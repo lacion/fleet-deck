@@ -1,0 +1,9 @@
+node_modules/
+board/node_modules/
+*.db
+*.db-wal
+*.db-shm
+.fleetdeck-test/
+demo/demo-logs/
+board/dist/
+ideas/
