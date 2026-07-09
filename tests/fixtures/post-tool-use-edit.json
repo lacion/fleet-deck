@@ -1,0 +1,12 @@
+{
+  "session_id": "__SESSION__",
+  "hook_event_name": "PostToolUse",
+  "cwd": "__CWD__",
+  "tool_name": "Edit",
+  "tool_input": {
+    "file_path": "__CWD__/util.js",
+    "old_string": "function slugify(s) {}",
+    "new_string": "function slugify(s) { return s; }"
+  },
+  "tool_response": { "success": true }
+}

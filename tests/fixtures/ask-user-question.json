@@ -1,0 +1,23 @@
+{
+  "session_id": "__SESSION__",
+  "transcript_path": "__CWD__/transcript.jsonl",
+  "cwd": "__CWD__",
+  "prompt_id": "5a4a17a1-0000-4000-8000-fixture00000",
+  "permission_mode": "default",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "AskUserQuestion",
+  "tool_input": {
+    "questions": [
+      {
+        "question": "Should this project use bcrypt or argon2 for password hashing?",
+        "header": "Hashing algo",
+        "options": [
+          { "label": "bcrypt", "description": "Battle-tested, widely supported; limited by 72-byte input and no memory-hardness." },
+          { "label": "argon2", "description": "PHC winner; memory-hard and tunable, better GPU/ASIC resistance." }
+        ],
+        "multiSelect": false
+      }
+    ]
+  },
+  "tool_use_id": "toolu_TESTFIXTURE0000000000001"
+}

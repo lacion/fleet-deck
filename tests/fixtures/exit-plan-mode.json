@@ -1,0 +1,9 @@
+{
+  "session_id": "__SESSION__",
+  "hook_event_name": "PermissionRequest",
+  "cwd": "__CWD__",
+  "tool_name": "ExitPlanMode",
+  "tool_input": {
+    "plan": "# Add rate limiting to the login endpoint\n\n## Context\nThe `/api/login` endpoint has no request throttling, which lets an attacker\nbrute-force passwords. This plan adds a sliding-window limiter ahead of the\nexisting auth check.\n\n## Steps\n1. Add a `rate-limiter-flexible` dependency (or roll a tiny in-memory\n   token bucket if we want zero new deps).\n2. Wrap the login handler:\n\n```js\nasync function loginHandler(req, res) {\n  const key = req.ip;\n  if (await limiter.isLimited(key)) {\n    return res.status(429).json({ error: 'too many attempts' });\n  }\n  return realLoginHandler(req, res);\n}\n```\n\n3. Return a `429` with a `Retry-After` header on trip.\n4. Add a regression test that hammers the endpoint and asserts the 6th\n   attempt within 60s gets a 429.\n\n## Risks\n- Shared IPs (NAT, corporate proxies) could get collateral-limited.\n- Needs a Redis-backed limiter before we run more than one fleetd instance.\n"
+  }
+}

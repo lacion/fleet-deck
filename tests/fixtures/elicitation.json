@@ -1,0 +1,10 @@
+{
+  "session_id": "__SESSION__",
+  "hook_event_name": "Elicitation",
+  "cwd": "__CWD__",
+  "message": "Which deployment target should I use?",
+  "requestedSchema": {
+    "type": "object",
+    "properties": { "target": { "type": "string" } }
+  }
+}

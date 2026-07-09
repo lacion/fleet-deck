@@ -1,0 +1,7 @@
+{
+  "session_id": "__SESSION__",
+  "hook_event_name": "PermissionRequest",
+  "cwd": "__CWD__",
+  "tool_name": "Bash",
+  "tool_input": { "command": "rm -rf build/" }
+}

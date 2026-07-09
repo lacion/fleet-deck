@@ -1,0 +1,6 @@
+{
+  "session_id": "__SESSION__",
+  "hook_event_name": "Notification",
+  "cwd": "__CWD__",
+  "message": "Claude needs your permission to use Bash"
+}

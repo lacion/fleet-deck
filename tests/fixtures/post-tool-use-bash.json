@@ -1,0 +1,10 @@
+{
+  "session_id": "__SESSION__",
+  "hook_event_name": "PostToolUse",
+  "cwd": "__CWD__",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "ls -la"
+  },
+  "tool_response": { "success": true }
+}

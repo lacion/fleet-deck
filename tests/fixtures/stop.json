@@ -1,0 +1,6 @@
+{
+  "session_id": "__SESSION__",
+  "hook_event_name": "Stop",
+  "cwd": "__CWD__",
+  "last_assistant_message": "I've finished adding the function and all tests pass."
+}

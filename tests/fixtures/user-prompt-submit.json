@@ -1,0 +1,6 @@
+{
+  "session_id": "__SESSION__",
+  "hook_event_name": "UserPromptSubmit",
+  "cwd": "__CWD__",
+  "prompt": "Add an exported function slugify(s) to util.js (lowercase, trim, spaces to dashes, strip punctuation)."
+}

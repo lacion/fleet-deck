@@ -1,0 +1,6 @@
+{
+  "session_id": "__SESSION__",
+  "hook_event_name": "SessionEnd",
+  "cwd": "__CWD__",
+  "reason": "other"
+}
