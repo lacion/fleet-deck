@@ -1,0 +1,416 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fleet Deck ⚡</title>
+<style>
+  :root {
+    --bg:#0b0e14; --panel:#11151f; --panel2:#151b28; --border:#1e2533;
+    --text:#e6e9f0; --dim:#8a93a6; --accent:#7aa2ff; --green:#3fd68f;
+    --yellow:#ffd166; --red:#ff5d73; --purple:#b48cff; --orange:#ffa657;
+  }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--text); font:14px/1.45 ui-monospace,'SF Mono',Menlo,Consolas,monospace; height:100vh; display:flex; flex-direction:column; overflow:hidden; }
+  header { display:flex; align-items:baseline; gap:18px; padding:14px 20px 10px; border-bottom:1px solid var(--border); }
+  header h1 { font-size:18px; letter-spacing:2px; font-weight:700; }
+  header h1 .bolt { color:var(--yellow); }
+  header .stat { color:var(--dim); font-size:12px; }
+  header .stat b { color:var(--text); }
+  #conn { margin-left:auto; font-size:12px; }
+  #conn.ok { color:var(--green); } #conn.bad { color:var(--red); }
+
+  #repochips { display:flex; gap:8px; padding:8px 20px; border-bottom:1px solid var(--border); flex-wrap:wrap; }
+  .chip { font-size:11px; padding:3px 10px; border-radius:11px; border:1px solid var(--border); color:var(--dim); cursor:pointer; background:var(--panel); }
+  .chip:hover { border-color:var(--accent); }
+  .chip.on { color:var(--bg); background:var(--accent); border-color:var(--accent); }
+  .chip .n { opacity:.75; margin-left:4px; }
+
+  #conflictbar { display:none; background:#2a1218; border-bottom:1px solid #4a1e28; color:var(--red); padding:8px 20px; font-size:13px; }
+  #conflictbar.on { display:block; animation:flash .9s ease-in-out 2; }
+  @keyframes flash { 50% { background:#471824; } }
+
+  /* NEEDS YOU rail (Phase 3 spike UI — Phase 5 replaces it) */
+  #questions { display:none; gap:10px; padding:10px 20px; border-bottom:1px solid var(--border); overflow-x:auto; background:#171307; }
+  #questions.on { display:flex; }
+  .q { flex:0 0 320px; background:var(--panel2); border:1px solid var(--yellow); border-radius:8px; padding:10px; font-size:12px; }
+  .q .qhead { display:flex; gap:8px; align-items:baseline; margin-bottom:6px; }
+  .q .qkind { font-size:10px; letter-spacing:1px; color:var(--yellow); }
+  .q .qcs { font-weight:700; }
+  .q .qttl { margin-left:auto; color:var(--dim); font-size:11px; }
+  .q pre { background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:6px; margin:6px 0; max-height:110px; overflow:auto; font-size:11px; white-space:pre-wrap; word-break:break-word; }
+  .q pre.qold { border-left:3px solid var(--red); }
+  .q pre.qnew { border-left:3px solid var(--green); }
+  .q .qrow { display:flex; gap:6px; margin-top:6px; }
+  .q .qrow input { flex:1; min-width:0; }
+  .q textarea { display:block; width:100%; background:var(--panel); border:1px solid var(--border); color:var(--text); border-radius:6px; padding:6px; font:inherit; font-size:11px; min-height:52px; margin-top:4px; }
+  .q button.deny { color:var(--red); border-color:var(--red); }
+  .q button.deny:hover { background:var(--red); color:var(--bg); }
+  .q label { font-size:10px; color:var(--dim); display:block; margin-top:4px; }
+  .q label input { width:100%; margin-top:2px; }
+  .q .qnote { margin-top:5px; font-size:10px; color:var(--dim); }
+  .q .qerr { color:var(--red); font-size:10px; margin-top:4px; min-height:12px; }
+  .q .qchip { display:inline-block; font-size:10px; letter-spacing:1px; color:var(--accent); border:1px solid var(--accent); border-radius:9px; padding:0 7px; margin:6px 0 3px; }
+  .q .qgroup { margin-top:4px; }
+  .q .qopts { flex-wrap:wrap; }
+  .q label.qopt { display:inline-flex; align-items:center; gap:5px; font-size:11px; color:var(--text); margin:2px 8px 0 0; cursor:pointer; }
+  .q label.qopt input { width:auto; margin:0; flex:none; }
+
+  main { flex:1; display:grid; grid-template-columns:repeat(6,1fr); gap:10px; padding:14px 16px; overflow-y:auto; align-content:start; }
+  .col { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:10px; min-height:160px; }
+  .col h2 { font-size:11px; letter-spacing:1.5px; color:var(--dim); margin-bottom:10px; display:flex; justify-content:space-between; }
+  .col h2 .n { color:var(--text); }
+  .col.needsyou h2 { color:var(--yellow); }
+
+  .card { background:var(--panel2); border:1px solid var(--border); border-radius:8px; padding:10px; margin-bottom:8px; position:relative; }
+  .card.hot { border-color:var(--red); }
+  .card .cs { font-weight:700; font-size:14px; margin-bottom:2px; display:flex; align-items:center; gap:7px; }
+  .dot { width:8px; height:8px; border-radius:50%; background:var(--dim); flex:none; }
+  .dot.live { background:var(--green); box-shadow:0 0 6px var(--green); }
+  .dot.warm { background:var(--yellow); }
+  .badge { font-size:10px; padding:1px 7px; border-radius:9px; border:1px solid var(--border); color:var(--dim); margin-left:auto; }
+  .badge.fable { color:var(--purple); border-color:var(--purple); }
+  .badge.opus { color:var(--orange); border-color:var(--orange); }
+  .badge.sonnet { color:var(--accent); border-color:var(--accent); }
+  .badge.haiku { color:var(--green); border-color:var(--green); }
+  .card .where { color:var(--dim); font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .card .note { margin-top:6px; font-size:12px; color:var(--text); word-break:break-word; }
+  .card .files { margin-top:6px; font-size:10px; color:var(--dim); }
+  .card .meta { margin-top:6px; font-size:10px; color:var(--dim); display:flex; justify-content:space-between; }
+  .card .mail-flag { color:var(--yellow); }
+
+  footer { display:grid; grid-template-columns:1fr 380px; gap:10px; border-top:1px solid var(--border); padding:10px 16px; height:150px; }
+  #ticker { overflow-y:auto; font-size:12px; color:var(--dim); }
+  #ticker div { padding:2px 0; }
+  #ticker time { color:#5b6478; margin-right:8px; }
+  #mailbox { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:10px; display:flex; flex-direction:column; gap:8px; }
+  #mailbox label { font-size:11px; letter-spacing:1.5px; color:var(--dim); }
+  #mailbox .row { display:flex; gap:8px; }
+  select,input,button { background:var(--panel2); border:1px solid var(--border); color:var(--text); border-radius:6px; padding:7px 9px; font:inherit; font-size:12px; }
+  input { flex:1; }
+  button { cursor:pointer; color:var(--accent); border-color:var(--accent); }
+  button:hover { background:var(--accent); color:var(--bg); }
+  #sent { font-size:11px; color:var(--green); height:14px; }
+</style>
+</head>
+<body>
+  <header>
+    <h1><span class="bolt">⚡</span> FLEET DECK</h1>
+    <span class="stat"><b id="n-active">0</b> active</span>
+    <span class="stat"><b id="n-conflicts">0</b> conflicts</span>
+    <span class="stat"><b id="n-questions">0</b> for you</span>
+    <span class="stat">up <b id="uptime">0s</b></span>
+    <span id="conn" class="bad">connecting…</span>
+  </header>
+  <div id="repochips"></div>
+  <div id="conflictbar"></div>
+  <div id="questions"></div>
+  <main id="cols"></main>
+  <footer>
+    <div id="ticker"></div>
+    <div id="mailbox">
+      <label>MESSAGE A SESSION — delivered at its next turn boundary</label>
+      <div class="row">
+        <select id="mail-to"><option value="all">all</option></select>
+        <input id="mail-text" placeholder="e.g. hold off on util.js, falcon has it" maxlength="300">
+        <button id="mail-send">send</button>
+      </div>
+      <div id="sent"></div>
+    </div>
+  </footer>
+
+<script>
+const COLS = [
+  ['queued','QUEUED'], ['working','WORKING'], ['verifying','VERIFYING'],
+  ['needsyou','NEEDS YOU'], ['idle','IDLE'], ['offline','OFFLINE'],
+];
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const age = ms => { const s = Math.floor(ms/1000); return s < 60 ? s+'s' : s < 3600 ? Math.floor(s/60)+'m' : Math.floor(s/3600)+'h'; };
+const modelClass = m => { m = String(m||'').toLowerCase();
+  return m.includes('fable') ? 'fable' : m.includes('opus') ? 'opus' : m.includes('sonnet') ? 'sonnet' : m.includes('haiku') ? 'haiku' : ''; };
+let snap = null;
+let repoFilter = null; // repo_id or null = all
+
+function render() {
+  if (!snap) return;
+  const now = Date.now();
+  const live = snap.sessions.filter(s => !s.endedAt);
+  $('n-active').textContent = live.length;
+  $('n-conflicts').textContent = snap.conflicts.length;
+  $('n-questions').textContent = (snap.questions || []).filter(q => q.status === 'pending').length;
+  $('uptime').textContent = age(snap.uptime_ms ?? snap.up_ms);
+  renderQuestions();
+
+  // repo grouping chips
+  const repos = snap.repos || [];
+  if (repoFilter && !repos.some(r => r.repo_id === repoFilter)) repoFilter = null;
+  $('repochips').innerHTML =
+    `<span class="chip${repoFilter === null ? ' on' : ''}" data-repo="">all repos<span class="n">${snap.sessions.length}</span></span>` +
+    repos.map(r =>
+      `<span class="chip${repoFilter === r.repo_id ? ' on' : ''}" data-repo="${esc(r.repo_id ?? '')}">${esc(r.repo_name || '(no repo)')}<span class="n">${r.active}</span></span>`
+    ).join('');
+  for (const chip of document.querySelectorAll('#repochips .chip')) {
+    chip.onclick = () => { repoFilter = chip.dataset.repo || null; render(); };
+  }
+  const shown = repoFilter ? snap.sessions.filter(s => s.repo_id === repoFilter) : snap.sessions;
+
+  const recent = snap.conflicts.filter(c => now - c.at < 5*60*1000);
+  const bar = $('conflictbar');
+  if (recent.length) {
+    bar.className = 'on';
+    bar.textContent = '⚠ ' + recent.slice(0,2).map(c =>
+      c.file.split('/').pop() + ' touched by ' + c.sessions.length + ' sessions' + (c.severity === 'info' ? ' (cross-worktree)' : '')).join('  ·  ');
+  } else bar.className = '';
+
+  $('cols').innerHTML = COLS.map(([key, label]) => {
+    const cards = shown.filter(s => s.col === key).sort((a,b) => b.lastSeen - a.lastSeen);
+    return `<div class="col ${key}"><h2>${label} <span class="n">${cards.length}</span></h2>` +
+      cards.map(s => {
+        const idle = now - s.lastSeen;
+        const dot = s.endedAt ? '' : idle < 15000 ? 'live' : idle < 90000 ? 'warm' : '';
+        const hot = recent.some(c => c.sessions.includes(s.session_id));
+        const mail = (snap.mail_pending[s.session_id] || 0);
+        const where = [s.repo_name || (s.cwd||'').split('/').slice(-2).join('/'), s.branch].filter(Boolean).join(' · ');
+        return `<div class="card${hot ? ' hot' : ''}">
+          <div class="cs"><span class="dot ${dot}"></span>${esc(s.callsign)}
+            <span class="badge ${modelClass(s.model)}">${esc(s.model || '?')}</span></div>
+          <div class="where">${esc(where)}</div>
+          <div class="note">${esc(s.note)}</div>
+          ${s.files.length ? `<div class="files">✎ ${s.files.slice(-3).map(f => esc(f.split('/').pop())).join(', ')}${s.files.length>3 ? ' +'+(s.files.length-3) : ''}</div>` : ''}
+          <div class="meta"><span>${s.events} events</span><span>${mail ? `<span class="mail-flag">✉ ${mail}</span> · ` : ''}${age(idle)} ago</span></div>
+        </div>`;
+      }).join('') + '</div>';
+  }).join('');
+
+  $('ticker').innerHTML = snap.ticker.map(t =>
+    `<div><time>${new Date(t.at).toLocaleTimeString()}</time>${esc(t.msg)}</div>`).join('');
+
+  const sel = $('mail-to'); const cur = sel.value;
+  sel.innerHTML = '<option value="all">all</option>' +
+    repos.filter(r => r.repo_name && r.active).map(r =>
+      `<option value="repo:${esc(r.repo_name)}">repo: ${esc(r.repo_name)}</option>`).join('') +
+    live.map(s => `<option value="${esc(s.callsign)}">${esc(s.callsign)}</option>`).join('');
+  if ([...sel.options].some(o => o.value === cur)) sel.value = cur;
+}
+
+// ---------------- NEEDS YOU rail (F3: questions answered from the board) ----
+// Rebuild the rail DOM only when the question set changes (signature check),
+// so in-progress typing in answer boxes survives snapshot refreshes; the 1 s
+// countdown tick touches only the [data-exp] spans.
+let qSig = null;
+function renderQuestions() {
+  const qs = (snap?.questions || []).filter(q => q.status === 'pending');
+  const rail = $('questions');
+  const sig = qs.map(q => q.id + ':' + q.kind + ':' + (q.held ? 1 : 0)).join(',');
+  if (sig !== qSig) {
+    qSig = sig;
+    rail.className = qs.length ? 'on' : '';
+    rail.innerHTML = qs.map(qCard).join('');
+  }
+  tickCountdowns();
+}
+
+const clip = (s, n) => { s = String(s ?? ''); return s.length > n ? s.slice(0, n) + '…' : s; };
+const pretty = o => { try { return JSON.stringify(o, null, 2); } catch { return String(o); } };
+
+function qCard(q) {
+  const p = q.payload || {};
+  const head = kind => `<div class="qhead"><span class="qkind">${kind}</span><span class="qcs">${esc(q.callsign || q.session_id)}</span>${q.expires_at ? `<span class="qttl" data-exp="${Number(q.expires_at)}"></span>` : ''}</div>`;
+
+  if (q.kind === 'permission') {
+    const ti = p.tool_input && typeof p.tool_input === 'object' ? p.tool_input : null;
+    const isEdit = ti && (ti.old_string != null || ti.new_string != null || (p.tool_name === 'Write' && ti.content != null));
+    const body = isEdit
+      ? `${ti.file_path ? `<div class="qnote">${esc(ti.file_path)}</div>` : ''}
+         ${ti.old_string != null ? `<pre class="qold">${esc(clip(ti.old_string, 400))}</pre>` : ''}
+         ${(ti.new_string ?? ti.content) != null ? `<pre class="qnew">${esc(clip(ti.new_string ?? ti.content, 400))}</pre>` : ''}`
+      : ti
+        ? `<pre>${esc(clip(pretty(ti), 600))}</pre>`
+        : `<div class="qnote">no tool_input in the hook payload — decide from the tool name</div>`;
+    return `<div class="q" data-q="${q.id}">
+      ${head('PERMISSION')}
+      <div><b>${esc(p.tool_name || 'tool')}</b></div>
+      ${body}
+      <div class="qrow">
+        <button onclick="answerQ(${q.id},{behavior:'allow'},this)">allow</button>
+        <button class="deny" onclick="answerQ(${q.id},{behavior:'deny'},this)">deny</button>
+      </div>
+      <div class="qerr"></div>
+    </div>`;
+  }
+
+  if (q.kind === 'elicitation') {
+    const props = p.requestedSchema && typeof p.requestedSchema.properties === 'object' ? p.requestedSchema.properties : null;
+    const fields = props ? Object.keys(props) : [];
+    const form = fields.length
+      ? fields.map(f => `<label>${esc(f)}${props[f] && props[f].description ? ' — ' + esc(props[f].description) : ''}<input data-field="${esc(f)}"></label>`).join('')
+      : `<textarea data-json placeholder='{"field":"value"} — schema unknown, answer as JSON'></textarea>`;
+    return `<div class="q" data-q="${q.id}">
+      ${head('ELICITATION')}
+      <div>${esc(p.message || 'MCP server requests input')}</div>
+      ${form}
+      <div class="qrow">
+        <button onclick="answerElicit(${q.id},this)">accept</button>
+        <button class="deny" onclick="answerQ(${q.id},{action:'decline'},this)">decline</button>
+      </div>
+      <div class="qerr"></div>
+    </div>`;
+  }
+
+  if (q.kind === 'choice') {
+    // F3c AskUserQuestion relay: payload is the raw PreToolUse hook payload;
+    // tool_input.questions[] carries {question, header, options[{label,
+    // description}], multiSelect} (validated live on CLI 2.1.206).
+    // Single question + single-select → immediate-answer buttons; anything
+    // else → radio/checkbox groups + one submit. A freeform text fallback is
+    // always offered ({text} body). Answer body mirrors the CLI's own format:
+    // {answers: {"<question text>": "<label>"}}.
+    const qs = (q.payload && q.payload.tool_input && Array.isArray(q.payload.tool_input.questions))
+      ? q.payload.tool_input.questions : [];
+    const oneShot = qs.length === 1 && !qs[0].multiSelect;
+    const blocks = qs.map((qq, i) => {
+      const opts = Array.isArray(qq.options) ? qq.options : [];
+      const optHtml = oneShot
+        ? opts.map(o =>
+            `<button title="${esc(o.description || '')}" data-qtext="${esc(qq.question)}" data-label="${esc(o.label)}" onclick="answerChoice(${q.id},this)">${esc(o.label)}</button>`
+          ).join('')
+        : opts.map(o =>
+            `<label class="qopt" title="${esc(o.description || '')}"><input type="${qq.multiSelect ? 'checkbox' : 'radio'}" name="q${q.id}-${i}" value="${esc(o.label)}">${esc(o.label)}</label>`
+          ).join('');
+      return `<div class="qgroup" data-qtext="${esc(qq.question)}">
+        ${qq.header ? `<div class="qchip">${esc(qq.header)}</div>` : ''}
+        <div>${esc(qq.question)}</div>
+        <div class="qrow qopts">${optHtml || '<span class="qnote">no options — use the text box</span>'}</div>
+      </div>`;
+    }).join('');
+    return `<div class="q" data-q="${q.id}">
+      ${head('CHOICE')}
+      ${blocks || '<div class="qnote">no questions[] in the hook payload — answer freeform</div>'}
+      ${!oneShot && qs.length ? `<div class="qrow"><button onclick="answerChoiceForm(${q.id},this)">submit answer${qs.length > 1 ? 's' : ''}</button></div>` : ''}
+      <div class="qrow">
+        <input data-freetext placeholder="or type a freeform answer…" maxlength="400">
+        <button onclick="answerChoiceText(${q.id},this)">send</button>
+      </div>
+      <div class="qnote">relayed as the session's chosen answer; on expiry the terminal chooser takes over</div>
+      <div class="qerr"></div>
+    </div>`;
+  }
+
+  // freeform
+  return `<div class="q" data-q="${q.id}">
+    ${head('QUESTION')}
+    <div>${esc(p.text || '(question)')}</div>
+    <div class="qrow">
+      <input data-answer placeholder="your answer…" maxlength="400">
+      <button onclick="answerFree(${q.id},this)">send</button>
+    </div>
+    <div class="qnote">delivered at the session's next turn boundary</div>
+    <div class="qerr"></div>
+  </div>`;
+}
+
+function tickCountdowns() {
+  const now = Date.now();
+  for (const el of document.querySelectorAll('#questions [data-exp]')) {
+    const left = Math.max(0, Math.ceil((Number(el.dataset.exp) - now) / 1000));
+    el.textContent = left + 's left';
+  }
+}
+setInterval(tickCountdowns, 1000);
+
+async function answerQ(id, body, btn) {
+  const cardEl = btn.closest('.q');
+  btn.disabled = true;
+  try {
+    const r = await fetch(`/api/questions/${id}/answer`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      cardEl.querySelector('.qerr').textContent = j.err || ('error ' + r.status);
+      btn.disabled = false;
+      return;
+    }
+    cardEl.querySelector('.qerr').textContent = j.note || 'sent';
+  } catch {
+    cardEl.querySelector('.qerr').textContent = 'network error';
+    btn.disabled = false;
+  }
+}
+
+function answerElicit(id, btn) {
+  const cardEl = btn.closest('.q');
+  const ta = cardEl.querySelector('[data-json]');
+  let content = {};
+  if (ta) {
+    try { content = ta.value.trim() ? JSON.parse(ta.value) : {}; }
+    catch { cardEl.querySelector('.qerr').textContent = 'answer must be valid JSON'; return; }
+  } else {
+    for (const inp of cardEl.querySelectorAll('[data-field]')) {
+      if (inp.value !== '') content[inp.dataset.field] = inp.value;
+    }
+  }
+  answerQ(id, { action: 'accept', content }, btn);
+}
+
+function answerFree(id, btn) {
+  const cardEl = btn.closest('.q');
+  const text = cardEl.querySelector('[data-answer]').value.trim();
+  if (!text) { cardEl.querySelector('.qerr').textContent = 'type an answer first'; return; }
+  answerQ(id, { text }, btn);
+}
+
+// ---- choice (F3c AskUserQuestion) answer paths ----
+function answerChoice(id, btn) { // single question, single select: one click
+  answerQ(id, { answers: { [btn.dataset.qtext]: btn.dataset.label } }, btn);
+}
+function answerChoiceForm(id, btn) { // multi-question and/or multiSelect
+  const cardEl = btn.closest('.q');
+  const answers = {};
+  for (const g of cardEl.querySelectorAll('.qgroup')) {
+    const picked = [...g.querySelectorAll('input:checked')].map(i => i.value);
+    if (!picked.length) { cardEl.querySelector('.qerr').textContent = 'pick an option for every question'; return; }
+    answers[g.dataset.qtext] = g.querySelector('input[type=checkbox]') ? picked.join(', ') : picked[0];
+  }
+  if (!Object.keys(answers).length) { cardEl.querySelector('.qerr').textContent = 'nothing to submit — type a freeform answer'; return; }
+  answerQ(id, { answers }, btn);
+}
+function answerChoiceText(id, btn) { // freeform fallback ({text} body)
+  const cardEl = btn.closest('.q');
+  const text = cardEl.querySelector('[data-freetext]').value.trim();
+  if (!text) { cardEl.querySelector('.qerr').textContent = 'type an answer first'; return; }
+  answerQ(id, { text }, btn);
+}
+$('questions').addEventListener('keydown', e => {
+  if (e.key !== 'Enter') return;
+  const card = e.target.closest('.q');
+  if (!card) return;
+  if (e.target.matches('[data-answer]')) {
+    answerFree(Number(card.dataset.q), card.querySelector('button'));
+  } else if (e.target.matches('[data-freetext]')) {
+    answerChoiceText(Number(card.dataset.q), e.target.nextElementSibling || card.querySelector('button'));
+  }
+});
+
+function connect() {
+  const ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.onopen = () => { $('conn').textContent = '● live'; $('conn').className = 'ok'; };
+  ws.onmessage = e => { snap = JSON.parse(e.data); render(); };
+  ws.onclose = () => { $('conn').textContent = '○ reconnecting…'; $('conn').className = 'bad'; setTimeout(connect, 1500); };
+}
+connect();
+setInterval(render, 3000);
+
+$('mail-send').onclick = async () => {
+  const text = $('mail-text').value.trim(); if (!text) return;
+  const r = await fetch('/mail', { method:'POST', headers:{'content-type':'application/json'},
+    body: JSON.stringify({ to: $('mail-to').value, from: 'human', text }) }).then(r => r.json());
+  $('sent').textContent = `queued for ${r.delivered} session(s) — lands at next turn boundary`;
+  $('mail-text').value = '';
+  setTimeout(() => $('sent').textContent = '', 4000);
+};
+$('mail-text').addEventListener('keydown', e => { if (e.key === 'Enter') $('mail-send').click(); });
+</script>
+</body>
+</html>
