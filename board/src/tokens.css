@@ -1,0 +1,63 @@
+/* Fleet Deck — design tokens (lift into Vite/React build) */
+:root {
+  /* color · dark (default) */
+  --bg: #0B0E14;          /* app canvas */
+  --surface: #121722;     /* cards, header, feed */
+  --raised: #18202F;      /* buttons, option rows */
+  --code: #0A0D13;        /* command blocks, inputs */
+  --border: #242E42;
+  --border-soft: #1B2333;
+  --text: #E7ECF5;
+  --dim: #94A0B8;
+  --faint: #5C6880;
+  --act: #F0A63C;         /* yours-to-act (amber) */
+  --act-bg: #2A1F0C;
+  --act-ink: #1A1206;     /* text on amber */
+  --hazard: #FF6B54;      /* conflicts, timeouts */
+  --hazard-bg: #2A120D;
+  --ok: #57B98A;          /* liveness, ship, delivered */
+  /* model families */
+  --m-fable: #C4B0FF;  --m-fable-bg: #241C3E;
+  --m-quill: #6FD6CD;  --m-quill-bg: #0E2A28;
+  --m-comet: #8FBCF7;  --m-comet-bg: #12233B;
+}
+[data-theme="light"] {
+  --bg: #EEF1F5; --surface: #FFFFFF; --raised: #F7F9FC; --code: #F1F3F7;
+  --border: #D4DAE4; --border-soft: #E2E7EF;
+  --text: #1A2230; --dim: #57637A; --faint: #8A94A8;
+  --act: #8A5300; --act-bg: #FFF3DC; --act-ink: #FFFFFF;
+  --hazard: #B3301C; --hazard-bg: #FDE8E4;
+  --ok: #1E7A4E;
+  --m-fable: #4C2FA8; --m-fable-bg: #EDE8FC;
+  --m-quill: #0E6B63; --m-quill-bg: #DDF4F2;
+  --m-comet: #1D4FA8; --m-comet-bg: #E3EDFC;
+}
+
+/* type */
+:root {
+  --font-ui: 'IBM Plex Sans', system-ui, sans-serif;    /* prose, titles, buttons */
+  --font-data: 'IBM Plex Mono', monospace;              /* callsigns, paths, cmds, timestamps */
+  --fs-micro: 10.5px;  /* column labels, kbd hints, tags */
+  --fs-data: 11.5px;   /* mono metadata rows */
+  --fs-body: 12.5px;   /* card note, buttons */
+  --fs-title: 13.5px;  /* question titles */
+  --fs-heading: 14px;  /* header wordmark, drawer task */
+  --ls-label: 1.8px;   /* letter-spacing on ALL-CAPS labels */
+}
+
+/* space & shape */
+:root {
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 24px;
+  --r-chip: 4px; --r-ctl: 7px; --r-card: 9px; --r-panel: 10px; --r-pill: 999px;
+}
+
+/* motion */
+:root {
+  --t-fast: 200ms ease-out;      /* selection ring, hover */
+  --t-move: 240ms ease;          /* card column glide, fades */
+  --t-drawer: 220ms ease-out;    /* drawer slide */
+  --pulse-working: 2400ms;       /* liveness breathe */
+  --pulse-needs: 1600ms;         /* needs-you breathe (faster) */
+  --ripple-conflict: 900ms;      /* one iteration, never loops */
+  --ring-tick: 1s linear;        /* countdown ring stroke */
+}
