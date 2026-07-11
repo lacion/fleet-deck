@@ -36,18 +36,25 @@ Every session on the machine appears on one local board — **http://127.0.0.1:4
 ## Install
 
 ```bash
-claude plugin marketplace add /path/to/fleetdeck   # the repo is its own marketplace
+claude plugin marketplace add lacion/fleet-deck   # the repo is its own marketplace
 claude plugin install fleetdeck@fleetdeck
 ```
 
 That's it. Your next `claude` — any terminal, any repo, no wrapper, no launcher, no ritual — brings the fleet up and appears on the board at **http://127.0.0.1:4711**. Type `/fleet` in any session for a live summary.
 
-**Team sharing:** push this repo to your git host, then everyone runs:
+Requires **Node 22.5+** — and that's the whole list. There is nothing to `npm install`: the daemon ships as one bundled file and keeps its state in Node's built-in `node:sqlite`. Add **tmux** if you want the board to spawn workers or open their panes in the browser; everything else works without it. Linux, WSL2 and macOS. Windows-native is untested — if you try it, tell us what broke.
+
+<details>
+<summary>Working on Fleet Deck itself, or running it from a fork</summary>
 
 ```bash
-claude plugin marketplace add your-org/fleetdeck
+claude plugin marketplace add /path/to/fleet-deck   # a local clone
+claude plugin marketplace add your-org/your-fork    # or your own fork
 claude plugin install fleetdeck@fleetdeck
 ```
+
+After changing anything under `scripts/` you need `npm run bundle` (the daemon runs the bundle, not the source), and after changing the board, `npm run build` in `board/`. Then restart the daemon.
+</details>
 
 ## The 60-second tour
 
@@ -195,7 +202,7 @@ All optional. Fleet Deck's defaults are the configuration we actually run.
 
 ```bash
 npm install
-node --test --test-concurrency=1     # 159 contract tests against a real daemon
+node --test --test-concurrency=1     # 170 contract tests against a real daemon
 npm run bundle                       # rebundle the daemon after touching scripts/fleetd/
 npm run build:board                  # rebuild the React board into board-dist/
 ```
