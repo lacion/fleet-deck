@@ -319,6 +319,15 @@ export function createQuestions(db, {
     return changed;
   }
 
+  // "Clear" on the board: answered, expired and dismissed cards leave the rail
+  // for good. PENDING rows are the human's actual queue and are never touched
+  // here — Clear tidies the past, it does not silence the present.
+  function purgeResolved() {
+    const out = db.prepare("DELETE FROM questions WHERE status != 'pending'").run();
+    if (out.changes) onChange();
+    return out.changes;
+  }
+
   // The human already handled it elsewhere: retire the card, tell the session
   // nothing. Distinct from answering (which mails the answer to the session)
   // and from expiring a hold (which must fail a parked socket open).
@@ -412,6 +421,7 @@ export function createQuestions(db, {
     socketClosed,
     answer,
     dismiss,
+    purgeResolved,
     expireOnActivity,
     expireOrphans,
     expireAllForSession,

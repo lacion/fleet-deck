@@ -4151,6 +4151,11 @@ function createQuestions(db2, {
     if (changed) onChange();
     return changed;
   }
+  function purgeResolved() {
+    const out = db2.prepare("DELETE FROM questions WHERE status != 'pending'").run();
+    if (out.changes) onChange();
+    return out.changes;
+  }
   function dismiss(id) {
     const row = q.get.get(id);
     if (!row) return { ok: false, reason: "no such question" };
@@ -4228,6 +4233,7 @@ function createQuestions(db2, {
     socketClosed,
     answer,
     dismiss,
+    purgeResolved,
     expireOnActivity,
     expireOrphans,
     expireAllForSession,
@@ -4600,6 +4606,19 @@ function createCore(db2, {
     trimTicker: db2.prepare("DELETE FROM ticker WHERE id <= (SELECT MAX(id) FROM ticker) - 500"),
     insertConflict: db2.prepare("INSERT INTO conflicts (at, repo_id, rel_path, severity, sessions_json) VALUES (?, ?, ?, ?, ?)"),
     recentConflicts: db2.prepare("SELECT * FROM conflicts ORDER BY id DESC LIMIT 20"),
+    // Manual cleanup (CONTRACT): "Clear" means the board shows only what is
+    // still alive. A conflict between two dead sessions, a feed narrating
+    // yesterday, and a file ledger full of ghosts are all noise the human
+    // explicitly asked to be rid of — the radar re-raises a real conflict the
+    // moment two live sessions touch the same file again.
+    allConflicts: db2.prepare("SELECT id, sessions_json FROM conflicts"),
+    deleteConflict: db2.prepare("DELETE FROM conflicts WHERE id = ?"),
+    clearTicker: db2.prepare("DELETE FROM ticker"),
+    aliveSessionIds: db2.prepare("SELECT session_id FROM sessions WHERE ended_at IS NULL AND archived_at IS NULL"),
+    deleteDeadTouches: db2.prepare(`DELETE FROM file_touches WHERE session_id IN (
+      SELECT session_id FROM sessions WHERE ended_at IS NOT NULL OR archived_at IS NOT NULL)`),
+    deleteArchivedMail: db2.prepare(`DELETE FROM mail WHERE to_session IN (
+      SELECT session_id FROM sessions WHERE archived_at IS NOT NULL)`),
     insertCommand: db2.prepare("INSERT INTO commands (at, text, parsed_json) VALUES (?, ?, ?)"),
     pruneEvents: db2.prepare("DELETE FROM events WHERE at < ?"),
     // v1.2 board-spawned sessions. "Active" = status spawning|stalled|live — the rows
@@ -5783,6 +5802,7 @@ function createCore(db2, {
     const spawnBySid = /* @__PURE__ */ new Map();
     for (const r of q.allSpawns.all()) spawnBySid.set(r.session_id, r);
     const pendingBySid = new Map(q.pendingCounts.all().map((r) => [r.to_session, r]));
+    const callsignById = new Map(q.allSessions.all().map((s) => [s.session_id, s.callsign]));
     const sessions = q.visibleSessions.all().map((s) => {
       const sp = spawnBySid.get(s.session_id);
       const pending = pendingBySid.get(s.session_id);
@@ -5863,15 +5883,22 @@ function createCore(db2, {
       sessions,
       repos: [...repoMap.values()],
       ticker: q.recentTicker.all(),
-      conflicts: q.recentConflicts.all().map((c) => ({
-        at: c.at,
-        repo_id: c.repo_id,
-        rel_path: c.rel_path,
-        file: c.rel_path,
-        // spike board reads .file
-        severity: c.severity,
-        sessions: JSON.parse(c.sessions_json || "[]")
-      })),
+      // Callsigns resolved from EVERY session, not just the visible ones: a
+      // conflict outlives its participants, and a banner shouting a raw UUID at
+      // you is worse than one that says `comet-2d9d`.
+      conflicts: q.recentConflicts.all().map((c) => {
+        const ids = JSON.parse(c.sessions_json || "[]");
+        return {
+          at: c.at,
+          repo_id: c.repo_id,
+          rel_path: c.rel_path,
+          file: c.rel_path,
+          // spike board reads .file
+          severity: c.severity,
+          sessions: ids,
+          callsigns: ids.map((id) => callsignById.get(id) ?? id)
+        };
+      }),
       mail_pending: mailPending,
       mail_meta: mailMeta,
       // per-session {queued, oldest_at, route}
@@ -5944,6 +5971,21 @@ function createCore(db2, {
       const out = await tmuxAdapter.killWindowVerified(win.window);
       if (out.ok) windows_killed++;
     }
+    const alive = new Set(q.aliveSessionIds.all().map((r) => r.session_id));
+    let conflicts_cleared = 0;
+    for (const row of q.allConflicts.all()) {
+      let ids = [];
+      try {
+        ids = JSON.parse(row.sessions_json || "[]");
+      } catch {
+      }
+      if (ids.length && ids.every((id) => alive.has(id))) continue;
+      conflicts_cleared += Number(q.deleteConflict.run(row.id).changes);
+    }
+    q.deleteDeadTouches.run();
+    const questions_purged = Number(questions.purgeResolved());
+    q.deleteArchivedMail.run();
+    const feed_cleared = Number(q.clearTicker.run().changes);
     const orphan_worktrees = q.orphanWorktrees.all().map((r) => r.worktree_path).filter((p) => {
       try {
         return fs3.existsSync(p);
@@ -5951,8 +5993,19 @@ function createCore(db2, {
         return false;
       }
     });
-    if (archived || mail_expired || questions_expired || windows_killed) onMutate();
-    return { ok: true, archived, mail_expired, questions_expired, windows_killed, orphan_worktrees };
+    tick(`\u232B cleared \u2014 ${archived} card(s), ${conflicts_cleared} conflict(s), ${questions_purged} answered question(s), the feed`);
+    onMutate();
+    return {
+      ok: true,
+      archived,
+      mail_expired,
+      questions_expired,
+      questions_purged,
+      conflicts_cleared,
+      feed_cleared,
+      windows_killed,
+      orphan_worktrees
+    };
   }
   retentionSweep();
   setInterval(() => {

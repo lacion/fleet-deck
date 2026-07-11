@@ -161,8 +161,14 @@ export default function App() {
   const byId = new Map(sessions.map((s) => [s.session_id, s]));
   const csOf = (sid) => byId.get(sid)?.callsign || sid;
 
+  // Prefer the daemon's callsigns: it resolves them from EVERY session, so a
+  // conflict whose participants have since been archived still reads
+  // `comet-2d9d × ember-fc8e` instead of shouting two raw uuids at you.
   const conflictMsg = conflicts.length
-    ? conflicts.map((c) => `${basename(c.file || c.rel_path)} — ${(c.sessions || []).map(csOf).join(' × ')}`).join('   ·   ')
+    ? conflicts.map((c) => {
+      const who = c.callsigns?.length ? c.callsigns : (c.sessions || []).map(csOf);
+      return `${basename(c.file || c.rel_path)} — ${who.join(' × ')}`;
+    }).join('   ·   ')
     : null;
 
   const drawerSession = drawerSid ? byId.get(drawerSid) : null;
@@ -201,8 +207,9 @@ export default function App() {
       if (res.ok && res.json?.ok !== false) {
         const j = res.json || {};
         const orphans = Array.isArray(j.orphan_worktrees) ? j.orphan_worktrees : [];
-        const msg = `cleared ${j.archived ?? 0} offline · ${j.mail_expired ?? 0} mail expired`
-          + ` · ${j.questions_expired ?? 0} questions expired · ${j.windows_killed ?? 0} windows killed`;
+        const msg = `cleared ${j.archived ?? 0} offline · ${j.conflicts_cleared ?? 0} conflicts`
+          + ` · ${(j.questions_purged ?? 0) + (j.questions_expired ?? 0)} questions`
+          + ` · ${j.mail_expired ?? 0} mail · ${j.windows_killed ?? 0} windows · feed wiped`;
         // orphan paths need reading time — that strip stays until dismissed
         showNote({ msg, orphans }, orphans.length ? 0 : 8000);
       } else {

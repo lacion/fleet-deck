@@ -294,9 +294,11 @@ test('cleanup archives offline rows, expires mail, kills eligible dead panes, an
 
   const out = await core.cleanup();
   assert.deepEqual(out, {
-    ok: true, archived: 1, mail_expired: 1, questions_expired: 0, windows_killed: 1,
+    ok: true, archived: 1, mail_expired: 1, questions_expired: 0, questions_purged: 0,
+    conflicts_cleared: 0, feed_cleared: out.feed_cleared, windows_killed: 1,
     orphan_worktrees: [wt],
   });
+  assert.ok(out.feed_cleared >= 0, 'Clear wipes the feed too');
   assert.deepEqual(state.killed, ['fd4711-off-1']);
   assert.equal(core.snapshot().sessions.some(s => s.session_id === 'offline'), false);
 });

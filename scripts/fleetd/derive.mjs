@@ -146,6 +146,19 @@ export function createCore(db, {
     trimTicker: db.prepare('DELETE FROM ticker WHERE id <= (SELECT MAX(id) FROM ticker) - 500'),
     insertConflict: db.prepare('INSERT INTO conflicts (at, repo_id, rel_path, severity, sessions_json) VALUES (?, ?, ?, ?, ?)'),
     recentConflicts: db.prepare('SELECT * FROM conflicts ORDER BY id DESC LIMIT 20'),
+    // Manual cleanup (CONTRACT): "Clear" means the board shows only what is
+    // still alive. A conflict between two dead sessions, a feed narrating
+    // yesterday, and a file ledger full of ghosts are all noise the human
+    // explicitly asked to be rid of — the radar re-raises a real conflict the
+    // moment two live sessions touch the same file again.
+    allConflicts: db.prepare('SELECT id, sessions_json FROM conflicts'),
+    deleteConflict: db.prepare('DELETE FROM conflicts WHERE id = ?'),
+    clearTicker: db.prepare('DELETE FROM ticker'),
+    aliveSessionIds: db.prepare('SELECT session_id FROM sessions WHERE ended_at IS NULL AND archived_at IS NULL'),
+    deleteDeadTouches: db.prepare(`DELETE FROM file_touches WHERE session_id IN (
+      SELECT session_id FROM sessions WHERE ended_at IS NOT NULL OR archived_at IS NOT NULL)`),
+    deleteArchivedMail: db.prepare(`DELETE FROM mail WHERE to_session IN (
+      SELECT session_id FROM sessions WHERE archived_at IS NOT NULL)`),
     insertCommand: db.prepare('INSERT INTO commands (at, text, parsed_json) VALUES (?, ?, ?)'),
     pruneEvents: db.prepare('DELETE FROM events WHERE at < ?'),
     // v1.2 board-spawned sessions. "Active" = status spawning|stalled|live — the rows
@@ -1605,6 +1618,7 @@ export function createCore(db, {
     const spawnBySid = new Map();
     for (const r of q.allSpawns.all()) spawnBySid.set(r.session_id, r);
     const pendingBySid = new Map(q.pendingCounts.all().map(r => [r.to_session, r]));
+    const callsignById = new Map(q.allSessions.all().map(s => [s.session_id, s.callsign]));
     const sessions = q.visibleSessions.all().map(s => {
       const sp = spawnBySid.get(s.session_id);
       const pending = pendingBySid.get(s.session_id);
@@ -1687,14 +1701,21 @@ export function createCore(db, {
       sessions,
       repos: [...repoMap.values()],
       ticker: q.recentTicker.all(),
-      conflicts: q.recentConflicts.all().map(c => ({
-        at: c.at,
-        repo_id: c.repo_id,
-        rel_path: c.rel_path,
-        file: c.rel_path,       // spike board reads .file
-        severity: c.severity,
-        sessions: JSON.parse(c.sessions_json || '[]'),
-      })),
+      // Callsigns resolved from EVERY session, not just the visible ones: a
+      // conflict outlives its participants, and a banner shouting a raw UUID at
+      // you is worse than one that says `comet-2d9d`.
+      conflicts: q.recentConflicts.all().map(c => {
+        const ids = JSON.parse(c.sessions_json || '[]');
+        return {
+          at: c.at,
+          repo_id: c.repo_id,
+          rel_path: c.rel_path,
+          file: c.rel_path,       // spike board reads .file
+          severity: c.severity,
+          sessions: ids,
+          callsigns: ids.map(id => callsignById.get(id) ?? id),
+        };
+      }),
       mail_pending: mailPending,
       mail_meta: mailMeta, // per-session {queued, oldest_at, route}
       questions: questions.listForState(), // F3: pending + last few resolved
@@ -1777,13 +1798,49 @@ export function createCore(db, {
       const out = await tmuxAdapter.killWindowVerified(win.window);
       if (out.ok) windows_killed++;
     }
+    // CLEAR MEANS CLEAR. Archiving the cards was never enough: the conflict
+    // banner kept shouting about files two dead sessions once touched, the rail
+    // kept a wall of answered questions, and the feed kept narrating a fleet
+    // that no longer exists. What survives a Clear is what is still ALIVE.
+    const alive = new Set(q.aliveSessionIds.all().map(r => r.session_id));
+
+    // A conflict is only news while every session in it can still act on it.
+    let conflicts_cleared = 0;
+    for (const row of q.allConflicts.all()) {
+      let ids = [];
+      try { ids = JSON.parse(row.sessions_json || '[]'); } catch { /* corrupt row → drop it */ }
+      if (ids.length && ids.every(id => alive.has(id))) continue; // still a live argument
+      conflicts_cleared += Number(q.deleteConflict.run(row.id).changes);
+    }
+    // The ledger the radar reads: dead sessions' touches would keep raising
+    // conflicts against a session that cannot answer for them.
+    q.deleteDeadTouches.run();
+    // Answered/expired/dismissed cards leave the rail entirely (pending ones
+    // are the human's actual queue and are never touched here).
+    const questions_purged = Number(questions.purgeResolved());
+    q.deleteArchivedMail.run();
+    // The feed is a live narration, not an archive — SQLite keeps the events.
+    const feed_cleared = Number(q.clearTicker.run().changes);
+
     // Only worktrees still on disk are the human's chore — rows whose paths
     // were already removed by hand are silence, not a nag.
     const orphan_worktrees = q.orphanWorktrees.all()
       .map(r => r.worktree_path)
       .filter(p => { try { return fs.existsSync(p); } catch { return false; } });
-    if (archived || mail_expired || questions_expired || windows_killed) onMutate();
-    return { ok: true, archived, mail_expired, questions_expired, windows_killed, orphan_worktrees };
+    // One line of feed survives the wipe: the wipe itself.
+    tick(`⌫ cleared — ${archived} card(s), ${conflicts_cleared} conflict(s), ${questions_purged} answered question(s), the feed`);
+    onMutate();
+    return {
+      ok: true,
+      archived,
+      mail_expired,
+      questions_expired,
+      questions_purged,
+      conflicts_cleared,
+      feed_cleared,
+      windows_killed,
+      orphan_worktrees,
+    };
   }
 
   // Run retention once at core boot, then alongside event pruning every 10m.
