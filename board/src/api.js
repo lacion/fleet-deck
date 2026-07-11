@@ -19,6 +19,16 @@ async function post(url, body) {
   return { status: res.status, ok: res.ok, json };
 }
 
+// Same shape as post() — for GETs whose failure the CALLER must show (unlike
+// /state, which fails silently into the LIVE pill).
+async function get(url) {
+  const res = await fetch(url, { headers: authHeaders() });
+  if (res.status === 401) markUnauthorized();
+  let json = null;
+  try { json = await res.json(); } catch { /* non-JSON error body */ }
+  return { status: res.status, ok: res.ok, json };
+}
+
 // GET /state — the board's paint-and-poll snapshot. Returns null on any
 // failure (401 included: the gate, not the caller, reports that one).
 export async function fetchState() {
@@ -93,4 +103,33 @@ export function reviveSpawn(spawnId, remoteControl) {
 // session is mid-turn ("busy") or the pane isn't live.
 export function enableRemote(spawnId) {
   return post(`/api/spawn/${encodeURIComponent(spawnId)}/rc`);
+}
+
+// v1.9 — the worktrees a spawn left behind. The daemon does the judging (the
+// board must never guess whether a directory is safe to delete): each row
+// arrives with a verdict and the evidence that produced it —
+//   safe      nothing would be lost (clean, and merged or fully pushed)
+//   has-work  dirty > 0 or unpushed > 0 — removing it destroys something
+//   gone      the path is no longer there; only a stale row survives
+//   unknown   git could not answer — dangerous, NEVER treated as safe
+// 200 {ok:true, worktrees:[{path, callsign, session_id, session_alive,
+// spawn_status, exists, branch, base, dirty, dirty_files, ahead, upstream,
+// unpushed, merged, last_commit, verdict}]}. 404 on a daemon that predates the
+// endpoint — the board hides the whole affordance rather than dangling it.
+export function fetchWorktrees() {
+  return get('/api/worktrees');
+}
+
+// Remove a worktree (and optionally its branch). The daemon REFUSES a
+// 'has-work' worktree without force:true, and refuses ANY worktree whose
+// session is still alive — so force:true only ever leaves the board from the
+// confirmation dialog, which first spells out what it destroys.
+// 200 {ok:true, removed:true, branch_deleted, rows_purged, path} or
+// 4xx {ok:false, reason, verdict, dirty, unpushed} — the reason is shown verbatim.
+export function removeWorktree(path, { force = false, deleteBranch = false } = {}) {
+  return post('/api/worktrees/remove', {
+    path,
+    force: !!force,
+    delete_branch: !!deleteBranch,
+  });
 }

@@ -257,6 +257,18 @@ export function createHttp(core, { port, boardFile, version = '0.0.0', capture =
           return json(res, 200, { ok: true, fleet: core.fleetSize(), pid: process.pid, version, spawn: core.spawnCapability() });
         }
         if (url.pathname === '/state') return json(res, 200, snapshotWithLan());
+        if (url.pathname === '/api/worktrees') {
+          // Inspector failures are represented per row as verdict:unknown;
+          // one broken repository must never turn this fleet-wide view into a
+          // 500 or hide the other worktrees from the human.
+          core.worktrees()
+            .then(out => json(res, 200, out))
+            .catch(err => {
+              console.error('fleetd worktree inspector error:', err);
+              json(res, 200, { ok: true, worktrees: [] });
+            });
+          return;
+        }
         if (url.pathname === '/mail') {
           const sid = url.searchParams.get('session') || '';
           const box = core.drainMail(sid);
@@ -331,6 +343,17 @@ export function createHttp(core, { port, boardFile, version = '0.0.0', capture =
                 .catch(err => {
                   console.error('fleetd cleanup error:', err);
                   json(res, 500, { ok: false, err: 'internal' });
+                });
+              return;
+            }
+            if (url.pathname === '/api/worktrees/remove') {
+              // Security and data-loss gates live together in derive: only a
+              // spawn-owned path reaches git, and force is an exact boolean.
+              core.removeWorktree(ev)
+                .then(out => json(res, out.status, out.body))
+                .catch(err => {
+                  console.error('fleetd worktree removal error:', err);
+                  json(res, 500, { ok: false, reason: 'internal' });
                 });
               return;
             }

@@ -4634,6 +4634,16 @@ function createCore(db2, {
     countActiveSpawns: db2.prepare("SELECT COUNT(*) AS n FROM spawns WHERE status IN ('spawning', 'stalled', 'live')"),
     setSpawnStatus: db2.prepare("UPDATE spawns SET status = ? WHERE spawn_id = ?"),
     setSpawnRemote: db2.prepare("UPDATE spawns SET remote_control = 1, remote_url = ? WHERE spawn_id = ?"),
+    // WORKTREE OWNERSHIP CONTRACT: this is the allow-list behind the removal
+    // API. A path is removable only when it appears here; no path supplied by
+    // a browser is ever promoted into a git argv before this lookup succeeds.
+    // Newest-first lets one revive lineage collapse to its current spawn row.
+    worktreeSpawns: db2.prepare(`SELECT spawns.*, sessions.ended_at AS session_ended_at
+      FROM spawns LEFT JOIN sessions ON sessions.session_id = spawns.session_id
+      WHERE spawns.worktree_path IS NOT NULL
+      ORDER BY spawns.requested_at DESC, spawns.rowid DESC`),
+    deleteWorktreeSpawns: db2.prepare("DELETE FROM spawns WHERE worktree_path = ?"),
+    deleteEndedSession: db2.prepare("DELETE FROM sessions WHERE session_id = ? AND ended_at IS NOT NULL"),
     presumeDeadSessions: db2.prepare(`SELECT * FROM sessions
       WHERE source = 'hooks' AND ended_at IS NULL
         AND col IN ('queued', 'idle', 'needsyou') AND last_seen < ?`),
@@ -5231,13 +5241,154 @@ function createCore(db2, {
     return new Promise((resolve) => {
       try {
         execFile2(cmd, args, { timeout, windowsHide: true }, (err, stdout, stderr) => {
-          if (err) return resolve({ ok: false, err: String(stderr || err.message || err).trim() });
+          if (err) return resolve({ ok: false, code: err.code, err: String(stderr || err.message || err).trim() });
           resolve({ ok: true, out: stdout });
         });
       } catch (err) {
         resolve({ ok: false, err: String(err.message || err) });
       }
     });
+  }
+  async function mapLimit(items, limit, fn) {
+    const out = new Array(items.length);
+    let next = 0;
+    async function worker() {
+      for (; ; ) {
+        const i = next++;
+        if (i >= items.length) return;
+        out[i] = await fn(items[i]);
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+    return out;
+  }
+  function worktreeRows() {
+    const seen = /* @__PURE__ */ new Set();
+    return q.worktreeSpawns.all().filter((row) => {
+      if (seen.has(row.worktree_path)) return false;
+      seen.add(row.worktree_path);
+      return true;
+    });
+  }
+  function worktreeShell(row, exists) {
+    return {
+      path: row.worktree_path,
+      exists,
+      callsign: row.callsign ?? null,
+      session_id: row.session_id ?? null,
+      session_alive: row.session_ended_at == null && q.getSession.get(row.session_id) != null,
+      spawn_status: row.status ?? null,
+      branch: null,
+      dirty: null,
+      dirty_files: [],
+      ahead: null,
+      base: null,
+      upstream: null,
+      unpushed: null,
+      merged: null,
+      last_commit: null,
+      verdict: exists ? "unknown" : "gone"
+    };
+  }
+  async function baseBranch(worktree) {
+    const remote = await execFileP("git", ["-C", worktree, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"], { timeout: 5e3 });
+    if (remote.ok && remote.out.trim()) return remote.out.trim().replace(/^origin\//, "");
+    for (const name of ["main", "master"]) {
+      const exists = await execFileP("git", ["-C", worktree, "show-ref", "--verify", "--quiet", `refs/heads/${name}`], { timeout: 5e3 });
+      if (exists.ok) return name;
+    }
+    return null;
+  }
+  async function inspectWorktree(row) {
+    let exists = false;
+    try {
+      exists = fs3.existsSync(row.worktree_path);
+    } catch {
+    }
+    const item = worktreeShell(row, exists);
+    if (!exists) return item;
+    const [branch, status, upstream, log, base] = await Promise.all([
+      execFileP("git", ["-C", row.worktree_path, "rev-parse", "--abbrev-ref", "HEAD"], { timeout: 5e3 }),
+      execFileP("git", ["-C", row.worktree_path, "status", "--porcelain"], { timeout: 5e3 }),
+      execFileP("git", ["-C", row.worktree_path, "rev-parse", "--abbrev-ref", "@{u}"], { timeout: 5e3 }),
+      execFileP("git", ["-C", row.worktree_path, "log", "-1", "--format=%h%x00%s%x00%ct"], { timeout: 5e3 }),
+      baseBranch(row.worktree_path)
+    ]);
+    if (!branch.ok || !status.ok || !base) return item;
+    item.branch = branch.out.trim() || null;
+    const lines = status.out.split(/\r?\n/).filter(Boolean);
+    item.dirty = lines.length;
+    item.dirty_files = lines.slice(0, 10).map((line) => line.slice(3).trim());
+    item.base = base;
+    item.upstream = upstream.ok ? upstream.out.trim() || null : null;
+    if (log.ok && log.out.trim()) {
+      const [sha, subject, at] = log.out.trimEnd().split("\0");
+      item.last_commit = { sha, subject, at: Number(at) };
+    }
+    const [ahead, unpushed, merged] = await Promise.all([
+      execFileP("git", ["-C", row.worktree_path, "rev-list", "--count", `${base}..HEAD`], { timeout: 5e3 }),
+      item.upstream ? execFileP("git", ["-C", row.worktree_path, "rev-list", "--count", "@{u}..HEAD"], { timeout: 5e3 }) : Promise.resolve(null),
+      execFileP("git", ["-C", row.worktree_path, "merge-base", "--is-ancestor", "HEAD", base], { timeout: 5e3 })
+    ]);
+    if (!ahead.ok || unpushed && !unpushed.ok || !merged.ok && merged.code !== 1) return item;
+    item.ahead = Number(ahead.out.trim());
+    item.unpushed = item.upstream ? Number(unpushed.out.trim()) : item.ahead;
+    item.merged = merged.ok;
+    item.verdict = item.dirty > 0 || item.unpushed > 0 ? "has-work" : item.merged || item.unpushed === 0 ? "safe" : "unknown";
+    return item;
+  }
+  async function worktrees() {
+    return { ok: true, worktrees: await mapLimit(worktreeRows(), 4, inspectWorktree) };
+  }
+  async function removeWorktree(body = {}) {
+    if (typeof body?.path !== "string") {
+      return { status: 400, body: { ok: false, reason: "not a fleet worktree" } };
+    }
+    const rows = q.worktreeSpawns.all().filter((row2) => row2.worktree_path === body.path);
+    const row = rows[0];
+    if (!row) return { status: 400, body: { ok: false, reason: "not a fleet worktree" } };
+    const alive = rows.some((candidate) => candidate.session_ended_at == null && q.getSession.get(candidate.session_id));
+    if (alive) return { status: 409, body: { ok: false, reason: "session is still alive" } };
+    const state = await inspectWorktree(row);
+    if ((state.verdict === "has-work" || state.verdict === "unknown") && body.force !== true) {
+      return {
+        status: 409,
+        body: {
+          ok: false,
+          reason: state.verdict === "has-work" ? "worktree has uncommitted or unpushed work" : "worktree safety is unknown",
+          verdict: state.verdict,
+          dirty: state.dirty,
+          unpushed: state.unpushed
+        }
+      };
+    }
+    const repoResult = await execFileP("git", ["-C", row.cwd, "rev-parse", "--show-toplevel"], { timeout: 5e3 });
+    if (!repoResult.ok) return { status: 409, body: { ok: false, reason: "main repository unavailable" } };
+    const repo = repoResult.out.trim();
+    if (state.exists) {
+      const args = ["-C", repo, "worktree", "remove"];
+      if (body.force === true) args.push("--force");
+      args.push(row.worktree_path);
+      const removed = await execFileP("git", args, { timeout: 3e4 });
+      if (!removed.ok) return { status: 409, body: { ok: false, reason: `git worktree remove failed: ${removed.err}`.slice(0, 300) } };
+    } else {
+      const pruned = await execFileP("git", ["-C", repo, "worktree", "prune"], { timeout: 3e4 });
+      if (!pruned.ok) return { status: 409, body: { ok: false, reason: `git worktree prune failed: ${pruned.err}`.slice(0, 300) } };
+    }
+    let branch_deleted = false;
+    const branch = state.branch ?? q.getSession.get(row.session_id)?.branch ?? null;
+    if (body.delete_branch === true && branch) {
+      const deleted = await execFileP("git", ["-C", repo, "branch", "-D", branch], { timeout: 3e4 });
+      branch_deleted = deleted.ok;
+    }
+    const sessionIds = [...new Set(rows.map((candidate) => candidate.session_id).filter(Boolean))];
+    const spawnsPurged = Number(q.deleteWorktreeSpawns.run(row.worktree_path).changes);
+    let sessionsPurged = 0;
+    for (const sessionId of sessionIds) sessionsPurged += Number(q.deleteEndedSession.run(sessionId).changes);
+    const rows_purged = spawnsPurged + sessionsPurged;
+    tick(`\u232B removed worktree ${row.worktree_path}${branch_deleted ? ` and branch ${branch}` : ""}`);
+    onMutate();
+    return { status: 200, body: { ok: true, removed: true, branch_deleted, rows_purged, path: row.worktree_path } };
   }
   function spawnCapability() {
     const base = { max: MAX_SPAWNED, active: q.countActiveSpawns.get().n };
@@ -6060,6 +6211,10 @@ function createCore(db2, {
     // fleetd boot: rows ↔ tmux windows
     retentionSweep,
     cleanup,
+    worktrees,
+    // GET /api/worktrees — bounded live git inspection
+    removeWorktree,
+    // POST /api/worktrees/remove — allow-listed destruction
     // v1.3 plan library
     planMark,
     // POST /api/plans/:id/mark → {status, body}
@@ -6516,6 +6671,13 @@ function createHttp(core2, { port, boardFile, version: version2 = "0.0.0", captu
           return json(res, 200, { ok: true, fleet: core2.fleetSize(), pid: process.pid, version: version2, spawn: core2.spawnCapability() });
         }
         if (url.pathname === "/state") return json(res, 200, snapshotWithLan());
+        if (url.pathname === "/api/worktrees") {
+          core2.worktrees().then((out) => json(res, 200, out)).catch((err) => {
+            console.error("fleetd worktree inspector error:", err);
+            json(res, 200, { ok: true, worktrees: [] });
+          });
+          return;
+        }
         if (url.pathname === "/mail") {
           const sid = url.searchParams.get("session") || "";
           const box = core2.drainMail(sid);
@@ -6578,6 +6740,13 @@ function createHttp(core2, { port, boardFile, version: version2 = "0.0.0", captu
               core2.cleanup().then((out) => json(res, 200, out)).catch((err) => {
                 console.error("fleetd cleanup error:", err);
                 json(res, 500, { ok: false, err: "internal" });
+              });
+              return;
+            }
+            if (url.pathname === "/api/worktrees/remove") {
+              core2.removeWorktree(ev).then((out) => json(res, out.status, out.body)).catch((err) => {
+                console.error("fleetd worktree removal error:", err);
+                json(res, 500, { ok: false, reason: "internal" });
               });
               return;
             }

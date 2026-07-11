@@ -757,6 +757,135 @@ textarea.fd-input { font-family: var(--font-ui); font-size: 13px; resize: none; 
 .fd-dangerbtn:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 .fd-dangerbtn:disabled { opacity: .6; cursor: default; }
 
+/* ============ v1.9 — worktrees ============ */
+
+/* header badge: the count, and — when any worktree holds work that exists
+   nowhere else — the color that says so without opening anything */
+.fd-wtbadge { font-family: var(--font-data); font-size: 10px; color: var(--faint); }
+.fd-wtbadge.haz {
+  color: var(--hazard); background: var(--hazard-bg); border: 1px solid var(--hazard);
+  border-radius: var(--r-pill); padding: 0 6px; font-weight: 600;
+}
+
+.fd-wtree { width: 720px; max-height: 76vh; gap: 12px; }
+.fd-wthead { display: flex; align-items: center; gap: 9px; flex: none; }
+.fd-wtcount {
+  font-family: var(--font-data); font-size: 11px; font-weight: 600;
+  background: var(--border-soft); color: var(--dim); border-radius: var(--r-pill); padding: 0 8px;
+}
+[data-theme="light"] .fd-wtcount { background: #EAEEF4; }
+.fd-wtcount.haz { background: var(--hazard-bg); color: var(--hazard); }
+.fd-wtrefresh { font-size: 11px; padding: 4px 10px; }
+.fd-wtrefresh:disabled { opacity: .5; cursor: default; }
+.fd-wtree .sub { font-size: var(--fs-body); color: var(--dim); line-height: 1.55; text-wrap: pretty; flex: none; }
+
+/* the bulk action — its blast radius is written on the tin, right beside it */
+.fd-wtbulk {
+  flex: none; display: flex; align-items: center; gap: 11px;
+  background: var(--raised); border: 1px solid var(--border); border-radius: var(--r-ctl); padding: 9px 11px;
+}
+.fd-wtbulk .fd-ghostbtn { flex: none; font-size: var(--fs-body); }
+.fd-wtbulk .fd-ghostbtn:disabled { opacity: .45; cursor: default; }
+.fd-wtbulk .note { font-family: var(--font-data); font-size: 10.5px; color: var(--faint); line-height: 1.5; text-wrap: pretty; }
+.fd-wtbulk .note b { color: var(--ok); font-weight: 600; }
+.fd-wtbulknote { flex: none; font-family: var(--font-data); font-size: 11px; color: var(--ok); }
+
+.fd-wtlist { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 9px; padding-right: 2px; }
+
+.fd-wtempty { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 30px 20px 34px; }
+.fd-wtempty .t1 { font-family: var(--font-data); letter-spacing: 3px; font-size: 12px; color: var(--faint); }
+.fd-wtempty .t2 { font-size: var(--fs-body); color: var(--dim); max-width: 430px; text-align: center; line-height: 1.6; text-wrap: pretty; }
+
+/* one row per worktree — the left border carries the verdict at a glance */
+.fd-wtrow {
+  display: flex; flex-direction: column; gap: 6px;
+  background: var(--bg); border: 1px solid var(--border); border-left: 3px solid var(--border);
+  border-radius: var(--r-card); padding: 10px 12px;
+}
+.fd-wtrow.safe { border-left-color: var(--ok); }
+.fd-wtrow.has-work { border-left-color: var(--hazard); border-color: var(--hazard); }
+.fd-wtrow.unknown { border-left-color: var(--act); }
+.fd-wtrow.gone { border-left-color: var(--border); opacity: .72; }
+.fd-wtrow.busy { opacity: .6; }
+
+.fd-wtrow .r1 { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+.fd-wtrow .cs { font-family: var(--font-data); font-size: 12.5px; font-weight: 600; color: var(--text); white-space: nowrap; }
+.fd-wtrow .br {
+  font-family: var(--font-data); font-size: 10.5px; color: var(--dim); background: var(--border-soft);
+  border-radius: var(--r-chip); padding: 1px 6px; white-space: nowrap; max-width: 220px;
+  overflow: hidden; text-overflow: ellipsis;
+}
+[data-theme="light"] .fd-wtrow .br { background: #EAEEF4; }
+.fd-wtrow .base { font-family: var(--font-data); font-size: 10px; color: var(--faint); white-space: nowrap; }
+/* muted + truncated; the full path is the title (and it is the ONE thing the
+   remove POST is keyed on, so it must be legible on hover) */
+.fd-wtrow .path {
+  font-family: var(--font-data); font-size: var(--fs-micro); color: var(--faint);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
+}
+
+.fd-wtverdict {
+  font-family: var(--font-data); font-size: 10px; letter-spacing: 1px; text-transform: uppercase;
+  padding: 1px 7px; border-radius: var(--r-chip); flex: none; white-space: nowrap; font-weight: 600;
+}
+.fd-wtverdict.safe { color: var(--ok); background: var(--free-bg); }
+.fd-wtverdict.has-work { color: var(--hazard); background: var(--hazard-bg); border: 1px solid var(--hazard); }
+.fd-wtverdict.unknown { color: var(--act); background: var(--act-bg); border: 1px solid var(--act); }
+.fd-wtverdict.gone { color: var(--faint); background: var(--border-soft); }
+[data-theme="light"] .fd-wtverdict.gone { background: #EAEEF4; }
+
+/* a live session is a hard block on removal — it reads like the state it is */
+.fd-wtalive {
+  font-family: var(--font-data); font-size: 10px; color: var(--ok); background: var(--free-bg);
+  border-radius: var(--r-chip); padding: 1px 6px; white-space: nowrap; flex: none;
+}
+.fd-wtspawn {
+  font-family: var(--font-data); font-size: 10px; color: var(--faint); border: 1px solid var(--border);
+  border-radius: var(--r-chip); padding: 0 6px; white-space: nowrap; flex: none;
+}
+
+/* the evidence — ALWAYS on the row, never hidden behind a click */
+.fd-wtev { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-width: 0; }
+.fd-wtev .ev { font-family: var(--font-data); font-size: 11px; color: var(--dim); white-space: nowrap; }
+.fd-wtev .ev.haz { color: var(--hazard); font-weight: 600; }
+.fd-wtev .ev.ok { color: var(--ok); }
+.fd-wtev .ev.act { color: var(--act); }
+.fd-wtev .ev.faint { color: var(--faint); }
+.fd-wtev .ev.last { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; color: var(--faint); }
+.fd-wtev .ev.link { background: none; border: none; padding: 0; cursor: pointer; }
+.fd-wtev .ev.link:hover { text-decoration: underline; }
+.fd-wtev .ev.link:focus-visible { outline: 2px solid var(--hazard); outline-offset: 2px; border-radius: 3px; }
+
+.fd-wtfiles { display: flex; flex-wrap: wrap; gap: 5px; }
+.fd-wtfiles .fd-filechip { max-width: 100%; }
+
+.fd-wtblocked {
+  font-family: var(--font-data); font-size: 11px; color: var(--act); background: var(--act-bg);
+  border: 1px solid var(--act); border-radius: var(--r-ctl); padding: 7px 9px; line-height: 1.5; text-wrap: pretty;
+}
+
+.fd-wtacts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.fd-wtacts .fd-ghostbtn { flex: none; font-size: var(--fs-body); }
+.fd-wtacts .fd-ghostbtn:disabled { opacity: .45; cursor: default; }
+.fd-wtacts .hint { font-family: var(--font-data); font-size: 10px; color: var(--faint); text-align: right; }
+.fd-wtacts .hint.haz { color: var(--hazard); opacity: .85; }
+
+.fd-check.fd-wtbranch { font-family: var(--font-data); font-size: 11px; color: var(--dim); flex: none; }
+.fd-check.fd-wtbranch .mono { color: var(--text); }
+.fd-check.fd-wtbranch .why { color: var(--ok); font-size: 10px; }
+.fd-check.fd-wtbranch.hazard { color: var(--text); }
+
+.fd-wtree .fd-hazardconfirm .warn { line-height: 1.5; text-wrap: pretty; white-space: normal; }
+.fd-wtree .fd-hazardconfirm .sub { line-height: 1.5; text-wrap: pretty; }
+.fd-wtree .fd-hazardconfirm .sub .mono { color: var(--text); overflow-wrap: anywhere; }
+.fd-wtfoot { display: flex; align-items: center; gap: 8px; }
+.fd-wtfoot .fd-ghostbtn, .fd-wtfoot .fd-dangerbtn { flex: none; }
+.fd-wtfoot .fd-dangerbtn { padding: 6px 14px; font-size: var(--fs-body); }
+.fd-wtfoot .fd-ghostbtn { font-size: var(--fs-body); }
+
+/* the daemon's refusal, verbatim, on the row it refused */
+.fd-wterr { font-family: var(--font-data); font-size: 11px; color: var(--hazard); overflow-wrap: anywhere; }
+
 /* dismiss a stale NEEDS YOU card: quiet, no confirmation — the daemon expires
    the question and sends the session NOTHING (you already answered it there) */
 .fd-qdismiss {

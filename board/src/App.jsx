@@ -1,7 +1,10 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useFleetState } from './useFleetState.js';
 import { hhmmss, basename, spawnTermable } from './util.js';
-import { sendMail, markPlan, cleanup, reviveSpawn, enableRemote, killSpawn } from './api.js';
+import {
+  sendMail, markPlan, cleanup, reviveSpawn, enableRemote, killSpawn,
+  fetchWorktrees, removeWorktree,
+} from './api.js';
 import { useAuth, saveToken } from './token.js';
 import BoardLanes from './components/BoardLanes.jsx';
 import Inbox from './components/Inbox.jsx';
@@ -12,6 +15,7 @@ import SpawnForm from './components/SpawnForm.jsx';
 import PlanLibrary from './components/PlanLibrary.jsx';
 import LanPanel from './components/LanPanel.jsx';
 import KillConfirm from './components/KillConfirm.jsx';
+import WorktreesModal from './components/WorktreesModal.jsx';
 import TokenGate from './components/TokenGate.jsx';
 
 // v1.4 — lazy: xterm.js (~300 kB) loads only when a terminal is opened
@@ -31,6 +35,14 @@ export default function App() {
   const [compose, setCompose] = useState(null); // null | { target }
   const [spawnForm, setSpawnForm] = useState(null); // null | { prompt?, cwd?, planId? }
   const [lanOpen, setLanOpen] = useState(false); // v1.7 LAN share panel
+  // v1.9 worktrees — the list lives up here because the HEADER carries its
+  // count: a worktree holding unpushed work is a fact about the fleet, not a
+  // detail of a modal that happens to be open.
+  const [wtOpen, setWtOpen] = useState(false);
+  const [worktrees, setWorktrees] = useState(null); // null = never loaded
+  const [wtLoading, setWtLoading] = useState(false);
+  const [wtErr, setWtErr] = useState(null);
+  const [wtSupported, setWtSupported] = useState(true); // 404 → older daemon
   // v1.4 live terminal — ONE at a time; identity captured at open so the
   // stream survives the card mutating (or vanishing) mid-view.
   const [term, setTerm] = useState(null); // null | { spawnId, callsign, window }
@@ -57,6 +69,7 @@ export default function App() {
   useEffect(() => { termOpen.current = !!term; }, [term]);
   const killOpen = useRef(false); // mirrors `killAsk` for the keydown handler
   useEffect(() => { killOpen.current = !!killAsk; }, [killAsk]);
+  const wtGone = useRef(false); // this daemon has no /api/worktrees — stop asking
 
   // 1 s clock: ages, countdown rings, header clock
   useEffect(() => {
@@ -121,6 +134,7 @@ export default function App() {
         // leaves the drawer it may have been opened from standing
         if (killOpen.current) { setKillAsk(null); return; }
         setDrawerSid(null); setCompose(null); setSpawnForm(null); setLanOpen(false);
+        setWtOpen(false);
         return;
       }
       if (typing) return;
@@ -350,6 +364,52 @@ export default function App() {
     }
   };
 
+  // v1.9 — worktrees. The daemon runs git per row to answer this, so the board
+  // does NOT poll it on a timer: it reads once at boot, again whenever the fleet
+  // gains or loses a session (a spawn creates a worktree; a death strands one),
+  // and on every open/refresh/removal from the modal. A 404 means this daemon
+  // predates the endpoint — we latch that and hide the affordance entirely
+  // rather than leaving a button that leads nowhere.
+  const loadWorktrees = useCallback(async () => {
+    if (wtGone.current) return;
+    setWtLoading(true);
+    try {
+      const res = await fetchWorktrees();
+      if (res.status === 404) {
+        wtGone.current = true;
+        setWtSupported(false);
+        setWorktrees([]);
+        setWtErr(null);
+      } else if (res.ok && res.json?.ok !== false && Array.isArray(res.json?.worktrees)) {
+        setWorktrees(res.json.worktrees);
+        setWtErr(null);
+      } else if (res.status !== 401) {
+        // 401 is the token gate's business, not ours
+        setWtErr(res.json?.reason || res.json?.err || `could not list worktrees (${res.status})`);
+      }
+    } catch {
+      setWtErr('daemon unreachable');
+    } finally {
+      setWtLoading(false);
+    }
+  }, []);
+  useEffect(() => { loadWorktrees(); }, [loadWorktrees, sessions.length]);
+
+  // The POST only. The modal owns the confirmation that precedes force:true and
+  // shows the daemon's refusal verbatim; this just reports the outcome back.
+  const doRemoveWorktree = async (path, opts) => {
+    try {
+      const res = await removeWorktree(path, opts);
+      if (res.ok && res.json?.ok !== false) return { ok: true, json: res.json };
+      return { ok: false, reason: res.json?.reason || res.json?.err || `remove failed (${res.status})` };
+    } catch {
+      return { ok: false, reason: 'daemon unreachable' };
+    }
+  };
+
+  const wtCount = Array.isArray(worktrees) ? worktrees.length : 0;
+  const wtHazard = (worktrees || []).some((w) => w.verdict === 'has-work' || w.verdict === 'unknown');
+
   // v1.4 — open the live terminal for a board-spawned session
   const openTerm = (s) => {
     if (!spawnTermable(s)) return;
@@ -435,6 +495,23 @@ export default function App() {
         {hasOffline && (
           <button type="button" className="fd-hbtn" disabled={clearing} onClick={doClear}>
             ⌫ {clearing ? 'Clearing…' : 'Clear'}
+          </button>
+        )}
+        {/* v1.9 — worktrees left behind by spawns. Always offered (an empty
+            modal explains where they come from); hidden only on a daemon whose
+            /api/worktrees 404s. The badge turns hazard when any row holds work
+            nobody has pushed: that is the fact you want to see from the header. */}
+        {wtSupported && (
+          <button
+            type="button"
+            className="fd-hbtn"
+            title="Git worktrees left behind by spawns"
+            onClick={() => { setWtOpen(true); loadWorktrees(); }}
+          >
+            ⑂ Worktrees
+            {wtCount > 0 && (
+              <span className={`fd-wtbadge${wtHazard ? ' haz' : ''}`}>{wtCount}</span>
+            )}
           </button>
         )}
         {/* v1.7 — always offered: when LAN is off the panel is where you learn
@@ -589,6 +666,19 @@ export default function App() {
 
       {/* ============ LAN share (v1.7) ============ */}
       {lanOpen && <LanPanel lan={snap.lan} onClose={() => setLanOpen(false)} />}
+
+      {/* ============ worktrees (v1.9 — the ONLY door to removeWorktree) ============ */}
+      {wtOpen && (
+        <WorktreesModal
+          worktrees={worktrees}
+          loading={wtLoading}
+          error={wtErr}
+          now={now}
+          onReload={loadWorktrees}
+          onRemove={doRemoveWorktree}
+          onClose={() => setWtOpen(false)}
+        />
+      )}
 
       {/* ============ spawn (v1.2 — explicit human click only) ============ */}
       {spawnForm && (
