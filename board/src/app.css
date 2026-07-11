@@ -422,6 +422,26 @@ textarea.fd-input { font-family: var(--font-ui); font-size: 13px; resize: none; 
   white-space: nowrap; letter-spacing: .5px; flex: none;
 }
 
+/* spawn watchdog: pane up but the session never phoned home (spawn.stalled) */
+.fd-stalledchip {
+  font-family: var(--font-data); font-size: 10px; color: var(--hazard); background: var(--hazard-bg);
+  border: 1px solid var(--hazard); border-radius: var(--r-chip); padding: 0 6px;
+  white-space: nowrap; letter-spacing: .5px; flex: none;
+}
+
+/* cleanup summary strip (header Clear button feedback) */
+.fd-clearstrip {
+  flex: none; display: flex; align-items: center; gap: 10px; padding: 7px 16px;
+  background: var(--raised); border-bottom: 1px solid var(--border);
+  font-family: var(--font-data); font-size: 12px; color: var(--dim);
+  animation: fdSlideIn .3s ease-out 1;
+}
+.fd-clearstrip .hd { font-weight: 600; white-space: nowrap; color: var(--ok); }
+.fd-clearstrip .msg { color: var(--text); white-space: nowrap; }
+.fd-clearstrip .orph { color: var(--hazard); min-width: 0; overflow-wrap: anywhere; }
+.fd-clearstrip.err { background: var(--hazard-bg); border-bottom-color: var(--hazard); }
+.fd-clearstrip.err .hd { color: var(--hazard); }
+
 /* ============ v1.3 — rendered plan markdown (tiny local renderer) ============ */
 .fd-md { font-size: var(--fs-body); line-height: 1.5; color: var(--text); min-width: 0; }
 .fd-md h1, .fd-md h2, .fd-md h3 { font-family: var(--font-data); font-weight: 600; margin: 12px 0 4px; letter-spacing: .4px; }

@@ -327,16 +327,19 @@ export function createQuestions(db, {
   // queue item, not the session's. (Proven live in the Phase 3 acceptance:
   // expiring freeform at SessionEnd orphaned the answer and the resumed
   // session went hunting for it through the board API.)
-  function expireAllForSession(sessionId) {
-    let changed = false;
+  // includeFreeform is the one sanctioned exception: manual cleanup archiving
+  // a card is the human declaring "done with these" — its freeform items go too.
+  // Returns the number of questions expired (truthy iff anything changed).
+  function expireAllForSession(sessionId, { includeFreeform = false } = {}) {
+    let expired = 0;
     for (const r of q.pendingBySession.all(sessionId)) {
-      if (!HOLD_KINDS.has(r.kind)) continue;
+      if (!includeFreeform && !HOLD_KINDS.has(r.kind)) continue;
       const h = releaseHold(r.id);
       if (h) { try { h.respond({}); } catch { /* gone */ } }
-      if (q.markExpired.run(r.id).changes) changed = true;
+      if (q.markExpired.run(r.id).changes) expired++;
     }
-    if (changed) onChange();
-    return changed;
+    if (expired) onChange();
+    return expired;
   }
 
   function pendingOf(sessionId) {

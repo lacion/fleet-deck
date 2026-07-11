@@ -7,7 +7,7 @@ import { COLS, boardCol, basename } from '../util.js';
 // faded). needsyou sessions render in WORKING with the amber treatment; their
 // question lives in the global rail.
 export default function BoardLanes({
-  sessions, repos, conflicts, mailPending, now, compact, stale,
+  sessions, repos, conflicts, mailPending, mailMeta, now, compact, stale,
   repoFilter, onRepoFilter, ripples, priorities, onOpenSession,
 }) {
   const repoKey = (s) => s.repo_id ?? '(none)';
@@ -109,6 +109,7 @@ export default function BoardLanes({
                         now={now}
                         compact={compact}
                         mailCount={mailPending[s.session_id] || 0}
+                        mailMeta={mailMeta[s.session_id] || null}
                         conflictFiles={conflictFiles.get(s.session_id) || []}
                         conflictPeers={conflictPeers.get(s.session_id) || []}
                         ripple={(ripples.get(s.session_id) || 0) > now}

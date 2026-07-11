@@ -5,7 +5,7 @@
 // fleet) — kept in its own file so it can land/iterate independently of the
 // v1.2 suite. Same harness as tests/spawn.test.mjs: every test uses the
 // FLEETDECK_SPAWN_CMD test override (tests/helpers/spawn-cmd-fixture.mjs)
-// instead of real tmux, so we can inspect the exact claude argv the daemon
+// instead of real tmux, so we can inspect the full env-wrapped claude argv the daemon
 // would have executed.
 //
 // Contract (v1.3 §A, unsupervised spawns):

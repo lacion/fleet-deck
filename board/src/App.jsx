@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useFleetState } from './useFleetState.js';
 import { hhmmss, basename } from './util.js';
-import { sendMail, markPlan } from './api.js';
+import { sendMail, markPlan, cleanup } from './api.js';
 import BoardLanes from './components/BoardLanes.jsx';
 import Inbox from './components/Inbox.jsx';
 import Feed from './components/Feed.jsx';
@@ -25,6 +25,9 @@ export default function App() {
   const [priorities, setPriorities] = useState(() => new Set());
   const [threads, setThreads] = useState({}); // sid -> [{text, at}] (this tab only)
   const [ripples, setRipples] = useState(() => new Map()); // sid -> until(ms)
+  const [clearing, setClearing] = useState(false);
+  const [clearNote, setClearNote] = useState(null); // {msg, orphans} | {err}
+  const clearTimer = useRef(null);
   const prevConflicts = useRef({ keys: null, sawData: false });
 
   // 1 s clock: ages, countdown rings, header clock
@@ -142,6 +145,39 @@ export default function App() {
   // v1.3 plan library — hidden entirely when the daemon doesn't send `plans`
   const plans = Array.isArray(snap.plans) ? snap.plans : null;
 
+  // Fix D — manual cleanup. The button only appears when there is something
+  // to clear (an offline card); the daemon archives offline sessions, expires
+  // their mail/questions, kills dead scoped panes, and LISTS (never deletes)
+  // orphaned worktrees for the human to remove.
+  const hasOffline = sessions.some((s) => s.col === 'offline');
+  const doClear = async () => {
+    if (clearing) return;
+    setClearing(true);
+    clearTimeout(clearTimer.current);
+    const showFor = (note, ms) => {
+      setClearNote(note);
+      if (ms) clearTimer.current = setTimeout(() => setClearNote(null), ms);
+    };
+    try {
+      const res = await cleanup();
+      if (res.ok && res.json?.ok !== false) {
+        const j = res.json || {};
+        const orphans = Array.isArray(j.orphan_worktrees) ? j.orphan_worktrees : [];
+        const msg = `cleared ${j.archived ?? 0} offline · ${j.mail_expired ?? 0} mail expired`
+          + ` · ${j.questions_expired ?? 0} questions expired · ${j.windows_killed ?? 0} windows killed`;
+        // orphan paths need reading time — that strip stays until dismissed
+        showFor({ msg, orphans }, orphans.length ? 0 : 8000);
+      } else {
+        showFor({ err: res.json?.err || `clear failed (${res.status})` }, 8000);
+      }
+    } catch {
+      showFor({ err: 'daemon unreachable' }, 8000);
+    } finally {
+      setClearing(false);
+    }
+  };
+  useEffect(() => () => clearTimeout(clearTimer.current), []);
+
   // Execute plan → spawn form prefilled per contract; cwd from a live
   // session worktree of the plan's repo when one exists.
   const openExecutePlan = (p) => {
@@ -206,6 +242,11 @@ export default function App() {
             )}
           </button>
         )}
+        {hasOffline && (
+          <button type="button" className="fd-hbtn" disabled={clearing} onClick={doClear}>
+            ⌫ {clearing ? 'Clearing…' : 'Clear'}
+          </button>
+        )}
         <button type="button" className="fd-hbtn dim" aria-label="Toggle density" onClick={() => setCompact(!compact)}>
           {compact ? '▤ Cozy' : '▦ Compact'}
         </button>
@@ -219,6 +260,21 @@ export default function App() {
         <div className="fd-confstrip">
           <span className="hd">▲ CONFLICT</span>
           <span className="msg">{conflictMsg}</span>
+        </div>
+      )}
+
+      {/* ============ cleanup summary strip (Clear feedback) ============ */}
+      {clearNote && (
+        <div className={`fd-clearstrip${clearNote.err ? ' err' : ''}`}>
+          <span className="hd">{clearNote.err ? '✗ CLEAR' : '✓ CLEARED'}</span>
+          <span className="msg">{clearNote.err || clearNote.msg}</span>
+          {(clearNote.orphans || []).length > 0 && (
+            <span className="orph">
+              orphan worktrees — remove manually: {clearNote.orphans.join('  ·  ')}
+            </span>
+          )}
+          <span className="fd-spacer" />
+          <button type="button" className="fd-x" aria-label="Dismiss" onClick={() => setClearNote(null)}>✕</button>
         </div>
       )}
 
@@ -239,6 +295,7 @@ export default function App() {
               repos={snap.repos || []}
               conflicts={conflicts}
               mailPending={snap.mail_pending || {}}
+              mailMeta={snap.mail_meta || {}}
               now={now}
               compact={compact}
               stale={stale}

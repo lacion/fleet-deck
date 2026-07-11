@@ -1,0 +1,244 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync, writeFileSync, chmodSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { openDb } from '../scripts/fleetd/db.mjs';
+import { createCore } from '../scripts/fleetd/derive.mjs';
+import { pasteText, sendEnter } from '../scripts/fleetd/spawn.mjs';
+
+function setEnv(t, values) {
+  const before = new Map(Object.keys(values).map(k => [k, process.env[k]]));
+  for (const [k, v] of Object.entries(values)) process.env[k] = String(v);
+  t.after(() => {
+    for (const [k, v] of before) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  });
+}
+
+function fakeTmux(port = 4711) {
+  const state = {
+    windows: [], argv: null, calls: [], pasteOk: true, enterOk: true, killed: [],
+  };
+  const adapter = {
+    spawnOverrideCmd: () => null,
+    hasTmux: () => true,
+    sessionName: p => `fleetdeck-${p}`,
+    windowName: (p, callsign) => `fd${p}-${callsign}`,
+    ensureSession: async p => `fleetdeck-${p}`,
+    newWindow: async spec => {
+      state.argv = spec.argv;
+      const win = {
+        session: `fleetdeck-${spec.port}`,
+        window: `fd${spec.port}-${spec.callsign}`,
+        window_id: '@1', pane_dead: false, pane_cmd: 'claude',
+      };
+      state.windows.push(win);
+      return { session: win.session, window: win.window, window_id: win.window_id };
+    },
+    listScopedWindows: async () => state.windows,
+    paneCurrentCommand: async target => {
+      const win = state.windows.find(w => w.window_id === target || w.window === target);
+      return win ? { dead: win.pane_dead, cmd: win.pane_cmd } : null;
+    },
+    pasteText: async (target, text) => {
+      state.calls.push(['pasteText', target, text]);
+      return state.pasteOk;
+    },
+    sendEnter: async target => {
+      state.calls.push(['sendEnter', target]);
+      return state.enterOk;
+    },
+    sendBringupEnter: async target => {
+      state.calls.push(['sendBringupEnter', target]);
+      return true;
+    },
+    killWindowVerified: async name => {
+      state.killed.push(name);
+      return { ok: true, window_id: state.windows.find(w => w.window === name)?.window_id ?? '@1' };
+    },
+    launchOverride: () => {},
+  };
+  return { state, adapter, port };
+}
+
+function memoryCore(t, { env = {}, tmux = fakeTmux(), home = '/daemon-home' } = {}) {
+  setEnv(t, { FLEETDECK_NUDGE_MS: 1_000_000, FLEETDECK_PANE_MAIL_GRACE_MS: 1_000_000, ...env });
+  const db = openDb(':memory:');
+  const core = createCore(db, { port: tmux.port, home, tmuxAdapter: tmux.adapter });
+  t.after(() => db.close());
+  return { db, core, ...tmux, home };
+}
+
+test('spawn argv is deterministic and registration watchdog stalls once, then a late hook revives it', async (t) => {
+  const { db, core, state, port, home } = memoryCore(t, {
+    env: { FLEETDECK_SPAWN_REGISTER_MS: 1 },
+  });
+  const cwd = mkdtempSync(path.join(tmpdir(), 'fd-watchdog-'));
+  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+
+  const out = await core.spawn({ cwd, model: 'sonnet', permission_mode: 'acceptEdits', prompt: 'do it' });
+  assert.equal(out.status, 200);
+  const scrub = [
+    'CLAUDECODE', 'CLAUDE_CODE_SESSION_ID', 'CLAUDE_CODE_CHILD_SESSION',
+    'CLAUDE_CODE_BRIDGE_SESSION_ID', 'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_CODE_EXECPATH',
+    'CLAUDE_ENV_FILE', 'CLAUDE_PROJECT_DIR', 'CLAUDE_PLUGIN_ROOT', 'CLAUDE_PLUGIN_DATA',
+    'CLAUDE_EFFORT', 'AI_AGENT', 'CODEX_COMPANION_TRANSCRIPT_PATH',
+    'CODEX_COMPANION_SESSION_ID', 'FLEETDECK_AGENTS_CMD', 'FLEETDECK_SPAWN_CMD',
+    'TMUX', 'TMUX_PANE', 'FLEETDECK_TMUX_SOCKET',
+    'FLEETDECK_AGENTS_POLL_MS', 'FLEETDECK_HOLD_MS', 'FLEETDECK_STALE_MS',
+    'FLEETDECK_NUDGE_MS', 'FLEETDECK_MAX_SPAWNED', 'FLEETDECK_WATCH_MAX_MS',
+    'FLEETDECK_WATCH_POLL_MS', 'FLEETDECK_SPAWN_REGISTER_MS',
+    'FLEETDECK_PANE_MAIL_GRACE_MS', 'FLEETDECK_PRESUME_DEAD_MS',
+    'FLEETDECK_RETAIN_OFFLINE_MS',
+  ];
+  const prefix = ['env', ...scrub.flatMap(v => ['-u', v]), `FLEETDECK_PORT=${port}`, `FLEETDECK_HOME=${home}`];
+  assert.deepEqual(state.argv.slice(0, prefix.length), prefix);
+  assert.deepEqual(state.argv.slice(prefix.length), [
+    'claude', '--session-id', out.body.session_id,
+    '--model', 'sonnet', '--permission-mode', 'acceptEdits', 'do it',
+  ]);
+
+  await new Promise(resolve => setTimeout(resolve, 5));
+  await core.spawnLivenessTick();
+  let card = core.snapshot().sessions.find(s => s.session_id === out.body.session_id);
+  assert.equal(card.spawn.status, 'stalled');
+  assert.equal(card.spawn.stalled, true);
+  assert.equal(card.col, 'needsyou', 'a stalled spawn must land in the loud lane');
+  assert.equal(card.notification_type, 'spawn_stalled');
+  assert.match(card.note, /pane up but never registered.*window/);
+  assert.ok(core.snapshot().ticker.some(x => /never phoned home/.test(x.msg)));
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM events WHERE hook_event = 'SpawnStalled'").get().n, 1);
+
+  await core.spawnLivenessTick();
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM events WHERE hook_event = 'SpawnStalled'").get().n, 1,
+    'stalled rows must not emit the watchdog event repeatedly');
+  core.hookSessionStart({ session_id: out.body.session_id, cwd, source: 'startup' });
+  card = core.snapshot().sessions.find(s => s.session_id === out.body.session_id);
+  assert.equal(card.spawn.status, 'live', 'the first late hook must win over stalled');
+});
+
+test('owned-pane mail honors watcher priority and unclaims all rows when paste fails', async (t) => {
+  const { db, core, state } = memoryCore(t);
+  const cwd = mkdtempSync(path.join(tmpdir(), 'fd-mail-pane-'));
+  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  const spawn = await core.spawn({ cwd });
+  const sid = spawn.body.session_id;
+  core.hookSessionStart({ session_id: sid, cwd, source: 'startup' });
+
+  let posted = await core.postMail({ to: sid, from: 'ops', text: 'line one\nline two' });
+  assert.equal(posted.targets[0].route, 'pane');
+  assert.equal(await core.tryOwnedPaneDelivery(sid), true);
+  assert.deepEqual(state.calls, [
+    ['pasteText', '@1', '[FLEETDECK MAIL from ops] line one\nline two'],
+    ['sendEnter', '@1'],
+  ]);
+  assert.ok(db.prepare('SELECT delivered_at FROM mail ORDER BY id LIMIT 1').get().delivered_at);
+  assert.equal(core.snapshot().sessions.find(s => s.session_id === sid).mail_pending.count, 0);
+
+  state.calls.length = 0;
+  const unregister = core.addWatchWaiter(sid, () => {});
+  posted = await core.postMail({ to: sid, from: 'human', text: 'watcher first' });
+  assert.equal(posted.targets[0].route, 'watcher');
+  assert.equal(await core.tryOwnedPaneDelivery(sid), false);
+  assert.deepEqual(state.calls, [], 'a registered waiter suppresses pane paste');
+  unregister();
+  core.drainMail(sid);
+
+  state.pasteOk = false;
+  await core.postMail({ to: sid, from: 'ops', text: 'retry me' });
+  assert.equal(await core.tryOwnedPaneDelivery(sid), false);
+  const failed = db.prepare("SELECT * FROM mail WHERE text = 'retry me'").get();
+  assert.equal(failed.delivered_at, null, 'paste failure must put every claimed row back');
+  assert.deepEqual(state.calls, [['pasteText', '@1', '[FLEETDECK MAIL from ops] retry me']]);
+});
+
+test('tmux mail helpers use isolated-socket argv for set-buffer, paste-buffer, and Enter', async (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'fd-tmux-argv-'));
+  const record = path.join(dir, 'argv.jsonl');
+  const shim = path.join(dir, 'tmux');
+  writeFileSync(shim, `#!/usr/bin/env node\nimport { appendFileSync } from 'node:fs';\nappendFileSync(process.env.FD_TMUX_RECORD, JSON.stringify(process.argv.slice(2)) + '\\n');\n`);
+  chmodSync(shim, 0o755);
+  setEnv(t, {
+    PATH: `${dir}${path.delimiter}${process.env.PATH}`,
+    FD_TMUX_RECORD: record,
+    FLEETDECK_TMUX_SOCKET: 'fd-test-socket',
+  });
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+
+  assert.equal(await pasteText('@9', 'hello\nworld'), true);
+  assert.equal(await sendEnter('@9'), true);
+  const calls = readFileSync(record, 'utf8').trim().split('\n').map(JSON.parse);
+  assert.deepEqual(calls, [
+    ['-L', 'fd-test-socket', 'set-buffer', '-b', 'fdmail', '--', 'hello\nworld'],
+    ['-L', 'fd-test-socket', 'paste-buffer', '-p', '-d', '-b', 'fdmail', '-t', '@9'],
+    ['-L', 'fd-test-socket', 'send-keys', '-t', '@9', 'Enter'],
+  ]);
+});
+
+test('retention presumes dead, archives, expires mail, hides archived rows, and resurrects late hooks', (t) => {
+  setEnv(t, { FLEETDECK_NUDGE_MS: 1_000_000, FLEETDECK_PANE_MAIL_GRACE_MS: 1_000_000 });
+  const db = openDb(':memory:');
+  t.after(() => db.close());
+  const now = Date.now();
+  const insert = db.prepare(`INSERT INTO sessions
+    (session_id, callsign, col, note, events, started_at, last_seen, ended_at, source)
+    VALUES (?, ?, ?, ?, 0, ?, ?, ?, 'hooks')`);
+  insert.run('silent', 'silent-1', 'idle', 'waiting', now - 4 * 3_600_000, now - 4 * 3_600_000, null);
+  insert.run('old-offline', 'old-1', 'offline', 'ended', now - 30 * 3_600_000, now - 30 * 3_600_000, now - 30 * 3_600_000);
+  db.prepare(`INSERT INTO mail (to_session, from_id, text, at, delivered_at, expired_at)
+    VALUES ('old-offline', 'ops', 'old', ?, NULL, NULL)`).run(now);
+  db.prepare(`INSERT INTO spawns
+    (spawn_id, session_id, callsign, tmux_session, tmux_window, requested_at, status)
+    VALUES ('sp-old', 'old-offline', 'old-1', 'fleetdeck-4711', 'fd4711-old-1', ?, 'live')`).run(now - 30 * 3_600_000);
+
+  const core = createCore(db, { port: 4711, home: '/home', tmuxAdapter: fakeTmux().adapter });
+  const silent = db.prepare("SELECT * FROM sessions WHERE session_id = 'silent'").get();
+  assert.equal(silent.col, 'offline');
+  assert.ok(silent.ended_at);
+  assert.match(silent.note, /^presumed ended \(silent .+h\)$/);
+  assert.ok(db.prepare("SELECT archived_at FROM sessions WHERE session_id = 'old-offline'").get().archived_at);
+  assert.ok(db.prepare("SELECT expired_at FROM mail WHERE to_session = 'old-offline'").get().expired_at);
+  assert.equal(db.prepare("SELECT status FROM spawns WHERE spawn_id = 'sp-old'").get().status, 'gone');
+  assert.equal(core.snapshot().sessions.some(s => s.session_id === 'old-offline'), false);
+
+  core.applyEvent({ session_id: 'silent', hook_event_name: 'UserPromptSubmit', prompt: 'still here' });
+  const revived = db.prepare("SELECT * FROM sessions WHERE session_id = 'silent'").get();
+  assert.equal(revived.ended_at, null);
+  assert.equal(revived.archived_at, null);
+  assert.equal(revived.col, 'working');
+});
+
+test('cleanup archives offline rows, expires mail, kills eligible dead panes, and only lists worktrees', async (t) => {
+  const tmux = fakeTmux();
+  const { db, core, state } = memoryCore(t, { tmux });
+  const now = Date.now();
+  db.prepare(`INSERT INTO sessions
+    (session_id, callsign, col, note, events, started_at, last_seen, ended_at, source)
+    VALUES ('offline', 'off-1', 'offline', 'ended', 0, ?, ?, ?, 'hooks')`).run(now, now, now);
+  db.prepare(`INSERT INTO mail (to_session, from_id, text, at, delivered_at, expired_at)
+    VALUES ('offline', 'ops', 'pending', ?, NULL, NULL)`).run(now);
+  // One worktree still on disk (must be listed), one already hand-removed
+  // (must be silently dropped — cleanup only nags about real chores).
+  const wt = mkdtempSync(path.join(tmpdir(), 'fd-wt-off-'));
+  t.after(() => rmSync(wt, { recursive: true, force: true }));
+  db.prepare(`INSERT INTO spawns
+    (spawn_id, session_id, callsign, tmux_session, tmux_window, worktree_path, requested_at, status)
+    VALUES ('sp-off', 'offline', 'off-1', 'fleetdeck-4711', 'fd4711-off-1', ?, ?, 'pane-dead')`).run(wt, now);
+  db.prepare(`INSERT INTO spawns
+    (spawn_id, session_id, callsign, tmux_session, tmux_window, worktree_path, requested_at, status)
+    VALUES ('sp-gone', 'offline', 'off-1', 'fleetdeck-4711', 'fd4711-off-gone', '/tmp/fd-wt-off-already-removed', ?, 'gone')`).run(now);
+  state.windows.push({
+    session: 'fleetdeck-4711', window: 'fd4711-off-1', window_id: '@7', pane_dead: true, pane_cmd: 'claude',
+  });
+
+  const out = await core.cleanup();
+  assert.deepEqual(out, {
+    ok: true, archived: 1, mail_expired: 1, questions_expired: 0, windows_killed: 1,
+    orphan_worktrees: [wt],
+  });
+  assert.deepEqual(state.killed, ['fd4711-off-1']);
+  assert.equal(core.snapshot().sessions.some(s => s.session_id === 'offline'), false);
+});

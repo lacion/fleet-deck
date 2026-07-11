@@ -50,6 +50,26 @@ async function api(pathname, { method = 'GET', body, timeout = 400 } = {}) {
   finally { clearTimeout(t); }
 }
 
+// The daemon's env seeds any tmux SERVER it creates: tmux bakes the FIRST
+// client's environment into the server's global env, which every later pane
+// inherits (the 2026-07-11 ghost-daemon scar — a test-run daemon poisoned the
+// default server with a test FLEETDECK_PORT/HOME). This hook runs INSIDE a
+// Claude session, so scrub the session markers before boot. Deliberately does
+// NOT scrub FLEETDECK_* tuning knobs — tests/demos pass those through here on
+// purpose. Keep the marker list in sync with the spawn() scrub in
+// fleetd/derive.mjs.
+function bootEnv() {
+  const env = { ...process.env, FLEETDECK_PORT: String(PORT), FLEETDECK_HOME: HOME };
+  for (const k of [
+    'CLAUDECODE', 'CLAUDE_CODE_SESSION_ID', 'CLAUDE_CODE_CHILD_SESSION',
+    'CLAUDE_CODE_BRIDGE_SESSION_ID', 'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_CODE_EXECPATH',
+    'CLAUDE_ENV_FILE', 'CLAUDE_PROJECT_DIR', 'CLAUDE_PLUGIN_ROOT', 'CLAUDE_PLUGIN_DATA',
+    'CLAUDE_EFFORT', 'AI_AGENT', 'CODEX_COMPANION_TRANSCRIPT_PATH',
+    'CODEX_COMPANION_SESSION_ID', 'TMUX', 'TMUX_PANE',
+  ]) delete env[k];
+  return env;
+}
+
 // Election: whoever gets here first launches fleetd. The port bind is the
 // lock — a concurrent launcher's daemon exits 3 on EADDRINUSE and we just poll.
 async function ensureServer() {
@@ -60,7 +80,7 @@ async function ensureServer() {
     const child = spawn(process.execPath, ['--no-warnings=ExperimentalWarning', FLEETD], {
       detached: true,
       stdio: ['ignore', out, out],
-      env: { ...process.env, FLEETDECK_PORT: String(PORT), FLEETDECK_HOME: HOME },
+      env: bootEnv(),
     });
     child.unref();
     fs.closeSync(out);

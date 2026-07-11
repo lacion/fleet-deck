@@ -42,8 +42,8 @@
 // Spec-shape caveat: the contract pins the spawns DB row's column names
 // and the /api/spawn request/response shapes exactly, but does NOT pin the
 // exact JSON shape of `spec` handed to FLEETDECK_SPAWN_CMD beyond "argv
-// [FLEETDECK_SPAWN_CMD, JSON.stringify(spec)]" and the literal claude argv
-// it must produce (`claude --session-id <uuid> [--model m]
+// [FLEETDECK_SPAWN_CMD, JSON.stringify(spec)]" and the full env-wrapped argv
+// it must produce (`env ... claude --session-id <uuid> [--model m]
 // [--permission-mode pm] [prompt]`). Assertions on `spec` below search
 // recursively for reasonably-named fields (session_id/sessionId, cwd, an
 // argv-shaped array) rather than assuming one exact top-level layout, and
@@ -309,7 +309,29 @@ test('argv construction: prompt/model/permission-mode survive intact through the
 
   const argv = extractArgv(record.parsed);
   assert.ok(argv, `expected an argv-shaped array in the spec per the contract ("claude --session-id <uuid> ..."); spec keys were: ${JSON.stringify(Object.keys(record.parsed || {}))}`);
-  assert.equal(argv[0], 'claude', 'argv[0] must be the plain claude binary (zero wrapper)');
+  // Contract-pinned copy of the spawn() scrub list (fleetd/derive.mjs) — an
+  // intentional duplicate: a var silently dropped from the wrapper fails HERE.
+  const scrub = [
+    'CLAUDECODE', 'CLAUDE_CODE_SESSION_ID', 'CLAUDE_CODE_CHILD_SESSION',
+    'CLAUDE_CODE_BRIDGE_SESSION_ID', 'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_CODE_EXECPATH',
+    'CLAUDE_ENV_FILE', 'CLAUDE_PROJECT_DIR', 'CLAUDE_PLUGIN_ROOT', 'CLAUDE_PLUGIN_DATA',
+    'CLAUDE_EFFORT', 'AI_AGENT', 'CODEX_COMPANION_TRANSCRIPT_PATH',
+    'CODEX_COMPANION_SESSION_ID', 'FLEETDECK_AGENTS_CMD', 'FLEETDECK_SPAWN_CMD',
+    'TMUX', 'TMUX_PANE', 'FLEETDECK_TMUX_SOCKET',
+    'FLEETDECK_AGENTS_POLL_MS', 'FLEETDECK_HOLD_MS', 'FLEETDECK_STALE_MS',
+    'FLEETDECK_NUDGE_MS', 'FLEETDECK_MAX_SPAWNED', 'FLEETDECK_WATCH_MAX_MS',
+    'FLEETDECK_WATCH_POLL_MS', 'FLEETDECK_SPAWN_REGISTER_MS',
+    'FLEETDECK_PANE_MAIL_GRACE_MS', 'FLEETDECK_PRESUME_DEAD_MS',
+    'FLEETDECK_RETAIN_OFFLINE_MS',
+  ];
+  const expectedPrefix = [
+    'env', ...scrub.flatMap(name => ['-u', name]),
+    `FLEETDECK_PORT=${daemon.port}`, `FLEETDECK_HOME=${daemon.home}`,
+  ];
+  assert.deepEqual(argv.slice(0, expectedPrefix.length), expectedPrefix,
+    'argv must scrub inherited agent/fleet variables and pin this daemon port/home in the specified order');
+  const claudeIdx = expectedPrefix.length;
+  assert.equal(argv[claudeIdx], 'claude', 'claude must immediately follow the deterministic env prefix');
 
   const sidIdx = argv.indexOf('--session-id');
   assert.ok(sidIdx >= 0, 'argv must include --session-id');
@@ -322,6 +344,13 @@ test('argv construction: prompt/model/permission-mode survive intact through the
   const pmIdx = argv.indexOf('--permission-mode');
   assert.ok(pmIdx >= 0, 'argv must include --permission-mode when one was requested');
   assert.equal(argv[pmIdx + 1], 'acceptEdits');
+
+  assert.deepEqual(argv.slice(claudeIdx), [
+    'claude', '--session-id', sid,
+    '--model', 'claude-test-model',
+    '--permission-mode', 'acceptEdits',
+    dangerousPrompt,
+  ], 'claude flag ordering must remain contract-pinned after the env wrapper');
 
   assert.ok(argv.includes(dangerousPrompt), 'the dangerous prompt must appear as ONE whole argv element, not split into shell words');
   // No fragment of the dangerous prompt should appear as a SEPARATE element
@@ -613,7 +642,7 @@ test('reconciliation: a spawn row whose window was never actually created in rea
   assert.equal(card.col, 'offline', "restart reconciliation should mark a spawn row with no matching real window's card offline");
   if (card.spawn?.status) {
     t.diagnostic(`post-restart spawn row status: ${card.spawn.status}`);
-    assert.equal(card.spawn.status, 'gone', "contract rule: a spawning/live row whose window is gone at boot should become 'gone'");
+    assert.equal(card.spawn.status, 'gone', "contract rule: a spawning/stalled/live row whose window is gone at boot should become 'gone'");
   } else {
     t.diagnostic('card carries no spawn{} descriptor after restart -- could not directly confirm the row status reached \'gone\' from /state alone; offline col is the observable proxy used here');
   }

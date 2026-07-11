@@ -80,22 +80,29 @@ export function spawnRaw({
   scriptPath = process.env.FLEETDECK_TEST_DAEMON_SCRIPT || FLEETD_PATH,
   env = {},
 } = {}) {
+  const childEnv = {
+    ...process.env,
+    FLEETDECK_PORT: String(port),
+    FLEETDECK_HOME: home,
+    // Default the agents-cli poller (handoff F1) OFF for every spawned
+    // test daemon: left on, every daemon in the suite would shell out to
+    // the real `claude agents --json` ~1s after listening, which is pure
+    // background load unrelated to almost all tests and was observed to
+    // destabilize unrelated timing-sensitive tests when many daemons spin
+    // up concurrently. Tests that actually exercise the poller (see
+    // tests/agents-ingest.test.mjs) pass their own FLEETDECK_AGENTS_CMD via
+    // `env`, which — spread after this default — wins as usual.
+    FLEETDECK_AGENTS_CMD: 'false',
+    // Isolated tmux server per test daemon: the suite can never touch (or
+    // poison) the developer's real tmux server — the 2026-07-11 env scar.
+    FLEETDECK_TMUX_SOCKET: `fleetdeck-test-${port}`,
+    ...env,
+  };
+  // Running the suite from inside tmux must not leak the outer server either.
+  delete childEnv.TMUX;
+  delete childEnv.TMUX_PANE;
   const child = spawn(process.execPath, [scriptPath], {
-    env: {
-      ...process.env,
-      FLEETDECK_PORT: String(port),
-      FLEETDECK_HOME: home,
-      // Default the agents-cli poller (handoff F1) OFF for every spawned
-      // test daemon: left on, every daemon in the suite would shell out to
-      // the real `claude agents --json` ~1s after listening, which is pure
-      // background load unrelated to almost all tests and was observed to
-      // destabilize unrelated timing-sensitive tests when many daemons spin
-      // up concurrently. Tests that actually exercise the poller (see
-      // tests/agents-ingest.test.mjs) pass their own FLEETDECK_AGENTS_CMD via
-      // `env`, which — spread after this default — wins as usual.
-      FLEETDECK_AGENTS_CMD: 'false',
-      ...env,
-    },
+    env: childEnv,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let stdout = '';

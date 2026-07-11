@@ -20,6 +20,10 @@ var __commonJS = (cb, mod) => function __require2() {
     throw mod = 0, e;
   }
 };
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
 var __copyProps = (to, from, except, desc) => {
   if (from && typeof from === "object" || typeof from === "function") {
     for (let key of __getOwnPropNames(from))
@@ -3750,7 +3754,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   ended_at          INTEGER,
   blocked_this_turn INTEGER DEFAULT 0,
   source            TEXT DEFAULT 'hooks',
-  notification_type TEXT
+  notification_type TEXT,
+  archived_at       INTEGER
 );
 CREATE TABLE IF NOT EXISTS file_touches (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -3769,7 +3774,8 @@ CREATE TABLE IF NOT EXISTS mail (
   from_id      TEXT,
   text         TEXT,
   at           INTEGER,
-  delivered_at INTEGER
+  delivered_at INTEGER,
+  expired_at   INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_mail_to ON mail(to_session, delivered_at);
 CREATE TABLE IF NOT EXISTS events (
@@ -3822,7 +3828,7 @@ CREATE TABLE IF NOT EXISTS spawns (
   cwd           TEXT,               -- requested cwd (the form value)
   worktree_path TEXT,               -- effective cwd when worktree:true, else NULL
   requested_at  INTEGER,
-  status        TEXT DEFAULT 'spawning',  -- spawning | live | pane-dead | killed | gone
+  status        TEXT DEFAULT 'spawning',  -- spawning | stalled | live | pane-dead | killed | gone
   skip_permissions INTEGER DEFAULT 0     -- v1.3 unsupervised spawn (either bypass form)
 );
 CREATE INDEX IF NOT EXISTS idx_spawns_session ON spawns(session_id);
@@ -3849,6 +3855,13 @@ function migrate(db2) {
   }
   if (!cols.includes("notification_type")) {
     db2.exec("ALTER TABLE sessions ADD COLUMN notification_type TEXT");
+  }
+  if (!cols.includes("archived_at")) {
+    db2.exec("ALTER TABLE sessions ADD COLUMN archived_at INTEGER");
+  }
+  const mailCols = db2.prepare("PRAGMA table_info(mail)").all().map((r) => r.name);
+  if (!mailCols.includes("expired_at")) {
+    db2.exec("ALTER TABLE mail ADD COLUMN expired_at INTEGER");
   }
   const spawnCols = db2.prepare("PRAGMA table_info(spawns)").all().map((r) => r.name);
   if (spawnCols.length && !spawnCols.includes("skip_permissions")) {
@@ -4139,10 +4152,10 @@ function createQuestions(db2, {
     if (changed) onChange();
     return changed;
   }
-  function expireAllForSession(sessionId) {
-    let changed = false;
+  function expireAllForSession(sessionId, { includeFreeform = false } = {}) {
+    let expired = 0;
     for (const r of q.pendingBySession.all(sessionId)) {
-      if (!HOLD_KINDS.has(r.kind)) continue;
+      if (!includeFreeform && !HOLD_KINDS.has(r.kind)) continue;
       const h = releaseHold(r.id);
       if (h) {
         try {
@@ -4150,10 +4163,10 @@ function createQuestions(db2, {
         } catch {
         }
       }
-      if (q.markExpired.run(r.id).changes) changed = true;
+      if (q.markExpired.run(r.id).changes) expired++;
     }
-    if (changed) onChange();
-    return changed;
+    if (expired) onChange();
+    return expired;
   }
   function pendingOf(sessionId) {
     return q.pendingBySession.all(sessionId);
@@ -4275,13 +4288,31 @@ function lastAssistantText(transcriptPath, { maxBytes = 2e6 } = {}) {
 }
 
 // scripts/fleetd/spawn.mjs
+var spawn_exports = {};
+__export(spawn_exports, {
+  ensureSession: () => ensureSession,
+  hasTmux: () => hasTmux,
+  killWindowVerified: () => killWindowVerified,
+  launchOverride: () => launchOverride,
+  listScopedWindows: () => listScopedWindows,
+  newWindow: () => newWindow,
+  paneCurrentCommand: () => paneCurrentCommand,
+  pasteText: () => pasteText,
+  sendBringupEnter: () => sendBringupEnter,
+  sendEnter: () => sendEnter,
+  sessionName: () => sessionName,
+  spawnOverrideCmd: () => spawnOverrideCmd,
+  windowName: () => windowName
+});
 import { execFile, execFileSync as execFileSync2, spawn as spawnChild } from "node:child_process";
 var TMUX_TIMEOUT_MS = 5e3;
 var US = "";
 function tmux(args) {
   return new Promise((resolve) => {
     try {
-      execFile("tmux", args, { timeout: TMUX_TIMEOUT_MS, windowsHide: true }, (err, stdout) => {
+      const socket = process.env.FLEETDECK_TMUX_SOCKET?.trim();
+      const argv = socket ? ["-L", socket, ...args] : args;
+      execFile("tmux", argv, { timeout: TMUX_TIMEOUT_MS, windowsHide: true }, (err, stdout) => {
         resolve(err ? null : stdout ?? "");
       });
     } catch {
@@ -4340,6 +4371,12 @@ async function newWindow({ port, callsign, cwd, argv }) {
   await tmux(["set-option", "-w", "-t", window_id, "remain-on-exit", "on"]);
   return { session, window, window_id };
 }
+async function paneCurrentCommand(target) {
+  const out = await tmux(["display-message", "-p", "-t", target, `#{pane_dead}${US}#{pane_current_command}`]);
+  if (out === null) return null;
+  const [dead, cmd] = out.replace(/\n$/, "").split(US);
+  return { dead: dead === "1", cmd: cmd ?? "" };
+}
 async function listScopedWindows(port) {
   const out = await tmux([
     "list-panes",
@@ -4372,8 +4409,15 @@ async function killWindowVerified(name) {
   if (again === null || !again.split("\n").includes(name)) return { ok: false, gone: true };
   return { ok: false, error: "tmux kill-window failed" };
 }
-async function sendBringupEnter(target) {
+async function pasteText(target, text) {
+  if (await tmux(["set-buffer", "-b", "fdmail", "--", String(text)]) === null) return false;
+  return await tmux(["paste-buffer", "-p", "-d", "-b", "fdmail", "-t", target]) !== null;
+}
+async function sendEnter(target) {
   return await tmux(["send-keys", "-t", target, "Enter"]) !== null;
+}
+async function sendBringupEnter(target) {
+  return sendEnter(target);
 }
 function launchOverride(cmd, spec, onError = () => {
 }) {
@@ -4403,16 +4447,26 @@ function envInt(name, fallback, { min = 0 } = {}) {
   const n = Number(process.env[name]);
   return Number.isFinite(n) && n >= min ? Math.floor(n) : fallback;
 }
-function createCore(db2, { port = 4711, holdMs = resolveHoldMs() } = {}) {
+function createCore(db2, {
+  port = 4711,
+  home = process.env.FLEETDECK_HOME || "",
+  holdMs = resolveHoldMs(),
+  tmuxAdapter = spawn_exports
+} = {}) {
   const t0 = Date.now();
   let onMutate = () => {
   };
   const MAX_SPAWNED = envInt("FLEETDECK_MAX_SPAWNED", 5);
   const STALE_MS = envInt("FLEETDECK_STALE_MS", 6e5, { min: 1 });
   const NUDGE_MS = envInt("FLEETDECK_NUDGE_MS", 8e3, { min: 1 });
+  const SPAWN_REGISTER_MS = envInt("FLEETDECK_SPAWN_REGISTER_MS", 9e4, { min: 1 });
+  const PANE_MAIL_GRACE_MS = envInt("FLEETDECK_PANE_MAIL_GRACE_MS", 1500, { min: 0 });
+  const PRESUME_DEAD_MS = envInt("FLEETDECK_PRESUME_DEAD_MS", 108e5, { min: 1 });
+  const RETAIN_OFFLINE_MS = envInt("FLEETDECK_RETAIN_OFFLINE_MS", 864e5, { min: 1 });
   const q = {
     getSession: db2.prepare("SELECT * FROM sessions WHERE session_id = ?"),
     allSessions: db2.prepare("SELECT * FROM sessions ORDER BY started_at"),
+    visibleSessions: db2.prepare("SELECT * FROM sessions WHERE archived_at IS NULL ORDER BY started_at"),
     countSessions: db2.prepare("SELECT COUNT(*) AS n FROM sessions"),
     insertSession: db2.prepare(`INSERT INTO sessions
       (session_id, callsign, col, note, events, started_at, last_seen, blocked_this_turn)
@@ -4428,10 +4482,10 @@ function createCore(db2, { port = 4711, holdMs = resolveHoldMs() } = {}) {
     recentTouches: db2.prepare("SELECT * FROM file_touches WHERE repo_id = ? AND rel_path = ? AND at > ? ORDER BY at"),
     filesBySession: db2.prepare("SELECT session_id, abs_path, MIN(at) AS first FROM file_touches GROUP BY session_id, abs_path ORDER BY first"),
     insertMail: db2.prepare("INSERT INTO mail (to_session, from_id, text, at, delivered_at) VALUES (?, ?, ?, ?, NULL)"),
-    pendingMail: db2.prepare("SELECT * FROM mail WHERE to_session = ? AND delivered_at IS NULL ORDER BY at"),
+    pendingMail: db2.prepare("SELECT * FROM mail WHERE to_session = ? AND delivered_at IS NULL AND expired_at IS NULL ORDER BY at, id"),
     // /api/watch v2 claim: oldest undelivered mail from ANY sender (v1
     // claimed fleetdeck-answer rows only).
-    nextMail: db2.prepare("SELECT * FROM mail WHERE to_session = ? AND delivered_at IS NULL ORDER BY at, id LIMIT 1"),
+    nextMail: db2.prepare("SELECT * FROM mail WHERE to_session = ? AND delivered_at IS NULL AND expired_at IS NULL ORDER BY at, id LIMIT 1"),
     // v1.1 `assign auto` routing (POST /command contract): deterministic,
     // zero model calls. Candidates = non-ended sessions whose col is not
     // offline/needsyou (stuck sessions get no new work), scoped to a repo
@@ -4441,7 +4495,7 @@ function createCore(db2, { port = 4711, holdMs = resolveHoldMs() } = {}) {
     // last_seen. LIMIT 1 = the winner.
     autoCandidate: db2.prepare(`SELECT s.*,
         (SELECT COUNT(*) FROM mail m
-          WHERE m.to_session = s.session_id AND m.delivered_at IS NULL) AS undelivered
+          WHERE m.to_session = s.session_id AND m.delivered_at IS NULL AND m.expired_at IS NULL) AS undelivered
       FROM sessions s
       WHERE s.ended_at IS NULL
         AND s.col NOT IN ('offline', 'needsyou')
@@ -4450,8 +4504,10 @@ function createCore(db2, { port = 4711, holdMs = resolveHoldMs() } = {}) {
         undelivered ASC,
         s.last_seen DESC
       LIMIT 1`),
-    pendingCounts: db2.prepare("SELECT to_session, COUNT(*) AS n FROM mail WHERE delivered_at IS NULL GROUP BY to_session"),
+    pendingCounts: db2.prepare(`SELECT to_session, COUNT(*) AS n, MIN(at) AS oldest_at
+      FROM mail WHERE delivered_at IS NULL AND expired_at IS NULL GROUP BY to_session`),
     markDelivered: db2.prepare("UPDATE mail SET delivered_at = ? WHERE id = ?"),
+    unmarkDelivered: db2.prepare("UPDATE mail SET delivered_at = NULL WHERE id = ?"),
     insertEvent: db2.prepare("INSERT INTO events (session_id, hook_event, tool_name, note, at) VALUES (?, ?, ?, ?, ?)"),
     sparkline: db2.prepare("SELECT session_id, (at / 60000) AS minute, COUNT(*) AS n FROM events WHERE at > ? GROUP BY session_id, minute"),
     insertTicker: db2.prepare("INSERT INTO ticker (at, msg) VALUES (?, ?)"),
@@ -4461,7 +4517,7 @@ function createCore(db2, { port = 4711, holdMs = resolveHoldMs() } = {}) {
     recentConflicts: db2.prepare("SELECT * FROM conflicts ORDER BY id DESC LIMIT 20"),
     insertCommand: db2.prepare("INSERT INTO commands (at, text, parsed_json) VALUES (?, ?, ?)"),
     pruneEvents: db2.prepare("DELETE FROM events WHERE at < ?"),
-    // v1.2 board-spawned sessions. "Active" = status spawning|live — the rows
+    // v1.2 board-spawned sessions. "Active" = status spawning|stalled|live — the rows
     // that count against FLEETDECK_MAX_SPAWNED and get liveness-checked.
     insertSpawn: db2.prepare(`INSERT INTO spawns
       (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, requested_at, status, skip_permissions)
@@ -4469,9 +4525,32 @@ function createCore(db2, { port = 4711, holdMs = resolveHoldMs() } = {}) {
     getSpawn: db2.prepare("SELECT * FROM spawns WHERE spawn_id = ?"),
     spawnBySession: db2.prepare("SELECT * FROM spawns WHERE session_id = ? ORDER BY requested_at DESC LIMIT 1"),
     allSpawns: db2.prepare("SELECT * FROM spawns ORDER BY requested_at"),
-    activeSpawns: db2.prepare("SELECT * FROM spawns WHERE status IN ('spawning', 'live')"),
-    countActiveSpawns: db2.prepare("SELECT COUNT(*) AS n FROM spawns WHERE status IN ('spawning', 'live')"),
+    activeSpawns: db2.prepare("SELECT * FROM spawns WHERE status IN ('spawning', 'stalled', 'live')"),
+    countActiveSpawns: db2.prepare("SELECT COUNT(*) AS n FROM spawns WHERE status IN ('spawning', 'stalled', 'live')"),
     setSpawnStatus: db2.prepare("UPDATE spawns SET status = ? WHERE spawn_id = ?"),
+    presumeDeadSessions: db2.prepare(`SELECT * FROM sessions
+      WHERE source = 'hooks' AND ended_at IS NULL
+        AND col IN ('queued', 'idle', 'needsyou') AND last_seen < ?`),
+    archiveCandidates: db2.prepare(`SELECT * FROM sessions
+      WHERE col = 'offline' AND archived_at IS NULL
+        AND COALESCE(ended_at, last_seen) < ?`),
+    setArchived: db2.prepare("UPDATE sessions SET archived_at = ? WHERE session_id = ? AND archived_at IS NULL"),
+    archiveAllOffline: db2.prepare("UPDATE sessions SET archived_at = ? WHERE col = 'offline' AND archived_at IS NULL"),
+    expireRetainedMail: db2.prepare(`UPDATE mail SET expired_at = ?
+      WHERE delivered_at IS NULL AND expired_at IS NULL
+        AND to_session IN (SELECT session_id FROM sessions
+          WHERE archived_at IS NOT NULL OR ended_at < ?)`),
+    expireArchivedMail: db2.prepare(`UPDATE mail SET expired_at = ?
+      WHERE delivered_at IS NULL AND expired_at IS NULL
+        AND to_session IN (SELECT session_id FROM sessions WHERE archived_at IS NOT NULL)`),
+    goneArchivedSpawns: db2.prepare(`UPDATE spawns SET status = 'gone'
+      WHERE status NOT IN ('killed', 'pane-dead', 'gone')
+        AND session_id IN (SELECT session_id FROM sessions WHERE archived_at IS NOT NULL)`),
+    orphanWorktrees: db2.prepare(`SELECT DISTINCT spawns.worktree_path FROM spawns
+      JOIN sessions ON sessions.session_id = spawns.session_id
+      WHERE spawns.worktree_path IS NOT NULL
+        AND (sessions.col = 'offline' OR sessions.archived_at IS NOT NULL)
+      ORDER BY spawns.worktree_path`),
     // Pre-created card for a board spawn (CONTRACT flow step 1): source
     // 'spawned' from birth so (a) the agents-cli absence sweep — which only
     // touches source='agents-cli' — never tombstones a still-booting spawn,
@@ -4530,7 +4609,8 @@ function createCore(db2, { port = 4711, holdMs = resolveHoldMs() } = {}) {
     "ended_at",
     "blocked_this_turn",
     "source",
-    "notification_type"
+    "notification_type",
+    "archived_at"
   ];
   function updateSession(sid, upd) {
     const keys = Object.keys(upd).filter((k) => FIELDS.includes(k));
@@ -4562,6 +4642,11 @@ function createCore(db2, { port = 4711, holdMs = resolveHoldMs() } = {}) {
   function mail(toSession, from, text) {
     q.insertMail.run(toSession, from, String(text ?? "").slice(0, 500), Date.now());
     notifyWatchers(toSession);
+    const timer = setTimeout(() => {
+      tryOwnedPaneDelivery(toSession).catch(() => {
+      });
+    }, PANE_MAIL_GRACE_MS);
+    timer.unref?.();
   }
   function drainMail(sid) {
     const box = q.pendingMail.all(sid);
@@ -4570,7 +4655,7 @@ function createCore(db2, { port = 4711, holdMs = resolveHoldMs() } = {}) {
     return box.map((m) => ({ from: m.from_id, text: m.text, at: m.at }));
   }
   function resolveTargets(to) {
-    const all = q.allSessions.all();
+    const all = q.visibleSessions.all();
     const active = all.filter((s) => s.ended_at == null);
     if (to === "all") return active.map((s) => s.session_id);
     const m = /^repo:(.+)$/.exec(String(to ?? ""));
@@ -4607,10 +4692,14 @@ function createCore(db2, { port = 4711, holdMs = resolveHoldMs() } = {}) {
   function applyEvent(ev) {
     const sid = ev.session_id || "unknown";
     let c = card(sid);
+    if (c.note?.startsWith("presumed ended")) {
+      updateSession(sid, { ended_at: null, archived_at: null });
+      c = { ...c, ended_at: null, archived_at: null };
+    }
     if (c.source !== "hooks") {
       updateSession(sid, { source: "hooks" });
       const sp = q.spawnBySession.get(sid);
-      if (sp && sp.status === "spawning") {
+      if (sp && (sp.status === "spawning" || sp.status === "stalled")) {
         q.setSpawnStatus.run("live", sp.spawn_id);
         tick(`\u{1F6F0} ${c.callsign} pane is live (first hook event)`);
       }
@@ -4855,7 +4944,7 @@ function createCore(db2, { port = 4711, holdMs = resolveHoldMs() } = {}) {
     applyEvent({ ...ev, hook_event_name: "SessionEnd" });
     questions.expireAllForSession(ev.session_id || "unknown");
     const sp = q.spawnBySession.get(ev.session_id || "unknown");
-    if (sp && (sp.status === "spawning" || sp.status === "live")) {
+    if (sp && (sp.status === "spawning" || sp.status === "stalled" || sp.status === "live")) {
       q.setSpawnStatus.run("pane-dead", sp.spawn_id);
     }
     notifyWatchers(ev.session_id || "unknown");
@@ -4880,6 +4969,66 @@ function createCore(db2, { port = 4711, holdMs = resolveHoldMs() } = {}) {
         if (!set.size) watchWaiters.delete(sid);
       }
     };
+  }
+  function hasWatchWaiter(sid) {
+    return (watchWaiters.get(sid)?.size ?? 0) > 0;
+  }
+  function ownedPaneRow(sid) {
+    const c = q.getSession.get(sid);
+    if (!c || c.ended_at != null || !["queued", "idle"].includes(c.col)) return null;
+    const sp = q.spawnBySession.get(sid);
+    if (!sp || !["spawning", "stalled", "live"].includes(sp.status)) return null;
+    return { c, sp };
+  }
+  async function ownedPaneDeliverable(sid, { probe: probe2 = true } = {}) {
+    const pair = ownedPaneRow(sid);
+    if (!pair) return false;
+    if (!probe2) return true;
+    const wins = await tmuxAdapter.listScopedWindows(port);
+    const win = wins.find((w) => w.window === pair.sp.tmux_window);
+    if (!win || win.pane_dead) return false;
+    const pane = await tmuxAdapter.paneCurrentCommand(win.window_id);
+    return !!pane && !pane.dead && pane.cmd === "claude";
+  }
+  function claimAllMail(sid) {
+    db2.exec("BEGIN IMMEDIATE");
+    try {
+      const box = q.pendingMail.all(sid);
+      const now = Date.now();
+      for (const m of box) q.markDelivered.run(now, m.id);
+      db2.exec("COMMIT");
+      return box;
+    } catch (err) {
+      try {
+        db2.exec("ROLLBACK");
+      } catch {
+      }
+      throw err;
+    }
+  }
+  async function tryOwnedPaneDelivery(sid) {
+    const pair = ownedPaneRow(sid);
+    if (!pair || hasWatchWaiter(sid)) return false;
+    const wins = await tmuxAdapter.listScopedWindows(port);
+    const win = wins.find((w) => w.window === pair.sp.tmux_window);
+    if (!win || win.pane_dead) return false;
+    const pane = await tmuxAdapter.paneCurrentCommand(win.window_id);
+    if (!pane || pane.dead || pane.cmd !== "claude") return false;
+    if (hasWatchWaiter(sid)) return false;
+    const box = claimAllMail(sid);
+    if (!box.length) return false;
+    const text = box.map((m) => `[FLEETDECK MAIL from ${m.from_id}] ${m.text}`).join("\n");
+    const pasted = await tmuxAdapter.pasteText(win.window_id, text);
+    const entered = pasted ? await tmuxAdapter.sendEnter(win.window_id) : false;
+    if (!pasted || !entered) {
+      for (const m of box) q.unmarkDelivered.run(m.id);
+      onMutate();
+      return false;
+    }
+    tick(`\u2709 delivered ${box.length} mail to ${pair.c.callsign} (typed into pane)`);
+    logEvent(sid, "MailPaneDelivery", null, `typed ${box.length} mail into ${pair.sp.tmux_window}`);
+    onMutate();
+    return true;
   }
   function claimMail(sid) {
     const m = q.nextMail.get(sid);
@@ -4988,10 +5137,10 @@ function createCore(db2, { port = 4711, holdMs = resolveHoldMs() } = {}) {
     if (String(process.env.FLEETDECK_SPAWN ?? "").toLowerCase() === "off") {
       return { available: false, reason: "disabled (FLEETDECK_SPAWN=off)", ...base };
     }
-    if (spawnOverrideCmd()) {
+    if (tmuxAdapter.spawnOverrideCmd()) {
       return { available: true, reason: "test-override", ...base };
     }
-    if (!hasTmux()) {
+    if (!tmuxAdapter.hasTmux()) {
       return { available: false, reason: "tmux not found on PATH", ...base };
     }
     return { available: true, ...base };
@@ -5031,10 +5180,10 @@ function createCore(db2, { port = 4711, holdMs = resolveHoldMs() } = {}) {
         if (nudged.has(spawn_id)) return;
         const row = q.getSpawn.get(spawn_id);
         if (!row || row.status !== "spawning") return;
-        const win = (await listScopedWindows(port)).find((w) => w.window === window);
+        const win = (await tmuxAdapter.listScopedWindows(port)).find((w) => w.window === window);
         if (!win || win.pane_dead) return;
         nudged.add(spawn_id);
-        await sendBringupEnter(win.window_id);
+        await tmuxAdapter.sendBringupEnter(win.window_id);
         logEvent(row.session_id, "SpawnNudge", null, "bring-up Enter sent (trust dialog)");
         tick(`\u23CE nudged ${callsign} through the trust dialog`);
         onMutate();
@@ -5097,14 +5246,59 @@ function createCore(db2, { port = 4711, holdMs = resolveHoldMs() } = {}) {
       });
     }
     const runCwd = worktree_path ?? cwd;
-    const argv = ["claude", "--session-id", session_id];
+    const scrub = [
+      "CLAUDECODE",
+      "CLAUDE_CODE_SESSION_ID",
+      "CLAUDE_CODE_CHILD_SESSION",
+      "CLAUDE_CODE_BRIDGE_SESSION_ID",
+      "CLAUDE_CODE_ENTRYPOINT",
+      "CLAUDE_CODE_EXECPATH",
+      "CLAUDE_ENV_FILE",
+      "CLAUDE_PROJECT_DIR",
+      "CLAUDE_PLUGIN_ROOT",
+      "CLAUDE_PLUGIN_DATA",
+      "CLAUDE_EFFORT",
+      "AI_AGENT",
+      "CODEX_COMPANION_TRANSCRIPT_PATH",
+      "CODEX_COMPANION_SESSION_ID",
+      "FLEETDECK_AGENTS_CMD",
+      "FLEETDECK_SPAWN_CMD",
+      // The baked-in tmux server env is the scar this wrapper exists for —
+      // scrub the tmux client markers and every fleet tuning/test knob too,
+      // so a pane (or anything it auto-boots) can never inherit a foreign
+      // fleet's configuration. Keep in sync with tests/spawn.test.mjs and
+      // the boot scrub in scripts/fleet-sessionstart.mjs.
+      "TMUX",
+      "TMUX_PANE",
+      "FLEETDECK_TMUX_SOCKET",
+      "FLEETDECK_AGENTS_POLL_MS",
+      "FLEETDECK_HOLD_MS",
+      "FLEETDECK_STALE_MS",
+      "FLEETDECK_NUDGE_MS",
+      "FLEETDECK_MAX_SPAWNED",
+      "FLEETDECK_WATCH_MAX_MS",
+      "FLEETDECK_WATCH_POLL_MS",
+      "FLEETDECK_SPAWN_REGISTER_MS",
+      "FLEETDECK_PANE_MAIL_GRACE_MS",
+      "FLEETDECK_PRESUME_DEAD_MS",
+      "FLEETDECK_RETAIN_OFFLINE_MS"
+    ];
+    const argv = [
+      "env",
+      ...scrub.flatMap((name) => ["-u", name]),
+      `FLEETDECK_PORT=${port}`,
+      `FLEETDECK_HOME=${home}`,
+      "claude",
+      "--session-id",
+      session_id
+    ];
     if (body?.model) argv.push("--model", body.model);
     if (body?.permission_mode) argv.push("--permission-mode", body.permission_mode);
     if (body?.dangerously_skip_permissions === true) argv.push("--dangerously-skip-permissions");
     if (body?.prompt) argv.push(body.prompt);
-    const tmux_session = sessionName(port);
-    const tmux_window = windowName(port, callsign);
-    const override = spawnOverrideCmd();
+    const tmux_session = tmuxAdapter.sessionName(port);
+    const tmux_window = tmuxAdapter.windowName(port, callsign);
+    const override = tmuxAdapter.spawnOverrideCmd();
     if (override) {
       const spec = {
         spawn_id,
@@ -5121,13 +5315,13 @@ function createCore(db2, { port = 4711, holdMs = resolveHoldMs() } = {}) {
         skip_permissions: skipPermissions,
         tmux: { session: tmux_session, window: tmux_window },
         argv
-        // the exact claude argv tmux would have run
+        // the full env-wrapped argv tmux would have run
       };
-      launchOverride(override, spec, (err) => spawnFailed(session_id, callsign, `spawn override: ${err.message || err}`));
+      tmuxAdapter.launchOverride(override, spec, (err) => spawnFailed(session_id, callsign, `spawn override: ${err.message || err}`));
     } else {
       try {
-        await ensureSession(port);
-        await newWindow({ port, callsign, cwd: runCwd, argv });
+        await tmuxAdapter.ensureSession(port);
+        await tmuxAdapter.newWindow({ port, callsign, cwd: runCwd, argv });
       } catch (err) {
         spawnFailed(session_id, callsign, String(err.message || err));
         return { status: 500, body: { ok: false, reason: `tmux spawn failed: ${err.message || err}` } };
@@ -5152,9 +5346,9 @@ function createCore(db2, { port = 4711, holdMs = resolveHoldMs() } = {}) {
         body: { ok: false, reason: `session ${c.callsign} is ${c.col}, not offline \u2014 pass force:true to kill anyway` }
       };
     }
-    const res = await killWindowVerified(row.tmux_window);
+    const res = await tmuxAdapter.killWindowVerified(row.tmux_window);
     if (res.gone) {
-      if (["spawning", "live", "pane-dead"].includes(row.status)) {
+      if (["spawning", "stalled", "live", "pane-dead"].includes(row.status)) {
         q.setSpawnStatus.run("gone", spawn_id);
         if (c && c.ended_at == null) {
           updateSession(row.session_id, { col: "offline", ended_at: Date.now(), note: "spawned pane window gone" });
@@ -5178,11 +5372,22 @@ function createCore(db2, { port = 4711, holdMs = resolveHoldMs() } = {}) {
   async function spawnLivenessTick() {
     const rows = q.activeSpawns.all();
     if (!rows.length && !spawnOrphans.length) return;
-    const wins = await listScopedWindows(port);
+    const wins = await tmuxAdapter.listScopedWindows(port);
     for (const row of rows) {
       const win = wins.find((w) => w.window === row.tmux_window);
       if (!win) continue;
-      if (!win.pane_dead && win.pane_cmd === "claude") continue;
+      if (!win.pane_dead && win.pane_cmd === "claude") {
+        if (row.status === "spawning" && Date.now() - row.requested_at > SPAWN_REGISTER_MS) {
+          const note = `pane up but never registered \u2014 env/port issue? window ${row.tmux_window}`;
+          q.setSpawnStatus.run("stalled", row.spawn_id);
+          updateSession(row.session_id, { col: "needsyou", notification_type: "spawn_stalled", note });
+          const c = q.getSession.get(row.session_id);
+          tick(`\u26A0 ${c?.callsign ?? row.callsign} pane is up but never phoned home`);
+          logEvent(row.session_id, "SpawnStalled", null, note);
+          onMutate();
+        }
+        continue;
+      }
       if (win.pane_dead || SHELL_RE.test(win.pane_cmd)) {
         q.setSpawnStatus.run("pane-dead", row.spawn_id);
         const c = q.getSession.get(row.session_id);
@@ -5207,7 +5412,7 @@ function createCore(db2, { port = 4711, holdMs = resolveHoldMs() } = {}) {
   }
   let spawnOrphans = [];
   async function reconcileSpawns() {
-    const wins = await listScopedWindows(port);
+    const wins = await tmuxAdapter.listScopedWindows(port);
     const names = new Set(wins.map((w) => w.window));
     for (const row of q.activeSpawns.all()) {
       if (names.has(row.tmux_window)) continue;
@@ -5308,12 +5513,25 @@ function createCore(db2, { port = 4711, holdMs = resolveHoldMs() } = {}) {
     onMutate();
     return { ok: true, parsed, delivered };
   }
-  function postMail({ to, from, text }) {
+  async function postMail({ to, from, text }) {
     const targets = resolveTargets(to);
+    const routes = await Promise.all(targets.map(async (sid) => {
+      if (hasWatchWaiter(sid)) return "watcher";
+      if (await ownedPaneDeliverable(sid)) return "pane";
+      return q.getSession.get(sid)?.ended_at != null ? "offline-queued" : "turn-boundary";
+    }));
     targets.forEach((sid) => mail(sid, from || "human", text));
     tick(`\u2709 mail from ${from || "human"} \u2192 ${to}`);
     onMutate();
-    return { ok: true, delivered: targets.length };
+    return {
+      ok: true,
+      delivered: targets.length,
+      targets: targets.map((sid, i) => ({
+        session_id: sid,
+        callsign: q.getSession.get(sid)?.callsign ?? null,
+        route: routes[i]
+      }))
+    };
   }
   function snapshot() {
     const now = Date.now();
@@ -5331,8 +5549,10 @@ function createCore(db2, { port = 4711, holdMs = resolveHoldMs() } = {}) {
     }
     const spawnBySid = /* @__PURE__ */ new Map();
     for (const r of q.allSpawns.all()) spawnBySid.set(r.session_id, r);
-    const sessions = q.allSessions.all().map((s) => {
+    const pendingBySid = new Map(q.pendingCounts.all().map((r) => [r.to_session, r]));
+    const sessions = q.visibleSessions.all().map((s) => {
       const sp = spawnBySid.get(s.session_id);
+      const pending = pendingBySid.get(s.session_id);
       return {
         session_id: s.session_id,
         callsign: s.callsign,
@@ -5354,6 +5574,13 @@ function createCore(db2, { port = 4711, holdMs = resolveHoldMs() } = {}) {
         source: s.source,
         notification_type: s.notification_type ?? null,
         // F3e: WHY it needs you
+        mail_pending: {
+          count: pending?.n ?? 0,
+          oldest_at: pending?.oldest_at ?? null,
+          // Approximation by design: no tmux subprocess in a snapshot. A
+          // qualifying active spawn row is treated as pane-capable here.
+          deliverable: hasWatchWaiter(s.session_id) || !!ownedPaneRow(s.session_id)
+        },
         sparkline: sparkBySid.get(s.session_id) || new Array(30).fill(0),
         stale: (s.col === "working" || s.col === "verifying") && s.last_seen != null && now - s.last_seen > STALE_MS,
         ...sp ? {
@@ -5361,6 +5588,8 @@ function createCore(db2, { port = 4711, holdMs = resolveHoldMs() } = {}) {
             spawn_id: sp.spawn_id,
             tmux_window: sp.tmux_window,
             status: sp.status,
+            stalled: sp.status === "stalled",
+            // watchdog chip ("never registered")
             skip_permissions: !!sp.skip_permissions
             // v1.3 unsupervised chip
           }
@@ -5377,8 +5606,17 @@ function createCore(db2, { port = 4711, holdMs = resolveHoldMs() } = {}) {
       if (s.repo_name) r.repo_name = s.repo_name;
     }
     const mailPending = {};
-    for (const row of q.pendingCounts.all()) mailPending[row.to_session] = row.n;
+    for (const row of pendingBySid.values()) mailPending[row.to_session] = row.n;
     for (const s of sessions) if (!(s.session_id in mailPending)) mailPending[s.session_id] = 0;
+    const mailMeta = {};
+    for (const s of sessions) {
+      const p = pendingBySid.get(s.session_id);
+      mailMeta[s.session_id] = {
+        queued: p?.n ?? 0,
+        oldest_at: p?.oldest_at ?? null,
+        route: hasWatchWaiter(s.session_id) ? "watcher" : ownedPaneRow(s.session_id) ? "pane" : s.endedAt != null ? "offline-queued" : "turn-boundary"
+      };
+    }
     return {
       up_ms: now - t0,
       // spike name, preserved
@@ -5397,6 +5635,8 @@ function createCore(db2, { port = 4711, holdMs = resolveHoldMs() } = {}) {
         sessions: JSON.parse(c.sessions_json || "[]")
       })),
       mail_pending: mailPending,
+      mail_meta: mailMeta,
+      // per-session {queued, oldest_at, route}
       questions: questions.listForState(),
       // F3: pending + last few resolved
       spawn: spawnCapability(),
@@ -5421,9 +5661,66 @@ function createCore(db2, { port = 4711, holdMs = resolveHoldMs() } = {}) {
   function fleetSize() {
     return q.countSessions.get().n;
   }
+  function retentionSweep(now = Date.now()) {
+    let changed = false;
+    for (const s of q.presumeDeadSessions.all(now - PRESUME_DEAD_MS)) {
+      const hours = Math.max(0, (now - s.last_seen) / 36e5);
+      const label = Number.isInteger(hours) ? String(hours) : hours.toFixed(1).replace(/\.0$/, "");
+      updateSession(s.session_id, {
+        col: "offline",
+        ended_at: now,
+        note: `presumed ended (silent ${label}h)`
+      });
+      tick(`\u231B ${s.callsign} presumed ended after ${label}h silent`);
+      notifyWatchers(s.session_id);
+      changed = true;
+    }
+    for (const s of q.archiveCandidates.all(now - RETAIN_OFFLINE_MS)) {
+      q.setArchived.run(now, s.session_id);
+      changed = true;
+    }
+    if (q.expireRetainedMail.run(now, now - RETAIN_OFFLINE_MS).changes) changed = true;
+    if (q.goneArchivedSpawns.run().changes) changed = true;
+    if (changed) onMutate();
+    return { changed };
+  }
+  async function cleanup() {
+    const now = Date.now();
+    const archiving = q.archiveCandidates.all(now + 1).map((r) => r.session_id);
+    const archived = Number(q.archiveAllOffline.run(now).changes);
+    const mail_expired = Number(q.expireArchivedMail.run(now).changes);
+    let questions_expired = 0;
+    for (const sid of archiving) {
+      questions_expired += Number(questions.expireAllForSession(sid, { includeFreeform: true }));
+    }
+    q.goneArchivedSpawns.run();
+    const wins = await tmuxAdapter.listScopedWindows(port);
+    const byName = new Map(q.allSpawns.all().map((r) => [r.tmux_window, r]));
+    let windows_killed = 0;
+    for (const win of wins) {
+      const sp = byName.get(win.window);
+      if (!win.pane_dead || !sp || !["killed", "pane-dead", "gone"].includes(sp.status)) continue;
+      const out = await tmuxAdapter.killWindowVerified(win.window);
+      if (out.ok) windows_killed++;
+    }
+    const orphan_worktrees = q.orphanWorktrees.all().map((r) => r.worktree_path).filter((p) => {
+      try {
+        return fs3.existsSync(p);
+      } catch {
+        return false;
+      }
+    });
+    if (archived || mail_expired || questions_expired || windows_killed) onMutate();
+    return { ok: true, archived, mail_expired, questions_expired, windows_killed, orphan_worktrees };
+  }
+  retentionSweep();
   setInterval(() => {
     try {
       q.pruneEvents.run(Date.now() - 24 * 3600 * 1e3);
+    } catch {
+    }
+    try {
+      retentionSweep();
     } catch {
     }
   }, 10 * 60 * 1e3).unref();
@@ -5439,12 +5736,14 @@ function createCore(db2, { port = 4711, holdMs = resolveHoldMs() } = {}) {
     // F3 relay surface: attachHold / socketClosed / answer / …
     addWatchWaiter,
     // F3d-2 watch surface (GET /api/watch v2)
+    hasWatchWaiter,
     claimMail,
     // "
     watchInfo,
     // "
     drainMail,
     postMail,
+    tryOwnedPaneDelivery,
     command,
     snapshot,
     fleetSize,
@@ -5460,6 +5759,8 @@ function createCore(db2, { port = 4711, holdMs = resolveHoldMs() } = {}) {
     // owned-pane liveness, rides the agents-poll cadence
     reconcileSpawns,
     // fleetd boot: rows ↔ tmux windows
+    retentionSweep,
+    cleanup,
     // v1.3 plan library
     planMark,
     // POST /api/plans/:id/mark → {status, body}
@@ -5656,7 +5957,20 @@ function createHttp(core2, { port, boardFile, version: version2 = "0.0.0", captu
               }
               return json(res, 200, handler(ev) ?? {});
             }
-            if (url.pathname === "/mail") return json(res, 200, core2.postMail(ev));
+            if (url.pathname === "/mail") {
+              core2.postMail(ev).then((out) => json(res, 200, out)).catch((err) => {
+                console.error("fleetd mail error:", err);
+                json(res, 500, { ok: false, err: "internal" });
+              });
+              return;
+            }
+            if (url.pathname === "/api/cleanup") {
+              core2.cleanup().then((out) => json(res, 200, out)).catch((err) => {
+                console.error("fleetd cleanup error:", err);
+                json(res, 500, { ok: false, err: "internal" });
+              });
+              return;
+            }
             if (url.pathname === "/command") return json(res, 200, core2.command(ev.text));
             if (url.pathname === "/api/spawn") {
               core2.spawn(ev).then((out) => json(res, out.status, out.body)).catch((err) => {

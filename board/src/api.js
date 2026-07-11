@@ -38,3 +38,10 @@ export function killSpawn(spawnId, force) {
 export function markPlan(planId, body) {
   return post(`/api/plans/${encodeURIComponent(planId)}/mark`, body);
 }
+
+// Manual cleanup: archive offline cards, expire their undelivered mail, kill
+// dead scoped panes. Responds {ok, archived, mail_expired, windows_killed,
+// orphan_worktrees} — orphans are LISTED, never deleted by the daemon.
+export function cleanup() {
+  return post('/api/cleanup');
+}

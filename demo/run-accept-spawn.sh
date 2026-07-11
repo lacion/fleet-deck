@@ -18,6 +18,25 @@ BASE="http://127.0.0.1:$FLEETDECK_PORT"
 TMUX_SESSION="fleetdeck-$FLEETDECK_PORT"
 WINDOW_PREFIX="fd$FLEETDECK_PORT-"
 OUTPUT_FILE="$PROJECT_DIR/spawn-accept-done.txt"
+
+# Isolated tmux server for this run, NEVER the user's default server: tmux
+# bakes the first client's environment into a new server's global env, and
+# every later window inherits it — a test-env daemon on the default socket
+# would poison production spawns. spawn.mjs honors this env and runs all its
+# tmux calls as `tmux -L $FLEETDECK_TMUX_SOCKET`.
+export FLEETDECK_TMUX_SOCKET="fdaccept-$$"
+
+# Claude-session env vars that must never leak into the daemon this script
+# launches: a daemon (or tmux server) that inherits them can mislead later
+# spawns into reporting to the wrong fleet. Passed to `env` as -u flags.
+CLAUDE_ENV_SCRUB=(
+  -u CLAUDECODE -u CLAUDE_CODE_SESSION_ID -u CLAUDE_CODE_CHILD_SESSION
+  -u CLAUDE_CODE_BRIDGE_SESSION_ID -u CLAUDE_CODE_ENTRYPOINT
+  -u CLAUDE_CODE_EXECPATH -u CLAUDE_ENV_FILE -u CLAUDE_PROJECT_DIR
+  -u CLAUDE_PLUGIN_ROOT -u CLAUDE_PLUGIN_DATA -u CLAUDE_EFFORT
+  -u AI_AGENT -u CODEX_COMPANION_SESSION_ID -u CODEX_COMPANION_TRANSCRIPT_PATH
+  -u TMUX -u TMUX_PANE
+)
 DAEMON_LOG="$SCRATCH_HOME/fleetd.log"
 
 PASS=0
@@ -40,7 +59,8 @@ bad() {
 }
 
 scoped_session_exists() {
-  tmux list-sessions -F '#{session_name}' -f "#{==:#{session_name},$TMUX_SESSION}" 2>/dev/null |
+  tmux -L "$FLEETDECK_TMUX_SOCKET" list-sessions -F '#{session_name}' \
+    -f "#{==:#{session_name},$TMUX_SESSION}" 2>/dev/null |
     grep -Fxq "$TMUX_SESSION"
 }
 
@@ -50,7 +70,7 @@ scoped_window_exists() {
     "$WINDOW_PREFIX"*) ;;
     *) return 1 ;;
   esac
-  tmux list-windows -t "$TMUX_SESSION" -F '#{window_name}' \
+  tmux -L "$FLEETDECK_TMUX_SOCKET" list-windows -t "$TMUX_SESSION" -F '#{window_name}' \
     -f "#{m:${WINDOW_PREFIX}*,#{window_name}}" 2>/dev/null |
     grep -Fxq "$TMUX_WINDOW"
 }
@@ -69,10 +89,10 @@ cleanup_resources() {
     done
   fi
 
-  # This direct tmux operation is cleanup only. All inspection is server-side
-  # filtered to the one Fleet Deck session; unrelated sessions are never listed.
-  if command -v tmux >/dev/null 2>&1 && scoped_session_exists; then
-    tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
+  # This direct tmux operation is cleanup only, and it targets this run's own
+  # isolated server (-L). The user's default tmux server is never touched.
+  if command -v tmux >/dev/null 2>&1; then
+    tmux -L "$FLEETDECK_TMUX_SOCKET" kill-server 2>/dev/null || true
   fi
 }
 
@@ -160,8 +180,9 @@ if command -v tmux >/dev/null 2>&1; then
 fi
 
 if ! curl -s -m 1 "$BASE/health" >/dev/null 2>&1; then
-  env -u FLEETDECK_SPAWN_CMD \
+  env -u FLEETDECK_SPAWN_CMD "${CLAUDE_ENV_SCRUB[@]}" \
     FLEETDECK_HOME="$SCRATCH_HOME" FLEETDECK_PORT="$FLEETDECK_PORT" \
+    FLEETDECK_TMUX_SOCKET="$FLEETDECK_TMUX_SOCKET" \
     node "$FLEETDECK_ROOT/scripts/fleetd/fleetd.mjs" > "$DAEMON_LOG" 2>&1 &
   DAEMON_PID=$!
   for _ in $(seq 1 40); do
@@ -395,7 +416,7 @@ fi
 if [ -n "$CLEANUP_OK" ]; then
   ok "cleanup"
 else
-  bad "cleanup" "output, daemon, or fleetdeck-4711 tmux session remains"
+  bad "cleanup" "output, daemon, or isolated tmux server session remains"
 fi
 
 echo

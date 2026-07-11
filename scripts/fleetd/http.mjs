@@ -3,6 +3,7 @@
 // Hook endpoints answer with hook-output JSON directly; every
 // handler fails open — an internal error still returns 200 {} so a hook can
 // never break a session. Board/control API: /health /state /mail /command,
+// /api/cleanup,
 // static board at / + /assets/* (built React app from board-dist), the spike
 // board at /plain, and WS /ws (snapshot on connect, on every mutation, 5 s
 // heartbeat).
@@ -239,7 +240,24 @@ export function createHttp(core, { port, boardFile, version = '0.0.0', capture =
               }
               return json(res, 200, handler(ev) ?? {});
             }
-            if (url.pathname === '/mail') return json(res, 200, core.postMail(ev));
+            if (url.pathname === '/mail') {
+              core.postMail(ev)
+                .then(out => json(res, 200, out))
+                .catch(err => {
+                  console.error('fleetd mail error:', err);
+                  json(res, 500, { ok: false, err: 'internal' });
+                });
+              return;
+            }
+            if (url.pathname === '/api/cleanup') {
+              core.cleanup()
+                .then(out => json(res, 200, out))
+                .catch(err => {
+                  console.error('fleetd cleanup error:', err);
+                  json(res, 500, { ok: false, err: 'internal' });
+                });
+              return;
+            }
             if (url.pathname === '/command') return json(res, 200, core.command(ev.text));
             if (url.pathname === '/api/spawn') {
               // v1.2 board spawn (CONTRACT). Control API like the questions

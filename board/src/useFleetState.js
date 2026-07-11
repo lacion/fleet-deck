@@ -19,6 +19,7 @@ const EMPTY = {
   ticker: [],
   conflicts: [],
   mail_pending: {},
+  mail_meta: {}, // {sid: {queued, oldest_at, route}} — route: watcher|pane|turn-boundary|offline-queued
   questions: [],
   spawn: null, // v1.2 capability: {available, reason?, max, active}
   spawn_orphans: [],

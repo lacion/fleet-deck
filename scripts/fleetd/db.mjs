@@ -33,7 +33,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   ended_at          INTEGER,
   blocked_this_turn INTEGER DEFAULT 0,
   source            TEXT DEFAULT 'hooks',
-  notification_type TEXT
+  notification_type TEXT,
+  archived_at       INTEGER
 );
 CREATE TABLE IF NOT EXISTS file_touches (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -52,7 +53,8 @@ CREATE TABLE IF NOT EXISTS mail (
   from_id      TEXT,
   text         TEXT,
   at           INTEGER,
-  delivered_at INTEGER
+  delivered_at INTEGER,
+  expired_at   INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_mail_to ON mail(to_session, delivered_at);
 CREATE TABLE IF NOT EXISTS events (
@@ -105,7 +107,7 @@ CREATE TABLE IF NOT EXISTS spawns (
   cwd           TEXT,               -- requested cwd (the form value)
   worktree_path TEXT,               -- effective cwd when worktree:true, else NULL
   requested_at  INTEGER,
-  status        TEXT DEFAULT 'spawning',  -- spawning | live | pane-dead | killed | gone
+  status        TEXT DEFAULT 'spawning',  -- spawning | stalled | live | pane-dead | killed | gone
   skip_permissions INTEGER DEFAULT 0     -- v1.3 unsupervised spawn (either bypass form)
 );
 CREATE INDEX IF NOT EXISTS idx_spawns_session ON spawns(session_id);
@@ -142,6 +144,8 @@ CREATE INDEX IF NOT EXISTS idx_plans_question ON plans(question_id);
 // `spawns` shipped in v1.2 — pre-v1.3 databases need the additive
 // `skip_permissions` column backfilled here. Default 0 matches every
 // pre-existing row's truth (the flag did not exist to be requested).
+// Retention is additive too: archived/expired timestamps preserve all rows
+// for forensics while removing them from live board/delivery queries.
 function migrate(db) {
   const cols = db.prepare('PRAGMA table_info(sessions)').all().map(r => r.name);
   if (!cols.includes('source')) {
@@ -149,6 +153,13 @@ function migrate(db) {
   }
   if (!cols.includes('notification_type')) {
     db.exec('ALTER TABLE sessions ADD COLUMN notification_type TEXT');
+  }
+  if (!cols.includes('archived_at')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN archived_at INTEGER');
+  }
+  const mailCols = db.prepare('PRAGMA table_info(mail)').all().map(r => r.name);
+  if (!mailCols.includes('expired_at')) {
+    db.exec('ALTER TABLE mail ADD COLUMN expired_at INTEGER');
   }
   const spawnCols = db.prepare('PRAGMA table_info(spawns)').all().map(r => r.name);
   if (spawnCols.length && !spawnCols.includes('skip_permissions')) {

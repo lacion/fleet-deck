@@ -17,6 +17,8 @@
 //     Verified: a dead pane keeps reporting the ORIGINAL command in
 //     #{pane_current_command} (with #{pane_dead}=1), so liveness checks MUST
 //     read pane_dead too — the command name alone would say "claude" forever.
+//   - FLEETDECK_TMUX_SOCKET selects an isolated tmux server with `-L <name>`
+//     for every adapter command. Blank values retain tmux's default socket.
 //
 // Test override (CONTRACT): FLEETDECK_SPAWN_CMD — when set, the daemon runs
 // argv [FLEETDECK_SPAWN_CMD, JSON.stringify(spec)] instead of tmux; the
@@ -35,7 +37,9 @@ const US = '\u001f'; // unit separator — never appears in tmux names in practi
 function tmux(args) {
   return new Promise((resolve) => {
     try {
-      execFile('tmux', args, { timeout: TMUX_TIMEOUT_MS, windowsHide: true }, (err, stdout) => {
+      const socket = process.env.FLEETDECK_TMUX_SOCKET?.trim();
+      const argv = socket ? ['-L', socket, ...args] : args;
+      execFile('tmux', argv, { timeout: TMUX_TIMEOUT_MS, windowsHide: true }, (err, stdout) => {
         resolve(err ? null : (stdout ?? ''));
       });
     } catch {
@@ -161,11 +165,21 @@ export async function killWindowVerified(name) {
   return { ok: false, error: 'tmux kill-window failed' };
 }
 
-/** THE one keystroke injection permitted, ever (CONTRACT): a single Enter to
- * clear the trust dialog during bring-up. Caller (derive.mjs) enforces
- * at-most-once per spawn. */
-export async function sendBringupEnter(target) {
+/** The two sanctioned owned-pane injections (CONTRACT) are: one bring-up
+ * Enter for the trust dialog, and bracketed-paste mail followed by Enter.
+ * All user text still travels only as argv elements; no shell is involved. */
+export async function pasteText(target, text) {
+  if (await tmux(['set-buffer', '-b', 'fdmail', '--', String(text)]) === null) return false;
+  return (await tmux(['paste-buffer', '-p', '-d', '-b', 'fdmail', '-t', target])) !== null;
+}
+
+export async function sendEnter(target) {
   return (await tmux(['send-keys', '-t', target, 'Enter'])) !== null;
+}
+
+/** Bring-up compatibility export; caller enforces at-most-once per spawn. */
+export async function sendBringupEnter(target) {
+  return sendEnter(target);
 }
 
 // ------------------------------------------------------------ test override

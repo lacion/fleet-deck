@@ -19,6 +19,35 @@ FLEETDECK_PORT="${FLEETDECK_PORT:-4711}"
 SCRATCH_HOME="${FLEETDECK_HOME_OVERRIDE:-$FLEETDECK_ROOT/.fleetdeck-test}"
 BASE="http://127.0.0.1:$FLEETDECK_PORT"
 
+# Isolated tmux server for THIS run only, never the user's default server.
+# The fleetd elected by the sessions' SessionStart hook inherits this env and
+# runs all its tmux calls as `tmux -L $FLEETDECK_TMUX_SOCKET`. Without it, a
+# test-env daemon starting the default tmux server would bake FLEETDECK_*
+# test values into that server's global env — poisoning every window (and
+# production spawn) created there later.
+export FLEETDECK_TMUX_SOCKET="fdaccept-$$"
+
+# Kill the isolated tmux server (if anything ever spawned into it) with the
+# run; the default server is never touched.
+cleanup_tmux_server() {
+  command -v tmux >/dev/null 2>&1 || return 0
+  tmux -L "$FLEETDECK_TMUX_SOCKET" kill-server 2>/dev/null || true
+}
+trap cleanup_tmux_server EXIT
+
+# Claude-session env vars that must never leak into the sessions (and through
+# their SessionStart hook, into the elected daemon): a daemon or tmux server
+# inheriting them can mislead later spawns into reporting to the wrong fleet.
+# Passed to `env` as -u flags.
+CLAUDE_ENV_SCRUB=(
+  -u CLAUDECODE -u CLAUDE_CODE_SESSION_ID -u CLAUDE_CODE_CHILD_SESSION
+  -u CLAUDE_CODE_BRIDGE_SESSION_ID -u CLAUDE_CODE_ENTRYPOINT
+  -u CLAUDE_CODE_EXECPATH -u CLAUDE_ENV_FILE -u CLAUDE_PROJECT_DIR
+  -u CLAUDE_PLUGIN_ROOT -u CLAUDE_PLUGIN_DATA -u CLAUDE_EFFORT
+  -u AI_AGENT -u CODEX_COMPANION_SESSION_ID -u CODEX_COMPANION_TRANSCRIPT_PATH
+  -u TMUX -u TMUX_PANE
+)
+
 echo "== Fleet Deck Phase 3 acceptance =="
 
 # ---------------------------------------------------------------- reset
@@ -81,8 +110,9 @@ bad() { echo "FAIL: $1${2:+ -- $2}"; FAIL=$((FAIL+1)); }
 # NO --dangerously-skip-permissions: the Bash call needs a permission
 # decision, which must come from the board via the held PermissionRequest.
 S1=$(node -e 'console.log(crypto.randomUUID())')
-env -u CLAUDE_CODE_SESSION_ID -u CLAUDE_CODE_CHILD_SESSION \
+env "${CLAUDE_ENV_SCRUB[@]}" \
   FLEETDECK_HOME="$SCRATCH_HOME" FLEETDECK_PORT="$FLEETDECK_PORT" \
+  FLEETDECK_TMUX_SOCKET="$FLEETDECK_TMUX_SOCKET" \
   timeout 240 claude -p "Use the Bash tool to create a file named fleet-perm-proof.txt containing exactly the text FLEET_PERMISSION_OK (e.g. printf 'FLEET_PERMISSION_OK' > fleet-perm-proof.txt), then cat it and report its contents. Then stop." \
   --session-id "$S1" --max-turns 6 --permission-mode default \
   --output-format json > "$DEMO_LOGS/p3-perm.json" 2> "$DEMO_LOGS/p3-perm.err" &
@@ -119,8 +149,9 @@ fi
 
 # ============================================== PART 2: freeform Q&A
 S2=$(node -e 'console.log(crypto.randomUUID())')
-env -u CLAUDE_CODE_SESSION_ID -u CLAUDE_CODE_CHILD_SESSION \
+env "${CLAUDE_ENV_SCRUB[@]}" \
   FLEETDECK_HOME="$SCRATCH_HOME" FLEETDECK_PORT="$FLEETDECK_PORT" \
+  FLEETDECK_TMUX_SOCKET="$FLEETDECK_TMUX_SOCKET" \
   timeout 240 claude -p "You need one decision from the human before doing anything: should the project use bcrypt or argon2 for password hashing? Do not decide yourself and do not do any other work. End your reply with that single question addressed to me." \
   --session-id "$S2" --max-turns 4 --dangerously-skip-permissions \
   --output-format json > "$DEMO_LOGS/p3-freeform.json" 2> "$DEMO_LOGS/p3-freeform.err"
@@ -143,8 +174,9 @@ else
 fi
 
 # Next boundary: resume the same session; UserPromptSubmit must deliver the answer.
-env -u CLAUDE_CODE_SESSION_ID -u CLAUDE_CODE_CHILD_SESSION \
+env "${CLAUDE_ENV_SCRUB[@]}" \
   FLEETDECK_HOME="$SCRATCH_HOME" FLEETDECK_PORT="$FLEETDECK_PORT" \
+  FLEETDECK_TMUX_SOCKET="$FLEETDECK_TMUX_SOCKET" \
   timeout 240 claude -p --resume "$S2" "Continue based on my answer. State which algorithm you will use and why, in one sentence." \
   --max-turns 4 --dangerously-skip-permissions \
   --output-format json > "$DEMO_LOGS/p3-resume.json" 2> "$DEMO_LOGS/p3-resume.err"

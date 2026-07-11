@@ -74,6 +74,11 @@ claude plugin install fleetdeck@fleetdeck
 - **Version pin: Claude Code CLI 2.1.206.** Fleet Deck leans on a couple of behaviors the docs don't mention (they work; we checked, repeatedly, at some cost to our dignity). A guard test fails loudly if a CLI update drops them. Contract tests replay recorded hook payloads so schema drift is caught in CI, not in your fleet.
 - **Ports:** `FLEETDECK_PORT` / `FLEETDECK_HOME` env vars; hooks are pinned to 4711 by default, so a truly separate fleet needs the port swapped in a copy of `hooks/hooks.json` too. On multi-user machines give each OS user their own port — TCP ports are shared per machine, and you probably don't want to co-manage a fleet with whoever else is on that box.
 
+### Tmux isolation & the one-port rule
+
+- **`FLEETDECK_TMUX_SOCKET`** — when set, the daemon runs every tmux command against that named server (`tmux -L <socket>`) instead of your default one. The tests and `demo/` scripts always set it, and the reason is a scar, not a style choice: tmux bakes the **first client's environment** into a new server's global env, and every window created later inherits it. We once let an acceptance run start the default tmux server from inside a test session — and that evening's production spawns dutifully inherited the test `FLEETDECK_PORT`/`FLEETDECK_HOME` and reported to a ghost daemon nobody was watching. The demo scripts now use a per-run socket (`fdaccept-<pid>`) and `kill-server` it on exit; your default tmux server is never touched. Leave the variable unset in production.
+- **4711 is the supported production port.** The plugin's http hooks in `hooks/hooks.json` are pinned to 4711, while the SessionStart and watch scripts honor `FLEETDECK_PORT` — so running a fleet on any other port splits your hook traffic between two daemons, and neither one sees the whole picture. If you genuinely need a different port, swap it in a copy of `hooks/hooks.json` too (see the ports note above).
+
 ## Development
 
 ```bash

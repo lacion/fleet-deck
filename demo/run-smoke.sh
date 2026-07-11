@@ -29,11 +29,41 @@ FLEETDECK_PORT="${FLEETDECK_PORT:-4711}"
 # repo's own .gitignore entry for `.fleetdeck-test/`.
 SCRATCH_HOME="${FLEETDECK_HOME_OVERRIDE:-$FLEETDECK_ROOT/.fleetdeck-test}"
 
+# Isolated tmux server for THIS run only, never the user's default server.
+# The fleetd elected by the workers' SessionStart hook inherits this env and
+# runs all its tmux calls as `tmux -L $FLEETDECK_TMUX_SOCKET`. Without it, a
+# test-env daemon starting the default tmux server would bake FLEETDECK_*
+# test values into that server's global env — poisoning every window (and
+# production spawn) created there later.
+export FLEETDECK_TMUX_SOCKET="fdaccept-$$"
+
+# Kill the isolated tmux server (if anything ever spawned into it) with the
+# run; the default server is never touched.
+cleanup_tmux_server() {
+  command -v tmux >/dev/null 2>&1 || return 0
+  tmux -L "$FLEETDECK_TMUX_SOCKET" kill-server 2>/dev/null || true
+}
+trap cleanup_tmux_server EXIT
+
+# Claude-session env vars that must never leak into the workers (and through
+# their SessionStart hook, into the elected daemon): a daemon or tmux server
+# inheriting them can mislead later spawns into reporting to the wrong fleet.
+# Passed to `env` as -u flags.
+CLAUDE_ENV_SCRUB=(
+  -u CLAUDECODE -u CLAUDE_CODE_SESSION_ID -u CLAUDE_CODE_CHILD_SESSION
+  -u CLAUDE_CODE_BRIDGE_SESSION_ID -u CLAUDE_CODE_ENTRYPOINT
+  -u CLAUDE_CODE_EXECPATH -u CLAUDE_ENV_FILE -u CLAUDE_PROJECT_DIR
+  -u CLAUDE_PLUGIN_ROOT -u CLAUDE_PLUGIN_DATA -u CLAUDE_EFFORT
+  -u AI_AGENT -u CODEX_COMPANION_SESSION_ID -u CODEX_COMPANION_TRANSCRIPT_PATH
+  -u TMUX -u TMUX_PANE
+)
+
 echo "== Fleet Deck Phase 1 smoke =="
-echo "FLEETDECK_ROOT   = $FLEETDECK_ROOT"
-echo "PROJECT_DIR      = $PROJECT_DIR"
-echo "SCRATCH_HOME     = $SCRATCH_HOME"
-echo "FLEETDECK_PORT   = $FLEETDECK_PORT"
+echo "FLEETDECK_ROOT        = $FLEETDECK_ROOT"
+echo "PROJECT_DIR           = $PROJECT_DIR"
+echo "SCRATCH_HOME          = $SCRATCH_HOME"
+echo "FLEETDECK_PORT        = $FLEETDECK_PORT"
+echo "FLEETDECK_TMUX_SOCKET = $FLEETDECK_TMUX_SOCKET"
 echo
 
 # ---------------------------------------------------------------- 1. reset
@@ -142,8 +172,9 @@ echo "$SB" > "$DEMO_LOGS/sid-b.txt"
 
 cd "$PROJECT_DIR"
 
-env -u CLAUDE_CODE_SESSION_ID -u CLAUDE_CODE_CHILD_SESSION \
+env "${CLAUDE_ENV_SCRUB[@]}" \
   FLEETDECK_HOME="$SCRATCH_HOME" FLEETDECK_PORT="$FLEETDECK_PORT" \
+  FLEETDECK_TMUX_SOCKET="$FLEETDECK_TMUX_SOCKET" \
   timeout 300 claude -p "Add an exported function slugify(s) to util.js (lowercase, trim, spaces to dashes, strip punctuation). Add assert-based tests for it in test.js (create or extend). Verify each edge case one at a time with separate 'node -e' commands: spaces, capitals, punctuation, empty string. Then run node test.js. Preserve any existing exports. Work step by step, one small change per edit." \
   --session-id "$SA" --max-turns 24 --dangerously-skip-permissions \
   --output-format json > "$DEMO_LOGS/worker-a.json" 2> "$DEMO_LOGS/worker-a.err" &
@@ -152,8 +183,9 @@ echo "T+0 session A launched sid=$SA"
 
 sleep 15
 
-env -u CLAUDE_CODE_SESSION_ID -u CLAUDE_CODE_CHILD_SESSION \
+env "${CLAUDE_ENV_SCRUB[@]}" \
   FLEETDECK_HOME="$SCRATCH_HOME" FLEETDECK_PORT="$FLEETDECK_PORT" \
+  FLEETDECK_TMUX_SOCKET="$FLEETDECK_TMUX_SOCKET" \
   timeout 300 claude -p "Add an exported function titleCase(s) to util.js (capitalize each word). Add assert-based tests for it in test.js (create or extend). Verify edge cases one at a time with separate 'node -e' commands: single word, multiple words, empty string. Then run node test.js. IMPORTANT: preserve any existing exports and tests you find. Work step by step, one small change per edit." \
   --session-id "$SB" --max-turns 24 --dangerously-skip-permissions \
   --output-format json > "$DEMO_LOGS/worker-b.json" 2> "$DEMO_LOGS/worker-b.err" &

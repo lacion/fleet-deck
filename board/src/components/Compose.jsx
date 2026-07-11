@@ -2,6 +2,19 @@ import React, { useEffect, useRef, useState } from 'react';
 import { sendMail, sendCommand } from '../api.js';
 import { basename } from '../util.js';
 
+// Honest per-target feedback from POST /mail `targets` ({session_id, callsign,
+// route}). watcher/pane routes deliver without the human doing anything;
+// turn-boundary/offline-queued wait for the session itself.
+function deliveryNote(targets) {
+  if (!targets.length) return '→ sent — no matching recipients';
+  const names = (list) => list.map((t) => t.callsign || t.session_id).join(', ');
+  const now = targets.filter((t) => t.route === 'watcher' || t.route === 'pane');
+  const later = targets.filter((t) => t.route !== 'watcher' && t.route !== 'pane');
+  if (!later.length) return `→ delivering now to ${names(now)}`;
+  if (!now.length) return `→ queued for ${names(later)} — delivers at next turn boundary`;
+  return `→ delivering now to ${names(now)} · queued: ${names(later)} (next turn boundary)`;
+}
+
 // Compose modal: mail to a session / all / repo:<name>, or free text to the
 // orchestrator (POST /command — broadcast / assign / note).
 export default function Compose({ initialTarget, sessions, repos, onClose, onSent, spawnAvailable, onSpawnFor }) {
@@ -52,6 +65,11 @@ export default function Compose({ initialTarget, sessions, repos, onClose, onSen
         } else if (unrouted) {
           setNote('no available session — task logged');
           setUnroutedText(res.json?.text ?? sent);
+          setText('');
+        } else if (target !== 'daemon' && Array.isArray(res.json?.targets)) {
+          // fix C: the daemon now says HOW each recipient gets the mail —
+          // confirm inline (same affordance as daemon-command notes).
+          setNote(deliveryNote(res.json.targets));
           setText('');
         } else {
           onClose();
