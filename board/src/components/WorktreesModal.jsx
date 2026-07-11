@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { human } from '../util.js';
+import { human, copyText } from '../util.js';
 
 // v1.9 — the worktrees a spawn left behind.
 //
@@ -253,7 +253,34 @@ function WorktreeRow({ w, now, busy, err, onRemove }) {
         </div>
       )}
 
-      {err && <div className="fd-wterr">✗ {err}</div>}
+      {w.note && <div className="fd-wtnote">⚠ {w.note}</div>}
+
+      {err && (
+        <div className="fd-wterr">
+          <div>✗ {typeof err === 'string' ? err : err.reason}</div>
+          {/* A worktree is a working directory: a container run inside it can
+              leave paths owned by root. Fleet Deck never escalates — it names
+              what blocks it and hands over the command. */}
+          {err?.blocked_paths?.length > 0 && (
+            <>
+              <ul className="fd-wtblocked">
+                {err.blocked_paths.map((p) => (
+                  <li key={p}><code>{p}</code> <span className="own">owned by {err.blocked_owner}</span></li>
+                ))}
+              </ul>
+              <div className="fd-wtfix">
+                <code>{err.fix_command}</code>
+                <button
+                  type="button"
+                  className="fd-ghostbtn"
+                  onClick={() => copyText(err.fix_command)}
+                  title="copy the command"
+                >⧉ copy</button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -299,7 +326,7 @@ export default function WorktreesModal({ worktrees, loading, error, now, onReloa
     const res = await onRemove(w.path, opts);
     markBusy(w.path, false);
     if (res.ok) await onReload();
-    else setErrs((prev) => ({ ...prev, [w.path]: res.reason }));
+    else setErrs((prev) => ({ ...prev, [w.path]: res }));
   };
 
   // Sequential, one POST at a time — the daemon is running git per row, and a
@@ -318,7 +345,7 @@ export default function WorktreesModal({ worktrees, loading, error, now, onReloa
       if (res.ok) done += 1;
       else {
         failed.push(w.path);
-        setErrs((prev) => ({ ...prev, [w.path]: res.reason }));
+        setErrs((prev) => ({ ...prev, [w.path]: res }));
       }
     }
     setBulkBusy(false);

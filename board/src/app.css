@@ -896,3 +896,22 @@ textarea.fd-input { font-family: var(--font-ui); font-size: 13px; resize: none; 
 .fd-qdismiss:hover { color: var(--hazard); border-color: var(--hazard); }
 .fd-qdismiss:focus-visible { outline: 2px solid var(--act); outline-offset: 2px; }
 .fd-qdismiss:disabled { opacity: .5; cursor: default; }
+
+/* v1.9 — a removal the daemon may not perform: name what blocks it, and hand
+   over the exact command. Fleet Deck runs as you and never escalates to root. */
+.fd-wtblocked { margin: 6px 0 4px; padding-left: 16px; list-style: none; }
+.fd-wtblocked li { font-family: var(--font-data); font-size: 11px; color: var(--hazard); line-height: 1.7; }
+.fd-wtblocked .own { color: var(--faint); }
+.fd-wtfix {
+  display: flex; align-items: center; gap: 8px; margin-top: 6px; padding: 6px 8px;
+  background: var(--code); border: 1px solid var(--line); border-radius: 5px;
+}
+.fd-wtfix code {
+  flex: 1; min-width: 0; font-family: var(--font-data); font-size: 11px; color: var(--text);
+  overflow-x: auto; white-space: nowrap;
+}
+.fd-wtnote {
+  margin-top: 6px; padding: 6px 8px; font-size: 11px; line-height: 1.6;
+  color: var(--act); background: color-mix(in srgb, var(--act) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--act) 30%, transparent); border-radius: 5px;
+}

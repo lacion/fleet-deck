@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { openDb } from '../scripts/fleetd/db.mjs';
 import { startDaemon } from './helpers/daemon.mjs';
@@ -175,4 +176,92 @@ test('POST remove with delete_branch deletes the worktree branch', async (t) => 
     () => git(['show-ref', '--verify', '--quiet', 'refs/heads/wt-branch'], repo.root),
     /Command failed/,
   );
+});
+
+// THE false alarm, pinned. A local `main` is a cache, and a stale one lies.
+// Live incident: a worktree whose work was ALREADY merged on origin read as
+// "9 commits that exist nowhere else", because the local main was ten commits
+// behind. That is the exact reading that talks a human into force-deleting.
+test('work already on the remote is SAFE even when the local base branch is stale', async (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'fd-wt-stale-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+
+  const origin = path.join(dir, 'origin.git');
+  const repo = path.join(dir, 'repo');
+  const wt = path.join(dir, 'repo--fd-agent');
+  execFileSync('git', ['init', '--bare', '-b', 'main', origin]);
+  execFileSync('git', ['clone', origin, repo]);
+  const g = args => execFileSync('git', ['-C', repo, ...args], { stdio: 'ignore' });
+  g(['config', 'user.email', 't@t']); g(['config', 'user.name', 't']);
+  writeFileSync(path.join(repo, 'a.txt'), 'one\n');
+  g(['add', '-A']); g(['commit', '-m', 'base']); g(['push', 'origin', 'main']);
+
+  // an agent's worktree does work, and it lands on origin/main upstream…
+  g(['worktree', 'add', '-b', 'fd/agent', wt]);
+  writeFileSync(path.join(wt, 'b.txt'), 'agent work\n');
+  execFileSync('git', ['-C', wt, 'add', '-A'], { stdio: 'ignore' });
+  execFileSync('git', ['-C', wt, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-m', 'agent work'], { stdio: 'ignore' });
+  execFileSync('git', ['-C', wt, 'push', 'origin', 'HEAD:main'], { stdio: 'ignore' });
+  execFileSync('git', ['-C', wt, 'fetch', 'origin'], { stdio: 'ignore' });
+
+  // …while the LOCAL main never moved. This is the trap.
+  const localMain = execFileSync('git', ['-C', repo, 'rev-parse', 'main'], { encoding: 'utf8' }).trim();
+  const remoteMain = execFileSync('git', ['-C', repo, 'rev-parse', 'origin/main'], { encoding: 'utf8' }).trim();
+  assert.notEqual(localMain, remoteMain, 'sanity: the local base really is stale');
+
+  const daemon = await startDaemon();
+  t.after(async () => { await daemon.stop(); });
+  const db = openDb(daemon.dbPath ?? path.join(daemon.home, 'fleetd.db'));
+  t.after(() => db.close());
+  db.prepare(`INSERT INTO sessions (session_id, callsign, cwd, col, started_at, last_seen, ended_at, source)
+    VALUES ('s-stale', 'agent-1', ?, 'offline', 1, 1, 2, 'spawned')`).run(repo);
+  db.prepare(`INSERT INTO spawns (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, requested_at, status)
+    VALUES ('sp-stale', 's-stale', 'agent-1', 'fleetdeck-1', 'fd1-agent-1', ?, ?, 1, 'gone')`).run(repo, wt);
+
+  const res = await getJson(`${daemon.baseUrl}/api/worktrees`);
+  const item = res.json.worktrees.find(w => w.path === wt);
+  assert.ok(item, 'the worktree is listed');
+  assert.equal(item.unpushed, 0, 'commits that exist on a remote are NOT "nowhere else"');
+  assert.equal(item.verdict, 'safe', 'a stale local base must not manufacture a has-work verdict');
+  assert.equal(item.base, 'origin/main', 'the base measured against must be the remote one');
+});
+
+// A worktree is a working directory: build tooling leaves read-only files in
+// it, and `git worktree remove` then dies with one opaque "Permission denied".
+// What the daemon owns, it fixes and retries. (The other half of this — paths
+// owned by ROOT, which a container run inside the worktree leaves behind — is
+// reported with the blocking paths and their owner instead, and cannot be
+// exercised here without root. Fleet Deck never escalates.)
+test('a read-only directory the daemon owns is made writable and the removal retries', async (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'fd-wt-ro-'));
+  t.after(() => {
+    try { chmodSync(path.join(dir, 'repo--fd-ro', 'locked'), 0o700); } catch { /* already gone */ }
+    rmSync(dir, { recursive: true, force: true });
+  });
+  const repo = path.join(dir, 'repo');
+  const wt = path.join(dir, 'repo--fd-ro');
+  execFileSync('git', ['init', '-b', 'main', repo], { stdio: 'ignore' });
+  const g = args => execFileSync('git', ['-C', repo, ...args], { stdio: 'ignore' });
+  g(['config', 'user.email', 't@t']); g(['config', 'user.name', 't']);
+  writeFileSync(path.join(repo, 'a.txt'), 'one\n');
+  g(['add', '-A']); g(['commit', '-m', 'base']);
+  g(['worktree', 'add', '-b', 'fd/ro', wt]);
+
+  // an untracked, read-only directory — exactly what a build leaves behind
+  mkdirSync(path.join(wt, 'locked'));
+  writeFileSync(path.join(wt, 'locked', 'artifact.bin'), 'x');
+  chmodSync(path.join(wt, 'locked'), 0o500); // no write on the parent → unlink EACCES
+
+  const daemon = await startDaemon();
+  t.after(async () => { await daemon.stop(); });
+  const db = openDb(path.join(daemon.home, 'fleetd.db'));
+  t.after(() => db.close());
+  db.prepare(`INSERT INTO sessions (session_id, callsign, cwd, col, started_at, last_seen, ended_at, source)
+    VALUES ('s-ro', 'ro-1', ?, 'offline', 1, 1, 2, 'spawned')`).run(repo);
+  db.prepare(`INSERT INTO spawns (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, requested_at, status)
+    VALUES ('sp-ro', 's-ro', 'ro-1', 'fleetdeck-1', 'fd1-ro-1', ?, ?, 1, 'gone')`).run(repo, wt);
+
+  const res = await postJson(`${daemon.baseUrl}/api/worktrees/remove`, { path: wt, force: true });
+  assert.equal(res.status, 200, `removal should recover from a read-only dir it owns (got: ${JSON.stringify(res.json)})`);
+  assert.equal(existsSync(wt), false, 'the worktree is gone from disk');
 });

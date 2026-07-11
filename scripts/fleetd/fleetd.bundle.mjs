@@ -5287,15 +5287,21 @@ function createCore(db2, {
       unpushed: null,
       merged: null,
       last_commit: null,
+      note: null,
+      // why we cannot vouch for it — the board shows this verbatim
       verdict: exists ? "unknown" : "gone"
     };
   }
   async function baseBranch(worktree) {
-    const remote = await execFileP("git", ["-C", worktree, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"], { timeout: 5e3 });
-    if (remote.ok && remote.out.trim()) return remote.out.trim().replace(/^origin\//, "");
+    const head = await execFileP("git", ["-C", worktree, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"], { timeout: 5e3 });
+    if (head.ok && head.out.trim()) return { ref: head.out.trim(), local: false };
     for (const name of ["main", "master"]) {
-      const exists = await execFileP("git", ["-C", worktree, "show-ref", "--verify", "--quiet", `refs/heads/${name}`], { timeout: 5e3 });
-      if (exists.ok) return name;
+      const remote = await execFileP("git", ["-C", worktree, "show-ref", "--verify", "--quiet", `refs/remotes/origin/${name}`], { timeout: 5e3 });
+      if (remote.ok) return { ref: `origin/${name}`, local: false };
+    }
+    for (const name of ["main", "master"]) {
+      const local = await execFileP("git", ["-C", worktree, "show-ref", "--verify", "--quiet", `refs/heads/${name}`], { timeout: 5e3 });
+      if (local.ok) return { ref: name, local: true };
     }
     return null;
   }
@@ -5314,32 +5320,120 @@ function createCore(db2, {
       execFileP("git", ["-C", row.worktree_path, "log", "-1", "--format=%h%x00%s%x00%ct"], { timeout: 5e3 }),
       baseBranch(row.worktree_path)
     ]);
-    if (!branch.ok || !status.ok || !base) return item;
+    if (!branch.ok || !status.ok || !base) {
+      item.note = !branch.ok ? "git no longer recognises this directory as a worktree \u2014 a previous removal was interrupted. Whatever is inside cannot be checked from here; removal will report exactly what blocks it." : "git could not read this worktree.";
+      return item;
+    }
     item.branch = branch.out.trim() || null;
     const lines = status.out.split(/\r?\n/).filter(Boolean);
     item.dirty = lines.length;
     item.dirty_files = lines.slice(0, 10).map((line) => line.slice(3).trim());
-    item.base = base;
+    item.base = base.ref;
+    item.base_is_local = base.local;
     item.upstream = upstream.ok ? upstream.out.trim() || null : null;
     if (log.ok && log.out.trim()) {
       const [sha, subject, at] = log.out.trimEnd().split("\0");
       item.last_commit = { sha, subject, at: Number(at) };
     }
     const [ahead, unpushed, merged] = await Promise.all([
-      execFileP("git", ["-C", row.worktree_path, "rev-list", "--count", `${base}..HEAD`], { timeout: 5e3 }),
-      item.upstream ? execFileP("git", ["-C", row.worktree_path, "rev-list", "--count", "@{u}..HEAD"], { timeout: 5e3 }) : Promise.resolve(null),
-      execFileP("git", ["-C", row.worktree_path, "merge-base", "--is-ancestor", "HEAD", base], { timeout: 5e3 })
+      execFileP("git", ["-C", row.worktree_path, "rev-list", "--count", `${base.ref}..HEAD`], { timeout: 5e3 }),
+      // THE question, and the only one that decides whether deleting this
+      // destroys anything: are these commits on ANY remote-tracking ref? Not
+      // "ahead of my upstream", not "ahead of my local main" — both of those
+      // say yes to work that is already safely merged on the server. `--not
+      // --remotes` asks git for commits that exist on no remote we know of.
+      // (Knowledge is as of the last fetch; the board says so, and `?fetch=1`
+      // refreshes it.)
+      execFileP("git", ["-C", row.worktree_path, "rev-list", "--count", "HEAD", "--not", "--remotes"], { timeout: 5e3 }),
+      execFileP("git", ["-C", row.worktree_path, "merge-base", "--is-ancestor", "HEAD", base.ref], { timeout: 5e3 })
     ]);
-    if (!ahead.ok || unpushed && !unpushed.ok || !merged.ok && merged.code !== 1) return item;
+    if (!ahead.ok || !unpushed.ok || !merged.ok && merged.code !== 1) return item;
     item.ahead = Number(ahead.out.trim());
-    item.unpushed = item.upstream ? Number(unpushed.out.trim()) : item.ahead;
+    item.unpushed = Number(unpushed.out.trim());
     item.merged = merged.ok;
-    item.verdict = item.dirty > 0 || item.unpushed > 0 ? "has-work" : item.merged || item.unpushed === 0 ? "safe" : "unknown";
+    if (base.local) item.unpushed = item.merged ? 0 : item.ahead;
+    item.verdict = item.dirty > 0 || item.unpushed > 0 ? "has-work" : "safe";
     return item;
   }
   async function worktrees() {
     return { ok: true, worktrees: await mapLimit(worktreeRows(), 4, inspectWorktree) };
   }
+  async function chmodWritableWhereOwned(root) {
+    const uid = typeof process.getuid === "function" ? process.getuid() : null;
+    const walk = (dir, depth = 0) => {
+      if (depth > 12) return;
+      let entries = [];
+      try {
+        entries = fs3.readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        const full = path2.join(dir, entry.name);
+        let st;
+        try {
+          st = fs3.lstatSync(full);
+        } catch {
+          continue;
+        }
+        if (uid != null && st.uid !== uid) continue;
+        try {
+          fs3.chmodSync(full, st.mode | 128);
+        } catch {
+        }
+        if (entry.isDirectory() && !entry.isSymbolicLink()) walk(full, depth + 1);
+      }
+    };
+    try {
+      walk(root);
+    } catch {
+    }
+  }
+  function blockedPaths(root, limit = 8) {
+    const uid = typeof process.getuid === "function" ? process.getuid() : null;
+    const owners = /* @__PURE__ */ new Map();
+    const out = [];
+    const ownerOf = (st) => {
+      if (owners.has(st.uid)) return owners.get(st.uid);
+      let name = `uid ${st.uid}`;
+      try {
+        name = st.uid === 0 ? "root" : os.userInfo().uid === st.uid ? os.userInfo().username : name;
+      } catch {
+      }
+      owners.set(st.uid, name);
+      return name;
+    };
+    const walk = (dir, depth = 0) => {
+      if (out.length >= limit || depth > 12) return;
+      let entries = [];
+      try {
+        entries = fs3.readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        if (out.length >= limit) return;
+        const full = path2.join(dir, entry.name);
+        let st;
+        try {
+          st = fs3.lstatSync(full);
+        } catch {
+          continue;
+        }
+        if (uid != null && st.uid !== uid) {
+          out.push({ path: full, owner: ownerOf(st) });
+          continue;
+        }
+        if (entry.isDirectory() && !entry.isSymbolicLink()) walk(full, depth + 1);
+      }
+    };
+    try {
+      walk(root);
+    } catch {
+    }
+    return out;
+  }
+  const shellQuote = (s) => /^[A-Za-z0-9_@%+=:,./-]+$/.test(s) ? s : `'${String(s).replace(/'/g, `'\\''`)}'`;
   async function removeWorktree(body = {}) {
     if (typeof body?.path !== "string") {
       return { status: 400, body: { ok: false, reason: "not a fleet worktree" } };
@@ -5366,11 +5460,33 @@ function createCore(db2, {
     if (!repoResult.ok) return { status: 409, body: { ok: false, reason: "main repository unavailable" } };
     const repo = repoResult.out.trim();
     if (state.exists) {
+      await chmodWritableWhereOwned(row.worktree_path);
       const args = ["-C", repo, "worktree", "remove"];
       if (body.force === true) args.push("--force");
       args.push(row.worktree_path);
       const removed = await execFileP("git", args, { timeout: 3e4 });
-      if (!removed.ok) return { status: 409, body: { ok: false, reason: `git worktree remove failed: ${removed.err}`.slice(0, 300) } };
+      if (!removed.ok) {
+        const blocked = blockedPaths(row.worktree_path);
+        if (blocked.length) {
+          return {
+            status: 409,
+            body: {
+              ok: false,
+              reason: `blocked by ${blocked.length} path(s) this daemon may not delete \u2014 owned by ${[...new Set(blocked.map((b) => b.owner))].join(", ")}. Fleet Deck runs as you and never escalates to root.`,
+              blocked_paths: blocked.map((b) => b.path),
+              blocked_owner: blocked[0].owner,
+              fix_command: `sudo rm -rf ${blocked.map((b) => shellQuote(b.path)).join(" ")} && git -C ${shellQuote(repo)} worktree prune`
+            }
+          };
+        }
+        try {
+          fs3.rmSync(row.worktree_path, { recursive: true, force: true });
+        } catch (err) {
+          return { status: 409, body: { ok: false, reason: `could not remove worktree: ${err.code || err.message}` } };
+        }
+        const pruned = await execFileP("git", ["-C", repo, "worktree", "prune"], { timeout: 3e4 });
+        if (!pruned.ok) return { status: 409, body: { ok: false, reason: `git worktree prune failed: ${pruned.err}`.slice(0, 300) } };
+      }
     } else {
       const pruned = await execFileP("git", ["-C", repo, "worktree", "prune"], { timeout: 3e4 });
       if (!pruned.ok) return { status: 409, body: { ok: false, reason: `git worktree prune failed: ${pruned.err}`.slice(0, 300) } };

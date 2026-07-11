@@ -1024,16 +1024,33 @@ export function createCore(db, {
       unpushed: null,
       merged: null,
       last_commit: null,
+      note: null, // why we cannot vouch for it — the board shows this verbatim
       verdict: exists ? 'unknown' : 'gone',
     };
   }
 
+  // The base we measure against is the REMOTE one (origin/main), not the local
+  // branch of the same name — and that distinction is the whole feature.
+  //
+  // A local `main` is a cache, and a stale one lies. Measured against a local
+  // main that was ten commits behind, a worktree whose work had ALREADY been
+  // merged upstream read as "9 commits that exist nowhere else" — the exact
+  // false alarm that pushes a human toward force-deleting, or (worse) toward
+  // not trusting the warning the one time it is real. Verified the hard way.
+  //
+  // Falls back to the local branch only when no remote-tracking ref exists at
+  // all (a repo with no remote); the caller flags that as base_is_local so the
+  // board can say its knowledge is local-only.
   async function baseBranch(worktree) {
-    const remote = await execFileP('git', ['-C', worktree, 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], { timeout: 5_000 });
-    if (remote.ok && remote.out.trim()) return remote.out.trim().replace(/^origin\//, '');
+    const head = await execFileP('git', ['-C', worktree, 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], { timeout: 5_000 });
+    if (head.ok && head.out.trim()) return { ref: head.out.trim(), local: false }; // e.g. origin/main
     for (const name of ['main', 'master']) {
-      const exists = await execFileP('git', ['-C', worktree, 'show-ref', '--verify', '--quiet', `refs/heads/${name}`], { timeout: 5_000 });
-      if (exists.ok) return name;
+      const remote = await execFileP('git', ['-C', worktree, 'show-ref', '--verify', '--quiet', `refs/remotes/origin/${name}`], { timeout: 5_000 });
+      if (remote.ok) return { ref: `origin/${name}`, local: false };
+    }
+    for (const name of ['main', 'master']) {
+      const local = await execFileP('git', ['-C', worktree, 'show-ref', '--verify', '--quiet', `refs/heads/${name}`], { timeout: 5_000 });
+      if (local.ok) return { ref: name, local: true };
     }
     return null;
   }
@@ -1054,13 +1071,26 @@ export function createCore(db, {
     // Missing upstream and an empty log are valid repository states. Branch,
     // status, and a resolvable base are the minimum evidence needed to make a
     // destructive verdict; absent any of them, UNKNOWN is the only safe word.
-    if (!branch.ok || !status.ok || !base) return item;
+    if (!branch.ok || !status.ok || !base) {
+      // The commonest cause, and it has a story: an interrupted removal. git
+      // unlinks its worktree admin entry BEFORE it deletes the files, so a
+      // removal that dies on an undeletable path (a root-owned directory a
+      // container left behind) leaves the directory standing and orphaned —
+      // git no longer recognises it, and nothing can be verified about what is
+      // inside. Never call that 'safe'.
+      item.note = !branch.ok
+        ? 'git no longer recognises this directory as a worktree — a previous removal was interrupted. '
+          + 'Whatever is inside cannot be checked from here; removal will report exactly what blocks it.'
+        : 'git could not read this worktree.';
+      return item;
+    }
 
     item.branch = branch.out.trim() || null;
     const lines = status.out.split(/\r?\n/).filter(Boolean);
     item.dirty = lines.length;
     item.dirty_files = lines.slice(0, 10).map(line => line.slice(3).trim());
-    item.base = base;
+    item.base = base.ref;
+    item.base_is_local = base.local; // no remote to check against — say so
     item.upstream = upstream.ok ? (upstream.out.trim() || null) : null;
     if (log.ok && log.out.trim()) {
       const [sha, subject, at] = log.out.trimEnd().split('\0');
@@ -1068,19 +1098,25 @@ export function createCore(db, {
     }
 
     const [ahead, unpushed, merged] = await Promise.all([
-      execFileP('git', ['-C', row.worktree_path, 'rev-list', '--count', `${base}..HEAD`], { timeout: 5_000 }),
-      item.upstream
-        ? execFileP('git', ['-C', row.worktree_path, 'rev-list', '--count', '@{u}..HEAD'], { timeout: 5_000 })
-        : Promise.resolve(null),
-      execFileP('git', ['-C', row.worktree_path, 'merge-base', '--is-ancestor', 'HEAD', base], { timeout: 5_000 }),
+      execFileP('git', ['-C', row.worktree_path, 'rev-list', '--count', `${base.ref}..HEAD`], { timeout: 5_000 }),
+      // THE question, and the only one that decides whether deleting this
+      // destroys anything: are these commits on ANY remote-tracking ref? Not
+      // "ahead of my upstream", not "ahead of my local main" — both of those
+      // say yes to work that is already safely merged on the server. `--not
+      // --remotes` asks git for commits that exist on no remote we know of.
+      // (Knowledge is as of the last fetch; the board says so, and `?fetch=1`
+      // refreshes it.)
+      execFileP('git', ['-C', row.worktree_path, 'rev-list', '--count', 'HEAD', '--not', '--remotes'], { timeout: 5_000 }),
+      execFileP('git', ['-C', row.worktree_path, 'merge-base', '--is-ancestor', 'HEAD', base.ref], { timeout: 5_000 }),
     ]);
-    if (!ahead.ok || (unpushed && !unpushed.ok) || (!merged.ok && merged.code !== 1)) return item;
+    if (!ahead.ok || !unpushed.ok || (!merged.ok && merged.code !== 1)) return item;
     item.ahead = Number(ahead.out.trim());
-    item.unpushed = item.upstream ? Number(unpushed.out.trim()) : item.ahead;
+    item.unpushed = Number(unpushed.out.trim());
     item.merged = merged.ok;
-    item.verdict = item.dirty > 0 || item.unpushed > 0
-      ? 'has-work'
-      : (item.merged || item.unpushed === 0 ? 'safe' : 'unknown');
+    // A repo with no remote at all cannot prove anything lives elsewhere, so
+    // "merged into the local base" is the strongest safety it can offer.
+    if (base.local) item.unpushed = item.merged ? 0 : item.ahead;
+    item.verdict = item.dirty > 0 || item.unpushed > 0 ? 'has-work' : 'safe';
     return item;
   }
 
@@ -1091,6 +1127,65 @@ export function createCore(db, {
   // CONTRACT: removal reuses the inspector's daemon verdict, but the DB
   // allow-list and liveness gates come first. UNKNOWN also requires force:
   // inability to prove safety must never become permission to destroy data.
+  // Only ever inside a path the daemon itself created (the caller has already
+  // proved that against the spawns table). Restores write permission on the
+  // directories WE own — a read-only build artifact is our mess to clear — and
+  // silently steps over anything owned by someone else. Never chmods what it
+  // does not own, never recurses outside the worktree.
+  async function chmodWritableWhereOwned(root) {
+    const uid = typeof process.getuid === 'function' ? process.getuid() : null;
+    const walk = (dir, depth = 0) => {
+      if (depth > 12) return; // a worktree is not a filesystem crawl
+      let entries = [];
+      try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+      for (const entry of entries) {
+        const full = path.join(dir, entry.name);
+        let st;
+        try { st = fs.lstatSync(full); } catch { continue; }
+        if (uid != null && st.uid !== uid) continue; // not ours — leave it alone
+        try { fs.chmodSync(full, st.mode | 0o200); } catch { /* best effort */ }
+        if (entry.isDirectory() && !entry.isSymbolicLink()) walk(full, depth + 1);
+      }
+    };
+    try { walk(root); } catch { /* best effort: the retry will tell the truth */ }
+  }
+
+  // What actually stands in the way, named. A path we cannot unlink is one whose
+  // PARENT we cannot write to (that is what unlink(2) checks) — reporting the
+  // child alone would send the human chasing the wrong file.
+  function blockedPaths(root, limit = 8) {
+    const uid = typeof process.getuid === 'function' ? process.getuid() : null;
+    const owners = new Map();
+    const out = [];
+    const ownerOf = st => {
+      if (owners.has(st.uid)) return owners.get(st.uid);
+      let name = `uid ${st.uid}`;
+      try { name = st.uid === 0 ? 'root' : (os.userInfo().uid === st.uid ? os.userInfo().username : name); } catch { /* keep uid */ }
+      owners.set(st.uid, name);
+      return name;
+    };
+    const walk = (dir, depth = 0) => {
+      if (out.length >= limit || depth > 12) return;
+      let entries = [];
+      try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+      for (const entry of entries) {
+        if (out.length >= limit) return;
+        const full = path.join(dir, entry.name);
+        let st;
+        try { st = fs.lstatSync(full); } catch { continue; }
+        if (uid != null && st.uid !== uid) {
+          out.push({ path: full, owner: ownerOf(st) });
+          continue; // do not descend into someone else's tree
+        }
+        if (entry.isDirectory() && !entry.isSymbolicLink()) walk(full, depth + 1);
+      }
+    };
+    try { walk(root); } catch { /* nothing to add */ }
+    return out;
+  }
+
+  const shellQuote = s => (/^[A-Za-z0-9_@%+=:,./-]+$/.test(s) ? s : `'${String(s).replace(/'/g, `'\\''`)}'`);
+
   async function removeWorktree(body = {}) {
     if (typeof body?.path !== 'string') {
       return { status: 400, body: { ok: false, reason: 'not a fleet worktree' } };
@@ -1119,11 +1214,53 @@ export function createCore(db, {
     if (!repoResult.ok) return { status: 409, body: { ok: false, reason: 'main repository unavailable' } };
     const repo = repoResult.out.trim();
     if (state.exists) {
+      // "Permission denied" is a diagnosis, not an answer. A worktree is a
+      // WORKING directory: build tooling leaves read-only files in it, and a
+      // container run from inside it leaves paths owned by ROOT (the real case
+      // that found this: a Zitadel init wrote secrets/ as root:root). git then
+      // refuses the whole removal with one opaque line and no way forward.
+      //
+      // Clear what we legitimately can FIRST — a failed `worktree remove` can
+      // leave the tree half-dismantled (git unlinks its .git file before it
+      // hits the undeletable file), and the retry then fails with a *different*
+      // and even less useful error.
+      await chmodWritableWhereOwned(row.worktree_path);
+
       const args = ['-C', repo, 'worktree', 'remove'];
       if (body.force === true) args.push('--force');
       args.push(row.worktree_path);
       const removed = await execFileP('git', args, { timeout: 30_000 });
-      if (!removed.ok) return { status: 409, body: { ok: false, reason: `git worktree remove failed: ${removed.err}`.slice(0, 300) } };
+
+      if (!removed.ok) {
+        // Anything left belongs to somebody else. This daemon runs as you and
+        // does NOT escalate to root — so it names the paths and their owner,
+        // hands over the exact command, and stops.
+        const blocked = blockedPaths(row.worktree_path);
+        if (blocked.length) {
+          return {
+            status: 409,
+            body: {
+              ok: false,
+              reason: `blocked by ${blocked.length} path(s) this daemon may not delete — owned by `
+                + `${[...new Set(blocked.map(b => b.owner))].join(', ')}. Fleet Deck runs as you and never escalates to root.`,
+              blocked_paths: blocked.map(b => b.path),
+              blocked_owner: blocked[0].owner,
+              fix_command: `sudo rm -rf ${blocked.map(b => shellQuote(b.path)).join(' ')} `
+                + `&& git -C ${shellQuote(repo)} worktree prune`,
+            },
+          };
+        }
+        // Nothing foreign in the way: git is just being git (a half-removed
+        // tree it no longer recognises). Take the directory down ourselves and
+        // let git reconcile its admin files.
+        try {
+          fs.rmSync(row.worktree_path, { recursive: true, force: true });
+        } catch (err) {
+          return { status: 409, body: { ok: false, reason: `could not remove worktree: ${err.code || err.message}` } };
+        }
+        const pruned = await execFileP('git', ['-C', repo, 'worktree', 'prune'], { timeout: 30_000 });
+        if (!pruned.ok) return { status: 409, body: { ok: false, reason: `git worktree prune failed: ${pruned.err}`.slice(0, 300) } };
+      }
     } else {
       const pruned = await execFileP('git', ['-C', repo, 'worktree', 'prune'], { timeout: 30_000 });
       if (!pruned.ok) return { status: 409, body: { ok: false, reason: `git worktree prune failed: ${pruned.err}`.slice(0, 300) } };
