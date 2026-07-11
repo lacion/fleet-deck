@@ -8,7 +8,8 @@ import { COLS, boardCol, basename } from '../util.js';
 // question lives in the global rail.
 export default function BoardLanes({
   sessions, repos, conflicts, mailPending, mailMeta, now, compact, stale,
-  repoFilter, onRepoFilter, ripples, priorities, onOpenSession,
+  repoFilter, onRepoFilter, ripples, priorities, onOpenSession, onOpenTerm,
+  reviving, revivingAll, onRevive, onReviveAll, enablingRemote, onEnableRemote, onKill,
 }) {
   const repoKey = (s) => s.repo_id ?? '(none)';
 
@@ -30,6 +31,10 @@ export default function BoardLanes({
     ...c,
     count: visible.filter((s) => boardCol(s.col) === c.key).length,
   }));
+
+  // v1.5 — dead board-spawned agents whose worktree + transcript survive.
+  // The bulk action sits on the OFFLINE column head from 2 revivable cards.
+  const revivables = visible.filter((s) => s.col === 'offline' && s.spawn?.revivable);
 
   // lane order = repos snapshot order (first seen), skipping empty lanes
   const laneDefs = repos
@@ -85,6 +90,17 @@ export default function BoardLanes({
             <div className="h" key={c.key}>
               <span className="l">{c.label}</span>
               <span className="n">{c.count}</span>
+              {c.key === 'offline' && onReviveAll && revivables.length >= 2 && (
+                <button
+                  type="button"
+                  className="fd-ghostbtn fd-reviveall"
+                  disabled={revivingAll}
+                  title="revive every offline card whose worktree + transcript survive"
+                  onClick={() => onReviveAll(revivables)}
+                >
+                  ⟲ {revivingAll ? 'Reviving…' : `Revive all (${revivables.length})`}
+                </button>
+              )}
             </div>
           ))}
         </div>
@@ -115,6 +131,12 @@ export default function BoardLanes({
                         ripple={(ripples.get(s.session_id) || 0) > now}
                         priority={priorities.has(s.session_id)}
                         onOpen={() => onOpenSession(s.session_id)}
+                        onOpenTerm={onOpenTerm ? () => onOpenTerm(s) : undefined}
+                        onRevive={onRevive ? () => onRevive(s) : undefined}
+                        reviving={!!(s.spawn && reviving?.has(s.spawn.spawn_id))}
+                        onEnableRemote={onEnableRemote ? () => onEnableRemote(s) : undefined}
+                        enablingRemote={!!(s.spawn && enablingRemote?.has(s.spawn.spawn_id))}
+                        onKill={onKill ? () => onKill(s) : undefined}
                       />
                     ))}
                 </div>

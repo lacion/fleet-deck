@@ -3722,7 +3722,8 @@ var require_websocket_server = __commonJS({
 
 // scripts/fleetd/fleetd.mjs
 import fs6 from "node:fs";
-import os from "node:os";
+import crypto from "node:crypto";
+import os2 from "node:os";
 import path5 from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
@@ -3829,7 +3830,9 @@ CREATE TABLE IF NOT EXISTS spawns (
   worktree_path TEXT,               -- effective cwd when worktree:true, else NULL
   requested_at  INTEGER,
   status        TEXT DEFAULT 'spawning',  -- spawning | stalled | live | pane-dead | killed | gone
-  skip_permissions INTEGER DEFAULT 0     -- v1.3 unsupervised spawn (either bypass form)
+  skip_permissions INTEGER DEFAULT 0,    -- v1.3 unsupervised spawn (either bypass form)
+  remote_control INTEGER DEFAULT 0,      -- remote-control wished/enabled for this launch
+  remote_url     TEXT                    -- harvested claude.ai URL; NULL until/if observed
 );
 CREATE INDEX IF NOT EXISTS idx_spawns_session ON spawns(session_id);
 CREATE INDEX IF NOT EXISTS idx_spawns_status ON spawns(status);
@@ -3867,6 +3870,12 @@ function migrate(db2) {
   if (spawnCols.length && !spawnCols.includes("skip_permissions")) {
     db2.exec("ALTER TABLE spawns ADD COLUMN skip_permissions INTEGER DEFAULT 0");
   }
+  if (spawnCols.length && !spawnCols.includes("remote_control")) {
+    db2.exec("ALTER TABLE spawns ADD COLUMN remote_control INTEGER DEFAULT 0");
+  }
+  if (spawnCols.length && !spawnCols.includes("remote_url")) {
+    db2.exec("ALTER TABLE spawns ADD COLUMN remote_url TEXT");
+  }
 }
 function openDb(file) {
   const db2 = new DatabaseSync(file);
@@ -3878,6 +3887,7 @@ function openDb(file) {
 // scripts/fleetd/derive.mjs
 import path2 from "node:path";
 import fs3 from "node:fs";
+import os from "node:os";
 import { randomUUID } from "node:crypto";
 import { execFile as execFile2 } from "node:child_process";
 
@@ -4129,7 +4139,6 @@ function createQuestions(db2, {
   function expireOnActivity(sessionId) {
     let changed = false;
     for (const r of q.pendingBySession.all(sessionId)) {
-      if (!HOLD_KINDS.has(r.kind)) continue;
       const h = releaseHold(r.id);
       if (h) {
         try {
@@ -4141,6 +4150,21 @@ function createQuestions(db2, {
     }
     if (changed) onChange();
     return changed;
+  }
+  function dismiss(id) {
+    const row = q.get.get(id);
+    if (!row) return { ok: false, reason: "no such question" };
+    if (row.status !== "pending") return { ok: true, already: true };
+    const h = releaseHold(row.id);
+    if (h) {
+      try {
+        h.respond({});
+      } catch {
+      }
+    }
+    const changed = q.markExpired.run(row.id).changes > 0;
+    if (changed) onChange();
+    return { ok: true, callsign: row.callsign ?? null };
   }
   function expireOrphans() {
     let changed = false;
@@ -4203,6 +4227,7 @@ function createQuestions(db2, {
     attachHold,
     socketClosed,
     answer,
+    dismiss,
     expireOnActivity,
     expireOrphans,
     expireAllForSession,
@@ -4290,6 +4315,7 @@ function lastAssistantText(transcriptPath, { maxBytes = 2e6 } = {}) {
 // scripts/fleetd/spawn.mjs
 var spawn_exports = {};
 __export(spawn_exports, {
+  capturePane: () => capturePane,
   ensureSession: () => ensureSession,
   hasTmux: () => hasTmux,
   killWindowVerified: () => killWindowVerified,
@@ -4302,6 +4328,7 @@ __export(spawn_exports, {
   sendEnter: () => sendEnter,
   sessionName: () => sessionName,
   spawnOverrideCmd: () => spawnOverrideCmd,
+  typeKeys: () => typeKeys,
   windowName: () => windowName
 });
 import { execFile, execFileSync as execFileSync2, spawn as spawnChild } from "node:child_process";
@@ -4416,6 +4443,12 @@ async function pasteText(target, text) {
 async function sendEnter(target) {
   return await tmux(["send-keys", "-t", target, "Enter"]) !== null;
 }
+async function typeKeys(target, text) {
+  return await tmux(["send-keys", "-t", target, "-l", "--", String(text)]) !== null;
+}
+async function capturePane(target) {
+  return tmux(["capture-pane", "-p", "-t", target]);
+}
 async function sendBringupEnter(target) {
   return sendEnter(target);
 }
@@ -4447,6 +4480,57 @@ function envInt(name, fallback, { min = 0 } = {}) {
   const n = Number(process.env[name]);
   return Number.isFinite(n) && n >= min ? Math.floor(n) : fallback;
 }
+function mungeClaudeProjectCwd(cwd) {
+  return path2.resolve(cwd).replace(/[\/.]/g, "-");
+}
+function claudeTranscriptPath(cwd, sessionId, homeDir = os.homedir()) {
+  return path2.join(homeDir, ".claude", "projects", mungeClaudeProjectCwd(cwd), `${sessionId}.jsonl`);
+}
+function spawnRowRevivable(row) {
+  const runCwd = row?.worktree_path ?? row?.cwd;
+  return !!runCwd && ["pane-dead", "killed", "gone"].includes(row.status) && fs3.existsSync(runCwd) && fs3.existsSync(claudeTranscriptPath(runCwd, row.session_id));
+}
+function claudeEnvArgvPrefix(port, home) {
+  const scrub = [
+    "CLAUDECODE",
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_CODE_CHILD_SESSION",
+    "CLAUDE_CODE_BRIDGE_SESSION_ID",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_CODE_EXECPATH",
+    "CLAUDE_ENV_FILE",
+    "CLAUDE_PROJECT_DIR",
+    "CLAUDE_PLUGIN_ROOT",
+    "CLAUDE_PLUGIN_DATA",
+    "CLAUDE_EFFORT",
+    "AI_AGENT",
+    "CODEX_COMPANION_TRANSCRIPT_PATH",
+    "CODEX_COMPANION_SESSION_ID",
+    "FLEETDECK_AGENTS_CMD",
+    "FLEETDECK_SPAWN_CMD",
+    "TMUX",
+    "TMUX_PANE",
+    "FLEETDECK_TMUX_SOCKET",
+    "FLEETDECK_AGENTS_POLL_MS",
+    "FLEETDECK_HOLD_MS",
+    "FLEETDECK_STALE_MS",
+    "FLEETDECK_NUDGE_MS",
+    "FLEETDECK_MAX_SPAWNED",
+    "FLEETDECK_WATCH_MAX_MS",
+    "FLEETDECK_WATCH_POLL_MS",
+    "FLEETDECK_SPAWN_REGISTER_MS",
+    "FLEETDECK_PANE_MAIL_GRACE_MS",
+    "FLEETDECK_PRESUME_DEAD_MS",
+    "FLEETDECK_RETAIN_OFFLINE_MS",
+    "FLEETDECK_RC_HARVEST_MS"
+  ];
+  return [
+    "env",
+    ...scrub.flatMap((name) => ["-u", name]),
+    `FLEETDECK_PORT=${port}`,
+    `FLEETDECK_HOME=${home}`
+  ];
+}
 function createCore(db2, {
   port = 4711,
   home = process.env.FLEETDECK_HOME || "",
@@ -4463,6 +4547,7 @@ function createCore(db2, {
   const PANE_MAIL_GRACE_MS = envInt("FLEETDECK_PANE_MAIL_GRACE_MS", 1500, { min: 0 });
   const PRESUME_DEAD_MS = envInt("FLEETDECK_PRESUME_DEAD_MS", 108e5, { min: 1 });
   const RETAIN_OFFLINE_MS = envInt("FLEETDECK_RETAIN_OFFLINE_MS", 864e5, { min: 1 });
+  const RC_HARVEST_MS = envInt("FLEETDECK_RC_HARVEST_MS", 2500, { min: 0 });
   const q = {
     getSession: db2.prepare("SELECT * FROM sessions WHERE session_id = ?"),
     allSessions: db2.prepare("SELECT * FROM sessions ORDER BY started_at"),
@@ -4520,14 +4605,16 @@ function createCore(db2, {
     // v1.2 board-spawned sessions. "Active" = status spawning|stalled|live — the rows
     // that count against FLEETDECK_MAX_SPAWNED and get liveness-checked.
     insertSpawn: db2.prepare(`INSERT INTO spawns
-      (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, requested_at, status, skip_permissions)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'spawning', ?)`),
+      (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, requested_at, status, skip_permissions, remote_control)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'spawning', ?, ?)`),
     getSpawn: db2.prepare("SELECT * FROM spawns WHERE spawn_id = ?"),
-    spawnBySession: db2.prepare("SELECT * FROM spawns WHERE session_id = ? ORDER BY requested_at DESC LIMIT 1"),
-    allSpawns: db2.prepare("SELECT * FROM spawns ORDER BY requested_at"),
+    spawnBySession: db2.prepare("SELECT * FROM spawns WHERE session_id = ? ORDER BY requested_at DESC, rowid DESC LIMIT 1"),
+    allSpawns: db2.prepare("SELECT * FROM spawns ORDER BY requested_at, rowid"),
     activeSpawns: db2.prepare("SELECT * FROM spawns WHERE status IN ('spawning', 'stalled', 'live')"),
+    activeSpawnBySession: db2.prepare("SELECT * FROM spawns WHERE session_id = ? AND status IN ('spawning', 'stalled', 'live') ORDER BY requested_at DESC, rowid DESC LIMIT 1"),
     countActiveSpawns: db2.prepare("SELECT COUNT(*) AS n FROM spawns WHERE status IN ('spawning', 'stalled', 'live')"),
     setSpawnStatus: db2.prepare("UPDATE spawns SET status = ? WHERE spawn_id = ?"),
+    setSpawnRemote: db2.prepare("UPDATE spawns SET remote_control = 1, remote_url = ? WHERE spawn_id = ?"),
     presumeDeadSessions: db2.prepare(`SELECT * FROM sessions
       WHERE source = 'hooks' AND ended_at IS NULL
         AND col IN ('queued', 'idle', 'needsyou') AND last_seen < ?`),
@@ -4692,18 +4779,19 @@ function createCore(db2, {
   function applyEvent(ev) {
     const sid = ev.session_id || "unknown";
     let c = card(sid);
-    if (c.note?.startsWith("presumed ended")) {
+    if (c.ended_at != null || c.archived_at != null) {
       updateSession(sid, { ended_at: null, archived_at: null });
       c = { ...c, ended_at: null, archived_at: null };
     }
     if (c.source !== "hooks") {
       updateSession(sid, { source: "hooks" });
-      const sp = q.spawnBySession.get(sid);
-      if (sp && (sp.status === "spawning" || sp.status === "stalled")) {
-        q.setSpawnStatus.run("live", sp.spawn_id);
-        tick(`\u{1F6F0} ${c.callsign} pane is live (first hook event)`);
-      }
       c = { ...c, source: "hooks" };
+    }
+    const sp = q.spawnBySession.get(sid);
+    if (sp && (sp.status === "spawning" || sp.status === "stalled")) {
+      q.setSpawnStatus.run("live", sp.spawn_id);
+      tick(`\u{1F6F0} ${c.callsign} pane is live (first hook event)`);
+      if (sp.remote_control) scheduleRegistrationRemoteHarvest(sp.spawn_id);
     }
     const upd = { last_seen: Date.now(), events: c.events + 1 };
     if (ev.cwd) {
@@ -5192,7 +5280,40 @@ function createCore(db2, {
     }, NUDGE_MS);
     t.unref?.();
   }
-  async function spawn(body) {
+  const RC_URL_RE = /https:\/\/claude\.ai\/\S+/;
+  const registrationRemoteHarvests = /* @__PURE__ */ new Map();
+  async function harvestRemote(spawn_id) {
+    const row = q.getSpawn.get(spawn_id);
+    if (!row) return { url: null };
+    let text = null;
+    try {
+      text = await tmuxAdapter.capturePane(row.tmux_window);
+    } catch {
+    }
+    const url = typeof text === "string" ? text.match(RC_URL_RE)?.[0] ?? null : null;
+    q.setSpawnRemote.run(url, spawn_id);
+    tick(`\u{1F4F1} ${row.callsign} remote control enabled${url ? "" : " (URL not found)"}`);
+    onMutate();
+    return { url };
+  }
+  function delayedRemoteHarvest(spawn_id) {
+    if (RC_HARVEST_MS === 0) {
+      return Promise.resolve().then(() => harvestRemote(spawn_id));
+    }
+    let timer;
+    const promise = new Promise((resolve) => {
+      timer = setTimeout(() => harvestRemote(spawn_id).then(resolve, () => resolve({ url: null })), RC_HARVEST_MS);
+      timer.unref?.();
+    });
+    return promise;
+  }
+  function scheduleRegistrationRemoteHarvest(spawn_id) {
+    if (registrationRemoteHarvests.has(spawn_id)) return registrationRemoteHarvests.get(spawn_id);
+    const promise = delayedRemoteHarvest(spawn_id);
+    registrationRemoteHarvests.set(spawn_id, promise);
+    return promise;
+  }
+  async function spawn2(body) {
     const cap = spawnCapability();
     if (!cap.available) {
       return { status: 400, body: { ok: false, reason: `spawning unavailable: ${cap.reason}` } };
@@ -5207,6 +5328,9 @@ function createCore(db2, {
     }
     if (body?.dangerously_skip_permissions != null && typeof body.dangerously_skip_permissions !== "boolean") {
       return { status: 400, body: { ok: false, reason: "dangerously_skip_permissions must be a boolean" } };
+    }
+    if (body?.remote_control != null && typeof body.remote_control !== "boolean") {
+      return { status: 400, body: { ok: false, reason: "remote_control must be a boolean" } };
     }
     const skipPermissions = body?.dangerously_skip_permissions === true || body?.permission_mode === "bypassPermissions";
     const cwd = body?.cwd || "";
@@ -5246,48 +5370,10 @@ function createCore(db2, {
       });
     }
     const runCwd = worktree_path ?? cwd;
-    const scrub = [
-      "CLAUDECODE",
-      "CLAUDE_CODE_SESSION_ID",
-      "CLAUDE_CODE_CHILD_SESSION",
-      "CLAUDE_CODE_BRIDGE_SESSION_ID",
-      "CLAUDE_CODE_ENTRYPOINT",
-      "CLAUDE_CODE_EXECPATH",
-      "CLAUDE_ENV_FILE",
-      "CLAUDE_PROJECT_DIR",
-      "CLAUDE_PLUGIN_ROOT",
-      "CLAUDE_PLUGIN_DATA",
-      "CLAUDE_EFFORT",
-      "AI_AGENT",
-      "CODEX_COMPANION_TRANSCRIPT_PATH",
-      "CODEX_COMPANION_SESSION_ID",
-      "FLEETDECK_AGENTS_CMD",
-      "FLEETDECK_SPAWN_CMD",
-      // The baked-in tmux server env is the scar this wrapper exists for —
-      // scrub the tmux client markers and every fleet tuning/test knob too,
-      // so a pane (or anything it auto-boots) can never inherit a foreign
-      // fleet's configuration. Keep in sync with tests/spawn.test.mjs and
-      // the boot scrub in scripts/fleet-sessionstart.mjs.
-      "TMUX",
-      "TMUX_PANE",
-      "FLEETDECK_TMUX_SOCKET",
-      "FLEETDECK_AGENTS_POLL_MS",
-      "FLEETDECK_HOLD_MS",
-      "FLEETDECK_STALE_MS",
-      "FLEETDECK_NUDGE_MS",
-      "FLEETDECK_MAX_SPAWNED",
-      "FLEETDECK_WATCH_MAX_MS",
-      "FLEETDECK_WATCH_POLL_MS",
-      "FLEETDECK_SPAWN_REGISTER_MS",
-      "FLEETDECK_PANE_MAIL_GRACE_MS",
-      "FLEETDECK_PRESUME_DEAD_MS",
-      "FLEETDECK_RETAIN_OFFLINE_MS"
-    ];
+    const tmux_session = tmuxAdapter.sessionName(port);
+    const tmux_window = tmuxAdapter.windowName(port, callsign);
     const argv = [
-      "env",
-      ...scrub.flatMap((name) => ["-u", name]),
-      `FLEETDECK_PORT=${port}`,
-      `FLEETDECK_HOME=${home}`,
+      ...claudeEnvArgvPrefix(port, home),
       "claude",
       "--session-id",
       session_id
@@ -5295,9 +5381,8 @@ function createCore(db2, {
     if (body?.model) argv.push("--model", body.model);
     if (body?.permission_mode) argv.push("--permission-mode", body.permission_mode);
     if (body?.dangerously_skip_permissions === true) argv.push("--dangerously-skip-permissions");
+    if (body?.remote_control === true) argv.push("--remote-control", callsign);
     if (body?.prompt) argv.push(body.prompt);
-    const tmux_session = tmuxAdapter.sessionName(port);
-    const tmux_window = tmuxAdapter.windowName(port, callsign);
     const override = tmuxAdapter.spawnOverrideCmd();
     if (override) {
       const spec = {
@@ -5313,6 +5398,7 @@ function createCore(db2, {
         worktree_path,
         dangerously_skip_permissions: body?.dangerously_skip_permissions === true,
         skip_permissions: skipPermissions,
+        remote_control: body?.remote_control === true,
         tmux: { session: tmux_session, window: tmux_window },
         argv
         // the full env-wrapped argv tmux would have run
@@ -5327,7 +5413,18 @@ function createCore(db2, {
         return { status: 500, body: { ok: false, reason: `tmux spawn failed: ${err.message || err}` } };
       }
     }
-    q.insertSpawn.run(spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, Date.now(), skipPermissions ? 1 : 0);
+    q.insertSpawn.run(
+      spawn_id,
+      session_id,
+      callsign,
+      tmux_session,
+      tmux_window,
+      cwd,
+      worktree_path,
+      Date.now(),
+      skipPermissions ? 1 : 0,
+      body?.remote_control === true ? 1 : 0
+    );
     tick(`\u{1F680} spawned ${callsign} \u2014 tmux window ${tmux_window}${skipPermissions ? " (unsupervised)" : ""}`);
     scheduleNudge(spawn_id, tmux_window, callsign);
     onMutate();
@@ -5335,6 +5432,142 @@ function createCore(db2, {
       status: 200,
       body: { ok: true, spawn_id, session_id, callsign, tmux: { session: tmux_session, window: tmux_window } }
     };
+  }
+  async function revive(spawn_id, body = {}) {
+    const row = q.getSpawn.get(spawn_id);
+    if (!row) return { status: 404, body: { ok: false, reason: "no such spawn" } };
+    if (!["pane-dead", "killed", "gone"].includes(row.status)) {
+      return { status: 409, body: { ok: false, reason: `spawn is ${row.status}, not revivable` } };
+    }
+    if (body?.remote_control != null && typeof body.remote_control !== "boolean") {
+      return { status: 400, body: { ok: false, reason: "remote_control must be a boolean" } };
+    }
+    const remoteWanted = body?.remote_control ?? !!row.remote_control;
+    const active = q.activeSpawnBySession.get(row.session_id);
+    if (active) {
+      return { status: 409, body: { ok: false, reason: `session already has active spawn ${active.spawn_id}` } };
+    }
+    const cap = spawnCapability();
+    if (cap.active >= cap.max) {
+      return { status: 409, body: { ok: false, reason: `spawn cap reached (${cap.active} of ${cap.max} live \u2014 FLEETDECK_MAX_SPAWNED)` } };
+    }
+    const existing = (await tmuxAdapter.listScopedWindows(port)).find((w) => w.window === row.tmux_window);
+    if (existing && !existing.pane_dead && existing.pane_cmd === "claude") {
+      return { status: 409, body: { ok: false, reason: `window ${row.tmux_window} already has a live claude pane` } };
+    }
+    if (existing) {
+      const killed = await tmuxAdapter.killWindowVerified(row.tmux_window);
+      if (!killed.ok && !killed.gone) {
+        return { status: 500, body: { ok: false, reason: killed.error || "tmux kill-window failed" } };
+      }
+    }
+    const runCwd = row.worktree_path ?? row.cwd;
+    let st = null;
+    try {
+      st = fs3.statSync(runCwd);
+    } catch {
+    }
+    if (!runCwd || !st?.isDirectory()) {
+      return { status: 410, body: { ok: false, reason: "revive cwd no longer exists" } };
+    }
+    if (!fs3.existsSync(claudeTranscriptPath(runCwd, row.session_id))) {
+      return { status: 410, body: { ok: false, reason: "resume transcript no longer exists" } };
+    }
+    const new_spawn_id = randomUUID();
+    const argv = [...claudeEnvArgvPrefix(port, home), "claude", "--resume", row.session_id];
+    if (row.skip_permissions) argv.push("--dangerously-skip-permissions");
+    if (remoteWanted) argv.push("--remote-control", row.callsign);
+    const tmux_session = tmuxAdapter.sessionName(port);
+    const override = tmuxAdapter.spawnOverrideCmd();
+    if (override) {
+      tmuxAdapter.launchOverride(override, {
+        spawn_id: new_spawn_id,
+        revive_of: spawn_id,
+        session_id: row.session_id,
+        callsign: row.callsign,
+        port,
+        cwd: runCwd,
+        requested_cwd: row.cwd,
+        prompt: null,
+        model: null,
+        permission_mode: null,
+        worktree_path: row.worktree_path,
+        dangerously_skip_permissions: !!row.skip_permissions,
+        skip_permissions: !!row.skip_permissions,
+        remote_control: remoteWanted,
+        tmux: { session: tmux_session, window: row.tmux_window },
+        argv
+      }, (err) => spawnFailed(row.session_id, row.callsign, `spawn override: ${err.message || err}`));
+    } else {
+      try {
+        await tmuxAdapter.ensureSession(port);
+        await tmuxAdapter.newWindow({ port, callsign: row.callsign, cwd: runCwd, argv });
+      } catch (err) {
+        return { status: 500, body: { ok: false, reason: `tmux revive failed: ${err.message || err}` } };
+      }
+    }
+    q.insertSpawn.run(
+      new_spawn_id,
+      row.session_id,
+      row.callsign,
+      tmux_session,
+      row.tmux_window,
+      row.cwd,
+      row.worktree_path,
+      Date.now(),
+      row.skip_permissions ? 1 : 0,
+      remoteWanted ? 1 : 0
+    );
+    updateSession(row.session_id, { archived_at: null, col: "queued", note: "reviving\u2026" });
+    tick(`\u27F2 reviving ${row.callsign} (resume ${row.session_id.slice(0, 8)})`);
+    scheduleNudge(new_spawn_id, row.tmux_window, row.callsign);
+    onMutate();
+    return {
+      status: 200,
+      body: {
+        ok: true,
+        spawn_id: new_spawn_id,
+        session_id: row.session_id,
+        callsign: row.callsign,
+        tmux: { session: tmux_session, window: row.tmux_window }
+      }
+    };
+  }
+  async function enableRemote(spawn_id) {
+    const row = q.getSpawn.get(spawn_id);
+    if (!row) return { status: 404, body: { ok: false, reason: "no such spawn" } };
+    if (row.status !== "live") {
+      return { status: 409, body: { ok: false, reason: `spawn is ${row.status}, not live` } };
+    }
+    if (row.remote_control && row.remote_url) {
+      return { status: 200, body: { ok: true, enabled: true, url: row.remote_url, pending: false } };
+    }
+    const session = q.getSession.get(row.session_id);
+    if (!session || !["queued", "idle"].includes(session.col)) {
+      return { status: 409, body: { ok: false, reason: `session is ${session?.col ?? "missing"}, not queued or idle` } };
+    }
+    const win = (await tmuxAdapter.listScopedWindows(port)).find((w) => w.window === row.tmux_window);
+    if (!win || win.pane_dead || win.pane_cmd !== "claude") {
+      const observed = !win ? "missing" : win.pane_dead ? "dead" : `running ${win.pane_cmd || "unknown"}`;
+      return { status: 409, body: { ok: false, reason: `claude pane is not alive (${observed})` } };
+    }
+    const typed = await tmuxAdapter.typeKeys(win.window_id, `/rc ${row.callsign}`);
+    const entered = typed ? await tmuxAdapter.sendEnter(win.window_id) : false;
+    if (!typed || !entered) {
+      return { status: 500, body: { ok: false, reason: "failed to type remote-control command into pane" } };
+    }
+    const harvest = delayedRemoteHarvest(spawn_id);
+    let timeout;
+    const timed = new Promise((resolve) => {
+      timeout = setTimeout(() => resolve({ pending: true, url: null }), 6e3);
+      timeout.unref?.();
+    });
+    const result = await Promise.race([
+      harvest.then(({ url }) => ({ pending: false, url })),
+      timed
+    ]);
+    clearTimeout(timeout);
+    return { status: 200, body: { ok: true, enabled: true, url: result.url, pending: result.pending } };
   }
   async function spawnKill(spawn_id, force) {
     const row = q.getSpawn.get(spawn_id);
@@ -5590,8 +5823,13 @@ function createCore(db2, {
             status: sp.status,
             stalled: sp.status === "stalled",
             // watchdog chip ("never registered")
-            skip_permissions: !!sp.skip_permissions
+            skip_permissions: !!sp.skip_permissions,
             // v1.3 unsupervised chip
+            remote: { enabled: !!sp.remote_control, url: sp.remote_url ?? null },
+            // Snapshot cost is intentionally uncached: two existsSync calls
+            // per owned card keep removal/restore feedback immediate, and a
+            // fleet has only a handful of rows by design.
+            revivable: spawnRowRevivable(sp)
           }
         } : {}
       };
@@ -5661,17 +5899,20 @@ function createCore(db2, {
   function fleetSize() {
     return q.countSessions.get().n;
   }
+  function terminalSpawn(spawnId) {
+    return q.getSpawn.get(spawnId) || null;
+  }
   function retentionSweep(now = Date.now()) {
     let changed = false;
     for (const s of q.presumeDeadSessions.all(now - PRESUME_DEAD_MS)) {
       const hours = Math.max(0, (now - s.last_seen) / 36e5);
-      const label = Number.isInteger(hours) ? String(hours) : hours.toFixed(1).replace(/\.0$/, "");
+      const label2 = Number.isInteger(hours) ? String(hours) : hours.toFixed(1).replace(/\.0$/, "");
       updateSession(s.session_id, {
         col: "offline",
         ended_at: now,
-        note: `presumed ended (silent ${label}h)`
+        note: `presumed ended (silent ${label2}h)`
       });
-      tick(`\u231B ${s.callsign} presumed ended after ${label}h silent`);
+      tick(`\u231B ${s.callsign} presumed ended after ${label2}h silent`);
       notifyWatchers(s.session_id);
       changed = true;
     }
@@ -5747,10 +5988,15 @@ function createCore(db2, {
     command,
     snapshot,
     fleetSize,
+    terminalSpawn,
     ingestAgentsPoll,
     // v1.2 dynamic fleet
-    spawn,
+    spawn: spawn2,
     // POST /api/spawn flow → {status, body}
+    revive,
+    // POST /api/spawn/:id/revive → {status, body}
+    enableRemote,
+    // POST /api/spawn/:id/rc → {status, body}
     spawnKill,
     // POST /api/spawn/:id/kill → {status, body}
     spawnCapability,
@@ -5772,6 +6018,7 @@ function createCore(db2, {
 
 // scripts/fleetd/http.mjs
 import http from "node:http";
+import { timingSafeEqual } from "node:crypto";
 import fs4 from "node:fs";
 import path3 from "node:path";
 import { fileURLToPath } from "node:url";
@@ -5786,8 +6033,298 @@ var import_subprotocol = __toESM(require_subprotocol(), 1);
 var import_websocket = __toESM(require_websocket(), 1);
 var import_websocket_server = __toESM(require_websocket_server(), 1);
 
+// scripts/fleetd/termbridge.mjs
+import { spawn } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
+var ACTIVE_STATUSES = /* @__PURE__ */ new Set(["spawning", "stalled", "live"]);
+var INPUT_CHUNK_BYTES = 1024;
+function envInt2(name, fallback, { min = 0 } = {}) {
+  const n = Number(process.env[name]);
+  return Number.isFinite(n) && n >= min ? Math.floor(n) : fallback;
+}
+var CLEAR_SCREEN = "\x1B[H\x1B[2J";
+var REPAINT_MS = envInt2("FLEETDECK_TERM_REPAINT_MS", 80);
+function dimensions(cols, rows) {
+  const c = Number(cols);
+  const r = Number(rows);
+  if (!Number.isInteger(c) || !Number.isInteger(r) || c < 1 || r < 1 || c > 1e3 || r > 1e3) return null;
+  return { cols: c, rows: r };
+}
+function unescapeControlData(value) {
+  const text = String(value);
+  const bytes = [];
+  for (let i = 0; i < text.length; ) {
+    if (text[i] === "\\" && /^[0-7]{3}$/.test(text.slice(i + 1, i + 4))) {
+      bytes.push(Number.parseInt(text.slice(i + 1, i + 4), 8));
+      i += 4;
+      continue;
+    }
+    bytes.push(text.charCodeAt(i) & 255);
+    i += 1;
+  }
+  return Buffer.from(bytes);
+}
+var ControlModeParser = class {
+  constructor() {
+    this.decoder = new StringDecoder("latin1");
+    this.pending = "";
+    this.block = null;
+  }
+  feed(chunk) {
+    this.pending += Buffer.isBuffer(chunk) ? this.decoder.write(chunk) : String(chunk);
+    const events = [];
+    for (; ; ) {
+      const nl = this.pending.indexOf("\n");
+      if (nl < 0) break;
+      let line = this.pending.slice(0, nl);
+      this.pending = this.pending.slice(nl + 1);
+      if (line.endsWith("\r")) line = line.slice(0, -1);
+      this.#line(line, events);
+    }
+    return events;
+  }
+  #line(line, events) {
+    const boundary = /^%(begin|end|error)\s+(\S+)\s+(\S+)(?:\s+.*)?$/.exec(line);
+    if (this.block) {
+      if (boundary && boundary[1] !== "begin" && boundary[2] === this.block.time && boundary[3] === this.block.number) {
+        events.push({
+          type: "response",
+          key: `${this.block.time}:${this.block.number}`,
+          time: this.block.time,
+          number: this.block.number,
+          ok: boundary[1] === "end",
+          lines: this.block.lines
+        });
+        this.block = null;
+      } else {
+        this.block.lines.push(line);
+      }
+      return;
+    }
+    if (boundary?.[1] === "begin") {
+      this.block = { time: boundary[2], number: boundary[3], lines: [] };
+      return;
+    }
+    const output = /^%output\s+(%\S+)\s?(.*)$/.exec(line);
+    if (output) {
+      events.push({ type: "output", pane: output[1], data: unescapeControlData(output[2]) });
+      return;
+    }
+    const exit = /^%exit(?:\s+(.*))?$/.exec(line);
+    if (exit) {
+      events.push({ type: "exit", reason: exit[1] || "tmux control client exited" });
+      return;
+    }
+    const closed = /^%window-close\s+(\S+)/.exec(line);
+    if (closed) {
+      events.push({ type: "window-close", window: closed[1] });
+      return;
+    }
+    const session = /^%session-changed\s+(\S+)(?:\s+(.*))?$/.exec(line);
+    if (session) events.push({ type: "session-changed", session: session[1], name: session[2] || "" });
+  }
+};
+var TermBridgeError = class extends Error {
+  constructor(reason) {
+    super(reason);
+    this.reason = reason;
+  }
+};
+function createTermBridge({
+  port,
+  resolveSpawn,
+  maxViewers = envInt2("FLEETDECK_TERM_MAX_VIEWERS", 4, { min: 1 }),
+  log = () => {
+  }
+} = {}) {
+  let active = 0;
+  async function openViewer({ spawn_id, cols, rows, send, onClose = () => {
+  } }) {
+    if (process.env.FLEETDECK_TERM?.trim().toLowerCase() === "off") throw new TermBridgeError("live terminal disabled");
+    const size = dimensions(cols, rows);
+    if (!size) throw new TermBridgeError("invalid terminal dimensions");
+    if (active >= maxViewers) throw new TermBridgeError("live terminal viewer cap reached");
+    active++;
+    let row;
+    try {
+      row = await resolveSpawn?.(spawn_id);
+      if (!row) throw new TermBridgeError("no such spawn");
+      if (!ACTIVE_STATUSES.has(row.status)) throw new TermBridgeError("spawn is not live");
+      if (row.tmux_session !== `fleetdeck-${port}` || !String(row.tmux_window || "").startsWith(`fd${port}-`)) {
+        throw new TermBridgeError("spawn is outside this fleet");
+      }
+    } catch (err) {
+      active--;
+      throw err;
+    }
+    let child;
+    let pane = null;
+    let intentional = false;
+    let finished = false;
+    let established = false;
+    let initialized = false;
+    const outDecoder = new StringDecoder("utf8");
+    const pendingOutput = [];
+    const responseWaiters = [];
+    const parser = new ControlModeParser();
+    let readyResolve;
+    let readyReject;
+    const ready = new Promise((resolve, reject) => {
+      readyResolve = resolve;
+      readyReject = reject;
+    });
+    ready.catch(() => {
+    });
+    const finish = (reason, notify = true) => {
+      if (finished) return;
+      finished = true;
+      active--;
+      readyReject(new Error(reason));
+      for (const waiter of responseWaiters.splice(0)) waiter.reject(new Error(reason));
+      if (child && child.exitCode === null && !child.killed) {
+        try {
+          child.kill("SIGTERM");
+        } catch {
+        }
+      }
+      if (notify && established) {
+        try {
+          onClose(reason);
+        } catch {
+        }
+      }
+    };
+    const command = (line) => new Promise((resolve, reject) => {
+      if (finished || !child?.stdin?.writable) return reject(new Error("control client is closed"));
+      const waiter = { resolve, reject };
+      responseWaiters.push(waiter);
+      child.stdin.write(line + "\n", (err) => {
+        if (!err) return;
+        const index = responseWaiters.indexOf(waiter);
+        if (index >= 0) responseWaiters.splice(index, 1);
+        reject(err);
+      });
+    });
+    const handleEvent = (ev) => {
+      if (ev.type === "response") {
+        responseWaiters.shift()?.resolve(ev);
+      } else if (ev.type === "session-changed") {
+        readyResolve();
+      } else if (ev.type === "output" && pane && ev.pane === pane) {
+        const data = outDecoder.write(ev.data);
+        if (!data) return;
+        if (!initialized) pendingOutput.push(data);
+        else try {
+          send({ t: "out", data });
+        } catch {
+          finish("terminal socket closed", false);
+        }
+      } else if (ev.type === "exit") {
+        finish(ev.reason || "tmux session ended");
+      } else if (ev.type === "window-close" && pane) {
+        command(`display-message -p -t ${pane} '#{pane_id}'`).then((res) => {
+          if (!res.ok) finish("terminal pane closed");
+        }).catch(() => finish("terminal pane closed"));
+      }
+    };
+    try {
+      const override = process.env.FLEETDECK_TERM_CMD?.trim();
+      const socket = process.env.FLEETDECK_TMUX_SOCKET?.trim();
+      const argv = socket ? ["-L", socket, "-C", "attach-session", "-t", "=" + row.tmux_session] : ["-C", "attach-session", "-t", "=" + row.tmux_session];
+      child = spawn(override || "tmux", override ? [] : argv, { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+      child.stdout.on("data", (chunk) => {
+        for (const ev of parser.feed(chunk)) handleEvent(ev);
+      });
+      child.stderr.on("data", (chunk) => log(`terminal control stderr: ${String(chunk).trim()}`));
+      child.on("error", (err) => finish(`terminal control client failed: ${err.message}`));
+      child.on("exit", () => {
+        if (!intentional) finish("terminal control client exited");
+      });
+      let attachTimer;
+      try {
+        await Promise.race([
+          ready,
+          new Promise((_, reject) => {
+            attachTimer = setTimeout(() => reject(new Error("terminal control attach timed out")), 5e3);
+          })
+        ]);
+      } finally {
+        clearTimeout(attachTimer);
+      }
+      const panes = await command(`list-panes -t =${row.tmux_session}:${row.tmux_window} -F '#{pane_id}'`);
+      if (!panes.ok) throw new Error("terminal pane not found");
+      pane = panes.lines.map((s) => s.trim()).find((s) => /^%\d+$/.test(s));
+      if (!pane) throw new Error("terminal pane not found");
+      const setSize = async (c, r) => {
+        let out = await command(`refresh-client -C ${c},${r}`);
+        if (!out.ok) out = await command(`refresh-client -C ${c}x${r}`);
+        return out;
+      };
+      if (!(await setSize(size.cols, size.rows)).ok) throw new Error("terminal resize failed");
+      await setSize(size.cols, Math.max(1, size.rows - 1));
+      await setSize(size.cols, size.rows);
+      await new Promise((r) => {
+        const t = setTimeout(r, REPAINT_MS);
+        t.unref?.();
+      });
+      const captured = await command(`capture-pane -p -e -t ${pane}`);
+      if (!captured.ok) throw new Error("terminal pane capture failed");
+      const cursor = await command(`display-message -p -t ${pane} '#{cursor_x} #{cursor_y}'`);
+      if (!cursor.ok) throw new Error("terminal cursor lookup failed");
+      const match = /^(\d+)\s+(\d+)$/.exec(cursor.lines.at(-1)?.trim() || "");
+      if (!match) throw new Error("terminal cursor lookup returned invalid data");
+      established = true;
+      send({
+        t: "init",
+        cols: size.cols,
+        rows: size.rows,
+        // The parser speaks latin1 (byte-exact); the pane speaks UTF-8. Rebuild
+        // the bytes and decode them as one piece so multi-byte glyphs survive.
+        screen: CLEAR_SCREEN + Buffer.from(captured.lines.join("\r\n"), "latin1").toString("utf8") + `\x1B[${Number(match[2]) + 1};${Number(match[1]) + 1}H`
+      });
+      initialized = true;
+      pendingOutput.length = 0;
+    } catch (err) {
+      intentional = true;
+      finish(err?.message || "terminal open failed", false);
+      throw new TermBridgeError(err?.message || "terminal open failed");
+    }
+    return {
+      input(dataString) {
+        if (finished || typeof dataString !== "string" || !dataString) return;
+        const bytes = Buffer.from(dataString, "utf8");
+        for (let offset = 0; offset < bytes.length; offset += INPUT_CHUNK_BYTES) {
+          const hex = [...bytes.subarray(offset, offset + INPUT_CHUNK_BYTES)].map((b) => b.toString(16).padStart(2, "0")).join(" ");
+          command(`send-keys -t ${pane} -H ${hex}`).then((res) => {
+            if (!res.ok) finish("terminal pane closed");
+          }).catch(() => finish("terminal pane closed"));
+        }
+      },
+      resize(nextCols, nextRows) {
+        const next = dimensions(nextCols, nextRows);
+        if (finished || !next) return;
+        command(`refresh-client -C ${next.cols},${next.rows}`).then(async (res) => {
+          if (!res.ok) res = await command(`refresh-client -C ${next.cols}x${next.rows}`);
+          if (!res.ok) finish("terminal resize failed");
+        }).catch(() => finish("terminal resize failed"));
+      },
+      close() {
+        intentional = true;
+        finish("terminal viewer closed", false);
+      }
+    };
+  }
+  return { openViewer, get activeViewers() {
+    return active;
+  } };
+}
+
 // scripts/fleetd/http.mjs
 var MAX_BODY = 1e6;
+function isLoopbackAddress(address) {
+  const value = String(address || "").trim().toLowerCase();
+  return value === "localhost" || value === "::1" || /^127(?:\.[0-9]{1,3}){3}$/.test(value) || /^::ffff:127(?:\.[0-9]{1,3}){3}$/.test(value);
+}
 var BOARD_DIST = path3.join(path3.dirname(fileURLToPath(import.meta.url)), "board-dist");
 var MIME = {
   ".html": "text/html; charset=utf-8",
@@ -5826,11 +6363,27 @@ function serveBoardAsset(res, pathname, notFound) {
   return res.end(data);
 }
 function createHttp(core2, { port, boardFile, version: version2 = "0.0.0", capture = () => {
-} }) {
+}, token, lan = null }) {
+  const lanInfo = lan?.enabled ? { enabled: true, urls: lan.urls ?? [], mdns: lan.mdns ?? null } : { enabled: false, urls: [] };
+  function snapshotWithLan() {
+    return { ...core2.snapshot(), lan: lanInfo };
+  }
   function json(res, code, obj) {
     const body = JSON.stringify(obj);
     res.writeHead(code, { "content-type": "application/json", "content-length": Buffer.byteLength(body) });
     res.end(body);
+  }
+  function tokenMatches(candidate) {
+    if (typeof token !== "string" || typeof candidate !== "string") return false;
+    const expected = Buffer.from(token);
+    const presented = Buffer.from(candidate);
+    return expected.length === presented.length && timingSafeEqual(expected, presented);
+  }
+  function authorized(req, url) {
+    if (isLoopbackAddress(req.socket?.remoteAddress)) return true;
+    const authorization = req.headers.authorization;
+    const bearer = typeof authorization === "string" ? /^Bearer (.+)$/.exec(authorization)?.[1] : void 0;
+    return tokenMatches(bearer) || tokenMatches(url.searchParams.get("t"));
   }
   const hookHandlers = {
     SessionStart: (ev) => core2.hookSessionStart(ev),
@@ -5898,14 +6451,18 @@ function createHttp(core2, { port, boardFile, version: version2 = "0.0.0", captu
       unregister();
     });
   }
+  const isPublicShell = (method, pathname) => method === "GET" && (pathname === "/" || pathname === "/index.html" || pathname === "/favicon.ico" || pathname.startsWith("/assets/"));
   const server2 = http.createServer((req, res) => {
     try {
       const url = new URL(req.url, `http://127.0.0.1:${port}`);
+      if (!isPublicShell(req.method, url.pathname) && !authorized(req, url)) {
+        return json(res, 401, { ok: false, reason: "unauthorized" });
+      }
       if (req.method === "GET") {
         if (url.pathname === "/health") {
           return json(res, 200, { ok: true, fleet: core2.fleetSize(), pid: process.pid, version: version2, spawn: core2.spawnCapability() });
         }
-        if (url.pathname === "/state") return json(res, 200, core2.snapshot());
+        if (url.pathname === "/state") return json(res, 200, snapshotWithLan());
         if (url.pathname === "/mail") {
           const sid = url.searchParams.get("session") || "";
           const box = core2.drainMail(sid);
@@ -5987,10 +6544,31 @@ function createHttp(core2, { port, boardFile, version: version2 = "0.0.0", captu
               });
               return;
             }
+            const reviveMatch = /^\/api\/spawn\/([A-Za-z0-9-]+)\/revive$/.exec(url.pathname);
+            if (reviveMatch) {
+              core2.revive(reviveMatch[1], ev ?? {}).then((out) => json(res, out.status, out.body)).catch((err) => {
+                console.error("fleetd spawn revive error:", err);
+                json(res, 500, { ok: false, reason: "internal" });
+              });
+              return;
+            }
+            const rcMatch = /^\/api\/spawn\/([A-Za-z0-9-]+)\/rc$/.exec(url.pathname);
+            if (rcMatch) {
+              core2.enableRemote(rcMatch[1]).then((out) => json(res, out.status, out.body)).catch((err) => {
+                console.error("fleetd remote-control error:", err);
+                json(res, 500, { ok: false, reason: "internal" });
+              });
+              return;
+            }
             const answerMatch = /^\/api\/questions\/(\d+)\/answer$/.exec(url.pathname);
             if (answerMatch) {
               const out = core2.questions.answer(Number(answerMatch[1]), ev);
               return json(res, out.status, out.body);
+            }
+            const dismissMatch = /^\/api\/questions\/(\d+)\/dismiss$/.exec(url.pathname);
+            if (dismissMatch) {
+              const out = core2.questions.dismiss(Number(dismissMatch[1]));
+              return json(res, out.ok ? 200 : 404, out);
             }
             const planMatch = /^\/api\/plans\/(\d+)\/mark$/.exec(url.pathname);
             if (planMatch) {
@@ -6015,24 +6593,102 @@ function createHttp(core2, { port, boardFile, version: version2 = "0.0.0", captu
       }
     }
   });
-  const wss = new import_websocket_server.default({ server: server2, path: "/ws" });
+  const wss = new import_websocket_server.default({ noServer: true });
+  const termWss = new import_websocket_server.default({ noServer: true });
+  const termbridge = createTermBridge({
+    port,
+    resolveSpawn: (spawnId) => core2.terminalSpawn(spawnId),
+    log: (message) => console.error(`fleetd ${message}`)
+  });
   wss.on("error", () => {
+  });
+  termWss.on("error", () => {
+  });
+  server2.on("upgrade", (req, socket, head) => {
+    let url;
+    try {
+      url = new URL(req.url || "/", "http://127.0.0.1");
+    } catch {
+      socket.destroy();
+      return;
+    }
+    if (!authorized(req, url)) {
+      socket.destroy();
+      return;
+    }
+    if (url.pathname === "/ws") {
+      wss.handleUpgrade(req, socket, head, (ws) => wss.emit("connection", ws, req));
+    } else if (url.pathname === "/ws/term") {
+      termWss.handleUpgrade(req, socket, head, (ws) => termWss.emit("connection", ws, req));
+    } else {
+      socket.destroy();
+    }
   });
   function broadcast() {
     if (!wss.clients.size) return;
-    const msg = JSON.stringify({ type: "snapshot", ...core2.snapshot() });
+    const msg = JSON.stringify({ type: "snapshot", ...snapshotWithLan() });
     for (const c of wss.clients) if (c.readyState === 1) c.send(msg);
   }
   wss.on("connection", (ws) => {
     try {
-      ws.send(JSON.stringify({ type: "snapshot", ...core2.snapshot() }));
+      ws.send(JSON.stringify({ type: "snapshot", ...snapshotWithLan() }));
     } catch {
+    }
+  });
+  termWss.on("connection", async (ws, req) => {
+    let handle = null;
+    let socketClosed = false;
+    const send = (frame) => {
+      if (ws.readyState === 1) ws.send(JSON.stringify(frame));
+    };
+    ws.on("close", () => {
+      socketClosed = true;
+      handle?.close();
+    });
+    ws.on("message", (raw) => {
+      if (!handle) return;
+      let frame;
+      try {
+        frame = JSON.parse(raw.toString("utf8"));
+      } catch {
+        return;
+      }
+      if (!frame || typeof frame !== "object") return;
+      if (frame.t === "in" && typeof frame.data === "string") handle.input(frame.data);
+      else if (frame.t === "resize") handle.resize(frame.cols, frame.rows);
+    });
+    try {
+      const url = new URL(req.url || "/", "http://127.0.0.1");
+      const spawn_id = url.searchParams.get("spawn");
+      const cols = Number(url.searchParams.get("cols"));
+      const rows = Number(url.searchParams.get("rows"));
+      if (!spawn_id) throw new Error("missing spawn id");
+      handle = await termbridge.openViewer({
+        spawn_id,
+        cols,
+        rows,
+        send,
+        onClose(reason) {
+          send({ t: "exit", reason });
+          try {
+            ws.close();
+          } catch {
+          }
+        }
+      });
+      if (socketClosed) handle.close();
+    } catch (err) {
+      send({ t: "err", reason: err?.reason || err?.message || "terminal unavailable" });
+      try {
+        ws.close();
+      } catch {
+      }
     }
   });
   const heartbeat = setInterval(broadcast, 5e3);
   heartbeat.unref();
   core2.onMutate = broadcast;
-  return { server: server2, wss, broadcast };
+  return { server: server2, wss, termWss, broadcast };
 }
 
 // scripts/fleetd/agents-poll.mjs
@@ -6137,20 +6793,530 @@ function createPayloadCapture(homeDir, { maxBytes = MAX_FILE_BYTES, perEvent = P
   };
 }
 
+// scripts/fleetd/mdns.mjs
+import dgram from "node:dgram";
+var MDNS_ADDR = "224.0.0.251";
+var MDNS_PORT = 5353;
+var TYPE = { A: 1, PTR: 12, TXT: 16, AAAA: 28, SRV: 33, ANY: 255 };
+var TYPE_NAME = Object.fromEntries(Object.entries(TYPE).map(([k, v]) => [v, k]));
+var CLASS_IN = 1;
+var CLASS_ANY = 255;
+var FLUSH_BIT = 32768;
+var QU_BIT = 32768;
+var QR_BIT = 32768;
+var FLAGS_RESPONSE = 33792;
+var DEFAULT_TTL = { A: 120, SRV: 120, PTR: 4500, TXT: 4500 };
+var LEGACY_TTL = 10;
+var SERVICE_TYPES = ["_fleetdeck._tcp.local", "_http._tcp.local"];
+var META_QUERY = "_services._dns-sd._udp.local";
+var ANNOUNCE_DELAYS_MS = [0, 1e3, 2e3];
+function encodeName(name) {
+  const labels = String(name).replace(/\.$/, "").split(".").filter(Boolean);
+  const parts = [];
+  for (const label2 of labels) {
+    const bytes = Buffer.from(label2, "utf8");
+    if (bytes.length > 63) throw new RangeError(`mdns: label longer than 63 bytes: ${label2}`);
+    parts.push(Buffer.from([bytes.length]), bytes);
+  }
+  parts.push(Buffer.from([0]));
+  return Buffer.concat(parts);
+}
+function decodeName(buf, offset = 0) {
+  const labels = [];
+  let pos = offset;
+  let end = offset;
+  let jumped = false;
+  let hops = 0;
+  for (; ; ) {
+    if (pos >= buf.length) throw new RangeError("mdns: name runs past end of packet");
+    const len = buf[pos];
+    if (len === 0) {
+      pos += 1;
+      if (!jumped) end = pos;
+      break;
+    }
+    if ((len & 192) === 192) {
+      if (pos + 1 >= buf.length) throw new RangeError("mdns: truncated compression pointer");
+      const target = (len & 63) << 8 | buf[pos + 1];
+      if (!jumped) {
+        end = pos + 2;
+        jumped = true;
+      }
+      if (++hops > 64) throw new RangeError("mdns: compression pointer loop");
+      pos = target;
+      continue;
+    }
+    if ((len & 192) !== 0) throw new RangeError("mdns: reserved label type");
+    const start = pos + 1;
+    if (start + len > buf.length) throw new RangeError("mdns: label runs past end of packet");
+    labels.push(buf.toString("utf8", start, start + len));
+    pos = start + len;
+    if (!jumped) end = pos;
+  }
+  return { name: labels.join("."), offset: end };
+}
+function typeNumber(type) {
+  if (typeof type === "number") return type;
+  const n = TYPE[String(type).toUpperCase()];
+  if (!n) throw new TypeError(`mdns: unknown record type ${type}`);
+  return n;
+}
+function encodeIPv4(address) {
+  const octets = String(address).split(".").map(Number);
+  if (octets.length !== 4 || octets.some((o) => !Number.isInteger(o) || o < 0 || o > 255)) {
+    throw new TypeError(`mdns: not an IPv4 address: ${address}`);
+  }
+  return Buffer.from(octets);
+}
+function encodeTxt(data) {
+  const strings = Array.isArray(data) ? data.map(String) : Object.entries(data || {}).map(([k, v]) => `${k}=${v}`);
+  if (!strings.length) return Buffer.from([0]);
+  const parts = [];
+  for (const s of strings) {
+    const bytes = Buffer.from(s, "utf8").subarray(0, 255);
+    parts.push(Buffer.from([bytes.length]), bytes);
+  }
+  return Buffer.concat(parts);
+}
+function encodeRdata(type, data) {
+  switch (type) {
+    case TYPE.A:
+      return encodeIPv4(data);
+    case TYPE.PTR:
+      return encodeName(data);
+    case TYPE.TXT:
+      return encodeTxt(data);
+    case TYPE.SRV: {
+      const head = Buffer.alloc(6);
+      head.writeUInt16BE(data.priority ?? 0, 0);
+      head.writeUInt16BE(data.weight ?? 0, 2);
+      head.writeUInt16BE(data.port ?? 0, 4);
+      return Buffer.concat([head, encodeName(data.target)]);
+    }
+    default:
+      throw new TypeError(`mdns: cannot encode rdata for type ${type}`);
+  }
+}
+function encodeRecord(record) {
+  const type = typeNumber(record.type);
+  const name = encodeName(record.name);
+  const rdata = encodeRdata(type, record.data);
+  const head = Buffer.alloc(8);
+  head.writeUInt16BE(type, 0);
+  head.writeUInt16BE(CLASS_IN | (record.flush ? FLUSH_BIT : 0), 2);
+  head.writeUInt32BE(Math.max(0, Number(record.ttl) || 0), 4);
+  const rdlength = Buffer.alloc(2);
+  rdlength.writeUInt16BE(rdata.length, 0);
+  return Buffer.concat([name, head, rdlength, rdata]);
+}
+function parseHeader(buf) {
+  if (!Buffer.isBuffer(buf) || buf.length < 12) return null;
+  return {
+    id: buf.readUInt16BE(0),
+    flags: buf.readUInt16BE(2),
+    qdcount: buf.readUInt16BE(4),
+    ancount: buf.readUInt16BE(6),
+    nscount: buf.readUInt16BE(8),
+    arcount: buf.readUInt16BE(10)
+  };
+}
+function parseQuestions(buf) {
+  const header = parseHeader(buf);
+  if (!header) return [];
+  const questions = [];
+  let offset = 12;
+  for (let i = 0; i < header.qdcount; i += 1) {
+    let decoded;
+    try {
+      decoded = decodeName(buf, offset);
+    } catch {
+      break;
+    }
+    offset = decoded.offset;
+    if (offset + 4 > buf.length) break;
+    const type = buf.readUInt16BE(offset);
+    const qclass = buf.readUInt16BE(offset + 2);
+    offset += 4;
+    questions.push({
+      name: decoded.name,
+      type,
+      typeName: TYPE_NAME[type] || String(type),
+      class: qclass & ~QU_BIT,
+      unicast: (qclass & QU_BIT) !== 0
+    });
+  }
+  return questions;
+}
+function encodeMessage({ id = 0, flags = FLAGS_RESPONSE, questions = [], answers = [], additionals = [] } = {}) {
+  const header = Buffer.alloc(12);
+  header.writeUInt16BE(id & 65535, 0);
+  header.writeUInt16BE(flags & 65535, 2);
+  header.writeUInt16BE(questions.length, 4);
+  header.writeUInt16BE(answers.length, 6);
+  header.writeUInt16BE(0, 8);
+  header.writeUInt16BE(additionals.length, 10);
+  const parts = [header];
+  for (const q of questions) {
+    const tail = Buffer.alloc(4);
+    tail.writeUInt16BE(typeNumber(q.type ?? TYPE.ANY), 0);
+    tail.writeUInt16BE((q.class || CLASS_IN) | (q.unicast ? QU_BIT : 0), 2);
+    parts.push(encodeName(q.name), tail);
+  }
+  for (const record of [...answers, ...additionals]) parts.push(encodeRecord(record));
+  return Buffer.concat(parts);
+}
+var IPV4 = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
+function isIPv4(address) {
+  if (!IPV4.test(String(address))) return false;
+  return String(address).split(".").every((o) => Number(o) <= 255);
+}
+function label(value, fallback) {
+  const text = String(value ?? "").replace(/[.\u0000-\u001f\u007f]/g, "-").trim();
+  const bytes = Buffer.from(text || fallback, "utf8").subarray(0, 63);
+  return bytes.toString("utf8").replace(/\ufffd+$/, "") || fallback;
+}
+function normalize(options = {}) {
+  const host = `${label(options.name || "fleetdeck", "fleetdeck")}.local`;
+  const instance = label(options.instance || "Fleet Deck", "Fleet Deck");
+  const port = Number(options.port) || 0;
+  const addresses = (Array.isArray(options.addresses) ? options.addresses : []).filter(isIPv4);
+  const txt = { path: "/", board: "fleetdeck", ...options.txt || {} };
+  const services = SERVICE_TYPES.map((type) => ({ type, name: `${instance}.${type}` }));
+  return { host, instance, port, addresses, txt, services };
+}
+function ttlFor(type, override) {
+  return override === void 0 ? DEFAULT_TTL[type] : override;
+}
+function aRecords(ad, ttl, flush) {
+  return ad.addresses.map((address) => ({
+    name: ad.host,
+    type: "A",
+    ttl: ttlFor("A", ttl),
+    flush,
+    data: address
+  }));
+}
+function ptrRecord(ad, service, ttl) {
+  return { name: service.type, type: "PTR", ttl: ttlFor("PTR", ttl), flush: false, data: service.name };
+}
+function srvRecord(ad, service, ttl, flush) {
+  return {
+    name: service.name,
+    type: "SRV",
+    ttl: ttlFor("SRV", ttl),
+    flush,
+    data: { priority: 0, weight: 0, port: ad.port, target: ad.host }
+  };
+}
+function txtRecord(ad, service, ttl, flush) {
+  return { name: service.name, type: "TXT", ttl: ttlFor("TXT", ttl), flush, data: ad.txt };
+}
+function metaRecords(ad, ttl) {
+  return ad.services.map((service) => ({
+    name: META_QUERY,
+    type: "PTR",
+    ttl: ttlFor("PTR", ttl),
+    flush: false,
+    data: service.type
+  }));
+}
+function keyOf(record) {
+  return `${String(record.name).toLowerCase()}|${record.type}|${JSON.stringify(record.data)}`;
+}
+function buildAnnouncement(options = {}, { ttl } = {}) {
+  const ad = normalize(options);
+  const flush = ttl !== 0;
+  const records = [
+    ...aRecords(ad, ttl, flush),
+    ...metaRecords(ad, ttl)
+  ];
+  for (const service of ad.services) {
+    records.push(ptrRecord(ad, service, ttl), srvRecord(ad, service, ttl, flush), txtRecord(ad, service, ttl, flush));
+  }
+  const seen = /* @__PURE__ */ new Set();
+  return records.filter((r) => !seen.has(keyOf(r)) && seen.add(keyOf(r)));
+}
+function buildResponse(questions, options = {}, { ttl, flush = true } = {}) {
+  const ad = normalize(options);
+  const answers = [];
+  const additionals = [];
+  const wants = (q, type) => q.type === TYPE.ANY || q.type === TYPE[type];
+  for (const q of Array.isArray(questions) ? questions : []) {
+    if (q.class && q.class !== CLASS_IN && q.class !== CLASS_ANY) continue;
+    const qname = String(q.name || "").replace(/\.$/, "").toLowerCase();
+    if (qname === ad.host.toLowerCase() && wants(q, "A")) {
+      answers.push(...aRecords(ad, ttl, flush));
+    }
+    if (qname === META_QUERY && wants(q, "PTR")) {
+      answers.push(...metaRecords(ad, ttl));
+    }
+    for (const service of ad.services) {
+      if (qname === service.type.toLowerCase() && wants(q, "PTR")) {
+        answers.push(ptrRecord(ad, service, ttl));
+        additionals.push(
+          srvRecord(ad, service, ttl, flush),
+          txtRecord(ad, service, ttl, flush),
+          ...aRecords(ad, ttl, flush)
+        );
+      }
+      if (qname === service.name.toLowerCase()) {
+        if (wants(q, "SRV")) {
+          answers.push(srvRecord(ad, service, ttl, flush));
+          additionals.push(...aRecords(ad, ttl, flush));
+        }
+        if (wants(q, "TXT")) answers.push(txtRecord(ad, service, ttl, flush));
+      }
+    }
+  }
+  const answerKeys = /* @__PURE__ */ new Set();
+  const dedupedAnswers = answers.filter((r) => !answerKeys.has(keyOf(r)) && answerKeys.add(keyOf(r)));
+  const extraKeys = /* @__PURE__ */ new Set();
+  const dedupedAdditionals = additionals.filter((r) => !answerKeys.has(keyOf(r)) && !extraKeys.has(keyOf(r)) && extraKeys.add(keyOf(r)));
+  return { answers: dedupedAnswers, additionals: dedupedAdditionals };
+}
+function createMdns({ port, name = "fleetdeck", instance = "Fleet Deck", addresses = [], txt, log = () => {
+} } = {}) {
+  const options = { port, name, instance, addresses, txt };
+  const ad = normalize(options);
+  let socket = null;
+  let started = false;
+  let stopping = null;
+  let dead = false;
+  const timers = /* @__PURE__ */ new Set();
+  const note = (message) => {
+    try {
+      log(message);
+    } catch {
+    }
+  };
+  function die(reason, err) {
+    if (dead) return;
+    dead = true;
+    note(`mdns disabled (${reason})${err && err.message ? `: ${err.message}` : ""} \u2014 the board still works over its IP`);
+    for (const t of timers) clearTimeout(t);
+    timers.clear();
+    const doomed = socket;
+    socket = null;
+    try {
+      doomed?.close();
+    } catch {
+    }
+  }
+  function send(packet, targetPort, targetAddress) {
+    if (!socket || dead) return;
+    try {
+      socket.send(packet, targetPort, targetAddress, (err) => {
+        if (err && err.code !== "ENETUNREACH" && err.code !== "EHOSTUNREACH") note(`mdns send failed: ${err.message}`);
+      });
+    } catch (err) {
+      note(`mdns send failed: ${err.message}`);
+    }
+  }
+  function announce(ttl) {
+    try {
+      const answers = buildAnnouncement(options, ttl === void 0 ? {} : { ttl });
+      if (!answers.length) return;
+      send(encodeMessage({ id: 0, flags: FLAGS_RESPONSE, answers }), MDNS_PORT, MDNS_ADDR);
+    } catch (err) {
+      note(`mdns announce failed: ${err.message}`);
+    }
+  }
+  function onMessage(msg, rinfo) {
+    try {
+      const header = parseHeader(msg);
+      if (!header || header.qdcount === 0) return;
+      if ((header.flags & QR_BIT) !== 0) return;
+      const questions = parseQuestions(msg);
+      if (!questions.length) return;
+      const legacy = rinfo.port !== MDNS_PORT;
+      const { answers, additionals } = legacy ? buildResponse(questions, options, { ttl: LEGACY_TTL, flush: false }) : buildResponse(questions, options);
+      if (!answers.length) return;
+      const packet = encodeMessage({
+        id: legacy ? header.id : 0,
+        flags: FLAGS_RESPONSE,
+        questions: legacy ? questions : [],
+        // legacy resolvers match on the echoed question
+        answers,
+        additionals
+      });
+      if (legacy || questions.some((q) => q.unicast)) send(packet, rinfo.port, rinfo.address);
+      else send(packet, MDNS_PORT, MDNS_ADDR);
+    } catch (err) {
+      note(`mdns query handling error: ${err.message}`);
+    }
+  }
+  function onBound() {
+    try {
+      socket.setMulticastTTL(255);
+    } catch {
+    }
+    try {
+      socket.setMulticastLoopback(true);
+    } catch {
+    }
+    let joins = 0;
+    try {
+      socket.addMembership(MDNS_ADDR);
+      joins += 1;
+    } catch {
+    }
+    for (const address of ad.addresses) {
+      try {
+        socket.addMembership(MDNS_ADDR, address);
+        joins += 1;
+      } catch {
+      }
+    }
+    if (joins === 0) {
+      die("no multicast membership");
+      return;
+    }
+    for (const delay of ANNOUNCE_DELAYS_MS) {
+      const timer = setTimeout(() => {
+        timers.delete(timer);
+        announce();
+      }, delay);
+      timer.unref?.();
+      timers.add(timer);
+    }
+    note(`mdns responding for ${ad.host}:${ad.port}${ad.addresses.length ? ` (${ad.addresses.join(", ")})` : " (no LAN address to advertise)"}`);
+  }
+  function start() {
+    if (started || dead) return;
+    started = true;
+    if (!ad.port) {
+      die("no port to advertise");
+      return;
+    }
+    if (!ad.addresses.length) {
+      die("no non-internal IPv4 address");
+      return;
+    }
+    try {
+      socket = dgram.createSocket({ type: "udp4", reuseAddr: true });
+    } catch (err) {
+      die("socket create failed", err);
+      return;
+    }
+    socket.on("error", (err) => die(err.code === "EADDRINUSE" ? "port 5353 already owned by another responder" : err.code || "socket error", err));
+    socket.on("message", onMessage);
+    try {
+      socket.bind({ port: MDNS_PORT }, () => {
+        try {
+          onBound();
+        } catch (err) {
+          die("bind setup failed", err);
+        }
+      });
+    } catch (err) {
+      die("bind failed", err);
+    }
+  }
+  function stop() {
+    if (stopping) return stopping;
+    if (!started || dead || !socket) {
+      dead = true;
+      for (const t of timers) clearTimeout(t);
+      timers.clear();
+      stopping = Promise.resolve();
+      return stopping;
+    }
+    for (const t of timers) clearTimeout(t);
+    timers.clear();
+    stopping = new Promise((resolve) => {
+      const finish = () => {
+        const doomed = socket;
+        socket = null;
+        dead = true;
+        try {
+          doomed?.close(resolve);
+        } catch {
+          resolve();
+        }
+      };
+      try {
+        const answers = buildAnnouncement(options, { ttl: 0 });
+        const packet = encodeMessage({ id: 0, flags: FLAGS_RESPONSE, answers });
+        const guard = setTimeout(finish, 250);
+        guard.unref?.();
+        socket.send(packet, MDNS_PORT, MDNS_ADDR, () => {
+          clearTimeout(guard);
+          finish();
+        });
+      } catch {
+        finish();
+      }
+    });
+    return stopping;
+  }
+  return { start, stop };
+}
+
 // scripts/fleetd/fleetd.mjs
 var __dirname = path5.dirname(fileURLToPath2(import.meta.url));
 var PORT = Number(process.env.FLEETDECK_PORT || 4711);
-var HOME = process.env.FLEETDECK_HOME || path5.join(os.homedir() || "/tmp", ".fleetdeck");
-fs6.mkdirSync(HOME, { recursive: true });
+var BIND = (process.env.FLEETDECK_BIND || "127.0.0.1").trim() || "127.0.0.1";
+var LAN_MODE = !isLoopbackAddress(BIND);
+var HOME = process.env.FLEETDECK_HOME || path5.join(os2.homedir() || "/tmp", ".fleetdeck");
+function startupFatal(reason) {
+  try {
+    fs6.writeSync(2, `fleetd refused to start: ${reason}
+`);
+  } catch {
+  }
+  process.exit(1);
+}
+try {
+  fs6.mkdirSync(HOME, { recursive: true });
+} catch (err) {
+  startupFatal(`cannot create FLEETDECK_HOME (${err?.code || err?.message || "unknown error"})`);
+}
+var TOKEN_FILE = path5.join(HOME, "token");
+var TOKEN;
+if (Object.hasOwn(process.env, "FLEETDECK_TOKEN")) {
+  TOKEN = String(process.env.FLEETDECK_TOKEN).trim();
+  if (TOKEN.length < 16) startupFatal("FLEETDECK_TOKEN must be at least 16 characters after trimming");
+} else {
+  try {
+    const persisted = fs6.readFileSync(TOKEN_FILE, "utf8").trim();
+    if (persisted.length >= 16) TOKEN = persisted;
+    else if (LAN_MODE) startupFatal("FLEETDECK_HOME/token must contain at least 16 characters");
+  } catch (err) {
+    if (err?.code !== "ENOENT" && LAN_MODE) {
+      startupFatal(`cannot read FLEETDECK_HOME/token (${err?.code || err?.message || "unknown error"})`);
+    }
+  }
+}
+if (LAN_MODE && !TOKEN) {
+  try {
+    TOKEN = crypto.randomBytes(32).toString("hex");
+  } catch (err) {
+    startupFatal(`cannot generate LAN token (${err?.code || err?.message || "unknown error"})`);
+  }
+  try {
+    fs6.writeFileSync(TOKEN_FILE, TOKEN, { encoding: "utf8", mode: 384, flag: "wx" });
+  } catch (err) {
+    startupFatal(`cannot persist FLEETDECK_HOME/token (${err?.code || err?.message || "unknown error"})`);
+  }
+}
 var version = "0.0.0";
 try {
   version = JSON.parse(fs6.readFileSync(path5.resolve(__dirname, "../../package.json"), "utf8")).version || version;
 } catch {
 }
+var MDNS_NAME = (process.env.FLEETDECK_MDNS_NAME || "fleetdeck").trim() || "fleetdeck";
 var db = openDb(path5.join(HOME, "fleetd.db"));
 var core = createCore(db, { port: PORT });
+var MDNS_ENABLED = LAN_MODE && process.env.FLEETDECK_MDNS?.trim().toLowerCase() !== "off";
+var LAN_INFO = LAN_MODE ? {
+  enabled: true,
+  urls: lanAddresses().map((a) => `http://${a}:${PORT}/?t=${encodeURIComponent(TOKEN)}`),
+  mdns: MDNS_ENABLED ? `http://${MDNS_NAME}.local:${PORT}/?t=${encodeURIComponent(TOKEN)}` : null
+} : { enabled: false, urls: [] };
 var { server } = createHttp(core, {
   port: PORT,
+  token: TOKEN,
+  lan: LAN_INFO,
   // the Phase 1 spike board, kept verbatim at GET /plain; the real board
   // (GET / + /assets/*) is served from board-dist, resolved inside http.mjs
   boardFile: path5.join(__dirname, "board.html"),
@@ -6165,17 +7331,53 @@ server.on("error", (e) => {
   }
   throw e;
 });
+function lanAddresses() {
+  const addresses = /* @__PURE__ */ new Set();
+  try {
+    for (const entries of Object.values(os2.networkInterfaces())) {
+      for (const entry of entries || []) {
+        if ((entry.family === "IPv4" || entry.family === 4) && !entry.internal) addresses.add(entry.address);
+      }
+    }
+  } catch (err) {
+    console.error(`fleetd could not enumerate LAN addresses (${err?.code || err?.message || "unknown error"})`);
+  }
+  return [...addresses];
+}
+var mdns = null;
 var PID_FILE = path5.join(HOME, "fleetd.pid");
-server.listen(PORT, "127.0.0.1", () => {
+server.listen(PORT, BIND, () => {
   try {
     fs6.writeFileSync(PID_FILE, String(process.pid));
   } catch {
   }
-  console.log(`fleetd up on http://127.0.0.1:${PORT} (pid ${process.pid}, db ${path5.join(HOME, "fleetd.db")})`);
+  const boundHost = BIND.includes(":") && !BIND.startsWith("[") ? `[${BIND}]` : BIND;
+  console.log(`fleetd up on http://${boundHost}:${PORT} (pid ${process.pid}, db ${path5.join(HOME, "fleetd.db")})`);
+  if (LAN_MODE) {
+    const addresses = lanAddresses();
+    for (const address of addresses) {
+      console.log(`fleetd LAN http://${address}:${PORT}/?t=${encodeURIComponent(TOKEN)}`);
+    }
+    if (process.env.FLEETDECK_MDNS?.trim().toLowerCase() !== "off" && addresses.length) {
+      mdns = createMdns({
+        port: PORT,
+        name: MDNS_NAME,
+        instance: `Fleet Deck (${os2.hostname()})`,
+        addresses,
+        log: (msg) => console.error(`fleetd mdns: ${msg}`)
+      });
+      mdns.start();
+      console.log(`fleetd LAN http://${MDNS_NAME}.local:${PORT}/?t=${encodeURIComponent(TOKEN)} (mDNS \u2014 needs a resolver on the peer)`);
+    }
+  }
   core.reconcileSpawns().catch((err) => console.error("fleetd spawn reconciliation error:", err));
   startAgentsPoll(core);
 });
 function shutdown() {
+  try {
+    mdns?.stop();
+  } catch {
+  }
   try {
     if (fs6.existsSync(PID_FILE) && fs6.readFileSync(PID_FILE, "utf8").trim() === String(process.pid)) fs6.unlinkSync(PID_FILE);
   } catch {

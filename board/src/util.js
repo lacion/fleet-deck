@@ -1,5 +1,33 @@
 // Small pure helpers shared across the board.
 
+// Clipboard for the LAN panel. navigator.clipboard exists ONLY in a secure
+// context — and the LAN board is plain http://192.168.x.x, which is exactly
+// where copying a URL matters most. So: try the real API, fall back to the old
+// execCommand trick, and tell the truth (false) when both are refused so the
+// caller can say "select it yourself" instead of lying about a copy.
+export async function copyText(text) {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch { /* denied or insecure context — fall through */ }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
 export function human(ms) {
   const s = Math.max(0, Math.floor(ms / 1000));
   if (s < 60) return s + 's';
@@ -45,6 +73,35 @@ export function modelFamily(model) {
   if (m.includes('quill')) return 'quill';
   if (m.includes('comet')) return 'comet';
   return 'other';
+}
+
+// v1.4 live terminal — a board-owned pane is viewable while the pane exists:
+// spawning (incl. the stalled watchdog state) or live; never after exit/kill.
+export function spawnTermable(s) {
+  if (!s?.spawn) return false;
+  const st = s.spawn.stalled ? 'stalled' : (s.spawn.status || 'live');
+  return st === 'spawning' || st === 'stalled' || st === 'live';
+}
+
+// v1.8 kill-from-the-card — a board-owned pane can be killed while a window
+// still exists to kill: spawning / stalled / live, and pane-dead (the dead
+// pane's window survives until something kills it). 'killed' and 'gone' are
+// terminal — there is nothing left to take down, so the board offers nothing.
+export function spawnKillable(s) {
+  if (!s?.spawn?.spawn_id) return false;
+  const st = s.spawn.status || 'live';
+  return st !== 'killed' && st !== 'gone';
+}
+
+// v1.6 remote control — the "enable remote" door is offered only when the
+// daemon would say yes: a LIVE board-owned pane (not spawning/stalled — /rc
+// is typed into a working TUI), not already on remote control, and the
+// session at a turn boundary (queued/idle). The daemon 409s every other col
+// ("never inject into a working/needsyou turn"), so the board never offers
+// what would be refused.
+export function spawnRemoteAvailable(s) {
+  if (!s?.spawn || s.spawn.status !== 'live' || s.spawn.remote?.enabled) return false;
+  return s.col === 'queued' || s.col === 'idle';
 }
 
 // Daemon columns → board columns. `needsyou` renders in WORKING with amber

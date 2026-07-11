@@ -140,7 +140,12 @@ a { color: var(--act); } a:hover { opacity: .85; }
 .fd-card.offline { opacity: .45; }
 .fd-card.ripple { animation: fdRipple var(--ripple-conflict) ease-out 1; }
 
-.fd-card .row1 { display: flex; align-items: center; gap: 7px; min-width: 0; }
+/* Wraps, deliberately. Every chip in here is flex:none / nowrap, so on a card
+   that carries several at once — an unsupervised OFFLINE spawn shows the
+   callsign, the `unsupervised` chip AND `⟲ revive` — a single line overflows
+   and the last chip is clipped out of reach. An action you cannot click is
+   worse than one that costs a second row. */
+.fd-card .row1 { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; min-width: 0; }
 .fd-pulse { width: 8px; height: 8px; flex: none; border-radius: 50%; background: var(--faint); border: 1.5px solid var(--faint); }
 .fd-pulse.working { background: var(--ok); border-color: var(--ok); animation: fdPulse var(--pulse-working) ease-in-out infinite; }
 .fd-pulse.verifying { background: var(--m-comet); border-color: var(--m-comet); animation: fdPulse 3.2s ease-in-out infinite; }
@@ -376,6 +381,8 @@ textarea.fd-input { font-family: var(--font-ui); font-size: 13px; resize: none; 
   text-overflow: ellipsis; max-width: 140px; min-width: 0;
 }
 [data-theme="light"] .fd-panechip { background: #EAEEF4; }
+/* v1.8 — the chip is METADATA again (which pane this card owns). The door into
+   the pane is .fd-actbtn.term below: an action that looks like one. */
 .fd-stalechip {
   font-family: var(--font-data); font-size: 10px; color: var(--hazard); background: var(--hazard-bg);
   border-radius: var(--r-chip); padding: 1px 6px; white-space: nowrap; opacity: .85;
@@ -389,8 +396,10 @@ textarea.fd-input { font-family: var(--font-ui); font-size: 13px; resize: none; 
 }
 .fd-killrow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .fd-killrow .fd-ghostbtn { flex: none; }
-.fd-killbtn:hover { border-color: var(--hazard); color: var(--hazard); }
-.fd-killbtn.armed { border-color: var(--hazard); color: var(--hazard); background: var(--hazard-bg); }
+/* the drawer's kill button opens the confirmation dialog — it never kills on
+   its own click, so it wears hazard on hover, not permanently */
+.fd-killbtn { color: var(--hazard); }
+.fd-killbtn:hover { border-color: var(--hazard); background: var(--hazard-bg); }
 .fd-killwarn { font-family: var(--font-data); font-size: 11px; color: var(--hazard); }
 .fd-killok { font-family: var(--font-data); font-size: 11px; color: var(--ok); }
 
@@ -429,7 +438,54 @@ textarea.fd-input { font-family: var(--font-ui); font-size: 13px; resize: none; 
   white-space: nowrap; letter-spacing: .5px; flex: none;
 }
 
-/* cleanup summary strip (header Clear button feedback) */
+/* ============ v1.5 — revive dead board-spawned agents ============ */
+/* card chip: offline + spawn.revivable — the resurrection door */
+.fd-revivechip {
+  font-family: var(--font-data); font-size: 10px; color: var(--act); background: var(--act-bg);
+  border: 1px solid var(--act); border-radius: var(--r-chip); padding: 0 6px;
+  white-space: nowrap; flex: none; cursor: pointer;
+}
+.fd-revivechip:hover { opacity: .8; }
+.fd-revivechip:focus-visible { outline: 2px solid var(--act); outline-offset: 1px; }
+.fd-revivechip.busy { cursor: default; opacity: .6; }
+/* a revivable offline card is less dead than the rest of the graveyard */
+.fd-card.offline:has(.fd-revivechip) { opacity: .6; }
+.fd-card.offline:has(.fd-revivechip):hover { opacity: .85; }
+/* bulk action on the OFFLINE column head — ghost button at head scale */
+.fd-reviveall { font-size: 10px; padding: 1px 8px; border-radius: var(--r-chip); white-space: nowrap; }
+.fd-reviveall:disabled { opacity: .6; cursor: default; }
+
+/* ============ v1.6 — remote control (/rc) ============ */
+/* card + drawer chip: spawn.remote.enabled — comet-blue (capability, not
+   hazard); .link once the claude.ai URL is harvested (the chip is the door) */
+.fd-remotechip {
+  font-family: var(--font-data); font-size: 10px; color: var(--m-comet); background: var(--m-comet-bg);
+  border: 1px solid var(--m-comet); border-radius: var(--r-chip); padding: 0 6px;
+  white-space: nowrap; letter-spacing: .5px; flex: none;
+}
+.fd-remotechip.link { cursor: pointer; }
+.fd-remotechip.link:hover { opacity: .8; }
+.fd-remotechip.link:focus-visible { outline: 2px solid var(--act); outline-offset: 1px; }
+/* drawer: the claude.ai link (or its pending placeholder) under the attach hint */
+.fd-remoterow { font-family: var(--font-data); font-size: var(--fs-data); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fd-remoterow a { color: var(--m-comet); text-decoration: none; }
+.fd-remoterow a:hover { text-decoration: underline; opacity: 1; }
+.fd-remoterow.pending { color: var(--faint); }
+/* the enable door on the card — like the revive chip, act-colored (an action
+   you can take, not a state): live pane, not yet enabled, turn boundary */
+.fd-remoteofferchip {
+  font-family: var(--font-data); font-size: 10px; color: var(--act); background: var(--act-bg);
+  border: 1px solid var(--act); border-radius: var(--r-chip); padding: 0 6px;
+  white-space: nowrap; flex: none; cursor: pointer;
+}
+.fd-remoteofferchip:hover { opacity: .8; }
+.fd-remoteofferchip:focus-visible { outline: 2px solid var(--act); outline-offset: 1px; }
+.fd-remoteofferchip.busy { cursor: default; opacity: .6; }
+/* feedback strip: the harvested claude.ai link (✓ REMOTE) */
+.fd-clearstrip .lnk { color: var(--m-comet); text-decoration: none; white-space: nowrap; }
+.fd-clearstrip .lnk:hover { text-decoration: underline; }
+
+/* cleanup summary strip (header Clear button feedback + revive results) */
 .fd-clearstrip {
   flex: none; display: flex; align-items: center; gap: 10px; padding: 7px 16px;
   background: var(--raised); border-bottom: 1px solid var(--border);
@@ -544,3 +600,170 @@ textarea.fd-input { font-family: var(--font-ui); font-size: 13px; resize: none; 
 .fd.compact .fd-card .note { font-size: 11.5px; white-space: nowrap; }
 .fd.compact .fd-feed { height: 112px; }
 .fd.compact .fd-planlist { max-height: 240px; }
+
+/* ============ live terminal modal (v1.4) ============ */
+/* Above compose (20) — one terminal at a time, closed via ✕ ONLY (Esc goes
+   to the agent's TUI, never to the board while this is open). */
+.fd-termwrap {
+  position: fixed; inset: 0; background: rgba(0,0,0,.55);
+  display: flex; align-items: center; justify-content: center;
+  padding: 4vh 3vw; z-index: 30;
+}
+.fd-term {
+  width: min(1060px, 100%); height: min(720px, 100%);
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  display: flex; flex-direction: column; overflow: hidden; text-align: left;
+  box-shadow: 0 24px 60px rgba(0,0,0,.4); animation: fdSlideIn .2s ease-out 1;
+}
+.fd-termhead {
+  flex: none; display: flex; align-items: center; gap: 10px;
+  padding: 12px 16px; border-bottom: 1px solid var(--border-soft);
+}
+.fd-termhead .callsign { font-family: var(--font-data); font-size: 14px; font-weight: 600; }
+.fd-termhead .fd-panechip { max-width: 220px; }
+.fd-termhint {
+  font-family: var(--font-data); font-size: var(--fs-micro); color: var(--faint);
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.fd-termbody { flex: 1; min-height: 0; position: relative; background: var(--code); }
+.fd-termscreen { position: absolute; inset: 8px 4px 8px 10px; }
+.fd-termscreen .xterm { height: 100%; }
+/* end-of-stream strip — NON-destructive: the frozen screen stays visible */
+.fd-termnote {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  display: flex; align-items: center; gap: 12px; padding: 9px 14px;
+  background: var(--surface); border-top: 1px solid var(--border);
+  font-family: var(--font-data); font-size: var(--fs-data); color: var(--dim);
+  animation: fdSlideIn .2s ease-out 1;
+}
+.fd-termnote .msg { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.fd-termnote.err .msg { color: var(--hazard); }
+.fd-termnote .fd-ghostbtn { flex: none; }
+
+/* ============ LAN share + token gate (v1.7) ============ */
+
+/* header: LAN is on — a quiet green tell, not a badge that shouts */
+.fd-landot {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--ok); flex: none;
+  animation: fdPulse var(--pulse-working) ease-in-out infinite;
+}
+
+.fd-lan { width: 460px; gap: 14px; }
+.fd-lan .sub { font-size: var(--fs-body); color: var(--dim); line-height: 1.55; text-wrap: pretty; }
+
+/* the QR is ALWAYS black on white — inverted codes defeat many scanners, and
+   this exists to be pointed at with a phone camera */
+.fd-qr { display: flex; flex-direction: column; align-items: center; gap: 7px; }
+.fd-qr svg { background: #fff; border-radius: 8px; padding: 8px; display: block; }
+.fd-qr .cap { font-family: var(--font-data); font-size: var(--fs-micro); letter-spacing: var(--ls-label); color: var(--faint); }
+
+.fd-lanurls { display: flex; flex-direction: column; gap: 6px; }
+.fd-lanurl {
+  display: flex; align-items: center; gap: 8px; background: var(--code);
+  border: 1px solid var(--border-soft); border-radius: var(--r-ctl); padding: 2px 8px 2px 2px;
+}
+.fd-lanurl.primary { border-color: var(--border); }
+.fd-lanurl .u {
+  flex: 1; min-width: 0; text-align: left; background: none; border: none; cursor: pointer;
+  font-family: var(--font-data); font-size: 12px; color: var(--text); padding: 8px 8px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-radius: 6px;
+}
+.fd-lanurl .u:hover { color: var(--act); }
+.fd-lanurl .u:focus-visible { outline: 2px solid var(--act); outline-offset: -2px; }
+.fd-lanurl .c { font-family: var(--font-data); font-size: var(--fs-micro); color: var(--faint); flex: none; white-space: nowrap; }
+.fd-lanurl .c.ok { color: var(--ok); }
+.fd-lanurl .c.manual { color: var(--act); }
+
+.fd-lannote { font-family: var(--font-data); font-size: 11.5px; color: var(--act); overflow-wrap: anywhere; }
+.fd-lanwarn {
+  display: flex; gap: 7px; background: var(--hazard-bg); border: 1px solid var(--hazard);
+  border-radius: var(--r-ctl); padding: 9px 11px; font-size: var(--fs-body);
+  color: var(--text); line-height: 1.5; text-wrap: pretty;
+}
+
+.fd-lanhow { display: flex; flex-direction: column; gap: 8px; }
+.fd-lanhow .h { font-family: var(--font-data); font-size: var(--fs-micro); letter-spacing: var(--ls-label); color: var(--faint); }
+.fd-lanhow .s { font-size: var(--fs-body); color: var(--dim); line-height: 1.55; text-wrap: pretty; }
+.fd-lanhow .s em { color: var(--text); font-style: normal; font-weight: 600; }
+.fd-lanhow .mono { font-family: var(--font-data); color: var(--text); }
+.fd-lanhow .cmd {
+  font-family: var(--font-data); font-size: 12.5px; background: var(--code); color: var(--ok);
+  border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; overflow-x: auto; white-space: pre;
+}
+
+/* the token gate replaces the board outright — nothing behind it works */
+.fd-gate { align-items: center; justify-content: center; padding: 24px; }
+.fd-gatecard {
+  width: 480px; max-width: 100%; display: flex; flex-direction: column; gap: 13px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  padding: 26px 28px; box-shadow: 0 24px 60px rgba(0,0,0,.4); animation: fdSlideIn .2s ease-out 1;
+}
+.fd-gatecard .fd-wordmark { color: var(--text); margin-bottom: 2px; }
+.fd-gatecard .t1 { font-family: var(--font-data); font-size: 12px; letter-spacing: 2px; color: var(--act); font-weight: 600; }
+.fd-gatecard .t2 { font-size: 14px; color: var(--dim); line-height: 1.6; text-wrap: pretty; }
+.fd-gatecard .hint {
+  display: flex; flex-direction: column; gap: 7px; font-size: var(--fs-body); color: var(--faint); line-height: 1.5;
+}
+.fd-gatecard .hint .cmd {
+  font-family: var(--font-data); font-size: 12.5px; background: var(--code); color: var(--ok);
+  border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; overflow-x: auto; white-space: pre;
+}
+.fd-gatecard .hint .cmd .c { color: var(--act); }
+.fd-gatecard .row { display: flex; gap: 8px; }
+.fd-gatecard .foot { font-family: var(--font-data); font-size: var(--fs-micro); color: var(--faint); }
+
+/* ============ v1.8 — card actions · kill dialog · dismiss ============ */
+
+/* The card's action row. Killing used to live inside the drawer and the
+   terminal used to hide behind a metadata-looking chip; both are ACTIONS, so
+   both now look like buttons and sit together on the card, in both densities. */
+.fd-cardacts { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.fd-actbtn {
+  display: inline-flex; align-items: center; gap: 4px; flex: none;
+  font-family: var(--font-data); font-size: 10.5px; line-height: 19px;
+  padding: 0 9px; border-radius: var(--r-ctl); white-space: nowrap;
+  background: var(--raised); border: 1px solid var(--border); color: var(--dim); cursor: pointer;
+  transition: border-color var(--t-fast), color var(--t-fast), background var(--t-fast);
+}
+.fd-actbtn:focus-visible { outline: 2px solid var(--act); outline-offset: 1px; }
+/* ▣ terminal — the door into the live pane, and the loudest thing on the card */
+.fd-actbtn.term { color: var(--text); font-weight: 600; }
+.fd-actbtn.term:hover { border-color: var(--act); background: var(--act-bg); color: var(--act); }
+/* ☠ kill — hazard from the first glance, so it is never clicked absent-mindedly
+   (and it only ever OPENS the confirmation dialog) */
+.fd-actbtn.kill { color: var(--hazard); }
+.fd-actbtn.kill:hover { border-color: var(--hazard); background: var(--hazard-bg); }
+.fd-actbtn.kill:focus-visible { outline-color: var(--hazard); }
+
+/* the kill confirmation — Compose's modal shell, hazard-headed */
+.fd-killask { width: 470px; gap: 12px; }
+.fd-killask .lbl.haz { color: var(--hazard); font-weight: 600; }
+.fd-killask .ask { font-size: var(--fs-heading); line-height: 1.55; text-wrap: pretty; }
+.fd-killask .ask b { font-family: var(--font-data); font-weight: 600; }
+.fd-killask .win {
+  font-family: var(--font-data); font-size: 12.5px; color: var(--text); background: var(--code);
+  border: 1px solid var(--border-soft); border-radius: var(--r-chip); padding: 1px 6px; overflow-wrap: anywhere;
+}
+.fd-killask .sub { font-size: var(--fs-body); color: var(--dim); line-height: 1.55; text-wrap: pretty; }
+.fd-killask .fd-lanwarn { font-size: var(--fs-body); }
+.fd-killask .foot { gap: 8px; }
+.fd-killask .fd-ghostbtn:disabled, .fd-killask .fd-x:disabled { opacity: .5; cursor: default; }
+/* the only affirmative: a filled hazard button (ink flips per theme, like --act) */
+.fd-dangerbtn {
+  background: var(--hazard); color: var(--act-ink); border: 1px solid var(--hazard); border-radius: var(--r-ctl);
+  padding: 8px 18px; font-size: 13px; font-weight: 600; cursor: pointer; flex: none; white-space: nowrap;
+}
+.fd-dangerbtn:hover { opacity: .9; }
+.fd-dangerbtn:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+.fd-dangerbtn:disabled { opacity: .6; cursor: default; }
+
+/* dismiss a stale NEEDS YOU card: quiet, no confirmation — the daemon expires
+   the question and sends the session NOTHING (you already answered it there) */
+.fd-qdismiss {
+  flex: none; width: 20px; height: 20px; padding: 0; border-radius: 5px; line-height: 1;
+  background: none; border: 1px solid var(--border); color: var(--faint);
+  font-size: 10px; cursor: pointer;
+}
+.fd-qdismiss:hover { color: var(--hazard); border-color: var(--hazard); }
+.fd-qdismiss:focus-visible { outline: 2px solid var(--act); outline-offset: 2px; }
+.fd-qdismiss:disabled { opacity: .5; cursor: default; }

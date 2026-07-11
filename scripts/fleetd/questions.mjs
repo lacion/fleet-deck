@@ -289,8 +289,21 @@ export function createQuestions(db, {
   // settle every pending hold-kind question it has: live holds are failed
   // open ({} → the terminal flow owns the decision) without waiting out the
   // window; hold-less rows (window lapsed, client gone, daemon restarted
-  // mid-hold) just flip to expired. Freeform rows are deliberately untouched
-  // — they're the human's queue (answered or SessionEnd only).
+  // mid-hold) just flip to expired.
+  //
+  // FREEFORM ROWS EXPIRE HERE TOO, and that is a correction, not a shortcut.
+  // A freeform question is raised at a Stop — the session is idle, waiting on
+  // an answer. Activity after that means it is NOT waiting any more: the human
+  // walked over and answered in the terminal (or in the board's live terminal
+  // modal), and the session moved on. Leaving the row pending left a NEEDS YOU
+  // card on the board forever, for a question that was answered ten minutes ago
+  // in another window — the rail filled with ghosts and stopped meaning
+  // anything. The board must reflect what is actually still owed.
+  //
+  // The resume path is untouched: expireAllForSession (SessionEnd) still spares
+  // freeform, so an ENDED session's question survives for `claude --resume`.
+  // Only a session that demonstrably kept going clears its own queue.
+  //
   // Watch item for live acceptance: if 2.1.206 ever fires PermissionRequest
   // hooks for PARALLEL tool calls, the first allowed tool's PostToolUse would
   // fail the sibling holds open here (unproven live — validate before relying
@@ -298,13 +311,26 @@ export function createQuestions(db, {
   function expireOnActivity(sessionId) {
     let changed = false;
     for (const r of q.pendingBySession.all(sessionId)) {
-      if (!HOLD_KINDS.has(r.kind)) continue;
       const h = releaseHold(r.id);
       if (h) { try { h.respond({}); } catch { /* socket already gone */ } }
       if (q.markExpired.run(r.id).changes) changed = true;
     }
     if (changed) onChange();
     return changed;
+  }
+
+  // The human already handled it elsewhere: retire the card, tell the session
+  // nothing. Distinct from answering (which mails the answer to the session)
+  // and from expiring a hold (which must fail a parked socket open).
+  function dismiss(id) {
+    const row = q.get.get(id);
+    if (!row) return { ok: false, reason: 'no such question' };
+    if (row.status !== 'pending') return { ok: true, already: true };
+    const h = releaseHold(row.id);
+    if (h) { try { h.respond({}); } catch { /* socket already gone */ } }
+    const changed = q.markExpired.run(row.id).changes > 0;
+    if (changed) onChange();
+    return { ok: true, callsign: row.callsign ?? null };
   }
 
   // Restart hygiene (periodic sweep): a pending hold-kind row with NO live
@@ -385,6 +411,7 @@ export function createQuestions(db, {
     attachHold,
     socketClosed,
     answer,
+    dismiss,
     expireOnActivity,
     expireOrphans,
     expireAllForSession,

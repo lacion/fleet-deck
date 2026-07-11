@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { human, basename, questionView } from '../util.js';
 import { renderMarkdown, planTitle } from '../markdown.js';
-import { answerQuestion } from '../api.js';
+import { answerQuestion, dismissQuestion } from '../api.js';
 
 // The fixed right rail: NEEDS YOU. Global (never repo-filtered — the human's
 // attention is the one resource that isn't per-project), badged by repo.
@@ -301,9 +301,13 @@ function statusLine(q, session) {
   return null;
 }
 
-export function QuestionCard({ q, session, now, selected, onSelect }) {
+export function QuestionCard({ q, session, now, selected, onSelect, onDismissed }) {
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState(null); // transient result of an answer POST
+  // v1.8 — dismiss: the question you already answered in the terminal. Low
+  // risk (the daemon expires it and sends the session NOTHING), so no confirm
+  // — just an in-flight lock and an honest failure line if the daemon says no.
+  const [dismissing, setDismissing] = useState(false);
   const view = questionView(q);
   // v1.3 — ExitPlanMode permissions are PLAN cards (they also carry plan_id)
   const isPlan = q.kind === 'permission' && q.payload?.tool_name === 'ExitPlanMode';
@@ -336,6 +340,24 @@ export function QuestionCard({ q, session, now, selected, onSelect }) {
     }
   };
 
+  const doDismiss = async () => {
+    if (dismissing) return;
+    setDismissing(true);
+    setNote(null);
+    try {
+      const res = await dismissQuestion(q.id);
+      if (res.ok && res.json?.ok !== false) {
+        // gone from the rail immediately; the next snapshot agrees (expired)
+        onDismissed?.(q.id);
+        return; // unmounting — don't touch state
+      }
+      setNote({ cls: 'hazard', text: res.json?.reason || res.json?.err || `dismiss failed (${res.status})` });
+    } catch {
+      setNote({ cls: 'hazard', text: 'daemon unreachable — try again' });
+    }
+    setDismissing(false);
+  };
+
   const resolved = statusLine(q, session);
   const interactive = pending && !holdLost;
 
@@ -354,6 +376,18 @@ export function QuestionCard({ q, session, now, selected, onSelect }) {
         <span className="fd-spacer" />
         <span className="age">{human(now - (q.created_at || now))}</span>
         {pending && !holdLost && <CountdownRing q={q} now={now} />}
+        {pending && (
+          <button
+            type="button"
+            className="fd-qdismiss"
+            aria-label="Dismiss this question"
+            title="dismiss — you already handled this in the terminal"
+            disabled={dismissing}
+            onClick={(e) => { e.stopPropagation(); doDismiss(); }}
+          >
+            ✕
+          </button>
+        )}
       </div>
       <div className="title">{isPlan ? planTitle(q.payload?.tool_input?.plan) : view.title}</div>
       {holdLost && (
@@ -372,8 +406,14 @@ export function QuestionCard({ q, session, now, selected, onSelect }) {
 
 export default function Inbox({ questions, sessions, now, selQ, onSelect }) {
   const byId = new Map(sessions.map((s) => [s.session_id, s]));
-  const pending = questions.filter((q) => q.status === 'pending');
-  const resolved = questions.filter((q) => q.status !== 'pending');
+  // v1.8 — dismissed ids stay hidden in this tab. The daemon expires the
+  // question, but an expired question still rides the snapshot for a while
+  // (F3: pending + the last few resolved) and would come back as a faded
+  // "⏱ expired" card — which is exactly the stale clutter being cleared.
+  const [dismissed, setDismissed] = useState(() => new Set());
+  const live = questions.filter((q) => !dismissed.has(q.id));
+  const pending = live.filter((q) => q.status === 'pending');
+  const resolved = live.filter((q) => q.status !== 'pending');
   const ordered = [...pending, ...resolved];
 
   return (
@@ -400,6 +440,7 @@ export default function Inbox({ questions, sessions, now, selQ, onSelect }) {
             now={now}
             selected={q.id === selQ}
             onSelect={() => onSelect(q.id)}
+            onDismissed={(id) => setDismissed((prev) => new Set(prev).add(id))}
           />
         ))}
       </div>

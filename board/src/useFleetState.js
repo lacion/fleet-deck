@@ -9,8 +9,18 @@
 //   - while not live, GET /state is polled every 3 s so the board keeps
 //     breathing off the same snapshot shape (WS and /state are identical
 //     minus the `type` field).
+//
+// v1.7 LAN mode: the token rides the WS query string (`?t=` — browsers cannot
+// set headers on a WS handshake) and the Authorization header on /state. A WS
+// refused for auth looks like any other drop to the browser (no status code
+// reaches JS), so the 401 that actually LATCHES the gate always comes from the
+// /state poll — which is exactly why the poll fires on boot and on every drop.
+// While the board is gated we stop connecting entirely: no retry storm behind
+// a wall we know is up. Saving a token re-runs this effect and reconnects.
 
 import { useEffect, useRef, useState } from 'react';
+import { fetchState } from './api.js';
+import { useAuth, wsUrl } from './token.js';
 
 const EMPTY = {
   up_ms: 0,
@@ -23,6 +33,9 @@ const EMPTY = {
   questions: [],
   spawn: null, // v1.2 capability: {available, reason?, max, active}
   spawn_orphans: [],
+  // v1.7 LAN share — {enabled, urls}. Absent on older daemons, so `null` is
+  // the honest default: the panel says "loopback-only", never invents a URL.
+  lan: null,
   // v1.3 `plans` is deliberately ABSENT here: a daemon that doesn't send it
   // leaves snap.plans undefined and the board hides the library entirely.
 };
@@ -31,16 +44,18 @@ export function useFleetState() {
   const [snap, setSnap] = useState(EMPTY);
   const [status, setStatus] = useState('reconnecting'); // live | reconnecting | offline
   const ref = useRef({ ws: null, timer: null, poll: null, failures: 0, closed: false });
+  const { token, unauthorized } = useAuth();
 
   useEffect(() => {
+    if (unauthorized) return undefined; // gated — App owns the screen now
     const st = ref.current;
     st.closed = false;
+    st.failures = 0;
 
     const apply = (data) => setSnap({ ...EMPTY, ...data });
 
     const pollOnce = () => {
-      fetch('/state')
-        .then((r) => (r.ok ? r.json() : null))
+      fetchState()
         .then((data) => { if (data && !st.closed) apply(data); })
         .catch(() => { /* daemon unreachable — WS retry loop owns recovery */ });
     };
@@ -55,10 +70,9 @@ export function useFleetState() {
 
     const connect = () => {
       if (st.closed) return;
-      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
       let ws;
       try {
-        ws = new WebSocket(`${proto}://${location.host}/ws`);
+        ws = new WebSocket(wsUrl('/ws'));
       } catch {
         scheduleRetry();
         return;
@@ -99,7 +113,8 @@ export function useFleetState() {
       stopPolling();
       try { st.ws?.close(); } catch { /* unmounting */ }
     };
-  }, []);
+    // a saved token must reconnect the socket that was refused without it
+  }, [token, unauthorized]);
 
   return { snap, status };
 }

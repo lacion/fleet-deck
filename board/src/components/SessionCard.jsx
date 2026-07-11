@@ -1,6 +1,6 @@
 import React from 'react';
 import Sparkline from './Sparkline.jsx';
-import { human, basename, prettyModel, modelShort, modelFamily } from '../util.js';
+import { human, basename, prettyModel, modelShort, modelFamily, spawnTermable, spawnKillable, spawnRemoteAvailable } from '../util.js';
 
 // How queued mail will reach this session (snapshot mail_meta[sid].route).
 // watcher/pane deliver without the human doing anything; the other two wait.
@@ -15,7 +15,8 @@ const MAIL_HINT = {
 // badge (--m-* family colors), branch/worktree line, note, conflict hazard
 // edge + one-shot ripple, file chips, sparkline + age.
 export default function SessionCard({
-  s, now, compact, mailCount, mailMeta, conflictFiles, conflictPeers, ripple, priority, onOpen,
+  s, now, compact, mailCount, mailMeta, conflictFiles, conflictPeers, ripple, priority, onOpen, onOpenTerm,
+  onRevive, reviving, onEnableRemote, enablingRemote, onKill,
 }) {
   const offline = s.col === 'offline';
   const needsyou = s.col === 'needsyou';
@@ -43,6 +44,14 @@ export default function SessionCard({
   // the daemon records worktree = toplevel of cwd even for the main tree —
   // only badge REAL secondary worktrees (toplevel differs from the repo name)
   const wt = s.worktree && basename(s.worktree) !== s.repo_name ? basename(s.worktree) : null;
+  // v1.8 — the card's own action row. The terminal was reachable before, but
+  // only by clicking what looked like a metadata chip; killing was reachable
+  // only from inside the drawer. Both are ACTIONS, so both now read as buttons,
+  // side by side, on the card itself. (Spans with role=button: the card is
+  // itself a <button> and buttons don't nest — same trick as the chips above.)
+  const canTerm = !!onOpenTerm && spawnTermable(s);
+  const canKill = !!onKill && spawnKillable(s);
+  const hasActs = canTerm || canKill;
 
   const cls = [
     'fd-card',
@@ -60,6 +69,9 @@ export default function SessionCard({
         <span className="callsign">{s.callsign || s.session_id}</span>
         {priority && <span className="star" title="priority">★</span>}
         {s.spawn && (
+          // the window name is METADATA — it says which pane this card owns.
+          // The door into that pane is the ▣ terminal button in the action row
+          // below (v1.8: the chip used to be the door, and nobody found it).
           <span className="fd-panechip" title={`board-owned pane · ${s.spawn.status || 'live'}`}>
             ⌗ {s.spawn.tmux_window}
           </span>
@@ -67,6 +79,67 @@ export default function SessionCard({
         {s.spawn?.skip_permissions && (
           <span className="fd-unsupchip" title="spawned with permissions bypassed — it will never ask before acting">
             unsupervised
+          </span>
+        )}
+        {s.spawn?.remote?.enabled && (
+          // v1.6: remote control is on. With a harvested link the chip is the
+          // door to claude.ai (span, not <a> — the card itself is a button);
+          // without one it just states the fact and points at the terminal.
+          s.spawn.remote.url ? (
+            <span
+              className="fd-remotechip link"
+              role="link"
+              tabIndex={0}
+              title={`remote control on — open ${s.spawn.remote.url}`}
+              onClick={(e) => { e.stopPropagation(); window.open(s.spawn.remote.url, '_blank', 'noopener'); }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); window.open(s.spawn.remote.url, '_blank', 'noopener'); }
+              }}
+            >
+              📱 remote ↗
+            </span>
+          ) : (
+            <span
+              className="fd-remotechip"
+              title="remote control on, but the claude.ai URL wasn't captured — open the agent's terminal (▣) to find it"
+            >
+              📱 remote
+            </span>
+          )
+        )}
+        {spawnRemoteAvailable(s) && onEnableRemote && (
+          // v1.6: the enable door — live pane, not yet on remote control,
+          // session at a turn boundary (span, not <button> — the card is a
+          // button). Results land on the header feedback strip via App.
+          <span
+            className={`fd-remoteofferchip${enablingRemote ? ' busy' : ''}`}
+            role="button"
+            tabIndex={enablingRemote ? -1 : 0}
+            aria-disabled={enablingRemote || undefined}
+            title="put this agent on remote control — drive it from claude.ai on web or phone"
+            onClick={(e) => { e.stopPropagation(); if (!enablingRemote) onEnableRemote(); }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); if (!enablingRemote) onEnableRemote(); }
+            }}
+          >
+            {enablingRemote ? 'enabling…' : '📱 enable remote'}
+          </span>
+        )}
+        {offline && s.spawn?.revivable && onRevive && (
+          // v1.5: dead agent, surviving worktree + transcript — the chip is
+          // the resurrection door (span, not <button> — the card is a button).
+          <span
+            className={`fd-revivechip${reviving ? ' busy' : ''}`}
+            role="button"
+            tabIndex={reviving ? -1 : 0}
+            aria-disabled={reviving || undefined}
+            title="worktree + transcript survived — revive this agent (card moves to QUEUED)"
+            onClick={(e) => { e.stopPropagation(); if (!reviving) onRevive(); }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); if (!reviving) onRevive(); }
+            }}
+          >
+            {reviving ? 'reviving…' : '⟲ revive'}
           </span>
         )}
         {stalled && (
@@ -97,6 +170,41 @@ export default function SessionCard({
       </span>
       {inConflict && conflictPeers.length > 0 && (
         <span className="contested">▲ contested with {conflictPeers.join(', ')}</span>
+      )}
+      {hasActs && (
+        // v1.8 — card actions. Present in BOTH densities: they are the two
+        // things you want at 2am without hunting through a drawer.
+        <span className="fd-cardacts">
+          {canTerm && (
+            <span
+              className="fd-actbtn term"
+              role="button"
+              tabIndex={0}
+              title="open live terminal — your keystrokes go straight to the agent"
+              onClick={(e) => { e.stopPropagation(); onOpenTerm(); }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onOpenTerm(); }
+              }}
+            >
+              ▣ terminal
+            </span>
+          )}
+          {canKill && (
+            // opens the confirmation dialog — NEVER kills on this click
+            <span
+              className="fd-actbtn kill"
+              role="button"
+              tabIndex={0}
+              title="kill this agent — asks first; the worktree and branch are left alone"
+              onClick={(e) => { e.stopPropagation(); onKill(); }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onKill(); }
+              }}
+            >
+              ☠ kill
+            </span>
+          )}
+        </span>
       )}
       {!compact && (
         <span className="row-files">

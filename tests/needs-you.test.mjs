@@ -637,3 +637,85 @@ test('malformed /hook/PermissionRequest body still answers 200 and the daemon st
   const state = await getJson(`${daemon.baseUrl}/state`);
   assert.equal(state.status, 200, '/state must still respond fine after a malformed hook body');
 });
+
+// A freeform card must not outlive the question it represents. The human very
+// often answers in the terminal (or the board's live-terminal modal) instead of
+// the rail — and the rail used to keep showing the card anyway, forever, until
+// NEEDS YOU was a wall of ghosts nobody trusted. Any activity from the session
+// proves it is no longer waiting.
+test('F3d: a freeform card clears when the session moves on (answered in the terminal)', async (t) => {
+  const daemon = await startDaemon();
+  const cwd = scratchCwd();
+  const transcriptDir = makeTranscriptDir();
+  t.after(async () => {
+    await daemon.stop();
+    rmSync(cwd, { recursive: true, force: true });
+    rmSync(transcriptDir, { recursive: true, force: true });
+  });
+
+  const sid = randomUUID();
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
+  await postHook(daemon.baseUrl, 'UserPromptSubmit', loadFixture('user-prompt-submit', { session_id: sid, cwd }));
+  const transcriptPath = writeTranscript(transcriptDir, {
+    sessionId: sid,
+    assistantText: 'Should I use bcrypt or argon2?',
+  });
+  await postHook(daemon.baseUrl, 'Stop', {
+    session_id: sid, hook_event_name: 'Stop', cwd, transcript_path: transcriptPath,
+  });
+
+  let state = (await getJson(`${daemon.baseUrl}/state`)).json;
+  const q = questionsFor(state, sid, 'freeform')[0];
+  assert.ok(q, 'sanity: the trailing question became a card');
+  assert.equal(q.status, 'pending');
+
+  // The human answers in the terminal: the session takes a new prompt.
+  await postHook(daemon.baseUrl, 'UserPromptSubmit', loadFixture('user-prompt-submit', { session_id: sid, cwd }));
+
+  state = (await getJson(`${daemon.baseUrl}/state`)).json;
+  const after = (state.questions || []).find(x => x.id === q.id);
+  assert.notEqual(after?.status, 'pending', 'the card must not still be pending once the session moved on');
+});
+
+test('a stale needs-you card can be dismissed without telling the session anything', async (t) => {
+  const daemon = await startDaemon();
+  const cwd = scratchCwd();
+  const transcriptDir = makeTranscriptDir();
+  t.after(async () => {
+    await daemon.stop();
+    rmSync(cwd, { recursive: true, force: true });
+    rmSync(transcriptDir, { recursive: true, force: true });
+  });
+
+  const sid = randomUUID();
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
+  await postHook(daemon.baseUrl, 'UserPromptSubmit', loadFixture('user-prompt-submit', { session_id: sid, cwd }));
+  const transcriptPath = writeTranscript(transcriptDir, {
+    sessionId: sid,
+    assistantText: 'Want me to open the PR?',
+  });
+  await postHook(daemon.baseUrl, 'Stop', {
+    session_id: sid, hook_event_name: 'Stop', cwd, transcript_path: transcriptPath,
+  });
+
+  let state = (await getJson(`${daemon.baseUrl}/state`)).json;
+  const q = questionsFor(state, sid, 'freeform')[0];
+  assert.ok(q, 'sanity: the question became a card');
+
+  const res = await postJson(`${daemon.baseUrl}/api/questions/${q.id}/dismiss`, {});
+  assert.equal(res.status, 200);
+  assert.equal(res.json.ok, true);
+
+  state = (await getJson(`${daemon.baseUrl}/state`)).json;
+  const after = (state.questions || []).find(x => x.id === q.id);
+  assert.notEqual(after?.status, 'pending', 'a dismissed card is retired');
+
+  // Dismissing is NOT answering: the session must receive no mail for it.
+  const mail = (await getJson(`${daemon.baseUrl}/mail?session=${sid}`)).json.mail || [];
+  assert.equal(mail.length, 0, 'dismiss must not mail the session anything');
+
+  const again = await postJson(`${daemon.baseUrl}/api/questions/${q.id}/dismiss`, {});
+  assert.equal(again.status, 200, 'dismiss is idempotent');
+  const missing = await postJson(`${daemon.baseUrl}/api/questions/999999/dismiss`, {});
+  assert.equal(missing.status, 404, 'an unknown question id is a 404');
+});

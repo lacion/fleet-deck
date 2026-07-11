@@ -9,12 +9,26 @@
 // heartbeat).
 
 import http from 'node:http';
+import { timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
+import { createTermBridge } from './termbridge.mjs';
 
 const MAX_BODY = 1e6;
+
+// LOOPBACK CONTRACT: local hooks and board traffic remain zero-config even
+// when fleetd is in LAN mode. Node reports IPv4 peers either directly or as
+// IPv4-mapped IPv6, so all three explicit forms must remain exempt. Bind-time
+// classification also accepts localhost and the complete 127/8 block.
+export function isLoopbackAddress(address) {
+  const value = String(address || '').trim().toLowerCase();
+  return value === 'localhost'
+    || value === '::1'
+    || /^127(?:\.[0-9]{1,3}){3}$/.test(value)
+    || /^::ffff:127(?:\.[0-9]{1,3}){3}$/.test(value);
+}
 
 // ------------------------------------------------------------ board static
 // GET / and /assets/* serve the built React board from board-dist, resolved
@@ -57,11 +71,42 @@ function serveBoardAsset(res, pathname, notFound) {
   return res.end(data);
 }
 
-export function createHttp(core, { port, boardFile, version = '0.0.0', capture = () => {} }) {
+export function createHttp(core, { port, boardFile, version = '0.0.0', capture = () => {}, token, lan = null }) {
+  // The board renders its share panel from this: the exact URLs a peer can
+  // open, token included (a browser cannot send an Authorization header on its
+  // first navigation). Absent/disabled ⇒ the panel says "local only" rather
+  // than inventing a URL. Only ever handed to an ALREADY-AUTHORIZED caller —
+  // snapshot() is behind the same gate as everything else.
+  const lanInfo = lan?.enabled
+    ? { enabled: true, urls: lan.urls ?? [], mdns: lan.mdns ?? null }
+    : { enabled: false, urls: [] };
+
+  function snapshotWithLan() {
+    return { ...core.snapshot(), lan: lanInfo };
+  }
+
   function json(res, code, obj) {
     const body = JSON.stringify(obj);
     res.writeHead(code, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) });
     res.end(body);
+  }
+
+  // AUTH CONTRACT: every non-loopback HTTP route and WebSocket upgrade shares
+  // this exact gate. Presented secrets are compared only after byte lengths
+  // match, because timingSafeEqual throws for unequal buffers. Never include a
+  // rejected credential in logs or response bodies.
+  function tokenMatches(candidate) {
+    if (typeof token !== 'string' || typeof candidate !== 'string') return false;
+    const expected = Buffer.from(token);
+    const presented = Buffer.from(candidate);
+    return expected.length === presented.length && timingSafeEqual(expected, presented);
+  }
+
+  function authorized(req, url) {
+    if (isLoopbackAddress(req.socket?.remoteAddress)) return true;
+    const authorization = req.headers.authorization;
+    const bearer = typeof authorization === 'string' ? /^Bearer (.+)$/.exec(authorization)?.[1] : undefined;
+    return tokenMatches(bearer) || tokenMatches(url.searchParams.get('t'));
   }
 
   // PermissionRequest / Elicitation / AskUserQuestion are handled OUT of this
@@ -171,16 +216,47 @@ export function createHttp(core, { port, boardFile, version = '0.0.0', capture =
     // response intentionally left open
   }
 
+  // SURFACE CONTRACT: the static shell — index.html and the hashed /assets/*
+  // bundle — is served to anyone who asks. Everything that carries fleet data
+  // or DOES something (/state, /health, /api/*, hooks, mail, both WebSockets)
+  // stays behind the token.
+  //
+  // This is not a softening; gating the shell simply does not work, and the
+  // failure is invisible from loopback:
+  //   - A browser cannot attach `?t=` or an Authorization header to the
+  //     `<script type="module">` tag inside a page it is already loading. Gate
+  //     the assets and `/?t=<token>` returns HTML whose own script 401s — a
+  //     blank board for the one person the feature exists for.
+  //   - Rewriting the token into asset URLs does not save it either: the
+  //     terminal modal is a LAZY chunk, imported at click time by code we do
+  //     not get to touch, and that fetch would carry no token.
+  // The shell is an empty React app that knows how to ask for a key — no
+  // session data, no callsigns, no token. A stranger on the network gets that
+  // gate page and nothing else; every byte of fleet data still costs the token.
+  //
+  // Deliberately NOT a cookie: cookies ride along automatically, so any web
+  // page you happened to visit could make your browser POST /api/spawn at this
+  // board (CSRF) and get a live agent on your machine. A bearer token cannot be
+  // forged that way. See tests/lan-auth.test.mjs — the browser-reachability of
+  // the shell is pinned there precisely so this never regresses into a blank
+  // page again.
+  const isPublicShell = (method, pathname) => method === 'GET'
+    && (pathname === '/' || pathname === '/index.html' || pathname === '/favicon.ico'
+      || pathname.startsWith('/assets/'));
+
   const server = http.createServer((req, res) => {
     try {
       const url = new URL(req.url, `http://127.0.0.1:${port}`);
+      if (!isPublicShell(req.method, url.pathname) && !authorized(req, url)) {
+        return json(res, 401, { ok: false, reason: 'unauthorized' });
+      }
       if (req.method === 'GET') {
         if (url.pathname === '/health') {
           // v1.2: spawn capability rides /health so the launcher/board can
           // hide all spawn UI when unavailable.
           return json(res, 200, { ok: true, fleet: core.fleetSize(), pid: process.pid, version, spawn: core.spawnCapability() });
         }
-        if (url.pathname === '/state') return json(res, 200, core.snapshot());
+        if (url.pathname === '/state') return json(res, 200, snapshotWithLan());
         if (url.pathname === '/mail') {
           const sid = url.searchParams.get('session') || '';
           const box = core.drainMail(sid);
@@ -286,6 +362,32 @@ export function createHttp(core, { port, boardFile, version = '0.0.0', capture =
                 });
               return;
             }
+            const reviveMatch = /^\/api\/spawn\/([A-Za-z0-9-]+)\/revive$/.exec(url.pathname);
+            if (reviveMatch) {
+              // Terminal spawn rows can be resumed only when their durable
+              // cwd/transcript evidence still exists; derive owns every
+              // collision/cap check and returns the control-API status. The
+              // body may override remote_control (default: inherit).
+              core.revive(reviveMatch[1], ev ?? {})
+                .then(out => json(res, out.status, out.body))
+                .catch(err => {
+                  console.error('fleetd spawn revive error:', err);
+                  json(res, 500, { ok: false, reason: 'internal' });
+                });
+              return;
+            }
+            const rcMatch = /^\/api\/spawn\/([A-Za-z0-9-]+)\/rc$/.exec(url.pathname);
+            if (rcMatch) {
+              // Explicit human board action: derive enforces the idle/live
+              // pane boundary, types /rc literally, and waits for harvesting.
+              core.enableRemote(rcMatch[1])
+                .then(out => json(res, out.status, out.body))
+                .catch(err => {
+                  console.error('fleetd remote-control error:', err);
+                  json(res, 500, { ok: false, reason: 'internal' });
+                });
+              return;
+            }
             const answerMatch = /^\/api\/questions\/(\d+)\/answer$/.exec(url.pathname);
             if (answerMatch) {
               // Board answer API (F3). NOT a hook path — real status codes.
@@ -294,6 +396,13 @@ export function createHttp(core, { port, boardFile, version = '0.0.0', capture =
               // branching lives in questions.mjs answer().
               const out = core.questions.answer(Number(answerMatch[1]), ev);
               return json(res, out.status, out.body);
+            }
+            const dismissMatch = /^\/api\/questions\/(\d+)\/dismiss$/.exec(url.pathname);
+            if (dismissMatch) {
+              // "I already handled this in the terminal." Retires the card and
+              // tells the session NOTHING — unlike answer(), which mails it.
+              const out = core.questions.dismiss(Number(dismissMatch[1]));
+              return json(res, out.ok ? 200 : 404, out);
             }
             const planMatch = /^\/api\/plans\/(\d+)\/mark$/.exec(url.pathname);
             if (planMatch) {
@@ -322,21 +431,87 @@ export function createHttp(core, { port, boardFile, version = '0.0.0', capture =
   });
 
   // ---------------------------------------------------------------- ws
-  const wss = new WebSocketServer({ server, path: '/ws' });
+  const wss = new WebSocketServer({ noServer: true });
+  const termWss = new WebSocketServer({ noServer: true });
+  const termbridge = createTermBridge({
+    port,
+    resolveSpawn: spawnId => core.terminalSpawn(spawnId),
+    log: message => console.error(`fleetd ${message}`),
+  });
   // ws re-emits http server errors (e.g. EADDRINUSE) on the wss; without a
   // listener that throws and masks the election exit-3 path in fleetd.mjs.
   wss.on('error', () => { /* the http server's 'error' listener owns this */ });
+  termWss.on('error', () => { /* the http server's 'error' listener owns this */ });
+
+  // Explicit upgrade routing keeps the snapshot socket's long-standing /ws
+  // contract separate from /ws/term. Terminal query values are never tmux
+  // targets: only the opaque spawn id reaches the core resolver.
+  server.on('upgrade', (req, socket, head) => {
+    let url;
+    try { url = new URL(req.url || '/', 'http://127.0.0.1'); } catch { socket.destroy(); return; }
+    // WS AUTH CONTRACT: reject before either noServer WebSocketServer sees the
+    // socket. Destruction (rather than an HTTP upgrade response) guarantees no
+    // snapshot or terminal bridge can be observed through an unauthenticated
+    // non-loopback connection.
+    if (!authorized(req, url)) { socket.destroy(); return; }
+    if (url.pathname === '/ws') {
+      wss.handleUpgrade(req, socket, head, ws => wss.emit('connection', ws, req));
+    } else if (url.pathname === '/ws/term') {
+      termWss.handleUpgrade(req, socket, head, ws => termWss.emit('connection', ws, req));
+    } else {
+      socket.destroy();
+    }
+  });
   function broadcast() {
     if (!wss.clients.size) return;
-    const msg = JSON.stringify({ type: 'snapshot', ...core.snapshot() });
+    const msg = JSON.stringify({ type: 'snapshot', ...snapshotWithLan() });
     for (const c of wss.clients) if (c.readyState === 1) c.send(msg);
   }
   wss.on('connection', ws => {
-    try { ws.send(JSON.stringify({ type: 'snapshot', ...core.snapshot() })); } catch { /* client gone */ }
+    try { ws.send(JSON.stringify({ type: 'snapshot', ...snapshotWithLan() })); } catch { /* client gone */ }
+  });
+
+  termWss.on('connection', async (ws, req) => {
+    let handle = null;
+    let socketClosed = false;
+    const send = frame => {
+      if (ws.readyState === 1) ws.send(JSON.stringify(frame));
+    };
+    ws.on('close', () => {
+      socketClosed = true;
+      handle?.close();
+    });
+    ws.on('message', raw => {
+      if (!handle) return;
+      let frame;
+      try { frame = JSON.parse(raw.toString('utf8')); } catch { return; }
+      if (!frame || typeof frame !== 'object') return;
+      if (frame.t === 'in' && typeof frame.data === 'string') handle.input(frame.data);
+      else if (frame.t === 'resize') handle.resize(frame.cols, frame.rows);
+    });
+
+    try {
+      const url = new URL(req.url || '/', 'http://127.0.0.1');
+      const spawn_id = url.searchParams.get('spawn');
+      const cols = Number(url.searchParams.get('cols'));
+      const rows = Number(url.searchParams.get('rows'));
+      if (!spawn_id) throw new Error('missing spawn id');
+      handle = await termbridge.openViewer({
+        spawn_id, cols, rows, send,
+        onClose(reason) {
+          send({ t: 'exit', reason });
+          try { ws.close(); } catch { /* already gone */ }
+        },
+      });
+      if (socketClosed) handle.close();
+    } catch (err) {
+      send({ t: 'err', reason: err?.reason || err?.message || 'terminal unavailable' });
+      try { ws.close(); } catch { /* already gone */ }
+    }
   });
   const heartbeat = setInterval(broadcast, 5000); // ages on the board refresh
   heartbeat.unref();
   core.onMutate = broadcast;
 
-  return { server, wss, broadcast };
+  return { server, wss, termWss, broadcast };
 }

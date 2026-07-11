@@ -19,9 +19,14 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = path.resolve(HERE, '../..');
 export const FLEETD_PATH = path.join(REPO_ROOT, 'scripts/fleetd/fleetd.mjs');
 
-// Testing contract: scratch port range 47600-47999.
-const PORT_MIN = 47600;
-const PORT_MAX = 47999;
+// Testing contract: scratch port range 21600-21999. Deliberately BELOW the
+// kernel's ephemeral range (WSL2 default 44620-48715 — check
+// /proc/sys/net/ipv4/ip_local_port_range): the old 47xxx range sat inside
+// it, so the suite's own outbound health/state polls would occasionally grab
+// a 47xxx source port and a later test daemon binding it lost the election
+// ("fleetd already running") — the long-blamed "WSL2 flake".
+const PORT_MIN = 21600;
+const PORT_MAX = 21999;
 
 export function randomPort() {
   return PORT_MIN + Math.floor(Math.random() * (PORT_MAX - PORT_MIN + 1));

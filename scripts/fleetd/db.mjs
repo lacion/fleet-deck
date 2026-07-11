@@ -108,7 +108,9 @@ CREATE TABLE IF NOT EXISTS spawns (
   worktree_path TEXT,               -- effective cwd when worktree:true, else NULL
   requested_at  INTEGER,
   status        TEXT DEFAULT 'spawning',  -- spawning | stalled | live | pane-dead | killed | gone
-  skip_permissions INTEGER DEFAULT 0     -- v1.3 unsupervised spawn (either bypass form)
+  skip_permissions INTEGER DEFAULT 0,    -- v1.3 unsupervised spawn (either bypass form)
+  remote_control INTEGER DEFAULT 0,      -- remote-control wished/enabled for this launch
+  remote_url     TEXT                    -- harvested claude.ai URL; NULL until/if observed
 );
 CREATE INDEX IF NOT EXISTS idx_spawns_session ON spawns(session_id);
 CREATE INDEX IF NOT EXISTS idx_spawns_status ON spawns(status);
@@ -144,6 +146,8 @@ CREATE INDEX IF NOT EXISTS idx_plans_question ON plans(question_id);
 // `spawns` shipped in v1.2 — pre-v1.3 databases need the additive
 // `skip_permissions` column backfilled here. Default 0 matches every
 // pre-existing row's truth (the flag did not exist to be requested).
+// Remote control is additive on that same durable row: old launches were not
+// born remote and no URL was persisted, so 0/NULL are truthful backfills.
 // Retention is additive too: archived/expired timestamps preserve all rows
 // for forensics while removing them from live board/delivery queries.
 function migrate(db) {
@@ -164,6 +168,12 @@ function migrate(db) {
   const spawnCols = db.prepare('PRAGMA table_info(spawns)').all().map(r => r.name);
   if (spawnCols.length && !spawnCols.includes('skip_permissions')) {
     db.exec('ALTER TABLE spawns ADD COLUMN skip_permissions INTEGER DEFAULT 0');
+  }
+  if (spawnCols.length && !spawnCols.includes('remote_control')) {
+    db.exec('ALTER TABLE spawns ADD COLUMN remote_control INTEGER DEFAULT 0');
+  }
+  if (spawnCols.length && !spawnCols.includes('remote_url')) {
+    db.exec('ALTER TABLE spawns ADD COLUMN remote_url TEXT');
   }
 }
 

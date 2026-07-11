@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync, chmodSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, chmodSync, readFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { openDb } from '../scripts/fleetd/db.mjs';
-import { createCore } from '../scripts/fleetd/derive.mjs';
-import { pasteText, sendEnter } from '../scripts/fleetd/spawn.mjs';
+import { claudeTranscriptPath, createCore } from '../scripts/fleetd/derive.mjs';
+import { capturePane, pasteText, sendEnter, typeKeys } from '../scripts/fleetd/spawn.mjs';
 
 function setEnv(t, values) {
   const before = new Map(Object.keys(values).map(k => [k, process.env[k]]));
@@ -93,6 +93,7 @@ test('spawn argv is deterministic and registration watchdog stalls once, then a 
     'FLEETDECK_WATCH_POLL_MS', 'FLEETDECK_SPAWN_REGISTER_MS',
     'FLEETDECK_PANE_MAIL_GRACE_MS', 'FLEETDECK_PRESUME_DEAD_MS',
     'FLEETDECK_RETAIN_OFFLINE_MS',
+    'FLEETDECK_RC_HARVEST_MS',
   ];
   const prefix = ['env', ...scrub.flatMap(v => ['-u', v]), `FLEETDECK_PORT=${port}`, `FLEETDECK_HOME=${home}`];
   assert.deepEqual(state.argv.slice(0, prefix.length), prefix);
@@ -118,6 +119,59 @@ test('spawn argv is deterministic and registration watchdog stalls once, then a 
   core.hookSessionStart({ session_id: out.body.session_id, cwd, source: 'startup' });
   card = core.snapshot().sessions.find(s => s.session_id === out.body.session_id);
   assert.equal(card.spawn.status, 'live', 'the first late hook must win over stalled');
+});
+
+test('revive reuses the env wrapper, kills a dead remnant, inserts a new row, and the resume hook marks it live', async (t) => {
+  const userHome = mkdtempSync(path.join(tmpdir(), 'fd-revive-home-'));
+  const cwd = mkdtempSync(path.join(tmpdir(), 'fd-revive-cwd-'));
+  t.after(() => {
+    rmSync(userHome, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true });
+  });
+  const { db, core, state, port, home } = memoryCore(t, {
+    env: { HOME: userHome },
+  });
+  const original = await core.spawn({ cwd, dangerously_skip_permissions: true });
+  const { spawn_id: oldId, session_id: sid } = original.body;
+  core.hookSessionStart({ session_id: sid, cwd, source: 'startup' });
+  db.prepare("UPDATE spawns SET status = 'gone' WHERE spawn_id = ?").run(oldId);
+  db.prepare("UPDATE sessions SET col = 'offline', note = 'spawned pane window gone', ended_at = ?, archived_at = ? WHERE session_id = ?")
+    .run(Date.now(), Date.now(), sid);
+  const transcript = claudeTranscriptPath(cwd, sid, userHome);
+  mkdirSync(path.dirname(transcript), { recursive: true });
+  writeFileSync(transcript, '{}\n');
+
+  const collision = await core.revive(oldId);
+  assert.equal(collision.status, 409, 'an existing live Claude pane prevents a duplicate resume');
+  assert.match(collision.body.reason, /live claude pane/);
+  state.windows[0].pane_dead = true;
+  const out = await core.revive(oldId);
+  assert.equal(out.status, 200);
+  assert.notEqual(out.body.spawn_id, oldId);
+  assert.deepEqual(state.killed, [original.body.tmux.window]);
+  const prefix = state.argv.slice(0, state.argv.indexOf('claude'));
+  assert.deepEqual(prefix.slice(-2), [`FLEETDECK_PORT=${port}`, `FLEETDECK_HOME=${home}`]);
+  assert.deepEqual(state.argv.slice(state.argv.indexOf('claude')),
+    ['claude', '--resume', sid, '--dangerously-skip-permissions']);
+  assert.equal(state.argv.includes('--session-id'), false);
+
+  const rows = db.prepare('SELECT * FROM spawns WHERE session_id = ? ORDER BY requested_at, rowid').all(sid);
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].status, 'gone');
+  assert.equal(rows[1].status, 'spawning');
+  let session = db.prepare('SELECT * FROM sessions WHERE session_id = ?').get(sid);
+  assert.equal(session.col, 'queued');
+  assert.equal(session.note, 'reviving…');
+  assert.equal(session.archived_at, null);
+  assert.ok(session.ended_at);
+
+  core.hookSessionStart({ session_id: sid, cwd, source: 'resume' });
+  assert.equal(db.prepare('SELECT status FROM spawns WHERE spawn_id = ?').get(out.body.spawn_id).status, 'live');
+  assert.equal(db.prepare('SELECT status FROM spawns WHERE spawn_id = ?').get(oldId).status, 'gone');
+  session = db.prepare('SELECT * FROM sessions WHERE session_id = ?').get(sid);
+  assert.equal(session.ended_at, null);
+  assert.equal(session.col, 'queued');
+  assert.equal(session.note, 'session resume');
 });
 
 test('owned-pane mail honors watcher priority and unclaims all rows when paste fails', async (t) => {
@@ -155,7 +209,7 @@ test('owned-pane mail honors watcher priority and unclaims all rows when paste f
   assert.deepEqual(state.calls, [['pasteText', '@1', '[FLEETDECK MAIL from ops] retry me']]);
 });
 
-test('tmux mail helpers use isolated-socket argv for set-buffer, paste-buffer, and Enter', async (t) => {
+test('tmux input/capture helpers use isolated-socket argv without shell interpolation', async (t) => {
   const dir = mkdtempSync(path.join(tmpdir(), 'fd-tmux-argv-'));
   const record = path.join(dir, 'argv.jsonl');
   const shim = path.join(dir, 'tmux');
@@ -170,11 +224,15 @@ test('tmux mail helpers use isolated-socket argv for set-buffer, paste-buffer, a
 
   assert.equal(await pasteText('@9', 'hello\nworld'), true);
   assert.equal(await sendEnter('@9'), true);
+  assert.equal(await typeKeys('@9', '/rc fd4711-falcon'), true);
+  assert.equal(await capturePane('fd4711-falcon'), '');
   const calls = readFileSync(record, 'utf8').trim().split('\n').map(JSON.parse);
   assert.deepEqual(calls, [
     ['-L', 'fd-test-socket', 'set-buffer', '-b', 'fdmail', '--', 'hello\nworld'],
     ['-L', 'fd-test-socket', 'paste-buffer', '-p', '-d', '-b', 'fdmail', '-t', '@9'],
     ['-L', 'fd-test-socket', 'send-keys', '-t', '@9', 'Enter'],
+    ['-L', 'fd-test-socket', 'send-keys', '-t', '@9', '-l', '--', '/rc fd4711-falcon'],
+    ['-L', 'fd-test-socket', 'capture-pane', '-p', '-t', 'fd4711-falcon'],
   ]);
 });
 

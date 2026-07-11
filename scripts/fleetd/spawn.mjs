@@ -165,9 +165,12 @@ export async function killWindowVerified(name) {
   return { ok: false, error: 'tmux kill-window failed' };
 }
 
-/** The two sanctioned owned-pane injections (CONTRACT) are: one bring-up
- * Enter for the trust dialog, and bracketed-paste mail followed by Enter.
- * All user text still travels only as argv elements; no shell is involved. */
+/** The four sanctioned owned-pane injections (CONTRACT) are: one bring-up
+ * Enter for the trust dialog, bracketed-paste mail followed by Enter, and
+ * verbatim human typing relayed by the live-terminal modal, plus a human's
+ * explicit board action enabling remote control via a literally typed /rc
+ * command. All user text still travels without a shell; terminal input uses
+ * control-mode hex bytes. */
 export async function pasteText(target, text) {
   if (await tmux(['set-buffer', '-b', 'fdmail', '--', String(text)]) === null) return false;
   return (await tmux(['paste-buffer', '-p', '-d', '-b', 'fdmail', '-t', target])) !== null;
@@ -175,6 +178,18 @@ export async function pasteText(target, text) {
 
 export async function sendEnter(target) {
   return (await tmux(['send-keys', '-t', target, 'Enter'])) !== null;
+}
+
+/** Literal keystrokes for TUI commands. `-l --` prevents tmux key-name
+ * parsing; unlike bracketed paste this reaches Claude as typed slash input. */
+export async function typeKeys(target, text) {
+  return (await tmux(['send-keys', '-t', target, '-l', '--', String(text)])) !== null;
+}
+
+/** Independent pane-scrollback capture for remote-control URL harvesting.
+ * Keep this adapter local rather than coupling daemon state to termbridge. */
+export async function capturePane(target) {
+  return tmux(['capture-pane', '-p', '-t', target]);
 }
 
 /** Bring-up compatibility export; caller enforces at-most-once per spawn. */

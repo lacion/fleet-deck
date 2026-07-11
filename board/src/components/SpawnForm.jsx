@@ -16,12 +16,17 @@ import { spawnSession } from '../api.js';
 //     so the human edits exactly where the contract expects; after a
 //     successful POST the onSpawned callback (App) marks the plan executed
 //     and any failure of THAT surfaces here instead of auto-closing over it.
+//
+// v1.6: "remote control" checkbox → remote_control:true on the POST body —
+// the session comes up remote-controllable from claude.ai (web/phone) from
+// birth; the claude.ai link lands on the card once the daemon harvests it.
 export default function SpawnForm({ sessions, prefillPrompt, prefillCwd, planMode, onClose, onSpawned }) {
   const [cwd, setCwd] = useState(prefillCwd || '');
   const [prompt, setPrompt] = useState(prefillPrompt || '');
   const [model, setModel] = useState('');
   const [permissionMode, setPermissionMode] = useState('default');
   const [worktree, setWorktree] = useState(false);
+  const [remote, setRemote] = useState(false); // v1.6: remote control from birth
   const [unsup, setUnsup] = useState(false);   // step 1: reveal the confirm
   const [armed, setArmed] = useState(false);   // step 2: actually send the flag
   const [busy, setBusy] = useState(false);
@@ -64,6 +69,7 @@ export default function SpawnForm({ sessions, prefillPrompt, prefillCwd, planMod
     if (model.trim()) body.model = model.trim();
     if (permissionMode !== 'default') body.permission_mode = permissionMode;
     if (worktree) body.worktree = true;
+    if (remote) body.remote_control = true;
     if (unsup && armed) body.dangerously_skip_permissions = true;
     try {
       const res = await spawnSession(body);
@@ -164,6 +170,18 @@ export default function SpawnForm({ sessions, prefillPrompt, prefillCwd, planMod
                 onChange={(e) => setWorktree(e.target.checked)}
               />
               work in a fresh git worktree
+            </label>
+          </div>
+          {/* v1.6 — remote control from birth (/rc) */}
+          <div className="frow">
+            <span className="fl">remote control</span>
+            <label className="fd-check">
+              <input
+                type="checkbox"
+                checked={remote}
+                onChange={(e) => setRemote(e.target.checked)}
+              />
+              📱 drive it from claude.ai (web / phone)
             </label>
           </div>
           {/* v1.3 — unsupervised (two-step: reveal, then arm) */}

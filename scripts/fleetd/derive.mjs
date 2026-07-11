@@ -8,6 +8,7 @@
 
 import path from 'node:path';
 import fs from 'node:fs';
+import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { deriveRepo, branchOf, ledgerKey } from './repo-identity.mjs';
@@ -33,6 +34,48 @@ function envInt(name, fallback, { min = 0 } = {}) {
   return Number.isFinite(n) && n >= min ? Math.floor(n) : fallback;
 }
 
+// Claude stores one project directory per absolute cwd by replacing every
+// slash and dot with a dash. Keep this pure and exported: revive eligibility,
+// the launch guard, and unit tests must all agree on the exact on-disk name.
+export function mungeClaudeProjectCwd(cwd) {
+  return path.resolve(cwd).replace(/[\/.]/g, '-');
+}
+
+export function claudeTranscriptPath(cwd, sessionId, homeDir = os.homedir()) {
+  return path.join(homeDir, '.claude', 'projects', mungeClaudeProjectCwd(cwd), `${sessionId}.jsonl`);
+}
+
+function spawnRowRevivable(row) {
+  const runCwd = row?.worktree_path ?? row?.cwd;
+  return !!runCwd
+    && ['pane-dead', 'killed', 'gone'].includes(row.status)
+    && fs.existsSync(runCwd)
+    && fs.existsSync(claudeTranscriptPath(runCwd, row.session_id));
+}
+
+// CONTRACT: fresh spawn and revive share one environment wrapper. This is
+// the single source of truth for inherited-agent/fleet scrubbing; callers add
+// only the Claude invocation and its operation-specific argv.
+export function claudeEnvArgvPrefix(port, home) {
+  const scrub = [
+    'CLAUDECODE', 'CLAUDE_CODE_SESSION_ID', 'CLAUDE_CODE_CHILD_SESSION',
+    'CLAUDE_CODE_BRIDGE_SESSION_ID', 'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_CODE_EXECPATH',
+    'CLAUDE_ENV_FILE', 'CLAUDE_PROJECT_DIR', 'CLAUDE_PLUGIN_ROOT', 'CLAUDE_PLUGIN_DATA',
+    'CLAUDE_EFFORT', 'AI_AGENT', 'CODEX_COMPANION_TRANSCRIPT_PATH',
+    'CODEX_COMPANION_SESSION_ID', 'FLEETDECK_AGENTS_CMD', 'FLEETDECK_SPAWN_CMD',
+    'TMUX', 'TMUX_PANE', 'FLEETDECK_TMUX_SOCKET',
+    'FLEETDECK_AGENTS_POLL_MS', 'FLEETDECK_HOLD_MS', 'FLEETDECK_STALE_MS',
+    'FLEETDECK_NUDGE_MS', 'FLEETDECK_MAX_SPAWNED', 'FLEETDECK_WATCH_MAX_MS',
+    'FLEETDECK_WATCH_POLL_MS', 'FLEETDECK_SPAWN_REGISTER_MS',
+    'FLEETDECK_PANE_MAIL_GRACE_MS', 'FLEETDECK_PRESUME_DEAD_MS',
+    'FLEETDECK_RETAIN_OFFLINE_MS', 'FLEETDECK_RC_HARVEST_MS',
+  ];
+  return [
+    'env', ...scrub.flatMap(name => ['-u', name]),
+    `FLEETDECK_PORT=${port}`, `FLEETDECK_HOME=${home}`,
+  ];
+}
+
 export function createCore(db, {
   port = 4711,
   home = process.env.FLEETDECK_HOME || '',
@@ -48,6 +91,7 @@ export function createCore(db, {
   const PANE_MAIL_GRACE_MS = envInt('FLEETDECK_PANE_MAIL_GRACE_MS', 1_500, { min: 0 });
   const PRESUME_DEAD_MS = envInt('FLEETDECK_PRESUME_DEAD_MS', 10_800_000, { min: 1 });
   const RETAIN_OFFLINE_MS = envInt('FLEETDECK_RETAIN_OFFLINE_MS', 86_400_000, { min: 1 });
+  const RC_HARVEST_MS = envInt('FLEETDECK_RC_HARVEST_MS', 2_500, { min: 0 });
 
   // ------------------------------------------------------------- statements
   const q = {
@@ -107,14 +151,16 @@ export function createCore(db, {
     // v1.2 board-spawned sessions. "Active" = status spawning|stalled|live — the rows
     // that count against FLEETDECK_MAX_SPAWNED and get liveness-checked.
     insertSpawn: db.prepare(`INSERT INTO spawns
-      (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, requested_at, status, skip_permissions)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'spawning', ?)`),
+      (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, requested_at, status, skip_permissions, remote_control)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'spawning', ?, ?)`),
     getSpawn: db.prepare('SELECT * FROM spawns WHERE spawn_id = ?'),
-    spawnBySession: db.prepare('SELECT * FROM spawns WHERE session_id = ? ORDER BY requested_at DESC LIMIT 1'),
-    allSpawns: db.prepare('SELECT * FROM spawns ORDER BY requested_at'),
+    spawnBySession: db.prepare('SELECT * FROM spawns WHERE session_id = ? ORDER BY requested_at DESC, rowid DESC LIMIT 1'),
+    allSpawns: db.prepare('SELECT * FROM spawns ORDER BY requested_at, rowid'),
     activeSpawns: db.prepare("SELECT * FROM spawns WHERE status IN ('spawning', 'stalled', 'live')"),
+    activeSpawnBySession: db.prepare("SELECT * FROM spawns WHERE session_id = ? AND status IN ('spawning', 'stalled', 'live') ORDER BY requested_at DESC, rowid DESC LIMIT 1"),
     countActiveSpawns: db.prepare("SELECT COUNT(*) AS n FROM spawns WHERE status IN ('spawning', 'stalled', 'live')"),
     setSpawnStatus: db.prepare('UPDATE spawns SET status = ? WHERE spawn_id = ?'),
+    setSpawnRemote: db.prepare('UPDATE spawns SET remote_control = 1, remote_url = ? WHERE spawn_id = ?'),
     presumeDeadSessions: db.prepare(`SELECT * FROM sessions
       WHERE source = 'hooks' AND ended_at IS NULL
         AND col IN ('queued', 'idle', 'needsyou') AND last_seen < ?`),
@@ -309,7 +355,7 @@ export function createCore(db, {
     // Retention tombstones are reversible: a late hook proves the process was
     // alive (or resumed). Clear both timestamps so an archived presumed-dead
     // card becomes visible again before normal derivation continues.
-    if (c.note?.startsWith('presumed ended')) {
+    if (c.ended_at != null || c.archived_at != null) {
       updateSession(sid, { ended_at: null, archived_at: null });
       c = { ...c, ended_at: null, archived_at: null };
     }
@@ -319,15 +365,17 @@ export function createCore(db, {
     // good, and the poller must never touch its column again after this.
     if (c.source !== 'hooks') {
       updateSession(sid, { source: 'hooks' });
-      // v1.2: the session's FIRST hook event is the bring-up proof for a
-      // board spawn — its spawn row (if 'spawning' or 'stalled') flips live.
-      // Later statuses (pane-dead/killed/gone) are never revived here.
-      const sp = q.spawnBySession.get(sid);
-      if (sp && (sp.status === 'spawning' || sp.status === 'stalled')) {
-        q.setSpawnStatus.run('live', sp.spawn_id);
-        tick(`🛰 ${c.callsign} pane is live (first hook event)`);
-      }
       c = { ...c, source: 'hooks' };
+    }
+    // A first hook is bring-up proof for both a fresh spawn and a revive.
+    // Revived cards already have source='hooks', so this check deliberately
+    // lives outside the provenance flip. Terminal historical rows stay put;
+    // spawnBySession returns only the newest row and only active rows move.
+    const sp = q.spawnBySession.get(sid);
+    if (sp && (sp.status === 'spawning' || sp.status === 'stalled')) {
+      q.setSpawnStatus.run('live', sp.spawn_id);
+      tick(`🛰 ${c.callsign} pane is live (first hook event)`);
+      if (sp.remote_control) scheduleRegistrationRemoteHarvest(sp.spawn_id);
     }
     const upd = { last_seen: Date.now(), events: c.events + 1 };
     if (ev.cwd) {
@@ -949,9 +997,11 @@ export function createCore(db, {
     onMutate();
   }
 
-  // Bring-up nudge — one of two sanctioned pane injections (the other is
-  // owned-pane mail): if no hook lands within NUDGE_MS and the pane is alive,
-  // send ONE Enter for the trust dialog. Never again for that spawn.
+  // Bring-up nudge — one of four sanctioned pane injections (the others are
+  // owned-pane mail and verbatim human typing relayed by the live-terminal
+  // modal, plus explicit human-requested /rc enablement): if no hook lands
+  // within NUDGE_MS and the pane is alive, send ONE Enter for the trust
+  // dialog. Never again for that spawn.
   const nudged = new Set();
   function scheduleNudge(spawn_id, window, callsign) {
     const t = setTimeout(async () => {
@@ -969,6 +1019,45 @@ export function createCore(db, {
       } catch { /* nudge is best-effort; never disturb the daemon */ }
     }, NUDGE_MS);
     t.unref?.();
+  }
+
+  const RC_URL_RE = /https:\/\/claude\.ai\/\S+/;
+  const registrationRemoteHarvests = new Map();
+
+  async function harvestRemote(spawn_id) {
+    const row = q.getSpawn.get(spawn_id);
+    if (!row) return { url: null };
+    let text = null;
+    try { text = await tmuxAdapter.capturePane(row.tmux_window); } catch { /* best effort */ }
+    const url = typeof text === 'string' ? (text.match(RC_URL_RE)?.[0] ?? null) : null;
+    q.setSpawnRemote.run(url, spawn_id);
+    tick(`📱 ${row.callsign} remote control enabled${url ? '' : ' (URL not found)'}`);
+    onMutate();
+    return { url };
+  }
+
+  // CONTRACT: born-remote sessions expose their URL only in TUI scrollback.
+  // The first hook schedules exactly one delayed capture, after the status
+  // panel has had time to render. The unref timer never keeps fleetd alive.
+  function delayedRemoteHarvest(spawn_id) {
+    // A zero test knob means "capture on the next microtask"; production's
+    // non-zero delay always uses the required unref timer.
+    if (RC_HARVEST_MS === 0) {
+      return Promise.resolve().then(() => harvestRemote(spawn_id));
+    }
+    let timer;
+    const promise = new Promise(resolve => {
+      timer = setTimeout(() => harvestRemote(spawn_id).then(resolve, () => resolve({ url: null })), RC_HARVEST_MS);
+      timer.unref?.();
+    });
+    return promise;
+  }
+
+  function scheduleRegistrationRemoteHarvest(spawn_id) {
+    if (registrationRemoteHarvests.has(spawn_id)) return registrationRemoteHarvests.get(spawn_id);
+    const promise = delayedRemoteHarvest(spawn_id);
+    registrationRemoteHarvests.set(spawn_id, promise);
+    return promise;
   }
 
   // POST /api/spawn — control API, fail-loud (CONTRACT: 4xx {ok:false,
@@ -989,6 +1078,9 @@ export function createCore(db, {
     }
     if (body?.dangerously_skip_permissions != null && typeof body.dangerously_skip_permissions !== 'boolean') {
       return { status: 400, body: { ok: false, reason: 'dangerously_skip_permissions must be a boolean' } };
+    }
+    if (body?.remote_control != null && typeof body.remote_control !== 'boolean') {
+      return { status: 400, body: { ok: false, reason: 'remote_control must be a boolean' } };
     }
     // v1.3 unsupervised spawns (CONTRACT "A"): either form of bypass —
     // dangerously_skip_permissions:true (its own CLI flag) or
@@ -1036,41 +1128,26 @@ export function createCore(db, {
 
     // Step 3: deterministic interactive `claude`: scrub inherited agent and
     // fleet variables, then pin this daemon's port/home. The claude flag order
-    // remains contract-pinned: --session-id, --model, --permission-mode, then
-    // the prompt as ONE positional argv element. v1.3 appends
-    // --dangerously-skip-permissions (before the positional prompt) when
-    // requested; permission_mode "bypassPermissions" needs no argv change —
-    // it rides --permission-mode as plain passthrough.
-    const scrub = [
-      'CLAUDECODE', 'CLAUDE_CODE_SESSION_ID', 'CLAUDE_CODE_CHILD_SESSION',
-      'CLAUDE_CODE_BRIDGE_SESSION_ID', 'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_CODE_EXECPATH',
-      'CLAUDE_ENV_FILE', 'CLAUDE_PROJECT_DIR', 'CLAUDE_PLUGIN_ROOT', 'CLAUDE_PLUGIN_DATA',
-      'CLAUDE_EFFORT', 'AI_AGENT', 'CODEX_COMPANION_TRANSCRIPT_PATH',
-      'CODEX_COMPANION_SESSION_ID', 'FLEETDECK_AGENTS_CMD', 'FLEETDECK_SPAWN_CMD',
-      // The baked-in tmux server env is the scar this wrapper exists for —
-      // scrub the tmux client markers and every fleet tuning/test knob too,
-      // so a pane (or anything it auto-boots) can never inherit a foreign
-      // fleet's configuration. Keep in sync with tests/spawn.test.mjs and
-      // the boot scrub in scripts/fleet-sessionstart.mjs.
-      'TMUX', 'TMUX_PANE', 'FLEETDECK_TMUX_SOCKET',
-      'FLEETDECK_AGENTS_POLL_MS', 'FLEETDECK_HOLD_MS', 'FLEETDECK_STALE_MS',
-      'FLEETDECK_NUDGE_MS', 'FLEETDECK_MAX_SPAWNED', 'FLEETDECK_WATCH_MAX_MS',
-      'FLEETDECK_WATCH_POLL_MS', 'FLEETDECK_SPAWN_REGISTER_MS',
-      'FLEETDECK_PANE_MAIL_GRACE_MS', 'FLEETDECK_PRESUME_DEAD_MS',
-      'FLEETDECK_RETAIN_OFFLINE_MS',
-    ];
+    // remains contract-pinned: --session-id, --model, --permission-mode,
+    // permission bypass, remote-control name, then the prompt as ONE
+    // positional argv element. permission_mode "bypassPermissions" needs no
+    // extra argv change — it rides --permission-mode as plain passthrough.
+    const tmux_session = tmuxAdapter.sessionName(port);
+    const tmux_window = tmuxAdapter.windowName(port, callsign);
     const argv = [
-      'env', ...scrub.flatMap(name => ['-u', name]),
-      `FLEETDECK_PORT=${port}`, `FLEETDECK_HOME=${home}`,
+      ...claudeEnvArgvPrefix(port, home),
       'claude', '--session-id', session_id,
     ];
     if (body?.model) argv.push('--model', body.model);
     if (body?.permission_mode) argv.push('--permission-mode', body.permission_mode);
     if (body?.dangerously_skip_permissions === true) argv.push('--dangerously-skip-permissions');
+    // Name the Remote Control session after the CALLSIGN, not the tmux window:
+    // this is the string the human reads in the claude.ai session list on their
+    // phone, and the board speaks callsigns everywhere. fd<port>- is internal
+    // plumbing that means nothing to them.
+    if (body?.remote_control === true) argv.push('--remote-control', callsign);
     if (body?.prompt) argv.push(body.prompt);
 
-    const tmux_session = tmuxAdapter.sessionName(port);
-    const tmux_window = tmuxAdapter.windowName(port, callsign);
     const override = tmuxAdapter.spawnOverrideCmd();
     if (override) {
       // Test override: argv [FLEETDECK_SPAWN_CMD, JSON.stringify(spec)].
@@ -1081,6 +1158,7 @@ export function createCore(db, {
         permission_mode: body?.permission_mode ?? null, worktree_path,
         dangerously_skip_permissions: body?.dangerously_skip_permissions === true,
         skip_permissions: skipPermissions,
+        remote_control: body?.remote_control === true,
         tmux: { session: tmux_session, window: tmux_window },
         argv, // the full env-wrapped argv tmux would have run
       };
@@ -1097,7 +1175,8 @@ export function createCore(db, {
     }
 
     // Step 4: durable spawn row; step 5: bring-up nudge timer.
-    q.insertSpawn.run(spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, Date.now(), skipPermissions ? 1 : 0);
+    q.insertSpawn.run(spawn_id, session_id, callsign, tmux_session, tmux_window, cwd,
+      worktree_path, Date.now(), skipPermissions ? 1 : 0, body?.remote_control === true ? 1 : 0);
     tick(`🚀 spawned ${callsign} — tmux window ${tmux_window}${skipPermissions ? ' (unsupervised)' : ''}`);
     scheduleNudge(spawn_id, tmux_window, callsign);
     onMutate();
@@ -1105,6 +1184,140 @@ export function createCore(db, {
       status: 200,
       body: { ok: true, spawn_id, session_id, callsign, tmux: { session: tmux_session, window: tmux_window } },
     };
+  }
+
+  // POST /api/spawn/:id/revive — resume a terminal board-owned Claude
+  // conversation into a NEW durable spawn row. Historical rows are immutable
+  // evidence; the same session id/callsign/window identity is reused.
+  async function revive(spawn_id, body = {}) {
+    const row = q.getSpawn.get(spawn_id);
+    if (!row) return { status: 404, body: { ok: false, reason: 'no such spawn' } };
+    if (!['pane-dead', 'killed', 'gone'].includes(row.status)) {
+      return { status: 409, body: { ok: false, reason: `spawn is ${row.status}, not revivable` } };
+    }
+    if (body?.remote_control != null && typeof body.remote_control !== 'boolean') {
+      return { status: 400, body: { ok: false, reason: 'remote_control must be a boolean' } };
+    }
+    // Remote control survives death: inherit the dead row's wish unless the
+    // human overrides it on this revive.
+    const remoteWanted = body?.remote_control ?? !!row.remote_control;
+    const active = q.activeSpawnBySession.get(row.session_id);
+    if (active) {
+      return { status: 409, body: { ok: false, reason: `session already has active spawn ${active.spawn_id}` } };
+    }
+    const cap = spawnCapability();
+    if (cap.active >= cap.max) {
+      return { status: 409, body: { ok: false, reason: `spawn cap reached (${cap.active} of ${cap.max} live — FLEETDECK_MAX_SPAWNED)` } };
+    }
+
+    // Exact scoped-name collision defense. A live Claude pane is ownership
+    // proof and must never be duplicated. Dead/bare remnants are safe to
+    // remove by verified name before reusing the deterministic window name.
+    const existing = (await tmuxAdapter.listScopedWindows(port)).find(w => w.window === row.tmux_window);
+    if (existing && !existing.pane_dead && existing.pane_cmd === 'claude') {
+      return { status: 409, body: { ok: false, reason: `window ${row.tmux_window} already has a live claude pane` } };
+    }
+    if (existing) {
+      const killed = await tmuxAdapter.killWindowVerified(row.tmux_window);
+      if (!killed.ok && !killed.gone) {
+        return { status: 500, body: { ok: false, reason: killed.error || 'tmux kill-window failed' } };
+      }
+    }
+
+    const runCwd = row.worktree_path ?? row.cwd;
+    let st = null;
+    try { st = fs.statSync(runCwd); } catch { /* missing */ }
+    if (!runCwd || !st?.isDirectory()) {
+      return { status: 410, body: { ok: false, reason: 'revive cwd no longer exists' } };
+    }
+    if (!fs.existsSync(claudeTranscriptPath(runCwd, row.session_id))) {
+      return { status: 410, body: { ok: false, reason: 'resume transcript no longer exists' } };
+    }
+
+    const new_spawn_id = randomUUID();
+    const argv = [...claudeEnvArgvPrefix(port, home), 'claude', '--resume', row.session_id];
+    if (row.skip_permissions) argv.push('--dangerously-skip-permissions');
+    if (remoteWanted) argv.push('--remote-control', row.callsign);
+    const tmux_session = tmuxAdapter.sessionName(port);
+    const override = tmuxAdapter.spawnOverrideCmd();
+    if (override) {
+      tmuxAdapter.launchOverride(override, {
+        spawn_id: new_spawn_id, revive_of: spawn_id,
+        session_id: row.session_id, callsign: row.callsign, port,
+        cwd: runCwd, requested_cwd: row.cwd, prompt: null, model: null,
+        permission_mode: null, worktree_path: row.worktree_path,
+        dangerously_skip_permissions: !!row.skip_permissions,
+        skip_permissions: !!row.skip_permissions,
+        remote_control: remoteWanted,
+        tmux: { session: tmux_session, window: row.tmux_window },
+        argv,
+      }, err => spawnFailed(row.session_id, row.callsign, `spawn override: ${err.message || err}`));
+    } else {
+      try {
+        await tmuxAdapter.ensureSession(port);
+        await tmuxAdapter.newWindow({ port, callsign: row.callsign, cwd: runCwd, argv });
+      } catch (err) {
+        return { status: 500, body: { ok: false, reason: `tmux revive failed: ${err.message || err}` } };
+      }
+    }
+
+    // remote_url is deliberately NOT carried over: the old link died with the
+    // old session. A fresh one is harvested from the revived pane.
+    q.insertSpawn.run(new_spawn_id, row.session_id, row.callsign, tmux_session,
+      row.tmux_window, row.cwd, row.worktree_path, Date.now(), row.skip_permissions ? 1 : 0,
+      remoteWanted ? 1 : 0);
+    updateSession(row.session_id, { archived_at: null, col: 'queued', note: 'reviving…' });
+    tick(`⟲ reviving ${row.callsign} (resume ${row.session_id.slice(0, 8)})`);
+    scheduleNudge(new_spawn_id, row.tmux_window, row.callsign);
+    onMutate();
+    return {
+      status: 200,
+      body: { ok: true, spawn_id: new_spawn_id, session_id: row.session_id, callsign: row.callsign,
+        tmux: { session: tmux_session, window: row.tmux_window } },
+    };
+  }
+
+  // POST /api/spawn/:id/rc — an explicit human board action, relayed as
+  // literal TUI input. Never inject into a working/needsyou turn boundary.
+  async function enableRemote(spawn_id) {
+    const row = q.getSpawn.get(spawn_id);
+    if (!row) return { status: 404, body: { ok: false, reason: 'no such spawn' } };
+    if (row.status !== 'live') {
+      return { status: 409, body: { ok: false, reason: `spawn is ${row.status}, not live` } };
+    }
+    if (row.remote_control && row.remote_url) {
+      return { status: 200, body: { ok: true, enabled: true, url: row.remote_url, pending: false } };
+    }
+    const session = q.getSession.get(row.session_id);
+    if (!session || !['queued', 'idle'].includes(session.col)) {
+      return { status: 409, body: { ok: false, reason: `session is ${session?.col ?? 'missing'}, not queued or idle` } };
+    }
+    const win = (await tmuxAdapter.listScopedWindows(port)).find(w => w.window === row.tmux_window);
+    if (!win || win.pane_dead || win.pane_cmd !== 'claude') {
+      const observed = !win ? 'missing' : win.pane_dead ? 'dead' : `running ${win.pane_cmd || 'unknown'}`;
+      return { status: 409, body: { ok: false, reason: `claude pane is not alive (${observed})` } };
+    }
+    // `/rc <name>` — named by callsign so the session the human finds on
+    // claude.ai carries the same name as the card on the board. Verified live
+    // on CLI 2.1.207: no confirmation dialog, and the
+    // https://claude.ai/code/session_… URL lands in the pane's scrollback.
+    const typed = await tmuxAdapter.typeKeys(win.window_id, `/rc ${row.callsign}`);
+    const entered = typed ? await tmuxAdapter.sendEnter(win.window_id) : false;
+    if (!typed || !entered) {
+      return { status: 500, body: { ok: false, reason: 'failed to type remote-control command into pane' } };
+    }
+    const harvest = delayedRemoteHarvest(spawn_id);
+    let timeout;
+    const timed = new Promise(resolve => {
+      timeout = setTimeout(() => resolve({ pending: true, url: null }), 6_000);
+      timeout.unref?.();
+    });
+    const result = await Promise.race([
+      harvest.then(({ url }) => ({ pending: false, url })),
+      timed,
+    ]);
+    clearTimeout(timeout);
+    return { status: 200, body: { ok: true, enabled: true, url: result.url, pending: result.pending } };
   }
 
   // POST /api/spawn/:id/kill — name-verified tmux kill-window (404 unknown
@@ -1432,6 +1645,11 @@ export function createCore(db, {
             status: sp.status,
             stalled: sp.status === 'stalled', // watchdog chip ("never registered")
             skip_permissions: !!sp.skip_permissions, // v1.3 unsupervised chip
+            remote: { enabled: !!sp.remote_control, url: sp.remote_url ?? null },
+            // Snapshot cost is intentionally uncached: two existsSync calls
+            // per owned card keep removal/restore feedback immediate, and a
+            // fleet has only a handful of rows by design.
+            revivable: spawnRowRevivable(sp),
           },
         } : {}),
       };
@@ -1500,6 +1718,13 @@ export function createCore(db, {
 
   function fleetSize() {
     return q.countSessions.get().n;
+  }
+
+  // Live-terminal target resolver (CONTRACT): the HTTP/WS layer gets a row
+  // only by opaque spawn id. It never accepts a pane/window target supplied
+  // by a browser; termbridge performs the remaining fleet/status checks.
+  function terminalSpawn(spawnId) {
+    return q.getSpawn.get(spawnId) || null;
   }
 
   // Retention is non-destructive: sessions/mail are timestamped out of the
@@ -1587,9 +1812,12 @@ export function createCore(db, {
     command,
     snapshot,
     fleetSize,
+    terminalSpawn,
     ingestAgentsPoll,
     // v1.2 dynamic fleet
     spawn,             // POST /api/spawn flow → {status, body}
+    revive,            // POST /api/spawn/:id/revive → {status, body}
+    enableRemote,      // POST /api/spawn/:id/rc → {status, body}
     spawnKill,         // POST /api/spawn/:id/kill → {status, body}
     spawnCapability,   // /health + /state `spawn` object
     spawnLivenessTick, // owned-pane liveness, rides the agents-poll cadence
