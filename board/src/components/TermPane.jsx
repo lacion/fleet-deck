@@ -18,6 +18,13 @@ import { wsUrl } from '../token.js';
 // receive them. A non-live pane sets xterm's own disableStdin, so there is no
 // path from a keypress to the wire — not a check we could forget to make.
 
+// ESC CR — what Claude Code's own /terminal-setup asks a terminal to send for
+// Shift+Enter, so it is what its TUI listens for as "newline, do not submit".
+// Built from the char code on purpose: an ESC written literally into source is
+// an invisible control character, and the next person to read this file
+// deserves better.
+const NEWLINE_SEQ = String.fromCharCode(27) + '\r';
+
 function cssVar(name, fallback) {
   const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   return v || fallback;
@@ -128,12 +135,36 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
     };
     ws.onclose = () => { if (!st.done) end('close', 'connection closed'); };
 
+    const sendIn = (data) => {
+      if (st.done || term.options.disableStdin || ws.readyState !== WebSocket.OPEN) return false;
+      ws.send(JSON.stringify({ t: 'in', data }));
+      return true;
+    };
+
     // keystrokes → agent, verbatim. xterm suppresses onData entirely while
     // disableStdin is set, so a non-live tile cannot reach the wire at all.
-    const dataSub = term.onData((data) => {
-      if (!st.done && !term.options.disableStdin && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ t: 'in', data }));
-      }
+    const dataSub = term.onData(sendIn);
+
+    // Shift/Ctrl/Alt+Enter → a NEWLINE, not a submit.
+    //
+    // A terminal cannot tell Shift+Enter from Enter: both are just CR on the
+    // wire, which is why multi-line input in a normal terminal needs
+    // `/terminal-setup` to teach the emulator a distinct sequence. Claude Code
+    // asks for ESC CR — verbatim, from its own VS Code keybinding:
+    //
+    //   {key:"shift+enter", command:"workbench.action.terminal.sendSequence",
+    //    args:{text:"\x1B\r"}, when:"terminalFocus"}
+    //
+    // Here there is nothing to configure: the board IS the emulator, so it just
+    // sends those bytes itself. Plain Enter still submits, exactly as it does in
+    // the terminal — this only claims the modified chords, which xterm would
+    // otherwise collapse into a bare CR and submit on you mid-sentence.
+    term.attachCustomKeyEventHandler((e) => {
+      if (e.type !== 'keydown' || e.key !== 'Enter' || e.metaKey) return true;
+      if (!(e.shiftKey || e.ctrlKey || e.altKey)) return true; // bare Enter: submit, as always
+      e.preventDefault();
+      sendIn(NEWLINE_SEQ);
+      return false; // and never let xterm send its own CR after ours
     });
     // fit()/init resizes land here; only genuine changes go up the wire
     const resizeSub = term.onResize(({ cols, rows }) => {

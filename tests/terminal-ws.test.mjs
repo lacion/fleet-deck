@@ -81,6 +81,13 @@ test('live terminal WS seeds, streams, relays hex input/resize, and kills its co
   ws.send(JSON.stringify({ t: 'resize', cols: 101, rows: 41 }));
   await waitUntil(() => records(record).some(r => r.line === 'send-keys -t %1 -H 41 03 c3 a9'), 'hex send-keys');
 
+  // Shift+Enter → a newline in the agent's composer, not a submit. The board
+  // sends ESC CR (1b 0d) — the sequence Claude Code's own /terminal-setup asks
+  // terminals to bind — and the bridge must relay those two bytes untouched.
+  // Verified against a real Claude TUI: it splits the line and does not submit.
+  ws.send(JSON.stringify({ t: 'in', data: `${ESC}\r` }));
+  await waitUntil(() => records(record).some(r => r.line === 'send-keys -t %1 -H 1b 0d'), 'ESC CR relayed as bytes');
+
   // v1.9: geometry is set on the WINDOW, not on the client. `refresh-client -C`
   // sized whoever was attached — which is precisely what made N tiles fight over
   // one pane's shape. `resize-window` under `window-size manual` does not.

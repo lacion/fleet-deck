@@ -20,7 +20,9 @@ export default function TermModal({ spawnId, callsign, tmuxWindow, onClose }) {
         <div className="fd-termhead">
           <span className="callsign">{callsign || spawnId}</span>
           {tmuxWindow && <span className="fd-panechip">⌗ {tmuxWindow}</span>}
-          <span className="fd-termhint">⌨ keystrokes go to the live agent — Esc included · close with ✕</span>
+          <span className="fd-termhint">
+            ⌨ keystrokes go to the live agent — Esc included · <b>⇧⏎</b> for a newline · close with ✕
+          </span>
           <span className="fd-spacer" />
           <button type="button" className="fd-x" aria-label="Close terminal" onClick={onClose}>✕</button>
         </div>

@@ -38,7 +38,7 @@ export default function TermGrid({ tiles, onClose, onExpand }) {
           <span className="lbl">LIVE TERMINALS</span>
           <span className="fd-gridcount">{tiles.length}</span>
           <span className="fd-termhint">
-            ⌨ keystrokes go to the <b>focused</b> agent only — click a tile to move the focus
+            ⌨ keystrokes go to the <b>focused</b> agent only — click a tile to move the focus · <b>⇧⏎</b> for a newline
           </span>
           <span className="fd-spacer" />
           <button type="button" className="fd-x" aria-label="Close terminals" onClick={onClose}>✕</button>

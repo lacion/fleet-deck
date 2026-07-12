@@ -691,7 +691,7 @@ textarea.fd-input { font-family: var(--font-ui); font-size: 13px; resize: none; 
   color: var(--text); background: var(--border-soft);
   border-radius: var(--r-chip); padding: 1px 7px; flex: none;
 }
-.fd-gridhead .fd-termhint b { color: var(--act); font-weight: 600; }
+.fd-termhint b { color: var(--act); font-weight: 600; }
 .fd-gridbody {
   flex: 1; min-height: 0; display: grid; gap: 8px; padding: 10px;
   overflow: auto; align-content: stretch;
