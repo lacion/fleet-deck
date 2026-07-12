@@ -16,7 +16,7 @@ const MAIL_HINT = {
 // edge + one-shot ripple, file chips, sparkline + age.
 export default function SessionCard({
   s, now, compact, mailCount, mailMeta, conflictFiles, conflictPeers, ripple, priority, onOpen, onOpenTerm,
-  onRevive, reviving, onEnableRemote, enablingRemote, onKill,
+  onRevive, reviving, onEnableRemote, enablingRemote, onKill, onToggleWatch, watched,
 }) {
   const offline = s.col === 'offline';
   const needsyou = s.col === 'needsyou';
@@ -51,7 +51,10 @@ export default function SessionCard({
   // itself a <button> and buttons don't nest — same trick as the chips above.)
   const canTerm = !!onOpenTerm && spawnTermable(s);
   const canKill = !!onKill && spawnKillable(s);
-  const hasActs = canTerm || canKill;
+  // v1.9 — tick an agent into the wall of screens. Same eligibility as the
+  // terminal: only a pane the daemon owns can be watched at all.
+  const canWatch = !!onToggleWatch && spawnTermable(s);
+  const hasActs = canTerm || canKill || canWatch;
 
   const cls = [
     'fd-card',
@@ -187,6 +190,21 @@ export default function SessionCard({
               }}
             >
               ▣ terminal
+            </span>
+          )}
+          {canWatch && (
+            <span
+              className={`fd-actbtn watch${watched ? ' on' : ''}`}
+              role="button"
+              aria-pressed={!!watched}
+              tabIndex={0}
+              title={watched ? 'remove from the terminal wall' : 'add to the terminal wall'}
+              onClick={(e) => { e.stopPropagation(); onToggleWatch(); }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onToggleWatch(); }
+              }}
+            >
+              {watched ? '▦ watching' : '▦ watch'}
             </span>
           )}
           {canKill && (

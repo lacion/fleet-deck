@@ -3968,7 +3968,6 @@ function ledgerKey(absPath, session) {
 }
 
 // scripts/fleetd/questions.mjs
-import fs2 from "node:fs";
 var PLAN_CAPTURE_MAIL = "[FLEETDECK] Your plan was captured to the fleet plan library \u2014 do not execute it. Wrap up your turn.";
 var DEFAULT_HOLD_MS = 5e4;
 var MAX_HOLDS_PER_SESSION = 4;
@@ -4285,23 +4284,38 @@ function clipQuestion(s) {
   const t = String(s).trim();
   return t.length <= 300 ? t : t.slice(0, 297) + "\u2026";
 }
+
+// scripts/fleetd/transcript.mjs
+import fs2 from "node:fs";
+function tailLines(transcriptPath, { maxBytes = 262144 } = {}) {
+  const stat = fs2.statSync(transcriptPath);
+  const start = Math.max(0, stat.size - maxBytes);
+  const buf = Buffer.alloc(stat.size - start);
+  const fd = fs2.openSync(transcriptPath, "r");
+  try {
+    fs2.readSync(fd, buf, 0, buf.length, start);
+  } finally {
+    fs2.closeSync(fd);
+  }
+  let chunk = buf.toString("utf8");
+  if (start > 0) chunk = chunk.slice(chunk.indexOf("\n") + 1);
+  const lines = chunk.split("\n");
+  const it = (function* () {
+    let end = stat.size;
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const bytes = Buffer.byteLength(lines[i], "utf8");
+      const offset = end - bytes;
+      end = offset - 1;
+      const line = lines[i].trim();
+      if (line) yield { line, offset };
+    }
+  })();
+  it.truncated = start > 0;
+  return it;
+}
 function lastAssistantText(transcriptPath, { maxBytes = 2e6 } = {}) {
   try {
-    const stat = fs2.statSync(transcriptPath);
-    const start = Math.max(0, stat.size - maxBytes);
-    const buf = Buffer.alloc(stat.size - start);
-    const fd = fs2.openSync(transcriptPath, "r");
-    try {
-      fs2.readSync(fd, buf, 0, buf.length, start);
-    } finally {
-      fs2.closeSync(fd);
-    }
-    let chunk = buf.toString("utf8");
-    if (start > 0) chunk = chunk.slice(chunk.indexOf("\n") + 1);
-    const lines = chunk.split("\n");
-    for (let i = lines.length - 1; i >= 0; i--) {
-      const line = lines[i].trim();
-      if (!line) continue;
+    for (const { line } of tailLines(transcriptPath, { maxBytes })) {
       let entry;
       try {
         entry = JSON.parse(line);
@@ -4313,6 +4327,33 @@ function lastAssistantText(transcriptPath, { maxBytes = 2e6 } = {}) {
       const text = Array.isArray(content) ? content.filter((b) => b?.type === "text" && typeof b.text === "string").map((b) => b.text).join("\n").trim() : typeof content === "string" ? content.trim() : "";
       if (text) return text;
     }
+  } catch {
+  }
+  return null;
+}
+function scanForModel(transcriptPath, maxBytes, minOffset) {
+  const it = tailLines(transcriptPath, { maxBytes });
+  for (const { line, offset } of it) {
+    if (!line.includes('"assistant"') || !line.includes('"model"')) continue;
+    let entry;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (entry?.type !== "assistant" || entry.isSidechain === true) continue;
+    const model = entry.message?.model;
+    if (typeof model !== "string" || !model.trim()) continue;
+    return { model: offset >= minOffset ? model : null, found: true };
+  }
+  return { model: null, found: false, truncated: it.truncated };
+}
+function lastAssistantModel(transcriptPath, { minOffset = 0 } = {}) {
+  try {
+    const near = scanForModel(transcriptPath, 262144, minOffset);
+    if (near.found) return near.model;
+    if (!near.truncated) return null;
+    return scanForModel(transcriptPath, 2e6, minOffset).model;
   } catch {
   }
   return null;
@@ -4521,7 +4562,6 @@ function claudeEnvArgvPrefix(port, home) {
     "FLEETDECK_HOLD_MS",
     "FLEETDECK_STALE_MS",
     "FLEETDECK_NUDGE_MS",
-    "FLEETDECK_MAX_SPAWNED",
     "FLEETDECK_WATCH_MAX_MS",
     "FLEETDECK_WATCH_POLL_MS",
     "FLEETDECK_SPAWN_REGISTER_MS",
@@ -4546,7 +4586,6 @@ function createCore(db2, {
   const t0 = Date.now();
   let onMutate = () => {
   };
-  const MAX_SPAWNED = envInt("FLEETDECK_MAX_SPAWNED", 5);
   const STALE_MS = envInt("FLEETDECK_STALE_MS", 6e5, { min: 1 });
   const NUDGE_MS = envInt("FLEETDECK_NUDGE_MS", 8e3, { min: 1 });
   const SPAWN_REGISTER_MS = envInt("FLEETDECK_SPAWN_REGISTER_MS", 9e4, { min: 1 });
@@ -4621,8 +4660,8 @@ function createCore(db2, {
       SELECT session_id FROM sessions WHERE archived_at IS NOT NULL)`),
     insertCommand: db2.prepare("INSERT INTO commands (at, text, parsed_json) VALUES (?, ?, ?)"),
     pruneEvents: db2.prepare("DELETE FROM events WHERE at < ?"),
-    // v1.2 board-spawned sessions. "Active" = status spawning|stalled|live — the rows
-    // that count against FLEETDECK_MAX_SPAWNED and get liveness-checked.
+    // v1.2 board-spawned sessions. "Active" = status spawning|stalled|live — the
+    // rows that get liveness-checked, and the number the board shows as "N live".
     insertSpawn: db2.prepare(`INSERT INTO spawns
       (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, requested_at, status, skip_permissions, remote_control)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'spawning', ?, ?)`),
@@ -4733,6 +4772,28 @@ function createCore(db2, {
     if (!keys.length) return;
     db2.prepare(`UPDATE sessions SET ${keys.map((k) => `${k} = ?`).join(", ")} WHERE session_id = ?`).run(...keys.map((k) => upd[k] ?? null), sid);
   }
+  const modelMemo = /* @__PURE__ */ new Map();
+  function stampTranscriptFloor(sid, transcriptPath) {
+    let floor = 0;
+    try {
+      if (transcriptPath) floor = fs3.statSync(transcriptPath).size;
+    } catch {
+    }
+    modelMemo.set(sid, { floor, size: -1, model: null });
+  }
+  function readTranscriptModel(sid, transcriptPath) {
+    const memo = modelMemo.get(sid) ?? { floor: 0, size: -1, model: null };
+    let size;
+    try {
+      size = fs3.statSync(transcriptPath).size;
+    } catch {
+      return null;
+    }
+    if (size === memo.size) return memo.model;
+    const model = lastAssistantModel(transcriptPath, { minOffset: memo.floor });
+    modelMemo.set(sid, { ...memo, size, model: model ?? memo.model });
+    return model;
+  }
   function assignCallsign(sid) {
     const idx = q.countSessions.get().n;
     return CALLSIGNS[idx % CALLSIGNS.length] + "-" + String(sid).slice(0, 4);
@@ -4832,8 +4893,18 @@ function createCore(db2, {
       const branch = branchOf(ev.cwd) || ev.git_branch || null;
       if (branch) upd.branch = branch;
     }
-    if (ev.model?.display_name || ev.model?.id || typeof ev.model === "string") {
-      upd.model = ev.model.display_name || ev.model.id || ev.model;
+    const payloadModel = ev.model?.display_name || ev.model?.id || (typeof ev.model === "string" && ev.model ? ev.model : null);
+    if (ev.hook_event_name === "SessionStart") {
+      stampTranscriptFloor(sid, ev.transcript_path);
+      if (payloadModel) upd.model = payloadModel;
+    } else if (payloadModel) {
+      upd.model = payloadModel;
+    } else if (ev.transcript_path) {
+      const model = readTranscriptModel(sid, ev.transcript_path);
+      if (model && model !== c.model) {
+        upd.model = model;
+        if (c.model) tick(`\u{1F500} ${c.callsign} switched model \u2192 ${model}`);
+      }
     }
     updateSession(sid, upd);
     c = { ...c, ...upd };
@@ -5060,6 +5131,7 @@ function createCore(db2, {
   function hookSessionEnd(ev) {
     applyEvent({ ...ev, hook_event_name: "SessionEnd" });
     questions.expireAllForSession(ev.session_id || "unknown");
+    modelMemo.delete(ev.session_id || "unknown");
     const sp = q.spawnBySession.get(ev.session_id || "unknown");
     if (sp && (sp.status === "spawning" || sp.status === "stalled" || sp.status === "live")) {
       q.setSpawnStatus.run("pane-dead", sp.spawn_id);
@@ -5507,7 +5579,7 @@ function createCore(db2, {
     return { status: 200, body: { ok: true, removed: true, branch_deleted, rows_purged, path: row.worktree_path } };
   }
   function spawnCapability() {
-    const base = { max: MAX_SPAWNED, active: q.countActiveSpawns.get().n };
+    const base = { active: q.countActiveSpawns.get().n };
     if (String(process.env.FLEETDECK_SPAWN ?? "").toLowerCase() === "off") {
       return { available: false, reason: "disabled (FLEETDECK_SPAWN=off)", ...base };
     }
@@ -5628,9 +5700,6 @@ function createCore(db2, {
     if (!cwd || !st?.isDirectory()) {
       return { status: 400, body: { ok: false, reason: "cwd missing or not a directory" } };
     }
-    if (cap.active >= cap.max) {
-      return { status: 409, body: { ok: false, reason: `spawn cap reached (${cap.active} of ${cap.max} live \u2014 FLEETDECK_MAX_SPAWNED)` } };
-    }
     if (body?.worktree === true && !deriveRepo(cwd).is_git) {
       return { status: 409, body: { ok: false, reason: "cwd is not a git repository \u2014 cannot spawn into a worktree" } };
     }
@@ -5732,10 +5801,6 @@ function createCore(db2, {
     const active = q.activeSpawnBySession.get(row.session_id);
     if (active) {
       return { status: 409, body: { ok: false, reason: `session already has active spawn ${active.spawn_id}` } };
-    }
-    const cap = spawnCapability();
-    if (cap.active >= cap.max) {
-      return { status: 409, body: { ok: false, reason: `spawn cap reached (${cap.active} of ${cap.max} live \u2014 FLEETDECK_MAX_SPAWNED)` } };
     }
     const existing = (await tmuxAdapter.listScopedWindows(port)).find((w) => w.window === row.tmux_window);
     if (existing && !existing.pane_dead && existing.pane_cmd === "claude") {
@@ -6362,6 +6427,7 @@ import { spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 var ACTIVE_STATUSES = /* @__PURE__ */ new Set(["spawning", "stalled", "live"]);
 var INPUT_CHUNK_BYTES = 1024;
+var ATTACH_TIMEOUT_MS = 5e3;
 function envInt2(name, fallback, { min = 0 } = {}) {
   const n = Number(process.env[name]);
   return Number.isFinite(n) && n >= min ? Math.floor(n) : fallback;
@@ -6454,150 +6520,207 @@ var TermBridgeError = class extends Error {
     this.reason = reason;
   }
 };
-function createTermBridge({
-  port,
-  resolveSpawn,
-  maxViewers = envInt2("FLEETDECK_TERM_MAX_VIEWERS", 4, { min: 1 }),
-  log = () => {
+function createTermBridge({ port, resolveSpawn, log = () => {
+} } = {}) {
+  const session = `fleetdeck-${port}`;
+  const viewers = /* @__PURE__ */ new Set();
+  let client = null;
+  function createClient() {
+    const c = {
+      child: null,
+      parser: new ControlModeParser(),
+      waiters: [],
+      // pane id -> { decoder, subs:Set<viewer> }. The decoder is PER PANE, not
+      // per viewer: it is the pane's byte stream that gets split mid-character,
+      // and two tiles watching one pane must not each hold half a glyph.
+      panes: /* @__PURE__ */ new Map(),
+      manualSizing: /* @__PURE__ */ new Set(),
+      // windows we have switched to manual sizing
+      closed: false,
+      ready: null,
+      readyResolve: null,
+      readyReject: null
+    };
+    c.ready = new Promise((resolve, reject) => {
+      c.readyResolve = resolve;
+      c.readyReject = reject;
+    });
+    c.ready.catch(() => {
+    });
+    c.command = (line) => new Promise((resolve, reject) => {
+      if (c.closed || !c.child?.stdin?.writable) return reject(new Error("control client is closed"));
+      const waiter = { resolve, reject };
+      c.waiters.push(waiter);
+      c.child.stdin.write(line + "\n", (err) => {
+        if (!err) return;
+        const i = c.waiters.indexOf(waiter);
+        if (i >= 0) c.waiters.splice(i, 1);
+        reject(err);
+      });
+    });
+    const onEvent = (ev) => {
+      if (ev.type === "response") {
+        c.waiters.shift()?.resolve(ev);
+      } else if (ev.type === "session-changed") {
+        c.readyResolve();
+      } else if (ev.type === "output") {
+        const stream = c.panes.get(ev.pane);
+        if (!stream) return;
+        const data = stream.decoder.write(ev.data);
+        if (!data) return;
+        for (const v of stream.subs) v.emit(data);
+      } else if (ev.type === "exit") {
+        teardown(ev.reason || "tmux session ended");
+      } else if (ev.type === "window-close") {
+        if (!c.panes.size) return;
+        c.command("list-panes -a -F '#{pane_id}'").then((res) => {
+          if (!res.ok) return;
+          const alive = new Set(res.lines.map((s) => s.trim()));
+          for (const [paneId, stream] of [...c.panes]) {
+            if (alive.has(paneId)) continue;
+            for (const v of [...stream.subs]) v.finish("terminal pane closed");
+          }
+        }).catch(() => {
+        });
+      }
+    };
+    const override = process.env.FLEETDECK_TERM_CMD?.trim();
+    const socket = process.env.FLEETDECK_TMUX_SOCKET?.trim();
+    const argv = socket ? ["-L", socket, "-C", "attach-session", "-t", "=" + session] : ["-C", "attach-session", "-t", "=" + session];
+    c.child = spawn(override || "tmux", override ? [] : argv, { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+    c.child.stdout.on("data", (chunk) => {
+      for (const ev of c.parser.feed(chunk)) onEvent(ev);
+    });
+    c.child.stderr.on("data", (chunk) => log(`terminal control stderr: ${String(chunk).trim()}`));
+    c.child.on("error", (err) => teardown(`terminal control client failed: ${err.message}`));
+    c.child.on("exit", () => {
+      if (!c.closed) teardown("terminal control client exited");
+    });
+    return c;
   }
-} = {}) {
-  let active = 0;
+  function teardown(reason) {
+    const c = client;
+    if (!c || c.closed) return;
+    c.closed = true;
+    client = null;
+    c.readyReject(new Error(reason));
+    for (const waiter of c.waiters.splice(0)) waiter.reject(new Error(reason));
+    for (const v of [...viewers]) v.finish(reason);
+    if (c.child && c.child.exitCode === null && !c.child.killed) {
+      try {
+        c.child.kill("SIGTERM");
+      } catch {
+      }
+    }
+  }
+  async function ensureClient() {
+    if (!client) client = createClient();
+    const c = client;
+    let timer;
+    try {
+      await Promise.race([
+        c.ready,
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error("terminal control attach timed out")), ATTACH_TIMEOUT_MS);
+        })
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+    if (c.closed) throw new Error("terminal control client exited");
+    return c;
+  }
+  async function sizeWindow(c, window, cols, rows) {
+    const target = `=${session}:${window}`;
+    if (!c.manualSizing.has(window)) {
+      const opt = await c.command(`set-option -w -t ${target} window-size manual`).catch(() => ({ ok: false }));
+      if (opt.ok) c.manualSizing.add(window);
+    }
+    if (c.manualSizing.has(window)) {
+      const res = await c.command(`resize-window -t ${target} -x ${cols} -y ${rows}`);
+      if (res.ok) return res;
+      c.manualSizing.delete(window);
+    }
+    let out = await c.command(`refresh-client -C ${cols},${rows}`);
+    if (!out.ok) out = await c.command(`refresh-client -C ${cols}x${rows}`);
+    return out;
+  }
+  function subscribe(c, pane, viewer) {
+    let stream = c.panes.get(pane);
+    if (!stream) {
+      stream = { decoder: new StringDecoder("utf8"), subs: /* @__PURE__ */ new Set() };
+      c.panes.set(pane, stream);
+    }
+    stream.subs.add(viewer);
+  }
+  function unsubscribe(c, pane, viewer) {
+    const stream = c?.panes.get(pane);
+    if (!stream) return;
+    stream.subs.delete(viewer);
+    if (!stream.subs.size) c.panes.delete(pane);
+  }
   async function openViewer({ spawn_id, cols, rows, send, onClose = () => {
   } }) {
     if (process.env.FLEETDECK_TERM?.trim().toLowerCase() === "off") throw new TermBridgeError("live terminal disabled");
     const size = dimensions(cols, rows);
     if (!size) throw new TermBridgeError("invalid terminal dimensions");
-    if (active >= maxViewers) throw new TermBridgeError("live terminal viewer cap reached");
-    active++;
-    let row;
-    try {
-      row = await resolveSpawn?.(spawn_id);
-      if (!row) throw new TermBridgeError("no such spawn");
-      if (!ACTIVE_STATUSES.has(row.status)) throw new TermBridgeError("spawn is not live");
-      if (row.tmux_session !== `fleetdeck-${port}` || !String(row.tmux_window || "").startsWith(`fd${port}-`)) {
-        throw new TermBridgeError("spawn is outside this fleet");
-      }
-    } catch (err) {
-      active--;
-      throw err;
+    const row = await resolveSpawn?.(spawn_id);
+    if (!row) throw new TermBridgeError("no such spawn");
+    if (!ACTIVE_STATUSES.has(row.status)) throw new TermBridgeError("spawn is not live");
+    if (row.tmux_session !== session || !String(row.tmux_window || "").startsWith(`fd${port}-`)) {
+      throw new TermBridgeError("spawn is outside this fleet");
     }
-    let child;
-    let pane = null;
-    let intentional = false;
-    let finished = false;
-    let established = false;
-    let initialized = false;
-    const outDecoder = new StringDecoder("utf8");
-    const pendingOutput = [];
-    const responseWaiters = [];
-    const parser = new ControlModeParser();
-    let readyResolve;
-    let readyReject;
-    const ready = new Promise((resolve, reject) => {
-      readyResolve = resolve;
-      readyReject = reject;
-    });
-    ready.catch(() => {
-    });
-    const finish = (reason, notify = true) => {
-      if (finished) return;
-      finished = true;
-      active--;
-      readyReject(new Error(reason));
-      for (const waiter of responseWaiters.splice(0)) waiter.reject(new Error(reason));
-      if (child && child.exitCode === null && !child.killed) {
+    const viewer = {
+      pane: null,
+      window: row.tmux_window,
+      established: false,
+      initialized: false,
+      finished: false,
+      emit(data) {
+        if (this.finished || !this.initialized) return;
         try {
-          child.kill("SIGTERM");
-        } catch {
-        }
-      }
-      if (notify && established) {
-        try {
-          onClose(reason);
-        } catch {
-        }
-      }
-    };
-    const command = (line) => new Promise((resolve, reject) => {
-      if (finished || !child?.stdin?.writable) return reject(new Error("control client is closed"));
-      const waiter = { resolve, reject };
-      responseWaiters.push(waiter);
-      child.stdin.write(line + "\n", (err) => {
-        if (!err) return;
-        const index = responseWaiters.indexOf(waiter);
-        if (index >= 0) responseWaiters.splice(index, 1);
-        reject(err);
-      });
-    });
-    const handleEvent = (ev) => {
-      if (ev.type === "response") {
-        responseWaiters.shift()?.resolve(ev);
-      } else if (ev.type === "session-changed") {
-        readyResolve();
-      } else if (ev.type === "output" && pane && ev.pane === pane) {
-        const data = outDecoder.write(ev.data);
-        if (!data) return;
-        if (!initialized) pendingOutput.push(data);
-        else try {
           send({ t: "out", data });
         } catch {
-          finish("terminal socket closed", false);
+          this.finish("terminal socket closed", false);
         }
-      } else if (ev.type === "exit") {
-        finish(ev.reason || "tmux session ended");
-      } else if (ev.type === "window-close" && pane) {
-        command(`display-message -p -t ${pane} '#{pane_id}'`).then((res) => {
-          if (!res.ok) finish("terminal pane closed");
-        }).catch(() => finish("terminal pane closed"));
+      },
+      finish(reason, notify = true) {
+        if (this.finished) return;
+        this.finished = true;
+        viewers.delete(this);
+        if (this.pane) unsubscribe(client, this.pane, this);
+        if (notify && this.established) {
+          try {
+            onClose(reason);
+          } catch {
+          }
+        }
+        if (!viewers.size) teardown("no viewers left");
       }
     };
+    viewers.add(viewer);
     try {
-      const override = process.env.FLEETDECK_TERM_CMD?.trim();
-      const socket = process.env.FLEETDECK_TMUX_SOCKET?.trim();
-      const argv = socket ? ["-L", socket, "-C", "attach-session", "-t", "=" + row.tmux_session] : ["-C", "attach-session", "-t", "=" + row.tmux_session];
-      child = spawn(override || "tmux", override ? [] : argv, { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
-      child.stdout.on("data", (chunk) => {
-        for (const ev of parser.feed(chunk)) handleEvent(ev);
-      });
-      child.stderr.on("data", (chunk) => log(`terminal control stderr: ${String(chunk).trim()}`));
-      child.on("error", (err) => finish(`terminal control client failed: ${err.message}`));
-      child.on("exit", () => {
-        if (!intentional) finish("terminal control client exited");
-      });
-      let attachTimer;
-      try {
-        await Promise.race([
-          ready,
-          new Promise((_, reject) => {
-            attachTimer = setTimeout(() => reject(new Error("terminal control attach timed out")), 5e3);
-          })
-        ]);
-      } finally {
-        clearTimeout(attachTimer);
-      }
-      const panes = await command(`list-panes -t =${row.tmux_session}:${row.tmux_window} -F '#{pane_id}'`);
+      const c = await ensureClient();
+      const panes = await c.command(`list-panes -t =${session}:${row.tmux_window} -F '#{pane_id}'`);
       if (!panes.ok) throw new Error("terminal pane not found");
-      pane = panes.lines.map((s) => s.trim()).find((s) => /^%\d+$/.test(s));
+      const pane = panes.lines.map((s) => s.trim()).find((s) => /^%\d+$/.test(s));
       if (!pane) throw new Error("terminal pane not found");
-      const setSize = async (c, r) => {
-        let out = await command(`refresh-client -C ${c},${r}`);
-        if (!out.ok) out = await command(`refresh-client -C ${c}x${r}`);
-        return out;
-      };
-      if (!(await setSize(size.cols, size.rows)).ok) throw new Error("terminal resize failed");
-      await setSize(size.cols, Math.max(1, size.rows - 1));
-      await setSize(size.cols, size.rows);
+      viewer.pane = pane;
+      if (!(await sizeWindow(c, row.tmux_window, size.cols, size.rows)).ok) throw new Error("terminal resize failed");
+      await sizeWindow(c, row.tmux_window, size.cols, Math.max(1, size.rows - 1));
+      await sizeWindow(c, row.tmux_window, size.cols, size.rows);
       await new Promise((r) => {
         const t = setTimeout(r, REPAINT_MS);
         t.unref?.();
       });
-      const captured = await command(`capture-pane -p -e -t ${pane}`);
+      const captured = await c.command(`capture-pane -p -e -t ${pane}`);
       if (!captured.ok) throw new Error("terminal pane capture failed");
-      const cursor = await command(`display-message -p -t ${pane} '#{cursor_x} #{cursor_y}'`);
+      const cursor = await c.command(`display-message -p -t ${pane} '#{cursor_x} #{cursor_y}'`);
       if (!cursor.ok) throw new Error("terminal cursor lookup failed");
       const match = /^(\d+)\s+(\d+)$/.exec(cursor.lines.at(-1)?.trim() || "");
       if (!match) throw new Error("terminal cursor lookup returned invalid data");
-      established = true;
+      subscribe(c, pane, viewer);
+      viewer.established = true;
       send({
         t: "init",
         cols: size.cols,
@@ -6606,40 +6729,39 @@ function createTermBridge({
         // the bytes and decode them as one piece so multi-byte glyphs survive.
         screen: CLEAR_SCREEN + Buffer.from(captured.lines.join("\r\n"), "latin1").toString("utf8") + `\x1B[${Number(match[2]) + 1};${Number(match[1]) + 1}H`
       });
-      initialized = true;
-      pendingOutput.length = 0;
+      viewer.initialized = true;
     } catch (err) {
-      intentional = true;
-      finish(err?.message || "terminal open failed", false);
+      viewer.finish(err?.message || "terminal open failed", false);
       throw new TermBridgeError(err?.message || "terminal open failed");
     }
     return {
       input(dataString) {
-        if (finished || typeof dataString !== "string" || !dataString) return;
+        if (viewer.finished || typeof dataString !== "string" || !dataString) return;
+        const c = client;
+        if (!c) return;
         const bytes = Buffer.from(dataString, "utf8");
         for (let offset = 0; offset < bytes.length; offset += INPUT_CHUNK_BYTES) {
           const hex = [...bytes.subarray(offset, offset + INPUT_CHUNK_BYTES)].map((b) => b.toString(16).padStart(2, "0")).join(" ");
-          command(`send-keys -t ${pane} -H ${hex}`).then((res) => {
-            if (!res.ok) finish("terminal pane closed");
-          }).catch(() => finish("terminal pane closed"));
+          c.command(`send-keys -t ${viewer.pane} -H ${hex}`).then((res) => {
+            if (!res.ok) viewer.finish("terminal pane closed");
+          }).catch(() => viewer.finish("terminal pane closed"));
         }
       },
       resize(nextCols, nextRows) {
         const next = dimensions(nextCols, nextRows);
-        if (finished || !next) return;
-        command(`refresh-client -C ${next.cols},${next.rows}`).then(async (res) => {
-          if (!res.ok) res = await command(`refresh-client -C ${next.cols}x${next.rows}`);
-          if (!res.ok) finish("terminal resize failed");
-        }).catch(() => finish("terminal resize failed"));
+        const c = client;
+        if (viewer.finished || !next || !c) return;
+        sizeWindow(c, viewer.window, next.cols, next.rows).then((res) => {
+          if (!res.ok) viewer.finish("terminal resize failed");
+        }).catch(() => viewer.finish("terminal resize failed"));
       },
       close() {
-        intentional = true;
-        finish("terminal viewer closed", false);
+        viewer.finish("terminal viewer closed", false);
       }
     };
   }
   return { openViewer, get activeViewers() {
-    return active;
+    return viewers.size;
   } };
 }
 

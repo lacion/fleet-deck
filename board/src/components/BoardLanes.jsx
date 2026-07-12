@@ -10,6 +10,7 @@ export default function BoardLanes({
   sessions, repos, conflicts, mailPending, mailMeta, now, compact, stale,
   repoFilter, onRepoFilter, ripples, priorities, onOpenSession, onOpenTerm,
   reviving, revivingAll, onRevive, onReviveAll, enablingRemote, onEnableRemote, onKill,
+  onToggleWatch, watch,
 }) {
   const repoKey = (s) => s.repo_id ?? '(none)';
 
@@ -137,6 +138,8 @@ export default function BoardLanes({
                         onEnableRemote={onEnableRemote ? () => onEnableRemote(s) : undefined}
                         enablingRemote={!!(s.spawn && enablingRemote?.has(s.spawn.spawn_id))}
                         onKill={onKill ? () => onKill(s) : undefined}
+                        onToggleWatch={onToggleWatch ? () => onToggleWatch(s) : undefined}
+                        watched={!!watch?.has(s.session_id)}
                       />
                     ))}
                 </div>

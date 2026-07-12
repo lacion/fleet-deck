@@ -125,7 +125,7 @@ test('revive resumes the same session into a new spawn row and its resume hook m
   assert.equal(card.note, 'session resume');
 });
 
-test('revive refusals cover unknown/live/missing cwd/missing transcript/active sibling/cap', async (t) => {
+test('revive refusals cover unknown/live/missing cwd/missing transcript/active sibling', async (t) => {
   const daemonHome = scratch('fleetdeck-revive-refuse-daemon-');
   const userHome = scratch('fleetdeck-revive-refuse-user-');
   const cwd = scratch('fleetdeck-revive-refuse-cwd-');
@@ -134,7 +134,6 @@ test('revive refusals cover unknown/live/missing cwd/missing transcript/active s
     home: daemonHome,
     env: {
       HOME: userHome,
-      FLEETDECK_MAX_SPAWNED: '1',
       FLEETDECK_SPAWN_CMD: SPAWN_CMD_FIXTURE,
       FLEETDECK_TEST_SPAWN_RECORD: record,
     },
@@ -177,13 +176,17 @@ test('revive refusals cover unknown/live/missing cwd/missing transcript/active s
   assert.match(res.json.reason, /active spawn/);
   withDb(daemonHome, db => db.prepare("UPDATE spawns SET status = 'gone' WHERE spawn_id = ?").run(sibling));
 
-  const otherCwd = scratch('fleetdeck-revive-cap-cwd-');
+  // ...and with every refusal cleared, a revive goes through EVEN THOUGH other
+  // agents are already live. Revive used to count against FLEETDECK_MAX_SPAWNED
+  // and would 409 here; there is no cap any more, so a busy fleet is not a
+  // reason to refuse to bring a session back.
+  const otherCwd = scratch('fleetdeck-revive-busy-cwd-');
   t.after(() => rmSync(otherCwd, { recursive: true, force: true }));
   const other = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd: otherCwd });
   assert.equal(other.status, 200);
   res = await postJson(`${daemon.baseUrl}/api/spawn/${oldId}/revive`, {});
-  assert.equal(res.status, 409);
-  assert.match(res.json.reason, /spawn cap reached/);
+  assert.equal(res.status, 200, 'a live fleet must not block a revive — the cap is gone');
+  assert.equal(res.json?.ok, true);
 });
 
 test('snapshot spawn.revivable follows terminal status, cwd, and transcript existence', async (t) => {

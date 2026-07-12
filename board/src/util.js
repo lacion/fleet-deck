@@ -48,31 +48,117 @@ export function basename(p) {
   return i === -1 ? s : s.slice(i + 1);
 }
 
-// 'claude-fable-5-20250929' → 'Fable 5' ·  'Fable 5 mini' stays as-is.
-export function prettyModel(model) {
-  const raw = String(model ?? '').trim();
-  if (!raw) return '—';
-  const words = raw
+// Every family modelFamily() can name needs a matching .fd-mbadge.<fam> rule in
+// app.css and a --m-<fam>/--m-<fam>-bg token pair in BOTH themes of tokens.css.
+// board-util.test.mjs enforces that mechanically.
+export const MODEL_FAMILIES = ['opus', 'sonnet', 'haiku', 'fable', 'quill', 'comet'];
+
+// Split a model id into renderable parts, once, so the three helpers below can
+// each render it their own way without re-parsing each other's output.
+//
+//   'claude-opus-4-8[1m]' → { parts: [{ver:false,'Opus'}, {ver:true,'4.8'}], marker: '1M' }
+//
+// Version digits arrive as separate '-' tokens ('opus-4-8'), so a RUN of numeric
+// tokens is collapsed into one dotted version IN PLACE — that keeps 'fable-5-mini'
+// reading as 'Fable 5 Mini' rather than reordering it.
+export function parseModel(model) {
+  let s = String(model ?? '').trim();
+  if (!s) return null;
+
+  // The long-context marker must come off BEFORE tokenizing: the build-tag
+  // filter below matches '1m' and would silently eat it. It arrives bracketed
+  // from the CLI ('...[1m]') and bare from our own output ('Opus 4.8 1M') —
+  // accept both, so prettyModel is idempotent over what it just rendered.
+  let marker = null;
+  const bracketed = s.match(/\[([^\]]+)\]\s*$/);
+  const bare = s.match(/[\s\-_](\d+m)\s*$/i);
+  if (bracketed) { marker = bracketed[1].toUpperCase(); s = s.slice(0, bracketed.index); }
+  else if (bare) { marker = bare[1].toUpperCase(); s = s.slice(0, bare.index); }
+
+  const toks = s
     .replace(/^claude[-_ ]/i, '')
-    .split(/[-_ ]+/)
-    .filter((w) => w && !/^\d{6,}$/.test(w) && !/^v?\d+[a-z]\d*$/i.test(w));
-  return words.map((w) => (/^\d/.test(w) ? w : w[0].toUpperCase() + w.slice(1))).join(' ') || raw;
+    .split(/[-_ .]+/) // '.' too, so prettyModel is idempotent over its own output
+    .filter(Boolean)
+    .filter((t) => !/^\d{6,}$/.test(t))        // 20250929 datestamps
+    .filter((t) => !/^v?\d+[a-z]\d*$/i.test(t)); // build tags
+
+  const parts = [];
+  for (let i = 0; i < toks.length; i++) {
+    if (/^\d+$/.test(toks[i])) {
+      const run = [];
+      while (i < toks.length && /^\d+$/.test(toks[i])) run.push(toks[i++]);
+      i--;
+      parts.push({ ver: true, text: run.join('.') });
+    } else {
+      parts.push({ ver: false, text: toks[i][0].toUpperCase() + toks[i].slice(1).toLowerCase() });
+    }
+  }
+  // Legacy ids put the version first ('claude-3-5-haiku'). Hoist it behind the
+  // name so the badge never shows '3.5 Haiku' beside a 'Haiku 4.5'.
+  if (parts.length > 1 && parts[0].ver) parts.push(parts.shift());
+
+  return { parts, marker, raw: String(model).trim() };
 }
 
+// 'claude-opus-4-8[1m]' → 'Opus 4.8 1M' · 'claude-3-5-haiku-20241022' → 'Haiku 3.5'
+export function prettyModel(model) {
+  const p = parseModel(model);
+  if (!p) return '—';
+  const name = p.parts.map((x) => x.text).join(' ');
+  if (!name) return p.raw;
+  return p.marker ? `${name} ${p.marker}` : name;
+}
+
+// Compact cards: initials + version, no marker — 'claude-opus-4-8[1m]' → 'O4.8'.
 export function modelShort(model) {
-  return prettyModel(model)
-    .split(' ')
-    .map((w) => (/^\d/.test(w) ? w : w[0]))
-    .join('');
+  const p = parseModel(model);
+  if (!p) return '—';
+  return p.parts.map((x) => (x.ver ? x.text : x.text[0])).join('') || p.raw;
 }
 
 // model family → CSS class carrying the --m-* token pair
 export function modelFamily(model) {
   const m = String(model ?? '').toLowerCase();
-  if (m.includes('fable')) return 'fable';
-  if (m.includes('quill')) return 'quill';
-  if (m.includes('comet')) return 'comet';
-  return 'other';
+  return MODEL_FAMILIES.find((f) => m.includes(f)) ?? 'other';
+}
+
+// ------------------------------------------------------------------ batch spawn
+// In batch mode the prompt box stops being one prompt and becomes a task LIST:
+// one agent per non-empty line, and an optional "3x " prefix runs that line's
+// task three times (to race several attempts at the same problem).
+//
+//   3x fix the flaky worktree test     → 3 agents, same task
+//   update the README                  → 1 agent
+//
+// This is only ever applied when the human explicitly ticks "batch" — a prompt
+// with newlines in it is otherwise still ONE prompt, which matters enormously
+// for plan execution, where the whole plan is prefilled into this box.
+//
+// The multiplier is capped at two digits on purpose: with no spawn cap left in
+// the daemon, "300x" as a typo should be unrepresentable rather than expensive.
+const BATCH_REPEAT_RE = /^(\d{1,2})\s*[x×]\s+(.+)$/i;
+
+export function parseBatchTasks(text) {
+  return String(text ?? '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const m = line.match(BATCH_REPEAT_RE);
+      if (!m) return { count: 1, prompt: line };
+      return { count: Math.max(1, parseInt(m[1], 10)), prompt: m[2].trim() };
+    })
+    .filter((t) => t.prompt);
+}
+
+/** How many agents `parseBatchTasks` output would actually launch. */
+export function batchTotal(tasks) {
+  return (tasks || []).reduce((n, t) => n + t.count, 0);
+}
+
+/** The flat prompt list, in launch order — one entry per agent. */
+export function expandBatchTasks(tasks) {
+  return (tasks || []).flatMap((t) => Array.from({ length: t.count }, () => t.prompt));
 }
 
 // v1.4 live terminal — a board-owned pane is viewable while the pane exists:

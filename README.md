@@ -18,13 +18,14 @@ Every session on the machine appears on one local board — **http://127.0.0.1:4
 
 ## What it does
 
-- **See everything.** `queued → working → verifying → needs-you → idle → offline`, derived from hook telemetry — never self-reported, because sessions, like people, believe they are almost done.
+- **See everything.** `queued → working → verifying → needs-you → idle → offline`, derived from hook telemetry — never self-reported, because sessions, like people, believe they are almost done. The model badge is derived the same way: Claude Code only reports the model at startup, so Fleet Deck reads it from the session transcript instead and the badge follows a mid-session `/model` switch rather than freezing on whatever the session happened to launch with.
 - **Conflict radar.** Two sessions touching the same file within 30 minutes get warned *in context* ("coordinate, don't clobber"), the board flashes hazard-red, and yes, it's worktree-aware — the same file edited in two worktrees of one repo is a merge conflict introducing itself early.
 - **Needs-you rail.** Permission prompts, multiple-choice questions, MCP forms, and trailing "should I use bcrypt or argon2?" questions all become cards you answer from the board. The terminal never even asks — it just prints `⎿ Allowed by PermissionRequest hook` and carries on, slightly smug.
 - **Mail with honest latency.** Message any session, a whole repo, or everyone. Delivered at the next turn boundary — idle sessions usually wake within seconds (a small watcher taps them on the shoulder). The board never promises "instant," because we don't lie to you, even about milliseconds.
 - **An orchestrator with no brain, on purpose.** `assign auto: fix the flaky test` picks the best candidate — idle first, least buried, right repo — with a SQL query, not a model call. The core makes **zero model calls**. Your tokens are yours.
 - **A dynamic fleet.** The `+ Spawn` button starts a fresh interactive `claude` in a daemon-owned tmux window. Watch it work on the board, attach to the pane if you're nostalgic for terminals, kill it when it's done (there's a confirm; we've all misclicked).
 - **A live terminal.** Click a board-spawned session's tmux chip and its pane opens in a modal — an xterm.js terminal bridged over WebSocket to a tmux control-mode client (`tmux -C attach`). No PTY, no native deps, and typing in the modal sends real keystrokes to the agent's pane: you're driving the actual session, not watching a replay. The plain-tmux equivalent is still `tmux attach -t fleetdeck-4711:fd4711-<callsign>` — same pane, more ritual.
+- **The wall of screens.** `▦ Terminals` opens every live agent at once, in a grid. All of them stream; exactly **one** types — the focused tile wears an amber ring and says *⌨ typing here*, and every other tile is stdin-disabled at the terminal itself, not merely ignored on the way out. A keystroke lands in a real agent and cannot be recalled, so which one it reaches is never something you have to infer. Click a tile to move the focus, `⤢` to promote it to full size. The whole grid shares **one** tmux control client, so the tenth tile costs a WebSocket, not a tenth tmux process.
 - **Revive.** A reboot kills the panes, not the work — worktrees and transcripts survive on disk. One `⟲` click resumes a dead agent in its own worktree with its whole history: same callsign, same card. Whole columns at a time, if the night was rough.
 - **Remote control.** Put an agent on claude.ai and drive it from your phone. The card grows a 📱 chip that opens the session — named after its callsign, so the thing in your pocket is recognizably the thing on your board.
 - **A plan library.** Spawn a planner in plan mode. Its plan lands on the board as a rendered card *before* it can act. Approve it, or capture it to the library and release the planner. Later, execute the plan with your own custom instructions — optionally in unsupervised mode, which is behind a red two-step checkbox that says exactly what it does.
@@ -62,7 +63,28 @@ After changing anything under `scripts/` you need `npm run bundle` (the daemon r
 2. Launch a second one in the same repo and have them both touch the same file. Watch the hazard ripple. Read the whisper each session receives. Feel seen.
 3. Compose → ORCHESTRATOR → `assign auto: add input validation to the signup form`. The daemon picks a session; if it's idle, it wakes up and gets to work.
 4. Nobody available? The board offers a **spawn a session for this** button. One click, one new worker, prefilled with the task.
-5. Spawn a planner (`permission mode: plan`), give it something gnarly, and capture its plan. Execute it later with an unsupervised worker while you make coffee. The coffee is not optional; you're a fleet commander now.
+5. Tick **batch** on the spawn form and paste in three tasks, one per line. Three agents, three worktrees, three branches, one click. Then hit **▦ Terminals** and watch all three work at once.
+6. Spawn a planner (`permission mode: plan`), give it something gnarly, and capture its plan. Execute it later with an unsupervised worker while you make coffee. The coffee is not optional; you're a fleet commander now.
+
+## Batch spawn: a fleet, not an agent
+
+Tick **batch** in the spawn form and the prompt box stops being one prompt and becomes a task list — one agent per line:
+
+```
+fix the flaky worktree test
+update the README install section
+3x find the race in the spawn path
+```
+
+That's five agents in one click. Each one gets **its own git worktree** (`<repo>--fd-<callsign>`) on **its own branch** (`fd/<callsign>`), so they can all work the same repo without ever standing on each other's edits — that isolation is forced for a batch, not offered. The `3x` prefix runs a line several times, which is how you race three independent attempts at one nasty bug and keep the best.
+
+Before anything launches, the form shows you the exact list and the exact count. **That preview is the guardrail** — there is deliberately no cap on how many agents may be live at once. It's your machine and your token budget; Fleet Deck's job is to make the size of what you're about to do impossible to miss, not to pick a number for you.
+
+Then hit **▦ Terminals** and watch the whole fleet work at once:
+
+<p align="center">
+  <img src="docs/assets/terminal-grid.gif" alt="Four agents spawned into one repo, each in its own worktree, all four live terminals open at once in a grid. The focused tile wears an amber ring and says 'typing here'; the other three say 'watching'." width="100%">
+</p>
 
 ## How it works
 
@@ -88,7 +110,7 @@ So an OFFLINE card whose worktree **and** transcript both survive grows a **⟲ 
 
 It refuses honestly instead of guessing:
 
-- **409** — the pane is somehow still alive, that session already has a live spawn, or the spawn cap is full.
+- **409** — the pane is somehow still alive, or that session already has a live spawn.
 - **410** — the worktree or the transcript is gone. There is nothing to resume into and we will not invent one.
 
 <p align="center">
@@ -177,7 +199,6 @@ All optional. Fleet Deck's defaults are the configuration we actually run.
 | `FLEETDECK_TOKEN` | generated into `$FLEETDECK_HOME/token` | The LAN bearer token. Minimum 16 characters; the daemon refuses to start on a shorter one. |
 | `FLEETDECK_MDNS` | on (LAN mode only) | `off` disables the mDNS/DNS-SD responder. |
 | `FLEETDECK_MDNS_NAME` | `fleetdeck` | The advertised name — i.e. `fleetdeck.local`. Rename one of them when two fleets share a network. |
-| `FLEETDECK_MAX_SPAWNED` | `5` | Cap on simultaneously live board-spawned agents. Revive counts against it too. |
 | `FLEETDECK_SPAWN` | on | `off` disables spawning entirely; the board hides every spawn control. |
 | `FLEETDECK_STALE_MS` | `600000` (10 min) | How long a working/verifying card runs without telemetry before it's badged stale. |
 | `FLEETDECK_HOLD_MS` | `50000` (50 s) | How long a question hook is held open awaiting a board answer. Clamped to 250 ms–60 s, under the 65 s hook timeout. |
@@ -188,7 +209,6 @@ All optional. Fleet Deck's defaults are the configuration we actually run.
 | `FLEETDECK_RETAIN_OFFLINE_MS` | `86400000` (24 h) | How long an offline card stays on the board before it's archived out (never deleted). |
 | `FLEETDECK_RC_HARVEST_MS` | `2500` (2.5 s) | Delay before the daemon reads the pane's scrollback for the `claude.ai` remote-control link. |
 | `FLEETDECK_TERM` | on | `off` disables the live terminal (WebSocket + modal) altogether. |
-| `FLEETDECK_TERM_MAX_VIEWERS` | `4` | Concurrent viewers per pane. |
 | `FLEETDECK_TERM_REPAINT_MS` | `80` | Repaint coalescing window for the terminal bridge. |
 | `FLEETDECK_TMUX_SOCKET` | unset | Run every tmux command against a named server (`tmux -L`). Tests and demos only — see the scar story above. |
 | `FLEETDECK_AGENTS_CMD` | the `claude agents` CLI | Override the agents-listing command. `false` disables that poller (hooks still feed the board). |
@@ -202,10 +222,12 @@ All optional. Fleet Deck's defaults are the configuration we actually run.
 
 ```bash
 npm install
-node --test --test-concurrency=1     # 170 contract tests against a real daemon
+npm test                             # 211 contract tests against a real daemon
 npm run bundle                       # rebundle the daemon after touching scripts/fleetd/
 npm run build:board                  # rebuild the React board into board-dist/
 ```
+
+`npm test` runs the suite **serially** (`--test-concurrency=1`), and that is not a style preference. Every one of these tests boots a real daemon that binds a real port and drives a real tmux server; run them in parallel and they contend for both, and you get one or two failures a run — a *different* one each time, each passing in isolation. That looks exactly like flaky tests and is in fact a flaky harness.
 
 The `demo/` scripts are live acceptance gates that start *real* Claude sessions (i.e., they cost money): `run-smoke.sh` (two sessions colliding on purpose), `run-accept-phase3.sh` (a permission approved from the board; a trailing question answered from the board), `run-accept-spawn.sh` (spawn → assign → board-approved permission → kill), `run-accept-plan.sh` (plan → capture → unsupervised execution). Run them deliberately, not casually.
 

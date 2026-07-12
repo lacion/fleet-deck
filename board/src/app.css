@@ -164,6 +164,9 @@ a { color: var(--act); } a:hover { opacity: .85; }
 .fd-mbadge.fable { color: var(--m-fable); background: var(--m-fable-bg); }
 .fd-mbadge.quill { color: var(--m-quill); background: var(--m-quill-bg); }
 .fd-mbadge.comet { color: var(--m-comet); background: var(--m-comet-bg); }
+.fd-mbadge.opus { color: var(--m-opus); background: var(--m-opus-bg); }
+.fd-mbadge.sonnet { color: var(--m-sonnet); background: var(--m-sonnet-bg); }
+.fd-mbadge.haiku { color: var(--m-haiku); background: var(--m-haiku-bg); }
 
 .fd-card .branch { font-family: var(--font-data); font-size: 11px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .fd-card .branch .b { color: var(--dim); }
@@ -425,6 +428,26 @@ textarea.fd-input { font-family: var(--font-ui); font-size: 13px; resize: none; 
 }
 .fd-hazardconfirm .warn { font-family: var(--font-data); font-size: 11.5px; font-weight: 600; color: var(--hazard); }
 .fd-hazardconfirm .sub { font-family: var(--font-data); font-size: 10.5px; color: var(--dim); }
+
+/* batch spawn: the fleet you are about to launch, counted, before you click.
+   With no spawn cap in the daemon, this list IS the guardrail. */
+.fd-batchpreview {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px;
+  background: var(--raised); border: 1px solid var(--border); border-radius: var(--r-ctl);
+  padding: 10px 12px; animation: fdSlideIn .2s ease-out 1;
+}
+.fd-batchpreview .hd { font-family: var(--font-data); font-size: 11px; color: var(--dim); }
+.fd-batchpreview .hd b { color: var(--text); font-weight: 600; }
+.fd-batchpreview ol { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 3px; }
+.fd-batchpreview li {
+  font-size: var(--fs-body); color: var(--text); line-height: 1.35;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.fd-batchpreview .mult {
+  font-family: var(--font-data); font-size: 10px; font-weight: 600;
+  color: var(--m-comet); background: var(--m-comet-bg);
+  border-radius: var(--r-chip); padding: 1px 5px; margin-right: 6px;
+}
 .fd-unsupchip {
   font-family: var(--font-data); font-size: 10px; color: var(--hazard); background: var(--hazard-bg);
   border: 1px solid var(--hazard); border-radius: var(--r-chip); padding: 0 6px;
@@ -640,6 +663,78 @@ textarea.fd-input { font-family: var(--font-ui); font-size: 13px; resize: none; 
 .fd-termnote.err .msg { color: var(--hazard); }
 .fd-termnote .fd-ghostbtn { flex: none; }
 
+/* ============ the wall of screens (v1.9) ============ */
+/* N terminals at once. Every tile STREAMS; exactly one tile TYPES. A keystroke
+   lands in a live agent and cannot be recalled, so "which one am I typing into"
+   must be answerable from across the room — hence the ring, not a subtle tint. */
+.fd-gridwrap {
+  position: fixed; inset: 0; background: rgba(0,0,0,.55);
+  display: flex; align-items: center; justify-content: center;
+  padding: 3vh 2vw; z-index: 30;
+}
+.fd-grid {
+  width: 100%; height: 100%;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  display: flex; flex-direction: column; overflow: hidden; text-align: left;
+  box-shadow: 0 24px 60px rgba(0,0,0,.4); animation: fdSlideIn .2s ease-out 1;
+}
+.fd-gridhead {
+  flex: none; display: flex; align-items: center; gap: 10px;
+  padding: 12px 16px; border-bottom: 1px solid var(--border-soft);
+}
+.fd-gridhead .lbl {
+  font-family: var(--font-data); font-size: var(--fs-micro); font-weight: 600;
+  letter-spacing: var(--ls-label); color: var(--dim);
+}
+.fd-gridcount {
+  font-family: var(--font-data); font-size: 10px; font-weight: 600;
+  color: var(--text); background: var(--border-soft);
+  border-radius: var(--r-chip); padding: 1px 7px; flex: none;
+}
+.fd-gridhead .fd-termhint b { color: var(--act); font-weight: 600; }
+.fd-gridbody {
+  flex: 1; min-height: 0; display: grid; gap: 8px; padding: 10px;
+  overflow: auto; align-content: stretch;
+}
+
+.fd-tile {
+  min-width: 0; min-height: 140px; display: flex; flex-direction: column; overflow: hidden;
+  background: var(--code); border: 1px solid var(--border); border-radius: var(--r-ctl);
+  transition: border-color var(--t-fast), box-shadow var(--t-fast);
+}
+/* the focused tile — the one your keys reach. Amber IS the board's "this is
+   yours to act on" language, and typing into an agent is exactly that. */
+.fd-tile.live { border-color: var(--act); box-shadow: 0 0 0 2px var(--act-bg), 0 0 0 3px var(--act); }
+.fd-tile.ended { opacity: .72; }
+.fd-tilehead {
+  flex: none; display: flex; align-items: center; gap: 8px;
+  padding: 5px 6px 5px 10px; background: var(--surface);
+  border-bottom: 1px solid var(--border-soft);
+}
+.fd-tilehead .callsign {
+  font-family: var(--font-data); font-size: 11.5px; font-weight: 600; color: var(--text);
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.fd-tilefocus {
+  font-family: var(--font-data); font-size: 9.5px; font-weight: 600; letter-spacing: var(--ls-label);
+  color: var(--act); background: var(--act-bg); border-radius: var(--r-chip);
+  padding: 1px 6px; white-space: nowrap; flex: none;
+}
+.fd-tilewatch {
+  font-family: var(--font-data); font-size: 9.5px; letter-spacing: var(--ls-label);
+  color: var(--faint); white-space: nowrap; flex: none;
+}
+.fd-tile .fd-ghostbtn { flex: none; padding: 0 7px; line-height: 18px; font-size: 11px; }
+.fd-tilebody { flex: 1; min-height: 0; position: relative; background: var(--code); cursor: text; }
+.fd-tilebody .fd-termscreen { inset: 5px 2px 5px 7px; }
+.fd-tilenote {
+  position: absolute; left: 0; right: 0; bottom: 0; padding: 5px 9px;
+  background: var(--surface); border-top: 1px solid var(--border);
+  font-family: var(--font-data); font-size: 10px; color: var(--dim);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.fd-tilenote.err { color: var(--hazard); }
+
 /* ============ LAN share + token gate (v1.7) ============ */
 
 /* header: LAN is on — a quiet green tell, not a badge that shouts */
@@ -729,6 +824,12 @@ textarea.fd-input { font-family: var(--font-ui); font-size: 13px; resize: none; 
 /* ▣ terminal — the door into the live pane, and the loudest thing on the card */
 .fd-actbtn.term { color: var(--text); font-weight: 600; }
 .fd-actbtn.term:hover { border-color: var(--act); background: var(--act-bg); color: var(--act); }
+/* ▦ watch — a quiet toggle, not an action: it queues the agent for the wall of
+   screens rather than doing anything to it. Loud only once it's ON. */
+.fd-actbtn.watch:hover { border-color: var(--m-comet); color: var(--m-comet); }
+.fd-actbtn.watch.on {
+  color: var(--m-comet); background: var(--m-comet-bg); border-color: var(--m-comet); font-weight: 600;
+}
 /* ☠ kill — hazard from the first glance, so it is never clicked absent-mindedly
    (and it only ever OPENS the confirmation dialog) */
 .fd-actbtn.kill { color: var(--hazard); }

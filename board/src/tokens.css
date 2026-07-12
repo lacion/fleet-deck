@@ -16,10 +16,14 @@
   --hazard: #FF6B54;      /* conflicts, timeouts */
   --hazard-bg: #2A120D;
   --ok: #57B98A;          /* liveness, ship, delivered */
-  /* model families */
+  /* model families — one hue each, and NONE of them amber: on this board amber
+     is the "yours to act" language and a model badge is never a call to act. */
   --m-fable: #C4B0FF;  --m-fable-bg: #241C3E;
   --m-quill: #6FD6CD;  --m-quill-bg: #0E2A28;
   --m-comet: #8FBCF7;  --m-comet-bg: #12233B;
+  --m-opus: #F0A8C6;   --m-opus-bg: #33172A;    /* rose */
+  --m-sonnet: #B7D97A; --m-sonnet-bg: #212B12;  /* lime */
+  --m-haiku: #A8B4D8;  --m-haiku-bg: #1D2436;   /* periwinkle */
 }
 [data-theme="light"] {
   --bg: #EEF1F5; --surface: #FFFFFF; --raised: #F7F9FC; --code: #F1F3F7;
@@ -31,6 +35,9 @@
   --m-fable: #4C2FA8; --m-fable-bg: #EDE8FC;
   --m-quill: #0E6B63; --m-quill-bg: #DDF4F2;
   --m-comet: #1D4FA8; --m-comet-bg: #E3EDFC;
+  --m-opus: #A31C63; --m-opus-bg: #FBE7F1;
+  --m-sonnet: #486B12; --m-sonnet-bg: #EDF5DB;
+  --m-haiku: #3A4780; --m-haiku-bg: #E7EAF7;
 }
 
 /* type */

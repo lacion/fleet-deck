@@ -160,13 +160,12 @@ function containsExactString(value, target, seen = new Set()) {
   return false;
 }
 
-function spawnCmdEnv({ recordFile, postUrl, maxSpawned, staleMs } = {}) {
+function spawnCmdEnv({ recordFile, postUrl, staleMs } = {}) {
   const env = {
     FLEETDECK_SPAWN_CMD: SPAWN_CMD_FIXTURE,
     FLEETDECK_TEST_SPAWN_RECORD: recordFile,
   };
   if (postUrl) env.FLEETDECK_TEST_SPAWN_POST_URL = postUrl;
-  if (maxSpawned !== undefined) env.FLEETDECK_MAX_SPAWNED = String(maxSpawned);
   if (staleMs !== undefined) env.FLEETDECK_STALE_MS = String(staleMs);
   return env;
 }
@@ -185,9 +184,9 @@ test('capability: FLEETDECK_SPAWN_CMD reports available:true reason:test-overrid
   assert.ok(health.json?.spawn, '/health should carry a top-level spawn capability object');
   assert.equal(health.json.spawn.available, true, 'FLEETDECK_SPAWN_CMD should make the daemon report spawn availability');
   assert.equal(health.json.spawn.reason, 'test-override', 'the override reason must be exactly "test-override"');
-  assert.equal(typeof health.json.spawn.max, 'number', 'spawn.max should be a number (FLEETDECK_MAX_SPAWNED or its default)');
   assert.equal(typeof health.json.spawn.active, 'number', 'spawn.active should be a number');
   assert.equal(health.json.spawn.active, 0, 'no spawns have happened yet');
+  assert.equal(health.json.spawn.max, undefined, 'there is no fleet cap — spawn.max must not come back');
 
   const state = await getJson(`${daemon.baseUrl}/state`);
   assert.equal(state.status, 200);
@@ -319,7 +318,7 @@ test('argv construction: prompt/model/permission-mode survive intact through the
     'CODEX_COMPANION_SESSION_ID', 'FLEETDECK_AGENTS_CMD', 'FLEETDECK_SPAWN_CMD',
     'TMUX', 'TMUX_PANE', 'FLEETDECK_TMUX_SOCKET',
     'FLEETDECK_AGENTS_POLL_MS', 'FLEETDECK_HOLD_MS', 'FLEETDECK_STALE_MS',
-    'FLEETDECK_NUDGE_MS', 'FLEETDECK_MAX_SPAWNED', 'FLEETDECK_WATCH_MAX_MS',
+    'FLEETDECK_NUDGE_MS', 'FLEETDECK_WATCH_MAX_MS',
     'FLEETDECK_WATCH_POLL_MS', 'FLEETDECK_SPAWN_REGISTER_MS',
     'FLEETDECK_PANE_MAIL_GRACE_MS', 'FLEETDECK_PRESUME_DEAD_MS',
     'FLEETDECK_RETAIN_OFFLINE_MS',
@@ -377,30 +376,32 @@ test('fail-loud: missing cwd -> 4xx with a reason', async (t) => {
   assert.ok(res.json.reason.length > 0);
 });
 
-test('fail-loud: FLEETDECK_MAX_SPAWNED cap -> 4xx on the (cap+1)th spawn', async (t) => {
+test('no fleet cap: the 8th concurrent spawn is as welcome as the 1st', async (t) => {
+  // There used to be a hard FLEETDECK_MAX_SPAWNED=5 refusal here. It is gone:
+  // the fleet is as big as the human says it is. 8 is deliberately past the old
+  // default, so this test fails loudly if a cap ever creeps back in.
   const port = randomPort();
   const baseUrl = `http://127.0.0.1:${port}`;
   const rec = path.join(scratchDir(), 'specs.jsonl');
-  const daemon = await startDaemon({ port, env: spawnCmdEnv({ recordFile: rec, postUrl: baseUrl, maxSpawned: 2 }) });
-  const dirs = [scratchDir(), scratchDir(), scratchDir()];
+  const daemon = await startDaemon({ port, env: spawnCmdEnv({ recordFile: rec, postUrl: baseUrl }) });
+  const dirs = Array.from({ length: 8 }, () => scratchDir());
   t.after(async () => { await daemon.stop(); for (const d of dirs) rmSync(d, { recursive: true, force: true }); });
 
-  for (let i = 0; i < 2; i++) {
-    const res = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd: dirs[i] });
-    assert.equal(res.status, 200, `spawn #${i + 1} (within cap) should 200`);
-    const sid = res.json.session_id;
+  for (const [i, dir] of dirs.entries()) {
+    const res = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd: dir });
+    assert.equal(res.status, 200, `spawn #${i + 1} of ${dirs.length} should 200 — there is no cap`);
     await waitUntil(async () => {
       const state = (await getJson(`${daemon.baseUrl}/state`)).json;
-      const c = findSession(state, sid);
-      return c?.spawn?.status === 'live' ? c : null;
+      return findSession(state, res.json.session_id)?.spawn?.status === 'live' || null;
     }, { label: `spawn #${i + 1} reaches status live` });
   }
 
-  const third = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd: dirs[2] });
-  assert.ok(third.status >= 400 && third.status < 500, `the (cap+1)th spawn should 4xx (got ${third.status})`);
-  assert.equal(third.json?.ok, false);
-  assert.equal(typeof third.json?.reason, 'string');
-  t.diagnostic(`cap-rejection reason: ${third.json?.reason}`);
+  // And the capability object reports the fleet size as a plain count, with no
+  // budget to run out of.
+  const health = (await getJson(`${daemon.baseUrl}/health`)).json;
+  assert.equal(health.spawn.active, 8, 'all 8 should be counted live');
+  assert.equal(health.spawn.max, undefined, 'no cap should be advertised');
+  assert.equal(health.spawn.available, true, '8 live agents must not make spawning "unavailable"');
 });
 
 test('fail-loud: worktree:true on a non-git cwd -> 409', async (t) => {
@@ -458,6 +459,52 @@ test('worktree path: worktree:true creates a sibling --fd-<callsign> checkout on
   const card = findSession(state, sid);
   assert.ok(card, 'the spawned card should be present in /state');
   assert.equal(card.repo_id, repo.gitCommonDir, "the worktree-spawned card's repo_id must collapse to the main tree's git-common-dir");
+});
+
+test('fan-out: 4 agents spawned into ONE repo each get their own worktree and branch', async (t) => {
+  // The whole point of a batch: N agents on one repo, none of them standing on
+  // another's edits. The board forces worktree:true for a batch; this pins that
+  // the daemon can actually deliver N isolated checkouts from one cwd.
+  const port = randomPort();
+  const baseUrl = `http://127.0.0.1:${port}`;
+  const rec = path.join(scratchDir(), 'specs.jsonl');
+  const repo = makeRepoWithWorktree({ repoName: 'fleetdeck-fanout-test' });
+  const daemon = await startDaemon({ port, env: spawnCmdEnv({ recordFile: rec, postUrl: baseUrl }) });
+  t.after(async () => { await daemon.stop(); repo.cleanup(); });
+
+  const prompts = ['fix the flaky test', 'update the README', 'audit the spawn path', 'fix the flaky test'];
+  const agents = [];
+  for (const prompt of prompts) {
+    const res = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd: repo.root, worktree: true, prompt });
+    assert.equal(res.status, 200, `spawning "${prompt}" into ${repo.root} should 200`);
+    agents.push(res.json);
+  }
+
+  // Four distinct callsigns → four distinct worktrees, four distinct branches,
+  // four distinct tmux windows. Note the last prompt REPEATS the first (the
+  // "2x <task>" case): identical task text must still mean separate agents.
+  const callsigns = agents.map(a => a.callsign);
+  assert.equal(new Set(callsigns).size, 4, `callsigns must be unique, got ${callsigns.join(', ')}`);
+  assert.equal(new Set(agents.map(a => a.tmux.window)).size, 4, 'tmux window names must be unique');
+
+  const listing = await waitUntil(() => {
+    const out = execFileSync('git', ['-C', repo.root, 'worktree', 'list', '--porcelain'], { encoding: 'utf8' });
+    return callsigns.every(cs => out.includes(`refs/heads/fd/${cs}`)) ? out : null;
+  }, { label: 'all 4 fd/<callsign> worktrees appear in git worktree list' });
+
+  for (const cs of callsigns) {
+    const wt = path.join(path.dirname(repo.root), `${path.basename(repo.root)}--fd-${cs}`);
+    assert.ok(existsSync(wt), `worktree ${wt} should exist on disk`);
+    assert.match(listing, new RegExp(`branch refs/heads/fd/${cs.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`));
+  }
+
+  // ...and all four cards still collapse to the SAME repo, so the board groups
+  // them as one fleet working one codebase rather than four unrelated repos.
+  const state = (await getJson(`${daemon.baseUrl}/state`)).json;
+  for (const a of agents) {
+    assert.equal(findSession(state, a.session_id)?.repo_id, repo.gitCommonDir,
+      `${a.callsign} must collapse to the main tree's repo_id`);
+  }
 });
 
 // ---------------------------------------------------------------------------

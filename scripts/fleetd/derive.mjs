@@ -12,7 +12,8 @@ import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { deriveRepo, branchOf, ledgerKey } from './repo-identity.mjs';
-import { createQuestions, resolveHoldMs, detectTrailingQuestion, lastAssistantText } from './questions.mjs';
+import { createQuestions, resolveHoldMs, detectTrailingQuestion } from './questions.mjs';
+import { lastAssistantText, lastAssistantModel } from './transcript.mjs';
 import * as defaultTmuxAdapter from './spawn.mjs';
 
 const CALLSIGNS = ['falcon', 'otter', 'raven', 'lynx', 'orca', 'wren', 'viper', 'heron', 'badger', 'comet', 'ember', 'drift'];
@@ -21,7 +22,6 @@ const EDIT_TOOLS = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'];
 const TEST_RUNNER_RE = /\b(pytest|jest|vitest|go test|cargo test|npm (run )?test)\b/; // spike regex, verbatim
 
 // v1.2 env knobs (resolved once per core; tests spawn fresh daemons):
-//   FLEETDECK_MAX_SPAWNED — spawn cap, counting live spawn rows (default 5)
 //   FLEETDECK_STALE_MS    — stale badge threshold for working/verifying cards
 //                           with no events (default 600 000 = 10 min)
 //   FLEETDECK_NUDGE_MS               — bring-up nudge delay (default 8 s)
@@ -65,7 +65,7 @@ export function claudeEnvArgvPrefix(port, home) {
     'CODEX_COMPANION_SESSION_ID', 'FLEETDECK_AGENTS_CMD', 'FLEETDECK_SPAWN_CMD',
     'TMUX', 'TMUX_PANE', 'FLEETDECK_TMUX_SOCKET',
     'FLEETDECK_AGENTS_POLL_MS', 'FLEETDECK_HOLD_MS', 'FLEETDECK_STALE_MS',
-    'FLEETDECK_NUDGE_MS', 'FLEETDECK_MAX_SPAWNED', 'FLEETDECK_WATCH_MAX_MS',
+    'FLEETDECK_NUDGE_MS', 'FLEETDECK_WATCH_MAX_MS',
     'FLEETDECK_WATCH_POLL_MS', 'FLEETDECK_SPAWN_REGISTER_MS',
     'FLEETDECK_PANE_MAIL_GRACE_MS', 'FLEETDECK_PRESUME_DEAD_MS',
     'FLEETDECK_RETAIN_OFFLINE_MS', 'FLEETDECK_RC_HARVEST_MS',
@@ -84,7 +84,6 @@ export function createCore(db, {
 } = {}) {
   const t0 = Date.now();
   let onMutate = () => {};
-  const MAX_SPAWNED = envInt('FLEETDECK_MAX_SPAWNED', 5);
   const STALE_MS = envInt('FLEETDECK_STALE_MS', 600_000, { min: 1 });
   const NUDGE_MS = envInt('FLEETDECK_NUDGE_MS', 8_000, { min: 1 });
   const SPAWN_REGISTER_MS = envInt('FLEETDECK_SPAWN_REGISTER_MS', 90_000, { min: 1 });
@@ -161,8 +160,8 @@ export function createCore(db, {
       SELECT session_id FROM sessions WHERE archived_at IS NOT NULL)`),
     insertCommand: db.prepare('INSERT INTO commands (at, text, parsed_json) VALUES (?, ?, ?)'),
     pruneEvents: db.prepare('DELETE FROM events WHERE at < ?'),
-    // v1.2 board-spawned sessions. "Active" = status spawning|stalled|live — the rows
-    // that count against FLEETDECK_MAX_SPAWNED and get liveness-checked.
+    // v1.2 board-spawned sessions. "Active" = status spawning|stalled|live — the
+    // rows that get liveness-checked, and the number the board shows as "N live".
     insertSpawn: db.prepare(`INSERT INTO spawns
       (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, requested_at, status, skip_permissions, remote_control)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'spawning', ?, ?)`),
@@ -263,6 +262,39 @@ export function createCore(db, {
     if (!keys.length) return;
     db.prepare(`UPDATE sessions SET ${keys.map(k => `${k} = ?`).join(', ')} WHERE session_id = ?`)
       .run(...keys.map(k => upd[k] ?? null), sid);
+  }
+
+  // ------------------------------------------------------------- model tracking
+  // Claude Code reports `model` in the SessionStart payload and nowhere else, so
+  // a /model switch mid-session would otherwise leave the badge frozen at the
+  // launch model forever. The transcript records the model on every assistant
+  // line, so we re-read its tail — carefully:
+  //
+  //   floor — the transcript's size at SessionStart. `claude --resume` appends to
+  //           the SAME file, so a resumed session's tail is full of the PREVIOUS
+  //           run's assistant lines. Without this, the first post-SessionStart
+  //           event (a UserPromptSubmit, which appends only a user line) would
+  //           read the old model and stomp the fresh one from the payload. No
+  //           floor recorded (daemon restarted mid-session) → 0 → the transcript
+  //           is the truth, which is exactly right after a restart.
+  //   size  — the file size at our last read. Transcripts only grow, so an
+  //           unchanged size means there is nothing new to see: skip the read.
+  const modelMemo = new Map(); // sid -> { floor, size, model }
+
+  function stampTranscriptFloor(sid, transcriptPath) {
+    let floor = 0;
+    try { if (transcriptPath) floor = fs.statSync(transcriptPath).size; } catch { /* not written yet → 0 */ }
+    modelMemo.set(sid, { floor, size: -1, model: null });
+  }
+
+  function readTranscriptModel(sid, transcriptPath) {
+    const memo = modelMemo.get(sid) ?? { floor: 0, size: -1, model: null };
+    let size;
+    try { size = fs.statSync(transcriptPath).size; } catch { return null; }
+    if (size === memo.size) return memo.model;
+    const model = lastAssistantModel(transcriptPath, { minOffset: memo.floor });
+    modelMemo.set(sid, { ...memo, size, model: model ?? memo.model });
+    return model;
   }
 
   // ------------------------------------------------------------------ cards
@@ -410,8 +442,25 @@ export function createCore(db, {
       const branch = branchOf(ev.cwd) || ev.git_branch || null; // server-side; payload value only as fallback
       if (branch) upd.branch = branch;
     }
-    if (ev.model?.display_name || ev.model?.id || typeof ev.model === 'string') {
-      upd.model = ev.model.display_name || ev.model.id || ev.model;
+    // The payload only ever carries a model on SessionStart (a bare id string;
+    // the object form is defensive — a future CLI may send the statusline
+    // shape). That value is the CLI's live truth at launch, and it beats the
+    // transcript when an old session is resumed under a different --model. Every
+    // OTHER event has to go to the transcript, because that is the only place a
+    // mid-session /model switch is written down.
+    const payloadModel = ev.model?.display_name || ev.model?.id
+      || (typeof ev.model === 'string' && ev.model ? ev.model : null);
+    if (ev.hook_event_name === 'SessionStart') {
+      stampTranscriptFloor(sid, ev.transcript_path);
+      if (payloadModel) upd.model = payloadModel;
+    } else if (payloadModel) {
+      upd.model = payloadModel;
+    } else if (ev.transcript_path) {
+      const model = readTranscriptModel(sid, ev.transcript_path);
+      if (model && model !== c.model) {
+        upd.model = model;
+        if (c.model) tick(`🔀 ${c.callsign} switched model → ${model}`);
+      }
     }
     updateSession(sid, upd);
     c = { ...c, ...upd };
@@ -698,13 +747,13 @@ export function createCore(db, {
   function hookSessionEnd(ev) {
     applyEvent({ ...ev, hook_event_name: 'SessionEnd' });
     questions.expireAllForSession(ev.session_id || 'unknown');
+    modelMemo.delete(ev.session_id || 'unknown'); // a revive re-stamps the floor at its SessionStart
     // v1.2: SessionEnd on a spawned session does NOT kill its pane — the
     // human may want the scrollback (CONTRACT). It just updates the row: the
-    // pane no longer hosts a live claude session, so the spawn stops counting
-    // against FLEETDECK_MAX_SPAWNED right now (the ~10 s liveness tick would
-    // reach the same verdict once the pane's claude exits, but under the
-    // FLEETDECK_SPAWN_CMD override there is no pane to observe at all — this
-    // direct update is the only path that frees the cap there).
+    // pane no longer hosts a live claude session, so it stops counting as live
+    // right now (the ~10 s liveness tick would reach the same verdict once the
+    // pane's claude exits, but under the FLEETDECK_SPAWN_CMD override there is
+    // no pane to observe at all — this direct update is the only path there).
     const sp = q.spawnBySession.get(ev.session_id || 'unknown');
     if (sp && (sp.status === 'spawning' || sp.status === 'stalled' || sp.status === 'live')) {
       q.setSpawnStatus.run('pane-dead', sp.spawn_id);
@@ -1287,8 +1336,13 @@ export function createCore(db, {
   // or FLEETDECK_SPAWN=off; the FLEETDECK_SPAWN_CMD override reports
   // available:true with reason 'test-override'. The board hides ALL spawn UI
   // when available is false.
+  //
+  // `active` is a COUNT, not a budget: there is no cap on how many agents may
+  // be live at once. The board shows it so you know how big your fleet is, and
+  // the spawn form makes you look at exactly what you are about to launch —
+  // that is the guardrail, not a refusal from the daemon.
   function spawnCapability() {
-    const base = { max: MAX_SPAWNED, active: q.countActiveSpawns.get().n };
+    const base = { active: q.countActiveSpawns.get().n };
     if (String(process.env.FLEETDECK_SPAWN ?? '').toLowerCase() === 'off') {
       return { available: false, reason: 'disabled (FLEETDECK_SPAWN=off)', ...base };
     }
@@ -1423,9 +1477,6 @@ export function createCore(db, {
     if (!cwd || !st?.isDirectory()) {
       return { status: 400, body: { ok: false, reason: 'cwd missing or not a directory' } };
     }
-    if (cap.active >= cap.max) {
-      return { status: 409, body: { ok: false, reason: `spawn cap reached (${cap.active} of ${cap.max} live — FLEETDECK_MAX_SPAWNED)` } };
-    }
     if (body?.worktree === true && !deriveRepo(cwd).is_git) {
       return { status: 409, body: { ok: false, reason: 'cwd is not a git repository — cannot spawn into a worktree' } };
     }
@@ -1532,10 +1583,6 @@ export function createCore(db, {
     const active = q.activeSpawnBySession.get(row.session_id);
     if (active) {
       return { status: 409, body: { ok: false, reason: `session already has active spawn ${active.spawn_id}` } };
-    }
-    const cap = spawnCapability();
-    if (cap.active >= cap.max) {
-      return { status: 409, body: { ok: false, reason: `spawn cap reached (${cap.active} of ${cap.max} live — FLEETDECK_MAX_SPAWNED)` } };
     }
 
     // Exact scoped-name collision defense. A live Claude pane is ownership

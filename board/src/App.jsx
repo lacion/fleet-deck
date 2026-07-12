@@ -18,8 +18,10 @@ import KillConfirm from './components/KillConfirm.jsx';
 import WorktreesModal from './components/WorktreesModal.jsx';
 import TokenGate from './components/TokenGate.jsx';
 
-// v1.4 — lazy: xterm.js (~300 kB) loads only when a terminal is opened
+// v1.4 — lazy: xterm.js (~300 kB) loads only when a terminal is opened.
+// v1.9 — the grid shares the same chunk: both are TermPane in a different box.
 const TermModal = React.lazy(() => import('./components/TermModal.jsx'));
+const TermGrid = React.lazy(() => import('./components/TermGrid.jsx'));
 
 const WS_LABEL = { live: 'LIVE', reconnecting: 'RECONNECTING', offline: 'OFFLINE' };
 
@@ -43,9 +45,14 @@ export default function App() {
   const [wtLoading, setWtLoading] = useState(false);
   const [wtErr, setWtErr] = useState(null);
   const [wtSupported, setWtSupported] = useState(true); // 404 → older daemon
-  // v1.4 live terminal — ONE at a time; identity captured at open so the
-  // stream survives the card mutating (or vanishing) mid-view.
+  // v1.4 live terminal — identity captured at open so the stream survives the
+  // card mutating (or vanishing) mid-view.
   const [term, setTerm] = useState(null); // null | { spawnId, callsign, window }
+  // v1.9 the wall of screens — N terminals at once. Same identity shape, a list.
+  const [grid, setGrid] = useState(null); // null | [{ spawnId, callsign, window }]
+  // v1.9 which agents are ticked for the grid (by session id, so the set
+  // survives a card re-render; resolved to spawn identities at open time).
+  const [watch, setWatch] = useState(() => new Set());
   // v1.8 kill — the card chip and the drawer button both open ONE dialog; the
   // POST only fires from its hazard button. null | {spawnId, callsign, window, alive}
   const [killAsk, setKillAsk] = useState(null);
@@ -65,8 +72,11 @@ export default function App() {
   const [enablingRemote, setEnablingRemote] = useState(() => new Set());
   const clearTimer = useRef(null);
   const prevConflicts = useRef({ keys: null, sawData: false });
-  const termOpen = useRef(false); // mirrors `term` for the keydown handler
-  useEffect(() => { termOpen.current = !!term; }, [term]);
+  // Mirrors "a live terminal has the keyboard" for the keydown handler — the
+  // modal OR the grid, since the grid's focused tile owns Esc exactly as the
+  // modal does. Both stop propagation themselves; this guard covers stray focus.
+  const termOpen = useRef(false);
+  useEffect(() => { termOpen.current = !!term || !!grid; }, [term, grid]);
   const killOpen = useRef(false); // mirrors `killAsk` for the keydown handler
   useEffect(() => { killOpen.current = !!killAsk; }, [killAsk]);
   const wtGone = useRef(false); // this daemon has no /api/worktrees — stop asking
@@ -411,13 +421,35 @@ export default function App() {
   const wtHazard = (worktrees || []).some((w) => w.verdict === 'has-work' || w.verdict === 'unknown');
 
   // v1.4 — open the live terminal for a board-spawned session
+  const termIdentity = (s) => ({
+    spawnId: s.spawn.spawn_id,
+    callsign: s.callsign || s.session_id,
+    window: s.spawn.tmux_window,
+  });
   const openTerm = (s) => {
     if (!spawnTermable(s)) return;
-    setTerm({
-      spawnId: s.spawn.spawn_id,
-      callsign: s.callsign || s.session_id,
-      window: s.spawn.tmux_window,
+    setGrid(null); // the modal and the wall are one keyboard; never both
+    setTerm(termIdentity(s));
+  };
+
+  // v1.9 — the wall of screens. Only board-spawned panes exist to be watched: a
+  // plain `claude` in your own terminal has no pane the daemon owns.
+  const termableSessions = sessions.filter(spawnTermable);
+  const watchable = termableSessions.filter((s) => watch.has(s.session_id));
+  const toggleWatch = (s) => {
+    if (!spawnTermable(s)) return;
+    setWatch((prev) => {
+      const next = new Set(prev);
+      if (next.has(s.session_id)) next.delete(s.session_id);
+      else next.add(s.session_id);
+      return next;
     });
+  };
+  const openGrid = (list) => {
+    const tiles = (list && list.length ? list : termableSessions).filter(spawnTermable).map(termIdentity);
+    if (!tiles.length) return;
+    setTerm(null);
+    setGrid(tiles);
   };
 
   // Execute plan → spawn form prefilled per contract; cwd from a live
@@ -484,11 +516,27 @@ export default function App() {
         <button type="button" className="fd-hbtn" onClick={() => setCompose({ target: 'all' })}>
           ✉ Compose <span className="fd-kbd">c</span>
         </button>
+        {/* v1.9 the wall of screens. Ticked agents if you ticked any, otherwise
+            every live pane — so "just show me everything" is one click. */}
+        {termableSessions.length > 0 && (
+          <button
+            type="button"
+            className="fd-hbtn"
+            title={watchable.length
+              ? `Watch the ${watchable.length} selected agent${watchable.length === 1 ? '' : 's'}`
+              : `Watch all ${termableSessions.length} live agent${termableSessions.length === 1 ? '' : 's'}`}
+            onClick={() => openGrid(watchable)}
+          >
+            ▦ Terminals
+            <span className="fd-spawncount">{watchable.length || termableSessions.length}</span>
+          </button>
+        )}
         {spawnAvailable && (
           <button type="button" className="fd-hbtn" onClick={() => setSpawnForm({})}>
             + Spawn
             {(spawnCap.active || 0) > 0 && (
-              <span className="fd-spawncount">{spawnCap.active}/{spawnCap.max}</span>
+              // A count, not a budget — there is no cap on the fleet size.
+              <span className="fd-spawncount" title={`${spawnCap.active} board-spawned agents live`}>{spawnCap.active} live</span>
             )}
           </button>
         )}
@@ -595,6 +643,8 @@ export default function App() {
               enablingRemote={enablingRemote}
               onEnableRemote={doEnableRemote}
               onKill={askKill}
+              onToggleWatch={toggleWatch}
+              watch={watch}
             />
           )}
           {/* v1.3 — PLANS library, between the lanes and the feed (never in
@@ -713,6 +763,17 @@ export default function App() {
             callsign={term.callsign}
             tmuxWindow={term.window}
             onClose={() => setTerm(null)}
+          />
+        </React.Suspense>
+      )}
+
+      {/* ============ the wall of screens (v1.9 — ✕ ONLY, same as above) ===== */}
+      {grid && (
+        <React.Suspense fallback={null}>
+          <TermGrid
+            tiles={grid}
+            onClose={() => setGrid(null)}
+            onExpand={(t) => { setGrid(null); setTerm(t); }}
           />
         </React.Suspense>
       )}

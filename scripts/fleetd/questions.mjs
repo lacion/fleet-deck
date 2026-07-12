@@ -58,8 +58,6 @@
 // any activity event from that session) expires it, because nobody can
 // deliver its answer any more. The hook side times out non-blockingly.
 
-import fs from 'node:fs';
-
 // v1.3 plan library (CONTRACT "B. Plan library"): the mail sent to the
 // planner when the board answers its ExitPlanMode question with
 // {behavior:"capture"}. Text pinned VERBATIM by the contract. Delivery is the
@@ -499,36 +497,4 @@ function sentenceWithLastQuestionMark(para) {
 function clipQuestion(s) {
   const t = String(s).trim();
   return t.length <= 300 ? t : t.slice(0, 297) + '…';
-}
-
-// Read the LAST assistant message's text from a Claude Code transcript
-// (JSONL). Walks from the end, reading at most the final ~2 MB. An assistant
-// entry's text blocks are concatenated; entries with no text at all
-// (tool_use-only) and sidechain entries are skipped, so what gets scanned is
-// "the assistant's final words". Any read/parse failure returns null —
-// detection is best-effort and must never disturb the Stop response.
-export function lastAssistantText(transcriptPath, { maxBytes = 2_000_000 } = {}) {
-  try {
-    const stat = fs.statSync(transcriptPath);
-    const start = Math.max(0, stat.size - maxBytes);
-    const buf = Buffer.alloc(stat.size - start);
-    const fd = fs.openSync(transcriptPath, 'r');
-    try { fs.readSync(fd, buf, 0, buf.length, start); } finally { fs.closeSync(fd); }
-    let chunk = buf.toString('utf8');
-    if (start > 0) chunk = chunk.slice(chunk.indexOf('\n') + 1); // drop the partial first line
-    const lines = chunk.split('\n');
-    for (let i = lines.length - 1; i >= 0; i--) {
-      const line = lines[i].trim();
-      if (!line) continue;
-      let entry;
-      try { entry = JSON.parse(line); } catch { continue; }
-      if (entry?.type !== 'assistant' || entry.isSidechain === true) continue;
-      const content = entry.message?.content;
-      const text = Array.isArray(content)
-        ? content.filter(b => b?.type === 'text' && typeof b.text === 'string').map(b => b.text).join('\n').trim()
-        : (typeof content === 'string' ? content.trim() : '');
-      if (text) return text;
-    }
-  } catch { /* unreadable/absent transcript: no detection */ }
-  return null;
 }

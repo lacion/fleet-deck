@@ -1,22 +1,39 @@
 // termbridge.mjs — live access to daemon-owned tmux panes.
 //
-// CONTRACT: every viewer owns one plain-pipe tmux CONTROL MODE client. There
-// is deliberately no PTY and no native dependency. Production launches argv
-// [tmux, [-L socket], -C, attach-session, -t, =fleetdeck-<port>]. `-C` is used
-// exactly once: unlike `-CC`, it retains the documented tmux 3.x command
+// CONTRACT: the daemon keeps ONE tmux CONTROL MODE client for the whole fleet,
+// shared by every viewer, and demultiplexes `%output` to subscribers by pane id.
+// There is deliberately no PTY and no native dependency. Production launches
+// argv [tmux, [-L socket], -C, attach-session, -t, =fleetdeck-<port>]. `-C` is
+// used exactly once: unlike `-CC`, it retains the documented tmux 3.x command
 // echo/response behavior parsed below.
 //
 // The database supplies only an already-scoped spawn row. The browser never
 // supplies a tmux target. Pane discovery, the ANSI seed and cursor lookup all
-// run through the attached control client; input is hex bytes so no human
-// text is ever parsed as tmux syntax. FLEETDECK_TERM_CMD replaces the complete
+// run through the attached control client; input is hex bytes so no human text
+// is ever parsed as tmux syntax. FLEETDECK_TERM_CMD replaces the complete
 // production argv with argv [cmd] for protocol-fixture tests.
+//
+// WHY ONE CLIENT (v1.9, the terminal grid). Every viewer used to own its own
+// `tmux -C attach-session`, and a control client is attached to the SESSION, so
+// each one received `%output` for every pane in the fleet and discarded all but
+// its own. Eight tiles meant eight tmux processes each parsing eight agents'
+// output to keep an eighth of it. Worse, sizing went through `refresh-client -C`
+// — which sets the CLIENT's size, and a window's geometry is derived from the
+// clients watching it. With one viewer that is invisible. With eight tiles of
+// differing sizes it is eight clients fighting over every pane's dimensions.
+//
+// So: one client, output routed by pane id, and geometry set per WINDOW with
+// `resize-window` under `window-size manual` — which decouples a pane's size
+// from whoever happens to be watching it. That is what lets N tiles each hold
+// their own shape. It also retires the old viewer cap, which existed to bound
+// the per-viewer process count that no longer exists.
 
 import { spawn } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
 
 const ACTIVE_STATUSES = new Set(['spawning', 'stalled', 'live']);
 const INPUT_CHUNK_BYTES = 1024;
+const ATTACH_TIMEOUT_MS = 5_000;
 
 function envInt(name, fallback, { min = 0 } = {}) {
   const n = Number(process.env[name]);
@@ -70,8 +87,8 @@ export class ControlModeParser {
     // box-drawing glyph, then the protocol's own '\n', call the sequence
     // invalid and burn the character down to U+FFFD — two junk cells that
     // shove the rest of the row sideways. latin1 is byte-exact (1 char == 1
-    // byte); the pane's real UTF-8 is reassembled by the viewer's decoder,
-    // which is the only place that knows where the character stream resumes.
+    // byte); the pane's real UTF-8 is reassembled by the pane stream's
+    // decoder, which is the only place that knows where the character resumes.
     this.decoder = new StringDecoder('latin1');
     this.pending = '';
     this.block = null;
@@ -138,129 +155,215 @@ export class TermBridgeError extends Error {
   }
 }
 
-/** Factory lifetime equals the daemon lifetime, so the cap is shared by all
- * live-terminal sockets rather than sampled separately for every request. */
-export function createTermBridge({ port, resolveSpawn,
-  maxViewers = envInt('FLEETDECK_TERM_MAX_VIEWERS', 4, { min: 1 }), log = () => {} } = {}) {
-  let active = 0;
+/** Factory lifetime equals the daemon lifetime. The shared control client is
+ * lazy: it attaches when the first viewer opens and detaches when the last one
+ * leaves, so a fleet nobody is watching holds no tmux client at all. */
+export function createTermBridge({ port, resolveSpawn, log = () => {} } = {}) {
+  const session = `fleetdeck-${port}`;
+  const viewers = new Set();
+  let client = null;
+
+  // ---------------------------------------------------------------- the client
+
+  function createClient() {
+    const c = {
+      child: null,
+      parser: new ControlModeParser(),
+      waiters: [],
+      // pane id -> { decoder, subs:Set<viewer> }. The decoder is PER PANE, not
+      // per viewer: it is the pane's byte stream that gets split mid-character,
+      // and two tiles watching one pane must not each hold half a glyph.
+      panes: new Map(),
+      manualSizing: new Set(), // windows we have switched to manual sizing
+      closed: false,
+      ready: null,
+      readyResolve: null,
+      readyReject: null,
+    };
+    c.ready = new Promise((resolve, reject) => { c.readyResolve = resolve; c.readyReject = reject; });
+    c.ready.catch(() => { /* the attach race below reports this */ });
+
+    c.command = (line) => new Promise((resolve, reject) => {
+      if (c.closed || !c.child?.stdin?.writable) return reject(new Error('control client is closed'));
+      const waiter = { resolve, reject };
+      c.waiters.push(waiter);
+      c.child.stdin.write(line + '\n', (err) => {
+        if (!err) return;
+        const i = c.waiters.indexOf(waiter);
+        if (i >= 0) c.waiters.splice(i, 1);
+        reject(err);
+      });
+    });
+
+    const onEvent = (ev) => {
+      if (ev.type === 'response') {
+        c.waiters.shift()?.resolve(ev);
+      } else if (ev.type === 'session-changed') {
+        c.readyResolve();
+      } else if (ev.type === 'output') {
+        const stream = c.panes.get(ev.pane);
+        if (!stream) return; // a pane nobody is watching — the whole point of demuxing
+        const data = stream.decoder.write(ev.data);
+        if (!data) return; // an incomplete character; it lands with the next event
+        for (const v of stream.subs) v.emit(data);
+      } else if (ev.type === 'exit') {
+        teardown(ev.reason || 'tmux session ended');
+      } else if (ev.type === 'window-close') {
+        // The client sees every window in the session, so verify which of OUR
+        // panes actually died rather than assuming this close was ours. One
+        // list-panes answers for every viewer at once.
+        if (!c.panes.size) return;
+        c.command("list-panes -a -F '#{pane_id}'").then((res) => {
+          if (!res.ok) return;
+          const alive = new Set(res.lines.map((s) => s.trim()));
+          for (const [paneId, stream] of [...c.panes]) {
+            if (alive.has(paneId)) continue;
+            for (const v of [...stream.subs]) v.finish('terminal pane closed');
+          }
+        }).catch(() => { /* a failed probe is not proof a pane died */ });
+      }
+    };
+
+    const override = process.env.FLEETDECK_TERM_CMD?.trim();
+    const socket = process.env.FLEETDECK_TMUX_SOCKET?.trim();
+    const argv = socket
+      ? ['-L', socket, '-C', 'attach-session', '-t', '=' + session]
+      : ['-C', 'attach-session', '-t', '=' + session];
+    c.child = spawn(override || 'tmux', override ? [] : argv, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+    c.child.stdout.on('data', (chunk) => { for (const ev of c.parser.feed(chunk)) onEvent(ev); });
+    c.child.stderr.on('data', (chunk) => log(`terminal control stderr: ${String(chunk).trim()}`));
+    c.child.on('error', (err) => teardown(`terminal control client failed: ${err.message}`));
+    c.child.on('exit', () => { if (!c.closed) teardown('terminal control client exited'); });
+    return c;
+  }
+
+  /** Kill the shared client and take every viewer down with it. */
+  function teardown(reason) {
+    const c = client;
+    if (!c || c.closed) return;
+    c.closed = true;
+    client = null;
+    c.readyReject(new Error(reason));
+    for (const waiter of c.waiters.splice(0)) waiter.reject(new Error(reason));
+    for (const v of [...viewers]) v.finish(reason);
+    if (c.child && c.child.exitCode === null && !c.child.killed) {
+      try { c.child.kill('SIGTERM'); } catch { /* already gone */ }
+    }
+  }
+
+  /** Attach (once) and wait for tmux to confirm. Concurrent openers share it. */
+  async function ensureClient() {
+    if (!client) client = createClient();
+    const c = client;
+    let timer;
+    try {
+      await Promise.race([
+        c.ready,
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error('terminal control attach timed out')), ATTACH_TIMEOUT_MS);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+    if (c.closed) throw new Error('terminal control client exited');
+    return c;
+  }
+
+  // ---------------------------------------------------------------- geometry
+
+  // A window's size normally follows the clients watching it. With one shared
+  // client that would mean every tile shares one geometry — so put each window
+  // in `window-size manual` and drive its size ourselves. This is the whole
+  // reason a grid of differently-shaped tiles can work at all.
+  //
+  // `window-size` is a WINDOW option: it must be set with `-w` on OUR window and
+  // never with `-g`, which would reach across the tmux server and re-size the
+  // human's own sessions. (Verified on tmux 3.7b: three windows, three sizes.)
+  //
+  // Fallback: on a tmux too old for `resize-window`, go back to sizing the
+  // client. That restores the pre-v1.9 behaviour — contention and all — which is
+  // strictly better than refusing to show a terminal at all.
+  async function sizeWindow(c, window, cols, rows) {
+    const target = `=${session}:${window}`;
+    if (!c.manualSizing.has(window)) {
+      const opt = await c.command(`set-option -w -t ${target} window-size manual`).catch(() => ({ ok: false }));
+      if (opt.ok) c.manualSizing.add(window);
+    }
+    if (c.manualSizing.has(window)) {
+      const res = await c.command(`resize-window -t ${target} -x ${cols} -y ${rows}`);
+      if (res.ok) return res;
+      c.manualSizing.delete(window); // resize-window is unavailable; stop pretending
+    }
+    let out = await c.command(`refresh-client -C ${cols},${rows}`);
+    if (!out.ok) out = await c.command(`refresh-client -C ${cols}x${rows}`); // pre-3.2 syntax
+    return out;
+  }
+
+  // ---------------------------------------------------------------- viewers
+
+  function subscribe(c, pane, viewer) {
+    let stream = c.panes.get(pane);
+    if (!stream) {
+      stream = { decoder: new StringDecoder('utf8'), subs: new Set() };
+      c.panes.set(pane, stream);
+    }
+    stream.subs.add(viewer);
+  }
+
+  function unsubscribe(c, pane, viewer) {
+    const stream = c?.panes.get(pane);
+    if (!stream) return;
+    stream.subs.delete(viewer);
+    if (!stream.subs.size) c.panes.delete(pane);
+  }
 
   async function openViewer({ spawn_id, cols, rows, send, onClose = () => {} }) {
     if (process.env.FLEETDECK_TERM?.trim().toLowerCase() === 'off') throw new TermBridgeError('live terminal disabled');
     const size = dimensions(cols, rows);
     if (!size) throw new TermBridgeError('invalid terminal dimensions');
-    if (active >= maxViewers) throw new TermBridgeError('live terminal viewer cap reached');
-    // Reserve before the resolver's await: two simultaneous upgrades must
-    // not both observe the same final slot and exceed the cap.
-    active++;
-    let row;
-    try {
-      row = await resolveSpawn?.(spawn_id);
-      if (!row) throw new TermBridgeError('no such spawn');
-      if (!ACTIVE_STATUSES.has(row.status)) throw new TermBridgeError('spawn is not live');
-      if (row.tmux_session !== `fleetdeck-${port}` || !String(row.tmux_window || '').startsWith(`fd${port}-`)) {
-        throw new TermBridgeError('spawn is outside this fleet');
-      }
-    } catch (err) {
-      active--;
-      throw err;
+
+    const row = await resolveSpawn?.(spawn_id);
+    if (!row) throw new TermBridgeError('no such spawn');
+    if (!ACTIVE_STATUSES.has(row.status)) throw new TermBridgeError('spawn is not live');
+    if (row.tmux_session !== session || !String(row.tmux_window || '').startsWith(`fd${port}-`)) {
+      throw new TermBridgeError('spawn is outside this fleet');
     }
-    let child;
-    let pane = null;
-    let intentional = false;
-    let finished = false;
-    let established = false;
-    let initialized = false;
-    const outDecoder = new StringDecoder('utf8'); // spans %output boundaries
-    const pendingOutput = [];
-    const responseWaiters = [];
-    const parser = new ControlModeParser();
-    let readyResolve;
-    let readyReject;
-    const ready = new Promise((resolve, reject) => { readyResolve = resolve; readyReject = reject; });
-    ready.catch(() => { /* also handled by the attach wait; covers synchronous spawn failure */ });
 
-    const finish = (reason, notify = true) => {
-      if (finished) return;
-      finished = true;
-      active--;
-      readyReject(new Error(reason));
-      for (const waiter of responseWaiters.splice(0)) waiter.reject(new Error(reason));
-      if (child && child.exitCode === null && !child.killed) {
-        try { child.kill('SIGTERM'); } catch { /* already gone */ }
-      }
-      if (notify && established) {
-        try { onClose(reason); } catch { /* socket reporting only */ }
-      }
+    const viewer = {
+      pane: null,
+      window: row.tmux_window,
+      established: false,
+      initialized: false,
+      finished: false,
+      emit(data) {
+        if (this.finished || !this.initialized) return;
+        try { send({ t: 'out', data }); } catch { this.finish('terminal socket closed', false); }
+      },
+      finish(reason, notify = true) {
+        if (this.finished) return;
+        this.finished = true;
+        viewers.delete(this);
+        if (this.pane) unsubscribe(client, this.pane, this);
+        if (notify && this.established) {
+          try { onClose(reason); } catch { /* socket reporting only */ }
+        }
+        // Nobody left watching: hand the tmux client back rather than holding a
+        // control attach open over an unwatched fleet.
+        if (!viewers.size) teardown('no viewers left');
+      },
     };
-
-    const command = line => new Promise((resolve, reject) => {
-      if (finished || !child?.stdin?.writable) return reject(new Error('control client is closed'));
-      const waiter = { resolve, reject };
-      responseWaiters.push(waiter);
-      child.stdin.write(line + '\n', err => {
-        if (!err) return;
-        const index = responseWaiters.indexOf(waiter);
-        if (index >= 0) responseWaiters.splice(index, 1);
-        reject(err);
-      });
-    });
-
-    const handleEvent = ev => {
-      if (ev.type === 'response') {
-        responseWaiters.shift()?.resolve(ev);
-      } else if (ev.type === 'session-changed') {
-        readyResolve();
-      } else if (ev.type === 'output' && pane && ev.pane === pane) {
-        // Decode the pane stream with a PERSISTENT decoder. tmux emits %output
-        // as bytes arrive, so a multi-byte character (every box-drawing glyph
-        // Claude's TUI is made of) can land half in one notification and half
-        // in the next. Decoding each notification on its own turned that char
-        // into two U+FFFDs — two extra cells that shoved the rest of the row
-        // over and wrapped the line. The decoder holds the partial sequence
-        // until its tail arrives.
-        const data = outDecoder.write(ev.data);
-        if (!data) return; // an incomplete character; it lands with the next event
-        if (!initialized) pendingOutput.push(data);
-        else try { send({ t: 'out', data }); } catch { finish('terminal socket closed', false); }
-      } else if (ev.type === 'exit') {
-        finish(ev.reason || 'tmux session ended');
-      } else if (ev.type === 'window-close' && pane) {
-        // The client sees all windows in its session; verify our pane so an
-        // unrelated window closing does not terminate this viewer.
-        command(`display-message -p -t ${pane} '#{pane_id}'`).then(res => {
-          if (!res.ok) finish('terminal pane closed');
-        }).catch(() => finish('terminal pane closed'));
-      }
-    };
+    viewers.add(viewer);
 
     try {
-      const override = process.env.FLEETDECK_TERM_CMD?.trim();
-      const socket = process.env.FLEETDECK_TMUX_SOCKET?.trim();
-      const argv = socket ? ['-L', socket, '-C', 'attach-session', '-t', '=' + row.tmux_session]
-        : ['-C', 'attach-session', '-t', '=' + row.tmux_session];
-      child = spawn(override || 'tmux', override ? [] : argv, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
-      child.stdout.on('data', chunk => {
-        for (const ev of parser.feed(chunk)) handleEvent(ev);
-      });
-      child.stderr.on('data', chunk => log(`terminal control stderr: ${String(chunk).trim()}`));
-      child.on('error', err => finish(`terminal control client failed: ${err.message}`));
-      child.on('exit', () => { if (!intentional) finish('terminal control client exited'); });
-
-      let attachTimer;
-      try {
-        await Promise.race([
-          ready,
-          new Promise((_, reject) => { attachTimer = setTimeout(() => reject(new Error('terminal control attach timed out')), 5_000); }),
-        ]);
-      } finally {
-        clearTimeout(attachTimer);
-      }
+      const c = await ensureClient();
 
       // Lowest pane index speaks for a split window, matching listScopedWindows.
-      const panes = await command(`list-panes -t =${row.tmux_session}:${row.tmux_window} -F '#{pane_id}'`);
+      const panes = await c.command(`list-panes -t =${session}:${row.tmux_window} -F '#{pane_id}'`);
       if (!panes.ok) throw new Error('terminal pane not found');
-      pane = panes.lines.map(s => s.trim()).find(s => /^%\d+$/.test(s));
+      const pane = panes.lines.map((s) => s.trim()).find((s) => /^%\d+$/.test(s));
       if (!pane) throw new Error('terminal pane not found');
+      viewer.pane = pane;
 
       // Make the app repaint FIRST, then photograph the result.
       //
@@ -272,28 +375,27 @@ export function createTermBridge({ port, resolveSpawn,
       // that made the modal look scrambled until the human typed and forced a
       // full redraw of their own.
       //
-      // So: size the client, jiggle one row to guarantee a SIGWINCH even when
+      // So: size the window, jiggle one row to guarantee a SIGWINCH even when
       // the size was already correct, let the app draw itself, and only THEN
       // capture. The snapshot is now the app's own freshly-drawn screen.
       // This is a terminal event, not keystroke injection — nothing reaches the
       // pane's input, so it stays outside the keystroke doctrine.
-      const setSize = async (c, r) => {
-        let out = await command(`refresh-client -C ${c},${r}`);
-        if (!out.ok) out = await command(`refresh-client -C ${c}x${r}`); // pre-3.2 syntax
-        return out;
-      };
-      if (!(await setSize(size.cols, size.rows)).ok) throw new Error('terminal resize failed');
-      await setSize(size.cols, Math.max(1, size.rows - 1));
-      await setSize(size.cols, size.rows);
-      await new Promise(r => { const t = setTimeout(r, REPAINT_MS); t.unref?.(); });
+      if (!(await sizeWindow(c, row.tmux_window, size.cols, size.rows)).ok) throw new Error('terminal resize failed');
+      await sizeWindow(c, row.tmux_window, size.cols, Math.max(1, size.rows - 1));
+      await sizeWindow(c, row.tmux_window, size.cols, size.rows);
+      await new Promise((r) => { const t = setTimeout(r, REPAINT_MS); t.unref?.(); });
 
-      const captured = await command(`capture-pane -p -e -t ${pane}`);
+      const captured = await c.command(`capture-pane -p -e -t ${pane}`);
       if (!captured.ok) throw new Error('terminal pane capture failed');
-      const cursor = await command(`display-message -p -t ${pane} '#{cursor_x} #{cursor_y}'`);
+      const cursor = await c.command(`display-message -p -t ${pane} '#{cursor_x} #{cursor_y}'`);
       if (!cursor.ok) throw new Error('terminal cursor lookup failed');
       const match = /^(\d+)\s+(\d+)$/.exec(cursor.lines.at(-1)?.trim() || '');
       if (!match) throw new Error('terminal cursor lookup returned invalid data');
-      established = true;
+
+      // Subscribe only now: everything the app emitted while repainting is
+      // already baked into the snapshot below, and replaying it would double-draw.
+      subscribe(c, pane, viewer);
+      viewer.established = true;
       // CRLF, never bare LF: a raw terminal reads \n as "down one row", NOT
       // "down and back to column 0" — joining a captured screen with \n walks
       // every line one column further right than the last. That staircase is
@@ -302,42 +404,42 @@ export function createTermBridge({ port, resolveSpawn,
         // The parser speaks latin1 (byte-exact); the pane speaks UTF-8. Rebuild
         // the bytes and decode them as one piece so multi-byte glyphs survive.
         screen: CLEAR_SCREEN + Buffer.from(captured.lines.join('\r\n'), 'latin1').toString('utf8') + `\u001b[${Number(match[2]) + 1};${Number(match[1]) + 1}H` });
-      initialized = true;
-      // Whatever the app emitted while repainting is ALREADY baked into the
-      // snapshot above — replaying it would double-draw. Stream starts clean.
-      pendingOutput.length = 0;
+      viewer.initialized = true;
     } catch (err) {
-      intentional = true;
-      finish(err?.message || 'terminal open failed', false);
+      viewer.finish(err?.message || 'terminal open failed', false);
       throw new TermBridgeError(err?.message || 'terminal open failed');
     }
 
     return {
       input(dataString) {
-        if (finished || typeof dataString !== 'string' || !dataString) return;
+        if (viewer.finished || typeof dataString !== 'string' || !dataString) return;
+        const c = client;
+        if (!c) return;
         const bytes = Buffer.from(dataString, 'utf8');
         for (let offset = 0; offset < bytes.length; offset += INPUT_CHUNK_BYTES) {
           const hex = [...bytes.subarray(offset, offset + INPUT_CHUNK_BYTES)]
-            .map(b => b.toString(16).padStart(2, '0')).join(' ');
-          command(`send-keys -t ${pane} -H ${hex}`).then(res => {
-            if (!res.ok) finish('terminal pane closed');
-          }).catch(() => finish('terminal pane closed'));
+            .map((b) => b.toString(16).padStart(2, '0')).join(' ');
+          c.command(`send-keys -t ${viewer.pane} -H ${hex}`).then((res) => {
+            if (!res.ok) viewer.finish('terminal pane closed');
+          }).catch(() => viewer.finish('terminal pane closed'));
         }
       },
       resize(nextCols, nextRows) {
         const next = dimensions(nextCols, nextRows);
-        if (finished || !next) return;
-        command(`refresh-client -C ${next.cols},${next.rows}`).then(async res => {
-          if (!res.ok) res = await command(`refresh-client -C ${next.cols}x${next.rows}`);
-          if (!res.ok) finish('terminal resize failed');
-        }).catch(() => finish('terminal resize failed'));
+        const c = client;
+        if (viewer.finished || !next || !c) return;
+        // Last writer wins when two viewers watch one pane at different sizes —
+        // there is one pane and it has one shape. In the grid the tiles are
+        // distinct agents, so in practice each window has exactly one author.
+        sizeWindow(c, viewer.window, next.cols, next.rows)
+          .then((res) => { if (!res.ok) viewer.finish('terminal resize failed'); })
+          .catch(() => viewer.finish('terminal resize failed'));
       },
       close() {
-        intentional = true;
-        finish('terminal viewer closed', false);
+        viewer.finish('terminal viewer closed', false);
       },
     };
   }
 
-  return { openViewer, get activeViewers() { return active; } };
+  return { openViewer, get activeViewers() { return viewers.size; } };
 }
