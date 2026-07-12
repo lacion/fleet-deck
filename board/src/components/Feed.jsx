@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { hhmmss, classifyTicker, stripTickerEmoji } from '../util.js';
 
 const FILTERS = ['all', 'ask', 'confl', 'mail', 'tool', 'join'];
-const TAG_TEXT = { join: 'join', tool: 'tool', ask: 'ask', confl: 'confl', mail: 'mail', ship: 'ship' };
+const TAG_TEXT = { join: 'join', tool: 'tool', ask: 'ask', confl: 'confl', mail: 'mail' };
 
 // Bottom ticker feed — mono, hazard-colored conflict lines, filter chips.
 // v1.2: spawn_orphans (fd<port>-* windows with no spawns row) get a one-line

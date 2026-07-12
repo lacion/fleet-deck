@@ -91,6 +91,13 @@ export function createCore(db, {
   const PRESUME_DEAD_MS = envInt('FLEETDECK_PRESUME_DEAD_MS', 10_800_000, { min: 1 });
   const RETAIN_OFFLINE_MS = envInt('FLEETDECK_RETAIN_OFFLINE_MS', 86_400_000, { min: 1 });
   const RC_HARVEST_MS = envInt('FLEETDECK_RC_HARVEST_MS', 2_500, { min: 0 });
+  // M-G1 ledger retention: file_touches / commands / conflicts / settled mail
+  // are aged out of SQLite after this window, and the snapshot only aggregates
+  // file touches newer than it. Defaults to 24h (matching the events prune).
+  // Daemon-internal only — deliberately NOT in the claudeEnvArgvPrefix scrub
+  // list, since a spawned `claude` child never reads it.
+  const RETAIN_LEDGER_MS = envInt('FLEETDECK_RETAIN_LEDGER_MS', 86_400_000, { min: 60_000 });
+  const SNAPSHOT_FILES_PER_SESSION = 50; // M-P2/M-G1: per-card cap on the ledger file list
 
   // ------------------------------------------------------------- statements
   const q = {
@@ -110,7 +117,11 @@ export function createCore(db, {
     setBlocked: db.prepare('UPDATE sessions SET blocked_this_turn = ? WHERE session_id = ?'),
     insertTouch: db.prepare('INSERT INTO file_touches (repo_id, rel_path, abs_path, session_id, worktree, at) VALUES (?, ?, ?, ?, ?, ?)'),
     recentTouches: db.prepare('SELECT * FROM file_touches WHERE repo_id = ? AND rel_path = ? AND at > ? ORDER BY at'),
-    filesBySession: db.prepare('SELECT session_id, abs_path, MIN(at) AS first FROM file_touches GROUP BY session_id, abs_path ORDER BY first'),
+    // M-G1: windowed by time. The snapshot GROUP-BY used to scan the WHOLE
+    // (never-pruned-for-live-sessions) file_touches table on every frame; it
+    // now only aggregates touches newer than the ledger window (retentionSweep
+    // deletes the rest), and the snapshot caps the per-session list on top.
+    filesBySession: db.prepare('SELECT session_id, abs_path, MIN(at) AS first FROM file_touches WHERE at > ? GROUP BY session_id, abs_path ORDER BY first'),
     insertMail: db.prepare('INSERT INTO mail (to_session, from_id, text, at, delivered_at) VALUES (?, ?, ?, ?, NULL)'),
     pendingMail: db.prepare('SELECT * FROM mail WHERE to_session = ? AND delivered_at IS NULL AND expired_at IS NULL ORDER BY at, id'),
     // /api/watch v2 claim: oldest undelivered mail from ANY sender (v1
@@ -160,11 +171,38 @@ export function createCore(db, {
       SELECT session_id FROM sessions WHERE archived_at IS NOT NULL)`),
     insertCommand: db.prepare('INSERT INTO commands (at, text, parsed_json) VALUES (?, ?, ?)'),
     pruneEvents: db.prepare('DELETE FROM events WHERE at < ?'),
+    // M-G1: the append-only ledgers grew unbounded (file_touches for live
+    // sessions, commands, conflicts, and settled mail). Age them out of the DB
+    // on the retention cadence. Pending mail (delivered_at IS NULL AND
+    // expired_at IS NULL) is a real queue and is NEVER pruned by age here — the
+    // existing archival/expiry paths own its lifecycle.
+    pruneTouches: db.prepare('DELETE FROM file_touches WHERE at < ?'),
+    pruneCommands: db.prepare('DELETE FROM commands WHERE at < ?'),
+    pruneConflicts: db.prepare('DELETE FROM conflicts WHERE at < ?'),
+    pruneSettledMail: db.prepare('DELETE FROM mail WHERE at < ? AND (delivered_at IS NOT NULL OR expired_at IS NOT NULL)'),
     // v1.2 board-spawned sessions. "Active" = status spawning|stalled|live — the
     // rows that get liveness-checked, and the number the board shows as "N live".
     insertSpawn: db.prepare(`INSERT INTO spawns
       (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, requested_at, status, skip_permissions, remote_control)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'spawning', ?, ?)`),
+    // H-R6: a spawn's durable row now exists BEFORE any external op (worktree
+    // add / tmux window) so a crash in that gap can never orphan a worktree or
+    // pane with no owning row. It is born 'provisioning' — excluded from
+    // activeSpawns (never liveness-checked or counted live) until its pane
+    // exists — and flipped to 'spawning' once launch succeeds.
+    insertProvisionalSpawn: db.prepare(`INSERT INTO spawns
+      (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, requested_at, status, skip_permissions, remote_control)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'provisioning', ?, ?)`),
+    setSpawnWorktree: db.prepare('UPDATE spawns SET worktree_path = ? WHERE spawn_id = ?'),
+    staleProvisioningSpawns: db.prepare("SELECT * FROM spawns WHERE status = 'provisioning'"),
+    // H-R5: the newest spawn row still physically owning a tmux window (a
+    // revive reuses the dead row's window name, so a lineage can have several
+    // rows naming one window). 'killed'/'gone' rows have released the window;
+    // 'provisioning' has not claimed it yet. A kill by any OTHER id than this
+    // one is a stale/historical request and must be refused.
+    currentWindowOwner: db.prepare(`SELECT * FROM spawns
+      WHERE tmux_window = ? AND status IN ('spawning', 'stalled', 'live', 'pane-dead')
+      ORDER BY requested_at DESC, rowid DESC LIMIT 1`),
     getSpawn: db.prepare('SELECT * FROM spawns WHERE spawn_id = ?'),
     spawnBySession: db.prepare('SELECT * FROM spawns WHERE session_id = ? ORDER BY requested_at DESC, rowid DESC LIMIT 1'),
     allSpawns: db.prepare('SELECT * FROM spawns ORDER BY requested_at, rowid'),
@@ -257,11 +295,23 @@ export function createCore(db, {
   const FIELDS = ['callsign', 'model', 'cwd', 'repo_id', 'repo_name', 'branch', 'worktree',
     'col', 'note', 'task', 'last_tool', 'events', 'last_seen', 'ended_at', 'blocked_this_turn', 'source',
     'notification_type', 'archived_at'];
+  // M-P8: updateSession is the hottest write path (every hook event runs it
+  // one to three times). Each call used to compile a brand-new UPDATE, so
+  // SQLite re-parsed and re-planned identical statements forever. The set of
+  // distinct column-shapes is small and enumerable (one per updater code
+  // path), so cache the prepared statement keyed by the joined column list and
+  // reuse it. The `?` order still matches `keys` order within a shape.
+  const updateStmts = new Map(); // "col,col,…" -> prepared UPDATE
   function updateSession(sid, upd) {
     const keys = Object.keys(upd).filter(k => FIELDS.includes(k));
     if (!keys.length) return;
-    db.prepare(`UPDATE sessions SET ${keys.map(k => `${k} = ?`).join(', ')} WHERE session_id = ?`)
-      .run(...keys.map(k => upd[k] ?? null), sid);
+    const shape = keys.join(',');
+    let stmt = updateStmts.get(shape);
+    if (!stmt) {
+      stmt = db.prepare(`UPDATE sessions SET ${keys.map(k => `${k} = ?`).join(', ')} WHERE session_id = ?`);
+      updateStmts.set(shape, stmt);
+    }
+    stmt.run(...keys.map(k => upd[k] ?? null), sid);
   }
 
   // ------------------------------------------------------------- model tracking
@@ -410,9 +460,17 @@ export function createCore(db, {
     // Retention tombstones are reversible: a late hook proves the process was
     // alive (or resumed). Clear both timestamps so an archived presumed-dead
     // card becomes visible again before normal derivation continues.
+    //
+    // M-B5: resurrection must also lift the card OUT of the offline column.
+    // The Pre/PostToolUse column rule is "queued|needsyou → working, else keep
+    // col"; with col still 'offline' from the tombstone, "keep col" would leave
+    // an actively-working resurrected session stranded in the offline lane
+    // (UserPromptSubmit forces 'working' and hid this, but tool hooks and the
+    // resolved-Notification path do not). Reset the base column to 'queued' so
+    // the switch below re-derives a live lane from the activity it just saw.
     if (c.ended_at != null || c.archived_at != null) {
-      updateSession(sid, { ended_at: null, archived_at: null });
-      c = { ...c, ended_at: null, archived_at: null };
+      updateSession(sid, { ended_at: null, archived_at: null, col: 'queued' });
+      c = { ...c, ended_at: null, archived_at: null, col: 'queued' };
     }
     // Precedence rule (handoff F1): hook-derived state ALWAYS wins. The
     // moment a real hook event arrives for a session — even one first
@@ -632,13 +690,26 @@ export function createCore(db, {
     };
   }
 
+  // http.mjs routes BOTH /hook/PreToolUse and /hook/PostToolUse here (same
+  // derivation branch as the spike). The conflict whisper must therefore
+  // declare the caller's ACTUAL event name — a PreToolUse client that receives
+  // hookSpecificOutput.hookEventName:'PostToolUse' may drop the mismatched
+  // whisper (M-B2). The event's own hook_event_name is authoritative (Claude
+  // sends it in every hook payload); fall back to 'PostToolUse' only when a
+  // client omitted it.
   function hookPostToolUse(ev) {
-    const { conflict } = applyEvent({ ...ev, hook_event_name: ev.hook_event_name || 'PostToolUse' });
-    questions.expireOnActivity(ev.session_id || 'unknown'); // F3e auto-resolution
+    const eventName = ev.hook_event_name || 'PostToolUse';
+    const { conflict } = applyEvent({ ...ev, hook_event_name: eventName });
+    // F3e auto-resolution, correlated (M-B1): a single completed tool call must
+    // settle ONLY its own permission hold, never a sibling parallel hold still
+    // awaiting the human. Pass the tool_use_id so expireOnActivity can target the
+    // matching question; it falls back to session-wide expiry only when the
+    // payload carries no correlation id.
+    questions.expireOnActivity(ev.session_id || 'unknown', { toolUseId: ev.tool_use_id });
     if (!conflict) return {};
     return {
       hookSpecificOutput: {
-        hookEventName: 'PostToolUse',
+        hookEventName: eventName,
         additionalContext: whisperText(conflict),
       },
     };
@@ -723,21 +794,42 @@ export function createCore(db, {
       : 'permission';
     applyEvent({ ...ev, hook_event_name: eventName });
     const sid = ev.session_id || 'unknown';
-    const row = questions.create(kind, sid, ev);
-    if (eventName === 'PermissionRequest' && ev?.tool_name === 'ExitPlanMode') {
-      try {
-        const c = q.getSession.get(sid); // applyEvent ensured the card exists
-        const planMd = typeof ev.tool_input?.plan === 'string'
-          ? ev.tool_input.plan
-          : String(ev.tool_input?.plan ?? '');
-        const info = q.insertPlan.run(sid, c?.callsign ?? null, c?.repo_id ?? null,
-          c?.repo_name ?? null, row.id, planMd, Date.now());
-        tick(`📋 ${c?.callsign ?? sid} proposed a plan — captured to the library (#${Number(info.lastInsertRowid)})`);
-      } catch (err) {
-        // capture must never break the hold — the question still relays
-        console.error('fleetd plan capture error:', err);
-      }
+    const isPlan = eventName === 'PermissionRequest' && ev?.tool_name === 'ExitPlanMode';
+    if (!isPlan) {
+      const row = questions.create(kind, sid, ev);
+      onMutate();
+      return row;
     }
+    // M-B6: the ExitPlanMode question row and its captured plan row must both
+    // persist or NEITHER. They used to be two independent inserts with the
+    // plan insert's errors swallowed — a crash/SQLITE error in between left a
+    // held question with no linked plan, so the board's `capture` answer path
+    // (planByQuestion → null) could never satisfy it. Wrap both inserts in one
+    // transaction; on any failure roll BOTH back and fail the hook OPEN (return
+    // null → http.mjs answers {} and the terminal resumes normally), rather
+    // than relaying a hold the library can never honour.
+    let row = null;
+    let planRowId = null;
+    let callsign = null;
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      row = questions.create(kind, sid, ev);
+      const c = q.getSession.get(sid); // applyEvent ensured the card exists
+      callsign = c?.callsign ?? sid;
+      const planMd = typeof ev.tool_input?.plan === 'string'
+        ? ev.tool_input.plan
+        : String(ev.tool_input?.plan ?? '');
+      const info = q.insertPlan.run(sid, c?.callsign ?? null, c?.repo_id ?? null,
+        c?.repo_name ?? null, row.id, planMd, Date.now());
+      planRowId = Number(info.lastInsertRowid);
+      db.exec('COMMIT');
+    } catch (err) {
+      try { db.exec('ROLLBACK'); } catch { /* keep the original error */ }
+      console.error('fleetd plan capture error (question + plan rolled back, hook fails open):', err);
+      onMutate();
+      return null;
+    }
+    tick(`📋 ${callsign} proposed a plan — captured to the library (#${planRowId})`);
     onMutate();
     return row;
   }
@@ -757,6 +849,7 @@ export function createCore(db, {
     const sp = q.spawnBySession.get(ev.session_id || 'unknown');
     if (sp && (sp.status === 'spawning' || sp.status === 'stalled' || sp.status === 'live')) {
       q.setSpawnStatus.run('pane-dead', sp.spawn_id);
+      forgetSpawn(sp.spawn_id); // M-G2: terminal-ish — drop nudge/harvest ephemera
     }
     // F3d-2: wake any /api/watch long-poll so its watcher sees
     // session_alive:false and exits now instead of at its hold timeout.
@@ -1181,7 +1274,7 @@ export function createCore(db, {
   // directories WE own — a read-only build artifact is our mess to clear — and
   // silently steps over anything owned by someone else. Never chmods what it
   // does not own, never recurses outside the worktree.
-  async function chmodWritableWhereOwned(root) {
+  function chmodWritableWhereOwned(root) {
     const uid = typeof process.getuid === 'function' ? process.getuid() : null;
     const walk = (dir, depth = 0) => {
       if (depth > 12) return; // a worktree is not a filesystem crawl
@@ -1273,7 +1366,7 @@ export function createCore(db, {
       // leave the tree half-dismantled (git unlinks its .git file before it
       // hits the undeletable file), and the retry then fails with a *different*
       // and even less useful error.
-      await chmodWritableWhereOwned(row.worktree_path);
+      chmodWritableWhereOwned(row.worktree_path); // sync: only fs.chmodSync/readdirSync
 
       const args = ['-C', repo, 'worktree', 'remove'];
       if (body.force === true) args.push('--force');
@@ -1299,9 +1392,32 @@ export function createCore(db, {
             },
           };
         }
-        // Nothing foreign in the way: git is just being git (a half-removed
-        // tree it no longer recognises). Take the directory down ourselves and
-        // let git reconcile its admin files.
+        // Nothing FOREIGN in the way — but "not foreign" is not the same as
+        // "safe to erase". H-R1: blockedPaths() only ever reports paths owned by
+        // ANOTHER user; your own uncommitted/untracked files are invisible to
+        // it. git refuses a DIRTY worktree, and reaching here on a request that
+        // never set force (verdict was 'safe' at inspect, or a TOCTOU write
+        // landed after it) would mean rmSync(force:true) silently destroys that
+        // work. So before we take the directory down ourselves, re-read the
+        // working tree: only rm when the human forced it, OR a fresh
+        // `git status --porcelain` proves the tree is clean (git was refusing
+        // for a benign admin reason — a half-removed tree it no longer
+        // recognises, where `git status` itself fails). A tree with real
+        // uncommitted changes and no force is refused, loudly.
+        if (body.force !== true) {
+          const porcelain = await execFileP('git', ['-C', row.worktree_path, 'status', '--porcelain'], { timeout: 5_000 });
+          if (porcelain.ok && porcelain.out.trim() !== '') {
+            return {
+              status: 409,
+              body: {
+                ok: false,
+                reason: 'git refused to remove this worktree and it still has uncommitted changes — pass force to delete',
+                verdict: 'has-work',
+                dirty: porcelain.out.split(/\r?\n/).filter(Boolean).length,
+              },
+            };
+          }
+        }
         try {
           fs.rmSync(row.worktree_path, { recursive: true, force: true });
         } catch (err) {
@@ -1375,6 +1491,7 @@ export function createCore(db, {
       col: 'offline', ended_at: Date.now(),
       note: `spawn failed: ${reason}`.slice(0, 80),
     });
+    modelMemo.delete(sid); // M-G2: terminal — a revive re-stamps the floor
     tick(`✗ spawn failed for ${callsign}: ${reason.slice(0, 60)}`);
     onMutate();
   }
@@ -1406,15 +1523,37 @@ export function createCore(db, {
   const RC_URL_RE = /https:\/\/claude\.ai\/\S+/;
   const registrationRemoteHarvests = new Map();
 
+  // M-G2: per-spawn in-memory ephemera (the bring-up nudge dedupe set and the
+  // registration remote-harvest promise) used to be cleared on no terminal
+  // path at all, leaking one entry per spawn for the daemon's life. Drop them
+  // on EVERY terminal spawn transition (kill / gone / pane-dead / spawn-fail /
+  // reconciliation). modelMemo is keyed by session, not spawn, and is cleared
+  // alongside session-terminal transitions.
+  function forgetSpawn(spawn_id) {
+    nudged.delete(spawn_id);
+    registrationRemoteHarvests.delete(spawn_id);
+  }
+
   async function harvestRemote(spawn_id) {
     const row = q.getSpawn.get(spawn_id);
     if (!row) return { url: null };
     let text = null;
     try { text = await tmuxAdapter.capturePane(row.tmux_window); } catch { /* best effort */ }
     const url = typeof text === 'string' ? (text.match(RC_URL_RE)?.[0] ?? null) : null;
-    q.setSpawnRemote.run(url, spawn_id);
-    tick(`📱 ${row.callsign} remote control enabled${url ? '' : ' (URL not found)'}`);
-    onMutate();
+    // M-B8: setSpawnRemote/tick/onMutate can throw (SQLITE_BUSY/IOERR, or a bug
+    // in a broadcast handler). Harvest runs from an unref timer / detached
+    // promise, so an escaping throw becomes an unhandled rejection — and with
+    // no global process.on('unhandledRejection') handler (that belongs in
+    // fleetd.mjs; see coordination note) it could take the daemon down.
+    // Contain it: a failed harvest just leaves remote_url unset, which the next
+    // /rc attempt or registration hook can retry.
+    try {
+      q.setSpawnRemote.run(url, spawn_id);
+      tick(`📱 ${row.callsign} remote control enabled${url ? '' : ' (URL not found)'}`);
+      onMutate();
+    } catch (err) {
+      console.error('fleetd remote harvest persist error:', err);
+    }
     return { url };
   }
 
@@ -1424,8 +1563,12 @@ export function createCore(db, {
   function delayedRemoteHarvest(spawn_id) {
     // A zero test knob means "capture on the next microtask"; production's
     // non-zero delay always uses the required unref timer.
+    // M-B8: the timer path already funnels rejections into resolve({url:null});
+    // the zero path returned a bare promise whose rejection nothing observed.
+    // harvestRemote is now internally guarded, but keep the .catch() as the
+    // documented belt-and-suspenders against an unhandled rejection.
     if (RC_HARVEST_MS === 0) {
-      return Promise.resolve().then(() => harvestRemote(spawn_id));
+      return Promise.resolve().then(() => harvestRemote(spawn_id)).catch(() => ({ url: null }));
     }
     let timer;
     const promise = new Promise(resolve => {
@@ -1440,6 +1583,27 @@ export function createCore(db, {
     const promise = delayedRemoteHarvest(spawn_id);
     registrationRemoteHarvests.set(spawn_id, promise);
     return promise;
+  }
+
+  // H-R6 compensation: unwind a spawn's partial EXTERNAL state and settle its
+  // durable row+card as failed. A fleet-created worktree is fresh and holds no
+  // human work, so force-remove it (git first, then rmSync + prune as the
+  // half-created fallback); kill any half-created scoped window by verified
+  // name. Then flip the provisional row to a terminal 'gone' (so neither
+  // liveness nor boot reconciliation ever adopts it) and tombstone the card.
+  // Best-effort throughout: cleanup failure must not mask the launch failure.
+  async function spawnCompensate({ spawn_id, session_id, callsign, cwd, worktree_path, tmux_window, reason }) {
+    if (worktree_path) {
+      try {
+        const rm = await execFileP('git', ['-C', cwd, 'worktree', 'remove', '--force', worktree_path], { timeout: 30_000 });
+        if (!rm.ok) { try { fs.rmSync(worktree_path, { recursive: true, force: true }); } catch { /* best effort */ } }
+        await execFileP('git', ['-C', cwd, 'worktree', 'prune'], { timeout: 30_000 });
+      } catch { /* best effort — a stranded fleet worktree is surfaced by cleanup() */ }
+    }
+    if (tmux_window) { try { await tmuxAdapter.killWindowVerified(tmux_window); } catch { /* best effort */ } }
+    q.setSpawnStatus.run('gone', spawn_id);
+    forgetSpawn(spawn_id);
+    spawnFailed(session_id, callsign, reason);
   }
 
   // POST /api/spawn — control API, fail-loud (CONTRACT: 4xx {ok:false,
@@ -1488,15 +1652,31 @@ export function createCore(db, {
     const c = createSpawnedCard(session_id, cwd, body?.prompt);
     const callsign = c.callsign;
 
-    // Step 2: optional fresh worktree — the session cwd becomes the new path.
+    // Step 2 (H-R6): insert the DURABLE spawn row BEFORE any external op. The
+    // tmux names are deterministic from the callsign, so the provisional row
+    // already knows the window it is about to create — which lets compensation
+    // clean up by verified name and lets boot reconciliation finish/clean a
+    // row whose external ops never completed. It is born 'provisioning'
+    // (excluded from activeSpawns), and only flips to 'spawning' once the pane
+    // exists. worktree_path is filled in once the worktree is actually created.
+    const tmux_session = tmuxAdapter.sessionName(port);
+    const tmux_window = tmuxAdapter.windowName(port, callsign);
+    q.insertProvisionalSpawn.run(spawn_id, session_id, callsign, tmux_session, tmux_window, cwd,
+      null, Date.now(), skipPermissions ? 1 : 0, body?.remote_control === true ? 1 : 0);
+
+    // Step 3: optional fresh worktree — the session cwd becomes the new path.
     let worktree_path = null;
     if (body?.worktree === true) {
       worktree_path = path.join(path.dirname(cwd), `${path.basename(cwd)}--fd-${callsign}`);
       const res = await execFileP('git', ['-C', cwd, 'worktree', 'add', '-b', `fd/${callsign}`, worktree_path]);
       if (!res.ok) {
-        spawnFailed(session_id, callsign, `git worktree add: ${res.err}`);
+        // No window was created yet; compensate cleans the (possibly partial)
+        // worktree and settles the provisional row.
+        await spawnCompensate({ spawn_id, session_id, callsign, cwd, worktree_path, tmux_window: null,
+          reason: `git worktree add: ${res.err}` });
         return { status: 409, body: { ok: false, reason: `git worktree add failed: ${res.err}`.slice(0, 300) } };
       }
+      q.setSpawnWorktree.run(worktree_path, spawn_id);
       const repo = deriveRepo(worktree_path);
       updateSession(session_id, {
         cwd: worktree_path, repo_id: repo.repo_id, repo_name: repo.repo_name,
@@ -1505,14 +1685,12 @@ export function createCore(db, {
     }
     const runCwd = worktree_path ?? cwd;
 
-    // Step 3: deterministic interactive `claude`: scrub inherited agent and
+    // Step 4: deterministic interactive `claude`: scrub inherited agent and
     // fleet variables, then pin this daemon's port/home. The claude flag order
     // remains contract-pinned: --session-id, --model, --permission-mode,
     // permission bypass, remote-control name, then the prompt as ONE
     // positional argv element. permission_mode "bypassPermissions" needs no
     // extra argv change — it rides --permission-mode as plain passthrough.
-    const tmux_session = tmuxAdapter.sessionName(port);
-    const tmux_window = tmuxAdapter.windowName(port, callsign);
     const argv = [
       ...claudeEnvArgvPrefix(port, home),
       'claude', '--session-id', session_id,
@@ -1541,21 +1719,29 @@ export function createCore(db, {
         tmux: { session: tmux_session, window: tmux_window },
         argv, // the full env-wrapped argv tmux would have run
       };
+      // launchOverride is fire-and-forget; onError fires only if the child
+      // process cannot start at all (no child ⇒ no SessionStart to race), so
+      // compensating there is safe.
       tmuxAdapter.launchOverride(override, spec, err =>
-        spawnFailed(session_id, callsign, `spawn override: ${err.message || err}`));
+        spawnCompensate({ spawn_id, session_id, callsign, cwd, worktree_path, tmux_window,
+          reason: `spawn override: ${err.message || err}` }).catch(() => {}));
     } else {
       try {
         await tmuxAdapter.ensureSession(port);
         await tmuxAdapter.newWindow({ port, callsign, cwd: runCwd, argv });
       } catch (err) {
-        spawnFailed(session_id, callsign, String(err.message || err));
+        // The window failed to launch; compensate removes the worktree we may
+        // have just created and settles the provisional row (H-R6).
+        await spawnCompensate({ spawn_id, session_id, callsign, cwd, worktree_path, tmux_window,
+          reason: String(err.message || err) });
         return { status: 500, body: { ok: false, reason: `tmux spawn failed: ${err.message || err}` } };
       }
     }
 
-    // Step 4: durable spawn row; step 5: bring-up nudge timer.
-    q.insertSpawn.run(spawn_id, session_id, callsign, tmux_session, tmux_window, cwd,
-      worktree_path, Date.now(), skipPermissions ? 1 : 0, body?.remote_control === true ? 1 : 0);
+    // Step 5: the pane now exists (or the override was handed off) — flip the
+    // durable row live-eligible ('provisioning' → 'spawning') and arm the
+    // bring-up nudge timer.
+    q.setSpawnStatus.run('spawning', spawn_id);
     tick(`🚀 spawned ${callsign} — tmux window ${tmux_window}${skipPermissions ? ' (unsupervised)' : ''}`);
     scheduleNudge(spawn_id, tmux_window, callsign);
     onMutate();
@@ -1585,20 +1771,12 @@ export function createCore(db, {
       return { status: 409, body: { ok: false, reason: `session already has active spawn ${active.spawn_id}` } };
     }
 
-    // Exact scoped-name collision defense. A live Claude pane is ownership
-    // proof and must never be duplicated. Dead/bare remnants are safe to
-    // remove by verified name before reusing the deterministic window name.
-    const existing = (await tmuxAdapter.listScopedWindows(port)).find(w => w.window === row.tmux_window);
-    if (existing && !existing.pane_dead && existing.pane_cmd === 'claude') {
-      return { status: 409, body: { ok: false, reason: `window ${row.tmux_window} already has a live claude pane` } };
-    }
-    if (existing) {
-      const killed = await tmuxAdapter.killWindowVerified(row.tmux_window);
-      if (!killed.ok && !killed.gone) {
-        return { status: 500, body: { ok: false, reason: killed.error || 'tmux kill-window failed' } };
-      }
-    }
-
+    // H-R7: validate ALL resume eligibility BEFORE touching tmux. Reviving
+    // reuses the deterministic window name, and the old code killed whatever
+    // occupied it and THEN checked cwd/transcript — so a missing transcript
+    // would 410 only AFTER an unrelated pane had already been destroyed.
+    // Prove the resume can actually happen first; only then reconcile the
+    // window.
     const runCwd = row.worktree_path ?? row.cwd;
     let st = null;
     try { st = fs.statSync(runCwd); } catch { /* missing */ }
@@ -1607,6 +1785,26 @@ export function createCore(db, {
     }
     if (!fs.existsSync(claudeTranscriptPath(runCwd, row.session_id))) {
       return { status: 410, body: { ok: false, reason: 'resume transcript no longer exists' } };
+    }
+
+    // Exact scoped-name collision defense, now that eligibility is proven. A
+    // live Claude pane is ownership proof and must never be duplicated. Only a
+    // pane PROVEN dead, or an expected bare shell (claude exited, leaving the
+    // login shell in a remain-on-exit window), is a safe remnant to remove by
+    // verified name before reusing the window. A live pane running ANYTHING
+    // ELSE (the human repurposed the window) is never destroyed — refuse.
+    const existing = (await tmuxAdapter.listScopedWindows(port)).find(w => w.window === row.tmux_window);
+    if (existing && !existing.pane_dead && existing.pane_cmd === 'claude') {
+      return { status: 409, body: { ok: false, reason: `window ${row.tmux_window} already has a live claude pane` } };
+    }
+    if (existing && !existing.pane_dead && !SHELL_RE.test(existing.pane_cmd)) {
+      return { status: 409, body: { ok: false, reason: `window ${row.tmux_window} hosts a live '${existing.pane_cmd}' pane — not a dead remnant; refusing to kill it` } };
+    }
+    if (existing) {
+      const killed = await tmuxAdapter.killWindowVerified(row.tmux_window);
+      if (!killed.ok && !killed.gone) {
+        return { status: 500, body: { ok: false, reason: killed.error || 'tmux kill-window failed' } };
+      }
     }
 
     const new_spawn_id = randomUUID();
@@ -1701,6 +1899,24 @@ export function createCore(db, {
   async function spawnKill(spawn_id, force) {
     const row = q.getSpawn.get(spawn_id);
     if (!row) return { status: 404, body: { ok: false, reason: 'no such spawn' } };
+    // H-R5: a revive reuses the dead row's tmux_window, so one physical window
+    // can be named by several rows across a session's lifetime. Killing by a
+    // STALE id would kill the window the NEWEST (revived) row now owns while
+    // marking only the old row 'killed' — liveness then disagrees with reality
+    // (the new row still says 'live', its pane is dead). Refuse a historical
+    // id even under force: the window belongs to whichever non-terminal row
+    // most recently claimed it, and that is the only id allowed to kill it.
+    const owner = q.currentWindowOwner.get(row.tmux_window);
+    if (owner && owner.spawn_id !== spawn_id) {
+      return {
+        status: 409,
+        body: {
+          ok: false,
+          reason: `spawn ${spawn_id} is a historical row; tmux window ${row.tmux_window} is now owned by spawn ${owner.spawn_id} — kill that one`,
+          current_spawn_id: owner.spawn_id,
+        },
+      };
+    }
     const c = q.getSession.get(row.session_id);
     if (c && c.col !== 'offline' && force !== true) {
       return {
@@ -1715,6 +1931,7 @@ export function createCore(db, {
       // a non-offline card via an explicit force:true).
       if (['spawning', 'stalled', 'live', 'pane-dead'].includes(row.status)) {
         q.setSpawnStatus.run('gone', spawn_id);
+        forgetSpawn(spawn_id); // M-G2
         if (c && c.ended_at == null) {
           updateSession(row.session_id, { col: 'offline', ended_at: Date.now(), note: 'spawned pane window gone' });
           notifyWatchers(row.session_id);
@@ -1725,6 +1942,7 @@ export function createCore(db, {
     }
     if (!res.ok) return { status: 500, body: { ok: false, reason: res.error || 'tmux kill-window failed' } };
     q.setSpawnStatus.run('killed', spawn_id);
+    forgetSpawn(spawn_id); // M-G2
     if (c && c.ended_at == null) {
       updateSession(row.session_id, { col: 'offline', ended_at: Date.now(), note: 'pane killed from the board' });
       notifyWatchers(row.session_id);
@@ -1769,6 +1987,7 @@ export function createCore(db, {
       }
       if (win.pane_dead || SHELL_RE.test(win.pane_cmd)) {
         q.setSpawnStatus.run('pane-dead', row.spawn_id);
+        forgetSpawn(row.spawn_id); // M-G2
         const c = q.getSession.get(row.session_id);
         if (c && c.ended_at == null) {
           updateSession(row.session_id, {
@@ -1792,18 +2011,51 @@ export function createCore(db, {
     }
   }
 
+  // H-R2: listScopedWindows() returns [] indistinguishably for "tmux is
+  // reachable but this fleet owns no windows" (→ genuinely gone) and "tmux
+  // timed out / is unreachable" (→ UNKNOWN). Boot reconciliation is the only
+  // path that tombstones absent windows, so on a transient tmux hiccup at
+  // restart it would mark the WHOLE live fleet gone+offline — the exact
+  // "unreachable → confidently dead" mistake spawnLivenessTick already refuses
+  // (`if (!win) continue`). The clean fix threads an explicit unknown-signal
+  // out of the adapter; that lives in spawn.mjs (see coordination note), so
+  // here we probe reachability instead: when the scoped list is empty AND we
+  // still hold active rows, confirm tmux is actually reachable before trusting
+  // the emptiness. ensureSession() is the only exported call that distinguishes
+  // reachable (resolves) from unreachable (throws); its create-on-absence side
+  // effect is exactly what the next spawn would do anyway.
+  async function tmuxReachableForReconcile() {
+    // Test-override mode has no tmux server to reach — the fixture drives
+    // spawns and the empty scoped list is authoritative (existing contract).
+    if (tmuxAdapter.spawnOverrideCmd()) return true;
+    // No tmux binary at all: there is no server that could be "unreachable",
+    // and rows created under a since-removed backend should reconcile normally.
+    if (typeof tmuxAdapter.hasTmux === 'function' && !tmuxAdapter.hasTmux()) return true;
+    try { await tmuxAdapter.ensureSession(port); return true; }
+    catch { return false; } // binary present but server wedged / timed out
+  }
+
   // Restart reconciliation (fleetd boot): spawn rows outlive the daemon in
   // SQLite while the panes outlive it in tmux — re-join the two. Rows in
   // spawning|stalled|live whose exact scoped window is gone → 'gone' + card
-  // offline; scoped windows with no row at all → spawn_orphans ("unadopted"
-  // on the board; surfaced, never operated on).
+  // offline; provisioning rows (H-R6, launch interrupted) → gone + offline;
+  // scoped windows with no row at all → spawn_orphans ("unadopted" on the
+  // board; surfaced, never operated on).
   let spawnOrphans = [];
   async function reconcileSpawns() {
     const wins = await tmuxAdapter.listScopedWindows(port);
+    const active = q.activeSpawns.all();
+    if (!wins.length && active.length && !(await tmuxReachableForReconcile())) {
+      // Unreachable at boot → leave every row UNKNOWN, tombstone nothing.
+      tick(`⚠ tmux unreachable at restart — leaving ${active.length} spawn row(s) as-is (unknown, not gone)`);
+      onMutate();
+      return;
+    }
     const names = new Set(wins.map(w => w.window));
-    for (const row of q.activeSpawns.all()) {
+    for (const row of active) {
       if (names.has(row.tmux_window)) continue;
       q.setSpawnStatus.run('gone', row.spawn_id);
+      forgetSpawn(row.spawn_id); // M-G2
       const c = q.getSession.get(row.session_id);
       if (c && c.ended_at == null) {
         updateSession(row.session_id, {
@@ -1811,6 +2063,23 @@ export function createCore(db, {
           note: 'spawned pane gone (daemon restart reconciliation)',
         });
         tick(`${c.callsign} pane gone — noticed at daemon restart`);
+      }
+      onMutate();
+    }
+    // H-R6: a 'provisioning' row is a spawn that died between its durable
+    // insert and the completion of its external ops (worktree/window). It
+    // never had a live pane; boot is where we finish the job — settle the row
+    // and tombstone the half-born card.
+    for (const row of q.staleProvisioningSpawns.all()) {
+      q.setSpawnStatus.run('gone', row.spawn_id);
+      forgetSpawn(row.spawn_id);
+      const c = q.getSession.get(row.session_id);
+      if (c && c.ended_at == null) {
+        updateSession(row.session_id, {
+          col: 'offline', ended_at: Date.now(),
+          note: 'spawn interrupted before launch (daemon restart)',
+        });
+        tick(`${c.callsign} spawn was interrupted before launch — cleaned up at restart`);
       }
       onMutate();
     }
@@ -1962,10 +2231,14 @@ export function createCore(db, {
   // Spike field names preserved; adds repo fields + sparkline + uptime.
   function snapshot() {
     const now = Date.now();
+    // M-G1: window the touch aggregation by time (retentionSweep deletes older
+    // rows) and cap the per-session list, so a snapshot can never GROUP-BY an
+    // unbounded table nor ship an unbounded file list per card on every frame.
     const filesBySid = new Map();
-    for (const row of q.filesBySession.all()) {
-      if (!filesBySid.has(row.session_id)) filesBySid.set(row.session_id, []);
-      filesBySid.get(row.session_id).push(row.abs_path);
+    for (const row of q.filesBySession.all(now - RETAIN_LEDGER_MS)) {
+      let list = filesBySid.get(row.session_id);
+      if (!list) { list = []; filesBySid.set(row.session_id, list); }
+      if (list.length < SNAPSHOT_FILES_PER_SESSION) list.push(row.abs_path);
     }
     const sparkBySid = new Map();
     const nowMin = Math.floor(now / 60000);
@@ -1981,7 +2254,17 @@ export function createCore(db, {
     for (const r of q.allSpawns.all()) spawnBySid.set(r.session_id, r);
     const pendingBySid = new Map(q.pendingCounts.all().map(r => [r.to_session, r]));
     const callsignById = new Map(q.allSessions.all().map(s => [s.session_id, s.callsign]));
-    const sessions = q.visibleSessions.all().map(s => {
+    const visible = q.visibleSessions.all();
+    // M-P2: the owned-pane and watcher facts were each recomputed TWICE per
+    // session (mail_pending.deliverable and again in mail_meta.route, each
+    // doing its own getSession + spawnBySession query). Compute each once.
+    const waiterBySid = new Map();
+    const ownedPaneBySid = new Map();
+    for (const s of visible) {
+      waiterBySid.set(s.session_id, hasWatchWaiter(s.session_id));
+      ownedPaneBySid.set(s.session_id, !!ownedPaneRow(s.session_id));
+    }
+    const sessions = visible.map(s => {
       const sp = spawnBySid.get(s.session_id);
       const pending = pendingBySid.get(s.session_id);
       return {
@@ -2009,7 +2292,7 @@ export function createCore(db, {
           oldest_at: pending?.oldest_at ?? null,
           // Approximation by design: no tmux subprocess in a snapshot. A
           // qualifying active spawn row is treated as pane-capable here.
-          deliverable: hasWatchWaiter(s.session_id) || !!ownedPaneRow(s.session_id),
+          deliverable: waiterBySid.get(s.session_id) || ownedPaneBySid.get(s.session_id),
         },
         sparkline: sparkBySid.get(s.session_id) || new Array(30).fill(0),
         stale: (s.col === 'working' || s.col === 'verifying')
@@ -2024,7 +2307,10 @@ export function createCore(db, {
             remote: { enabled: !!sp.remote_control, url: sp.remote_url ?? null },
             // Snapshot cost is intentionally uncached: two existsSync calls
             // per owned card keep removal/restore feedback immediate, and a
-            // fleet has only a handful of rows by design.
+            // fleet has only a handful of rows by design. (M-P2 suggested a
+            // short revivable TTL; deliberately NOT taken — the immediate
+            // flip is a tested board contract, see revive.test.mjs; a cache
+            // would need that test + a frontend sign-off. Coordination note.)
             revivable: spawnRowRevivable(sp),
           },
         } : {}),
@@ -2051,8 +2337,8 @@ export function createCore(db, {
       mailMeta[s.session_id] = {
         queued: p?.n ?? 0,
         oldest_at: p?.oldest_at ?? null,
-        route: hasWatchWaiter(s.session_id) ? 'watcher'
-          : ownedPaneRow(s.session_id) ? 'pane'
+        route: waiterBySid.get(s.session_id) ? 'watcher'
+          : ownedPaneBySid.get(s.session_id) ? 'pane'
             : s.endedAt != null ? 'offline-queued'
               : 'turn-boundary',
       };
@@ -2066,9 +2352,14 @@ export function createCore(db, {
       // Callsigns resolved from EVERY session, not just the visible ones: a
       // conflict outlives its participants, and a banner shouting a raw UUID at
       // you is worse than one that says `comet-2d9d`.
-      conflicts: q.recentConflicts.all().map(c => {
-        const ids = JSON.parse(c.sessions_json || '[]');
-        return {
+      conflicts: q.recentConflicts.all().flatMap(c => {
+        // M-B4: guarded parse (drop-on-corrupt), matching cleanup(). A single
+        // corrupt sessions_json used to throw here and 500 EVERY /state and
+        // every broadcast frame — poisoning the whole board off one bad row.
+        let ids;
+        try { ids = JSON.parse(c.sessions_json || '[]'); }
+        catch { return []; }
+        return [{
           at: c.at,
           repo_id: c.repo_id,
           rel_path: c.rel_path,
@@ -2076,7 +2367,7 @@ export function createCore(db, {
           severity: c.severity,
           sessions: ids,
           callsigns: ids.map(id => callsignById.get(id) ?? id),
-        };
+        }];
       }),
       mail_pending: mailPending,
       mail_meta: mailMeta, // per-session {queued, oldest_at, route}
@@ -2121,6 +2412,7 @@ export function createCore(db, {
         col: 'offline', ended_at: now,
         note: `presumed ended (silent ${label}h)`,
       });
+      modelMemo.delete(s.session_id); // M-G2: terminal — clear the transcript memo
       tick(`⌛ ${s.callsign} presumed ended after ${label}h silent`);
       notifyWatchers(s.session_id);
       changed = true;
@@ -2131,6 +2423,16 @@ export function createCore(db, {
     }
     if (q.expireRetainedMail.run(now, now - RETAIN_OFFLINE_MS).changes) changed = true;
     if (q.goneArchivedSpawns.run().changes) changed = true;
+    // M-G1: age the append-only ledgers so they cannot grow without bound.
+    // file_touches is pruned to the ledger window (the conflict radar only
+    // looks back CONFLICT_WINDOW_MS anyway, and the snapshot windows its query
+    // to the same cutoff); commands, conflicts, and settled mail are pruned to
+    // the same horizon. Pending mail is never age-pruned here.
+    const ledgerCutoff = now - RETAIN_LEDGER_MS;
+    if (q.pruneTouches.run(ledgerCutoff).changes) changed = true;
+    if (q.pruneCommands.run(ledgerCutoff).changes) changed = true;
+    if (q.pruneConflicts.run(ledgerCutoff).changes) changed = true;
+    if (q.pruneSettledMail.run(ledgerCutoff).changes) changed = true;
     if (changed) onMutate();
     return { changed };
   }
@@ -2222,7 +2524,8 @@ export function createCore(db, {
     hookHoldQuestion,
     questions, // F3 relay surface: attachHold / socketClosed / answer / …
     addWatchWaiter,  // F3d-2 watch surface (GET /api/watch v2)
-    hasWatchWaiter,
+    // hasWatchWaiter is used only INTERNALLY (mail routing + snapshot); no
+    // http.mjs/fleetd.mjs caller consumes it, so it is not re-exported here.
     claimMail,       // "
     watchInfo,       // "
     drainMail,
@@ -2241,7 +2544,8 @@ export function createCore(db, {
     spawnCapability,   // /health + /state `spawn` object
     spawnLivenessTick, // owned-pane liveness, rides the agents-poll cadence
     reconcileSpawns,   // fleetd boot: rows ↔ tmux windows
-    retentionSweep,
+    // retentionSweep runs internally (boot + the 10m interval below); nothing
+    // outside createCore calls it, so it is not re-exported.
     cleanup,
     worktrees,          // GET /api/worktrees — bounded live git inspection
     removeWorktree,     // POST /api/worktrees/remove — allow-listed destruction

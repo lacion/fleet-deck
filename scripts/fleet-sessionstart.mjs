@@ -74,17 +74,31 @@ function bootEnv() {
 // lock — a concurrent launcher's daemon exits 3 on EADDRINUSE and we just poll.
 async function ensureServer() {
   if (await api('/health', { timeout: 250 })) return true;
+  let out = null;
   try {
     fs.mkdirSync(HOME, { recursive: true });
-    const out = fs.openSync(path.join(HOME, 'fleetd.log'), 'a');
+    const logFile = path.join(HOME, 'fleetd.log');
+    // WHY mode is not enough: open(append) preserves an existing file's old
+    // permissions. chmod repairs logs created by older versions before this
+    // hook gives a daemon another chance to write credentials into them.
+    out = fs.openSync(logFile, 'a', 0o600);
+    fs.chmodSync(logFile, 0o600);
     const child = spawn(process.execPath, ['--no-warnings=ExperimentalWarning', FLEETD], {
       detached: true,
       stdio: ['ignore', out, out],
       env: bootEnv(),
     });
+    // spawn() reports resource exhaustion and similar launch failures on the
+    // next turn. Without a listener that 'error' would violate this hook's
+    // foundational promise to fail silently instead of breaking SessionStart.
+    child.once('error', () => {});
     child.unref();
-    fs.closeSync(out);
   } catch { return false; }
+  finally {
+    // The detached child owns duplicated descriptors after a successful
+    // spawn; the launcher must release its copy on every success/failure path.
+    if (out !== null) try { fs.closeSync(out); } catch { /* silent hook */ }
+  }
   for (let i = 0; i < 12; i++) {
     await new Promise(r => setTimeout(r, 250));
     if (await api('/health', { timeout: 250 })) return true;

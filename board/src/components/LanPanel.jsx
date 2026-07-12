@@ -1,6 +1,7 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { qrPath } from '../qr.js';
 import { copyText } from '../util.js';
+import { useModal } from '../useModal.js';
 
 // v1.7 LAN share. The daemon sends `lan: {enabled, urls}` on /state — the urls
 // already carry ?t=<token>, so everything here is display + copy; the board
@@ -39,13 +40,18 @@ function UrlRow({ url, primary }) {
 }
 
 export default function LanPanel({ lan, onClose }) {
+  // `lan` may be briefly null (H-S1: it arrives on the /state poll, not the WS
+  // frame) — every read below is optional-chained, so an absent lan just reads
+  // as "local only" until the poll lands.
   const urls = Array.isArray(lan?.urls) ? lan.urls.filter(Boolean) : [];
   const enabled = !!lan?.enabled && urls.length > 0;
   const qr = useMemo(() => (enabled ? qrPath(urls[0]) : null), [enabled, urls[0]]);
+  const dialogRef = useRef(null);
+  useModal(dialogRef); // M-A2
 
   return (
     <div className="fd-composewrap" onClick={onClose}>
-      <div className="fd-compose fd-lan" role="dialog" aria-label="Share this board" onClick={(e) => e.stopPropagation()}>
+      <div className="fd-compose fd-lan" role="dialog" aria-modal="true" aria-label="Share this board" ref={dialogRef} onClick={(e) => e.stopPropagation()}>
         <div style={{ display: 'flex', alignItems: 'center' }}>
           <span className="lbl">{enabled ? 'SHARE THIS BOARD' : 'THIS BOARD IS LOCAL ONLY'}</span>
           <span className="fd-spacer" />

@@ -1,5 +1,6 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { human, copyText } from '../util.js';
+import { useModal } from '../useModal.js';
 
 // v1.9 — the worktrees a spawn left behind.
 //
@@ -357,6 +358,8 @@ export default function WorktreesModal({ worktrees, loading, error, now, onReloa
 
   const anyBusy = bulkBusy || busyPaths.size > 0;
   const n = rows.length;
+  const dialogRef = useRef(null);
+  useModal(dialogRef); // M-A2 — trap Tab + restore focus (it already had aria-modal)
 
   return (
     <div className="fd-composewrap" onClick={anyBusy ? undefined : onClose}>
@@ -365,6 +368,7 @@ export default function WorktreesModal({ worktrees, loading, error, now, onReloa
         role="dialog"
         aria-modal="true"
         aria-label="Worktrees"
+        ref={dialogRef}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="fd-wthead">

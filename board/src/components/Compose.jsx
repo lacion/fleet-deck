@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { sendMail, sendCommand } from '../api.js';
+import { sendMail, sendCommand, reasonOf } from '../api.js';
 import { basename } from '../util.js';
+import { useModal } from '../useModal.js';
 
 // Honest per-target feedback from POST /mail `targets` ({session_id, callsign,
 // route}). watcher/pane routes deliver without the human doing anything;
@@ -25,6 +26,9 @@ export default function Compose({ initialTarget, sessions, repos, onClose, onSen
   const [unroutedText, setUnroutedText] = useState(null); // v1.2: task text of an unrouted command → spawn CTA
   const [busy, setBusy] = useState(false);
   const taRef = useRef(null);
+  const dialogRef = useRef(null);
+  // M-A2 — trap Tab + restore focus on close; the textarea owns initial focus.
+  useModal(dialogRef, { initialFocus: false });
 
   useEffect(() => { taRef.current?.focus(); }, []);
 
@@ -75,7 +79,7 @@ export default function Compose({ initialTarget, sessions, repos, onClose, onSen
           onClose();
         }
       } else {
-        setErr(res.json?.err || `send failed (${res.status})`);
+        setErr(reasonOf(res, `send failed (${res.status})`));
       }
     } catch {
       setErr('daemon unreachable');
@@ -86,7 +90,7 @@ export default function Compose({ initialTarget, sessions, repos, onClose, onSen
 
   return (
     <div className="fd-composewrap" onClick={onClose}>
-      <div className="fd-compose" role="dialog" aria-label="Compose" onClick={(e) => e.stopPropagation()}>
+      <div className="fd-compose" role="dialog" aria-modal="true" aria-label="Compose" ref={dialogRef} onClick={(e) => e.stopPropagation()}>
         <div style={{ display: 'flex', alignItems: 'center' }}>
           <span className="lbl">COMPOSE</span>
           <span className="fd-spacer" />

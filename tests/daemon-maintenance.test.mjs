@@ -227,9 +227,16 @@ test('tmux input/capture helpers use isolated-socket argv without shell interpol
   assert.equal(await typeKeys('@9', '/rc fd4711-falcon'), true);
   assert.equal(await capturePane('fd4711-falcon'), '');
   const calls = readFileSync(record, 'utf8').trim().split('\n').map(JSON.parse);
-  assert.deepEqual(calls, [
-    ['-L', 'fd-test-socket', 'set-buffer', '-b', 'fdmail', '--', 'hello\nworld'],
-    ['-L', 'fd-test-socket', 'paste-buffer', '-p', '-d', '-b', 'fdmail', '-t', '@9'],
+  // pasteText now uses a per-call unique buffer (fdmail-<uuid>, H-R4) and deletes
+  // it in a finally, so assert the argv shape and the buffer-name relationship
+  // rather than a fixed name — the isolated socket + no-shell contract is intact.
+  const [setBuf, pasteBuf, delBuf, ...rest] = calls;
+  const bufName = setBuf[4];
+  assert.match(bufName, /^fdmail-[0-9a-f-]+$/, 'set-buffer uses a unique fdmail-<uuid> buffer');
+  assert.deepEqual(setBuf, ['-L', 'fd-test-socket', 'set-buffer', '-b', bufName, '--', 'hello\nworld']);
+  assert.deepEqual(pasteBuf, ['-L', 'fd-test-socket', 'paste-buffer', '-p', '-d', '-b', bufName, '-t', '@9']);
+  assert.deepEqual(delBuf, ['-L', 'fd-test-socket', 'delete-buffer', '-b', bufName]);
+  assert.deepEqual(rest, [
     ['-L', 'fd-test-socket', 'send-keys', '-t', '@9', 'Enter'],
     ['-L', 'fd-test-socket', 'send-keys', '-t', '@9', '-l', '--', '/rc fd4711-falcon'],
     ['-L', 'fd-test-socket', 'capture-pane', '-p', '-t', 'fd4711-falcon'],

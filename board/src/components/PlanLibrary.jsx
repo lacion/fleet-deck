@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { human } from '../util.js';
 import { renderMarkdown, planTitle } from '../markdown.js';
-import { sendMail, markPlan } from '../api.js';
+import { sendMail, markPlan, reasonOf } from '../api.js';
 
 // v1.3 PLANS library — collapsible strip between the lanes and the feed
 // (contract offered rail-under-questions as the alternative; the rail is the
@@ -16,10 +16,10 @@ import { sendMail, markPlan } from '../api.js';
 const EXECUTABLE = new Set(['proposed', 'approved', 'captured']);
 
 function markErr(res, did) {
-  const reason = res.json?.err || res.json?.reason;
+  const reason = res.reason; // raw daemon reason (null when it sent none)
   if (res.status === 409) return `${did ? did + ', but ' : ''}409 — ${reason || 'bad transition'}`;
   if (res.status === 404) return `${did ? did + ', but ' : ''}404 — ${reason || 'unknown plan'}`;
-  return `${did ? did + ', but ' : ''}${reason || `mark failed (${res.status})`}`;
+  return `${did ? did + ', but ' : ''}${reasonOf(res, `mark failed (${res.status})`)}`;
 }
 
 function PlanCard({ p, now, liveSessions, spawnAvailable, onExecute }) {
@@ -29,6 +29,13 @@ function PlanCard({ p, now, liveSessions, spawnAvailable, onExecute }) {
   const [instr, setInstr] = useState('');
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState(null); // {cls, text}
+
+  // M-P7 — parse the plan body once per text, not on every render/second.
+  // M-P2 — a snapshot may ship a plan row without its body; keep both the title
+  // and the expanded view honest about that rather than rendering an empty box.
+  const md = p.plan_md || '';
+  const title = useMemo(() => planTitle(md), [md]);
+  const html = useMemo(() => (md.trim() ? renderMarkdown(md) : null), [md]);
 
   const executable = EXECUTABLE.has(p.status);
 
@@ -54,7 +61,7 @@ function PlanCard({ p, now, liveSessions, spawnAvailable, onExecute }) {
     try {
       const res = await sendMail(target, text);
       if (!res.ok) {
-        setNote({ cls: 'hazard', text: res.json?.err || `mail failed (${res.status})` });
+        setNote({ cls: 'hazard', text: reasonOf(res, `mail failed (${res.status})`) });
       } else {
         const mres = await markPlan(p.plan_id, { status: 'executed', via: `assign:${target}` });
         if (mres.ok) {
@@ -76,7 +83,7 @@ function PlanCard({ p, now, liveSessions, spawnAvailable, onExecute }) {
     <div className="fd-plan" data-planid={p.plan_id}>
       <button type="button" className="phead" onClick={() => setOpen(!open)} title={open ? 'collapse' : 'expand the full plan'}>
         <span className="tri">{open ? '▾' : '▸'}</span>
-        <span className="ttl">{planTitle(p.plan_md)}</span>
+        <span className="ttl">{title}</span>
         <span className="callsign">{p.callsign || p.session_id}</span>
         {p.repo_name && <span className="repo">{p.repo_name}</span>}
         <span className={`fd-pstatus ${p.status}`}>{p.status}</span>
@@ -85,7 +92,9 @@ function PlanCard({ p, now, liveSessions, spawnAvailable, onExecute }) {
       </button>
       {open && (
         <div className="pbody">
-          <div className="fd-md" dangerouslySetInnerHTML={{ __html: renderMarkdown(p.plan_md) }} />
+          {html
+            ? <div className="fd-md" dangerouslySetInnerHTML={{ __html: html }} />
+            : <div className="fd-md"><em>plan text not included in this snapshot</em></div>}
         </div>
       )}
       <div className="pactions">

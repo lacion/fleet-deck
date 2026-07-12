@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
-import { human, hhmmss, basename, prettyModel, modelFamily, spawnKillable, spawnRemoteAvailable } from '../util.js';
-import { sendMail, reviveSpawn, enableRemote } from '../api.js';
+import React, { useRef, useState } from 'react';
+import { human, hhmmss, basename, prettyModel, modelFamily, safeUrl, spawnKillable, spawnRemoteAvailable } from '../util.js';
+import { sendMail, reasonOf } from '../api.js';
+import { useModal } from '../useModal.js';
 
 // Owned-pane block (v1.2): attach hint + kill.
 // v1.4 adds the live-terminal door (onOpenTerm — App passes it only while
@@ -10,63 +11,54 @@ import { sendMail, reviveSpawn, enableRemote } from '../api.js';
 // v1.8: kill no longer lives here alone (the card carries it too) and no
 // longer arms in place — both doors open App's KillConfirm dialog, which owns
 // the POST and reports the outcome on the shared header strip.
-function OwnedPane({ s, onOpenTerm, onKill }) {
+//
+// M-F2 — revive + enable-remote no longer POST from here directly: onRevive /
+// onEnableRemote come from App's shared useSpawnActions hook (the SAME one the
+// card chips use), so the card and this pane can't each fire a POST. The busy
+// state (reviving / enablingRemote) is shared too; only the inline result text
+// is local to this surface.
+function OwnedPane({ s, onOpenTerm, onKill, onRevive, onEnableRemote, reviving, enablingRemote }) {
   // v1.5 revive — offline + spawn.revivable only; one click, no confirm
-  // (worst case is a fresh QUEUED card, not data loss)
-  const [rev, setRev] = useState({ state: 'idle', err: null, ok: null }); // idle | busy | done
+  // (worst case is a fresh QUEUED card, not data loss). Local = the result line.
+  const [rev, setRev] = useState({ done: false, err: null, ok: null });
   // v1.6 remote control — the daemon types /rc into the pane and harvests the
-  // claude.ai link, so the round-trip runs ~3-6 s; the button owns a busy
-  // state and a 409 (mid-turn / pane not live) surfaces honestly.
-  const [rc, setRc] = useState({ state: 'idle', err: null, ok: null, url: null }); // idle | busy | done
+  // claude.ai link, so the round-trip runs ~3-6 s; a 409 (mid-turn / pane not
+  // live) surfaces honestly.
+  const [rc, setRc] = useState({ done: false, err: null, ok: null, url: null });
   const alive = s.col !== 'offline';
   const revivable = !alive && !!s.spawn.revivable;
   // snapshot truth first; the fresh POST response fills the gap until the
   // next snapshot lands (WS pushes on every mutation, so it's brief)
-  const remoteOn = !!s.spawn.remote?.enabled || rc.state === 'done';
-  const remoteUrl = s.spawn.remote?.url || rc.url;
+  const remoteOn = !!s.spawn.remote?.enabled || rc.done;
+  const remoteUrl = safeUrl(s.spawn.remote?.url || rc.url); // M-S1 — https/claude.ai only
   const win = s.spawn.tmux_window || '';
   // the window is named fd<port>-<callsign> — recover the daemon port for
   // the attach hint from it (falls back to how this board was reached)
   const m = /^fd(\d+)-/.exec(win);
   const tmuxSession = `fleetdeck-${m ? m[1] : (location.port || '4711')}`;
 
-  const doRevive = async () => {
-    setRev({ state: 'busy', err: null, ok: null });
-    try {
-      const res = await reviveSpawn(s.spawn.spawn_id);
-      if (res.ok && res.json?.ok !== false) {
-        setRev({ state: 'done', err: null, ok: 'reviving — card moves to QUEUED' });
-      } else {
-        const reason = res.json?.reason || res.json?.err;
-        setRev({ state: 'idle', err: reason || `revive failed (${res.status})`, ok: null });
-      }
-    } catch {
-      setRev({ state: 'idle', err: 'daemon unreachable', ok: null });
-    }
+  const doRevive = () => {
+    setRev({ done: false, err: null, ok: null });
+    onRevive(s, (r) => {
+      if (r.ok) setRev({ done: true, err: null, ok: 'reviving — card moves to QUEUED' });
+      else setRev({ done: false, err: r.reason, ok: null });
+    });
   };
 
-  const doRemote = async () => {
-    setRc({ state: 'busy', err: null, ok: null, url: null });
-    try {
-      const res = await enableRemote(s.spawn.spawn_id);
-      if (res.ok && res.json?.ok !== false) {
-        const url = res.json?.url || null;
+  const doRemote = () => {
+    setRc({ done: false, err: null, ok: null, url: null });
+    onEnableRemote(s, (r) => {
+      if (r.ok) {
         setRc({
-          state: 'done',
+          done: true,
           err: null,
-          ok: url ? 'remote control on' : 'remote control on — harvesting the claude.ai link',
-          url,
+          ok: safeUrl(r.url) ? 'remote control on' : 'remote control on — harvesting the claude.ai link',
+          url: r.url,
         });
       } else {
-        const reason = res.json?.reason || res.json?.err;
-        const msg = res.status === 409
-          ? (reason || 'refused — session is mid-turn (409), retry when it goes idle')
-          : (reason || `remote control failed (${res.status})`);
-        setRc({ state: 'idle', err: msg, ok: null, url: null });
+        setRc({ done: false, err: r.reason, ok: null, url: null });
       }
-    } catch {
-      setRc({ state: 'idle', err: 'daemon unreachable', ok: null, url: null });
-    }
+    });
   };
 
   return (
@@ -113,28 +105,28 @@ function OwnedPane({ s, onOpenTerm, onKill }) {
             ▣ Live terminal
           </button>
         )}
-        {spawnRemoteAvailable(s) && rc.state !== 'done' && (
+        {spawnRemoteAvailable(s) && !rc.done && (
           // offered only when the daemon would say yes (live pane, turn
           // boundary) — a mid-click race still 409s honestly below
           <button
             type="button"
             className="fd-ghostbtn"
-            disabled={rc.state === 'busy'}
+            disabled={enablingRemote}
             title="put this agent on remote control — drive it from claude.ai on web or phone (types /rc into the pane; takes a few seconds)"
             onClick={doRemote}
           >
-            📱 {rc.state === 'busy' ? 'Enabling remote… (~5 s)' : 'Enable remote'}
+            📱 {enablingRemote ? 'Enabling remote… (~5 s)' : 'Enable remote'}
           </button>
         )}
-        {revivable && rev.state !== 'done' && (
+        {revivable && !rev.done && (
           <button
             type="button"
             className="fd-ghostbtn"
-            disabled={rev.state === 'busy'}
+            disabled={reviving}
             title="worktree + transcript survived — resume this agent (card moves to QUEUED)"
             onClick={doRevive}
           >
-            ⟲ {rev.state === 'busy' ? 'Reviving…' : 'Revive'}
+            ⟲ {reviving ? 'Reviving…' : 'Revive'}
           </button>
         )}
         {onKill && spawnKillable(s) && (
@@ -164,9 +156,15 @@ function OwnedPane({ s, onOpenTerm, onKill }) {
 // delivery is turn-boundary, so entries stay marked queued.
 export default function Drawer({
   s, now, conflictFiles, mailCount, priority, onTogglePriority, onClose, onCompose, onOpenTerm, onKill,
-  thread, onSendThread,
+  thread, onSendThread, onRevive, onEnableRemote, reviving, enablingRemote,
 }) {
   const [draft, setDraft] = useState('');
+  const [sending, setSending] = useState(false);
+  const [sendErr, setSendErr] = useState(null); // M-F5 — a swallowed send now shows
+  const [nudge, setNudge] = useState(null);     // {ok} | {err}
+  const [nudging, setNudging] = useState(false);
+  const ref = useRef(null);
+  useModal(ref); // M-A2 — focus in, Tab trapped, focus restored on close
   const fam = modelFamily(s.model);
   const pulseClass =
     s.col === 'working' ? 'working'
@@ -178,17 +176,36 @@ export default function Drawer({
   const hot = new Set(conflictFiles.map(basename));
   const offline = s.col === 'offline';
 
-  const send = () => {
+  // M-F5 — await the result: clear the draft ONLY on success, surface a failure
+  // rather than dropping it (the old code cleared before the POST and swallowed
+  // 4xx/network errors entirely).
+  const send = async () => {
     const text = draft.trim();
-    if (!text) return;
-    onSendThread(text);
-    setDraft('');
+    if (!text || sending) return;
+    setSending(true);
+    setSendErr(null);
+    const res = await onSendThread(text);
+    setSending(false);
+    if (res?.ok) setDraft('');
+    else setSendErr(res?.reason || 'send failed');
+  };
+
+  // M-F5 — Nudge was fire-and-forget (unhandled rejection, no feedback). Same
+  // result handling as the thread send now: awaited, with an ok/err line.
+  const doNudge = async () => {
+    if (nudging) return;
+    setNudging(true);
+    setNudge(null);
+    const res = await sendMail(s.session_id, 'nudge: status check-in please');
+    setNudging(false);
+    if (res.ok && res.json?.ok !== false) setNudge({ ok: 'nudge sent' });
+    else setNudge({ err: reasonOf(res, `nudge failed (${res.status})`) });
   };
 
   return (
     <>
       <div className="fd-scrim" onClick={onClose} />
-      <div className="fd-drawer" role="dialog" aria-label={`Session ${s.callsign}`}>
+      <div className="fd-drawer" role="dialog" aria-modal="true" aria-label={`Session ${s.callsign}`} ref={ref}>
         <div className="fd-drawerhead">
           <span className={`fd-pulse ${pulseClass}`} style={{ width: 9, height: 9 }} />
           <span className="callsign">{s.callsign || s.session_id}</span>
@@ -215,9 +232,10 @@ export default function Drawer({
             <button
               type="button"
               className="fd-ghostbtn"
-              onClick={() => sendMail(s.session_id, 'nudge: status check-in please')}
+              disabled={nudging}
+              onClick={doNudge}
             >
-              Nudge
+              {nudging ? 'Nudging…' : 'Nudge'}
             </button>
             <button
               type="button"
@@ -227,8 +245,20 @@ export default function Drawer({
             >
               {priority ? '★ Priority' : '☆ Priority'}
             </button>
+            {nudge?.ok && <span className="fd-killok">✓ {nudge.ok}</span>}
+            {nudge?.err && <span className="fd-killwarn">✗ {nudge.err}</span>}
           </div>
-          {s.spawn && <OwnedPane s={s} onOpenTerm={onOpenTerm} onKill={onKill} />}
+          {s.spawn && (
+            <OwnedPane
+              s={s}
+              onOpenTerm={onOpenTerm}
+              onKill={onKill}
+              onRevive={onRevive}
+              onEnableRemote={onEnableRemote}
+              reviving={reviving}
+              enablingRemote={enablingRemote}
+            />
+          )}
           <div className="fd-sect">
             <div className="sl">FILES</div>
             <div className="fd-filewrap">
@@ -276,11 +306,14 @@ export default function Drawer({
                   style={{ fontFamily: 'var(--font-ui)', fontSize: '12.5px' }}
                   placeholder={`Message ${s.callsign || 'session'}…`}
                   value={draft}
-                  onChange={(e) => setDraft(e.target.value)}
+                  onChange={(e) => { setDraft(e.target.value); if (sendErr) setSendErr(null); }}
                   onKeyDown={(e) => { if (e.key === 'Enter') send(); }}
                 />
-                <button type="button" className="fd-send" disabled={!draft.trim()} onClick={send}>Send</button>
+                <button type="button" className="fd-send" disabled={!draft.trim() || sending} onClick={send}>
+                  {sending ? 'Sending…' : 'Send'}
+                </button>
               </div>
+              {sendErr && <div className="status hazard">✗ {sendErr} — your message is still here, try again</div>}
             </div>
           </div>
         </div>

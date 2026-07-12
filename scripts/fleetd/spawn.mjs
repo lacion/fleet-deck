@@ -27,6 +27,7 @@
 // 'test-override'.
 
 import { execFile, execFileSync, spawn as spawnChild } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 
 const TMUX_TIMEOUT_MS = 5_000;
 const US = '\u001f'; // unit separator — never appears in tmux names in practice
@@ -172,8 +173,19 @@ export async function killWindowVerified(name) {
  * command. All user text still travels without a shell; terminal input uses
  * control-mode hex bytes. */
 export async function pasteText(target, text) {
-  if (await tmux(['set-buffer', '-b', 'fdmail', '--', String(text)]) === null) return false;
-  return (await tmux(['paste-buffer', '-p', '-d', '-b', 'fdmail', '-t', target])) !== null;
+  // tmux buffers are server-global, so a constant name lets concurrent mail
+  // deliveries overwrite each other between set-buffer and paste-buffer. A
+  // UUID makes the two-command handoff private to this call; `-d` removes the
+  // buffer on success, while finally covers a failed/timed-out paste.
+  const buffer = `fdmail-${randomUUID()}`;
+  if (await tmux(['set-buffer', '-b', buffer, '--', String(text)]) === null) return false;
+  try {
+    return (await tmux(['paste-buffer', '-p', '-d', '-b', buffer, '-t', target])) !== null;
+  } finally {
+    // Best-effort and deliberately awaited: do not leave mail text resident
+    // in tmux when paste-buffer fails before its `-d` cleanup can take effect.
+    await tmux(['delete-buffer', '-b', buffer]);
+  }
 }
 
 export async function sendEnter(target) {

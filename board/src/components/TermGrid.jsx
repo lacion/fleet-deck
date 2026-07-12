@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useRef, useState } from 'react';
 import TermPane from './TermPane.jsx';
+import { useModal } from '../useModal.js';
 
 // The wall of screens (v1.9): N live terminals at once, one tile per agent.
 //
@@ -21,24 +22,43 @@ export default function TermGrid({ tiles, onClose, onExpand }) {
   // nothing focused would look like a broken keyboard rather than a choice.
   const [focused, setFocused] = useState(tiles[0]?.spawnId ?? null);
   const [notes, setNotes] = useState({}); // spawnId -> {kind,text} | null
-
-  // If the focused agent disappears (killed, ended), hand the keyboard to a
-  // survivor rather than leaving it pointing at nothing.
-  useEffect(() => {
-    if (tiles.some((t) => t.spawnId === focused)) return;
-    setFocused(tiles[0]?.spawnId ?? null);
-  }, [tiles, focused]);
+  const dialogRef = useRef(null);
+  // M-A2 (terminal variant) — restore focus on close; NO Tab trap / focus steal
+  // (Tab and focus belong to the focused agent's xterm).
+  useModal(dialogRef, { trap: false, initialFocus: false });
 
   const cols = COLS(tiles.length);
 
+  // M-A3 — a keyboard path for moving the typing focus between tiles, since the
+  // click handoff was mouse-only. Ctrl+←/→ cycles. Handled in the CAPTURE phase
+  // on the wrapper so it is consumed BEFORE the focused agent's xterm sees it
+  // (otherwise the chord would also be typed into the agent).
+  const cycle = (dir) => setFocused((cur) => {
+    const i = tiles.findIndex((t) => t.spawnId === cur);
+    const base = i < 0 ? 0 : i;
+    return tiles[(base + dir + tiles.length) % tiles.length]?.spawnId ?? cur;
+  });
+  const onCaptureKey = (e) => {
+    if (e.ctrlKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+      e.preventDefault();
+      e.stopPropagation();
+      cycle(e.key === 'ArrowRight' ? 1 : -1);
+    }
+  };
+
   return (
-    <div className="fd-gridwrap" role="presentation" onKeyDown={(e) => e.stopPropagation()}>
-      <div className="fd-grid" role="dialog" aria-label={`Live terminals — ${tiles.length} agents`}>
+    <div
+      className="fd-gridwrap"
+      role="presentation"
+      onKeyDownCapture={onCaptureKey}
+      onKeyDown={(e) => e.stopPropagation()}
+    >
+      <div className="fd-grid" role="dialog" aria-modal="true" aria-label={`Live terminals — ${tiles.length} agents`} ref={dialogRef}>
         <div className="fd-gridhead">
           <span className="lbl">LIVE TERMINALS</span>
           <span className="fd-gridcount">{tiles.length}</span>
           <span className="fd-termhint">
-            ⌨ keystrokes go to the <b>focused</b> agent only — click a tile to move the focus · <b>⇧⏎</b> for a newline
+            ⌨ keystrokes go to the <b>focused</b> agent only — click a tile or press <b>Ctrl+←/→</b> to move the focus · <b>⇧⏎</b> for a newline
           </span>
           <span className="fd-spacer" />
           <button type="button" className="fd-x" aria-label="Close terminals" onClick={onClose}>✕</button>

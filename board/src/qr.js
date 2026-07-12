@@ -294,7 +294,8 @@ function interleave(data, version, rawCodewords) {
 }
 
 /** Encode `text` as a QR matrix (byte mode, EC level M). null if too long. */
-export function qrMatrix(text) {
+// in-file only — qrPath() below is the single exported surface over this.
+function qrMatrix(text) {
   const bytes = new TextEncoder().encode(String(text ?? ''));
 
   // pick the smallest version that fits, and learn its capacity from the

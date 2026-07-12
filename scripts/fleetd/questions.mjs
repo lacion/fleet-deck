@@ -63,10 +63,10 @@
 // {behavior:"capture"}. Text pinned VERBATIM by the contract. Delivery is the
 // ordinary mail pipeline (turn boundary, or the v1.1 mail-wake for an idle
 // planner) — mail() nudges watchers on insert.
-export const PLAN_CAPTURE_MAIL = '[FLEETDECK] Your plan was captured to the fleet plan library — do not execute it. Wrap up your turn.';
+const PLAN_CAPTURE_MAIL = '[FLEETDECK] Your plan was captured to the fleet plan library — do not execute it. Wrap up your turn.';
 
-export const DEFAULT_HOLD_MS = 50_000;
-export const MAX_HOLDS_PER_SESSION = 4;
+const DEFAULT_HOLD_MS = 50_000;
+const MAX_HOLDS_PER_SESSION = 4;
 const SWEEP_MS = 5_000;
 const RESOLVED_IN_STATE = 8; // "last few resolved" in GET /state
 const HOLD_KINDS = new Set(['permission', 'elicitation', 'choice']);
@@ -134,7 +134,20 @@ export function createQuestions(db, {
       .sort((a, b) => a - b);
     if (mine.length >= MAX_HOLDS_PER_SESSION) settleExpired(mine[0]);
 
-    const timer = setTimeout(() => settleExpired(row.id), Math.max(0, row.expires_at - Date.now()));
+    // WHY the timer owns a second fail-open path: settleExpired deliberately
+    // releases the HTTP response before touching SQLite, but persistence can
+    // still throw (SQLITE_BUSY/IOERR), and an exception escaping a timer kills
+    // the daemon. The catch repeats release/respond defensively in case a
+    // future edit adds a throwing operation before settleExpired's release.
+    const timer = setTimeout(() => {
+      try {
+        settleExpired(row.id);
+      } catch (err) {
+        const h = releaseHold(row.id);
+        if (h) { try { h.respond({}); } catch { /* socket already gone */ } }
+        console.error(`fleetd question #${row.id} expiry persistence error:`, err);
+      }
+    }, Math.max(0, row.expires_at - Date.now()));
     timer.unref?.();
     holds.set(row.id, { session_id: row.session_id, respond, timer });
   }
@@ -302,13 +315,36 @@ export function createQuestions(db, {
   // freeform, so an ENDED session's question survives for `claude --resume`.
   // Only a session that demonstrably kept going clears its own queue.
   //
-  // Watch item for live acceptance: if 2.1.206 ever fires PermissionRequest
-  // hooks for PARALLEL tool calls, the first allowed tool's PostToolUse would
-  // fail the sibling holds open here (unproven live — validate before relying
-  // on it).
-  function expireOnActivity(sessionId) {
+  // Parallel tool calls make session identity alone insufficient: a
+  // PostToolUse for tool A proves only A's hold is over; tool B can still be
+  // parked waiting for the human. The hook payload saved on each row carries
+  // the request identity, so a correlated activity event retires exactly one
+  // row. UserPromptSubmit and older callers have no request identity; there is
+  // no other evidence telling us which request completed, so those calls keep
+  // the legacy session-wide fallback.
+  //
+  // TODO(derive.mjs owner): thread PostToolUse `ev.tool_use_id` as
+  // `questions.expireOnActivity(sid, { toolUseId: ev.tool_use_id })`. Until
+  // that caller does so, production PostToolUse events take the no-ID fallback
+  // and cannot protect still-open parallel sibling holds.
+  function expireOnActivity(sessionId, { toolUseId, requestId } = {}) {
+    const correlationId = toolUseId ?? requestId;
+    let rows = q.pendingBySession.all(sessionId);
+    if (correlationId != null) {
+      const matched = rows.find(r => {
+        if (!HOLD_KINDS.has(r.kind)) return false;
+        const payload = safeParse(r.payload_json);
+        const rowId = payload?.tool_use_id ?? payload?.toolUseId
+          ?? payload?.request_id ?? payload?.requestId;
+        return rowId != null && String(rowId) === String(correlationId);
+      });
+      // WHY no session-wide fallback on a supplied-but-unknown identity: a
+      // delayed/duplicate activity event must not release unrelated live
+      // holds merely because its own row was already settled or never held.
+      rows = matched ? [matched] : [];
+    }
     let changed = false;
-    for (const r of q.pendingBySession.all(sessionId)) {
+    for (const r of rows) {
       const h = releaseHold(r.id);
       if (h) { try { h.respond({}); } catch { /* socket already gone */ } }
       if (q.markExpired.run(r.id).changes) changed = true;
@@ -337,7 +373,9 @@ export function createQuestions(db, {
     if (h) { try { h.respond({}); } catch { /* socket already gone */ } }
     const changed = q.markExpired.run(row.id).changes > 0;
     if (changed) onChange();
-    return { ok: true, callsign: row.callsign ?? null };
+    // WHY resolve through the session adapter: `questions` deliberately has
+    // no callsign column, so reading row.callsign always returned dead null.
+    return { ok: true, callsign: callsignOf(row.session_id) ?? null };
   }
 
   // Restart hygiene (periodic sweep): a pending hold-kind row with NO live
@@ -413,7 +451,6 @@ export function createQuestions(db, {
   sweep.unref();
 
   return {
-    holdMs,
     create,
     attachHold,
     socketClosed,
@@ -429,7 +466,7 @@ export function createQuestions(db, {
 }
 
 // --------------------------------------------------------------------------
-// F3c choice-answer serialization (pure; exported for tests)
+// F3c choice-answer serialization (pure helper)
 // --------------------------------------------------------------------------
 // Compacts a board answer body into the deny-reason tail. The frame the live
 // validation proved graceful is "User answered via Fleet Deck: <answer>", so
@@ -442,7 +479,7 @@ export function createQuestions(db, {
 // shorter `header` when the payload lets us match it. Values may be a string
 // or an array of labels (multiSelect). Returns null when the body carries
 // nothing usable — the HTTP layer turns that into a 400.
-export function serializeChoiceAnswer(row, body) {
+function serializeChoiceAnswer(row, body) {
   if (typeof body?.text === 'string' && body.text.trim()) return clipQuestion(body.text.trim());
   const answers = body?.answers;
   if (!answers || typeof answers !== 'object' || Array.isArray(answers)) return null;
@@ -459,7 +496,7 @@ export function serializeChoiceAnswer(row, body) {
 // F3d detection helpers (pure functions; exported for tests)
 // --------------------------------------------------------------------------
 
-export const CHOICE_RE = /\b(should I|do you want|would you like|which|prefer|option [AB1-9]|let me know)\b/i;
+const CHOICE_RE = /\b(should I|do you want|would you like|which|prefer|option [AB1-9]|let me know)\b/i;
 
 // Regex heuristic, NO model call. A trailing question is:
 //   (1) the last non-empty line of the final paragraph ends with '?'

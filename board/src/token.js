@@ -58,7 +58,8 @@ export function initToken() {
   state = { token: fromUrl || readStored(), unauthorized: false, attempts: 0 };
 }
 
-export function getToken() {
+// in-file only — authHeaders()/wsUrl() below are the exported surface over it.
+function getToken() {
   if (!booted) initToken(); // a request before render() must still be armed
   return state.token;
 }

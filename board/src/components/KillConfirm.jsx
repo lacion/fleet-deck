@@ -1,4 +1,5 @@
 import React, { useEffect, useRef } from 'react';
+import { useModal } from '../useModal.js';
 
 // v1.8 — the kill confirmation. Killing is the one board action that ends an
 // agent mid-thought, so it NEVER happens on a single click: the card's ☠ chip
@@ -12,6 +13,9 @@ import React, { useEffect, useRef } from 'react';
 // killOpen ref there), and the hazard button is the only affirmative.
 export default function KillConfirm({ callsign, tmuxWindow, alive, busy, onCancel, onConfirm }) {
   const cancelRef = useRef(null);
+  const dialogRef = useRef(null);
+  // M-A2 — trap Tab + restore focus on close; the SAFE button owns initial focus.
+  useModal(dialogRef, { initialFocus: false });
   // the SAFE choice takes focus on open — a stray ⏎ cancels, never kills
   useEffect(() => { cancelRef.current?.focus(); }, []);
 
@@ -24,6 +28,7 @@ export default function KillConfirm({ callsign, tmuxWindow, alive, busy, onCance
         role="dialog"
         aria-modal="true"
         aria-label={`Kill ${callsign}`}
+        ref={dialogRef}
         onClick={(e) => e.stopPropagation()}
       >
         <div style={{ display: 'flex', alignItems: 'center' }}>

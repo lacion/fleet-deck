@@ -195,7 +195,7 @@ a { color: var(--act); } a:hover { opacity: .85; }
 .fd-feedline .m { color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .fd-feedline .m.hot { color: var(--hazard); }
 .tag-join { color: var(--faint); } .tag-tool { color: var(--dim); } .tag-ask { color: var(--act); }
-.tag-confl { color: var(--hazard); } .tag-mail { color: var(--m-comet); } .tag-ship { color: var(--ok); }
+.tag-confl { color: var(--hazard); } .tag-mail { color: var(--m-comet); }
 
 /* ============ inbox rail ============ */
 .fd-inbox { width: 340px; flex: none; border-left: 1px solid var(--act-bg); background: var(--bg); display: flex; flex-direction: column; min-height: 0; }

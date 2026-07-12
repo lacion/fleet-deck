@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { human, basename, questionView } from '../util.js';
 import { renderMarkdown, planTitle } from '../markdown.js';
-import { answerQuestion, dismissQuestion } from '../api.js';
+import { answerQuestion, dismissQuestion, reasonOf } from '../api.js';
+import { registerQuestion } from '../qbus.js';
 
 // The fixed right rail: NEEDS YOU. Global (never repo-filtered — the human's
 // attention is the one resource that isn't per-project), badged by repo.
@@ -28,7 +29,7 @@ function CountdownRing({ q, now }) {
   );
 }
 
-function PermissionBody({ q, view, busy, onAnswer }) {
+function PermissionBody({ view, busy, onAnswer }) {
   return (
     <>
       {view.command && !view.diff && <div className="cmd">{view.command}</div>}
@@ -59,9 +60,15 @@ function PermissionBody({ q, view, busy, onAnswer }) {
 // daemon denies the hook AND mails the planner to stop without executing).
 function PlanBody({ q, busy, onAnswer }) {
   const md = q.payload?.tool_input?.plan || '';
+  // M-P7 — parse the plan markdown once per body text, not on every 1 s render.
+  // M-P2 — a resolved snapshot may omit the plan body; render a placeholder
+  // rather than an empty box (never assume the body is present).
+  const html = useMemo(() => renderMarkdown(md), [md]);
   return (
     <>
-      <div className="fd-md rail" dangerouslySetInnerHTML={{ __html: renderMarkdown(md) }} />
+      {md.trim()
+        ? <div className="fd-md rail" dangerouslySetInnerHTML={{ __html: html }} />
+        : <div className="fd-md rail"><em>plan text not included in this snapshot</em></div>}
       <div className="fd-btnrow">
         <button type="button" className="fd-allow" disabled={busy} onClick={() => onAnswer({ behavior: 'allow' }, 'approve')}>
           Approve <span className="k">y</span>
@@ -83,7 +90,7 @@ function PlanBody({ q, busy, onAnswer }) {
   );
 }
 
-function ChoiceBody({ q, view, busy, onAnswer }) {
+function ChoiceBody({ view, busy, onAnswer, bindKeys }) {
   const questions = view.questions || [];
   const [picked, setPicked] = useState({}); // question text -> label | [labels]
   const multi = questions.length > 1 || questions.some((x) => x.multiSelect);
@@ -104,6 +111,26 @@ function ChoiceBody({ q, view, busy, onAnswer }) {
       return { ...prev, [question.question]: cur === opt.label ? undefined : opt.label };
     });
   };
+
+  // M-F6 — expose "act on the n-th option" so App's 1-9 keys reach this card
+  // through the registry, exactly as clicking the n-th option button would
+  // (options are numbered across all questions in render order).
+  useEffect(() => {
+    bindKeys?.({
+      choose: (n) => {
+        if (busy) return;
+        let idx = n - 1;
+        for (const question of questions) {
+          const opts = question.options || [];
+          if (idx < opts.length) { pick(question, opts[idx]); return; }
+          idx -= opts.length;
+        }
+      },
+    });
+    return () => bindKeys?.(null);
+    // pick closes over `picked`/`multi`; re-bind when those (or busy) change
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, picked, busy, bindKeys]);
 
   const complete = questions.every((x) => {
     const v = picked[x.question];
@@ -155,18 +182,25 @@ function ChoiceBody({ q, view, busy, onAnswer }) {
   );
 }
 
-function FreeformBody({ q, offline, busy, onAnswer }) {
+function FreeformBody({ offline, busy, onAnswer, bindKeys }) {
   const [draft, setDraft] = useState('');
+  const taRef = useRef(null);
   const send = () => { if (draft.trim()) onAnswer({ text: draft.trim() }, 'sent'); };
+  // M-F6 — App's Enter-on-a-selected-freeform focuses the textarea through this
+  // handle instead of a document.querySelector('textarea').
+  useEffect(() => {
+    bindKeys?.({ focusInput: () => taRef.current?.focus() });
+    return () => bindKeys?.(null);
+  }, [bindKeys]);
   return (
     <>
       <div className="fd-freerow">
         <textarea
+          ref={taRef}
           className="fd-input"
           rows={2}
           placeholder="Type an answer…"
           value={draft}
-          data-qid={q.id}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
@@ -184,7 +218,7 @@ function FreeformBody({ q, offline, busy, onAnswer }) {
 }
 
 // Schema-driven basic form for elicitation, with a raw-JSON fallback.
-function ElicitationBody({ q, view, busy, onAnswer }) {
+function ElicitationBody({ view, busy, onAnswer }) {
   const props = view.schema?.properties && typeof view.schema.properties === 'object'
     ? Object.entries(view.schema.properties)
     : [];
@@ -301,7 +335,7 @@ function statusLine(q, session) {
   return null;
 }
 
-export function QuestionCard({ q, session, now, selected, onSelect, onDismissed }) {
+function QuestionCard({ q, session, now, selected, onSelect, onDismissed }) {
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState(null); // transient result of an answer POST
   // v1.8 — dismiss: the question you already answered in the terminal. Low
@@ -317,55 +351,71 @@ export function QuestionCard({ q, session, now, selected, onSelect, onDismissed 
   const done = !pending;
   const repoName = session?.repo_name || (session?.repo_id ? basename(session.repo_id) : null);
   const offline = session?.col === 'offline';
+  // M-P7 — the plan title is derived from the plan body; memo it so a 1 s
+  // re-render doesn't re-scan the markdown. M-P2 — planTitle already degrades
+  // to 'untitled plan' when the body is absent.
+  const planMd = isPlan ? (q.payload?.tool_input?.plan || '') : '';
+  const title = useMemo(
+    () => (isPlan ? planTitle(planMd) : view.title),
+    [isPlan, planMd, view.title],
+  );
 
-  const onAnswer = async (body, label) => {
+  const onAnswer = useCallback(async (body, label) => {
     setBusy(true);
     setNote(null);
-    try {
-      const res = await answerQuestion(q.id, body);
-      if (res.ok) {
-        setNote({
-          cls: q.kind === 'freeform' ? 'act' : 'ok',
-          text: q.kind === 'freeform'
-            ? (offline ? `→ ${label} · queued — delivers on resume` : `→ ${label} · queued — delivers at next turn boundary — idle sessions usually wake within seconds`)
-            : `→ ${label} — sent to agent`,
-        });
-      } else {
-        setNote({ cls: 'hazard', text: res.json?.err || `answer failed (${res.status})` });
-      }
-    } catch {
-      setNote({ cls: 'hazard', text: 'daemon unreachable — try again' });
-    } finally {
-      setBusy(false);
+    const res = await answerQuestion(q.id, body);
+    if (res.ok) {
+      setNote({
+        cls: q.kind === 'freeform' ? 'act' : 'ok',
+        text: q.kind === 'freeform'
+          ? (offline ? `→ ${label} · queued — delivers on resume` : `→ ${label} · queued — delivers at next turn boundary — idle sessions usually wake within seconds`)
+          : `→ ${label} — sent to agent`,
+      });
+    } else {
+      setNote({ cls: 'hazard', text: reasonOf(res, `answer failed (${res.status})`) });
     }
-  };
+    setBusy(false);
+  }, [q.id, q.kind, offline]);
 
   const doDismiss = async () => {
     if (dismissing) return;
     setDismissing(true);
     setNote(null);
-    try {
-      const res = await dismissQuestion(q.id);
-      if (res.ok && res.json?.ok !== false) {
-        // gone from the rail immediately; the next snapshot agrees (expired)
-        onDismissed?.(q.id);
-        return; // unmounting — don't touch state
-      }
-      setNote({ cls: 'hazard', text: res.json?.reason || res.json?.err || `dismiss failed (${res.status})` });
-    } catch {
-      setNote({ cls: 'hazard', text: 'daemon unreachable — try again' });
+    const res = await dismissQuestion(q.id);
+    if (res.ok && res.json?.ok !== false) {
+      // gone from the rail immediately; the next snapshot agrees (expired)
+      onDismissed?.(q.id);
+      return; // unmounting — don't touch state
     }
+    setNote({ cls: 'hazard', text: reasonOf(res, `dismiss failed (${res.status})`) });
     setDismissing(false);
   };
 
   const resolved = statusLine(q, session);
   const interactive = pending && !holdLost;
 
+  // M-F6 — the imperative handle App's hotkeys reach this card by. Registered
+  // per id; the body components fill in `bodyApi` (choose / focusInput) so no
+  // CSS class is load-bearing for the keyboard path.
+  const cardRef = useRef(null);
+  const bodyApi = useRef({});
+  const bindKeys = useCallback((api) => { bodyApi.current = api || {}; }, []);
+  useEffect(() => {
+    const handle = {
+      allow: () => { if (interactive && !busy) onAnswer({ behavior: 'allow' }, isPlan ? 'approve' : 'allow'); },
+      deny: () => { if (interactive && !busy) onAnswer({ behavior: 'deny' }, 'deny'); },
+      choose: (n) => { if (interactive && !busy) bodyApi.current.choose?.(n); },
+      focusInput: () => { bodyApi.current.focusInput?.(); },
+      scrollIntoView: () => { cardRef.current?.scrollIntoView({ block: 'nearest' }); },
+    };
+    return registerQuestion(q.id, handle);
+  }, [q.id, interactive, busy, isPlan, onAnswer]);
+
   return (
     <div
+      ref={cardRef}
       className={`fd-q${selected && pending ? ' sel' : ''}${done ? ' done' : ''}`}
       onClick={() => { if (pending) onSelect(); }}
-      data-qid={q.id}
     >
       <div className="row1">
         <span className="callsign">{q.callsign || q.session_id}</span>
@@ -389,15 +439,15 @@ export function QuestionCard({ q, session, now, selected, onSelect, onDismissed 
           </button>
         )}
       </div>
-      <div className="title">{isPlan ? planTitle(q.payload?.tool_input?.plan) : view.title}</div>
+      <div className="title">{title}</div>
       {holdLost && (
         <div className="status hazard">⚠ hold lost (daemon restarted) — decide in the terminal</div>
       )}
       {interactive && isPlan && <PlanBody q={q} busy={busy} onAnswer={onAnswer} />}
-      {interactive && q.kind === 'permission' && !isPlan && <PermissionBody q={q} view={view} busy={busy} onAnswer={onAnswer} />}
-      {interactive && q.kind === 'choice' && <ChoiceBody q={q} view={view} busy={busy} onAnswer={onAnswer} />}
-      {interactive && q.kind === 'freeform' && <FreeformBody q={q} offline={offline} busy={busy} onAnswer={onAnswer} />}
-      {interactive && q.kind === 'elicitation' && <ElicitationBody q={q} view={view} busy={busy} onAnswer={onAnswer} />}
+      {interactive && q.kind === 'permission' && !isPlan && <PermissionBody view={view} busy={busy} onAnswer={onAnswer} />}
+      {interactive && q.kind === 'choice' && <ChoiceBody view={view} busy={busy} onAnswer={onAnswer} bindKeys={bindKeys} />}
+      {interactive && q.kind === 'freeform' && <FreeformBody offline={offline} busy={busy} onAnswer={onAnswer} bindKeys={bindKeys} />}
+      {interactive && q.kind === 'elicitation' && <ElicitationBody view={view} busy={busy} onAnswer={onAnswer} />}
       {note && pending && <div className={`status ${note.cls}`}>{note.text}</div>}
       {resolved && <div className={`status ${resolved.cls}`}>{resolved.text}</div>}
     </div>

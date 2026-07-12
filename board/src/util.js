@@ -48,6 +48,24 @@ export function basename(p) {
   return i === -1 ? s : s.slice(i + 1);
 }
 
+// M-S1 — `remote.url` is harvested by the daemon from the AGENT's terminal
+// output, which is the least-trusted party in the whole system. It reaches the
+// board and lands in window.open()/<a href>, so a `javascript:` (or `data:`)
+// URL there would EXECUTE on click. Nothing legitimate lives outside claude.ai,
+// so gate every use of that URL through here: it returns the URL only when it
+// parses to https on claude.ai (or a subdomain), and null for everything else —
+// the caller then renders the plain, non-clickable chip instead of a live link.
+export function safeUrl(u) {
+  try {
+    const url = new URL(String(u ?? '').trim());
+    if (url.protocol === 'https:'
+      && (url.hostname === 'claude.ai' || url.hostname.endsWith('.claude.ai'))) {
+      return url.href;
+    }
+  } catch { /* not a parseable URL */ }
+  return null;
+}
+
 // Every family modelFamily() can name needs a matching .fd-mbadge.<fam> rule in
 // app.css and a --m-<fam>/--m-<fam>-bg token pair in BOTH themes of tokens.css.
 // board-util.test.mjs enforces that mechanically.
@@ -61,7 +79,8 @@ export const MODEL_FAMILIES = ['opus', 'sonnet', 'haiku', 'fable', 'quill', 'com
 // Version digits arrive as separate '-' tokens ('opus-4-8'), so a RUN of numeric
 // tokens is collapsed into one dotted version IN PLACE — that keeps 'fable-5-mini'
 // reading as 'Fable 5 Mini' rather than reordering it.
-export function parseModel(model) {
+// (in-file only — prettyModel/modelShort are the exported surface over it.)
+function parseModel(model) {
   let s = String(model ?? '').trim();
   if (!s) return null;
 

@@ -58,9 +58,24 @@ export function tailLines(transcriptPath, { maxBytes = 262_144 } = {}) {
 // detection is best-effort and must never disturb the Stop response.
 export function lastAssistantText(transcriptPath, { maxBytes = 2_000_000 } = {}) {
   try {
+    let newest = true;
     for (const { line } of tailLines(transcriptPath, { maxBytes })) {
+      // Most transcript rows are user/tool_result entries, occasionally very
+      // large ones. Avoid parsing them merely to learn they are not assistant
+      // output; the structural checks below remain authoritative.
+      const maybeAssistant = line.includes('"assistant"');
       let entry;
-      try { entry = JSON.parse(line); } catch { continue; }
+      try { entry = JSON.parse(line); } catch {
+        // The newest non-empty line may still be in the middle of an append.
+        // Falling through to an older assistant turn can resurrect a question
+        // the user already answered, so "not stable yet" is represented as no
+        // result. Corruption deeper in history stays best-effort-skippable.
+        if (newest) return null;
+        newest = false;
+        continue;
+      }
+      newest = false;
+      if (!maybeAssistant) continue;
       if (entry?.type !== 'assistant' || entry.isSidechain === true) continue;
       const content = entry.message?.content;
       const text = Array.isArray(content)
@@ -83,10 +98,9 @@ export function lastAssistantText(transcriptPath, { maxBytes = 2_000_000 } = {})
 //     run of a resumed session (`claude --resume` appends to the same file), so
 //     it is not evidence about the model running now. Finding one means "no
 //     evidence yet", not "the old model".
-//   • It reads a small window first (256 KB is many turns) and only pays for a
-//     2 MB read if that window was truncated and turned up nothing — which
-//     happens when a single huge tool_result has pushed the last assistant
-//     entry far from the end of the file.
+//   • It reads a tiny common-case window first, then 256 KB, and only pays for
+//     a 2 MB read when a huge tool_result pushed the last assistant entry far
+//     from EOF. Most hook events therefore read 16 KB rather than 256 KB.
 function scanForModel(transcriptPath, maxBytes, minOffset) {
   const it = tailLines(transcriptPath, { maxBytes });
   for (const { line, offset } of it) {
@@ -105,9 +119,12 @@ function scanForModel(transcriptPath, maxBytes, minOffset) {
 
 export function lastAssistantModel(transcriptPath, { minOffset = 0 } = {}) {
   try {
-    const near = scanForModel(transcriptPath, 262_144, minOffset);
+    const near = scanForModel(transcriptPath, 16_384, minOffset);
     if (near.found) return near.model;
     if (!near.truncated) return null; // we saw the whole file; there is nothing more to find
+    const wider = scanForModel(transcriptPath, 262_144, minOffset);
+    if (wider.found) return wider.model;
+    if (!wider.truncated) return null;
     return scanForModel(transcriptPath, 2_000_000, minOffset).model;
   } catch { /* unreadable/absent transcript: leave the model as it was */ }
   return null;

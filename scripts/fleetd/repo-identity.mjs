@@ -8,17 +8,55 @@
 //   branch    = `git rev-parse --abbrev-ref HEAD` (server-side; short TTL —
 //               branches change under a session)
 //   non-git dir: repo_id = cwd
-// Cache per cwd: one subprocess round per unknown cwd, not per event.
+// Cache per cwd: one subprocess round per unknown cwd, not per event. Both
+// caches are deliberately bounded and expiring: cwd values come from external
+// hook/CLI input, and a daemon can otherwise retain every directory it has ever
+// seen for its whole lifetime.
 
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const identityCache = new Map(); // cwd -> {repo_id, repo_name, worktree, is_git}
-const branchCache = new Map();   // cwd -> {branch, at}
+const identityCache = new Map(); // cwd -> {value, expiresAt}; insertion order is LRU order
+const branchCache = new Map();   // cwd -> {value, expiresAt}; insertion order is LRU order
+const CACHE_MAX = 512;
+const IDENTITY_TTL_MS = 5 * 60_000;
+// A directory can become a repository in place (`git init`). Keeping that
+// negative answer for minutes caused worktree spawn requests to keep returning
+// 409 until daemon restart, so absence gets only a short quiet-period cache.
+const NEGATIVE_TTL_MS = 2_000;
 const BRANCH_TTL_MS = 20_000;
 
+function cacheGet(cache, key, now = Date.now()) {
+  const hit = cache.get(key);
+  if (!hit) return undefined;
+  if (hit.expiresAt <= now) {
+    cache.delete(key);
+    return undefined;
+  }
+  // Map preserves insertion order. Reinsert a hit so the size cap evicts the
+  // least-recently-used cwd, not merely the oldest-created cwd.
+  cache.delete(key);
+  cache.set(key, hit);
+  return hit.value;
+}
+
+function cacheSet(cache, key, value, ttlMs, now = Date.now()) {
+  cache.delete(key);
+  cache.set(key, { value, expiresAt: now + ttlMs });
+  while (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value);
+}
+
+function isDirectory(cwd) {
+  try { return fs.statSync(cwd).isDirectory(); } catch { return false; }
+}
+
 function git(args, cwd) {
+  // These calls intentionally remain synchronous for now: derive.mjs consumes
+  // deriveRepo()/branchOf() inline while constructing SQL updates. Moving git
+  // off the daemon event loop is worthwhile, but requires making that caller
+  // chain async as one coordinated change; silently changing this module's
+  // return contract would instead write Promises into session state.
   try {
     const out = execFileSync('git', args, {
       cwd, timeout: 1500, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
@@ -35,8 +73,15 @@ function canon(p) {
 
 export function deriveRepo(cwd) {
   if (!cwd) return { repo_id: null, repo_name: null, worktree: null, is_git: false };
-  const hit = identityCache.get(cwd);
-  if (hit) return hit;
+  // Validate before consulting the cache too: a formerly valid directory may
+  // have been removed, and git's 1.5 s timeout is wasted work for files/missing
+  // paths. Invalid paths are not cached so a later mkdir is noticed at once.
+  if (!isDirectory(cwd)) {
+    const c = canon(cwd);
+    return { repo_id: c, repo_name: path.basename(c), worktree: c, is_git: false };
+  }
+  const hit = cacheGet(identityCache, cwd);
+  if (hit !== undefined) return hit;
 
   let out;
   const common = git(['rev-parse', '--git-common-dir'], cwd);
@@ -57,17 +102,19 @@ export function deriveRepo(cwd) {
     const c = canon(cwd);
     out = { repo_id: c, repo_name: path.basename(c), worktree: c, is_git: false };
   }
-  identityCache.set(cwd, out);
+  cacheSet(identityCache, cwd, out, out.is_git ? IDENTITY_TTL_MS : NEGATIVE_TTL_MS);
   return out;
 }
 
 export function branchOf(cwd) {
-  if (!cwd) return null;
+  if (!cwd || !isDirectory(cwd)) return null;
   const now = Date.now();
-  const hit = branchCache.get(cwd);
-  if (hit && now - hit.at < BRANCH_TTL_MS) return hit.branch;
+  const hit = cacheGet(branchCache, cwd, now);
+  if (hit !== undefined) return hit;
   const branch = git(['rev-parse', '--abbrev-ref', 'HEAD'], cwd);
-  branchCache.set(cwd, { branch, at: now });
+  // A null branch commonly means "not a repo yet", so it gets the same short
+  // retry horizon as a negative identity instead of hiding a later git init.
+  cacheSet(branchCache, cwd, branch, branch == null ? NEGATIVE_TTL_MS : BRANCH_TTL_MS, now);
   return branch;
 }
 

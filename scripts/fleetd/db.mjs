@@ -1,18 +1,30 @@
 // db.mjs — SQLite store for fleetd (node:sqlite DatabaseSync, WAL mode).
 // All timestamps are ms epoch integers.
 
-// Suppress ONLY the node:sqlite ExperimentalWarning, even when the process was
-// started without --no-warnings=ExperimentalWarning (e.g. `node fleetd.mjs`
-// by hand). Other warnings are re-printed in the default format.
-process.removeAllListeners('warning');
-process.on('warning', (w) => {
-  if (w.name === 'ExperimentalWarning' && /sqlite/i.test(String(w.message))) return;
-  console.error(`(node:${process.pid}) ${w.name}: ${w.message}`);
-});
+// Suppress ONLY the warning raised while node:sqlite itself is imported. WHY:
+// removing `warning` listeners here clobbers handlers installed by launchers,
+// test runners and observability tooling, while installing our own formatter
+// also loses Node's normal warning detail. Intercepting the one emission at its
+// source leaves every pre-existing listener and every unrelated warning alone.
+const emitWarning = process.emitWarning;
+process.emitWarning = function fleetdSqliteWarningFilter(warning, type, ...args) {
+  const name = warning instanceof Error
+    ? warning.name
+    : (typeof type === 'string' ? type : type?.type);
+  const message = warning instanceof Error ? warning.message : String(warning);
+  if (name === 'ExperimentalWarning' && /^SQLite is an experimental feature\b/i.test(message)) return;
+  return emitWarning.call(this, warning, type, ...args);
+};
 
-const { DatabaseSync } = await import('node:sqlite');
+let DatabaseSync;
+try {
+  ({ DatabaseSync } = await import('node:sqlite'));
+} finally {
+  process.emitWarning = emitWarning;
+}
 
 const DDL = `
+PRAGMA busy_timeout = 5000;
 PRAGMA journal_mode = WAL;
 CREATE TABLE IF NOT EXISTS sessions (
   session_id        TEXT PRIMARY KEY,

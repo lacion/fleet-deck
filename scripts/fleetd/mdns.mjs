@@ -56,10 +56,10 @@ export const MDNS_PORT = 5353;
 export const TYPE = { A: 1, PTR: 12, TXT: 16, AAAA: 28, SRV: 33, ANY: 255 };
 const TYPE_NAME = Object.fromEntries(Object.entries(TYPE).map(([k, v]) => [v, k]));
 
-export const CLASS_IN = 1;
-export const CLASS_ANY = 255;    // a QCLASS of 255 ("any class") also matches IN
-export const FLUSH_BIT = 0x8000; // top bit of an ANSWER's class: cache-flush
-export const QU_BIT = 0x8000;    // top bit of a QUESTION's class: unicast reply wanted
+const CLASS_IN = 1;
+const CLASS_ANY = 255;    // a QCLASS of 255 ("any class") also matches IN
+const FLUSH_BIT = 0x8000; // top bit of an ANSWER's class: cache-flush
+const QU_BIT = 0x8000;    // top bit of a QUESTION's class: unicast reply wanted
 const QR_BIT = 0x8000;           // top bit of the header flags: this is a response
 const FLAGS_RESPONSE = 0x8400;   // QR + AA — an mDNS responder is always authoritative
 
@@ -67,7 +67,7 @@ const FLAGS_RESPONSE = 0x8400;   // QR + AA — an mDNS responder is always auth
 const DEFAULT_TTL = { A: 120, SRV: 120, PTR: 4500, TXT: 4500 };
 const LEGACY_TTL = 10; // §6.7 — a legacy resolver's cache must not outlive us for long
 
-export const SERVICE_TYPES = ['_fleetdeck._tcp.local', '_http._tcp.local'];
+const SERVICE_TYPES = ['_fleetdeck._tcp.local', '_http._tcp.local'];
 export const META_QUERY = '_services._dns-sd._udp.local';
 
 const ANNOUNCE_DELAYS_MS = [0, 1000, 2000]; // RFC 6762 §8.3: 2-3 announcements, ~1s apart
@@ -192,7 +192,7 @@ export function encodeRecord(record) {
   return Buffer.concat([name, head, rdlength, rdata]);
 }
 
-export function parseHeader(buf) {
+function parseHeader(buf) {
   if (!Buffer.isBuffer(buf) || buf.length < 12) return null;
   return {
     id: buf.readUInt16BE(0),

@@ -1,9 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useFleetState } from './useFleetState.js';
-import { hhmmss, basename, spawnTermable } from './util.js';
+import { useSpawnActions } from './useSpawnActions.js';
+import { ClockContext } from './clock.jsx';
+import { getQuestion } from './qbus.js';
+import { hhmmss, basename, safeUrl, spawnTermable } from './util.js';
 import {
-  sendMail, markPlan, cleanup, reviveSpawn, enableRemote, killSpawn,
-  fetchWorktrees, removeWorktree,
+  sendMail, markPlan, cleanup, killSpawn,
+  fetchWorktrees, removeWorktree, reasonOf,
 } from './api.js';
 import { useAuth, saveToken } from './token.js';
 import BoardLanes from './components/BoardLanes.jsx';
@@ -24,6 +27,20 @@ const TermModal = React.lazy(() => import('./components/TermModal.jsx'));
 const TermGrid = React.lazy(() => import('./components/TermGrid.jsx'));
 
 const WS_LABEL = { live: 'LIVE', reconnecting: 'RECONNECTING', offline: 'OFFLINE' };
+
+// Stable empty singletons for absent snapshot fields — a fresh `[]`/`{}` per
+// render would break the memoized board (M-P4) on every 1 s clock tick.
+const EMPTY_ARR = [];
+const EMPTY_OBJ = {};
+
+// v1.4 — the identity a live terminal captures at open, so its stream survives
+// the card mutating (or vanishing) mid-view. Pure, so it lives at module scope
+// and both openTerm and openGrid share it.
+const termIdentity = (s) => ({
+  spawnId: s.spawn.spawn_id,
+  callsign: s.callsign || s.session_id,
+  window: s.spawn.tmux_window,
+});
 
 export default function App() {
   const { snap, status } = useFleetState();
@@ -64,12 +81,10 @@ export default function App() {
   // shared feedback strip (Clear + revive + remote):
   // {hd?, msg, orphans?, url?} | {hd?, err}
   const [clearNote, setClearNote] = useState(null);
-  // v1.5 revive — spawn_ids with a revive POST in flight, + the bulk action
-  const [reviving, setReviving] = useState(() => new Set());
-  const [revivingAll, setRevivingAll] = useState(false);
-  // v1.6 remote control — spawn_ids with an enable POST in flight (the
-  // daemon types /rc and harvests the claude.ai link: ~3-6 s round-trip)
-  const [enablingRemote, setEnablingRemote] = useState(() => new Set());
+  // M-F2 — ONE owner of the revive + enable-remote POSTs and their per-spawn
+  // in-flight sets, shared by the card chips (here) and the drawer's OWNED PANE.
+  // A session's card chip and its drawer button can no longer each fire a POST.
+  const { reviving, enabling, revivingAll, revive, reviveAll, enableRemote: enableRemoteAction } = useSpawnActions();
   const clearTimer = useRef(null);
   const prevConflicts = useRef({ keys: null, sawData: false });
   // Mirrors "a live terminal has the keyboard" for the keydown handler — the
@@ -122,8 +137,8 @@ export default function App() {
     if (isData) store.sawData = true;
   }, [snap]);
 
-  const sessions = snap.sessions || [];
-  const questions = snap.questions || [];
+  const sessions = snap.sessions || EMPTY_ARR;
+  const questions = snap.questions || EMPTY_ARR;
   const pendingQs = useMemo(() => questions.filter((q) => q.status === 'pending'), [questions]);
 
   // keep a valid rail selection
@@ -161,15 +176,15 @@ export default function App() {
       } else {
         const q = pendingQs[idx];
         if (!q) return;
-        const card = document.querySelector(`.fd-q[data-qid="${q.id}"]`);
-        if (q.kind === 'permission' && (e.key === 'y' || e.key === 'n')) {
-          card?.querySelector(e.key === 'y' ? '.fd-allow' : '.fd-deny')?.click();
-        } else if (q.kind === 'choice' && /^[1-9]$/.test(e.key)) {
-          card?.querySelectorAll('.fd-opt')[Number(e.key) - 1]?.click();
-        } else if (q.kind === 'freeform' && e.key === 'Enter') {
-          card?.querySelector('textarea')?.focus();
-          e.preventDefault();
-        }
+        // M-F6 — reach the selected card through its registered imperative
+        // handle, not document.querySelector('.fd-allow') etc. A renamed CSS
+        // class can no longer silently kill y/n/1-9.
+        const h = getQuestion(q.id);
+        if (!h) return;
+        if (q.kind === 'permission' && e.key === 'y') h.allow?.();
+        else if (q.kind === 'permission' && e.key === 'n') h.deny?.();
+        else if (q.kind === 'choice' && /^[1-9]$/.test(e.key)) h.choose?.(Number(e.key));
+        else if (q.kind === 'freeform' && e.key === 'Enter') { h.focusInput?.(); e.preventDefault(); }
       }
     };
     window.addEventListener('keydown', onKey);
@@ -181,7 +196,7 @@ export default function App() {
   // v1.2 spawn capability — ALL spawn UI hides when unavailable
   const spawnCap = snap.spawn || null;
   const spawnAvailable = !!spawnCap?.available;
-  const conflicts = snap.conflicts || [];
+  const conflicts = snap.conflicts || EMPTY_ARR;
   const byId = new Map(sessions.map((s) => [s.session_id, s]));
   const csOf = (sid) => byId.get(sid)?.callsign || sid;
 
@@ -217,128 +232,87 @@ export default function App() {
   // their mail/questions, kills dead scoped panes, and LISTS (never deletes)
   // orphaned worktrees for the human to remove.
   const hasOffline = sessions.some((s) => s.col === 'offline');
-  // one strip, many reporters (Clear, revive): ms=0 stays until dismissed
-  const showNote = (note, ms) => {
+  // one strip, many reporters (Clear, revive, remote): ms=0 stays until dismissed.
+  // Stable identity (refs + setters only) so the memoized action reporters below
+  // don't churn every render.
+  const showNote = useCallback((note, ms) => {
     clearTimeout(clearTimer.current);
     setClearNote(note);
     if (ms) clearTimer.current = setTimeout(() => setClearNote(null), ms);
-  };
+  }, []);
   const doClear = async () => {
     if (clearing) return;
     setClearing(true);
-    try {
-      const res = await cleanup();
-      if (res.ok && res.json?.ok !== false) {
-        const j = res.json || {};
-        const orphans = Array.isArray(j.orphan_worktrees) ? j.orphan_worktrees : [];
-        const msg = `cleared ${j.archived ?? 0} offline · ${j.conflicts_cleared ?? 0} conflicts`
-          + ` · ${(j.questions_purged ?? 0) + (j.questions_expired ?? 0)} questions`
-          + ` · ${j.mail_expired ?? 0} mail · ${j.windows_killed ?? 0} windows · feed wiped`;
-        // orphan paths need reading time — that strip stays until dismissed
-        showNote({ msg, orphans }, orphans.length ? 0 : 8000);
-      } else {
-        showNote({ err: res.json?.err || `clear failed (${res.status})` }, 8000);
-      }
-    } catch {
-      showNote({ err: 'daemon unreachable' }, 8000);
-    } finally {
-      setClearing(false);
+    const res = await cleanup();
+    if (res.ok && res.json?.ok !== false) {
+      const j = res.json || {};
+      const orphans = Array.isArray(j.orphan_worktrees) ? j.orphan_worktrees : [];
+      const msg = `cleared ${j.archived ?? 0} offline · ${j.conflicts_cleared ?? 0} conflicts`
+        + ` · ${(j.questions_purged ?? 0) + (j.questions_expired ?? 0)} questions`
+        + ` · ${j.mail_expired ?? 0} mail · ${j.windows_killed ?? 0} windows · feed wiped`;
+      // orphan paths need reading time — that strip stays until dismissed
+      showNote({ msg, orphans }, orphans.length ? 0 : 8000);
+    } else {
+      showNote({ err: reasonOf(res, `clear failed (${res.status})`) }, 8000);
     }
+    setClearing(false);
   };
   useEffect(() => () => clearTimeout(clearTimer.current), []);
 
   // v1.5 — revive dead board-spawned agents (spawn.revivable). Success is
-  // silent: the daemon moves the card to QUEUED ("reviving…") and it flips
-  // live on the resumed session's first hook. Only failures hit the strip.
-  const markReviving = (ids, on) => setReviving((prev) => {
-    const next = new Set(prev);
-    for (const id of ids) { if (on) next.add(id); else next.delete(id); }
-    return next;
-  });
-  const reviveReason = (res) => res.json?.reason || res.json?.err || `HTTP ${res.status}`;
-  const doRevive = async (s) => {
-    const id = s.spawn?.spawn_id;
-    if (!id || reviving.has(id)) return;
-    markReviving([id], true);
-    try {
-      const res = await reviveSpawn(id);
-      if (!res.ok || res.json?.ok === false) {
-        showNote({ hd: '✗ REVIVE', err: `${s.callsign || id} — ${reviveReason(res)}` }, 8000);
-      }
-    } catch {
-      showNote({ hd: '✗ REVIVE', err: `${s.callsign || id} — daemon unreachable` }, 8000);
-    } finally {
-      markReviving([id], false);
-    }
-  };
+  // silent: the daemon moves the card to QUEUED ("reviving…") and it flips live
+  // on the resumed session's first hook. Only failures hit the strip. The POST +
+  // in-flight guard live in useSpawnActions; this is just the card-chip reporter.
+  const doRevive = useCallback((s) => {
+    revive(s, (r) => {
+      if (!r.ok) showNote({ hd: '✗ REVIVE', err: `${s.callsign || s.spawn?.spawn_id} — ${r.reason}` }, 8000);
+    });
+  }, [revive, showNote]);
   // Revive all (OFFLINE column head): sequential POSTs, one summary note.
-  const doReviveAll = async (list) => {
-    if (revivingAll || !list.length) return;
-    setRevivingAll(true);
-    markReviving(list.map((s) => s.spawn.spawn_id), true);
-    let okN = 0;
-    const fails = [];
-    for (const s of list) {
-      const label = s.callsign || s.spawn.spawn_id;
-      try {
-        const res = await reviveSpawn(s.spawn.spawn_id);
-        if (res.ok && res.json?.ok !== false) okN += 1;
-        else fails.push(`${label}: ${reviveReason(res)}`);
-      } catch {
-        fails.push(`${label}: daemon unreachable`);
-      }
-      markReviving([s.spawn.spawn_id], false);
-    }
-    setRevivingAll(false);
-    if (fails.length === 0) {
-      showNote({ hd: '✓ REVIVE', msg: `revived ${okN}/${list.length} — cards move to QUEUED` }, 8000);
-    } else {
-      // failure reasons need reading time — stays until dismissed
-      showNote({ hd: '✗ REVIVE', err: `revived ${okN}/${list.length} — ${fails.join('  ·  ')}` }, 0);
-    }
-  };
-
-  // v1.6 — put a board-spawned agent on remote control (card chip; the
-  // drawer's OWNED PANE button reports inline instead). Success surfaces on
-  // the shared strip — with the claude.ai link when the harvest beat the
-  // response — and the card chip flips to the permanent door on the next
-  // snapshot. Failures (409 mid-turn races, dead pane) surface the reason.
-  const doEnableRemote = async (s) => {
-    const id = s.spawn?.spawn_id;
-    if (!id || enablingRemote.has(id)) return;
-    const label = s.callsign || id;
-    setEnablingRemote((prev) => new Set(prev).add(id));
-    try {
-      const res = await enableRemote(id);
-      if (res.ok && res.json?.ok !== false) {
-        const url = res.json?.url || null;
-        if (url) {
-          // the link needs reading/tapping time — stays until dismissed
-          showNote({ hd: '✓ REMOTE', msg: `${label} on remote control —`, url }, 0);
-        } else {
-          showNote({
-            hd: '✓ REMOTE',
-            msg: `${label} on remote control — ${res.json?.pending
-              ? 'still harvesting the claude.ai link; it lands on the card chip'
-              : 'claude.ai link not captured — check the agent’s terminal (▣)'}`,
-          }, 8000);
-        }
+  const doReviveAll = useCallback((list) => {
+    reviveAll(list, ({ okN, total, fails }) => {
+      if (fails.length === 0) {
+        showNote({ hd: '✓ REVIVE', msg: `revived ${okN}/${total} — cards move to QUEUED` }, 8000);
       } else {
-        showNote({ hd: '✗ REMOTE', err: `${label} — ${res.json?.reason || res.json?.err || `HTTP ${res.status}`}` }, 8000);
+        // failure reasons need reading time — stays until dismissed
+        showNote({ hd: '✗ REVIVE', err: `revived ${okN}/${total} — ${fails.join('  ·  ')}` }, 0);
       }
-    } catch {
-      showNote({ hd: '✗ REMOTE', err: `${label} — daemon unreachable` }, 8000);
-    } finally {
-      setEnablingRemote((prev) => { const next = new Set(prev); next.delete(id); return next; });
-    }
-  };
+    });
+  }, [reviveAll, showNote]);
+
+  // v1.6 — put a board-spawned agent on remote control (card chip; the drawer's
+  // OWNED PANE button reports inline instead, off the SAME shared POST). Success
+  // surfaces on the strip — with the claude.ai link when the harvest beat the
+  // response (and only when safeUrl vouches for it — M-S1). Failures (409
+  // mid-turn races, dead pane) surface the reason.
+  const doEnableRemote = useCallback((s) => {
+    const label = s.callsign || s.spawn?.spawn_id;
+    enableRemoteAction(s, (r) => {
+      if (!r.ok) {
+        showNote({ hd: '✗ REMOTE', err: `${label} — ${r.reason}` }, 8000);
+        return;
+      }
+      const url = safeUrl(r.url);
+      if (url) {
+        // the link needs reading/tapping time — stays until dismissed
+        showNote({ hd: '✓ REMOTE', msg: `${label} on remote control —`, url }, 0);
+      } else {
+        showNote({
+          hd: '✓ REMOTE',
+          msg: `${label} on remote control — ${r.pending
+            ? 'still harvesting the claude.ai link; it lands on the card chip'
+            : 'claude.ai link not captured — check the agent’s terminal (▣)'}`,
+        }, 8000);
+      }
+    });
+  }, [enableRemoteAction, showNote]);
 
   // v1.8 — kill a board-spawned agent. The card chip and the drawer button
   // only ASK (this opens the dialog); the POST fires from the dialog's hazard
   // button alone. Success is quiet on the board itself — the card goes OFFLINE
   // on the next snapshot — so the strip carries the confirmation, and every
   // refusal (409 not-offline, 410 gone, 404 unknown) reaches it verbatim.
-  const askKill = (s) => {
+  const askKill = useCallback((s) => {
     if (!s?.spawn?.spawn_id) return;
     setKillAsk({
       spawnId: s.spawn.spawn_id,
@@ -346,32 +320,29 @@ export default function App() {
       window: s.spawn.tmux_window || '',
       alive: s.col !== 'offline',
     });
-  };
+  }, []);
   const doKill = async () => {
     if (!killAsk || killBusy) return;
     const { spawnId, callsign, alive } = killAsk;
     setKillBusy(true);
-    try {
-      // force:true is REQUIRED for a card that isn't offline — the daemon 409s
-      // otherwise. `alive` is exactly that condition (see the dialog's warning).
-      const res = await killSpawn(spawnId, alive);
-      if (res.ok && res.json?.ok !== false) {
-        showNote({ hd: '✓ KILLED', msg: `${callsign} — pane killed · worktree and branch left on disk` }, 8000);
-      } else {
-        const reason = res.json?.reason || res.json?.err;
-        const msg =
-          res.status === 409 ? (reason || 'refused — session is not offline (409)')
-          : res.status === 410 ? (reason || 'window already gone (410)')
-          : res.status === 404 ? (reason || 'unknown spawn (404)')
-          : (reason || `kill failed (${res.status})`);
-        showNote({ hd: '✗ KILL', err: `${callsign} — ${msg}` }, 8000);
-      }
-    } catch {
-      showNote({ hd: '✗ KILL', err: `${callsign} — daemon unreachable` }, 8000);
-    } finally {
-      setKillBusy(false);
-      setKillAsk(null);
+    // force:true is REQUIRED for a card that isn't offline — the daemon 409s
+    // otherwise. `alive` is exactly that condition (see the dialog's warning).
+    const res = await killSpawn(spawnId, alive);
+    if (res.ok && res.json?.ok !== false) {
+      showNote({ hd: '✓ KILLED', msg: `${callsign} — pane killed · worktree and branch left on disk` }, 8000);
+    } else {
+      // res.reason is the daemon's reason (null when it sent none) — status
+      // gives the fallback sentence; a network drop reads "daemon unreachable".
+      const reason = res.reason;
+      const msg =
+        res.status === 409 ? (reason || 'refused — session is not offline (409)')
+        : res.status === 410 ? (reason || 'window already gone (410)')
+        : res.status === 404 ? (reason || 'unknown spawn (404)')
+        : (reason || `kill failed (${res.status})`);
+      showNote({ hd: '✗ KILL', err: `${callsign} — ${msg}` }, 8000);
     }
+    setKillBusy(false);
+    setKillAsk(null);
   };
 
   // v1.9 — worktrees. The daemon runs git per row to answer this, so the board
@@ -395,10 +366,8 @@ export default function App() {
         setWtErr(null);
       } else if (res.status !== 401) {
         // 401 is the token gate's business, not ours
-        setWtErr(res.json?.reason || res.json?.err || `could not list worktrees (${res.status})`);
+        setWtErr(reasonOf(res, `could not list worktrees (${res.status})`));
       }
-    } catch {
-      setWtErr('daemon unreachable');
     } finally {
       setWtLoading(false);
     }
@@ -408,35 +377,27 @@ export default function App() {
   // The POST only. The modal owns the confirmation that precedes force:true and
   // shows the daemon's refusal verbatim; this just reports the outcome back.
   const doRemoveWorktree = async (path, opts) => {
-    try {
-      const res = await removeWorktree(path, opts);
-      if (res.ok && res.json?.ok !== false) return { ok: true, json: res.json };
-      return { ok: false, reason: res.json?.reason || res.json?.err || `remove failed (${res.status})` };
-    } catch {
-      return { ok: false, reason: 'daemon unreachable' };
-    }
+    const res = await removeWorktree(path, opts);
+    if (res.ok && res.json?.ok !== false) return { ok: true, json: res.json };
+    return { ok: false, reason: reasonOf(res, `remove failed (${res.status})`) };
   };
 
   const wtCount = Array.isArray(worktrees) ? worktrees.length : 0;
   const wtHazard = (worktrees || []).some((w) => w.verdict === 'has-work' || w.verdict === 'unknown');
 
-  // v1.4 — open the live terminal for a board-spawned session
-  const termIdentity = (s) => ({
-    spawnId: s.spawn.spawn_id,
-    callsign: s.callsign || s.session_id,
-    window: s.spawn.tmux_window,
-  });
-  const openTerm = (s) => {
+  // v1.4 — open the live terminal for a board-spawned session. useCallback so the
+  // card lane's props stay stable (M-P4); termIdentity is at module scope.
+  const openTerm = useCallback((s) => {
     if (!spawnTermable(s)) return;
     setGrid(null); // the modal and the wall are one keyboard; never both
     setTerm(termIdentity(s));
-  };
+  }, []);
 
   // v1.9 — the wall of screens. Only board-spawned panes exist to be watched: a
   // plain `claude` in your own terminal has no pane the daemon owns.
   const termableSessions = sessions.filter(spawnTermable);
   const watchable = termableSessions.filter((s) => watch.has(s.session_id));
-  const toggleWatch = (s) => {
+  const toggleWatch = useCallback((s) => {
     if (!spawnTermable(s)) return;
     setWatch((prev) => {
       const next = new Set(prev);
@@ -444,7 +405,7 @@ export default function App() {
       else next.add(s.session_id);
       return next;
     });
-  };
+  }, []);
   const openGrid = (list) => {
     const tiles = (list && list.length ? list : termableSessions).filter(spawnTermable).map(termIdentity);
     if (!tiles.length) return;
@@ -469,7 +430,7 @@ export default function App() {
     if (!spawnForm?.planId) return null;
     const res = await markPlan(spawnForm.planId, { status: 'executed', via: `spawn:${json.spawn_id}` });
     if (res.ok) return { ok: true, text: 'plan marked executed' };
-    const reason = res.json?.err || res.json?.reason;
+    const reason = res.reason;
     return {
       ok: false,
       text: res.status === 409
@@ -487,6 +448,10 @@ export default function App() {
   }
 
   return (
+    // M-P4 — the 1 s `now` reaches only the leaves that read this context (the
+    // card <Age> spans). App re-renders each second for the header clock, but
+    // the memoized board below skips because none of its props changed.
+    <ClockContext.Provider value={now}>
     <div className={`fd${compact ? ' compact' : ''}${stale ? ' stale' : ''}`}>
       {/* ============ header ============ */}
       <div className="fd-header">
@@ -501,9 +466,7 @@ export default function App() {
             type="button"
             className="fd-needschip"
             title="Jump to the inbox"
-            onClick={() => {
-              document.querySelector(`.fd-q[data-qid="${(pendingQs[0] || {}).id}"]`)?.scrollIntoView({ block: 'nearest' });
-            }}
+            onClick={() => { getQuestion((pendingQs[0] || {}).id)?.scrollIntoView?.(); }}
           >
             NEEDS YOU · {pendingQs.length}
           </button>
@@ -594,8 +557,8 @@ export default function App() {
         <div className={`fd-clearstrip${clearNote.err ? ' err' : ''}`}>
           <span className="hd">{clearNote.hd || (clearNote.err ? '✗ CLEAR' : '✓ CLEARED')}</span>
           <span className="msg">{clearNote.err || clearNote.msg}</span>
-          {clearNote.url && (
-            <a className="lnk" href={clearNote.url} target="_blank" rel="noopener noreferrer">
+          {safeUrl(clearNote.url) && (
+            <a className="lnk" href={safeUrl(clearNote.url)} target="_blank" rel="noopener noreferrer">
               📱 open on claude.ai ↗
             </a>
           )}
@@ -623,11 +586,10 @@ export default function App() {
           ) : (
             <BoardLanes
               sessions={sessions}
-              repos={snap.repos || []}
+              repos={snap.repos || EMPTY_ARR}
               conflicts={conflicts}
-              mailPending={snap.mail_pending || {}}
-              mailMeta={snap.mail_meta || {}}
-              now={now}
+              mailPending={snap.mail_pending || EMPTY_OBJ}
+              mailMeta={snap.mail_meta || EMPTY_OBJ}
               compact={compact}
               stale={stale}
               repoFilter={repoFilter}
@@ -640,7 +602,7 @@ export default function App() {
               revivingAll={revivingAll}
               onRevive={doRevive}
               onReviveAll={doReviveAll}
-              enablingRemote={enablingRemote}
+              enablingRemote={enabling}
               onEnableRemote={doEnableRemote}
               onKill={askKill}
               onToggleWatch={toggleWatch}
@@ -692,11 +654,20 @@ export default function App() {
             ? () => { openTerm(drawerSession); setDrawerSid(null); }
             : undefined}
           onKill={() => askKill(drawerSession)}
-          thread={threads[drawerSid] || []}
-          onSendThread={(text) => {
-            sendMail(drawerSid, text).then((res) => {
-              if (res.ok) recordThread(drawerSid, text);
-            }).catch(() => { /* surfaced by the LIVE pill */ });
+          // M-F2 — the drawer's OWNED PANE drives revive/enable-remote through
+          // the SAME shared hook the card chip uses; a second click can't fire a
+          // second POST. It renders its OWN inline result off the callback.
+          onRevive={revive}
+          onEnableRemote={enableRemoteAction}
+          reviving={!!(drawerSession.spawn && reviving.has(drawerSession.spawn.spawn_id))}
+          enablingRemote={!!(drawerSession.spawn && enabling.has(drawerSession.spawn.spawn_id))}
+          thread={threads[drawerSid] || EMPTY_ARR}
+          // M-F5 — await the result: clear the draft only on success, and let
+          // the drawer surface a failure instead of swallowing it.
+          onSendThread={async (text) => {
+            const res = await sendMail(drawerSid, text);
+            if (res.ok && res.json?.ok !== false) { recordThread(drawerSid, text); return { ok: true }; }
+            return { ok: false, reason: reasonOf(res, `send failed (${res.status})`) };
           }}
         />
       )}
@@ -778,5 +749,6 @@ export default function App() {
         </React.Suspense>
       )}
     </div>
+    </ClockContext.Provider>
   );
 }

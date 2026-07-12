@@ -78,6 +78,7 @@ function envMs(name, dflt, min, max) {
 const POLL_MS = envMs('FLEETDECK_WATCH_POLL_MS', 25_000, 50, 25_000);
 const MAX_MS = envMs('FLEETDECK_WATCH_MAX_MS', 7_200_000, 500, 24 * 3600_000);
 const MAX_FAILURES = 3;
+const MAX_STDIN_BYTES = 64_000;
 
 const startedAt = Date.now();
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -88,12 +89,39 @@ const jitter = base => base + Math.floor(Math.random() * 250);
 // a pathological parent can never wedge us before the loop's own caps apply.
 function readStdin(timeoutMs = 5_000) {
   return new Promise(resolve => {
-    let data = '';
-    const done = () => resolve(data);
-    const t = setTimeout(done, timeoutMs);
-    process.stdin.on('data', c => { data += c; });
-    process.stdin.on('end', () => { clearTimeout(t); done(); });
-    process.stdin.on('error', () => { clearTimeout(t); done(); });
+    const chunks = [];
+    let bytes = 0;
+    let settled = false;
+    let timer;
+
+    // WHY one finish path: the timeout, EOF, stream error and byte ceiling can
+    // race. Resolving a Promise twice is harmless, but leaving even one data
+    // listener behind lets a wedged parent feed this two-hour watcher forever.
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      process.stdin.removeListener('data', onData);
+      process.stdin.removeListener('end', finish);
+      process.stdin.removeListener('error', finish);
+      process.stdin.pause();
+      resolve(Buffer.concat(chunks, bytes).toString('utf8'));
+    };
+    const onData = chunk => {
+      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      const room = MAX_STDIN_BYTES - bytes;
+      if (room > 0) {
+        const kept = buf.length <= room ? buf : buf.subarray(0, room);
+        chunks.push(kept);
+        bytes += kept.length;
+      }
+      if (bytes >= MAX_STDIN_BYTES) finish();
+    };
+
+    timer = setTimeout(finish, timeoutMs);
+    process.stdin.on('data', onData);
+    process.stdin.on('end', finish);
+    process.stdin.on('error', finish);
   });
 }
 

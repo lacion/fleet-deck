@@ -7,32 +7,66 @@
 
 import { authHeaders, markUnauthorized } from './token.js';
 
-async function post(url, body) {
-  const res = await fetch(url, {
+// M-F1/H-X2 — the daemon speaks two error dialects ({reason} and the older
+// {err}), and every caller used to hand-write the same `json?.reason ||
+// json?.err || 'HTTP …'` dance (~16 of them). This is that dance, once. It also
+// reads the top-level `reason` the request helpers set for a network failure,
+// so "daemon unreachable" flows through the same path as a 4xx reason.
+export function reasonOf(res, fallback) {
+  if (!res) return fallback || 'daemon unreachable';
+  return res.reason
+    || res.json?.reason
+    || res.json?.err
+    || fallback
+    || `HTTP ${res.status}`;
+}
+
+// One request path for both verbs. It NEVER rejects: a network drop, an abort,
+// or the 15 s timeout come back as {ok:false, status:0, reason:'daemon
+// unreachable'} — the same shape a 4xx does — so callers branch on `res.ok`
+// and read `reasonOf(res)` without a parallel try/catch for the transport.
+async function request(url, init) {
+  let res;
+  try {
+    res = await fetch(url, { ...init, signal: AbortSignal.timeout(15000) });
+  } catch {
+    // DNS/refused/reset/timeout/abort — the daemon is unreachable, not a status
+    return { ok: false, status: 0, json: null, reason: 'daemon unreachable' };
+  }
+  if (res.status === 401) markUnauthorized();
+  let json = null;
+  try { json = await res.json(); } catch { /* non-JSON error body */ }
+  return {
+    ok: res.ok,
+    status: res.status,
+    json,
+    reason: json?.reason || json?.err || null,
+  };
+}
+
+function post(url, body) {
+  return request(url, {
     method: 'POST',
     headers: authHeaders({ 'content-type': 'application/json' }),
     body: JSON.stringify(body ?? {}),
   });
-  if (res.status === 401) markUnauthorized();
-  let json = null;
-  try { json = await res.json(); } catch { /* non-JSON error body */ }
-  return { status: res.status, ok: res.ok, json };
 }
 
 // Same shape as post() — for GETs whose failure the CALLER must show (unlike
 // /state, which fails silently into the LIVE pill).
-async function get(url) {
-  const res = await fetch(url, { headers: authHeaders() });
-  if (res.status === 401) markUnauthorized();
-  let json = null;
-  try { json = await res.json(); } catch { /* non-JSON error body */ }
-  return { status: res.status, ok: res.ok, json };
+function get(url) {
+  return request(url, { headers: authHeaders() });
 }
 
 // GET /state — the board's paint-and-poll snapshot. Returns null on any
 // failure (401 included: the gate, not the caller, reports that one).
 export async function fetchState() {
-  const res = await fetch('/state', { headers: authHeaders() });
+  let res;
+  try {
+    res = await fetch('/state', { headers: authHeaders(), signal: AbortSignal.timeout(15000) });
+  } catch {
+    return null; // unreachable/timeout — the WS retry loop owns recovery
+  }
   if (res.status === 401) { markUnauthorized(); return null; }
   if (!res.ok) return null;
   try { return await res.json(); } catch { return null; }

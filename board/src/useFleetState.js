@@ -31,7 +31,7 @@ const EMPTY = {
   mail_pending: {},
   mail_meta: {}, // {sid: {queued, oldest_at, route}} — route: watcher|pane|turn-boundary|offline-queued
   questions: [],
-  spawn: null, // v1.2 capability: {available, reason?, max, active}
+  spawn: null, // v1.2 capability: {available, reason?, active}
   spawn_orphans: [],
   // v1.7 LAN share — {enabled, urls}. Absent on older daemons, so `null` is
   // the honest default: the panel says "loopback-only", never invents a URL.
@@ -43,7 +43,7 @@ const EMPTY = {
 export function useFleetState() {
   const [snap, setSnap] = useState(EMPTY);
   const [status, setStatus] = useState('reconnecting'); // live | reconnecting | offline
-  const ref = useRef({ ws: null, timer: null, poll: null, failures: 0, closed: false });
+  const ref = useRef({ ws: null, timer: null, poll: null, failures: 0, closed: false, socketOpen: false });
   const { token, unauthorized } = useAuth();
 
   useEffect(() => {
@@ -51,12 +51,32 @@ export function useFleetState() {
     const st = ref.current;
     st.closed = false;
     st.failures = 0;
+    st.socketOpen = false;
 
-    const apply = (data) => setSnap({ ...EMPTY, ...data });
+    // H-S1 — the daemon deliberately keeps the token-bearing `lan` block OUT of
+    // the WS broadcast (it rides only the token-gated GET /state). So a WS frame
+    // carries no `lan`; preserve the last one we saw rather than clobbering the
+    // share panel/LAN dot to null on every frame.
+    const apply = (data) => setSnap((prev) => ({ ...EMPTY, ...data, lan: data.lan ?? prev.lan }));
 
+    // M-F3 — a /state poll started while the socket was down can still be in
+    // flight when the WS opens; the WS pushes the authoritative snapshot on
+    // connect and on every mutation, so once the socket is open the poll result
+    // is by definition NOT newer and must not overwrite the board — a late poll
+    // landing after a fresh WS frame would regress it to an older snapshot.
+    // EXCEPTION: `lan` lives ONLY on /state (H-S1 above), so even after the
+    // socket is open we still fold that one field in from a poll (it can't
+    // regress anything the WS owns).
     const pollOnce = () => {
       fetchState()
-        .then((data) => { if (data && !st.closed) apply(data); })
+        .then((data) => {
+          if (!data || st.closed) return;
+          if (st.socketOpen) {
+            if (data.lan) setSnap((prev) => ({ ...prev, lan: data.lan }));
+          } else {
+            apply(data);
+          }
+        })
         .catch(() => { /* daemon unreachable — WS retry loop owns recovery */ });
     };
 
@@ -80,6 +100,7 @@ export function useFleetState() {
       st.ws = ws;
       ws.onopen = () => {
         st.failures = 0;
+        st.socketOpen = true;
         setStatus('live');
         stopPolling();
       };
@@ -96,6 +117,7 @@ export function useFleetState() {
     const scheduleRetry = () => {
       if (st.closed) return;
       st.ws = null;
+      st.socketOpen = false; // poll results may be applied again while we're down
       st.failures += 1;
       setStatus(st.failures > 3 ? 'offline' : 'reconnecting');
       startPolling();

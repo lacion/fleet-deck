@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import TermPane from './TermPane.jsx';
+import { useModal } from '../useModal.js';
 
 // Live terminal onto a board-owned pane (v1.4), full size. The screen and the
 // socket live in TermPane, which the grid's tiles share; this is the chrome.
@@ -11,12 +12,17 @@ export default function TermModal({ spawnId, callsign, tmuxWindow, onClose }) {
   // null | {kind:'exit'|'err'|'close', text} — non-destructive: the terminal
   // stays on screen, frozen, under the strip.
   const [note, setNote] = useState(null);
+  const dialogRef = useRef(null);
+  // M-A2 (terminal variant) — restore focus to the opener on close, but NO Tab
+  // trap and NO initial-focus steal: xterm claims focus itself and Tab must
+  // reach the agent (autocomplete), so trapping it would break the terminal.
+  useModal(dialogRef, { trap: false, initialFocus: false });
 
   return (
     // no backdrop-click close, no Esc close — Esc belongs to the agent's TUI.
     // stopPropagation shields App's window-level shortcuts while typing here.
     <div className="fd-termwrap" role="presentation" onKeyDown={(e) => e.stopPropagation()}>
-      <div className="fd-term" role="dialog" aria-label={`Live terminal ${callsign || spawnId}`}>
+      <div className="fd-term" role="dialog" aria-modal="true" aria-label={`Live terminal ${callsign || spawnId}`} ref={dialogRef}>
         <div className="fd-termhead">
           <span className="callsign">{callsign || spawnId}</span>
           {tmuxWindow && <span className="fd-panechip">⌗ {tmuxWindow}</span>}

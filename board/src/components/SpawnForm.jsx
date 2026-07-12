@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { spawnSession } from '../api.js';
+import { spawnSession, reasonOf } from '../api.js';
 import { batchTotal, expandBatchTasks, parseBatchTasks } from '../util.js';
+import { useModal } from '../useModal.js';
 
 // v1.2 spawn form — POST /api/spawn on an explicit human click, never any
 // other path. Fail-loud: a {ok:false, reason} renders inline, no silent
@@ -51,6 +52,10 @@ export default function SpawnForm({ sessions, prefillPrompt, prefillCwd, planMod
   const cwdRef = useRef(null);
   const promptRef = useRef(null);
   const closeTimer = useRef(null);
+  const dialogRef = useRef(null);
+  // M-A2 — trap Tab + restore focus on close; the form parks initial focus
+  // itself (cwd, or the plan caret) in the effect below.
+  useModal(dialogRef, { initialFocus: false });
 
   useEffect(() => {
     if (planMode && promptRef.current) {
@@ -102,7 +107,7 @@ export default function SpawnForm({ sessions, prefillPrompt, prefillCwd, planMod
     if (prompt.trim()) body.prompt = prompt.trim();
     const res = await spawnSession(body);
     if (!(res.ok && res.json?.ok)) {
-      setErr(res.json?.reason || `spawn failed (${res.status})`);
+      setErr(reasonOf(res, `spawn failed (${res.status})`));
       setBusy(false);
       return;
     }
@@ -138,7 +143,7 @@ export default function SpawnForm({ sessions, prefillPrompt, prefillCwd, planMod
         res = null;
       }
       if (res?.ok && res.json?.ok) launched.push(res.json.callsign || res.json.session_id);
-      else failed.push({ prompt: p, reason: res?.json?.reason || (res ? `spawn failed (${res.status})` : 'daemon unreachable') });
+      else failed.push({ prompt: p, reason: res ? reasonOf(res, `spawn failed (${res.status})`) : 'daemon unreachable' });
       setProgress({ done: i + 1, total: prompts.length, failed: [...failed] });
     }
     if (failed.length) {

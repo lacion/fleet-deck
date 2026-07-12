@@ -1,6 +1,7 @@
 import React from 'react';
 import Sparkline from './Sparkline.jsx';
-import { human, basename, prettyModel, modelShort, modelFamily, spawnTermable, spawnKillable, spawnRemoteAvailable } from '../util.js';
+import { Age } from '../clock.jsx';
+import { basename, prettyModel, modelShort, modelFamily, safeUrl, spawnTermable, spawnKillable, spawnRemoteAvailable } from '../util.js';
 
 // How queued mail will reach this session (snapshot mail_meta[sid].route).
 // watcher/pane deliver without the human doing anything; the other two wait.
@@ -14,8 +15,14 @@ const MAIL_HINT = {
 // One session card. Faithful to the design: pulse dot, mono callsign, model
 // badge (--m-* family colors), branch/worktree line, note, conflict hazard
 // edge + one-shot ripple, file chips, sparkline + age.
-export default function SessionCard({
-  s, now, compact, mailCount, mailMeta, conflictFiles, conflictPeers, ripple, priority, onOpen, onOpenTerm,
+//
+// M-P4 — React.memo'd (see export below) with a stable prop set: no `now`
+// (the age is an <Age> leaf that reads the 1 s clock from context), and every
+// action prop takes the session `s` so BoardLanes can pass ONE stable function
+// per action instead of minting a fresh closure per card per render. A 1 s tick
+// therefore re-renders only the <Age> spans, not the whole wall of cards.
+function SessionCard({
+  s, compact, mailCount, mailMeta, conflictFiles, conflictPeers, ripple, priority, onOpen, onOpenTerm,
   onRevive, reviving, onEnableRemote, enablingRemote, onKill, onToggleWatch, watched,
 }) {
   const offline = s.col === 'offline';
@@ -51,6 +58,11 @@ export default function SessionCard({
   // itself a <button> and buttons don't nest — same trick as the chips above.)
   const canTerm = !!onOpenTerm && spawnTermable(s);
   const canKill = !!onKill && spawnKillable(s);
+  // M-S1 — the harvested remote URL only becomes a live link if it is https on
+  // claude.ai; anything else (a `javascript:` a hostile agent printed into its
+  // terminal) collapses to null and renders as the plain, unclickable chip.
+  const remoteUrl = safeUrl(s.spawn?.remote?.url);
+  const openRemote = (e) => { e.stopPropagation(); if (remoteUrl) window.open(remoteUrl, '_blank', 'noopener'); };
   // v1.9 — tick an agent into the wall of screens. Same eligibility as the
   // terminal: only a pane the daemon owns can be watched at all.
   const canWatch = !!onToggleWatch && spawnTermable(s);
@@ -66,7 +78,22 @@ export default function SessionCard({
   ].filter(Boolean).join(' ');
 
   return (
-    <button type="button" className={cls} onClick={onOpen} title={s.task || s.note || s.callsign}>
+    // M-A1 — a real <button> may not contain interactive descendants, but this
+    // card is wall-to-wall action chips (terminal/kill/revive/remote), each a
+    // role=button span. So the card is a div with role=button + its own Enter/
+    // Space handler: the click/keyboard "open the drawer" affordance survives,
+    // and the nested chips are now ARIA-legal.
+    <div
+      role="button"
+      tabIndex={0}
+      className={cls}
+      onClick={() => onOpen(s)}
+      onKeyDown={(e) => {
+        if (e.target !== e.currentTarget) return; // a chip handled it
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(s); }
+      }}
+      title={s.task || s.note || s.callsign}
+    >
       <span className="row1">
         <span className={`fd-pulse ${pulseClass}`} />
         <span className="callsign">{s.callsign || s.session_id}</span>
@@ -85,18 +112,18 @@ export default function SessionCard({
           </span>
         )}
         {s.spawn?.remote?.enabled && (
-          // v1.6: remote control is on. With a harvested link the chip is the
-          // door to claude.ai (span, not <a> — the card itself is a button);
-          // without one it just states the fact and points at the terminal.
-          s.spawn.remote.url ? (
+          // v1.6: remote control is on. With a harvested (and vouched-for) link
+          // the chip is the door to claude.ai; without a safe one it just states
+          // the fact and points at the terminal.
+          remoteUrl ? (
             <span
               className="fd-remotechip link"
               role="link"
               tabIndex={0}
-              title={`remote control on — open ${s.spawn.remote.url}`}
-              onClick={(e) => { e.stopPropagation(); window.open(s.spawn.remote.url, '_blank', 'noopener'); }}
+              title={`remote control on — open ${remoteUrl}`}
+              onClick={openRemote}
               onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); window.open(s.spawn.remote.url, '_blank', 'noopener'); }
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openRemote(e); }
               }}
             >
               📱 remote ↗
@@ -104,7 +131,7 @@ export default function SessionCard({
           ) : (
             <span
               className="fd-remotechip"
-              title="remote control on, but the claude.ai URL wasn't captured — open the agent's terminal (▣) to find it"
+              title="remote control on, but no claude.ai URL was captured — open the agent's terminal (▣) to find it"
             >
               📱 remote
             </span>
@@ -120,9 +147,9 @@ export default function SessionCard({
             tabIndex={enablingRemote ? -1 : 0}
             aria-disabled={enablingRemote || undefined}
             title="put this agent on remote control — drive it from claude.ai on web or phone"
-            onClick={(e) => { e.stopPropagation(); if (!enablingRemote) onEnableRemote(); }}
+            onClick={(e) => { e.stopPropagation(); if (!enablingRemote) onEnableRemote(s); }}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); if (!enablingRemote) onEnableRemote(); }
+              if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); if (!enablingRemote) onEnableRemote(s); }
             }}
           >
             {enablingRemote ? 'enabling…' : '📱 enable remote'}
@@ -137,9 +164,9 @@ export default function SessionCard({
             tabIndex={reviving ? -1 : 0}
             aria-disabled={reviving || undefined}
             title="worktree + transcript survived — revive this agent (card moves to QUEUED)"
-            onClick={(e) => { e.stopPropagation(); if (!reviving) onRevive(); }}
+            onClick={(e) => { e.stopPropagation(); if (!reviving) onRevive(s); }}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); if (!reviving) onRevive(); }
+              if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); if (!reviving) onRevive(s); }
             }}
           >
             {reviving ? 'reviving…' : '⟲ revive'}
@@ -169,7 +196,7 @@ export default function SessionCard({
       )}
       <span style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
         <span className="note" style={{ flex: 1 }}>{s.note || s.task || '—'}</span>
-        {compact && <span className="age">{human(now - (s.lastSeen || s.startedAt || now))}</span>}
+        {compact && <Age className="age" from={s.lastSeen || s.startedAt} />}
       </span>
       {inConflict && conflictPeers.length > 0 && (
         <span className="contested">▲ contested with {conflictPeers.join(', ')}</span>
@@ -184,9 +211,9 @@ export default function SessionCard({
               role="button"
               tabIndex={0}
               title="open live terminal — your keystrokes go straight to the agent"
-              onClick={(e) => { e.stopPropagation(); onOpenTerm(); }}
+              onClick={(e) => { e.stopPropagation(); onOpenTerm(s); }}
               onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onOpenTerm(); }
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onOpenTerm(s); }
               }}
             >
               ▣ terminal
@@ -199,9 +226,9 @@ export default function SessionCard({
               aria-pressed={!!watched}
               tabIndex={0}
               title={watched ? 'remove from the terminal wall' : 'add to the terminal wall'}
-              onClick={(e) => { e.stopPropagation(); onToggleWatch(); }}
+              onClick={(e) => { e.stopPropagation(); onToggleWatch(s); }}
               onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onToggleWatch(); }
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onToggleWatch(s); }
               }}
             >
               {watched ? '▦ watching' : '▦ watch'}
@@ -214,9 +241,9 @@ export default function SessionCard({
               role="button"
               tabIndex={0}
               title="kill this agent — asks first; the worktree and branch are left alone"
-              onClick={(e) => { e.stopPropagation(); onKill(); }}
+              onClick={(e) => { e.stopPropagation(); onKill(s); }}
               onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onKill(); }
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onKill(s); }
               }}
             >
               ☠ kill
@@ -232,9 +259,14 @@ export default function SessionCard({
           {files.length > shown.length && <span className="fd-filechip">+{files.length - shown.length}</span>}
           <span className="fd-spacer" />
           <Sparkline data={s.sparkline} />
-          <span className="age">{human(now - (s.lastSeen || s.startedAt || now))}</span>
+          <Age className="age" from={s.lastSeen || s.startedAt} />
         </span>
       )}
-    </button>
+    </div>
   );
 }
+
+// M-P4 — memoized so a 1 s clock tick (or an unrelated App re-render) skips the
+// whole card when its props are referentially equal; only the <Age> leaves,
+// which read the clock from context, update each second.
+export default React.memo(SessionCard);

@@ -31,7 +31,8 @@ function cssVar(name, fallback) {
 }
 
 // xterm theme from the board's live tokens (dark or light — read at mount).
-export function boardTermTheme() {
+// in-file only — the effect below is its single consumer.
+function boardTermTheme() {
   const bg = cssVar('--code', '#0A0D13');
   const text = cssVar('--text', '#E7ECF5');
   const act = cssVar('--act', '#F0A63C');
@@ -73,10 +74,11 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
   // null | {kind:'exit'|'err'|'close', text} — non-destructive: the terminal
   // stays on screen, frozen, under the strip.
   const [note, setNote] = useState(null);
+  // mirror `note` into a ref for the socket effect's "already ended?" check.
+  // Kept in an effect (not assigned during render) so render stays pure.
   const noteRef = useRef(null);
-  noteRef.current = note;
 
-  useEffect(() => { onNote?.(note); }, [note]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { noteRef.current = note; onNote?.(note); }, [note]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const term = new Terminal({

@@ -10,6 +10,7 @@
 
 import http from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
+import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,6 +18,25 @@ import { WebSocketServer } from 'ws';
 import { createTermBridge } from './termbridge.mjs';
 
 const MAX_BODY = 1e6;
+// H-R3 backpressure: a /ws peer this far behind (dropped wifi, a frozen tab) is
+// treated as gone — we stop buffering snapshots into its socket and let the
+// keepalive reap it.
+const MAX_WS_BUFFER = 1 << 20; // 1 MiB
+// H-R3 keepalive cadence: ping every peer and terminate any that missed the
+// previous pong. This also RETIRES the old "broadcast a full snapshot every
+// 5 s" — a phone that vanished without a FIN never fires 'close', so without a
+// real ping/pong its /ws socket leaked and its /ws/term viewer pinned the
+// shared tmux client forever.
+const WS_PING_MS = 30_000;
+// M-P1: coalesce a burst of mutations into ONE snapshot. A single hook can
+// drive several updateSession() calls; unbatched, each one rebuilt, stringified
+// and broadcast the whole snapshot to every client.
+const BROADCAST_COALESCE_MS = 60;
+// M-R4/M-P6 terminal-WS bounds. One input frame is a keystroke or a paste,
+// never a megabyte; a viewer sitting on this many un-drained output bytes has
+// stopped reading and is evicted rather than buffered into oblivion.
+const MAX_TERM_FRAME_BYTES = 1 << 20; // 1 MiB
+const MAX_TERM_WS_BUFFER = 4 << 20;   // 4 MiB
 
 // LOOPBACK CONTRACT: local hooks and board traffic remain zero-config even
 // when fleetd is in LAN mode. Node reports IPv4 peers either directly or as
@@ -108,6 +128,66 @@ export function createHttp(core, { port, boardFile, version = '0.0.0', capture =
     const bearer = typeof authorization === 'string' ? /^Bearer (.+)$/.exec(authorization)?.[1] : undefined;
     return tokenMatches(bearer) || tokenMatches(url.searchParams.get('t'));
   }
+
+  // SAME-ORIGIN CONTRACT (C1/H-S3). Loopback auto-authorizes, and a browser is a
+  // loopback peer — so a page on ANY site the user visits could otherwise open
+  // ws://127.0.0.1/ws (read the whole snapshot, drive a live pane) or blind-POST
+  // /api/spawn (RCE). The token alone does not stop this: the local board carries
+  // none. The wall is instead "is this request same-origin with us?", enforced
+  // for every state-changing POST, both WS upgrades, and (for DNS rebinding) the
+  // Host of every data route. Loopback CLI hooks send no Origin and a loopback
+  // Host, so they sail straight through.
+  const daemonPort = String(port);
+  // Hostnames that count as "us": loopback (localhost, 127/8, ::1 — via
+  // isLoopbackAddress), every address this host actually answers on, and the
+  // advertised mDNS .local name. Built once — a LAN address is not going to
+  // change under the daemon's feet.
+  const lanHosts = new Set();
+  try {
+    for (const entries of Object.values(os.networkInterfaces())) {
+      for (const entry of entries || []) {
+        if (entry?.address) lanHosts.add(String(entry.address).toLowerCase());
+      }
+    }
+  } catch { /* restricted sandbox: loopback stays allowed regardless */ }
+  try {
+    if (lan?.mdns) lanHosts.add(new URL(lan.mdns).hostname.toLowerCase());
+  } catch { /* malformed mDNS URL — skip it; the IP URLs still work */ }
+
+  // WHATWG URL keeps the brackets on an IPv6 hostname ([::1]); strip them so the
+  // value matches what isLoopbackAddress / the lanHosts set hold.
+  const normHost = h => String(h || '').toLowerCase().replace(/^\[/, '').replace(/\]$/, '');
+  // A parsed URL is ours when its hostname is loopback / an own LAN address /
+  // the .local name AND its port is our port (or absent, i.e. a default 80/443).
+  function hostAllowed(u) {
+    const host = normHost(u.hostname);
+    return (isLoopbackAddress(host) || lanHosts.has(host)) && (u.port === '' || u.port === daemonPort);
+  }
+  // Host header check — the DNS-rebinding wall. A browser always sends Host, so a
+  // domain that re-resolves to this box arrives as Host: evil.example and is
+  // refused. A missing Host is a non-browser caller and is left alone.
+  function hostHeaderOk(req) {
+    const host = req.headers.host;
+    if (typeof host !== 'string' || !host) return true;
+    let u; try { u = new URL('http://' + host); } catch { return false; }
+    return hostAllowed(u);
+  }
+  // Sec-Fetch-Site + Origin verdict for a STATE-CHANGING request. Returns null
+  // when it may proceed. Sec-Fetch-Site, when the browser sends it, is
+  // authoritative for the cross-site call; an Origin, when present, must resolve
+  // to one of our own hosts; no Origin at all is a non-browser CLI hook and is
+  // allowed. The reason drives our control flow only — it is never echoed back.
+  function crossSiteReason(req) {
+    const site = req.headers['sec-fetch-site'];
+    if (site === 'cross-site' || site === 'cross-origin') return 'cross-site';
+    const origin = req.headers.origin;
+    if (typeof origin === 'string' && origin) {
+      let u; try { u = new URL(origin); } catch { return 'bad-origin'; } // 'null', junk
+      if (!hostAllowed(u)) return 'cross-origin';
+    }
+    return null;
+  }
+  const isJsonContentType = v => typeof v === 'string' && /^application\/json\b/i.test(v.trim());
 
   // PermissionRequest / Elicitation / AskUserQuestion are handled OUT of this
   // table (Phase 3/4 hold-open relay — the response is parked, see the hook
@@ -247,8 +327,18 @@ export function createHttp(core, { port, boardFile, version = '0.0.0', capture =
   const server = http.createServer((req, res) => {
     try {
       const url = new URL(req.url, `http://127.0.0.1:${port}`);
-      if (!isPublicShell(req.method, url.pathname) && !authorized(req, url)) {
+      const shell = isPublicShell(req.method, url.pathname);
+      if (!shell && !authorized(req, url)) {
         return json(res, 401, { ok: false, reason: 'unauthorized' });
+      }
+      // DNS-REBINDING DEFENSE (C1/H-S3): a page pointed at a domain that
+      // re-resolves to this box arrives with a foreign Host — refuse it on every
+      // route that carries data or DOES something. The data-free public shell
+      // stays open (a browser must load it before it can present the token). A
+      // hook keeps its fail-open dialect so an odd proxy can never wedge a
+      // real session; a genuine loopback hook sends a loopback Host and is fine.
+      if (!shell && !hostHeaderOk(req)) {
+        return url.pathname.startsWith('/hook/') ? json(res, 200, {}) : json(res, 403, { ok: false, reason: 'forbidden' });
       }
       if (req.method === 'GET') {
         if (url.pathname === '/health') {
@@ -289,15 +379,48 @@ export function createHttp(core, { port, boardFile, version = '0.0.0', capture =
       }
 
       if (req.method === 'POST') {
-        let body = '';
-        req.on('data', d => { body += d; if (body.length > MAX_BODY) req.destroy(); });
+        const isHook = url.pathname.startsWith('/hook/');
+        // CSRF WALL (C1): a state-changing request driven from another origin is
+        // refused before a byte of its body is read. Real CLI hooks send no
+        // Origin and a loopback Host, so they pass untouched; a browser on
+        // another site is turned away. A refused hook still answers in the
+        // fail-open dialect so it can never break a session.
+        if (crossSiteReason(req)) {
+          return isHook ? json(res, 200, {}) : json(res, 403, { ok: false, reason: 'forbidden' });
+        }
+        // CONTENT-TYPE WALL (C1): control POSTs must declare JSON — which also
+        // forces a CORS preflight for any cross-origin attempt, a second wall in
+        // front of /api/spawn et al. Hooks are EXEMPT per the hook contract: a
+        // hook with an odd/absent content-type is still processed (fail open).
+        if (!isHook && !isJsonContentType(req.headers['content-type'])) {
+          return json(res, 415, { ok: false, reason: 'expected application/json' });
+        }
+        // M-B3: collect raw Buffers, cap by BYTES, decode ONCE. `body += d`
+        // stringified each TCP chunk independently — a multibyte glyph straddling
+        // a chunk boundary decoded to U+FFFD — and `body.length` counted UTF-16
+        // units, not bytes. Concatenating the bytes and decoding the whole once
+        // is byte-exact.
+        const chunks = [];
+        let size = 0;
+        let tooLarge = false;
+        req.on('data', d => {
+          if (tooLarge) return;
+          size += d.length; // d is a Buffer — byte length, not char count
+          if (size > MAX_BODY) {
+            tooLarge = true;
+            // 413 on control paths; hooks keep the fail-open 200 {}. Stop
+            // accumulating either way so the body can't grow without bound.
+            return isHook ? json(res, 200, {}) : json(res, 413, { ok: false, reason: 'payload too large' });
+          }
+          chunks.push(d);
+        });
         req.on('end', () => {
+          if (tooLarge) return;
+          const body = Buffer.concat(chunks).toString('utf8');
           let ev = {};
           try { ev = JSON.parse(body || '{}'); } catch {
             // hooks fail open: a bad body on a hook path is still 200 {}
-            return url.pathname.startsWith('/hook/')
-              ? json(res, 200, {})
-              : json(res, 400, { err: 'bad json' });
+            return isHook ? json(res, 200, {}) : json(res, 400, { err: 'bad json' });
           }
           try {
             const hook = /^\/hook\/([A-Za-z]+)$/.exec(url.pathname);
@@ -472,11 +595,13 @@ export function createHttp(core, { port, boardFile, version = '0.0.0', capture =
   server.on('upgrade', (req, socket, head) => {
     let url;
     try { url = new URL(req.url || '/', 'http://127.0.0.1'); } catch { socket.destroy(); return; }
-    // WS AUTH CONTRACT: reject before either noServer WebSocketServer sees the
-    // socket. Destruction (rather than an HTTP upgrade response) guarantees no
-    // snapshot or terminal bridge can be observed through an unauthenticated
-    // non-loopback connection.
-    if (!authorized(req, url)) { socket.destroy(); return; }
+    // WS AUTH + CSRF CONTRACT: reject before either noServer WebSocketServer
+    // sees the socket. A WebSocket is NOT subject to the same-origin READ
+    // barrier, so a cross-site page could otherwise read the whole snapshot or
+    // drive a live pane. Destroying the socket — no HTTP upgrade response —
+    // guarantees nothing is observable through an unauthenticated OR
+    // cross-origin connection; the Host check closes DNS rebinding (C1).
+    if (!authorized(req, url) || !hostHeaderOk(req) || crossSiteReason(req)) { socket.destroy(); return; }
     if (url.pathname === '/ws') {
       wss.handleUpgrade(req, socket, head, ws => wss.emit('connection', ws, req));
     } else if (url.pathname === '/ws/term') {
@@ -485,20 +610,60 @@ export function createHttp(core, { port, boardFile, version = '0.0.0', capture =
       socket.destroy();
     }
   });
+  // M-P1 coalescing: a mutation flips `dirty` and schedules at most one flush
+  // per short window, so N updateSession() calls inside one hook collapse to a
+  // single snapshot rebuild+stringify+send instead of N.
+  let dirty = false;
+  let flushTimer = null;
+  // H-S1: the broadcast/connect snapshot deliberately uses core.snapshot() and
+  // NOT snapshotWithLan() — the token-bearing lan.urls/lan.mdns must never ride
+  // a frame a /ws client can read. The share URLs stay on GET /state, which is
+  // token-gated in LAN mode (the board reads `lan` from its /state poll).
   function broadcast() {
+    dirty = false;
     if (!wss.clients.size) return;
-    const msg = JSON.stringify({ type: 'snapshot', ...snapshotWithLan() });
-    for (const c of wss.clients) if (c.readyState === 1) c.send(msg);
+    const msg = JSON.stringify({ type: 'snapshot', ...core.snapshot() });
+    for (const c of wss.clients) {
+      if (c.readyState !== 1) continue;
+      // H-R3 backpressure: a peer that stopped draining must not make us buffer
+      // snapshot after snapshot into a dead socket until we run out of memory.
+      // Past the cap we skip it; the keepalive below terminates it.
+      if (c.bufferedAmount > MAX_WS_BUFFER) continue;
+      c.send(msg);
+    }
+  }
+  function scheduleBroadcast() {
+    dirty = true;
+    if (flushTimer) return;
+    flushTimer = setTimeout(() => {
+      flushTimer = null;
+      if (dirty) broadcast();
+    }, BROADCAST_COALESCE_MS);
+    flushTimer.unref?.();
   }
   wss.on('connection', ws => {
-    try { ws.send(JSON.stringify({ type: 'snapshot', ...snapshotWithLan() })); } catch { /* client gone */ }
+    ws.isAlive = true;
+    ws.on('pong', () => { ws.isAlive = true; });
+    try { ws.send(JSON.stringify({ type: 'snapshot', ...core.snapshot() })); } catch { /* client gone */ }
   });
 
   termWss.on('connection', async (ws, req) => {
     let handle = null;
     let socketClosed = false;
+    ws.isAlive = true;
+    ws.on('pong', () => { ws.isAlive = true; });
+    // H-R3/M-P6 backpressure: a viewer that has stopped draining is EVICTED (a
+    // 1009 close), not fed. Silently dropping pane bytes would desync its screen;
+    // closing the socket unwinds its tmux subscription (the 'close' handler runs
+    // handle.close()) so a slow viewer can never buffer a pane's whole output
+    // into a dead socket.
     const send = frame => {
-      if (ws.readyState === 1) ws.send(JSON.stringify(frame));
+      if (ws.readyState !== 1) return;
+      if (ws.bufferedAmount > MAX_TERM_WS_BUFFER) {
+        try { ws.close(1009, 'terminal viewer too far behind'); } catch { /* already gone */ }
+        return;
+      }
+      ws.send(JSON.stringify(frame));
     };
     ws.on('close', () => {
       socketClosed = true;
@@ -506,6 +671,10 @@ export function createHttp(core, { port, boardFile, version = '0.0.0', capture =
     });
     ws.on('message', raw => {
       if (!handle) return;
+      // M-R4: a terminal frame is a keystroke or a modest paste — never a
+      // megabyte. Refuse an oversized frame outright (1009) rather than expand it
+      // to hex and queue it; termbridge.input() enforces the queued-byte bound.
+      if (raw.length > MAX_TERM_FRAME_BYTES) { try { ws.close(1009, 'input frame too large'); } catch { /* already gone */ } return; }
       let frame;
       try { frame = JSON.parse(raw.toString('utf8')); } catch { return; }
       if (!frame || typeof frame !== 'object') return;
@@ -519,8 +688,12 @@ export function createHttp(core, { port, boardFile, version = '0.0.0', capture =
       const cols = Number(url.searchParams.get('cols'));
       const rows = Number(url.searchParams.get('rows'));
       if (!spawn_id) throw new Error('missing spawn id');
+      // M-R5 abort path: if the socket closes mid-open (before `handle` exists),
+      // openViewer() checks isAborted() between its awaits and bails, so the
+      // half-opened viewer is removed instead of lingering counted forever.
       handle = await termbridge.openViewer({
         spawn_id, cols, rows, send,
+        isAborted: () => socketClosed,
         onClose(reason) {
           send({ t: 'exit', reason });
           try { ws.close(); } catch { /* already gone */ }
@@ -532,9 +705,24 @@ export function createHttp(core, { port, boardFile, version = '0.0.0', capture =
       try { ws.close(); } catch { /* already gone */ }
     }
   });
-  const heartbeat = setInterval(broadcast, 5000); // ages on the board refresh
-  heartbeat.unref();
-  core.onMutate = broadcast;
+  // H-R3 + M-P1: a real keepalive replaces the "full snapshot every 5 s"
+  // heartbeat. Ping every peer on both servers; terminate any that missed the
+  // previous pong. terminate() fires 'close', which unwinds a leaked /ws socket
+  // and — for /ws/term — the viewer + (once the last leaves) the shared tmux
+  // client, the exact leak a phone that dropped wifi used to cause.
+  const keepalive = setInterval(() => {
+    for (const server of [wss, termWss]) {
+      for (const ws of server.clients) {
+        if (ws.isAlive === false) { ws.terminate(); continue; }
+        ws.isAlive = false;
+        try { ws.ping(); } catch { /* reaped next round */ }
+      }
+    }
+  }, WS_PING_MS);
+  keepalive.unref();
+  core.onMutate = scheduleBroadcast;
 
-  return { server, wss, termWss, broadcast };
+  // Only `server` is used externally (fleetd.mjs listens on it); wss/termWss/
+  // broadcast stay internal.
+  return { server };
 }
