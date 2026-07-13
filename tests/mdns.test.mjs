@@ -316,12 +316,47 @@ function collect(socket) {
 
 const close = socket => new Promise(resolve => { try { socket.close(resolve); } catch { resolve(); } });
 
+/**
+ * Empirically decide whether a unicast datagram to 127.0.0.1:5353 actually
+ * reaches OUR shared-bound socket. bindShared(5353) succeeding is not enough:
+ * on macOS, Bonjour's mDNSResponder holds 5353 with SO_REUSEPORT-style sharing,
+ * so our bind succeeds but the kernel may hand the datagram to mDNSResponder's
+ * socket instead — the legacy-unicast-query tests below would then wait forever
+ * for a reply that went elsewhere. So we send ourselves one junk datagram and
+ * check whether we get it back. Returns true when it did NOT arrive (another
+ * process on 5353 swallowed it), meaning unicast delivery is ambiguous here.
+ */
+async function foreignResponderOn5353() {
+  const probe = await bindShared(MDNS_PORT);
+  if (!probe) return true;                          // can't even share the port — treat it as foreign-owned
+  const sender = await bindShared(0);
+  if (!sender) { await close(probe); return true; } // no ephemeral socket to probe with — same conclusion
+
+  let retry, deadline;
+  const arrived = await new Promise((resolve) => {
+    const done = (v) => { clearTimeout(retry); clearTimeout(deadline); resolve(v); };
+    probe.once('message', () => done(true));        // OUR socket received it — unicast delivery works here
+    const shoot = () => { try { sender.send(Buffer.from([0]), MDNS_PORT, '127.0.0.1'); } catch { /* the point is whether it lands */ } };
+    shoot();                                         // probe is already bound+listening: bindShared resolves in the bind callback
+    retry = setTimeout(shoot, 200);                  // re-send once, in case scheduler lag beat the first send to the listener
+    deadline = setTimeout(() => done(false), 600);
+  });
+
+  await close(sender);
+  await close(probe);
+  return !arrived;                                   // datagram vanished => another responder on 5353 owns it
+}
+
 test('a real A query on the wire gets a real answer carrying the advertised IPv4', async (t) => {
   // The responder needs udp4/5353. If a real avahi owns it, standing down is the
   // CORRECT behaviour, not a failure — so skip rather than fail.
   const probe = await bindShared(MDNS_PORT);
   if (!probe) return t.skip('udp4 port 5353 is already owned by another responder (avahi/Bonjour?) — nothing to test');
   await close(probe);
+  // Sharing the port can succeed while a co-bound responder (macOS Bonjour) still
+  // wins our unicast datagrams. If our own probe cannot reach us, standing down is
+  // correct — the legacy-query reply below would land in someone else's socket.
+  if (await foreignResponderOn5353()) return t.skip('another responder shares udp/5353 (mDNSResponder/Bonjour?) — unicast delivery is ambiguous in this environment');
 
   const logs = [];
   const mdns = createMdns({ port: 4711, addresses: ['192.0.2.7'], log: m => logs.push(String(m)) });
@@ -365,6 +400,7 @@ test('a PTR browse on the wire resolves the board in one round-trip', async (t) 
   const probe = await bindShared(MDNS_PORT);
   if (!probe) return t.skip('udp4 port 5353 is already owned by another responder');
   await close(probe);
+  if (await foreignResponderOn5353()) return t.skip('another responder shares udp/5353 (mDNSResponder/Bonjour?) — unicast delivery is ambiguous in this environment');
 
   const logs = [];
   const mdns = createMdns({ port: 4711, addresses: ['192.0.2.7'], log: m => logs.push(String(m)) });
