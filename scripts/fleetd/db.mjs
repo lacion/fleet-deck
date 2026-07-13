@@ -46,7 +46,10 @@ CREATE TABLE IF NOT EXISTS sessions (
   blocked_this_turn INTEGER DEFAULT 0,
   source            TEXT DEFAULT 'hooks',
   notification_type TEXT,
-  archived_at       INTEGER
+  archived_at       INTEGER,
+  ticket            TEXT,               -- current Jira key (raven-PROJ-123's PROJ-123) or NULL
+  ticket_source     TEXT,               -- 'branch' | 'manual'; NULL = never set (auto path still open)
+  prev_callsign     TEXT                -- birth callsign, write-once on the FIRST rename (stale-ref anchor for mail)
 );
 CREATE TABLE IF NOT EXISTS file_touches (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -172,6 +175,18 @@ function migrate(db) {
   }
   if (!cols.includes('archived_at')) {
     db.exec('ALTER TABLE sessions ADD COLUMN archived_at INTEGER');
+  }
+  // 0.6.0 ticket callsigns: three additive columns. NULL backfill is truthful
+  // for every pre-0.6.0 row — those sessions were never ticket-named and never
+  // renamed, so ticket / ticket_source / prev_callsign are all genuinely unset.
+  if (!cols.includes('ticket')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN ticket TEXT');
+  }
+  if (!cols.includes('ticket_source')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN ticket_source TEXT');
+  }
+  if (!cols.includes('prev_callsign')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN prev_callsign TEXT');
   }
   const mailCols = db.prepare('PRAGMA table_info(mail)').all().map(r => r.name);
   if (!mailCols.includes('expired_at')) {

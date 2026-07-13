@@ -288,3 +288,28 @@ test('poll command producing garbage (non-JSON) output harms nothing', async (t)
   assert.equal(state.status, 200, '/state should still respond fine');
   assert.ok(Array.isArray(state.json.sessions), '/state should still have a sessions array');
 });
+
+// 0.6.0: an agents-cli birth follows the same ticket-detection rules as a hook
+// birth — the entry's cwd branch is read server-side and, when it carries a
+// Jira key, the discovered card is ticketed (<animal>-KEY, ticket_source
+// 'branch') instead of hex-suffixed.
+test('agents-cli birth on a ticket branch → a ticketed callsign', async (t) => {
+  const scratchDir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-agents-scratch-'));
+  const fixtureFile = path.join(scratchDir, 'agents.json');
+  const repo = makeRepoWithWorktree({ repoName: 'agents-ticket-test', branch: 'feature/PROJ-123-agent' });
+  t.after(() => { repo.cleanup(); rmSync(scratchDir, { recursive: true, force: true }); });
+
+  const sid = randomUUID();
+  writeFixture(fixtureFile, [
+    { pid: LIVE_PID, cwd: repo.worktree, kind: 'interactive', startedAt: Date.now(), sessionId: sid, name: 'ticketed agent', status: 'busy' },
+  ]);
+
+  const daemon = await startDaemon({ env: agentsFixtureEnv(fixtureFile) });
+  t.after(async () => { await daemon.stop(); });
+
+  const card = await waitForSession(daemon.baseUrl, sid);
+  assert.equal(card.source, 'agents-cli', 'a poller-discovered card');
+  assert.match(card.callsign, /^[a-z]+-PROJ-123$/, `an agents-cli birth on a ticket branch should be ticketed (got ${card.callsign})`);
+  assert.equal(card.ticket, 'PROJ-123', 'the ticket is detected from the entry cwd branch');
+  assert.equal(card.ticket_source, 'branch');
+});

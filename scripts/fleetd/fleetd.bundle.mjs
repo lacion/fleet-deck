@@ -3764,7 +3764,10 @@ CREATE TABLE IF NOT EXISTS sessions (
   blocked_this_turn INTEGER DEFAULT 0,
   source            TEXT DEFAULT 'hooks',
   notification_type TEXT,
-  archived_at       INTEGER
+  archived_at       INTEGER,
+  ticket            TEXT,               -- current Jira key (raven-PROJ-123's PROJ-123) or NULL
+  ticket_source     TEXT,               -- 'branch' | 'manual'; NULL = never set (auto path still open)
+  prev_callsign     TEXT                -- birth callsign, write-once on the FIRST rename (stale-ref anchor for mail)
 );
 CREATE TABLE IF NOT EXISTS file_touches (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -3870,6 +3873,15 @@ function migrate(db2) {
   if (!cols.includes("archived_at")) {
     db2.exec("ALTER TABLE sessions ADD COLUMN archived_at INTEGER");
   }
+  if (!cols.includes("ticket")) {
+    db2.exec("ALTER TABLE sessions ADD COLUMN ticket TEXT");
+  }
+  if (!cols.includes("ticket_source")) {
+    db2.exec("ALTER TABLE sessions ADD COLUMN ticket_source TEXT");
+  }
+  if (!cols.includes("prev_callsign")) {
+    db2.exec("ALTER TABLE sessions ADD COLUMN prev_callsign TEXT");
+  }
   const mailCols = db2.prepare("PRAGMA table_info(mail)").all().map((r) => r.name);
   if (!mailCols.includes("expired_at")) {
     db2.exec("ALTER TABLE mail ADD COLUMN expired_at INTEGER");
@@ -3894,6 +3906,131 @@ function openDb(file) {
 
 // scripts/fleetd/derive.mjs
 import fs7 from "node:fs";
+
+// scripts/fleetd/repo-identity.mjs
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+var identityCache = /* @__PURE__ */ new Map();
+var branchCache = /* @__PURE__ */ new Map();
+var CACHE_MAX = 512;
+var IDENTITY_TTL_MS = 5 * 6e4;
+var NEGATIVE_TTL_MS = 2e3;
+var BRANCH_TTL_MS = 2e4;
+function cacheGet(cache, key, now = Date.now()) {
+  const hit = cache.get(key);
+  if (!hit) return void 0;
+  if (hit.expiresAt <= now) {
+    cache.delete(key);
+    return void 0;
+  }
+  cache.delete(key);
+  cache.set(key, hit);
+  return hit.value;
+}
+function cacheSet(cache, key, value, ttlMs, now = Date.now()) {
+  cache.delete(key);
+  cache.set(key, { value, expiresAt: now + ttlMs });
+  while (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value);
+}
+function isDirectory(cwd) {
+  try {
+    return fs.statSync(cwd).isDirectory();
+  } catch {
+    return false;
+  }
+}
+function git(args, cwd) {
+  try {
+    const out = execFileSync("git", args, {
+      cwd,
+      timeout: 1500,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"]
+    }).trim();
+    return out || null;
+  } catch {
+    return null;
+  }
+}
+function canon(p) {
+  try {
+    return fs.realpathSync(p);
+  } catch {
+    return path.resolve(p);
+  }
+}
+function deriveRepo(cwd) {
+  if (!cwd) return { repo_id: null, repo_name: null, worktree: null, is_git: false };
+  if (!isDirectory(cwd)) {
+    const c = canon(cwd);
+    return { repo_id: c, repo_name: path.basename(c), worktree: c, is_git: false };
+  }
+  const hit = cacheGet(identityCache, cwd);
+  if (hit !== void 0) return hit;
+  let out;
+  const common = git(["rev-parse", "--git-common-dir"], cwd);
+  if (common) {
+    const commonAbs = canon(path.isAbsolute(common) ? common : path.resolve(cwd, common));
+    const mainTree = path.basename(commonAbs) === ".git" ? path.dirname(commonAbs) : commonAbs;
+    const toplevel = git(["rev-parse", "--show-toplevel"], cwd);
+    out = {
+      repo_id: commonAbs,
+      repo_name: path.basename(mainTree).replace(/\.git$/, "") || path.basename(mainTree),
+      worktree: toplevel ? canon(toplevel) : canon(cwd),
+      is_git: true
+    };
+  } else {
+    const c = canon(cwd);
+    out = { repo_id: c, repo_name: path.basename(c), worktree: c, is_git: false };
+  }
+  cacheSet(identityCache, cwd, out, out.is_git ? IDENTITY_TTL_MS : NEGATIVE_TTL_MS);
+  return out;
+}
+function branchOf(cwd, { fresh = false } = {}) {
+  if (!cwd || !isDirectory(cwd)) return null;
+  const now = Date.now();
+  if (!fresh) {
+    const hit = cacheGet(branchCache, cwd, now);
+    if (hit !== void 0) return hit;
+  }
+  const branch = git(["rev-parse", "--abbrev-ref", "HEAD"], cwd);
+  cacheSet(branchCache, cwd, branch, branch == null ? NEGATIVE_TTL_MS : BRANCH_TTL_MS, now);
+  return branch;
+}
+function ledgerKey(absPath, session) {
+  if (session?.worktree && session.repo_id && deriveRepo(session.cwd).is_git) {
+    const rel = path.relative(session.worktree, absPath);
+    if (rel && !rel.startsWith("..") && !path.isAbsolute(rel)) {
+      return { repo_id: session.repo_id, rel_path: rel, worktree: session.worktree };
+    }
+  }
+  const repo = deriveRepo(path.dirname(absPath));
+  if (repo.is_git) {
+    const rel = path.relative(repo.worktree, absPath);
+    if (rel && !rel.startsWith("..") && !path.isAbsolute(rel)) {
+      return { repo_id: repo.repo_id, rel_path: rel, worktree: repo.worktree };
+    }
+  }
+  return { repo_id: "", rel_path: absPath, worktree: null };
+}
+
+// scripts/fleetd/tickets.mjs
+var KEY_CORE = "([A-Z][A-Z0-9]{1,9})-([1-9][0-9]*)";
+var TICKET_RE = new RegExp(`(?<![A-Za-z0-9])${KEY_CORE}(?![A-Za-z0-9])`);
+var TICKET_EXACT_RE = new RegExp(`^${KEY_CORE}$`);
+function ticketFromBranch(branch) {
+  if (typeof branch !== "string" || !branch) return null;
+  const m = TICKET_RE.exec(branch);
+  return m ? `${m[1]}-${m[2]}` : null;
+}
+function normalizeTicket(raw) {
+  const s = String(raw ?? "").trim().toUpperCase();
+  return TICKET_EXACT_RE.test(s) ? s : null;
+}
+function animalOf(callsign) {
+  return String(callsign).split("-")[0];
+}
 
 // scripts/fleetd/questions.mjs
 var PLAN_CAPTURE_MAIL = "[FLEETDECK] Your plan was captured to the fleet plan library \u2014 do not execute it. Wrap up your turn.";
@@ -4246,17 +4383,17 @@ function clipQuestion(s) {
 }
 
 // scripts/fleetd/transcript.mjs
-import fs from "node:fs";
+import fs2 from "node:fs";
 function tailLines(transcriptPath, { maxBytes = 262144 } = {}) {
-  const stat = fs.statSync(transcriptPath);
+  const stat = fs2.statSync(transcriptPath);
   const start = Math.max(0, stat.size - maxBytes);
   const buf = Buffer.alloc(stat.size - start);
-  const fd = fs.openSync(transcriptPath, "r");
+  const fd = fs2.openSync(transcriptPath, "r");
   let nread;
   try {
-    nread = fs.readSync(fd, buf, 0, buf.length, start);
+    nread = fs2.readSync(fd, buf, 0, buf.length, start);
   } finally {
-    fs.closeSync(fd);
+    fs2.closeSync(fd);
   }
   let chunk = buf.subarray(0, nread).toString("utf8");
   if (start > 0) chunk = chunk.slice(chunk.indexOf("\n") + 1);
@@ -4349,7 +4486,7 @@ __export(spawn_exports, {
   typeKeys: () => typeKeys,
   windowName: () => windowName
 });
-import { execFile, execFileSync, spawn as spawnChild } from "node:child_process";
+import { execFile, execFileSync as execFileSync2, spawn as spawnChild } from "node:child_process";
 import { randomUUID } from "node:crypto";
 var TMUX_TIMEOUT_MS = 5e3;
 var US = "";
@@ -4373,7 +4510,7 @@ function hasTmux() {
   if (now - probe.at < PROBE_TTL_MS) return probe.ok;
   let ok = false;
   try {
-    execFileSync("tmux", ["-V"], { timeout: 1500, stdio: ["ignore", "pipe", "ignore"] });
+    execFileSync2("tmux", ["-V"], { timeout: 1500, stdio: ["ignore", "pipe", "ignore"] });
     ok = true;
   } catch {
   }
@@ -4499,6 +4636,15 @@ function launchOverride(cmd, spec, onError = () => {
 function createStatements(db2) {
   const q = {
     getSession: db2.prepare("SELECT * FROM sessions WHERE session_id = ?"),
+    // 0.6.0 ticket callsigns: is a candidate name already held by ANOTHER row?
+    // Scope is archived_at IS NULL (not ended_at IS NULL) because resolveTargets
+    // routes mail against every non-archived row including dead-but-retained
+    // tombstones — a name held by a corpse still up to 24h must not be reissued,
+    // or mail would fork between the corpse and its usurper. Both callsign and
+    // prev_callsign count as "held" (a birth name kept as a stale-ref anchor is
+    // still a live mail target). The session's own row is excluded so a rename
+    // that keeps the animal never collides with itself.
+    callsignTaken: db2.prepare("SELECT 1 FROM sessions WHERE (callsign = ? OR prev_callsign = ?) AND archived_at IS NULL AND session_id != ? LIMIT 1"),
     allSessions: db2.prepare("SELECT * FROM sessions ORDER BY started_at"),
     visibleSessions: db2.prepare("SELECT * FROM sessions WHERE archived_at IS NULL ORDER BY started_at"),
     countSessions: db2.prepare("SELECT COUNT(*) AS n FROM sessions"),
@@ -4704,7 +4850,10 @@ function createStatements(db2) {
     "blocked_this_turn",
     "source",
     "notification_type",
-    "archived_at"
+    "archived_at",
+    "ticket",
+    "ticket_source",
+    "prev_callsign"
   ];
   const updateStmts = /* @__PURE__ */ new Map();
   function updateSession(sid, upd) {
@@ -4722,11 +4871,11 @@ function createStatements(db2) {
 }
 
 // scripts/fleetd/worktrees.mjs
-import fs3 from "node:fs";
+import fs4 from "node:fs";
 
 // scripts/fleetd/helpers.mjs
-import path from "node:path";
-import fs2 from "node:fs";
+import path2 from "node:path";
+import fs3 from "node:fs";
 import os from "node:os";
 import { execFile as execFile2 } from "node:child_process";
 
@@ -4754,14 +4903,14 @@ function envInt(name, fallback, { min = 0 } = {}) {
   return Number.isFinite(n) && n >= min ? Math.floor(n) : fallback;
 }
 function mungeClaudeProjectCwd(cwd) {
-  return path.resolve(cwd).replace(/[\/.]/g, "-");
+  return path2.resolve(cwd).replace(/[\/.]/g, "-");
 }
 function claudeTranscriptPath(cwd, sessionId, homeDir = os.homedir()) {
-  return path.join(homeDir, ".claude", "projects", mungeClaudeProjectCwd(cwd), `${sessionId}.jsonl`);
+  return path2.join(homeDir, ".claude", "projects", mungeClaudeProjectCwd(cwd), `${sessionId}.jsonl`);
 }
 function spawnRowRevivable(row) {
   const runCwd = row?.worktree_path ?? row?.cwd;
-  return !!runCwd && ["pane-dead", "killed", "gone"].includes(row.status) && fs2.existsSync(runCwd) && fs2.existsSync(claudeTranscriptPath(runCwd, row.session_id));
+  return !!runCwd && ["pane-dead", "killed", "gone"].includes(row.status) && fs3.existsSync(runCwd) && fs3.existsSync(claudeTranscriptPath(runCwd, row.session_id));
 }
 function claudeEnvArgvPrefix(port, home) {
   const scrub = [
@@ -4821,21 +4970,21 @@ function chmodWritableWhereOwned(root) {
     if (depth > 12) return;
     let entries = [];
     try {
-      entries = fs2.readdirSync(dir, { withFileTypes: true });
+      entries = fs3.readdirSync(dir, { withFileTypes: true });
     } catch {
       return;
     }
     for (const entry of entries) {
-      const full = path.join(dir, entry.name);
+      const full = path2.join(dir, entry.name);
       let st;
       try {
-        st = fs2.lstatSync(full);
+        st = fs3.lstatSync(full);
       } catch {
         continue;
       }
       if (uid != null && st.uid !== uid) continue;
       try {
-        fs2.chmodSync(full, st.mode | 128);
+        fs3.chmodSync(full, st.mode | 128);
       } catch {
       }
       if (entry.isDirectory() && !entry.isSymbolicLink()) walk(full, depth + 1);
@@ -4864,16 +5013,16 @@ function blockedPaths(root, limit = 8) {
     if (out.length >= limit || depth > 12) return;
     let entries = [];
     try {
-      entries = fs2.readdirSync(dir, { withFileTypes: true });
+      entries = fs3.readdirSync(dir, { withFileTypes: true });
     } catch {
       return;
     }
     for (const entry of entries) {
       if (out.length >= limit) return;
-      const full = path.join(dir, entry.name);
+      const full = path2.join(dir, entry.name);
       let st;
       try {
-        st = fs2.lstatSync(full);
+        st = fs3.lstatSync(full);
       } catch {
         continue;
       }
@@ -4918,6 +5067,12 @@ function parseCommand(text) {
       return { cmd: "assign_auto", repo, text: m[2].trim() };
     }
     return { cmd: "assign", target, text: m[2].trim() };
+  }
+  if (m = /^ticket\s+(\S+)\s+(\S+)\s*$/i.exec(t)) {
+    return { cmd: "ticket", target: m[1], ticket: m[2] };
+  }
+  if (/^ticket\b/i.test(t)) {
+    return { cmd: "ticket", error: "usage: ticket <callsign-or-session-id> <PROJ-123|clear>" };
   }
   return { cmd: "note", text: t };
 }
@@ -4972,7 +5127,7 @@ function createWorktrees(ctx) {
   async function inspectWorktree(row) {
     let exists = false;
     try {
-      exists = fs3.existsSync(row.worktree_path);
+      exists = fs4.existsSync(row.worktree_path);
     } catch {
     }
     const item = worktreeShell(row, exists);
@@ -5082,7 +5237,7 @@ function createWorktrees(ctx) {
           }
         }
         try {
-          fs3.rmSync(row.worktree_path, { recursive: true, force: true });
+          fs4.rmSync(row.worktree_path, { recursive: true, force: true });
         } catch (err) {
           return { status: 409, body: { ok: false, reason: `could not remove worktree: ${err.code || err.message}` } };
         }
@@ -5157,7 +5312,9 @@ function createMail(ctx) {
       const key = m[1];
       return active.filter((s) => s.repo_id === key || s.repo_name === key).map((s) => s.session_id);
     }
-    return all.filter((s) => s.session_id === to || s.callsign === to).map((s) => s.session_id);
+    const direct = all.filter((s) => s.session_id === to || s.callsign === to);
+    if (direct.length) return direct.map((s) => s.session_id);
+    return all.filter((s) => s.prev_callsign === to).map((s) => s.session_id);
   }
   const watchWaiters = /* @__PURE__ */ new Map();
   function notifyWatchers(sid) {
@@ -5298,114 +5455,6 @@ function createMail(ctx) {
 
 // scripts/fleetd/ledger.mjs
 import path3 from "node:path";
-
-// scripts/fleetd/repo-identity.mjs
-import { execFileSync as execFileSync2 } from "node:child_process";
-import fs4 from "node:fs";
-import path2 from "node:path";
-var identityCache = /* @__PURE__ */ new Map();
-var branchCache = /* @__PURE__ */ new Map();
-var CACHE_MAX = 512;
-var IDENTITY_TTL_MS = 5 * 6e4;
-var NEGATIVE_TTL_MS = 2e3;
-var BRANCH_TTL_MS = 2e4;
-function cacheGet(cache, key, now = Date.now()) {
-  const hit = cache.get(key);
-  if (!hit) return void 0;
-  if (hit.expiresAt <= now) {
-    cache.delete(key);
-    return void 0;
-  }
-  cache.delete(key);
-  cache.set(key, hit);
-  return hit.value;
-}
-function cacheSet(cache, key, value, ttlMs, now = Date.now()) {
-  cache.delete(key);
-  cache.set(key, { value, expiresAt: now + ttlMs });
-  while (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value);
-}
-function isDirectory(cwd) {
-  try {
-    return fs4.statSync(cwd).isDirectory();
-  } catch {
-    return false;
-  }
-}
-function git(args, cwd) {
-  try {
-    const out = execFileSync2("git", args, {
-      cwd,
-      timeout: 1500,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"]
-    }).trim();
-    return out || null;
-  } catch {
-    return null;
-  }
-}
-function canon(p) {
-  try {
-    return fs4.realpathSync(p);
-  } catch {
-    return path2.resolve(p);
-  }
-}
-function deriveRepo(cwd) {
-  if (!cwd) return { repo_id: null, repo_name: null, worktree: null, is_git: false };
-  if (!isDirectory(cwd)) {
-    const c = canon(cwd);
-    return { repo_id: c, repo_name: path2.basename(c), worktree: c, is_git: false };
-  }
-  const hit = cacheGet(identityCache, cwd);
-  if (hit !== void 0) return hit;
-  let out;
-  const common = git(["rev-parse", "--git-common-dir"], cwd);
-  if (common) {
-    const commonAbs = canon(path2.isAbsolute(common) ? common : path2.resolve(cwd, common));
-    const mainTree = path2.basename(commonAbs) === ".git" ? path2.dirname(commonAbs) : commonAbs;
-    const toplevel = git(["rev-parse", "--show-toplevel"], cwd);
-    out = {
-      repo_id: commonAbs,
-      repo_name: path2.basename(mainTree).replace(/\.git$/, "") || path2.basename(mainTree),
-      worktree: toplevel ? canon(toplevel) : canon(cwd),
-      is_git: true
-    };
-  } else {
-    const c = canon(cwd);
-    out = { repo_id: c, repo_name: path2.basename(c), worktree: c, is_git: false };
-  }
-  cacheSet(identityCache, cwd, out, out.is_git ? IDENTITY_TTL_MS : NEGATIVE_TTL_MS);
-  return out;
-}
-function branchOf(cwd) {
-  if (!cwd || !isDirectory(cwd)) return null;
-  const now = Date.now();
-  const hit = cacheGet(branchCache, cwd, now);
-  if (hit !== void 0) return hit;
-  const branch = git(["rev-parse", "--abbrev-ref", "HEAD"], cwd);
-  cacheSet(branchCache, cwd, branch, branch == null ? NEGATIVE_TTL_MS : BRANCH_TTL_MS, now);
-  return branch;
-}
-function ledgerKey(absPath, session) {
-  if (session?.worktree && session.repo_id && deriveRepo(session.cwd).is_git) {
-    const rel = path2.relative(session.worktree, absPath);
-    if (rel && !rel.startsWith("..") && !path2.isAbsolute(rel)) {
-      return { repo_id: session.repo_id, rel_path: rel, worktree: session.worktree };
-    }
-  }
-  const repo = deriveRepo(path2.dirname(absPath));
-  if (repo.is_git) {
-    const rel = path2.relative(repo.worktree, absPath);
-    if (rel && !rel.startsWith("..") && !path2.isAbsolute(rel)) {
-      return { repo_id: repo.repo_id, rel_path: rel, worktree: repo.worktree };
-    }
-  }
-  return { repo_id: "", rel_path: absPath, worktree: null };
-}
-
-// scripts/fleetd/ledger.mjs
 var CONFLICT_WINDOW_MS = 30 * 60 * 1e3;
 function createLedger(ctx) {
   const { q, card, mail, tick } = ctx;
@@ -5447,10 +5496,11 @@ function createIngest(ctx) {
       const rawState = rec.state ?? rec.status;
       const existing = q.getSession.get(sid);
       if (!existing) {
-        const callsign = assignCallsign(sid);
         const cwd = rec.cwd || null;
         const repo = cwd ? deriveRepo(cwd) : { repo_id: null, repo_name: null, worktree: null };
-        const branch = cwd ? branchOf(cwd) : null;
+        const branch = cwd ? branchOf(cwd, { fresh: true }) : null;
+        const ticket = ticketFromBranch(branch);
+        const callsign = assignCallsign(sid, ticket);
         const now = Date.now();
         const startedAt = Number.isFinite(rec.startedAt) ? rec.startedAt : now;
         q.insertAgentSession.run(
@@ -5467,6 +5517,7 @@ function createIngest(ctx) {
           startedAt,
           now
         );
+        if (ticket) updateSession(sid, { ticket, ticket_source: "branch" });
         tick(`${callsign} joined the fleet (agents CLI)`);
         onMutate();
       } else if (existing.source === "agents-cli") {
@@ -5498,7 +5549,29 @@ function createIngest(ctx) {
 
 // scripts/fleetd/commands.mjs
 function createCommands(ctx) {
-  const { q, mail, resolveTargets, tick, onMutate } = ctx;
+  const { q, mail, resolveTargets, tick, onMutate, applyTicket, updateSession } = ctx;
+  function clearTicket(sid) {
+    const c = q.getSession.get(sid);
+    if (!c || c.ended_at != null) return { ok: false, reason: "no live session for that target" };
+    const upd = { ticket: null, ticket_source: "manual" };
+    let result = { ok: true, renamed: false, callsign: c.callsign, ticket: null };
+    if (c.prev_callsign && !q.callsignTaken.get(c.prev_callsign, c.prev_callsign, sid)) {
+      upd.callsign = c.prev_callsign;
+      upd.prev_callsign = c.callsign;
+      tick(`\u{1F3AB} ${c.callsign} reverted to ${c.prev_callsign} (ticket cleared)`);
+      result = { ok: true, renamed: true, callsign: c.prev_callsign, ticket: null, previous: c.callsign };
+    } else {
+      tick(`\u{1F3AB} ${c.callsign} ticket cleared`);
+    }
+    updateSession(sid, upd);
+    return result;
+  }
+  function resolveTicketTarget(target) {
+    const matches = q.visibleSessions.all().filter((s) => s.ended_at == null && (s.session_id === target || s.callsign === target || s.prev_callsign === target));
+    if (matches.length === 0) return { error: `no live session matching "${target}"` };
+    if (matches.length > 1) return { error: `"${target}" is ambiguous \u2014 use the session id` };
+    return { sid: matches[0].session_id };
+  }
   function command(text) {
     const parsed = parseCommand(text);
     const logCommand = (extra) => q.insertCommand.run(Date.now(), String(text ?? ""), JSON.stringify(extra ? { ...parsed, ...extra } : parsed));
@@ -5528,6 +5601,38 @@ function createCommands(ctx) {
       targets.forEach((sid) => mail(sid, "orchestrator", `[FLEETDECK ASSIGNMENT] ${parsed.text}`));
       delivered = targets.length;
       tick(`\u{1F4CC} orchestrator assign \u2192 ${parsed.target}${delivered ? "" : " (no such session)"}`);
+    } else if (parsed.cmd === "ticket") {
+      if (parsed.error) {
+        logCommand();
+        onMutate();
+        return { ok: false, reason: parsed.error };
+      }
+      if (parsed.target === "all" || /^repo:/.test(parsed.target)) {
+        logCommand();
+        onMutate();
+        return { ok: false, reason: "ticket targets one session \u2014 not all/repo:*" };
+      }
+      const resolved = resolveTicketTarget(parsed.target);
+      if (resolved.error) {
+        logCommand();
+        onMutate();
+        return { ok: false, reason: resolved.error };
+      }
+      let result;
+      if (/^clear$/i.test(parsed.ticket)) {
+        result = clearTicket(resolved.sid);
+      } else {
+        const key = normalizeTicket(parsed.ticket);
+        if (!key) {
+          logCommand();
+          onMutate();
+          return { ok: false, reason: `invalid ticket key "${parsed.ticket}" \u2014 expected e.g. PROJ-123 or clear` };
+        }
+        result = applyTicket(resolved.sid, key, "manual");
+      }
+      logCommand({ result });
+      onMutate();
+      return { session_id: resolved.sid, ...result };
     } else {
       tick(`\u{1F4DD} orchestrator note: ${parsed.text.slice(0, 60)}`);
     }
@@ -5608,9 +5713,10 @@ function createSpawns(ctx) {
     return { available: true, ...base };
   }
   function createSpawnedCard(sid, cwd, prompt) {
-    const callsign = assignCallsign(sid);
     const repo = deriveRepo(cwd);
-    const branch = cwd ? branchOf(cwd) : null;
+    const branch = cwd ? branchOf(cwd, { fresh: true }) : null;
+    const ticket = ticketFromBranch(branch);
+    const callsign = assignCallsign(sid, ticket);
     const now = Date.now();
     q.insertSpawnedSession.run(
       sid,
@@ -5624,6 +5730,7 @@ function createSpawns(ctx) {
       now,
       now
     );
+    if (ticket) updateSession(sid, { ticket, ticket_source: "branch" });
     return q.getSession.get(sid);
   }
   function spawnFailed(sid, callsign, reason) {
@@ -5695,7 +5802,8 @@ function createSpawns(ctx) {
     const url = typeof text === "string" ? text.match(RC_URL_RE)?.[0] ?? null : null;
     try {
       q.setSpawnRemote.run(url, spawn_id);
-      tick(`\u{1F4F1} ${row.callsign} remote control enabled${url ? "" : " (URL not found)"}`);
+      const c = q.getSession.get(row.session_id);
+      tick(`\u{1F4F1} ${c?.callsign ?? row.callsign} remote control enabled${url ? "" : " (URL not found)"}`);
       onMutate();
     } catch (err) {
       console.error("fleetd remote harvest persist error:", err);
@@ -5795,8 +5903,19 @@ function createSpawns(ctx) {
     );
     let worktree_path = null;
     if (body?.worktree === true) {
-      worktree_path = path4.join(path4.dirname(cwd), `${path4.basename(cwd)}--fd-${callsign}`);
-      const res = await execFileP("git", ["-C", cwd, "worktree", "add", "-b", `fd/${callsign}`, worktree_path]);
+      const ticketNamed = c.ticket && String(callsign).endsWith(`-${c.ticket}`);
+      const baseName = ticketNamed ? `${c.ticket}-${animalOf(callsign)}` : callsign;
+      const pathFor = (name) => path4.join(path4.dirname(cwd), `${path4.basename(cwd)}--fd-${name}`);
+      const dedup = `${baseName}-${session_id.slice(0, 4)}`;
+      const names = fs5.existsSync(pathFor(baseName)) ? [dedup] : [baseName, dedup];
+      let candidate;
+      let res;
+      for (const workname of names) {
+        candidate = pathFor(workname);
+        res = await execFileP("git", ["-C", cwd, "worktree", "add", "-b", `fd/${workname}`, candidate]);
+        if (res.ok) break;
+      }
+      worktree_path = candidate;
       if (!res.ok) {
         await spawnCompensate({
           spawn_id,
@@ -6043,7 +6162,7 @@ function createSpawns(ctx) {
       const observed = !win ? "missing" : win.pane_dead ? "dead" : `running ${win.pane_cmd || "unknown"}`;
       return { status: 409, body: { ok: false, reason: `claude pane is not alive (${observed})` } };
     }
-    const typed = await tmuxAdapter.typeKeys(win.window_id, `/rc ${row.callsign}`);
+    const typed = await tmuxAdapter.typeKeys(win.window_id, `/rc ${session?.callsign ?? row.callsign}`);
     const entered = typed ? await tmuxAdapter.sendEnter(win.window_id) : false;
     if (!typed || !entered) {
       return { status: 500, body: { ok: false, reason: "failed to type remote-control command into pane" } };
@@ -6265,11 +6384,12 @@ function createEvents(ctx) {
     drainMail,
     notifyWatchers,
     modelMemo,
-    forgetSpawn
+    forgetSpawn,
+    applyTicket
   } = ctx;
   function applyEvent(ev) {
     const sid = ev.session_id || "unknown";
-    let c = card(sid);
+    let c = card(sid, ev.cwd);
     if (c.ended_at != null || c.archived_at != null) {
       updateSession(sid, { ended_at: null, archived_at: null, col: "queued" });
       c = { ...c, ended_at: null, archived_at: null, col: "queued" };
@@ -6285,13 +6405,15 @@ function createEvents(ctx) {
       if (sp.remote_control) scheduleRegistrationRemoteHarvest(sp.spawn_id);
     }
     const upd = { last_seen: Date.now(), events: c.events + 1 };
+    let serverBranch = null;
     if (ev.cwd) {
       upd.cwd = ev.cwd;
       const repo = deriveRepo(ev.cwd);
       upd.repo_id = repo.repo_id;
       upd.repo_name = repo.repo_name;
       upd.worktree = repo.worktree;
-      const branch = branchOf(ev.cwd) || ev.git_branch || null;
+      serverBranch = branchOf(ev.cwd);
+      const branch = serverBranch || ev.git_branch || null;
       if (branch) upd.branch = branch;
     }
     const payloadModel = ev.model?.display_name || ev.model?.id || (typeof ev.model === "string" && ev.model ? ev.model : null);
@@ -6309,6 +6431,13 @@ function createEvents(ctx) {
     }
     updateSession(sid, upd);
     c = { ...c, ...upd };
+    if (upd.branch && c.ticket == null && c.ticket_source == null) {
+      let tk = ticketFromBranch(serverBranch);
+      if (tk) {
+        tk = ticketFromBranch(branchOf(ev.cwd, { fresh: true }));
+      }
+      if (tk && applyTicket(sid, tk, "branch").ok) c = q.getSession.get(sid);
+    }
     let conflict = null;
     const set = {};
     switch (ev.hook_event_name) {
@@ -6423,7 +6552,7 @@ function createEvents(ctx) {
     const otherRepos = new Set(elsewhere.map((s) => s.repo_id ?? "(none)")).size;
     const repoLabel = c.repo_name ? ` in ${c.repo_name}` : "";
     const lines = [
-      `[FLEETDECK] You are on the fleet board as "${c.callsign}" \u2014 live at http://127.0.0.1:${port}`,
+      `[FLEETDECK] You are on the fleet board as "${c.callsign}"${c.ticket ? ` (ticket ${c.ticket})` : ""} \u2014 live at http://127.0.0.1:${port}`,
       sameRepo.length ? `Other active sessions${repoLabel} (${sameRepo.length}):` : `No other sessions active${repoLabel} right now.`,
       ...sameRepo.map((s) => `  - ${s.callsign} [${s.col}] ${s.note}${s.branch ? " \u2014 " + s.branch : ""}${s.worktree && s.worktree !== c.worktree ? " @ " + s.worktree : ""}`)
     ];
@@ -6629,6 +6758,11 @@ function createSnapshot(ctx) {
       return {
         session_id: s.session_id,
         callsign: s.callsign,
+        // 0.6.0 ticket callsigns: the board renders these verbatim (null when
+        // unset). prev_callsign lets the ticker/mail UI recognise the birth name.
+        ticket: s.ticket ?? null,
+        ticket_source: s.ticket_source ?? null,
+        prev_callsign: s.prev_callsign ?? null,
         model: s.model,
         cwd: s.cwd,
         branch: s.branch,
@@ -6975,20 +7109,58 @@ function createCore(db2, {
     modelMemo.set(sid, { ...memo, size, model: model ?? memo.model });
     return model;
   }
-  function assignCallsign(sid) {
-    const idx = q.countSessions.get().n;
-    return CALLSIGNS[idx % CALLSIGNS.length] + "-" + String(sid).slice(0, 4);
+  function assignCallsign(sid, ticket = null) {
+    const start = q.countSessions.get().n % CALLSIGNS.length;
+    if (ticket) {
+      for (let i = 0; i < CALLSIGNS.length; i++) {
+        const cand = CALLSIGNS[(start + i) % CALLSIGNS.length] + "-" + ticket;
+        if (!q.callsignTaken.get(cand, cand, sid)) return cand;
+      }
+    }
+    return CALLSIGNS[start] + "-" + String(sid).slice(0, 4);
   }
-  function card(sid) {
+  function card(sid, cwd = null) {
     let c = q.getSession.get(sid);
     if (!c) {
-      const callsign = assignCallsign(sid);
+      const ticket = ticketFromBranch(cwd ? branchOf(cwd, { fresh: true }) : null);
+      const callsign = assignCallsign(sid, ticket);
       const now = Date.now();
       q.insertSession.run(sid, callsign, now, now);
+      if (ticket) updateSession(sid, { ticket, ticket_source: "branch" });
       c = q.getSession.get(sid);
       tick(`${callsign} joined the fleet`);
     }
     return c;
+  }
+  function applyTicket(sid, ticket, source) {
+    const c = q.getSession.get(sid);
+    if (!c || c.ended_at != null) return { ok: false, reason: "no live session for that target" };
+    if (source === "branch" && (c.ticket != null || c.ticket_source != null)) {
+      return { ok: false, reason: "ticket already set \u2014 auto-detect fires once" };
+    }
+    const preferred = `${animalOf(c.callsign)}-${ticket}`;
+    const next = q.callsignTaken.get(preferred, preferred, sid) ? assignCallsign(sid, ticket) : preferred;
+    if (!next.endsWith("-" + ticket)) {
+      updateSession(sid, { ticket, ticket_source: source });
+      tick(`\u{1F3AB} ${c.callsign} stays on ticket ${ticket} \u2014 every callsign for it is taken`);
+      onMutate();
+      return { ok: true, renamed: false, callsign: c.callsign, ticket };
+    }
+    if (next === c.callsign) {
+      updateSession(sid, { ticket, ticket_source: source });
+      onMutate();
+      return { ok: true, renamed: false, callsign: c.callsign, ticket };
+    }
+    const previous = c.callsign;
+    updateSession(sid, {
+      callsign: next,
+      prev_callsign: c.prev_callsign ?? c.callsign,
+      ticket,
+      ticket_source: source
+    });
+    tick(`\u{1F3AB} ${previous} is now ${next} (ticket ${ticket})`);
+    onMutate();
+    return { ok: true, renamed: true, callsign: next, ticket, previous };
   }
   function tick(msg) {
     q.insertTicker.run(Date.now(), msg);
@@ -7022,6 +7194,7 @@ function createCore(db2, {
     logEvent,
     card,
     assignCallsign,
+    applyTicket,
     modelMemo,
     stampTranscriptFloor,
     readTranscriptModel

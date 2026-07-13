@@ -58,6 +58,11 @@ export function createSnapshot(ctx) {
       return {
         session_id: s.session_id,
         callsign: s.callsign,
+        // 0.6.0 ticket callsigns: the board renders these verbatim (null when
+        // unset). prev_callsign lets the ticker/mail UI recognise the birth name.
+        ticket: s.ticket ?? null,
+        ticket_source: s.ticket_source ?? null,
+        prev_callsign: s.prev_callsign ?? null,
         model: s.model,
         cwd: s.cwd,
         branch: s.branch,

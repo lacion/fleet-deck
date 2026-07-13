@@ -138,9 +138,13 @@ export default function App() {
   const drawerConflictFiles = drawerSession
     ? conflicts.filter((c) => (c.sessions || []).includes(drawerSid)).map((c) => c.file || c.rel_path)
     : [];
-  const drawerTimeline = drawerSession
-    ? sessionTicker(snap.ticker || EMPTY_ARR, drawerSession.callsign)
-    : EMPTY_ARR;
+  // Memoized off the 1 Hz clock re-render: the ticker filter (a RegExp build +
+  // full scan in sessionTicker) reruns only when the ticker or the drawer's
+  // callsign changes, like byId/pendingQs above.
+  const drawerTimeline = useMemo(
+    () => (drawerSession ? sessionTicker(snap.ticker || EMPTY_ARR, drawerSession.callsign) : EMPTY_ARR),
+    [snap.ticker, drawerSession?.callsign],
+  );
 
   const recordThread = (target, text) => {
     if (byId.has(target)) {

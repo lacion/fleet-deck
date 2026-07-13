@@ -263,11 +263,20 @@ export function callsignOf(byId, sid) {
 
 // The drawer's per-session timeline: the daemon's global ticker filtered to the
 // rows that name this callsign, capped at the newest 12. The ticker carries only
-// {at, msg}, so the match is by substring — the same convention the feed
-// classifier relies on.
+// {at, msg}, so the match is by text — the same convention the feed classifier
+// relies on.
+//
+// Boundary match, not a bare .includes(): ticket suffixes prefix-nest —
+// 'raven-PROJ-1' is a substring of 'raven-PROJ-12' — where the old fixed-length
+// hex suffix never could, so .includes() would leak the shorter ticket's
+// timeline into every longer one. Require the callsign to be flanked by a
+// non-[A-Za-z0-9-] character (or a string edge) on each side. The RegExp is
+// built once per call, not once per row.
 export function sessionTicker(ticker, callsign) {
+  const esc = String(callsign ?? '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`(^|[^A-Za-z0-9-])${esc}([^A-Za-z0-9-]|$)`);
   return (ticker || [])
-    .filter((e) => String(e.msg || '').includes(callsign))
+    .filter((e) => re.test(String(e.msg || '')))
     .slice(0, 12);
 }
 

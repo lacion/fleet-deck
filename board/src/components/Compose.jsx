@@ -59,21 +59,35 @@ export default function Compose({ initialTarget, sessions, repos, onClose, onSen
       // v1.1 auto-routing: /command may answer {ok:true, assigned_to:{callsign}}
       // (routed) or {ok:false, unrouted:true} (no candidate, task still logged)
       // — both count as "sent", neither is an error to show in red.
-      const callsign = target === 'daemon' ? res.json?.assigned_to?.callsign : null;
-      const unrouted = target === 'daemon' && res.json?.unrouted === true;
-      if (res.ok || unrouted) {
+      const body = res.json || {};
+      const callsign = target === 'daemon' ? body.assigned_to?.callsign : null;
+      const unrouted = target === 'daemon' && body.unrouted === true;
+      if (target === 'daemon' && body.ok === false && !unrouted) {
+        // /command always answers HTTP 200, so res.ok can't see a daemon-side
+        // rejection — a {ok:false, reason} body (malformed/invalid/ambiguous
+        // `ticket`, …) must surface in red, not close the dialog as a success.
+        setErr(body.reason || 'command failed');
+      } else if (res.ok || unrouted) {
         onSent?.(target, sent);
         if (callsign) {
           setNote(`→ routed to ${callsign}`);
           setText('');
         } else if (unrouted) {
           setNote('no available session — task logged');
-          setUnroutedText(res.json?.text ?? sent);
+          setUnroutedText(body.text ?? sent);
           setText('');
-        } else if (target !== 'daemon' && Array.isArray(res.json?.targets)) {
+        } else if (target === 'daemon' && typeof body.renamed === 'boolean') {
+          // `ticket` outcomes: confirm the (possibly new) name inline.
+          setNote(body.renamed
+            ? `→ ${body.previous} is now ${body.callsign}`
+            : body.ticket
+              ? `→ ${body.callsign} pinned to ${body.ticket}`
+              : `→ ${body.callsign} ticket cleared`);
+          setText('');
+        } else if (target !== 'daemon' && Array.isArray(body.targets)) {
           // fix C: the daemon now says HOW each recipient gets the mail —
           // confirm inline (same affordance as daemon-command notes).
-          setNote(deliveryNote(res.json.targets));
+          setNote(deliveryNote(body.targets));
           setText('');
         } else {
           onClose();
@@ -112,7 +126,7 @@ export default function Compose({ initialTarget, sessions, repos, onClose, onSen
           ref={taRef}
           rows={4}
           placeholder={target === 'daemon'
-            ? 'Instruct the orchestrator…  (broadcast <text> · assign <callsign> <text> · assign auto <text> · assign auto:<repo> <text> · note)'
+            ? 'Instruct the orchestrator…  (broadcast <text> · assign <callsign> <text> · assign auto <text> · assign auto:<repo> <text> · ticket <callsign> <KEY-1> · note)'
             : 'Write to the fleet…'}
           value={text}
           onChange={(e) => { setText(e.target.value); if (note) setNote(null); if (unroutedText) setUnroutedText(null); }}

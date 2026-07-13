@@ -18,7 +18,7 @@ Fleet Deck is the air-traffic control tower for that situation.
   <img src="docs/assets/fleet-deck-demo.gif" alt="The board in action: sessions working, a conflict flaring, a permission answered from the rail, a plan getting captured." width="100%">
 </p>
 
-Every session on the machine appears on one local board — **http://127.0.0.1:4711** — with a callsign (`falcon-a3f2`, `otter-91c4`... yes, the banner is literally the roster), a live column derived from what it's *actually doing*, and a mailbox. Sessions get whispered at when they're about to trample each other's files. Questions land in an amber rail you can answer from across the room. And when you're feeling ambitious, the board will spawn new workers, route tasks to whoever's idle, and file their plans in a library.
+Every session on the machine appears on one local board — **http://127.0.0.1:4711** — with a callsign (`falcon-a3f2`, `otter-91c4`, or `raven-PROJ-123` when it's working a Jira ticket... yes, the banner is literally the roster), a live column derived from what it's *actually doing*, and a mailbox. Sessions get whispered at when they're about to trample each other's files. Questions land in an amber rail you can answer from across the room. And when you're feeling ambitious, the board will spawn new workers, route tasks to whoever's idle, and file their plans in a library.
 
 ## What it does
 
@@ -80,7 +80,7 @@ update the README install section
 3x find the race in the spawn path
 ```
 
-That's five agents in one click. Each one gets **its own git worktree** (`<repo>--fd-<callsign>`) on **its own branch** (`fd/<callsign>`), so they can all work the same repo without ever standing on each other's edits — that isolation is forced for a batch, not offered. The `3x` prefix runs a line several times, which is how you race three independent attempts at one nasty bug and keep the best.
+That's five agents in one click. Each one gets **its own git worktree** (`<repo>--fd-<callsign>`, or `<repo>--fd-<TICKET>-<animal>` when the source branch carries a Jira ticket) on **its own branch** (`fd/<callsign>` / `fd/<TICKET>-<animal>`), so they can all work the same repo without ever standing on each other's edits — that isolation is forced for a batch, not offered. The `3x` prefix runs a line several times, which is how you race three independent attempts at one nasty bug and keep the best.
 
 Before anything launches, the form shows you the exact list and the exact count. **That preview is the guardrail** — there is deliberately no cap on how many agents may be live at once. It's your machine and your token budget; Fleet Deck's job is to make the size of what you're about to do impossible to miss, not to pick a number for you.
 
@@ -134,6 +134,17 @@ Claude Code can hand a session to claude.ai. Fleet Deck gives you three doors to
 Either way, the card grows a **📱 remote ↗** chip that opens claude.ai in a new tab.
 
 **The guard, because it matters:** enabling remote control is refused (409) unless the session is at a turn boundary — queued or idle. An agent that is mid-turn, or sitting on a permission dialog, is not waiting for a slash command; typing one there would *answer the dialog*. The board doesn't even offer the chip in those states, and the daemon refuses it if you ask anyway.
+
+## Jira tickets: a callsign that tells you the work
+
+A session's callsign is `<animal>-<4 hex>` by default (`raven-4b7f`) — memorable, but it says nothing about *what the session is on*. So when a session sits on a branch that carries a Jira key (`feature/PROJ-123-checkout`, `fd/PROJ-123-otter`), Fleet Deck swaps the hex for the ticket: **`raven-PROJ-123`**. The board card, the mailbox target, and the tmux window all read as the ticket you'd recognize from standup.
+
+- **Auto-detected from the branch**, no config. It's read once at birth, and again the first time a ticketless session checks out a ticket branch — that rename happens exactly once and is announced in the ticker.
+- **`ticket <callsign> <PROJ-123>`** from Compose → ORCHESTRATOR pins a ticket by hand; a manual pin wins over auto-detection and is never overwritten. `ticket <callsign> clear` drops it and restores the birth name.
+- **One animal per ticket.** A fleet on one branch is the normal case, so every session on `PROJ-123` gets a *different* animal — `otter-PROJ-123`, `falcon-PROJ-123`, `raven-PROJ-123`. When all twelve animals are taken for a ticket, the thirteenth falls back to the hex suffix (a ticker line tells you), and a manual `ticket` command is the recovery.
+- **Spawns name their artifacts ticket-first.** A worker spawned from a `PROJ-123` branch lands in the worktree `<repo>--fd-PROJ-123-<animal>` on branch `fd/PROJ-123-<animal>`, so sibling worktrees and branch lists group by ticket. Ticketless spawns keep today's `<repo>--fd-<callsign>` / `fd/<callsign>` format.
+
+**Upgrading an existing fleet:** **restart the daemon** so it loads the new code (source changes ship nothing until the daemon restarts). After that, any live session already sitting on a ticket branch renames itself once on its next hook event, and mail addressed to a session's old, pre-rename name still finds it.
 
 ## Retention, and the Clear button
 

@@ -55,7 +55,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, readFileSync, existsSync, chmodSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, readFileSync, existsSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -697,4 +697,125 @@ test('reconciliation: a spawn row whose window was never actually created in rea
   } else {
     t.diagnostic('card carries no spawn{} descriptor after restart -- could not directly confirm the row status reached \'gone\' from /state alone; offline col is the observable proxy used here');
   }
+});
+
+// ---------------------------------------------------------------------------
+// 10. Ticket-first spawn naming (0.6.0)
+//
+// When the SOURCE cwd's branch carries a Jira key, the spawned session is
+// ticket-first: the board callsign stays animal-first (<animal>-PROJ-123) but
+// the worktree dir and fd/ branch are composed as
+// <repo>--fd-PROJ-123-<animal> / fd/PROJ-123-<animal> so sibling dirs and
+// branch lists group by ticket. The tmux window keeps the plain callsign.
+// A ticketless spawn is unchanged (--fd-<callsign> / fd/<callsign>).
+// ---------------------------------------------------------------------------
+
+test('ticket spawn: a spawn from a ticket-branch cwd is ticket-first (callsign, worktree dir, fd/ branch); its own SessionStart does not re-rename', async (t) => {
+  const port = randomPort();
+  const baseUrl = `http://127.0.0.1:${port}`;
+  const rec = path.join(scratchDir(), 'specs.jsonl');
+  const repo = makeRepoWithWorktree({ repoName: 'fd-spawn-ticket', branch: 'feature/PROJ-123-work' });
+  const daemon = await startDaemon({ port, env: spawnCmdEnv({ recordFile: rec, postUrl: baseUrl }) });
+  t.after(async () => { await daemon.stop(); repo.cleanup(); });
+
+  const cwd = repo.worktree; // branch feature/PROJ-123-work → ticket PROJ-123
+  const res = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd, worktree: true });
+  assert.equal(res.status, 200, `ticket worktree spawn should 200 (got ${res.status}: ${JSON.stringify(res.json)})`);
+  const { callsign, session_id: sid } = res.json;
+
+  // Board callsign stays animal-first, ticket-suffixed.
+  assert.match(callsign, /^[a-z]+-PROJ-123$/, `spawned callsign should be <animal>-PROJ-123 (got ${callsign})`);
+  const animal = callsign.split('-')[0];
+
+  // The tmux window keeps the plain callsign.
+  assert.equal(res.json.tmux.window, `fd${daemon.port}-${callsign}`, 'the tmux window name stays callsign-based');
+
+  // Ticket-first worktree dir + fd/ branch on disk.
+  const expectedWorktree = path.join(path.dirname(cwd), `${path.basename(cwd)}--fd-PROJ-123-${animal}`);
+  await waitUntil(() => existsSync(expectedWorktree) || null,
+    { label: `ticket-first worktree dir ${expectedWorktree} appears` });
+
+  const listing = execFileSync('git', ['-C', repo.root, 'worktree', 'list', '--porcelain'], { encoding: 'utf8' });
+  assert.match(listing, new RegExp(`worktree ${expectedWorktree.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`),
+    `git worktree list should show the ticket-first worktree (listing: ${listing})`);
+  assert.match(listing, new RegExp(`branch refs/heads/fd/PROJ-123-${animal}\\b`),
+    `the spawned branch should be fd/PROJ-123-${animal} (listing: ${listing})`);
+
+  // The spawned session's own SessionStart (posted by the fixture; cwd = the new
+  // fd/PROJ-123-<animal> worktree) re-yields PROJ-123, so inheritance and
+  // self-detection agree and the rename-once guard makes it a no-op.
+  const card = await waitUntil(async () => {
+    const state = (await getJson(`${daemon.baseUrl}/state`)).json;
+    const c = findSession(state, sid);
+    return c && c.source === 'hooks' ? c : null;
+  }, { label: 'the spawned session flips to hooks after its SessionStart' });
+  assert.equal(card.ticket, 'PROJ-123', 'the spawned session inherits the ticket');
+  assert.equal(card.callsign, callsign, 'the spawned SessionStart must not re-rename the inherited callsign');
+  assert.equal(card.prev_callsign ?? null, null, 'no rename happened → no prev_callsign');
+});
+
+test('ticket spawn leftover-artifact: a pre-existing ticket-first worktree dir forces a deduped -<sid4> workname', async (t) => {
+  const port = randomPort();
+  const baseUrl = `http://127.0.0.1:${port}`;
+  const rec = path.join(scratchDir(), 'specs.jsonl');
+  const repo = makeRepoWithWorktree({ repoName: 'fd-spawn-ticket-dedup', branch: 'feature/PROJ-123-work' });
+  const daemon = await startDaemon({ port, env: spawnCmdEnv({ recordFile: rec, postUrl: baseUrl }) });
+  t.after(async () => { await daemon.stop(); repo.cleanup(); });
+
+  const cwd = repo.worktree;
+  // The FIRST session in a fresh daemon takes falcon (rotation start = count
+  // 0 % 12, pinned). Pre-create the exact ticket-first dir the daemon would
+  // otherwise choose so the leftover-artifact retry (existsSync → workname +
+  // '-' + sid4) fires.
+  const collidedDir = path.join(path.dirname(cwd), `${path.basename(cwd)}--fd-PROJ-123-falcon`);
+  mkdirSync(collidedDir, { recursive: true });
+
+  const res = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd, worktree: true });
+  assert.equal(res.status, 200, `dedup spawn should still 200 (got ${res.status}: ${JSON.stringify(res.json)})`);
+  const { callsign, session_id: sid } = res.json;
+  // Confirm the rotation prediction so the pre-created dir really is the one the
+  // daemon wanted (a clear failure here means rotation, not dedup, diverged).
+  assert.equal(callsign, 'falcon-PROJ-123', `the first spawn should be falcon-PROJ-123 (got ${callsign})`);
+  const sid4 = sid.slice(0, 4);
+
+  // Cross-check the effective worktree cwd the daemon handed the backend: it must
+  // be the DEDUPED path (differs from the pre-created dir, carries the -<sid4>).
+  const specs = await waitForSpecRecords(rec, 1);
+  const actualWorktree = specCwd(specs[specs.length - 1].parsed);
+  assert.ok(actualWorktree, 'the spec should carry the effective worktree cwd');
+  assert.equal(path.basename(actualWorktree), `${path.basename(cwd)}--fd-PROJ-123-falcon-${sid4}`,
+    `the worktree dir should be the deduped -<sid4> workname (got ${actualWorktree})`);
+  assert.notEqual(path.resolve(actualWorktree), path.resolve(collidedDir),
+    'the deduped worktree dir must differ from the pre-created one');
+
+  await waitUntil(() => existsSync(actualWorktree) || null,
+    { label: `deduped worktree dir ${actualWorktree} appears on disk` });
+  const listing = execFileSync('git', ['-C', repo.root, 'worktree', 'list', '--porcelain'], { encoding: 'utf8' });
+  assert.match(listing, new RegExp(`branch refs/heads/fd/PROJ-123-falcon-${sid4}\\b`),
+    `the deduped branch should be fd/PROJ-123-falcon-${sid4} (listing: ${listing})`);
+  assert.ok(existsSync(collidedDir), 'the pre-created (non-worktree) dir is left in place');
+});
+
+test('ticketless spawn keeps the plain --fd-<callsign> worktree format (no ticket in the path)', async (t) => {
+  const port = randomPort();
+  const baseUrl = `http://127.0.0.1:${port}`;
+  const rec = path.join(scratchDir(), 'specs.jsonl');
+  // A repo whose worktree branch carries NO Jira key.
+  const repo = makeRepoWithWorktree({ repoName: 'fd-spawn-noticket', branch: 'feature/no-key-here' });
+  const daemon = await startDaemon({ port, env: spawnCmdEnv({ recordFile: rec, postUrl: baseUrl }) });
+  t.after(async () => { await daemon.stop(); repo.cleanup(); });
+
+  const cwd = repo.worktree;
+  const res = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd, worktree: true });
+  assert.equal(res.status, 200, `ticketless worktree spawn should 200 (got ${res.status}: ${JSON.stringify(res.json)})`);
+  const { callsign } = res.json;
+  assert.match(callsign, /^[a-z]+-[0-9a-f]{4}$/, `a ticketless spawn keeps the hex callsign (got ${callsign})`);
+
+  const expectedWorktree = path.join(path.dirname(cwd), `${path.basename(cwd)}--fd-${callsign}`);
+  await waitUntil(() => existsSync(expectedWorktree) || null,
+    { label: `plain --fd-<callsign> worktree ${expectedWorktree} appears` });
+  const listing = execFileSync('git', ['-C', repo.root, 'worktree', 'list', '--porcelain'], { encoding: 'utf8' });
+  assert.match(listing, new RegExp(`branch refs/heads/fd/${callsign.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`),
+    'the ticketless spawn branch stays fd/<callsign>');
+  assert.ok(!/PROJ-/.test(expectedWorktree), 'no ticket appears in a ticketless worktree path');
 });

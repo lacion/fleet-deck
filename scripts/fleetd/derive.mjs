@@ -7,6 +7,8 @@
 // Transition rules are a faithful port of fleetdeck-spike/server/fleetd.mjs.
 
 import fs from 'node:fs';
+import { branchOf } from './repo-identity.mjs';
+import { ticketFromBranch, animalOf } from './tickets.mjs';
 import { createQuestions, resolveHoldMs } from './questions.mjs';
 import { lastAssistantModel } from './transcript.mjs';
 import * as defaultTmuxAdapter from './spawn.mjs';
@@ -148,21 +150,106 @@ export function createCore(db, {
   }
 
   // ------------------------------------------------------------------ cards
-  function assignCallsign(sid) {
-    const idx = q.countSessions.get().n;
-    return CALLSIGNS[idx % CALLSIGNS.length] + '-' + String(sid).slice(0, 4);
+  // With a ticket, the callsign becomes <animal>-<TICKET> instead of
+  // <animal>-<sid4>. Multiple sessions on one ticket is the NORMAL case (a fleet
+  // on one branch), so each gets a different animal: scan the 12-animal rotation
+  // from the count-based start and take the first <animal>-<ticket> no other
+  // un-archived row holds. All 12 held → the ticket is saturated → fall back to
+  // today's hex format (a stable, unique name; recorded once so detection never
+  // retries). Without a ticket → today's behaviour, byte-for-byte.
+  function assignCallsign(sid, ticket = null) {
+    const start = q.countSessions.get().n % CALLSIGNS.length;
+    if (ticket) {
+      for (let i = 0; i < CALLSIGNS.length; i++) {
+        const cand = CALLSIGNS[(start + i) % CALLSIGNS.length] + '-' + ticket;
+        if (!q.callsignTaken.get(cand, cand, sid)) return cand;
+      }
+    }
+    return CALLSIGNS[start] + '-' + String(sid).slice(0, 4);
   }
 
-  function card(sid) {
+  // `cwd` is passed ONLY by the birth callers that know it (the applyEvent
+  // entry); the hookStop/detectFreeform/ledger callers pass none because they
+  // only ever hit an existing row. When a fresh card is born with a cwd, detect
+  // its ticket from the SERVER-derived branch — fresh:true so a 20s-stale cache
+  // can't misname a just-switched checkout — and name it ticket-first. The
+  // ticketFromBranch → assignCallsign → insert chain has NO await in it: the
+  // naming synchrony invariant (see plan) requires choose-name + insert to land
+  // in one tick, which is why fresh branchOf stays execFileSync.
+  function card(sid, cwd = null) {
     let c = q.getSession.get(sid);
     if (!c) {
-      const callsign = assignCallsign(sid);
+      const ticket = ticketFromBranch(cwd ? branchOf(cwd, { fresh: true }) : null);
+      const callsign = assignCallsign(sid, ticket);
       const now = Date.now();
       q.insertSession.run(sid, callsign, now, now);
+      // Birth is NOT a rename: the card is inserted already ticket-named, so
+      // there is no prev_callsign and a single "joined" tick. Record ticket +
+      // source even on the hex fallback — detection was consumed, and the auto
+      // path (guarded on ticket_source IS NULL) must never fire again.
+      if (ticket) updateSession(sid, { ticket, ticket_source: 'branch' });
       c = q.getSession.get(sid);
       tick(`${callsign} joined the fleet`);
     }
     return c;
+  }
+
+  // applyTicket — the ONE rename path, shared by branch auto-detect (events.mjs)
+  // and the manual `ticket` command (commands.mjs). Returns
+  // { ok:true, renamed, callsign, ticket, previous? } (previous only on a real
+  // rename) or { ok:false, reason }. Runs fully synchronously (no await), so it
+  // preserves the naming-collision invariant: read current name, compute the
+  // next, write it, all in one tick.
+  function applyTicket(sid, ticket, source) {
+    const c = q.getSession.get(sid);
+    if (!c || c.ended_at != null) return { ok: false, reason: 'no live session for that target' };
+    // Auto-rename fires AT MOST ONCE: a branch detection is refused the moment
+    // a ticket/source already exists (a later branch switch changes nothing, and
+    // a manual ticket_source permanently blocks the auto path). Manual may fire
+    // any number of times.
+    if (source === 'branch' && (c.ticket != null || c.ticket_source != null)) {
+      return { ok: false, reason: 'ticket already set — auto-detect fires once' };
+    }
+    // Prefer keeping the current animal so a rename is the least-surprising
+    // <sameAnimal>-<ticket>; only when that exact name is already held by
+    // another row do we rotation-scan for a free animal.
+    const preferred = `${animalOf(c.callsign)}-${ticket}`;
+    const next = q.callsignTaken.get(preferred, preferred, sid) ? assignCallsign(sid, ticket) : preferred;
+    // assignCallsign returns the hex fallback only when all 12 animals for this
+    // ticket are taken. Saturation: keep the current name, but still record
+    // ticket + source so the auto path never retries (manual is the recovery).
+    if (!next.endsWith('-' + ticket)) {
+      updateSession(sid, { ticket, ticket_source: source });
+      tick(`🎫 ${c.callsign} stays on ticket ${ticket} — every callsign for it is taken`);
+      onMutate();
+      return { ok: true, renamed: false, callsign: c.callsign, ticket };
+    }
+    if (next === c.callsign) {
+      // Name unchanged (a manual re-ticket with the current key). Record the
+      // fields (e.g. a manual pin over a branch-detected ticket) without a
+      // rename tick or touching prev_callsign.
+      updateSession(sid, { ticket, ticket_source: source });
+      onMutate();
+      return { ok: true, renamed: false, callsign: c.callsign, ticket };
+    }
+    // prev_callsign is WRITE-ONCE: set to the birth callsign on the first rename
+    // (c.prev_callsign ?? c.callsign), never overwritten by a later manual
+    // rename. WHY: the birth name is the longest-lived stale reference — printed
+    // into this session's own SessionStart brief and every peer's brief — so it
+    // must remain the mail-routing anchor even after a second re-ticket.
+    const previous = c.callsign;
+    updateSession(sid, {
+      callsign: next,
+      prev_callsign: c.prev_callsign ?? c.callsign,
+      ticket,
+      ticket_source: source,
+    });
+    // ONE tick carrying BOTH names + the ticket: the board ticker filters by
+    // callsign substring, so a line naming old AND new appears in both cards'
+    // timelines — the handoff is visible from either name.
+    tick(`🎫 ${previous} is now ${next} (ticket ${ticket})`);
+    onMutate();
+    return { ok: true, renamed: true, callsign: next, ticket, previous };
   }
 
   function tick(msg) {
@@ -188,7 +275,7 @@ export function createCore(db, {
     PRESUME_DEAD_MS, RETAIN_OFFLINE_MS, RC_HARVEST_MS, RETAIN_LEDGER_MS,
     SNAPSHOT_FILES_PER_SESSION,
     q, updateSession, onMutate, tmuxAdapter, questions,
-    findScopedWindow, tick, logEvent, card, assignCallsign,
+    findScopedWindow, tick, logEvent, card, assignCallsign, applyTicket,
     modelMemo, stampTranscriptFloor, readTranscriptModel,
   };
 

@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { deriveRepo, branchOf } from './repo-identity.mjs';
+import { ticketFromBranch, animalOf } from './tickets.mjs';
 import { execFileP, claudeEnvArgvPrefix, claudeTranscriptPath, SHELL_RE } from './helpers.mjs';
 
 export function createSpawns(ctx) {
@@ -68,15 +69,22 @@ export function createSpawns(ctx) {
   // CONTRACT flow step 1: pre-create the card so the callsign exists before
   // the pane does. Note is EXACTLY "spawning…"; col queued; source 'spawned'.
   function createSpawnedCard(sid, cwd, prompt) {
-    const callsign = assignCallsign(sid);
     const repo = deriveRepo(cwd);
-    const branch = cwd ? branchOf(cwd) : null;
+    // Ticket inheritance is a naming moment: derive the ticket from the SOURCE
+    // cwd's branch (fresh — bypass the 20s cache) BEFORE naming, so a spawn off a
+    // ticket branch is born ticket-first exactly like a hook/agents birth. The
+    // whole chain here runs in spawn()'s synchronous pre-await prefix, preserving
+    // the naming-collision invariant.
+    const branch = cwd ? branchOf(cwd, { fresh: true }) : null;
+    const ticket = ticketFromBranch(branch);
+    const callsign = assignCallsign(sid, ticket);
     const now = Date.now();
     q.insertSpawnedSession.run(
       sid, callsign, cwd, repo.repo_id ?? null, repo.repo_name ?? null,
       branch ?? null, repo.worktree ?? null,
       prompt ? String(prompt).slice(0, 80) : null, now, now,
     );
+    if (ticket) updateSession(sid, { ticket, ticket_source: 'branch' });
     return q.getSession.get(sid);
   }
 
@@ -197,7 +205,10 @@ export function createSpawns(ctx) {
     // or registration hook can retry.
     try {
       q.setSpawnRemote.run(url, spawn_id);
-      tick(`📱 ${row.callsign} remote control enabled${url ? '' : ' (URL not found)'}`);
+      // Live callsign, not the frozen spawn row: a manual re-ticket renames the
+      // session but never the immutable spawn.callsign (like :180/:764).
+      const c = q.getSession.get(row.session_id);
+      tick(`📱 ${c?.callsign ?? row.callsign} remote control enabled${url ? '' : ' (URL not found)'}`);
       onMutate();
     } catch (err) {
       console.error('fleetd remote harvest persist error:', err);
@@ -315,8 +326,36 @@ export function createSpawns(ctx) {
     // Step 3: optional fresh worktree — the session cwd becomes the new path.
     let worktree_path = null;
     if (body?.worktree === true) {
-      worktree_path = path.join(path.dirname(cwd), `${path.basename(cwd)}--fd-${callsign}`);
-      const res = await execFileP('git', ['-C', cwd, 'worktree', 'add', '-b', `fd/${callsign}`, worktree_path]);
+      // Ticket-first artifact names so sibling worktree dirs and branch lists
+      // group by ticket: <repo>--fd-PROJ-123-otter / fd/PROJ-123-otter.
+      // Gated on the callsign actually BEING ticket-named: on a saturated
+      // ticket assignCallsign falls back to hex while c.ticket is still
+      // recorded, and composing from c.ticket there would mint PROJ-123-raven —
+      // the canonical dir of the OTHER live raven that caused the saturation —
+      // colliding every time and naming a dir after a foreign session. Hex or
+      // ticketless callsigns keep today's <repo>--fd-<callsign> / fd/<callsign>,
+      // byte-for-byte. The tmux window + --remote-control keep the plain
+      // callsign (set above / below).
+      const ticketNamed = c.ticket && String(callsign).endsWith(`-${c.ticket}`);
+      const baseName = ticketNamed ? `${c.ticket}-${animalOf(callsign)}` : callsign;
+      const pathFor = name => path.join(path.dirname(cwd), `${path.basename(cwd)}--fd-${name}`);
+      // Leftover-artifact collision: a long-archived same-ticket session can free
+      // the animal (taken-scope is archived_at) while its worktree dir / fd/
+      // branch still sit on disk. If the target dir already exists, go straight
+      // to a sid-disambiguated name; otherwise try the clean name and retry ONCE
+      // on failure (also covers a stale branch of the same name). Hex-suffixed
+      // ticketless names made this astronomically unlikely; ticket-first names
+      // make it merely rare — hence the single deterministic retry, no loop.
+      const dedup = `${baseName}-${session_id.slice(0, 4)}`;
+      const names = fs.existsSync(pathFor(baseName)) ? [dedup] : [baseName, dedup];
+      let candidate;
+      let res;
+      for (const workname of names) {
+        candidate = pathFor(workname);
+        res = await execFileP('git', ['-C', cwd, 'worktree', 'add', '-b', `fd/${workname}`, candidate]);
+        if (res.ok) break;
+      }
+      worktree_path = candidate;
       if (!res.ok) {
         // No window was created yet; compensate cleans the (possibly partial)
         // worktree and settles the provisional row.
@@ -627,7 +666,9 @@ export function createSpawns(ctx) {
     // claude.ai carries the same name as the card on the board. Verified live
     // on CLI 2.1.207: no confirmation dialog, and the
     // https://claude.ai/code/session_… URL lands in the pane's scrollback.
-    const typed = await tmuxAdapter.typeKeys(win.window_id, `/rc ${row.callsign}`);
+    // Use the LIVE session callsign (a manual re-ticket renames the card but not
+    // the frozen spawn.callsign) so claude.ai shows today's name.
+    const typed = await tmuxAdapter.typeKeys(win.window_id, `/rc ${session?.callsign ?? row.callsign}`);
     const entered = typed ? await tmuxAdapter.sendEnter(win.window_id) : false;
     if (!typed || !entered) {
       return { status: 500, body: { ok: false, reason: 'failed to type remote-control command into pane' } };

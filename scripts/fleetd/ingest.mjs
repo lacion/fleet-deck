@@ -4,6 +4,7 @@
 // are pure helpers.
 
 import { deriveRepo, branchOf } from './repo-identity.mjs';
+import { ticketFromBranch } from './tickets.mjs';
 import { pidAlive, colFromAgentState } from './helpers.mjs';
 
 export function createIngest(ctx) {
@@ -52,10 +53,14 @@ export function createIngest(ctx) {
       const rawState = rec.state ?? rec.status;
       const existing = q.getSession.get(sid);
       if (!existing) {
-        const callsign = assignCallsign(sid);
         const cwd = rec.cwd || null;
         const repo = cwd ? deriveRepo(cwd) : { repo_id: null, repo_name: null, worktree: null };
-        const branch = cwd ? branchOf(cwd) : null;
+        // Naming moment (same rules as a hook birth): fresh branch (bypass the
+        // 20s cache) so the ticket key matches the checkout the agent is on now;
+        // ticket-first callsign; ticket + source recorded right after the insert.
+        const branch = cwd ? branchOf(cwd, { fresh: true }) : null;
+        const ticket = ticketFromBranch(branch);
+        const callsign = assignCallsign(sid, ticket);
         const now = Date.now();
         const startedAt = Number.isFinite(rec.startedAt) ? rec.startedAt : now;
         q.insertAgentSession.run(
@@ -63,6 +68,7 @@ export function createIngest(ctx) {
           branch ?? null, repo.worktree ?? null, colFromAgentState(rawState, true),
           'seen via agents CLI', rec.name ?? null, startedAt, now,
         );
+        if (ticket) updateSession(sid, { ticket, ticket_source: 'branch' });
         tick(`${callsign} joined the fleet (agents CLI)`);
         onMutate();
       } else if (existing.source === 'agents-cli') {

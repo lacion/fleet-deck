@@ -9,6 +9,7 @@
 
 import path from 'node:path';
 import { deriveRepo, branchOf } from './repo-identity.mjs';
+import { ticketFromBranch } from './tickets.mjs';
 import { lastAssistantText } from './transcript.mjs';
 import { detectTrailingQuestion } from './questions.mjs';
 
@@ -20,13 +21,14 @@ export function createEvents(ctx) {
     q, db, card, updateSession, tick, logEvent, onMutate, port, questions,
     scheduleRegistrationRemoteHarvest, stampTranscriptFloor, readTranscriptModel,
     recordFile, whisperText, drainMail, notifyWatchers, modelMemo, forgetSpawn,
+    applyTicket,
   } = ctx;
 
   // ---------------------------------------------- hook event -> card state
   // Faithful port of the spike's applyEvent switch.
   function applyEvent(ev) {
     const sid = ev.session_id || 'unknown';
-    let c = card(sid);
+    let c = card(sid, ev.cwd);
     // Retention tombstones are reversible: a late hook proves the process was
     // alive (or resumed). Clear both timestamps so an archived presumed-dead
     // card becomes visible again before normal derivation continues.
@@ -61,13 +63,15 @@ export function createEvents(ctx) {
       if (sp.remote_control) scheduleRegistrationRemoteHarvest(sp.spawn_id);
     }
     const upd = { last_seen: Date.now(), events: c.events + 1 };
+    let serverBranch = null; // the SERVER-derived branch — the ONLY value ticket detection is allowed to trust
     if (ev.cwd) {
       upd.cwd = ev.cwd;
       const repo = deriveRepo(ev.cwd);
       upd.repo_id = repo.repo_id;
       upd.repo_name = repo.repo_name;
       upd.worktree = repo.worktree;
-      const branch = branchOf(ev.cwd) || ev.git_branch || null; // server-side; payload value only as fallback
+      serverBranch = branchOf(ev.cwd);
+      const branch = serverBranch || ev.git_branch || null; // display column; payload value only as fallback
       if (branch) upd.branch = branch;
     }
     // The payload only ever carries a model on SessionStart (a bare id string;
@@ -92,6 +96,28 @@ export function createEvents(ctx) {
     }
     updateSession(sid, upd);
     c = { ...c, ...upd };
+
+    // Rename-once (late ticket detection): a card born ticketless — or one whose
+    // branch only just resolved — that is now seen on a ticket branch is renamed
+    // a single time. Guarded on ticket IS NULL AND ticket_source IS NULL (a
+    // manual ticket_source or an earlier branch detection permanently closes
+    // this path; applyTicket re-checks the same). Detection consumes ONLY the
+    // server-derived branch, never the unauthenticated ev.git_branch. Re-read c
+    // so THIS event's later ticks and (on SessionStart) composeBrief already
+    // speak the renamed callsign + ticket.
+    if (upd.branch && c.ticket == null && c.ticket_source == null) {
+      let tk = ticketFromBranch(serverBranch);
+      if (tk) {
+        // The cached read above is the cheap per-event trigger, but the rename
+        // is one-shot — a ≤20s-stale cache hit (e.g. a shared-cwd peer warmed
+        // it just before a checkout) would mis-ticket the session PERMANENTLY.
+        // Re-verify against the live branch at the single moment of first
+        // detection: one extra synchronous git exec per session lifetime,
+        // still inside applyEvent's no-await block.
+        tk = ticketFromBranch(branchOf(ev.cwd, { fresh: true }));
+      }
+      if (tk && applyTicket(sid, tk, 'branch').ok) c = q.getSession.get(sid);
+    }
 
     let conflict = null;
     const set = {};
@@ -241,7 +267,7 @@ export function createEvents(ctx) {
     const otherRepos = new Set(elsewhere.map(s => s.repo_id ?? '(none)')).size;
     const repoLabel = c.repo_name ? ` in ${c.repo_name}` : '';
     const lines = [
-      `[FLEETDECK] You are on the fleet board as "${c.callsign}" — live at http://127.0.0.1:${port}`,
+      `[FLEETDECK] You are on the fleet board as "${c.callsign}"${c.ticket ? ` (ticket ${c.ticket})` : ''} — live at http://127.0.0.1:${port}`,
       sameRepo.length
         ? `Other active sessions${repoLabel} (${sameRepo.length}):`
         : `No other sessions active${repoLabel} right now.`,

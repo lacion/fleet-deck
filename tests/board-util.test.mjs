@@ -25,6 +25,7 @@ import {
   modelShort,
   parseBatchTasks,
   prettyModel,
+  sessionTicker,
 } from '../board/src/util.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -125,6 +126,69 @@ test('batch: empty input launches nothing', () => {
     assert.deepEqual(parseBatchTasks(empty), []);
     assert.equal(batchTotal(parseBatchTasks(empty)), 0);
   }
+});
+
+// -------------------------------------------------------------- sessionTicker
+
+// The drawer filters the global ticker to the rows that name a callsign. Jira
+// ticket suffixes prefix-nest ('raven-PROJ-1' ⊂ 'raven-PROJ-12'), where the old
+// fixed-length hex suffix never could — so the match must be on callsign
+// boundaries, not a bare substring, or the shorter ticket's timeline would leak
+// into every longer one.
+const tick = (...msgs) => msgs.map((msg, i) => ({ at: 1000 + i, msg }));
+
+test('sessionTicker: a nested-prefix ticket does not steal the longer ticket\'s rows', () => {
+  const t = tick(
+    'raven-PROJ-12 edited util.js',   // the LONGER ticket — must not leak into PROJ-1
+    'raven-PROJ-1 joined the fleet',  // PROJ-1's own row
+  );
+  const one = sessionTicker(t, 'raven-PROJ-1');
+  assert.equal(one.length, 1);
+  assert.equal(one[0].msg, 'raven-PROJ-1 joined the fleet');
+
+  const twelve = sessionTicker(t, 'raven-PROJ-12');
+  assert.equal(twelve.length, 1);
+  assert.equal(twelve[0].msg, 'raven-PROJ-12 edited util.js');
+});
+
+test('sessionTicker: matches its own callsign at start, middle, and end of a message', () => {
+  const t = tick(
+    'raven-PROJ-1 joined the fleet',              // start
+    '✉ mail for raven-PROJ-1 queued',             // middle
+    'assigned to raven-PROJ-1',                    // end
+    'unrelated otter-9c1a note',                   // no match
+  );
+  const rows = sessionTicker(t, 'raven-PROJ-1');
+  assert.equal(rows.length, 3);
+  assert.ok(rows.every((r) => r.msg.includes('raven-PROJ-1')));
+});
+
+test('sessionTicker: a rename line naming both callsigns is caught by both filters', () => {
+  // The daemon ticks one handoff line containing the old and new names so both
+  // cards' timelines catch the rename — do not depend on exact wording beyond
+  // "contains both callsigns".
+  const t = tick('renamed raven-4b7f → raven-PROJ-123 (ticket PROJ-123)');
+  assert.equal(sessionTicker(t, 'raven-4b7f').length, 1);
+  assert.equal(sessionTicker(t, 'raven-PROJ-123').length, 1);
+});
+
+test('sessionTicker: hex callsigns still match as before', () => {
+  const t = tick(
+    'falcon-a3f2 joined the fleet',
+    '⚠ falcon-a3f2 and otter-91c4 both touched util.js',
+    'otter-91c4 verifying',
+  );
+  const falcon = sessionTicker(t, 'falcon-a3f2');
+  assert.equal(falcon.length, 2);
+  assert.ok(falcon.every((r) => r.msg.includes('falcon-a3f2')));
+  assert.equal(sessionTicker(t, 'otter-91c4').length, 2);
+});
+
+test('sessionTicker: tolerates empty/absent input and caps at 12 newest', () => {
+  assert.deepEqual(sessionTicker(null, 'raven-PROJ-1'), []);
+  assert.deepEqual(sessionTicker([], 'raven-PROJ-1'), []);
+  const many = tick(...Array.from({ length: 20 }, () => 'raven-PROJ-1 tick'));
+  assert.equal(sessionTicker(many, 'raven-PROJ-1').length, 12);
 });
 
 // ------------------------------------------------------------------ CSS guard

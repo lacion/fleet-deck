@@ -7,6 +7,15 @@ export function createStatements(db) {
   // ------------------------------------------------------------- statements
   const q = {
     getSession: db.prepare('SELECT * FROM sessions WHERE session_id = ?'),
+    // 0.6.0 ticket callsigns: is a candidate name already held by ANOTHER row?
+    // Scope is archived_at IS NULL (not ended_at IS NULL) because resolveTargets
+    // routes mail against every non-archived row including dead-but-retained
+    // tombstones — a name held by a corpse still up to 24h must not be reissued,
+    // or mail would fork between the corpse and its usurper. Both callsign and
+    // prev_callsign count as "held" (a birth name kept as a stale-ref anchor is
+    // still a live mail target). The session's own row is excluded so a rename
+    // that keeps the animal never collides with itself.
+    callsignTaken: db.prepare('SELECT 1 FROM sessions WHERE (callsign = ? OR prev_callsign = ?) AND archived_at IS NULL AND session_id != ? LIMIT 1'),
     allSessions: db.prepare('SELECT * FROM sessions ORDER BY started_at'),
     visibleSessions: db.prepare('SELECT * FROM sessions WHERE archived_at IS NULL ORDER BY started_at'),
     countSessions: db.prepare('SELECT COUNT(*) AS n FROM sessions'),
@@ -197,7 +206,7 @@ export function createStatements(db) {
 
   const FIELDS = ['callsign', 'model', 'cwd', 'repo_id', 'repo_name', 'branch', 'worktree',
     'col', 'note', 'task', 'last_tool', 'events', 'last_seen', 'ended_at', 'blocked_this_turn', 'source',
-    'notification_type', 'archived_at'];
+    'notification_type', 'archived_at', 'ticket', 'ticket_source', 'prev_callsign'];
   // M-P8: updateSession is the hottest write path (every hook event runs it
   // one to three times). Each call used to compile a brand-new UPDATE, so
   // SQLite re-parsed and re-planned identical statements forever. The set of

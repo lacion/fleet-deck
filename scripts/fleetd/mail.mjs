@@ -78,9 +78,16 @@ export function createMail(ctx) {
         .filter(s => s.repo_id === key || s.repo_name === key)
         .map(s => s.session_id);
     }
-    return all
-      .filter(s => s.session_id === to || s.callsign === to)
-      .map(s => s.session_id);
+    // Direct match: session_id or CURRENT callsign wins. Only when nothing
+    // matches there do we fall back to prev_callsign — the birth name a rename
+    // left behind, still printed in this session's own brief and every peer's.
+    // Fallback ONLY (never merged) so a reissued birth name never double-delivers
+    // to both its new holder (matched above by current callsign) and the renamed
+    // session that used to wear it. Both scopes are archived_at IS NULL (`all`),
+    // so a dead-but-retained tombstone still catches mail to either of its names.
+    const direct = all.filter(s => s.session_id === to || s.callsign === to);
+    if (direct.length) return direct.map(s => s.session_id);
+    return all.filter(s => s.prev_callsign === to).map(s => s.session_id);
   }
 
   // ---------------------------------------- F3d-2 /api/watch core surface

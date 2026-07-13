@@ -106,11 +106,20 @@ export function deriveRepo(cwd) {
   return out;
 }
 
-export function branchOf(cwd) {
+// `fresh` bypasses the TTL cache READ (still WRITES it) — used at naming moments
+// (SessionStart/agents-cli/spawn births) where a stale cached branch could
+// ticket-name a session for the branch it was on 20s ago. It stays execFileSync:
+// the naming paths derive a name and INSERT in one synchronous block with no
+// await, and the ticket key is read off this branch in that same tick (the
+// synchrony invariant). The 20s TTL is fine for the display column and the
+// later rename trigger, which tolerate lag.
+export function branchOf(cwd, { fresh = false } = {}) {
   if (!cwd || !isDirectory(cwd)) return null;
   const now = Date.now();
-  const hit = cacheGet(branchCache, cwd, now);
-  if (hit !== undefined) return hit;
+  if (!fresh) {
+    const hit = cacheGet(branchCache, cwd, now);
+    if (hit !== undefined) return hit;
+  }
   const branch = git(['rev-parse', '--abbrev-ref', 'HEAD'], cwd);
   // A null branch commonly means "not a repo yet", so it gets the same short
   // retry horizon as a negative identity instead of hiding a later git init.

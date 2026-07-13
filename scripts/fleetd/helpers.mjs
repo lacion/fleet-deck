@@ -186,6 +186,18 @@ export function parseCommand(text) {
     }
     return { cmd: 'assign', target, text: m[2].trim() };
   }
+  // 0.6.0 ticket callsigns: `ticket <target> <PROJ-123|clear>`. Exactly two
+  // tokens (the value is anchored last), so `ticket foo BAR extra` does NOT
+  // match here and falls to the malformed branch below. A malformed or bare
+  // `ticket …` must NEVER silently become a note — it carries an explicit error
+  // the command handler surfaces loudly (an operator who fat-fingers a key
+  // deserves a usage line, not a note that looks like it worked).
+  if ((m = /^ticket\s+(\S+)\s+(\S+)\s*$/i.exec(t))) {
+    return { cmd: 'ticket', target: m[1], ticket: m[2] };
+  }
+  if (/^ticket\b/i.test(t)) {
+    return { cmd: 'ticket', error: 'usage: ticket <callsign-or-session-id> <PROJ-123|clear>' };
+  }
   return { cmd: 'note', text: t };
 }
 

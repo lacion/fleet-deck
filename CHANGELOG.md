@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-13
+
+### Added
+
+- Jira-ticket callsigns. A session on a branch that carries a Jira key (`feature/PROJ-123-checkout`) is named `<animal>-PROJ-123` instead of `<animal>-<hex>` — the ticket is auto-detected from the git branch, once at birth and once more the first time a ticketless session checks out a ticket branch (a single, announced rename). Every session on one ticket gets a distinct animal; when all twelve are taken the thirteenth falls back to the hex suffix.
+- A `ticket <callsign> <PROJ-123>` orchestrator command that pins or changes a session's ticket by hand — a manual pin wins over branch auto-detection and is never overwritten — plus `ticket <callsign> clear` to drop it and restore the birth name.
+- Ticket-first worktree and branch names for spawns: a worker spawned from a `PROJ-123` branch lands in `<repo>--fd-PROJ-123-<animal>` on branch `fd/PROJ-123-<animal>`, so sibling worktrees and branch lists group by ticket. Ticketless spawns keep the `<repo>--fd-<callsign>` / `fd/<callsign>` format.
+- Mail routing survives a rename: a session's birth (pre-rename) callsign keeps delivering, so a message addressed to the name a peer last saw still reaches it — without double-delivering to a reissued name.
+
+### Fixed
+
+- The board's compose box now surfaces daemon-command rejections (HTTP 200 bodies with `ok:false`, e.g. a malformed `ticket` command) as inline errors and confirms ticket renames, instead of closing as if the command had succeeded.
+
+**Upgrade note:** this ships an additive schema migration — three nullable columns (`ticket`, `ticket_source`, `prev_callsign`) are added to the `sessions` table on first boot, and existing pre-0.6.0 rows read back as `ticket: null`. **Restart the daemon** to load the new code: hooks boot the committed bundle, so source changes ship nothing until it restarts. Live sessions already on a ticket branch then rename themselves once on their next hook event.
 ## [0.5.1] - 2026-07-13
 
 ### Changed
@@ -108,6 +122,7 @@ Initial public release.
 - A brainless orchestrator: `assign auto` routes a task to the best existing session with a SQL query, not a model call — the core makes zero model calls.
 - One-command plugin install with a self-contained daemon bundle (`node:sqlite` state, nothing to `npm install`); the first session's SessionStart hook elects and launches the daemon. MIT licensed.
 
-[unreleased]: https://github.com/lacion/fleet-deck/compare/v0.5.1...HEAD
+[unreleased]: https://github.com/lacion/fleet-deck/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/lacion/fleet-deck/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/lacion/fleet-deck/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/lacion/fleet-deck/releases/tag/v0.5.0

@@ -19,14 +19,23 @@ function git(args, cwd) {
  * Create a fresh repo under the OS tmpdir with one commit, and a second
  * worktree checked out from it.
  *
+ * Options:
+ *  - repoName: basename of the main worktree (default 'fleetdeck-repo-test')
+ *  - branch:   branch name checked out in the second worktree. Defaults to
+ *              'wt-branch' so every pre-0.6.0 caller behaves exactly as before;
+ *              the 0.6.0 ticket-callsign tests pass a ticket-bearing branch
+ *              (e.g. 'feature/PROJ-123-checkout') so the daemon's server-side
+ *              branchOf() yields a Jira key to detect.
+ *
  * Returns:
  *  - root: real path of the main worktree (repo_name = basename(root))
  *  - worktree: real path of the second worktree
  *  - repoName: basename of the main worktree
+ *  - branch: the branch name checked out in the worktree
  *  - gitCommonDir: realpath of `git rev-parse --git-common-dir` from root
  *  - cleanup(): removes both worktrees and the containing tmp dir
  */
-export function makeRepoWithWorktree({ repoName = 'fleetdeck-repo-test' } = {}) {
+export function makeRepoWithWorktree({ repoName = 'fleetdeck-repo-test', branch = 'wt-branch' } = {}) {
   const base = mkdtempSync(path.join(tmpdir(), 'fleetdeck-git-'));
   const root = path.join(base, repoName);
   mkdirSync(root, { recursive: true });
@@ -39,7 +48,7 @@ export function makeRepoWithWorktree({ repoName = 'fleetdeck-repo-test' } = {}) 
   git(['commit', '-q', '-m', 'seed'], root);
 
   const worktree = path.join(base, `${repoName}-wt`);
-  git(['worktree', 'add', '-q', '-b', 'wt-branch', worktree], root);
+  git(['worktree', 'add', '-q', '-b', branch, worktree], root);
 
   // --git-common-dir is usually printed relative (".git"); realpathSync()
   // resolves a relative path against process.cwd(), NOT against `root`, so
@@ -54,6 +63,7 @@ export function makeRepoWithWorktree({ repoName = 'fleetdeck-repo-test' } = {}) 
     root: realpathSync(root),
     worktree: realpathSync(worktree),
     repoName,
+    branch,
     gitCommonDir,
     cleanup() {
       try { git(['worktree', 'remove', '--force', worktree], root); } catch { /* ignore */ }
