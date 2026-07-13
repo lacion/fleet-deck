@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { human, hhmmss, basename, prettyModel, modelFamily, safeUrl, spawnKillable, spawnRemoteAvailable } from '../util.js';
+import { human, hhmmss, basename, prettyModel, modelFamily, safeUrl, spawnKillable, spawnRemoteAvailable, colPulse, worktreeLabel, TURN_BOUNDARY_HINT } from '../util.js';
 import { sendMail, reasonOf } from '../api.js';
 import { useModal } from '../useModal.js';
 
@@ -166,12 +166,8 @@ export default function Drawer({
   const ref = useRef(null);
   useModal(ref); // M-A2 — focus in, Tab trapped, focus restored on close
   const fam = modelFamily(s.model);
-  const pulseClass =
-    s.col === 'working' ? 'working'
-    : s.col === 'verifying' ? 'verifying'
-    : s.col === 'needsyou' ? 'needsyou'
-    : s.col === 'offline' ? 'offline'
-    : 'still';
+  const pulseClass = colPulse(s.col);
+  const wt = worktreeLabel(s);
   const files = (s.files || []).map(basename);
   const hot = new Set(conflictFiles.map(basename));
   const offline = s.col === 'offline';
@@ -220,7 +216,7 @@ export default function Drawer({
             <div className="task">{s.task || s.note || '—'}</div>
           </div>
           <div className="fd-meta">
-            <div>repo <span title={s.cwd || ''}>{s.repo_name || basename(s.repo_id || '') || '—'}{s.worktree && basename(s.worktree) !== s.repo_name ? ` (wt: ${basename(s.worktree)})` : ''}</span></div>
+            <div>repo <span title={s.cwd || ''}>{s.repo_name || basename(s.repo_id || '') || '—'}{wt ? ` (wt: ${wt})` : ''}</span></div>
             <div>branch <span>⎇ {s.branch || '—'}</span></div>
             <div>started <span>{s.startedAt ? human(now - s.startedAt) + ' ago' : '—'}</span></div>
             <div>events <span>{s.events ?? 0}{s.lastTool ? ` · last ${s.lastTool}` : ''}</span></div>
@@ -288,7 +284,7 @@ export default function Drawer({
             <div className="sl">THREAD</div>
             <div className="fd-thread">
               {thread.length === 0 && (
-                <div className="none">No messages yet. Anything you send lands at the agent’s next turn boundary — idle sessions usually wake within seconds.</div>
+                <div className="none">{`No messages yet. Anything you send lands at the agent’s ${TURN_BOUNDARY_HINT}.`}</div>
               )}
               {thread.map((m, i) => (
                 <div className="fd-msg" key={i}>
@@ -296,7 +292,7 @@ export default function Drawer({
                   <div className="state">
                     {offline
                       ? `⧗ sent ${hhmmss(m.at)} — delivers on resume`
-                      : `⧗ sent ${hhmmss(m.at)} — delivers at next turn boundary — idle sessions usually wake within seconds`}
+                      : `⧗ sent ${hhmmss(m.at)} — delivers at ${TURN_BOUNDARY_HINT}`}
                   </div>
                 </div>
               ))}

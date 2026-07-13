@@ -7,6 +7,19 @@ import { pathToFileURL } from 'node:url';
 import { decodeMessage } from '../scripts/fleetd/mdns.mjs';
 import { randomPort, spawnRaw } from './helpers/daemon.mjs';
 
+// Three tests below drive fleetd startup through an ESM --experimental-loader
+// (helpers/mdns-dgram-loader.mjs) that mocks node:dgram / ./http.mjs / node:os by
+// matching the SOURCE module paths (scripts/fleetd/*.mjs). The single-file bundle
+// inlines those modules, so the loader intercepts nothing and the mocked
+// console-record / mDNS announcement never appears — the tests would hang. They are
+// therefore inherently source-only; the daemon behaviour they assert is verified
+// against the bundle separately (a real LAN startup elides the token, refuses a
+// second same-HOME daemon, and awaits the goodbye), and fully covered here in source
+// mode. Skip them when the suite runs against the bundle (npm run test:bundle).
+const BUNDLE_SKIP = process.env.FLEETDECK_TEST_DAEMON_SCRIPT
+  ? 'source-only: ESM loader mock cannot intercept the inlined bundle'
+  : false;
+
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 async function waitUntil(predicate, label, timeoutMs = 5000) {
@@ -31,7 +44,7 @@ function loaderOptions(extra = {}) {
   };
 }
 
-test('LAN startup logs elide the token and direct operators to the share panel', async (t) => {
+test('LAN startup logs elide the token and direct operators to the share panel', { skip: BUNDLE_SKIP }, async (t) => {
   const token = 'audit-token-must-never-reach-fleetd-log-0123456789';
   const home = freshHome('fleetdeck-token-log-');
   const consoleRecord = path.join(home, 'console.log');
@@ -60,7 +73,7 @@ test('LAN startup logs elide the token and direct operators to the share panel',
   assert.match(output, /credential available in share panel/);
 });
 
-test('one FLEETDECK_HOME cannot be opened concurrently by daemons on different ports', async (t) => {
+test('one FLEETDECK_HOME cannot be opened concurrently by daemons on different ports', { skip: BUNDLE_SKIP }, async (t) => {
   const home = freshHome('fleetdeck-port-scope-');
   t.after(() => rmSync(home, { recursive: true, force: true }));
   const firstPort = randomPort();
@@ -112,7 +125,7 @@ test('Linux PID reuse by a non-fleetd process does not retain a stale HOME lock'
   assert.equal(existsSync(pidFile), false, 'startupFatal must release the newly claimed pidfile');
 });
 
-test('SIGTERM waits for the mDNS goodbye send callback before fleetd exits', async (t) => {
+test('SIGTERM waits for the mDNS goodbye send callback before fleetd exits', { skip: BUNDLE_SKIP }, async (t) => {
   const home = freshHome('fleetdeck-goodbye-');
   const record = path.join(home, 'mdns.jsonl');
   const port = randomPort();

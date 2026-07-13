@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { human, basename, questionView } from '../util.js';
+import { human, basename, questionView, sessionsById, TURN_BOUNDARY_HINT } from '../util.js';
 import { renderMarkdown, planTitle } from '../markdown.js';
 import { answerQuestion, dismissQuestion, reasonOf } from '../api.js';
 import { registerQuestion } from '../qbus.js';
@@ -211,7 +211,7 @@ function FreeformBody({ offline, busy, onAnswer, bindKeys }) {
       <span className="micro">
         {offline
           ? 'session is offline — your answer delivers on resume'
-          : 'delivered at next turn boundary — idle sessions usually wake within seconds'}
+          : `delivered at ${TURN_BOUNDARY_HINT}`}
       </span>
     </>
   );
@@ -327,7 +327,7 @@ function statusLine(q, session) {
   if (q.status === 'answered') {
     if (q.kind === 'freeform') {
       const offline = session?.col === 'offline';
-      return { cls: 'ok', text: offline ? '✓ queued — delivers on resume' : '✓ queued — delivers at next turn boundary — idle sessions usually wake within seconds' };
+      return { cls: 'ok', text: offline ? '✓ queued — delivers on resume' : `✓ queued — delivers at ${TURN_BOUNDARY_HINT}` };
     }
     return { cls: 'ok', text: '✓ answered from the board' };
   }
@@ -368,7 +368,7 @@ function QuestionCard({ q, session, now, selected, onSelect, onDismissed }) {
       setNote({
         cls: q.kind === 'freeform' ? 'act' : 'ok',
         text: q.kind === 'freeform'
-          ? (offline ? `→ ${label} · queued — delivers on resume` : `→ ${label} · queued — delivers at next turn boundary — idle sessions usually wake within seconds`)
+          ? (offline ? `→ ${label} · queued — delivers on resume` : `→ ${label} · queued — delivers at ${TURN_BOUNDARY_HINT}`)
           : `→ ${label} — sent to agent`,
       });
     } else {
@@ -455,7 +455,7 @@ function QuestionCard({ q, session, now, selected, onSelect, onDismissed }) {
 }
 
 export default function Inbox({ questions, sessions, now, selQ, onSelect }) {
-  const byId = new Map(sessions.map((s) => [s.session_id, s]));
+  const byId = sessionsById(sessions);
   // v1.8 — dismissed ids stay hidden in this tab. The daemon expires the
   // question, but an expired question still rides the snapshot for a while
   // (F3: pending + the last few resolved) and would come back as a faded

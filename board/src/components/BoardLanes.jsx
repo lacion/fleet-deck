@@ -1,6 +1,6 @@
 import React, { useCallback, useMemo } from 'react';
 import SessionCard from './SessionCard.jsx';
-import { COLS, boardCol, basename } from '../util.js';
+import { COLS, boardCol, basename, sessionsById, callsignOf } from '../util.js';
 
 // One shared empty array for the "no conflict" case — a fresh `[]` per card
 // would defeat React.memo(SessionCard).
@@ -30,8 +30,8 @@ function BoardLanes({
   // unrelated re-render so the card props below don't churn.
   const { lanes, chips, colHeads, revivables, conflictFiles, conflictPeers } = useMemo(() => {
     const repoKey = (s) => s.repo_id ?? '(none)';
-    const byId = new Map(sessions.map((s) => [s.session_id, s]));
-    const csOf = (sid) => byId.get(sid)?.callsign || sid;
+    const byId = sessionsById(sessions);
+    const csOf = (sid) => callsignOf(byId, sid);
 
     // M-F4 — a session in TWO conflicts must keep BOTH peers. The old code did
     // `set(sid, …)` which OVERWROTE per conflict and silently dropped the

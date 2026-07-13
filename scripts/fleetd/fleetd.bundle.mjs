@@ -3721,10 +3721,10 @@ var require_websocket_server = __commonJS({
 });
 
 // scripts/fleetd/fleetd.mjs
-import fs6 from "node:fs";
+import fs10 from "node:fs";
 import crypto from "node:crypto";
 import os3 from "node:os";
-import path5 from "node:path";
+import path8 from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // scripts/fleetd/db.mjs
@@ -3893,117 +3893,7 @@ function openDb(file) {
 }
 
 // scripts/fleetd/derive.mjs
-import path2 from "node:path";
-import fs3 from "node:fs";
-import os from "node:os";
-import { randomUUID as randomUUID2 } from "node:crypto";
-import { execFile as execFile2 } from "node:child_process";
-
-// scripts/fleetd/repo-identity.mjs
-import { execFileSync } from "node:child_process";
-import fs from "node:fs";
-import path from "node:path";
-var identityCache = /* @__PURE__ */ new Map();
-var branchCache = /* @__PURE__ */ new Map();
-var CACHE_MAX = 512;
-var IDENTITY_TTL_MS = 5 * 6e4;
-var NEGATIVE_TTL_MS = 2e3;
-var BRANCH_TTL_MS = 2e4;
-function cacheGet(cache, key, now = Date.now()) {
-  const hit = cache.get(key);
-  if (!hit) return void 0;
-  if (hit.expiresAt <= now) {
-    cache.delete(key);
-    return void 0;
-  }
-  cache.delete(key);
-  cache.set(key, hit);
-  return hit.value;
-}
-function cacheSet(cache, key, value, ttlMs, now = Date.now()) {
-  cache.delete(key);
-  cache.set(key, { value, expiresAt: now + ttlMs });
-  while (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value);
-}
-function isDirectory(cwd) {
-  try {
-    return fs.statSync(cwd).isDirectory();
-  } catch {
-    return false;
-  }
-}
-function git(args, cwd) {
-  try {
-    const out = execFileSync("git", args, {
-      cwd,
-      timeout: 1500,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"]
-    }).trim();
-    return out || null;
-  } catch {
-    return null;
-  }
-}
-function canon(p) {
-  try {
-    return fs.realpathSync(p);
-  } catch {
-    return path.resolve(p);
-  }
-}
-function deriveRepo(cwd) {
-  if (!cwd) return { repo_id: null, repo_name: null, worktree: null, is_git: false };
-  if (!isDirectory(cwd)) {
-    const c = canon(cwd);
-    return { repo_id: c, repo_name: path.basename(c), worktree: c, is_git: false };
-  }
-  const hit = cacheGet(identityCache, cwd);
-  if (hit !== void 0) return hit;
-  let out;
-  const common = git(["rev-parse", "--git-common-dir"], cwd);
-  if (common) {
-    const commonAbs = canon(path.isAbsolute(common) ? common : path.resolve(cwd, common));
-    const mainTree = path.basename(commonAbs) === ".git" ? path.dirname(commonAbs) : commonAbs;
-    const toplevel = git(["rev-parse", "--show-toplevel"], cwd);
-    out = {
-      repo_id: commonAbs,
-      repo_name: path.basename(mainTree).replace(/\.git$/, "") || path.basename(mainTree),
-      worktree: toplevel ? canon(toplevel) : canon(cwd),
-      is_git: true
-    };
-  } else {
-    const c = canon(cwd);
-    out = { repo_id: c, repo_name: path.basename(c), worktree: c, is_git: false };
-  }
-  cacheSet(identityCache, cwd, out, out.is_git ? IDENTITY_TTL_MS : NEGATIVE_TTL_MS);
-  return out;
-}
-function branchOf(cwd) {
-  if (!cwd || !isDirectory(cwd)) return null;
-  const now = Date.now();
-  const hit = cacheGet(branchCache, cwd, now);
-  if (hit !== void 0) return hit;
-  const branch = git(["rev-parse", "--abbrev-ref", "HEAD"], cwd);
-  cacheSet(branchCache, cwd, branch, branch == null ? NEGATIVE_TTL_MS : BRANCH_TTL_MS, now);
-  return branch;
-}
-function ledgerKey(absPath, session) {
-  if (session?.worktree && session.repo_id && deriveRepo(session.cwd).is_git) {
-    const rel = path.relative(session.worktree, absPath);
-    if (rel && !rel.startsWith("..") && !path.isAbsolute(rel)) {
-      return { repo_id: session.repo_id, rel_path: rel, worktree: session.worktree };
-    }
-  }
-  const repo = deriveRepo(path.dirname(absPath));
-  if (repo.is_git) {
-    const rel = path.relative(repo.worktree, absPath);
-    if (rel && !rel.startsWith("..") && !path.isAbsolute(rel)) {
-      return { repo_id: repo.repo_id, rel_path: rel, worktree: repo.worktree };
-    }
-  }
-  return { repo_id: "", rel_path: absPath, worktree: null };
-}
+import fs7 from "node:fs";
 
 // scripts/fleetd/questions.mjs
 var PLAN_CAPTURE_MAIL = "[FLEETDECK] Your plan was captured to the fleet plan library \u2014 do not execute it. Wrap up your turn.";
@@ -4356,17 +4246,17 @@ function clipQuestion(s) {
 }
 
 // scripts/fleetd/transcript.mjs
-import fs2 from "node:fs";
+import fs from "node:fs";
 function tailLines(transcriptPath, { maxBytes = 262144 } = {}) {
-  const stat = fs2.statSync(transcriptPath);
+  const stat = fs.statSync(transcriptPath);
   const start = Math.max(0, stat.size - maxBytes);
   const buf = Buffer.alloc(stat.size - start);
-  const fd = fs2.openSync(transcriptPath, "r");
+  const fd = fs.openSync(transcriptPath, "r");
   let nread;
   try {
-    nread = fs2.readSync(fd, buf, 0, buf.length, start);
+    nread = fs.readSync(fd, buf, 0, buf.length, start);
   } finally {
-    fs2.closeSync(fd);
+    fs.closeSync(fd);
   }
   let chunk = buf.subarray(0, nread).toString("utf8");
   if (start > 0) chunk = chunk.slice(chunk.indexOf("\n") + 1);
@@ -4459,7 +4349,7 @@ __export(spawn_exports, {
   typeKeys: () => typeKeys,
   windowName: () => windowName
 });
-import { execFile, execFileSync as execFileSync2, spawn as spawnChild } from "node:child_process";
+import { execFile, execFileSync, spawn as spawnChild } from "node:child_process";
 import { randomUUID } from "node:crypto";
 var TMUX_TIMEOUT_MS = 5e3;
 var US = "";
@@ -4483,7 +4373,7 @@ function hasTmux() {
   if (now - probe.at < PROBE_TTL_MS) return probe.ok;
   let ok = false;
   try {
-    execFileSync2("tmux", ["-V"], { timeout: 1500, stdio: ["ignore", "pipe", "ignore"] });
+    execFileSync("tmux", ["-V"], { timeout: 1500, stdio: ["ignore", "pipe", "ignore"] });
     ok = true;
   } catch {
   }
@@ -4605,90 +4495,8 @@ function launchOverride(cmd, spec, onError = () => {
   }
 }
 
-// scripts/fleetd/derive.mjs
-var CALLSIGNS = ["falcon", "otter", "raven", "lynx", "orca", "wren", "viper", "heron", "badger", "comet", "ember", "drift"];
-var CONFLICT_WINDOW_MS = 30 * 60 * 1e3;
-var MAIL_MAX_LEN = 4e3;
-function clampMail(raw) {
-  if (raw.length <= MAIL_MAX_LEN) return raw;
-  const cut = raw.slice(0, MAIL_MAX_LEN);
-  const last = cut.charCodeAt(cut.length - 1);
-  return last >= 55296 && last <= 56319 ? cut.slice(0, -1) : cut;
-}
-var EDIT_TOOLS = ["Edit", "Write", "MultiEdit", "NotebookEdit"];
-var TEST_RUNNER_RE = /\b(pytest|jest|vitest|go test|cargo test|npm (run )?test)\b/;
-function envInt(name, fallback, { min = 0 } = {}) {
-  const n = Number(process.env[name]);
-  return Number.isFinite(n) && n >= min ? Math.floor(n) : fallback;
-}
-function mungeClaudeProjectCwd(cwd) {
-  return path2.resolve(cwd).replace(/[\/.]/g, "-");
-}
-function claudeTranscriptPath(cwd, sessionId, homeDir = os.homedir()) {
-  return path2.join(homeDir, ".claude", "projects", mungeClaudeProjectCwd(cwd), `${sessionId}.jsonl`);
-}
-function spawnRowRevivable(row) {
-  const runCwd = row?.worktree_path ?? row?.cwd;
-  return !!runCwd && ["pane-dead", "killed", "gone"].includes(row.status) && fs3.existsSync(runCwd) && fs3.existsSync(claudeTranscriptPath(runCwd, row.session_id));
-}
-function claudeEnvArgvPrefix(port, home) {
-  const scrub = [
-    "CLAUDECODE",
-    "CLAUDE_CODE_SESSION_ID",
-    "CLAUDE_CODE_CHILD_SESSION",
-    "CLAUDE_CODE_BRIDGE_SESSION_ID",
-    "CLAUDE_CODE_ENTRYPOINT",
-    "CLAUDE_CODE_EXECPATH",
-    "CLAUDE_ENV_FILE",
-    "CLAUDE_PROJECT_DIR",
-    "CLAUDE_PLUGIN_ROOT",
-    "CLAUDE_PLUGIN_DATA",
-    "CLAUDE_EFFORT",
-    "AI_AGENT",
-    "CODEX_COMPANION_TRANSCRIPT_PATH",
-    "CODEX_COMPANION_SESSION_ID",
-    "FLEETDECK_AGENTS_CMD",
-    "FLEETDECK_SPAWN_CMD",
-    "TMUX",
-    "TMUX_PANE",
-    "FLEETDECK_TMUX_SOCKET",
-    "FLEETDECK_AGENTS_POLL_MS",
-    "FLEETDECK_HOLD_MS",
-    "FLEETDECK_STALE_MS",
-    "FLEETDECK_NUDGE_MS",
-    "FLEETDECK_WATCH_MAX_MS",
-    "FLEETDECK_WATCH_POLL_MS",
-    "FLEETDECK_SPAWN_REGISTER_MS",
-    "FLEETDECK_PANE_MAIL_GRACE_MS",
-    "FLEETDECK_PRESUME_DEAD_MS",
-    "FLEETDECK_RETAIN_OFFLINE_MS",
-    "FLEETDECK_RC_HARVEST_MS"
-  ];
-  return [
-    "env",
-    ...scrub.flatMap((name) => ["-u", name]),
-    `FLEETDECK_PORT=${port}`,
-    `FLEETDECK_HOME=${home}`
-  ];
-}
-function createCore(db2, {
-  port = 4711,
-  home = process.env.FLEETDECK_HOME || "",
-  holdMs = resolveHoldMs(),
-  tmuxAdapter = spawn_exports
-} = {}) {
-  const t0 = Date.now();
-  let onMutate = () => {
-  };
-  const STALE_MS = envInt("FLEETDECK_STALE_MS", 6e5, { min: 1 });
-  const NUDGE_MS = envInt("FLEETDECK_NUDGE_MS", 8e3, { min: 1 });
-  const SPAWN_REGISTER_MS = envInt("FLEETDECK_SPAWN_REGISTER_MS", 9e4, { min: 1 });
-  const PANE_MAIL_GRACE_MS = envInt("FLEETDECK_PANE_MAIL_GRACE_MS", 1500, { min: 0 });
-  const PRESUME_DEAD_MS = envInt("FLEETDECK_PRESUME_DEAD_MS", 108e5, { min: 1 });
-  const RETAIN_OFFLINE_MS = envInt("FLEETDECK_RETAIN_OFFLINE_MS", 864e5, { min: 1 });
-  const RC_HARVEST_MS = envInt("FLEETDECK_RC_HARVEST_MS", 2500, { min: 0 });
-  const RETAIN_LEDGER_MS = envInt("FLEETDECK_RETAIN_LEDGER_MS", 864e5, { min: 6e4 });
-  const SNAPSHOT_FILES_PER_SESSION = 50;
+// scripts/fleetd/statements.mjs
+function createStatements(db2) {
   const q = {
     getSession: db2.prepare("SELECT * FROM sessions WHERE session_id = ?"),
     allSessions: db2.prepare("SELECT * FROM sessions ORDER BY started_at"),
@@ -4878,26 +4686,6 @@ function createCore(db2, {
     setPlanStatus: db2.prepare("UPDATE plans SET status = ? WHERE plan_id = ?"),
     setPlanExecuted: db2.prepare("UPDATE plans SET status = 'executed', executed_via = ? WHERE plan_id = ?")
   };
-  const questions = createQuestions(db2, {
-    holdMs,
-    mail: (sid, from, text) => mail(sid, from, text),
-    tick: (msg) => tick(msg),
-    callsignOf: (sid) => q.getSession.get(sid)?.callsign ?? null,
-    onChange: () => onMutate(),
-    // v1.3 plan library: the plans table lives here; questions.mjs only needs
-    // the link (plan_id for /state) and the answer-path status flips. The
-    // flip is guarded to 'proposed' — the answer paths describe the freshly
-    // captured plan, and a plan the human already archived/marked from the
-    // library keeps that verdict.
-    planIdFor: (questionId) => q.planByQuestion.get(questionId)?.plan_id ?? null,
-    planAnswered: (questionId, behavior) => {
-      const p = q.planByQuestion.get(questionId);
-      if (!p || p.status !== "proposed") return;
-      const status = behavior === "allow" ? "approved" : behavior === "capture" ? "captured" : "rejected";
-      q.setPlanStatus.run(status, p.plan_id);
-      tick(`\u{1F4DA} plan #${p.plan_id} (${p.callsign ?? p.session_id}) ${status}`);
-    }
-  });
   const FIELDS = [
     "callsign",
     "model",
@@ -4930,50 +4718,419 @@ function createCore(db2, {
     }
     stmt.run(...keys.map((k) => upd[k] ?? null), sid);
   }
-  const modelMemo = /* @__PURE__ */ new Map();
-  function stampTranscriptFloor(sid, transcriptPath) {
-    let floor = 0;
+  return { q, FIELDS, updateSession };
+}
+
+// scripts/fleetd/worktrees.mjs
+import fs3 from "node:fs";
+
+// scripts/fleetd/helpers.mjs
+import path from "node:path";
+import fs2 from "node:fs";
+import os from "node:os";
+import { execFile as execFile2 } from "node:child_process";
+
+// scripts/fleetd/env-scrub.mjs
+var CLAUDE_ENV_MARKERS = [
+  "CLAUDECODE",
+  "CLAUDE_CODE_SESSION_ID",
+  "CLAUDE_CODE_CHILD_SESSION",
+  "CLAUDE_CODE_BRIDGE_SESSION_ID",
+  "CLAUDE_CODE_ENTRYPOINT",
+  "CLAUDE_CODE_EXECPATH",
+  "CLAUDE_ENV_FILE",
+  "CLAUDE_PROJECT_DIR",
+  "CLAUDE_PLUGIN_ROOT",
+  "CLAUDE_PLUGIN_DATA",
+  "CLAUDE_EFFORT",
+  "AI_AGENT",
+  "CODEX_COMPANION_TRANSCRIPT_PATH",
+  "CODEX_COMPANION_SESSION_ID"
+];
+
+// scripts/fleetd/helpers.mjs
+function envInt(name, fallback, { min = 0 } = {}) {
+  const n = Number(process.env[name]);
+  return Number.isFinite(n) && n >= min ? Math.floor(n) : fallback;
+}
+function mungeClaudeProjectCwd(cwd) {
+  return path.resolve(cwd).replace(/[\/.]/g, "-");
+}
+function claudeTranscriptPath(cwd, sessionId, homeDir = os.homedir()) {
+  return path.join(homeDir, ".claude", "projects", mungeClaudeProjectCwd(cwd), `${sessionId}.jsonl`);
+}
+function spawnRowRevivable(row) {
+  const runCwd = row?.worktree_path ?? row?.cwd;
+  return !!runCwd && ["pane-dead", "killed", "gone"].includes(row.status) && fs2.existsSync(runCwd) && fs2.existsSync(claudeTranscriptPath(runCwd, row.session_id));
+}
+function claudeEnvArgvPrefix(port, home) {
+  const scrub = [
+    ...CLAUDE_ENV_MARKERS,
+    "FLEETDECK_AGENTS_CMD",
+    "FLEETDECK_SPAWN_CMD",
+    "TMUX",
+    "TMUX_PANE",
+    "FLEETDECK_TMUX_SOCKET",
+    "FLEETDECK_AGENTS_POLL_MS",
+    "FLEETDECK_HOLD_MS",
+    "FLEETDECK_STALE_MS",
+    "FLEETDECK_NUDGE_MS",
+    "FLEETDECK_WATCH_MAX_MS",
+    "FLEETDECK_WATCH_POLL_MS",
+    "FLEETDECK_SPAWN_REGISTER_MS",
+    "FLEETDECK_PANE_MAIL_GRACE_MS",
+    "FLEETDECK_PRESUME_DEAD_MS",
+    "FLEETDECK_RETAIN_OFFLINE_MS",
+    "FLEETDECK_RC_HARVEST_MS"
+  ];
+  return [
+    "env",
+    ...scrub.flatMap((name) => ["-u", name]),
+    `FLEETDECK_PORT=${port}`,
+    `FLEETDECK_HOME=${home}`
+  ];
+}
+function execFileP(cmd, args, { timeout = 3e4 } = {}) {
+  return new Promise((resolve) => {
     try {
-      if (transcriptPath) floor = fs3.statSync(transcriptPath).size;
+      execFile2(cmd, args, { timeout, windowsHide: true }, (err, stdout, stderr) => {
+        if (err) return resolve({ ok: false, code: err.code, err: String(stderr || err.message || err).trim() });
+        resolve({ ok: true, out: stdout });
+      });
+    } catch (err) {
+      resolve({ ok: false, err: String(err.message || err) });
+    }
+  });
+}
+async function mapLimit(items, limit, fn) {
+  const out = new Array(items.length);
+  let next = 0;
+  async function worker() {
+    for (; ; ) {
+      const i = next++;
+      if (i >= items.length) return;
+      out[i] = await fn(items[i]);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
+}
+function chmodWritableWhereOwned(root) {
+  const uid = typeof process.getuid === "function" ? process.getuid() : null;
+  const walk = (dir, depth = 0) => {
+    if (depth > 12) return;
+    let entries = [];
+    try {
+      entries = fs2.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      let st;
+      try {
+        st = fs2.lstatSync(full);
+      } catch {
+        continue;
+      }
+      if (uid != null && st.uid !== uid) continue;
+      try {
+        fs2.chmodSync(full, st.mode | 128);
+      } catch {
+      }
+      if (entry.isDirectory() && !entry.isSymbolicLink()) walk(full, depth + 1);
+    }
+  };
+  try {
+    walk(root);
+  } catch {
+  }
+}
+function blockedPaths(root, limit = 8) {
+  const uid = typeof process.getuid === "function" ? process.getuid() : null;
+  const owners = /* @__PURE__ */ new Map();
+  const out = [];
+  const ownerOf = (st) => {
+    if (owners.has(st.uid)) return owners.get(st.uid);
+    let name = `uid ${st.uid}`;
+    try {
+      name = st.uid === 0 ? "root" : os.userInfo().uid === st.uid ? os.userInfo().username : name;
     } catch {
     }
-    modelMemo.set(sid, { floor, size: -1, model: null });
-  }
-  function readTranscriptModel(sid, transcriptPath) {
-    const memo = modelMemo.get(sid) ?? { floor: 0, size: -1, model: null };
-    let size;
+    owners.set(st.uid, name);
+    return name;
+  };
+  const walk = (dir, depth = 0) => {
+    if (out.length >= limit || depth > 12) return;
+    let entries = [];
     try {
-      size = fs3.statSync(transcriptPath).size;
+      entries = fs2.readdirSync(dir, { withFileTypes: true });
     } catch {
-      return null;
+      return;
     }
-    if (size === memo.size) return memo.model;
-    const model = lastAssistantModel(transcriptPath, { minOffset: memo.floor });
-    modelMemo.set(sid, { ...memo, size, model: model ?? memo.model });
-    return model;
-  }
-  function assignCallsign(sid) {
-    const idx = q.countSessions.get().n;
-    return CALLSIGNS[idx % CALLSIGNS.length] + "-" + String(sid).slice(0, 4);
-  }
-  function card(sid) {
-    let c = q.getSession.get(sid);
-    if (!c) {
-      const callsign = assignCallsign(sid);
-      const now = Date.now();
-      q.insertSession.run(sid, callsign, now, now);
-      c = q.getSession.get(sid);
-      tick(`${callsign} joined the fleet`);
+    for (const entry of entries) {
+      if (out.length >= limit) return;
+      const full = path.join(dir, entry.name);
+      let st;
+      try {
+        st = fs2.lstatSync(full);
+      } catch {
+        continue;
+      }
+      if (uid != null && st.uid !== uid) {
+        out.push({ path: full, owner: ownerOf(st) });
+        continue;
+      }
+      if (entry.isDirectory() && !entry.isSymbolicLink()) walk(full, depth + 1);
     }
-    return c;
+  };
+  try {
+    walk(root);
+  } catch {
   }
-  function tick(msg) {
-    q.insertTicker.run(Date.now(), msg);
-    q.trimTicker.run();
+  return out;
+}
+var shellQuote = (s) => /^[A-Za-z0-9_@%+=:,./-]+$/.test(s) ? s : `'${String(s).replace(/'/g, `'\\''`)}'`;
+function pidAlive(pid) {
+  if (!Number.isFinite(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
   }
-  function logEvent(sid, hookEvent, toolName, note) {
-    q.insertEvent.run(sid, hookEvent ?? null, toolName ?? null, note ?? null, Date.now());
+}
+function colFromAgentState(raw, isNew) {
+  const s = String(raw ?? "").toLowerCase();
+  if (s === "busy" || s === "running") return "working";
+  if (s === "blocked" || s === "waiting") return "needsyou";
+  if (s === "idle") return "idle";
+  return isNew ? "queued" : "idle";
+}
+function parseCommand(text) {
+  const t = String(text ?? "").trim();
+  let m;
+  if (m = /^broadcast\s+(.+)$/is.exec(t)) return { cmd: "broadcast", text: m[1].trim() };
+  if (m = /^assign\s+(\S+)\s+(.+)$/is.exec(t)) {
+    const target = m[1];
+    if (target === "auto" || target.startsWith("auto:")) {
+      const repo = target.length > "auto:".length ? target.slice("auto:".length) : null;
+      return { cmd: "assign_auto", repo, text: m[2].trim() };
+    }
+    return { cmd: "assign", target, text: m[2].trim() };
   }
+  return { cmd: "note", text: t };
+}
+var SHELL_RE = /^(sh|bash|zsh|zsh-.*)$/;
+
+// scripts/fleetd/worktrees.mjs
+function createWorktrees(ctx) {
+  const { q, tick, onMutate } = ctx;
+  function worktreeRows() {
+    const seen = /* @__PURE__ */ new Set();
+    return q.worktreeSpawns.all().filter((row) => {
+      if (seen.has(row.worktree_path)) return false;
+      seen.add(row.worktree_path);
+      return true;
+    });
+  }
+  function worktreeShell(row, exists) {
+    return {
+      path: row.worktree_path,
+      exists,
+      callsign: row.callsign ?? null,
+      session_id: row.session_id ?? null,
+      session_alive: row.session_ended_at == null && q.getSession.get(row.session_id) != null,
+      spawn_status: row.status ?? null,
+      branch: null,
+      dirty: null,
+      dirty_files: [],
+      ahead: null,
+      base: null,
+      upstream: null,
+      unpushed: null,
+      merged: null,
+      last_commit: null,
+      note: null,
+      // why we cannot vouch for it — the board shows this verbatim
+      verdict: exists ? "unknown" : "gone"
+    };
+  }
+  async function baseBranch(worktree) {
+    const head = await execFileP("git", ["-C", worktree, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"], { timeout: 5e3 });
+    if (head.ok && head.out.trim()) return { ref: head.out.trim(), local: false };
+    for (const name of ["main", "master"]) {
+      const remote = await execFileP("git", ["-C", worktree, "show-ref", "--verify", "--quiet", `refs/remotes/origin/${name}`], { timeout: 5e3 });
+      if (remote.ok) return { ref: `origin/${name}`, local: false };
+    }
+    for (const name of ["main", "master"]) {
+      const local = await execFileP("git", ["-C", worktree, "show-ref", "--verify", "--quiet", `refs/heads/${name}`], { timeout: 5e3 });
+      if (local.ok) return { ref: name, local: true };
+    }
+    return null;
+  }
+  async function inspectWorktree(row) {
+    let exists = false;
+    try {
+      exists = fs3.existsSync(row.worktree_path);
+    } catch {
+    }
+    const item = worktreeShell(row, exists);
+    if (!exists) return item;
+    const [branch, status, upstream, log, base] = await Promise.all([
+      execFileP("git", ["-C", row.worktree_path, "rev-parse", "--abbrev-ref", "HEAD"], { timeout: 5e3 }),
+      execFileP("git", ["-C", row.worktree_path, "status", "--porcelain"], { timeout: 5e3 }),
+      execFileP("git", ["-C", row.worktree_path, "rev-parse", "--abbrev-ref", "@{u}"], { timeout: 5e3 }),
+      execFileP("git", ["-C", row.worktree_path, "log", "-1", "--format=%h%x00%s%x00%ct"], { timeout: 5e3 }),
+      baseBranch(row.worktree_path)
+    ]);
+    if (!branch.ok || !status.ok || !base) {
+      item.note = !branch.ok ? "git no longer recognises this directory as a worktree \u2014 a previous removal was interrupted. Whatever is inside cannot be checked from here; removal will report exactly what blocks it." : "git could not read this worktree.";
+      return item;
+    }
+    item.branch = branch.out.trim() || null;
+    const lines = status.out.split(/\r?\n/).filter(Boolean);
+    item.dirty = lines.length;
+    item.dirty_files = lines.slice(0, 10).map((line) => line.slice(3).trim());
+    item.base = base.ref;
+    item.base_is_local = base.local;
+    item.upstream = upstream.ok ? upstream.out.trim() || null : null;
+    if (log.ok && log.out.trim()) {
+      const [sha, subject, at] = log.out.trimEnd().split("\0");
+      item.last_commit = { sha, subject, at: Number(at) };
+    }
+    const [ahead, unpushed, merged] = await Promise.all([
+      execFileP("git", ["-C", row.worktree_path, "rev-list", "--count", `${base.ref}..HEAD`], { timeout: 5e3 }),
+      // THE question, and the only one that decides whether deleting this
+      // destroys anything: are these commits on ANY remote-tracking ref? Not
+      // "ahead of my upstream", not "ahead of my local main" — both of those
+      // say yes to work that is already safely merged on the server. `--not
+      // --remotes` asks git for commits that exist on no remote we know of.
+      // (Knowledge is as of the last fetch; the board says so, and `?fetch=1`
+      // refreshes it.)
+      execFileP("git", ["-C", row.worktree_path, "rev-list", "--count", "HEAD", "--not", "--remotes"], { timeout: 5e3 }),
+      execFileP("git", ["-C", row.worktree_path, "merge-base", "--is-ancestor", "HEAD", base.ref], { timeout: 5e3 })
+    ]);
+    if (!ahead.ok || !unpushed.ok || !merged.ok && merged.code !== 1) return item;
+    item.ahead = Number(ahead.out.trim());
+    item.unpushed = Number(unpushed.out.trim());
+    item.merged = merged.ok;
+    if (base.local) item.unpushed = item.merged ? 0 : item.ahead;
+    item.verdict = item.dirty > 0 || item.unpushed > 0 ? "has-work" : "safe";
+    return item;
+  }
+  async function worktrees() {
+    return { ok: true, worktrees: await mapLimit(worktreeRows(), 4, inspectWorktree) };
+  }
+  async function removeWorktree(body = {}) {
+    if (typeof body?.path !== "string") {
+      return { status: 400, body: { ok: false, reason: "not a fleet worktree" } };
+    }
+    const rows = q.worktreeSpawns.all().filter((row2) => row2.worktree_path === body.path);
+    const row = rows[0];
+    if (!row) return { status: 400, body: { ok: false, reason: "not a fleet worktree" } };
+    const alive = rows.some((candidate) => candidate.session_ended_at == null && q.getSession.get(candidate.session_id));
+    if (alive) return { status: 409, body: { ok: false, reason: "session is still alive" } };
+    const state = await inspectWorktree(row);
+    if ((state.verdict === "has-work" || state.verdict === "unknown") && body.force !== true) {
+      return {
+        status: 409,
+        body: {
+          ok: false,
+          reason: state.verdict === "has-work" ? "worktree has uncommitted or unpushed work" : "worktree safety is unknown",
+          verdict: state.verdict,
+          dirty: state.dirty,
+          unpushed: state.unpushed
+        }
+      };
+    }
+    const repoResult = await execFileP("git", ["-C", row.cwd, "rev-parse", "--show-toplevel"], { timeout: 5e3 });
+    if (!repoResult.ok) return { status: 409, body: { ok: false, reason: "main repository unavailable" } };
+    const repo = repoResult.out.trim();
+    if (state.exists) {
+      chmodWritableWhereOwned(row.worktree_path);
+      const args = ["-C", repo, "worktree", "remove"];
+      if (body.force === true) args.push("--force");
+      args.push(row.worktree_path);
+      const removed = await execFileP("git", args, { timeout: 3e4 });
+      if (!removed.ok) {
+        const blocked = blockedPaths(row.worktree_path);
+        if (blocked.length) {
+          return {
+            status: 409,
+            body: {
+              ok: false,
+              reason: `blocked by ${blocked.length} path(s) this daemon may not delete \u2014 owned by ${[...new Set(blocked.map((b) => b.owner))].join(", ")}. Fleet Deck runs as you and never escalates to root.`,
+              blocked_paths: blocked.map((b) => b.path),
+              blocked_owner: blocked[0].owner,
+              fix_command: `sudo rm -rf ${blocked.map((b) => shellQuote(b.path)).join(" ")} && git -C ${shellQuote(repo)} worktree prune`
+            }
+          };
+        }
+        if (body.force !== true) {
+          const porcelain = await execFileP("git", ["-C", row.worktree_path, "status", "--porcelain"], { timeout: 5e3 });
+          if (porcelain.ok && porcelain.out.trim() !== "") {
+            return {
+              status: 409,
+              body: {
+                ok: false,
+                reason: "git refused to remove this worktree and it still has uncommitted changes \u2014 pass force to delete",
+                verdict: "has-work",
+                dirty: porcelain.out.split(/\r?\n/).filter(Boolean).length
+              }
+            };
+          }
+        }
+        try {
+          fs3.rmSync(row.worktree_path, { recursive: true, force: true });
+        } catch (err) {
+          return { status: 409, body: { ok: false, reason: `could not remove worktree: ${err.code || err.message}` } };
+        }
+        const pruned = await execFileP("git", ["-C", repo, "worktree", "prune"], { timeout: 3e4 });
+        if (!pruned.ok) return { status: 409, body: { ok: false, reason: `git worktree prune failed: ${pruned.err}`.slice(0, 300) } };
+      }
+    } else {
+      const pruned = await execFileP("git", ["-C", repo, "worktree", "prune"], { timeout: 3e4 });
+      if (!pruned.ok) return { status: 409, body: { ok: false, reason: `git worktree prune failed: ${pruned.err}`.slice(0, 300) } };
+    }
+    let branch_deleted = false;
+    const branch = state.branch ?? q.getSession.get(row.session_id)?.branch ?? null;
+    if (body.delete_branch === true && branch) {
+      const deleted = await execFileP("git", ["-C", repo, "branch", "-D", branch], { timeout: 3e4 });
+      branch_deleted = deleted.ok;
+    }
+    const sessionIds = [...new Set(rows.map((candidate) => candidate.session_id).filter(Boolean))];
+    const spawnsPurged = Number(q.deleteWorktreeSpawns.run(row.worktree_path).changes);
+    let sessionsPurged = 0;
+    for (const sessionId of sessionIds) sessionsPurged += Number(q.deleteEndedSession.run(sessionId).changes);
+    const rows_purged = spawnsPurged + sessionsPurged;
+    tick(`\u232B removed worktree ${row.worktree_path}${branch_deleted ? ` and branch ${branch}` : ""}`);
+    onMutate();
+    return { status: 200, body: { ok: true, removed: true, branch_deleted, rows_purged, path: row.worktree_path } };
+  }
+  return { worktrees, removeWorktree };
+}
+
+// scripts/fleetd/mail.mjs
+var MAIL_MAX_LEN = 4e3;
+function clampMail(raw) {
+  if (raw.length <= MAIL_MAX_LEN) return raw;
+  const cut = raw.slice(0, MAIL_MAX_LEN);
+  const last = cut.charCodeAt(cut.length - 1);
+  return last >= 55296 && last <= 56319 ? cut.slice(0, -1) : cut;
+}
+function createMail(ctx) {
+  const {
+    db: db2,
+    q,
+    tick,
+    logEvent,
+    onMutate,
+    questions,
+    tmuxAdapter,
+    findScopedWindow,
+    PANE_MAIL_GRACE_MS
+  } = ctx;
   function mail(toSession, from, text) {
     const raw = String(text ?? "");
     q.insertMail.run(toSession, from, clampMail(raw), Date.now());
@@ -5002,10 +5159,260 @@ function createCore(db2, {
     }
     return all.filter((s) => s.session_id === to || s.callsign === to).map((s) => s.session_id);
   }
+  const watchWaiters = /* @__PURE__ */ new Map();
+  function notifyWatchers(sid) {
+    for (const fn of [...watchWaiters.get(sid) ?? []]) {
+      try {
+        fn();
+      } catch {
+      }
+    }
+  }
+  function addWatchWaiter(sid, fn) {
+    if (!watchWaiters.has(sid)) watchWaiters.set(sid, /* @__PURE__ */ new Set());
+    watchWaiters.get(sid).add(fn);
+    return () => {
+      const set = watchWaiters.get(sid);
+      if (set) {
+        set.delete(fn);
+        if (!set.size) watchWaiters.delete(sid);
+      }
+    };
+  }
+  function hasWatchWaiter(sid) {
+    return (watchWaiters.get(sid)?.size ?? 0) > 0;
+  }
+  function ownedPaneRow(sid) {
+    const c = q.getSession.get(sid);
+    if (!c || c.ended_at != null || !["queued", "idle"].includes(c.col)) return null;
+    const sp = q.spawnBySession.get(sid);
+    if (!sp || !["spawning", "stalled", "live"].includes(sp.status)) return null;
+    return { c, sp };
+  }
+  async function ownedPaneDeliverable(sid, { probe: probe2 = true } = {}) {
+    const pair = ownedPaneRow(sid);
+    if (!pair) return false;
+    if (!probe2) return true;
+    const win = await findScopedWindow(pair.sp.tmux_window);
+    if (!win || win.pane_dead) return false;
+    const pane = await tmuxAdapter.paneCurrentCommand(win.window_id);
+    return !!pane && !pane.dead && pane.cmd === "claude";
+  }
+  function claimAllMail(sid) {
+    db2.exec("BEGIN IMMEDIATE");
+    try {
+      const box = q.pendingMail.all(sid);
+      const now = Date.now();
+      for (const m of box) q.markDelivered.run(now, m.id);
+      db2.exec("COMMIT");
+      return box;
+    } catch (err) {
+      try {
+        db2.exec("ROLLBACK");
+      } catch {
+      }
+      throw err;
+    }
+  }
+  async function tryOwnedPaneDelivery(sid) {
+    const pair = ownedPaneRow(sid);
+    if (!pair || hasWatchWaiter(sid)) return false;
+    const win = await findScopedWindow(pair.sp.tmux_window);
+    if (!win || win.pane_dead) return false;
+    const pane = await tmuxAdapter.paneCurrentCommand(win.window_id);
+    if (!pane || pane.dead || pane.cmd !== "claude") return false;
+    if (hasWatchWaiter(sid)) return false;
+    const box = claimAllMail(sid);
+    if (!box.length) return false;
+    const text = box.map((m) => `[FLEETDECK MAIL from ${m.from_id}] ${m.text}`).join("\n");
+    const pasted = await tmuxAdapter.pasteText(win.window_id, text);
+    const entered = pasted ? await tmuxAdapter.sendEnter(win.window_id) : false;
+    if (!pasted || !entered) {
+      for (const m of box) q.unmarkDelivered.run(m.id);
+      onMutate();
+      return false;
+    }
+    tick(`\u2709 delivered ${box.length} mail to ${pair.c.callsign} (typed into pane)`);
+    logEvent(sid, "MailPaneDelivery", null, `typed ${box.length} mail into ${pair.sp.tmux_window}`);
+    onMutate();
+    return true;
+  }
+  function claimMail(sid) {
+    const m = q.nextMail.get(sid);
+    if (!m) return null;
+    q.markDelivered.run(Date.now(), m.id);
+    onMutate();
+    return { mail_id: m.id, at: m.at, from: m.from_id, text: m.text };
+  }
+  function watchInfo(sid) {
+    const c = q.getSession.get(sid);
+    return {
+      session_alive: !!c && c.ended_at == null,
+      // Informational in v2: the watcher keeps polling while session_alive
+      // is true even at pending:0, because mail can arrive for an idle
+      // session at any time. Still counts FREEFORM questions only —
+      // permission/elicitation/choice answers ride their held hook response
+      // and never become mail (a choice whose hold expired belongs to the
+      // native terminal chooser permanently; a late board answer 409s).
+      pending: questions.pendingOf(sid).filter((r) => r.kind === "freeform").length
+    };
+  }
+  async function postMail({ to, from, text }) {
+    const targets = resolveTargets(to);
+    const routes = await Promise.all(targets.map(async (sid) => {
+      if (hasWatchWaiter(sid)) return "watcher";
+      if (await ownedPaneDeliverable(sid)) return "pane";
+      return q.getSession.get(sid)?.ended_at != null ? "offline-queued" : "turn-boundary";
+    }));
+    targets.forEach((sid) => mail(sid, from || "human", text));
+    tick(`\u2709 mail from ${from || "human"} \u2192 ${to}`);
+    onMutate();
+    const raw = String(text ?? "");
+    const truncated = raw.length > MAIL_MAX_LEN;
+    return {
+      ok: true,
+      delivered: targets.length,
+      targets: targets.map((sid, i) => ({
+        session_id: sid,
+        callsign: q.getSession.get(sid)?.callsign ?? null,
+        route: routes[i]
+      })),
+      ...truncated ? { truncated: true, original_length: raw.length, max_length: MAIL_MAX_LEN } : {}
+    };
+  }
+  return {
+    mail,
+    drainMail,
+    resolveTargets,
+    notifyWatchers,
+    addWatchWaiter,
+    hasWatchWaiter,
+    ownedPaneRow,
+    ownedPaneDeliverable,
+    tryOwnedPaneDelivery,
+    claimMail,
+    watchInfo,
+    postMail
+  };
+}
+
+// scripts/fleetd/ledger.mjs
+import path3 from "node:path";
+
+// scripts/fleetd/repo-identity.mjs
+import { execFileSync as execFileSync2 } from "node:child_process";
+import fs4 from "node:fs";
+import path2 from "node:path";
+var identityCache = /* @__PURE__ */ new Map();
+var branchCache = /* @__PURE__ */ new Map();
+var CACHE_MAX = 512;
+var IDENTITY_TTL_MS = 5 * 6e4;
+var NEGATIVE_TTL_MS = 2e3;
+var BRANCH_TTL_MS = 2e4;
+function cacheGet(cache, key, now = Date.now()) {
+  const hit = cache.get(key);
+  if (!hit) return void 0;
+  if (hit.expiresAt <= now) {
+    cache.delete(key);
+    return void 0;
+  }
+  cache.delete(key);
+  cache.set(key, hit);
+  return hit.value;
+}
+function cacheSet(cache, key, value, ttlMs, now = Date.now()) {
+  cache.delete(key);
+  cache.set(key, { value, expiresAt: now + ttlMs });
+  while (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value);
+}
+function isDirectory(cwd) {
+  try {
+    return fs4.statSync(cwd).isDirectory();
+  } catch {
+    return false;
+  }
+}
+function git(args, cwd) {
+  try {
+    const out = execFileSync2("git", args, {
+      cwd,
+      timeout: 1500,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"]
+    }).trim();
+    return out || null;
+  } catch {
+    return null;
+  }
+}
+function canon(p) {
+  try {
+    return fs4.realpathSync(p);
+  } catch {
+    return path2.resolve(p);
+  }
+}
+function deriveRepo(cwd) {
+  if (!cwd) return { repo_id: null, repo_name: null, worktree: null, is_git: false };
+  if (!isDirectory(cwd)) {
+    const c = canon(cwd);
+    return { repo_id: c, repo_name: path2.basename(c), worktree: c, is_git: false };
+  }
+  const hit = cacheGet(identityCache, cwd);
+  if (hit !== void 0) return hit;
+  let out;
+  const common = git(["rev-parse", "--git-common-dir"], cwd);
+  if (common) {
+    const commonAbs = canon(path2.isAbsolute(common) ? common : path2.resolve(cwd, common));
+    const mainTree = path2.basename(commonAbs) === ".git" ? path2.dirname(commonAbs) : commonAbs;
+    const toplevel = git(["rev-parse", "--show-toplevel"], cwd);
+    out = {
+      repo_id: commonAbs,
+      repo_name: path2.basename(mainTree).replace(/\.git$/, "") || path2.basename(mainTree),
+      worktree: toplevel ? canon(toplevel) : canon(cwd),
+      is_git: true
+    };
+  } else {
+    const c = canon(cwd);
+    out = { repo_id: c, repo_name: path2.basename(c), worktree: c, is_git: false };
+  }
+  cacheSet(identityCache, cwd, out, out.is_git ? IDENTITY_TTL_MS : NEGATIVE_TTL_MS);
+  return out;
+}
+function branchOf(cwd) {
+  if (!cwd || !isDirectory(cwd)) return null;
+  const now = Date.now();
+  const hit = cacheGet(branchCache, cwd, now);
+  if (hit !== void 0) return hit;
+  const branch = git(["rev-parse", "--abbrev-ref", "HEAD"], cwd);
+  cacheSet(branchCache, cwd, branch, branch == null ? NEGATIVE_TTL_MS : BRANCH_TTL_MS, now);
+  return branch;
+}
+function ledgerKey(absPath, session) {
+  if (session?.worktree && session.repo_id && deriveRepo(session.cwd).is_git) {
+    const rel = path2.relative(session.worktree, absPath);
+    if (rel && !rel.startsWith("..") && !path2.isAbsolute(rel)) {
+      return { repo_id: session.repo_id, rel_path: rel, worktree: session.worktree };
+    }
+  }
+  const repo = deriveRepo(path2.dirname(absPath));
+  if (repo.is_git) {
+    const rel = path2.relative(repo.worktree, absPath);
+    if (rel && !rel.startsWith("..") && !path2.isAbsolute(rel)) {
+      return { repo_id: repo.repo_id, rel_path: rel, worktree: repo.worktree };
+    }
+  }
+  return { repo_id: "", rel_path: absPath, worktree: null };
+}
+
+// scripts/fleetd/ledger.mjs
+var CONFLICT_WINDOW_MS = 30 * 60 * 1e3;
+function createLedger(ctx) {
+  const { q, card, mail, tick } = ctx;
   function recordFile(sid, absFile, editorCard) {
     if (!absFile) return null;
     const now = Date.now();
-    const abs = path2.isAbsolute(absFile) ? absFile : path2.resolve(editorCard.cwd || "/", absFile);
+    const abs = path3.isAbsolute(absFile) ? absFile : path3.resolve(editorCard.cwd || "/", absFile);
     const key = ledgerKey(abs, editorCard);
     const touches = q.recentTouches.all(key.repo_id ?? "", key.rel_path, now - CONFLICT_WINDOW_MS);
     const rivalTouches = touches.filter((t) => t.session_id !== sid && q.getSession.get(t.session_id));
@@ -5016,7 +5423,7 @@ function createCore(db2, {
     const severity = sameTree ? "warning" : "info";
     const rivalNames = rivals.map((r) => card(r).callsign).join(", ");
     q.insertConflict.run(now, key.repo_id ?? "", key.rel_path, severity, JSON.stringify([sid, ...rivals]));
-    tick(`\u26A0 conflict: ${editorCard.callsign} and ${rivalNames} both touching ${path2.basename(key.rel_path)}`);
+    tick(`\u26A0 conflict: ${editorCard.callsign} and ${rivalNames} both touching ${path3.basename(key.rel_path)}`);
     for (const r of rivals) {
       mail(r, "fleetdeck", severity === "warning" ? `Heads up: ${editorCard.callsign} is also editing ${key.rel_path}. Coordinate before you overwrite each other.` : `Heads up: ${editorCard.callsign} is editing ${key.rel_path} in another worktree of this repo \u2014 a future merge conflict announcing itself early.`);
     }
@@ -5026,6 +5433,839 @@ function createCore(db2, {
     const base = `[FLEETDECK] \u26A0 Session(s) ${conflict.rivals} recently edited ${conflict.file} too`;
     return conflict.severity === "info" ? `${base} (in another worktree of this repo \u2014 a future merge conflict). Check their intent before building on this file, and mention the coordination in your final summary.` : `${base}. Re-read the file before further edits and avoid reverting their work. Mention this coordination in your final summary.`;
   }
+  return { recordFile, whisperText };
+}
+
+// scripts/fleetd/ingest.mjs
+function createIngest(ctx) {
+  const { q, assignCallsign, updateSession, tick, onMutate } = ctx;
+  function ingestAgentsPoll(records) {
+    if (!Array.isArray(records)) return;
+    const live = records.filter((rec) => rec && typeof rec === "object" && rec.sessionId && rec.kind === "interactive" && pidAlive(rec.pid));
+    for (const rec of live) {
+      const sid = rec.sessionId;
+      const rawState = rec.state ?? rec.status;
+      const existing = q.getSession.get(sid);
+      if (!existing) {
+        const callsign = assignCallsign(sid);
+        const cwd = rec.cwd || null;
+        const repo = cwd ? deriveRepo(cwd) : { repo_id: null, repo_name: null, worktree: null };
+        const branch = cwd ? branchOf(cwd) : null;
+        const now = Date.now();
+        const startedAt = Number.isFinite(rec.startedAt) ? rec.startedAt : now;
+        q.insertAgentSession.run(
+          sid,
+          callsign,
+          cwd,
+          repo.repo_id ?? null,
+          repo.repo_name ?? null,
+          branch ?? null,
+          repo.worktree ?? null,
+          colFromAgentState(rawState, true),
+          "seen via agents CLI",
+          rec.name ?? null,
+          startedAt,
+          now
+        );
+        tick(`${callsign} joined the fleet (agents CLI)`);
+        onMutate();
+      } else if (existing.source === "agents-cli") {
+        updateSession(sid, {
+          col: colFromAgentState(rawState, false),
+          note: "seen via agents CLI",
+          last_seen: Date.now(),
+          ended_at: null
+          // reappearance revives an absence-tombstoned card
+        });
+        onMutate();
+      }
+    }
+    const liveSids = new Set(live.map((r) => r.sessionId));
+    for (const s of q.allSessions.all()) {
+      if (s.source !== "agents-cli" || s.ended_at != null) continue;
+      if (liveSids.has(s.session_id)) continue;
+      updateSession(s.session_id, {
+        col: "offline",
+        note: "no longer reported by agents CLI",
+        ended_at: Date.now()
+      });
+      tick(`${s.callsign} left the fleet (agents CLI)`);
+      onMutate();
+    }
+  }
+  return { ingestAgentsPoll };
+}
+
+// scripts/fleetd/commands.mjs
+function createCommands(ctx) {
+  const { q, mail, resolveTargets, tick, onMutate } = ctx;
+  function command(text) {
+    const parsed = parseCommand(text);
+    const logCommand = (extra) => q.insertCommand.run(Date.now(), String(text ?? ""), JSON.stringify(extra ? { ...parsed, ...extra } : parsed));
+    let delivered = 0;
+    if (parsed.cmd === "broadcast") {
+      const targets = resolveTargets("all");
+      targets.forEach((sid) => mail(sid, "orchestrator", parsed.text));
+      delivered = targets.length;
+      tick(`\u{1F4E3} orchestrator broadcast \u2192 ${delivered} session(s)`);
+    } else if (parsed.cmd === "assign_auto") {
+      const repo = parsed.repo ?? null;
+      const winner = q.autoCandidate.get(repo, repo, repo);
+      if (!winner) {
+        logCommand({ unrouted: true });
+        tick("\u26A0 assign auto: no available session \u2014 task logged");
+        onMutate();
+        return { ok: false, unrouted: true, text: parsed.text };
+      }
+      const assigned_to = { session_id: winner.session_id, callsign: winner.callsign };
+      mail(winner.session_id, "orchestrator", `[FLEETDECK ASSIGNMENT] ${parsed.text}`);
+      tick(`\u26A1 orchestrator \u2192 ${winner.callsign}: ${parsed.text.slice(0, 60)}`);
+      logCommand({ assigned_to });
+      onMutate();
+      return { ok: true, assigned_to };
+    } else if (parsed.cmd === "assign") {
+      const targets = resolveTargets(parsed.target);
+      targets.forEach((sid) => mail(sid, "orchestrator", `[FLEETDECK ASSIGNMENT] ${parsed.text}`));
+      delivered = targets.length;
+      tick(`\u{1F4CC} orchestrator assign \u2192 ${parsed.target}${delivered ? "" : " (no such session)"}`);
+    } else {
+      tick(`\u{1F4DD} orchestrator note: ${parsed.text.slice(0, 60)}`);
+    }
+    logCommand();
+    onMutate();
+    return { ok: true, parsed, delivered };
+  }
+  return { command };
+}
+
+// scripts/fleetd/plans.mjs
+function createPlans(ctx) {
+  const { q, tick, onMutate } = ctx;
+  const EXECUTABLE_FROM = /* @__PURE__ */ new Set(["proposed", "approved", "captured"]);
+  function planMark(plan_id, body) {
+    const p = q.getPlan.get(Number(plan_id));
+    if (!p) return { status: 404, body: { ok: false, err: "no such plan" } };
+    const target = body?.status;
+    if (target !== "executed" && target !== "archived") {
+      return { status: 400, body: { ok: false, err: 'status must be "executed" or "archived"' } };
+    }
+    if (body?.via != null && typeof body.via !== "string") {
+      return { status: 400, body: { ok: false, err: "via must be a string" } };
+    }
+    if (target === "executed") {
+      if (!EXECUTABLE_FROM.has(p.status)) {
+        return { status: 409, body: { ok: false, err: `cannot mark a ${p.status} plan executed` } };
+      }
+      const via = body?.via?.trim() ? body.via.trim().slice(0, 200) : null;
+      q.setPlanExecuted.run(via, p.plan_id);
+      tick(`\u{1F4DA} plan #${p.plan_id} (${p.callsign ?? p.session_id}) marked executed${via ? ` via ${via}` : ""}`);
+    } else {
+      if (p.status === "archived") {
+        return { status: 409, body: { ok: false, err: "plan is already archived" } };
+      }
+      q.setPlanStatus.run("archived", p.plan_id);
+      tick(`\u{1F4DA} plan #${p.plan_id} (${p.callsign ?? p.session_id}) archived`);
+    }
+    onMutate();
+    return { status: 200, body: { ok: true, plan_id: p.plan_id, status: target } };
+  }
+  return { planMark };
+}
+
+// scripts/fleetd/spawns.mjs
+import fs5 from "node:fs";
+import path4 from "node:path";
+import { randomUUID as randomUUID2 } from "node:crypto";
+function createSpawns(ctx) {
+  const {
+    q,
+    updateSession,
+    tick,
+    logEvent,
+    onMutate,
+    assignCallsign,
+    notifyWatchers,
+    tombstoneCard,
+    findScopedWindow,
+    tmuxAdapter,
+    port,
+    home,
+    NUDGE_MS,
+    SPAWN_REGISTER_MS,
+    RC_HARVEST_MS
+  } = ctx;
+  function spawnCapability() {
+    const base = { active: q.countActiveSpawns.get().n };
+    if (String(process.env.FLEETDECK_SPAWN ?? "").toLowerCase() === "off") {
+      return { available: false, reason: "disabled (FLEETDECK_SPAWN=off)", ...base };
+    }
+    if (tmuxAdapter.spawnOverrideCmd()) {
+      return { available: true, reason: "test-override", ...base };
+    }
+    if (!tmuxAdapter.hasTmux()) {
+      return { available: false, reason: "tmux not found on PATH", ...base };
+    }
+    return { available: true, ...base };
+  }
+  function createSpawnedCard(sid, cwd, prompt) {
+    const callsign = assignCallsign(sid);
+    const repo = deriveRepo(cwd);
+    const branch = cwd ? branchOf(cwd) : null;
+    const now = Date.now();
+    q.insertSpawnedSession.run(
+      sid,
+      callsign,
+      cwd,
+      repo.repo_id ?? null,
+      repo.repo_name ?? null,
+      branch ?? null,
+      repo.worktree ?? null,
+      prompt ? String(prompt).slice(0, 80) : null,
+      now,
+      now
+    );
+    return q.getSession.get(sid);
+  }
+  function spawnFailed(sid, callsign, reason) {
+    tombstoneCard(sid, {
+      note: `spawn failed: ${reason}`.slice(0, 80),
+      tickMsg: `\u2717 spawn failed for ${callsign}: ${reason.slice(0, 60)}`,
+      forgetModel: true,
+      mutate: true
+    });
+  }
+  const nudged = /* @__PURE__ */ new Set();
+  function scheduleNudge(spawn_id, window, callsign) {
+    const t = setTimeout(async () => {
+      try {
+        if (nudged.has(spawn_id)) return;
+        const row = q.getSpawn.get(spawn_id);
+        if (!row || row.status !== "spawning") return;
+        const win = await findScopedWindow(window);
+        if (!win || win.pane_dead) return;
+        nudged.add(spawn_id);
+        await tmuxAdapter.sendBringupEnter(win.window_id);
+        logEvent(row.session_id, "SpawnNudge", null, "bring-up Enter sent (trust dialog)");
+        tick(`\u23CE nudged ${callsign} through the trust dialog`);
+        onMutate();
+      } catch {
+      }
+    }, NUDGE_MS);
+    t.unref?.();
+  }
+  const RC_URL_RE = /https:\/\/claude\.ai\/\S+/;
+  const registrationRemoteHarvests = /* @__PURE__ */ new Map();
+  const revivingSessions = /* @__PURE__ */ new Set();
+  const condemnStreak = /* @__PURE__ */ new Map();
+  function forgetSpawn(spawn_id) {
+    nudged.delete(spawn_id);
+    registrationRemoteHarvests.delete(spawn_id);
+    condemnStreak.delete(spawn_id);
+  }
+  function resurrectSpawn(row) {
+    q.setSpawnStatus.run("live", row.spawn_id);
+    const c = q.getSession.get(row.session_id);
+    updateSession(row.session_id, {
+      col: "idle",
+      ended_at: null,
+      archived_at: null,
+      // BUG 4: a card condemned while it was 'spawn_stalled'/'permission_prompt'
+      // must not come back wearing a stale needs-you reason chip — clear
+      // notification_type. And a resurrected card IS being seen right now, so
+      // refresh last_seen: it is 'idle' at its prompt, not silent since death
+      // (otherwise the very next retention sweep could presume it dead again on
+      // the pre-death last_seen).
+      notification_type: null,
+      last_seen: Date.now(),
+      note: "pane is a live claude \u2014 restored to the board"
+    });
+    forgetSpawn(row.spawn_id);
+    tick(`\u2728 ${c?.callsign ?? row.callsign} restored \u2014 its pane was a live claude all along`);
+    notifyWatchers(row.session_id);
+    onMutate();
+  }
+  async function harvestRemote(spawn_id) {
+    const row = q.getSpawn.get(spawn_id);
+    if (!row) return { url: null };
+    let text = null;
+    try {
+      text = await tmuxAdapter.capturePane(row.tmux_window);
+    } catch {
+    }
+    const url = typeof text === "string" ? text.match(RC_URL_RE)?.[0] ?? null : null;
+    try {
+      q.setSpawnRemote.run(url, spawn_id);
+      tick(`\u{1F4F1} ${row.callsign} remote control enabled${url ? "" : " (URL not found)"}`);
+      onMutate();
+    } catch (err) {
+      console.error("fleetd remote harvest persist error:", err);
+    }
+    return { url };
+  }
+  function delayedRemoteHarvest(spawn_id) {
+    if (RC_HARVEST_MS === 0) {
+      return Promise.resolve().then(() => harvestRemote(spawn_id)).catch(() => ({ url: null }));
+    }
+    let timer;
+    const promise = new Promise((resolve) => {
+      timer = setTimeout(() => harvestRemote(spawn_id).then(resolve, () => resolve({ url: null })), RC_HARVEST_MS);
+      timer.unref?.();
+    });
+    return promise;
+  }
+  function scheduleRegistrationRemoteHarvest(spawn_id) {
+    if (registrationRemoteHarvests.has(spawn_id)) return registrationRemoteHarvests.get(spawn_id);
+    const promise = delayedRemoteHarvest(spawn_id);
+    registrationRemoteHarvests.set(spawn_id, promise);
+    return promise;
+  }
+  async function spawnCompensate({ spawn_id, session_id, callsign, cwd, worktree_path, tmux_window, reason }) {
+    if (worktree_path) {
+      try {
+        const rm = await execFileP("git", ["-C", cwd, "worktree", "remove", "--force", worktree_path], { timeout: 3e4 });
+        if (!rm.ok) {
+          try {
+            fs5.rmSync(worktree_path, { recursive: true, force: true });
+          } catch {
+          }
+        }
+        await execFileP("git", ["-C", cwd, "worktree", "prune"], { timeout: 3e4 });
+      } catch {
+      }
+    }
+    if (tmux_window) {
+      try {
+        await tmuxAdapter.killWindowVerified(tmux_window);
+      } catch {
+      }
+    }
+    q.setSpawnStatus.run("gone", spawn_id);
+    forgetSpawn(spawn_id);
+    spawnFailed(session_id, callsign, reason);
+  }
+  async function spawn2(body) {
+    const cap = spawnCapability();
+    if (!cap.available) {
+      return { status: 400, body: { ok: false, reason: `spawning unavailable: ${cap.reason}` } };
+    }
+    for (const k of ["cwd", "prompt", "model", "permission_mode"]) {
+      if (body?.[k] != null && typeof body[k] !== "string") {
+        return { status: 400, body: { ok: false, reason: `${k} must be a string` } };
+      }
+    }
+    if (body?.worktree != null && typeof body.worktree !== "boolean") {
+      return { status: 400, body: { ok: false, reason: "worktree must be a boolean" } };
+    }
+    if (body?.dangerously_skip_permissions != null && typeof body.dangerously_skip_permissions !== "boolean") {
+      return { status: 400, body: { ok: false, reason: "dangerously_skip_permissions must be a boolean" } };
+    }
+    if (body?.remote_control != null && typeof body.remote_control !== "boolean") {
+      return { status: 400, body: { ok: false, reason: "remote_control must be a boolean" } };
+    }
+    const skipPermissions = body?.dangerously_skip_permissions === true || body?.permission_mode === "bypassPermissions";
+    const cwd = body?.cwd || "";
+    let st = null;
+    try {
+      st = fs5.statSync(cwd);
+    } catch {
+    }
+    if (!cwd || !st?.isDirectory()) {
+      return { status: 400, body: { ok: false, reason: "cwd missing or not a directory" } };
+    }
+    if (body?.worktree === true && !deriveRepo(cwd).is_git) {
+      return { status: 409, body: { ok: false, reason: "cwd is not a git repository \u2014 cannot spawn into a worktree" } };
+    }
+    const session_id = randomUUID2();
+    const spawn_id = randomUUID2();
+    const c = createSpawnedCard(session_id, cwd, body?.prompt);
+    const callsign = c.callsign;
+    const tmux_session = tmuxAdapter.sessionName(port);
+    const tmux_window = tmuxAdapter.windowName(port, callsign);
+    q.insertProvisionalSpawn.run(
+      spawn_id,
+      session_id,
+      callsign,
+      tmux_session,
+      tmux_window,
+      cwd,
+      null,
+      Date.now(),
+      skipPermissions ? 1 : 0,
+      body?.remote_control === true ? 1 : 0
+    );
+    let worktree_path = null;
+    if (body?.worktree === true) {
+      worktree_path = path4.join(path4.dirname(cwd), `${path4.basename(cwd)}--fd-${callsign}`);
+      const res = await execFileP("git", ["-C", cwd, "worktree", "add", "-b", `fd/${callsign}`, worktree_path]);
+      if (!res.ok) {
+        await spawnCompensate({
+          spawn_id,
+          session_id,
+          callsign,
+          cwd,
+          worktree_path,
+          tmux_window: null,
+          reason: `git worktree add: ${res.err}`
+        });
+        return { status: 409, body: { ok: false, reason: `git worktree add failed: ${res.err}`.slice(0, 300) } };
+      }
+      q.setSpawnWorktree.run(worktree_path, spawn_id);
+      const repo = deriveRepo(worktree_path);
+      updateSession(session_id, {
+        cwd: worktree_path,
+        repo_id: repo.repo_id,
+        repo_name: repo.repo_name,
+        worktree: repo.worktree,
+        branch: branchOf(worktree_path)
+      });
+    }
+    const runCwd = worktree_path ?? cwd;
+    const argv = [
+      ...claudeEnvArgvPrefix(port, home),
+      "claude",
+      "--session-id",
+      session_id
+    ];
+    if (body?.model) argv.push("--model", body.model);
+    if (body?.permission_mode) argv.push("--permission-mode", body.permission_mode);
+    if (body?.dangerously_skip_permissions === true) argv.push("--dangerously-skip-permissions");
+    if (body?.remote_control === true) argv.push("--remote-control", callsign);
+    if (body?.prompt) argv.push(body.prompt);
+    const override = tmuxAdapter.spawnOverrideCmd();
+    if (override) {
+      const spec = {
+        spawn_id,
+        session_id,
+        callsign,
+        port,
+        cwd: runCwd,
+        requested_cwd: cwd,
+        prompt: body?.prompt ?? null,
+        model: body?.model ?? null,
+        permission_mode: body?.permission_mode ?? null,
+        worktree_path,
+        dangerously_skip_permissions: body?.dangerously_skip_permissions === true,
+        skip_permissions: skipPermissions,
+        remote_control: body?.remote_control === true,
+        tmux: { session: tmux_session, window: tmux_window },
+        argv
+        // the full env-wrapped argv tmux would have run
+      };
+      tmuxAdapter.launchOverride(override, spec, (err) => spawnCompensate({
+        spawn_id,
+        session_id,
+        callsign,
+        cwd,
+        worktree_path,
+        tmux_window,
+        reason: `spawn override: ${err.message || err}`
+      }).catch(() => {
+      }));
+    } else {
+      try {
+        await tmuxAdapter.ensureSession(port);
+        await tmuxAdapter.newWindow({ port, callsign, cwd: runCwd, argv });
+      } catch (err) {
+        await spawnCompensate({
+          spawn_id,
+          session_id,
+          callsign,
+          cwd,
+          worktree_path,
+          tmux_window,
+          reason: String(err.message || err)
+        });
+        return { status: 500, body: { ok: false, reason: `tmux spawn failed: ${err.message || err}` } };
+      }
+    }
+    q.setSpawnStatus.run("spawning", spawn_id);
+    tick(`\u{1F680} spawned ${callsign} \u2014 tmux window ${tmux_window}${skipPermissions ? " (unsupervised)" : ""}`);
+    scheduleNudge(spawn_id, tmux_window, callsign);
+    onMutate();
+    return {
+      status: 200,
+      body: { ok: true, spawn_id, session_id, callsign, tmux: { session: tmux_session, window: tmux_window } }
+    };
+  }
+  async function revive(spawn_id, body = {}) {
+    const row = q.getSpawn.get(spawn_id);
+    if (!row) return { status: 404, body: { ok: false, reason: "no such spawn" } };
+    if (!["pane-dead", "killed", "gone"].includes(row.status)) {
+      return { status: 409, body: { ok: false, reason: `spawn is ${row.status}, not revivable` } };
+    }
+    if (body?.remote_control != null && typeof body.remote_control !== "boolean") {
+      return { status: 400, body: { ok: false, reason: "remote_control must be a boolean" } };
+    }
+    const remoteWanted = body?.remote_control ?? !!row.remote_control;
+    const active = q.activeSpawnBySession.get(row.session_id) || q.provisioningSpawnBySession.get(row.session_id);
+    if (active) {
+      return { status: 409, body: { ok: false, reason: `session already has active spawn ${active.spawn_id}` } };
+    }
+    if (revivingSessions.has(row.session_id)) {
+      return { status: 409, body: { ok: false, reason: `session ${row.session_id.slice(0, 8)} is already being revived` } };
+    }
+    revivingSessions.add(row.session_id);
+    try {
+      const runCwd = row.worktree_path ?? row.cwd;
+      let st = null;
+      try {
+        st = fs5.statSync(runCwd);
+      } catch {
+      }
+      if (!runCwd || !st?.isDirectory()) {
+        return { status: 410, body: { ok: false, reason: "revive cwd no longer exists" } };
+      }
+      if (!fs5.existsSync(claudeTranscriptPath(runCwd, row.session_id))) {
+        return { status: 410, body: { ok: false, reason: "resume transcript no longer exists" } };
+      }
+      const existing = await findScopedWindow(row.tmux_window);
+      if (existing && !existing.pane_dead && existing.pane_cmd === "claude") {
+        if (row.status !== "pane-dead" && row.status !== "gone") {
+          return { status: 409, body: { ok: false, reason: `spawn ${spawn_id} was killed \u2014 its window hosts a live claude, but a killed spawn is never resurrected by adoption` } };
+        }
+        const owner = q.currentWindowOwner.get(row.tmux_window);
+        if (owner && owner.spawn_id !== row.spawn_id) {
+          return {
+            status: 409,
+            body: { ok: false, reason: `window ${row.tmux_window} is owned by spawn ${owner.spawn_id} \u2014 revive that one`, current_spawn_id: owner.spawn_id }
+          };
+        }
+        resurrectSpawn(row);
+        return {
+          status: 200,
+          body: {
+            ok: true,
+            adopted: true,
+            spawn_id: row.spawn_id,
+            session_id: row.session_id,
+            callsign: row.callsign,
+            tmux: { session: tmuxAdapter.sessionName(port), window: row.tmux_window }
+          }
+        };
+      }
+      if (existing && !existing.pane_dead && !SHELL_RE.test(existing.pane_cmd)) {
+        return { status: 409, body: { ok: false, reason: `window ${row.tmux_window} hosts a live '${existing.pane_cmd}' pane \u2014 not a dead remnant; refusing to kill it` } };
+      }
+      if (existing) {
+        const killed = await tmuxAdapter.killWindowVerified(row.tmux_window);
+        if (!killed.ok && !killed.gone) {
+          return { status: 500, body: { ok: false, reason: killed.error || "tmux kill-window failed" } };
+        }
+      }
+      const new_spawn_id = randomUUID2();
+      const argv = [...claudeEnvArgvPrefix(port, home), "claude", "--resume", row.session_id];
+      if (row.skip_permissions) argv.push("--dangerously-skip-permissions");
+      if (remoteWanted) argv.push("--remote-control", row.callsign);
+      const tmux_session = tmuxAdapter.sessionName(port);
+      const preLaunchOwner = q.currentWindowOwner.get(row.tmux_window);
+      if (preLaunchOwner && preLaunchOwner.spawn_id !== spawn_id && ["provisioning", "spawning", "stalled", "live"].includes(preLaunchOwner.status)) {
+        return {
+          status: 409,
+          body: { ok: false, reason: `window ${row.tmux_window} is now owned by active spawn ${preLaunchOwner.spawn_id}`, current_spawn_id: preLaunchOwner.spawn_id }
+        };
+      }
+      q.insertProvisionalSpawn.run(
+        new_spawn_id,
+        row.session_id,
+        row.callsign,
+        tmux_session,
+        row.tmux_window,
+        row.cwd,
+        row.worktree_path,
+        Date.now(),
+        row.skip_permissions ? 1 : 0,
+        remoteWanted ? 1 : 0
+      );
+      const override = tmuxAdapter.spawnOverrideCmd();
+      if (override) {
+        tmuxAdapter.launchOverride(override, {
+          spawn_id: new_spawn_id,
+          revive_of: spawn_id,
+          session_id: row.session_id,
+          callsign: row.callsign,
+          port,
+          cwd: runCwd,
+          requested_cwd: row.cwd,
+          prompt: null,
+          model: null,
+          permission_mode: null,
+          worktree_path: row.worktree_path,
+          dangerously_skip_permissions: !!row.skip_permissions,
+          skip_permissions: !!row.skip_permissions,
+          remote_control: remoteWanted,
+          tmux: { session: tmux_session, window: row.tmux_window },
+          argv
+        }, (err) => spawnFailed(row.session_id, row.callsign, `spawn override: ${err.message || err}`));
+      } else {
+        try {
+          await tmuxAdapter.ensureSession(port);
+          await tmuxAdapter.newWindow({ port, callsign: row.callsign, cwd: runCwd, argv });
+        } catch (err) {
+          q.setSpawnStatus.run("gone", new_spawn_id);
+          forgetSpawn(new_spawn_id);
+          return { status: 500, body: { ok: false, reason: `tmux revive failed: ${err.message || err}` } };
+        }
+      }
+      q.setSpawnStatus.run("spawning", new_spawn_id);
+      updateSession(row.session_id, { archived_at: null, col: "queued", note: "reviving\u2026" });
+      tick(`\u27F2 reviving ${row.callsign} (resume ${row.session_id.slice(0, 8)})`);
+      scheduleNudge(new_spawn_id, row.tmux_window, row.callsign);
+      onMutate();
+      return {
+        status: 200,
+        body: {
+          ok: true,
+          spawn_id: new_spawn_id,
+          session_id: row.session_id,
+          callsign: row.callsign,
+          tmux: { session: tmux_session, window: row.tmux_window }
+        }
+      };
+    } finally {
+      revivingSessions.delete(row.session_id);
+    }
+  }
+  async function enableRemote(spawn_id) {
+    const row = q.getSpawn.get(spawn_id);
+    if (!row) return { status: 404, body: { ok: false, reason: "no such spawn" } };
+    if (row.status !== "live") {
+      return { status: 409, body: { ok: false, reason: `spawn is ${row.status}, not live` } };
+    }
+    if (row.remote_control && row.remote_url) {
+      return { status: 200, body: { ok: true, enabled: true, url: row.remote_url, pending: false } };
+    }
+    const session = q.getSession.get(row.session_id);
+    if (!session || !["queued", "idle"].includes(session.col)) {
+      return { status: 409, body: { ok: false, reason: `session is ${session?.col ?? "missing"}, not queued or idle` } };
+    }
+    const win = await findScopedWindow(row.tmux_window);
+    if (!win || win.pane_dead || win.pane_cmd !== "claude") {
+      const observed = !win ? "missing" : win.pane_dead ? "dead" : `running ${win.pane_cmd || "unknown"}`;
+      return { status: 409, body: { ok: false, reason: `claude pane is not alive (${observed})` } };
+    }
+    const typed = await tmuxAdapter.typeKeys(win.window_id, `/rc ${row.callsign}`);
+    const entered = typed ? await tmuxAdapter.sendEnter(win.window_id) : false;
+    if (!typed || !entered) {
+      return { status: 500, body: { ok: false, reason: "failed to type remote-control command into pane" } };
+    }
+    const harvest = delayedRemoteHarvest(spawn_id);
+    let timeout;
+    const timed = new Promise((resolve) => {
+      timeout = setTimeout(() => resolve({ pending: true, url: null }), 6e3);
+      timeout.unref?.();
+    });
+    const result = await Promise.race([
+      harvest.then(({ url }) => ({ pending: false, url })),
+      timed
+    ]);
+    clearTimeout(timeout);
+    return { status: 200, body: { ok: true, enabled: true, url: result.url, pending: result.pending } };
+  }
+  async function spawnKill(spawn_id, force) {
+    const row = q.getSpawn.get(spawn_id);
+    if (!row) return { status: 404, body: { ok: false, reason: "no such spawn" } };
+    const owner = q.currentWindowOwner.get(row.tmux_window);
+    if (owner && owner.spawn_id !== spawn_id) {
+      return {
+        status: 409,
+        body: {
+          ok: false,
+          reason: `spawn ${spawn_id} is a historical row; tmux window ${row.tmux_window} is now owned by spawn ${owner.spawn_id} \u2014 kill that one`,
+          current_spawn_id: owner.spawn_id
+        }
+      };
+    }
+    const c = q.getSession.get(row.session_id);
+    if (c && c.col !== "offline" && force !== true) {
+      return {
+        status: 409,
+        body: { ok: false, reason: `session ${c.callsign} is ${c.col}, not offline \u2014 pass force:true to kill anyway` }
+      };
+    }
+    const res = await tmuxAdapter.killWindowVerified(row.tmux_window);
+    if (res.gone) {
+      if (["spawning", "stalled", "live", "pane-dead"].includes(row.status)) {
+        q.setSpawnStatus.run("gone", spawn_id);
+        forgetSpawn(spawn_id);
+        if (c && c.ended_at == null) {
+          tombstoneCard(row.session_id, { note: "spawned pane window gone" });
+        }
+        onMutate();
+      }
+      return { status: 410, body: { ok: false, reason: "window already gone" } };
+    }
+    if (!res.ok) return { status: 500, body: { ok: false, reason: res.error || "tmux kill-window failed" } };
+    q.setSpawnStatus.run("killed", spawn_id);
+    forgetSpawn(spawn_id);
+    if (c && c.ended_at == null) {
+      tombstoneCard(row.session_id, { note: "pane killed from the board" });
+    }
+    tick(`\u{1F5E1} killed pane ${row.tmux_window}${force === true ? " (forced)" : ""}`);
+    onMutate();
+    return { status: 200, body: { ok: true, spawn_id, status: "killed" } };
+  }
+  const CONDEMN_DEAD_READS = 2;
+  async function spawnLivenessTick() {
+    const rows = q.activeSpawns.all();
+    const resurrectable = q.resurrectableSpawns.all();
+    if (!rows.length && !resurrectable.length && !spawnState.orphans.length) return;
+    const wins = await tmuxAdapter.listScopedWindows(port);
+    for (const row of rows) {
+      const win = wins.find((w) => w.window === row.tmux_window);
+      if (!win) continue;
+      let deadSignal;
+      if (win.pane_dead) {
+        deadSignal = true;
+      } else if (win.pane_cmd === "claude") {
+        deadSignal = false;
+      } else {
+        const pane = await tmuxAdapter.paneCurrentCommand(win.window_id);
+        if (pane && !pane.dead && pane.cmd === "claude") deadSignal = false;
+        else if (!pane || pane.dead || SHELL_RE.test(pane.cmd)) deadSignal = true;
+        else deadSignal = null;
+      }
+      if (deadSignal === false) {
+        condemnStreak.delete(row.spawn_id);
+        if (row.status === "spawning" && Date.now() - row.requested_at > SPAWN_REGISTER_MS) {
+          const note = `pane up but never registered \u2014 env/port issue? window ${row.tmux_window}`;
+          q.setSpawnStatus.run("stalled", row.spawn_id);
+          updateSession(row.session_id, { col: "needsyou", notification_type: "spawn_stalled", note });
+          const c2 = q.getSession.get(row.session_id);
+          tick(`\u26A0 ${c2?.callsign ?? row.callsign} pane is up but never phoned home`);
+          logEvent(row.session_id, "SpawnStalled", null, note);
+          onMutate();
+        }
+        continue;
+      }
+      if (deadSignal === null) continue;
+      const streak = (condemnStreak.get(row.spawn_id) ?? 0) + 1;
+      if (streak < CONDEMN_DEAD_READS) {
+        condemnStreak.set(row.spawn_id, streak);
+        continue;
+      }
+      q.setSpawnStatus.run("pane-dead", row.spawn_id);
+      forgetSpawn(row.spawn_id);
+      const c = q.getSession.get(row.session_id);
+      if (c && c.ended_at == null) {
+        tombstoneCard(row.session_id, {
+          // D8
+          note: `pane idle \u2014 resume with claude --resume ${row.session_id}`,
+          tickMsg: `\u{1F480} ${c.callsign} pane died (claude no longer running) \u2014 window kept for scrollback`
+        });
+      }
+      onMutate();
+    }
+    for (const row of resurrectable) {
+      const win = wins.find((w) => w.window === row.tmux_window);
+      if (!win || win.pane_dead) continue;
+      const owner = q.currentWindowOwner.get(row.tmux_window);
+      if (owner && owner.spawn_id !== row.spawn_id) continue;
+      const pane = await tmuxAdapter.paneCurrentCommand(win.window_id);
+      if (!pane || pane.dead || pane.cmd !== "claude") continue;
+      resurrectSpawn(row);
+    }
+    const owned = new Set(q.allSpawns.all().map((r) => r.tmux_window));
+    const orphans = wins.filter((w) => !owned.has(w.window)).map((w) => ({ window: w.window }));
+    if (JSON.stringify(orphans) !== JSON.stringify(spawnState.orphans)) {
+      spawnState.orphans = orphans;
+      onMutate();
+    }
+  }
+  async function tmuxReachableForReconcile() {
+    if (tmuxAdapter.spawnOverrideCmd()) return true;
+    if (typeof tmuxAdapter.hasTmux === "function" && !tmuxAdapter.hasTmux()) return true;
+    try {
+      await tmuxAdapter.ensureSession(port);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  const spawnState = { orphans: [] };
+  async function reconcileSpawns() {
+    const wins = await tmuxAdapter.listScopedWindows(port);
+    const active = q.activeSpawns.all();
+    if (!wins.length && active.length && !await tmuxReachableForReconcile()) {
+      tick(`\u26A0 tmux unreachable at restart \u2014 leaving ${active.length} spawn row(s) as-is (unknown, not gone)`);
+      onMutate();
+      return;
+    }
+    const names = new Set(wins.map((w) => w.window));
+    for (const row of active) {
+      if (names.has(row.tmux_window)) continue;
+      q.setSpawnStatus.run("gone", row.spawn_id);
+      forgetSpawn(row.spawn_id);
+      const c = q.getSession.get(row.session_id);
+      if (c && c.ended_at == null) {
+        tombstoneCard(row.session_id, {
+          // D8 (reconcile never woke watchers)
+          note: "spawned pane gone (daemon restart reconciliation)",
+          tickMsg: `${c.callsign} pane gone \u2014 noticed at daemon restart`,
+          notify: false
+        });
+      }
+      onMutate();
+    }
+    for (const row of q.staleProvisioningSpawns.all()) {
+      q.setSpawnStatus.run("gone", row.spawn_id);
+      forgetSpawn(row.spawn_id);
+      const c = q.getSession.get(row.session_id);
+      if (c && c.ended_at == null) {
+        tombstoneCard(row.session_id, {
+          // D8 (reconcile never woke watchers)
+          note: "spawn interrupted before launch (daemon restart)",
+          tickMsg: `${c.callsign} spawn was interrupted before launch \u2014 cleaned up at restart`,
+          notify: false
+        });
+      }
+      onMutate();
+    }
+    const owned = new Set(q.allSpawns.all().map((r) => r.tmux_window));
+    spawnState.orphans = wins.filter((w) => !owned.has(w.window)).map((w) => ({ window: w.window }));
+    if (spawnState.orphans.length) {
+      tick(`\u26A0 ${spawnState.orphans.length} unadopted fleetdeck window(s) in tmux (fd${port}-* with no spawn row)`);
+      onMutate();
+    }
+  }
+  return {
+    spawn: spawn2,
+    revive,
+    enableRemote,
+    spawnKill,
+    spawnCapability,
+    spawnLivenessTick,
+    reconcileSpawns,
+    scheduleRegistrationRemoteHarvest,
+    forgetSpawn,
+    spawnState
+  };
+}
+
+// scripts/fleetd/events.mjs
+import path5 from "node:path";
+var EDIT_TOOLS = ["Edit", "Write", "MultiEdit", "NotebookEdit"];
+var TEST_RUNNER_RE = /\b(pytest|jest|vitest|go test|cargo test|npm (run )?test)\b/;
+function createEvents(ctx) {
+  const {
+    q,
+    db: db2,
+    card,
+    updateSession,
+    tick,
+    logEvent,
+    onMutate,
+    port,
+    questions,
+    scheduleRegistrationRemoteHarvest,
+    stampTranscriptFloor,
+    readTranscriptModel,
+    recordFile,
+    whisperText,
+    drainMail,
+    notifyWatchers,
+    modelMemo,
+    forgetSpawn
+  } = ctx;
   function applyEvent(ev) {
     const sid = ev.session_id || "unknown";
     let c = card(sid);
@@ -5091,7 +6331,7 @@ function createCore(db2, {
         const file = input.file_path || input.notebook_path;
         if (EDIT_TOOLS.includes(ev.tool_name) && file) {
           conflict = recordFile(sid, file, c);
-          set.note = `editing ${path2.basename(file)}`;
+          set.note = `editing ${path5.basename(file)}`;
         } else if (ev.tool_name === "Bash" && input.command) {
           const cmd = String(input.command);
           if (TEST_RUNNER_RE.test(cmd)) {
@@ -5109,7 +6349,7 @@ function createCore(db2, {
         const file = ev.file_path || ev.tool_input?.file_path || ev.path || null;
         if (file) {
           conflict = recordFile(sid, file, c);
-          set.note = `changed ${path2.basename(file)}`;
+          set.note = `changed ${path5.basename(file)}`;
         }
         break;
       }
@@ -5328,1200 +6568,31 @@ function createCore(db2, {
     notifyWatchers(sid);
     return {};
   }
-  const watchWaiters = /* @__PURE__ */ new Map();
-  function notifyWatchers(sid) {
-    for (const fn of [...watchWaiters.get(sid) ?? []]) {
-      try {
-        fn();
-      } catch {
-      }
-    }
-  }
-  function addWatchWaiter(sid, fn) {
-    if (!watchWaiters.has(sid)) watchWaiters.set(sid, /* @__PURE__ */ new Set());
-    watchWaiters.get(sid).add(fn);
-    return () => {
-      const set = watchWaiters.get(sid);
-      if (set) {
-        set.delete(fn);
-        if (!set.size) watchWaiters.delete(sid);
-      }
-    };
-  }
-  function hasWatchWaiter(sid) {
-    return (watchWaiters.get(sid)?.size ?? 0) > 0;
-  }
-  function ownedPaneRow(sid) {
-    const c = q.getSession.get(sid);
-    if (!c || c.ended_at != null || !["queued", "idle"].includes(c.col)) return null;
-    const sp = q.spawnBySession.get(sid);
-    if (!sp || !["spawning", "stalled", "live"].includes(sp.status)) return null;
-    return { c, sp };
-  }
-  async function ownedPaneDeliverable(sid, { probe: probe2 = true } = {}) {
-    const pair = ownedPaneRow(sid);
-    if (!pair) return false;
-    if (!probe2) return true;
-    const wins = await tmuxAdapter.listScopedWindows(port);
-    const win = wins.find((w) => w.window === pair.sp.tmux_window);
-    if (!win || win.pane_dead) return false;
-    const pane = await tmuxAdapter.paneCurrentCommand(win.window_id);
-    return !!pane && !pane.dead && pane.cmd === "claude";
-  }
-  function claimAllMail(sid) {
-    db2.exec("BEGIN IMMEDIATE");
-    try {
-      const box = q.pendingMail.all(sid);
-      const now = Date.now();
-      for (const m of box) q.markDelivered.run(now, m.id);
-      db2.exec("COMMIT");
-      return box;
-    } catch (err) {
-      try {
-        db2.exec("ROLLBACK");
-      } catch {
-      }
-      throw err;
-    }
-  }
-  async function tryOwnedPaneDelivery(sid) {
-    const pair = ownedPaneRow(sid);
-    if (!pair || hasWatchWaiter(sid)) return false;
-    const wins = await tmuxAdapter.listScopedWindows(port);
-    const win = wins.find((w) => w.window === pair.sp.tmux_window);
-    if (!win || win.pane_dead) return false;
-    const pane = await tmuxAdapter.paneCurrentCommand(win.window_id);
-    if (!pane || pane.dead || pane.cmd !== "claude") return false;
-    if (hasWatchWaiter(sid)) return false;
-    const box = claimAllMail(sid);
-    if (!box.length) return false;
-    const text = box.map((m) => `[FLEETDECK MAIL from ${m.from_id}] ${m.text}`).join("\n");
-    const pasted = await tmuxAdapter.pasteText(win.window_id, text);
-    const entered = pasted ? await tmuxAdapter.sendEnter(win.window_id) : false;
-    if (!pasted || !entered) {
-      for (const m of box) q.unmarkDelivered.run(m.id);
-      onMutate();
-      return false;
-    }
-    tick(`\u2709 delivered ${box.length} mail to ${pair.c.callsign} (typed into pane)`);
-    logEvent(sid, "MailPaneDelivery", null, `typed ${box.length} mail into ${pair.sp.tmux_window}`);
-    onMutate();
-    return true;
-  }
-  function claimMail(sid) {
-    const m = q.nextMail.get(sid);
-    if (!m) return null;
-    q.markDelivered.run(Date.now(), m.id);
-    onMutate();
-    return { mail_id: m.id, at: m.at, from: m.from_id, text: m.text };
-  }
-  function watchInfo(sid) {
-    const c = q.getSession.get(sid);
-    return {
-      session_alive: !!c && c.ended_at == null,
-      // Informational in v2: the watcher keeps polling while session_alive
-      // is true even at pending:0, because mail can arrive for an idle
-      // session at any time. Still counts FREEFORM questions only —
-      // permission/elicitation/choice answers ride their held hook response
-      // and never become mail (a choice whose hold expired belongs to the
-      // native terminal chooser permanently; a late board answer 409s).
-      pending: questions.pendingOf(sid).filter((r) => r.kind === "freeform").length
-    };
-  }
-  function pidAlive(pid) {
-    if (!Number.isFinite(pid) || pid <= 0) return false;
-    try {
-      process.kill(pid, 0);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-  function colFromAgentState(raw, isNew) {
-    const s = String(raw ?? "").toLowerCase();
-    if (s === "busy" || s === "running") return "working";
-    if (s === "blocked" || s === "waiting") return "needsyou";
-    if (s === "idle") return "idle";
-    return isNew ? "queued" : "idle";
-  }
-  function ingestAgentsPoll(records) {
-    if (!Array.isArray(records)) return;
-    const live = records.filter((rec) => rec && typeof rec === "object" && rec.sessionId && rec.kind === "interactive" && pidAlive(rec.pid));
-    for (const rec of live) {
-      const sid = rec.sessionId;
-      const rawState = rec.state ?? rec.status;
-      const existing = q.getSession.get(sid);
-      if (!existing) {
-        const callsign = assignCallsign(sid);
-        const cwd = rec.cwd || null;
-        const repo = cwd ? deriveRepo(cwd) : { repo_id: null, repo_name: null, worktree: null };
-        const branch = cwd ? branchOf(cwd) : null;
-        const now = Date.now();
-        const startedAt = Number.isFinite(rec.startedAt) ? rec.startedAt : now;
-        q.insertAgentSession.run(
-          sid,
-          callsign,
-          cwd,
-          repo.repo_id ?? null,
-          repo.repo_name ?? null,
-          branch ?? null,
-          repo.worktree ?? null,
-          colFromAgentState(rawState, true),
-          "seen via agents CLI",
-          rec.name ?? null,
-          startedAt,
-          now
-        );
-        tick(`${callsign} joined the fleet (agents CLI)`);
-        onMutate();
-      } else if (existing.source === "agents-cli") {
-        updateSession(sid, {
-          col: colFromAgentState(rawState, false),
-          note: "seen via agents CLI",
-          last_seen: Date.now(),
-          ended_at: null
-          // reappearance revives an absence-tombstoned card
-        });
-        onMutate();
-      }
-    }
-    const liveSids = new Set(live.map((r) => r.sessionId));
-    for (const s of q.allSessions.all()) {
-      if (s.source !== "agents-cli" || s.ended_at != null) continue;
-      if (liveSids.has(s.session_id)) continue;
-      updateSession(s.session_id, {
-        col: "offline",
-        note: "no longer reported by agents CLI",
-        ended_at: Date.now()
-      });
-      tick(`${s.callsign} left the fleet (agents CLI)`);
-      onMutate();
-    }
-  }
-  function execFileP(cmd, args, { timeout = 3e4 } = {}) {
-    return new Promise((resolve) => {
-      try {
-        execFile2(cmd, args, { timeout, windowsHide: true }, (err, stdout, stderr) => {
-          if (err) return resolve({ ok: false, code: err.code, err: String(stderr || err.message || err).trim() });
-          resolve({ ok: true, out: stdout });
-        });
-      } catch (err) {
-        resolve({ ok: false, err: String(err.message || err) });
-      }
-    });
-  }
-  async function mapLimit(items, limit, fn) {
-    const out = new Array(items.length);
-    let next = 0;
-    async function worker() {
-      for (; ; ) {
-        const i = next++;
-        if (i >= items.length) return;
-        out[i] = await fn(items[i]);
-      }
-    }
-    await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-    return out;
-  }
-  function worktreeRows() {
-    const seen = /* @__PURE__ */ new Set();
-    return q.worktreeSpawns.all().filter((row) => {
-      if (seen.has(row.worktree_path)) return false;
-      seen.add(row.worktree_path);
-      return true;
-    });
-  }
-  function worktreeShell(row, exists) {
-    return {
-      path: row.worktree_path,
-      exists,
-      callsign: row.callsign ?? null,
-      session_id: row.session_id ?? null,
-      session_alive: row.session_ended_at == null && q.getSession.get(row.session_id) != null,
-      spawn_status: row.status ?? null,
-      branch: null,
-      dirty: null,
-      dirty_files: [],
-      ahead: null,
-      base: null,
-      upstream: null,
-      unpushed: null,
-      merged: null,
-      last_commit: null,
-      note: null,
-      // why we cannot vouch for it — the board shows this verbatim
-      verdict: exists ? "unknown" : "gone"
-    };
-  }
-  async function baseBranch(worktree) {
-    const head = await execFileP("git", ["-C", worktree, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"], { timeout: 5e3 });
-    if (head.ok && head.out.trim()) return { ref: head.out.trim(), local: false };
-    for (const name of ["main", "master"]) {
-      const remote = await execFileP("git", ["-C", worktree, "show-ref", "--verify", "--quiet", `refs/remotes/origin/${name}`], { timeout: 5e3 });
-      if (remote.ok) return { ref: `origin/${name}`, local: false };
-    }
-    for (const name of ["main", "master"]) {
-      const local = await execFileP("git", ["-C", worktree, "show-ref", "--verify", "--quiet", `refs/heads/${name}`], { timeout: 5e3 });
-      if (local.ok) return { ref: name, local: true };
-    }
-    return null;
-  }
-  async function inspectWorktree(row) {
-    let exists = false;
-    try {
-      exists = fs3.existsSync(row.worktree_path);
-    } catch {
-    }
-    const item = worktreeShell(row, exists);
-    if (!exists) return item;
-    const [branch, status, upstream, log, base] = await Promise.all([
-      execFileP("git", ["-C", row.worktree_path, "rev-parse", "--abbrev-ref", "HEAD"], { timeout: 5e3 }),
-      execFileP("git", ["-C", row.worktree_path, "status", "--porcelain"], { timeout: 5e3 }),
-      execFileP("git", ["-C", row.worktree_path, "rev-parse", "--abbrev-ref", "@{u}"], { timeout: 5e3 }),
-      execFileP("git", ["-C", row.worktree_path, "log", "-1", "--format=%h%x00%s%x00%ct"], { timeout: 5e3 }),
-      baseBranch(row.worktree_path)
-    ]);
-    if (!branch.ok || !status.ok || !base) {
-      item.note = !branch.ok ? "git no longer recognises this directory as a worktree \u2014 a previous removal was interrupted. Whatever is inside cannot be checked from here; removal will report exactly what blocks it." : "git could not read this worktree.";
-      return item;
-    }
-    item.branch = branch.out.trim() || null;
-    const lines = status.out.split(/\r?\n/).filter(Boolean);
-    item.dirty = lines.length;
-    item.dirty_files = lines.slice(0, 10).map((line) => line.slice(3).trim());
-    item.base = base.ref;
-    item.base_is_local = base.local;
-    item.upstream = upstream.ok ? upstream.out.trim() || null : null;
-    if (log.ok && log.out.trim()) {
-      const [sha, subject, at] = log.out.trimEnd().split("\0");
-      item.last_commit = { sha, subject, at: Number(at) };
-    }
-    const [ahead, unpushed, merged] = await Promise.all([
-      execFileP("git", ["-C", row.worktree_path, "rev-list", "--count", `${base.ref}..HEAD`], { timeout: 5e3 }),
-      // THE question, and the only one that decides whether deleting this
-      // destroys anything: are these commits on ANY remote-tracking ref? Not
-      // "ahead of my upstream", not "ahead of my local main" — both of those
-      // say yes to work that is already safely merged on the server. `--not
-      // --remotes` asks git for commits that exist on no remote we know of.
-      // (Knowledge is as of the last fetch; the board says so, and `?fetch=1`
-      // refreshes it.)
-      execFileP("git", ["-C", row.worktree_path, "rev-list", "--count", "HEAD", "--not", "--remotes"], { timeout: 5e3 }),
-      execFileP("git", ["-C", row.worktree_path, "merge-base", "--is-ancestor", "HEAD", base.ref], { timeout: 5e3 })
-    ]);
-    if (!ahead.ok || !unpushed.ok || !merged.ok && merged.code !== 1) return item;
-    item.ahead = Number(ahead.out.trim());
-    item.unpushed = Number(unpushed.out.trim());
-    item.merged = merged.ok;
-    if (base.local) item.unpushed = item.merged ? 0 : item.ahead;
-    item.verdict = item.dirty > 0 || item.unpushed > 0 ? "has-work" : "safe";
-    return item;
-  }
-  async function worktrees() {
-    return { ok: true, worktrees: await mapLimit(worktreeRows(), 4, inspectWorktree) };
-  }
-  function chmodWritableWhereOwned(root) {
-    const uid = typeof process.getuid === "function" ? process.getuid() : null;
-    const walk = (dir, depth = 0) => {
-      if (depth > 12) return;
-      let entries = [];
-      try {
-        entries = fs3.readdirSync(dir, { withFileTypes: true });
-      } catch {
-        return;
-      }
-      for (const entry of entries) {
-        const full = path2.join(dir, entry.name);
-        let st;
-        try {
-          st = fs3.lstatSync(full);
-        } catch {
-          continue;
-        }
-        if (uid != null && st.uid !== uid) continue;
-        try {
-          fs3.chmodSync(full, st.mode | 128);
-        } catch {
-        }
-        if (entry.isDirectory() && !entry.isSymbolicLink()) walk(full, depth + 1);
-      }
-    };
-    try {
-      walk(root);
-    } catch {
-    }
-  }
-  function blockedPaths(root, limit = 8) {
-    const uid = typeof process.getuid === "function" ? process.getuid() : null;
-    const owners = /* @__PURE__ */ new Map();
-    const out = [];
-    const ownerOf = (st) => {
-      if (owners.has(st.uid)) return owners.get(st.uid);
-      let name = `uid ${st.uid}`;
-      try {
-        name = st.uid === 0 ? "root" : os.userInfo().uid === st.uid ? os.userInfo().username : name;
-      } catch {
-      }
-      owners.set(st.uid, name);
-      return name;
-    };
-    const walk = (dir, depth = 0) => {
-      if (out.length >= limit || depth > 12) return;
-      let entries = [];
-      try {
-        entries = fs3.readdirSync(dir, { withFileTypes: true });
-      } catch {
-        return;
-      }
-      for (const entry of entries) {
-        if (out.length >= limit) return;
-        const full = path2.join(dir, entry.name);
-        let st;
-        try {
-          st = fs3.lstatSync(full);
-        } catch {
-          continue;
-        }
-        if (uid != null && st.uid !== uid) {
-          out.push({ path: full, owner: ownerOf(st) });
-          continue;
-        }
-        if (entry.isDirectory() && !entry.isSymbolicLink()) walk(full, depth + 1);
-      }
-    };
-    try {
-      walk(root);
-    } catch {
-    }
-    return out;
-  }
-  const shellQuote = (s) => /^[A-Za-z0-9_@%+=:,./-]+$/.test(s) ? s : `'${String(s).replace(/'/g, `'\\''`)}'`;
-  async function removeWorktree(body = {}) {
-    if (typeof body?.path !== "string") {
-      return { status: 400, body: { ok: false, reason: "not a fleet worktree" } };
-    }
-    const rows = q.worktreeSpawns.all().filter((row2) => row2.worktree_path === body.path);
-    const row = rows[0];
-    if (!row) return { status: 400, body: { ok: false, reason: "not a fleet worktree" } };
-    const alive = rows.some((candidate) => candidate.session_ended_at == null && q.getSession.get(candidate.session_id));
-    if (alive) return { status: 409, body: { ok: false, reason: "session is still alive" } };
-    const state = await inspectWorktree(row);
-    if ((state.verdict === "has-work" || state.verdict === "unknown") && body.force !== true) {
-      return {
-        status: 409,
-        body: {
-          ok: false,
-          reason: state.verdict === "has-work" ? "worktree has uncommitted or unpushed work" : "worktree safety is unknown",
-          verdict: state.verdict,
-          dirty: state.dirty,
-          unpushed: state.unpushed
-        }
-      };
-    }
-    const repoResult = await execFileP("git", ["-C", row.cwd, "rev-parse", "--show-toplevel"], { timeout: 5e3 });
-    if (!repoResult.ok) return { status: 409, body: { ok: false, reason: "main repository unavailable" } };
-    const repo = repoResult.out.trim();
-    if (state.exists) {
-      chmodWritableWhereOwned(row.worktree_path);
-      const args = ["-C", repo, "worktree", "remove"];
-      if (body.force === true) args.push("--force");
-      args.push(row.worktree_path);
-      const removed = await execFileP("git", args, { timeout: 3e4 });
-      if (!removed.ok) {
-        const blocked = blockedPaths(row.worktree_path);
-        if (blocked.length) {
-          return {
-            status: 409,
-            body: {
-              ok: false,
-              reason: `blocked by ${blocked.length} path(s) this daemon may not delete \u2014 owned by ${[...new Set(blocked.map((b) => b.owner))].join(", ")}. Fleet Deck runs as you and never escalates to root.`,
-              blocked_paths: blocked.map((b) => b.path),
-              blocked_owner: blocked[0].owner,
-              fix_command: `sudo rm -rf ${blocked.map((b) => shellQuote(b.path)).join(" ")} && git -C ${shellQuote(repo)} worktree prune`
-            }
-          };
-        }
-        if (body.force !== true) {
-          const porcelain = await execFileP("git", ["-C", row.worktree_path, "status", "--porcelain"], { timeout: 5e3 });
-          if (porcelain.ok && porcelain.out.trim() !== "") {
-            return {
-              status: 409,
-              body: {
-                ok: false,
-                reason: "git refused to remove this worktree and it still has uncommitted changes \u2014 pass force to delete",
-                verdict: "has-work",
-                dirty: porcelain.out.split(/\r?\n/).filter(Boolean).length
-              }
-            };
-          }
-        }
-        try {
-          fs3.rmSync(row.worktree_path, { recursive: true, force: true });
-        } catch (err) {
-          return { status: 409, body: { ok: false, reason: `could not remove worktree: ${err.code || err.message}` } };
-        }
-        const pruned = await execFileP("git", ["-C", repo, "worktree", "prune"], { timeout: 3e4 });
-        if (!pruned.ok) return { status: 409, body: { ok: false, reason: `git worktree prune failed: ${pruned.err}`.slice(0, 300) } };
-      }
-    } else {
-      const pruned = await execFileP("git", ["-C", repo, "worktree", "prune"], { timeout: 3e4 });
-      if (!pruned.ok) return { status: 409, body: { ok: false, reason: `git worktree prune failed: ${pruned.err}`.slice(0, 300) } };
-    }
-    let branch_deleted = false;
-    const branch = state.branch ?? q.getSession.get(row.session_id)?.branch ?? null;
-    if (body.delete_branch === true && branch) {
-      const deleted = await execFileP("git", ["-C", repo, "branch", "-D", branch], { timeout: 3e4 });
-      branch_deleted = deleted.ok;
-    }
-    const sessionIds = [...new Set(rows.map((candidate) => candidate.session_id).filter(Boolean))];
-    const spawnsPurged = Number(q.deleteWorktreeSpawns.run(row.worktree_path).changes);
-    let sessionsPurged = 0;
-    for (const sessionId of sessionIds) sessionsPurged += Number(q.deleteEndedSession.run(sessionId).changes);
-    const rows_purged = spawnsPurged + sessionsPurged;
-    tick(`\u232B removed worktree ${row.worktree_path}${branch_deleted ? ` and branch ${branch}` : ""}`);
-    onMutate();
-    return { status: 200, body: { ok: true, removed: true, branch_deleted, rows_purged, path: row.worktree_path } };
-  }
-  function spawnCapability() {
-    const base = { active: q.countActiveSpawns.get().n };
-    if (String(process.env.FLEETDECK_SPAWN ?? "").toLowerCase() === "off") {
-      return { available: false, reason: "disabled (FLEETDECK_SPAWN=off)", ...base };
-    }
-    if (tmuxAdapter.spawnOverrideCmd()) {
-      return { available: true, reason: "test-override", ...base };
-    }
-    if (!tmuxAdapter.hasTmux()) {
-      return { available: false, reason: "tmux not found on PATH", ...base };
-    }
-    return { available: true, ...base };
-  }
-  function createSpawnedCard(sid, cwd, prompt) {
-    const callsign = assignCallsign(sid);
-    const repo = deriveRepo(cwd);
-    const branch = cwd ? branchOf(cwd) : null;
-    const now = Date.now();
-    q.insertSpawnedSession.run(
-      sid,
-      callsign,
-      cwd,
-      repo.repo_id ?? null,
-      repo.repo_name ?? null,
-      branch ?? null,
-      repo.worktree ?? null,
-      prompt ? String(prompt).slice(0, 80) : null,
-      now,
-      now
-    );
-    return q.getSession.get(sid);
-  }
-  function spawnFailed(sid, callsign, reason) {
-    updateSession(sid, {
-      col: "offline",
-      ended_at: Date.now(),
-      note: `spawn failed: ${reason}`.slice(0, 80)
-    });
-    modelMemo.delete(sid);
-    tick(`\u2717 spawn failed for ${callsign}: ${reason.slice(0, 60)}`);
-    onMutate();
-  }
-  const nudged = /* @__PURE__ */ new Set();
-  function scheduleNudge(spawn_id, window, callsign) {
-    const t = setTimeout(async () => {
-      try {
-        if (nudged.has(spawn_id)) return;
-        const row = q.getSpawn.get(spawn_id);
-        if (!row || row.status !== "spawning") return;
-        const win = (await tmuxAdapter.listScopedWindows(port)).find((w) => w.window === window);
-        if (!win || win.pane_dead) return;
-        nudged.add(spawn_id);
-        await tmuxAdapter.sendBringupEnter(win.window_id);
-        logEvent(row.session_id, "SpawnNudge", null, "bring-up Enter sent (trust dialog)");
-        tick(`\u23CE nudged ${callsign} through the trust dialog`);
-        onMutate();
-      } catch {
-      }
-    }, NUDGE_MS);
-    t.unref?.();
-  }
-  const RC_URL_RE = /https:\/\/claude\.ai\/\S+/;
-  const registrationRemoteHarvests = /* @__PURE__ */ new Map();
-  const revivingSessions = /* @__PURE__ */ new Set();
-  const condemnStreak = /* @__PURE__ */ new Map();
-  function forgetSpawn(spawn_id) {
-    nudged.delete(spawn_id);
-    registrationRemoteHarvests.delete(spawn_id);
-    condemnStreak.delete(spawn_id);
-  }
-  function resurrectSpawn(row) {
-    q.setSpawnStatus.run("live", row.spawn_id);
-    const c = q.getSession.get(row.session_id);
-    updateSession(row.session_id, {
-      col: "idle",
-      ended_at: null,
-      archived_at: null,
-      // BUG 4: a card condemned while it was 'spawn_stalled'/'permission_prompt'
-      // must not come back wearing a stale needs-you reason chip — clear
-      // notification_type. And a resurrected card IS being seen right now, so
-      // refresh last_seen: it is 'idle' at its prompt, not silent since death
-      // (otherwise the very next retention sweep could presume it dead again on
-      // the pre-death last_seen).
-      notification_type: null,
-      last_seen: Date.now(),
-      note: "pane is a live claude \u2014 restored to the board"
-    });
-    forgetSpawn(row.spawn_id);
-    tick(`\u2728 ${c?.callsign ?? row.callsign} restored \u2014 its pane was a live claude all along`);
-    notifyWatchers(row.session_id);
-    onMutate();
-  }
-  async function harvestRemote(spawn_id) {
-    const row = q.getSpawn.get(spawn_id);
-    if (!row) return { url: null };
-    let text = null;
-    try {
-      text = await tmuxAdapter.capturePane(row.tmux_window);
-    } catch {
-    }
-    const url = typeof text === "string" ? text.match(RC_URL_RE)?.[0] ?? null : null;
-    try {
-      q.setSpawnRemote.run(url, spawn_id);
-      tick(`\u{1F4F1} ${row.callsign} remote control enabled${url ? "" : " (URL not found)"}`);
-      onMutate();
-    } catch (err) {
-      console.error("fleetd remote harvest persist error:", err);
-    }
-    return { url };
-  }
-  function delayedRemoteHarvest(spawn_id) {
-    if (RC_HARVEST_MS === 0) {
-      return Promise.resolve().then(() => harvestRemote(spawn_id)).catch(() => ({ url: null }));
-    }
-    let timer;
-    const promise = new Promise((resolve) => {
-      timer = setTimeout(() => harvestRemote(spawn_id).then(resolve, () => resolve({ url: null })), RC_HARVEST_MS);
-      timer.unref?.();
-    });
-    return promise;
-  }
-  function scheduleRegistrationRemoteHarvest(spawn_id) {
-    if (registrationRemoteHarvests.has(spawn_id)) return registrationRemoteHarvests.get(spawn_id);
-    const promise = delayedRemoteHarvest(spawn_id);
-    registrationRemoteHarvests.set(spawn_id, promise);
-    return promise;
-  }
-  async function spawnCompensate({ spawn_id, session_id, callsign, cwd, worktree_path, tmux_window, reason }) {
-    if (worktree_path) {
-      try {
-        const rm = await execFileP("git", ["-C", cwd, "worktree", "remove", "--force", worktree_path], { timeout: 3e4 });
-        if (!rm.ok) {
-          try {
-            fs3.rmSync(worktree_path, { recursive: true, force: true });
-          } catch {
-          }
-        }
-        await execFileP("git", ["-C", cwd, "worktree", "prune"], { timeout: 3e4 });
-      } catch {
-      }
-    }
-    if (tmux_window) {
-      try {
-        await tmuxAdapter.killWindowVerified(tmux_window);
-      } catch {
-      }
-    }
-    q.setSpawnStatus.run("gone", spawn_id);
-    forgetSpawn(spawn_id);
-    spawnFailed(session_id, callsign, reason);
-  }
-  async function spawn2(body) {
-    const cap = spawnCapability();
-    if (!cap.available) {
-      return { status: 400, body: { ok: false, reason: `spawning unavailable: ${cap.reason}` } };
-    }
-    for (const k of ["cwd", "prompt", "model", "permission_mode"]) {
-      if (body?.[k] != null && typeof body[k] !== "string") {
-        return { status: 400, body: { ok: false, reason: `${k} must be a string` } };
-      }
-    }
-    if (body?.worktree != null && typeof body.worktree !== "boolean") {
-      return { status: 400, body: { ok: false, reason: "worktree must be a boolean" } };
-    }
-    if (body?.dangerously_skip_permissions != null && typeof body.dangerously_skip_permissions !== "boolean") {
-      return { status: 400, body: { ok: false, reason: "dangerously_skip_permissions must be a boolean" } };
-    }
-    if (body?.remote_control != null && typeof body.remote_control !== "boolean") {
-      return { status: 400, body: { ok: false, reason: "remote_control must be a boolean" } };
-    }
-    const skipPermissions = body?.dangerously_skip_permissions === true || body?.permission_mode === "bypassPermissions";
-    const cwd = body?.cwd || "";
-    let st = null;
-    try {
-      st = fs3.statSync(cwd);
-    } catch {
-    }
-    if (!cwd || !st?.isDirectory()) {
-      return { status: 400, body: { ok: false, reason: "cwd missing or not a directory" } };
-    }
-    if (body?.worktree === true && !deriveRepo(cwd).is_git) {
-      return { status: 409, body: { ok: false, reason: "cwd is not a git repository \u2014 cannot spawn into a worktree" } };
-    }
-    const session_id = randomUUID2();
-    const spawn_id = randomUUID2();
-    const c = createSpawnedCard(session_id, cwd, body?.prompt);
-    const callsign = c.callsign;
-    const tmux_session = tmuxAdapter.sessionName(port);
-    const tmux_window = tmuxAdapter.windowName(port, callsign);
-    q.insertProvisionalSpawn.run(
-      spawn_id,
-      session_id,
-      callsign,
-      tmux_session,
-      tmux_window,
-      cwd,
-      null,
-      Date.now(),
-      skipPermissions ? 1 : 0,
-      body?.remote_control === true ? 1 : 0
-    );
-    let worktree_path = null;
-    if (body?.worktree === true) {
-      worktree_path = path2.join(path2.dirname(cwd), `${path2.basename(cwd)}--fd-${callsign}`);
-      const res = await execFileP("git", ["-C", cwd, "worktree", "add", "-b", `fd/${callsign}`, worktree_path]);
-      if (!res.ok) {
-        await spawnCompensate({
-          spawn_id,
-          session_id,
-          callsign,
-          cwd,
-          worktree_path,
-          tmux_window: null,
-          reason: `git worktree add: ${res.err}`
-        });
-        return { status: 409, body: { ok: false, reason: `git worktree add failed: ${res.err}`.slice(0, 300) } };
-      }
-      q.setSpawnWorktree.run(worktree_path, spawn_id);
-      const repo = deriveRepo(worktree_path);
-      updateSession(session_id, {
-        cwd: worktree_path,
-        repo_id: repo.repo_id,
-        repo_name: repo.repo_name,
-        worktree: repo.worktree,
-        branch: branchOf(worktree_path)
-      });
-    }
-    const runCwd = worktree_path ?? cwd;
-    const argv = [
-      ...claudeEnvArgvPrefix(port, home),
-      "claude",
-      "--session-id",
-      session_id
-    ];
-    if (body?.model) argv.push("--model", body.model);
-    if (body?.permission_mode) argv.push("--permission-mode", body.permission_mode);
-    if (body?.dangerously_skip_permissions === true) argv.push("--dangerously-skip-permissions");
-    if (body?.remote_control === true) argv.push("--remote-control", callsign);
-    if (body?.prompt) argv.push(body.prompt);
-    const override = tmuxAdapter.spawnOverrideCmd();
-    if (override) {
-      const spec = {
-        spawn_id,
-        session_id,
-        callsign,
-        port,
-        cwd: runCwd,
-        requested_cwd: cwd,
-        prompt: body?.prompt ?? null,
-        model: body?.model ?? null,
-        permission_mode: body?.permission_mode ?? null,
-        worktree_path,
-        dangerously_skip_permissions: body?.dangerously_skip_permissions === true,
-        skip_permissions: skipPermissions,
-        remote_control: body?.remote_control === true,
-        tmux: { session: tmux_session, window: tmux_window },
-        argv
-        // the full env-wrapped argv tmux would have run
-      };
-      tmuxAdapter.launchOverride(override, spec, (err) => spawnCompensate({
-        spawn_id,
-        session_id,
-        callsign,
-        cwd,
-        worktree_path,
-        tmux_window,
-        reason: `spawn override: ${err.message || err}`
-      }).catch(() => {
-      }));
-    } else {
-      try {
-        await tmuxAdapter.ensureSession(port);
-        await tmuxAdapter.newWindow({ port, callsign, cwd: runCwd, argv });
-      } catch (err) {
-        await spawnCompensate({
-          spawn_id,
-          session_id,
-          callsign,
-          cwd,
-          worktree_path,
-          tmux_window,
-          reason: String(err.message || err)
-        });
-        return { status: 500, body: { ok: false, reason: `tmux spawn failed: ${err.message || err}` } };
-      }
-    }
-    q.setSpawnStatus.run("spawning", spawn_id);
-    tick(`\u{1F680} spawned ${callsign} \u2014 tmux window ${tmux_window}${skipPermissions ? " (unsupervised)" : ""}`);
-    scheduleNudge(spawn_id, tmux_window, callsign);
-    onMutate();
-    return {
-      status: 200,
-      body: { ok: true, spawn_id, session_id, callsign, tmux: { session: tmux_session, window: tmux_window } }
-    };
-  }
-  async function revive(spawn_id, body = {}) {
-    const row = q.getSpawn.get(spawn_id);
-    if (!row) return { status: 404, body: { ok: false, reason: "no such spawn" } };
-    if (!["pane-dead", "killed", "gone"].includes(row.status)) {
-      return { status: 409, body: { ok: false, reason: `spawn is ${row.status}, not revivable` } };
-    }
-    if (body?.remote_control != null && typeof body.remote_control !== "boolean") {
-      return { status: 400, body: { ok: false, reason: "remote_control must be a boolean" } };
-    }
-    const remoteWanted = body?.remote_control ?? !!row.remote_control;
-    const active = q.activeSpawnBySession.get(row.session_id) || q.provisioningSpawnBySession.get(row.session_id);
-    if (active) {
-      return { status: 409, body: { ok: false, reason: `session already has active spawn ${active.spawn_id}` } };
-    }
-    if (revivingSessions.has(row.session_id)) {
-      return { status: 409, body: { ok: false, reason: `session ${row.session_id.slice(0, 8)} is already being revived` } };
-    }
-    revivingSessions.add(row.session_id);
-    try {
-      const runCwd = row.worktree_path ?? row.cwd;
-      let st = null;
-      try {
-        st = fs3.statSync(runCwd);
-      } catch {
-      }
-      if (!runCwd || !st?.isDirectory()) {
-        return { status: 410, body: { ok: false, reason: "revive cwd no longer exists" } };
-      }
-      if (!fs3.existsSync(claudeTranscriptPath(runCwd, row.session_id))) {
-        return { status: 410, body: { ok: false, reason: "resume transcript no longer exists" } };
-      }
-      const existing = (await tmuxAdapter.listScopedWindows(port)).find((w) => w.window === row.tmux_window);
-      if (existing && !existing.pane_dead && existing.pane_cmd === "claude") {
-        if (row.status !== "pane-dead" && row.status !== "gone") {
-          return { status: 409, body: { ok: false, reason: `spawn ${spawn_id} was killed \u2014 its window hosts a live claude, but a killed spawn is never resurrected by adoption` } };
-        }
-        const owner = q.currentWindowOwner.get(row.tmux_window);
-        if (owner && owner.spawn_id !== row.spawn_id) {
-          return {
-            status: 409,
-            body: { ok: false, reason: `window ${row.tmux_window} is owned by spawn ${owner.spawn_id} \u2014 revive that one`, current_spawn_id: owner.spawn_id }
-          };
-        }
-        resurrectSpawn(row);
-        return {
-          status: 200,
-          body: {
-            ok: true,
-            adopted: true,
-            spawn_id: row.spawn_id,
-            session_id: row.session_id,
-            callsign: row.callsign,
-            tmux: { session: tmuxAdapter.sessionName(port), window: row.tmux_window }
-          }
-        };
-      }
-      if (existing && !existing.pane_dead && !SHELL_RE.test(existing.pane_cmd)) {
-        return { status: 409, body: { ok: false, reason: `window ${row.tmux_window} hosts a live '${existing.pane_cmd}' pane \u2014 not a dead remnant; refusing to kill it` } };
-      }
-      if (existing) {
-        const killed = await tmuxAdapter.killWindowVerified(row.tmux_window);
-        if (!killed.ok && !killed.gone) {
-          return { status: 500, body: { ok: false, reason: killed.error || "tmux kill-window failed" } };
-        }
-      }
-      const new_spawn_id = randomUUID2();
-      const argv = [...claudeEnvArgvPrefix(port, home), "claude", "--resume", row.session_id];
-      if (row.skip_permissions) argv.push("--dangerously-skip-permissions");
-      if (remoteWanted) argv.push("--remote-control", row.callsign);
-      const tmux_session = tmuxAdapter.sessionName(port);
-      const preLaunchOwner = q.currentWindowOwner.get(row.tmux_window);
-      if (preLaunchOwner && preLaunchOwner.spawn_id !== spawn_id && ["provisioning", "spawning", "stalled", "live"].includes(preLaunchOwner.status)) {
-        return {
-          status: 409,
-          body: { ok: false, reason: `window ${row.tmux_window} is now owned by active spawn ${preLaunchOwner.spawn_id}`, current_spawn_id: preLaunchOwner.spawn_id }
-        };
-      }
-      q.insertProvisionalSpawn.run(
-        new_spawn_id,
-        row.session_id,
-        row.callsign,
-        tmux_session,
-        row.tmux_window,
-        row.cwd,
-        row.worktree_path,
-        Date.now(),
-        row.skip_permissions ? 1 : 0,
-        remoteWanted ? 1 : 0
-      );
-      const override = tmuxAdapter.spawnOverrideCmd();
-      if (override) {
-        tmuxAdapter.launchOverride(override, {
-          spawn_id: new_spawn_id,
-          revive_of: spawn_id,
-          session_id: row.session_id,
-          callsign: row.callsign,
-          port,
-          cwd: runCwd,
-          requested_cwd: row.cwd,
-          prompt: null,
-          model: null,
-          permission_mode: null,
-          worktree_path: row.worktree_path,
-          dangerously_skip_permissions: !!row.skip_permissions,
-          skip_permissions: !!row.skip_permissions,
-          remote_control: remoteWanted,
-          tmux: { session: tmux_session, window: row.tmux_window },
-          argv
-        }, (err) => spawnFailed(row.session_id, row.callsign, `spawn override: ${err.message || err}`));
-      } else {
-        try {
-          await tmuxAdapter.ensureSession(port);
-          await tmuxAdapter.newWindow({ port, callsign: row.callsign, cwd: runCwd, argv });
-        } catch (err) {
-          q.setSpawnStatus.run("gone", new_spawn_id);
-          forgetSpawn(new_spawn_id);
-          return { status: 500, body: { ok: false, reason: `tmux revive failed: ${err.message || err}` } };
-        }
-      }
-      q.setSpawnStatus.run("spawning", new_spawn_id);
-      updateSession(row.session_id, { archived_at: null, col: "queued", note: "reviving\u2026" });
-      tick(`\u27F2 reviving ${row.callsign} (resume ${row.session_id.slice(0, 8)})`);
-      scheduleNudge(new_spawn_id, row.tmux_window, row.callsign);
-      onMutate();
-      return {
-        status: 200,
-        body: {
-          ok: true,
-          spawn_id: new_spawn_id,
-          session_id: row.session_id,
-          callsign: row.callsign,
-          tmux: { session: tmux_session, window: row.tmux_window }
-        }
-      };
-    } finally {
-      revivingSessions.delete(row.session_id);
-    }
-  }
-  async function enableRemote(spawn_id) {
-    const row = q.getSpawn.get(spawn_id);
-    if (!row) return { status: 404, body: { ok: false, reason: "no such spawn" } };
-    if (row.status !== "live") {
-      return { status: 409, body: { ok: false, reason: `spawn is ${row.status}, not live` } };
-    }
-    if (row.remote_control && row.remote_url) {
-      return { status: 200, body: { ok: true, enabled: true, url: row.remote_url, pending: false } };
-    }
-    const session = q.getSession.get(row.session_id);
-    if (!session || !["queued", "idle"].includes(session.col)) {
-      return { status: 409, body: { ok: false, reason: `session is ${session?.col ?? "missing"}, not queued or idle` } };
-    }
-    const win = (await tmuxAdapter.listScopedWindows(port)).find((w) => w.window === row.tmux_window);
-    if (!win || win.pane_dead || win.pane_cmd !== "claude") {
-      const observed = !win ? "missing" : win.pane_dead ? "dead" : `running ${win.pane_cmd || "unknown"}`;
-      return { status: 409, body: { ok: false, reason: `claude pane is not alive (${observed})` } };
-    }
-    const typed = await tmuxAdapter.typeKeys(win.window_id, `/rc ${row.callsign}`);
-    const entered = typed ? await tmuxAdapter.sendEnter(win.window_id) : false;
-    if (!typed || !entered) {
-      return { status: 500, body: { ok: false, reason: "failed to type remote-control command into pane" } };
-    }
-    const harvest = delayedRemoteHarvest(spawn_id);
-    let timeout;
-    const timed = new Promise((resolve) => {
-      timeout = setTimeout(() => resolve({ pending: true, url: null }), 6e3);
-      timeout.unref?.();
-    });
-    const result = await Promise.race([
-      harvest.then(({ url }) => ({ pending: false, url })),
-      timed
-    ]);
-    clearTimeout(timeout);
-    return { status: 200, body: { ok: true, enabled: true, url: result.url, pending: result.pending } };
-  }
-  async function spawnKill(spawn_id, force) {
-    const row = q.getSpawn.get(spawn_id);
-    if (!row) return { status: 404, body: { ok: false, reason: "no such spawn" } };
-    const owner = q.currentWindowOwner.get(row.tmux_window);
-    if (owner && owner.spawn_id !== spawn_id) {
-      return {
-        status: 409,
-        body: {
-          ok: false,
-          reason: `spawn ${spawn_id} is a historical row; tmux window ${row.tmux_window} is now owned by spawn ${owner.spawn_id} \u2014 kill that one`,
-          current_spawn_id: owner.spawn_id
-        }
-      };
-    }
-    const c = q.getSession.get(row.session_id);
-    if (c && c.col !== "offline" && force !== true) {
-      return {
-        status: 409,
-        body: { ok: false, reason: `session ${c.callsign} is ${c.col}, not offline \u2014 pass force:true to kill anyway` }
-      };
-    }
-    const res = await tmuxAdapter.killWindowVerified(row.tmux_window);
-    if (res.gone) {
-      if (["spawning", "stalled", "live", "pane-dead"].includes(row.status)) {
-        q.setSpawnStatus.run("gone", spawn_id);
-        forgetSpawn(spawn_id);
-        if (c && c.ended_at == null) {
-          updateSession(row.session_id, { col: "offline", ended_at: Date.now(), note: "spawned pane window gone" });
-          notifyWatchers(row.session_id);
-        }
-        onMutate();
-      }
-      return { status: 410, body: { ok: false, reason: "window already gone" } };
-    }
-    if (!res.ok) return { status: 500, body: { ok: false, reason: res.error || "tmux kill-window failed" } };
-    q.setSpawnStatus.run("killed", spawn_id);
-    forgetSpawn(spawn_id);
-    if (c && c.ended_at == null) {
-      updateSession(row.session_id, { col: "offline", ended_at: Date.now(), note: "pane killed from the board" });
-      notifyWatchers(row.session_id);
-    }
-    tick(`\u{1F5E1} killed pane ${row.tmux_window}${force === true ? " (forced)" : ""}`);
-    onMutate();
-    return { status: 200, body: { ok: true, spawn_id, status: "killed" } };
-  }
-  const SHELL_RE = /^(sh|bash|zsh|zsh-.*)$/;
-  const CONDEMN_DEAD_READS = 2;
-  async function spawnLivenessTick() {
-    const rows = q.activeSpawns.all();
-    const resurrectable = q.resurrectableSpawns.all();
-    if (!rows.length && !resurrectable.length && !spawnOrphans.length) return;
-    const wins = await tmuxAdapter.listScopedWindows(port);
-    for (const row of rows) {
-      const win = wins.find((w) => w.window === row.tmux_window);
-      if (!win) continue;
-      let deadSignal;
-      if (win.pane_dead) {
-        deadSignal = true;
-      } else if (win.pane_cmd === "claude") {
-        deadSignal = false;
-      } else {
-        const pane = await tmuxAdapter.paneCurrentCommand(win.window_id);
-        if (pane && !pane.dead && pane.cmd === "claude") deadSignal = false;
-        else if (!pane || pane.dead || SHELL_RE.test(pane.cmd)) deadSignal = true;
-        else deadSignal = null;
-      }
-      if (deadSignal === false) {
-        condemnStreak.delete(row.spawn_id);
-        if (row.status === "spawning" && Date.now() - row.requested_at > SPAWN_REGISTER_MS) {
-          const note = `pane up but never registered \u2014 env/port issue? window ${row.tmux_window}`;
-          q.setSpawnStatus.run("stalled", row.spawn_id);
-          updateSession(row.session_id, { col: "needsyou", notification_type: "spawn_stalled", note });
-          const c2 = q.getSession.get(row.session_id);
-          tick(`\u26A0 ${c2?.callsign ?? row.callsign} pane is up but never phoned home`);
-          logEvent(row.session_id, "SpawnStalled", null, note);
-          onMutate();
-        }
-        continue;
-      }
-      if (deadSignal === null) continue;
-      const streak = (condemnStreak.get(row.spawn_id) ?? 0) + 1;
-      if (streak < CONDEMN_DEAD_READS) {
-        condemnStreak.set(row.spawn_id, streak);
-        continue;
-      }
-      q.setSpawnStatus.run("pane-dead", row.spawn_id);
-      forgetSpawn(row.spawn_id);
-      const c = q.getSession.get(row.session_id);
-      if (c && c.ended_at == null) {
-        updateSession(row.session_id, {
-          col: "offline",
-          ended_at: Date.now(),
-          note: `pane idle \u2014 resume with claude --resume ${row.session_id}`
-        });
-        tick(`\u{1F480} ${c.callsign} pane died (claude no longer running) \u2014 window kept for scrollback`);
-        notifyWatchers(row.session_id);
-      }
-      onMutate();
-    }
-    for (const row of resurrectable) {
-      const win = wins.find((w) => w.window === row.tmux_window);
-      if (!win || win.pane_dead) continue;
-      const owner = q.currentWindowOwner.get(row.tmux_window);
-      if (owner && owner.spawn_id !== row.spawn_id) continue;
-      const pane = await tmuxAdapter.paneCurrentCommand(win.window_id);
-      if (!pane || pane.dead || pane.cmd !== "claude") continue;
-      resurrectSpawn(row);
-    }
-    const owned = new Set(q.allSpawns.all().map((r) => r.tmux_window));
-    const orphans = wins.filter((w) => !owned.has(w.window)).map((w) => ({ window: w.window }));
-    if (JSON.stringify(orphans) !== JSON.stringify(spawnOrphans)) {
-      spawnOrphans = orphans;
-      onMutate();
-    }
-  }
-  async function tmuxReachableForReconcile() {
-    if (tmuxAdapter.spawnOverrideCmd()) return true;
-    if (typeof tmuxAdapter.hasTmux === "function" && !tmuxAdapter.hasTmux()) return true;
-    try {
-      await tmuxAdapter.ensureSession(port);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-  let spawnOrphans = [];
-  async function reconcileSpawns() {
-    const wins = await tmuxAdapter.listScopedWindows(port);
-    const active = q.activeSpawns.all();
-    if (!wins.length && active.length && !await tmuxReachableForReconcile()) {
-      tick(`\u26A0 tmux unreachable at restart \u2014 leaving ${active.length} spawn row(s) as-is (unknown, not gone)`);
-      onMutate();
-      return;
-    }
-    const names = new Set(wins.map((w) => w.window));
-    for (const row of active) {
-      if (names.has(row.tmux_window)) continue;
-      q.setSpawnStatus.run("gone", row.spawn_id);
-      forgetSpawn(row.spawn_id);
-      const c = q.getSession.get(row.session_id);
-      if (c && c.ended_at == null) {
-        updateSession(row.session_id, {
-          col: "offline",
-          ended_at: Date.now(),
-          note: "spawned pane gone (daemon restart reconciliation)"
-        });
-        tick(`${c.callsign} pane gone \u2014 noticed at daemon restart`);
-      }
-      onMutate();
-    }
-    for (const row of q.staleProvisioningSpawns.all()) {
-      q.setSpawnStatus.run("gone", row.spawn_id);
-      forgetSpawn(row.spawn_id);
-      const c = q.getSession.get(row.session_id);
-      if (c && c.ended_at == null) {
-        updateSession(row.session_id, {
-          col: "offline",
-          ended_at: Date.now(),
-          note: "spawn interrupted before launch (daemon restart)"
-        });
-        tick(`${c.callsign} spawn was interrupted before launch \u2014 cleaned up at restart`);
-      }
-      onMutate();
-    }
-    const owned = new Set(q.allSpawns.all().map((r) => r.tmux_window));
-    spawnOrphans = wins.filter((w) => !owned.has(w.window)).map((w) => ({ window: w.window }));
-    if (spawnOrphans.length) {
-      tick(`\u26A0 ${spawnOrphans.length} unadopted fleetdeck window(s) in tmux (fd${port}-* with no spawn row)`);
-      onMutate();
-    }
-  }
-  const EXECUTABLE_FROM = /* @__PURE__ */ new Set(["proposed", "approved", "captured"]);
-  function planMark(plan_id, body) {
-    const p = q.getPlan.get(Number(plan_id));
-    if (!p) return { status: 404, body: { ok: false, err: "no such plan" } };
-    const target = body?.status;
-    if (target !== "executed" && target !== "archived") {
-      return { status: 400, body: { ok: false, err: 'status must be "executed" or "archived"' } };
-    }
-    if (body?.via != null && typeof body.via !== "string") {
-      return { status: 400, body: { ok: false, err: "via must be a string" } };
-    }
-    if (target === "executed") {
-      if (!EXECUTABLE_FROM.has(p.status)) {
-        return { status: 409, body: { ok: false, err: `cannot mark a ${p.status} plan executed` } };
-      }
-      const via = body?.via?.trim() ? body.via.trim().slice(0, 200) : null;
-      q.setPlanExecuted.run(via, p.plan_id);
-      tick(`\u{1F4DA} plan #${p.plan_id} (${p.callsign ?? p.session_id}) marked executed${via ? ` via ${via}` : ""}`);
-    } else {
-      if (p.status === "archived") {
-        return { status: 409, body: { ok: false, err: "plan is already archived" } };
-      }
-      q.setPlanStatus.run("archived", p.plan_id);
-      tick(`\u{1F4DA} plan #${p.plan_id} (${p.callsign ?? p.session_id}) archived`);
-    }
-    onMutate();
-    return { status: 200, body: { ok: true, plan_id: p.plan_id, status: target } };
-  }
-  function parseCommand(text) {
-    const t = String(text ?? "").trim();
-    let m;
-    if (m = /^broadcast\s+(.+)$/is.exec(t)) return { cmd: "broadcast", text: m[1].trim() };
-    if (m = /^assign\s+(\S+)\s+(.+)$/is.exec(t)) {
-      const target = m[1];
-      if (target === "auto" || target.startsWith("auto:")) {
-        const repo = target.length > "auto:".length ? target.slice("auto:".length) : null;
-        return { cmd: "assign_auto", repo, text: m[2].trim() };
-      }
-      return { cmd: "assign", target, text: m[2].trim() };
-    }
-    return { cmd: "note", text: t };
-  }
-  function command(text) {
-    const parsed = parseCommand(text);
-    const logCommand = (extra) => q.insertCommand.run(Date.now(), String(text ?? ""), JSON.stringify(extra ? { ...parsed, ...extra } : parsed));
-    let delivered = 0;
-    if (parsed.cmd === "broadcast") {
-      const targets = resolveTargets("all");
-      targets.forEach((sid) => mail(sid, "orchestrator", parsed.text));
-      delivered = targets.length;
-      tick(`\u{1F4E3} orchestrator broadcast \u2192 ${delivered} session(s)`);
-    } else if (parsed.cmd === "assign_auto") {
-      const repo = parsed.repo ?? null;
-      const winner = q.autoCandidate.get(repo, repo, repo);
-      if (!winner) {
-        logCommand({ unrouted: true });
-        tick("\u26A0 assign auto: no available session \u2014 task logged");
-        onMutate();
-        return { ok: false, unrouted: true, text: parsed.text };
-      }
-      const assigned_to = { session_id: winner.session_id, callsign: winner.callsign };
-      mail(winner.session_id, "orchestrator", `[FLEETDECK ASSIGNMENT] ${parsed.text}`);
-      tick(`\u26A1 orchestrator \u2192 ${winner.callsign}: ${parsed.text.slice(0, 60)}`);
-      logCommand({ assigned_to });
-      onMutate();
-      return { ok: true, assigned_to };
-    } else if (parsed.cmd === "assign") {
-      const targets = resolveTargets(parsed.target);
-      targets.forEach((sid) => mail(sid, "orchestrator", `[FLEETDECK ASSIGNMENT] ${parsed.text}`));
-      delivered = targets.length;
-      tick(`\u{1F4CC} orchestrator assign \u2192 ${parsed.target}${delivered ? "" : " (no such session)"}`);
-    } else {
-      tick(`\u{1F4DD} orchestrator note: ${parsed.text.slice(0, 60)}`);
-    }
-    logCommand();
-    onMutate();
-    return { ok: true, parsed, delivered };
-  }
-  async function postMail({ to, from, text }) {
-    const targets = resolveTargets(to);
-    const routes = await Promise.all(targets.map(async (sid) => {
-      if (hasWatchWaiter(sid)) return "watcher";
-      if (await ownedPaneDeliverable(sid)) return "pane";
-      return q.getSession.get(sid)?.ended_at != null ? "offline-queued" : "turn-boundary";
-    }));
-    targets.forEach((sid) => mail(sid, from || "human", text));
-    tick(`\u2709 mail from ${from || "human"} \u2192 ${to}`);
-    onMutate();
-    const raw = String(text ?? "");
-    const truncated = raw.length > MAIL_MAX_LEN;
-    return {
-      ok: true,
-      delivered: targets.length,
-      targets: targets.map((sid, i) => ({
-        session_id: sid,
-        callsign: q.getSession.get(sid)?.callsign ?? null,
-        route: routes[i]
-      })),
-      ...truncated ? { truncated: true, original_length: raw.length, max_length: MAIL_MAX_LEN } : {}
-    };
-  }
+  return {
+    applyEvent,
+    hookSessionStart,
+    hookUserPromptSubmit,
+    hookPostToolUse,
+    hookStop,
+    hookSessionEnd,
+    hookHoldQuestion
+  };
+}
+
+// scripts/fleetd/snapshot.mjs
+function createSnapshot(ctx) {
+  const {
+    q,
+    t0,
+    STALE_MS,
+    RETAIN_LEDGER_MS,
+    SNAPSHOT_FILES_PER_SESSION,
+    questions,
+    hasWatchWaiter,
+    ownedPaneRow,
+    spawnCapability,
+    spawnState
+  } = ctx;
   function snapshot() {
     const now = Date.now();
     const filesBySid = /* @__PURE__ */ new Map();
@@ -6663,7 +6734,7 @@ function createCore(db2, {
       // F3: pending + last few resolved
       spawn: spawnCapability(),
       // v1.2 capability flag
-      spawn_orphans: spawnOrphans,
+      spawn_orphans: spawnState.orphans,
       // v1.2 "unadopted" scoped windows
       // v1.3 plan library: non-archived, newest first, cap 20. RAW plan_md
       // only — title derivation (first heading / first line) is a board
@@ -6686,17 +6757,37 @@ function createCore(db2, {
   function terminalSpawn(spawnId) {
     return q.getSpawn.get(spawnId) || null;
   }
+  return { snapshot, fleetSize, terminalSpawn };
+}
+
+// scripts/fleetd/retention.mjs
+import fs6 from "node:fs";
+function createRetention(ctx) {
+  const {
+    q,
+    updateSession,
+    tick,
+    onMutate,
+    tombstoneCard,
+    forgetSpawn,
+    tmuxAdapter,
+    port,
+    questions,
+    PRESUME_DEAD_MS,
+    RETAIN_OFFLINE_MS,
+    RETAIN_LEDGER_MS
+  } = ctx;
   function presumeDeadSilent(s, now) {
     const hours = Math.max(0, (now - s.last_seen) / 36e5);
     const label2 = Number.isInteger(hours) ? String(hours) : hours.toFixed(1).replace(/\.0$/, "");
-    updateSession(s.session_id, {
-      col: "offline",
-      ended_at: now,
-      note: `presumed ended (silent ${label2}h)`
+    tombstoneCard(s.session_id, {
+      // D8
+      note: `presumed ended (silent ${label2}h)`,
+      at: now,
+      tickMsg: `\u231B ${s.callsign} presumed ended after ${label2}h silent`,
+      forgetModel: true
+      // M-G2: terminal — clear the transcript memo
     });
-    modelMemo.delete(s.session_id);
-    tick(`\u231B ${s.callsign} presumed ended after ${label2}h silent`);
-    notifyWatchers(s.session_id);
   }
   async function retentionSweep(now = Date.now()) {
     let changed = false;
@@ -6732,14 +6823,13 @@ function createCore(db2, {
         if (win && (win.pane_dead || SHELL_RE.test(win.pane_cmd))) {
           q.setSpawnStatus.run("pane-dead", sp.spawn_id);
           forgetSpawn(sp.spawn_id);
-          updateSession(s.session_id, {
-            col: "offline",
-            ended_at: now,
-            note: `pane confirmed dead \u2014 resume with claude --resume ${s.session_id}`
+          tombstoneCard(s.session_id, {
+            // D8
+            note: `pane confirmed dead \u2014 resume with claude --resume ${s.session_id}`,
+            at: now,
+            tickMsg: `\u{1F480} ${s.callsign} pane confirmed dead after long silence \u2014 window kept for scrollback`,
+            forgetModel: true
           });
-          modelMemo.delete(s.session_id);
-          tick(`\u{1F480} ${s.callsign} pane confirmed dead after long silence \u2014 window kept for scrollback`);
-          notifyWatchers(s.session_id);
           changed = true;
         }
       }
@@ -6795,7 +6885,7 @@ function createCore(db2, {
     const feed_cleared = Number(q.clearTicker.run().changes);
     const orphan_worktrees = q.orphanWorktrees.all().map((r) => r.worktree_path).filter((p) => {
       try {
-        return fs3.existsSync(p);
+        return fs6.existsSync(p);
       } catch {
         return false;
       }
@@ -6814,6 +6904,186 @@ function createCore(db2, {
       orphan_worktrees
     };
   }
+  return { retentionSweep, cleanup };
+}
+
+// scripts/fleetd/derive.mjs
+var CALLSIGNS = ["falcon", "otter", "raven", "lynx", "orca", "wren", "viper", "heron", "badger", "comet", "ember", "drift"];
+function createCore(db2, {
+  port = 4711,
+  home = process.env.FLEETDECK_HOME || "",
+  holdMs = resolveHoldMs(),
+  tmuxAdapter = spawn_exports
+} = {}) {
+  const t0 = Date.now();
+  let onMutateImpl = () => {
+  };
+  const onMutate = () => onMutateImpl();
+  const STALE_MS = envInt("FLEETDECK_STALE_MS", 6e5, { min: 1 });
+  const NUDGE_MS = envInt("FLEETDECK_NUDGE_MS", 8e3, { min: 1 });
+  const SPAWN_REGISTER_MS = envInt("FLEETDECK_SPAWN_REGISTER_MS", 9e4, { min: 1 });
+  const PANE_MAIL_GRACE_MS = envInt("FLEETDECK_PANE_MAIL_GRACE_MS", 1500, { min: 0 });
+  const PRESUME_DEAD_MS = envInt("FLEETDECK_PRESUME_DEAD_MS", 108e5, { min: 1 });
+  const RETAIN_OFFLINE_MS = envInt("FLEETDECK_RETAIN_OFFLINE_MS", 864e5, { min: 1 });
+  const RC_HARVEST_MS = envInt("FLEETDECK_RC_HARVEST_MS", 2500, { min: 0 });
+  const RETAIN_LEDGER_MS = envInt("FLEETDECK_RETAIN_LEDGER_MS", 864e5, { min: 6e4 });
+  const SNAPSHOT_FILES_PER_SESSION = 50;
+  async function findScopedWindow(name) {
+    return (await tmuxAdapter.listScopedWindows(port)).find((w) => w.window === name);
+  }
+  const { q, updateSession } = createStatements(db2);
+  const questions = createQuestions(db2, {
+    holdMs,
+    mail: (sid, from, text) => ctx.mail(sid, from, text),
+    tick: (msg) => tick(msg),
+    callsignOf: (sid) => q.getSession.get(sid)?.callsign ?? null,
+    onChange: () => onMutate(),
+    // v1.3 plan library: the plans table lives here; questions.mjs only needs
+    // the link (plan_id for /state) and the answer-path status flips. The
+    // flip is guarded to 'proposed' — the answer paths describe the freshly
+    // captured plan, and a plan the human already archived/marked from the
+    // library keeps that verdict.
+    planIdFor: (questionId) => q.planByQuestion.get(questionId)?.plan_id ?? null,
+    planAnswered: (questionId, behavior) => {
+      const p = q.planByQuestion.get(questionId);
+      if (!p || p.status !== "proposed") return;
+      const status = behavior === "allow" ? "approved" : behavior === "capture" ? "captured" : "rejected";
+      q.setPlanStatus.run(status, p.plan_id);
+      tick(`\u{1F4DA} plan #${p.plan_id} (${p.callsign ?? p.session_id}) ${status}`);
+    }
+  });
+  const modelMemo = /* @__PURE__ */ new Map();
+  function stampTranscriptFloor(sid, transcriptPath) {
+    let floor = 0;
+    try {
+      if (transcriptPath) floor = fs7.statSync(transcriptPath).size;
+    } catch {
+    }
+    modelMemo.set(sid, { floor, size: -1, model: null });
+  }
+  function readTranscriptModel(sid, transcriptPath) {
+    const memo = modelMemo.get(sid) ?? { floor: 0, size: -1, model: null };
+    let size;
+    try {
+      size = fs7.statSync(transcriptPath).size;
+    } catch {
+      return null;
+    }
+    if (size === memo.size) return memo.model;
+    const model = lastAssistantModel(transcriptPath, { minOffset: memo.floor });
+    modelMemo.set(sid, { ...memo, size, model: model ?? memo.model });
+    return model;
+  }
+  function assignCallsign(sid) {
+    const idx = q.countSessions.get().n;
+    return CALLSIGNS[idx % CALLSIGNS.length] + "-" + String(sid).slice(0, 4);
+  }
+  function card(sid) {
+    let c = q.getSession.get(sid);
+    if (!c) {
+      const callsign = assignCallsign(sid);
+      const now = Date.now();
+      q.insertSession.run(sid, callsign, now, now);
+      c = q.getSession.get(sid);
+      tick(`${callsign} joined the fleet`);
+    }
+    return c;
+  }
+  function tick(msg) {
+    q.insertTicker.run(Date.now(), msg);
+    q.trimTicker.run();
+  }
+  function logEvent(sid, hookEvent, toolName, note) {
+    q.insertEvent.run(sid, hookEvent ?? null, toolName ?? null, note ?? null, Date.now());
+  }
+  const ctx = {
+    db: db2,
+    port,
+    home,
+    holdMs,
+    t0,
+    STALE_MS,
+    NUDGE_MS,
+    SPAWN_REGISTER_MS,
+    PANE_MAIL_GRACE_MS,
+    PRESUME_DEAD_MS,
+    RETAIN_OFFLINE_MS,
+    RC_HARVEST_MS,
+    RETAIN_LEDGER_MS,
+    SNAPSHOT_FILES_PER_SESSION,
+    q,
+    updateSession,
+    onMutate,
+    tmuxAdapter,
+    questions,
+    findScopedWindow,
+    tick,
+    logEvent,
+    card,
+    assignCallsign,
+    modelMemo,
+    stampTranscriptFloor,
+    readTranscriptModel
+  };
+  Object.assign(ctx, createMail(ctx));
+  const {
+    mail,
+    drainMail,
+    resolveTargets,
+    notifyWatchers,
+    addWatchWaiter,
+    hasWatchWaiter,
+    ownedPaneRow,
+    ownedPaneDeliverable,
+    tryOwnedPaneDelivery,
+    claimMail,
+    watchInfo,
+    postMail
+  } = ctx;
+  function tombstoneCard(sid, { note, at = Date.now(), tickMsg = null, notify = true, forgetModel = false, mutate = false }) {
+    updateSession(sid, { col: "offline", ended_at: at, note });
+    if (forgetModel) modelMemo.delete(sid);
+    if (tickMsg) tick(tickMsg);
+    if (notify) notifyWatchers(sid);
+    if (mutate) onMutate();
+  }
+  ctx.tombstoneCard = tombstoneCard;
+  Object.assign(ctx, createLedger(ctx));
+  const { recordFile, whisperText } = ctx;
+  Object.assign(ctx, createIngest(ctx));
+  const { ingestAgentsPoll } = ctx;
+  Object.assign(ctx, createCommands(ctx));
+  const { command } = ctx;
+  Object.assign(ctx, createPlans(ctx));
+  const { planMark } = ctx;
+  const { worktrees, removeWorktree } = createWorktrees(ctx);
+  Object.assign(ctx, createSpawns(ctx));
+  const {
+    spawn: spawn2,
+    revive,
+    enableRemote,
+    spawnKill,
+    spawnCapability,
+    spawnLivenessTick,
+    reconcileSpawns,
+    scheduleRegistrationRemoteHarvest,
+    forgetSpawn,
+    spawnState
+  } = ctx;
+  Object.assign(ctx, createEvents(ctx));
+  const {
+    applyEvent,
+    hookSessionStart,
+    hookUserPromptSubmit,
+    hookPostToolUse,
+    hookStop,
+    hookSessionEnd,
+    hookHoldQuestion
+  } = ctx;
+  Object.assign(ctx, createSnapshot(ctx));
+  const { snapshot, fleetSize, terminalSpawn } = ctx;
+  Object.assign(ctx, createRetention(ctx));
+  const { retentionSweep, cleanup } = ctx;
   retentionSweep().catch((err) => console.error("fleetd retention sweep error:", err));
   setInterval(() => {
     try {
@@ -6877,7 +7147,7 @@ function createCore(db2, {
     planMark,
     // POST /api/plans/:id/mark → {status, body}
     set onMutate(fn) {
-      onMutate = fn;
+      onMutateImpl = fn;
     }
   };
 }
@@ -6886,8 +7156,8 @@ function createCore(db2, {
 import http from "node:http";
 import { timingSafeEqual } from "node:crypto";
 import os2 from "node:os";
-import fs4 from "node:fs";
-import path3 from "node:path";
+import fs8 from "node:fs";
+import path6 from "node:path";
 import { fileURLToPath } from "node:url";
 
 // node_modules/ws/wrapper.mjs
@@ -7332,7 +7602,7 @@ function isLoopbackAddress(address) {
   const value = String(address || "").trim().toLowerCase();
   return value === "localhost" || value === "::1" || /^127(?:\.[0-9]{1,3}){3}$/.test(value) || /^::ffff:127(?:\.[0-9]{1,3}){3}$/.test(value);
 }
-var BOARD_DIST = path3.join(path3.dirname(fileURLToPath(import.meta.url)), "board-dist");
+var BOARD_DIST = path6.join(path6.dirname(fileURLToPath(import.meta.url)), "board-dist");
 var MIME = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -7355,16 +7625,16 @@ function serveBoardAsset(res, pathname, notFound) {
     return notFound();
   }
   const rel = decoded === "/" ? "index.html" : decoded.replace(/^\/+/, "");
-  const abs = path3.resolve(BOARD_DIST, rel);
-  if (abs !== BOARD_DIST && !abs.startsWith(BOARD_DIST + path3.sep)) return notFound();
+  const abs = path6.resolve(BOARD_DIST, rel);
+  if (abs !== BOARD_DIST && !abs.startsWith(BOARD_DIST + path6.sep)) return notFound();
   let data;
   try {
-    data = fs4.readFileSync(abs);
+    data = fs8.readFileSync(abs);
   } catch {
     return notFound();
   }
   res.writeHead(200, {
-    "content-type": MIME[path3.extname(abs).toLowerCase()] || "application/octet-stream",
+    "content-type": MIME[path6.extname(abs).toLowerCase()] || "application/octet-stream",
     "content-length": data.length
   });
   return res.end(data);
@@ -7539,7 +7809,7 @@ function createHttp(core2, { port, boardFile, version: version2 = "0.0.0", captu
         if (url.pathname === "/api/watch") return watchHook(req, res, url);
         if (url.pathname === "/plain") {
           res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-          return res.end(fs4.readFileSync(boardFile));
+          return res.end(fs8.readFileSync(boardFile));
         }
         if (url.pathname === "/" || url.pathname.startsWith("/assets/")) {
           return serveBoardAsset(res, url.pathname, () => json(res, 404, { err: "nope" }));
@@ -7935,8 +8205,8 @@ function startAgentsPoll(core2) {
 }
 
 // scripts/fleetd/payload-capture.mjs
-import fs5 from "node:fs";
-import path4 from "node:path";
+import fs9 from "node:fs";
+import path7 from "node:path";
 var MAX_FILE_BYTES = 1e6;
 var MAX_PAYLOAD_BYTES = 64e3;
 var PER_EVENT = 3;
@@ -7986,14 +8256,14 @@ function createPayloadCapture(homeDir, {
   enabled = process.env.FLEETDECK_CAPTURE_PAYLOADS?.trim().toLowerCase() === "on"
 } = {}) {
   if (!enabled) return NOOP;
-  const file = path4.join(homeDir, "hook-payloads.jsonl");
+  const file = path7.join(homeDir, "hook-payloads.jsonl");
   const counts = /* @__PURE__ */ new Map();
   try {
-    fs5.chmodSync(file, 384);
+    fs9.chmodSync(file, 384);
   } catch {
   }
   try {
-    for (const line of fs5.readFileSync(file, "utf8").split("\n")) {
+    for (const line of fs9.readFileSync(file, "utf8").split("\n")) {
       if (!line.trim()) continue;
       try {
         const rec = JSON.parse(line);
@@ -8008,7 +8278,7 @@ function createPayloadCapture(homeDir, {
       if (!event || (counts.get(event) || 0) >= perEvent) return;
       let size = 0;
       try {
-        size = fs5.statSync(file).size;
+        size = fs9.statSync(file).size;
       } catch {
         size = 0;
       }
@@ -8020,9 +8290,9 @@ function createPayloadCapture(homeDir, {
         payload: safePayload
       }) + "\n";
       if (size + Buffer.byteLength(line) > maxBytes) return;
-      fs5.appendFileSync(file, line, { encoding: "utf8", mode: 384 });
+      fs9.appendFileSync(file, line, { encoding: "utf8", mode: 384 });
       try {
-        fs5.chmodSync(file, 384);
+        fs9.chmodSync(file, 384);
       } catch {
       }
       counts.set(event, (counts.get(event) || 0) + 1);
@@ -8491,11 +8761,11 @@ function createMdns({ port, name = "fleetdeck", instance = "Fleet Deck", address
 }
 
 // scripts/fleetd/fleetd.mjs
-var __dirname = path5.dirname(fileURLToPath2(import.meta.url));
+var __dirname = path8.dirname(fileURLToPath2(import.meta.url));
 var PORT = Number(process.env.FLEETDECK_PORT || 4711);
 var BIND = (process.env.FLEETDECK_BIND || "127.0.0.1").trim() || "127.0.0.1";
 var LAN_MODE = !isLoopbackAddress(BIND);
-var HOME = process.env.FLEETDECK_HOME || path5.join(os3.homedir() || "/tmp", ".fleetdeck");
+var HOME = process.env.FLEETDECK_HOME || path8.join(os3.homedir() || "/tmp", ".fleetdeck");
 process.on("unhandledRejection", (reason) => {
   console.error("fleetd unhandled rejection (daemon kept alive):", reason);
 });
@@ -8505,18 +8775,18 @@ function startupFatal(reason) {
   } catch {
   }
   try {
-    fs6.writeSync(2, `fleetd refused to start: ${reason}
+    fs10.writeSync(2, `fleetd refused to start: ${reason}
 `);
   } catch {
   }
   process.exit(1);
 }
 try {
-  fs6.mkdirSync(HOME, { recursive: true });
+  fs10.mkdirSync(HOME, { recursive: true });
 } catch (err) {
   startupFatal(`cannot create FLEETDECK_HOME (${err?.code || err?.message || "unknown error"})`);
 }
-var PID_FILE = path5.join(HOME, "fleetd.pid");
+var PID_FILE = path8.join(HOME, "fleetd.pid");
 var ownsPidFile = false;
 function pidRecord(text) {
   try {
@@ -8540,8 +8810,8 @@ function pidIsLive(pid) {
 function livePidLooksLikeFleetd(pid) {
   if (process.platform !== "linux") return true;
   try {
-    const comm = fs6.readFileSync(`/proc/${pid}/comm`, "utf8").trim();
-    const argv = fs6.readFileSync(`/proc/${pid}/cmdline`).toString("utf8").split("\0").filter(Boolean);
+    const comm = fs10.readFileSync(`/proc/${pid}/comm`, "utf8").trim();
+    const argv = fs10.readFileSync(`/proc/${pid}/cmdline`).toString("utf8").split("\0").filter(Boolean);
     const nodeLike = /^(?:node|nodejs|fleetd)$/i.test(comm);
     const fleetdScript = argv.some((arg) => /(?:^|[/\\])fleetd(?:\.bundle)?\.mjs$/.test(arg));
     return nodeLike && fleetdScript;
@@ -8552,8 +8822,8 @@ function livePidLooksLikeFleetd(pid) {
 function removeOwnedPidFile() {
   if (!ownsPidFile) return;
   try {
-    const record = pidRecord(fs6.readFileSync(PID_FILE, "utf8"));
-    if (record?.pid === process.pid) fs6.unlinkSync(PID_FILE);
+    const record = pidRecord(fs10.readFileSync(PID_FILE, "utf8"));
+    if (record?.pid === process.pid) fs10.unlinkSync(PID_FILE);
   } catch {
   }
   ownsPidFile = false;
@@ -8561,7 +8831,7 @@ function removeOwnedPidFile() {
 function claimHome() {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      fs6.writeFileSync(PID_FILE, JSON.stringify({ pid: process.pid, port: PORT }), {
+      fs10.writeFileSync(PID_FILE, JSON.stringify({ pid: process.pid, port: PORT }), {
         encoding: "utf8",
         mode: 384,
         flag: "wx"
@@ -8576,7 +8846,7 @@ function claimHome() {
     let recordText = null;
     let record = null;
     try {
-      recordText = fs6.readFileSync(PID_FILE, "utf8");
+      recordText = fs10.readFileSync(PID_FILE, "utf8");
       record = pidRecord(recordText);
     } catch (err) {
       if (err?.code === "ENOENT") continue;
@@ -8587,13 +8857,13 @@ function claimHome() {
       startupFatal(`FLEETDECK_HOME is already used by live fleetd pid ${record.pid} on ${port}; use a separate FLEETDECK_HOME for another daemon (if that PID was recycled, remove stale pidfile ${PID_FILE})`);
     }
     try {
-      if (fs6.readFileSync(PID_FILE, "utf8") !== recordText) continue;
+      if (fs10.readFileSync(PID_FILE, "utf8") !== recordText) continue;
     } catch (err) {
       if (err?.code === "ENOENT") continue;
       startupFatal(`cannot re-read stale FLEETDECK_HOME pidfile (${err?.code || err?.message || "unknown error"})`);
     }
     try {
-      fs6.unlinkSync(PID_FILE);
+      fs10.unlinkSync(PID_FILE);
     } catch (err) {
       if (err?.code !== "ENOENT") startupFatal(`cannot clear stale FLEETDECK_HOME pidfile (${err?.code || err?.message || "unknown error"})`);
     }
@@ -8601,14 +8871,14 @@ function claimHome() {
   startupFatal("could not claim FLEETDECK_HOME pidfile after concurrent startup attempts");
 }
 claimHome();
-var TOKEN_FILE = path5.join(HOME, "token");
+var TOKEN_FILE = path8.join(HOME, "token");
 var TOKEN;
 if (Object.hasOwn(process.env, "FLEETDECK_TOKEN")) {
   TOKEN = String(process.env.FLEETDECK_TOKEN).trim();
   if (TOKEN.length < 16) startupFatal("FLEETDECK_TOKEN must be at least 16 characters after trimming");
 } else {
   try {
-    const persisted = fs6.readFileSync(TOKEN_FILE, "utf8").trim();
+    const persisted = fs10.readFileSync(TOKEN_FILE, "utf8").trim();
     if (persisted.length >= 16) TOKEN = persisted;
     else if (LAN_MODE) startupFatal("FLEETDECK_HOME/token must contain at least 16 characters");
   } catch (err) {
@@ -8624,14 +8894,14 @@ if (LAN_MODE && !TOKEN) {
     startupFatal(`cannot generate LAN token (${err?.code || err?.message || "unknown error"})`);
   }
   try {
-    fs6.writeFileSync(TOKEN_FILE, TOKEN, { encoding: "utf8", mode: 384, flag: "wx" });
+    fs10.writeFileSync(TOKEN_FILE, TOKEN, { encoding: "utf8", mode: 384, flag: "wx" });
   } catch (err) {
     startupFatal(`cannot persist FLEETDECK_HOME/token (${err?.code || err?.message || "unknown error"})`);
   }
 }
 var version = "0.0.0";
 try {
-  version = JSON.parse(fs6.readFileSync(path5.resolve(__dirname, "../../package.json"), "utf8")).version || version;
+  version = JSON.parse(fs10.readFileSync(path8.resolve(__dirname, "../../package.json"), "utf8")).version || version;
 } catch {
 }
 var MDNS_NAME = (process.env.FLEETDECK_MDNS_NAME || "fleetdeck").trim() || "fleetdeck";
@@ -8642,7 +8912,7 @@ function mdnsInstanceName() {
     return "Fleet Deck";
   }
 }
-var DB_FILE = path5.join(HOME, "fleetd.db");
+var DB_FILE = path8.join(HOME, "fleetd.db");
 var db = openDb(DB_FILE);
 var core = createCore(db, { port: PORT });
 var MDNS_ENABLED = LAN_MODE && process.env.FLEETDECK_MDNS?.trim().toLowerCase() !== "off";
@@ -8657,7 +8927,7 @@ var { server } = createHttp(core, {
   lan: LAN_INFO,
   // the Phase 1 spike board, kept verbatim at GET /plain; the real board
   // (GET / + /assets/*) is served from board-dist, resolved inside http.mjs
-  boardFile: path5.join(__dirname, "board.html"),
+  boardFile: path8.join(__dirname, "board.html"),
   version,
   // validation aid: first 3 raw payloads per hook event → HOME/hook-payloads.jsonl
   capture: createPayloadCapture(HOME)

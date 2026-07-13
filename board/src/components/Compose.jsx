@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { sendMail, sendCommand, reasonOf } from '../api.js';
-import { basename } from '../util.js';
+import { basename, TURN_BOUNDARY_HINT } from '../util.js';
 import { useModal } from '../useModal.js';
 
 // Honest per-target feedback from POST /mail `targets` ({session_id, callsign,
@@ -123,7 +123,7 @@ export default function Compose({ initialTarget, sessions, repos, onClose, onSen
             <span className="note" style={{ color: 'var(--ok)' }}>{note}</span>
           ) : (
             <span className="note">
-              {target === 'daemon' ? 'runs in the daemon immediately' : 'delivers at the agent’s next turn boundary — idle sessions usually wake within seconds'}
+              {target === 'daemon' ? 'runs in the daemon immediately' : `delivers at the agent’s ${TURN_BOUNDARY_HINT}`}
             </span>
           )}
           {unroutedText != null && spawnAvailable && (

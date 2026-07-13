@@ -1,7 +1,7 @@
 import React from 'react';
 import Sparkline from './Sparkline.jsx';
 import { Age } from '../clock.jsx';
-import { basename, prettyModel, modelShort, modelFamily, safeUrl, spawnTermable, spawnKillable, spawnRemoteAvailable } from '../util.js';
+import { basename, prettyModel, modelShort, modelFamily, safeUrl, spawnTermable, spawnKillable, spawnRemoteAvailable, colPulse, worktreeLabel } from '../util.js';
 
 // How queued mail will reach this session (snapshot mail_meta[sid].route).
 // watcher/pane deliver without the human doing anything; the other two wait.
@@ -29,12 +29,7 @@ function SessionCard({
   const needsyou = s.col === 'needsyou';
   const inConflict = conflictFiles.length > 0;
   const fam = modelFamily(s.model);
-  const pulseClass =
-    s.col === 'working' ? 'working'
-    : s.col === 'verifying' ? 'verifying'
-    : needsyou ? 'needsyou'
-    : offline ? 'offline'
-    : 'still';
+  const pulseClass = colPulse(s.col);
   const files = (s.files || []).map(basename);
   const hot = new Set(conflictFiles.map(basename));
   const shown = files.slice(0, 4);
@@ -48,9 +43,9 @@ function SessionCard({
   // route}. Older daemons omit it — the badge falls back to a bare count.
   const mailHint = MAIL_HINT[mailMeta?.route];
   const mailStuck = mailMeta?.route === 'turn-boundary' || mailMeta?.route === 'offline-queued';
-  // the daemon records worktree = toplevel of cwd even for the main tree —
-  // only badge REAL secondary worktrees (toplevel differs from the repo name)
-  const wt = s.worktree && basename(s.worktree) !== s.repo_name ? basename(s.worktree) : null;
+  // only badge REAL secondary worktrees (see worktreeLabel — the daemon records
+  // worktree = toplevel of cwd even for the main tree)
+  const wt = worktreeLabel(s);
   // v1.8 — the card's own action row. The terminal was reachable before, but
   // only by clicking what looked like a metadata chip; killing was reachable
   // only from inside the drawer. Both are ACTIONS, so both now read as buttons,

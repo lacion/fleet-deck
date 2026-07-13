@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { human } from '../util.js';
+import { human, TURN_BOUNDARY_HINT } from '../util.js';
 import { renderMarkdown, planTitle } from '../markdown.js';
 import { sendMail, markPlan, reasonOf } from '../api.js';
 
@@ -148,7 +148,7 @@ function PlanCard({ p, now, liveSessions, spawnAvailable, onExecute }) {
                   Send
                 </button>
               </div>
-              <span className="micro">mails the framed plan — delivered at next turn boundary — idle sessions usually wake within seconds</span>
+              <span className="micro">{`mails the framed plan — delivered at ${TURN_BOUNDARY_HINT}`}</span>
             </>
           )}
         </div>

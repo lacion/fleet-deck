@@ -1,14 +1,17 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useFleetState } from './useFleetState.js';
 import { useSpawnActions } from './useSpawnActions.js';
+import { useConflictRipples } from './hooks/useConflictRipples.js';
+import { useFeedbackStrip } from './hooks/useFeedbackStrip.js';
+import { useTermWindows } from './hooks/useTermWindows.js';
+import { useWorktrees } from './hooks/useWorktrees.js';
+import { useBoardHotkeys } from './hooks/useBoardHotkeys.js';
+import { useFleetActions } from './hooks/useFleetActions.js';
 import { ClockContext } from './clock.jsx';
-import { getQuestion } from './qbus.js';
-import { hhmmss, basename, safeUrl, spawnTermable } from './util.js';
-import {
-  sendMail, markPlan, cleanup, killSpawn,
-  fetchWorktrees, removeWorktree, reasonOf,
-} from './api.js';
+import { basename, safeUrl, spawnTermable, sessionsById, callsignOf, sessionTicker } from './util.js';
+import { sendMail, markPlan, reasonOf } from './api.js';
 import { useAuth, saveToken } from './token.js';
+import Header from './components/Header.jsx';
 import BoardLanes from './components/BoardLanes.jsx';
 import Inbox from './components/Inbox.jsx';
 import Feed from './components/Feed.jsx';
@@ -26,21 +29,10 @@ import TokenGate from './components/TokenGate.jsx';
 const TermModal = React.lazy(() => import('./components/TermModal.jsx'));
 const TermGrid = React.lazy(() => import('./components/TermGrid.jsx'));
 
-const WS_LABEL = { live: 'LIVE', reconnecting: 'RECONNECTING', offline: 'OFFLINE' };
-
 // Stable empty singletons for absent snapshot fields — a fresh `[]`/`{}` per
 // render would break the memoized board (M-P4) on every 1 s clock tick.
 const EMPTY_ARR = [];
 const EMPTY_OBJ = {};
-
-// v1.4 — the identity a live terminal captures at open, so its stream survives
-// the card mutating (or vanishing) mid-view. Pure, so it lives at module scope
-// and both openTerm and openGrid share it.
-const termIdentity = (s) => ({
-  spawnId: s.spawn.spawn_id,
-  callsign: s.callsign || s.session_id,
-  window: s.spawn.tmux_window,
-});
 
 export default function App() {
   const { snap, status } = useFleetState();
@@ -54,52 +46,49 @@ export default function App() {
   const [compose, setCompose] = useState(null); // null | { target }
   const [spawnForm, setSpawnForm] = useState(null); // null | { prompt?, cwd?, planId? }
   const [lanOpen, setLanOpen] = useState(false); // v1.7 LAN share panel
-  // v1.9 worktrees — the list lives up here because the HEADER carries its
-  // count: a worktree holding unpushed work is a fact about the fleet, not a
-  // detail of a modal that happens to be open.
-  const [wtOpen, setWtOpen] = useState(false);
-  const [worktrees, setWorktrees] = useState(null); // null = never loaded
-  const [wtLoading, setWtLoading] = useState(false);
-  const [wtErr, setWtErr] = useState(null);
-  const [wtSupported, setWtSupported] = useState(true); // 404 → older daemon
-  // v1.4 live terminal — identity captured at open so the stream survives the
-  // card mutating (or vanishing) mid-view.
-  const [term, setTerm] = useState(null); // null | { spawnId, callsign, window }
-  // v1.9 the wall of screens — N terminals at once. Same identity shape, a list.
-  const [grid, setGrid] = useState(null); // null | [{ spawnId, callsign, window }]
-  // v1.9 which agents are ticked for the grid (by session id, so the set
-  // survives a card re-render; resolved to spawn identities at open time).
-  const [watch, setWatch] = useState(() => new Set());
-  // v1.8 kill — the card chip and the drawer button both open ONE dialog; the
-  // POST only fires from its hazard button. null | {spawnId, callsign, window, alive}
-  const [killAsk, setKillAsk] = useState(null);
-  const [killBusy, setKillBusy] = useState(false);
+  const [wtOpen, setWtOpen] = useState(false); // v1.9 worktrees modal
   const [priorities, setPriorities] = useState(() => new Set());
   const [threads, setThreads] = useState({}); // sid -> [{text, at}] (this tab only)
-  const [ripples, setRipples] = useState(() => new Map()); // sid -> until(ms)
-  const [clearing, setClearing] = useState(false);
-  // shared feedback strip (Clear + revive + remote):
-  // {hd?, msg, orphans?, url?} | {hd?, err}
-  const [clearNote, setClearNote] = useState(null);
+
+  const sessions = snap.sessions || EMPTY_ARR;
+  const questions = snap.questions || EMPTY_ARR;
+  const conflicts = snap.conflicts || EMPTY_ARR;
+  const pendingQs = useMemo(() => questions.filter((q) => q.status === 'pending'), [questions]);
+  const byId = useMemo(() => sessionsById(sessions), [sessions]);
+
+  // ---- subsystem hooks ------------------------------------------------------
+  // one-shot conflict ripple (fires only when a conflict row FIRST appears)
+  const ripples = useConflictRipples(snap);
+  // shared feedback strip (Clear + revive + remote), {hd?,msg,orphans?,url?}|{hd?,err}
+  const { clearNote, setClearNote, showNote } = useFeedbackStrip();
   // M-F2 — ONE owner of the revive + enable-remote POSTs and their per-spawn
-  // in-flight sets, shared by the card chips (here) and the drawer's OWNED PANE.
-  // A session's card chip and its drawer button can no longer each fire a POST.
+  // in-flight sets, shared by the card chips (via useFleetActions below) and the
+  // drawer's OWNED PANE. A card chip and its drawer button can't each fire a POST.
   const { reviving, enabling, revivingAll, revive, reviveAll, enableRemote: enableRemoteAction } = useSpawnActions();
-  const clearTimer = useRef(null);
-  const prevConflicts = useRef({ keys: null, sawData: false });
+  // board-level mutations that report onto the strip: Clear, revive, enable-remote,
+  // and the two-step kill (ASK opens the dialog; the POST is the dialog's alone).
+  const {
+    clearing, doClear,
+    killAsk, setKillAsk, killBusy, askKill, doKill,
+    doRevive, doReviveAll, doEnableRemote,
+  } = useFleetActions({ showNote, revive, reviveAll, enableRemoteAction });
+  // terminal / grid / watch windows — killAsk is threaded in for the keydown mirror
+  const {
+    term, setTerm, grid, setGrid, watch,
+    termableSessions, watchable, openTerm, toggleWatch, openGrid,
+    termOpen, killOpen,
+  } = useTermWindows(sessions, killAsk);
+  // worktrees list — reloads on boot and whenever the fleet gains/loses a session
+  const {
+    worktrees, wtLoading, wtErr, wtSupported, loadWorktrees, removeWorktree: doRemoveWorktree,
+    wtCount, wtHazard,
+  } = useWorktrees(sessions.length);
+
   // R3-4 — the header "▦ Terminals" button is a persistent focus target: when
   // the grid promotes a tile to the full modal, the grid (and the ⤢ button that
   // opened the modal) unmount, so the modal has no live opener to restore to on
   // close. This ref is its safety net (handed to TermModal + TermGrid).
   const termBtnRef = useRef(null);
-  // Mirrors "a live terminal has the keyboard" for the keydown handler — the
-  // modal OR the grid, since the grid's focused tile owns Esc exactly as the
-  // modal does. Both stop propagation themselves; this guard covers stray focus.
-  const termOpen = useRef(false);
-  useEffect(() => { termOpen.current = !!term || !!grid; }, [term, grid]);
-  const killOpen = useRef(false); // mirrors `killAsk` for the keydown handler
-  useEffect(() => { killOpen.current = !!killAsk; }, [killAsk]);
-  const wtGone = useRef(false); // this daemon has no /api/worktrees — stop asking
 
   // 1 s clock: ages, countdown rings, header clock
   useEffect(() => {
@@ -115,102 +104,32 @@ export default function App() {
   }, [theme]);
   useEffect(() => { localStorage.setItem('fd-compact', compact ? '1' : '0'); }, [compact]);
 
-  // one-shot conflict ripple: fire only when a conflict row FIRST appears
-  // (never on the initial snapshot — history doesn't ripple)
-  useEffect(() => {
-    const store = prevConflicts.current;
-    const list = snap.conflicts || [];
-    const keyOf = (c) => `${c.at}:${c.rel_path || c.file}:${(c.sessions || []).join(',')}`;
-    const keys = new Set(list.map(keyOf));
-    const isData = (snap.up_ms || 0) > 0 || (snap.sessions || []).length > 0 || list.length > 0;
-    if (store.keys && store.sawData) {
-      const until = Date.now() + 2000;
-      const add = new Map();
-      for (const c of list) {
-        if (!store.keys.has(keyOf(c))) for (const sid of c.sessions || []) add.set(sid, until);
-      }
-      if (add.size) {
-        setRipples((prev) => new Map([...prev, ...add]));
-        setTimeout(() => setRipples((prev) => {
-          const m = new Map(prev);
-          for (const [sid, u] of add) if (m.get(sid) === u) m.delete(sid);
-          return m;
-        }), 2200);
-      }
-    }
-    store.keys = keys;
-    if (isData) store.sawData = true;
-  }, [snap]);
-
-  const sessions = snap.sessions || EMPTY_ARR;
-  const questions = snap.questions || EMPTY_ARR;
-  const pendingQs = useMemo(() => questions.filter((q) => q.status === 'pending'), [questions]);
-
   // keep a valid rail selection
   useEffect(() => {
     if (!pendingQs.some((q) => q.id === selQ)) setSelQ(pendingQs[0]?.id ?? null);
   }, [pendingQs, selQ]);
 
   // keyboard: j/k rail nav · y/n permission · 1-9 choice · c compose · Esc close
-  useEffect(() => {
-    const onKey = (e) => {
-      const tag = (e.target.tagName || '').toLowerCase();
-      const typing = tag === 'input' || tag === 'textarea' || tag === 'select';
-      // Esc NEVER touches the live terminal — the agent's TUI needs it. The
-      // modal stops propagation itself; this guard covers stray focus too.
-      if (e.key === 'Escape') {
-        if (termOpen.current) return;
-        // the kill dialog is modal over everything else: Esc cancels IT, and
-        // leaves the drawer it may have been opened from standing
-        if (killOpen.current) { setKillAsk(null); return; }
-        setDrawerSid(null); setCompose(null); setSpawnForm(null); setLanOpen(false);
-        setWtOpen(false);
-        return;
-      }
-      if (typing) return;
-      const idx = pendingQs.findIndex((q) => q.id === selQ);
-      if (e.key === 'j' || e.key === 'ArrowDown') {
-        e.preventDefault();
-        if (pendingQs.length) setSelQ(pendingQs[Math.min(pendingQs.length - 1, Math.max(0, idx) + (idx < 0 ? 0 : 1))].id);
-      } else if (e.key === 'k' || e.key === 'ArrowUp') {
-        e.preventDefault();
-        if (pendingQs.length) setSelQ(pendingQs[Math.max(0, (idx < 0 ? 0 : idx) - 1)].id);
-      } else if (e.key === 'c') {
-        e.preventDefault();
-        setCompose({ target: 'all' });
-      } else {
-        const q = pendingQs[idx];
-        if (!q) return;
-        // M-F6 — reach the selected card through its registered imperative
-        // handle, not document.querySelector('.fd-allow') etc. A renamed CSS
-        // class can no longer silently kill y/n/1-9.
-        const h = getQuestion(q.id);
-        if (!h) return;
-        if (q.kind === 'permission' && e.key === 'y') h.allow?.();
-        else if (q.kind === 'permission' && e.key === 'n') h.deny?.();
-        else if (q.kind === 'choice' && /^[1-9]$/.test(e.key)) h.choose?.(Number(e.key));
-        else if (q.kind === 'freeform' && e.key === 'Enter') { h.focusInput?.(); e.preventDefault(); }
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [pendingQs, selQ]);
+  useBoardHotkeys({
+    pendingQs, selQ, setSelQ, termOpen, killOpen,
+    setKillAsk, setDrawerSid, setCompose, setSpawnForm, setLanOpen, setWtOpen,
+  });
 
   const stale = status !== 'live';
   const liveN = sessions.filter((s) => s.col !== 'offline').length;
   // v1.2 spawn capability — ALL spawn UI hides when unavailable
   const spawnCap = snap.spawn || null;
   const spawnAvailable = !!spawnCap?.available;
-  const conflicts = snap.conflicts || EMPTY_ARR;
-  const byId = new Map(sessions.map((s) => [s.session_id, s]));
-  const csOf = (sid) => byId.get(sid)?.callsign || sid;
+  // Fix D — manual cleanup: the Clear button only appears when there is an
+  // offline card to clear.
+  const hasOffline = sessions.some((s) => s.col === 'offline');
 
   // Prefer the daemon's callsigns: it resolves them from EVERY session, so a
   // conflict whose participants have since been archived still reads
   // `comet-2d9d × ember-fc8e` instead of shouting two raw uuids at you.
   const conflictMsg = conflicts.length
     ? conflicts.map((c) => {
-      const who = c.callsigns?.length ? c.callsigns : (c.sessions || []).map(csOf);
+      const who = c.callsigns?.length ? c.callsigns : (c.sessions || []).map((sid) => callsignOf(byId, sid));
       return `${basename(c.file || c.rel_path)} — ${who.join(' × ')}`;
     }).join('   ·   ')
     : null;
@@ -220,8 +139,8 @@ export default function App() {
     ? conflicts.filter((c) => (c.sessions || []).includes(drawerSid)).map((c) => c.file || c.rel_path)
     : [];
   const drawerTimeline = drawerSession
-    ? (snap.ticker || []).filter((e) => String(e.msg || '').includes(drawerSession.callsign)).slice(0, 12)
-    : [];
+    ? sessionTicker(snap.ticker || EMPTY_ARR, drawerSession.callsign)
+    : EMPTY_ARR;
 
   const recordThread = (target, text) => {
     if (byId.has(target)) {
@@ -231,192 +150,6 @@ export default function App() {
 
   // v1.3 plan library — hidden entirely when the daemon doesn't send `plans`
   const plans = Array.isArray(snap.plans) ? snap.plans : null;
-
-  // Fix D — manual cleanup. The button only appears when there is something
-  // to clear (an offline card); the daemon archives offline sessions, expires
-  // their mail/questions, kills dead scoped panes, and LISTS (never deletes)
-  // orphaned worktrees for the human to remove.
-  const hasOffline = sessions.some((s) => s.col === 'offline');
-  // one strip, many reporters (Clear, revive, remote): ms=0 stays until dismissed.
-  // Stable identity (refs + setters only) so the memoized action reporters below
-  // don't churn every render.
-  const showNote = useCallback((note, ms) => {
-    clearTimeout(clearTimer.current);
-    setClearNote(note);
-    if (ms) clearTimer.current = setTimeout(() => setClearNote(null), ms);
-  }, []);
-  const doClear = async () => {
-    if (clearing) return;
-    setClearing(true);
-    const res = await cleanup();
-    if (res.ok && res.json?.ok !== false) {
-      const j = res.json || {};
-      const orphans = Array.isArray(j.orphan_worktrees) ? j.orphan_worktrees : [];
-      const msg = `cleared ${j.archived ?? 0} offline · ${j.conflicts_cleared ?? 0} conflicts`
-        + ` · ${(j.questions_purged ?? 0) + (j.questions_expired ?? 0)} questions`
-        + ` · ${j.mail_expired ?? 0} mail · ${j.windows_killed ?? 0} windows · feed wiped`;
-      // orphan paths need reading time — that strip stays until dismissed
-      showNote({ msg, orphans }, orphans.length ? 0 : 8000);
-    } else {
-      showNote({ err: reasonOf(res, `clear failed (${res.status})`) }, 8000);
-    }
-    setClearing(false);
-  };
-  useEffect(() => () => clearTimeout(clearTimer.current), []);
-
-  // v1.5 — revive dead board-spawned agents (spawn.revivable). Success is
-  // silent: the daemon moves the card to QUEUED ("reviving…") and it flips live
-  // on the resumed session's first hook. Only failures hit the strip. The POST +
-  // in-flight guard live in useSpawnActions; this is just the card-chip reporter.
-  const doRevive = useCallback((s) => {
-    revive(s, (r) => {
-      if (!r.ok) showNote({ hd: '✗ REVIVE', err: `${s.callsign || s.spawn?.spawn_id} — ${r.reason}` }, 8000);
-    });
-  }, [revive, showNote]);
-  // Revive all (OFFLINE column head): sequential POSTs, one summary note.
-  const doReviveAll = useCallback((list) => {
-    reviveAll(list, ({ okN, total, fails }) => {
-      if (fails.length === 0) {
-        showNote({ hd: '✓ REVIVE', msg: `revived ${okN}/${total} — cards move to QUEUED` }, 8000);
-      } else {
-        // failure reasons need reading time — stays until dismissed
-        showNote({ hd: '✗ REVIVE', err: `revived ${okN}/${total} — ${fails.join('  ·  ')}` }, 0);
-      }
-    });
-  }, [reviveAll, showNote]);
-
-  // v1.6 — put a board-spawned agent on remote control (card chip; the drawer's
-  // OWNED PANE button reports inline instead, off the SAME shared POST). Success
-  // surfaces on the strip — with the claude.ai link when the harvest beat the
-  // response (and only when safeUrl vouches for it — M-S1). Failures (409
-  // mid-turn races, dead pane) surface the reason.
-  const doEnableRemote = useCallback((s) => {
-    const label = s.callsign || s.spawn?.spawn_id;
-    enableRemoteAction(s, (r) => {
-      if (!r.ok) {
-        showNote({ hd: '✗ REMOTE', err: `${label} — ${r.reason}` }, 8000);
-        return;
-      }
-      const url = safeUrl(r.url);
-      if (url) {
-        // the link needs reading/tapping time — stays until dismissed
-        showNote({ hd: '✓ REMOTE', msg: `${label} on remote control —`, url }, 0);
-      } else {
-        showNote({
-          hd: '✓ REMOTE',
-          msg: `${label} on remote control — ${r.pending
-            ? 'still harvesting the claude.ai link; it lands on the card chip'
-            : 'claude.ai link not captured — check the agent’s terminal (▣)'}`,
-        }, 8000);
-      }
-    });
-  }, [enableRemoteAction, showNote]);
-
-  // v1.8 — kill a board-spawned agent. The card chip and the drawer button
-  // only ASK (this opens the dialog); the POST fires from the dialog's hazard
-  // button alone. Success is quiet on the board itself — the card goes OFFLINE
-  // on the next snapshot — so the strip carries the confirmation, and every
-  // refusal (409 not-offline, 410 gone, 404 unknown) reaches it verbatim.
-  const askKill = useCallback((s) => {
-    if (!s?.spawn?.spawn_id) return;
-    setKillAsk({
-      spawnId: s.spawn.spawn_id,
-      callsign: s.callsign || s.session_id,
-      window: s.spawn.tmux_window || '',
-      alive: s.col !== 'offline',
-    });
-  }, []);
-  const doKill = async () => {
-    if (!killAsk || killBusy) return;
-    const { spawnId, callsign, alive } = killAsk;
-    setKillBusy(true);
-    // force:true is REQUIRED for a card that isn't offline — the daemon 409s
-    // otherwise. `alive` is exactly that condition (see the dialog's warning).
-    const res = await killSpawn(spawnId, alive);
-    if (res.ok && res.json?.ok !== false) {
-      showNote({ hd: '✓ KILLED', msg: `${callsign} — pane killed · worktree and branch left on disk` }, 8000);
-    } else {
-      // res.reason is the daemon's reason (null when it sent none) — status
-      // gives the fallback sentence; a network drop reads "daemon unreachable".
-      const reason = res.reason;
-      const msg =
-        res.status === 409 ? (reason || 'refused — session is not offline (409)')
-        : res.status === 410 ? (reason || 'window already gone (410)')
-        : res.status === 404 ? (reason || 'unknown spawn (404)')
-        : (reason || `kill failed (${res.status})`);
-      showNote({ hd: '✗ KILL', err: `${callsign} — ${msg}` }, 8000);
-    }
-    setKillBusy(false);
-    setKillAsk(null);
-  };
-
-  // v1.9 — worktrees. The daemon runs git per row to answer this, so the board
-  // does NOT poll it on a timer: it reads once at boot, again whenever the fleet
-  // gains or loses a session (a spawn creates a worktree; a death strands one),
-  // and on every open/refresh/removal from the modal. A 404 means this daemon
-  // predates the endpoint — we latch that and hide the affordance entirely
-  // rather than leaving a button that leads nowhere.
-  const loadWorktrees = useCallback(async () => {
-    if (wtGone.current) return;
-    setWtLoading(true);
-    try {
-      const res = await fetchWorktrees();
-      if (res.status === 404) {
-        wtGone.current = true;
-        setWtSupported(false);
-        setWorktrees([]);
-        setWtErr(null);
-      } else if (res.ok && res.json?.ok !== false && Array.isArray(res.json?.worktrees)) {
-        setWorktrees(res.json.worktrees);
-        setWtErr(null);
-      } else if (res.status !== 401) {
-        // 401 is the token gate's business, not ours
-        setWtErr(reasonOf(res, `could not list worktrees (${res.status})`));
-      }
-    } finally {
-      setWtLoading(false);
-    }
-  }, []);
-  useEffect(() => { loadWorktrees(); }, [loadWorktrees, sessions.length]);
-
-  // The POST only. The modal owns the confirmation that precedes force:true and
-  // shows the daemon's refusal verbatim; this just reports the outcome back.
-  const doRemoveWorktree = async (path, opts) => {
-    const res = await removeWorktree(path, opts);
-    if (res.ok && res.json?.ok !== false) return { ok: true, json: res.json };
-    return { ok: false, reason: reasonOf(res, `remove failed (${res.status})`) };
-  };
-
-  const wtCount = Array.isArray(worktrees) ? worktrees.length : 0;
-  const wtHazard = (worktrees || []).some((w) => w.verdict === 'has-work' || w.verdict === 'unknown');
-
-  // v1.4 — open the live terminal for a board-spawned session. useCallback so the
-  // card lane's props stay stable (M-P4); termIdentity is at module scope.
-  const openTerm = useCallback((s) => {
-    if (!spawnTermable(s)) return;
-    setGrid(null); // the modal and the wall are one keyboard; never both
-    setTerm(termIdentity(s));
-  }, []);
-
-  // v1.9 — the wall of screens. Only board-spawned panes exist to be watched: a
-  // plain `claude` in your own terminal has no pane the daemon owns.
-  const termableSessions = sessions.filter(spawnTermable);
-  const watchable = termableSessions.filter((s) => watch.has(s.session_id));
-  const toggleWatch = useCallback((s) => {
-    if (!spawnTermable(s)) return;
-    setWatch((prev) => {
-      const next = new Set(prev);
-      if (next.has(s.session_id)) next.delete(s.session_id);
-      else next.add(s.session_id);
-      return next;
-    });
-  }, []);
-  const openGrid = (list) => {
-    const tiles = (list && list.length ? list : termableSessions).filter(spawnTermable).map(termIdentity);
-    if (!tiles.length) return;
-    setTerm(null);
-    setGrid(tiles);
-  };
 
   // Execute plan → spawn form prefilled per contract; cwd from a live
   // session worktree of the plan's repo when one exists.
@@ -458,97 +191,35 @@ export default function App() {
     // the memoized board below skips because none of its props changed.
     <ClockContext.Provider value={now}>
     <div className={`fd${compact ? ' compact' : ''}${stale ? ' stale' : ''}`}>
-      {/* ============ header ============ */}
-      <div className="fd-header">
-        <div className="fd-wordmark">FLEET&nbsp;DECK&nbsp;⚡</div>
-        <div className={`fd-wspill ${status}`}>
-          <span className="dot" />
-          {WS_LABEL[status]}
-        </div>
-        {stale && <div className="fd-stale">showing last known state</div>}
-        {pendingQs.length > 0 && (
-          <button
-            type="button"
-            className="fd-needschip"
-            title="Jump to the inbox"
-            onClick={() => { getQuestion((pendingQs[0] || {}).id)?.scrollIntoView?.(); }}
-          >
-            NEEDS YOU · {pendingQs.length}
-          </button>
-        )}
-        <div className="fd-spacer" />
-        <div className="fd-fleetline">
-          {liveN} session{liveN === 1 ? '' : 's'} · {conflicts.length} conflict{conflicts.length === 1 ? '' : 's'}
-        </div>
-        <div className="fd-clock">{hhmmss(now)}</div>
-        <button type="button" className="fd-hbtn" onClick={() => setCompose({ target: 'all' })}>
-          ✉ Compose <span className="fd-kbd">c</span>
-        </button>
-        {/* v1.9 the wall of screens. Ticked agents if you ticked any, otherwise
-            every live pane — so "just show me everything" is one click. */}
-        {termableSessions.length > 0 && (
-          <button
-            type="button"
-            ref={termBtnRef}
-            className="fd-hbtn"
-            title={watchable.length
-              ? `Watch the ${watchable.length} selected agent${watchable.length === 1 ? '' : 's'}`
-              : `Watch all ${termableSessions.length} live agent${termableSessions.length === 1 ? '' : 's'}`}
-            onClick={() => openGrid(watchable)}
-          >
-            ▦ Terminals
-            <span className="fd-spawncount">{watchable.length || termableSessions.length}</span>
-          </button>
-        )}
-        {spawnAvailable && (
-          <button type="button" className="fd-hbtn" onClick={() => setSpawnForm({})}>
-            + Spawn
-            {(spawnCap.active || 0) > 0 && (
-              // A count, not a budget — there is no cap on the fleet size.
-              <span className="fd-spawncount" title={`${spawnCap.active} board-spawned agents live`}>{spawnCap.active} live</span>
-            )}
-          </button>
-        )}
-        {hasOffline && (
-          <button type="button" className="fd-hbtn" disabled={clearing} onClick={doClear}>
-            ⌫ {clearing ? 'Clearing…' : 'Clear'}
-          </button>
-        )}
-        {/* v1.9 — worktrees left behind by spawns. Always offered (an empty
-            modal explains where they come from); hidden only on a daemon whose
-            /api/worktrees 404s. The badge turns hazard when any row holds work
-            nobody has pushed: that is the fact you want to see from the header. */}
-        {wtSupported && (
-          <button
-            type="button"
-            className="fd-hbtn"
-            title="Git worktrees left behind by spawns"
-            onClick={() => { setWtOpen(true); loadWorktrees(); }}
-          >
-            ⑂ Worktrees
-            {wtCount > 0 && (
-              <span className={`fd-wtbadge${wtHazard ? ' haz' : ''}`}>{wtCount}</span>
-            )}
-          </button>
-        )}
-        {/* v1.7 — always offered: when LAN is off the panel is where you learn
-            how to turn it on, so it must not hide precisely when it's needed */}
-        <button
-          type="button"
-          className="fd-hbtn"
-          title="Open this board on another device"
-          onClick={() => setLanOpen(true)}
-        >
-          ⇄ Share
-          {snap.lan?.enabled && <span className="fd-landot" aria-label="LAN mode on" />}
-        </button>
-        <button type="button" className="fd-hbtn dim" aria-label="Toggle density" onClick={() => setCompact(!compact)}>
-          {compact ? '▤ Cozy' : '▦ Compact'}
-        </button>
-        <button type="button" className="fd-hbtn dim" aria-label="Toggle theme" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>
-          {theme === 'dark' ? '☀ Light' : '● Dark'}
-        </button>
-      </div>
+      <Header
+        status={status}
+        stale={stale}
+        pendingQs={pendingQs}
+        liveN={liveN}
+        conflictCount={conflicts.length}
+        now={now}
+        onCompose={() => setCompose({ target: 'all' })}
+        termableSessions={termableSessions}
+        watchable={watchable}
+        termBtnRef={termBtnRef}
+        onOpenGrid={openGrid}
+        spawnAvailable={spawnAvailable}
+        spawnActive={spawnCap?.active || 0}
+        onSpawn={() => setSpawnForm({})}
+        hasOffline={hasOffline}
+        clearing={clearing}
+        onClear={doClear}
+        wtSupported={wtSupported}
+        wtCount={wtCount}
+        wtHazard={wtHazard}
+        onOpenWorktrees={() => { setWtOpen(true); loadWorktrees(); }}
+        lanEnabled={snap.lan?.enabled}
+        onShare={() => setLanOpen(true)}
+        compact={compact}
+        onToggleCompact={() => setCompact(!compact)}
+        theme={theme}
+        onToggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+      />
 
       {/* ============ conflict strip ============ */}
       {conflictMsg && (

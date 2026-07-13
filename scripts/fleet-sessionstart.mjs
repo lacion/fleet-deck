@@ -14,6 +14,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { CLAUDE_ENV_MARKERS } from './fleetd/env-scrub.mjs';
 
 const PORT = Number(process.env.FLEETDECK_PORT || 4711);
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -56,16 +57,13 @@ async function api(pathname, { method = 'GET', body, timeout = 400 } = {}) {
 // default server with a test FLEETDECK_PORT/HOME). This hook runs INSIDE a
 // Claude session, so scrub the session markers before boot. Deliberately does
 // NOT scrub FLEETDECK_* tuning knobs — tests/demos pass those through here on
-// purpose. Keep the marker list in sync with the spawn() scrub in
-// fleetd/derive.mjs.
+// purpose. The shared Claude/agent marker list lives in fleetd/env-scrub.mjs
+// (imported by the spawn() scrub in fleetd/helpers.mjs too, so the two can
+// never drift); TMUX/TMUX_PANE are this hook's own context-specific additions.
 function bootEnv() {
   const env = { ...process.env, FLEETDECK_PORT: String(PORT), FLEETDECK_HOME: HOME };
   for (const k of [
-    'CLAUDECODE', 'CLAUDE_CODE_SESSION_ID', 'CLAUDE_CODE_CHILD_SESSION',
-    'CLAUDE_CODE_BRIDGE_SESSION_ID', 'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_CODE_EXECPATH',
-    'CLAUDE_ENV_FILE', 'CLAUDE_PROJECT_DIR', 'CLAUDE_PLUGIN_ROOT', 'CLAUDE_PLUGIN_DATA',
-    'CLAUDE_EFFORT', 'AI_AGENT', 'CODEX_COMPANION_TRANSCRIPT_PATH',
-    'CODEX_COMPANION_SESSION_ID', 'TMUX', 'TMUX_PANE',
+    ...CLAUDE_ENV_MARKERS, 'TMUX', 'TMUX_PANE',
   ]) delete env[k];
   return env;
 }

@@ -225,6 +225,58 @@ export function boardCol(col) {
   return COLS.some((c) => c.key === col) ? col : 'idle';
 }
 
+// The pulse-dot class for a session's column — the amber "working" glow, the
+// verifying tint, the needsyou amber, the offline grey, or the resting "still".
+// SessionCard's dot and the Drawer head both render this off `s.col`; one chain
+// here so the two surfaces can never drift apart (D12).
+export function colPulse(col) {
+  if (col === 'working') return 'working';
+  if (col === 'verifying') return 'verifying';
+  if (col === 'needsyou') return 'needsyou';
+  if (col === 'offline') return 'offline';
+  return 'still';
+}
+
+// A session's worktree is only worth badging when it is a REAL secondary
+// worktree: the daemon records worktree = toplevel of cwd even for the main
+// tree, so a worktree whose basename equals the repo name is just "main" and
+// gets no chip. Returns the short worktree name to show, or null (D12: was
+// inlined identically in SessionCard and the Drawer).
+export function worktreeLabel(s) {
+  return s.worktree && basename(s.worktree) !== s.repo_name ? basename(s.worktree) : null;
+}
+
+// The session lookup every surface rebuilds: session_id → session. Built fresh
+// from the current snapshot — sessions are replaced wholesale each frame, so
+// there is nothing to memo across frames beyond what the caller already does
+// (D12: App, BoardLanes and Inbox each open-coded this Map).
+export function sessionsById(sessions) {
+  return new Map(sessions.map((s) => [s.session_id, s]));
+}
+
+// Prefer a session's callsign, falling back to the raw id when the session has
+// been archived out of the snapshot — used wherever a conflict/mail names a sid
+// the board may no longer be showing.
+export function callsignOf(byId, sid) {
+  return byId.get(sid)?.callsign || sid;
+}
+
+// The drawer's per-session timeline: the daemon's global ticker filtered to the
+// rows that name this callsign, capped at the newest 12. The ticker carries only
+// {at, msg}, so the match is by substring — the same convention the feed
+// classifier relies on.
+export function sessionTicker(ticker, callsign) {
+  return (ticker || [])
+    .filter((e) => String(e.msg || '').includes(callsign))
+    .slice(0, 12);
+}
+
+// The one sentence the board repeats wherever a message won't be delivered
+// instantly: it rides the agent's turn loop, so it lands at the next boundary.
+// Quoted verbatim across Compose/Inbox/Drawer/PlanLibrary — one constant so the
+// copy stays identical and changes in a single place (D12).
+export const TURN_BOUNDARY_HINT = 'next turn boundary — idle sessions usually wake within seconds';
+
 // Ticker rows are {at, msg} only — the tag is derived from the daemon's
 // message conventions (derive.mjs / questions.mjs tick() calls).
 export function classifyTicker(msg) {
