@@ -22,8 +22,10 @@ const BUNDLE_SKIP = process.env.FLEETDECK_TEST_DAEMON_SCRIPT
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
+const WAIT_SCALE = Number(process.env.FLEETDECK_TEST_WAIT_SCALE) || 1;
+
 async function waitUntil(predicate, label, timeoutMs = 5000) {
-  const deadline = Date.now() + timeoutMs;
+  const deadline = Date.now() + timeoutMs * WAIT_SCALE;
   while (Date.now() < deadline) {
     const value = predicate();
     if (value) return value;
