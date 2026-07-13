@@ -18,6 +18,29 @@ import * as defaultTmuxAdapter from './spawn.mjs';
 
 const CALLSIGNS = ['falcon', 'otter', 'raven', 'lynx', 'orca', 'wren', 'viper', 'heron', 'badger', 'comet', 'ember', 'drift'];
 const CONFLICT_WINDOW_MS = 30 * 60 * 1000;
+// BUG 4: mail is pasted VERBATIM into a tmux paste-buffer, so it must stay
+// bounded — but the old 500-char clamp silently truncated real messages (it
+// cut the very bug report that surfaced these bugs to 500 chars) and reported
+// {ok:true, delivered:1} as if nothing had been lost. 4 KB leaves room for a
+// paragraph or a short stack trace while keeping the tmux buffer sane; the mail
+// path now returns a `truncated` flag + the original length so POST /mail can
+// tell the sender the truth instead of quietly dropping the tail.
+const MAIL_MAX_LEN = 4000;
+// BUG 6: .slice() cuts by UTF-16 code UNIT, so a clamp landing between the two
+// halves of an astral character (emoji, CJK extension B, …) keeps a lone high
+// surrogate at the tail — a malformed, unpasteable string. Clamp to at most
+// MAIL_MAX_LEN code units, then drop a trailing UNPAIRED high surrogate (its
+// low-surrogate partner was the code unit we cut off, so it is guaranteed
+// orphaned). The reported length semantics are UNCHANGED and code-unit-based:
+// `original_length` stays raw.length and truncation is still `raw.length >
+// MAIL_MAX_LEN` — only the STORED body loses the half-character (so a clamped
+// astral message stores MAIL_MAX_LEN-1 units, never a broken surrogate).
+function clampMail(raw) {
+  if (raw.length <= MAIL_MAX_LEN) return raw;
+  const cut = raw.slice(0, MAIL_MAX_LEN);
+  const last = cut.charCodeAt(cut.length - 1);
+  return (last >= 0xd800 && last <= 0xdbff) ? cut.slice(0, -1) : cut;
+}
 const EDIT_TOOLS = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'];
 const TEST_RUNNER_RE = /\b(pytest|jest|vitest|go test|cargo test|npm (run )?test)\b/; // spike regex, verbatim
 
@@ -216,7 +239,22 @@ export function createCore(db, {
     spawnBySession: db.prepare('SELECT * FROM spawns WHERE session_id = ? ORDER BY requested_at DESC, rowid DESC LIMIT 1'),
     allSpawns: db.prepare('SELECT * FROM spawns ORDER BY requested_at, rowid'),
     activeSpawns: db.prepare("SELECT * FROM spawns WHERE status IN ('spawning', 'stalled', 'live')"),
+    // BUG 3: 'pane-dead' and 'gone' were a ONE-WAY DOOR — activeSpawns never
+    // re-checked them, so a spawn wrongly condemned (BUG 1 /clear, BUG 2
+    // silence, or a transient tmux misread) stayed dead on the board forever
+    // even while its pane kept running claude. The liveness tick re-checks
+    // these against tmux and RESURRECTS any whose window is a live claude.
+    // 'killed' is deliberately absent: a human kill is a decision, not a
+    // mistake, and must stay killed.
+    resurrectableSpawns: db.prepare("SELECT * FROM spawns WHERE status IN ('pane-dead', 'gone')"),
     activeSpawnBySession: db.prepare("SELECT * FROM spawns WHERE session_id = ? AND status IN ('spawning', 'stalled', 'live') ORDER BY requested_at DESC, rowid DESC LIMIT 1"),
+    // HIGH (revive single-flight): activeSpawnBySession deliberately EXCLUDES
+    // 'provisioning' (a provisional row is not yet a live-eligible spawn). But
+    // revive()'s duplicate-guard must ALSO see a provisioning row: a revive
+    // inserts its durable row 'provisioning' before the pane is up, and a
+    // second revive arriving while the first is still bringing that pane up
+    // must be refused, not allowed to launch a second pane for the one session.
+    provisioningSpawnBySession: db.prepare("SELECT * FROM spawns WHERE session_id = ? AND status = 'provisioning' ORDER BY requested_at DESC, rowid DESC LIMIT 1"),
     countActiveSpawns: db.prepare("SELECT COUNT(*) AS n FROM spawns WHERE status IN ('spawning', 'stalled', 'live')"),
     setSpawnStatus: db.prepare('UPDATE spawns SET status = ? WHERE spawn_id = ?'),
     setSpawnRemote: db.prepare('UPDATE spawns SET remote_control = 1, remote_url = ? WHERE spawn_id = ?'),
@@ -384,8 +422,13 @@ export function createCore(db, {
   }
 
   // ------------------------------------------------------------------- mail
+  // BUG 4: returns {truncated, original_length} so callers that surface a
+  // delivery receipt (postMail → POST /mail) can tell the sender when the tail
+  // was cut. The clamp itself lives here so every mail entry point — board
+  // mail, orchestrator routing, question relays — is bounded identically.
   function mail(toSession, from, text) {
-    q.insertMail.run(toSession, from, String(text ?? '').slice(0, 500), Date.now());
+    const raw = String(text ?? '');
+    q.insertMail.run(toSession, from, clampMail(raw), Date.now()); // BUG 6: surrogate-safe clamp
     // v1.1 mail-wake: ANY mail landing in the mailbox wakes any /api/watch
     // long-poll for that session — board answers, [FLEETDECK ASSIGNMENT]
     // routing and plain board/session mail alike (v1 nudged only on
@@ -398,6 +441,7 @@ export function createCore(db, {
       tryOwnedPaneDelivery(toSession).catch(() => { /* fail-open; mail stays pending */ });
     }, PANE_MAIL_GRACE_MS);
     timer.unref?.();
+    return { truncated: raw.length > MAIL_MAX_LEN, original_length: raw.length };
   }
 
   function drainMail(sid) {
@@ -637,10 +681,24 @@ export function createCore(db, {
         tick(`${c.callsign} finished a turn`);
         break;
       case 'SessionEnd':
-        set.col = 'offline';
-        set.ended_at = Date.now();
-        set.note = 'session ended' + (ev.reason ? ` (${ev.reason})` : '');
-        tick(`${c.callsign} left the fleet`);
+        // BUG 1: Claude Code fires SessionEnd with reason='clear' when the
+        // human runs /clear — but the session STAYS LIVE: same session_id, the
+        // pane keeps running claude, and no SessionStart follows. Treating that
+        // as a real end tombstones a live card (and hookSessionEnd would then
+        // condemn its live pane 'pane-dead'), so the board loses the terminal
+        // button for an agent that is right there working. A /clear is NOT an
+        // end: leave col/ended_at untouched (last_seen was already bumped above
+        // — the clear proves liveness, which also resets BUG 2's silence clock)
+        // and only reflect it in the note. Every real end reason still ends.
+        if (ev.reason === 'clear') {
+          set.note = 'context cleared (/clear) — still live';
+          tick(`🧹 ${c.callsign} ran /clear — context reset, session still live`);
+        } else {
+          set.col = 'offline';
+          set.ended_at = Date.now();
+          set.note = 'session ended' + (ev.reason ? ` (${ev.reason})` : '');
+          tick(`${c.callsign} left the fleet`);
+        }
         break;
       default:
         set.note = ev.hook_event_name;
@@ -848,23 +906,37 @@ export function createCore(db, {
   // SessionEnd: THE tombstone — pending hold-kind questions die with it;
   // freeform questions outlive the session (answer deliverable on --resume).
   function hookSessionEnd(ev) {
+    const sid = ev.session_id || 'unknown';
     applyEvent({ ...ev, hook_event_name: 'SessionEnd' });
-    questions.expireAllForSession(ev.session_id || 'unknown');
-    modelMemo.delete(ev.session_id || 'unknown'); // a revive re-stamps the floor at its SessionStart
+    // BUG 1: a /clear (reason='clear') is NOT a session end — see the guarded
+    // SessionEnd case in applyEvent above, which keeps the card live. Mirror
+    // that here: do NOT mark the pane 'pane-dead' and do NOT drop the model
+    // memo (same session_id, same transcript, still running). The terminal
+    // wiped whatever hold-kind question was drawn there, so those live holds
+    // are expired (they'd otherwise wait forever on a prompt that is gone);
+    // freeform rows survive — they are the human's queue.
+    questions.expireAllForSession(sid);
+    if (ev.reason === 'clear') {
+      // F3d-2: still wake watchers so a poll re-checks, but the session is
+      // deliberately left live — pane and card untouched.
+      notifyWatchers(sid);
+      return {};
+    }
+    modelMemo.delete(sid); // a revive re-stamps the floor at its SessionStart
     // v1.2: SessionEnd on a spawned session does NOT kill its pane — the
     // human may want the scrollback (CONTRACT). It just updates the row: the
     // pane no longer hosts a live claude session, so it stops counting as live
     // right now (the ~10 s liveness tick would reach the same verdict once the
     // pane's claude exits, but under the FLEETDECK_SPAWN_CMD override there is
     // no pane to observe at all — this direct update is the only path there).
-    const sp = q.spawnBySession.get(ev.session_id || 'unknown');
+    const sp = q.spawnBySession.get(sid);
     if (sp && (sp.status === 'spawning' || sp.status === 'stalled' || sp.status === 'live')) {
       q.setSpawnStatus.run('pane-dead', sp.spawn_id);
       forgetSpawn(sp.spawn_id); // M-G2: terminal-ish — drop nudge/harvest ephemera
     }
     // F3d-2: wake any /api/watch long-poll so its watcher sees
     // session_alive:false and exits now instead of at its hold timeout.
-    notifyWatchers(ev.session_id || 'unknown');
+    notifyWatchers(sid);
     return {};
   }
 
@@ -1534,15 +1606,65 @@ export function createCore(db, {
   const RC_URL_RE = /https:\/\/claude\.ai\/\S+/;
   const registrationRemoteHarvests = new Map();
 
+  // HIGH (revive single-flight): the SYNCHRONOUS claim that makes revive()
+  // single-flight per session. revive() crosses async awaits (window
+  // inspection, kill) before it inserts its provisional owner row, so two
+  // near-simultaneous revives for one session could BOTH pass the DB guard and
+  // BOTH launch a pane. A revive checks-and-adds its session id here with NO
+  // await in between, so the second revive is refused (409) until the first
+  // settles (the try/finally in revive always releases it). Scoped to this
+  // core; a restart naturally clears it (a mid-flight revive is a provisioning
+  // row that boot reconciliation settles).
+  const revivingSessions = new Set();
+
+  // BUG 3 (condemn hysteresis): consecutive dead-read counter per spawn, keyed
+  // by spawn_id. The liveness tick requires CONDEMN_DEAD_READS consecutive dead
+  // reads before it flips a LIVE spawn 'pane-dead', so a single transient dead
+  // read (a momentary tmux glitch / split-pane flap) cannot condemn a card the
+  // resurrect loop would only flip back next tick. Cleared on any live read and
+  // on every terminal transition (forgetSpawn), so it never carries stale.
+  const condemnStreak = new Map();
+
   // M-G2: per-spawn in-memory ephemera (the bring-up nudge dedupe set and the
   // registration remote-harvest promise) used to be cleared on no terminal
   // path at all, leaking one entry per spawn for the daemon's life. Drop them
   // on EVERY terminal spawn transition (kill / gone / pane-dead / spawn-fail /
   // reconciliation). modelMemo is keyed by session, not spawn, and is cleared
-  // alongside session-terminal transitions.
+  // alongside session-terminal transitions. condemnStreak (BUG 3) rides along:
+  // a spawn that just went terminal has no live streak to remember.
   function forgetSpawn(spawn_id) {
     nudged.delete(spawn_id);
     registrationRemoteHarvests.delete(spawn_id);
+    condemnStreak.delete(spawn_id);
+  }
+
+  // BUG 3: restore a spawn that tmux just proved is a live claude after it was
+  // wrongly condemned to 'pane-dead'/'gone' (a /clear tombstone, a 3h-silence
+  // presume-dead, a transient tmux misread). Flip the row back 'live' and lift
+  // the card off the offline shelf — clear ended_at/archived_at and re-derive a
+  // live lane — so the board shows the terminal again. 'idle' reflects a live
+  // claude sitting at its prompt; the next real hook refines col/note. Shared
+  // by the liveness tick (automatic, next poll) and revive() (human-driven,
+  // immediate). The caller has already confirmed pane_dead=0 and
+  // pane_current_command='claude' AND that no newer row owns the window.
+  function resurrectSpawn(row) {
+    q.setSpawnStatus.run('live', row.spawn_id);
+    const c = q.getSession.get(row.session_id);
+    updateSession(row.session_id, {
+      col: 'idle', ended_at: null, archived_at: null,
+      // BUG 4: a card condemned while it was 'spawn_stalled'/'permission_prompt'
+      // must not come back wearing a stale needs-you reason chip — clear
+      // notification_type. And a resurrected card IS being seen right now, so
+      // refresh last_seen: it is 'idle' at its prompt, not silent since death
+      // (otherwise the very next retention sweep could presume it dead again on
+      // the pre-death last_seen).
+      notification_type: null, last_seen: Date.now(),
+      note: 'pane is a live claude — restored to the board',
+    });
+    forgetSpawn(row.spawn_id); // drop any stale nudge/harvest ephemera from the death (BUG 3: also clears condemnStreak)
+    tick(`✨ ${c?.callsign ?? row.callsign} restored — its pane was a live claude all along`);
+    notifyWatchers(row.session_id);
+    onMutate();
   }
 
   async function harvestRemote(spawn_id) {
@@ -1553,11 +1675,11 @@ export function createCore(db, {
     const url = typeof text === 'string' ? (text.match(RC_URL_RE)?.[0] ?? null) : null;
     // M-B8: setSpawnRemote/tick/onMutate can throw (SQLITE_BUSY/IOERR, or a bug
     // in a broadcast handler). Harvest runs from an unref timer / detached
-    // promise, so an escaping throw becomes an unhandled rejection — and with
-    // no global process.on('unhandledRejection') handler (that belongs in
-    // fleetd.mjs; see coordination note) it could take the daemon down.
-    // Contain it: a failed harvest just leaves remote_url unset, which the next
-    // /rc attempt or registration hook can retry.
+    // promise, so an escaping throw becomes an unhandled rejection. fleetd.mjs
+    // now installs a global process.on('unhandledRejection') handler that logs
+    // rather than crashing, but we do not lean on it: contain the throw HERE so
+    // a failed harvest just leaves remote_url unset, which the next /rc attempt
+    // or registration hook can retry.
     try {
       q.setSpawnRemote.run(url, spawn_id);
       tick(`📱 ${row.callsign} remote control enabled${url ? '' : ' (URL not found)'}`);
@@ -1777,106 +1899,193 @@ export function createCore(db, {
     // Remote control survives death: inherit the dead row's wish unless the
     // human overrides it on this revive.
     const remoteWanted = body?.remote_control ?? !!row.remote_control;
-    const active = q.activeSpawnBySession.get(row.session_id);
+    // HIGH (revive single-flight), part 1 — the DB guard. A live-eligible OR a
+    // PROVISIONING spawn for this session means someone is already bringing a
+    // pane up; refuse. Including 'provisioning' matters because a revive's own
+    // durable row is 'provisioning' from the instant it is inserted until its
+    // pane is up, so a later revive request cannot slip past a still-in-flight
+    // one (activeSpawnBySession alone would not see it).
+    const active = q.activeSpawnBySession.get(row.session_id)
+      || q.provisioningSpawnBySession.get(row.session_id);
     if (active) {
       return { status: 409, body: { ok: false, reason: `session already has active spawn ${active.spawn_id}` } };
     }
-
-    // H-R7: validate ALL resume eligibility BEFORE touching tmux. Reviving
-    // reuses the deterministic window name, and the old code killed whatever
-    // occupied it and THEN checked cwd/transcript — so a missing transcript
-    // would 410 only AFTER an unrelated pane had already been destroyed.
-    // Prove the resume can actually happen first; only then reconcile the
-    // window.
-    const runCwd = row.worktree_path ?? row.cwd;
-    let st = null;
-    try { st = fs.statSync(runCwd); } catch { /* missing */ }
-    if (!runCwd || !st?.isDirectory()) {
-      return { status: 410, body: { ok: false, reason: 'revive cwd no longer exists' } };
+    // HIGH (revive single-flight), part 2 — the SYNCHRONOUS claim. The DB guard
+    // above cannot stop TWO near-simultaneous revives: both read the same
+    // pre-insert state, both cross the async window inspection below, and both
+    // insert a provisional row + launch a pane → two live panes for one
+    // session. Claim the session id here with no await between the check and
+    // the add, so the second concurrent revive is refused until the first
+    // settles. The try/finally guarantees the claim is released on EVERY exit
+    // (success, refusal, or throw). R2-5 stale-kill protection is untouched —
+    // the provisional owner row is still inserted below before newWindow.
+    if (revivingSessions.has(row.session_id)) {
+      return { status: 409, body: { ok: false, reason: `session ${row.session_id.slice(0, 8)} is already being revived` } };
     }
-    if (!fs.existsSync(claudeTranscriptPath(runCwd, row.session_id))) {
-      return { status: 410, body: { ok: false, reason: 'resume transcript no longer exists' } };
-    }
-
-    // Exact scoped-name collision defense, now that eligibility is proven. A
-    // live Claude pane is ownership proof and must never be duplicated. Only a
-    // pane PROVEN dead, or an expected bare shell (claude exited, leaving the
-    // login shell in a remain-on-exit window), is a safe remnant to remove by
-    // verified name before reusing the window. A live pane running ANYTHING
-    // ELSE (the human repurposed the window) is never destroyed — refuse.
-    const existing = (await tmuxAdapter.listScopedWindows(port)).find(w => w.window === row.tmux_window);
-    if (existing && !existing.pane_dead && existing.pane_cmd === 'claude') {
-      return { status: 409, body: { ok: false, reason: `window ${row.tmux_window} already has a live claude pane` } };
-    }
-    if (existing && !existing.pane_dead && !SHELL_RE.test(existing.pane_cmd)) {
-      return { status: 409, body: { ok: false, reason: `window ${row.tmux_window} hosts a live '${existing.pane_cmd}' pane — not a dead remnant; refusing to kill it` } };
-    }
-    if (existing) {
-      const killed = await tmuxAdapter.killWindowVerified(row.tmux_window);
-      if (!killed.ok && !killed.gone) {
-        return { status: 500, body: { ok: false, reason: killed.error || 'tmux kill-window failed' } };
+    revivingSessions.add(row.session_id);
+    try {
+      // H-R7: validate ALL resume eligibility BEFORE touching tmux. Reviving
+      // reuses the deterministic window name, and the old code killed whatever
+      // occupied it and THEN checked cwd/transcript — so a missing transcript
+      // would 410 only AFTER an unrelated pane had already been destroyed.
+      // Prove the resume can actually happen first; only then reconcile the
+      // window.
+      const runCwd = row.worktree_path ?? row.cwd;
+      let st = null;
+      try { st = fs.statSync(runCwd); } catch { /* missing */ }
+      if (!runCwd || !st?.isDirectory()) {
+        return { status: 410, body: { ok: false, reason: 'revive cwd no longer exists' } };
       }
-    }
-
-    const new_spawn_id = randomUUID();
-    const argv = [...claudeEnvArgvPrefix(port, home), 'claude', '--resume', row.session_id];
-    if (row.skip_permissions) argv.push('--dangerously-skip-permissions');
-    if (remoteWanted) argv.push('--remote-control', row.callsign);
-    const tmux_session = tmuxAdapter.sessionName(port);
-
-    // R2-5: insert the new spawn's durable row as a PROVISIONAL owner of the
-    // reused window name BEFORE the pane is created (the H-R6 pattern, now in
-    // revive too). Reviving reuses the dead row's tmux_window; without a live
-    // owning row, a forced stale-id spawnKill arriving during the newWindow
-    // await would see no current owner (the old row is terminal) — or only that
-    // old row — match the just-revived pane by window name, and kill it,
-    // leaving a 'spawning' row for a dead pane. currentWindowOwner counts
-    // 'provisioning', so the new row owns the window the instant it exists and
-    // any OTHER-id kill is refused. remote_url is deliberately NOT carried over:
-    // the old link died with the old session; a fresh one is harvested from the
-    // revived pane. Flip to 'spawning' (live-eligible) only once the pane is up.
-    q.insertProvisionalSpawn.run(new_spawn_id, row.session_id, row.callsign, tmux_session,
-      row.tmux_window, row.cwd, row.worktree_path, Date.now(), row.skip_permissions ? 1 : 0,
-      remoteWanted ? 1 : 0);
-
-    const override = tmuxAdapter.spawnOverrideCmd();
-    if (override) {
-      tmuxAdapter.launchOverride(override, {
-        spawn_id: new_spawn_id, revive_of: spawn_id,
-        session_id: row.session_id, callsign: row.callsign, port,
-        cwd: runCwd, requested_cwd: row.cwd, prompt: null, model: null,
-        permission_mode: null, worktree_path: row.worktree_path,
-        dangerously_skip_permissions: !!row.skip_permissions,
-        skip_permissions: !!row.skip_permissions,
-        remote_control: remoteWanted,
-        tmux: { session: tmux_session, window: row.tmux_window },
-        argv,
-      }, err => spawnFailed(row.session_id, row.callsign, `spawn override: ${err.message || err}`));
-    } else {
-      try {
-        await tmuxAdapter.ensureSession(port);
-        await tmuxAdapter.newWindow({ port, callsign: row.callsign, cwd: runCwd, argv });
-      } catch (err) {
-        // The pane never launched — settle the provisional row terminal so it
-        // stops owning the window (and is never liveness-checked), then fail.
-        q.setSpawnStatus.run('gone', new_spawn_id);
-        forgetSpawn(new_spawn_id);
-        return { status: 500, body: { ok: false, reason: `tmux revive failed: ${err.message || err}` } };
+      if (!fs.existsSync(claudeTranscriptPath(runCwd, row.session_id))) {
+        return { status: 410, body: { ok: false, reason: 'resume transcript no longer exists' } };
       }
-    }
 
-    // Pane exists (or the override was handed off): flip the durable row
-    // live-eligible ('provisioning' → 'spawning').
-    q.setSpawnStatus.run('spawning', new_spawn_id);
-    updateSession(row.session_id, { archived_at: null, col: 'queued', note: 'reviving…' });
-    tick(`⟲ reviving ${row.callsign} (resume ${row.session_id.slice(0, 8)})`);
-    scheduleNudge(new_spawn_id, row.tmux_window, row.callsign);
-    onMutate();
-    return {
-      status: 200,
-      body: { ok: true, spawn_id: new_spawn_id, session_id: row.session_id, callsign: row.callsign,
-        tmux: { session: tmux_session, window: row.tmux_window } },
-    };
+      // Exact scoped-name collision defense, now that eligibility is proven. A
+      // live Claude pane is ownership proof and must never be duplicated. Only a
+      // pane PROVEN dead, or an expected bare shell (claude exited, leaving the
+      // login shell in a remain-on-exit window), is a safe remnant to remove by
+      // verified name before reusing the window. A live pane running ANYTHING
+      // ELSE (the human repurposed the window) is never destroyed — refuse.
+      const existing = (await tmuxAdapter.listScopedWindows(port)).find(w => w.window === row.tmux_window);
+      if (existing && !existing.pane_dead && existing.pane_cmd === 'claude') {
+        // BUG 3: the deterministic window ALREADY hosts a live claude pane for
+        // this session — it was wrongly condemned (BUG 1 /clear, BUG 2 silence)
+        // while the agent kept running, and the board hid the terminal. A human
+        // clicking Revive here used to hit a dead-end 409 ("already has a live
+        // claude pane") and stay stuck until the next liveness poll. There is
+        // nothing to resume: the pane IS the live session. ADOPT it — resurrect
+        // the row to 'live' and lift the card back onto the board — and return
+        // success so the terminal shows NOW. No tmux launch, no kill: we never
+        // duplicate a live billed session (the same safety the 409 protected).
+        //
+        // MED (adoption must mirror the liveness-tick's resurrection guards):
+        // the tick only resurrects a 'pane-dead'/'gone' row (never 'killed')
+        // AND only when currentWindowOwner still names THAT row. Adoption did
+        // NEITHER, which let two things go wrong:
+        //   (a) a 'killed' row (a human decision) could be flipped back to
+        //       'live' by adoption — breaking "a human kill never resurrects".
+        //   (b) reviving a NON-newest 'pane-dead'/'gone' row whose reused window
+        //       is a live claude could resurrect the OLDER row while a newer
+        //       pane-dead row still outranks it in currentWindowOwner: BOTH end
+        //       up 'live' (countActiveSpawns double-counts) and the adopted row
+        //       becomes un-killable (spawnKill's owner check points at the other
+        //       one). Guard both here before resurrecting.
+        if (row.status !== 'pane-dead' && row.status !== 'gone') {
+          // 'killed': the window hosts a live claude, but a human kill is never
+          // undone by adoption. Refuse rather than resurrect or duplicate.
+          return { status: 409, body: { ok: false, reason: `spawn ${spawn_id} was killed — its window hosts a live claude, but a killed spawn is never resurrected by adoption` } };
+        }
+        const owner = q.currentWindowOwner.get(row.tmux_window);
+        if (owner && owner.spawn_id !== row.spawn_id) {
+          return {
+            status: 409,
+            body: { ok: false, reason: `window ${row.tmux_window} is owned by spawn ${owner.spawn_id} — revive that one`, current_spawn_id: owner.spawn_id },
+          };
+        }
+        resurrectSpawn(row);
+        return {
+          status: 200,
+          body: {
+            ok: true, adopted: true, spawn_id: row.spawn_id, session_id: row.session_id,
+            callsign: row.callsign, tmux: { session: tmuxAdapter.sessionName(port), window: row.tmux_window },
+          },
+        };
+      }
+      if (existing && !existing.pane_dead && !SHELL_RE.test(existing.pane_cmd)) {
+        return { status: 409, body: { ok: false, reason: `window ${row.tmux_window} hosts a live '${existing.pane_cmd}' pane — not a dead remnant; refusing to kill it` } };
+      }
+      if (existing) {
+        const killed = await tmuxAdapter.killWindowVerified(row.tmux_window);
+        if (!killed.ok && !killed.gone) {
+          return { status: 500, body: { ok: false, reason: killed.error || 'tmux kill-window failed' } };
+        }
+      }
+
+      const new_spawn_id = randomUUID();
+      const argv = [...claudeEnvArgvPrefix(port, home), 'claude', '--resume', row.session_id];
+      if (row.skip_permissions) argv.push('--dangerously-skip-permissions');
+      if (remoteWanted) argv.push('--remote-control', row.callsign);
+      const tmux_session = tmuxAdapter.sessionName(port);
+
+      // HIGH (revive single-flight), part 3 — re-check ownership right before we
+      // claim the window. The guards at the top ran BEFORE the awaits above
+      // (listScopedWindows / killWindowVerified). Re-confirm no live-eligible or
+      // provisioning row has taken this reused window in the meantime (belt-and-
+      // suspenders behind the single-flight claim; also catches a concurrent
+      // spawn that somehow reused this exact scoped name). currentWindowOwner
+      // ranks the window's rows newest-first over provisioning|spawning|stalled|
+      // live|pane-dead: the rightful owner right now must be either the row we
+      // are reviving (a 'pane-dead' row still naming its window) or nobody (a
+      // 'gone'/'killed' row released it). A DIFFERENT row in a live-eligible
+      // state means a second pane is already coming up — refuse rather than
+      // launch a duplicate. A stale 'pane-dead' SIBLING is not live-eligible and
+      // never blocks a legitimate revive.
+      const preLaunchOwner = q.currentWindowOwner.get(row.tmux_window);
+      if (preLaunchOwner && preLaunchOwner.spawn_id !== spawn_id
+        && ['provisioning', 'spawning', 'stalled', 'live'].includes(preLaunchOwner.status)) {
+        return {
+          status: 409,
+          body: { ok: false, reason: `window ${row.tmux_window} is now owned by active spawn ${preLaunchOwner.spawn_id}`, current_spawn_id: preLaunchOwner.spawn_id },
+        };
+      }
+
+      // R2-5: insert the new spawn's durable row as a PROVISIONAL owner of the
+      // reused window name BEFORE the pane is created (the H-R6 pattern, now in
+      // revive too). Reviving reuses the dead row's tmux_window; without a live
+      // owning row, a forced stale-id spawnKill arriving during the newWindow
+      // await would see no current owner (the old row is terminal) — or only that
+      // old row — match the just-revived pane by window name, and kill it,
+      // leaving a 'spawning' row for a dead pane. currentWindowOwner counts
+      // 'provisioning', so the new row owns the window the instant it exists and
+      // any OTHER-id kill is refused. remote_url is deliberately NOT carried over:
+      // the old link died with the old session; a fresh one is harvested from the
+      // revived pane. Flip to 'spawning' (live-eligible) only once the pane is up.
+      q.insertProvisionalSpawn.run(new_spawn_id, row.session_id, row.callsign, tmux_session,
+        row.tmux_window, row.cwd, row.worktree_path, Date.now(), row.skip_permissions ? 1 : 0,
+        remoteWanted ? 1 : 0);
+
+      const override = tmuxAdapter.spawnOverrideCmd();
+      if (override) {
+        tmuxAdapter.launchOverride(override, {
+          spawn_id: new_spawn_id, revive_of: spawn_id,
+          session_id: row.session_id, callsign: row.callsign, port,
+          cwd: runCwd, requested_cwd: row.cwd, prompt: null, model: null,
+          permission_mode: null, worktree_path: row.worktree_path,
+          dangerously_skip_permissions: !!row.skip_permissions,
+          skip_permissions: !!row.skip_permissions,
+          remote_control: remoteWanted,
+          tmux: { session: tmux_session, window: row.tmux_window },
+          argv,
+        }, err => spawnFailed(row.session_id, row.callsign, `spawn override: ${err.message || err}`));
+      } else {
+        try {
+          await tmuxAdapter.ensureSession(port);
+          await tmuxAdapter.newWindow({ port, callsign: row.callsign, cwd: runCwd, argv });
+        } catch (err) {
+          // The pane never launched — settle the provisional row terminal so it
+          // stops owning the window (and is never liveness-checked), then fail.
+          q.setSpawnStatus.run('gone', new_spawn_id);
+          forgetSpawn(new_spawn_id);
+          return { status: 500, body: { ok: false, reason: `tmux revive failed: ${err.message || err}` } };
+        }
+      }
+
+      // Pane exists (or the override was handed off): flip the durable row
+      // live-eligible ('provisioning' → 'spawning').
+      q.setSpawnStatus.run('spawning', new_spawn_id);
+      updateSession(row.session_id, { archived_at: null, col: 'queued', note: 'reviving…' });
+      tick(`⟲ reviving ${row.callsign} (resume ${row.session_id.slice(0, 8)})`);
+      scheduleNudge(new_spawn_id, row.tmux_window, row.callsign);
+      onMutate();
+      return {
+        status: 200,
+        body: { ok: true, spawn_id: new_spawn_id, session_id: row.session_id, callsign: row.callsign,
+          tmux: { session: tmux_session, window: row.tmux_window } },
+      };
+    } finally {
+      // Release the single-flight claim on EVERY exit path.
+      revivingSessions.delete(row.session_id);
+    }
   }
 
   // POST /api/spawn/:id/rc — an explicit human board action, relayed as
@@ -1993,14 +2202,45 @@ export function createCore(db, {
   // the ORIGINAL command name after death (verified on tmux 3.7b) — the
   // command string alone would read "claude" forever.
   const SHELL_RE = /^(sh|bash|zsh|zsh-.*)$/;
+  // BUG 3 (hysteresis): consecutive dead reads a LIVE spawn must accumulate
+  // before the condemn loop flips it 'pane-dead'. Two is enough to swallow a
+  // single transient dead read (~one tick) while still condemning a genuinely
+  // dead pane on the very next tick.
+  const CONDEMN_DEAD_READS = 2;
   async function spawnLivenessTick() {
     const rows = q.activeSpawns.all();
-    if (!rows.length && !spawnOrphans.length) return;
+    // BUG 3: resurrection candidates count too — if EVERY spawn is already
+    // 'pane-dead'/'gone' (rows empty) we must still probe tmux, or a fleet
+    // that was wholly (and wrongly) condemned could never come back.
+    const resurrectable = q.resurrectableSpawns.all();
+    if (!rows.length && !resurrectable.length && !spawnOrphans.length) return;
     const wins = await tmuxAdapter.listScopedWindows(port);
     for (const row of rows) {
       const win = wins.find(w => w.window === row.tmux_window);
       if (!win) continue; // gone/unreachable at runtime = unknown; boot reconciliation owns 'gone'
-      if (!win.pane_dead && win.pane_cmd === 'claude') {
+      // BUG 3 (consistent probe): decide liveness with the SAME signal the
+      // resurrect loop below trusts. pane_dead is authoritative; otherwise the
+      // ACTIVE-pane command (paneCurrentCommand) is the truth. The scoped
+      // win.pane_cmd is the LOWEST-index pane and reads stale on remain-on-exit
+      // / split panes — letting it CONDEMN while the resurrect loop RESURRECTS
+      // off a different pane was the thrash: a split or flapping window
+      // oscillated a card live↔pane-dead every ~10s tick (feed spam, re-waking
+      // every watcher/broadcast). Trust one pane for both decisions.
+      //   deadSignal: true = looks dead, false = live claude, null = some other
+      //   command → UNKNOWN, no action (unchanged firstmate rule).
+      let deadSignal;
+      if (win.pane_dead) {
+        deadSignal = true;
+      } else if (win.pane_cmd === 'claude') {
+        deadSignal = false; // fast path: lowest pane already reads claude, no extra probe needed
+      } else {
+        const pane = await tmuxAdapter.paneCurrentCommand(win.window_id);
+        if (pane && !pane.dead && pane.cmd === 'claude') deadSignal = false;      // active pane IS a live claude
+        else if (!pane || pane.dead || SHELL_RE.test(pane.cmd)) deadSignal = true; // dead / bare shell remnant
+        else deadSignal = null;                                                    // repurposed to some other cmd → unknown
+      }
+      if (deadSignal === false) {
+        condemnStreak.delete(row.spawn_id); // a live read resets the hysteresis counter
         if (row.status === 'spawning' && Date.now() - row.requested_at > SPAWN_REGISTER_MS) {
           const note = `pane up but never registered — env/port issue? window ${row.tmux_window}`;
           q.setSpawnStatus.run('stalled', row.spawn_id);
@@ -2014,21 +2254,51 @@ export function createCore(db, {
         }
         continue; // alive; stalled is fail-loud state only, never remediation
       }
-      if (win.pane_dead || SHELL_RE.test(win.pane_cmd)) {
-        q.setSpawnStatus.run('pane-dead', row.spawn_id);
-        forgetSpawn(row.spawn_id); // M-G2
-        const c = q.getSession.get(row.session_id);
-        if (c && c.ended_at == null) {
-          updateSession(row.session_id, {
-            col: 'offline', ended_at: Date.now(),
-            note: `pane idle — resume with claude --resume ${row.session_id}`,
-          });
-          tick(`💀 ${c.callsign} pane died (claude no longer running) — window kept for scrollback`);
-          notifyWatchers(row.session_id);
-        }
-        onMutate();
+      if (deadSignal === null) continue; // unknown → no action
+      // deadSignal === true: HYSTERESIS — require CONDEMN_DEAD_READS consecutive
+      // dead reads before condemning a LIVE spawn, so a single transient dead
+      // read cannot condemn a card the resurrect loop would only flip back next
+      // tick. A genuinely dead pane just condemns one tick later.
+      const streak = (condemnStreak.get(row.spawn_id) ?? 0) + 1;
+      if (streak < CONDEMN_DEAD_READS) {
+        condemnStreak.set(row.spawn_id, streak);
+        continue;
       }
-      // anything else: unknown → no action
+      q.setSpawnStatus.run('pane-dead', row.spawn_id);
+      forgetSpawn(row.spawn_id); // M-G2 (also clears the condemnStreak entry)
+      const c = q.getSession.get(row.session_id);
+      if (c && c.ended_at == null) {
+        updateSession(row.session_id, {
+          col: 'offline', ended_at: Date.now(),
+          note: `pane idle — resume with claude --resume ${row.session_id}`,
+        });
+        tick(`💀 ${c.callsign} pane died (claude no longer running) — window kept for scrollback`);
+        notifyWatchers(row.session_id);
+      }
+      onMutate();
+    }
+    // BUG 3 — resurrection: re-validate the terminal-but-recoverable rows
+    // ('pane-dead'/'gone', never 'killed') against tmux and bring back any
+    // whose window is a live claude. This is the ONLY exit from those states
+    // back to 'live'; without it BUG 1/BUG 2 (and any transient misread) are a
+    // permanent one-way door, and revive() deadlocks on the very-alive pane.
+    for (const row of resurrectable) {
+      const win = wins.find(w => w.window === row.tmux_window);
+      if (!win || win.pane_dead) continue; // gone/dead/unreachable → stays condemned (firstmate rule)
+      // A NEWER row may now own this reused window name (a revive lineage);
+      // only resurrect when this row is still the window's rightful owner.
+      // currentWindowOwner ranks provisioning|spawning|stalled|live|pane-dead
+      // newest-first: for a 'pane-dead' row it returns that row unless a newer
+      // live row exists; for a 'gone' row (excluded from that query) it returns
+      // null when no other row claims the window — both mean "resurrect me".
+      const owner = q.currentWindowOwner.get(row.tmux_window);
+      if (owner && owner.spawn_id !== row.spawn_id) continue;
+      // Second probe confirms 'claude' (the scoped row's pane_cmd can read
+      // stale on remain-on-exit panes; pane_dead already screened above). This
+      // is the exact liveness test ownedPaneDeliverable trusts to type mail in.
+      const pane = await tmuxAdapter.paneCurrentCommand(win.window_id);
+      if (!pane || pane.dead || pane.cmd !== 'claude') continue; // bare shell / not claude → stays condemned
+      resurrectSpawn(row);
     }
     // Keep the boot-computed orphan list honest: windows that disappear
     // stop being listed (informational only — no ops are ever offered).
@@ -2245,6 +2515,13 @@ export function createCore(db, {
     targets.forEach(sid => mail(sid, from || 'human', text));
     tick(`✉ mail from ${from || 'human'} → ${to}`);
     onMutate();
+    // BUG 4: report truncation to the sender. All targets receive the same
+    // text and share MAIL_MAX_LEN, so the clamp is computed once from the raw
+    // body (this also stays honest when there are zero targets). http.mjs's
+    // /mail handler passes this object through verbatim (json(res, 200, out)),
+    // so the flag surfaces without any change there — see coordination note.
+    const raw = String(text ?? '');
+    const truncated = raw.length > MAIL_MAX_LEN;
     return {
       ok: true,
       delivered: targets.length,
@@ -2253,6 +2530,7 @@ export function createCore(db, {
         callsign: q.getSession.get(sid)?.callsign ?? null,
         route: routes[i],
       })),
+      ...(truncated ? { truncated: true, original_length: raw.length, max_length: MAIL_MAX_LEN } : {}),
     };
   }
 
@@ -2437,21 +2715,96 @@ export function createCore(db, {
     return q.getSpawn.get(spawnId) || null;
   }
 
+  // Silence → presumed-ended tombstone. Pane-less hook sessions have no window
+  // to consult, so their silence IS the only signal (unchanged behavior).
+  function presumeDeadSilent(s, now) {
+    const hours = Math.max(0, (now - s.last_seen) / 3_600_000);
+    const label = Number.isInteger(hours) ? String(hours) : hours.toFixed(1).replace(/\.0$/, '');
+    updateSession(s.session_id, {
+      col: 'offline', ended_at: now,
+      note: `presumed ended (silent ${label}h)`,
+    });
+    modelMemo.delete(s.session_id); // M-G2: terminal — clear the transcript memo
+    tick(`⌛ ${s.callsign} presumed ended after ${label}h silent`);
+    notifyWatchers(s.session_id);
+  }
+
   // Retention is non-destructive: sessions/mail are timestamped out of the
   // live surface, never deleted. A late hook resurrects a presumed-dead card.
-  function retentionSweep(now = Date.now()) {
+  //
+  // BUG 2: presume-dead is a SILENCE heuristic, valid ONLY for pane-less hook
+  // sessions. A board-SPAWNED agent idling quietly at its prompt emits no hooks
+  // for hours, yet its tmux pane is a live claude the whole time — silence must
+  // never condemn it. This sweep therefore splits the candidates: hook-only
+  // rows (no live spawn) presume dead on silence as before; spawned rows are
+  // adjudicated by TMUX, never the clock — alive → refresh last_seen and keep
+  // it live; tmux-confirmed dead → condemn (same verdict the liveness tick
+  // reaches); window absent/unreachable → UNKNOWN, no action (firstmate rule).
+  // The function is async, but stays fully SYNCHRONOUS whenever there is no
+  // spawned candidate (the common case, and every boot path the tests assert):
+  // the tmux probe is only awaited when `spawned.length` is non-zero.
+  async function retentionSweep(now = Date.now()) {
     let changed = false;
+    const spawned = [];
+    // BUG 7: a FLEETDECK_SPAWN_CMD override launches a detached process, NOT a
+    // tmux window, so its spawn row names a window tmux never has. BUG 2's tmux
+    // adjudication would then read that window as ABSENT → UNKNOWN → never
+    // presume it dead, so an override agent that crashed without a SessionEnd
+    // lingered active on the board forever. An override spawn has no pane to
+    // consult, so — like a pane-less hook session — its SILENCE is the only
+    // signal it exposes: treat it as pane-less and let the silence heuristic
+    // presume it dead. (The whole daemon is in override mode or none is, so
+    // this is one check, not a per-row flag.)
+    const overrideMode = !!tmuxAdapter.spawnOverrideCmd();
     for (const s of q.presumeDeadSessions.all(now - PRESUME_DEAD_MS)) {
-      const hours = Math.max(0, (now - s.last_seen) / 3_600_000);
-      const label = Number.isInteger(hours) ? String(hours) : hours.toFixed(1).replace(/\.0$/, '');
-      updateSession(s.session_id, {
-        col: 'offline', ended_at: now,
-        note: `presumed ended (silent ${label}h)`,
-      });
-      modelMemo.delete(s.session_id); // M-G2: terminal — clear the transcript memo
-      tick(`⌛ ${s.callsign} presumed ended after ${label}h silent`);
-      notifyWatchers(s.session_id);
+      const sp = q.activeSpawnBySession.get(s.session_id); // live-eligible spawn row?
+      if (sp && !overrideMode) { spawned.push({ s, sp }); continue; } // tmux-backed pane → ask tmux below
+      // Pane-less: a hook-only session (no spawn row) OR an override process
+      // (a spawn row, but no tmux window to adjudicate). Silence is the signal.
+      presumeDeadSilent(s, now);
+      // BUG 7: keep an override spawn row coherent with its now-offline card —
+      // condemn it 'pane-dead' (never left stale 'live', so countActiveSpawns
+      // stops counting it) which ALSO makes it revivable, exactly the recovery
+      // path a crashed override agent needs.
+      if (sp) { q.setSpawnStatus.run('pane-dead', sp.spawn_id); forgetSpawn(sp.spawn_id); }
       changed = true;
+    }
+    if (spawned.length) {
+      const wins = await tmuxAdapter.listScopedWindows(port);
+      for (const { s, sp } of spawned) {
+        const win = wins.find(w => w.window === sp.tmux_window);
+        // Alive: window present, pane not dead, and paneCurrentCommand confirms
+        // claude (pane_cmd can read stale on remain-on-exit panes). The agent
+        // is simply quiet — refresh last_seen so the clock restarts and leave
+        // the card live. This is the "3.1h alive spawn got goned" fix.
+        let alive = false;
+        if (win && !win.pane_dead) {
+          const pane = await tmuxAdapter.paneCurrentCommand(win.window_id);
+          alive = !!pane && !pane.dead && pane.cmd === 'claude';
+        }
+        if (alive) {
+          updateSession(s.session_id, { last_seen: now });
+          changed = true;
+          continue;
+        }
+        // tmux CONFIRMS dead — window present but pane_dead or a bare shell.
+        // Condemn exactly like the liveness tick: flip the spawn 'pane-dead'
+        // (still revivable) and tombstone the card. A window that is ABSENT is
+        // UNKNOWN, not dead — never condemn on silence (a wrong "dead" costs a
+        // duplicate billed session); leave it for a later sweep / boot reconcile.
+        if (win && (win.pane_dead || SHELL_RE.test(win.pane_cmd))) {
+          q.setSpawnStatus.run('pane-dead', sp.spawn_id);
+          forgetSpawn(sp.spawn_id);
+          updateSession(s.session_id, {
+            col: 'offline', ended_at: now,
+            note: `pane confirmed dead — resume with claude --resume ${s.session_id}`,
+          });
+          modelMemo.delete(s.session_id);
+          tick(`💀 ${s.callsign} pane confirmed dead after long silence — window kept for scrollback`);
+          notifyWatchers(s.session_id);
+          changed = true;
+        }
+      }
     }
     for (const s of q.archiveCandidates.all(now - RETAIN_OFFLINE_MS)) {
       q.setArchived.run(now, s.session_id);
@@ -2547,10 +2900,15 @@ export function createCore(db, {
   }
 
   // Run retention once at core boot, then alongside event pruning every 10m.
-  retentionSweep();
+  // BUG 2: retentionSweep is async now (it may probe tmux for spawned silence),
+  // but with no spawned candidate it completes SYNCHRONOUSLY before returning
+  // its already-resolved promise, so the boot sweep's DB effects still land
+  // synchronously for the common case. .catch() contains any tmux-probe
+  // rejection so a fire-and-forget sweep can never become an unhandled reject.
+  retentionSweep().catch(err => console.error('fleetd retention sweep error:', err));
   setInterval(() => {
     try { q.pruneEvents.run(Date.now() - 24 * 3600 * 1000); } catch { /* hygiene only */ }
-    try { retentionSweep(); } catch { /* hygiene only */ }
+    retentionSweep().catch(() => { /* hygiene only */ });
   }, 10 * 60 * 1000).unref();
 
   return {
@@ -2583,8 +2941,10 @@ export function createCore(db, {
     spawnCapability,   // /health + /state `spawn` object
     spawnLivenessTick, // owned-pane liveness, rides the agents-poll cadence
     reconcileSpawns,   // fleetd boot: rows ↔ tmux windows
-    // retentionSweep runs internally (boot + the 10m interval below); nothing
-    // outside createCore calls it, so it is not re-exported.
+    // retentionSweep also runs internally (boot + the 10m interval above). It
+    // is re-exported so tests can drive the tmux-verified presume-dead path
+    // (BUG 2) deterministically; production callers keep using the interval.
+    retentionSweep,
     cleanup,
     worktrees,          // GET /api/worktrees — bounded live git inspection
     removeWorktree,     // POST /api/worktrees/remove — allow-listed destruction

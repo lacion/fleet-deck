@@ -141,9 +141,11 @@ test('revive reuses the env wrapper, kills a dead remnant, inserts a new row, an
   mkdirSync(path.dirname(transcript), { recursive: true });
   writeFileSync(transcript, '{}\n');
 
-  const collision = await core.revive(oldId);
-  assert.equal(collision.status, 409, 'an existing live Claude pane prevents a duplicate resume');
-  assert.match(collision.body.reason, /live claude pane/);
+  // BUG 3: a gone row whose window still hosts a LIVE claude pane is now
+  // ADOPTED by revive (resurrected in place, no duplicate) instead of a
+  // dead-end 409 — that behavior has its own coverage in fleet-bugs.test.mjs.
+  // This test exercises the RELAUNCH path, so first mark the remnant pane dead:
+  // a dead remnant is killed and a fresh row launched.
   state.windows[0].pane_dead = true;
   const out = await core.revive(oldId);
   assert.equal(out.status, 200);

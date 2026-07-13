@@ -4197,13 +4197,16 @@ function createQuestions(db2, {
   function expireOnActivity(sessionId, { toolName, toolInput } = {}) {
     const correlated = typeof toolName === "string" && toolName !== "";
     const activityKey = correlated ? toolCallKey(toolName, toolInput) : null;
-    const rows = q.pendingBySession.all(sessionId).filter((r) => {
+    let rows = q.pendingBySession.all(sessionId).filter((r) => {
       if (!correlated) return true;
       if (!HOLD_KINDS.has(r.kind)) return false;
       const payload = safeParse(r.payload_json);
       if (payload?.tool_name == null) return false;
       return toolCallKey(payload.tool_name, payload.tool_input) === activityKey;
     });
+    if (correlated && rows.length > 1) {
+      rows = [rows.find((r) => holds.has(r.id)) ?? rows[0]];
+    }
     let changed = false;
     for (const r of rows) {
       const h = releaseHold(r.id);
@@ -4605,6 +4608,13 @@ function launchOverride(cmd, spec, onError = () => {
 // scripts/fleetd/derive.mjs
 var CALLSIGNS = ["falcon", "otter", "raven", "lynx", "orca", "wren", "viper", "heron", "badger", "comet", "ember", "drift"];
 var CONFLICT_WINDOW_MS = 30 * 60 * 1e3;
+var MAIL_MAX_LEN = 4e3;
+function clampMail(raw) {
+  if (raw.length <= MAIL_MAX_LEN) return raw;
+  const cut = raw.slice(0, MAIL_MAX_LEN);
+  const last = cut.charCodeAt(cut.length - 1);
+  return last >= 55296 && last <= 56319 ? cut.slice(0, -1) : cut;
+}
 var EDIT_TOOLS = ["Edit", "Write", "MultiEdit", "NotebookEdit"];
 var TEST_RUNNER_RE = /\b(pytest|jest|vitest|go test|cargo test|npm (run )?test)\b/;
 function envInt(name, fallback, { min = 0 } = {}) {
@@ -4795,7 +4805,22 @@ function createCore(db2, {
     spawnBySession: db2.prepare("SELECT * FROM spawns WHERE session_id = ? ORDER BY requested_at DESC, rowid DESC LIMIT 1"),
     allSpawns: db2.prepare("SELECT * FROM spawns ORDER BY requested_at, rowid"),
     activeSpawns: db2.prepare("SELECT * FROM spawns WHERE status IN ('spawning', 'stalled', 'live')"),
+    // BUG 3: 'pane-dead' and 'gone' were a ONE-WAY DOOR — activeSpawns never
+    // re-checked them, so a spawn wrongly condemned (BUG 1 /clear, BUG 2
+    // silence, or a transient tmux misread) stayed dead on the board forever
+    // even while its pane kept running claude. The liveness tick re-checks
+    // these against tmux and RESURRECTS any whose window is a live claude.
+    // 'killed' is deliberately absent: a human kill is a decision, not a
+    // mistake, and must stay killed.
+    resurrectableSpawns: db2.prepare("SELECT * FROM spawns WHERE status IN ('pane-dead', 'gone')"),
     activeSpawnBySession: db2.prepare("SELECT * FROM spawns WHERE session_id = ? AND status IN ('spawning', 'stalled', 'live') ORDER BY requested_at DESC, rowid DESC LIMIT 1"),
+    // HIGH (revive single-flight): activeSpawnBySession deliberately EXCLUDES
+    // 'provisioning' (a provisional row is not yet a live-eligible spawn). But
+    // revive()'s duplicate-guard must ALSO see a provisioning row: a revive
+    // inserts its durable row 'provisioning' before the pane is up, and a
+    // second revive arriving while the first is still bringing that pane up
+    // must be refused, not allowed to launch a second pane for the one session.
+    provisioningSpawnBySession: db2.prepare("SELECT * FROM spawns WHERE session_id = ? AND status = 'provisioning' ORDER BY requested_at DESC, rowid DESC LIMIT 1"),
     countActiveSpawns: db2.prepare("SELECT COUNT(*) AS n FROM spawns WHERE status IN ('spawning', 'stalled', 'live')"),
     setSpawnStatus: db2.prepare("UPDATE spawns SET status = ? WHERE spawn_id = ?"),
     setSpawnRemote: db2.prepare("UPDATE spawns SET remote_control = 1, remote_url = ? WHERE spawn_id = ?"),
@@ -4950,13 +4975,15 @@ function createCore(db2, {
     q.insertEvent.run(sid, hookEvent ?? null, toolName ?? null, note ?? null, Date.now());
   }
   function mail(toSession, from, text) {
-    q.insertMail.run(toSession, from, String(text ?? "").slice(0, 500), Date.now());
+    const raw = String(text ?? "");
+    q.insertMail.run(toSession, from, clampMail(raw), Date.now());
     notifyWatchers(toSession);
     const timer = setTimeout(() => {
       tryOwnedPaneDelivery(toSession).catch(() => {
       });
     }, PANE_MAIL_GRACE_MS);
     timer.unref?.();
+    return { truncated: raw.length > MAIL_MAX_LEN, original_length: raw.length };
   }
   function drainMail(sid) {
     const box = q.pendingMail.all(sid);
@@ -5125,10 +5152,15 @@ function createCore(db2, {
         tick(`${c.callsign} finished a turn`);
         break;
       case "SessionEnd":
-        set.col = "offline";
-        set.ended_at = Date.now();
-        set.note = "session ended" + (ev.reason ? ` (${ev.reason})` : "");
-        tick(`${c.callsign} left the fleet`);
+        if (ev.reason === "clear") {
+          set.note = "context cleared (/clear) \u2014 still live";
+          tick(`\u{1F9F9} ${c.callsign} ran /clear \u2014 context reset, session still live`);
+        } else {
+          set.col = "offline";
+          set.ended_at = Date.now();
+          set.note = "session ended" + (ev.reason ? ` (${ev.reason})` : "");
+          tick(`${c.callsign} left the fleet`);
+        }
         break;
       default:
         set.note = ev.hook_event_name;
@@ -5280,15 +5312,20 @@ function createCore(db2, {
     return row;
   }
   function hookSessionEnd(ev) {
+    const sid = ev.session_id || "unknown";
     applyEvent({ ...ev, hook_event_name: "SessionEnd" });
-    questions.expireAllForSession(ev.session_id || "unknown");
-    modelMemo.delete(ev.session_id || "unknown");
-    const sp = q.spawnBySession.get(ev.session_id || "unknown");
+    questions.expireAllForSession(sid);
+    if (ev.reason === "clear") {
+      notifyWatchers(sid);
+      return {};
+    }
+    modelMemo.delete(sid);
+    const sp = q.spawnBySession.get(sid);
     if (sp && (sp.status === "spawning" || sp.status === "stalled" || sp.status === "live")) {
       q.setSpawnStatus.run("pane-dead", sp.spawn_id);
       forgetSpawn(sp.spawn_id);
     }
-    notifyWatchers(ev.session_id || "unknown");
+    notifyWatchers(sid);
     return {};
   }
   const watchWaiters = /* @__PURE__ */ new Map();
@@ -5807,9 +5844,34 @@ function createCore(db2, {
   }
   const RC_URL_RE = /https:\/\/claude\.ai\/\S+/;
   const registrationRemoteHarvests = /* @__PURE__ */ new Map();
+  const revivingSessions = /* @__PURE__ */ new Set();
+  const condemnStreak = /* @__PURE__ */ new Map();
   function forgetSpawn(spawn_id) {
     nudged.delete(spawn_id);
     registrationRemoteHarvests.delete(spawn_id);
+    condemnStreak.delete(spawn_id);
+  }
+  function resurrectSpawn(row) {
+    q.setSpawnStatus.run("live", row.spawn_id);
+    const c = q.getSession.get(row.session_id);
+    updateSession(row.session_id, {
+      col: "idle",
+      ended_at: null,
+      archived_at: null,
+      // BUG 4: a card condemned while it was 'spawn_stalled'/'permission_prompt'
+      // must not come back wearing a stale needs-you reason chip — clear
+      // notification_type. And a resurrected card IS being seen right now, so
+      // refresh last_seen: it is 'idle' at its prompt, not silent since death
+      // (otherwise the very next retention sweep could presume it dead again on
+      // the pre-death last_seen).
+      notification_type: null,
+      last_seen: Date.now(),
+      note: "pane is a live claude \u2014 restored to the board"
+    });
+    forgetSpawn(row.spawn_id);
+    tick(`\u2728 ${c?.callsign ?? row.callsign} restored \u2014 its pane was a live claude all along`);
+    notifyWatchers(row.session_id);
+    onMutate();
   }
   async function harvestRemote(spawn_id) {
     const row = q.getSpawn.get(spawn_id);
@@ -6024,97 +6086,133 @@ function createCore(db2, {
       return { status: 400, body: { ok: false, reason: "remote_control must be a boolean" } };
     }
     const remoteWanted = body?.remote_control ?? !!row.remote_control;
-    const active = q.activeSpawnBySession.get(row.session_id);
+    const active = q.activeSpawnBySession.get(row.session_id) || q.provisioningSpawnBySession.get(row.session_id);
     if (active) {
       return { status: 409, body: { ok: false, reason: `session already has active spawn ${active.spawn_id}` } };
     }
-    const runCwd = row.worktree_path ?? row.cwd;
-    let st = null;
+    if (revivingSessions.has(row.session_id)) {
+      return { status: 409, body: { ok: false, reason: `session ${row.session_id.slice(0, 8)} is already being revived` } };
+    }
+    revivingSessions.add(row.session_id);
     try {
-      st = fs3.statSync(runCwd);
-    } catch {
-    }
-    if (!runCwd || !st?.isDirectory()) {
-      return { status: 410, body: { ok: false, reason: "revive cwd no longer exists" } };
-    }
-    if (!fs3.existsSync(claudeTranscriptPath(runCwd, row.session_id))) {
-      return { status: 410, body: { ok: false, reason: "resume transcript no longer exists" } };
-    }
-    const existing = (await tmuxAdapter.listScopedWindows(port)).find((w) => w.window === row.tmux_window);
-    if (existing && !existing.pane_dead && existing.pane_cmd === "claude") {
-      return { status: 409, body: { ok: false, reason: `window ${row.tmux_window} already has a live claude pane` } };
-    }
-    if (existing && !existing.pane_dead && !SHELL_RE.test(existing.pane_cmd)) {
-      return { status: 409, body: { ok: false, reason: `window ${row.tmux_window} hosts a live '${existing.pane_cmd}' pane \u2014 not a dead remnant; refusing to kill it` } };
-    }
-    if (existing) {
-      const killed = await tmuxAdapter.killWindowVerified(row.tmux_window);
-      if (!killed.ok && !killed.gone) {
-        return { status: 500, body: { ok: false, reason: killed.error || "tmux kill-window failed" } };
-      }
-    }
-    const new_spawn_id = randomUUID2();
-    const argv = [...claudeEnvArgvPrefix(port, home), "claude", "--resume", row.session_id];
-    if (row.skip_permissions) argv.push("--dangerously-skip-permissions");
-    if (remoteWanted) argv.push("--remote-control", row.callsign);
-    const tmux_session = tmuxAdapter.sessionName(port);
-    q.insertProvisionalSpawn.run(
-      new_spawn_id,
-      row.session_id,
-      row.callsign,
-      tmux_session,
-      row.tmux_window,
-      row.cwd,
-      row.worktree_path,
-      Date.now(),
-      row.skip_permissions ? 1 : 0,
-      remoteWanted ? 1 : 0
-    );
-    const override = tmuxAdapter.spawnOverrideCmd();
-    if (override) {
-      tmuxAdapter.launchOverride(override, {
-        spawn_id: new_spawn_id,
-        revive_of: spawn_id,
-        session_id: row.session_id,
-        callsign: row.callsign,
-        port,
-        cwd: runCwd,
-        requested_cwd: row.cwd,
-        prompt: null,
-        model: null,
-        permission_mode: null,
-        worktree_path: row.worktree_path,
-        dangerously_skip_permissions: !!row.skip_permissions,
-        skip_permissions: !!row.skip_permissions,
-        remote_control: remoteWanted,
-        tmux: { session: tmux_session, window: row.tmux_window },
-        argv
-      }, (err) => spawnFailed(row.session_id, row.callsign, `spawn override: ${err.message || err}`));
-    } else {
+      const runCwd = row.worktree_path ?? row.cwd;
+      let st = null;
       try {
-        await tmuxAdapter.ensureSession(port);
-        await tmuxAdapter.newWindow({ port, callsign: row.callsign, cwd: runCwd, argv });
-      } catch (err) {
-        q.setSpawnStatus.run("gone", new_spawn_id);
-        forgetSpawn(new_spawn_id);
-        return { status: 500, body: { ok: false, reason: `tmux revive failed: ${err.message || err}` } };
+        st = fs3.statSync(runCwd);
+      } catch {
       }
+      if (!runCwd || !st?.isDirectory()) {
+        return { status: 410, body: { ok: false, reason: "revive cwd no longer exists" } };
+      }
+      if (!fs3.existsSync(claudeTranscriptPath(runCwd, row.session_id))) {
+        return { status: 410, body: { ok: false, reason: "resume transcript no longer exists" } };
+      }
+      const existing = (await tmuxAdapter.listScopedWindows(port)).find((w) => w.window === row.tmux_window);
+      if (existing && !existing.pane_dead && existing.pane_cmd === "claude") {
+        if (row.status !== "pane-dead" && row.status !== "gone") {
+          return { status: 409, body: { ok: false, reason: `spawn ${spawn_id} was killed \u2014 its window hosts a live claude, but a killed spawn is never resurrected by adoption` } };
+        }
+        const owner = q.currentWindowOwner.get(row.tmux_window);
+        if (owner && owner.spawn_id !== row.spawn_id) {
+          return {
+            status: 409,
+            body: { ok: false, reason: `window ${row.tmux_window} is owned by spawn ${owner.spawn_id} \u2014 revive that one`, current_spawn_id: owner.spawn_id }
+          };
+        }
+        resurrectSpawn(row);
+        return {
+          status: 200,
+          body: {
+            ok: true,
+            adopted: true,
+            spawn_id: row.spawn_id,
+            session_id: row.session_id,
+            callsign: row.callsign,
+            tmux: { session: tmuxAdapter.sessionName(port), window: row.tmux_window }
+          }
+        };
+      }
+      if (existing && !existing.pane_dead && !SHELL_RE.test(existing.pane_cmd)) {
+        return { status: 409, body: { ok: false, reason: `window ${row.tmux_window} hosts a live '${existing.pane_cmd}' pane \u2014 not a dead remnant; refusing to kill it` } };
+      }
+      if (existing) {
+        const killed = await tmuxAdapter.killWindowVerified(row.tmux_window);
+        if (!killed.ok && !killed.gone) {
+          return { status: 500, body: { ok: false, reason: killed.error || "tmux kill-window failed" } };
+        }
+      }
+      const new_spawn_id = randomUUID2();
+      const argv = [...claudeEnvArgvPrefix(port, home), "claude", "--resume", row.session_id];
+      if (row.skip_permissions) argv.push("--dangerously-skip-permissions");
+      if (remoteWanted) argv.push("--remote-control", row.callsign);
+      const tmux_session = tmuxAdapter.sessionName(port);
+      const preLaunchOwner = q.currentWindowOwner.get(row.tmux_window);
+      if (preLaunchOwner && preLaunchOwner.spawn_id !== spawn_id && ["provisioning", "spawning", "stalled", "live"].includes(preLaunchOwner.status)) {
+        return {
+          status: 409,
+          body: { ok: false, reason: `window ${row.tmux_window} is now owned by active spawn ${preLaunchOwner.spawn_id}`, current_spawn_id: preLaunchOwner.spawn_id }
+        };
+      }
+      q.insertProvisionalSpawn.run(
+        new_spawn_id,
+        row.session_id,
+        row.callsign,
+        tmux_session,
+        row.tmux_window,
+        row.cwd,
+        row.worktree_path,
+        Date.now(),
+        row.skip_permissions ? 1 : 0,
+        remoteWanted ? 1 : 0
+      );
+      const override = tmuxAdapter.spawnOverrideCmd();
+      if (override) {
+        tmuxAdapter.launchOverride(override, {
+          spawn_id: new_spawn_id,
+          revive_of: spawn_id,
+          session_id: row.session_id,
+          callsign: row.callsign,
+          port,
+          cwd: runCwd,
+          requested_cwd: row.cwd,
+          prompt: null,
+          model: null,
+          permission_mode: null,
+          worktree_path: row.worktree_path,
+          dangerously_skip_permissions: !!row.skip_permissions,
+          skip_permissions: !!row.skip_permissions,
+          remote_control: remoteWanted,
+          tmux: { session: tmux_session, window: row.tmux_window },
+          argv
+        }, (err) => spawnFailed(row.session_id, row.callsign, `spawn override: ${err.message || err}`));
+      } else {
+        try {
+          await tmuxAdapter.ensureSession(port);
+          await tmuxAdapter.newWindow({ port, callsign: row.callsign, cwd: runCwd, argv });
+        } catch (err) {
+          q.setSpawnStatus.run("gone", new_spawn_id);
+          forgetSpawn(new_spawn_id);
+          return { status: 500, body: { ok: false, reason: `tmux revive failed: ${err.message || err}` } };
+        }
+      }
+      q.setSpawnStatus.run("spawning", new_spawn_id);
+      updateSession(row.session_id, { archived_at: null, col: "queued", note: "reviving\u2026" });
+      tick(`\u27F2 reviving ${row.callsign} (resume ${row.session_id.slice(0, 8)})`);
+      scheduleNudge(new_spawn_id, row.tmux_window, row.callsign);
+      onMutate();
+      return {
+        status: 200,
+        body: {
+          ok: true,
+          spawn_id: new_spawn_id,
+          session_id: row.session_id,
+          callsign: row.callsign,
+          tmux: { session: tmux_session, window: row.tmux_window }
+        }
+      };
+    } finally {
+      revivingSessions.delete(row.session_id);
     }
-    q.setSpawnStatus.run("spawning", new_spawn_id);
-    updateSession(row.session_id, { archived_at: null, col: "queued", note: "reviving\u2026" });
-    tick(`\u27F2 reviving ${row.callsign} (resume ${row.session_id.slice(0, 8)})`);
-    scheduleNudge(new_spawn_id, row.tmux_window, row.callsign);
-    onMutate();
-    return {
-      status: 200,
-      body: {
-        ok: true,
-        spawn_id: new_spawn_id,
-        session_id: row.session_id,
-        callsign: row.callsign,
-        tmux: { session: tmux_session, window: row.tmux_window }
-      }
-    };
   }
   async function enableRemote(spawn_id) {
     const row = q.getSpawn.get(spawn_id);
@@ -6198,40 +6296,67 @@ function createCore(db2, {
     return { status: 200, body: { ok: true, spawn_id, status: "killed" } };
   }
   const SHELL_RE = /^(sh|bash|zsh|zsh-.*)$/;
+  const CONDEMN_DEAD_READS = 2;
   async function spawnLivenessTick() {
     const rows = q.activeSpawns.all();
-    if (!rows.length && !spawnOrphans.length) return;
+    const resurrectable = q.resurrectableSpawns.all();
+    if (!rows.length && !resurrectable.length && !spawnOrphans.length) return;
     const wins = await tmuxAdapter.listScopedWindows(port);
     for (const row of rows) {
       const win = wins.find((w) => w.window === row.tmux_window);
       if (!win) continue;
-      if (!win.pane_dead && win.pane_cmd === "claude") {
+      let deadSignal;
+      if (win.pane_dead) {
+        deadSignal = true;
+      } else if (win.pane_cmd === "claude") {
+        deadSignal = false;
+      } else {
+        const pane = await tmuxAdapter.paneCurrentCommand(win.window_id);
+        if (pane && !pane.dead && pane.cmd === "claude") deadSignal = false;
+        else if (!pane || pane.dead || SHELL_RE.test(pane.cmd)) deadSignal = true;
+        else deadSignal = null;
+      }
+      if (deadSignal === false) {
+        condemnStreak.delete(row.spawn_id);
         if (row.status === "spawning" && Date.now() - row.requested_at > SPAWN_REGISTER_MS) {
           const note = `pane up but never registered \u2014 env/port issue? window ${row.tmux_window}`;
           q.setSpawnStatus.run("stalled", row.spawn_id);
           updateSession(row.session_id, { col: "needsyou", notification_type: "spawn_stalled", note });
-          const c = q.getSession.get(row.session_id);
-          tick(`\u26A0 ${c?.callsign ?? row.callsign} pane is up but never phoned home`);
+          const c2 = q.getSession.get(row.session_id);
+          tick(`\u26A0 ${c2?.callsign ?? row.callsign} pane is up but never phoned home`);
           logEvent(row.session_id, "SpawnStalled", null, note);
           onMutate();
         }
         continue;
       }
-      if (win.pane_dead || SHELL_RE.test(win.pane_cmd)) {
-        q.setSpawnStatus.run("pane-dead", row.spawn_id);
-        forgetSpawn(row.spawn_id);
-        const c = q.getSession.get(row.session_id);
-        if (c && c.ended_at == null) {
-          updateSession(row.session_id, {
-            col: "offline",
-            ended_at: Date.now(),
-            note: `pane idle \u2014 resume with claude --resume ${row.session_id}`
-          });
-          tick(`\u{1F480} ${c.callsign} pane died (claude no longer running) \u2014 window kept for scrollback`);
-          notifyWatchers(row.session_id);
-        }
-        onMutate();
+      if (deadSignal === null) continue;
+      const streak = (condemnStreak.get(row.spawn_id) ?? 0) + 1;
+      if (streak < CONDEMN_DEAD_READS) {
+        condemnStreak.set(row.spawn_id, streak);
+        continue;
       }
+      q.setSpawnStatus.run("pane-dead", row.spawn_id);
+      forgetSpawn(row.spawn_id);
+      const c = q.getSession.get(row.session_id);
+      if (c && c.ended_at == null) {
+        updateSession(row.session_id, {
+          col: "offline",
+          ended_at: Date.now(),
+          note: `pane idle \u2014 resume with claude --resume ${row.session_id}`
+        });
+        tick(`\u{1F480} ${c.callsign} pane died (claude no longer running) \u2014 window kept for scrollback`);
+        notifyWatchers(row.session_id);
+      }
+      onMutate();
+    }
+    for (const row of resurrectable) {
+      const win = wins.find((w) => w.window === row.tmux_window);
+      if (!win || win.pane_dead) continue;
+      const owner = q.currentWindowOwner.get(row.tmux_window);
+      if (owner && owner.spawn_id !== row.spawn_id) continue;
+      const pane = await tmuxAdapter.paneCurrentCommand(win.window_id);
+      if (!pane || pane.dead || pane.cmd !== "claude") continue;
+      resurrectSpawn(row);
     }
     const owned = new Set(q.allSpawns.all().map((r) => r.tmux_window));
     const orphans = wins.filter((w) => !owned.has(w.window)).map((w) => ({ window: w.window }));
@@ -6384,6 +6509,8 @@ function createCore(db2, {
     targets.forEach((sid) => mail(sid, from || "human", text));
     tick(`\u2709 mail from ${from || "human"} \u2192 ${to}`);
     onMutate();
+    const raw = String(text ?? "");
+    const truncated = raw.length > MAIL_MAX_LEN;
     return {
       ok: true,
       delivered: targets.length,
@@ -6391,7 +6518,8 @@ function createCore(db2, {
         session_id: sid,
         callsign: q.getSession.get(sid)?.callsign ?? null,
         route: routes[i]
-      }))
+      })),
+      ...truncated ? { truncated: true, original_length: raw.length, max_length: MAIL_MAX_LEN } : {}
     };
   }
   function snapshot() {
@@ -6558,20 +6686,63 @@ function createCore(db2, {
   function terminalSpawn(spawnId) {
     return q.getSpawn.get(spawnId) || null;
   }
-  function retentionSweep(now = Date.now()) {
+  function presumeDeadSilent(s, now) {
+    const hours = Math.max(0, (now - s.last_seen) / 36e5);
+    const label2 = Number.isInteger(hours) ? String(hours) : hours.toFixed(1).replace(/\.0$/, "");
+    updateSession(s.session_id, {
+      col: "offline",
+      ended_at: now,
+      note: `presumed ended (silent ${label2}h)`
+    });
+    modelMemo.delete(s.session_id);
+    tick(`\u231B ${s.callsign} presumed ended after ${label2}h silent`);
+    notifyWatchers(s.session_id);
+  }
+  async function retentionSweep(now = Date.now()) {
     let changed = false;
+    const spawned = [];
+    const overrideMode = !!tmuxAdapter.spawnOverrideCmd();
     for (const s of q.presumeDeadSessions.all(now - PRESUME_DEAD_MS)) {
-      const hours = Math.max(0, (now - s.last_seen) / 36e5);
-      const label2 = Number.isInteger(hours) ? String(hours) : hours.toFixed(1).replace(/\.0$/, "");
-      updateSession(s.session_id, {
-        col: "offline",
-        ended_at: now,
-        note: `presumed ended (silent ${label2}h)`
-      });
-      modelMemo.delete(s.session_id);
-      tick(`\u231B ${s.callsign} presumed ended after ${label2}h silent`);
-      notifyWatchers(s.session_id);
+      const sp = q.activeSpawnBySession.get(s.session_id);
+      if (sp && !overrideMode) {
+        spawned.push({ s, sp });
+        continue;
+      }
+      presumeDeadSilent(s, now);
+      if (sp) {
+        q.setSpawnStatus.run("pane-dead", sp.spawn_id);
+        forgetSpawn(sp.spawn_id);
+      }
       changed = true;
+    }
+    if (spawned.length) {
+      const wins = await tmuxAdapter.listScopedWindows(port);
+      for (const { s, sp } of spawned) {
+        const win = wins.find((w) => w.window === sp.tmux_window);
+        let alive = false;
+        if (win && !win.pane_dead) {
+          const pane = await tmuxAdapter.paneCurrentCommand(win.window_id);
+          alive = !!pane && !pane.dead && pane.cmd === "claude";
+        }
+        if (alive) {
+          updateSession(s.session_id, { last_seen: now });
+          changed = true;
+          continue;
+        }
+        if (win && (win.pane_dead || SHELL_RE.test(win.pane_cmd))) {
+          q.setSpawnStatus.run("pane-dead", sp.spawn_id);
+          forgetSpawn(sp.spawn_id);
+          updateSession(s.session_id, {
+            col: "offline",
+            ended_at: now,
+            note: `pane confirmed dead \u2014 resume with claude --resume ${s.session_id}`
+          });
+          modelMemo.delete(s.session_id);
+          tick(`\u{1F480} ${s.callsign} pane confirmed dead after long silence \u2014 window kept for scrollback`);
+          notifyWatchers(s.session_id);
+          changed = true;
+        }
+      }
     }
     for (const s of q.archiveCandidates.all(now - RETAIN_OFFLINE_MS)) {
       q.setArchived.run(now, s.session_id);
@@ -6643,16 +6814,14 @@ function createCore(db2, {
       orphan_worktrees
     };
   }
-  retentionSweep();
+  retentionSweep().catch((err) => console.error("fleetd retention sweep error:", err));
   setInterval(() => {
     try {
       q.pruneEvents.run(Date.now() - 24 * 3600 * 1e3);
     } catch {
     }
-    try {
-      retentionSweep();
-    } catch {
-    }
+    retentionSweep().catch(() => {
+    });
   }, 10 * 60 * 1e3).unref();
   return {
     applyEvent,
@@ -6695,8 +6864,10 @@ function createCore(db2, {
     // owned-pane liveness, rides the agents-poll cadence
     reconcileSpawns,
     // fleetd boot: rows ↔ tmux windows
-    // retentionSweep runs internally (boot + the 10m interval below); nothing
-    // outside createCore calls it, so it is not re-exported.
+    // retentionSweep also runs internally (boot + the 10m interval above). It
+    // is re-exported so tests can drive the tmux-verified presume-dead path
+    // (BUG 2) deterministically; production callers keep using the interval.
+    retentionSweep,
     cleanup,
     worktrees,
     // GET /api/worktrees — bounded live git inspection

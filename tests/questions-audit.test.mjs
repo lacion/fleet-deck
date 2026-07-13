@@ -94,6 +94,39 @@ test('M-B1 (b): a completing PostToolUse expires only its own hold; a parallel s
   db.close();
 });
 
+test('BUG 5: IDENTICAL-input parallel holds — a single PostToolUse expires exactly ONE, its twin is preserved', () => {
+  const db = openDb(':memory:');
+  const questions = createQuestions(db, { holdMs: 60_000 });
+
+  // Two parallel permission holds for the SAME tool call — identical tool_name
+  // AND tool_input — so they share a toolCallKey. A single completing
+  // PostToolUse settles exactly ONE tool call and must retire exactly ONE hold
+  // (the oldest still-live match), leaving its twin parked on the human. The
+  // old code matched on the shared key and expired BOTH.
+  const perm = fixture('permission-request', { session: 's1' }); // Bash `rm -rf build/`
+  const repliesA = [];
+  const repliesB = [];
+  const rowA = questions.create('permission', 's1', perm);
+  const rowB = questions.create('permission', 's1', perm);
+  questions.attachHold(rowA, b => repliesA.push(b));
+  questions.attachHold(rowB, b => repliesB.push(b));
+
+  const changed = questions.expireOnActivity('s1', { toolName: perm.tool_name, toolInput: perm.tool_input });
+
+  assert.equal(changed, true);
+  assert.deepEqual(repliesA, [{}], 'the OLDEST matching hold is failed open — one completion, one release');
+  assert.deepEqual(repliesB, [], 'its identical-input twin stays held — one PostToolUse cannot retire both');
+  assert.deepEqual(questions.pendingOf('s1').map(r => r.id), [rowB.id],
+    'only the older identical sibling expired; the newer is still the human’s open question');
+
+  // A SECOND identical completion retires the survivor — nothing is stranded.
+  const changed2 = questions.expireOnActivity('s1', { toolName: perm.tool_name, toolInput: perm.tool_input });
+  assert.equal(changed2, true);
+  assert.deepEqual(repliesB, [{}], 'the second identical completion retires the remaining twin');
+  assert.deepEqual(questions.pendingOf('s1'), []);
+  db.close();
+});
+
 test('M-B1 (b2): a completing tool call that matches NO hold (e.g. a Read that needed no permission) leaves every hold pending', () => {
   const db = openDb(':memory:');
   const questions = createQuestions(db, { holdMs: 60_000 });
