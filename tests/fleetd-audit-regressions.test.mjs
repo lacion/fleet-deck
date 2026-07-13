@@ -67,9 +67,11 @@ test('LAN startup logs elide the token and direct operators to the share panel',
     if (daemon.proc.exitCode !== null) throw new Error(`daemon exited ${daemon.proc.exitCode}:\n${daemon.stdout}\n${daemon.stderr}`);
     try {
       const text = readFileSync(consoleRecord, 'utf8');
-      return text.includes('fleetd up on') ? text : null;
+      // The LAN line is a separate console.log after the up-banner; waiting only
+      // for 'fleetd up on' races the second write and flakes on slow runners.
+      return text.includes('credential available in share panel') ? text : null;
     } catch { return null; }
-  }, 'startup banner');
+  }, 'startup banner incl. LAN line');
   assert.equal(output.includes(token), false, `credential leaked in startup logs:\n${output}`);
   assert.match(output, /fleetd LAN http:\/\/[^\s]+\/\?t=<hidden>/);
   assert.match(output, /credential available in share panel/);
