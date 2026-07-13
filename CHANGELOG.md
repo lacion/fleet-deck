@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-07-13
+
+### Changed
+
+- Board build toolchain: Vite 8 and `@vitejs/plugin-react` 6; the shipped board bundle was rebuilt (no functional change).
+- CI: `actions/checkout` v7 and `actions/setup-node` v6 (Dependabot majors).
+
+### Fixed
+
+- A startup-banner race in the LAN token-elision test: it asserted on the banner's second line after waiting only for the first, flaking on slow runners.
+
 ## [0.5.0] - 2026-07-13
 
 A deep security / reliability / performance / quality audit of the daemon and
@@ -96,5 +107,6 @@ Initial public release.
 - A brainless orchestrator: `assign auto` routes a task to the best existing session with a SQL query, not a model call — the core makes zero model calls.
 - One-command plugin install with a self-contained daemon bundle (`node:sqlite` state, nothing to `npm install`); the first session's SessionStart hook elects and launches the daemon. MIT licensed.
 
-[unreleased]: https://github.com/lacion/fleet-deck/compare/v0.5.0...HEAD
+[unreleased]: https://github.com/lacion/fleet-deck/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/lacion/fleet-deck/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/lacion/fleet-deck/releases/tag/v0.5.0

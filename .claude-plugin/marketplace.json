@@ -4,19 +4,27 @@
     "name": "Luis Morales",
     "email": "luismmorales@gmail.com"
   },
-  "description": "Self-hosting marketplace for Fleet Deck — this repo is both the plugin and its marketplace.",
+  "description": "Self-hosting marketplace for Fleet Deck \u2014 this repo is both the plugin and its marketplace.",
   "plugins": [
     {
       "name": "fleetdeck",
       "source": "./",
       "displayName": "Fleet Deck",
       "description": "Localhost fleet board for Claude Code: every session on the machine visible on one board, cross-session file-conflict whispers, and turn-boundary mail between sessions. Zero wrapper, zero model calls in the core. Tested against Claude Code 2.1.206.",
-      "version": "0.5.0",
+      "version": "0.5.1",
       "author": {
         "name": "Luis Morales"
       },
       "category": "productivity",
-      "keywords": ["fleet", "sessions", "board", "coordination", "conflicts", "mail", "telemetry"]
+      "keywords": [
+        "fleet",
+        "sessions",
+        "board",
+        "coordination",
+        "conflicts",
+        "mail",
+        "telemetry"
+      ]
     }
   ]
 }
