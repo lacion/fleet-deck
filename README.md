@@ -4,6 +4,10 @@
 
 # Fleet Deck ⚡
 
+[![CI](https://github.com/lacion/fleet-deck/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/lacion/fleet-deck/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Node ≥ 22.5](https://img.shields.io/badge/node-%E2%89%A5%2022.5-brightgreen.svg)](https://nodejs.org)
+
 **Mission control for every Claude Code session on your machine.**
 
 You know how it goes. You start one Claude Code session. Then one in a worktree, because you're organized. Then a third one "just to look something up," and a fourth because the second one seemed stuck. It is now 6 PM, two of them are editing `util.js` at the same time, one has been silently waiting forty minutes for you to approve `rm -rf node_modules`, and you honestly could not say which terminal tab is which.
@@ -222,7 +226,7 @@ All optional. Fleet Deck's defaults are the configuration we actually run.
 
 ```bash
 npm install
-npm test                             # 211 contract tests against a real daemon
+npm test                             # 303 contract tests against a real daemon
 npm run bundle                       # rebundle the daemon after touching scripts/fleetd/
 npm run build:board                  # rebuild the React board into board-dist/
 ```
