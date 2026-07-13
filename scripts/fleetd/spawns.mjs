@@ -853,8 +853,26 @@ export function createSpawns(ctx) {
   // board; surfaced, never operated on).
   const spawnState = { orphans: [] };
   async function reconcileSpawns() {
-    const wins = await tmuxAdapter.listScopedWindows(port);
+    // BOOT TOCTOU: snapshot the rows to reconcile BEFORE awaiting the tmux
+    // window list. reconcile exists to settle rows that PRE-EXIST this boot
+    // against the current windows; it runs fire-and-forget the instant the
+    // server starts listening, so a human's POST /api/spawn (or a revive) can
+    // land DURING the listScopedWindows await below. That new spawn inserts its
+    // row and flips it 'spawning' synchronously — and if we read `active` AFTER
+    // the await, the brand-new row is in the set but its window is absent from a
+    // `wins` snapshot taken before the window could exist, so the loop condemns
+    // it 'gone' and tombstones the just-created card. (Observed as the
+    // intermittent Node-24 "spawn never reaches live": the later first hook
+    // finds the row already 'gone' and the live-flip gate skips it.) Reading the
+    // candidate rows first excludes anything created concurrently — that spawn
+    // is owned by the live spawn/liveness path, never by boot reconciliation.
+    // This mirrors spawnLivenessTick, which already snapshots its rows before
+    // its own await. Provisioning rows are captured here for the same reason
+    // (staleProvisioningSpawns has no age floor, so a fresh provisional row
+    // read post-await would be condemned identically).
     const active = q.activeSpawns.all();
+    const staleProvisioning = q.staleProvisioningSpawns.all();
+    const wins = await tmuxAdapter.listScopedWindows(port);
     if (!wins.length && active.length && !(await tmuxReachableForReconcile())) {
       // Unreachable at boot → leave every row UNKNOWN, tombstone nothing.
       tick(`⚠ tmux unreachable at restart — leaving ${active.length} spawn row(s) as-is (unknown, not gone)`);
@@ -879,8 +897,9 @@ export function createSpawns(ctx) {
     // H-R6: a 'provisioning' row is a spawn that died between its durable
     // insert and the completion of its external ops (worktree/window). It
     // never had a live pane; boot is where we finish the job — settle the row
-    // and tombstone the half-born card.
-    for (const row of q.staleProvisioningSpawns.all()) {
+    // and tombstone the half-born card. (Snapshot taken pre-await above so a
+    // spawn created concurrently with reconcile is not swept up as stale.)
+    for (const row of staleProvisioning) {
       q.setSpawnStatus.run('gone', row.spawn_id);
       forgetSpawn(row.spawn_id);
       const c = q.getSession.get(row.session_id);

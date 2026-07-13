@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A boot-time race in spawn reconciliation: `reconcileSpawns()` read its candidate rows after awaiting the tmux window list, so a spawn (or revive) landing in that window at daemon startup was judged against a stale snapshot, condemned to `gone`, and tombstoned while its pane came up fine. Rows are now snapshotted before the await, mirroring the liveness tick. Surfaced as an intermittent Node 24 CI failure; reproducible on any Node with unlucky timing.
 - A startup-banner race in the LAN token-elision test: it asserted on the banner's second line after waiting only for the first, flaking on slow runners.
 
 ## [0.5.0] - 2026-07-13

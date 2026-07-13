@@ -6183,8 +6183,9 @@ function createSpawns(ctx) {
   }
   const spawnState = { orphans: [] };
   async function reconcileSpawns() {
-    const wins = await tmuxAdapter.listScopedWindows(port);
     const active = q.activeSpawns.all();
+    const staleProvisioning = q.staleProvisioningSpawns.all();
+    const wins = await tmuxAdapter.listScopedWindows(port);
     if (!wins.length && active.length && !await tmuxReachableForReconcile()) {
       tick(`\u26A0 tmux unreachable at restart \u2014 leaving ${active.length} spawn row(s) as-is (unknown, not gone)`);
       onMutate();
@@ -6206,7 +6207,7 @@ function createSpawns(ctx) {
       }
       onMutate();
     }
-    for (const row of q.staleProvisioningSpawns.all()) {
+    for (const row of staleProvisioning) {
       q.setSpawnStatus.run("gone", row.spawn_id);
       forgetSpawn(row.spawn_id);
       const c = q.getSession.get(row.session_id);
