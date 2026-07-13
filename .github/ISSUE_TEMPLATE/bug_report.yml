@@ -1,0 +1,97 @@
+name: Bug report
+description: Report something in Fleet Deck that is broken or behaving unexpectedly.
+title: "[bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report. The more detail you
+        give us — especially exact versions and a daemon log excerpt — the
+        faster we can reproduce and fix it.
+
+        Before you start: please search existing issues to avoid duplicates.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear and concise description of the bug. What did you see?
+      placeholder: The board stopped updating after a session was killed...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+      description: What did you think would happen instead?
+      placeholder: The pane should have flipped to a dead state within a second or two.
+    validations:
+      required: false
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: How can we make this happen ourselves? Numbered steps are ideal.
+      placeholder: |
+        1. Start the daemon with `...`
+        2. Spawn a session in `~/projects/foo`
+        3. Kill the tmux pane
+        4. Watch the board footer
+    validations:
+      required: false
+  - type: input
+    id: fleetdeck-version
+    attributes:
+      label: Fleet Deck version
+      description: From `claude plugin list`, or read it off the board footer.
+      placeholder: 0.5.0
+    validations:
+      required: false
+  - type: input
+    id: claude-code-version
+    attributes:
+      label: Claude Code version
+      description: From `claude --version`. Fleet Deck needs 2.1.206 or newer.
+      placeholder: 2.1.206
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: OS
+      description: Which operating system are you running Fleet Deck on?
+      options:
+        - Linux
+        - WSL2
+        - macOS
+        - Windows (native — untested)
+    validations:
+      required: true
+  - type: input
+    id: node-version
+    attributes:
+      label: Node version
+      description: From `node --version`.
+      placeholder: v22.11.0
+    validations:
+      required: false
+  - type: input
+    id: tmux-version
+    attributes:
+      label: tmux version
+      description: From `tmux -V`, or "none" if you do not use tmux.
+      placeholder: tmux 3.4
+    validations:
+      required: false
+  - type: textarea
+    id: daemon-log
+    attributes:
+      label: Daemon log excerpt
+      description: >
+        Relevant lines from `$FLEETDECK_HOME/fleetd.log` (default
+        `~/.fleetdeck/fleetd.log`). The auth token is never logged, but your
+        prompts and session titles may appear — redact anything sensitive
+        before pasting.
+      render: shell
+    validations:
+      required: false

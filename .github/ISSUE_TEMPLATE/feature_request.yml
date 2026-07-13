@@ -1,0 +1,49 @@
+name: Feature request
+description: Suggest an idea or improvement for Fleet Deck.
+title: "[feat]: "
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping shape Fleet Deck. Good feature requests start with
+        the problem, not the solution — tell us what you are trying to do and
+        why it is hard today.
+
+        Consider opening a discussion first if the idea is still taking shape.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      description: >
+        Describe the pain point or the goal. What are you trying to accomplish,
+        and what gets in the way today?
+      placeholder: When I run more than a dozen sessions, I can't tell at a glance which...
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: If you have one in mind, describe how you would like it to work.
+      placeholder: A filter box in the board header that...
+    validations:
+      required: false
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What other approaches or workarounds have you tried or thought about?
+      placeholder: I tried grouping by directory, but...
+    validations:
+      required: false
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: Design constraints
+      description: Fleet Deck holds a couple of hard lines. Please acknowledge them.
+      options:
+        - label: I understand Fleet Deck adds no runtime dependencies beyond `ws` without prior discussion
+          required: false
+        - label: I understand the daemon core makes zero model/LLM calls, and this proposal keeps it that way
+          required: false
