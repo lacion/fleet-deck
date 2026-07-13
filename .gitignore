@@ -5,5 +5,6 @@ board/node_modules/
 *.db-shm
 .fleetdeck-test/
 demo/demo-logs/
+demo/project/.claude/settings.json
 board/dist/
 ideas/

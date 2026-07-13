@@ -4,6 +4,26 @@
   "description": "Fleet Deck — localhost daemon + board that makes every Claude Code session on a machine visible. Tested against Claude Code 2.1.206.",
   "type": "module",
   "private": true,
+  "license": "MIT",
+  "author": "Luis Morales <luismmorales@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lacion/fleet-deck.git"
+  },
+  "bugs": {
+    "url": "https://github.com/lacion/fleet-deck/issues"
+  },
+  "homepage": "https://github.com/lacion/fleet-deck#readme",
+  "keywords": [
+    "claude-code",
+    "claude",
+    "plugin",
+    "tmux",
+    "agents",
+    "orchestration",
+    "dashboard",
+    "fleet"
+  ],
   "scripts": {
     "start": "node --no-warnings=ExperimentalWarning scripts/fleetd/fleetd.mjs",
     "test": "node --test --test-concurrency=1",
