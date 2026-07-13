@@ -79,9 +79,12 @@ function pidIsLive(pid) {
 function livePidLooksLikeFleetd(pid) {
   if (process.platform !== 'linux') return true;
   try {
-    const comm = fs.readFileSync(`/proc/${pid}/comm`, 'utf8').trim();
+    // `/proc/<pid>/comm` is the main thread name, not a stable executable
+    // identity: Node 24 names it `MainThread` instead of `node`. Resolve the
+    // executable symlink so upgrades cannot make a live fleetd look recycled.
+    const executable = path.basename(fs.readlinkSync(`/proc/${pid}/exe`)).replace(/ \(deleted\)$/, '');
     const argv = fs.readFileSync(`/proc/${pid}/cmdline`).toString('utf8').split('\0').filter(Boolean);
-    const nodeLike = /^(?:node|nodejs|fleetd)$/i.test(comm);
+    const nodeLike = /^(?:node|nodejs|fleetd)$/i.test(executable);
     const fleetdScript = argv.some(arg => /(?:^|[/\\])fleetd(?:\.bundle)?\.mjs$/.test(arg));
     return nodeLike && fleetdScript;
   } catch (err) {
