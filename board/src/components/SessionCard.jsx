@@ -54,15 +54,14 @@ function SessionCard({
   // v1.8 — the card's own action row. The terminal was reachable before, but
   // only by clicking what looked like a metadata chip; killing was reachable
   // only from inside the drawer. Both are ACTIONS, so both now read as buttons,
-  // side by side, on the card itself. (Spans with role=button: the card is
-  // itself a <button> and buttons don't nest — same trick as the chips above.)
+  // side by side, on the card itself. (R3-3: they are real <button>s — the card
+  // is no longer an interactive element, so nesting is no longer a concern.)
   const canTerm = !!onOpenTerm && spawnTermable(s);
   const canKill = !!onKill && spawnKillable(s);
   // M-S1 — the harvested remote URL only becomes a live link if it is https on
   // claude.ai; anything else (a `javascript:` a hostile agent printed into its
   // terminal) collapses to null and renders as the plain, unclickable chip.
   const remoteUrl = safeUrl(s.spawn?.remote?.url);
-  const openRemote = (e) => { e.stopPropagation(); if (remoteUrl) window.open(remoteUrl, '_blank', 'noopener'); };
   // v1.9 — tick an agent into the wall of screens. Same eligibility as the
   // terminal: only a pane the daemon owns can be watched at all.
   const canWatch = !!onToggleWatch && spawnTermable(s);
@@ -78,22 +77,23 @@ function SessionCard({
   ].filter(Boolean).join(' ');
 
   return (
-    // M-A1 — a real <button> may not contain interactive descendants, but this
-    // card is wall-to-wall action chips (terminal/kill/revive/remote), each a
-    // role=button span. So the card is a div with role=button + its own Enter/
-    // Space handler: the click/keyboard "open the drawer" affordance survives,
-    // and the nested chips are now ARIA-legal.
-    <div
-      role="button"
-      tabIndex={0}
-      className={cls}
-      onClick={() => onOpen(s)}
-      onKeyDown={(e) => {
-        if (e.target !== e.currentTarget) return; // a chip handled it
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(s); }
-      }}
-      title={s.task || s.note || s.callsign}
-    >
+    // M-A1 / R3-3 — the card is wall-to-wall action chips (terminal/kill/revive/
+    // remote), so it can't itself be an interactive control: a role="button"
+    // may not contain interactive descendants, and nesting real buttons inside
+    // one is just as illegal. Instead the card is a NON-interactive container
+    // (role="group"), the single "open the drawer" control is the full-bleed
+    // <button className="fd-cardopen"> below — keyboard-focusable, covering the
+    // whole card so a click anywhere still opens the drawer — and every action
+    // chip is a real <button>/<a> that rides ABOVE that overlay (z-index), a
+    // sibling control, never nested inside another interactive element.
+    <div role="group" aria-label={s.callsign || s.session_id} className={cls}>
+      <button
+        type="button"
+        className="fd-cardopen"
+        aria-label={`Open ${s.callsign || s.session_id}`}
+        title={s.task || s.note || s.callsign}
+        onClick={() => onOpen(s)}
+      />
       <span className="row1">
         <span className={`fd-pulse ${pulseClass}`} />
         <span className="callsign">{s.callsign || s.session_id}</span>
@@ -116,18 +116,17 @@ function SessionCard({
           // the chip is the door to claude.ai; without a safe one it just states
           // the fact and points at the terminal.
           remoteUrl ? (
-            <span
+            // real <a> (safeUrl vouched it https/claude.ai) — rides above the
+            // card's open-drawer overlay, so it opens claude.ai, not the drawer.
+            <a
               className="fd-remotechip link"
-              role="link"
-              tabIndex={0}
+              href={remoteUrl}
+              target="_blank"
+              rel="noopener noreferrer"
               title={`remote control on — open ${remoteUrl}`}
-              onClick={openRemote}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openRemote(e); }
-              }}
             >
               📱 remote ↗
-            </span>
+            </a>
           ) : (
             <span
               className="fd-remotechip"
@@ -139,38 +138,32 @@ function SessionCard({
         )}
         {spawnRemoteAvailable(s) && onEnableRemote && (
           // v1.6: the enable door — live pane, not yet on remote control,
-          // session at a turn boundary (span, not <button> — the card is a
-          // button). Results land on the header feedback strip via App.
-          <span
+          // session at a turn boundary. R3-3: a real <button> (raised above the
+          // card overlay); `disabled` while in flight replaces the old aria/guard.
+          // Results land on the header feedback strip via App.
+          <button
+            type="button"
             className={`fd-remoteofferchip${enablingRemote ? ' busy' : ''}`}
-            role="button"
-            tabIndex={enablingRemote ? -1 : 0}
-            aria-disabled={enablingRemote || undefined}
+            disabled={enablingRemote}
             title="put this agent on remote control — drive it from claude.ai on web or phone"
-            onClick={(e) => { e.stopPropagation(); if (!enablingRemote) onEnableRemote(s); }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); if (!enablingRemote) onEnableRemote(s); }
-            }}
+            onClick={() => onEnableRemote(s)}
           >
             {enablingRemote ? 'enabling…' : '📱 enable remote'}
-          </span>
+          </button>
         )}
         {offline && s.spawn?.revivable && onRevive && (
-          // v1.5: dead agent, surviving worktree + transcript — the chip is
-          // the resurrection door (span, not <button> — the card is a button).
-          <span
+          // v1.5: dead agent, surviving worktree + transcript — the resurrection
+          // door. R3-3: a real <button> (raised above the card overlay);
+          // `disabled` while in flight replaces the old aria/guard.
+          <button
+            type="button"
             className={`fd-revivechip${reviving ? ' busy' : ''}`}
-            role="button"
-            tabIndex={reviving ? -1 : 0}
-            aria-disabled={reviving || undefined}
+            disabled={reviving}
             title="worktree + transcript survived — revive this agent (card moves to QUEUED)"
-            onClick={(e) => { e.stopPropagation(); if (!reviving) onRevive(s); }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); if (!reviving) onRevive(s); }
-            }}
+            onClick={() => onRevive(s)}
           >
             {reviving ? 'reviving…' : '⟲ revive'}
-          </span>
+          </button>
         )}
         {stalled && (
           <span className="fd-stalledchip" title={stalledTip}>never registered</span>
@@ -203,51 +196,41 @@ function SessionCard({
       )}
       {hasActs && (
         // v1.8 — card actions. Present in BOTH densities: they are the two
-        // things you want at 2am without hunting through a drawer.
+        // things you want at 2am without hunting through a drawer. R3-3: real
+        // <button>s now (raised above the card's open-drawer overlay), so they
+        // no longer need role/tabIndex/onKeyDown or a stopPropagation guard.
         <span className="fd-cardacts">
           {canTerm && (
-            <span
+            <button
+              type="button"
               className="fd-actbtn term"
-              role="button"
-              tabIndex={0}
               title="open live terminal — your keystrokes go straight to the agent"
-              onClick={(e) => { e.stopPropagation(); onOpenTerm(s); }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onOpenTerm(s); }
-              }}
+              onClick={() => onOpenTerm(s)}
             >
               ▣ terminal
-            </span>
+            </button>
           )}
           {canWatch && (
-            <span
+            <button
+              type="button"
               className={`fd-actbtn watch${watched ? ' on' : ''}`}
-              role="button"
               aria-pressed={!!watched}
-              tabIndex={0}
               title={watched ? 'remove from the terminal wall' : 'add to the terminal wall'}
-              onClick={(e) => { e.stopPropagation(); onToggleWatch(s); }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onToggleWatch(s); }
-              }}
+              onClick={() => onToggleWatch(s)}
             >
               {watched ? '▦ watching' : '▦ watch'}
-            </span>
+            </button>
           )}
           {canKill && (
             // opens the confirmation dialog — NEVER kills on this click
-            <span
+            <button
+              type="button"
               className="fd-actbtn kill"
-              role="button"
-              tabIndex={0}
               title="kill this agent — asks first; the worktree and branch are left alone"
-              onClick={(e) => { e.stopPropagation(); onKill(s); }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onKill(s); }
-              }}
+              onClick={() => onKill(s)}
             >
               ☠ kill
-            </span>
+            </button>
           )}
         </span>
       )}

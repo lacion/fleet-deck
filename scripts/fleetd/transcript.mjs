@@ -30,8 +30,12 @@ export function tailLines(transcriptPath, { maxBytes = 262_144 } = {}) {
   const start = Math.max(0, stat.size - maxBytes);
   const buf = Buffer.alloc(stat.size - start);
   const fd = fs.openSync(transcriptPath, 'r');
-  try { fs.readSync(fd, buf, 0, buf.length, start); } finally { fs.closeSync(fd); }
-  let chunk = buf.toString('utf8');
+  let nread;
+  try { nread = fs.readSync(fd, buf, 0, buf.length, start); } finally { fs.closeSync(fd); }
+  // WHY: stat and read are separate syscalls. Transcripts are append-only in
+  // practice, but if a file shrinks between them, Buffer.alloc's unread tail
+  // is NUL padding — never let those zeroes corrupt the newest JSONL record.
+  let chunk = buf.subarray(0, nread).toString('utf8');
   if (start > 0) chunk = chunk.slice(chunk.indexOf('\n') + 1); // drop the partial first line
 
   const lines = chunk.split('\n');
@@ -61,9 +65,11 @@ export function lastAssistantText(transcriptPath, { maxBytes = 2_000_000 } = {})
     let newest = true;
     for (const { line } of tailLines(transcriptPath, { maxBytes })) {
       // Most transcript rows are user/tool_result entries, occasionally very
-      // large ones. Avoid parsing them merely to learn they are not assistant
-      // output; the structural checks below remain authoritative.
+      // large ones. WHY: the newest row must still be parsed unconditionally
+      // so a partial append cannot resurrect old text; only older rows get the
+      // cheap pre-parse reject. Structural checks remain authoritative.
       const maybeAssistant = line.includes('"assistant"');
+      if (!newest && !maybeAssistant) continue;
       let entry;
       try { entry = JSON.parse(line); } catch {
         // The newest non-empty line may still be in the middle of an append.

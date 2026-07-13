@@ -8,7 +8,7 @@ import { useModal } from '../useModal.js';
 // EVERY key goes to the agent — Esc included (Claude's TUI needs it), so the
 // modal stops keydown propagation and App's global shortcuts (Esc-to-close,
 // j/k/c/y/n…) never fire while it is open. Closing is the ✕ button only.
-export default function TermModal({ spawnId, callsign, tmuxWindow, onClose }) {
+export default function TermModal({ spawnId, callsign, tmuxWindow, fallbackFocusRef, onClose }) {
   // null | {kind:'exit'|'err'|'close', text} — non-destructive: the terminal
   // stays on screen, frozen, under the strip.
   const [note, setNote] = useState(null);
@@ -16,7 +16,9 @@ export default function TermModal({ spawnId, callsign, tmuxWindow, onClose }) {
   // M-A2 (terminal variant) — restore focus to the opener on close, but NO Tab
   // trap and NO initial-focus steal: xterm claims focus itself and Tab must
   // reach the agent (autocomplete), so trapping it would break the terminal.
-  useModal(dialogRef, { trap: false, initialFocus: false });
+  // R3-4 — when opened by promoting a grid tile, the ⤢ opener is gone by close;
+  // fallbackFocusRef (the header Terminals button) catches focus in that case.
+  useModal(dialogRef, { trap: false, initialFocus: false, fallbackRef: fallbackFocusRef });
 
   return (
     // no backdrop-click close, no Esc close — Esc belongs to the agent's TUI.

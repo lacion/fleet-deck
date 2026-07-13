@@ -66,6 +66,44 @@ test('a malformed final transcript record never resurrects older assistant text'
   assert.equal(lastAssistantText(file), null, 'the newest append is not stable enough to answer from history');
 });
 
+test('assistant text scan skips large older non-assistant tail rows without losing the newest assistant', (t) => {
+  const dir = scratch(t, 'fleetdeck-transcript-filter-');
+  const file = path.join(dir, 'session.jsonl');
+  const largeRows = Array.from({ length: 3 }, (_, index) =>
+    JSON.stringify({ type: 'user', tool_result: 'x'.repeat(100_000), index }));
+  writeFileSync(file, `${assistant('Newest assistant answer')}\n${largeRows.join('\n')}\n`);
+
+  const originalParse = JSON.parse;
+  let parses = 0;
+  JSON.parse = function trackedParse(...args) {
+    parses++;
+    return originalParse.apply(this, args);
+  };
+  try {
+    assert.equal(lastAssistantText(file), 'Newest assistant answer');
+  } finally {
+    JSON.parse = originalParse;
+  }
+  assert.equal(parses, 2, 'only the newest row and eventual assistant row should need parsing');
+});
+
+test('assistant text scan ignores unread zero-fill after a short transcript read', (t) => {
+  const dir = scratch(t, 'fleetdeck-transcript-short-read-');
+  const file = path.join(dir, 'session.jsonl');
+  writeFileSync(file, `${assistant('Complete final answer')}\n`);
+
+  const originalStatSync = fs.statSync;
+  fs.statSync = function inflatedStat(...args) {
+    const stat = originalStatSync.apply(this, args);
+    return { ...stat, size: stat.size + 64 };
+  };
+  try {
+    assert.equal(lastAssistantText(file), 'Complete final answer');
+  } finally {
+    fs.statSync = originalStatSync;
+  }
+});
+
 test('model tracking reads only the 16 KB first tier when the newest assistant is nearby', (t) => {
   const dir = scratch(t, 'fleetdeck-transcript-tier-');
   const file = path.join(dir, 'session.jsonl');

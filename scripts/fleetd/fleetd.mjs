@@ -38,6 +38,12 @@ process.on('unhandledRejection', (reason) => {
 // other daemon capability is opened. There is deliberately no insecure LAN
 // fallback: a HOME/token read/write failure must never leave an open listener.
 function startupFatal(reason) {
+  // WHY cleanup here: HOME ownership is claimed before token validation and
+  // several other startup steps. Exiting from any of those refusals without
+  // releasing our exact pid record leaves a stale lock behind. The helper is a
+  // no-op before claimHome succeeds; the try also covers the very early mkdir
+  // failure, when its module-scoped ownership flag is not initialized yet.
+  try { removeOwnedPidFile(); } catch { /* startup refusal must still exit */ }
   // stderr may be a pipe (launchers/tests); synchronous emission guarantees
   // the refusal reason is not truncated by the immediate non-zero exit.
   try { fs.writeSync(2, `fleetd refused to start: ${reason}\n`); } catch { /* exit still wins */ }
@@ -70,6 +76,22 @@ function pidIsLive(pid) {
   }
 }
 
+function livePidLooksLikeFleetd(pid) {
+  if (process.platform !== 'linux') return true;
+  try {
+    const comm = fs.readFileSync(`/proc/${pid}/comm`, 'utf8').trim();
+    const argv = fs.readFileSync(`/proc/${pid}/cmdline`).toString('utf8').split('\0').filter(Boolean);
+    const nodeLike = /^(?:node|nodejs|fleetd)$/i.test(comm);
+    const fleetdScript = argv.some(arg => /(?:^|[/\\])fleetd(?:\.bundle)?\.mjs$/.test(arg));
+    return nodeLike && fleetdScript;
+  } catch (err) {
+    // WHY ENOENT is decisive: the PID died after kill(0), so it no longer owns
+    // HOME. Permission and transient I/O failures are not decisive; retaining
+    // the lock is safer than opening a live daemon's SQLite database twice.
+    return err?.code !== 'ENOENT';
+  }
+}
+
 function removeOwnedPidFile() {
   if (!ownsPidFile) return;
   try {
@@ -95,14 +117,29 @@ function claimHome() {
       }
     }
 
+    let recordText = null;
     let record = null;
-    try { record = pidRecord(fs.readFileSync(PID_FILE, 'utf8')); } catch (err) {
+    try {
+      recordText = fs.readFileSync(PID_FILE, 'utf8');
+      record = pidRecord(recordText);
+    } catch (err) {
       if (err?.code === 'ENOENT') continue; // the owner exited between EEXIST and read
       startupFatal(`cannot read FLEETDECK_HOME pidfile (${err?.code || err?.message || 'unknown error'})`);
     }
-    if (record && pidIsLive(record.pid)) {
+    if (record && pidIsLive(record.pid) && (record.port === null || livePidLooksLikeFleetd(record.pid))) {
       const port = record.port === null ? 'an unknown port (legacy pidfile)' : `port ${record.port}`;
-      startupFatal(`FLEETDECK_HOME is already used by live fleetd pid ${record.pid} on ${port}; use a separate FLEETDECK_HOME for another daemon`);
+      startupFatal(`FLEETDECK_HOME is already used by live fleetd pid ${record.pid} on ${port}; use a separate FLEETDECK_HOME for another daemon (if that PID was recycled, remove stale pidfile ${PID_FILE})`);
+    }
+
+    // WHY compare immediately before unlink: after a crash, two replacements
+    // can both inspect the same dead record. If one has already claimed HOME,
+    // the other must re-evaluate its fresh live record instead of deleting it
+    // and creating a second SQLite owner on another port.
+    try {
+      if (fs.readFileSync(PID_FILE, 'utf8') !== recordText) continue;
+    } catch (err) {
+      if (err?.code === 'ENOENT') continue;
+      startupFatal(`cannot re-read stale FLEETDECK_HOME pidfile (${err?.code || err?.message || 'unknown error'})`);
     }
     try { fs.unlinkSync(PID_FILE); } catch (err) {
       if (err?.code !== 'ENOENT') startupFatal(`cannot clear stale FLEETDECK_HOME pidfile (${err?.code || err?.message || 'unknown error'})`);
@@ -194,6 +231,10 @@ server.on('error', (e) => {
     try { db.close(); } catch { /* process is exiting */ }
     process.exit(3);
   }
+  // A bind/runtime setup failure is terminal too. Release only our exact pid
+  // record before the uncaught throw exits, so startup errors do not orphan HOME.
+  removeOwnedPidFile();
+  try { db.close(); } catch { /* the original server error still wins */ }
   throw e;
 });
 
@@ -261,6 +302,10 @@ async function shutdown() {
   // that never settles. `unref` means the guard itself never prolongs shutdown.
   const hardExit = setTimeout(() => {
     console.error('fleetd shutdown timed out waiting for discovery; forcing exit');
+    // These operations are synchronous and best effort, so they cannot await
+    // the discovery promise that this watchdog exists to escape.
+    removeOwnedPidFile();
+    try { db.close(); } catch { /* forced exit still wins */ }
     process.exit(1);
   }, 1000);
   hardExit.unref?.();

@@ -121,7 +121,11 @@ export function createCore(db, {
     // (never-pruned-for-live-sessions) file_touches table on every frame; it
     // now only aggregates touches newer than the ledger window (retentionSweep
     // deletes the rest), and the snapshot caps the per-session list on top.
-    filesBySession: db.prepare('SELECT session_id, abs_path, MIN(at) AS first FROM file_touches WHERE at > ? GROUP BY session_id, abs_path ORDER BY first'),
+    // R2-7: rank each file by its MOST RECENT touch, newest first, so the
+    // snapshot's per-session cap keeps the files a card touched most recently.
+    // (Was MIN(at) ASC, which kept a busy card's OLDEST 50 and dropped its
+    // newest — the exact files the human is watching.)
+    filesBySession: db.prepare('SELECT session_id, abs_path, MAX(at) AS recent FROM file_touches WHERE at > ? GROUP BY session_id, abs_path ORDER BY recent DESC'),
     insertMail: db.prepare('INSERT INTO mail (to_session, from_id, text, at, delivered_at) VALUES (?, ?, ?, ?, NULL)'),
     pendingMail: db.prepare('SELECT * FROM mail WHERE to_session = ? AND delivered_at IS NULL AND expired_at IS NULL ORDER BY at, id'),
     // /api/watch v2 claim: oldest undelivered mail from ANY sender (v1
@@ -195,13 +199,18 @@ export function createCore(db, {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'provisioning', ?, ?)`),
     setSpawnWorktree: db.prepare('UPDATE spawns SET worktree_path = ? WHERE spawn_id = ?'),
     staleProvisioningSpawns: db.prepare("SELECT * FROM spawns WHERE status = 'provisioning'"),
-    // H-R5: the newest spawn row still physically owning a tmux window (a
+    // H-R5 / R2-5: the newest spawn row still laying claim to a tmux window (a
     // revive reuses the dead row's window name, so a lineage can have several
-    // rows naming one window). 'killed'/'gone' rows have released the window;
-    // 'provisioning' has not claimed it yet. A kill by any OTHER id than this
-    // one is a stale/historical request and must be refused.
+    // rows naming one window). 'killed'/'gone' rows have RELEASED the window.
+    // 'provisioning' rows DO count now: spawn() and revive() insert the durable
+    // row as a provisional owner BEFORE the pane is created, precisely so a
+    // stale-id kill arriving during the newWindow await sees the NEW row as the
+    // window's owner and is refused. Without that, a revive's just-created pane
+    // could be killed by the OLD (terminal) spawn_id while the new row did not
+    // yet exist (R2-5). A kill by any OTHER id than this current owner is a
+    // stale/historical request and must be refused.
     currentWindowOwner: db.prepare(`SELECT * FROM spawns
-      WHERE tmux_window = ? AND status IN ('spawning', 'stalled', 'live', 'pane-dead')
+      WHERE tmux_window = ? AND status IN ('provisioning', 'spawning', 'stalled', 'live', 'pane-dead')
       ORDER BY requested_at DESC, rowid DESC LIMIT 1`),
     getSpawn: db.prepare('SELECT * FROM spawns WHERE spawn_id = ?'),
     spawnBySession: db.prepare('SELECT * FROM spawns WHERE session_id = ? ORDER BY requested_at DESC, rowid DESC LIMIT 1'),
@@ -702,10 +711,12 @@ export function createCore(db, {
     const { conflict } = applyEvent({ ...ev, hook_event_name: eventName });
     // F3e auto-resolution, correlated (M-B1): a single completed tool call must
     // settle ONLY its own permission hold, never a sibling parallel hold still
-    // awaiting the human. Pass the tool_use_id so expireOnActivity can target the
-    // matching question; it falls back to session-wide expiry only when the
-    // payload carries no correlation id.
-    questions.expireOnActivity(ev.session_id || 'unknown', { toolUseId: ev.tool_use_id });
+    // awaiting the human. Real PostToolUse payloads carry NO tool_use_id, so we
+    // correlate on the identity they DO share with the held PermissionRequest —
+    // (tool_name, tool_input). A hold for a DIFFERENT tool call, and every
+    // freeform row, is left untouched; the turn-boundary UserPromptSubmit path
+    // (hookUserPromptSubmit above) stays session-wide.
+    questions.expireOnActivity(ev.session_id || 'unknown', { toolName: ev.tool_name, toolInput: ev.tool_input });
     if (!conflict) return {};
     return {
       hookSpecificOutput: {
@@ -1812,6 +1823,22 @@ export function createCore(db, {
     if (row.skip_permissions) argv.push('--dangerously-skip-permissions');
     if (remoteWanted) argv.push('--remote-control', row.callsign);
     const tmux_session = tmuxAdapter.sessionName(port);
+
+    // R2-5: insert the new spawn's durable row as a PROVISIONAL owner of the
+    // reused window name BEFORE the pane is created (the H-R6 pattern, now in
+    // revive too). Reviving reuses the dead row's tmux_window; without a live
+    // owning row, a forced stale-id spawnKill arriving during the newWindow
+    // await would see no current owner (the old row is terminal) — or only that
+    // old row — match the just-revived pane by window name, and kill it,
+    // leaving a 'spawning' row for a dead pane. currentWindowOwner counts
+    // 'provisioning', so the new row owns the window the instant it exists and
+    // any OTHER-id kill is refused. remote_url is deliberately NOT carried over:
+    // the old link died with the old session; a fresh one is harvested from the
+    // revived pane. Flip to 'spawning' (live-eligible) only once the pane is up.
+    q.insertProvisionalSpawn.run(new_spawn_id, row.session_id, row.callsign, tmux_session,
+      row.tmux_window, row.cwd, row.worktree_path, Date.now(), row.skip_permissions ? 1 : 0,
+      remoteWanted ? 1 : 0);
+
     const override = tmuxAdapter.spawnOverrideCmd();
     if (override) {
       tmuxAdapter.launchOverride(override, {
@@ -1830,15 +1857,17 @@ export function createCore(db, {
         await tmuxAdapter.ensureSession(port);
         await tmuxAdapter.newWindow({ port, callsign: row.callsign, cwd: runCwd, argv });
       } catch (err) {
+        // The pane never launched — settle the provisional row terminal so it
+        // stops owning the window (and is never liveness-checked), then fail.
+        q.setSpawnStatus.run('gone', new_spawn_id);
+        forgetSpawn(new_spawn_id);
         return { status: 500, body: { ok: false, reason: `tmux revive failed: ${err.message || err}` } };
       }
     }
 
-    // remote_url is deliberately NOT carried over: the old link died with the
-    // old session. A fresh one is harvested from the revived pane.
-    q.insertSpawn.run(new_spawn_id, row.session_id, row.callsign, tmux_session,
-      row.tmux_window, row.cwd, row.worktree_path, Date.now(), row.skip_permissions ? 1 : 0,
-      remoteWanted ? 1 : 0);
+    // Pane exists (or the override was handed off): flip the durable row
+    // live-eligible ('provisioning' → 'spawning').
+    q.setSpawnStatus.run('spawning', new_spawn_id);
     updateSession(row.session_id, { archived_at: null, col: 'queued', note: 'reviving…' });
     tick(`⟲ reviving ${row.callsign} (resume ${row.session_id.slice(0, 8)})`);
     scheduleNudge(new_spawn_id, row.tmux_window, row.callsign);
@@ -2234,6 +2263,8 @@ export function createCore(db, {
     // M-G1: window the touch aggregation by time (retentionSweep deletes older
     // rows) and cap the per-session list, so a snapshot can never GROUP-BY an
     // unbounded table nor ship an unbounded file list per card on every frame.
+    // R2-7: filesBySession is ordered newest-touch-first, so taking the first
+    // SNAPSHOT_FILES_PER_SESSION keeps each card's MOST RECENT files.
     const filesBySid = new Map();
     for (const row of q.filesBySession.all(now - RETAIN_LEDGER_MS)) {
       let list = filesBySid.get(row.session_id);
@@ -2359,6 +2390,11 @@ export function createCore(db, {
         let ids;
         try { ids = JSON.parse(c.sessions_json || '[]'); }
         catch { return []; }
+        // R2-6: valid JSON of the WRONG shape ('{}', 'null', '"s"', 42) parses
+        // without throwing, but then `ids.map(...)` below throws — reopening the
+        // same 500-every-frame hole the guard was meant to close. Require an
+        // array; anything else is dropped exactly like a corrupt row.
+        if (!Array.isArray(ids)) return [];
         return [{
           at: c.at,
           repo_id: c.repo_id,
@@ -2473,6 +2509,9 @@ export function createCore(db, {
     for (const row of q.allConflicts.all()) {
       let ids = [];
       try { ids = JSON.parse(row.sessions_json || '[]'); } catch { /* corrupt row → drop it */ }
+      // R2-6: wrong-shape JSON ('null', '{}', a string) parses but would make
+      // `ids.length`/`ids.every` throw (e.g. null.length) — treat it as corrupt.
+      if (!Array.isArray(ids)) ids = [];
       if (ids.length && ids.every(id => alive.has(id))) continue; // still a live argument
       conflicts_cleared += Number(q.deleteConflict.run(row.id).changes);
     }

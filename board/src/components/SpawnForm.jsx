@@ -182,7 +182,7 @@ export default function SpawnForm({ sessions, prefillPrompt, prefillCwd, planMod
 
   return (
     <div className="fd-composewrap" onClick={onClose}>
-      <div className="fd-compose fd-spawn" role="dialog" aria-label="Spawn a session" onClick={(e) => e.stopPropagation()}>
+      <div className="fd-compose fd-spawn" role="dialog" aria-modal="true" aria-label="Spawn a session" ref={dialogRef} onClick={(e) => e.stopPropagation()}>
         <div style={{ display: 'flex', alignItems: 'center' }}>
           <span className="lbl">{planMode ? 'SPAWN SESSION — EXECUTE PLAN' : 'SPAWN SESSION'}</span>
           <span className="fd-spacer" />

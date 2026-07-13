@@ -17,15 +17,16 @@ import { useModal } from '../useModal.js';
 
 const COLS = (n) => (n <= 1 ? 1 : n <= 4 ? 2 : n <= 9 ? 3 : 4);
 
-export default function TermGrid({ tiles, onClose, onExpand }) {
+export default function TermGrid({ tiles, fallbackFocusRef, onClose, onExpand }) {
   // The focused tile owns the keyboard. Default to the first — a grid with
   // nothing focused would look like a broken keyboard rather than a choice.
   const [focused, setFocused] = useState(tiles[0]?.spawnId ?? null);
   const [notes, setNotes] = useState({}); // spawnId -> {kind,text} | null
   const dialogRef = useRef(null);
   // M-A2 (terminal variant) — restore focus on close; NO Tab trap / focus steal
-  // (Tab and focus belong to the focused agent's xterm).
-  useModal(dialogRef, { trap: false, initialFocus: false });
+  // (Tab and focus belong to the focused agent's xterm). R3-4 — fallbackFocusRef
+  // (the header Terminals button, our own opener) keeps parity with the modal.
+  useModal(dialogRef, { trap: false, initialFocus: false, fallbackRef: fallbackFocusRef });
 
   const cols = COLS(tiles.length);
 

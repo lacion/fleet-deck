@@ -87,6 +87,11 @@ export default function App() {
   const { reviving, enabling, revivingAll, revive, reviveAll, enableRemote: enableRemoteAction } = useSpawnActions();
   const clearTimer = useRef(null);
   const prevConflicts = useRef({ keys: null, sawData: false });
+  // R3-4 — the header "▦ Terminals" button is a persistent focus target: when
+  // the grid promotes a tile to the full modal, the grid (and the ⤢ button that
+  // opened the modal) unmount, so the modal has no live opener to restore to on
+  // close. This ref is its safety net (handed to TermModal + TermGrid).
+  const termBtnRef = useRef(null);
   // Mirrors "a live terminal has the keyboard" for the keydown handler — the
   // modal OR the grid, since the grid's focused tile owns Esc exactly as the
   // modal does. Both stop propagation themselves; this guard covers stray focus.
@@ -484,6 +489,7 @@ export default function App() {
         {termableSessions.length > 0 && (
           <button
             type="button"
+            ref={termBtnRef}
             className="fd-hbtn"
             title={watchable.length
               ? `Watch the ${watchable.length} selected agent${watchable.length === 1 ? '' : 's'}`
@@ -733,6 +739,7 @@ export default function App() {
             spawnId={term.spawnId}
             callsign={term.callsign}
             tmuxWindow={term.window}
+            fallbackFocusRef={termBtnRef}
             onClose={() => setTerm(null)}
           />
         </React.Suspense>
@@ -743,6 +750,7 @@ export default function App() {
         <React.Suspense fallback={null}>
           <TermGrid
             tiles={grid}
+            fallbackFocusRef={termBtnRef}
             onClose={() => setGrid(null)}
             onExpand={(t) => { setGrid(null); setTerm(t); }}
           />

@@ -68,6 +68,40 @@ function wsAttempt(url, options) {
   });
 }
 
+// A raw WebSocket upgrade handshake with fully controlled headers. The ws client
+// refuses to forge Host or Sec-Fetch-Site (exactly the headers a real attacker
+// cannot set from a page either — which is the point), so drive the 101 by hand.
+// Resolves 'upgraded' when the server completes the switch, or 'rejected' when it
+// destroys the socket (the upgrade handler's socket.destroy() path) or answers
+// any non-101.
+function rawUpgrade(port, { path: reqPath = '/ws', headers = {} } = {}) {
+  return new Promise(resolve => {
+    const req = http.request({
+      host: '127.0.0.1', port, path: reqPath, method: 'GET',
+      headers: {
+        connection: 'Upgrade',
+        upgrade: 'websocket',
+        'sec-websocket-version': '13',
+        // A VALID 16-byte key. The ws server rejects a malformed one outright, so
+        // a bogus key would make every case "reject" — the control upgrade below
+        // would fail and the guard test would be tautological (rejecting the
+        // forged headers for the wrong reason). UUID-minus-dashes is 32 hex = 16
+        // bytes → a spec-shaped base64 key.
+        'sec-websocket-key': Buffer.from(randomUUID().replace(/-/g, ''), 'hex').toString('base64'),
+        ...headers,
+      },
+    });
+    let settled = false;
+    const done = outcome => { if (settled) return; settled = true; try { req.destroy(); } catch { /* noop */ } resolve(outcome); };
+    req.on('upgrade', (_res, socket) => { try { socket.destroy(); } catch { /* noop */ } done('upgraded'); });
+    req.on('response', () => done('rejected')); // any non-101 answer
+    req.on('error', () => done('rejected'));    // server tore the socket down
+    req.on('socket', s => s.on('close', () => done('rejected')));
+    req.setTimeout(5000, () => done('rejected'));
+    req.end();
+  });
+}
+
 test('C1: same-origin gate on POSTs, WS upgrades, Host, and Content-Type', async t => {
   const daemon = await startDaemon();
   t.after(() => daemon.stop());
@@ -173,6 +207,52 @@ test('C1: same-origin gate on POSTs, WS upgrades, Host, and Content-Type', async
     const evil = await wsAttempt(`${wsBase}/ws/term?spawn=x&cols=80&rows=24`, { headers: { origin: 'https://evil.example' } });
     assert.equal(evil.outcome, 'refused', 'a cross-site page must not reach a live pane');
   });
+
+  // R1-1: method is not the boundary — state change is. GET /mail DRAINS a
+  // mailbox and GET /api/watch CLAIMS mail; both mutate, so both get the same
+  // cross-site verdict as a POST. A simple cross-site fetch() carries an Origin
+  // but needs no preflight, so without this a page could drain a session's mail.
+  await t.test('mutating GET /mail is refused cross-origin (403), allowed with no Origin', async () => {
+    const evil = await raw(port, {
+      method: 'GET', path: '/mail?session=nobody',
+      headers: { origin: 'https://evil.example' },
+    });
+    assert.equal(evil.status, 403, 'a page on another site must not DRAIN a mailbox via GET /mail');
+
+    const cli = await raw(port, { method: 'GET', path: '/mail?session=nobody' }); // a CLI/fleet-watch caller sends no Origin
+    assert.equal(cli.status, 200, 'a no-Origin loopback caller must still drain mail');
+  });
+
+  await t.test('mutating GET /api/watch is refused cross-site (403), allowed with no Origin', async () => {
+    const evil = await raw(port, {
+      method: 'GET', path: '/api/watch?session=nobody',
+      headers: { 'sec-fetch-site': 'cross-site' },
+    });
+    assert.equal(evil.status, 403, 'a cross-site page must not CLAIM mail via GET /api/watch');
+
+    // Unknown session ⇒ session_alive:false ⇒ the long-poll answers idle at once
+    // (no hold), so the no-Origin path returns promptly rather than hanging.
+    const cli = await raw(port, { method: 'GET', path: '/api/watch?session=nobody' });
+    assert.equal(cli.status, 200, 'a no-Origin watcher must still be served');
+  });
+
+  // Item-4 WS gaps, on RAW sockets so the forged headers actually reach the
+  // server (the ws client silently drops Host / Sec-Fetch-Site). A control case
+  // proves the guard is discriminating, not refusing every raw upgrade.
+  await t.test('WS /ws upgrade with a forged foreign Host is refused (raw socket)', async () => {
+    assert.equal(await rawUpgrade(port, { path: '/ws', headers: { host: `evil.example:${port}` } }), 'rejected',
+      'a DNS-rebinding Host must not complete the /ws upgrade');
+  });
+
+  await t.test('WS /ws upgrade with cross-site Sec-Fetch-Site is refused (raw socket)', async () => {
+    assert.equal(await rawUpgrade(port, { path: '/ws', headers: { 'sec-fetch-site': 'cross-site' } }), 'rejected',
+      'a cross-site page must not complete the /ws upgrade');
+  });
+
+  await t.test('WS /ws upgrade with our own Host and no cross-site marker completes (control)', async () => {
+    assert.equal(await rawUpgrade(port, { path: '/ws', headers: { host: `127.0.0.1:${port}` } }), 'upgraded',
+      'a same-origin upgrade must still succeed — the guard is discriminating, not blanket-refusing');
+  });
 });
 
 test('M-B3: POST body is byte-exact and byte-capped', async t => {
@@ -219,5 +299,22 @@ test('M-B3: POST body is byte-exact and byte-capped', async t => {
       parts: [JSON.stringify({ to: 'all', from: 'board', text: huge })],
     });
     assert.equal(res.status, 413, 'a body past the byte cap must be refused on a control path');
+  });
+
+  await t.test('the cap counts BYTES not UTF-16 units: a sub-cap-length multibyte body still 413s', async () => {
+    // 400k snowmen: .length is 400_000 UTF-16 units — comfortably UNDER
+    // MAX_BODY=1e6, so a `body.length` cap would wave this straight through — but
+    // 1_200_000 UTF-8 bytes, OVER the cap. Only a byte-measured cap refuses it,
+    // which is the whole point of M-B3. An ASCII 'x'.repeat test cannot show this
+    // (its length and byte count are equal), so it is not proof the cap is bytes.
+    const text = '☃'.repeat(400_000);
+    assert.ok(text.length < 1_000_000, 'sanity: the UTF-16 length is under the cap');
+    assert.ok(Buffer.byteLength(text, 'utf8') > 1_000_000, 'sanity: the byte length is over the cap');
+    const res = await raw(port, {
+      method: 'POST', path: '/mail',
+      headers: { 'content-type': 'application/json' },
+      parts: [JSON.stringify({ to: 'all', from: 'board', text })],
+    });
+    assert.equal(res.status, 413, 'a body whose BYTES exceed the cap must 413 even when its UTF-16 length does not');
   });
 });

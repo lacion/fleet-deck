@@ -386,11 +386,29 @@ export function createTermBridge({ port, resolveSpawn, log = () => {} } = {}) {
       established: false,
       initialized: false,
       finished: false,
+      pending: [],                  // R1-4: %output that arrived after we
+                                    // subscribed but before the init frame shipped
       queuedInput: 0,               // M-R4: pending input bytes not yet sent
       inputChain: Promise.resolve(), // M-R4: serializes this viewer's send-keys
       emit(data) {
-        if (this.finished || !this.initialized) return;
+        if (this.finished) return;
+        // R1-4: subscribed but not yet initialized — BUFFER, never drop. We now
+        // subscribe right after capture-pane (see below), so output landing
+        // during the cursor lookup + init build must be held until the seed has
+        // shipped, then replayed in order by flushPending().
+        if (!this.initialized) { this.pending.push(data); return; }
         try { send({ t: 'out', data }); } catch { this.finish('terminal socket closed', false); }
+      },
+      // R1-4: replay the gap buffer AFTER the init frame, in arrival order. The
+      // captured seed holds only what existed at capture time and this buffer
+      // only what arrived after, so there is no double-draw.
+      flushPending() {
+        const buffered = this.pending;
+        this.pending = [];
+        for (const data of buffered) {
+          if (this.finished) return;
+          try { send({ t: 'out', data }); } catch { this.finish('terminal socket closed', false); }
+        }
       },
       finish(reason, notify = true) {
         if (this.finished) return;
@@ -441,14 +459,23 @@ export function createTermBridge({ port, resolveSpawn, log = () => {} } = {}) {
 
       const captured = await c.command(`capture-pane -p -e -t ${pane}`);
       if (!captured.ok) throw new Error('terminal pane capture failed');
+
+      // R1-4: subscribe NOW, the instant the seed is photographed — not after the
+      // cursor lookup below. Everything the app emitted while repainting is baked
+      // into `captured`, so subscribing later dropped every %output that landed
+      // during the cursor round-trip: the pane was not yet in c.panes, so the
+      // demux discarded it and the viewer stayed desynced until a later repaint.
+      // emit() buffers into viewer.pending until the init frame ships;
+      // flushPending() replays it right after, with no double-draw — the seed
+      // holds only what existed at capture time, the buffer only what arrived
+      // after.
+      subscribe(c, pane, viewer);
+
       const cursor = await c.command(`display-message -p -t ${pane} '#{cursor_x} #{cursor_y}'`);
       if (!cursor.ok) throw new Error('terminal cursor lookup failed');
       const match = /^(\d+)\s+(\d+)$/.exec(cursor.lines.at(-1)?.trim() || '');
       if (!match) throw new Error('terminal cursor lookup returned invalid data');
 
-      // Subscribe only now: everything the app emitted while repainting is
-      // already baked into the snapshot below, and replaying it would double-draw.
-      subscribe(c, pane, viewer);
       viewer.established = true;
       // CRLF, never bare LF: a raw terminal reads \n as "down one row", NOT
       // "down and back to column 0" — joining a captured screen with \n walks
@@ -459,6 +486,8 @@ export function createTermBridge({ port, resolveSpawn, log = () => {} } = {}) {
         // the bytes and decode them as one piece so multi-byte glyphs survive.
         screen: CLEAR_SCREEN + Buffer.from(captured.lines.join('\r\n'), 'latin1').toString('utf8') + `\u001b[${Number(match[2]) + 1};${Number(match[1]) + 1}H` });
       viewer.initialized = true;
+      // R1-4: replay whatever arrived during the cursor lookup / init build.
+      viewer.flushPending();
     } catch (err) {
       viewer.finish(err?.message || 'terminal open failed', false);
       throw new TermBridgeError(err?.message || 'terminal open failed');

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -85,6 +85,31 @@ test('one FLEETDECK_HOME cannot be opened concurrently by daemons on different p
   assert.match(second.stderr, new RegExp(`already used by live fleetd pid .* port ${firstPort}`));
 
   assert.equal(first.proc.exitCode, null, 'refusing the second port must not disturb the HOME owner');
+});
+
+test('Linux PID reuse by a non-fleetd process does not retain a stale HOME lock', {
+  skip: process.platform !== 'linux' ? 'requires Linux /proc process metadata' : false,
+}, async (t) => {
+  const home = freshHome('fleetdeck-recycled-pid-');
+  const pidFile = path.join(home, 'fleetd.pid');
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+
+  // The test runner PID is live and node-backed, but its cmdline is not fleetd.
+  // A stale record for it models OS PID reuse without needing privileged PID
+  // namespace control. The short token then fails before any socket bind.
+  writeFileSync(pidFile, JSON.stringify({ pid: process.pid, port: randomPort() }));
+  const daemon = spawnRaw({
+    port: randomPort(),
+    home,
+    env: loaderOptions({ FLEETDECK_TOKEN: 'too-short' }),
+  });
+  t.after(() => daemon.kill());
+
+  const code = await daemon.waitForExit(5000);
+  assert.equal(code, 1);
+  assert.match(daemon.stderr, /FLEETDECK_TOKEN must be at least 16 characters/,
+    `recycled PID was mistaken for fleetd:\n${daemon.stderr}`);
+  assert.equal(existsSync(pidFile), false, 'startupFatal must release the newly claimed pidfile');
 });
 
 test('SIGTERM waits for the mDNS goodbye send callback before fleetd exits', async (t) => {

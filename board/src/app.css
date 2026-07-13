@@ -127,13 +127,35 @@ a { color: var(--act); } a:hover { opacity: .85; }
 
 /* session card */
 .fd-card {
+  position: relative; /* R3-3 — positioning context for the .fd-cardopen overlay */
   background: var(--surface); border: 1px solid var(--border); border-left: 3px solid transparent;
   border-radius: var(--r-card); padding: 10px 12px; display: flex; flex-direction: column; gap: 6px;
   cursor: pointer; transition: border-color var(--t-move), opacity var(--t-move); text-align: left; color: var(--text);
   font-size: 14px; width: 100%;
 }
 .fd-card:hover { border-color: var(--dim); }
-.fd-card:focus-visible { outline: 2px solid var(--act); outline-offset: 1px; }
+/* R3-3 — the card is a non-interactive container now; the full-bleed
+   .fd-cardopen <button> is what opens the drawer and what takes focus, so it
+   carries the focus ring (drawn around the whole card, since it covers it). */
+.fd-cardopen {
+  position: absolute; inset: 0; z-index: 1;
+  margin: 0; padding: 0; border: 0; background: transparent; color: transparent;
+  border-radius: var(--r-card); cursor: pointer; font: inherit;
+  appearance: none; -webkit-appearance: none;
+}
+.fd-cardopen:focus-visible { outline: 2px solid var(--act); outline-offset: 1px; }
+/* the interactive chips ride ABOVE the overlay so they get their own clicks;
+   everything else stays under it, so a click there opens the drawer. Only the
+   individual controls are raised (not the acts row), so gaps still open it. */
+.fd-card .fd-cardacts .fd-actbtn,
+.fd-card .fd-revivechip,
+.fd-card .fd-remoteofferchip,
+.fd-card a.fd-remotechip.link { position: relative; z-index: 2; }
+/* these chips are <button>/<a> now — strip UA chrome so they still read as chips */
+button.fd-revivechip, button.fd-remoteofferchip, button.fd-actbtn {
+  margin: 0; appearance: none; -webkit-appearance: none;
+}
+a.fd-remotechip.link { text-decoration: none; }
 .fd-card.conflict { border-color: var(--hazard); border-left-color: var(--hazard); }
 .fd-card.priority { border-left-color: var(--act); }
 .fd-card.needsyou { border-left-color: var(--act); }

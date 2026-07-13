@@ -70,6 +70,44 @@ test('M-P1: a burst of mutations coalesces into far fewer broadcasts', async t =
   assert.ok(session, 'the coalesced snapshot still carries the mutated session');
 });
 
+test('R1-2: a /ws client past the buffer cap is TERMINATED on broadcast, not silently skipped', async t => {
+  // Deterministic eviction: with the cap forced to -1, bufferedAmount (always
+  // >= 0) exceeds it for every peer, so the very next broadcast must terminate
+  // the client. The bug was to instead SKIP the send while clearing `dirty` —
+  // the mutation was then lost to a client that later recovers, because the
+  // board stops /state polling while its socket is live. Terminate-and-reconnect
+  // is the fix, and this pins it.
+  const daemon = await startDaemon({ env: { FLEETDECK_WS_BUFFER_MAX: '-1' } });
+  t.after(() => daemon.stop());
+  const cwd = mkdtempSync(path.join(tmpdir(), 'fleetdeck-evict-'));
+  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+
+  const { ws, frames } = connect(daemon.baseUrl.replace(/^http/, 'ws') + '/ws');
+  t.after(() => ws.close());
+  let closed = false;
+  ws.on('close', () => { closed = true; });
+  // The connect snapshot still lands — the connection handler does not apply the
+  // cap, only broadcast() does.
+  await waitUntil(() => frames.find(f => f.type === 'snapshot'), 'connect snapshot');
+  assert.equal(closed, false, 'a fresh client must not be evicted before any broadcast');
+
+  // Any mutation drives a broadcast → the over-cap client is terminated.
+  const sid = randomUUID();
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
+  await waitUntil(() => closed, 'over-cap client terminated on the broadcast');
+
+  // …and the point of terminating: a reconnecting client is handed a COMPLETE
+  // snapshot on connect, so it recovers the mutation it would otherwise never
+  // have learned about. (The connect handler does not cap, so this frame lands.)
+  const again = connect(daemon.baseUrl.replace(/^http/, 'ws') + '/ws');
+  t.after(() => again.ws.close());
+  const fresh = await waitUntil(
+    () => again.frames.find(f => f.type === 'snapshot' && f.sessions?.some(s => s.session_id === sid)),
+    'fresh connect snapshot carries the mutation the evicted client missed',
+  );
+  assert.ok(fresh, 'a reconnecting client recovers the state via the connect snapshot');
+});
+
 // ---- H-S1 needs a real LAN bind so a token exists at all. Skip when the host
 // has no reachable non-internal IPv4 (CI, a locked-down sandbox), exactly like
 // tests/lan-auth.test.mjs.
@@ -133,4 +171,25 @@ test('H-S1: the /ws snapshot carries no token; /state (authorized) still does', 
   const frame = await waitUntil(() => frames.find(f => f.type === 'snapshot'), 'LAN /ws snapshot');
   assert.ok(!JSON.stringify(frame).includes(LAN_TOKEN), 'the /ws snapshot must never contain the token');
   assert.equal(frame.lan, undefined, 'the /ws snapshot must not carry lan at all — the token rides its urls');
+
+  // H-S1 must also hold on a BROADCAST, not just the connect snapshot: every
+  // mutation pushes a fresh snapshot to each live /ws client, and that frame is
+  // built by the SAME broadcast() path — but a regression could reintroduce the
+  // token there while leaving the connect snapshot clean. Drive one mutation and
+  // inspect the pushed frame. (The hook rides the LAN address with the token in
+  // the query; a fetch sends no Origin, so it clears the CSRF wall as a CLI would.)
+  const cwd = mkdtempSync(path.join(tmpdir(), 'fleetdeck-hs1-mut-'));
+  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  const sid = randomUUID();
+  const posted = await fetch(`${baseUrl}/hook/SessionStart?t=${encodeURIComponent(LAN_TOKEN)}`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(loadFixture('session-start', { session_id: sid, cwd })),
+  });
+  assert.equal(posted.status, 200);
+  const broadcast = await waitUntil(
+    () => frames.find(f => f.type === 'snapshot' && f.sessions?.some(s => s.session_id === sid)),
+    'LAN /ws broadcast carrying the new session',
+  );
+  assert.ok(!JSON.stringify(broadcast).includes(LAN_TOKEN), 'the broadcast snapshot must never contain the token');
+  assert.equal(broadcast.lan, undefined, 'the broadcast snapshot must not carry lan either');
 });

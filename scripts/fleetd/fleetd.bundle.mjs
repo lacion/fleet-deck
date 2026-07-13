@@ -4024,6 +4024,14 @@ function safeParse(json) {
     return null;
   }
 }
+function stableStringify(v) {
+  if (v === null || typeof v !== "object") return JSON.stringify(v ?? null);
+  if (Array.isArray(v)) return "[" + v.map(stableStringify).join(",") + "]";
+  return "{" + Object.keys(v).sort().map((k) => JSON.stringify(k) + ":" + stableStringify(v[k])).join(",") + "}";
+}
+function toolCallKey(toolName, toolInput) {
+  return String(toolName) + "\0" + stableStringify(toolInput ?? null);
+}
 function createQuestions(db2, {
   holdMs = DEFAULT_HOLD_MS,
   mail = () => {
@@ -4186,18 +4194,16 @@ function createQuestions(db2, {
     }
     return { status: 400, body: { ok: false, err: `unknown question kind ${row.kind}` } };
   }
-  function expireOnActivity(sessionId, { toolUseId, requestId } = {}) {
-    const correlationId = toolUseId ?? requestId;
-    let rows = q.pendingBySession.all(sessionId);
-    if (correlationId != null) {
-      const matched = rows.find((r) => {
-        if (!HOLD_KINDS.has(r.kind)) return false;
-        const payload = safeParse(r.payload_json);
-        const rowId = payload?.tool_use_id ?? payload?.toolUseId ?? payload?.request_id ?? payload?.requestId;
-        return rowId != null && String(rowId) === String(correlationId);
-      });
-      rows = matched ? [matched] : [];
-    }
+  function expireOnActivity(sessionId, { toolName, toolInput } = {}) {
+    const correlated = typeof toolName === "string" && toolName !== "";
+    const activityKey = correlated ? toolCallKey(toolName, toolInput) : null;
+    const rows = q.pendingBySession.all(sessionId).filter((r) => {
+      if (!correlated) return true;
+      if (!HOLD_KINDS.has(r.kind)) return false;
+      const payload = safeParse(r.payload_json);
+      if (payload?.tool_name == null) return false;
+      return toolCallKey(payload.tool_name, payload.tool_input) === activityKey;
+    });
     let changed = false;
     for (const r of rows) {
       const h = releaseHold(r.id);
@@ -4353,12 +4359,13 @@ function tailLines(transcriptPath, { maxBytes = 262144 } = {}) {
   const start = Math.max(0, stat.size - maxBytes);
   const buf = Buffer.alloc(stat.size - start);
   const fd = fs2.openSync(transcriptPath, "r");
+  let nread;
   try {
-    fs2.readSync(fd, buf, 0, buf.length, start);
+    nread = fs2.readSync(fd, buf, 0, buf.length, start);
   } finally {
     fs2.closeSync(fd);
   }
-  let chunk = buf.toString("utf8");
+  let chunk = buf.subarray(0, nread).toString("utf8");
   if (start > 0) chunk = chunk.slice(chunk.indexOf("\n") + 1);
   const lines = chunk.split("\n");
   const it = (function* () {
@@ -4379,6 +4386,7 @@ function lastAssistantText(transcriptPath, { maxBytes = 2e6 } = {}) {
     let newest = true;
     for (const { line } of tailLines(transcriptPath, { maxBytes })) {
       const maybeAssistant = line.includes('"assistant"');
+      if (!newest && !maybeAssistant) continue;
       let entry;
       try {
         entry = JSON.parse(line);
@@ -4692,7 +4700,11 @@ function createCore(db2, {
     // (never-pruned-for-live-sessions) file_touches table on every frame; it
     // now only aggregates touches newer than the ledger window (retentionSweep
     // deletes the rest), and the snapshot caps the per-session list on top.
-    filesBySession: db2.prepare("SELECT session_id, abs_path, MIN(at) AS first FROM file_touches WHERE at > ? GROUP BY session_id, abs_path ORDER BY first"),
+    // R2-7: rank each file by its MOST RECENT touch, newest first, so the
+    // snapshot's per-session cap keeps the files a card touched most recently.
+    // (Was MIN(at) ASC, which kept a busy card's OLDEST 50 and dropped its
+    // newest — the exact files the human is watching.)
+    filesBySession: db2.prepare("SELECT session_id, abs_path, MAX(at) AS recent FROM file_touches WHERE at > ? GROUP BY session_id, abs_path ORDER BY recent DESC"),
     insertMail: db2.prepare("INSERT INTO mail (to_session, from_id, text, at, delivered_at) VALUES (?, ?, ?, ?, NULL)"),
     pendingMail: db2.prepare("SELECT * FROM mail WHERE to_session = ? AND delivered_at IS NULL AND expired_at IS NULL ORDER BY at, id"),
     // /api/watch v2 claim: oldest undelivered mail from ANY sender (v1
@@ -4766,13 +4778,18 @@ function createCore(db2, {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'provisioning', ?, ?)`),
     setSpawnWorktree: db2.prepare("UPDATE spawns SET worktree_path = ? WHERE spawn_id = ?"),
     staleProvisioningSpawns: db2.prepare("SELECT * FROM spawns WHERE status = 'provisioning'"),
-    // H-R5: the newest spawn row still physically owning a tmux window (a
+    // H-R5 / R2-5: the newest spawn row still laying claim to a tmux window (a
     // revive reuses the dead row's window name, so a lineage can have several
-    // rows naming one window). 'killed'/'gone' rows have released the window;
-    // 'provisioning' has not claimed it yet. A kill by any OTHER id than this
-    // one is a stale/historical request and must be refused.
+    // rows naming one window). 'killed'/'gone' rows have RELEASED the window.
+    // 'provisioning' rows DO count now: spawn() and revive() insert the durable
+    // row as a provisional owner BEFORE the pane is created, precisely so a
+    // stale-id kill arriving during the newWindow await sees the NEW row as the
+    // window's owner and is refused. Without that, a revive's just-created pane
+    // could be killed by the OLD (terminal) spawn_id while the new row did not
+    // yet exist (R2-5). A kill by any OTHER id than this current owner is a
+    // stale/historical request and must be refused.
     currentWindowOwner: db2.prepare(`SELECT * FROM spawns
-      WHERE tmux_window = ? AND status IN ('spawning', 'stalled', 'live', 'pane-dead')
+      WHERE tmux_window = ? AND status IN ('provisioning', 'spawning', 'stalled', 'live', 'pane-dead')
       ORDER BY requested_at DESC, rowid DESC LIMIT 1`),
     getSpawn: db2.prepare("SELECT * FROM spawns WHERE spawn_id = ?"),
     spawnBySession: db2.prepare("SELECT * FROM spawns WHERE session_id = ? ORDER BY requested_at DESC, rowid DESC LIMIT 1"),
@@ -5161,7 +5178,7 @@ function createCore(db2, {
   function hookPostToolUse(ev) {
     const eventName = ev.hook_event_name || "PostToolUse";
     const { conflict } = applyEvent({ ...ev, hook_event_name: eventName });
-    questions.expireOnActivity(ev.session_id || "unknown", { toolUseId: ev.tool_use_id });
+    questions.expireOnActivity(ev.session_id || "unknown", { toolName: ev.tool_name, toolInput: ev.tool_input });
     if (!conflict) return {};
     return {
       hookSpecificOutput: {
@@ -6041,6 +6058,18 @@ function createCore(db2, {
     if (row.skip_permissions) argv.push("--dangerously-skip-permissions");
     if (remoteWanted) argv.push("--remote-control", row.callsign);
     const tmux_session = tmuxAdapter.sessionName(port);
+    q.insertProvisionalSpawn.run(
+      new_spawn_id,
+      row.session_id,
+      row.callsign,
+      tmux_session,
+      row.tmux_window,
+      row.cwd,
+      row.worktree_path,
+      Date.now(),
+      row.skip_permissions ? 1 : 0,
+      remoteWanted ? 1 : 0
+    );
     const override = tmuxAdapter.spawnOverrideCmd();
     if (override) {
       tmuxAdapter.launchOverride(override, {
@@ -6066,21 +6095,12 @@ function createCore(db2, {
         await tmuxAdapter.ensureSession(port);
         await tmuxAdapter.newWindow({ port, callsign: row.callsign, cwd: runCwd, argv });
       } catch (err) {
+        q.setSpawnStatus.run("gone", new_spawn_id);
+        forgetSpawn(new_spawn_id);
         return { status: 500, body: { ok: false, reason: `tmux revive failed: ${err.message || err}` } };
       }
     }
-    q.insertSpawn.run(
-      new_spawn_id,
-      row.session_id,
-      row.callsign,
-      tmux_session,
-      row.tmux_window,
-      row.cwd,
-      row.worktree_path,
-      Date.now(),
-      row.skip_permissions ? 1 : 0,
-      remoteWanted ? 1 : 0
-    );
+    q.setSpawnStatus.run("spawning", new_spawn_id);
     updateSession(row.session_id, { archived_at: null, col: "queued", note: "reviving\u2026" });
     tick(`\u27F2 reviving ${row.callsign} (resume ${row.session_id.slice(0, 8)})`);
     scheduleNudge(new_spawn_id, row.tmux_window, row.callsign);
@@ -6496,6 +6516,7 @@ function createCore(db2, {
         } catch {
           return [];
         }
+        if (!Array.isArray(ids)) return [];
         return [{
           at: c.at,
           repo_id: c.repo_id,
@@ -6593,6 +6614,7 @@ function createCore(db2, {
         ids = JSON.parse(row.sessions_json || "[]");
       } catch {
       }
+      if (!Array.isArray(ids)) ids = [];
       if (ids.length && ids.every((id) => alive.has(id))) continue;
       conflicts_cleared += Number(q.deleteConflict.run(row.id).changes);
     }
@@ -6993,16 +7015,38 @@ function createTermBridge({ port, resolveSpawn, log = () => {
       established: false,
       initialized: false,
       finished: false,
+      pending: [],
+      // R1-4: %output that arrived after we
+      // subscribed but before the init frame shipped
       queuedInput: 0,
       // M-R4: pending input bytes not yet sent
       inputChain: Promise.resolve(),
       // M-R4: serializes this viewer's send-keys
       emit(data) {
-        if (this.finished || !this.initialized) return;
+        if (this.finished) return;
+        if (!this.initialized) {
+          this.pending.push(data);
+          return;
+        }
         try {
           send({ t: "out", data });
         } catch {
           this.finish("terminal socket closed", false);
+        }
+      },
+      // R1-4: replay the gap buffer AFTER the init frame, in arrival order. The
+      // captured seed holds only what existed at capture time and this buffer
+      // only what arrived after, so there is no double-draw.
+      flushPending() {
+        const buffered = this.pending;
+        this.pending = [];
+        for (const data of buffered) {
+          if (this.finished) return;
+          try {
+            send({ t: "out", data });
+          } catch {
+            this.finish("terminal socket closed", false);
+          }
         }
       },
       finish(reason, notify = true) {
@@ -7038,11 +7082,11 @@ function createTermBridge({ port, resolveSpawn, log = () => {
       abortIfClosed();
       const captured = await c.command(`capture-pane -p -e -t ${pane}`);
       if (!captured.ok) throw new Error("terminal pane capture failed");
+      subscribe(c, pane, viewer);
       const cursor = await c.command(`display-message -p -t ${pane} '#{cursor_x} #{cursor_y}'`);
       if (!cursor.ok) throw new Error("terminal cursor lookup failed");
       const match = /^(\d+)\s+(\d+)$/.exec(cursor.lines.at(-1)?.trim() || "");
       if (!match) throw new Error("terminal cursor lookup returned invalid data");
-      subscribe(c, pane, viewer);
       viewer.established = true;
       send({
         t: "init",
@@ -7053,6 +7097,7 @@ function createTermBridge({ port, resolveSpawn, log = () => {
         screen: CLEAR_SCREEN + Buffer.from(captured.lines.join("\r\n"), "latin1").toString("utf8") + `\x1B[${Number(match[2]) + 1};${Number(match[1]) + 1}H`
       });
       viewer.initialized = true;
+      viewer.flushPending();
     } catch (err) {
       viewer.finish(err?.message || "terminal open failed", false);
       throw new TermBridgeError(err?.message || "terminal open failed");
@@ -7104,7 +7149,10 @@ function createTermBridge({ port, resolveSpawn, log = () => {
 
 // scripts/fleetd/http.mjs
 var MAX_BODY = 1e6;
-var MAX_WS_BUFFER = 1 << 20;
+var MAX_WS_BUFFER = (() => {
+  const n = Number(process.env.FLEETDECK_WS_BUFFER_MAX);
+  return Number.isFinite(n) ? n : 1 << 20;
+})();
 var WS_PING_MS = 3e4;
 var BROADCAST_COALESCE_MS = 60;
 var MAX_TERM_FRAME_BYTES = 1 << 20;
@@ -7297,6 +7345,9 @@ function createHttp(core2, { port, boardFile, version: version2 = "0.0.0", captu
         return url.pathname.startsWith("/hook/") ? json(res, 200, {}) : json(res, 403, { ok: false, reason: "forbidden" });
       }
       if (req.method === "GET") {
+        if ((url.pathname === "/mail" || url.pathname === "/api/watch") && crossSiteReason(req)) {
+          return json(res, 403, { ok: false, reason: "forbidden" });
+        }
         if (url.pathname === "/health") {
           return json(res, 200, { ok: true, fleet: core2.fleetSize(), pid: process.pid, version: version2, spawn: core2.spawnCapability() });
         }
@@ -7500,7 +7551,13 @@ function createHttp(core2, { port, boardFile, version: version2 = "0.0.0", captu
     const msg = JSON.stringify({ type: "snapshot", ...core2.snapshot() });
     for (const c of wss.clients) {
       if (c.readyState !== 1) continue;
-      if (c.bufferedAmount > MAX_WS_BUFFER) continue;
+      if (c.bufferedAmount > MAX_WS_BUFFER) {
+        try {
+          c.terminate();
+        } catch {
+        }
+        continue;
+      }
       c.send(msg);
     }
   }
@@ -8273,6 +8330,10 @@ process.on("unhandledRejection", (reason) => {
 });
 function startupFatal(reason) {
   try {
+    removeOwnedPidFile();
+  } catch {
+  }
+  try {
     fs6.writeSync(2, `fleetd refused to start: ${reason}
 `);
   } catch {
@@ -8305,6 +8366,18 @@ function pidIsLive(pid) {
     return err?.code !== "ESRCH";
   }
 }
+function livePidLooksLikeFleetd(pid) {
+  if (process.platform !== "linux") return true;
+  try {
+    const comm = fs6.readFileSync(`/proc/${pid}/comm`, "utf8").trim();
+    const argv = fs6.readFileSync(`/proc/${pid}/cmdline`).toString("utf8").split("\0").filter(Boolean);
+    const nodeLike = /^(?:node|nodejs|fleetd)$/i.test(comm);
+    const fleetdScript = argv.some((arg) => /(?:^|[/\\])fleetd(?:\.bundle)?\.mjs$/.test(arg));
+    return nodeLike && fleetdScript;
+  } catch (err) {
+    return err?.code !== "ENOENT";
+  }
+}
 function removeOwnedPidFile() {
   if (!ownsPidFile) return;
   try {
@@ -8329,16 +8402,24 @@ function claimHome() {
         startupFatal(`cannot claim FLEETDECK_HOME pidfile (${err?.code || err?.message || "unknown error"})`);
       }
     }
+    let recordText = null;
     let record = null;
     try {
-      record = pidRecord(fs6.readFileSync(PID_FILE, "utf8"));
+      recordText = fs6.readFileSync(PID_FILE, "utf8");
+      record = pidRecord(recordText);
     } catch (err) {
       if (err?.code === "ENOENT") continue;
       startupFatal(`cannot read FLEETDECK_HOME pidfile (${err?.code || err?.message || "unknown error"})`);
     }
-    if (record && pidIsLive(record.pid)) {
+    if (record && pidIsLive(record.pid) && (record.port === null || livePidLooksLikeFleetd(record.pid))) {
       const port = record.port === null ? "an unknown port (legacy pidfile)" : `port ${record.port}`;
-      startupFatal(`FLEETDECK_HOME is already used by live fleetd pid ${record.pid} on ${port}; use a separate FLEETDECK_HOME for another daemon`);
+      startupFatal(`FLEETDECK_HOME is already used by live fleetd pid ${record.pid} on ${port}; use a separate FLEETDECK_HOME for another daemon (if that PID was recycled, remove stale pidfile ${PID_FILE})`);
+    }
+    try {
+      if (fs6.readFileSync(PID_FILE, "utf8") !== recordText) continue;
+    } catch (err) {
+      if (err?.code === "ENOENT") continue;
+      startupFatal(`cannot re-read stale FLEETDECK_HOME pidfile (${err?.code || err?.message || "unknown error"})`);
     }
     try {
       fs6.unlinkSync(PID_FILE);
@@ -8420,6 +8501,11 @@ server.on("error", (e) => {
     }
     process.exit(3);
   }
+  removeOwnedPidFile();
+  try {
+    db.close();
+  } catch {
+  }
   throw e;
 });
 function lanAddresses() {
@@ -8467,6 +8553,11 @@ async function shutdown() {
   shuttingDown = true;
   const hardExit = setTimeout(() => {
     console.error("fleetd shutdown timed out waiting for discovery; forcing exit");
+    removeOwnedPidFile();
+    try {
+      db.close();
+    } catch {
+    }
     process.exit(1);
   }, 1e3);
   hardExit.unref?.();

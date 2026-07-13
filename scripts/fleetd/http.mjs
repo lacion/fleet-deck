@@ -5,8 +5,8 @@
 // never break a session. Board/control API: /health /state /mail /command,
 // /api/cleanup,
 // static board at / + /assets/* (built React app from board-dist), the spike
-// board at /plain, and WS /ws (snapshot on connect, on every mutation, 5 s
-// heartbeat).
+// board at /plain, and WS /ws (snapshot on connect and on every mutation; a
+// ping/pong keepalive — not a periodic snapshot — reaps dead peers).
 
 import http from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
@@ -18,10 +18,19 @@ import { WebSocketServer } from 'ws';
 import { createTermBridge } from './termbridge.mjs';
 
 const MAX_BODY = 1e6;
-// H-R3 backpressure: a /ws peer this far behind (dropped wifi, a frozen tab) is
-// treated as gone — we stop buffering snapshots into its socket and let the
-// keepalive reap it.
-const MAX_WS_BUFFER = 1 << 20; // 1 MiB
+// H-R3/R1-2 backpressure: a /ws peer this far behind (dropped wifi, a frozen
+// tab) has stopped draining. We do NOT keep buffering snapshots into its dead
+// socket — but nor do we merely SKIP the send and clear `dirty`, which stranded
+// a recovering client on the one mutation it missed forever (the board halts
+// /state polling while its socket is live, so nothing re-delivers it). Instead
+// broadcast() TERMINATES the peer past this cap; it reconnects and the connect
+// handler hands it a fresh, complete snapshot. FLEETDECK_WS_BUFFER_MAX overrides
+// the cap for tests (e.g. -1 forces the eviction path deterministically, since
+// bufferedAmount is never negative); unset in production, the 1 MiB default stands.
+const MAX_WS_BUFFER = (() => {
+  const n = Number(process.env.FLEETDECK_WS_BUFFER_MAX);
+  return Number.isFinite(n) ? n : (1 << 20); // 1 MiB
+})();
 // H-R3 keepalive cadence: ping every peer and terminate any that missed the
 // previous pong. This also RETIRES the old "broadcast a full snapshot every
 // 5 s" — a phone that vanished without a FIN never fires 'close', so without a
@@ -341,6 +350,20 @@ export function createHttp(core, { port, boardFile, version = '0.0.0', capture =
         return url.pathname.startsWith('/hook/') ? json(res, 200, {}) : json(res, 403, { ok: false, reason: 'forbidden' });
       }
       if (req.method === 'GET') {
+        // CSRF WALL for MUTATING GETs (C1/R1-1). Method is not the boundary —
+        // state change is. GET /mail DRAINS a mailbox (marks its rows delivered)
+        // and GET /api/watch CLAIMS mail (sets delivered_at); a page on another
+        // site can fire a simple `fetch('http://127.0.0.1:PORT/mail?session=X')`
+        // — an Origin-bearing request that needs no CORS preflight — and drain a
+        // session's mail cross-site. So these two GETs get the exact same
+        // Origin/Sec-Fetch-Site verdict as a state-changing POST. A genuine
+        // fleet-watch/CLI caller sends NO Origin and sails through. The read-only
+        // GETs (/state, /health, /api/worktrees) and the public shell do not
+        // mutate and stay open; /state's data exposure is already walled by the
+        // Host allowlist (hostHeaderOk above), the DNS-rebinding defense.
+        if ((url.pathname === '/mail' || url.pathname === '/api/watch') && crossSiteReason(req)) {
+          return json(res, 403, { ok: false, reason: 'forbidden' });
+        }
         if (url.pathname === '/health') {
           // v1.2: spawn capability rides /health so the launcher/board can
           // hide all spawn UI when unavailable.
@@ -625,10 +648,16 @@ export function createHttp(core, { port, boardFile, version = '0.0.0', capture =
     const msg = JSON.stringify({ type: 'snapshot', ...core.snapshot() });
     for (const c of wss.clients) {
       if (c.readyState !== 1) continue;
-      // H-R3 backpressure: a peer that stopped draining must not make us buffer
-      // snapshot after snapshot into a dead socket until we run out of memory.
-      // Past the cap we skip it; the keepalive below terminates it.
-      if (c.bufferedAmount > MAX_WS_BUFFER) continue;
+      // H-R3/R1-2 backpressure: a peer that stopped draining must not make us
+      // buffer snapshot after snapshot into a dead socket until we run out of
+      // memory. Past the cap we TERMINATE it rather than skip-and-forget:
+      // skipping while clearing `dirty` (below) would drop THIS mutation for a
+      // client that later recovers, and the board stops /state polling while its
+      // socket is live, so it would never learn of the update. Terminating forces
+      // a reconnect, and the connect handler seeds the fresh socket with a full
+      // snapshot — correctness over a silent partial board. 'close' unwinds the
+      // socket exactly as the keepalive's reap would.
+      if (c.bufferedAmount > MAX_WS_BUFFER) { try { c.terminate(); } catch { /* already gone */ } continue; }
       c.send(msg);
     }
   }

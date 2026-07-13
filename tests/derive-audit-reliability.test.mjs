@@ -13,6 +13,11 @@
 //   M-B6  ExitPlanMode question + plan are inserted atomically
 //   M-B8  a guarded remote harvest never rejects
 //   M-G1  the append-only ledgers are aged out; snapshot windows touches
+//   R2-5  a stale-id kill during a revive's window creation is refused
+//   R2-6  snapshot/cleanup drop a conflicts row whose sessions_json is
+//         valid JSON of the wrong shape ('{}', 'null', a string)
+//   R2-7  the per-card file cap keeps a card's NEWEST touches, not oldest
+//   R2-8  removeWorktree's FINAL git-status guard refuses a TOCTOU-dirty tree
 //
 // These drive createCore() directly with an injected fake tmux adapter and an
 // in-memory SQLite db — the same harness shape as daemon-maintenance.test.mjs,
@@ -541,4 +546,219 @@ test('M-P8: cached updateSession statements apply the right columns across disti
   assert.equal(card.task, 'do the thing');
   assert.equal(card.source, 'hooks');
   assert.ok(card.events >= 4);
+});
+
+// ---------------------------------------------------------------------------
+// R2-5
+// ---------------------------------------------------------------------------
+
+test('R2-5: a stale-id force-kill arriving during a revive\'s window creation is refused; the revived pane survives', async (t) => {
+  const userHome = mkdtempSync(path.join(tmpdir(), 'fd-r25-home-'));
+  const cwd = mkdtempSync(path.join(tmpdir(), 'fd-r25-cwd-'));
+  t.after(() => { rmSync(userHome, { recursive: true, force: true }); rmSync(cwd, { recursive: true, force: true }); });
+
+  // A newWindow we can PAUSE mid-flight. revive() inserts its provisional row,
+  // then awaits newWindow — exactly the gap in which a stale kill used to slip
+  // in and destroy the just-created pane. Gating newWindow lets us fire the
+  // kill while the revive is parked there.
+  const tmux = makeAdapter(4711);
+  const { state } = tmux;
+  let releaseNewWindow;
+  const gate = new Promise(resolve => { releaseNewWindow = resolve; });
+  let sawNewWindow;
+  const started = new Promise(resolve => { sawNewWindow = resolve; });
+  tmux.adapter.newWindow = async spec => {
+    sawNewWindow();
+    await gate;
+    const win = { session: `fleetdeck-${spec.port}`, window: `fd${spec.port}-${spec.callsign}`,
+      window_id: '@1', pane_dead: false, pane_cmd: 'claude' };
+    state.windows.push(win);
+    return { session: win.session, window: win.window, window_id: win.window_id };
+  };
+
+  const { db, core } = memoryCore(t, { tmux, env: { HOME: userHome } });
+
+  // Seed a terminal (pane-dead) board spawn whose window name a revive reuses,
+  // plus the resume transcript so revive is eligible. NO live remnant window is
+  // registered, so revive skips its own remnant kill — state.killed then
+  // reflects ONLY what the stale kill attempts.
+  const sid = randomUUID();
+  const oldId = randomUUID();
+  const now = Date.now();
+  db.prepare(`INSERT INTO sessions (session_id, callsign, cwd, col, note, events, started_at, last_seen, ended_at, archived_at, source)
+    VALUES (?, 'otter', ?, 'offline', 'ended', 0, ?, ?, ?, ?, 'spawned')`).run(sid, cwd, now, now, now, now);
+  db.prepare(`INSERT INTO spawns (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, requested_at, status)
+    VALUES (?, ?, 'otter', 'fleetdeck-4711', 'fd4711-otter', ?, ?, 'pane-dead')`).run(oldId, sid, cwd, now - 10_000);
+  const transcript = claudeTranscriptPath(cwd, sid, userHome);
+  mkdirSync(path.dirname(transcript), { recursive: true });
+  writeFileSync(transcript, '{}\n');
+
+  // Start the revive but do NOT await it — it parks inside newWindow, AFTER the
+  // provisional row exists and owns the reused window.
+  const revivePromise = core.revive(oldId);
+  await started;
+
+  // A forced kill via the OLD (historical) id lands mid-revive. It must be
+  // refused: the reused window now belongs to the new provisional row.
+  const stale = await core.spawnKill(oldId, true);
+  assert.equal(stale.status, 409, 'a stale-id kill during the revive window creation must be refused');
+  assert.notEqual(stale.body.current_spawn_id, oldId, 'the refusal must not name the stale id as owner');
+  assert.deepEqual(state.killed, [], 'the stale kill killed no tmux window — the revived pane is untouched');
+  assert.equal(db.prepare('SELECT status FROM spawns WHERE spawn_id=?').get(oldId).status, 'pane-dead',
+    'the historical row is not flipped to killed by the refused request');
+
+  // Let the revive finish; the pane comes up and the row goes live-eligible.
+  releaseNewWindow();
+  const revived = await revivePromise;
+  assert.equal(revived.status, 200, JSON.stringify(revived.body));
+  const newId = revived.body.spawn_id;
+  assert.notEqual(newId, oldId);
+  assert.equal(stale.body.current_spawn_id, newId, 'the refusal named the new revive row as the current owner');
+  assert.equal(db.prepare('SELECT status FROM spawns WHERE spawn_id=?').get(newId).status, 'spawning',
+    'the revived row is spawning (live-eligible), not left provisioning or dead');
+
+  // The refused kill never reached its tombstone updateSession; revive's own
+  // update is what stands (queued/reviving), not "pane killed from the board".
+  const card = db.prepare('SELECT * FROM sessions WHERE session_id=?').get(sid);
+  assert.equal(card.col, 'queued', 'the stale kill did not tombstone the reviving card offline');
+  assert.match(card.note, /reviving/, 'revive\'s state stands; the refused kill left no mark');
+
+  // Sanity: the CURRENT id can still kill it.
+  const good = await core.spawnKill(newId, true);
+  assert.equal(good.status, 200, JSON.stringify(good.body));
+  assert.deepEqual(state.killed, ['fd4711-otter'], 'only the current-id kill reaches tmux');
+});
+
+// ---------------------------------------------------------------------------
+// R2-6
+// ---------------------------------------------------------------------------
+
+test('R2-6: a conflicts row that is valid JSON of the WRONG shape is dropped by snapshot() and cleanup(), never thrown on', async (t) => {
+  const db = openDb(':memory:');
+  t.after(() => db.close());
+  const now = Date.now();
+  const ins = db.prepare('INSERT INTO conflicts (at, repo_id, rel_path, severity, sessions_json) VALUES (?, ?, ?, ?, ?)');
+  ins.run(now, 'r', 'obj.js', 'warning', '{}');    // an object, not an array
+  ins.run(now, 'r', 'null.js', 'warning', 'null'); // null → null.map / null.length used to throw
+  ins.run(now, 'r', 'str.js', 'warning', '"sX"');  // a bare string
+  ins.run(now, 'r', 'num.js', 'warning', '42');    // a number
+  ins.run(now, 'r', 'good.js', 'warning', JSON.stringify(['sX', 'sY'])); // the one well-formed row
+
+  const core = createCore(db, { port: 4711, home: '/h', tmuxAdapter: makeAdapter().adapter });
+
+  let snap;
+  assert.doesNotThrow(() => { snap = core.snapshot(); }, 'wrong-shape rows must not throw out of snapshot()');
+  assert.equal(snap.conflicts.length, 1, 'only the well-formed conflict survives the snapshot');
+  assert.equal(snap.conflicts[0].rel_path, 'good.js');
+  assert.deepEqual(snap.conflicts[0].sessions, ['sX', 'sY']);
+
+  // cleanup() walks the same rows; its guard used to run `null.length` and throw.
+  let res;
+  await assert.doesNotReject(async () => { res = await core.cleanup(); }, 'wrong-shape rows must not throw out of cleanup()');
+  assert.ok(res.ok);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM conflicts').get().n, 0,
+    'every conflict (wrong-shape + the dead-session good one) is cleared, none survives as a crash');
+});
+
+// ---------------------------------------------------------------------------
+// R2-7
+// ---------------------------------------------------------------------------
+
+test('R2-7: the per-card file cap keeps a card\'s NEWEST touches, not its oldest', (t) => {
+  const { db, core } = memoryCore(t);
+  const now = Date.now();
+  db.prepare(`INSERT INTO sessions (session_id, callsign, col, note, events, started_at, last_seen, source)
+    VALUES ('sn', 'an', 'working', 'x', 1, ?, ?, 'hooks')`).run(now, now);
+
+  // 60 distinct files, f0 (oldest touch) … f59 (newest), all inside the ledger
+  // window. The cap is 50, so the 10 OLDEST (f0…f9) must be the ones dropped.
+  const ins = db.prepare('INSERT INTO file_touches (repo_id, rel_path, abs_path, session_id, worktree, at) VALUES (?,?,?,?,?,?)');
+  for (let i = 0; i < 60; i++) {
+    ins.run('r', `f${i}.js`, `/x/f${i}.js`, 'sn', null, now - (60 - i) * 1000);
+  }
+
+  const card = core.snapshot().sessions.find(s => s.session_id === 'sn');
+  assert.equal(card.files.length, 50, 'the per-card list is capped at 50');
+  assert.equal(card.files[0], '/x/f59.js', 'the newest touch is listed first');
+  assert.ok(card.files.includes('/x/f59.js') && card.files.includes('/x/f10.js'), 'the newest 50 survive');
+  assert.ok(!card.files.includes('/x/f0.js') && !card.files.includes('/x/f9.js'),
+    'the 10 OLDEST are dropped — the pre-fix code kept these and dropped the newest');
+});
+
+// ---------------------------------------------------------------------------
+// R2-8 — the FINAL git-status guard in removeWorktree (gate 2), reached only
+// after `git worktree remove` fails. The existing H-R1 dirty case returns at
+// gate 1 (inspect verdict 'has-work') and never reaches gate 2, so deleting the
+// guard would still pass it. A tiny `git` shim on PATH lets an uncommitted
+// write land BETWEEN the inspector's clean read and the actual removal — the
+// exact TOCTOU the guard exists to catch — deterministically, with real git
+// answering every other call.
+// ---------------------------------------------------------------------------
+
+function realGitPath() {
+  // Resolved from the UNSHIMMED PATH (call before installing the shim).
+  return execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+}
+
+// A `git` that passes everything through to real git, except it runs one side
+// effect right before `git worktree remove`:
+//   FD_SHIM_MODE=dirty → drop an uncommitted file into the worktree, then let
+//     real git run (it now refuses the dirty removal → gate 2 re-reads dirty).
+//   FD_SHIM_MODE=break → remove the worktree's .git pointer and report failure,
+//     so gate 2's own `git status` errors (the benign half-removed recovery).
+function writeGitShim(t) {
+  const dir = mkdtempSync(path.join(tmpdir(), 'fd-gitshim-'));
+  const shim = path.join(dir, 'git');
+  writeFileSync(shim,
+    '#!/usr/bin/env bash\n'
+    + 'case " $* " in\n'
+    + '  *" worktree remove "*)\n'
+    + '    if [ "$FD_SHIM_MODE" = dirty ]; then\n'
+    + '      printf \'UNCOMMITTED via TOCTOU\\n\' > "$FD_SHIM_TARGET/precious.txt"\n'
+    + '    elif [ "$FD_SHIM_MODE" = break ]; then\n'
+    + '      rm -f "$FD_SHIM_TARGET/.git"\n'
+    + '      exit 1\n'
+    + '    fi\n'
+    + '    ;;\n'
+    + 'esac\n'
+    + 'exec "$FD_REAL_GIT" "$@"\n',
+    { mode: 0o755 });
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  return dir;
+}
+
+test('R2-8: a write landing between inspect and removal is refused by the final git-status guard — uncommitted work survives', async (t) => {
+  const { db, core } = memoryCore(t);
+  const { base, root } = initRepo(t, 'repo');
+
+  // A CLEAN worktree: the inspector reads verdict 'safe' and passes gate 1.
+  const wt = path.join(base, 'repo--fd-toctou');
+  git(['worktree', 'add', '-q', '-b', 'fd/toctou', wt], root);
+  ownWorktree(db, { sessionId: 's-toctou', callsign: 'toctou', spawnId: 'sp-toctou', cwd: root, worktreePath: wt });
+
+  const shimDir = writeGitShim(t);
+  setEnv(t, { PATH: `${shimDir}:${process.env.PATH}`, FD_REAL_GIT: realGitPath(), FD_SHIM_MODE: 'dirty', FD_SHIM_TARGET: wt });
+
+  const res = await core.removeWorktree({ path: wt }); // no force
+  assert.equal(res.status, 409, `the final-status guard refuses the now-dirty tree: ${JSON.stringify(res.body)}`);
+  assert.equal(res.body.verdict, 'has-work');
+  assert.equal(existsSync(wt), true, 'the worktree still exists — it was NOT rm -rf-ed');
+  assert.equal(existsSync(path.join(wt, 'precious.txt')), true, 'the uncommitted file the guard protected survives');
+});
+
+test('R2-8: when git can no longer read the tree at the final status check, removal falls through to rmSync (half-removed recovery)', async (t) => {
+  const { db, core } = memoryCore(t);
+  const { base, root } = initRepo(t, 'repo');
+
+  const wt = path.join(base, 'repo--fd-broken');
+  git(['worktree', 'add', '-q', '-b', 'fd/broken', wt], root);
+  ownWorktree(db, { sessionId: 's-broken', callsign: 'broken', spawnId: 'sp-broken', cwd: root, worktreePath: wt });
+
+  const shimDir = writeGitShim(t);
+  setEnv(t, { PATH: `${shimDir}:${process.env.PATH}`, FD_REAL_GIT: realGitPath(), FD_SHIM_MODE: 'break', FD_SHIM_TARGET: wt });
+
+  const res = await core.removeWorktree({ path: wt }); // no force
+  assert.equal(res.status, 200, `an unreadable tree falls through to rmSync: ${JSON.stringify(res.body)}`);
+  assert.equal(res.body.removed, true);
+  assert.equal(existsSync(wt), false, 'the daemon removed the directory itself when git could not');
 });

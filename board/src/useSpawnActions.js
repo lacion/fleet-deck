@@ -45,26 +45,43 @@ export function useSpawnActions() {
 
   // Revive-all: sequential POSTs (one summary result). Each id joins the shared
   // in-flight set so its own card chip reads "reviving…" too.
+  //
+  // R3-1 — the bulk must acquire the SAME per-id lock (revRef) a single Revive
+  // uses, not just the bulk lock (allRef). Otherwise clicking a card's Revive
+  // and THEN "Revive all" fires two POSTs at that one spawn, and whichever
+  // finishes first frees the shared id out from under the other. So we lock only
+  // the ids NOT already in flight, remember exactly which ones WE locked, and in
+  // the finally release only those — never the id a single Revive still owns.
   const reviveAll = useCallback(async (list, onResult) => {
     if (allRef.current || !list?.length) return;
     allRef.current = true;
     setRevivingAll(true);
-    for (const s of list) revRef.current.add(s.spawn.spawn_id);
+    // Take the per-id lock atomically (check-then-add, no await between), so a
+    // spawn a single Revive is already handling is skipped here, not POSTed twice.
+    const mine = [];
+    for (const s of list) {
+      const id = s?.spawn?.spawn_id;
+      if (!id || revRef.current.has(id)) continue;
+      revRef.current.add(id);
+      mine.push(s);
+    }
     setReviving(new Set(revRef.current));
     let okN = 0;
     const fails = [];
-    for (const s of list) {
+    for (const s of mine) {
       const id = s.spawn.spawn_id;
       const label = s.callsign || id;
       const res = await reviveSpawn(id);
       if (res.ok && res.json?.ok !== false) okN += 1;
       else fails.push(`${label}: ${reasonOf(res)}`);
-      revRef.current.delete(id);
+      revRef.current.delete(id); // only ids this bulk locked ever reach here
       setReviving(new Set(revRef.current));
     }
     allRef.current = false;
     setRevivingAll(false);
-    onResult?.({ okN, total: list.length, fails });
+    // total is what THIS bulk attempted — any id skipped above is being revived
+    // by its own single Revive, which reports its own outcome.
+    onResult?.({ okN, total: mine.length, fails });
   }, []);
 
   const enable = useCallback(async (s, onResult) => {
