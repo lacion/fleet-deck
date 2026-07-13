@@ -8810,9 +8810,9 @@ function pidIsLive(pid) {
 function livePidLooksLikeFleetd(pid) {
   if (process.platform !== "linux") return true;
   try {
-    const comm = fs10.readFileSync(`/proc/${pid}/comm`, "utf8").trim();
+    const executable = path8.basename(fs10.readlinkSync(`/proc/${pid}/exe`)).replace(/ \(deleted\)$/, "");
     const argv = fs10.readFileSync(`/proc/${pid}/cmdline`).toString("utf8").split("\0").filter(Boolean);
-    const nodeLike = /^(?:node|nodejs|fleetd)$/i.test(comm);
+    const nodeLike = /^(?:node|nodejs|fleetd)$/i.test(executable);
     const fleetdScript = argv.some((arg) => /(?:^|[/\\])fleetd(?:\.bundle)?\.mjs$/.test(arg));
     return nodeLike && fleetdScript;
   } catch (err) {
