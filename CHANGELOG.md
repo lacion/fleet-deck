@@ -20,6 +20,7 @@ every change. See [`docs/AUDIT-2026-07.md`](docs/AUDIT-2026-07.md) for the full 
 
 ### Fixed
 
+- Node 24 compatibility: the HOME-lock owner check identified fleetd via `/proc/<pid>/comm`, which Node 24 renames to `MainThread` — a second daemon could misread a live owner as a recycled PID, steal the lock, and open its SQLite alongside it. The check now resolves the `/proc/<pid>/exe` symlink. Caught by the new CI's Node 22/24 matrix on its first run.
 - Four production spawn-lifecycle bugs (reported over the fleet board after they lost every live terminal): `/clear` no longer condemns a live pane; retention verifies a pane via tmux before presuming a silent-but-live agent dead; `pane-dead`/`gone` spawns are re-validated and resurrected with hysteresis, and `revive()` adopts a live pane instead of 409-deadlocking; mail no longer silently truncates at 500 chars (now bounded at 4000, surrogate-safe, and signalled).
 - Reliability hardening: worktree removal no longer `rm -rf`s uncommitted work without `--force`; boot reconciliation no longer tombstones the live fleet on a tmux timeout; per-paste unique tmux buffers stop cross-agent mail bleed; plus byte-correct UTF-8 request bodies, WS keepalive and backpressure, bounded DB and caches, and a global `unhandledRejection` handler.
 
