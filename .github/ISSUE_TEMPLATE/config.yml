@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions & fleet stories
+    url: https://github.com/lacion/fleet-deck/discussions
+    about: Ask anything, show off your fleet, or discuss ideas before they become feature requests.
+  - name: Security reports
+    url: https://github.com/lacion/fleet-deck/security/policy
+    about: Never open a public issue for a vulnerability — use private reporting.
