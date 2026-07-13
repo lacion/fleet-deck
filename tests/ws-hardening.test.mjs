@@ -25,8 +25,10 @@ function connect(url, options) {
   return { ws, frames };
 }
 
+const WAIT_SCALE = Number(process.env.FLEETDECK_TEST_WAIT_SCALE) || 1;
+
 async function waitUntil(fn, label, timeoutMs = 5000) {
-  const deadline = Date.now() + timeoutMs;
+  const deadline = Date.now() + timeoutMs * WAIT_SCALE;
   for (;;) {
     const v = fn();
     if (v) return v;
