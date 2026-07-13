@@ -2,7 +2,7 @@
   "name": "fleetdeck",
   "owner": {
     "name": "Luis Morales",
-    "email": "luis@agsense.es"
+    "email": "luismmorales@gmail.com"
   },
   "description": "Self-hosting marketplace for Fleet Deck — this repo is both the plugin and its marketplace.",
   "plugins": [
