@@ -1,0 +1,82 @@
+# Publish to npm on a version tag, via OIDC trusted publishing.
+#
+# There is no NPM_TOKEN. npm authenticates this workflow by its identity — repo +
+# workflow filename, as configured under the package's Trusted Publisher settings
+# on npmjs.com. Two consequences worth knowing before you edit this file:
+#
+#   - RENAMING THIS FILE BREAKS PUBLISHING. The trusted-publisher config names
+#     `publish.yml` specifically. npm does not validate that config when you save
+#     it, so a mismatch does not surface until a release fails with ENEEDAUTH.
+#   - `id-token: write` is the whole mechanism. Without it there is no OIDC token
+#     to exchange and npm falls back to looking for a credential that isn't there.
+#
+# Provenance attestation is generated automatically under trusted publishing —
+# deliberately NO `--provenance` flag; passing it is not how you turn it on.
+name: Publish
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+  id-token: write # the trusted-publishing credential; nothing works without it
+
+jobs:
+  publish:
+    # GitHub-hosted runner required — OIDC trusted publishing does not support
+    # self-hosted runners.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          # Trusted publishing needs Node >= 22.14. Publishing is also the one job
+          # that must never reuse a warm cache: what we ship is decided entirely by
+          # what is committed at this tag.
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+          package-manager-cache: false
+
+      # Node 24 still ships an npm below the 11.5.1 floor that trusted publishing
+      # requires. Without this the publish fails asking for a token.
+      - name: Ensure npm supports trusted publishing
+        run: |
+          npm install -g npm@latest
+          npm --version
+
+      # The tag is the release. If it disagrees with package.json, one of the two
+      # is a lie — and a mislabelled version on npm cannot be taken back. (We have
+      # already shipped one: npm 0.7.1 does not match git v0.7.1.)
+      - name: Fail if the tag and package.json disagree
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg=$(node -p "require('./package.json').version")
+          echo "tag=$tag  package.json=$pkg"
+          if [ "$tag" != "$pkg" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match package.json version $pkg"
+            exit 1
+          fi
+
+      - run: npm ci
+
+      - run: npm test
+
+      # The published tarball carries the COMMITTED bundle and board-dist, never a
+      # fresh build. So prove here — at the only moment it is irreversible — that
+      # what is committed is what the source actually produces. `main` gates this
+      # on every push, but a tag can point at any commit, and a stale bundle on npm
+      # is forever.
+      - name: Fail if the committed artifacts are stale
+        run: |
+          npm run bundle
+          git diff --exit-code scripts/fleetd/fleetd.bundle.mjs
+          npm --prefix board ci
+          npm --prefix board run build
+          git diff --exit-code scripts/fleetd/board-dist
+
+      # No --provenance (automatic), no NODE_AUTH_TOKEN (OIDC).
+      - run: npm publish --access public
