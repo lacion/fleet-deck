@@ -50,6 +50,10 @@ function rearmWatchdog(totalMs) {
 // Set only on a takeover spawn (see ensureServer): the displaced version, which
 // bootEnv folds into FLEETDECK_REPLACED for the replacement daemon's banner.
 let replacedVersion = null;
+// Set when a service-managed daemon is running a different version than this
+// plugin. We never evict it (see ensureServer), but silent drift is how someone
+// spends an afternoon debugging a fix that is installed and not running.
+let managedVersionDrift = null;
 
 async function readStdin() {
   let data = '';
@@ -137,6 +141,16 @@ async function ensureServer() {
     // round-trip, as before.
     const own = ownVersion();
     if (own == null || health.version === own) return true;
+    // MANAGED DAEMON: started by `fleetdeck serve` under a supervisor, so it is
+    // not ours to kill. Evicting it would start a fight we cannot win — we
+    // SIGTERM it and spawn a replacement while the supervisor ALSO restarts it,
+    // and whichever loses the port bind exits 3. The service owns the port; a
+    // version mismatch here is an operator's upgrade to make, so we fail open
+    // onto it and say so rather than papering over the drift.
+    if (health.managed) {
+      managedVersionDrift = health.version;
+      return true;
+    }
     // Version differs. Take over ONLY when strictly newer AND we can positively
     // identify the /health pid as our daemon (pidfile match + /proc shape). Any
     // doubt on either check → keep using the running daemon.
@@ -190,6 +204,13 @@ try {
   payload.hook_event_name = payload.hook_event_name || 'SessionStart';
   if (await ensureServer()) {
     const reg = await api('/hook/SessionStart', { method: 'POST', body: payload, timeout: 1200 });
+    if (managedVersionDrift) {
+      process.stdout.write(
+        `[FLEETDECK] The fleet daemon is a managed service running v${managedVersionDrift}, `
+        + `but this plugin is v${ownVersion()}. The service owns the port and was left running. `
+        + `Restart it to pick up the new version.\n`,
+      );
+    }
     if (reg?.brief) process.stdout.write(reg.brief);
   }
 } catch { /* no fleet, no drama */ }

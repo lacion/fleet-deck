@@ -191,6 +191,54 @@ Cards don't pile up forever. Nothing is ever deleted:
 
 Knobs: `FLEETDECK_PRESUME_DEAD_MS`, `FLEETDECK_RETAIN_OFFLINE_MS`.
 
+## Standalone mode
+
+Fleet Deck is a Claude Code plugin, and the daemon it needs is booted for it, lazily, by a
+`SessionStart` hook. That is perfect on a laptop and useless on a remote dev box, where there may be
+no Claude Code session at all and the only way in is a browser tab.
+
+So it also runs as a service:
+
+```bash
+npm install -g fleetdeck
+fleetdeck doctor            # Node 22.5+? tmux? claude? the plugin?
+fleetdeck service install   # a systemd user unit, or a supervised wrapper if there's no systemd
+fleetdeck service start
+```
+
+The board is now always on. Open it and **spawn an agent with no Claude Code session anywhere** —
+type a repo path, click, and it comes up in a tmux pane you can watch, type into, and answer prompts
+for, all from the browser. That was already true of the board; what standalone adds is a daemon that
+exists without a session to boot it, and a way to reach it from somewhere other than localhost.
+
+To reach it from a browser that isn't on the box, put it behind a reverse proxy and name the origin:
+
+```bash
+export FLEETDECK_TRUSTED_ORIGINS="https://board.example.com"
+export FLEETDECK_PROXY_AUTH="trust"   # only if the proxy really does authenticate; default is `token`
+```
+
+Fleet Deck's same-origin wall is what keeps any website you visit from driving your fleet over
+loopback, so it does not simply switch off — you widen it by exactly the origin you name, and not one
+inch more. An origin you didn't name is still refused, and a typo is a startup refusal rather than a
+board that mysteriously 403s.
+
+The board itself is prefix-agnostic: it resolves its assets, API calls and WebSockets relative to
+wherever it was loaded from, so it works at a domain root *or* under a path prefix
+(`/apps/fleetdeck/`) behind nginx, Traefik, or a Coder path-based app.
+
+Keep the plugin installed. The board can *launch* an agent without it, but the status, the model, the
+edits and the permission prompts all arrive through the plugin's hooks — without it, cards appear and
+then never move.
+
+**→ [docs/CODER.md](docs/CODER.md)** is the full guide for [Coder](https://coder.com) workspaces:
+a copy-pasteable `coder_script` + `coder_app`, why `subdomain = true` matters, and why there is no
+systemd in that container.
+
+A managed daemon is never evicted by a plugin hook. Normally the newest installed plugin takes the
+port by SIGTERMing an older daemon; against a supervised service that would just start a fight with
+the supervisor, so the service wins and the version drift is reported in your session brief instead.
+
 ## The fine print (read this bit)
 
 - **Spawned sessions are real billed Claude sessions.** The spawn form says so, the cap defaults to 5, and nothing ever spawns without a human click (an *armed* move-to-tmux fires at SessionEnd, but the click that armed it was the decision — one-shot, cancellable, visible on the card, and it expires). `assign auto` routes to *existing* sessions only.
@@ -246,7 +294,10 @@ All optional. Fleet Deck's defaults are the configuration we actually run.
 | `FLEETDECK_PORT` | `4711` | Daemon port. The plugin's http hooks are pinned to 4711 — read the one-port rule above before changing it. |
 | `FLEETDECK_HOME` | `~/.fleetdeck` | State directory: the SQLite db, the LAN token, watcher pid files. |
 | `FLEETDECK_BIND` | `127.0.0.1` | Bind address. `0.0.0.0` is LAN mode, which makes a token mandatory. |
-| `FLEETDECK_TOKEN` | generated into `$FLEETDECK_HOME/token` | The LAN bearer token. Minimum 16 characters; the daemon refuses to start on a shorter one. |
+| `FLEETDECK_TOKEN` | generated into `$FLEETDECK_HOME/token` | The bearer token. Minimum 16 characters; the daemon refuses to start on a shorter one. Generated automatically whenever the board is reachable from off-box — LAN mode, or a reverse proxy in `token` mode. |
+| `FLEETDECK_TRUSTED_ORIGINS` | unset | Comma-separated origins allowed to reach the daemon, for running behind a reverse proxy — `https://board.example.com`, or one leading wildcard label (`https://*.coder.example.com`). A scheme is required. Without this, a proxied board loads and then 403s on every request. See [Standalone mode](#standalone-mode). |
+| `FLEETDECK_PROXY_AUTH` | `token` | Who authenticates a proxied browser. `token`: it must still present the bearer token. `trust`: the reverse proxy already authenticated it (only sane when the proxy really does, e.g. Coder with `share = "owner"`). |
+| `FLEETDECK_MANAGED` | unset | Set to `1` by `fleetdeck serve`. Marks the daemon as supervisor-owned, so a plugin hook will never SIGTERM it to install a newer version. You do not set this by hand. |
 | `FLEETDECK_MDNS` | on (LAN mode only) | `off` disables the mDNS/DNS-SD responder. |
 | `FLEETDECK_MDNS_NAME` | `fleetdeck` | The advertised name — i.e. `fleetdeck.local`. Rename one of them when two fleets share a network. |
 | `FLEETDECK_SPAWN` | on | `off` disables spawning entirely; the board hides every spawn control. |

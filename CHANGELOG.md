@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-07-14
+
+### Added
+
+- **Standalone mode: run the board as an always-on service.** Fleet Deck has only ever been a Claude Code plugin, and the daemon it needs was booted for it — lazily, detached — by a `SessionStart` hook. That is right on a laptop and useless on a remote dev box, where there may be no Claude Code session at all and the only way in is a browser tab. So the same daemon now also runs as a supervised service, installed from npm: `npm i -g fleetdeck && fleetdeck service install && fleetdeck service start`. The board is then simply *on*, and you can spawn an agent with no Claude Code session anywhere — type a repo path, click, and watch it come up in a pane you can type into and answer prompts for, all from the browser. The plugin is unchanged and the two cooperate.
+- **A `fleetdeck` CLI**, published to npm as a dependency-light package that carries the same daemon bundle the plugin ships (so there is exactly one daemon implementation, and CI's drift gate covers both entry points). `serve` runs it in the foreground for a supervisor; `doctor` preflights the box (Node ≥ 22.5, tmux, the `claude` CLI, and — the one people miss — whether the plugin is installed, without which spawned cards appear and then never move); `status`, `token`, and `service install|start|stop|restart|uninstall`. `service install` writes a systemd user unit when systemd is there and a supervised wrapper when it is not, because a container often has no init system at all. Both restart a daemon that dies, both decline to restart one that exited cleanly or lost the port election, and `service start` returns as soon as the board actually answers — never before, and never blocking.
+- **`FLEETDECK_TRUSTED_ORIGINS` — run the board behind a reverse proxy.** A proxy does not rewrite `Host`, so the daemon saw the browser-facing hostname and refused every POST, both WebSocket upgrades and the mutating GETs: the board's shell would load and then everything inside it failed. Name the origin (`https://board.example.com`, or one leading wildcard label like `https://*.coder.example.com`) and the same-origin wall widens by exactly that and not one inch more. A scheme is required, an origin you did not name is still refused, and a malformed entry is a startup refusal rather than a board that mysteriously 403s. Configure nothing and every wall behaves byte-for-byte as before.
+- **`FLEETDECK_PROXY_AUTH`** — a proxy reaches the daemon over loopback, and loopback auto-authorizes, so left alone that would hand the fleet (spawn included) to anyone who can reach the proxy. `token` (the default) makes a proxied browser present the bearer token anyway; `trust` says the proxy is the authenticator. Whether that is true is not something the daemon can infer, so you say it out loud. A local CLI hook sends no `Origin` and is never dragged into either.
+- **The board is now prefix-agnostic.** It resolves its assets, API calls and WebSockets relative to wherever it was loaded from, so one build works at a domain root, under a path prefix (`/apps/fleetdeck/`), and behind nginx, Traefik or a Coder path-based app — which strips its prefix before forwarding and tells the app nothing about it.
+- **[docs/CODER.md](docs/CODER.md)** — the full guide for [Coder](https://coder.com) workspaces: a copy-pasteable `coder_script` + `coder_app`, why `subdomain = true` is worth insisting on, and why there is no systemd in that container.
+
+### Changed
+
+- **A service-managed daemon is never evicted by a plugin hook.** 0.7.0 taught the newest installed plugin to take the port by SIGTERMing an older daemon. Against a supervised service that starts a fight nobody wins — the hook kills the daemon and spawns a replacement at the same moment the supervisor restarts it, and whichever loses the port bind exits 3. So the service wins: `fleetdeck serve` marks the daemon `managed` on `/health`, the hook leaves it alone, and the version drift is reported in your session brief instead of silently swallowed. Discovering that a fix you installed is not the code that is running should not cost an afternoon.
+- The bearer token is now generated whenever the board is reachable from off-box — LAN mode, as before, and now also a reverse proxy in `token` mode. Without this a proxied daemon would have had no token to compare against and would have refused every request it was meant to gate: a locked door with no key.
+- CI gains a version-consistency gate. Four manifests carry the same version string and nothing enforced it; standalone makes that drift user-visible, since the npm version and the plugin version are now compared at every `SessionStart`.
+
+**Upgrade note:** no schema change, and nothing to do. Existing plugin installs keep working exactly as before — every new knob is opt-in, and a fleet that sets none of them is byte-for-byte the fleet you had.
+
 ## [0.7.1] - 2026-07-14
 
 ### Fixed
@@ -148,7 +167,8 @@ Initial public release.
 - A brainless orchestrator: `assign auto` routes a task to the best existing session with a SQL query, not a model call — the core makes zero model calls.
 - One-command plugin install with a self-contained daemon bundle (`node:sqlite` state, nothing to `npm install`); the first session's SessionStart hook elects and launches the daemon. MIT licensed.
 
-[unreleased]: https://github.com/lacion/fleet-deck/compare/v0.7.1...HEAD
+[unreleased]: https://github.com/lacion/fleet-deck/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/lacion/fleet-deck/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/lacion/fleet-deck/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/lacion/fleet-deck/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/lacion/fleet-deck/compare/v0.5.1...v0.6.0

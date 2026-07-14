@@ -349,3 +349,74 @@ test('stretch: two racing newer hooks converge on exactly one replacement daemon
   const again = await waitForHealth(`http://127.0.0.1:${port}`, 3000);
   assert.equal(again.pid, health.pid, 'the port is owned by a single, stable daemon (no flapping)');
 });
+
+// ---------------------------------------------------------------------------
+// MANAGED DAEMONS (standalone mode). A daemon started by `fleetdeck serve` is
+// owned by a supervisor — systemd, or the wrapper in a Coder workspace. The
+// takeover contract above must NOT apply to it, and this is not a stylistic
+// preference: if a newer plugin SIGTERMs a supervised daemon, the supervisor
+// restarts it at the very moment the hook spawns its own replacement, and the
+// two race for the port. Whichever loses exits 3. The service owns the port; a
+// version mismatch is an operator's upgrade to make, not a hook's.
+
+test('a MANAGED daemon is never evicted, even by a strictly newer hook', async (t) => {
+  const port = randomPort();
+  const home = mkdtempSync(path.join(tmpdir(), 'fleetdeck-managed-home-'));
+  const cwd = scratchDir(t);
+  t.after(async () => {
+    await killDaemonAt(port, home);
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  // A managed daemon pinned OLDER than us — precisely the case the takeover
+  // contract exists to evict. FLEETDECK_MANAGED=1 is what `fleetdeck serve` sets.
+  const svc = await startDaemon({
+    port, home,
+    env: { FLEETDECK_VERSION_OVERRIDE: '0.0.1', FLEETDECK_MANAGED: '1' },
+  });
+  const before = (await getJson(`${svc.baseUrl}/health`)).json;
+  assert.equal(before.managed, true, 'sanity: `fleetdeck serve` marks the daemon managed on /health');
+  assert.equal(before.version, '0.0.1', 'sanity: it is strictly older than this package');
+
+  const hook = runHook({ port, home, payload: loadFixture('session-start', { session_id: randomUUID(), cwd }) });
+  assert.equal(
+    await hook.exitWithin(14000, 'managed-daemon hook'), 0,
+    `the hook must still exit 0 (stderr: ${hook.stderr})`,
+  );
+
+  // The service is untouched: same process, same version, still managed.
+  assert.equal(svc.proc.exitCode, null, 'the managed daemon must NOT have been terminated');
+  const after = (await getJson(`http://127.0.0.1:${port}/health`)).json;
+  assert.equal(after.pid, before.pid, 'the managed daemon must be the SAME process — no takeover, no respawn');
+  assert.equal(after.version, '0.0.1', 'the older managed daemon still owns the port');
+
+  // ...and the drift is REPORTED, not silently swallowed. Discovering that a fix
+  // you installed is not the code that is running should not cost an afternoon.
+  assert.match(hook.stdout, /managed service running v0\.0\.1/,
+    `the SessionStart brief must name the running service version (got: ${hook.stdout.slice(0, 300)})`);
+  assert.match(hook.stdout, new RegExp(`plugin is v${PKG_VERSION.replace(/\./g, '\\.')}`),
+    'the SessionStart brief must name the plugin version it could not install');
+});
+
+test('an UNMANAGED daemon of the same age is still evicted (the guard is the flag, not the version)', async (t) => {
+  const port = randomPort();
+  const home = mkdtempSync(path.join(tmpdir(), 'fleetdeck-unmanaged-home-'));
+  const cwd = scratchDir(t);
+  t.after(async () => {
+    await killDaemonAt(port, home);
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  // Identical to the test above in every respect EXCEPT FLEETDECK_MANAGED. If
+  // this one did not evict, the test above would prove nothing.
+  const old = await startDaemon({ port, home, env: { FLEETDECK_VERSION_OVERRIDE: '0.0.1' } });
+  const oldPid = (await getJson(`${old.baseUrl}/health`)).json.pid;
+
+  const hook = runHook({ port, home, payload: loadFixture('session-start', { session_id: randomUUID(), cwd }) });
+  assert.equal(await hook.exitWithin(14000, 'unmanaged-daemon hook'), 0);
+
+  const health = await waitForHealth(`http://127.0.0.1:${port}`, 8000);
+  assert.notEqual(health.pid, oldPid, 'an unmanaged older daemon must still be replaced');
+  assert.equal(health.version, PKG_VERSION);
+  assert.equal(health.managed, false, 'the hook-spawned replacement is not a managed service');
+});

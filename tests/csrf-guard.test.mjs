@@ -318,3 +318,171 @@ test('M-B3: POST body is byte-exact and byte-capped', async t => {
     assert.equal(res.status, 413, 'a body whose BYTES exceed the cap must 413 even when its UTF-16 length does not');
   });
 });
+
+// ---------------------------------------------------------------------------
+// FLEETDECK_TRUSTED_ORIGINS / FLEETDECK_PROXY_AUTH — the standalone/reverse-proxy
+// surface. Behind a proxy (Coder, nginx, Traefik) the browser-facing Host and
+// Origin are the PROXY's — Coder's reverse proxy never rewrites req.Host — so
+// every wall above refuses the very traffic we are trying to serve. These knobs
+// are the operator's way to say "this other origin is also me", and their whole
+// job is to widen the walls by EXACTLY the named origin and not one inch more.
+//
+// The suite above is the no-regression contract: it runs with no trusted origin
+// configured, and every case in it must keep passing unchanged.
+
+const PROXY_ORIGIN = 'https://fd--main--ws--luis.coder.example.com';
+const PROXY_HOST = 'fd--main--ws--luis.coder.example.com';
+
+test('trusted origins widen the walls by exactly the named origin', async t => {
+  const daemon = await startDaemon({
+    env: {
+      FLEETDECK_TRUSTED_ORIGINS: PROXY_ORIGIN,
+      // 'trust' keeps this suite about the WALLS; the token gate is exercised
+      // separately below, so a failure here can only mean an origin bug.
+      FLEETDECK_PROXY_AUTH: 'trust',
+    },
+  });
+  t.after(() => daemon.stop());
+  const { port } = daemon;
+
+  await t.test('a POST from the trusted origin is allowed', async () => {
+    const res = await raw(port, {
+      method: 'POST', path: '/mail',
+      headers: { ...JSON_CT, origin: PROXY_ORIGIN, host: PROXY_HOST },
+      parts: [JSON.stringify({ to: 'all', from: 'board', text: 'through the proxy' })],
+    });
+    assert.equal(res.status, 200, 'the whole point: the board behind the proxy must be able to drive the fleet');
+  });
+
+  await t.test('an untrusted origin is STILL refused', async () => {
+    const res = await raw(port, {
+      method: 'POST', path: '/mail',
+      headers: { ...JSON_CT, origin: 'https://evil.example', host: PROXY_HOST },
+      parts: [JSON.stringify({ to: 'all', from: 'board', text: 'nope' })],
+    });
+    assert.equal(res.status, 403, 'trusting one origin must not trust every origin');
+  });
+
+  await t.test('the scheme is part of the origin: http:// is not https://', async () => {
+    const res = await raw(port, {
+      method: 'POST', path: '/mail',
+      headers: { ...JSON_CT, origin: `http://${PROXY_HOST}`, host: PROXY_HOST },
+      parts: [JSON.stringify({ to: 'all', from: 'board', text: 'downgraded' })],
+    });
+    assert.equal(res.status, 403, 'naming an https origin must not also trust its http twin');
+  });
+
+  await t.test('the proxy Host passes the DNS-rebinding wall on a data route', async () => {
+    const res = await raw(port, { path: '/state', headers: { host: PROXY_HOST } });
+    assert.equal(res.status, 200);
+  });
+
+  await t.test('an unnamed Host is still refused on a data route', async () => {
+    const res = await raw(port, { path: '/state', headers: { host: 'evil.example' } });
+    assert.equal(res.status, 403, 'the rebinding wall must only open for the operator-named host');
+  });
+
+  await t.test('both WS upgrades accept the trusted origin and refuse an untrusted one', async () => {
+    assert.equal(
+      await rawUpgrade(port, { path: '/ws', headers: { host: PROXY_HOST, origin: PROXY_ORIGIN } }),
+      'upgraded', 'the board behind a proxy cannot work without its snapshot socket',
+    );
+    assert.equal(
+      await rawUpgrade(port, { path: '/ws', headers: { host: PROXY_HOST, origin: 'https://evil.example' } }),
+      'rejected',
+    );
+    // /ws/term is the one that can DRIVE a pane, so it matters most.
+    assert.equal(
+      await rawUpgrade(port, { path: '/ws/term?spawn=nope', headers: { host: PROXY_HOST, origin: 'https://evil.example' } }),
+      'rejected',
+    );
+  });
+
+  await t.test('a local CLI hook (no Origin) still sails through', async () => {
+    const res = await raw(port, {
+      method: 'POST', path: '/mail',
+      headers: JSON_CT,
+      parts: [JSON.stringify({ to: 'all', from: 'board', text: 'from the hook' })],
+    });
+    assert.equal(res.status, 200, 'the hook path must never be collateral damage of a proxy setting');
+  });
+});
+
+test('a wildcard trusted origin matches exactly one label', async t => {
+  const daemon = await startDaemon({
+    env: {
+      FLEETDECK_TRUSTED_ORIGINS: 'https://*.coder.example.com',
+      FLEETDECK_PROXY_AUTH: 'trust',
+    },
+  });
+  t.after(() => daemon.stop());
+  const { port } = daemon;
+
+  const post = (origin, host) => raw(port, {
+    method: 'POST', path: '/mail',
+    headers: { ...JSON_CT, origin, host },
+    parts: [JSON.stringify({ to: 'all', from: 'board', text: 'x' })],
+  });
+
+  await t.test('one label matches', async () => {
+    const res = await post('https://fd--main--ws--luis.coder.example.com', 'fd--main--ws--luis.coder.example.com');
+    assert.equal(res.status, 200);
+  });
+
+  await t.test('the bare apex does NOT match', async () => {
+    const res = await post('https://coder.example.com', 'coder.example.com');
+    assert.equal(res.status, 403, '*.example.com must not silently include example.com itself');
+  });
+
+  await t.test('two labels do NOT match', async () => {
+    const res = await post('https://a.b.coder.example.com', 'a.b.coder.example.com');
+    assert.equal(res.status, 403, 'a single-label wildcard must not become a subtree wildcard');
+  });
+
+  await t.test('a lookalike suffix does NOT match', async () => {
+    const res = await post('https://evilcoder.example.com', 'evilcoder.example.com');
+    assert.equal(res.status, 403, 'suffix matching must be label-aware, not a naive endsWith');
+  });
+});
+
+test('FLEETDECK_PROXY_AUTH=token still demands the token from a proxied browser', async t => {
+  const TOKEN = 'x'.repeat(32);
+  const daemon = await startDaemon({
+    env: {
+      FLEETDECK_TRUSTED_ORIGINS: PROXY_ORIGIN,
+      FLEETDECK_TOKEN: TOKEN,
+      // 'token' is the DEFAULT — pinned explicitly so a future default flip
+      // cannot quietly turn this suite into a no-op.
+      FLEETDECK_PROXY_AUTH: 'token',
+    },
+  });
+  t.after(() => daemon.stop());
+  const { port } = daemon;
+
+  await t.test('a proxied read with no token is refused despite the trusted origin', async () => {
+    const res = await raw(port, { path: '/state', headers: { host: PROXY_HOST, origin: PROXY_ORIGIN } });
+    assert.equal(res.status, 401, 'clearing the CSRF wall is not the same as being authenticated');
+  });
+
+  await t.test('a proxied read WITH the token is allowed', async () => {
+    const res = await raw(port, {
+      path: '/state',
+      headers: { host: PROXY_HOST, origin: PROXY_ORIGIN, authorization: `Bearer ${TOKEN}` },
+    });
+    assert.equal(res.status, 200);
+  });
+
+  await t.test('the local hook path (no Origin) is NOT dragged into the token gate', async () => {
+    const res = await raw(port, {
+      method: 'POST', path: '/mail',
+      headers: JSON_CT,
+      parts: [JSON.stringify({ to: 'all', from: 'board', text: 'hook' })],
+    });
+    assert.equal(res.status, 200, 'turning on proxy auth must not break every local hook on the box');
+  });
+
+  await t.test('a same-origin loopback board still needs no token', async () => {
+    const res = await raw(port, { path: '/state', headers: { origin: `http://127.0.0.1:${port}` } });
+    assert.equal(res.status, 200, 'the loopback exemption survives: proxy auth is about the PROXY');
+  });
+});

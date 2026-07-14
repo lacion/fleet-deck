@@ -77,6 +77,13 @@ export async function load(url, context, nextLoad) {
         export function isLoopbackAddress(value) {
           return ['127.0.0.1', '::1', 'localhost'].includes(String(value).toLowerCase());
         }
+        // fleetd.mjs imports this at startup. These suites exercise mDNS, the HOME
+        // pidfile lock and LAN log redaction — none of which configure a trusted
+        // origin — so an empty parse is the faithful stub. The real parser is
+        // covered directly in tests/csrf-guard.test.mjs.
+        export function parseTrustedOrigins() {
+          return [];
+        }
         export function createHttp() {
           const server = new EventEmitter();
           server.listen = (_port, _bind, callback) => {

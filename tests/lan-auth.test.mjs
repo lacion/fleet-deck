@@ -155,9 +155,13 @@ test('a LAN peer can actually LOAD the board: shell public, every byte of data g
 
   // 2. …and the script tag INSIDE that page must load — with no token, because
   //    the browser cannot add one. This is the assertion that was missing.
-  const asset = /src="(\/assets\/[^"]+\.js)"/.exec(html)?.[1];
+  //    The src is RELATIVE ("./assets/…") since the board learned to live under a
+  //    reverse-proxy path prefix — so resolve it the way a browser would rather
+  //    than assuming it is rooted. What is pinned here is unchanged: whatever the
+  //    shell points at must load with no token.
+  const asset = /src="([^"]+\.js)"/.exec(html)?.[1];
   assert.ok(asset, `the shell must reference a hashed module (got: ${html.slice(0, 200)})`);
-  const script = await fetch(`${daemon.baseUrl}${asset}`);
+  const script = await fetch(new URL(asset, `${daemon.baseUrl}/`));
   assert.equal(script.status, 200, "the board's own script must load without a token, or the page is blank");
 
   // 3. the shell is a shell: no fleet data rides along with it

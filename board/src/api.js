@@ -6,6 +6,7 @@
 // swaps the board for the token gate — one clear state, however many calls fail.
 
 import { authHeaders, markUnauthorized } from './token.js';
+import { apiUrl } from './base.js';
 
 // M-F1/H-X2 — the daemon speaks two error dialects ({reason} and the older
 // {err}), and every caller used to hand-write the same `json?.reason ||
@@ -28,7 +29,9 @@ export function reasonOf(res, fallback) {
 async function request(url, init) {
   let res;
   try {
-    res = await fetch(url, { ...init, signal: AbortSignal.timeout(15000) });
+    // Callers still write root-relative paths ('/api/spawn'); apiUrl resolves
+    // them against the board's actual base so a path-based proxy works.
+    res = await fetch(apiUrl(url), { ...init, signal: AbortSignal.timeout(15000) });
   } catch {
     // DNS/refused/reset/timeout/abort — the daemon is unreachable, not a status
     return { ok: false, status: 0, json: null, reason: 'daemon unreachable' };
@@ -63,7 +66,7 @@ function get(url) {
 export async function fetchState() {
   let res;
   try {
-    res = await fetch('/state', { headers: authHeaders(), signal: AbortSignal.timeout(15000) });
+    res = await fetch(apiUrl('/state'), { headers: authHeaders(), signal: AbortSignal.timeout(15000) });
   } catch {
     return null; // unreachable/timeout — the WS retry loop owns recovery
   }

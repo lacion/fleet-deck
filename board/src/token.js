@@ -16,6 +16,7 @@
 // exactly one failure state.
 
 import { useSyncExternalStore } from 'react';
+import { wsBase } from './base.js';
 
 const KEY = 'fleetdeck.token';
 
@@ -87,8 +88,8 @@ export function authHeaders(base) {
 
 /** ws(s):// URL for `path`, carrying the token in the query string. */
 export function wsUrl(path, params) {
-  const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-  const url = new URL(`${proto}://${window.location.host}${path}`);
+  // Resolved against the board's own base, not the page root — see base.js.
+  const url = wsBase(path);
   for (const [k, v] of Object.entries(params || {})) {
     if (v != null) url.searchParams.set(k, String(v));
   }

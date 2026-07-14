@@ -13,7 +13,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openDb } from './db.mjs';
 import { createCore } from './derive.mjs';
-import { createHttp, isLoopbackAddress } from './http.mjs';
+import { createHttp, isLoopbackAddress, parseTrustedOrigins } from './http.mjs';
 import { startAgentsPoll } from './agents-poll.mjs';
 import { createPayloadCapture } from './payload-capture.mjs';
 import { createMdns } from './mdns.mjs';
@@ -27,6 +27,14 @@ const PORT = Number(process.env.FLEETDECK_PORT || 4711);
 const BIND = (process.env.FLEETDECK_BIND || '127.0.0.1').trim() || '127.0.0.1';
 const LAN_MODE = !isLoopbackAddress(BIND);
 const HOME = process.env.FLEETDECK_HOME || path.join(os.homedir() || '/tmp', '.fleetdeck');
+// MANAGED CONTRACT: set by `fleetdeck serve`, i.e. this daemon is owned by a
+// service supervisor (systemd, or the supervised wrapper) rather than lazily
+// spawned by a SessionStart hook. It changes exactly one thing — a plugin hook
+// must never SIGTERM us (see fleet-sessionstart.mjs). Without this the hook and
+// the supervisor race: the hook kills the daemon and spawns its own replacement
+// while the supervisor simultaneously restarts it, and one of the two loses the
+// port bind and exits 3. Surfaced on /health, which is what the hook already reads.
+const MANAGED = process.env.FLEETDECK_MANAGED === '1';
 
 // LAST-RESORT CONTRACT: individual async entry points should still catch their
 // own failures, but one forgotten rejection must not kill the fleet coordinator
@@ -119,6 +127,32 @@ function claimHome() {
 
 claimHome();
 
+// PROXY CONFIG. Both knobs are security-relevant, so a malformed value is a
+// startup refusal, never a silent fallback to something laxer: an operator who
+// typos a trusted origin must find out at boot, not discover later that the
+// board has been refusing their proxy (or worse, accepting the wrong one).
+let TRUSTED_ORIGINS = [];
+try {
+  TRUSTED_ORIGINS = parseTrustedOrigins(process.env.FLEETDECK_TRUSTED_ORIGINS);
+} catch (err) {
+  startupFatal(`FLEETDECK_TRUSTED_ORIGINS — ${err?.message || 'unparseable'}`);
+}
+const PROXY_AUTH = (process.env.FLEETDECK_PROXY_AUTH || 'token').trim().toLowerCase() || 'token';
+if (PROXY_AUTH !== 'token' && PROXY_AUTH !== 'trust') {
+  startupFatal(`FLEETDECK_PROXY_AUTH must be 'token' or 'trust' (got '${PROXY_AUTH}')`);
+}
+if (PROXY_AUTH === 'trust' && !TRUSTED_ORIGINS.length) {
+  startupFatal("FLEETDECK_PROXY_AUTH=trust requires FLEETDECK_TRUSTED_ORIGINS — there is nothing to trust");
+}
+
+// TOKEN CONTRACT (extended for standalone). A token is mandatory whenever the
+// board is reachable from something that is not this machine. That is LAN mode
+// — and now also a reverse proxy in 'token' mode, where the daemon still binds
+// loopback but a browser reaches it from the outside world. Without this, a
+// proxied 'token'-mode daemon would have NO token to compare against and would
+// refuse every request it was supposed to gate: a locked door with no key.
+const TOKEN_REQUIRED = LAN_MODE || (TRUSTED_ORIGINS.length > 0 && PROXY_AUTH === 'token');
+
 const TOKEN_FILE = path.join(HOME, 'token');
 let TOKEN;
 if (Object.hasOwn(process.env, 'FLEETDECK_TOKEN')) {
@@ -128,17 +162,17 @@ if (Object.hasOwn(process.env, 'FLEETDECK_TOKEN')) {
   try {
     const persisted = fs.readFileSync(TOKEN_FILE, 'utf8').trim();
     if (persisted.length >= 16) TOKEN = persisted;
-    else if (LAN_MODE) startupFatal('FLEETDECK_HOME/token must contain at least 16 characters');
+    else if (TOKEN_REQUIRED) startupFatal('FLEETDECK_HOME/token must contain at least 16 characters');
   } catch (err) {
-    if (err?.code !== 'ENOENT' && LAN_MODE) {
+    if (err?.code !== 'ENOENT' && TOKEN_REQUIRED) {
       startupFatal(`cannot read FLEETDECK_HOME/token (${err?.code || err?.message || 'unknown error'})`);
     }
   }
 }
 
-if (LAN_MODE && !TOKEN) {
+if (TOKEN_REQUIRED && !TOKEN) {
   try { TOKEN = crypto.randomBytes(32).toString('hex'); } catch (err) {
-    startupFatal(`cannot generate LAN token (${err?.code || err?.message || 'unknown error'})`);
+    startupFatal(`cannot generate access token (${err?.code || err?.message || 'unknown error'})`);
   }
   try {
     // TOKEN FILE CONTRACT: an explicitly supplied mode keeps the credential
@@ -197,6 +231,9 @@ const { server } = createHttp(core, {
   // (GET / + /assets/*) is served from board-dist, resolved inside http.mjs
   boardFile: path.join(__dirname, 'board.html'),
   version,
+  trustedOrigins: TRUSTED_ORIGINS,
+  proxyAuth: PROXY_AUTH,
+  managed: MANAGED,
   // validation aid: first 3 raw payloads per hook event → HOME/hook-payloads.jsonl
   capture: createPayloadCapture(HOME),
 });

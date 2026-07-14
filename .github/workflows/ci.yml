@@ -75,3 +75,31 @@ jobs:
       - run: npm test
         env:
           FLEETDECK_TEST_WAIT_SCALE: 3
+
+  # Four manifests carry the same version string, and nothing used to enforce
+  # that. Standalone makes the drift user-visible: the npm version and the plugin
+  # version are compared at every SessionStart, and a mismatch there is reported
+  # to the user as a "restart your service" warning — so a release that forgets
+  # one manifest now produces a warning that is simply wrong.
+  version:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Fail if the four manifests disagree on the version
+        run: |
+          pkg=$(node -p "require('./package.json').version")
+          plugin=$(node -p "require('./.claude-plugin/plugin.json').version")
+          market=$(node -p "require('./.claude-plugin/marketplace.json').plugins[0].version")
+          board=$(node -p "require('./board/package.json').version")
+          echo "package.json                    $pkg"
+          echo ".claude-plugin/plugin.json      $plugin"
+          echo ".claude-plugin/marketplace.json $market"
+          echo "board/package.json              $board"
+          for v in "$plugin" "$market" "$board"; do
+            if [ "$v" != "$pkg" ]; then
+              echo "::error::version drift — package.json says $pkg but a sibling manifest says $v"
+              exit 1
+            fi
+          done
+          echo "✓ all four agree on $pkg"

@@ -31,7 +31,13 @@ const httpProxy = { target: FLEETD_HTTP, changeOrigin: true, configure: rewriteO
 // relative to http.mjs, so both the source and bundle runs find it).
 export default defineConfig({
   plugins: [react()],
-  base: '/',
+  // RELATIVE, not '/': the board must load under a path-based reverse proxy
+  // (Coder serves apps at /@user/ws.agent/apps/<slug>/ and strips that prefix
+  // before forwarding, without telling the app it ever existed). Relative asset
+  // URLs resolve against the document, so one build works at the root, under any
+  // prefix, and behind any proxy. The API/WS side of the same problem is solved
+  // at runtime in src/base.js — read that file before changing this line.
+  base: './',
   build: {
     outDir: '../scripts/fleetd/board-dist',
     emptyOutDir: true,

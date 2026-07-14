@@ -8409,8 +8409,57 @@ function serveBoardAsset(res, pathname, notFound) {
   });
   return res.end(data);
 }
-function createHttp(core2, { port, boardFile, version: version2 = "0.0.0", capture = () => {
-}, token, lan = null }) {
+function parseTrustedOrigins(spec) {
+  const out = [];
+  for (const raw of String(spec || "").split(",")) {
+    const entry = raw.trim();
+    if (!entry) continue;
+    const wild = /^([a-z][a-z0-9+.-]*:\/\/)\*\./i.exec(entry);
+    const probe2 = wild ? entry.replace("://*.", "://wildcard-placeholder.") : entry;
+    let u;
+    try {
+      u = new URL(probe2);
+    } catch {
+      throw new Error(`not a valid origin: ${entry}`);
+    }
+    if (u.protocol !== "http:" && u.protocol !== "https:") {
+      throw new Error(`origin must be http:// or https://: ${entry}`);
+    }
+    if (u.pathname !== "/" || u.search || u.hash || u.username || u.password) {
+      throw new Error(`origin must be scheme://host[:port] with no path or credentials: ${entry}`);
+    }
+    const host = u.hostname.toLowerCase().replace(/^\[/, "").replace(/\]$/, "");
+    out.push({
+      scheme: u.protocol.slice(0, -1),
+      // For a wildcard we keep the SUFFIX including the leading dot, so matching
+      // is a suffix test plus a "no further dots" test.
+      wildcard: Boolean(wild),
+      host: wild ? host.replace(/^wildcard-placeholder/, "") : host,
+      port: u.port
+      // '' means the scheme default (80/443)
+    });
+  }
+  return out;
+}
+function trustedHostMatch(entry, host, port) {
+  if (entry.port !== port) return false;
+  if (!entry.wildcard) return entry.host === host;
+  if (!host.endsWith(entry.host)) return false;
+  const label2 = host.slice(0, -entry.host.length);
+  return label2.length > 0 && !label2.includes(".");
+}
+function createHttp(core2, {
+  port,
+  boardFile,
+  version: version2 = "0.0.0",
+  capture = () => {
+  },
+  token,
+  lan = null,
+  trustedOrigins = [],
+  proxyAuth = "token",
+  managed = false
+}) {
   const lanInfo = lan?.enabled ? { enabled: true, urls: lan.urls ?? [], mdns: lan.mdns ?? null } : { enabled: false, urls: [] };
   function snapshotWithLan() {
     return { ...core2.snapshot(), lan: lanInfo };
@@ -8427,7 +8476,9 @@ function createHttp(core2, { port, boardFile, version: version2 = "0.0.0", captu
     return expected.length === presented.length && timingSafeEqual(expected, presented);
   }
   function authorized(req, url) {
-    if (isLoopbackAddress(req.socket?.remoteAddress)) return true;
+    if (isLoopbackAddress(req.socket?.remoteAddress)) {
+      if (!(proxyAuth === "token" && viaTrustedProxy(req))) return true;
+    }
     const authorization = req.headers.authorization;
     const bearer = typeof authorization === "string" ? /^Bearer (.+)$/.exec(authorization)?.[1] : void 0;
     return tokenMatches(bearer) || tokenMatches(url.searchParams.get("t"));
@@ -8451,6 +8502,15 @@ function createHttp(core2, { port, boardFile, version: version2 = "0.0.0", captu
     const host = normHost(u.hostname);
     return (isLoopbackAddress(host) || lanHosts.has(host)) && (u.port === "" || u.port === daemonPort);
   }
+  function authorityTrusted(u) {
+    const host = normHost(u.hostname);
+    return trustedOrigins.some((e) => trustedHostMatch(e, host, u.port));
+  }
+  function originTrusted(u) {
+    const host = normHost(u.hostname);
+    const scheme = u.protocol.slice(0, -1);
+    return trustedOrigins.some((e) => e.scheme === scheme && trustedHostMatch(e, host, u.port));
+  }
   function hostHeaderOk(req) {
     const host = req.headers.host;
     if (typeof host !== "string" || !host) return true;
@@ -8460,7 +8520,7 @@ function createHttp(core2, { port, boardFile, version: version2 = "0.0.0", captu
     } catch {
       return false;
     }
-    return hostAllowed(u);
+    return hostAllowed(u) || authorityTrusted(u);
   }
   function crossSiteReason(req) {
     const site = req.headers["sec-fetch-site"];
@@ -8473,9 +8533,20 @@ function createHttp(core2, { port, boardFile, version: version2 = "0.0.0", captu
       } catch {
         return "bad-origin";
       }
-      if (!hostAllowed(u)) return "cross-origin";
+      if (!hostAllowed(u) && !originTrusted(u)) return "cross-origin";
     }
     return null;
+  }
+  function viaTrustedProxy(req) {
+    const origin = req.headers.origin;
+    if (typeof origin !== "string" || !origin) return false;
+    let u;
+    try {
+      u = new URL(origin);
+    } catch {
+      return false;
+    }
+    return !hostAllowed(u) && originTrusted(u);
   }
   const isJsonContentType = (v) => typeof v === "string" && /^application\/json\b/i.test(v.trim());
   const hookHandlers = {
@@ -8560,7 +8631,14 @@ function createHttp(core2, { port, boardFile, version: version2 = "0.0.0", captu
           return json(res, 403, { ok: false, reason: "forbidden" });
         }
         if (url.pathname === "/health") {
-          return json(res, 200, { ok: true, fleet: core2.fleetSize(), pid: process.pid, version: version2, spawn: core2.spawnCapability() });
+          return json(res, 200, {
+            ok: true,
+            fleet: core2.fleetSize(),
+            pid: process.pid,
+            version: version2,
+            managed,
+            spawn: core2.spawnCapability()
+          });
         }
         if (url.pathname === "/state") return json(res, 200, snapshotWithLan());
         if (url.pathname === "/api/worktrees") {
@@ -9593,6 +9671,7 @@ var PORT = Number(process.env.FLEETDECK_PORT || 4711);
 var BIND = (process.env.FLEETDECK_BIND || "127.0.0.1").trim() || "127.0.0.1";
 var LAN_MODE = !isLoopbackAddress(BIND);
 var HOME = process.env.FLEETDECK_HOME || path9.join(os3.homedir() || "/tmp", ".fleetdeck");
+var MANAGED = process.env.FLEETDECK_MANAGED === "1";
 process.on("unhandledRejection", (reason) => {
   console.error("fleetd unhandled rejection (daemon kept alive):", reason);
 });
@@ -9667,6 +9746,20 @@ function claimHome() {
   startupFatal("could not claim FLEETDECK_HOME pidfile after concurrent startup attempts");
 }
 claimHome();
+var TRUSTED_ORIGINS = [];
+try {
+  TRUSTED_ORIGINS = parseTrustedOrigins(process.env.FLEETDECK_TRUSTED_ORIGINS);
+} catch (err) {
+  startupFatal(`FLEETDECK_TRUSTED_ORIGINS \u2014 ${err?.message || "unparseable"}`);
+}
+var PROXY_AUTH = (process.env.FLEETDECK_PROXY_AUTH || "token").trim().toLowerCase() || "token";
+if (PROXY_AUTH !== "token" && PROXY_AUTH !== "trust") {
+  startupFatal(`FLEETDECK_PROXY_AUTH must be 'token' or 'trust' (got '${PROXY_AUTH}')`);
+}
+if (PROXY_AUTH === "trust" && !TRUSTED_ORIGINS.length) {
+  startupFatal("FLEETDECK_PROXY_AUTH=trust requires FLEETDECK_TRUSTED_ORIGINS \u2014 there is nothing to trust");
+}
+var TOKEN_REQUIRED = LAN_MODE || TRUSTED_ORIGINS.length > 0 && PROXY_AUTH === "token";
 var TOKEN_FILE = path9.join(HOME, "token");
 var TOKEN;
 if (Object.hasOwn(process.env, "FLEETDECK_TOKEN")) {
@@ -9676,18 +9769,18 @@ if (Object.hasOwn(process.env, "FLEETDECK_TOKEN")) {
   try {
     const persisted = fs11.readFileSync(TOKEN_FILE, "utf8").trim();
     if (persisted.length >= 16) TOKEN = persisted;
-    else if (LAN_MODE) startupFatal("FLEETDECK_HOME/token must contain at least 16 characters");
+    else if (TOKEN_REQUIRED) startupFatal("FLEETDECK_HOME/token must contain at least 16 characters");
   } catch (err) {
-    if (err?.code !== "ENOENT" && LAN_MODE) {
+    if (err?.code !== "ENOENT" && TOKEN_REQUIRED) {
       startupFatal(`cannot read FLEETDECK_HOME/token (${err?.code || err?.message || "unknown error"})`);
     }
   }
 }
-if (LAN_MODE && !TOKEN) {
+if (TOKEN_REQUIRED && !TOKEN) {
   try {
     TOKEN = crypto.randomBytes(32).toString("hex");
   } catch (err) {
-    startupFatal(`cannot generate LAN token (${err?.code || err?.message || "unknown error"})`);
+    startupFatal(`cannot generate access token (${err?.code || err?.message || "unknown error"})`);
   }
   try {
     fs11.writeFileSync(TOKEN_FILE, TOKEN, { encoding: "utf8", mode: 384, flag: "wx" });
@@ -9730,6 +9823,9 @@ var { server } = createHttp(core, {
   // (GET / + /assets/*) is served from board-dist, resolved inside http.mjs
   boardFile: path9.join(__dirname, "board.html"),
   version,
+  trustedOrigins: TRUSTED_ORIGINS,
+  proxyAuth: PROXY_AUTH,
+  managed: MANAGED,
   // validation aid: first 3 raw payloads per hook event → HOME/hook-payloads.jsonl
   capture: createPayloadCapture(HOME)
 });

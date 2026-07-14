@@ -1,10 +1,19 @@
 {
   "name": "fleetdeck",
-  "version": "0.7.1",
+  "version": "0.8.0",
   "description": "Fleet Deck — localhost daemon + board that makes every Claude Code session on a machine visible. Tested against Claude Code 2.1.206.",
   "type": "module",
-  "private": true,
   "license": "MIT",
+  "bin": {
+    "fleetdeck": "bin/fleetdeck.mjs"
+  },
+  "files": [
+    "bin/",
+    "scripts/fleetd/fleetd.bundle.mjs",
+    "scripts/fleetd/board-dist/",
+    "scripts/fleetd/board.html",
+    "docs/CODER.md"
+  ],
   "author": "Luis Morales <luismmorales@gmail.com>",
   "repository": {
     "type": "git",

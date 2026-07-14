@@ -103,7 +103,64 @@ function serveBoardAsset(res, pathname, notFound) {
   return res.end(data);
 }
 
-export function createHttp(core, { port, boardFile, version = '0.0.0', capture = () => {}, token, lan = null }) {
+// ------------------------------------------------------- trusted origins
+// STANDALONE/PROXY CONTRACT. Behind a reverse proxy (Coder, nginx, Traefik) the
+// browser-facing Host and Origin are the PROXY's, not ours — Coder's reverse
+// proxy never rewrites req.Host — so the same-origin walls below refuse every
+// POST, both WS upgrades and the mutating GETs. `FLEETDECK_TRUSTED_ORIGINS` is
+// how an operator says "this other origin is also me".
+//
+// Entries are full origins (scheme REQUIRED, so an operator can never widen
+// http and https at once by accident): `https://board.example.com`,
+// `https://board.example.com:8443`, or one leading wildcard LABEL:
+// `https://*.coder.example.com` — which matches `fd--main--ws--luis.coder.
+// example.com` but NOT `coder.example.com` itself and NOT `a.b.coder.example.com`.
+// A wildcard is deliberately single-label: `*.example.com` must not hand the
+// fleet to every subdomain of a shared apex.
+export function parseTrustedOrigins(spec) {
+  const out = [];
+  for (const raw of String(spec || '').split(',')) {
+    const entry = raw.trim();
+    if (!entry) continue;
+    // The wildcard label is not a legal URL host, so swap in a placeholder to
+    // parse, then remember that the first label was a star.
+    const wild = /^([a-z][a-z0-9+.-]*:\/\/)\*\./i.exec(entry);
+    const probe = wild ? entry.replace('://*.', '://wildcard-placeholder.') : entry;
+    let u;
+    try { u = new URL(probe); } catch { throw new Error(`not a valid origin: ${entry}`); }
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+      throw new Error(`origin must be http:// or https://: ${entry}`);
+    }
+    if (u.pathname !== '/' || u.search || u.hash || u.username || u.password) {
+      throw new Error(`origin must be scheme://host[:port] with no path or credentials: ${entry}`);
+    }
+    const host = u.hostname.toLowerCase().replace(/^\[/, '').replace(/\]$/, '');
+    out.push({
+      scheme: u.protocol.slice(0, -1),
+      // For a wildcard we keep the SUFFIX including the leading dot, so matching
+      // is a suffix test plus a "no further dots" test.
+      wildcard: Boolean(wild),
+      host: wild ? host.replace(/^wildcard-placeholder/, '') : host,
+      port: u.port, // '' means the scheme default (80/443)
+    });
+  }
+  return out;
+}
+
+// Does `host`/`port` match this entry? Scheme is checked separately, because a
+// Host header carries no scheme and an Origin does.
+function trustedHostMatch(entry, host, port) {
+  if (entry.port !== port) return false;
+  if (!entry.wildcard) return entry.host === host;
+  if (!host.endsWith(entry.host)) return false;
+  const label = host.slice(0, -entry.host.length);
+  return label.length > 0 && !label.includes('.'); // exactly one label, non-empty
+}
+
+export function createHttp(core, {
+  port, boardFile, version = '0.0.0', capture = () => {}, token, lan = null,
+  trustedOrigins = [], proxyAuth = 'token', managed = false,
+}) {
   // The board renders its share panel from this: the exact URLs a peer can
   // open, token included (a browser cannot send an Authorization header on its
   // first navigation). Absent/disabled ⇒ the panel says "local only" rather
@@ -134,8 +191,25 @@ export function createHttp(core, { port, boardFile, version = '0.0.0', capture =
     return expected.length === presented.length && timingSafeEqual(expected, presented);
   }
 
+  // PROXY AUTH CONTRACT. A reverse proxy connects to us over loopback, so the
+  // loopback exemption below would hand the entire fleet — spawn included — to
+  // anyone who can reach the proxy. Which of the two is correct is not something
+  // the daemon can infer, so the operator states it:
+  //
+  //   'token' (default) — a browser arriving through a trusted external origin
+  //     must still present the bearer token. Defence in depth, and the only safe
+  //     default: it is the behaviour an operator gets if they configure a proxy
+  //     and think no further about auth.
+  //   'trust' — the proxy is the authenticator (Coder authenticates before it
+  //     ever forwards, and coder_app defaults to share = "owner"). A trusted
+  //     origin is then sufficient and the board needs no token at all.
+  //
+  // Either way a LOCAL CLI hook is untouched: it sends no Origin, so
+  // viaTrustedProxy is false and the loopback exemption still applies.
   function authorized(req, url) {
-    if (isLoopbackAddress(req.socket?.remoteAddress)) return true;
+    if (isLoopbackAddress(req.socket?.remoteAddress)) {
+      if (!(proxyAuth === 'token' && viaTrustedProxy(req))) return true;
+    }
     const authorization = req.headers.authorization;
     const bearer = typeof authorization === 'string' ? /^Bearer (.+)$/.exec(authorization)?.[1] : undefined;
     return tokenMatches(bearer) || tokenMatches(url.searchParams.get('t'));
@@ -175,14 +249,34 @@ export function createHttp(core, { port, boardFile, version = '0.0.0', capture =
     const host = normHost(u.hostname);
     return (isLoopbackAddress(host) || lanHosts.has(host)) && (u.port === '' || u.port === daemonPort);
   }
+  // The operator-named extension of "us" (see parseTrustedOrigins). Kept separate
+  // from hostAllowed so that a deployment which configures nothing gets today's
+  // behaviour byte-for-byte: with an empty list both helpers below are false and
+  // every wall is exactly as tight as it was.
+  //
+  // authorityTrusted ignores the scheme (a Host header has none); originTrusted
+  // demands it. That asymmetry is deliberate, not an oversight: the Host wall
+  // exists to stop DNS rebinding, which a scheme cannot help with, while the
+  // Origin wall is the CSRF wall, where http-vs-https is a real distinction.
+  function authorityTrusted(u) {
+    const host = normHost(u.hostname);
+    return trustedOrigins.some(e => trustedHostMatch(e, host, u.port));
+  }
+  function originTrusted(u) {
+    const host = normHost(u.hostname);
+    const scheme = u.protocol.slice(0, -1);
+    return trustedOrigins.some(e => e.scheme === scheme && trustedHostMatch(e, host, u.port));
+  }
   // Host header check — the DNS-rebinding wall. A browser always sends Host, so a
   // domain that re-resolves to this box arrives as Host: evil.example and is
-  // refused. A missing Host is a non-browser caller and is left alone.
+  // refused. A missing Host is a non-browser caller and is left alone. A proxied
+  // request arrives with the PROXY's Host, which only passes once an operator has
+  // named it in FLEETDECK_TRUSTED_ORIGINS.
   function hostHeaderOk(req) {
     const host = req.headers.host;
     if (typeof host !== 'string' || !host) return true;
     let u; try { u = new URL('http://' + host); } catch { return false; }
-    return hostAllowed(u);
+    return hostAllowed(u) || authorityTrusted(u);
   }
   // Sec-Fetch-Site + Origin verdict for a STATE-CHANGING request. Returns null
   // when it may proceed. Sec-Fetch-Site, when the browser sends it, is
@@ -195,9 +289,19 @@ export function createHttp(core, { port, boardFile, version = '0.0.0', capture =
     const origin = req.headers.origin;
     if (typeof origin === 'string' && origin) {
       let u; try { u = new URL(origin); } catch { return 'bad-origin'; } // 'null', junk
-      if (!hostAllowed(u)) return 'cross-origin';
+      if (!hostAllowed(u) && !originTrusted(u)) return 'cross-origin';
     }
     return null;
+  }
+
+  // Is this a browser arriving through a reverse proxy — i.e. an Origin that is
+  // trusted but is NOT one of our own hosts? Such a request has already cleared
+  // the walls above; this only decides whether it must ALSO carry the token.
+  function viaTrustedProxy(req) {
+    const origin = req.headers.origin;
+    if (typeof origin !== 'string' || !origin) return false; // a CLI hook
+    let u; try { u = new URL(origin); } catch { return false; }
+    return !hostAllowed(u) && originTrusted(u);
   }
   const isJsonContentType = v => typeof v === 'string' && /^application\/json\b/i.test(v.trim());
 
@@ -370,7 +474,12 @@ export function createHttp(core, { port, boardFile, version = '0.0.0', capture =
         if (url.pathname === '/health') {
           // v1.2: spawn capability rides /health so the launcher/board can
           // hide all spawn UI when unavailable.
-          return json(res, 200, { ok: true, fleet: core.fleetSize(), pid: process.pid, version, spawn: core.spawnCapability() });
+          // `managed` rides /health because that is the one thing the SessionStart
+          // hook already fetches before it decides whether to evict us.
+          return json(res, 200, {
+            ok: true, fleet: core.fleetSize(), pid: process.pid, version, managed,
+            spawn: core.spawnCapability(),
+          });
         }
         if (url.pathname === '/state') return json(res, 200, snapshotWithLan());
         if (url.pathname === '/api/worktrees') {
