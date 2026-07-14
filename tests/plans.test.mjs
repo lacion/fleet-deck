@@ -121,7 +121,7 @@ test('capture-before-answer: the plan row appears in /state (status proposed, pl
   const holdMs = 1500;
   const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
   const cwd = scratchCwd();
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
   await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
@@ -164,7 +164,7 @@ test('answer path: {behavior:"allow"} approves the plan and the held response is
   const holdMs = 1500;
   const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
   const cwd = scratchCwd();
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
   await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
@@ -194,7 +194,7 @@ test('answer path: {behavior:"capture"} denies the held hook bare AND mails the 
   const holdMs = 1500;
   const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
   const cwd = scratchCwd();
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
   await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
@@ -230,7 +230,7 @@ test('answer path: {behavior:"deny"} plainly denies the held hook; plan becomes 
   const holdMs = 1500;
   const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
   const cwd = scratchCwd();
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
   await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
@@ -256,7 +256,7 @@ test('answer path: an unanswered ExitPlanMode hold expires to {} and the plan st
   const holdMs = 1200;
   const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
   const cwd = scratchCwd();
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
   await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
@@ -283,7 +283,7 @@ test('answer path: an unanswered ExitPlanMode hold expires to {} and the plan st
 test('regression: PermissionRequest tool_name=AskUserQuestion still answers {} in <200ms untouched by the v1.3 ExitPlanMode capture wiring', async (t) => {
   const daemon = await startDaemon();
   const cwd = scratchCwd();
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
   await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
@@ -310,7 +310,7 @@ test('/state plans: caps at 20 non-archived rows, newest first; archiving frees 
   const holdMs = 800;
   const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
   const cwd = scratchCwd();
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const TOTAL = 25;
   const pending = [];
@@ -364,7 +364,7 @@ test('mark: proposed -> executed (optional {via} recorded if exposed on /state, 
   const holdMs = 1000;
   const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
   const cwd = scratchCwd();
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
   const { held } = await holdExitPlan(daemon, sid, cwd, holdMs);
@@ -396,7 +396,7 @@ test('mark: captured -> executed', async (t) => {
   const holdMs = 1500;
   const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
   const cwd = scratchCwd();
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
   const { held, q } = await holdExitPlan(daemon, sid, cwd, holdMs);
@@ -420,7 +420,7 @@ test('mark: archived from each non-archived status (proposed, approved, captured
   const holdMs = 1200;
   const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
   const cwd = scratchCwd();
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const behaviorFor = { approved: 'allow', rejected: 'deny', captured: 'capture', executed: 'allow' };
   const pendingHolds = [];

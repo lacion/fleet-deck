@@ -46,8 +46,8 @@ async function boot(t, prefix) {
   const daemon = await startDaemon({ home, env: { FLEETDECK_SPAWN_CMD: SPAWN_CMD_FIXTURE } });
   t.after(async () => {
     await daemon.stop({ keepHome: true });
-    rmSync(home, { recursive: true, force: true });
-    rmSync(cwd, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
   return { daemon, home, cwd };
 }

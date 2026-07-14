@@ -81,7 +81,7 @@ async function startLan(t, address, { token = LAN_TOKEN, home = scratchHome() } 
   });
   t.after(async () => {
     await raw.kill();
-    rmSync(home, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
   return { raw, home, port, baseUrl: `http://${address}:${port}` };
 }
@@ -222,7 +222,7 @@ test('FLEETDECK_TOKEN shorter than 16 trimmed characters refuses startup', async
   });
   t.after(async () => {
     await raw.kill();
-    rmSync(home, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   const code = await raw.waitForExit();
@@ -240,7 +240,7 @@ test('LAN mode generates and persists an owner-only token', async t => {
   });
   t.after(async () => {
     await raw.kill();
-    rmSync(home, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
   const tokenFile = path.join(home, 'token');
 

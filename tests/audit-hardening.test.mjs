@@ -26,7 +26,7 @@ const SESSIONSTART = path.join(REPO_ROOT, 'scripts/fleet-sessionstart.mjs');
 
 function scratch(t, prefix = 'fleetdeck-audit-') {
   const dir = mkdtempSync(path.join(tmpdir(), prefix));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  t.after(() => rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
   return dir;
 }
 

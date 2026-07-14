@@ -201,7 +201,7 @@ test('capability: FLEETDECK_SPAWN_CMD reports available:true reason:test-overrid
 test('capability: FLEETDECK_SPAWN=off reports available:false on /health and /state, and POST /api/spawn is refused 4xx', async (t) => {
   const daemon = await startDaemon({ env: { FLEETDECK_SPAWN: 'off' } });
   const cwd = scratchDir();
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const health = await getJson(`${daemon.baseUrl}/health`);
   assert.ok(health.json?.spawn, '/health should carry a spawn capability object even when disabled');
@@ -228,7 +228,7 @@ test('spawn happy path: POST /api/spawn pre-creates the card immediately (source
   const rec = path.join(scratchDir(), 'specs.jsonl');
   const cwd = scratchDir();
   const daemon = await startDaemon({ env: spawnCmdEnv({ recordFile: rec }) });
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const res = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd });
   assert.equal(res.status, 200, `spawn should 200 (got ${res.status}: ${JSON.stringify(res.json)})`);
@@ -254,7 +254,7 @@ test("spawn happy path: the fixture's SessionStart flips source to hooks and the
   const rec = path.join(scratchDir(), 'specs.jsonl');
   const cwd = scratchDir();
   const daemon = await startDaemon({ port, env: spawnCmdEnv({ recordFile: rec, postUrl: baseUrl }) });
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const res = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd });
   assert.equal(res.status, 200);
@@ -279,7 +279,7 @@ test('argv construction: prompt/model/permission-mode survive intact through the
   const rec = path.join(scratchDir(), 'specs.jsonl');
   const cwd = scratchDir();
   const daemon = await startDaemon({ port, env: spawnCmdEnv({ recordFile: rec, postUrl: baseUrl }) });
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   // The rm target is a guaranteed-nonexistent scratch path so that even in
   // the worst case -- an implementation that (in violation of the contract's
@@ -390,7 +390,7 @@ test('no fleet cap: the 8th concurrent spawn is as welcome as the 1st', async (t
   const rec = path.join(scratchDir(), 'specs.jsonl');
   const daemon = await startDaemon({ port, env: spawnCmdEnv({ recordFile: rec, postUrl: baseUrl }) });
   const dirs = Array.from({ length: 8 }, () => scratchDir());
-  t.after(async () => { await daemon.stop(); for (const d of dirs) rmSync(d, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); for (const d of dirs) rmSync(d, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   for (const [i, dir] of dirs.entries()) {
     const res = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd: dir });
@@ -531,7 +531,7 @@ test('kill: a live (non-offline) card is refused without force -> 409', async (t
   const rec = path.join(scratchDir(), 'specs.jsonl');
   const cwd = scratchDir();
   const daemon = await startDaemon({ port, env: spawnCmdEnv({ recordFile: rec, postUrl: baseUrl }) });
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const spawnRes = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd });
   assert.equal(spawnRes.status, 200);
@@ -562,7 +562,7 @@ test("kill: an offline card's kill is accepted (200) or reports the window alrea
   const rec = path.join(scratchDir(), 'specs.jsonl');
   const cwd = scratchDir();
   const daemon = await startDaemon({ port, env: spawnCmdEnv({ recordFile: rec, postUrl: baseUrl }) });
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const spawnRes = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd });
   assert.equal(spawnRes.status, 200);
@@ -605,7 +605,7 @@ test('stale flag: a working card with no events for FLEETDECK_STALE_MS gets stal
   const staleMs = 500;
   const daemon = await startDaemon({ env: { FLEETDECK_STALE_MS: String(staleMs) } });
   const cwd = scratchDir();
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
   await postHook(daemon.baseUrl, 'SessionStart', { session_id: sid, hook_event_name: 'SessionStart', cwd, source: 'startup' });
@@ -667,7 +667,7 @@ test('reconciliation: a spawn row whose window was never actually created in rea
   const port = randomPort();
   const baseUrl = `http://127.0.0.1:${port}`;
   const rec = path.join(scratchDir(), 'specs.jsonl');
-  t.after(() => { rmSync(home, { recursive: true, force: true }); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(() => { rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const first = await startDaemon({ port, home, env: spawnCmdEnv({ recordFile: rec, postUrl: baseUrl }) });
   let sid;

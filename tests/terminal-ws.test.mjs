@@ -67,7 +67,7 @@ test('live terminal WS seeds, streams, relays hex input/resize, and kills its co
   const dir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-term-'));
   const record = path.join(dir, 'term.jsonl');
   const daemon = await startDaemon({ env: env(record) });
-  t.after(async () => { await daemon.stop(); rmSync(dir, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
   const spawned = await createSpawn(daemon, dir);
   const { ws, frames } = connect(termUrl(daemon, spawned.spawn_id, 90, 30));
 
@@ -114,7 +114,7 @@ test('grid: many viewers share ONE control client, each sized and streamed indep
   const dir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-term-grid-'));
   const record = path.join(dir, 'term.jsonl');
   const daemon = await startDaemon({ env: env(record) });
-  t.after(async () => { await daemon.stop(); rmSync(dir, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   // Six tiles — past the old FLEETDECK_TERM_MAX_VIEWERS default of 4, which used
   // to refuse the 5th outright.
@@ -176,7 +176,7 @@ test('the shared control client is released once the last viewer leaves', async 
   const dir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-term-release-'));
   const record = path.join(dir, 'term.jsonl');
   const daemon = await startDaemon({ env: env(record) });
-  t.after(async () => { await daemon.stop(); rmSync(dir, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const a = await createSpawn(daemon, dir);
   const b = await createSpawn(daemon, dir);
@@ -198,7 +198,7 @@ test('live terminal WS refuses an unknown spawn and honors FLEETDECK_TERM=off', 
   const dir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-term-refuse-'));
   const record = path.join(dir, 'term.jsonl');
   const daemon = await startDaemon({ env: env(record, { FLEETDECK_TERM: 'off' }) });
-  t.after(async () => { await daemon.stop(); rmSync(dir, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
   const unknown = connect(`${daemon.baseUrl.replace('http', 'ws')}/ws/term?spawn=not-a-spawn&cols=80&rows=24`);
   const disabled = await waitUntil(() => unknown.frames.find(frame => frame.t === 'err'), 'disabled err');
   assert.match(disabled.reason, /disabled/);
@@ -209,7 +209,7 @@ test('live terminal WS returns err for an unknown spawn when enabled', async t =
   const dir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-term-unknown-'));
   const record = path.join(dir, 'term.jsonl');
   const daemon = await startDaemon({ env: env(record) });
-  t.after(async () => { await daemon.stop(); rmSync(dir, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const unknown = connect(`${daemon.baseUrl.replace('http', 'ws')}/ws/term?spawn=not-a-spawn&cols=80&rows=24`);
   const missing = await waitUntil(() => unknown.frames.find(frame => frame.t === 'err'), 'unknown-spawn err');

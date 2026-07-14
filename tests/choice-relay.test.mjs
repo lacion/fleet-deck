@@ -72,7 +72,7 @@ test('F3c: AskUserQuestion holds as kind=choice with parsed questions[]; {answer
   const holdMs = 4000;
   const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
   const cwd = scratchCwd();
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
   const reg = await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
@@ -132,7 +132,7 @@ test('F3c: an unanswered AskUserQuestion hold expires to {} and the question bec
   const holdMs = 1200;
   const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
   const cwd = scratchCwd();
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
   await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
@@ -164,7 +164,7 @@ test('F3c: /hook/PermissionRequest with tool_name=AskUserQuestion answers {} in 
   const holdMs = 6000; // long, so a wrongly-held request would blow the 200ms budget by construction
   const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
   const cwd = scratchCwd();
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
   await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
@@ -203,7 +203,7 @@ test('F3c: multi-question answers serialize compactly (header: label; multiSelec
   const holdMs = 4000;
   const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
   const cwd = scratchCwd();
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
   await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
@@ -236,7 +236,7 @@ test('F3c: {text} freeform fallback answers a choice hold with the text as the r
   const holdMs = 4000;
   const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
   const cwd = scratchCwd();
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
   await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
@@ -263,7 +263,7 @@ test('F3c: session activity (UserPromptSubmit) expires a pending choice hold wit
   const holdMs = 6000;
   const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
   const cwd = scratchCwd();
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
   await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
@@ -284,7 +284,7 @@ test('F3c: SessionEnd expires a pending choice hold with {} — identical to the
   const holdMs = 6000;
   const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
   const cwd = scratchCwd();
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
   await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));

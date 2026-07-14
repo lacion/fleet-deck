@@ -24,7 +24,7 @@ function findSession(state, sid) {
 test('one block per turn: Stop blocks once on pending mail, then passes, then blocks again after a new turn + new mail', async (t) => {
   const daemon = await startDaemon();
   const cwd = mkdtempSync(path.join(tmpdir(), 'fleetdeck-cwd-'));
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
   await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
@@ -60,7 +60,7 @@ test('one block per turn: Stop blocks once on pending mail, then passes, then bl
 test('UserPromptSubmit drains pending mail as additionalContext', async (t) => {
   const daemon = await startDaemon();
   const cwd = mkdtempSync(path.join(tmpdir(), 'fleetdeck-cwd-'));
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
   await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
@@ -80,7 +80,7 @@ test('UserPromptSubmit drains pending mail as additionalContext', async (t) => {
 test('GET /mail?session=<sid> drains the mailbox directly', async (t) => {
   const daemon = await startDaemon();
   const cwd = mkdtempSync(path.join(tmpdir(), 'fleetdeck-cwd-'));
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
   await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));

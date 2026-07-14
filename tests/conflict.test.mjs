@@ -28,7 +28,7 @@ async function registerAndGetCallsign(daemon, sid, cwd) {
 test('second session touching the same file gets a whisper naming the rival; rival gets mail', async (t) => {
   const daemon = await startDaemon();
   const cwd = mkdtempSync(path.join(tmpdir(), 'fleetdeck-cwd-'));
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sidA = randomUUID();
   const sidB = randomUUID();
@@ -73,7 +73,7 @@ test('second session touching the same file gets a whisper naming the rival; riv
 test('a session that already ended still counts as a rival within the window', async (t) => {
   const daemon = await startDaemon();
   const cwd = mkdtempSync(path.join(tmpdir(), 'fleetdeck-cwd-'));
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sidC = randomUUID();
   const sidD = randomUUID();

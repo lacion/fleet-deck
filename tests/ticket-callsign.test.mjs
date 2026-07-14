@@ -126,7 +126,7 @@ test('rename-once: a ticketless session renamed by a ticket-branch event; a late
   const daemon = await startDaemon();
   t.after(async () => {
     await daemon.stop();
-    rmSync(plain, { recursive: true, force: true });
+    rmSync(plain, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     repo77.cleanup();
     repoEng.cleanup();
   });
@@ -172,7 +172,7 @@ test('manual ticket: override renames, blocks later auto-detect, re-override kee
   const plain = plainDir();
   const repo99 = makeRepoWithWorktree({ repoName: 'fd-manual-99', branch: 'feature/PROJ-99-auto' });
   const daemon = await startDaemon();
-  t.after(async () => { await daemon.stop(); rmSync(plain, { recursive: true, force: true }); repo99.cleanup(); });
+  t.after(async () => { await daemon.stop(); rmSync(plain, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); repo99.cleanup(); });
 
   const sid = randomUUID();
   const start = await sessionStart(daemon, sid, plain);
@@ -236,7 +236,7 @@ test('manual ticket: override renames, blocks later auto-detect, re-override kee
 test('manual ticket: an invalid key or an unknown target is refused loudly and never becomes a note', async (t) => {
   const plain = plainDir();
   const daemon = await startDaemon();
-  t.after(async () => { await daemon.stop(); rmSync(plain, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(plain, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
   const start = await sessionStart(daemon, sid, plain);
@@ -273,7 +273,7 @@ test('manual ticket: an invalid key or an unknown target is refused loudly and n
 test('manual ticket: an ambiguous target (a callsign shared by two live sessions) is refused; the session id disambiguates', async (t) => {
   const plain = plainDir();
   const daemon = await startDaemon();
-  t.after(async () => { await daemon.stop(); rmSync(plain, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(plain, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   // Ticketless births use the hex suffix and — unlike ticketed births — do not
   // consult the taken-check (current behavior, preserved by the plan). Two
@@ -311,7 +311,7 @@ test('manual ticket: an ambiguous target (a callsign shared by two live sessions
 test('mail and assign to the birth name after a rename still deliver to the renamed session', async (t) => {
   const plain = plainDir();
   const daemon = await startDaemon();
-  t.after(async () => { await daemon.stop(); rmSync(plain, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(plain, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
   const start = await sessionStart(daemon, sid, plain);
@@ -347,7 +347,7 @@ test('tombstone holds its animal: an ended-but-unarchived ticketed session block
   const repo = makeRepoWithWorktree({ repoName: 'fd-tombstone', branch: 'feature/PROJ-42-hold' });
   const plain = plainDir();
   const daemon = await startDaemon();
-  t.after(async () => { await daemon.stop(); repo.cleanup(); rmSync(plain, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); repo.cleanup(); rmSync(plain, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   // A: the first session (count 0 → falcon) on PROJ-42.
   const sidA = randomUUID();
@@ -428,7 +428,7 @@ test('migration: a pre-0.6.0 fleetd.db gains the ticket columns; old rows read t
   seed.close();
 
   const daemon = await startDaemon({ home });
-  t.after(async () => { await daemon.stop(); rmSync(home, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   // The old rows survive the migration and read ticket:null.
   const state = await getState(daemon);
@@ -461,7 +461,7 @@ test('migration: a pre-0.6.0 fleetd.db gains the ticket columns; old rows read t
 test('updateSession round-trips ticket/ticket_source/prev_callsign across later events (FIELDS whitelist regression)', async (t) => {
   const plain = plainDir();
   const daemon = await startDaemon();
-  t.after(async () => { await daemon.stop(); rmSync(plain, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(plain, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
   const start = await sessionStart(daemon, sid, plain);

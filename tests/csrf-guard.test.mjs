@@ -263,7 +263,7 @@ test('M-B3: POST body is byte-exact and byte-capped', async t => {
   await t.test('a multibyte glyph split across TCP chunks survives intact', async () => {
     const sid = randomUUID();
     const cwd = mkdtempSync(path.join(tmpdir(), 'fleetdeck-mb3-'));
-    t.after(() => rmSync(cwd, { recursive: true, force: true }));
+    t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
     const start = await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
     assert.equal(start.status, 200);
 

@@ -16,8 +16,8 @@ test('a second daemon on the same port loses the election and exits with code 3'
   const homeA = mkdtempSync(path.join(tmpdir(), 'fleetdeck-home-a-'));
   const homeB = mkdtempSync(path.join(tmpdir(), 'fleetdeck-home-b-'));
   t.after(() => {
-    rmSync(homeA, { recursive: true, force: true });
-    rmSync(homeB, { recursive: true, force: true });
+    rmSync(homeA, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    rmSync(homeB, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   const winner = await startDaemon({ port, home: homeA });

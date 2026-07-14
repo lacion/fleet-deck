@@ -50,7 +50,7 @@ test('LAN startup logs elide the token and direct operators to the share panel',
   const token = 'audit-token-must-never-reach-fleetd-log-0123456789';
   const home = freshHome('fleetdeck-token-log-');
   const consoleRecord = path.join(home, 'console.log');
-  t.after(() => rmSync(home, { recursive: true, force: true }));
+  t.after(() => rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
   const daemon = spawnRaw({
     port: randomPort(),
     home,
@@ -79,7 +79,7 @@ test('LAN startup logs elide the token and direct operators to the share panel',
 
 test('one FLEETDECK_HOME cannot be opened concurrently by daemons on different ports', { skip: BUNDLE_SKIP }, async (t) => {
   const home = freshHome('fleetdeck-port-scope-');
-  t.after(() => rmSync(home, { recursive: true, force: true }));
+  t.after(() => rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
   const firstPort = randomPort();
   let secondPort = randomPort();
   while (secondPort === firstPort) secondPort = randomPort();
@@ -109,7 +109,7 @@ test('Linux PID reuse by a non-fleetd process does not retain a stale HOME lock'
 }, async (t) => {
   const home = freshHome('fleetdeck-recycled-pid-');
   const pidFile = path.join(home, 'fleetd.pid');
-  t.after(() => rmSync(home, { recursive: true, force: true }));
+  t.after(() => rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
 
   // The test runner PID is live and node-backed, but its cmdline is not fleetd.
   // A stale record for it models OS PID reuse without needing privileged PID
@@ -133,7 +133,7 @@ test('SIGTERM waits for the mDNS goodbye send callback before fleetd exits', { s
   const home = freshHome('fleetdeck-goodbye-');
   const record = path.join(home, 'mdns.jsonl');
   const port = randomPort();
-  t.after(() => rmSync(home, { recursive: true, force: true }));
+  t.after(() => rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
 
   const child = spawnRaw({
     port,

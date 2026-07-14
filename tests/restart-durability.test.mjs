@@ -18,8 +18,8 @@ test('restart durability: same FLEETDECK_HOME after kill+restart still has the s
   const home = mkdtempSync(path.join(tmpdir(), 'fleetdeck-home-'));
   const cwd = mkdtempSync(path.join(tmpdir(), 'fleetdeck-cwd-'));
   t.after(() => {
-    rmSync(home, { recursive: true, force: true });
-    rmSync(cwd, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   const sid = randomUUID();

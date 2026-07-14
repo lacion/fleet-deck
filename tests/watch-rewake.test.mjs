@@ -147,7 +147,7 @@ test('/api/watch: unknown/offline session -> {status:"idle", session_alive:false
 test('/api/watch v2 FLIP: a live session with nothing claimable now HOLDS for the full hold_ms instead of returning idle immediately', async (t) => {
   const daemon = await startDaemon();
   const cwd = scratchCwd();
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
   await liveSession(daemon, sid, cwd);
@@ -166,7 +166,7 @@ test('/api/watch v2 FLIP: a live session with nothing claimable now HOLDS for th
 test('/api/watch v2: claims assignment mail — status "mail", from "orchestrator", RAW text with the [FLEETDECK ASSIGNMENT] prefix PRESENT (not stripped)', async (t) => {
   const daemon = await startDaemon();
   const cwd = scratchCwd();
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
   await liveSession(daemon, sid, cwd);
@@ -184,7 +184,7 @@ test('/api/watch v2: claims assignment mail — status "mail", from "orchestrato
 test('/api/watch v2: claims plain board mail too (no frame), same as any other sender', async (t) => {
   const daemon = await startDaemon();
   const cwd = scratchCwd();
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
   await liveSession(daemon, sid, cwd);
@@ -199,7 +199,7 @@ test('/api/watch v2: claims plain board mail too (no frame), same as any other s
 test('/api/watch v2: never claims mail for an offline session — preserved for --resume, delivered at the resumed first turn boundary', async (t) => {
   const daemon = await startDaemon();
   const cwd = scratchCwd();
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
   await liveSession(daemon, sid, cwd);
@@ -224,8 +224,8 @@ test('/api/watch v2: a pending freeform answered during the poll resolves as "ma
   const transcriptDir = makeTranscriptDir();
   t.after(async () => {
     await daemon.stop();
-    rmSync(cwd, { recursive: true, force: true });
-    rmSync(transcriptDir, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    rmSync(transcriptDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   const sid = randomUUID();
@@ -262,8 +262,8 @@ test('/api/watch: mailbox drained first (turn boundary) -> the poll stays idle a
   const transcriptDir = makeTranscriptDir();
   t.after(async () => {
     await daemon.stop();
-    rmSync(cwd, { recursive: true, force: true });
-    rmSync(transcriptDir, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    rmSync(transcriptDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   const sid = randomUUID();
@@ -290,7 +290,7 @@ test('/api/watch: mailbox drained first (turn boundary) -> the poll stays idle a
 test('fleet-watch v2: a live session with NO pending questions and NO mail KEEPS POLLING (does not exit)', async (t) => {
   const daemon = await startDaemon();
   const cwd = scratchCwd();
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
   await liveSession(daemon, sid, cwd);
@@ -311,7 +311,7 @@ test('fleet-watch v2: a live session with NO pending questions and NO mail KEEPS
 test('fleet-watch v2: assignment mail arrives -> exit 2 with "[FLEETDECK ASSIGNMENT]" in stderr (stdout silent), pid file removed', async (t) => {
   const daemon = await startDaemon();
   const cwd = scratchCwd();
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
   await liveSession(daemon, sid, cwd);
@@ -336,8 +336,8 @@ test('fleet-watch: a board answer makes the watcher exit 2 with the RAW answer (
   const transcriptDir = makeTranscriptDir();
   t.after(async () => {
     await daemon.stop();
-    rmSync(cwd, { recursive: true, force: true });
-    rmSync(transcriptDir, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    rmSync(transcriptDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   const sid = randomUUID();
@@ -364,8 +364,8 @@ test('fleet-watch: single-flight per session — a newer watcher supersedes the 
   const transcriptDir = makeTranscriptDir();
   t.after(async () => {
     await daemon.stop();
-    rmSync(cwd, { recursive: true, force: true });
-    rmSync(transcriptDir, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    rmSync(transcriptDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   const sid = randomUUID();
@@ -397,8 +397,8 @@ test('fleet-watch: SessionEnd tombstone makes the watcher exit 0 promptly (freef
   const transcriptDir = makeTranscriptDir();
   t.after(async () => {
     await daemon.stop();
-    rmSync(cwd, { recursive: true, force: true });
-    rmSync(transcriptDir, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    rmSync(transcriptDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   const sid = randomUUID();
@@ -425,7 +425,7 @@ test('fleet-watch: SessionEnd tombstone makes the watcher exit 0 promptly (freef
 test('fleet-watch v2: lifetime cap (FLEETDECK_WATCH_MAX_MS) makes the watcher exit 0 even with a live session and nothing pending', async (t) => {
   const daemon = await startDaemon();
   const cwd = scratchCwd();
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
   await liveSession(daemon, sid, cwd);
@@ -446,7 +446,7 @@ test('fleet-watch v2: lifetime cap (FLEETDECK_WATCH_MAX_MS) makes the watcher ex
 
 test('fleet-watch: fleetd unreachable -> exits 0 after 3 consecutive failed polls, silently', async (t) => {
   const home = mkdtempSync(path.join(tmpdir(), 'fleetdeck-watch-'));
-  t.after(() => rmSync(home, { recursive: true, force: true }));
+  t.after(() => rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
 
   const sid = randomUUID();
   const w = spawnWatcher({ port: randomPort(), home, sid, env: { FLEETDECK_WATCH_POLL_MS: '200' } }); // nobody listening
@@ -468,7 +468,7 @@ test('fleet-watch: fleetd unreachable -> exits 0 after 3 consecutive failed poll
 test('E2E: an idle session with a running fleet-watch wakes on `assign auto`, framed task on stderr, no duplicate at the next turn', async (t) => {
   const daemon = await startDaemon();
   const cwd = scratchCwd();
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
   // Idle session: SessionStart + Stop (Stop unconditionally derives col=idle).

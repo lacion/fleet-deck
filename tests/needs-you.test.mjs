@@ -76,7 +76,7 @@ test('F3a: PermissionRequest holds open; board answer {behavior:"allow"} resolve
   const holdMs = 1500;
   const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
   const cwd = scratchCwd();
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
   const reg = await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
@@ -127,7 +127,7 @@ test('F3a: PermissionRequest board answer {behavior:"deny"} resolves the held re
   const holdMs = 1500;
   const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
   const cwd = scratchCwd();
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
   await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
@@ -159,7 +159,7 @@ test('F3b: Elicitation holds open; board answer {action:"accept", content} resol
   const holdMs = 1500;
   const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
   const cwd = scratchCwd();
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
   const reg = await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
@@ -201,7 +201,7 @@ test('hold expiry: an unanswered PermissionRequest resolves to {} within toleran
   const holdMs = 1200;
   const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
   const cwd = scratchCwd();
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
   await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
@@ -239,8 +239,8 @@ test('F3d: Stop trailing-question freeform detection creates a needsyou card, an
   const transcriptDir = makeTranscriptDir();
   t.after(async () => {
     await daemon.stop();
-    rmSync(cwd, { recursive: true, force: true });
-    rmSync(transcriptDir, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    rmSync(transcriptDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   const sid = randomUUID();
@@ -307,8 +307,8 @@ test('F3d (probe): Stop with last_assistant_message present on the live payload'
   const transcriptDir = makeTranscriptDir();
   t.after(async () => {
     await daemon.stop();
-    rmSync(cwd, { recursive: true, force: true });
-    rmSync(transcriptDir, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    rmSync(transcriptDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   const sid = randomUUID();
@@ -351,8 +351,8 @@ test('a Stop that returns a mail block does not run freeform question detection 
   const transcriptDir = makeTranscriptDir();
   t.after(async () => {
     await daemon.stop();
-    rmSync(cwd, { recursive: true, force: true });
-    rmSync(transcriptDir, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    rmSync(transcriptDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   const sid = randomUUID();
@@ -382,7 +382,7 @@ test('a Stop that returns a mail block does not run freeform question detection 
 test('Notification ingest stores notification_type', async (t) => {
   const daemon = await startDaemon();
   const cwd = scratchCwd();
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
   await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
@@ -409,7 +409,7 @@ test('subsequent activity (UserPromptSubmit) returns col to working and expires 
   const holdMs = 6000; // long enough that early resolution can only be activity-driven, not the natural timeout
   const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
   const cwd = scratchCwd();
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
   await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
@@ -454,7 +454,7 @@ test('SessionEnd expires all pending permission/elicitation questions for the se
   const holdMs = 6000;
   const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
   const cwd = scratchCwd();
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
   await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
@@ -509,8 +509,8 @@ test('freeform questions SURVIVE SessionEnd and deliver on resume', async (t) =>
   const transcriptDir = makeTranscriptDir();
   t.after(async () => {
     await daemon.stop();
-    rmSync(cwd, { recursive: true, force: true });
-    rmSync(transcriptDir, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    rmSync(transcriptDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   const sid = randomUUID();
@@ -549,7 +549,7 @@ test('concurrent holds per session are capped at 4; the 5th arrival expires the 
   const holdMs = 4000;
   const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
   const cwd = scratchCwd();
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
   await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
@@ -652,8 +652,8 @@ test('F3d: a freeform card clears when the session moves on (answered in the ter
   const transcriptDir = makeTranscriptDir();
   t.after(async () => {
     await daemon.stop();
-    rmSync(cwd, { recursive: true, force: true });
-    rmSync(transcriptDir, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    rmSync(transcriptDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   const sid = randomUUID();
@@ -686,8 +686,8 @@ test('a stale needs-you card can be dismissed without telling the session anythi
   const transcriptDir = makeTranscriptDir();
   t.after(async () => {
     await daemon.stop();
-    rmSync(cwd, { recursive: true, force: true });
-    rmSync(transcriptDir, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    rmSync(transcriptDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   const sid = randomUUID();

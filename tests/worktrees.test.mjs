@@ -93,7 +93,7 @@ test('GET /api/worktrees follows clean, dirty, ahead/no-upstream, and gone real 
   assert.equal(item.unpushed, item.ahead, 'no upstream means every ahead commit is unpushed');
   assert.equal(item.verdict, 'has-work');
 
-  rmSync(repo.worktree, { recursive: true, force: true });
+  rmSync(repo.worktree, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   response = await getJson(`${daemon.baseUrl}/api/worktrees`);
   item = response.json.worktrees[0];
   assert.equal(item.exists, false);
@@ -184,7 +184,7 @@ test('POST remove with delete_branch deletes the worktree branch', async (t) => 
 // behind. That is the exact reading that talks a human into force-deleting.
 test('work already on the remote is SAFE even when the local base branch is stale', async (t) => {
   const dir = mkdtempSync(path.join(tmpdir(), 'fd-wt-stale-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  t.after(() => rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
 
   const origin = path.join(dir, 'origin.git');
   const repo = path.join(dir, 'repo');
@@ -236,7 +236,7 @@ test('a read-only directory the daemon owns is made writable and the removal ret
   const dir = mkdtempSync(path.join(tmpdir(), 'fd-wt-ro-'));
   t.after(() => {
     try { chmodSync(path.join(dir, 'repo--fd-ro', 'locked'), 0o700); } catch { /* already gone */ }
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
   const repo = path.join(dir, 'repo');
   const wt = path.join(dir, 'repo--fd-ro');

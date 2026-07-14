@@ -17,7 +17,7 @@ import { loadFixture } from './helpers/fixtures.mjs';
 test('SessionEnd tombstones a session even when Stop was never sent (max-turns abort shape)', async (t) => {
   const daemon = await startDaemon();
   const cwd = mkdtempSync(path.join(tmpdir(), 'fleetdeck-cwd-'));
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
   await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));

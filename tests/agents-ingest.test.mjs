@@ -91,7 +91,7 @@ test('poller cards live interactive entries only: background and dead-pid entrie
   const repo = makeRepoWithWorktree({ repoName: 'agents-repo-test' });
   t.after(() => {
     repo.cleanup();
-    rmSync(scratchDir, { recursive: true, force: true });
+    rmSync(scratchDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   const sidRoot = randomUUID();
@@ -147,8 +147,8 @@ test('a hook event for the same sessionId flips source to hooks and the poller s
   const fixtureFile = path.join(scratchDir, 'agents.json');
   const cwd = mkdtempSync(path.join(tmpdir(), 'fleetdeck-cwd-'));
   t.after(() => {
-    rmSync(scratchDir, { recursive: true, force: true });
-    rmSync(cwd, { recursive: true, force: true });
+    rmSync(scratchDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   const sid = randomUUID();
@@ -198,8 +198,8 @@ test('absence tombstones agents-cli cards; reappearance revives them', async (t)
   const fixtureFile = path.join(scratchDir, 'agents.json');
   const cwd = mkdtempSync(path.join(tmpdir(), 'fleetdeck-cwd-'));
   t.after(() => {
-    rmSync(scratchDir, { recursive: true, force: true });
-    rmSync(cwd, { recursive: true, force: true });
+    rmSync(scratchDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   const sid = randomUUID();
@@ -252,8 +252,8 @@ test('FLEETDECK_AGENTS_CMD=false disables the poller entirely', async (t) => {
   const fixtureFile = path.join(scratchDir, 'agents.json');
   const cwd = mkdtempSync(path.join(tmpdir(), 'fleetdeck-cwd-'));
   t.after(() => {
-    rmSync(scratchDir, { recursive: true, force: true });
-    rmSync(cwd, { recursive: true, force: true });
+    rmSync(scratchDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   const sid = randomUUID();
@@ -313,7 +313,7 @@ test('agents-cli birth on a ticket branch → a ticketed callsign', async (t) =>
   const scratchDir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-agents-scratch-'));
   const fixtureFile = path.join(scratchDir, 'agents.json');
   const repo = makeRepoWithWorktree({ repoName: 'agents-ticket-test', branch: 'feature/PROJ-123-agent' });
-  t.after(() => { repo.cleanup(); rmSync(scratchDir, { recursive: true, force: true }); });
+  t.after(() => { repo.cleanup(); rmSync(scratchDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
   writeFixture(fixtureFile, [

@@ -41,7 +41,7 @@ test('M-P1: a burst of mutations coalesces into far fewer broadcasts', async t =
   const daemon = await startDaemon();
   t.after(() => daemon.stop());
   const cwd = mkdtempSync(path.join(tmpdir(), 'fleetdeck-coalesce-'));
-  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
 
   const sid = randomUUID();
   await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
@@ -82,7 +82,7 @@ test('R1-2: a /ws client past the buffer cap is TERMINATED on broadcast, not sil
   const daemon = await startDaemon({ env: { FLEETDECK_WS_BUFFER_MAX: '-1' } });
   t.after(() => daemon.stop());
   const cwd = mkdtempSync(path.join(tmpdir(), 'fleetdeck-evict-'));
-  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
 
   const { ws, frames } = connect(daemon.baseUrl.replace(/^http/, 'ws') + '/ws');
   t.after(() => ws.close());
@@ -157,7 +157,7 @@ test('H-S1: the /ws snapshot carries no token; /state (authorized) still does', 
   const home = mkdtempSync(path.join(tmpdir(), 'fleetdeck-hs1-'));
   const port = randomPort();
   const raw = spawnRaw({ port, home, env: { FLEETDECK_BIND: address, FLEETDECK_TOKEN: LAN_TOKEN } });
-  t.after(async () => { await raw.kill(); rmSync(home, { recursive: true, force: true }); });
+  t.after(async () => { await raw.kill(); rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
   const baseUrl = `http://${address}:${port}`;
   await waitForResponse(`${baseUrl}/health?t=${encodeURIComponent(LAN_TOKEN)}`);
 
@@ -181,7 +181,7 @@ test('H-S1: the /ws snapshot carries no token; /state (authorized) still does', 
   // inspect the pushed frame. (The hook rides the LAN address with the token in
   // the query; a fetch sends no Origin, so it clears the CSRF wall as a CLI would.)
   const cwd = mkdtempSync(path.join(tmpdir(), 'fleetdeck-hs1-mut-'));
-  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
   const sid = randomUUID();
   const posted = await fetch(`${baseUrl}/hook/SessionStart?t=${encodeURIComponent(LAN_TOKEN)}`, {
     method: 'POST', headers: { 'content-type': 'application/json' },

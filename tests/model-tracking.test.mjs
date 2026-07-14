@@ -70,8 +70,8 @@ async function harness(t) {
   const tdir = makeTranscriptDir();
   t.after(async () => {
     await daemon.stop();
-    rmSync(cwd, { recursive: true, force: true });
-    rmSync(tdir, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    rmSync(tdir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
   return { daemon, cwd, tdir, sid: randomUUID() };
 }

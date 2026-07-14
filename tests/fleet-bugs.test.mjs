@@ -87,7 +87,7 @@ function cardOf(core, sid) {
 test('BUG 1: SessionEnd(reason="clear") keeps the pane and the card LIVE', async (t) => {
   const { core, db } = memoryCore(t);
   const cwd = mkdtempSync(path.join(tmpdir(), 'fd-clear-'));
-  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
 
   const spawn = await core.spawn({ cwd });
   const sid = spawn.body.session_id;
@@ -110,7 +110,7 @@ test('BUG 1: SessionEnd(reason="clear") keeps the pane and the card LIVE', async
 test('BUG 1 control: a real SessionEnd (reason="other") still ends the session and pane', async (t) => {
   const { core } = memoryCore(t);
   const cwd = mkdtempSync(path.join(tmpdir(), 'fd-end-'));
-  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
 
   const spawn = await core.spawn({ cwd });
   const sid = spawn.body.session_id;
@@ -194,7 +194,7 @@ async function condemnedSpawnWithLivePane(t, status) {
   const ctx = memoryCore(t, { tmux });
   const { core, db } = ctx;
   const cwd = mkdtempSync(path.join(tmpdir(), 'fd-res-'));
-  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
   const spawn = await core.spawn({ cwd });
   const sid = spawn.body.session_id;
   const spawnId = spawn.body.spawn_id;
@@ -258,8 +258,8 @@ test('BUG 3: revive() ADOPTS a gone spawn whose window is a live claude (no 409,
   const tmux = fakeTmux();
   const { core, db, state } = memoryCore(t, { tmux, env: { HOME: userHome } });
   t.after(() => {
-    rmSync(userHome, { recursive: true, force: true });
-    rmSync(cwd, { recursive: true, force: true });
+    rmSync(userHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   const spawn = await core.spawn({ cwd });
@@ -294,7 +294,7 @@ test('BUG 3: revive() ADOPTS a gone spawn whose window is a live claude (no 409,
 test('BUG 4: oversize mail is bounded and postMail reports truncated + original_length', async (t) => {
   const { db, core } = memoryCore(t);
   const cwd = mkdtempSync(path.join(tmpdir(), 'fd-mail-big-'));
-  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
   const spawn = await core.spawn({ cwd });
   const sid = spawn.body.session_id;
   core.hookSessionStart({ session_id: sid, cwd, source: 'startup' });
@@ -316,7 +316,7 @@ test('BUG 4: oversize mail is bounded and postMail reports truncated + original_
 test('BUG 4: a normal-sized message is delivered whole with no truncated flag', async (t) => {
   const { db, core } = memoryCore(t);
   const cwd = mkdtempSync(path.join(tmpdir(), 'fd-mail-ok-'));
-  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
   const spawn = await core.spawn({ cwd });
   const sid = spawn.body.session_id;
   core.hookSessionStart({ session_id: sid, cwd, source: 'startup' });
@@ -349,8 +349,8 @@ async function reviveScenario(t, { status = 'gone', paneDead = false } = {}) {
   const tmux = fakeTmux();
   const ctx = memoryCore(t, { tmux, env: { HOME: userHome } });
   t.after(() => {
-    rmSync(userHome, { recursive: true, force: true });
-    rmSync(cwd, { recursive: true, force: true });
+    rmSync(userHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
   const spawn = await ctx.core.spawn({ cwd });
   const sid = spawn.body.session_id;
@@ -455,7 +455,7 @@ test('Fix 2 [MED]: revive never resurrects a KILLED row by adoption even when it
 test('Fix 3 [MED]: a single transient dead read does NOT condemn-then-flap a steadily-live claude', async (t) => {
   const { core, db, state } = memoryCore(t);
   const cwd = mkdtempSync(path.join(tmpdir(), 'fd-hyst-'));
-  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
   const spawn = await core.spawn({ cwd });
   const sid = spawn.body.session_id;
   const spawnId = spawn.body.spawn_id;
@@ -478,7 +478,7 @@ test('Fix 3 [MED]: a single transient dead read does NOT condemn-then-flap a ste
 test('Fix 3 [MED]: a genuinely dead pane is still condemned — on the second consecutive dead read', async (t) => {
   const { core, db, state } = memoryCore(t);
   const cwd = mkdtempSync(path.join(tmpdir(), 'fd-hyst2-'));
-  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
   const spawn = await core.spawn({ cwd });
   const sid = spawn.body.session_id;
   const spawnId = spawn.body.spawn_id;
@@ -502,7 +502,7 @@ test('Fix 3 [MED]: condemn and resurrect share ONE probe — a split pane (lowes
   tmux.adapter.paneCurrentCommand = async () => ({ dead: false, cmd: 'claude' });
   const { core, db, state } = memoryCore(t, { tmux });
   const cwd = mkdtempSync(path.join(tmpdir(), 'fd-split-'));
-  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
   const spawn = await core.spawn({ cwd });
   const sid = spawn.body.session_id;
   const spawnId = spawn.body.spawn_id;
@@ -524,7 +524,7 @@ test('Fix 3 [MED]: condemn and resurrect share ONE probe — a split pane (lowes
 test('Fix 4 [LOW]: resurrection clears a stale needs-you reason and refreshes last_seen', async (t) => {
   const { core, db } = memoryCore(t);
   const cwd = mkdtempSync(path.join(tmpdir(), 'fd-res-fields-'));
-  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
   const spawn = await core.spawn({ cwd });
   const sid = spawn.body.session_id;
   const spawnId = spawn.body.spawn_id;
@@ -553,7 +553,7 @@ test('Fix 4 [LOW]: resurrection clears a stale needs-you reason and refreshes la
 test('Fix 6 [LOW]: mail truncation never splits a surrogate pair (no lone high surrogate stored)', async (t) => {
   const { db, core } = memoryCore(t);
   const cwd = mkdtempSync(path.join(tmpdir(), 'fd-astral-'));
-  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
   const spawn = await core.spawn({ cwd });
   const sid = spawn.body.session_id;
   core.hookSessionStart({ session_id: sid, cwd, source: 'startup' });
@@ -576,7 +576,7 @@ test('Fix 6 [LOW]: mail truncation never splits a surrogate pair (no lone high s
 test('Fix 6 [LOW]: an astral character fully within the limit is preserved intact', async (t) => {
   const { db, core } = memoryCore(t);
   const cwd = mkdtempSync(path.join(tmpdir(), 'fd-astral2-'));
-  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
   const spawn = await core.spawn({ cwd });
   const sid = spawn.body.session_id;
   core.hookSessionStart({ session_id: sid, cwd, source: 'startup' });

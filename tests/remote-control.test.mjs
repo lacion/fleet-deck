@@ -68,7 +68,7 @@ function fakeTmux(port = 4711) {
 test('legacy spawn tables migrate remote-control columns additively', (t) => {
   const dir = mkdtempSync(path.join(tmpdir(), 'fd-rc-db-'));
   const file = path.join(dir, 'fleet.db');
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  t.after(() => rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
   const legacy = new DatabaseSync(file);
   legacy.exec(`CREATE TABLE spawns (
     spawn_id TEXT PRIMARY KEY, session_id TEXT, callsign TEXT,
@@ -101,8 +101,8 @@ test('spawn rejects non-boolean remote_control', async (t) => {
 function harness(t, { port = 4711 } = {}) {
   const userHome = mkdtempSync(path.join(tmpdir(), 'fd-rc-home-'));
   const cwd = mkdtempSync(path.join(tmpdir(), 'fd-rc-cwd-'));
-  t.after(() => rmSync(userHome, { recursive: true, force: true }));
-  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  t.after(() => rmSync(userHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+  t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
   setEnv(t, {
     HOME: userHome,
     FLEETDECK_NUDGE_MS: 1_000_000,

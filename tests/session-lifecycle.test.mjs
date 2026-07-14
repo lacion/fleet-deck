@@ -31,7 +31,7 @@ test('telemetry derivation walks queued -> working -> editing -> verifying -> ne
   const scratchCwd = mkdtempSync(path.join(tmpdir(), 'fleetdeck-cwd-'));
   t.after(async () => {
     await daemon.stop();
-    rmSync(scratchCwd, { recursive: true, force: true });
+    rmSync(scratchCwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   const sid = randomUUID();

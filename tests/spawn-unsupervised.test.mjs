@@ -113,7 +113,7 @@ test('unsupervised spawn: dangerously_skip_permissions:true adds --dangerously-s
   const rec = path.join(scratchDir(), 'specs.jsonl');
   const cwd = scratchDir();
   const daemon = await startDaemon({ port, env: spawnCmdEnv({ recordFile: rec, postUrl: baseUrl }) });
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const res = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd, dangerously_skip_permissions: true });
   assert.equal(res.status, 200, `spawn should 200 (got ${res.status}: ${JSON.stringify(res.json)})`);
@@ -136,7 +136,7 @@ test("unsupervised spawn: permission_mode 'bypassPermissions' adds --permission-
   const rec = path.join(scratchDir(), 'specs.jsonl');
   const cwd = scratchDir();
   const daemon = await startDaemon({ port, env: spawnCmdEnv({ recordFile: rec, postUrl: baseUrl }) });
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const res = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd, permission_mode: 'bypassPermissions' });
   assert.equal(res.status, 200, `spawn should 200 (got ${res.status}: ${JSON.stringify(res.json)})`);
@@ -162,7 +162,7 @@ test('unsupervised spawn: neither dangerously_skip_permissions nor permission_mo
   const rec = path.join(scratchDir(), 'specs.jsonl');
   const cwd = scratchDir();
   const daemon = await startDaemon({ port, env: spawnCmdEnv({ recordFile: rec, postUrl: baseUrl }) });
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const res = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd });
   assert.equal(res.status, 200, `spawn should 200 (got ${res.status}: ${JSON.stringify(res.json)})`);
@@ -186,7 +186,7 @@ test('unsupervised spawn: both dangerously_skip_permissions:true AND permission_
   const rec = path.join(scratchDir(), 'specs.jsonl');
   const cwd = scratchDir();
   const daemon = await startDaemon({ port, env: spawnCmdEnv({ recordFile: rec, postUrl: baseUrl }) });
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const res = await postJson(`${daemon.baseUrl}/api/spawn`, {
     cwd, dangerously_skip_permissions: true, permission_mode: 'bypassPermissions',

@@ -77,7 +77,7 @@ test('spawn argv is deterministic and registration watchdog stalls once, then a 
     env: { FLEETDECK_SPAWN_REGISTER_MS: 1 },
   });
   const cwd = mkdtempSync(path.join(tmpdir(), 'fd-watchdog-'));
-  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
 
   const out = await core.spawn({ cwd, model: 'sonnet', permission_mode: 'acceptEdits', prompt: 'do it' });
   assert.equal(out.status, 200);
@@ -127,8 +127,8 @@ test('revive reuses the env wrapper, kills a dead remnant, inserts a new row, an
   const userHome = mkdtempSync(path.join(tmpdir(), 'fd-revive-home-'));
   const cwd = mkdtempSync(path.join(tmpdir(), 'fd-revive-cwd-'));
   t.after(() => {
-    rmSync(userHome, { recursive: true, force: true });
-    rmSync(cwd, { recursive: true, force: true });
+    rmSync(userHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
   const { db, core, state, port, home } = memoryCore(t, {
     env: { HOME: userHome },
@@ -181,7 +181,7 @@ test('revive reuses the env wrapper, kills a dead remnant, inserts a new row, an
 test('owned-pane mail honors watcher priority and unclaims all rows when paste fails', async (t) => {
   const { db, core, state } = memoryCore(t);
   const cwd = mkdtempSync(path.join(tmpdir(), 'fd-mail-pane-'));
-  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
   const spawn = await core.spawn({ cwd });
   const sid = spawn.body.session_id;
   core.hookSessionStart({ session_id: sid, cwd, source: 'startup' });
@@ -224,7 +224,7 @@ test('tmux input/capture helpers use isolated-socket argv without shell interpol
     FD_TMUX_RECORD: record,
     FLEETDECK_TMUX_SOCKET: 'fd-test-socket',
   });
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  t.after(() => rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
 
   assert.equal(await pasteText('@9', 'hello\nworld'), true);
   assert.equal(await sendEnter('@9'), true);
@@ -292,7 +292,7 @@ test('cleanup archives offline rows, expires mail, kills eligible dead panes, an
   // One worktree still on disk (must be listed), one already hand-removed
   // (must be silently dropped — cleanup only nags about real chores).
   const wt = mkdtempSync(path.join(tmpdir(), 'fd-wt-off-'));
-  t.after(() => rmSync(wt, { recursive: true, force: true }));
+  t.after(() => rmSync(wt, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
   db.prepare(`INSERT INTO spawns
     (spawn_id, session_id, callsign, tmux_session, tmux_window, worktree_path, requested_at, status)
     VALUES ('sp-off', 'offline', 'off-1', 'fleetdeck-4711', 'fd4711-off-1', ?, ?, 'pane-dead')`).run(wt, now);

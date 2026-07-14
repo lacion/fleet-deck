@@ -126,7 +126,7 @@ function assignAuto(daemon, target, text) {
 test('routing ladder: idle beats queued beats working; needsyou and offline are never candidates', async (t) => {
   const daemon = await startDaemon();
   const cwd = scratchCwd();
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const needsyou = await makeNeedsyou(daemon, cwd);
   const offline = await makeOffline(daemon, cwd);
@@ -159,7 +159,7 @@ test('routing ladder: idle beats queued beats working; needsyou and offline are 
 test('routing ladder: verifying ranks with working (both below queued), never above it', async (t) => {
   const daemon = await startDaemon();
   const cwd = scratchCwd();
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const verifying = await makeVerifying(daemon, cwd);
   const queued = await makeQueued(daemon, cwd);
@@ -194,7 +194,7 @@ test('auto:<repo> scopes candidates by repo_name and by repo_id; each repo stays
 test('tie on col: fewest undelivered mail wins, overriding recency', async (t) => {
   const daemon = await startDaemon();
   const cwd = scratchCwd();
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const older = await makeIdle(daemon, cwd); // idle first: earlier last_seen
   await new Promise(r => setTimeout(r, 30));
@@ -210,7 +210,7 @@ test('tie on col: fewest undelivered mail wins, overriding recency', async (t) =
 test('response shapes are exact; unrouted leaves no mail anywhere and still logs to the ticker', async (t) => {
   const daemon = await startDaemon();
   const cwd = scratchCwd();
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   // Only ineligible candidates present -> no winner possible.
   const needsyou = await makeNeedsyou(daemon, cwd);
@@ -237,7 +237,7 @@ test('response shapes are exact; unrouted leaves no mail anywhere and still logs
 test('the winning session receives exactly one mail from "orchestrator" framed as [FLEETDECK ASSIGNMENT]', async (t) => {
   const daemon = await startDaemon();
   const cwd = scratchCwd();
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const winner = await makeIdle(daemon, cwd);
   const text = 'refactor the widget loader';
@@ -255,7 +255,7 @@ test('the winning session receives exactly one mail from "orchestrator" framed a
 test('plain "assign <callsign> <text>" still delivers directly to that session', async (t) => {
   const daemon = await startDaemon();
   const cwd = scratchCwd();
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const target = await makeQueued(daemon, cwd);
   const res = await postJson(`${daemon.baseUrl}/command`, { text: `assign ${target.callsign} handle the migration` });

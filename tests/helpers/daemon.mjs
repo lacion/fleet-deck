@@ -181,7 +181,7 @@ export async function startDaemon({
         } catch { /* best-effort: no server on the socket is the common case */ }
       }
       if (!keepHome) {
-        rmSync(home, { recursive: true, force: true });
+        rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
       }
     },
   };

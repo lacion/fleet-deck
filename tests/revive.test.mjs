@@ -71,9 +71,9 @@ test('revive resumes the same session into a new spawn row and its resume hook m
   });
   t.after(async () => {
     await daemon.stop({ keepHome: true });
-    rmSync(daemonHome, { recursive: true, force: true });
-    rmSync(userHome, { recursive: true, force: true });
-    rmSync(cwd, { recursive: true, force: true });
+    rmSync(daemonHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    rmSync(userHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   const spawned = await postJson(`${daemon.baseUrl}/api/spawn`, {
@@ -140,9 +140,9 @@ test('revive refusals cover unknown/live/missing cwd/missing transcript/active s
   });
   t.after(async () => {
     await daemon.stop({ keepHome: true });
-    rmSync(daemonHome, { recursive: true, force: true });
-    rmSync(userHome, { recursive: true, force: true });
-    rmSync(cwd, { recursive: true, force: true });
+    rmSync(daemonHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    rmSync(userHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   let res = await postJson(`${daemon.baseUrl}/api/spawn/${randomUUID()}/revive`, {});
@@ -181,7 +181,7 @@ test('revive refusals cover unknown/live/missing cwd/missing transcript/active s
   // and would 409 here; there is no cap any more, so a busy fleet is not a
   // reason to refuse to bring a session back.
   const otherCwd = scratch('fleetdeck-revive-busy-cwd-');
-  t.after(() => rmSync(otherCwd, { recursive: true, force: true }));
+  t.after(() => rmSync(otherCwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
   const other = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd: otherCwd });
   assert.equal(other.status, 200);
   res = await postJson(`${daemon.baseUrl}/api/spawn/${oldId}/revive`, {});
@@ -199,9 +199,9 @@ test('snapshot spawn.revivable follows terminal status, cwd, and transcript exis
   });
   t.after(async () => {
     await daemon.stop({ keepHome: true });
-    rmSync(daemonHome, { recursive: true, force: true });
-    rmSync(userHome, { recursive: true, force: true });
-    rmSync(cwd, { recursive: true, force: true });
+    rmSync(daemonHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    rmSync(userHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
   const spawned = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd });
   const { spawn_id: spawnId, session_id: sid } = spawned.json;

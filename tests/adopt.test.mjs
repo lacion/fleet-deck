@@ -78,9 +78,9 @@ async function boot(t, prefix, extraEnv = {}) {
   const daemon = await startDaemon({ home: daemonHome, env });
   t.after(async () => {
     await daemon.stop({ keepHome: true });
-    rmSync(daemonHome, { recursive: true, force: true });
-    rmSync(userHome, { recursive: true, force: true });
-    rmSync(cwd, { recursive: true, force: true });
+    rmSync(daemonHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    rmSync(userHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
   return { daemon, daemonHome, userHome, cwd, record, env };
 }
@@ -433,7 +433,7 @@ test('adopt 410s when the resume transcript or the cwd is gone', async (t) => {
 
   // Write the transcript, then remove the cwd → 410 cwd (checked first).
   writeTranscript(userHome, cwd, sid);
-  rmSync(cwd, { recursive: true, force: true });
+  rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   res = await postJson(`${daemon.baseUrl}/api/sessions/${sid}/adopt`, {});
   assert.equal(res.status, 410);
   assert.match(res.json.reason, /cwd/);

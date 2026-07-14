@@ -44,7 +44,7 @@ const PKG_VERSION = JSON.parse(readFileSync(path.join(REPO_ROOT, 'package.json')
 
 function scratchDir(t) {
   const d = mkdtempSync(path.join(tmpdir(), 'fleetdeck-cwd-'));
-  t.after(() => rmSync(d, { recursive: true, force: true }));
+  t.after(() => rmSync(d, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
   return d;
 }
 
@@ -163,7 +163,7 @@ test('semver: parse, numeric compare, and the strictly-newer + 0.0.0/unparseable
 
 test('verifyDaemonPid refuses a non-fleetd-shaped live pid, a pidfile mismatch, and a missing pidfile', async (t) => {
   const home = mkdtempSync(path.join(tmpdir(), 'fleetdeck-verify-'));
-  t.after(() => rmSync(home, { recursive: true, force: true }));
+  t.after(() => rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
 
   // A live but non-fleetd node process: its /proc cmdline carries no
   // fleetd*.mjs arg, so livePidLooksLikeFleetd (Linux) must reject it even
@@ -184,7 +184,7 @@ test('verifyDaemonPid refuses a non-fleetd-shaped live pid, a pidfile mismatch, 
 
   // A missing pidfile is refused.
   const emptyHome = mkdtempSync(path.join(tmpdir(), 'fleetdeck-verify-empty-'));
-  t.after(() => rmSync(emptyHome, { recursive: true, force: true }));
+  t.after(() => rmSync(emptyHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
   assert.equal(verifyDaemonPid(sleeper.pid, emptyHome), false, 'a missing pidfile must be refused');
 
   // A bad pid argument is refused.
@@ -211,7 +211,7 @@ test('a newer hook replaces an older daemon: old exits 0, new owns the same port
   const cwd = scratchDir(t);
   t.after(async () => {
     await killDaemonAt(port, home);
-    rmSync(home, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   // OLD daemon from SOURCE, pinned to 0.0.1 (strictly older than PKG_VERSION).
@@ -289,7 +289,7 @@ test('an older hook never downgrades a newer daemon (daemon pinned to 99.0.0)', 
 test('a SIGTERM-immune stale daemon: the hook fails open and the stub keeps serving (no SIGKILL escalation)', async (t) => {
   const port = randomPort();
   const home = mkdtempSync(path.join(tmpdir(), 'fleetdeck-immortal-home-'));
-  t.after(() => rmSync(home, { recursive: true, force: true }));
+  t.after(() => rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
 
   // The disguise argv 'fleetd.mjs' makes livePidLooksLikeFleetd (and thus
   // verifyDaemonPid) accept the stub, so the hook genuinely reaches the SIGTERM
@@ -322,7 +322,7 @@ test('stretch: two racing newer hooks converge on exactly one replacement daemon
   const cwd = scratchDir(t);
   t.after(async () => {
     await killDaemonAt(port, home);
-    rmSync(home, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   const old = await startDaemon({ port, home, env: { FLEETDECK_VERSION_OVERRIDE: '0.0.1' } });

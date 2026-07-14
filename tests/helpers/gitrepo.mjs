@@ -67,7 +67,7 @@ export function makeRepoWithWorktree({ repoName = 'fleetdeck-repo-test', branch 
     gitCommonDir,
     cleanup() {
       try { git(['worktree', 'remove', '--force', worktree], root); } catch { /* ignore */ }
-      rmSync(base, { recursive: true, force: true });
+      rmSync(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     },
   };
 }
@@ -77,6 +77,6 @@ export function makePlainDir() {
   const dir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-plain-'));
   return {
     dir: realpathSync(dir),
-    cleanup() { rmSync(dir, { recursive: true, force: true }); },
+    cleanup() { rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); },
   };
 }

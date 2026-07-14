@@ -113,7 +113,7 @@ function initRepo(t, name = 'repo') {
   writeFileSync(path.join(root, 'a.txt'), 'one\n');
   git(['add', '-A'], root);
   git(['commit', '-qm', 'base'], root);
-  t.after(() => rmSync(base, { recursive: true, force: true }));
+  t.after(() => rmSync(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
   return { base, root };
 }
 
@@ -223,7 +223,7 @@ test('H-R2: boot reconciliation leaves active rows UNKNOWN when tmux is unreacha
 test('H-R5: killing by a stale (historical) spawn_id is refused; the newest owner is killable', async (t) => {
   const userHome = mkdtempSync(path.join(tmpdir(), 'fd-hr5-home-'));
   const cwd = mkdtempSync(path.join(tmpdir(), 'fd-hr5-cwd-'));
-  t.after(() => { rmSync(userHome, { recursive: true, force: true }); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(() => { rmSync(userHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
   const { db, core, state } = memoryCore(t, { env: { HOME: userHome } });
 
   const first = await core.spawn({ cwd });
@@ -305,7 +305,7 @@ test('H-R6: a tmux launch failure leaves NO orphan — the worktree, window, and
 test('H-R7: revive checks cwd/transcript BEFORE touching tmux, and refuses to kill a live non-claude pane', async (t) => {
   const userHome = mkdtempSync(path.join(tmpdir(), 'fd-hr7-home-'));
   const cwd = mkdtempSync(path.join(tmpdir(), 'fd-hr7-cwd-'));
-  t.after(() => { rmSync(userHome, { recursive: true, force: true }); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(() => { rmSync(userHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   // A live pane running vim occupies the deterministic window name.
   const tmux = makeAdapter(4711, {
@@ -341,7 +341,7 @@ test('H-R7: revive checks cwd/transcript BEFORE touching tmux, and refuses to ki
 
 test('M-B2: a PreToolUse conflict whisper declares hookEventName:"PreToolUse"', (t) => {
   const cwd = mkdtempSync(path.join(tmpdir(), 'fd-mb2-cwd-'));
-  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
   const { core } = memoryCore(t);
   const file = path.join(cwd, 'util.js');
 
@@ -389,7 +389,7 @@ test('M-B4: a corrupt conflicts row does not 500 /state — it is dropped, good 
 for (const event of ['PreToolUse', 'PostToolUse']) {
   test(`M-B5: a resurrecting ${event} lifts an offline card out of the offline column`, (t) => {
     const cwd = mkdtempSync(path.join(tmpdir(), 'fd-mb5-cwd-'));
-    t.after(() => rmSync(cwd, { recursive: true, force: true }));
+    t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
     const { db, core } = memoryCore(t);
 
     core.applyEvent({ session_id: 's', hook_event_name: 'SessionStart', cwd, source: 'startup' });
@@ -412,7 +412,7 @@ for (const event of ['PreToolUse', 'PostToolUse']) {
 
 test('M-B6: an ExitPlanMode plan-persist failure rolls the question row back and fails the hook open', (t) => {
   const cwd = mkdtempSync(path.join(tmpdir(), 'fd-mb6-cwd-'));
-  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
   const { db, core } = memoryCore(t);
 
   // Force the plan insert to throw at runtime by removing its table AFTER the
@@ -430,7 +430,7 @@ test('M-B6: an ExitPlanMode plan-persist failure rolls the question row back and
 
 test('M-B6: on the happy path both the question row and its plan row persist and are linked', (t) => {
   const cwd = mkdtempSync(path.join(tmpdir(), 'fd-mb6ok-cwd-'));
-  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
   const { db, core } = memoryCore(t);
 
   const planMd = '# Add caching\n\n1. do it\n';
@@ -450,7 +450,7 @@ test('M-B6: on the happy path both the question row and its plan row persist and
 
 test('M-B8: a remote harvest whose capture throws resolves cleanly (no unhandled rejection) via enableRemote', async (t) => {
   const cwd = mkdtempSync(path.join(tmpdir(), 'fd-mb8-cwd-'));
-  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
   const tmux = makeAdapter(4711, {
     capturePane: async () => { throw new Error('capture-pane exploded'); },
   });
@@ -528,7 +528,7 @@ test('M-G1: snapshot windows the per-card file list to the ledger window', (t) =
 
 test('M-P8: cached updateSession statements apply the right columns across distinct shapes', (t) => {
   const cwd = mkdtempSync(path.join(tmpdir(), 'fd-mp8-cwd-'));
-  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
   const { db, core } = memoryCore(t);
 
   // Drive a session through several event kinds — each builds a different
@@ -555,7 +555,7 @@ test('M-P8: cached updateSession statements apply the right columns across disti
 test('R2-5: a stale-id force-kill arriving during a revive\'s window creation is refused; the revived pane survives', async (t) => {
   const userHome = mkdtempSync(path.join(tmpdir(), 'fd-r25-home-'));
   const cwd = mkdtempSync(path.join(tmpdir(), 'fd-r25-cwd-'));
-  t.after(() => { rmSync(userHome, { recursive: true, force: true }); rmSync(cwd, { recursive: true, force: true }); });
+  t.after(() => { rmSync(userHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   // A newWindow we can PAUSE mid-flight. revive() inserts its provisional row,
   // then awaits newWindow — exactly the gap in which a stale kill used to slip
@@ -723,7 +723,7 @@ function writeGitShim(t) {
     + 'esac\n'
     + 'exec "$FD_REAL_GIT" "$@"\n',
     { mode: 0o755 });
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  t.after(() => rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
   return dir;
 }
 

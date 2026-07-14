@@ -16,7 +16,7 @@ import { lastAssistantModel, lastAssistantText } from '../scripts/fleetd/transcr
 
 function scratch(t, prefix) {
   const dir = mkdtempSync(path.join(tmpdir(), prefix));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  t.after(() => rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
   return dir;
 }
 
