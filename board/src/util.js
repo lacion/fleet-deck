@@ -209,6 +209,30 @@ export function spawnRemoteAvailable(s) {
   return s.col === 'queued' || s.col === 'idle';
 }
 
+// v2.0 "Move to tmux" — the three pure gates over `s.adopt`, the object the
+// snapshot attaches to a session the board could adopt into a tmux pane:
+//   { eligible: 'now' | 'arm' | null, armed, armed_until, armed_skip }
+// It is ABSENT (or null) on board-owned cards — they already have a pane — and
+// on daemons that predate the feature, so every gate guards for that.
+//
+//   adoptableNow  the session ended with a hook-proven end → adopt is immediate
+//   adoptArmable  the session is still live → the move must be ARMED and deferred
+//   adoptArmed    a move is armed AND its deadline is still in the future
+//
+// adoptArmed repeats the daemon's own `armed_until > now` check client-side, so
+// a stale snapshot never paints a chip as armed past its expiry (the arm is
+// restart-durable but sweep-free: expiry is just the deadline lapsing).
+export function adoptableNow(s) {
+  return s?.adopt?.eligible === 'now';
+}
+export function adoptArmable(s) {
+  return s?.adopt?.eligible === 'arm';
+}
+export function adoptArmed(s) {
+  const a = s?.adopt;
+  return !!(a && a.armed && a.armed_until && a.armed_until > Date.now());
+}
+
 // Daemon columns → board columns. `needsyou` renders in WORKING with amber
 // treatment (the question itself lives in the rail — F1/F6: attention is
 // global, the card just shows the session is blocked on you).

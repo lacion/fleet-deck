@@ -139,6 +139,29 @@ export function enableRemote(spawnId) {
   return post(`/api/spawn/${encodeURIComponent(spawnId)}/rc`);
 }
 
+// v2.0 "Move to tmux" — adopt a session the board did NOT spawn (source
+// 'hooks'/'agents-cli') into a board-owned tmux pane. POST
+// /api/sessions/<session_id>/adopt; the daemon is context-sensitive, so the
+// BODY picks the intent and the response says which thing happened:
+//   {} | {dangerously_skip_permissions:true}
+//     · on an ENDED session → immediate adopt:
+//         200 {ok:true, adopted:true, spawn_id, session_id, callsign,
+//              tmux:{session, window}}
+//     · on a LIVE session → ARM it (two processes can't drive one conversation,
+//       so the move is deferred to the session's own SessionEnd):
+//         200 {ok:true, armed:true, expires_at}
+//       Re-arming just refreshes the deadline (idempotent), and the skip flag is
+//       remembered for the deferred launch.
+//   {disarm:true} → 200 {ok:true, armed:false}
+// Refusals are {ok:false, reason} with 404/409/410 — 409 covers a still-alive
+// session presumed dead ("presumed dead only — arm it instead") and an existing
+// active spawn. On a successful adopt the daemon moves the card to QUEUED
+// ("moving to tmux…"); the board only fires and reports the outcome (or the
+// failure reason) on the shared feedback strip.
+export function adoptSession(sessionId, body) {
+  return post(`/api/sessions/${encodeURIComponent(sessionId)}/adopt`, body);
+}
+
 // v1.9 — the worktrees a spawn left behind. The daemon does the judging (the
 // board must never guess whether a directory is safe to delete): each row
 // arrives with a verdict and the evidence that produced it —

@@ -15,6 +15,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CLAUDE_ENV_MARKERS } from './fleetd/env-scrub.mjs';
+// Version-takeover contract, imported as SOURCE from the sibling fleetd/ dir
+// (same unbundled pattern as env-scrub.mjs above) so this hook can evict a
+// strictly-older daemon and let the newest installed build own the port.
+import { shouldTakeOver, verifyDaemonPid, terminateDaemon } from './fleetd/takeover.mjs';
 
 const PORT = Number(process.env.FLEETDECK_PORT || 4711);
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -22,11 +26,30 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 // Prefer the committed bundle (self-contained — git-distributed installs have
 // no node_modules); fall back to source for dev checkouts mid-iteration.
 const FLEETD_BUNDLE = path.join(HERE, 'fleetd', 'fleetd.bundle.mjs');
-const FLEETD = fs.existsSync(FLEETD_BUNDLE) ? FLEETD_BUNDLE : path.join(HERE, 'fleetd', 'fleetd.mjs');
+// FLEETDECK_TEST_DAEMON_SCRIPT is a test-only seam (mirrors the same env in
+// tests/helpers/daemon.mjs): it pins the launcher to a specific daemon build so
+// the takeover suite can boot the daemon FROM SOURCE while the committed bundle
+// is deliberately left stale mid-iteration. Unset in production, which always
+// prefers the bundle and falls back to source.
+const FLEETD = process.env.FLEETDECK_TEST_DAEMON_SCRIPT
+  || (fs.existsSync(FLEETD_BUNDLE) ? FLEETD_BUNDLE : path.join(HERE, 'fleetd', 'fleetd.mjs'));
 const HOME = process.env.FLEETDECK_HOME || path.join(os.homedir() || '/tmp', '.fleetdeck');
 
-// Hard deadline: whatever happens, exit 0 well inside the hook timeout.
-const watchdog = setTimeout(() => process.exit(0), 3800);
+// Hard deadline: whatever happens, exit 0 well inside the hook's 15s timeout.
+// The takeover path can outlast the default 3.8s budget (waiting for an old
+// daemon to die + polling the replacement), so the watchdog is re-armable to a
+// larger total via rearmWatchdog() — always measured from the hook's start and
+// always well inside hooks.json's 15s ceiling.
+const HOOK_START = Date.now();
+let watchdog = setTimeout(() => process.exit(0), 3800);
+function rearmWatchdog(totalMs) {
+  clearTimeout(watchdog);
+  const remaining = Math.max(0, totalMs - (Date.now() - HOOK_START));
+  watchdog = setTimeout(() => process.exit(0), remaining);
+}
+// Set only on a takeover spawn (see ensureServer): the displaced version, which
+// bootEnv folds into FLEETDECK_REPLACED for the replacement daemon's banner.
+let replacedVersion = null;
 
 async function readStdin() {
   let data = '';
@@ -64,14 +87,72 @@ function bootEnv() {
   const env = { ...process.env, FLEETDECK_PORT: String(PORT), FLEETDECK_HOME: HOME };
   for (const k of [
     ...CLAUDE_ENV_MARKERS, 'TMUX', 'TMUX_PANE',
+    // Test seams stop HERE: the hook itself may honor them (that's what tests
+    // drive), but they must never ride the daemon's env into a tmux server's
+    // global env and come back through a pane's SessionStart (the 2026-07-11
+    // scar). A leaked TEST_DAEMON_SCRIPT would hijack every future daemon
+    // spawn; a leaked VERSION_OVERRIDE would permanently skew takeover.
+    'FLEETDECK_TEST_DAEMON_SCRIPT', 'FLEETDECK_VERSION_OVERRIDE',
   ]) delete env[k];
+  // Upgrade takeover: ONLY the spawn that just evicted an older daemon carries
+  // the displaced version, so the replacement logs the handoff and emits the
+  // "replaced" ticker line exactly once. A cold first boot (no daemon was
+  // running) leaves it unset; the explicit delete also stops an inherited
+  // FLEETDECK_REPLACED from leaking a bogus banner onto an unrelated cold boot.
+  if (replacedVersion) env.FLEETDECK_REPLACED = replacedVersion;
+  else delete env.FLEETDECK_REPLACED;
   return env;
 }
 
-// Election: whoever gets here first launches fleetd. The port bind is the
-// lock — a concurrent launcher's daemon exits 3 on EADDRINUSE and we just poll.
+// Our OWN plugin version, read from the package.json one level up from this
+// hook (scripts/../package.json). CLAUDE_PLUGIN_ROOT always points Claude at
+// the NEWEST installed plugin version's cache dir, so this is the version that
+// should own the daemon. null on ANY failure: with no version of our own we
+// cannot claim to be newer than anyone, so takeover is skipped and the hook
+// behaves exactly as before (fail open onto whatever daemon is running).
+function ownVersion() {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(HERE, '..', 'package.json'), 'utf8'));
+    const v = typeof pkg?.version === 'string' ? pkg.version.trim() : '';
+    return v || null;
+  } catch { return null; }
+}
+
+// Election + version takeover: whoever gets here first launches fleetd. The
+// port bind is the lock — a concurrent launcher's daemon exits 3 on EADDRINUSE
+// and we just poll. NEW in the takeover era: if a HEALTHY daemon is already
+// serving but running a strictly-OLDER build than ours, SIGTERM it (after
+// proving it really is our daemon), wait for it to die, and spawn our newer
+// build onto the freed port. Every uncertain branch fails open — a stale
+// daemon still serving beats a broken session.
 async function ensureServer() {
-  if (await api('/health', { timeout: 250 })) return true;
+  const health = await api('/health', { timeout: 250 });
+  if (health) {
+    // A daemon is already up. ownVersion() is read only on this branch — the
+    // cold-boot path below never compares versions, so it skips the
+    // package.json read entirely. String-equality shortcut before ANY semver
+    // work: identical versions can never be a takeover candidate, and
+    // own==null (our package.json was unreadable) means we can't claim to be
+    // newer — both keep the overwhelmingly-common path a single /health
+    // round-trip, as before.
+    const own = ownVersion();
+    if (own == null || health.version === own) return true;
+    // Version differs. Take over ONLY when strictly newer AND we can positively
+    // identify the /health pid as our daemon (pidfile match + /proc shape). Any
+    // doubt on either check → keep using the running daemon.
+    if (!shouldTakeOver(own, health.version) || !verifyDaemonPid(health.pid, HOME)) return true;
+    // Committed takeover. This branch alone can take ~6.5s (up to 2s for the old
+    // daemon to die, then ~3s polling the replacement), so extend the hook's
+    // self-watchdog to 8s from its start; hooks.json's 15s ceiling is untouched.
+    rearmWatchdog(8000);
+    // SIGTERM + wait-for-death. A wedged daemon that ignores the signal is left
+    // serving (NO SIGKILL escalation) — return true to fail open onto it; the
+    // next SessionStart retries the takeover.
+    if (!(await terminateDaemon(health.pid))) return true;
+    // The old daemon is gone; port + pidfile are released. Tag the boot env so
+    // the replacement logs the handoff and emits the "replaced" ticker line.
+    replacedVersion = health.version;
+  }
   let out = null;
   try {
     fs.mkdirSync(HOME, { recursive: true });

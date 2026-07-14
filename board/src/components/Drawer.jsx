@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { human, hhmmss, basename, prettyModel, modelFamily, safeUrl, spawnKillable, spawnRemoteAvailable, colPulse, worktreeLabel, TURN_BOUNDARY_HINT } from '../util.js';
+import { human, hhmmss, basename, prettyModel, modelFamily, safeUrl, spawnKillable, spawnRemoteAvailable, colPulse, worktreeLabel, adoptableNow, adoptArmable, adoptArmed, TURN_BOUNDARY_HINT } from '../util.js';
 import { sendMail, reasonOf } from '../api.js';
 import { useModal } from '../useModal.js';
 
@@ -157,6 +157,7 @@ function OwnedPane({ s, onOpenTerm, onKill, onRevive, onEnableRemote, reviving, 
 export default function Drawer({
   s, now, conflictFiles, mailCount, priority, onTogglePriority, onClose, onCompose, onOpenTerm, onKill,
   thread, onSendThread, onRevive, onEnableRemote, reviving, enablingRemote,
+  onArmMove, onDisarm, adopting,
 }) {
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
@@ -171,6 +172,11 @@ export default function Drawer({
   const files = (s.files || []).map(basename);
   const hot = new Set(conflictFiles.map(basename));
   const offline = s.col === 'offline';
+  // v2.0 Move-to-tmux — mirror the card chip here (the drawerbtns row is shown
+  // for every session, so it drops in cleanly). Same shared owner as the card,
+  // so a click here and a click on the chip can't each fire a POST (M-F2).
+  const canMove = !!onArmMove && (adoptableNow(s) || adoptArmable(s));
+  const isArmed = !!onDisarm && adoptArmed(s);
 
   // M-F5 — await the result: clear the draft ONLY on success, surface a failure
   // rather than dropping it (the old code cleared before the POST and swallowed
@@ -241,6 +247,30 @@ export default function Drawer({
             >
               {priority ? '★ Priority' : '☆ Priority'}
             </button>
+            {/* v2.0 — move-to-tmux, mirroring the card chip. Armed → disarm on
+                click; otherwise → opens App's ArmMoveConfirm dialog over the drawer. */}
+            {isArmed ? (
+              <button
+                type="button"
+                className="fd-ghostbtn"
+                style={{ color: 'var(--m-comet)' }}
+                disabled={adopting}
+                title="a move is armed — exit this session in your terminal and fleetdeck resumes it in a board-owned pane; click to cancel the move"
+                onClick={() => onDisarm(s)}
+              >
+                ⧗ {adopting ? 'Canceling…' : 'Armed — exit CLI to move'}
+              </button>
+            ) : canMove ? (
+              <button
+                type="button"
+                className="fd-ghostbtn"
+                disabled={adopting}
+                title="move this session into a board-owned tmux pane so you can drive it from the board"
+                onClick={() => onArmMove(s)}
+              >
+                ⇥ {adopting ? 'Moving…' : 'Move to tmux'}
+              </button>
+            ) : null}
             {nudge?.ok && <span className="fd-killok">✓ {nudge.ok}</span>}
             {nudge?.err && <span className="fd-killwarn">✗ {nudge.err}</span>}
           </div>

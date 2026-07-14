@@ -19,12 +19,28 @@ export function createSpawns(ctx) {
     q, updateSession, tick, logEvent, onMutate, assignCallsign,
     notifyWatchers, tombstoneCard, findScopedWindow, tmuxAdapter, port, home,
     NUDGE_MS, SPAWN_REGISTER_MS, RC_HARVEST_MS,
+    ADOPT_ARM_MS, // 0.7.0 Move-to-tmux: arm-deadline window (default 30 min)
   } = ctx;
 
   // ------------------------------------- v1.2 board-spawned sessions (spawns)
   // CONTRACT "v1.2 — dynamic fleet". Spawn = explicit human click ONLY; the
   // spawned command is interactive `claude` behind a deterministic `env`
   // argv wrapper; no auto-respawn, ever. All tmux construction is argv arrays.
+  //
+  // 0.7.0 Move-to-tmux (adopt) does NOT break "explicit human click ONLY" even
+  // in its armed, fires-later form: the click that ARMED the card WAS the human
+  // decision. The deferred auto-adopt on the session's own SessionEnd is that
+  // single click cashing in — one-shot (the arm is durable intent, CONSUMED by
+  // adoptSession inside its single-flight claim; a failed launch never
+  // retries, and a deferred call that finds the arm gone or the session live
+  // again stands down instead of acting), cancellable (disarm any time,
+  // including inside the post-SessionEnd grace window, or it self-expires
+  // after FLEETDECK_ADOPT_ARM_MS), visible (the armed state + deadline ride
+  // the snapshot's per-session `adopt` object), and expiring (a deadline, not
+  // a standing order). The retention sweep completes an armed move orphaned by
+  // a daemon death inside the grace window — still the same single click. It
+  // is not auto-respawn: nothing the daemon decides on its own ever launches a
+  // pane — a human clicked, once.
   //
   // Row state machine:
   //   'spawning'  insert at POST /api/spawn
@@ -555,90 +571,303 @@ export function createSpawns(ctx) {
         }
       }
 
-      const new_spawn_id = randomUUID();
-      const argv = [...claudeEnvArgvPrefix(port, home), 'claude', '--resume', row.session_id];
-      if (row.skip_permissions) argv.push('--dangerously-skip-permissions');
-      if (remoteWanted) argv.push('--remote-control', row.callsign);
-      const tmux_session = tmuxAdapter.sessionName(port);
-
-      // HIGH (revive single-flight), part 3 — re-check ownership right before we
-      // claim the window. The guards at the top ran BEFORE the awaits above
-      // (listScopedWindows / killWindowVerified). Re-confirm no live-eligible or
-      // provisioning row has taken this reused window in the meantime (belt-and-
-      // suspenders behind the single-flight claim; also catches a concurrent
-      // spawn that somehow reused this exact scoped name). currentWindowOwner
-      // ranks the window's rows newest-first over provisioning|spawning|stalled|
-      // live|pane-dead: the rightful owner right now must be either the row we
-      // are reviving (a 'pane-dead' row still naming its window) or nobody (a
-      // 'gone'/'killed' row released it). A DIFFERENT row in a live-eligible
-      // state means a second pane is already coming up — refuse rather than
-      // launch a duplicate. A stale 'pane-dead' SIBLING is not live-eligible and
-      // never blocks a legitimate revive.
-      const preLaunchOwner = q.currentWindowOwner.get(row.tmux_window);
-      if (preLaunchOwner && preLaunchOwner.spawn_id !== spawn_id
-        && ['provisioning', 'spawning', 'stalled', 'live'].includes(preLaunchOwner.status)) {
-        return {
-          status: 409,
-          body: { ok: false, reason: `window ${row.tmux_window} is now owned by active spawn ${preLaunchOwner.spawn_id}`, current_spawn_id: preLaunchOwner.spawn_id },
-        };
-      }
-
-      // R2-5: insert the new spawn's durable row as a PROVISIONAL owner of the
-      // reused window name BEFORE the pane is created (the H-R6 pattern, now in
-      // revive too). Reviving reuses the dead row's tmux_window; without a live
-      // owning row, a forced stale-id spawnKill arriving during the newWindow
-      // await would see no current owner (the old row is terminal) — or only that
-      // old row — match the just-revived pane by window name, and kill it,
-      // leaving a 'spawning' row for a dead pane. currentWindowOwner counts
-      // 'provisioning', so the new row owns the window the instant it exists and
-      // any OTHER-id kill is refused. remote_url is deliberately NOT carried over:
-      // the old link died with the old session; a fresh one is harvested from the
-      // revived pane. Flip to 'spawning' (live-eligible) only once the pane is up.
-      q.insertProvisionalSpawn.run(new_spawn_id, row.session_id, row.callsign, tmux_session,
-        row.tmux_window, row.cwd, row.worktree_path, Date.now(), row.skip_permissions ? 1 : 0,
-        remoteWanted ? 1 : 0);
-
-      const override = tmuxAdapter.spawnOverrideCmd();
-      if (override) {
-        tmuxAdapter.launchOverride(override, {
-          spawn_id: new_spawn_id, revive_of: spawn_id,
-          session_id: row.session_id, callsign: row.callsign, port,
-          cwd: runCwd, requested_cwd: row.cwd, prompt: null, model: null,
-          permission_mode: null, worktree_path: row.worktree_path,
-          dangerously_skip_permissions: !!row.skip_permissions,
-          skip_permissions: !!row.skip_permissions,
-          remote_control: remoteWanted,
-          tmux: { session: tmux_session, window: row.tmux_window },
-          argv,
-        }, err => spawnFailed(row.session_id, row.callsign, `spawn override: ${err.message || err}`));
-      } else {
-        try {
-          await tmuxAdapter.ensureSession(port);
-          await tmuxAdapter.newWindow({ port, callsign: row.callsign, cwd: runCwd, argv });
-        } catch (err) {
-          // The pane never launched — settle the provisional row terminal so it
-          // stops owning the window (and is never liveness-checked), then fail.
-          q.setSpawnStatus.run('gone', new_spawn_id);
-          forgetSpawn(new_spawn_id);
-          return { status: 500, body: { ok: false, reason: `tmux revive failed: ${err.message || err}` } };
-        }
-      }
-
-      // Pane exists (or the override was handed off): flip the durable row
-      // live-eligible ('provisioning' → 'spawning').
-      q.setSpawnStatus.run('spawning', new_spawn_id);
-      updateSession(row.session_id, { archived_at: null, col: 'queued', note: 'reviving…' });
-      tick(`⟲ reviving ${row.callsign} (resume ${row.session_id.slice(0, 8)})`);
-      scheduleNudge(new_spawn_id, row.tmux_window, row.callsign);
-      onMutate();
-      return {
-        status: 200,
-        body: { ok: true, spawn_id: new_spawn_id, session_id: row.session_id, callsign: row.callsign,
-          tmux: { session: tmux_session, window: row.tmux_window } },
-      };
+      // The launch discipline (R2-5 pre-launch owner re-check, provisional owner
+      // row, override/newWindow, live-flip, card update, nudge) is shared with
+      // adopt now — launchResume() below is the single source of truth. Reviving
+      // reuses the dead row's window name and callsign, carries the dead row's
+      // requested cwd + worktree_path + skip-permissions, inherits the remote
+      // wish, and excludes ITS OWN terminal row (spawn_id) from the owner
+      // re-check (a 'pane-dead' row still naming its window is not a rival).
+      return await launchResume({
+        session_id: row.session_id,
+        callsign: row.callsign,
+        tmux_window: row.tmux_window,
+        runCwd,
+        requested_cwd: row.cwd,
+        worktree_path: row.worktree_path,
+        skip_permissions: !!row.skip_permissions,
+        remoteWanted,
+        excludeSpawnId: spawn_id,
+        overrideExtra: { revive_of: spawn_id },
+        note: 'reviving…',
+        tickMsg: `⟲ reviving ${row.callsign} (resume ${row.session_id.slice(0, 8)})`,
+        failReason: 'tmux revive failed',
+      });
     } finally {
       // Release the single-flight claim on EVERY exit path.
       revivingSessions.delete(row.session_id);
+    }
+  }
+
+  // Shared resume-launch discipline — the tail extracted VERBATIM from revive()
+  // so revive and adopt build the pane exactly one way. Given a session id +
+  // callsign + a scoped window name it: builds the env-wrapped
+  // `claude --resume <sid>` argv (+ optional --dangerously-skip-permissions /
+  // --remote-control), does the R2-5 pre-launch owner re-check, inserts the
+  // PROVISIONAL owner row BEFORE any pane exists (H-R6), launches (test override
+  // or tmux), flips the row live-eligible, updates the card (archived_at:null,
+  // col:queued, note — ended_at left for the first hook), nudges, and returns
+  // the control-API {status, body}. Callers own everything BEFORE this: state
+  // gate, single-flight claim, H-R7 cwd/transcript validation, and window
+  // collision defense. The caller's try/finally still owns the revivingSessions
+  // release — launchResume never touches that Set.
+  async function launchResume({
+    session_id, callsign, tmux_window, runCwd, requested_cwd, worktree_path,
+    skip_permissions, remoteWanted, excludeSpawnId, overrideExtra = {},
+    note, tickMsg, failReason, bodyExtra = {},
+  }) {
+    const new_spawn_id = randomUUID();
+    const argv = [...claudeEnvArgvPrefix(port, home), 'claude', '--resume', session_id];
+    if (skip_permissions) argv.push('--dangerously-skip-permissions');
+    if (remoteWanted) argv.push('--remote-control', callsign);
+    const tmux_session = tmuxAdapter.sessionName(port);
+
+    // HIGH (revive single-flight), part 3 / R2-5 — re-check ownership right
+    // before we claim the window. The caller's guards ran BEFORE its awaits
+    // (listScopedWindows / killWindowVerified). Re-confirm no live-eligible or
+    // provisioning row has taken this window in the meantime (belt-and-suspenders
+    // behind the single-flight claim; also catches a concurrent spawn that
+    // reused this exact scoped name). currentWindowOwner ranks the window's rows
+    // newest-first over provisioning|spawning|stalled|live|pane-dead: the
+    // rightful owner right now must be either the caller's own excluded row (a
+    // revive's 'pane-dead' row still naming its window — excludeSpawnId) or
+    // nobody (an adopt onto a fresh callsign-derived name, or a 'gone'/'killed'
+    // row that released it). A DIFFERENT row in a live-eligible state means a
+    // second pane is already coming up — refuse rather than launch a duplicate.
+    // A stale 'pane-dead' SIBLING is not live-eligible and never blocks.
+    const preLaunchOwner = q.currentWindowOwner.get(tmux_window);
+    if (preLaunchOwner && preLaunchOwner.spawn_id !== excludeSpawnId
+      && ['provisioning', 'spawning', 'stalled', 'live'].includes(preLaunchOwner.status)) {
+      return {
+        status: 409,
+        body: { ok: false, reason: `window ${tmux_window} is now owned by active spawn ${preLaunchOwner.spawn_id}`, current_spawn_id: preLaunchOwner.spawn_id },
+      };
+    }
+
+    // R2-5 / H-R6: insert the new spawn's durable row as a PROVISIONAL owner of
+    // the window name BEFORE the pane is created. Without a live owning row, a
+    // forced stale-id spawnKill arriving during the newWindow await would see no
+    // current owner and kill the just-launched pane, leaving a 'spawning' row
+    // for a dead pane. currentWindowOwner counts 'provisioning', so the new row
+    // owns the window the instant it exists and any OTHER-id kill is refused.
+    // remote_url is deliberately NOT carried over: a fresh one is harvested from
+    // the resumed pane. Flip to 'spawning' (live-eligible) only once the pane is
+    // up. (adopt passes worktree_path:null — it never creates a worktree.)
+    q.insertProvisionalSpawn.run(new_spawn_id, session_id, callsign, tmux_session,
+      tmux_window, requested_cwd, worktree_path, Date.now(), skip_permissions ? 1 : 0,
+      remoteWanted ? 1 : 0);
+
+    const override = tmuxAdapter.spawnOverrideCmd();
+    if (override) {
+      tmuxAdapter.launchOverride(override, {
+        spawn_id: new_spawn_id, ...overrideExtra,
+        session_id, callsign, port,
+        cwd: runCwd, requested_cwd, prompt: null, model: null,
+        permission_mode: null, worktree_path,
+        dangerously_skip_permissions: !!skip_permissions,
+        skip_permissions: !!skip_permissions,
+        remote_control: remoteWanted,
+        tmux: { session: tmux_session, window: tmux_window },
+        argv,
+      }, err => spawnFailed(session_id, callsign, `spawn override: ${err.message || err}`));
+    } else {
+      try {
+        await tmuxAdapter.ensureSession(port);
+        await tmuxAdapter.newWindow({ port, callsign, cwd: runCwd, argv });
+      } catch (err) {
+        // The pane never launched — settle the provisional row terminal so it
+        // stops owning the window (and is never liveness-checked), then fail.
+        q.setSpawnStatus.run('gone', new_spawn_id);
+        forgetSpawn(new_spawn_id);
+        return { status: 500, body: { ok: false, reason: `${failReason}: ${err.message || err}` } };
+      }
+    }
+
+    // Pane exists (or the override was handed off): flip the durable row
+    // live-eligible ('provisioning' → 'spawning').
+    q.setSpawnStatus.run('spawning', new_spawn_id);
+    updateSession(session_id, { archived_at: null, col: 'queued', note });
+    tick(tickMsg);
+    scheduleNudge(new_spawn_id, tmux_window, callsign);
+    onMutate();
+    return {
+      status: 200,
+      body: {
+        ok: true, ...bodyExtra, spawn_id: new_spawn_id, session_id, callsign,
+        tmux: { session: tmux_session, window: tmux_window },
+      },
+    };
+  }
+
+  // POST /api/sessions/:session_id/adopt — "Move to tmux". Adopt a session the
+  // board did NOT spawn (source 'hooks' / 'agents-cli' / a remote ccd-cli run)
+  // into a board-owned tmux pane via `claude --resume <sid>`. Context-sensitive:
+  //   • live session   → ARM (200 {armed, expires_at}); re-arm refreshes; the
+  //                      pane is launched by hookSessionEnd when the CLI exits
+  //                      (two processes can't drive one conversation).
+  //   • ended session  → ADOPT NOW (200 {adopted, spawn_id, …}).
+  //   • body {disarm}  → clear a pending arm (200 {armed:false}).
+  // Stale-snapshot races degrade correctly in BOTH directions (a card that
+  // ended between snapshot and this POST adopts now instead of arming, and vice
+  // versa) and the response says which happened. Never sets --remote-control in
+  // v1 (/rc is available from the live card once the pane is up).
+  async function adoptSession(session_id, body = {}, { deferred = false } = {}) {
+    const c = q.getSession.get(session_id);
+    if (!c) return { status: 404, body: { ok: false, reason: 'no such session' } };
+
+    // Body validation. dangerously_skip_permissions is the two-step unsupervised
+    // gate; disarm cancels a pending arm.
+    if (body?.dangerously_skip_permissions != null && typeof body.dangerously_skip_permissions !== 'boolean') {
+      return { status: 400, body: { ok: false, reason: 'dangerously_skip_permissions must be a boolean' } };
+    }
+    if (body?.disarm != null && typeof body.disarm !== 'boolean') {
+      return { status: 400, body: { ok: false, reason: 'disarm must be a boolean' } };
+    }
+    const skip = body?.dangerously_skip_permissions === true;
+
+    // Disarm FIRST, in any state: the click that disarms is the human revoking
+    // the earlier arm click, and it must NEVER fall through into an adopt (a
+    // card that ended between the armed snapshot and this disarm POST would
+    // otherwise be adopted by a cancel click). Because the arm now survives
+    // until CONSUMED (see the ended fork), a disarm landing inside the deferred
+    // grace window genuinely cancels the scheduled move — the deferred call
+    // finds the arm gone and stands down. Idempotent.
+    if (body?.disarm === true) {
+      updateSession(session_id, { adopt_armed_until: null, adopt_armed_skip: null });
+      tick(`⇥ ${c.callsign} move-to-tmux disarmed`);
+      onMutate();
+      return { status: 200, body: { ok: true, armed: false, disarmed: true } };
+    }
+
+    // Board-owned never adopts — and never ARMS. ANY spawn lineage (dead or
+    // alive) means the board already owns this session's pane story: revive
+    // owns dead lineages, and arming a board-owned session would fire a second
+    // `claude --resume` lineage at its next SessionEnd, fighting the first over
+    // the window name and worktree bookkeeping. This sits BEFORE the live/ended
+    // fork so neither path can slip past it. A deferred call landing here means
+    // a manual adopt/revive won the race and created the row — benign (the
+    // caller treats 409 as "someone else already did it").
+    const lineage = q.spawnBySession.get(session_id);
+    if (lineage) {
+      return { status: 409, body: { ok: false, reason: `session is board-owned (spawn ${lineage.spawn_id}, ${lineage.status}) — revive owns its pane story` } };
+    }
+
+    // LIVE fork: the CLI is still running (ended_at null). Two processes can't
+    // drive one conversation, so we can't grab it now.
+    if (c.ended_at == null) {
+      // A DEFERRED call reaching a live session is the resurrection race: the
+      // CLI exited (arming the move) and something resumed it inside the grace
+      // window. The human's click was one-shot — re-arming here would plant a
+      // standing 30-minute arm they never asked for, firing a surprise move at
+      // the NEXT exit. Cancel instead: consume the arm, say so once.
+      if (deferred) {
+        updateSession(session_id, { adopt_armed_until: null, adopt_armed_skip: null });
+        tick(`↷ move-to-tmux canceled for ${c.callsign} — session came back live before the move`);
+        onMutate();
+        return { status: 200, body: { ok: true, canceled: true } };
+      }
+      // Manual click → ARM: remember it as a durable deadline; hookSessionEnd
+      // fires the adopt the instant the CLI exits. Re-arm refreshes the
+      // deadline + bypass choice.
+      const expires_at = Date.now() + ADOPT_ARM_MS;
+      updateSession(session_id, { adopt_armed_until: expires_at, adopt_armed_skip: skip ? 1 : 0 });
+      tick(`⧗ ${c.callsign} armed for move-to-tmux — exit the CLI to move it${skip ? ' (unsupervised)' : ''}`);
+      onMutate();
+      return { status: 200, body: { ok: true, armed: true, expires_at } };
+    }
+
+    // ENDED fork: the card is offline — adopt NOW.
+    // A deferred call whose arm is already gone stands down silently: the human
+    // disarmed inside the grace window (their cancel must win), or another
+    // actor already consumed the arm. Not a failure — no ticker line.
+    if (deferred && c.adopt_armed_until == null) {
+      return { status: 200, body: { ok: true, canceled: true } };
+    }
+    // Immediate adopt requires a hook-PROVEN end, as an ALLOWLIST: end_reason
+    // NULL means no provenance was ever stamped (pre-0.7.0 rows, the agents-cli
+    // absence guess, tombstone writers that condemn without proof), and
+    // retention's silence guess stamps 'presumed'. Either way there is no proof
+    // the CLI actually exited, and `claude --resume` against a still-live CLI
+    // is a duplicate billed session (the exact doctrine violation) → refuse;
+    // arm it instead (truly dead cards just let the arm expire; silently-alive
+    // ones complete the move at their real exit).
+    if (c.end_reason == null || c.end_reason === 'presumed') {
+      return { status: 409, body: { ok: false, reason: 'session has no hook-proven end (presumed/unstamped) — arm it instead' } };
+    }
+    // Single-flight: reuse the revive Set so a manual adopt, an armed auto-adopt,
+    // and a revive can never race two panes onto one session. The try/finally
+    // releases it on EVERY exit path.
+    if (revivingSessions.has(session_id)) {
+      return { status: 409, body: { ok: false, reason: `session ${session_id.slice(0, 8)} is already being moved/revived` } };
+    }
+    revivingSessions.add(session_id);
+    try {
+      // Consume the arm INSIDE the single-flight claim, before any external op:
+      // one-shot by construction — whoever acts first (deferred timer, manual
+      // click, sweep) burns it, and a failed launch never retries. Skipped when
+      // the columns are already clear (the common manual adopt-now).
+      if (c.adopt_armed_until != null || c.adopt_armed_skip != null) {
+        updateSession(session_id, { adopt_armed_until: null, adopt_armed_skip: null });
+      }
+      // H-R7: validate ALL resume eligibility BEFORE touching tmux. runCwd is
+      // the hook-reported sessions.cwd (the dir claudeTranscriptPath munges) —
+      // NEVER sessions.worktree (the git worktree root); adopt creates no
+      // worktree, so the spawn row's worktree_path stays NULL.
+      const runCwd = c.cwd;
+      let st = null;
+      try { st = fs.statSync(runCwd); } catch { /* missing */ }
+      if (!runCwd || !st?.isDirectory()) {
+        return { status: 410, body: { ok: false, reason: 'session cwd no longer exists' } };
+      }
+      if (!fs.existsSync(claudeTranscriptPath(runCwd, session_id))) {
+        return { status: 410, body: { ok: false, reason: 'resume transcript no longer exists' } };
+      }
+
+      // Window collision defense — mirrors revive minus resurrection. The window
+      // name comes from the LIVE callsign (windowName(port, callsign), the
+      // enableRemote precedent). Adopt has NO prior ownership claim, so unlike
+      // revive there is no self-row to ADOPT: a live claude pane on this name is
+      // some other live session → 409; a live pane running anything else (the
+      // human repurposed the window) → 409; only a pane PROVEN dead or an
+      // expected bare shell is a safe remnant to kill by verified name and reuse.
+      const tmux_window = tmuxAdapter.windowName(port, c.callsign);
+      const existing = await findScopedWindow(tmux_window);
+      if (existing && !existing.pane_dead && existing.pane_cmd === 'claude') {
+        return { status: 409, body: { ok: false, reason: `window ${tmux_window} already hosts a live claude pane` } };
+      }
+      if (existing && !existing.pane_dead && !SHELL_RE.test(existing.pane_cmd)) {
+        return { status: 409, body: { ok: false, reason: `window ${tmux_window} hosts a live '${existing.pane_cmd}' pane — not a dead remnant; refusing to kill it` } };
+      }
+      if (existing) {
+        const killed = await tmuxAdapter.killWindowVerified(tmux_window);
+        if (!killed.ok && !killed.gone) {
+          return { status: 500, body: { ok: false, reason: killed.error || 'tmux kill-window failed' } };
+        }
+      }
+
+      // Launch. adopt carries the LIVE callsign, the hook cwd as both effective
+      // and requested cwd, NULL worktree_path, the human's bypass choice, and
+      // NEVER remote_control (v1). excludeSpawnId is null — adopt has no prior
+      // row, so ANY active owner on the window is a rival to refuse.
+      return await launchResume({
+        session_id,
+        callsign: c.callsign,
+        tmux_window,
+        runCwd,
+        requested_cwd: runCwd,
+        worktree_path: null,
+        skip_permissions: skip,
+        remoteWanted: false,
+        excludeSpawnId: null,
+        overrideExtra: { adopt_of: session_id },
+        note: 'moving to tmux…',
+        tickMsg: `⇥ moving ${c.callsign} to tmux (resume ${session_id.slice(0, 8)})${skip ? ' (unsupervised)' : ''}`,
+        failReason: 'tmux adopt failed',
+        bodyExtra: { adopted: true },
+      });
+    } finally {
+      // Release the single-flight claim on EVERY exit path.
+      revivingSessions.delete(session_id);
     }
   }
 
@@ -962,7 +1191,7 @@ export function createSpawns(ctx) {
   }
 
   return {
-    spawn, revive, enableRemote, spawnKill, spawnCapability,
+    spawn, revive, adoptSession, enableRemote, spawnKill, spawnCapability,
     spawnLivenessTick, reconcileSpawns, scheduleRegistrationRemoteHarvest,
     forgetSpawn, spawnState,
   };

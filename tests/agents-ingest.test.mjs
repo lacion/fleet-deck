@@ -31,6 +31,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startDaemon } from './helpers/daemon.mjs';
 import { postHook, getJson } from './helpers/http.mjs';
+import { openDb } from '../scripts/fleetd/db.mjs';
 import { loadFixture } from './helpers/fixtures.mjs';
 import { makeRepoWithWorktree } from './helpers/gitrepo.mjs';
 
@@ -220,6 +221,16 @@ test('absence tombstones agents-cli cards; reappearance revives them', async (t)
   }, { label: 'absence tombstone' });
   assert.equal(card.note, 'no longer reported by agents CLI');
   assert.ok(card.endedAt, 'absence tombstone must set endedAt');
+  // 0.7.0 Move-to-tmux: absence from one registry poll is a GUESS, not proof
+  // of death — the sweep must stamp end_reason='presumed' so the adopt-now
+  // allowlist refuses to `claude --resume` a possibly-still-live CLI.
+  const dbFile = path.join(daemon.home, 'fleetd.db');
+  const stampDb = openDb(dbFile);
+  try {
+    const row = stampDb.prepare('SELECT end_reason FROM sessions WHERE session_id = ?').get(sid);
+    assert.equal(row.end_reason, 'presumed', 'absence tombstone is stamped as a guess');
+  } finally { stampDb.close(); }
+  assert.equal(card.adopt.eligible, null, 'a presumed absence is never adopt-now-eligible');
 
   // Reappear -> revived (endedAt cleared, back in a live column).
   writeFixture(fixtureFile, [record]);
@@ -229,6 +240,11 @@ test('absence tombstones agents-cli cards; reappearance revives them', async (t)
     return c && c.col === 'working' ? c : null;
   }, { label: 'reappearance revival' });
   assert.equal(card.endedAt ?? null, null, 'reappearance must clear endedAt');
+  const revDb = openDb(dbFile);
+  try {
+    const row = revDb.prepare('SELECT end_reason FROM sessions WHERE session_id = ?').get(sid);
+    assert.equal(row.end_reason, null, 'reappearance clears the absence guess');
+  } finally { revDb.close(); }
 });
 
 test('FLEETDECK_AGENTS_CMD=false disables the poller entirely', async (t) => {

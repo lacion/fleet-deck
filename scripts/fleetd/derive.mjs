@@ -53,6 +53,10 @@ export function createCore(db, {
   home = process.env.FLEETDECK_HOME || '',
   holdMs = resolveHoldMs(),
   tmuxAdapter = defaultTmuxAdapter,
+  // Daemon version, threaded from fleetd.mjs's package.json read so the
+  // snapshot can tell the board which build is serving it (upgrade-takeover
+  // observability). '0.0.0' mirrors /health's standalone-install fallback.
+  version = '0.0.0',
 } = {}) {
   const t0 = Date.now();
   // onMutate is reassignable through the setter on the returned surface; the
@@ -68,6 +72,18 @@ export function createCore(db, {
   const PRESUME_DEAD_MS = envInt('FLEETDECK_PRESUME_DEAD_MS', 10_800_000, { min: 1 });
   const RETAIN_OFFLINE_MS = envInt('FLEETDECK_RETAIN_OFFLINE_MS', 86_400_000, { min: 1 });
   const RC_HARVEST_MS = envInt('FLEETDECK_RC_HARVEST_MS', 2_500, { min: 0 });
+  // 0.7.0 Move-to-tmux (adopt) knobs:
+  //   FLEETDECK_ADOPT_ARM_MS   — how long a "move to tmux" arm on a LIVE card
+  //                              stays valid before it self-expires (default
+  //                              30 min). Stored as a deadline on the card, so
+  //                              expiry needs no sweep — consumers check
+  //                              `adopt_armed_until > Date.now()`.
+  //   FLEETDECK_ADOPT_DELAY_MS — grace after the armed session's SessionEnd
+  //                              before the deferred adopt launches, letting the
+  //                              CLI flush the final transcript lines the resume
+  //                              reads (default 750 ms; set 0 in tests).
+  const ADOPT_ARM_MS = envInt('FLEETDECK_ADOPT_ARM_MS', 1_800_000, { min: 1 });
+  const ADOPT_DELAY_MS = envInt('FLEETDECK_ADOPT_DELAY_MS', 750, { min: 0 });
   // M-G1 ledger retention: file_touches / commands / conflicts / settled mail
   // are aged out of SQLite after this window, and the snapshot only aggregates
   // file touches newer than it. Defaults to 24h (matching the events prune).
@@ -270,9 +286,10 @@ export function createCore(db, {
   // (and the return surface) can reach it. onMutate is the STABLE wrapper, so
   // the setter on the returned object reaches code in every module.
   const ctx = {
-    db, port, home, holdMs, t0,
+    db, port, home, holdMs, t0, version,
     STALE_MS, NUDGE_MS, SPAWN_REGISTER_MS, PANE_MAIL_GRACE_MS,
     PRESUME_DEAD_MS, RETAIN_OFFLINE_MS, RC_HARVEST_MS, RETAIN_LEDGER_MS,
+    ADOPT_ARM_MS, ADOPT_DELAY_MS, // 0.7.0 Move-to-tmux (spawns arms, events fires)
     SNAPSHOT_FILES_PER_SESSION,
     q, updateSession, onMutate, tmuxAdapter, questions,
     findScopedWindow, tick, logEvent, card, assignCallsign, applyTicket,
@@ -325,7 +342,7 @@ export function createCore(db, {
   // v1.2/v1.3 board-spawned session lifecycle → spawns.mjs.
   Object.assign(ctx, createSpawns(ctx));
   const {
-    spawn, revive, enableRemote, spawnKill, spawnCapability,
+    spawn, revive, adoptSession, enableRemote, spawnKill, spawnCapability,
     spawnLivenessTick, reconcileSpawns, scheduleRegistrationRemoteHarvest,
     forgetSpawn, spawnState,
   } = ctx;
@@ -382,6 +399,7 @@ export function createCore(db, {
     // v1.2 dynamic fleet
     spawn,             // POST /api/spawn flow → {status, body}
     revive,            // POST /api/spawn/:id/revive → {status, body}
+    adoptSession,      // POST /api/sessions/:session_id/adopt → {status, body}
     enableRemote,      // POST /api/spawn/:id/rc → {status, body}
     spawnKill,         // POST /api/spawn/:id/kill → {status, body}
     spawnCapability,   // /health + /state `spawn` object
@@ -396,6 +414,9 @@ export function createCore(db, {
     removeWorktree,     // POST /api/worktrees/remove — allow-listed destruction
     // v1.3 plan library
     planMark,          // POST /api/plans/:id/mark → {status, body}
+    // Exposed for fleetd.mjs's boot banner (upgrade takeover: "vX replaced
+    // vY" must reach the board feed, not just fleetd.log).
+    tick,
     set onMutate(fn) { onMutateImpl = fn; },
   };
 }

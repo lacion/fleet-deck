@@ -545,6 +545,23 @@ export function createHttp(core, { port, boardFile, version = '0.0.0', capture =
                 });
               return;
             }
+            const adoptMatch = /^\/api\/sessions\/([^/]+)\/adopt$/.exec(url.pathname);
+            if (adoptMatch) {
+              // 0.7.0 "Move to tmux": adopt a session the board did NOT spawn
+              // into a board-owned `claude --resume` pane. Context-sensitive —
+              // derive arms a live session (auto-adopts on its SessionEnd) and
+              // adopts an ended one now; the body may carry
+              // dangerously_skip_permissions:bool or {disarm:true}. Every guard
+              // (404/400/409/410) lives in derive; the CSRF/Host walls above
+              // apply automatically like every other control POST.
+              core.adoptSession(adoptMatch[1], ev ?? {})
+                .then(out => json(res, out.status, out.body))
+                .catch(err => {
+                  console.error('fleetd adopt error:', err);
+                  json(res, 500, { ok: false, reason: 'internal' });
+                });
+              return;
+            }
             const rcMatch = /^\/api\/spawn\/([A-Za-z0-9-]+)\/rc$/.exec(url.pathname);
             if (rcMatch) {
               // Explicit human board action: derive enforces the idle/live

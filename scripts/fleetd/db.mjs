@@ -49,7 +49,14 @@ CREATE TABLE IF NOT EXISTS sessions (
   archived_at       INTEGER,
   ticket            TEXT,               -- current Jira key (raven-PROJ-123's PROJ-123) or NULL
   ticket_source     TEXT,               -- 'branch' | 'manual'; NULL = never set (auto path still open)
-  prev_callsign     TEXT                -- birth callsign, write-once on the FIRST rename (stale-ref anchor for mail)
+  prev_callsign     TEXT,               -- birth callsign, write-once on the FIRST rename (stale-ref anchor for mail)
+  -- 0.7.0 Move-to-tmux (adopt): three additive columns, all NULL for pre-0.7.0
+  -- rows (never armed, never proven-ended). adopt_armed_until stores the arm
+  -- DEADLINE (ms epoch) so a consumer just checks it against now() in JS --
+  -- restart-durable, snapshot-visible, disarm = NULL, expiry needs no sweep.
+  adopt_armed_until INTEGER,            -- Move-to-tmux arm deadline (ms epoch); NULL = not armed
+  adopt_armed_skip  INTEGER,            -- bypass choice stored at arm time (0/1); read by the auto-adopt trigger, cleared with the arm
+  end_reason        TEXT                -- how the session ended: hook reason ('end'/'logout'/…) or 'presumed' (silence guess); NULL = never ended
 );
 CREATE TABLE IF NOT EXISTS file_touches (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -187,6 +194,20 @@ function migrate(db) {
   }
   if (!cols.includes('prev_callsign')) {
     db.exec('ALTER TABLE sessions ADD COLUMN prev_callsign TEXT');
+  }
+  // 0.7.0 Move-to-tmux (adopt): three additive columns. NULL backfill is
+  // truthful for every pre-0.7.0 row — those sessions were never armed for a
+  // move-to-tmux and their end (if any) predates the end_reason bookkeeping, so
+  // adopt-now's presumed-dead guard treats a NULL end_reason as "not presumed"
+  // (a genuine hook end), which is the safe reading for an already-offline row.
+  if (!cols.includes('adopt_armed_until')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN adopt_armed_until INTEGER');
+  }
+  if (!cols.includes('adopt_armed_skip')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN adopt_armed_skip INTEGER');
+  }
+  if (!cols.includes('end_reason')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN end_reason TEXT');
   }
   const mailCols = db.prepare('PRAGMA table_info(mail)').all().map(r => r.name);
   if (!mailCols.includes('expired_at')) {

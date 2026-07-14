@@ -10,7 +10,7 @@ const WS_LABEL = { live: 'LIVE', reconnecting: 'RECONNECTING', offline: 'OFFLINE
 // every button is a callback prop, so the header holds no business logic beyond
 // the scroll-to-inbox handle it reads from qbus.
 export default function Header({
-  status, stale, pendingQs, liveN, conflictCount, now,
+  status, stale, pendingQs, liveN, conflictCount, version, now,
   onCompose,
   termableSessions, watchable, termBtnRef, onOpenGrid,
   spawnAvailable, spawnActive, onSpawn,
@@ -43,6 +43,9 @@ export default function Header({
         {liveN} session{liveN === 1 ? '' : 's'} · {conflictCount} conflict{conflictCount === 1 ? '' : 's'}
       </div>
       <div className="fd-clock">{hhmmss(now)}</div>
+      {/* v2.0 — the daemon version, in the status cluster beside the clock.
+          Guarded for absence: an older daemon omits snap.version entirely. */}
+      {version && <div className="fd-fleetver" title="fleetd daemon version">fleetd v{version}</div>}
       <button type="button" className="fd-hbtn" onClick={onCompose}>
         ✉ Compose <span className="fd-kbd">c</span>
       </button>

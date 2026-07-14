@@ -13,7 +13,7 @@ import { SHELL_RE } from './helpers.mjs';
 export function createRetention(ctx) {
   const {
     q, updateSession, tick, onMutate, tombstoneCard, forgetSpawn,
-    tmuxAdapter, port, questions,
+    tmuxAdapter, port, questions, adoptSession,
     PRESUME_DEAD_MS, RETAIN_OFFLINE_MS, RETAIN_LEDGER_MS,
   } = ctx;
 
@@ -28,6 +28,12 @@ export function createRetention(ctx) {
       tickMsg: `⌛ ${s.callsign} presumed ended after ${label}h silent`,
       forgetModel: true, // M-G2: terminal — clear the transcript memo
     });
+    // 0.7.0 Move-to-tmux: mark this end as GUESSED, not proven. Silence is a
+    // heuristic — the CLI may still be running quietly — so `claude --resume`
+    // here could duplicate a live billed session. end_reason='presumed' makes
+    // adopt-now refuse (409 "arm it instead"); a later real hook clears it back
+    // to a live/proven state via applyEvent's resurrection block.
+    updateSession(s.session_id, { end_reason: 'presumed' });
   }
 
   // Retention is non-destructive: sessions/mail are timestamped out of the
@@ -104,6 +110,40 @@ export function createRetention(ctx) {
           });
           changed = true;
         }
+      }
+    }
+    // 0.7.0 Move-to-tmux: the armed-adopt safety net. The arm is durable intent
+    // consumed by adoptSession itself (NOT by the SessionEnd trigger), so two
+    // kinds of leftovers can sit in SQLite:
+    //   • EXPIRED arms — the deadline passed with no consuming adopt: clear the
+    //     columns (the snapshot already renders a past deadline as unarmed;
+    //     this just keeps the rows truthful).
+    //   • ORPHANED arms — the session ENDED with a hook-proven reason while the
+    //     arm is still set: the deferred timer died with the daemon (a crash,
+    //     or precisely a version-takeover SIGTERM inside the grace window).
+    //     Complete the human's move now, with deferred semantics so every
+    //     benign race stays silent and adoptSession consumes the arm one-shot —
+    //     a 409 (another actor mid-flight) leaves the arm for the winner, and a
+    //     consumed arm means the next sweep cannot double-fire.
+    for (const s of q.allSessions.all()) {
+      if (s.adopt_armed_until == null && s.adopt_armed_skip == null) continue;
+      if (s.adopt_armed_until == null || s.adopt_armed_until <= now) {
+        updateSession(s.session_id, { adopt_armed_until: null, adopt_armed_skip: null });
+        changed = true;
+        continue;
+      }
+      if (s.ended_at != null && s.end_reason != null && s.end_reason !== 'presumed') {
+        // Fire-and-forget: a tmux stall must never wedge the sweep. Same
+        // failure surface as the SessionEnd trigger — loud only for real
+        // failures, never for benign 409 races.
+        Promise.resolve(adoptSession(s.session_id, { dangerously_skip_permissions: !!s.adopt_armed_skip }, { deferred: true }))
+          .then(out => {
+            if (!out || (out.status >= 400 && out.status !== 409)) {
+              tick(`✗ move-to-tmux failed for ${s.callsign}: ${(out?.body?.reason ?? 'unknown')}`.slice(0, 100));
+            }
+          })
+          .catch(err => tick(`✗ move-to-tmux failed for ${s.callsign}: ${String(err?.message || err)}`.slice(0, 100)));
+        changed = true;
       }
     }
     for (const s of q.archiveCandidates.all(now - RETAIN_OFFLINE_MS)) {

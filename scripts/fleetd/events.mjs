@@ -22,6 +22,10 @@ export function createEvents(ctx) {
     scheduleRegistrationRemoteHarvest, stampTranscriptFloor, readTranscriptModel,
     recordFile, whisperText, drainMail, notifyWatchers, modelMemo, forgetSpawn,
     applyTicket,
+    // 0.7.0 Move-to-tmux (adopt): the armed auto-adopt trigger in hookSessionEnd
+    // fires adoptSession after ADOPT_DELAY_MS. createSpawns(ctx) runs before
+    // createEvents(ctx) in derive.mjs, so ctx.adoptSession is already bound here.
+    adoptSession, ADOPT_DELAY_MS,
   } = ctx;
 
   // ---------------------------------------------- hook event -> card state
@@ -41,8 +45,14 @@ export function createEvents(ctx) {
     // resolved-Notification path do not). Reset the base column to 'queued' so
     // the switch below re-derives a live lane from the activity it just saw.
     if (c.ended_at != null || c.archived_at != null) {
-      updateSession(sid, { ended_at: null, archived_at: null, col: 'queued' });
-      c = { ...c, ended_at: null, archived_at: null, col: 'queued' };
+      // 0.7.0: a session that comes back alive is no longer ended, so its
+      // end_reason (the hook reason, or retention's 'presumed' guess) is stale —
+      // clear it so adopt-now's presumed-dead guard reads the fresh liveness.
+      // The adopt_armed_* columns are deliberately KEPT: the human armed this
+      // card, and the session being alive again is exactly the armed state's
+      // precondition (the auto-adopt still waits for its next real SessionEnd).
+      updateSession(sid, { ended_at: null, archived_at: null, col: 'queued', end_reason: null });
+      c = { ...c, ended_at: null, archived_at: null, col: 'queued', end_reason: null };
     }
     // Precedence rule (handoff F1): hook-derived state ALWAYS wins. The
     // moment a real hook event arrives for a session — even one first
@@ -239,6 +249,12 @@ export function createEvents(ctx) {
         } else {
           set.col = 'offline';
           set.ended_at = Date.now();
+          // 0.7.0: record the hook-PROVEN end reason. adopt-now trusts this to
+          // distinguish a real end (safe to `claude --resume`) from retention's
+          // silence guess ('presumed', set in retention.mjs) — resuming a still-
+          // live CLI would be a duplicate billed session. Default 'end' when the
+          // CLI sent no reason so the column is never NULL after a proven end.
+          set.end_reason = ev.reason || 'end';
           set.note = 'session ended' + (ev.reason ? ` (${ev.reason})` : '');
           tick(`${c.callsign} left the fleet`);
         }
@@ -464,6 +480,46 @@ export function createEvents(ctx) {
       // deliberately left live — pane and card untouched.
       notifyWatchers(sid);
       return {};
+    }
+    // 0.7.0 Move-to-tmux armed auto-adopt (CONTRACT): the human armed this
+    // card ("move to tmux") while the CLI was live — two processes can't drive
+    // one conversation, so the adopt waited for the CLI to exit, which is NOW.
+    // This sits AFTER the reason==='clear' early-return above: a /clear is not
+    // an end and KEEPS the arm (the session is still live, still armed). Read
+    // the durable arm columns (applyEvent leaves them untouched) and fire the
+    // adopt fire-and-forget after a short grace (ADOPT_DELAY_MS, default
+    // 750 ms, 0 in tests) that lets the CLI flush the final transcript lines
+    // the resume will read.
+    const armed = q.getSession.get(sid);
+    if (armed && armed.adopt_armed_until != null && armed.adopt_armed_until > Date.now()) {
+      // The arm is NOT cleared here: it is durable intent, consumed by
+      // adoptSession itself inside its single-flight claim. That buys three
+      // things the old clear-first scheme lost: a disarm click landing inside
+      // the grace window genuinely cancels the move (the deferred call finds
+      // the arm gone and stands down); a daemon death inside the window leaves
+      // the arm in SQLite for the retention sweep to complete at next boot; and
+      // one-shot still holds — whoever consumes the arm first wins, nothing
+      // ever retries a failed launch.
+      const skip = !!armed.adopt_armed_skip;
+      const timer = setTimeout(() => {
+        adoptSession(sid, { dangerously_skip_permissions: skip }, { deferred: true })
+          .then(out => {
+            // One loud ticker line on REAL failures only. 409s are benign
+            // races — a manual adopt-now click (or a revive) beat the timer and
+            // the move actually happened; shouting "failed" over a success was
+            // the confirmed false-alarm bug. canceled:true outcomes already
+            // ticked (or deliberately stayed silent) inside adoptSession.
+            if (!out || (out.status >= 400 && out.status !== 409)) {
+              const c = q.getSession.get(sid);
+              tick(`✗ move-to-tmux failed for ${c?.callsign ?? sid}: ${(out?.body?.reason ?? 'unknown')}`.slice(0, 100));
+            }
+          })
+          .catch(err => {
+            const c = q.getSession.get(sid);
+            tick(`✗ move-to-tmux failed for ${c?.callsign ?? sid}: ${String(err?.message || err)}`.slice(0, 100));
+          });
+      }, ADOPT_DELAY_MS);
+      timer.unref?.(); // never keep the daemon alive for a deferred adopt
     }
     modelMemo.delete(sid); // a revive re-stamps the floor at its SessionStart
     // v1.2: SessionEnd on a spawned session does NOT kill its pane — the

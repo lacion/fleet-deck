@@ -21,6 +21,7 @@ import SpawnForm from './components/SpawnForm.jsx';
 import PlanLibrary from './components/PlanLibrary.jsx';
 import LanPanel from './components/LanPanel.jsx';
 import KillConfirm from './components/KillConfirm.jsx';
+import ArmMoveConfirm from './components/ArmMoveConfirm.jsx';
 import WorktreesModal from './components/WorktreesModal.jsx';
 import TokenGate from './components/TokenGate.jsx';
 
@@ -64,20 +65,23 @@ export default function App() {
   // M-F2 — ONE owner of the revive + enable-remote POSTs and their per-spawn
   // in-flight sets, shared by the card chips (via useFleetActions below) and the
   // drawer's OWNED PANE. A card chip and its drawer button can't each fire a POST.
-  const { reviving, enabling, revivingAll, revive, reviveAll, enableRemote: enableRemoteAction } = useSpawnActions();
+  const { reviving, enabling, revivingAll, adopting, revive, reviveAll, enableRemote: enableRemoteAction, adopt } = useSpawnActions();
   // board-level mutations that report onto the strip: Clear, revive, enable-remote,
-  // and the two-step kill (ASK opens the dialog; the POST is the dialog's alone).
+  // the two-step kill, and the two-step Move-to-tmux (ASK opens the dialog; the
+  // POST is the dialog's alone — disarm is the one direct click).
   const {
     clearing, doClear,
     killAsk, setKillAsk, killBusy, askKill, doKill,
+    armAsk, setArmAsk, armBusy, askArm, doArm, doDisarm,
     doRevive, doReviveAll, doEnableRemote,
-  } = useFleetActions({ showNote, revive, reviveAll, enableRemoteAction });
-  // terminal / grid / watch windows — killAsk is threaded in for the keydown mirror
+  } = useFleetActions({ showNote, revive, reviveAll, enableRemoteAction, adopt });
+  // terminal / grid / watch windows — killAsk + armAsk are threaded in for the
+  // keydown mirrors (Esc cancels the topmost dialog, leaves the drawer standing)
   const {
     term, setTerm, grid, setGrid, watch,
     termableSessions, watchable, openTerm, toggleWatch, openGrid,
-    termOpen, killOpen,
-  } = useTermWindows(sessions, killAsk);
+    termOpen, killOpen, armOpen,
+  } = useTermWindows(sessions, killAsk, armAsk);
   // worktrees list — reloads on boot and whenever the fleet gains/loses a session
   const {
     worktrees, wtLoading, wtErr, wtSupported, loadWorktrees, removeWorktree: doRemoveWorktree,
@@ -111,8 +115,8 @@ export default function App() {
 
   // keyboard: j/k rail nav · y/n permission · 1-9 choice · c compose · Esc close
   useBoardHotkeys({
-    pendingQs, selQ, setSelQ, termOpen, killOpen,
-    setKillAsk, setDrawerSid, setCompose, setSpawnForm, setLanOpen, setWtOpen,
+    pendingQs, selQ, setSelQ, termOpen, killOpen, armOpen,
+    setKillAsk, setArmAsk, setDrawerSid, setCompose, setSpawnForm, setLanOpen, setWtOpen,
   });
 
   const stale = status !== 'live';
@@ -201,6 +205,7 @@ export default function App() {
         pendingQs={pendingQs}
         liveN={liveN}
         conflictCount={conflicts.length}
+        version={snap.version}
         now={now}
         onCompose={() => setCompose({ target: 'all' })}
         termableSessions={termableSessions}
@@ -288,6 +293,9 @@ export default function App() {
               onKill={askKill}
               onToggleWatch={toggleWatch}
               watch={watch}
+              onArmMove={askArm}
+              onDisarm={doDisarm}
+              adopting={adopting}
             />
           )}
           {/* v1.3 — PLANS library, between the lanes and the feed (never in
@@ -342,6 +350,10 @@ export default function App() {
           onEnableRemote={enableRemoteAction}
           reviving={!!(drawerSession.spawn && reviving.has(drawerSession.spawn.spawn_id))}
           enablingRemote={!!(drawerSession.spawn && enabling.has(drawerSession.spawn.spawn_id))}
+          // v2.0 — Move-to-tmux, same shared owner as the card chip (M-F2)
+          onArmMove={askArm}
+          onDisarm={doDisarm}
+          adopting={adopting.has(drawerSid)}
           thread={threads[drawerSid] || EMPTY_ARR}
           // M-F5 — await the result: clear the draft only on success, and let
           // the drawer surface a failure instead of swallowing it.
@@ -403,6 +415,17 @@ export default function App() {
           busy={killBusy}
           onCancel={() => setKillAsk(null)}
           onConfirm={doKill}
+        />
+      )}
+
+      {/* ======= move-to-tmux confirmation (v2.0 — the door to an armed/immediate adopt) ======= */}
+      {armAsk && (
+        <ArmMoveConfirm
+          callsign={armAsk.callsign}
+          live={armAsk.live}
+          busy={armBusy}
+          onCancel={() => setArmAsk(null)}
+          onConfirm={doArm}
         />
       )}
 

@@ -206,7 +206,12 @@ export function createStatements(db) {
 
   const FIELDS = ['callsign', 'model', 'cwd', 'repo_id', 'repo_name', 'branch', 'worktree',
     'col', 'note', 'task', 'last_tool', 'events', 'last_seen', 'ended_at', 'blocked_this_turn', 'source',
-    'notification_type', 'archived_at', 'ticket', 'ticket_source', 'prev_callsign'];
+    'notification_type', 'archived_at', 'ticket', 'ticket_source', 'prev_callsign',
+    // 0.7.0 Move-to-tmux (adopt): the arm deadline + bypass choice + the
+    // hook-proven end reason are all written through updateSession. No new
+    // INSERT — insertProvisionalSpawn already attaches a spawns row to any
+    // session_id without minting a card, which is exactly what adopt needs.
+    'adopt_armed_until', 'adopt_armed_skip', 'end_reason'];
   // M-P8: updateSession is the hottest write path (every hook event runs it
   // one to three times). Each call used to compile a brand-new UPDATE, so
   // SQLite re-parsed and re-planned identical statements forever. The set of
@@ -214,8 +219,11 @@ export function createStatements(db) {
   // path), so cache the prepared statement keyed by the joined column list and
   // reuse it. The `?` order still matches `keys` order within a shape.
   const updateStmts = new Map(); // "col,col,…" -> prepared UPDATE
+  // Set membership beats a linear FIELDS.includes() scan on this same hottest
+  // path — FIELDS is 24 entries and growing, and every update filters every key.
+  const FIELD_SET = new Set(FIELDS);
   function updateSession(sid, upd) {
-    const keys = Object.keys(upd).filter(k => FIELDS.includes(k));
+    const keys = Object.keys(upd).filter(k => FIELD_SET.has(k));
     if (!keys.length) return;
     const shape = keys.join(',');
     let stmt = updateStmts.get(shape);

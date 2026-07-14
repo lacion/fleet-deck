@@ -326,6 +326,8 @@ test('argv construction: prompt/model/permission-mode survive intact through the
     'FLEETDECK_PANE_MAIL_GRACE_MS', 'FLEETDECK_PRESUME_DEAD_MS',
     'FLEETDECK_RETAIN_OFFLINE_MS',
     'FLEETDECK_RC_HARVEST_MS',
+    'FLEETDECK_ADOPT_ARM_MS', 'FLEETDECK_ADOPT_DELAY_MS',
+    'FLEETDECK_TEST_DAEMON_SCRIPT', 'FLEETDECK_VERSION_OVERRIDE',
   ];
   const expectedPrefix = [
     'env', ...scrub.flatMap(name => ['-u', name]),

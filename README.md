@@ -58,7 +58,7 @@ claude plugin marketplace add your-org/your-fork    # or your own fork
 claude plugin install fleetdeck@fleetdeck
 ```
 
-After changing anything under `scripts/` you need `npm run bundle` (the daemon runs the bundle, not the source), and after changing the board, `npm run build` in `board/`. Then restart the daemon.
+After changing anything under `scripts/` you need `npm run bundle` (the daemon runs the bundle, not the source), and after changing the board, `npm run build` in `board/`. Then restart the daemon — or, if you also bumped the version, just start a new session and let the upgrade takeover do it.
 </details>
 
 ## The 60-second tour
@@ -123,6 +123,27 @@ It refuses honestly instead of guessing:
 
 We built this the morning after a WSL2 restart took an entire fleet out overnight. Five agents came back with their work intact. It remains the most satisfying button on the board.
 
+## Move to tmux: adopt a session the board didn't spawn
+
+Sessions you started yourself — a plain `claude` in a terminal — show up on the board via hooks, but the board doesn't own their pane: no terminal chip, no revive, no mail-to-pane. **⇥ move to tmux** fixes that. It resumes the session into a board-owned tmux window (`claude --resume <session-id>` — same session id, same card, full history), after which it's a first-class fleet worker: terminal modal, revive, kill, the lot.
+
+Two entry states, one button:
+
+- **The session already ended** (card in OFFLINE with a hook-proven end): the move happens immediately.
+- **The session is live in your terminal:** two processes can't drive one conversation, so the click **arms** the card instead. Exit the session in your terminal whenever you're ready; the daemon catches the SessionEnd and resumes it into a managed pane within a second. The armed chip reads `⧗ armed — exit CLI to move`; clicking it again disarms, and an arm you forget about expires on its own after ~30 minutes (`FLEETDECK_ADOPT_ARM_MS`). A `/clear` doesn't count as an exit — the session is still live, and the arm survives it.
+
+The arm is **durable intent, consumed exactly once**: it lives in SQLite, not in a timer. Disarm any time — including in the moment after you exit, while the move is still settling — and the cancel wins. If the session comes back to life before the move lands (you resumed it yourself), the move quietly cancels rather than leaving a standing order to ambush your next exit. And if the daemon dies in that window (a crash, or an upgrade takeover), the next boot's sweep finishes the move you asked for.
+
+The dialog offers the same red, asks-twice **unsupervised** gate as the Spawn form if you want the moved session to keep `--dangerously-skip-permissions`; left unchecked, the resumed session's permission prompts land on the board like any spawned worker's.
+
+It refuses honestly, like revive:
+
+- **409, "board-owned"** — the session already has a spawn lineage, alive *or* dead. The board owns its pane story: **⟲ revive** is that button, and a second lineage would fight the first over the tmux window and the worktree. A card never offers both.
+- **409, "no hook-proven end"** — the card is offline, but nothing ever *proved* the CLI exited: retention only presumed it dead after 3h of silence, the agents-CLI registry simply stopped reporting it, or it predates 0.7.0 and carries no provenance at all. A session that is quietly alive would be resumed into a *second billed session*, so absence of proof is never treated as proof. Arm it instead — if it's truly dead the arm just expires; if it's alive, exiting it completes the move.
+- **410** — the working directory or the transcript is gone. Nothing to resume into.
+
+Remote (claude.ai/code) sessions appear on the board too and aren't blocked from adopting — but resuming a web session's transcript locally is untested territory; the transcript check is the honest gate, not the session's origin.
+
 ## Remote control: the fleet in your pocket (`/rc`)
 
 Claude Code can hand a session to claude.ai. Fleet Deck gives you three doors to that, and names the session after its callsign — so the thing you find in the claude.ai session list is recognizably the thing on your board.
@@ -144,7 +165,7 @@ A session's callsign is `<animal>-<4 hex>` by default (`raven-4b7f`) — memorab
 - **One animal per ticket.** A fleet on one branch is the normal case, so every session on `PROJ-123` gets a *different* animal — `otter-PROJ-123`, `falcon-PROJ-123`, `raven-PROJ-123`. When all twelve animals are taken for a ticket, the thirteenth falls back to the hex suffix (a ticker line tells you), and a manual `ticket` command is the recovery.
 - **Spawns name their artifacts ticket-first.** A worker spawned from a `PROJ-123` branch lands in the worktree `<repo>--fd-PROJ-123-<animal>` on branch `fd/PROJ-123-<animal>`, so sibling worktrees and branch lists group by ticket. Ticketless spawns keep today's `<repo>--fd-<callsign>` / `fd/<callsign>` format.
 
-**Upgrading an existing fleet:** **restart the daemon** so it loads the new code (source changes ship nothing until the daemon restarts). After that, any live session already sitting on a ticket branch renames itself once on its next hook event, and mail addressed to a session's old, pre-rename name still finds it.
+**Upgrading an existing fleet:** as of 0.7.0 this is automatic — the next new session's SessionStart hook notices the running daemon is an older version, asks it to step down (SIGTERM, the same graceful shutdown as ever; state is SQLite, nothing is lost), and boots its own newer build. Strictly newer only, never a downgrade, and if anything about the handoff looks uncertain the hook fails open onto the running daemon. A manual restart still works and is never harmful. After the upgrade, any live session already sitting on a ticket branch renames itself once on its next hook event, and mail addressed to a session's old, pre-rename name still finds it.
 
 ## Retention, and the Clear button
 
@@ -158,7 +179,7 @@ Knobs: `FLEETDECK_PRESUME_DEAD_MS`, `FLEETDECK_RETAIN_OFFLINE_MS`.
 
 ## The fine print (read this bit)
 
-- **Spawned sessions are real billed Claude sessions.** The spawn form says so, the cap defaults to 5, and nothing ever spawns without a human click. `assign auto` routes to *existing* sessions only.
+- **Spawned sessions are real billed Claude sessions.** The spawn form says so, the cap defaults to 5, and nothing ever spawns without a human click (an *armed* move-to-tmux fires at SessionEnd, but the click that armed it was the decision — one-shot, cancellable, visible on the card, and it expires). `assign auto` routes to *existing* sessions only.
 - **Unsupervised mode means unsupervised.** `--dangerously-skip-permissions` workers never produce permission cards. The checkbox is red and asks twice. Pair it with the fresh-worktree option and sleep better.
 - **The permission relay is interactive-only.** Headless `claude -p` sessions deny permission-needing tools without consulting hooks — that's CLI behavior, not ours. Spawned fleet workers are interactive (in tmux) precisely so their prompts reach your board.
 - **Version pin: Claude Code CLI 2.1.206+ (tested through 2.1.207).** Fleet Deck leans on a couple of behaviors the docs don't mention (they work; we checked, repeatedly, at some cost to our dignity). A guard test fails loudly if a CLI update drops them. Contract tests replay recorded hook payloads so schema drift is caught in CI, not in your fleet.
@@ -223,6 +244,8 @@ All optional. Fleet Deck's defaults are the configuration we actually run.
 | `FLEETDECK_PRESUME_DEAD_MS` | `10800000` (3 h) | Silence after which a session is presumed ended. A late hook undoes it. |
 | `FLEETDECK_RETAIN_OFFLINE_MS` | `86400000` (24 h) | How long an offline card stays on the board before it's archived out (never deleted). |
 | `FLEETDECK_RC_HARVEST_MS` | `2500` (2.5 s) | Delay before the daemon reads the pane's scrollback for the `claude.ai` remote-control link. |
+| `FLEETDECK_ADOPT_ARM_MS` | `1800000` (30 min) | How long an armed **move to tmux** waits for you to exit the CLI before it expires. |
+| `FLEETDECK_ADOPT_DELAY_MS` | `750` | Grace after a session's exit before the armed move resumes it, so the CLI can flush its final transcript lines. |
 | `FLEETDECK_TERM` | on | `off` disables the live terminal (WebSocket + modal) altogether. |
 | `FLEETDECK_TERM_REPAINT_MS` | `80` | Repaint coalescing window for the terminal bridge. |
 | `FLEETDECK_TMUX_SOCKET` | unset | Run every tmux command against a named server (`tmux -L`). Tests and demos only — see the scar story above. |

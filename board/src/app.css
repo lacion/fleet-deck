@@ -58,6 +58,8 @@ a { color: var(--act); } a:hover { opacity: .85; }
 }
 .fd-fleetline { font-family: var(--font-data); font-size: 12px; color: var(--dim); white-space: nowrap; }
 .fd-clock { font-family: var(--font-data); font-size: 12px; color: var(--faint); }
+/* v2.0 — daemon version, quiet in the status cluster beside the clock */
+.fd-fleetver { font-family: var(--font-data); font-size: var(--fs-micro); color: var(--faint); white-space: nowrap; }
 .fd-hbtn {
   display: flex; align-items: center; gap: 6px; flex: none; white-space: nowrap;
   background: var(--raised); border: 1px solid var(--border); color: var(--text);
@@ -857,6 +859,17 @@ textarea.fd-input { font-family: var(--font-ui); font-size: 13px; resize: none; 
 .fd-actbtn.kill { color: var(--hazard); }
 .fd-actbtn.kill:hover { border-color: var(--hazard); background: var(--hazard-bg); }
 .fd-actbtn.kill:focus-visible { outline-color: var(--hazard); }
+/* ⇥ move to tmux (v2.0) — adopt a non-board session into a board-owned pane.
+   act-colored: an action you can take, like the revive / enable-remote chips. */
+.fd-actbtn.move { color: var(--act); }
+.fd-actbtn.move:hover { border-color: var(--act); background: var(--act-bg); color: var(--act); }
+.fd-actbtn.move.busy { cursor: default; opacity: .6; }
+/* ⧗ armed — the deferred move is waiting for the CLI session to exit. A pending
+   state (comet-blue, not act): clicking it CANCELS, it doesn't re-fire. */
+.fd-actbtn.move.armed {
+  color: var(--m-comet); background: var(--m-comet-bg); border-color: var(--m-comet); font-weight: 600;
+}
+.fd-actbtn.move.armed:hover { border-color: var(--m-comet); opacity: .85; }
 
 /* the kill confirmation — Compose's modal shell, hazard-headed */
 .fd-killask { width: 470px; gap: 12px; }

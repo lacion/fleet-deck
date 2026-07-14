@@ -3721,10 +3721,10 @@ var require_websocket_server = __commonJS({
 });
 
 // scripts/fleetd/fleetd.mjs
-import fs10 from "node:fs";
+import fs11 from "node:fs";
 import crypto from "node:crypto";
 import os3 from "node:os";
-import path8 from "node:path";
+import path9 from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // scripts/fleetd/db.mjs
@@ -3767,7 +3767,14 @@ CREATE TABLE IF NOT EXISTS sessions (
   archived_at       INTEGER,
   ticket            TEXT,               -- current Jira key (raven-PROJ-123's PROJ-123) or NULL
   ticket_source     TEXT,               -- 'branch' | 'manual'; NULL = never set (auto path still open)
-  prev_callsign     TEXT                -- birth callsign, write-once on the FIRST rename (stale-ref anchor for mail)
+  prev_callsign     TEXT,               -- birth callsign, write-once on the FIRST rename (stale-ref anchor for mail)
+  -- 0.7.0 Move-to-tmux (adopt): three additive columns, all NULL for pre-0.7.0
+  -- rows (never armed, never proven-ended). adopt_armed_until stores the arm
+  -- DEADLINE (ms epoch) so a consumer just checks it against now() in JS --
+  -- restart-durable, snapshot-visible, disarm = NULL, expiry needs no sweep.
+  adopt_armed_until INTEGER,            -- Move-to-tmux arm deadline (ms epoch); NULL = not armed
+  adopt_armed_skip  INTEGER,            -- bypass choice stored at arm time (0/1); read by the auto-adopt trigger, cleared with the arm
+  end_reason        TEXT                -- how the session ended: hook reason ('end'/'logout'/\u2026) or 'presumed' (silence guess); NULL = never ended
 );
 CREATE TABLE IF NOT EXISTS file_touches (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -3881,6 +3888,15 @@ function migrate(db2) {
   }
   if (!cols.includes("prev_callsign")) {
     db2.exec("ALTER TABLE sessions ADD COLUMN prev_callsign TEXT");
+  }
+  if (!cols.includes("adopt_armed_until")) {
+    db2.exec("ALTER TABLE sessions ADD COLUMN adopt_armed_until INTEGER");
+  }
+  if (!cols.includes("adopt_armed_skip")) {
+    db2.exec("ALTER TABLE sessions ADD COLUMN adopt_armed_skip INTEGER");
+  }
+  if (!cols.includes("end_reason")) {
+    db2.exec("ALTER TABLE sessions ADD COLUMN end_reason TEXT");
   }
   const mailCols = db2.prepare("PRAGMA table_info(mail)").all().map((r) => r.name);
   if (!mailCols.includes("expired_at")) {
@@ -4853,11 +4869,19 @@ function createStatements(db2) {
     "archived_at",
     "ticket",
     "ticket_source",
-    "prev_callsign"
+    "prev_callsign",
+    // 0.7.0 Move-to-tmux (adopt): the arm deadline + bypass choice + the
+    // hook-proven end reason are all written through updateSession. No new
+    // INSERT — insertProvisionalSpawn already attaches a spawns row to any
+    // session_id without minting a card, which is exactly what adopt needs.
+    "adopt_armed_until",
+    "adopt_armed_skip",
+    "end_reason"
   ];
   const updateStmts = /* @__PURE__ */ new Map();
+  const FIELD_SET = new Set(FIELDS);
   function updateSession(sid, upd) {
-    const keys = Object.keys(upd).filter((k) => FIELDS.includes(k));
+    const keys = Object.keys(upd).filter((k) => FIELD_SET.has(k));
     if (!keys.length) return;
     const shape = keys.join(",");
     let stmt = updateStmts.get(shape);
@@ -4912,6 +4936,24 @@ function spawnRowRevivable(row) {
   const runCwd = row?.worktree_path ?? row?.cwd;
   return !!runCwd && ["pane-dead", "killed", "gone"].includes(row.status) && fs3.existsSync(runCwd) && fs3.existsSync(claudeTranscriptPath(runCwd, row.session_id));
 }
+function cwdIsDirectory(p) {
+  if (!p) return false;
+  try {
+    return fs3.statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+}
+function sessionAdoptableNow(session, hasSpawnRow) {
+  if (!session) return false;
+  if (session.ended_at == null) return false;
+  if (session.end_reason == null || session.end_reason === "presumed") {
+    return false;
+  }
+  if (hasSpawnRow) return false;
+  const cwd = session.cwd;
+  return cwdIsDirectory(cwd) && fs3.existsSync(claudeTranscriptPath(cwd, session.session_id));
+}
 function claudeEnvArgvPrefix(port, home) {
   const scrub = [
     ...CLAUDE_ENV_MARKERS,
@@ -4930,7 +4972,16 @@ function claudeEnvArgvPrefix(port, home) {
     "FLEETDECK_PANE_MAIL_GRACE_MS",
     "FLEETDECK_PRESUME_DEAD_MS",
     "FLEETDECK_RETAIN_OFFLINE_MS",
-    "FLEETDECK_RC_HARVEST_MS"
+    "FLEETDECK_RC_HARVEST_MS",
+    "FLEETDECK_ADOPT_ARM_MS",
+    "FLEETDECK_ADOPT_DELAY_MS",
+    // Test seams that must NEVER ride a pane's env into the next SessionStart:
+    // a leaked FLEETDECK_TEST_DAEMON_SCRIPT would make every future daemon
+    // (re)spawn launch an arbitrary script, and a leaked VERSION_OVERRIDE
+    // permanently skews the upgrade-takeover comparison (the 2026-07-11 tmux
+    // env-poisoning scar, new tenants).
+    "FLEETDECK_TEST_DAEMON_SCRIPT",
+    "FLEETDECK_VERSION_OVERRIDE"
   ];
   return [
     "env",
@@ -5525,8 +5576,10 @@ function createIngest(ctx) {
           col: colFromAgentState(rawState, false),
           note: "seen via agents CLI",
           last_seen: Date.now(),
-          ended_at: null
+          ended_at: null,
           // reappearance revives an absence-tombstoned card
+          end_reason: null
+          // and clears the absence guess stamped below
         });
         onMutate();
       }
@@ -5538,7 +5591,12 @@ function createIngest(ctx) {
       updateSession(s.session_id, {
         col: "offline",
         note: "no longer reported by agents CLI",
-        ended_at: Date.now()
+        ended_at: Date.now(),
+        // Absence from one registry poll is a GUESS, not proof of death (the
+        // registry is documented-unreliable, trust rules above). Stamp it like
+        // retention's silence guess so move-to-tmux's adopt-now allowlist
+        // refuses it — resuming a still-live CLI is a duplicate billed session.
+        end_reason: "presumed"
       });
       tick(`${s.callsign} left the fleet (agents CLI)`);
       onMutate();
@@ -5697,7 +5755,9 @@ function createSpawns(ctx) {
     home,
     NUDGE_MS,
     SPAWN_REGISTER_MS,
-    RC_HARVEST_MS
+    RC_HARVEST_MS,
+    ADOPT_ARM_MS
+    // 0.7.0 Move-to-tmux: arm-deadline window (default 30 min)
   } = ctx;
   function spawnCapability() {
     const base = { active: q.countActiveSpawns.get().n };
@@ -6071,77 +6131,203 @@ function createSpawns(ctx) {
           return { status: 500, body: { ok: false, reason: killed.error || "tmux kill-window failed" } };
         }
       }
-      const new_spawn_id = randomUUID2();
-      const argv = [...claudeEnvArgvPrefix(port, home), "claude", "--resume", row.session_id];
-      if (row.skip_permissions) argv.push("--dangerously-skip-permissions");
-      if (remoteWanted) argv.push("--remote-control", row.callsign);
-      const tmux_session = tmuxAdapter.sessionName(port);
-      const preLaunchOwner = q.currentWindowOwner.get(row.tmux_window);
-      if (preLaunchOwner && preLaunchOwner.spawn_id !== spawn_id && ["provisioning", "spawning", "stalled", "live"].includes(preLaunchOwner.status)) {
-        return {
-          status: 409,
-          body: { ok: false, reason: `window ${row.tmux_window} is now owned by active spawn ${preLaunchOwner.spawn_id}`, current_spawn_id: preLaunchOwner.spawn_id }
-        };
-      }
-      q.insertProvisionalSpawn.run(
-        new_spawn_id,
-        row.session_id,
-        row.callsign,
-        tmux_session,
-        row.tmux_window,
-        row.cwd,
-        row.worktree_path,
-        Date.now(),
-        row.skip_permissions ? 1 : 0,
-        remoteWanted ? 1 : 0
-      );
-      const override = tmuxAdapter.spawnOverrideCmd();
-      if (override) {
-        tmuxAdapter.launchOverride(override, {
-          spawn_id: new_spawn_id,
-          revive_of: spawn_id,
-          session_id: row.session_id,
-          callsign: row.callsign,
-          port,
-          cwd: runCwd,
-          requested_cwd: row.cwd,
-          prompt: null,
-          model: null,
-          permission_mode: null,
-          worktree_path: row.worktree_path,
-          dangerously_skip_permissions: !!row.skip_permissions,
-          skip_permissions: !!row.skip_permissions,
-          remote_control: remoteWanted,
-          tmux: { session: tmux_session, window: row.tmux_window },
-          argv
-        }, (err) => spawnFailed(row.session_id, row.callsign, `spawn override: ${err.message || err}`));
-      } else {
-        try {
-          await tmuxAdapter.ensureSession(port);
-          await tmuxAdapter.newWindow({ port, callsign: row.callsign, cwd: runCwd, argv });
-        } catch (err) {
-          q.setSpawnStatus.run("gone", new_spawn_id);
-          forgetSpawn(new_spawn_id);
-          return { status: 500, body: { ok: false, reason: `tmux revive failed: ${err.message || err}` } };
-        }
-      }
-      q.setSpawnStatus.run("spawning", new_spawn_id);
-      updateSession(row.session_id, { archived_at: null, col: "queued", note: "reviving\u2026" });
-      tick(`\u27F2 reviving ${row.callsign} (resume ${row.session_id.slice(0, 8)})`);
-      scheduleNudge(new_spawn_id, row.tmux_window, row.callsign);
-      onMutate();
-      return {
-        status: 200,
-        body: {
-          ok: true,
-          spawn_id: new_spawn_id,
-          session_id: row.session_id,
-          callsign: row.callsign,
-          tmux: { session: tmux_session, window: row.tmux_window }
-        }
-      };
+      return await launchResume({
+        session_id: row.session_id,
+        callsign: row.callsign,
+        tmux_window: row.tmux_window,
+        runCwd,
+        requested_cwd: row.cwd,
+        worktree_path: row.worktree_path,
+        skip_permissions: !!row.skip_permissions,
+        remoteWanted,
+        excludeSpawnId: spawn_id,
+        overrideExtra: { revive_of: spawn_id },
+        note: "reviving\u2026",
+        tickMsg: `\u27F2 reviving ${row.callsign} (resume ${row.session_id.slice(0, 8)})`,
+        failReason: "tmux revive failed"
+      });
     } finally {
       revivingSessions.delete(row.session_id);
+    }
+  }
+  async function launchResume({
+    session_id,
+    callsign,
+    tmux_window,
+    runCwd,
+    requested_cwd,
+    worktree_path,
+    skip_permissions,
+    remoteWanted,
+    excludeSpawnId,
+    overrideExtra = {},
+    note,
+    tickMsg,
+    failReason,
+    bodyExtra = {}
+  }) {
+    const new_spawn_id = randomUUID2();
+    const argv = [...claudeEnvArgvPrefix(port, home), "claude", "--resume", session_id];
+    if (skip_permissions) argv.push("--dangerously-skip-permissions");
+    if (remoteWanted) argv.push("--remote-control", callsign);
+    const tmux_session = tmuxAdapter.sessionName(port);
+    const preLaunchOwner = q.currentWindowOwner.get(tmux_window);
+    if (preLaunchOwner && preLaunchOwner.spawn_id !== excludeSpawnId && ["provisioning", "spawning", "stalled", "live"].includes(preLaunchOwner.status)) {
+      return {
+        status: 409,
+        body: { ok: false, reason: `window ${tmux_window} is now owned by active spawn ${preLaunchOwner.spawn_id}`, current_spawn_id: preLaunchOwner.spawn_id }
+      };
+    }
+    q.insertProvisionalSpawn.run(
+      new_spawn_id,
+      session_id,
+      callsign,
+      tmux_session,
+      tmux_window,
+      requested_cwd,
+      worktree_path,
+      Date.now(),
+      skip_permissions ? 1 : 0,
+      remoteWanted ? 1 : 0
+    );
+    const override = tmuxAdapter.spawnOverrideCmd();
+    if (override) {
+      tmuxAdapter.launchOverride(override, {
+        spawn_id: new_spawn_id,
+        ...overrideExtra,
+        session_id,
+        callsign,
+        port,
+        cwd: runCwd,
+        requested_cwd,
+        prompt: null,
+        model: null,
+        permission_mode: null,
+        worktree_path,
+        dangerously_skip_permissions: !!skip_permissions,
+        skip_permissions: !!skip_permissions,
+        remote_control: remoteWanted,
+        tmux: { session: tmux_session, window: tmux_window },
+        argv
+      }, (err) => spawnFailed(session_id, callsign, `spawn override: ${err.message || err}`));
+    } else {
+      try {
+        await tmuxAdapter.ensureSession(port);
+        await tmuxAdapter.newWindow({ port, callsign, cwd: runCwd, argv });
+      } catch (err) {
+        q.setSpawnStatus.run("gone", new_spawn_id);
+        forgetSpawn(new_spawn_id);
+        return { status: 500, body: { ok: false, reason: `${failReason}: ${err.message || err}` } };
+      }
+    }
+    q.setSpawnStatus.run("spawning", new_spawn_id);
+    updateSession(session_id, { archived_at: null, col: "queued", note });
+    tick(tickMsg);
+    scheduleNudge(new_spawn_id, tmux_window, callsign);
+    onMutate();
+    return {
+      status: 200,
+      body: {
+        ok: true,
+        ...bodyExtra,
+        spawn_id: new_spawn_id,
+        session_id,
+        callsign,
+        tmux: { session: tmux_session, window: tmux_window }
+      }
+    };
+  }
+  async function adoptSession(session_id, body = {}, { deferred = false } = {}) {
+    const c = q.getSession.get(session_id);
+    if (!c) return { status: 404, body: { ok: false, reason: "no such session" } };
+    if (body?.dangerously_skip_permissions != null && typeof body.dangerously_skip_permissions !== "boolean") {
+      return { status: 400, body: { ok: false, reason: "dangerously_skip_permissions must be a boolean" } };
+    }
+    if (body?.disarm != null && typeof body.disarm !== "boolean") {
+      return { status: 400, body: { ok: false, reason: "disarm must be a boolean" } };
+    }
+    const skip = body?.dangerously_skip_permissions === true;
+    if (body?.disarm === true) {
+      updateSession(session_id, { adopt_armed_until: null, adopt_armed_skip: null });
+      tick(`\u21E5 ${c.callsign} move-to-tmux disarmed`);
+      onMutate();
+      return { status: 200, body: { ok: true, armed: false, disarmed: true } };
+    }
+    const lineage = q.spawnBySession.get(session_id);
+    if (lineage) {
+      return { status: 409, body: { ok: false, reason: `session is board-owned (spawn ${lineage.spawn_id}, ${lineage.status}) \u2014 revive owns its pane story` } };
+    }
+    if (c.ended_at == null) {
+      if (deferred) {
+        updateSession(session_id, { adopt_armed_until: null, adopt_armed_skip: null });
+        tick(`\u21B7 move-to-tmux canceled for ${c.callsign} \u2014 session came back live before the move`);
+        onMutate();
+        return { status: 200, body: { ok: true, canceled: true } };
+      }
+      const expires_at = Date.now() + ADOPT_ARM_MS;
+      updateSession(session_id, { adopt_armed_until: expires_at, adopt_armed_skip: skip ? 1 : 0 });
+      tick(`\u29D7 ${c.callsign} armed for move-to-tmux \u2014 exit the CLI to move it${skip ? " (unsupervised)" : ""}`);
+      onMutate();
+      return { status: 200, body: { ok: true, armed: true, expires_at } };
+    }
+    if (deferred && c.adopt_armed_until == null) {
+      return { status: 200, body: { ok: true, canceled: true } };
+    }
+    if (c.end_reason == null || c.end_reason === "presumed") {
+      return { status: 409, body: { ok: false, reason: "session has no hook-proven end (presumed/unstamped) \u2014 arm it instead" } };
+    }
+    if (revivingSessions.has(session_id)) {
+      return { status: 409, body: { ok: false, reason: `session ${session_id.slice(0, 8)} is already being moved/revived` } };
+    }
+    revivingSessions.add(session_id);
+    try {
+      if (c.adopt_armed_until != null || c.adopt_armed_skip != null) {
+        updateSession(session_id, { adopt_armed_until: null, adopt_armed_skip: null });
+      }
+      const runCwd = c.cwd;
+      let st = null;
+      try {
+        st = fs5.statSync(runCwd);
+      } catch {
+      }
+      if (!runCwd || !st?.isDirectory()) {
+        return { status: 410, body: { ok: false, reason: "session cwd no longer exists" } };
+      }
+      if (!fs5.existsSync(claudeTranscriptPath(runCwd, session_id))) {
+        return { status: 410, body: { ok: false, reason: "resume transcript no longer exists" } };
+      }
+      const tmux_window = tmuxAdapter.windowName(port, c.callsign);
+      const existing = await findScopedWindow(tmux_window);
+      if (existing && !existing.pane_dead && existing.pane_cmd === "claude") {
+        return { status: 409, body: { ok: false, reason: `window ${tmux_window} already hosts a live claude pane` } };
+      }
+      if (existing && !existing.pane_dead && !SHELL_RE.test(existing.pane_cmd)) {
+        return { status: 409, body: { ok: false, reason: `window ${tmux_window} hosts a live '${existing.pane_cmd}' pane \u2014 not a dead remnant; refusing to kill it` } };
+      }
+      if (existing) {
+        const killed = await tmuxAdapter.killWindowVerified(tmux_window);
+        if (!killed.ok && !killed.gone) {
+          return { status: 500, body: { ok: false, reason: killed.error || "tmux kill-window failed" } };
+        }
+      }
+      return await launchResume({
+        session_id,
+        callsign: c.callsign,
+        tmux_window,
+        runCwd,
+        requested_cwd: runCwd,
+        worktree_path: null,
+        skip_permissions: skip,
+        remoteWanted: false,
+        excludeSpawnId: null,
+        overrideExtra: { adopt_of: session_id },
+        note: "moving to tmux\u2026",
+        tickMsg: `\u21E5 moving ${c.callsign} to tmux (resume ${session_id.slice(0, 8)})${skip ? " (unsupervised)" : ""}`,
+        failReason: "tmux adopt failed",
+        bodyExtra: { adopted: true }
+      });
+    } finally {
+      revivingSessions.delete(session_id);
     }
   }
   async function enableRemote(spawn_id) {
@@ -6350,6 +6536,7 @@ function createSpawns(ctx) {
   return {
     spawn: spawn2,
     revive,
+    adoptSession,
     enableRemote,
     spawnKill,
     spawnCapability,
@@ -6385,14 +6572,19 @@ function createEvents(ctx) {
     notifyWatchers,
     modelMemo,
     forgetSpawn,
-    applyTicket
+    applyTicket,
+    // 0.7.0 Move-to-tmux (adopt): the armed auto-adopt trigger in hookSessionEnd
+    // fires adoptSession after ADOPT_DELAY_MS. createSpawns(ctx) runs before
+    // createEvents(ctx) in derive.mjs, so ctx.adoptSession is already bound here.
+    adoptSession,
+    ADOPT_DELAY_MS
   } = ctx;
   function applyEvent(ev) {
     const sid = ev.session_id || "unknown";
     let c = card(sid, ev.cwd);
     if (c.ended_at != null || c.archived_at != null) {
-      updateSession(sid, { ended_at: null, archived_at: null, col: "queued" });
-      c = { ...c, ended_at: null, archived_at: null, col: "queued" };
+      updateSession(sid, { ended_at: null, archived_at: null, col: "queued", end_reason: null });
+      c = { ...c, ended_at: null, archived_at: null, col: "queued", end_reason: null };
     }
     if (c.source !== "hooks") {
       updateSession(sid, { source: "hooks" });
@@ -6528,6 +6720,7 @@ function createEvents(ctx) {
         } else {
           set.col = "offline";
           set.ended_at = Date.now();
+          set.end_reason = ev.reason || "end";
           set.note = "session ended" + (ev.reason ? ` (${ev.reason})` : "");
           tick(`${c.callsign} left the fleet`);
         }
@@ -6689,6 +6882,22 @@ function createEvents(ctx) {
       notifyWatchers(sid);
       return {};
     }
+    const armed = q.getSession.get(sid);
+    if (armed && armed.adopt_armed_until != null && armed.adopt_armed_until > Date.now()) {
+      const skip = !!armed.adopt_armed_skip;
+      const timer = setTimeout(() => {
+        adoptSession(sid, { dangerously_skip_permissions: skip }, { deferred: true }).then((out) => {
+          if (!out || out.status >= 400 && out.status !== 409) {
+            const c = q.getSession.get(sid);
+            tick(`\u2717 move-to-tmux failed for ${c?.callsign ?? sid}: ${out?.body?.reason ?? "unknown"}`.slice(0, 100));
+          }
+        }).catch((err) => {
+          const c = q.getSession.get(sid);
+          tick(`\u2717 move-to-tmux failed for ${c?.callsign ?? sid}: ${String(err?.message || err)}`.slice(0, 100));
+        });
+      }, ADOPT_DELAY_MS);
+      timer.unref?.();
+    }
     modelMemo.delete(sid);
     const sp = q.spawnBySession.get(sid);
     if (sp && (sp.status === "spawning" || sp.status === "stalled" || sp.status === "live")) {
@@ -6714,6 +6923,7 @@ function createSnapshot(ctx) {
   const {
     q,
     t0,
+    version: version2,
     STALE_MS,
     RETAIN_LEDGER_MS,
     SNAPSHOT_FILES_PER_SESSION,
@@ -6755,6 +6965,13 @@ function createSnapshot(ctx) {
     const sessions = visible.map((s) => {
       const sp = spawnBySid.get(s.session_id);
       const pending = pendingBySid.get(s.session_id);
+      const adoptEligible = s.ended_at != null ? sessionAdoptableNow(s, !!sp) ? "now" : null : s.source === "hooks" && !sp ? "arm" : null;
+      const adopt = {
+        eligible: adoptEligible,
+        armed: s.adopt_armed_until != null && s.adopt_armed_until > now,
+        armed_until: s.adopt_armed_until ?? null,
+        armed_skip: !!s.adopt_armed_skip
+      };
       return {
         session_id: s.session_id,
         callsign: s.callsign,
@@ -6808,7 +7025,13 @@ function createSnapshot(ctx) {
             // would need that test + a frontend sign-off. Coordination note.)
             revivable: spawnRowRevivable(sp)
           }
-        } : {}
+        } : {},
+        // 0.7.0 Move-to-tmux: {eligible:'now'|'arm'|null, armed, armed_until,
+        // armed_skip}. 'now' = adopt this offline card immediately; 'arm' = live
+        // card, remember the click and move it when the CLI exits; null = not a
+        // move-to-tmux candidate right now (board-owned, presumed dead, or a
+        // live non-hooks card). armed reflects a live, unexpired arm.
+        adopt
       };
     });
     const repoMap = /* @__PURE__ */ new Map();
@@ -6837,6 +7060,9 @@ function createSnapshot(ctx) {
       // spike name, preserved
       uptime_ms: now - t0,
       // contract addition
+      // Which build is serving the board — pairs with /health's version so an
+      // upgrade takeover is visible in the footer without a second fetch.
+      version: version2,
       sessions,
       repos: [...repoMap.values()],
       ticker: q.recentTicker.all(),
@@ -6908,6 +7134,7 @@ function createRetention(ctx) {
     tmuxAdapter,
     port,
     questions,
+    adoptSession,
     PRESUME_DEAD_MS,
     RETAIN_OFFLINE_MS,
     RETAIN_LEDGER_MS
@@ -6923,6 +7150,7 @@ function createRetention(ctx) {
       forgetModel: true
       // M-G2: terminal — clear the transcript memo
     });
+    updateSession(s.session_id, { end_reason: "presumed" });
   }
   async function retentionSweep(now = Date.now()) {
     let changed = false;
@@ -6967,6 +7195,22 @@ function createRetention(ctx) {
           });
           changed = true;
         }
+      }
+    }
+    for (const s of q.allSessions.all()) {
+      if (s.adopt_armed_until == null && s.adopt_armed_skip == null) continue;
+      if (s.adopt_armed_until == null || s.adopt_armed_until <= now) {
+        updateSession(s.session_id, { adopt_armed_until: null, adopt_armed_skip: null });
+        changed = true;
+        continue;
+      }
+      if (s.ended_at != null && s.end_reason != null && s.end_reason !== "presumed") {
+        Promise.resolve(adoptSession(s.session_id, { dangerously_skip_permissions: !!s.adopt_armed_skip }, { deferred: true })).then((out) => {
+          if (!out || out.status >= 400 && out.status !== 409) {
+            tick(`\u2717 move-to-tmux failed for ${s.callsign}: ${out?.body?.reason ?? "unknown"}`.slice(0, 100));
+          }
+        }).catch((err) => tick(`\u2717 move-to-tmux failed for ${s.callsign}: ${String(err?.message || err)}`.slice(0, 100)));
+        changed = true;
       }
     }
     for (const s of q.archiveCandidates.all(now - RETAIN_OFFLINE_MS)) {
@@ -7048,7 +7292,11 @@ function createCore(db2, {
   port = 4711,
   home = process.env.FLEETDECK_HOME || "",
   holdMs = resolveHoldMs(),
-  tmuxAdapter = spawn_exports
+  tmuxAdapter = spawn_exports,
+  // Daemon version, threaded from fleetd.mjs's package.json read so the
+  // snapshot can tell the board which build is serving it (upgrade-takeover
+  // observability). '0.0.0' mirrors /health's standalone-install fallback.
+  version: version2 = "0.0.0"
 } = {}) {
   const t0 = Date.now();
   let onMutateImpl = () => {
@@ -7061,6 +7309,8 @@ function createCore(db2, {
   const PRESUME_DEAD_MS = envInt("FLEETDECK_PRESUME_DEAD_MS", 108e5, { min: 1 });
   const RETAIN_OFFLINE_MS = envInt("FLEETDECK_RETAIN_OFFLINE_MS", 864e5, { min: 1 });
   const RC_HARVEST_MS = envInt("FLEETDECK_RC_HARVEST_MS", 2500, { min: 0 });
+  const ADOPT_ARM_MS = envInt("FLEETDECK_ADOPT_ARM_MS", 18e5, { min: 1 });
+  const ADOPT_DELAY_MS = envInt("FLEETDECK_ADOPT_DELAY_MS", 750, { min: 0 });
   const RETAIN_LEDGER_MS = envInt("FLEETDECK_RETAIN_LEDGER_MS", 864e5, { min: 6e4 });
   const SNAPSHOT_FILES_PER_SESSION = 50;
   async function findScopedWindow(name) {
@@ -7175,6 +7425,7 @@ function createCore(db2, {
     home,
     holdMs,
     t0,
+    version: version2,
     STALE_MS,
     NUDGE_MS,
     SPAWN_REGISTER_MS,
@@ -7183,6 +7434,9 @@ function createCore(db2, {
     RETAIN_OFFLINE_MS,
     RC_HARVEST_MS,
     RETAIN_LEDGER_MS,
+    ADOPT_ARM_MS,
+    ADOPT_DELAY_MS,
+    // 0.7.0 Move-to-tmux (spawns arms, events fires)
     SNAPSHOT_FILES_PER_SESSION,
     q,
     updateSession,
@@ -7235,6 +7489,7 @@ function createCore(db2, {
   const {
     spawn: spawn2,
     revive,
+    adoptSession,
     enableRemote,
     spawnKill,
     spawnCapability,
@@ -7298,6 +7553,8 @@ function createCore(db2, {
     // POST /api/spawn flow → {status, body}
     revive,
     // POST /api/spawn/:id/revive → {status, body}
+    adoptSession,
+    // POST /api/sessions/:session_id/adopt → {status, body}
     enableRemote,
     // POST /api/spawn/:id/rc → {status, body}
     spawnKill,
@@ -7320,6 +7577,9 @@ function createCore(db2, {
     // v1.3 plan library
     planMark,
     // POST /api/plans/:id/mark → {status, body}
+    // Exposed for fleetd.mjs's boot banner (upgrade takeover: "vX replaced
+    // vY" must reach the board feed, not just fleetd.log).
+    tick,
     set onMutate(fn) {
       onMutateImpl = fn;
     }
@@ -8082,6 +8342,14 @@ function createHttp(core2, { port, boardFile, version: version2 = "0.0.0", captu
             if (reviveMatch) {
               core2.revive(reviveMatch[1], ev ?? {}).then((out) => json(res, out.status, out.body)).catch((err) => {
                 console.error("fleetd spawn revive error:", err);
+                json(res, 500, { ok: false, reason: "internal" });
+              });
+              return;
+            }
+            const adoptMatch = /^\/api\/sessions\/([^/]+)\/adopt$/.exec(url.pathname);
+            if (adoptMatch) {
+              core2.adoptSession(adoptMatch[1], ev ?? {}).then((out) => json(res, out.status, out.body)).catch((err) => {
+                console.error("fleetd adopt error:", err);
                 json(res, 500, { ok: false, reason: "internal" });
               });
               return;
@@ -8934,34 +9202,9 @@ function createMdns({ port, name = "fleetdeck", instance = "Fleet Deck", address
   return { start, stop };
 }
 
-// scripts/fleetd/fleetd.mjs
-var __dirname = path8.dirname(fileURLToPath2(import.meta.url));
-var PORT = Number(process.env.FLEETDECK_PORT || 4711);
-var BIND = (process.env.FLEETDECK_BIND || "127.0.0.1").trim() || "127.0.0.1";
-var LAN_MODE = !isLoopbackAddress(BIND);
-var HOME = process.env.FLEETDECK_HOME || path8.join(os3.homedir() || "/tmp", ".fleetdeck");
-process.on("unhandledRejection", (reason) => {
-  console.error("fleetd unhandled rejection (daemon kept alive):", reason);
-});
-function startupFatal(reason) {
-  try {
-    removeOwnedPidFile();
-  } catch {
-  }
-  try {
-    fs10.writeSync(2, `fleetd refused to start: ${reason}
-`);
-  } catch {
-  }
-  process.exit(1);
-}
-try {
-  fs10.mkdirSync(HOME, { recursive: true });
-} catch (err) {
-  startupFatal(`cannot create FLEETDECK_HOME (${err?.code || err?.message || "unknown error"})`);
-}
-var PID_FILE = path8.join(HOME, "fleetd.pid");
-var ownsPidFile = false;
+// scripts/fleetd/takeover.mjs
+import fs10 from "node:fs";
+import path8 from "node:path";
 function pidRecord(text) {
   try {
     const parsed = JSON.parse(String(text));
@@ -8993,11 +9236,40 @@ function livePidLooksLikeFleetd(pid) {
     return err?.code !== "ENOENT";
   }
 }
+
+// scripts/fleetd/fleetd.mjs
+var __dirname = path9.dirname(fileURLToPath2(import.meta.url));
+var PORT = Number(process.env.FLEETDECK_PORT || 4711);
+var BIND = (process.env.FLEETDECK_BIND || "127.0.0.1").trim() || "127.0.0.1";
+var LAN_MODE = !isLoopbackAddress(BIND);
+var HOME = process.env.FLEETDECK_HOME || path9.join(os3.homedir() || "/tmp", ".fleetdeck");
+process.on("unhandledRejection", (reason) => {
+  console.error("fleetd unhandled rejection (daemon kept alive):", reason);
+});
+function startupFatal(reason) {
+  try {
+    removeOwnedPidFile();
+  } catch {
+  }
+  try {
+    fs11.writeSync(2, `fleetd refused to start: ${reason}
+`);
+  } catch {
+  }
+  process.exit(1);
+}
+try {
+  fs11.mkdirSync(HOME, { recursive: true });
+} catch (err) {
+  startupFatal(`cannot create FLEETDECK_HOME (${err?.code || err?.message || "unknown error"})`);
+}
+var PID_FILE = path9.join(HOME, "fleetd.pid");
+var ownsPidFile = false;
 function removeOwnedPidFile() {
   if (!ownsPidFile) return;
   try {
-    const record = pidRecord(fs10.readFileSync(PID_FILE, "utf8"));
-    if (record?.pid === process.pid) fs10.unlinkSync(PID_FILE);
+    const record = pidRecord(fs11.readFileSync(PID_FILE, "utf8"));
+    if (record?.pid === process.pid) fs11.unlinkSync(PID_FILE);
   } catch {
   }
   ownsPidFile = false;
@@ -9005,7 +9277,7 @@ function removeOwnedPidFile() {
 function claimHome() {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      fs10.writeFileSync(PID_FILE, JSON.stringify({ pid: process.pid, port: PORT }), {
+      fs11.writeFileSync(PID_FILE, JSON.stringify({ pid: process.pid, port: PORT }), {
         encoding: "utf8",
         mode: 384,
         flag: "wx"
@@ -9020,7 +9292,7 @@ function claimHome() {
     let recordText = null;
     let record = null;
     try {
-      recordText = fs10.readFileSync(PID_FILE, "utf8");
+      recordText = fs11.readFileSync(PID_FILE, "utf8");
       record = pidRecord(recordText);
     } catch (err) {
       if (err?.code === "ENOENT") continue;
@@ -9031,13 +9303,13 @@ function claimHome() {
       startupFatal(`FLEETDECK_HOME is already used by live fleetd pid ${record.pid} on ${port}; use a separate FLEETDECK_HOME for another daemon (if that PID was recycled, remove stale pidfile ${PID_FILE})`);
     }
     try {
-      if (fs10.readFileSync(PID_FILE, "utf8") !== recordText) continue;
+      if (fs11.readFileSync(PID_FILE, "utf8") !== recordText) continue;
     } catch (err) {
       if (err?.code === "ENOENT") continue;
       startupFatal(`cannot re-read stale FLEETDECK_HOME pidfile (${err?.code || err?.message || "unknown error"})`);
     }
     try {
-      fs10.unlinkSync(PID_FILE);
+      fs11.unlinkSync(PID_FILE);
     } catch (err) {
       if (err?.code !== "ENOENT") startupFatal(`cannot clear stale FLEETDECK_HOME pidfile (${err?.code || err?.message || "unknown error"})`);
     }
@@ -9045,14 +9317,14 @@ function claimHome() {
   startupFatal("could not claim FLEETDECK_HOME pidfile after concurrent startup attempts");
 }
 claimHome();
-var TOKEN_FILE = path8.join(HOME, "token");
+var TOKEN_FILE = path9.join(HOME, "token");
 var TOKEN;
 if (Object.hasOwn(process.env, "FLEETDECK_TOKEN")) {
   TOKEN = String(process.env.FLEETDECK_TOKEN).trim();
   if (TOKEN.length < 16) startupFatal("FLEETDECK_TOKEN must be at least 16 characters after trimming");
 } else {
   try {
-    const persisted = fs10.readFileSync(TOKEN_FILE, "utf8").trim();
+    const persisted = fs11.readFileSync(TOKEN_FILE, "utf8").trim();
     if (persisted.length >= 16) TOKEN = persisted;
     else if (LAN_MODE) startupFatal("FLEETDECK_HOME/token must contain at least 16 characters");
   } catch (err) {
@@ -9068,15 +9340,20 @@ if (LAN_MODE && !TOKEN) {
     startupFatal(`cannot generate LAN token (${err?.code || err?.message || "unknown error"})`);
   }
   try {
-    fs10.writeFileSync(TOKEN_FILE, TOKEN, { encoding: "utf8", mode: 384, flag: "wx" });
+    fs11.writeFileSync(TOKEN_FILE, TOKEN, { encoding: "utf8", mode: 384, flag: "wx" });
   } catch (err) {
     startupFatal(`cannot persist FLEETDECK_HOME/token (${err?.code || err?.message || "unknown error"})`);
   }
 }
 var version = "0.0.0";
-try {
-  version = JSON.parse(fs10.readFileSync(path8.resolve(__dirname, "../../package.json"), "utf8")).version || version;
-} catch {
+var versionOverride = process.env.FLEETDECK_VERSION_OVERRIDE?.trim();
+if (versionOverride) {
+  version = versionOverride;
+} else {
+  try {
+    version = JSON.parse(fs11.readFileSync(path9.resolve(__dirname, "../../package.json"), "utf8")).version || version;
+  } catch {
+  }
 }
 var MDNS_NAME = (process.env.FLEETDECK_MDNS_NAME || "fleetdeck").trim() || "fleetdeck";
 function mdnsInstanceName() {
@@ -9086,9 +9363,9 @@ function mdnsInstanceName() {
     return "Fleet Deck";
   }
 }
-var DB_FILE = path8.join(HOME, "fleetd.db");
+var DB_FILE = path9.join(HOME, "fleetd.db");
 var db = openDb(DB_FILE);
-var core = createCore(db, { port: PORT });
+var core = createCore(db, { port: PORT, version });
 var MDNS_ENABLED = LAN_MODE && process.env.FLEETDECK_MDNS?.trim().toLowerCase() !== "off";
 var LAN_INFO = LAN_MODE ? {
   enabled: true,
@@ -9101,7 +9378,7 @@ var { server } = createHttp(core, {
   lan: LAN_INFO,
   // the Phase 1 spike board, kept verbatim at GET /plain; the real board
   // (GET / + /assets/*) is served from board-dist, resolved inside http.mjs
-  boardFile: path8.join(__dirname, "board.html"),
+  boardFile: path9.join(__dirname, "board.html"),
   version,
   // validation aid: first 3 raw payloads per hook event → HOME/hook-payloads.jsonl
   capture: createPayloadCapture(HOME)
@@ -9140,6 +9417,14 @@ var mdns = null;
 server.listen(PORT, BIND, () => {
   const boundHost = BIND.includes(":") && !BIND.startsWith("[") ? `[${BIND}]` : BIND;
   console.log(`fleetd up on http://${boundHost}:${PORT} (pid ${process.pid}, db ${DB_FILE})`);
+  const replacedVersion = process.env.FLEETDECK_REPLACED;
+  if (replacedVersion) {
+    console.log(`fleetd v${version} replaced v${replacedVersion} (plugin upgrade takeover)`);
+    try {
+      core.tick(`\u2B06\uFE0F fleetd v${version} replaced v${replacedVersion}`);
+    } catch {
+    }
+  }
   if (LAN_MODE) {
     const addresses = lanAddresses();
     for (const address of addresses) {

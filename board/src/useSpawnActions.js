@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
-import { reviveSpawn, enableRemote, reasonOf } from './api.js';
+import { reviveSpawn, enableRemote, adoptSession, reasonOf } from './api.js';
 
 // M-F2 — revive and enable-remote used to be implemented TWICE: once on the
 // card chip (App) and once in the drawer's OWNED PANE (Drawer), each with its
@@ -24,9 +24,15 @@ export function useSpawnActions() {
   const revRef = useRef(new Set());
   const enRef = useRef(new Set());
   const allRef = useRef(false);
+  // v2.0 Move-to-tmux — the adopt/arm/disarm in-flight guard. Keyed on
+  // SESSION_ID, not spawn_id: the card being moved has NO spawn row yet (that is
+  // the whole point), so the lock is the session. adopt, arm and disarm all POST
+  // to the same endpoint on the same session, so they share ONE lock.
+  const adoptRef = useRef(new Set());
   const [reviving, setReviving] = useState(() => new Set());
   const [enabling, setEnabling] = useState(() => new Set());
   const [revivingAll, setRevivingAll] = useState(false);
+  const [adopting, setAdopting] = useState(() => new Set());
 
   const revive = useCallback(async (s, onResult) => {
     const id = s?.spawn?.spawn_id;
@@ -100,5 +106,29 @@ export function useSpawnActions() {
     }
   }, []);
 
-  return { reviving, enabling, revivingAll, revive, reviveAll, enableRemote: enable };
+  // v2.0 Move-to-tmux — the single POST owner for adopt / arm / disarm. `body`
+  // picks the intent ({} or {dangerously_skip_permissions:true} to adopt-or-arm,
+  // {disarm:true} to disarm); the daemon decides adopt-vs-arm from the session's
+  // own liveness. M-F2 — one owner, shared by the card chip AND the drawer (via
+  // useFleetActions), so whichever surface fires first takes the per-session lock
+  // and the other is a no-op until it resolves. onResult carries the branch the
+  // daemon took so the reporter can say "moved" vs "armed" vs the reason.
+  const adopt = useCallback(async (s, body, onResult) => {
+    const id = s?.session_id;
+    if (!id || adoptRef.current.has(id)) return;
+    adoptRef.current.add(id);
+    setAdopting(new Set(adoptRef.current));
+    try {
+      const res = await adoptSession(id, body || {});
+      const ok = res.ok && res.json?.ok !== false;
+      onResult?.(ok
+        ? { ok: true, adopted: !!res.json?.adopted, armed: !!res.json?.armed }
+        : { ok: false, reason: reasonOf(res) });
+    } finally {
+      adoptRef.current.delete(id);
+      setAdopting(new Set(adoptRef.current));
+    }
+  }, []);
+
+  return { reviving, enabling, revivingAll, adopting, revive, reviveAll, enableRemote: enable, adopt };
 }

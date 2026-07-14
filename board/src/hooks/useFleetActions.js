@@ -11,12 +11,18 @@ import { safeUrl } from '../util.js';
 //
 // showNote comes from useFeedbackStrip; the spawn actions come from
 // useSpawnActions (App holds one instance and shares it with the drawer too).
-export function useFleetActions({ showNote, revive, reviveAll, enableRemoteAction }) {
+export function useFleetActions({ showNote, revive, reviveAll, enableRemoteAction, adopt }) {
   const [clearing, setClearing] = useState(false);
   // v1.8 kill — the card chip and the drawer button both open ONE dialog; the
   // POST only fires from its hazard button. null | {spawnId, callsign, window, alive}
   const [killAsk, setKillAsk] = useState(null);
   const [killBusy, setKillBusy] = useState(false);
+  // v2.0 Move-to-tmux — the card chip (offline 'now' OR live 'arm') opens ONE
+  // dialog; the POST fires only from its confirm button. null | {sessionId,
+  // callsign, live}. `live` picks the dialog's copy variant AND, on the daemon,
+  // whether the click adopts now or arms a deferred move.
+  const [armAsk, setArmAsk] = useState(null);
+  const [armBusy, setArmBusy] = useState(false);
 
   // Fix D — the daemon archives offline sessions, expires their mail/questions,
   // kills dead scoped panes, and LISTS (never deletes) orphaned worktrees for
@@ -124,9 +130,70 @@ export function useFleetActions({ showNote, revive, reviveAll, enableRemoteActio
     setKillAsk(null);
   };
 
+  // v2.0 Move-to-tmux — report the branch the daemon took onto the shared strip.
+  // A single POST can come back adopted (ended card → moved now) or armed (live
+  // card → deferred until you exit the CLI), and either can fail; all three land
+  // here so the copy stays in one place.
+  const reportAdopt = useCallback((label, r) => {
+    if (!r.ok) {
+      showNote({ hd: '✗ MOVE', err: `${label} — ${r.reason}` }, 8000);
+    } else if (r.armed) {
+      // the move is deferred: nothing appears until the human exits the CLI
+      showNote({ hd: '⧗ ARMED', msg: `${label} — armed; exit this session in your terminal to complete the move · the arm expires in ~30 min` }, 8000);
+    } else {
+      showNote({ hd: '✓ MOVE', msg: `${label} — moving to tmux; the card returns to QUEUED` }, 8000);
+    }
+  }, [showNote]);
+
+  // Fire the adopt/arm POST through the shared single-owner action (per-session
+  // lock in useSpawnActions). skip → dangerously_skip_permissions:true (the
+  // dialog's two-step unsupervised gate); the safe default sends {}. Awaits the
+  // action's OWN promise (which always resolves — even on an in-flight
+  // early-return) so the dialog can close without ever hanging on the strip
+  // reporter, which only fires when a POST actually went out.
+  const doAdopt = useCallback(async (s, { skip } = {}) => {
+    await adopt(s, skip ? { dangerously_skip_permissions: true } : {}, (r) => {
+      reportAdopt(s.callsign || s.session_id, r);
+    });
+  }, [adopt, reportAdopt]);
+
+  // Open the Move-to-tmux dialog. Both eligibility states funnel here: an ended
+  // 'now' card and a live 'arm' card open the SAME dialog, differing only in the
+  // copy `live` selects — the daemon, not the board, decides adopt-vs-arm.
+  const askArm = useCallback((s) => {
+    if (!s?.session_id) return;
+    setArmAsk({
+      sessionId: s.session_id,
+      callsign: s.callsign || s.session_id,
+      live: s.col !== 'offline',
+    });
+  }, []);
+  // The dialog's confirm — mirrors doKill: hold the dialog (armBusy) through the
+  // POST, then close on completion (success OR failure; the reason lands on the
+  // strip either way). `skip` comes from the dialog's unsupervised gate.
+  const doArm = useCallback(async (skip) => {
+    const a = armAsk;
+    if (!a || armBusy) return;
+    setArmBusy(true);
+    await doAdopt({ session_id: a.sessionId, callsign: a.callsign }, { skip });
+    setArmBusy(false);
+    setArmAsk(null);
+  }, [armAsk, armBusy, doAdopt]);
+
+  // The armed chip's click: cancel the deferred move immediately, no dialog
+  // (nothing hazardous is being undone — worst case is a card that stays put).
+  const doDisarm = useCallback((s) => {
+    const label = s.callsign || s.session_id;
+    adopt(s, { disarm: true }, (r) => {
+      if (!r.ok) showNote({ hd: '✗ MOVE', err: `${label} — ${r.reason}` }, 8000);
+      else showNote({ hd: '✓ DISARMED', msg: `${label} — move canceled; the card stays where it is` }, 8000);
+    });
+  }, [adopt, showNote]);
+
   return {
     clearing, doClear,
     killAsk, setKillAsk, killBusy, askKill, doKill,
+    armAsk, setArmAsk, armBusy, askArm, doArm, doDisarm,
     doRevive, doReviveAll, doEnableRemote,
   };
 }

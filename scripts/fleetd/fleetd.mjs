@@ -17,6 +17,10 @@ import { createHttp, isLoopbackAddress } from './http.mjs';
 import { startAgentsPoll } from './agents-poll.mjs';
 import { createPayloadCapture } from './payload-capture.mjs';
 import { createMdns } from './mdns.mjs';
+// HOME-ownership pid helpers now live in takeover.mjs (the version-takeover
+// contract), so the daemon's own claimHome lock and the SessionStart hook's
+// evict-a-stale-daemon path share one implementation and can never drift.
+import { pidRecord, pidIsLive, livePidLooksLikeFleetd } from './takeover.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.FLEETDECK_PORT || 4711);
@@ -56,44 +60,6 @@ try { fs.mkdirSync(HOME, { recursive: true }); } catch (err) {
 
 const PID_FILE = path.join(HOME, 'fleetd.pid');
 let ownsPidFile = false;
-
-function pidRecord(text) {
-  try {
-    const parsed = JSON.parse(String(text));
-    if (Number.isInteger(parsed?.pid) && parsed.pid > 0) {
-      return { pid: parsed.pid, port: Number.isInteger(parsed.port) ? parsed.port : null };
-    }
-  } catch { /* pre-port fleetd.pid was a plain PID; accept it below */ }
-  const pid = Number(String(text).trim());
-  return Number.isInteger(pid) && pid > 0 ? { pid, port: null } : null;
-}
-
-function pidIsLive(pid) {
-  try { process.kill(pid, 0); return true; } catch (err) {
-    // EPERM means the process exists but belongs to another user. Treat that as
-    // live: opening its database would be unsafe even though we cannot signal it.
-    return err?.code !== 'ESRCH';
-  }
-}
-
-function livePidLooksLikeFleetd(pid) {
-  if (process.platform !== 'linux') return true;
-  try {
-    // `/proc/<pid>/comm` is the main thread name, not a stable executable
-    // identity: Node 24 names it `MainThread` instead of `node`. Resolve the
-    // executable symlink so upgrades cannot make a live fleetd look recycled.
-    const executable = path.basename(fs.readlinkSync(`/proc/${pid}/exe`)).replace(/ \(deleted\)$/, '');
-    const argv = fs.readFileSync(`/proc/${pid}/cmdline`).toString('utf8').split('\0').filter(Boolean);
-    const nodeLike = /^(?:node|nodejs|fleetd)$/i.test(executable);
-    const fleetdScript = argv.some(arg => /(?:^|[/\\])fleetd(?:\.bundle)?\.mjs$/.test(arg));
-    return nodeLike && fleetdScript;
-  } catch (err) {
-    // WHY ENOENT is decisive: the PID died after kill(0), so it no longer owns
-    // HOME. Permission and transient I/O failures are not decisive; retaining
-    // the lock is safer than opening a live daemon's SQLite database twice.
-    return err?.code !== 'ENOENT';
-  }
-}
 
 function removeOwnedPidFile() {
   if (!ownsPidFile) return;
@@ -185,9 +151,18 @@ if (LAN_MODE && !TOKEN) {
 }
 
 let version = '0.0.0';
-try {
-  version = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../package.json'), 'utf8')).version || version;
-} catch { /* standalone install; /health just reports 0.0.0 */ }
+// Test-only override: FLEETDECK_VERSION_OVERRIDE lets the takeover suite stand
+// up an "older" or "newer" daemon deterministically without editing (or
+// depending on the current value of) package.json. Trimmed, and it wins over
+// the package.json read below when present. Production installs never set it.
+const versionOverride = process.env.FLEETDECK_VERSION_OVERRIDE?.trim();
+if (versionOverride) {
+  version = versionOverride;
+} else {
+  try {
+    version = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../package.json'), 'utf8')).version || version;
+  } catch { /* standalone install; /health just reports 0.0.0 */ }
+}
 
 // mDNS name: `fleetdeck.local` by default, so a peer can reach the board
 // without knowing an IP. Peers running their OWN fleet would collide on that
@@ -201,7 +176,7 @@ function mdnsInstanceName() {
 
 const DB_FILE = path.join(HOME, 'fleetd.db');
 const db = openDb(DB_FILE);
-const core = createCore(db, { port: PORT }); // holdMs resolves from FLEETDECK_HOLD_MS inside
+const core = createCore(db, { port: PORT, version }); // holdMs resolves from FLEETDECK_HOLD_MS inside
 
 // The board's share panel owns the complete credentialed URLs. Startup logs only
 // describe the same endpoints with the credential deliberately redacted.
@@ -263,6 +238,17 @@ let mdns = null;
 server.listen(PORT, BIND, () => {
   const boundHost = BIND.includes(':') && !BIND.startsWith('[') ? `[${BIND}]` : BIND;
   console.log(`fleetd up on http://${boundHost}:${PORT} (pid ${process.pid}, db ${DB_FILE})`);
+  // Upgrade-takeover banner: a SessionStart hook set FLEETDECK_REPLACED to the
+  // version it SIGTERMed (and waited for the death of) before spawning us onto
+  // the freed port — see takeover.mjs. Surface the handoff both in fleetd.log
+  // and on the board feed so an automatic upgrade is observable, not silent.
+  const replacedVersion = process.env.FLEETDECK_REPLACED;
+  if (replacedVersion) {
+    console.log(`fleetd v${version} replaced v${replacedVersion} (plugin upgrade takeover)`);
+    // The ticker write is best-effort: a banner must never crash the listen
+    // callback (an uncaught throw here would take the fresh daemon down).
+    try { core.tick(`⬆️ fleetd v${version} replaced v${replacedVersion}`); } catch { /* feed line is non-essential */ }
+  }
   if (LAN_MODE) {
     // LOG CREDENTIAL CONTRACT: the real query-bearing URLs live in the board's
     // share panel. stdout is commonly redirected to fleetd.log (often 0644), so

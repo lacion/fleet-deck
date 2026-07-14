@@ -1,7 +1,7 @@
 import React from 'react';
 import Sparkline from './Sparkline.jsx';
 import { Age } from '../clock.jsx';
-import { basename, prettyModel, modelShort, modelFamily, safeUrl, spawnTermable, spawnKillable, spawnRemoteAvailable, colPulse, worktreeLabel } from '../util.js';
+import { basename, prettyModel, modelShort, modelFamily, safeUrl, spawnTermable, spawnKillable, spawnRemoteAvailable, colPulse, worktreeLabel, adoptableNow, adoptArmable, adoptArmed } from '../util.js';
 
 // How queued mail will reach this session (snapshot mail_meta[sid].route).
 // watcher/pane deliver without the human doing anything; the other two wait.
@@ -24,6 +24,7 @@ const MAIL_HINT = {
 function SessionCard({
   s, compact, mailCount, mailMeta, conflictFiles, conflictPeers, ripple, priority, onOpen, onOpenTerm,
   onRevive, reviving, onEnableRemote, enablingRemote, onKill, onToggleWatch, watched,
+  onArmMove, onDisarm, adopting,
 }) {
   const offline = s.col === 'offline';
   const needsyou = s.col === 'needsyou';
@@ -60,7 +61,15 @@ function SessionCard({
   // v1.9 — tick an agent into the wall of screens. Same eligibility as the
   // terminal: only a pane the daemon owns can be watched at all.
   const canWatch = !!onToggleWatch && spawnTermable(s);
-  const hasActs = canTerm || canKill || canWatch;
+  // v2.0 Move-to-tmux — the FIRST action a non-`s.spawn` card ever shows (a plain
+  // `claude` in your own terminal had zero card actions before this). `canMove`
+  // opens the confirm dialog (offline 'now' → immediate copy, live 'arm' →
+  // deferred copy); `isArmed` means a deferred move is waiting and the chip
+  // becomes a one-click disarm (no dialog — nothing hazardous is undone).
+  const canMove = !!onArmMove && (adoptableNow(s) || adoptArmable(s));
+  const isArmed = !!onDisarm && adoptArmed(s);
+  const canAdopt = canMove || isArmed;
+  const hasActs = canTerm || canKill || canWatch || canAdopt;
 
   const cls = [
     'fd-card',
@@ -195,6 +204,33 @@ function SessionCard({
         // <button>s now (raised above the card's open-drawer overlay), so they
         // no longer need role/tabIndex/onKeyDown or a stopPropagation guard.
         <span className="fd-cardacts">
+          {canAdopt && (
+            // v2.0 — move-to-tmux, the first action on a non-board card. R3-3:
+            // a real <button> raised above the card's open-drawer overlay (the
+            // .fd-actbtn z-index rule already covers it). Armed → click disarms
+            // immediately; otherwise → opens the confirm dialog.
+            isArmed ? (
+              <button
+                type="button"
+                className={`fd-actbtn move armed${adopting ? ' busy' : ''}`}
+                disabled={adopting}
+                title="a move is armed — exit this session in your terminal and fleetdeck resumes it in a board-owned pane; click to cancel the move"
+                onClick={() => onDisarm(s)}
+              >
+                {adopting ? 'canceling…' : '⧗ armed — exit CLI to move'}
+              </button>
+            ) : (
+              <button
+                type="button"
+                className={`fd-actbtn move${adopting ? ' busy' : ''}`}
+                disabled={adopting}
+                title="move this session into a board-owned tmux pane so you can drive it from the board"
+                onClick={() => onArmMove(s)}
+              >
+                {adopting ? 'moving…' : '⇥ move to tmux'}
+              </button>
+            )
+          )}
           {canTerm && (
             <button
               type="button"

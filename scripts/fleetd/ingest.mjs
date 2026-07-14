@@ -77,6 +77,7 @@ export function createIngest(ctx) {
           note: 'seen via agents CLI',
           last_seen: Date.now(),
           ended_at: null, // reappearance revives an absence-tombstoned card
+          end_reason: null, // and clears the absence guess stamped below
         });
         onMutate();
       }
@@ -93,6 +94,11 @@ export function createIngest(ctx) {
         col: 'offline',
         note: 'no longer reported by agents CLI',
         ended_at: Date.now(),
+        // Absence from one registry poll is a GUESS, not proof of death (the
+        // registry is documented-unreliable, trust rules above). Stamp it like
+        // retention's silence guess so move-to-tmux's adopt-now allowlist
+        // refuses it — resuming a still-live CLI is a duplicate billed session.
+        end_reason: 'presumed',
       });
       tick(`${s.callsign} left the fleet (agents CLI)`);
       onMutate();

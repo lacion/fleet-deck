@@ -5,11 +5,11 @@
 // facts (hasWatchWaiter/ownedPaneRow), spawnCapability + spawnState from the
 // spawn module. spawnRowRevivable is a pure helper.
 
-import { spawnRowRevivable } from './helpers.mjs';
+import { spawnRowRevivable, sessionAdoptableNow } from './helpers.mjs';
 
 export function createSnapshot(ctx) {
   const {
-    q, t0, STALE_MS, RETAIN_LEDGER_MS, SNAPSHOT_FILES_PER_SESSION,
+    q, t0, version, STALE_MS, RETAIN_LEDGER_MS, SNAPSHOT_FILES_PER_SESSION,
     questions, hasWatchWaiter, ownedPaneRow, spawnCapability, spawnState,
   } = ctx;
 
@@ -55,6 +55,26 @@ export function createSnapshot(ctx) {
     const sessions = visible.map(s => {
       const sp = spawnBySid.get(s.session_id);
       const pending = pendingBySid.get(s.session_id);
+      // 0.7.0 Move-to-tmux (adopt) eligibility. ANY spawn row — dead or alive —
+      // means the board owns this session's pane story: revive owns dead
+      // lineages, so an adopted/spawned card is never ALSO adopt-eligible (a
+      // second lineage would fight the first over the window and worktree
+      // bookkeeping). Cost mirrors the spawn.revivable note below:
+      // sessionAdoptableNow's two fs probes run ONLY on the offline branch (a
+      // live card takes the no-fs 'arm' path), and a fleet has a handful of
+      // rows by design — deliberately uncached so move-to-tmux feedback stays
+      // immediate. The `adopt` object is ALWAYS emitted (armed/deadline are
+      // meaningful even when eligible is null); board-owned cards simply carry
+      // eligible:null.
+      const adoptEligible = s.ended_at != null
+        ? (sessionAdoptableNow(s, !!sp) ? 'now' : null)
+        : (s.source === 'hooks' && !sp ? 'arm' : null);
+      const adopt = {
+        eligible: adoptEligible,
+        armed: s.adopt_armed_until != null && s.adopt_armed_until > now,
+        armed_until: s.adopt_armed_until ?? null,
+        armed_skip: !!s.adopt_armed_skip,
+      };
       return {
         session_id: s.session_id,
         callsign: s.callsign,
@@ -107,6 +127,12 @@ export function createSnapshot(ctx) {
             revivable: spawnRowRevivable(sp),
           },
         } : {}),
+        // 0.7.0 Move-to-tmux: {eligible:'now'|'arm'|null, armed, armed_until,
+        // armed_skip}. 'now' = adopt this offline card immediately; 'arm' = live
+        // card, remember the click and move it when the CLI exits; null = not a
+        // move-to-tmux candidate right now (board-owned, presumed dead, or a
+        // live non-hooks card). armed reflects a live, unexpired arm.
+        adopt,
       };
     });
     const repoMap = new Map();
@@ -139,6 +165,9 @@ export function createSnapshot(ctx) {
     return {
       up_ms: now - t0,          // spike name, preserved
       uptime_ms: now - t0,      // contract addition
+      // Which build is serving the board — pairs with /health's version so an
+      // upgrade takeover is visible in the footer without a second fetch.
+      version,
       sessions,
       repos: [...repoMap.values()],
       ticker: q.recentTicker.all(),

@@ -9,7 +9,7 @@
 // that spawn it will simply fail/skip until the sibling daemon lands; that is
 // expected and not a bug in this harness.
 
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -116,6 +116,7 @@ export function spawnRaw({
   child.stderr.on('data', d => { stderr += d; });
   return {
     proc: child,
+    tmuxSocket: childEnv.FLEETDECK_TMUX_SOCKET,
     get stdout() { return stdout; },
     get stderr() { return stderr; },
     waitForExit: (timeoutMs) => waitForExit(child, timeoutMs),
@@ -166,6 +167,19 @@ export async function startDaemon({
     get stderr() { return raw.stderr; },
     async stop({ keepHome = false } = {}) {
       await raw.kill();
+      // tmux servers outlive the daemon that started them: any test whose
+      // daemon touched the real tmux path left a live
+      // `tmux -L fleetdeck-test-<port>` server behind forever — observed
+      // 2026-07-14: 89 leaked servers from the previous day's suite runs,
+      // four still hosting live claude panes that haunted the production
+      // board as ghost cards. Guarded to test-owned sockets so a test that
+      // points FLEETDECK_TMUX_SOCKET at a shared server can never have that
+      // server killed from here.
+      if (raw.tmuxSocket?.startsWith('fleetdeck-test-')) {
+        try {
+          spawnSync('tmux', ['-L', raw.tmuxSocket, 'kill-server'], { stdio: 'ignore', timeout: 3000 });
+        } catch { /* best-effort: no server on the socket is the common case */ }
+      }
       if (!keepHome) {
         rmSync(home, { recursive: true, force: true });
       }

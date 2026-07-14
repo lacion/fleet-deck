@@ -35,6 +35,45 @@ export function spawnRowRevivable(row) {
     && fs.existsSync(claudeTranscriptPath(runCwd, row.session_id));
 }
 
+// 0.7.0 Move-to-tmux: the "adopt NOW" predicate (snapshot `adopt.eligible ===
+// 'now'`), shared by the snapshot and adoptSession so both agree on exactly
+// when an OFFLINE card can be resumed into a board pane immediately:
+//   • a hook-PROVEN end — ended_at set AND end_reason names a real hook end.
+//     end_reason is an ALLOWLIST, not a blocklist: NULL means "no provenance
+//     stamped" (a pre-0.7.0 row, an agents-cli absence guess, or one of the
+//     tombstone writers that condemn without proof — liveness condemn,
+//     reconcile-gone). Absence of proof is not proof of death: `claude
+//     --resume` against a still-live CLI is a duplicate billed session, so
+//     only 'presumed'-or-NULL-free rows are adopt-now-eligible (arm the rest —
+//     truly dead cards just let the arm expire).
+//   • ZERO spawn lineage — not merely "no ACTIVE row". Any spawn row, dead or
+//     alive, means the board owns this session's pane story: revive owns dead
+//     lineages (a second lineage would fight the first over the window and the
+//     worktree bookkeeping).
+//   • resume evidence still on disk: cwd is a DIRECTORY (statSync, matching
+//     adoptSession's enforcement exactly — existsSync would pass a regular
+//     file the launch then 410s on) + transcript exists. runCwd is
+//     sessions.cwd (what claudeTranscriptPath munges), NEVER sessions.worktree.
+// Two fs probes — same uncached cost contract as spawnRowRevivable; the
+// snapshot runs it ONLY for offline cards (a live card takes the no-fs 'arm'
+// path), so a frame never fs-probes the whole fleet.
+export function cwdIsDirectory(p) {
+  if (!p) return false;
+  try { return fs.statSync(p).isDirectory(); } catch { return false; }
+}
+
+export function sessionAdoptableNow(session, hasSpawnRow) {
+  if (!session) return false;
+  if (session.ended_at == null) return false;  // still live → arm, not now
+  if (session.end_reason == null || session.end_reason === 'presumed') {
+    return false;                              // no proof of death → arm, not now
+  }
+  if (hasSpawnRow) return false;               // board-owned lineage → revive owns it
+  const cwd = session.cwd;
+  return cwdIsDirectory(cwd)
+    && fs.existsSync(claudeTranscriptPath(cwd, session.session_id));
+}
+
 // CONTRACT: fresh spawn and revive share one environment wrapper. This is
 // the single source of truth for inherited-agent/fleet scrubbing; callers add
 // only the Claude invocation and its operation-specific argv. The Claude/agent
@@ -51,6 +90,13 @@ export function claudeEnvArgvPrefix(port, home) {
     'FLEETDECK_WATCH_POLL_MS', 'FLEETDECK_SPAWN_REGISTER_MS',
     'FLEETDECK_PANE_MAIL_GRACE_MS', 'FLEETDECK_PRESUME_DEAD_MS',
     'FLEETDECK_RETAIN_OFFLINE_MS', 'FLEETDECK_RC_HARVEST_MS',
+    'FLEETDECK_ADOPT_ARM_MS', 'FLEETDECK_ADOPT_DELAY_MS',
+    // Test seams that must NEVER ride a pane's env into the next SessionStart:
+    // a leaked FLEETDECK_TEST_DAEMON_SCRIPT would make every future daemon
+    // (re)spawn launch an arbitrary script, and a leaked VERSION_OVERRIDE
+    // permanently skews the upgrade-takeover comparison (the 2026-07-11 tmux
+    // env-poisoning scar, new tenants).
+    'FLEETDECK_TEST_DAEMON_SCRIPT', 'FLEETDECK_VERSION_OVERRIDE',
   ];
   return [
     'env', ...scrub.flatMap(name => ['-u', name]),

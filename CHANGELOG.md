@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-14
+
+### Added
+
+- **Move to tmux.** A `⇥ move to tmux` chip on cards the board didn't spawn (plain-CLI and other hook-tracked sessions) adopts the session into a board-owned tmux pane via `claude --resume <session-id>` — same session id, same card, full history, and afterwards it's a first-class fleet worker (terminal modal, revive, kill, mail-to-pane). An ended card moves immediately; a live card is **armed** and moves the moment you exit it in your terminal. The arm is durable intent consumed exactly once: it lives in SQLite (not in a timer), a disarm wins even in the settling moment right after you exit, a session that comes back alive cancels the move instead of leaving a standing order, and a daemon death mid-move (crash or upgrade takeover) is recovered by the next boot's sweep. It expires after ~30 minutes (`FLEETDECK_ADOPT_ARM_MS`), and a `/clear` keeps it, since the session is still live. The dialog carries the same asks-twice unsupervised gate as the Spawn form for keeping `--dangerously-skip-permissions` across the move. Refusals are honest: **409** when the session has any spawn lineage, alive or dead (the board owns its pane story — ⟲ revive is that button, and a card never offers both), **409** when nothing ever *proved* the CLI exited (a 3h-silence guess, an agents-CLI absence, or a pre-0.7.0 row with no provenance — a quietly-alive session must never be resumed into a second billed session; arm it instead), and **410** when the cwd or transcript is gone. New endpoint: `POST /api/sessions/:session_id/adopt`.
+- **Plugin upgrades take effect automatically.** A SessionStart hook from a newer plugin version now replaces a stale daemon on port 4711: verify (the /health pid must match the HOME pidfile and look fleetd-shaped) → SIGTERM (the existing graceful shutdown; state is SQLite and survives) → boot the newer build, announced in the board ticker (`⬆️ fleetd vX replaced vY`). Strictly newer only — never a downgrade, never on an unparseable/standalone `0.0.0` version — and every uncertain path fails open onto the running daemon. Manual restarts remain fine. (`FLEETDECK_VERSION_OVERRIDE` exists for the test suite only.)
+- The daemon version is now in the `/state` snapshot and shown in the board header, so you can see at a glance which build is serving you.
+
+### Changed
+
+- Session ends now carry provenance (`sessions.end_reason`): a real hook end records its reason, retention's 3h-silence guess records `presumed`, and the agents-CLI absence sweep — which is likewise a guess, from a registry that is documented-unreliable — now records `presumed` too. Move-to-tmux treats this as an allowlist: only a proven end may be resumed immediately.
+
+**Upgrade note:** additive schema migration — three nullable columns (`adopt_armed_until`, `adopt_armed_skip`, `end_reason`) on the `sessions` table. Offline cards that predate 0.7.0 carry no end provenance, so they are never offered an immediate move-to-tmux (arm them instead, or revive them if the board spawned them). This is the last upgrade that needs a manual daemon restart to load; from here on the takeover does it for you.
+
 ## [0.6.0] - 2026-07-13
 
 ### Added
@@ -122,7 +136,8 @@ Initial public release.
 - A brainless orchestrator: `assign auto` routes a task to the best existing session with a SQL query, not a model call — the core makes zero model calls.
 - One-command plugin install with a self-contained daemon bundle (`node:sqlite` state, nothing to `npm install`); the first session's SessionStart hook elects and launches the daemon. MIT licensed.
 
-[unreleased]: https://github.com/lacion/fleet-deck/compare/v0.6.0...HEAD
+[unreleased]: https://github.com/lacion/fleet-deck/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/lacion/fleet-deck/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/lacion/fleet-deck/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/lacion/fleet-deck/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/lacion/fleet-deck/releases/tag/v0.5.0
