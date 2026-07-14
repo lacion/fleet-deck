@@ -1,13 +1,16 @@
 // commands.mjs — the POST /command surface (broadcast / assign / assign auto /
-// note). parseCommand is a pure helper; the deterministic auto-routing policy
-// lives in q.autoCandidate. Threaded ctx state: q, mail, resolveTargets, tick,
-// onMutate.
+// ticket / name / note). parseCommand is a pure helper; the deterministic
+// auto-routing policy lives in q.autoCandidate. Threaded ctx state: q, mail,
+// resolveTargets, tick, onMutate, applyTicket, applyCustomName.
 
-import { parseCommand } from './helpers.mjs';
+import { parseCommand, validateNameSuffix } from './helpers.mjs';
 import { normalizeTicket } from './tickets.mjs';
 
 export function createCommands(ctx) {
-  const { q, mail, resolveTargets, tick, onMutate, applyTicket, updateSession } = ctx;
+  const {
+    q, mail, resolveTargets, tick, onMutate, applyTicket, updateSession,
+    applyCustomName, // 0.7.1 `name <target> <suffix|clear>`
+  } = ctx;
 
   // `ticket <target> clear`: drop the ticket and pin the auto path off. Setting
   // ticket_source='manual' (never NULL) is what makes "no ticket" stick — a
@@ -120,6 +123,28 @@ export function createCommands(ctx) {
         }
         result = applyTicket(resolved.sid, key, 'manual');
       }
+      logCommand({ result });
+      onMutate();
+      return { session_id: resolved.sid, ...result };
+    } else if (parsed.cmd === 'name') {
+      // 0.7.1 custom names — the `ticket` branch's twin, same contract: every
+      // exit is {ok:false, reason} or {session_id, ...renameResult}, and a
+      // malformed rename is NEVER filed as a note. The human owns the suffix;
+      // the animal is not theirs to choose, so it is not in the grammar.
+      if (parsed.error) { logCommand(); onMutate(); return { ok: false, reason: parsed.error }; }
+      if (parsed.target === 'all' || /^repo:/.test(parsed.target)) {
+        logCommand();
+        onMutate();
+        return { ok: false, reason: 'name targets one session — not all/repo:*' };
+      }
+      const resolved = resolveTicketTarget(parsed.target);
+      if (resolved.error) { logCommand(); onMutate(); return { ok: false, reason: resolved.error }; }
+      const clearing = /^clear$/i.test(parsed.suffix);
+      if (!clearing) {
+        const bad = validateNameSuffix(parsed.suffix);
+        if (bad) { logCommand(); onMutate(); return { ok: false, reason: bad }; }
+      }
+      const result = applyCustomName(resolved.sid, clearing ? null : parsed.suffix);
       logCommand({ result });
       onMutate();
       return { session_id: resolved.sid, ...result };

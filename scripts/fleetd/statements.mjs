@@ -29,6 +29,50 @@ export function createStatements(db) {
       (session_id, callsign, cwd, repo_id, repo_name, branch, worktree, col, note, task, events, started_at, last_seen, blocked_this_turn, source)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 0, 'agents-cli')`),
     setBlocked: db.prepare('UPDATE sessions SET blocked_this_turn = ? WHERE session_id = ?'),
+    // 0.7.1 /clear succession. The CLI forks a new session id on /clear, and
+    // nothing in the SessionStart payload names the predecessor — so the link is
+    // inferred: same cwd, a /clear stamped moments ago, not already succeeded,
+    // still on the board. Ordered so the caller can apply the tie-break rule
+    // (prefer the candidate holding a pane; else the most recent clear).
+    clearedPredecessors: db.prepare(`SELECT * FROM sessions
+      WHERE cwd = ? AND cleared_at IS NOT NULL AND cleared_at > ?
+        AND succeeded_by IS NULL AND ended_at IS NULL AND archived_at IS NULL
+        AND session_id != ?
+      ORDER BY cleared_at DESC`),
+    // The pane follows the session across a /clear. Only NON-terminal rows move:
+    // the live pane is the successor's to drive, while terminal history stays
+    // with the id that actually lived it. spawns.callsign / tmux_window are
+    // deliberately NOT rewritten — the successor INHERITS the callsign, so the
+    // frozen window name still matches windowName(port, callsign).
+    reassignActiveSpawns: db.prepare(`UPDATE spawns SET session_id = ?
+      WHERE session_id = ? AND status IN ('provisioning', 'spawning', 'stalled', 'live')`),
+    // Undelivered mail follows the card, not the id the human never sees.
+    reassignPendingMail: db.prepare(`UPDATE mail SET to_session = ?
+      WHERE to_session = ? AND delivered_at IS NULL AND expired_at IS NULL`),
+    // The human's surviving question queue follows too (hold-kind rows were
+    // already expired by hookSessionEnd's expireAllForSession on the /clear).
+    reassignPendingQuestions: db.prepare(`UPDATE questions SET session_id = ?
+      WHERE session_id = ? AND status = 'pending'`),
+    // The file ledger follows as well, and this one is not bookkeeping: the
+    // conflict radar counts a rival as "a DIFFERENT session_id whose row still
+    // exists" (ledger.mjs). The retired predecessor's row does still exist
+    // (archived, not deleted), so leaving its touches behind would make the
+    // successor collide with its own past self — a hazard banner reading
+    // "wren-a9e1 and wren-a9e1 both touching X".
+    reassignTouches: db.prepare('UPDATE file_touches SET session_id = ? WHERE session_id = ?'),
+    // Boot heal (reconcileClearForks): pre-0.7.1 rows have no cleared_at, so a
+    // stranded pair is reconstructed from the event log instead. These two read
+    // the 24h-retained events table.
+    lastEventOf: db.prepare(`SELECT hook_event, note, at FROM events
+      WHERE session_id = ? ORDER BY at DESC LIMIT 1`),
+    clearBornSessionsSince: db.prepare(`SELECT DISTINCT e.session_id, e.at FROM events e
+      WHERE e.hook_event = 'SessionStart' AND e.note = 'session clear' AND e.at BETWEEN ? AND ?
+      ORDER BY e.at ASC`),
+    // A session can be succeeded by exactly ONE heir, and an heir can continue
+    // exactly ONE lineage. Without this, the boot heal could hand the same heir
+    // to two different predecessors — merging two unrelated conversations onto
+    // one card, which is strictly worse than the split it set out to fix.
+    successorClaimed: db.prepare('SELECT session_id FROM sessions WHERE succeeded_by = ? LIMIT 1'),
     insertTouch: db.prepare('INSERT INTO file_touches (repo_id, rel_path, abs_path, session_id, worktree, at) VALUES (?, ?, ?, ?, ?, ?)'),
     recentTouches: db.prepare('SELECT * FROM file_touches WHERE repo_id = ? AND rel_path = ? AND at > ? ORDER BY at'),
     // M-G1: windowed by time. The snapshot GROUP-BY used to scan the WHOLE
@@ -211,7 +255,9 @@ export function createStatements(db) {
     // hook-proven end reason are all written through updateSession. No new
     // INSERT — insertProvisionalSpawn already attaches a spawns row to any
     // session_id without minting a card, which is exactly what adopt needs.
-    'adopt_armed_until', 'adopt_armed_skip', 'end_reason'];
+    'adopt_armed_until', 'adopt_armed_skip', 'end_reason',
+    // 0.7.1 /clear succession + custom names.
+    'cleared_at', 'succeeded_by', 'custom_suffix'];
   // M-P8: updateSession is the hottest write path (every hook event runs it
   // one to three times). Each call used to compile a brand-new UPDATE, so
   // SQLite re-parsed and re-planned identical statements forever. The set of

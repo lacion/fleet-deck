@@ -165,6 +165,20 @@ A session's callsign is `<animal>-<4 hex>` by default (`raven-4b7f`) — memorab
 - **One animal per ticket.** A fleet on one branch is the normal case, so every session on `PROJ-123` gets a *different* animal — `otter-PROJ-123`, `falcon-PROJ-123`, `raven-PROJ-123`. When all twelve animals are taken for a ticket, the thirteenth falls back to the hex suffix (a ticker line tells you), and a manual `ticket` command is the recovery.
 - **Spawns name their artifacts ticket-first.** A worker spawned from a `PROJ-123` branch lands in the worktree `<repo>--fd-PROJ-123-<animal>` on branch `fd/PROJ-123-<animal>`, so sibling worktrees and branch lists group by ticket. Ticketless spawns keep today's `<repo>--fd-<callsign>` / `fd/<callsign>` format.
 
+## Name a session yourself
+
+The animal is the fleet's; the ID part is yours. `wren-a9e1` says nothing about what wren is *doing*, so rename it: **`wren-docs-review`**. Click the **✎** chip on the card (or in the drawer), or type `name wren-a9e1 docs-review` into Compose. `name <callsign> clear` puts the automatic name back — the ticket name if the card has a ticket, otherwise the name it was born with.
+
+The animal never changes, and that is deliberate: twelve animals rotating through the fleet is what makes cards recognizable at a glance, and it keeps the one-animal-per-ticket rule intact. Names are letters, digits and dashes (a space or a dot would quietly break the card's own timeline filter and its tmux window name, so they're refused).
+
+**A hand-typed name wins.** Branch ticket auto-detection will never rename over a name you chose — automation doesn't get to overrule you. An explicit `ticket` command still does, because that's you too. And mail addressed to the old name keeps arriving, exactly as with a ticket rename.
+
+## `/clear` keeps your card
+
+Claude Code doesn't keep a session's id across a `/clear` — it ends the old one and starts a fresh one behind the scenes. Fleet Deck follows the handoff: the new session **continues the same card**, with the same callsign, the same tmux pane, the same ticket, the same mailbox and the same armed move-to-tmux. You will see one ticker line saying the context was cleared, and nothing else changes.
+
+(Before 0.7.1 it did not follow: the old card kept the pane while the new one collected the work, which is how a session ended up with a terminal button that drove a card that never updated. If your board still has a pair split that way, upgrading heals it at boot.)
+
 **Upgrading an existing fleet:** as of 0.7.0 this is automatic — the next new session's SessionStart hook notices the running daemon is an older version, asks it to step down (SIGTERM, the same graceful shutdown as ever; state is SQLite, nothing is lost), and boots its own newer build. Strictly newer only, never a downgrade, and if anything about the handoff looks uncertain the hook fails open onto the running daemon. A manual restart still works and is never harmful. After the upgrade, any live session already sitting on a ticket branch renames itself once on its next hook event, and mail addressed to a session's old, pre-rename name still finds it.
 
 ## Retention, and the Clear button
@@ -246,6 +260,7 @@ All optional. Fleet Deck's defaults are the configuration we actually run.
 | `FLEETDECK_RC_HARVEST_MS` | `2500` (2.5 s) | Delay before the daemon reads the pane's scrollback for the `claude.ai` remote-control link. |
 | `FLEETDECK_ADOPT_ARM_MS` | `1800000` (30 min) | How long an armed **move to tmux** waits for you to exit the CLI before it expires. |
 | `FLEETDECK_ADOPT_DELAY_MS` | `750` | Grace after a session's exit before the armed move resumes it, so the CLI can flush its final transcript lines. |
+| `FLEETDECK_CLEAR_SUCCESSION_MS` | `30000` (30 s) | How long after a `/clear` a brand-new session id starting in the same directory is read as that session continuing. |
 | `FLEETDECK_TERM` | on | `off` disables the live terminal (WebSocket + modal) altogether. |
 | `FLEETDECK_TERM_REPAINT_MS` | `80` | Repaint coalescing window for the terminal bridge. |
 | `FLEETDECK_TMUX_SOCKET` | unset | Run every tmux command against a named server (`tmux -L`). Tests and demos only — see the scar story above. |

@@ -14,6 +14,9 @@ import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+// 0.7.1: one validator for the custom-name suffix, shared with the `name`
+// orchestrator command so the REST route and the text command can never drift.
+import { validateNameSuffix } from './helpers.mjs';
 import { WebSocketServer } from 'ws';
 import { createTermBridge } from './termbridge.mjs';
 
@@ -561,6 +564,26 @@ export function createHttp(core, { port, boardFile, version = '0.0.0', capture =
                   json(res, 500, { ok: false, reason: 'internal' });
                 });
               return;
+            }
+            const nameMatch = /^\/api\/sessions\/([^/]+)\/name$/.exec(url.pathname);
+            if (nameMatch) {
+              // 0.7.1 custom names: rename a card's SUFFIX (the animal is never
+              // the human's to choose). {suffix:"docs-review"} renames;
+              // {clear:true} reverts to the automatic name (the ticket name if
+              // the card has a ticket, else the birth <animal>-<sid4>). Same
+              // core write as the `name` orchestrator command, so both surfaces
+              // enforce one set of rules.
+              const body = ev ?? {};
+              const clearing = body.clear === true;
+              if (!clearing && typeof body.suffix !== 'string') {
+                return json(res, 400, { ok: false, reason: 'suffix must be a string (or pass {clear:true})' });
+              }
+              if (!clearing) {
+                const bad = validateNameSuffix(body.suffix);
+                if (bad) return json(res, 400, { ok: false, reason: bad });
+              }
+              const out = core.applyCustomName(nameMatch[1], clearing ? null : body.suffix);
+              return json(res, out.ok ? 200 : 409, out);
             }
             const rcMatch = /^\/api\/spawn\/([A-Za-z0-9-]+)\/rc$/.exec(url.pathname);
             if (rcMatch) {

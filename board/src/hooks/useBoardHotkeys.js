@@ -18,8 +18,8 @@ import { getQuestion } from '../qbus.js';
 // termOpen / killOpen are refs (from useTermWindows) read synchronously so a
 // stale closure over state can't misroute Esc.
 export function useBoardHotkeys({
-  pendingQs, selQ, setSelQ, termOpen, killOpen, armOpen,
-  setKillAsk, setArmAsk, setDrawerSid, setCompose, setSpawnForm, setLanOpen, setWtOpen,
+  pendingQs, selQ, setSelQ, termOpen, killOpen, armOpen, renameOpen,
+  setKillAsk, setArmAsk, setRenameAsk, setDrawerSid, setCompose, setSpawnForm, setLanOpen, setWtOpen,
 }) {
   useEffect(() => {
     const onKey = (e) => {
@@ -29,11 +29,15 @@ export function useBoardHotkeys({
       // modal stops propagation itself; this guard covers stray focus too.
       if (e.key === 'Escape') {
         if (termOpen.current) return;
-        // the kill / move-to-tmux dialogs are modal over everything else: Esc
-        // cancels the open one, and leaves the drawer it may have been opened
-        // from standing (only one of the two is ever open at a time)
+        // the kill / move-to-tmux / rename dialogs are modal over everything
+        // else: Esc cancels the open one, and leaves the drawer it may have been
+        // opened from standing (only one of the three is ever open at a time).
+        // Rename is checked here, ABOVE the `typing` guard below, on purpose:
+        // its dialog is a text input, and Esc from inside it must abandon the
+        // rename rather than fall through to closing the drawer underneath.
         if (killOpen.current) { setKillAsk(null); return; }
         if (armOpen.current) { setArmAsk(null); return; }
+        if (renameOpen.current) { setRenameAsk(null); return; }
         setDrawerSid(null); setCompose(null); setSpawnForm(null); setLanOpen(false);
         setWtOpen(false);
         return;
@@ -65,7 +69,8 @@ export function useBoardHotkeys({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-    // Setters (useState) and the termOpen/killOpen refs are referentially stable,
-    // so this effect still only re-subscribes when the rail selection changes.
-  }, [pendingQs, selQ, termOpen, killOpen, armOpen, setKillAsk, setArmAsk, setDrawerSid, setCompose, setSpawnForm, setLanOpen, setWtOpen]);
+    // Setters (useState) and the termOpen/killOpen/armOpen/renameOpen refs are
+    // referentially stable, so this effect still only re-subscribes when the rail
+    // selection changes.
+  }, [pendingQs, selQ, termOpen, killOpen, armOpen, renameOpen, setKillAsk, setArmAsk, setRenameAsk, setDrawerSid, setCompose, setSpawnForm, setLanOpen, setWtOpen]);
 }

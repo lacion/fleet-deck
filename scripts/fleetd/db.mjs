@@ -56,7 +56,18 @@ CREATE TABLE IF NOT EXISTS sessions (
   -- restart-durable, snapshot-visible, disarm = NULL, expiry needs no sweep.
   adopt_armed_until INTEGER,            -- Move-to-tmux arm deadline (ms epoch); NULL = not armed
   adopt_armed_skip  INTEGER,            -- bypass choice stored at arm time (0/1); read by the auto-adopt trigger, cleared with the arm
-  end_reason        TEXT                -- how the session ended: hook reason ('end'/'logout'/…) or 'presumed' (silence guess); NULL = never ended
+  end_reason        TEXT,               -- how the session ended: hook reason ('end'/'logout'/…), 'presumed' (a guess), or 'superseded' (a /clear fork); NULL = never ended, or ended before provenance existed
+  -- 0.7.1 /clear succession. The CLI mints a NEW session id on /clear: the old
+  -- id fires SessionEnd(reason='clear') and a brand-new id fires
+  -- SessionStart(source='clear') in the same cwd, same second. Nothing in the
+  -- payload links them, so cleared_at opens a short correlation window and
+  -- succeeded_by records the verdict (auditable + makes the boot heal idempotent).
+  cleared_at        INTEGER,            -- when this session last ran /clear; opens the succession window
+  succeeded_by      TEXT,               -- the session id that inherited this card's identity (pane, callsign, mail)
+  -- 0.7.1 custom names: the human-chosen suffix of <animal>-<suffix>. Presence
+  -- means "a human named this card", which is what blocks branch auto-detection
+  -- from renaming over it.
+  custom_suffix     TEXT
 );
 CREATE TABLE IF NOT EXISTS file_touches (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -197,9 +208,11 @@ function migrate(db) {
   }
   // 0.7.0 Move-to-tmux (adopt): three additive columns. NULL backfill is
   // truthful for every pre-0.7.0 row — those sessions were never armed for a
-  // move-to-tmux and their end (if any) predates the end_reason bookkeeping, so
-  // adopt-now's presumed-dead guard treats a NULL end_reason as "not presumed"
-  // (a genuine hook end), which is the safe reading for an already-offline row.
+  // move-to-tmux, and their end (if any) predates the end_reason bookkeeping,
+  // so they carry NO proof of how they ended. adopt-now reads end_reason as an
+  // ALLOWLIST (a NULL is "unproven", never "proven"), which is what keeps a
+  // pre-0.7.0 offline row — possibly a CLI that is still quietly alive — from
+  // being resumed into a duplicate billed session.
   if (!cols.includes('adopt_armed_until')) {
     db.exec('ALTER TABLE sessions ADD COLUMN adopt_armed_until INTEGER');
   }
@@ -208,6 +221,20 @@ function migrate(db) {
   }
   if (!cols.includes('end_reason')) {
     db.exec('ALTER TABLE sessions ADD COLUMN end_reason TEXT');
+  }
+  // 0.7.1 /clear succession + custom names: three additive columns. NULL
+  // backfill is truthful — pre-0.7.1 rows were never correlated across a /clear
+  // (that is the bug this ships) and were never human-named. The boot heal
+  // (reconcileClearForks) repairs already-stranded pairs from the events table,
+  // not from these columns, precisely because old rows have them NULL.
+  if (!cols.includes('cleared_at')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN cleared_at INTEGER');
+  }
+  if (!cols.includes('succeeded_by')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN succeeded_by TEXT');
+  }
+  if (!cols.includes('custom_suffix')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN custom_suffix TEXT');
   }
   const mailCols = db.prepare('PRAGMA table_info(mail)').all().map(r => r.name);
   if (!mailCols.includes('expired_at')) {

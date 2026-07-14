@@ -157,7 +157,7 @@ function OwnedPane({ s, onOpenTerm, onKill, onRevive, onEnableRemote, reviving, 
 export default function Drawer({
   s, now, conflictFiles, mailCount, priority, onTogglePriority, onClose, onCompose, onOpenTerm, onKill,
   thread, onSendThread, onRevive, onEnableRemote, reviving, enablingRemote,
-  onArmMove, onDisarm, adopting,
+  onArmMove, onDisarm, adopting, onRename,
 }) {
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
@@ -211,6 +211,21 @@ export default function Drawer({
         <div className="fd-drawerhead">
           <span className={`fd-pulse ${pulseClass}`} style={{ width: 9, height: 9 }} />
           <span className="callsign">{s.callsign || s.session_id}</span>
+          {/* v2.1 — rename, right where the name is: the ✎ sits ON the callsign it
+              renames rather than down among the action buttons, which are all
+              things done TO the session. Same door as the card chip (App's
+              RenameDialog owns the POST); same gate — any live card, spawn or not. */}
+          {onRename && !offline && (
+            <button
+              type="button"
+              className="fd-namebtn"
+              aria-label={`Rename ${s.callsign || s.session_id}`}
+              title="rename this session — the animal stays, the rest is yours"
+              onClick={() => onRename(s)}
+            >
+              ✎
+            </button>
+          )}
           <span className={`fd-mbadge ${fam}`}>{prettyModel(s.model)}</span>
           <span className="col">{String(s.col || '').toUpperCase()}</span>
           <span className="fd-spacer" />

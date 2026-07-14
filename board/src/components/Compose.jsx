@@ -125,8 +125,13 @@ export default function Compose({ initialTarget, sessions, repos, onClose, onSen
         <textarea
           ref={taRef}
           rows={4}
+          // This placeholder is the ONLY place the orchestrator's grammar is
+          // discoverable — every command the daemon parses has to appear here, or
+          // nobody finds it. v2.1 adds `name` (custom callsign suffix; `clear`
+          // reverts to the automatic name). Its response reuses the ticket
+          // confirmation path below verbatim — {renamed, callsign, previous}.
           placeholder={target === 'daemon'
-            ? 'Instruct the orchestrator…  (broadcast <text> · assign <callsign> <text> · assign auto <text> · assign auto:<repo> <text> · ticket <callsign> <KEY-1> · note)'
+            ? 'Instruct the orchestrator…  (broadcast <text> · assign <callsign> <text> · assign auto <text> · assign auto:<repo> <text> · ticket <callsign> <KEY-1> · name <callsign> <suffix|clear> · note)'
             : 'Write to the fleet…'}
           value={text}
           onChange={(e) => { setText(e.target.value); if (note) setNote(null); if (unroutedText) setUnroutedText(null); }}

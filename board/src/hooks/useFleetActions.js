@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react';
-import { cleanup, killSpawn, reasonOf } from '../api.js';
-import { safeUrl } from '../util.js';
+import { cleanup, killSpawn, reasonOf, renameSession } from '../api.js';
+import { safeUrl, validSuffix } from '../util.js';
 
 // The board-level fleet mutations that all report their outcome onto the shared
 // feedback strip: Clear, revive (single + all), enable-remote, and the two-step
@@ -23,6 +23,14 @@ export function useFleetActions({ showNote, revive, reviveAll, enableRemoteActio
   // whether the click adopts now or arms a deferred move.
   const [armAsk, setArmAsk] = useState(null);
   const [armBusy, setArmBusy] = useState(false);
+  // v2.1 Rename — the card's ✎ chip and the drawer's ✎ button both open ONE
+  // dialog; the POST fires only from it. null | {sessionId, callsign, window}.
+  // `window` is the pane's tmux window when the board owns one — it is ABSENT on
+  // a card the board never spawned, which is fine: rename is a metadata action,
+  // not a pane action, so EVERY live card can be renamed and the dialog simply
+  // drops the "your tmux window keeps its name" line when there is no window.
+  const [renameAsk, setRenameAsk] = useState(null);
+  const [renameBusy, setRenameBusy] = useState(false);
 
   // Fix D — the daemon archives offline sessions, expires their mail/questions,
   // kills dead scoped panes, and LISTS (never deletes) orphaned worktrees for
@@ -190,10 +198,75 @@ export function useFleetActions({ showNote, revive, reviveAll, enableRemoteActio
     });
   }, [adopt, showNote]);
 
+  // v2.1 Rename — open the dialog. Offered on ANY live card: a rename touches
+  // only the session's name, so a session the board never spawned (no `s.spawn`)
+  // is as renameable as a board-owned pane — hence the optional-chain on the
+  // window rather than a spawn guard like askKill's.
+  const askRename = useCallback((s) => {
+    if (!s?.session_id) return;
+    setRenameAsk({
+      sessionId: s.session_id,
+      callsign: s.callsign || s.session_id,
+      window: s.spawn?.tmux_window || '',
+    });
+  }, []);
+
+  // Both rename outcomes report through one place, because {suffix} and
+  // {clear:true} answer in the SAME shape and their copy must not drift.
+  // `renamed:false` is a success (the name simply did not change — you cleared a
+  // name that was already automatic), so it reads as one, in green, not as a
+  // silent no-op the human is left to wonder about.
+  const reportRename = useCallback((label, res) => {
+    if (!(res.ok && res.json?.ok !== false)) {
+      showNote({ hd: '✗ NAME', err: `${label} — ${reasonOf(res, `rename failed (${res.status})`)}` }, 8000);
+      return;
+    }
+    const j = res.json || {};
+    showNote({
+      hd: '✓ NAME',
+      msg: j.renamed
+        ? `${j.previous || label} is now ${j.callsign}`
+        : `${j.callsign || label} — already its name; nothing changed`,
+    }, 8000);
+  }, [showNote]);
+
+  // The dialog's confirm — mirrors doKill/doArm: hold the dialog (renameBusy)
+  // through the POST, then close on completion, success OR failure (the daemon's
+  // reason lands on the strip either way, so the dialog never has to carry it).
+  const doRename = useCallback(async (suffix) => {
+    const a = renameAsk;
+    if (!a || renameBusy) return;
+    // The dialog already disables the confirm on an invalid suffix — this is the
+    // second latch, so a stray ⏎ can never POST a name the daemon must reject.
+    // (The daemon validates it again regardless: it, not the board, is the
+    // authority on names.)
+    if (!validSuffix(suffix)) return;
+    setRenameBusy(true);
+    const res = await renameSession(a.sessionId, { suffix });
+    reportRename(a.callsign, res);
+    setRenameBusy(false);
+    setRenameAsk(null);
+  }, [renameAsk, renameBusy, reportRename]);
+
+  // The dialog's quiet "reset to the automatic name" — {clear:true} reverts to
+  // the ticket name when the session has a ticket, else to the hex name. No
+  // second confirmation: nothing is destroyed, and the name it lands on is the
+  // one the daemon would have given it anyway.
+  const doResetName = useCallback(async () => {
+    const a = renameAsk;
+    if (!a || renameBusy) return;
+    setRenameBusy(true);
+    const res = await renameSession(a.sessionId, { clear: true });
+    reportRename(a.callsign, res);
+    setRenameBusy(false);
+    setRenameAsk(null);
+  }, [renameAsk, renameBusy, reportRename]);
+
   return {
     clearing, doClear,
     killAsk, setKillAsk, killBusy, askKill, doKill,
     armAsk, setArmAsk, armBusy, askArm, doArm, doDisarm,
+    renameAsk, setRenameAsk, renameBusy, askRename, doRename, doResetName,
     doRevive, doReviveAll, doEnableRemote,
   };
 }

@@ -8,7 +8,7 @@
 // SHELL_RE is a pure helper.
 
 import fs from 'node:fs';
-import { SHELL_RE } from './helpers.mjs';
+import { SHELL_RE, NOT_RESUMABLE_END } from './helpers.mjs';
 
 export function createRetention(ctx) {
   const {
@@ -132,7 +132,10 @@ export function createRetention(ctx) {
         changed = true;
         continue;
       }
-      if (s.ended_at != null && s.end_reason != null && s.end_reason !== 'presumed') {
+      // The same allowlist the board's chip and adoptSession use — one owner for
+      // "may this end be resumed?", so a third hand-rolled copy can't drift
+      // (0.7.1's 'superseded' would have slipped straight through the old test).
+      if (s.ended_at != null && !NOT_RESUMABLE_END.has(s.end_reason ?? null)) {
         // Fire-and-forget: a tmux stall must never wedge the sweep. Same
         // failure surface as the SessionEnd trigger — loud only for real
         // failures, never for benign 409 races.

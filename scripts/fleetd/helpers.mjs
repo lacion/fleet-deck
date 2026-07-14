@@ -62,12 +62,23 @@ export function cwdIsDirectory(p) {
   try { return fs.statSync(p).isDirectory(); } catch { return false; }
 }
 
+// Ends that must never be resumed, and why each one is not a green light:
+//   • null       — no provenance was ever stamped (a pre-0.7.0 row, an
+//                  agents-CLI absence, a condemn without proof). Absence of
+//                  proof is not proof: the CLI may still be alive.
+//   • 'presumed' — retention GUESSED, from 3h of silence.
+//   • 'superseded' (0.7.1) — the session did not stop, it CONTINUED under a new
+//                  id after a /clear. The heir owns the card, the pane and the
+//                  name; the retired id's transcript is a closed chapter.
+// Resuming any of these mints a second billed session against a conversation
+// that is either still live or already moved on. One owner, so the snapshot
+// predicate below and adoptSession's own guard can never drift apart.
+export const NOT_RESUMABLE_END = new Set([null, 'presumed', 'superseded']);
+
 export function sessionAdoptableNow(session, hasSpawnRow) {
   if (!session) return false;
   if (session.ended_at == null) return false;  // still live → arm, not now
-  if (session.end_reason == null || session.end_reason === 'presumed') {
-    return false;                              // no proof of death → arm, not now
-  }
+  if (NOT_RESUMABLE_END.has(session.end_reason ?? null)) return false;
   if (hasSpawnRow) return false;               // board-owned lineage → revive owns it
   const cwd = session.cwd;
   return cwdIsDirectory(cwd)
@@ -244,7 +255,37 @@ export function parseCommand(text) {
   if (/^ticket\b/i.test(t)) {
     return { cmd: 'ticket', error: 'usage: ticket <callsign-or-session-id> <PROJ-123|clear>' };
   }
+  // 0.7.1 custom names: `name <target> <suffix|clear>`. Same shape and the same
+  // never-silently-a-note rule as `ticket` above — the human renames a card by
+  // its ID part, the animal is never theirs to choose.
+  if ((m = /^name\s+(\S+)\s+(\S+)\s*$/i.exec(t))) {
+    return { cmd: 'name', target: m[1], suffix: m[2] };
+  }
+  if (/^name\b/i.test(t)) {
+    return { cmd: 'name', error: 'usage: name <callsign-or-session-id> <new-suffix|clear>' };
+  }
   return { cmd: 'note', text: t };
+}
+
+// 0.7.1: the suffix half of <animal>-<suffix>, when a human chooses it.
+// The charset is NOT cosmetic — the board's ticker filter matches callsigns on
+// a [^A-Za-z0-9-] boundary and tmux window names are built as fd<port>-<callsign>,
+// so a space, dot or underscore here would silently break a card's timeline and
+// its pane addressing. Must start alphanumeric; 24 chars is plenty for a label
+// and keeps the card from wrapping.
+export const NAME_SUFFIX_RE = /^[A-Za-z0-9][A-Za-z0-9-]{0,23}$/;
+// Reserved: the mail router resolves these before it ever looks at a callsign,
+// so a card named `all` could never be messaged directly.
+export const RESERVED_NAMES = new Set(['all', 'everyone', 'clear']);
+
+export function validateNameSuffix(suffix) {
+  if (!NAME_SUFFIX_RE.test(suffix)) {
+    return 'a name is letters, digits and dashes only (start with a letter or digit, max 24)';
+  }
+  if (RESERVED_NAMES.has(suffix.toLowerCase()) || suffix.toLowerCase().startsWith('repo:')) {
+    return `"${suffix}" is reserved — mail routing needs it`;
+  }
+  return null;
 }
 
 // Bare-shell command names: a remain-on-exit pane keeps reporting the ORIGINAL

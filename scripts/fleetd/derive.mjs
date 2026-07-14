@@ -90,6 +90,16 @@ export function createCore(db, {
   // Daemon-internal only — deliberately NOT in the claudeEnvArgvPrefix scrub
   // list, since a spawned `claude` child never reads it.
   const RETAIN_LEDGER_MS = envInt('FLEETDECK_RETAIN_LEDGER_MS', 86_400_000, { min: 60_000 });
+  // 0.7.1 /clear succession: how long after a session's /clear a brand-new
+  // session id starting in the SAME cwd is read as that session continuing.
+  // The real gap is milliseconds (the CLI fires both hooks in the same second);
+  // 30s is generous cover for a slow hook round-trip without being long enough
+  // to swallow a genuinely new session the human started right after clearing.
+  const CLEAR_SUCCESSION_MS = envInt('FLEETDECK_CLEAR_SUCCESSION_MS', 30_000, { min: 0 });
+  // Two /clears in one directory closer together than this are indistinguishable
+  // as "the one that just happened", so the daemon refuses to pair them by time
+  // and falls back to the pane as evidence (or to no merge at all).
+  const CLEAR_AMBIGUITY_MS = 1_000;
   const SNAPSHOT_FILES_PER_SESSION = 50; // M-P2/M-G1: per-card cap on the ledger file list
 
   // D7: the single way to resolve one of THIS fleet's scoped tmux windows by
@@ -216,6 +226,38 @@ export function createCore(db, {
   // rename) or { ok:false, reason }. Runs fully synchronously (no await), so it
   // preserves the naming-collision invariant: read current name, compute the
   // next, write it, all in one tick.
+  // 0.7.1: the ONE write that renames a card, extracted from applyTicket so the
+  // ticket rename, the human `name` command, and the /clear succession heal all
+  // rename identically. Synchronous by contract (read-current-name → compute →
+  // write, one tick), so two concurrent renames can never both see a free name.
+  //
+  // What it deliberately does NOT touch: spawns.callsign / spawns.tmux_window.
+  // Those are frozen at spawn birth and every pane operation (mail-to-pane,
+  // kill, revive, liveness, termbridge) reads the ROW, so a renamed card keeps
+  // driving its real window. Renaming the tmux window instead would open a
+  // crash window where the row names a window tmux no longer has — and
+  // reconcileSpawns would then condemn a live pane to 'gone'. The row stays
+  // authoritative; the window name is an internal handle, not a label.
+  function renameCallsign(sid, c, next, { tickMsg, extra = {} }) {
+    const previous = c.callsign;
+    updateSession(sid, {
+      callsign: next,
+      // prev_callsign is WRITE-ONCE: set to the birth callsign on the first
+      // rename (c.prev_callsign ?? c.callsign), never overwritten by a later
+      // one. WHY: the birth name is the longest-lived stale reference — printed
+      // into this session's own SessionStart brief and every peer's brief — so
+      // it must remain the mail-routing anchor even after a second rename.
+      prev_callsign: c.prev_callsign ?? c.callsign,
+      ...extra,
+    });
+    // ONE tick carrying BOTH names: the board ticker filters by callsign
+    // substring, so a line naming old AND new appears in both cards' timelines
+    // — the handoff is visible from either name.
+    tick(tickMsg(previous, next));
+    onMutate();
+    return { ok: true, renamed: true, callsign: next, previous };
+  }
+
   function applyTicket(sid, ticket, source) {
     const c = q.getSession.get(sid);
     if (!c || c.ended_at != null) return { ok: false, reason: 'no live session for that target' };
@@ -225,6 +267,14 @@ export function createCore(db, {
     // any number of times.
     if (source === 'branch' && (c.ticket != null || c.ticket_source != null)) {
       return { ok: false, reason: 'ticket already set — auto-detect fires once' };
+    }
+    // 0.7.1: a human-chosen name outranks branch auto-detection, always. The
+    // rule across the whole naming system is one sentence — the most recent
+    // EXPLICIT human action wins, and automation never overwrites a human name.
+    // (A manual `ticket` command still may: that is also an explicit human act,
+    // and it clears custom_suffix on its way through.)
+    if (source === 'branch' && c.custom_suffix != null) {
+      return { ok: false, reason: 'session has a custom name — auto-detect does not override it' };
     }
     // Prefer keeping the current animal so a rename is the least-surprising
     // <sameAnimal>-<ticket>; only when that exact name is already held by
@@ -248,24 +298,228 @@ export function createCore(db, {
       onMutate();
       return { ok: true, renamed: false, callsign: c.callsign, ticket };
     }
-    // prev_callsign is WRITE-ONCE: set to the birth callsign on the first rename
-    // (c.prev_callsign ?? c.callsign), never overwritten by a later manual
-    // rename. WHY: the birth name is the longest-lived stale reference — printed
-    // into this session's own SessionStart brief and every peer's brief — so it
-    // must remain the mail-routing anchor even after a second re-ticket.
-    const previous = c.callsign;
-    updateSession(sid, {
-      callsign: next,
-      prev_callsign: c.prev_callsign ?? c.callsign,
-      ticket,
-      ticket_source: source,
+    // A ticket rename is an explicit human/branch naming act, so it takes the
+    // name over from any custom suffix (cleared here — the card is now
+    // ticket-named, and `name <target> clear` reverts to exactly this name).
+    const out = renameCallsign(sid, c, next, {
+      tickMsg: (previous, name) => `🎫 ${previous} is now ${name} (ticket ${ticket})`,
+      extra: { ticket, ticket_source: source, custom_suffix: null },
     });
-    // ONE tick carrying BOTH names + the ticket: the board ticker filters by
-    // callsign substring, so a line naming old AND new appears in both cards'
-    // timelines — the handoff is visible from either name.
-    tick(`🎫 ${previous} is now ${next} (ticket ${ticket})`);
+    return { ...out, ticket };
+  }
+
+  // 0.7.1 custom names: rename the SUFFIX, keep the animal. The animal is the
+  // fleet's stable identity (12 of them, one per ticket); the suffix is the
+  // part that should say what the session is doing. `suffix: null` reverts to
+  // the automatic name — the ticket name if the card has a ticket, else the
+  // birth <animal>-<sid4>.
+  function applyCustomName(sid, suffix) {
+    const c = q.getSession.get(sid);
+    if (!c || c.ended_at != null) return { ok: false, reason: 'no live session for that target' };
+    const animal = animalOf(c.callsign);
+    // Clearing a name that was never set is a NO-OP, and it has to be: the
+    // "automatic" name cannot be recomputed from the session id after a /clear
+    // succession (the heir's id is not the id its inherited name was minted
+    // from), so reconstructing <animal>-<sid4> here would rename a card to a
+    // name no human has ever seen — and, for a paned card, away from the
+    // fd<port>-<callsign> its window is actually called.
+    if (suffix == null && c.custom_suffix == null) {
+      return { ok: true, renamed: false, callsign: c.callsign };
+    }
+    // The automatic name to revert TO: the ticket name when the card has a
+    // ticket, else the name it carried before the human renamed it (the
+    // write-once anchor — the birth name, or the callsign inherited across a
+    // /clear). If that is gone or taken, keep the current name rather than
+    // invent one.
+    const revertTo = c.ticket
+      ? `${animal}-${c.ticket}`
+      : (c.prev_callsign && !q.callsignTaken.get(c.prev_callsign, c.prev_callsign, sid)
+        ? c.prev_callsign
+        : c.callsign);
+    const next = suffix == null ? revertTo : `${animal}-${suffix}`;
+    if (next === c.callsign) {
+      // Name unchanged (renaming to what it already is, or clearing a card that
+      // never had a custom name). Record the column so a clear is still a clear,
+      // but no rename tick and no prev_callsign churn.
+      if ((c.custom_suffix ?? null) !== (suffix ?? null)) {
+        updateSession(sid, { custom_suffix: suffix ?? null });
+        onMutate();
+      }
+      return { ok: true, renamed: false, callsign: c.callsign };
+    }
+    if (q.callsignTaken.get(next, next, sid)) {
+      return { ok: false, reason: `${next} is already taken by another session` };
+    }
+    return renameCallsign(sid, c, next, {
+      tickMsg: (previous, name) => (suffix == null
+        ? `✎ ${previous} is now ${name} (custom name cleared)`
+        : `✎ ${previous} is now ${name}`),
+      extra: { custom_suffix: suffix ?? null },
+    });
+  }
+
+  // ------------------------------------------- 0.7.1 /clear session succession
+  // THE FACT THIS EXISTS FOR: the CLI mints a NEW session id on /clear. The old
+  // id fires SessionEnd(reason='clear') and, in the same second and the same
+  // cwd, a brand-new id fires SessionStart(source='clear'). Nothing in either
+  // payload names the other (SessionStart carries only cwd/session_id/source/
+  // model/transcript_path, and the new transcript's header has no parent), so
+  // the daemon used to see two unrelated sessions: the OLD card kept the spawn
+  // row and the tmux window (and therefore the terminal/kill chips) while going
+  // permanently silent, and a SECOND card collected all the telemetry with no
+  // pane to drive. A human clicking "terminal" on one card and watching the
+  // other card update is the visible symptom; a board-spawned worker that runs
+  // /clear stranding its own pane is the expensive one.
+  //
+  // So: correlate them, and make the successor CONTINUE the card. It inherits
+  // the callsign (which is also why nothing has to rename a tmux window — the
+  // frozen spawns.tmux_window still matches windowName(port, callsign)), the
+  // ticket, the mail anchor, the arm, the pane, the pending mail and questions.
+  // The predecessor is retired as 'superseded': archived, so its name is freed
+  // for the heir, and never resurrectable (its transcript is still on disk).
+  //
+  // findClearedPredecessor is the whole inference. It is deliberately narrow —
+  // a wrong merge is worse than a duplicate card, so an ambiguous match is
+  // simply not a match.
+  const hasLivePane = sid => {
+    const sp = q.spawnBySession.get(sid);
+    return !!sp && ['provisioning', 'spawning', 'stalled', 'live'].includes(sp.status);
+  };
+
+  function findClearedPredecessor(sid, cwd, now) {
+    if (!cwd) return null;
+    // Ordered newest-clear-first.
+    const candidates = q.clearedPredecessors.all(cwd, now - CLEAR_SUCCESSION_MS, sid);
+    if (!candidates.length) return null;
+    if (candidates.length === 1) return candidates[0];
+    // Several sessions in this cwd cleared inside the window. The heir is born
+    // MILLISECONDS after its own /clear, so the freshest clear is its parent —
+    // unless two clears are so close together that "freshest" is meaningless.
+    const [first, second] = candidates;
+    if (first.cleared_at - second.cleared_at > CLEAR_AMBIGUITY_MS) return first;
+    // Near-simultaneous. Prefer the one holding a live pane (a stranded pane is
+    // the expensive case, and the pane corroborates the link); otherwise refuse
+    // to guess — an unhealed split is recoverable, a wrong merge is not.
+    const paned = candidates.filter(c => hasLivePane(c.session_id));
+    return paned.length === 1 ? paned[0] : null;
+  }
+
+  // The other direction. SessionEnd is an ASYNC hook (hooks.json) while
+  // SessionStart is not, so the heir's birth can reach the daemon BEFORE its
+  // predecessor's /clear — and the agents-cli poller can even create the heir's
+  // row first. Either way the hook-time interception misses, and without this
+  // the pair silently stays split until the next boot heal. So when a /clear
+  // lands, also look FORWARD: is the heir already here, orphaned, waiting?
+  function succeedForwardFromClear(prevSid, cwd) {
+    const prev = q.getSession.get(prevSid);
+    if (!prev || prev.succeeded_by != null || !cwd) return null;
+    const now = Date.now();
+    const born = q.clearBornSessionsSince.all(now - CLEAR_SUCCESSION_MS, now + 1_000);
+    const cands = [];
+    for (const b of born) {
+      if (b.session_id === prevSid) continue;
+      const heir = q.getSession.get(b.session_id);
+      if (!heir || heir.archived_at != null || heir.ended_at != null) continue;
+      if (heir.cwd !== cwd || heir.succeeded_by != null) continue;
+      if (q.successorClaimed.get(heir.session_id)) continue; // already continues someone
+      if (q.spawnBySession.get(heir.session_id)) continue;   // owns a pane → not a stranded heir
+      cands.push(heir);
+    }
+    // 0 candidates is the NORMAL case (the heir simply has not started yet — the
+    // hook-time interception will catch it). More than one: refuse to guess.
+    if (cands.length !== 1) return null;
+    return succeedSession(prev, cands[0].session_id, { rename: true });
+  }
+
+  // Move everything that binds a card to its work from the predecessor to the
+  // heir. Synchronous: the caller runs it before the successor's first event is
+  // derived, so the card the rest of applyEvent sees is already the continued one.
+  function succeedSession(prev, sid, { rename = false } = {}) {
+    const now = Date.now();
+    const callsign = prev.callsign;
+    // One transaction: a half-done succession is the one outcome worse than the
+    // bug — the predecessor archived (its card gone from the board) with no heir
+    // wearing its identity would delete a live session from the fleet's view.
+    db.exec('BEGIN IMMEDIATE');
+    try {
+    // Retire the predecessor FIRST: archiving frees its callsign (callsignTaken
+    // scopes on archived_at IS NULL), which is what lets the heir take the name.
+    // 'superseded' is a PROVEN end (the CLI told us it cleared) but must never be
+    // adopt- or revive-eligible: the pane it used to own now belongs to the heir,
+    // and its transcript is a closed chapter (see sessionAdoptableNow). The arm
+    // is cleared here and re-hung on the heir below — an arm left on a ghost
+    // would be found by retention's orphaned-arm sweep and fired at the
+    // abandoned transcript.
+    updateSession(prev.session_id, {
+      col: 'offline',
+      ended_at: now,
+      end_reason: 'superseded',
+      succeeded_by: sid,
+      archived_at: now,
+      cleared_at: null,
+      note: `context cleared → continued as ${callsign}`,
+      adopt_armed_until: null,
+      adopt_armed_skip: null,
+    });
+    if (rename) {
+      // Heal mode: the heir already exists under its own auto-assigned name (a
+      // stranded card the board has been showing alongside the real one). Rename
+      // it onto the lineage's callsign.
+      //
+      // Its throwaway name is deliberately NOT kept as the mail anchor. That
+      // name only ever existed BECAUSE of the bug, while the lineage's own name
+      // is the one in every peer's roster brief, in the ticker, and on the tmux
+      // window. prev_callsign has exactly one slot (write-once), so spending it
+      // on the artifact would leave the real name routable by nobody the next
+      // time the card is renamed. Inherit the lineage's anchor instead.
+      const heir = q.getSession.get(sid);
+      if (heir && heir.callsign !== callsign) {
+        updateSession(sid, { callsign });
+      }
+      updateSession(sid, {
+        prev_callsign: prev.prev_callsign ?? null,
+        ticket: prev.ticket ?? null,
+        ticket_source: prev.ticket_source ?? null,
+        custom_suffix: prev.custom_suffix ?? null,
+        adopt_armed_until: prev.adopt_armed_until ?? null,
+        adopt_armed_skip: prev.adopt_armed_skip ?? null,
+      });
+    } else {
+      // Birth mode: insert the heir already wearing the inherited identity, so
+      // card() finds an existing row and never mints a fresh animal (or ticks
+      // "joined the fleet" for what is, to the human, the same session).
+      q.insertSession.run(sid, callsign, now, now);
+      updateSession(sid, {
+        ticket: prev.ticket ?? null,
+        ticket_source: prev.ticket_source ?? null,
+        prev_callsign: prev.prev_callsign ?? null,
+        custom_suffix: prev.custom_suffix ?? null,
+        adopt_armed_until: prev.adopt_armed_until ?? null,
+        adopt_armed_skip: prev.adopt_armed_skip ?? null,
+      });
+    }
+    // The pane, the undelivered mail, the human's surviving question queue and
+    // the file ledger all follow the card. Terminal spawn history stays with the
+    // id that lived it. The ledger move is NOT bookkeeping: the conflict radar
+    // treats any other still-existing session row as a rival, so touches left on
+    // the archived predecessor would have the heir colliding with its own past.
+    q.reassignActiveSpawns.run(sid, prev.session_id);
+    q.reassignPendingMail.run(sid, prev.session_id);
+    q.reassignPendingQuestions.run(sid, prev.session_id);
+    q.reassignTouches.run(sid, prev.session_id);
+      db.exec('COMMIT');
+    } catch (err) {
+      try { db.exec('ROLLBACK'); } catch { /* the transaction is already gone */ }
+      console.error('fleetd /clear succession error:', err);
+      return null;
+    }
+    modelMemo.delete(prev.session_id); // the heir stamps its own floor at SessionStart
+    // Wake the retired id's /api/watch long-poll so its watcher sees
+    // session_alive:false and exits now instead of hanging to its timeout.
+    notifyWatchers(prev.session_id);
+    tick(`🧹 ${callsign} cleared its context — same card, new session id (${String(sid).slice(0, 8)})`);
     onMutate();
-    return { ok: true, renamed: true, callsign: next, ticket, previous };
+    return callsign;
   }
 
   function tick(msg) {
@@ -294,6 +548,11 @@ export function createCore(db, {
     q, updateSession, onMutate, tmuxAdapter, questions,
     findScopedWindow, tick, logEvent, card, assignCallsign, applyTicket,
     modelMemo, stampTranscriptFloor, readTranscriptModel,
+    // 0.7.1: naming + /clear succession, shared with events.mjs (the hook-time
+    // interception), commands.mjs / http.mjs (the `name` surfaces), and
+    // spawns.mjs (the boot heal for pairs stranded before this shipped).
+    CLEAR_SUCCESSION_MS, applyCustomName, hasLivePane,
+    findClearedPredecessor, succeedSession, succeedForwardFromClear,
   };
 
   // Mail + /api/watch waiter registry + owned-pane delivery → mail.mjs.
@@ -343,8 +602,8 @@ export function createCore(db, {
   Object.assign(ctx, createSpawns(ctx));
   const {
     spawn, revive, adoptSession, enableRemote, spawnKill, spawnCapability,
-    spawnLivenessTick, reconcileSpawns, scheduleRegistrationRemoteHarvest,
-    forgetSpawn, spawnState,
+    spawnLivenessTick, reconcileSpawns, reconcileClearForks,
+    scheduleRegistrationRemoteHarvest, forgetSpawn, spawnState,
   } = ctx;
 
   // Hook state machine (applyEvent + hook endpoints + brief + plan capture) → events.mjs.
@@ -405,6 +664,7 @@ export function createCore(db, {
     spawnCapability,   // /health + /state `spawn` object
     spawnLivenessTick, // owned-pane liveness, rides the agents-poll cadence
     reconcileSpawns,   // fleetd boot: rows ↔ tmux windows
+    reconcileClearForks, // fleetd boot: heal cards split by a /clear before 0.7.1
     // retentionSweep also runs internally (boot + the 10m interval above). It
     // is re-exported so tests can drive the tmux-verified presume-dead path
     // (BUG 2) deterministically; production callers keep using the interval.
@@ -414,6 +674,9 @@ export function createCore(db, {
     removeWorktree,     // POST /api/worktrees/remove — allow-listed destruction
     // v1.3 plan library
     planMark,          // POST /api/plans/:id/mark → {status, body}
+    // 0.7.1 custom names: POST /api/sessions/:id/name and the `name` command
+    // both land here (one rename write, one set of rules).
+    applyCustomName,
     // Exposed for fleetd.mjs's boot banner (upgrade takeover: "vX replaced
     // vY" must reach the board feed, not just fleetd.log).
     tick,

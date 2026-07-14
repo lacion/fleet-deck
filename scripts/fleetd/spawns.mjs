@@ -12,7 +12,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { deriveRepo, branchOf } from './repo-identity.mjs';
 import { ticketFromBranch, animalOf } from './tickets.mjs';
-import { execFileP, claudeEnvArgvPrefix, claudeTranscriptPath, SHELL_RE } from './helpers.mjs';
+import { execFileP, claudeEnvArgvPrefix, claudeTranscriptPath, SHELL_RE, NOT_RESUMABLE_END } from './helpers.mjs';
 
 export function createSpawns(ctx) {
   const {
@@ -20,6 +20,8 @@ export function createSpawns(ctx) {
     notifyWatchers, tombstoneCard, findScopedWindow, tmuxAdapter, port, home,
     NUDGE_MS, SPAWN_REGISTER_MS, RC_HARVEST_MS,
     ADOPT_ARM_MS, // 0.7.0 Move-to-tmux: arm-deadline window (default 30 min)
+    // 0.7.1: the boot heal for /clear forks stranded BEFORE succession shipped.
+    succeedSession, CLEAR_SUCCESSION_MS, hasLivePane,
   } = ctx;
 
   // ------------------------------------- v1.2 board-spawned sessions (spawns)
@@ -783,16 +785,24 @@ export function createSpawns(ctx) {
     if (deferred && c.adopt_armed_until == null) {
       return { status: 200, body: { ok: true, canceled: true } };
     }
-    // Immediate adopt requires a hook-PROVEN end, as an ALLOWLIST: end_reason
-    // NULL means no provenance was ever stamped (pre-0.7.0 rows, the agents-cli
-    // absence guess, tombstone writers that condemn without proof), and
-    // retention's silence guess stamps 'presumed'. Either way there is no proof
-    // the CLI actually exited, and `claude --resume` against a still-live CLI
-    // is a duplicate billed session (the exact doctrine violation) → refuse;
-    // arm it instead (truly dead cards just let the arm expire; silently-alive
-    // ones complete the move at their real exit).
-    if (c.end_reason == null || c.end_reason === 'presumed') {
-      return { status: 409, body: { ok: false, reason: 'session has no hook-proven end (presumed/unstamped) — arm it instead' } };
+    // Immediate adopt requires an end that is BOTH proven and final — the
+    // NOT_RESUMABLE_END allowlist in helpers.mjs owns that judgement (a NULL is
+    // unproven, 'presumed' is a silence guess, and 0.7.1's 'superseded' means
+    // the session did not stop at all: it continued under a new id after a
+    // /clear, and the heir already owns the pane). Resuming any of them mints a
+    // second billed session → refuse; arm it instead. Sharing the set with
+    // sessionAdoptableNow is what keeps the board's chip and this guard honest
+    // about exactly the same cards.
+    if (NOT_RESUMABLE_END.has(c.end_reason ?? null)) {
+      return {
+        status: 409,
+        body: {
+          ok: false,
+          reason: c.end_reason === 'superseded'
+            ? 'session was superseded by a /clear — its heir owns the card now'
+            : 'session has no hook-proven end (presumed/unstamped) — arm it instead',
+        },
+      };
     }
     // Single-flight: reuse the revive Set so a manual adopt, an armed auto-adopt,
     // and a revive can never race two panes onto one session. The try/finally
@@ -1190,10 +1200,78 @@ export function createSpawns(ctx) {
     }
   }
 
+  // 0.7.1 boot heal — the retroactive half of /clear succession.
+  //
+  // Sessions forked by a /clear BEFORE succession shipped are still sitting on
+  // the board as split pairs: the predecessor holds the spawn row and the tmux
+  // window (so the human's terminal button drives a session that never updates)
+  // while its heir collects every hook with no pane to its name. Those rows have
+  // no cleared_at — the column did not exist when they forked — so this
+  // reconstructs the link from the EVENT LOG instead (retained 24h, which is the
+  // window in which a stranded pair is still live enough to matter).
+  //
+  // Detection mirrors the hook-time rule exactly: a session whose LAST event is a
+  // /clear end, and a brand-new session born from a clear moments later in the
+  // same cwd that never got a pane of its own. Idempotent (succeedSession stamps
+  // succeeded_by, and a healed predecessor is archived out of the candidate set),
+  // and a no-op on a fleet that never forked.
+  function reconcileClearForks() {
+    let healed = 0;
+    // Walk the HEIRS, not the predecessors. Walking predecessors invites two of
+    // them to claim the same heir (two pane-less sessions clearing minutes apart
+    // in one repo both see the earlier heir as "theirs"), which would merge two
+    // unrelated conversations onto one card — strictly worse than the split this
+    // heals. One heir continues at most one lineage, and it must be unambiguous
+    // about WHICH: exactly the rule the live path enforces.
+    const born = q.clearBornSessionsSince.all(Date.now() - 24 * 3600 * 1000, Date.now());
+    for (const b of born) {
+      const heir = q.getSession.get(b.session_id);
+      if (!heir || heir.archived_at != null || heir.ended_at != null) continue;
+      if (heir.succeeded_by != null) continue;          // it was itself superseded later
+      if (q.successorClaimed.get(heir.session_id)) continue; // already healed → IDEMPOTENT
+      if (q.spawnBySession.get(heir.session_id)) continue;   // owns a pane → nothing was stranded
+      if (!heir.cwd) continue;
+
+      // Its predecessor: a still-live card in the same cwd whose LAST word was a
+      // /clear, in the correlation window before this heir was born. Rows are
+      // re-read FRESH every iteration — an earlier heir may already have renamed
+      // one (a session that clears twice in a day forms a chain), and inheriting
+      // from a stale snapshot would hand this heir a callsign nobody has ever
+      // seen, while the name the human knows would belong to no visible card.
+      const cands = [];
+      for (const p of q.visibleSessions.all()) {
+        if (p.session_id === heir.session_id) continue;
+        if (p.ended_at != null || p.succeeded_by != null) continue; // already claimed
+        if (p.cwd !== heir.cwd) continue;
+        const last = q.lastEventOf.get(p.session_id);
+        if (!last || last.hook_event !== 'SessionEnd') continue;
+        if (!String(last.note ?? '').startsWith('context cleared')) continue;
+        if (last.at < b.at - CLEAR_SUCCESSION_MS || last.at > b.at + 2_000) continue;
+        cands.push({ row: p, at: last.at });
+      }
+      if (!cands.length) continue;
+      // Pair by ORDER, not by guesswork. Heirs are walked oldest-first and a
+      // predecessor can be claimed only once (succeeded_by), so giving each heir
+      // the OLDEST unclaimed clear in its window pairs interleaved lineages
+      // correctly: the first heir takes the first clear, the second heir is then
+      // left with the second. A live pane still wins when one exists, since a
+      // stranded pane is the case that actually costs something.
+      cands.sort((x, y) => x.at - y.at);
+      const paned = cands.filter(c => hasLivePane(c.row.session_id));
+      const prev = paned.length === 1 ? paned[0].row : cands[0].row;
+      if (succeedSession(prev, heir.session_id, { rename: true })) healed += 1;
+    }
+    if (healed) {
+      tick(`🧹 healed ${healed} card${healed === 1 ? '' : 's'} split by a /clear before 0.7.1`);
+      onMutate();
+    }
+    return { healed };
+  }
+
   return {
     spawn, revive, adoptSession, enableRemote, spawnKill, spawnCapability,
-    spawnLivenessTick, reconcileSpawns, scheduleRegistrationRemoteHarvest,
-    forgetSpawn, spawnState,
+    spawnLivenessTick, reconcileSpawns, reconcileClearForks,
+    scheduleRegistrationRemoteHarvest, forgetSpawn, spawnState,
   };
 }
 

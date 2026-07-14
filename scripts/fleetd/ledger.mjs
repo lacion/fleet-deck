@@ -22,7 +22,16 @@ export function createLedger(ctx) {
     const key = ledgerKey(abs, editorCard);
 
     const touches = q.recentTouches.all(key.repo_id ?? '', key.rel_path, now - CONFLICT_WINDOW_MS);
-    const rivalTouches = touches.filter(t => t.session_id !== sid && q.getSession.get(t.session_id));
+    // A rival is another session that is still ON THE BOARD. Archived rows are
+    // retained (never deleted), and 0.7.1 archives the predecessor of every
+    // /clear — so a plain "the row exists" test would let a session collide with
+    // its own retired past self and raise `⚠ wren-a9e1 and wren-a9e1 both
+    // touching X`. A card nobody can see is nobody to coordinate with.
+    const rivalTouches = touches.filter(t => {
+      if (t.session_id === sid) return false;
+      const row = q.getSession.get(t.session_id);
+      return !!row && row.archived_at == null;
+    });
     const rivals = [...new Set(rivalTouches.map(t => t.session_id))];
     q.insertTouch.run(key.repo_id ?? '', key.rel_path, abs, sid, key.worktree ?? null, now);
 

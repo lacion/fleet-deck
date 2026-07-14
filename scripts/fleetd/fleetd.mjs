@@ -277,6 +277,16 @@ server.listen(PORT, BIND, () => {
   // v1.2 restart reconciliation: spawn rows survive in SQLite, panes survive
   // in tmux — re-join them (rows with a missing window → 'gone' + card
   // offline; scoped fd<PORT>-* windows with no row → /state spawn_orphans).
+  // 0.7.1: heal cards split by a /clear fork before succession shipped (the CLI
+  // mints a new session id on /clear, which used to strand the predecessor's
+  // pane on a card that never updates again). Synchronous, idempotent, a no-op
+  // on a fleet that never forked — and it runs BEFORE reconcileSpawns so the
+  // pane rows it moves are already on the right session when tmux is consulted.
+  try {
+    core.reconcileClearForks();
+  } catch (err) {
+    console.error('fleetd /clear fork heal error:', err);
+  }
   core.reconcileSpawns().catch(err => console.error('fleetd spawn reconciliation error:', err));
   startAgentsPoll(core); // F1 secondary session source; first run shortly after listen
 });

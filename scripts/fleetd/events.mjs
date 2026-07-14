@@ -26,6 +26,10 @@ export function createEvents(ctx) {
     // fires adoptSession after ADOPT_DELAY_MS. createSpawns(ctx) runs before
     // createEvents(ctx) in derive.mjs, so ctx.adoptSession is already bound here.
     adoptSession, ADOPT_DELAY_MS,
+    // 0.7.1 /clear succession: recognise the heir a /clear just minted, before
+    // card() can deal it a fresh identity — and, when the hooks arrive out of
+    // order, recognise an heir that is already waiting.
+    findClearedPredecessor, succeedSession, succeedForwardFromClear,
   } = ctx;
 
   // ---------------------------------------------- hook event -> card state
@@ -44,7 +48,18 @@ export function createEvents(ctx) {
     // (UserPromptSubmit forces 'working' and hid this, but tool hooks and the
     // resolved-Notification path do not). Reset the base column to 'queued' so
     // the switch below re-derives a live lane from the activity it just saw.
-    if (c.ended_at != null || c.archived_at != null) {
+    // 0.7.1: a SUPERSEDED row is the one tombstone that must NEVER come back.
+    // Its lineage did not die, it CONTINUED under a new id — and the heir is
+    // already wearing this row's callsign and driving its pane. Async hooks
+    // (Notification, FileChanged, an in-flight PostToolUse) can still land for
+    // the retired id a moment after the /clear, and resurrecting on one would
+    // put a second card on the board under the SAME callsign, holding no pane
+    // and never updating again: the exact split this release exists to end.
+    // Let the event fall through and update the archived row's counters (it is
+    // invisible either way — visibleSessions filters archived rows out); just
+    // never un-retire it.
+    const superseded = c.succeeded_by != null;
+    if (!superseded && (c.ended_at != null || c.archived_at != null)) {
       // 0.7.0: a session that comes back alive is no longer ended, so its
       // end_reason (the hook reason, or retention's 'presumed' guess) is stale —
       // clear it so adopt-now's presumed-dead guard reads the fresh liveness.
@@ -115,7 +130,12 @@ export function createEvents(ctx) {
     // server-derived branch, never the unauthenticated ev.git_branch. Re-read c
     // so THIS event's later ticks and (on SessionStart) composeBrief already
     // speak the renamed callsign + ticket.
-    if (upd.branch && c.ticket == null && c.ticket_source == null) {
+    // 0.7.1: a human-named card is off the auto path for good, and the check
+    // belongs HERE, not only inside applyTicket. applyTicket refusing a branch
+    // rename writes nothing, so the gate below would never close — and the
+    // "one extra synchronous git exec per session LIFETIME" below would become
+    // one per hook event, forever, on the hottest path in the daemon.
+    if (upd.branch && c.ticket == null && c.ticket_source == null && c.custom_suffix == null) {
       let tk = ticketFromBranch(serverBranch);
       if (tk) {
         // The cached read above is the cheap per-event trigger, but the rename
@@ -234,17 +254,25 @@ export function createEvents(ctx) {
         tick(`${c.callsign} finished a turn`);
         break;
       case 'SessionEnd':
-        // BUG 1: Claude Code fires SessionEnd with reason='clear' when the
-        // human runs /clear — but the session STAYS LIVE: same session_id, the
-        // pane keeps running claude, and no SessionStart follows. Treating that
-        // as a real end tombstones a live card (and hookSessionEnd would then
-        // condemn its live pane 'pane-dead'), so the board loses the terminal
-        // button for an agent that is right there working. A /clear is NOT an
-        // end: leave col/ended_at untouched (last_seen was already bumped above
-        // — the clear proves liveness, which also resets BUG 2's silence clock)
-        // and only reflect it in the note. Every real end reason still ends.
+        // BUG 1 (0.2.0): a /clear is NOT a session end. Treating it as one
+        // tombstones a live card (and hookSessionEnd would condemn its live pane
+        // 'pane-dead'), so the board loses the terminal button for an agent that
+        // is right there working. Leave col/ended_at untouched — last_seen was
+        // already bumped above, and the clear proves liveness, which also resets
+        // BUG 2's silence clock. Every real end reason still ends.
+        //
+        // 0.7.1 CORRECTION to that comment's model: the current CLI does NOT
+        // keep the same session_id across a /clear. It mints a NEW one — this
+        // SessionEnd is immediately followed by a SessionStart(source='clear')
+        // under a brand-new id in the same cwd. So the card does keep living
+        // (this branch is still right), but it lives on under a DIFFERENT id:
+        // stamp cleared_at to open the correlation window that hookSessionStart
+        // uses to recognise the heir (see succeedSession in derive.mjs). If no
+        // heir ever arrives — an older CLI that really does keep the id — the
+        // stamp simply expires and this stays the plain "still live" case.
         if (ev.reason === 'clear') {
           set.note = 'context cleared (/clear) — still live';
+          set.cleared_at = Date.now();
           tick(`🧹 ${c.callsign} ran /clear — context reset, session still live`);
         } else {
           set.col = 'offline';
@@ -271,6 +299,32 @@ export function createEvents(ctx) {
 
   // ------------------------------------------------------ hook endpoints
   function hookSessionStart(ev) {
+    // 0.7.1 /clear succession, intercepted HERE because applyEvent → card()
+    // births a card on first touch: by the time applyEvent runs, an unrecognised
+    // heir would already have been dealt a fresh animal, a fresh hex suffix and
+    // a "joined the fleet" tick — a second card for what the human considers the
+    // same session. So before any of that: if this is an id we have never seen,
+    // arriving with source='clear' (or 'compact', handled defensively — if that
+    // one keeps its id, this branch simply never fires), look for the session in
+    // this cwd that just cleared, and continue IT instead of starting a stranger.
+    const sid = ev.session_id || 'unknown';
+    if (ev.source === 'clear' || ev.source === 'compact') {
+      const existing = q.getSession.get(sid);
+      // Usually the heir is brand-new. But the agents-cli poller can beat its
+      // SessionStart hook and pre-create the row, and a re-delivered hook would
+      // find it too — so "no card yet" is not the test. The test is "this card
+      // has done NOTHING yet and continues nobody": a placeholder, which we
+      // adopt into the lineage (rename mode) instead of leaving it stranded.
+      const placeholder = existing
+        && existing.events === 0
+        && existing.succeeded_by == null
+        && !q.successorClaimed.get(sid)
+        && !q.spawnBySession.get(sid);
+      if (!existing || placeholder) {
+        const prev = findClearedPredecessor(sid, ev.cwd, Date.now());
+        if (prev) succeedSession(prev, sid, { rename: !!existing });
+      }
+    }
     const { card: c } = applyEvent({ ...ev, hook_event_name: 'SessionStart' });
     return { ok: true, callsign: c.callsign, brief: composeBrief(c) };
   }
@@ -476,6 +530,12 @@ export function createEvents(ctx) {
     // freeform rows survive — they are the human's queue.
     questions.expireAllForSession(sid);
     if (ev.reason === 'clear') {
+      // 0.7.1: applyEvent has just stamped cleared_at. Normally the heir's
+      // SessionStart arrives next and claims this card. But SessionEnd is an
+      // ASYNC hook while SessionStart is not, so the heir can already be here,
+      // sitting on its own orphan card — look forward and claim it now, or the
+      // pair stays split until the next boot heal.
+      succeedForwardFromClear(sid, ev.cwd);
       // F3d-2: still wake watchers so a poll re-checks, but the session is
       // deliberately left live — pane and card untouched.
       notifyWatchers(sid);

@@ -19,7 +19,7 @@ function BoardLanes({
   sessions, repos, conflicts, mailPending, mailMeta, compact, stale,
   repoFilter, onRepoFilter, ripples, priorities, onOpenSession, onOpenTerm,
   reviving, revivingAll, onRevive, onReviveAll, enablingRemote, onEnableRemote, onKill,
-  onToggleWatch, watch, onArmMove, onDisarm, adopting,
+  onToggleWatch, watch, onArmMove, onDisarm, adopting, onRename,
 }) {
   // SessionCard calls onOpen(s); the drawer keys off session_id. One stable
   // wrapper for the whole board rather than a fresh closure per card.
@@ -176,6 +176,7 @@ function BoardLanes({
                         onArmMove={onArmMove}
                         onDisarm={onDisarm}
                         adopting={!!adopting?.has(s.session_id)}
+                        onRename={onRename}
                       />
                     ))}
                 </div>

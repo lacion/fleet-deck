@@ -870,6 +870,57 @@ textarea.fd-input { font-family: var(--font-ui); font-size: 13px; resize: none; 
   color: var(--m-comet); background: var(--m-comet-bg); border-color: var(--m-comet); font-weight: 600;
 }
 .fd-actbtn.move.armed:hover { border-color: var(--m-comet); opacity: .85; }
+/* ✎ rename (v2.1) — the quietest chip in the row, and the only one with no spawn
+   gate: it edits the card's NAME, not its pane, so every live card carries it.
+   Dim at rest so it never competes with ▣ terminal; act-colored on hover, because
+   it is still an action. (The `.fd-card .fd-cardacts .fd-actbtn` z-index rule at
+   the top of this file already raises it over the .fd-cardopen overlay — R3-3.) */
+.fd-actbtn.rename { color: var(--dim); }
+.fd-actbtn.rename:hover { border-color: var(--act); background: var(--act-bg); color: var(--act); }
+
+/* ✎ in the drawer head — the rename door sitting ON the callsign it renames.
+   Ghost-quiet until hovered: the head is an identity line, not a button bar. */
+.fd-namebtn {
+  flex: none; margin: 0; appearance: none; -webkit-appearance: none;
+  background: transparent; border: 1px solid transparent; border-radius: var(--r-chip);
+  color: var(--dim); cursor: pointer; font-size: 11px; line-height: 17px; padding: 0 5px;
+  transition: border-color var(--t-fast), color var(--t-fast), background var(--t-fast);
+}
+.fd-namebtn:hover { color: var(--act); border-color: var(--act); background: var(--act-bg); }
+.fd-namebtn:focus-visible { outline: 2px solid var(--act); outline-offset: 1px; }
+
+/* the rename dialog — the kill ask's shell (same modal, .ask/.sub/.win
+   typography, same foot), so only the name row itself is new here. */
+.fd-renameask .fd-namerow { display: flex; align-items: stretch; }
+/* the FIXED animal, welded to the input's left edge: one seam, one callsign, and
+   no doubt about which half is editable (it is text, not a disabled field). */
+.fd-renameask .fd-namefix {
+  display: inline-flex; align-items: center; flex: none;
+  font-family: var(--font-data); font-size: 13px; color: var(--dim);
+  background: var(--code); border: 1px solid var(--border); border-right: 0;
+  border-radius: var(--r-ctl) 0 0 var(--r-ctl); padding: 0 1px 0 10px;
+  user-select: none; transition: border-color var(--t-fast);
+}
+.fd-renameask .fd-nameinput { border-radius: 0 var(--r-ctl) var(--r-ctl) 0; font-size: 13px; }
+/* focus reads as ONE control, prefix included */
+.fd-renameask .fd-namerow:focus-within .fd-namefix { border-color: var(--act); }
+.fd-renameask .fd-nameinput:disabled { opacity: .6; cursor: default; }
+.fd-renameask .fd-namehint {
+  font-family: var(--font-data); font-size: var(--fs-body); color: var(--dim);
+  min-height: 15px; overflow-wrap: anywhere;
+}
+.fd-renameask .fd-namehint.bad { color: var(--hazard); }
+.fd-renameask .foot { gap: 8px; }
+.fd-renameask .send:disabled { opacity: .5; cursor: default; }
+/* "reset to the automatic name" — a real door, but a quiet one: chromeless until
+   hovered, so it never reads as the thing you came here to click. The border stays
+   transparent rather than absent, so revealing it on hover changes no geometry —
+   the button must not move under the cursor. */
+.fd-renameask .fd-ghostbtn.reset {
+  background: transparent; border-color: transparent; color: var(--dim); font-size: var(--fs-body);
+}
+.fd-renameask .fd-ghostbtn.reset:hover { color: var(--text); border-color: var(--border); }
+.fd-renameask .fd-ghostbtn.reset:disabled { opacity: .5; cursor: default; }
 
 /* the kill confirmation — Compose's modal shell, hazard-headed */
 .fd-killask { width: 470px; gap: 12px; }

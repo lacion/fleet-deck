@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-07-14
+
+### Fixed
+
+- **A `/clear` no longer splits your card in two.** The current Claude Code CLI does not keep the session id across a `/clear` — it ends the old id and mints a new one, which starts in the same directory a few milliseconds later. Fleet Deck believed the opposite, so the *old* card kept the tmux pane (and therefore the terminal, watch and kill chips) while going permanently silent, and a *second* card appeared for the new id with no pane at all: you clicked terminal on one card and watched the status updates land on the other. A board-spawned worker that ran `/clear` stranded its own pane the same way. Now the new session id **continues the card**: same callsign, same pane, same ticket, same mailbox, same armed move-to-tmux, and the file ledger comes along too (so a session can't raise a file conflict against its own past self). The retired id is archived and can never be resumed — its transcript is a closed chapter. A fleet that already has a pair split this way is **healed at boot**, so upgrading is enough to put the pane back on the card that is doing the work.
+
+### Added
+
+- **Rename a session.** The animal is the fleet's — the ID part is yours: `wren-a9e1` → `wren-docs-review`. Rename from the board (a `✎` chip on the card or in the drawer) or from Compose with `name <callsign> <suffix>`; `name <callsign> clear` reverts to the automatic name (the ticket name if the card has one, else the birth name). A hand-typed name outranks branch ticket auto-detection — automation never renames over a human — while an explicit `ticket` command still takes the name over. Mail addressed to the old name keeps arriving, as with any rename. New endpoint: `POST /api/sessions/:session_id/name`.
+
+**Upgrade note:** additive schema migration — three nullable columns (`cleared_at`, `succeeded_by`, `custom_suffix`) on the `sessions` table. The daemon upgrades itself on your next session (0.7.0's takeover), and the `/clear` heal runs on that boot.
+
 ## [0.7.0] - 2026-07-14
 
 ### Added
@@ -136,7 +148,8 @@ Initial public release.
 - A brainless orchestrator: `assign auto` routes a task to the best existing session with a SQL query, not a model call — the core makes zero model calls.
 - One-command plugin install with a self-contained daemon bundle (`node:sqlite` state, nothing to `npm install`); the first session's SessionStart hook elects and launches the daemon. MIT licensed.
 
-[unreleased]: https://github.com/lacion/fleet-deck/compare/v0.7.0...HEAD
+[unreleased]: https://github.com/lacion/fleet-deck/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/lacion/fleet-deck/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/lacion/fleet-deck/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/lacion/fleet-deck/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/lacion/fleet-deck/compare/v0.5.0...v0.5.1

@@ -3774,7 +3774,18 @@ CREATE TABLE IF NOT EXISTS sessions (
   -- restart-durable, snapshot-visible, disarm = NULL, expiry needs no sweep.
   adopt_armed_until INTEGER,            -- Move-to-tmux arm deadline (ms epoch); NULL = not armed
   adopt_armed_skip  INTEGER,            -- bypass choice stored at arm time (0/1); read by the auto-adopt trigger, cleared with the arm
-  end_reason        TEXT                -- how the session ended: hook reason ('end'/'logout'/\u2026) or 'presumed' (silence guess); NULL = never ended
+  end_reason        TEXT,               -- how the session ended: hook reason ('end'/'logout'/\u2026), 'presumed' (a guess), or 'superseded' (a /clear fork); NULL = never ended, or ended before provenance existed
+  -- 0.7.1 /clear succession. The CLI mints a NEW session id on /clear: the old
+  -- id fires SessionEnd(reason='clear') and a brand-new id fires
+  -- SessionStart(source='clear') in the same cwd, same second. Nothing in the
+  -- payload links them, so cleared_at opens a short correlation window and
+  -- succeeded_by records the verdict (auditable + makes the boot heal idempotent).
+  cleared_at        INTEGER,            -- when this session last ran /clear; opens the succession window
+  succeeded_by      TEXT,               -- the session id that inherited this card's identity (pane, callsign, mail)
+  -- 0.7.1 custom names: the human-chosen suffix of <animal>-<suffix>. Presence
+  -- means "a human named this card", which is what blocks branch auto-detection
+  -- from renaming over it.
+  custom_suffix     TEXT
 );
 CREATE TABLE IF NOT EXISTS file_touches (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -3897,6 +3908,15 @@ function migrate(db2) {
   }
   if (!cols.includes("end_reason")) {
     db2.exec("ALTER TABLE sessions ADD COLUMN end_reason TEXT");
+  }
+  if (!cols.includes("cleared_at")) {
+    db2.exec("ALTER TABLE sessions ADD COLUMN cleared_at INTEGER");
+  }
+  if (!cols.includes("succeeded_by")) {
+    db2.exec("ALTER TABLE sessions ADD COLUMN succeeded_by TEXT");
+  }
+  if (!cols.includes("custom_suffix")) {
+    db2.exec("ALTER TABLE sessions ADD COLUMN custom_suffix TEXT");
   }
   const mailCols = db2.prepare("PRAGMA table_info(mail)").all().map((r) => r.name);
   if (!mailCols.includes("expired_at")) {
@@ -4674,6 +4694,50 @@ function createStatements(db2) {
       (session_id, callsign, cwd, repo_id, repo_name, branch, worktree, col, note, task, events, started_at, last_seen, blocked_this_turn, source)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 0, 'agents-cli')`),
     setBlocked: db2.prepare("UPDATE sessions SET blocked_this_turn = ? WHERE session_id = ?"),
+    // 0.7.1 /clear succession. The CLI forks a new session id on /clear, and
+    // nothing in the SessionStart payload names the predecessor — so the link is
+    // inferred: same cwd, a /clear stamped moments ago, not already succeeded,
+    // still on the board. Ordered so the caller can apply the tie-break rule
+    // (prefer the candidate holding a pane; else the most recent clear).
+    clearedPredecessors: db2.prepare(`SELECT * FROM sessions
+      WHERE cwd = ? AND cleared_at IS NOT NULL AND cleared_at > ?
+        AND succeeded_by IS NULL AND ended_at IS NULL AND archived_at IS NULL
+        AND session_id != ?
+      ORDER BY cleared_at DESC`),
+    // The pane follows the session across a /clear. Only NON-terminal rows move:
+    // the live pane is the successor's to drive, while terminal history stays
+    // with the id that actually lived it. spawns.callsign / tmux_window are
+    // deliberately NOT rewritten — the successor INHERITS the callsign, so the
+    // frozen window name still matches windowName(port, callsign).
+    reassignActiveSpawns: db2.prepare(`UPDATE spawns SET session_id = ?
+      WHERE session_id = ? AND status IN ('provisioning', 'spawning', 'stalled', 'live')`),
+    // Undelivered mail follows the card, not the id the human never sees.
+    reassignPendingMail: db2.prepare(`UPDATE mail SET to_session = ?
+      WHERE to_session = ? AND delivered_at IS NULL AND expired_at IS NULL`),
+    // The human's surviving question queue follows too (hold-kind rows were
+    // already expired by hookSessionEnd's expireAllForSession on the /clear).
+    reassignPendingQuestions: db2.prepare(`UPDATE questions SET session_id = ?
+      WHERE session_id = ? AND status = 'pending'`),
+    // The file ledger follows as well, and this one is not bookkeeping: the
+    // conflict radar counts a rival as "a DIFFERENT session_id whose row still
+    // exists" (ledger.mjs). The retired predecessor's row does still exist
+    // (archived, not deleted), so leaving its touches behind would make the
+    // successor collide with its own past self — a hazard banner reading
+    // "wren-a9e1 and wren-a9e1 both touching X".
+    reassignTouches: db2.prepare("UPDATE file_touches SET session_id = ? WHERE session_id = ?"),
+    // Boot heal (reconcileClearForks): pre-0.7.1 rows have no cleared_at, so a
+    // stranded pair is reconstructed from the event log instead. These two read
+    // the 24h-retained events table.
+    lastEventOf: db2.prepare(`SELECT hook_event, note, at FROM events
+      WHERE session_id = ? ORDER BY at DESC LIMIT 1`),
+    clearBornSessionsSince: db2.prepare(`SELECT DISTINCT e.session_id, e.at FROM events e
+      WHERE e.hook_event = 'SessionStart' AND e.note = 'session clear' AND e.at BETWEEN ? AND ?
+      ORDER BY e.at ASC`),
+    // A session can be succeeded by exactly ONE heir, and an heir can continue
+    // exactly ONE lineage. Without this, the boot heal could hand the same heir
+    // to two different predecessors — merging two unrelated conversations onto
+    // one card, which is strictly worse than the split it set out to fix.
+    successorClaimed: db2.prepare("SELECT session_id FROM sessions WHERE succeeded_by = ? LIMIT 1"),
     insertTouch: db2.prepare("INSERT INTO file_touches (repo_id, rel_path, abs_path, session_id, worktree, at) VALUES (?, ?, ?, ?, ?, ?)"),
     recentTouches: db2.prepare("SELECT * FROM file_touches WHERE repo_id = ? AND rel_path = ? AND at > ? ORDER BY at"),
     // M-G1: windowed by time. The snapshot GROUP-BY used to scan the WHOLE
@@ -4876,7 +4940,11 @@ function createStatements(db2) {
     // session_id without minting a card, which is exactly what adopt needs.
     "adopt_armed_until",
     "adopt_armed_skip",
-    "end_reason"
+    "end_reason",
+    // 0.7.1 /clear succession + custom names.
+    "cleared_at",
+    "succeeded_by",
+    "custom_suffix"
   ];
   const updateStmts = /* @__PURE__ */ new Map();
   const FIELD_SET = new Set(FIELDS);
@@ -4944,12 +5012,11 @@ function cwdIsDirectory(p) {
     return false;
   }
 }
+var NOT_RESUMABLE_END = /* @__PURE__ */ new Set([null, "presumed", "superseded"]);
 function sessionAdoptableNow(session, hasSpawnRow) {
   if (!session) return false;
   if (session.ended_at == null) return false;
-  if (session.end_reason == null || session.end_reason === "presumed") {
-    return false;
-  }
+  if (NOT_RESUMABLE_END.has(session.end_reason ?? null)) return false;
   if (hasSpawnRow) return false;
   const cwd = session.cwd;
   return cwdIsDirectory(cwd) && fs3.existsSync(claudeTranscriptPath(cwd, session.session_id));
@@ -5125,7 +5192,24 @@ function parseCommand(text) {
   if (/^ticket\b/i.test(t)) {
     return { cmd: "ticket", error: "usage: ticket <callsign-or-session-id> <PROJ-123|clear>" };
   }
+  if (m = /^name\s+(\S+)\s+(\S+)\s*$/i.exec(t)) {
+    return { cmd: "name", target: m[1], suffix: m[2] };
+  }
+  if (/^name\b/i.test(t)) {
+    return { cmd: "name", error: "usage: name <callsign-or-session-id> <new-suffix|clear>" };
+  }
   return { cmd: "note", text: t };
+}
+var NAME_SUFFIX_RE = /^[A-Za-z0-9][A-Za-z0-9-]{0,23}$/;
+var RESERVED_NAMES = /* @__PURE__ */ new Set(["all", "everyone", "clear"]);
+function validateNameSuffix(suffix) {
+  if (!NAME_SUFFIX_RE.test(suffix)) {
+    return "a name is letters, digits and dashes only (start with a letter or digit, max 24)";
+  }
+  if (RESERVED_NAMES.has(suffix.toLowerCase()) || suffix.toLowerCase().startsWith("repo:")) {
+    return `"${suffix}" is reserved \u2014 mail routing needs it`;
+  }
+  return null;
 }
 var SHELL_RE = /^(sh|bash|zsh|zsh-.*)$/;
 
@@ -5515,7 +5599,11 @@ function createLedger(ctx) {
     const abs = path3.isAbsolute(absFile) ? absFile : path3.resolve(editorCard.cwd || "/", absFile);
     const key = ledgerKey(abs, editorCard);
     const touches = q.recentTouches.all(key.repo_id ?? "", key.rel_path, now - CONFLICT_WINDOW_MS);
-    const rivalTouches = touches.filter((t) => t.session_id !== sid && q.getSession.get(t.session_id));
+    const rivalTouches = touches.filter((t) => {
+      if (t.session_id === sid) return false;
+      const row = q.getSession.get(t.session_id);
+      return !!row && row.archived_at == null;
+    });
     const rivals = [...new Set(rivalTouches.map((t) => t.session_id))];
     q.insertTouch.run(key.repo_id ?? "", key.rel_path, abs, sid, key.worktree ?? null, now);
     if (!rivals.length) return null;
@@ -5607,7 +5695,17 @@ function createIngest(ctx) {
 
 // scripts/fleetd/commands.mjs
 function createCommands(ctx) {
-  const { q, mail, resolveTargets, tick, onMutate, applyTicket, updateSession } = ctx;
+  const {
+    q,
+    mail,
+    resolveTargets,
+    tick,
+    onMutate,
+    applyTicket,
+    updateSession,
+    applyCustomName
+    // 0.7.1 `name <target> <suffix|clear>`
+  } = ctx;
   function clearTicket(sid) {
     const c = q.getSession.get(sid);
     if (!c || c.ended_at != null) return { ok: false, reason: "no live session for that target" };
@@ -5691,6 +5789,36 @@ function createCommands(ctx) {
       logCommand({ result });
       onMutate();
       return { session_id: resolved.sid, ...result };
+    } else if (parsed.cmd === "name") {
+      if (parsed.error) {
+        logCommand();
+        onMutate();
+        return { ok: false, reason: parsed.error };
+      }
+      if (parsed.target === "all" || /^repo:/.test(parsed.target)) {
+        logCommand();
+        onMutate();
+        return { ok: false, reason: "name targets one session \u2014 not all/repo:*" };
+      }
+      const resolved = resolveTicketTarget(parsed.target);
+      if (resolved.error) {
+        logCommand();
+        onMutate();
+        return { ok: false, reason: resolved.error };
+      }
+      const clearing = /^clear$/i.test(parsed.suffix);
+      if (!clearing) {
+        const bad = validateNameSuffix(parsed.suffix);
+        if (bad) {
+          logCommand();
+          onMutate();
+          return { ok: false, reason: bad };
+        }
+      }
+      const result = applyCustomName(resolved.sid, clearing ? null : parsed.suffix);
+      logCommand({ result });
+      onMutate();
+      return { session_id: resolved.sid, ...result };
     } else {
       tick(`\u{1F4DD} orchestrator note: ${parsed.text.slice(0, 60)}`);
     }
@@ -5756,8 +5884,12 @@ function createSpawns(ctx) {
     NUDGE_MS,
     SPAWN_REGISTER_MS,
     RC_HARVEST_MS,
-    ADOPT_ARM_MS
+    ADOPT_ARM_MS,
     // 0.7.0 Move-to-tmux: arm-deadline window (default 30 min)
+    // 0.7.1: the boot heal for /clear forks stranded BEFORE succession shipped.
+    succeedSession,
+    CLEAR_SUCCESSION_MS,
+    hasLivePane
   } = ctx;
   function spawnCapability() {
     const base = { active: q.countActiveSpawns.get().n };
@@ -6273,8 +6405,14 @@ function createSpawns(ctx) {
     if (deferred && c.adopt_armed_until == null) {
       return { status: 200, body: { ok: true, canceled: true } };
     }
-    if (c.end_reason == null || c.end_reason === "presumed") {
-      return { status: 409, body: { ok: false, reason: "session has no hook-proven end (presumed/unstamped) \u2014 arm it instead" } };
+    if (NOT_RESUMABLE_END.has(c.end_reason ?? null)) {
+      return {
+        status: 409,
+        body: {
+          ok: false,
+          reason: c.end_reason === "superseded" ? "session was superseded by a /clear \u2014 its heir owns the card now" : "session has no hook-proven end (presumed/unstamped) \u2014 arm it instead"
+        }
+      };
     }
     if (revivingSessions.has(session_id)) {
       return { status: 409, body: { ok: false, reason: `session ${session_id.slice(0, 8)} is already being moved/revived` } };
@@ -6533,6 +6671,39 @@ function createSpawns(ctx) {
       onMutate();
     }
   }
+  function reconcileClearForks() {
+    let healed = 0;
+    const born = q.clearBornSessionsSince.all(Date.now() - 24 * 3600 * 1e3, Date.now());
+    for (const b of born) {
+      const heir = q.getSession.get(b.session_id);
+      if (!heir || heir.archived_at != null || heir.ended_at != null) continue;
+      if (heir.succeeded_by != null) continue;
+      if (q.successorClaimed.get(heir.session_id)) continue;
+      if (q.spawnBySession.get(heir.session_id)) continue;
+      if (!heir.cwd) continue;
+      const cands = [];
+      for (const p of q.visibleSessions.all()) {
+        if (p.session_id === heir.session_id) continue;
+        if (p.ended_at != null || p.succeeded_by != null) continue;
+        if (p.cwd !== heir.cwd) continue;
+        const last = q.lastEventOf.get(p.session_id);
+        if (!last || last.hook_event !== "SessionEnd") continue;
+        if (!String(last.note ?? "").startsWith("context cleared")) continue;
+        if (last.at < b.at - CLEAR_SUCCESSION_MS || last.at > b.at + 2e3) continue;
+        cands.push({ row: p, at: last.at });
+      }
+      if (!cands.length) continue;
+      cands.sort((x, y) => x.at - y.at);
+      const paned = cands.filter((c) => hasLivePane(c.row.session_id));
+      const prev = paned.length === 1 ? paned[0].row : cands[0].row;
+      if (succeedSession(prev, heir.session_id, { rename: true })) healed += 1;
+    }
+    if (healed) {
+      tick(`\u{1F9F9} healed ${healed} card${healed === 1 ? "" : "s"} split by a /clear before 0.7.1`);
+      onMutate();
+    }
+    return { healed };
+  }
   return {
     spawn: spawn2,
     revive,
@@ -6542,6 +6713,7 @@ function createSpawns(ctx) {
     spawnCapability,
     spawnLivenessTick,
     reconcileSpawns,
+    reconcileClearForks,
     scheduleRegistrationRemoteHarvest,
     forgetSpawn,
     spawnState
@@ -6577,12 +6749,19 @@ function createEvents(ctx) {
     // fires adoptSession after ADOPT_DELAY_MS. createSpawns(ctx) runs before
     // createEvents(ctx) in derive.mjs, so ctx.adoptSession is already bound here.
     adoptSession,
-    ADOPT_DELAY_MS
+    ADOPT_DELAY_MS,
+    // 0.7.1 /clear succession: recognise the heir a /clear just minted, before
+    // card() can deal it a fresh identity — and, when the hooks arrive out of
+    // order, recognise an heir that is already waiting.
+    findClearedPredecessor,
+    succeedSession,
+    succeedForwardFromClear
   } = ctx;
   function applyEvent(ev) {
     const sid = ev.session_id || "unknown";
     let c = card(sid, ev.cwd);
-    if (c.ended_at != null || c.archived_at != null) {
+    const superseded = c.succeeded_by != null;
+    if (!superseded && (c.ended_at != null || c.archived_at != null)) {
       updateSession(sid, { ended_at: null, archived_at: null, col: "queued", end_reason: null });
       c = { ...c, ended_at: null, archived_at: null, col: "queued", end_reason: null };
     }
@@ -6623,7 +6802,7 @@ function createEvents(ctx) {
     }
     updateSession(sid, upd);
     c = { ...c, ...upd };
-    if (upd.branch && c.ticket == null && c.ticket_source == null) {
+    if (upd.branch && c.ticket == null && c.ticket_source == null && c.custom_suffix == null) {
       let tk = ticketFromBranch(serverBranch);
       if (tk) {
         tk = ticketFromBranch(branchOf(ev.cwd, { fresh: true }));
@@ -6716,6 +6895,7 @@ function createEvents(ctx) {
       case "SessionEnd":
         if (ev.reason === "clear") {
           set.note = "context cleared (/clear) \u2014 still live";
+          set.cleared_at = Date.now();
           tick(`\u{1F9F9} ${c.callsign} ran /clear \u2014 context reset, session still live`);
         } else {
           set.col = "offline";
@@ -6735,6 +6915,15 @@ function createEvents(ctx) {
     return { card: c, conflict };
   }
   function hookSessionStart(ev) {
+    const sid = ev.session_id || "unknown";
+    if (ev.source === "clear" || ev.source === "compact") {
+      const existing = q.getSession.get(sid);
+      const placeholder = existing && existing.events === 0 && existing.succeeded_by == null && !q.successorClaimed.get(sid) && !q.spawnBySession.get(sid);
+      if (!existing || placeholder) {
+        const prev = findClearedPredecessor(sid, ev.cwd, Date.now());
+        if (prev) succeedSession(prev, sid, { rename: !!existing });
+      }
+    }
     const { card: c } = applyEvent({ ...ev, hook_event_name: "SessionStart" });
     return { ok: true, callsign: c.callsign, brief: composeBrief(c) };
   }
@@ -6879,6 +7068,7 @@ function createEvents(ctx) {
     applyEvent({ ...ev, hook_event_name: "SessionEnd" });
     questions.expireAllForSession(sid);
     if (ev.reason === "clear") {
+      succeedForwardFromClear(sid, ev.cwd);
       notifyWatchers(sid);
       return {};
     }
@@ -7204,7 +7394,7 @@ function createRetention(ctx) {
         changed = true;
         continue;
       }
-      if (s.ended_at != null && s.end_reason != null && s.end_reason !== "presumed") {
+      if (s.ended_at != null && !NOT_RESUMABLE_END.has(s.end_reason ?? null)) {
         Promise.resolve(adoptSession(s.session_id, { dangerously_skip_permissions: !!s.adopt_armed_skip }, { deferred: true })).then((out) => {
           if (!out || out.status >= 400 && out.status !== 409) {
             tick(`\u2717 move-to-tmux failed for ${s.callsign}: ${out?.body?.reason ?? "unknown"}`.slice(0, 100));
@@ -7312,6 +7502,8 @@ function createCore(db2, {
   const ADOPT_ARM_MS = envInt("FLEETDECK_ADOPT_ARM_MS", 18e5, { min: 1 });
   const ADOPT_DELAY_MS = envInt("FLEETDECK_ADOPT_DELAY_MS", 750, { min: 0 });
   const RETAIN_LEDGER_MS = envInt("FLEETDECK_RETAIN_LEDGER_MS", 864e5, { min: 6e4 });
+  const CLEAR_SUCCESSION_MS = envInt("FLEETDECK_CLEAR_SUCCESSION_MS", 3e4, { min: 0 });
+  const CLEAR_AMBIGUITY_MS = 1e3;
   const SNAPSHOT_FILES_PER_SESSION = 50;
   async function findScopedWindow(name) {
     return (await tmuxAdapter.listScopedWindows(port)).find((w) => w.window === name);
@@ -7382,11 +7574,30 @@ function createCore(db2, {
     }
     return c;
   }
+  function renameCallsign(sid, c, next, { tickMsg, extra = {} }) {
+    const previous = c.callsign;
+    updateSession(sid, {
+      callsign: next,
+      // prev_callsign is WRITE-ONCE: set to the birth callsign on the first
+      // rename (c.prev_callsign ?? c.callsign), never overwritten by a later
+      // one. WHY: the birth name is the longest-lived stale reference — printed
+      // into this session's own SessionStart brief and every peer's brief — so
+      // it must remain the mail-routing anchor even after a second rename.
+      prev_callsign: c.prev_callsign ?? c.callsign,
+      ...extra
+    });
+    tick(tickMsg(previous, next));
+    onMutate();
+    return { ok: true, renamed: true, callsign: next, previous };
+  }
   function applyTicket(sid, ticket, source) {
     const c = q.getSession.get(sid);
     if (!c || c.ended_at != null) return { ok: false, reason: "no live session for that target" };
     if (source === "branch" && (c.ticket != null || c.ticket_source != null)) {
       return { ok: false, reason: "ticket already set \u2014 auto-detect fires once" };
+    }
+    if (source === "branch" && c.custom_suffix != null) {
+      return { ok: false, reason: "session has a custom name \u2014 auto-detect does not override it" };
     }
     const preferred = `${animalOf(c.callsign)}-${ticket}`;
     const next = q.callsignTaken.get(preferred, preferred, sid) ? assignCallsign(sid, ticket) : preferred;
@@ -7401,16 +7612,126 @@ function createCore(db2, {
       onMutate();
       return { ok: true, renamed: false, callsign: c.callsign, ticket };
     }
-    const previous = c.callsign;
-    updateSession(sid, {
-      callsign: next,
-      prev_callsign: c.prev_callsign ?? c.callsign,
-      ticket,
-      ticket_source: source
+    const out = renameCallsign(sid, c, next, {
+      tickMsg: (previous, name) => `\u{1F3AB} ${previous} is now ${name} (ticket ${ticket})`,
+      extra: { ticket, ticket_source: source, custom_suffix: null }
     });
-    tick(`\u{1F3AB} ${previous} is now ${next} (ticket ${ticket})`);
+    return { ...out, ticket };
+  }
+  function applyCustomName(sid, suffix) {
+    const c = q.getSession.get(sid);
+    if (!c || c.ended_at != null) return { ok: false, reason: "no live session for that target" };
+    const animal = animalOf(c.callsign);
+    if (suffix == null && c.custom_suffix == null) {
+      return { ok: true, renamed: false, callsign: c.callsign };
+    }
+    const revertTo = c.ticket ? `${animal}-${c.ticket}` : c.prev_callsign && !q.callsignTaken.get(c.prev_callsign, c.prev_callsign, sid) ? c.prev_callsign : c.callsign;
+    const next = suffix == null ? revertTo : `${animal}-${suffix}`;
+    if (next === c.callsign) {
+      if ((c.custom_suffix ?? null) !== (suffix ?? null)) {
+        updateSession(sid, { custom_suffix: suffix ?? null });
+        onMutate();
+      }
+      return { ok: true, renamed: false, callsign: c.callsign };
+    }
+    if (q.callsignTaken.get(next, next, sid)) {
+      return { ok: false, reason: `${next} is already taken by another session` };
+    }
+    return renameCallsign(sid, c, next, {
+      tickMsg: (previous, name) => suffix == null ? `\u270E ${previous} is now ${name} (custom name cleared)` : `\u270E ${previous} is now ${name}`,
+      extra: { custom_suffix: suffix ?? null }
+    });
+  }
+  const hasLivePane = (sid) => {
+    const sp = q.spawnBySession.get(sid);
+    return !!sp && ["provisioning", "spawning", "stalled", "live"].includes(sp.status);
+  };
+  function findClearedPredecessor(sid, cwd, now) {
+    if (!cwd) return null;
+    const candidates = q.clearedPredecessors.all(cwd, now - CLEAR_SUCCESSION_MS, sid);
+    if (!candidates.length) return null;
+    if (candidates.length === 1) return candidates[0];
+    const [first, second] = candidates;
+    if (first.cleared_at - second.cleared_at > CLEAR_AMBIGUITY_MS) return first;
+    const paned = candidates.filter((c) => hasLivePane(c.session_id));
+    return paned.length === 1 ? paned[0] : null;
+  }
+  function succeedForwardFromClear(prevSid, cwd) {
+    const prev = q.getSession.get(prevSid);
+    if (!prev || prev.succeeded_by != null || !cwd) return null;
+    const now = Date.now();
+    const born = q.clearBornSessionsSince.all(now - CLEAR_SUCCESSION_MS, now + 1e3);
+    const cands = [];
+    for (const b of born) {
+      if (b.session_id === prevSid) continue;
+      const heir = q.getSession.get(b.session_id);
+      if (!heir || heir.archived_at != null || heir.ended_at != null) continue;
+      if (heir.cwd !== cwd || heir.succeeded_by != null) continue;
+      if (q.successorClaimed.get(heir.session_id)) continue;
+      if (q.spawnBySession.get(heir.session_id)) continue;
+      cands.push(heir);
+    }
+    if (cands.length !== 1) return null;
+    return succeedSession(prev, cands[0].session_id, { rename: true });
+  }
+  function succeedSession(prev, sid, { rename = false } = {}) {
+    const now = Date.now();
+    const callsign = prev.callsign;
+    db2.exec("BEGIN IMMEDIATE");
+    try {
+      updateSession(prev.session_id, {
+        col: "offline",
+        ended_at: now,
+        end_reason: "superseded",
+        succeeded_by: sid,
+        archived_at: now,
+        cleared_at: null,
+        note: `context cleared \u2192 continued as ${callsign}`,
+        adopt_armed_until: null,
+        adopt_armed_skip: null
+      });
+      if (rename) {
+        const heir = q.getSession.get(sid);
+        if (heir && heir.callsign !== callsign) {
+          updateSession(sid, { callsign });
+        }
+        updateSession(sid, {
+          prev_callsign: prev.prev_callsign ?? null,
+          ticket: prev.ticket ?? null,
+          ticket_source: prev.ticket_source ?? null,
+          custom_suffix: prev.custom_suffix ?? null,
+          adopt_armed_until: prev.adopt_armed_until ?? null,
+          adopt_armed_skip: prev.adopt_armed_skip ?? null
+        });
+      } else {
+        q.insertSession.run(sid, callsign, now, now);
+        updateSession(sid, {
+          ticket: prev.ticket ?? null,
+          ticket_source: prev.ticket_source ?? null,
+          prev_callsign: prev.prev_callsign ?? null,
+          custom_suffix: prev.custom_suffix ?? null,
+          adopt_armed_until: prev.adopt_armed_until ?? null,
+          adopt_armed_skip: prev.adopt_armed_skip ?? null
+        });
+      }
+      q.reassignActiveSpawns.run(sid, prev.session_id);
+      q.reassignPendingMail.run(sid, prev.session_id);
+      q.reassignPendingQuestions.run(sid, prev.session_id);
+      q.reassignTouches.run(sid, prev.session_id);
+      db2.exec("COMMIT");
+    } catch (err) {
+      try {
+        db2.exec("ROLLBACK");
+      } catch {
+      }
+      console.error("fleetd /clear succession error:", err);
+      return null;
+    }
+    modelMemo.delete(prev.session_id);
+    notifyWatchers(prev.session_id);
+    tick(`\u{1F9F9} ${callsign} cleared its context \u2014 same card, new session id (${String(sid).slice(0, 8)})`);
     onMutate();
-    return { ok: true, renamed: true, callsign: next, ticket, previous };
+    return callsign;
   }
   function tick(msg) {
     q.insertTicker.run(Date.now(), msg);
@@ -7451,7 +7772,16 @@ function createCore(db2, {
     applyTicket,
     modelMemo,
     stampTranscriptFloor,
-    readTranscriptModel
+    readTranscriptModel,
+    // 0.7.1: naming + /clear succession, shared with events.mjs (the hook-time
+    // interception), commands.mjs / http.mjs (the `name` surfaces), and
+    // spawns.mjs (the boot heal for pairs stranded before this shipped).
+    CLEAR_SUCCESSION_MS,
+    applyCustomName,
+    hasLivePane,
+    findClearedPredecessor,
+    succeedSession,
+    succeedForwardFromClear
   };
   Object.assign(ctx, createMail(ctx));
   const {
@@ -7495,6 +7825,7 @@ function createCore(db2, {
     spawnCapability,
     spawnLivenessTick,
     reconcileSpawns,
+    reconcileClearForks,
     scheduleRegistrationRemoteHarvest,
     forgetSpawn,
     spawnState
@@ -7565,6 +7896,8 @@ function createCore(db2, {
     // owned-pane liveness, rides the agents-poll cadence
     reconcileSpawns,
     // fleetd boot: rows ↔ tmux windows
+    reconcileClearForks,
+    // fleetd boot: heal cards split by a /clear before 0.7.1
     // retentionSweep also runs internally (boot + the 10m interval above). It
     // is re-exported so tests can drive the tmux-verified presume-dead path
     // (BUG 2) deterministically; production callers keep using the interval.
@@ -7577,6 +7910,9 @@ function createCore(db2, {
     // v1.3 plan library
     planMark,
     // POST /api/plans/:id/mark → {status, body}
+    // 0.7.1 custom names: POST /api/sessions/:id/name and the `name` command
+    // both land here (one rename write, one set of rules).
+    applyCustomName,
     // Exposed for fleetd.mjs's boot banner (upgrade takeover: "vX replaced
     // vY" must reach the board feed, not just fleetd.log).
     tick,
@@ -8353,6 +8689,20 @@ function createHttp(core2, { port, boardFile, version: version2 = "0.0.0", captu
                 json(res, 500, { ok: false, reason: "internal" });
               });
               return;
+            }
+            const nameMatch = /^\/api\/sessions\/([^/]+)\/name$/.exec(url.pathname);
+            if (nameMatch) {
+              const body2 = ev ?? {};
+              const clearing = body2.clear === true;
+              if (!clearing && typeof body2.suffix !== "string") {
+                return json(res, 400, { ok: false, reason: "suffix must be a string (or pass {clear:true})" });
+              }
+              if (!clearing) {
+                const bad = validateNameSuffix(body2.suffix);
+                if (bad) return json(res, 400, { ok: false, reason: bad });
+              }
+              const out = core2.applyCustomName(nameMatch[1], clearing ? null : body2.suffix);
+              return json(res, out.ok ? 200 : 409, out);
             }
             const rcMatch = /^\/api\/spawn\/([A-Za-z0-9-]+)\/rc$/.exec(url.pathname);
             if (rcMatch) {
@@ -9443,6 +9793,11 @@ server.listen(PORT, BIND, () => {
       mdns.start();
       console.log(`fleetd LAN http://${MDNS_NAME}.local:${PORT}/?t=<hidden> (mDNS; credential available in share panel)`);
     }
+  }
+  try {
+    core.reconcileClearForks();
+  } catch (err) {
+    console.error("fleetd /clear fork heal error:", err);
   }
   core.reconcileSpawns().catch((err) => console.error("fleetd spawn reconciliation error:", err));
   startAgentsPoll(core);

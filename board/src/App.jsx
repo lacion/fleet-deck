@@ -22,6 +22,7 @@ import PlanLibrary from './components/PlanLibrary.jsx';
 import LanPanel from './components/LanPanel.jsx';
 import KillConfirm from './components/KillConfirm.jsx';
 import ArmMoveConfirm from './components/ArmMoveConfirm.jsx';
+import RenameDialog from './components/RenameDialog.jsx';
 import WorktreesModal from './components/WorktreesModal.jsx';
 import TokenGate from './components/TokenGate.jsx';
 
@@ -67,21 +68,24 @@ export default function App() {
   // drawer's OWNED PANE. A card chip and its drawer button can't each fire a POST.
   const { reviving, enabling, revivingAll, adopting, revive, reviveAll, enableRemote: enableRemoteAction, adopt } = useSpawnActions();
   // board-level mutations that report onto the strip: Clear, revive, enable-remote,
-  // the two-step kill, and the two-step Move-to-tmux (ASK opens the dialog; the
-  // POST is the dialog's alone — disarm is the one direct click).
+  // the two-step kill, the two-step Move-to-tmux (ASK opens the dialog; the POST
+  // is the dialog's alone — disarm is the one direct click), and the two-step
+  // rename (v2.1 — same shape: ✎ asks, the dialog POSTs).
   const {
     clearing, doClear,
     killAsk, setKillAsk, killBusy, askKill, doKill,
     armAsk, setArmAsk, armBusy, askArm, doArm, doDisarm,
+    renameAsk, setRenameAsk, renameBusy, askRename, doRename, doResetName,
     doRevive, doReviveAll, doEnableRemote,
   } = useFleetActions({ showNote, revive, reviveAll, enableRemoteAction, adopt });
-  // terminal / grid / watch windows — killAsk + armAsk are threaded in for the
-  // keydown mirrors (Esc cancels the topmost dialog, leaves the drawer standing)
+  // terminal / grid / watch windows — killAsk + armAsk + renameAsk are threaded in
+  // for the keydown mirrors (Esc cancels the topmost dialog, leaves the drawer
+  // standing)
   const {
     term, setTerm, grid, setGrid, watch,
     termableSessions, watchable, openTerm, toggleWatch, openGrid,
-    termOpen, killOpen, armOpen,
-  } = useTermWindows(sessions, killAsk, armAsk);
+    termOpen, killOpen, armOpen, renameOpen,
+  } = useTermWindows(sessions, killAsk, armAsk, renameAsk);
   // worktrees list — reloads on boot and whenever the fleet gains/loses a session
   const {
     worktrees, wtLoading, wtErr, wtSupported, loadWorktrees, removeWorktree: doRemoveWorktree,
@@ -115,8 +119,8 @@ export default function App() {
 
   // keyboard: j/k rail nav · y/n permission · 1-9 choice · c compose · Esc close
   useBoardHotkeys({
-    pendingQs, selQ, setSelQ, termOpen, killOpen, armOpen,
-    setKillAsk, setArmAsk, setDrawerSid, setCompose, setSpawnForm, setLanOpen, setWtOpen,
+    pendingQs, selQ, setSelQ, termOpen, killOpen, armOpen, renameOpen,
+    setKillAsk, setArmAsk, setRenameAsk, setDrawerSid, setCompose, setSpawnForm, setLanOpen, setWtOpen,
   });
 
   const stale = status !== 'live';
@@ -296,6 +300,7 @@ export default function App() {
               onArmMove={askArm}
               onDisarm={doDisarm}
               adopting={adopting}
+              onRename={askRename}
             />
           )}
           {/* v1.3 — PLANS library, between the lanes and the feed (never in
@@ -354,6 +359,9 @@ export default function App() {
           onArmMove={askArm}
           onDisarm={doDisarm}
           adopting={adopting.has(drawerSid)}
+          // v2.1 — rename: the drawer's ✎ and the card's chip open the SAME
+          // dialog, which owns the POST and reports on the shared strip
+          onRename={askRename}
           thread={threads[drawerSid] || EMPTY_ARR}
           // M-F5 — await the result: clear the draft only on success, and let
           // the drawer surface a failure instead of swallowing it.
@@ -426,6 +434,18 @@ export default function App() {
           busy={armBusy}
           onCancel={() => setArmAsk(null)}
           onConfirm={doArm}
+        />
+      )}
+
+      {/* ======= rename (v2.1 — the ONLY door to renameSession) ======= */}
+      {renameAsk && (
+        <RenameDialog
+          callsign={renameAsk.callsign}
+          tmuxWindow={renameAsk.window}
+          busy={renameBusy}
+          onCancel={() => setRenameAsk(null)}
+          onConfirm={doRename}
+          onReset={doResetName}
         />
       )}
 

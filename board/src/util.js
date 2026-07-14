@@ -285,6 +285,41 @@ export function callsignOf(byId, sid) {
   return byId.get(sid)?.callsign || sid;
 }
 
+// ------------------------------------------------------------ callsign naming
+// A callsign is `<animal>-<suffix>`: 'wren-a9e1' (suffix = the first 4 chars of
+// the session uuid), 'wren-PROJ-123' (a ticket), or 'wren-docs-review' (a human
+// name). The ANIMAL is minted by the daemon and is never chosen — only the
+// SUFFIX is renameable — so the split is always at the FIRST dash: everything
+// after it, dashes included, is ONE suffix ('PROJ-123' is not two fields).
+export function animalOf(callsign) {
+  const s = String(callsign ?? '');
+  const i = s.indexOf('-');
+  return i === -1 ? s : s.slice(0, i);
+}
+export function suffixOf(callsign) {
+  const s = String(callsign ?? '');
+  const i = s.indexOf('-');
+  return i === -1 ? '' : s.slice(i + 1);
+}
+
+// The suffix charset is LOAD-BEARING — do NOT loosen it:
+//   · sessionTicker (below) matches a callsign flanked by [^A-Za-z0-9-] so that
+//     'raven-PROJ-1' doesn't leak into 'raven-PROJ-12's timeline; a suffix
+//     carrying a space, a dot or a slash would slip straight through that guard;
+//   · the pane's tmux window is named fd<port>-<callsign> and has to survive a
+//     shell unquoted.
+// Letters, digits and dashes only; must START alphanumeric (a leading '-' reads
+// as a flag everywhere downstream); max 24 chars. The daemon validates it again
+// and is the AUTHORITY — this is the client-side copy that keeps the rename
+// dialog honest (inline hint, disabled confirm) before the round-trip.
+const SUFFIX_RE = /^[A-Za-z0-9][A-Za-z0-9-]{0,23}$/;
+// 24 = the 1 leading char + the 23 trailing ones SUFFIX_RE allows. The rename
+// input's maxLength reads it from here, so the two can't drift apart.
+export const SUFFIX_MAX = 24;
+export function validSuffix(s) {
+  return SUFFIX_RE.test(String(s ?? ''));
+}
+
 // The drawer's per-session timeline: the daemon's global ticker filtered to the
 // rows that name this callsign, capped at the newest 12. The ticker carries only
 // {at, msg}, so the match is by text — the same convention the feed classifier

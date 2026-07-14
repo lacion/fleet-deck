@@ -162,6 +162,27 @@ export function adoptSession(sessionId, body) {
   return post(`/api/sessions/${encodeURIComponent(sessionId)}/adopt`, body);
 }
 
+// v2.1 "Rename" (0.7.1) — give a session a custom callsign SUFFIX. The animal is
+// minted by the daemon and is never chosen, so a rename only ever replaces the
+// half after the first dash: 'wren-a9e1' → 'wren-docs-review'. POST
+// /api/sessions/<session_id>/name — the BODY picks the intent:
+//   {suffix: 'docs-review'} → 200 {ok:true, renamed:true,
+//                                  callsign:'wren-docs-review', previous:'wren-a9e1'}
+//   {clear: true}           → revert to the AUTOMATIC name (the ticket name when
+//                             the session has a ticket, else the hex name) —
+//                             same success shape
+// `renamed:false` is a SUCCESS, not a failure: it means the name did not change
+// (clearing a name that was already automatic), and the board says so plainly.
+// Refusals are {ok:false, reason:'<human sentence>'} with 400 (bad charset,
+// reserved word), 404 (no such session) or 409 (name already taken) — the reason
+// is a finished sentence and is shown verbatim on the feedback strip.
+// Valid suffix: ^[A-Za-z0-9][A-Za-z0-9-]{0,23}$ — validSuffix() in util.js is the
+// client-side copy of that rule (see the WHY it can't be loosened there), but the
+// DAEMON is the authority and gets the last word on every name.
+export function renameSession(sessionId, body) {
+  return post(`/api/sessions/${encodeURIComponent(sessionId)}/name`, body);
+}
+
 // v1.9 — the worktrees a spawn left behind. The daemon does the judging (the
 // board must never guess whether a directory is safe to delete): each row
 // arrives with a verdict and the evidence that produced it —

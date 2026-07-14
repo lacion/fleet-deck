@@ -24,7 +24,7 @@ const MAIL_HINT = {
 function SessionCard({
   s, compact, mailCount, mailMeta, conflictFiles, conflictPeers, ripple, priority, onOpen, onOpenTerm,
   onRevive, reviving, onEnableRemote, enablingRemote, onKill, onToggleWatch, watched,
-  onArmMove, onDisarm, adopting,
+  onArmMove, onDisarm, adopting, onRename,
 }) {
   const offline = s.col === 'offline';
   const needsyou = s.col === 'needsyou';
@@ -69,7 +69,13 @@ function SessionCard({
   const canMove = !!onArmMove && (adoptableNow(s) || adoptArmable(s));
   const isArmed = !!onDisarm && adoptArmed(s);
   const canAdopt = canMove || isArmed;
-  const hasActs = canTerm || canKill || canWatch || canAdopt;
+  // v2.1 Rename — the ONE action with no spawn gate at all. Renaming touches the
+  // session's name, never its pane, so it is offered on EVERY live card:
+  // board-owned or not, revivable or not. Offline cards are excluded on purpose —
+  // they are on their way to being archived (and their callsign released), so
+  // naming one buys nothing and would only invite a refusal.
+  const canRename = !!onRename && !offline;
+  const hasActs = canTerm || canKill || canWatch || canAdopt || canRename;
 
   const cls = [
     'fd-card',
@@ -250,6 +256,22 @@ function SessionCard({
               onClick={() => onToggleWatch(s)}
             >
               {watched ? '▦ watching' : '▦ watch'}
+            </button>
+          )}
+          {canRename && (
+            // v2.1 — ✎ rename. R3-3: a real <button>, a SIBLING of the full-bleed
+            // .fd-cardopen overlay and never nested inside it, raised above it by
+            // the existing `.fd-card .fd-cardacts .fd-actbtn { z-index: 2 }` rule
+            // — so this click renames, and a click anywhere else on the card still
+            // opens the drawer. It only OPENS the dialog; the POST is that
+            // dialog's alone (so no busy state belongs on the chip).
+            <button
+              type="button"
+              className="fd-actbtn rename"
+              title="rename this session — the animal stays, the rest is yours"
+              onClick={() => onRename(s)}
+            >
+              ✎ rename
             </button>
           )}
           {canKill && (

@@ -15,15 +15,17 @@ const termIdentity = (s) => ({
 // keyboard — opening either closes the other — so this hook owns both and the
 // invariant between them.
 //
-// `killAsk` / `armAsk` are threaded in only so the keydown MIRRORS live
-// together, since the hotkey handler reads them synchronously off refs (a stale
-// closure over state would misroute the key):
-//   termOpen — "a live terminal has the keyboard": Esc is the agent's, never
-//              ours (the modal OR the grid, whose focused tile owns Esc too);
-//   killOpen — "the kill dialog is modal over everything": Esc cancels IT;
-//   armOpen  — "the move-to-tmux dialog is modal too": Esc cancels IT (v2.0),
-//              leaving the drawer it may have been opened from standing.
-export function useTermWindows(sessions, killAsk, armAsk) {
+// `killAsk` / `armAsk` / `renameAsk` are threaded in only so the keydown MIRRORS
+// live together, since the hotkey handler reads them synchronously off refs (a
+// stale closure over state would misroute the key):
+//   termOpen   — "a live terminal has the keyboard": Esc is the agent's, never
+//                ours (the modal OR the grid, whose focused tile owns Esc too);
+//   killOpen   — "the kill dialog is modal over everything": Esc cancels IT;
+//   armOpen    — "the move-to-tmux dialog is modal too": Esc cancels IT (v2.0),
+//                leaving the drawer it may have been opened from standing;
+//   renameOpen — same for the rename dialog (v2.1). Esc from INSIDE its text
+//                input must abandon the rename, not close the drawer under it.
+export function useTermWindows(sessions, killAsk, armAsk, renameAsk) {
   const [term, setTerm] = useState(null); // null | { spawnId, callsign, window }
   const [grid, setGrid] = useState(null); // null | [{ spawnId, callsign, window }]
   // which agents are ticked for the grid (by session id, so the set survives a
@@ -36,6 +38,8 @@ export function useTermWindows(sessions, killAsk, armAsk) {
   useEffect(() => { killOpen.current = !!killAsk; }, [killAsk]);
   const armOpen = useRef(false);
   useEffect(() => { armOpen.current = !!armAsk; }, [armAsk]);
+  const renameOpen = useRef(false);
+  useEffect(() => { renameOpen.current = !!renameAsk; }, [renameAsk]);
 
   // Only board-spawned panes exist to be watched: a plain `claude` in your own
   // terminal has no pane the daemon owns.
@@ -76,6 +80,6 @@ export function useTermWindows(sessions, killAsk, armAsk) {
     term, setTerm, grid, setGrid, watch,
     termableSessions, watchable,
     openTerm, toggleWatch, openGrid,
-    termOpen, killOpen, armOpen,
+    termOpen, killOpen, armOpen, renameOpen,
   };
 }
