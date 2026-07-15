@@ -49,6 +49,12 @@ function validateRelPath(relPath) {
       || path.isAbsolute(relPath) || relPath.split(/[\\/]/).includes('..')) {
     throw new PathError(400, 'invalid path');
   }
+  // `.git` is refused HERE, once, so list/read/search all agree: the tree view
+  // hides it (readdir filter) and the search backends skip it, but without this
+  // gate `fs/read?path=.git/config` (embedded remote credentials, on a plain
+  // clone) and `fs/list?path=.git` (the whole object store) would still answer.
+  // The wall belongs at the door every operation shares, not on each of them.
+  if (relPath.split(/[\\/]/).includes('.git')) throw new PathError(404, 'not found');
 }
 
 // Pure lexical containment. Callers perform the realpath checks appropriate to
@@ -74,7 +80,11 @@ export function fileType(st) {
 }
 
 export function clipText(text, max = 400) {
-  return text.length <= max ? text : text.slice(0, max);
+  if (text.length <= max) return text;
+  let clipped = text.slice(0, max);
+  const last = clipped.charCodeAt(clipped.length - 1);
+  if (last >= 0xd800 && last <= 0xdbff) clipped = clipped.slice(0, -1);
+  return clipped;
 }
 
 function failure(err, fallback = 'not found') {
@@ -232,7 +242,7 @@ async function gitSearch(root, q, mode, deadline) {
       .filter(name => name.toLocaleLowerCase().includes(needle));
     return {
       hits: matches.slice(0, SEARCH_HITS).map(file => ({ path: file })),
-      truncated: out.truncated || matches.length > SEARCH_HITS,
+      truncated: out.truncated || out.code !== 0 || matches.length > SEARCH_HITS,
     };
   }
 
@@ -247,10 +257,23 @@ async function gitSearch(root, q, mode, deadline) {
     });
   }
   const parsed = parseGitGrep(out.stdout, SEARCH_HITS);
-  return { hits: parsed.hits, truncated: out.truncated || parsed.overflow };
+  return {
+    hits: parsed.hits,
+    truncated: out.truncated || (out.code !== 0 && out.code !== 1) || parsed.overflow,
+  };
 }
 
-function walkSearch(root, q, mode, deadline) {
+// Async on purpose: every operation here is a *sync* fs call (readdir, lstat,
+// read) plus per-line CPU, so a big non-git tree would otherwise pin the
+// daemon's single thread for the whole deadline — freezing hooks, the board and
+// every other session — and, worse, make the 2-in-flight cap meaningless (a
+// synchronous walk never yields, so a second search can't run to trip it). We
+// hand the event loop back every WALK_YIELD_EVERY entries; the cost is a few
+// setImmediate hops, the win is a daemon that still breathes mid-search.
+const WALK_YIELD_EVERY = 512;
+const yieldToLoop = () => new Promise(resolve => { setImmediate(resolve); });
+
+async function walkSearch(root, q, mode, deadline) {
   const hits = [];
   const needle = q.toLocaleLowerCase();
   const stack = [{ dir: root, rel: '', depth: 0 }];
@@ -272,6 +295,7 @@ function walkSearch(root, q, mode, deadline) {
         stop = true;
         break;
       }
+      if (visited % WALK_YIELD_EVERY === 0) await yieldToLoop();
       const abs = path.join(current.dir, name);
       const rel = entryPath(current.rel, name);
       let st;
@@ -332,7 +356,7 @@ export function createFiles(ctx) {
       const real = realpathInside(root, abs);
       const own = fs.lstatSync(abs);
       if (!own.isDirectory() || own.isSymbolicLink()) throw new PathError(404, 'not found');
-      let names = fs.readdirSync(real).filter(name => name !== '.git');
+      const names = fs.readdirSync(real).filter(name => name !== '.git');
       const truncated = names.length > LIST_MAX;
       const entries = [];
       for (const name of names) {
@@ -364,6 +388,7 @@ export function createFiles(ctx) {
     const { root } = resolved;
     try {
       const abs = safeJoin(root, relPath);
+      if (abs === root) return { status: 404, body: { ok: false, reason: 'is a directory' } };
       realpathInside(root, path.dirname(abs));
       let lst;
       try { lst = fs.lstatSync(abs); } catch { throw new PathError(404, 'not found'); }
@@ -408,7 +433,7 @@ export function createFiles(ctx) {
       const deadline = started + SEARCH_TIMEOUT_MS;
       const result = resolved.git
         ? await gitSearch(resolved.root, q, mode, deadline)
-        : walkSearch(resolved.root, q, mode, deadline);
+        : await walkSearch(resolved.root, q, mode, deadline);
       return {
         status: 200,
         body: {

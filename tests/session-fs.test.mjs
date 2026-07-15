@@ -79,6 +79,9 @@ test('git session list/read/search is typed, literal, ignored-aware, and exclude
   assert.equal(read.json.content, 'first line\nNeedle literal here\nthird line\n');
   assert.equal(read.json.binary, false);
   assert.equal(read.json.truncated, false);
+  const readDirectory = await getJson(endpoint(daemon.baseUrl, 'fs-session', 'read'));
+  assert.equal(readDirectory.status, 404);
+  assert.equal(readDirectory.json.reason, 'is a directory');
 
   const named = await getJson(endpoint(daemon.baseUrl, 'fs-session', 'search', '?mode=name&q=ALPHA'));
   assert.equal(named.status, 200);
@@ -156,6 +159,14 @@ test('plain roots include dotfiles, skip .git, and support list/read/walk search
   assert.deepEqual(name.json.hits, [{ path: 'notes.txt' }]);
   const skipped = await getJson(endpoint(daemon.baseUrl, 'fs-session', 'search', '?q=never-index-this'));
   assert.deepEqual(skipped.json.hits, []);
+
+  // .git is refused for DIRECT access too, not merely hidden from listings and
+  // search: reading .git/config on a plain clone would hand back embedded
+  // remote credentials, and listing .git would hand back the object store.
+  const gitList = await getJson(endpoint(daemon.baseUrl, 'fs-session', 'list', '?path=.git'));
+  assert.equal(gitList.status, 404);
+  const gitRead = await getJson(endpoint(daemon.baseUrl, 'fs-session', 'read', '?path=.git%2Fhidden.txt'));
+  assert.equal(gitRead.status, 404);
 });
 
 test('read, list, search-hit, and binary caps shape bounded responses', async t => {

@@ -193,13 +193,17 @@ export default function FileViewer({ sid, callsign, root, initialPath, onClose }
   };
 
   const toggleDir = (p) => {
+    const opening = !openSet.has(p);
     setOpenSet((prev) => {
       const next = new Set(prev);
-      if (next.has(p)) next.delete(p);
-      else next.add(p);
+      if (opening) next.add(p);
+      else next.delete(p);
       return next;
     });
-    if (!dirs[p] && !openSet.has(p)) loadDir(p);
+    // refetch on EVERY expand, not just the first: the agents are writing while
+    // you watch, and a listing cached at open-time quietly lies within minutes.
+    // Stale entries stay painted while the refresh runs (no flicker).
+    if (opening) loadDir(p);
   };
 
   const openFile = async (p, line) => {
