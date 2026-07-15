@@ -80,3 +80,51 @@ export function makePlainDir() {
     cleanup() { rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); },
   };
 }
+
+/**
+ * Create a networkless bare origin with a seeded main branch and optional
+ * pushed branches. Call clone(name) for independent working copies whose
+ * non-default branches exist only as origin/* refs.
+ */
+export function makeRemoteRepo({ repoName = 'fleetdeck-remote-test', branches = [] } = {}) {
+  const base = mkdtempSync(path.join(tmpdir(), 'fleetdeck-remote-'));
+  const origin = path.join(base, `${repoName}.git`);
+  const seed = path.join(base, 'seed');
+  execFileSync('git', ['init', '--bare', '-q', '-b', 'main', origin]);
+  mkdirSync(seed, { recursive: true });
+  git(['init', '-q', '-b', 'main'], seed);
+  git(['config', 'user.email', 'test@fleetdeck.local'], seed);
+  git(['config', 'user.name', 'Fleet Deck Tests'], seed);
+  writeFileSync(path.join(seed, 'README.md'), '# seed\n');
+  git(['add', '.'], seed);
+  git(['commit', '-q', '-m', 'seed'], seed);
+  git(['remote', 'add', 'origin', origin], seed);
+  git(['push', '-q', '-u', 'origin', 'main'], seed);
+  for (const branch of branches) {
+    git(['switch', '-q', '-c', branch, 'main'], seed);
+    const marker = branch.replaceAll('/', '-') + '.txt';
+    writeFileSync(path.join(seed, marker), `${branch}\n`);
+    git(['add', marker], seed);
+    git(['commit', '-q', '-m', `seed ${branch}`], seed);
+    git(['push', '-q', '-u', 'origin', branch], seed);
+    git(['switch', '-q', 'main'], seed);
+  }
+
+  let cloneNo = 0;
+  return {
+    base,
+    origin: realpathSync(origin),
+    repoName,
+    seed: realpathSync(seed),
+    clone(name = `clone-${++cloneNo}`) {
+      const target = path.join(base, name);
+      execFileSync('git', ['clone', '-q', origin, target]);
+      git(['config', 'user.email', 'test@fleetdeck.local'], target);
+      git(['config', 'user.name', 'Fleet Deck Tests'], target);
+      return realpathSync(target);
+    },
+    cleanup() {
+      rmSync(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    },
+  };
+}
