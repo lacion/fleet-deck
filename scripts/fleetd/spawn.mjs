@@ -26,7 +26,8 @@
 // pre-issued session_id. Capability reports available:true, reason
 // 'test-override'.
 
-import { execFile, execFileSync, spawn as spawnChild } from 'node:child_process';
+import { execFileSync, spawn as spawnChild } from 'node:child_process';
+import { execFileP } from './exec.mjs';
 import { randomUUID } from 'node:crypto';
 
 const TMUX_TIMEOUT_MS = 5_000;
@@ -35,18 +36,21 @@ const US = '\u001f'; // unit separator — never appears in tmux names in practi
 // Run one tmux command (argv). Resolves stdout on success, null on ANY
 // failure (tmux absent, no server, bad target, timeout) — callers decide
 // whether null is "gone", "unknown" or an error.
-function tmux(args) {
-  return new Promise((resolve) => {
-    try {
-      const socket = process.env.FLEETDECK_TMUX_SOCKET?.trim();
-      const argv = socket ? ['-L', socket, ...args] : args;
-      execFile('tmux', argv, { timeout: TMUX_TIMEOUT_MS, windowsHide: true }, (err, stdout) => {
-        resolve(err ? null : (stdout ?? ''));
-      });
-    } catch {
-      resolve(null);
-    }
-  });
+async function tmux(args) {
+  // Reuse the shared execFileP primitive (exec.mjs) and map its result object
+  // back to this adapter's null-or-stdout contract: callers here decide whether
+  // null is "gone", "unknown" or an error. Behaviour is byte-identical to the
+  // hand-rolled execFile it replaced (utf8 stdout, windowsHide, 5s timeout). The
+  // try/catch is kept — as in the original — so any throw (e.g. a non-iterable
+  // args) resolves to null rather than rejecting.
+  try {
+    const socket = process.env.FLEETDECK_TMUX_SOCKET?.trim();
+    const argv = socket ? ['-L', socket, ...args] : args;
+    const r = await execFileP('tmux', argv, { timeout: TMUX_TIMEOUT_MS });
+    return r.ok ? (r.out ?? '') : null;
+  } catch {
+    return null;
+  }
 }
 
 // ------------------------------------------------------------- capability

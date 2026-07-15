@@ -21,12 +21,13 @@ import { createMdns } from './mdns.mjs';
 // contract), so the daemon's own claimHome lock and the SessionStart hook's
 // evict-a-stale-daemon path share one implementation and can never drift.
 import { pidRecord, pidIsLive, livePidLooksLikeFleetd } from './takeover.mjs';
+import { resolveHome, resolvePort } from './config.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const PORT = Number(process.env.FLEETDECK_PORT || 4711);
+const PORT = resolvePort();
 const BIND = (process.env.FLEETDECK_BIND || '127.0.0.1').trim() || '127.0.0.1';
 const LAN_MODE = !isLoopbackAddress(BIND);
-const HOME = process.env.FLEETDECK_HOME || path.join(os.homedir() || '/tmp', '.fleetdeck');
+const HOME = resolveHome();
 // MANAGED CONTRACT: set by `fleetdeck serve`, i.e. this daemon is owned by a
 // service supervisor (systemd, or the supervised wrapper) rather than lazily
 // spawned by a SessionStart hook. It changes exactly one thing — a plugin hook

@@ -196,7 +196,7 @@ test('owned-pane mail honors watcher priority and unclaims all rows when paste f
     ['sendEnter', '@1'],
   ]);
   assert.ok(db.prepare('SELECT delivered_at FROM mail ORDER BY id LIMIT 1').get().delivered_at);
-  assert.equal(core.snapshot().sessions.find(s => s.session_id === sid).mail_pending.count, 0);
+  assert.equal(core.snapshot().mail_meta[sid].queued, 0);
 
   state.calls.length = 0;
   const unregister = core.addWatchWaiter(sid, () => {});
