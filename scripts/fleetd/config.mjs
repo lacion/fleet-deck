@@ -7,6 +7,7 @@
 // scripts/fleetd/*.mjs source, so the standalone CLI cannot import this module at
 // runtime and keeps its own byte-identical HOME/PORT constants. Keep the two in
 // sync by eye; a drift test would need the CLI to be importable, which it is not.
+import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -26,4 +27,21 @@ export function resolvePort() {
 // The loopback base URL the hook scripts POST their events to.
 export function resolveBase(port = resolvePort()) {
   return `http://127.0.0.1:${port}`;
+}
+
+// Are we on a Coder workspace whose persisted disk is `/workspace`? Coder sets
+// CODER / CODER_WORKSPACE_NAME / CODER_AGENT_URL in the agent environment; any
+// one of them (non-empty) plus an actual `/workspace` directory is the signal.
+// Returns the probe dir (default '/workspace') when both hold, else null — the
+// caller then seeds the repos root and browse root there instead of ~/projects
+// and ~. Both inputs are injected so the unit tests need neither a real Coder
+// box nor a real /workspace: `{ env, probeDir }`.
+export function detectCoderWorkspaceRoot({ env = process.env, probeDir = '/workspace' } = {}) {
+  const present = v => typeof v === 'string' && v !== '';
+  const onCoder = present(env.CODER) || present(env.CODER_WORKSPACE_NAME) || present(env.CODER_AGENT_URL);
+  if (!onCoder) return null;
+  try {
+    if (fs.statSync(probeDir).isDirectory()) return probeDir;
+  } catch { /* no /workspace — not a persisted-disk Coder box */ }
+  return null;
 }

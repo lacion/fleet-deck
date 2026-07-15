@@ -38,6 +38,26 @@ export function execFileP(cmd, args, { timeout = 30_000, env } = {}) {
   });
 }
 
+// Distil a git subprocess's stderr down to the one line a human needs on a
+// tombstone or ticker: git's own `fatal:`/`error:` verdict. git narrates before
+// it fails ("Cloning into '…'"), so the FIRST stderr line — the one an 80-char
+// note clamp used to show — routinely hid the actual cause (e.g. `fatal: could
+// not read Username for 'https://gitlab.com': terminal prompts disabled`). We
+// take the LAST matching verdict line (the final word wins when git prints
+// several), else the last non-empty line, trimmed and capped so it stays a
+// note, not a log. Callers still console.error the FULL stderr for diagnosis.
+export function distillGitStderr(text) {
+  const lines = String(text ?? '').split('\n');
+  let verdict = null;
+  let lastNonEmpty = null;
+  for (const line of lines) {
+    if (line.trim() !== '') lastNonEmpty = line;
+    if (/^\s*(fatal|error):/i.test(line)) verdict = line;
+  }
+  const chosen = (verdict ?? lastNonEmpty ?? '').trim();
+  return chosen.length > 300 ? chosen.slice(0, 300) : chosen;
+}
+
 // Resolve the repository's primary integration ref, built on execFileP above.
 // Prefer origin/HEAD, then conventional remote main/master, and only fall back
 // to a local branch when the repo has no matching remote-tracking ref (a repo

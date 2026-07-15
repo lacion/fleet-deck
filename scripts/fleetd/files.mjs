@@ -9,7 +9,6 @@
 // and time limits. The endpoints are read-only and never invoke a shell.
 
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { deriveRepo } from './repo-identity.mjs';
@@ -116,19 +115,55 @@ function resolveRoot(ctx, sid) {
   }
 }
 
-// The global explorer: rooted at the DAEMON user's home directory, resolved
-// server-side from os.homedir() — the browser names a path relative to it and
-// nothing else, exactly as with a session root. Same containment, caps and
-// walls apply; a token-holder in LAN mode can read what the daemon user can, so
-// this widens exposure and is auth-gated like every other data endpoint.
-function resolveHomeRoot() {
-  const home = os.homedir();
+// The global explorer's root (D4): settings.mjs owns the precedence (browse_root
+// setting → FLEETDECK_BROWSE_ROOT env → Coder /workspace → the daemon user's
+// home) via browseRootChoice; this thunk resolves it server-side and enforces
+// the SAME containment as a session root — the browser names a path relative to
+// whatever wins and nothing else. A token-holder in LAN mode can read what the
+// daemon user can, so a CONFIGURED root widens exposure and stays auth-gated.
+// Fail-loud: a configured root that has vanished returns 410 NAMING its source —
+// never a silent fall-through to home (which would leak a different tree than
+// the operator pinned).
+function resolveBrowseRoot(ctx) {
+  const { source, resolved } = ctx.browseRootChoice();
+  let root;
   try {
-    if (!home || !fs.statSync(home).isDirectory()) throw new Error('no home');
-    const root = fs.realpathSync(home);
-    return { root, git: deriveRepo(root).is_git };
+    if (!resolved || !fs.statSync(resolved).isDirectory()) throw new Error('missing');
+    root = fs.realpathSync(resolved);
   } catch {
-    return { error: { status: 410, body: { ok: false, reason: 'home directory is unavailable' } } };
+    return { error: { status: 410, body: { ok: false, reason: browseRootGoneReason(source, resolved) } } };
+  }
+  // The settings validator already bans a CONFIGURED root of / (lexically and
+  // by realpath), but the env path is unvalidated — FLEETDECK_BROWSE_ROOT=/
+  // (or an alias that realpaths there) would otherwise serve a LAN
+  // token-holder the ENTIRE filesystem. Refuse it here, naming the source,
+  // exactly like a vanished root: fail loud, never serve.
+  if (path.dirname(root) === root) {
+    return {
+      error: {
+        status: 410,
+        body: { ok: false, reason: `${browseRootSourceName(source)} must not be the filesystem root` },
+      },
+    };
+  }
+  return { root, git: deriveRepo(root).is_git };
+}
+
+function browseRootSourceName(source) {
+  switch (source) {
+    case 'override': return 'the browse_root setting';
+    case 'env': return 'FLEETDECK_BROWSE_ROOT';
+    case 'detected': return 'the detected Coder workspace root';
+    default: return 'the home directory';
+  }
+}
+
+function browseRootGoneReason(source, resolved) {
+  switch (source) {
+    case 'override': return `browse_root setting points to a directory that no longer exists: ${resolved}`;
+    case 'env': return `FLEETDECK_BROWSE_ROOT points to a directory that no longer exists: ${resolved}`;
+    case 'detected': return `the detected Coder workspace root no longer exists: ${resolved}`;
+    default: return 'home directory is unavailable';
   }
 }
 
@@ -363,8 +398,8 @@ async function walkSearch(root, q, mode, deadline) {
 
 export function createFiles(ctx) {
   // Each operation takes a resolver thunk so the SAME containment/caps logic
-  // serves both a per-session root (resolveRoot) and the global home root
-  // (resolveHomeRoot). The browser never supplies a root either way.
+  // serves both a per-session root (resolveRoot) and the global browse root
+  // (resolveBrowseRoot). The browser never supplies a root either way.
   async function listAt(resolve, relPath) {
     let abs;
     try { validateRelPath(relPath); } catch (err) { return failure(err); }
@@ -467,9 +502,9 @@ export function createFiles(ctx) {
   }
 
   // Per-session entry points (root resolved from the session id) and the global
-  // home-rooted explorer share one implementation via the resolver thunk.
+  // browse-root explorer share one implementation via the resolver thunk.
   const sessionRoot = sid => () => resolveRoot(ctx, sid);
-  const homeRoot = () => resolveHomeRoot();
+  const homeRoot = () => resolveBrowseRoot(ctx);
   return {
     fsList: (sid, p) => listAt(sessionRoot(sid), p),
     fsRead: (sid, p) => readAt(sessionRoot(sid), p),

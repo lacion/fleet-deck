@@ -145,6 +145,9 @@ export default function App() {
   // Fix D — manual cleanup: the Clear button only appears when there is an
   // offline card to clear.
   const hasOffline = sessions.some((s) => s.col === 'offline');
+  // v2.5 — the global explorer's root: the daemon's resolved browse_root, with
+  // home_dir as the one-release fallback for a daemon predating the setting.
+  const browseRoot = snap.settings?.browse_root?.resolved || snap.home_dir || '~';
 
   // Prefer the daemon's callsigns: it resolves them from EVERY session, so a
   // conflict whose participants have since been archived still reads
@@ -426,12 +429,19 @@ export default function App() {
         />
       )}
 
-      {/* ====== file viewer (v2.2 read-only) — a session's tree, or all of home ====== */}
+      {/* ====== file viewer (v2.2 read-only) — a session's tree, or all of the
+              browse root (v2.5: configurable, was hard-wired home). Keyed by the
+              RESOLVED root, not a constant: a browse_root change (from the
+              picker's "set as default root", another tab, or curl) must fully
+              remount the viewer — its per-directory cache, open set, and current
+              file all name paths relative to the OLD root and would silently lie
+              under the new one. ====== */}
       {fsView && (fsView.scope === 'home' ? (
         <FileViewer
-          key="home"
-          title="~ home"
-          root={snap.home_dir || '~'}
+          key={`home:${browseRoot}`}
+          title={browseRoot}
+          root={browseRoot}
+          favs={snap.settings?.fav_dirs || EMPTY_ARR}
           list={fsListHome}
           read={fsReadHome}
           search={fsSearchHome}

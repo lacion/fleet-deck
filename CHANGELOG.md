@@ -5,6 +5,27 @@ All notable changes to Fleet Deck are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Repo-mode spawns work where the repos actually live: private forges over ssh,
+and Coder workspaces whose real disk is `/workspace`, not home.
+
+### Added
+
+- **ssh or https, your pick, for `org/repo` shorthand.** The spawn dialog's host pills gain a transport row (`ssh · git@…` / `https`); the destination hint previews the exact origin either way. The choice is a durable daemon setting written when a shorthand spawn is accepted with an explicit transport — the fleet remembers what you actually use. API: `POST /api/spawn` takes `repo_transport` (`ssh` | `https`); absent resolves from the setting.
+- **The file explorer's root is yours to choose.** A durable `browse_root` setting (env `FLEETDECK_BROWSE_ROOT` between setting and default) re-roots the global ⌸ Files explorer and the spawn form's 🗀 folder picker. On a Coder workspace the default is auto-detected as `/workspace` (the persisted disk); everywhere else it stays your home directory. The root is still resolved server-side only — the browser never names one — and a configured root that has vanished fails loud (410 naming its source), never silently falls back.
+- **Favorite folders.** ☆ any folder in the explorer or the picker to pin it; pinned folders appear as one-click chips in both, and **set as default root** re-roots everything from the folder you're standing on. Up to 20, stored as the `fav_dirs` setting, validated server-side (absolute, existing directories).
+- `POST /api/settings` now accepts any subset of `repos_dir`, `repo_transport`, `browse_root`, `fav_dirs` — validate-all-then-apply-all, unknown keys refused by name.
+
+### Changed
+
+- **Shorthand clones default to ssh** (`git@github.com:org/repo.git`) instead of https. v0.12.0 composed https unconditionally, which cannot clone a private repo from a daemon (`GIT_TERMINAL_PROMPT=0`, no interactive credentials) unless durable https credentials exist — while ssh keys are how forge auth actually works on most dev boxes. Pick the https pill once and it's remembered; existing checkouts are unaffected either way, because origin matching is transport-insensitive since 0.12.0.
+- **On a Coder workspace, clones land in `/workspace` by default** (was `~/projects`) — the persisted disk, not the ephemeral home. `FLEETDECK_REPOS_DIR` and the dialog's repos-root override behave as before.
+
+### Fixed
+
+- **A failed clone now tells you why.** The card tombstone carries git's `fatal:`/`error:` line (e.g. `fatal: could not read Username for 'https://gitlab.com': terminal prompts disabled`) instead of a truncated `Cloning into '…` banner; the note clamp grew 80→200 chars, the ticker line 60→120. The full stderr goes to `fleetd.log`, and a durable `SpawnFailed` event keeps the first 2000 chars queryable.
+
 ## [0.13.0] - 2026-07-15
 
 A supply-chain and shared-host hardening pass, written with scanner triage in

@@ -176,6 +176,22 @@ board up to read the warning.
 
 `fleetdeck doctor` checks all four and exits non-zero if a hard one is missing.
 
+## `/workspace` is detected automatically
+
+A Coder workspace's home directory is usually ephemeral; the disk that survives
+rebuilds is `/workspace`. When the daemon sees a Coder agent's environment
+(`CODER`, `CODER_WORKSPACE_NAME` or `CODER_AGENT_URL`) **and** `/workspace`
+exists, it roots two defaults there instead of home:
+
+- **repo-mode spawns clone into `/workspace`** (elsewhere: `~/projects`) —
+  override with `FLEETDECK_REPOS_DIR` or the spawn dialog's destination field;
+- **the ⌸ Files explorer and 🗀 folder picker open at `/workspace`**
+  (elsewhere: home) — override with `FLEETDECK_BROWSE_ROOT`, or pick any folder
+  and hit **set as default root**.
+
+Both are just seeded defaults: an explicit setting or env var always wins, and
+nothing changes for non-Coder machines.
+
 ## Without a wildcard domain: just port-forward
 
 If your Coder deployment has no wildcard DNS and path-based apps are disabled, you do not need any of

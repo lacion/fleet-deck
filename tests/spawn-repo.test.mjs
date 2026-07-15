@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { startDaemon, randomPort } from './helpers/daemon.mjs';
 import { getJson, postHook, postJson } from './helpers/http.mjs';
 import { makeRemoteRepo } from './helpers/gitrepo.mjs';
+import { openDb } from '../scripts/fleetd/db.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SPAWN_CMD_FIXTURE = path.join(HERE, 'helpers/spawn-cmd-fixture.mjs');
@@ -44,6 +45,36 @@ function spawnEnv(recordFile, reposDir, postUrl = null) {
     FLEETDECK_REPOS_DIR: reposDir,
     ...(postUrl ? { FLEETDECK_TEST_SPAWN_POST_URL: postUrl } : {}),
   };
+}
+
+function countEvents(home, hookEvent) {
+  const db = openDb(path.join(home, 'fleetd.db'));
+  try { return db.prepare('SELECT COUNT(*) AS n FROM events WHERE hook_event = ?').get(hookEvent).n; }
+  finally { db.close(); }
+}
+
+// A daemon whose background clones are guaranteed to die instantly: a 1ms clone
+// timeout plus a false GIT_SSH_COMMAND so an ssh origin fails on connect. The
+// transport tests only assert the SYNCHRONOUS 202 echo (composed before the
+// clone runs), so the clone's fate is irrelevant beyond not outliving teardown.
+async function cloneKilledDaemon(t) {
+  const reposDir = scratch('fleetdeck-transport-repos-');
+  const recordFile = path.join(scratch(), 'specs.jsonl');
+  const port = randomPort();
+  const daemon = await startDaemon({
+    port,
+    env: {
+      ...spawnEnv(recordFile, reposDir, `http://127.0.0.1:${port}`),
+      FLEETDECK_CLONE_TIMEOUT_MS: '1',
+      GIT_SSH_COMMAND: 'false',
+    },
+  });
+  t.after(async () => {
+    await daemon.stop();
+    rmSync(reposDir, { recursive: true, force: true });
+    rmSync(path.dirname(recordFile), { recursive: true, force: true });
+  });
+  return { daemon, reposDir };
 }
 
 async function setup(t, { branches = ['existing', 'remote-only'] } = {}) {
@@ -153,6 +184,15 @@ test('clone failure tombstones the card and removes destination plus temp', asyn
     return found?.col === 'offline' ? found : null;
   }, { label: 'failed clone tombstone' });
   assert.match(card.note, /spawn failed/i);
+  // D6: the tombstone carries git's OWN distilled `fatal:` line, not its
+  // "Cloning into '…'" narration — the whole point of distillGitStderr. (A
+  // missing local origin prints only the fatal line, so this proves the note is
+  // the verdict, clamped to 200 not 80.)
+  assert.match(card.note, /fatal: repository .*does not exist/i);
+  assert.doesNotMatch(card.note, /Cloning into/i);
+  // …and the full reason is durable in the events table (SpawnFailed), the
+  // queryable audit trail alongside the full stderr in fleetd.log.
+  assert.ok(countEvents(daemon.home, 'SpawnFailed') >= 1, 'a failed clone must log a durable SpawnFailed event');
   assert.equal(existsSync(dest), false);
   assert.equal(existsSync(`${dest}.fd-cloning-${response.json.spawn_id.slice(0, 8)}`), false);
 });
@@ -228,19 +268,109 @@ test('repo_host without repo is refused', async t => {
   assert.match(response.json.reason, /repo_host requires repo/i);
 });
 
-test('repo_host gitlab shorthand resolves a gitlab.com clone origin', async t => {
+test('repo_host gitlab shorthand resolves a gitlab.com clone origin (ssh by default)', async t => {
   // A gitlab shorthand with nested subgroups is a clone request; the 202 echoes
   // the composed origin synchronously, so we assert the resolved gitlab.com URL
-  // without depending on the (here unreachable) background clone. A 1ms clone
-  // timeout guarantees that clone cannot outlive the test's teardown.
-  const reposDir = scratch('fleetdeck-gitlab-repos-');
+  // without depending on the (here unreachable) background clone. With ssh now
+  // the resolved default (v0.14.0 behaviour change; was https in 0.12.0) an
+  // absent-transport shorthand composes the scp-style origin.
+  const { daemon, reposDir } = await cloneKilledDaemon(t);
+
+  const response = await postJson(`${daemon.baseUrl}/api/spawn`, {
+    repo: 'mygroup/mysub/myproj', branch: 'main', branch_mode: 'in-place', repo_host: 'gitlab',
+  });
+  assert.equal(response.status, 202, response.text);
+  assert.equal(response.json.provisioning, true);
+  assert.equal(response.json.clone.origin_url, 'git@gitlab.com:mygroup/mysub/myproj.git');
+  assert.equal(response.json.clone.dest, path.join(reposDir, 'myproj'));
+});
+
+test('explicit repo_transport composes the echoed origin (ssh + https) on a fresh daemon', async t => {
+  const { daemon, reposDir } = await cloneKilledDaemon(t);
+  // distinct repo names so the two clones never collide on the provisioning claim
+  const ssh = await postJson(`${daemon.baseUrl}/api/spawn`, {
+    repo: 'org/alpha', branch: 'main', branch_mode: 'in-place', repo_transport: 'ssh',
+  });
+  assert.equal(ssh.status, 202, ssh.text);
+  assert.equal(ssh.json.clone.origin_url, 'git@github.com:org/alpha.git');
+  assert.equal(ssh.json.clone.dest, path.join(reposDir, 'alpha'));
+
+  const https = await postJson(`${daemon.baseUrl}/api/spawn`, {
+    repo: 'org/beta', branch: 'main', branch_mode: 'in-place', repo_transport: 'https',
+  });
+  assert.equal(https.status, 202, https.text);
+  assert.equal(https.json.clone.origin_url, 'https://github.com/org/beta.git');
+});
+
+test('absent repo_transport on a fresh daemon composes an ssh origin (the new default)', async t => {
+  const { daemon } = await cloneKilledDaemon(t);
+  const res = await postJson(`${daemon.baseUrl}/api/spawn`, {
+    repo: 'org/repo', branch: 'main', branch_mode: 'in-place',
+  });
+  assert.equal(res.status, 202, res.text);
+  assert.equal(res.json.clone.origin_url, 'git@github.com:org/repo.git');
+});
+
+test('absent repo_transport honors the persisted https setting', async t => {
+  const { daemon } = await cloneKilledDaemon(t);
+  const set = await postJson(`${daemon.baseUrl}/api/settings`, { repo_transport: 'https' });
+  assert.equal(set.status, 200, set.text);
+  const res = await postJson(`${daemon.baseUrl}/api/spawn`, {
+    repo: 'org/repo', branch: 'main', branch_mode: 'in-place',
+  });
+  assert.equal(res.status, 202, res.text);
+  assert.equal(res.json.clone.origin_url, 'https://github.com/org/repo.git');
+});
+
+test('an explicit transport on a shorthand spawn persists as an override', async t => {
+  const { daemon } = await cloneKilledDaemon(t);
+  const before = await getJson(`${daemon.baseUrl}/api/settings`);
+  assert.equal(before.json.settings.repo_transport.source, 'default', 'a fresh daemon has no override');
+
+  const spawn1 = await postJson(`${daemon.baseUrl}/api/spawn`, {
+    repo: 'org/persist', branch: 'main', branch_mode: 'in-place', repo_transport: 'https',
+  });
+  assert.equal(spawn1.status, 202, spawn1.text);
+  const afterExplicit = await getJson(`${daemon.baseUrl}/api/settings`);
+  assert.equal(afterExplicit.json.settings.repo_transport.source, 'override');
+  assert.equal(afterExplicit.json.settings.repo_transport.value, 'https');
+
+  // An absent-transport shorthand spawn must NOT rewrite the remembered choice.
+  const spawn2 = await postJson(`${daemon.baseUrl}/api/spawn`, {
+    repo: 'org/persist2', branch: 'main', branch_mode: 'in-place',
+  });
+  assert.equal(spawn2.status, 202, spawn2.text);
+  const afterAbsent = await getJson(`${daemon.baseUrl}/api/settings`);
+  assert.equal(afterAbsent.json.settings.repo_transport.value, 'https');
+  assert.equal(afterAbsent.json.settings.repo_transport.source, 'override');
+});
+
+test('an absent transport never creates a transport override', async t => {
+  const { daemon } = await cloneKilledDaemon(t);
+  const res = await postJson(`${daemon.baseUrl}/api/spawn`, {
+    repo: 'org/repo', branch: 'main', branch_mode: 'in-place',
+  });
+  assert.equal(res.status, 202, res.text);
+  const got = await getJson(`${daemon.baseUrl}/api/settings`);
+  assert.equal(got.json.settings.repo_transport.source, 'default');
+  assert.equal(got.json.settings.repo_transport.value, 'ssh');
+});
+
+test('a 409-refused explicit transport never rewrites the remembered setting', async t => {
+  const reposDir = scratch('fleetdeck-claim-repos-');
   const recordFile = path.join(scratch(), 'specs.jsonl');
   const port = randomPort();
   const daemon = await startDaemon({
     port,
     env: {
       ...spawnEnv(recordFile, reposDir, `http://127.0.0.1:${port}`),
-      FLEETDECK_CLONE_TIMEOUT_MS: '1',
+      // The first clone must HOLD its destination claim long enough for the
+      // second request to collide with it: ssh "connects" straight into a 30s
+      // sleep (`sh -c` swallows git's appended host/command args as positional
+      // params) and the 5s clone timeout reaps it — the immediate second POST
+      // lands well inside that window, and nothing outlives teardown.
+      FLEETDECK_CLONE_TIMEOUT_MS: '5000',
+      GIT_SSH_COMMAND: 'sh -c "exec sleep 30"',
     },
   });
   t.after(async () => {
@@ -249,11 +379,38 @@ test('repo_host gitlab shorthand resolves a gitlab.com clone origin', async t =>
     rmSync(path.dirname(recordFile), { recursive: true, force: true });
   });
 
-  const response = await postJson(`${daemon.baseUrl}/api/spawn`, {
-    repo: 'mygroup/mysub/myproj', branch: 'main', branch_mode: 'in-place', repo_host: 'gitlab',
+  // First spawn (absent transport → ssh default) accepts and holds the claim.
+  const first = await postJson(`${daemon.baseUrl}/api/spawn`, {
+    repo: 'org/heldrepo', branch: 'main', branch_mode: 'in-place',
   });
-  assert.equal(response.status, 202, response.text);
-  assert.equal(response.json.provisioning, true);
-  assert.equal(response.json.clone.origin_url, 'https://gitlab.com/mygroup/mysub/myproj.git');
-  assert.equal(response.json.clone.dest, path.join(reposDir, 'myproj'));
+  assert.equal(first.status, 202, first.text);
+
+  // Second spawn names the SAME destination with an explicit https — it 409s on
+  // the provisioning-owner gate, and a refused request must NOT persist.
+  const second = await postJson(`${daemon.baseUrl}/api/spawn`, {
+    repo: 'org/heldrepo', branch: 'main', branch_mode: 'in-place', repo_transport: 'https',
+  });
+  assert.equal(second.status, 409, second.text);
+  assert.match(second.json.reason, /already being provisioned/i);
+
+  const got = await getJson(`${daemon.baseUrl}/api/settings`);
+  assert.equal(got.json.settings.repo_transport.source, 'default',
+    'a 409-refused spawn must not rewrite the remembered transport');
+  assert.equal(got.json.settings.repo_transport.value, 'ssh');
+});
+
+test('repo mode rejects an unknown repo_transport value', async t => {
+  const { daemon } = await cloneKilledDaemon(t);
+  const res = await postJson(`${daemon.baseUrl}/api/spawn`, {
+    repo: 'org/repo', branch: 'main', branch_mode: 'in-place', repo_transport: 'sftp',
+  });
+  assert.equal(res.status, 400);
+  assert.match(res.json.reason, /repo_transport must be ssh or https/i);
+});
+
+test('repo_transport without repo is refused', async t => {
+  const { daemon } = await cloneKilledDaemon(t);
+  const res = await postJson(`${daemon.baseUrl}/api/spawn`, { repo_transport: 'ssh', branch: 'main' });
+  assert.equal(res.status, 400);
+  assert.match(res.json.reason, /repo_transport requires repo/i);
 });

@@ -44,13 +44,18 @@ const isShorthandRepo = (input) => {
 };
 
 // The origin a shorthand resolves to, composed with the daemon's exact rule
-// (repos.mjs): https://<github.com|gitlab.com>/<input minus trailing .git>.git.
-// GitLab shorthand may carry subgroups (group/sub/repo) — the whole path rides
-// through untouched. Only ever called on isShorthandRepo-true input.
-const shorthandOrigin = (input, host) => {
+// (repos.mjs parseRepoInput): the input minus any trailing `.git`, then either
+// scp-style ssh (git@<github.com|gitlab.com>:<slug>.git) or https
+// (https://<host>/<slug>.git). GitLab shorthand may carry subgroups
+// (group/sub/repo) — the whole path rides through untouched. Only ever called on
+// isShorthandRepo-true input; a feedback-only preview, the daemon composes the
+// origin it actually clones.
+const shorthandOrigin = (input, host, transport) => {
   const slug = String(input || '').trim().replace(/\.git$/i, '');
   const domain = host === 'gitlab' ? 'gitlab.com' : 'github.com';
-  return `https://${domain}/${slug}.git`;
+  return transport === 'ssh'
+    ? `git@${domain}:${slug}.git`
+    : `https://${domain}/${slug}.git`;
 };
 
 // v1.2 spawn form — POST /api/spawn on an explicit human click, never any
@@ -109,6 +114,17 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
   // v2.4 — host for `org/repo` shorthand: parseRepoInput hardcodes github.com,
   // but this user is on github AND gitlab, so shorthand needs an explicit pick.
   const [repoHost, setRepoHost] = useState('github'); // 'github' | 'gitlab'
+  // v2.5 — clone transport for `org/repo` shorthand: ssh (scp-style git@…) or
+  // https. Seeded ONCE, at mount, from the daemon's RESOLVED setting (ssh is the
+  // durable default — this fleet's forge auth is SSH-only).
+  // DOCTRINE: this is deliberately NOT live-adopted from later snapshot frames
+  // the way reposDir is. A transport pill the user is looking at must never flip
+  // under them — not when an unrelated frame arrives, and least of all when
+  // their own accepted spawn just PERSISTED the very setting this seeds from
+  // (D2). The daemon owns the durable default; this box owns the current pick
+  // until the form closes. baseBody() sends it only for shorthand; the daemon
+  // remembers an EXPLICIT pick on the accepted spawn, so there is no save here.
+  const [repoTransport, setRepoTransport] = useState(() => settings?.repo_transport?.value || 'ssh');
   // the repos root: seeded from the daemon's resolved setting, editable here,
   // PERSISTED on commit (blur/Enter) — that is what survives reboots
   const [reposDir, setReposDir] = useState(settings?.repos_dir?.resolved || '');
@@ -227,6 +243,11 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
     // there, and absent means github, so back-compat holds for every other input.
     // The EFFECTIVE host, not the pill: subgroups force gitlab (see above).
     if (shorthand) body.repo_host = effectiveHost;
+    // v2.5 — repo_transport rides ONLY for shorthand, exactly like repo_host: the
+    // daemon reads it only there, absent resolves to the persisted setting, and
+    // the accepted spawn remembers an explicit pick (D2) — so there is no
+    // separate persistence call from the board.
+    if (shorthand) body.repo_transport = repoTransport;
     if (model.trim()) body.model = model.trim();
     if (permissionMode !== 'default') body.permission_mode = permissionMode;
     if (!repoMode && (worktree || batching)) body.worktree = true; // forced for a batch
@@ -426,6 +447,32 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
                   </div>
                 </div>
               )}
+              {/* v2.5 — clone transport for the shorthand: ssh default (this
+                  fleet's forge auth is SSH), https selectable. SAME visibility as
+                  the host toggle above (showHostToggle) and the same pill look
+                  (fd-fsmodes / fd-target). No save on click — the accepted spawn
+                  persists the pick daemon-side (D2); this is a live preview knob. */}
+              {showHostToggle && (
+                <div className="frow">
+                  <span className="fl">transport</span>
+                  <div className="fd-fsmodes" role="radiogroup" aria-label="Clone transport">
+                    <button
+                      type="button"
+                      className={`fd-target${repoTransport === 'ssh' ? ' on' : ''}`}
+                      onClick={() => { setRepoTransport('ssh'); if (err) setErr(null); }}
+                    >
+                      ssh · git@…
+                    </button>
+                    <button
+                      type="button"
+                      className={`fd-target${repoTransport === 'https' ? ' on' : ''}`}
+                      onClick={() => { setRepoTransport('https'); if (err) setErr(null); }}
+                    >
+                      https
+                    </button>
+                  </div>
+                </div>
+              )}
               <div className="frow">
                 <span className="fl">branch *</span>
                 <input
@@ -497,8 +544,9 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
                                 // v2.4 — spell out the exact origin the host pick resolves to, so
                                 // the human sees precisely what gets cloned before they click.
                                 // The EFFECTIVE host: subgroups preview gitlab, never a github
-                                // origin the daemon would refuse.
-                                ? `not on this machine yet — cloned from ${shorthandOrigin(repo, effectiveHost)} on spawn; the root is remembered across restarts`
+                                // origin the daemon would refuse. The transport pick steers the
+                                // spelling (ssh git@… vs https://…), same as the daemon will.
+                                ? `not on this machine yet — cloned from ${shorthandOrigin(repo, effectiveHost, repoTransport)} on spawn; the root is remembered across restarts`
                                 : 'not on this machine yet — cloned here on spawn; the root is remembered across restarts'}
                         </span>
                       </>
@@ -656,7 +704,8 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
       </div>
       {pickerFor && (
         <DirPicker
-          root={homeDir || '~'}
+          root={settings?.browse_root?.resolved || homeDir || '~'}
+          favs={settings?.fav_dirs || []}
           onPick={handlePick}
           onClose={() => setPickerFor(null)}
         />

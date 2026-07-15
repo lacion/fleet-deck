@@ -24,7 +24,7 @@ export function createSpawns(ctx) {
     // 0.7.1: the boot heal for /clear forks stranded BEFORE succession shipped.
     succeedSession, CLEAR_SUCCESSION_MS, hasLivePane,
     validateBranch, resolveTarget, cloneRepo, materializeBranch, touchRepo,
-    claimTarget, targetOwner, reserveCloneSlot,
+    claimTarget, targetOwner, reserveCloneSlot, persistRepoTransport,
   } = ctx;
 
   // ------------------------------------- v1.2 board-spawned sessions (spawns)
@@ -115,14 +115,22 @@ export function createSpawns(ctx) {
   }
 
   function spawnFailed(sid, callsign, reason) {
-    // D8: this tombstone now also wakes watchers (via tombstoneCard's default),
+    // D6: keep the FULL reason durable in the events table (SpawnStalled
+    // precedent) even though the card note is clamped — the 80-char clamp that
+    // used to be the ONLY record is why a private-repo clone failure could not
+    // be diagnosed without re-running it by hand. cloneRepo has already
+    // console.error'd git's full stderr to fleetd.log; this is the queryable
+    // audit trail. Clamps widened: note 80→200, ticker 60→120 (a distilled
+    // `fatal:` line needs the room).
+    logEvent(sid, 'SpawnFailed', null, String(reason).slice(0, 2000));
+    // D8: this tombstone also wakes watchers (via tombstoneCard's default),
     // consistent with every other terminal transition — a failed spawn is a
     // card that just went offline, and a watch long-poll should learn that now
     // rather than at its timeout. forgetModel drops the transcript memo (M-G2:
     // terminal — a revive re-stamps the floor).
     tombstoneCard(sid, {
-      note: `spawn failed: ${reason}`.slice(0, 80),
-      tickMsg: `✗ spawn failed for ${callsign}: ${reason.slice(0, 60)}`,
+      note: `spawn failed: ${reason}`.slice(0, 200),
+      tickMsg: `✗ spawn failed for ${callsign}: ${String(reason).slice(0, 120)}`,
       forgetModel: true,
       mutate: true,
     });
@@ -363,7 +371,7 @@ export function createSpawns(ctx) {
     if (!cap.available) {
       return { status: 400, body: { ok: false, reason: `spawning unavailable: ${cap.reason}` } };
     }
-    for (const k of ['cwd', 'repo', 'branch', 'branch_mode', 'prompt', 'model', 'permission_mode', 'repo_host']) {
+    for (const k of ['cwd', 'repo', 'branch', 'branch_mode', 'prompt', 'model', 'permission_mode', 'repo_host', 'repo_transport']) {
       if (body?.[k] != null && typeof body[k] !== 'string') {
         return { status: 400, body: { ok: false, reason: `${k} must be a string` } };
       }
@@ -377,6 +385,17 @@ export function createSpawns(ctx) {
       }
       if (body?.repo == null) {
         return { status: 400, body: { ok: false, reason: 'repo_host requires repo' } };
+      }
+    }
+    // repo_transport steers the SAME shorthand (D1) and is refused without a
+    // repo, mirroring repo_host exactly — a transport with nothing to steer is
+    // a confused request. An explicit value also PERSISTS (D2), below.
+    if (body?.repo_transport != null) {
+      if (body.repo_transport !== 'ssh' && body.repo_transport !== 'https') {
+        return { status: 400, body: { ok: false, reason: 'repo_transport must be ssh or https' } };
+      }
+      if (body?.repo == null) {
+        return { status: 400, body: { ok: false, reason: 'repo_transport requires repo' } };
       }
     }
     if (body?.worktree != null && typeof body.worktree !== 'boolean') {
@@ -423,6 +442,19 @@ export function createSpawns(ctx) {
       if (target.mode === 'clone') {
         try { releaseCloneSlot = reserveCloneSlot(); }
         catch (err) { return { status: err.status || 429, body: { ok: false, reason: err.message || String(err) } }; }
+      }
+      // D2: an EXPLICIT transport on an ACCEPTED shorthand spawn becomes the
+      // remembered default for the next one (and for curl users) — not a pill
+      // click, which is exploratory. It sits AFTER every synchronous rejection
+      // (validation 400s, the provisioning-owner 409, the clone-cap 429): a
+      // request the daemon refused must never rewrite the remembered choice.
+      // From here the spawn is committed to a card. A transport absent-and-
+      // resolved-from-the-setting never rewrites it; and it steers shorthand
+      // only, so a URL/path/bare-name target (kind !== 'shorthand') persists
+      // nothing.
+      if (body.repo_transport != null && target.kind === 'shorthand') {
+        persistRepoTransport(body.repo_transport);
+        onMutate();
       }
 
       const session_id = randomUUID();

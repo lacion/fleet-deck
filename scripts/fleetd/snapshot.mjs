@@ -5,14 +5,13 @@
 // facts (hasWatchWaiter/ownedPaneRow), spawnCapability + spawnState from the
 // spawn module. spawnRowRevivable is a pure helper.
 
-import os from 'node:os';
 import { spawnRowRevivable, sessionAdoptableNow } from './helpers.mjs';
 
 export function createSnapshot(ctx) {
   const {
     q, t0, version, STALE_MS, RETAIN_LEDGER_MS, SNAPSHOT_FILES_PER_SESSION,
     questions, hasWatchWaiter, ownedPaneRow, spawnCapability, spawnState,
-    resolveReposDir,
+    resolveSettings,
   } = ctx;
 
   // -------------------------------------------------------------- snapshot
@@ -163,6 +162,9 @@ export function createSnapshot(ctx) {
               : 'turn-boundary',
       };
     }
+    // Resolved ONCE per frame: home_dir below is derived from the same object,
+    // and the two must never disagree within a single snapshot.
+    const settings = resolveSettings();
     return {
       up_ms: now - t0,          // spike name, preserved
       uptime_ms: now - t0,      // contract addition
@@ -179,8 +181,16 @@ export function createSnapshot(ctx) {
         default_branch: repo.default_branch ?? null,
         last_used_at: repo.last_used_at,
       })),
-      settings: { repos_dir: resolveReposDir() },
-      home_dir: os.homedir(), // root label for the global (home) file explorer
+      settings, // {repos_dir, repo_transport, browse_root, fav_dirs}
+      // home_dir means "the absolute root the /api/fs endpoints serve" — it is
+      // NOT the user's home any more. A stale board (the previously committed
+      // board-dist) composes its global-explorer paths against this field, so
+      // it MUST track the same root the endpoints actually serve: shipping
+      // os.homedir() while /api/fs served a Coder /workspace would make the
+      // stale picker build /home/…/<sel> for rows listed from /workspace. The
+      // key keeps its old name for one release of stale-board compatibility;
+      // new boards read settings.browse_root.resolved.
+      home_dir: settings.browse_root.resolved,
       ticker: q.recentTicker.all(),
       // Callsigns resolved from EVERY session, not just the visible ones: a
       // conflict outlives its participants, and a banner shouting a raw UUID at

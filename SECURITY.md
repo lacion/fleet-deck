@@ -179,3 +179,13 @@ token like an SSH key. The README's
 [**The fine print**](README.md#the-fine-print-read-this-bit) and
 [**LAN mode**](README.md#opening-the-board-on-your-other-machine-lan-mode)
 sections are the fuller version of all of this.
+
+One knob deserves an explicit callout: the global file explorer's root is
+configurable (`browse_root` setting / `FLEETDECK_BROWSE_ROOT`; on a Coder
+workspace it auto-detects `/workspace`). The explorer is read-only and the root
+is resolved **server-side only** — the browser can never name a root or escape
+it (`..`, absolute paths and symlinks out of the root are refused, `.git` is
+never readable) — but whatever root you configure is what any bearer-token
+holder can read in LAN/standalone mode. Rooting it at `/` or another broad
+directory widens that exposure accordingly; leave it at the default unless the
+machine is yours alone or the network is trusted.

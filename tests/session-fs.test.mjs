@@ -10,7 +10,7 @@ import path from 'node:path';
 import { openDb } from '../scripts/fleetd/db.mjs';
 import { startDaemon } from './helpers/daemon.mjs';
 import { makePlainDir, makeRepoWithWorktree } from './helpers/gitrepo.mjs';
-import { getJson } from './helpers/http.mjs';
+import { getJson, postJson } from './helpers/http.mjs';
 
 function withDb(home, fn) {
   const db = openDb(path.join(home, 'fleetd.db'));
@@ -306,4 +306,92 @@ test('the global home explorer roots at HOME, browses and searches, and refuses 
   // containment: no traversal out of home, by relative or absolute path
   assert.equal((await getJson(`${daemon.baseUrl}/api/fs/read?path=..%2F${path.basename(outside)}%2Fsecret.txt`)).status, 400);
   assert.equal((await getJson(`${daemon.baseUrl}/api/fs/read?path=${encodeURIComponent(path.join(outside, 'secret.txt'))}`)).status, 400);
+});
+
+test('the global explorer re-roots to the browse_root setting, keeps containment, and 410s when it is deleted', async t => {
+  const browse = mkdtempSync(path.join(tmpdir(), 'fleetdeck-browse-root-'));
+  mkdirSync(path.join(browse, 'sub'));
+  writeFileSync(path.join(browse, 'sub', 'inside.txt'), 'inside the configured root\n');
+  const outside = mkdtempSync(path.join(tmpdir(), 'fleetdeck-browse-outside-'));
+  writeFileSync(path.join(outside, 'secret.txt'), 'must never be reachable\n');
+  // Clear any inherited Coder signal so precedence is deterministic (the setting
+  // wins over everything regardless; this just documents intent).
+  const daemon = await startDaemon({ env: { CODER: '', CODER_WORKSPACE_NAME: '', CODER_AGENT_URL: '' } });
+  t.after(async () => {
+    await daemon.stop();
+    rmSync(browse, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  });
+
+  const set = await postJson(`${daemon.baseUrl}/api/settings`, { browse_root: browse });
+  assert.equal(set.status, 200, set.text);
+
+  const list = await getJson(`${daemon.baseUrl}/api/fs/list?path=`);
+  assert.equal(list.status, 200);
+  assert.equal(list.json.entries.some(e => e.name === 'sub' && e.type === 'dir'), true);
+  const read = await getJson(`${daemon.baseUrl}/api/fs/read?path=sub%2Finside.txt`);
+  assert.equal(read.json.content, 'inside the configured root\n');
+
+  // Containment survives the re-root — the resolver thunk changed, the walls did
+  // not: no traversal out of the configured root, by relative or absolute path.
+  assert.equal((await getJson(`${daemon.baseUrl}/api/fs/read?path=..%2F${path.basename(outside)}%2Fsecret.txt`)).status, 400);
+  assert.equal((await getJson(`${daemon.baseUrl}/api/fs/read?path=${encodeURIComponent(path.join(outside, 'secret.txt'))}`)).status, 400);
+
+  // Deleting the CONFIGURED root fails LOUD (410) NAMING the setting — never a
+  // silent fall-through to home (which would leak a different tree).
+  rmSync(browse, { recursive: true, force: true });
+  const gone = await getJson(`${daemon.baseUrl}/api/fs/list?path=`);
+  assert.equal(gone.status, 410);
+  assert.match(gone.json.reason, /browse_root setting/i);
+});
+
+test('FLEETDECK_BROWSE_ROOT=/ is refused with a 410 naming the source, never served', async t => {
+  // The settings validator bans a configured root of /, but the env var is
+  // unvalidated — serving it would hand a LAN token-holder the entire
+  // filesystem. The fs endpoints must refuse it loudly instead.
+  const daemon = await startDaemon({ env: {
+    FLEETDECK_BROWSE_ROOT: '/',
+    CODER: '', CODER_WORKSPACE_NAME: '', CODER_AGENT_URL: '',
+  } });
+  t.after(async () => { await daemon.stop(); });
+  for (const [action, suffix] of [['list', '?path='], ['read', '?path=etc%2Fpasswd'], ['search', '?q=root']]) {
+    const res = await getJson(`${daemon.baseUrl}/api/fs/${action}${suffix}`);
+    assert.equal(res.status, 410, action);
+    assert.match(res.json.reason, /FLEETDECK_BROWSE_ROOT/, action);
+    assert.match(res.json.reason, /filesystem root/i, action);
+  }
+});
+
+test('FLEETDECK_BROWSE_ROOT roots the global explorer, and the browse_root setting beats the env', async t => {
+  const envRoot = mkdtempSync(path.join(tmpdir(), 'fleetdeck-browse-env-'));
+  writeFileSync(path.join(envRoot, 'from-env.txt'), 'env root\n');
+  const settingRoot = mkdtempSync(path.join(tmpdir(), 'fleetdeck-browse-setting-'));
+  writeFileSync(path.join(settingRoot, 'from-setting.txt'), 'setting root\n');
+  const daemon = await startDaemon({ env: {
+    FLEETDECK_BROWSE_ROOT: envRoot,
+    CODER: '', CODER_WORKSPACE_NAME: '', CODER_AGENT_URL: '',
+  } });
+  t.after(async () => {
+    await daemon.stop();
+    rmSync(envRoot, { recursive: true, force: true });
+    rmSync(settingRoot, { recursive: true, force: true });
+  });
+
+  // env honored (no setting yet): rooted at envRoot, source 'env'.
+  const envList = await getJson(`${daemon.baseUrl}/api/fs/list?path=`);
+  assert.equal(envList.status, 200);
+  assert.equal(envList.json.entries.some(e => e.name === 'from-env.txt'), true);
+  const envSettings = await getJson(`${daemon.baseUrl}/api/settings`);
+  assert.equal(envSettings.json.settings.browse_root.source, 'env');
+  assert.equal(envSettings.json.settings.browse_root.resolved, envRoot);
+
+  // setting beats env: after POST, the explorer roots at settingRoot.
+  const set = await postJson(`${daemon.baseUrl}/api/settings`, { browse_root: settingRoot });
+  assert.equal(set.status, 200, set.text);
+  const settingList = await getJson(`${daemon.baseUrl}/api/fs/list?path=`);
+  assert.equal(settingList.json.entries.some(e => e.name === 'from-setting.txt'), true);
+  assert.equal(settingList.json.entries.some(e => e.name === 'from-env.txt'), false);
+  const afterSettings = await getJson(`${daemon.baseUrl}/api/settings`);
+  assert.equal(afterSettings.json.settings.browse_root.source, 'override');
+  assert.equal(afterSettings.json.settings.browse_root.resolved, settingRoot);
 });

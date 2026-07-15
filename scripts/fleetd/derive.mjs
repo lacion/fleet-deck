@@ -15,6 +15,7 @@ import * as defaultTmuxAdapter from './spawn.mjs';
 import { createStatements } from './statements.mjs';
 import { createWorktrees } from './worktrees.mjs';
 import { createRepos } from './repos.mjs';
+import { createSettings } from './settings.mjs';
 import { createFiles } from './files.mjs';
 import { pasteImage } from './paste.mjs';
 import { createMail } from './mail.mjs';
@@ -610,7 +611,13 @@ export function createCore(db, {
   // materialization. It must precede ingest/events/spawns: all three are
   // catalog writers or consumers.
   Object.assign(ctx, createRepos(ctx));
-  const { resolveReposDir, setSettings } = ctx;
+  // Whitelisted settings surface (repos_dir/repo_transport/browse_root/fav_dirs)
+  // rides ON TOP of the repos catalog: createSettings reads resolveReposDir /
+  // setReposDir from ctx and re-exports the `setSettings` name (so http.mjs's
+  // POST route is untouched) plus resolveSettings, browseRootChoice (files.mjs)
+  // and persistRepoTransport (spawns.mjs). It must precede files/spawns.
+  Object.assign(ctx, createSettings(ctx));
+  const { resolveReposDir, setSettings, resolveSettings } = ctx;
 
   // File-touch ledger + conflict radar → ledger.mjs.
   Object.assign(ctx, createLedger(ctx));
@@ -711,8 +718,9 @@ export function createCore(db, {
     cleanup,
     worktrees,          // GET /api/worktrees — bounded live git inspection
     removeWorktree,     // POST /api/worktrees/remove — allow-listed destruction
-    resolveReposDir,    // GET /api/settings + /state
-    setSettings,        // POST /api/settings
+    resolveReposDir,    // repos-root resolver (still consumed via resolveSettings)
+    resolveSettings,    // GET /api/settings + POST response + /state snapshot
+    setSettings,        // POST /api/settings (whitelisted; settings.mjs)
     fsList,             // GET /api/sessions/:id/fs/list → {status, body}
     fsRead,             // GET /api/sessions/:id/fs/read → {status, body}
     fsSearch,           // GET /api/sessions/:id/fs/search → {status, body}

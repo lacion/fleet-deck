@@ -1163,6 +1163,23 @@ textarea.fd-input { font-family: var(--font-ui); font-size: 13px; resize: none; 
 .fd-fsrow.warn { color: var(--act); cursor: default; font-size: 11px; }
 .fd-fsrow.err { color: var(--hazard); cursor: default; font-size: 11px; white-space: normal; }
 .fd-fsrow:focus-visible { outline: 2px solid var(--act); outline-offset: -2px; }
+/* v2.5 — favorites in the GLOBAL explorer: chip strip + a ☆ per directory row.
+   Absent for the session-scoped viewer (favs prop omitted → none of this renders). */
+.fd-fsfavs { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; flex: none; padding: 2px 0; }
+.fd-fsfavs .lbl { font-family: var(--font-data); font-size: var(--fs-micro); letter-spacing: var(--ls-label); color: var(--faint); margin-right: 2px; }
+.fd-fsfav { font-family: var(--font-data); font-size: 11px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fd-fsfav.off { opacity: .4; cursor: default; }
+.fd-fsfav-err { font-family: var(--font-data); font-size: 11px; color: var(--hazard); flex: none; }
+.fd-fsrowline { display: flex; align-items: center; }
+.fd-fsrowline .fd-fsrow.dir { flex: 1; min-width: 0; }
+.fd-fsstar {
+  flex: none; background: none; border: none; cursor: pointer; color: var(--faint);
+  font-size: 12px; line-height: 1; padding: 2px 8px; border-radius: 4px;
+}
+.fd-fsstar.on { color: var(--act); }
+.fd-fsstar:hover:not(:disabled) { color: var(--act); background: var(--border-soft); }
+.fd-fsstar:disabled { cursor: default; opacity: .35; }
+.fd-fsstar:focus-visible { outline: 2px solid var(--act); outline-offset: -2px; }
 
 /* --- the content pane: a file, the search results, or the welcome card --- */
 .fd-fspane { display: flex; flex-direction: column; gap: 8px; min-height: 0; min-width: 0; }
@@ -1285,3 +1302,22 @@ textarea.fd-input { font-family: var(--font-ui); font-size: 13px; resize: none; 
 .fd-dpfoot .send { background: var(--act); color: var(--act-ink); border: none; border-radius: var(--r-ctl); padding: 8px 16px; font-size: 13px; font-weight: 600; cursor: pointer; }
 .fd-dpfoot .send:hover { opacity: .9; }
 .fd-dpfoot .send:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+/* v2.5 — favorites: quick-jump chips (reuse .fd-chip) + a ☆ per folder row */
+.fd-dpfavs { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.fd-dpfavs .lbl { font-family: var(--font-data); font-size: var(--fs-micro); letter-spacing: var(--ls-label); color: var(--faint); margin-right: 2px; }
+.fd-dpfav { font-family: var(--font-data); font-size: 11px; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fd-dpfav.off { opacity: .4; cursor: default; }
+.fd-dprowline { display: flex; align-items: center; }
+.fd-dprowline .fd-dprow { flex: 1; min-width: 0; }
+.fd-dpstar {
+  flex: none; background: none; border: none; cursor: pointer; color: var(--faint);
+  font-size: 12px; line-height: 1; padding: 3px 8px; border-radius: 4px;
+}
+.fd-dpstar.on { color: var(--act); }
+.fd-dpstar:hover:not(:disabled) { color: var(--act); background: var(--border-soft); }
+.fd-dpstar:disabled { cursor: default; opacity: .35; }
+.fd-dpstar:focus-visible { outline: 2px solid var(--act); outline-offset: -2px; }
+.fd-dpstar.foot { font-size: 15px; padding: 4px 8px; }
+.fd-dprootbtn { flex: none; font-size: 11px; padding: 6px 10px; }
+.fd-dpnote { font-family: var(--font-data); font-size: 11px; color: var(--dim); }
+.fd-dpnote.err { color: var(--hazard); }

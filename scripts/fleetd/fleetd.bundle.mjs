@@ -3721,10 +3721,10 @@ var require_websocket_server = __commonJS({
 });
 
 // scripts/fleetd/fleetd.mjs
-import fs14 from "node:fs";
+import fs16 from "node:fs";
 import crypto2 from "node:crypto";
-import os8 from "node:os";
-import path13 from "node:path";
+import os7 from "node:os";
+import path14 from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // scripts/fleetd/db.mjs
@@ -3984,7 +3984,7 @@ function openDb(file) {
 }
 
 // scripts/fleetd/derive.mjs
-import fs10 from "node:fs";
+import fs12 from "node:fs";
 
 // scripts/fleetd/repo-identity.mjs
 import { execFileSync } from "node:child_process";
@@ -4591,6 +4591,17 @@ function execFileP(cmd, args, { timeout = 3e4, env } = {}) {
       resolve({ ok: false, err: String(err.message || err) });
     }
   });
+}
+function distillGitStderr(text) {
+  const lines = String(text ?? "").split("\n");
+  let verdict = null;
+  let lastNonEmpty = null;
+  for (const line of lines) {
+    if (line.trim() !== "") lastNonEmpty = line;
+    if (/^\s*(fatal|error):/i.test(line)) verdict = line;
+  }
+  const chosen = (verdict ?? lastNonEmpty ?? "").trim();
+  return chosen.length > 300 ? chosen.slice(0, 300) : chosen;
 }
 async function baseBranch(worktree) {
   const head = await execFileP("git", ["-C", worktree, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"], { timeout: 5e3 });
@@ -5498,9 +5509,32 @@ function createWorktrees(ctx) {
 }
 
 // scripts/fleetd/repos.mjs
+import fs6 from "node:fs";
+import os3 from "node:os";
+import path4 from "node:path";
+
+// scripts/fleetd/config.mjs
 import fs5 from "node:fs";
 import os2 from "node:os";
 import path3 from "node:path";
+function resolveHome() {
+  return process.env.FLEETDECK_HOME || path3.join(os2.homedir() || "/tmp", ".fleetdeck");
+}
+function resolvePort() {
+  return Number(process.env.FLEETDECK_PORT || 4711);
+}
+function detectCoderWorkspaceRoot({ env = process.env, probeDir = "/workspace" } = {}) {
+  const present = (v) => typeof v === "string" && v !== "";
+  const onCoder = present(env.CODER) || present(env.CODER_WORKSPACE_NAME) || present(env.CODER_AGENT_URL);
+  if (!onCoder) return null;
+  try {
+    if (fs5.statSync(probeDir).isDirectory()) return probeDir;
+  } catch {
+  }
+  return null;
+}
+
+// scripts/fleetd/repos.mjs
 var CONTROL_RE = /[\x00-\x1f\x7f]/;
 var SPACE_OR_CONTROL_RE = /[\s\x00-\x1f\x7f]/;
 function namedError(status, message) {
@@ -5510,14 +5544,17 @@ function namedError(status, message) {
 }
 function repoNameOf(value) {
   const clean = String(value).replace(/[\\/]+$/, "");
-  return path3.basename(clean).replace(/\.git$/i, "");
+  return path4.basename(clean).replace(/\.git$/i, "");
 }
 function unsafeDashSegment(value) {
   return String(value).split(/[/:@]/).some((segment) => segment.startsWith("-"));
 }
-function parseRepoInput(input, repoHost = "github") {
+function parseRepoInput(input, repoHost = "github", repoTransport = "https") {
   if (repoHost !== "github" && repoHost !== "gitlab") {
     return { error: `repo_host must be github or gitlab \u2014 got "${repoHost}"` };
+  }
+  if (repoTransport !== "ssh" && repoTransport !== "https") {
+    return { error: `repo_transport must be ssh or https \u2014 got "${repoTransport}"` };
   }
   if (typeof input !== "string" || !input) return { error: "repo must be a non-empty string" };
   if (SPACE_OR_CONTROL_RE.test(input)) return { error: "repo must not contain whitespace or control characters" };
@@ -5554,7 +5591,7 @@ function parseRepoInput(input, repoHost = "github") {
     if (scheme === "http") return { error: "plain http repository URLs are refused \u2014 use https or ssh" };
     return { error: `repository URL scheme "${scheme}" is refused \u2014 use https or ssh` };
   }
-  if (path3.isAbsolute(input)) {
+  if (path4.isAbsolute(input)) {
     const repo_name = repoNameOf(input);
     if (!repo_name) return { error: "absolute repository path must name a repository" };
     return { kind: "path", origin_url: null, repo_name };
@@ -5565,22 +5602,24 @@ function parseRepoInput(input, repoHost = "github") {
     const repo_name = repoNameOf(parts[parts.length - 1]);
     if (!repo_name) return { error: "shorthand must end in a repository name" };
     if (repoHost === "gitlab") {
+      const slug = input.replace(/\.git$/i, "");
       return {
         kind: "shorthand",
-        origin_url: `https://gitlab.com/${input.replace(/\.git$/i, "")}.git`,
+        origin_url: repoTransport === "ssh" ? `git@gitlab.com:${slug}.git` : `https://gitlab.com/${slug}.git`,
         repo_name
       };
     }
     if (parts.length === 2) {
+      const slug = input.replace(/\.git$/i, "");
       return {
         kind: "shorthand",
-        origin_url: `https://github.com/${input.replace(/\.git$/i, "")}.git`,
+        origin_url: repoTransport === "ssh" ? `git@github.com:${slug}.git` : `https://github.com/${slug}.git`,
         repo_name
       };
     }
     return { error: "group/subgroup paths need the gitlab host or a full repository URL" };
   }
-  if (parts.length > 1 || input === "." || input === ".." || input.startsWith("." + path3.sep)) {
+  if (parts.length > 1 || input === "." || input === ".." || input.startsWith("." + path4.sep)) {
     return { error: "relative repository paths are refused \u2014 use an absolute path" };
   }
   return { kind: "name", origin_url: null, repo_name: repoNameOf(input) };
@@ -5597,8 +5636,8 @@ function quickBranchCheck(branch) {
   return null;
 }
 function expandHome(value) {
-  if (value === "~") return os2.homedir();
-  if (value.startsWith("~/")) return path3.join(os2.homedir(), value.slice(2));
+  if (value === "~") return os3.homedir();
+  if (value.startsWith("~/")) return path4.join(os3.homedir(), value.slice(2));
   return value;
 }
 function normalizeRemoteOrigin(value) {
@@ -5624,25 +5663,25 @@ function normalizeRemoteOrigin(value) {
 }
 function comparableOrigin(value) {
   if (!value) return null;
-  if (path3.isAbsolute(value)) {
+  if (path4.isAbsolute(value)) {
     try {
-      return fs5.realpathSync(value);
+      return fs6.realpathSync(value);
     } catch {
-      return path3.resolve(value);
+      return path4.resolve(value);
     }
   }
   return normalizeRemoteOrigin(value) ?? String(value).replace(/[\\/]+$/, "").replace(/\.git$/i, "").toLowerCase();
 }
 function exists(pathname) {
   try {
-    return fs5.existsSync(pathname);
+    return fs6.existsSync(pathname);
   } catch {
     return false;
   }
 }
 function isDirectory2(pathname) {
   try {
-    return fs5.statSync(pathname).isDirectory();
+    return fs6.statSync(pathname).isDirectory();
   } catch {
     return false;
   }
@@ -5678,7 +5717,7 @@ function dirtyNames(porcelain) {
   return String(porcelain || "").split("\n").filter(Boolean).map((line) => line.slice(3).trim()).filter(Boolean);
 }
 function createRepos(ctx) {
-  const { q, onMutate } = ctx;
+  const { q } = ctx;
   const touchedAt = /* @__PURE__ */ new Map();
   const provisioningTargets = /* @__PURE__ */ new Map();
   const cloneCap = (() => {
@@ -5709,14 +5748,17 @@ function createRepos(ctx) {
   function resolveReposDir() {
     const override = q.getSetting.get("repos_dir")?.value;
     if (override != null) {
-      return { value: override, source: "override", resolved: path3.resolve(expandHome(override)) };
+      return { value: override, source: "override", resolved: path4.resolve(expandHome(override)) };
     }
     if (process.env.FLEETDECK_REPOS_DIR) {
       const value2 = process.env.FLEETDECK_REPOS_DIR;
-      return { value: value2, source: "env", resolved: path3.resolve(expandHome(value2)) };
+      return { value: value2, source: "env", resolved: path4.resolve(expandHome(value2)) };
     }
-    const value = path3.join(os2.homedir(), "projects");
+    const value = detectCoderWorkspaceRoot() ?? path4.join(os3.homedir(), "projects");
     return { value, source: "default", resolved: value };
+  }
+  function resolveRepoTransport() {
+    return q.getSetting.get("repo_transport")?.value ?? "ssh";
   }
   function setReposDir(value) {
     if (value === null) {
@@ -5725,12 +5767,13 @@ function createRepos(ctx) {
     }
     if (typeof value !== "string" || !value) throw namedError(400, "repos_dir must be an absolute path or null");
     if (CONTROL_RE.test(value)) throw namedError(400, "repos_dir must not contain NUL or control characters");
-    const resolved = path3.resolve(expandHome(value));
-    if (!path3.isAbsolute(resolved)) throw namedError(400, "repos_dir must be an absolute path (or begin with ~/)");
-    if (path3.dirname(resolved) === resolved) throw namedError(400, "repos_dir must not be the filesystem root");
+    const expanded = expandHome(value);
+    if (!path4.isAbsolute(expanded)) throw namedError(400, "repos_dir must be an absolute path (or begin with ~/)");
+    const resolved = path4.resolve(expanded);
+    if (path4.dirname(resolved) === resolved) throw namedError(400, "repos_dir must not be the filesystem root");
     try {
-      if (fs5.existsSync(resolved)) {
-        if (!fs5.statSync(resolved).isDirectory()) throw namedError(400, "repos_dir points to an existing file");
+      if (fs6.existsSync(resolved)) {
+        if (!fs6.statSync(resolved).isDirectory()) throw namedError(400, "repos_dir points to an existing file");
       }
     } catch (err) {
       if (err?.status) throw err;
@@ -5738,18 +5781,6 @@ function createRepos(ctx) {
     }
     q.setSetting.run("repos_dir", value, Date.now());
     return resolveReposDir();
-  }
-  function setSettings(body) {
-    if (!body || !Object.prototype.hasOwnProperty.call(body, "repos_dir")) {
-      return { status: 400, body: { ok: false, reason: "repos_dir is required" } };
-    }
-    try {
-      const repos_dir = setReposDir(body.repos_dir);
-      onMutate();
-      return { status: 200, body: { ok: true, settings: { repos_dir } } };
-    } catch (err) {
-      return { status: err.status || 400, body: { ok: false, reason: err.message || String(err) } };
-    }
   }
   function touchRepo({ repo_id, repo_name, root, origin_url = null, default_branch = null, source }) {
     if (!repo_id || !repo_name || !root) return;
@@ -5764,7 +5795,8 @@ function createRepos(ctx) {
     }
   }
   async function resolveTarget(body) {
-    const parsed = parseRepoInput(body?.repo, body?.repo_host ?? void 0);
+    const transport = body?.repo_transport ?? resolveRepoTransport();
+    const parsed = parseRepoInput(body?.repo, body?.repo_host ?? void 0, transport);
     if (parsed.error) throw namedError(400, parsed.error);
     let origin_url = parsed.origin_url;
     let catalogRows = q.repoByName.all(parsed.repo_name);
@@ -5777,18 +5809,18 @@ function createRepos(ctx) {
       dest = roots[0];
       origin_url = row?.origin_url ?? null;
     } else if (parsed.kind === "path") {
-      dest = path3.resolve(body.repo);
+      dest = path4.resolve(body.repo);
     } else {
-      dest = path3.join(resolveReposDir().resolved, parsed.repo_name);
+      dest = path4.join(resolveReposDir().resolved, parsed.repo_name);
     }
     if (parsed.kind === "path") {
       const kind = await gitRepoKind(dest);
       if (kind === "worktree") {
-        return { mode: "local", root: dest, dest, origin_url: await originOf(dest), repo_name: parsed.repo_name };
+        return { mode: "local", root: dest, dest, origin_url: await originOf(dest), repo_name: parsed.repo_name, kind: parsed.kind };
       }
       if (exists(dest) && kind !== "bare") throw namedError(409, `${dest} exists and is not ${body.repo}`);
       origin_url = dest;
-      dest = path3.join(resolveReposDir().resolved, parsed.repo_name);
+      dest = path4.join(resolveReposDir().resolved, parsed.repo_name);
     }
     const candidates = [dest];
     if (parsed.kind !== "path") {
@@ -5811,32 +5843,36 @@ function createRepos(ctx) {
           continue;
         }
       }
-      return { mode: "local", root: candidate, dest: candidate, origin_url: origin_url ?? knownOrigin, repo_name: parsed.repo_name };
+      return { mode: "local", root: candidate, dest: candidate, origin_url: origin_url ?? knownOrigin, repo_name: parsed.repo_name, kind: parsed.kind };
     }
     if (!origin_url) throw namedError(404, `no usable checkout is known for "${parsed.repo_name}"`);
-    return { mode: "clone", origin_url, dest, repo_name: parsed.repo_name };
+    return { mode: "clone", origin_url, dest, repo_name: parsed.repo_name, kind: parsed.kind };
   }
   async function cloneRepo({ origin_url, dest, spawn_id }) {
     if (typeof origin_url !== "string" || !origin_url || SPACE_OR_CONTROL_RE.test(origin_url) || origin_url.startsWith("-") || unsafeDashSegment(origin_url)) {
       throw namedError(409, "refusing to clone an unsafe origin URL");
     }
     const reposDir = resolveReposDir().resolved;
-    fs5.mkdirSync(reposDir, { recursive: true });
+    fs6.mkdirSync(reposDir, { recursive: true });
     const temp = `${dest}.fd-cloning-${String(spawn_id).slice(0, 8)}`;
     try {
-      fs5.rmSync(temp, { recursive: true, force: true });
+      fs6.rmSync(temp, { recursive: true, force: true });
       const configuredTimeout = Number(process.env.FLEETDECK_CLONE_TIMEOUT_MS);
       const timeout = Number.isFinite(configuredTimeout) && configuredTimeout > 0 ? configuredTimeout : 6e5;
       const result = await execFileP("git", ["clone", "--", origin_url, temp], {
         timeout,
         env: { GIT_TERMINAL_PROMPT: "0" }
       });
-      if (!result.ok) throw namedError(409, result.err || "git clone failed");
-      fs5.renameSync(temp, dest);
+      if (!result.ok) {
+        if (result.err) console.error(`fleetd clone failed \u2014 ${origin_url}
+${result.err}`);
+        throw namedError(409, distillGitStderr(result.err) || "git clone failed");
+      }
+      fs6.renameSync(temp, dest);
       return dest;
     } catch (err) {
       try {
-        fs5.rmSync(temp, { recursive: true, force: true });
+        fs6.rmSync(temp, { recursive: true, force: true });
       } catch {
       }
       throw err?.status ? err : namedError(409, err.message || String(err));
@@ -5852,7 +5888,7 @@ function createRepos(ctx) {
     const remote = await execFileP("git", ["-C", root, "show-ref", "--verify", "--quiet", `refs/remotes/origin/${branch}`], { timeout: 5e3 });
     const base = await baseBranch(root);
     if (!local.ok && !remote.ok && !base) {
-      throw namedError(409, fetched.ok ? `branch ${branch} does not exist and no base branch is available to create it from` : `branch ${branch} not found locally and fetch failed: ${fetched.err}`);
+      throw namedError(409, fetched.ok ? `branch ${branch} does not exist and no base branch is available to create it from` : `branch ${branch} not found locally and fetch failed: ${distillGitStderr(fetched.err)}`);
     }
     if (mode === "in-place") {
       const status = await execFileP("git", ["-C", root, "status", "--porcelain"], { timeout: 3e4 });
@@ -5872,7 +5908,7 @@ function createRepos(ctx) {
     const existing = parseWorktrees(listed.out).find((row) => row.branch === branch);
     if (existing) return { runCwd: existing.path, created: { clone: !!clone, worktree: false }, reused: true };
     const safeBranch = branch.replaceAll("/", "-");
-    const basePath = path3.join(path3.dirname(root), `${path3.basename(root)}--fd-${safeBranch}`);
+    const basePath = path4.join(path4.dirname(root), `${path4.basename(root)}--fd-${safeBranch}`);
     const dedupPath = `${basePath}-${String(sid).slice(0, 4) || "repo"}`;
     const candidates = exists(basePath) ? [dedupPath] : [basePath, dedupPath];
     let last = null;
@@ -5884,7 +5920,7 @@ function createRepos(ctx) {
       if (!existedBefore && exists(candidate)) {
         await execFileP("git", ["-C", root, "worktree", "remove", "--force", candidate], { timeout: 3e4 });
         try {
-          fs5.rmSync(candidate, { recursive: true, force: true });
+          fs6.rmSync(candidate, { recursive: true, force: true });
         } catch {
         }
         await execFileP("git", ["-C", root, "worktree", "prune"], { timeout: 3e4 });
@@ -5894,9 +5930,9 @@ function createRepos(ctx) {
   }
   function canonicalTarget(dest) {
     try {
-      return fs5.realpathSync(dest);
+      return fs6.realpathSync(dest);
     } catch {
-      return path3.resolve(dest);
+      return path4.resolve(dest);
     }
   }
   function claimTarget(dest, callsign) {
@@ -5913,7 +5949,6 @@ function createRepos(ctx) {
     validateBranch,
     resolveReposDir,
     setReposDir,
-    setSettings,
     touchRepo,
     resolveTarget,
     cloneRepo,
@@ -5924,10 +5959,187 @@ function createRepos(ctx) {
   };
 }
 
+// scripts/fleetd/settings.mjs
+import fs7 from "node:fs";
+import os4 from "node:os";
+import path5 from "node:path";
+var CONTROL_RE2 = /[\x00-\x1f\x7f]/;
+var FAV_DIRS_MAX = 20;
+var ALLOWED_KEYS = ["repos_dir", "repo_transport", "browse_root", "fav_dirs"];
+function namedError2(status, message) {
+  const err = new Error(message);
+  err.status = status;
+  return err;
+}
+function expandHome2(value) {
+  if (value === "~") return os4.homedir();
+  if (value.startsWith("~/")) return path5.join(os4.homedir(), value.slice(2));
+  return value;
+}
+function validatePathSetting(value, label2) {
+  if (typeof value !== "string" || !value) throw namedError2(400, `${label2} must be an absolute path or null`);
+  if (CONTROL_RE2.test(value)) throw namedError2(400, `${label2} must not contain NUL or control characters`);
+  const expanded = expandHome2(value);
+  if (!path5.isAbsolute(expanded)) throw namedError2(400, `${label2} must be an absolute path (or begin with ~/)`);
+  const resolved = path5.resolve(expanded);
+  if (path5.dirname(resolved) === resolved) throw namedError2(400, `${label2} must not be the filesystem root`);
+  try {
+    if (fs7.existsSync(resolved) && !fs7.statSync(resolved).isDirectory()) {
+      throw namedError2(400, `${label2} points to an existing file`);
+    }
+  } catch (err) {
+    if (err?.status) throw err;
+    throw namedError2(400, `cannot inspect ${label2}: ${err.message || err}`);
+  }
+  try {
+    const canonical = fs7.realpathSync(resolved);
+    if (path5.dirname(canonical) === canonical) throw namedError2(400, `${label2} must not be the filesystem root`);
+  } catch (err) {
+    if (err?.status) throw err;
+  }
+  return resolved;
+}
+function createSettings(ctx) {
+  const { q, onMutate, resolveReposDir, setReposDir } = ctx;
+  function readSetting(key) {
+    return q.getSetting.get(key)?.value ?? null;
+  }
+  function resolveRepoTransport() {
+    const value = readSetting("repo_transport");
+    const known = value === "ssh" || value === "https";
+    return { value: known ? value : "ssh", source: known ? "override" : "default" };
+  }
+  function browseRootChoice() {
+    const setting = readSetting("browse_root");
+    if (setting != null) {
+      return { value: setting, source: "override", resolved: path5.resolve(expandHome2(setting)) };
+    }
+    const env = process.env.FLEETDECK_BROWSE_ROOT;
+    if (env) {
+      return { value: env, source: "env", resolved: path5.resolve(expandHome2(env)) };
+    }
+    const detected = detectCoderWorkspaceRoot();
+    if (detected) {
+      return { value: detected, source: "detected", resolved: detected };
+    }
+    let home = null;
+    try {
+      home = os4.homedir();
+    } catch {
+      home = null;
+    }
+    return { value: home, source: "default", resolved: home };
+  }
+  function resolveFavDirs() {
+    const raw = readSetting("fav_dirs");
+    if (raw == null) return [];
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      console.error("fleetd settings: fav_dirs is corrupt JSON \u2014 serving []");
+      return [];
+    }
+    return Array.isArray(parsed) ? parsed.filter((v) => typeof v === "string") : [];
+  }
+  function validateFavDirs(value) {
+    if (value == null) return null;
+    if (!Array.isArray(value)) throw namedError2(400, "fav_dirs must be an array of absolute directory paths or null");
+    if (value.length === 0) return null;
+    const seen = /* @__PURE__ */ new Set();
+    const out = [];
+    for (const entry of value) {
+      if (typeof entry !== "string" || !entry) throw namedError2(400, "each fav_dir must be a non-empty string");
+      if (CONTROL_RE2.test(entry)) throw namedError2(400, "a fav_dir must not contain NUL or control characters");
+      const expanded = expandHome2(entry);
+      if (!path5.isAbsolute(expanded)) throw namedError2(400, "a fav_dir must be an absolute path (or begin with ~/)");
+      const resolved = path5.resolve(expanded);
+      let isDir = false;
+      try {
+        isDir = fs7.statSync(resolved).isDirectory();
+      } catch {
+        isDir = false;
+      }
+      if (!isDir) throw namedError2(400, `a fav_dir is not an existing directory \u2014 ${resolved}`);
+      if (seen.has(resolved)) continue;
+      seen.add(resolved);
+      out.push(resolved);
+    }
+    if (out.length > FAV_DIRS_MAX) throw namedError2(400, `fav_dirs must list ${FAV_DIRS_MAX} directories or fewer \u2014 got ${out.length}`);
+    return out;
+  }
+  const HANDLERS = {
+    repos_dir: {
+      // repos.mjs stays the SINGLE writer for the repos root; we pre-validate
+      // with the shared gates so a bad repos_dir cannot slip past a valid
+      // sibling key and half-apply a body.
+      prepare: (v) => {
+        if (v != null) validatePathSetting(v, "repos_dir");
+        return v;
+      },
+      commit: (v) => setReposDir(v)
+    },
+    repo_transport: {
+      prepare: (v) => {
+        if (v != null && v !== "ssh" && v !== "https") {
+          throw namedError2(400, `repo_transport must be ssh or https \u2014 got ${JSON.stringify(v)}`);
+        }
+        return v;
+      },
+      commit: (v) => q.setSetting.run("repo_transport", v ?? null, Date.now())
+    },
+    browse_root: {
+      prepare: (v) => {
+        if (v != null) validatePathSetting(v, "browse_root");
+        return v;
+      },
+      commit: (v) => q.setSetting.run("browse_root", v ?? null, Date.now())
+    },
+    fav_dirs: {
+      prepare: (v) => validateFavDirs(v),
+      // → normalized array | null
+      commit: (prepared) => q.setSetting.run("fav_dirs", prepared == null ? null : JSON.stringify(prepared), Date.now())
+    }
+  };
+  function setSettings(body) {
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return { status: 400, body: { ok: false, reason: "settings body must be a JSON object" } };
+    }
+    const keys = Object.keys(body);
+    const unknown = keys.find((k) => !ALLOWED_KEYS.includes(k));
+    if (unknown) {
+      return {
+        status: 400,
+        body: { ok: false, reason: `unknown setting "${unknown}" \u2014 allowed: ${ALLOWED_KEYS.join(", ")}` }
+      };
+    }
+    try {
+      const prepared = keys.map((k) => ({ k, value: HANDLERS[k].prepare(body[k]) }));
+      for (const { k, value } of prepared) HANDLERS[k].commit(value);
+      onMutate();
+      return { status: 200, body: { ok: true, settings: resolveSettings() } };
+    } catch (err) {
+      return { status: err.status || 400, body: { ok: false, reason: err.message || String(err) } };
+    }
+  }
+  function persistRepoTransport(value) {
+    if (value !== "ssh" && value !== "https") return;
+    q.setSetting.run("repo_transport", value, Date.now());
+  }
+  function resolveSettings() {
+    return {
+      repos_dir: resolveReposDir(),
+      repo_transport: resolveRepoTransport(),
+      browse_root: browseRootChoice(),
+      fav_dirs: resolveFavDirs()
+    };
+  }
+  return { setSettings, resolveSettings, browseRootChoice, persistRepoTransport };
+}
+
 // scripts/fleetd/files.mjs
-import fs6 from "node:fs";
-import os3 from "node:os";
-import path4 from "node:path";
+import fs8 from "node:fs";
+import path6 from "node:path";
 import { spawn } from "node:child_process";
 function envInt2(name, fallback, { min = 1 } = {}) {
   const n = Number(process.env[name]);
@@ -5953,17 +6165,17 @@ var PathError = class extends Error {
   }
 };
 function within(root, candidate) {
-  return candidate === root || candidate.startsWith(root + path4.sep);
+  return candidate === root || candidate.startsWith(root + path6.sep);
 }
 function validateRelPath(relPath) {
-  if (typeof relPath !== "string" || relPath.length > 4096 || relPath.includes("\0") || path4.isAbsolute(relPath) || relPath.split(/[\\/]/).includes("..")) {
+  if (typeof relPath !== "string" || relPath.length > 4096 || relPath.includes("\0") || path6.isAbsolute(relPath) || relPath.split(/[\\/]/).includes("..")) {
     throw new PathError(400, "invalid path");
   }
   if (relPath.split(/[\\/]/).includes(".git")) throw new PathError(404, "not found");
 }
 function safeJoin(realRoot, relPath) {
   validateRelPath(relPath);
-  const abs = path4.resolve(realRoot, relPath || ".");
+  const abs = path6.resolve(realRoot, relPath || ".");
   if (!within(realRoot, abs)) throw new PathError(400, "invalid path");
   return abs;
 }
@@ -5994,7 +6206,7 @@ function failure(err, fallback = "not found") {
 function realpathInside(realRoot, target) {
   let real;
   try {
-    real = fs6.realpathSync(target);
+    real = fs8.realpathSync(target);
   } catch {
     throw new PathError(404, "not found");
   }
@@ -6007,21 +6219,54 @@ function resolveRoot(ctx, sid) {
   const spawnRow = ctx.q.spawnBySession.get(sid);
   const candidate = spawnRow?.worktree_path ?? session.worktree ?? session.cwd;
   try {
-    if (!candidate || !fs6.statSync(candidate).isDirectory()) throw new Error("not a directory");
-    const root = fs6.realpathSync(candidate);
+    if (!candidate || !fs8.statSync(candidate).isDirectory()) throw new Error("not a directory");
+    const root = fs8.realpathSync(candidate);
     return { root, git: deriveRepo(root).is_git };
   } catch {
     return { error: { status: 410, body: { ok: false, reason: "working tree no longer exists" } } };
   }
 }
-function resolveHomeRoot() {
-  const home = os3.homedir();
+function resolveBrowseRoot(ctx) {
+  const { source, resolved } = ctx.browseRootChoice();
+  let root;
   try {
-    if (!home || !fs6.statSync(home).isDirectory()) throw new Error("no home");
-    const root = fs6.realpathSync(home);
-    return { root, git: deriveRepo(root).is_git };
+    if (!resolved || !fs8.statSync(resolved).isDirectory()) throw new Error("missing");
+    root = fs8.realpathSync(resolved);
   } catch {
-    return { error: { status: 410, body: { ok: false, reason: "home directory is unavailable" } } };
+    return { error: { status: 410, body: { ok: false, reason: browseRootGoneReason(source, resolved) } } };
+  }
+  if (path6.dirname(root) === root) {
+    return {
+      error: {
+        status: 410,
+        body: { ok: false, reason: `${browseRootSourceName(source)} must not be the filesystem root` }
+      }
+    };
+  }
+  return { root, git: deriveRepo(root).is_git };
+}
+function browseRootSourceName(source) {
+  switch (source) {
+    case "override":
+      return "the browse_root setting";
+    case "env":
+      return "FLEETDECK_BROWSE_ROOT";
+    case "detected":
+      return "the detected Coder workspace root";
+    default:
+      return "the home directory";
+  }
+}
+function browseRootGoneReason(source, resolved) {
+  switch (source) {
+    case "override":
+      return `browse_root setting points to a directory that no longer exists: ${resolved}`;
+    case "env":
+      return `FLEETDECK_BROWSE_ROOT points to a directory that no longer exists: ${resolved}`;
+    case "detected":
+      return `the detected Coder workspace root no longer exists: ${resolved}`;
+    default:
+      return "home directory is unavailable";
   }
 }
 function runBounded(cmd, args, {
@@ -6095,7 +6340,7 @@ function runBounded(cmd, args, {
   });
 }
 function entryPath(relDir, name) {
-  return relDir ? path4.posix.join(relDir.split(path4.sep).join("/"), name) : name;
+  return relDir ? path6.posix.join(relDir.split(path6.sep).join("/"), name) : name;
 }
 async function ignoredPaths(root, paths, timeoutMs) {
   if (!paths.length) return /* @__PURE__ */ new Set();
@@ -6111,20 +6356,20 @@ async function ignoredPaths(root, paths, timeoutMs) {
 function readOpenFile(abs, maxBytes) {
   let fd;
   try {
-    fd = fs6.openSync(abs, fs6.constants.O_RDONLY | (fs6.constants.O_NOFOLLOW || 0));
-    const st = fs6.fstatSync(fd);
+    fd = fs8.openSync(abs, fs8.constants.O_RDONLY | (fs8.constants.O_NOFOLLOW || 0));
+    const st = fs8.fstatSync(fd);
     if (!st.isFile()) return { st, notFile: true };
     const wanted = Math.min(st.size, Math.max(BINARY_SNIFF_BYTES, maxBytes));
     const buf = Buffer.alloc(wanted);
     let offset = 0;
     while (offset < wanted) {
-      const n = fs6.readSync(fd, buf, offset, wanted - offset, offset);
+      const n = fs8.readSync(fd, buf, offset, wanted - offset, offset);
       if (!n) break;
       offset += n;
     }
     return { st, buf: buf.subarray(0, offset) };
   } finally {
-    if (fd != null) fs6.closeSync(fd);
+    if (fd != null) fs8.closeSync(fd);
   }
 }
 function parseGitGrep(raw, hitCap) {
@@ -6202,7 +6447,7 @@ async function walkSearch(root, q, mode, deadline) {
     const current = stack.pop();
     let names;
     try {
-      names = fs6.readdirSync(current.dir).sort((a, b) => a.localeCompare(b));
+      names = fs8.readdirSync(current.dir).sort((a, b) => a.localeCompare(b));
     } catch {
       continue;
     }
@@ -6215,11 +6460,11 @@ async function walkSearch(root, q, mode, deadline) {
         break;
       }
       if (visited % WALK_YIELD_EVERY === 0) await yieldToLoop();
-      const abs = path4.join(current.dir, name);
+      const abs = path6.join(current.dir, name);
       const rel = entryPath(current.rel, name);
       let st;
       try {
-        st = fs6.lstatSync(abs);
+        st = fs8.lstatSync(abs);
       } catch {
         continue;
       }
@@ -6286,15 +6531,15 @@ function createFiles(ctx) {
     try {
       abs = safeJoin(root, relPath);
       const real = realpathInside(root, abs);
-      const own = fs6.lstatSync(abs);
+      const own = fs8.lstatSync(abs);
       if (!own.isDirectory() || own.isSymbolicLink()) throw new PathError(404, "not found");
-      const names = fs6.readdirSync(real).filter((name) => name !== ".git");
+      const names = fs8.readdirSync(real).filter((name) => name !== ".git");
       const truncated = names.length > LIST_MAX;
       const entries = [];
       for (const name of names) {
         let st;
         try {
-          st = fs6.lstatSync(path4.join(real, name));
+          st = fs8.lstatSync(path6.join(real, name));
         } catch {
           continue;
         }
@@ -6328,10 +6573,10 @@ function createFiles(ctx) {
     try {
       const abs = safeJoin(root, relPath);
       if (abs === root) return { status: 404, body: { ok: false, reason: "is a directory" } };
-      realpathInside(root, path4.dirname(abs));
+      realpathInside(root, path6.dirname(abs));
       let lst;
       try {
-        lst = fs6.lstatSync(abs);
+        lst = fs8.lstatSync(abs);
       } catch {
         throw new PathError(404, "not found");
       }
@@ -6396,7 +6641,7 @@ function createFiles(ctx) {
     }
   }
   const sessionRoot = (sid) => () => resolveRoot(ctx, sid);
-  const homeRoot = () => resolveHomeRoot();
+  const homeRoot = () => resolveBrowseRoot(ctx);
   return {
     fsList: (sid, p) => listAt(sessionRoot(sid), p),
     fsRead: (sid, p) => readAt(sessionRoot(sid), p),
@@ -6408,17 +6653,17 @@ function createFiles(ctx) {
 }
 
 // scripts/fleetd/paste.mjs
-import fs7 from "node:fs";
-import os4 from "node:os";
-import path5 from "node:path";
+import fs9 from "node:fs";
+import os5 from "node:os";
+import path7 from "node:path";
 import crypto from "node:crypto";
 var MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 var PRUNE_AFTER_MS = 24 * 60 * 60 * 1e3;
 var MAX_KEPT_PASTES = 50;
 var ACCEPT = "png, jpeg, gif, webp";
 function pasteDir() {
-  const home = process.env.FLEETDECK_HOME || path5.join(os4.homedir() || os4.tmpdir(), ".fleetdeck");
-  return path5.join(home, "pastes");
+  const home = process.env.FLEETDECK_HOME || path7.join(os5.homedir() || os5.tmpdir(), ".fleetdeck");
+  return path7.join(home, "pastes");
 }
 function sniffImage(buf) {
   if (buf.length >= 8 && buf[0] === 137 && buf[1] === 80 && buf[2] === 78 && buf[3] === 71 && buf[4] === 13 && buf[5] === 10 && buf[6] === 26 && buf[7] === 10) return "png";
@@ -6434,15 +6679,15 @@ function looksBase64(s) {
 function ensurePasteDir() {
   const dir = pasteDir();
   try {
-    fs7.mkdirSync(path5.dirname(dir), { recursive: true });
+    fs9.mkdirSync(path7.dirname(dir), { recursive: true });
   } catch {
   }
   try {
-    fs7.mkdirSync(dir, { mode: 448 });
+    fs9.mkdirSync(dir, { mode: 448 });
   } catch (err) {
     if (err?.code !== "EEXIST") throw err;
   }
-  const st = fs7.lstatSync(dir);
+  const st = fs9.lstatSync(dir);
   if (st.isSymbolicLink() || !st.isDirectory()) {
     throw new Error(`${dir} is not a real directory; refusing to write pastes there`);
   }
@@ -6454,24 +6699,24 @@ function ensurePasteDir() {
 function pruneOldPastes(dir, now = Date.now(), protect = null) {
   let names;
   try {
-    names = fs7.readdirSync(dir);
+    names = fs9.readdirSync(dir);
   } catch {
     return;
   }
   const regular = [];
   for (const name of names) {
-    const p = path5.join(dir, name);
+    const p = path7.join(dir, name);
     if (protect && p === protect) continue;
     let st;
     try {
-      st = fs7.lstatSync(p);
+      st = fs9.lstatSync(p);
     } catch {
       continue;
     }
     if (!st.isFile()) continue;
     if (now - st.mtimeMs > PRUNE_AFTER_MS) {
       try {
-        fs7.unlinkSync(p);
+        fs9.unlinkSync(p);
       } catch {
       }
     } else {
@@ -6483,7 +6728,7 @@ function pruneOldPastes(dir, now = Date.now(), protect = null) {
     regular.sort((a, b) => a.mtime - b.mtime);
     for (const { p } of regular.slice(0, regular.length - budget)) {
       try {
-        fs7.unlinkSync(p);
+        fs9.unlinkSync(p);
       } catch {
       }
     }
@@ -6514,14 +6759,14 @@ function pasteImage(ev) {
     return { status: 500, body: { ok: false, reason: "cannot prepare paste dir" } };
   }
   const name = `paste-${crypto.randomUUID()}.${ext}`;
-  const file = path5.join(dir, name);
+  const file = path7.join(dir, name);
   const tmp = `${file}.tmp`;
   try {
-    fs7.writeFileSync(tmp, buf, { mode: 384, flag: "wx" });
-    fs7.renameSync(tmp, file);
+    fs9.writeFileSync(tmp, buf, { mode: 384, flag: "wx" });
+    fs9.renameSync(tmp, file);
   } catch (err) {
     try {
-      fs7.unlinkSync(tmp);
+      fs9.unlinkSync(tmp);
     } catch {
     }
     console.error("fleetd paste: write failed:", err);
@@ -6736,14 +6981,14 @@ function createMail(ctx) {
 }
 
 // scripts/fleetd/ledger.mjs
-import path6 from "node:path";
+import path8 from "node:path";
 var CONFLICT_WINDOW_MS = 30 * 60 * 1e3;
 function createLedger(ctx) {
   const { q, card, mail, tick } = ctx;
   function recordFile(sid, absFile, editorCard) {
     if (!absFile) return null;
     const now = Date.now();
-    const abs = path6.isAbsolute(absFile) ? absFile : path6.resolve(editorCard.cwd || "/", absFile);
+    const abs = path8.isAbsolute(absFile) ? absFile : path8.resolve(editorCard.cwd || "/", absFile);
     const key = ledgerKey(abs, editorCard);
     const touches = q.recentTouches.all(key.repo_id ?? "", key.rel_path, now - CONFLICT_WINDOW_MS);
     const rivalTouches = touches.filter((t) => {
@@ -6758,7 +7003,7 @@ function createLedger(ctx) {
     const severity = sameTree ? "warning" : "info";
     const rivalNames = rivals.map((r) => card(r).callsign).join(", ");
     q.insertConflict.run(now, key.repo_id ?? "", key.rel_path, severity, JSON.stringify([sid, ...rivals]));
-    tick(`\u26A0 conflict: ${editorCard.callsign} and ${rivalNames} both touching ${path6.basename(key.rel_path)}`);
+    tick(`\u26A0 conflict: ${editorCard.callsign} and ${rivalNames} both touching ${path8.basename(key.rel_path)}`);
     for (const r of rivals) {
       mail(r, "fleetdeck", severity === "warning" ? `Heads up: ${editorCard.callsign} is also editing ${key.rel_path}. Coordinate before you overwrite each other.` : `Heads up: ${editorCard.callsign} is editing ${key.rel_path} in another worktree of this repo \u2014 a future merge conflict announcing itself early.`);
     }
@@ -7035,8 +7280,8 @@ function createPlans(ctx) {
 }
 
 // scripts/fleetd/spawns.mjs
-import fs8 from "node:fs";
-import path7 from "node:path";
+import fs10 from "node:fs";
+import path9 from "node:path";
 import { randomUUID as randomUUID2 } from "node:crypto";
 function createSpawns(ctx) {
   const {
@@ -7068,7 +7313,8 @@ function createSpawns(ctx) {
     touchRepo,
     claimTarget,
     targetOwner,
-    reserveCloneSlot
+    reserveCloneSlot,
+    persistRepoTransport
   } = ctx;
   function spawnCapability() {
     const base = { active: q.countActiveSpawns.get().n };
@@ -7110,9 +7356,10 @@ function createSpawns(ctx) {
     return q.getSession.get(sid);
   }
   function spawnFailed(sid, callsign, reason) {
+    logEvent(sid, "SpawnFailed", null, String(reason).slice(0, 2e3));
     tombstoneCard(sid, {
-      note: `spawn failed: ${reason}`.slice(0, 80),
-      tickMsg: `\u2717 spawn failed for ${callsign}: ${reason.slice(0, 60)}`,
+      note: `spawn failed: ${reason}`.slice(0, 200),
+      tickMsg: `\u2717 spawn failed for ${callsign}: ${String(reason).slice(0, 120)}`,
       forgetModel: true,
       mutate: true
     });
@@ -7218,7 +7465,7 @@ function createSpawns(ctx) {
         const rm = await execFileP("git", ["-C", cwd, "worktree", "remove", "--force", worktree_path], { timeout: 3e4 });
         if (!rm.ok) {
           try {
-            fs8.rmSync(worktree_path, { recursive: true, force: true });
+            fs10.rmSync(worktree_path, { recursive: true, force: true });
           } catch {
           }
         }
@@ -7228,7 +7475,7 @@ function createSpawns(ctx) {
     }
     if (cwd && created.clone) {
       try {
-        fs8.rmSync(cwd, { recursive: true, force: true });
+        fs10.rmSync(cwd, { recursive: true, force: true });
       } catch {
       }
     }
@@ -7317,7 +7564,7 @@ function createSpawns(ctx) {
     if (!cap.available) {
       return { status: 400, body: { ok: false, reason: `spawning unavailable: ${cap.reason}` } };
     }
-    for (const k of ["cwd", "repo", "branch", "branch_mode", "prompt", "model", "permission_mode", "repo_host"]) {
+    for (const k of ["cwd", "repo", "branch", "branch_mode", "prompt", "model", "permission_mode", "repo_host", "repo_transport"]) {
       if (body?.[k] != null && typeof body[k] !== "string") {
         return { status: 400, body: { ok: false, reason: `${k} must be a string` } };
       }
@@ -7328,6 +7575,14 @@ function createSpawns(ctx) {
       }
       if (body?.repo == null) {
         return { status: 400, body: { ok: false, reason: "repo_host requires repo" } };
+      }
+    }
+    if (body?.repo_transport != null) {
+      if (body.repo_transport !== "ssh" && body.repo_transport !== "https") {
+        return { status: 400, body: { ok: false, reason: "repo_transport must be ssh or https" } };
+      }
+      if (body?.repo == null) {
+        return { status: 400, body: { ok: false, reason: "repo_transport requires repo" } };
       }
     }
     if (body?.worktree != null && typeof body.worktree !== "boolean") {
@@ -7368,7 +7623,7 @@ function createSpawns(ctx) {
       const targetPath = target.mode === "clone" ? target.dest : target.root;
       const owner = targetOwner(targetPath);
       if (owner) {
-        return { status: 409, body: { ok: false, reason: `${path7.resolve(targetPath)} is already being provisioned by ${owner}` } };
+        return { status: 409, body: { ok: false, reason: `${path9.resolve(targetPath)} is already being provisioned by ${owner}` } };
       }
       let releaseCloneSlot = () => {
       };
@@ -7378,6 +7633,10 @@ function createSpawns(ctx) {
         } catch (err) {
           return { status: err.status || 429, body: { ok: false, reason: err.message || String(err) } };
         }
+      }
+      if (body.repo_transport != null && target.kind === "shorthand") {
+        persistRepoTransport(body.repo_transport);
+        onMutate();
       }
       const session_id2 = randomUUID2();
       const spawn_id2 = randomUUID2();
@@ -7471,7 +7730,7 @@ function createSpawns(ctx) {
               created: materialized.created
             });
           } catch (err) {
-            const reason = branchMode === "in-place" ? `${err.message || String(err)} \u2014 ${path7.basename(target.root)} was left switched to ${body.branch}` : err.message || String(err);
+            const reason = branchMode === "in-place" ? `${err.message || String(err)} \u2014 ${path9.basename(target.root)} was left switched to ${body.branch}` : err.message || String(err);
             await spawnCompensate({
               spawn_id: spawn_id2,
               session_id: session_id2,
@@ -7522,7 +7781,7 @@ function createSpawns(ctx) {
             created
           });
         } catch (err) {
-          const reason = branchMode === "in-place" && created.clone ? `${err.message || String(err)} \u2014 ${path7.basename(target.dest)} was left switched to ${body.branch}` : err.message || String(err);
+          const reason = branchMode === "in-place" && created.clone ? `${err.message || String(err)} \u2014 ${path9.basename(target.dest)} was left switched to ${body.branch}` : err.message || String(err);
           await spawnCompensate({
             spawn_id: spawn_id2,
             session_id: session_id2,
@@ -7554,7 +7813,7 @@ function createSpawns(ctx) {
     const cwd = body?.cwd || "";
     let st = null;
     try {
-      st = fs8.statSync(cwd);
+      st = fs10.statSync(cwd);
     } catch {
     }
     if (!cwd || !st?.isDirectory()) {
@@ -7588,9 +7847,9 @@ function createSpawns(ctx) {
     if (body?.worktree === true) {
       const ticketNamed = c.ticket && String(callsign).endsWith(`-${c.ticket}`);
       const baseName = ticketNamed ? `${c.ticket}-${animalOf(callsign)}` : callsign;
-      const pathFor = (name) => path7.join(path7.dirname(cwd), `${path7.basename(cwd)}--fd-${name}`);
+      const pathFor = (name) => path9.join(path9.dirname(cwd), `${path9.basename(cwd)}--fd-${name}`);
       const dedup = `${baseName}-${session_id.slice(0, 4)}`;
-      const names = fs8.existsSync(pathFor(baseName)) ? [dedup] : [baseName, dedup];
+      const names = fs10.existsSync(pathFor(baseName)) ? [dedup] : [baseName, dedup];
       let candidate;
       let result;
       for (const workname of names) {
@@ -7657,13 +7916,13 @@ function createSpawns(ctx) {
       const runCwd = row.worktree_path ?? row.cwd;
       let st = null;
       try {
-        st = fs8.statSync(runCwd);
+        st = fs10.statSync(runCwd);
       } catch {
       }
       if (!runCwd || !st?.isDirectory()) {
         return { status: 410, body: { ok: false, reason: "revive cwd no longer exists" } };
       }
-      if (!fs8.existsSync(claudeTranscriptPath(runCwd, row.session_id))) {
+      if (!fs10.existsSync(claudeTranscriptPath(runCwd, row.session_id))) {
         return { status: 410, body: { ok: false, reason: "resume transcript no longer exists" } };
       }
       const existing = await findScopedWindow(row.tmux_window);
@@ -7865,13 +8124,13 @@ function createSpawns(ctx) {
       const runCwd = c.cwd;
       let st = null;
       try {
-        st = fs8.statSync(runCwd);
+        st = fs10.statSync(runCwd);
       } catch {
       }
       if (!runCwd || !st?.isDirectory()) {
         return { status: 410, body: { ok: false, reason: "session cwd no longer exists" } };
       }
-      if (!fs8.existsSync(claudeTranscriptPath(runCwd, session_id))) {
+      if (!fs10.existsSync(claudeTranscriptPath(runCwd, session_id))) {
         return { status: 410, body: { ok: false, reason: "resume transcript no longer exists" } };
       }
       const tmux_window = tmuxAdapter.windowName(port, c.callsign);
@@ -8103,7 +8362,7 @@ function createSpawns(ctx) {
     }
     for (const row of staleProvisioning) {
       try {
-        fs8.rmSync(`${row.cwd}.fd-cloning-${String(row.spawn_id).slice(0, 8)}`, {
+        fs10.rmSync(`${row.cwd}.fd-cloning-${String(row.spawn_id).slice(0, 8)}`, {
           recursive: true,
           force: true
         });
@@ -8179,7 +8438,7 @@ function createSpawns(ctx) {
 }
 
 // scripts/fleetd/events.mjs
-import path8 from "node:path";
+import path10 from "node:path";
 var EDIT_TOOLS = ["Edit", "Write", "MultiEdit", "NotebookEdit"];
 var TEST_RUNNER_RE = /\b(pytest|jest|vitest|go test|cargo test|npm (run )?test)\b/;
 function createEvents(ctx) {
@@ -8301,7 +8560,7 @@ function createEvents(ctx) {
         const file = input.file_path || input.notebook_path;
         if (EDIT_TOOLS.includes(ev.tool_name) && file) {
           conflict = recordFile(sid, file, c);
-          set.note = `editing ${path8.basename(file)}`;
+          set.note = `editing ${path10.basename(file)}`;
         } else if (ev.tool_name === "Bash" && input.command) {
           const cmd = String(input.command);
           if (TEST_RUNNER_RE.test(cmd)) {
@@ -8319,7 +8578,7 @@ function createEvents(ctx) {
         const file = ev.file_path || ev.tool_input?.file_path || ev.path || null;
         if (file) {
           conflict = recordFile(sid, file, c);
-          set.note = `changed ${path8.basename(file)}`;
+          set.note = `changed ${path10.basename(file)}`;
         }
         break;
       }
@@ -8578,7 +8837,6 @@ function createEvents(ctx) {
 }
 
 // scripts/fleetd/snapshot.mjs
-import os5 from "node:os";
 function createSnapshot(ctx) {
   const {
     q,
@@ -8592,7 +8850,7 @@ function createSnapshot(ctx) {
     ownedPaneRow,
     spawnCapability,
     spawnState,
-    resolveReposDir
+    resolveSettings
   } = ctx;
   function snapshot() {
     const now = Date.now();
@@ -8715,6 +8973,7 @@ function createSnapshot(ctx) {
         route: waiterBySid.get(s.session_id) ? "watcher" : ownedPaneBySid.get(s.session_id) ? "pane" : s.endedAt != null ? "offline-queued" : "turn-boundary"
       };
     }
+    const settings = resolveSettings();
     return {
       up_ms: now - t0,
       // spike name, preserved
@@ -8733,9 +8992,17 @@ function createSnapshot(ctx) {
         default_branch: repo.default_branch ?? null,
         last_used_at: repo.last_used_at
       })),
-      settings: { repos_dir: resolveReposDir() },
-      home_dir: os5.homedir(),
-      // root label for the global (home) file explorer
+      settings,
+      // {repos_dir, repo_transport, browse_root, fav_dirs}
+      // home_dir means "the absolute root the /api/fs endpoints serve" — it is
+      // NOT the user's home any more. A stale board (the previously committed
+      // board-dist) composes its global-explorer paths against this field, so
+      // it MUST track the same root the endpoints actually serve: shipping
+      // os.homedir() while /api/fs served a Coder /workspace would make the
+      // stale picker build /home/…/<sel> for rows listed from /workspace. The
+      // key keeps its old name for one release of stale-board compatibility;
+      // new boards read settings.browse_root.resolved.
+      home_dir: settings.browse_root.resolved,
       ticker: q.recentTicker.all(),
       // Callsigns resolved from EVERY session, not just the visible ones: a
       // conflict outlives its participants, and a banner shouting a raw UUID at
@@ -8793,7 +9060,7 @@ function createSnapshot(ctx) {
 }
 
 // scripts/fleetd/retention.mjs
-import fs9 from "node:fs";
+import fs11 from "node:fs";
 function createRetention(ctx) {
   const {
     q,
@@ -8935,7 +9202,7 @@ function createRetention(ctx) {
     const feed_cleared = Number(q.clearTicker.run().changes);
     const orphan_worktrees = q.orphanWorktrees.all().map((r) => r.worktree_path).filter((p) => {
       try {
-        return fs9.existsSync(p);
+        return fs11.existsSync(p);
       } catch {
         return false;
       }
@@ -9014,7 +9281,7 @@ function createCore(db2, {
   function stampTranscriptFloor(sid, transcriptPath) {
     let floor = 0;
     try {
-      if (transcriptPath) floor = fs10.statSync(transcriptPath).size;
+      if (transcriptPath) floor = fs12.statSync(transcriptPath).size;
     } catch {
     }
     modelMemo.set(sid, { floor, size: -1, model: null });
@@ -9023,7 +9290,7 @@ function createCore(db2, {
     const memo = modelMemo.get(sid) ?? { floor: 0, size: -1, model: null };
     let size;
     try {
-      size = fs10.statSync(transcriptPath).size;
+      size = fs12.statSync(transcriptPath).size;
     } catch {
       return null;
     }
@@ -9290,7 +9557,8 @@ function createCore(db2, {
   }
   ctx.tombstoneCard = tombstoneCard;
   Object.assign(ctx, createRepos(ctx));
-  const { resolveReposDir, setSettings } = ctx;
+  Object.assign(ctx, createSettings(ctx));
+  const { resolveReposDir, setSettings, resolveSettings } = ctx;
   Object.assign(ctx, createLedger(ctx));
   const { recordFile, whisperText } = ctx;
   Object.assign(ctx, createIngest(ctx));
@@ -9398,9 +9666,11 @@ function createCore(db2, {
     removeWorktree,
     // POST /api/worktrees/remove — allow-listed destruction
     resolveReposDir,
-    // GET /api/settings + /state
+    // repos-root resolver (still consumed via resolveSettings)
+    resolveSettings,
+    // GET /api/settings + POST response + /state snapshot
     setSettings,
-    // POST /api/settings
+    // POST /api/settings (whitelisted; settings.mjs)
     fsList,
     // GET /api/sessions/:id/fs/list → {status, body}
     fsRead,
@@ -9432,8 +9702,8 @@ function createCore(db2, {
 import http from "node:http";
 import { timingSafeEqual } from "node:crypto";
 import os6 from "node:os";
-import fs11 from "node:fs";
-import path9 from "node:path";
+import fs13 from "node:fs";
+import path11 from "node:path";
 import { fileURLToPath } from "node:url";
 
 // node_modules/ws/wrapper.mjs
@@ -9875,7 +10145,7 @@ function isLoopbackAddress(address) {
   const value = String(address || "").trim().toLowerCase();
   return value === "localhost" || value === "::1" || /^127(?:\.[0-9]{1,3}){3}$/.test(value) || /^::ffff:127(?:\.[0-9]{1,3}){3}$/.test(value);
 }
-var BOARD_DIST = path9.join(path9.dirname(fileURLToPath(import.meta.url)), "board-dist");
+var BOARD_DIST = path11.join(path11.dirname(fileURLToPath(import.meta.url)), "board-dist");
 var MIME = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -9899,15 +10169,15 @@ function serveBoardAsset(res, pathname, notFound) {
     return notFound();
   }
   const rel = decoded === "/" ? "index.html" : decoded.replace(/^\/+/, "");
-  const abs = path9.resolve(BOARD_DIST, rel);
-  if (abs !== BOARD_DIST && !abs.startsWith(BOARD_DIST + path9.sep)) return notFound();
+  const abs = path11.resolve(BOARD_DIST, rel);
+  if (abs !== BOARD_DIST && !abs.startsWith(BOARD_DIST + path11.sep)) return notFound();
   let data;
   try {
-    data = fs11.readFileSync(abs);
+    data = fs13.readFileSync(abs);
   } catch {
     return notFound();
   }
-  const ext = path9.extname(abs).toLowerCase();
+  const ext = path11.extname(abs).toLowerCase();
   const headers = {
     "content-type": MIME[ext] || "application/octet-stream",
     "content-length": data.length,
@@ -10176,7 +10446,7 @@ function createHttp(core2, {
         }
         if (url.pathname === "/state") return json(res, 200, snapshotWithLan());
         if (url.pathname === "/api/settings") {
-          return json(res, 200, { ok: true, settings: { repos_dir: core2.resolveReposDir() } });
+          return json(res, 200, { ok: true, settings: core2.resolveSettings() });
         }
         if (url.pathname === "/api/worktrees") {
           core2.worktrees().then((out) => json(res, 200, out)).catch((err) => {
@@ -10653,8 +10923,8 @@ function startAgentsPoll(core2) {
 }
 
 // scripts/fleetd/payload-capture.mjs
-import fs12 from "node:fs";
-import path10 from "node:path";
+import fs14 from "node:fs";
+import path12 from "node:path";
 var MAX_FILE_BYTES = 1e6;
 var MAX_PAYLOAD_BYTES = 64e3;
 var PER_EVENT = 3;
@@ -10733,14 +11003,14 @@ function createPayloadCapture(homeDir, {
 } = {}) {
   if (!enabled) return NOOP;
   const exactSecrets = secrets.filter((s) => typeof s === "string" && s.length > 0);
-  const file = path10.join(homeDir, "hook-payloads.jsonl");
+  const file = path12.join(homeDir, "hook-payloads.jsonl");
   const counts = /* @__PURE__ */ new Map();
   try {
-    fs12.chmodSync(file, 384);
+    fs14.chmodSync(file, 384);
   } catch {
   }
   try {
-    for (const line of fs12.readFileSync(file, "utf8").split("\n")) {
+    for (const line of fs14.readFileSync(file, "utf8").split("\n")) {
       if (!line.trim()) continue;
       try {
         const rec = JSON.parse(line);
@@ -10755,7 +11025,7 @@ function createPayloadCapture(homeDir, {
       if (!event || (counts.get(event) || 0) >= perEvent) return;
       let size = 0;
       try {
-        size = fs12.statSync(file).size;
+        size = fs14.statSync(file).size;
       } catch {
         size = 0;
       }
@@ -10772,9 +11042,9 @@ function createPayloadCapture(homeDir, {
         if (escaped && escaped !== secret) line = line.split(escaped).join(REDACTED);
       }
       if (size + Buffer.byteLength(line) > maxBytes) return;
-      fs12.appendFileSync(file, line, { encoding: "utf8", mode: 384 });
+      fs14.appendFileSync(file, line, { encoding: "utf8", mode: 384 });
       try {
-        fs12.chmodSync(file, 384);
+        fs14.chmodSync(file, 384);
       } catch {
       }
       counts.set(event, (counts.get(event) || 0) + 1);
@@ -11243,8 +11513,8 @@ function createMdns({ port, name = "fleetdeck", instance = "Fleet Deck", address
 }
 
 // scripts/fleetd/takeover.mjs
-import fs13 from "node:fs";
-import path11 from "node:path";
+import fs15 from "node:fs";
+import path13 from "node:path";
 function pidRecord(text) {
   try {
     const parsed = JSON.parse(String(text));
@@ -11267,8 +11537,8 @@ function pidIsLive(pid) {
 function livePidLooksLikeFleetd(pid) {
   if (process.platform !== "linux") return true;
   try {
-    const executable = path11.basename(fs13.readlinkSync(`/proc/${pid}/exe`)).replace(/ \(deleted\)$/, "");
-    const argv = fs13.readFileSync(`/proc/${pid}/cmdline`).toString("utf8").split("\0").filter(Boolean);
+    const executable = path13.basename(fs15.readlinkSync(`/proc/${pid}/exe`)).replace(/ \(deleted\)$/, "");
+    const argv = fs15.readFileSync(`/proc/${pid}/cmdline`).toString("utf8").split("\0").filter(Boolean);
     const nodeLike = /^(?:node|nodejs|fleetd)$/i.test(executable);
     const fleetdScript = argv.some((arg) => /(?:^|[/\\])fleetd(?:\.bundle)?\.mjs$/.test(arg));
     return nodeLike && fleetdScript;
@@ -11277,18 +11547,8 @@ function livePidLooksLikeFleetd(pid) {
   }
 }
 
-// scripts/fleetd/config.mjs
-import os7 from "node:os";
-import path12 from "node:path";
-function resolveHome() {
-  return process.env.FLEETDECK_HOME || path12.join(os7.homedir() || "/tmp", ".fleetdeck");
-}
-function resolvePort() {
-  return Number(process.env.FLEETDECK_PORT || 4711);
-}
-
 // scripts/fleetd/fleetd.mjs
-var __dirname = path13.dirname(fileURLToPath2(import.meta.url));
+var __dirname = path14.dirname(fileURLToPath2(import.meta.url));
 var PORT = resolvePort();
 var BIND = (process.env.FLEETDECK_BIND || "127.0.0.1").trim() || "127.0.0.1";
 var LAN_MODE = !isLoopbackAddress(BIND);
@@ -11303,28 +11563,28 @@ function startupFatal(reason) {
   } catch {
   }
   try {
-    fs14.writeSync(2, `fleetd refused to start: ${reason}
+    fs16.writeSync(2, `fleetd refused to start: ${reason}
 `);
   } catch {
   }
   process.exit(1);
 }
 try {
-  fs14.mkdirSync(HOME, { recursive: true });
+  fs16.mkdirSync(HOME, { recursive: true });
 } catch (err) {
   startupFatal(`cannot create FLEETDECK_HOME (${err?.code || err?.message || "unknown error"})`);
 }
 try {
-  fs14.chmodSync(HOME, 448);
+  fs16.chmodSync(HOME, 448);
 } catch {
 }
-var PID_FILE = path13.join(HOME, "fleetd.pid");
+var PID_FILE = path14.join(HOME, "fleetd.pid");
 var ownsPidFile = false;
 function removeOwnedPidFile() {
   if (!ownsPidFile) return;
   try {
-    const record = pidRecord(fs14.readFileSync(PID_FILE, "utf8"));
-    if (record?.pid === process.pid) fs14.unlinkSync(PID_FILE);
+    const record = pidRecord(fs16.readFileSync(PID_FILE, "utf8"));
+    if (record?.pid === process.pid) fs16.unlinkSync(PID_FILE);
   } catch {
   }
   ownsPidFile = false;
@@ -11332,7 +11592,7 @@ function removeOwnedPidFile() {
 function claimHome() {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      fs14.writeFileSync(PID_FILE, JSON.stringify({ pid: process.pid, port: PORT }), {
+      fs16.writeFileSync(PID_FILE, JSON.stringify({ pid: process.pid, port: PORT }), {
         encoding: "utf8",
         mode: 384,
         flag: "wx"
@@ -11347,7 +11607,7 @@ function claimHome() {
     let recordText = null;
     let record = null;
     try {
-      recordText = fs14.readFileSync(PID_FILE, "utf8");
+      recordText = fs16.readFileSync(PID_FILE, "utf8");
       record = pidRecord(recordText);
     } catch (err) {
       if (err?.code === "ENOENT") continue;
@@ -11358,13 +11618,13 @@ function claimHome() {
       startupFatal(`FLEETDECK_HOME is already used by live fleetd pid ${record.pid} on ${port}; use a separate FLEETDECK_HOME for another daemon (if that PID was recycled, remove stale pidfile ${PID_FILE})`);
     }
     try {
-      if (fs14.readFileSync(PID_FILE, "utf8") !== recordText) continue;
+      if (fs16.readFileSync(PID_FILE, "utf8") !== recordText) continue;
     } catch (err) {
       if (err?.code === "ENOENT") continue;
       startupFatal(`cannot re-read stale FLEETDECK_HOME pidfile (${err?.code || err?.message || "unknown error"})`);
     }
     try {
-      fs14.unlinkSync(PID_FILE);
+      fs16.unlinkSync(PID_FILE);
     } catch (err) {
       if (err?.code !== "ENOENT") startupFatal(`cannot clear stale FLEETDECK_HOME pidfile (${err?.code || err?.message || "unknown error"})`);
     }
@@ -11387,14 +11647,14 @@ if (PROXY_AUTH === "trust" && !TRUSTED_ORIGINS.length) {
 }
 var REQUIRE_TOKEN = (process.env.FLEETDECK_REQUIRE_TOKEN || "").trim().toLowerCase() === "on";
 var TOKEN_REQUIRED = LAN_MODE || REQUIRE_TOKEN || TRUSTED_ORIGINS.length > 0 && PROXY_AUTH === "token";
-var TOKEN_FILE = path13.join(HOME, "token");
+var TOKEN_FILE = path14.join(HOME, "token");
 var TOKEN;
 if (Object.hasOwn(process.env, "FLEETDECK_TOKEN")) {
   TOKEN = String(process.env.FLEETDECK_TOKEN).trim();
   if (TOKEN.length < 16) startupFatal("FLEETDECK_TOKEN must be at least 16 characters after trimming");
 } else {
   try {
-    const persisted = fs14.readFileSync(TOKEN_FILE, "utf8").trim();
+    const persisted = fs16.readFileSync(TOKEN_FILE, "utf8").trim();
     if (persisted.length >= 16) TOKEN = persisted;
     else if (TOKEN_REQUIRED) startupFatal("FLEETDECK_HOME/token must contain at least 16 characters");
   } catch (err) {
@@ -11410,7 +11670,7 @@ if (TOKEN_REQUIRED && !TOKEN) {
     startupFatal(`cannot generate access token (${err?.code || err?.message || "unknown error"})`);
   }
   try {
-    fs14.writeFileSync(TOKEN_FILE, TOKEN, { encoding: "utf8", mode: 384, flag: "wx" });
+    fs16.writeFileSync(TOKEN_FILE, TOKEN, { encoding: "utf8", mode: 384, flag: "wx" });
   } catch (err) {
     startupFatal(`cannot persist FLEETDECK_HOME/token (${err?.code || err?.message || "unknown error"})`);
   }
@@ -11418,7 +11678,7 @@ if (TOKEN_REQUIRED && !TOKEN) {
 if (TOKEN_REQUIRED && TOKEN) {
   let onDisk = null;
   try {
-    onDisk = fs14.readFileSync(TOKEN_FILE, "utf8");
+    onDisk = fs16.readFileSync(TOKEN_FILE, "utf8");
   } catch (err) {
     if (err?.code !== "ENOENT") {
       startupFatal(`cannot read FLEETDECK_HOME/token (${err?.code || err?.message || "unknown error"})`);
@@ -11426,9 +11686,9 @@ if (TOKEN_REQUIRED && TOKEN) {
   }
   if (onDisk === null || onDisk.trim() !== TOKEN) {
     try {
-      fs14.writeFileSync(TOKEN_FILE, TOKEN, { encoding: "utf8", mode: 384 });
+      fs16.writeFileSync(TOKEN_FILE, TOKEN, { encoding: "utf8", mode: 384 });
       try {
-        fs14.chmodSync(TOKEN_FILE, 384);
+        fs16.chmodSync(TOKEN_FILE, 384);
       } catch {
       }
     } catch (err) {
@@ -11442,7 +11702,7 @@ if (versionOverride) {
   version = versionOverride;
 } else {
   try {
-    version = JSON.parse(fs14.readFileSync(path13.resolve(__dirname, "../../package.json"), "utf8")).version || version;
+    version = JSON.parse(fs16.readFileSync(path14.resolve(__dirname, "../../package.json"), "utf8")).version || version;
   } catch {
   }
 }
@@ -11454,7 +11714,7 @@ function mdnsInstanceName() {
     return "Fleet Deck";
   }
 }
-var DB_FILE = path13.join(HOME, "fleetd.db");
+var DB_FILE = path14.join(HOME, "fleetd.db");
 var db = openDb(DB_FILE);
 var core = createCore(db, { port: PORT, version });
 var MDNS_ENABLED = LAN_MODE && process.env.FLEETDECK_MDNS?.trim().toLowerCase() !== "off";
@@ -11495,7 +11755,7 @@ server.on("error", (e) => {
 function lanAddresses() {
   const addresses = /* @__PURE__ */ new Set();
   try {
-    for (const entries of Object.values(os8.networkInterfaces())) {
+    for (const entries of Object.values(os7.networkInterfaces())) {
       for (const entry of entries || []) {
         if ((entry.family === "IPv4" || entry.family === 4) && !entry.internal) addresses.add(entry.address);
       }

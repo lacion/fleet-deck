@@ -2,10 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import os, { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createRepos, parseRepoInput, quickBranchCheck } from '../scripts/fleetd/repos.mjs';
+import { detectCoderWorkspaceRoot } from '../scripts/fleetd/config.mjs';
 import { startDaemon, randomPort } from './helpers/daemon.mjs';
 import { getJson, postHook, postJson } from './helpers/http.mjs';
 import { makeRemoteRepo } from './helpers/gitrepo.mjs';
@@ -94,6 +95,102 @@ test('shorthand refuses a trailing .git-only segment on both hosts', () => {
   assert.match(parseRepoInput('group/subgroup/.git', 'gitlab').error, /repository name/i);
 });
 
+test('parseRepoInput composes ssh scp-style origins and stays https on the two-arg call', () => {
+  // The third param defaults https so EVERY existing two-arg caller is
+  // byte-stable — the daemon SETTING owns the ssh default, not this function.
+  assert.equal(parseRepoInput('org/repo', 'github').origin_url, 'https://github.com/org/repo.git');
+  assert.equal(parseRepoInput('org/repo', 'gitlab').origin_url, 'https://gitlab.com/org/repo.git');
+  assert.equal(parseRepoInput('org/repo', 'github', 'https').origin_url, 'https://github.com/org/repo.git');
+
+  // Explicit ssh yields the injection-safe scp form on both hosts.
+  assert.deepEqual(parseRepoInput('org/repo', 'github', 'ssh'), {
+    kind: 'shorthand', origin_url: 'git@github.com:org/repo.git', repo_name: 'repo',
+  });
+  assert.deepEqual(parseRepoInput('org/repo', 'gitlab', 'ssh'), {
+    kind: 'shorthand', origin_url: 'git@gitlab.com:org/repo.git', repo_name: 'repo',
+  });
+  // gitlab nested subgroups keep the full path under ssh; repo_name is the last.
+  assert.deepEqual(parseRepoInput('group/sub/proj', 'gitlab', 'ssh'), {
+    kind: 'shorthand', origin_url: 'git@gitlab.com:group/sub/proj.git', repo_name: 'proj',
+  });
+  // A trailing .git is stripped before our own suffix, exactly like https.
+  assert.equal(parseRepoInput('group/team/sub/proj.git', 'gitlab', 'ssh').origin_url, 'git@gitlab.com:group/team/sub/proj.git');
+
+  // A typo'd transport fails loud (mirrors the repo_host gate), naming values.
+  assert.match(parseRepoInput('org/repo', 'github', 'sftp').error, /repo_transport must be ssh or https/i);
+  assert.match(parseRepoInput('org/repo', 'gitlab', 'SSH').error, /ssh or https/i);
+
+  // repo_transport steers ONLY shorthand — URL/scp/absolute-path/bare-name
+  // kinds carry their own transport and ignore it entirely.
+  const url = 'https://example.com/org/repo.git';
+  assert.deepEqual(parseRepoInput(url, 'github', 'ssh'), parseRepoInput(url, 'github', 'https'));
+  const scp = 'git@example.com:org/repo.git';
+  assert.deepEqual(parseRepoInput(scp, 'github', 'ssh'), parseRepoInput(scp, 'github', 'https'));
+  assert.deepEqual(parseRepoInput('/abs/path/repo', 'github', 'ssh'), parseRepoInput('/abs/path/repo', 'github', 'https'));
+  assert.deepEqual(parseRepoInput('barename', 'github', 'ssh'), parseRepoInput('barename', 'github', 'https'));
+});
+
+test('ssh transport keeps every argv/scheme/whitespace hazard gate', () => {
+  assert.equal(parseRepoInput('-oProxyCommand=sh', 'github', 'ssh').error != null, true);
+  assert.equal(parseRepoInput('git@-oProxyCommand=reboot:x', 'gitlab', 'ssh').error != null, true);
+  assert.equal(parseRepoInput('group/-osub/repo', 'gitlab', 'ssh').error != null, true);
+  assert.equal(parseRepoInput('group/sub group/repo', 'gitlab', 'ssh').error != null, true);
+  // The composed ssh origin itself passes cloneRepo's argv re-gate: constant
+  // host, an already-gated slug, and no leading-dash segment.
+  const composed = parseRepoInput('org/repo', 'github', 'ssh').origin_url;
+  assert.equal(/[\s\x00-\x1f\x7f]/.test(composed), false);
+  assert.equal(composed.startsWith('-'), false);
+  assert.equal(composed.split(/[/:@]/).some(segment => segment.startsWith('-')), false);
+});
+
+test('detectCoderWorkspaceRoot needs both a Coder signal and the probe directory', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-coder-'));
+  const absent = path.join(dir, 'nope');
+  const file = path.join(dir, 'a-file');
+  writeFileSync(file, 'x');
+  try {
+    // Any single signal (non-empty) plus an existing probe dir → the dir.
+    for (const key of ['CODER', 'CODER_WORKSPACE_NAME', 'CODER_AGENT_URL']) {
+      assert.equal(detectCoderWorkspaceRoot({ env: { [key]: '1' }, probeDir: dir }), dir, key);
+    }
+    // Signal but no probe dir → null (a /workspace-less box).
+    assert.equal(detectCoderWorkspaceRoot({ env: { CODER: '1' }, probeDir: absent }), null);
+    // Probe dir exists but no signal → null (not a Coder box).
+    assert.equal(detectCoderWorkspaceRoot({ env: {}, probeDir: dir }), null);
+    // Empty-string signals are NOT a signal.
+    assert.equal(detectCoderWorkspaceRoot({ env: { CODER: '', CODER_WORKSPACE_NAME: '' }, probeDir: dir }), null);
+    // A probe path that is a FILE, not a directory → null.
+    assert.equal(detectCoderWorkspaceRoot({ env: { CODER: '1' }, probeDir: file }), null);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('resolveReposDir default is ~/projects off Coder (detection needs both signal and /workspace)', () => {
+  const saved = {};
+  for (const k of ['FLEETDECK_REPOS_DIR', 'CODER', 'CODER_WORKSPACE_NAME', 'CODER_AGENT_URL']) {
+    saved[k] = process.env[k];
+    delete process.env[k];
+  }
+  try {
+    const off = createRepos(fakeReposCtx()).resolveReposDir();
+    assert.equal(off.source, 'default');
+    assert.equal(off.value, path.join(os.homedir(), 'projects'));
+    // A Coder SIGNAL alone, with the default /workspace absent on this box,
+    // still falls to ~/projects — detection requires the probe dir too. (On a
+    // genuine Coder box /workspace exists and this would be /workspace.)
+    process.env.CODER = '1';
+    const withSignal = createRepos(fakeReposCtx()).resolveReposDir();
+    if (withSignal.value !== '/workspace') {
+      assert.equal(withSignal.value, path.join(os.homedir(), 'projects'));
+    }
+  } finally {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k]; else process.env[k] = v;
+    }
+  }
+});
+
 // resolveTarget needs only these slivers of ctx: an empty catalog and no
 // repos_dir override (so FLEETDECK_REPOS_DIR decides the repos root).
 function fakeReposCtx() {
@@ -127,11 +224,14 @@ function withReposDir(t) {
 
 test('resolveTarget reuses a checkout whose scp-style origin matches the gitlab shorthand', async t => {
   const reposDir = withReposDir(t);
-  // The user's reported failure: cloned once over ssh, then spawned by
-  // shorthand — the checkout IS the requested repo, spelled differently.
+  // The user's reported failure: cloned once over ssh, then spawned by an https
+  // shorthand — the checkout IS the requested repo, spelled differently. The
+  // request is explicitly https here so the composed origin is the https form
+  // and the cross-spelling reuse is exactly what's under test (with ssh now the
+  // resolved default, the plain shorthand would compose the SAME ssh spelling).
   const dest = checkoutWithOrigin(reposDir, 'repo', 'git@gitlab.com:org/repo.git');
   const { resolveTarget } = createRepos(fakeReposCtx());
-  const target = await resolveTarget({ repo: 'org/repo', repo_host: 'gitlab' });
+  const target = await resolveTarget({ repo: 'org/repo', repo_host: 'gitlab', repo_transport: 'https' });
   assert.equal(target.mode, 'local');
   assert.equal(target.root, dest);
   assert.equal(target.origin_url, 'https://gitlab.com/org/repo.git');
@@ -232,4 +332,140 @@ test('POST /api/settings rejects an existing file', async t => {
   const response = await postJson(`${daemon.baseUrl}/api/settings`, { repos_dir: file });
   assert.equal(response.status, 400);
   assert.match(response.json.reason, /file/i);
+});
+
+test('POST /api/settings round-trips repo_transport, browse_root and fav_dirs across restart', async t => {
+  const home = mkdtempSync(path.join(tmpdir(), 'fleetdeck-settings2-home-'));
+  const browseDir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-browse-'));
+  const favA = mkdtempSync(path.join(tmpdir(), 'fleetdeck-fav-a-'));
+  const favB = mkdtempSync(path.join(tmpdir(), 'fleetdeck-fav-b-'));
+  t.after(() => {
+    for (const d of [home, browseDir, favA, favB]) rmSync(d, { recursive: true, force: true });
+  });
+  const port = randomPort();
+  const first = await startDaemon({ port, home });
+  try {
+    const set = await postJson(`${first.baseUrl}/api/settings`, {
+      repo_transport: 'https', browse_root: browseDir, fav_dirs: [favA, favB, favA],
+    });
+    assert.equal(set.status, 200, set.text);
+    assert.equal(set.json.settings.repo_transport.value, 'https');
+    assert.equal(set.json.settings.repo_transport.source, 'override');
+    assert.equal(set.json.settings.browse_root.value, browseDir);
+    assert.equal(set.json.settings.browse_root.source, 'override');
+    assert.equal(set.json.settings.browse_root.resolved, browseDir);
+    assert.deepEqual(set.json.settings.fav_dirs, [favA, favB]); // deduped, order kept
+  } finally {
+    await first.stop({ keepHome: true });
+  }
+
+  const second = await startDaemon({ port: randomPort(), home });
+  try {
+    const got = await getJson(`${second.baseUrl}/api/settings`);
+    assert.equal(got.json.settings.repo_transport.value, 'https');
+    assert.equal(got.json.settings.browse_root.value, browseDir);
+    assert.deepEqual(got.json.settings.fav_dirs, [favA, favB]);
+    // /state carries the SAME settings object (shared board contract), plus the
+    // legacy repos_dir key and home_dir label for stale boards.
+    const state = (await getJson(`${second.baseUrl}/state`)).json;
+    assert.equal(state.settings.repo_transport.value, 'https');
+    assert.equal(state.settings.browse_root.resolved, browseDir);
+    assert.deepEqual(state.settings.fav_dirs, [favA, favB]);
+    assert.ok(state.settings.repos_dir?.resolved);
+    // Stale-board compat: home_dir means "the absolute root /api/fs serves".
+    // An old board composes its explorer paths against it, so with a configured
+    // browse_root it must be THAT root, never os.homedir().
+    assert.equal(state.home_dir, browseDir);
+    // null clears the transport back to the ssh default; [] clears favourites.
+    const cleared = await postJson(`${second.baseUrl}/api/settings`, { repo_transport: null, fav_dirs: [] });
+    assert.equal(cleared.status, 200);
+    assert.equal(cleared.json.settings.repo_transport.source, 'default');
+    assert.equal(cleared.json.settings.repo_transport.value, 'ssh');
+    assert.deepEqual(cleared.json.settings.fav_dirs, []);
+  } finally {
+    await second.stop({ keepHome: false });
+  }
+});
+
+test('POST /api/settings validates values, caps fav_dirs, and refuses unknown keys', async t => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-settings-bad-'));
+  const file = path.join(dir, 'a-file');
+  writeFileSync(file, 'x');
+  const many = path.join(dir, 'many');
+  mkdirSync(many);
+  const twentyOne = [];
+  for (let i = 0; i < 21; i += 1) { const d = path.join(many, `d${i}`); mkdirSync(d); twentyOne.push(d); }
+  const daemon = await startDaemon();
+  t.after(async () => { await daemon.stop(); rmSync(dir, { recursive: true, force: true }); });
+
+  const badTransport = await postJson(`${daemon.baseUrl}/api/settings`, { repo_transport: 'sftp' });
+  assert.equal(badTransport.status, 400);
+  assert.match(badTransport.json.reason, /repo_transport must be ssh or https/i);
+
+  const browseFile = await postJson(`${daemon.baseUrl}/api/settings`, { browse_root: file });
+  assert.equal(browseFile.status, 400);
+  assert.match(browseFile.json.reason, /browse_root.*file/i);
+
+  const favMissing = await postJson(`${daemon.baseUrl}/api/settings`, { fav_dirs: [path.join(dir, 'nope')] });
+  assert.equal(favMissing.status, 400);
+  assert.match(favMissing.json.reason, /fav_dir is not an existing directory/i);
+
+  const tooMany = await postJson(`${daemon.baseUrl}/api/settings`, { fav_dirs: twentyOne });
+  assert.equal(tooMany.status, 400);
+  assert.match(tooMany.json.reason, /20 directories or fewer/i);
+
+  const unknown = await postJson(`${daemon.baseUrl}/api/settings`, { bogus: 'x' });
+  assert.equal(unknown.status, 400);
+  assert.match(unknown.json.reason, /unknown setting "bogus"/i);
+  assert.match(unknown.json.reason, /repos_dir/);
+
+  // Relative paths are refused BEFORE path.resolve can absolutize them against
+  // the daemon's cwd — "." must never validate and persist a cwd-dependent root.
+  for (const [key, body] of [
+    ['browse_root', { browse_root: '.' }],
+    ['repos_dir', { repos_dir: 'relative/dir' }],
+    ['fav_dirs', { fav_dirs: ['.'] }],
+  ]) {
+    const rel = await postJson(`${daemon.baseUrl}/api/settings`, body);
+    assert.equal(rel.status, 400, `${key} must reject a relative path`);
+    assert.match(rel.json.reason, /absolute/i, key);
+  }
+});
+
+test('a filesystem-root ALIAS is refused even when the lexical root ban passes', async t => {
+  // /proc/self/root is a magic symlink to / on Linux: it survives the lexical
+  // dirname(resolved)===resolved ban (its spelling is not "/") and only the
+  // canonical realpath check catches it. Skip where procfs is absent (macOS).
+  let alias = null;
+  try { if (realpathSync('/proc/self/root') === '/') alias = '/proc/self/root'; } catch { /* no procfs */ }
+  if (!alias) return t.skip('no /proc/self/root alias to / on this platform');
+  const daemon = await startDaemon();
+  t.after(async () => { await daemon.stop(); });
+  const browse = await postJson(`${daemon.baseUrl}/api/settings`, { browse_root: alias });
+  assert.equal(browse.status, 400);
+  assert.match(browse.json.reason, /filesystem root/i);
+  // …and the literal spelling stays refused by the lexical ban, as before.
+  const literal = await postJson(`${daemon.baseUrl}/api/settings`, { browse_root: '/' });
+  assert.equal(literal.status, 400);
+  assert.match(literal.json.reason, /filesystem root/i);
+});
+
+test('POST /api/settings applies a mixed subset and never half-writes on a bad field', async t => {
+  const reposDir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-mixed-repos-'));
+  const daemon = await startDaemon();
+  t.after(async () => { await daemon.stop(); rmSync(reposDir, { recursive: true, force: true }); });
+
+  // A mixed subset — the legacy repos_dir key alongside a new one — applies both.
+  const ok = await postJson(`${daemon.baseUrl}/api/settings`, { repos_dir: reposDir, repo_transport: 'https' });
+  assert.equal(ok.status, 200, ok.text);
+  assert.equal(ok.json.settings.repos_dir.value, reposDir);
+  assert.equal(ok.json.settings.repo_transport.value, 'https');
+
+  // validate-all-then-apply-all: a good repos_dir alongside a BAD repo_transport
+  // writes NOTHING — the prior overrides must both survive untouched.
+  const partial = await postJson(`${daemon.baseUrl}/api/settings`, { repos_dir: '/some/other/dir', repo_transport: 'bogus' });
+  assert.equal(partial.status, 400);
+  const after = await getJson(`${daemon.baseUrl}/api/settings`);
+  assert.equal(after.json.settings.repos_dir.value, reposDir, 'a rejected body must not have rewritten repos_dir');
+  assert.equal(after.json.settings.repo_transport.value, 'https');
 });

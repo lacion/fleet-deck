@@ -6,7 +6,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileP, baseBranch } from './exec.mjs';
+import { execFileP, baseBranch, distillGitStderr } from './exec.mjs';
+import { detectCoderWorkspaceRoot } from './config.mjs';
 
 const CONTROL_RE = /[\x00-\x1f\x7f]/;
 const SPACE_OR_CONTROL_RE = /[\s\x00-\x1f\x7f]/;
@@ -31,13 +32,22 @@ function unsafeDashSegment(value) {
   return String(value).split(/[/:@]/).some(segment => segment.startsWith('-'));
 }
 
-export function parseRepoInput(input, repoHost = 'github') {
+export function parseRepoInput(input, repoHost = 'github', repoTransport = 'https') {
   // repo_host steers ONLY the org/repo shorthand below — it composes the forge
   // origin, so a typo'd host must fail loud rather than silently fall back to
   // github and clone the wrong forge. Every other kind (URL/ssh/scp/absolute
   // path/bare name) already carries its own host and ignores repoHost entirely.
   if (repoHost !== 'github' && repoHost !== 'gitlab') {
     return { error: `repo_host must be github or gitlab — got "${repoHost}"` };
+  }
+  // repo_transport steers the SAME shorthand: ssh composes the scp-style
+  // git@{host}:{slug}.git, https the https://{host}/{slug}.git. A typo'd
+  // transport fails loud like repo_host. The param default stays https so this
+  // PURE function is byte-stable for every existing two-arg caller — the daemon
+  // SETTING owns the ssh default (see resolveTarget/resolveRepoTransport), not
+  // this function.
+  if (repoTransport !== 'ssh' && repoTransport !== 'https') {
+    return { error: `repo_transport must be ssh or https — got "${repoTransport}"` };
   }
   if (typeof input !== 'string' || !input) return { error: 'repo must be a non-empty string' };
   if (SPACE_OR_CONTROL_RE.test(input)) return { error: 'repo must not contain whitespace or control characters' };
@@ -86,17 +96,25 @@ export function parseRepoInput(input, repoHost = 'github') {
     // exactly as the URL branches refuse a nameless pathname.
     const repo_name = repoNameOf(parts[parts.length - 1]);
     if (!repo_name) return { error: 'shorthand must end in a repository name' };
+    // Injection-safe by construction: the host is a constant, and `slug` is the
+    // already-gated input (SPACE_OR_CONTROL_RE + unsafeDashSegment above) with
+    // only its trailing `.git` stripped before we re-append our own. cloneRepo
+    // re-gates the composed argv, and normalizeRemoteOrigin unifies the ssh/scp
+    // spelling with https for reuse — so an ssh clone still proves an https
+    // shorthand request and vice-versa.
     if (repoHost === 'gitlab') {
+      const slug = input.replace(/\.git$/i, '');
       return {
         kind: 'shorthand',
-        origin_url: `https://gitlab.com/${input.replace(/\.git$/i, '')}.git`,
+        origin_url: repoTransport === 'ssh' ? `git@gitlab.com:${slug}.git` : `https://gitlab.com/${slug}.git`,
         repo_name,
       };
     }
     if (parts.length === 2) {
+      const slug = input.replace(/\.git$/i, '');
       return {
         kind: 'shorthand',
-        origin_url: `https://github.com/${input.replace(/\.git$/i, '')}.git`,
+        origin_url: repoTransport === 'ssh' ? `git@github.com:${slug}.git` : `https://github.com/${slug}.git`,
         repo_name,
       };
     }
@@ -225,7 +243,7 @@ function dirtyNames(porcelain) {
 }
 
 export function createRepos(ctx) {
-  const { q, onMutate } = ctx;
+  const { q } = ctx;
   const touchedAt = new Map();
   const provisioningTargets = new Map();
 
@@ -266,8 +284,18 @@ export function createRepos(ctx) {
       const value = process.env.FLEETDECK_REPOS_DIR;
       return { value, source: 'env', resolved: path.resolve(expandHome(value)) };
     }
-    const value = path.join(os.homedir(), 'projects');
+    // Default: `/workspace` DIRECTLY on a Coder box (its persisted disk — not a
+    // subfolder, per the locked decision), else ~/projects everywhere else.
+    const value = detectCoderWorkspaceRoot() ?? path.join(os.homedir(), 'projects');
     return { value, source: 'default', resolved: value };
+  }
+
+  // The single read that STEERS a shorthand spawn's transport (D1/D2). ssh is
+  // the default here — the SETTING owns it — while parseRepoInput's own param
+  // default stays https. spawns.mjs never re-reads this: it relies on
+  // resolveTarget, which passes an explicit transport to parseRepoInput below.
+  function resolveRepoTransport() {
+    return q.getSetting.get('repo_transport')?.value ?? 'ssh';
   }
 
   function setReposDir(value) {
@@ -277,8 +305,13 @@ export function createRepos(ctx) {
     }
     if (typeof value !== 'string' || !value) throw namedError(400, 'repos_dir must be an absolute path or null');
     if (CONTROL_RE.test(value)) throw namedError(400, 'repos_dir must not contain NUL or control characters');
-    const resolved = path.resolve(expandHome(value));
-    if (!path.isAbsolute(resolved)) throw namedError(400, 'repos_dir must be an absolute path (or begin with ~/)');
+    // The value ITSELF (post ~ expansion) must be absolute, checked BEFORE
+    // path.resolve — resolve() absolutizes ANY relative string against the
+    // daemon's cwd, so the old isAbsolute(resolved) check was a tautology and
+    // "." would have persisted as a cwd-dependent repos root.
+    const expanded = expandHome(value);
+    if (!path.isAbsolute(expanded)) throw namedError(400, 'repos_dir must be an absolute path (or begin with ~/)');
+    const resolved = path.resolve(expanded);
     if (path.dirname(resolved) === resolved) throw namedError(400, 'repos_dir must not be the filesystem root');
     try {
       if (fs.existsSync(resolved)) {
@@ -293,19 +326,6 @@ export function createRepos(ctx) {
     }
     q.setSetting.run('repos_dir', value, Date.now());
     return resolveReposDir();
-  }
-
-  function setSettings(body) {
-    if (!body || !Object.prototype.hasOwnProperty.call(body, 'repos_dir')) {
-      return { status: 400, body: { ok: false, reason: 'repos_dir is required' } };
-    }
-    try {
-      const repos_dir = setReposDir(body.repos_dir);
-      onMutate();
-      return { status: 200, body: { ok: true, settings: { repos_dir } } };
-    } catch (err) {
-      return { status: err.status || 400, body: { ok: false, reason: err.message || String(err) } };
-    }
   }
 
   function touchRepo({ repo_id, repo_name, root, origin_url = null, default_branch = null, source }) {
@@ -326,7 +346,11 @@ export function createRepos(ctx) {
     // `?? undefined` lets the parseRepoInput default ('github') apply when the
     // caller omits repo_host or sends an explicit null — spawns.mjs has already
     // rejected any other non-string/unknown value by the time we get here.
-    const parsed = parseRepoInput(body?.repo, body?.repo_host ?? undefined);
+    // Transport resolves in ONE place: the explicit body field wins, else the
+    // persisted setting (default ssh). We pass a concrete transport, never
+    // parseRepoInput's https default — the setting owns the ssh default.
+    const transport = body?.repo_transport ?? resolveRepoTransport();
+    const parsed = parseRepoInput(body?.repo, body?.repo_host ?? undefined, transport);
     if (parsed.error) throw namedError(400, parsed.error);
     let origin_url = parsed.origin_url;
     let catalogRows = q.repoByName.all(parsed.repo_name);
@@ -348,7 +372,7 @@ export function createRepos(ctx) {
     if (parsed.kind === 'path') {
       const kind = await gitRepoKind(dest);
       if (kind === 'worktree') {
-        return { mode: 'local', root: dest, dest, origin_url: await originOf(dest), repo_name: parsed.repo_name };
+        return { mode: 'local', root: dest, dest, origin_url: await originOf(dest), repo_name: parsed.repo_name, kind: parsed.kind };
       }
       if (exists(dest) && kind !== 'bare') throw namedError(409, `${dest} exists and is not ${body.repo}`);
       origin_url = dest;
@@ -386,11 +410,11 @@ export function createRepos(ctx) {
           continue;
         }
       }
-      return { mode: 'local', root: candidate, dest: candidate, origin_url: origin_url ?? knownOrigin, repo_name: parsed.repo_name };
+      return { mode: 'local', root: candidate, dest: candidate, origin_url: origin_url ?? knownOrigin, repo_name: parsed.repo_name, kind: parsed.kind };
     }
 
     if (!origin_url) throw namedError(404, `no usable checkout is known for "${parsed.repo_name}"`);
-    return { mode: 'clone', origin_url, dest, repo_name: parsed.repo_name };
+    return { mode: 'clone', origin_url, dest, repo_name: parsed.repo_name, kind: parsed.kind };
   }
 
   async function cloneRepo({ origin_url, dest, spawn_id }) {
@@ -415,7 +439,13 @@ export function createRepos(ctx) {
         timeout,
         env: { GIT_TERMINAL_PROMPT: '0' },
       });
-      if (!result.ok) throw namedError(409, result.err || 'git clone failed');
+      if (!result.ok) {
+        // The full stderr goes to fleetd.log for diagnosis; the human-facing
+        // failure carries git's own distilled `fatal:`/`error:` line, so a
+        // private-repo auth failure no longer hides behind "Cloning into '…'".
+        if (result.err) console.error(`fleetd clone failed — ${origin_url}\n${result.err}`);
+        throw namedError(409, distillGitStderr(result.err) || 'git clone failed');
+      }
       fs.renameSync(temp, dest);
       return dest;
     } catch (err) {
@@ -440,7 +470,7 @@ export function createRepos(ctx) {
     if (!local.ok && !remote.ok && !base) {
       throw namedError(409, fetched.ok
         ? `branch ${branch} does not exist and no base branch is available to create it from`
-        : `branch ${branch} not found locally and fetch failed: ${fetched.err}`);
+        : `branch ${branch} not found locally and fetch failed: ${distillGitStderr(fetched.err)}`);
     }
 
     if (mode === 'in-place') {
@@ -506,7 +536,7 @@ export function createRepos(ctx) {
   }
 
   return {
-    validateBranch, resolveReposDir, setReposDir, setSettings, touchRepo,
+    validateBranch, resolveReposDir, setReposDir, touchRepo,
     resolveTarget, cloneRepo, materializeBranch, claimTarget, targetOwner,
     reserveCloneSlot,
   };

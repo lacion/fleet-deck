@@ -589,7 +589,7 @@ export function createHttp(core, {
         }
         if (url.pathname === '/state') return json(res, 200, snapshotWithLan());
         if (url.pathname === '/api/settings') {
-          return json(res, 200, { ok: true, settings: { repos_dir: core.resolveReposDir() } });
+          return json(res, 200, { ok: true, settings: core.resolveSettings() });
         }
         if (url.pathname === '/api/worktrees') {
           // Inspector failures are represented per row as verdict:unknown;

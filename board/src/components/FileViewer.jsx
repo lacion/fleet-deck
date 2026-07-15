@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { reasonOf } from '../api.js';
+import { reasonOf, saveSettings } from '../api.js';
 import { basename, copyText } from '../util.js';
 import { renderMarkdown } from '../markdown.js';
 import { useModal } from '../useModal.js';
@@ -20,6 +20,7 @@ import { useModal } from '../useModal.js';
 //     list one click away — find-read-return is the loop this exists for.
 
 const MAX_RENDER_LINES = 5000; // DOM guard; the daemon's byte cap comes first
+const FAV_MAX = 20;            // matches the daemon's fav_dirs ceiling
 
 const fmtSize = (n) => {
   if (!Number.isFinite(n)) return '';
@@ -35,7 +36,8 @@ const parentOf = (p) => (p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '');
 // socket the daemon refuses to open — render it inert so nobody keeps clicking).
 const GLYPH = { symlink: '⇗', other: '∅' };
 
-function TreeDir({ path, dirs, openSet, curFile, depth, onToggle, onOpenFile }) {
+function TreeDir({ path, dirs, openSet, curFile, depth, onToggle, onOpenFile,
+  favActive = false, favSet, favFull = false, absOf, onToggleFav }) {
   const d = dirs[path];
   if (!d) return null;
   if (d.loading && !d.entries) {
@@ -54,18 +56,41 @@ function TreeDir({ path, dirs, openSet, curFile, depth, onToggle, onOpenFile }) 
         const p = path ? `${path}/${e.name}` : e.name;
         if (e.type === 'dir') {
           const isOpen = openSet.has(p);
+          // favorites are OPT-IN: without the props this renders exactly as it
+          // always has (a bare dir button). With them, the ☆ rides as a sibling
+          // in a flex line — never a button-in-button.
+          const abs = favActive ? absOf(p) : null;
+          const fav = favActive && favSet.has(abs);
+          const capped = favActive && !fav && favFull; // 20-favorite ceiling
+          const dirBtn = (
+            <button
+              type="button"
+              className={`fd-fsrow dir${e.ignored ? ' ignored' : ''}`}
+              style={{ paddingLeft: depth * 14 + 8 }}
+              onClick={() => onToggle(p)}
+              aria-expanded={isOpen}
+            >
+              <span className="tw">{isOpen ? '▾' : '▸'}</span>
+              <span className="nm">{e.name}</span>
+            </button>
+          );
           return (
             <React.Fragment key={p}>
-              <button
-                type="button"
-                className={`fd-fsrow dir${e.ignored ? ' ignored' : ''}`}
-                style={{ paddingLeft: depth * 14 + 8 }}
-                onClick={() => onToggle(p)}
-                aria-expanded={isOpen}
-              >
-                <span className="tw">{isOpen ? '▾' : '▸'}</span>
-                <span className="nm">{e.name}</span>
-              </button>
+              {favActive ? (
+                <div className="fd-fsrowline">
+                  {dirBtn}
+                  <button
+                    type="button"
+                    className={`fd-fsstar${fav ? ' on' : ''}`}
+                    disabled={capped}
+                    aria-pressed={fav}
+                    title={fav ? 'unpin this favorite' : capped ? `${FAV_MAX} favorites max` : 'pin as a favorite'}
+                    onClick={() => onToggleFav(abs, fav)}
+                  >
+                    {fav ? '★' : '☆'}
+                  </button>
+                </div>
+              ) : dirBtn}
               {isOpen && (
                 <TreeDir
                   path={p}
@@ -75,6 +100,11 @@ function TreeDir({ path, dirs, openSet, curFile, depth, onToggle, onOpenFile }) 
                   depth={depth + 1}
                   onToggle={onToggle}
                   onOpenFile={onOpenFile}
+                  favActive={favActive}
+                  favSet={favSet}
+                  favFull={favFull}
+                  absOf={absOf}
+                  onToggleFav={onToggleFav}
                 />
               )}
             </React.Fragment>
@@ -156,7 +186,12 @@ function FileBody({ file, targetLine, mdOn }) {
 // list/read/search are already bound to a scope (a session's working tree, or
 // the global home root) by the parent — this component doesn't know or care
 // which, so the same tree/search/read UI serves both. title labels the header.
-export default function FileViewer({ list, read, search, title, root, initialPath, onClose }) {
+// v2.5 — `favs` is OPTIONAL. When it is provided (the GLOBAL home explorer), a
+// favorites chip strip + ☆ affordances on directory rows appear, wired through
+// the daemon's whitelisted settings surface (fav_dirs). When it is absent (the
+// session-scoped instance), every favorites branch short-circuits and the
+// viewer renders byte-for-byte as it did before this prop existed.
+export default function FileViewer({ list, read, search, title, root, initialPath, favs, onClose }) {
   const [dirs, setDirs] = useState({});          // relPath -> {entries, truncated, loading, err}
   const [openSet, setOpenSet] = useState(() => new Set(['']));
   const [git, setGit] = useState(null);          // null until the first list answers
@@ -168,6 +203,21 @@ export default function FileViewer({ list, read, search, title, root, initialPat
   const [mode, setMode] = useState('content');
   const [results, setResults] = useState(null);  // {q, mode, backend, hits, truncated, err, busy}
   const [view, setView] = useState('welcome');   // 'welcome' | 'file' | 'results'
+  const [favErr, setFavErr] = useState(null);    // fail-loud ☆ save error (favActive only)
+
+  // favorites: opt-in, and only ever touched when favs is an array
+  const favActive = Array.isArray(favs);
+  // trailing-slash-free root for the containment math — except the filesystem
+  // root, which IS its own trailing slash, so the child prefix is computed once
+  // instead of naively appending '/' ('/' + '/' would be '//', matching nothing
+  // and disabling every chip)
+  const normRoot = String(root || '~').replace(/\/+$/, '') || '/';
+  const rootPrefix = normRoot.endsWith('/') ? normRoot : normRoot + '/';
+  const favSet = useMemo(() => new Set(favActive ? favs : []), [favs, favActive]);
+  const favFull = favActive && favs.length >= FAV_MAX;
+  // reachable from THIS root iff it is the root or nests under it — the browser
+  // never names a root; out-of-root favorites render disabled with a hint
+  const favEnabled = (fav) => fav === normRoot || fav.startsWith(rootPrefix);
 
   const ref = useRef(null);
   const searchRef = useRef(null);
@@ -238,6 +288,31 @@ export default function FileViewer({ list, read, search, title, root, initialPat
       setOpenSet((prev) => new Set(prev).add(cur));
     }
     openFile(p, line);
+  };
+
+  // v2.5 — chip click: reveal a favorite directory by opening the root and every
+  // ancestor prefix down to it, lazy-loading each level (like revealPath, but the
+  // target is a folder, so no file opens). Only ever called on a favEnabled chip.
+  const revealDir = async (fav) => {
+    const rel = fav === normRoot ? '' : fav.slice(rootPrefix.length);
+    const segs = rel ? rel.split('/') : [];
+    let cur = '';
+    for (const seg of segs) {
+      cur = cur ? `${cur}/${seg}` : seg;
+      if (!dirs[cur]?.entries) { if (!(await loadDir(cur))) return; }
+      setOpenSet((prev) => new Set(prev).add(cur));
+    }
+  };
+
+  // v2.5 — ☆ toggle: flip membership of the ABSOLUTE path in fav_dirs and POST
+  // the whole array. No optimistic flip — on {ok:false} the reason renders
+  // inline (fail-loud), and success re-supplies `favs` via the next snapshot.
+  const toggleFav = async (abs, isFav) => {
+    if (!isFav && favFull) { setFavErr(`${FAV_MAX} favorites max`); return; }
+    setFavErr(null);
+    const next = isFav ? favs.filter((f) => f !== abs) : [...favs, abs];
+    const res = await saveSettings({ fav_dirs: next });
+    if (!(res.ok && res.json?.ok)) setFavErr(reasonOf(res, `save failed (${res.status})`));
   };
 
   useEffect(() => {
@@ -361,7 +436,32 @@ export default function FileViewer({ list, read, search, title, root, initialPat
             </div>
           </div>
         ) : (
-          <div className="fd-fsbody">
+          <>
+            {/* v2.5 — favorites chip strip (global explorer only). Enabled iff the
+                favorite nests under this root; out-of-root ones sit disabled with
+                a hint, never naming a root the browser may not reach. */}
+            {favActive && favs.length > 0 && (
+              <div className="fd-fsfavs">
+                <span className="lbl">favorites</span>
+                {favs.map((fav) => {
+                  const enabled = favEnabled(fav);
+                  return (
+                    <button
+                      type="button"
+                      key={fav}
+                      className={`fd-chip fd-fsfav${enabled ? '' : ' off'}`}
+                      disabled={!enabled}
+                      title={enabled ? fav : 'outside the browse root — set it as default root to reach it'}
+                      onClick={enabled ? () => revealDir(fav) : undefined}
+                    >
+                      ★ {basename(fav)}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            {favActive && favErr && <div className="fd-fsfav-err">✗ {favErr}</div>}
+            <div className="fd-fsbody">
             <div className="fd-fstree">
               <TreeDir
                 path=""
@@ -371,6 +471,11 @@ export default function FileViewer({ list, read, search, title, root, initialPat
                 depth={0}
                 onToggle={toggleDir}
                 onOpenFile={(p) => openFile(p)}
+                favActive={favActive}
+                favSet={favSet}
+                favFull={favFull}
+                absOf={absPath}
+                onToggleFav={toggleFav}
               />
             </div>
 
@@ -476,7 +581,8 @@ export default function FileViewer({ list, read, search, title, root, initialPat
                 </div>
               )}
             </div>
-          </div>
+            </div>
+          </>
         )}
       </div>
     </div>
