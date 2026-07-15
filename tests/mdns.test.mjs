@@ -31,6 +31,7 @@ import {
   MDNS_PORT,
   TYPE,
 } from '../scripts/fleetd/mdns.mjs';
+import { scaleMs } from './helpers/wait.mjs';
 
 const AD = { port: 4711, addresses: ['192.0.2.7'] }; // RFC 5737 TEST-NET-1: never routable
 const HOST = 'fleetdeck.local';
@@ -303,7 +304,7 @@ function collect(socket) {
   return {
     packets,
     async waitFor(predicate, label, timeoutMs = 4000) {
-      const deadline = Date.now() + timeoutMs;
+      const deadline = Date.now() + scaleMs(timeoutMs);
       for (;;) {
         const hit = packets.find(predicate);
         if (hit) return hit;
@@ -338,8 +339,8 @@ async function foreignResponderOn5353() {
     probe.once('message', () => done(true));        // OUR socket received it — unicast delivery works here
     const shoot = () => { try { sender.send(Buffer.from([0]), MDNS_PORT, '127.0.0.1'); } catch { /* the point is whether it lands */ } };
     shoot();                                         // probe is already bound+listening: bindShared resolves in the bind callback
-    retry = setTimeout(shoot, 200);                  // re-send once, in case scheduler lag beat the first send to the listener
-    deadline = setTimeout(() => done(false), 600);
+    retry = setTimeout(shoot, scaleMs(200));         // re-send once, in case scheduler lag beat the first send to the listener
+    deadline = setTimeout(() => done(false), scaleMs(600));
   });
 
   await close(sender);
@@ -365,7 +366,7 @@ test('a real A query on the wire gets a real answer carrying the advertised IPv4
 
   // start() is async under the hood (bind + join); give it a beat, then check it
   // did not degrade. No multicast in this environment is a skip, not a failure.
-  await new Promise(r => setTimeout(r, 250));
+  await new Promise(r => setTimeout(r, scaleMs(250)));
   const disabled = logs.find(m => m.includes('mdns disabled'));
   if (disabled) return t.skip(`responder degraded to a no-op in this environment: ${disabled}`);
 
@@ -406,7 +407,7 @@ test('a PTR browse on the wire resolves the board in one round-trip', async (t) 
   const mdns = createMdns({ port: 4711, addresses: ['192.0.2.7'], log: m => logs.push(String(m)) });
   mdns.start();
   t.after(() => mdns.stop());
-  await new Promise(r => setTimeout(r, 250));
+  await new Promise(r => setTimeout(r, scaleMs(250)));
   const disabled = logs.find(m => m.includes('mdns disabled'));
   if (disabled) return t.skip(`responder degraded to a no-op: ${disabled}`);
 

@@ -152,6 +152,23 @@ export function createWorktrees(ctx) {
   // inability to prove safety must never become permission to destroy data.
   // (chmodWritableWhereOwned / blockedPaths / shellQuote are pure helpers now —
   // see helpers.mjs; they carry their own contract comments there.)
+  // A worktree_path counts as LIVE — and must never be removed or purged — when
+  // any of its spawn rows is launching or running. A revive (/api/spawn/:id/revive)
+  // inserts its durable row 'provisioning' → 'spawning' SYNCHRONOUSLY, but leaves
+  // sessions.ended_at SET until the resumed child's async SessionStart hook lands
+  // seconds later — so a liveness test keyed on session_ended_at is BLIND to a
+  // revive in flight (the exact revive-during-removal race). Spawn STATUS is the
+  // synchronous signal the revive does set; a not-yet-ended session is the other.
+  // 'stalled' is deliberately NOT here: it is set later by the watchdog, never by
+  // a revive, and the ended-session branch already governs it as before.
+  const LAUNCHING_OR_LIVE = new Set(['provisioning', 'spawning', 'live']);
+  function worktreePathIsLive(worktreePath) {
+    return q.worktreeSpawns.all().some(candidate =>
+      candidate.worktree_path === worktreePath && (
+        LAUNCHING_OR_LIVE.has(candidate.status) ||
+        (candidate.session_ended_at == null && q.getSession.get(candidate.session_id) != null)));
+  }
+
   async function removeWorktree(body = {}) {
     if (typeof body?.path !== 'string') {
       return { status: 400, body: { ok: false, reason: 'not a fleet worktree' } };
@@ -159,8 +176,7 @@ export function createWorktrees(ctx) {
     const rows = q.worktreeSpawns.all().filter(row => row.worktree_path === body.path);
     const row = rows[0];
     if (!row) return { status: 400, body: { ok: false, reason: 'not a fleet worktree' } };
-    const alive = rows.some(candidate => candidate.session_ended_at == null && q.getSession.get(candidate.session_id));
-    if (alive) return { status: 409, body: { ok: false, reason: 'session is still alive' } };
+    if (worktreePathIsLive(body.path)) return { status: 409, body: { ok: false, reason: 'session is still alive' } };
 
     const state = await inspectWorktree(row);
     if ((state.verdict === 'has-work' || state.verdict === 'unknown') && body.force !== true) {
@@ -179,6 +195,21 @@ export function createWorktrees(ctx) {
     const repoResult = await execFileP('git', ['-C', row.cwd, 'rev-parse', '--show-toplevel'], { timeout: 5_000 });
     if (!repoResult.ok) return { status: 409, body: { ok: false, reason: 'main repository unavailable' } };
     const repo = repoResult.out.trim();
+
+    // CONTRACT: re-validate liveness HERE, after every awaited probe and right
+    // before the first destructive step. The gate above was decided before
+    // inspectWorktree's multi-second git probes AND the repo rev-parse yielded the
+    // event loop; a concurrent /api/spawn/:id/revive of this offline spawn during
+    // that window relaunches Claude in THIS worktree and writes a fresh
+    // 'provisioning'/'spawning' spawn row. worktreePathIsLive re-queries the DB
+    // (authoritative and synchronous) by spawn STATUS — not session_ended_at,
+    // which the revive leaves set until a later hook — so it actually sees that
+    // row and aborts before we chmod/`git worktree remove` (which with force:true
+    // would erase the just-revived pane's tree). Closes the pre-remove window.
+    if (worktreePathIsLive(row.worktree_path)) {
+      return { status: 409, body: { ok: false, reason: 'session became live during removal' } };
+    }
+
     if (state.exists) {
       // "Permission denied" is a diagnosis, not an answer. A worktree is a
       // WORKING directory: build tooling leaves read-only files in it, and a
@@ -262,6 +293,15 @@ export function createWorktrees(ctx) {
       branch_deleted = deleted.ok;
     }
 
+    // Final liveness gate before the DB purge. The awaited git remove/prune/branch
+    // ops above yielded the event loop for up to ~90s; a revive that landed in THAT
+    // window has a fresh launching/live spawn row for this path. The tree may
+    // already be gone, but purging that row would vanish a LIVE session from the
+    // board (a lost-terminal bug) — so keep the rows and report rows_purged:0.
+    if (worktreePathIsLive(row.worktree_path)) {
+      onMutate();
+      return { status: 200, body: { ok: true, removed: true, branch_deleted, rows_purged: 0, spawn_became_live: true, path: row.worktree_path } };
+    }
     const sessionIds = [...new Set(rows.map(candidate => candidate.session_id).filter(Boolean))];
     const spawnsPurged = Number(q.deleteWorktreeSpawns.run(row.worktree_path).changes);
     let sessionsPurged = 0;

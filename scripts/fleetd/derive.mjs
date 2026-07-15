@@ -429,6 +429,27 @@ export function createCore(db, {
     // 0 candidates is the NORMAL case (the heir simply has not started yet — the
     // hook-time interception will catch it). More than one: refuse to guess.
     if (cands.length !== 1) return null;
+    // Predecessor-ambiguity guard, the mirror image of findClearedPredecessor's.
+    // The backward path refuses a heir when SEVERAL predecessors could be its
+    // parent; this path must refuse the symmetric case — a LONE orphan heir that
+    // SEVERAL predecessors are competing to claim. `prev` just cleared, but so
+    // may have another agent sharing this cwd: two co-located sessions both
+    // running /clear at once. If A′ arrived early (the reorder this whole forward
+    // pass exists for) and is sitting orphaned while BOTH A and B are cleared,
+    // not-yet-succeeded predecessors, nothing in A′'s SessionStart says which one
+    // it continues — and matching only on (time-window, cwd) cannot tell them
+    // apart. Whichever /clear's SessionEnd lands first would grab the lone heir
+    // and graft ITS callsign, pane, mail and questions onto a conversation that
+    // is really the sibling's. That merge is irreversible; the split it would
+    // "fix" is not — the boot heal re-derives the pairing from the event log once
+    // every clear is finally on record. So the instant a SECOND cleared,
+    // un-succeeded predecessor in this cwd could equally claim this heir, refuse
+    // and stay split. (Reuses q.clearedPredecessors — the same cleared-in-window
+    // query the backward path reads — excluding `prev` itself; any survivor is a
+    // rival for the same heir. prev's own cleared_at was stamped by applyEvent
+    // just before this ran, so prev is a predecessor here, not a rival.)
+    const rivals = q.clearedPredecessors.all(cwd, now - CLEAR_SUCCESSION_MS, prevSid);
+    if (rivals.length) return null;
     return succeedSession(prev, cands[0].session_id, { rename: true });
   }
 

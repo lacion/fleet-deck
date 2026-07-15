@@ -1,6 +1,8 @@
 // db.mjs — SQLite store for fleetd (node:sqlite DatabaseSync, WAL mode).
 // All timestamps are ms epoch integers.
 
+import { chmodSync } from 'node:fs';
+
 // Suppress ONLY the warning raised while node:sqlite itself is imported. WHY:
 // removing `warning` listeners here clobbers handlers installed by launchers,
 // test runners and observability tooling, while installing our own formatter
@@ -256,5 +258,27 @@ export function openDb(file) {
   const db = new DatabaseSync(file);
   db.exec(DDL);
   migrate(db);
+  // STATE CONFIDENTIALITY CONTRACT: this DB holds session cwds, callsigns, mail,
+  // commands, plan text and raw permission/question payloads — owner-only, like
+  // the token and fleetd.log the July audit already hardened to 0600. node:sqlite
+  // exposes no creation mode, so SQLite makes fleetd.db (and, on first write, its
+  // -wal/-shm sidecars) under the ambient umask — 0644, i.e. world-readable,
+  // under the common 022. chmod after open pins the main file to 0600; the WAL/SHM
+  // chmods are best-effort because those files are created lazily on first write
+  // (and recreated after a checkpoint), so they may be absent right now. The
+  // durable guarantee that closes any window where a freshly recreated sidecar is
+  // momentarily 0644 is the 0700 FLEETDECK_HOME dir (see fleetd.mjs) — a private
+  // state dir keeps other local users out regardless of individual file modes.
+  // Only an on-disk DB has files to chmod. Guard the ':memory:' sentinel
+  // explicitly: it is NOT a path, and chmod(':memory:') would silently alter an
+  // unrelated ./:memory: file if one happened to exist in cwd. Each chmod is also
+  // wrapped because the WAL/SHM sidecars are created lazily on first write (and
+  // recreated after a checkpoint), so they may be absent right now — ENOENT there
+  // must not become a spurious throw.
+  if (file !== ':memory:') {
+    try { chmodSync(file, 0o600); } catch { /* non-file DB / not yet on disk */ }
+    try { chmodSync(`${file}-wal`, 0o600); } catch { /* WAL created lazily; dir mode covers the gap */ }
+    try { chmodSync(`${file}-shm`, 0o600); } catch { /* SHM created lazily; dir mode covers the gap */ }
+  }
   return db;
 }

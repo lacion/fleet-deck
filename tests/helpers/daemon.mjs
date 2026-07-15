@@ -14,6 +14,7 @@ import { mkdtempSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { scaleMs } from './wait.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = path.resolve(HERE, '../..');
@@ -44,7 +45,11 @@ function freshHome() {
  * Poll GET <baseUrl>/health until it responds 2xx or the timeout elapses.
  */
 export async function waitForHealth(baseUrl, timeoutMs = 10000) {
-  const deadline = Date.now() + timeoutMs;
+  // Scale the health budget by WAIT_SCALE so slow CI lanes get headroom. This
+  // covers BOTH the default AND every explicit caller (startDaemon's
+  // healthTimeoutMs, takeover's fixed 8000/3000) — the effective deadline is
+  // always the authored value * WAIT_SCALE.
+  const deadline = Date.now() + scaleMs(timeoutMs);
   let lastErr = null;
   while (Date.now() < deadline) {
     try {

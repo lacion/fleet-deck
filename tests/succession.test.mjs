@@ -243,6 +243,55 @@ test('an ambiguous double-clear in one cwd refuses to merge — a wrong merge is
   assert.ok(cardOf(state, a.sid) && cardOf(state, b.sid), 'neither candidate was retired on a guess');
 });
 
+test('the FORWARD /clear path refuses a lone orphan heir when TWO predecessors could claim it — a wrong merge is worse than a spare card', async (t) => {
+  const { daemon, home, cwd } = await boot(t, 'fleetdeck-succ-fwd-ambiguous');
+  // The backward path (pinned above) already refuses to pick a parent when two
+  // sessions cleared at once. This pins the SYMMETRIC hazard on the FORWARD path:
+  // a lone orphan heir that MORE THAN ONE predecessor could equally claim. Set it
+  // up exactly as the backward-ambiguity case does — two bare sessions in one cwd
+  // both /clear and linger un-succeeded, then a heir arrives and, unable to pick a
+  // parent, is left on its OWN orphan card.
+  const a = await startSession(daemon, cwd);
+  const b = await startSession(daemon, cwd);
+  const c = await startSession(daemon, cwd);
+  await postHook(daemon.baseUrl, 'SessionEnd', { session_id: a.sid, cwd, reason: 'clear' });
+  await postHook(daemon.baseUrl, 'SessionEnd', { session_id: b.sid, cwd, reason: 'clear' });
+
+  const heir = randomUUID();
+  await postHook(daemon.baseUrl, 'SessionStart', { session_id: heir, cwd, source: 'clear' });
+  let card = cardOf((await getJson(`${daemon.baseUrl}/state`)).json, heir);
+  assert.ok(card, 'the heir starts on its own orphan card (backward refused to guess)');
+  assert.notEqual(card.callsign, a.callsign);
+  assert.notEqual(card.callsign, b.callsign);
+  const heirCallsign = card.callsign;
+
+  // Now a THIRD session /clears. Its SessionEnd fires the FORWARD lookup, which
+  // sees the lone orphan heir as its single candidate. Before the fix it would
+  // graft c's callsign/pane/mail/questions onto that heir — but the heir is
+  // really a's or b's, and both are still competing cleared predecessors. The
+  // predecessor-ambiguity guard must refuse rather than merge on a guess.
+  await postHook(daemon.baseUrl, 'SessionEnd', { session_id: c.sid, cwd, reason: 'clear' });
+
+  const state = (await getJson(`${daemon.baseUrl}/state`)).json;
+  assert.equal(cardsIn(state, cwd).length, 4, 'four cards stand — nobody was merged away');
+  card = cardOf(state, heir);
+  assert.ok(card, 'the heir kept its own card — c did not swallow it');
+  assert.equal(card.callsign, heirCallsign, 'and its own name, never c’s');
+  assert.notEqual(card.callsign, c.callsign);
+  const cCard = cardOf(state, c.sid);
+  assert.ok(cCard, 'c is still on the board (a /clear is not an end)');
+  assert.equal(cCard.endedAt, null, 'c stays live, not retired-as-superseded');
+
+  // The load-bearing invariant: NOBODY was succeeded. The split stands (a boot
+  // heal can still repair it once every clear is on record), and no irreversible
+  // merge happened.
+  const merges = withDb(home, db => db.prepare('SELECT session_id, succeeded_by FROM sessions WHERE succeeded_by IS NOT NULL').all());
+  assert.equal(merges.length, 0, 'no succession at all — the forward path refused the ambiguous claim');
+  const cRow = withDb(home, db => db.prepare('SELECT succeeded_by, archived_at, end_reason FROM sessions WHERE session_id = ?').get(c.sid));
+  assert.equal(cRow.succeeded_by, null, 'c did not succeed into the heir');
+  assert.equal(cRow.archived_at, null, 'c was not retired on a guess');
+});
+
 test('the boot heal repairs a pair already split by a /clear, and is idempotent', async (t) => {
   const { daemon, home, cwd, env } = await boot(t, 'fleetdeck-succ-heal', {
     // Succession off at hook time, so we can manufacture the exact pre-0.7.1

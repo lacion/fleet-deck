@@ -11,7 +11,7 @@ them are scars, not preferences.
 git clone https://github.com/lacion/fleet-deck
 cd fleet-deck
 npm install                 # installs ws + esbuild; that's the whole tree
-npm test                    # 303 contract tests, serial, against a real daemon
+npm test                    # ~400+ contract tests, serial, against a real daemon
 
 # regenerate the two committed build artifacts before you push (see below)
 npm run bundle              # → scripts/fleetd/fleetd.bundle.mjs

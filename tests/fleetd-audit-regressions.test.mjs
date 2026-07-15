@@ -6,6 +6,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { decodeMessage } from '../scripts/fleetd/mdns.mjs';
 import { randomPort, spawnRaw } from './helpers/daemon.mjs';
+import { waitUntil as waitUntilBase } from './helpers/wait.mjs';
 
 // Three tests below drive fleetd startup through an ESM --experimental-loader
 // (helpers/mdns-dgram-loader.mjs) that mocks node:dgram / ./http.mjs / node:os by
@@ -20,19 +21,10 @@ const BUNDLE_SKIP = process.env.FLEETDECK_TEST_DAEMON_SCRIPT
   ? 'source-only: ESM loader mock cannot intercept the inlined bundle'
   : false;
 
-const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-
-const WAIT_SCALE = Number(process.env.FLEETDECK_TEST_WAIT_SCALE) || 1;
-
-async function waitUntil(predicate, label, timeoutMs = 5000) {
-  const deadline = Date.now() + timeoutMs * WAIT_SCALE;
-  while (Date.now() < deadline) {
-    const value = predicate();
-    if (value) return value;
-    await delay(25);
-  }
-  throw new Error(`timed out waiting for ${label}`);
-}
+// Positional-signature adapter over the shared scaled poller: call sites pass
+// (predicate, label) with an authored 5000ms budget and a 25ms poll.
+const waitUntil = (predicate, label, timeoutMs = 5000) =>
+  waitUntilBase(predicate, { label, timeoutMs, intervalMs: 25 });
 
 function freshHome(prefix) {
   return mkdtempSync(path.join(tmpdir(), prefix));

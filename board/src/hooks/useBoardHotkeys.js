@@ -17,9 +17,42 @@ import { getQuestion } from '../qbus.js';
 //
 // termOpen / killOpen are refs (from useTermWindows) read synchronously so a
 // stale closure over state can't misroute Esc.
+//
+// M-F7 — a global answer/nav key must NEVER fire while a modal overlay owns the
+// screen, for the SAME reason Esc is trapped above (M-F6 handles). With a
+// permission SELECTED in the rail, opening a BUTTON-ONLY dialog (Kill /
+// Move-to-tmux) leaves `typing` false, so an un-guarded `y` would route to
+// h.allow?.() and SILENTLY approve the hidden tool instead of acting on the
+// dialog. Symmetric to the Esc guard: Esc closes the topmost modal, every other
+// global key (y/n · 1-9 · Enter · j/k · c) is a no-op under one.
+//
+// Pure + ref-based so a future test can import it, and so the stable keydown
+// closure reads open-state synchronously (never a stale state snapshot, exactly
+// like the Esc branch). Each entry is a ref-like { current }; nullish/undefined
+// entries are simply ignored, so overlays whose ref hasn't been threaded yet
+// don't block.
+export function blockingOverlayOpen(overlays) {
+  // Each entry is either a ref-like { current } (open when .current is truthy) or
+  // a plain boolean/value (open when itself truthy). Accepting both keeps this
+  // guard robust to how any given overlay exposes its open-state — a peer branch
+  // threads a plain-boolean overlay flag into this same list — so a value dropped
+  // in here can never silently fail to suppress. Nullish entries are ignored.
+  return overlays.some((o) => {
+    if (o == null) return false;
+    if (typeof o === 'object' && 'current' in o) return !!o.current;
+    return !!o;
+  });
+}
+
 export function useBoardHotkeys({
   pendingQs, selQ, setSelQ, termOpen, killOpen, armOpen, renameOpen,
   setKillAsk, setArmAsk, setRenameAsk, setDrawerSid, setCompose, setSpawnForm, setLanOpen, setWtOpen,
+  // Overlay refs. The four above (term/kill/arm/rename) reach this hook directly;
+  // compose/spawnForm/lan/wt are plain state in App, which mirrors each into a ref
+  // (the same way useTermWindows mirrors killAsk→killOpen) and threads it here, so
+  // ALL eight overlays now suppress the answer/nav keys. blockingOverlayOpen still
+  // ignores any entry that is nullish, so an unthreaded ref is simply inert.
+  composeOpen, spawnOpen, lanOpen, wtOpen,
 }) {
   useEffect(() => {
     const onKey = (e) => {
@@ -43,6 +76,12 @@ export function useBoardHotkeys({
         return;
       }
       if (typing) return;
+      // M-F7 — under an open modal, don't let y/n · 1-9 · Enter (or j/k · c)
+      // leak past the overlay; Esc above already owns the modal. Read the same
+      // synchronously-read refs so a stale closure can't misroute an answer.
+      if (blockingOverlayOpen([
+        termOpen, killOpen, armOpen, renameOpen, composeOpen, spawnOpen, lanOpen, wtOpen,
+      ])) return;
       const idx = pendingQs.findIndex((q) => q.id === selQ);
       if (e.key === 'j' || e.key === 'ArrowDown') {
         e.preventDefault();
@@ -72,5 +111,5 @@ export function useBoardHotkeys({
     // Setters (useState) and the termOpen/killOpen/armOpen/renameOpen refs are
     // referentially stable, so this effect still only re-subscribes when the rail
     // selection changes.
-  }, [pendingQs, selQ, termOpen, killOpen, armOpen, renameOpen, setKillAsk, setArmAsk, setRenameAsk, setDrawerSid, setCompose, setSpawnForm, setLanOpen, setWtOpen]);
+  }, [pendingQs, selQ, termOpen, killOpen, armOpen, renameOpen, composeOpen, spawnOpen, lanOpen, wtOpen, setKillAsk, setArmAsk, setRenameAsk, setDrawerSid, setCompose, setSpawnForm, setLanOpen, setWtOpen]);
 }

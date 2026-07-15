@@ -31,6 +31,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startDaemon } from './helpers/daemon.mjs';
 import { postHook, getJson } from './helpers/http.mjs';
+import { waitUntil as waitUntilBase } from './helpers/wait.mjs';
 import { openDb } from '../scripts/fleetd/db.mjs';
 import { loadFixture } from './helpers/fixtures.mjs';
 import { makeRepoWithWorktree } from './helpers/gitrepo.mjs';
@@ -65,18 +66,9 @@ function writeFixture(file, records) {
   writeFileSync(file, JSON.stringify(records));
 }
 
-const WAIT_SCALE = Number(process.env.FLEETDECK_TEST_WAIT_SCALE) || 1;
-
-async function waitUntil(fn, { timeoutMs = 8000, intervalMs = 150, label = 'condition' } = {}) {
-  const effectiveTimeoutMs = timeoutMs * WAIT_SCALE;
-  const deadline = Date.now() + effectiveTimeoutMs;
-  for (;;) {
-    const result = await fn();
-    if (result) return result;
-    if (Date.now() >= deadline) throw new Error(`waitUntil: ${label} not met within ${effectiveTimeoutMs}ms`);
-    await new Promise(r => setTimeout(r, intervalMs));
-  }
-}
+// Scaled poller (helpers/wait.mjs) carrying this file's authored 8000ms /
+// 150ms-interval defaults; call sites keep their opts unchanged.
+const waitUntil = (fn, opts = {}) => waitUntilBase(fn, { timeoutMs: 8000, intervalMs: 150, ...opts });
 
 async function waitForSession(baseUrl, sid, opts) {
   return waitUntil(async () => {

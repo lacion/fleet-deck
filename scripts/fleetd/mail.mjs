@@ -25,9 +25,30 @@ const MAIL_MAX_LEN = 4000;
 // astral message stores MAIL_MAX_LEN-1 units, never a broken surrogate).
 function clampMail(raw) {
   if (raw.length <= MAIL_MAX_LEN) return raw;
-  const cut = raw.slice(0, MAIL_MAX_LEN);
+  return dropOrphanSurrogate(raw.slice(0, MAIL_MAX_LEN));
+}
+
+// Shared BUG 6 tail-fix: a UTF-16 code-unit .slice() can leave a lone (unpaired)
+// high surrogate at the cut — its low half was the very unit we dropped, so it
+// is guaranteed orphaned. Shear it so no clamp ever stores or pastes a broken
+// astral half-character. Both the text clamp and the `from` clamp go through it.
+function dropOrphanSurrogate(cut) {
   const last = cut.charCodeAt(cut.length - 1);
   return (last >= 0xd800 && last <= 0xdbff) ? cut.slice(0, -1) : cut;
+}
+
+// BUG 12: the `from`/`from_id` is embedded VERBATIM into the owned-pane paste
+// (`[FLEETDECK MAIL from ${from_id}] …`) and into every ticker/log line, but
+// only `text` was ever bounded — a multi-MB `from` became a multi-MB paste +
+// ticker row. Bound it at insert time to a short sane cap, surrogate-safe by
+// the exact BUG 6 rule. Non-string values pass through untouched so the DB
+// NULL-binding path is unchanged; only an oversized string is clamped. Unlike
+// `text` no length is reported back: an over-long sender is malformed input,
+// not a message body whose truncated tail we owe the caller.
+const MAIL_FROM_MAX_LEN = 200;
+function clampFrom(from) {
+  if (typeof from !== 'string' || from.length <= MAIL_FROM_MAX_LEN) return from;
+  return dropOrphanSurrogate(from.slice(0, MAIL_FROM_MAX_LEN));
 }
 
 export function createMail(ctx) {
@@ -43,7 +64,7 @@ export function createMail(ctx) {
   // mail, orchestrator routing, question relays — is bounded identically.
   function mail(toSession, from, text) {
     const raw = String(text ?? '');
-    q.insertMail.run(toSession, from, clampMail(raw), Date.now()); // BUG 6: surrogate-safe clamp
+    q.insertMail.run(toSession, clampFrom(from), clampMail(raw), Date.now()); // BUG 6/12: surrogate-safe clamps
     // v1.1 mail-wake: ANY mail landing in the mailbox wakes any /api/watch
     // long-poll for that session — board answers, [FLEETDECK ASSIGNMENT]
     // routing and plain board/session mail alike (v1 nudged only on
@@ -164,12 +185,32 @@ export function createMail(ctx) {
     // Re-check waiter priority after the asynchronous probes, then atomically
     // claim every pending row before any text enters the pane.
     if (hasWatchWaiter(sid)) return false;
+    // BUG 8: close the owned-pane TOCTOU. The eligibility gate at the top
+    // (ownedPaneRow) read this session's turn-state/col BEFORE the awaited
+    // findScopedWindow + paneCurrentCommand probes. During those awaits a
+    // PermissionRequest/Notification hook can flip the card out of idle/queued
+    // into needs-you/working — pasting now would inject text + Enter into a
+    // permission or question TUI. Re-read the row FRESH through the same gate
+    // and bail (claiming nothing) unless it is still an idle/queued owned pane.
+    if (!ownedPaneRow(sid)) return false;
     const box = claimAllMail(sid);
     if (!box.length) return false;
     const text = box.map(m => `[FLEETDECK MAIL from ${m.from_id}] ${m.text}`).join('\n');
     const pasted = await tmuxAdapter.pasteText(win.window_id, text);
-    const entered = pasted ? await tmuxAdapter.sendEnter(win.window_id) : false;
-    if (!pasted || !entered) {
+    if (!pasted) {                       // paste failed → redeliver at a later turn
+      for (const m of box) q.unmarkDelivered.run(m.id);
+      onMutate();
+      return false;
+    }
+    // BUG 8 (last mile): the pasteText round-trip above yielded the event loop, so
+    // re-read turn-state ONE more time before pressing Enter. If a hook flipped the
+    // pane to needs-you/working in that window, do NOT auto-SUBMIT: the (sanitized,
+    // bounded) text is already in the pane, but Enter would fire it into a
+    // permission/question TUI. Leave it un-entered — recoverable — and keep it
+    // marked delivered so it is never re-pasted.
+    if (!ownedPaneRow(sid)) { onMutate(); return true; }
+    const entered = await tmuxAdapter.sendEnter(win.window_id);
+    if (!entered) {
       for (const m of box) q.unmarkDelivered.run(m.id);
       onMutate();
       return false;

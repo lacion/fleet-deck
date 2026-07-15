@@ -11,7 +11,6 @@
     "bin/",
     "scripts/fleetd/fleetd.bundle.mjs",
     "scripts/fleetd/board-dist/",
-    "scripts/fleetd/board.html",
     "docs/CODER.md"
   ],
   "author": "Luis Morales <luismmorales@gmail.com>",

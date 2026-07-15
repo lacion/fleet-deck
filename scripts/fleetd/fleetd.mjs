@@ -65,6 +65,16 @@ function startupFatal(reason) {
 try { fs.mkdirSync(HOME, { recursive: true }); } catch (err) {
   startupFatal(`cannot create FLEETDECK_HOME (${err?.code || err?.message || 'unknown error'})`);
 }
+// STATE DIR CONFIDENTIALITY CONTRACT: HOME holds fleetd.db (session cwds,
+// callsigns, mail, plan text, raw permission payloads), the access token and
+// fleetd.log — all owner-only individually. `mkdir -p` never tightens a dir
+// that already exists, so pin 0700 explicitly: a private state dir is the
+// PRIMARY guarantee that other local users cannot traverse in, and it backstops
+// the DB's 0600 during the window where a lazily recreated WAL/SHM sidecar is
+// momentarily 0644 (see db.mjs openDb). Best-effort — the board is reached over
+// HTTP, never the filesystem, so no multi-user access model depends on HOME
+// being group/other-traversable; a chmod refusal must not block startup.
+try { fs.chmodSync(HOME, 0o700); } catch { /* dir confidentiality is best effort */ }
 
 const PID_FILE = path.join(HOME, 'fleetd.pid');
 let ownsPidFile = false;
@@ -227,9 +237,6 @@ const { server } = createHttp(core, {
   port: PORT,
   token: TOKEN,
   lan: LAN_INFO,
-  // the Phase 1 spike board, kept verbatim at GET /plain; the real board
-  // (GET / + /assets/*) is served from board-dist, resolved inside http.mjs
-  boardFile: path.join(__dirname, 'board.html'),
   version,
   trustedOrigins: TRUSTED_ORIGINS,
   proxyAuth: PROXY_AUTH,

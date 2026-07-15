@@ -44,24 +44,12 @@ import { startDaemon, randomPort, REPO_ROOT } from './helpers/daemon.mjs';
 import { postHook, postJson, getJson } from './helpers/http.mjs';
 import { loadFixture } from './helpers/fixtures.mjs';
 import { makeTranscriptDir, writeTranscript } from './helpers/transcript.mjs';
+import { waitUntil, scaleMs } from './helpers/wait.mjs';
 
 const WATCH_SCRIPT = path.join(REPO_ROOT, 'scripts/fleet-watch.mjs');
 
 function scratchCwd() {
   return mkdtempSync(path.join(tmpdir(), 'fleetdeck-cwd-'));
-}
-
-const WAIT_SCALE = Number(process.env.FLEETDECK_TEST_WAIT_SCALE) || 1;
-
-async function waitUntil(fn, { timeoutMs = 5000, intervalMs = 100, label = 'condition' } = {}) {
-  const effectiveTimeoutMs = timeoutMs * WAIT_SCALE;
-  const deadline = Date.now() + effectiveTimeoutMs;
-  for (;;) {
-    const result = await fn();
-    if (result) return result;
-    if (Date.now() >= deadline) throw new Error(`waitUntil: ${label} not met within ${effectiveTimeoutMs}ms`);
-    await new Promise(r => setTimeout(r, intervalMs));
-  }
 }
 
 // Register a session and park a pending FREEFORM question for it (the only
@@ -113,7 +101,7 @@ function spawnWatcher({ port, home, sid, env = {} }) {
     exitWithin(timeoutMs, label) {
       return Promise.race([
         exited,
-        new Promise((_, reject) => setTimeout(() => reject(new Error(`watcher did not exit within ${timeoutMs}ms (${label})`)), timeoutMs).unref?.()),
+        new Promise((_, reject) => setTimeout(() => reject(new Error(`watcher did not exit within ${timeoutMs}ms (${label})`)), scaleMs(timeoutMs)).unref?.()),
       ]);
     },
   };
