@@ -18,8 +18,8 @@ import { getQuestion } from '../qbus.js';
 // termOpen / killOpen are refs (from useTermWindows) read synchronously so a
 // stale closure over state can't misroute Esc.
 export function useBoardHotkeys({
-  pendingQs, selQ, setSelQ, termOpen, killOpen, armOpen, renameOpen,
-  setKillAsk, setArmAsk, setRenameAsk, setDrawerSid, setCompose, setSpawnForm, setLanOpen, setWtOpen,
+  pendingQs, selQ, setSelQ, termOpen, killOpen, armOpen, renameOpen, fsOpen,
+  setKillAsk, setArmAsk, setRenameAsk, setDrawerSid, setCompose, setSpawnForm, setLanOpen, setWtOpen, setFsView,
 }) {
   useEffect(() => {
     const onKey = (e) => {
@@ -38,6 +38,10 @@ export function useBoardHotkeys({
         if (killOpen.current) { setKillAsk(null); return; }
         if (armOpen.current) { setArmAsk(null); return; }
         if (renameOpen.current) { setRenameAsk(null); return; }
+        // v2.2 — the file viewer opens OVER the drawer; Esc peels it off alone
+        // so the drawer you launched it from is still there behind it. (Its
+        // search box eats the first Esc itself when it holds a query.)
+        if (fsOpen) { setFsView(null); return; }
         setDrawerSid(null); setCompose(null); setSpawnForm(null); setLanOpen(false);
         setWtOpen(false);
         return;
@@ -71,6 +75,7 @@ export function useBoardHotkeys({
     return () => window.removeEventListener('keydown', onKey);
     // Setters (useState) and the termOpen/killOpen/armOpen/renameOpen refs are
     // referentially stable, so this effect still only re-subscribes when the rail
-    // selection changes.
-  }, [pendingQs, selQ, termOpen, killOpen, armOpen, renameOpen, setKillAsk, setArmAsk, setRenameAsk, setDrawerSid, setCompose, setSpawnForm, setLanOpen, setWtOpen]);
+    // selection changes (and when the file viewer opens/closes — fsOpen is a
+    // plain boolean, not a ref).
+  }, [pendingQs, selQ, termOpen, killOpen, armOpen, renameOpen, fsOpen, setKillAsk, setArmAsk, setRenameAsk, setDrawerSid, setCompose, setSpawnForm, setLanOpen, setWtOpen, setFsView]);
 }

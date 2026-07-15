@@ -500,6 +500,25 @@ export function createHttp(core, {
             });
           return;
         }
+        const sessionFsMatch = /^\/api\/sessions\/([^/]+)\/fs\/(list|read|search)$/.exec(url.pathname);
+        if (sessionFsMatch) {
+          const sid = decodeURIComponent(sessionFsMatch[1]);
+          const action = sessionFsMatch[2];
+          const operation = action === 'list'
+            ? core.fsList(sid, url.searchParams.get('path') ?? '')
+            : action === 'read'
+              ? core.fsRead(sid, url.searchParams.get('path') ?? '')
+              : core.fsSearch(sid, url.searchParams.get('q') ?? '', {
+                mode: url.searchParams.get('mode') ?? 'content',
+              });
+          operation
+            .then(({ status, body }) => json(res, status, body))
+            .catch(err => {
+              console.error('fleetd session filesystem error:', err);
+              json(res, 500, { ok: false, reason: 'internal' });
+            });
+          return;
+        }
         if (url.pathname === '/mail') {
           const sid = url.searchParams.get('session') || '';
           const box = core.drainMail(sid);

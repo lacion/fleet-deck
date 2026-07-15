@@ -14,6 +14,7 @@ import { lastAssistantModel } from './transcript.mjs';
 import * as defaultTmuxAdapter from './spawn.mjs';
 import { createStatements } from './statements.mjs';
 import { createWorktrees } from './worktrees.mjs';
+import { createFiles } from './files.mjs';
 import { pasteImage } from './paste.mjs';
 import { createMail } from './mail.mjs';
 import { createLedger } from './ledger.mjs';
@@ -597,7 +598,12 @@ export function createCore(db, {
   const { planMark } = ctx;
 
   // Worktree custody (inspection + allow-listed removal) → worktrees.mjs.
-  const { worktrees, removeWorktree } = createWorktrees(ctx);
+  Object.assign(ctx, createWorktrees(ctx));
+  const { worktrees, removeWorktree } = ctx;
+
+  // Read-only session working-tree browsing → files.mjs.
+  Object.assign(ctx, createFiles(ctx));
+  const { fsList, fsRead, fsSearch } = ctx;
 
   // v1.2/v1.3 board-spawned session lifecycle → spawns.mjs.
   Object.assign(ctx, createSpawns(ctx));
@@ -674,6 +680,9 @@ export function createCore(db, {
     cleanup,
     worktrees,          // GET /api/worktrees — bounded live git inspection
     removeWorktree,     // POST /api/worktrees/remove — allow-listed destruction
+    fsList,             // GET /api/sessions/:id/fs/list → {status, body}
+    fsRead,             // GET /api/sessions/:id/fs/read → {status, body}
+    fsSearch,           // GET /api/sessions/:id/fs/search → {status, body}
     // v1.3 plan library
     planMark,          // POST /api/plans/:id/mark → {status, body}
     // 0.7.1 custom names: POST /api/sessions/:id/name and the `name` command

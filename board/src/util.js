@@ -48,6 +48,19 @@ export function basename(p) {
   return i === -1 ? s : s.slice(i + 1);
 }
 
+// v2.2 file viewer — an absolute ledger path (s.files) relative to the
+// session's browse root, or null when it lives outside it (a /tmp scratch
+// file, another repo). The root guess mirrors the daemon's resolution order
+// (worktree ?? cwd); the daemon re-derives it from the session id anyway, so a
+// mismatch here can only cost a click, never leak a path.
+export function relToRoot(s, abs) {
+  const root = s?.worktree || s?.cwd;
+  const p = String(abs ?? '');
+  if (!root || !p) return null;
+  if (p === root) return '';
+  return p.startsWith(root + '/') ? p.slice(root.length + 1) : null;
+}
+
 // M-S1 — `remote.url` is harvested by the daemon from the AGENT's terminal
 // output, which is the least-trusted party in the whole system. It reaches the
 // board and lands in window.open()/<a href>, so a `javascript:` (or `data:`)

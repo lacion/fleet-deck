@@ -24,6 +24,7 @@ import KillConfirm from './components/KillConfirm.jsx';
 import ArmMoveConfirm from './components/ArmMoveConfirm.jsx';
 import RenameDialog from './components/RenameDialog.jsx';
 import WorktreesModal from './components/WorktreesModal.jsx';
+import FileViewer from './components/FileViewer.jsx';
 import TokenGate from './components/TokenGate.jsx';
 
 // v1.4 — lazy: xterm.js (~300 kB) loads only when a terminal is opened.
@@ -49,6 +50,7 @@ export default function App() {
   const [spawnForm, setSpawnForm] = useState(null); // null | { prompt?, cwd?, planId? }
   const [lanOpen, setLanOpen] = useState(false); // v1.7 LAN share panel
   const [wtOpen, setWtOpen] = useState(false); // v1.9 worktrees modal
+  const [fsView, setFsView] = useState(null); // v2.2 file viewer — null | {sid, callsign, root, path?}
   const [priorities, setPriorities] = useState(() => new Set());
   const [threads, setThreads] = useState({}); // sid -> [{text, at}] (this tab only)
 
@@ -119,8 +121,8 @@ export default function App() {
 
   // keyboard: j/k rail nav · y/n permission · 1-9 choice · c compose · Esc close
   useBoardHotkeys({
-    pendingQs, selQ, setSelQ, termOpen, killOpen, armOpen, renameOpen,
-    setKillAsk, setArmAsk, setRenameAsk, setDrawerSid, setCompose, setSpawnForm, setLanOpen, setWtOpen,
+    pendingQs, selQ, setSelQ, termOpen, killOpen, armOpen, renameOpen, fsOpen: !!fsView,
+    setKillAsk, setArmAsk, setRenameAsk, setDrawerSid, setCompose, setSpawnForm, setLanOpen, setWtOpen, setFsView,
   });
 
   const stale = status !== 'live';
@@ -362,6 +364,14 @@ export default function App() {
           // v2.1 — rename: the drawer's ✎ and the card's chip open the SAME
           // dialog, which owns the POST and reports on the shared strip
           onRename={askRename}
+          // v2.2 — the read-only file viewer opens OVER the drawer (relPath
+          // null = at the root; a FILES chip passes the file to reveal)
+          onBrowseFiles={(sess, relPath) => setFsView({
+            sid: sess.session_id,
+            callsign: sess.callsign || sess.session_id,
+            root: sess.worktree || sess.cwd || '',
+            path: relPath || null,
+          })}
           thread={threads[drawerSid] || EMPTY_ARR}
           // M-F5 — await the result: clear the draft only on success, and let
           // the drawer surface a failure instead of swallowing it.
@@ -402,10 +412,24 @@ export default function App() {
         />
       )}
 
+      {/* ============ file viewer (v2.2 — read-only, per session) ============ */}
+      {fsView && (
+        <FileViewer
+          key={fsView.sid}
+          sid={fsView.sid}
+          callsign={fsView.callsign}
+          root={fsView.root}
+          initialPath={fsView.path}
+          onClose={() => setFsView(null)}
+        />
+      )}
+
       {/* ============ spawn (v1.2 — explicit human click only) ============ */}
       {spawnForm && (
         <SpawnForm
           sessions={sessions}
+          repoCatalog={snap.repo_catalog || EMPTY_ARR}
+          settings={snap.settings || EMPTY_OBJ}
           prefillPrompt={spawnForm.prompt || ''}
           prefillCwd={spawnForm.cwd || ''}
           planMode={!!spawnForm.planId}
