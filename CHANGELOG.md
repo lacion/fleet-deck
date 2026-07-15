@@ -5,21 +5,32 @@ All notable changes to Fleet Deck are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.10.0] - 2026-07-15
 
-A security / reliability / docs audit of the daemon and board.
+A full security / reliability / quality audit of the daemon and board — findings
+fixed and pinned by regression tests, with every fix cross-reviewed.
 
 ### Security
 
-- **Proxy-auth token bypass closed.** Behind a reverse proxy, a request arriving over loopback could be auto-authorized even when `FLEETDECK_PROXY_AUTH` was configured to require the bearer token. Proxied requests now present the token as configured.
-- **Mail-to-pane keystroke injection hardened.** Mail delivered by typing into an owned tmux pane can no longer be crafted to inject control sequences beyond the message itself.
-- **State files are owner-only.** Files and directories under `FLEETDECK_HOME` are created `0600`/`0700`, so a co-tenant on a shared host can't read your fleet state.
-- **Spawn prompts are never parsed as flags.** A spawn prompt beginning with `-`/`--` could be swallowed as a `claude` option; the prompt is now always passed as data, never as an option.
+- **Proxy-auth token bypass closed.** Behind a reverse proxy, a request arriving over loopback with no `Origin` and no token could be auto-authorized even when `FLEETDECK_PROXY_AUTH=token` required the bearer token — exposing `POST /api/spawn` and the rest of the API. The loopback exemption now also consults the `Host` authority, so a proxied request must present the token as configured while genuine local hooks are unaffected.
+- **Mail-to-pane keystroke injection hardened.** Mail typed into an owned tmux pane is sanitized (bracketed-paste markers and control bytes stripped), so message content can no longer break out of the paste and be run as live keystrokes.
+- **State files are owner-only.** `fleetd.db` (and its WAL/SHM sidecars) plus `FLEETDECK_HOME` are created `0600`/`0700`, so a co-tenant on a shared host can't read your session paths, mail, or plan text.
+- **Spawn prompts are never parsed as flags.** A spawn prompt beginning with `--` could be swallowed as a `claude` option (e.g. silently enabling permission-skip); the prompt is now always passed after a `--` terminator, as data.
+- **Standalone CLI hardening.** The service supervisor verifies a pidfile by process identity before signalling it (no more SIGTERM of a reused PID), and `service.env` values are validated so they cannot behave differently under the shell supervisor vs. systemd.
 
 ### Fixed
 
-- Several async races along the spawn, adopt and terminal paths.
-- Dead code removed, and the docs (README, SECURITY, this changelog, and the plugin manifests) reconciled with the shipped behavior.
+- **Worktree removal no longer races a revive.** A `worktree remove` overlapping a revive of the same offline spawn could force-remove a tree Claude had just relaunched into; liveness is now re-checked (by spawn status) right before every destructive step.
+- **`/clear` succession can't mis-assign an heir.** Two sessions clearing in the same directory at once can no longer graft one's callsign, pane, and mail onto the other's heir.
+- **No auto-submit into a busy pane.** Mail delivery and `/rc` re-check the pane's turn-state before pressing Enter, so neither fires into a permission prompt that appeared mid-delivery.
+- **Board answer-hotkeys respect modals.** With a permission selected in the rail, pressing `y`/`n`/`1-9` while a dialog is open no longer silently approves the hidden permission.
+- The image-paste directory now holds a true 50-file cap, and several other small correctness fixes across the spawn, mail, and terminal paths.
+
+### Changed
+
+- Dead code removed: the legacy `/plain` board and its `board.html` (also trimming the npm package), unused exports, and a stray NUL byte in source.
+- Internal dedup (no behavior change): shared `config.mjs` (HOME/PORT resolution) and `exec.mjs` (subprocess primitive); the redundant **per-session** `mail_pending` field was dropped from `/state` — the top-level `mail_pending` map (documented for orchestrators) and the richer `mail_meta` both remain.
+- Docs reconciled with the shipped behavior (README, SECURITY, the plugin manifests), and test waits now honor `FLEETDECK_TEST_WAIT_SCALE` fleet-wide.
 
 ## [0.9.1] - 2026-07-15
 
@@ -199,7 +210,7 @@ Initial public release.
 - A brainless orchestrator: `assign auto` routes a task to the best existing session with a SQL query, not a model call — the core makes zero model calls.
 - One-command plugin install with a self-contained daemon bundle (`node:sqlite` state, nothing to `npm install`); the first session's SessionStart hook elects and launches the daemon. MIT licensed.
 
-[unreleased]: https://github.com/lacion/fleet-deck/compare/v0.9.1...HEAD
+[0.10.0]: https://github.com/lacion/fleet-deck/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/lacion/fleet-deck/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/lacion/fleet-deck/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/lacion/fleet-deck/compare/v0.7.1...v0.8.0
