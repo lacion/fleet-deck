@@ -5,17 +5,16 @@
 // rejecting: `{ ok: true, out }` on success, `{ ok: false, code, err }` on any
 // failure (non-zero exit, timeout, missing binary, or a synchronous throw). Every
 // async execFile caller in the daemon funnels through this one shape — worktrees'
-// git probes, and the tmux adapter (spawn.mjs), which maps it to its own
-// null-or-stdout convention at the boundary.
+// git probes, the tmux adapter (spawn.mjs) which maps it to its own
+// null-or-stdout convention at the boundary, and the agents-cli poller
+// (agents-poll.mjs), which tokenizes the operator-supplied FLEETDECK_AGENTS_CMD
+// on whitespace and runs it by argv. There is therefore NO shell execution
+// anywhere in the daemon — the no-shell security boundary holds without exception.
 //
-// Two sibling wrappers deliberately do NOT share this and are not moved here:
+// One sibling wrapper deliberately does NOT share this and is not moved here:
 //   - repo-identity.mjs `git()` is SYNCHRONOUS (execFileSync) on purpose — its
 //     caller (derive.mjs) consumes results inline while building SQL, and making
 //     it async would thread Promises into session state (see its own comment).
-//   - agents-poll.mjs `runOnce()` uses `exec` (a SHELL) because FLEETDECK_AGENTS_CMD
-//     is an operator-supplied command STRING; keeping that the lone shell caller,
-//     apart from this argv-only primitive, preserves the no-shell security boundary
-//     the rest of the daemon relies on.
 import { execFile } from 'node:child_process';
 
 export function execFileP(cmd, args, { timeout = 30_000, env } = {}) {

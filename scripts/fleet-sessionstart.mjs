@@ -35,6 +35,17 @@ const FLEETD = process.env.FLEETDECK_TEST_DAEMON_SCRIPT
   || (fs.existsSync(FLEETD_BUNDLE) ? FLEETD_BUNDLE : path.join(HERE, 'fleetd', 'fleetd.mjs'));
 const HOME = resolveHome();
 
+// FLEETDECK_REQUIRE_TOKEN support: when the operator opts every loopback caller
+// into the token, this hook must still reach the daemon. Read the persisted
+// token ($FLEETDECK_HOME/token, resolved exactly like every other path here)
+// ONCE at startup and tolerate its absence — in default loopback mode there is
+// no token file and the loopback exemption carries the hook. When a token IS
+// present we always attach it (harmless: the daemon ignores a bearer it does
+// not require). /hook/* keeps the loopback exemption even under the flag, so a
+// cold boot that mints the token after this read still succeeds.
+let TOKEN = null;
+try { TOKEN = fs.readFileSync(path.join(HOME, 'token'), 'utf8').trim() || null; } catch { /* no token file — default loopback mode */ }
+
 // Hard deadline: whatever happens, exit 0 well inside the hook's 15s timeout.
 // The takeover path can outlast the default 3.8s budget (waiting for an old
 // daemon to die + polling the replacement), so the watchdog is re-armable to a
@@ -67,9 +78,12 @@ async function api(pathname, { method = 'GET', body, timeout = 400 } = {}) {
   const ctl = new AbortController();
   const t = setTimeout(() => ctl.abort(), timeout);
   try {
+    const headers = {};
+    if (body) headers['content-type'] = 'application/json';
+    if (TOKEN) headers.authorization = `Bearer ${TOKEN}`;
     const res = await fetch(BASE + pathname, {
       method,
-      headers: body ? { 'content-type': 'application/json' } : undefined,
+      headers: Object.keys(headers).length ? headers : undefined,
       body: body ? JSON.stringify(body) : undefined,
       signal: ctl.signal,
     });

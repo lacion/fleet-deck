@@ -90,6 +90,15 @@ const MIME = {
   '.woff2': 'font/woff2',
 };
 
+// CSP for the HTML shell only (the one response a browser parses as a document).
+// Verified against board-dist/index.html: it loads IBM Plex from
+// fonts.googleapis.com (a stylesheet) and fonts.gstatic.com (the font files),
+// the favicon is a data: SVG, the paste flow can mint blob: image URLs, and
+// React sets inline style ATTRIBUTES (hence 'unsafe-inline' in style-src only —
+// there are no inline <script>s, so script-src stays 'self'). connect-src covers
+// the /state|/health|/api fetches and both WebSockets, same-origin under a proxy.
+const CSP_SHELL = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self' ws: wss:; img-src 'self' data: blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
+
 // Serve one file from board-dist. Traversal-safe: the decoded request path is
 // resolved against BOARD_DIST and must stay strictly inside it (any '..' —
 // raw or percent-encoded — normalizes outside and 404s).
@@ -101,10 +110,16 @@ function serveBoardAsset(res, pathname, notFound) {
   if (abs !== BOARD_DIST && !abs.startsWith(BOARD_DIST + path.sep)) return notFound();
   let data;
   try { data = fs.readFileSync(abs); } catch { return notFound(); }
-  res.writeHead(200, {
-    'content-type': MIME[path.extname(abs).toLowerCase()] || 'application/octet-stream',
+  const ext = path.extname(abs).toLowerCase();
+  // nosniff on EVERY asset (kills MIME-confusion on the hashed JS/CSS); CSP only
+  // on the HTML document — subresources inherit the document's policy.
+  const headers = {
+    'content-type': MIME[ext] || 'application/octet-stream',
     'content-length': data.length,
-  });
+    'x-content-type-options': 'nosniff',
+  };
+  if (ext === '.html') headers['content-security-policy'] = CSP_SHELL;
+  res.writeHead(200, headers);
   return res.end(data);
 }
 
@@ -164,7 +179,7 @@ function trustedHostMatch(entry, host, port) {
 
 export function createHttp(core, {
   port, version = '0.0.0', capture = () => {}, token, lan = null,
-  trustedOrigins = [], proxyAuth = 'token', managed = false,
+  trustedOrigins = [], proxyAuth = 'token', managed = false, requireToken = false,
 }) {
   // The board renders its share panel from this: the exact URLs a peer can
   // open, token included (a browser cannot send an Authorization header on its
@@ -181,7 +196,13 @@ export function createHttp(core, {
 
   function json(res, code, obj) {
     const body = JSON.stringify(obj);
-    res.writeHead(code, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) });
+    // nosniff on every JSON response too: the one central place that emits our
+    // API + hook bodies, so no route can forget it (matches serveBoardAsset).
+    res.writeHead(code, {
+      'content-type': 'application/json',
+      'content-length': Buffer.byteLength(body),
+      'x-content-type-options': 'nosniff',
+    });
     res.end(body);
   }
 
@@ -218,7 +239,22 @@ export function createHttp(core, {
       // Use arrivedViaTrustedProxy, NOT viaTrustedProxy: the latter keys off
       // Origin alone and so waived the token for a proxied request that carried
       // no Origin — the no-Origin bypass fixed here.
-      if (!(proxyAuth === 'token' && arrivedViaTrustedProxy(req))) return true;
+      if (!(proxyAuth === 'token' && arrivedViaTrustedProxy(req))) {
+        // REQUIRE_TOKEN (FLEETDECK_REQUIRE_TOKEN=on): on a multi-user machine
+        // every other OS user can reach 127.0.0.1 and today inherits this
+        // loopback exemption — tokenless /state, /api/spawn, the lot — and it is
+        // also the residual behind the Host-rewriting-proxy note above. With the
+        // flag on the exemption survives for exactly two callers: a /hook/* path
+        // (Claude Code http hooks cannot attach an Authorization header — see
+        // hooks/hooks.json) and the data-free public shell (a browser must load
+        // it before it can present a key). Everything else falls through to the
+        // bearer/?t= check below even on loopback. Purely ADDITIVE: with the flag
+        // off (the default) the loopback exemption is byte-for-byte as before,
+        // and this never loosens the proxyAuth/arrivedViaTrustedProxy gate above.
+        if (!requireToken
+          || url.pathname.startsWith('/hook/')
+          || isPublicShell(req.method, url.pathname)) return true;
+      }
     }
     const authorization = req.headers.authorization;
     const bearer = typeof authorization === 'string' ? /^Bearer (.+)$/.exec(authorization)?.[1] : undefined;
@@ -339,6 +375,18 @@ export function createHttp(core, {
     return authorityTrusted(u) && !hostAllowed(u);
   }
   const isJsonContentType = v => typeof v === 'string' && /^application\/json\b/i.test(v.trim());
+
+  // PROVENANCE LOG (exec-class control routes). spawn/kill/revive/adopt/rc each
+  // start a process or move a live pane, so one audit line records WHERE the
+  // call came from: the socket peer, and whether it arrived through a trusted
+  // reverse proxy (a browser at the proxy) rather than a direct loopback/LAN
+  // caller. Deliberately NEVER the token, headers or body — provenance, not
+  // payload. Matches the daemon's `fleetd …:` stderr dialect so it lands in
+  // fleetd.log alongside the other operational lines.
+  function logExec(route, req, extra = '') {
+    const from = req.socket?.remoteAddress || 'unknown';
+    console.error(`fleetd exec ${route} from ${from} proxied=${arrivedViaTrustedProxy(req)}${extra}`);
+  }
 
   // PermissionRequest / Elicitation / AskUserQuestion are handled OUT of this
   // table (Phase 3/4 hold-open relay — the response is parked, see the hook
@@ -715,6 +763,9 @@ export function createHttp(core, {
               // row → nudge) lives in derive.mjs. v1.3 adds
               // dangerously_skip_permissions: bool and permission_mode
               // "bypassPermissions" (validated/applied in derive.spawn too).
+              logExec(url.pathname, req,
+                (ev?.dangerously_skip_permissions === true || ev?.permission_mode === 'bypassPermissions')
+                  ? ' unsupervised=true' : ' unsupervised=false');
               core.spawn(ev)
                 .then(out => json(res, out.status, out.body))
                 .catch(err => {
@@ -727,6 +778,7 @@ export function createHttp(core, {
             if (killMatch) {
               // v1.2 name-verified kill: 404 unknown id, 409 card not offline
               // without force:true, 410 window already gone.
+              logExec(url.pathname, req);
               core.spawnKill(killMatch[1], ev?.force === true)
                 .then(out => json(res, out.status, out.body))
                 .catch(err => {
@@ -741,6 +793,7 @@ export function createHttp(core, {
               // cwd/transcript evidence still exists; derive owns every
               // collision/cap check and returns the control-API status. The
               // body may override remote_control (default: inherit).
+              logExec(url.pathname, req);
               core.revive(reviveMatch[1], ev ?? {})
                 .then(out => json(res, out.status, out.body))
                 .catch(err => {
@@ -758,6 +811,9 @@ export function createHttp(core, {
               // dangerously_skip_permissions:bool or {disarm:true}. Every guard
               // (404/400/409/410) lives in derive; the CSRF/Host walls above
               // apply automatically like every other control POST.
+              logExec(url.pathname, req,
+                (ev?.dangerously_skip_permissions === true || ev?.permission_mode === 'bypassPermissions')
+                  ? ' unsupervised=true' : '');
               core.adoptSession(adoptMatch[1], ev ?? {})
                 .then(out => json(res, out.status, out.body))
                 .catch(err => {
@@ -790,6 +846,7 @@ export function createHttp(core, {
             if (rcMatch) {
               // Explicit human board action: derive enforces the idle/live
               // pane boundary, types /rc literally, and waits for harvesting.
+              logExec(url.pathname, req);
               core.enableRemote(rcMatch[1])
                 .then(out => json(res, out.status, out.body))
                 .catch(err => {

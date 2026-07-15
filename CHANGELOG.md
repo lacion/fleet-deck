@@ -5,6 +5,23 @@ All notable changes to Fleet Deck are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0] - 2026-07-15
+
+A supply-chain and shared-host hardening pass, written with scanner triage in
+mind: the daemon executes no shell anywhere, payload capture actually redacts,
+and an opt-in mode puts the bearer token in front of loopback too.
+
+### Security
+
+- **Payload capture actually redacts now.** With `FLEETDECK_CAPTURE_PAYLOADS=on`, captured hook payloads are scrubbed before they touch disk: values under secret-looking key names (token / password / api-key / credential / authorization / cookie / private-key…), well-known credential shapes inside strings (`sk-ant-`, `ghp_` / `github_pat_`, `xox?-`, `AKIA…`, JWTs, PEM private-key blocks, `Bearer` tokens), and the daemon's own bearer token. A secret embedded in arbitrary free text can still slip through, so capture stays opt-in and `0600` — the previous "secrets are scrubbed" wording promised more than it did.
+- **`FLEETDECK_REQUIRE_TOKEN=on` — the bearer token even over loopback.** A new opt-in mode that requires the token on every control and data route (`/state`, `/mail`, `/command`, `/api/*`, `/ws`, `/ws/term`) even for loopback connections; only `/hook/*` and the public board shell stay exempt, because Claude Code's http-type hooks cannot send headers. It closes the loopback trust zone against other OS users on a shared machine, and the residual Host-rewriting reverse-proxy case. The fleet's own hooks and CLI read the token from `$FLEETDECK_HOME/token` and attach it automatically, so a normal single-user setup is unaffected.
+- **The board shell now ships a Content-Security-Policy**, and every response carries `X-Content-Type-Options: nosniff`.
+- **Exec-class API routes log who asked.** `/api/spawn`, `adopt`, `revive`, `kill` and `rc` now record requester provenance — remote address, proxy verdict, unsupervised flag — to `fleetd.log`, and the daemon warns at startup when any test-seam env var is live (`FLEETDECK_SPAWN_CMD`, `FLEETDECK_TERM_CMD`, `FLEETDECK_TEST_DAEMON_SCRIPT`, `FLEETDECK_VERSION_OVERRIDE`, or a non-default `FLEETDECK_AGENTS_CMD`), so a fixture left on in production announces itself instead of hiding.
+
+### Changed
+
+- **BREAKING — the agents poller no longer uses a shell.** `FLEETDECK_AGENTS_CMD` is now whitespace-split into argv and run via `execFile`, so quotes, pipes, `$()` and redirection are never interpreted (the default `claude` poll is unchanged). An override that leaned on shell features must move into an executable script named as the command; `false` or blank still disables the poller, and the failure mode is the poller's existing silent skip. Native-Windows note: post-CVE-2024-27980 Node cannot spawn `.cmd` shims without a shell, so the default `claude` poll there degrades to the same silent skip — the platform is already documented as untested.
+
 ## [0.12.0] - 2026-07-15
 
 Repo-mode spawns learn that not every repo lives on GitHub.
@@ -238,6 +255,7 @@ Initial public release.
 - A brainless orchestrator: `assign auto` routes a task to the best existing session with a SQL query, not a model call — the core makes zero model calls.
 - One-command plugin install with a self-contained daemon bundle (`node:sqlite` state, nothing to `npm install`); the first session's SessionStart hook elects and launches the daemon. MIT licensed.
 
+[0.13.0]: https://github.com/lacion/fleet-deck/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/lacion/fleet-deck/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/lacion/fleet-deck/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/lacion/fleet-deck/compare/v0.9.1...v0.10.0

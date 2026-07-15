@@ -140,7 +140,10 @@ test('agents polling is single-flight and backs off the CLI while liveness stays
 
   process.env.FLEETDECK_AGENTS_POLL_MS = '100';
   process.env.FLEETDECK_AGENTS_IDLE_POLL_MS = '500';
-  process.env.FLEETDECK_AGENTS_CMD = `"${process.execPath}" "${runner}" "${log}"`;
+  // FLEETDECK_AGENTS_CMD is whitespace-tokenized and run WITHOUT a shell, so
+  // these tmpdir/execPath paths (all quote-free) are passed as-is; wrapping
+  // them in quotes would make the quote characters literal argv bytes → ENOENT.
+  process.env.FLEETDECK_AGENTS_CMD = `${process.execPath} ${runner} ${log}`;
   const { startAgentsPoll } = await import(`../scripts/fleetd/agents-poll.mjs?audit=${Date.now()}`);
 
   let livenessTicks = 0;

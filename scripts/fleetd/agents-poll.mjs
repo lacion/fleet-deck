@@ -13,9 +13,13 @@
 //   - 5s exec timeout; ANY failure (CLI absent, timeout, non-zero exit,
 //     unparseable output) is a silent skip — it must never crash the daemon
 //   - overridable via FLEETDECK_AGENTS_CMD (tests inject fixture output this
-//     way; users can disable the poller entirely with FLEETDECK_AGENTS_CMD=false)
+//     way): the value is split on whitespace and run WITHOUT a shell, so
+//     quotes, pipes, $(), and redirection are never interpreted — every token
+//     arrives as a literal argv byte; wrap any shell pipeline in an executable
+//     script and point the var at that. A 'false' or blank value disables the
+//     CLI half of the poll entirely.
 
-import { exec } from 'node:child_process';
+import { execFileP } from './exec.mjs';
 
 // FLEETDECK_AGENTS_POLL_MS: test hook to shrink the cadence (floor 100 ms);
 // production default ~10 s.
@@ -30,24 +34,25 @@ const IDLE_POLL_INTERVAL_MS = Math.max(
 );
 const FIRST_RUN_DELAY_MS = Math.min(1_000, POLL_INTERVAL_MS); // "shortly after listen"
 const EXEC_TIMEOUT_MS = 5_000;
-const DEFAULT_CMD = 'claude agents --json';
+const DEFAULT_ARGV = ['claude', 'agents', '--json'];
 
-function resolveCommand() {
+// Resolve FLEETDECK_AGENTS_CMD to an argv array (never a shell string). Unset →
+// the default CLI; a blank or 'false' value → null, which disables the CLI half
+// of the poll; anything else is tokenized on runs of whitespace into argv.
+function resolveArgv() {
   const override = process.env.FLEETDECK_AGENTS_CMD;
-  return override === undefined ? DEFAULT_CMD : override;
+  if (override === undefined) return DEFAULT_ARGV;
+  const trimmed = override.trim();
+  if (trimmed === '' || trimmed === 'false') return null;
+  return trimmed.split(/\s+/);
 }
 
-function runOnce(cmd) {
-  return new Promise((resolve) => {
-    try {
-      exec(cmd, { timeout: EXEC_TIMEOUT_MS, windowsHide: true }, (err, stdout) => {
-        if (err) return resolve(null); // absent CLI / timeout / non-zero exit: silent skip
-        resolve(stdout);
-      });
-    } catch {
-      resolve(null); // e.g. exec throwing synchronously on a malformed command
-    }
-  });
+async function runOnce(argv) {
+  // execFileP runs by argv (no shell), absorbs synchronous throws, and applies
+  // windowsHide itself — so a bad command yields { ok: false } rather than
+  // escaping. ANY failure (absent CLI / timeout / non-zero exit) → null skip.
+  const res = await execFileP(argv[0], argv.slice(1), { timeout: EXEC_TIMEOUT_MS });
+  return res.ok ? res.out : null;
 }
 
 function hasLiveInteractive(records) {
@@ -74,8 +79,8 @@ function hasLiveInteractive(records) {
  * active spawn rows.
  */
 export function startAgentsPoll(core) {
-  const cmd = resolveCommand();
-  const agentsEnabled = !(cmd === 'false' || cmd.trim() === '');
+  const argv = resolveArgv();
+  const agentsEnabled = argv !== null;
   let stopped = false;
   let running = false;
   let timer = null;
@@ -90,7 +95,7 @@ export function startAgentsPoll(core) {
     running = true;
     try {
       if (agentsEnabled && Date.now() >= nextAgentsPollAt) {
-        const out = await runOnce(cmd);
+        const out = await runOnce(argv);
         let validPoll = false;
         let records;
         if (out != null) { // exec failed/timed out: silent skip

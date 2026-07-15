@@ -156,13 +156,24 @@ if (PROXY_AUTH === 'trust' && !TRUSTED_ORIGINS.length) {
   startupFatal("FLEETDECK_PROXY_AUTH=trust requires FLEETDECK_TRUSTED_ORIGINS — there is nothing to trust");
 }
 
+// FLEETDECK_REQUIRE_TOKEN=on — opt into the token even on pure loopback. On a
+// multi-user machine every other OS user can reach 127.0.0.1 and today inherits
+// the loopback exemption (tokenless /state, /api/spawn, the lot); this closes
+// that, and the documented Host-rewriting-proxy residual with it. It forces a
+// token to EXIST (folded into TOKEN_REQUIRED below, so one is generated +
+// persisted 0600 exactly as in LAN mode) and http.mjs flips the loopback
+// auto-authorize off for everything but /hook/* and the data-free public shell.
+const REQUIRE_TOKEN = (process.env.FLEETDECK_REQUIRE_TOKEN || '').trim().toLowerCase() === 'on';
+
 // TOKEN CONTRACT (extended for standalone). A token is mandatory whenever the
 // board is reachable from something that is not this machine. That is LAN mode
 // — and now also a reverse proxy in 'token' mode, where the daemon still binds
 // loopback but a browser reaches it from the outside world. Without this, a
 // proxied 'token'-mode daemon would have NO token to compare against and would
 // refuse every request it was supposed to gate: a locked door with no key.
-const TOKEN_REQUIRED = LAN_MODE || (TRUSTED_ORIGINS.length > 0 && PROXY_AUTH === 'token');
+// FLEETDECK_REQUIRE_TOKEN=on joins the list: it too makes a token mandatory (and
+// therefore generated + persisted below) even though the bind stays loopback.
+const TOKEN_REQUIRED = LAN_MODE || REQUIRE_TOKEN || (TRUSTED_ORIGINS.length > 0 && PROXY_AUTH === 'token');
 
 const TOKEN_FILE = path.join(HOME, 'token');
 let TOKEN;
@@ -242,8 +253,9 @@ const { server } = createHttp(core, {
   trustedOrigins: TRUSTED_ORIGINS,
   proxyAuth: PROXY_AUTH,
   managed: MANAGED,
+  requireToken: REQUIRE_TOKEN,
   // validation aid: first 3 raw payloads per hook event → HOME/hook-payloads.jsonl
-  capture: createPayloadCapture(HOME),
+  capture: createPayloadCapture(HOME, { secrets: TOKEN ? [TOKEN] : [] }),
 });
 
 // -------------------------------------------------------------- election
@@ -283,6 +295,25 @@ let mdns = null;
 server.listen(PORT, BIND, () => {
   const boundHost = BIND.includes(':') && !BIND.startsWith('[') ? `[${BIND}]` : BIND;
   console.log(`fleetd up on http://${boundHost}:${PORT} (pid ${process.pid}, db ${DB_FILE})`);
+  // TEST-SEAM ANNOUNCEMENT: these env vars swap a real subprocess (spawn / term
+  // / the daemon script) or override identity (version) for the test suite. In
+  // production they must be unset; announcing each active one at boot means a
+  // leaked seam (the 2026-07-11 env scar) is visible in fleetd.log rather than
+  // silently reshaping the daemon. Provenance only — the value is never logged.
+  for (const seam of ['FLEETDECK_SPAWN_CMD', 'FLEETDECK_TERM_CMD', 'FLEETDECK_TEST_DAEMON_SCRIPT', 'FLEETDECK_VERSION_OVERRIDE']) {
+    if (process.env[seam]) console.error(`fleetd WARNING: test seam ${seam} active`);
+  }
+  // FLEETDECK_AGENTS_CMD is a seam ONLY when it names a real command: '' and
+  // 'false' are the documented DISABLE sentinels (agents-poll resolveArgv), and
+  // unset is the default real CLI — none of those is an injected seam. Mirror
+  // resolveArgv's exact trim-but-not-lowercase test so the two can never drift.
+  const agentsCmd = process.env.FLEETDECK_AGENTS_CMD;
+  if (agentsCmd !== undefined) {
+    const trimmedAgents = agentsCmd.trim();
+    if (trimmedAgents !== '' && trimmedAgents !== 'false') {
+      console.error('fleetd WARNING: test seam FLEETDECK_AGENTS_CMD active');
+    }
+  }
   // Upgrade-takeover banner: a SessionStart hook set FLEETDECK_REPLACED to the
   // version it SIGTERMed (and waited for the death of) before spawning us onto
   // the freed port — see takeover.mjs. Surface the handoff both in fleetd.log
