@@ -78,14 +78,21 @@ instructions changes.
 ## Sending mail to another session
 
 ```
+TOKEN=$(cat "${FLEETDECK_HOME:-$HOME/.fleetdeck}/token" 2>/dev/null)
 curl -s -X POST http://127.0.0.1:4711/mail -H 'content-type: application/json' \
+  ${TOKEN:+-H "Authorization: Bearer $TOKEN"} \
   -d '{"to":"<target>","from":"<your session_id or callsign>","text":"..."}'
 ```
+
+The `${TOKEN:+…}` header is sent only when a token file exists; on a plain
+loopback board the file is absent and the header is omitted. Reuse the same
+`$TOKEN` for every daemon call below.
 
 `to` accepts a session_id, a callsign (from the roster brief or board),
 `all`, or `repo:<repo name>`. Delivery is at the target's **next turn
 boundary** — never instant; do not wait for a reply, keep working.
-`GET http://127.0.0.1:4711/state` shows the current roster if you need a target.
+`curl -s ${TOKEN:+-H "Authorization: Bearer $TOKEN"} http://127.0.0.1:4711/state`
+shows the current roster if you need a target.
 
 ## When you are deputized
 

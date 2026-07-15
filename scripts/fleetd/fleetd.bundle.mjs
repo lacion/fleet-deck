@@ -5129,8 +5129,14 @@ function sessionAdoptableNow(session, hasSpawnRow) {
 function claudeEnvArgvPrefix(port, home) {
   const scrub = [
     ...CLAUDE_ENV_MARKERS,
+    // FLEETDECK_*_CMD name fixture commands the daemon execs in place of a real
+    // subprocess (SPAWN_CMD → the `claude` pane; TERM_CMD → termbridge's tmux
+    // control client). A leaked one riding a pane's env into the next
+    // SessionStart would make a fresh daemon exec the fixture instead of the
+    // real thing — the same scar class as the test seams below, so scrub both.
     "FLEETDECK_AGENTS_CMD",
     "FLEETDECK_SPAWN_CMD",
+    "FLEETDECK_TERM_CMD",
     "TMUX",
     "TMUX_PANE",
     "FLEETDECK_TMUX_SOCKET",
@@ -9884,6 +9890,7 @@ var MIME = {
   ".woff": "font/woff",
   ".woff2": "font/woff2"
 };
+var CSP_SHELL = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self' ws: wss:; img-src 'self' data: blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
 function serveBoardAsset(res, pathname, notFound) {
   let decoded;
   try {
@@ -9900,10 +9907,14 @@ function serveBoardAsset(res, pathname, notFound) {
   } catch {
     return notFound();
   }
-  res.writeHead(200, {
-    "content-type": MIME[path9.extname(abs).toLowerCase()] || "application/octet-stream",
-    "content-length": data.length
-  });
+  const ext = path9.extname(abs).toLowerCase();
+  const headers = {
+    "content-type": MIME[ext] || "application/octet-stream",
+    "content-length": data.length,
+    "x-content-type-options": "nosniff"
+  };
+  if (ext === ".html") headers["content-security-policy"] = CSP_SHELL;
+  res.writeHead(200, headers);
   return res.end(data);
 }
 function parseTrustedOrigins(spec) {
@@ -9954,7 +9965,8 @@ function createHttp(core2, {
   lan = null,
   trustedOrigins = [],
   proxyAuth = "token",
-  managed = false
+  managed = false,
+  requireToken = false
 }) {
   const lanInfo = lan?.enabled ? { enabled: true, urls: lan.urls ?? [], mdns: lan.mdns ?? null } : { enabled: false, urls: [] };
   function snapshotWithLan() {
@@ -9962,7 +9974,11 @@ function createHttp(core2, {
   }
   function json(res, code, obj) {
     const body = JSON.stringify(obj);
-    res.writeHead(code, { "content-type": "application/json", "content-length": Buffer.byteLength(body) });
+    res.writeHead(code, {
+      "content-type": "application/json",
+      "content-length": Buffer.byteLength(body),
+      "x-content-type-options": "nosniff"
+    });
     res.end(body);
   }
   function tokenMatches(candidate) {
@@ -9973,7 +9989,13 @@ function createHttp(core2, {
   }
   function authorized(req, url) {
     if (isLoopbackAddress(req.socket?.remoteAddress)) {
-      if (!(proxyAuth === "token" && arrivedViaTrustedProxy(req))) return true;
+      const viaProxy = arrivedViaTrustedProxy(req);
+      if (proxyAuth === "token" && viaProxy) {
+      } else if (proxyAuth === "trust" && viaProxy) {
+        return true;
+      } else {
+        if (!requireToken || url.pathname.startsWith("/hook/") || url.pathname === "/health" || isPublicShell(req.method, url.pathname)) return true;
+      }
     }
     const authorization = req.headers.authorization;
     const bearer = typeof authorization === "string" ? /^Bearer (.+)$/.exec(authorization)?.[1] : void 0;
@@ -10057,6 +10079,10 @@ function createHttp(core2, {
     return authorityTrusted(u) && !hostAllowed(u);
   }
   const isJsonContentType = (v) => typeof v === "string" && /^application\/json\b/i.test(v.trim());
+  function logExec(route, req, extra = "") {
+    const from = req.socket?.remoteAddress || "unknown";
+    console.error(`fleetd exec ${route} from ${from} proxied=${arrivedViaTrustedProxy(req)}${extra}`);
+  }
   const hookHandlers = {
     SessionStart: (ev) => core2.hookSessionStart(ev),
     UserPromptSubmit: (ev) => core2.hookUserPromptSubmit(ev),
@@ -10283,6 +10309,11 @@ function createHttp(core2, {
               return json(res, out.status, out.body);
             }
             if (url.pathname === "/api/spawn") {
+              logExec(
+                url.pathname,
+                req,
+                ev?.dangerously_skip_permissions === true || ev?.permission_mode === "bypassPermissions" ? " unsupervised=true" : " unsupervised=false"
+              );
               core2.spawn(ev).then((out) => json(res, out.status, out.body)).catch((err) => {
                 console.error("fleetd spawn error:", err);
                 json(res, 500, { ok: false, reason: "internal" });
@@ -10291,6 +10322,7 @@ function createHttp(core2, {
             }
             const killMatch = /^\/api\/spawn\/([A-Za-z0-9-]+)\/kill$/.exec(url.pathname);
             if (killMatch) {
+              logExec(url.pathname, req);
               core2.spawnKill(killMatch[1], ev?.force === true).then((out) => json(res, out.status, out.body)).catch((err) => {
                 console.error("fleetd spawn kill error:", err);
                 json(res, 500, { ok: false, reason: "internal" });
@@ -10299,6 +10331,7 @@ function createHttp(core2, {
             }
             const reviveMatch = /^\/api\/spawn\/([A-Za-z0-9-]+)\/revive$/.exec(url.pathname);
             if (reviveMatch) {
+              logExec(url.pathname, req);
               core2.revive(reviveMatch[1], ev ?? {}).then((out) => json(res, out.status, out.body)).catch((err) => {
                 console.error("fleetd spawn revive error:", err);
                 json(res, 500, { ok: false, reason: "internal" });
@@ -10307,6 +10340,11 @@ function createHttp(core2, {
             }
             const adoptMatch = /^\/api\/sessions\/([^/]+)\/adopt$/.exec(url.pathname);
             if (adoptMatch) {
+              logExec(
+                url.pathname,
+                req,
+                ev?.dangerously_skip_permissions === true || ev?.permission_mode === "bypassPermissions" ? " unsupervised=true" : " unsupervised=false"
+              );
               core2.adoptSession(adoptMatch[1], ev ?? {}).then((out) => json(res, out.status, out.body)).catch((err) => {
                 console.error("fleetd adopt error:", err);
                 json(res, 500, { ok: false, reason: "internal" });
@@ -10329,6 +10367,7 @@ function createHttp(core2, {
             }
             const rcMatch = /^\/api\/spawn\/([A-Za-z0-9-]+)\/rc$/.exec(url.pathname);
             if (rcMatch) {
+              logExec(url.pathname, req);
               core2.enableRemote(rcMatch[1]).then((out) => json(res, out.status, out.body)).catch((err) => {
                 console.error("fleetd remote-control error:", err);
                 json(res, 500, { ok: false, reason: "internal" });
@@ -10527,7 +10566,6 @@ function createHttp(core2, {
 }
 
 // scripts/fleetd/agents-poll.mjs
-import { exec } from "node:child_process";
 var POLL_INTERVAL_MS = Math.max(100, Number(process.env.FLEETDECK_AGENTS_POLL_MS) || 1e4);
 var IDLE_POLL_INTERVAL_MS = Math.max(
   POLL_INTERVAL_MS,
@@ -10535,22 +10573,17 @@ var IDLE_POLL_INTERVAL_MS = Math.max(
 );
 var FIRST_RUN_DELAY_MS = Math.min(1e3, POLL_INTERVAL_MS);
 var EXEC_TIMEOUT_MS = 5e3;
-var DEFAULT_CMD = "claude agents --json";
-function resolveCommand() {
+var DEFAULT_ARGV = ["claude", "agents", "--json"];
+function resolveArgv() {
   const override = process.env.FLEETDECK_AGENTS_CMD;
-  return override === void 0 ? DEFAULT_CMD : override;
+  if (override === void 0) return DEFAULT_ARGV;
+  const trimmed = override.trim();
+  if (trimmed === "" || trimmed === "false") return null;
+  return trimmed.split(/\s+/);
 }
-function runOnce(cmd) {
-  return new Promise((resolve) => {
-    try {
-      exec(cmd, { timeout: EXEC_TIMEOUT_MS, windowsHide: true }, (err, stdout) => {
-        if (err) return resolve(null);
-        resolve(stdout);
-      });
-    } catch {
-      resolve(null);
-    }
-  });
+async function runOnce(argv) {
+  const res = await execFileP(argv[0], argv.slice(1), { timeout: EXEC_TIMEOUT_MS });
+  return res.ok ? res.out : null;
 }
 function hasLiveInteractive(records) {
   if (!Array.isArray(records)) return false;
@@ -10565,8 +10598,8 @@ function hasLiveInteractive(records) {
   });
 }
 function startAgentsPoll(core2) {
-  const cmd = resolveCommand();
-  const agentsEnabled = !(cmd === "false" || cmd.trim() === "");
+  const argv = resolveArgv();
+  const agentsEnabled = argv !== null;
   let stopped = false;
   let running = false;
   let timer = null;
@@ -10577,7 +10610,7 @@ function startAgentsPoll(core2) {
     running = true;
     try {
       if (agentsEnabled && Date.now() >= nextAgentsPollAt) {
-        const out = await runOnce(cmd);
+        const out = await runOnce(argv);
         let validPoll = false;
         let records;
         if (out != null) {
@@ -10627,6 +10660,27 @@ var MAX_PAYLOAD_BYTES = 64e3;
 var PER_EVENT = 3;
 var NOOP = () => {
 };
+var REDACTED = "[redacted]";
+var SECRET_KEY_RE = /(?:^|[_\-.])(token|secret|password|passwd|passphrase|api[_-]?key|apikey|auth(orization)?|bearer|cookie|credential|private[_-]?key|access[_-]?key|client[_-]?secret)(?:$|[_\-.])/i;
+function isSecretKey(key) {
+  const normalized = String(key).replace(/([a-z0-9])([A-Z])/g, "$1_$2").replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2");
+  return SECRET_KEY_RE.test(normalized);
+}
+var SECRET_VALUE_RES = [
+  /sk-ant-[A-Za-z0-9_-]{10,}/g,
+  /(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}/g,
+  /github_pat_[A-Za-z0-9_]{20,}/g,
+  /xox[baprs]-[A-Za-z0-9-]{10,}/g,
+  /AKIA[A-Z0-9]{16}/g,
+  /eyJ[A-Za-z0-9_-]{10,4096}\.[A-Za-z0-9_-]{10,4096}\.[A-Za-z0-9_-]{10,4096}/g,
+  /-----BEGIN [A-Z ]{0,40}PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]{0,40}PRIVATE KEY-----|$)/g,
+  /Bearer\s+[A-Za-z0-9._~+/=-]{16,}/g
+];
+function redactValue(text) {
+  let out = text;
+  for (const re of SECRET_VALUE_RES) out = out.replace(re, REDACTED);
+  return out;
+}
 function boundedPayload(value, maxBytes) {
   let remaining = Math.max(0, maxBytes);
   const seen = /* @__PURE__ */ new WeakSet();
@@ -10636,7 +10690,9 @@ function boundedPayload(value, maxBytes) {
     let out = String(value2).slice(0, remaining);
     while (out && Buffer.byteLength(out) > remaining) out = out.slice(0, Math.floor(out.length * 0.75));
     remaining -= Buffer.byteLength(out);
-    return out.length < String(value2).length ? `${out}${marker}` : out;
+    const truncated = out.length < String(value2).length;
+    out = redactValue(out);
+    return truncated ? `${out}${marker}` : out;
   }
   function visit(current, depth = 0) {
     if (remaining <= 0) return marker;
@@ -10658,6 +10714,10 @@ function boundedPayload(value, maxBytes) {
     for (const key in current) {
       if (!Object.hasOwn(current, key) || remaining <= 0) continue;
       remaining -= Math.min(remaining, Buffer.byteLength(key) + 4);
+      if (isSecretKey(key)) {
+        out[key] = REDACTED;
+        continue;
+      }
       out[key] = visit(current[key], depth + 1);
     }
     return out;
@@ -10668,9 +10728,11 @@ function createPayloadCapture(homeDir, {
   maxBytes = MAX_FILE_BYTES,
   maxPayloadBytes = MAX_PAYLOAD_BYTES,
   perEvent = PER_EVENT,
+  secrets = [],
   enabled = process.env.FLEETDECK_CAPTURE_PAYLOADS?.trim().toLowerCase() === "on"
 } = {}) {
   if (!enabled) return NOOP;
+  const exactSecrets = secrets.filter((s) => typeof s === "string" && s.length > 0);
   const file = path10.join(homeDir, "hook-payloads.jsonl");
   const counts = /* @__PURE__ */ new Map();
   try {
@@ -10698,12 +10760,17 @@ function createPayloadCapture(homeDir, {
         size = 0;
       }
       const safePayload = boundedPayload(payload, maxPayloadBytes);
-      const line = JSON.stringify({
+      let line = JSON.stringify({
         at: Date.now(),
         event,
         keys: safePayload && typeof safePayload === "object" && !Array.isArray(safePayload) ? Object.keys(safePayload) : [],
         payload: safePayload
       }) + "\n";
+      for (const secret of exactSecrets) {
+        line = line.split(secret).join(REDACTED);
+        const escaped = JSON.stringify(secret).slice(1, -1);
+        if (escaped && escaped !== secret) line = line.split(escaped).join(REDACTED);
+      }
       if (size + Buffer.byteLength(line) > maxBytes) return;
       fs12.appendFileSync(file, line, { encoding: "utf8", mode: 384 });
       try {
@@ -11318,7 +11385,8 @@ if (PROXY_AUTH !== "token" && PROXY_AUTH !== "trust") {
 if (PROXY_AUTH === "trust" && !TRUSTED_ORIGINS.length) {
   startupFatal("FLEETDECK_PROXY_AUTH=trust requires FLEETDECK_TRUSTED_ORIGINS \u2014 there is nothing to trust");
 }
-var TOKEN_REQUIRED = LAN_MODE || TRUSTED_ORIGINS.length > 0 && PROXY_AUTH === "token";
+var REQUIRE_TOKEN = (process.env.FLEETDECK_REQUIRE_TOKEN || "").trim().toLowerCase() === "on";
+var TOKEN_REQUIRED = LAN_MODE || REQUIRE_TOKEN || TRUSTED_ORIGINS.length > 0 && PROXY_AUTH === "token";
 var TOKEN_FILE = path13.join(HOME, "token");
 var TOKEN;
 if (Object.hasOwn(process.env, "FLEETDECK_TOKEN")) {
@@ -11345,6 +11413,27 @@ if (TOKEN_REQUIRED && !TOKEN) {
     fs14.writeFileSync(TOKEN_FILE, TOKEN, { encoding: "utf8", mode: 384, flag: "wx" });
   } catch (err) {
     startupFatal(`cannot persist FLEETDECK_HOME/token (${err?.code || err?.message || "unknown error"})`);
+  }
+}
+if (TOKEN_REQUIRED && TOKEN) {
+  let onDisk = null;
+  try {
+    onDisk = fs14.readFileSync(TOKEN_FILE, "utf8");
+  } catch (err) {
+    if (err?.code !== "ENOENT") {
+      startupFatal(`cannot read FLEETDECK_HOME/token (${err?.code || err?.message || "unknown error"})`);
+    }
+  }
+  if (onDisk === null || onDisk.trim() !== TOKEN) {
+    try {
+      fs14.writeFileSync(TOKEN_FILE, TOKEN, { encoding: "utf8", mode: 384 });
+      try {
+        fs14.chmodSync(TOKEN_FILE, 384);
+      } catch {
+      }
+    } catch (err) {
+      startupFatal(`cannot persist FLEETDECK_HOME/token (${err?.code || err?.message || "unknown error"})`);
+    }
   }
 }
 var version = "0.0.0";
@@ -11382,8 +11471,9 @@ var { server } = createHttp(core, {
   trustedOrigins: TRUSTED_ORIGINS,
   proxyAuth: PROXY_AUTH,
   managed: MANAGED,
+  requireToken: REQUIRE_TOKEN,
   // validation aid: first 3 raw payloads per hook event → HOME/hook-payloads.jsonl
-  capture: createPayloadCapture(HOME)
+  capture: createPayloadCapture(HOME, { secrets: TOKEN ? [TOKEN] : [] })
 });
 server.on("error", (e) => {
   if (e.code === "EADDRINUSE") {
@@ -11419,6 +11509,16 @@ var mdns = null;
 server.listen(PORT, BIND, () => {
   const boundHost = BIND.includes(":") && !BIND.startsWith("[") ? `[${BIND}]` : BIND;
   console.log(`fleetd up on http://${boundHost}:${PORT} (pid ${process.pid}, db ${DB_FILE})`);
+  for (const seam of ["FLEETDECK_SPAWN_CMD", "FLEETDECK_TERM_CMD", "FLEETDECK_TEST_DAEMON_SCRIPT", "FLEETDECK_VERSION_OVERRIDE"]) {
+    if (process.env[seam]) console.error(`fleetd WARNING: test seam ${seam} active`);
+  }
+  const agentsCmd = process.env.FLEETDECK_AGENTS_CMD;
+  if (agentsCmd !== void 0) {
+    const trimmedAgents = agentsCmd.trim();
+    if (trimmedAgents !== "" && trimmedAgents !== "false") {
+      console.error("fleetd WARNING: test seam FLEETDECK_AGENTS_CMD active");
+    }
+  }
   const replacedVersion = process.env.FLEETDECK_REPLACED;
   if (replacedVersion) {
     console.log(`fleetd v${version} replaced v${replacedVersion} (plugin upgrade takeover)`);

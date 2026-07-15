@@ -70,6 +70,16 @@ const PORT = resolvePort();
 const BASE = resolveBase(PORT);
 const HOME = resolveHome();
 
+// FLEETDECK_REQUIRE_TOKEN support: /api/watch is neither a hook path nor the
+// public shell, so under the flag it demands the token even on loopback. Read
+// the persisted token ($FLEETDECK_HOME/token, resolved like every other path
+// here) ONCE at startup and tolerate absence — in default loopback mode there
+// is no file and the loopback exemption carries the poll. This watcher is only
+// ever spawned by a Stop hook AFTER SessionStart booted the daemon, so the token
+// file already exists by the time we read it. Harmless in default mode.
+let TOKEN = null;
+try { TOKEN = fs.readFileSync(path.join(HOME, 'token'), 'utf8').trim() || null; } catch { /* no token file — default loopback mode */ }
+
 function envMs(name, dflt, min, max) {
   const raw = Number(process.env[name]);
   if (!Number.isFinite(raw) || raw <= 0) return dflt;
@@ -169,7 +179,10 @@ while (Date.now() < deadline) {
   try {
     const res = await fetch(
       `${BASE}/api/watch?session=${encodeURIComponent(sid)}&hold_ms=${holdMs}`,
-      { signal: AbortSignal.timeout(holdMs + 5_000) },
+      {
+        headers: TOKEN ? { authorization: `Bearer ${TOKEN}` } : undefined,
+        signal: AbortSignal.timeout(holdMs + 5_000),
+      },
     );
     if (!res.ok) throw new Error(`watch ${res.status}`);
     out = await res.json();

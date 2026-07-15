@@ -42,8 +42,8 @@ it. A proof-of-concept web page or `curl` is worth a thousand words.
 
 | Version | Supported |
 | --- | --- |
-| 0.9.x   | ✅ |
-| < 0.9   | ❌ |
+| 0.13.x  | ✅ |
+| < 0.13  | ❌ |
 
 Fleet Deck is pre-1.0. Only the latest release gets security fixes — if you're
 behind, the fix is to upgrade.
@@ -61,7 +61,10 @@ The design intent, in one sentence: **the daemon trusts the local user
 completely and everyone else not at all.** It exists to act on your behalf, so if
 code is already running as you, it's already inside the trust boundary. The
 interesting attack surface is everything that is *not* you — a web page you
-visited, or another host on your network when LAN mode is on.
+visited, or another host on your network when LAN mode is on. One honest caveat:
+on a multi-user machine the loopback trust zone is wider than "you" — every other
+local OS user can reach `127.0.0.1` too, and so is trusted by default unless you
+set `FLEETDECK_REQUIRE_TOKEN=on` to demand the bearer token even over loopback.
 
 ### In scope
 
@@ -90,10 +93,12 @@ Reports in these areas are wanted:
   they're gated behind a deliberate two-step red confirmation. Any path that
   spawns an unsupervised worker without a human passing through that flow is in
   scope.
-- **Secrets leaking into logs or captures.** Environment secrets, tokens, or
-  other sensitive values ending up in `fleetd.log` or in hook-payload capture
-  files (capture is off by default) despite the scrubbing that's supposed to
-  strip them.
+- **Secrets leaking into logs or captures.** A real secret surviving into
+  `fleetd.log` or a hook-payload capture file (capture is off by default, `0600`)
+  past the redaction — which strips secret-looking key names, well-known
+  credential shapes, and the daemon's own token. Free-text secrets are only
+  best-effort caught, so a token that lands in an unexpected field and rides
+  through is exactly the report wanted.
 - **Reverse-proxy trust bypass.** Behind a proxy, `FLEETDECK_TRUSTED_ORIGINS`
   widens the same-origin wall to exactly the origins you name and
   `FLEETDECK_PROXY_AUTH=trust` delegates authentication to the proxy. Reaching
@@ -126,6 +131,40 @@ vulnerabilities:
 - **The `demo/` scripts.** They're live acceptance gates that start real,
   billed Claude sessions and set test-only env vars. They aren't a supported way
   to run a fleet and aren't part of the security surface.
+
+## Supply-chain notes
+
+For anyone triaging a Socket, Snyk, or similar scanner alert against this
+package — the short version of why the daemon does what it does:
+
+- **No shell execution anywhere in the daemon.** Every subprocess is argv-only
+  `execFile`/`spawn` routed through `scripts/fleetd`'s single exec primitive —
+  there is no `child_process.exec`, no `sh -c`, no string command line. As of
+  0.13.0 `FLEETDECK_AGENTS_CMD` is whitespace-split into argv and run the same
+  way; quotes, pipes, `$()` and redirection are never interpreted. A flagged
+  "command execution" sink is that primitive, and what reaches it is argv, not
+  attacker-controlled shell.
+- **`POST /command` and the terminal WebSocket do not execute commands.** Mail is
+  queued and delivered as a sanitized bracketed paste (control bytes and
+  paste-escape markers stripped); terminal keystrokes reach the pane via `tmux
+  send-keys -H` (hex literals). Nothing runs unless the human's Claude session
+  runs it — the same trust boundary as typing into that terminal yourself.
+- **Payload capture is opt-in, `0600`, size-capped, and redacted** — secret-looking
+  key names, well-known token shapes, and the daemon's own token are stripped. A
+  secret buried in free text may survive that redaction, which is exactly why the
+  feature defaults off.
+- **No telemetry, no update checks, no callouts.** Every `fetch`/WebSocket in the
+  shipped artifacts targets loopback or the same origin that served the board.
+  The only unsolicited network emission is opt-in LAN-mode mDNS multicast on the
+  local segment.
+- **Package contents:** `bin/`, one esbuild bundle plus the compiled board — both
+  committed to git and drift-gated in CI (the publish workflow rebuilds them and
+  `git diff --exit-code`s the result, so what's on npm is what's in the tag). No
+  install/postinstall scripts, and a single runtime dependency (`ws`), inlined
+  into the bundle.
+- **Published via npm OIDC trusted publishing** with provenance attestation — no
+  long-lived npm token in CI, and the registry artifact traces back to the tagged
+  commit and workflow that built it.
 
 ## Hardening notes for users
 

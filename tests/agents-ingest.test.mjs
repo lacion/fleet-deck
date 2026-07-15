@@ -25,7 +25,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -272,7 +272,10 @@ test('FLEETDECK_AGENTS_CMD=false disables the poller entirely', async (t) => {
 });
 
 test('poll command exiting non-zero harms nothing', async (t) => {
-  const daemon = await startDaemon({ env: { FLEETDECK_AGENTS_CMD: 'exit 1', FLEETDECK_AGENTS_POLL_MS: '300' } });
+  // `${node} -e process.exit(1)` tokenizes to [node, '-e', 'process.exit(1)']
+  // and is a REAL non-zero exit under argv-only execution. (A shell builtin
+  // like `exit 1` would instead ENOENT, testing a different failure mode.)
+  const daemon = await startDaemon({ env: { FLEETDECK_AGENTS_CMD: `${process.execPath} -e process.exit(1)`, FLEETDECK_AGENTS_POLL_MS: '300' } });
   t.after(async () => { await daemon.stop(); });
 
   await new Promise(r => setTimeout(r, 2500)); // let several failing ticks run
@@ -282,6 +285,48 @@ test('poll command exiting non-zero harms nothing', async (t) => {
   const state = await getJson(`${daemon.baseUrl}/state`);
   assert.equal(state.status, 200, '/state should still respond fine');
   assert.ok(Array.isArray(state.json.sessions), '/state should still have a sessions array');
+});
+
+// no-shell canary: FLEETDECK_AGENTS_CMD is whitespace-tokenized and run WITHOUT
+// a shell, so a trailing `> file` is NOT an output redirection — the `>` and the
+// path are handed to the fixture as literal argv it ignores. Pins two things at
+// once: the poll still ingests the fixture JSON (stdout unredirected), and the
+// "redirect target" file is never created (`>` is data, not a shell operator).
+test('FLEETDECK_AGENTS_CMD is argv-only: a `>` is data, never a shell redirection', async (t) => {
+  const scratchDir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-agents-scratch-'));
+  const fixtureFile = path.join(scratchDir, 'agents.json');
+  const canaryPath = path.join(scratchDir, 'canary-should-never-exist');
+  const cwd = mkdtempSync(path.join(tmpdir(), 'fleetdeck-cwd-'));
+  t.after(() => {
+    rmSync(scratchDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  const sid = randomUUID();
+  writeFixture(fixtureFile, [
+    { pid: LIVE_PID, cwd, kind: 'interactive', startedAt: Date.now(), sessionId: sid, name: 'no-shell canary', status: 'busy' },
+  ]);
+
+  const daemon = await startDaemon({
+    env: {
+      // Under a shell, `> canaryPath` would redirect stdout and create the file
+      // (and the poll would then ingest nothing). Argv-only execution instead
+      // passes `>` and canaryPath to the fixture as extra args it ignores, so
+      // the JSON reaches stdout unredirected and the canary is never written.
+      FLEETDECK_AGENTS_CMD: `${process.execPath} ${AGENTS_CMD_FIXTURE} > ${canaryPath}`,
+      FLEETDECK_TEST_AGENTS_FIXTURE: fixtureFile,
+      FLEETDECK_AGENTS_POLL_MS: '400',
+    },
+  });
+  t.after(async () => { await daemon.stop(); });
+
+  // (a) the poll still ingests the fixture despite the trailing `>` argv bytes
+  const card = await waitForSession(daemon.baseUrl, sid);
+  assert.equal(card.source, 'agents-cli');
+  assert.equal(card.col, 'working', 'status=busy should map to col=working');
+
+  // (b) the `>` was never honored as a redirect — no file was created
+  assert.equal(existsSync(canaryPath), false, '`>` must be a literal argv byte, never a shell redirection');
 });
 
 test('poll command producing garbage (non-JSON) output harms nothing', async (t) => {
