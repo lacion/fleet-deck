@@ -23,7 +23,7 @@ export function createSpawns(ctx) {
     // 0.7.1: the boot heal for /clear forks stranded BEFORE succession shipped.
     succeedSession, CLEAR_SUCCESSION_MS, hasLivePane,
     validateBranch, resolveTarget, cloneRepo, materializeBranch, touchRepo,
-    claimTarget, targetOwner,
+    claimTarget, targetOwner, reserveCloneSlot,
   } = ctx;
 
   // ------------------------------------- v1.2 board-spawned sessions (spawns)
@@ -399,6 +399,13 @@ export function createSpawns(ctx) {
       if (owner) {
         return { status: 409, body: { ok: false, reason: `${path.resolve(targetPath)} is already being provisioned by ${owner}` } };
       }
+      // Reserve a clone slot BEFORE any card/row exists, so a full pool returns a
+      // clean 429 with nothing to compensate. Local materialization is uncapped.
+      let releaseCloneSlot = () => {};
+      if (target.mode === 'clone') {
+        try { releaseCloneSlot = reserveCloneSlot(); }
+        catch (err) { return { status: err.status || 429, body: { ok: false, reason: err.message || String(err) } }; }
+      }
 
       const session_id = randomUUID();
       const spawn_id = randomUUID();
@@ -469,11 +476,16 @@ export function createSpawns(ctx) {
               created: materialized.created,
             });
           } catch (err) {
+            // in-place already ran `git switch`; compensation won't revert the
+            // user's own checkout, so say plainly that it was left on the branch.
+            const reason = branchMode === 'in-place'
+              ? `${err.message || String(err)} — ${path.basename(target.root)} was left switched to ${body.branch}`
+              : (err.message || String(err));
             await spawnCompensate({
               spawn_id, session_id, callsign, cwd: target.root, worktree_path,
-              tmux_window, reason: err.message || String(err), created: materialized.created,
+              tmux_window, reason, created: materialized.created,
             });
-            return { status: err.status || 409, body: { ok: false, reason: err.message || String(err) } };
+            return { status: err.status || 409, body: { ok: false, reason } };
           }
         } finally {
           releaseTarget();
@@ -502,11 +514,15 @@ export function createSpawns(ctx) {
             cleanupRoot: target.dest, worktree_path, body, skipPermissions, created,
           });
         } catch (err) {
+          const reason = branchMode === 'in-place' && created.clone
+            ? `${err.message || String(err)} — ${path.basename(target.dest)} was left switched to ${body.branch}`
+            : (err.message || String(err));
           await spawnCompensate({
             spawn_id, session_id, callsign, cwd: target.dest, worktree_path,
-            tmux_window, reason: err.message || String(err), created,
+            tmux_window, reason, created,
           });
         } finally {
+          releaseCloneSlot();
           releaseTarget();
         }
       }).catch(err => console.error('fleetd detached repo provisioning error:', err));

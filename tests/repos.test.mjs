@@ -21,6 +21,10 @@ test('parseRepoInput accepts supported forms and rejects argv/scheme hazards', (
   });
   assert.equal(parseRepoInput('-oProxyCommand=sh').error != null, true);
   assert.equal(parseRepoInput('--upload-pack=evil').error != null, true);
+  // a dash-leading host hidden behind userinfo must not slip through: git's --
+  // protects git's argv but still hands -oProxyCommand=… to ssh as the hostname
+  assert.equal(parseRepoInput('git@-oProxyCommand=reboot:x').error != null, true);
+  assert.equal(parseRepoInput('ssh://git@-oProxyCommand=reboot/x').error != null, true);
   assert.match(parseRepoInput('http://example.com/repo.git').error, /http.*refused/i);
   assert.match(parseRepoInput('file:///tmp/repo.git').error, /scheme.*refused/i);
   assert.match(parseRepoInput('./repo').error, /relative/i);

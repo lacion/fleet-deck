@@ -4840,7 +4840,6 @@ function createStatements(db2) {
     getSetting: db2.prepare("SELECT value FROM settings WHERE key = ?"),
     setSetting: db2.prepare(`INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`),
-    deleteSetting: db2.prepare("DELETE FROM settings WHERE key = ?"),
     upsertRepo: db2.prepare(`INSERT INTO repos
       (repo_id, repo_name, root, origin_url, default_branch, first_seen_at, last_used_at, source)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -5467,7 +5466,7 @@ function repoNameOf(value) {
   return path3.basename(clean).replace(/\.git$/i, "");
 }
 function unsafeDashSegment(value) {
-  return String(value).split(/[/:]/).some((segment) => segment.startsWith("-"));
+  return String(value).split(/[/:@]/).some((segment) => segment.startsWith("-"));
 }
 function parseRepoInput(input) {
   if (typeof input !== "string" || !input) return { error: "repo must be a non-empty string" };
@@ -5598,6 +5597,24 @@ function createRepos(ctx) {
   const { q, onMutate } = ctx;
   const touchedAt = /* @__PURE__ */ new Map();
   const provisioningTargets = /* @__PURE__ */ new Map();
+  const cloneCap = (() => {
+    const n = Number(process.env.FLEETDECK_CLONE_CONCURRENCY);
+    return Number.isInteger(n) && n > 0 ? n : 3;
+  })();
+  let clonesInFlight = 0;
+  function reserveCloneSlot() {
+    if (clonesInFlight >= cloneCap) {
+      throw namedError(429, `too many repositories are cloning right now (${clonesInFlight}/${cloneCap}) \u2014 retry in a moment`);
+    }
+    clonesInFlight += 1;
+    let released = false;
+    return () => {
+      if (!released) {
+        released = true;
+        clonesInFlight -= 1;
+      }
+    };
+  }
   async function validateBranch(branch) {
     const quick = quickBranchCheck(branch);
     if (quick) throw namedError(400, quick);
@@ -5619,16 +5636,17 @@ function createRepos(ctx) {
   }
   function setReposDir(value) {
     if (value === null) {
-      q.deleteSetting.run("repos_dir");
+      q.setSetting.run("repos_dir", null, Date.now());
       return resolveReposDir();
     }
     if (typeof value !== "string" || !value) throw namedError(400, "repos_dir must be an absolute path or null");
     if (CONTROL_RE.test(value)) throw namedError(400, "repos_dir must not contain NUL or control characters");
-    const resolved = expandHome(value);
+    const resolved = path3.resolve(expandHome(value));
     if (!path3.isAbsolute(resolved)) throw namedError(400, "repos_dir must be an absolute path (or begin with ~/)");
+    if (path3.dirname(resolved) === resolved) throw namedError(400, "repos_dir must not be the filesystem root");
     try {
-      if (fs5.existsSync(resolved) && !fs5.statSync(resolved).isDirectory()) {
-        throw namedError(400, "repos_dir points to an existing file");
+      if (fs5.existsSync(resolved)) {
+        if (!fs5.statSync(resolved).isDirectory()) throw namedError(400, "repos_dir points to an existing file");
       }
     } catch (err) {
       if (err?.status) throw err;
@@ -5702,11 +5720,12 @@ function createRepos(ctx) {
         continue;
       }
       const knownOrigin = await originOf(candidate);
-      if (origin_url && knownOrigin && comparableOrigin(origin_url) !== comparableOrigin(knownOrigin)) {
-        if (candidate === dest) {
-          throw namedError(409, `${dest} exists and is not ${body.repo}`);
+      if (origin_url) {
+        const matches = knownOrigin && comparableOrigin(origin_url) === comparableOrigin(knownOrigin);
+        if (!matches) {
+          if (candidate === dest) throw namedError(409, `${dest} exists and is not ${body.repo}`);
+          continue;
         }
-        continue;
       }
       return { mode: "local", root: candidate, dest: candidate, origin_url: origin_url ?? knownOrigin, repo_name: parsed.repo_name };
     }
@@ -5714,6 +5733,9 @@ function createRepos(ctx) {
     return { mode: "clone", origin_url, dest, repo_name: parsed.repo_name };
   }
   async function cloneRepo({ origin_url, dest, spawn_id }) {
+    if (typeof origin_url !== "string" || !origin_url || SPACE_OR_CONTROL_RE.test(origin_url) || origin_url.startsWith("-") || unsafeDashSegment(origin_url)) {
+      throw namedError(409, "refusing to clone an unsafe origin URL");
+    }
     const reposDir = resolveReposDir().resolved;
     fs5.mkdirSync(reposDir, { recursive: true });
     const temp = `${dest}.fd-cloning-${String(spawn_id).slice(0, 8)}`;
@@ -5742,13 +5764,12 @@ function createRepos(ctx) {
       timeout: 12e4,
       env: { GIT_TERMINAL_PROMPT: "0" }
     });
-    if (!fetched.ok && !localBefore.ok) {
-      throw namedError(409, `branch not found locally and fetch failed: ${fetched.err}`);
-    }
     const local = localBefore.ok ? localBefore : await execFileP("git", ["-C", root, "show-ref", "--verify", "--quiet", `refs/heads/${branch}`], { timeout: 5e3 });
     const remote = await execFileP("git", ["-C", root, "show-ref", "--verify", "--quiet", `refs/remotes/origin/${branch}`], { timeout: 5e3 });
     const base = await baseBranch(root);
-    if (!local.ok && !remote.ok && !base) throw namedError(409, `cannot determine a base branch for ${branch}`);
+    if (!local.ok && !remote.ok && !base) {
+      throw namedError(409, fetched.ok ? `branch ${branch} does not exist and no base branch is available to create it from` : `branch ${branch} not found locally and fetch failed: ${fetched.err}`);
+    }
     if (mode === "in-place") {
       const status = await execFileP("git", ["-C", root, "status", "--porcelain"], { timeout: 3e4 });
       if (!status.ok) throw namedError(409, status.err || "git status failed");
@@ -5787,15 +5808,22 @@ function createRepos(ctx) {
     }
     throw namedError(409, last?.err || "git worktree add failed");
   }
+  function canonicalTarget(dest) {
+    try {
+      return fs5.realpathSync(dest);
+    } catch {
+      return path3.resolve(dest);
+    }
+  }
   function claimTarget(dest, callsign) {
-    const canonical = path3.resolve(dest);
+    const canonical = canonicalTarget(dest);
     const owner = provisioningTargets.get(canonical);
     if (owner) throw namedError(409, `${canonical} is already being provisioned by ${owner}`);
     provisioningTargets.set(canonical, callsign);
     return () => provisioningTargets.delete(canonical);
   }
   function targetOwner(dest) {
-    return provisioningTargets.get(path3.resolve(dest)) ?? null;
+    return provisioningTargets.get(canonicalTarget(dest)) ?? null;
   }
   return {
     validateBranch,
@@ -5807,7 +5835,8 @@ function createRepos(ctx) {
     cloneRepo,
     materializeBranch,
     claimTarget,
-    targetOwner
+    targetOwner,
+    reserveCloneSlot
   };
 }
 
@@ -6915,7 +6944,8 @@ function createSpawns(ctx) {
     materializeBranch,
     touchRepo,
     claimTarget,
-    targetOwner
+    targetOwner,
+    reserveCloneSlot
   } = ctx;
   function spawnCapability() {
     const base = { active: q.countActiveSpawns.get().n };
@@ -7209,6 +7239,15 @@ function createSpawns(ctx) {
       if (owner) {
         return { status: 409, body: { ok: false, reason: `${path7.resolve(targetPath)} is already being provisioned by ${owner}` } };
       }
+      let releaseCloneSlot = () => {
+      };
+      if (target.mode === "clone") {
+        try {
+          releaseCloneSlot = reserveCloneSlot();
+        } catch (err) {
+          return { status: err.status || 429, body: { ok: false, reason: err.message || String(err) } };
+        }
+      }
       const session_id2 = randomUUID2();
       const spawn_id2 = randomUUID2();
       const initialNote = target.mode === "clone" ? `cloning ${target.repo_name}\u2026` : `preparing ${body.branch}\u2026`;
@@ -7301,6 +7340,7 @@ function createSpawns(ctx) {
               created: materialized.created
             });
           } catch (err) {
+            const reason = branchMode === "in-place" ? `${err.message || String(err)} \u2014 ${path7.basename(target.root)} was left switched to ${body.branch}` : err.message || String(err);
             await spawnCompensate({
               spawn_id: spawn_id2,
               session_id: session_id2,
@@ -7308,10 +7348,10 @@ function createSpawns(ctx) {
               cwd: target.root,
               worktree_path: worktree_path2,
               tmux_window: tmux_window2,
-              reason: err.message || String(err),
+              reason,
               created: materialized.created
             });
-            return { status: err.status || 409, body: { ok: false, reason: err.message || String(err) } };
+            return { status: err.status || 409, body: { ok: false, reason } };
           }
         } finally {
           releaseTarget();
@@ -7351,6 +7391,7 @@ function createSpawns(ctx) {
             created
           });
         } catch (err) {
+          const reason = branchMode === "in-place" && created.clone ? `${err.message || String(err)} \u2014 ${path7.basename(target.dest)} was left switched to ${body.branch}` : err.message || String(err);
           await spawnCompensate({
             spawn_id: spawn_id2,
             session_id: session_id2,
@@ -7358,10 +7399,11 @@ function createSpawns(ctx) {
             cwd: target.dest,
             worktree_path: worktree_path2,
             tmux_window: tmux_window2,
-            reason: err.message || String(err),
+            reason,
             created
           });
         } finally {
+          releaseCloneSlot();
           releaseTarget();
         }
       }).catch((err) => console.error("fleetd detached repo provisioning error:", err));

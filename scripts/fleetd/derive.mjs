@@ -49,6 +49,7 @@ const CALLSIGNS = ['falcon', 'otter', 'raven', 'lynx', 'orca', 'wren', 'viper', 
 //   FLEETDECK_RETAIN_OFFLINE_MS      — offline retention window (24 h)
 //   FLEETDECK_REPOS_DIR              — default root for managed repository clones
 //   FLEETDECK_CLONE_TIMEOUT_MS        — git clone timeout (default 600 000 = 10 min)
+//   FLEETDECK_CLONE_CONCURRENCY       — max repos cloning at once (default 3)
 // envInt (the reader) + mungeClaudeProjectCwd / claudeTranscriptPath /
 // spawnRowRevivable / claudeEnvArgvPrefix now live in helpers.mjs (re-exported
 // above).

@@ -22,8 +22,13 @@ function repoNameOf(value) {
   return path.basename(clean).replace(/\.git$/i, '');
 }
 
+// Any argv-relevant segment that begins with `-` is refused. We split on `@`
+// as well as `/` and `:` because a scp/ssh URL hides its host behind the
+// userinfo: `git@-oProxyCommand=reboot:x` would otherwise sail past — git's
+// `--` protects git's OWN argv but still hands `-oProxyCommand=…` to ssh as the
+// hostname (CVE-2017-1000117-class). The `@` split closes that.
 function unsafeDashSegment(value) {
-  return String(value).split(/[/:]/).some(segment => segment.startsWith('-'));
+  return String(value).split(/[/:@]/).some(segment => segment.startsWith('-'));
 }
 
 export function parseRepoInput(input) {
@@ -147,6 +152,26 @@ export function createRepos(ctx) {
   const touchedAt = new Map();
   const provisioningTargets = new Map();
 
+  // A clone is an unbounded, minutes-long subprocess that writes to disk;
+  // single-flight only dedupes the SAME destination, so without a ceiling a
+  // token holder could fire many distinct-URL clones at once and fill the disk.
+  // The cap is on concurrent clones only — local materialization is cheap and
+  // uncapped. Reservation is synchronous (no await between check and bump) so
+  // two racing requests can't both slip past a full pool.
+  const cloneCap = (() => {
+    const n = Number(process.env.FLEETDECK_CLONE_CONCURRENCY);
+    return Number.isInteger(n) && n > 0 ? n : 3;
+  })();
+  let clonesInFlight = 0;
+  function reserveCloneSlot() {
+    if (clonesInFlight >= cloneCap) {
+      throw namedError(429, `too many repositories are cloning right now (${clonesInFlight}/${cloneCap}) — retry in a moment`);
+    }
+    clonesInFlight += 1;
+    let released = false;
+    return () => { if (!released) { released = true; clonesInFlight -= 1; } };
+  }
+
   async function validateBranch(branch) {
     const quick = quickBranchCheck(branch);
     if (quick) throw namedError(400, quick);
@@ -175,11 +200,15 @@ export function createRepos(ctx) {
     }
     if (typeof value !== 'string' || !value) throw namedError(400, 'repos_dir must be an absolute path or null');
     if (CONTROL_RE.test(value)) throw namedError(400, 'repos_dir must not contain NUL or control characters');
-    const resolved = expandHome(value);
+    const resolved = path.resolve(expandHome(value));
     if (!path.isAbsolute(resolved)) throw namedError(400, 'repos_dir must be an absolute path (or begin with ~/)');
+    if (path.dirname(resolved) === resolved) throw namedError(400, 'repos_dir must not be the filesystem root');
     try {
-      if (fs.existsSync(resolved) && !fs.statSync(resolved).isDirectory()) {
-        throw namedError(400, 'repos_dir points to an existing file');
+      if (fs.existsSync(resolved)) {
+        // Follow symlinks and require a real directory: clones land under this
+        // path and persist, so a file (or a symlink to one) is refused up front
+        // rather than surfacing as a confusing clone failure later.
+        if (!fs.statSync(resolved).isDirectory()) throw namedError(400, 'repos_dir points to an existing file');
       }
     } catch (err) {
       if (err?.status) throw err;
@@ -260,11 +289,19 @@ export function createRepos(ctx) {
         continue;
       }
       const knownOrigin = await originOf(candidate);
-      if (origin_url && knownOrigin && comparableOrigin(origin_url) !== comparableOrigin(knownOrigin)) {
-        if (candidate === dest) {
-          throw namedError(409, `${dest} exists and is not ${body.repo}`);
+      // When the REQUEST names a concrete origin (a URL, org/repo shorthand, or
+      // a local-path clone), only reuse a checkout that PROVABLY is that origin.
+      // A same-named checkout with no remote — or a different one — is not ours
+      // to reuse: doing so would silently run the agent in an unrelated tree
+      // (and lets a poisoned no-origin catalog row redirect a spawn). An unknown
+      // origin is treated as a non-match, not a maybe. A bare-name/path spawn
+      // (origin_url null) still resolves by name as before.
+      if (origin_url) {
+        const matches = knownOrigin && comparableOrigin(origin_url) === comparableOrigin(knownOrigin);
+        if (!matches) {
+          if (candidate === dest) throw namedError(409, `${dest} exists and is not ${body.repo}`);
+          continue;
         }
-        continue;
       }
       return { mode: 'local', root: candidate, dest: candidate, origin_url: origin_url ?? knownOrigin, repo_name: parsed.repo_name };
     }
@@ -274,6 +311,14 @@ export function createRepos(ctx) {
   }
 
   async function cloneRepo({ origin_url, dest, spawn_id }) {
+    // Defence in depth: an origin reached via the catalog (a bare-name spawn, or
+    // a `git remote get-url` backfill) never passed through parseRepoInput, so
+    // re-apply the argv-safety gate here before it becomes a clone argument.
+    if (typeof origin_url !== 'string' || !origin_url
+        || SPACE_OR_CONTROL_RE.test(origin_url)
+        || origin_url.startsWith('-') || unsafeDashSegment(origin_url)) {
+      throw namedError(409, 'refusing to clone an unsafe origin URL');
+    }
     const reposDir = resolveReposDir().resolved;
     fs.mkdirSync(reposDir, { recursive: true });
     const temp = `${dest}.fd-cloning-${String(spawn_id).slice(0, 8)}`;
@@ -298,18 +343,22 @@ export function createRepos(ctx) {
 
   async function materializeBranch({ root, branch, mode, spawn_id = '', sid = spawn_id, clone = false }) {
     const localBefore = await execFileP('git', ['-C', root, 'show-ref', '--verify', '--quiet', `refs/heads/${branch}`], { timeout: 5_000 });
+    // Best-effort: a fetch failure is fine as long as the branch (or a base to
+    // cut it from) already resolves locally — an origin-less local repo can
+    // still create a new branch from its own main.
     const fetched = await execFileP('git', ['-C', root, 'fetch', 'origin', '--prune'], {
       timeout: 120_000,
       env: { GIT_TERMINAL_PROMPT: '0' },
     });
-    if (!fetched.ok && !localBefore.ok) {
-      throw namedError(409, `branch not found locally and fetch failed: ${fetched.err}`);
-    }
     const local = localBefore.ok ? localBefore
       : await execFileP('git', ['-C', root, 'show-ref', '--verify', '--quiet', `refs/heads/${branch}`], { timeout: 5_000 });
     const remote = await execFileP('git', ['-C', root, 'show-ref', '--verify', '--quiet', `refs/remotes/origin/${branch}`], { timeout: 5_000 });
     const base = await baseBranch(root);
-    if (!local.ok && !remote.ok && !base) throw namedError(409, `cannot determine a base branch for ${branch}`);
+    if (!local.ok && !remote.ok && !base) {
+      throw namedError(409, fetched.ok
+        ? `branch ${branch} does not exist and no base branch is available to create it from`
+        : `branch ${branch} not found locally and fetch failed: ${fetched.err}`);
+    }
 
     if (mode === 'in-place') {
       const status = await execFileP('git', ['-C', root, 'status', '--porcelain'], { timeout: 30_000 });
@@ -376,5 +425,6 @@ export function createRepos(ctx) {
   return {
     validateBranch, resolveReposDir, setReposDir, setSettings, touchRepo,
     resolveTarget, cloneRepo, materializeBranch, claimTarget, targetOwner,
+    reserveCloneSlot,
   };
 }

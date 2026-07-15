@@ -186,3 +186,28 @@ test('repo mode rejects legacy worktree:true', async t => {
   assert.equal(response.status, 400);
   assert.equal(response.json.reason, 'branch_mode replaces worktree in repo mode');
 });
+
+test('a same-named checkout with no matching origin is not reused when the request names an origin', async t => {
+  const { remote, reposDir, recordFile, daemon } = await setup(t);
+  // A decoy: a local repo with the SAME basename as the requested one but NO
+  // remote, seeded into the catalog via a session hook. Reusing it would run the
+  // agent in an unrelated tree — the request names a concrete origin, so the
+  // daemon must clone into the repos root instead of resolving to the decoy.
+  const decoy = path.join(scratch('fleetdeck-decoy-'), remote.repoName);
+  execFileSync('git', ['init', '-q', decoy]);
+  execFileSync('git', ['-C', decoy, 'commit', '-q', '--allow-empty', '-m', 'decoy'], {
+    env: { ...process.env, GIT_AUTHOR_NAME: 'x', GIT_AUTHOR_EMAIL: 'x@x', GIT_COMMITTER_NAME: 'x', GIT_COMMITTER_EMAIL: 'x@x' },
+  });
+  t.after(() => rmSync(path.dirname(decoy), { recursive: true, force: true }));
+  await postHook(daemon.baseUrl, 'SessionStart', {
+    session_id: randomUUID(), cwd: decoy, hook_event_name: 'SessionStart', source: 'startup',
+  });
+
+  const response = await postJson(`${daemon.baseUrl}/api/spawn`, { repo: remote.origin, branch: 'main', branch_mode: 'in-place' });
+  assert.equal(response.status, 202, response.text); // cloned, not reused
+  const dest = path.join(reposDir, remote.repoName);
+  await waitUntil(() => records(recordFile).length && existsSync(dest), { label: 'clone-not-reuse' });
+  const spec = records(recordFile)[0].parsed;
+  assert.equal(spec.cwd, dest);          // ran in the freshly cloned tree…
+  assert.notEqual(spec.cwd, decoy);      // …never in the unrelated same-named decoy
+});
