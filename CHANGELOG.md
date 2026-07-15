@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-07-15
+
+### Fixed
+
+- **Image pastes are written under `FLEETDECK_HOME`, not a fixed name in shared `/tmp`.** The 0.9.0 paste dir was `os.tmpdir()/fleetdeck-pastes` — a world-known path in sticky `/tmp` — and the pruner followed a directory symlink planted there. On a multi-user host a local co-tenant could pre-create that symlink and turn a victim's paste into an arbitrary-file delete/overwrite as the victim's user (and, as a lesser variant, squat the name to break the feature for everyone else on the box). A single-user laptop or a single-owner Coder workspace was never exposed — this bites shared login/build hosts. The directory now lives under `FLEETDECK_HOME`, which no other user can write, so the symlink cannot be planted at all; the pruner additionally `lstat`s every entry and never follows a symlink, and the dir is refused if it is not a real directory this user owns.
+- **A burst of pastes can no longer clobber an earlier one.** Filenames were a per-second timestamp plus 24 random bits; names are now a 128-bit `randomUUID`, and the staging write is exclusive (`wx`), so two pastes in the same instant get distinct files instead of one overwriting the other.
+- **The paste directory is bounded.** Age-pruning (>24 h) only ran on the *next* paste and had no ceiling, so a flood — or a wedged agent that never submits — could grow it without limit. It now also keeps at most the 50 most-recent files.
+- **The feature is no longer silent.** Every failure path (too-large image, unreachable daemon, unsupported bytes, a pane that lost focus mid-upload) now shows a transient status over the pane instead of only a console warning — a 12 MB screenshot that was silently dropped in 0.9.0 now says "image too large (max 10 MB)". Success shows "image added — press Enter to send".
+- Reject an oversized paste by its `Content-Length` before buffering it; tighten the transport cap to what a 10 MB image actually needs; validate base64 up front instead of letting malformed input decode to garbage.
+
 ## [0.9.0] - 2026-07-15
 
 ### Added

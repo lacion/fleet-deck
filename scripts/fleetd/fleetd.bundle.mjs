@@ -5408,58 +5408,109 @@ import path3 from "node:path";
 import crypto from "node:crypto";
 var MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 var PRUNE_AFTER_MS = 24 * 60 * 60 * 1e3;
-var PASTE_DIR = path3.join(os2.tmpdir(), "fleetdeck-pastes");
+var MAX_KEPT_PASTES = 50;
+var ACCEPT = "png, jpeg, gif, webp";
+function pasteDir() {
+  const home = process.env.FLEETDECK_HOME || path3.join(os2.homedir() || os2.tmpdir(), ".fleetdeck");
+  return path3.join(home, "pastes");
+}
 function sniffImage(buf) {
-  if (buf.length >= 4 && buf[0] === 137 && buf[1] === 80 && buf[2] === 78 && buf[3] === 71) return "png";
+  if (buf.length >= 8 && buf[0] === 137 && buf[1] === 80 && buf[2] === 78 && buf[3] === 71 && buf[4] === 13 && buf[5] === 10 && buf[6] === 26 && buf[7] === 10) return "png";
   if (buf.length >= 3 && buf[0] === 255 && buf[1] === 216 && buf[2] === 255) return "jpg";
-  if (buf.length >= 3 && buf[0] === 71 && buf[1] === 73 && buf[2] === 70) return "gif";
+  if (buf.length >= 6 && buf.toString("latin1", 0, 6).match(/^GIF8[79]a$/)) return "gif";
   if (buf.length >= 12 && buf.toString("latin1", 0, 4) === "RIFF" && buf.toString("latin1", 8, 12) === "WEBP") return "webp";
   return null;
 }
-function pruneOldPastes(now = Date.now()) {
+function looksBase64(s) {
+  const t = s.replace(/\s+/g, "");
+  return t.length > 0 && t.length % 4 === 0 && /^[A-Za-z0-9+/]*={0,2}$/.test(t);
+}
+function ensurePasteDir() {
+  const dir = pasteDir();
+  try {
+    fs5.mkdirSync(path3.dirname(dir), { recursive: true });
+  } catch {
+  }
+  try {
+    fs5.mkdirSync(dir, { mode: 448 });
+  } catch (err) {
+    if (err?.code !== "EEXIST") throw err;
+  }
+  const st = fs5.lstatSync(dir);
+  if (st.isSymbolicLink() || !st.isDirectory()) {
+    throw new Error(`${dir} is not a real directory; refusing to write pastes there`);
+  }
+  if (typeof process.getuid === "function" && st.uid !== process.getuid()) {
+    throw new Error(`${dir} is not owned by this user; refusing to write pastes there`);
+  }
+  return dir;
+}
+function pruneOldPastes(dir, now = Date.now()) {
   let names;
   try {
-    names = fs5.readdirSync(PASTE_DIR);
+    names = fs5.readdirSync(dir);
   } catch {
     return;
   }
+  const regular = [];
   for (const name of names) {
-    const p = path3.join(PASTE_DIR, name);
+    const p = path3.join(dir, name);
+    let st;
     try {
-      if (now - fs5.statSync(p).mtimeMs > PRUNE_AFTER_MS) fs5.unlinkSync(p);
+      st = fs5.lstatSync(p);
     } catch {
+      continue;
+    }
+    if (!st.isFile()) continue;
+    if (now - st.mtimeMs > PRUNE_AFTER_MS) {
+      try {
+        fs5.unlinkSync(p);
+      } catch {
+      }
+    } else {
+      regular.push({ p, mtime: st.mtimeMs });
+    }
+  }
+  if (regular.length > MAX_KEPT_PASTES) {
+    regular.sort((a, b) => a.mtime - b.mtime);
+    for (const { p } of regular.slice(0, regular.length - MAX_KEPT_PASTES)) {
+      try {
+        fs5.unlinkSync(p);
+      } catch {
+      }
     }
   }
 }
 function pasteImage(ev) {
   const raw = typeof ev?.data === "string" ? ev.data : "";
-  const b64 = raw.startsWith("data:") ? raw.slice(raw.indexOf(",") + 1) : raw;
-  if (!b64) return { status: 400, body: { ok: false, reason: "missing image data" } };
-  let buf;
-  try {
-    buf = Buffer.from(b64, "base64");
-  } catch {
-    return { status: 400, body: { ok: false, reason: "not base64" } };
+  let b64 = raw;
+  if (raw.startsWith("data:")) {
+    const comma = raw.indexOf(",");
+    if (comma === -1) return { status: 400, body: { ok: false, reason: "malformed data URL" } };
+    b64 = raw.slice(comma + 1);
   }
+  if (!b64) return { status: 400, body: { ok: false, reason: "missing image data" } };
+  if (!looksBase64(b64)) return { status: 400, body: { ok: false, reason: "not valid base64" } };
+  const buf = Buffer.from(b64, "base64");
   if (buf.length === 0) return { status: 400, body: { ok: false, reason: "empty image" } };
   if (buf.length > MAX_IMAGE_BYTES) {
     return { status: 413, body: { ok: false, reason: `image exceeds ${MAX_IMAGE_BYTES} bytes` } };
   }
   const ext = sniffImage(buf);
-  if (!ext) return { status: 400, body: { ok: false, reason: "not a supported image (png, jpeg, gif, webp)" } };
+  if (!ext) return { status: 400, body: { ok: false, reason: `not a supported image (${ACCEPT})` } };
+  let dir;
   try {
-    fs5.mkdirSync(PASTE_DIR, { recursive: true, mode: 448 });
+    dir = ensurePasteDir();
   } catch (err) {
-    console.error("fleetd paste: cannot create paste dir:", err);
-    return { status: 500, body: { ok: false, reason: "cannot create paste dir" } };
+    console.error("fleetd paste: cannot prepare paste dir:", err);
+    return { status: 500, body: { ok: false, reason: "cannot prepare paste dir" } };
   }
-  pruneOldPastes();
-  const ts = (/* @__PURE__ */ new Date()).toISOString().replace(/[-:]/g, "").replace(/\..*$/, "");
-  const name = `paste-${ts}-${crypto.randomBytes(3).toString("hex")}.${ext}`;
-  const file = path3.join(PASTE_DIR, name);
+  pruneOldPastes(dir);
+  const name = `paste-${crypto.randomUUID()}.${ext}`;
+  const file = path3.join(dir, name);
   const tmp = `${file}.tmp`;
   try {
-    fs5.writeFileSync(tmp, buf, { mode: 384 });
+    fs5.writeFileSync(tmp, buf, { mode: 384, flag: "wx" });
     fs5.renameSync(tmp, file);
   } catch (err) {
     try {
@@ -8433,7 +8484,7 @@ function createTermBridge({ port, resolveSpawn, log = () => {
 
 // scripts/fleetd/http.mjs
 var MAX_BODY = 1e6;
-var MAX_PASTE_BODY = 16e6;
+var MAX_PASTE_BODY = 14e6;
 var MAX_WS_BUFFER = (() => {
   const n = Number(process.env.FLEETDECK_WS_BUFFER_MAX);
   return Number.isFinite(n) ? n : 1 << 20;
@@ -8750,6 +8801,10 @@ function createHttp(core2, {
         let size = 0;
         let tooLarge = false;
         const bodyCap = url.pathname === "/api/paste-image" ? MAX_PASTE_BODY : MAX_BODY;
+        const declared = Number(req.headers["content-length"]);
+        if (Number.isFinite(declared) && declared > bodyCap) {
+          return isHook ? json(res, 200, {}) : json(res, 413, { ok: false, reason: "payload too large" });
+        }
         req.on("data", (d) => {
           if (tooLarge) return;
           size += d.length;

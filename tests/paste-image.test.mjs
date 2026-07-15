@@ -20,12 +20,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { startDaemon } from './helpers/daemon.mjs';
 import { postJson } from './helpers/http.mjs';
 
-const PASTE_DIR = path.join(os.tmpdir(), 'fleetdeck-pastes');
+// The daemon writes under ITS FLEETDECK_HOME (startDaemon gives each a fresh
+// tmpdir home), NOT a shared /tmp path — that move is the fix for the /tmp
+// symlink-follow, so the test asserts the location relative to the daemon home.
+const pasteDirOf = (d) => path.join(d.home, 'pastes');
 
 const b64 = (buf) => Buffer.from(buf).toString('base64');
 
@@ -58,6 +60,7 @@ test('paste-image: ingest contract', async (t) => {
   const d = await startDaemon();
   t.after(() => d.stop());
   const url = `${d.baseUrl}/api/paste-image`;
+  const PASTE_DIR = pasteDirOf(d);
 
   await t.test('png/jpg/gif/webp are accepted and the extension comes from the sniff', async () => {
     for (const [buf, ext] of [[PNG, 'png'], [JPG, 'jpg'], [GIF, 'gif'], [WEBP, 'webp']]) {
@@ -72,6 +75,22 @@ test('paste-image: ingest contract', async (t) => {
     }
   });
 
+  await t.test('the paste dir is owner-only and never in shared /tmp', async () => {
+    await postJson(url, { data: b64(PNG) });
+    const st = fs.lstatSync(PASTE_DIR);
+    assert.ok(!st.isSymbolicLink(), 'paste dir must not be a symlink');
+    assert.ok(st.isDirectory());
+    assert.equal(st.mode & 0o777, 0o700, 'paste dir is owner-only');
+    assert.ok(PASTE_DIR.startsWith(d.home), 'paste dir lives under FLEETDECK_HOME, not /tmp');
+  });
+
+  await t.test('a burst of pastes never collides (unique 128-bit names)', async () => {
+    const results = await Promise.all(Array.from({ length: 40 }, () => postJson(url, { data: b64(PNG) })));
+    const paths = new Set();
+    for (const r of results) { assert.equal(r.status, 201); paths.add(r.json.path); }
+    assert.equal(paths.size, results.length, 'every paste got a distinct path — no clobber');
+  });
+
   await t.test('a data: URL prefix is stripped, not rejected', async () => {
     const res = await postJson(url, { data: `data:image/png;base64,${b64(PNG)}` });
     assert.equal(res.status, 201);
@@ -84,6 +103,18 @@ test('paste-image: ingest contract', async (t) => {
       assert.equal(res.status, 400);
       assert.equal(res.json.ok, false);
     }
+  });
+
+  await t.test('malformed base64 is refused up front, not decoded to junk', async () => {
+    for (const bad of ['!!!not base64!!!', 'iV!BO@Rw==', 'abc']) { // last: not a multiple of 4
+      const res = await postJson(url, { data: bad });
+      assert.equal(res.status, 400, `"${bad}" should 400`);
+    }
+  });
+
+  await t.test('a data: URL with no comma is refused, not treated as base64', async () => {
+    const res = await postJson(url, { data: 'data:image/png;base64NOCOMMA' });
+    assert.equal(res.status, 400);
   });
 
   await t.test('missing/empty data is a 400, not a crash', async () => {
@@ -132,8 +163,9 @@ test('paste-image: ingest contract', async (t) => {
   });
 
   await t.test('a stale paste is pruned by the next paste', async () => {
-    const old = path.join(PASTE_DIR, 'paste-00000000T000000-deadbe.png');
-    fs.mkdirSync(PASTE_DIR, { recursive: true, mode: 0o700 });
+    const res0 = await postJson(url, { data: b64(PNG) }); // ensures the dir exists, owned by us
+    assert.equal(res0.status, 201);
+    const old = path.join(PASTE_DIR, 'paste-00000000-0000-0000-0000-000000000000.png');
     fs.writeFileSync(old, PNG, { mode: 0o600 });
     const past = new Date(Date.now() - 25 * 60 * 60 * 1000);
     fs.utimesSync(old, past, past);
@@ -141,6 +173,34 @@ test('paste-image: ingest contract', async (t) => {
     assert.equal(res.status, 201);
     assert.ok(!fs.existsSync(old), 'the 25h-old paste should have been reclaimed');
   });
+});
+
+// The security regression this release fixes, pinned directly against the
+// module: a symlinked paste dir must be refused, never followed.
+test('paste-image: a symlinked paste dir is refused (no /tmp symlink-follow)', async () => {
+  const { pasteImage, pasteDir } = await import('../scripts/fleetd/paste.mjs');
+  const { mkdtempSync, mkdirSync, symlinkSync, rmSync, existsSync } = await import('node:fs');
+  const os2 = await import('node:os');
+  const scratch = mkdtempSync(path.join(os2.tmpdir(), 'fd-paste-sym-'));
+  const fakeHome = path.join(scratch, 'home');
+  const victim = path.join(scratch, 'victim');
+  mkdirSync(fakeHome, { recursive: true });
+  mkdirSync(victim, { recursive: true });
+  const prevHome = process.env.FLEETDECK_HOME;
+  process.env.FLEETDECK_HOME = fakeHome;
+  try {
+    // plant a symlink where the paste dir would be created
+    symlinkSync(victim, pasteDir());
+    const res = pasteImage({ data: b64(PNG) });
+    assert.equal(res.status, 500, 'must refuse a symlinked paste dir');
+    assert.equal(existsSync(path.join(victim, 'x')), false); // nothing written into the target
+    // and prove NOTHING landed in the victim dir
+    const { readdirSync } = await import('node:fs');
+    assert.deepEqual(readdirSync(victim), [], 'must not write into the symlink target');
+  } finally {
+    if (prevHome === undefined) delete process.env.FLEETDECK_HOME; else process.env.FLEETDECK_HOME = prevHome;
+    rmSync(scratch, { recursive: true, force: true });
+  }
 });
 
 test('paste-image: sniff table is a pinned contract', async () => {

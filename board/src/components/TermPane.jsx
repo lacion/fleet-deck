@@ -76,6 +76,12 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
   // null | {kind:'exit'|'err'|'close', text} — non-destructive: the terminal
   // stays on screen, frozen, under the strip.
   const [note, setNote] = useState(null);
+  // Transient, self-dismissing status for an image paste — its own channel, NOT
+  // `note` (which means "the terminal ended"). Without this the feature is 100%
+  // silent: a too-large screenshot looks identical to a successful one.
+  // {kind:'busy'|'ok'|'err', text}
+  const [pasteStatus, setPasteStatus] = useState(null);
+  const pasteTimer = useRef(0);
   // mirror `note` into a ref for the socket effect's "already ended?" check.
   // Kept in an effect (not assigned during render) so render stays pure.
   const noteRef = useRef(null);
@@ -175,7 +181,7 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
     // silently drops image blobs; and even locally Claude Code has no Linux
     // clipboard-image read. So the board does what a terminal cannot: lift the
     // blob off the clipboard, POST it to the daemon (which writes it under
-    // tmp/fleetdeck-pastes and answers with the path), then TYPE that path into
+    // FLEETDECK_HOME and answers with the path), then TYPE that path into
     // the pane — Claude Code ingests image paths everywhere. The user still
     // presses Enter: keystrokes into a live agent are irreversible, so a paste
     // must never submit on its own.
@@ -186,22 +192,43 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
     // the typed path through sendIn keeps the grid's one-tile-types discipline:
     // a non-live tile refuses at the same gate a keystroke would (and we skip
     // the upload too — no point shipping bytes nothing may type).
+    // Flash a transient status over the pane and auto-clear it. 'busy' persists
+    // (it is superseded by ok/err); ok/err self-dismiss.
+    const flash = (kind, text) => {
+      clearTimeout(pasteTimer.current);
+      setPasteStatus({ kind, text });
+      if (kind !== 'busy') pasteTimer.current = setTimeout(() => setPasteStatus(null), 4000);
+    };
+
     const onPaste = (e) => {
       const item = imageFromClipboard(e.clipboardData?.items);
       if (!item) return; // text paste — xterm's own handler takes it from here
       e.preventDefault();
       e.stopPropagation();
-      if (st.done || term.options.disableStdin) return;
+      if (st.done || term.options.disableStdin) return; // non-live tile: refuse before uploading
       const file = item.getAsFile();
-      if (!file) return;
+      if (!file) { flash('err', 'could not read the pasted image'); return; }
+      flash('busy', 'uploading image…');
       const reader = new FileReader();
+      reader.onerror = () => flash('err', 'could not read the pasted image');
       reader.onload = () => {
+        // Focus/liveness can change while the blob reads and uploads. Re-check
+        // HERE so we do not ship bytes for a pane that can no longer type them —
+        // and sendIn re-checks again at type time, so the path can only ever
+        // reach THIS pane or be dropped, never another agent.
+        if (st.done || term.options.disableStdin) { clearTimeout(pasteTimer.current); setPasteStatus(null); return; }
         pasteImage(reader.result)
           .then((res) => {
-            if (res.ok && res.json?.path) sendIn(res.json.path + ' ');
-            else console.warn('fleetdeck: image paste refused:', res.reason || `http ${res.status}`);
+            if (res.ok && res.json?.path) {
+              if (sendIn(res.json.path + ' ')) flash('ok', 'image added — press Enter to send');
+              else flash('err', 'pane lost focus — paste discarded');
+            } else if (res.status === 413) {
+              flash('err', 'image too large (max 10 MB)');
+            } else {
+              flash('err', `paste failed — ${res.reason || `error ${res.status}`}`);
+            }
           })
-          .catch((err) => console.warn('fleetdeck: image paste failed:', err));
+          .catch(() => flash('err', 'paste failed — daemon unreachable'));
       };
       reader.readAsDataURL(file);
     };
@@ -233,6 +260,7 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
       ro.disconnect();
       window.removeEventListener('resize', refit);
       screenEl.removeEventListener('paste', onPaste, true);
+      clearTimeout(pasteTimer.current);
       cancelAnimationFrame(raf);
       dataSub.dispose();
       resizeSub.dispose();
@@ -254,5 +282,17 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
     if (live && !dead) term.focus();
   }, [live]);
 
-  return <div className="fd-termscreen" ref={screenRef} />;
+  // Fragment, not a wrapper: `.fd-termscreen` must stay a direct child of its
+  // (position:relative) parent so its inset-based absolute sizing is unchanged,
+  // and the status pill anchors to that same parent.
+  return (
+    <>
+      <div className="fd-termscreen" ref={screenRef} />
+      {pasteStatus && (
+        <div className={`fd-pastestatus ${pasteStatus.kind}`} role="status">
+          {pasteStatus.kind === 'busy' ? '⬆' : pasteStatus.kind === 'ok' ? '✓' : '⚠'} {pasteStatus.text}
+        </div>
+      )}
+    </>
+  );
 }

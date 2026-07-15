@@ -23,9 +23,10 @@ import { createTermBridge } from './termbridge.mjs';
 const MAX_BODY = 1e6;
 // /api/paste-image only: a screenshot is megabytes, and base64-in-JSON (kept —
 // the json content-type wall forces a CORS preflight that raw image/png would
-// dodge) inflates it another third. 16 MB of transport comfortably carries
-// paste.mjs's 10 MB decoded-image cap; every other POST keeps MAX_BODY.
-const MAX_PASTE_BODY = 16e6;
+// dodge) inflates it another third. paste.mjs caps the DECODED image at 10 MB;
+// 10 MB base64 is ~13.4 MB, plus the small JSON/data-URL envelope — 14 MB
+// carries it with headroom and nothing more. Every other POST keeps MAX_BODY.
+const MAX_PASTE_BODY = 14e6;
 // H-R3/R1-2 backpressure: a /ws peer this far behind (dropped wifi, a frozen
 // tab) has stopped draining. We do NOT keep buffering snapshots into its dead
 // socket — but nor do we merely SKIP the send and clear `dirty`, which stranded
@@ -544,6 +545,13 @@ export function createHttp(core, {
         let size = 0;
         let tooLarge = false;
         const bodyCap = url.pathname === '/api/paste-image' ? MAX_PASTE_BODY : MAX_BODY;
+        // Refuse an oversized body by its declared Content-Length before reading
+        // a byte — the streaming cap below still catches a lying/absent header,
+        // but this avoids buffering megabytes only to reject them.
+        const declared = Number(req.headers['content-length']);
+        if (Number.isFinite(declared) && declared > bodyCap) {
+          return isHook ? json(res, 200, {}) : json(res, 413, { ok: false, reason: 'payload too large' });
+        }
         req.on('data', d => {
           if (tooLarge) return;
           size += d.length; // d is a Buffer — byte length, not char count
