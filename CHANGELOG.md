@@ -5,6 +5,19 @@ All notable changes to Fleet Deck are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] - 2026-07-15
+
+Repo-mode spawns learn that not every repo lives on GitHub.
+
+### Added
+
+- **GitHub / GitLab host choice for `org/repo` shorthand.** The spawn dialog grows a host toggle (github default) whenever the repo field holds `org/repo` shorthand, and the destination hint now previews the exact origin that will be cloned — no more guessing which forge a shorthand resolves to. GitLab nested subgroups (`group/subgroup/repo`) are supported: a 3+-segment path forces the gitlab host (GitHub has no such shape) instead of failing with a misleading "relative path" error. API: `POST /api/spawn` accepts `repo_host` (`github` | `gitlab`; absent means github, fully backward compatible).
+
+### Fixed
+
+- **SSH-cloned checkouts are reused by https/shorthand spawns.** Origin matching is now transport-insensitive: `git@gitlab.com:org/repo.git`, `ssh://git@gitlab.com/org/repo.git`, and `https://gitlab.com/org/repo.git` count as the same repository, so a repo-mode spawn reuses an existing checkout instead of refusing with "exists and is not …" or cloning a duplicate. Deliberately conservative: an `ssh://` origin with an explicit port never normalizes (a nonstandard port can front a different server), and a missed match degrades to the old behaviour — never to reusing the wrong tree.
+- **Nameless shorthand is refused.** `org/.git`-style input used to resolve to an empty repository name and collapse the clone destination onto the repos root itself; it now fails up front with "shorthand must end in a repository name".
+
 ## [0.11.0] - 2026-07-15
 
 Two features that make the board a place you can read code and start work from,
@@ -225,6 +238,7 @@ Initial public release.
 - A brainless orchestrator: `assign auto` routes a task to the best existing session with a SQL query, not a model call — the core makes zero model calls.
 - One-command plugin install with a self-contained daemon bundle (`node:sqlite` state, nothing to `npm install`); the first session's SessionStart hook elects and launches the daemon. MIT licensed.
 
+[0.12.0]: https://github.com/lacion/fleet-deck/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/lacion/fleet-deck/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/lacion/fleet-deck/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/lacion/fleet-deck/compare/v0.9.0...v0.9.1
