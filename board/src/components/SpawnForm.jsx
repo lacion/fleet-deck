@@ -1,7 +1,31 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { spawnSession, reasonOf } from '../api.js';
+import { spawnSession, saveSettings, reasonOf } from '../api.js';
 import { batchTotal, expandBatchTasks, parseBatchTasks } from '../util.js';
 import { useModal } from '../useModal.js';
+import DirPicker from './DirPicker.jsx';
+
+// v2.2 repo+branch mode — client-side mirrors of the daemon's input gates, for
+// instant feedback only: the DAEMON is the authority (git check-ref-format gets
+// the last word on a branch, parseRepoInput on a repo), same doctrine as
+// validSuffix in util.js. Refusing the obvious junk here just saves a POST.
+const branchProblem = (b) => {
+  if (b.length > 200) return 'too long for a branch name';
+  if (b.startsWith('-')) return 'a branch cannot start with “-”';
+  if (/[\s\x00-\x1f~^:?*[\\]/.test(b)) return 'no spaces or git-special characters (~ ^ : ? * [ \\)';
+  if (b.includes('..') || b.includes('@{')) return 'no “..” or “@{”';
+  if (b.endsWith('.lock') || b.endsWith('/') || b.startsWith('/')) return 'not a valid ref name';
+  return null;
+};
+
+// The repo's basename, for the destination preview — works for https/ssh URLs,
+// scp-like git@host:org/repo, org/repo shorthand, absolute paths, bare names.
+const repoNameOf = (input) => {
+  const s = String(input || '').trim().replace(/\/+$/, '');
+  if (!s) return null;
+  const tail = s.split(/[/:]/).pop() || '';
+  const name = tail.replace(/\.git$/, '');
+  return name || null;
+};
 
 // v1.2 spawn form — POST /api/spawn on an explicit human click, never any
 // other path. Fail-loud: a {ok:false, reason} renders inline, no silent
@@ -35,7 +59,7 @@ import { useModal } from '../useModal.js';
 //
 // Since the daemon no longer caps how many agents may be live, the preview
 // below — the exact list, counted, before you click — IS the guardrail.
-export default function SpawnForm({ sessions, prefillPrompt, prefillCwd, planMode, onClose, onSpawned }) {
+export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, prefillPrompt, prefillCwd, planMode, onClose, onSpawned }) {
   const [cwd, setCwd] = useState(prefillCwd || '');
   const [prompt, setPrompt] = useState(prefillPrompt || '');
   const [model, setModel] = useState('');
@@ -49,6 +73,20 @@ export default function SpawnForm({ sessions, prefillPrompt, prefillCwd, planMod
   const [err, setErr] = useState(null);
   const [note, setNote] = useState(null); // "spawning — <callsign>"
   const [progress, setProgress] = useState(null); // batch: {done, total, failed[]}
+  // v2.2 — repo+branch as the alternative to cwd. Plan execution stays on the
+  // directory path (the plan already knows its repo's checkout), so the toggle
+  // hides in planMode and 'dir' is always the starting mode.
+  const [targetMode, setTargetMode] = useState('dir'); // 'dir' | 'repo'
+  const [repo, setRepo] = useState('');
+  const [branch, setBranch] = useState('');
+  const [branchMode, setBranchMode] = useState('worktree'); // 'worktree' | 'in-place'
+  // the repos root: seeded from the daemon's resolved setting, editable here,
+  // PERSISTED on commit (blur/Enter) — that is what survives reboots
+  const [reposDir, setReposDir] = useState(settings?.repos_dir?.resolved || '');
+  const [dirNote, setDirNote] = useState(null); // {ok} | {err} after a save
+  const savedDir = useRef(settings?.repos_dir?.resolved || '');
+  // v2.3 — the folder picker; which field a pick fills: null | 'cwd' | 'repo' | 'reposDir'
+  const [pickerFor, setPickerFor] = useState(null);
   const cwdRef = useRef(null);
   const promptRef = useRef(null);
   const closeTimer = useRef(null);
@@ -73,14 +111,57 @@ export default function SpawnForm({ sessions, prefillPrompt, prefillCwd, planMod
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => () => clearTimeout(closeTimer.current), []);
 
+  // v2.2 — snapshots keep flowing while the form is open; adopt a repos-root
+  // that arrives (or changes under us) ONLY while the box is untouched — a
+  // half-typed path must never be replaced by a websocket frame.
+  useEffect(() => {
+    const v = settings?.repos_dir?.resolved || '';
+    if (reposDir === savedDir.current && v !== savedDir.current) {
+      savedDir.current = v;
+      setReposDir(v);
+    }
+  }, [settings?.repos_dir?.resolved]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // distinct places the fleet has been seen working → cwd suggestions
   const suggestions = [...new Set(
     (sessions || []).flatMap((s) => [s.worktree, s.cwd]).filter(Boolean),
   )];
 
+  const repoMode = targetMode === 'repo' && !planMode;
+  // recently-used repos (the daemon's durable catalog) → repo suggestions;
+  // names and origin URLs both complete, because both are valid input
+  const repoSuggestions = [...new Set(
+    (repoCatalog || []).flatMap((r) => [r.repo_name, r.origin_url]).filter(Boolean),
+  )];
+  const repoName = repoMode ? repoNameOf(repo) : null;
+  // a catalog hit by name or URL means no clone: the daemon will use that root
+  const knownRepo = repoMode && repo.trim()
+    ? (repoCatalog || []).find((r) => r.repo_name?.toLowerCase() === repo.trim().toLowerCase()
+      || r.origin_url === repo.trim()
+      || r.root === repo.trim())
+    : null;
+  const branchErr = repoMode && branch.trim() ? branchProblem(branch.trim()) : null;
+
+  // the repos-root override persists on commit, not per keystroke — an
+  // unfinished path half-typed into the box must never become a setting
+  const commitReposDir = async (value = reposDir) => {
+    const v = value.trim();
+    if (v === savedDir.current) return;
+    const res = await saveSettings({ repos_dir: v || null });
+    if (res.ok && res.json?.ok) {
+      savedDir.current = res.json.settings?.repos_dir?.resolved ?? v;
+      setReposDir(savedDir.current);
+      setDirNote({ ok: v ? 'saved — future clones land here' : 'cleared — back to the default' });
+    } else {
+      setDirNote({ err: reasonOf(res, `save failed (${res.status})`) });
+    }
+  };
+
   // Batch is meaningless for plan execution: there, the prompt IS the plan, and
   // splitting it on newlines would fan a single brief out into dozens of agents.
-  const canBatch = !planMode;
+  // In repo mode it's deferred (one human-chosen branch and N forced per-agent
+  // worktrees contradict each other) — the note under the checkbox says so.
+  const canBatch = !planMode && !repoMode;
   const batching = batch && canBatch;
   const tasks = useMemo(() => (batching ? parseBatchTasks(prompt) : []), [batching, prompt]);
   const total = batching ? batchTotal(tasks) : 1;
@@ -92,10 +173,14 @@ export default function SpawnForm({ sessions, prefillPrompt, prefillCwd, planMod
 
   /** The POST body shared by every agent in this submit; `prompt` varies. */
   const baseBody = () => {
-    const body = { cwd: cwd.trim() };
+    // repo mode replaces cwd wholesale: the daemon refuses both together, and
+    // branch_mode subsumes the worktree flag (it IS the worktree decision)
+    const body = repoMode
+      ? { repo: repo.trim(), branch: branch.trim(), branch_mode: branchMode }
+      : { cwd: cwd.trim() };
     if (model.trim()) body.model = model.trim();
     if (permissionMode !== 'default') body.permission_mode = permissionMode;
-    if (worktree || batching) body.worktree = true; // forced for a batch
+    if (!repoMode && (worktree || batching)) body.worktree = true; // forced for a batch
     if (remote) body.remote_control = true;
     if (unsup && armed) body.dangerously_skip_permissions = true;
     return body;
@@ -111,7 +196,11 @@ export default function SpawnForm({ sessions, prefillPrompt, prefillCwd, planMod
       setBusy(false);
       return;
     }
-    setNote(`spawning — ${res.json.callsign || res.json.session_id || 'new session'}`);
+    // v2.2 — a 202 means the clone is running: the card narrates from here
+    // (note → live, or a tombstone carrying git's stderr). Same close flow.
+    setNote(res.json.provisioning
+      ? `cloning — ${res.json.callsign || res.json.session_id || 'new session'} (the card narrates from here)`
+      : `spawning — ${res.json.callsign || res.json.session_id || 'new session'}`);
     // plan execution: mark the plan executed (via:'spawn:<id>'); a mark
     // failure keeps the form open and says so — never close over a 409
     let extra = null;
@@ -163,8 +252,13 @@ export default function SpawnForm({ sessions, prefillPrompt, prefillCwd, planMod
     closeTimer.current = setTimeout(onClose, 1800);
   };
 
+  // repo mode swaps the required fields: repo + a well-formed branch
+  const targetReady = repoMode
+    ? !!(repo.trim() && branch.trim() && !branchErr)
+    : !!cwd.trim();
+
   const submit = async () => {
-    if (!cwd.trim() || busy || note || blocked || emptyBatch) return;
+    if (!targetReady || busy || note || blocked || emptyBatch) return;
     setBusy(true);
     setErr(null);
     try {
@@ -180,6 +274,14 @@ export default function SpawnForm({ sessions, prefillPrompt, prefillCwd, planMod
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submit();
   };
 
+  // folder picker → the field that opened it
+  const handlePick = (absPath) => {
+    if (pickerFor === 'cwd') { setCwd(absPath); if (err) setErr(null); }
+    else if (pickerFor === 'repo') { setRepo(absPath); setDirNote(null); if (err) setErr(null); }
+    else if (pickerFor === 'reposDir') { setReposDir(absPath); commitReposDir(absPath); }
+    setPickerFor(null);
+  };
+
   return (
     <div className="fd-composewrap" onClick={onClose}>
       <div className="fd-compose fd-spawn" role="dialog" aria-modal="true" aria-label="Spawn a session" ref={dialogRef} onClick={(e) => e.stopPropagation()}>
@@ -189,21 +291,140 @@ export default function SpawnForm({ sessions, prefillPrompt, prefillCwd, planMod
           <button type="button" className="fd-x" aria-label="Close" onClick={onClose}>✕</button>
         </div>
         <div className="fd-form">
-          <div className="frow">
-            <span className="fl">cwd *</span>
-            <input
-              ref={cwdRef}
-              className="fd-input"
-              list="fd-cwd-suggest"
-              placeholder="/path/to/repo"
-              value={cwd}
-              onChange={(e) => { setCwd(e.target.value); if (err) setErr(null); }}
-              onKeyDown={onCtrlEnter}
-            />
-            <datalist id="fd-cwd-suggest">
-              {suggestions.map((p) => <option key={p} value={p} />)}
-            </datalist>
-          </div>
+          {/* v2.2 — where the agent works: an existing directory, or a repo the
+              daemon materializes (clone if missing, branch created if new) */}
+          {!planMode && (
+            <div className="frow">
+              <span className="fl">target</span>
+              <div className="fd-fsmodes" role="radiogroup" aria-label="Spawn target">
+                <button
+                  type="button"
+                  className={`fd-target${!repoMode ? ' on' : ''}`}
+                  onClick={() => { setTargetMode('dir'); if (err) setErr(null); }}
+                >
+                  directory
+                </button>
+                <button
+                  type="button"
+                  className={`fd-target${repoMode ? ' on' : ''}`}
+                  onClick={() => { setTargetMode('repo'); setBatch(false); if (err) setErr(null); }}
+                >
+                  repo + branch
+                </button>
+              </div>
+            </div>
+          )}
+          {!repoMode && (
+            <div className="frow">
+              <span className="fl">cwd *</span>
+              <input
+                ref={cwdRef}
+                className="fd-input"
+                list="fd-cwd-suggest"
+                placeholder="/path/to/repo"
+                value={cwd}
+                onChange={(e) => { setCwd(e.target.value); if (err) setErr(null); }}
+                onKeyDown={onCtrlEnter}
+              />
+              <button type="button" className="fd-browsebtn" title="browse folders" onClick={() => setPickerFor('cwd')}>🗀</button>
+              <datalist id="fd-cwd-suggest">
+                {suggestions.map((p) => <option key={p} value={p} />)}
+              </datalist>
+            </div>
+          )}
+          {repoMode && (
+            <>
+              <div className="frow">
+                <span className="fl">repo *</span>
+                <input
+                  className="fd-input"
+                  list="fd-repo-suggest"
+                  placeholder="org/repo · https://… · git@… · a name the fleet knows"
+                  value={repo}
+                  onChange={(e) => { setRepo(e.target.value); setDirNote(null); if (err) setErr(null); }}
+                  onKeyDown={onCtrlEnter}
+                />
+                <button type="button" className="fd-browsebtn" title="browse for a local repo folder" onClick={() => setPickerFor('repo')}>🗀</button>
+                <datalist id="fd-repo-suggest">
+                  {repoSuggestions.map((p) => <option key={p} value={p} />)}
+                </datalist>
+              </div>
+              <div className="frow">
+                <span className="fl">branch *</span>
+                <input
+                  className="fd-input"
+                  placeholder="existing branch, or a new one to create"
+                  value={branch}
+                  onChange={(e) => { setBranch(e.target.value); if (err) setErr(null); }}
+                  onKeyDown={onCtrlEnter}
+                />
+              </div>
+              {branchErr && (
+                <div className="frow">
+                  <span className="fl" />
+                  <span className="fd-spawnerr">✗ {branchErr}</span>
+                </div>
+              )}
+              <div className="frow top">
+                <span className="fl">branch mode</span>
+                <div className="fd-branchmode">
+                  <label className="fd-check">
+                    <input
+                      type="radio"
+                      name="fd-branch-mode"
+                      checked={branchMode === 'worktree'}
+                      onChange={() => setBranchMode('worktree')}
+                    />
+                    own worktree — the repo&apos;s main checkout is never touched
+                  </label>
+                  <label className="fd-check">
+                    <input
+                      type="radio"
+                      name="fd-branch-mode"
+                      checked={branchMode === 'in-place'}
+                      onChange={() => setBranchMode('in-place')}
+                    />
+                    in place — <code>git switch</code> in the checkout itself (refused if dirty)
+                  </label>
+                </div>
+              </div>
+              {repoName && (
+                <div className="frow top">
+                  <span className="fl">destination</span>
+                  <div className="fd-destbox">
+                    {knownRepo ? (
+                      <span className="known">
+                        already local · <span className="mono">{knownRepo.root}</span> — no clone needed
+                      </span>
+                    ) : (
+                      <>
+                        <div className="row">
+                          <input
+                            className="fd-input"
+                            placeholder={settings?.repos_dir?.resolved || 'repos root (e.g. ~/projects)'}
+                            value={reposDir}
+                            onChange={(e) => { setReposDir(e.target.value); setDirNote(null); }}
+                            onBlur={() => commitReposDir()}
+                            onKeyDown={(e) => { if (e.key === 'Enter') commitReposDir(); }}
+                          />
+                          <button type="button" className="fd-browsebtn" title="browse folders" onClick={() => setPickerFor('reposDir')}>🗀</button>
+                          <span className="sep">/</span>
+                          <span className="mono nm">{repoName}</span>
+                        </div>
+                        <span className="hint">
+                          {dirNote?.ok
+                            ? `✓ ${dirNote.ok}`
+                            : dirNote?.err
+                              ? `✗ ${dirNote.err}`
+                              : 'not on this machine yet — cloned here on spawn; the root is remembered across restarts'}
+                        </span>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
           <div className="frow top">
             <span className="fl">{batching ? 'tasks' : 'prompt'}</span>
             <textarea
@@ -270,20 +491,22 @@ export default function SpawnForm({ sessions, prefillPrompt, prefillCwd, planMod
               <option value="bypassPermissions">bypassPermissions</option>
             </select>
           </div>
-          <div className="frow">
-            <span className="fl">worktree</span>
-            <label className="fd-check">
-              <input
-                type="checkbox"
-                checked={worktree || batching}
-                disabled={batching}
-                onChange={(e) => setWorktree(e.target.checked)}
-              />
-              {batching
-                ? 'each agent gets its own worktree — required for a batch'
-                : 'work in a fresh git worktree'}
-            </label>
-          </div>
+          {!repoMode && (
+            <div className="frow">
+              <span className="fl">worktree</span>
+              <label className="fd-check">
+                <input
+                  type="checkbox"
+                  checked={worktree || batching}
+                  disabled={batching}
+                  onChange={(e) => setWorktree(e.target.checked)}
+                />
+                {batching
+                  ? 'each agent gets its own worktree — required for a batch'
+                  : 'work in a fresh git worktree'}
+              </label>
+            </div>
+          )}
           {/* v1.6 — remote control from birth (/rc) */}
           <div className="frow">
             <span className="fl">remote control</span>
@@ -336,13 +559,25 @@ export default function SpawnForm({ sessions, prefillPrompt, prefillCwd, planMod
                 ? <span className="note" style={{ color: 'var(--hazard)' }}>arm the unsupervised confirm — or uncheck it</span>
                 : emptyBatch
                   ? <span className="note">write at least one task, one per line</span>
-                  : <span className="note">starts {total > 1 ? `${total} new billed Claude sessions` : 'a new billed Claude session'}</span>}
+                  : (
+                    <span className="note">
+                      starts {total > 1 ? `${total} new billed Claude sessions` : 'a new billed Claude session'}
+                      {repoMode && !knownRepo && repoName ? ' — clones the repo first' : ''}
+                    </span>
+                  )}
           <span className="fd-spacer" />
-          <button type="button" className="send" onClick={submit} disabled={!cwd.trim() || busy || blocked || emptyBatch}>
+          <button type="button" className="send" onClick={submit} disabled={!targetReady || busy || blocked || emptyBatch}>
             {total > 1 ? `Spawn ${total} ⏎` : 'Spawn ⏎'}
           </button>
         </div>
       </div>
+      {pickerFor && (
+        <DirPicker
+          root={homeDir || '~'}
+          onPick={handlePick}
+          onClose={() => setPickerFor(null)}
+        />
+      )}
     </div>
   );
 }

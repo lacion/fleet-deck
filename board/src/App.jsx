@@ -9,7 +9,7 @@ import { useBoardHotkeys } from './hooks/useBoardHotkeys.js';
 import { useFleetActions } from './hooks/useFleetActions.js';
 import { ClockContext } from './clock.jsx';
 import { basename, safeUrl, spawnTermable, sessionsById, callsignOf, sessionTicker } from './util.js';
-import { sendMail, markPlan, reasonOf } from './api.js';
+import { sendMail, markPlan, reasonOf, fsList, fsRead, fsSearch, fsListHome, fsReadHome, fsSearchHome } from './api.js';
 import { useAuth, saveToken } from './token.js';
 import Header from './components/Header.jsx';
 import BoardLanes from './components/BoardLanes.jsx';
@@ -24,6 +24,7 @@ import KillConfirm from './components/KillConfirm.jsx';
 import ArmMoveConfirm from './components/ArmMoveConfirm.jsx';
 import RenameDialog from './components/RenameDialog.jsx';
 import WorktreesModal from './components/WorktreesModal.jsx';
+import FileViewer from './components/FileViewer.jsx';
 import TokenGate from './components/TokenGate.jsx';
 
 // v1.4 — lazy: xterm.js (~300 kB) loads only when a terminal is opened.
@@ -49,6 +50,7 @@ export default function App() {
   const [spawnForm, setSpawnForm] = useState(null); // null | { prompt?, cwd?, planId? }
   const [lanOpen, setLanOpen] = useState(false); // v1.7 LAN share panel
   const [wtOpen, setWtOpen] = useState(false); // v1.9 worktrees modal
+  const [fsView, setFsView] = useState(null); // v2.2 file viewer — null | {scope:'session', sid, callsign, root, path?} | {scope:'home'}
   const [priorities, setPriorities] = useState(() => new Set());
   const [threads, setThreads] = useState({}); // sid -> [{text, at}] (this tab only)
 
@@ -130,8 +132,8 @@ export default function App() {
 
   // keyboard: j/k rail nav · y/n permission · 1-9 choice · c compose · Esc close
   useBoardHotkeys({
-    pendingQs, selQ, setSelQ, termOpen, killOpen, armOpen, renameOpen,
-    setKillAsk, setArmAsk, setRenameAsk, setDrawerSid, setCompose, setSpawnForm, setLanOpen, setWtOpen,
+    pendingQs, selQ, setSelQ, termOpen, killOpen, armOpen, renameOpen, fsOpen: !!fsView,
+    setKillAsk, setArmAsk, setRenameAsk, setDrawerSid, setCompose, setSpawnForm, setLanOpen, setWtOpen, setFsView,
     composeOpen: composeOpenRef, spawnOpen: spawnOpenRef, lanOpen: lanOpenRef, wtOpen: wtOpenRef,
   });
 
@@ -231,6 +233,7 @@ export default function App() {
         spawnAvailable={spawnAvailable}
         spawnActive={spawnCap?.active || 0}
         onSpawn={() => setSpawnForm({})}
+        onBrowseHome={() => setFsView({ scope: 'home' })}
         hasOffline={hasOffline}
         clearing={clearing}
         onClear={doClear}
@@ -374,6 +377,15 @@ export default function App() {
           // v2.1 — rename: the drawer's ✎ and the card's chip open the SAME
           // dialog, which owns the POST and reports on the shared strip
           onRename={askRename}
+          // v2.2 — the read-only file viewer opens OVER the drawer (relPath
+          // null = at the root; a FILES chip passes the file to reveal)
+          onBrowseFiles={(sess, relPath) => setFsView({
+            scope: 'session',
+            sid: sess.session_id,
+            callsign: sess.callsign || sess.session_id,
+            root: sess.worktree || sess.cwd || '',
+            path: relPath || null,
+          })}
           thread={threads[drawerSid] || EMPTY_ARR}
           // M-F5 — await the result: clear the draft only on success, and let
           // the drawer surface a failure instead of swallowing it.
@@ -414,10 +426,37 @@ export default function App() {
         />
       )}
 
+      {/* ====== file viewer (v2.2 read-only) — a session's tree, or all of home ====== */}
+      {fsView && (fsView.scope === 'home' ? (
+        <FileViewer
+          key="home"
+          title="~ home"
+          root={snap.home_dir || '~'}
+          list={fsListHome}
+          read={fsReadHome}
+          search={fsSearchHome}
+          onClose={() => setFsView(null)}
+        />
+      ) : (
+        <FileViewer
+          key={fsView.sid}
+          title={fsView.callsign}
+          root={fsView.root}
+          initialPath={fsView.path}
+          list={(p) => fsList(fsView.sid, p)}
+          read={(p) => fsRead(fsView.sid, p)}
+          search={(q, m) => fsSearch(fsView.sid, q, m)}
+          onClose={() => setFsView(null)}
+        />
+      ))}
+
       {/* ============ spawn (v1.2 — explicit human click only) ============ */}
       {spawnForm && (
         <SpawnForm
           sessions={sessions}
+          repoCatalog={snap.repo_catalog || EMPTY_ARR}
+          settings={snap.settings || EMPTY_OBJ}
+          homeDir={snap.home_dir || ''}
           prefillPrompt={spawnForm.prompt || ''}
           prefillCwd={spawnForm.cwd || ''}
           planMode={!!spawnForm.planId}

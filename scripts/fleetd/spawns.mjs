@@ -13,7 +13,7 @@ import { randomUUID } from 'node:crypto';
 import { deriveRepo, branchOf } from './repo-identity.mjs';
 import { ticketFromBranch, animalOf } from './tickets.mjs';
 import { claudeEnvArgvPrefix, claudeTranscriptPath, SHELL_RE, NOT_RESUMABLE_END } from './helpers.mjs';
-import { execFileP } from './exec.mjs';
+import { execFileP, baseBranch } from './exec.mjs';
 
 export function createSpawns(ctx) {
   const {
@@ -23,6 +23,8 @@ export function createSpawns(ctx) {
     ADOPT_ARM_MS, // 0.7.0 Move-to-tmux: arm-deadline window (default 30 min)
     // 0.7.1: the boot heal for /clear forks stranded BEFORE succession shipped.
     succeedSession, CLEAR_SUCCESSION_MS, hasLivePane,
+    validateBranch, resolveTarget, cloneRepo, materializeBranch, touchRepo,
+    claimTarget, targetOwner, reserveCloneSlot,
   } = ctx;
 
   // ------------------------------------- v1.2 board-spawned sessions (spawns)
@@ -87,14 +89,18 @@ export function createSpawns(ctx) {
 
   // CONTRACT flow step 1: pre-create the card so the callsign exists before
   // the pane does. Note is EXACTLY "spawning…"; col queued; source 'spawned'.
-  function createSpawnedCard(sid, cwd, prompt) {
-    const repo = deriveRepo(cwd);
+  function createSpawnedCard(sid, cwd, prompt, overrides = null) {
+    const repo = overrides ? {
+      repo_id: overrides.repo_id ?? null,
+      repo_name: overrides.repo_name ?? null,
+      worktree: overrides.worktree ?? null,
+    } : deriveRepo(cwd);
     // Ticket inheritance is a naming moment: derive the ticket from the SOURCE
     // cwd's branch (fresh — bypass the 20s cache) BEFORE naming, so a spawn off a
     // ticket branch is born ticket-first exactly like a hook/agents birth. The
     // whole chain here runs in spawn()'s synchronous pre-await prefix, preserving
     // the naming-collision invariant.
-    const branch = cwd ? branchOf(cwd, { fresh: true }) : null;
+    const branch = overrides?.branch ?? (cwd ? branchOf(cwd, { fresh: true }) : null);
     const ticket = ticketFromBranch(branch);
     const callsign = assignCallsign(sid, ticket);
     const now = Date.now();
@@ -103,6 +109,7 @@ export function createSpawns(ctx) {
       branch ?? null, repo.worktree ?? null,
       prompt ? String(prompt).slice(0, 80) : null, now, now,
     );
+    if (overrides?.note) updateSession(sid, { note: overrides.note });
     if (ticket) updateSession(sid, { ticket, ticket_source: 'branch' });
     return q.getSession.get(sid);
   }
@@ -270,13 +277,19 @@ export function createSpawns(ctx) {
   // name. Then flip the provisional row to a terminal 'gone' (so neither
   // liveness nor boot reconciliation ever adopts it) and tombstone the card.
   // Best-effort throughout: cleanup failure must not mask the launch failure.
-  async function spawnCompensate({ spawn_id, session_id, callsign, cwd, worktree_path, tmux_window, reason }) {
-    if (worktree_path) {
+  async function spawnCompensate({
+    spawn_id, session_id, callsign, cwd, worktree_path, tmux_window, reason,
+    created = { clone: false, worktree: !!worktree_path },
+  }) {
+    if (worktree_path && created.worktree) {
       try {
         const rm = await execFileP('git', ['-C', cwd, 'worktree', 'remove', '--force', worktree_path], { timeout: 30_000 });
         if (!rm.ok) { try { fs.rmSync(worktree_path, { recursive: true, force: true }); } catch { /* best effort */ } }
         await execFileP('git', ['-C', cwd, 'worktree', 'prune'], { timeout: 30_000 });
       } catch { /* best effort — a stranded fleet worktree is surfaced by cleanup() */ }
+    }
+    if (cwd && created.clone) {
+      try { fs.rmSync(cwd, { recursive: true, force: true }); } catch { /* best effort */ }
     }
     if (tmux_window) { try { await tmuxAdapter.killWindowVerified(tmux_window); } catch { /* best effort */ } }
     q.setSpawnStatus.run('gone', spawn_id);
@@ -284,15 +297,73 @@ export function createSpawns(ctx) {
     spawnFailed(session_id, callsign, reason);
   }
 
-  // POST /api/spawn — control API, fail-loud (CONTRACT: 4xx {ok:false,
-  // reason} for no-tmux / bad-cwd / cap / bad-worktree; 409 when worktree is
-  // requested outside git). Returns {status, body} for the HTTP layer.
+  async function launchPane({
+    spawn_id, session_id, callsign, tmux_session, tmux_window,
+    requestedCwd, runCwd, cleanupRoot, worktree_path, body, skipPermissions,
+    created = { clone: false, worktree: !!worktree_path },
+  }) {
+    // This argv order is a public contract shared by cwd- and repo-mode spawns.
+    const argv = [...claudeEnvArgvPrefix(port, home), 'claude', '--session-id', session_id];
+    if (body?.model) argv.push('--model', body.model);
+    if (body?.permission_mode) argv.push('--permission-mode', body.permission_mode);
+    if (body?.dangerously_skip_permissions === true) argv.push('--dangerously-skip-permissions');
+    if (body?.remote_control === true) argv.push('--remote-control', callsign);
+    // SECURITY (option injection): the prompt is untrusted human text and MUST
+    // be the last, positional argv element — but WITHOUT a `--` terminator the
+    // claude CLI (commander) parses a prompt like `--dangerously-skip-permissions`
+    // as a FLAG, silently granting a bypass the spawn row records as
+    // skip_permissions:false. `--` forces everything after it to be positional.
+    // Nothing is ever pushed onto argv past this point.
+    if (body?.prompt) argv.push('--', body.prompt);
+
+    const compensate = reason => spawnCompensate({
+      spawn_id, session_id, callsign, cwd: cleanupRoot, worktree_path,
+      tmux_window, reason, created,
+    });
+    const override = tmuxAdapter.spawnOverrideCmd();
+    if (override) {
+      const spec = {
+        spawn_id, session_id, callsign, port,
+        cwd: runCwd, requested_cwd: requestedCwd,
+        prompt: body?.prompt ?? null, model: body?.model ?? null,
+        permission_mode: body?.permission_mode ?? null, worktree_path,
+        dangerously_skip_permissions: body?.dangerously_skip_permissions === true,
+        skip_permissions: skipPermissions,
+        remote_control: body?.remote_control === true,
+        tmux: { session: tmux_session, window: tmux_window },
+        argv,
+      };
+      tmuxAdapter.launchOverride(override, spec, err =>
+        compensate(`spawn override: ${err.message || err}`).catch(() => {}));
+    } else {
+      try {
+        await tmuxAdapter.ensureSession(port);
+        await tmuxAdapter.newWindow({ port, callsign, cwd: runCwd, argv });
+      } catch (err) {
+        await compensate(String(err.message || err));
+        return { status: 500, body: { ok: false, reason: `tmux spawn failed: ${err.message || err}` } };
+      }
+    }
+
+    q.setSpawnStatus.run('spawning', spawn_id);
+    updateSession(session_id, { note: 'spawning…' });
+    tick(`🚀 spawned ${callsign} — tmux window ${tmux_window}${skipPermissions ? ' (unsupervised)' : ''}`);
+    scheduleNudge(spawn_id, tmux_window, callsign);
+    onMutate();
+    return {
+      status: 200,
+      body: { ok: true, spawn_id, session_id, callsign, tmux: { session: tmux_session, window: tmux_window } },
+    };
+  }
+
+  // POST /api/spawn — either the original existing-cwd flow or managed
+  // {repo, branch, branch_mode} provisioning.
   async function spawn(body) {
     const cap = spawnCapability();
     if (!cap.available) {
       return { status: 400, body: { ok: false, reason: `spawning unavailable: ${cap.reason}` } };
     }
-    for (const k of ['cwd', 'prompt', 'model', 'permission_mode']) {
+    for (const k of ['cwd', 'repo', 'branch', 'branch_mode', 'prompt', 'model', 'permission_mode']) {
       if (body?.[k] != null && typeof body[k] !== 'string') {
         return { status: 400, body: { ok: false, reason: `${k} must be a string` } };
       }
@@ -306,13 +377,174 @@ export function createSpawns(ctx) {
     if (body?.remote_control != null && typeof body.remote_control !== 'boolean') {
       return { status: 400, body: { ok: false, reason: 'remote_control must be a boolean' } };
     }
-    // v1.3 unsupervised spawns (CONTRACT "A"): either form of bypass —
-    // dangerously_skip_permissions:true (its own CLI flag) or
-    // permission_mode:"bypassPermissions" (plain passthrough) — marks the row
-    // and the /state spawn object. Both together are allowed (CLI semantics
-    // decide what wins in the session).
+
+    const hasRepo = body?.repo != null;
+    const hasCwd = body?.cwd != null;
+    if (hasRepo && hasCwd) {
+      return { status: 400, body: { ok: false, reason: 'provide either cwd or repo, not both' } };
+    }
     const skipPermissions = body?.dangerously_skip_permissions === true
       || body?.permission_mode === 'bypassPermissions';
+
+    if (hasRepo) {
+      if (body?.worktree === true) {
+        return { status: 400, body: { ok: false, reason: 'branch_mode replaces worktree in repo mode' } };
+      }
+      if (!body.branch) return { status: 400, body: { ok: false, reason: 'branch is required in repo mode' } };
+      const branchMode = body.branch_mode ?? 'worktree';
+      if (!['worktree', 'in-place'].includes(branchMode)) {
+        return { status: 400, body: { ok: false, reason: 'branch_mode must be worktree or in-place' } };
+      }
+      try { await validateBranch(body.branch); }
+      catch (err) { return { status: 400, body: { ok: false, reason: err.message || String(err) } }; }
+
+      let target;
+      try { target = await resolveTarget(body); }
+      catch (err) { return { status: err.status || 400, body: { ok: false, reason: err.message || String(err) } }; }
+      const targetPath = target.mode === 'clone' ? target.dest : target.root;
+      const owner = targetOwner(targetPath);
+      if (owner) {
+        return { status: 409, body: { ok: false, reason: `${path.resolve(targetPath)} is already being provisioned by ${owner}` } };
+      }
+      // Reserve a clone slot BEFORE any card/row exists, so a full pool returns a
+      // clean 429 with nothing to compensate. Local materialization is uncapped.
+      let releaseCloneSlot = () => {};
+      if (target.mode === 'clone') {
+        try { releaseCloneSlot = reserveCloneSlot(); }
+        catch (err) { return { status: err.status || 429, body: { ok: false, reason: err.message || String(err) } }; }
+      }
+
+      const session_id = randomUUID();
+      const spawn_id = randomUUID();
+      const initialNote = target.mode === 'clone'
+        ? `cloning ${target.repo_name}…`
+        : `preparing ${body.branch}…`;
+      const c = createSpawnedCard(session_id, targetPath, body?.prompt, {
+        repo_name: target.repo_name,
+        branch: body.branch,
+        note: initialNote,
+      });
+      const callsign = c.callsign;
+      const releaseTarget = claimTarget(targetPath, callsign);
+      const tmux_session = tmuxAdapter.sessionName(port);
+      const tmux_window = tmuxAdapter.windowName(port, callsign);
+      q.insertProvisionalSpawn.run(
+        spawn_id, session_id, callsign, tmux_session, tmux_window, targetPath,
+        null, Date.now(), skipPermissions ? 1 : 0, body?.remote_control === true ? 1 : 0,
+        target.origin_url ?? null, body.branch, branchMode,
+      );
+
+      const finishMaterialization = async (materialized, source) => {
+        const worktree_path = branchMode === 'worktree' ? materialized.runCwd : null;
+        if (worktree_path) q.setSpawnWorktree.run(worktree_path, spawn_id);
+        const repo = deriveRepo(materialized.runCwd);
+        updateSession(session_id, {
+          cwd: materialized.runCwd,
+          repo_id: repo.repo_id,
+          repo_name: repo.repo_name,
+          worktree: repo.worktree,
+          branch: branchOf(materialized.runCwd, { fresh: true }) ?? body.branch,
+        });
+        const defaultRef = await baseBranch(target.mode === 'clone' ? target.dest : target.root);
+        touchRepo({
+          repo_id: repo.repo_id,
+          repo_name: repo.repo_name,
+          root: repo.main_tree,
+          origin_url: target.origin_url ?? null,
+          default_branch: defaultRef?.ref?.replace(/^origin\//, '') ?? null,
+          source,
+        });
+        return worktree_path;
+      };
+
+      if (target.mode === 'local') {
+        try {
+          let materialized;
+          let worktree_path = null;
+          try {
+            materialized = await materializeBranch({
+              root: target.root, branch: body.branch, mode: branchMode, spawn_id, sid: session_id,
+            });
+          } catch (err) {
+            await spawnCompensate({
+              spawn_id, session_id, callsign, cwd: target.root, worktree_path: null,
+              tmux_window: null, reason: err.message || String(err),
+              created: { clone: false, worktree: false },
+            });
+            return { status: err.status || 409, body: { ok: false, reason: err.message || String(err) } };
+          }
+          worktree_path = branchMode === 'worktree' ? materialized.runCwd : null;
+          try {
+            await finishMaterialization(materialized, 'spawn');
+            return await launchPane({
+              spawn_id, session_id, callsign, tmux_session, tmux_window,
+              requestedCwd: target.root, runCwd: materialized.runCwd,
+              cleanupRoot: target.root, worktree_path, body, skipPermissions,
+              created: materialized.created,
+            });
+          } catch (err) {
+            // in-place already ran `git switch`; compensation won't revert the
+            // user's own checkout, so say plainly that it was left on the branch.
+            const reason = branchMode === 'in-place'
+              ? `${err.message || String(err)} — ${path.basename(target.root)} was left switched to ${body.branch}`
+              : (err.message || String(err));
+            await spawnCompensate({
+              spawn_id, session_id, callsign, cwd: target.root, worktree_path,
+              tmux_window, reason, created: materialized.created,
+            });
+            return { status: err.status || 409, body: { ok: false, reason } };
+          }
+        } finally {
+          releaseTarget();
+        }
+      }
+
+      // Clone provisioning continues after the HTTP 202 response. The guarded
+      // detached chain owns both compensation and the single-flight release.
+      Promise.resolve().then(async () => {
+        let created = { clone: false, worktree: false };
+        let worktree_path = null;
+        try {
+          await cloneRepo({ origin_url: target.origin_url, dest: target.dest, spawn_id });
+          created.clone = true;
+          updateSession(session_id, { note: `preparing ${body.branch}…` });
+          onMutate();
+          const materialized = await materializeBranch({
+            root: target.dest, branch: body.branch, mode: branchMode, spawn_id, sid: session_id, clone: true,
+          });
+          created = materialized.created;
+          worktree_path = branchMode === 'worktree' ? materialized.runCwd : null;
+          await finishMaterialization(materialized, 'clone');
+          await launchPane({
+            spawn_id, session_id, callsign, tmux_session, tmux_window,
+            requestedCwd: target.dest, runCwd: materialized.runCwd,
+            cleanupRoot: target.dest, worktree_path, body, skipPermissions, created,
+          });
+        } catch (err) {
+          const reason = branchMode === 'in-place' && created.clone
+            ? `${err.message || String(err)} — ${path.basename(target.dest)} was left switched to ${body.branch}`
+            : (err.message || String(err));
+          await spawnCompensate({
+            spawn_id, session_id, callsign, cwd: target.dest, worktree_path,
+            tmux_window, reason, created,
+          });
+        } finally {
+          releaseCloneSlot();
+          releaseTarget();
+        }
+      }).catch(err => console.error('fleetd detached repo provisioning error:', err));
+
+      return {
+        status: 202,
+        body: {
+          ok: true, provisioning: true, spawn_id, session_id, callsign,
+          clone: { origin_url: target.origin_url, dest: target.dest },
+          tmux: { session: tmux_session, window: tmux_window },
+        },
+      };
+    }
+
+    // Original cwd mode remains synchronous through optional worktree creation.
     const cwd = body?.cwd || '';
     let st = null;
     try { st = fs.statSync(cwd); } catch { /* missing */ }
@@ -323,64 +555,39 @@ export function createSpawns(ctx) {
       return { status: 409, body: { ok: false, reason: 'cwd is not a git repository — cannot spawn into a worktree' } };
     }
 
-    // Step 1: pre-issue the session UUID and create the card (callsign exists
-    // from here on; the first real hook event flips source to 'hooks').
     const session_id = randomUUID();
     const spawn_id = randomUUID();
     const c = createSpawnedCard(session_id, cwd, body?.prompt);
     const callsign = c.callsign;
-
-    // Step 2 (H-R6): insert the DURABLE spawn row BEFORE any external op. The
-    // tmux names are deterministic from the callsign, so the provisional row
-    // already knows the window it is about to create — which lets compensation
-    // clean up by verified name and lets boot reconciliation finish/clean a
-    // row whose external ops never completed. It is born 'provisioning'
-    // (excluded from activeSpawns), and only flips to 'spawning' once the pane
-    // exists. worktree_path is filled in once the worktree is actually created.
     const tmux_session = tmuxAdapter.sessionName(port);
     const tmux_window = tmuxAdapter.windowName(port, callsign);
-    q.insertProvisionalSpawn.run(spawn_id, session_id, callsign, tmux_session, tmux_window, cwd,
-      null, Date.now(), skipPermissions ? 1 : 0, body?.remote_control === true ? 1 : 0);
+    q.insertProvisionalSpawn.run(
+      spawn_id, session_id, callsign, tmux_session, tmux_window, cwd,
+      null, Date.now(), skipPermissions ? 1 : 0, body?.remote_control === true ? 1 : 0,
+      null, null, null,
+    );
 
-    // Step 3: optional fresh worktree — the session cwd becomes the new path.
     let worktree_path = null;
     if (body?.worktree === true) {
-      // Ticket-first artifact names so sibling worktree dirs and branch lists
-      // group by ticket: <repo>--fd-PROJ-123-otter / fd/PROJ-123-otter.
-      // Gated on the callsign actually BEING ticket-named: on a saturated
-      // ticket assignCallsign falls back to hex while c.ticket is still
-      // recorded, and composing from c.ticket there would mint PROJ-123-raven —
-      // the canonical dir of the OTHER live raven that caused the saturation —
-      // colliding every time and naming a dir after a foreign session. Hex or
-      // ticketless callsigns keep today's <repo>--fd-<callsign> / fd/<callsign>,
-      // byte-for-byte. The tmux window + --remote-control keep the plain
-      // callsign (set above / below).
       const ticketNamed = c.ticket && String(callsign).endsWith(`-${c.ticket}`);
       const baseName = ticketNamed ? `${c.ticket}-${animalOf(callsign)}` : callsign;
       const pathFor = name => path.join(path.dirname(cwd), `${path.basename(cwd)}--fd-${name}`);
-      // Leftover-artifact collision: a long-archived same-ticket session can free
-      // the animal (taken-scope is archived_at) while its worktree dir / fd/
-      // branch still sit on disk. If the target dir already exists, go straight
-      // to a sid-disambiguated name; otherwise try the clean name and retry ONCE
-      // on failure (also covers a stale branch of the same name). Hex-suffixed
-      // ticketless names made this astronomically unlikely; ticket-first names
-      // make it merely rare — hence the single deterministic retry, no loop.
       const dedup = `${baseName}-${session_id.slice(0, 4)}`;
       const names = fs.existsSync(pathFor(baseName)) ? [dedup] : [baseName, dedup];
       let candidate;
-      let res;
+      let result;
       for (const workname of names) {
         candidate = pathFor(workname);
-        res = await execFileP('git', ['-C', cwd, 'worktree', 'add', '-b', `fd/${workname}`, candidate]);
-        if (res.ok) break;
+        result = await execFileP('git', ['-C', cwd, 'worktree', 'add', '-b', `fd/${workname}`, candidate]);
+        if (result.ok) break;
       }
       worktree_path = candidate;
-      if (!res.ok) {
-        // No window was created yet; compensate cleans the (possibly partial)
-        // worktree and settles the provisional row.
-        await spawnCompensate({ spawn_id, session_id, callsign, cwd, worktree_path, tmux_window: null,
-          reason: `git worktree add: ${res.err}` });
-        return { status: 409, body: { ok: false, reason: `git worktree add failed: ${res.err}`.slice(0, 300) } };
+      if (!result.ok) {
+        await spawnCompensate({
+          spawn_id, session_id, callsign, cwd, worktree_path, tmux_window: null,
+          reason: `git worktree add: ${result.err}`,
+        });
+        return { status: 409, body: { ok: false, reason: `git worktree add failed: ${result.err}`.slice(0, 300) } };
       }
       q.setSpawnWorktree.run(worktree_path, spawn_id);
       const repo = deriveRepo(worktree_path);
@@ -389,82 +596,14 @@ export function createSpawns(ctx) {
         worktree: repo.worktree, branch: branchOf(worktree_path),
       });
     }
-    const runCwd = worktree_path ?? cwd;
-
-    // Step 4: deterministic interactive `claude`: scrub inherited agent and
-    // fleet variables, then pin this daemon's port/home. The claude flag order
-    // remains contract-pinned: --session-id, --model, --permission-mode,
-    // permission bypass, remote-control name, then a `--` end-of-options marker
-    // and the prompt as ONE positional argv element. permission_mode
-    // "bypassPermissions" needs no extra argv change — it rides
-    // --permission-mode as plain passthrough.
-    const argv = [
-      ...claudeEnvArgvPrefix(port, home),
-      'claude', '--session-id', session_id,
-    ];
-    if (body?.model) argv.push('--model', body.model);
-    if (body?.permission_mode) argv.push('--permission-mode', body.permission_mode);
-    if (body?.dangerously_skip_permissions === true) argv.push('--dangerously-skip-permissions');
-    // Name the Remote Control session after the CALLSIGN, not the tmux window:
-    // this is the string the human reads in the claude.ai session list on their
-    // phone, and the board speaks callsigns everywhere. fd<port>- is internal
-    // plumbing that means nothing to them.
-    if (body?.remote_control === true) argv.push('--remote-control', callsign);
-    // SECURITY (option injection): the prompt is untrusted human text and MUST
-    // be the last, positional argv element — but WITHOUT a `--` terminator the
-    // claude CLI (commander) parses a prompt like `--dangerously-skip-permissions`
-    // or `--model evil` as a FLAG, silently granting a bypass the spawn row
-    // records as skip_permissions:false. `--` forces everything after it to be
-    // positional (end-of-options; verified on claude CLI 2.1.210: a token that
-    // is an unknown flag without `--` errors, but rides through as the prompt
-    // after `--`). Nothing is ever pushed onto argv past this point, so the
-    // prompt stays the final element in both the override and real-tmux paths.
-    if (body?.prompt) argv.push('--', body.prompt);
-
-    const override = tmuxAdapter.spawnOverrideCmd();
-    if (override) {
-      // Test override: argv [FLEETDECK_SPAWN_CMD, JSON.stringify(spec)].
-      const spec = {
-        spawn_id, session_id, callsign, port,
-        cwd: runCwd, requested_cwd: cwd,
-        prompt: body?.prompt ?? null, model: body?.model ?? null,
-        permission_mode: body?.permission_mode ?? null, worktree_path,
-        dangerously_skip_permissions: body?.dangerously_skip_permissions === true,
-        skip_permissions: skipPermissions,
-        remote_control: body?.remote_control === true,
-        tmux: { session: tmux_session, window: tmux_window },
-        argv, // the full env-wrapped argv tmux would have run
-      };
-      // launchOverride is fire-and-forget; onError fires only if the child
-      // process cannot start at all (no child ⇒ no SessionStart to race), so
-      // compensating there is safe.
-      tmuxAdapter.launchOverride(override, spec, err =>
-        spawnCompensate({ spawn_id, session_id, callsign, cwd, worktree_path, tmux_window,
-          reason: `spawn override: ${err.message || err}` }).catch(() => {}));
-    } else {
-      try {
-        await tmuxAdapter.ensureSession(port);
-        await tmuxAdapter.newWindow({ port, callsign, cwd: runCwd, argv });
-      } catch (err) {
-        // The window failed to launch; compensate removes the worktree we may
-        // have just created and settles the provisional row (H-R6).
-        await spawnCompensate({ spawn_id, session_id, callsign, cwd, worktree_path, tmux_window,
-          reason: String(err.message || err) });
-        return { status: 500, body: { ok: false, reason: `tmux spawn failed: ${err.message || err}` } };
-      }
-    }
-
-    // Step 5: the pane now exists (or the override was handed off) — flip the
-    // durable row live-eligible ('provisioning' → 'spawning') and arm the
-    // bring-up nudge timer.
-    q.setSpawnStatus.run('spawning', spawn_id);
-    tick(`🚀 spawned ${callsign} — tmux window ${tmux_window}${skipPermissions ? ' (unsupervised)' : ''}`);
-    scheduleNudge(spawn_id, tmux_window, callsign);
-    onMutate();
-    return {
-      status: 200,
-      body: { ok: true, spawn_id, session_id, callsign, tmux: { session: tmux_session, window: tmux_window } },
-    };
+    // The deterministic-argv build + override/tmux launch + status flip is
+    // shared with repo-mode spawns; it lives in launchPane() (incl. the `--`
+    // end-of-options fix carried over from origin/main's audit).
+    return launchPane({
+      spawn_id, session_id, callsign, tmux_session, tmux_window,
+      requestedCwd: cwd, runCwd: worktree_path ?? cwd, cleanupRoot: cwd,
+      worktree_path, body, skipPermissions,
+    });
   }
 
   // POST /api/spawn/:id/revive — resume a terminal board-owned Claude
@@ -668,7 +807,7 @@ export function createSpawns(ctx) {
     // up. (adopt passes worktree_path:null — it never creates a worktree.)
     q.insertProvisionalSpawn.run(new_spawn_id, session_id, callsign, tmux_session,
       tmux_window, requested_cwd, worktree_path, Date.now(), skip_permissions ? 1 : 0,
-      remoteWanted ? 1 : 0);
+      remoteWanted ? 1 : 0, null, null, null);
 
     const override = tmuxAdapter.spawnOverrideCmd();
     if (override) {
@@ -1212,6 +1351,14 @@ export function createSpawns(ctx) {
     // and tombstone the half-born card. (Snapshot taken pre-await above so a
     // spawn created concurrently with reconcile is not swept up as stale.)
     for (const row of staleProvisioning) {
+      // A daemon death during git clone leaves only the request-scoped temp
+      // directory. The final destination is never removed here: it may have
+      // pre-existed or the rename may have completed before the crash.
+      try {
+        fs.rmSync(`${row.cwd}.fd-cloning-${String(row.spawn_id).slice(0, 8)}`, {
+          recursive: true, force: true,
+        });
+      } catch { /* best effort */ }
       q.setSpawnStatus.run('gone', row.spawn_id);
       forgetSpawn(row.spawn_id);
       const c = q.getSession.get(row.session_id);
@@ -1306,4 +1453,3 @@ export function createSpawns(ctx) {
     scheduleRegistrationRemoteHarvest, forgetSpawn, spawnState,
   };
 }
-

@@ -247,6 +247,8 @@ test("spawn happy path: the fixture's SessionStart flips source to hooks and the
   assert.equal(String(card.spawn.spawn_id), String(spawnId), 'card.spawn.spawn_id should match the /api/spawn response');
   assert.equal(card.spawn.tmux_window, res.json.tmux.window, 'card.spawn.tmux_window should match the tmux window name');
   assert.equal(card.spawn.status, 'live', "the spawns row should flip to status 'live' on the session's first hook event");
+  assert.equal(card.spawn.requested_branch, null, 'cwd-mode spawn rows keep requested_branch NULL');
+  assert.equal(card.spawn.branch_mode, null, 'cwd-mode spawn rows keep branch_mode NULL');
 });
 
 test('argv construction: prompt/model/permission-mode survive intact through the FLEETDECK_SPAWN_CMD override, including a shell-metachar-hostile prompt', async (t) => {

@@ -142,19 +142,34 @@ export function createStatements(db) {
     pruneCommands: db.prepare('DELETE FROM commands WHERE at < ?'),
     pruneConflicts: db.prepare('DELETE FROM conflicts WHERE at < ?'),
     pruneSettledMail: db.prepare('DELETE FROM mail WHERE at < ? AND (delivered_at IS NOT NULL OR expired_at IS NOT NULL)'),
+    getSetting: db.prepare('SELECT value FROM settings WHERE key = ?'),
+    setSetting: db.prepare(`INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`),
+    upsertRepo: db.prepare(`INSERT INTO repos
+      (repo_id, repo_name, root, origin_url, default_branch, first_seen_at, last_used_at, source)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(repo_id) DO UPDATE SET
+        repo_name = excluded.repo_name,
+        root = excluded.root,
+        origin_url = COALESCE(repos.origin_url, excluded.origin_url),
+        default_branch = COALESCE(repos.default_branch, excluded.default_branch),
+        last_used_at = excluded.last_used_at`),
+    setRepoOrigin: db.prepare('UPDATE repos SET origin_url = ? WHERE repo_id = ? AND origin_url IS NULL'),
+    repoByName: db.prepare('SELECT * FROM repos WHERE repo_name = ? COLLATE NOCASE ORDER BY last_used_at DESC'),
+    catalogRepos: db.prepare('SELECT * FROM repos ORDER BY last_used_at DESC LIMIT 30'),
     // v1.2 board-spawned sessions. "Active" = status spawning|stalled|live — the
     // rows that get liveness-checked, and the number the board shows as "N live".
     insertSpawn: db.prepare(`INSERT INTO spawns
-      (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, requested_at, status, skip_permissions, remote_control)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'spawning', ?, ?)`),
+      (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, requested_at, status, skip_permissions, remote_control, origin_url, requested_branch, branch_mode)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'spawning', ?, ?, ?, ?, ?)`),
     // H-R6: a spawn's durable row now exists BEFORE any external op (worktree
     // add / tmux window) so a crash in that gap can never orphan a worktree or
     // pane with no owning row. It is born 'provisioning' — excluded from
     // activeSpawns (never liveness-checked or counted live) until its pane
     // exists — and flipped to 'spawning' once launch succeeds.
     insertProvisionalSpawn: db.prepare(`INSERT INTO spawns
-      (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, requested_at, status, skip_permissions, remote_control)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'provisioning', ?, ?)`),
+      (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, requested_at, status, skip_permissions, remote_control, origin_url, requested_branch, branch_mode)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'provisioning', ?, ?, ?, ?, ?)`),
     setSpawnWorktree: db.prepare('UPDATE spawns SET worktree_path = ? WHERE spawn_id = ?'),
     staleProvisioningSpawns: db.prepare("SELECT * FROM spawns WHERE status = 'provisioning'"),
     // H-R5 / R2-5: the newest spawn row still laying claim to a tmux window (a

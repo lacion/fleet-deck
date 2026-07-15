@@ -5,6 +5,21 @@ All notable changes to Fleet Deck are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-07-15
+
+Two features that make the board a place you can read code and start work from,
+not just watch it — each shipped with an adversarial security review.
+
+### Added
+
+- **Read-only file explorer.** Browse any session's working tree from its drawer (the FILES section grows a **⌸ browse** button and its file chips open the viewer), and browse your whole home directory from a new **⌸ Files** button in the header. A file tree that fetches per-directory and refreshes on every expand, a line-numbered file view with a rendered-Markdown toggle, and search — by content or by file name — whose hits open the file at the line. Git roots search through `git grep`/`git ls-files` (`.gitignore`-aware); non-git roots fall back to a bounded walk. Everything the daemon caps (directory size, file bytes, hit count) is shown as truncated, never silently dropped.
+- **Spawn by repo + branch.** The spawn form takes a repo (a URL, `org/repo` shorthand, a local path, or a name the fleet already knows) and a branch instead of a cwd: the daemon clones the repo if it isn't local — into a repos root (`FLEETDECK_REPOS_DIR`, default `~/projects`) whose override persists across restarts — and materializes the branch as its own worktree or in place, creating it from `origin/HEAD` when it exists nowhere and tracking it when it's remote-only. Repos the fleet has seen are kept in a durable catalog that powers recently-used suggestions, and a **🗀** folder picker fills the cwd / repo / repos-root fields without typing a path. A clone runs asynchronously (the spawn returns `202` and the card narrates cloning → live, or tombstones with git's own error).
+
+### Security
+
+- The global home explorer exposes read-only home-directory files (including `~/.ssh`, `~/.aws`) to any bearer-token holder in LAN/standalone mode — loopback is unaffected. It is gated by the same auth and Host walls as every other data endpoint, and enforces the same containment: the root is resolved server-side (the browser only names a path relative to it), `..`/absolute paths are refused, symlinks are never followed out of the root, and `.git` is never readable.
+- Repo-mode spawns build every git command as an argv array (never a shell), refuse repo/branch inputs that could smuggle an option (a leading `-`, a dash-leading ssh host behind `user@`, non-`https`/`ssh` schemes), validate branch names through `git check-ref-format`, run clone/fetch with `GIT_TERMINAL_PROMPT=0`, never recurse submodules, and cap concurrent clones.
+
 ## [0.10.0] - 2026-07-15
 
 A full security / reliability / quality audit of the daemon and board — findings
@@ -210,6 +225,7 @@ Initial public release.
 - A brainless orchestrator: `assign auto` routes a task to the best existing session with a SQL query, not a model call — the core makes zero model calls.
 - One-command plugin install with a self-contained daemon bundle (`node:sqlite` state, nothing to `npm install`); the first session's SessionStart hook elects and launches the daemon. MIT licensed.
 
+[0.11.0]: https://github.com/lacion/fleet-deck/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/lacion/fleet-deck/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/lacion/fleet-deck/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/lacion/fleet-deck/compare/v0.8.0...v0.9.0

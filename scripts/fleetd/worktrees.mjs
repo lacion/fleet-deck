@@ -9,7 +9,7 @@ import path from 'node:path';
 import {
   mapLimit, chmodWritableWhereOwned, blockedPaths, shellQuote,
 } from './helpers.mjs';
-import { execFileP } from './exec.mjs';
+import { execFileP, baseBranch } from './exec.mjs';
 
 export function createWorktrees(ctx) {
   const { q, tick, onMutate } = ctx;
@@ -65,20 +65,6 @@ export function createWorktrees(ctx) {
   // Falls back to the local branch only when no remote-tracking ref exists at
   // all (a repo with no remote); the caller flags that as base_is_local so the
   // board can say its knowledge is local-only.
-  async function baseBranch(worktree) {
-    const head = await execFileP('git', ['-C', worktree, 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], { timeout: 5_000 });
-    if (head.ok && head.out.trim()) return { ref: head.out.trim(), local: false }; // e.g. origin/main
-    for (const name of ['main', 'master']) {
-      const remote = await execFileP('git', ['-C', worktree, 'show-ref', '--verify', '--quiet', `refs/remotes/origin/${name}`], { timeout: 5_000 });
-      if (remote.ok) return { ref: `origin/${name}`, local: false };
-    }
-    for (const name of ['main', 'master']) {
-      const local = await execFileP('git', ['-C', worktree, 'show-ref', '--verify', '--quiet', `refs/heads/${name}`], { timeout: 5_000 });
-      if (local.ok) return { ref: name, local: true };
-    }
-    return null;
-  }
-
   async function inspectWorktree(row) {
     let exists = false;
     try { exists = fs.existsSync(row.worktree_path); } catch { /* unknown path state stays gone */ }

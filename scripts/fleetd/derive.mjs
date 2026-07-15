@@ -14,6 +14,8 @@ import { lastAssistantModel } from './transcript.mjs';
 import * as defaultTmuxAdapter from './spawn.mjs';
 import { createStatements } from './statements.mjs';
 import { createWorktrees } from './worktrees.mjs';
+import { createRepos } from './repos.mjs';
+import { createFiles } from './files.mjs';
 import { pasteImage } from './paste.mjs';
 import { createMail } from './mail.mjs';
 import { createLedger } from './ledger.mjs';
@@ -45,6 +47,9 @@ const CALLSIGNS = ['falcon', 'otter', 'raven', 'lynx', 'orca', 'wren', 'viper', 
 //   FLEETDECK_PANE_MAIL_GRACE_MS     — watcher-first mail grace (1.5 s)
 //   FLEETDECK_PRESUME_DEAD_MS        — silent hook-session timeout (3 h)
 //   FLEETDECK_RETAIN_OFFLINE_MS      — offline retention window (24 h)
+//   FLEETDECK_REPOS_DIR              — default root for managed repository clones
+//   FLEETDECK_CLONE_TIMEOUT_MS        — git clone timeout (default 600 000 = 10 min)
+//   FLEETDECK_CLONE_CONCURRENCY       — max repos cloning at once (default 3)
 // envInt (the reader) + mungeClaudeProjectCwd / claudeTranscriptPath /
 // spawnRowRevivable / claudeEnvArgvPrefix now live in helpers.mjs (re-exported
 // above).
@@ -601,6 +606,12 @@ export function createCore(db, {
   }
   ctx.tombstoneCard = tombstoneCard;
 
+  // Repository catalog, persisted repos-root setting, clone and branch
+  // materialization. It must precede ingest/events/spawns: all three are
+  // catalog writers or consumers.
+  Object.assign(ctx, createRepos(ctx));
+  const { resolveReposDir, setSettings } = ctx;
+
   // File-touch ledger + conflict radar → ledger.mjs.
   Object.assign(ctx, createLedger(ctx));
   const { recordFile, whisperText } = ctx;
@@ -618,7 +629,12 @@ export function createCore(db, {
   const { planMark } = ctx;
 
   // Worktree custody (inspection + allow-listed removal) → worktrees.mjs.
-  const { worktrees, removeWorktree } = createWorktrees(ctx);
+  Object.assign(ctx, createWorktrees(ctx));
+  const { worktrees, removeWorktree } = ctx;
+
+  // Read-only session working-tree browsing + the global home explorer → files.mjs.
+  Object.assign(ctx, createFiles(ctx));
+  const { fsList, fsRead, fsSearch, fsListHome, fsReadHome, fsSearchHome } = ctx;
 
   // v1.2/v1.3 board-spawned session lifecycle → spawns.mjs.
   Object.assign(ctx, createSpawns(ctx));
@@ -695,6 +711,14 @@ export function createCore(db, {
     cleanup,
     worktrees,          // GET /api/worktrees — bounded live git inspection
     removeWorktree,     // POST /api/worktrees/remove — allow-listed destruction
+    resolveReposDir,    // GET /api/settings + /state
+    setSettings,        // POST /api/settings
+    fsList,             // GET /api/sessions/:id/fs/list → {status, body}
+    fsRead,             // GET /api/sessions/:id/fs/read → {status, body}
+    fsSearch,           // GET /api/sessions/:id/fs/search → {status, body}
+    fsListHome,         // GET /api/fs/list → {status, body} (home-rooted)
+    fsReadHome,         // GET /api/fs/read → {status, body}
+    fsSearchHome,       // GET /api/fs/search → {status, body}
     // v1.3 plan library
     planMark,          // POST /api/plans/:id/mark → {status, body}
     // 0.7.1 custom names: POST /api/sessions/:id/name and the `name` command

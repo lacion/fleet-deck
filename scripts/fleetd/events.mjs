@@ -30,6 +30,7 @@ export function createEvents(ctx) {
     // card() can deal it a fresh identity — and, when the hooks arrive out of
     // order, recognise an heir that is already waiting.
     findClearedPredecessor, succeedSession, succeedForwardFromClear,
+    touchRepo,
   } = ctx;
 
   // ---------------------------------------------- hook event -> card state
@@ -89,6 +90,7 @@ export function createEvents(ctx) {
     }
     const upd = { last_seen: Date.now(), events: c.events + 1 };
     let serverBranch = null; // the SERVER-derived branch — the ONLY value ticket detection is allowed to trust
+    let changedRepo = null;
     if (ev.cwd) {
       upd.cwd = ev.cwd;
       const repo = deriveRepo(ev.cwd);
@@ -98,6 +100,7 @@ export function createEvents(ctx) {
       serverBranch = branchOf(ev.cwd);
       const branch = serverBranch || ev.git_branch || null; // display column; payload value only as fallback
       if (branch) upd.branch = branch;
+      if (repo.is_git && repo.repo_id !== c.repo_id) changedRepo = repo;
     }
     // The payload only ever carries a model on SessionStart (a bare id string;
     // the object form is defensive — a future CLI may send the statusline
@@ -120,6 +123,14 @@ export function createEvents(ctx) {
       }
     }
     updateSession(sid, upd);
+    if (changedRepo) {
+      touchRepo({
+        repo_id: changedRepo.repo_id,
+        repo_name: changedRepo.repo_name,
+        root: changedRepo.main_tree,
+        source: 'hooks',
+      });
+    }
     c = { ...c, ...upd };
 
     // Rename-once (late ticket detection): a card born ticketless — or one whose
@@ -604,4 +615,3 @@ export function createEvents(ctx) {
     hookStop, hookSessionEnd, hookHoldQuestion,
   };
 }
-

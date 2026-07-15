@@ -45,13 +45,14 @@ export function blockingOverlayOpen(overlays) {
 }
 
 export function useBoardHotkeys({
-  pendingQs, selQ, setSelQ, termOpen, killOpen, armOpen, renameOpen,
-  setKillAsk, setArmAsk, setRenameAsk, setDrawerSid, setCompose, setSpawnForm, setLanOpen, setWtOpen,
+  pendingQs, selQ, setSelQ, termOpen, killOpen, armOpen, renameOpen, fsOpen,
+  setKillAsk, setArmAsk, setRenameAsk, setDrawerSid, setCompose, setSpawnForm, setLanOpen, setWtOpen, setFsView,
   // Overlay refs. The four above (term/kill/arm/rename) reach this hook directly;
   // compose/spawnForm/lan/wt are plain state in App, which mirrors each into a ref
   // (the same way useTermWindows mirrors killAsk→killOpen) and threads it here, so
-  // ALL eight overlays now suppress the answer/nav keys. blockingOverlayOpen still
-  // ignores any entry that is nullish, so an unthreaded ref is simply inert.
+  // ALL overlays suppress the answer/nav keys. blockingOverlayOpen still ignores
+  // any entry that is nullish, so an unthreaded ref is simply inert. fsOpen (the
+  // file viewer) is a plain boolean, which blockingOverlayOpen also accepts.
   composeOpen, spawnOpen, lanOpen, wtOpen,
 }) {
   useEffect(() => {
@@ -71,6 +72,10 @@ export function useBoardHotkeys({
         if (killOpen.current) { setKillAsk(null); return; }
         if (armOpen.current) { setArmAsk(null); return; }
         if (renameOpen.current) { setRenameAsk(null); return; }
+        // v2.2 — the file viewer opens OVER the drawer; Esc peels it off alone
+        // so the drawer you launched it from is still there behind it. (Its
+        // search box eats the first Esc itself when it holds a query.)
+        if (fsOpen) { setFsView(null); return; }
         setDrawerSid(null); setCompose(null); setSpawnForm(null); setLanOpen(false);
         setWtOpen(false);
         return;
@@ -80,7 +85,7 @@ export function useBoardHotkeys({
       // leak past the overlay; Esc above already owns the modal. Read the same
       // synchronously-read refs so a stale closure can't misroute an answer.
       if (blockingOverlayOpen([
-        termOpen, killOpen, armOpen, renameOpen, composeOpen, spawnOpen, lanOpen, wtOpen,
+        termOpen, killOpen, armOpen, renameOpen, composeOpen, spawnOpen, lanOpen, wtOpen, fsOpen,
       ])) return;
       const idx = pendingQs.findIndex((q) => q.id === selQ);
       if (e.key === 'j' || e.key === 'ArrowDown') {
@@ -110,6 +115,7 @@ export function useBoardHotkeys({
     return () => window.removeEventListener('keydown', onKey);
     // Setters (useState) and the termOpen/killOpen/armOpen/renameOpen refs are
     // referentially stable, so this effect still only re-subscribes when the rail
-    // selection changes.
-  }, [pendingQs, selQ, termOpen, killOpen, armOpen, renameOpen, composeOpen, spawnOpen, lanOpen, wtOpen, setKillAsk, setArmAsk, setRenameAsk, setDrawerSid, setCompose, setSpawnForm, setLanOpen, setWtOpen]);
+    // selection changes (and when the file viewer opens/closes — fsOpen is a
+    // plain boolean, not a ref).
+  }, [pendingQs, selQ, termOpen, killOpen, armOpen, renameOpen, fsOpen, composeOpen, spawnOpen, lanOpen, wtOpen, setKillAsk, setArmAsk, setRenameAsk, setDrawerSid, setCompose, setSpawnForm, setLanOpen, setWtOpen, setFsView]);
 }

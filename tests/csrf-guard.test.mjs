@@ -117,6 +117,15 @@ test('C1: same-origin gate on POSTs, WS upgrades, Host, and Content-Type', async
     assert.equal(res.status, 403, 'a page on another site must not drive /mail');
   });
 
+  await t.test('POST /api/settings rides the same cross-origin wall', async () => {
+    const res = await raw(port, {
+      method: 'POST', path: '/api/settings',
+      headers: { ...JSON_CT, origin: 'https://evil.example' },
+      parts: [JSON.stringify({ repos_dir: '/tmp/evil-repos' })],
+    });
+    assert.equal(res.status, 403, 'a page on another site must not change the managed repos root');
+  });
+
   await t.test('Sec-Fetch-Site: cross-site is refused (403) even with our own Origin absent', async () => {
     const res = await raw(port, {
       method: 'POST', path: '/mail',

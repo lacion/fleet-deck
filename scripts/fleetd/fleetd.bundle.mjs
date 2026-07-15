@@ -2051,9 +2051,9 @@ var require_event_target = __commonJS({
         }
         let wrapper;
         if (type === "message") {
-          wrapper = function onMessage(data, isBinary) {
+          wrapper = function onMessage(data, isBinary2) {
             const event = new MessageEvent("message", {
-              data: isBinary ? data : data.toString()
+              data: isBinary2 ? data : data.toString()
             });
             event[kTarget] = this;
             callListener(handler, this, event);
@@ -3100,8 +3100,8 @@ var require_websocket = __commonJS({
     function receiverOnFinish() {
       this[kWebSocket].emitClose();
     }
-    function receiverOnMessage(data, isBinary) {
-      this[kWebSocket].emit("message", data, isBinary);
+    function receiverOnMessage(data, isBinary2) {
+      this[kWebSocket].emit("message", data, isBinary2);
     }
     function receiverOnPing(data) {
       const websocket = this[kWebSocket];
@@ -3206,8 +3206,8 @@ var require_stream = __commonJS({
         objectMode: false,
         writableObjectMode: false
       });
-      ws.on("message", function message(msg, isBinary) {
-        const data = !isBinary && duplex._readableState.objectMode ? msg.toString() : msg;
+      ws.on("message", function message(msg, isBinary2) {
+        const data = !isBinary2 && duplex._readableState.objectMode ? msg.toString() : msg;
         if (!duplex.push(data)) ws.pause();
       });
       ws.once("error", function error(err) {
@@ -3721,10 +3721,10 @@ var require_websocket_server = __commonJS({
 });
 
 // scripts/fleetd/fleetd.mjs
-import fs12 from "node:fs";
+import fs14 from "node:fs";
 import crypto2 from "node:crypto";
-import os5 from "node:os";
-import path11 from "node:path";
+import os8 from "node:os";
+import path13 from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // scripts/fleetd/db.mjs
@@ -3862,10 +3862,29 @@ CREATE TABLE IF NOT EXISTS spawns (
   status        TEXT DEFAULT 'spawning',  -- spawning | stalled | live | pane-dead | killed | gone
   skip_permissions INTEGER DEFAULT 0,    -- v1.3 unsupervised spawn (either bypass form)
   remote_control INTEGER DEFAULT 0,      -- remote-control wished/enabled for this launch
-  remote_url     TEXT                    -- harvested claude.ai URL; NULL until/if observed
+  remote_url     TEXT,                   -- harvested claude.ai URL; NULL until/if observed
+  origin_url     TEXT,                   -- repo-mode clone source; NULL for cwd-mode spawns
+  requested_branch TEXT,                 -- repo-mode branch requested by the board
+  branch_mode    TEXT                    -- repo-mode worktree | in-place
 );
 CREATE INDEX IF NOT EXISTS idx_spawns_session ON spawns(session_id);
 CREATE INDEX IF NOT EXISTS idx_spawns_status ON spawns(status);
+CREATE TABLE IF NOT EXISTS repos (
+  repo_id        TEXT PRIMARY KEY,
+  repo_name      TEXT,
+  root           TEXT,
+  origin_url     TEXT,
+  default_branch TEXT,
+  first_seen_at  INTEGER,
+  last_used_at   INTEGER,
+  source         TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_repos_name ON repos(repo_name);
+CREATE TABLE IF NOT EXISTS settings (
+  key        TEXT PRIMARY KEY,
+  value      TEXT,
+  updated_at INTEGER
+);
 CREATE TABLE IF NOT EXISTS plans (
   plan_id      INTEGER PRIMARY KEY AUTOINCREMENT,  -- v1.3 plan library (CONTRACT)
   session_id   TEXT,
@@ -3933,6 +3952,15 @@ function migrate(db2) {
   if (spawnCols.length && !spawnCols.includes("remote_url")) {
     db2.exec("ALTER TABLE spawns ADD COLUMN remote_url TEXT");
   }
+  if (spawnCols.length && !spawnCols.includes("origin_url")) {
+    db2.exec("ALTER TABLE spawns ADD COLUMN origin_url TEXT");
+  }
+  if (spawnCols.length && !spawnCols.includes("requested_branch")) {
+    db2.exec("ALTER TABLE spawns ADD COLUMN requested_branch TEXT");
+  }
+  if (spawnCols.length && !spawnCols.includes("branch_mode")) {
+    db2.exec("ALTER TABLE spawns ADD COLUMN branch_mode TEXT");
+  }
 }
 function openDb(file) {
   const db2 = new DatabaseSync(file);
@@ -3956,7 +3984,7 @@ function openDb(file) {
 }
 
 // scripts/fleetd/derive.mjs
-import fs8 from "node:fs";
+import fs10 from "node:fs";
 
 // scripts/fleetd/repo-identity.mjs
 import { execFileSync } from "node:child_process";
@@ -4012,10 +4040,10 @@ function canon(p) {
   }
 }
 function deriveRepo(cwd) {
-  if (!cwd) return { repo_id: null, repo_name: null, worktree: null, is_git: false };
+  if (!cwd) return { repo_id: null, repo_name: null, worktree: null, main_tree: null, is_git: false };
   if (!isDirectory(cwd)) {
     const c = canon(cwd);
-    return { repo_id: c, repo_name: path.basename(c), worktree: c, is_git: false };
+    return { repo_id: c, repo_name: path.basename(c), worktree: c, main_tree: c, is_git: false };
   }
   const hit = cacheGet(identityCache, cwd);
   if (hit !== void 0) return hit;
@@ -4023,17 +4051,19 @@ function deriveRepo(cwd) {
   const common = git(["rev-parse", "--git-common-dir"], cwd);
   if (common) {
     const commonAbs = canon(path.isAbsolute(common) ? common : path.resolve(cwd, common));
-    const mainTree = path.basename(commonAbs) === ".git" ? path.dirname(commonAbs) : commonAbs;
     const toplevel = git(["rev-parse", "--show-toplevel"], cwd);
+    const listedMain = path.basename(commonAbs) === ".git" ? null : git(["worktree", "list", "--porcelain"], cwd)?.split("\n").find((line) => line.startsWith("worktree "))?.slice(9);
+    const mainTree = path.basename(commonAbs) === ".git" ? path.dirname(commonAbs) : canon(listedMain || toplevel || cwd);
     out = {
       repo_id: commonAbs,
       repo_name: path.basename(mainTree).replace(/\.git$/, "") || path.basename(mainTree),
       worktree: toplevel ? canon(toplevel) : canon(cwd),
+      main_tree: canon(mainTree),
       is_git: true
     };
   } else {
     const c = canon(cwd);
-    out = { repo_id: c, repo_name: path.basename(c), worktree: c, is_git: false };
+    out = { repo_id: c, repo_name: path.basename(c), worktree: c, main_tree: c, is_git: false };
   }
   cacheSet(identityCache, cwd, out, out.is_git ? IDENTITY_TTL_MS : NEGATIVE_TTL_MS);
   return out;
@@ -4542,10 +4572,18 @@ import { execFileSync as execFileSync2, spawn as spawnChild } from "node:child_p
 
 // scripts/fleetd/exec.mjs
 import { execFile } from "node:child_process";
-function execFileP(cmd, args, { timeout = 3e4 } = {}) {
+function execFileP(cmd, args, { timeout = 3e4, env } = {}) {
   return new Promise((resolve) => {
     try {
-      execFile(cmd, args, { timeout, windowsHide: true }, (err, stdout, stderr) => {
+      execFile(cmd, args, {
+        timeout,
+        windowsHide: true,
+        // When an env is supplied it is MERGED over the daemon's own (never
+        // replacing it), so PATH and the rest survive while a caller adds e.g.
+        // GIT_TERMINAL_PROMPT=0 to make an unauthenticated clone fail fast
+        // instead of hanging on a credential prompt.
+        ...env ? { env: { ...process.env, ...env } } : {}
+      }, (err, stdout, stderr) => {
         if (err) return resolve({ ok: false, code: err.code, err: String(stderr || err.message || err).trim() });
         resolve({ ok: true, out: stdout });
       });
@@ -4553,6 +4591,19 @@ function execFileP(cmd, args, { timeout = 3e4 } = {}) {
       resolve({ ok: false, err: String(err.message || err) });
     }
   });
+}
+async function baseBranch(worktree) {
+  const head = await execFileP("git", ["-C", worktree, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"], { timeout: 5e3 });
+  if (head.ok && head.out.trim()) return { ref: head.out.trim(), local: false };
+  for (const name of ["main", "master"]) {
+    const remote = await execFileP("git", ["-C", worktree, "show-ref", "--verify", "--quiet", `refs/remotes/origin/${name}`], { timeout: 5e3 });
+    if (remote.ok) return { ref: `origin/${name}`, local: false };
+  }
+  for (const name of ["main", "master"]) {
+    const local = await execFileP("git", ["-C", worktree, "show-ref", "--verify", "--quiet", `refs/heads/${name}`], { timeout: 5e3 });
+    if (local.ok) return { ref: name, local: true };
+  }
+  return null;
 }
 
 // scripts/fleetd/spawn.mjs
@@ -4847,19 +4898,34 @@ function createStatements(db2) {
     pruneCommands: db2.prepare("DELETE FROM commands WHERE at < ?"),
     pruneConflicts: db2.prepare("DELETE FROM conflicts WHERE at < ?"),
     pruneSettledMail: db2.prepare("DELETE FROM mail WHERE at < ? AND (delivered_at IS NOT NULL OR expired_at IS NOT NULL)"),
+    getSetting: db2.prepare("SELECT value FROM settings WHERE key = ?"),
+    setSetting: db2.prepare(`INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`),
+    upsertRepo: db2.prepare(`INSERT INTO repos
+      (repo_id, repo_name, root, origin_url, default_branch, first_seen_at, last_used_at, source)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(repo_id) DO UPDATE SET
+        repo_name = excluded.repo_name,
+        root = excluded.root,
+        origin_url = COALESCE(repos.origin_url, excluded.origin_url),
+        default_branch = COALESCE(repos.default_branch, excluded.default_branch),
+        last_used_at = excluded.last_used_at`),
+    setRepoOrigin: db2.prepare("UPDATE repos SET origin_url = ? WHERE repo_id = ? AND origin_url IS NULL"),
+    repoByName: db2.prepare("SELECT * FROM repos WHERE repo_name = ? COLLATE NOCASE ORDER BY last_used_at DESC"),
+    catalogRepos: db2.prepare("SELECT * FROM repos ORDER BY last_used_at DESC LIMIT 30"),
     // v1.2 board-spawned sessions. "Active" = status spawning|stalled|live — the
     // rows that get liveness-checked, and the number the board shows as "N live".
     insertSpawn: db2.prepare(`INSERT INTO spawns
-      (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, requested_at, status, skip_permissions, remote_control)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'spawning', ?, ?)`),
+      (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, requested_at, status, skip_permissions, remote_control, origin_url, requested_branch, branch_mode)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'spawning', ?, ?, ?, ?, ?)`),
     // H-R6: a spawn's durable row now exists BEFORE any external op (worktree
     // add / tmux window) so a crash in that gap can never orphan a worktree or
     // pane with no owning row. It is born 'provisioning' — excluded from
     // activeSpawns (never liveness-checked or counted live) until its pane
     // exists — and flipped to 'spawning' once launch succeeds.
     insertProvisionalSpawn: db2.prepare(`INSERT INTO spawns
-      (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, requested_at, status, skip_permissions, remote_control)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'provisioning', ?, ?)`),
+      (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, requested_at, status, skip_permissions, remote_control, origin_url, requested_branch, branch_mode)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'provisioning', ?, ?, ?, ?, ?)`),
     setSpawnWorktree: db2.prepare("UPDATE spawns SET worktree_path = ? WHERE spawn_id = ?"),
     staleProvisioningSpawns: db2.prepare("SELECT * FROM spawns WHERE status = 'provisioning'"),
     // H-R5 / R2-5: the newest spawn row still laying claim to a tmux window (a
@@ -5251,10 +5317,10 @@ function createWorktrees(ctx) {
       return true;
     });
   }
-  function worktreeShell(row, exists) {
+  function worktreeShell(row, exists2) {
     return {
       path: row.worktree_path,
-      exists,
+      exists: exists2,
       callsign: row.callsign ?? null,
       session_id: row.session_id ?? null,
       session_alive: row.session_ended_at == null && q.getSession.get(row.session_id) != null,
@@ -5270,30 +5336,17 @@ function createWorktrees(ctx) {
       last_commit: null,
       note: null,
       // why we cannot vouch for it — the board shows this verbatim
-      verdict: exists ? "unknown" : "gone"
+      verdict: exists2 ? "unknown" : "gone"
     };
   }
-  async function baseBranch(worktree) {
-    const head = await execFileP("git", ["-C", worktree, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"], { timeout: 5e3 });
-    if (head.ok && head.out.trim()) return { ref: head.out.trim(), local: false };
-    for (const name of ["main", "master"]) {
-      const remote = await execFileP("git", ["-C", worktree, "show-ref", "--verify", "--quiet", `refs/remotes/origin/${name}`], { timeout: 5e3 });
-      if (remote.ok) return { ref: `origin/${name}`, local: false };
-    }
-    for (const name of ["main", "master"]) {
-      const local = await execFileP("git", ["-C", worktree, "show-ref", "--verify", "--quiet", `refs/heads/${name}`], { timeout: 5e3 });
-      if (local.ok) return { ref: name, local: true };
-    }
-    return null;
-  }
   async function inspectWorktree(row) {
-    let exists = false;
+    let exists2 = false;
     try {
-      exists = fs4.existsSync(row.worktree_path);
+      exists2 = fs4.existsSync(row.worktree_path);
     } catch {
     }
-    const item = worktreeShell(row, exists);
-    if (!exists) return item;
+    const item = worktreeShell(row, exists2);
+    if (!exists2) return item;
     const [branch, status, upstream, log, base] = await Promise.all([
       execFileP("git", ["-C", row.worktree_path, "rev-parse", "--abbrev-ref", "HEAD"], { timeout: 5e3 }),
       execFileP("git", ["-C", row.worktree_path, "status", "--porcelain"], { timeout: 5e3 }),
@@ -5438,18 +5491,891 @@ function createWorktrees(ctx) {
   return { worktrees, removeWorktree };
 }
 
-// scripts/fleetd/paste.mjs
+// scripts/fleetd/repos.mjs
 import fs5 from "node:fs";
 import os2 from "node:os";
 import path3 from "node:path";
+var CONTROL_RE = /[\x00-\x1f\x7f]/;
+var SPACE_OR_CONTROL_RE = /[\s\x00-\x1f\x7f]/;
+function namedError(status, message) {
+  const err = new Error(message);
+  err.status = status;
+  return err;
+}
+function repoNameOf(value) {
+  const clean = String(value).replace(/[\\/]+$/, "");
+  return path3.basename(clean).replace(/\.git$/i, "");
+}
+function unsafeDashSegment(value) {
+  return String(value).split(/[/:@]/).some((segment) => segment.startsWith("-"));
+}
+function parseRepoInput(input) {
+  if (typeof input !== "string" || !input) return { error: "repo must be a non-empty string" };
+  if (SPACE_OR_CONTROL_RE.test(input)) return { error: "repo must not contain whitespace or control characters" };
+  if (input.startsWith("-") || unsafeDashSegment(input)) return { error: "repo must not contain a path or argument segment beginning with -" };
+  if (/^https:\/\//i.test(input)) {
+    let url;
+    try {
+      url = new URL(input);
+    } catch {
+      return { error: "repo is not a valid HTTPS URL" };
+    }
+    const repo_name = repoNameOf(url.pathname);
+    if (!repo_name) return { error: "repository URL must name a repository" };
+    return { kind: "url", origin_url: input, repo_name };
+  }
+  if (/^ssh:\/\//i.test(input)) {
+    let url;
+    try {
+      url = new URL(input);
+    } catch {
+      return { error: "repo is not a valid SSH URL" };
+    }
+    const repo_name = repoNameOf(url.pathname);
+    if (!repo_name) return { error: "repository URL must name a repository" };
+    return { kind: "url", origin_url: input, repo_name };
+  }
+  if (/^[^/@:]+@[^/:]+:.+$/.test(input)) {
+    const repo_name = repoNameOf(input.slice(input.indexOf(":") + 1));
+    if (!repo_name) return { error: "scp-style repository URL must name a repository" };
+    return { kind: "url", origin_url: input, repo_name };
+  }
+  const scheme = /^([A-Za-z][A-Za-z0-9+.-]*):/.exec(input)?.[1]?.toLowerCase();
+  if (scheme) {
+    if (scheme === "http") return { error: "plain http repository URLs are refused \u2014 use https or ssh" };
+    return { error: `repository URL scheme "${scheme}" is refused \u2014 use https or ssh` };
+  }
+  if (path3.isAbsolute(input)) {
+    const repo_name = repoNameOf(input);
+    if (!repo_name) return { error: "absolute repository path must name a repository" };
+    return { kind: "path", origin_url: null, repo_name };
+  }
+  const parts = input.split("/");
+  if (parts.length === 2 && parts.every(Boolean) && !parts.some((part) => part === "." || part === "..")) {
+    return {
+      kind: "shorthand",
+      origin_url: `https://github.com/${input.replace(/\.git$/i, "")}.git`,
+      repo_name: repoNameOf(parts[1])
+    };
+  }
+  if (parts.length > 1 || input === "." || input === ".." || input.startsWith("." + path3.sep)) {
+    return { error: "relative repository paths are refused \u2014 use an absolute path" };
+  }
+  return { kind: "name", origin_url: null, repo_name: repoNameOf(input) };
+}
+function quickBranchCheck(branch) {
+  if (typeof branch !== "string" || !branch) return "branch must be a non-empty string";
+  if (branch.length > 200) return "branch must be 200 characters or fewer";
+  if (branch.startsWith("-")) return "branch must not begin with -";
+  if (SPACE_OR_CONTROL_RE.test(branch)) return "branch must not contain whitespace or control characters";
+  if (branch.includes("..")) return "branch must not contain ..";
+  if (branch.includes("@{")) return "branch must not contain @{";
+  if (branch.endsWith(".lock")) return "branch must not end with .lock";
+  if (branch.startsWith("/") || branch.endsWith("/")) return "branch must not begin or end with /";
+  return null;
+}
+function expandHome(value) {
+  if (value === "~") return os2.homedir();
+  if (value.startsWith("~/")) return path3.join(os2.homedir(), value.slice(2));
+  return value;
+}
+function comparableOrigin(value) {
+  if (!value) return null;
+  if (path3.isAbsolute(value)) {
+    try {
+      return fs5.realpathSync(value);
+    } catch {
+      return path3.resolve(value);
+    }
+  }
+  return String(value).replace(/[\\/]+$/, "").replace(/\.git$/i, "").toLowerCase();
+}
+function exists(pathname) {
+  try {
+    return fs5.existsSync(pathname);
+  } catch {
+    return false;
+  }
+}
+function isDirectory2(pathname) {
+  try {
+    return fs5.statSync(pathname).isDirectory();
+  } catch {
+    return false;
+  }
+}
+async function gitRepoKind(root) {
+  if (!isDirectory2(root)) return null;
+  const probe2 = await execFileP("git", ["-C", root, "rev-parse", "--is-bare-repository"], { timeout: 5e3 });
+  if (!probe2.ok) return null;
+  return probe2.out.trim() === "true" ? "bare" : "worktree";
+}
+async function originOf(root) {
+  const result = await execFileP("git", ["-C", root, "remote", "get-url", "origin"], { timeout: 5e3 });
+  return result.ok ? result.out.trim() || null : null;
+}
+function parseWorktrees(porcelain) {
+  const rows = [];
+  let row = null;
+  for (const line of String(porcelain || "").split("\n")) {
+    if (line.startsWith("worktree ")) {
+      if (row) rows.push(row);
+      row = { path: line.slice(9), branch: null };
+    } else if (row && line.startsWith("branch refs/heads/")) {
+      row.branch = line.slice("branch refs/heads/".length);
+    } else if (!line && row) {
+      rows.push(row);
+      row = null;
+    }
+  }
+  if (row) rows.push(row);
+  return rows;
+}
+function dirtyNames(porcelain) {
+  return String(porcelain || "").split("\n").filter(Boolean).map((line) => line.slice(3).trim()).filter(Boolean);
+}
+function createRepos(ctx) {
+  const { q, onMutate } = ctx;
+  const touchedAt = /* @__PURE__ */ new Map();
+  const provisioningTargets = /* @__PURE__ */ new Map();
+  const cloneCap = (() => {
+    const n = Number(process.env.FLEETDECK_CLONE_CONCURRENCY);
+    return Number.isInteger(n) && n > 0 ? n : 3;
+  })();
+  let clonesInFlight = 0;
+  function reserveCloneSlot() {
+    if (clonesInFlight >= cloneCap) {
+      throw namedError(429, `too many repositories are cloning right now (${clonesInFlight}/${cloneCap}) \u2014 retry in a moment`);
+    }
+    clonesInFlight += 1;
+    let released = false;
+    return () => {
+      if (!released) {
+        released = true;
+        clonesInFlight -= 1;
+      }
+    };
+  }
+  async function validateBranch(branch) {
+    const quick = quickBranchCheck(branch);
+    if (quick) throw namedError(400, quick);
+    const result = await execFileP("git", ["check-ref-format", "--branch", branch], { timeout: 5e3 });
+    if (!result.ok) throw namedError(400, result.err || "branch is not a valid git branch name");
+    return branch;
+  }
+  function resolveReposDir() {
+    const override = q.getSetting.get("repos_dir")?.value;
+    if (override != null) {
+      return { value: override, source: "override", resolved: path3.resolve(expandHome(override)) };
+    }
+    if (process.env.FLEETDECK_REPOS_DIR) {
+      const value2 = process.env.FLEETDECK_REPOS_DIR;
+      return { value: value2, source: "env", resolved: path3.resolve(expandHome(value2)) };
+    }
+    const value = path3.join(os2.homedir(), "projects");
+    return { value, source: "default", resolved: value };
+  }
+  function setReposDir(value) {
+    if (value === null) {
+      q.setSetting.run("repos_dir", null, Date.now());
+      return resolveReposDir();
+    }
+    if (typeof value !== "string" || !value) throw namedError(400, "repos_dir must be an absolute path or null");
+    if (CONTROL_RE.test(value)) throw namedError(400, "repos_dir must not contain NUL or control characters");
+    const resolved = path3.resolve(expandHome(value));
+    if (!path3.isAbsolute(resolved)) throw namedError(400, "repos_dir must be an absolute path (or begin with ~/)");
+    if (path3.dirname(resolved) === resolved) throw namedError(400, "repos_dir must not be the filesystem root");
+    try {
+      if (fs5.existsSync(resolved)) {
+        if (!fs5.statSync(resolved).isDirectory()) throw namedError(400, "repos_dir points to an existing file");
+      }
+    } catch (err) {
+      if (err?.status) throw err;
+      throw namedError(400, `cannot inspect repos_dir: ${err.message || err}`);
+    }
+    q.setSetting.run("repos_dir", value, Date.now());
+    return resolveReposDir();
+  }
+  function setSettings(body) {
+    if (!body || !Object.prototype.hasOwnProperty.call(body, "repos_dir")) {
+      return { status: 400, body: { ok: false, reason: "repos_dir is required" } };
+    }
+    try {
+      const repos_dir = setReposDir(body.repos_dir);
+      onMutate();
+      return { status: 200, body: { ok: true, settings: { repos_dir } } };
+    } catch (err) {
+      return { status: err.status || 400, body: { ok: false, reason: err.message || String(err) } };
+    }
+  }
+  function touchRepo({ repo_id, repo_name, root, origin_url = null, default_branch = null, source }) {
+    if (!repo_id || !repo_name || !root) return;
+    const now = Date.now();
+    if (now - (touchedAt.get(repo_id) ?? 0) < 6e4) return;
+    touchedAt.set(repo_id, now);
+    q.upsertRepo.run(repo_id, repo_name, root, origin_url, default_branch, now, now, source ?? null);
+    if (!origin_url) {
+      Promise.resolve().then(() => originOf(root)).then((found) => {
+        if (found) q.setRepoOrigin.run(found, repo_id);
+      }).catch((err) => console.error("fleetd repo origin backfill error:", err));
+    }
+  }
+  async function resolveTarget(body) {
+    const parsed = parseRepoInput(body?.repo);
+    if (parsed.error) throw namedError(400, parsed.error);
+    let origin_url = parsed.origin_url;
+    let catalogRows = q.repoByName.all(parsed.repo_name);
+    let dest;
+    if (parsed.kind === "name") {
+      const roots = [...new Set(catalogRows.map((row2) => row2.root).filter(Boolean))];
+      if (!roots.length) throw namedError(404, `no known repo named "${parsed.repo_name}" \u2014 paste a URL or a path`);
+      if (roots.length > 1) throw namedError(409, `more than one known repo named "${parsed.repo_name}": ${roots.join(", ")}`);
+      const row = catalogRows.find((item) => item.root === roots[0]);
+      dest = roots[0];
+      origin_url = row?.origin_url ?? null;
+    } else if (parsed.kind === "path") {
+      dest = path3.resolve(body.repo);
+    } else {
+      dest = path3.join(resolveReposDir().resolved, parsed.repo_name);
+    }
+    if (parsed.kind === "path") {
+      const kind = await gitRepoKind(dest);
+      if (kind === "worktree") {
+        return { mode: "local", root: dest, dest, origin_url: await originOf(dest), repo_name: parsed.repo_name };
+      }
+      if (exists(dest) && kind !== "bare") throw namedError(409, `${dest} exists and is not ${body.repo}`);
+      origin_url = dest;
+      dest = path3.join(resolveReposDir().resolved, parsed.repo_name);
+    }
+    const candidates = [dest];
+    if (parsed.kind !== "path") {
+      for (const row of catalogRows) {
+        if (row.root && !candidates.includes(row.root)) candidates.push(row.root);
+      }
+    }
+    for (const candidate of candidates) {
+      if (!exists(candidate)) continue;
+      const kind = await gitRepoKind(candidate);
+      if (kind !== "worktree") {
+        if (candidate === dest) throw namedError(409, `${candidate} exists and is not ${body.repo}`);
+        continue;
+      }
+      const knownOrigin = await originOf(candidate);
+      if (origin_url) {
+        const matches = knownOrigin && comparableOrigin(origin_url) === comparableOrigin(knownOrigin);
+        if (!matches) {
+          if (candidate === dest) throw namedError(409, `${dest} exists and is not ${body.repo}`);
+          continue;
+        }
+      }
+      return { mode: "local", root: candidate, dest: candidate, origin_url: origin_url ?? knownOrigin, repo_name: parsed.repo_name };
+    }
+    if (!origin_url) throw namedError(404, `no usable checkout is known for "${parsed.repo_name}"`);
+    return { mode: "clone", origin_url, dest, repo_name: parsed.repo_name };
+  }
+  async function cloneRepo({ origin_url, dest, spawn_id }) {
+    if (typeof origin_url !== "string" || !origin_url || SPACE_OR_CONTROL_RE.test(origin_url) || origin_url.startsWith("-") || unsafeDashSegment(origin_url)) {
+      throw namedError(409, "refusing to clone an unsafe origin URL");
+    }
+    const reposDir = resolveReposDir().resolved;
+    fs5.mkdirSync(reposDir, { recursive: true });
+    const temp = `${dest}.fd-cloning-${String(spawn_id).slice(0, 8)}`;
+    try {
+      fs5.rmSync(temp, { recursive: true, force: true });
+      const configuredTimeout = Number(process.env.FLEETDECK_CLONE_TIMEOUT_MS);
+      const timeout = Number.isFinite(configuredTimeout) && configuredTimeout > 0 ? configuredTimeout : 6e5;
+      const result = await execFileP("git", ["clone", "--", origin_url, temp], {
+        timeout,
+        env: { GIT_TERMINAL_PROMPT: "0" }
+      });
+      if (!result.ok) throw namedError(409, result.err || "git clone failed");
+      fs5.renameSync(temp, dest);
+      return dest;
+    } catch (err) {
+      try {
+        fs5.rmSync(temp, { recursive: true, force: true });
+      } catch {
+      }
+      throw err?.status ? err : namedError(409, err.message || String(err));
+    }
+  }
+  async function materializeBranch({ root, branch, mode, spawn_id = "", sid = spawn_id, clone = false }) {
+    const localBefore = await execFileP("git", ["-C", root, "show-ref", "--verify", "--quiet", `refs/heads/${branch}`], { timeout: 5e3 });
+    const fetched = await execFileP("git", ["-C", root, "fetch", "origin", "--prune"], {
+      timeout: 12e4,
+      env: { GIT_TERMINAL_PROMPT: "0" }
+    });
+    const local = localBefore.ok ? localBefore : await execFileP("git", ["-C", root, "show-ref", "--verify", "--quiet", `refs/heads/${branch}`], { timeout: 5e3 });
+    const remote = await execFileP("git", ["-C", root, "show-ref", "--verify", "--quiet", `refs/remotes/origin/${branch}`], { timeout: 5e3 });
+    const base = await baseBranch(root);
+    if (!local.ok && !remote.ok && !base) {
+      throw namedError(409, fetched.ok ? `branch ${branch} does not exist and no base branch is available to create it from` : `branch ${branch} not found locally and fetch failed: ${fetched.err}`);
+    }
+    if (mode === "in-place") {
+      const status = await execFileP("git", ["-C", root, "status", "--porcelain"], { timeout: 3e4 });
+      if (!status.ok) throw namedError(409, status.err || "git status failed");
+      const dirty = dirtyNames(status.out);
+      if (dirty.length) {
+        const shown = dirty.slice(0, 3).join(", ");
+        throw namedError(409, `checkout is dirty (${dirty.length} files: ${shown}${dirty.length > 3 ? "\u2026" : ""}) \u2014 use worktree mode or commit`);
+      }
+      const args = local.ok ? ["-C", root, "switch", branch] : remote.ok ? ["-C", root, "switch", "--track", `origin/${branch}`] : ["-C", root, "switch", "-c", branch, base.ref];
+      const switched = await execFileP("git", args, { timeout: 3e4 });
+      if (!switched.ok) throw namedError(409, switched.err || "git switch failed");
+      return { runCwd: root, created: { clone: !!clone, worktree: false }, reused: false };
+    }
+    const listed = await execFileP("git", ["-C", root, "worktree", "list", "--porcelain"], { timeout: 1e4 });
+    if (!listed.ok) throw namedError(409, listed.err || "git worktree list failed");
+    const existing = parseWorktrees(listed.out).find((row) => row.branch === branch);
+    if (existing) return { runCwd: existing.path, created: { clone: !!clone, worktree: false }, reused: true };
+    const safeBranch = branch.replaceAll("/", "-");
+    const basePath = path3.join(path3.dirname(root), `${path3.basename(root)}--fd-${safeBranch}`);
+    const dedupPath = `${basePath}-${String(sid).slice(0, 4) || "repo"}`;
+    const candidates = exists(basePath) ? [dedupPath] : [basePath, dedupPath];
+    let last = null;
+    for (const candidate of candidates) {
+      const existedBefore = exists(candidate);
+      const args = local.ok ? ["-C", root, "worktree", "add", candidate, branch] : remote.ok ? ["-C", root, "worktree", "add", "--track", "-b", branch, candidate, `origin/${branch}`] : ["-C", root, "worktree", "add", "-b", branch, candidate, base.ref];
+      last = await execFileP("git", args, { timeout: 3e4 });
+      if (last.ok) return { runCwd: candidate, created: { clone: !!clone, worktree: true }, reused: false };
+      if (!existedBefore && exists(candidate)) {
+        await execFileP("git", ["-C", root, "worktree", "remove", "--force", candidate], { timeout: 3e4 });
+        try {
+          fs5.rmSync(candidate, { recursive: true, force: true });
+        } catch {
+        }
+        await execFileP("git", ["-C", root, "worktree", "prune"], { timeout: 3e4 });
+      }
+    }
+    throw namedError(409, last?.err || "git worktree add failed");
+  }
+  function canonicalTarget(dest) {
+    try {
+      return fs5.realpathSync(dest);
+    } catch {
+      return path3.resolve(dest);
+    }
+  }
+  function claimTarget(dest, callsign) {
+    const canonical = canonicalTarget(dest);
+    const owner = provisioningTargets.get(canonical);
+    if (owner) throw namedError(409, `${canonical} is already being provisioned by ${owner}`);
+    provisioningTargets.set(canonical, callsign);
+    return () => provisioningTargets.delete(canonical);
+  }
+  function targetOwner(dest) {
+    return provisioningTargets.get(canonicalTarget(dest)) ?? null;
+  }
+  return {
+    validateBranch,
+    resolveReposDir,
+    setReposDir,
+    setSettings,
+    touchRepo,
+    resolveTarget,
+    cloneRepo,
+    materializeBranch,
+    claimTarget,
+    targetOwner,
+    reserveCloneSlot
+  };
+}
+
+// scripts/fleetd/files.mjs
+import fs6 from "node:fs";
+import os3 from "node:os";
+import path4 from "node:path";
+import { spawn } from "node:child_process";
+function envInt2(name, fallback, { min = 1 } = {}) {
+  const n = Number(process.env[name]);
+  return Number.isInteger(n) && n >= min ? n : fallback;
+}
+var LIST_MAX = envInt2("FLEETDECK_FS_LIST_MAX", 1e3);
+var READ_MAX = envInt2("FLEETDECK_FS_READ_MAX", 512 * 1024);
+var SEARCH_HITS = envInt2("FLEETDECK_FS_SEARCH_HITS", 200);
+var SEARCH_TIMEOUT_MS = envInt2("FLEETDECK_FS_SEARCH_TIMEOUT_MS", 5e3);
+var SEARCH_OUTPUT_MAX = 4 * 1024 * 1024;
+var BINARY_SNIFF_BYTES = 8e3;
+var WALK_DEPTH_MAX = 12;
+var WALK_ENTRY_MAX = 2e4;
+var WALK_FILE_MAX = 2e3;
+var WALK_FILE_BYTES = 1024 * 1024;
+var PER_FILE_HITS = 5;
+var searchesInFlight = 0;
+var PathError = class extends Error {
+  constructor(status, reason) {
+    super(reason);
+    this.status = status;
+    this.reason = reason;
+  }
+};
+function within(root, candidate) {
+  return candidate === root || candidate.startsWith(root + path4.sep);
+}
+function validateRelPath(relPath) {
+  if (typeof relPath !== "string" || relPath.length > 4096 || relPath.includes("\0") || path4.isAbsolute(relPath) || relPath.split(/[\\/]/).includes("..")) {
+    throw new PathError(400, "invalid path");
+  }
+  if (relPath.split(/[\\/]/).includes(".git")) throw new PathError(404, "not found");
+}
+function safeJoin(realRoot, relPath) {
+  validateRelPath(relPath);
+  const abs = path4.resolve(realRoot, relPath || ".");
+  if (!within(realRoot, abs)) throw new PathError(400, "invalid path");
+  return abs;
+}
+function isBinary(buf) {
+  const end = Math.min(buf.length, BINARY_SNIFF_BYTES);
+  for (let i = 0; i < end; i += 1) if (buf[i] === 0) return true;
+  return false;
+}
+function fileType(st) {
+  if (st.isSymbolicLink()) return "symlink";
+  if (st.isDirectory()) return "dir";
+  if (st.isFile()) return "file";
+  return "other";
+}
+function clipText(text, max = 400) {
+  if (text.length <= max) return text;
+  let clipped = text.slice(0, max);
+  const last = clipped.charCodeAt(clipped.length - 1);
+  if (last >= 55296 && last <= 56319) clipped = clipped.slice(0, -1);
+  return clipped;
+}
+function failure(err, fallback = "not found") {
+  if (err instanceof PathError) {
+    return { status: err.status, body: { ok: false, reason: err.reason } };
+  }
+  return { status: 404, body: { ok: false, reason: fallback } };
+}
+function realpathInside(realRoot, target) {
+  let real;
+  try {
+    real = fs6.realpathSync(target);
+  } catch {
+    throw new PathError(404, "not found");
+  }
+  if (!within(realRoot, real)) throw new PathError(404, "not found");
+  return real;
+}
+function resolveRoot(ctx, sid) {
+  const session = ctx.q.getSession.get(sid);
+  if (!session) return { error: { status: 404, body: { ok: false, reason: "unknown session" } } };
+  const spawnRow = ctx.q.spawnBySession.get(sid);
+  const candidate = spawnRow?.worktree_path ?? session.worktree ?? session.cwd;
+  try {
+    if (!candidate || !fs6.statSync(candidate).isDirectory()) throw new Error("not a directory");
+    const root = fs6.realpathSync(candidate);
+    return { root, git: deriveRepo(root).is_git };
+  } catch {
+    return { error: { status: 410, body: { ok: false, reason: "working tree no longer exists" } } };
+  }
+}
+function resolveHomeRoot() {
+  const home = os3.homedir();
+  try {
+    if (!home || !fs6.statSync(home).isDirectory()) throw new Error("no home");
+    const root = fs6.realpathSync(home);
+    return { root, git: deriveRepo(root).is_git };
+  } catch {
+    return { error: { status: 410, body: { ok: false, reason: "home directory is unavailable" } } };
+  }
+}
+function runBounded(cmd, args, {
+  cwd,
+  timeoutMs,
+  maxBytes,
+  input = null
+} = {}) {
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = spawn(cmd, args, {
+        cwd,
+        windowsHide: true,
+        stdio: [input == null ? "ignore" : "pipe", "pipe", "pipe"]
+      });
+    } catch (error) {
+      resolve({ code: null, stdout: Buffer.alloc(0), stderr: String(error?.message || error), truncated: false, timedOut: false });
+      return;
+    }
+    const stdout = [];
+    const stderr = [];
+    let bytes = 0;
+    let truncated = false;
+    let timedOut = false;
+    let settled = false;
+    let spawnError = null;
+    const take = (chunks, chunk) => {
+      const remaining = Math.max(0, maxBytes - bytes);
+      if (remaining) chunks.push(chunk.subarray(0, remaining));
+      bytes += chunk.length;
+      if (bytes > maxBytes && !truncated) {
+        truncated = true;
+        try {
+          child.kill("SIGKILL");
+        } catch {
+        }
+      }
+    };
+    child.stdout.on("data", (chunk) => take(stdout, chunk));
+    child.stderr.on("data", (chunk) => take(stderr, chunk));
+    child.on("error", (error) => {
+      spawnError = error;
+    });
+    const timer = setTimeout(() => {
+      timedOut = true;
+      truncated = true;
+      try {
+        child.kill("SIGKILL");
+      } catch {
+      }
+    }, timeoutMs);
+    timer.unref?.();
+    child.on("close", (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({
+        code,
+        stdout: Buffer.concat(stdout),
+        stderr: spawnError ? String(spawnError.message || spawnError) : Buffer.concat(stderr).toString("utf8"),
+        truncated,
+        timedOut
+      });
+    });
+    if (input != null) {
+      child.stdin.on("error", () => {
+      });
+      child.stdin.end(input);
+    }
+  });
+}
+function entryPath(relDir, name) {
+  return relDir ? path4.posix.join(relDir.split(path4.sep).join("/"), name) : name;
+}
+async function ignoredPaths(root, paths, timeoutMs) {
+  if (!paths.length) return /* @__PURE__ */ new Set();
+  const input = Buffer.from(`${paths.join("\0")}\0`);
+  const out = await runBounded("git", ["check-ignore", "-z", "--stdin"], {
+    cwd: root,
+    timeoutMs,
+    maxBytes: SEARCH_OUTPUT_MAX,
+    input
+  });
+  return new Set(out.stdout.toString("utf8").split("\0").filter(Boolean));
+}
+function readOpenFile(abs, maxBytes) {
+  let fd;
+  try {
+    fd = fs6.openSync(abs, fs6.constants.O_RDONLY | (fs6.constants.O_NOFOLLOW || 0));
+    const st = fs6.fstatSync(fd);
+    if (!st.isFile()) return { st, notFile: true };
+    const wanted = Math.min(st.size, Math.max(BINARY_SNIFF_BYTES, maxBytes));
+    const buf = Buffer.alloc(wanted);
+    let offset = 0;
+    while (offset < wanted) {
+      const n = fs6.readSync(fd, buf, offset, wanted - offset, offset);
+      if (!n) break;
+      offset += n;
+    }
+    return { st, buf: buf.subarray(0, offset) };
+  } finally {
+    if (fd != null) fs6.closeSync(fd);
+  }
+}
+function parseGitGrep(raw, hitCap) {
+  const hits = [];
+  const perFile = /* @__PURE__ */ new Map();
+  let overflow = false;
+  for (const record of raw.toString("utf8").split("\n")) {
+    if (!record) continue;
+    const match = /^(.*?):([0-9]+):(.*)$/.exec(record);
+    if (!match) continue;
+    const count = perFile.get(match[1]) || 0;
+    if (count >= PER_FILE_HITS) continue;
+    perFile.set(match[1], count + 1);
+    if (hits.length >= hitCap) {
+      overflow = true;
+      break;
+    }
+    hits.push({ path: match[1], line: Number(match[2]), text: clipText(match[3]) });
+  }
+  return { hits, overflow };
+}
+async function gitSearch(root, q, mode, deadline) {
+  const remaining = () => Math.max(1, deadline - Date.now());
+  if (mode === "name") {
+    const out2 = await runBounded("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], {
+      cwd: root,
+      timeoutMs: remaining(),
+      maxBytes: SEARCH_OUTPUT_MAX
+    });
+    const needle = q.toLocaleLowerCase();
+    const matches = out2.stdout.toString("utf8").split("\0").filter(Boolean).filter((name) => name.toLocaleLowerCase().includes(needle));
+    return {
+      hits: matches.slice(0, SEARCH_HITS).map((file) => ({ path: file })),
+      truncated: out2.truncated || out2.code !== 0 || matches.length > SEARCH_HITS
+    };
+  }
+  const baseArgs = ["grep", "-I", "-n", "-i", "-F", "--untracked"];
+  let out = await runBounded("git", [...baseArgs, "--max-count=5", "-e", q, "--"], {
+    cwd: root,
+    timeoutMs: remaining(),
+    maxBytes: SEARCH_OUTPUT_MAX
+  });
+  const optionError = out.code !== 0 && out.code !== 1 && /max-count|unknown option|unrecognized option/i.test(out.stderr);
+  if (optionError && Date.now() < deadline) {
+    out = await runBounded("git", [...baseArgs, "-e", q, "--"], {
+      cwd: root,
+      timeoutMs: remaining(),
+      maxBytes: SEARCH_OUTPUT_MAX
+    });
+  }
+  const parsed = parseGitGrep(out.stdout, SEARCH_HITS);
+  return {
+    hits: parsed.hits,
+    truncated: out.truncated || out.code !== 0 && out.code !== 1 || parsed.overflow
+  };
+}
+var WALK_YIELD_EVERY = 512;
+var yieldToLoop = () => new Promise((resolve) => {
+  setImmediate(resolve);
+});
+async function walkSearch(root, q, mode, deadline) {
+  const hits = [];
+  const needle = q.toLocaleLowerCase();
+  const stack = [{ dir: root, rel: "", depth: 0 }];
+  let visited = 0;
+  let scannedFiles = 0;
+  let truncated = false;
+  let stop = false;
+  while (stack.length && !stop) {
+    if (Date.now() >= deadline) {
+      truncated = true;
+      stop = true;
+      break;
+    }
+    const current = stack.pop();
+    let names;
+    try {
+      names = fs6.readdirSync(current.dir).sort((a, b) => a.localeCompare(b));
+    } catch {
+      continue;
+    }
+    for (let i = names.length - 1; i >= 0; i -= 1) {
+      const name = names[i];
+      if (name === ".git") continue;
+      if (++visited > WALK_ENTRY_MAX || Date.now() >= deadline) {
+        truncated = true;
+        stop = true;
+        break;
+      }
+      if (visited % WALK_YIELD_EVERY === 0) await yieldToLoop();
+      const abs = path4.join(current.dir, name);
+      const rel = entryPath(current.rel, name);
+      let st;
+      try {
+        st = fs6.lstatSync(abs);
+      } catch {
+        continue;
+      }
+      if (st.isSymbolicLink()) continue;
+      if (st.isDirectory()) {
+        if (current.depth < WALK_DEPTH_MAX) stack.push({ dir: abs, rel, depth: current.depth + 1 });
+        else truncated = true;
+        continue;
+      }
+      if (!st.isFile()) continue;
+      if (mode === "name") {
+        if (rel.toLocaleLowerCase().includes(needle)) hits.push({ path: rel });
+      } else {
+        if (scannedFiles >= WALK_FILE_MAX) {
+          truncated = true;
+          stop = true;
+          break;
+        }
+        scannedFiles += 1;
+        if (st.size > WALK_FILE_BYTES) {
+          truncated = true;
+          continue;
+        }
+        let opened;
+        try {
+          opened = readOpenFile(abs, WALK_FILE_BYTES);
+        } catch {
+          continue;
+        }
+        if (opened.notFile || isBinary(opened.buf)) continue;
+        let perFile = 0;
+        const lines = opened.buf.toString("utf8").split("\n");
+        for (let line = 0; line < lines.length && perFile < PER_FILE_HITS; line += 1) {
+          if (!lines[line].toLocaleLowerCase().includes(needle)) continue;
+          hits.push({ path: rel, line: line + 1, text: clipText(lines[line].replace(/\r$/, "")) });
+          perFile += 1;
+          if (hits.length >= SEARCH_HITS) {
+            truncated = true;
+            stop = true;
+            break;
+          }
+        }
+      }
+      if (hits.length >= SEARCH_HITS) {
+        truncated = true;
+        stop = true;
+        break;
+      }
+    }
+  }
+  return { hits: hits.slice(0, SEARCH_HITS), truncated };
+}
+function createFiles(ctx) {
+  async function listAt(resolve, relPath) {
+    let abs;
+    try {
+      validateRelPath(relPath);
+    } catch (err) {
+      return failure(err);
+    }
+    const resolved = resolve();
+    if (resolved.error) return resolved.error;
+    const { root, git: git2 } = resolved;
+    try {
+      abs = safeJoin(root, relPath);
+      const real = realpathInside(root, abs);
+      const own = fs6.lstatSync(abs);
+      if (!own.isDirectory() || own.isSymbolicLink()) throw new PathError(404, "not found");
+      const names = fs6.readdirSync(real).filter((name) => name !== ".git");
+      const truncated = names.length > LIST_MAX;
+      const entries = [];
+      for (const name of names) {
+        let st;
+        try {
+          st = fs6.lstatSync(path4.join(real, name));
+        } catch {
+          continue;
+        }
+        entries.push({ name, type: fileType(st), size: st.size, mtime: st.mtimeMs, ignored: false });
+      }
+      entries.sort((a, b) => {
+        const ad = a.type === "dir" ? 0 : 1;
+        const bd = b.type === "dir" ? 0 : 1;
+        return ad - bd || a.name.localeCompare(b.name);
+      });
+      entries.splice(LIST_MAX);
+      if (git2 && !truncated) {
+        const rels = entries.map((entry) => entryPath(relPath, entry.name));
+        const ignored = await ignoredPaths(root, rels, SEARCH_TIMEOUT_MS);
+        for (let i = 0; i < entries.length; i += 1) entries[i].ignored = ignored.has(rels[i]);
+      }
+      return { status: 200, body: { ok: true, path: relPath, git: git2, entries, truncated } };
+    } catch (err) {
+      return failure(err);
+    }
+  }
+  async function readAt(resolve, relPath) {
+    try {
+      validateRelPath(relPath);
+    } catch (err) {
+      return failure(err);
+    }
+    const resolved = resolve();
+    if (resolved.error) return resolved.error;
+    const { root } = resolved;
+    try {
+      const abs = safeJoin(root, relPath);
+      if (abs === root) return { status: 404, body: { ok: false, reason: "is a directory" } };
+      realpathInside(root, path4.dirname(abs));
+      let lst;
+      try {
+        lst = fs6.lstatSync(abs);
+      } catch {
+        throw new PathError(404, "not found");
+      }
+      if (lst.isDirectory()) return { status: 404, body: { ok: false, reason: "is a directory" } };
+      if (!lst.isFile() || lst.isSymbolicLink()) throw new PathError(404, "not found");
+      const opened = readOpenFile(abs, READ_MAX);
+      if (opened.notFile) throw new PathError(404, "not found");
+      const binary = isBinary(opened.buf);
+      const truncated = opened.st.size > READ_MAX;
+      const body = {
+        ok: true,
+        path: relPath,
+        size: opened.st.size,
+        mtime: opened.st.mtimeMs,
+        binary,
+        truncated
+      };
+      if (!binary) {
+        let content = opened.buf.subarray(0, Math.min(opened.buf.length, READ_MAX));
+        if (truncated) {
+          const newline = content.lastIndexOf(10);
+          content = newline < 0 ? Buffer.alloc(0) : content.subarray(0, newline + 1);
+        }
+        body.content = content.toString("utf8");
+      }
+      return { status: 200, body };
+    } catch (err) {
+      return failure(err);
+    }
+  }
+  async function searchAt(resolve, q, { mode } = {}) {
+    if (typeof q !== "string" || q.length < 2 || q.length > 256) {
+      return { status: 400, body: { ok: false, reason: "query must be 2\u2013256 characters" } };
+    }
+    if (mode !== "content" && mode !== "name") {
+      return { status: 400, body: { ok: false, reason: "invalid search mode" } };
+    }
+    const resolved = resolve();
+    if (resolved.error) return resolved.error;
+    if (searchesInFlight >= 2) {
+      return { status: 429, body: { ok: false, reason: "search busy \u2014 try again" } };
+    }
+    searchesInFlight += 1;
+    const started = Date.now();
+    try {
+      const deadline = started + SEARCH_TIMEOUT_MS;
+      const result = resolved.git ? await gitSearch(resolved.root, q, mode, deadline) : await walkSearch(resolved.root, q, mode, deadline);
+      return {
+        status: 200,
+        body: {
+          ok: true,
+          mode,
+          q,
+          backend: resolved.git ? "git" : "walk",
+          hits: result.hits,
+          truncated: result.truncated,
+          elapsed_ms: Date.now() - started
+        }
+      };
+    } finally {
+      searchesInFlight -= 1;
+    }
+  }
+  const sessionRoot = (sid) => () => resolveRoot(ctx, sid);
+  const homeRoot = () => resolveHomeRoot();
+  return {
+    fsList: (sid, p) => listAt(sessionRoot(sid), p),
+    fsRead: (sid, p) => readAt(sessionRoot(sid), p),
+    fsSearch: (sid, q, opts) => searchAt(sessionRoot(sid), q, opts),
+    fsListHome: (p) => listAt(homeRoot, p),
+    fsReadHome: (p) => readAt(homeRoot, p),
+    fsSearchHome: (q, opts) => searchAt(homeRoot, q, opts)
+  };
+}
+
+// scripts/fleetd/paste.mjs
+import fs7 from "node:fs";
+import os4 from "node:os";
+import path5 from "node:path";
 import crypto from "node:crypto";
 var MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 var PRUNE_AFTER_MS = 24 * 60 * 60 * 1e3;
 var MAX_KEPT_PASTES = 50;
 var ACCEPT = "png, jpeg, gif, webp";
 function pasteDir() {
-  const home = process.env.FLEETDECK_HOME || path3.join(os2.homedir() || os2.tmpdir(), ".fleetdeck");
-  return path3.join(home, "pastes");
+  const home = process.env.FLEETDECK_HOME || path5.join(os4.homedir() || os4.tmpdir(), ".fleetdeck");
+  return path5.join(home, "pastes");
 }
 function sniffImage(buf) {
   if (buf.length >= 8 && buf[0] === 137 && buf[1] === 80 && buf[2] === 78 && buf[3] === 71 && buf[4] === 13 && buf[5] === 10 && buf[6] === 26 && buf[7] === 10) return "png";
@@ -5465,15 +6391,15 @@ function looksBase64(s) {
 function ensurePasteDir() {
   const dir = pasteDir();
   try {
-    fs5.mkdirSync(path3.dirname(dir), { recursive: true });
+    fs7.mkdirSync(path5.dirname(dir), { recursive: true });
   } catch {
   }
   try {
-    fs5.mkdirSync(dir, { mode: 448 });
+    fs7.mkdirSync(dir, { mode: 448 });
   } catch (err) {
     if (err?.code !== "EEXIST") throw err;
   }
-  const st = fs5.lstatSync(dir);
+  const st = fs7.lstatSync(dir);
   if (st.isSymbolicLink() || !st.isDirectory()) {
     throw new Error(`${dir} is not a real directory; refusing to write pastes there`);
   }
@@ -5485,24 +6411,24 @@ function ensurePasteDir() {
 function pruneOldPastes(dir, now = Date.now(), protect = null) {
   let names;
   try {
-    names = fs5.readdirSync(dir);
+    names = fs7.readdirSync(dir);
   } catch {
     return;
   }
   const regular = [];
   for (const name of names) {
-    const p = path3.join(dir, name);
+    const p = path5.join(dir, name);
     if (protect && p === protect) continue;
     let st;
     try {
-      st = fs5.lstatSync(p);
+      st = fs7.lstatSync(p);
     } catch {
       continue;
     }
     if (!st.isFile()) continue;
     if (now - st.mtimeMs > PRUNE_AFTER_MS) {
       try {
-        fs5.unlinkSync(p);
+        fs7.unlinkSync(p);
       } catch {
       }
     } else {
@@ -5514,7 +6440,7 @@ function pruneOldPastes(dir, now = Date.now(), protect = null) {
     regular.sort((a, b) => a.mtime - b.mtime);
     for (const { p } of regular.slice(0, regular.length - budget)) {
       try {
-        fs5.unlinkSync(p);
+        fs7.unlinkSync(p);
       } catch {
       }
     }
@@ -5545,14 +6471,14 @@ function pasteImage(ev) {
     return { status: 500, body: { ok: false, reason: "cannot prepare paste dir" } };
   }
   const name = `paste-${crypto.randomUUID()}.${ext}`;
-  const file = path3.join(dir, name);
+  const file = path5.join(dir, name);
   const tmp = `${file}.tmp`;
   try {
-    fs5.writeFileSync(tmp, buf, { mode: 384, flag: "wx" });
-    fs5.renameSync(tmp, file);
+    fs7.writeFileSync(tmp, buf, { mode: 384, flag: "wx" });
+    fs7.renameSync(tmp, file);
   } catch (err) {
     try {
-      fs5.unlinkSync(tmp);
+      fs7.unlinkSync(tmp);
     } catch {
     }
     console.error("fleetd paste: write failed:", err);
@@ -5767,14 +6693,14 @@ function createMail(ctx) {
 }
 
 // scripts/fleetd/ledger.mjs
-import path4 from "node:path";
+import path6 from "node:path";
 var CONFLICT_WINDOW_MS = 30 * 60 * 1e3;
 function createLedger(ctx) {
   const { q, card, mail, tick } = ctx;
   function recordFile(sid, absFile, editorCard) {
     if (!absFile) return null;
     const now = Date.now();
-    const abs = path4.isAbsolute(absFile) ? absFile : path4.resolve(editorCard.cwd || "/", absFile);
+    const abs = path6.isAbsolute(absFile) ? absFile : path6.resolve(editorCard.cwd || "/", absFile);
     const key = ledgerKey(abs, editorCard);
     const touches = q.recentTouches.all(key.repo_id ?? "", key.rel_path, now - CONFLICT_WINDOW_MS);
     const rivalTouches = touches.filter((t) => {
@@ -5789,7 +6715,7 @@ function createLedger(ctx) {
     const severity = sameTree ? "warning" : "info";
     const rivalNames = rivals.map((r) => card(r).callsign).join(", ");
     q.insertConflict.run(now, key.repo_id ?? "", key.rel_path, severity, JSON.stringify([sid, ...rivals]));
-    tick(`\u26A0 conflict: ${editorCard.callsign} and ${rivalNames} both touching ${path4.basename(key.rel_path)}`);
+    tick(`\u26A0 conflict: ${editorCard.callsign} and ${rivalNames} both touching ${path6.basename(key.rel_path)}`);
     for (const r of rivals) {
       mail(r, "fleetdeck", severity === "warning" ? `Heads up: ${editorCard.callsign} is also editing ${key.rel_path}. Coordinate before you overwrite each other.` : `Heads up: ${editorCard.callsign} is editing ${key.rel_path} in another worktree of this repo \u2014 a future merge conflict announcing itself early.`);
     }
@@ -5804,7 +6730,7 @@ function createLedger(ctx) {
 
 // scripts/fleetd/ingest.mjs
 function createIngest(ctx) {
-  const { q, assignCallsign, updateSession, tick, onMutate } = ctx;
+  const { q, assignCallsign, updateSession, tick, onMutate, touchRepo } = ctx;
   function ingestAgentsPoll(records) {
     if (!Array.isArray(records)) return;
     const live = records.filter((rec) => rec && typeof rec === "object" && rec.sessionId && rec.kind === "interactive" && pidAlive(rec.pid));
@@ -5812,9 +6738,9 @@ function createIngest(ctx) {
       const sid = rec.sessionId;
       const rawState = rec.state ?? rec.status;
       const existing = q.getSession.get(sid);
+      const cwd = rec.cwd || null;
+      const repo = cwd ? deriveRepo(cwd) : { repo_id: null, repo_name: null, worktree: null, main_tree: null, is_git: false };
       if (!existing) {
-        const cwd = rec.cwd || null;
-        const repo = cwd ? deriveRepo(cwd) : { repo_id: null, repo_name: null, worktree: null };
         const branch = cwd ? branchOf(cwd, { fresh: true }) : null;
         const ticket = ticketFromBranch(branch);
         const callsign = assignCallsign(sid, ticket);
@@ -5834,19 +6760,43 @@ function createIngest(ctx) {
           startedAt,
           now
         );
+        if (repo.is_git) {
+          touchRepo({
+            repo_id: repo.repo_id,
+            repo_name: repo.repo_name,
+            root: repo.main_tree,
+            source: "hooks"
+          });
+        }
         if (ticket) updateSession(sid, { ticket, ticket_source: "branch" });
         tick(`${callsign} joined the fleet (agents CLI)`);
         onMutate();
       } else if (existing.source === "agents-cli") {
+        const repoChanged = repo.is_git && repo.repo_id !== existing.repo_id;
         updateSession(sid, {
           col: colFromAgentState(rawState, false),
           note: "seen via agents CLI",
           last_seen: Date.now(),
           ended_at: null,
           // reappearance revives an absence-tombstoned card
-          end_reason: null
+          end_reason: null,
           // and clears the absence guess stamped below
+          ...repoChanged ? {
+            cwd,
+            repo_id: repo.repo_id,
+            repo_name: repo.repo_name,
+            worktree: repo.worktree,
+            branch: branchOf(cwd)
+          } : {}
         });
+        if (repoChanged) {
+          touchRepo({
+            repo_id: repo.repo_id,
+            repo_name: repo.repo_name,
+            root: repo.main_tree,
+            source: "hooks"
+          });
+        }
         onMutate();
       }
     }
@@ -6042,8 +6992,8 @@ function createPlans(ctx) {
 }
 
 // scripts/fleetd/spawns.mjs
-import fs6 from "node:fs";
-import path5 from "node:path";
+import fs8 from "node:fs";
+import path7 from "node:path";
 import { randomUUID as randomUUID2 } from "node:crypto";
 function createSpawns(ctx) {
   const {
@@ -6067,7 +7017,15 @@ function createSpawns(ctx) {
     // 0.7.1: the boot heal for /clear forks stranded BEFORE succession shipped.
     succeedSession,
     CLEAR_SUCCESSION_MS,
-    hasLivePane
+    hasLivePane,
+    validateBranch,
+    resolveTarget,
+    cloneRepo,
+    materializeBranch,
+    touchRepo,
+    claimTarget,
+    targetOwner,
+    reserveCloneSlot
   } = ctx;
   function spawnCapability() {
     const base = { active: q.countActiveSpawns.get().n };
@@ -6082,9 +7040,13 @@ function createSpawns(ctx) {
     }
     return { available: true, ...base };
   }
-  function createSpawnedCard(sid, cwd, prompt) {
-    const repo = deriveRepo(cwd);
-    const branch = cwd ? branchOf(cwd, { fresh: true }) : null;
+  function createSpawnedCard(sid, cwd, prompt, overrides = null) {
+    const repo = overrides ? {
+      repo_id: overrides.repo_id ?? null,
+      repo_name: overrides.repo_name ?? null,
+      worktree: overrides.worktree ?? null
+    } : deriveRepo(cwd);
+    const branch = overrides?.branch ?? (cwd ? branchOf(cwd, { fresh: true }) : null);
     const ticket = ticketFromBranch(branch);
     const callsign = assignCallsign(sid, ticket);
     const now = Date.now();
@@ -6100,6 +7062,7 @@ function createSpawns(ctx) {
       now,
       now
     );
+    if (overrides?.note) updateSession(sid, { note: overrides.note });
     if (ticket) updateSession(sid, { ticket, ticket_source: "branch" });
     return q.getSession.get(sid);
   }
@@ -6197,17 +7160,32 @@ function createSpawns(ctx) {
     registrationRemoteHarvests.set(spawn_id, promise);
     return promise;
   }
-  async function spawnCompensate({ spawn_id, session_id, callsign, cwd, worktree_path, tmux_window, reason }) {
-    if (worktree_path) {
+  async function spawnCompensate({
+    spawn_id,
+    session_id,
+    callsign,
+    cwd,
+    worktree_path,
+    tmux_window,
+    reason,
+    created = { clone: false, worktree: !!worktree_path }
+  }) {
+    if (worktree_path && created.worktree) {
       try {
         const rm = await execFileP("git", ["-C", cwd, "worktree", "remove", "--force", worktree_path], { timeout: 3e4 });
         if (!rm.ok) {
           try {
-            fs6.rmSync(worktree_path, { recursive: true, force: true });
+            fs8.rmSync(worktree_path, { recursive: true, force: true });
           } catch {
           }
         }
         await execFileP("git", ["-C", cwd, "worktree", "prune"], { timeout: 3e4 });
+      } catch {
+      }
+    }
+    if (cwd && created.clone) {
+      try {
+        fs8.rmSync(cwd, { recursive: true, force: true });
       } catch {
       }
     }
@@ -6221,12 +7199,82 @@ function createSpawns(ctx) {
     forgetSpawn(spawn_id);
     spawnFailed(session_id, callsign, reason);
   }
-  async function spawn2(body) {
+  async function launchPane({
+    spawn_id,
+    session_id,
+    callsign,
+    tmux_session,
+    tmux_window,
+    requestedCwd,
+    runCwd,
+    cleanupRoot,
+    worktree_path,
+    body,
+    skipPermissions,
+    created = { clone: false, worktree: !!worktree_path }
+  }) {
+    const argv = [...claudeEnvArgvPrefix(port, home), "claude", "--session-id", session_id];
+    if (body?.model) argv.push("--model", body.model);
+    if (body?.permission_mode) argv.push("--permission-mode", body.permission_mode);
+    if (body?.dangerously_skip_permissions === true) argv.push("--dangerously-skip-permissions");
+    if (body?.remote_control === true) argv.push("--remote-control", callsign);
+    if (body?.prompt) argv.push("--", body.prompt);
+    const compensate = (reason) => spawnCompensate({
+      spawn_id,
+      session_id,
+      callsign,
+      cwd: cleanupRoot,
+      worktree_path,
+      tmux_window,
+      reason,
+      created
+    });
+    const override = tmuxAdapter.spawnOverrideCmd();
+    if (override) {
+      const spec = {
+        spawn_id,
+        session_id,
+        callsign,
+        port,
+        cwd: runCwd,
+        requested_cwd: requestedCwd,
+        prompt: body?.prompt ?? null,
+        model: body?.model ?? null,
+        permission_mode: body?.permission_mode ?? null,
+        worktree_path,
+        dangerously_skip_permissions: body?.dangerously_skip_permissions === true,
+        skip_permissions: skipPermissions,
+        remote_control: body?.remote_control === true,
+        tmux: { session: tmux_session, window: tmux_window },
+        argv
+      };
+      tmuxAdapter.launchOverride(override, spec, (err) => compensate(`spawn override: ${err.message || err}`).catch(() => {
+      }));
+    } else {
+      try {
+        await tmuxAdapter.ensureSession(port);
+        await tmuxAdapter.newWindow({ port, callsign, cwd: runCwd, argv });
+      } catch (err) {
+        await compensate(String(err.message || err));
+        return { status: 500, body: { ok: false, reason: `tmux spawn failed: ${err.message || err}` } };
+      }
+    }
+    q.setSpawnStatus.run("spawning", spawn_id);
+    updateSession(session_id, { note: "spawning\u2026" });
+    tick(`\u{1F680} spawned ${callsign} \u2014 tmux window ${tmux_window}${skipPermissions ? " (unsupervised)" : ""}`);
+    scheduleNudge(spawn_id, tmux_window, callsign);
+    onMutate();
+    return {
+      status: 200,
+      body: { ok: true, spawn_id, session_id, callsign, tmux: { session: tmux_session, window: tmux_window } }
+    };
+  }
+  async function spawn3(body) {
     const cap = spawnCapability();
     if (!cap.available) {
       return { status: 400, body: { ok: false, reason: `spawning unavailable: ${cap.reason}` } };
     }
-    for (const k of ["cwd", "prompt", "model", "permission_mode"]) {
+    for (const k of ["cwd", "repo", "branch", "branch_mode", "prompt", "model", "permission_mode"]) {
       if (body?.[k] != null && typeof body[k] !== "string") {
         return { status: 400, body: { ok: false, reason: `${k} must be a string` } };
       }
@@ -6240,11 +7288,222 @@ function createSpawns(ctx) {
     if (body?.remote_control != null && typeof body.remote_control !== "boolean") {
       return { status: 400, body: { ok: false, reason: "remote_control must be a boolean" } };
     }
+    const hasRepo = body?.repo != null;
+    const hasCwd = body?.cwd != null;
+    if (hasRepo && hasCwd) {
+      return { status: 400, body: { ok: false, reason: "provide either cwd or repo, not both" } };
+    }
     const skipPermissions = body?.dangerously_skip_permissions === true || body?.permission_mode === "bypassPermissions";
+    if (hasRepo) {
+      if (body?.worktree === true) {
+        return { status: 400, body: { ok: false, reason: "branch_mode replaces worktree in repo mode" } };
+      }
+      if (!body.branch) return { status: 400, body: { ok: false, reason: "branch is required in repo mode" } };
+      const branchMode = body.branch_mode ?? "worktree";
+      if (!["worktree", "in-place"].includes(branchMode)) {
+        return { status: 400, body: { ok: false, reason: "branch_mode must be worktree or in-place" } };
+      }
+      try {
+        await validateBranch(body.branch);
+      } catch (err) {
+        return { status: 400, body: { ok: false, reason: err.message || String(err) } };
+      }
+      let target;
+      try {
+        target = await resolveTarget(body);
+      } catch (err) {
+        return { status: err.status || 400, body: { ok: false, reason: err.message || String(err) } };
+      }
+      const targetPath = target.mode === "clone" ? target.dest : target.root;
+      const owner = targetOwner(targetPath);
+      if (owner) {
+        return { status: 409, body: { ok: false, reason: `${path7.resolve(targetPath)} is already being provisioned by ${owner}` } };
+      }
+      let releaseCloneSlot = () => {
+      };
+      if (target.mode === "clone") {
+        try {
+          releaseCloneSlot = reserveCloneSlot();
+        } catch (err) {
+          return { status: err.status || 429, body: { ok: false, reason: err.message || String(err) } };
+        }
+      }
+      const session_id2 = randomUUID2();
+      const spawn_id2 = randomUUID2();
+      const initialNote = target.mode === "clone" ? `cloning ${target.repo_name}\u2026` : `preparing ${body.branch}\u2026`;
+      const c2 = createSpawnedCard(session_id2, targetPath, body?.prompt, {
+        repo_name: target.repo_name,
+        branch: body.branch,
+        note: initialNote
+      });
+      const callsign2 = c2.callsign;
+      const releaseTarget = claimTarget(targetPath, callsign2);
+      const tmux_session2 = tmuxAdapter.sessionName(port);
+      const tmux_window2 = tmuxAdapter.windowName(port, callsign2);
+      q.insertProvisionalSpawn.run(
+        spawn_id2,
+        session_id2,
+        callsign2,
+        tmux_session2,
+        tmux_window2,
+        targetPath,
+        null,
+        Date.now(),
+        skipPermissions ? 1 : 0,
+        body?.remote_control === true ? 1 : 0,
+        target.origin_url ?? null,
+        body.branch,
+        branchMode
+      );
+      const finishMaterialization = async (materialized, source) => {
+        const worktree_path2 = branchMode === "worktree" ? materialized.runCwd : null;
+        if (worktree_path2) q.setSpawnWorktree.run(worktree_path2, spawn_id2);
+        const repo = deriveRepo(materialized.runCwd);
+        updateSession(session_id2, {
+          cwd: materialized.runCwd,
+          repo_id: repo.repo_id,
+          repo_name: repo.repo_name,
+          worktree: repo.worktree,
+          branch: branchOf(materialized.runCwd, { fresh: true }) ?? body.branch
+        });
+        const defaultRef = await baseBranch(target.mode === "clone" ? target.dest : target.root);
+        touchRepo({
+          repo_id: repo.repo_id,
+          repo_name: repo.repo_name,
+          root: repo.main_tree,
+          origin_url: target.origin_url ?? null,
+          default_branch: defaultRef?.ref?.replace(/^origin\//, "") ?? null,
+          source
+        });
+        return worktree_path2;
+      };
+      if (target.mode === "local") {
+        try {
+          let materialized;
+          let worktree_path2 = null;
+          try {
+            materialized = await materializeBranch({
+              root: target.root,
+              branch: body.branch,
+              mode: branchMode,
+              spawn_id: spawn_id2,
+              sid: session_id2
+            });
+          } catch (err) {
+            await spawnCompensate({
+              spawn_id: spawn_id2,
+              session_id: session_id2,
+              callsign: callsign2,
+              cwd: target.root,
+              worktree_path: null,
+              tmux_window: null,
+              reason: err.message || String(err),
+              created: { clone: false, worktree: false }
+            });
+            return { status: err.status || 409, body: { ok: false, reason: err.message || String(err) } };
+          }
+          worktree_path2 = branchMode === "worktree" ? materialized.runCwd : null;
+          try {
+            await finishMaterialization(materialized, "spawn");
+            return await launchPane({
+              spawn_id: spawn_id2,
+              session_id: session_id2,
+              callsign: callsign2,
+              tmux_session: tmux_session2,
+              tmux_window: tmux_window2,
+              requestedCwd: target.root,
+              runCwd: materialized.runCwd,
+              cleanupRoot: target.root,
+              worktree_path: worktree_path2,
+              body,
+              skipPermissions,
+              created: materialized.created
+            });
+          } catch (err) {
+            const reason = branchMode === "in-place" ? `${err.message || String(err)} \u2014 ${path7.basename(target.root)} was left switched to ${body.branch}` : err.message || String(err);
+            await spawnCompensate({
+              spawn_id: spawn_id2,
+              session_id: session_id2,
+              callsign: callsign2,
+              cwd: target.root,
+              worktree_path: worktree_path2,
+              tmux_window: tmux_window2,
+              reason,
+              created: materialized.created
+            });
+            return { status: err.status || 409, body: { ok: false, reason } };
+          }
+        } finally {
+          releaseTarget();
+        }
+      }
+      Promise.resolve().then(async () => {
+        let created = { clone: false, worktree: false };
+        let worktree_path2 = null;
+        try {
+          await cloneRepo({ origin_url: target.origin_url, dest: target.dest, spawn_id: spawn_id2 });
+          created.clone = true;
+          updateSession(session_id2, { note: `preparing ${body.branch}\u2026` });
+          onMutate();
+          const materialized = await materializeBranch({
+            root: target.dest,
+            branch: body.branch,
+            mode: branchMode,
+            spawn_id: spawn_id2,
+            sid: session_id2,
+            clone: true
+          });
+          created = materialized.created;
+          worktree_path2 = branchMode === "worktree" ? materialized.runCwd : null;
+          await finishMaterialization(materialized, "clone");
+          await launchPane({
+            spawn_id: spawn_id2,
+            session_id: session_id2,
+            callsign: callsign2,
+            tmux_session: tmux_session2,
+            tmux_window: tmux_window2,
+            requestedCwd: target.dest,
+            runCwd: materialized.runCwd,
+            cleanupRoot: target.dest,
+            worktree_path: worktree_path2,
+            body,
+            skipPermissions,
+            created
+          });
+        } catch (err) {
+          const reason = branchMode === "in-place" && created.clone ? `${err.message || String(err)} \u2014 ${path7.basename(target.dest)} was left switched to ${body.branch}` : err.message || String(err);
+          await spawnCompensate({
+            spawn_id: spawn_id2,
+            session_id: session_id2,
+            callsign: callsign2,
+            cwd: target.dest,
+            worktree_path: worktree_path2,
+            tmux_window: tmux_window2,
+            reason,
+            created
+          });
+        } finally {
+          releaseCloneSlot();
+          releaseTarget();
+        }
+      }).catch((err) => console.error("fleetd detached repo provisioning error:", err));
+      return {
+        status: 202,
+        body: {
+          ok: true,
+          provisioning: true,
+          spawn_id: spawn_id2,
+          session_id: session_id2,
+          callsign: callsign2,
+          clone: { origin_url: target.origin_url, dest: target.dest },
+          tmux: { session: tmux_session2, window: tmux_window2 }
+        }
+      };
+    }
     const cwd = body?.cwd || "";
     let st = null;
     try {
-      st = fs6.statSync(cwd);
+      st = fs8.statSync(cwd);
     } catch {
     }
     if (!cwd || !st?.isDirectory()) {
@@ -6269,24 +7528,27 @@ function createSpawns(ctx) {
       null,
       Date.now(),
       skipPermissions ? 1 : 0,
-      body?.remote_control === true ? 1 : 0
+      body?.remote_control === true ? 1 : 0,
+      null,
+      null,
+      null
     );
     let worktree_path = null;
     if (body?.worktree === true) {
       const ticketNamed = c.ticket && String(callsign).endsWith(`-${c.ticket}`);
       const baseName = ticketNamed ? `${c.ticket}-${animalOf(callsign)}` : callsign;
-      const pathFor = (name) => path5.join(path5.dirname(cwd), `${path5.basename(cwd)}--fd-${name}`);
+      const pathFor = (name) => path7.join(path7.dirname(cwd), `${path7.basename(cwd)}--fd-${name}`);
       const dedup = `${baseName}-${session_id.slice(0, 4)}`;
-      const names = fs6.existsSync(pathFor(baseName)) ? [dedup] : [baseName, dedup];
+      const names = fs8.existsSync(pathFor(baseName)) ? [dedup] : [baseName, dedup];
       let candidate;
-      let res;
+      let result;
       for (const workname of names) {
         candidate = pathFor(workname);
-        res = await execFileP("git", ["-C", cwd, "worktree", "add", "-b", `fd/${workname}`, candidate]);
-        if (res.ok) break;
+        result = await execFileP("git", ["-C", cwd, "worktree", "add", "-b", `fd/${workname}`, candidate]);
+        if (result.ok) break;
       }
       worktree_path = candidate;
-      if (!res.ok) {
+      if (!result.ok) {
         await spawnCompensate({
           spawn_id,
           session_id,
@@ -6294,9 +7556,9 @@ function createSpawns(ctx) {
           cwd,
           worktree_path,
           tmux_window: null,
-          reason: `git worktree add: ${res.err}`
+          reason: `git worktree add: ${result.err}`
         });
-        return { status: 409, body: { ok: false, reason: `git worktree add failed: ${res.err}`.slice(0, 300) } };
+        return { status: 409, body: { ok: false, reason: `git worktree add failed: ${result.err}`.slice(0, 300) } };
       }
       q.setSpawnWorktree.run(worktree_path, spawn_id);
       const repo = deriveRepo(worktree_path);
@@ -6308,73 +7570,19 @@ function createSpawns(ctx) {
         branch: branchOf(worktree_path)
       });
     }
-    const runCwd = worktree_path ?? cwd;
-    const argv = [
-      ...claudeEnvArgvPrefix(port, home),
-      "claude",
-      "--session-id",
-      session_id
-    ];
-    if (body?.model) argv.push("--model", body.model);
-    if (body?.permission_mode) argv.push("--permission-mode", body.permission_mode);
-    if (body?.dangerously_skip_permissions === true) argv.push("--dangerously-skip-permissions");
-    if (body?.remote_control === true) argv.push("--remote-control", callsign);
-    if (body?.prompt) argv.push("--", body.prompt);
-    const override = tmuxAdapter.spawnOverrideCmd();
-    if (override) {
-      const spec = {
-        spawn_id,
-        session_id,
-        callsign,
-        port,
-        cwd: runCwd,
-        requested_cwd: cwd,
-        prompt: body?.prompt ?? null,
-        model: body?.model ?? null,
-        permission_mode: body?.permission_mode ?? null,
-        worktree_path,
-        dangerously_skip_permissions: body?.dangerously_skip_permissions === true,
-        skip_permissions: skipPermissions,
-        remote_control: body?.remote_control === true,
-        tmux: { session: tmux_session, window: tmux_window },
-        argv
-        // the full env-wrapped argv tmux would have run
-      };
-      tmuxAdapter.launchOverride(override, spec, (err) => spawnCompensate({
-        spawn_id,
-        session_id,
-        callsign,
-        cwd,
-        worktree_path,
-        tmux_window,
-        reason: `spawn override: ${err.message || err}`
-      }).catch(() => {
-      }));
-    } else {
-      try {
-        await tmuxAdapter.ensureSession(port);
-        await tmuxAdapter.newWindow({ port, callsign, cwd: runCwd, argv });
-      } catch (err) {
-        await spawnCompensate({
-          spawn_id,
-          session_id,
-          callsign,
-          cwd,
-          worktree_path,
-          tmux_window,
-          reason: String(err.message || err)
-        });
-        return { status: 500, body: { ok: false, reason: `tmux spawn failed: ${err.message || err}` } };
-      }
-    }
-    q.setSpawnStatus.run("spawning", spawn_id);
-    tick(`\u{1F680} spawned ${callsign} \u2014 tmux window ${tmux_window}${skipPermissions ? " (unsupervised)" : ""}`);
-    scheduleNudge(spawn_id, tmux_window, callsign);
-    onMutate();
-    return {
-      status: 200,
-      body: { ok: true, spawn_id, session_id, callsign, tmux: { session: tmux_session, window: tmux_window } }
-    };
+    return launchPane({
+      spawn_id,
+      session_id,
+      callsign,
+      tmux_session,
+      tmux_window,
+      requestedCwd: cwd,
+      runCwd: worktree_path ?? cwd,
+      cleanupRoot: cwd,
+      worktree_path,
+      body,
+      skipPermissions
+    });
   }
   async function revive(spawn_id, body = {}) {
     const row = q.getSpawn.get(spawn_id);
@@ -6398,13 +7606,13 @@ function createSpawns(ctx) {
       const runCwd = row.worktree_path ?? row.cwd;
       let st = null;
       try {
-        st = fs6.statSync(runCwd);
+        st = fs8.statSync(runCwd);
       } catch {
       }
       if (!runCwd || !st?.isDirectory()) {
         return { status: 410, body: { ok: false, reason: "revive cwd no longer exists" } };
       }
-      if (!fs6.existsSync(claudeTranscriptPath(runCwd, row.session_id))) {
+      if (!fs8.existsSync(claudeTranscriptPath(runCwd, row.session_id))) {
         return { status: 410, body: { ok: false, reason: "resume transcript no longer exists" } };
       }
       const existing = await findScopedWindow(row.tmux_window);
@@ -6498,7 +7706,10 @@ function createSpawns(ctx) {
       worktree_path,
       Date.now(),
       skip_permissions ? 1 : 0,
-      remoteWanted ? 1 : 0
+      remoteWanted ? 1 : 0,
+      null,
+      null,
+      null
     );
     const override = tmuxAdapter.spawnOverrideCmd();
     if (override) {
@@ -6603,13 +7814,13 @@ function createSpawns(ctx) {
       const runCwd = c.cwd;
       let st = null;
       try {
-        st = fs6.statSync(runCwd);
+        st = fs8.statSync(runCwd);
       } catch {
       }
       if (!runCwd || !st?.isDirectory()) {
         return { status: 410, body: { ok: false, reason: "session cwd no longer exists" } };
       }
-      if (!fs6.existsSync(claudeTranscriptPath(runCwd, session_id))) {
+      if (!fs8.existsSync(claudeTranscriptPath(runCwd, session_id))) {
         return { status: 410, body: { ok: false, reason: "resume transcript no longer exists" } };
       }
       const tmux_window = tmuxAdapter.windowName(port, c.callsign);
@@ -6840,6 +8051,13 @@ function createSpawns(ctx) {
       onMutate();
     }
     for (const row of staleProvisioning) {
+      try {
+        fs8.rmSync(`${row.cwd}.fd-cloning-${String(row.spawn_id).slice(0, 8)}`, {
+          recursive: true,
+          force: true
+        });
+      } catch {
+      }
       q.setSpawnStatus.run("gone", row.spawn_id);
       forgetSpawn(row.spawn_id);
       const c = q.getSession.get(row.session_id);
@@ -6894,7 +8112,7 @@ function createSpawns(ctx) {
     return { healed };
   }
   return {
-    spawn: spawn2,
+    spawn: spawn3,
     revive,
     adoptSession,
     enableRemote,
@@ -6910,7 +8128,7 @@ function createSpawns(ctx) {
 }
 
 // scripts/fleetd/events.mjs
-import path6 from "node:path";
+import path8 from "node:path";
 var EDIT_TOOLS = ["Edit", "Write", "MultiEdit", "NotebookEdit"];
 var TEST_RUNNER_RE = /\b(pytest|jest|vitest|go test|cargo test|npm (run )?test)\b/;
 function createEvents(ctx) {
@@ -6944,7 +8162,8 @@ function createEvents(ctx) {
     // order, recognise an heir that is already waiting.
     findClearedPredecessor,
     succeedSession,
-    succeedForwardFromClear
+    succeedForwardFromClear,
+    touchRepo
   } = ctx;
   function applyEvent(ev) {
     const sid = ev.session_id || "unknown";
@@ -6966,6 +8185,7 @@ function createEvents(ctx) {
     }
     const upd = { last_seen: Date.now(), events: c.events + 1 };
     let serverBranch = null;
+    let changedRepo = null;
     if (ev.cwd) {
       upd.cwd = ev.cwd;
       const repo = deriveRepo(ev.cwd);
@@ -6975,6 +8195,7 @@ function createEvents(ctx) {
       serverBranch = branchOf(ev.cwd);
       const branch = serverBranch || ev.git_branch || null;
       if (branch) upd.branch = branch;
+      if (repo.is_git && repo.repo_id !== c.repo_id) changedRepo = repo;
     }
     const payloadModel = ev.model?.display_name || ev.model?.id || (typeof ev.model === "string" && ev.model ? ev.model : null);
     if (ev.hook_event_name === "SessionStart") {
@@ -6990,6 +8211,14 @@ function createEvents(ctx) {
       }
     }
     updateSession(sid, upd);
+    if (changedRepo) {
+      touchRepo({
+        repo_id: changedRepo.repo_id,
+        repo_name: changedRepo.repo_name,
+        root: changedRepo.main_tree,
+        source: "hooks"
+      });
+    }
     c = { ...c, ...upd };
     if (upd.branch && c.ticket == null && c.ticket_source == null && c.custom_suffix == null) {
       let tk = ticketFromBranch(serverBranch);
@@ -7021,7 +8250,7 @@ function createEvents(ctx) {
         const file = input.file_path || input.notebook_path;
         if (EDIT_TOOLS.includes(ev.tool_name) && file) {
           conflict = recordFile(sid, file, c);
-          set.note = `editing ${path6.basename(file)}`;
+          set.note = `editing ${path8.basename(file)}`;
         } else if (ev.tool_name === "Bash" && input.command) {
           const cmd = String(input.command);
           if (TEST_RUNNER_RE.test(cmd)) {
@@ -7039,7 +8268,7 @@ function createEvents(ctx) {
         const file = ev.file_path || ev.tool_input?.file_path || ev.path || null;
         if (file) {
           conflict = recordFile(sid, file, c);
-          set.note = `changed ${path6.basename(file)}`;
+          set.note = `changed ${path8.basename(file)}`;
         }
         break;
       }
@@ -7298,6 +8527,7 @@ function createEvents(ctx) {
 }
 
 // scripts/fleetd/snapshot.mjs
+import os5 from "node:os";
 function createSnapshot(ctx) {
   const {
     q,
@@ -7310,7 +8540,8 @@ function createSnapshot(ctx) {
     hasWatchWaiter,
     ownedPaneRow,
     spawnCapability,
-    spawnState
+    spawnState,
+    resolveReposDir
   } = ctx;
   function snapshot() {
     const now = Date.now();
@@ -7393,6 +8624,8 @@ function createSnapshot(ctx) {
             skip_permissions: !!sp.skip_permissions,
             // v1.3 unsupervised chip
             remote: { enabled: !!sp.remote_control, url: sp.remote_url ?? null },
+            requested_branch: sp.requested_branch ?? null,
+            branch_mode: sp.branch_mode ?? null,
             // Snapshot cost is intentionally uncached: two existsSync calls
             // per owned card keep removal/restore feedback immediate, and a
             // fleet has only a handful of rows by design. (M-P2 suggested a
@@ -7441,6 +8674,17 @@ function createSnapshot(ctx) {
       version: version2,
       sessions,
       repos: [...repoMap.values()],
+      repo_catalog: q.catalogRepos.all().map((repo) => ({
+        repo_id: repo.repo_id,
+        repo_name: repo.repo_name,
+        root: repo.root,
+        origin_url: repo.origin_url ?? null,
+        default_branch: repo.default_branch ?? null,
+        last_used_at: repo.last_used_at
+      })),
+      settings: { repos_dir: resolveReposDir() },
+      home_dir: os5.homedir(),
+      // root label for the global (home) file explorer
       ticker: q.recentTicker.all(),
       // Callsigns resolved from EVERY session, not just the visible ones: a
       // conflict outlives its participants, and a banner shouting a raw UUID at
@@ -7498,7 +8742,7 @@ function createSnapshot(ctx) {
 }
 
 // scripts/fleetd/retention.mjs
-import fs7 from "node:fs";
+import fs9 from "node:fs";
 function createRetention(ctx) {
   const {
     q,
@@ -7640,7 +8884,7 @@ function createRetention(ctx) {
     const feed_cleared = Number(q.clearTicker.run().changes);
     const orphan_worktrees = q.orphanWorktrees.all().map((r) => r.worktree_path).filter((p) => {
       try {
-        return fs7.existsSync(p);
+        return fs9.existsSync(p);
       } catch {
         return false;
       }
@@ -7719,7 +8963,7 @@ function createCore(db2, {
   function stampTranscriptFloor(sid, transcriptPath) {
     let floor = 0;
     try {
-      if (transcriptPath) floor = fs8.statSync(transcriptPath).size;
+      if (transcriptPath) floor = fs10.statSync(transcriptPath).size;
     } catch {
     }
     modelMemo.set(sid, { floor, size: -1, model: null });
@@ -7728,7 +8972,7 @@ function createCore(db2, {
     const memo = modelMemo.get(sid) ?? { floor: 0, size: -1, model: null };
     let size;
     try {
-      size = fs8.statSync(transcriptPath).size;
+      size = fs10.statSync(transcriptPath).size;
     } catch {
       return null;
     }
@@ -7994,6 +9238,8 @@ function createCore(db2, {
     if (mutate) onMutate();
   }
   ctx.tombstoneCard = tombstoneCard;
+  Object.assign(ctx, createRepos(ctx));
+  const { resolveReposDir, setSettings } = ctx;
   Object.assign(ctx, createLedger(ctx));
   const { recordFile, whisperText } = ctx;
   Object.assign(ctx, createIngest(ctx));
@@ -8002,10 +9248,13 @@ function createCore(db2, {
   const { command } = ctx;
   Object.assign(ctx, createPlans(ctx));
   const { planMark } = ctx;
-  const { worktrees, removeWorktree } = createWorktrees(ctx);
+  Object.assign(ctx, createWorktrees(ctx));
+  const { worktrees, removeWorktree } = ctx;
+  Object.assign(ctx, createFiles(ctx));
+  const { fsList, fsRead, fsSearch, fsListHome, fsReadHome, fsSearchHome } = ctx;
   Object.assign(ctx, createSpawns(ctx));
   const {
-    spawn: spawn2,
+    spawn: spawn3,
     revive,
     adoptSession,
     enableRemote,
@@ -8070,7 +9319,7 @@ function createCore(db2, {
     // POST /api/paste-image → {status, body} (stateless; paste.mjs)
     ingestAgentsPoll,
     // v1.2 dynamic fleet
-    spawn: spawn2,
+    spawn: spawn3,
     // POST /api/spawn flow → {status, body}
     revive,
     // POST /api/spawn/:id/revive → {status, body}
@@ -8097,6 +9346,22 @@ function createCore(db2, {
     // GET /api/worktrees — bounded live git inspection
     removeWorktree,
     // POST /api/worktrees/remove — allow-listed destruction
+    resolveReposDir,
+    // GET /api/settings + /state
+    setSettings,
+    // POST /api/settings
+    fsList,
+    // GET /api/sessions/:id/fs/list → {status, body}
+    fsRead,
+    // GET /api/sessions/:id/fs/read → {status, body}
+    fsSearch,
+    // GET /api/sessions/:id/fs/search → {status, body}
+    fsListHome,
+    // GET /api/fs/list → {status, body} (home-rooted)
+    fsReadHome,
+    // GET /api/fs/read → {status, body}
+    fsSearchHome,
+    // GET /api/fs/search → {status, body}
     // v1.3 plan library
     planMark,
     // POST /api/plans/:id/mark → {status, body}
@@ -8115,9 +9380,9 @@ function createCore(db2, {
 // scripts/fleetd/http.mjs
 import http from "node:http";
 import { timingSafeEqual } from "node:crypto";
-import os3 from "node:os";
-import fs9 from "node:fs";
-import path7 from "node:path";
+import os6 from "node:os";
+import fs11 from "node:fs";
+import path9 from "node:path";
 import { fileURLToPath } from "node:url";
 
 // node_modules/ws/wrapper.mjs
@@ -8131,7 +9396,7 @@ var import_websocket = __toESM(require_websocket(), 1);
 var import_websocket_server = __toESM(require_websocket_server(), 1);
 
 // scripts/fleetd/termbridge.mjs
-import { spawn } from "node:child_process";
+import { spawn as spawn2 } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 var ACTIVE_STATUSES = /* @__PURE__ */ new Set(["spawning", "stalled", "live"]);
 var INPUT_CHUNK_BYTES = 1024;
@@ -8299,7 +9564,7 @@ function createTermBridge({ port, resolveSpawn, log = () => {
     const override = process.env.FLEETDECK_TERM_CMD?.trim();
     const socket = process.env.FLEETDECK_TMUX_SOCKET?.trim();
     const argv = socket ? ["-L", socket, "-C", "attach-session", "-t", "=" + session] : ["-C", "attach-session", "-t", "=" + session];
-    c.child = spawn(override || "tmux", override ? [] : argv, { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+    c.child = spawn2(override || "tmux", override ? [] : argv, { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
     c.child.stdout.on("data", (chunk) => {
       const batched = /* @__PURE__ */ new Map();
       const flush = () => {
@@ -8559,7 +9824,7 @@ function isLoopbackAddress(address) {
   const value = String(address || "").trim().toLowerCase();
   return value === "localhost" || value === "::1" || /^127(?:\.[0-9]{1,3}){3}$/.test(value) || /^::ffff:127(?:\.[0-9]{1,3}){3}$/.test(value);
 }
-var BOARD_DIST = path7.join(path7.dirname(fileURLToPath(import.meta.url)), "board-dist");
+var BOARD_DIST = path9.join(path9.dirname(fileURLToPath(import.meta.url)), "board-dist");
 var MIME = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -8582,16 +9847,16 @@ function serveBoardAsset(res, pathname, notFound) {
     return notFound();
   }
   const rel = decoded === "/" ? "index.html" : decoded.replace(/^\/+/, "");
-  const abs = path7.resolve(BOARD_DIST, rel);
-  if (abs !== BOARD_DIST && !abs.startsWith(BOARD_DIST + path7.sep)) return notFound();
+  const abs = path9.resolve(BOARD_DIST, rel);
+  if (abs !== BOARD_DIST && !abs.startsWith(BOARD_DIST + path9.sep)) return notFound();
   let data;
   try {
-    data = fs9.readFileSync(abs);
+    data = fs11.readFileSync(abs);
   } catch {
     return notFound();
   }
   res.writeHead(200, {
-    "content-type": MIME[path7.extname(abs).toLowerCase()] || "application/octet-stream",
+    "content-type": MIME[path9.extname(abs).toLowerCase()] || "application/octet-stream",
     "content-length": data.length
   });
   return res.end(data);
@@ -8672,7 +9937,7 @@ function createHttp(core2, {
   const daemonPort = String(port);
   const lanHosts = /* @__PURE__ */ new Set();
   try {
-    for (const entries of Object.values(os3.networkInterfaces())) {
+    for (const entries of Object.values(os6.networkInterfaces())) {
       for (const entry of entries || []) {
         if (entry?.address) lanHosts.add(String(entry.address).toLowerCase());
       }
@@ -8839,10 +10104,38 @@ function createHttp(core2, {
           });
         }
         if (url.pathname === "/state") return json(res, 200, snapshotWithLan());
+        if (url.pathname === "/api/settings") {
+          return json(res, 200, { ok: true, settings: { repos_dir: core2.resolveReposDir() } });
+        }
         if (url.pathname === "/api/worktrees") {
           core2.worktrees().then((out) => json(res, 200, out)).catch((err) => {
             console.error("fleetd worktree inspector error:", err);
             json(res, 200, { ok: true, worktrees: [] });
+          });
+          return;
+        }
+        const sessionFsMatch = /^\/api\/sessions\/([^/]+)\/fs\/(list|read|search)$/.exec(url.pathname);
+        if (sessionFsMatch) {
+          const sid = decodeURIComponent(sessionFsMatch[1]);
+          const action = sessionFsMatch[2];
+          const operation = action === "list" ? core2.fsList(sid, url.searchParams.get("path") ?? "") : action === "read" ? core2.fsRead(sid, url.searchParams.get("path") ?? "") : core2.fsSearch(sid, url.searchParams.get("q") ?? "", {
+            mode: url.searchParams.get("mode") ?? "content"
+          });
+          operation.then(({ status, body }) => json(res, status, body)).catch((err) => {
+            console.error("fleetd session filesystem error:", err);
+            json(res, 500, { ok: false, reason: "internal" });
+          });
+          return;
+        }
+        const homeFsMatch = /^\/api\/fs\/(list|read|search)$/.exec(url.pathname);
+        if (homeFsMatch) {
+          const action = homeFsMatch[1];
+          const operation = action === "list" ? core2.fsListHome(url.searchParams.get("path") ?? "") : action === "read" ? core2.fsReadHome(url.searchParams.get("path") ?? "") : core2.fsSearchHome(url.searchParams.get("q") ?? "", {
+            mode: url.searchParams.get("mode") ?? "content"
+          });
+          operation.then(({ status, body }) => json(res, status, body)).catch((err) => {
+            console.error("fleetd home filesystem error:", err);
+            json(res, 500, { ok: false, reason: "internal" });
           });
           return;
         }
@@ -8934,6 +10227,10 @@ function createHttp(core2, {
                 json(res, 500, { ok: false, reason: "internal" });
               });
               return;
+            }
+            if (url.pathname === "/api/settings") {
+              const out = core2.setSettings(ev);
+              return json(res, out.status, out.body);
             }
             if (url.pathname === "/command") return json(res, 200, core2.command(ev.text));
             if (url.pathname === "/api/paste-image") {
@@ -9278,8 +10575,8 @@ function startAgentsPoll(core2) {
 }
 
 // scripts/fleetd/payload-capture.mjs
-import fs10 from "node:fs";
-import path8 from "node:path";
+import fs12 from "node:fs";
+import path10 from "node:path";
 var MAX_FILE_BYTES = 1e6;
 var MAX_PAYLOAD_BYTES = 64e3;
 var PER_EVENT = 3;
@@ -9329,14 +10626,14 @@ function createPayloadCapture(homeDir, {
   enabled = process.env.FLEETDECK_CAPTURE_PAYLOADS?.trim().toLowerCase() === "on"
 } = {}) {
   if (!enabled) return NOOP;
-  const file = path8.join(homeDir, "hook-payloads.jsonl");
+  const file = path10.join(homeDir, "hook-payloads.jsonl");
   const counts = /* @__PURE__ */ new Map();
   try {
-    fs10.chmodSync(file, 384);
+    fs12.chmodSync(file, 384);
   } catch {
   }
   try {
-    for (const line of fs10.readFileSync(file, "utf8").split("\n")) {
+    for (const line of fs12.readFileSync(file, "utf8").split("\n")) {
       if (!line.trim()) continue;
       try {
         const rec = JSON.parse(line);
@@ -9351,7 +10648,7 @@ function createPayloadCapture(homeDir, {
       if (!event || (counts.get(event) || 0) >= perEvent) return;
       let size = 0;
       try {
-        size = fs10.statSync(file).size;
+        size = fs12.statSync(file).size;
       } catch {
         size = 0;
       }
@@ -9363,9 +10660,9 @@ function createPayloadCapture(homeDir, {
         payload: safePayload
       }) + "\n";
       if (size + Buffer.byteLength(line) > maxBytes) return;
-      fs10.appendFileSync(file, line, { encoding: "utf8", mode: 384 });
+      fs12.appendFileSync(file, line, { encoding: "utf8", mode: 384 });
       try {
-        fs10.chmodSync(file, 384);
+        fs12.chmodSync(file, 384);
       } catch {
       }
       counts.set(event, (counts.get(event) || 0) + 1);
@@ -9834,8 +11131,8 @@ function createMdns({ port, name = "fleetdeck", instance = "Fleet Deck", address
 }
 
 // scripts/fleetd/takeover.mjs
-import fs11 from "node:fs";
-import path9 from "node:path";
+import fs13 from "node:fs";
+import path11 from "node:path";
 function pidRecord(text) {
   try {
     const parsed = JSON.parse(String(text));
@@ -9858,8 +11155,8 @@ function pidIsLive(pid) {
 function livePidLooksLikeFleetd(pid) {
   if (process.platform !== "linux") return true;
   try {
-    const executable = path9.basename(fs11.readlinkSync(`/proc/${pid}/exe`)).replace(/ \(deleted\)$/, "");
-    const argv = fs11.readFileSync(`/proc/${pid}/cmdline`).toString("utf8").split("\0").filter(Boolean);
+    const executable = path11.basename(fs13.readlinkSync(`/proc/${pid}/exe`)).replace(/ \(deleted\)$/, "");
+    const argv = fs13.readFileSync(`/proc/${pid}/cmdline`).toString("utf8").split("\0").filter(Boolean);
     const nodeLike = /^(?:node|nodejs|fleetd)$/i.test(executable);
     const fleetdScript = argv.some((arg) => /(?:^|[/\\])fleetd(?:\.bundle)?\.mjs$/.test(arg));
     return nodeLike && fleetdScript;
@@ -9869,17 +11166,17 @@ function livePidLooksLikeFleetd(pid) {
 }
 
 // scripts/fleetd/config.mjs
-import os4 from "node:os";
-import path10 from "node:path";
+import os7 from "node:os";
+import path12 from "node:path";
 function resolveHome() {
-  return process.env.FLEETDECK_HOME || path10.join(os4.homedir() || "/tmp", ".fleetdeck");
+  return process.env.FLEETDECK_HOME || path12.join(os7.homedir() || "/tmp", ".fleetdeck");
 }
 function resolvePort() {
   return Number(process.env.FLEETDECK_PORT || 4711);
 }
 
 // scripts/fleetd/fleetd.mjs
-var __dirname = path11.dirname(fileURLToPath2(import.meta.url));
+var __dirname = path13.dirname(fileURLToPath2(import.meta.url));
 var PORT = resolvePort();
 var BIND = (process.env.FLEETDECK_BIND || "127.0.0.1").trim() || "127.0.0.1";
 var LAN_MODE = !isLoopbackAddress(BIND);
@@ -9894,28 +11191,28 @@ function startupFatal(reason) {
   } catch {
   }
   try {
-    fs12.writeSync(2, `fleetd refused to start: ${reason}
+    fs14.writeSync(2, `fleetd refused to start: ${reason}
 `);
   } catch {
   }
   process.exit(1);
 }
 try {
-  fs12.mkdirSync(HOME, { recursive: true });
+  fs14.mkdirSync(HOME, { recursive: true });
 } catch (err) {
   startupFatal(`cannot create FLEETDECK_HOME (${err?.code || err?.message || "unknown error"})`);
 }
 try {
-  fs12.chmodSync(HOME, 448);
+  fs14.chmodSync(HOME, 448);
 } catch {
 }
-var PID_FILE = path11.join(HOME, "fleetd.pid");
+var PID_FILE = path13.join(HOME, "fleetd.pid");
 var ownsPidFile = false;
 function removeOwnedPidFile() {
   if (!ownsPidFile) return;
   try {
-    const record = pidRecord(fs12.readFileSync(PID_FILE, "utf8"));
-    if (record?.pid === process.pid) fs12.unlinkSync(PID_FILE);
+    const record = pidRecord(fs14.readFileSync(PID_FILE, "utf8"));
+    if (record?.pid === process.pid) fs14.unlinkSync(PID_FILE);
   } catch {
   }
   ownsPidFile = false;
@@ -9923,7 +11220,7 @@ function removeOwnedPidFile() {
 function claimHome() {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      fs12.writeFileSync(PID_FILE, JSON.stringify({ pid: process.pid, port: PORT }), {
+      fs14.writeFileSync(PID_FILE, JSON.stringify({ pid: process.pid, port: PORT }), {
         encoding: "utf8",
         mode: 384,
         flag: "wx"
@@ -9938,7 +11235,7 @@ function claimHome() {
     let recordText = null;
     let record = null;
     try {
-      recordText = fs12.readFileSync(PID_FILE, "utf8");
+      recordText = fs14.readFileSync(PID_FILE, "utf8");
       record = pidRecord(recordText);
     } catch (err) {
       if (err?.code === "ENOENT") continue;
@@ -9949,13 +11246,13 @@ function claimHome() {
       startupFatal(`FLEETDECK_HOME is already used by live fleetd pid ${record.pid} on ${port}; use a separate FLEETDECK_HOME for another daemon (if that PID was recycled, remove stale pidfile ${PID_FILE})`);
     }
     try {
-      if (fs12.readFileSync(PID_FILE, "utf8") !== recordText) continue;
+      if (fs14.readFileSync(PID_FILE, "utf8") !== recordText) continue;
     } catch (err) {
       if (err?.code === "ENOENT") continue;
       startupFatal(`cannot re-read stale FLEETDECK_HOME pidfile (${err?.code || err?.message || "unknown error"})`);
     }
     try {
-      fs12.unlinkSync(PID_FILE);
+      fs14.unlinkSync(PID_FILE);
     } catch (err) {
       if (err?.code !== "ENOENT") startupFatal(`cannot clear stale FLEETDECK_HOME pidfile (${err?.code || err?.message || "unknown error"})`);
     }
@@ -9977,14 +11274,14 @@ if (PROXY_AUTH === "trust" && !TRUSTED_ORIGINS.length) {
   startupFatal("FLEETDECK_PROXY_AUTH=trust requires FLEETDECK_TRUSTED_ORIGINS \u2014 there is nothing to trust");
 }
 var TOKEN_REQUIRED = LAN_MODE || TRUSTED_ORIGINS.length > 0 && PROXY_AUTH === "token";
-var TOKEN_FILE = path11.join(HOME, "token");
+var TOKEN_FILE = path13.join(HOME, "token");
 var TOKEN;
 if (Object.hasOwn(process.env, "FLEETDECK_TOKEN")) {
   TOKEN = String(process.env.FLEETDECK_TOKEN).trim();
   if (TOKEN.length < 16) startupFatal("FLEETDECK_TOKEN must be at least 16 characters after trimming");
 } else {
   try {
-    const persisted = fs12.readFileSync(TOKEN_FILE, "utf8").trim();
+    const persisted = fs14.readFileSync(TOKEN_FILE, "utf8").trim();
     if (persisted.length >= 16) TOKEN = persisted;
     else if (TOKEN_REQUIRED) startupFatal("FLEETDECK_HOME/token must contain at least 16 characters");
   } catch (err) {
@@ -10000,7 +11297,7 @@ if (TOKEN_REQUIRED && !TOKEN) {
     startupFatal(`cannot generate access token (${err?.code || err?.message || "unknown error"})`);
   }
   try {
-    fs12.writeFileSync(TOKEN_FILE, TOKEN, { encoding: "utf8", mode: 384, flag: "wx" });
+    fs14.writeFileSync(TOKEN_FILE, TOKEN, { encoding: "utf8", mode: 384, flag: "wx" });
   } catch (err) {
     startupFatal(`cannot persist FLEETDECK_HOME/token (${err?.code || err?.message || "unknown error"})`);
   }
@@ -10011,7 +11308,7 @@ if (versionOverride) {
   version = versionOverride;
 } else {
   try {
-    version = JSON.parse(fs12.readFileSync(path11.resolve(__dirname, "../../package.json"), "utf8")).version || version;
+    version = JSON.parse(fs14.readFileSync(path13.resolve(__dirname, "../../package.json"), "utf8")).version || version;
   } catch {
   }
 }
@@ -10023,7 +11320,7 @@ function mdnsInstanceName() {
     return "Fleet Deck";
   }
 }
-var DB_FILE = path11.join(HOME, "fleetd.db");
+var DB_FILE = path13.join(HOME, "fleetd.db");
 var db = openDb(DB_FILE);
 var core = createCore(db, { port: PORT, version });
 var MDNS_ENABLED = LAN_MODE && process.env.FLEETDECK_MDNS?.trim().toLowerCase() !== "off";
@@ -10063,7 +11360,7 @@ server.on("error", (e) => {
 function lanAddresses() {
   const addresses = /* @__PURE__ */ new Set();
   try {
-    for (const entries of Object.values(os5.networkInterfaces())) {
+    for (const entries of Object.values(os8.networkInterfaces())) {
       for (const entry of entries || []) {
         if ((entry.family === "IPv4" || entry.family === 4) && !entry.internal) addresses.add(entry.address);
       }

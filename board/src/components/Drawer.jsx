@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { human, hhmmss, basename, prettyModel, modelFamily, safeUrl, spawnKillable, spawnRemoteAvailable, colPulse, worktreeLabel, adoptableNow, adoptArmable, adoptArmed, TURN_BOUNDARY_HINT } from '../util.js';
+import { human, hhmmss, basename, prettyModel, modelFamily, safeUrl, spawnKillable, spawnRemoteAvailable, colPulse, worktreeLabel, adoptableNow, adoptArmable, adoptArmed, relToRoot, TURN_BOUNDARY_HINT } from '../util.js';
 import { sendMail, reasonOf } from '../api.js';
 import { useModal } from '../useModal.js';
 
@@ -157,7 +157,7 @@ function OwnedPane({ s, onOpenTerm, onKill, onRevive, onEnableRemote, reviving, 
 export default function Drawer({
   s, now, conflictFiles, mailCount, priority, onTogglePriority, onClose, onCompose, onOpenTerm, onKill,
   thread, onSendThread, onRevive, onEnableRemote, reviving, enablingRemote,
-  onArmMove, onDisarm, adopting, onRename,
+  onArmMove, onDisarm, adopting, onRename, onBrowseFiles,
 }) {
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
@@ -169,8 +169,13 @@ export default function Drawer({
   const fam = modelFamily(s.model);
   const pulseClass = colPulse(s.col);
   const wt = worktreeLabel(s);
-  const files = (s.files || []).map(basename);
+  // v2.2 — keep the absolute ledger path alongside the display basename: a chip
+  // whose file resolves inside the browse root opens the viewer AT that file;
+  // one that doesn't (a /tmp scratch path) opens at the root instead — the
+  // title says which of the two a click will do.
+  const files = (s.files || []).map((abs) => ({ abs, name: basename(abs), rel: relToRoot(s, abs) }));
   const hot = new Set(conflictFiles.map(basename));
+  const canBrowse = !!onBrowseFiles && !!(s.worktree || s.cwd);
   const offline = s.col === 'offline';
   // v2.0 Move-to-tmux — mirror the card chip here (the drawerbtns row is shown
   // for every session, so it drops in cleanly). Same shared owner as the card,
@@ -301,13 +306,39 @@ export default function Drawer({
             />
           )}
           <div className="fd-sect">
-            <div className="sl">FILES</div>
+            <div className="sl" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              FILES
+              {canBrowse && (
+                <button
+                  type="button"
+                  className="fd-fsopenbtn"
+                  title="browse this session's working tree — read-only, with search"
+                  onClick={() => onBrowseFiles(s)}
+                >
+                  ⌸ browse
+                </button>
+              )}
+            </div>
             <div className="fd-filewrap">
               {files.length === 0 && <span className="fd-filechip">none yet</span>}
               {files.map((f, i) => (
-                <span key={i} className={`fd-filechip${hot.has(f) ? ' hot' : ''}`}>
-                  {f}{hot.has(f) ? '  ▲ contested' : ''}
-                </span>
+                canBrowse ? (
+                  <button
+                    key={i}
+                    type="button"
+                    className={`fd-filechip clickable${hot.has(f.name) ? ' hot' : ''}`}
+                    title={f.rel != null
+                      ? `open ${f.abs} in the viewer`
+                      : `${f.abs} is outside this session's working tree — opens the viewer at the root`}
+                    onClick={() => onBrowseFiles(s, f.rel)}
+                  >
+                    {f.name}{hot.has(f.name) ? '  ▲ contested' : ''}
+                  </button>
+                ) : (
+                  <span key={i} className={`fd-filechip${hot.has(f.name) ? ' hot' : ''}`}>
+                    {f.name}{hot.has(f.name) ? '  ▲ contested' : ''}
+                  </span>
+                )
               ))}
             </div>
           </div>

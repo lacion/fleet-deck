@@ -98,8 +98,20 @@ export function sendCommand(text) {
 
 // v1.2 — board-spawned sessions. Spawn is an explicit human click ONLY.
 // v1.6: body may carry remote_control:true — remote control on from birth.
+// v2.2: body may carry {repo, branch, branch_mode} INSTEAD of cwd — the daemon
+// clones a repo it doesn't have and materializes the branch. A 200 is today's
+// "spawning"; a 202 {ok:true, provisioning:true} means a clone is running and
+// the card narrates the rest (success flips it live, failure tombstones it
+// with git's own words).
 export function spawnSession(body) {
   return post('/api/spawn', body);
+}
+
+// v2.2 — persist the repos root override ({repos_dir: '/abs/path'} to set,
+// {repos_dir: null} to fall back to env/default). Survives daemon restarts —
+// it lives in the daemon's SQLite, not in this browser.
+export function saveSettings(body) {
+  return post('/api/settings', body);
 }
 
 export function killSpawn(spawnId, force) {
@@ -221,4 +233,39 @@ export function removeWorktree(path, { force = false, deleteBranch = false } = {
     force: !!force,
     delete_branch: !!deleteBranch,
   });
+}
+
+// v2.2 — the read-only file viewer. All three are GETs against the session's
+// working tree; the DAEMON resolves the root from the session id (the browser
+// never names a directory, only a path relative to that root), so a compromised
+// tab can read exactly what /state already implies this session can see, and
+// nothing else. 400 bad path · 404 unknown session/missing path · 410 the
+// working tree is gone · 429 search busy — reasons are finished sentences.
+export function fsList(sid, path) {
+  return get(`/api/sessions/${encodeURIComponent(sid)}/fs/list?path=${encodeURIComponent(path ?? '')}`);
+}
+
+// {ok, path, size, mtime, binary, truncated, content} — binary omits content.
+export function fsRead(sid, path) {
+  return get(`/api/sessions/${encodeURIComponent(sid)}/fs/read?path=${encodeURIComponent(path)}`);
+}
+
+// mode 'content' (hits {path, line, text}) or 'name' (hits {path}).
+export function fsSearch(sid, q, mode) {
+  return get(`/api/sessions/${encodeURIComponent(sid)}/fs/search?q=${encodeURIComponent(q)}&mode=${encodeURIComponent(mode || 'content')}`);
+}
+
+// The global explorer — same shapes, rooted at the daemon user's home (the
+// daemon resolves the root from os.homedir(); the browser only ever names a
+// path relative to it).
+export function fsListHome(path) {
+  return get(`/api/fs/list?path=${encodeURIComponent(path ?? '')}`);
+}
+
+export function fsReadHome(path) {
+  return get(`/api/fs/read?path=${encodeURIComponent(path)}`);
+}
+
+export function fsSearchHome(q, mode) {
+  return get(`/api/fs/search?q=${encodeURIComponent(q)}&mode=${encodeURIComponent(mode || 'content')}`);
 }

@@ -8,7 +8,7 @@ import { ticketFromBranch } from './tickets.mjs';
 import { pidAlive, colFromAgentState } from './helpers.mjs';
 
 export function createIngest(ctx) {
-  const { q, assignCallsign, updateSession, tick, onMutate } = ctx;
+  const { q, assignCallsign, updateSession, tick, onMutate, touchRepo } = ctx;
 
   // ------------------------------------------- agents-cli ingest (F1)
   // Secondary session source: `claude agents --json` catches sessions that
@@ -52,9 +52,9 @@ export function createIngest(ctx) {
       const sid = rec.sessionId;
       const rawState = rec.state ?? rec.status;
       const existing = q.getSession.get(sid);
+      const cwd = rec.cwd || null;
+      const repo = cwd ? deriveRepo(cwd) : { repo_id: null, repo_name: null, worktree: null, main_tree: null, is_git: false };
       if (!existing) {
-        const cwd = rec.cwd || null;
-        const repo = cwd ? deriveRepo(cwd) : { repo_id: null, repo_name: null, worktree: null };
         // Naming moment (same rules as a hook birth): fresh branch (bypass the
         // 20s cache) so the ticket key matches the checkout the agent is on now;
         // ticket-first callsign; ticket + source recorded right after the insert.
@@ -68,17 +68,41 @@ export function createIngest(ctx) {
           branch ?? null, repo.worktree ?? null, colFromAgentState(rawState, true),
           'seen via agents CLI', rec.name ?? null, startedAt, now,
         );
+        if (repo.is_git) {
+          touchRepo({
+            repo_id: repo.repo_id,
+            repo_name: repo.repo_name,
+            root: repo.main_tree,
+            source: 'hooks',
+          });
+        }
         if (ticket) updateSession(sid, { ticket, ticket_source: 'branch' });
         tick(`${callsign} joined the fleet (agents CLI)`);
         onMutate();
       } else if (existing.source === 'agents-cli') {
+        const repoChanged = repo.is_git && repo.repo_id !== existing.repo_id;
         updateSession(sid, {
           col: colFromAgentState(rawState, false),
           note: 'seen via agents CLI',
           last_seen: Date.now(),
           ended_at: null, // reappearance revives an absence-tombstoned card
           end_reason: null, // and clears the absence guess stamped below
+          ...(repoChanged ? {
+            cwd,
+            repo_id: repo.repo_id,
+            repo_name: repo.repo_name,
+            worktree: repo.worktree,
+            branch: branchOf(cwd),
+          } : {}),
         });
+        if (repoChanged) {
+          touchRepo({
+            repo_id: repo.repo_id,
+            repo_name: repo.repo_name,
+            root: repo.main_tree,
+            source: 'hooks',
+          });
+        }
         onMutate();
       }
       // existing.source === 'hooks': hook-derived state always wins here —
