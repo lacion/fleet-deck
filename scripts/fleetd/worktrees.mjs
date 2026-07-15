@@ -7,8 +7,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  execFileP, mapLimit, chmodWritableWhereOwned, blockedPaths, shellQuote,
+  mapLimit, chmodWritableWhereOwned, blockedPaths, shellQuote,
 } from './helpers.mjs';
+import { execFileP } from './exec.mjs';
 
 export function createWorktrees(ctx) {
   const { q, tick, onMutate } = ctx;

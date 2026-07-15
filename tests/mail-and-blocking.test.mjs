@@ -281,6 +281,6 @@ test('BUG 8: owned-pane mail bails without pasting when the turn-state flips to 
   // Claimed nothing: the mail is still pending for an honest later turn-boundary.
   const row = db.prepare('SELECT delivered_at FROM mail WHERE to_session = ? ORDER BY id DESC LIMIT 1').get(sid);
   assert.equal(row.delivered_at, null, 'a bailed delivery claims no mail — it stays pending');
-  assert.equal(core.snapshot().sessions.find(s => s.session_id === sid).mail_pending.count, 1,
+  assert.equal(core.snapshot().mail_meta[sid].queued, 1,
     'the mailbox still shows the undelivered message');
 });

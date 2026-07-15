@@ -6,7 +6,6 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
-import { execFile } from 'node:child_process';
 import { CLAUDE_ENV_MARKERS } from './env-scrub.mjs';
 
 // v1.2 env knobs are resolved once per core via this reader; see the knob doc
@@ -113,19 +112,6 @@ export function claudeEnvArgvPrefix(port, home) {
     'env', ...scrub.flatMap(name => ['-u', name]),
     `FLEETDECK_PORT=${port}`, `FLEETDECK_HOME=${home}`,
   ];
-}
-
-export function execFileP(cmd, args, { timeout = 30_000 } = {}) {
-  return new Promise((resolve) => {
-    try {
-      execFile(cmd, args, { timeout, windowsHide: true }, (err, stdout, stderr) => {
-        if (err) return resolve({ ok: false, code: err.code, err: String(stderr || err.message || err).trim() });
-        resolve({ ok: true, out: stdout });
-      });
-    } catch (err) {
-      resolve({ ok: false, err: String(err.message || err) });
-    }
-  });
 }
 
 // Bounded-concurrency map: run `fn` over `items` with at most `limit` in

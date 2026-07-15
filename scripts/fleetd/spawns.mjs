@@ -12,7 +12,8 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { deriveRepo, branchOf } from './repo-identity.mjs';
 import { ticketFromBranch, animalOf } from './tickets.mjs';
-import { execFileP, claudeEnvArgvPrefix, claudeTranscriptPath, SHELL_RE, NOT_RESUMABLE_END } from './helpers.mjs';
+import { claudeEnvArgvPrefix, claudeTranscriptPath, SHELL_RE, NOT_RESUMABLE_END } from './helpers.mjs';
+import { execFileP } from './exec.mjs';
 
 export function createSpawns(ctx) {
   const {

@@ -141,10 +141,11 @@ test('pending mail and the ticket follow the card across a /clear', async (t) =>
   await postJson(`${daemon.baseUrl}/mail`, { to: ticketed, from: 'operator', text: 'read me after the clear' });
 
   const { newSid } = await clearInto(daemon, cwd, sid);
-  const heir = cardOf((await getJson(`${daemon.baseUrl}/state`)).json, newSid);
+  const heirState = (await getJson(`${daemon.baseUrl}/state`)).json;
+  const heir = cardOf(heirState, newSid);
   assert.equal(heir.callsign, ticketed, 'the ticket name came along');
   assert.equal(heir.ticket, 'PROJ-42');
-  assert.equal(heir.mail_pending.count, 1, 'the undelivered mail followed the card, not the dead id');
+  assert.equal(heirState.mail_meta[newSid].queued, 1, 'the undelivered mail followed the card, not the dead id');
 
   const rows = withDb(home, db => db.prepare('SELECT to_session FROM mail WHERE delivered_at IS NULL').all());
   assert.deepEqual(rows.map(r => r.to_session), [newSid]);
@@ -416,8 +417,8 @@ test('a healed card keeps the name the fleet knows — the throwaway never becom
   assert.equal(renamed.status, 200, JSON.stringify(renamed.json));
   assert.equal(renamed.json.previous, callsign);
   await postJson(`${healed.baseUrl}/mail`, { to: callsign, from: 'operator', text: 'the name everyone knows' });
-  const card = cardOf((await getJson(`${healed.baseUrl}/state`)).json, newSid);
-  assert.equal(card.mail_pending.count, 1, 'mail to the lineage name still lands after a rename');
+  const healedState = (await getJson(`${healed.baseUrl}/state`)).json;
+  assert.equal(healedState.mail_meta[newSid].queued, 1, 'mail to the lineage name still lands after a rename');
 
   // And reverting hands back the lineage name, never the throwaway.
   const reverted = await postJson(`${healed.baseUrl}/api/sessions/${newSid}/name`, { clear: true });

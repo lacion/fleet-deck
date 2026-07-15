@@ -3723,8 +3723,8 @@ var require_websocket_server = __commonJS({
 // scripts/fleetd/fleetd.mjs
 import fs12 from "node:fs";
 import crypto2 from "node:crypto";
-import os4 from "node:os";
-import path10 from "node:path";
+import os5 from "node:os";
+import path11 from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // scripts/fleetd/db.mjs
@@ -4538,22 +4538,36 @@ __export(spawn_exports, {
   typeKeys: () => typeKeys,
   windowName: () => windowName
 });
-import { execFile, execFileSync as execFileSync2, spawn as spawnChild } from "node:child_process";
+import { execFileSync as execFileSync2, spawn as spawnChild } from "node:child_process";
+
+// scripts/fleetd/exec.mjs
+import { execFile } from "node:child_process";
+function execFileP(cmd, args, { timeout = 3e4 } = {}) {
+  return new Promise((resolve) => {
+    try {
+      execFile(cmd, args, { timeout, windowsHide: true }, (err, stdout, stderr) => {
+        if (err) return resolve({ ok: false, code: err.code, err: String(stderr || err.message || err).trim() });
+        resolve({ ok: true, out: stdout });
+      });
+    } catch (err) {
+      resolve({ ok: false, err: String(err.message || err) });
+    }
+  });
+}
+
+// scripts/fleetd/spawn.mjs
 import { randomUUID } from "node:crypto";
 var TMUX_TIMEOUT_MS = 5e3;
 var US = "";
-function tmux(args) {
-  return new Promise((resolve) => {
-    try {
-      const socket = process.env.FLEETDECK_TMUX_SOCKET?.trim();
-      const argv = socket ? ["-L", socket, ...args] : args;
-      execFile("tmux", argv, { timeout: TMUX_TIMEOUT_MS, windowsHide: true }, (err, stdout) => {
-        resolve(err ? null : stdout ?? "");
-      });
-    } catch {
-      resolve(null);
-    }
-  });
+async function tmux(args) {
+  try {
+    const socket = process.env.FLEETDECK_TMUX_SOCKET?.trim();
+    const argv = socket ? ["-L", socket, ...args] : args;
+    const r = await execFileP("tmux", argv, { timeout: TMUX_TIMEOUT_MS });
+    return r.ok ? r.out ?? "" : null;
+  } catch {
+    return null;
+  }
 }
 var probe = { ok: false, at: 0 };
 var PROBE_TTL_MS = 6e4;
@@ -4995,7 +5009,6 @@ import fs4 from "node:fs";
 import path2 from "node:path";
 import fs3 from "node:fs";
 import os from "node:os";
-import { execFile as execFile2 } from "node:child_process";
 
 // scripts/fleetd/env-scrub.mjs
 var CLAUDE_ENV_MARKERS = [
@@ -5082,18 +5095,6 @@ function claudeEnvArgvPrefix(port, home) {
     `FLEETDECK_PORT=${port}`,
     `FLEETDECK_HOME=${home}`
   ];
-}
-function execFileP(cmd, args, { timeout = 3e4 } = {}) {
-  return new Promise((resolve) => {
-    try {
-      execFile2(cmd, args, { timeout, windowsHide: true }, (err, stdout, stderr) => {
-        if (err) return resolve({ ok: false, code: err.code, err: String(stderr || err.message || err).trim() });
-        resolve({ ok: true, out: stdout });
-      });
-    } catch (err) {
-      resolve({ ok: false, err: String(err.message || err) });
-    }
-  });
 }
 async function mapLimit(items, limit, fn) {
   const out = new Array(items.length);
@@ -7342,7 +7343,6 @@ function createSnapshot(ctx) {
     }
     const sessions = visible.map((s) => {
       const sp = spawnBySid.get(s.session_id);
-      const pending = pendingBySid.get(s.session_id);
       const adoptEligible = s.ended_at != null ? sessionAdoptableNow(s, !!sp) ? "now" : null : s.source === "hooks" && !sp ? "arm" : null;
       const adopt = {
         eligible: adoptEligible,
@@ -7376,13 +7376,11 @@ function createSnapshot(ctx) {
         source: s.source,
         notification_type: s.notification_type ?? null,
         // F3e: WHY it needs you
-        mail_pending: {
-          count: pending?.n ?? 0,
-          oldest_at: pending?.oldest_at ?? null,
-          // Approximation by design: no tmux subprocess in a snapshot. A
-          // qualifying active spawn row is treated as pane-capable here.
-          deliverable: waiterBySid.get(s.session_id) || ownedPaneBySid.get(s.session_id)
-        },
+        // D11: the per-session mail_pending block ({count, oldest_at, deliverable})
+        // was removed — the top-level mail_meta[session_id] carries the same facts
+        // ({queued, oldest_at, route}) and is the single per-session source of
+        // truth. The top-level mail_pending map (a simple {sid: count}) is KEPT: it
+        // is the documented /state count field orchestrators read (commands/fleet.md).
         sparkline: sparkBySid.get(s.session_id) || new Array(30).fill(0),
         stale: (s.col === "working" || s.col === "verifying") && s.last_seen != null && now - s.last_seen > STALE_MS,
         ...sp ? {
@@ -9870,12 +9868,22 @@ function livePidLooksLikeFleetd(pid) {
   }
 }
 
+// scripts/fleetd/config.mjs
+import os4 from "node:os";
+import path10 from "node:path";
+function resolveHome() {
+  return process.env.FLEETDECK_HOME || path10.join(os4.homedir() || "/tmp", ".fleetdeck");
+}
+function resolvePort() {
+  return Number(process.env.FLEETDECK_PORT || 4711);
+}
+
 // scripts/fleetd/fleetd.mjs
-var __dirname = path10.dirname(fileURLToPath2(import.meta.url));
-var PORT = Number(process.env.FLEETDECK_PORT || 4711);
+var __dirname = path11.dirname(fileURLToPath2(import.meta.url));
+var PORT = resolvePort();
 var BIND = (process.env.FLEETDECK_BIND || "127.0.0.1").trim() || "127.0.0.1";
 var LAN_MODE = !isLoopbackAddress(BIND);
-var HOME = process.env.FLEETDECK_HOME || path10.join(os4.homedir() || "/tmp", ".fleetdeck");
+var HOME = resolveHome();
 var MANAGED = process.env.FLEETDECK_MANAGED === "1";
 process.on("unhandledRejection", (reason) => {
   console.error("fleetd unhandled rejection (daemon kept alive):", reason);
@@ -9901,7 +9909,7 @@ try {
   fs12.chmodSync(HOME, 448);
 } catch {
 }
-var PID_FILE = path10.join(HOME, "fleetd.pid");
+var PID_FILE = path11.join(HOME, "fleetd.pid");
 var ownsPidFile = false;
 function removeOwnedPidFile() {
   if (!ownsPidFile) return;
@@ -9969,7 +9977,7 @@ if (PROXY_AUTH === "trust" && !TRUSTED_ORIGINS.length) {
   startupFatal("FLEETDECK_PROXY_AUTH=trust requires FLEETDECK_TRUSTED_ORIGINS \u2014 there is nothing to trust");
 }
 var TOKEN_REQUIRED = LAN_MODE || TRUSTED_ORIGINS.length > 0 && PROXY_AUTH === "token";
-var TOKEN_FILE = path10.join(HOME, "token");
+var TOKEN_FILE = path11.join(HOME, "token");
 var TOKEN;
 if (Object.hasOwn(process.env, "FLEETDECK_TOKEN")) {
   TOKEN = String(process.env.FLEETDECK_TOKEN).trim();
@@ -10003,7 +10011,7 @@ if (versionOverride) {
   version = versionOverride;
 } else {
   try {
-    version = JSON.parse(fs12.readFileSync(path10.resolve(__dirname, "../../package.json"), "utf8")).version || version;
+    version = JSON.parse(fs12.readFileSync(path11.resolve(__dirname, "../../package.json"), "utf8")).version || version;
   } catch {
   }
 }
@@ -10015,7 +10023,7 @@ function mdnsInstanceName() {
     return "Fleet Deck";
   }
 }
-var DB_FILE = path10.join(HOME, "fleetd.db");
+var DB_FILE = path11.join(HOME, "fleetd.db");
 var db = openDb(DB_FILE);
 var core = createCore(db, { port: PORT, version });
 var MDNS_ENABLED = LAN_MODE && process.env.FLEETDECK_MDNS?.trim().toLowerCase() !== "off";
@@ -10055,7 +10063,7 @@ server.on("error", (e) => {
 function lanAddresses() {
   const addresses = /* @__PURE__ */ new Set();
   try {
-    for (const entries of Object.values(os4.networkInterfaces())) {
+    for (const entries of Object.values(os5.networkInterfaces())) {
       for (const entry of entries || []) {
         if ((entry.family === "IPv4" || entry.family === 4) && !entry.internal) addresses.add(entry.address);
       }
