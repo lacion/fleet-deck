@@ -15,6 +15,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import http from 'node:http';
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -75,6 +76,27 @@ function refused(url) {
     ws.once('open', () => { clearTimeout(timer); ws.terminate(); reject(new Error('unauthenticated WebSocket unexpectedly opened')); });
     ws.once('error', () => { clearTimeout(timer); resolve(); });
     ws.once('close', () => { clearTimeout(timer); resolve(); });
+  });
+}
+
+// A loopback request with FULL control over the Host/Origin headers. undici's
+// fetch silently DROPS a Host override (a forbidden request header there), so a
+// proxy-shaped request — a loopback socket carrying the PROXY's external Host —
+// cannot be crafted with fetch. node:http honours the override, so the trusted-
+// proxy path is actually exercised. Resolves { status, body }; never rejects on
+// a non-2xx. (Mirrors tests/lan-auth.test.mjs rawGet.)
+function rawGet(port, pathname, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      { host: '127.0.0.1', port, path: pathname, method: 'GET', headers },
+      res => {
+        let body = '';
+        res.on('data', c => { body += c; });
+        res.on('end', () => resolve({ status: res.statusCode, body }));
+      },
+    );
+    req.on('error', reject);
+    req.end();
   });
 }
 
@@ -156,6 +178,82 @@ test('REQUIRE_TOKEN=on generates and persists a loopback token (0600) with no FL
   assert.equal(noTok.status, 401, 'the generated token must gate a loopback data route');
   const withTok = await fetch(`${baseUrl}/state`, { headers: { authorization: `Bearer ${generated}` } });
   assert.equal(withTok.status, 200, 'the generated token must authorize a loopback data route');
+});
+
+test('REQUIRE_TOKEN=on: an ENV-supplied FLEETDECK_TOKEN is persisted to HOME/token (0600)', async t => {
+  // FIX: the generate path only writes HOME/token when it MINTS a token. When
+  // the operator PINS FLEETDECK_TOKEN in the env (how startRT starts the daemon,
+  // and the documented way), no file was written — but fleet-watch.mjs /
+  // fleet-sessionstart.mjs read the bearer ONLY from HOME/token, so with no file
+  // they present nothing and every gated call 401s. The token must be persisted
+  // even when it came from the env. The daemon writes it synchronously before it
+  // listens, so once /health answers (startRT waits on it) the file must exist.
+  const { home } = await startRT(t);
+  const tokenFile = path.join(home, 'token');
+  assert.equal(existsSync(tokenFile), true, 'an env-supplied token must be persisted for file-only clients (fleet-watch)');
+  assert.equal(readFileSync(tokenFile, 'utf8').trim(), TOKEN, 'the persisted file must hold the env-supplied token verbatim');
+  assert.equal(statSync(tokenFile).mode & 0o777, 0o600, 'the persisted token must stay owner-only');
+});
+
+test('REQUIRE_TOKEN=on: /health stays tokenless (liveness/version probe)', async t => {
+  // /health is deliberately ABSENT from the CHANGELOG'd gated list: it is a
+  // liveness/version probe used by `fleetdeck status`, the supervisor's
+  // waitForHealth and the standalone check — all tokenless by design — and it
+  // carries no fleet data. The flag must not gate it.
+  const { baseUrl } = await startRT(t);
+
+  const health = await fetch(`${baseUrl}/health`);
+  assert.equal(health.status, 200, '/health must not be gated by REQUIRE_TOKEN');
+  const body = await health.json();
+  assert.equal(body.ok, true);
+  assert.equal(typeof body.version, 'string');
+
+  // A neighbouring data route stays gated — /health is the only added carve-out.
+  const state = await fetch(`${baseUrl}/state`);
+  assert.equal(state.status, 401, 'a data route must stay gated while /health is exempt');
+});
+
+test('REQUIRE_TOKEN=on + PROXY_AUTH=trust: a browser via the trusted proxy needs no token', async t => {
+  // PROXY_AUTH=trust makes the reverse proxy the authenticator, so a browser
+  // that genuinely arrived through the trusted proxy carries NO bearer. The
+  // requireToken tightening must not fire for it: REQUIRE_TOKEN closes the
+  // LOOPBACK trust zone against other OS users, it does NOT override an explicit
+  // operator decision to trust a proxy. Before the fix this browser 401'd with
+  // no token to present.
+  const PROXY_HOST = 'board.example.com';
+  const port = randomPort();
+  const home = scratchHome();
+  const raw = spawnRaw({
+    port,
+    home,
+    env: {
+      FLEETDECK_REQUIRE_TOKEN: 'on',
+      FLEETDECK_TOKEN: TOKEN,
+      FLEETDECK_PROXY_AUTH: 'trust',
+      FLEETDECK_TRUSTED_ORIGINS: `https://${PROXY_HOST}`,
+    },
+  });
+  t.after(async () => {
+    await raw.kill();
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+  const baseUrl = `http://127.0.0.1:${port}`;
+  await waitForResponse(`${baseUrl}/health?t=${encodeURIComponent(TOKEN)}`);
+
+  // A browser arriving through the trusted proxy: the proxy's external Host, its
+  // trusted Origin, and NO bearer. It must be authorized despite REQUIRE_TOKEN.
+  const proxied = await rawGet(port, '/state', { Host: PROXY_HOST, Origin: `https://${PROXY_HOST}` });
+  assert.equal(proxied.status, 200, 'a trusted-proxy browser must not be gated by REQUIRE_TOKEN in trust mode');
+
+  // The Host-only variant (no Origin) is still recognised as arriving via the
+  // proxy (arrivedViaTrustedProxy's Host-based signal) and stays exempt too.
+  const proxiedNoOrigin = await rawGet(port, '/state', { Host: PROXY_HOST });
+  assert.equal(proxiedNoOrigin.status, 200, 'the Host-based trusted-proxy signal must also stay exempt in trust mode');
+
+  // But a PLAIN loopback data route — our own Host, no proxy, no token — is
+  // still gated by the flag: trust mode does not reopen the loopback trust zone.
+  const plain = await rawGet(port, '/state', { Host: `127.0.0.1:${port}` });
+  assert.equal(plain.status, 401, 'plain loopback stays gated under REQUIRE_TOKEN even in trust mode');
 });
 
 test('flag off (default): a loopback data route stays open with no token', async t => {

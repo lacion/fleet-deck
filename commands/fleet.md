@@ -1,11 +1,11 @@
 ---
 description: Show the Fleet Deck board URL and a live summary of every Claude Code session on this machine
-allowed-tools: Bash(curl:*)
+allowed-tools: Bash(curl:*), Bash(cat:*)
 ---
 
 ## Fleet state (raw)
 
-!`curl -sf -m 2 http://127.0.0.1:4711/state || echo FLEET_DAEMON_DOWN`
+!`TOKEN=$(cat "${FLEETDECK_HOME:-$HOME/.fleetdeck}/token" 2>/dev/null); curl -sf -m 2 ${TOKEN:+-H "Authorization: Bearer $TOKEN"} http://127.0.0.1:4711/state || echo FLEET_DAEMON_DOWN`
 
 ## Your task
 

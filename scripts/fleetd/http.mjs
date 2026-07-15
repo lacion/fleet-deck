@@ -239,20 +239,43 @@ export function createHttp(core, {
       // Use arrivedViaTrustedProxy, NOT viaTrustedProxy: the latter keys off
       // Origin alone and so waived the token for a proxied request that carried
       // no Origin — the no-Origin bypass fixed here.
-      if (!(proxyAuth === 'token' && arrivedViaTrustedProxy(req))) {
-        // REQUIRE_TOKEN (FLEETDECK_REQUIRE_TOKEN=on): on a multi-user machine
-        // every other OS user can reach 127.0.0.1 and today inherits this
-        // loopback exemption — tokenless /state, /api/spawn, the lot — and it is
-        // also the residual behind the Host-rewriting-proxy note above. With the
-        // flag on the exemption survives for exactly two callers: a /hook/* path
-        // (Claude Code http hooks cannot attach an Authorization header — see
-        // hooks/hooks.json) and the data-free public shell (a browser must load
-        // it before it can present a key). Everything else falls through to the
-        // bearer/?t= check below even on loopback. Purely ADDITIVE: with the flag
-        // off (the default) the loopback exemption is byte-for-byte as before,
-        // and this never loosens the proxyAuth/arrivedViaTrustedProxy gate above.
+      const viaProxy = arrivedViaTrustedProxy(req);
+      if (proxyAuth === 'token' && viaProxy) {
+        // NO-ORIGIN PROXY HOLE: a browser that genuinely reached us THROUGH the
+        // proxy must still present the bearer even over loopback (see
+        // arrivedViaTrustedProxy). Do NOT auto-exempt — fall through to the token
+        // check below. REQUIRE_TOKEN never loosens this gate.
+      } else if (proxyAuth === 'trust' && viaProxy) {
+        // PROXY_AUTH=trust: the operator has explicitly made the reverse proxy
+        // the authenticator (Coder et al. authenticate before forwarding), so a
+        // request that genuinely arrived through the trusted proxy needs no token
+        // at all. REQUIRE_TOKEN exists to close the LOOPBACK trust zone against
+        // other local OS users; it must NOT override this deliberate operator
+        // decision to trust the proxy, so this exemption survives the flag.
+        return true;
+      } else {
+        // PLAIN LOOPBACK (not via the proxy). REQUIRE_TOKEN
+        // (FLEETDECK_REQUIRE_TOKEN=on): on a multi-user machine every other OS
+        // user can reach 127.0.0.1 and today inherits this loopback exemption —
+        // tokenless /state, /api/spawn, the lot — and it is also the residual
+        // behind the Host-rewriting-proxy note above. With the flag on the
+        // exemption survives for exactly: a /hook/* path (Claude Code http hooks
+        // cannot attach an Authorization header — see hooks/hooks.json), /health
+        // (a tokenless liveness/version probe — deliberately absent from the
+        // CHANGELOG'd gated list; used by `fleetdeck status`, the supervisor's
+        // waitForHealth and the standalone health check; it carries no fleet
+        // data, just {ok,version,managed}), and the data-free public shell (a
+        // browser must load it before it can present a key). The isPublicShell
+        // arm is redundant on the HTTP path — the request handler short-circuits
+        // shell paths before calling authorized() — but it GUARDS THE WS-UPGRADE
+        // PATH, which calls authorized() directly with no such short-circuit.
+        // Everything else falls through to the bearer/?t= check below even on
+        // loopback. Purely ADDITIVE: with the flag off (the default) the loopback
+        // exemption is byte-for-byte as before, and this never loosens the
+        // proxyAuth/arrivedViaTrustedProxy gate above.
         if (!requireToken
           || url.pathname.startsWith('/hook/')
+          || url.pathname === '/health'
           || isPublicShell(req.method, url.pathname)) return true;
       }
     }
@@ -813,7 +836,7 @@ export function createHttp(core, {
               // apply automatically like every other control POST.
               logExec(url.pathname, req,
                 (ev?.dangerously_skip_permissions === true || ev?.permission_mode === 'bypassPermissions')
-                  ? ' unsupervised=true' : '');
+                  ? ' unsupervised=true' : ' unsupervised=false');
               core.adoptSession(adoptMatch[1], ev ?? {})
                 .then(out => json(res, out.status, out.body))
                 .catch(err => {

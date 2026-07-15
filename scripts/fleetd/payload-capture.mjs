@@ -55,14 +55,35 @@ function isSecretKey(key) {
 // masking can only shrink (never grow) an already-budgeted slice — see
 // textWithinBudget. The PEM alternative tolerates a block the byte budget cut
 // off mid-key (…|$), so a half-captured private key still masks.
+//
+// ReDoS AUDIT (capture runs synchronously in the hook handler, so a pattern
+// that backtracks super-linearly on attacker-influenced text stalls the
+// daemon). Each pattern below was checked against adversarial input:
+//   - sk-ant / ghp / github_pat / xox / Bearer each have a SINGLE trailing
+//     unbounded run with no required token after it (and the class never
+//     overlaps its own prefix separator), so a greedy match either succeeds in
+//     one forward pass or fails locally — linear, left as-is. Bounding their
+//     tails would risk under-masking a legitimately long token.
+//   - AKIA is fixed-width — trivially linear.
+//   - JWT had THREE unbounded runs joined by literal dots; on a string like
+//     ('eyJ'.repeat(N) + '.' + 'a'.repeat(M)) the first run scans to the lone
+//     dot at every one of the N 'eyJ' start positions → O(n^2), a measured
+//     ~2s stall at 64KB. Bounding each segment to {10,4096} (real JWT segments
+//     are far shorter) makes per-start work constant → linear, and a normal JWT
+//     still matches.
+//   - PEM was measured safe (lazy `[\s\S]*?`, anchored, `…|$` still tolerates a
+//     truncated block). The two `[A-Z ]*` key-type labels are defensively
+//     bounded to {0,40} — every real label ("RSA", "OPENSSH", "ENCRYPTED", …)
+//     fits, and match semantics (incl. the truncated-block `…|$` fallback) are
+//     unchanged.
 const SECRET_VALUE_RES = [
   /sk-ant-[A-Za-z0-9_-]{10,}/g,
   /(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}/g,
   /github_pat_[A-Za-z0-9_]{20,}/g,
   /xox[baprs]-[A-Za-z0-9-]{10,}/g,
   /AKIA[A-Z0-9]{16}/g,
-  /eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g,
-  /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g,
+  /eyJ[A-Za-z0-9_-]{10,4096}\.[A-Za-z0-9_-]{10,4096}\.[A-Za-z0-9_-]{10,4096}/g,
+  /-----BEGIN [A-Z ]{0,40}PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]{0,40}PRIVATE KEY-----|$)/g,
   /Bearer\s+[A-Za-z0-9._~+/=-]{16,}/g,
 ];
 
@@ -97,6 +118,13 @@ function boundedPayload(value, maxBytes) {
     // SECRET_VALUE_RES match is longer than the marker it becomes, this can only
     // shrink `out`; `remaining` was already charged for the pre-mask bytes, so
     // we never emit more than was accounted for and the budget stays sound.
+    // KNOWN RESIDUAL (accepted): masking runs on the post-slice string, so a
+    // real credential that straddles the exact byte-budget boundary is cut to a
+    // sub-min-length prefix its shape regex no longer recognizes, and that
+    // prefix survives. We deliberately do NOT redact pre-slice — that would
+    // re-materialize the multi-MB secret the budget exists to avoid. This is a
+    // narrow leak of a partial token onto an opt-in, 0600 file; documented so
+    // the next reader knows it is known and why it is tolerated.
     out = redactValue(out);
     return truncated ? `${out}${marker}` : out;
   }
@@ -186,7 +214,17 @@ export function createPayloadCapture(homeDir, {
       // EXACT-SECRET SCRUB: strip any known daemon secret from the FINISHED line
       // via split/join, not a regex — a token can contain regex metacharacters.
       // Runs before the size cap so the cap measures exactly what hits disk.
-      for (const secret of exactSecrets) line = line.split(secret).join(REDACTED);
+      // The line is JSON, so a secret containing " \ or a control char appears
+      // ONLY in JSON-escaped form and the raw split would never match — so scrub
+      // BOTH the raw secret AND its escaped inner form (stringify then drop the
+      // surrounding quotes). Generated tokens are hex (escaped === raw, so the
+      // second pass is skipped), but an operator-set FLEETDECK_TOKEN may contain
+      // those chars and must not leak verbatim.
+      for (const secret of exactSecrets) {
+        line = line.split(secret).join(REDACTED);
+        const escaped = JSON.stringify(secret).slice(1, -1); // inner form, no quotes
+        if (escaped && escaped !== secret) line = line.split(escaped).join(REDACTED);
+      }
       if (size + Buffer.byteLength(line) > maxBytes) return; // size cap
       // WHY both mode and chmod: mode protects first creation against ambient
       // umask; chmod also repairs an existing legacy 0644 capture file.

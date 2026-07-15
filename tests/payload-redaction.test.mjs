@@ -105,6 +105,40 @@ test('a known daemon secret is scrubbed from the finished line, bytes and all', 
   assert.equal(payload.note, 'unrelated');
 });
 
+test('an adversarial JWT-shaped string cannot stall the synchronous capture (ReDoS guard)', (t) => {
+  // Pre-fix, the JWT shape /eyJ…{10,}\.{10,}\.{10,}/ backtracked quadratically:
+  // on ('eyJ'.repeat(N) + '.' + 'a'.repeat(M)) the first unbounded run rescans
+  // to the lone dot at every 'eyJ' start (~4.5s at this size, measured). With
+  // each segment bounded to {10,4096} per-start work is constant → linear.
+  // Capture runs synchronously inside the hook handler, so this MUST stay fast.
+  const evil = 'eyJ'.repeat(32000) + '.' + 'a'.repeat(1000); // ~97 KB
+  const started = Date.now();
+  const { raw } = captureOnce(t, { blob: evil }, { maxPayloadBytes: 97_000 });
+  const elapsed = Date.now() - started;
+  // The string is not a real JWT (only one dot), so it is not masked — the
+  // point is purely that redaction returns promptly and a record is written.
+  assert.ok(raw.length > 0, 'capture produced a line');
+  assert.ok(elapsed < 2_000, `redaction must not hang; took ${elapsed}ms`);
+});
+
+test('an operator token with JSON-special chars is scrubbed in every form, bytes and all', (t) => {
+  // Generated tokens are hex (safe), but an operator-set FLEETDECK_TOKEN may
+  // contain " \ or control chars. Inside the JSON line those appear only in
+  // escaped form, so the raw split() misses them — the escaped-inner scrub is
+  // what closes the leak.
+  const secret = 'ab"cd\\ef012345678'; // 17 chars: contains a quote and a backslash
+  const escapedInner = JSON.stringify(secret).slice(1, -1); // how it appears in the line
+  const { payload, raw } = captureOnce(t, {
+    prompt: `operator pasted ${secret} into the box`,
+    note: 'unrelated',
+  }, { secrets: [secret] });
+  assert.equal(raw.includes(secret), false, 'raw token bytes must be absent');
+  assert.equal(raw.includes(escapedInner), false, 'JSON-escaped token bytes must be absent too');
+  assert.equal(raw.includes('012345678'), false, 'no distinctive tail of the token may survive');
+  assert.equal(payload.prompt, 'operator pasted [redacted] into the box');
+  assert.equal(payload.note, 'unrelated');
+});
+
 test('a giant value under a secret key is redacted, never truncated-but-leaked', (t) => {
   const giant = 'S3CR3T' + 'x'.repeat(400_000);
   const { payload, raw } = captureOnce(t, { password: giant, ok: 'visible' });

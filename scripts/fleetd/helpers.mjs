@@ -93,7 +93,12 @@ export function sessionAdoptableNow(session, hasSpawnRow) {
 export function claudeEnvArgvPrefix(port, home) {
   const scrub = [
     ...CLAUDE_ENV_MARKERS,
-    'FLEETDECK_AGENTS_CMD', 'FLEETDECK_SPAWN_CMD',
+    // FLEETDECK_*_CMD name fixture commands the daemon execs in place of a real
+    // subprocess (SPAWN_CMD → the `claude` pane; TERM_CMD → termbridge's tmux
+    // control client). A leaked one riding a pane's env into the next
+    // SessionStart would make a fresh daemon exec the fixture instead of the
+    // real thing — the same scar class as the test seams below, so scrub both.
+    'FLEETDECK_AGENTS_CMD', 'FLEETDECK_SPAWN_CMD', 'FLEETDECK_TERM_CMD',
     'TMUX', 'TMUX_PANE', 'FLEETDECK_TMUX_SOCKET',
     'FLEETDECK_AGENTS_POLL_MS', 'FLEETDECK_HOLD_MS', 'FLEETDECK_STALE_MS',
     'FLEETDECK_NUDGE_MS', 'FLEETDECK_WATCH_MAX_MS',

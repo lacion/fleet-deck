@@ -206,6 +206,41 @@ if (TOKEN_REQUIRED && !TOKEN) {
   }
 }
 
+// PERSIST AN ENV-SUPPLIED TOKEN TOO. The generate path above writes HOME/token
+// only when it MINTS a token. When the operator PINS FLEETDECK_TOKEN in the env
+// (the documented way — and how the test suite starts the daemon), TOKEN is set
+// but no file was written, and HOME/token was never even read. But the fleet's
+// own clients — fleet-watch.mjs / fleet-sessionstart.mjs — read the bearer ONLY
+// from HOME/token, so with no file they present no token and every gated call
+// (LAN, REQUIRE_TOKEN, or proxy-token mode) 401s: the flag's own clients locked
+// out. So whenever a token is REQUIRED and one exists, make the file match it
+// (0600), writing only when it is absent or differs (a differing file is a stale
+// token — e.g. a previously generated one — that would otherwise mislead every
+// file-only client). Deliberately NOT when no token is required (default
+// loopback, no flag): a token file there gates nothing and only surprises the
+// operator. The just-generated case above already matches, so this no-ops it.
+if (TOKEN_REQUIRED && TOKEN) {
+  let onDisk = null;
+  try { onDisk = fs.readFileSync(TOKEN_FILE, 'utf8'); } catch (err) {
+    if (err?.code !== 'ENOENT') {
+      startupFatal(`cannot read FLEETDECK_HOME/token (${err?.code || err?.message || 'unknown error'})`);
+    }
+  }
+  if (onDisk === null || onDisk.trim() !== TOKEN) {
+    try {
+      // mode 0o600 applies on create; an existing (stale) file is rewritten in
+      // place — no 'wx', we INTEND to replace a differing token — then chmod in
+      // case it pre-existed with looser permissions (writeFileSync ignores mode
+      // on an existing file). A persistence failure is fatal: a file-only client
+      // that cannot read the current token is silently locked out otherwise.
+      fs.writeFileSync(TOKEN_FILE, TOKEN, { encoding: 'utf8', mode: 0o600 });
+      try { fs.chmodSync(TOKEN_FILE, 0o600); } catch { /* best-effort tighten */ }
+    } catch (err) {
+      startupFatal(`cannot persist FLEETDECK_HOME/token (${err?.code || err?.message || 'unknown error'})`);
+    }
+  }
+}
+
 let version = '0.0.0';
 // Test-only override: FLEETDECK_VERSION_OVERRIDE lets the takeover suite stand
 // up an "older" or "newer" daemon deterministically without editing (or
