@@ -9,7 +9,7 @@ import { useBoardHotkeys } from './hooks/useBoardHotkeys.js';
 import { useFleetActions } from './hooks/useFleetActions.js';
 import { ClockContext } from './clock.jsx';
 import { basename, safeUrl, spawnTermable, sessionsById, callsignOf, sessionTicker } from './util.js';
-import { sendMail, markPlan, reasonOf } from './api.js';
+import { sendMail, markPlan, reasonOf, fsList, fsRead, fsSearch, fsListHome, fsReadHome, fsSearchHome } from './api.js';
 import { useAuth, saveToken } from './token.js';
 import Header from './components/Header.jsx';
 import BoardLanes from './components/BoardLanes.jsx';
@@ -50,7 +50,7 @@ export default function App() {
   const [spawnForm, setSpawnForm] = useState(null); // null | { prompt?, cwd?, planId? }
   const [lanOpen, setLanOpen] = useState(false); // v1.7 LAN share panel
   const [wtOpen, setWtOpen] = useState(false); // v1.9 worktrees modal
-  const [fsView, setFsView] = useState(null); // v2.2 file viewer — null | {sid, callsign, root, path?}
+  const [fsView, setFsView] = useState(null); // v2.2 file viewer — null | {scope:'session', sid, callsign, root, path?} | {scope:'home'}
   const [priorities, setPriorities] = useState(() => new Set());
   const [threads, setThreads] = useState({}); // sid -> [{text, at}] (this tab only)
 
@@ -221,6 +221,7 @@ export default function App() {
         spawnAvailable={spawnAvailable}
         spawnActive={spawnCap?.active || 0}
         onSpawn={() => setSpawnForm({})}
+        onBrowseHome={() => setFsView({ scope: 'home' })}
         hasOffline={hasOffline}
         clearing={clearing}
         onClear={doClear}
@@ -367,6 +368,7 @@ export default function App() {
           // v2.2 — the read-only file viewer opens OVER the drawer (relPath
           // null = at the root; a FILES chip passes the file to reveal)
           onBrowseFiles={(sess, relPath) => setFsView({
+            scope: 'session',
             sid: sess.session_id,
             callsign: sess.callsign || sess.session_id,
             root: sess.worktree || sess.cwd || '',
@@ -412,17 +414,29 @@ export default function App() {
         />
       )}
 
-      {/* ============ file viewer (v2.2 — read-only, per session) ============ */}
-      {fsView && (
+      {/* ====== file viewer (v2.2 read-only) — a session's tree, or all of home ====== */}
+      {fsView && (fsView.scope === 'home' ? (
         <FileViewer
-          key={fsView.sid}
-          sid={fsView.sid}
-          callsign={fsView.callsign}
-          root={fsView.root}
-          initialPath={fsView.path}
+          key="home"
+          title="~ home"
+          root={snap.home_dir || '~'}
+          list={fsListHome}
+          read={fsReadHome}
+          search={fsSearchHome}
           onClose={() => setFsView(null)}
         />
-      )}
+      ) : (
+        <FileViewer
+          key={fsView.sid}
+          title={fsView.callsign}
+          root={fsView.root}
+          initialPath={fsView.path}
+          list={(p) => fsList(fsView.sid, p)}
+          read={(p) => fsRead(fsView.sid, p)}
+          search={(q, m) => fsSearch(fsView.sid, q, m)}
+          onClose={() => setFsView(null)}
+        />
+      ))}
 
       {/* ============ spawn (v1.2 — explicit human click only) ============ */}
       {spawnForm && (
@@ -430,6 +444,7 @@ export default function App() {
           sessions={sessions}
           repoCatalog={snap.repo_catalog || EMPTY_ARR}
           settings={snap.settings || EMPTY_OBJ}
+          homeDir={snap.home_dir || ''}
           prefillPrompt={spawnForm.prompt || ''}
           prefillCwd={spawnForm.cwd || ''}
           planMode={!!spawnForm.planId}

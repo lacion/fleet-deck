@@ -5,6 +5,7 @@
 // facts (hasWatchWaiter/ownedPaneRow), spawnCapability + spawnState from the
 // spawn module. spawnRowRevivable is a pure helper.
 
+import os from 'node:os';
 import { spawnRowRevivable, sessionAdoptableNow } from './helpers.mjs';
 
 export function createSnapshot(ctx) {
@@ -182,6 +183,7 @@ export function createSnapshot(ctx) {
         last_used_at: repo.last_used_at,
       })),
       settings: { repos_dir: resolveReposDir() },
+      home_dir: os.homedir(), // root label for the global (home) file explorer
       ticker: q.recentTicker.all(),
       // Callsigns resolved from EVERY session, not just the visible ones: a
       // conflict outlives its participants, and a banner shouting a raw UUID at

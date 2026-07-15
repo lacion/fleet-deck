@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { fsList, fsRead, fsSearch, reasonOf } from '../api.js';
+import { reasonOf } from '../api.js';
 import { basename, copyText } from '../util.js';
 import { renderMarkdown } from '../markdown.js';
 import { useModal } from '../useModal.js';
@@ -153,7 +153,10 @@ function FileBody({ file, targetLine, mdOn }) {
   );
 }
 
-export default function FileViewer({ sid, callsign, root, initialPath, onClose }) {
+// list/read/search are already bound to a scope (a session's working tree, or
+// the global home root) by the parent — this component doesn't know or care
+// which, so the same tree/search/read UI serves both. title labels the header.
+export default function FileViewer({ list, read, search, title, root, initialPath, onClose }) {
   const [dirs, setDirs] = useState({});          // relPath -> {entries, truncated, loading, err}
   const [openSet, setOpenSet] = useState(() => new Set(['']));
   const [git, setGit] = useState(null);          // null until the first list answers
@@ -175,7 +178,7 @@ export default function FileViewer({ sid, callsign, root, initialPath, onClose }
 
   const loadDir = async (p) => {
     setDirs((prev) => ({ ...prev, [p]: { ...(prev[p] || {}), loading: true, err: null } }));
-    const res = await fsList(sid, p);
+    const res = await list(p);
     if (res.ok && res.json?.ok) {
       if (p === '') { setGit(!!res.json.git); setRootErr(null); }
       setDirs((prev) => ({
@@ -212,7 +215,7 @@ export default function FileViewer({ sid, callsign, root, initialPath, onClose }
     setTargetLine(line ?? null);
     setMdOn(p.endsWith('.md')); // prose renders, one click back to source
     setFile({ path: p, loading: true, err: null, content: '' });
-    const res = await fsRead(sid, p);
+    const res = await read(p);
     if (my !== seq.current) return;
     if (res.ok && res.json?.ok) {
       setFile({ path: p, loading: false, err: null, ...res.json });
@@ -248,7 +251,7 @@ export default function FileViewer({ sid, callsign, root, initialPath, onClose }
     const my = ++seq.current;
     setResults({ q: query, mode: m, hits: [], busy: true, err: null });
     setView('results');
-    const res = await fsSearch(sid, query, m);
+    const res = await search(query, m);
     if (my !== seq.current) return;
     if (res.ok && res.json?.ok) {
       setResults({ q: query, mode: m, busy: false, err: null, ...res.json });
@@ -300,12 +303,12 @@ export default function FileViewer({ sid, callsign, root, initialPath, onClose }
         className="fd-compose fd-fsviewer"
         role="dialog"
         aria-modal="true"
-        aria-label={`Files — ${callsign}`}
+        aria-label={`Files — ${title}`}
         ref={ref}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="fd-fshead">
-          <span className="lbl">⌸ FILES — {callsign}</span>
+          <span className="lbl">⌸ FILES — {title}</span>
           <span className="fd-fsroot mono" title={root}>{root}</span>
           {git != null && (
             <span

@@ -9,6 +9,7 @@
 // and time limits. The endpoints are read-only and never invoke a shell.
 
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { deriveRepo } from './repo-identity.mjs';
@@ -112,6 +113,22 @@ function resolveRoot(ctx, sid) {
     return { root, git: deriveRepo(root).is_git };
   } catch {
     return { error: { status: 410, body: { ok: false, reason: 'working tree no longer exists' } } };
+  }
+}
+
+// The global explorer: rooted at the DAEMON user's home directory, resolved
+// server-side from os.homedir() — the browser names a path relative to it and
+// nothing else, exactly as with a session root. Same containment, caps and
+// walls apply; a token-holder in LAN mode can read what the daemon user can, so
+// this widens exposure and is auth-gated like every other data endpoint.
+function resolveHomeRoot() {
+  const home = os.homedir();
+  try {
+    if (!home || !fs.statSync(home).isDirectory()) throw new Error('no home');
+    const root = fs.realpathSync(home);
+    return { root, git: deriveRepo(root).is_git };
+  } catch {
+    return { error: { status: 410, body: { ok: false, reason: 'home directory is unavailable' } } };
   }
 }
 
@@ -345,10 +362,13 @@ async function walkSearch(root, q, mode, deadline) {
 }
 
 export function createFiles(ctx) {
-  async function fsList(sid, relPath) {
+  // Each operation takes a resolver thunk so the SAME containment/caps logic
+  // serves both a per-session root (resolveRoot) and the global home root
+  // (resolveHomeRoot). The browser never supplies a root either way.
+  async function listAt(resolve, relPath) {
     let abs;
     try { validateRelPath(relPath); } catch (err) { return failure(err); }
-    const resolved = resolveRoot(ctx, sid);
+    const resolved = resolve();
     if (resolved.error) return resolved.error;
     const { root, git } = resolved;
     try {
@@ -381,9 +401,9 @@ export function createFiles(ctx) {
     }
   }
 
-  async function fsRead(sid, relPath) {
+  async function readAt(resolve, relPath) {
     try { validateRelPath(relPath); } catch (err) { return failure(err); }
-    const resolved = resolveRoot(ctx, sid);
+    const resolved = resolve();
     if (resolved.error) return resolved.error;
     const { root } = resolved;
     try {
@@ -415,14 +435,14 @@ export function createFiles(ctx) {
     }
   }
 
-  async function fsSearch(sid, q, { mode } = {}) {
+  async function searchAt(resolve, q, { mode } = {}) {
     if (typeof q !== 'string' || q.length < 2 || q.length > 256) {
       return { status: 400, body: { ok: false, reason: 'query must be 2–256 characters' } };
     }
     if (mode !== 'content' && mode !== 'name') {
       return { status: 400, body: { ok: false, reason: 'invalid search mode' } };
     }
-    const resolved = resolveRoot(ctx, sid);
+    const resolved = resolve();
     if (resolved.error) return resolved.error;
     if (searchesInFlight >= 2) {
       return { status: 429, body: { ok: false, reason: 'search busy — try again' } };
@@ -446,7 +466,18 @@ export function createFiles(ctx) {
     }
   }
 
-  return { fsList, fsRead, fsSearch };
+  // Per-session entry points (root resolved from the session id) and the global
+  // home-rooted explorer share one implementation via the resolver thunk.
+  const sessionRoot = sid => () => resolveRoot(ctx, sid);
+  const homeRoot = () => resolveHomeRoot();
+  return {
+    fsList: (sid, p) => listAt(sessionRoot(sid), p),
+    fsRead: (sid, p) => readAt(sessionRoot(sid), p),
+    fsSearch: (sid, q, opts) => searchAt(sessionRoot(sid), q, opts),
+    fsListHome: p => listAt(homeRoot, p),
+    fsReadHome: p => readAt(homeRoot, p),
+    fsSearchHome: (q, opts) => searchAt(homeRoot, q, opts),
+  };
 }
 
 export {

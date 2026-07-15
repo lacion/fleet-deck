@@ -611,9 +611,9 @@ export function createCore(db, {
   Object.assign(ctx, createWorktrees(ctx));
   const { worktrees, removeWorktree } = ctx;
 
-  // Read-only session working-tree browsing → files.mjs.
+  // Read-only session working-tree browsing + the global home explorer → files.mjs.
   Object.assign(ctx, createFiles(ctx));
-  const { fsList, fsRead, fsSearch } = ctx;
+  const { fsList, fsRead, fsSearch, fsListHome, fsReadHome, fsSearchHome } = ctx;
 
   // v1.2/v1.3 board-spawned session lifecycle → spawns.mjs.
   Object.assign(ctx, createSpawns(ctx));
@@ -695,6 +695,9 @@ export function createCore(db, {
     fsList,             // GET /api/sessions/:id/fs/list → {status, body}
     fsRead,             // GET /api/sessions/:id/fs/read → {status, body}
     fsSearch,           // GET /api/sessions/:id/fs/search → {status, body}
+    fsListHome,         // GET /api/fs/list → {status, body} (home-rooted)
+    fsReadHome,         // GET /api/fs/read → {status, body}
+    fsSearchHome,       // GET /api/fs/search → {status, body}
     // v1.3 plan library
     planMark,          // POST /api/plans/:id/mark → {status, body}
     // 0.7.1 custom names: POST /api/sessions/:id/name and the `name` command

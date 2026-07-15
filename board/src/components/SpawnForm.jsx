@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { spawnSession, saveSettings, reasonOf } from '../api.js';
 import { batchTotal, expandBatchTasks, parseBatchTasks } from '../util.js';
 import { useModal } from '../useModal.js';
+import DirPicker from './DirPicker.jsx';
 
 // v2.2 repo+branch mode — client-side mirrors of the daemon's input gates, for
 // instant feedback only: the DAEMON is the authority (git check-ref-format gets
@@ -58,7 +59,7 @@ const repoNameOf = (input) => {
 //
 // Since the daemon no longer caps how many agents may be live, the preview
 // below — the exact list, counted, before you click — IS the guardrail.
-export default function SpawnForm({ sessions, repoCatalog, settings, prefillPrompt, prefillCwd, planMode, onClose, onSpawned }) {
+export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, prefillPrompt, prefillCwd, planMode, onClose, onSpawned }) {
   const [cwd, setCwd] = useState(prefillCwd || '');
   const [prompt, setPrompt] = useState(prefillPrompt || '');
   const [model, setModel] = useState('');
@@ -84,6 +85,8 @@ export default function SpawnForm({ sessions, repoCatalog, settings, prefillProm
   const [reposDir, setReposDir] = useState(settings?.repos_dir?.resolved || '');
   const [dirNote, setDirNote] = useState(null); // {ok} | {err} after a save
   const savedDir = useRef(settings?.repos_dir?.resolved || '');
+  // v2.3 — the folder picker; which field a pick fills: null | 'cwd' | 'repo' | 'reposDir'
+  const [pickerFor, setPickerFor] = useState(null);
   const cwdRef = useRef(null);
   const promptRef = useRef(null);
   const closeTimer = useRef(null);
@@ -141,8 +144,8 @@ export default function SpawnForm({ sessions, repoCatalog, settings, prefillProm
 
   // the repos-root override persists on commit, not per keystroke — an
   // unfinished path half-typed into the box must never become a setting
-  const commitReposDir = async () => {
-    const v = reposDir.trim();
+  const commitReposDir = async (value = reposDir) => {
+    const v = value.trim();
     if (v === savedDir.current) return;
     const res = await saveSettings({ repos_dir: v || null });
     if (res.ok && res.json?.ok) {
@@ -271,6 +274,14 @@ export default function SpawnForm({ sessions, repoCatalog, settings, prefillProm
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submit();
   };
 
+  // folder picker → the field that opened it
+  const handlePick = (absPath) => {
+    if (pickerFor === 'cwd') { setCwd(absPath); if (err) setErr(null); }
+    else if (pickerFor === 'repo') { setRepo(absPath); setDirNote(null); if (err) setErr(null); }
+    else if (pickerFor === 'reposDir') { setReposDir(absPath); commitReposDir(absPath); }
+    setPickerFor(null);
+  };
+
   return (
     <div className="fd-composewrap" onClick={onClose}>
       <div className="fd-compose fd-spawn" role="dialog" aria-modal="true" aria-label="Spawn a session" ref={dialogRef} onClick={(e) => e.stopPropagation()}>
@@ -315,6 +326,7 @@ export default function SpawnForm({ sessions, repoCatalog, settings, prefillProm
                 onChange={(e) => { setCwd(e.target.value); if (err) setErr(null); }}
                 onKeyDown={onCtrlEnter}
               />
+              <button type="button" className="fd-browsebtn" title="browse folders" onClick={() => setPickerFor('cwd')}>🗀</button>
               <datalist id="fd-cwd-suggest">
                 {suggestions.map((p) => <option key={p} value={p} />)}
               </datalist>
@@ -332,6 +344,7 @@ export default function SpawnForm({ sessions, repoCatalog, settings, prefillProm
                   onChange={(e) => { setRepo(e.target.value); setDirNote(null); if (err) setErr(null); }}
                   onKeyDown={onCtrlEnter}
                 />
+                <button type="button" className="fd-browsebtn" title="browse for a local repo folder" onClick={() => setPickerFor('repo')}>🗀</button>
                 <datalist id="fd-repo-suggest">
                   {repoSuggestions.map((p) => <option key={p} value={p} />)}
                 </datalist>
@@ -391,9 +404,10 @@ export default function SpawnForm({ sessions, repoCatalog, settings, prefillProm
                             placeholder={settings?.repos_dir?.resolved || 'repos root (e.g. ~/projects)'}
                             value={reposDir}
                             onChange={(e) => { setReposDir(e.target.value); setDirNote(null); }}
-                            onBlur={commitReposDir}
+                            onBlur={() => commitReposDir()}
                             onKeyDown={(e) => { if (e.key === 'Enter') commitReposDir(); }}
                           />
+                          <button type="button" className="fd-browsebtn" title="browse folders" onClick={() => setPickerFor('reposDir')}>🗀</button>
                           <span className="sep">/</span>
                           <span className="mono nm">{repoName}</span>
                         </div>
@@ -557,6 +571,13 @@ export default function SpawnForm({ sessions, repoCatalog, settings, prefillProm
           </button>
         </div>
       </div>
+      {pickerFor && (
+        <DirPicker
+          root={homeDir || '~'}
+          onPick={handlePick}
+          onClose={() => setPickerFor(null)}
+        />
+      )}
     </div>
   );
 }

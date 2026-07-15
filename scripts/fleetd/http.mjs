@@ -522,6 +522,24 @@ export function createHttp(core, {
             });
           return;
         }
+        const homeFsMatch = /^\/api\/fs\/(list|read|search)$/.exec(url.pathname);
+        if (homeFsMatch) {
+          const action = homeFsMatch[1];
+          const operation = action === 'list'
+            ? core.fsListHome(url.searchParams.get('path') ?? '')
+            : action === 'read'
+              ? core.fsReadHome(url.searchParams.get('path') ?? '')
+              : core.fsSearchHome(url.searchParams.get('q') ?? '', {
+                mode: url.searchParams.get('mode') ?? 'content',
+              });
+          operation
+            .then(({ status, body }) => json(res, status, body))
+            .catch(err => {
+              console.error('fleetd home filesystem error:', err);
+              json(res, 500, { ok: false, reason: 'internal' });
+            });
+          return;
+        }
         if (url.pathname === '/mail') {
           const sid = url.searchParams.get('session') || '';
           const box = core.drainMail(sid);

@@ -254,3 +254,18 @@ export function fsRead(sid, path) {
 export function fsSearch(sid, q, mode) {
   return get(`/api/sessions/${encodeURIComponent(sid)}/fs/search?q=${encodeURIComponent(q)}&mode=${encodeURIComponent(mode || 'content')}`);
 }
+
+// The global explorer — same shapes, rooted at the daemon user's home (the
+// daemon resolves the root from os.homedir(); the browser only ever names a
+// path relative to it).
+export function fsListHome(path) {
+  return get(`/api/fs/list?path=${encodeURIComponent(path ?? '')}`);
+}
+
+export function fsReadHome(path) {
+  return get(`/api/fs/read?path=${encodeURIComponent(path)}`);
+}
+
+export function fsSearchHome(q, mode) {
+  return get(`/api/fs/search?q=${encodeURIComponent(q)}&mode=${encodeURIComponent(mode || 'content')}`);
+}

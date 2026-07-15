@@ -3723,7 +3723,7 @@ var require_websocket_server = __commonJS({
 // scripts/fleetd/fleetd.mjs
 import fs14 from "node:fs";
 import crypto2 from "node:crypto";
-import os5 from "node:os";
+import os7 from "node:os";
 import path12 from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
@@ -5842,6 +5842,7 @@ function createRepos(ctx) {
 
 // scripts/fleetd/files.mjs
 import fs6 from "node:fs";
+import os3 from "node:os";
 import path4 from "node:path";
 import { spawn } from "node:child_process";
 function envInt2(name, fallback, { min = 1 } = {}) {
@@ -5927,6 +5928,16 @@ function resolveRoot(ctx, sid) {
     return { root, git: deriveRepo(root).is_git };
   } catch {
     return { error: { status: 410, body: { ok: false, reason: "working tree no longer exists" } } };
+  }
+}
+function resolveHomeRoot() {
+  const home = os3.homedir();
+  try {
+    if (!home || !fs6.statSync(home).isDirectory()) throw new Error("no home");
+    const root = fs6.realpathSync(home);
+    return { root, git: deriveRepo(root).is_git };
+  } catch {
+    return { error: { status: 410, body: { ok: false, reason: "home directory is unavailable" } } };
   }
 }
 function runBounded(cmd, args, {
@@ -6178,14 +6189,14 @@ async function walkSearch(root, q, mode, deadline) {
   return { hits: hits.slice(0, SEARCH_HITS), truncated };
 }
 function createFiles(ctx) {
-  async function fsList(sid, relPath) {
+  async function listAt(resolve, relPath) {
     let abs;
     try {
       validateRelPath(relPath);
     } catch (err) {
       return failure(err);
     }
-    const resolved = resolveRoot(ctx, sid);
+    const resolved = resolve();
     if (resolved.error) return resolved.error;
     const { root, git: git2 } = resolved;
     try {
@@ -6221,13 +6232,13 @@ function createFiles(ctx) {
       return failure(err);
     }
   }
-  async function fsRead(sid, relPath) {
+  async function readAt(resolve, relPath) {
     try {
       validateRelPath(relPath);
     } catch (err) {
       return failure(err);
     }
-    const resolved = resolveRoot(ctx, sid);
+    const resolved = resolve();
     if (resolved.error) return resolved.error;
     const { root } = resolved;
     try {
@@ -6267,14 +6278,14 @@ function createFiles(ctx) {
       return failure(err);
     }
   }
-  async function fsSearch(sid, q, { mode } = {}) {
+  async function searchAt(resolve, q, { mode } = {}) {
     if (typeof q !== "string" || q.length < 2 || q.length > 256) {
       return { status: 400, body: { ok: false, reason: "query must be 2\u2013256 characters" } };
     }
     if (mode !== "content" && mode !== "name") {
       return { status: 400, body: { ok: false, reason: "invalid search mode" } };
     }
-    const resolved = resolveRoot(ctx, sid);
+    const resolved = resolve();
     if (resolved.error) return resolved.error;
     if (searchesInFlight >= 2) {
       return { status: 429, body: { ok: false, reason: "search busy \u2014 try again" } };
@@ -6300,12 +6311,21 @@ function createFiles(ctx) {
       searchesInFlight -= 1;
     }
   }
-  return { fsList, fsRead, fsSearch };
+  const sessionRoot = (sid) => () => resolveRoot(ctx, sid);
+  const homeRoot = () => resolveHomeRoot();
+  return {
+    fsList: (sid, p) => listAt(sessionRoot(sid), p),
+    fsRead: (sid, p) => readAt(sessionRoot(sid), p),
+    fsSearch: (sid, q, opts) => searchAt(sessionRoot(sid), q, opts),
+    fsListHome: (p) => listAt(homeRoot, p),
+    fsReadHome: (p) => readAt(homeRoot, p),
+    fsSearchHome: (q, opts) => searchAt(homeRoot, q, opts)
+  };
 }
 
 // scripts/fleetd/paste.mjs
 import fs7 from "node:fs";
-import os3 from "node:os";
+import os4 from "node:os";
 import path5 from "node:path";
 import crypto from "node:crypto";
 var MAX_IMAGE_BYTES = 10 * 1024 * 1024;
@@ -6313,7 +6333,7 @@ var PRUNE_AFTER_MS = 24 * 60 * 60 * 1e3;
 var MAX_KEPT_PASTES = 50;
 var ACCEPT = "png, jpeg, gif, webp";
 function pasteDir() {
-  const home = process.env.FLEETDECK_HOME || path5.join(os3.homedir() || os3.tmpdir(), ".fleetdeck");
+  const home = process.env.FLEETDECK_HOME || path5.join(os4.homedir() || os4.tmpdir(), ".fleetdeck");
   return path5.join(home, "pastes");
 }
 function sniffImage(buf) {
@@ -8436,6 +8456,7 @@ function createEvents(ctx) {
 }
 
 // scripts/fleetd/snapshot.mjs
+import os5 from "node:os";
 function createSnapshot(ctx) {
   const {
     q,
@@ -8594,6 +8615,8 @@ function createSnapshot(ctx) {
         last_used_at: repo.last_used_at
       })),
       settings: { repos_dir: resolveReposDir() },
+      home_dir: os5.homedir(),
+      // root label for the global (home) file explorer
       ticker: q.recentTicker.all(),
       // Callsigns resolved from EVERY session, not just the visible ones: a
       // conflict outlives its participants, and a banner shouting a raw UUID at
@@ -9158,7 +9181,7 @@ function createCore(db2, {
   Object.assign(ctx, createWorktrees(ctx));
   const { worktrees, removeWorktree } = ctx;
   Object.assign(ctx, createFiles(ctx));
-  const { fsList, fsRead, fsSearch } = ctx;
+  const { fsList, fsRead, fsSearch, fsListHome, fsReadHome, fsSearchHome } = ctx;
   Object.assign(ctx, createSpawns(ctx));
   const {
     spawn: spawn3,
@@ -9263,6 +9286,12 @@ function createCore(db2, {
     // GET /api/sessions/:id/fs/read → {status, body}
     fsSearch,
     // GET /api/sessions/:id/fs/search → {status, body}
+    fsListHome,
+    // GET /api/fs/list → {status, body} (home-rooted)
+    fsReadHome,
+    // GET /api/fs/read → {status, body}
+    fsSearchHome,
+    // GET /api/fs/search → {status, body}
     // v1.3 plan library
     planMark,
     // POST /api/plans/:id/mark → {status, body}
@@ -9281,7 +9310,7 @@ function createCore(db2, {
 // scripts/fleetd/http.mjs
 import http from "node:http";
 import { timingSafeEqual } from "node:crypto";
-import os4 from "node:os";
+import os6 from "node:os";
 import fs11 from "node:fs";
 import path9 from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9843,7 +9872,7 @@ function createHttp(core2, {
   const daemonPort = String(port);
   const lanHosts = /* @__PURE__ */ new Set();
   try {
-    for (const entries of Object.values(os4.networkInterfaces())) {
+    for (const entries of Object.values(os6.networkInterfaces())) {
       for (const entry of entries || []) {
         if (entry?.address) lanHosts.add(String(entry.address).toLowerCase());
       }
@@ -10017,6 +10046,18 @@ function createHttp(core2, {
           });
           operation.then(({ status, body }) => json(res, status, body)).catch((err) => {
             console.error("fleetd session filesystem error:", err);
+            json(res, 500, { ok: false, reason: "internal" });
+          });
+          return;
+        }
+        const homeFsMatch = /^\/api\/fs\/(list|read|search)$/.exec(url.pathname);
+        if (homeFsMatch) {
+          const action = homeFsMatch[1];
+          const operation = action === "list" ? core2.fsListHome(url.searchParams.get("path") ?? "") : action === "read" ? core2.fsReadHome(url.searchParams.get("path") ?? "") : core2.fsSearchHome(url.searchParams.get("q") ?? "", {
+            mode: url.searchParams.get("mode") ?? "content"
+          });
+          operation.then(({ status, body }) => json(res, status, body)).catch((err) => {
+            console.error("fleetd home filesystem error:", err);
             json(res, 500, { ok: false, reason: "internal" });
           });
           return;
@@ -11056,7 +11097,7 @@ var __dirname = path12.dirname(fileURLToPath2(import.meta.url));
 var PORT = Number(process.env.FLEETDECK_PORT || 4711);
 var BIND = (process.env.FLEETDECK_BIND || "127.0.0.1").trim() || "127.0.0.1";
 var LAN_MODE = !isLoopbackAddress(BIND);
-var HOME = process.env.FLEETDECK_HOME || path12.join(os5.homedir() || "/tmp", ".fleetdeck");
+var HOME = process.env.FLEETDECK_HOME || path12.join(os7.homedir() || "/tmp", ".fleetdeck");
 var MANAGED = process.env.FLEETDECK_MANAGED === "1";
 process.on("unhandledRejection", (reason) => {
   console.error("fleetd unhandled rejection (daemon kept alive):", reason);
@@ -11235,7 +11276,7 @@ server.on("error", (e) => {
 function lanAddresses() {
   const addresses = /* @__PURE__ */ new Set();
   try {
-    for (const entries of Object.values(os5.networkInterfaces())) {
+    for (const entries of Object.values(os7.networkInterfaces())) {
       for (const entry of entries || []) {
         if ((entry.family === "IPv4" || entry.family === 4) && !entry.internal) addresses.add(entry.address);
       }

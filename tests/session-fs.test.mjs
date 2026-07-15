@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import http, { createServer } from 'node:http';
 import {
-  mkdirSync, rmSync, symlinkSync, writeFileSync,
+  mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync,
 } from 'node:fs';
-import { networkInterfaces } from 'node:os';
+import { networkInterfaces, tmpdir } from 'node:os';
 import path from 'node:path';
 import { openDb } from '../scripts/fleetd/db.mjs';
 import { startDaemon } from './helpers/daemon.mjs';
@@ -271,4 +271,39 @@ test('session filesystem routes stay behind LAN token and Host walls', async t =
   assert.equal((await fetch(`${route}?t=${token}`)).status, 200);
   const hostile = await raw(daemon.port, '/api/sessions/fs-session/fs/list', { host: `evil.example:${daemon.port}` });
   assert.equal(hostile.status, 403);
+});
+
+test('the global home explorer roots at HOME, browses and searches, and refuses escapes', async t => {
+  // A controlled home: os.homedir() honours HOME, so the daemon roots the
+  // /api/fs/* endpoints here and the assertions are deterministic.
+  const home = mkdtempSync(path.join(tmpdir(), 'fleetdeck-home-'));
+  mkdirSync(path.join(home, 'workspace'));
+  writeFileSync(path.join(home, 'notes.txt'), 'top-level home note\n');
+  writeFileSync(path.join(home, 'workspace', 'todo.md'), 'find the home needle here\n');
+  writeFileSync(path.join(home, '.secret'), 'a dotfile is shown, not hidden\n');
+  const outside = mkdtempSync(path.join(tmpdir(), 'fleetdeck-outside-'));
+  writeFileSync(path.join(outside, 'secret.txt'), 'must never be reachable\n');
+  const daemon = await startDaemon({ env: { HOME: home } });
+  t.after(async () => {
+    await daemon.stop();
+    rmSync(home, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  });
+
+  const list = await getJson(`${daemon.baseUrl}/api/fs/list?path=`);
+  assert.equal(list.status, 200);
+  assert.equal(list.json.ok, true);
+  assert.equal(list.json.entries.some(e => e.name === 'workspace' && e.type === 'dir'), true);
+  assert.equal(list.json.entries.some(e => e.name === '.secret'), true); // dotfiles shown
+
+  const read = await getJson(`${daemon.baseUrl}/api/fs/read?path=workspace%2Ftodo.md`);
+  assert.equal(read.json.content, 'find the home needle here\n');
+
+  const search = await getJson(`${daemon.baseUrl}/api/fs/search?q=home%20needle&mode=content`);
+  assert.equal(search.json.ok, true);
+  assert.deepEqual(search.json.hits, [{ path: 'workspace/todo.md', line: 1, text: 'find the home needle here' }]);
+
+  // containment: no traversal out of home, by relative or absolute path
+  assert.equal((await getJson(`${daemon.baseUrl}/api/fs/read?path=..%2F${path.basename(outside)}%2Fsecret.txt`)).status, 400);
+  assert.equal((await getJson(`${daemon.baseUrl}/api/fs/read?path=${encodeURIComponent(path.join(outside, 'secret.txt'))}`)).status, 400);
 });

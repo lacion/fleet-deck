@@ -14,6 +14,7 @@ export default function Header({
   onCompose,
   termableSessions, watchable, termBtnRef, onOpenGrid,
   spawnAvailable, spawnActive, onSpawn,
+  onBrowseHome,
   hasOffline, clearing, onClear,
   wtSupported, wtCount, wtHazard, onOpenWorktrees,
   lanEnabled, onShare,
@@ -74,6 +75,16 @@ export default function Header({
           )}
         </button>
       )}
+      {/* v2.3 — the global file explorer, rooted at your home directory.
+          Read-only, sits beside Spawn. */}
+      <button
+        type="button"
+        className="fd-hbtn"
+        title="Browse files from your home directory (read-only)"
+        onClick={onBrowseHome}
+      >
+        ⌸ Files
+      </button>
       {hasOffline && (
         <button type="button" className="fd-hbtn" disabled={clearing} onClick={onClear}>
           ⌫ {clearing ? 'Clearing…' : 'Clear'}
