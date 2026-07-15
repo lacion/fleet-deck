@@ -404,3 +404,19 @@ export function questionView(q) {
   }
   return { title: '(unknown question)' };
 }
+
+// ---------------------------------------------------------------- image paste
+
+// The first image item on a clipboard, or null. Pure selection logic so the
+// terminal's paste handler stays a thin DOM shim: given event.clipboardData
+// .items (or any array-like of {kind,type,getAsFile}), pick what the paste
+// feature ingests. Text-only clipboards return null — the caller must then let
+// the event fall through to xterm untouched, so ordinary text paste keeps
+// working exactly as before.
+export function imageFromClipboard(items) {
+  if (!items) return null;
+  for (const it of Array.from(items)) {
+    if (it && it.kind === 'file' && /^image\//.test(it.type || '')) return it;
+  }
+  return null;
+}

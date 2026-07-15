@@ -21,6 +21,11 @@ import { WebSocketServer } from 'ws';
 import { createTermBridge } from './termbridge.mjs';
 
 const MAX_BODY = 1e6;
+// /api/paste-image only: a screenshot is megabytes, and base64-in-JSON (kept —
+// the json content-type wall forces a CORS preflight that raw image/png would
+// dodge) inflates it another third. 16 MB of transport comfortably carries
+// paste.mjs's 10 MB decoded-image cap; every other POST keeps MAX_BODY.
+const MAX_PASTE_BODY = 16e6;
 // H-R3/R1-2 backpressure: a /ws peer this far behind (dropped wifi, a frozen
 // tab) has stopped draining. We do NOT keep buffering snapshots into its dead
 // socket — but nor do we merely SKIP the send and clear `dirty`, which stranded
@@ -538,10 +543,11 @@ export function createHttp(core, {
         const chunks = [];
         let size = 0;
         let tooLarge = false;
+        const bodyCap = url.pathname === '/api/paste-image' ? MAX_PASTE_BODY : MAX_BODY;
         req.on('data', d => {
           if (tooLarge) return;
           size += d.length; // d is a Buffer — byte length, not char count
-          if (size > MAX_BODY) {
+          if (size > bodyCap) {
             tooLarge = true;
             // 413 on control paths; hooks keep the fail-open 200 {}. Stop
             // accumulating either way so the body can't grow without bound.
@@ -616,6 +622,16 @@ export function createHttp(core, {
               return;
             }
             if (url.pathname === '/command') return json(res, 200, core.command(ev.text));
+            if (url.pathname === '/api/paste-image') {
+              // v1.7 pasted image → file (paste.mjs). Same wall stack as every
+              // control POST (auth → Host → CSRF → json content-type → body
+              // cap); only the body cap is per-route (see MAX_PASTE_BODY). The
+              // returned path is TYPED into the pane by the BOARD, not by us —
+              // injection must ride TermPane's sendIn gate so the grid's
+              // one-tile-types discipline also governs pastes.
+              const out = core.pasteImage(ev);
+              return json(res, out.status, out.body);
+            }
             if (url.pathname === '/api/spawn') {
               // v1.2 board spawn (CONTRACT). Control API like the questions
               // answer path: real status codes, fail-loud — never a silent

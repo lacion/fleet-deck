@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-07-15
+
+### Added
+
+- **Paste an image into the board terminal.** Ctrl+V a screenshot into a live pane and it lands in the agent's composer — something no terminal connection can do by itself, because the image lives in the *browser's* clipboard and the wire only carries text (and Claude Code has no Linux clipboard-image read to hand it to anyway). The board now does what a terminal cannot: it lifts the blob off the clipboard, ships it to the daemon (`POST /api/paste-image`, base64-in-JSON so both CSRF walls keep standing), the daemon sniffs the magic bytes (png/jpeg/gif/webp — the client's mime claim is never trusted), writes the file owner-only under `tmp/fleetdeck-pastes/`, and the board *types the path* into the pane through the same stdin gate as every keystroke. Which means the grid's one-tile-types discipline governs pastes too, and the paste never submits on its own — you read the path, you press Enter. Text paste is untouched: a clipboard with no image falls through to xterm exactly as before. Pasted files are pruned after 24 hours; the image is read the moment you submit, so nothing of value lives there.
+
 ## [0.8.0] - 2026-07-14
 
 ### Added

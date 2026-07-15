@@ -19,6 +19,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   MODEL_FAMILIES,
+  imageFromClipboard,
   batchTotal,
   expandBatchTasks,
   modelFamily,
@@ -212,4 +213,29 @@ test('every family modelFamily() can return has a badge rule and tokens in BOTH 
       assert.ok(block.includes(`--m-${fam}-bg:`), `tokens.css ${name} theme is missing --m-${fam}-bg`);
     }
   }
+});
+
+// --- image paste: clipboard-item selection (TermPane's paste handler shim) ---
+//
+// The DOM handler in TermPane must stay a thin shim, so the decision "does this
+// clipboard carry an image we ingest?" lives here where node --test can reach
+// it. The contract worth pinning: only file-kind image/* items count, the first
+// one wins, and a text-only clipboard yields null — which is what lets ordinary
+// text paste fall through to xterm untouched.
+test('imageFromClipboard picks the first image file item', () => {
+  const text = { kind: 'string', type: 'text/plain' };
+  const png = { kind: 'file', type: 'image/png' };
+  const jpeg = { kind: 'file', type: 'image/jpeg' };
+  assert.equal(imageFromClipboard([text, png, jpeg]), png);
+  assert.equal(imageFromClipboard([png]), png);
+});
+
+test('imageFromClipboard yields null when there is nothing to ingest', () => {
+  assert.equal(imageFromClipboard(null), null);
+  assert.equal(imageFromClipboard([]), null);
+  assert.equal(imageFromClipboard([{ kind: 'string', type: 'text/plain' }]), null);
+  // an image STRING item (e.g. an <img> URL) is not a pasted file
+  assert.equal(imageFromClipboard([{ kind: 'string', type: 'image/png' }]), null);
+  // a non-image file (e.g. a PDF) is not ours either
+  assert.equal(imageFromClipboard([{ kind: 'file', type: 'application/pdf' }]), null);
 });

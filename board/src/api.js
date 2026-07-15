@@ -106,6 +106,14 @@ export function killSpawn(spawnId, force) {
   return post(`/api/spawn/${encodeURIComponent(spawnId)}/kill`, { force: !!force });
 }
 
+// v1.7 — Ctrl+V an image into a terminal pane. `data` is base64 (a data: URL
+// straight from FileReader is fine — the daemon strips the prefix). The daemon
+// writes the file and answers { path }; TermPane then TYPES that path through
+// its own live-gated stdin, so this call carries bytes, never keystrokes.
+export function pasteImage(data) {
+  return post('/api/paste-image', { data });
+}
+
 // v1.3 — plan library. body = {status:'executed', via} | {status:'archived'};
 // the daemon 409s bad transitions and the board surfaces that honestly.
 export function markPlan(planId, body) {

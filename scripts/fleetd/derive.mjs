@@ -14,6 +14,7 @@ import { lastAssistantModel } from './transcript.mjs';
 import * as defaultTmuxAdapter from './spawn.mjs';
 import { createStatements } from './statements.mjs';
 import { createWorktrees } from './worktrees.mjs';
+import { pasteImage } from './paste.mjs';
 import { createMail } from './mail.mjs';
 import { createLedger } from './ledger.mjs';
 import { createIngest } from './ingest.mjs';
@@ -654,6 +655,7 @@ export function createCore(db, {
     snapshot,
     fleetSize,
     terminalSpawn,
+    pasteImage,        // POST /api/paste-image → {status, body} (stateless; paste.mjs)
     ingestAgentsPoll,
     // v1.2 dynamic fleet
     spawn,             // POST /api/spawn flow → {status, body}

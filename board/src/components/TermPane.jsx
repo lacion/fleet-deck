@@ -3,6 +3,8 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { wsUrl } from '../token.js';
+import { pasteImage } from '../api.js';
+import { imageFromClipboard } from '../util.js';
 
 // One live terminal onto one board-owned pane — the screen and the socket, with
 // no chrome around it. The full-size modal (TermModal) and each tile of the grid
@@ -168,6 +170,44 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
       sendIn(NEWLINE_SEQ);
       return false; // and never let xterm send its own CR after ours
     });
+    // Ctrl+V of an IMAGE — the one paste xterm cannot deliver. A terminal
+    // connection carries text, so xterm's own paste path reads text/plain and
+    // silently drops image blobs; and even locally Claude Code has no Linux
+    // clipboard-image read. So the board does what a terminal cannot: lift the
+    // blob off the clipboard, POST it to the daemon (which writes it under
+    // tmp/fleetdeck-pastes and answers with the path), then TYPE that path into
+    // the pane — Claude Code ingests image paths everywhere. The user still
+    // presses Enter: keystrokes into a live agent are irreversible, so a paste
+    // must never submit on its own.
+    //
+    // Capture phase, so this runs before xterm's paste listener on the hidden
+    // textarea inside screenRef. A clipboard with no image falls through
+    // untouched — plain text paste behaves exactly as it always has. Routing
+    // the typed path through sendIn keeps the grid's one-tile-types discipline:
+    // a non-live tile refuses at the same gate a keystroke would (and we skip
+    // the upload too — no point shipping bytes nothing may type).
+    const onPaste = (e) => {
+      const item = imageFromClipboard(e.clipboardData?.items);
+      if (!item) return; // text paste — xterm's own handler takes it from here
+      e.preventDefault();
+      e.stopPropagation();
+      if (st.done || term.options.disableStdin) return;
+      const file = item.getAsFile();
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        pasteImage(reader.result)
+          .then((res) => {
+            if (res.ok && res.json?.path) sendIn(res.json.path + ' ');
+            else console.warn('fleetdeck: image paste refused:', res.reason || `http ${res.status}`);
+          })
+          .catch((err) => console.warn('fleetdeck: image paste failed:', err));
+      };
+      reader.readAsDataURL(file);
+    };
+    const screenEl = screenRef.current;
+    screenEl.addEventListener('paste', onPaste, true);
+
     // fit()/init resizes land here; only genuine changes go up the wire
     const resizeSub = term.onResize(({ cols, rows }) => {
       if (cols === st.size.cols && rows === st.size.rows) return;
@@ -192,6 +232,7 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
       termRef.current = null;
       ro.disconnect();
       window.removeEventListener('resize', refit);
+      screenEl.removeEventListener('paste', onPaste, true);
       cancelAnimationFrame(raf);
       dataSub.dispose();
       resizeSub.dispose();
