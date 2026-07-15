@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileP, baseBranch } from './helpers.mjs';
+import { execFileP, baseBranch } from './exec.mjs';
 
 const CONTROL_RE = /[\x00-\x1f\x7f]/;
 const SPACE_OR_CONTROL_RE = /[\s\x00-\x1f\x7f]/;

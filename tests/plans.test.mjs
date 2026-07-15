@@ -56,6 +56,7 @@ import path from 'node:path';
 import { startDaemon } from './helpers/daemon.mjs';
 import { postHook, postJson, getJson } from './helpers/http.mjs';
 import { loadFixture } from './helpers/fixtures.mjs';
+import { waitUntil } from './helpers/wait.mjs';
 
 const EXIT_PLAN_FIXTURE = 'exit-plan-mode';
 
@@ -84,19 +85,6 @@ function questionPlanId(q) {
   if (q?.plan_id !== undefined && q.plan_id !== null) return { plan_id: q.plan_id, where: 'top-level' };
   if (q?.payload?.plan_id !== undefined && q.payload.plan_id !== null) return { plan_id: q.payload.plan_id, where: 'payload' };
   return { plan_id: undefined, where: null };
-}
-
-const WAIT_SCALE = Number(process.env.FLEETDECK_TEST_WAIT_SCALE) || 1;
-
-async function waitUntil(fn, { timeoutMs = 5000, intervalMs = 100, label = 'condition' } = {}) {
-  const effectiveTimeoutMs = timeoutMs * WAIT_SCALE;
-  const deadline = Date.now() + effectiveTimeoutMs;
-  for (;;) {
-    const result = await fn();
-    if (result) return result;
-    if (Date.now() >= deadline) throw new Error(`waitUntil: ${label} not met within ${effectiveTimeoutMs}ms`);
-    await new Promise(r => setTimeout(r, intervalMs));
-  }
 }
 
 /** POST the ExitPlanMode fixture (held) and wait for its permission question

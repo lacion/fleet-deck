@@ -63,12 +63,12 @@
 // cap, default 7200000 = 2h, clamped 500..86400000).
 
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
+import { resolveHome, resolvePort, resolveBase } from './fleetd/config.mjs';
 
-const PORT = Number(process.env.FLEETDECK_PORT || 4711);
-const BASE = `http://127.0.0.1:${PORT}`;
-const HOME = process.env.FLEETDECK_HOME || path.join(os.homedir() || '/tmp', '.fleetdeck');
+const PORT = resolvePort();
+const BASE = resolveBase(PORT);
+const HOME = resolveHome();
 
 function envMs(name, dflt, min, max) {
   const raw = Number(process.env[name]);

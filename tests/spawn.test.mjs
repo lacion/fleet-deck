@@ -61,6 +61,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startDaemon, randomPort } from './helpers/daemon.mjs';
 import { postHook, postJson, getJson } from './helpers/http.mjs';
+import { waitUntil as waitUntilBase, waitForSpecRecords } from './helpers/wait.mjs';
 import { makeRepoWithWorktree, makePlainDir } from './helpers/gitrepo.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -77,37 +78,12 @@ function scratchDir(prefix = 'fleetdeck-spawn-') {
   return mkdtempSync(path.join(tmpdir(), prefix));
 }
 
-const WAIT_SCALE = Number(process.env.FLEETDECK_TEST_WAIT_SCALE) || 1;
-
-async function waitUntil(fn, { timeoutMs = 8000, intervalMs = 100, label = 'condition' } = {}) {
-  const effectiveTimeoutMs = timeoutMs * WAIT_SCALE;
-  const deadline = Date.now() + effectiveTimeoutMs;
-  for (;;) {
-    const result = await fn();
-    if (result) return result;
-    if (Date.now() >= deadline) throw new Error(`waitUntil: ${label} not met within ${effectiveTimeoutMs}ms`);
-    await new Promise(r => setTimeout(r, intervalMs));
-  }
-}
+// Scaled poller (helpers/wait.mjs) carrying this file's authored 8000ms default
+// budget; call sites keep their { label, timeoutMs? } opts unchanged.
+const waitUntil = (fn, opts = {}) => waitUntilBase(fn, { timeoutMs: 8000, ...opts });
 
 function findSession(state, sid) {
   return state.sessions.find(s => s.session_id === sid);
-}
-
-/** Read+parse every JSONL line recorded so far by the spawn-cmd fixture. */
-function readSpecRecords(file) {
-  if (!existsSync(file)) return [];
-  const text = readFileSync(file, 'utf8');
-  return text.split('\n').filter(Boolean).map(line => {
-    try { return JSON.parse(line); } catch { return null; }
-  }).filter(Boolean);
-}
-
-async function waitForSpecRecords(file, minCount, opts) {
-  return waitUntil(() => {
-    const recs = readSpecRecords(file);
-    return recs.length >= minCount ? recs : null;
-  }, { label: `>= ${minCount} recorded spec(s) in ${file}`, ...opts });
 }
 
 /** Recursively find an array anywhere in `spec` matching `pred`. */
@@ -356,8 +332,13 @@ test('argv construction: prompt/model/permission-mode survive intact through the
     'claude', '--session-id', sid,
     '--model', 'claude-test-model',
     '--permission-mode', 'acceptEdits',
-    dangerousPrompt,
-  ], 'claude flag ordering must remain contract-pinned after the env wrapper');
+    '--', dangerousPrompt,
+  ], 'claude flag ordering must remain contract-pinned after the env wrapper; the prompt rides last as a positional, guarded by a `--` end-of-options marker');
+
+  // The `--` must sit IMMEDIATELY before the prompt so the CLI can never parse
+  // prompt text as a flag (option-injection guard; see the #5 test below).
+  assert.equal(argv[argv.length - 1], dangerousPrompt, 'the prompt must be the final argv element');
+  assert.equal(argv[argv.length - 2], '--', 'a `--` end-of-options marker must immediately precede the prompt');
 
   assert.ok(argv.includes(dangerousPrompt), 'the dangerous prompt must appear as ONE whole argv element, not split into shell words');
   // No fragment of the dangerous prompt should appear as a SEPARATE element
@@ -365,6 +346,58 @@ test('argv construction: prompt/model/permission-mode survive intact through the
   const fragments = dangerousPrompt.split(' ');
   const suspiciousSplit = argv.some((el, i) => el === fragments[0] && argv[i + 1] === fragments[1]);
   assert.ok(!suspiciousSplit, 'the prompt must not appear word-split across separate argv elements');
+});
+
+test('option-injection: a prompt of "--dangerously-skip-permissions" rides after `--` as a positional and does NOT flip the persisted bypass flag', async (t) => {
+  // BUG #5 regression. The prompt is untrusted human text appended last on the
+  // claude argv. Without a `--` end-of-options marker, a prompt that LOOKS like
+  // a flag (`--dangerously-skip-permissions`, `--model evil`, …) is parsed by
+  // the claude CLI as that flag — a real permission bypass — while the spawn
+  // row honestly records skip_permissions:false (this request never asked for
+  // it). The fix inserts `--` immediately before the prompt so everything after
+  // is positional. Here we assert both halves: the row/spec stay
+  // skip_permissions:false, AND the flag-looking prompt is fenced behind `--`.
+  const port = randomPort();
+  const baseUrl = `http://127.0.0.1:${port}`;
+  const rec = path.join(scratchDir(), 'specs.jsonl');
+  const cwd = scratchDir();
+  const daemon = await startDaemon({ port, env: spawnCmdEnv({ recordFile: rec, postUrl: baseUrl }) });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+
+  const evilPrompt = '--dangerously-skip-permissions';
+  // Deliberately NO dangerously_skip_permissions and NO bypass permission_mode:
+  // the ONLY place this token appears is the prompt.
+  const res = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd, prompt: evilPrompt });
+  assert.equal(res.status, 200, `spawn should 200 (got ${res.status}: ${JSON.stringify(res.json)})`);
+
+  const specs = await waitForSpecRecords(rec, 1);
+  const record = specs[specs.length - 1];
+  assert.equal(record.parseError, null, 'the JSON.stringify(spec) argv element must parse back as valid JSON');
+
+  // The persisted spawn row (surfaced verbatim in the test-override spec) must
+  // still say NO bypass — the flag-shaped prompt did not grant one.
+  assert.equal(record.parsed.skip_permissions, false,
+    'a flag-shaped prompt must NOT flip the persisted skip_permissions bit');
+  assert.equal(record.parsed.dangerously_skip_permissions, false,
+    'the request never asked for dangerously_skip_permissions, so the spec must record false');
+
+  const argv = extractArgv(record.parsed);
+  assert.ok(argv, `expected an argv-shaped array in the spec; spec keys were: ${JSON.stringify(Object.keys(record.parsed || {}))}`);
+
+  // The prompt is the LAST element, guarded by a `--` immediately before it.
+  assert.equal(argv[argv.length - 1], evilPrompt, 'the flag-shaped prompt must be the final, positional argv element');
+  assert.equal(argv[argv.length - 2], '--', 'a `--` end-of-options marker must immediately precede the prompt');
+
+  // The token must appear ONLY as that trailing positional — never as a real
+  // parsed flag. Since this request requested no bypass, the only occurrence of
+  // the string in argv is the prompt after `--`.
+  assert.equal(argv.indexOf(evilPrompt), argv.length - 1,
+    'the token must occur exactly once, as the final positional');
+  assert.equal(argv.lastIndexOf(evilPrompt), argv.length - 1,
+    'the flag-shaped token must not ALSO appear as an interpreted flag ahead of the prompt');
+  const terminatorIdx = argv.indexOf('--');
+  assert.equal(terminatorIdx, argv.length - 2,
+    'the `--` terminator must sit exactly one slot before the prompt, fencing it off from option parsing');
 });
 
 // ---------------------------------------------------------------------------

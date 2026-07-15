@@ -88,8 +88,8 @@ test('mail addressed to the birth name still reaches a renamed session', async (
 
   const res = await postJson(`${daemon.baseUrl}/mail`, { to: callsign, from: 'operator', text: 'still finds you' });
   assert.equal(res.status, 200, JSON.stringify(res.json));
-  const card = cardOf((await getJson(`${daemon.baseUrl}/state`)).json, sid);
-  assert.equal(card.mail_pending.count, 1, 'the old name is a fallback route, not a dead letter');
+  const state = (await getJson(`${daemon.baseUrl}/state`)).json;
+  assert.equal(state.mail_meta[sid].queued, 1, 'the old name is a fallback route, not a dead letter');
 });
 
 test('bad suffixes are refused loudly — charset, leading dash, length, reserved words', async (t) => {

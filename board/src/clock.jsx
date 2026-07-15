@@ -11,7 +11,9 @@ import { human } from './util.js';
 // else on the card does.
 export const ClockContext = createContext(Date.now());
 
-export function useNow() {
+// Internal only — the sole consumer is <Age> just below. (Was exported; nothing
+// outside this file imported it, so the `export` was dead surface.)
+function useNow() {
   return useContext(ClockContext);
 }
 

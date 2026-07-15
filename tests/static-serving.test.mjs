@@ -4,8 +4,7 @@
 //   1. GET /           → the built React board (board-dist/index.html)
 //   2. GET /assets/*   → hashed build assets with correct MIME types
 //   3. traversal attempts (raw and percent-encoded) → 404, never file leaks
-//   4. GET /plain      → the Phase 1 spike board, unchanged
-//   5. regression: /state and a hook endpoint still behave as before
+//   4. regression: /state and a hook endpoint still behave as before
 //
 // The dist under scripts/fleetd/board-dist is COMMITTED, so these tests run
 // against the real files the daemon ships with.
@@ -49,7 +48,7 @@ async function getText(url) {
   return { status: res.status, type: res.headers.get('content-type') || '', text: await res.text() };
 }
 
-test('static serving: board, assets, traversal, /plain, API regression', async t => {
+test('static serving: board, assets, traversal, API regression', async t => {
   const daemon = await startDaemon();
   t.after(() => daemon.stop());
 
@@ -106,15 +105,8 @@ test('static serving: board, assets, traversal, /plain, API regression', async t
       assert.ok(!res.body.includes('"name": "fleetdeck"'), `body for ${p} must not leak package.json`);
     }
     // sibling files of board-dist (same directory as http.mjs) stay unreachable
-    const direct = await rawGet(daemon.port, '/assets/../board.html');
+    const direct = await rawGet(daemon.port, '/assets/../fleetd.mjs');
     assert.equal(direct.status, 404);
-  });
-
-  await t.test('GET /plain serves the spike board unchanged', async () => {
-    const res = await getText(daemon.baseUrl + '/plain');
-    assert.equal(res.status, 200);
-    assert.match(res.type, /text\/html/);
-    assert.equal(res.text, readFileSync(path.join(REPO_ROOT, 'scripts/fleetd/board.html'), 'utf8'));
   });
 
   await t.test('regression: /state and hook endpoints still behave', async () => {

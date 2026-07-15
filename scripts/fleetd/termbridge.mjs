@@ -30,15 +30,12 @@
 
 import { spawn } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
+import { sessionName } from './spawn.mjs';
+import { envInt } from './helpers.mjs';
 
 const ACTIVE_STATUSES = new Set(['spawning', 'stalled', 'live']);
 const INPUT_CHUNK_BYTES = 1024;
 const ATTACH_TIMEOUT_MS = 5_000;
-
-function envInt(name, fallback, { min = 0 } = {}) {
-  const n = Number(process.env[name]);
-  return Number.isFinite(n) && n >= min ? Math.floor(n) : fallback;
-}
 
 // M-R5: a per-command deadline so a wedged tmux reply cannot hang a viewer open
 // forever. Generous — every command here is a fast control op — and overridable
@@ -152,10 +149,6 @@ export class ControlModeParser {
   }
 }
 
-export function parseControlChunk(chunk) {
-  return new ControlModeParser().feed(chunk);
-}
-
 // Not exported: only thrown/caught inside this file. http.mjs duck-types the
 // failure via `err?.reason`, so no importer needs the class itself.
 class TermBridgeError extends Error {
@@ -169,7 +162,7 @@ class TermBridgeError extends Error {
  * lazy: it attaches when the first viewer opens and detaches when the last one
  * leaves, so a fleet nobody is watching holds no tmux client at all. */
 export function createTermBridge({ port, resolveSpawn, log = () => {} } = {}) {
-  const session = `fleetdeck-${port}`;
+  const session = sessionName(port);
   const viewers = new Set();
   let client = null;
 

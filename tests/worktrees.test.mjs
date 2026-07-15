@@ -5,6 +5,8 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } 
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { openDb } from '../scripts/fleetd/db.mjs';
+import { createStatements } from '../scripts/fleetd/statements.mjs';
+import { createWorktrees } from '../scripts/fleetd/worktrees.mjs';
 import { startDaemon } from './helpers/daemon.mjs';
 import { makeRepoWithWorktree, makePlainDir } from './helpers/gitrepo.mjs';
 import { getJson, postJson } from './helpers/http.mjs';
@@ -157,6 +159,173 @@ test('POST remove refuses while any owning session is alive', async (t) => {
   assert.deepEqual(response.json, { ok: false, reason: 'session is still alive' });
   assert.equal(existsSync(repo.worktree), true);
   assert.ok(withDb(daemon.home, db => db.prepare('SELECT 1 FROM spawns WHERE worktree_path = ?').get(repo.worktree)));
+});
+
+// BUG #4, the remove-vs-revive TOCTOU, pinned deterministically. The liveness
+// gate is decided BEFORE inspectWorktree's multi-second git probes and the repo
+// rev-parse yield the event loop. A /api/spawn/:id/revive of the offline spawn
+// during that window relaunches Claude in this very worktree by INSERTING a
+// 'spawning' spawn row — but it leaves the session's ended_at set until a later
+// hook, so a recheck keyed on session_ended_at is blind to it and force-removes
+// the now-live tree. Racing a real daemon is nondeterministic (the window is
+// milliseconds on a scratch repo), so we drive createWorktrees directly and land
+// the revive at the exact dangerous instant: our wrapper inserts the live-eligible
+// spawn row on the first worktreeSpawns.all() AFTER the initial gate — precisely
+// what the concurrent revive does. The status-aware recheck must re-query fresh
+// and abort with 409; the earlier ended_at-only version silently proceeds.
+test('remove re-checks liveness after the git probes and aborts a revive that raced in', async (t) => {
+  const repo = makeRepoWithWorktree({ repoName: 'fleetdeck-revive-race' });
+  const home = mkdtempSync(path.join(tmpdir(), 'fd-revive-race-home-'));
+  t.after(() => {
+    repo.cleanup();
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  const db = openDb(path.join(home, 'fleetd.db'));
+  t.after(() => db.close());
+  const now = Date.now();
+  // An OFFLINE spawn (ended_at set): the initial liveness gate lets removal proceed.
+  db.prepare(`INSERT INTO sessions
+    (session_id, callsign, cwd, branch, col, note, events, started_at, last_seen, ended_at, source)
+    VALUES ('revive-race', 'otter', ?, 'wt-branch', 'offline', 'test', 0, ?, ?, ?, 'spawned')`)
+    .run(repo.worktree, now, now, now);
+  db.prepare(`INSERT INTO spawns
+    (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, requested_at, status)
+    VALUES ('sp-revive-race', 'revive-race', 'otter', 'fleetdeck-test', ?, ?, ?, ?, 'pane-dead')`)
+    .run(repo.root, repo.root, repo.worktree, now);
+
+  const { q } = createStatements(db);
+  // The initial gate reads worktreeSpawns twice (rows + the liveness check) with
+  // the spawn still 'pane-dead' → passes. Once the awaited git probes yield, a
+  // real POST /api/spawn/:id/revive lands: it INSERTS a live-eligible 'spawning'
+  // spawn row for this worktree_path and deliberately does NOT clear the session's
+  // ended_at (that waits for the resumed child's later SessionStart hook). So the
+  // recheck must key on spawn STATUS, not session_ended_at — this wrapper injects
+  // exactly that row on the first read after the gate. A fix that re-read
+  // ended_at (the earlier, ineffective version) would MISS this and force-remove
+  // the live tree; the status-aware recheck sees it and aborts 409.
+  let calls = 0;
+  let injected = false;
+  const realStmt = q.worktreeSpawns;
+  q.worktreeSpawns = {
+    all: (...args) => {
+      calls += 1;
+      if (calls >= 3 && !injected) {
+        injected = true;
+        db.prepare(`INSERT INTO spawns
+          (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, requested_at, status)
+          VALUES ('sp-revive-inflight', 'revive-race', 'otter', 'fleetdeck-test', ?, ?, ?, ?, 'spawning')`)
+          .run(repo.root, repo.root, repo.worktree, now + 1);
+      }
+      return realStmt.all(...args);
+    },
+  };
+
+  const { removeWorktree } = createWorktrees({ q, tick() {}, onMutate() {} });
+  const res = await removeWorktree({ path: repo.worktree, force: true });
+
+  assert.equal(res.status, 409, `a revive during the probe window must abort removal (got ${JSON.stringify(res.body)})`);
+  assert.equal(res.body.ok, false);
+  assert.equal(res.body.reason, 'session became live during removal');
+  assert.ok(injected && calls >= 3, 'the recheck re-queried worktreeSpawns fresh after the gate — not the stale rows closure');
+  assert.equal(existsSync(repo.worktree), true, 'the now-live worktree survives — the force removal was aborted');
+  assert.ok(
+    db.prepare("SELECT 1 FROM spawns WHERE spawn_id = 'sp-revive-inflight'").get(),
+    'the revived spawn row was not purged',
+  );
+});
+
+// Direct, timing-free validation of the core status-aware predicate: a worktree
+// whose spawn is mid-revive ('spawning') with the session's ended_at STILL SET
+// (the real revive-in-flight state) must be refused at the very first gate. The
+// earlier ended_at-only check let this through and force-removed a live tree.
+test('remove refuses a worktree whose spawn is launching (revive in flight, ended_at still set)', async (t) => {
+  const repo = makeRepoWithWorktree({ repoName: 'fleetdeck-launching' });
+  const home = mkdtempSync(path.join(tmpdir(), 'fd-launching-home-'));
+  t.after(() => {
+    repo.cleanup();
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+  const db = openDb(path.join(home, 'fleetd.db'));
+  t.after(() => db.close());
+  const now = Date.now();
+  // ended_at SET — exactly what a revive leaves until its first hook — yet the
+  // spawn row is 'spawning' (launching). Status must win.
+  db.prepare(`INSERT INTO sessions
+    (session_id, callsign, cwd, branch, col, note, events, started_at, last_seen, ended_at, source)
+    VALUES ('launching', 'otter', ?, 'wt-branch', 'queued', 'test', 0, ?, ?, ?, 'spawned')`)
+    .run(repo.worktree, now, now, now);
+  db.prepare(`INSERT INTO spawns
+    (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, requested_at, status)
+    VALUES ('sp-launching', 'launching', 'otter', 'fleetdeck-test', ?, ?, ?, ?, 'spawning')`)
+    .run(repo.root, repo.root, repo.worktree, now);
+
+  const { q } = createStatements(db);
+  const { removeWorktree } = createWorktrees({ q, tick() {}, onMutate() {} });
+  const res = await removeWorktree({ path: repo.worktree, force: true });
+
+  assert.equal(res.status, 409, `a launching spawn must block removal (got ${JSON.stringify(res.body)})`);
+  assert.equal(res.body.reason, 'session is still alive');
+  assert.equal(existsSync(repo.worktree), true, 'the launching worktree survives');
+});
+
+// The FINAL gate: a revive that lands AFTER the pre-remove recheck but during the
+// awaited `git worktree remove`/prune/branch ops. The tree is already gone by the
+// time we notice, but the last check before deleteWorktreeSpawns must KEEP the
+// now-live spawn/session rows so the card doesn't vanish (a lost-terminal bug).
+test('remove keeps rows (rows_purged:0) when a revive lands during the git ops', async (t) => {
+  const repo = makeRepoWithWorktree({ repoName: 'fleetdeck-final-gate' });
+  const home = mkdtempSync(path.join(tmpdir(), 'fd-final-gate-home-'));
+  t.after(() => {
+    repo.cleanup();
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+  const db = openDb(path.join(home, 'fleetd.db'));
+  t.after(() => db.close());
+  const now = Date.now();
+  db.prepare(`INSERT INTO sessions
+    (session_id, callsign, cwd, branch, col, note, events, started_at, last_seen, ended_at, source)
+    VALUES ('final-gate', 'otter', ?, 'wt-branch', 'offline', 'test', 0, ?, ?, ?, 'spawned')`)
+    .run(repo.worktree, now, now, now);
+  db.prepare(`INSERT INTO spawns
+    (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, requested_at, status)
+    VALUES ('sp-final-gate', 'final-gate', 'otter', 'fleetdeck-test', ?, ?, ?, ?, 'pane-dead')`)
+    .run(repo.root, repo.root, repo.worktree, now);
+
+  const { q } = createStatements(db);
+  // Let the initial gate (#1, #2) and the pre-remove recheck (#3) pass, then inject
+  // the revive's live row only on the FINAL worktreeSpawns.all() (#4, after the git
+  // remove has already run). This is the one window the pre-remove gate cannot see.
+  let calls = 0;
+  let injected = false;
+  const realStmt = q.worktreeSpawns;
+  q.worktreeSpawns = {
+    all: (...args) => {
+      calls += 1;
+      if (calls >= 4 && !injected) {
+        injected = true;
+        db.prepare(`INSERT INTO spawns
+          (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, requested_at, status)
+          VALUES ('sp-revive-late', 'final-gate', 'otter', 'fleetdeck-test', ?, ?, ?, ?, 'spawning')`)
+          .run(repo.root, repo.root, repo.worktree, now + 1);
+      }
+      return realStmt.all(...args);
+    },
+  };
+
+  const { removeWorktree } = createWorktrees({ q, tick() {}, onMutate() {} });
+  const res = await removeWorktree({ path: repo.worktree, force: true });
+
+  assert.equal(res.status, 200, `the tree is gone but this is not an error (got ${JSON.stringify(res.body)})`);
+  assert.equal(res.body.removed, true);
+  assert.equal(res.body.rows_purged, 0, 'the revive that raced in kept its rows');
+  assert.equal(res.body.spawn_became_live, true);
+  assert.ok(injected && calls >= 4, 'the final gate ran after the git ops');
+  assert.equal(existsSync(repo.worktree), false, 'the tree WAS removed (git already ran)');
+  assert.ok(
+    db.prepare("SELECT 1 FROM spawns WHERE spawn_id = 'sp-revive-late'").get(),
+    'the revived spawn row survived the purge',
+  );
 });
 
 test('POST remove with delete_branch deletes the worktree branch', async (t) => {

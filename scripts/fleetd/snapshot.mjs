@@ -45,9 +45,9 @@ export function createSnapshot(ctx) {
     const pendingBySid = new Map(q.pendingCounts.all().map(r => [r.to_session, r]));
     const callsignById = new Map(q.allSessions.all().map(s => [s.session_id, s.callsign]));
     const visible = q.visibleSessions.all();
-    // M-P2: the owned-pane and watcher facts were each recomputed TWICE per
-    // session (mail_pending.deliverable and again in mail_meta.route, each
-    // doing its own getSession + spawnBySession query). Compute each once.
+    // M-P2: the owned-pane and watcher facts feed mail_meta.route below; compute
+    // each ONCE per session here rather than re-running getSession +
+    // spawnBySession inside the route derivation.
     const waiterBySid = new Map();
     const ownedPaneBySid = new Map();
     for (const s of visible) {
@@ -56,7 +56,6 @@ export function createSnapshot(ctx) {
     }
     const sessions = visible.map(s => {
       const sp = spawnBySid.get(s.session_id);
-      const pending = pendingBySid.get(s.session_id);
       // 0.7.0 Move-to-tmux (adopt) eligibility. ANY spawn row — dead or alive —
       // means the board owns this session's pane story: revive owns dead
       // lineages, so an adopted/spawned card is never ALSO adopt-eligible (a
@@ -102,13 +101,11 @@ export function createSnapshot(ctx) {
         worktree: s.worktree,
         source: s.source,
         notification_type: s.notification_type ?? null, // F3e: WHY it needs you
-        mail_pending: {
-          count: pending?.n ?? 0,
-          oldest_at: pending?.oldest_at ?? null,
-          // Approximation by design: no tmux subprocess in a snapshot. A
-          // qualifying active spawn row is treated as pane-capable here.
-          deliverable: waiterBySid.get(s.session_id) || ownedPaneBySid.get(s.session_id),
-        },
+        // D11: the per-session mail_pending block ({count, oldest_at, deliverable})
+        // was removed — the top-level mail_meta[session_id] carries the same facts
+        // ({queued, oldest_at, route}) and is the single per-session source of
+        // truth. The top-level mail_pending map (a simple {sid: count}) is KEPT: it
+        // is the documented /state count field orchestrators read (commands/fleet.md).
         sparkline: sparkBySid.get(s.session_id) || new Array(30).fill(0),
         stale: (s.col === 'working' || s.col === 'verifying')
           && s.last_seen != null && (now - s.last_seen > STALE_MS),

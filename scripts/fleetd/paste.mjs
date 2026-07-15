@@ -36,9 +36,10 @@ const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const PRUNE_AFTER_MS = 24 * 60 * 60 * 1000;
 
 // A hard ceiling regardless of age: age-only pruning cannot bound a burst
-// inside the 24h window, and every paste is up to MAX_IMAGE_BYTES. Keep only
-// the most recent N so a flood (or a wedged agent that never submits) cannot
-// grow the directory without limit.
+// inside the 24h window, and every paste is up to MAX_IMAGE_BYTES. Keep at most
+// N (the most recent) so a flood (or a wedged agent that never submits) cannot
+// grow the directory without limit. The count-prune runs AFTER each write, so N
+// is the true on-disk count once a paste returns — not N+1 (see pasteImage).
 const MAX_KEPT_PASTES = 50;
 
 const ACCEPT = 'png, jpeg, gif, webp';
@@ -98,12 +99,19 @@ function ensurePasteDir() {
 // Age-then-count prune. Best-effort, errors swallowed: a prune must never fail a
 // paste. lstat, not stat: a per-entry symlink is skipped, never followed to
 // unlink something outside the dir.
-function pruneOldPastes(dir, now = Date.now()) {
+// `protect` (an absolute path, the paste we just wrote) is NEVER pruned and is
+// excluded from BOTH the age sweep and the count budget: the count-prune uses
+// oldest-mtime-first, so a pre-existing file with a doctored FUTURE mtime would
+// otherwise sort the fresh current-time paste as "oldest" and unlink the very
+// file we are about to return. Reserving one slot for it keeps the on-disk total
+// at MAX_KEPT_PASTES (no off-by-one) while guaranteeing the fresh paste survives.
+function pruneOldPastes(dir, now = Date.now(), protect = null) {
   let names;
   try { names = fs.readdirSync(dir); } catch { return; }
   const regular = [];
   for (const name of names) {
     const p = path.join(dir, name);
+    if (protect && p === protect) continue; // the just-written paste is untouchable
     let st;
     try { st = fs.lstatSync(p); } catch { continue; }
     if (!st.isFile()) continue; // skip symlinks, dirs, sockets — never chase them
@@ -113,9 +121,10 @@ function pruneOldPastes(dir, now = Date.now()) {
       regular.push({ p, mtime: st.mtimeMs });
     }
   }
-  if (regular.length > MAX_KEPT_PASTES) {
+  const budget = protect ? MAX_KEPT_PASTES - 1 : MAX_KEPT_PASTES; // reserve a slot
+  if (regular.length > budget) {
     regular.sort((a, b) => a.mtime - b.mtime); // oldest first
-    for (const { p } of regular.slice(0, regular.length - MAX_KEPT_PASTES)) {
+    for (const { p } of regular.slice(0, regular.length - budget)) {
       try { fs.unlinkSync(p); } catch { /* raced */ }
     }
   }
@@ -155,8 +164,6 @@ export function pasteImage(ev) {
     return { status: 500, body: { ok: false, reason: 'cannot prepare paste dir' } };
   }
 
-  pruneOldPastes(dir);
-
   // Name from a 128-bit random id (not a per-second counter): collisions are
   // cryptographically negligible, so a burst can never overwrite an earlier
   // paste. No spaces or shell metacharacters — the path is TYPED, unquoted.
@@ -175,8 +182,18 @@ export function pasteImage(ev) {
     return { status: 500, body: { ok: false, reason: 'write failed' } };
   }
 
+  // Prune AFTER the new file lands, so the cap holds POST-write. Pruning first
+  // trimmed to MAX_KEPT_PASTES and then wrote → MAX_KEPT_PASTES+1: an off-by-one
+  // that let the dir sit permanently one over (and ~one image over the byte
+  // budget). Pass `file` as protected so the count-prune can never unlink the
+  // paste we are about to return — even if a doctored future mtime on another
+  // file would otherwise sort ours as "oldest". The 24h age-prune runs here too.
+  // Both stay best-effort — a prune slip never unwinds a paste that already landed.
+  pruneOldPastes(dir, Date.now(), file);
+
   return { status: 201, body: { ok: true, path: file, bytes: buf.length } };
 }
 
-// exported for tests only — the sniff table and dir resolution are contracts.
-export { sniffImage, looksBase64, pasteDir, MAX_IMAGE_BYTES, MAX_KEPT_PASTES };
+// exported for tests only — the sniff table, dir resolution, and retention cap
+// are contracts.
+export { sniffImage, pasteDir, MAX_KEPT_PASTES };

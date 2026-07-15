@@ -10,7 +10,8 @@
 //     MAX_BODY) still lands on THIS path, and nowhere else
 //   - written files are 0600, under the OS tmpdir, and atomic (no .tmp left)
 //   - the CSRF walls hold: cross-site Origin → 403, non-JSON content-type → 415
-//   - prune: a paste older than 24 h is reclaimed by the next paste
+//   - prune: a paste older than 24 h is reclaimed by the next paste, and the
+//     retention cap holds at MAX_KEPT_PASTES POST-write (never N+1)
 //
 // Magic-byte stubs (not decodable images) are used on purpose: the endpoint's
 // contract IS the sniff. Whether Claude can render the pixels is the caller's
@@ -23,6 +24,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { startDaemon } from './helpers/daemon.mjs';
 import { postJson } from './helpers/http.mjs';
+import { scaleMs } from './helpers/wait.mjs';
 
 // The daemon writes under ITS FLEETDECK_HOME (startDaemon gives each a fresh
 // tmpdir home), NOT a shared /tmp path — that move is the fix for the /tmp
@@ -50,7 +52,7 @@ function rawPost(port, reqPath, headers, body) {
         res.on('end', () => resolve({ status: res.statusCode, body: out }));
       },
     );
-    req.setTimeout(5000, () => req.destroy(new Error('raw request timed out')));
+    req.setTimeout(scaleMs(5000), () => req.destroy(new Error('raw request timed out')));
     req.on('error', reject);
     req.end(body);
   });
@@ -126,14 +128,14 @@ test('paste-image: ingest contract', async (t) => {
 
   await t.test('the per-route transport raise works: a 2 MB image (over global MAX_BODY) lands', async () => {
     const big = Buffer.concat([PNG, Buffer.alloc(2 * 1024 * 1024)]);
-    const res = await postJson(url, { data: b64(big) }, { timeout: 15000 });
+    const res = await postJson(url, { data: b64(big) }, { timeout: scaleMs(15000) });
     assert.equal(res.status, 201, JSON.stringify(res.json));
     assert.equal(fs.statSync(res.json.path).size, big.length, 'decoded bytes written verbatim');
   });
 
   await t.test('decoded image over 10 MB is 413 even though transport allows it', async () => {
     const over = Buffer.concat([PNG, Buffer.alloc(10 * 1024 * 1024)]);
-    const res = await postJson(url, { data: b64(over) }, { timeout: 15000 });
+    const res = await postJson(url, { data: b64(over) }, { timeout: scaleMs(15000) });
     assert.equal(res.status, 413);
     assert.equal(res.json.ok, false);
   });
@@ -211,4 +213,78 @@ test('paste-image: sniff table is a pinned contract', async () => {
   assert.equal(sniffImage(WEBP), 'webp');
   assert.equal(sniffImage(Buffer.from('RIFFxxxxWAVE', 'latin1')), null, 'RIFF alone is not WEBP');
   assert.equal(sniffImage(Buffer.alloc(2)), null, 'too short to sniff');
+});
+
+// Retention cap (MAX_KEPT_PASTES), pinned directly against the module — the
+// export existed "for tests only" but nothing imported it, which is exactly how
+// the prune off-by-one slipped through. Driven module-direct (no daemon) via
+// FLEETDECK_HOME + pasteDir(), same harness as the symlink test above.
+test('paste-image: an over-cap dir is pruned to exactly MAX_KEPT_PASTES, newest kept', async () => {
+  const { pasteImage, pasteDir, MAX_KEPT_PASTES } = await import('../scripts/fleetd/paste.mjs');
+  const os2 = await import('node:os');
+  const scratch = fs.mkdtempSync(path.join(os2.tmpdir(), 'fd-paste-cap-'));
+  const fakeHome = path.join(scratch, 'home');
+  fs.mkdirSync(fakeHome, { recursive: true });
+  const prevHome = process.env.FLEETDECK_HOME;
+  process.env.FLEETDECK_HOME = fakeHome;
+  try {
+    const dir = pasteDir();
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    // Seed MAX_KEPT_PASTES + 5 recent (within the 24h window) pastes with
+    // strictly ascending mtimes, so "newest" is unambiguous and it is the
+    // COUNT-prune, not the age-prune, that must do the trimming.
+    const base = Date.now();
+    const seeded = [];
+    for (let i = 0; i < MAX_KEPT_PASTES + 5; i++) {
+      const name = `paste-seed-${String(i).padStart(2, '0')}.png`;
+      const p = path.join(dir, name);
+      fs.writeFileSync(p, PNG, { mode: 0o600 });
+      const t = new Date(base - (MAX_KEPT_PASTES + 5 - i) * 60_000); // i=0 oldest … last=newest
+      fs.utimesSync(p, t, t);
+      seeded.push(name);
+    }
+    assert.equal(fs.readdirSync(dir).length, MAX_KEPT_PASTES + 5, 'seeded over the cap');
+
+    const res = pasteImage({ data: b64(PNG) });
+    assert.equal(res.status, 201, JSON.stringify(res.body));
+
+    const after = fs.readdirSync(dir);
+    // 55 seeds + 1 fresh = 56 → prune the 6 oldest → exactly 50 remain.
+    assert.equal(after.length, MAX_KEPT_PASTES, `exactly ${MAX_KEPT_PASTES} pastes must remain, got ${after.length}`);
+    assert.ok(after.includes(path.basename(res.body.path)), 'the just-written paste (newest mtime) is retained');
+    assert.ok(after.includes(seeded[seeded.length - 1]), 'the newest seed survives');
+    assert.ok(!after.includes(seeded[0]), 'the oldest seed is pruned');
+  } finally {
+    if (prevHome === undefined) delete process.env.FLEETDECK_HOME; else process.env.FLEETDECK_HOME = prevHome;
+    fs.rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+// The off-by-one directly (bug #11): the prune once ran BEFORE the write, so a
+// full dir (50 files → prune skips, not > 50 → write) settled permanently at
+// 51. Assert the invariant holds after EVERY paste, and that the cap is
+// actually reached (so a never-filled dir cannot pass this vacuously).
+test('paste-image: repeated pastes never leave more than MAX_KEPT_PASTES on disk', async () => {
+  const { pasteImage, pasteDir, MAX_KEPT_PASTES } = await import('../scripts/fleetd/paste.mjs');
+  const os2 = await import('node:os');
+  const scratch = fs.mkdtempSync(path.join(os2.tmpdir(), 'fd-paste-flood-'));
+  const fakeHome = path.join(scratch, 'home');
+  fs.mkdirSync(fakeHome, { recursive: true });
+  const prevHome = process.env.FLEETDECK_HOME;
+  process.env.FLEETDECK_HOME = fakeHome;
+  try {
+    const dir = pasteDir(); // pasteImage creates it; count what the cap governs
+    let maxSeen = 0;
+    for (let i = 0; i < MAX_KEPT_PASTES + 10; i++) {
+      const res = pasteImage({ data: b64(PNG) });
+      assert.equal(res.status, 201, JSON.stringify(res.body));
+      const n = fs.readdirSync(dir).length;
+      maxSeen = Math.max(maxSeen, n);
+      assert.ok(n <= MAX_KEPT_PASTES, `after paste #${i + 1}, ${n} files on disk exceeds the cap ${MAX_KEPT_PASTES}`);
+    }
+    assert.equal(maxSeen, MAX_KEPT_PASTES, `the cap must actually be reached; saw a max of ${maxSeen}`);
+  } finally {
+    if (prevHome === undefined) delete process.env.FLEETDECK_HOME; else process.env.FLEETDECK_HOME = prevHome;
+    fs.rmSync(scratch, { recursive: true, force: true });
+  }
 });

@@ -42,6 +42,7 @@ import { startDaemon } from './helpers/daemon.mjs';
 import { postHook, postJson, getJson } from './helpers/http.mjs';
 import { loadFixture } from './helpers/fixtures.mjs';
 import { makeTranscriptDir, writeTranscript } from './helpers/transcript.mjs';
+import { waitUntil } from './helpers/wait.mjs';
 
 function scratchCwd() {
   return mkdtempSync(path.join(tmpdir(), 'fleetdeck-cwd-'));
@@ -53,19 +54,6 @@ function findSession(state, sid) {
 
 function questionsFor(state, sid, kind) {
   return (state.questions || []).filter(q => q.session_id === sid && (!kind || q.kind === kind));
-}
-
-const WAIT_SCALE = Number(process.env.FLEETDECK_TEST_WAIT_SCALE) || 1;
-
-async function waitUntil(fn, { timeoutMs = 5000, intervalMs = 100, label = 'condition' } = {}) {
-  const effectiveTimeoutMs = timeoutMs * WAIT_SCALE;
-  const deadline = Date.now() + effectiveTimeoutMs;
-  for (;;) {
-    const result = await fn();
-    if (result) return result;
-    if (Date.now() >= deadline) throw new Error(`waitUntil: ${label} not met within ${effectiveTimeoutMs}ms`);
-    await new Promise(r => setTimeout(r, intervalMs));
-  }
 }
 
 // ---------------------------------------------------------------------------

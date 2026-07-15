@@ -179,13 +179,56 @@ async function hasSystemd() {
 // read. systemd user units do not inherit an interactive shell's environment, and
 // a `service start` run from a different shell than `service install` would
 // otherwise silently get different config. One file, one source of truth.
+//
+// ENV-FILE SAFETY CONTRACT. service.env is consumed TWO ways that do NOT agree on
+// quoting: the no-systemd supervisor `.`-sources it in a POSIX shell (SUPERVISE:
+// `set -a; . "$ENV_FILE"; set +a`), where each `KEY=value` is an assignment whose
+// RHS is subject to $-expansion, command substitution, and — via an embedded
+// space — command splitting; systemd's `EnvironmentFile=` takes the value
+// literally to end-of-line and does NO expansion. So a value like `$(id)`,
+// `a; rm -rf ~`, or `a b` would be EXECUTED on the shell path and stored verbatim
+// on the systemd path — divergent behavior, and arbitrary shell execution on the
+// no-systemd path (the common case). Rather than try to quote for two
+// incompatible parsers, we VALIDATE: every FLEETDECK_* value must be drawn from a
+// charset that is literal in BOTH readers. That set (alnum plus _ - . : / , @ % +
+// = *) is the intersection of "safe, unquoted, on a `.`-source assignment RHS"
+// and "literal in a systemd EnvironmentFile", and it comfortably covers every real
+// config value: ports, hosts, comma-separated trusted origins including a leading
+// `*` wildcard label, token/trust, hex OR base64 (`+/=`) tokens, and slash paths.
+// A value drawn from it is written BARE (byte-identical to older installs).
+//
+// But some knobs are legitimately a spaced shell command — FLEETDECK_AGENTS_CMD
+// (e.g. `claude agents --json`, agents-poll.mjs) is documented. Bare-writing a
+// spaced value would word-split on the `.`-source path, so such values are
+// SINGLE-QUOTED: a single-quoted RHS is taken LITERALLY — no $-expansion, no
+// command substitution, no splitting — by BOTH a POSIX `.`-source and systemd's
+// EnvironmentFile (which strips matching outer quotes), so the two readers agree
+// and the divergence the bare path guards against cannot arise. We still refuse
+// what single-quoting canNOT reconcile: control chars / newlines (break the line
+// format for both), an embedded single quote (ends the quote), AND a backslash —
+// systemd's EnvironmentFile resolves backslash escapes UNCONDITIONALLY, even
+// inside single quotes (systemd#10659), so `'a\b'` becomes `ab` under systemd but
+// `a\b` under the POSIX `.`-source, and a trailing `\` even unterminates the
+// systemd quote. All three get a clear install-time refusal naming the key.
+const ENV_VALUE_BARE_SAFE = /^[A-Za-z0-9_.:/,@%+=*-]*$/;
+const ENV_VALUE_UNQUOTABLE = /[\u0000-\u001f\u0027\u005c]/;
+
 function writeEnvFile() {
   const lines = [];
   for (const [k, v] of Object.entries(process.env)) {
     if (!k.startsWith('FLEETDECK_')) continue;
     if (k === 'FLEETDECK_MANAGED') continue; // owned by `serve`, never configuration
-    if (/[\n\r]/.test(v)) throw new Error(`${k} contains a newline; refusing to write it to ${ENV_FILE}`);
-    lines.push(`${k}=${v}`);
+    if (ENV_VALUE_UNQUOTABLE.test(v)) {
+      throw new Error(
+        `${k} has a value unsafe for ${ENV_FILE}, which is BOTH shell-sourced (no-systemd `
+        + `supervisor) AND parsed by systemd EnvironmentFile. A newline, control character, `
+        + `embedded single quote, or backslash cannot be represented identically to both readers `
+        + `and is refused. Fix or unset ${k}.`,
+      );
+    }
+    // Bare when safe (unchanged); single-quoted otherwise (spaces / $ ; & | etc.
+    // stay literal for both readers). No embedded single quote can reach here.
+    lines.push(ENV_VALUE_BARE_SAFE.test(v) ? `${k}=${v}` : `${k}='${v}'`);
   }
   fs.mkdirSync(HOME, { recursive: true });
   // 0600: FLEETDECK_TOKEN may legitimately live here.
@@ -258,11 +301,44 @@ async function serviceInstall() {
   return 0;
 }
 
+// SUPERVISOR IDENTITY CONTRACT. supervisor.pid records the pid of the detached
+// `sh SUPERVISE_SH` that serviceStart backgrounds. A bare kill(pid, 0) only proves
+// SOMETHING with that pid is alive — after a reboot + PID reuse a stale
+// supervisor.pid can point at an unrelated live process, which would make
+// `service start` falsely report "already running" (the board never comes up) or
+// make `service stop` SIGTERM an innocent process. So, exactly like the daemon's
+// own HOME-ownership check (takeover.mjs `livePidLooksLikeFleetd`), we verify the
+// live process is actually OUR supervisor before trusting the pidfile: on Linux
+// its /proc/<pid>/cmdline must reference SUPERVISE_SH. /proc is Linux-only; on
+// macOS/other there is no cheap identity probe, so we fall back to kill(0)
+// liveness alone (documented limitation: a recycled pid there can still be
+// misread, the same fallback the daemon accepts on non-Linux).
+// The match rule, kept pure (no /proc read) so it is testable without spawning a
+// real supervisor: we backgrounded `sh SUPERVISE_SH`, so the absolute SUPERVISE_SH
+// path is present in the live process's argv exactly when the pid is still ours.
+function argvIsOurSupervisor(argv) {
+  return Array.isArray(argv) && argv.includes(SUPERVISE_SH);
+}
+
+function supervisorLooksLikeOurs(pid) {
+  if (process.platform !== 'linux') return true; // no /proc — best-effort fallback
+  try {
+    const argv = fs.readFileSync(`/proc/${pid}/cmdline`).toString('utf8').split('\0').filter(Boolean);
+    return argvIsOurSupervisor(argv);
+  } catch (err) {
+    // ENOENT is decisive: the pid died between kill(0) and here, so it is not our
+    // supervisor. Permission/transient I/O errors are NOT decisive — treating a
+    // still-live process as ours avoids falsely dropping a running supervisor.
+    return err?.code !== 'ENOENT';
+  }
+}
+
 function supervisorAlive() {
   try {
     const pid = Number(fs.readFileSync(SUPERVISOR_PID, 'utf8').trim());
     if (!Number.isInteger(pid) || pid <= 0) return 0;
     process.kill(pid, 0);
+    if (!supervisorLooksLikeOurs(pid)) return 0; // stale pidfile after PID reuse
     return pid;
   } catch { return 0; }
 }
@@ -405,20 +481,38 @@ Configuration is entirely FLEETDECK_* environment variables — see the README.
 For an always-on board on a remote dev box, see docs/CODER.md.
 `;
 
-const [cmd, ...rest] = process.argv.slice(2);
-let code = 0;
-switch (cmd) {
-  case 'serve': await serve(); break; // never returns until SIGTERM
-  case 'status': code = await status(); break;
-  case 'doctor': code = await doctor(); break;
-  case 'service': code = await service(rest[0]); break;
-  case 'token': code = await token(rest); break;
-  case '--version': case '-v': out(version()); break;
-  case 'help': case '--help': case '-h': case undefined: out(HELP); break;
-  default:
-    err(`unknown command: ${cmd}\n`);
-    err(HELP);
-    code = 2;
+async function main(argv) {
+  const [cmd, ...rest] = argv;
+  let code = 0;
+  switch (cmd) {
+    case 'serve': await serve(); return; // never returns until SIGTERM; serve owns the process
+    case 'status': code = await status(); break;
+    case 'doctor': code = await doctor(); break;
+    case 'service': code = await service(rest[0]); break;
+    case 'token': code = await token(rest); break;
+    case '--version': case '-v': out(version()); break;
+    case 'help': case '--help': case '-h': case undefined: out(HELP); break;
+    default:
+      err(`unknown command: ${cmd}\n`);
+      err(HELP);
+      code = 2;
+  }
+  // `serve` returned above and owns the process; every other command is done.
+  process.exit(code);
 }
-// `serve` owns the process from here; everything else is done.
-if (cmd !== 'serve') process.exit(code);
+
+// Only dispatch when this file is the process entry point. Importing the module
+// (the test suite does) must never run a command or exit the process — so the
+// helpers above stay testable in isolation. Compare real paths because the global
+// `fleetdeck` bin is a symlink into node_modules while import.meta.url is resolved.
+const IS_ENTRYPOINT = (() => {
+  try { return !!process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url); }
+  catch { return false; }
+})();
+
+if (IS_ENTRYPOINT) await main(process.argv.slice(2));
+
+// exported for tests only — the env-file validation, supervisor identity check,
+// and file generators are contracts. Nothing here runs on import (see
+// IS_ENTRYPOINT above), so importing is side-effect-free.
+export { writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor, serviceInstall, UNIT, SUPERVISE };

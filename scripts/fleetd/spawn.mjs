@@ -26,7 +26,8 @@
 // pre-issued session_id. Capability reports available:true, reason
 // 'test-override'.
 
-import { execFile, execFileSync, spawn as spawnChild } from 'node:child_process';
+import { execFileSync, spawn as spawnChild } from 'node:child_process';
+import { execFileP } from './exec.mjs';
 import { randomUUID } from 'node:crypto';
 
 const TMUX_TIMEOUT_MS = 5_000;
@@ -35,18 +36,21 @@ const US = '\u001f'; // unit separator — never appears in tmux names in practi
 // Run one tmux command (argv). Resolves stdout on success, null on ANY
 // failure (tmux absent, no server, bad target, timeout) — callers decide
 // whether null is "gone", "unknown" or an error.
-function tmux(args) {
-  return new Promise((resolve) => {
-    try {
-      const socket = process.env.FLEETDECK_TMUX_SOCKET?.trim();
-      const argv = socket ? ['-L', socket, ...args] : args;
-      execFile('tmux', argv, { timeout: TMUX_TIMEOUT_MS, windowsHide: true }, (err, stdout) => {
-        resolve(err ? null : (stdout ?? ''));
-      });
-    } catch {
-      resolve(null);
-    }
-  });
+async function tmux(args) {
+  // Reuse the shared execFileP primitive (exec.mjs) and map its result object
+  // back to this adapter's null-or-stdout contract: callers here decide whether
+  // null is "gone", "unknown" or an error. Behaviour is byte-identical to the
+  // hand-rolled execFile it replaced (utf8 stdout, windowsHide, 5s timeout). The
+  // try/catch is kept — as in the original — so any throw (e.g. a non-iterable
+  // args) resolves to null rather than rejecting.
+  try {
+    const socket = process.env.FLEETDECK_TMUX_SOCKET?.trim();
+    const argv = socket ? ['-L', socket, ...args] : args;
+    const r = await execFileP('tmux', argv, { timeout: TMUX_TIMEOUT_MS });
+    return r.ok ? (r.out ?? '') : null;
+  } catch {
+    return null;
+  }
 }
 
 // ------------------------------------------------------------- capability
@@ -166,6 +170,39 @@ export async function killWindowVerified(name) {
   return { ok: false, error: 'tmux kill-window failed' };
 }
 
+/** Neutralize the BRACKETED-PASTE BREAKOUT before any owned-pane paste
+ * (CONTRACT). pasteText delivers with `-p`, which wraps the buffer in tmux's
+ * bracketed-paste markers ESC[200~ … ESC[201~. Mail delivery (mail.mjs) pipes
+ * VERBATIM message content through pasteText, so content carrying a literal END
+ * marker `\x1b[201~` would close the bracket EARLY inside the receiving Claude
+ * TUI — everything after it is then processed as LIVE keystrokes, which the
+ * daemon's own sendEnter promptly submits. That is keystroke/command injection
+ * into a daemon-owned pane. This is the one chokepoint every pane paste flows
+ * through, so sanitizing here protects every caller.
+ *
+ * Pure and conservative: normalize CRLF / lone CR to LF, delete the
+ * bracketed-paste START/END markers (looped so a crafted overlap cannot
+ * reconstitute one after a single pass), then strip every remaining C0 control
+ * byte — bare ESC `\x1b` included, since it could open a fresh control sequence —
+ * plus DEL and the C1 controls (0x80–0x9f, e.g. the 8-bit CSI U+009B) — EXCEPT
+ * `\t` (0x09) and `\n` (0x0A), both legitimate in pasted text. Code points above
+ * U+009F are never touched, so normal UTF-8 (accented Latin-1 at U+00A0–U+00FF,
+ * CJK, emoji) is intact. The control strip is the load-bearing guarantee: with no
+ * ESC or C1 CSI left, no functional paste marker can survive whatever the input
+ * tried to smuggle in. */
+export function sanitizePaneText(text) {
+  let out = String(text).replace(/\r\n?/g, '\n');
+  let prev;
+  do { prev = out; out = out.replace(/\u001b\[20[01]~/g, ''); } while (out !== prev);
+  // Strip C0 controls (keep \t and \n), DEL, AND the C1 range 0x80-0x9f. The
+  // C1 strip closes the 8-bit-CSI form: a lone U+009B is the single-byte CSI a
+  // terminal could read as the start of a `\u001b[201~` bracketed-paste terminator,
+  // so removing it denies that alternative escape. C1 code points are control
+  // codes, never legitimate text; everything above U+009F (accented Latin-1,
+  // CJK, emoji) is untouched.
+  return out.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, '');
+}
+
 /** The four sanctioned owned-pane injections (CONTRACT) are: one bring-up
  * Enter for the trust dialog, bracketed-paste mail followed by Enter, and
  * verbatim human typing relayed by the live-terminal modal, plus a human's
@@ -173,12 +210,16 @@ export async function killWindowVerified(name) {
  * command. All user text still travels without a shell; terminal input uses
  * control-mode hex bytes. */
 export async function pasteText(target, text) {
+  // Bracketed-paste breakout defense: sanitize BEFORE the buffer is set, so the
+  // `-p` paste below can never carry an END marker that turns mail content into
+  // live keystrokes (see sanitizePaneText).
+  const safe = sanitizePaneText(text);
   // tmux buffers are server-global, so a constant name lets concurrent mail
   // deliveries overwrite each other between set-buffer and paste-buffer. A
   // UUID makes the two-command handoff private to this call; `-d` removes the
   // buffer on success, while finally covers a failed/timed-out paste.
   const buffer = `fdmail-${randomUUID()}`;
-  if (await tmux(['set-buffer', '-b', buffer, '--', String(text)]) === null) return false;
+  if (await tmux(['set-buffer', '-b', buffer, '--', safe]) === null) return false;
   try {
     return (await tmux(['paste-buffer', '-p', '-d', '-b', buffer, '-t', target])) !== null;
   } finally {

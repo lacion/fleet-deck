@@ -11,7 +11,6 @@
 
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CLAUDE_ENV_MARKERS } from './fleetd/env-scrub.mjs';
@@ -19,9 +18,10 @@ import { CLAUDE_ENV_MARKERS } from './fleetd/env-scrub.mjs';
 // (same unbundled pattern as env-scrub.mjs above) so this hook can evict a
 // strictly-older daemon and let the newest installed build own the port.
 import { shouldTakeOver, verifyDaemonPid, terminateDaemon } from './fleetd/takeover.mjs';
+import { resolveHome, resolvePort, resolveBase } from './fleetd/config.mjs';
 
-const PORT = Number(process.env.FLEETDECK_PORT || 4711);
-const BASE = `http://127.0.0.1:${PORT}`;
+const PORT = resolvePort();
+const BASE = resolveBase(PORT);
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 // Prefer the committed bundle (self-contained — git-distributed installs have
 // no node_modules); fall back to source for dev checkouts mid-iteration.
@@ -33,7 +33,7 @@ const FLEETD_BUNDLE = path.join(HERE, 'fleetd', 'fleetd.bundle.mjs');
 // prefers the bundle and falls back to source.
 const FLEETD = process.env.FLEETDECK_TEST_DAEMON_SCRIPT
   || (fs.existsSync(FLEETD_BUNDLE) ? FLEETD_BUNDLE : path.join(HERE, 'fleetd', 'fleetd.mjs'));
-const HOME = process.env.FLEETDECK_HOME || path.join(os.homedir() || '/tmp', '.fleetdeck');
+const HOME = resolveHome();
 
 // Hard deadline: whatever happens, exit 0 well inside the hook's 15s timeout.
 // The takeover path can outlast the default 3.8s budget (waiting for an old
