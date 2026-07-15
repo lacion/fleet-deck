@@ -4,9 +4,9 @@
 // handler fails open — an internal error still returns 200 {} so a hook can
 // never break a session. Board/control API: /health /state /mail /command,
 // /api/cleanup,
-// static board at / + /assets/* (built React app from board-dist), the spike
-// board at /plain, and WS /ws (snapshot on connect and on every mutation; a
-// ping/pong keepalive — not a periodic snapshot — reaps dead peers).
+// static board at / + /assets/* (built React app from board-dist), and WS /ws
+// (snapshot on connect and on every mutation; a ping/pong keepalive — not a
+// periodic snapshot — reaps dead peers).
 
 import http from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
@@ -73,7 +73,6 @@ export function isLoopbackAddress(address) {
 // relative to THIS file's directory at runtime — the esbuild bundle keeps
 // import.meta.url pointing at scripts/fleetd/, so both the source run
 // (fleetd.mjs) and the bundle run (fleetd.bundle.mjs) find the same dist.
-// The spike board stays available verbatim at GET /plain.
 const BOARD_DIST = path.join(path.dirname(fileURLToPath(import.meta.url)), 'board-dist');
 
 const MIME = {
@@ -164,7 +163,7 @@ function trustedHostMatch(entry, host, port) {
 }
 
 export function createHttp(core, {
-  port, boardFile, version = '0.0.0', capture = () => {}, token, lan = null,
+  port, version = '0.0.0', capture = () => {}, token, lan = null,
   trustedOrigins = [], proxyAuth = 'token', managed = false,
 }) {
   // The board renders its share panel from this: the exact URLs a peer can
@@ -210,11 +209,16 @@ export function createHttp(core, {
   //     ever forwards, and coder_app defaults to share = "owner"). A trusted
   //     origin is then sufficient and the board needs no token at all.
   //
-  // Either way a LOCAL CLI hook is untouched: it sends no Origin, so
-  // viaTrustedProxy is false and the loopback exemption still applies.
+  // Either way a LOCAL CLI hook is untouched: it sends our OWN loopback Host and
+  // no Origin, so arrivedViaTrustedProxy is false and the loopback exemption
+  // still applies. The proxy is caught by its EXTERNAL Host even with no Origin
+  // (see arrivedViaTrustedProxy for why the Origin signal alone was not enough).
   function authorized(req, url) {
     if (isLoopbackAddress(req.socket?.remoteAddress)) {
-      if (!(proxyAuth === 'token' && viaTrustedProxy(req))) return true;
+      // Use arrivedViaTrustedProxy, NOT viaTrustedProxy: the latter keys off
+      // Origin alone and so waived the token for a proxied request that carried
+      // no Origin — the no-Origin bypass fixed here.
+      if (!(proxyAuth === 'token' && arrivedViaTrustedProxy(req))) return true;
     }
     const authorization = req.headers.authorization;
     const bearer = typeof authorization === 'string' ? /^Bearer (.+)$/.exec(authorization)?.[1] : undefined;
@@ -308,6 +312,31 @@ export function createHttp(core, {
     if (typeof origin !== 'string' || !origin) return false; // a CLI hook
     let u; try { u = new URL(origin); } catch { return false; }
     return !hostAllowed(u) && originTrusted(u);
+  }
+  // C1/H-S3 NO-ORIGIN PROXY HOLE. viaTrustedProxy keys off Origin alone — but a
+  // reverse proxy connects to us over loopback, so an attacker who reaches the
+  // public proxy and sends a request with a trusted Host, NO Origin and NO token
+  // looked exactly like a local CLI hook: isLoopbackAddress true, viaTrustedProxy
+  // false ⇒ the loopback exemption returned authorized. Under the default
+  // PROXY_AUTH=token that waived the bearer token entirely (spawn/state/mail/
+  // cleanup exposed tokenless), defeating the standalone auth model.
+  //
+  // The Host header carries the signal Origin does not: a genuine loopback hook
+  // sends our OWN authority (127.0.0.1:port, localhost) — hostAllowed — while a
+  // proxied request sends the proxy's EXTERNAL authority (board.example.com),
+  // which is authorityTrusted but NOT hostAllowed. Treat EITHER the Origin-based
+  // signal or that Host-based signal as "arrived through the proxy", so such a
+  // request must still clear the token check below.
+  //
+  // RESIDUAL (out of scope): a proxy that REWRITES Host to loopback still reads
+  // as local. Coder and the documented proxies preserve req.Host (see ~line 116),
+  // so this does not arise in the supported deployments.
+  function arrivedViaTrustedProxy(req) {
+    if (viaTrustedProxy(req)) return true;
+    const host = req.headers.host;
+    if (typeof host !== 'string' || !host) return false; // a CLI hook may omit Host
+    let u; try { u = new URL('http://' + host); } catch { return false; }
+    return authorityTrusted(u) && !hostAllowed(u);
   }
   const isJsonContentType = v => typeof v === 'string' && /^application\/json\b/i.test(v.trim());
 
@@ -507,11 +536,6 @@ export function createHttp(core, {
           return json(res, 200, { mail: box });
         }
         if (url.pathname === '/api/watch') return watchHook(req, res, url); // F3d-2 long-poll
-        if (url.pathname === '/plain') {
-          // the Phase 1 spike board, served verbatim
-          res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-          return res.end(fs.readFileSync(boardFile));
-        }
         if (url.pathname === '/' || url.pathname.startsWith('/assets/')) {
           // built React board (Phase 5) from board-dist
           return serveBoardAsset(res, url.pathname, () => json(res, 404, { err: 'nope' }));

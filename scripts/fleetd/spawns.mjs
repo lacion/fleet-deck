@@ -393,9 +393,10 @@ export function createSpawns(ctx) {
     // Step 4: deterministic interactive `claude`: scrub inherited agent and
     // fleet variables, then pin this daemon's port/home. The claude flag order
     // remains contract-pinned: --session-id, --model, --permission-mode,
-    // permission bypass, remote-control name, then the prompt as ONE
-    // positional argv element. permission_mode "bypassPermissions" needs no
-    // extra argv change — it rides --permission-mode as plain passthrough.
+    // permission bypass, remote-control name, then a `--` end-of-options marker
+    // and the prompt as ONE positional argv element. permission_mode
+    // "bypassPermissions" needs no extra argv change — it rides
+    // --permission-mode as plain passthrough.
     const argv = [
       ...claudeEnvArgvPrefix(port, home),
       'claude', '--session-id', session_id,
@@ -408,7 +409,16 @@ export function createSpawns(ctx) {
     // phone, and the board speaks callsigns everywhere. fd<port>- is internal
     // plumbing that means nothing to them.
     if (body?.remote_control === true) argv.push('--remote-control', callsign);
-    if (body?.prompt) argv.push(body.prompt);
+    // SECURITY (option injection): the prompt is untrusted human text and MUST
+    // be the last, positional argv element — but WITHOUT a `--` terminator the
+    // claude CLI (commander) parses a prompt like `--dangerously-skip-permissions`
+    // or `--model evil` as a FLAG, silently granting a bypass the spawn row
+    // records as skip_permissions:false. `--` forces everything after it to be
+    // positional (end-of-options; verified on claude CLI 2.1.210: a token that
+    // is an unknown flag without `--` errors, but rides through as the prompt
+    // after `--`). Nothing is ever pushed onto argv past this point, so the
+    // prompt stays the final element in both the override and real-tmux paths.
+    if (body?.prompt) argv.push('--', body.prompt);
 
     const override = tmuxAdapter.spawnOverrideCmd();
     if (override) {
@@ -901,15 +911,36 @@ export function createSpawns(ctx) {
       const observed = !win ? 'missing' : win.pane_dead ? 'dead' : `running ${win.pane_cmd || 'unknown'}`;
       return { status: 409, body: { ok: false, reason: `claude pane is not alive (${observed})` } };
     }
+    // TOCTOU recheck: findScopedWindow awaited above, and in that gap another
+    // client's prompt can move this card from idle/queued to working/needs-you
+    // while the pane stays a live `claude` (so the window check still passes).
+    // Re-read the turn-state FRESH — the same q.getSession query the initial
+    // idle/queued gate used — and bail before typing `/rc`: injecting it into a
+    // now-active TUI corrupts the human's in-flight turn. (Mirrors the initial
+    // gate; closes the check-then-send race that the window-only recheck missed.)
+    const fresh = q.getSession.get(row.session_id);
+    if (!fresh || !['queued', 'idle'].includes(fresh.col)) {
+      return { status: 409, body: { ok: false, reason: `session is ${fresh?.col ?? 'missing'}, not queued or idle` } };
+    }
     // `/rc <name>` — named by callsign so the session the human finds on
     // claude.ai carries the same name as the card on the board. Verified live
     // on CLI 2.1.207: no confirmation dialog, and the
     // https://claude.ai/code/session_… URL lands in the pane's scrollback.
     // Use the LIVE session callsign (a manual re-ticket renames the card but not
     // the frozen spawn.callsign) so claude.ai shows today's name.
-    const typed = await tmuxAdapter.typeKeys(win.window_id, `/rc ${session?.callsign ?? row.callsign}`);
-    const entered = typed ? await tmuxAdapter.sendEnter(win.window_id) : false;
-    if (!typed || !entered) {
+    const typed = await tmuxAdapter.typeKeys(win.window_id, `/rc ${fresh.callsign ?? row.callsign}`);
+    if (!typed) {
+      return { status: 500, body: { ok: false, reason: 'failed to type remote-control command into pane' } };
+    }
+    // Last-mile recheck: typeKeys awaited too, so re-read turn-state once more
+    // before Enter. If the pane flipped active in that window, do NOT submit `/rc`
+    // into the human's in-flight turn — leave it typed-but-unsent (recoverable).
+    const afterType = q.getSession.get(row.session_id);
+    if (!afterType || !['queued', 'idle'].includes(afterType.col)) {
+      return { status: 409, body: { ok: false, reason: `session became ${afterType?.col ?? 'missing'} before /rc could submit` } };
+    }
+    const entered = await tmuxAdapter.sendEnter(win.window_id);
+    if (!entered) {
       return { status: 500, body: { ok: false, reason: 'failed to type remote-control command into pane' } };
     }
     const harvest = delayedRemoteHarvest(spawn_id);

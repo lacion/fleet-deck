@@ -57,7 +57,7 @@ export function spawnRowRevivable(row) {
 // Two fs probes — same uncached cost contract as spawnRowRevivable; the
 // snapshot runs it ONLY for offline cards (a live card takes the no-fs 'arm'
 // path), so a frame never fs-probes the whole fleet.
-export function cwdIsDirectory(p) {
+function cwdIsDirectory(p) {
   if (!p) return false;
   try { return fs.statSync(p).isDirectory(); } catch { return false; }
 }
@@ -273,10 +273,10 @@ export function parseCommand(text) {
 // so a space, dot or underscore here would silently break a card's timeline and
 // its pane addressing. Must start alphanumeric; 24 chars is plenty for a label
 // and keeps the card from wrapping.
-export const NAME_SUFFIX_RE = /^[A-Za-z0-9][A-Za-z0-9-]{0,23}$/;
+const NAME_SUFFIX_RE = /^[A-Za-z0-9][A-Za-z0-9-]{0,23}$/;
 // Reserved: the mail router resolves these before it ever looks at a callsign,
 // so a card named `all` could never be messaged directly.
-export const RESERVED_NAMES = new Set(['all', 'everyone', 'clear']);
+const RESERVED_NAMES = new Set(['all', 'everyone', 'clear']);
 
 export function validateNameSuffix(suffix) {
   if (!NAME_SUFFIX_RE.test(suffix)) {

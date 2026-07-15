@@ -3728,6 +3728,7 @@ import path10 from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // scripts/fleetd/db.mjs
+import { chmodSync } from "node:fs";
 var emitWarning = process.emitWarning;
 process.emitWarning = function fleetdSqliteWarningFilter(warning, type, ...args) {
   const name = warning instanceof Error ? warning.name : typeof type === "string" ? type : type?.type;
@@ -3937,6 +3938,20 @@ function openDb(file) {
   const db2 = new DatabaseSync(file);
   db2.exec(DDL);
   migrate(db2);
+  if (file !== ":memory:") {
+    try {
+      chmodSync(file, 384);
+    } catch {
+    }
+    try {
+      chmodSync(`${file}-wal`, 384);
+    } catch {
+    }
+    try {
+      chmodSync(`${file}-shm`, 384);
+    } catch {
+    }
+  }
   return db2;
 }
 
@@ -4515,6 +4530,7 @@ __export(spawn_exports, {
   newWindow: () => newWindow,
   paneCurrentCommand: () => paneCurrentCommand,
   pasteText: () => pasteText,
+  sanitizePaneText: () => sanitizePaneText,
   sendBringupEnter: () => sendBringupEnter,
   sendEnter: () => sendEnter,
   sessionName: () => sessionName,
@@ -4628,9 +4644,19 @@ async function killWindowVerified(name) {
   if (again === null || !again.split("\n").includes(name)) return { ok: false, gone: true };
   return { ok: false, error: "tmux kill-window failed" };
 }
+function sanitizePaneText(text) {
+  let out = String(text).replace(/\r\n?/g, "\n");
+  let prev;
+  do {
+    prev = out;
+    out = out.replace(/\u001b\[20[01]~/g, "");
+  } while (out !== prev);
+  return out.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, "");
+}
 async function pasteText(target, text) {
+  const safe = sanitizePaneText(text);
   const buffer = `fdmail-${randomUUID()}`;
-  if (await tmux(["set-buffer", "-b", buffer, "--", String(text)]) === null) return false;
+  if (await tmux(["set-buffer", "-b", buffer, "--", safe]) === null) return false;
   try {
     return await tmux(["paste-buffer", "-p", "-d", "-b", buffer, "-t", target]) !== null;
   } finally {
@@ -5312,6 +5338,10 @@ function createWorktrees(ctx) {
   async function worktrees() {
     return { ok: true, worktrees: await mapLimit(worktreeRows(), 4, inspectWorktree) };
   }
+  const LAUNCHING_OR_LIVE = /* @__PURE__ */ new Set(["provisioning", "spawning", "live"]);
+  function worktreePathIsLive(worktreePath) {
+    return q.worktreeSpawns.all().some((candidate) => candidate.worktree_path === worktreePath && (LAUNCHING_OR_LIVE.has(candidate.status) || candidate.session_ended_at == null && q.getSession.get(candidate.session_id) != null));
+  }
   async function removeWorktree(body = {}) {
     if (typeof body?.path !== "string") {
       return { status: 400, body: { ok: false, reason: "not a fleet worktree" } };
@@ -5319,8 +5349,7 @@ function createWorktrees(ctx) {
     const rows = q.worktreeSpawns.all().filter((row2) => row2.worktree_path === body.path);
     const row = rows[0];
     if (!row) return { status: 400, body: { ok: false, reason: "not a fleet worktree" } };
-    const alive = rows.some((candidate) => candidate.session_ended_at == null && q.getSession.get(candidate.session_id));
-    if (alive) return { status: 409, body: { ok: false, reason: "session is still alive" } };
+    if (worktreePathIsLive(body.path)) return { status: 409, body: { ok: false, reason: "session is still alive" } };
     const state = await inspectWorktree(row);
     if ((state.verdict === "has-work" || state.verdict === "unknown") && body.force !== true) {
       return {
@@ -5337,6 +5366,9 @@ function createWorktrees(ctx) {
     const repoResult = await execFileP("git", ["-C", row.cwd, "rev-parse", "--show-toplevel"], { timeout: 5e3 });
     if (!repoResult.ok) return { status: 409, body: { ok: false, reason: "main repository unavailable" } };
     const repo = repoResult.out.trim();
+    if (worktreePathIsLive(row.worktree_path)) {
+      return { status: 409, body: { ok: false, reason: "session became live during removal" } };
+    }
     if (state.exists) {
       chmodWritableWhereOwned(row.worktree_path);
       const args = ["-C", repo, "worktree", "remove"];
@@ -5388,6 +5420,10 @@ function createWorktrees(ctx) {
     if (body.delete_branch === true && branch) {
       const deleted = await execFileP("git", ["-C", repo, "branch", "-D", branch], { timeout: 3e4 });
       branch_deleted = deleted.ok;
+    }
+    if (worktreePathIsLive(row.worktree_path)) {
+      onMutate();
+      return { status: 200, body: { ok: true, removed: true, branch_deleted, rows_purged: 0, spawn_became_live: true, path: row.worktree_path } };
     }
     const sessionIds = [...new Set(rows.map((candidate) => candidate.session_id).filter(Boolean))];
     const spawnsPurged = Number(q.deleteWorktreeSpawns.run(row.worktree_path).changes);
@@ -5445,7 +5481,7 @@ function ensurePasteDir() {
   }
   return dir;
 }
-function pruneOldPastes(dir, now = Date.now()) {
+function pruneOldPastes(dir, now = Date.now(), protect = null) {
   let names;
   try {
     names = fs5.readdirSync(dir);
@@ -5455,6 +5491,7 @@ function pruneOldPastes(dir, now = Date.now()) {
   const regular = [];
   for (const name of names) {
     const p = path3.join(dir, name);
+    if (protect && p === protect) continue;
     let st;
     try {
       st = fs5.lstatSync(p);
@@ -5471,9 +5508,10 @@ function pruneOldPastes(dir, now = Date.now()) {
       regular.push({ p, mtime: st.mtimeMs });
     }
   }
-  if (regular.length > MAX_KEPT_PASTES) {
+  const budget = protect ? MAX_KEPT_PASTES - 1 : MAX_KEPT_PASTES;
+  if (regular.length > budget) {
     regular.sort((a, b) => a.mtime - b.mtime);
-    for (const { p } of regular.slice(0, regular.length - MAX_KEPT_PASTES)) {
+    for (const { p } of regular.slice(0, regular.length - budget)) {
       try {
         fs5.unlinkSync(p);
       } catch {
@@ -5505,7 +5543,6 @@ function pasteImage(ev) {
     console.error("fleetd paste: cannot prepare paste dir:", err);
     return { status: 500, body: { ok: false, reason: "cannot prepare paste dir" } };
   }
-  pruneOldPastes(dir);
   const name = `paste-${crypto.randomUUID()}.${ext}`;
   const file = path3.join(dir, name);
   const tmp = `${file}.tmp`;
@@ -5520,6 +5557,7 @@ function pasteImage(ev) {
     console.error("fleetd paste: write failed:", err);
     return { status: 500, body: { ok: false, reason: "write failed" } };
   }
+  pruneOldPastes(dir, Date.now(), file);
   return { status: 201, body: { ok: true, path: file, bytes: buf.length } };
 }
 
@@ -5527,9 +5565,16 @@ function pasteImage(ev) {
 var MAIL_MAX_LEN = 4e3;
 function clampMail(raw) {
   if (raw.length <= MAIL_MAX_LEN) return raw;
-  const cut = raw.slice(0, MAIL_MAX_LEN);
+  return dropOrphanSurrogate(raw.slice(0, MAIL_MAX_LEN));
+}
+function dropOrphanSurrogate(cut) {
   const last = cut.charCodeAt(cut.length - 1);
   return last >= 55296 && last <= 56319 ? cut.slice(0, -1) : cut;
+}
+var MAIL_FROM_MAX_LEN = 200;
+function clampFrom(from) {
+  if (typeof from !== "string" || from.length <= MAIL_FROM_MAX_LEN) return from;
+  return dropOrphanSurrogate(from.slice(0, MAIL_FROM_MAX_LEN));
 }
 function createMail(ctx) {
   const {
@@ -5545,7 +5590,7 @@ function createMail(ctx) {
   } = ctx;
   function mail(toSession, from, text) {
     const raw = String(text ?? "");
-    q.insertMail.run(toSession, from, clampMail(raw), Date.now());
+    q.insertMail.run(toSession, clampFrom(from), clampMail(raw), Date.now());
     notifyWatchers(toSession);
     const timer = setTimeout(() => {
       tryOwnedPaneDelivery(toSession).catch(() => {
@@ -5636,12 +5681,22 @@ function createMail(ctx) {
     const pane = await tmuxAdapter.paneCurrentCommand(win.window_id);
     if (!pane || pane.dead || pane.cmd !== "claude") return false;
     if (hasWatchWaiter(sid)) return false;
+    if (!ownedPaneRow(sid)) return false;
     const box = claimAllMail(sid);
     if (!box.length) return false;
     const text = box.map((m) => `[FLEETDECK MAIL from ${m.from_id}] ${m.text}`).join("\n");
     const pasted = await tmuxAdapter.pasteText(win.window_id, text);
-    const entered = pasted ? await tmuxAdapter.sendEnter(win.window_id) : false;
-    if (!pasted || !entered) {
+    if (!pasted) {
+      for (const m of box) q.unmarkDelivered.run(m.id);
+      onMutate();
+      return false;
+    }
+    if (!ownedPaneRow(sid)) {
+      onMutate();
+      return true;
+    }
+    const entered = await tmuxAdapter.sendEnter(win.window_id);
+    if (!entered) {
       for (const m of box) q.unmarkDelivered.run(m.id);
       onMutate();
       return false;
@@ -6263,7 +6318,7 @@ function createSpawns(ctx) {
     if (body?.permission_mode) argv.push("--permission-mode", body.permission_mode);
     if (body?.dangerously_skip_permissions === true) argv.push("--dangerously-skip-permissions");
     if (body?.remote_control === true) argv.push("--remote-control", callsign);
-    if (body?.prompt) argv.push(body.prompt);
+    if (body?.prompt) argv.push("--", body.prompt);
     const override = tmuxAdapter.spawnOverrideCmd();
     if (override) {
       const spec = {
@@ -6608,9 +6663,20 @@ function createSpawns(ctx) {
       const observed = !win ? "missing" : win.pane_dead ? "dead" : `running ${win.pane_cmd || "unknown"}`;
       return { status: 409, body: { ok: false, reason: `claude pane is not alive (${observed})` } };
     }
-    const typed = await tmuxAdapter.typeKeys(win.window_id, `/rc ${session?.callsign ?? row.callsign}`);
-    const entered = typed ? await tmuxAdapter.sendEnter(win.window_id) : false;
-    if (!typed || !entered) {
+    const fresh = q.getSession.get(row.session_id);
+    if (!fresh || !["queued", "idle"].includes(fresh.col)) {
+      return { status: 409, body: { ok: false, reason: `session is ${fresh?.col ?? "missing"}, not queued or idle` } };
+    }
+    const typed = await tmuxAdapter.typeKeys(win.window_id, `/rc ${fresh.callsign ?? row.callsign}`);
+    if (!typed) {
+      return { status: 500, body: { ok: false, reason: "failed to type remote-control command into pane" } };
+    }
+    const afterType = q.getSession.get(row.session_id);
+    if (!afterType || !["queued", "idle"].includes(afterType.col)) {
+      return { status: 409, body: { ok: false, reason: `session became ${afterType?.col ?? "missing"} before /rc could submit` } };
+    }
+    const entered = await tmuxAdapter.sendEnter(win.window_id);
+    if (!entered) {
       return { status: 500, body: { ok: false, reason: "failed to type remote-control command into pane" } };
     }
     const harvest = delayedRemoteHarvest(spawn_id);
@@ -7794,6 +7860,8 @@ function createCore(db2, {
       cands.push(heir);
     }
     if (cands.length !== 1) return null;
+    const rivals = q.clearedPredecessors.all(cwd, now - CLEAR_SUCCESSION_MS, prevSid);
+    if (rivals.length) return null;
     return succeedSession(prev, cands[0].session_id, { rename: true });
   }
   function succeedSession(prev, sid, { rename = false } = {}) {
@@ -8070,14 +8138,10 @@ import { StringDecoder } from "node:string_decoder";
 var ACTIVE_STATUSES = /* @__PURE__ */ new Set(["spawning", "stalled", "live"]);
 var INPUT_CHUNK_BYTES = 1024;
 var ATTACH_TIMEOUT_MS = 5e3;
-function envInt2(name, fallback, { min = 0 } = {}) {
-  const n = Number(process.env[name]);
-  return Number.isFinite(n) && n >= min ? Math.floor(n) : fallback;
-}
-var COMMAND_TIMEOUT_MS = envInt2("FLEETDECK_TERM_CMD_TIMEOUT_MS", 1e4, { min: 100 });
-var MAX_INPUT_QUEUE_BYTES = envInt2("FLEETDECK_TERM_INPUT_MAX_BYTES", 256 * 1024, { min: 1024 });
+var COMMAND_TIMEOUT_MS = envInt("FLEETDECK_TERM_CMD_TIMEOUT_MS", 1e4, { min: 100 });
+var MAX_INPUT_QUEUE_BYTES = envInt("FLEETDECK_TERM_INPUT_MAX_BYTES", 256 * 1024, { min: 1024 });
 var CLEAR_SCREEN = "\x1B[H\x1B[2J";
-var REPAINT_MS = envInt2("FLEETDECK_TERM_REPAINT_MS", 80);
+var REPAINT_MS = envInt("FLEETDECK_TERM_REPAINT_MS", 80);
 function dimensions(cols, rows) {
   const c = Number(cols);
   const r = Number(rows);
@@ -8166,7 +8230,7 @@ var TermBridgeError = class extends Error {
 };
 function createTermBridge({ port, resolveSpawn, log = () => {
 } } = {}) {
-  const session = `fleetdeck-${port}`;
+  const session = sessionName(port);
   const viewers = /* @__PURE__ */ new Set();
   let client = null;
   function createClient() {
@@ -8575,7 +8639,6 @@ function trustedHostMatch(entry, host, port) {
 }
 function createHttp(core2, {
   port,
-  boardFile,
   version: version2 = "0.0.0",
   capture = () => {
   },
@@ -8602,7 +8665,7 @@ function createHttp(core2, {
   }
   function authorized(req, url) {
     if (isLoopbackAddress(req.socket?.remoteAddress)) {
-      if (!(proxyAuth === "token" && viaTrustedProxy(req))) return true;
+      if (!(proxyAuth === "token" && arrivedViaTrustedProxy(req))) return true;
     }
     const authorization = req.headers.authorization;
     const bearer = typeof authorization === "string" ? /^Bearer (.+)$/.exec(authorization)?.[1] : void 0;
@@ -8672,6 +8735,18 @@ function createHttp(core2, {
       return false;
     }
     return !hostAllowed(u) && originTrusted(u);
+  }
+  function arrivedViaTrustedProxy(req) {
+    if (viaTrustedProxy(req)) return true;
+    const host = req.headers.host;
+    if (typeof host !== "string" || !host) return false;
+    let u;
+    try {
+      u = new URL("http://" + host);
+    } catch {
+      return false;
+    }
+    return authorityTrusted(u) && !hostAllowed(u);
   }
   const isJsonContentType = (v) => typeof v === "string" && /^application\/json\b/i.test(v.trim());
   const hookHandlers = {
@@ -8780,10 +8855,6 @@ function createHttp(core2, {
           return json(res, 200, { mail: box });
         }
         if (url.pathname === "/api/watch") return watchHook(req, res, url);
-        if (url.pathname === "/plain") {
-          res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-          return res.end(fs9.readFileSync(boardFile));
-        }
         if (url.pathname === "/" || url.pathname.startsWith("/assets/")) {
           return serveBoardAsset(res, url.pathname, () => json(res, 404, { err: "nope" }));
         }
@@ -9826,6 +9897,10 @@ try {
 } catch (err) {
   startupFatal(`cannot create FLEETDECK_HOME (${err?.code || err?.message || "unknown error"})`);
 }
+try {
+  fs12.chmodSync(HOME, 448);
+} catch {
+}
 var PID_FILE = path10.join(HOME, "fleetd.pid");
 var ownsPidFile = false;
 function removeOwnedPidFile() {
@@ -9953,9 +10028,6 @@ var { server } = createHttp(core, {
   port: PORT,
   token: TOKEN,
   lan: LAN_INFO,
-  // the Phase 1 spike board, kept verbatim at GET /plain; the real board
-  // (GET / + /assets/*) is served from board-dist, resolved inside http.mjs
-  boardFile: path10.join(__dirname, "board.html"),
   version,
   trustedOrigins: TRUSTED_ORIGINS,
   proxyAuth: PROXY_AUTH,

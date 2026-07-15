@@ -33,6 +33,7 @@ import path from 'node:path';
 import { startDaemon, randomPort, waitForHealth, REPO_ROOT } from './helpers/daemon.mjs';
 import { getJson, postHook } from './helpers/http.mjs';
 import { loadFixture } from './helpers/fixtures.mjs';
+import { waitUntil, scaleMs } from './helpers/wait.mjs';
 import {
   parseSemver, compareSemver, shouldTakeOver, verifyDaemonPid,
 } from '../scripts/fleetd/takeover.mjs';
@@ -46,15 +47,6 @@ function scratchDir(t) {
   const d = mkdtempSync(path.join(tmpdir(), 'fleetdeck-cwd-'));
   t.after(() => rmSync(d, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
   return d;
-}
-
-async function waitUntil(fn, { timeoutMs = 5000, intervalMs = 100, label = 'condition' } = {}) {
-  const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    if (await fn()) return true;
-    if (Date.now() >= deadline) throw new Error(`waitUntil: ${label} not met within ${timeoutMs}ms`);
-    await new Promise(r => setTimeout(r, intervalMs));
-  }
 }
 
 // Spawn the REAL SessionStart hook the way Claude Code does: a SessionStart
@@ -92,7 +84,7 @@ function runHook({ port, home, env = {}, payload }) {
       return Promise.race([
         exited,
         new Promise((_, reject) => setTimeout(
-          () => reject(new Error(`hook did not exit within ${ms}ms (${label})`)), ms).unref?.()),
+          () => reject(new Error(`hook did not exit within ${ms}ms (${label})`)), scaleMs(ms)).unref?.()),
       ]);
     },
   };

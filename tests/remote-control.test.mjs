@@ -132,6 +132,10 @@ test('remote spawn persists intent, exposes snapshot state, and orders argv befo
   assert.deepEqual(argv.slice(remoteAt, remoteAt + 2), ['--remote-control', out.body.callsign]);
   assert.ok(remoteAt > argv.indexOf('--dangerously-skip-permissions'));
   assert.ok(remoteAt < argv.indexOf(prompt));
+  // Option-injection guard (#5): the prompt is the final positional, fenced off
+  // from option parsing by a `--` end-of-options marker immediately before it.
+  assert.equal(argv[argv.length - 1], prompt, 'the prompt must be the final argv element');
+  assert.equal(argv[argv.indexOf(prompt) - 1], '--', 'a `--` marker must immediately precede the prompt');
   assert.deepEqual(core.snapshot().sessions.find(s => s.session_id === out.body.session_id).spawn.remote,
     { enabled: true, url: null });
 });
@@ -237,6 +241,40 @@ test('enableRemote types literal /rc, harvests URL, updates snapshot, and is ide
     ok: true, enabled: true, url: 'https://claude.ai/code/session_abc?source=rc', pending: false,
   });
   assert.equal(state.calls.length, before, 'stored URL makes repeated enable idempotent');
+});
+
+test('enableRemote rechecks turn-state AFTER the window await and refuses a mid-await flip to working (TOCTOU, #7)', async (t) => {
+  // BUG #7 regression. enableRemote gates on the session being idle/queued, then
+  // `await findScopedWindow(...)`. Historically the post-await recheck confirmed
+  // only the WINDOW (pane still `claude`), never the turn-state — so a prompt
+  // landing DURING that await could move the card to `working` and `/rc` + Enter
+  // got typed into the now-active TUI, corrupting the human's turn. The fix
+  // re-reads the turn-state fresh after the window lookup and bails.
+  const { db, core, cwd, state, adapter } = harness(t);
+  const spawned = await core.spawn({ cwd });
+  const { spawn_id, session_id } = spawned.body;
+  db.prepare("UPDATE spawns SET status = 'live' WHERE spawn_id = ?").run(spawn_id);
+  db.prepare("UPDATE sessions SET col = 'idle' WHERE session_id = ?").run(session_id);
+
+  // The initial idle/queued gate passes. Then, DURING the findScopedWindow await
+  // (which resolves via listScopedWindows), simulate another client's prompt
+  // landing: flip the card to `working`. The pane stays a live `claude`, so the
+  // window recheck alone would wave it through — only the turn-state recheck can
+  // catch it.
+  const realList = adapter.listScopedWindows;
+  adapter.listScopedWindows = async (...args) => {
+    db.prepare("UPDATE sessions SET col = 'working' WHERE session_id = ?").run(session_id);
+    return realList(...args);
+  };
+
+  const out = await core.enableRemote(spawn_id);
+  assert.equal(out.status, 409, 'a turn that went active mid-await must be refused');
+  assert.match(out.body.reason, /working/);
+  // The whole point: nothing was typed into the now-active TUI.
+  assert.equal(state.calls.filter(c => c[0] === 'typeKeys' || c[0] === 'sendEnter').length, 0,
+    'no /rc keystrokes may be sent once the turn-state flipped active during the window await');
+  assert.equal(db.prepare('SELECT remote_control FROM spawns WHERE spawn_id = ?').get(spawn_id).remote_control, 0,
+    'a refused enable must not persist remote-control intent');
 });
 
 test('enableRemote remains enabled with a null URL when capture has no link', async (t) => {

@@ -26,6 +26,7 @@ import path from 'node:path';
 import { startDaemon } from './helpers/daemon.mjs';
 import { postHook, postJson, getJson } from './helpers/http.mjs';
 import { loadFixture } from './helpers/fixtures.mjs';
+import { waitUntil } from './helpers/wait.mjs';
 
 const FIXTURE_QUESTION = 'Should this project use bcrypt or argon2 for password hashing?';
 
@@ -35,19 +36,6 @@ function scratchCwd() {
 
 function questionsFor(state, sid, kind) {
   return (state.questions || []).filter(q => q.session_id === sid && (!kind || q.kind === kind));
-}
-
-const WAIT_SCALE = Number(process.env.FLEETDECK_TEST_WAIT_SCALE) || 1;
-
-async function waitUntil(fn, { timeoutMs = 5000, intervalMs = 100, label = 'condition' } = {}) {
-  const effectiveTimeoutMs = timeoutMs * WAIT_SCALE;
-  const deadline = Date.now() + effectiveTimeoutMs;
-  for (;;) {
-    const result = await fn();
-    if (result) return result;
-    if (Date.now() >= deadline) throw new Error(`waitUntil: ${label} not met within ${effectiveTimeoutMs}ms`);
-    await new Promise(r => setTimeout(r, intervalMs));
-  }
 }
 
 async function holdChoice(daemon, sid, cwd, holdMs, overrides = {}) {

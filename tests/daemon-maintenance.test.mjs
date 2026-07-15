@@ -101,7 +101,9 @@ test('spawn argv is deterministic and registration watchdog stalls once, then a 
   assert.deepEqual(state.argv.slice(0, prefix.length), prefix);
   assert.deepEqual(state.argv.slice(prefix.length), [
     'claude', '--session-id', out.body.session_id,
-    '--model', 'sonnet', '--permission-mode', 'acceptEdits', 'do it',
+    // '--' terminates option parsing so a prompt that looks like a flag
+    // (e.g. --dangerously-skip-permissions) is a positional, not a claude flag.
+    '--model', 'sonnet', '--permission-mode', 'acceptEdits', '--', 'do it',
   ]);
 
   await new Promise(resolve => setTimeout(resolve, 5));

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { StringDecoder } from 'node:string_decoder';
-import { ControlModeParser, parseControlChunk, unescapeControlData } from '../scripts/fleetd/termbridge.mjs';
+import { ControlModeParser, unescapeControlData } from '../scripts/fleetd/termbridge.mjs';
 
 test('control parser incrementally matches response blocks across awkward chunks', () => {
   const parser = new ControlModeParser();
@@ -17,7 +17,7 @@ test('control parser incrementally matches response blocks across awkward chunks
 test('control parser unescapes output bytes, filters nothing, and ignores unknown notifications', () => {
   // Fed as a Buffer, exactly as the control client's stdout arrives: the
   // parser is a BYTE pipe and must return the pane's bytes untouched.
-  const events = parseControlChunk(Buffer.from('%layout-change @1 abc\n%output %7 A\\033B\\134C café\n%window-close @4\n%session-changed $0 fleetdeck-4711\n%exit session gone\n', 'utf8'));
+  const events = new ControlModeParser().feed(Buffer.from('%layout-change @1 abc\n%output %7 A\\033B\\134C café\n%window-close @4\n%session-changed $0 fleetdeck-4711\n%exit session gone\n', 'utf8'));
   assert.equal(events.length, 4);
   assert.equal(events[0].type, 'output');
   assert.equal(events[0].pane, '%7');
@@ -54,7 +54,7 @@ test('a glyph split across two %output notifications survives intact', () => {
     Buffer.from('%output %1 ', 'latin1'), glyph.subarray(0, 2), Buffer.from('\n', 'latin1'),
     Buffer.from('%output %1 ', 'latin1'), glyph.subarray(2), Buffer.from('\n', 'latin1'),
   ]);
-  const events = parseControlChunk(wire);
+  const events = new ControlModeParser().feed(wire);
   assert.equal(events.length, 2);
   assert.deepEqual(Buffer.concat(events.map(e => e.data)), glyph,
     'the parser must not re-encode, drop or mangle the split bytes');

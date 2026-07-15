@@ -21,7 +21,7 @@ public issue tells everyone the hole exists before there's a fix.
 - **If you can't use GitHub:** email **luismmorales@gmail.com**. Say "Fleet Deck
   security" in the subject so it doesn't get lost.
 
-A good report includes the version (`0.5.0`, etc.), your OS and Node version,
+A good report includes the version (`0.9.1`, etc.), your OS and Node version,
 whether you were in loopback or LAN mode, and the smallest steps that reproduce
 it. A proof-of-concept web page or `curl` is worth a thousand words.
 
@@ -42,17 +42,20 @@ it. A proof-of-concept web page or `curl` is worth a thousand words.
 
 | Version | Supported |
 | --- | --- |
-| 0.5.x   | ✅ |
-| < 0.5   | ❌ |
+| 0.9.x   | ✅ |
+| < 0.9   | ❌ |
 
 Fleet Deck is pre-1.0. Only the latest release gets security fixes — if you're
 behind, the fix is to upgrade.
 
 ## Threat model / scope
 
-The full, current threat model lives in
+The threat model as of v0.5.0 lives in
 [`docs/AUDIT-2026-07.md`](docs/AUDIT-2026-07.md) — the July 2026 deep audit that
-these boundaries come from. Read it if you want the details behind any line below.
+these boundaries come from. Read it for the details behind any line below, but note
+it predates the v0.8 reverse-proxy surface (`FLEETDECK_TRUSTED_ORIGINS`,
+`FLEETDECK_PROXY_AUTH`) and the v0.9 `POST /api/paste-image` endpoint — both are in
+the in-scope list below.
 
 The design intent, in one sentence: **the daemon trusts the local user
 completely and everyone else not at all.** It exists to act on your behalf, so if
@@ -91,6 +94,17 @@ Reports in these areas are wanted:
   other sensitive values ending up in `fleetd.log` or in hook-payload capture
   files (capture is off by default) despite the scrubbing that's supposed to
   strip them.
+- **Reverse-proxy trust bypass.** Behind a proxy, `FLEETDECK_TRUSTED_ORIGINS`
+  widens the same-origin wall to exactly the origins you name and
+  `FLEETDECK_PROXY_AUTH=trust` delegates authentication to the proxy. Reaching
+  fleet data or a mutating route from an origin you did *not* name, or getting
+  `trust` mode to waive the bearer token when the proxy has not actually
+  authenticated the browser, is in scope.
+- **Image-paste ingest (`POST /api/paste-image`).** The paste endpoint decodes
+  browser-supplied base64, sniffs the magic bytes (the client's mime claim is
+  never trusted), and writes an owner-only file under `FLEETDECK_HOME`. Anything
+  that defeats the type sniff, escapes that directory (symlink or path
+  traversal), or turns a paste into an arbitrary-file write is in scope.
 
 ### Out of scope
 

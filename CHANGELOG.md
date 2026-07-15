@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+A security / reliability / docs audit of the daemon and board.
+
+### Security
+
+- **Proxy-auth token bypass closed.** Behind a reverse proxy, a request arriving over loopback could be auto-authorized even when `FLEETDECK_PROXY_AUTH` was configured to require the bearer token. Proxied requests now present the token as configured.
+- **Mail-to-pane keystroke injection hardened.** Mail delivered by typing into an owned tmux pane can no longer be crafted to inject control sequences beyond the message itself.
+- **State files are owner-only.** Files and directories under `FLEETDECK_HOME` are created `0600`/`0700`, so a co-tenant on a shared host can't read your fleet state.
+- **Spawn prompts are never parsed as flags.** A spawn prompt beginning with `-`/`--` could be swallowed as a `claude` option; the prompt is now always passed as data, never as an option.
+
+### Fixed
+
+- Several async races along the spawn, adopt and terminal paths.
+- Dead code removed, and the docs (README, SECURITY, this changelog, and the plugin manifests) reconciled with the shipped behavior.
+
 ## [0.9.1] - 2026-07-15
 
 ### Fixed
@@ -22,6 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Paste an image into the board terminal.** Ctrl+V a screenshot into a live pane and it lands in the agent's composer — something no terminal connection can do by itself, because the image lives in the *browser's* clipboard and the wire only carries text (and Claude Code has no Linux clipboard-image read to hand it to anyway). The board now does what a terminal cannot: it lifts the blob off the clipboard, ships it to the daemon (`POST /api/paste-image`, base64-in-JSON so both CSRF walls keep standing), the daemon sniffs the magic bytes (png/jpeg/gif/webp — the client's mime claim is never trusted), writes the file owner-only under `tmp/fleetdeck-pastes/`, and the board *types the path* into the pane through the same stdin gate as every keystroke. Which means the grid's one-tile-types discipline governs pastes too, and the paste never submits on its own — you read the path, you press Enter. Text paste is untouched: a clipboard with no image falls through to xterm exactly as before. Pasted files are pruned after 24 hours; the image is read the moment you submit, so nothing of value lives there.
+- **`fleetdeck` publishes to npm automatically on a version tag**, via GitHub's OIDC trusted publishing — no long-lived npm token stored in CI. This is the pipeline behind `npm i -g fleetdeck`: a tagged release reaches the registry on its own, so the standalone CLI ships in lockstep with the plugin.
 
 ## [0.8.0] - 2026-07-14
 
@@ -82,6 +97,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The board's compose box now surfaces daemon-command rejections (HTTP 200 bodies with `ok:false`, e.g. a malformed `ticket` command) as inline errors and confirms ticket renames, instead of closing as if the command had succeeded.
 
 **Upgrade note:** this ships an additive schema migration — three nullable columns (`ticket`, `ticket_source`, `prev_callsign`) are added to the `sessions` table on first boot, and existing pre-0.6.0 rows read back as `ticket: null`. **Restart the daemon** to load the new code: hooks boot the committed bundle, so source changes ship nothing until it restarts. Live sessions already on a ticket branch then rename themselves once on their next hook event.
+
 ## [0.5.1] - 2026-07-13
 
 ### Changed
@@ -183,7 +199,9 @@ Initial public release.
 - A brainless orchestrator: `assign auto` routes a task to the best existing session with a SQL query, not a model call — the core makes zero model calls.
 - One-command plugin install with a self-contained daemon bundle (`node:sqlite` state, nothing to `npm install`); the first session's SessionStart hook elects and launches the daemon. MIT licensed.
 
-[unreleased]: https://github.com/lacion/fleet-deck/compare/v0.8.0...HEAD
+[unreleased]: https://github.com/lacion/fleet-deck/compare/v0.9.1...HEAD
+[0.9.1]: https://github.com/lacion/fleet-deck/compare/v0.9.0...v0.9.1
+[0.9.0]: https://github.com/lacion/fleet-deck/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/lacion/fleet-deck/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/lacion/fleet-deck/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/lacion/fleet-deck/compare/v0.6.0...v0.7.0

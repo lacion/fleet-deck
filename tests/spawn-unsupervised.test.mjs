@@ -31,12 +31,13 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, readFileSync, existsSync, chmodSync } from 'node:fs';
+import { mkdtempSync, rmSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startDaemon, randomPort } from './helpers/daemon.mjs';
 import { postJson, getJson } from './helpers/http.mjs';
+import { waitForSpecRecords } from './helpers/wait.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SPAWN_CMD_FIXTURE = path.join(HERE, 'helpers/spawn-cmd-fixture.mjs');
@@ -54,33 +55,6 @@ function spawnCmdEnv({ recordFile, postUrl } = {}) {
   const env = { FLEETDECK_SPAWN_CMD: SPAWN_CMD_FIXTURE, FLEETDECK_TEST_SPAWN_RECORD: recordFile };
   if (postUrl) env.FLEETDECK_TEST_SPAWN_POST_URL = postUrl;
   return env;
-}
-
-const WAIT_SCALE = Number(process.env.FLEETDECK_TEST_WAIT_SCALE) || 1;
-
-async function waitUntil(fn, { timeoutMs = 8000, intervalMs = 100, label = 'condition' } = {}) {
-  const effectiveTimeoutMs = timeoutMs * WAIT_SCALE;
-  const deadline = Date.now() + effectiveTimeoutMs;
-  for (;;) {
-    const result = await fn();
-    if (result) return result;
-    if (Date.now() >= deadline) throw new Error(`waitUntil: ${label} not met within ${effectiveTimeoutMs}ms`);
-    await new Promise(r => setTimeout(r, intervalMs));
-  }
-}
-
-function readSpecRecords(file) {
-  if (!existsSync(file)) return [];
-  return readFileSync(file, 'utf8').split('\n').filter(Boolean).map(line => {
-    try { return JSON.parse(line); } catch { return null; }
-  }).filter(Boolean);
-}
-
-async function waitForSpecRecords(file, minCount, opts) {
-  return waitUntil(() => {
-    const recs = readSpecRecords(file);
-    return recs.length >= minCount ? recs : null;
-  }, { label: `>= ${minCount} recorded spec(s) in ${file}`, ...opts });
 }
 
 /** Recursively find an array anywhere in `spec` matching `pred` (mirrors

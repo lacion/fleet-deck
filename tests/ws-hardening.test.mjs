@@ -7,7 +7,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
-import { networkInterfaces, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { createServer } from 'node:http';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -15,6 +15,7 @@ import { WebSocket } from 'ws';
 import { randomPort, spawnRaw, startDaemon } from './helpers/daemon.mjs';
 import { postHook } from './helpers/http.mjs';
 import { loadFixture } from './helpers/fixtures.mjs';
+import { waitUntil as waitUntilBase, waitForResponse, nonInternalIpv4s } from './helpers/wait.mjs';
 
 const LAN_TOKEN = 'fleetdeck-ws-hardening-token-0123456789';
 
@@ -25,17 +26,10 @@ function connect(url, options) {
   return { ws, frames };
 }
 
-const WAIT_SCALE = Number(process.env.FLEETDECK_TEST_WAIT_SCALE) || 1;
-
-async function waitUntil(fn, label, timeoutMs = 5000) {
-  const deadline = Date.now() + timeoutMs * WAIT_SCALE;
-  for (;;) {
-    const v = fn();
-    if (v) return v;
-    if (Date.now() >= deadline) throw new Error(`timed out waiting for ${label}`);
-    await new Promise(r => setTimeout(r, 20));
-  }
-}
+// Positional-signature adapter over the shared scaled poller: call sites pass
+// (fn, label) with an authored 5000ms budget and a 20ms poll.
+const waitUntil = (fn, label, timeoutMs = 5000) =>
+  waitUntilBase(fn, { label, timeoutMs, intervalMs: 20 });
 
 test('M-P1: a burst of mutations coalesces into far fewer broadcasts', async t => {
   const daemon = await startDaemon();
@@ -114,18 +108,6 @@ test('R1-2: a /ws client past the buffer cap is TERMINATED on broadcast, not sil
 // has no reachable non-internal IPv4 (CI, a locked-down sandbox), exactly like
 // tests/lan-auth.test.mjs.
 
-function nonInternalIpv4s() {
-  const found = [];
-  try {
-    for (const entries of Object.values(networkInterfaces())) {
-      for (const entry of entries || []) {
-        if ((entry.family === 'IPv4' || entry.family === 4) && !entry.internal) found.push(entry.address);
-      }
-    }
-  } catch { /* restricted sandbox */ }
-  return found;
-}
-
 async function reachableIpv4() {
   for (const address of nonInternalIpv4s()) {
     const probe = createServer((_req, res) => res.end('ok'));
@@ -138,16 +120,6 @@ async function reachableIpv4() {
     }
   }
   return null;
-}
-
-async function waitForResponse(url, timeoutMs = 10_000) {
-  const deadline = Date.now() + timeoutMs;
-  let lastError;
-  while (Date.now() < deadline) {
-    try { return await fetch(url, { signal: AbortSignal.timeout(500) }); }
-    catch (err) { lastError = err; await new Promise(r => setTimeout(r, 100)); }
-  }
-  throw new Error(`daemon never answered ${url}: ${lastError?.message || 'timeout'}`);
 }
 
 test('H-S1: the /ws snapshot carries no token; /state (authorized) still does', async t => {

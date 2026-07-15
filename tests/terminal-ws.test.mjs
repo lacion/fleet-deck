@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { WebSocket } from 'ws';
 import { startDaemon } from './helpers/daemon.mjs';
 import { postJson } from './helpers/http.mjs';
+import { waitUntil as waitUntilBase } from './helpers/wait.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SPAWN_FIXTURE = path.join(HERE, 'helpers/spawn-cmd-fixture.mjs');
@@ -23,17 +24,10 @@ function records(file) {
   return readFileSync(file, 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line));
 }
 
-const WAIT_SCALE = Number(process.env.FLEETDECK_TEST_WAIT_SCALE) || 1;
-
-async function waitUntil(fn, label, timeoutMs = 6000) {
-  const deadline = Date.now() + timeoutMs * WAIT_SCALE;
-  for (;;) {
-    const value = fn();
-    if (value) return value;
-    if (Date.now() >= deadline) throw new Error(`timed out waiting for ${label}`);
-    await new Promise(resolve => setTimeout(resolve, 25));
-  }
-}
+// Positional-signature adapter over the shared scaled poller: this file's call
+// sites pass (fn, label) with an authored 6000ms budget and a 25ms poll.
+const waitUntil = (fn, label, timeoutMs = 6000) =>
+  waitUntilBase(fn, { label, timeoutMs, intervalMs: 25 });
 
 function connect(url) {
   const ws = new WebSocket(url);

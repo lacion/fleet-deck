@@ -117,10 +117,22 @@ export default function App() {
     if (!pendingQs.some((q) => q.id === selQ)) setSelQ(pendingQs[0]?.id ?? null);
   }, [pendingQs, selQ]);
 
+  // M-F7 — mirror the four remaining modal open-states into refs so the global
+  // answer/nav hotkeys suppress while any is open. The keydown closure reads refs,
+  // never React state (same reason useTermWindows mirrors killAsk→killOpen), so a
+  // button-focus press under Compose/SpawnForm/LanPanel/WorktreesModal can no
+  // longer leak a y/n/1-9 into a hidden permission. Assigning .current on render
+  // is the intended "latest value" ref pattern — idempotent, no effect needed.
+  const composeOpenRef = useRef(false); composeOpenRef.current = compose != null;
+  const spawnOpenRef = useRef(false); spawnOpenRef.current = spawnForm != null;
+  const lanOpenRef = useRef(false); lanOpenRef.current = lanOpen;
+  const wtOpenRef = useRef(false); wtOpenRef.current = wtOpen;
+
   // keyboard: j/k rail nav · y/n permission · 1-9 choice · c compose · Esc close
   useBoardHotkeys({
     pendingQs, selQ, setSelQ, termOpen, killOpen, armOpen, renameOpen,
     setKillAsk, setArmAsk, setRenameAsk, setDrawerSid, setCompose, setSpawnForm, setLanOpen, setWtOpen,
+    composeOpen: composeOpenRef, spawnOpen: spawnOpenRef, lanOpen: lanOpenRef, wtOpen: wtOpenRef,
   });
 
   const stale = status !== 'live';

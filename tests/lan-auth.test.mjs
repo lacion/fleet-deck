@@ -1,31 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
-import { networkInterfaces, tmpdir } from 'node:os';
-import { createServer } from 'node:http';
+import { tmpdir } from 'node:os';
+import http, { createServer } from 'node:http';
 import path from 'node:path';
 import { WebSocket } from 'ws';
 import { randomPort, spawnRaw, startDaemon } from './helpers/daemon.mjs';
+import { waitForResponse, nonInternalIpv4s, scaleMs } from './helpers/wait.mjs';
 
 const LAN_TOKEN = 'fleetdeck-lan-test-token-0123456789';
-
-// Every non-internal IPv4, in order. NOT just the first one: a machine can
-// carry addresses it cannot talk to itself on — a Tailscale/VPN interface owned
-// by another network stack (this is exactly what WSL2's mirrored networking
-// hands you), where a connection to the address simply hangs. The caller probes
-// them and uses the first that actually answers, so this suite exercises the
-// auth gate rather than a routing quirk.
-function nonInternalIpv4s() {
-  const found = [];
-  try {
-    for (const entries of Object.values(networkInterfaces())) {
-      for (const entry of entries || []) {
-        if ((entry.family === 'IPv4' || entry.family === 4) && !entry.internal) found.push(entry.address);
-      }
-    }
-  } catch { /* restricted sandboxes may deny interface enumeration */ }
-  return found;
-}
 
 // The first candidate this host can actually reach ITSELF on: stand up a
 // throwaway listener bound to the address and fetch it. Guessing from the
@@ -55,20 +38,6 @@ function scratchHome() {
   return mkdtempSync(path.join(tmpdir(), 'fleetdeck-lan-auth-'));
 }
 
-async function waitForResponse(url, options = {}, timeoutMs = 10_000) {
-  const deadline = Date.now() + timeoutMs;
-  let lastError;
-  while (Date.now() < deadline) {
-    try {
-      return await fetch(url, { ...options, signal: AbortSignal.timeout(500) });
-    } catch (err) {
-      lastError = err;
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-  }
-  throw new Error(`daemon never answered ${url}: ${lastError?.message || 'timeout'}`);
-}
-
 async function startLan(t, address, { token = LAN_TOKEN, home = scratchHome() } = {}) {
   const port = randomPort();
   const raw = spawnRaw({
@@ -92,7 +61,7 @@ function snapshot(url) {
     const timer = setTimeout(() => {
       ws.terminate();
       reject(new Error('timed out waiting for snapshot'));
-    }, 5000);
+    }, scaleMs(5000));
     ws.once('message', raw => {
       clearTimeout(timer);
       try { resolve(JSON.parse(raw.toString('utf8'))); } catch (err) { reject(err); }
@@ -108,7 +77,7 @@ function refused(url) {
     const timer = setTimeout(() => {
       ws.terminate();
       reject(new Error('unauthenticated WebSocket was not closed'));
-    }, 5000);
+    }, scaleMs(5000));
     ws.once('open', () => {
       clearTimeout(timer);
       ws.terminate();
@@ -116,6 +85,28 @@ function refused(url) {
     });
     ws.once('error', () => { clearTimeout(timer); resolve(); });
     ws.once('close', () => { clearTimeout(timer); resolve(); });
+  });
+}
+
+// A loopback request with FULL control over the Host header. undici's fetch
+// silently DROPS a Host override (it is a forbidden request header there), so a
+// proxy-shaped request — a loopback socket carrying the PROXY's external Host —
+// cannot be crafted with fetch: the header would fall back to 127.0.0.1:port and
+// the request would look local, quietly passing whether or not the fix is
+// present. node:http honours the override, so the proxy hole is actually
+// exercised. Resolves { status, body } and never rejects on a non-2xx.
+function rawGet(port, pathname, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      { host: '127.0.0.1', port, path: pathname, method: 'GET', headers },
+      res => {
+        let body = '';
+        res.on('data', c => { body += c; });
+        res.on('end', () => resolve({ status: res.statusCode, body }));
+      },
+    );
+    req.on('error', reject);
+    req.end();
   });
 }
 
@@ -205,6 +196,41 @@ test('LAN HTTP requires the query or bearer token for a non-loopback peer', asyn
   assert.equal(wrong.status, 401);
 });
 
+test('proxy token mode: a loopback request bearing a trusted proxy Host but no Origin and no token is rejected', async t => {
+  // NO-ORIGIN PROXY-HOLE REGRESSION (C1/H-S3). A reverse proxy connects to the
+  // daemon over loopback. viaTrustedProxy keyed off the Origin header alone, so a
+  // request that reached the public proxy carrying the proxy's trusted Host, NO
+  // Origin and NO token looked exactly like a local CLI hook: isLoopbackAddress
+  // true, viaTrustedProxy false, so the loopback exemption authorized it — every
+  // control route (spawn=RCE, /state, mail, cleanup) exposed tokenless. The fix
+  // (arrivedViaTrustedProxy) adds a Host-based signal: the proxy's EXTERNAL Host
+  // is authorityTrusted but NOT hostAllowed, so such a request must still clear
+  // the token check. This pins that it does.
+  const PROXY_HOST = 'board.example.com';
+  const daemon = await startDaemon({
+    env: {
+      FLEETDECK_TRUSTED_ORIGINS: `https://${PROXY_HOST}`,
+      FLEETDECK_PROXY_AUTH: 'token',
+      FLEETDECK_TOKEN: LAN_TOKEN,
+    },
+  });
+  t.after(() => daemon.stop());
+
+  // THE FIX: proxied, no Origin, no token → must fall through to the token check
+  // and 401, NOT be waved through as a local hook. Before the fix this was 200.
+  const attack = await rawGet(daemon.port, '/state', { Host: PROXY_HOST });
+  assert.equal(attack.status, 401, 'a proxied no-Origin no-token request must be rejected, not treated as a local hook');
+
+  // A genuine local CLI hook — our own loopback Host, no Origin, no token — is
+  // untouched: hostAllowed ⇒ not via the proxy ⇒ the loopback exemption stands.
+  const localHook = await rawGet(daemon.port, '/state', { Host: `127.0.0.1:${daemon.port}` });
+  assert.equal(localHook.status, 200, 'a local loopback request must remain authorized with no token');
+
+  // The same proxied request, now carrying the bearer token, is authorized.
+  const withToken = await rawGet(daemon.port, '/state', { Host: PROXY_HOST, authorization: `Bearer ${LAN_TOKEN}` });
+  assert.equal(withToken.status, 200, 'a proxied request that presents the token must be authorized');
+});
+
 test('LAN snapshot WebSocket rejects no token and accepts the query token', async t => {
   const address = await reachableIpv4();
   if (!address) return t.skip('host has no non-internal IPv4 interface');
@@ -248,7 +274,7 @@ test('LAN mode generates and persists an owner-only token', async t => {
   });
   const tokenFile = path.join(home, 'token');
 
-  const deadline = Date.now() + 5000;
+  const deadline = Date.now() + scaleMs(5000);
   while (!existsSync(tokenFile) && Date.now() < deadline) {
     await new Promise(resolve => setTimeout(resolve, 25));
   }
