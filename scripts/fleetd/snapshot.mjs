@@ -11,6 +11,7 @@ export function createSnapshot(ctx) {
   const {
     q, t0, version, STALE_MS, RETAIN_LEDGER_MS, SNAPSHOT_FILES_PER_SESSION,
     questions, hasWatchWaiter, ownedPaneRow, spawnCapability, spawnState,
+    resolveReposDir,
   } = ctx;
 
   // -------------------------------------------------------------- snapshot
@@ -118,6 +119,8 @@ export function createSnapshot(ctx) {
             stalled: sp.status === 'stalled', // watchdog chip ("never registered")
             skip_permissions: !!sp.skip_permissions, // v1.3 unsupervised chip
             remote: { enabled: !!sp.remote_control, url: sp.remote_url ?? null },
+            requested_branch: sp.requested_branch ?? null,
+            branch_mode: sp.branch_mode ?? null,
             // Snapshot cost is intentionally uncached: two existsSync calls
             // per owned card keep removal/restore feedback immediate, and a
             // fleet has only a handful of rows by design. (M-P2 suggested a
@@ -170,6 +173,15 @@ export function createSnapshot(ctx) {
       version,
       sessions,
       repos: [...repoMap.values()],
+      repo_catalog: q.catalogRepos.all().map(repo => ({
+        repo_id: repo.repo_id,
+        repo_name: repo.repo_name,
+        root: repo.root,
+        origin_url: repo.origin_url ?? null,
+        default_branch: repo.default_branch ?? null,
+        last_used_at: repo.last_used_at,
+      })),
+      settings: { repos_dir: resolveReposDir() },
       ticker: q.recentTicker.all(),
       // Callsigns resolved from EVERY session, not just the visible ones: a
       // conflict outlives its participants, and a banner shouting a raw UUID at
@@ -230,4 +242,3 @@ export function createSnapshot(ctx) {
 
   return { snapshot, fleetSize, terminalSpawn };
 }
-

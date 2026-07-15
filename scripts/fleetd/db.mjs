@@ -143,10 +143,29 @@ CREATE TABLE IF NOT EXISTS spawns (
   status        TEXT DEFAULT 'spawning',  -- spawning | stalled | live | pane-dead | killed | gone
   skip_permissions INTEGER DEFAULT 0,    -- v1.3 unsupervised spawn (either bypass form)
   remote_control INTEGER DEFAULT 0,      -- remote-control wished/enabled for this launch
-  remote_url     TEXT                    -- harvested claude.ai URL; NULL until/if observed
+  remote_url     TEXT,                   -- harvested claude.ai URL; NULL until/if observed
+  origin_url     TEXT,                   -- repo-mode clone source; NULL for cwd-mode spawns
+  requested_branch TEXT,                 -- repo-mode branch requested by the board
+  branch_mode    TEXT                    -- repo-mode worktree | in-place
 );
 CREATE INDEX IF NOT EXISTS idx_spawns_session ON spawns(session_id);
 CREATE INDEX IF NOT EXISTS idx_spawns_status ON spawns(status);
+CREATE TABLE IF NOT EXISTS repos (
+  repo_id        TEXT PRIMARY KEY,
+  repo_name      TEXT,
+  root           TEXT,
+  origin_url     TEXT,
+  default_branch TEXT,
+  first_seen_at  INTEGER,
+  last_used_at   INTEGER,
+  source         TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_repos_name ON repos(repo_name);
+CREATE TABLE IF NOT EXISTS settings (
+  key        TEXT PRIMARY KEY,
+  value      TEXT,
+  updated_at INTEGER
+);
 CREATE TABLE IF NOT EXISTS plans (
   plan_id      INTEGER PRIMARY KEY AUTOINCREMENT,  -- v1.3 plan library (CONTRACT)
   session_id   TEXT,
@@ -249,6 +268,15 @@ function migrate(db) {
   }
   if (spawnCols.length && !spawnCols.includes('remote_url')) {
     db.exec('ALTER TABLE spawns ADD COLUMN remote_url TEXT');
+  }
+  if (spawnCols.length && !spawnCols.includes('origin_url')) {
+    db.exec('ALTER TABLE spawns ADD COLUMN origin_url TEXT');
+  }
+  if (spawnCols.length && !spawnCols.includes('requested_branch')) {
+    db.exec('ALTER TABLE spawns ADD COLUMN requested_branch TEXT');
+  }
+  if (spawnCols.length && !spawnCols.includes('branch_mode')) {
+    db.exec('ALTER TABLE spawns ADD COLUMN branch_mode TEXT');
   }
 }
 

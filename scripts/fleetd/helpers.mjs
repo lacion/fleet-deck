@@ -115,10 +115,14 @@ export function claudeEnvArgvPrefix(port, home) {
   ];
 }
 
-export function execFileP(cmd, args, { timeout = 30_000 } = {}) {
+export function execFileP(cmd, args, { timeout = 30_000, env } = {}) {
   return new Promise((resolve) => {
     try {
-      execFile(cmd, args, { timeout, windowsHide: true }, (err, stdout, stderr) => {
+      execFile(cmd, args, {
+        timeout,
+        windowsHide: true,
+        ...(env ? { env: { ...process.env, ...env } } : {}),
+      }, (err, stdout, stderr) => {
         if (err) return resolve({ ok: false, code: err.code, err: String(stderr || err.message || err).trim() });
         resolve({ ok: true, out: stdout });
       });
@@ -126,6 +130,23 @@ export function execFileP(cmd, args, { timeout = 30_000 } = {}) {
       resolve({ ok: false, err: String(err.message || err) });
     }
   });
+}
+
+// Resolve the repository's primary integration ref. Prefer origin/HEAD, then
+// conventional remote main/master refs, and only fall back to local branches
+// when the repository has no matching remote-tracking ref.
+export async function baseBranch(worktree) {
+  const head = await execFileP('git', ['-C', worktree, 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], { timeout: 5_000 });
+  if (head.ok && head.out.trim()) return { ref: head.out.trim(), local: false };
+  for (const name of ['main', 'master']) {
+    const remote = await execFileP('git', ['-C', worktree, 'show-ref', '--verify', '--quiet', `refs/remotes/origin/${name}`], { timeout: 5_000 });
+    if (remote.ok) return { ref: `origin/${name}`, local: false };
+  }
+  for (const name of ['main', 'master']) {
+    const local = await execFileP('git', ['-C', worktree, 'show-ref', '--verify', '--quiet', `refs/heads/${name}`], { timeout: 5_000 });
+    if (local.ok) return { ref: name, local: true };
+  }
+  return null;
 }
 
 // Bounded-concurrency map: run `fn` over `items` with at most `limit` in

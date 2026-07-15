@@ -72,13 +72,13 @@ function canon(p) {
 }
 
 export function deriveRepo(cwd) {
-  if (!cwd) return { repo_id: null, repo_name: null, worktree: null, is_git: false };
+  if (!cwd) return { repo_id: null, repo_name: null, worktree: null, main_tree: null, is_git: false };
   // Validate before consulting the cache too: a formerly valid directory may
   // have been removed, and git's 1.5 s timeout is wasted work for files/missing
   // paths. Invalid paths are not cached so a later mkdir is noticed at once.
   if (!isDirectory(cwd)) {
     const c = canon(cwd);
-    return { repo_id: c, repo_name: path.basename(c), worktree: c, is_git: false };
+    return { repo_id: c, repo_name: path.basename(c), worktree: c, main_tree: c, is_git: false };
   }
   const hit = cacheGet(identityCache, cwd);
   if (hit !== undefined) return hit;
@@ -89,18 +89,27 @@ export function deriveRepo(cwd) {
     // --git-common-dir may be relative (usually ".git"); resolve against cwd,
     // then canonicalize so every worktree of the repo lands on one repo_id.
     const commonAbs = canon(path.isAbsolute(common) ? common : path.resolve(cwd, common));
-    // Main tree = parent of the common ".git" dir; a bare repo has no parent tree.
-    const mainTree = path.basename(commonAbs) === '.git' ? path.dirname(commonAbs) : commonAbs;
     const toplevel = git(['rev-parse', '--show-toplevel'], cwd);
+    // Normal repositories and linked worktrees share <main>/.git. For less
+    // conventional layouts, git worktree list is authoritative about which
+    // checkout is the main tree (its first porcelain record).
+    const listedMain = path.basename(commonAbs) === '.git'
+      ? null
+      : git(['worktree', 'list', '--porcelain'], cwd)
+        ?.split('\n').find(line => line.startsWith('worktree '))?.slice(9);
+    const mainTree = path.basename(commonAbs) === '.git'
+      ? path.dirname(commonAbs)
+      : canon(listedMain || toplevel || cwd);
     out = {
       repo_id: commonAbs,
       repo_name: path.basename(mainTree).replace(/\.git$/, '') || path.basename(mainTree),
       worktree: toplevel ? canon(toplevel) : canon(cwd),
+      main_tree: canon(mainTree),
       is_git: true,
     };
   } else {
     const c = canon(cwd);
-    out = { repo_id: c, repo_name: path.basename(c), worktree: c, is_git: false };
+    out = { repo_id: c, repo_name: path.basename(c), worktree: c, main_tree: c, is_git: false };
   }
   cacheSet(identityCache, cwd, out, out.is_git ? IDENTITY_TTL_MS : NEGATIVE_TTL_MS);
   return out;

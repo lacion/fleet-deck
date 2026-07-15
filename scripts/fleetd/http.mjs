@@ -488,6 +488,9 @@ export function createHttp(core, {
           });
         }
         if (url.pathname === '/state') return json(res, 200, snapshotWithLan());
+        if (url.pathname === '/api/settings') {
+          return json(res, 200, { ok: true, settings: { repos_dir: core.resolveReposDir() } });
+        }
         if (url.pathname === '/api/worktrees') {
           // Inspector failures are represented per row as verdict:unknown;
           // one broken repository must never turn this fleet-wide view into a
@@ -647,6 +650,10 @@ export function createHttp(core, {
                   json(res, 500, { ok: false, reason: 'internal' });
                 });
               return;
+            }
+            if (url.pathname === '/api/settings') {
+              const out = core.setSettings(ev);
+              return json(res, out.status, out.body);
             }
             if (url.pathname === '/command') return json(res, 200, core.command(ev.text));
             if (url.pathname === '/api/paste-image') {

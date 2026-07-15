@@ -14,6 +14,7 @@ import { lastAssistantModel } from './transcript.mjs';
 import * as defaultTmuxAdapter from './spawn.mjs';
 import { createStatements } from './statements.mjs';
 import { createWorktrees } from './worktrees.mjs';
+import { createRepos } from './repos.mjs';
 import { createFiles } from './files.mjs';
 import { pasteImage } from './paste.mjs';
 import { createMail } from './mail.mjs';
@@ -46,6 +47,8 @@ const CALLSIGNS = ['falcon', 'otter', 'raven', 'lynx', 'orca', 'wren', 'viper', 
 //   FLEETDECK_PANE_MAIL_GRACE_MS     — watcher-first mail grace (1.5 s)
 //   FLEETDECK_PRESUME_DEAD_MS        — silent hook-session timeout (3 h)
 //   FLEETDECK_RETAIN_OFFLINE_MS      — offline retention window (24 h)
+//   FLEETDECK_REPOS_DIR              — default root for managed repository clones
+//   FLEETDECK_CLONE_TIMEOUT_MS        — git clone timeout (default 600 000 = 10 min)
 // envInt (the reader) + mungeClaudeProjectCwd / claudeTranscriptPath /
 // spawnRowRevivable / claudeEnvArgvPrefix now live in helpers.mjs (re-exported
 // above).
@@ -581,6 +584,12 @@ export function createCore(db, {
   }
   ctx.tombstoneCard = tombstoneCard;
 
+  // Repository catalog, persisted repos-root setting, clone and branch
+  // materialization. It must precede ingest/events/spawns: all three are
+  // catalog writers or consumers.
+  Object.assign(ctx, createRepos(ctx));
+  const { resolveReposDir, setSettings } = ctx;
+
   // File-touch ledger + conflict radar → ledger.mjs.
   Object.assign(ctx, createLedger(ctx));
   const { recordFile, whisperText } = ctx;
@@ -680,6 +689,8 @@ export function createCore(db, {
     cleanup,
     worktrees,          // GET /api/worktrees — bounded live git inspection
     removeWorktree,     // POST /api/worktrees/remove — allow-listed destruction
+    resolveReposDir,    // GET /api/settings + /state
+    setSettings,        // POST /api/settings
     fsList,             // GET /api/sessions/:id/fs/list → {status, body}
     fsRead,             // GET /api/sessions/:id/fs/read → {status, body}
     fsSearch,           // GET /api/sessions/:id/fs/search → {status, body}
