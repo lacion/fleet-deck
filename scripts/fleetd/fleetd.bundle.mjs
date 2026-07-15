@@ -5509,7 +5509,10 @@ function repoNameOf(value) {
 function unsafeDashSegment(value) {
   return String(value).split(/[/:@]/).some((segment) => segment.startsWith("-"));
 }
-function parseRepoInput(input) {
+function parseRepoInput(input, repoHost = "github") {
+  if (repoHost !== "github" && repoHost !== "gitlab") {
+    return { error: `repo_host must be github or gitlab \u2014 got "${repoHost}"` };
+  }
   if (typeof input !== "string" || !input) return { error: "repo must be a non-empty string" };
   if (SPACE_OR_CONTROL_RE.test(input)) return { error: "repo must not contain whitespace or control characters" };
   if (input.startsWith("-") || unsafeDashSegment(input)) return { error: "repo must not contain a path or argument segment beginning with -" };
@@ -5551,12 +5554,25 @@ function parseRepoInput(input) {
     return { kind: "path", origin_url: null, repo_name };
   }
   const parts = input.split("/");
-  if (parts.length === 2 && parts.every(Boolean) && !parts.some((part) => part === "." || part === "..")) {
-    return {
-      kind: "shorthand",
-      origin_url: `https://github.com/${input.replace(/\.git$/i, "")}.git`,
-      repo_name: repoNameOf(parts[1])
-    };
+  const cleanSegments = parts.every(Boolean) && !parts.some((part) => part === "." || part === "..");
+  if (cleanSegments && parts.length >= 2) {
+    const repo_name = repoNameOf(parts[parts.length - 1]);
+    if (!repo_name) return { error: "shorthand must end in a repository name" };
+    if (repoHost === "gitlab") {
+      return {
+        kind: "shorthand",
+        origin_url: `https://gitlab.com/${input.replace(/\.git$/i, "")}.git`,
+        repo_name
+      };
+    }
+    if (parts.length === 2) {
+      return {
+        kind: "shorthand",
+        origin_url: `https://github.com/${input.replace(/\.git$/i, "")}.git`,
+        repo_name
+      };
+    }
+    return { error: "group/subgroup paths need the gitlab host or a full repository URL" };
   }
   if (parts.length > 1 || input === "." || input === ".." || input.startsWith("." + path3.sep)) {
     return { error: "relative repository paths are refused \u2014 use an absolute path" };
@@ -5579,6 +5595,27 @@ function expandHome(value) {
   if (value.startsWith("~/")) return path3.join(os2.homedir(), value.slice(2));
   return value;
 }
+function normalizeRemoteOrigin(value) {
+  const input = String(value);
+  let host;
+  let rest;
+  const url = /^(?:https|ssh):\/\/([^/?#]+)(\/[^?#]*)$/i.exec(input);
+  if (url) {
+    host = url[1];
+    const at = host.lastIndexOf("@");
+    if (at !== -1) host = host.slice(at + 1);
+    if (!host || host.includes(":")) return null;
+    rest = url[2];
+  } else {
+    if (input.includes("://")) return null;
+    const scp = /^(?:[^/@:]+@)?([^/:@]+):(.+)$/.exec(input);
+    if (!scp) return null;
+    [, host, rest] = scp;
+  }
+  const cleaned = rest.replace(/^\/+/, "").replace(/[\\/]+$/, "").replace(/\.git$/i, "");
+  if (!cleaned) return null;
+  return `//${host}/${cleaned}`.toLowerCase();
+}
 function comparableOrigin(value) {
   if (!value) return null;
   if (path3.isAbsolute(value)) {
@@ -5588,7 +5625,7 @@ function comparableOrigin(value) {
       return path3.resolve(value);
     }
   }
-  return String(value).replace(/[\\/]+$/, "").replace(/\.git$/i, "").toLowerCase();
+  return normalizeRemoteOrigin(value) ?? String(value).replace(/[\\/]+$/, "").replace(/\.git$/i, "").toLowerCase();
 }
 function exists(pathname) {
   try {
@@ -5721,7 +5758,7 @@ function createRepos(ctx) {
     }
   }
   async function resolveTarget(body) {
-    const parsed = parseRepoInput(body?.repo);
+    const parsed = parseRepoInput(body?.repo, body?.repo_host ?? void 0);
     if (parsed.error) throw namedError(400, parsed.error);
     let origin_url = parsed.origin_url;
     let catalogRows = q.repoByName.all(parsed.repo_name);
@@ -7274,9 +7311,17 @@ function createSpawns(ctx) {
     if (!cap.available) {
       return { status: 400, body: { ok: false, reason: `spawning unavailable: ${cap.reason}` } };
     }
-    for (const k of ["cwd", "repo", "branch", "branch_mode", "prompt", "model", "permission_mode"]) {
+    for (const k of ["cwd", "repo", "branch", "branch_mode", "prompt", "model", "permission_mode", "repo_host"]) {
       if (body?.[k] != null && typeof body[k] !== "string") {
         return { status: 400, body: { ok: false, reason: `${k} must be a string` } };
+      }
+    }
+    if (body?.repo_host != null) {
+      if (body.repo_host !== "github" && body.repo_host !== "gitlab") {
+        return { status: 400, body: { ok: false, reason: "repo_host must be github or gitlab" } };
+      }
+      if (body?.repo == null) {
+        return { status: 400, body: { ok: false, reason: "repo_host requires repo" } };
       }
     }
     if (body?.worktree != null && typeof body.worktree !== "boolean") {

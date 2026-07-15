@@ -363,9 +363,20 @@ export function createSpawns(ctx) {
     if (!cap.available) {
       return { status: 400, body: { ok: false, reason: `spawning unavailable: ${cap.reason}` } };
     }
-    for (const k of ['cwd', 'repo', 'branch', 'branch_mode', 'prompt', 'model', 'permission_mode']) {
+    for (const k of ['cwd', 'repo', 'branch', 'branch_mode', 'prompt', 'model', 'permission_mode', 'repo_host']) {
       if (body?.[k] != null && typeof body[k] !== 'string') {
         return { status: 400, body: { ok: false, reason: `${k} must be a string` } };
+      }
+    }
+    // repo_host only steers the org/repo shorthand (see repos.mjs). Validate its
+    // value here so resolveTarget receives a known host, and refuse it without a
+    // repo — a host with nothing to steer is a confused request, not a default.
+    if (body?.repo_host != null) {
+      if (body.repo_host !== 'github' && body.repo_host !== 'gitlab') {
+        return { status: 400, body: { ok: false, reason: 'repo_host must be github or gitlab' } };
+      }
+      if (body?.repo == null) {
+        return { status: 400, body: { ok: false, reason: 'repo_host requires repo' } };
       }
     }
     if (body?.worktree != null && typeof body.worktree !== 'boolean') {

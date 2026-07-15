@@ -211,3 +211,49 @@ test('a same-named checkout with no matching origin is not reused when the reque
   assert.equal(spec.cwd, dest);          // ran in the freshly cloned tree…
   assert.notEqual(spec.cwd, decoy);      // …never in the unrelated same-named decoy
 });
+
+test('repo mode rejects an unknown repo_host value', async t => {
+  const { root, daemon } = await setup(t);
+  const response = await postJson(`${daemon.baseUrl}/api/spawn`, {
+    repo: root, branch: 'main', branch_mode: 'in-place', repo_host: 'bitbucket',
+  });
+  assert.equal(response.status, 400);
+  assert.match(response.json.reason, /repo_host must be github or gitlab/i);
+});
+
+test('repo_host without repo is refused', async t => {
+  const { daemon } = await setup(t);
+  const response = await postJson(`${daemon.baseUrl}/api/spawn`, { repo_host: 'gitlab', branch: 'main' });
+  assert.equal(response.status, 400);
+  assert.match(response.json.reason, /repo_host requires repo/i);
+});
+
+test('repo_host gitlab shorthand resolves a gitlab.com clone origin', async t => {
+  // A gitlab shorthand with nested subgroups is a clone request; the 202 echoes
+  // the composed origin synchronously, so we assert the resolved gitlab.com URL
+  // without depending on the (here unreachable) background clone. A 1ms clone
+  // timeout guarantees that clone cannot outlive the test's teardown.
+  const reposDir = scratch('fleetdeck-gitlab-repos-');
+  const recordFile = path.join(scratch(), 'specs.jsonl');
+  const port = randomPort();
+  const daemon = await startDaemon({
+    port,
+    env: {
+      ...spawnEnv(recordFile, reposDir, `http://127.0.0.1:${port}`),
+      FLEETDECK_CLONE_TIMEOUT_MS: '1',
+    },
+  });
+  t.after(async () => {
+    await daemon.stop();
+    rmSync(reposDir, { recursive: true, force: true });
+    rmSync(path.dirname(recordFile), { recursive: true, force: true });
+  });
+
+  const response = await postJson(`${daemon.baseUrl}/api/spawn`, {
+    repo: 'mygroup/mysub/myproj', branch: 'main', branch_mode: 'in-place', repo_host: 'gitlab',
+  });
+  assert.equal(response.status, 202, response.text);
+  assert.equal(response.json.provisioning, true);
+  assert.equal(response.json.clone.origin_url, 'https://gitlab.com/mygroup/mysub/myproj.git');
+  assert.equal(response.json.clone.dest, path.join(reposDir, 'myproj'));
+});

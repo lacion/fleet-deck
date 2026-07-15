@@ -31,7 +31,14 @@ function unsafeDashSegment(value) {
   return String(value).split(/[/:@]/).some(segment => segment.startsWith('-'));
 }
 
-export function parseRepoInput(input) {
+export function parseRepoInput(input, repoHost = 'github') {
+  // repo_host steers ONLY the org/repo shorthand below — it composes the forge
+  // origin, so a typo'd host must fail loud rather than silently fall back to
+  // github and clone the wrong forge. Every other kind (URL/ssh/scp/absolute
+  // path/bare name) already carries its own host and ignores repoHost entirely.
+  if (repoHost !== 'github' && repoHost !== 'gitlab') {
+    return { error: `repo_host must be github or gitlab — got "${repoHost}"` };
+  }
   if (typeof input !== 'string' || !input) return { error: 'repo must be a non-empty string' };
   if (SPACE_OR_CONTROL_RE.test(input)) return { error: 'repo must not contain whitespace or control characters' };
   if (input.startsWith('-') || unsafeDashSegment(input)) return { error: 'repo must not contain a path or argument segment beginning with -' };
@@ -65,13 +72,38 @@ export function parseRepoInput(input) {
     if (!repo_name) return { error: 'absolute repository path must name a repository' };
     return { kind: 'path', origin_url: null, repo_name };
   }
+  // Shorthand. github addresses exactly one org level (org/repo); gitlab nests
+  // subgroups (group/subgroup/…/repo), so it accepts 2+ clean segments and the
+  // repo name is the LAST one. Either way the input's trailing `.git` is stripped
+  // before we re-append our own — the long-standing github behaviour, kept here.
   const parts = input.split('/');
-  if (parts.length === 2 && parts.every(Boolean) && !parts.some(part => part === '.' || part === '..')) {
-    return {
-      kind: 'shorthand',
-      origin_url: `https://github.com/${input.replace(/\.git$/i, '')}.git`,
-      repo_name: repoNameOf(parts[1]),
-    };
+  const cleanSegments = parts.every(Boolean) && !parts.some(part => part === '.' || part === '..');
+  if (cleanSegments && parts.length >= 2) {
+    // repoNameOf strips a trailing '.git', so a final segment of exactly
+    // '.git' ('org/.git', 'group/sub/.git') names NOTHING — downstream,
+    // resolveTarget would path.join(reposDir, '') and the clone dest would
+    // collapse onto the repos root itself. Refuse a nameless shorthand here,
+    // exactly as the URL branches refuse a nameless pathname.
+    const repo_name = repoNameOf(parts[parts.length - 1]);
+    if (!repo_name) return { error: 'shorthand must end in a repository name' };
+    if (repoHost === 'gitlab') {
+      return {
+        kind: 'shorthand',
+        origin_url: `https://gitlab.com/${input.replace(/\.git$/i, '')}.git`,
+        repo_name,
+      };
+    }
+    if (parts.length === 2) {
+      return {
+        kind: 'shorthand',
+        origin_url: `https://github.com/${input.replace(/\.git$/i, '')}.git`,
+        repo_name,
+      };
+    }
+    // github with 3+ clean segments is a group/subgroup path, not a mistaken
+    // relative path — name that so the fix is obvious instead of misdirecting
+    // to "relative repository paths are refused".
+    return { error: 'group/subgroup paths need the gitlab host or a full repository URL' };
   }
   if (parts.length > 1 || input === '.' || input === '..' || input.startsWith('.' + path.sep)) {
     return { error: 'relative repository paths are refused — use an absolute path' };
@@ -97,12 +129,57 @@ function expandHome(value) {
   return value;
 }
 
+// A remote's identity is its host+path, not its transport spelling: on a forge,
+// `https://gitlab.com/org/repo.git`, `ssh://git@gitlab.com/org/repo.git` and
+// `git@gitlab.com:org/repo.git` are three doors into ONE repository. The reuse
+// guard in resolveTarget compares origins to prove a same-named checkout really
+// IS the requested repo; comparing raw strings made an ssh-cloned checkout
+// invisible to an https/shorthand spawn (409 "exists and is not", or a duplicate
+// clone). Reducing the three shapes to one lowercase `//host/path` key widens
+// reuse ONLY across spellings — two origins with a different host or path still
+// never match, so an unrelated tree remains exactly as un-reusable as before.
+// Conservative by construction:
+//  - only https://, unported ssh://, and scp-style origins normalize; any other
+//    shape returns null and keeps the old lowercase string comparison — the
+//    worst outcome of a missed match is the OLD behaviour (a spare clone or a
+//    409), never a wrong reuse;
+//  - an ssh:// URL with an explicit port is NOT normalized: a nonstandard port
+//    can front a different server on the same hostname (forwards, multiplexed
+//    bastions), and proving it equal to the https/:22 repo is not ours to assume;
+//  - userinfo is dropped (it may carry credentials, and `git@` vs `oauth2@` does
+//    not change which repo is behind the door);
+//  - the `//host/path` key cannot collide with the other key families: realpath
+//    keys start with a single `/`, and an origin string starting with `//` is
+//    posix-absolute so it takes the realpath branch, never the fallback.
+function normalizeRemoteOrigin(value) {
+  const input = String(value);
+  let host;
+  let rest;
+  const url = /^(?:https|ssh):\/\/([^/?#]+)(\/[^?#]*)$/i.exec(input);
+  if (url) {
+    host = url[1];
+    const at = host.lastIndexOf('@');
+    if (at !== -1) host = host.slice(at + 1);
+    if (!host || host.includes(':')) return null; // ported (or hostless) — fall back
+    rest = url[2];
+  } else {
+    if (input.includes('://')) return null; // some other scheme — fall back
+    const scp = /^(?:[^/@:]+@)?([^/:@]+):(.+)$/.exec(input);
+    if (!scp) return null;
+    [, host, rest] = scp;
+  }
+  const cleaned = rest.replace(/^\/+/, '').replace(/[\\/]+$/, '').replace(/\.git$/i, '');
+  if (!cleaned) return null;
+  return `//${host}/${cleaned}`.toLowerCase();
+}
+
 function comparableOrigin(value) {
   if (!value) return null;
   if (path.isAbsolute(value)) {
     try { return fs.realpathSync(value); } catch { return path.resolve(value); }
   }
-  return String(value).replace(/[\\/]+$/, '').replace(/\.git$/i, '').toLowerCase();
+  return normalizeRemoteOrigin(value)
+    ?? String(value).replace(/[\\/]+$/, '').replace(/\.git$/i, '').toLowerCase();
 }
 
 function exists(pathname) {
@@ -246,7 +323,10 @@ export function createRepos(ctx) {
   }
 
   async function resolveTarget(body) {
-    const parsed = parseRepoInput(body?.repo);
+    // `?? undefined` lets the parseRepoInput default ('github') apply when the
+    // caller omits repo_host or sends an explicit null — spawns.mjs has already
+    // rejected any other non-string/unknown value by the time we get here.
+    const parsed = parseRepoInput(body?.repo, body?.repo_host ?? undefined);
     if (parsed.error) throw namedError(400, parsed.error);
     let origin_url = parsed.origin_url;
     let catalogRows = q.repoByName.all(parsed.repo_name);
@@ -295,7 +375,10 @@ export function createRepos(ctx) {
       // to reuse: doing so would silently run the agent in an unrelated tree
       // (and lets a poisoned no-origin catalog row redirect a spawn). An unknown
       // origin is treated as a non-match, not a maybe. A bare-name/path spawn
-      // (origin_url null) still resolves by name as before.
+      // (origin_url null) still resolves by name as before. Origins compare
+      // transport-insensitively (see normalizeRemoteOrigin): https/ssh/scp
+      // spellings of one host+path are one repo, so an ssh-cloned checkout
+      // proves an https-shorthand request — different host or path never match.
       if (origin_url) {
         const matches = knownOrigin && comparableOrigin(origin_url) === comparableOrigin(knownOrigin);
         if (!matches) {

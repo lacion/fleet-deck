@@ -18,13 +18,39 @@ const branchProblem = (b) => {
 };
 
 // The repo's basename, for the destination preview — works for https/ssh URLs,
-// scp-like git@host:org/repo, org/repo shorthand, absolute paths, bare names.
+// scp-like git@host:org/repo, org/repo shorthand (incl. gitlab subgroups —
+// split-and-pop takes the LAST segment), absolute paths, bare names.
 const repoNameOf = (input) => {
   const s = String(input || '').trim().replace(/\/+$/, '');
   if (!s) return null;
   const tail = s.split(/[/:]/).pop() || '';
   const name = tail.replace(/\.git$/, '');
   return name || null;
+};
+
+// v2.4 — is this repo field `org/repo` shorthand? A client mirror of the daemon's
+// parseRepoInput shorthand branch (repos.mjs), for feedback only: the daemon
+// decides. Shorthand-shaped iff trimmed & non-empty, contains a "/", no
+// whitespace, no ":" (rules out URLs and scp-style git@host:path), no "@", does
+// not start with "/", "~", ".", or "-" (rules out absolute/home/relative/argv),
+// and every "/"-segment is non-empty and not "."/"..". Everything else (a URL, an
+// absolute path, a bare name) is NOT shorthand, so it must never carry repo_host.
+const isShorthandRepo = (input) => {
+  const s = String(input || '').trim();
+  if (!s || !s.includes('/')) return false;
+  if (/[\s:@]/.test(s)) return false;   // whitespace, URL scheme/host, scp-style userinfo
+  if (/^[/~.-]/.test(s)) return false;  // absolute, home, relative, or argv-flag lead
+  return s.split('/').every((seg) => seg && seg !== '.' && seg !== '..');
+};
+
+// The origin a shorthand resolves to, composed with the daemon's exact rule
+// (repos.mjs): https://<github.com|gitlab.com>/<input minus trailing .git>.git.
+// GitLab shorthand may carry subgroups (group/sub/repo) — the whole path rides
+// through untouched. Only ever called on isShorthandRepo-true input.
+const shorthandOrigin = (input, host) => {
+  const slug = String(input || '').trim().replace(/\.git$/i, '');
+  const domain = host === 'gitlab' ? 'gitlab.com' : 'github.com';
+  return `https://${domain}/${slug}.git`;
 };
 
 // v1.2 spawn form — POST /api/spawn on an explicit human click, never any
@@ -80,6 +106,9 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
   const [repo, setRepo] = useState('');
   const [branch, setBranch] = useState('');
   const [branchMode, setBranchMode] = useState('worktree'); // 'worktree' | 'in-place'
+  // v2.4 — host for `org/repo` shorthand: parseRepoInput hardcodes github.com,
+  // but this user is on github AND gitlab, so shorthand needs an explicit pick.
+  const [repoHost, setRepoHost] = useState('github'); // 'github' | 'gitlab'
   // the repos root: seeded from the daemon's resolved setting, editable here,
   // PERSISTED on commit (blur/Enter) — that is what survives reboots
   const [reposDir, setReposDir] = useState(settings?.repos_dir?.resolved || '');
@@ -140,6 +169,21 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
       || r.origin_url === repo.trim()
       || r.root === repo.trim())
     : null;
+  // v2.4 — shorthand-shaped input needs an explicit host toggle (github default);
+  // a catalog hit already has its root, so no clone and no host question there.
+  const shorthand = repoMode && isShorthandRepo(repo);
+  const showHostToggle = shorthand && !knownRepo;
+  // 3+ segments (group/sub/repo) is a gitlab-only shape: github shorthand is
+  // exactly org/repo, and the daemon 400s a subgrouped github resolve — so the
+  // EFFECTIVE host overrides the pill for that shape, and the POST body and the
+  // origin preview both read it, never raw pill state (a confident preview of an
+  // origin the daemon will never produce is worse than no preview). The pill's
+  // own state stays untouched: trim back to two segments and the user's pick is
+  // right where they left it. Still a client mirror for instant feedback — the
+  // daemon keeps the last word (it also rejects an empty final `.git` segment;
+  // the inline 400 covers that one, no mirror needed).
+  const subgrouped = shorthand && repo.trim().split('/').length > 2;
+  const effectiveHost = subgrouped ? 'gitlab' : repoHost;
   const branchErr = repoMode && branch.trim() ? branchProblem(branch.trim()) : null;
 
   // the repos-root override persists on commit, not per keystroke — an
@@ -178,6 +222,11 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
     const body = repoMode
       ? { repo: repo.trim(), branch: branch.trim(), branch_mode: branchMode }
       : { cwd: cwd.trim() };
+    // v2.4 — repo_host rides ONLY for `org/repo` shorthand (github|gitlab). Never
+    // for a URL, scp-style, absolute path, or bare name: the daemon reads it only
+    // there, and absent means github, so back-compat holds for every other input.
+    // The EFFECTIVE host, not the pill: subgroups force gitlab (see above).
+    if (shorthand) body.repo_host = effectiveHost;
     if (model.trim()) body.model = model.trim();
     if (permissionMode !== 'default') body.permission_mode = permissionMode;
     if (!repoMode && (worktree || batching)) body.worktree = true; // forced for a batch
@@ -349,6 +398,34 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
                   {repoSuggestions.map((p) => <option key={p} value={p} />)}
                 </datalist>
               </div>
+              {/* v2.4 — shorthand is host-ambiguous; make the human pick. Reuses
+                  the target-toggle look (fd-fsmodes / fd-target). github default.
+                  Selection renders from the EFFECTIVE host: with 3+ segments the
+                  github pill is disabled (subgroups are gitlab-only) and gitlab
+                  shows selected, whatever the pill state underneath says. */}
+              {showHostToggle && (
+                <div className="frow">
+                  <span className="fl">host</span>
+                  <div className="fd-fsmodes" role="radiogroup" aria-label="Shorthand host">
+                    <button
+                      type="button"
+                      className={`fd-target${effectiveHost === 'github' ? ' on' : ''}`}
+                      disabled={subgrouped}
+                      title={subgrouped ? 'github shorthand is org/repo — subgroups need gitlab or a full URL' : undefined}
+                      onClick={() => { setRepoHost('github'); if (err) setErr(null); }}
+                    >
+                      github
+                    </button>
+                    <button
+                      type="button"
+                      className={`fd-target${effectiveHost === 'gitlab' ? ' on' : ''}`}
+                      onClick={() => { setRepoHost('gitlab'); if (err) setErr(null); }}
+                    >
+                      gitlab
+                    </button>
+                  </div>
+                </div>
+              )}
               <div className="frow">
                 <span className="fl">branch *</span>
                 <input
@@ -416,7 +493,13 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
                             ? `✓ ${dirNote.ok}`
                             : dirNote?.err
                               ? `✗ ${dirNote.err}`
-                              : 'not on this machine yet — cloned here on spawn; the root is remembered across restarts'}
+                              : shorthand
+                                // v2.4 — spell out the exact origin the host pick resolves to, so
+                                // the human sees precisely what gets cloned before they click.
+                                // The EFFECTIVE host: subgroups preview gitlab, never a github
+                                // origin the daemon would refuse.
+                                ? `not on this machine yet — cloned from ${shorthandOrigin(repo, effectiveHost)} on spawn; the root is remembered across restarts`
+                                : 'not on this machine yet — cloned here on spawn; the root is remembered across restarts'}
                         </span>
                       </>
                     )}

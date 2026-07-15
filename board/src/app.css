@@ -382,6 +382,7 @@ textarea.fd-input { font-family: var(--font-ui); font-size: 13px; resize: none; 
   cursor: pointer; white-space: nowrap; border: 1px solid var(--border); background: transparent; color: var(--faint);
 }
 .fd-target.on { border-color: var(--act); background: var(--act-bg); color: var(--act); }
+.fd-target:disabled { opacity: .5; cursor: default; } /* v2.4 — host pill ruled out (subgroup shorthand) */
 .fd-target:focus-visible { outline: 2px solid var(--act); outline-offset: 1px; }
 .fd-compose textarea { background: var(--code); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; color: var(--text); font-size: 13px; font-family: var(--font-ui); resize: none; outline: none; }
 .fd-compose textarea:focus { border-color: var(--act); }
