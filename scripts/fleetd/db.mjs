@@ -148,7 +148,8 @@ CREATE TABLE IF NOT EXISTS spawns (
   remote_url     TEXT,                   -- harvested claude.ai URL; NULL until/if observed
   origin_url     TEXT,                   -- repo-mode clone source; NULL for cwd-mode spawns
   requested_branch TEXT,                 -- repo-mode branch requested by the board
-  branch_mode    TEXT                    -- repo-mode worktree | in-place
+  branch_mode    TEXT,                   -- repo-mode worktree | in-place
+  gateway        INTEGER DEFAULT 0       -- routed through the LLM gateway (settings.gateway_*)
 );
 CREATE INDEX IF NOT EXISTS idx_spawns_session ON spawns(session_id);
 CREATE INDEX IF NOT EXISTS idx_spawns_status ON spawns(status);
@@ -276,6 +277,9 @@ function migrate(db) {
   }
   if (spawnCols.length && !spawnCols.includes('requested_branch')) {
     db.exec('ALTER TABLE spawns ADD COLUMN requested_branch TEXT');
+  }
+  if (spawnCols.length && !spawnCols.includes('gateway')) {
+    db.exec('ALTER TABLE spawns ADD COLUMN gateway INTEGER DEFAULT 0');
   }
   if (spawnCols.length && !spawnCols.includes('branch_mode')) {
     db.exec('ALTER TABLE spawns ADD COLUMN branch_mode TEXT');

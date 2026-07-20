@@ -160,16 +160,16 @@ export function createStatements(db) {
     // v1.2 board-spawned sessions. "Active" = status spawning|stalled|live — the
     // rows that get liveness-checked, and the number the board shows as "N live".
     insertSpawn: db.prepare(`INSERT INTO spawns
-      (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, requested_at, status, skip_permissions, remote_control, origin_url, requested_branch, branch_mode)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'spawning', ?, ?, ?, ?, ?)`),
+      (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, requested_at, status, skip_permissions, remote_control, origin_url, requested_branch, branch_mode, gateway)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'spawning', ?, ?, ?, ?, ?, ?)`),
     // H-R6: a spawn's durable row now exists BEFORE any external op (worktree
     // add / tmux window) so a crash in that gap can never orphan a worktree or
     // pane with no owning row. It is born 'provisioning' — excluded from
     // activeSpawns (never liveness-checked or counted live) until its pane
     // exists — and flipped to 'spawning' once launch succeeds.
     insertProvisionalSpawn: db.prepare(`INSERT INTO spawns
-      (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, requested_at, status, skip_permissions, remote_control, origin_url, requested_branch, branch_mode)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'provisioning', ?, ?, ?, ?, ?)`),
+      (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, requested_at, status, skip_permissions, remote_control, origin_url, requested_branch, branch_mode, gateway)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'provisioning', ?, ?, ?, ?, ?, ?)`),
     setSpawnWorktree: db.prepare('UPDATE spawns SET worktree_path = ? WHERE spawn_id = ?'),
     staleProvisioningSpawns: db.prepare("SELECT * FROM spawns WHERE status = 'provisioning'"),
     // H-R5 / R2-5: the newest spawn row still laying claim to a tmux window (a

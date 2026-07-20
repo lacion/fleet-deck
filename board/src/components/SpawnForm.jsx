@@ -98,6 +98,19 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
   const [worktree, setWorktree] = useState(false);
   const [batch, setBatch] = useState(false);   // prompt box becomes a task list
   const [remote, setRemote] = useState(false); // v1.6: remote control from birth
+  // v0.15 — LLM gateway. Seeded ONCE from the daemon's gateway_default, and
+  // deliberately NOT live-adopted from later frames, for the same reason as the
+  // transport pill above: a control that decides WHO IS BILLED must never flip
+  // under the human while they are looking at it.
+  const [gateway, setGateway] = useState(() => !!settings?.gateway?.default);
+  const [gwEdit, setGwEdit] = useState(false);       // the inline config drawer
+  const [gwUrl, setGwUrl] = useState(settings?.gateway?.base_url || '');
+  const [gwToken, setGwToken] = useState('');        // write-only; never seeded
+  const [gwStyle, setGwStyle] = useState(() => settings?.gateway?.auth_style || 'bearer');
+  const [gwDiscovery, setGwDiscovery] = useState(() => settings?.gateway?.model_discovery !== false);
+  const [gwAlways, setGwAlways] = useState(() => !!settings?.gateway?.default);
+  const [gwNote, setGwNote] = useState(null);        // {ok} | {err} after a save
+  const [gwBusy, setGwBusy] = useState(false);
   const [unsup, setUnsup] = useState(false);   // step 1: reveal the confirm
   const [armed, setArmed] = useState(false);   // step 2: actually send the flag
   const [busy, setBusy] = useState(false);
@@ -217,6 +230,45 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
     }
   };
 
+  // v0.15 — the gateway profile lives in the same durable settings store as the
+  // repos root, and (like it) is edited HERE, at the moment it matters, because
+  // this board has no settings panel to put it in. The credential is write-only:
+  // the daemon serves `token_set`, never the token, so an empty box means
+  // "leave whatever is stored alone" and never "clear it".
+  const gwProfile = settings?.gateway || {};
+  const gwReady = !!gwProfile.ready;
+  const saveGateway = async () => {
+    const body = {};
+    const url = gwUrl.trim();
+    if (url !== (gwProfile.base_url || '')) body.gateway_base_url = url || null;
+    if (gwToken) body.gateway_token = gwToken;
+    if (gwStyle !== (gwProfile.auth_style || 'bearer')) body.gateway_auth_style = gwStyle;
+    if (gwDiscovery !== (gwProfile.model_discovery !== false)) body.gateway_model_discovery = gwDiscovery;
+    if (gwAlways !== !!gwProfile.default) body.gateway_default = gwAlways;
+    if (!Object.keys(body).length) { setGwEdit(false); return; }
+    setGwBusy(true);
+    const res = await saveSettings(body);
+    setGwBusy(false);
+    // Cleared on EVERY outcome, not just success: a rejected save (a bad URL
+    // beside a good token) would otherwise leave the credential sitting in
+    // component state and in the input's value for the life of the form.
+    setGwToken('');
+    if (res.ok && res.json?.ok) {
+      setGwNote({ ok: 'saved' });
+      setGwEdit(false);
+    } else {
+      setGwNote({ err: reasonOf(res, `save failed (${res.status})`) });
+    }
+  };
+
+  // Remote control and the gateway are mutually exclusive, and not by our
+  // choice: Claude Code disables Remote Control whenever ANTHROPIC_BASE_URL
+  // points at a non-Anthropic host. The daemon refuses the pair with a 400; the
+  // UI disables the losing checkbox so the human never composes a spawn that
+  // cannot be accepted. Turning one ON turns the other OFF rather than silently
+  // blocking the submit button.
+  const gatewayOn = gateway && gwReady;
+
   // Batch is meaningless for plan execution: there, the prompt IS the plan, and
   // splitting it on newlines would fan a single brief out into dozens of agents.
   // In repo mode it's deferred (one human-chosen branch and N forced per-agent
@@ -251,8 +303,18 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
     if (model.trim()) body.model = model.trim();
     if (permissionMode !== 'default') body.permission_mode = permissionMode;
     if (!repoMode && (worktree || batching)) body.worktree = true; // forced for a batch
-    if (remote) body.remote_control = true;
+    // `gatewayOn` wins outright, and this guard is NOT redundant with the
+    // disabled checkbox. `remote` is state, not a render: tick remote while the
+    // gateway box is disabled (a profile with a URL and no token yet), then save
+    // a token in the drawer — `gwReady` flips, the remote box goes disabled and
+    // renders unchecked, but `remote` is still true. Without this the form would
+    // submit a pair the daemon is guaranteed to 400.
+    if (remote && !gatewayOn) body.remote_control = true;
     if (unsup && armed) body.dangerously_skip_permissions = true;
+    // Always explicit, never omitted: silence would defer to gateway_default,
+    // and the checkbox the human is looking at is the answer — even when it
+    // agrees with the default it was seeded from.
+    body.gateway = gatewayOn;
     return body;
   };
 
@@ -638,18 +700,117 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
               </label>
             </div>
           )}
+          {/* v0.15 — LLM gateway: route this session's API traffic through a
+              proxy (CLIProxyAPI, a corporate gateway) instead of Anthropic. */}
+          <div className="frow">
+            <span className="fl">gateway</span>
+            <div className="fd-gwbox">
+              <label className={`fd-check${gwReady ? '' : ' disabled'}`}>
+                <input
+                  type="checkbox"
+                  checked={gatewayOn}
+                  disabled={!gwReady}
+                  onChange={(e) => {
+                    setGateway(e.target.checked);
+                    // Claude Code turns Remote Control off on a non-Anthropic
+                    // base URL, so choosing the gateway un-chooses the 📱 link
+                    // rather than letting the daemon 400 the pair.
+                    if (e.target.checked) setRemote(false);
+                  }}
+                />
+                🛰 route through {gwProfile.base_url || 'a gateway'}
+              </label>
+              <button
+                type="button"
+                className="fd-gwedit"
+                onClick={() => { setGwEdit(v => !v); setGwNote(null); }}
+              >
+                {gwReady ? 'edit' : 'set up'}
+              </button>
+            </div>
+          </div>
+          {gwEdit && (
+            <div className="frow top">
+              <span className="fl" />
+              <div className="fd-gwconfig">
+                <input
+                  className="fd-input"
+                  placeholder="http://127.0.0.1:8317"
+                  value={gwUrl}
+                  onChange={(e) => { setGwUrl(e.target.value); setGwNote(null); }}
+                />
+                <input
+                  className="fd-input"
+                  type="password"
+                  autoComplete="off"
+                  placeholder={gwProfile.token_set ? 'token stored — type to replace' : 'gateway token'}
+                  value={gwToken}
+                  onChange={(e) => { setGwToken(e.target.value); setGwNote(null); }}
+                />
+                <div className="fd-fsmodes">
+                  {['bearer', 'api-key'].map(style => (
+                    <button
+                      key={style}
+                      type="button"
+                      className={`fd-target${gwStyle === style ? ' on' : ''}`}
+                      onClick={() => { setGwStyle(style); setGwNote(null); }}
+                    >
+                      {style === 'bearer' ? 'bearer · Authorization' : 'api-key · x-api-key'}
+                    </button>
+                  ))}
+                </div>
+                <label className="fd-check">
+                  <input
+                    type="checkbox"
+                    checked={gwDiscovery}
+                    onChange={(e) => { setGwDiscovery(e.target.checked); setGwNote(null); }}
+                  />
+                  ask the gateway for its model list
+                </label>
+                <label className="fd-check">
+                  <input
+                    type="checkbox"
+                    checked={gwAlways}
+                    onChange={(e) => { setGwAlways(e.target.checked); setGwNote(null); }}
+                  />
+                  route every new session through it by default
+                </label>
+                <div className="row">
+                  <button type="button" className="fd-gwsave" disabled={gwBusy} onClick={saveGateway}>
+                    {gwBusy ? 'saving…' : 'save'}
+                  </button>
+                  <span className="hint">
+                    {gwNote?.ok
+                      ? `✓ ${gwNote.ok}`
+                      : gwNote?.err
+                        ? `✗ ${gwNote.err}`
+                        : 'stored on this machine; the token is never sent back to the board'}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
           {/* v1.6 — remote control from birth (/rc) */}
           <div className="frow">
             <span className="fl">remote control</span>
-            <label className="fd-check">
+            <label className={`fd-check${gatewayOn ? ' disabled' : ''}`}>
               <input
                 type="checkbox"
-                checked={remote}
+                checked={remote && !gatewayOn}
+                disabled={gatewayOn}
                 onChange={(e) => setRemote(e.target.checked)}
               />
               📱 drive it from claude.ai (web / phone)
             </label>
           </div>
+          {gatewayOn && (
+            <div className="frow">
+              <span className="fl" />
+              <span className="hint">
+                Claude Code disables remote control when the base URL isn’t Anthropic’s
+              </span>
+            </div>
+          )}
           {/* v1.3 — unsupervised (two-step: reveal, then arm) */}
           <div className="frow">
             <span className="fl">unsupervised</span>

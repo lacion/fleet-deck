@@ -479,6 +479,16 @@ textarea.fd-input { font-family: var(--font-ui); font-size: 13px; resize: none; 
   white-space: nowrap; letter-spacing: .5px; flex: none;
 }
 
+/* v0.15 — this card's session talks to the configured gateway, not Anthropic.
+   Informational, not hazardous: it uses the neutral chip palette rather than
+   the unsupervised chip's hazard colours. */
+.fd-gwchip {
+  font-family: var(--font-data); font-size: 10px; color: var(--dim); background: var(--border-soft);
+  border: 1px solid var(--border); border-radius: var(--r-chip); padding: 0 6px;
+  white-space: nowrap; letter-spacing: .5px; flex: none;
+}
+[data-theme="light"] .fd-gwchip { background: #EAEEF4; }
+
 /* spawn watchdog: pane up but the session never phoned home (spawn.stalled) */
 .fd-stalledchip {
   font-family: var(--font-data); font-size: 10px; color: var(--hazard); background: var(--hazard-bg);
@@ -1260,6 +1270,36 @@ textarea.fd-input { font-family: var(--font-ui); font-size: 13px; resize: none; 
 .fd-destbox .hint { font-family: var(--font-data); font-size: 10px; color: var(--faint); line-height: 1.5; }
 .fd-destbox .known { font-family: var(--font-data); font-size: 11.5px; color: var(--ok); overflow-wrap: anywhere; line-height: 1.6; }
 .fd-destbox .known .mono { color: var(--text); }
+
+/* ============ LLM gateway (v0.15) ============
+   The gateway profile is edited here, in the spawn form, for the same reason
+   the repos root is: this board has no settings panel, so a durable preference
+   lives where it is used. The credential input is write-only — the daemon
+   serves `token_set`, never the token, so there is nothing to seed it with. */
+.fd-gwbox { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; }
+.fd-gwedit {
+  flex: none; background: none; border: none; color: var(--dim); cursor: pointer;
+  font-family: var(--font-data); font-size: 10.5px; text-decoration: underline; padding: 2px 4px;
+}
+.fd-gwedit:hover { color: var(--text); }
+.fd-gwedit:focus-visible { outline: 2px solid var(--act); outline-offset: 2px; }
+.fd-gwconfig {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 7px;
+  background: var(--raised); border: 1px solid var(--border); border-radius: var(--r-ctl);
+  padding: 10px 12px; animation: fdSlideIn .2s ease-out 1;
+}
+.fd-gwconfig .fd-input { font-family: var(--font-data); font-size: 12px; }
+.fd-gwconfig .row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.fd-gwconfig .hint { font-family: var(--font-data); font-size: 10px; color: var(--faint); line-height: 1.5; }
+.fd-gwsave {
+  flex: none; background: var(--raised); border: 1px solid var(--border); color: var(--text);
+  border-radius: var(--r-ctl); padding: 5px 12px; font-size: 11.5px; cursor: pointer;
+}
+.fd-gwsave:hover:not(:disabled) { border-color: var(--act); }
+.fd-gwsave:disabled { opacity: .55; cursor: default; }
+/* A checkbox that cannot be chosen right now still has to say why — the label
+   beside it carries the reason, so this only needs to look unavailable. */
+.fd-check.disabled { color: var(--faint); cursor: default; }
 
 /* the browse-folders button sitting beside a path input */
 .fd-browsebtn {

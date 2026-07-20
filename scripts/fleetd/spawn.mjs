@@ -98,15 +98,35 @@ export async function ensureSession(port) {
 /** Create a detached window named fd<port>-<callsign> in fleetdeck-<port>,
  * cwd set, running `argv` DIRECTLY (execvp, no shell — see header). Returns
  * {session, window, window_id} — window_id (@n) is the stable kill/inspect
- * target, immune to renames and index shuffles. */
-export async function newWindow({ port, callsign, cwd, argv }) {
+ * target, immune to renames and index shuffles.
+ *
+ * `env` (0.15.0) is an optional {NAME: value} map delivered through tmux's
+ * `new-window -e`, which sets the variable in the new window's environment
+ * rather than in the command line it runs. That distinction is the entire point
+ * and it is a SECURITY one: the only caller supplies an LLM-gateway credential,
+ * and an `env NAME=secret claude …` argv would publish it in `ps` output for
+ * the whole multi-hour life of the pane — readable by every other OS user on the
+ * box, which SECURITY.md names as the honest caveat of the loopback trust zone.
+ * Via `-e` the secret appears only in THIS tmux command's own argv, for the
+ * milliseconds it takes to return, and thereafter lives in the tmux server's
+ * per-window environment (reachable only by someone who can already reach the
+ * socket — i.e. already this user).
+ *
+ * Values are passed as their own argv elements exactly like every other tmux
+ * argument here, so no quoting or shell metacharacter can escape them. Verified
+ * on tmux 3.7b; `-e` has been available on new-window since tmux 3.0. */
+export async function newWindow({ port, callsign, cwd, argv, env = null }) {
   const session = sessionName(port);
   const window = windowName(port, callsign);
+  const envArgs = env
+    ? Object.entries(env).flatMap(([name, value]) => ['-e', `${name}=${value}`])
+    : [];
   const out = await tmux([
     'new-window', '-d', '-P', '-F', '#{window_id}',
     '-t', '=' + session + ':', // exact session, next free window index
     '-n', window,
     '-c', cwd,
+    ...envArgs,
     '--', ...argv,
   ]);
   if (out === null) throw new Error(`tmux new-window failed for ${window}`);

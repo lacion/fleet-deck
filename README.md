@@ -156,6 +156,30 @@ Either way, the card grows a **📱 remote ↗** chip that opens claude.ai in a 
 
 **The guard, because it matters:** enabling remote control is refused (409) unless the session is at a turn boundary — queued or idle. An agent that is mid-turn, or sitting on a permission dialog, is not waiting for a slash command; typing one there would *answer the dialog*. The board doesn't even offer the chip in those states, and the daemon refuses it if you ask anyway.
 
+## Route a session through an LLM gateway
+
+Claude Code will talk to anything that speaks the Anthropic wire format — [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI), a corporate gateway, your own proxy — if you point `ANTHROPIC_BASE_URL` at it. Fleet Deck makes that a **per-session** choice instead of a machine-wide one, so a fleet can run some agents through a proxy and others straight to Anthropic, and the board tells you which is which.
+
+**Set it up once**, on the Spawn form: hit **set up** next to 🛰 gateway and give it a base URL and a token.
+
+| Setting | What it is |
+| --- | --- |
+| `gateway_base_url` | Where the gateway lives — `http://127.0.0.1:8317` for a stock CLIProxyAPI. `http://` and `https://` only, and **no credentials in the URL**: this value is shown on the board and travels in `/state`, so `user:pass@host` and `?api_key=…` are refused. Put the credential in `gateway_token`. |
+| `gateway_token` | The credential. For CLIProxyAPI this is any entry from its `api-keys:` list. |
+| `gateway_auth_style` | `bearer` (default) sends it as `Authorization: Bearer …`; `api-key` sends it as `x-api-key`. **If you get a 401, it's almost always this** — the credential is fine, it's just arriving in a header the gateway doesn't read. |
+| `gateway_model_discovery` | On by default. Asks the gateway for its model list at startup so gateway-only model names show up in `/model`. |
+| `gateway_default` | Off by default. When on, a spawn that says nothing routes through the gateway anyway. |
+
+Then tick **🛰 route through …** on any spawn. Gateway-routed cards carry a **🛰 gateway** chip, and a revived agent keeps whatever routing its lineage had — resuming a conversation against a *different* provider than the one that wrote its transcript is not something that should happen quietly.
+
+**The token never comes back.** It's stored on this machine and handed to the pane through tmux's own environment (`new-window -e`), so it stays out of the pane's command line and out of `ps`. The board is told `token_set: true` and nothing else — the `/state` snapshot is broadcast to every connected board, phones included, so the credential simply isn't in it. The **base URL is not secret** and deliberately *is* in there (you want to see where a session is going), which is exactly why it refuses to carry one.
+
+**One upgrade note.** Board-spawned panes no longer inherit `ANTHROPIC_*` from the daemon's environment — that inheritance was how a single `export` in one terminal could silently reroute every session on the machine. If you authenticate Claude Code with an `ANTHROPIC_API_KEY` exported in your shell, move it to `~/.claude/settings.json` under `env`; sessions you start yourself are unaffected either way.
+
+**Two things it will refuse, both loudly.** A half-configured gateway (a URL with no token, or the reverse) fails the spawn with a 400 rather than quietly billing your Anthropic account instead. And **remote control is unavailable on a gateway-routed session** — that one isn't our rule: Claude Code disables Remote Control whenever `ANTHROPIC_BASE_URL` points somewhere that isn't Anthropic, because claude.ai has no route to a session it isn't serving. Pick one; the form greys out whichever you didn't.
+
+> Sessions you start yourself, in your own terminal, are outside this — Fleet Deck only steers the panes it launches. If you want *everything* on the gateway, put the variables in `~/.claude/settings.json` under `env` and leave this feature alone. What Fleet Deck adds is the per-session choice.
+
 ## Jira tickets: a callsign that tells you the work
 
 A session's callsign is `<animal>-<4 hex>` by default (`raven-4b7f`) — memorable, but it says nothing about *what the session is on*. So when a session sits on a branch that carries a Jira key (`feature/PROJ-123-checkout`, `fd/PROJ-123-otter`), Fleet Deck swaps the hex for the ticket: **`raven-PROJ-123`**. The board card, the mailbox target, and the tmux window all read as the ticket you'd recognize from standup.

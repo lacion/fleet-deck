@@ -25,7 +25,56 @@ export function createSpawns(ctx) {
     succeedSession, CLEAR_SUCCESSION_MS, hasLivePane,
     validateBranch, resolveTarget, cloneRepo, materializeBranch, touchRepo,
     claimTarget, targetOwner, reserveCloneSlot, persistRepoTransport,
+    resolveGateway, resolveGatewayEnv,
   } = ctx;
+
+  // ------------------------------------------------- LLM gateway (0.15.0)
+  // Does THIS launch route through the configured gateway, and with what
+  // environment? One resolver, shared by fresh spawns and revives, so a revived
+  // pane can never disagree with the spawn it descends from about who is being
+  // billed.
+  //
+  // Precedence: an explicit `gateway` on the request wins; silence falls back to
+  // the `gateway_default` setting. Both failure modes are LOUD (400) rather than
+  // a quiet fall-through to Anthropic — the entire point of this feature is that
+  // which provider serves a session is never a surprise, and "your gateway was
+  // half-configured so we billed your Anthropic account for six hours instead"
+  // is exactly the surprise it exists to prevent. This mirrors browse_root's
+  // rule in files.mjs: a CONFIGURED root that has gone missing fails loud, it
+  // does not silently become home.
+  // `source` names WHERE the request came from, because the caller of a revive
+  // did not choose anything — the flag was inherited from the row — and an error
+  // that says "gateway:true was requested" when nobody requested it sends the
+  // human looking for a bug in their own call. Each source gets the remedy that
+  // actually applies to it.
+  function gatewayDecision(wanted, source = 'request') {
+    const profile = resolveGateway();
+    const asked = wanted === true || (wanted == null && profile.default);
+    if (!asked) return { use: false, env: null };
+    if (!profile.ready) {
+      const missing = !profile.base_url
+        ? 'gateway_base_url is not set'
+        : 'gateway_token is not set';
+      const why = source === 'inherited'
+        ? `this session was spawned through the gateway, but the gateway is no longer configured — ${missing}. Restore it, or revive with {"gateway":false} to resume this conversation against Anthropic instead`
+        : wanted === true
+          ? `gateway:true was requested but the gateway is not configured — ${missing}`
+          : `gateway_default is on but the gateway is not configured — ${missing}`;
+      return { use: false, env: null, error: why };
+    }
+    return { use: true, env: resolveGatewayEnv() };
+  }
+
+  // Remote control and the gateway are mutually exclusive, and not by our
+  // choice: Claude Code itself disables Remote Control whenever
+  // ANTHROPIC_BASE_URL points at a non-Anthropic host, because the claude.ai
+  // relay has no route to a session it isn't serving. Accepting both would hand
+  // back a spawn whose 📱 link never appears and whose failure has no visible
+  // cause — so refuse at the door, where the reason can be stated.
+  function gatewayRemoteConflict(gatewayUse, remoteWanted) {
+    if (!gatewayUse || !remoteWanted) return null;
+    return 'remote control is unavailable on a gateway-routed session — Claude Code disables it whenever ANTHROPIC_BASE_URL points at a non-Anthropic host. Spawn with gateway:false to use remote control, or remote_control:false to use the gateway.';
+  }
 
   // ------------------------------------- v1.2 board-spawned sessions (spawns)
   // CONTRACT "v1.2 — dynamic fleet". Spawn = explicit human click ONLY; the
@@ -308,10 +357,19 @@ export function createSpawns(ctx) {
   async function launchPane({
     spawn_id, session_id, callsign, tmux_session, tmux_window,
     requestedCwd, runCwd, cleanupRoot, worktree_path, body, skipPermissions,
+    gatewayEnv = null,
     created = { clone: false, worktree: !!worktree_path },
   }) {
     // This argv order is a public contract shared by cwd- and repo-mode spawns.
-    const argv = [...claudeEnvArgvPrefix(port, home), 'claude', '--session-id', session_id];
+    // `keep` names the gateway variables tmux is about to set via `-e`: without
+    // it the prefix's own `env -u` would strip them straight back off (see
+    // claudeEnvArgvPrefix). The CREDENTIAL never enters argv — only the names of
+    // the variables NOT being unset appear here, which is why the scrub list
+    // shrinks rather than the assignment list growing.
+    const argv = [
+      ...claudeEnvArgvPrefix(port, home, { keep: gatewayEnv ? Object.keys(gatewayEnv) : [] }),
+      'claude', '--session-id', session_id,
+    ];
     if (body?.model) argv.push('--model', body.model);
     if (body?.permission_mode) argv.push('--permission-mode', body.permission_mode);
     if (body?.dangerously_skip_permissions === true) argv.push('--dangerously-skip-permissions');
@@ -338,6 +396,16 @@ export function createSpawns(ctx) {
         dangerously_skip_permissions: body?.dangerously_skip_permissions === true,
         skip_permissions: skipPermissions,
         remote_control: body?.remote_control === true,
+        gateway: !!gatewayEnv,
+        // The fixture receives the gateway environment VERBATIM, credential
+        // included, because the only way to prove the routing actually reaches a
+        // pane is to assert on what the pane was handed. That is acceptable here
+        // and nowhere else: FLEETDECK_SPAWN_CMD is a test seam the README
+        // explicitly disclaims as a way to run a real fleet, and it is already
+        // the one path that hands a fixture the whole spawn spec. The tmux path
+        // below — the only one a real fleet takes — keeps the credential out of
+        // argv entirely (see newWindow's `-e` contract).
+        gateway_env: gatewayEnv,
         tmux: { session: tmux_session, window: tmux_window },
         argv,
       };
@@ -346,7 +414,7 @@ export function createSpawns(ctx) {
     } else {
       try {
         await tmuxAdapter.ensureSession(port);
-        await tmuxAdapter.newWindow({ port, callsign, cwd: runCwd, argv });
+        await tmuxAdapter.newWindow({ port, callsign, cwd: runCwd, argv, env: gatewayEnv });
       } catch (err) {
         await compensate(String(err.message || err));
         return { status: 500, body: { ok: false, reason: `tmux spawn failed: ${err.message || err}` } };
@@ -355,7 +423,7 @@ export function createSpawns(ctx) {
 
     q.setSpawnStatus.run('spawning', spawn_id);
     updateSession(session_id, { note: 'spawning…' });
-    tick(`🚀 spawned ${callsign} — tmux window ${tmux_window}${skipPermissions ? ' (unsupervised)' : ''}`);
+    tick(`🚀 spawned ${callsign} — tmux window ${tmux_window}${skipPermissions ? ' (unsupervised)' : ''}${gatewayEnv ? ' (gateway)' : ''}`);
     scheduleNudge(spawn_id, tmux_window, callsign);
     onMutate();
     return {
@@ -407,6 +475,16 @@ export function createSpawns(ctx) {
     if (body?.remote_control != null && typeof body.remote_control !== 'boolean') {
       return { status: 400, body: { ok: false, reason: 'remote_control must be a boolean' } };
     }
+    if (body?.gateway != null && typeof body.gateway !== 'boolean') {
+      return { status: 400, body: { ok: false, reason: 'gateway must be a boolean' } };
+    }
+    // Decide the routing BEFORE anything is created. A gateway refusal must cost
+    // the caller nothing — no clone, no worktree, no pane, no durable row — so
+    // it lands here beside the other pure-body gates rather than at launch time.
+    const gateway = gatewayDecision(body?.gateway);
+    if (gateway.error) return { status: 400, body: { ok: false, reason: gateway.error } };
+    const rcConflict = gatewayRemoteConflict(gateway.use, body?.remote_control === true);
+    if (rcConflict) return { status: 400, body: { ok: false, reason: rcConflict } };
 
     const hasRepo = body?.repo != null;
     const hasCwd = body?.cwd != null;
@@ -474,7 +552,7 @@ export function createSpawns(ctx) {
       q.insertProvisionalSpawn.run(
         spawn_id, session_id, callsign, tmux_session, tmux_window, targetPath,
         null, Date.now(), skipPermissions ? 1 : 0, body?.remote_control === true ? 1 : 0,
-        target.origin_url ?? null, body.branch, branchMode,
+        target.origin_url ?? null, body.branch, branchMode, gateway.use ? 1 : 0,
       );
 
       const finishMaterialization = async (materialized, source) => {
@@ -523,6 +601,7 @@ export function createSpawns(ctx) {
               spawn_id, session_id, callsign, tmux_session, tmux_window,
               requestedCwd: target.root, runCwd: materialized.runCwd,
               cleanupRoot: target.root, worktree_path, body, skipPermissions,
+              gatewayEnv: gateway.env,
               created: materialized.created,
             });
           } catch (err) {
@@ -562,6 +641,7 @@ export function createSpawns(ctx) {
             spawn_id, session_id, callsign, tmux_session, tmux_window,
             requestedCwd: target.dest, runCwd: materialized.runCwd,
             cleanupRoot: target.dest, worktree_path, body, skipPermissions, created,
+            gatewayEnv: gateway.env,
           });
         } catch (err) {
           const reason = branchMode === 'in-place' && created.clone
@@ -607,7 +687,7 @@ export function createSpawns(ctx) {
     q.insertProvisionalSpawn.run(
       spawn_id, session_id, callsign, tmux_session, tmux_window, cwd,
       null, Date.now(), skipPermissions ? 1 : 0, body?.remote_control === true ? 1 : 0,
-      null, null, null,
+      null, null, null, gateway.use ? 1 : 0,
     );
 
     let worktree_path = null;
@@ -645,7 +725,7 @@ export function createSpawns(ctx) {
     return launchPane({
       spawn_id, session_id, callsign, tmux_session, tmux_window,
       requestedCwd: cwd, runCwd: worktree_path ?? cwd, cleanupRoot: cwd,
-      worktree_path, body, skipPermissions,
+      worktree_path, body, skipPermissions, gatewayEnv: gateway.env,
     });
   }
 
@@ -661,9 +741,29 @@ export function createSpawns(ctx) {
     if (body?.remote_control != null && typeof body.remote_control !== 'boolean') {
       return { status: 400, body: { ok: false, reason: 'remote_control must be a boolean' } };
     }
+    if (body?.gateway != null && typeof body.gateway !== 'boolean') {
+      return { status: 400, body: { ok: false, reason: 'gateway must be a boolean' } };
+    }
     // Remote control survives death: inherit the dead row's wish unless the
     // human overrides it on this revive.
     const remoteWanted = body?.remote_control ?? !!row.remote_control;
+    // Gateway routing survives death the same way — and for a stronger reason
+    // than symmetry. A revive RESUMES a conversation, and the transcript being
+    // resumed was produced by whatever provider served it; silently continuing
+    // it against a different one changes who is billed for the rest of that
+    // conversation without anything on screen saying so. Inheriting the dead
+    // row's routing keeps a lineage on one provider unless a human says
+    // otherwise. Note the fallback resolves to a BOOLEAN, never null: null would
+    // re-consult gateway_default, so flipping that setting on would quietly
+    // reroute every later revive of every pre-existing session. A revive asks
+    // "what was this lineage doing", not "what would a new spawn do".
+    const gateway = gatewayDecision(
+      body?.gateway ?? !!row.gateway,
+      body?.gateway == null ? 'inherited' : 'request',
+    );
+    if (gateway.error) return { status: 400, body: { ok: false, reason: gateway.error } };
+    const rcConflict = gatewayRemoteConflict(gateway.use, remoteWanted);
+    if (rcConflict) return { status: 400, body: { ok: false, reason: rcConflict } };
     // HIGH (revive single-flight), part 1 — the DB guard. A live-eligible OR a
     // PROVISIONING spawn for this session means someone is already bringing a
     // pane up; refuse. Including 'provisioning' matters because a revive's own
@@ -782,6 +882,7 @@ export function createSpawns(ctx) {
         worktree_path: row.worktree_path,
         skip_permissions: !!row.skip_permissions,
         remoteWanted,
+        gatewayEnv: gateway.env,
         excludeSpawnId: spawn_id,
         overrideExtra: { revive_of: spawn_id },
         note: 'reviving…',
@@ -809,10 +910,16 @@ export function createSpawns(ctx) {
   async function launchResume({
     session_id, callsign, tmux_window, runCwd, requested_cwd, worktree_path,
     skip_permissions, remoteWanted, excludeSpawnId, overrideExtra = {},
-    note, tickMsg, failReason, bodyExtra = {},
+    note, tickMsg, failReason, bodyExtra = {}, gatewayEnv = null,
   }) {
     const new_spawn_id = randomUUID();
-    const argv = [...claudeEnvArgvPrefix(port, home), 'claude', '--resume', session_id];
+    // `keep` mirrors launchPane: the gateway variables tmux sets via `-e` must
+    // be excluded from this prefix's own `env -u`, or the resumed pane would be
+    // scrubbed back onto Anthropic mid-conversation.
+    const argv = [
+      ...claudeEnvArgvPrefix(port, home, { keep: gatewayEnv ? Object.keys(gatewayEnv) : [] }),
+      'claude', '--resume', session_id,
+    ];
     if (skip_permissions) argv.push('--dangerously-skip-permissions');
     if (remoteWanted) argv.push('--remote-control', callsign);
     const tmux_session = tmuxAdapter.sessionName(port);
@@ -850,7 +957,7 @@ export function createSpawns(ctx) {
     // up. (adopt passes worktree_path:null — it never creates a worktree.)
     q.insertProvisionalSpawn.run(new_spawn_id, session_id, callsign, tmux_session,
       tmux_window, requested_cwd, worktree_path, Date.now(), skip_permissions ? 1 : 0,
-      remoteWanted ? 1 : 0, null, null, null);
+      remoteWanted ? 1 : 0, null, null, null, gatewayEnv ? 1 : 0);
 
     const override = tmuxAdapter.spawnOverrideCmd();
     if (override) {
@@ -862,13 +969,15 @@ export function createSpawns(ctx) {
         dangerously_skip_permissions: !!skip_permissions,
         skip_permissions: !!skip_permissions,
         remote_control: remoteWanted,
+        gateway: !!gatewayEnv,
+        gateway_env: gatewayEnv,   // test seam only — see launchPane's spec
         tmux: { session: tmux_session, window: tmux_window },
         argv,
       }, err => spawnFailed(session_id, callsign, `spawn override: ${err.message || err}`));
     } else {
       try {
         await tmuxAdapter.ensureSession(port);
-        await tmuxAdapter.newWindow({ port, callsign, cwd: runCwd, argv });
+        await tmuxAdapter.newWindow({ port, callsign, cwd: runCwd, argv, env: gatewayEnv });
       } catch (err) {
         // The pane never launched — settle the provisional row terminal so it
         // stops owning the window (and is never liveness-checked), then fail.
@@ -1052,6 +1161,19 @@ export function createSpawns(ctx) {
       // and requested cwd, NULL worktree_path, the human's bypass choice, and
       // NEVER remote_control (v1). excludeSpawnId is null — adopt has no prior
       // row, so ANY active owner on the window is a rival to refuse.
+      //
+      // Gateway routing: unlike revive, adopt has NO evidence to inherit — the
+      // session it resumes was started by a human in their own terminal, and
+      // whether that terminal had a gateway exported is not knowable from here
+      // (the pane is gone by the time we resume). So this is the one path that
+      // consults gateway_default, which is exactly what a default is for: the
+      // stated answer to "what should a fleet pane do when nothing else says".
+      // A human who runs everything through a proxy sets it and adopt follows;
+      // anyone else gets Anthropic, as before. Deliberately NOT an error when
+      // the profile is half-configured — an adopt is a move, not a new billed
+      // session, and refusing it would strand a live conversation outside the
+      // board over a settings typo.
+      const adoptGateway = gatewayDecision(null);
       return await launchResume({
         session_id,
         callsign: c.callsign,
@@ -1061,6 +1183,7 @@ export function createSpawns(ctx) {
         worktree_path: null,
         skip_permissions: skip,
         remoteWanted: false,
+        gatewayEnv: adoptGateway.env,
         excludeSpawnId: null,
         overrideExtra: { adopt_of: session_id },
         note: 'moving to tmux…',

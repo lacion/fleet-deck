@@ -121,6 +121,15 @@ function SessionCard({
             unsupervised
           </span>
         )}
+        {s.spawn?.gateway && (
+          // v0.15: this pane's API traffic goes to the configured gateway, not
+          // to Anthropic. Which provider is serving a session is exactly the
+          // kind of thing that should never be invisible on the board — the
+          // whole feature exists so it is a decision, not an accident.
+          <span className="fd-gwchip" title="routed through the configured LLM gateway, not Anthropic">
+            🛰 gateway
+          </span>
+        )}
         {s.spawn?.remote?.enabled && (
           // v1.6: remote control is on. With a harvested (and vouched-for) link
           // the chip is the door to claude.ai; without a safe one it just states
