@@ -5,6 +5,35 @@ All notable changes to Fleet Deck are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.0] - 2026-07-20
+
+Which provider serves a session becomes a decision you make per spawn, and can
+see on the board — instead of whatever the daemon's shell happened to inherit.
+
+### Added
+
+- **Route a session through an LLM gateway.** A durable gateway profile (`gateway_base_url`, `gateway_token`, `gateway_auth_style`, `gateway_model_discovery`, `gateway_default`) plus a per-spawn **🛰 gateway** toggle sends that session's API traffic to anything Anthropic-compatible — [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI), a corporate gateway — while its neighbours go straight to Anthropic. API: `POST /api/spawn` and `POST /api/spawn/:id/revive` take `gateway` (boolean); absent resolves from `gateway_default`. Gateway-routed cards carry a 🛰 chip, and `/state` exposes `spawn.gateway`.
+- **A revive keeps its lineage's routing.** Resuming a conversation against a different provider than the one that wrote its transcript changes who is billed for the rest of it with nothing on screen saying so, so revive inherits the dead row's `gateway` and deliberately does *not* re-consult `gateway_default` — flipping the default on can never retroactively reroute an existing lineage. An explicit `gateway` on the revive still wins. `adopt` is the one path that does consult the default, because a session Fleet Deck never spawned leaves nothing to inherit.
+- `POST /api/settings` accepts the five `gateway_*` keys, with the same validate-all-then-apply-all discipline as the rest.
+
+### Security
+
+- **The gateway credential is never served back.** `gateway_token` is stored on the daemon's machine and reaches the pane through tmux's own environment (`new-window -e`), so it stays out of the pane's argv and out of `ps` — which matters on exactly the multi-user machines SECURITY.md names as the honest caveat of the loopback trust zone. The settings view serves `token_set: true` and nothing more; `/state` is broadcast to every connected board, phones on LAN mode included, so the credential is simply not in it.
+- **The gateway `base_url` refuses embedded credentials.** `gateway_base_url` is served *unmasked* — it rides `/state` to every board and is rendered in the spawn form, because seeing where your session is going is the point. `https://user:pass@gw` and `https://gw/?api_key=…` are both ordinary proxy spellings that would have smuggled a secret down that public path (and `new URL().href` preserves both, so normalizing would not have caught it), so userinfo, query strings and fragments are refused at the door with a message pointing at `gateway_token`. The validator also no longer echoes the rejected value back in its error, so a credential pasted into the wrong field isn't reflected into logs.
+
+### Changed
+
+- **BREAKING for ambient-`ANTHROPIC_API_KEY` auth.** `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY` and `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY` now join the `env -u` scrub list, and the daemon's own boot environment drops them too. The bug this fixes was real and silent: exporting a gateway once, in whichever terminal happened to trigger SessionStart, baked it into the tmux server's global environment, so *every* board-spawned session on the machine quietly routed through it for as long as that server lived (the 2026-07-11 env-poisoning scar, new tenants). A pane's provider is now exactly what its spawn asked for, and only the variables a gateway spawn actually supplies are exempt — an ambient `ANTHROPIC_API_KEY` is still stripped from a bearer-style gateway pane.
+
+  **If you authenticate Claude Code with an `ANTHROPIC_API_KEY` exported in your shell, board-spawned panes will stop seeing it.** Sessions you start yourself are unaffected. Move it to `~/.claude/settings.json` under `env`, which Claude Code reads for itself and Fleet Deck never touches:
+
+  ```json
+  { "env": { "ANTHROPIC_API_KEY": "sk-ant-…" } }
+  ```
+
+- **Remote control and the gateway are refused together, with the reason.** Claude Code disables Remote Control whenever `ANTHROPIC_BASE_URL` points at a non-Anthropic host, so accepting both would return a spawn whose 📱 link never appears and whose failure has no visible cause. The daemon 400s the pair naming the cause; the spawn form disables whichever checkbox lost.
+- **A half-configured gateway fails the spawn** (400) rather than falling through to Anthropic. A base URL with no credential would reach the proxy and 401, which reads as a Claude Code bug rather than a settings mistake — and the quiet fallback would bill the account the feature exists to route *away* from.
+
 ## [0.14.0] - 2026-07-16
 
 Repo-mode spawns work where the repos actually live: private forges over ssh,
@@ -276,6 +305,7 @@ Initial public release.
 - A brainless orchestrator: `assign auto` routes a task to the best existing session with a SQL query, not a model call — the core makes zero model calls.
 - One-command plugin install with a self-contained daemon bundle (`node:sqlite` state, nothing to `npm install`); the first session's SessionStart hook elects and launches the daemon. MIT licensed.
 
+[0.15.0]: https://github.com/lacion/fleet-deck/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/lacion/fleet-deck/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/lacion/fleet-deck/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/lacion/fleet-deck/compare/v0.11.0...v0.12.0

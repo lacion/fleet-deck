@@ -6,7 +6,7 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
-import { CLAUDE_ENV_MARKERS } from './env-scrub.mjs';
+import { CLAUDE_ENV_MARKERS, GATEWAY_ENV_VARS } from './env-scrub.mjs';
 
 // v1.2 env knobs are resolved once per core via this reader; see the knob doc
 // in derive.mjs where each threshold is bound.
@@ -90,7 +90,18 @@ export function sessionAdoptableNow(session, hasSpawnRow) {
 // session markers come from env-scrub.mjs (shared with fleet-sessionstart's
 // bootEnv); the tmux plumbing + FLEETDECK_* tuning knobs below are this
 // wrapper's own context-specific additions.
-export function claudeEnvArgvPrefix(port, home) {
+//
+// `keep` (0.15.0) names the variables this particular launch is DELIBERATELY
+// supplying — today, the LLM-gateway set a `gateway:true` spawn hands to tmux
+// via `new-window -e` (spawn.mjs). They must be excluded from the `-u` list or
+// the scrub would win: tmux sets them in the pane's environment, then this very
+// `env -u` strips them right back off before exec'ing claude, and the spawn
+// would silently route to Anthropic after all. Excluding EXACTLY the injected
+// names keeps the guarantee intact for every variable the launch did NOT set —
+// an ambient ANTHROPIC_API_KEY is still scrubbed from a spawn that only supplies
+// ANTHROPIC_AUTH_TOKEN. Default `[]` ⇒ byte-identical to the pre-0.15.0 prefix.
+export function claudeEnvArgvPrefix(port, home, { keep = [] } = {}) {
+  const keepSet = new Set(keep);
   const scrub = [
     ...CLAUDE_ENV_MARKERS,
     // FLEETDECK_*_CMD name fixture commands the daemon execs in place of a real
@@ -112,7 +123,11 @@ export function claudeEnvArgvPrefix(port, home) {
     // permanently skews the upgrade-takeover comparison (the 2026-07-11 tmux
     // env-poisoning scar, new tenants).
     'FLEETDECK_TEST_DAEMON_SCRIPT', 'FLEETDECK_VERSION_OVERRIDE',
-  ];
+    // LLM-gateway routing (see GATEWAY_ENV_VARS): whether a pane bills your
+    // Anthropic account or a local proxy must come from the spawn, never from
+    // whatever shell the daemon happened to boot in.
+    ...GATEWAY_ENV_VARS,
+  ].filter(name => !keepSet.has(name));
   return [
     'env', ...scrub.flatMap(name => ['-u', name]),
     `FLEETDECK_PORT=${port}`, `FLEETDECK_HOME=${home}`,

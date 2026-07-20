@@ -18,6 +18,16 @@
 // filesystem root, not an existing file) are the SAME ones repos.mjs's
 // setReposDir enforces — repos_dir still delegates its WRITE to setReposDir so
 // there is one writer for the repos root; browse_root mirrors those gates here.
+//
+// 0.15.0 adds a fifth preference that breaks the pattern above in one way worth
+// stating up front: the LLM-gateway profile (gateway_*) holds a CREDENTIAL.
+// Every other setting here is safe to broadcast, and resolveSettings() is
+// broadcast — it rides the /state snapshot to every board client, phones on LAN
+// mode included. So the gateway keys are asymmetric by design: they WRITE like
+// the others, and they READ through two different doors — resolveGateway() for
+// clients (masked; `token_set` is the whole truth it tells) and
+// resolveGatewayEnv() for the spawn path (unmasked, one caller, never
+// serialized). See the block comment above validateGatewayBaseUrl.
 
 import fs from 'node:fs';
 import os from 'node:os';
@@ -26,7 +36,15 @@ import { detectCoderWorkspaceRoot } from './config.mjs';
 
 const CONTROL_RE = /[\x00-\x1f\x7f]/;
 const FAV_DIRS_MAX = 20;
-const ALLOWED_KEYS = ['repos_dir', 'repo_transport', 'browse_root', 'fav_dirs'];
+const ALLOWED_KEYS = [
+  'repos_dir', 'repo_transport', 'browse_root', 'fav_dirs',
+  'gateway_base_url', 'gateway_auth_style', 'gateway_token',
+  'gateway_model_discovery', 'gateway_default',
+];
+// A gateway credential is long-lived and grants API spend, so the ceiling is
+// generous but finite — an unbounded value would ride every /state frame's
+// `token_set` computation and every spawn's tmux argv.
+const GATEWAY_TOKEN_MAX = 4096;
 
 function namedError(status, message) {
   const err = new Error(message);
@@ -165,6 +183,132 @@ export function createSettings(ctx) {
     return out;
   }
 
+  // ----------------------------------------------------------------- gateway
+  // The LLM-gateway profile (0.15.0): where a `gateway:true` spawn sends its
+  // API traffic instead of Anthropic — a local CLIProxyAPI, a corporate
+  // gateway, anything that speaks the Anthropic wire format.
+  //
+  // SECURITY, and the reason this key group is not shaped like the four above:
+  // `gateway_token` is a live credential, and resolveSettings() is not a private
+  // reply. It rides the /state snapshot (snapshot.mjs:167) to EVERY connected
+  // board — including a phone over LAN mode, and including whatever a reverse
+  // proxy fronts. So the token has exactly one reader, resolveGatewayEnv(), on
+  // the spawn path; the settings view serves `token_set: true` and nothing more.
+  // A masked-tail preview was considered and rejected: it leaks credential
+  // length and prefix to every board client for no operational gain — "is one
+  // configured" is the only question the UI actually asks.
+
+  // http/https only. A gateway is a URL the daemon hands to a child process, so
+  // the scheme wall is what stops `file:`, `data:` and friends from ever
+  // reaching it. Cleartext http is ALLOWED and deliberately not warned about
+  // here: the overwhelmingly common case is 127.0.0.1, where TLS buys nothing,
+  // and refusing it would lock out every local proxy this feature exists for.
+  //
+  // SECURITY — why userinfo and query strings are REFUSED rather than accepted
+  // and masked: unlike gateway_token, this value is deliberately NOT secret. It
+  // is served raw by resolveGateway(), rides the broadcast /state snapshot, and
+  // is rendered into the spawn form so a human can see where their session is
+  // going. `https://user:pass@gw` and `https://gw/?api_key=…` are both ordinary
+  // proxy spellings that would smuggle a credential down that public path — and
+  // `new URL().href` preserves both, so normalization does not save us. There is
+  // a field for credentials and this is not it; refusing at the door keeps the
+  // one masked value (gateway_token) the only secret in the profile, which is
+  // the property the whole settings split rests on.
+  function validateGatewayBaseUrl(value) {
+    if (typeof value !== 'string' || !value) throw namedError(400, 'gateway_base_url must be a URL or null');
+    if (CONTROL_RE.test(value)) throw namedError(400, 'gateway_base_url must not contain NUL or control characters');
+    let url;
+    // Deliberately does NOT echo `value`: a human who pastes a credential into
+    // the wrong field must not have it reflected back in an error string that
+    // may be logged or rendered.
+    try { url = new URL(value); } catch { throw namedError(400, 'gateway_base_url is not a valid URL'); }
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      throw namedError(400, `gateway_base_url must be http:// or https:// — got ${url.protocol}//`);
+    }
+    if (url.username || url.password) {
+      throw namedError(400, 'gateway_base_url must not embed credentials (user:password@) — put the credential in gateway_token, which is never served back to a client');
+    }
+    if (url.search) {
+      throw namedError(400, 'gateway_base_url must not carry a query string — it would be broadcast to every board; put a credential in gateway_token instead');
+    }
+    if (url.hash) throw namedError(400, 'gateway_base_url must not carry a fragment');
+    // Trailing slashes are cosmetic to the client but make the /state view and
+    // the injected env disagree on spelling; normalize once, at the door.
+    return url.href.replace(/\/+$/, '');
+  }
+
+  function validateGatewayToken(value) {
+    if (typeof value !== 'string' || !value) throw namedError(400, 'gateway_token must be a non-empty string or null');
+    // Control characters would be smuggled into an HTTP header value; a
+    // credential never legitimately contains them.
+    if (CONTROL_RE.test(value)) throw namedError(400, 'gateway_token must not contain NUL or control characters');
+    if (value.length > GATEWAY_TOKEN_MAX) {
+      throw namedError(400, `gateway_token must be ${GATEWAY_TOKEN_MAX} characters or fewer — got ${value.length}`);
+    }
+    return value;
+  }
+
+  // Booleans persist as '1'/'0' so a cleared row and an explicit false stay
+  // distinguishable from a never-set one at the SQL layer.
+  function validateGatewayBool(value, label) {
+    if (typeof value !== 'boolean') throw namedError(400, `${label} must be a boolean or null`);
+    return value ? '1' : '0';
+  }
+
+  function readGatewayBool(key, fallback) {
+    const raw = readSetting(key);
+    if (raw == null) return fallback;
+    return raw === '1';
+  }
+
+  // The MASKED view — the only gateway shape that leaves this module for a
+  // client. `ready` is what the board gates its toggle on: a base_url with no
+  // token (or the reverse) is a half-configured profile that would fail at the
+  // pane with a 401, so it is not offered as spawnable.
+  function resolveGateway() {
+    const base_url = readSetting('gateway_base_url');
+    const auth_style = readSetting('gateway_auth_style') === 'api-key' ? 'api-key' : 'bearer';
+    const token_set = readSetting('gateway_token') != null;
+    return {
+      base_url,
+      auth_style,
+      token_set,
+      // Gateways commonly serve model names Claude Code doesn't ship in its
+      // built-in list, and without discovery those are simply absent from the
+      // /model picker — so this defaults ON.
+      model_discovery: readGatewayBool('gateway_model_discovery', true),
+      // When true, a spawn that says nothing about `gateway` routes through it
+      // anyway. Off by default: silently rerouting billing is the failure mode
+      // this whole feature exists to make explicit.
+      default: readGatewayBool('gateway_default', false),
+      ready: !!base_url && token_set,
+    };
+  }
+
+  // The UNMASKED env map — spawn.mjs's tmux `-e` payload. Returns null when the
+  // profile is not fully configured, so a caller can never half-apply one (a
+  // base_url with no credential routes traffic somewhere that will 401, which
+  // looks like a Claude Code bug rather than a settings mistake).
+  //
+  // The credential variable is chosen by auth_style because Claude Code sends
+  // the two in DIFFERENT headers — ANTHROPIC_AUTH_TOKEN as `Authorization:
+  // Bearer …`, ANTHROPIC_API_KEY as `x-api-key`. A credential in the wrong one
+  // reaches the gateway in a header it does not read and fails 401; 'bearer' is
+  // the default because it is what Anthropic's own gateway guidance recommends
+  // when the operator didn't say, and what CLIProxyAPI's `api-keys` list wants.
+  function resolveGatewayEnv() {
+    const base_url = readSetting('gateway_base_url');
+    const token = readSetting('gateway_token');
+    if (!base_url || !token) return null;
+    const auth_style = readSetting('gateway_auth_style') === 'api-key' ? 'api-key' : 'bearer';
+    const env = { ANTHROPIC_BASE_URL: base_url };
+    env[auth_style === 'api-key' ? 'ANTHROPIC_API_KEY' : 'ANTHROPIC_AUTH_TOKEN'] = token;
+    if (readGatewayBool('gateway_model_discovery', true)) {
+      env.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY = '1';
+    }
+    return env;
+  }
+
   // Each key VALIDATES in prepare() (pure — may throw a 400, never writes) and
   // WRITES in commit(prepared). setSettings runs every prepare BEFORE any
   // commit, so a mixed body with one bad field writes nothing. `null` clears a
@@ -194,6 +338,31 @@ export function createSettings(ctx) {
     fav_dirs: {
       prepare: v => validateFavDirs(v),             // → normalized array | null
       commit: prepared => q.setSetting.run('fav_dirs', prepared == null ? null : JSON.stringify(prepared), Date.now()),
+    },
+    gateway_base_url: {
+      prepare: v => (v == null ? null : validateGatewayBaseUrl(v)),
+      commit: v => q.setSetting.run('gateway_base_url', v ?? null, Date.now()),
+    },
+    gateway_auth_style: {
+      prepare: v => {
+        if (v != null && v !== 'bearer' && v !== 'api-key') {
+          throw namedError(400, `gateway_auth_style must be bearer or api-key — got ${JSON.stringify(v)}`);
+        }
+        return v;
+      },
+      commit: v => q.setSetting.run('gateway_auth_style', v ?? null, Date.now()),
+    },
+    gateway_token: {
+      prepare: v => (v == null ? null : validateGatewayToken(v)),
+      commit: v => q.setSetting.run('gateway_token', v ?? null, Date.now()),
+    },
+    gateway_model_discovery: {
+      prepare: v => (v == null ? null : validateGatewayBool(v, 'gateway_model_discovery')),
+      commit: v => q.setSetting.run('gateway_model_discovery', v ?? null, Date.now()),
+    },
+    gateway_default: {
+      prepare: v => (v == null ? null : validateGatewayBool(v, 'gateway_default')),
+      commit: v => q.setSetting.run('gateway_default', v ?? null, Date.now()),
     },
   };
 
@@ -240,8 +409,18 @@ export function createSettings(ctx) {
       repo_transport: resolveRepoTransport(),
       browse_root: browseRootChoice(),
       fav_dirs: resolveFavDirs(),
+      // MASKED by construction — see resolveGateway. Never inline the raw
+      // gateway_token row here: this object is broadcast, not returned.
+      gateway: resolveGateway(),
     };
   }
 
-  return { setSettings, resolveSettings, browseRootChoice, persistRepoTransport };
+  // resolveGatewayEnv is deliberately NOT part of resolveSettings and has
+  // exactly one caller (spawns.mjs, on the launch path). Keeping it a separate
+  // export is the structural reason a future edit to the settings view cannot
+  // accidentally start serializing the credential.
+  return {
+    setSettings, resolveSettings, browseRootChoice, persistRepoTransport,
+    resolveGateway, resolveGatewayEnv,
+  };
 }

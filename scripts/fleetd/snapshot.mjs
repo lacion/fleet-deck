@@ -116,6 +116,10 @@ export function createSnapshot(ctx) {
             stalled: sp.status === 'stalled', // watchdog chip ("never registered")
             skip_permissions: !!sp.skip_permissions, // v1.3 unsupervised chip
             remote: { enabled: !!sp.remote_control, url: sp.remote_url ?? null },
+            // Which provider is serving this pane. A boolean, never the profile:
+            // the card needs a badge, and the gateway's URL/credential are not
+            // the card's business (see settings.mjs's masking note).
+            gateway: !!sp.gateway,
             requested_branch: sp.requested_branch ?? null,
             branch_mode: sp.branch_mode ?? null,
             // Snapshot cost is intentionally uncached: two existsSync calls

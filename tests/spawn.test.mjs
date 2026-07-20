@@ -307,6 +307,12 @@ test('argv construction: prompt/model/permission-mode survive intact through the
     'FLEETDECK_RC_HARVEST_MS',
     'FLEETDECK_ADOPT_ARM_MS', 'FLEETDECK_ADOPT_DELAY_MS',
     'FLEETDECK_TEST_DAEMON_SCRIPT', 'FLEETDECK_VERSION_OVERRIDE',
+    // 0.15.0 LLM gateway: a pane's provider must come from the spawn, never
+    // from an ambient export the daemon happened to inherit. This spawn asked
+    // for no gateway, so ALL FOUR stay scrubbed — the `keep` exemption in
+    // claudeEnvArgvPrefix applies only to variables a gateway spawn supplies.
+    'ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY',
+    'CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY',
   ];
   const expectedPrefix = [
     'env', ...scrub.flatMap(name => ['-u', name]),

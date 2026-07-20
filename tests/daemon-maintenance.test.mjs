@@ -97,6 +97,9 @@ test('spawn argv is deterministic and registration watchdog stalls once, then a 
     'FLEETDECK_RC_HARVEST_MS',
     'FLEETDECK_ADOPT_ARM_MS', 'FLEETDECK_ADOPT_DELAY_MS',
     'FLEETDECK_TEST_DAEMON_SCRIPT', 'FLEETDECK_VERSION_OVERRIDE',
+    // 0.15.0 LLM gateway — see the identical note in spawn.test.mjs.
+    'ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY',
+    'CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY',
   ];
   const prefix = ['env', ...scrub.flatMap(v => ['-u', v]), `FLEETDECK_PORT=${port}`, `FLEETDECK_HOME=${home}`];
   assert.deepEqual(state.argv.slice(0, prefix.length), prefix);

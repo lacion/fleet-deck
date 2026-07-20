@@ -13,7 +13,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CLAUDE_ENV_MARKERS } from './fleetd/env-scrub.mjs';
+import { CLAUDE_ENV_MARKERS, GATEWAY_ENV_VARS } from './fleetd/env-scrub.mjs';
 // Version-takeover contract, imported as SOURCE from the sibling fleetd/ dir
 // (same unbundled pattern as env-scrub.mjs above) so this hook can evict a
 // strictly-older daemon and let the newest installed build own the port.
@@ -105,6 +105,13 @@ function bootEnv() {
   const env = { ...process.env, FLEETDECK_PORT: String(PORT), FLEETDECK_HOME: HOME };
   for (const k of [
     ...CLAUDE_ENV_MARKERS, 'TMUX', 'TMUX_PANE',
+    // LLM-gateway routing: the daemon never calls an Anthropic API itself, so it
+    // has no use for these — but its environment SEEDS any tmux server it
+    // creates, and that server's global env reaches every pane. Dropping them
+    // here keeps an ambient gateway out of the server in the first place; the
+    // pane-level `env -u` in claudeEnvArgvPrefix is the load-bearing guarantee,
+    // this is the belt to its braces.
+    ...GATEWAY_ENV_VARS,
     // Test seams stop HERE: the hook itself may honor them (that's what tests
     // drive), but they must never ride the daemon's env into a tmux server's
     // global env and come back through a pane's SessionStart (the 2026-07-11

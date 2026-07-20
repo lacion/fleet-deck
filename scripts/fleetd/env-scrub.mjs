@@ -16,3 +16,27 @@ export const CLAUDE_ENV_MARKERS = [
   'CLAUDE_EFFORT', 'AI_AGENT', 'CODEX_COMPANION_TRANSCRIPT_PATH',
   'CODEX_COMPANION_SESSION_ID',
 ];
+
+// The LLM-gateway variables (0.15.0). Claude Code reads these to route its API
+// traffic somewhere other than Anthropic — a local CLIProxyAPI, a corporate
+// gateway, anything Anthropic-compatible. Fleet Deck now OWNS them per spawn
+// (the `gateway` flag → settings.mjs resolveGatewayEnv), which means a pane must
+// never also inherit an ambient copy: whether a session bills your Anthropic
+// account or a proxy is not something to decide by accident.
+//
+// The accident was real before this list existed. The SessionStart hook boots
+// the daemon from whatever shell the human happened to be in, tmux bakes that
+// first client's environment into the SERVER's global env, and every later pane
+// inherits it — so exporting ANTHROPIC_BASE_URL once, in one terminal, silently
+// rerouted every board-spawned session on the machine for as long as that tmux
+// server lived (the 2026-07-11 env-poisoning scar, new tenants). Scrubbing here
+// makes the pane's routing exactly what the spawn asked for and nothing else.
+//
+// Both credential variables are listed because Claude Code sends them in
+// DIFFERENT headers — ANTHROPIC_AUTH_TOKEN as `Authorization: Bearer …`,
+// ANTHROPIC_API_KEY as `x-api-key` — so a stale one of either kind is a live
+// credential leaking into a pane that did not ask for it.
+export const GATEWAY_ENV_VARS = [
+  'ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY',
+  'CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY',
+];
