@@ -81,6 +81,15 @@ function deniedName(name) {
   return CREDENTIAL_SEGMENTS.has(String(name).toLowerCase());
 }
 
+// 0.16.0: the same rule applied to a RELATIVE path (search hits from either
+// backend): any denied segment, or .docker/config.json specifically.
+function deniedRelPath(rel) {
+  const segs = String(rel).toLowerCase().split(/[\\/]/);
+  if (segs.some(s => CREDENTIAL_SEGMENTS.has(s))) return true;
+  const dockerAt = segs.indexOf('.docker');
+  return dockerAt !== -1 && segs[dockerAt + 1] === 'config.json';
+}
+
 // Pure lexical containment. Callers perform the realpath checks appropriate to
 // their operation (the target for list, and the parent before a file open).
 export function safeJoin(realRoot, relPath) {
@@ -336,8 +345,12 @@ async function gitSearch(root, q, mode, deadline) {
       cwd: root, timeoutMs: remaining(), maxBytes: SEARCH_OUTPUT_MAX,
     });
     const needle = q.toLocaleLowerCase();
+    // 0.16.0: the denylist gates fs/read on the same paths, so a TRACKED
+    // credential file (an accidentally committed .ssh/deploy_key,
+    // .aws/credentials) must not ride the git backend around it.
     const matches = out.stdout.toString('utf8').split('\0').filter(Boolean)
-      .filter(name => name.toLocaleLowerCase().includes(needle));
+      .filter(name => name.toLocaleLowerCase().includes(needle))
+      .filter(name => !deniedRelPath(name));
     return {
       hits: matches.slice(0, SEARCH_HITS).map(file => ({ path: file })),
       truncated: out.truncated || out.code !== 0 || matches.length > SEARCH_HITS,
@@ -355,6 +368,7 @@ async function gitSearch(root, q, mode, deadline) {
     });
   }
   const parsed = parseGitGrep(out.stdout, SEARCH_HITS);
+  parsed.hits = parsed.hits.filter(h => !deniedRelPath(h.path));
   return {
     hits: parsed.hits,
     truncated: out.truncated || (out.code !== 0 && out.code !== 1) || parsed.overflow,
@@ -387,7 +401,7 @@ async function walkSearch(root, q, mode, deadline) {
     try { names = fs.readdirSync(current.dir).sort((a, b) => a.localeCompare(b)); } catch { continue; }
     for (let i = names.length - 1; i >= 0; i -= 1) {
       const name = names[i];
-      if (name === '.git') continue;
+      if (name.toLowerCase() === '.git') continue;
       // 0.16.0: the search walker never runs validateRelPath per entry, so the
       // credential denylist must filter HERE — otherwise fs/search?mode=content
       // reads ~/.aws and friends even though fs/read refuses them.
@@ -461,7 +475,7 @@ export function createFiles(ctx) {
       const real = realpathInside(root, abs);
       const own = fs.lstatSync(abs);
       if (!own.isDirectory() || own.isSymbolicLink()) throw new PathError(404, 'not found');
-      const names = fs.readdirSync(real).filter(name => name !== '.git' && !deniedName(name));
+      const names = fs.readdirSync(real).filter(name => name.toLowerCase() !== '.git' && !deniedName(name));
       const truncated = names.length > LIST_MAX;
       const entries = [];
       for (const name of names) {
@@ -494,7 +508,16 @@ export function createFiles(ctx) {
     try {
       const abs = safeJoin(root, relPath);
       if (abs === root) return { status: 404, body: { ok: false, reason: 'is a directory' } };
-      realpathInside(root, path.dirname(abs));
+      const realParent = realpathInside(root, path.dirname(abs));
+      // 0.16.0 (second review): the realpath segment check inside
+      // realpathInside sees the PARENT, so its basename-qualified
+      // .docker/config.json rule can never fire here — a symlink parent
+      // (dl -> ~/.docker) would serve the registry credentials. Re-check with
+      // the filename the parent check never sees.
+      if (path.basename(abs).toLowerCase() === 'config.json'
+        && realParent.toLowerCase().split(path.sep).includes('.docker')) {
+        throw new PathError(404, 'not found');
+      }
       let lst;
       try { lst = fs.lstatSync(abs); } catch { throw new PathError(404, 'not found'); }
       if (lst.isDirectory()) return { status: 404, body: { ok: false, reason: 'is a directory' } };

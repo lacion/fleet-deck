@@ -154,8 +154,11 @@ export function cleanup() {
 // omitted (the default) means the revived agent inherits whatever the dead
 // spawn had — today the daemon always inherits and ignores the override, so
 // this is forward-compat plumbing, not a live affordance.
-export function reviveSpawn(spawnId, remoteControl) {
+export function reviveSpawn(spawnId, remoteControl, armToken) {
   const body = typeof remoteControl === 'boolean' ? { remote_control: remoteControl } : {};
+  // 0.16.0: reviving an unsupervised lineage passes the daemon's arm gate, so
+  // the board mints one up front (see useSpawnActions).
+  if (armToken) body.arm_token = armToken;
   return post(`/api/spawn/${encodeURIComponent(spawnId)}/revive`, body);
 }
 

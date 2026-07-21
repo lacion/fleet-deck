@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
-import { reviveSpawn, enableRemote, adoptSession, reasonOf } from './api.js';
+import { reviveSpawn, enableRemote, adoptSession, reasonOf, armUnsupervised } from './api.js';
 
 // M-F2 — revive and enable-remote used to be implemented TWICE: once on the
 // card chip (App) and once in the drawer's OWNED PANE (Drawer), each with its
@@ -34,20 +34,33 @@ export function useSpawnActions() {
   const [revivingAll, setRevivingAll] = useState(false);
   const [adopting, setAdopting] = useState(() => new Set());
 
+  // 0.16.0: a revive of an unsupervised lineage passes the daemon's arm gate
+  // (the 60s arm must never become a permanent replayable capability), so the
+  // board mints a fresh arm token before reviving a skip_permissions row. The
+  // click IS the human's confirmation — the same proof the spawn form's red
+  // two-step collects.
+  const armFor = useCallback(async (s) => {
+    if (!s?.spawn?.skip_permissions) return null;
+    try {
+      const res = await armUnsupervised();
+      return res.ok && res.json?.arm_token ? res.json.arm_token : null;
+    } catch { return null; }
+  }, []);
+
   const revive = useCallback(async (s, onResult) => {
     const id = s?.spawn?.spawn_id;
     if (!id || revRef.current.has(id)) return;
     revRef.current.add(id);
     setReviving(new Set(revRef.current));
     try {
-      const res = await reviveSpawn(id);
+      const res = await reviveSpawn(id, undefined, await armFor(s));
       const ok = res.ok && res.json?.ok !== false;
       onResult?.(ok ? { ok: true } : { ok: false, reason: reasonOf(res) });
     } finally {
       revRef.current.delete(id);
       setReviving(new Set(revRef.current));
     }
-  }, []);
+  }, [armFor]);
 
   // Revive-all: sequential POSTs (one summary result). Each id joins the shared
   // in-flight set so its own card chip reads "reviving…" too.
@@ -77,7 +90,7 @@ export function useSpawnActions() {
     for (const s of mine) {
       const id = s.spawn.spawn_id;
       const label = s.callsign || id;
-      const res = await reviveSpawn(id);
+      const res = await reviveSpawn(id, undefined, await armFor(s));
       if (res.ok && res.json?.ok !== false) okN += 1;
       else fails.push(`${label}: ${reasonOf(res)}`);
       revRef.current.delete(id); // only ids this bulk locked ever reach here

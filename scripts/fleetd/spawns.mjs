@@ -250,6 +250,7 @@ export function createSpawns(ctx) {
         // screen. Hold instead; the human's own Enter always works.
         if (typeof screen !== 'string' || screen.trim() === '') {
           logEvent(row.session_id, 'SpawnNudge', null, 'pane unreadable — bring-up Enter held');
+          updateSession(row.session_id, { note: 'no bring-up keystroke sent — pane unreadable; check the terminal' });
           tick(`🔒 ${callsign} needs a look — no bring-up keystroke sent`);
           onMutate();
           return;
@@ -569,7 +570,7 @@ export function createSpawns(ctx) {
     // original casing (the CLI's own spelling is what argv carries); a cased
     // bypass is gated, then canonicalized so gate and launch can never drift;
     // anything else 400s rather than handing the CLI a mode we never vetted.
-    const PERMISSION_MODES = new Set(['default', 'acceptedits', 'plan', 'bypasspermissions', 'dontask', 'auto']);
+    const PERMISSION_MODES = new Set(['default', 'acceptedits', 'plan', 'bypasspermissions']);
     if (body?.permission_mode != null) {
       const lower = String(body.permission_mode).toLowerCase();
       if (!PERMISSION_MODES.has(lower)) {

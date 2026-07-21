@@ -825,7 +825,7 @@ export function createHttp(core, {
               // dangerously_skip_permissions: bool and permission_mode
               // "bypassPermissions" (validated/applied in derive.spawn too).
               logExec(url.pathname, req,
-                (ev?.dangerously_skip_permissions === true || ev?.permission_mode === 'bypassPermissions')
+                (ev?.dangerously_skip_permissions === true || (typeof ev?.permission_mode === 'string' && ev.permission_mode.toLowerCase() === 'bypasspermissions'))
                   ? ' unsupervised=true' : ' unsupervised=false');
               core.spawn(ev)
                 .then(out => json(res, out.status, out.body))
@@ -873,7 +873,7 @@ export function createHttp(core, {
               // (404/400/409/410) lives in derive; the CSRF/Host walls above
               // apply automatically like every other control POST.
               logExec(url.pathname, req,
-                (ev?.dangerously_skip_permissions === true || ev?.permission_mode === 'bypassPermissions')
+                (ev?.dangerously_skip_permissions === true || (typeof ev?.permission_mode === 'string' && ev.permission_mode.toLowerCase() === 'bypasspermissions'))
                   ? ' unsupervised=true' : ' unsupervised=false');
               core.adoptSession(adoptMatch[1], ev ?? {})
                 .then(out => json(res, out.status, out.body))

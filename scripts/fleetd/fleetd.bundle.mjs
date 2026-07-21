@@ -6319,6 +6319,12 @@ var CREDENTIAL_SEGMENTS = /* @__PURE__ */ new Set([".ssh", ".aws", ".gnupg", ".n
 function deniedName(name) {
   return CREDENTIAL_SEGMENTS.has(String(name).toLowerCase());
 }
+function deniedRelPath(rel) {
+  const segs = String(rel).toLowerCase().split(/[\\/]/);
+  if (segs.some((s) => CREDENTIAL_SEGMENTS.has(s))) return true;
+  const dockerAt = segs.indexOf(".docker");
+  return dockerAt !== -1 && segs[dockerAt + 1] === "config.json";
+}
 function safeJoin(realRoot, relPath) {
   validateRelPath(relPath);
   const abs = path6.resolve(realRoot, relPath || ".");
@@ -6559,7 +6565,7 @@ async function gitSearch(root, q, mode, deadline) {
       maxBytes: SEARCH_OUTPUT_MAX
     });
     const needle = q.toLocaleLowerCase();
-    const matches = out2.stdout.toString("utf8").split("\0").filter(Boolean).filter((name) => name.toLocaleLowerCase().includes(needle));
+    const matches = out2.stdout.toString("utf8").split("\0").filter(Boolean).filter((name) => name.toLocaleLowerCase().includes(needle)).filter((name) => !deniedRelPath(name));
     return {
       hits: matches.slice(0, SEARCH_HITS).map((file) => ({ path: file })),
       truncated: out2.truncated || out2.code !== 0 || matches.length > SEARCH_HITS
@@ -6580,6 +6586,7 @@ async function gitSearch(root, q, mode, deadline) {
     });
   }
   const parsed = parseGitGrep(out.stdout, SEARCH_HITS);
+  parsed.hits = parsed.hits.filter((h) => !deniedRelPath(h.path));
   return {
     hits: parsed.hits,
     truncated: out.truncated || out.code !== 0 && out.code !== 1 || parsed.overflow
@@ -6612,7 +6619,7 @@ async function walkSearch(root, q, mode, deadline) {
     }
     for (let i = names.length - 1; i >= 0; i -= 1) {
       const name = names[i];
-      if (name === ".git") continue;
+      if (name.toLowerCase() === ".git") continue;
       if (deniedName(name)) continue;
       if (++visited > WALK_ENTRY_MAX || Date.now() >= deadline) {
         truncated = true;
@@ -6693,7 +6700,7 @@ function createFiles(ctx) {
       const real = realpathInside(root, abs);
       const own = fs8.lstatSync(abs);
       if (!own.isDirectory() || own.isSymbolicLink()) throw new PathError(404, "not found");
-      const names = fs8.readdirSync(real).filter((name) => name !== ".git" && !deniedName(name));
+      const names = fs8.readdirSync(real).filter((name) => name.toLowerCase() !== ".git" && !deniedName(name));
       const truncated = names.length > LIST_MAX;
       const entries = [];
       for (const name of names) {
@@ -6733,7 +6740,10 @@ function createFiles(ctx) {
     try {
       const abs = safeJoin(root, relPath);
       if (abs === root) return { status: 404, body: { ok: false, reason: "is a directory" } };
-      realpathInside(root, path6.dirname(abs));
+      const realParent = realpathInside(root, path6.dirname(abs));
+      if (path6.basename(abs).toLowerCase() === "config.json" && realParent.toLowerCase().split(path6.sep).includes(".docker")) {
+        throw new PathError(404, "not found");
+      }
       let lst;
       try {
         lst = fs8.lstatSync(abs);
@@ -7595,6 +7605,7 @@ function createSpawns(ctx) {
         }
         if (typeof screen !== "string" || screen.trim() === "") {
           logEvent(row.session_id, "SpawnNudge", null, "pane unreadable \u2014 bring-up Enter held");
+          updateSession(row.session_id, { note: "no bring-up keystroke sent \u2014 pane unreadable; check the terminal" });
           tick(`\u{1F512} ${callsign} needs a look \u2014 no bring-up keystroke sent`);
           onMutate();
           return;
@@ -7858,7 +7869,7 @@ function createSpawns(ctx) {
     if (hasRepo && hasCwd) {
       return { status: 400, body: { ok: false, reason: "provide either cwd or repo, not both" } };
     }
-    const PERMISSION_MODES = /* @__PURE__ */ new Set(["default", "acceptedits", "plan", "bypasspermissions", "dontask", "auto"]);
+    const PERMISSION_MODES = /* @__PURE__ */ new Set(["default", "acceptedits", "plan", "bypasspermissions"]);
     if (body?.permission_mode != null) {
       const lower = String(body.permission_mode).toLowerCase();
       if (!PERMISSION_MODES.has(lower)) {
@@ -10936,7 +10947,7 @@ function createHttp(core2, {
               logExec(
                 url.pathname,
                 req,
-                ev?.dangerously_skip_permissions === true || ev?.permission_mode === "bypassPermissions" ? " unsupervised=true" : " unsupervised=false"
+                ev?.dangerously_skip_permissions === true || typeof ev?.permission_mode === "string" && ev.permission_mode.toLowerCase() === "bypasspermissions" ? " unsupervised=true" : " unsupervised=false"
               );
               core2.spawn(ev).then((out) => json(res, out.status, out.body)).catch((err) => {
                 console.error("fleetd spawn error:", err);
@@ -10967,7 +10978,7 @@ function createHttp(core2, {
               logExec(
                 url.pathname,
                 req,
-                ev?.dangerously_skip_permissions === true || ev?.permission_mode === "bypassPermissions" ? " unsupervised=true" : " unsupervised=false"
+                ev?.dangerously_skip_permissions === true || typeof ev?.permission_mode === "string" && ev.permission_mode.toLowerCase() === "bypasspermissions" ? " unsupervised=true" : " unsupervised=false"
               );
               core2.adoptSession(adoptMatch[1], ev ?? {}).then((out) => json(res, out.status, out.body)).catch((err) => {
                 console.error("fleetd adopt error:", err);
