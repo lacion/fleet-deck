@@ -80,14 +80,16 @@ test('nudge holds on a trust dialog: no Enter, board says waiting', { skip: !tmu
   const { spawn_id, tmux: { session, window } } = res.json;
 
   // Build the pane the daemon believes it launched: scoped session, scoped
-  // window name, `cat` echoing a trust dialog.
+  // window name. The pane process must SURVIVE the nudge window — `cat` would
+  // exit on EOF after echoing and the daemon would see pane_dead, so use a
+  // shell that prints the dialog and then sleeps forever.
   const socket = `fleetdeck-test-${daemon.port}`;
   try { tmux(socket, ['kill-server']); } catch { /* no prior server */ }
-  tmux(socket, ['new-session', '-d', '-s', session, '-x', '200', '-y', '50']);
-  tmux(socket, ['new-window', '-d', '-t', session, '-n', window, 'cat']);
+  try { tmux(socket, ['new-session', '-d', '-s', session, '-x', '200', '-y', '50']); } catch (e) {
+    throw new Error(`tmux new-session failed on ${socket}: ${e.message} (stderr: ${e.stderr?.toString?.() || 'n/a'})`);
+  }
+  tmux(socket, ['new-window', '-d', '-t', session, '-n', window, 'sh', '-c', `printf '%s\n' '${TRUST_SCREEN.replace(/'/g, `'\\''`)}'; sleep 3600`]);
   const target = `${session}:${window}`;
-  tmux(socket, ['send-keys', '-t', target, '-l', '--', TRUST_SCREEN]);
-  tmux(socket, ['send-keys', '-t', target, 'Enter']);
 
   // The nudge fires after NUDGE_MS. Assert: the card note says waiting, and
   // NO Enter was pressed (the trust screen's cursor line is unchanged — an
@@ -132,10 +134,8 @@ test('nudge presses Enter on an ordinary bring-up screen', { skip: !tmuxOk() && 
   const socket = `fleetdeck-test-${daemon.port}`;
   try { tmux(socket, ['kill-server']); } catch { /* no prior server */ }
   tmux(socket, ['new-session', '-d', '-s', session, '-x', '200', '-y', '50']);
-  tmux(socket, ['new-window', '-d', '-t', session, '-n', window, 'cat']);
+  tmux(socket, ['new-window', '-d', '-t', session, '-n', window, 'sh', '-c', "printf '%s\\n' 'some ordinary prompt text'; sleep 3600"]);
   const target = `${session}:${window}`;
-  tmux(socket, ['send-keys', '-t', target, '-l', '--', 'some ordinary prompt text']);
-  tmux(socket, ['send-keys', '-t', target, 'Enter']);
 
   await waitUntil(async () => {
     const state = (await getJson(`${daemon.baseUrl}/state`)).json;
