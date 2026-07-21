@@ -26,6 +26,12 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm test
+        # Shared-runner lanes are slow and noisy in exactly the way the macOS
+        # advisory lane is — every wait routes through the WAIT_SCALE knob
+        # (tests/helpers/wait.mjs), so give the Linux lanes the same headroom
+        # instead of tuning timeouts one flake at a time.
+        env:
+          FLEETDECK_TEST_WAIT_SCALE: 3
 
   bundle:
     runs-on: ubuntu-latest
@@ -43,6 +49,8 @@ jobs:
       - name: Fail if committed bundle is stale
         run: git diff --exit-code scripts/fleetd/fleetd.bundle.mjs
       - run: npm run test:bundle
+        env:
+          FLEETDECK_TEST_WAIT_SCALE: 3
 
   board:
     runs-on: ubuntu-latest
