@@ -8991,6 +8991,15 @@ function createEvents(ctx) {
     const { card: c } = applyEvent({ ...ev, hook_event_name: "SessionStart" });
     return { ok: true, callsign: c.callsign, brief: composeBrief(c) };
   }
+  function takeoverBriefLines(replacedVersion, legacy) {
+    const lines = [`[FLEETDECK] The fleet daemon was just upgraded (replacing v${replacedVersion}).`];
+    const n = legacy?.sessions?.length ?? 0;
+    if (n > 0) {
+      const names = legacy.sessions.slice(0, 8).map((s) => String(s).slice(0, 8)).join(", ");
+      lines.push(`[FLEETDECK] ${n} session(s) are still running pre-0.16.0 hooks (${names}${n > 8 ? ", \u2026" : ""}) \u2014 they are dark on the board until restarted. Tell the human: restart those sessions when convenient; the board tracks which are left.`);
+    }
+    return lines;
+  }
   function composeBrief(c) {
     const others = q.allSessions.all().filter((s) => s.session_id !== c.session_id && s.ended_at == null);
     const sameRepo = others.filter((s) => (s.repo_id ?? null) === (c.repo_id ?? null));
@@ -9168,7 +9177,8 @@ function createEvents(ctx) {
     hookPostToolUse,
     hookStop,
     hookSessionEnd,
-    hookHoldQuestion
+    hookHoldQuestion,
+    takeoverBriefLines
   };
 }
 
@@ -9935,7 +9945,8 @@ function createCore(db2, {
     hookPostToolUse,
     hookStop,
     hookSessionEnd,
-    hookHoldQuestion
+    hookHoldQuestion,
+    takeoverBriefLines
   } = ctx;
   Object.assign(ctx, createSnapshot(ctx));
   const { snapshot, fleetSize, terminalSpawn } = ctx;
@@ -9958,6 +9969,8 @@ function createCore(db2, {
     hookStop,
     hookSessionEnd,
     hookHoldQuestion,
+    takeoverBriefLines,
+    // 0.16.0 upgrade banner lines for the takeover SessionStart brief
     questions,
     // F3 relay surface: attachHold / socketClosed / answer / …
     addWatchWaiter,
@@ -10587,7 +10600,7 @@ function createHttp(core2, {
 }) {
   const lanInfo = lan?.enabled ? { enabled: true, urls: lan.urls ?? [], mdns: lan.mdns ?? null } : { enabled: false, urls: [] };
   function snapshotWithLan() {
-    return { ...core2.snapshot(), lan: lanInfo };
+    return { ...core2.snapshot(), lan: lanInfo, legacy_upgrade: legacyBanner() };
   }
   function json(res, code, obj) {
     const body = JSON.stringify(obj);
@@ -10625,10 +10638,27 @@ function createHttp(core2, {
     return pathname === "/mail" || pathname === "/api/spawn/arm-unsupervised";
   }
   const legacyWhisperedSessions = /* @__PURE__ */ new Set();
+  const legacySessions = /* @__PURE__ */ new Set();
+  const upgradedSessions = /* @__PURE__ */ new Set();
+  function noteLegacySession(sid) {
+    if (typeof sid !== "string" || !sid || sid === "unknown") return;
+    if (upgradedSessions.has(sid)) return;
+    legacySessions.add(sid);
+  }
+  function noteUpgradedSession(sid) {
+    if (typeof sid !== "string" || !sid || sid === "unknown") return;
+    if (upgradedSessions.has(sid)) return;
+    upgradedSessions.add(sid);
+    legacySessions.delete(sid);
+  }
+  function legacyBanner() {
+    return { sessions: [...legacySessions], upgraded: upgradedSessions.size };
+  }
   const LEGACY_WHISPER = "[FLEETDECK] This session is running pre-0.16.0 hooks and is no longer reaching the fleet daemon (hook calls now require a token). Tell the human: please RESTART this Claude session \u2014 after the restart it reconnects to the board automatically.";
   const LEGACY_BLOCK_REASON = "[FLEETDECK] This session is running pre-0.16.0 hooks and cannot reach the fleet daemon. Stop and tell the human NOW: restart this Claude session (exit and relaunch in the same directory). Do not continue the current task until the human acknowledges \u2014 the session is running without fleet oversight.";
   function legacyHookResponse(res, ev, name) {
     const sid = typeof ev?.session_id === "string" ? ev.session_id : null;
+    noteLegacySession(sid);
     if (name === "Stop" && sid && !legacyWhisperedSessions.has(sid)) {
       legacyWhisperedSessions.add(sid);
       return json(res, 200, { decision: "block", reason: LEGACY_BLOCK_REASON });
@@ -10720,7 +10750,16 @@ function createHttp(core2, {
     console.error(`fleetd exec ${route} from ${from} proxied=${arrivedViaTrustedProxy(req)}${extra}`);
   }
   const hookHandlers = {
-    SessionStart: (ev) => core2.hookSessionStart(ev),
+    // 0.16.0: the hook that may have just performed the version takeover gets
+    // the upgrade lines appended — the human who started THAT session hears
+    // about every other session still needing a restart (see fleet-sessionstart).
+    SessionStart: (ev) => {
+      const out = core2.hookSessionStart(ev);
+      if (ev?.fleet_takeover && out && typeof out === "object") {
+        out.upgrade_lines = core2.takeoverBriefLines(ev.fleet_takeover, legacyBanner());
+      }
+      return out;
+    },
     UserPromptSubmit: (ev) => core2.hookUserPromptSubmit(ev),
     PostToolUse: (ev) => core2.hookPostToolUse(ev),
     PreToolUse: (ev) => core2.hookPostToolUse(ev),
@@ -10899,6 +10938,7 @@ function createHttp(core2, {
             if (hook) {
               const name = hook[1];
               if (!hookAuthed) return legacyHookResponse(res, ev, name);
+              noteUpgradedSession(ev?.session_id);
               try {
                 capture(name, ev);
               } catch {

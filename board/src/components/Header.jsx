@@ -10,7 +10,7 @@ const WS_LABEL = { live: 'LIVE', reconnecting: 'RECONNECTING', offline: 'OFFLINE
 // every button is a callback prop, so the header holds no business logic beyond
 // the scroll-to-inbox handle it reads from qbus.
 export default function Header({
-  status, stale, pendingQs, liveN, conflictCount, version, now,
+  status, stale, pendingQs, liveN, conflictCount, version, now, legacyUpgrade,
   onCompose,
   termableSessions, watchable, termBtnRef, onOpenGrid,
   spawnAvailable, spawnActive, onSpawn,
@@ -21,6 +21,7 @@ export default function Header({
   compact, onToggleCompact,
   theme, onToggleTheme,
 }) {
+  const legacyN = legacyUpgrade?.sessions?.length ?? 0;
   return (
     <div className="fd-header">
       <div className="fd-wordmark">FLEET&nbsp;DECK&nbsp;⚡</div>
@@ -29,6 +30,17 @@ export default function Header({
         {WS_LABEL[status]}
       </div>
       {stale && <div className="fd-stale">showing last known state</div>}
+      {/* 0.16.0 — sessions still running pre-upgrade hooks. The count shrinks
+          to zero on its own as each is restarted (its first authenticated hook
+          clears it server-side), and the banner disappears with it. */}
+      {legacyN > 0 && (
+        <div
+          className="fd-needschip fd-legacychip"
+          title={`${legacyN} session(s) are running pre-0.16.0 hooks and are dark on this board — restart each one in its terminal to reconnect.${legacyUpgrade?.upgraded ? ` ${legacyUpgrade.upgraded} already reconnected.` : ''}`}
+        >
+          ⬆ RESTART {legacyN} SESSION{legacyN === 1 ? '' : 'S'}
+        </div>
+      )}
       {pendingQs.length > 0 && (
         <button
           type="button"

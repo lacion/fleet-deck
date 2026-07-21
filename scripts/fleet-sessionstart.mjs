@@ -229,7 +229,12 @@ async function ensureServer() {
 try {
   const payload = await readStdin();
   payload.hook_event_name = payload.hook_event_name || 'SessionStart';
-  if (await ensureServer()) {
+  const serverUp = await ensureServer();
+  // 0.16.0: if THIS hook evicted an older daemon, say so on the registration —
+  // the daemon answers with upgrade lines (which other sessions still run
+  // pre-upgrade hooks) so the human hears it from the session that caused it.
+  if (replacedVersion) payload.fleet_takeover = replacedVersion;
+  if (serverUp) {
     const reg = await api('/hook/SessionStart', { method: 'POST', body: payload, timeout: 1200 });
     if (managedVersionDrift) {
       process.stdout.write(
@@ -237,6 +242,9 @@ try {
         + `but this plugin is v${ownVersion()}. The service owns the port and was left running. `
         + `Restart it to pick up the new version.\n`,
       );
+    }
+    if (Array.isArray(reg?.upgrade_lines)) {
+      for (const line of reg.upgrade_lines) process.stdout.write(`${line}\n`);
     }
     if (reg?.brief) process.stdout.write(reg.brief);
   }

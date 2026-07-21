@@ -655,7 +655,7 @@ export function createCore(db, {
   Object.assign(ctx, createEvents(ctx));
   const {
     applyEvent, hookSessionStart, hookUserPromptSubmit, hookPostToolUse,
-    hookStop, hookSessionEnd, hookHoldQuestion,
+    hookStop, hookSessionEnd, hookHoldQuestion, takeoverBriefLines,
   } = ctx;
 
   // /state snapshot + fleetSize + live-terminal resolver → snapshot.mjs.
@@ -686,6 +686,7 @@ export function createCore(db, {
     hookStop,
     hookSessionEnd,
     hookHoldQuestion,
+    takeoverBriefLines, // 0.16.0 upgrade banner lines for the takeover SessionStart brief
     questions, // F3 relay surface: attachHold / socketClosed / answer / …
     addWatchWaiter,  // F3d-2 watch surface (GET /api/watch v2)
     // hasWatchWaiter is used only INTERNALLY (mail routing + snapshot); no

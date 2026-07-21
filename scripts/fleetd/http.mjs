@@ -195,7 +195,7 @@ export function createHttp(core, {
     : { enabled: false, urls: [] };
 
   function snapshotWithLan() {
-    return { ...core.snapshot(), lan: lanInfo };
+    return { ...core.snapshot(), lan: lanInfo, legacy_upgrade: legacyBanner() };
   }
 
   function json(res, code, obj) {
@@ -316,10 +316,33 @@ export function createHttp(core, {
   // deliberately NOT distinguished: both get the same response, the whisper
   // carries no privileged data, and the request is always refused.
   const legacyWhisperedSessions = new Set();
+  // The board banner reads these: which sessions are running pre-0.16.0 hooks
+  // (still to restart) and which have already proven they're on the new shims
+  // (an authenticated hook arrived). A session moves from the first set to
+  // the second exactly once — its first authenticated hook — so the banner
+  // self-heals as the human restarts things. In-memory: a daemon restart
+  // simply re-learns both from the next hooks each session emits.
+  const legacySessions = new Set();
+  const upgradedSessions = new Set();
+  function noteLegacySession(sid) {
+    if (typeof sid !== 'string' || !sid || sid === 'unknown') return;
+    if (upgradedSessions.has(sid)) return;
+    legacySessions.add(sid);
+  }
+  function noteUpgradedSession(sid) {
+    if (typeof sid !== 'string' || !sid || sid === 'unknown') return;
+    if (upgradedSessions.has(sid)) return;
+    upgradedSessions.add(sid);
+    legacySessions.delete(sid);
+  }
+  function legacyBanner() {
+    return { sessions: [...legacySessions], upgraded: upgradedSessions.size };
+  }
   const LEGACY_WHISPER = '[FLEETDECK] This session is running pre-0.16.0 hooks and is no longer reaching the fleet daemon (hook calls now require a token). Tell the human: please RESTART this Claude session — after the restart it reconnects to the board automatically.';
   const LEGACY_BLOCK_REASON = '[FLEETDECK] This session is running pre-0.16.0 hooks and cannot reach the fleet daemon. Stop and tell the human NOW: restart this Claude session (exit and relaunch in the same directory). Do not continue the current task until the human acknowledges — the session is running without fleet oversight.';
   function legacyHookResponse(res, ev, name) {
     const sid = typeof ev?.session_id === 'string' ? ev.session_id : null;
+    noteLegacySession(sid);
     if (name === 'Stop' && sid && !legacyWhisperedSessions.has(sid)) {
       legacyWhisperedSessions.add(sid);
       return json(res, 200, { decision: 'block', reason: LEGACY_BLOCK_REASON });
@@ -460,7 +483,16 @@ export function createHttp(core, {
   // table (Phase 3/4 hold-open relay — the response is parked, see the hook
   // branch below).
   const hookHandlers = {
-    SessionStart: ev => core.hookSessionStart(ev),
+    // 0.16.0: the hook that may have just performed the version takeover gets
+    // the upgrade lines appended — the human who started THAT session hears
+    // about every other session still needing a restart (see fleet-sessionstart).
+    SessionStart: ev => {
+      const out = core.hookSessionStart(ev);
+      if (ev?.fleet_takeover && out && typeof out === 'object') {
+        out.upgrade_lines = core.takeoverBriefLines(ev.fleet_takeover, legacyBanner());
+      }
+      return out;
+    },
     UserPromptSubmit: ev => core.hookUserPromptSubmit(ev),
     PostToolUse: ev => core.hookPostToolUse(ev),
     PreToolUse: ev => core.hookPostToolUse(ev), // same derivation branch as the spike
@@ -765,6 +797,7 @@ export function createHttp(core, {
               // below may ingest, hold, or derive from it — and answered with
               // the restart whisper (see legacyHookResponse).
               if (!hookAuthed) return legacyHookResponse(res, ev, name);
+              noteUpgradedSession(ev?.session_id);
               // payload capture (validation aid): first 3 raw payloads per
               // hook event name, best-effort, never affects the response
               try { capture(name, ev); } catch { /* best-effort */ }

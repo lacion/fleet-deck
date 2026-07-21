@@ -362,6 +362,21 @@ export function createEvents(ctx) {
     return { ok: true, callsign: c.callsign, brief: composeBrief(c) };
   }
 
+  // 0.16.0: fleet-sessionstart.mjs reports the takeover it performed, so the
+  // brief for THAT session can tell the human the rest of the fleet needs
+  // restarts too. Counts come from http.mjs's legacy-tracking sets, but
+  // derive owns the brief, so the daemon hands a probe through createCore's
+  // options (see fleetd.mjs).
+  function takeoverBriefLines(replacedVersion, legacy) {
+    const lines = [`[FLEETDECK] The fleet daemon was just upgraded (replacing v${replacedVersion}).`];
+    const n = legacy?.sessions?.length ?? 0;
+    if (n > 0) {
+      const names = legacy.sessions.slice(0, 8).map(s => String(s).slice(0, 8)).join(', ');
+      lines.push(`[FLEETDECK] ${n} session(s) are still running pre-0.16.0 hooks (${names}${n > 8 ? ', …' : ''}) — they are dark on the board until restarted. Tell the human: restart those sessions when convenient; the board tracks which are left.`);
+    }
+    return lines;
+  }
+
   function composeBrief(c) {
     const others = q.allSessions.all()
       .filter(s => s.session_id !== c.session_id && s.ended_at == null);
@@ -634,6 +649,6 @@ export function createEvents(ctx) {
 
   return {
     applyEvent, hookSessionStart, hookUserPromptSubmit, hookPostToolUse,
-    hookStop, hookSessionEnd, hookHoldQuestion,
+    hookStop, hookSessionEnd, hookHoldQuestion, takeoverBriefLines,
   };
 }

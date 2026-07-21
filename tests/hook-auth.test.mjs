@@ -115,6 +115,65 @@ test('forged /clear succession graft is refused tokenless', async (t) => {
   assert.ok(!after.sessions.find(s => s.session_id === heir), 'forged heir never got a card');
 });
 
+test('the banner tracks legacy sessions and self-heals on their first authenticated hook', async (t) => {
+  const daemon = await startDaemon();
+  t.after(() => daemon.stop());
+
+  const sid = randomUUID();
+  const other = randomUUID();
+  const cwd = scratchCwd();
+  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+
+  // No legacy state before anything happens.
+  let state = (await getJson(`${daemon.baseUrl}/state`)).json;
+  assert.deepEqual(state.legacy_upgrade, { sessions: [], upgraded: 0 });
+
+  // Two sessions call tokenless → both listed.
+  await postHook(daemon.baseUrl, 'UserPromptSubmit', loadFixture('user-prompt-submit', { session_id: sid, cwd }));
+  await postHook(daemon.baseUrl, 'UserPromptSubmit', loadFixture('user-prompt-submit', { session_id: other, cwd }));
+  state = (await getJson(`${daemon.baseUrl}/state`)).json;
+  assert.deepEqual(new Set(state.legacy_upgrade.sessions), new Set([sid, other]), 'both legacy sessions listed');
+
+  // One restarts (its first AUTHENTICATED hook arrives) → it leaves the list
+  // and the reconnected count moves. The board banner shrinks on its own.
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon });
+  state = (await getJson(`${daemon.baseUrl}/state`)).json;
+  assert.deepEqual(state.legacy_upgrade.sessions, [other], 'restarted session cleared');
+  assert.equal(state.legacy_upgrade.upgraded, 1, 'reconnected count moved');
+
+  // A session that was never legacy just counts as upgraded.
+  const fresh = randomUUID();
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: fresh, cwd }), { token: daemon });
+  state = (await getJson(`${daemon.baseUrl}/state`)).json;
+  assert.equal(state.legacy_upgrade.upgraded, 2);
+  assert.deepEqual(state.legacy_upgrade.sessions, [other]);
+});
+
+test('a takeover registration carries the upgrade lines for the triggering session', async (t) => {
+  const daemon = await startDaemon();
+  t.after(() => daemon.stop());
+
+  const sid = randomUUID();
+  const cwd = scratchCwd();
+  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+
+  // A legacy session is outstanding when the takeover registration lands.
+  await postHook(daemon.baseUrl, 'UserPromptSubmit', loadFixture('user-prompt-submit', { session_id: sid, cwd }));
+
+  const reg = await postHook(daemon.baseUrl, 'SessionStart',
+    loadFixture('session-start', { session_id: randomUUID(), cwd }, { fleet_takeover: '0.15.0' }),
+    { token: daemon });
+  assert.equal(reg.status, 200);
+  assert.ok(Array.isArray(reg.json?.upgrade_lines), 'upgrade lines present on a takeover registration');
+  assert.match(reg.json.upgrade_lines.join('\n'), /0\.15\.0/, 'names the replaced version');
+  assert.match(reg.json.upgrade_lines.join('\n'), /1 session\(s\)/, 'counts the outstanding legacy sessions');
+
+  // No takeover flag → no upgrade lines (an ordinary SessionStart is unchanged).
+  const plain = await postHook(daemon.baseUrl, 'SessionStart',
+    loadFixture('session-start', { session_id: randomUUID(), cwd }), { token: daemon });
+  assert.equal(plain.json?.upgrade_lines ?? null, null);
+});
+
 test('a legacy session that keeps calling gets ONE blocking restart instruction, then only whispers', async (t) => {
   const daemon = await startDaemon();
   t.after(() => daemon.stop());

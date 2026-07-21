@@ -227,6 +227,7 @@ export default function App() {
         liveN={liveN}
         conflictCount={conflicts.length}
         version={snap.version}
+        legacyUpgrade={snap.legacy_upgrade}
         now={now}
         onCompose={() => setCompose({ target: 'all' })}
         termableSessions={termableSessions}
@@ -300,6 +301,7 @@ export default function App() {
               mailMeta={snap.mail_meta || EMPTY_OBJ}
               compact={compact}
               stale={stale}
+              legacyUpgrade={snap.legacy_upgrade}
               repoFilter={repoFilter}
               onRepoFilter={setRepoFilter}
               ripples={ripples}
