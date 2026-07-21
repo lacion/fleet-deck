@@ -648,7 +648,7 @@ export function createCore(db, {
   const {
     spawn, revive, adoptSession, enableRemote, spawnKill, spawnCapability,
     spawnLivenessTick, reconcileSpawns, reconcileClearForks,
-    scheduleRegistrationRemoteHarvest, forgetSpawn, spawnState,
+    scheduleRegistrationRemoteHarvest, forgetSpawn, spawnState, armUnsupervised,
   } = ctx;
 
   // Hook state machine (applyEvent + hook endpoints + brief + plan capture) → events.mjs.
@@ -708,6 +708,7 @@ export function createCore(db, {
     enableRemote,      // POST /api/spawn/:id/rc → {status, body}
     spawnKill,         // POST /api/spawn/:id/kill → {status, body}
     spawnCapability,   // /health + /state `spawn` object
+    armUnsupervised,   // POST /api/spawn/arm-unsupervised → one-time arm token
     spawnLivenessTick, // owned-pane liveness, rides the agents-poll cadence
     reconcileSpawns,   // fleetd boot: rows ↔ tmux windows
     reconcileClearForks, // fleetd boot: heal cards split by a /clear before 0.7.1

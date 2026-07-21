@@ -273,7 +273,7 @@ test('M-B3: POST body is byte-exact and byte-capped', async t => {
     const sid = randomUUID();
     const cwd = mkdtempSync(path.join(tmpdir(), 'fleetdeck-mb3-'));
     t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
-    const start = await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
+    const start = await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon });
     assert.equal(start.status, 200);
 
     // 'A☃B' — the snowman is 3 bytes (E2 98 83). Split the JSON body one byte

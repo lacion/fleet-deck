@@ -10,7 +10,7 @@
 // expected and not a bug in this harness.
 
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -163,10 +163,16 @@ export async function startDaemon({
     const detail = raw.stderr || raw.stdout || '(no output captured)';
     throw new Error(`${err.message}\n--- daemon output ---\n${detail}`);
   }
+  // 0.16.0: the daemon always mints/persists a token, and /hook/*, POST /mail,
+  // /ws/term and gateway_* writes now require it. Surface it on the handle so
+  // tests can act as the authenticated caller (postHook, postJson {token}).
+  let token = null;
+  try { token = readFileSync(path.join(home, 'token'), 'utf8').trim() || null; } catch { /* persist failure — gated routes will 401, as the daemon warned */ }
   return {
     port,
     home,
     baseUrl,
+    token,
     proc: raw.proc,
     get stdout() { return raw.stdout; },
     get stderr() { return raw.stderr; },

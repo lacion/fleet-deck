@@ -32,8 +32,8 @@ test('events from two worktrees of one repo collapse to one repo_id; cross-workt
   const sidRoot = randomUUID();
   const sidWt = randomUUID();
 
-  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sidRoot, cwd: repo.root }));
-  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sidWt, cwd: repo.worktree }));
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sidRoot, cwd: repo.root }), { token: daemon });
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sidWt, cwd: repo.worktree }), { token: daemon });
 
   let state = (await getJson(`${daemon.baseUrl}/state`)).json;
   const cardRoot = findSession(state, sidRoot);
@@ -49,10 +49,10 @@ test('events from two worktrees of one repo collapse to one repo_id; cross-workt
   // Cross-worktree collision on the same rel path -> severity "info".
   await postHook(daemon.baseUrl, 'PostToolUse', loadFixture('post-tool-use-edit', { session_id: sidRoot, cwd: repo.root }, {
     tool_input: { file_path: path.join(repo.root, 'shared.js'), old_string: 'a', new_string: 'b' },
-  }));
+  }), { token: daemon });
   const whisperRes = await postHook(daemon.baseUrl, 'PostToolUse', loadFixture('post-tool-use-edit', { session_id: sidWt, cwd: repo.worktree }, {
     tool_input: { file_path: path.join(repo.worktree, 'shared.js'), old_string: 'a', new_string: 'c' },
-  }));
+  }), { token: daemon });
   assert.ok(whisperRes.json?.hookSpecificOutput, 'editing the same rel path from another worktree should whisper');
 
   state = (await getJson(`${daemon.baseUrl}/state`)).json;
@@ -68,16 +68,16 @@ test('two sessions in the same worktree colliding is severity=warning', async (t
 
   const sidA = randomUUID();
   const sidB = randomUUID();
-  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sidA, cwd: repo.root }));
-  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sidB, cwd: repo.root }));
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sidA, cwd: repo.root }), { token: daemon });
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sidB, cwd: repo.root }), { token: daemon });
 
   const filePath = path.join(repo.root, 'same-worktree.js');
   await postHook(daemon.baseUrl, 'PostToolUse', loadFixture('post-tool-use-edit', { session_id: sidA, cwd: repo.root }, {
     tool_input: { file_path: filePath, old_string: 'a', new_string: 'b' },
-  }));
+  }), { token: daemon });
   const res = await postHook(daemon.baseUrl, 'PostToolUse', loadFixture('post-tool-use-edit', { session_id: sidB, cwd: repo.root }, {
     tool_input: { file_path: filePath, old_string: 'b', new_string: 'c' },
-  }));
+  }), { token: daemon });
   assert.ok(res.json?.hookSpecificOutput, 'same-worktree collision should whisper');
 
   const state = (await getJson(`${daemon.baseUrl}/state`)).json;
@@ -92,7 +92,7 @@ test('a non-git cwd falls back to repo_id = cwd', async (t) => {
   t.after(async () => { await daemon.stop(); plain.cleanup(); });
 
   const sid = randomUUID();
-  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd: plain.dir }));
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd: plain.dir }), { token: daemon });
 
   const state = (await getJson(`${daemon.baseUrl}/state`)).json;
   const card = findSession(state, sid);

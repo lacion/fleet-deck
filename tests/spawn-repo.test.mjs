@@ -213,7 +213,7 @@ test('bare-name repo mode resolves through the hook-populated catalog', async t 
   const { root, daemon } = await setup(t);
   await postHook(daemon.baseUrl, 'SessionStart', {
     session_id: randomUUID(), cwd: root, hook_event_name: 'SessionStart', source: 'startup',
-  });
+  }, { token: daemon });
   const response = await postJson(`${daemon.baseUrl}/api/spawn`, {
     repo: path.basename(root), branch: 'main', branch_mode: 'worktree',
   });
@@ -241,7 +241,7 @@ test('a same-named checkout with no matching origin is not reused when the reque
   t.after(() => rmSync(path.dirname(decoy), { recursive: true, force: true }));
   await postHook(daemon.baseUrl, 'SessionStart', {
     session_id: randomUUID(), cwd: decoy, hook_event_name: 'SessionStart', source: 'startup',
-  });
+  }, { token: daemon });
 
   const response = await postJson(`${daemon.baseUrl}/api/spawn`, { repo: remote.origin, branch: 'main', branch_mode: 'in-place' });
   assert.equal(response.status, 202, response.text); // cloned, not reused

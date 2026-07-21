@@ -157,7 +157,7 @@ test('a hook event for the same sessionId flips source to hooks and the poller s
   assert.equal(card.col, 'working', 'status=busy should map to col=working');
 
   // Phase 2: a real hook arrives -> source flips, SessionStart derives queued.
-  const startRes = await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
+  const startRes = await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon });
   assert.equal(startRes.status, 200);
   let state = (await getJson(`${daemon.baseUrl}/state`)).json;
   card = findSession(state, sid);

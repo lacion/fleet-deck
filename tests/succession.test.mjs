@@ -64,15 +64,15 @@ async function boot(t, prefix, extraEnv = {}) {
 // A plain CLI session the board never spawned.
 async function startSession(daemon, cwd) {
   const sid = randomUUID();
-  const res = await postHook(daemon.baseUrl, 'SessionStart', { session_id: sid, cwd, source: 'startup' });
+  const res = await postHook(daemon.baseUrl, 'SessionStart', { session_id: sid, cwd, source: 'startup' }, { token: daemon });
   return { sid, callsign: res.json.callsign };
 }
 
 // The two hooks a /clear actually fires, in the order the CLI fires them.
 async function clearInto(daemon, cwd, oldSid) {
   const newSid = randomUUID();
-  await postHook(daemon.baseUrl, 'SessionEnd', { session_id: oldSid, cwd, reason: 'clear' });
-  const res = await postHook(daemon.baseUrl, 'SessionStart', { session_id: newSid, cwd, source: 'clear' });
+  await postHook(daemon.baseUrl, 'SessionEnd', { session_id: oldSid, cwd, reason: 'clear' }, { token: daemon });
+  const res = await postHook(daemon.baseUrl, 'SessionStart', { session_id: newSid, cwd, source: 'clear' }, { token: daemon });
   return { newSid, callsign: res.json.callsign };
 }
 
@@ -107,7 +107,7 @@ test('the pane follows the card across a /clear — the terminal button keeps dr
   const sid = spawned.json.session_id;
   const callsign = spawned.json.callsign;
   // The pane registers (the fixture's first hook), so the spawn row is live.
-  await postHook(daemon.baseUrl, 'SessionStart', { session_id: sid, cwd, source: 'startup' });
+  await postHook(daemon.baseUrl, 'SessionStart', { session_id: sid, cwd, source: 'startup' }, { token: daemon });
 
   const before = cardOf((await getJson(`${daemon.baseUrl}/state`)).json, sid);
   assert.equal(before.spawn.status, 'live');
@@ -138,7 +138,7 @@ test('pending mail and the ticket follow the card across a /clear', async (t) =>
   const ticketed = cardOf((await getJson(`${daemon.baseUrl}/state`)).json, sid).callsign;
 
   // Mail arrives while the session is alive, undelivered (no watcher, no pane).
-  await postJson(`${daemon.baseUrl}/mail`, { to: ticketed, from: 'operator', text: 'read me after the clear' });
+  await postJson(`${daemon.baseUrl}/mail`, { to: ticketed, from: 'operator', text: 'read me after the clear' }, { token: daemon });
 
   const { newSid } = await clearInto(daemon, cwd, sid);
   const heirState = (await getJson(`${daemon.baseUrl}/state`)).json;
@@ -174,8 +174,8 @@ test('a straggler hook for the retired id never resurrects it — two cards unde
   // arrive AFTER the succession. The resurrection rule ("a late hook proves the
   // process is alive") must not apply here — the process is not alive, its
   // conversation moved house, and the heir already wears this callsign.
-  await postHook(daemon.baseUrl, 'PostToolUse', { session_id: sid, cwd, tool_name: 'Bash', tool_input: { command: 'echo late' } });
-  await postHook(daemon.baseUrl, 'Notification', { session_id: sid, cwd, message: 'late notification' });
+  await postHook(daemon.baseUrl, 'PostToolUse', { session_id: sid, cwd, tool_name: 'Bash', tool_input: { command: 'echo late' } }, { token: daemon });
+  await postHook(daemon.baseUrl, 'Notification', { session_id: sid, cwd, message: 'late notification' }, { token: daemon });
 
   const state = (await getJson(`${daemon.baseUrl}/state`)).json;
   const visible = cardsIn(state, cwd);
@@ -195,7 +195,7 @@ test('a /clear with NO successor still keeps the card live (the legacy same-id p
   const { sid, callsign } = await startSession(daemon, cwd);
 
   // An older CLI keeps the id: SessionEnd(clear) arrives and nothing follows.
-  await postHook(daemon.baseUrl, 'SessionEnd', { session_id: sid, cwd, reason: 'clear' });
+  await postHook(daemon.baseUrl, 'SessionEnd', { session_id: sid, cwd, reason: 'clear' }, { token: daemon });
 
   const card = cardOf((await getJson(`${daemon.baseUrl}/state`)).json, sid);
   assert.ok(card, 'the card is still on the board');
@@ -211,12 +211,12 @@ test('a /clear with NO successor still keeps the card live (the legacy same-id p
 test('an unrelated new session in the same cwd is not swallowed as a continuation', async (t) => {
   const { daemon, cwd } = await boot(t, 'fleetdeck-succ-unrelated');
   const { sid } = await startSession(daemon, cwd);
-  await postHook(daemon.baseUrl, 'SessionEnd', { session_id: sid, cwd, reason: 'clear' });
+  await postHook(daemon.baseUrl, 'SessionEnd', { session_id: sid, cwd, reason: 'clear' }, { token: daemon });
 
   // A genuinely new session (source='startup', not 'clear') starting in the same
   // cwd is a stranger, not an heir — it must get its own card.
   const stranger = randomUUID();
-  await postHook(daemon.baseUrl, 'SessionStart', { session_id: stranger, cwd, source: 'startup' });
+  await postHook(daemon.baseUrl, 'SessionStart', { session_id: stranger, cwd, source: 'startup' }, { token: daemon });
 
   const state = (await getJson(`${daemon.baseUrl}/state`)).json;
   assert.equal(cardsIn(state, cwd).length, 2, 'two real sessions, two cards');
@@ -230,11 +230,11 @@ test('an ambiguous double-clear in one cwd refuses to merge — a wrong merge is
   const b = await startSession(daemon, cwd);
   // Both bare sessions in the same cwd clear inside the same window: there is no
   // honest way to say which one the heir continues.
-  await postHook(daemon.baseUrl, 'SessionEnd', { session_id: a.sid, cwd, reason: 'clear' });
-  await postHook(daemon.baseUrl, 'SessionEnd', { session_id: b.sid, cwd, reason: 'clear' });
+  await postHook(daemon.baseUrl, 'SessionEnd', { session_id: a.sid, cwd, reason: 'clear' }, { token: daemon });
+  await postHook(daemon.baseUrl, 'SessionEnd', { session_id: b.sid, cwd, reason: 'clear' }, { token: daemon });
 
   const heir = randomUUID();
-  await postHook(daemon.baseUrl, 'SessionStart', { session_id: heir, cwd, source: 'clear' });
+  await postHook(daemon.baseUrl, 'SessionStart', { session_id: heir, cwd, source: 'clear' }, { token: daemon });
 
   const state = (await getJson(`${daemon.baseUrl}/state`)).json;
   const card = cardOf(state, heir);
@@ -255,11 +255,11 @@ test('the FORWARD /clear path refuses a lone orphan heir when TWO predecessors c
   const a = await startSession(daemon, cwd);
   const b = await startSession(daemon, cwd);
   const c = await startSession(daemon, cwd);
-  await postHook(daemon.baseUrl, 'SessionEnd', { session_id: a.sid, cwd, reason: 'clear' });
-  await postHook(daemon.baseUrl, 'SessionEnd', { session_id: b.sid, cwd, reason: 'clear' });
+  await postHook(daemon.baseUrl, 'SessionEnd', { session_id: a.sid, cwd, reason: 'clear' }, { token: daemon });
+  await postHook(daemon.baseUrl, 'SessionEnd', { session_id: b.sid, cwd, reason: 'clear' }, { token: daemon });
 
   const heir = randomUUID();
-  await postHook(daemon.baseUrl, 'SessionStart', { session_id: heir, cwd, source: 'clear' });
+  await postHook(daemon.baseUrl, 'SessionStart', { session_id: heir, cwd, source: 'clear' }, { token: daemon });
   let card = cardOf((await getJson(`${daemon.baseUrl}/state`)).json, heir);
   assert.ok(card, 'the heir starts on its own orphan card (backward refused to guess)');
   assert.notEqual(card.callsign, a.callsign);
@@ -271,7 +271,7 @@ test('the FORWARD /clear path refuses a lone orphan heir when TWO predecessors c
   // graft c's callsign/pane/mail/questions onto that heir — but the heir is
   // really a's or b's, and both are still competing cleared predecessors. The
   // predecessor-ambiguity guard must refuse rather than merge on a guess.
-  await postHook(daemon.baseUrl, 'SessionEnd', { session_id: c.sid, cwd, reason: 'clear' });
+  await postHook(daemon.baseUrl, 'SessionEnd', { session_id: c.sid, cwd, reason: 'clear' }, { token: daemon });
 
   const state = (await getJson(`${daemon.baseUrl}/state`)).json;
   assert.equal(cardsIn(state, cwd).length, 4, 'four cards stand — nobody was merged away');
@@ -302,7 +302,7 @@ test('the boot heal repairs a pair already split by a /clear, and is idempotent'
   const spawned = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd, prompt: 'work' });
   const sid = spawned.json.session_id;
   const callsign = spawned.json.callsign;
-  await postHook(daemon.baseUrl, 'SessionStart', { session_id: sid, cwd, source: 'startup' });
+  await postHook(daemon.baseUrl, 'SessionStart', { session_id: sid, cwd, source: 'startup' }, { token: daemon });
   const { newSid } = await clearInto(daemon, cwd, sid);
 
   // The wreckage: two cards, and the pane is on the card that will never update.
@@ -350,10 +350,10 @@ test('hooks arriving out of order still land one card — the heir can beat its 
   // SessionEnd is an ASYNC hook; SessionStart is not. So the heir's birth can
   // reach the daemon FIRST. It arrives as an orphan with its own card…
   const heirSid = randomUUID();
-  await postHook(daemon.baseUrl, 'SessionStart', { session_id: heirSid, cwd, source: 'clear' });
+  await postHook(daemon.baseUrl, 'SessionStart', { session_id: heirSid, cwd, source: 'clear' }, { token: daemon });
   // …and only then does the /clear that produced it land. The daemon must look
   // FORWARD and claim the heir waiting for it.
-  await postHook(daemon.baseUrl, 'SessionEnd', { session_id: sid, cwd, reason: 'clear' });
+  await postHook(daemon.baseUrl, 'SessionEnd', { session_id: sid, cwd, reason: 'clear' }, { token: daemon });
 
   const state = (await getJson(`${daemon.baseUrl}/state`)).json;
   assert.equal(cardsIn(state, cwd).length, 1, 'out-of-order hooks must not split the card');
@@ -416,7 +416,7 @@ test('a healed card keeps the name the fleet knows — the throwaway never becom
   const renamed = await postJson(`${healed.baseUrl}/api/sessions/${newSid}/name`, { suffix: 'after-heal' });
   assert.equal(renamed.status, 200, JSON.stringify(renamed.json));
   assert.equal(renamed.json.previous, callsign);
-  await postJson(`${healed.baseUrl}/mail`, { to: callsign, from: 'operator', text: 'the name everyone knows' });
+  await postJson(`${healed.baseUrl}/mail`, { to: callsign, from: 'operator', text: 'the name everyone knows' }, { token: healed });
   const healedState = (await getJson(`${healed.baseUrl}/state`)).json;
   assert.equal(healedState.mail_meta[newSid].queued, 1, 'mail to the lineage name still lands after a rename');
 

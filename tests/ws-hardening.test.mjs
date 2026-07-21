@@ -38,7 +38,7 @@ test('M-P1: a burst of mutations coalesces into far fewer broadcasts', async t =
   t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
 
   const sid = randomUUID();
-  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon });
 
   const { ws, frames } = connect(daemon.baseUrl.replace(/^http/, 'ws') + '/ws');
   t.after(() => ws.close());
@@ -50,7 +50,7 @@ test('M-P1: a burst of mutations coalesces into far fewer broadcasts', async t =
   const N = 40;
   const baseline = frames.length;
   await Promise.all(Array.from({ length: N }, () =>
-    postHook(daemon.baseUrl, 'PostToolUse', loadFixture('post-tool-use-bash', { session_id: sid, cwd }))));
+    postHook(daemon.baseUrl, 'PostToolUse', loadFixture('post-tool-use-bash', { session_id: sid, cwd }), { token: daemon })));
 
   // Let the trailing coalesce window (and any straddling ones) flush.
   await new Promise(r => setTimeout(r, 400));
@@ -89,7 +89,7 @@ test('R1-2: a /ws client past the buffer cap is TERMINATED on broadcast, not sil
 
   // Any mutation drives a broadcast → the over-cap client is terminated.
   const sid = randomUUID();
-  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon });
   await waitUntil(() => closed, 'over-cap client terminated on the broadcast');
 
   // …and the point of terminating: a reconnecting client is handed a COMPLETE

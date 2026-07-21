@@ -97,7 +97,7 @@ const MIME = {
 // React sets inline style ATTRIBUTES (hence 'unsafe-inline' in style-src only —
 // there are no inline <script>s, so script-src stays 'self'). connect-src covers
 // the /state|/health|/api fetches and both WebSockets, same-origin under a proxy.
-const CSP_SHELL = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self' ws: wss:; img-src 'self' data: blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
+const CSP_SHELL = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self'; img-src 'self' data: blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
 
 // Serve one file from board-dist. Traversal-safe: the decoded request path is
 // resolved against BOARD_DIST and must stay strictly inside it (any '..' —
@@ -117,6 +117,10 @@ function serveBoardAsset(res, pathname, notFound) {
     'content-type': MIME[ext] || 'application/octet-stream',
     'content-length': data.length,
     'x-content-type-options': 'nosniff',
+    // The board boots from a ?t=<token> URL; no subresource (notably the
+    // Google Fonts stylesheet, which fires before token.js can scrub the URL)
+    // may ever see it as a Referer.
+    'referrer-policy': 'no-referrer',
   };
   if (ext === '.html') headers['content-security-policy'] = CSP_SHELL;
   res.writeHead(200, headers);
@@ -254,34 +258,46 @@ export function createHttp(core, {
         // decision to trust the proxy, so this exemption survives the flag.
         return true;
       } else {
-        // PLAIN LOOPBACK (not via the proxy). REQUIRE_TOKEN
-        // (FLEETDECK_REQUIRE_TOKEN=on): on a multi-user machine every other OS
-        // user can reach 127.0.0.1 and today inherits this loopback exemption —
-        // tokenless /state, /api/spawn, the lot — and it is also the residual
-        // behind the Host-rewriting-proxy note above. With the flag on the
-        // exemption survives for exactly: a /hook/* path (Claude Code http hooks
-        // cannot attach an Authorization header — see hooks/hooks.json), /health
-        // (a tokenless liveness/version probe — deliberately absent from the
-        // CHANGELOG'd gated list; used by `fleetdeck status`, the supervisor's
-        // waitForHealth and the standalone health check; it carries no fleet
-        // data, just {ok,version,managed}), and the data-free public shell (a
-        // browser must load it before it can present a key). The isPublicShell
-        // arm is redundant on the HTTP path — the request handler short-circuits
-        // shell paths before calling authorized() — but it GUARDS THE WS-UPGRADE
-        // PATH, which calls authorized() directly with no such short-circuit.
-        // Everything else falls through to the bearer/?t= check below even on
-        // loopback. Purely ADDITIVE: with the flag off (the default) the loopback
-        // exemption is byte-for-byte as before, and this never loosens the
-        // proxyAuth/arrivedViaTrustedProxy gate above.
-        if (!requireToken
-          || url.pathname.startsWith('/hook/')
-          || url.pathname === '/health'
-          || isPublicShell(req.method, url.pathname)) return true;
+        // PLAIN LOOPBACK (not via the proxy). Since 0.16.0 the daemon always
+        // mints a token, and the loopback exemption shrinks to exactly two
+        // shapes: (a) /health and the data-free public shell, open for everyone;
+        // (b) /hook/*, open ONLY to callers that present the bearer — every
+        // hook now arrives through a command shim (scripts/fleet-hook.mjs /
+        // fleet-sessionstart.mjs / fleet-watch.mjs) that reads
+        // $FLEETDECK_HOME/token and attaches it, because Claude Code http hooks
+        // cannot. A tokenless /hook/* call is therefore no longer "a CLI that
+        // cannot authenticate" — it is exactly the forgery the shims exist to
+        // stop (a local process impersonating a session with one curl), so it
+        // falls through to the bearer check below and 401s. When REQUIRE_TOKEN
+        // is off (the default), every NON-hook loopback route keeps the
+        // historical exemption: the token gates only the specific powers named
+        // in REQUIRE_TOKEN_GATED_ROUTES (/ws/term, POST /mail, gateway settings
+        // writes, the unsupervised-spawn arm) — the powers a malicious same-UID
+        // process or a fleet agent itself must not wield anonymously.
+        // REQUIRE_TOKEN=on keeps its stronger meaning: everything except
+        // /health and the shell requires the bearer, hook shims included.
+        if (url.pathname === '/health' || isPublicShell(req.method, url.pathname)) return true;
+        if (!requireToken && !url.pathname.startsWith('/hook/')
+          && !tokenGatedRoute(req.method, url.pathname)) return true;
       }
     }
     const authorization = req.headers.authorization;
     const bearer = typeof authorization === 'string' ? /^Bearer (.+)$/.exec(authorization)?.[1] : undefined;
     return tokenMatches(bearer) || tokenMatches(url.searchParams.get('t'));
+  }
+
+  // 0.16.0 LOOPBACK GATES. Default loopback stays open for ordinary routes,
+  // but these powers require the bearer no matter where the call comes from:
+  // typing into a live pane (/ws/term), injecting mail into sessions, and
+  // arming an unsupervised spawn. The board, the hook shims and the fleet skill
+  // docs all present the token; a caller without it is precisely the attacker
+  // the gate names. Two gated powers need the parsed body and live at their
+  // handlers instead: gateway_* settings writes (POST /api/settings) and
+  // unsupervised spawn bodies (POST /api/spawn, adopt) — see those routes.
+  function tokenGatedRoute(method, pathname) {
+    if (pathname === '/ws/term') return true;
+    if (method !== 'POST') return false;
+    return pathname === '/mail' || pathname === '/api/spawn/arm-unsupervised';
   }
 
   // SAME-ORIGIN CONTRACT (C1/H-S3). Loopback auto-authorizes, and a browser is a
@@ -737,7 +753,7 @@ export function createHttp(core, {
             }
             if (url.pathname === '/mail') {
               core.postMail(ev)
-                .then(out => json(res, 200, out))
+                .then(out => json(res, out.status ?? 200, out.body ?? out))
                 .catch(err => {
                   console.error('fleetd mail error:', err);
                   json(res, 500, { ok: false, err: 'internal' });
@@ -765,6 +781,17 @@ export function createHttp(core, {
               return;
             }
             if (url.pathname === '/api/settings') {
+              // 0.16.0: gateway_* writes reroute every future session's LLM
+              // traffic, so they require the bearer even on loopback (a plain
+              // settings key like browse_root keeps the loopback exemption).
+              if (Object.keys(ev || {}).some(k => k.startsWith('gateway_'))) {
+                const authorization = req.headers.authorization;
+                const bearer = typeof authorization === 'string' ? /^Bearer (.+)$/.exec(authorization)?.[1] : undefined;
+                if (!tokenMatches(bearer) && !tokenMatches(url.searchParams.get('t'))) {
+                  return json(res, 401, { ok: false, reason: 'gateway settings require the bearer token' });
+                }
+                logExec(url.pathname, req, ' gateway=true');
+              }
               const out = core.setSettings(ev);
               return json(res, out.status, out.body);
             }
@@ -778,6 +805,14 @@ export function createHttp(core, {
               // one-tile-types discipline also governs pastes.
               const out = core.pasteImage(ev);
               return json(res, out.status, out.body);
+            }
+            if (url.pathname === '/api/spawn/arm-unsupervised') {
+              // 0.16.0: mint the one-time capability an unsupervised spawn body
+              // must echo. Token-gated by tokenGatedRoute even on loopback, so
+              // this route existing means the caller already proved it holds
+              // the bearer — the API-side half of the board's red two-step.
+              logExec(url.pathname, req);
+              return json(res, 200, { ok: true, arm_token: core.armUnsupervised() });
             }
             if (url.pathname === '/api/spawn') {
               // v1.2 board spawn (CONTRACT). Control API like the questions

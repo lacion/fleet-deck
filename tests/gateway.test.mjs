@@ -92,7 +92,7 @@ async function makeRevivable({ daemon, userHome, cwd, spawnBody }) {
   const spawned = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd, ...spawnBody });
   assert.equal(spawned.status, 200, spawned.text);
   const { spawn_id, session_id } = spawned.json;
-  await postHook(daemon.baseUrl, 'SessionStart', { session_id, cwd, source: 'startup' });
+  await postHook(daemon.baseUrl, 'SessionStart', { session_id, cwd, source: 'startup' }, { token: daemon });
 
   const file = claudeTranscriptPath(cwd, session_id, userHome);
   mkdirSync(path.dirname(file), { recursive: true });
@@ -520,14 +520,14 @@ test('gateway: adopt consults the default, because it has no lineage to inherit'
   const cwd = scratchDir();
   t.after(() => rmSync(cwd, { recursive: true, force: true }));
   const sid = randomUUID();
-  await postHook(daemon.baseUrl, 'SessionStart', { session_id: sid, cwd, source: 'startup' });
+  await postHook(daemon.baseUrl, 'SessionStart', { session_id: sid, cwd, source: 'startup' }, { token: daemon });
   mkdirSync(path.dirname(claudeTranscriptPath(cwd, sid, userHome)), { recursive: true });
   writeFileSync(claudeTranscriptPath(cwd, sid, userHome), '{"type":"summary"}\n');
   // 'logout' is a hook-PROVEN end. NOT 'clear': that ends the session as
   // 'superseded' (the conversation continued under a new id), which is
   // deliberately never resumable — an earlier draft used it and the adopt was
   // refused before it could exercise anything.
-  await postHook(daemon.baseUrl, 'SessionEnd', { session_id: sid, cwd, reason: 'logout' });
+  await postHook(daemon.baseUrl, 'SessionEnd', { session_id: sid, cwd, reason: 'logout' }, { token: daemon });
 
   const card = (await getJson(`${daemon.baseUrl}/state`)).json.sessions.find(s => s.session_id === sid);
   assert.equal(card.adopt.eligible, 'now', 'sanity: the session must actually be adoptable');

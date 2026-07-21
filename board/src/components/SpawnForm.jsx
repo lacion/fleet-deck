@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { spawnSession, saveSettings, reasonOf } from '../api.js';
+import { spawnSession, saveSettings, reasonOf, armUnsupervised } from '../api.js';
 import { batchTotal, expandBatchTasks, parseBatchTasks } from '../util.js';
 import { useModal } from '../useModal.js';
 import DirPicker from './DirPicker.jsx';
@@ -113,6 +113,10 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
   const [gwBusy, setGwBusy] = useState(false);
   const [unsup, setUnsup] = useState(false);   // step 1: reveal the confirm
   const [armed, setArmed] = useState(false);   // step 2: actually send the flag
+  // 0.16.0 — the server requires a one-time arm token for any unsupervised
+  // spawn (the API half of this two-step). Fetched when the human arms, echoed
+  // in the spawn body; single-use, 60s TTL, re-fetched on every arm.
+  const [armToken, setArmToken] = useState(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
   const [note, setNote] = useState(null); // "spawning — <callsign>"
@@ -278,8 +282,29 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
   const tasks = useMemo(() => (batching ? parseBatchTasks(prompt) : []), [batching, prompt]);
   const total = batching ? batchTotal(tasks) : 1;
 
-  // hazard checkbox checked but not armed → refuse to spawn either way
-  const blocked = unsup && !armed;
+  // 0.16.0 — one unsupervised concept, two pickers: the "run unsupervised"
+  // checkbox AND permission-mode=bypassPermissions now route through the same
+  // two-step (the dropdown used to bypass it entirely, and the daemon refuses
+  // either without an arm token).
+  const bypassPicked = permissionMode === 'bypassPermissions';
+  const unsupEffective = unsup || bypassPicked;
+  // hazard picked but not armed → refuse to spawn either way
+  const blocked = unsupEffective && !armed;
+
+  // Arming mints the server-side capability the spawn body must echo. A batch
+  // consumes one token per agent, so a batch fetch mints up front and each
+  // leg re-mints as it goes (see submitBatch).
+  const armUnsupervisedNow = async () => {
+    try {
+      const res = await armUnsupervised();
+      if (res.ok && res.json?.arm_token) { setArmToken(res.json.arm_token); return res.json.arm_token; }
+      setErr(`could not arm unsupervised spawning (${res.status})`);
+    } catch {
+      setErr('could not arm unsupervised spawning — daemon unreachable');
+    }
+    setArmToken(null);
+    return null;
+  };
   // a batch needs at least one task, and each agent needs its own worktree
   const emptyBatch = batching && total === 0;
 
@@ -310,7 +335,10 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
     // renders unchecked, but `remote` is still true. Without this the form would
     // submit a pair the daemon is guaranteed to 400.
     if (remote && !gatewayOn) body.remote_control = true;
-    if (unsup && armed) body.dangerously_skip_permissions = true;
+    if (unsupEffective && armed) {
+      body.dangerously_skip_permissions = true;
+      if (armToken) body.arm_token = armToken;
+    }
     // Always explicit, never omitted: silence would defer to gateway_default,
     // and the checkbox the human is looking at is the answer — even when it
     // agrees with the default it was seeded from.
@@ -362,6 +390,12 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
         res = await spawnSession({ ...baseBody(), prompt: p });
       } catch {
         res = null;
+      }
+      // Arm tokens are single-use: after the first leg of an armed batch, mint
+      // the next one so every agent carries a fresh capability.
+      if (unsupEffective && armed && i + 1 < prompts.length) {
+        const next = await armUnsupervisedNow();
+        if (!next) { failed.push(...prompts.slice(i + 1).map(pr => ({ prompt: pr, reason: 'arm token refused' }))); break; }
       }
       if (res?.ok && res.json?.ok) launched.push(res.json.callsign || res.json.session_id);
       else failed.push({ prompt: p, reason: res ? reasonOf(res, `spawn failed (${res.status})`) : 'daemon unreachable' });
@@ -676,12 +710,19 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
             <select
               className="fd-input"
               value={permissionMode}
-              onChange={(e) => setPermissionMode(e.target.value)}
+              onChange={(e) => {
+                setPermissionMode(e.target.value);
+                // bypassPermissions is the same hazard as "run unsupervised" —
+                // picking it reveals the same arm row below (0.16.0: the daemon
+                // refuses it without the arm token either way).
+                if (e.target.value !== 'bypassPermissions') setArmed(false);
+                if (err) setErr(null);
+              }}
             >
               <option value="default">default</option>
               <option value="acceptEdits">acceptEdits</option>
               <option value="plan">plan</option>
-              <option value="bypassPermissions">bypassPermissions</option>
+              <option value="bypassPermissions">bypassPermissions ⚠</option>
             </select>
           </div>
           {!repoMode && (
@@ -811,19 +852,29 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
               </span>
             </div>
           )}
-          {/* v1.3 — unsupervised (two-step: reveal, then arm) */}
+          {/* v1.3 — unsupervised (two-step: reveal, then arm). 0.16.0: the
+              bypassPermissions dropdown lands here too, and arming mints the
+              one-time server token the spawn body must echo. */}
           <div className="frow">
             <span className="fl">unsupervised</span>
             <label className="fd-check hazard">
               <input
                 type="checkbox"
-                checked={unsup}
-                onChange={(e) => { setUnsup(e.target.checked); if (!e.target.checked) setArmed(false); if (err) setErr(null); }}
+                checked={unsupEffective}
+                onChange={(e) => {
+                  setUnsup(e.target.checked);
+                  if (!e.target.checked) {
+                    setArmed(false);
+                    setArmToken(null);
+                    if (bypassPicked) setPermissionMode('default');
+                  }
+                  if (err) setErr(null);
+                }}
               />
               run unsupervised
             </label>
           </div>
-          {unsup && (
+          {unsupEffective && (
             <div className="frow top">
               <span className="fl" />
               <div className="fd-hazardconfirm">
@@ -833,7 +884,17 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
                   <input
                     type="checkbox"
                     checked={armed}
-                    onChange={(e) => { setArmed(e.target.checked); if (err) setErr(null); }}
+                    onChange={async (e) => {
+                      const on = e.target.checked;
+                      if (on) {
+                        const token = await armUnsupervisedNow();
+                        setArmed(!!token);
+                      } else {
+                        setArmed(false);
+                        setArmToken(null);
+                      }
+                      if (err) setErr(null);
+                    }}
                   />
                   I understand — arm it
                 </label>

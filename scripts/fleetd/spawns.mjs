@@ -9,7 +9,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, randomBytes } from 'node:crypto';
 import { deriveRepo, branchOf } from './repo-identity.mjs';
 import { ticketFromBranch, animalOf } from './tickets.mjs';
 import { claudeEnvArgvPrefix, claudeTranscriptPath, SHELL_RE, NOT_RESUMABLE_END } from './helpers.mjs';
@@ -27,6 +27,37 @@ export function createSpawns(ctx) {
     claimTarget, targetOwner, reserveCloneSlot, persistRepoTransport,
     resolveGateway, resolveGatewayEnv,
   } = ctx;
+
+  // ------------------------------------------- unsupervised arm gate (0.16.0)
+  // The board's red two-step is UI; the API needs its own proof of intent, or
+  // any loopback process (a fleet-spawned agent included) can curl itself an
+  // unsupervised sibling. POST /api/spawn/arm-unsupervised (token-gated in
+  // http.mjs) mints a single-use capability; a spawn/adopt body carrying
+  // dangerously_skip_permissions:true or permission_mode:'bypassPermissions'
+  // must echo a fresh one as arm_token. Single-use, short-TTL, in-memory — a
+  // daemon restart simply forces a re-arm.
+  const ARM_TTL_MS = 60_000;
+  const armTokens = new Map(); // token -> expires_at
+  function armUnsupervised() {
+    const token = randomBytes(24).toString('base64url');
+    armTokens.set(token, Date.now() + ARM_TTL_MS);
+    if (armTokens.size > 128) {
+      const now = Date.now();
+      for (const [t, exp] of armTokens) { if (exp <= now) armTokens.delete(t); }
+    }
+    return token;
+  }
+  function consumeArm(token) {
+    if (typeof token !== 'string' || !armTokens.has(token)) return false;
+    const exp = armTokens.get(token);
+    armTokens.delete(token);
+    return exp > Date.now();
+  }
+  function unsupervisedGate(skipPermissions, body) {
+    if (!skipPermissions) return null;
+    if (consumeArm(body?.arm_token)) return null;
+    return 'unsupervised spawns require a fresh arm token from POST /api/spawn/arm-unsupervised — the API half of the board\'s two-step confirmation';
+  }
 
   // ------------------------------------------------- LLM gateway (0.15.0)
   // Does THIS launch route through the configured gateway, and with what
@@ -188,8 +219,19 @@ export function createSpawns(ctx) {
   // Bring-up nudge — one of four sanctioned pane injections (the others are
   // owned-pane mail and verbatim human typing relayed by the live-terminal
   // modal, plus explicit human-requested /rc enablement): if no hook lands
-  // within NUDGE_MS and the pane is alive, send ONE Enter for the trust
+  // within NUDGE_MS and the pane is alive, send ONE Enter for a bring-up
   // dialog. Never again for that spawn.
+  //
+  // 0.16.0 TRUST GATE: the nudge used to press Enter through WHATEVER was on
+  // screen — including Claude Code's folder-trust and MCP-approval dialogs,
+  // which are the human checkpoints standing between a freshly cloned repo's
+  // .claude/settings.json hooks / .mcp.json servers and the user's credentials.
+  // A daemon that auto-answers them converts "untrusted repo" into "trusted"
+  // with no human in the loop. So the nudge now READS the pane first: a
+  // trust/MCP dialog is never auto-answered — the card says so and waits for a
+  // human (terminal modal or the pane itself). Anything else keeps the
+  // historical one-Enter bring-up.
+  const TRUST_DIALOG_RE = /do you trust the files in this folder|trust this folder|trust the files|new mcp server|mcp server .{0,40}(approve|allow|trust)|use this and all future mcp servers/i;
   const nudged = new Set();
   function scheduleNudge(spawn_id, window, callsign) {
     const t = setTimeout(async () => {
@@ -200,9 +242,18 @@ export function createSpawns(ctx) {
         const win = await findScopedWindow(window);
         if (!win || win.pane_dead) return; // pane not alive → no keystroke
         nudged.add(spawn_id);
+        let screen = '';
+        try { screen = await tmuxAdapter.capturePane(win.window_id) || ''; } catch { /* unreadable pane → hold, do not guess */ }
+        if (TRUST_DIALOG_RE.test(screen)) {
+          logEvent(row.session_id, 'SpawnNudge', null, 'trust/MCP dialog held for human approval');
+          updateSession(row.session_id, { note: 'waiting on the folder-trust dialog — approve it in the terminal' });
+          tick(`🔒 ${callsign} waits on a trust dialog — approve it in the terminal`);
+          onMutate();
+          return;
+        }
         await tmuxAdapter.sendBringupEnter(win.window_id);
-        logEvent(row.session_id, 'SpawnNudge', null, 'bring-up Enter sent (trust dialog)');
-        tick(`⏎ nudged ${callsign} through the trust dialog`);
+        logEvent(row.session_id, 'SpawnNudge', null, 'bring-up Enter sent');
+        tick(`⏎ nudged ${callsign} through bring-up`);
         onMutate();
       } catch { /* nudge is best-effort; never disturb the daemon */ }
     }, NUDGE_MS);
@@ -278,7 +329,11 @@ export function createSpawns(ctx) {
     if (!row) return { url: null };
     let text = null;
     try { text = await tmuxAdapter.capturePane(row.tmux_window); } catch { /* best effort */ }
-    const url = typeof text === 'string' ? (text.match(RC_URL_RE)?.[0] ?? null) : null;
+    // \S+ swallows terminal junk abutting the URL (trailing quotes, brackets,
+    // sentence punctuation) — trim the characters a URL never ends with.
+    const url = typeof text === 'string'
+      ? (text.match(RC_URL_RE)?.[0]?.replace(/[)\]}"'`.,;:]+$/, '') ?? null)
+      : null;
     // M-B8: setSpawnRemote/tick/onMutate can throw (SQLITE_BUSY/IOERR, or a bug
     // in a broadcast handler). Harvest runs from an unref timer / detached
     // promise, so an escaping throw becomes an unhandled rejection. fleetd.mjs
@@ -478,6 +533,9 @@ export function createSpawns(ctx) {
     if (body?.gateway != null && typeof body.gateway !== 'boolean') {
       return { status: 400, body: { ok: false, reason: 'gateway must be a boolean' } };
     }
+    if (body?.arm_token != null && typeof body.arm_token !== 'string') {
+      return { status: 400, body: { ok: false, reason: 'arm_token must be a string' } };
+    }
     // Decide the routing BEFORE anything is created. A gateway refusal must cost
     // the caller nothing — no clone, no worktree, no pane, no durable row — so
     // it lands here beside the other pure-body gates rather than at launch time.
@@ -493,6 +551,10 @@ export function createSpawns(ctx) {
     }
     const skipPermissions = body?.dangerously_skip_permissions === true
       || body?.permission_mode === 'bypassPermissions';
+    // 0.16.0: the unsupervised gate refuses before any clone/worktree/pane is
+    // created — an arm refusal must cost the caller nothing.
+    const armRefusal = unsupervisedGate(skipPermissions, body);
+    if (armRefusal) return { status: 403, body: { ok: false, reason: armRefusal } };
 
     if (hasRepo) {
       if (body?.worktree === true) {
@@ -1027,7 +1089,14 @@ export function createSpawns(ctx) {
     if (body?.disarm != null && typeof body.disarm !== 'boolean') {
       return { status: 400, body: { ok: false, reason: 'disarm must be a boolean' } };
     }
+    if (body?.arm_token != null && typeof body.arm_token !== 'string') {
+      return { status: 400, body: { ok: false, reason: 'arm_token must be a string' } };
+    }
     const skip = body?.dangerously_skip_permissions === true;
+    // 0.16.0: same unsupervised gate as /api/spawn — an adopt with skip:true
+    // launches a process, so it must echo a fresh arm token.
+    const adoptArmRefusal = unsupervisedGate(skip, body);
+    if (adoptArmRefusal) return { status: 403, body: { ok: false, reason: adoptArmRefusal } };
 
     // Disarm FIRST, in any state: the click that disarms is the human revoking
     // the earlier arm click, and it must NEVER fall through into an adopt (a
@@ -1617,5 +1686,6 @@ export function createSpawns(ctx) {
     spawn, revive, adoptSession, enableRemote, spawnKill, spawnCapability,
     spawnLivenessTick, reconcileSpawns, reconcileClearForks,
     scheduleRegistrationRemoteHarvest, forgetSpawn, spawnState,
+    armUnsupervised,
   };
 }

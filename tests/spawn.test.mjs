@@ -617,7 +617,7 @@ test("kill: an offline card's kill is accepted (200) or reports the window alrea
 
   await postHook(daemon.baseUrl, 'SessionEnd', {
     session_id: sid, hook_event_name: 'SessionEnd', cwd, reason: 'other',
-  });
+  }, { token: daemon });
   await waitUntil(async () => {
     const state = (await getJson(`${daemon.baseUrl}/state`)).json;
     return findSession(state, sid)?.col === 'offline' ? true : null;
@@ -650,8 +650,8 @@ test('stale flag: a working card with no events for FLEETDECK_STALE_MS gets stal
   t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
-  await postHook(daemon.baseUrl, 'SessionStart', { session_id: sid, hook_event_name: 'SessionStart', cwd, source: 'startup' });
-  await postHook(daemon.baseUrl, 'UserPromptSubmit', { session_id: sid, hook_event_name: 'UserPromptSubmit', cwd, prompt: 'do a thing' });
+  await postHook(daemon.baseUrl, 'SessionStart', { session_id: sid, hook_event_name: 'SessionStart', cwd, source: 'startup' }, { token: daemon });
+  await postHook(daemon.baseUrl, 'UserPromptSubmit', { session_id: sid, hook_event_name: 'UserPromptSubmit', cwd, prompt: 'do a thing' }, { token: daemon });
 
   let state = (await getJson(`${daemon.baseUrl}/state`)).json;
   let card = findSession(state, sid);
@@ -667,7 +667,7 @@ test('stale flag: a working card with no events for FLEETDECK_STALE_MS gets stal
 
   await postHook(daemon.baseUrl, 'PostToolUse', {
     session_id: sid, hook_event_name: 'PostToolUse', cwd, tool_name: 'Read', tool_input: { file_path: path.join(cwd, 'x.txt') },
-  });
+  }, { token: daemon });
   state = (await getJson(`${daemon.baseUrl}/state`)).json;
   card = findSession(state, sid);
   assert.ok(!card.stale, 'a fresh event must clear the stale flag');

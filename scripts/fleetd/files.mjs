@@ -9,6 +9,7 @@
 // and time limits. The endpoints are read-only and never invoke a shell.
 
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { deriveRepo } from './repo-identity.mjs';
@@ -54,8 +55,22 @@ function validateRelPath(relPath) {
   // gate `fs/read?path=.git/config` (embedded remote credentials, on a plain
   // clone) and `fs/list?path=.git` (the whole object store) would still answer.
   // The wall belongs at the door every operation shares, not on each of them.
-  if (relPath.split(/[\\/]/).includes('.git')) throw new PathError(404, 'not found');
+  //
+  // 0.16.0 CREDENTIAL PATHS join the refusal, same shape: the global explorer
+  // roots at the daemon user's HOME by default, and a bearer holder (a phone on
+  // LAN, a fleet agent with the token) has no legitimate reason to read private
+  // keys, cloud credentials or the daemon's own token through it. Whole-segment
+  // names are refused anywhere in the tree (they are near-unique to credential
+  // dirs); `.docker` is refused only for its config.json — images.list and
+  // friends are harmless to browse.
+  const segments = relPath.split(/[\\/]/);
+  if (segments.includes('.git')) throw new PathError(404, 'not found');
+  if (segments.some(s => CREDENTIAL_SEGMENTS.has(s))) throw new PathError(404, 'not found');
+  const dockerAt = segments.indexOf('.docker');
+  if (dockerAt !== -1 && segments[dockerAt + 1] === 'config.json') throw new PathError(404, 'not found');
 }
+
+const CREDENTIAL_SEGMENTS = new Set(['.ssh', '.aws', '.gnupg', '.netrc', '.kube']);
 
 // Pure lexical containment. Callers perform the realpath checks appropriate to
 // their operation (the target for list, and the parent before a file open).
@@ -98,8 +113,19 @@ function realpathInside(realRoot, target) {
   let real;
   try { real = fs.realpathSync(target); } catch { throw new PathError(404, 'not found'); }
   if (!within(realRoot, real)) throw new PathError(404, 'not found');
+  // 0.16.0: the daemon's own state dir (token, db, captures) must never be
+  // readable through the explorer — a symlink inside a browse root pointing
+  // into it, or a HOME-rooted path naming it directly, resolves here either
+  // way. Resolved once per process; FLEETDECK_HOME does not move mid-flight.
+  if (fleetHomeReal === undefined) {
+    try { fleetHomeReal = fs.realpathSync(process.env.FLEETDECK_HOME || path.join(os.homedir() || '/tmp', '.fleetdeck')); }
+    catch { fleetHomeReal = null; }
+  }
+  if (fleetHomeReal && within(fleetHomeReal, real)) throw new PathError(404, 'not found');
   return real;
 }
+
+let fleetHomeReal;
 
 function resolveRoot(ctx, sid) {
   const session = ctx.q.getSession.get(sid);

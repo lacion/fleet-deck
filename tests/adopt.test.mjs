@@ -93,13 +93,13 @@ function tickerHas(state, needle) {
 // a fresh session id, no spawn row.
 async function startLiveSession(daemon, cwd) {
   const sid = randomUUID();
-  const started = await postHook(daemon.baseUrl, 'SessionStart', { session_id: sid, cwd, source: 'startup' });
+  const started = await postHook(daemon.baseUrl, 'SessionStart', { session_id: sid, cwd, source: 'startup' }, { token: daemon });
   return { sid, callsign: started.json.callsign };
 }
 
 // Drive a live hooks session all the way to a hook-PROVEN offline end.
 async function endSession(daemon, sid, cwd, reason = 'logout') {
-  await postHook(daemon.baseUrl, 'SessionEnd', { session_id: sid, cwd, reason });
+  await postHook(daemon.baseUrl, 'SessionEnd', { session_id: sid, cwd, reason }, { token: daemon });
 }
 
 test('adopt moves an ended session into a board-owned pane and its resume hook makes the card live', async (t) => {
@@ -150,7 +150,7 @@ test('adopt moves an ended session into a board-owned pane and its resume hook m
   assert.ok(card.endedAt, 'adopt leaves ended_at for the first hook');
 
   // The resume pane's first hook lands on the SAME card and makes it live.
-  await postHook(daemon.baseUrl, 'SessionStart', { session_id: sid, cwd, source: 'resume' });
+  await postHook(daemon.baseUrl, 'SessionStart', { session_id: sid, cwd, source: 'resume' }, { token: daemon });
   card = findCard((await getJson(`${daemon.baseUrl}/state`)).json, sid);
   assert.equal(card.spawn.status, 'live');
   assert.equal(card.endedAt, null);
@@ -256,7 +256,7 @@ test('a /clear on an armed session keeps it live and armed and spawns no pane', 
 
   // /clear is NOT an end: the SessionEnd(reason:'clear') early-return keeps the
   // card live and the arm intact, and fires no adopt.
-  await postHook(daemon.baseUrl, 'SessionEnd', { session_id: sid, cwd, reason: 'clear' });
+  await postHook(daemon.baseUrl, 'SessionEnd', { session_id: sid, cwd, reason: 'clear' }, { token: daemon });
   await sleep(400); // an ADOPT_DELAY_MS=0 adopt would have recorded by now
 
   assert.equal(records(record).length, 0, 'no pane launched by a /clear');
@@ -347,7 +347,7 @@ test('a deferred adopt whose session came back live CANCELS the move — it neve
   // The CLI exits… and the session is resumed by hand INSIDE the grace window
   // (the resurrection race). The one-shot arm must not become a standing order.
   await endSession(daemon, sid, cwd);
-  await postHook(daemon.baseUrl, 'SessionStart', { session_id: sid, cwd, source: 'resume' });
+  await postHook(daemon.baseUrl, 'SessionStart', { session_id: sid, cwd, source: 'resume' }, { token: daemon });
   await sleep(600); // let the 250 ms deferred adopt fire and decide
 
   assert.equal(records(record).length, 0, 'no pane was launched');

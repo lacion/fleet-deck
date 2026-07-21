@@ -37,7 +37,8 @@
 //     test (that failure mode is for the daemon's OWN process-spawn error
 //     handling to cover, not this stand-in).
 
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, readFileSync } from 'node:fs';
+import path from 'node:path';
 
 const raw = process.argv[2] ?? '';
 
@@ -87,9 +88,18 @@ async function main() {
     const cwd = findCwd(parsed) || process.cwd();
     if (sid) {
       try {
+        // 0.16.0: /hook/* requires the bearer. The daemon hands the fixture its
+        // FLEETDECK_HOME via the spawn spec's env wrapper, but the fixture only
+        // needs the token FILE — FLEETDECK_HOME itself arrives in our env
+        // through the daemon's pane env (claudeEnvArgvPrefix exports it).
+        const headers = { 'content-type': 'application/json' };
+        try {
+          const token = readFileSync(path.join(process.env.FLEETDECK_HOME || '', 'token'), 'utf8').trim();
+          if (token) headers.authorization = `Bearer ${token}`;
+        } catch { /* tokenless: the 401 fail-open applies, test times out with a useful error */ }
         await fetch(`${postUrl}/hook/SessionStart`, {
           method: 'POST',
-          headers: { 'content-type': 'application/json' },
+          headers,
           body: JSON.stringify({
             session_id: sid,
             hook_event_name: 'SessionStart',

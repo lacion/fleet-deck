@@ -32,10 +32,10 @@ for (const [event, fixtureName, kind] of [
     t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
     const sid = randomUUID();
-    await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
+    await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon });
 
     const t0 = Date.now();
-    const res = await postHook(daemon.baseUrl, event, loadFixture(fixtureName, { session_id: sid, cwd }), {
+    const res = await postHook(daemon.baseUrl, event, loadFixture(fixtureName, { session_id: sid, cwd }), { token: daemon,
       timeout: holdMs + 5000,
     });
     const elapsed = Date.now() - t0;

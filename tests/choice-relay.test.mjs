@@ -42,7 +42,7 @@ async function holdChoice(daemon, sid, cwd, holdMs, overrides = {}) {
   const held = postHook(
     daemon.baseUrl, 'AskUserQuestion',
     loadFixture('ask-user-question', { session_id: sid, cwd }, overrides),
-    { timeout: holdMs + 5000 },
+    { token: daemon, timeout: holdMs + 5000 },
   );
   const q = await waitUntil(async () => {
     const state = (await getJson(`${daemon.baseUrl}/state`)).json;
@@ -63,7 +63,7 @@ test('F3c: AskUserQuestion holds as kind=choice with parsed questions[]; {answer
   t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
-  const reg = await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
+  const reg = await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon });
   const callsign = reg.json?.callsign;
 
   const t0 = Date.now();
@@ -123,7 +123,7 @@ test('F3c: an unanswered AskUserQuestion hold expires to {} and the question bec
   t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
-  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon });
 
   const t0 = Date.now();
   const { held, q } = await holdChoice(daemon, sid, cwd, holdMs);
@@ -155,7 +155,7 @@ test('F3c: /hook/PermissionRequest with tool_name=AskUserQuestion answers {} in 
   t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
-  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon });
 
   // open a choice hold first — the guard must answer around it, not through it
   const { held, q } = await holdChoice(daemon, sid, cwd, holdMs);
@@ -165,7 +165,7 @@ test('F3c: /hook/PermissionRequest with tool_name=AskUserQuestion answers {} in 
   const permPayload = loadFixture('ask-user-question', { session_id: sid, cwd }, { hook_event_name: 'PermissionRequest' });
   delete permPayload.tool_use_id;
   const t0 = Date.now();
-  const permRes = await postHook(daemon.baseUrl, 'PermissionRequest', permPayload);
+  const permRes = await postHook(daemon.baseUrl, 'PermissionRequest', permPayload, { token: daemon });
   const elapsed = Date.now() - t0;
 
   assert.equal(permRes.status, 200);
@@ -194,7 +194,7 @@ test('F3c: multi-question answers serialize compactly (header: label; multiSelec
   t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
-  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon });
 
   const toolInput = {
     questions: [
@@ -227,7 +227,7 @@ test('F3c: {text} freeform fallback answers a choice hold with the text as the r
   t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
-  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon });
 
   const { held, q } = await holdChoice(daemon, sid, cwd, holdMs);
 
@@ -254,11 +254,11 @@ test('F3c: session activity (UserPromptSubmit) expires a pending choice hold wit
   t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
-  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon });
   const { held, q } = await holdChoice(daemon, sid, cwd, holdMs);
 
   const t0 = Date.now();
-  await postHook(daemon.baseUrl, 'UserPromptSubmit', loadFixture('user-prompt-submit', { session_id: sid, cwd }));
+  await postHook(daemon.baseUrl, 'UserPromptSubmit', loadFixture('user-prompt-submit', { session_id: sid, cwd }), { token: daemon });
   const heldRes = await held;
   const elapsed = Date.now() - t0;
 
@@ -275,11 +275,11 @@ test('F3c: SessionEnd expires a pending choice hold with {} — identical to the
   t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
-  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon });
   const { held, q } = await holdChoice(daemon, sid, cwd, holdMs);
 
   const t0 = Date.now();
-  await postHook(daemon.baseUrl, 'SessionEnd', loadFixture('session-end', { session_id: sid, cwd }));
+  await postHook(daemon.baseUrl, 'SessionEnd', loadFixture('session-end', { session_id: sid, cwd }), { token: daemon });
   const heldRes = await held;
   const elapsed = Date.now() - t0;
 

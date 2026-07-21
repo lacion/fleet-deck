@@ -159,20 +159,18 @@ if (PROXY_AUTH === 'trust' && !TRUSTED_ORIGINS.length) {
 // FLEETDECK_REQUIRE_TOKEN=on — opt into the token even on pure loopback. On a
 // multi-user machine every other OS user can reach 127.0.0.1 and today inherits
 // the loopback exemption (tokenless /state, /api/spawn, the lot); this closes
-// that, and the documented Host-rewriting-proxy residual with it. It forces a
-// token to EXIST (folded into TOKEN_REQUIRED below, so one is generated +
-// persisted 0600 exactly as in LAN mode) and http.mjs flips the loopback
-// auto-authorize off for everything but /hook/* and the data-free public shell.
+// that, and the documented Host-rewriting-proxy residual with it.
 const REQUIRE_TOKEN = (process.env.FLEETDECK_REQUIRE_TOKEN || '').trim().toLowerCase() === 'on';
 
-// TOKEN CONTRACT (extended for standalone). A token is mandatory whenever the
-// board is reachable from something that is not this machine. That is LAN mode
-// — and now also a reverse proxy in 'token' mode, where the daemon still binds
-// loopback but a browser reaches it from the outside world. Without this, a
-// proxied 'token'-mode daemon would have NO token to compare against and would
-// refuse every request it was supposed to gate: a locked door with no key.
-// FLEETDECK_REQUIRE_TOKEN=on joins the list: it too makes a token mandatory (and
-// therefore generated + persisted below) even though the bind stays loopback.
+// TOKEN CONTRACT (0.16.0: a token ALWAYS exists). Since 0.16.0 the daemon
+// mints/persists a token on every boot, default loopback included: the
+// authenticated hook shims, the token-gated loopback powers (/ws/term, POST
+// /mail, gateway settings writes, the unsupervised-spawn arm) and the local
+// board's ?t= URL all need a credential to present, and none of that may be
+// conditional on the operator opting into LAN mode. TOKEN_REQUIRED now means
+// something narrower: a token READ failure is FATAL (the board is reachable
+// from outside this machine, or the operator demanded the token everywhere) —
+// where the default mode may fall back to minting a fresh one.
 const TOKEN_REQUIRED = LAN_MODE || REQUIRE_TOKEN || (TRUSTED_ORIGINS.length > 0 && PROXY_AUTH === 'token');
 
 const TOKEN_FILE = path.join(HOME, 'token');
@@ -192,17 +190,23 @@ if (Object.hasOwn(process.env, 'FLEETDECK_TOKEN')) {
   }
 }
 
-if (TOKEN_REQUIRED && !TOKEN) {
+if (!TOKEN) {
   try { TOKEN = crypto.randomBytes(32).toString('hex'); } catch (err) {
     startupFatal(`cannot generate access token (${err?.code || err?.message || 'unknown error'})`);
   }
   try {
     // TOKEN FILE CONTRACT: an explicitly supplied mode keeps the credential
-    // owner-only even under a permissive umask. Any persistence error is fatal
-    // because an ephemeral secret would be lost and LAN access unusable.
+    // owner-only even under a permissive umask. Persistence failure is fatal
+    // only when the token is REQUIRED (a LAN/proxy/REQUIRE_TOKEN daemon whose
+    // secret never reaches the file is unusable); in default loopback mode a
+    // read-only HOME degrades to a hook-shim lockout (their 401s fail open),
+    // never a boot failure.
     fs.writeFileSync(TOKEN_FILE, TOKEN, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
   } catch (err) {
-    startupFatal(`cannot persist FLEETDECK_HOME/token (${err?.code || err?.message || 'unknown error'})`);
+    if (TOKEN_REQUIRED) {
+      startupFatal(`cannot persist FLEETDECK_HOME/token (${err?.code || err?.message || 'unknown error'})`);
+    }
+    console.error(`fleetd: WARNING: cannot persist FLEETDECK_HOME/token (${err?.code || err?.message || 'unknown error'}) — hook shims and the gated loopback routes will not authenticate this boot`);
   }
 }
 
@@ -210,16 +214,16 @@ if (TOKEN_REQUIRED && !TOKEN) {
 // only when it MINTS a token. When the operator PINS FLEETDECK_TOKEN in the env
 // (the documented way — and how the test suite starts the daemon), TOKEN is set
 // but no file was written, and HOME/token was never even read. But the fleet's
-// own clients — fleet-watch.mjs / fleet-sessionstart.mjs — read the bearer ONLY
-// from HOME/token, so with no file they present no token and every gated call
-// (LAN, REQUIRE_TOKEN, or proxy-token mode) 401s: the flag's own clients locked
-// out. So whenever a token is REQUIRED and one exists, make the file match it
-// (0600), writing only when it is absent or differs (a differing file is a stale
-// token — e.g. a previously generated one — that would otherwise mislead every
-// file-only client). Deliberately NOT when no token is required (default
-// loopback, no flag): a token file there gates nothing and only surprises the
-// operator. The just-generated case above already matches, so this no-ops it.
-if (TOKEN_REQUIRED && TOKEN) {
+// own clients — fleet-watch.mjs / fleet-sessionstart.mjs / fleet-hook.mjs —
+// read the bearer ONLY from HOME/token, so with no file they present no token
+// and every gated call 401s: the flag's own clients locked out. So whenever a
+// token exists, make the file match it (0600), writing only when it is absent
+// or differs (a differing file is a stale token — e.g. a previously generated
+// one — that would otherwise mislead every file-only client). The
+// just-generated case above already matches, so this no-ops it. Persistence
+// failure is fatal only when the token is REQUIRED; default loopback warns and
+// boots (same degraded-hook contract as the mint path above).
+if (TOKEN) {
   let onDisk = null;
   try { onDisk = fs.readFileSync(TOKEN_FILE, 'utf8'); } catch (err) {
     if (err?.code !== 'ENOENT') {
@@ -236,7 +240,10 @@ if (TOKEN_REQUIRED && TOKEN) {
       fs.writeFileSync(TOKEN_FILE, TOKEN, { encoding: 'utf8', mode: 0o600 });
       try { fs.chmodSync(TOKEN_FILE, 0o600); } catch { /* best-effort tighten */ }
     } catch (err) {
-      startupFatal(`cannot persist FLEETDECK_HOME/token (${err?.code || err?.message || 'unknown error'})`);
+      if (TOKEN_REQUIRED) {
+        startupFatal(`cannot persist FLEETDECK_HOME/token (${err?.code || err?.message || 'unknown error'})`);
+      }
+      console.error(`fleetd: WARNING: cannot persist FLEETDECK_HOME/token (${err?.code || err?.message || 'unknown error'}) — hook shims and the gated loopback routes will not authenticate this boot`);
     }
   }
 }
@@ -330,6 +337,13 @@ let mdns = null;
 server.listen(PORT, BIND, () => {
   const boundHost = BIND.includes(':') && !BIND.startsWith('[') ? `[${BIND}]` : BIND;
   console.log(`fleetd up on http://${boundHost}:${PORT} (pid ${process.pid}, db ${DB_FILE})`);
+  if (!LAN_MODE) {
+    // 0.16.0: the token always exists, and the local board needs it for the
+    // gated powers (/ws/term typing, /mail, gateway settings, the unsupervised
+    // arm). Print the credentialed LOCAL URL — loopback-only, and fleetd.log
+    // is chmod 0600 by the launcher for exactly this class of secret.
+    console.log(`fleetd board http://127.0.0.1:${PORT}/?t=${TOKEN}`);
+  }
   // TEST-SEAM ANNOUNCEMENT: these env vars swap a real subprocess (spawn / term
   // / the daemon script) or override identity (version) for the test suite. In
   // production they must be unset; announcing each active one at boot means a

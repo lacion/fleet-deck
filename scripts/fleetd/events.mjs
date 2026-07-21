@@ -8,13 +8,22 @@
 // mail (drainMail), notifyWatchers and modelMemo.
 
 import path from 'node:path';
+import os from 'node:os';
 import { deriveRepo, branchOf } from './repo-identity.mjs';
 import { ticketFromBranch } from './tickets.mjs';
 import { lastAssistantText } from './transcript.mjs';
 import { detectTrailingQuestion } from './questions.mjs';
+import { mungeClaudeProjectCwd } from './helpers.mjs';
 
 const EDIT_TOOLS = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'];
 const TEST_RUNNER_RE = /\b(pytest|jest|vitest|go test|cargo test|npm (run )?test)\b/; // spike regex, verbatim
+
+// 0.16.0 succession corroboration: the directory a session working in `cwd`
+// writes its transcripts to (~/.claude/projects/<munged-cwd>/). The heir of a
+// /clear shares the predecessor's cwd, so its transcript_path MUST live here.
+function expectedTranscriptDir(cwd, homeDir = os.homedir()) {
+  return path.join(homeDir, '.claude', 'projects', mungeClaudeProjectCwd(cwd));
+}
 
 export function createEvents(ctx) {
   const {
@@ -333,7 +342,20 @@ export function createEvents(ctx) {
         && !q.spawnBySession.get(sid);
       if (!existing || placeholder) {
         const prev = findClearedPredecessor(sid, ev.cwd, Date.now());
-        if (prev) succeedSession(prev, sid, { rename: !!existing });
+        // 0.16.0 corroboration: hooks now arrive authenticated through the
+        // command shims, but cheap defense in depth costs nothing — when the
+        // heir DOES present a transcript_path, it must live in the transcript
+        // directory Claude derives from the shared cwd before we hand it the
+        // predecessor's identity, pane, mail and questions. An absent
+        // transcript_path falls back to the historical (cwd, time) inference —
+        // reconcileClearForks' boot heal depends on payloads that lack it.
+        if (prev && ev.transcript_path
+          && path.dirname(String(ev.transcript_path)) !== expectedTranscriptDir(ev.cwd)) {
+          logEvent(sid, 'ClearSuccessionRefused', null,
+            `transcript ${String(ev.transcript_path).slice(0, 160)} does not match cwd ${String(ev.cwd).slice(0, 160)}`);
+        } else if (prev) {
+          succeedSession(prev, sid, { rename: !!existing });
+        }
       }
     }
     const { card: c } = applyEvent({ ...ev, hook_event_name: 'SessionStart' });

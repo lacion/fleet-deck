@@ -38,7 +38,7 @@ test('telemetry derivation walks queued -> working -> editing -> verifying -> ne
   const tokens = { session_id: sid, cwd: scratchCwd };
 
   // SessionStart -> queued
-  const startRes = await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', tokens));
+  const startRes = await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', tokens), { token: daemon });
   assert.equal(startRes.status, 200, 'SessionStart should 200');
   assert.ok(startRes.json?.callsign, 'SessionStart response must include a callsign');
 
@@ -49,7 +49,7 @@ test('telemetry derivation walks queued -> working -> editing -> verifying -> ne
 
   // UserPromptSubmit -> working (+ task capture)
   const prompt = 'Add an exported function slugify(s) to util.js (lowercase, trim, spaces to dashes, strip punctuation).';
-  await postHook(daemon.baseUrl, 'UserPromptSubmit', loadFixture('user-prompt-submit', tokens, { prompt }));
+  await postHook(daemon.baseUrl, 'UserPromptSubmit', loadFixture('user-prompt-submit', tokens, { prompt }), { token: daemon });
   state = (await getJson(`${daemon.baseUrl}/state`)).json;
   card = findSession(state, sid);
   assert.equal(card.col, 'working', 'UserPromptSubmit should derive col=working');
@@ -61,7 +61,7 @@ test('telemetry derivation walks queued -> working -> editing -> verifying -> ne
   await postHook(daemon.baseUrl, 'PostToolUse', loadFixture('post-tool-use-edit', tokens, {
     tool_name: 'Edit',
     tool_input: { file_path: filePath, old_string: 'a', new_string: 'b' },
-  }));
+  }), { token: daemon });
   state = (await getJson(`${daemon.baseUrl}/state`)).json;
   card = findSession(state, sid);
   assert.match(card.note, /util\.js/, 'editing note should mention the touched file');
@@ -71,7 +71,7 @@ test('telemetry derivation walks queued -> working -> editing -> verifying -> ne
   await postHook(daemon.baseUrl, 'PostToolUse', loadFixture('post-tool-use-bash', tokens, {
     tool_name: 'Bash',
     tool_input: { command: 'npm test' },
-  }));
+  }), { token: daemon });
   state = (await getJson(`${daemon.baseUrl}/state`)).json;
   card = findSession(state, sid);
   assert.equal(card.col, 'verifying', 'npm test should derive col=verifying');
@@ -80,7 +80,7 @@ test('telemetry derivation walks queued -> working -> editing -> verifying -> ne
   await postHook(daemon.baseUrl, 'PostToolUse', loadFixture('post-tool-use-bash', tokens, {
     tool_name: 'Bash',
     tool_input: { command: 'pytest -q' },
-  }));
+  }), { token: daemon });
   state = (await getJson(`${daemon.baseUrl}/state`)).json;
   card = findSession(state, sid);
   assert.equal(card.col, 'verifying', 'pytest should derive col=verifying');
@@ -88,20 +88,20 @@ test('telemetry derivation walks queued -> working -> editing -> verifying -> ne
   // Notification -> needsyou
   await postHook(daemon.baseUrl, 'Notification', loadFixture('notification', tokens, {
     message: 'Claude needs your permission to use Bash',
-  }));
+  }), { token: daemon });
   state = (await getJson(`${daemon.baseUrl}/state`)).json;
   card = findSession(state, sid);
   assert.equal(card.col, 'needsyou', 'Notification should derive col=needsyou');
 
   // Stop -> idle (no mail pending, so no block)
-  const stopRes = await postHook(daemon.baseUrl, 'Stop', loadFixture('stop', tokens));
+  const stopRes = await postHook(daemon.baseUrl, 'Stop', loadFixture('stop', tokens), { token: daemon });
   assert.deepEqual(stopRes.json, {}, 'Stop with no mail should return {} (no block)');
   state = (await getJson(`${daemon.baseUrl}/state`)).json;
   card = findSession(state, sid);
   assert.equal(card.col, 'idle', 'Stop should derive col=idle');
 
   // SessionEnd -> offline + endedAt
-  const endRes = await postHook(daemon.baseUrl, 'SessionEnd', loadFixture('session-end', tokens));
+  const endRes = await postHook(daemon.baseUrl, 'SessionEnd', loadFixture('session-end', tokens), { token: daemon });
   assert.deepEqual(endRes.json, {}, 'SessionEnd should respond {}');
   state = (await getJson(`${daemon.baseUrl}/state`)).json;
   card = findSession(state, sid);

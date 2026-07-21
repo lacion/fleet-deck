@@ -838,7 +838,6 @@ var require_receiver = __commonJS({
         this._opcode = 0;
         this._totalPayloadLength = 0;
         this._messageLength = 0;
-        this._numFragments = 0;
         this._fragments = [];
         this._errored = false;
         this._loop = false;
@@ -1189,23 +1188,23 @@ var require_receiver = __commonJS({
           this.controlMessage(data, cb);
           return;
         }
-        if (this._maxFragments > 0 && ++this._numFragments > this._maxFragments) {
-          const error = this.createError(
-            RangeError,
-            "Too many message fragments",
-            false,
-            1008,
-            "WS_ERR_TOO_MANY_BUFFERED_PARTS"
-          );
-          cb(error);
-          return;
-        }
         if (this._compressed) {
           this._state = INFLATING;
           this.decompress(data, cb);
           return;
         }
         if (data.length) {
+          if (this._maxFragments > 0 && this._fragments.length >= this._maxFragments) {
+            const error = this.createError(
+              RangeError,
+              "Too many message fragments",
+              false,
+              1008,
+              "WS_ERR_TOO_MANY_BUFFERED_PARTS"
+            );
+            cb(error);
+            return;
+          }
           this._messageLength = this._totalPayloadLength;
           this._fragments.push(data);
         }
@@ -1235,6 +1234,17 @@ var require_receiver = __commonJS({
               cb(error);
               return;
             }
+            if (this._maxFragments > 0 && this._fragments.length >= this._maxFragments) {
+              const error = this.createError(
+                RangeError,
+                "Too many message fragments",
+                false,
+                1008,
+                "WS_ERR_TOO_MANY_BUFFERED_PARTS"
+              );
+              cb(error);
+              return;
+            }
             this._fragments.push(buf);
           }
           this.dataMessage(cb);
@@ -1257,7 +1267,6 @@ var require_receiver = __commonJS({
         this._totalPayloadLength = 0;
         this._messageLength = 0;
         this._fragmented = 0;
-        this._numFragments = 0;
         this._fragments = [];
         if (this._opcode === 2) {
           let data;
@@ -2280,7 +2289,7 @@ var require_websocket = __commonJS({
     var http2 = __require("http");
     var net = __require("net");
     var tls = __require("tls");
-    var { randomBytes, createHash } = __require("crypto");
+    var { randomBytes: randomBytes2, createHash } = __require("crypto");
     var { Duplex, Readable } = __require("stream");
     var { URL: URL2 } = __require("url");
     var PerMessageDeflate2 = require_permessage_deflate();
@@ -2758,8 +2767,8 @@ var require_websocket = __commonJS({
         autoPong: true,
         closeTimeout: CLOSE_TIMEOUT,
         protocolVersion: protocolVersions[1],
-        maxBufferedChunks: 256 * 1024,
-        maxFragments: 16 * 1024,
+        maxBufferedChunks: 1024 * 1024,
+        maxFragments: 128 * 1024,
         maxPayload: 100 * 1024 * 1024,
         skipUTF8Validation: false,
         perMessageDeflate: true,
@@ -2818,7 +2827,7 @@ var require_websocket = __commonJS({
         }
       }
       const defaultPort = isSecure ? 443 : 80;
-      const key = randomBytes(16).toString("base64");
+      const key = randomBytes2(16).toString("base64");
       const request = isSecure ? https.request : http2.request;
       const protocolSet = /* @__PURE__ */ new Set();
       let perMessageDeflate;
@@ -3346,9 +3355,9 @@ var require_websocket_server = __commonJS({
        *     called
        * @param {Function} [options.handleProtocols] A hook to handle protocols
        * @param {String} [options.host] The hostname where to bind the server
-       * @param {Number} [options.maxBufferedChunks=262144] The maximum number of
+       * @param {Number} [options.maxBufferedChunks=1048576] The maximum number of
        *     buffered data chunks
-       * @param {Number} [options.maxFragments=16384] The maximum number of message
+       * @param {Number} [options.maxFragments=131072] The maximum number of message
        *     fragments
        * @param {Number} [options.maxPayload=104857600] The maximum allowed message
        *     size
@@ -3371,8 +3380,8 @@ var require_websocket_server = __commonJS({
         options = {
           allowSynchronousEvents: true,
           autoPong: true,
-          maxBufferedChunks: 256 * 1024,
-          maxFragments: 16 * 1024,
+          maxBufferedChunks: 1024 * 1024,
+          maxFragments: 128 * 1024,
           maxPayload: 100 * 1024 * 1024,
           skipUTF8Validation: false,
           perMessageDeflate: false,
@@ -3714,7 +3723,7 @@ var require_websocket_server = __commonJS({
 // scripts/fleetd/fleetd.mjs
 import fs16 from "node:fs";
 import crypto2 from "node:crypto";
-import os7 from "node:os";
+import os9 from "node:os";
 import path14 from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
@@ -5175,6 +5184,11 @@ function claudeEnvArgvPrefix(port, home, { keep = [] } = {}) {
     // env-poisoning scar, new tenants).
     "FLEETDECK_TEST_DAEMON_SCRIPT",
     "FLEETDECK_VERSION_OVERRIDE",
+    // The daemon's bearer. When the operator pins FLEETDECK_TOKEN in the env it
+    // would otherwise ride tmux's global env into every pane — a live
+    // credential handed to every agent (0.16.0). Agents that legitimately call
+    // the API read $FLEETDECK_HOME/token instead (same file the shims use).
+    "FLEETDECK_TOKEN",
     // LLM-gateway routing (see GATEWAY_ENV_VARS): whether a pane bills your
     // Anthropic account or a local proxy must come from the spawn, never from
     // whatever shell the daemon happened to boot in.
@@ -6262,6 +6276,7 @@ function createSettings(ctx) {
 
 // scripts/fleetd/files.mjs
 import fs8 from "node:fs";
+import os5 from "node:os";
 import path6 from "node:path";
 import { spawn } from "node:child_process";
 function envInt2(name, fallback, { min = 1 } = {}) {
@@ -6294,8 +6309,13 @@ function validateRelPath(relPath) {
   if (typeof relPath !== "string" || relPath.length > 4096 || relPath.includes("\0") || path6.isAbsolute(relPath) || relPath.split(/[\\/]/).includes("..")) {
     throw new PathError(400, "invalid path");
   }
-  if (relPath.split(/[\\/]/).includes(".git")) throw new PathError(404, "not found");
+  const segments = relPath.split(/[\\/]/);
+  if (segments.includes(".git")) throw new PathError(404, "not found");
+  if (segments.some((s) => CREDENTIAL_SEGMENTS.has(s))) throw new PathError(404, "not found");
+  const dockerAt = segments.indexOf(".docker");
+  if (dockerAt !== -1 && segments[dockerAt + 1] === "config.json") throw new PathError(404, "not found");
 }
+var CREDENTIAL_SEGMENTS = /* @__PURE__ */ new Set([".ssh", ".aws", ".gnupg", ".netrc", ".kube"]);
 function safeJoin(realRoot, relPath) {
   validateRelPath(relPath);
   const abs = path6.resolve(realRoot, relPath || ".");
@@ -6334,8 +6354,17 @@ function realpathInside(realRoot, target) {
     throw new PathError(404, "not found");
   }
   if (!within(realRoot, real)) throw new PathError(404, "not found");
+  if (fleetHomeReal === void 0) {
+    try {
+      fleetHomeReal = fs8.realpathSync(process.env.FLEETDECK_HOME || path6.join(os5.homedir() || "/tmp", ".fleetdeck"));
+    } catch {
+      fleetHomeReal = null;
+    }
+  }
+  if (fleetHomeReal && within(fleetHomeReal, real)) throw new PathError(404, "not found");
   return real;
 }
+var fleetHomeReal;
 function resolveRoot(ctx, sid) {
   const session = ctx.q.getSession.get(sid);
   if (!session) return { error: { status: 404, body: { ok: false, reason: "unknown session" } } };
@@ -6777,7 +6806,7 @@ function createFiles(ctx) {
 
 // scripts/fleetd/paste.mjs
 import fs9 from "node:fs";
-import os5 from "node:os";
+import os6 from "node:os";
 import path7 from "node:path";
 import crypto from "node:crypto";
 var MAX_IMAGE_BYTES = 10 * 1024 * 1024;
@@ -6785,7 +6814,7 @@ var PRUNE_AFTER_MS = 24 * 60 * 60 * 1e3;
 var MAX_KEPT_PASTES = 50;
 var ACCEPT = "png, jpeg, gif, webp";
 function pasteDir() {
-  const home = process.env.FLEETDECK_HOME || path7.join(os5.homedir() || os5.tmpdir(), ".fleetdeck");
+  const home = process.env.FLEETDECK_HOME || path7.join(os6.homedir() || os6.tmpdir(), ".fleetdeck");
   return path7.join(home, "pastes");
 }
 function sniffImage(buf) {
@@ -6914,6 +6943,8 @@ function clampFrom(from) {
   if (typeof from !== "string" || from.length <= MAIL_FROM_MAX_LEN) return from;
   return dropOrphanSurrogate(from.slice(0, MAIL_FROM_MAX_LEN));
 }
+var RESERVED_SENDERS = /* @__PURE__ */ new Set(["orchestrator", "fleetdeck", "fleetdeck-answer", "human"]);
+var RESERVED_FRAME_RE = /^\s*\[FLEETDECK[ \]]/i;
 function createMail(ctx) {
   const {
     db: db2,
@@ -7065,6 +7096,12 @@ function createMail(ctx) {
     };
   }
   async function postMail({ to, from, text }) {
+    if (from != null && RESERVED_SENDERS.has(String(from).toLowerCase())) {
+      return { status: 422, body: { ok: false, reason: `sender name '${from}' is reserved for the daemon` } };
+    }
+    if (RESERVED_FRAME_RE.test(String(text ?? ""))) {
+      return { status: 422, body: { ok: false, reason: "mail text may not open with a [FLEETDECK ...] frame \u2014 those are reserved for the daemon" } };
+    }
     const targets = resolveTargets(to);
     const routes = await Promise.all(targets.map(async (sid) => {
       if (hasWatchWaiter(sid)) return "watcher";
@@ -7405,7 +7442,7 @@ function createPlans(ctx) {
 // scripts/fleetd/spawns.mjs
 import fs10 from "node:fs";
 import path9 from "node:path";
-import { randomUUID as randomUUID2 } from "node:crypto";
+import { randomUUID as randomUUID2, randomBytes } from "node:crypto";
 function createSpawns(ctx) {
   const {
     q,
@@ -7441,6 +7478,30 @@ function createSpawns(ctx) {
     resolveGateway,
     resolveGatewayEnv
   } = ctx;
+  const ARM_TTL_MS = 6e4;
+  const armTokens = /* @__PURE__ */ new Map();
+  function armUnsupervised() {
+    const token = randomBytes(24).toString("base64url");
+    armTokens.set(token, Date.now() + ARM_TTL_MS);
+    if (armTokens.size > 128) {
+      const now = Date.now();
+      for (const [t, exp] of armTokens) {
+        if (exp <= now) armTokens.delete(t);
+      }
+    }
+    return token;
+  }
+  function consumeArm(token) {
+    if (typeof token !== "string" || !armTokens.has(token)) return false;
+    const exp = armTokens.get(token);
+    armTokens.delete(token);
+    return exp > Date.now();
+  }
+  function unsupervisedGate(skipPermissions, body) {
+    if (!skipPermissions) return null;
+    if (consumeArm(body?.arm_token)) return null;
+    return "unsupervised spawns require a fresh arm token from POST /api/spawn/arm-unsupervised \u2014 the API half of the board's two-step confirmation";
+  }
   function gatewayDecision(wanted, source = "request") {
     const profile = resolveGateway();
     const asked = wanted === true || wanted == null && profile.default;
@@ -7504,6 +7565,7 @@ function createSpawns(ctx) {
       mutate: true
     });
   }
+  const TRUST_DIALOG_RE = /do you trust the files in this folder|trust this folder|trust the files|new mcp server|mcp server .{0,40}(approve|allow|trust)|use this and all future mcp servers/i;
   const nudged = /* @__PURE__ */ new Set();
   function scheduleNudge(spawn_id, window, callsign) {
     const t = setTimeout(async () => {
@@ -7514,9 +7576,21 @@ function createSpawns(ctx) {
         const win = await findScopedWindow(window);
         if (!win || win.pane_dead) return;
         nudged.add(spawn_id);
+        let screen = "";
+        try {
+          screen = await tmuxAdapter.capturePane(win.window_id) || "";
+        } catch {
+        }
+        if (TRUST_DIALOG_RE.test(screen)) {
+          logEvent(row.session_id, "SpawnNudge", null, "trust/MCP dialog held for human approval");
+          updateSession(row.session_id, { note: "waiting on the folder-trust dialog \u2014 approve it in the terminal" });
+          tick(`\u{1F512} ${callsign} waits on a trust dialog \u2014 approve it in the terminal`);
+          onMutate();
+          return;
+        }
         await tmuxAdapter.sendBringupEnter(win.window_id);
-        logEvent(row.session_id, "SpawnNudge", null, "bring-up Enter sent (trust dialog)");
-        tick(`\u23CE nudged ${callsign} through the trust dialog`);
+        logEvent(row.session_id, "SpawnNudge", null, "bring-up Enter sent");
+        tick(`\u23CE nudged ${callsign} through bring-up`);
         onMutate();
       } catch {
       }
@@ -7562,7 +7636,7 @@ function createSpawns(ctx) {
       text = await tmuxAdapter.capturePane(row.tmux_window);
     } catch {
     }
-    const url = typeof text === "string" ? text.match(RC_URL_RE)?.[0] ?? null : null;
+    const url = typeof text === "string" ? text.match(RC_URL_RE)?.[0]?.replace(/[)\]}"'`.,;:]+$/, "") ?? null : null;
     try {
       q.setSpawnRemote.run(url, spawn_id);
       const c = q.getSession.get(row.session_id);
@@ -7753,6 +7827,9 @@ function createSpawns(ctx) {
     if (body?.gateway != null && typeof body.gateway !== "boolean") {
       return { status: 400, body: { ok: false, reason: "gateway must be a boolean" } };
     }
+    if (body?.arm_token != null && typeof body.arm_token !== "string") {
+      return { status: 400, body: { ok: false, reason: "arm_token must be a string" } };
+    }
     const gateway = gatewayDecision(body?.gateway);
     if (gateway.error) return { status: 400, body: { ok: false, reason: gateway.error } };
     const rcConflict = gatewayRemoteConflict(gateway.use, body?.remote_control === true);
@@ -7763,6 +7840,8 @@ function createSpawns(ctx) {
       return { status: 400, body: { ok: false, reason: "provide either cwd or repo, not both" } };
     }
     const skipPermissions = body?.dangerously_skip_permissions === true || body?.permission_mode === "bypassPermissions";
+    const armRefusal = unsupervisedGate(skipPermissions, body);
+    if (armRefusal) return { status: 403, body: { ok: false, reason: armRefusal } };
     if (hasRepo) {
       if (body?.worktree === true) {
         return { status: 400, body: { ok: false, reason: "branch_mode replaces worktree in repo mode" } };
@@ -8266,7 +8345,12 @@ function createSpawns(ctx) {
     if (body?.disarm != null && typeof body.disarm !== "boolean") {
       return { status: 400, body: { ok: false, reason: "disarm must be a boolean" } };
     }
+    if (body?.arm_token != null && typeof body.arm_token !== "string") {
+      return { status: 400, body: { ok: false, reason: "arm_token must be a string" } };
+    }
     const skip = body?.dangerously_skip_permissions === true;
+    const adoptArmRefusal = unsupervisedGate(skip, body);
+    if (adoptArmRefusal) return { status: 403, body: { ok: false, reason: adoptArmRefusal } };
     if (body?.disarm === true) {
       updateSession(session_id, { adopt_armed_until: null, adopt_armed_skip: null });
       tick(`\u21E5 ${c.callsign} move-to-tmux disarmed`);
@@ -8624,14 +8708,19 @@ function createSpawns(ctx) {
     reconcileClearForks,
     scheduleRegistrationRemoteHarvest,
     forgetSpawn,
-    spawnState
+    spawnState,
+    armUnsupervised
   };
 }
 
 // scripts/fleetd/events.mjs
 import path10 from "node:path";
+import os7 from "node:os";
 var EDIT_TOOLS = ["Edit", "Write", "MultiEdit", "NotebookEdit"];
 var TEST_RUNNER_RE = /\b(pytest|jest|vitest|go test|cargo test|npm (run )?test)\b/;
+function expectedTranscriptDir(cwd, homeDir = os7.homedir()) {
+  return path10.join(homeDir, ".claude", "projects", mungeClaudeProjectCwd(cwd));
+}
 function createEvents(ctx) {
   const {
     q,
@@ -8840,7 +8929,16 @@ function createEvents(ctx) {
       const placeholder = existing && existing.events === 0 && existing.succeeded_by == null && !q.successorClaimed.get(sid) && !q.spawnBySession.get(sid);
       if (!existing || placeholder) {
         const prev = findClearedPredecessor(sid, ev.cwd, Date.now());
-        if (prev) succeedSession(prev, sid, { rename: !!existing });
+        if (prev && ev.transcript_path && path10.dirname(String(ev.transcript_path)) !== expectedTranscriptDir(ev.cwd)) {
+          logEvent(
+            sid,
+            "ClearSuccessionRefused",
+            null,
+            `transcript ${String(ev.transcript_path).slice(0, 160)} does not match cwd ${String(ev.cwd).slice(0, 160)}`
+          );
+        } else if (prev) {
+          succeedSession(prev, sid, { rename: !!existing });
+        }
       }
     }
     const { card: c } = applyEvent({ ...ev, hook_event_name: "SessionStart" });
@@ -9779,7 +9877,8 @@ function createCore(db2, {
     reconcileClearForks,
     scheduleRegistrationRemoteHarvest,
     forgetSpawn,
-    spawnState
+    spawnState,
+    armUnsupervised
   } = ctx;
   Object.assign(ctx, createEvents(ctx));
   const {
@@ -9845,6 +9944,8 @@ function createCore(db2, {
     // POST /api/spawn/:id/kill → {status, body}
     spawnCapability,
     // /health + /state `spawn` object
+    armUnsupervised,
+    // POST /api/spawn/arm-unsupervised → one-time arm token
     spawnLivenessTick,
     // owned-pane liveness, rides the agents-poll cadence
     reconcileSpawns,
@@ -9896,7 +9997,7 @@ function createCore(db2, {
 // scripts/fleetd/http.mjs
 import http from "node:http";
 import { timingSafeEqual } from "node:crypto";
-import os6 from "node:os";
+import os8 from "node:os";
 import fs13 from "node:fs";
 import path11 from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10355,7 +10456,7 @@ var MIME = {
   ".woff": "font/woff",
   ".woff2": "font/woff2"
 };
-var CSP_SHELL = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self' ws: wss:; img-src 'self' data: blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
+var CSP_SHELL = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self'; img-src 'self' data: blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
 function serveBoardAsset(res, pathname, notFound) {
   let decoded;
   try {
@@ -10376,7 +10477,11 @@ function serveBoardAsset(res, pathname, notFound) {
   const headers = {
     "content-type": MIME[ext] || "application/octet-stream",
     "content-length": data.length,
-    "x-content-type-options": "nosniff"
+    "x-content-type-options": "nosniff",
+    // The board boots from a ?t=<token> URL; no subresource (notably the
+    // Google Fonts stylesheet, which fires before token.js can scrub the URL)
+    // may ever see it as a Referer.
+    "referrer-policy": "no-referrer"
   };
   if (ext === ".html") headers["content-security-policy"] = CSP_SHELL;
   res.writeHead(200, headers);
@@ -10459,17 +10564,23 @@ function createHttp(core2, {
       } else if (proxyAuth === "trust" && viaProxy) {
         return true;
       } else {
-        if (!requireToken || url.pathname.startsWith("/hook/") || url.pathname === "/health" || isPublicShell(req.method, url.pathname)) return true;
+        if (url.pathname === "/health" || isPublicShell(req.method, url.pathname)) return true;
+        if (!requireToken && !url.pathname.startsWith("/hook/") && !tokenGatedRoute(req.method, url.pathname)) return true;
       }
     }
     const authorization = req.headers.authorization;
     const bearer = typeof authorization === "string" ? /^Bearer (.+)$/.exec(authorization)?.[1] : void 0;
     return tokenMatches(bearer) || tokenMatches(url.searchParams.get("t"));
   }
+  function tokenGatedRoute(method, pathname) {
+    if (pathname === "/ws/term") return true;
+    if (method !== "POST") return false;
+    return pathname === "/mail" || pathname === "/api/spawn/arm-unsupervised";
+  }
   const daemonPort = String(port);
   const lanHosts = /* @__PURE__ */ new Set();
   try {
-    for (const entries of Object.values(os6.networkInterfaces())) {
+    for (const entries of Object.values(os8.networkInterfaces())) {
       for (const entry of entries || []) {
         if (entry?.address) lanHosts.add(String(entry.address).toLowerCase());
       }
@@ -10744,7 +10855,7 @@ function createHttp(core2, {
               return json(res, 200, handler(ev) ?? {});
             }
             if (url.pathname === "/mail") {
-              core2.postMail(ev).then((out) => json(res, 200, out)).catch((err) => {
+              core2.postMail(ev).then((out) => json(res, out.status ?? 200, out.body ?? out)).catch((err) => {
                 console.error("fleetd mail error:", err);
                 json(res, 500, { ok: false, err: "internal" });
               });
@@ -10765,6 +10876,14 @@ function createHttp(core2, {
               return;
             }
             if (url.pathname === "/api/settings") {
+              if (Object.keys(ev || {}).some((k) => k.startsWith("gateway_"))) {
+                const authorization = req.headers.authorization;
+                const bearer = typeof authorization === "string" ? /^Bearer (.+)$/.exec(authorization)?.[1] : void 0;
+                if (!tokenMatches(bearer) && !tokenMatches(url.searchParams.get("t"))) {
+                  return json(res, 401, { ok: false, reason: "gateway settings require the bearer token" });
+                }
+                logExec(url.pathname, req, " gateway=true");
+              }
               const out = core2.setSettings(ev);
               return json(res, out.status, out.body);
             }
@@ -10772,6 +10891,10 @@ function createHttp(core2, {
             if (url.pathname === "/api/paste-image") {
               const out = core2.pasteImage(ev);
               return json(res, out.status, out.body);
+            }
+            if (url.pathname === "/api/spawn/arm-unsupervised") {
+              logExec(url.pathname, req);
+              return json(res, 200, { ok: true, arm_token: core2.armUnsupervised() });
             }
             if (url.pathname === "/api/spawn") {
               logExec(
@@ -11858,7 +11981,7 @@ if (Object.hasOwn(process.env, "FLEETDECK_TOKEN")) {
     }
   }
 }
-if (TOKEN_REQUIRED && !TOKEN) {
+if (!TOKEN) {
   try {
     TOKEN = crypto2.randomBytes(32).toString("hex");
   } catch (err) {
@@ -11867,10 +11990,13 @@ if (TOKEN_REQUIRED && !TOKEN) {
   try {
     fs16.writeFileSync(TOKEN_FILE, TOKEN, { encoding: "utf8", mode: 384, flag: "wx" });
   } catch (err) {
-    startupFatal(`cannot persist FLEETDECK_HOME/token (${err?.code || err?.message || "unknown error"})`);
+    if (TOKEN_REQUIRED) {
+      startupFatal(`cannot persist FLEETDECK_HOME/token (${err?.code || err?.message || "unknown error"})`);
+    }
+    console.error(`fleetd: WARNING: cannot persist FLEETDECK_HOME/token (${err?.code || err?.message || "unknown error"}) \u2014 hook shims and the gated loopback routes will not authenticate this boot`);
   }
 }
-if (TOKEN_REQUIRED && TOKEN) {
+if (TOKEN) {
   let onDisk = null;
   try {
     onDisk = fs16.readFileSync(TOKEN_FILE, "utf8");
@@ -11887,7 +12013,10 @@ if (TOKEN_REQUIRED && TOKEN) {
       } catch {
       }
     } catch (err) {
-      startupFatal(`cannot persist FLEETDECK_HOME/token (${err?.code || err?.message || "unknown error"})`);
+      if (TOKEN_REQUIRED) {
+        startupFatal(`cannot persist FLEETDECK_HOME/token (${err?.code || err?.message || "unknown error"})`);
+      }
+      console.error(`fleetd: WARNING: cannot persist FLEETDECK_HOME/token (${err?.code || err?.message || "unknown error"}) \u2014 hook shims and the gated loopback routes will not authenticate this boot`);
     }
   }
 }
@@ -11950,7 +12079,7 @@ server.on("error", (e) => {
 function lanAddresses() {
   const addresses = /* @__PURE__ */ new Set();
   try {
-    for (const entries of Object.values(os7.networkInterfaces())) {
+    for (const entries of Object.values(os9.networkInterfaces())) {
       for (const entry of entries || []) {
         if ((entry.family === "IPv4" || entry.family === 4) && !entry.internal) addresses.add(entry.address);
       }
@@ -11964,6 +12093,9 @@ var mdns = null;
 server.listen(PORT, BIND, () => {
   const boundHost = BIND.includes(":") && !BIND.startsWith("[") ? `[${BIND}]` : BIND;
   console.log(`fleetd up on http://${boundHost}:${PORT} (pid ${process.pid}, db ${DB_FILE})`);
+  if (!LAN_MODE) {
+    console.log(`fleetd board http://127.0.0.1:${PORT}/?t=${TOKEN}`);
+  }
   for (const seam of ["FLEETDECK_SPAWN_CMD", "FLEETDECK_TERM_CMD", "FLEETDECK_TEST_DAEMON_SCRIPT", "FLEETDECK_VERSION_OVERRIDE"]) {
     if (process.env[seam]) console.error(`fleetd WARNING: test seam ${seam} active`);
   }

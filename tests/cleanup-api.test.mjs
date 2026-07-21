@@ -8,9 +8,9 @@ test('POST /api/cleanup archives offline sessions and expires their queued mail'
   const daemon = await startDaemon();
   t.after(async () => { await daemon.stop(); });
   const sid = randomUUID();
-  await postHook(daemon.baseUrl, 'SessionStart', { session_id: sid, cwd: process.cwd(), source: 'startup' });
-  await postHook(daemon.baseUrl, 'SessionEnd', { session_id: sid, cwd: process.cwd(), reason: 'done' });
-  await postJson(`${daemon.baseUrl}/mail`, { to: sid, from: 'ops', text: 'undeliverable' });
+  await postHook(daemon.baseUrl, 'SessionStart', { session_id: sid, cwd: process.cwd(), source: 'startup' }, { token: daemon });
+  await postHook(daemon.baseUrl, 'SessionEnd', { session_id: sid, cwd: process.cwd(), reason: 'done' }, { token: daemon });
+  await postJson(`${daemon.baseUrl}/mail`, { to: sid, from: 'ops', text: 'undeliverable' }, { token: daemon });
 
   const res = await postJson(`${daemon.baseUrl}/api/cleanup`, {});
   assert.equal(res.status, 200);
@@ -35,11 +35,11 @@ test('Clear wipes everything that is not alive: conflicts, the rail, the feed', 
   const dead1 = randomUUID();
   const dead2 = randomUUID();
   for (const sid of [dead1, dead2]) {
-    await postHook(daemon.baseUrl, 'SessionStart', { session_id: sid, cwd: process.cwd(), source: 'startup' });
+    await postHook(daemon.baseUrl, 'SessionStart', { session_id: sid, cwd: process.cwd(), source: 'startup' }, { token: daemon });
     await postHook(daemon.baseUrl, 'PostToolUse', {
       session_id: sid, cwd: process.cwd(), tool_name: 'Edit',
       tool_input: { file_path: `${process.cwd()}/contested.js` },
-    });
+    }, { token: daemon });
   }
   let state = (await getJson(`${daemon.baseUrl}/state`)).json;
   assert.ok(state.conflicts.length >= 1, 'sanity: the radar raised a conflict');
@@ -48,10 +48,10 @@ test('Clear wipes everything that is not alive: conflicts, the rail, the feed', 
 
   // A THIRD session is still alive and arguing with nobody — it must survive.
   const alive = randomUUID();
-  await postHook(daemon.baseUrl, 'SessionStart', { session_id: alive, cwd: process.cwd(), source: 'startup' });
+  await postHook(daemon.baseUrl, 'SessionStart', { session_id: alive, cwd: process.cwd(), source: 'startup' }, { token: daemon });
 
   for (const sid of [dead1, dead2]) {
-    await postHook(daemon.baseUrl, 'SessionEnd', { session_id: sid, cwd: process.cwd(), reason: 'done' });
+    await postHook(daemon.baseUrl, 'SessionEnd', { session_id: sid, cwd: process.cwd(), reason: 'done' }, { token: daemon });
   }
 
   const res = await postJson(`${daemon.baseUrl}/api/cleanup`, {});

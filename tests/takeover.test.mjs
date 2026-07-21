@@ -212,7 +212,7 @@ test('a newer hook replaces an older daemon: old exits 0, new owns the same port
 
   // Pre-seed a session so we can prove state survives the SQLite handoff.
   const seededSid = randomUUID();
-  await postHook(old.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: seededSid, cwd }));
+  await postHook(old.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: seededSid, cwd }), { token: old });
   assert.ok(
     (await getJson(`${old.baseUrl}/state`)).json.sessions.find(s => s.session_id === seededSid),
     'sanity: the seed session is present before the takeover');
