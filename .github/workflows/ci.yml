@@ -17,28 +17,28 @@ jobs:
       matrix:
         node-version: ['22', '24']
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Install tmux
         run: sudo apt-get update && sudo apt-get install -y tmux
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: ${{ matrix.node-version }}
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: npm test
 
   bundle:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Install tmux
         run: sudo apt-get update && sudo apt-get install -y tmux
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '22'
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: npm run bundle
       - name: Fail if committed bundle is stale
         run: git diff --exit-code scripts/fleetd/fleetd.bundle.mjs
@@ -48,13 +48,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '22'
           cache: npm
           cache-dependency-path: board/package-lock.json
-      - run: npm --prefix board ci
+      - run: npm --prefix board ci --ignore-scripts
       - run: npm --prefix board run build
       - name: Fail if committed board build is stale
         run: git diff --exit-code scripts/fleetd/board-dist
@@ -64,14 +64,14 @@ jobs:
     timeout-minutes: 30
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Install tmux
         run: brew install tmux
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '22'
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: npm test
         env:
           FLEETDECK_TEST_WAIT_SCALE: 3
@@ -85,7 +85,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Fail if the four manifests disagree on the version
         run: |
           pkg=$(node -p "require('./package.json').version")
@@ -103,3 +103,47 @@ jobs:
             fi
           done
           echo "✓ all four agree on $pkg"
+
+  # 0.16.0 — the hook scripts run on every installed machine at every
+  # SessionStart with the user's full environment, and marketplace installs
+  # track git main UNGATED (no npm publish, no tag). The bundle drift gate
+  # covers only the bundled artifacts, so this job is the checkpoint for the
+  # unbundled execution path: hooks.json, the three hook scripts, and the
+  # fleetd/ source modules they import (config, takeover, env-scrub). Any
+  # change to that closure must ride a release — signalled by a version bump
+  # in the same diff — never slip in on an ordinary commit.
+  hook-integrity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - name: Fail if hook execution paths changed without a version bump
+        run: |
+          set -e
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+          else
+            BASE="${{ github.event.before }}"
+          fi
+          # Push to main with the same before/after (e.g. branch creation) — nothing to check.
+          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+            echo "no base to compare — skipping"
+            exit 0
+          fi
+          git fetch --no-tags origin "$BASE" || true
+          WATCHED="hooks/hooks.json scripts/fleet-hook.mjs scripts/fleet-sessionstart.mjs scripts/fleet-watch.mjs scripts/fleetd/config.mjs scripts/fleetd/takeover.mjs scripts/fleetd/env-scrub.mjs"
+          CHANGED=$(git diff --name-only "$BASE" HEAD -- $WATCHED || true)
+          if [ -z "$CHANGED" ]; then
+            echo "✓ hook execution closure untouched"
+            exit 0
+          fi
+          echo "hook execution closure changed:"
+          echo "$CHANGED"
+          VERSION_CHANGED=$(git diff --name-only "$BASE" HEAD -- package.json .claude-plugin/plugin.json .claude-plugin/marketplace.json board/package.json || true)
+          if [ -z "$VERSION_CHANGED" ]; then
+            echo "::error::hook scripts (or their fleetd/ import closure) changed but no version manifest did — code that runs at every user's SessionStart must ride a release"
+            exit 1
+          fi
+          echo "✓ hook closure changed alongside a version bump (release-bound)"

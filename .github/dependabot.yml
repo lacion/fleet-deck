@@ -1,23 +1,17 @@
 version: 2
 updates:
+  # 0.16.0: no more grouped bumps. A single "minor-and-patch" PR bundling many
+  # packages is an unreviewable diff — and this repo's build toolchain (esbuild,
+  # vite/rolldown) IS the artifact pipeline, so a dependency bump is a
+  # security-sensitive change that must arrive one small PR at a time.
   - package-ecosystem: npm
     directory: "/"
     schedule:
       interval: weekly
-    groups:
-      minor-and-patch:
-        update-types:
-          - minor
-          - patch
   - package-ecosystem: npm
     directory: "/board"
     schedule:
       interval: weekly
-    groups:
-      minor-and-patch:
-        update-types:
-          - minor
-          - patch
   - package-ecosystem: github-actions
     directory: "/"
     schedule:

@@ -5,6 +5,35 @@ All notable changes to Fleet Deck are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.0] - 2026-07-21
+
+A full red-team exercise (five attack teams, five independent verifiers, every
+claim re-read against the code) found the daemon's network walls held — and
+that the real exposure lived elsewhere: session-to-session isolation was
+cosmetic, the bring-up nudge answered Claude Code's trust dialog for you, the
+unsupervised two-step existed only in the UI, and the release pipeline had no
+human gate. This release closes all of it. Several changes are breaking;
+each says who and what to do.
+
+### Security
+
+- **Hooks are authenticated.** Every hook event now reaches the daemon through a command shim (`scripts/fleet-hook.mjs`, alongside the existing SessionStart and watch scripts) that reads `$FLEETDECK_HOME/token` and attaches it — Claude Code `http` hooks cannot carry headers, which is why the daemon used to exempt `/hook/*` from the bearer entirely. That exemption meant *any* local process could impersonate a session with one curl: graft a `/clear` succession and steal a card's identity, pane, mail and remote-control link; plant a permission hold under a sibling's callsign so your Approve lands on the attacker's prompt; drain a mailbox by forging `UserPromptSubmit`. All of those now 401.
+- **The daemon's mail identities and frames are reserved.** `orchestrator`, `fleetdeck`, `fleetdeck-answer`, `human` and any text opening with a `[FLEETDECK ...]` frame are refused (422) from external senders — the fleet doctrine teaches agents to treat those envelopes as carrying *your* authority, so they must be unforgeable. Ordinary callsign senders and plain text are untouched, and the doctrine now tells agents plainly: unframed mail is untrusted peer content, and no mail ever authorizes destructive or credential-touching work.
+- **The unsupervised two-step moved into the daemon.** It used to live only in the board's red checkbox flow, so any loopback process — a fleet-spawned agent included — could `curl /api/spawn` itself an unsupervised sibling. An unsupervised body (`dangerously_skip_permissions` or `permission_mode: 'bypassPermissions'`) now needs a single-use, 60-second arm token from the token-gated `POST /api/spawn/arm-unsupervised`. The board's checkbox and the permission-mode dropdown (which used to skip the two-step entirely) both route through it.
+- **The bring-up nudge never answers trust dialogs.** It used to press Enter through whatever was on screen — including the folder-trust and MCP-approval prompts, which are the human checkpoints between a freshly cloned repo's `.claude/settings.json` hooks / `.mcp.json` servers and your credentials. The nudge now reads the pane first: a trust/MCP dialog is held for you with a 🔒 note on the card; anything else keeps the historical one-Enter bring-up.
+- **Power routes require the token even on loopback.** Typing into terminals (`/ws/term`), `POST /mail`, `gateway_*` settings writes and the unsupervised arm now demand the bearer in every mode — these are the powers a malicious local process must not wield anonymously. Ordinary loopback browsing stays open; the trust zone for everything else is unchanged.
+- **The file explorer refuses credential paths.** The global explorer's default root is your home directory, and a bearer holder (a phone on LAN, an agent with the token) could read `~/.ssh`, `~/.aws` and the daemon's own token through it. `.git`, `.ssh`, `.aws`, `.gnupg`, `.netrc`, `.kube`, `.docker/config.json` and everything under `$FLEETDECK_HOME` now 404 through the explorer.
+- **Release pipeline hardening.** Publishing to npm now requires a human approval (the `release` GitHub environment) before the OIDC credential mints, and refuses tags whose commit isn't an ancestor of `main`. CI and publish installs run `npm ci --ignore-scripts`; dependabot PRs arrive one package at a time instead of grouped; GitHub Actions are SHA-pinned; `CODEOWNERS` covers the artifacts, hook scripts, workflows and lockfiles; and a new hook-integrity CI job fails any PR that touches the hook scripts or their import closure without a version bump — the path marketplace installs execute at every SessionStart, which the bundle drift gate never saw.
+- **Web hygiene.** The board shell sends `Referrer-Policy: no-referrer` (the Google Fonts stylesheet used to fire before the token could be scrubbed from the URL), the CSP drops the bare `ws:`/`wss:` connect-src wildcards, and the remote-control URL harvest trims terminal junk from the matched URL. `FLEETDECK_TOKEN` is scrubbed from pane environments.
+
+### Changed
+
+- **BREAKING: hooks require the token, in every mode.** A tokenless `/hook/*` call now 401s. If you have custom tooling that POSTs hook events, attach the bearer from `$FLEETDECK_HOME/token` — the same header the shims send. The daemon mints the file on every boot now, loopback included, so it is always there to read.
+- **BREAKING: `POST /mail`, `/ws/term`, gateway settings writes and unsupervised spawns require the token (or arm token) even on loopback.** The fleet doctrine's mail recipe already reads the token file and is now unconditional; anything else calling these routes needs the same header. Your board gets the key from the credentialed link the daemon prints at startup (`fleetd board http://127.0.0.1:4711/?t=…`).
+- **BREAKING: external mail can no longer wear daemon identities or `[FLEETDECK ...]` frames.** If you had scripts sending "official-looking" fleet mail, they will 422 — send as yourself instead.
+- **BREAKING (UX): fresh directories wait for you at the trust dialog.** The nudge no longer presses through it, so the first spawn in a new clone or directory shows 🔒 on the card until you approve the dialog in the terminal (or the board's terminal modal). Once per directory, then never again.
+- **Docs: what the boundaries actually are.** SECURITY.md now says plainly: `FLEETDECK_REQUIRE_TOKEN` protects against other OS users, not your own agents (the token file is owner-readable and `$FLEETDECK_HOME` is in every pane's env); LAN mode's risk on a hostile network is *active* (no token needed — the board's JS can be rewritten in flight, and `fleetdeck.local` can be spoofed into a phishing gate), not just passive sniffing; and a marketplace install tracks `main`, so cautious users should prefer the npm channel or pin a tag.
+
 ## [0.15.0] - 2026-07-20
 
 Which provider serves a session becomes a decision you make per spawn, and can
