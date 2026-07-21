@@ -47,10 +47,10 @@ test('events from two worktrees of one repo collapse to one repo_id; cross-workt
   assert.notEqual(cardRoot.branch, cardWt.branch, 'each session should still report its own worktree branch');
 
   // Cross-worktree collision on the same rel path -> severity "info".
-  await postHook(daemon.baseUrl, 'PostToolUse', loadFixture('post-tool-use-edit', { session_id: sidRoot, cwd: repo.root }, {
+  await postHook(daemon.baseUrl, 'PostToolUse', loadFixture('post-tool-use-edit', { token: daemon, session_id: sidRoot, cwd: repo.root }, {
     tool_input: { file_path: path.join(repo.root, 'shared.js'), old_string: 'a', new_string: 'b' },
   }), { token: daemon });
-  const whisperRes = await postHook(daemon.baseUrl, 'PostToolUse', loadFixture('post-tool-use-edit', { session_id: sidWt, cwd: repo.worktree }, {
+  const whisperRes = await postHook(daemon.baseUrl, 'PostToolUse', loadFixture('post-tool-use-edit', { token: daemon, session_id: sidWt, cwd: repo.worktree }, {
     tool_input: { file_path: path.join(repo.worktree, 'shared.js'), old_string: 'a', new_string: 'c' },
   }), { token: daemon });
   assert.ok(whisperRes.json?.hookSpecificOutput, 'editing the same rel path from another worktree should whisper');

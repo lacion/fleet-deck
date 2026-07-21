@@ -97,6 +97,9 @@ test('spawn argv is deterministic and registration watchdog stalls once, then a 
     'FLEETDECK_RC_HARVEST_MS',
     'FLEETDECK_ADOPT_ARM_MS', 'FLEETDECK_ADOPT_DELAY_MS',
     'FLEETDECK_TEST_DAEMON_SCRIPT', 'FLEETDECK_VERSION_OVERRIDE',
+    // 0.16.0: the daemon's bearer never leaks into a spawned pane — see the
+    // identical note in spawn.test.mjs.
+    'FLEETDECK_TOKEN',
     // 0.15.0 LLM gateway — see the identical note in spawn.test.mjs.
     'ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY',
     'CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY',
@@ -139,7 +142,9 @@ test('revive reuses the env wrapper, kills a dead remnant, inserts a new row, an
   const { db, core, state, port, home } = memoryCore(t, {
     env: { HOME: userHome },
   });
-  const original = await core.spawn({ cwd, dangerously_skip_permissions: true });
+  // 0.16.0: unsupervised spawns need a fresh single-use arm token — the core
+  // harness mints one directly (the HTTP arm route is bearer-gated).
+  const original = await core.spawn({ cwd, dangerously_skip_permissions: true, arm_token: core.armUnsupervised() });
   const { spawn_id: oldId, session_id: sid } = original.body;
   core.hookSessionStart({ session_id: sid, cwd, source: 'startup' });
   db.prepare("UPDATE spawns SET status = 'gone' WHERE spawn_id = ?").run(oldId);
@@ -204,7 +209,8 @@ test('owned-pane mail honors watcher priority and unclaims all rows when paste f
 
   state.calls.length = 0;
   const unregister = core.addWatchWaiter(sid, () => {});
-  posted = await core.postMail({ to: sid, from: 'human', text: 'watcher first' });
+  // 'human' is a reserved sender (0.16.0) — postMail refuses it even in-process.
+  posted = await core.postMail({ to: sid, from: 'operator', text: 'watcher first' });
   assert.equal(posted.targets[0].route, 'watcher');
   assert.equal(await core.tryOwnedPaneDelivery(sid), false);
   assert.deepEqual(state.calls, [], 'a registered waiter suppresses pane paste');

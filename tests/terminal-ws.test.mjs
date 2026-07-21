@@ -54,7 +54,8 @@ async function createSpawn(daemon, cwd) {
 }
 
 function termUrl(daemon, spawnId, cols, rows) {
-  return `${daemon.baseUrl.replace('http', 'ws')}/ws/term?spawn=${spawnId}&cols=${cols}&rows=${rows}`;
+  // 0.16.0: /ws/term requires the bearer at upgrade (?t= carries it for WS).
+  return `${daemon.baseUrl.replace('http', 'ws')}/ws/term?spawn=${spawnId}&cols=${cols}&rows=${rows}&t=${daemon.token}`;
 }
 
 test('live terminal WS seeds, streams, relays hex input/resize, and kills its control fixture', async t => {
@@ -193,7 +194,7 @@ test('live terminal WS refuses an unknown spawn and honors FLEETDECK_TERM=off', 
   const record = path.join(dir, 'term.jsonl');
   const daemon = await startDaemon({ env: env(record, { FLEETDECK_TERM: 'off' }) });
   t.after(async () => { await daemon.stop(); rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
-  const unknown = connect(`${daemon.baseUrl.replace('http', 'ws')}/ws/term?spawn=not-a-spawn&cols=80&rows=24`);
+  const unknown = connect(`${daemon.baseUrl.replace('http', 'ws')}/ws/term?spawn=not-a-spawn&cols=80&rows=24&t=${daemon.token}`);
   const disabled = await waitUntil(() => unknown.frames.find(frame => frame.t === 'err'), 'disabled err');
   assert.match(disabled.reason, /disabled/);
   assert.equal(records(record).length, 0, 'disabled bridge must not launch fixture');
@@ -205,7 +206,7 @@ test('live terminal WS returns err for an unknown spawn when enabled', async t =
   const daemon = await startDaemon({ env: env(record) });
   t.after(async () => { await daemon.stop(); rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
-  const unknown = connect(`${daemon.baseUrl.replace('http', 'ws')}/ws/term?spawn=not-a-spawn&cols=80&rows=24`);
+  const unknown = connect(`${daemon.baseUrl.replace('http', 'ws')}/ws/term?spawn=not-a-spawn&cols=80&rows=24&t=${daemon.token}`);
   const missing = await waitUntil(() => unknown.frames.find(frame => frame.t === 'err'), 'unknown-spawn err');
   assert.match(missing.reason, /no such spawn/);
   // An unresolvable spawn must not leave a control client attached behind it.

@@ -307,6 +307,9 @@ test('argv construction: prompt/model/permission-mode survive intact through the
     'FLEETDECK_RC_HARVEST_MS',
     'FLEETDECK_ADOPT_ARM_MS', 'FLEETDECK_ADOPT_DELAY_MS',
     'FLEETDECK_TEST_DAEMON_SCRIPT', 'FLEETDECK_VERSION_OVERRIDE',
+    // 0.16.0: the daemon's own bearer must never leak into a pane it spawns —
+    // an agent that knows FLEETDECK_TOKEN could drive every gated route.
+    'FLEETDECK_TOKEN',
     // 0.15.0 LLM gateway: a pane's provider must come from the spawn, never
     // from an ambient export the daemon happened to inherit. This spawn asked
     // for no gateway, so ALL FOUR stay scrubbed — the `keep` exemption in

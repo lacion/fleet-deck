@@ -22,7 +22,7 @@ test('SessionEnd tombstones a session even when Stop was never sent (max-turns a
   const sid = randomUUID();
   await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon });
   await postHook(daemon.baseUrl, 'UserPromptSubmit', loadFixture('user-prompt-submit', { session_id: sid, cwd }), { token: daemon });
-  await postHook(daemon.baseUrl, 'PostToolUse', loadFixture('post-tool-use-edit', { session_id: sid, cwd }, {
+  await postHook(daemon.baseUrl, 'PostToolUse', loadFixture('post-tool-use-edit', { token: daemon, session_id: sid, cwd }, {
     tool_input: { file_path: path.join(cwd, 'util.js'), old_string: 'a', new_string: 'b' },
   }), { token: daemon });
 
@@ -31,7 +31,7 @@ test('SessionEnd tombstones a session even when Stop was never sent (max-turns a
   assert.notEqual(card.col, 'offline', 'sanity: session should not already be offline before SessionEnd');
 
   // No Stop is ever sent -- this is the point of the test.
-  const endRes = await postHook(daemon.baseUrl, 'SessionEnd', loadFixture('session-end', { session_id: sid, cwd }, {
+  const endRes = await postHook(daemon.baseUrl, 'SessionEnd', loadFixture('session-end', { token: daemon, session_id: sid, cwd }, {
     reason: 'other',
   }), { token: daemon });
   assert.deepEqual(endRes.json, {}, 'SessionEnd should respond {}');

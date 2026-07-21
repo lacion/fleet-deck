@@ -90,8 +90,17 @@ export function spawnRaw({
   scriptPath = process.env.FLEETDECK_TEST_DAEMON_SCRIPT || FLEETD_PATH,
   env = {},
 } = {}) {
+  // Scrub the ambient environment BEFORE spreading it: a dev shell (or this
+  // very Claude session) running under `fleetdeck serve` carries
+  // FLEETDECK_MANAGED=1 (and often FLEETDECK_PORT/HOME pointing at the real
+  // daemon). Inherited by a test daemon, MANAGED makes it report managed:true
+  // — takeover.test.mjs's hook then refuses to evict the "service" and every
+  // eviction test hangs. Tests that WANT the flag pass it via `env` (spread
+  // after), so this delete must not come later than the spread.
+  const ambient = { ...process.env };
+  delete ambient.FLEETDECK_MANAGED;
   const childEnv = {
-    ...process.env,
+    ...ambient,
     FLEETDECK_PORT: String(port),
     FLEETDECK_HOME: home,
     // Default the agents-cli poller (handoff F1) OFF for every spawned

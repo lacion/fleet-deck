@@ -102,6 +102,14 @@ async function endSession(daemon, sid, cwd, reason = 'logout') {
   await postHook(daemon.baseUrl, 'SessionEnd', { session_id: sid, cwd, reason }, { token: daemon });
 }
 
+// 0.16.0: an adopt with dangerously_skip_permissions:true must echo a fresh
+// single-use arm token from POST /api/spawn/arm-unsupervised (bearer-gated).
+async function armUnsupervised(daemon) {
+  const res = await postJson(`${daemon.baseUrl}/api/spawn/arm-unsupervised`, {}, { token: daemon.token });
+  assert.equal(res.status, 200, `arm-unsupervised should 200 (got ${res.status}: ${JSON.stringify(res.json)})`);
+  return res.json.arm_token;
+}
+
 test('adopt moves an ended session into a board-owned pane and its resume hook makes the card live', async (t) => {
   const { daemon, daemonHome, userHome, cwd, record } = await boot(t, 'fleetdeck-adopt-now');
   const { sid, callsign } = await startLiveSession(daemon, cwd);
@@ -196,7 +204,7 @@ test('adopt on a live session arms it, snapshot shows the arm, and re-arming ref
 test('disarming an armed session clears the arm columns', async (t) => {
   const { daemon, daemonHome, cwd } = await boot(t, 'fleetdeck-adopt-disarm');
   const { sid } = await startLiveSession(daemon, cwd);
-  await postJson(`${daemon.baseUrl}/api/sessions/${sid}/adopt`, { dangerously_skip_permissions: true });
+  await postJson(`${daemon.baseUrl}/api/sessions/${sid}/adopt`, { dangerously_skip_permissions: true, arm_token: await armUnsupervised(daemon) });
   let stored = withDb(daemonHome, db => db.prepare('SELECT adopt_armed_until, adopt_armed_skip FROM sessions WHERE session_id = ?').get(sid));
   assert.ok(stored.adopt_armed_until > Date.now());
   assert.equal(stored.adopt_armed_skip, 1);
@@ -216,7 +224,7 @@ test('an armed session auto-adopts on SessionEnd and carries the bypass flag thr
   const { daemon, daemonHome, userHome, cwd, record } = await boot(t, 'fleetdeck-adopt-bypass');
   const { sid } = await startLiveSession(daemon, cwd);
   writeTranscript(userHome, cwd, sid);
-  const armed = await postJson(`${daemon.baseUrl}/api/sessions/${sid}/adopt`, { dangerously_skip_permissions: true });
+  const armed = await postJson(`${daemon.baseUrl}/api/sessions/${sid}/adopt`, { dangerously_skip_permissions: true, arm_token: await armUnsupervised(daemon) });
   assert.equal(armed.json.armed, true);
 
   // The CLI exits — the deferred adopt fires (ADOPT_DELAY_MS=0).

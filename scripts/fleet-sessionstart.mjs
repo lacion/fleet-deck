@@ -118,6 +118,12 @@ function bootEnv() {
     // scar). A leaked TEST_DAEMON_SCRIPT would hijack every future daemon
     // spawn; a leaked VERSION_OVERRIDE would permanently skew takeover.
     'FLEETDECK_TEST_DAEMON_SCRIPT', 'FLEETDECK_VERSION_OVERRIDE',
+    // The managed bit belongs to `fleetdeck serve` ALONE: a hook that happens
+    // to run inside a session whose daemon IS managed would otherwise stamp
+    // its unmanaged replacement as a service, and the NEXT hook would then
+    // refuse to evict it (the managed no-evict guard) — a daemon nothing
+    // supervises, immune to takeover forever.
+    'FLEETDECK_MANAGED',
   ]) delete env[k];
   // Upgrade takeover: ONLY the spawn that just evicted an older daemon carries
   // the displaced version, so the replacement logs the handoff and emits the

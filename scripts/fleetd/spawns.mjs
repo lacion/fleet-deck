@@ -1094,8 +1094,13 @@ export function createSpawns(ctx) {
     }
     const skip = body?.dangerously_skip_permissions === true;
     // 0.16.0: same unsupervised gate as /api/spawn — an adopt with skip:true
-    // launches a process, so it must echo a fresh arm token.
-    const adoptArmRefusal = unsupervisedGate(skip, body);
+    // launches a process, so it must echo a fresh arm token. A DEFERRED call
+    // (the armed auto-adopt fired by hookSessionEnd, or the boot sweep) is
+    // exempt: its body is reconstructed from the adopt_armed_skip column the
+    // human's ORIGINAL arm POST wrote — that POST already passed this gate
+    // with a fresh arm token, and the single-use token cannot be echoed a
+    // second time. Gating it again would 403 every armed move-to-tmux.
+    const adoptArmRefusal = deferred ? null : unsupervisedGate(skip, body);
     if (adoptArmRefusal) return { status: 403, body: { ok: false, reason: adoptArmRefusal } };
 
     // Disarm FIRST, in any state: the click that disarms is the human revoking

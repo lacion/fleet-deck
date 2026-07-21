@@ -92,7 +92,7 @@ async function makeRevivable({ daemon, userHome, cwd, spawnBody }) {
   const spawned = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd, ...spawnBody });
   assert.equal(spawned.status, 200, spawned.text);
   const { spawn_id, session_id } = spawned.json;
-  await postHook(daemon.baseUrl, 'SessionStart', { session_id, cwd, source: 'startup' }, { token: daemon });
+  await postHook(daemon.baseUrl, 'SessionStart', { session_id, cwd, source: 'startup' }, { token: daemon.token });
 
   const file = claudeTranscriptPath(cwd, session_id, userHome);
   mkdirSync(path.dirname(file), { recursive: true });
@@ -112,7 +112,7 @@ async function configure(daemon, extra = {}) {
     gateway_base_url: BASE_URL,
     gateway_token: TOKEN,
     ...extra,
-  });
+  }, { token: daemon.token });
   assert.equal(res.status, 200, res.text);
   return res;
 }
@@ -181,7 +181,7 @@ test('gateway: a half-configured profile is not ready and refuses a spawn that a
 
   // A base URL with no credential would reach the proxy and 401 — which reads
   // as a Claude Code bug rather than a settings mistake. Refuse it up front.
-  const res = await postJson(`${daemon.baseUrl}/api/settings`, { gateway_base_url: BASE_URL });
+  const res = await postJson(`${daemon.baseUrl}/api/settings`, { gateway_base_url: BASE_URL }, { token: daemon.token });
   assert.equal(res.status, 200, res.text);
   assert.equal(res.json.settings.gateway.ready, false, 'no token ⇒ not ready');
 
@@ -215,7 +215,7 @@ test('gateway: settings validation refuses bad URLs, schemes and auth styles', a
     [{ gateway_base_url: 'https://gw.example.com/?api_key=sekrit' }, /must not carry a query string/i],
   ];
   for (const [body, re] of bad) {
-    const res = await postJson(`${daemon.baseUrl}/api/settings`, body);
+    const res = await postJson(`${daemon.baseUrl}/api/settings`, body, { token: daemon.token });
     assert.equal(res.status, 400, `${JSON.stringify(body)} → ${res.text}`);
     assert.match(res.json.reason, re);
   }
@@ -223,7 +223,7 @@ test('gateway: settings validation refuses bad URLs, schemes and auth styles', a
   // validate-all-then-apply-all: one bad field must leave the store untouched.
   const mixed = await postJson(`${daemon.baseUrl}/api/settings`, {
     gateway_base_url: BASE_URL, gateway_auth_style: 'nonsense',
-  });
+  }, { token: daemon.token });
   assert.equal(mixed.status, 400, mixed.text);
   const after = await getJson(`${daemon.baseUrl}/api/settings`);
   assert.equal(after.json.settings.gateway.base_url, null,
@@ -231,7 +231,7 @@ test('gateway: settings validation refuses bad URLs, schemes and auth styles', a
 
   // A trailing slash is normalized once, at the door, so /state and the injected
   // env can never disagree on spelling.
-  await postJson(`${daemon.baseUrl}/api/settings`, { gateway_base_url: `${BASE_URL}/` });
+  await postJson(`${daemon.baseUrl}/api/settings`, { gateway_base_url: `${BASE_URL}/` }, { token: daemon.token });
   const normalized = await getJson(`${daemon.baseUrl}/api/settings`);
   assert.equal(normalized.json.settings.gateway.base_url, BASE_URL);
 });
@@ -357,13 +357,13 @@ test('gateway: remote control and the gateway are refused together, with a reaso
     'the refusal must say WHY — this is a Claude Code behaviour, not a Fleet Deck policy');
 
   // The same collision via gateway_default rather than an explicit flag.
-  await postJson(`${daemon.baseUrl}/api/settings`, { gateway_default: true });
+  await postJson(`${daemon.baseUrl}/api/settings`, { gateway_default: true }, { token: daemon.token });
   const viaDefault = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd, remote_control: true });
   assert.equal(viaDefault.status, 400, viaDefault.text);
   assert.match(viaDefault.json.reason, /remote control is unavailable/i);
 
   // Either one alone is fine.
-  await postJson(`${daemon.baseUrl}/api/settings`, { gateway_default: false });
+  await postJson(`${daemon.baseUrl}/api/settings`, { gateway_default: false }, { token: daemon.token });
   const rcOnly = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd, remote_control: true });
   assert.equal(rcOnly.status, 200, rcOnly.text);
 });
@@ -399,7 +399,7 @@ test('gateway: routing survives death — a revive inherits the row, not the cur
 
   // Flip the global default OFF. A revive must NOT consult it — it asks what
   // this lineage was doing, not what a new spawn would do.
-  const flipped = await postJson(`${daemon.baseUrl}/api/settings`, { gateway_default: false });
+  const flipped = await postJson(`${daemon.baseUrl}/api/settings`, { gateway_default: false }, { token: daemon.token });
   assert.equal(flipped.json.settings.gateway.default, false, 'sanity: the default really did change');
 
   const revive = await postJson(`${daemon.baseUrl}/api/spawn/${spawnId}/revive`, {});
@@ -429,7 +429,7 @@ test('gateway: a lineage that never used the gateway is not rerouted by flipping
   // Turning the default ON must not retroactively reroute an existing lineage:
   // gatewayDecision is handed a BOOLEAN from the row, never null, precisely so
   // this cannot consult gateway_default.
-  await postJson(`${daemon.baseUrl}/api/settings`, { gateway_default: true });
+  await postJson(`${daemon.baseUrl}/api/settings`, { gateway_default: true }, { token: daemon.token });
   const revive = await postJson(`${daemon.baseUrl}/api/spawn/${spawnId}/revive`, {});
   assert.equal(revive.status, 200, revive.text);
 
@@ -464,7 +464,7 @@ test('gateway: clearing the token disarms the profile without forgetting the URL
   t.after(() => daemon.stop());
   await configure(daemon);
 
-  const cleared = await postJson(`${daemon.baseUrl}/api/settings`, { gateway_token: null });
+  const cleared = await postJson(`${daemon.baseUrl}/api/settings`, { gateway_token: null }, { token: daemon.token });
   assert.equal(cleared.status, 200, cleared.text);
   assert.equal(cleared.json.settings.gateway.token_set, false);
   assert.equal(cleared.json.settings.gateway.ready, false, 'no credential ⇒ not spawnable');
@@ -491,7 +491,7 @@ test('gateway: a revive stranded by a cleared token blames the settings, not the
   // its row — nobody asked for it on this call — so an error phrased as
   // "gateway:true was requested" would send them hunting for a bug in a request
   // they never made.
-  await postJson(`${daemon.baseUrl}/api/settings`, { gateway_token: null });
+  await postJson(`${daemon.baseUrl}/api/settings`, { gateway_token: null }, { token: daemon.token });
   const stranded = await postJson(`${daemon.baseUrl}/api/spawn/${spawnId}/revive`, {});
   assert.equal(stranded.status, 400, stranded.text);
   assert.doesNotMatch(stranded.json.reason, /was requested/,
@@ -520,14 +520,14 @@ test('gateway: adopt consults the default, because it has no lineage to inherit'
   const cwd = scratchDir();
   t.after(() => rmSync(cwd, { recursive: true, force: true }));
   const sid = randomUUID();
-  await postHook(daemon.baseUrl, 'SessionStart', { session_id: sid, cwd, source: 'startup' }, { token: daemon });
+  await postHook(daemon.baseUrl, 'SessionStart', { session_id: sid, cwd, source: 'startup' }, { token: daemon.token });
   mkdirSync(path.dirname(claudeTranscriptPath(cwd, sid, userHome)), { recursive: true });
   writeFileSync(claudeTranscriptPath(cwd, sid, userHome), '{"type":"summary"}\n');
   // 'logout' is a hook-PROVEN end. NOT 'clear': that ends the session as
   // 'superseded' (the conversation continued under a new id), which is
   // deliberately never resumable — an earlier draft used it and the adopt was
   // refused before it could exercise anything.
-  await postHook(daemon.baseUrl, 'SessionEnd', { session_id: sid, cwd, reason: 'logout' }, { token: daemon });
+  await postHook(daemon.baseUrl, 'SessionEnd', { session_id: sid, cwd, reason: 'logout' }, { token: daemon.token });
 
   const card = (await getJson(`${daemon.baseUrl}/state`)).json.sessions.find(s => s.session_id === sid);
   assert.equal(card.adopt.eligible, 'now', 'sanity: the session must actually be adoptable');

@@ -17,7 +17,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { startDaemon } from './helpers/daemon.mjs';
 
-const EXPECTED_CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self' ws: wss:; img-src 'self' data: blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
+// 0.16.0: connect-src drops the bare ws:/wss: wildcards — every board
+// WebSocket is same-origin, which 'self' already covers, so the wildcards only
+// ever widened exfiltration for injected JS.
+const EXPECTED_CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self'; img-src 'self' data: blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
 
 test('security headers: CSP on the shell, nosniff everywhere', async t => {
   const daemon = await startDaemon();
@@ -31,6 +34,12 @@ test('security headers: CSP on the shell, nosniff everywhere', async t => {
     indexHtml = await res.text();
     assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
     assert.equal(res.headers.get('content-security-policy'), EXPECTED_CSP, 'the shell CSP must match the pinned policy exactly');
+  });
+
+  await t.test('GET / sends no Referer anywhere (the boot URL carries the token)', async () => {
+    const res = await fetch(`${daemon.baseUrl}/`);
+    assert.equal(res.headers.get('referrer-policy'), 'no-referrer',
+      '0.16.0: the Google Fonts stylesheet fires before token.js can scrub ?t= — no subresource may ever see the URL');
   });
 
   await t.test('GET /assets/<hashed> carries nosniff but no CSP (it is a subresource)', async () => {

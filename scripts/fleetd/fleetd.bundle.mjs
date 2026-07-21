@@ -8349,7 +8349,7 @@ function createSpawns(ctx) {
       return { status: 400, body: { ok: false, reason: "arm_token must be a string" } };
     }
     const skip = body?.dangerously_skip_permissions === true;
-    const adoptArmRefusal = unsupervisedGate(skip, body);
+    const adoptArmRefusal = deferred ? null : unsupervisedGate(skip, body);
     if (adoptArmRefusal) return { status: 403, body: { ok: false, reason: adoptArmRefusal } };
     if (body?.disarm === true) {
       updateSession(session_id, { adopt_armed_until: null, adopt_armed_skip: null });

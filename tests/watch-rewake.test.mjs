@@ -58,7 +58,7 @@ function scratchCwd() {
 async function pendingFreeform(daemon, sid, cwd, transcriptDir, questionText = 'Should the project use bcrypt or argon2?') {
   await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon });
   const transcriptPath = writeTranscript(transcriptDir, { sessionId: sid, assistantText: questionText });
-  await postHook(daemon.baseUrl, 'Stop', { session_id: sid, hook_event_name: 'Stop', cwd, transcript_path: transcriptPath }, { token: daemon });
+  await postHook(daemon.baseUrl, 'Stop', { session_id: sid, hook_event_name: 'Stop', cwd, transcript_path: transcriptPath }, { token: daemon.token });
   const state = (await getJson(`${daemon.baseUrl}/state`)).json;
   const q = (state.questions || []).find(x => x.session_id === sid && x.kind === 'freeform' && x.status === 'pending');
   assert.ok(q, 'setup: a pending freeform question should exist');
@@ -178,7 +178,7 @@ test('/api/watch v2: claims plain board mail too (no frame), same as any other s
 
   const sid = randomUUID();
   await liveSession(daemon, sid, cwd);
-  await postJson(`${daemon.baseUrl}/mail`, { to: sid, from: 'operator', text: 'no rush, just checking in' }, { token: daemon });
+  await postJson(`${daemon.baseUrl}/mail`, { to: sid, from: 'operator', text: 'no rush, just checking in' }, { token: daemon.token });
 
   const res = await getJson(`${daemon.baseUrl}/api/watch?session=${sid}&hold_ms=2000`);
   assert.equal(res.json?.status, 'mail', 'plain mail must resolve the watch, not just answer/assignment mail');

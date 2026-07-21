@@ -121,6 +121,8 @@ test('remote spawn persists intent, exposes snapshot state, and orders argv befo
   const prompt = 'inspect remote telemetry';
   const out = await core.spawn({
     cwd, prompt, model: 'sonnet', dangerously_skip_permissions: true, remote_control: true,
+    // 0.16.0: unsupervised spawns echo a fresh single-use arm token.
+    arm_token: core.armUnsupervised(),
   });
   assert.equal(out.status, 200);
   const row = db.prepare('SELECT * FROM spawns WHERE spawn_id = ?').get(out.body.spawn_id);

@@ -118,11 +118,13 @@ test('default bind preserves unauthenticated loopback health and hook traffic', 
   assert.equal(health.status, 200);
   assert.equal((await health.json()).ok, true);
 
-  // LOCAL-HOOK REGRESSION CONTRACT: real Claude hooks never know a LAN token;
-  // their 127.0.0.1 traffic must retain the historical fail-open response.
+  // LOCAL-HOOK REGRESSION CONTRACT: hooks reach the daemon through the command
+  // shims, which read $FLEETDECK_HOME/token and attach it — so hook traffic
+  // stays zero-config (never knows a LAN token) AND keeps its fail-open
+  // response. 0.16.0: the bearer comes from the daemon's own token file.
   const hook = await fetch(`${daemon.baseUrl}/hook/UnknownHook`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${daemon.token}` },
     body: '{}',
   });
   assert.equal(hook.status, 200);

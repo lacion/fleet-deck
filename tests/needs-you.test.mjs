@@ -248,7 +248,7 @@ test('F3d: Stop trailing-question freeform detection creates a needsyou card, an
     hook_event_name: 'Stop',
     cwd,
     transcript_path: transcriptPath,
-  }, { token: daemon });
+  }, { token: daemon.token });
   assert.equal(stopRes.status, 200);
 
   let state = (await getJson(`${daemon.baseUrl}/state`)).json;
@@ -265,7 +265,7 @@ test('F3d: Stop trailing-question freeform detection creates a needsyou card, an
 
   // Delivery channel is either the next UserPromptSubmit's additionalContext,
   // or the next Stop returning a mail block -- spec allows either.
-  const upRes = await postHook(daemon.baseUrl, 'UserPromptSubmit', loadFixture('user-prompt-submit', { session_id: sid, cwd }, {
+  const upRes = await postHook(daemon.baseUrl, 'UserPromptSubmit', loadFixture('user-prompt-submit', { token: daemon, session_id: sid, cwd }, {
     prompt: 'continue',
   }), { token: daemon });
   const upCtx = upRes.json?.hookSpecificOutput?.additionalContext ?? '';
@@ -279,7 +279,7 @@ test('F3d: Stop trailing-question freeform detection creates a needsyou card, an
     });
     const stopRes2 = await postHook(daemon.baseUrl, 'Stop', {
       session_id: sid, hook_event_name: 'Stop', cwd, transcript_path: transcriptPath2,
-    }, { token: daemon });
+    }, { token: daemon.token });
     const reason = stopRes2.json?.reason ?? '';
     delivered = stopRes2.json?.decision === 'block' && /\[FLEETDECK ANSWER\]/.test(reason) && reason.includes('argon2');
     deliveryChannel = delivered ? 'Stop block' : null;
@@ -316,7 +316,7 @@ test('F3d (probe): Stop with last_assistant_message present on the live payload'
     cwd,
     transcript_path: transcriptPath,
     last_assistant_message: 'Should I use REST or GraphQL for this endpoint?',
-  }, { token: daemon });
+  }, { token: daemon.token });
   assert.equal(stopRes.status, 200, 'Stop should 200 regardless of which detection path is taken');
 
   const state = (await getJson(`${daemon.baseUrl}/state`)).json;
@@ -346,7 +346,7 @@ test('a Stop that returns a mail block does not run freeform question detection 
   const sid = randomUUID();
   await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon });
   await postHook(daemon.baseUrl, 'UserPromptSubmit', loadFixture('user-prompt-submit', { session_id: sid, cwd }), { token: daemon });
-  await postJson(`${daemon.baseUrl}/mail`, { to: sid, from: 'tester', text: 'please wrap up soon' }, { token: daemon });
+  await postJson(`${daemon.baseUrl}/mail`, { to: sid, from: 'tester', text: 'please wrap up soon' }, { token: daemon.token });
 
   const transcriptPath = writeTranscript(transcriptDir, {
     sessionId: sid,
@@ -354,7 +354,7 @@ test('a Stop that returns a mail block does not run freeform question detection 
   });
   const stopRes = await postHook(daemon.baseUrl, 'Stop', {
     session_id: sid, hook_event_name: 'Stop', cwd, transcript_path: transcriptPath,
-  }, { token: daemon });
+  }, { token: daemon.token });
   assert.equal(stopRes.json?.decision, 'block', 'pending mail should still take priority and block, same as Phase 1/2 behavior');
   assert.match(stopRes.json?.reason ?? '', /\[FLEETDECK MAIL\]/);
 
@@ -374,7 +374,7 @@ test('Notification ingest stores notification_type', async (t) => {
 
   const sid = randomUUID();
   await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon });
-  const res = await postHook(daemon.baseUrl, 'Notification', loadFixture('notification', { session_id: sid, cwd }, {
+  const res = await postHook(daemon.baseUrl, 'Notification', loadFixture('notification', { token: daemon, session_id: sid, cwd }, {
     notification_type: 'permission_prompt',
   }), { token: daemon });
   assert.equal(res.status, 200);
@@ -509,7 +509,7 @@ test('freeform questions SURVIVE SessionEnd and deliver on resume', async (t) =>
   });
   await postHook(daemon.baseUrl, 'Stop', {
     session_id: sid, hook_event_name: 'Stop', cwd, transcript_path: transcriptPath,
-  }, { token: daemon });
+  }, { token: daemon.token });
   await postHook(daemon.baseUrl, 'SessionEnd', loadFixture('session-end', { session_id: sid, cwd }), { token: daemon });
 
   let state = (await getJson(`${daemon.baseUrl}/state`)).json;
@@ -522,8 +522,8 @@ test('freeform questions SURVIVE SessionEnd and deliver on resume', async (t) =>
   assert.equal(ansRes.status, 200, 'answering a question of an ended session must succeed');
 
   // Resume: SessionStart(resume) + first UserPromptSubmit drains the answer.
-  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }, { source: 'resume' }), { token: daemon });
-  const upRes = await postHook(daemon.baseUrl, 'UserPromptSubmit', loadFixture('user-prompt-submit', { session_id: sid, cwd }, { prompt: 'continue' }), { token: daemon });
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { token: daemon, session_id: sid, cwd }, { source: 'resume' }), { token: daemon });
+  const upRes = await postHook(daemon.baseUrl, 'UserPromptSubmit', loadFixture('user-prompt-submit', { token: daemon, session_id: sid, cwd }, { prompt: 'continue' }), { token: daemon });
   const ctx = upRes.json?.hookSpecificOutput?.additionalContext ?? '';
   assert.ok(/\[FLEETDECK ANSWER\]/.test(ctx) && ctx.includes('argon2id'),
     `resumed session's first UserPromptSubmit must carry the answer (got: ${ctx.slice(0, 120)})`);
@@ -612,7 +612,9 @@ test('malformed /hook/PermissionRequest body still answers 200 and the daemon st
 
   const res = await fetch(`${daemon.baseUrl}/hook/PermissionRequest`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    // 0.16.0: hooks are bearer-gated in every mode — the fail-open contract
+    // under test is about malformed BODIES, so the shim's token rides along.
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${daemon.token}` },
     body: '{not valid json at all',
     signal: AbortSignal.timeout(holdMs + 5000),
   });
@@ -653,7 +655,7 @@ test('F3d: a freeform card clears when the session moves on (answered in the ter
   });
   await postHook(daemon.baseUrl, 'Stop', {
     session_id: sid, hook_event_name: 'Stop', cwd, transcript_path: transcriptPath,
-  }, { token: daemon });
+  }, { token: daemon.token });
 
   let state = (await getJson(`${daemon.baseUrl}/state`)).json;
   const q = questionsFor(state, sid, 'freeform')[0];
@@ -687,7 +689,7 @@ test('a stale needs-you card can be dismissed without telling the session anythi
   });
   await postHook(daemon.baseUrl, 'Stop', {
     session_id: sid, hook_event_name: 'Stop', cwd, transcript_path: transcriptPath,
-  }, { token: daemon });
+  }, { token: daemon.token });
 
   let state = (await getJson(`${daemon.baseUrl}/state`)).json;
   const q = questionsFor(state, sid, 'freeform')[0];
