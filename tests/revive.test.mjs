@@ -91,7 +91,9 @@ test('revive resumes the same session into a new spawn row and its resume hook m
       .run(Date.now(), Date.now(), sid);
   });
 
-  const revived = await postJson(`${daemon.baseUrl}/api/spawn/${oldId}/revive`, {});
+  // 0.16.0: a revive of an unsupervised lineage passes the same arm gate.
+  const arm2 = (await postJson(`${daemon.baseUrl}/api/spawn/arm-unsupervised`, {}, { token: daemon.token })).json.arm_token;
+  const revived = await postJson(`${daemon.baseUrl}/api/spawn/${oldId}/revive`, { arm_token: arm2 });
   assert.equal(revived.status, 200, JSON.stringify(revived.json));
   assert.equal(revived.json.ok, true);
   assert.equal(revived.json.session_id, sid);

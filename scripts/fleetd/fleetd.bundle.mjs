@@ -6309,13 +6309,16 @@ function validateRelPath(relPath) {
   if (typeof relPath !== "string" || relPath.length > 4096 || relPath.includes("\0") || path6.isAbsolute(relPath) || relPath.split(/[\\/]/).includes("..")) {
     throw new PathError(400, "invalid path");
   }
-  const segments = relPath.split(/[\\/]/);
+  const segments = relPath.toLowerCase().split(/[\\/]/);
   if (segments.includes(".git")) throw new PathError(404, "not found");
   if (segments.some((s) => CREDENTIAL_SEGMENTS.has(s))) throw new PathError(404, "not found");
   const dockerAt = segments.indexOf(".docker");
   if (dockerAt !== -1 && segments[dockerAt + 1] === "config.json") throw new PathError(404, "not found");
 }
 var CREDENTIAL_SEGMENTS = /* @__PURE__ */ new Set([".ssh", ".aws", ".gnupg", ".netrc", ".kube"]);
+function deniedName(name) {
+  return CREDENTIAL_SEGMENTS.has(String(name).toLowerCase());
+}
 function safeJoin(realRoot, relPath) {
   validateRelPath(relPath);
   const abs = path6.resolve(realRoot, relPath || ".");
@@ -6362,6 +6365,10 @@ function realpathInside(realRoot, target) {
     }
   }
   if (fleetHomeReal && within(fleetHomeReal, real)) throw new PathError(404, "not found");
+  const realSegs = real.toLowerCase().split(path6.sep);
+  if (realSegs.some((s) => CREDENTIAL_SEGMENTS.has(s)) || realSegs.includes(".docker") && realSegs[realSegs.length - 1] === "config.json") {
+    throw new PathError(404, "not found");
+  }
   return real;
 }
 var fleetHomeReal;
@@ -6606,6 +6613,7 @@ async function walkSearch(root, q, mode, deadline) {
     for (let i = names.length - 1; i >= 0; i -= 1) {
       const name = names[i];
       if (name === ".git") continue;
+      if (deniedName(name)) continue;
       if (++visited > WALK_ENTRY_MAX || Date.now() >= deadline) {
         truncated = true;
         stop = true;
@@ -6685,7 +6693,7 @@ function createFiles(ctx) {
       const real = realpathInside(root, abs);
       const own = fs8.lstatSync(abs);
       if (!own.isDirectory() || own.isSymbolicLink()) throw new PathError(404, "not found");
-      const names = fs8.readdirSync(real).filter((name) => name !== ".git");
+      const names = fs8.readdirSync(real).filter((name) => name !== ".git" && !deniedName(name));
       const truncated = names.length > LIST_MAX;
       const entries = [];
       for (const name of names) {
@@ -6944,7 +6952,8 @@ function clampFrom(from) {
   return dropOrphanSurrogate(from.slice(0, MAIL_FROM_MAX_LEN));
 }
 var RESERVED_SENDERS = /* @__PURE__ */ new Set(["orchestrator", "fleetdeck", "fleetdeck-answer", "human"]);
-var RESERVED_FRAME_RE = /^\s*\[FLEETDECK[ \]]/i;
+var RESERVED_FRAME_RE = /^[\s\x00-\x1f\x7f-\x9f]*\[FLEETDECK[ \]]/i;
+var FROM_UNSAFE_RE = /[\r\n\x00-\x1f\x7f-\x9f]/;
 function createMail(ctx) {
   const {
     db: db2,
@@ -7098,6 +7107,9 @@ function createMail(ctx) {
   async function postMail({ to, from, text }) {
     if (from != null && RESERVED_SENDERS.has(String(from).toLowerCase())) {
       return { status: 422, body: { ok: false, reason: `sender name '${from}' is reserved for the daemon` } };
+    }
+    if (from != null && FROM_UNSAFE_RE.test(String(from))) {
+      return { status: 422, body: { ok: false, reason: "sender name may not contain control characters or newlines" } };
     }
     if (RESERVED_FRAME_RE.test(String(text ?? ""))) {
       return { status: 422, body: { ok: false, reason: "mail text may not open with a [FLEETDECK ...] frame \u2014 those are reserved for the daemon" } };
@@ -7565,7 +7577,7 @@ function createSpawns(ctx) {
       mutate: true
     });
   }
-  const TRUST_DIALOG_RE = /do you trust the files in this folder|trust this folder|trust the files|new mcp server|mcp server .{0,40}(approve|allow|trust)|use this and all future mcp servers/i;
+  const TRUST_DIALOG_RE = /do you trust the files in this folder|trust this folder|trust the files|trust this workspace|quick safety check|new mcp server|mcp server.{0,40}(approve|allow|trust)|use this and all future mcp servers/i;
   const nudged = /* @__PURE__ */ new Set();
   function scheduleNudge(spawn_id, window, callsign) {
     const t = setTimeout(async () => {
@@ -7576,12 +7588,19 @@ function createSpawns(ctx) {
         const win = await findScopedWindow(window);
         if (!win || win.pane_dead) return;
         nudged.add(spawn_id);
-        let screen = "";
+        let screen = null;
         try {
-          screen = await tmuxAdapter.capturePane(win.window_id) || "";
+          screen = await tmuxAdapter.capturePane(win.window_id);
         } catch {
         }
-        if (TRUST_DIALOG_RE.test(screen)) {
+        if (typeof screen !== "string" || screen.trim() === "") {
+          logEvent(row.session_id, "SpawnNudge", null, "pane unreadable \u2014 bring-up Enter held");
+          tick(`\u{1F512} ${callsign} needs a look \u2014 no bring-up keystroke sent`);
+          onMutate();
+          return;
+        }
+        const squashed = screen.replace(/\s+/g, " ");
+        if (TRUST_DIALOG_RE.test(squashed)) {
           logEvent(row.session_id, "SpawnNudge", null, "trust/MCP dialog held for human approval");
           updateSession(row.session_id, { note: "waiting on the folder-trust dialog \u2014 approve it in the terminal" });
           tick(`\u{1F512} ${callsign} waits on a trust dialog \u2014 approve it in the terminal`);
@@ -7839,7 +7858,17 @@ function createSpawns(ctx) {
     if (hasRepo && hasCwd) {
       return { status: 400, body: { ok: false, reason: "provide either cwd or repo, not both" } };
     }
-    const skipPermissions = body?.dangerously_skip_permissions === true || body?.permission_mode === "bypassPermissions";
+    const PERMISSION_MODES = /* @__PURE__ */ new Set(["default", "acceptedits", "plan", "bypasspermissions", "dontask", "auto"]);
+    if (body?.permission_mode != null) {
+      const lower = String(body.permission_mode).toLowerCase();
+      if (!PERMISSION_MODES.has(lower)) {
+        return { status: 400, body: { ok: false, reason: `unknown permission_mode '${body.permission_mode}'` } };
+      }
+      if (lower === "bypasspermissions" && body.permission_mode !== "bypassPermissions") {
+        body = { ...body, permission_mode: "bypassPermissions" };
+      }
+    }
+    const skipPermissions = body?.dangerously_skip_permissions === true || typeof body?.permission_mode === "string" && body.permission_mode.toLowerCase() === "bypasspermissions";
     const armRefusal = unsupervisedGate(skipPermissions, body);
     if (armRefusal) return { status: 403, body: { ok: false, reason: armRefusal } };
     if (hasRepo) {
@@ -8152,6 +8181,13 @@ function createSpawns(ctx) {
     }
     if (body?.gateway != null && typeof body.gateway !== "boolean") {
       return { status: 400, body: { ok: false, reason: "gateway must be a boolean" } };
+    }
+    if (body?.arm_token != null && typeof body.arm_token !== "string") {
+      return { status: 400, body: { ok: false, reason: "arm_token must be a string" } };
+    }
+    if (row.skip_permissions) {
+      const reviveArmRefusal = unsupervisedGate(true, body);
+      if (reviveArmRefusal) return { status: 403, body: { ok: false, reason: reviveArmRefusal } };
     }
     const remoteWanted = body?.remote_control ?? !!row.remote_control;
     const gateway = gatewayDecision(
@@ -10876,7 +10912,7 @@ function createHttp(core2, {
               return;
             }
             if (url.pathname === "/api/settings") {
-              if (Object.keys(ev || {}).some((k) => k.startsWith("gateway_"))) {
+              if (Object.keys(ev || {}).some((k) => k.toLowerCase().startsWith("gateway_"))) {
                 const authorization = req.headers.authorization;
                 const bearer = typeof authorization === "string" ? /^Bearer (.+)$/.exec(authorization)?.[1] : void 0;
                 if (!tokenMatches(bearer) && !tokenMatches(url.searchParams.get("t"))) {
@@ -11970,6 +12006,9 @@ var TOKEN;
 if (Object.hasOwn(process.env, "FLEETDECK_TOKEN")) {
   TOKEN = String(process.env.FLEETDECK_TOKEN).trim();
   if (TOKEN.length < 16) startupFatal("FLEETDECK_TOKEN must be at least 16 characters after trimming");
+  if (!/^[A-Za-z0-9_+\-/=]{16,}$/.test(TOKEN)) {
+    startupFatal("FLEETDECK_TOKEN must be 16+ characters from [A-Za-z0-9_+-/=] (no whitespace, control characters, or URL delimiters like & and #)");
+  }
 } else {
   try {
     const persisted = fs16.readFileSync(TOKEN_FILE, "utf8").trim();
@@ -12094,7 +12133,7 @@ server.listen(PORT, BIND, () => {
   const boundHost = BIND.includes(":") && !BIND.startsWith("[") ? `[${BIND}]` : BIND;
   console.log(`fleetd up on http://${boundHost}:${PORT} (pid ${process.pid}, db ${DB_FILE})`);
   if (!LAN_MODE) {
-    console.log(`fleetd board http://127.0.0.1:${PORT}/?t=${TOKEN}`);
+    console.log(`fleetd board http://127.0.0.1:${PORT}/?t=${encodeURIComponent(TOKEN)}`);
   }
   for (const seam of ["FLEETDECK_SPAWN_CMD", "FLEETDECK_TERM_CMD", "FLEETDECK_TEST_DAEMON_SCRIPT", "FLEETDECK_VERSION_OVERRIDE"]) {
     if (process.env[seam]) console.error(`fleetd WARNING: test seam ${seam} active`);

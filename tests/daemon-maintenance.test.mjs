@@ -160,7 +160,9 @@ test('revive reuses the env wrapper, kills a dead remnant, inserts a new row, an
   // This test exercises the RELAUNCH path, so first mark the remnant pane dead:
   // a dead remnant is killed and a fresh row launched.
   state.windows[0].pane_dead = true;
-  const out = await core.revive(oldId);
+  // 0.16.0: reviving an unsupervised lineage re-launches the bypass, so it
+  // passes the same arm gate as a fresh unsupervised spawn.
+  const out = await core.revive(oldId, { arm_token: core.armUnsupervised() });
   assert.equal(out.status, 200);
   assert.notEqual(out.body.spawn_id, oldId);
   assert.deepEqual(state.killed, [original.body.tmux.window]);

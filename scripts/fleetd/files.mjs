@@ -62,8 +62,10 @@ function validateRelPath(relPath) {
   // keys, cloud credentials or the daemon's own token through it. Whole-segment
   // names are refused anywhere in the tree (they are near-unique to credential
   // dirs); `.docker` is refused only for its config.json — images.list and
-  // friends are harmless to browse.
-  const segments = relPath.split(/[\\/]/);
+  // friends are harmless to browse. Compared case-insensitively: the default
+  // root is HOME on exactly the platforms (macOS, Windows) whose filesystems
+  // fold case.
+  const segments = relPath.toLowerCase().split(/[\\/]/);
   if (segments.includes('.git')) throw new PathError(404, 'not found');
   if (segments.some(s => CREDENTIAL_SEGMENTS.has(s))) throw new PathError(404, 'not found');
   const dockerAt = segments.indexOf('.docker');
@@ -71,6 +73,13 @@ function validateRelPath(relPath) {
 }
 
 const CREDENTIAL_SEGMENTS = new Set(['.ssh', '.aws', '.gnupg', '.netrc', '.kube']);
+
+// 0.16.0: is this entry NAME itself a denied credential path? Used by the
+// listing filter and the search walker, which never build a relPath through
+// validateRelPath for each entry.
+function deniedName(name) {
+  return CREDENTIAL_SEGMENTS.has(String(name).toLowerCase());
+}
 
 // Pure lexical containment. Callers perform the realpath checks appropriate to
 // their operation (the target for list, and the parent before a file open).
@@ -122,6 +131,17 @@ function realpathInside(realRoot, target) {
     catch { fleetHomeReal = null; }
   }
   if (fleetHomeReal && within(fleetHomeReal, real)) throw new PathError(404, 'not found');
+  // 0.16.0 (adversarial review): the lexical validateRelPath gate only sees
+  // the REQUESTED path. A symlink inside the root — work/ssh-link -> ~/.ssh —
+  // passes it with segments like ssh-link/id_ed25519 while resolving into a
+  // denied directory. Check the RESOLVED path's segments against the same
+  // denylist, so credential dirs are refused no matter which name points at
+  // them.
+  const realSegs = real.toLowerCase().split(path.sep);
+  if (realSegs.some(s => CREDENTIAL_SEGMENTS.has(s))
+    || (realSegs.includes('.docker') && realSegs[realSegs.length - 1] === 'config.json')) {
+    throw new PathError(404, 'not found');
+  }
   return real;
 }
 
@@ -368,6 +388,10 @@ async function walkSearch(root, q, mode, deadline) {
     for (let i = names.length - 1; i >= 0; i -= 1) {
       const name = names[i];
       if (name === '.git') continue;
+      // 0.16.0: the search walker never runs validateRelPath per entry, so the
+      // credential denylist must filter HERE — otherwise fs/search?mode=content
+      // reads ~/.aws and friends even though fs/read refuses them.
+      if (deniedName(name)) continue;
       if (++visited > WALK_ENTRY_MAX || Date.now() >= deadline) {
         truncated = true;
         stop = true;
@@ -437,7 +461,7 @@ export function createFiles(ctx) {
       const real = realpathInside(root, abs);
       const own = fs.lstatSync(abs);
       if (!own.isDirectory() || own.isSymbolicLink()) throw new PathError(404, 'not found');
-      const names = fs.readdirSync(real).filter(name => name !== '.git');
+      const names = fs.readdirSync(real).filter(name => name !== '.git' && !deniedName(name));
       const truncated = names.length > LIST_MAX;
       const entries = [];
       for (const name of names) {

@@ -60,7 +60,16 @@ function clampFrom(from) {
 // only the leading position is checked). Ordinary callsign/session-id senders
 // and plain text are unaffected.
 const RESERVED_SENDERS = new Set(['orchestrator', 'fleetdeck', 'fleetdeck-answer', 'human']);
-const RESERVED_FRAME_RE = /^\s*\[FLEETDECK[ \]]/i;
+// Leading whitespace AND control/zero-width characters: a frame smuggled past
+// as "\x00[FLEETDECK ANSWER]" renders identically in a pane to the real one.
+// eslint-disable-next-line no-control-regex
+const RESERVED_FRAME_RE = /^[\s\x00-\x1f\x7f-\x9f]*\[FLEETDECK[ \]]/i;
+// The pane envelope is a single line (`[FLEETDECK MAIL from <from>] <text>`):
+// a newline in `from` lets the text forge a line-two frame. Control chars are
+// already stripped from pane-bound text by sanitizePaneText, but `from` rides
+// inside the same paste — refuse them at the door instead.
+// eslint-disable-next-line no-control-regex
+const FROM_UNSAFE_RE = /[\r\n\x00-\x1f\x7f-\x9f]/;
 
 export function createMail(ctx) {
   const {
@@ -269,6 +278,9 @@ export function createMail(ctx) {
     // frames — see RESERVED_SENDERS above. 422 like every other body rejection.
     if (from != null && RESERVED_SENDERS.has(String(from).toLowerCase())) {
       return { status: 422, body: { ok: false, reason: `sender name '${from}' is reserved for the daemon` } };
+    }
+    if (from != null && FROM_UNSAFE_RE.test(String(from))) {
+      return { status: 422, body: { ok: false, reason: 'sender name may not contain control characters or newlines' } };
     }
     if (RESERVED_FRAME_RE.test(String(text ?? ''))) {
       return { status: 422, body: { ok: false, reason: 'mail text may not open with a [FLEETDECK ...] frame — those are reserved for the daemon' } };

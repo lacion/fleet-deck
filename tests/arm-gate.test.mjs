@@ -89,6 +89,80 @@ test('an armed unsupervised spawn works; the token is single-use', async (t) => 
   assert.equal(third.status, 200, 'second armed spawn (permission_mode route) succeeds');
 });
 
+test('a cased permission_mode variant cannot sneak past the gate', async (t) => {
+  const recordDir = scratchDir();
+  const recordFile = path.join(recordDir, 'spawns.jsonl');
+  const daemon = await startDaemon({ env: { FLEETDECK_SPAWN_CMD: SPAWN_CMD_FIXTURE, FLEETDECK_TEST_SPAWN_RECORD: recordFile } });
+  t.after(async () => { await daemon.stop(); rmSync(recordDir, { recursive: true, force: true }); });
+
+  const cwd = scratchDir();
+  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+
+  // Claude Code accepts the mode case-insensitively, so 'BypassPermissions'
+  // must be gated exactly like the lowercase spelling — an exact-string gate
+  // would wave it through as supervised while the pane boots unsupervised.
+  for (const variant of ['BypassPermissions', 'BYPASSPERMISSIONS', 'bypassPermissions']) {
+    const res = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd, permission_mode: variant });
+    assert.equal(res.status, 403, `cased variant ${variant} must 403 without an arm`);
+  }
+
+  // And WITH an arm, the canonical spelling is what reaches argv.
+  const armToken = await arm(daemon);
+  const ok = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd, permission_mode: 'BypassPermissions', arm_token: armToken });
+  assert.equal(ok.status, 200, JSON.stringify(ok.json));
+  const { waitForSpecRecords } = await import('./helpers/wait.mjs');
+  const records = await waitForSpecRecords(recordFile, 1);
+  const argv = records[0].parsed?.argv ?? [];
+  const idx = argv.indexOf('--permission-mode');
+  assert.ok(idx !== -1, 'permission-mode flag present');
+  assert.equal(argv[idx + 1], 'bypassPermissions', 'canonical spelling reaches argv');
+});
+
+test('unknown permission_mode values 400', async (t) => {
+  const daemon = await startDaemon();
+  t.after(() => daemon.stop());
+  const cwd = scratchDir();
+  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  const res = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd, permission_mode: 'yolo' });
+  assert.equal(res.status, 400);
+  assert.match(res.json?.reason ?? '', /unknown permission_mode/);
+});
+
+test('revive of an unsupervised lineage requires a fresh arm', async (t) => {
+  const recordDir = scratchDir();
+  const recordFile = path.join(recordDir, 'spawns.jsonl');
+  const daemon = await startDaemon({ env: { FLEETDECK_SPAWN_CMD: SPAWN_CMD_FIXTURE, FLEETDECK_TEST_SPAWN_RECORD: recordFile } });
+  t.after(async () => { await daemon.stop(); rmSync(recordDir, { recursive: true, force: true }); });
+
+  const cwd = scratchDir();
+  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+
+  // Spawn unsupervised (armed), let the row go terminal, then try to revive.
+  const token1 = await arm(daemon);
+  const spawn = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd, dangerously_skip_permissions: true, arm_token: token1 });
+  assert.equal(spawn.status, 200, JSON.stringify(spawn.json));
+  const spawnId = spawn.json.spawn_id;
+
+  // Take the row terminal directly (a fixture spawn has no tmux window to
+  // kill — kill would 410 'window already gone').
+  const { openDb } = await import('../scripts/fleetd/db.mjs');
+  const db = openDb(path.join(daemon.home, 'fleetd.db'));
+  db.prepare("UPDATE spawns SET status = 'gone' WHERE spawn_id = ?").run(spawnId);
+  db.close();
+
+  // The bypass from the adversarial review: the 60s single-use arm must NOT
+  // become a permanent replayable capability via revive.
+  const unarmed = await postJson(`${daemon.baseUrl}/api/spawn/${spawnId}/revive`, {});
+  assert.equal(unarmed.status, 403, 'revive of an unsupervised row must 403 without a fresh arm');
+  assert.match(unarmed.json?.reason ?? '', /arm/i);
+
+  // With a fresh arm the revive proceeds past the gate (it may fail later on
+  // resume evidence — the fixture transcript doesn't exist — but NOT with 403).
+  const token2 = await arm(daemon);
+  const armed = await postJson(`${daemon.baseUrl}/api/spawn/${spawnId}/revive`, { arm_token: token2 });
+  assert.notEqual(armed.status, 403, `armed revive must pass the gate (got ${armed.status}: ${JSON.stringify(armed.json)})`);
+});
+
 test('supervised spawns need no arm token', async (t) => {
   const recordDir = scratchDir();
   const recordFile = path.join(recordDir, 'spawns.jsonl');

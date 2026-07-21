@@ -178,6 +178,14 @@ let TOKEN;
 if (Object.hasOwn(process.env, 'FLEETDECK_TOKEN')) {
   TOKEN = String(process.env.FLEETDECK_TOKEN).trim();
   if (TOKEN.length < 16) startupFatal('FLEETDECK_TOKEN must be at least 16 characters after trimming');
+  // The token rides query strings (?t=) and prints into a URL, so whitespace,
+  // control characters and the URL delimiters &/#/? are refused — a pinned
+  // token containing one prints a mangled local board URL and can never match
+  // what the browser sends back. Base64's +/= stay legal (documented, and
+  // encodeURIComponent handles them on the printed URL).
+  if (!/^[A-Za-z0-9_+\-/=]{16,}$/.test(TOKEN)) {
+    startupFatal('FLEETDECK_TOKEN must be 16+ characters from [A-Za-z0-9_+-/=] (no whitespace, control characters, or URL delimiters like & and #)');
+  }
 } else {
   try {
     const persisted = fs.readFileSync(TOKEN_FILE, 'utf8').trim();
@@ -342,7 +350,7 @@ server.listen(PORT, BIND, () => {
     // gated powers (/ws/term typing, /mail, gateway settings, the unsupervised
     // arm). Print the credentialed LOCAL URL — loopback-only, and fleetd.log
     // is chmod 0600 by the launcher for exactly this class of secret.
-    console.log(`fleetd board http://127.0.0.1:${PORT}/?t=${TOKEN}`);
+    console.log(`fleetd board http://127.0.0.1:${PORT}/?t=${encodeURIComponent(TOKEN)}`);
   }
   // TEST-SEAM ANNOUNCEMENT: these env vars swap a real subprocess (spawn / term
   // / the daemon script) or override identity (version) for the test suite. In

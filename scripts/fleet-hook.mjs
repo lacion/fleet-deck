@@ -37,7 +37,13 @@ try { TOKEN = fs.readFileSync(path.join(HOME, 'token'), 'utf8').trim() || null; 
 
 async function readStdinRaw() {
   let data = '';
-  try { for await (const chunk of process.stdin) data += chunk; } catch { /* empty body is fine */ }
+  try {
+    for await (const chunk of process.stdin) {
+      // The daemon refuses bodies past 1MB anyway — stop accumulating rather
+      // than letting a wedged writer pin the shim's memory until the watchdog.
+      if (data.length < 1024 * 1024) data += chunk;
+    }
+  } catch { /* empty body is fine */ }
   return data;
 }
 

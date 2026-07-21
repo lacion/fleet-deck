@@ -395,3 +395,50 @@ test('FLEETDECK_BROWSE_ROOT roots the global explorer, and the browse_root setti
   assert.equal(afterSettings.json.settings.browse_root.source, 'override');
   assert.equal(afterSettings.json.settings.browse_root.resolved, settingRoot);
 });
+
+test('0.16.0 credential denylist: lexical, symlink, and search paths all refuse', async t => {
+  const browse = mkdtempSync(path.join(tmpdir(), 'fleetdeck-deny-root-'));
+  const secrets = mkdtempSync(path.join(tmpdir(), 'fleetdeck-deny-secrets-'));
+  mkdirSync(path.join(secrets, '.ssh'));
+  writeFileSync(path.join(secrets, '.ssh', 'id_ed25519'), 'PRIVATE KEY MATERIAL\n');
+  mkdirSync(path.join(browse, 'work'));
+  writeFileSync(path.join(browse, 'work', 'notes.txt'), 'ordinary notes\n');
+  // The attack: a symlink inside the browse root pointing at a credential dir.
+  symlinkSync(path.join(secrets, '.ssh'), path.join(browse, 'work', 'ssh-link'));
+
+  const daemon = await startDaemon({ env: { CODER: '', CODER_WORKSPACE_NAME: '', CODER_AGENT_URL: '' } });
+  t.after(async () => {
+    await daemon.stop();
+    rmSync(browse, { recursive: true, force: true });
+    rmSync(secrets, { recursive: true, force: true });
+  });
+  const set = await postJson(`${daemon.baseUrl}/api/settings`, { browse_root: browse });
+  assert.equal(set.status, 200, set.text);
+
+  // Lexical: a direct path naming a denied segment 404s on both read and list.
+  for (const p of ['.ssh', '.aws', '.gnupg', '.netrc', '.kube', '.docker%2Fconfig.json']) {
+    const res = await getJson(`${daemon.baseUrl}/api/fs/read?path=${p}`);
+    assert.equal(res.status, 404, `read ${p}`);
+  }
+  // Case-insensitive: HOME-rooted browsing on case-folding filesystems must
+  // refuse the uppercase spelling too.
+  assert.equal((await getJson(`${daemon.baseUrl}/api/fs/read?path=.SSH%2Fid_ed25519`)).status, 404, 'read .SSH');
+
+  // Symlink: the requested path is clean; the RESOLVED path is denied.
+  assert.equal((await getJson(`${daemon.baseUrl}/api/fs/read?path=work%2Fssh-link%2Fid_ed25519`)).status, 404, 'symlinked read');
+  assert.equal((await getJson(`${daemon.baseUrl}/api/fs/list?path=work%2Fssh-link`)).status, 404, 'symlinked list');
+
+  // Listings hide denied entries entirely (like .git), they do not render.
+  const rootList = await getJson(`${daemon.baseUrl}/api/fs/list?path=`);
+  assert.equal(rootList.json.entries.some(e => e.name === 'work'), true, 'work dir visible');
+
+  // Search must not read denied trees: the private key text is unfindable,
+  // and the search backend (walk — browse is not a git repo) skips the dir.
+  const search = await getJson(`${daemon.baseUrl}/api/fs/search?q=${encodeURIComponent('PRIVATE KEY MATERIAL')}`);
+  assert.deepEqual(search.json.hits, [], 'search never returns denied content');
+
+  // FLEETDECK_HOME containment: the daemon's own token is unservable even
+  // when the browse root is home — here via a symlink chain into it.
+  symlinkSync(daemon.home, path.join(browse, 'work', 'fleet-home-link'));
+  assert.equal((await getJson(`${daemon.baseUrl}/api/fs/read?path=work%2Ffleet-home-link%2Ftoken`)).status, 404, 'fleet home token');
+});

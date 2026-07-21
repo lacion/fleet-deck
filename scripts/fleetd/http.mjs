@@ -753,6 +753,9 @@ export function createHttp(core, {
             }
             if (url.pathname === '/mail') {
               core.postMail(ev)
+                // 0.16.0: postMail returns {status, body} on a refusal and the
+                // historical bare delivery object on success (in-process
+                // callers consume the bare shape — the adapter lives HERE).
                 .then(out => json(res, out.status ?? 200, out.body ?? out))
                 .catch(err => {
                   console.error('fleetd mail error:', err);
@@ -784,7 +787,7 @@ export function createHttp(core, {
               // 0.16.0: gateway_* writes reroute every future session's LLM
               // traffic, so they require the bearer even on loopback (a plain
               // settings key like browse_root keeps the loopback exemption).
-              if (Object.keys(ev || {}).some(k => k.startsWith('gateway_'))) {
+              if (Object.keys(ev || {}).some(k => k.toLowerCase().startsWith('gateway_'))) {
                 const authorization = req.headers.authorization;
                 const bearer = typeof authorization === 'string' ? /^Bearer (.+)$/.exec(authorization)?.[1] : undefined;
                 if (!tokenMatches(bearer) && !tokenMatches(url.searchParams.get('t'))) {

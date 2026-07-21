@@ -231,7 +231,7 @@ export function createSpawns(ctx) {
   // trust/MCP dialog is never auto-answered — the card says so and waits for a
   // human (terminal modal or the pane itself). Anything else keeps the
   // historical one-Enter bring-up.
-  const TRUST_DIALOG_RE = /do you trust the files in this folder|trust this folder|trust the files|new mcp server|mcp server .{0,40}(approve|allow|trust)|use this and all future mcp servers/i;
+  const TRUST_DIALOG_RE = /do you trust the files in this folder|trust this folder|trust the files|trust this workspace|quick safety check|new mcp server|mcp server.{0,40}(approve|allow|trust)|use this and all future mcp servers/i;
   const nudged = new Set();
   function scheduleNudge(spawn_id, window, callsign) {
     const t = setTimeout(async () => {
@@ -242,9 +242,22 @@ export function createSpawns(ctx) {
         const win = await findScopedWindow(window);
         if (!win || win.pane_dead) return; // pane not alive → no keystroke
         nudged.add(spawn_id);
-        let screen = '';
-        try { screen = await tmuxAdapter.capturePane(win.window_id) || ''; } catch { /* unreadable pane → hold, do not guess */ }
-        if (TRUST_DIALOG_RE.test(screen)) {
+        let screen = null;
+        try { screen = await tmuxAdapter.capturePane(win.window_id); } catch { /* fall through to the hold below */ }
+        // Fail CLOSED (0.16.0 adversarial review): an unreadable pane is never
+        // a safe pane to press Enter into — the pre-gate behavior was exactly
+        // "press and hope", and a mid-redraw trust dialog reads as an empty
+        // screen. Hold instead; the human's own Enter always works.
+        if (typeof screen !== 'string' || screen.trim() === '') {
+          logEvent(row.session_id, 'SpawnNudge', null, 'pane unreadable — bring-up Enter held');
+          tick(`🔒 ${callsign} needs a look — no bring-up keystroke sent`);
+          onMutate();
+          return;
+        }
+        // Whitespace-insensitive: the CLI's dialogs are centered/wrapped, so
+        // phrases can be split by arbitrary spacing on narrow panes.
+        const squashed = screen.replace(/\s+/g, ' ');
+        if (TRUST_DIALOG_RE.test(squashed)) {
           logEvent(row.session_id, 'SpawnNudge', null, 'trust/MCP dialog held for human approval');
           updateSession(row.session_id, { note: 'waiting on the folder-trust dialog — approve it in the terminal' });
           tick(`🔒 ${callsign} waits on a trust dialog — approve it in the terminal`);
@@ -549,8 +562,25 @@ export function createSpawns(ctx) {
     if (hasRepo && hasCwd) {
       return { status: 400, body: { ok: false, reason: 'provide either cwd or repo, not both' } };
     }
+    // permission_mode is an enum the CLI parses case-insensitively: validate
+    // it that way too, or 'BypassPermissions' would sail past an exact-string
+    // arm gate and boot a fully unsupervised pane recorded as supervised
+    // (0.16.0 adversarial review). Known modes pass through with their
+    // original casing (the CLI's own spelling is what argv carries); a cased
+    // bypass is gated, then canonicalized so gate and launch can never drift;
+    // anything else 400s rather than handing the CLI a mode we never vetted.
+    const PERMISSION_MODES = new Set(['default', 'acceptedits', 'plan', 'bypasspermissions', 'dontask', 'auto']);
+    if (body?.permission_mode != null) {
+      const lower = String(body.permission_mode).toLowerCase();
+      if (!PERMISSION_MODES.has(lower)) {
+        return { status: 400, body: { ok: false, reason: `unknown permission_mode '${body.permission_mode}'` } };
+      }
+      if (lower === 'bypasspermissions' && body.permission_mode !== 'bypassPermissions') {
+        body = { ...body, permission_mode: 'bypassPermissions' };
+      }
+    }
     const skipPermissions = body?.dangerously_skip_permissions === true
-      || body?.permission_mode === 'bypassPermissions';
+      || (typeof body?.permission_mode === 'string' && body.permission_mode.toLowerCase() === 'bypasspermissions');
     // 0.16.0: the unsupervised gate refuses before any clone/worktree/pane is
     // created — an arm refusal must cost the caller nothing.
     const armRefusal = unsupervisedGate(skipPermissions, body);
@@ -805,6 +835,18 @@ export function createSpawns(ctx) {
     }
     if (body?.gateway != null && typeof body.gateway !== 'boolean') {
       return { status: 400, body: { ok: false, reason: 'gateway must be a boolean' } };
+    }
+    if (body?.arm_token != null && typeof body.arm_token !== 'string') {
+      return { status: 400, body: { ok: false, reason: 'arm_token must be a string' } };
+    }
+    // 0.16.0 (adversarial review): reviving an UNSUPERVISED lineage launches
+    // --dangerously-skip-permissions again, so it is an unsupervised spawn and
+    // must pass the same gate — otherwise the 60s single-use arm becomes a
+    // permanent replayable capability (arm once, revive forever, tokenless).
+    // A supervised lineage revives with no gate, as before.
+    if (row.skip_permissions) {
+      const reviveArmRefusal = unsupervisedGate(true, body);
+      if (reviveArmRefusal) return { status: 403, body: { ok: false, reason: reviveArmRefusal } };
     }
     // Remote control survives death: inherit the dead row's wish unless the
     // human overrides it on this revive.
