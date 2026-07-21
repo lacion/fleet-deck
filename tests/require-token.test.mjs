@@ -126,8 +126,9 @@ test('REQUIRE_TOKEN=on: loopback exemption survives only for /health and the she
 
   // 0.16.0 INVERSION: /hook/* no longer keeps the exemption — hooks arrive
   // through the command shims (scripts/fleet-hook.mjs et al.), which read
-  // $FLEETDECK_HOME/token and attach it. A tokenless hook is exactly the
-  // forgery the shims exist to stop, so it 401s; the bearer opens it.
+  // $FLEETDECK_HOME/token and attach it. A tokenless hook is refused — but in
+  // the hook DIALECT (a restart whisper, never an error page): a pre-0.16.0
+  // session must not go silently dark, and a hook can never be broken.
   const sid = randomUUID();
   const cwd = mkdtempSync(path.join(tmpdir(), 'fleetdeck-rt-cwd-'));
   t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
@@ -137,7 +138,10 @@ test('REQUIRE_TOKEN=on: loopback exemption survives only for /health and the she
     headers: { 'content-type': 'application/json' },
     body: hookBody,
   });
-  assert.equal(bareHook.status, 401, 'a tokenless hook must be refused in every mode');
+  assert.equal(bareHook.status, 200, 'a tokenless hook is refused in the hook dialect, not with an error page');
+  const bareJson = await bareHook.json();
+  assert.match(bareJson?.hookSpecificOutput?.additionalContext ?? '', /restart/i, 'the whisper asks for a restart');
+  assert.equal(bareJson.ok ?? null, null, 'the refusal is not a processed hook');
   const hook = await fetch(`${baseUrl}/hook/SessionStart`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${TOKEN}` },

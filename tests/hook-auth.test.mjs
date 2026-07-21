@@ -31,7 +31,7 @@ function scratchCwd(prefix = 'fleetdeck-hookauth-') {
   return mkdtempSync(path.join(tmpdir(), prefix));
 }
 
-test('tokenless /hook/* is refused in every mode; the bearer opens it', async (t) => {
+test('tokenless /hook/* is refused with the upgrade whisper; the bearer opens it', async (t) => {
   const daemon = await startDaemon();
   t.after(() => daemon.stop());
 
@@ -39,13 +39,23 @@ test('tokenless /hook/* is refused in every mode; the bearer opens it', async (t
   const cwd = scratchCwd();
   t.after(() => rmSync(cwd, { recursive: true, force: true }));
 
-  // No token at all → 401 (and NOT the fail-open 200 {} a real hook gets).
+  // No token at all → refused, but answered in the hook dialect (a context
+  // whisper telling the agent to ask the human for a restart) — never a bare
+  // 401 page that would leave the old session silently dark.
   const bare = await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
-  assert.equal(bare.status, 401, 'tokenless hook must 401');
+  assert.equal(bare.status, 200, 'tokenless hook gets a dialect answer, not an error page');
+  assert.match(bare.json?.hookSpecificOutput?.additionalContext ?? '', /restart/i, 'the whisper tells the human to restart');
 
-  // A WRONG token → 401.
+  // Refused means REFUSED: no card was registered by the tokenless call.
+  const stateAfterBare = (await getJson(`${daemon.baseUrl}/state`)).json;
+  assert.ok(!stateAfterBare.sessions.find(s => s.session_id === sid), 'tokenless hook changed no state');
+
+  // A WRONG token gets the same treatment — forgery and legacy are not
+  // distinguished, and neither carries any effect.
   const wrong = await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: 'x'.repeat(64) });
-  assert.equal(wrong.status, 401, 'wrong token must 401');
+  assert.equal(wrong.status, 200);
+  const stateAfterWrong = (await getJson(`${daemon.baseUrl}/state`)).json;
+  assert.ok(!stateAfterWrong.sessions.find(s => s.session_id === sid), 'wrong token changed no state either');
 
   // The daemon's token → 200 with the SessionStart brief contract.
   const authed = await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon });
@@ -67,7 +77,9 @@ test('forged UserPromptSubmit can no longer drain a mailbox or expire holds', as
   // The attack from the red-team report: one tokenless curl that used to
   // receive the victim's pending mail verbatim AND mark it delivered.
   const forged = await postHook(daemon.baseUrl, 'UserPromptSubmit', loadFixture('user-prompt-submit', { session_id: victim, cwd }));
-  assert.equal(forged.status, 401, 'forged submit must 401');
+  assert.equal(forged.status, 200, 'tokenless forgery gets the whisper dialect');
+  assert.ok(!forged.json?.hookSpecificOutput?.additionalContext?.includes('secret instructions'),
+    'the response carries the whisper, never the mail');
 
   // The mailbox is intact: an authenticated drain still returns the mail.
   const drained = await getJson(`${daemon.baseUrl}/mail?session=${encodeURIComponent(victim)}`);
@@ -92,15 +104,45 @@ test('forged /clear succession graft is refused tokenless', async (t) => {
   // Tokenless SessionEnd(reason:'clear') + heir SessionStart(source:'clear'):
   // the two curls that used to steal the card's identity.
   const end = await postHook(daemon.baseUrl, 'SessionEnd', loadFixture('session-end', { session_id: victim, cwd }, { reason: 'clear' }));
-  assert.equal(end.status, 401);
+  assert.equal(end.status, 200, 'refused, in dialect');
   const start = await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: heir, cwd }, { source: 'clear' }));
-  assert.equal(start.status, 401);
+  assert.equal(start.status, 200, 'refused, in dialect');
 
   const after = (await getJson(`${daemon.baseUrl}/state`)).json;
   const surviving = after.sessions.find(s => s.session_id === victim);
   assert.ok(surviving, 'victim card untouched by the forged clear');
   assert.notEqual(surviving.col, 'offline', 'victim was not tombstoned');
   assert.ok(!after.sessions.find(s => s.session_id === heir), 'forged heir never got a card');
+});
+
+test('a legacy session that keeps calling gets ONE blocking restart instruction, then only whispers', async (t) => {
+  const daemon = await startDaemon();
+  t.after(() => daemon.stop());
+
+  const sid = randomUUID();
+  const cwd = scratchCwd();
+  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+
+  // Legacy session emits tokenless events. Non-Stop events: whisper only.
+  const evt = await postHook(daemon.baseUrl, 'UserPromptSubmit', loadFixture('user-prompt-submit', { session_id: sid, cwd }));
+  assert.ok(evt.json?.hookSpecificOutput?.additionalContext, 'whisper on ordinary events');
+
+  // First tokenless Stop from this session: the escalation — a turn-blocking
+  // restart instruction.
+  const stop1 = await postHook(daemon.baseUrl, 'Stop', loadFixture('stop', { session_id: sid, cwd }));
+  assert.equal(stop1.json?.decision, 'block', 'first legacy Stop blocks the turn');
+  assert.match(stop1.json?.reason ?? '', /restart/i);
+
+  // Every subsequent tokenless event, Stop included: whisper only — the block
+  // is once per session per daemon boot, never a loop.
+  const stop2 = await postHook(daemon.baseUrl, 'Stop', loadFixture('stop', { session_id: sid, cwd }));
+  assert.notEqual(stop2.json?.decision, 'block', 'no repeat block');
+  assert.ok(stop2.json?.hookSpecificOutput?.additionalContext, 'whisper continues');
+
+  // A DIFFERENT legacy session still gets its one block.
+  const other = randomUUID();
+  const stopOther = await postHook(daemon.baseUrl, 'Stop', loadFixture('stop', { session_id: other, cwd }));
+  assert.equal(stopOther.json?.decision, 'block', 'escalation is per-session');
 });
 
 test('fleet-hook.mjs shim forwards the payload with the token and relays the response', async (t) => {

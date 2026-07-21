@@ -85,7 +85,11 @@ prints the credentialed local URL (`fleetd board http://127.0.0.1:4711/?t=…` t
 the `0600` log). Every hook event arrives through a command shim
 (`scripts/fleet-hook.mjs`, `fleet-sessionstart.mjs`, `fleet-watch.mjs`) that
 reads the token file and attaches it — Claude Code http hooks cannot carry
-headers, which is why the shims exist.
+headers, which is why the shims exist. A tokenless hook is always refused (no
+state is ingested), but it is answered in the hook dialect — a restart whisper
+for sessions started before 0.16.0, escalating to a single turn-blocking
+restart instruction per session — rather than a bare 401, so a pre-upgrade
+session can never sit silently dark.
 
 ### In scope
 

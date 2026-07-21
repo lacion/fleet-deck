@@ -300,6 +300,35 @@ export function createHttp(core, {
     return pathname === '/mail' || pathname === '/api/spawn/arm-unsupervised';
   }
 
+  // 0.16.0 UPGRADE WHISPER. Sessions started before this release run the OLD
+  // (0.15-era) hooks: plain http POSTs with no token. With the gate up, those
+  // calls must be REFUSED — a tokenless hook is exactly the forgery the gate
+  // exists to stop — but a refusal alone leaves the old session silently dark
+  // on the board until someone restarts it. So instead of a bare 401, a
+  // tokenless hook is answered in the CLI's own dialect: no state change
+  // (nothing is ingested, held, or derived), but the response carries a
+  // context whisper the old CLI shows its agent, which relays it to the human.
+  // A session that KEEPS calling (the agent saw the whisper and the human
+  // hasn't acted) escalates once: its next tokenless Stop is answered with a
+  // turn-blocking restart instruction — the strongest signal the hook protocol
+  // allows, sent at most once per session per daemon boot, and never losing
+  // work (the turn continues after the block). Forgery vs. legacy is
+  // deliberately NOT distinguished: both get the same response, the whisper
+  // carries no privileged data, and the request is always refused.
+  const legacyWhisperedSessions = new Set();
+  const LEGACY_WHISPER = '[FLEETDECK] This session is running pre-0.16.0 hooks and is no longer reaching the fleet daemon (hook calls now require a token). Tell the human: please RESTART this Claude session — after the restart it reconnects to the board automatically.';
+  const LEGACY_BLOCK_REASON = '[FLEETDECK] This session is running pre-0.16.0 hooks and cannot reach the fleet daemon. Stop and tell the human NOW: restart this Claude session (exit and relaunch in the same directory). Do not continue the current task until the human acknowledges — the session is running without fleet oversight.';
+  function legacyHookResponse(res, ev, name) {
+    const sid = typeof ev?.session_id === 'string' ? ev.session_id : null;
+    if (name === 'Stop' && sid && !legacyWhisperedSessions.has(sid)) {
+      legacyWhisperedSessions.add(sid);
+      return json(res, 200, { decision: 'block', reason: LEGACY_BLOCK_REASON });
+    }
+    return json(res, 200, {
+      hookSpecificOutput: { hookEventName: name, additionalContext: LEGACY_WHISPER },
+    });
+  }
+
   // SAME-ORIGIN CONTRACT (C1/H-S3). Loopback auto-authorizes, and a browser is a
   // loopback peer — so a page on ANY site the user visits could otherwise open
   // ws://127.0.0.1/ws (read the whole snapshot, drive a live pane) or blind-POST
@@ -566,9 +595,15 @@ export function createHttp(core, {
     try {
       const url = new URL(req.url, `http://127.0.0.1:${port}`);
       const shell = isPublicShell(req.method, url.pathname);
-      if (!shell && !authorized(req, url)) {
+      // Hook paths are NOT refused here: a tokenless hook is answered (and
+      // refused) by legacyHookResponse AFTER its body is parsed — the upgrade
+      // whisper needs the session_id and event name, and the hook dialect
+      // never sends an error page. Everything else 401s as usual.
+      const isHookPath = url.pathname.startsWith('/hook/');
+      if (!shell && !isHookPath && !authorized(req, url)) {
         return json(res, 401, { ok: false, reason: 'unauthorized' });
       }
+      const hookAuthed = isHookPath ? authorized(req, url) : true;
       // DNS-REBINDING DEFENSE (C1/H-S3): a page pointed at a domain that
       // re-resolves to this box arrives with a foreign Host — refuse it on every
       // route that carries data or DOES something. The data-free public shell
@@ -726,6 +761,10 @@ export function createHttp(core, {
             const hook = /^\/hook\/([A-Za-z]+)$/.exec(url.pathname);
             if (hook) {
               const name = hook[1];
+              // 0.16.0 upgrade path: a tokenless hook is REFUSED here — nothing
+              // below may ingest, hold, or derive from it — and answered with
+              // the restart whisper (see legacyHookResponse).
+              if (!hookAuthed) return legacyHookResponse(res, ev, name);
               // payload capture (validation aid): first 3 raw payloads per
               // hook event name, best-effort, never affects the response
               try { capture(name, ev); } catch { /* best-effort */ }

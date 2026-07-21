@@ -10624,6 +10624,19 @@ function createHttp(core2, {
     if (method !== "POST") return false;
     return pathname === "/mail" || pathname === "/api/spawn/arm-unsupervised";
   }
+  const legacyWhisperedSessions = /* @__PURE__ */ new Set();
+  const LEGACY_WHISPER = "[FLEETDECK] This session is running pre-0.16.0 hooks and is no longer reaching the fleet daemon (hook calls now require a token). Tell the human: please RESTART this Claude session \u2014 after the restart it reconnects to the board automatically.";
+  const LEGACY_BLOCK_REASON = "[FLEETDECK] This session is running pre-0.16.0 hooks and cannot reach the fleet daemon. Stop and tell the human NOW: restart this Claude session (exit and relaunch in the same directory). Do not continue the current task until the human acknowledges \u2014 the session is running without fleet oversight.";
+  function legacyHookResponse(res, ev, name) {
+    const sid = typeof ev?.session_id === "string" ? ev.session_id : null;
+    if (name === "Stop" && sid && !legacyWhisperedSessions.has(sid)) {
+      legacyWhisperedSessions.add(sid);
+      return json(res, 200, { decision: "block", reason: LEGACY_BLOCK_REASON });
+    }
+    return json(res, 200, {
+      hookSpecificOutput: { hookEventName: name, additionalContext: LEGACY_WHISPER }
+    });
+  }
   const daemonPort = String(port);
   const lanHosts = /* @__PURE__ */ new Set();
   try {
@@ -10777,9 +10790,11 @@ function createHttp(core2, {
     try {
       const url = new URL(req.url, `http://127.0.0.1:${port}`);
       const shell = isPublicShell(req.method, url.pathname);
-      if (!shell && !authorized(req, url)) {
+      const isHookPath = url.pathname.startsWith("/hook/");
+      if (!shell && !isHookPath && !authorized(req, url)) {
         return json(res, 401, { ok: false, reason: "unauthorized" });
       }
+      const hookAuthed = isHookPath ? authorized(req, url) : true;
       if (!shell && !hostHeaderOk(req)) {
         return url.pathname.startsWith("/hook/") ? json(res, 200, {}) : json(res, 403, { ok: false, reason: "forbidden" });
       }
@@ -10883,6 +10898,7 @@ function createHttp(core2, {
             const hook = /^\/hook\/([A-Za-z]+)$/.exec(url.pathname);
             if (hook) {
               const name = hook[1];
+              if (!hookAuthed) return legacyHookResponse(res, ev, name);
               try {
                 capture(name, ev);
               } catch {
