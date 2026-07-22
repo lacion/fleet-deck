@@ -104,6 +104,14 @@ don't.
 `FLEETDECK_PROXY_AUTH=trust` with no trusted origins is a startup refusal — there would be nothing to
 trust.
 
+**One deliberate exception under `trust`: `gateway_*` settings writes still require the bearer.** They
+are the single write that reroutes every future session's LLM traffic and can exfiltrate the gateway
+credential, and the trusted-origin signal is derived from `Host`/`Origin` headers a local process can
+forge — too much authority to hang on a spoofable header. So under `trust`, save gateway settings once
+with the key from `fleetdeck token`; everything else stays tokenless. (On a single-user workspace you
+can waive even this with `FLEETDECK_TRUST_LOOPBACK=on`, which keys off the real loopback peer rather
+than a header — see §"Without a wildcard domain".)
+
 ## 3. Prefer `subdomain = true`
 
 Coder can serve an app two ways, and they are not equally good here.
@@ -203,8 +211,19 @@ coder port-forward my-workspace --tcp 4711:4711
 # → http://localhost:4711
 ```
 
-No trusted origins, no token, no proxy auth. This works today with an unmodified Fleet Deck, and it is
-the least configuration of any option here.
+No trusted origins, no proxy auth. Since 0.16.0 the four *power* routes (typing into terminals, mail,
+gateway settings, arming unsupervised spawns) still ask the browser for the board key even over
+loopback — everything else works without it. On a single-user workspace that gate protects nothing
+(there are no other OS users), so opt out of it in the workspace env:
+
+```sh
+FLEETDECK_TRUST_LOOPBACK=on
+```
+
+and the port-forwarded board needs no key at all, exactly like pre-0.16.0. Keep it **off** on any
+machine other people can log into: the loopback gates are what stop another local user from typing
+into your agents' terminals. Hooks stay authenticated either way (their shims read the key file
+themselves), and this knob refuses to combine with LAN mode or `FLEETDECK_REQUIRE_TOKEN`.
 
 ## Troubleshooting
 
@@ -212,6 +231,7 @@ the least configuration of any option here.
 | --- | --- |
 | Board shell loads, then everything 403s | `FLEETDECK_TRUSTED_ORIGINS` is unset or does not match the URL in your address bar. Compare them character by character — the scheme counts. |
 | Board asks for a token you did not expect | `FLEETDECK_PROXY_AUTH` is `token` (the default). Either run `fleetdeck token` and paste it, or set `trust` if Coder is authenticating. |
+| Terminals/mail ask for a key on a port-forwarded board | The 0.16.0 loopback power gates. Set `FLEETDECK_TRUST_LOOPBACK=on` on a single-user workspace, or paste the key once (`fleetdeck token` on the workspace). |
 | Daemon refuses to start | It prints the reason on stderr — a malformed trusted origin, or `trust` with nothing to trust. Check `$FLEETDECK_HOME/fleetd.log`. |
 | Cards appear and never change | The plugin is not installed for the `claude` CLI. Run `fleetdeck doctor`. |
 | Config changes did nothing | You changed the environment but did not re-run `fleetdeck service install`. |

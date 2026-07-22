@@ -91,6 +91,16 @@ for sessions started before 0.16.0, escalating to a single turn-blocking
 restart instruction per session — rather than a bare 401, so a pre-upgrade
 session can never sit silently dark.
 
+Since 0.16.1, `FLEETDECK_TRUST_LOOPBACK=on` waives the four loopback power
+gates (`/ws/term`, `POST /mail`, `gateway_*` writes, the unsupervised arm) for
+plain-loopback callers. It is the deliberate inverse of `REQUIRE_TOKEN` for
+machines where the loopback trust zone genuinely contains one person — a
+single-user Coder workspace reached over `coder port-forward`, a personal
+laptop. It changes nothing else: hooks still authenticate through their shims,
+proxied and LAN callers keep their walls, and the daemon refuses the flag
+outright when combined with LAN mode or `REQUIRE_TOKEN` (the configurations
+that assert the opposite). Do not set it on a box other people can log into.
+
 ### In scope
 
 Reports in these areas are wanted:

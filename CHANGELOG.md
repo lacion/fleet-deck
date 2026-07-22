@@ -5,6 +5,55 @@ All notable changes to Fleet Deck are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.1] - 2026-07-22
+
+0.16.0's loopback power gates assumed someone saw the daemon print its
+credentialed link. On auto-started daemons — Coder workspaces, systemd
+services, hook-spawned daemons — that line goes to a log file, and the first
+thing users saw was a locked board with no key in sight. This release makes
+the key findable everywhere and, for machines where the gates protect nothing,
+optional.
+
+### Added
+
+- **`FLEETDECK_TRUST_LOOPBACK=on`** waives the four loopback power gates
+  (`/ws/term`, `POST /mail`, `gateway_*` settings writes, the unsupervised
+  arm) for plain-loopback callers — the pre-0.16.0 behavior, opted into
+  explicitly. Meant for single-user machines and port-forwarded Coder
+  workspaces, where no other OS user can reach `127.0.0.1` and the gates
+  therefore defend nothing. Hooks still authenticate through their shims;
+  proxied and LAN callers are unaffected; the daemon refuses the flag combined
+  with LAN mode or `FLEETDECK_REQUIRE_TOKEN`. docs/CODER.md carries both
+  recipes (subdomain app + `PROXY_AUTH=trust`, port-forward + this flag).
+- **The key is findable after auto-start.** The SessionStart brief names where
+  the key lives (`fleetdeck token` / `$FLEETDECK_HOME/token`); `fleetdeck
+  status` shows the board URL and points at `fleetdeck token`; the board's key
+  gate explains how to recover the key when the startup link was never seen.
+  `fleetdeck status` keeps the credentialed link out of its routine output so
+  it cannot leak into logs, scrollback or support pastes — pass `--show-token`
+  when you actually mean to copy the full `?t=` URL.
+
+### Security
+
+- **`gateway_*` settings writes stay token-gated even under
+  `FLEETDECK_PROXY_AUTH=trust`.** They are the one write that reroutes every
+  future session's LLM traffic and can exfiltrate the gateway credential, and
+  the trusted-proxy signal is derived from caller-controlled `Host`/`Origin`
+  headers a direct-loopback process can forge. Only the explicit
+  `FLEETDECK_TRUST_LOOPBACK=on` opt-out waives them, and it keys off the real
+  peer address rather than a header. Under trust mode, save gateway settings
+  once with the key from `fleetdeck token`.
+- **Hooks authenticate in *every* mode, including `FLEETDECK_PROXY_AUTH=trust`.**
+  0.16.0 gated `/hook/*` on the bearer, but the proxy-trust exemption in
+  `authorized()` returned before that gate was reached: a direct-loopback
+  process could forge the configured trusted `Host`/`Origin` to look proxied
+  and, on a `trust`-mode daemon, POST tokenless hooks — re-opening the exact
+  session-impersonation forgeries 0.16.0 closed. The `/hook/*` gate now leads
+  `authorized()`, ahead of the proxy-trust exemption, so it holds under token
+  proxy, trust proxy, plain loopback, LAN, `REQUIRE_TOKEN` and
+  `TRUST_LOOPBACK` alike. Hooks always travel through their shims with the
+  bearer, so no legitimate caller is affected.
+
 ## [0.16.0] - 2026-07-22
 
 A full red-team exercise (five attack teams, five independent verifiers, every

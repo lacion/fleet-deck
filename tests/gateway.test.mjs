@@ -28,6 +28,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import http from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, chmodSync } from 'node:fs';
@@ -35,7 +36,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { startDaemon } from './helpers/daemon.mjs';
+import { randomPort, startDaemon } from './helpers/daemon.mjs';
 import { postJson, getJson, postHook } from './helpers/http.mjs';
 import { waitForSpecRecords } from './helpers/wait.mjs';
 import { claudeTranscriptPath } from '../scripts/fleetd/helpers.mjs';
@@ -55,6 +56,22 @@ const GATEWAY_VARS = [
 
 function scratchDir() {
   return mkdtempSync(path.join(tmpdir(), 'fleetdeck-gateway-'));
+}
+
+function rawJsonPost(port, pathname, body, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const payload = JSON.stringify(body);
+    const req = http.request({
+      host: '127.0.0.1', port, path: pathname, method: 'POST',
+      headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload), ...headers },
+    }, res => {
+      let text = '';
+      res.on('data', chunk => { text += chunk; });
+      res.on('end', () => resolve({ status: res.statusCode, text }));
+    });
+    req.on('error', reject);
+    req.end(payload);
+  });
 }
 
 /** Boot a daemon with the spawn fixture wired up.
@@ -139,6 +156,50 @@ function leaksAnywhere(value, needle, seen = new Set()) {
 }
 
 // ---------------------------------------------------------------- masking
+
+test('gateway: gateway_* writes require the bearer even under proxy trust — Host/Origin are forgeable', async (t) => {
+  // arrivedViaTrustedProxy() reads the Host and Origin headers, both of which a
+  // direct loopback caller controls. Everywhere else PROXY_AUTH=trust waives the
+  // token on that signal — that is the documented 0.13.0 contract — but gateway_*
+  // is the one write that reroutes every future session's LLM traffic and can
+  // exfiltrate the gateway credential, so it must NOT ride a forgeable header. A
+  // local process that forges the trusted hostname must still be refused.
+  const proxyOrigin = 'https://board.example.com';
+  const forgedHeaders = { host: 'board.example.com', origin: proxyOrigin };
+  const trustPort = randomPort();
+  let tokenPort = randomPort();
+  while (tokenPort === trustPort) tokenPort = randomPort();
+  const trust = await startDaemon({
+    port: trustPort,
+    env: { FLEETDECK_TRUSTED_ORIGINS: proxyOrigin, FLEETDECK_PROXY_AUTH: 'trust' },
+  });
+  t.after(() => trust.stop());
+  const token = await startDaemon({
+    port: tokenPort,
+    env: { FLEETDECK_TRUSTED_ORIGINS: proxyOrigin, FLEETDECK_PROXY_AUTH: 'token' },
+  });
+  t.after(() => token.stop());
+
+  // THE REGRESSION THIS TEST EXISTS FOR: a direct loopback request forging the
+  // trusted proxy's Host/Origin under trust mode is refused, not waived.
+  const forgedTrustWrite = await rawJsonPost(trust.port, '/api/settings', { gateway_base_url: BASE_URL }, forgedHeaders);
+  assert.equal(forgedTrustWrite.status, 401,
+    `forged trusted headers must not waive the gateway bearer under trust mode: ${forgedTrustWrite.text}`);
+
+  // The real proxy (or anyone) presenting the bearer is accepted, in either mode.
+  const trustWithBearer = await rawJsonPost(trust.port, '/api/settings', { gateway_base_url: BASE_URL }, {
+    ...forgedHeaders, authorization: `Bearer ${trust.token}`,
+  });
+  assert.equal(trustWithBearer.status, 200, `trust mode accepts the bearer: ${trustWithBearer.text}`);
+
+  const tokenWrite = await rawJsonPost(token.port, '/api/settings', { gateway_base_url: BASE_URL }, forgedHeaders);
+  assert.equal(tokenWrite.status, 401, 'proxy token mode still requires the bearer');
+
+  const authenticatedWrite = await rawJsonPost(token.port, '/api/settings', { gateway_base_url: BASE_URL }, {
+    ...forgedHeaders, authorization: `Bearer ${token.token}`,
+  });
+  assert.equal(authenticatedWrite.status, 200, `proxy token mode accepts its bearer: ${authenticatedWrite.text}`);
+});
 
 test('gateway: the token is stored, usable, and never served back to a client', async (t) => {
   const { daemon } = await gatewayDaemon();

@@ -84,7 +84,8 @@ async function health({ timeout = 1000 } = {}) {
   } catch { return null; }
 }
 
-async function status() {
+async function status(args = []) {
+  const showToken = args.includes('--show-token');
   const h = await health();
   if (!h) {
     out(`fleetdeck: no daemon answering on 127.0.0.1:${PORT}`);
@@ -93,6 +94,21 @@ async function status() {
   out(`fleetdeck v${h.version}${h.managed ? ' (managed service)' : ' (plugin-spawned)'}`);
   out(`  pid      ${h.pid}`);
   out(`  port     ${PORT}`);
+  // The board key lives in the ?t= of the credentialed URL. status output routinely
+  // ends up in logs, terminal scrollback, support pastes and screen-shares, so the
+  // key is REDACTED by default even though the caller could read it from HOME/token:
+  // a secret that only leaks when you explicitly ask for it is a far smaller footgun.
+  // `--show-token` reprints the full link for the moment you actually mean to copy it.
+  let key = '';
+  try { key = fs.readFileSync(path.join(HOME, 'token'), 'utf8').trim(); }
+  catch { /* no token file yet — the daemon mints one on next boot */ }
+  if (key && showToken) {
+    out(`  board    http://127.0.0.1:${PORT}/?t=${encodeURIComponent(key)}`);
+  } else if (key) {
+    out(`  board    http://127.0.0.1:${PORT}/  (board key hidden — run \`fleetdeck token\`, or \`fleetdeck status --show-token\` for the full link)`);
+  } else {
+    out(`  board    http://127.0.0.1:${PORT}/`);
+  }
   out(`  sessions ${h.fleet}`);
   out(`  spawn    ${h.spawn?.available ? `available (${h.spawn.active} active)` : `unavailable — ${h.spawn?.reason || 'unknown'}`}`);
   const own = version();
@@ -482,7 +498,7 @@ async function token(args) {
 const HELP = `fleetdeck v${version()} — the board for your Claude Code fleet
 
   fleetdeck serve                  run the daemon in the foreground (what a supervisor execs)
-  fleetdeck status                 ask the running daemon how it is doing
+  fleetdeck status [--show-token]  ask the running daemon how it is doing (board key hidden unless --show-token)
   fleetdeck doctor                 preflight this machine before running a fleet on it
   fleetdeck service install        install a supervisor (systemd user unit, or a wrapper)
   fleetdeck service start|stop     ...and drive it
@@ -499,7 +515,7 @@ async function main(argv) {
   let code = 0;
   switch (cmd) {
     case 'serve': await serve(); return; // never returns until SIGTERM; serve owns the process
-    case 'status': code = await status(); break;
+    case 'status': code = await status(rest); break;
     case 'doctor': code = await doctor(); break;
     case 'service': code = await service(rest[0]); break;
     case 'token': code = await token(rest); break;

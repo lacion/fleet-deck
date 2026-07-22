@@ -9265,6 +9265,7 @@ function createEvents(ctx) {
     logEvent,
     onMutate,
     port,
+    home,
     questions,
     scheduleRegistrationRemoteHarvest,
     stampTranscriptFloor,
@@ -9494,7 +9495,11 @@ function createEvents(ctx) {
     const otherRepos = new Set(elsewhere.map((s) => s.repo_id ?? "(none)")).size;
     const repoLabel = c.repo_name ? ` in ${c.repo_name}` : "";
     const lines = [
-      `[FLEETDECK] You are on the fleet board as "${c.callsign}"${c.ticket ? ` (ticket ${c.ticket})` : ""} \u2014 live at http://127.0.0.1:${port}`,
+      // The token itself must never enter a session brief: briefs land in every
+      // transcript (~/.claude/projects/**.jsonl), and transcripts get shared.
+      // Name where the key lives instead — an auto-started daemon prints its
+      // credentialed URL only into fleetd.log, which nobody reads.
+      `[FLEETDECK] You are on the fleet board as "${c.callsign}"${c.ticket ? ` (ticket ${c.ticket})` : ""} \u2014 live at http://127.0.0.1:${port} (board key, if asked: \`fleetdeck token\` or ${home ? path11.join(home, "token") : "$FLEETDECK_HOME/token"})`,
       sameRepo.length ? `Other active sessions${repoLabel} (${sameRepo.length}):` : `No other sessions active${repoLabel} right now.`,
       ...sameRepo.map((s) => `  - ${s.callsign} [${s.col}] ${s.note}${s.branch ? " \u2014 " + s.branch : ""}${s.worktree && s.worktree !== c.worktree ? " @ " + s.worktree : ""}`)
     ];
@@ -11092,7 +11097,8 @@ function createHttp(core2, {
   trustedOrigins = [],
   proxyAuth = "token",
   managed = false,
-  requireToken = false
+  requireToken = false,
+  trustLoopback = false
 }) {
   const lanInfo = lan?.enabled ? { enabled: true, urls: lan.urls ?? [], mdns: lan.mdns ?? null } : { enabled: false, urls: [] };
   function snapshotWithLan() {
@@ -11114,14 +11120,15 @@ function createHttp(core2, {
     return expected.length === presented.length && timingSafeEqual(expected, presented);
   }
   function authorized(req, url) {
-    if (isLoopbackAddress(req.socket?.remoteAddress)) {
+    const isHook = url.pathname.startsWith("/hook/");
+    if (isLoopbackAddress(req.socket?.remoteAddress) && !isHook) {
       const viaProxy = arrivedViaTrustedProxy(req);
       if (proxyAuth === "token" && viaProxy) {
       } else if (proxyAuth === "trust" && viaProxy) {
         return true;
       } else {
         if (url.pathname === "/health" || isPublicShell(req.method, url.pathname)) return true;
-        if (!requireToken && !url.pathname.startsWith("/hook/") && !tokenGatedRoute(req.method, url.pathname)) return true;
+        if (!requireToken && (trustLoopback || !tokenGatedRoute(req.method, url.pathname))) return true;
       }
     }
     const authorization = req.headers.authorization;
@@ -11478,7 +11485,8 @@ function createHttp(core2, {
               if (Object.keys(ev || {}).some((k) => k.toLowerCase().startsWith("gateway_"))) {
                 const authorization = req.headers.authorization;
                 const bearer = typeof authorization === "string" ? /^Bearer (.+)$/.exec(authorization)?.[1] : void 0;
-                if (!tokenMatches(bearer) && !tokenMatches(url.searchParams.get("t"))) {
+                const bearerWaived = trustLoopback && !arrivedViaTrustedProxy(req) && isLoopbackAddress(req.socket?.remoteAddress);
+                if (!bearerWaived && !tokenMatches(bearer) && !tokenMatches(url.searchParams.get("t"))) {
                   return json(res, 401, { ok: false, reason: "gateway settings require the bearer token" });
                 }
                 logExec(url.pathname, req, " gateway=true");
@@ -12564,6 +12572,17 @@ if (PROXY_AUTH === "trust" && !TRUSTED_ORIGINS.length) {
   startupFatal("FLEETDECK_PROXY_AUTH=trust requires FLEETDECK_TRUSTED_ORIGINS \u2014 there is nothing to trust");
 }
 var REQUIRE_TOKEN = (process.env.FLEETDECK_REQUIRE_TOKEN || "").trim().toLowerCase() === "on";
+var TRUST_LOOPBACK_VALUE = (process.env.FLEETDECK_TRUST_LOOPBACK || "").trim().toLowerCase();
+if (TRUST_LOOPBACK_VALUE !== "" && TRUST_LOOPBACK_VALUE !== "on" && TRUST_LOOPBACK_VALUE !== "off") {
+  startupFatal(`FLEETDECK_TRUST_LOOPBACK must be 'on' or 'off' (got '${TRUST_LOOPBACK_VALUE}')`);
+}
+var TRUST_LOOPBACK = TRUST_LOOPBACK_VALUE === "on";
+if (TRUST_LOOPBACK && REQUIRE_TOKEN) {
+  startupFatal("FLEETDECK_TRUST_LOOPBACK=on conflicts with FLEETDECK_REQUIRE_TOKEN=on");
+}
+if (TRUST_LOOPBACK && LAN_MODE) {
+  startupFatal("FLEETDECK_TRUST_LOOPBACK=on requires a loopback FLEETDECK_BIND");
+}
 var TOKEN_REQUIRED = LAN_MODE || REQUIRE_TOKEN || TRUSTED_ORIGINS.length > 0 && PROXY_AUTH === "token";
 var TOKEN_FILE = path15.join(HOME, "token");
 var TOKEN;
@@ -12659,6 +12678,7 @@ var { server } = createHttp(core, {
   proxyAuth: PROXY_AUTH,
   managed: MANAGED,
   requireToken: REQUIRE_TOKEN,
+  trustLoopback: TRUST_LOOPBACK,
   // validation aid: first 3 raw payloads per hook event → HOME/hook-payloads.jsonl
   capture: createPayloadCapture(HOME, { secrets: TOKEN ? [TOKEN] : [] })
 });
