@@ -172,7 +172,7 @@ test('H-R1: the rmSync fall-through preserves uncommitted work when force is not
 // H-R2
 // ---------------------------------------------------------------------------
 
-test('H-R2: boot reconciliation leaves active rows UNKNOWN when tmux is unreachable, and tombstones them when it is reachable', async (t) => {
+test('H-R2: boot reconciliation leaves rows UNKNOWN on list failure without creating a replacement server', async (t) => {
   function seedActiveSpawn(db) {
     const now = Date.now();
     db.prepare(`INSERT INTO sessions (session_id, callsign, col, note, events, started_at, last_seen, source)
@@ -181,30 +181,42 @@ test('H-R2: boot reconciliation leaves active rows UNKNOWN when tmux is unreacha
       VALUES ('sp1', 's1', 'a1', 'fleetdeck-4711', 'fd4711-a1', ?, 'live')`).run(now);
   }
 
-  // Unreachable: listScopedWindows returns [] (as it does on a tmux timeout)
-  // AND the reachability probe (ensureSession) throws. Nothing is tombstoned.
+  // Failed listing is explicitly UNKNOWN. Reconciliation must not call
+  // ensureSession: with an unlinked live socket that would create a replacement
+  // server and make the inaccessible original fleet look authoritatively gone.
   {
+    let ensureCalls = 0;
     const tmux = makeAdapter(4711, {
-      listScopedWindows: async () => [],
-      ensureSession: async () => { throw new Error('tmux timed out'); },
+      listScopedWindows: async () => null,
+      ensureSession: async () => { ensureCalls++; return 'fleetdeck-4711'; },
     });
     const { db, core } = memoryCore(t, { tmux });
     seedActiveSpawn(db);
+    const now = Date.now();
+    db.prepare(`INSERT INTO sessions (session_id, callsign, col, note, events, started_at, last_seen, source)
+      VALUES ('s2', 'b2', 'queued', 'provisioning', 0, ?, ?, 'spawned')`).run(now, now);
+    db.prepare(`INSERT INTO spawns (spawn_id, session_id, callsign, tmux_session, tmux_window, requested_at, status)
+      VALUES ('sp2', 's2', 'b2', 'fleetdeck-4711', 'fd4711-b2', ?, 'provisioning')`).run(now);
     await core.reconcileSpawns();
     assert.equal(db.prepare("SELECT status FROM spawns WHERE spawn_id='sp1'").get().status, 'live',
       'tmux unreachable → the live row stays live (unknown), never gone');
     assert.equal(db.prepare("SELECT col FROM sessions WHERE session_id='s1'").get().col, 'working',
       'tmux unreachable → the card is not tombstoned offline');
-    assert.ok(core.snapshot().ticker.some(x => /tmux unreachable at restart/.test(x.msg)),
+    assert.equal(db.prepare("SELECT status FROM spawns WHERE spawn_id='sp2'").get().status, 'provisioning',
+      'tmux UNKNOWN also leaves interrupted provisioning rows unchanged');
+    assert.equal(db.prepare("SELECT col FROM sessions WHERE session_id='s2'").get().col, 'queued');
+    assert.equal(ensureCalls, 0, 'reconciliation never creates/probes a session after an unknown list');
+    assert.ok(core.snapshot().ticker.some(x => /tmux window lookup failed at restart/.test(x.msg)),
       'the skip is announced on the feed');
   }
 
   // Reachable but the fleet owns no windows: the empty list is authoritative,
   // so the stale row IS reconciled to gone + offline (the existing contract).
   {
+    let ensureCalls = 0;
     const tmux = makeAdapter(4711, {
       listScopedWindows: async () => [],
-      ensureSession: async () => 'fleetdeck-4711', // resolves ⇒ reachable
+      ensureSession: async () => { ensureCalls++; throw new Error('must not be called'); },
     });
     const { db, core } = memoryCore(t, { tmux });
     seedActiveSpawn(db);
@@ -213,7 +225,57 @@ test('H-R2: boot reconciliation leaves active rows UNKNOWN when tmux is unreacha
       'tmux reachable + no windows → the row is reconciled to gone');
     assert.equal(db.prepare("SELECT col FROM sessions WHERE session_id='s1'").get().col, 'offline',
       'tmux reachable + no windows → the card is tombstoned offline');
+    assert.equal(ensureCalls, 0, 'validated empty needs no reachability side effect');
   }
+});
+
+test('revive and adopt return 5xx on UNKNOWN window lookup without launching', async (t) => {
+  const userHome = mkdtempSync(path.join(tmpdir(), 'fd-unknown-home-'));
+  const cwd = mkdtempSync(path.join(tmpdir(), 'fd-unknown-cwd-'));
+  t.after(() => {
+    rmSync(userHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+  let ensureCalls = 0;
+  let newWindowCalls = 0;
+  const tmux = makeAdapter(4711, {
+    listScopedWindows: async () => null,
+    ensureSession: async () => { ensureCalls++; return 'fleetdeck-4711'; },
+    newWindow: async () => { newWindowCalls++; throw new Error('must not launch'); },
+  });
+  const { db, core } = memoryCore(t, { tmux, env: { HOME: userHome } });
+  const now = Date.now();
+
+  db.prepare(`INSERT INTO sessions
+    (session_id, callsign, cwd, col, note, events, started_at, last_seen, ended_at, end_reason, source)
+    VALUES ('revive-unknown', 'otter', ?, 'offline', 'ended', 0, ?, ?, ?, 'other', 'spawned')`)
+    .run(cwd, now, now, now);
+  db.prepare(`INSERT INTO spawns
+    (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, requested_at, status)
+    VALUES ('sp-unknown', 'revive-unknown', 'otter', 'fleetdeck-4711', 'fd4711-otter', ?, ?, 'gone')`)
+    .run(cwd, now);
+  const reviveTranscript = claudeTranscriptPath(cwd, 'revive-unknown', userHome);
+  mkdirSync(path.dirname(reviveTranscript), { recursive: true });
+  writeFileSync(reviveTranscript, '{}\n');
+
+  const revived = await core.revive('sp-unknown');
+  assert.equal(revived.status, 503);
+  assert.match(revived.body.reason, /lookup failed.*duplicate/i);
+  assert.equal(db.prepare("SELECT status FROM spawns WHERE spawn_id='sp-unknown'").get().status, 'gone');
+
+  db.prepare(`INSERT INTO sessions
+    (session_id, callsign, cwd, col, note, events, started_at, last_seen, ended_at, end_reason, source)
+    VALUES ('adopt-unknown', 'badger', ?, 'offline', 'ended', 0, ?, ?, ?, 'other', 'hooks')`)
+    .run(cwd, now, now, now);
+  const adoptTranscript = claudeTranscriptPath(cwd, 'adopt-unknown', userHome);
+  writeFileSync(adoptTranscript, '{}\n');
+
+  const adopted = await core.adoptSession('adopt-unknown');
+  assert.equal(adopted.status, 503);
+  assert.match(adopted.body.reason, /lookup failed.*duplicate/i);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM spawns WHERE session_id='adopt-unknown'").get().n, 0);
+  assert.equal(ensureCalls, 0, 'UNKNOWN lookup never reaches ensureSession');
+  assert.equal(newWindowCalls, 0, 'UNKNOWN lookup never reaches newWindow');
 });
 
 // ---------------------------------------------------------------------------
@@ -296,6 +358,68 @@ test('H-R6: a tmux launch failure leaves NO orphan — the worktree, window, and
   // git itself must no longer know about the worktree (prune ran).
   const list = git(['worktree', 'list', '--porcelain'], root);
   assert.equal(list.includes(wt), false, 'git worktree list no longer references the cleaned worktree');
+});
+
+test('H-R6: unverifiable compensation kill stays loud and nonterminal without removing its worktree', async (t) => {
+  const { root, base } = initRepo(t, 'repo');
+  const tmux = makeAdapter(4711, {
+    ensureSession: async () => 'fleetdeck-4711',
+    newWindow: async () => { throw new Error('tmux new-window boom'); },
+    killWindowVerified: async () => ({ ok: false, error: 'tmux window lookup failed' }),
+  });
+  const { db, core } = memoryCore(t, { tmux });
+
+  const res = await core.spawn({ cwd: root, worktree: true });
+  assert.equal(res.status, 500);
+  assert.match(res.body.reason, /cleanup unresolved: tmux window lookup failed/);
+
+  const row = db.prepare('SELECT * FROM spawns').get();
+  assert.equal(row.status, 'stalled', 'unknown cleanup retains a nonterminal owner row');
+  const wt = path.join(base, `repo--fd-${row.callsign}`);
+  assert.equal(existsSync(wt), true, 'the worktree is retained while its pane may still be running');
+  assert.equal(git(['worktree', 'list', '--porcelain'], root).includes(wt), true,
+    'git still knows about the retained worktree');
+  const card = core.snapshot().sessions.find(s => s.session_id === row.session_id);
+  assert.equal(card.col, 'offline');
+  assert.match(card.note, /cleanup unresolved/);
+  await core.cleanup();
+  const afterCleanup = db.prepare('SELECT spawns.status, sessions.archived_at FROM spawns JOIN sessions USING (session_id) WHERE spawn_id = ?').get(row.spawn_id);
+  assert.equal(afterCleanup.status, 'stalled', 'manual cleanup never converts an UNKNOWN owner to gone');
+  assert.equal(afterCleanup.archived_at, null, 'the unresolved card stays visible instead of being archived away');
+  assert.equal((await core.revive(row.spawn_id)).status, 409, 'the retained owner cannot be duplicated by revive');
+});
+
+test('H-R6: resume launch failure uses verified compensation and retains an UNKNOWN pane owner', async (t) => {
+  const userHome = mkdtempSync(path.join(tmpdir(), 'fd-resume-comp-home-'));
+  const cwd = mkdtempSync(path.join(tmpdir(), 'fd-resume-comp-cwd-'));
+  t.after(() => {
+    rmSync(userHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+  const tmux = makeAdapter(4711, {
+    listScopedWindows: async () => [],
+    newWindow: async () => { throw new Error('resume new-window timeout'); },
+    killWindowVerified: async () => ({ ok: false, error: 'tmux window lookup failed' }),
+  });
+  const { db, core } = memoryCore(t, { tmux, env: { HOME: userHome } });
+  const now = Date.now();
+  db.prepare(`INSERT INTO sessions (session_id, callsign, cwd, col, note, events, started_at, last_seen, ended_at, source)
+    VALUES ('resume-s', 'otter', ?, 'offline', 'ended', 0, ?, ?, ?, 'spawned')`).run(cwd, now, now, now);
+  db.prepare(`INSERT INTO spawns (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, requested_at, status)
+    VALUES ('resume-old', 'resume-s', 'otter', 'fleetdeck-4711', 'fd4711-otter', ?, ?, 'gone')`).run(cwd, now);
+  const transcript = claudeTranscriptPath(cwd, 'resume-s', userHome);
+  mkdirSync(path.dirname(transcript), { recursive: true });
+  writeFileSync(transcript, '{}\n');
+
+  const out = await core.revive('resume-old');
+  assert.equal(out.status, 500);
+  assert.match(out.body.reason, /cleanup unresolved: tmux window lookup failed/);
+  const rows = db.prepare("SELECT spawn_id, status FROM spawns WHERE session_id='resume-s' ORDER BY requested_at, rowid").all();
+  assert.equal(rows.length, 2);
+  assert.equal(rows[1].status, 'stalled', 'the provisional resume row keeps ownership while cleanup is UNKNOWN');
+  const card = core.snapshot().sessions.find(s => s.session_id === 'resume-s');
+  assert.match(card.note, /cleanup unresolved/);
+  assert.equal((await core.revive('resume-old')).status, 409, 'a retry cannot duplicate the retained resume owner');
 });
 
 // ---------------------------------------------------------------------------

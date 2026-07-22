@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { openDb } from '../scripts/fleetd/db.mjs';
 import { claudeTranscriptPath, createCore } from '../scripts/fleetd/derive.mjs';
-import { capturePane, pasteText, sendEnter, typeKeys } from '../scripts/fleetd/spawn.mjs';
+import { capturePane, exactWindowTarget, pasteText, sendEnter, typeKeys } from '../scripts/fleetd/spawn.mjs';
 
 function setEnv(t, values) {
   const before = new Map(Object.keys(values).map(k => [k, process.env[k]]));
@@ -240,10 +240,12 @@ test('tmux input/capture helpers use isolated-socket argv without shell interpol
   });
   t.after(() => rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
 
-  assert.equal(await pasteText('@9', 'hello\nworld'), true);
-  assert.equal(await sendEnter('@9'), true);
-  assert.equal(await typeKeys('@9', '/rc fd4711-falcon'), true);
-  assert.equal(await capturePane('fd4711-falcon'), '');
+  const target = exactWindowTarget(4711, 'fd4711-falcon');
+  assert.equal(target, '=fleetdeck-4711:=fd4711-falcon');
+  assert.equal(await pasteText(target, 'hello\nworld'), true);
+  assert.equal(await sendEnter(target), true);
+  assert.equal(await typeKeys(target, '/rc fd4711-falcon'), true);
+  assert.equal(await capturePane(target), '');
   const calls = readFileSync(record, 'utf8').trim().split('\n').map(JSON.parse);
   // pasteText now uses a per-call unique buffer (fdmail-<uuid>, H-R4) and deletes
   // it in a finally, so assert the argv shape and the buffer-name relationship
@@ -252,12 +254,12 @@ test('tmux input/capture helpers use isolated-socket argv without shell interpol
   const bufName = setBuf[4];
   assert.match(bufName, /^fdmail-[0-9a-f-]+$/, 'set-buffer uses a unique fdmail-<uuid> buffer');
   assert.deepEqual(setBuf, ['-L', 'fd-test-socket', 'set-buffer', '-b', bufName, '--', 'hello\nworld']);
-  assert.deepEqual(pasteBuf, ['-L', 'fd-test-socket', 'paste-buffer', '-p', '-d', '-b', bufName, '-t', '@9']);
+  assert.deepEqual(pasteBuf, ['-L', 'fd-test-socket', 'paste-buffer', '-p', '-d', '-b', bufName, '-t', target]);
   assert.deepEqual(delBuf, ['-L', 'fd-test-socket', 'delete-buffer', '-b', bufName]);
   assert.deepEqual(rest, [
-    ['-L', 'fd-test-socket', 'send-keys', '-t', '@9', 'Enter'],
-    ['-L', 'fd-test-socket', 'send-keys', '-t', '@9', '-l', '--', '/rc fd4711-falcon'],
-    ['-L', 'fd-test-socket', 'capture-pane', '-p', '-t', 'fd4711-falcon'],
+    ['-L', 'fd-test-socket', 'send-keys', '-t', target, 'Enter'],
+    ['-L', 'fd-test-socket', 'send-keys', '-t', target, '-l', '--', '/rc fd4711-falcon'],
+    ['-L', 'fd-test-socket', 'capture-pane', '-p', '-t', target],
   ]);
 });
 

@@ -18,7 +18,7 @@ import { execFileP, baseBranch } from './exec.mjs';
 export function createSpawns(ctx) {
   const {
     q, updateSession, tick, logEvent, onMutate, assignCallsign,
-    notifyWatchers, tombstoneCard, findScopedWindow, tmuxAdapter, port, home,
+    notifyWatchers, tombstoneCard, findScopedWindow, scopedPaneTarget, tmuxAdapter, port, home,
     NUDGE_MS, SPAWN_REGISTER_MS, RC_HARVEST_MS,
     ADOPT_ARM_MS, // 0.7.0 Move-to-tmux: arm-deadline window (default 30 min)
     // 0.7.1: the boot heal for /clear forks stranded BEFORE succession shipped.
@@ -162,7 +162,8 @@ export function createSpawns(ctx) {
       return { available: true, reason: 'test-override', ...base };
     }
     if (!tmuxAdapter.hasTmux()) {
-      return { available: false, reason: 'tmux not found on PATH', ...base };
+      const reason = tmuxAdapter.tmuxCapability?.().reason ?? 'tmux 3.4+ unavailable';
+      return { available: false, reason, ...base };
     }
     return { available: true, ...base };
   }
@@ -240,10 +241,12 @@ export function createSpawns(ctx) {
         const row = q.getSpawn.get(spawn_id);
         if (!row || row.status !== 'spawning') return; // hook event already landed, or terminal
         const win = await findScopedWindow(window);
+        if (win === null) return; // lookup UNKNOWN → hold the keystroke
         if (!win || win.pane_dead) return; // pane not alive → no keystroke
         nudged.add(spawn_id);
         let screen = null;
-        try { screen = await tmuxAdapter.capturePane(win.window_id); } catch { /* fall through to the hold below */ }
+        const target = scopedPaneTarget(win);
+        try { screen = await tmuxAdapter.capturePane(target); } catch { /* fall through to the hold below */ }
         // Fail CLOSED (0.16.0 adversarial review): an unreadable pane is never
         // a safe pane to press Enter into — the pre-gate behavior was exactly
         // "press and hope", and a mid-redraw trust dialog reads as an empty
@@ -265,7 +268,7 @@ export function createSpawns(ctx) {
           onMutate();
           return;
         }
-        await tmuxAdapter.sendBringupEnter(win.window_id);
+        await tmuxAdapter.sendBringupEnter(target);
         logEvent(row.session_id, 'SpawnNudge', null, 'bring-up Enter sent');
         tick(`⏎ nudged ${callsign} through bring-up`);
         onMutate();
@@ -341,8 +344,10 @@ export function createSpawns(ctx) {
   async function harvestRemote(spawn_id) {
     const row = q.getSpawn.get(spawn_id);
     if (!row) return { url: null };
+    const win = await findScopedWindow(row.tmux_window);
+    if (!win || win === null || win.pane_dead) return { url: null };
     let text = null;
-    try { text = await tmuxAdapter.capturePane(row.tmux_window); } catch { /* best effort */ }
+    try { text = await tmuxAdapter.capturePane(scopedPaneTarget(win)); } catch { /* best effort */ }
     // \S+ swallows terminal junk abutting the URL (trailing quotes, brackets,
     // sentence punctuation) — trim the characters a URL never ends with.
     const url = typeof text === 'string'
@@ -400,13 +405,24 @@ export function createSpawns(ctx) {
   // durable row+card as failed. A fleet-created worktree is fresh and holds no
   // human work, so force-remove it (git first, then rmSync + prune as the
   // half-created fallback); kill any half-created scoped window by verified
-  // name. Then flip the provisional row to a terminal 'gone' (so neither
-  // liveness nor boot reconciliation ever adopts it) and tombstone the card.
-  // Best-effort throughout: cleanup failure must not mask the launch failure.
+  // name. Only a verified kill/absence permits filesystem cleanup and a terminal
+  // 'gone'. UNKNOWN/failed pane cleanup leaves the row 'stalled' as a visible
+  // owner, preserving its worktree and preventing a duplicate launch.
   async function spawnCompensate({
     spawn_id, session_id, callsign, cwd, worktree_path, tmux_window, reason,
     created = { clone: false, worktree: !!worktree_path },
   }) {
+    if (tmux_window) {
+      let killed;
+      try { killed = await tmuxAdapter.killWindowVerified(tmux_window); }
+      catch (err) { killed = { ok: false, error: String(err?.message || err) }; }
+      if (!killed?.ok && !killed?.gone) {
+        const cleanupError = killed?.error || 'tmux pane cleanup could not be verified';
+        q.setSpawnStatus.run('stalled', spawn_id);
+        spawnFailed(session_id, callsign, `${reason}; cleanup unresolved: ${cleanupError}`);
+        return { resolved: false, error: cleanupError };
+      }
+    }
     if (worktree_path && created.worktree) {
       try {
         const rm = await execFileP('git', ['-C', cwd, 'worktree', 'remove', '--force', worktree_path], { timeout: 30_000 });
@@ -417,10 +433,10 @@ export function createSpawns(ctx) {
     if (cwd && created.clone) {
       try { fs.rmSync(cwd, { recursive: true, force: true }); } catch { /* best effort */ }
     }
-    if (tmux_window) { try { await tmuxAdapter.killWindowVerified(tmux_window); } catch { /* best effort */ } }
     q.setSpawnStatus.run('gone', spawn_id);
     forgetSpawn(spawn_id);
     spawnFailed(session_id, callsign, reason);
+    return { resolved: true };
   }
 
   async function launchPane({
@@ -485,8 +501,9 @@ export function createSpawns(ctx) {
         await tmuxAdapter.ensureSession(port);
         await tmuxAdapter.newWindow({ port, callsign, cwd: runCwd, argv, env: gatewayEnv });
       } catch (err) {
-        await compensate(String(err.message || err));
-        return { status: 500, body: { ok: false, reason: `tmux spawn failed: ${err.message || err}` } };
+        const cleanup = await compensate(String(err.message || err));
+        const unresolved = cleanup?.resolved === false ? `; cleanup unresolved: ${cleanup.error}` : '';
+        return { status: 500, body: { ok: false, reason: `tmux spawn failed: ${err.message || err}${unresolved}` } };
       }
     }
 
@@ -675,6 +692,7 @@ export function createSpawns(ctx) {
         try {
           let materialized;
           let worktree_path = null;
+          let paneMayExist = false;
           try {
             materialized = await materializeBranch({
               root: target.root, branch: body.branch, mode: branchMode, spawn_id, sid: session_id,
@@ -690,6 +708,7 @@ export function createSpawns(ctx) {
           worktree_path = branchMode === 'worktree' ? materialized.runCwd : null;
           try {
             await finishMaterialization(materialized, 'spawn');
+            paneMayExist = true;
             return await launchPane({
               spawn_id, session_id, callsign, tmux_session, tmux_window,
               requestedCwd: target.root, runCwd: materialized.runCwd,
@@ -705,7 +724,7 @@ export function createSpawns(ctx) {
               : (err.message || String(err));
             await spawnCompensate({
               spawn_id, session_id, callsign, cwd: target.root, worktree_path,
-              tmux_window, reason, created: materialized.created,
+              tmux_window: paneMayExist ? tmux_window : null, reason, created: materialized.created,
             });
             return { status: err.status || 409, body: { ok: false, reason } };
           }
@@ -719,6 +738,7 @@ export function createSpawns(ctx) {
       Promise.resolve().then(async () => {
         let created = { clone: false, worktree: false };
         let worktree_path = null;
+        let paneMayExist = false;
         try {
           await cloneRepo({ origin_url: target.origin_url, dest: target.dest, spawn_id });
           created.clone = true;
@@ -730,6 +750,7 @@ export function createSpawns(ctx) {
           created = materialized.created;
           worktree_path = branchMode === 'worktree' ? materialized.runCwd : null;
           await finishMaterialization(materialized, 'clone');
+          paneMayExist = true;
           await launchPane({
             spawn_id, session_id, callsign, tmux_session, tmux_window,
             requestedCwd: target.dest, runCwd: materialized.runCwd,
@@ -742,7 +763,7 @@ export function createSpawns(ctx) {
             : (err.message || String(err));
           await spawnCompensate({
             spawn_id, session_id, callsign, cwd: target.dest, worktree_path,
-            tmux_window, reason, created,
+            tmux_window: paneMayExist ? tmux_window : null, reason, created,
           });
         } finally {
           releaseCloneSlot();
@@ -917,6 +938,9 @@ export function createSpawns(ctx) {
       // verified name before reusing the window. A live pane running ANYTHING
       // ELSE (the human repurposed the window) is never destroyed — refuse.
       const existing = await findScopedWindow(row.tmux_window);
+      if (existing === null) {
+        return { status: 503, body: { ok: false, reason: 'tmux window lookup failed; revive held to avoid a duplicate session' } };
+      }
       if (existing && !existing.pane_dead && existing.pane_cmd === 'claude') {
         // BUG 3: the deterministic window ALREADY hosts a live claude pane for
         // this session — it was wrongly condemned (BUG 1 /clear, BUG 2 silence)
@@ -1064,6 +1088,16 @@ export function createSpawns(ctx) {
       tmux_window, requested_cwd, worktree_path, Date.now(), skip_permissions ? 1 : 0,
       remoteWanted ? 1 : 0, null, null, null, gatewayEnv ? 1 : 0);
 
+    const compensateResume = reason => spawnCompensate({
+      spawn_id: new_spawn_id,
+      session_id,
+      callsign,
+      cwd: runCwd,
+      worktree_path,
+      tmux_window,
+      reason,
+      created: { clone: false, worktree: false },
+    });
     const override = tmuxAdapter.spawnOverrideCmd();
     if (override) {
       tmuxAdapter.launchOverride(override, {
@@ -1078,17 +1112,21 @@ export function createSpawns(ctx) {
         gateway_env: gatewayEnv,   // test seam only — see launchPane's spec
         tmux: { session: tmux_session, window: tmux_window },
         argv,
-      }, err => spawnFailed(session_id, callsign, `spawn override: ${err.message || err}`));
+      }, err => compensateResume(`spawn override: ${err.message || err}`).catch(() => {}));
     } else {
       try {
         await tmuxAdapter.ensureSession(port);
         await tmuxAdapter.newWindow({ port, callsign, cwd: runCwd, argv, env: gatewayEnv });
       } catch (err) {
-        // The pane never launched — settle the provisional row terminal so it
-        // stops owning the window (and is never liveness-checked), then fail.
-        q.setSpawnStatus.run('gone', new_spawn_id);
-        forgetSpawn(new_spawn_id);
-        return { status: 500, body: { ok: false, reason: `${failReason}: ${err.message || err}` } };
+        const reason = `${failReason}: ${err.message || err}`;
+        const cleanup = await compensateResume(reason);
+        return {
+          status: 500,
+          body: {
+            ok: false,
+            reason: cleanup.resolved ? reason : `${reason}; cleanup unresolved: ${cleanup.error}`,
+          },
+        };
       }
     }
 
@@ -1261,6 +1299,9 @@ export function createSpawns(ctx) {
       // expected bare shell is a safe remnant to kill by verified name and reuse.
       const tmux_window = tmuxAdapter.windowName(port, c.callsign);
       const existing = await findScopedWindow(tmux_window);
+      if (existing === null) {
+        return { status: 503, body: { ok: false, reason: 'tmux window lookup failed; adopt held to avoid a duplicate session' } };
+      }
       if (existing && !existing.pane_dead && existing.pane_cmd === 'claude') {
         return { status: 409, body: { ok: false, reason: `window ${tmux_window} already hosts a live claude pane` } };
       }
@@ -1330,6 +1371,9 @@ export function createSpawns(ctx) {
       return { status: 409, body: { ok: false, reason: `session is ${session?.col ?? 'missing'}, not queued or idle` } };
     }
     const win = await findScopedWindow(row.tmux_window);
+    if (win === null) {
+      return { status: 503, body: { ok: false, reason: 'tmux window lookup failed; remote control was not sent' } };
+    }
     if (!win || win.pane_dead || win.pane_cmd !== 'claude') {
       const observed = !win ? 'missing' : win.pane_dead ? 'dead' : `running ${win.pane_cmd || 'unknown'}`;
       return { status: 409, body: { ok: false, reason: `claude pane is not alive (${observed})` } };
@@ -1351,7 +1395,8 @@ export function createSpawns(ctx) {
     // https://claude.ai/code/session_… URL lands in the pane's scrollback.
     // Use the LIVE session callsign (a manual re-ticket renames the card but not
     // the frozen spawn.callsign) so claude.ai shows today's name.
-    const typed = await tmuxAdapter.typeKeys(win.window_id, `/rc ${fresh.callsign ?? row.callsign}`);
+    const target = scopedPaneTarget(win);
+    const typed = await tmuxAdapter.typeKeys(target, `/rc ${fresh.callsign ?? row.callsign}`);
     if (!typed) {
       return { status: 500, body: { ok: false, reason: 'failed to type remote-control command into pane' } };
     }
@@ -1362,7 +1407,7 @@ export function createSpawns(ctx) {
     if (!afterType || !['queued', 'idle'].includes(afterType.col)) {
       return { status: 409, body: { ok: false, reason: `session became ${afterType?.col ?? 'missing'} before /rc could submit` } };
     }
-    const entered = await tmuxAdapter.sendEnter(win.window_id);
+    const entered = await tmuxAdapter.sendEnter(target);
     if (!entered) {
       return { status: 500, body: { ok: false, reason: 'failed to type remote-control command into pane' } };
     }
@@ -1462,6 +1507,7 @@ export function createSpawns(ctx) {
     const resurrectable = q.resurrectableSpawns.all();
     if (!rows.length && !resurrectable.length && !spawnState.orphans.length) return;
     const wins = await tmuxAdapter.listScopedWindows(port);
+    if (wins === null) return; // tmux UNKNOWN: preserve rows, streaks, and orphans
     for (const row of rows) {
       const win = wins.find(w => w.window === row.tmux_window);
       if (!win) continue; // gone/unreachable at runtime = unknown; boot reconciliation owns 'gone'
@@ -1481,10 +1527,10 @@ export function createSpawns(ctx) {
       } else if (win.pane_cmd === 'claude') {
         deadSignal = false; // fast path: lowest pane already reads claude, no extra probe needed
       } else {
-        const pane = await tmuxAdapter.paneCurrentCommand(win.window_id);
-        if (pane && !pane.dead && pane.cmd === 'claude') deadSignal = false;      // active pane IS a live claude
-        else if (!pane || pane.dead || SHELL_RE.test(pane.cmd)) deadSignal = true; // dead / bare shell remnant
-        else deadSignal = null;                                                    // repurposed to some other cmd → unknown
+        const pane = await tmuxAdapter.paneCurrentCommand(scopedPaneTarget(win));
+        if (pane && !pane.dead && pane.cmd === 'claude') deadSignal = false;       // active pane IS a live claude
+        else if (pane?.dead || (pane && SHELL_RE.test(pane.cmd))) deadSignal = true; // dead / bare shell remnant
+        else deadSignal = null;                                                     // failed probe / other cmd → unknown
       }
       if (deadSignal === false) {
         condemnStreak.delete(row.spawn_id); // a live read resets the hysteresis counter
@@ -1501,7 +1547,10 @@ export function createSpawns(ctx) {
         }
         continue; // alive; stalled is fail-loud state only, never remediation
       }
-      if (deadSignal === null) continue; // unknown → no action
+      if (deadSignal === null) {
+        condemnStreak.delete(row.spawn_id); // not consecutive dead evidence
+        continue; // unknown → no action
+      }
       // deadSignal === true: HYSTERESIS — require CONDEMN_DEAD_READS consecutive
       // dead reads before condemning a LIVE spawn, so a single transient dead
       // read cannot condemn a card the resurrect loop would only flip back next
@@ -1541,7 +1590,7 @@ export function createSpawns(ctx) {
       // Second probe confirms 'claude' (the scoped row's pane_cmd can read
       // stale on remain-on-exit panes; pane_dead already screened above). This
       // is the exact liveness test ownedPaneDeliverable trusts to type mail in.
-      const pane = await tmuxAdapter.paneCurrentCommand(win.window_id);
+      const pane = await tmuxAdapter.paneCurrentCommand(scopedPaneTarget(win));
       if (!pane || pane.dead || pane.cmd !== 'claude') continue; // bare shell / not claude → stays condemned
       resurrectSpawn(row);
     }
@@ -1553,30 +1602,6 @@ export function createSpawns(ctx) {
       spawnState.orphans = orphans;
       onMutate();
     }
-  }
-
-  // H-R2: listScopedWindows() returns [] indistinguishably for "tmux is
-  // reachable but this fleet owns no windows" (→ genuinely gone) and "tmux
-  // timed out / is unreachable" (→ UNKNOWN). Boot reconciliation is the only
-  // path that tombstones absent windows, so on a transient tmux hiccup at
-  // restart it would mark the WHOLE live fleet gone+offline — the exact
-  // "unreachable → confidently dead" mistake spawnLivenessTick already refuses
-  // (`if (!win) continue`). The clean fix threads an explicit unknown-signal
-  // out of the adapter; that lives in spawn.mjs (see coordination note), so
-  // here we probe reachability instead: when the scoped list is empty AND we
-  // still hold active rows, confirm tmux is actually reachable before trusting
-  // the emptiness. ensureSession() is the only exported call that distinguishes
-  // reachable (resolves) from unreachable (throws); its create-on-absence side
-  // effect is exactly what the next spawn would do anyway.
-  async function tmuxReachableForReconcile() {
-    // Test-override mode has no tmux server to reach — the fixture drives
-    // spawns and the empty scoped list is authoritative (existing contract).
-    if (tmuxAdapter.spawnOverrideCmd()) return true;
-    // No tmux binary at all: there is no server that could be "unreachable",
-    // and rows created under a since-removed backend should reconcile normally.
-    if (typeof tmuxAdapter.hasTmux === 'function' && !tmuxAdapter.hasTmux()) return true;
-    try { await tmuxAdapter.ensureSession(port); return true; }
-    catch { return false; } // binary present but server wedged / timed out
   }
 
   // Restart reconciliation (fleetd boot): spawn rows outlive the daemon in
@@ -1607,9 +1632,12 @@ export function createSpawns(ctx) {
     const active = q.activeSpawns.all();
     const staleProvisioning = q.staleProvisioningSpawns.all();
     const wins = await tmuxAdapter.listScopedWindows(port);
-    if (!wins.length && active.length && !(await tmuxReachableForReconcile())) {
-      // Unreachable at boot → leave every row UNKNOWN, tombstone nothing.
-      tick(`⚠ tmux unreachable at restart — leaving ${active.length} spawn row(s) as-is (unknown, not gone)`);
+    if (wins === null) {
+      // Failed/malformed boot listing → leave every row UNKNOWN. Never call
+      // ensureSession here: an unlinked live socket could create a replacement
+      // server and turn inaccessible live panes into a false authoritative empty.
+      const count = active.length + staleProvisioning.length;
+      tick(`⚠ tmux window lookup failed at restart — leaving ${count} spawn row(s) as-is (unknown, not gone)`);
       onMutate();
       return;
     }

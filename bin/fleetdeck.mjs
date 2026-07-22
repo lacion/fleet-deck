@@ -29,6 +29,7 @@ import path from 'node:path';
 import { execFile, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import { MIN_TMUX_VERSION, parseTmuxVersion, tmuxVersionSupported } from './tmux-version.mjs';
 
 const execFileP = promisify(execFile);
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -122,7 +123,19 @@ async function doctor() {
   }
 
   if (!await onPath('tmux')) {
-    problems.push('tmux is not on PATH — every agent runs in a tmux pane, so nothing can spawn without it');
+    problems.push(`tmux ${MIN_TMUX_VERSION}+ is not on PATH — every agent runs in a tmux pane, so nothing can spawn without it`);
+  } else {
+    try {
+      const { stdout } = await execFileP('tmux', ['-V'], { timeout: 5_000 });
+      const parsed = parseTmuxVersion(stdout);
+      if (!parsed) {
+        problems.push(`tmux version could not be determined — fleetdeck requires tmux ${MIN_TMUX_VERSION}+ for safe server probing`);
+      } else if (!tmuxVersionSupported(stdout)) {
+        problems.push(`tmux ${parsed.version} is too old — fleetdeck requires tmux ${MIN_TMUX_VERSION}+ for safe server probing`);
+      }
+    } catch {
+      problems.push(`tmux version could not be determined — fleetdeck requires tmux ${MIN_TMUX_VERSION}+ for safe server probing`);
+    }
   }
   if (!await onPath('claude')) {
     problems.push('the `claude` CLI is not on PATH — the board would have nothing to launch');
@@ -515,4 +528,4 @@ if (IS_ENTRYPOINT) await main(process.argv.slice(2));
 // exported for tests only — the env-file validation, supervisor identity check,
 // and file generators are contracts. Nothing here runs on import (see
 // IS_ENTRYPOINT above), so importing is side-effect-free.
-export { writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor, serviceInstall, UNIT, SUPERVISE };
+export { writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor, serviceInstall, UNIT, SUPERVISE, doctor };

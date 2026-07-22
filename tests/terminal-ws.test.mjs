@@ -89,11 +89,11 @@ test('live terminal WS seeds, streams, relays hex input/resize, and kills its co
   // sized whoever was attached — which is precisely what made N tiles fight over
   // one pane's shape. `resize-window` under `window-size manual` does not.
   await waitUntil(
-    () => records(record).some(r => r.line === `resize-window -t =${spawned.tmux.session}:${spawned.tmux.window} -x 101 -y 41`),
+    () => records(record).some(r => r.line === `resize-window -t =${spawned.tmux.session}:=${spawned.tmux.window} -x 101 -y 41`),
     'per-window resize command',
   );
   assert.ok(
-    records(record).some(r => r.line === `set-option -w -t =${spawned.tmux.session}:${spawned.tmux.window} window-size manual`),
+    records(record).some(r => r.line === `set-option -w -t =${spawned.tmux.session}:=${spawned.tmux.window} window-size manual`),
     'the window must be put in manual sizing, or tmux re-derives its size from whatever clients are attached',
   );
   // `-g` would reach across the whole tmux server and resize the human's OWN
@@ -135,7 +135,7 @@ test('grid: many viewers share ONE control client, each sized and streamed indep
   // Each tile sized its OWN window.
   for (const [i, s] of spawns.entries()) {
     assert.ok(
-      records(record).some(r => r.line === `resize-window -t =${s.tmux.session}:${s.tmux.window} -x ${80 + i} -y ${24 + i}`),
+      records(record).some(r => r.line === `resize-window -t =${s.tmux.session}:=${s.tmux.window} -x ${80 + i} -y ${24 + i}`),
       `tile ${i} should have sized its own window ${s.tmux.window}`,
     );
   }

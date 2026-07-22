@@ -231,7 +231,7 @@ test('enableRemote types literal /rc, harvests URL, updates snapshot, and is ide
   assert.deepEqual(state.calls, [
     ['typeKeys', '@1', `/rc ${callsign}`],
     ['sendEnter', '@1'],
-    ['capturePane', `fd${port}-${callsign}`],
+    ['capturePane', '@1'],
   ]);
   assert.equal(db.prepare('SELECT remote_control FROM spawns WHERE spawn_id = ?').get(spawn_id).remote_control, 1);
   assert.equal(core.snapshot().sessions.find(s => s.session_id === session_id).spawn.remote.url,

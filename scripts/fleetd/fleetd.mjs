@@ -28,6 +28,10 @@ const PORT = resolvePort();
 const BIND = (process.env.FLEETDECK_BIND || '127.0.0.1').trim() || '127.0.0.1';
 const LAN_MODE = !isLoopbackAddress(BIND);
 const HOME = resolveHome();
+// The tmux adapter is imported before runtime config resolves, but reads this
+// value lazily. Export the resolved default too so generation identity is never
+// silently disabled merely because the operator accepted ~/.fleetdeck.
+process.env.FLEETDECK_HOME = HOME;
 // MANAGED CONTRACT: set by `fleetdeck serve`, i.e. this daemon is owned by a
 // service supervisor (systemd, or the supervised wrapper) rather than lazily
 // spawned by a SessionStart hook. It changes exactly one thing — a plugin hook

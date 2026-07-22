@@ -1,7 +1,7 @@
 # Security Policy
 
 Fleet Deck is a local daemon that watches your Claude Code sessions, types into
-tmux panes, and spawns new agents on your behalf — including, behind a two-step
+tmux 3.4+ panes, and spawns new agents on your behalf — including, behind a two-step
 red confirmation, unsupervised ones. That is a lot of power pointed at your
 machine, so security reports are taken seriously and answered by a human.
 

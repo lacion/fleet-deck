@@ -115,7 +115,21 @@ export function createCore(db, {
   // five copies of (await listScopedWindows(port)).find(w => w.window === X)
   // here so "which window is this" is asked exactly one way.
   async function findScopedWindow(name) {
-    return (await tmuxAdapter.listScopedWindows(port)).find(w => w.window === name);
+    const wins = await tmuxAdapter.listScopedWindows(port);
+    // The test override launches no tmux pane by contract, so a missing test
+    // server is authoritative absence. Production lookups remain fail-closed.
+    if (wins === null && tmuxAdapter.spawnOverrideCmd?.()) return undefined;
+    return wins === null ? null : wins.find(w => w.window === name);
+  }
+
+  // Production pane operations bind to the exact fleet session + exact window
+  // name found above, not the reusable @window_id. Injected test adapters from
+  // before this hardening have no exactWindowTarget helper and retain their
+  // stable-id contract through the fallback.
+  function scopedPaneTarget(win) {
+    return tmuxAdapter.exactWindowTarget
+      ? tmuxAdapter.exactWindowTarget(port, win.window)
+      : win.window_id;
   }
 
   // ----------------------------------------------------------- statements
@@ -574,7 +588,7 @@ export function createCore(db, {
     ADOPT_ARM_MS, ADOPT_DELAY_MS, // 0.7.0 Move-to-tmux (spawns arms, events fires)
     SNAPSHOT_FILES_PER_SESSION,
     q, updateSession, onMutate, tmuxAdapter, questions,
-    findScopedWindow, tick, logEvent, card, assignCallsign, applyTicket,
+    findScopedWindow, scopedPaneTarget, tick, logEvent, card, assignCallsign, applyTicket,
     modelMemo, stampTranscriptFloor, readTranscriptModel,
     // 0.7.1: naming + /clear succession, shared with events.mjs (the hook-time
     // interception), commands.mjs / http.mjs (the `name` surfaces), and

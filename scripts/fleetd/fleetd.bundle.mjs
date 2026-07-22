@@ -3229,7 +3229,7 @@ var require_stream = __commonJS({
       };
       duplex._final = function(callback) {
         if (ws.readyState === ws.CONNECTING) {
-          ws.once("open", function open() {
+          ws.once("open", function open2() {
             duplex._final(callback);
           });
           return;
@@ -3250,7 +3250,7 @@ var require_stream = __commonJS({
       };
       duplex._write = function(chunk, encoding, callback) {
         if (ws.readyState === ws.CONNECTING) {
-          ws.once("open", function open() {
+          ws.once("open", function open2() {
             duplex._write(chunk, encoding, callback);
           });
           return;
@@ -3715,7 +3715,7 @@ var require_websocket_server = __commonJS({
 import fs16 from "node:fs";
 import crypto2 from "node:crypto";
 import os9 from "node:os";
-import path14 from "node:path";
+import path15 from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // scripts/fleetd/db.mjs
@@ -4548,6 +4548,7 @@ var spawn_exports = {};
 __export(spawn_exports, {
   capturePane: () => capturePane,
   ensureSession: () => ensureSession,
+  exactWindowTarget: () => exactWindowTarget,
   hasTmux: () => hasTmux,
   killWindowVerified: () => killWindowVerified,
   launchOverride: () => launchOverride,
@@ -4560,6 +4561,7 @@ __export(spawn_exports, {
   sendEnter: () => sendEnter,
   sessionName: () => sessionName,
   spawnOverrideCmd: () => spawnOverrideCmd,
+  tmuxCapability: () => tmuxCapability,
   typeKeys: () => typeKeys,
   windowName: () => windowName
 });
@@ -4614,31 +4616,319 @@ async function baseBranch(worktree) {
 
 // scripts/fleetd/spawn.mjs
 import { randomUUID } from "node:crypto";
+import { constants as fsConstants } from "node:fs";
+import { link, open, rename, unlink } from "node:fs/promises";
+import path2 from "node:path";
+
+// bin/tmux-version.mjs
+var MIN_TMUX_VERSION = "3.4";
+function parseTmuxVersion(output) {
+  const match = /^tmux\s+(\d+)\.(\d+)([a-z][a-z0-9-]*)?\s*$/i.exec(String(output ?? ""));
+  if (!match) return null;
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  if (!Number.isSafeInteger(major) || !Number.isSafeInteger(minor)) return null;
+  return { major, minor, version: `${match[1]}.${match[2]}${match[3] ?? ""}` };
+}
+function tmuxVersionSupported(output) {
+  const parsed = parseTmuxVersion(output);
+  return !!parsed && (parsed.major > 3 || parsed.major === 3 && parsed.minor >= 4);
+}
+function tmuxVersionCapability(output) {
+  const parsed = parseTmuxVersion(output);
+  if (!parsed) return { available: false, reason: `tmux version is unknown; tmux ${MIN_TMUX_VERSION}+ required` };
+  if (!tmuxVersionSupported(output)) {
+    return {
+      available: false,
+      version: parsed.version,
+      reason: `tmux ${parsed.version} is too old; tmux ${MIN_TMUX_VERSION}+ required`
+    };
+  }
+  return { available: true, version: parsed.version };
+}
+
+// scripts/fleetd/spawn.mjs
 var TMUX_TIMEOUT_MS = 5e3;
-var US = "";
-async function tmux(args) {
+var FIELD_SEP = "	";
+async function tmuxResult(args, { noStart = false } = {}) {
   try {
     const socket = process.env.FLEETDECK_TMUX_SOCKET?.trim();
-    const argv = socket ? ["-L", socket, ...args] : args;
+    const argv = [
+      ...socket ? ["-L", socket] : [],
+      ...noStart ? ["-N"] : [],
+      ...args
+    ];
     const r = await execFileP("tmux", argv, { timeout: TMUX_TIMEOUT_MS });
-    return r.ok ? r.out ?? "" : null;
-  } catch {
-    return null;
+    return r.ok ? { ok: true, out: r.out ?? "" } : { ok: false, code: r.code, error: r.err ?? "" };
+  } catch (err) {
+    return { ok: false, error: String(err?.message || err || "") };
   }
 }
-var probe = { ok: false, at: 0 };
+async function tmux(args) {
+  const result = await tmuxResult(args);
+  return result.ok ? result.out : null;
+}
+var GENERATION_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var GENERATION_HEADER = "__fleetdeck_tmux_generation__=";
+var GENERATION_MISMATCH = "__fleetdeck_tmux_generation_mismatch__";
+var generationLocks = /* @__PURE__ */ new Map();
+function generationPort(port) {
+  const value = String(port);
+  if (!/^\d+$/.test(value)) throw new Error("invalid fleet port for tmux generation identity");
+  return value;
+}
+var generationOption = (port) => `@fleetdeck_generation_${generationPort(port)}`;
+var generationFile = (home, port) => path2.join(home, `tmux-generation-${generationPort(port)}`);
+function generationHome() {
+  const home = process.env.FLEETDECK_HOME?.trim();
+  return home || null;
+}
+async function readPersistedGeneration(home, port) {
+  const file = generationFile(home, port);
+  let handle;
+  try {
+    handle = await open(file, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+  } catch (err) {
+    if (err?.code === "ENOENT") return null;
+    throw new Error(`cannot read persisted tmux generation (${err?.code || err?.message || err})`);
+  }
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile()) throw new Error("persisted tmux generation is not a regular file");
+    await handle.chmod(384);
+    const text = await handle.readFile("utf8");
+    const value = text.endsWith("\n") ? text.slice(0, -1) : text;
+    if (GENERATION_UUID_RE.test(value)) {
+      return { generation: value.toLowerCase(), serverPid: null, legacy: true };
+    }
+    let record;
+    try {
+      record = JSON.parse(value);
+    } catch {
+    }
+    const keys = record && typeof record === "object" && !Array.isArray(record) ? Object.keys(record).sort() : [];
+    if (keys.length !== 2 || keys[0] !== "generation" || keys[1] !== "serverPid" || !GENERATION_UUID_RE.test(record.generation) || !Number.isSafeInteger(record.serverPid) || record.serverPid <= 1) {
+      throw new Error("persisted tmux generation is malformed");
+    }
+    return { generation: record.generation.toLowerCase(), serverPid: record.serverPid, legacy: false };
+  } finally {
+    await handle.close();
+  }
+}
+async function persistGeneration(home, port, record) {
+  const file = generationFile(home, port);
+  const temp = path2.join(home, `.${path2.basename(file)}.${process.pid}.${randomUUID()}.tmp`);
+  let handle;
+  try {
+    handle = await open(temp, "wx", 384);
+    await handle.writeFile(`${JSON.stringify({ generation: record.generation, serverPid: record.serverPid })}
+`, "utf8");
+    await handle.chmod(384);
+    await handle.sync();
+    await handle.close();
+    handle = null;
+    try {
+      await link(temp, file);
+    } catch (err) {
+      if (err?.code !== "EEXIST") throw err;
+    }
+  } catch (err) {
+    throw new Error(`cannot persist tmux generation (${err?.code || err?.message || err})`);
+  } finally {
+    try {
+      await handle?.close();
+    } catch {
+    }
+    try {
+      await unlink(temp);
+    } catch (err) {
+      if (err?.code !== "ENOENT") {
+      }
+    }
+  }
+  return readPersistedGeneration(home, port);
+}
+async function replacePersistedGeneration(home, port, record) {
+  const file = generationFile(home, port);
+  const temp = path2.join(home, `.${path2.basename(file)}.${process.pid}.${randomUUID()}.tmp`);
+  let handle;
+  try {
+    handle = await open(temp, "wx", 384);
+    await handle.writeFile(`${JSON.stringify({ generation: record.generation, serverPid: record.serverPid })}
+`, "utf8");
+    await handle.chmod(384);
+    await handle.sync();
+    await handle.close();
+    handle = null;
+    await rename(temp, file);
+  } catch (err) {
+    throw new Error(`cannot replace persisted tmux generation (${err?.code || err?.message || err})`);
+  } finally {
+    try {
+      await handle?.close();
+    } catch {
+    }
+    try {
+      await unlink(temp);
+    } catch (err) {
+      if (err?.code !== "ENOENT") {
+      }
+    }
+  }
+  return readPersistedGeneration(home, port);
+}
+async function readServerGeneration(port) {
+  const result = await tmuxResult([
+    "display-message",
+    "-p",
+    `#{${generationOption(port)}}${FIELD_SEP}#{pid}`
+  ], { noStart: true });
+  if (!result.ok) return { reachable: false, generation: null, serverPid: null };
+  const value = result.out.endsWith("\n") ? result.out.slice(0, -1) : result.out;
+  const [generation, pidText, ...extra] = value.split(FIELD_SEP);
+  const serverPid = Number(pidText);
+  return {
+    reachable: true,
+    generation: GENERATION_UUID_RE.test(generation) ? generation.toLowerCase() : null,
+    serverPid: extra.length === 0 && Number.isSafeInteger(serverPid) && serverPid > 1 ? serverPid : null
+  };
+}
+function pidState(pid) {
+  if (!Number.isSafeInteger(pid) || pid <= 1) return "unknown";
+  try {
+    process.kill(pid, 0);
+    return "alive";
+  } catch (err) {
+    if (err?.code === "ESRCH") return "dead";
+    return "unknown";
+  }
+}
+var sameRecord = (left, right) => !!left && !!right && left.generation === right.generation && left.serverPid === right.serverPid;
+async function retireDeadGeneration(home, port, expected) {
+  if (expected.serverPid === null || pidState(expected.serverPid) !== "dead") return false;
+  const current = await readPersistedGeneration(home, port);
+  if (!sameRecord(current, expected) || pidState(expected.serverPid) !== "dead") return false;
+  try {
+    await unlink(generationFile(home, port));
+    return true;
+  } catch (err) {
+    if (err?.code === "ENOENT") return false;
+    throw new Error(`cannot retire persisted tmux generation (${err?.code || err?.message || err})`);
+  }
+}
+async function prepareServerGenerationUnlocked(home, port) {
+  let expected = await readPersistedGeneration(home, port);
+  let server2 = await readServerGeneration(port);
+  if (expected !== null) {
+    if (server2.reachable && server2.generation === expected.generation && (expected.serverPid === null || server2.serverPid === expected.serverPid)) {
+      if (expected.serverPid === null) {
+        if (server2.serverPid === null) return { enabled: true, expected, verified: false };
+        expected = await replacePersistedGeneration(home, port, {
+          generation: server2.generation,
+          serverPid: server2.serverPid
+        });
+        server2 = await readServerGeneration(port);
+      }
+      return {
+        enabled: true,
+        expected,
+        verified: server2.reachable && server2.generation === expected.generation && server2.serverPid === expected.serverPid
+      };
+    }
+    if (expected.serverPid !== null && await retireDeadGeneration(home, port, expected)) {
+      expected = null;
+      server2 = await readServerGeneration(port);
+      if (!server2.reachable) {
+        return { enabled: true, expected: null, verified: false, authoritativeEmpty: true };
+      }
+    } else {
+      return { enabled: true, expected, verified: false };
+    }
+  }
+  if (!server2.reachable) {
+    return { enabled: true, expected: null, verified: false };
+  }
+  if (server2.generation === null) {
+    const candidate = randomUUID();
+    const set = await tmuxResult(["set-option", "-g", generationOption(port), candidate], { noStart: true });
+    if (!set.ok) return { enabled: true, expected: null, verified: false };
+    server2 = await readServerGeneration(port);
+    if (!server2.reachable || server2.generation === null) {
+      return { enabled: true, expected: null, verified: false };
+    }
+  }
+  if (server2.serverPid === null) return { enabled: true, expected: null, verified: false };
+  expected = await persistGeneration(home, port, {
+    generation: server2.generation,
+    serverPid: server2.serverPid
+  });
+  server2 = await readServerGeneration(port);
+  return {
+    enabled: true,
+    expected,
+    verified: server2.reachable && server2.generation === expected.generation && server2.serverPid === expected.serverPid
+  };
+}
+async function prepareServerGeneration(port) {
+  const home = generationHome();
+  if (home === null) return { enabled: false, expected: null, verified: true };
+  const key = `${home}\0${generationPort(port)}`;
+  const prior = generationLocks.get(key) ?? Promise.resolve();
+  const current = prior.catch(() => {
+  }).then(() => prepareServerGenerationUnlocked(home, port));
+  generationLocks.set(key, current);
+  try {
+    return await current;
+  } finally {
+    if (generationLocks.get(key) === current) generationLocks.delete(key);
+  }
+}
+async function generationVerifiedResult(port, args) {
+  let state;
+  try {
+    state = await prepareServerGeneration(port);
+  } catch (err) {
+    return { ok: false, generationError: String(err?.message || err) };
+  }
+  if (!state.enabled) return tmuxResult(args);
+  if (state.authoritativeEmpty) return { ok: true, out: "", authoritativeEmpty: true };
+  if (!state.verified || state.expected === null) {
+    return { ok: false, generationError: "tmux server generation unavailable or changed" };
+  }
+  const result = await tmuxResult([
+    "display-message",
+    "-p",
+    `${GENERATION_HEADER}#{${generationOption(port)}}${FIELD_SEP}#{pid}`,
+    ";",
+    ...args
+  ], { noStart: true });
+  if (!result.ok) return result;
+  const newline = result.out.indexOf("\n");
+  if (newline === -1 || result.out.slice(0, newline) !== `${GENERATION_HEADER}${state.expected.generation}${FIELD_SEP}${state.expected.serverPid}`) {
+    return { ok: false, generationError: "tmux server generation unavailable or changed" };
+  }
+  return { ok: true, out: result.out.slice(newline + 1), generation: state.expected.generation };
+}
+var probe = { available: false, reason: `tmux ${MIN_TMUX_VERSION}+ required`, at: 0 };
 var PROBE_TTL_MS = 6e4;
 function hasTmux() {
+  return tmuxCapability().available;
+}
+function tmuxCapability() {
   const now = Date.now();
-  if (now - probe.at < PROBE_TTL_MS) return probe.ok;
-  let ok = false;
+  if (now - probe.at < PROBE_TTL_MS) return { ...probe };
+  let next = { available: false, reason: `tmux ${MIN_TMUX_VERSION}+ not found on PATH` };
   try {
-    execFileSync2("tmux", ["-V"], { timeout: 1500, stdio: ["ignore", "pipe", "ignore"] });
-    ok = true;
+    const output = execFileSync2("tmux", ["-V"], {
+      timeout: 1500,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"]
+    });
+    next = tmuxVersionCapability(output);
   } catch {
   }
-  probe = { ok, at: now };
-  return ok;
+  probe = { ...next, at: now };
+  return { ...probe };
 }
 function spawnOverrideCmd() {
   const v = process.env.FLEETDECK_SPAWN_CMD;
@@ -4646,17 +4936,71 @@ function spawnOverrideCmd() {
 }
 var sessionName = (port) => `fleetdeck-${port}`;
 var windowName = (port, callsign) => `fd${port}-${callsign}`;
+function exactWindowTarget(port, window) {
+  const normalizedPort = generationPort(port);
+  const value = String(window);
+  const prefix = `fd${normalizedPort}-`;
+  if (!value.startsWith(prefix) || !/^[A-Za-z0-9-]+$/.test(value.slice(prefix.length))) {
+    throw new Error("invalid scoped tmux window name");
+  }
+  return `=${sessionName(normalizedPort)}:=${value}`;
+}
+function exactTargetPort(target) {
+  const match = /^=fleetdeck-(\d+):=fd(\d+)-[A-Za-z0-9-]+$/.exec(String(target));
+  return match && match[1] === match[2] ? match[1] : null;
+}
 async function ensureSession(port) {
   const name = sessionName(port);
-  if (await tmux(["has-session", "-t", "=" + name]) !== null) return name;
-  if (await tmux(["new-session", "-d", "-s", name]) !== null) return name;
-  if (await tmux(["has-session", "-t", "=" + name]) !== null) return name;
+  const state = await prepareServerGeneration(port);
+  if (!state.enabled) {
+    if (await tmux(["has-session", "-t", "=" + name]) !== null) return name;
+    if (await tmux(["new-session", "-d", "-s", name]) !== null) return name;
+    if (await tmux(["has-session", "-t", "=" + name]) !== null) return name;
+    throw new Error(`tmux could not create session ${name}`);
+  }
+  if (state.expected === null) {
+    const created2 = await tmuxResult(["new-session", "-d", "-s", name]);
+    if (created2.ok) {
+      const claimed = await prepareServerGeneration(port);
+      if (claimed.verified) {
+        const confirmed = await generationVerifiedResult(port, ["has-session", "-t", "=" + name]);
+        if (confirmed.ok) return name;
+      }
+      throw new Error(`tmux server generation could not be claimed for ${name}`);
+    }
+  } else if (!state.verified) {
+    throw new Error(`tmux server generation unavailable or changed for ${name}`);
+  }
+  const existing = await generationVerifiedResult(port, ["has-session", "-t", "=" + name]);
+  if (existing.ok) return name;
+  const refreshed = await prepareServerGeneration(port);
+  if (!refreshed.verified || refreshed.expected === null) {
+    throw new Error(`tmux server generation unavailable or changed for ${name}`);
+  }
+  const created = await tmuxResult([
+    "if-shell",
+    "-F",
+    `#{&&:#{==:#{${generationOption(port)}},${refreshed.expected.generation}},#{==:#{pid},${refreshed.expected.serverPid}}}`,
+    `new-session -d -s ${name}`,
+    `display-message -p ${GENERATION_MISMATCH}`
+  ], { noStart: true });
+  if (created.ok && created.out === "") {
+    const confirmed = await generationVerifiedResult(port, ["has-session", "-t", "=" + name]);
+    if (confirmed.ok) return name;
+  }
+  const raced = await generationVerifiedResult(port, ["has-session", "-t", "=" + name]);
+  if (raced.ok) return name;
   throw new Error(`tmux could not create session ${name}`);
 }
 async function newWindow({ port, callsign, cwd, argv, env = null }) {
   const session = sessionName(port);
   const window = windowName(port, callsign);
+  const generation = await prepareServerGeneration(port);
+  if (generation.enabled && (!generation.verified || generation.expected === null)) {
+    throw new Error(`tmux server generation unavailable or changed for ${window}`);
+  }
   const envArgs = env ? Object.entries(env).flatMap(([name, value]) => ["-e", `${name}=${value}`]) : [];
+  const target = exactWindowTarget(port, window);
   const out = await tmux([
     "new-window",
     "-d",
@@ -4676,45 +5020,125 @@ async function newWindow({ port, callsign, cwd, argv, env = null }) {
   ]);
   if (out === null) throw new Error(`tmux new-window failed for ${window}`);
   const window_id = out.trim();
-  await tmux(["set-option", "-w", "-t", window_id, "remain-on-exit", "on"]);
+  if (generation.enabled) {
+    const confirmed = await generationVerifiedResult(port, [
+      "display-message",
+      "-p",
+      "-t",
+      target,
+      ["#{session_name}", "#{window_name}", "#{window_id}"].join(FIELD_SEP)
+    ]);
+    const expected = [session, window, window_id].join(FIELD_SEP) + "\n";
+    if (!confirmed.ok || confirmed.out !== expected) {
+      throw new Error(`tmux new-window generation postcondition failed for ${window}`);
+    }
+  }
+  await tmux(["set-option", "-w", "-t", target, "remain-on-exit", "on"]);
   return { session, window, window_id };
 }
 async function paneCurrentCommand(target) {
-  const out = await tmux(["display-message", "-p", "-t", target, `#{pane_dead}${US}#{pane_current_command}`]);
-  if (out === null) return null;
-  const [dead, cmd] = out.replace(/\n$/, "").split(US);
-  return { dead: dead === "1", cmd: cmd ?? "" };
+  const args = ["display-message", "-p", "-t", target, `#{pane_dead}${FIELD_SEP}#{pane_current_command}`];
+  const port = exactTargetPort(target);
+  const result = port === null ? await tmuxResult(args) : await generationVerifiedResult(port, args);
+  if (!result.ok) return null;
+  const out = result.out;
+  const [dead, ...cmd] = out.replace(/\n$/, "").split(FIELD_SEP);
+  if (dead !== "0" && dead !== "1") return null;
+  return { dead: dead === "1", cmd: cmd.join(FIELD_SEP) };
 }
 async function listScopedWindows(port) {
-  const out = await tmux([
+  const expectedSession = sessionName(port);
+  const listed = await generationVerifiedResult(port, [
     "list-panes",
     "-a",
+    "-f",
+    `#{==:#{session_name},${expectedSession}}`,
     "-F",
-    ["#{session_name}", "#{window_name}", "#{window_id}", "#{pane_dead}", "#{pane_current_command}"].join(US)
+    ["#{session_name}", "#{window_name}", "#{window_id}", "#{pane_dead}", "#{pane_current_command}"].join(FIELD_SEP)
   ]);
-  if (out === null) return [];
+  if (!listed.ok) return null;
+  if (listed.out === "") return [];
+  const output = listed.out.endsWith("\n") ? listed.out.slice(0, -1) : listed.out;
+  if (output === "") return null;
   const prefix = `fd${port}-`;
   const seen = /* @__PURE__ */ new Set();
+  const seenNames = /* @__PURE__ */ new Set();
   const wins = [];
-  for (const line of out.split("\n")) {
-    if (!line) continue;
-    const [session, window, window_id, dead, cmd] = line.split(US);
-    if (!window || !window.startsWith(prefix)) continue;
+  for (const line of output.split("\n")) {
+    const [session, window, window_id, dead, ...cmd] = line.split(FIELD_SEP);
+    if (!session || !window || !/^@\d+$/.test(window_id ?? "") || dead !== "0" && dead !== "1" || cmd.length === 0) return null;
+    if (session !== expectedSession || !window?.startsWith(prefix)) continue;
     if (seen.has(window_id)) continue;
+    if (seenNames.has(window)) return null;
     seen.add(window_id);
-    wins.push({ session, window, window_id, pane_dead: dead === "1", pane_cmd: cmd ?? "" });
+    seenNames.add(window);
+    wins.push({ session, window, window_id, pane_dead: dead === "1", pane_cmd: cmd.join(FIELD_SEP) });
   }
   return wins;
 }
 async function killWindowVerified(name) {
-  if (!name) return { ok: false, gone: true };
-  const out = await tmux(["list-panes", "-a", "-F", `#{window_name}${US}#{window_id}`]);
-  if (out === null) return { ok: false, gone: true };
-  const hit = out.split("\n").filter(Boolean).map((l) => l.split(US)).find(([w]) => w === name);
-  if (!hit) return { ok: false, gone: true };
-  if (await tmux(["kill-window", "-t", hit[1]]) !== null) return { ok: true, window_id: hit[1] };
-  const again = await tmux(["list-panes", "-a", "-F", "#{window_name}"]);
-  if (again === null || !again.split("\n").includes(name)) return { ok: false, gone: true };
+  const scope = typeof name === "string" ? /^fd(\d+)-[^\u0000-\u001f\u007f]+$/.exec(name) : null;
+  if (!scope) return { ok: false, error: "invalid scoped tmux window name" };
+  const expectedSession = sessionName(scope[1]);
+  const format = ["#{session_name}", "#{window_name}", "#{window_id}"].join(FIELD_SEP);
+  const listArgs = ["list-panes", "-a", "-f", `#{==:#{session_name},${expectedSession}}`, "-F", format];
+  const parse = (output) => {
+    if (output === "") return [];
+    const body = output.endsWith("\n") ? output.slice(0, -1) : output;
+    if (body === "") return null;
+    const rows2 = body.split("\n").map((line) => line.split(FIELD_SEP));
+    if (rows2.some((fields) => fields.length !== 3 || !fields[0] || !fields[1] || !/^@\d+$/.test(fields[2]))) return null;
+    return rows2;
+  };
+  const exactMatches = (rows2) => {
+    const byWindowId = /* @__PURE__ */ new Map();
+    for (const fields of rows2) {
+      if (fields[0] === expectedSession && fields[1] === name) byWindowId.set(fields[2], fields);
+    }
+    return [...byWindowId.values()];
+  };
+  const listed = await generationVerifiedResult(scope[1], listArgs);
+  if (!listed.ok) return { ok: false, error: listed.generationError || "tmux window lookup failed" };
+  const rows = parse(listed.out);
+  if (rows === null) return { ok: false, error: "malformed tmux window listing" };
+  const matches = exactMatches(rows);
+  if (matches.length > 1) return { ok: false, error: "ambiguous scoped tmux window name" };
+  if (matches.length === 0) return { ok: false, gone: true };
+  const hit = matches[0];
+  let killGeneration;
+  try {
+    killGeneration = await prepareServerGeneration(scope[1]);
+  } catch (err) {
+    return { ok: false, error: `tmux server generation verification failed: ${err?.message || err}` };
+  }
+  let killed;
+  if (!killGeneration.enabled) {
+    killed = await tmuxResult(["kill-window", "-t", hit[2]]);
+  } else if (!killGeneration.verified || killGeneration.expected === null) {
+    return { ok: false, error: "tmux server generation unavailable or changed" };
+  } else {
+    killed = await tmuxResult([
+      "if-shell",
+      "-F",
+      `#{&&:#{==:#{${generationOption(scope[1])}},${killGeneration.expected.generation}},#{==:#{pid},${killGeneration.expected.serverPid}}}`,
+      `kill-window -t ${hit[2]}`,
+      `display-message -p ${GENERATION_MISMATCH}`
+    ], { noStart: true });
+    if (killed.ok && killed.out.trim() === GENERATION_MISMATCH) {
+      return { ok: false, error: "tmux server generation unavailable or changed" };
+    }
+  }
+  if (killed.ok) return { ok: true, window_id: hit[2] };
+  const rechecked = await generationVerifiedResult(scope[1], listArgs);
+  if (!rechecked.ok) return {
+    ok: false,
+    error: rechecked.generationError || "tmux window recheck failed after kill error"
+  };
+  const again = parse(rechecked.out);
+  if (again === null) return { ok: false, error: "malformed tmux window recheck after kill error" };
+  const remaining = exactMatches(again);
+  if (remaining.length > 1) return { ok: false, error: "ambiguous scoped tmux window name after kill error" };
+  if (remaining.length === 0) return { ok: false, gone: true };
   return { ok: false, error: "tmux kill-window failed" };
 }
 function sanitizePaneText(text) {
@@ -4737,13 +5161,34 @@ async function pasteText(target, text) {
   }
 }
 async function sendEnter(target) {
-  return await tmux(["send-keys", "-t", target, "Enter"]) !== null;
+  const port = exactTargetPort(target);
+  if (port === null) return await tmux(["send-keys", "-t", target, "Enter"]) !== null;
+  let state;
+  try {
+    state = await prepareServerGeneration(port);
+  } catch {
+    return false;
+  }
+  if (!state.enabled) return await tmux(["send-keys", "-t", target, "Enter"]) !== null;
+  if (!state.verified || state.expected === null) return false;
+  const result = await tmuxResult([
+    "if-shell",
+    "-F",
+    `#{&&:#{==:#{${generationOption(port)}},${state.expected.generation}},#{==:#{pid},${state.expected.serverPid}}}`,
+    `send-keys -t ${target} Enter`,
+    `display-message -p ${GENERATION_MISMATCH}`
+  ], { noStart: true });
+  return result.ok && result.out.trim() !== GENERATION_MISMATCH;
 }
 async function typeKeys(target, text) {
   return await tmux(["send-keys", "-t", target, "-l", "--", String(text)]) !== null;
 }
 async function capturePane(target) {
-  return tmux(["capture-pane", "-p", "-t", target]);
+  const args = ["capture-pane", "-p", "-t", target];
+  const port = exactTargetPort(target);
+  if (port === null) return tmux(args);
+  const result = await generationVerifiedResult(port, args);
+  return result.ok ? result.out : null;
 }
 async function sendBringupEnter(target) {
   return sendEnter(target);
@@ -4987,9 +5432,14 @@ function createStatements(db2) {
         AND col IN ('queued', 'idle', 'needsyou') AND last_seen < ?`),
     archiveCandidates: db2.prepare(`SELECT * FROM sessions
       WHERE col = 'offline' AND archived_at IS NULL
-        AND COALESCE(ended_at, last_seen) < ?`),
+        AND COALESCE(ended_at, last_seen) < ?
+        AND NOT EXISTS (SELECT 1 FROM spawns
+          WHERE spawns.session_id = sessions.session_id AND spawns.status = 'stalled')`),
     setArchived: db2.prepare("UPDATE sessions SET archived_at = ? WHERE session_id = ? AND archived_at IS NULL"),
-    archiveAllOffline: db2.prepare("UPDATE sessions SET archived_at = ? WHERE col = 'offline' AND archived_at IS NULL"),
+    archiveAllOffline: db2.prepare(`UPDATE sessions SET archived_at = ?
+      WHERE col = 'offline' AND archived_at IS NULL
+        AND NOT EXISTS (SELECT 1 FROM spawns
+          WHERE spawns.session_id = sessions.session_id AND spawns.status = 'stalled')`),
     expireRetainedMail: db2.prepare(`UPDATE mail SET expired_at = ?
       WHERE delivered_at IS NULL AND expired_at IS NULL
         AND to_session IN (SELECT session_id FROM sessions
@@ -4998,7 +5448,7 @@ function createStatements(db2) {
       WHERE delivered_at IS NULL AND expired_at IS NULL
         AND to_session IN (SELECT session_id FROM sessions WHERE archived_at IS NOT NULL)`),
     goneArchivedSpawns: db2.prepare(`UPDATE spawns SET status = 'gone'
-      WHERE status NOT IN ('killed', 'pane-dead', 'gone')
+      WHERE status NOT IN ('killed', 'pane-dead', 'gone', 'stalled')
         AND session_id IN (SELECT session_id FROM sessions WHERE archived_at IS NOT NULL)`),
     orphanWorktrees: db2.prepare(`SELECT DISTINCT spawns.worktree_path FROM spawns
       JOIN sessions ON sessions.session_id = spawns.session_id
@@ -5080,7 +5530,7 @@ function createStatements(db2) {
 import fs4 from "node:fs";
 
 // scripts/fleetd/helpers.mjs
-import path2 from "node:path";
+import path3 from "node:path";
 import fs3 from "node:fs";
 import os from "node:os";
 
@@ -5114,10 +5564,10 @@ function envInt(name, fallback, { min = 0 } = {}) {
   return Number.isFinite(n) && n >= min ? Math.floor(n) : fallback;
 }
 function mungeClaudeProjectCwd(cwd) {
-  return path2.resolve(cwd).replace(/[\/.]/g, "-");
+  return path3.resolve(cwd).replace(/[\/.]/g, "-");
 }
 function claudeTranscriptPath(cwd, sessionId, homeDir = os.homedir()) {
-  return path2.join(homeDir, ".claude", "projects", mungeClaudeProjectCwd(cwd), `${sessionId}.jsonl`);
+  return path3.join(homeDir, ".claude", "projects", mungeClaudeProjectCwd(cwd), `${sessionId}.jsonl`);
 }
 function spawnRowRevivable(row) {
   const runCwd = row?.worktree_path ?? row?.cwd;
@@ -5216,7 +5666,7 @@ function chmodWritableWhereOwned(root) {
       return;
     }
     for (const entry of entries) {
-      const full = path2.join(dir, entry.name);
+      const full = path3.join(dir, entry.name);
       let st;
       try {
         st = fs3.lstatSync(full);
@@ -5260,7 +5710,7 @@ function blockedPaths(root, limit = 8) {
     }
     for (const entry of entries) {
       if (out.length >= limit) return;
-      const full = path2.join(dir, entry.name);
+      const full = path3.join(dir, entry.name);
       let st;
       try {
         st = fs3.lstatSync(full);
@@ -5524,14 +5974,14 @@ function createWorktrees(ctx) {
 // scripts/fleetd/repos.mjs
 import fs6 from "node:fs";
 import os3 from "node:os";
-import path4 from "node:path";
+import path5 from "node:path";
 
 // scripts/fleetd/config.mjs
 import fs5 from "node:fs";
 import os2 from "node:os";
-import path3 from "node:path";
+import path4 from "node:path";
 function resolveHome() {
-  return process.env.FLEETDECK_HOME || path3.join(os2.homedir() || "/tmp", ".fleetdeck");
+  return process.env.FLEETDECK_HOME || path4.join(os2.homedir() || "/tmp", ".fleetdeck");
 }
 function resolvePort() {
   return Number(process.env.FLEETDECK_PORT || 4711);
@@ -5557,7 +6007,7 @@ function namedError(status, message) {
 }
 function repoNameOf(value) {
   const clean = String(value).replace(/[\\/]+$/, "");
-  return path4.basename(clean).replace(/\.git$/i, "");
+  return path5.basename(clean).replace(/\.git$/i, "");
 }
 function unsafeDashSegment(value) {
   return String(value).split(/[/:@]/).some((segment) => segment.startsWith("-"));
@@ -5604,7 +6054,7 @@ function parseRepoInput(input, repoHost = "github", repoTransport = "https") {
     if (scheme === "http") return { error: "plain http repository URLs are refused \u2014 use https or ssh" };
     return { error: `repository URL scheme "${scheme}" is refused \u2014 use https or ssh` };
   }
-  if (path4.isAbsolute(input)) {
+  if (path5.isAbsolute(input)) {
     const repo_name = repoNameOf(input);
     if (!repo_name) return { error: "absolute repository path must name a repository" };
     return { kind: "path", origin_url: null, repo_name };
@@ -5632,7 +6082,7 @@ function parseRepoInput(input, repoHost = "github", repoTransport = "https") {
     }
     return { error: "group/subgroup paths need the gitlab host or a full repository URL" };
   }
-  if (parts.length > 1 || input === "." || input === ".." || input.startsWith("." + path4.sep)) {
+  if (parts.length > 1 || input === "." || input === ".." || input.startsWith("." + path5.sep)) {
     return { error: "relative repository paths are refused \u2014 use an absolute path" };
   }
   return { kind: "name", origin_url: null, repo_name: repoNameOf(input) };
@@ -5650,7 +6100,7 @@ function quickBranchCheck(branch) {
 }
 function expandHome(value) {
   if (value === "~") return os3.homedir();
-  if (value.startsWith("~/")) return path4.join(os3.homedir(), value.slice(2));
+  if (value.startsWith("~/")) return path5.join(os3.homedir(), value.slice(2));
   return value;
 }
 function normalizeRemoteOrigin(value) {
@@ -5676,11 +6126,11 @@ function normalizeRemoteOrigin(value) {
 }
 function comparableOrigin(value) {
   if (!value) return null;
-  if (path4.isAbsolute(value)) {
+  if (path5.isAbsolute(value)) {
     try {
       return fs6.realpathSync(value);
     } catch {
-      return path4.resolve(value);
+      return path5.resolve(value);
     }
   }
   return normalizeRemoteOrigin(value) ?? String(value).replace(/[\\/]+$/, "").replace(/\.git$/i, "").toLowerCase();
@@ -5761,13 +6211,13 @@ function createRepos(ctx) {
   function resolveReposDir() {
     const override = q.getSetting.get("repos_dir")?.value;
     if (override != null) {
-      return { value: override, source: "override", resolved: path4.resolve(expandHome(override)) };
+      return { value: override, source: "override", resolved: path5.resolve(expandHome(override)) };
     }
     if (process.env.FLEETDECK_REPOS_DIR) {
       const value2 = process.env.FLEETDECK_REPOS_DIR;
-      return { value: value2, source: "env", resolved: path4.resolve(expandHome(value2)) };
+      return { value: value2, source: "env", resolved: path5.resolve(expandHome(value2)) };
     }
-    const value = detectCoderWorkspaceRoot() ?? path4.join(os3.homedir(), "projects");
+    const value = detectCoderWorkspaceRoot() ?? path5.join(os3.homedir(), "projects");
     return { value, source: "default", resolved: value };
   }
   function resolveRepoTransport() {
@@ -5781,9 +6231,9 @@ function createRepos(ctx) {
     if (typeof value !== "string" || !value) throw namedError(400, "repos_dir must be an absolute path or null");
     if (CONTROL_RE.test(value)) throw namedError(400, "repos_dir must not contain NUL or control characters");
     const expanded = expandHome(value);
-    if (!path4.isAbsolute(expanded)) throw namedError(400, "repos_dir must be an absolute path (or begin with ~/)");
-    const resolved = path4.resolve(expanded);
-    if (path4.dirname(resolved) === resolved) throw namedError(400, "repos_dir must not be the filesystem root");
+    if (!path5.isAbsolute(expanded)) throw namedError(400, "repos_dir must be an absolute path (or begin with ~/)");
+    const resolved = path5.resolve(expanded);
+    if (path5.dirname(resolved) === resolved) throw namedError(400, "repos_dir must not be the filesystem root");
     try {
       if (fs6.existsSync(resolved)) {
         if (!fs6.statSync(resolved).isDirectory()) throw namedError(400, "repos_dir points to an existing file");
@@ -5822,9 +6272,9 @@ function createRepos(ctx) {
       dest = roots[0];
       origin_url = row?.origin_url ?? null;
     } else if (parsed.kind === "path") {
-      dest = path4.resolve(body.repo);
+      dest = path5.resolve(body.repo);
     } else {
-      dest = path4.join(resolveReposDir().resolved, parsed.repo_name);
+      dest = path5.join(resolveReposDir().resolved, parsed.repo_name);
     }
     if (parsed.kind === "path") {
       const kind = await gitRepoKind(dest);
@@ -5833,7 +6283,7 @@ function createRepos(ctx) {
       }
       if (exists(dest) && kind !== "bare") throw namedError(409, `${dest} exists and is not ${body.repo}`);
       origin_url = dest;
-      dest = path4.join(resolveReposDir().resolved, parsed.repo_name);
+      dest = path5.join(resolveReposDir().resolved, parsed.repo_name);
     }
     const candidates = [dest];
     if (parsed.kind !== "path") {
@@ -5921,7 +6371,7 @@ ${result.err}`);
     const existing = parseWorktrees(listed.out).find((row) => row.branch === branch);
     if (existing) return { runCwd: existing.path, created: { clone: !!clone, worktree: false }, reused: true };
     const safeBranch = branch.replaceAll("/", "-");
-    const basePath = path4.join(path4.dirname(root), `${path4.basename(root)}--fd-${safeBranch}`);
+    const basePath = path5.join(path5.dirname(root), `${path5.basename(root)}--fd-${safeBranch}`);
     const dedupPath = `${basePath}-${String(sid).slice(0, 4) || "repo"}`;
     const candidates = exists(basePath) ? [dedupPath] : [basePath, dedupPath];
     let last = null;
@@ -5945,7 +6395,7 @@ ${result.err}`);
     try {
       return fs6.realpathSync(dest);
     } catch {
-      return path4.resolve(dest);
+      return path5.resolve(dest);
     }
   }
   function claimTarget(dest, callsign) {
@@ -5975,7 +6425,7 @@ ${result.err}`);
 // scripts/fleetd/settings.mjs
 import fs7 from "node:fs";
 import os4 from "node:os";
-import path5 from "node:path";
+import path6 from "node:path";
 var CONTROL_RE2 = /[\x00-\x1f\x7f]/;
 var FAV_DIRS_MAX = 20;
 var ALLOWED_KEYS = [
@@ -5997,16 +6447,16 @@ function namedError2(status, message) {
 }
 function expandHome2(value) {
   if (value === "~") return os4.homedir();
-  if (value.startsWith("~/")) return path5.join(os4.homedir(), value.slice(2));
+  if (value.startsWith("~/")) return path6.join(os4.homedir(), value.slice(2));
   return value;
 }
 function validatePathSetting(value, label2) {
   if (typeof value !== "string" || !value) throw namedError2(400, `${label2} must be an absolute path or null`);
   if (CONTROL_RE2.test(value)) throw namedError2(400, `${label2} must not contain NUL or control characters`);
   const expanded = expandHome2(value);
-  if (!path5.isAbsolute(expanded)) throw namedError2(400, `${label2} must be an absolute path (or begin with ~/)`);
-  const resolved = path5.resolve(expanded);
-  if (path5.dirname(resolved) === resolved) throw namedError2(400, `${label2} must not be the filesystem root`);
+  if (!path6.isAbsolute(expanded)) throw namedError2(400, `${label2} must be an absolute path (or begin with ~/)`);
+  const resolved = path6.resolve(expanded);
+  if (path6.dirname(resolved) === resolved) throw namedError2(400, `${label2} must not be the filesystem root`);
   try {
     if (fs7.existsSync(resolved) && !fs7.statSync(resolved).isDirectory()) {
       throw namedError2(400, `${label2} points to an existing file`);
@@ -6017,7 +6467,7 @@ function validatePathSetting(value, label2) {
   }
   try {
     const canonical = fs7.realpathSync(resolved);
-    if (path5.dirname(canonical) === canonical) throw namedError2(400, `${label2} must not be the filesystem root`);
+    if (path6.dirname(canonical) === canonical) throw namedError2(400, `${label2} must not be the filesystem root`);
   } catch (err) {
     if (err?.status) throw err;
   }
@@ -6036,11 +6486,11 @@ function createSettings(ctx) {
   function browseRootChoice() {
     const setting = readSetting("browse_root");
     if (setting != null) {
-      return { value: setting, source: "override", resolved: path5.resolve(expandHome2(setting)) };
+      return { value: setting, source: "override", resolved: path6.resolve(expandHome2(setting)) };
     }
     const env = process.env.FLEETDECK_BROWSE_ROOT;
     if (env) {
-      return { value: env, source: "env", resolved: path5.resolve(expandHome2(env)) };
+      return { value: env, source: "env", resolved: path6.resolve(expandHome2(env)) };
     }
     const detected = detectCoderWorkspaceRoot();
     if (detected) {
@@ -6076,8 +6526,8 @@ function createSettings(ctx) {
       if (typeof entry !== "string" || !entry) throw namedError2(400, "each fav_dir must be a non-empty string");
       if (CONTROL_RE2.test(entry)) throw namedError2(400, "a fav_dir must not contain NUL or control characters");
       const expanded = expandHome2(entry);
-      if (!path5.isAbsolute(expanded)) throw namedError2(400, "a fav_dir must be an absolute path (or begin with ~/)");
-      const resolved = path5.resolve(expanded);
+      if (!path6.isAbsolute(expanded)) throw namedError2(400, "a fav_dir must be an absolute path (or begin with ~/)");
+      const resolved = path6.resolve(expanded);
       let isDir = false;
       try {
         isDir = fs7.statSync(resolved).isDirectory();
@@ -6268,7 +6718,7 @@ function createSettings(ctx) {
 // scripts/fleetd/files.mjs
 import fs8 from "node:fs";
 import os5 from "node:os";
-import path6 from "node:path";
+import path7 from "node:path";
 import { spawn } from "node:child_process";
 function envInt2(name, fallback, { min = 1 } = {}) {
   const n = Number(process.env[name]);
@@ -6294,10 +6744,10 @@ var PathError = class extends Error {
   }
 };
 function within(root, candidate) {
-  return candidate === root || candidate.startsWith(root + path6.sep);
+  return candidate === root || candidate.startsWith(root + path7.sep);
 }
 function validateRelPath(relPath) {
-  if (typeof relPath !== "string" || relPath.length > 4096 || relPath.includes("\0") || path6.isAbsolute(relPath) || relPath.split(/[\\/]/).includes("..")) {
+  if (typeof relPath !== "string" || relPath.length > 4096 || relPath.includes("\0") || path7.isAbsolute(relPath) || relPath.split(/[\\/]/).includes("..")) {
     throw new PathError(400, "invalid path");
   }
   const segments = relPath.toLowerCase().split(/[\\/]/);
@@ -6318,7 +6768,7 @@ function deniedRelPath(rel) {
 }
 function safeJoin(realRoot, relPath) {
   validateRelPath(relPath);
-  const abs = path6.resolve(realRoot, relPath || ".");
+  const abs = path7.resolve(realRoot, relPath || ".");
   if (!within(realRoot, abs)) throw new PathError(400, "invalid path");
   return abs;
 }
@@ -6356,13 +6806,13 @@ function realpathInside(realRoot, target) {
   if (!within(realRoot, real)) throw new PathError(404, "not found");
   if (fleetHomeReal === void 0) {
     try {
-      fleetHomeReal = fs8.realpathSync(process.env.FLEETDECK_HOME || path6.join(os5.homedir() || "/tmp", ".fleetdeck"));
+      fleetHomeReal = fs8.realpathSync(process.env.FLEETDECK_HOME || path7.join(os5.homedir() || "/tmp", ".fleetdeck"));
     } catch {
       fleetHomeReal = null;
     }
   }
   if (fleetHomeReal && within(fleetHomeReal, real)) throw new PathError(404, "not found");
-  const realSegs = real.toLowerCase().split(path6.sep);
+  const realSegs = real.toLowerCase().split(path7.sep);
   if (realSegs.some((s) => CREDENTIAL_SEGMENTS.has(s)) || realSegs.includes(".docker") && realSegs[realSegs.length - 1] === "config.json") {
     throw new PathError(404, "not found");
   }
@@ -6391,7 +6841,7 @@ function resolveBrowseRoot(ctx) {
   } catch {
     return { error: { status: 410, body: { ok: false, reason: browseRootGoneReason(source, resolved) } } };
   }
-  if (path6.dirname(root) === root) {
+  if (path7.dirname(root) === root) {
     return {
       error: {
         status: 410,
@@ -6496,7 +6946,7 @@ function runBounded(cmd, args, {
   });
 }
 function entryPath(relDir, name) {
-  return relDir ? path6.posix.join(relDir.split(path6.sep).join("/"), name) : name;
+  return relDir ? path7.posix.join(relDir.split(path7.sep).join("/"), name) : name;
 }
 async function ignoredPaths(root, paths, timeoutMs) {
   if (!paths.length) return /* @__PURE__ */ new Set();
@@ -6618,7 +7068,7 @@ async function walkSearch(root, q, mode, deadline) {
         break;
       }
       if (visited % WALK_YIELD_EVERY === 0) await yieldToLoop();
-      const abs = path6.join(current.dir, name);
+      const abs = path7.join(current.dir, name);
       const rel = entryPath(current.rel, name);
       let st;
       try {
@@ -6697,7 +7147,7 @@ function createFiles(ctx) {
       for (const name of names) {
         let st;
         try {
-          st = fs8.lstatSync(path6.join(real, name));
+          st = fs8.lstatSync(path7.join(real, name));
         } catch {
           continue;
         }
@@ -6731,8 +7181,8 @@ function createFiles(ctx) {
     try {
       const abs = safeJoin(root, relPath);
       if (abs === root) return { status: 404, body: { ok: false, reason: "is a directory" } };
-      const realParent = realpathInside(root, path6.dirname(abs));
-      if (path6.basename(abs).toLowerCase() === "config.json" && realParent.toLowerCase().split(path6.sep).includes(".docker")) {
+      const realParent = realpathInside(root, path7.dirname(abs));
+      if (path7.basename(abs).toLowerCase() === "config.json" && realParent.toLowerCase().split(path7.sep).includes(".docker")) {
         throw new PathError(404, "not found");
       }
       let lst;
@@ -6816,15 +7266,15 @@ function createFiles(ctx) {
 // scripts/fleetd/paste.mjs
 import fs9 from "node:fs";
 import os6 from "node:os";
-import path7 from "node:path";
+import path8 from "node:path";
 import crypto from "node:crypto";
 var MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 var PRUNE_AFTER_MS = 24 * 60 * 60 * 1e3;
 var MAX_KEPT_PASTES = 50;
 var ACCEPT = "png, jpeg, gif, webp";
 function pasteDir() {
-  const home = process.env.FLEETDECK_HOME || path7.join(os6.homedir() || os6.tmpdir(), ".fleetdeck");
-  return path7.join(home, "pastes");
+  const home = process.env.FLEETDECK_HOME || path8.join(os6.homedir() || os6.tmpdir(), ".fleetdeck");
+  return path8.join(home, "pastes");
 }
 function sniffImage(buf) {
   if (buf.length >= 8 && buf[0] === 137 && buf[1] === 80 && buf[2] === 78 && buf[3] === 71 && buf[4] === 13 && buf[5] === 10 && buf[6] === 26 && buf[7] === 10) return "png";
@@ -6840,7 +7290,7 @@ function looksBase64(s) {
 function ensurePasteDir() {
   const dir = pasteDir();
   try {
-    fs9.mkdirSync(path7.dirname(dir), { recursive: true });
+    fs9.mkdirSync(path8.dirname(dir), { recursive: true });
   } catch {
   }
   try {
@@ -6866,7 +7316,7 @@ function pruneOldPastes(dir, now = Date.now(), protect = null) {
   }
   const regular = [];
   for (const name of names) {
-    const p = path7.join(dir, name);
+    const p = path8.join(dir, name);
     if (protect && p === protect) continue;
     let st;
     try {
@@ -6920,7 +7370,7 @@ function pasteImage(ev) {
     return { status: 500, body: { ok: false, reason: "cannot prepare paste dir" } };
   }
   const name = `paste-${crypto.randomUUID()}.${ext}`;
-  const file = path7.join(dir, name);
+  const file = path8.join(dir, name);
   const tmp = `${file}.tmp`;
   try {
     fs9.writeFileSync(tmp, buf, { mode: 384, flag: "wx" });
@@ -6965,6 +7415,7 @@ function createMail(ctx) {
     questions,
     tmuxAdapter,
     findScopedWindow,
+    scopedPaneTarget,
     PANE_MAIL_GRACE_MS
   } = ctx;
   function mail(toSession, from, text) {
@@ -7032,8 +7483,9 @@ function createMail(ctx) {
     if (!pair) return false;
     if (!probe2) return true;
     const win = await findScopedWindow(pair.sp.tmux_window);
+    if (win === null) return false;
     if (!win || win.pane_dead) return false;
-    const pane = await tmuxAdapter.paneCurrentCommand(win.window_id);
+    const pane = await tmuxAdapter.paneCurrentCommand(scopedPaneTarget(win));
     return !!pane && !pane.dead && pane.cmd === "claude";
   }
   function claimAllMail(sid) {
@@ -7056,15 +7508,17 @@ function createMail(ctx) {
     const pair = ownedPaneRow(sid);
     if (!pair || hasWatchWaiter(sid)) return false;
     const win = await findScopedWindow(pair.sp.tmux_window);
+    if (win === null) return false;
     if (!win || win.pane_dead) return false;
-    const pane = await tmuxAdapter.paneCurrentCommand(win.window_id);
+    const target = scopedPaneTarget(win);
+    const pane = await tmuxAdapter.paneCurrentCommand(target);
     if (!pane || pane.dead || pane.cmd !== "claude") return false;
     if (hasWatchWaiter(sid)) return false;
     if (!ownedPaneRow(sid)) return false;
     const box = claimAllMail(sid);
     if (!box.length) return false;
     const text = box.map((m) => `[FLEETDECK MAIL from ${m.from_id}] ${m.text}`).join("\n");
-    const pasted = await tmuxAdapter.pasteText(win.window_id, text);
+    const pasted = await tmuxAdapter.pasteText(target, text);
     if (!pasted) {
       for (const m of box) q.unmarkDelivered.run(m.id);
       onMutate();
@@ -7074,7 +7528,7 @@ function createMail(ctx) {
       onMutate();
       return true;
     }
-    const entered = await tmuxAdapter.sendEnter(win.window_id);
+    const entered = await tmuxAdapter.sendEnter(target);
     if (!entered) {
       for (const m of box) q.unmarkDelivered.run(m.id);
       onMutate();
@@ -7154,14 +7608,14 @@ function createMail(ctx) {
 }
 
 // scripts/fleetd/ledger.mjs
-import path8 from "node:path";
+import path9 from "node:path";
 var CONFLICT_WINDOW_MS = 30 * 60 * 1e3;
 function createLedger(ctx) {
   const { q, card, mail, tick } = ctx;
   function recordFile(sid, absFile, editorCard) {
     if (!absFile) return null;
     const now = Date.now();
-    const abs = path8.isAbsolute(absFile) ? absFile : path8.resolve(editorCard.cwd || "/", absFile);
+    const abs = path9.isAbsolute(absFile) ? absFile : path9.resolve(editorCard.cwd || "/", absFile);
     const key = ledgerKey(abs, editorCard);
     const touches = q.recentTouches.all(key.repo_id ?? "", key.rel_path, now - CONFLICT_WINDOW_MS);
     const rivalTouches = touches.filter((t) => {
@@ -7176,7 +7630,7 @@ function createLedger(ctx) {
     const severity = sameTree ? "warning" : "info";
     const rivalNames = rivals.map((r) => card(r).callsign).join(", ");
     q.insertConflict.run(now, key.repo_id ?? "", key.rel_path, severity, JSON.stringify([sid, ...rivals]));
-    tick(`\u26A0 conflict: ${editorCard.callsign} and ${rivalNames} both touching ${path8.basename(key.rel_path)}`);
+    tick(`\u26A0 conflict: ${editorCard.callsign} and ${rivalNames} both touching ${path9.basename(key.rel_path)}`);
     for (const r of rivals) {
       mail(r, "fleetdeck", severity === "warning" ? `Heads up: ${editorCard.callsign} is also editing ${key.rel_path}. Coordinate before you overwrite each other.` : `Heads up: ${editorCard.callsign} is editing ${key.rel_path} in another worktree of this repo \u2014 a future merge conflict announcing itself early.`);
     }
@@ -7454,7 +7908,7 @@ function createPlans(ctx) {
 
 // scripts/fleetd/spawns.mjs
 import fs10 from "node:fs";
-import path9 from "node:path";
+import path10 from "node:path";
 import { randomUUID as randomUUID2, randomBytes } from "node:crypto";
 function createSpawns(ctx) {
   const {
@@ -7467,6 +7921,7 @@ function createSpawns(ctx) {
     notifyWatchers,
     tombstoneCard,
     findScopedWindow,
+    scopedPaneTarget,
     tmuxAdapter,
     port,
     home,
@@ -7539,7 +7994,8 @@ function createSpawns(ctx) {
       return { available: true, reason: "test-override", ...base };
     }
     if (!tmuxAdapter.hasTmux()) {
-      return { available: false, reason: "tmux not found on PATH", ...base };
+      const reason = tmuxAdapter.tmuxCapability?.().reason ?? "tmux 3.4+ unavailable";
+      return { available: false, reason, ...base };
     }
     return { available: true, ...base };
   }
@@ -7587,11 +8043,13 @@ function createSpawns(ctx) {
         const row = q.getSpawn.get(spawn_id);
         if (!row || row.status !== "spawning") return;
         const win = await findScopedWindow(window);
+        if (win === null) return;
         if (!win || win.pane_dead) return;
         nudged.add(spawn_id);
         let screen = null;
+        const target = scopedPaneTarget(win);
         try {
-          screen = await tmuxAdapter.capturePane(win.window_id);
+          screen = await tmuxAdapter.capturePane(target);
         } catch {
         }
         if (typeof screen !== "string" || screen.trim() === "") {
@@ -7609,7 +8067,7 @@ function createSpawns(ctx) {
           onMutate();
           return;
         }
-        await tmuxAdapter.sendBringupEnter(win.window_id);
+        await tmuxAdapter.sendBringupEnter(target);
         logEvent(row.session_id, "SpawnNudge", null, "bring-up Enter sent");
         tick(`\u23CE nudged ${callsign} through bring-up`);
         onMutate();
@@ -7652,9 +8110,11 @@ function createSpawns(ctx) {
   async function harvestRemote(spawn_id) {
     const row = q.getSpawn.get(spawn_id);
     if (!row) return { url: null };
+    const win = await findScopedWindow(row.tmux_window);
+    if (!win || win === null || win.pane_dead) return { url: null };
     let text = null;
     try {
-      text = await tmuxAdapter.capturePane(row.tmux_window);
+      text = await tmuxAdapter.capturePane(scopedPaneTarget(win));
     } catch {
     }
     const url = typeof text === "string" ? text.match(RC_URL_RE)?.[0]?.replace(/[)\]}"'`.,;:]+$/, "") ?? null : null;
@@ -7695,6 +8155,20 @@ function createSpawns(ctx) {
     reason,
     created = { clone: false, worktree: !!worktree_path }
   }) {
+    if (tmux_window) {
+      let killed;
+      try {
+        killed = await tmuxAdapter.killWindowVerified(tmux_window);
+      } catch (err) {
+        killed = { ok: false, error: String(err?.message || err) };
+      }
+      if (!killed?.ok && !killed?.gone) {
+        const cleanupError = killed?.error || "tmux pane cleanup could not be verified";
+        q.setSpawnStatus.run("stalled", spawn_id);
+        spawnFailed(session_id, callsign, `${reason}; cleanup unresolved: ${cleanupError}`);
+        return { resolved: false, error: cleanupError };
+      }
+    }
     if (worktree_path && created.worktree) {
       try {
         const rm = await execFileP("git", ["-C", cwd, "worktree", "remove", "--force", worktree_path], { timeout: 3e4 });
@@ -7714,15 +8188,10 @@ function createSpawns(ctx) {
       } catch {
       }
     }
-    if (tmux_window) {
-      try {
-        await tmuxAdapter.killWindowVerified(tmux_window);
-      } catch {
-      }
-    }
     q.setSpawnStatus.run("gone", spawn_id);
     forgetSpawn(spawn_id);
     spawnFailed(session_id, callsign, reason);
+    return { resolved: true };
   }
   async function launchPane({
     spawn_id,
@@ -7796,8 +8265,9 @@ function createSpawns(ctx) {
         await tmuxAdapter.ensureSession(port);
         await tmuxAdapter.newWindow({ port, callsign, cwd: runCwd, argv, env: gatewayEnv });
       } catch (err) {
-        await compensate(String(err.message || err));
-        return { status: 500, body: { ok: false, reason: `tmux spawn failed: ${err.message || err}` } };
+        const cleanup = await compensate(String(err.message || err));
+        const unresolved = cleanup?.resolved === false ? `; cleanup unresolved: ${cleanup.error}` : "";
+        return { status: 500, body: { ok: false, reason: `tmux spawn failed: ${err.message || err}${unresolved}` } };
       }
     }
     q.setSpawnStatus.run("spawning", spawn_id);
@@ -7896,7 +8366,7 @@ function createSpawns(ctx) {
       const targetPath = target.mode === "clone" ? target.dest : target.root;
       const owner = targetOwner(targetPath);
       if (owner) {
-        return { status: 409, body: { ok: false, reason: `${path9.resolve(targetPath)} is already being provisioned by ${owner}` } };
+        return { status: 409, body: { ok: false, reason: `${path10.resolve(targetPath)} is already being provisioned by ${owner}` } };
       }
       let releaseCloneSlot = () => {
       };
@@ -7965,6 +8435,7 @@ function createSpawns(ctx) {
         try {
           let materialized;
           let worktree_path2 = null;
+          let paneMayExist = false;
           try {
             materialized = await materializeBranch({
               root: target.root,
@@ -7989,6 +8460,7 @@ function createSpawns(ctx) {
           worktree_path2 = branchMode === "worktree" ? materialized.runCwd : null;
           try {
             await finishMaterialization(materialized, "spawn");
+            paneMayExist = true;
             return await launchPane({
               spawn_id: spawn_id2,
               session_id: session_id2,
@@ -8005,14 +8477,14 @@ function createSpawns(ctx) {
               created: materialized.created
             });
           } catch (err) {
-            const reason = branchMode === "in-place" ? `${err.message || String(err)} \u2014 ${path9.basename(target.root)} was left switched to ${body.branch}` : err.message || String(err);
+            const reason = branchMode === "in-place" ? `${err.message || String(err)} \u2014 ${path10.basename(target.root)} was left switched to ${body.branch}` : err.message || String(err);
             await spawnCompensate({
               spawn_id: spawn_id2,
               session_id: session_id2,
               callsign: callsign2,
               cwd: target.root,
               worktree_path: worktree_path2,
-              tmux_window: tmux_window2,
+              tmux_window: paneMayExist ? tmux_window2 : null,
               reason,
               created: materialized.created
             });
@@ -8025,6 +8497,7 @@ function createSpawns(ctx) {
       Promise.resolve().then(async () => {
         let created = { clone: false, worktree: false };
         let worktree_path2 = null;
+        let paneMayExist = false;
         try {
           await cloneRepo({ origin_url: target.origin_url, dest: target.dest, spawn_id: spawn_id2 });
           created.clone = true;
@@ -8041,6 +8514,7 @@ function createSpawns(ctx) {
           created = materialized.created;
           worktree_path2 = branchMode === "worktree" ? materialized.runCwd : null;
           await finishMaterialization(materialized, "clone");
+          paneMayExist = true;
           await launchPane({
             spawn_id: spawn_id2,
             session_id: session_id2,
@@ -8057,14 +8531,14 @@ function createSpawns(ctx) {
             gatewayEnv: gateway.env
           });
         } catch (err) {
-          const reason = branchMode === "in-place" && created.clone ? `${err.message || String(err)} \u2014 ${path9.basename(target.dest)} was left switched to ${body.branch}` : err.message || String(err);
+          const reason = branchMode === "in-place" && created.clone ? `${err.message || String(err)} \u2014 ${path10.basename(target.dest)} was left switched to ${body.branch}` : err.message || String(err);
           await spawnCompensate({
             spawn_id: spawn_id2,
             session_id: session_id2,
             callsign: callsign2,
             cwd: target.dest,
             worktree_path: worktree_path2,
-            tmux_window: tmux_window2,
+            tmux_window: paneMayExist ? tmux_window2 : null,
             reason,
             created
           });
@@ -8124,7 +8598,7 @@ function createSpawns(ctx) {
     if (body?.worktree === true) {
       const ticketNamed = c.ticket && String(callsign).endsWith(`-${c.ticket}`);
       const baseName = ticketNamed ? `${c.ticket}-${animalOf(callsign)}` : callsign;
-      const pathFor = (name) => path9.join(path9.dirname(cwd), `${path9.basename(cwd)}--fd-${name}`);
+      const pathFor = (name) => path10.join(path10.dirname(cwd), `${path10.basename(cwd)}--fd-${name}`);
       const dedup = `${baseName}-${session_id.slice(0, 4)}`;
       const names = fs10.existsSync(pathFor(baseName)) ? [dedup] : [baseName, dedup];
       let candidate;
@@ -8221,6 +8695,9 @@ function createSpawns(ctx) {
         return { status: 410, body: { ok: false, reason: "resume transcript no longer exists" } };
       }
       const existing = await findScopedWindow(row.tmux_window);
+      if (existing === null) {
+        return { status: 503, body: { ok: false, reason: "tmux window lookup failed; revive held to avoid a duplicate session" } };
+      }
       if (existing && !existing.pane_dead && existing.pane_cmd === "claude") {
         if (row.status !== "pane-dead" && row.status !== "gone") {
           return { status: 409, body: { ok: false, reason: `spawn ${spawn_id} was killed \u2014 its window hosts a live claude, but a killed spawn is never resurrected by adoption` } };
@@ -8324,6 +8801,16 @@ function createSpawns(ctx) {
       null,
       gatewayEnv ? 1 : 0
     );
+    const compensateResume = (reason) => spawnCompensate({
+      spawn_id: new_spawn_id,
+      session_id,
+      callsign,
+      cwd: runCwd,
+      worktree_path,
+      tmux_window,
+      reason,
+      created: { clone: false, worktree: false }
+    });
     const override = tmuxAdapter.spawnOverrideCmd();
     if (override) {
       tmuxAdapter.launchOverride(override, {
@@ -8346,15 +8833,22 @@ function createSpawns(ctx) {
         // test seam only — see launchPane's spec
         tmux: { session: tmux_session, window: tmux_window },
         argv
-      }, (err) => spawnFailed(session_id, callsign, `spawn override: ${err.message || err}`));
+      }, (err) => compensateResume(`spawn override: ${err.message || err}`).catch(() => {
+      }));
     } else {
       try {
         await tmuxAdapter.ensureSession(port);
         await tmuxAdapter.newWindow({ port, callsign, cwd: runCwd, argv, env: gatewayEnv });
       } catch (err) {
-        q.setSpawnStatus.run("gone", new_spawn_id);
-        forgetSpawn(new_spawn_id);
-        return { status: 500, body: { ok: false, reason: `${failReason}: ${err.message || err}` } };
+        const reason = `${failReason}: ${err.message || err}`;
+        const cleanup = await compensateResume(reason);
+        return {
+          status: 500,
+          body: {
+            ok: false,
+            reason: cleanup.resolved ? reason : `${reason}; cleanup unresolved: ${cleanup.error}`
+          }
+        };
       }
     }
     q.setSpawnStatus.run("spawning", new_spawn_id);
@@ -8446,6 +8940,9 @@ function createSpawns(ctx) {
       }
       const tmux_window = tmuxAdapter.windowName(port, c.callsign);
       const existing = await findScopedWindow(tmux_window);
+      if (existing === null) {
+        return { status: 503, body: { ok: false, reason: "tmux window lookup failed; adopt held to avoid a duplicate session" } };
+      }
       if (existing && !existing.pane_dead && existing.pane_cmd === "claude") {
         return { status: 409, body: { ok: false, reason: `window ${tmux_window} already hosts a live claude pane` } };
       }
@@ -8494,6 +8991,9 @@ function createSpawns(ctx) {
       return { status: 409, body: { ok: false, reason: `session is ${session?.col ?? "missing"}, not queued or idle` } };
     }
     const win = await findScopedWindow(row.tmux_window);
+    if (win === null) {
+      return { status: 503, body: { ok: false, reason: "tmux window lookup failed; remote control was not sent" } };
+    }
     if (!win || win.pane_dead || win.pane_cmd !== "claude") {
       const observed = !win ? "missing" : win.pane_dead ? "dead" : `running ${win.pane_cmd || "unknown"}`;
       return { status: 409, body: { ok: false, reason: `claude pane is not alive (${observed})` } };
@@ -8502,7 +9002,8 @@ function createSpawns(ctx) {
     if (!fresh || !["queued", "idle"].includes(fresh.col)) {
       return { status: 409, body: { ok: false, reason: `session is ${fresh?.col ?? "missing"}, not queued or idle` } };
     }
-    const typed = await tmuxAdapter.typeKeys(win.window_id, `/rc ${fresh.callsign ?? row.callsign}`);
+    const target = scopedPaneTarget(win);
+    const typed = await tmuxAdapter.typeKeys(target, `/rc ${fresh.callsign ?? row.callsign}`);
     if (!typed) {
       return { status: 500, body: { ok: false, reason: "failed to type remote-control command into pane" } };
     }
@@ -8510,7 +9011,7 @@ function createSpawns(ctx) {
     if (!afterType || !["queued", "idle"].includes(afterType.col)) {
       return { status: 409, body: { ok: false, reason: `session became ${afterType?.col ?? "missing"} before /rc could submit` } };
     }
-    const entered = await tmuxAdapter.sendEnter(win.window_id);
+    const entered = await tmuxAdapter.sendEnter(target);
     if (!entered) {
       return { status: 500, body: { ok: false, reason: "failed to type remote-control command into pane" } };
     }
@@ -8576,6 +9077,7 @@ function createSpawns(ctx) {
     const resurrectable = q.resurrectableSpawns.all();
     if (!rows.length && !resurrectable.length && !spawnState.orphans.length) return;
     const wins = await tmuxAdapter.listScopedWindows(port);
+    if (wins === null) return;
     for (const row of rows) {
       const win = wins.find((w) => w.window === row.tmux_window);
       if (!win) continue;
@@ -8585,9 +9087,9 @@ function createSpawns(ctx) {
       } else if (win.pane_cmd === "claude") {
         deadSignal = false;
       } else {
-        const pane = await tmuxAdapter.paneCurrentCommand(win.window_id);
+        const pane = await tmuxAdapter.paneCurrentCommand(scopedPaneTarget(win));
         if (pane && !pane.dead && pane.cmd === "claude") deadSignal = false;
-        else if (!pane || pane.dead || SHELL_RE.test(pane.cmd)) deadSignal = true;
+        else if (pane?.dead || pane && SHELL_RE.test(pane.cmd)) deadSignal = true;
         else deadSignal = null;
       }
       if (deadSignal === false) {
@@ -8603,7 +9105,10 @@ function createSpawns(ctx) {
         }
         continue;
       }
-      if (deadSignal === null) continue;
+      if (deadSignal === null) {
+        condemnStreak.delete(row.spawn_id);
+        continue;
+      }
       const streak = (condemnStreak.get(row.spawn_id) ?? 0) + 1;
       if (streak < CONDEMN_DEAD_READS) {
         condemnStreak.set(row.spawn_id, streak);
@@ -8626,7 +9131,7 @@ function createSpawns(ctx) {
       if (!win || win.pane_dead) continue;
       const owner = q.currentWindowOwner.get(row.tmux_window);
       if (owner && owner.spawn_id !== row.spawn_id) continue;
-      const pane = await tmuxAdapter.paneCurrentCommand(win.window_id);
+      const pane = await tmuxAdapter.paneCurrentCommand(scopedPaneTarget(win));
       if (!pane || pane.dead || pane.cmd !== "claude") continue;
       resurrectSpawn(row);
     }
@@ -8637,23 +9142,14 @@ function createSpawns(ctx) {
       onMutate();
     }
   }
-  async function tmuxReachableForReconcile() {
-    if (tmuxAdapter.spawnOverrideCmd()) return true;
-    if (typeof tmuxAdapter.hasTmux === "function" && !tmuxAdapter.hasTmux()) return true;
-    try {
-      await tmuxAdapter.ensureSession(port);
-      return true;
-    } catch {
-      return false;
-    }
-  }
   const spawnState = { orphans: [] };
   async function reconcileSpawns() {
     const active = q.activeSpawns.all();
     const staleProvisioning = q.staleProvisioningSpawns.all();
     const wins = await tmuxAdapter.listScopedWindows(port);
-    if (!wins.length && active.length && !await tmuxReachableForReconcile()) {
-      tick(`\u26A0 tmux unreachable at restart \u2014 leaving ${active.length} spawn row(s) as-is (unknown, not gone)`);
+    if (wins === null) {
+      const count = active.length + staleProvisioning.length;
+      tick(`\u26A0 tmux window lookup failed at restart \u2014 leaving ${count} spawn row(s) as-is (unknown, not gone)`);
       onMutate();
       return;
     }
@@ -8752,12 +9248,12 @@ function createSpawns(ctx) {
 }
 
 // scripts/fleetd/events.mjs
-import path10 from "node:path";
+import path11 from "node:path";
 import os7 from "node:os";
 var EDIT_TOOLS = ["Edit", "Write", "MultiEdit", "NotebookEdit"];
 var TEST_RUNNER_RE = /\b(pytest|jest|vitest|go test|cargo test|npm (run )?test)\b/;
 function expectedTranscriptDir(cwd, homeDir = os7.homedir()) {
-  return path10.join(homeDir, ".claude", "projects", mungeClaudeProjectCwd(cwd));
+  return path11.join(homeDir, ".claude", "projects", mungeClaudeProjectCwd(cwd));
 }
 function createEvents(ctx) {
   const {
@@ -8878,7 +9374,7 @@ function createEvents(ctx) {
         const file = input.file_path || input.notebook_path;
         if (EDIT_TOOLS.includes(ev.tool_name) && file) {
           conflict = recordFile(sid, file, c);
-          set.note = `editing ${path10.basename(file)}`;
+          set.note = `editing ${path11.basename(file)}`;
         } else if (ev.tool_name === "Bash" && input.command) {
           const cmd = String(input.command);
           if (TEST_RUNNER_RE.test(cmd)) {
@@ -8896,7 +9392,7 @@ function createEvents(ctx) {
         const file = ev.file_path || ev.tool_input?.file_path || ev.path || null;
         if (file) {
           conflict = recordFile(sid, file, c);
-          set.note = `changed ${path10.basename(file)}`;
+          set.note = `changed ${path11.basename(file)}`;
         }
         break;
       }
@@ -8967,7 +9463,7 @@ function createEvents(ctx) {
       const placeholder = existing && existing.events === 0 && existing.succeeded_by == null && !q.successorClaimed.get(sid) && !q.spawnBySession.get(sid);
       if (!existing || placeholder) {
         const prev = findClearedPredecessor(sid, ev.cwd, Date.now());
-        if (prev && ev.transcript_path && path10.dirname(String(ev.transcript_path)) !== expectedTranscriptDir(ev.cwd)) {
+        if (prev && ev.transcript_path && path11.dirname(String(ev.transcript_path)) !== expectedTranscriptDir(ev.cwd)) {
           logEvent(
             sid,
             "ClearSuccessionRefused",
@@ -9414,6 +9910,7 @@ function createRetention(ctx) {
     port,
     questions,
     adoptSession,
+    scopedPaneTarget,
     PRESUME_DEAD_MS,
     RETAIN_OFFLINE_MS,
     RETAIN_LEDGER_MS
@@ -9450,29 +9947,31 @@ function createRetention(ctx) {
     }
     if (spawned.length) {
       const wins = await tmuxAdapter.listScopedWindows(port);
-      for (const { s, sp } of spawned) {
-        const win = wins.find((w) => w.window === sp.tmux_window);
-        let alive = false;
-        if (win && !win.pane_dead) {
-          const pane = await tmuxAdapter.paneCurrentCommand(win.window_id);
-          alive = !!pane && !pane.dead && pane.cmd === "claude";
-        }
-        if (alive) {
-          updateSession(s.session_id, { last_seen: now });
-          changed = true;
-          continue;
-        }
-        if (win && (win.pane_dead || SHELL_RE.test(win.pane_cmd))) {
-          q.setSpawnStatus.run("pane-dead", sp.spawn_id);
-          forgetSpawn(sp.spawn_id);
-          tombstoneCard(s.session_id, {
-            // D8
-            note: `pane confirmed dead \u2014 resume with claude --resume ${s.session_id}`,
-            at: now,
-            tickMsg: `\u{1F480} ${s.callsign} pane confirmed dead after long silence \u2014 window kept for scrollback`,
-            forgetModel: true
-          });
-          changed = true;
+      if (wins !== null) {
+        for (const { s, sp } of spawned) {
+          const win = wins.find((w) => w.window === sp.tmux_window);
+          let alive = false;
+          if (win && !win.pane_dead) {
+            const pane = await tmuxAdapter.paneCurrentCommand(scopedPaneTarget(win));
+            alive = !!pane && !pane.dead && pane.cmd === "claude";
+          }
+          if (alive) {
+            updateSession(s.session_id, { last_seen: now });
+            changed = true;
+            continue;
+          }
+          if (win && (win.pane_dead || SHELL_RE.test(win.pane_cmd))) {
+            q.setSpawnStatus.run("pane-dead", sp.spawn_id);
+            forgetSpawn(sp.spawn_id);
+            tombstoneCard(s.session_id, {
+              // D8
+              note: `pane confirmed dead \u2014 resume with claude --resume ${s.session_id}`,
+              at: now,
+              tickMsg: `\u{1F480} ${s.callsign} pane confirmed dead after long silence \u2014 window kept for scrollback`,
+              forgetModel: true
+            });
+            changed = true;
+          }
         }
       }
     }
@@ -9519,7 +10018,7 @@ function createRetention(ctx) {
     const wins = await tmuxAdapter.listScopedWindows(port);
     const byName = new Map(q.allSpawns.all().map((r) => [r.tmux_window, r]));
     let windows_killed = 0;
-    for (const win of wins) {
+    for (const win of wins ?? []) {
       const sp = byName.get(win.window);
       if (!win.pane_dead || !sp || !["killed", "pane-dead", "gone"].includes(sp.status)) continue;
       const out = await tmuxAdapter.killWindowVerified(win.window);
@@ -9595,7 +10094,12 @@ function createCore(db2, {
   const CLEAR_AMBIGUITY_MS = 1e3;
   const SNAPSHOT_FILES_PER_SESSION = 50;
   async function findScopedWindow(name) {
-    return (await tmuxAdapter.listScopedWindows(port)).find((w) => w.window === name);
+    const wins = await tmuxAdapter.listScopedWindows(port);
+    if (wins === null && tmuxAdapter.spawnOverrideCmd?.()) return void 0;
+    return wins === null ? null : wins.find((w) => w.window === name);
+  }
+  function scopedPaneTarget(win) {
+    return tmuxAdapter.exactWindowTarget ? tmuxAdapter.exactWindowTarget(port, win.window) : win.window_id;
   }
   const { q, updateSession } = createStatements(db2);
   const questions = createQuestions(db2, {
@@ -9765,7 +10269,7 @@ function createCore(db2, {
     if (rivals.length) return null;
     return succeedSession(prev, cands[0].session_id, { rename: true });
   }
-  function succeedSession(prev, sid, { rename = false } = {}) {
+  function succeedSession(prev, sid, { rename: rename2 = false } = {}) {
     const now = Date.now();
     const callsign = prev.callsign;
     db2.exec("BEGIN IMMEDIATE");
@@ -9781,7 +10285,7 @@ function createCore(db2, {
         adopt_armed_until: null,
         adopt_armed_skip: null
       });
-      if (rename) {
+      if (rename2) {
         const heir = q.getSession.get(sid);
         if (heir && heir.callsign !== callsign) {
           updateSession(sid, { callsign });
@@ -9856,6 +10360,7 @@ function createCore(db2, {
     tmuxAdapter,
     questions,
     findScopedWindow,
+    scopedPaneTarget,
     tick,
     logEvent,
     card,
@@ -10050,7 +10555,7 @@ import http from "node:http";
 import { timingSafeEqual } from "node:crypto";
 import os8 from "node:os";
 import fs13 from "node:fs";
-import path11 from "node:path";
+import path12 from "node:path";
 import { fileURLToPath } from "node:url";
 
 // node_modules/ws/wrapper.mjs
@@ -10297,7 +10802,7 @@ function createTermBridge({ port, resolveSpawn, log = () => {
     return c;
   }
   async function sizeWindow(c, window, cols, rows) {
-    const target = `=${session}:${window}`;
+    const target = exactWindowTarget(port, window);
     if (!c.manualSizing.has(window)) {
       const opt = await c.command(`set-option -w -t ${target} window-size manual`).catch(() => ({ ok: false }));
       if (opt.ok) c.manualSizing.add(window);
@@ -10397,7 +10902,7 @@ function createTermBridge({ port, resolveSpawn, log = () => {
     try {
       const c = await ensureClient();
       abortIfClosed();
-      const panes = await c.command(`list-panes -t =${session}:${row.tmux_window} -F '#{pane_id}'`);
+      const panes = await c.command(`list-panes -t ${exactWindowTarget(port, row.tmux_window)} -F '#{pane_id}'`);
       if (!panes.ok) throw new Error("terminal pane not found");
       const pane = panes.lines.map((s) => s.trim()).find((s) => /^%\d+$/.test(s));
       if (!pane) throw new Error("terminal pane not found");
@@ -10492,7 +10997,7 @@ function isLoopbackAddress(address) {
   const value = String(address || "").trim().toLowerCase();
   return value === "localhost" || value === "::1" || /^127(?:\.[0-9]{1,3}){3}$/.test(value) || /^::ffff:127(?:\.[0-9]{1,3}){3}$/.test(value);
 }
-var BOARD_DIST = path11.join(path11.dirname(fileURLToPath(import.meta.url)), "board-dist");
+var BOARD_DIST = path12.join(path12.dirname(fileURLToPath(import.meta.url)), "board-dist");
 var MIME = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -10516,15 +11021,15 @@ function serveBoardAsset(res, pathname, notFound) {
     return notFound();
   }
   const rel = decoded === "/" ? "index.html" : decoded.replace(/^\/+/, "");
-  const abs = path11.resolve(BOARD_DIST, rel);
-  if (abs !== BOARD_DIST && !abs.startsWith(BOARD_DIST + path11.sep)) return notFound();
+  const abs = path12.resolve(BOARD_DIST, rel);
+  if (abs !== BOARD_DIST && !abs.startsWith(BOARD_DIST + path12.sep)) return notFound();
   let data;
   try {
     data = fs13.readFileSync(abs);
   } catch {
     return notFound();
   }
-  const ext = path11.extname(abs).toLowerCase();
+  const ext = path12.extname(abs).toLowerCase();
   const headers = {
     "content-type": MIME[ext] || "application/octet-stream",
     "content-length": data.length,
@@ -11336,7 +11841,7 @@ function startAgentsPoll(core2) {
 
 // scripts/fleetd/payload-capture.mjs
 import fs14 from "node:fs";
-import path12 from "node:path";
+import path13 from "node:path";
 var MAX_FILE_BYTES = 1e6;
 var MAX_PAYLOAD_BYTES = 64e3;
 var PER_EVENT = 3;
@@ -11415,7 +11920,7 @@ function createPayloadCapture(homeDir, {
 } = {}) {
   if (!enabled) return NOOP;
   const exactSecrets = secrets.filter((s) => typeof s === "string" && s.length > 0);
-  const file = path12.join(homeDir, "hook-payloads.jsonl");
+  const file = path13.join(homeDir, "hook-payloads.jsonl");
   const counts = /* @__PURE__ */ new Map();
   try {
     fs14.chmodSync(file, 384);
@@ -11926,7 +12431,7 @@ function createMdns({ port, name = "fleetdeck", instance = "Fleet Deck", address
 
 // scripts/fleetd/takeover.mjs
 import fs15 from "node:fs";
-import path13 from "node:path";
+import path14 from "node:path";
 function pidRecord(text) {
   try {
     const parsed = JSON.parse(String(text));
@@ -11949,7 +12454,7 @@ function pidIsLive(pid) {
 function livePidLooksLikeFleetd(pid) {
   if (process.platform !== "linux") return true;
   try {
-    const executable = path13.basename(fs15.readlinkSync(`/proc/${pid}/exe`)).replace(/ \(deleted\)$/, "");
+    const executable = path14.basename(fs15.readlinkSync(`/proc/${pid}/exe`)).replace(/ \(deleted\)$/, "");
     const argv = fs15.readFileSync(`/proc/${pid}/cmdline`).toString("utf8").split("\0").filter(Boolean);
     const nodeLike = /^(?:node|nodejs|fleetd)$/i.test(executable);
     const fleetdScript = argv.some((arg) => /(?:^|[/\\])fleetd(?:\.bundle)?\.mjs$/.test(arg));
@@ -11960,11 +12465,12 @@ function livePidLooksLikeFleetd(pid) {
 }
 
 // scripts/fleetd/fleetd.mjs
-var __dirname = path14.dirname(fileURLToPath2(import.meta.url));
+var __dirname = path15.dirname(fileURLToPath2(import.meta.url));
 var PORT = resolvePort();
 var BIND = (process.env.FLEETDECK_BIND || "127.0.0.1").trim() || "127.0.0.1";
 var LAN_MODE = !isLoopbackAddress(BIND);
 var HOME = resolveHome();
+process.env.FLEETDECK_HOME = HOME;
 var MANAGED = process.env.FLEETDECK_MANAGED === "1";
 process.on("unhandledRejection", (reason) => {
   console.error("fleetd unhandled rejection (daemon kept alive):", reason);
@@ -11990,7 +12496,7 @@ try {
   fs16.chmodSync(HOME, 448);
 } catch {
 }
-var PID_FILE = path14.join(HOME, "fleetd.pid");
+var PID_FILE = path15.join(HOME, "fleetd.pid");
 var ownsPidFile = false;
 function removeOwnedPidFile() {
   if (!ownsPidFile) return;
@@ -12059,7 +12565,7 @@ if (PROXY_AUTH === "trust" && !TRUSTED_ORIGINS.length) {
 }
 var REQUIRE_TOKEN = (process.env.FLEETDECK_REQUIRE_TOKEN || "").trim().toLowerCase() === "on";
 var TOKEN_REQUIRED = LAN_MODE || REQUIRE_TOKEN || TRUSTED_ORIGINS.length > 0 && PROXY_AUTH === "token";
-var TOKEN_FILE = path14.join(HOME, "token");
+var TOKEN_FILE = path15.join(HOME, "token");
 var TOKEN;
 if (Object.hasOwn(process.env, "FLEETDECK_TOKEN")) {
   TOKEN = String(process.env.FLEETDECK_TOKEN).trim();
@@ -12123,7 +12629,7 @@ if (versionOverride) {
   version = versionOverride;
 } else {
   try {
-    version = JSON.parse(fs16.readFileSync(path14.resolve(__dirname, "../../package.json"), "utf8")).version || version;
+    version = JSON.parse(fs16.readFileSync(path15.resolve(__dirname, "../../package.json"), "utf8")).version || version;
   } catch {
   }
 }
@@ -12135,7 +12641,7 @@ function mdnsInstanceName() {
     return "Fleet Deck";
   }
 }
-var DB_FILE = path14.join(HOME, "fleetd.db");
+var DB_FILE = path15.join(HOME, "fleetd.db");
 var db = openDb(DB_FILE);
 var core = createCore(db, { port: PORT, version });
 var MDNS_ENABLED = LAN_MODE && process.env.FLEETDECK_MDNS?.trim().toLowerCase() !== "off";

@@ -49,7 +49,7 @@ That's it. Your next `claude` — any terminal, any repo, no wrapper, no launche
 
 > **One thing to know about this channel:** a marketplace install tracks the repo's **default branch**, not a pinned release — every push to `main` runs at your next SessionStart. That's how we develop it, and the pipeline is gated (CODEOWNERS, hook-integrity CI, human-approved npm publishes), but if you want *releases and only releases*, the npm channel ships nothing else: `npm i -g fleetdeck` for [standalone mode](#standalone-mode), or pin your marketplace clone to a tag.
 
-Requires **Node 22.5+** — and that's the whole list. There is nothing to `npm install`: the daemon ships as one bundled file and keeps its state in Node's built-in `node:sqlite`. Add **tmux** if you want the board to spawn workers or open their panes in the browser; everything else works without it. Linux, WSL2 and macOS. Windows-native is untested — if you try it, tell us what broke.
+Requires **Node 22.5+**. There is nothing to `npm install`: the daemon ships as one bundled file and keeps its state in Node's built-in `node:sqlite`. Add **tmux 3.4+** if you want the board to spawn workers or open their panes in the browser; Fleet Deck relies on 3.4's no-start probe to avoid silently attaching to a replacement server. Everything else works without tmux. Linux, WSL2 and macOS. Windows-native is untested — if you try it, tell us what broke.
 
 <details>
 <summary>Working on Fleet Deck itself, or running it from a fork</summary>
