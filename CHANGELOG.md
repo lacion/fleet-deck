@@ -5,6 +5,70 @@ All notable changes to Fleet Deck are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.0] - 2026-07-22
+
+Losing the tmux server took the whole board with it — silently, and then
+permanently. Every spawn vanished at once with nothing said about why, and from
+then on ⟲ revive answered `503 tmux window lookup failed; revive held to avoid a
+duplicate session` forever, with no way back except starting a tmux server by
+hand. This release makes that survivable: Fleet Deck now watches the tmux server
+it depends on, says plainly when it dies, settles the sessions that went down
+with it so they can be revived, and stands a fresh server back up.
+
+### Added
+
+- **A tmux server watchdog.** The liveness tick was the only thing watching
+  tmux and it watched in silence, so losing the tmux server looked like every
+  spawn dying at once for no stated reason. Per-window absence is deliberately
+  UNKNOWN at runtime — right for one window, wrong for the whole server — which
+  meant a SIGKILLed tmux left every row `live` forever: the board kept showing
+  panes that no longer existed and ⟲ revive answered `409 spawn is live, not
+  revivable`, with no way for a human to say "it's dead, bring it back". The
+  tick now asks the one question that separates a healthy-but-empty server from
+  a dead one, and acts only on proof (a death certificate plus tmux's own
+  absence verdict — a pane cannot outlive the server that ran it):
+  - the loss is announced once — `💀 the tmux server died — N spawn(s) went
+    with it; ⟲ revive brings them back`;
+  - the rows it took down are settled to `gone`, so Revive is offered instead
+    of a 409, and their cards go offline with a `claude --resume` note;
+  - a fresh fleet session is stood back up, so the board is usable again and
+    the next Revive lands on a live server.
+
+  It never relaunches an agent: resuming one spends money, so that decision
+  stays with the human. A tmux that merely stops answering is reported too
+  (`⚠ tmux is not answering — holding every card as-is until it does`, once,
+  after three consecutive failures, with a matching recovery line) and still
+  condemns nothing.
+
+### Fixed
+
+- **Revive no longer wedges permanently when the tmux server dies.** Losing the
+  tmux server took the whole board with it: every later Revive, Adopt and `/rc`
+  answered `503 tmux window lookup failed; revive held to avoid a duplicate
+  session`, forever, with no way back except starting a tmux server by hand.
+  Proving the recorded owner dead (ESRCH) is what proves its panes died with it
+  — and retiring the claim *destroyed that proof at the instant it was
+  obtained*, so exactly one call could answer "empty" and every call after it
+  went back to UNKNOWN. The liveness tick consumed that single recovery seconds
+  after the crash, and the refusal could not heal, because those three callers
+  ask "is this window free?" *before* the only code that ever creates a tmux
+  server. The proof is now kept as a death certificate
+  (`tmux-generation-<port>.retired`) that outlives the claim it replaced and is
+  cleared by the next successful claim, so absence is a stable answer and the
+  fleet comes back on the first click. A home that never claimed a server still
+  reports UNKNOWN — with no certificate there is no evidence, and a silent
+  socket is exactly what a live server behind an unlinked socket looks like.
+- **A failed tmux probe is no longer mistaken for an empty fleet.** Only tmux's
+  own two absence verdicts (`no server running on …`, `error connecting to …
+  (No such file or directory)`) count as proof that nothing is listening. A
+  timeout, a shadowed or missing `tmux` binary, an unreadable socket directory
+  or fork exhaustion stays UNKNOWN and fails closed — previously any of them
+  could have told boot reconciliation that a board full of live panes was gone.
+- **`ensureSession` can no longer report success without a tmux server.**
+  `has-session` is a predicate, so an authoritatively-empty short circuit
+  (correct for a listing: there is nothing to list) must not be read as "the
+  session exists".
+
 ## [0.16.1] - 2026-07-22
 
 0.16.0's loopback power gates assumed someone saw the daemon print its
@@ -385,6 +449,9 @@ Initial public release.
 - A brainless orchestrator: `assign auto` routes a task to the best existing session with a SQL query, not a model call — the core makes zero model calls.
 - One-command plugin install with a self-contained daemon bundle (`node:sqlite` state, nothing to `npm install`); the first session's SessionStart hook elects and launches the daemon. MIT licensed.
 
+[0.17.0]: https://github.com/lacion/fleet-deck/compare/v0.16.1...v0.17.0
+[0.16.1]: https://github.com/lacion/fleet-deck/compare/v0.16.0...v0.16.1
+[0.16.0]: https://github.com/lacion/fleet-deck/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/lacion/fleet-deck/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/lacion/fleet-deck/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/lacion/fleet-deck/compare/v0.12.0...v0.13.0
