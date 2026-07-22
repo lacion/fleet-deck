@@ -13,7 +13,7 @@
 Run more than two or three Claude Code sessions and you lose track of them: which terminal is which, which one is blocked on a permission prompt, and which two are editing the same file. Fleet Deck puts all of them on one local board at **http://127.0.0.1:4711**, with a callsign, a live status column, and a mailbox each.
 
 <p align="center">
-  <img src="docs/assets/fleet-deck-demo.gif" alt="The board: sessions working, a conflict flaring, a permission answered from the rail, a plan captured." width="100%">
+  <img src="docs/assets/fleet-deck-demo.gif" alt="The board: four agents working one repo in separate worktrees, cards moving between columns as each turn lands, and the conflict radar flaring when two of them touch the same file." width="100%">
 </p>
 
 ## What it does
