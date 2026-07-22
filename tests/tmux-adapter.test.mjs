@@ -10,6 +10,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { randomBytes, randomInt, randomUUID } from 'node:crypto';
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -182,6 +183,87 @@ exit 1
   assert.equal(readFileSync(creations, 'utf8').trim().split('\n').length, 1, 'expected generation forbids replacement creation');
 });
 
+// Absence is a VERDICT, not a failed probe. Treating every unsuccessful tmux
+// invocation as "the fleet is empty" would let one timed-out or shadowed tmux
+// tell boot reconciliation to tombstone a board full of live panes, so only the
+// two messages tmux itself uses for "nothing is listening here" may be
+// authoritative. Everything else stays UNKNOWN and fails closed.
+test("only tmux's own absence verdict is authoritative; a failed probe stays UNKNOWN", async (t) => {
+  const port = 29_990;
+  const dir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-tmux-absence-'));
+  const fakeTmux = path.join(dir, 'tmux');
+  const previous = new Map([
+    ['PATH', process.env.PATH],
+    ['FLEETDECK_HOME', process.env.FLEETDECK_HOME],
+    ['FLEETDECK_TMUX_SOCKET', process.env.FLEETDECK_TMUX_SOCKET],
+    ['FLEETDECK_FAKE_TMUX_STDERR', process.env.FLEETDECK_FAKE_TMUX_STDERR],
+  ]);
+  // Fails every command, including new-session, with a caller-chosen stderr.
+  writeFileSync(fakeTmux, `#!/bin/sh
+printf '%s\\n' "$FLEETDECK_FAKE_TMUX_STDERR" >&2
+exit 1
+`);
+  chmodSync(fakeTmux, 0o700);
+  process.env.PATH = `${dir}:${process.env.PATH}`;
+  process.env.FLEETDECK_HOME = dir;
+  process.env.FLEETDECK_TMUX_SOCKET = 'adapter-absence-contract';
+  t.after(() => {
+    restoreEnv(previous);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const ABSENCE_VERDICTS = [
+    'no server running on /tmp/tmux-1000/adapter-absence-contract',
+    'error connecting to /tmp/tmux-1000/adapter-absence-contract (No such file or directory)',
+  ];
+  const TRANSPORT_FAULTS = [
+    'connection timed out',
+    'directory /tmp/tmux-1000 has unsafe permissions',
+    'error connecting to /tmp/tmux-1000/x (File name too long)',
+    'lost server',
+    '',
+  ];
+
+  // With no death certificate on record, even tmux's own absence verdict proves
+  // nothing about panes: this is exactly what a live server behind an unlinked
+  // socket looks like.
+  for (const stderr of [...ABSENCE_VERDICTS, ...TRANSPORT_FAULTS]) {
+    process.env.FLEETDECK_FAKE_TMUX_STDERR = stderr;
+    assert.equal(
+      await listScopedWindows(port),
+      null,
+      `unproven absence stays UNKNOWN: ${stderr || '(silent failure)'}`,
+    );
+    // has-session is a predicate: absence must never be read as "it exists".
+    await assert.rejects(
+      ensureSession(port),
+      /generation unavailable|could not create session/,
+      'an unreachable server never fabricates a session that was never created',
+    );
+  }
+  assert.equal(existsSync(path.join(dir, `tmux-generation-${port}`)), false, 'reading claims nothing');
+  assert.equal(existsSync(path.join(dir, `tmux-generation-${port}.retired`)), false, 'and invents no proof');
+
+  // Plant a death certificate: an owner we once claimed, proven gone by ESRCH.
+  writeFileSync(
+    path.join(dir, `tmux-generation-${port}.retired`),
+    `${JSON.stringify({ retiredGeneration: randomUUID(), retiredServerPid: 424242 })}\n`,
+  );
+  for (const verdict of ABSENCE_VERDICTS) {
+    process.env.FLEETDECK_FAKE_TMUX_STDERR = verdict;
+    assert.deepEqual(await listScopedWindows(port), [], `proof + absence verdict is empty: ${verdict}`);
+  }
+  // ...but the certificate never upgrades a probe that merely failed.
+  for (const fault of TRANSPORT_FAULTS) {
+    process.env.FLEETDECK_FAKE_TMUX_STDERR = fault;
+    assert.equal(
+      await listScopedWindows(port),
+      null,
+      `transport fault stays UNKNOWN even with proof: ${fault || '(silent failure)'}`,
+    );
+  }
+});
+
 test('first run creates and claims a tmux server with an owner-only generation file', { skip: !tmuxOk() && 'tmux server unavailable' }, async (t) => {
   const port = 24_000 + randomInt(500);
   const env = isolatedTmuxEnv('fleetdeck-tmux-generation-first-');
@@ -237,6 +319,128 @@ test('ensureSession retires a normally exited tmux owner and claims a new genera
   assert.notEqual(second.serverPid, first.serverPid);
   assert.notEqual(second.generation, first.generation);
   assert.ok(pidAlive(second.serverPid));
+});
+
+// REGRESSION (observed 2026-07-22 on a live fleet): retiring a proven-dead
+// owner used to answer authoritativeEmpty exactly ONCE — from the very call
+// that unlinked the file. Every later lookup saw no claim and no server and
+// answered UNKNOWN, so revive/adopt/rc returned "tmux window lookup failed;
+// revive held to avoid a duplicate session" forever. The liveness tick consumed
+// the single recovery seconds after the crash, long before a human could click
+// Revive, and nothing could heal it because those callers ask their question
+// BEFORE ensureSession — the only code that creates a server. One dead tmux
+// server therefore wedged the whole board permanently. Lookups must stay
+// authoritatively empty for as long as the owner is gone.
+test('a dead tmux owner keeps its old fleet authoritatively empty across repeated lookups', { skip: !tmuxOk() && 'tmux server unavailable' }, async (t) => {
+  const port = 24_900 + randomInt(400);
+  const env = isolatedTmuxEnv('fleetdeck-tmux-generation-wedge-');
+  let newPid = null;
+  t.after(async () => {
+    await stopPid(newPid);
+    restoreEnv(env.previous);
+    rmSync(env.home, { recursive: true, force: true });
+  });
+
+  assert.equal(await ensureSession(port), sessionName(port));
+  const file = path.join(env.home, `tmux-generation-${port}`);
+  const first = JSON.parse(readFileSync(file, 'utf8'));
+
+  tmux(env.socket, ['kill-server']);
+  for (let i = 0; i < 50 && pidAlive(first.serverPid); i += 1) {
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  assert.equal(pidAlive(first.serverPid), false, 'the persisted owner is definitively dead');
+
+  // The first call retires the dead claim; the ones after it hold no claim at
+  // all. All three answer the same, or a human clicking Revive after the
+  // liveness tick has already run gets a permanent refusal.
+  assert.deepEqual(await listScopedWindows(port), [], 'retiring lookup is authoritatively empty');
+  assert.deepEqual(await listScopedWindows(port), [], 'second lookup is still authoritatively empty');
+  assert.deepEqual(await listScopedWindows(port), [], 'third lookup is still authoritatively empty');
+  assert.equal(existsSync(file), false, 'the dead claim stays retired');
+  assert.equal(existsSync(`${file}.retired`), true, 'the death certificate outlives the claim it replaced');
+  const certificate = JSON.parse(readFileSync(`${file}.retired`, 'utf8'));
+  assert.equal(certificate.retiredServerPid, first.serverPid, 'the certificate names the PID it proved dead');
+  assert.equal(certificate.retiredGeneration, first.generation);
+  assert.equal(statSync(`${file}.retired`).mode & 0o777, 0o600, 'certificate is owner-only');
+
+  // killWindowVerified answers the same question for revive's remnant cleanup:
+  // with the owner gone the window is authoritatively gone, never an error.
+  const killed = await killWindowVerified(`fd${port}-heron`);
+  assert.equal(killed.gone, true, 'a window on a dead owner is gone, not UNKNOWN');
+  assert.equal(killed.error, undefined);
+
+  // And the fleet must still be able to come back up afterwards.
+  assert.equal(await ensureSession(port), sessionName(port));
+  const second = JSON.parse(readFileSync(file, 'utf8'));
+  newPid = second.serverPid;
+  assert.notEqual(second.serverPid, first.serverPid);
+  assert.ok(pidAlive(second.serverPid));
+  assert.equal(
+    existsSync(`${file}.retired`),
+    false,
+    'a live claim supersedes the certificate — the old proof must not outlive this server',
+  );
+  assert.deepEqual(await listScopedWindows(port), [], 'the reclaimed server answers from its own identity');
+});
+
+test('a home that never claimed a server stays UNKNOWN about an absent fleet', async (t) => {
+  // The other side of the coin: absence is only ever licensed by a death
+  // certificate. A home that never claimed a server has no evidence at all, and
+  // "nothing answering the socket" is precisely what a LIVE server whose socket
+  // was unlinked looks like — its panes would still be running. Fail closed.
+  // tests/spawn.test.mjs pins the same contract from the kill side.
+  const port = 25_500 + randomInt(400);
+  const env = isolatedTmuxEnv('fleetdeck-tmux-generation-firstrun-');
+  t.after(() => {
+    restoreEnv(env.previous);
+    rmSync(env.home, { recursive: true, force: true });
+  });
+
+  assert.equal(await listScopedWindows(port), null);
+  assert.equal(
+    existsSync(path.join(env.home, `tmux-generation-${port}`)),
+    false,
+    'reading an absent fleet claims nothing',
+  );
+  assert.equal(
+    existsSync(path.join(env.home, `tmux-generation-${port}.retired`)),
+    false,
+    'and never invents a death certificate it did not earn',
+  );
+});
+
+// The boundary the fix must NOT cross: a claimed server that is still ALIVE but
+// whose socket was unlinked out from under us. Its panes are running and
+// unreachable, so an empty listing is a lie and must stay UNKNOWN — this is the
+// case the whole generation identity exists to catch, and it is distinguished
+// from the retired-owner case above only by the recorded PID still being alive.
+test('an unreachable but still-live claimed server keeps lookups UNKNOWN', { skip: !tmuxOk() && 'tmux server unavailable' }, async (t) => {
+  const port = 25_900 + randomInt(400);
+  const env = isolatedTmuxEnv('fleetdeck-tmux-generation-livesocket-');
+  const fleetWindow = `fd${port}-orca`;
+  let originalPid = null;
+  t.after(async () => {
+    await stopPid(originalPid);
+    restoreEnv(env.previous);
+    rmSync(env.home, { recursive: true, force: true });
+  });
+
+  tmux(env.socket, ['-f', '/dev/null', 'new-session', '-d', '-s', sessionName(port), '-n', fleetWindow, 'sleep 3600']);
+  originalPid = Number(tmux(env.socket, ['display-message', '-p', '#{pid}']));
+  assert.equal((await listScopedWindows(port))?.[0]?.window, fleetWindow, 'the live fleet window is claimed');
+
+  unlinkSync(env.socketPath); // server still running, now unreachable by label
+  assert.equal(await listScopedWindows(port), null, 'a live owner we cannot reach is UNKNOWN, never empty');
+  assert.equal(
+    existsSync(path.join(env.home, `tmux-generation-${port}`)),
+    true,
+    'a claim whose PID is alive is never retired',
+  );
+  const killed = await killWindowVerified(fleetWindow);
+  assert.equal(killed.gone, undefined, 'an unreachable live window is never authoritatively gone');
+  assert.match(killed.error, /generation/i);
+  assert.ok(pidAlive(originalPid), 'the original server and its panes are left alone');
 });
 
 test('an unlinked socket replacement cannot impersonate the claimed tmux server', { skip: !tmuxOk() && 'tmux server unavailable' }, async (t) => {

@@ -1499,6 +1499,60 @@ export function createSpawns(ctx) {
   // single transient dead read (~one tick) while still condemning a genuinely
   // dead pane on the very next tick.
   const CONDEMN_DEAD_READS = 2;
+
+  // ------------------------------------------------------ tmux server watchdog
+  // The liveness tick is the only thing watching tmux, and it watched SILENTLY:
+  // when tmux stopped answering, the board simply froze — every card kept its
+  // last state and nothing said why. Announce the transition ONCE (not every
+  // ~10s tick), after enough consecutive failures to ride out a blip, and
+  // announce the recovery too, so "the board went quiet" is never a mystery.
+  const TMUX_UNREACHABLE_READS = 3;
+  const tmuxWatchdog = { unreachableStreak: 0, announcedUnreachable: false };
+  function noteTmuxUnreachable() {
+    // Two ways of having no tmux are NOT outages and must stay silent, or every
+    // tick turns into a false alarm: the FLEETDECK_SPAWN_CMD override seam runs
+    // without tmux BY CONTRACT (derive.mjs reads a null listing as authoritative
+    // absence there), and a box with no tmux installed never had a server to
+    // lose. Only a tmux that should be answering and isn't is news.
+    if (tmuxAdapter.spawnOverrideCmd?.() || tmuxAdapter.hasTmux?.() === false) return;
+    tmuxWatchdog.unreachableStreak += 1;
+    if (tmuxWatchdog.announcedUnreachable) return;
+    if (tmuxWatchdog.unreachableStreak < TMUX_UNREACHABLE_READS) return;
+    tmuxWatchdog.announcedUnreachable = true;
+    tick('⚠ tmux is not answering — holding every card as-is until it does');
+  }
+
+  /** The fleet's tmux server is PROVEN gone (see tmuxAdapter.fleetServerAbsent).
+   * Settle the rows it took down and stand a fresh server back up, so the board
+   * stops showing panes that no longer exist and the human's ⟲ revive has
+   * somewhere to land. Deliberately does NOT relaunch anyone: resuming an agent
+   * spends money, so that decision stays with the human. */
+  async function mournFleetServer(rows) {
+    tick(`💀 the tmux server died — ${rows.length} spawn(s) went with it; ⟲ revive brings them back`);
+    for (const row of rows) {
+      q.setSpawnStatus.run('gone', row.spawn_id);
+      forgetSpawn(row.spawn_id);
+      const c = q.getSession.get(row.session_id);
+      if (c && c.ended_at == null) {
+        tombstoneCard(row.session_id, {
+          note: `tmux server died — resume with claude --resume ${row.session_id}`,
+        });
+      }
+      logEvent(row.session_id, 'SpawnGone', null, 'tmux server died');
+    }
+    onMutate();
+    // Recovery. Claiming a fresh server also clears the death certificate, so
+    // fleetServerAbsent goes false and this cannot fire twice for one death.
+    try {
+      await tmuxAdapter.ensureSession(port);
+      tick('⟲ tmux server restarted — the fleet is ready to revive');
+    } catch (err) {
+      // Revive still works without a server (it creates one), so this is a
+      // convenience, not a dependency. Say so and let the next tick retry.
+      tick(`⚠ could not restart the tmux server (${String(err?.message || err).slice(0, 80)})`);
+    }
+  }
+
   async function spawnLivenessTick() {
     const rows = q.activeSpawns.all();
     // BUG 3: resurrection candidates count too — if EVERY spawn is already
@@ -1507,7 +1561,26 @@ export function createSpawns(ctx) {
     const resurrectable = q.resurrectableSpawns.all();
     if (!rows.length && !resurrectable.length && !spawnState.orphans.length) return;
     const wins = await tmuxAdapter.listScopedWindows(port);
-    if (wins === null) return; // tmux UNKNOWN: preserve rows, streaks, and orphans
+    if (wins === null) { noteTmuxUnreachable(); return; } // UNKNOWN: preserve rows, streaks, orphans
+    tmuxWatchdog.unreachableStreak = 0;
+    if (tmuxWatchdog.announcedUnreachable) {
+      tmuxWatchdog.announcedUnreachable = false;
+      tick('✓ tmux is answering again');
+    }
+    // TMUX SERVER WATCHDOG. Per-window absence is deliberately UNKNOWN below
+    // ("gone/unreachable at runtime"), which is right for ONE window and wrong
+    // for the whole server: when the tmux server itself dies, every row keeps
+    // its 'live' status forever, the board keeps showing cards that no longer
+    // exist, and Revive answers 409 "spawn is live, not revivable" — the human
+    // is stuck with no way to say "it's dead, bring it back". Ask the one
+    // question that separates a healthy-but-empty server from a dead one, and
+    // act only on proof: a pane cannot outlive the server that ran it, so a
+    // proven-absent server settles its rows without probing panes that are
+    // provably gone. Same evidence boot reconciliation already condemns on.
+    if (!wins.length && rows.length && await tmuxAdapter.fleetServerAbsent?.(port)) {
+      await mournFleetServer(rows);
+      return;
+    }
     for (const row of rows) {
       const win = wins.find(w => w.window === row.tmux_window);
       if (!win) continue; // gone/unreachable at runtime = unknown; boot reconciliation owns 'gone'
