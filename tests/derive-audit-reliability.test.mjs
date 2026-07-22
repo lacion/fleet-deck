@@ -229,6 +229,95 @@ test('H-R2: boot reconciliation leaves rows UNKNOWN on list failure without crea
   }
 });
 
+// tmux server watchdog. Per-window absence is UNKNOWN at runtime, which is
+// right for one window and wrong for the whole server: a SIGKILLed tmux left
+// every row 'live' forever, so the board showed panes that no longer existed
+// and revive answered 409 "spawn is live, not revivable" — no way out. The
+// watchdog acts ONLY on proof that the server itself is gone.
+test('tmux watchdog: a proven-dead server settles its fleet, says so, and stands a new server up', async (t) => {
+  const userHome = mkdtempSync(path.join(tmpdir(), 'fd-watchdog-home-'));
+  const cwd = mkdtempSync(path.join(tmpdir(), 'fd-watchdog-cwd-'));
+  t.after(() => {
+    rmSync(userHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  let serverAbsent = false;
+  const ensured = [];
+  const tmux = makeAdapter(4711, {
+    fleetServerAbsent: async () => serverAbsent,
+    ensureSession: async p => { ensured.push(p); return `fleetdeck-${p}`; },
+  });
+  const { db, core, state } = memoryCore(t, { tmux, env: { HOME: userHome } });
+
+  const { body } = await core.spawn({ cwd });
+  const { spawn_id: spawnId, session_id: sid } = body;
+  core.hookSessionStart({ session_id: sid, cwd, source: 'startup' });
+  db.prepare("UPDATE spawns SET status='live' WHERE spawn_id=?").run(spawnId);
+  const statusOf = () => db.prepare('SELECT status FROM spawns WHERE spawn_id=?').get(spawnId).status;
+  ensured.length = 0; // spawn() stood the fleet session up; watch only what the tick does
+
+  // A HEALTHY server that simply lists no windows must never condemn: the
+  // window went missing, which is exactly the UNKNOWN the tick already owns.
+  state.windows.length = 0;
+  await core.spawnLivenessTick();
+  assert.equal(statusOf(), 'live', 'an empty listing from a reachable server condemns nothing');
+  assert.deepEqual(ensured, [], 'and never restarts a server that is already there');
+
+  // Now the server itself is provably gone — a pane cannot outlive it.
+  serverAbsent = true;
+  await core.spawnLivenessTick();
+  assert.equal(statusOf(), 'gone', 'the rows it took down are settled, so revive is offered');
+  const died = core.snapshot().ticker.filter(x => /tmux server died/.test(x.msg));
+  assert.equal(died.length, 1, 'the loss is announced exactly once');
+  assert.match(died[0].msg, /1 spawn\(s\) went with it/);
+  assert.deepEqual(ensured, [tmux.port], 'and a fresh fleet session is stood back up');
+
+  // Self-limiting: the fleet is settled, so a second tick re-announces nothing.
+  await core.spawnLivenessTick();
+  assert.equal(
+    core.snapshot().ticker.filter(x => /tmux server died/.test(x.msg)).length,
+    1,
+    'the watchdog does not re-announce a death it already settled',
+  );
+});
+
+test('tmux watchdog: an unreachable tmux is announced once and never condemns anything', async (t) => {
+  const cwd = mkdtempSync(path.join(tmpdir(), 'fd-watchdog-unknown-'));
+  t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+  let reachable = true;
+  const tmux = makeAdapter(4711, {
+    listScopedWindows: async () => (reachable ? [] : null),
+    // A failed probe must never be mistaken for proof the server is gone.
+    fleetServerAbsent: async () => false,
+  });
+  const { db, core } = memoryCore(t, { tmux });
+  const { body } = await core.spawn({ cwd });
+  db.prepare("UPDATE spawns SET status='live' WHERE spawn_id=?").run(body.spawn_id);
+
+  reachable = false;
+  const held = () => core.snapshot().ticker.filter(x => /tmux is not answering/.test(x.msg)).length;
+  await core.spawnLivenessTick();
+  assert.equal(held(), 0, 'a single failed read is a blip, not news');
+  await core.spawnLivenessTick();
+  await core.spawnLivenessTick();
+  assert.equal(held(), 1, 'a sustained outage is announced');
+  await core.spawnLivenessTick();
+  assert.equal(held(), 1, 'and announced only once');
+  assert.equal(
+    db.prepare('SELECT status FROM spawns WHERE spawn_id=?').get(body.spawn_id).status,
+    'live',
+    'an unreachable tmux never condemns a row',
+  );
+
+  reachable = true;
+  await core.spawnLivenessTick();
+  assert.ok(
+    core.snapshot().ticker.some(x => /tmux is answering again/.test(x.msg)),
+    'recovery is announced too, so a frozen board is never a mystery',
+  );
+});
+
 test('revive and adopt return 5xx on UNKNOWN window lookup without launching', async (t) => {
   const userHome = mkdtempSync(path.join(tmpdir(), 'fd-unknown-home-'));
   const cwd = mkdtempSync(path.join(tmpdir(), 'fd-unknown-cwd-'));

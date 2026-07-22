@@ -86,6 +86,15 @@ function generationPort(port) {
 
 const generationOption = port => `@fleetdeck_generation_${generationPort(port)}`;
 const generationFile = (home, port) => path.join(home, `tmux-generation-${generationPort(port)}`);
+// The DEATH CERTIFICATE for a retired claim, kept beside it. Proving an owner
+// dead by ESRCH is the only evidence that its panes died with it, and unlinking
+// the claim used to destroy that evidence at the instant it was obtained: the
+// retiring call could answer "authoritatively empty" and every call after it was
+// back to UNKNOWN. Recording the proof instead makes absence a STABLE answer, so
+// revive/adopt/rc keep working rather than wedging until a human starts a tmux
+// server by hand. Kept in its own file so claiming a replacement server still
+// uses the first-writer-wins link() publish on the claim path, untouched.
+const retiredGenerationFile = (home, port) => `${generationFile(home, port)}.retired`;
 
 function generationHome() {
   const home = process.env.FLEETDECK_HOME?.trim();
@@ -181,6 +190,18 @@ async function replacePersistedGeneration(home, port, record) {
   return readPersistedGeneration(home, port);
 }
 
+// Absence has to be PROVEN, never inferred from a probe that merely failed.
+// tmux has exactly two verdicts that mean "nothing is listening here": a socket
+// file with no listener behind it (`no server running on <path>`) and no socket
+// file at all (`error connecting to <path> (No such file or directory)`).
+// Everything else that makes the probe fail — a timeout, a missing or shadowed
+// tmux binary, EACCES on the socket directory, fork exhaustion, an over-long
+// socket path — is a TRANSPORT fault that says nothing about whether panes are
+// running. Only the two verdicts below may be treated as authoritative absence;
+// conflating them with transport faults would let a single broken tmux
+// invocation tell boot reconciliation that a live fleet is gone.
+const SERVER_ABSENT_RE = /(?:^|\n)(?:no server running on |error connecting to .*\(No such file or directory\))/i;
+
 async function readServerGeneration(port) {
   // Read both fields in one command from one reachable server. Separate tmux
   // clients could straddle a socket replacement and manufacture an identity no
@@ -188,12 +209,20 @@ async function readServerGeneration(port) {
   const result = await tmuxResult([
     'display-message', '-p', `#{${generationOption(port)}}${FIELD_SEP}#{pid}`,
   ], { noStart: true });
-  if (!result.ok) return { reachable: false, generation: null, serverPid: null };
+  if (!result.ok) {
+    return {
+      reachable: false,
+      absent: SERVER_ABSENT_RE.test(String(result.error ?? '')),
+      generation: null,
+      serverPid: null,
+    };
+  }
   const value = result.out.endsWith('\n') ? result.out.slice(0, -1) : result.out;
   const [generation, pidText, ...extra] = value.split(FIELD_SEP);
   const serverPid = Number(pidText);
   return {
     reachable: true,
+    absent: false,
     generation: GENERATION_UUID_RE.test(generation) ? generation.toLowerCase() : null,
     serverPid: extra.length === 0 && Number.isSafeInteger(serverPid) && serverPid > 1 ? serverPid : null,
   };
@@ -213,12 +242,65 @@ function pidState(pid) {
 const sameRecord = (left, right) => !!left && !!right
   && left.generation === right.generation && left.serverPid === right.serverPid;
 
+/** Record the death certificate, then drop the claim. Written FIRST and by
+ * atomic rename: a crash between the two leaves both files, and the claim wins
+ * on the next read (a live claim is always more specific than a certificate for
+ * an older one), so the only cost is a stale certificate that the next
+ * successful claim clears. */
+async function recordRetiredGeneration(home, port, expected) {
+  const file = retiredGenerationFile(home, port);
+  const temp = path.join(home, `.${path.basename(file)}.${process.pid}.${randomUUID()}.tmp`);
+  let handle;
+  try {
+    handle = await open(temp, 'wx', 0o600);
+    await handle.writeFile(`${JSON.stringify({
+      retiredGeneration: expected.generation, retiredServerPid: expected.serverPid,
+    })}\n`, 'utf8');
+    await handle.chmod(0o600);
+    await handle.sync();
+    await handle.close();
+    handle = null;
+    await rename(temp, file);
+  } catch (err) {
+    throw new Error(`cannot record retired tmux generation (${err?.code || err?.message || err})`);
+  } finally {
+    try { await handle?.close(); } catch { /* primary error wins */ }
+    try { await unlink(temp); } catch (err) { if (err?.code !== 'ENOENT') { /* best-effort temp cleanup */ } }
+  }
+}
+
+/** Is a proven-dead owner on record for this port? O_NOFOLLOW for the same
+ * reason the claim read uses it. Anything unreadable proves nothing and is
+ * reported as absent-of-proof, which fails closed at the caller. */
+async function hasRetiredGeneration(home, port) {
+  let handle;
+  try {
+    handle = await open(retiredGenerationFile(home, port), fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+  } catch {
+    return false;
+  }
+  try {
+    return (await handle.stat()).isFile();
+  } catch {
+    return false;
+  } finally {
+    try { await handle.close(); } catch { /* proof-read only */ }
+  }
+}
+
+async function clearRetiredGeneration(home, port) {
+  try { await unlink(retiredGenerationFile(home, port)); } catch (err) {
+    if (err?.code !== 'ENOENT') { /* best-effort: a stale certificate only matters while unclaimed */ }
+  }
+}
+
 async function retireDeadGeneration(home, port, expected) {
   if (expected.serverPid === null || pidState(expected.serverPid) !== 'dead') return false;
   // Re-read and re-probe immediately before unlink. A changed record, reused
   // PID, EPERM, or any unknown result leaves the identity untouched.
   const current = await readPersistedGeneration(home, port);
   if (!sameRecord(current, expected) || pidState(expected.serverPid) !== 'dead') return false;
+  await recordRetiredGeneration(home, port, expected);
   try {
     await unlink(generationFile(home, port));
     return true;
@@ -253,19 +335,40 @@ async function prepareServerGenerationUnlocked(home, port) {
     }
     if (expected.serverPid !== null && await retireDeadGeneration(home, port, expected)) {
       // The recorded owner is definitively gone. Resume first-contact: claim a
-      // reachable replacement or let ensureSession create a fresh server. When
-      // no server is reachable, reads may treat the old fleet as authoritatively
-      // empty because the persisted owner PID was proven dead.
+      // reachable replacement, or fall through to the no-claim case below and
+      // let ensureSession create a fresh server.
       expected = null;
       server = await readServerGeneration(port);
-      if (!server.reachable) {
-        return { enabled: true, expected: null, verified: false, authoritativeEmpty: true };
-      }
     } else {
       return { enabled: true, expected, verified: false };
     }
   }
   if (!server.reachable) {
+    // Nothing answering the socket. An empty fleet is a CLAIM ABOUT LIVE PANES,
+    // so it needs proof, and a silent socket is not proof: an unlinked socket is
+    // indistinguishable from no server while the original tmux keeps running
+    // panes behind it. Only two facts together license "authoritatively empty":
+    //
+    //   1. a death certificate — we once claimed a server for this port and
+    //      proved that exact PID gone by ESRCH, which is what proves its panes
+    //      died with it. Absent a certificate (never claimed, or the home was
+    //      wiped) we have no evidence at all and must stay UNKNOWN, because the
+    //      live-server-behind-an-unlinked-socket case looks exactly like this.
+    //   2. server.absent — tmux's own absence verdict rather than a probe that
+    //      merely failed, so a timeout or a shadowed binary cannot impersonate
+    //      an empty fleet and have boot reconciliation tombstone live cards.
+    //
+    // Recording the certificate is what makes this STABLE. The proof used to be
+    // destroyed by the very call that obtained it (retire unlinked the claim),
+    // so exactly one call could answer empty and every later one said UNKNOWN —
+    // and UNKNOWN here cannot heal, because revive, adopt and /rc ask "is this
+    // window free?" BEFORE ensureSession, the only code that ever creates a
+    // server. Refusing them meant no server was created, so the next attempt
+    // refused too: one dead tmux server wedged the board permanently, and the
+    // liveness tick consumed the single recovery seconds after the crash.
+    if (server.absent && await hasRetiredGeneration(home, port)) {
+      return { enabled: true, expected: null, verified: false, authoritativeEmpty: true };
+    }
     return { enabled: true, expected: null, verified: false };
   }
 
@@ -286,6 +389,10 @@ async function prepareServerGenerationUnlocked(home, port) {
     generation: server.generation,
     serverPid: server.serverPid,
   });
+  // A live claim supersedes any death certificate: this port now has a server
+  // again, and the old owner's proof must not outlive it and later license an
+  // "empty" verdict about THIS server's panes.
+  await clearRetiredGeneration(home, port);
   // Re-read after publishing: a socket replacement between set/read/persist is
   // caught here, and a concurrent file claimant's first-writer value wins.
   server = await readServerGeneration(port);
@@ -335,6 +442,27 @@ async function generationVerifiedResult(port, args) {
   return { ok: true, out: result.out.slice(newline + 1), generation: state.expected.generation };
 }
 
+
+/** Can we PROVE that no tmux server is hosting this fleet right now?
+ *
+ * An empty window listing has two very different causes: a healthy server whose
+ * windows were killed, and a server that DIED taking every pane with it. Only
+ * the second is a fleet-wide loss, and only it licenses settling live rows
+ * without probing their panes — a pane cannot outlive the server that ran it.
+ *
+ * True requires the same proof an authoritatively-empty listing does: a death
+ * certificate for the server we claimed (its PID proven gone by ESRCH) AND
+ * tmux's own absence verdict. A reachable server, a failed probe, or no
+ * certificate all return false, so callers never act on a guess — the caller
+ * that condemns rows must never be the one to invent the evidence. */
+export async function fleetServerAbsent(port) {
+  try {
+    const state = await prepareServerGeneration(port);
+    return state.enabled === true && state.authoritativeEmpty === true;
+  } catch {
+    return false; // an unreadable identity proves nothing
+  }
+}
 
 // ------------------------------------------------------------- capability
 let probe = { available: false, reason: `tmux ${MIN_TMUX_VERSION}+ required`, at: 0 };
@@ -389,6 +517,13 @@ function exactTargetPort(target) {
 }
 
 // ----------------------------------------------------------------- session
+/** `has-session` is a PREDICATE: the ok-ness of the result IS the answer. An
+ * authoritatively-empty short circuit reports {ok:true, out:''} for every
+ * command, which is correct for a LISTING (there is nothing to list) and a lie
+ * for a predicate (there is no server, so the session cannot exist). Never let
+ * absence manufacture a session that was never created. */
+const sessionConfirmed = result => result.ok && !result.authoritativeEmpty;
+
 /** Ensure the detached daemon-owned session `fleetdeck-<port>` exists.
  * `=` prefix = exact session-name match (verified; prefix matching could
  * otherwise confuse fleetdeck-4711 with fleetdeck-47110). */
@@ -410,7 +545,7 @@ export async function ensureSession(port) {
       const claimed = await prepareServerGeneration(port);
       if (claimed.verified) {
         const confirmed = await generationVerifiedResult(port, ['has-session', '-t', '=' + name]);
-        if (confirmed.ok) return name;
+        if (sessionConfirmed(confirmed)) return name;
       }
       throw new Error(`tmux server generation could not be claimed for ${name}`);
     }
@@ -419,7 +554,7 @@ export async function ensureSession(port) {
   }
 
   const existing = await generationVerifiedResult(port, ['has-session', '-t', '=' + name]);
-  if (existing.ok) return name;
+  if (sessionConfirmed(existing)) return name;
 
   // -N is present in tmux 3.4+: if the verified server disappears, new-session
   // must fail rather than silently starting a replacement at the same label.
@@ -436,12 +571,12 @@ export async function ensureSession(port) {
   ], { noStart: true });
   if (created.ok && created.out === '') {
     const confirmed = await generationVerifiedResult(port, ['has-session', '-t', '=' + name]);
-    if (confirmed.ok) return name;
+    if (sessionConfirmed(confirmed)) return name;
   }
   // Lost a same-generation session-creation race? Accept only a fresh verified
   // exact-session probe, never an uncorroborated new-session failure.
   const raced = await generationVerifiedResult(port, ['has-session', '-t', '=' + name]);
-  if (raced.ok) return name;
+  if (sessionConfirmed(raced)) return name;
   throw new Error(`tmux could not create session ${name}`);
 }
 

@@ -4549,6 +4549,7 @@ __export(spawn_exports, {
   capturePane: () => capturePane,
   ensureSession: () => ensureSession,
   exactWindowTarget: () => exactWindowTarget,
+  fleetServerAbsent: () => fleetServerAbsent,
   hasTmux: () => hasTmux,
   killWindowVerified: () => killWindowVerified,
   launchOverride: () => launchOverride,
@@ -4679,6 +4680,7 @@ function generationPort(port) {
 }
 var generationOption = (port) => `@fleetdeck_generation_${generationPort(port)}`;
 var generationFile = (home, port) => path2.join(home, `tmux-generation-${generationPort(port)}`);
+var retiredGenerationFile = (home, port) => `${generationFile(home, port)}.retired`;
 function generationHome() {
   const home = process.env.FLEETDECK_HOME?.trim();
   return home || null;
@@ -4777,18 +4779,27 @@ async function replacePersistedGeneration(home, port, record) {
   }
   return readPersistedGeneration(home, port);
 }
+var SERVER_ABSENT_RE = /(?:^|\n)(?:no server running on |error connecting to .*\(No such file or directory\))/i;
 async function readServerGeneration(port) {
   const result = await tmuxResult([
     "display-message",
     "-p",
     `#{${generationOption(port)}}${FIELD_SEP}#{pid}`
   ], { noStart: true });
-  if (!result.ok) return { reachable: false, generation: null, serverPid: null };
+  if (!result.ok) {
+    return {
+      reachable: false,
+      absent: SERVER_ABSENT_RE.test(String(result.error ?? "")),
+      generation: null,
+      serverPid: null
+    };
+  }
   const value = result.out.endsWith("\n") ? result.out.slice(0, -1) : result.out;
   const [generation, pidText, ...extra] = value.split(FIELD_SEP);
   const serverPid = Number(pidText);
   return {
     reachable: true,
+    absent: false,
     generation: GENERATION_UUID_RE.test(generation) ? generation.toLowerCase() : null,
     serverPid: extra.length === 0 && Number.isSafeInteger(serverPid) && serverPid > 1 ? serverPid : null
   };
@@ -4804,10 +4815,68 @@ function pidState(pid) {
   }
 }
 var sameRecord = (left, right) => !!left && !!right && left.generation === right.generation && left.serverPid === right.serverPid;
+async function recordRetiredGeneration(home, port, expected) {
+  const file = retiredGenerationFile(home, port);
+  const temp = path2.join(home, `.${path2.basename(file)}.${process.pid}.${randomUUID()}.tmp`);
+  let handle;
+  try {
+    handle = await open(temp, "wx", 384);
+    await handle.writeFile(`${JSON.stringify({
+      retiredGeneration: expected.generation,
+      retiredServerPid: expected.serverPid
+    })}
+`, "utf8");
+    await handle.chmod(384);
+    await handle.sync();
+    await handle.close();
+    handle = null;
+    await rename(temp, file);
+  } catch (err) {
+    throw new Error(`cannot record retired tmux generation (${err?.code || err?.message || err})`);
+  } finally {
+    try {
+      await handle?.close();
+    } catch {
+    }
+    try {
+      await unlink(temp);
+    } catch (err) {
+      if (err?.code !== "ENOENT") {
+      }
+    }
+  }
+}
+async function hasRetiredGeneration(home, port) {
+  let handle;
+  try {
+    handle = await open(retiredGenerationFile(home, port), fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+  } catch {
+    return false;
+  }
+  try {
+    return (await handle.stat()).isFile();
+  } catch {
+    return false;
+  } finally {
+    try {
+      await handle.close();
+    } catch {
+    }
+  }
+}
+async function clearRetiredGeneration(home, port) {
+  try {
+    await unlink(retiredGenerationFile(home, port));
+  } catch (err) {
+    if (err?.code !== "ENOENT") {
+    }
+  }
+}
 async function retireDeadGeneration(home, port, expected) {
   if (expected.serverPid === null || pidState(expected.serverPid) !== "dead") return false;
   const current = await readPersistedGeneration(home, port);
   if (!sameRecord(current, expected) || pidState(expected.serverPid) !== "dead") return false;
+  await recordRetiredGeneration(home, port, expected);
   try {
     await unlink(generationFile(home, port));
     return true;
@@ -4838,14 +4907,14 @@ async function prepareServerGenerationUnlocked(home, port) {
     if (expected.serverPid !== null && await retireDeadGeneration(home, port, expected)) {
       expected = null;
       server2 = await readServerGeneration(port);
-      if (!server2.reachable) {
-        return { enabled: true, expected: null, verified: false, authoritativeEmpty: true };
-      }
     } else {
       return { enabled: true, expected, verified: false };
     }
   }
   if (!server2.reachable) {
+    if (server2.absent && await hasRetiredGeneration(home, port)) {
+      return { enabled: true, expected: null, verified: false, authoritativeEmpty: true };
+    }
     return { enabled: true, expected: null, verified: false };
   }
   if (server2.generation === null) {
@@ -4862,6 +4931,7 @@ async function prepareServerGenerationUnlocked(home, port) {
     generation: server2.generation,
     serverPid: server2.serverPid
   });
+  await clearRetiredGeneration(home, port);
   server2 = await readServerGeneration(port);
   return {
     enabled: true,
@@ -4909,6 +4979,14 @@ async function generationVerifiedResult(port, args) {
   }
   return { ok: true, out: result.out.slice(newline + 1), generation: state.expected.generation };
 }
+async function fleetServerAbsent(port) {
+  try {
+    const state = await prepareServerGeneration(port);
+    return state.enabled === true && state.authoritativeEmpty === true;
+  } catch {
+    return false;
+  }
+}
 var probe = { available: false, reason: `tmux ${MIN_TMUX_VERSION}+ required`, at: 0 };
 var PROBE_TTL_MS = 6e4;
 function hasTmux() {
@@ -4949,6 +5027,7 @@ function exactTargetPort(target) {
   const match = /^=fleetdeck-(\d+):=fd(\d+)-[A-Za-z0-9-]+$/.exec(String(target));
   return match && match[1] === match[2] ? match[1] : null;
 }
+var sessionConfirmed = (result) => result.ok && !result.authoritativeEmpty;
 async function ensureSession(port) {
   const name = sessionName(port);
   const state = await prepareServerGeneration(port);
@@ -4964,7 +5043,7 @@ async function ensureSession(port) {
       const claimed = await prepareServerGeneration(port);
       if (claimed.verified) {
         const confirmed = await generationVerifiedResult(port, ["has-session", "-t", "=" + name]);
-        if (confirmed.ok) return name;
+        if (sessionConfirmed(confirmed)) return name;
       }
       throw new Error(`tmux server generation could not be claimed for ${name}`);
     }
@@ -4972,7 +5051,7 @@ async function ensureSession(port) {
     throw new Error(`tmux server generation unavailable or changed for ${name}`);
   }
   const existing = await generationVerifiedResult(port, ["has-session", "-t", "=" + name]);
-  if (existing.ok) return name;
+  if (sessionConfirmed(existing)) return name;
   const refreshed = await prepareServerGeneration(port);
   if (!refreshed.verified || refreshed.expected === null) {
     throw new Error(`tmux server generation unavailable or changed for ${name}`);
@@ -4986,10 +5065,10 @@ async function ensureSession(port) {
   ], { noStart: true });
   if (created.ok && created.out === "") {
     const confirmed = await generationVerifiedResult(port, ["has-session", "-t", "=" + name]);
-    if (confirmed.ok) return name;
+    if (sessionConfirmed(confirmed)) return name;
   }
   const raced = await generationVerifiedResult(port, ["has-session", "-t", "=" + name]);
-  if (raced.ok) return name;
+  if (sessionConfirmed(raced)) return name;
   throw new Error(`tmux could not create session ${name}`);
 }
 async function newWindow({ port, callsign, cwd, argv, env = null }) {
@@ -9072,12 +9151,55 @@ function createSpawns(ctx) {
     return { status: 200, body: { ok: true, spawn_id, status: "killed" } };
   }
   const CONDEMN_DEAD_READS = 2;
+  const TMUX_UNREACHABLE_READS = 3;
+  const tmuxWatchdog = { unreachableStreak: 0, announcedUnreachable: false };
+  function noteTmuxUnreachable() {
+    if (tmuxAdapter.spawnOverrideCmd?.() || tmuxAdapter.hasTmux?.() === false) return;
+    tmuxWatchdog.unreachableStreak += 1;
+    if (tmuxWatchdog.announcedUnreachable) return;
+    if (tmuxWatchdog.unreachableStreak < TMUX_UNREACHABLE_READS) return;
+    tmuxWatchdog.announcedUnreachable = true;
+    tick("\u26A0 tmux is not answering \u2014 holding every card as-is until it does");
+  }
+  async function mournFleetServer(rows) {
+    tick(`\u{1F480} the tmux server died \u2014 ${rows.length} spawn(s) went with it; \u27F2 revive brings them back`);
+    for (const row of rows) {
+      q.setSpawnStatus.run("gone", row.spawn_id);
+      forgetSpawn(row.spawn_id);
+      const c = q.getSession.get(row.session_id);
+      if (c && c.ended_at == null) {
+        tombstoneCard(row.session_id, {
+          note: `tmux server died \u2014 resume with claude --resume ${row.session_id}`
+        });
+      }
+      logEvent(row.session_id, "SpawnGone", null, "tmux server died");
+    }
+    onMutate();
+    try {
+      await tmuxAdapter.ensureSession(port);
+      tick("\u27F2 tmux server restarted \u2014 the fleet is ready to revive");
+    } catch (err) {
+      tick(`\u26A0 could not restart the tmux server (${String(err?.message || err).slice(0, 80)})`);
+    }
+  }
   async function spawnLivenessTick() {
     const rows = q.activeSpawns.all();
     const resurrectable = q.resurrectableSpawns.all();
     if (!rows.length && !resurrectable.length && !spawnState.orphans.length) return;
     const wins = await tmuxAdapter.listScopedWindows(port);
-    if (wins === null) return;
+    if (wins === null) {
+      noteTmuxUnreachable();
+      return;
+    }
+    tmuxWatchdog.unreachableStreak = 0;
+    if (tmuxWatchdog.announcedUnreachable) {
+      tmuxWatchdog.announcedUnreachable = false;
+      tick("\u2713 tmux is answering again");
+    }
+    if (!wins.length && rows.length && await tmuxAdapter.fleetServerAbsent?.(port)) {
+      await mournFleetServer(rows);
+      return;
+    }
     for (const row of rows) {
       const win = wins.find((w) => w.window === row.tmux_window);
       if (!win) continue;
