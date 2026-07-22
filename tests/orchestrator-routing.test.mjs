@@ -68,40 +68,40 @@ function scratchCwd() {
 
 async function makeQueued(daemon, cwd) {
   const sid = randomUUID();
-  const reg = await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
+  const reg = await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon.token });
   assert.ok(reg.json?.callsign, 'setup: SessionStart should hand back a callsign');
   return { sid, callsign: reg.json.callsign };
 }
 
 async function makeWorking(daemon, cwd) {
   const { sid, callsign } = await makeQueued(daemon, cwd);
-  await postHook(daemon.baseUrl, 'UserPromptSubmit', loadFixture('user-prompt-submit', { session_id: sid, cwd }));
+  await postHook(daemon.baseUrl, 'UserPromptSubmit', loadFixture('user-prompt-submit', { session_id: sid, cwd }), { token: daemon.token });
   return { sid, callsign };
 }
 
 async function makeVerifying(daemon, cwd) {
   const { sid, callsign } = await makeWorking(daemon, cwd);
-  await postHook(daemon.baseUrl, 'PostToolUse', loadFixture('post-tool-use-bash', { session_id: sid, cwd }, {
+  await postHook(daemon.baseUrl, 'PostToolUse', loadFixture('post-tool-use-bash', { token: daemon, session_id: sid, cwd }, {
     tool_name: 'Bash', tool_input: { command: 'npm test' },
-  }));
+  }), { token: daemon.token });
   return { sid, callsign };
 }
 
 async function makeIdle(daemon, cwd) {
   const { sid, callsign } = await makeWorking(daemon, cwd);
-  await postHook(daemon.baseUrl, 'Stop', loadFixture('stop', { session_id: sid, cwd }));
+  await postHook(daemon.baseUrl, 'Stop', loadFixture('stop', { session_id: sid, cwd }), { token: daemon.token });
   return { sid, callsign };
 }
 
 async function makeNeedsyou(daemon, cwd) {
   const { sid, callsign } = await makeQueued(daemon, cwd);
-  await postHook(daemon.baseUrl, 'Notification', loadFixture('notification', { session_id: sid, cwd }));
+  await postHook(daemon.baseUrl, 'Notification', loadFixture('notification', { session_id: sid, cwd }), { token: daemon.token });
   return { sid, callsign };
 }
 
 async function makeOffline(daemon, cwd) {
   const { sid, callsign } = await makeQueued(daemon, cwd);
-  await postHook(daemon.baseUrl, 'SessionEnd', loadFixture('session-end', { session_id: sid, cwd }));
+  await postHook(daemon.baseUrl, 'SessionEnd', loadFixture('session-end', { session_id: sid, cwd }), { token: daemon.token });
   return { sid, callsign };
 }
 
@@ -200,7 +200,7 @@ test('tie on col: fewest undelivered mail wins, overriding recency', async (t) =
   await new Promise(r => setTimeout(r, 30));
   const newer = await makeIdle(daemon, cwd); // idle second: later last_seen — would win a pure recency tie-break
 
-  await postJson(`${daemon.baseUrl}/mail`, { to: newer.sid, from: 'human', text: 'unrelated noise' });
+  await postJson(`${daemon.baseUrl}/mail`, { to: newer.sid, from: 'operator', text: 'unrelated noise' }, { token: daemon.token });
 
   const res = await assignAuto(daemon, 'auto', 'tie break check');
   assert.deepEqual(res.json, { ok: true, assigned_to: { session_id: older.sid, callsign: older.callsign } },

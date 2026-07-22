@@ -29,46 +29,335 @@
 import { execFileSync, spawn as spawnChild } from 'node:child_process';
 import { execFileP } from './exec.mjs';
 import { randomUUID } from 'node:crypto';
+import { constants as fsConstants } from 'node:fs';
+import { link, open, rename, unlink } from 'node:fs/promises';
+import path from 'node:path';
+import { MIN_TMUX_VERSION, tmuxVersionCapability } from '../../bin/tmux-version.mjs';
 
 const TMUX_TIMEOUT_MS = 5_000;
-const US = '\u001f'; // unit separator — never appears in tmux names in practice
+// tmux's formatted-output printer escapes a literal unit separator as "\\037".
+// TAB survives as a delimiter on supported tmux versions; the strict field,
+// session, and id validation below rejects malformed or shifted records.
+const FIELD_SEP = '\t';
 
-// Run one tmux command (argv). Resolves stdout on success, null on ANY
-// failure (tmux absent, no server, bad target, timeout) — callers decide
-// whether null is "gone", "unknown" or an error.
-async function tmux(args) {
-  // Reuse the shared execFileP primitive (exec.mjs) and map its result object
-  // back to this adapter's null-or-stdout contract: callers here decide whether
-  // null is "gone", "unknown" or an error. Behaviour is byte-identical to the
-  // hand-rolled execFile it replaced (utf8 stdout, windowsHide, 5s timeout). The
-  // try/catch is kept — as in the original — so any throw (e.g. a non-iterable
-  // args) resolves to null rather than rejecting.
+// Run one tmux command (argv), retaining failure details for probes whose
+// callers must distinguish authoritative absence from UNKNOWN.
+async function tmuxResult(args, { noStart = false } = {}) {
   try {
     const socket = process.env.FLEETDECK_TMUX_SOCKET?.trim();
-    const argv = socket ? ['-L', socket, ...args] : args;
+    const argv = [
+      ...(socket ? ['-L', socket] : []),
+      ...(noStart ? ['-N'] : []),
+      ...args,
+    ];
     const r = await execFileP('tmux', argv, { timeout: TMUX_TIMEOUT_MS });
-    return r.ok ? (r.out ?? '') : null;
-  } catch {
-    return null;
+    return r.ok
+      ? { ok: true, out: r.out ?? '' }
+      : { ok: false, code: r.code, error: r.err ?? '' };
+  } catch (err) {
+    return { ok: false, error: String(err?.message || err || '') };
   }
 }
 
+// Most probes intentionally keep the historical null-or-stdout contract.
+async function tmux(args) {
+  const result = await tmuxResult(args);
+  return result.ok ? result.out : null;
+}
+
+// --------------------------------------------------- server generation identity
+// A tmux socket pathname is not an identity: unlinking a live server's socket
+// lets a second server bind the same -L label while the original panes keep
+// running but become unreachable. Persisting the generation UUID and owning
+// tmux PID turns an empty listing from that replacement into UNKNOWN instead of
+// authoritative absence, while a definitive ESRCH permits safe recovery after
+// normal server exit. Direct adapter tests historically omit FLEETDECK_HOME;
+// that remains the explicit legacy/test seam, while production supplies HOME.
+const GENERATION_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const GENERATION_HEADER = '__fleetdeck_tmux_generation__=';
+const GENERATION_MISMATCH = '__fleetdeck_tmux_generation_mismatch__';
+const generationLocks = new Map();
+
+function generationPort(port) {
+  const value = String(port);
+  if (!/^\d+$/.test(value)) throw new Error('invalid fleet port for tmux generation identity');
+  return value;
+}
+
+const generationOption = port => `@fleetdeck_generation_${generationPort(port)}`;
+const generationFile = (home, port) => path.join(home, `tmux-generation-${generationPort(port)}`);
+
+function generationHome() {
+  const home = process.env.FLEETDECK_HOME?.trim();
+  return home || null;
+}
+
+async function readPersistedGeneration(home, port) {
+  const file = generationFile(home, port);
+  let handle;
+  try {
+    // O_NOFOLLOW prevents a substituted symlink from redirecting either the
+    // confidentiality chmod or the identity read outside FLEETDECK_HOME.
+    handle = await open(file, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+  } catch (err) {
+    if (err?.code === 'ENOENT') return null;
+    throw new Error(`cannot read persisted tmux generation (${err?.code || err?.message || err})`);
+  }
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile()) throw new Error('persisted tmux generation is not a regular file');
+    // Tighten files created by older/prerelease builds too. Failure is not
+    // best-effort: the contract says this persistent identity is owner-only.
+    await handle.chmod(0o600);
+    const text = await handle.readFile('utf8');
+    const value = text.endsWith('\n') ? text.slice(0, -1) : text;
+    // Legacy prerelease files contained only the UUID. They may corroborate a
+    // reachable server and then be upgraded, but cannot authorize recovery:
+    // without a PID there is no proof that the old server is dead.
+    if (GENERATION_UUID_RE.test(value)) {
+      return { generation: value.toLowerCase(), serverPid: null, legacy: true };
+    }
+    let record;
+    try { record = JSON.parse(value); } catch { /* strict error below */ }
+    const keys = record && typeof record === 'object' && !Array.isArray(record)
+      ? Object.keys(record).sort()
+      : [];
+    if (keys.length !== 2 || keys[0] !== 'generation' || keys[1] !== 'serverPid'
+      || !GENERATION_UUID_RE.test(record.generation)
+      || !Number.isSafeInteger(record.serverPid) || record.serverPid <= 1) {
+      throw new Error('persisted tmux generation is malformed');
+    }
+    return { generation: record.generation.toLowerCase(), serverPid: record.serverPid, legacy: false };
+  } finally {
+    await handle.close();
+  }
+}
+
+async function persistGeneration(home, port, record) {
+  const file = generationFile(home, port);
+  const temp = path.join(home, `.${path.basename(file)}.${process.pid}.${randomUUID()}.tmp`);
+  let handle;
+  try {
+    handle = await open(temp, 'wx', 0o600);
+    await handle.writeFile(`${JSON.stringify({ generation: record.generation, serverPid: record.serverPid })}\n`, 'utf8');
+    await handle.chmod(0o600);
+    await handle.sync();
+    await handle.close();
+    handle = null;
+    try {
+      // link is an atomic no-replace publish on the same filesystem. A second
+      // claimant can never overwrite the first durable expected generation.
+      await link(temp, file);
+    } catch (err) {
+      if (err?.code !== 'EEXIST') throw err;
+    }
+  } catch (err) {
+    throw new Error(`cannot persist tmux generation (${err?.code || err?.message || err})`);
+  } finally {
+    try { await handle?.close(); } catch { /* primary error wins */ }
+    try { await unlink(temp); } catch (err) { if (err?.code !== 'ENOENT') { /* best-effort temp cleanup */ } }
+  }
+  return readPersistedGeneration(home, port);
+}
+
+async function replacePersistedGeneration(home, port, record) {
+  const file = generationFile(home, port);
+  const temp = path.join(home, `.${path.basename(file)}.${process.pid}.${randomUUID()}.tmp`);
+  let handle;
+  try {
+    handle = await open(temp, 'wx', 0o600);
+    await handle.writeFile(`${JSON.stringify({ generation: record.generation, serverPid: record.serverPid })}\n`, 'utf8');
+    await handle.chmod(0o600);
+    await handle.sync();
+    await handle.close();
+    handle = null;
+    await rename(temp, file); // atomic old-record -> strict-record migration
+  } catch (err) {
+    throw new Error(`cannot replace persisted tmux generation (${err?.code || err?.message || err})`);
+  } finally {
+    try { await handle?.close(); } catch { /* primary error wins */ }
+    try { await unlink(temp); } catch (err) { if (err?.code !== 'ENOENT') { /* best-effort temp cleanup */ } }
+  }
+  return readPersistedGeneration(home, port);
+}
+
+async function readServerGeneration(port) {
+  // Read both fields in one command from one reachable server. Separate tmux
+  // clients could straddle a socket replacement and manufacture an identity no
+  // server ever held.
+  const result = await tmuxResult([
+    'display-message', '-p', `#{${generationOption(port)}}${FIELD_SEP}#{pid}`,
+  ], { noStart: true });
+  if (!result.ok) return { reachable: false, generation: null, serverPid: null };
+  const value = result.out.endsWith('\n') ? result.out.slice(0, -1) : result.out;
+  const [generation, pidText, ...extra] = value.split(FIELD_SEP);
+  const serverPid = Number(pidText);
+  return {
+    reachable: true,
+    generation: GENERATION_UUID_RE.test(generation) ? generation.toLowerCase() : null,
+    serverPid: extra.length === 0 && Number.isSafeInteger(serverPid) && serverPid > 1 ? serverPid : null,
+  };
+}
+
+function pidState(pid) {
+  if (!Number.isSafeInteger(pid) || pid <= 1) return 'unknown';
+  try {
+    process.kill(pid, 0);
+    return 'alive'; // includes PID reuse: a live unrelated process blocks reset
+  } catch (err) {
+    if (err?.code === 'ESRCH') return 'dead';
+    return 'unknown'; // EPERM and every platform ambiguity fail closed
+  }
+}
+
+const sameRecord = (left, right) => !!left && !!right
+  && left.generation === right.generation && left.serverPid === right.serverPid;
+
+async function retireDeadGeneration(home, port, expected) {
+  if (expected.serverPid === null || pidState(expected.serverPid) !== 'dead') return false;
+  // Re-read and re-probe immediately before unlink. A changed record, reused
+  // PID, EPERM, or any unknown result leaves the identity untouched.
+  const current = await readPersistedGeneration(home, port);
+  if (!sameRecord(current, expected) || pidState(expected.serverPid) !== 'dead') return false;
+  try {
+    await unlink(generationFile(home, port));
+    return true;
+  } catch (err) {
+    if (err?.code === 'ENOENT') return false;
+    throw new Error(`cannot retire persisted tmux generation (${err?.code || err?.message || err})`);
+  }
+}
+
+async function prepareServerGenerationUnlocked(home, port) {
+  let expected = await readPersistedGeneration(home, port);
+  let server = await readServerGeneration(port);
+  if (expected !== null) {
+    if (server.reachable && server.generation === expected.generation
+      && (expected.serverPid === null || server.serverPid === expected.serverPid)) {
+      // A matching legacy UUID is upgraded only using the PID read alongside
+      // it from that same server. Legacy data still cannot recover a mismatch.
+      if (expected.serverPid === null) {
+        if (server.serverPid === null) return { enabled: true, expected, verified: false };
+        expected = await replacePersistedGeneration(home, port, {
+          generation: server.generation,
+          serverPid: server.serverPid,
+        });
+        server = await readServerGeneration(port);
+      }
+      return {
+        enabled: true,
+        expected,
+        verified: server.reachable && server.generation === expected.generation
+          && server.serverPid === expected.serverPid,
+      };
+    }
+    if (expected.serverPid !== null && await retireDeadGeneration(home, port, expected)) {
+      // The recorded owner is definitively gone. Resume first-contact: claim a
+      // reachable replacement or let ensureSession create a fresh server. When
+      // no server is reachable, reads may treat the old fleet as authoritatively
+      // empty because the persisted owner PID was proven dead.
+      expected = null;
+      server = await readServerGeneration(port);
+      if (!server.reachable) {
+        return { enabled: true, expected: null, verified: false, authoritativeEmpty: true };
+      }
+    } else {
+      return { enabled: true, expected, verified: false };
+    }
+  }
+  if (!server.reachable) {
+    return { enabled: true, expected: null, verified: false };
+  }
+
+  // Upgrade/first-contact claim. Preserve a valid option set by an earlier
+  // claimant; otherwise mint one, set it, and trust only the value read back.
+  if (server.generation === null) {
+    const candidate = randomUUID();
+    const set = await tmuxResult(['set-option', '-g', generationOption(port), candidate], { noStart: true });
+    if (!set.ok) return { enabled: true, expected: null, verified: false };
+    server = await readServerGeneration(port);
+    if (!server.reachable || server.generation === null) {
+      return { enabled: true, expected: null, verified: false };
+    }
+  }
+
+  if (server.serverPid === null) return { enabled: true, expected: null, verified: false };
+  expected = await persistGeneration(home, port, {
+    generation: server.generation,
+    serverPid: server.serverPid,
+  });
+  // Re-read after publishing: a socket replacement between set/read/persist is
+  // caught here, and a concurrent file claimant's first-writer value wins.
+  server = await readServerGeneration(port);
+  return {
+    enabled: true,
+    expected,
+    verified: server.reachable && server.generation === expected.generation
+      && server.serverPid === expected.serverPid,
+  };
+}
+
+async function prepareServerGeneration(port) {
+  const home = generationHome();
+  if (home === null) return { enabled: false, expected: null, verified: true };
+  const key = `${home}\u0000${generationPort(port)}`;
+  const prior = generationLocks.get(key) ?? Promise.resolve();
+  const current = prior.catch(() => {}).then(() => prepareServerGenerationUnlocked(home, port));
+  generationLocks.set(key, current);
+  try {
+    return await current;
+  } finally {
+    if (generationLocks.get(key) === current) generationLocks.delete(key);
+  }
+}
+
+// Run a read command and print the server UUID + PID in the same tmux client
+// command queue. The socket cannot switch servers between header and listing.
+async function generationVerifiedResult(port, args) {
+  let state;
+  try { state = await prepareServerGeneration(port); }
+  catch (err) { return { ok: false, generationError: String(err?.message || err) }; }
+  if (!state.enabled) return tmuxResult(args);
+  if (state.authoritativeEmpty) return { ok: true, out: '', authoritativeEmpty: true };
+  if (!state.verified || state.expected === null) {
+    return { ok: false, generationError: 'tmux server generation unavailable or changed' };
+  }
+  const result = await tmuxResult([
+    'display-message', '-p', `${GENERATION_HEADER}#{${generationOption(port)}}${FIELD_SEP}#{pid}`,
+    ';', ...args,
+  ], { noStart: true });
+  if (!result.ok) return result;
+  const newline = result.out.indexOf('\n');
+  if (newline === -1 || result.out.slice(0, newline)
+    !== `${GENERATION_HEADER}${state.expected.generation}${FIELD_SEP}${state.expected.serverPid}`) {
+    return { ok: false, generationError: 'tmux server generation unavailable or changed' };
+  }
+  return { ok: true, out: result.out.slice(newline + 1), generation: state.expected.generation };
+}
+
+
 // ------------------------------------------------------------- capability
-let probe = { ok: false, at: 0 };
+let probe = { available: false, reason: `tmux ${MIN_TMUX_VERSION}+ required`, at: 0 };
 const PROBE_TTL_MS = 60_000;
 
 /** tmux binary reachable? Cached (60 s TTL) — this runs inside /health and
  * /state snapshots, so it must not fork a subprocess on every heartbeat. */
 export function hasTmux() {
+  return tmuxCapability().available;
+}
+
+export function tmuxCapability() {
   const now = Date.now();
-  if (now - probe.at < PROBE_TTL_MS) return probe.ok;
-  let ok = false;
+  if (now - probe.at < PROBE_TTL_MS) return { ...probe };
+  let next = { available: false, reason: `tmux ${MIN_TMUX_VERSION}+ not found on PATH` };
   try {
-    execFileSync('tmux', ['-V'], { timeout: 1_500, stdio: ['ignore', 'pipe', 'ignore'] });
-    ok = true;
+    const output = execFileSync('tmux', ['-V'], {
+      timeout: 1_500, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    next = tmuxVersionCapability(output);
   } catch { /* not installed / not executable */ }
-  probe = { ok, at: now };
-  return ok;
+  probe = { ...next, at: now };
+  return { ...probe };
 }
 
 /** FLEETDECK_SPAWN_CMD override, or null when unset/blank. */
@@ -81,16 +370,78 @@ export function spawnOverrideCmd() {
 export const sessionName = port => `fleetdeck-${port}`;
 export const windowName = (port, callsign) => `fd${port}-${callsign}`;
 
+/** Exact session + exact window target. A generation-mismatched replacement
+ * never receives this fleet session from ensureSession, so a reusable @id on
+ * that replacement cannot redirect pane operations after a verified lookup. */
+export function exactWindowTarget(port, window) {
+  const normalizedPort = generationPort(port);
+  const value = String(window);
+  const prefix = `fd${normalizedPort}-`;
+  if (!value.startsWith(prefix) || !/^[A-Za-z0-9-]+$/.test(value.slice(prefix.length))) {
+    throw new Error('invalid scoped tmux window name');
+  }
+  return `=${sessionName(normalizedPort)}:=${value}`;
+}
+
+function exactTargetPort(target) {
+  const match = /^=fleetdeck-(\d+):=fd(\d+)-[A-Za-z0-9-]+$/.exec(String(target));
+  return match && match[1] === match[2] ? match[1] : null;
+}
+
 // ----------------------------------------------------------------- session
 /** Ensure the detached daemon-owned session `fleetdeck-<port>` exists.
  * `=` prefix = exact session-name match (verified; prefix matching could
  * otherwise confuse fleetdeck-4711 with fleetdeck-47110). */
 export async function ensureSession(port) {
   const name = sessionName(port);
-  if (await tmux(['has-session', '-t', '=' + name]) !== null) return name;
-  if (await tmux(['new-session', '-d', '-s', name]) !== null) return name;
-  // lost a creation race? re-check before failing loud
-  if (await tmux(['has-session', '-t', '=' + name]) !== null) return name;
+  const state = await prepareServerGeneration(port);
+  if (!state.enabled) {
+    if (await tmux(['has-session', '-t', '=' + name]) !== null) return name;
+    if (await tmux(['new-session', '-d', '-s', name]) !== null) return name;
+    if (await tmux(['has-session', '-t', '=' + name]) !== null) return name;
+    throw new Error(`tmux could not create session ${name}`);
+  }
+
+  // With no expected generation and no reachable server, first-run creation is
+  // allowed. Every path after this call either claims that server or fails.
+  if (state.expected === null) {
+    const created = await tmuxResult(['new-session', '-d', '-s', name]);
+    if (created.ok) {
+      const claimed = await prepareServerGeneration(port);
+      if (claimed.verified) {
+        const confirmed = await generationVerifiedResult(port, ['has-session', '-t', '=' + name]);
+        if (confirmed.ok) return name;
+      }
+      throw new Error(`tmux server generation could not be claimed for ${name}`);
+    }
+  } else if (!state.verified) {
+    throw new Error(`tmux server generation unavailable or changed for ${name}`);
+  }
+
+  const existing = await generationVerifiedResult(port, ['has-session', '-t', '=' + name]);
+  if (existing.ok) return name;
+
+  // -N is present in tmux 3.4+: if the verified server disappears, new-session
+  // must fail rather than silently starting a replacement at the same label.
+  // The server-side format guard also refuses to create the session if the
+  // socket already points at a reachable server with a different generation.
+  const refreshed = await prepareServerGeneration(port);
+  if (!refreshed.verified || refreshed.expected === null) {
+    throw new Error(`tmux server generation unavailable or changed for ${name}`);
+  }
+  const created = await tmuxResult([
+    'if-shell', '-F', `#{&&:#{==:#{${generationOption(port)}},${refreshed.expected.generation}},#{==:#{pid},${refreshed.expected.serverPid}}}`,
+    `new-session -d -s ${name}`,
+    `display-message -p ${GENERATION_MISMATCH}`,
+  ], { noStart: true });
+  if (created.ok && created.out === '') {
+    const confirmed = await generationVerifiedResult(port, ['has-session', '-t', '=' + name]);
+    if (confirmed.ok) return name;
+  }
+  // Lost a same-generation session-creation race? Accept only a fresh verified
+  // exact-session probe, never an uncorroborated new-session failure.
+  const raced = await generationVerifiedResult(port, ['has-session', '-t', '=' + name]);
+  if (raced.ok) return name;
   throw new Error(`tmux could not create session ${name}`);
 }
 
@@ -118,9 +469,18 @@ export async function ensureSession(port) {
 export async function newWindow({ port, callsign, cwd, argv, env = null }) {
   const session = sessionName(port);
   const window = windowName(port, callsign);
+  const generation = await prepareServerGeneration(port);
+  if (generation.enabled && (!generation.verified || generation.expected === null)) {
+    throw new Error(`tmux server generation unavailable or changed for ${window}`);
+  }
   const envArgs = env
     ? Object.entries(env).flatMap(([name, value]) => ['-e', `${name}=${value}`])
     : [];
+  // Do not generation-condition this through if-shell: cwd, env, and argv are
+  // untrusted argv-safe values and must never be embedded in tmux parser text.
+  // The exact fleet target is the guard: ensureSession never creates/accepts it
+  // on a generation-mismatched replacement, so new-window fails there.
+  const target = exactWindowTarget(port, window);
   const out = await tmux([
     'new-window', '-d', '-P', '-F', '#{window_id}',
     '-t', '=' + session + ':', // exact session, next free window index
@@ -131,42 +491,65 @@ export async function newWindow({ port, callsign, cwd, argv, env = null }) {
   ]);
   if (out === null) throw new Error(`tmux new-window failed for ${window}`);
   const window_id = out.trim();
+  if (generation.enabled) {
+    const confirmed = await generationVerifiedResult(port, [
+      'display-message', '-p', '-t', target,
+      ['#{session_name}', '#{window_name}', '#{window_id}'].join(FIELD_SEP),
+    ]);
+    const expected = [session, window, window_id].join(FIELD_SEP) + '\n';
+    if (!confirmed.ok || confirmed.out !== expected) {
+      throw new Error(`tmux new-window generation postcondition failed for ${window}`);
+    }
+  }
   // Best-effort: keep the pane (scrollback + deterministic pane_dead crash
   // signal) when the command exits. A failure here degrades gracefully — the
   // window just closes on exit and boot reconciliation marks the row 'gone'.
-  await tmux(['set-option', '-w', '-t', window_id, 'remain-on-exit', 'on']);
+  await tmux(['set-option', '-w', '-t', target, 'remain-on-exit', 'on']);
   return { session, window, window_id };
 }
 
 /** {dead, cmd} for a pane/window target (@id or scoped name), or null when
  * the target is gone / tmux unreachable (= UNKNOWN, never confidently dead). */
 export async function paneCurrentCommand(target) {
-  const out = await tmux(['display-message', '-p', '-t', target, `#{pane_dead}${US}#{pane_current_command}`]);
-  if (out === null) return null;
-  const [dead, cmd] = out.replace(/\n$/, '').split(US);
-  return { dead: dead === '1', cmd: cmd ?? '' };
+  const args = ['display-message', '-p', '-t', target, `#{pane_dead}${FIELD_SEP}#{pane_current_command}`];
+  const port = exactTargetPort(target);
+  const result = port === null ? await tmuxResult(args) : await generationVerifiedResult(port, args);
+  if (!result.ok) return null;
+  const out = result.out;
+  const [dead, ...cmd] = out.replace(/\n$/, '').split(FIELD_SEP);
+  if (dead !== '0' && dead !== '1') return null;
+  return { dead: dead === '1', cmd: cmd.join(FIELD_SEP) };
 }
 
 /** All windows on the server whose name matches this fleet's scope
  * (`fd<port>-*`), with the first (lowest-index) pane speaking for each
- * window: [{session, window, window_id, pane_dead, pane_cmd}]. Returns []
- * when tmux is unreachable / no server runs. */
+ * window: [{session, window, window_id, pane_dead, pane_cmd}]. Returns [] only
+ * after a successful, fully validated empty listing; null means UNKNOWN because
+ * tmux failed or a successful response contained a malformed row. */
 export async function listScopedWindows(port) {
-  const out = await tmux([
-    'list-panes', '-a', '-F',
-    ['#{session_name}', '#{window_name}', '#{window_id}', '#{pane_dead}', '#{pane_current_command}'].join(US),
+  const expectedSession = sessionName(port);
+  const listed = await generationVerifiedResult(port, [
+    'list-panes', '-a', '-f', `#{==:#{session_name},${expectedSession}}`, '-F',
+    ['#{session_name}', '#{window_name}', '#{window_id}', '#{pane_dead}', '#{pane_current_command}'].join(FIELD_SEP),
   ]);
-  if (out === null) return [];
+  if (!listed.ok) return null;
+  if (listed.out === '') return [];
+  const output = listed.out.endsWith('\n') ? listed.out.slice(0, -1) : listed.out;
+  if (output === '') return null;
   const prefix = `fd${port}-`;
   const seen = new Set();
+  const seenNames = new Set();
   const wins = [];
-  for (const line of out.split('\n')) {
-    if (!line) continue;
-    const [session, window, window_id, dead, cmd] = line.split(US);
-    if (!window || !window.startsWith(prefix)) continue;
+  for (const line of output.split('\n')) {
+    const [session, window, window_id, dead, ...cmd] = line.split(FIELD_SEP);
+    if (!session || !window || !/^@\d+$/.test(window_id ?? '')
+      || (dead !== '0' && dead !== '1') || cmd.length === 0) return null;
+    if (session !== expectedSession || !window?.startsWith(prefix)) continue;
     if (seen.has(window_id)) continue; // human split the pane: original pane wins
+    if (seenNames.has(window)) return null; // duplicate scoped names are ambiguous ownership
     seen.add(window_id);
-    wins.push({ session, window, window_id, pane_dead: dead === '1', pane_cmd: cmd ?? '' });
+    seenNames.add(window);
+    wins.push({ session, window, window_id, pane_dead: dead === '1', pane_cmd: cmd.join(FIELD_SEP) });
   }
   return wins;
 }
@@ -178,15 +561,69 @@ export async function listScopedWindows(port) {
  *   {ok:false, gone:true}  no window with that exact name exists (410)
  *   {ok:false, error}      tmux kill-window itself failed */
 export async function killWindowVerified(name) {
-  if (!name) return { ok: false, gone: true };
-  const out = await tmux(['list-panes', '-a', '-F', `#{window_name}${US}#{window_id}`]);
-  if (out === null) return { ok: false, gone: true }; // no server ⇒ no window
-  const hit = out.split('\n').filter(Boolean).map(l => l.split(US)).find(([w]) => w === name);
-  if (!hit) return { ok: false, gone: true };
-  if (await tmux(['kill-window', '-t', hit[1]]) !== null) return { ok: true, window_id: hit[1] };
+  const scope = typeof name === 'string' ? /^fd(\d+)-[^\u0000-\u001f\u007f]+$/.exec(name) : null;
+  if (!scope) return { ok: false, error: 'invalid scoped tmux window name' };
+  const expectedSession = sessionName(scope[1]);
+  const format = ['#{session_name}', '#{window_name}', '#{window_id}'].join(FIELD_SEP);
+  const listArgs = ['list-panes', '-a', '-f', `#{==:#{session_name},${expectedSession}}`, '-F', format];
+  const parse = output => {
+    if (output === '') return [];
+    const body = output.endsWith('\n') ? output.slice(0, -1) : output;
+    if (body === '') return null;
+    const rows = body.split('\n').map(line => line.split(FIELD_SEP));
+    if (rows.some(fields => fields.length !== 3 || !fields[0] || !fields[1] || !/^@\d+$/.test(fields[2]))) return null;
+    return rows;
+  };
+  const exactMatches = rows => {
+    const byWindowId = new Map();
+    for (const fields of rows) {
+      if (fields[0] === expectedSession && fields[1] === name) byWindowId.set(fields[2], fields);
+    }
+    return [...byWindowId.values()];
+  };
+  const listed = await generationVerifiedResult(scope[1], listArgs);
+  if (!listed.ok) return { ok: false, error: listed.generationError || 'tmux window lookup failed' };
+  const rows = parse(listed.out);
+  if (rows === null) return { ok: false, error: 'malformed tmux window listing' };
+  const matches = exactMatches(rows);
+  if (matches.length > 1) return { ok: false, error: 'ambiguous scoped tmux window name' };
+  if (matches.length === 0) return { ok: false, gone: true };
+  const hit = matches[0];
+  let killGeneration;
+  try { killGeneration = await prepareServerGeneration(scope[1]); }
+  catch (err) {
+    return { ok: false, error: `tmux server generation verification failed: ${err?.message || err}` };
+  }
+  let killed;
+  if (!killGeneration.enabled) {
+    killed = await tmuxResult(['kill-window', '-t', hit[2]]);
+  } else if (!killGeneration.verified || killGeneration.expected === null) {
+    return { ok: false, error: 'tmux server generation unavailable or changed' };
+  } else {
+    // The conditional and kill execute in one server command queue. A socket
+    // swap after lookup cannot redirect @id at a replacement server: its absent
+    // or different generation/PID selects the harmless marker branch instead.
+    killed = await tmuxResult([
+      'if-shell', '-F', `#{&&:#{==:#{${generationOption(scope[1])}},${killGeneration.expected.generation}},#{==:#{pid},${killGeneration.expected.serverPid}}}`,
+      `kill-window -t ${hit[2]}`,
+      `display-message -p ${GENERATION_MISMATCH}`,
+    ], { noStart: true });
+    if (killed.ok && killed.out.trim() === GENERATION_MISMATCH) {
+      return { ok: false, error: 'tmux server generation unavailable or changed' };
+    }
+  }
+  if (killed.ok) return { ok: true, window_id: hit[2] };
   // kill failed — vanished between list and kill, or a real tmux error?
-  const again = await tmux(['list-panes', '-a', '-F', '#{window_name}']);
-  if (again === null || !again.split('\n').includes(name)) return { ok: false, gone: true };
+  const rechecked = await generationVerifiedResult(scope[1], listArgs);
+  if (!rechecked.ok) return {
+    ok: false,
+    error: rechecked.generationError || 'tmux window recheck failed after kill error',
+  };
+  const again = parse(rechecked.out);
+  if (again === null) return { ok: false, error: 'malformed tmux window recheck after kill error' };
+  const remaining = exactMatches(again);
+  if (remaining.length > 1) return { ok: false, error: 'ambiguous scoped tmux window name after kill error' };
+  if (remaining.length === 0) return { ok: false, gone: true };
   return { ok: false, error: 'tmux kill-window failed' };
 }
 
@@ -250,7 +687,20 @@ export async function pasteText(target, text) {
 }
 
 export async function sendEnter(target) {
-  return (await tmux(['send-keys', '-t', target, 'Enter'])) !== null;
+  const port = exactTargetPort(target);
+  if (port === null) return (await tmux(['send-keys', '-t', target, 'Enter'])) !== null;
+  let state;
+  try { state = await prepareServerGeneration(port); } catch { return false; }
+  if (!state.enabled) return (await tmux(['send-keys', '-t', target, 'Enter'])) !== null;
+  if (!state.verified || state.expected === null) return false;
+  // target is produced by exactWindowTarget (restricted alnum/dash grammar),
+  // and Enter is static, so this tmux parser string contains no untrusted data.
+  const result = await tmuxResult([
+    'if-shell', '-F', `#{&&:#{==:#{${generationOption(port)}},${state.expected.generation}},#{==:#{pid},${state.expected.serverPid}}}`,
+    `send-keys -t ${target} Enter`,
+    `display-message -p ${GENERATION_MISMATCH}`,
+  ], { noStart: true });
+  return result.ok && result.out.trim() !== GENERATION_MISMATCH;
 }
 
 /** Literal keystrokes for TUI commands. `-l --` prevents tmux key-name
@@ -262,7 +712,11 @@ export async function typeKeys(target, text) {
 /** Independent pane-scrollback capture for remote-control URL harvesting.
  * Keep this adapter local rather than coupling daemon state to termbridge. */
 export async function capturePane(target) {
-  return tmux(['capture-pane', '-p', '-t', target]);
+  const args = ['capture-pane', '-p', '-t', target];
+  const port = exactTargetPort(target);
+  if (port === null) return tmux(args);
+  const result = await generationVerifiedResult(port, args);
+  return result.ok ? result.out : null;
 }
 
 /** Bring-up compatibility export; caller enforces at-most-once per spawn. */

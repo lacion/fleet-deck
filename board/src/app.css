@@ -479,6 +479,16 @@ textarea.fd-input { font-family: var(--font-ui); font-size: 13px; resize: none; 
   white-space: nowrap; letter-spacing: .5px; flex: none;
 }
 
+/* 0.16.0 — pre-upgrade sessions: the header banner chip and the per-card tag
+   share the hazard palette, since a legacy card looks deceptively idle while
+   silently dark. Both clear server-side as each session is restarted. */
+.fd-legacychip { cursor: default; }
+.fd-legacytag {
+  font-family: var(--font-data); font-size: 10px; color: var(--hazard); background: var(--hazard-bg);
+  border: 1px dashed var(--hazard); border-radius: var(--r-chip); padding: 0 6px;
+  white-space: nowrap; letter-spacing: .5px; flex: none;
+}
+
 /* v0.15 — this card's session talks to the configured gateway, not Anthropic.
    Informational, not hazardous: it uses the neutral chip palette rather than
    the unsupervised chip's hazard colours. */

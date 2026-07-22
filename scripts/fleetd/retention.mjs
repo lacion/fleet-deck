@@ -13,7 +13,7 @@ import { SHELL_RE, NOT_RESUMABLE_END } from './helpers.mjs';
 export function createRetention(ctx) {
   const {
     q, updateSession, tick, onMutate, tombstoneCard, forgetSpawn,
-    tmuxAdapter, port, questions, adoptSession,
+    tmuxAdapter, port, questions, adoptSession, scopedPaneTarget,
     PRESUME_DEAD_MS, RETAIN_OFFLINE_MS, RETAIN_LEDGER_MS,
   } = ctx;
 
@@ -78,37 +78,39 @@ export function createRetention(ctx) {
     }
     if (spawned.length) {
       const wins = await tmuxAdapter.listScopedWindows(port);
-      for (const { s, sp } of spawned) {
-        const win = wins.find(w => w.window === sp.tmux_window);
-        // Alive: window present, pane not dead, and paneCurrentCommand confirms
-        // claude (pane_cmd can read stale on remain-on-exit panes). The agent
-        // is simply quiet — refresh last_seen so the clock restarts and leave
-        // the card live. This is the "3.1h alive spawn got goned" fix.
-        let alive = false;
-        if (win && !win.pane_dead) {
-          const pane = await tmuxAdapter.paneCurrentCommand(win.window_id);
-          alive = !!pane && !pane.dead && pane.cmd === 'claude';
-        }
-        if (alive) {
-          updateSession(s.session_id, { last_seen: now });
-          changed = true;
-          continue;
-        }
-        // tmux CONFIRMS dead — window present but pane_dead or a bare shell.
-        // Condemn exactly like the liveness tick: flip the spawn 'pane-dead'
-        // (still revivable) and tombstone the card. A window that is ABSENT is
-        // UNKNOWN, not dead — never condemn on silence (a wrong "dead" costs a
-        // duplicate billed session); leave it for a later sweep / boot reconcile.
-        if (win && (win.pane_dead || SHELL_RE.test(win.pane_cmd))) {
-          q.setSpawnStatus.run('pane-dead', sp.spawn_id);
-          forgetSpawn(sp.spawn_id);
-          tombstoneCard(s.session_id, { // D8
-            note: `pane confirmed dead — resume with claude --resume ${s.session_id}`,
-            at: now,
-            tickMsg: `💀 ${s.callsign} pane confirmed dead after long silence — window kept for scrollback`,
-            forgetModel: true,
-          });
-          changed = true;
+      if (wins !== null) {
+        for (const { s, sp } of spawned) {
+          const win = wins.find(w => w.window === sp.tmux_window);
+          // Alive: window present, pane not dead, and paneCurrentCommand confirms
+          // claude (pane_cmd can read stale on remain-on-exit panes). The agent
+          // is simply quiet — refresh last_seen so the clock restarts and leave
+          // the card live. This is the "3.1h alive spawn got goned" fix.
+          let alive = false;
+          if (win && !win.pane_dead) {
+            const pane = await tmuxAdapter.paneCurrentCommand(scopedPaneTarget(win));
+            alive = !!pane && !pane.dead && pane.cmd === 'claude';
+          }
+          if (alive) {
+            updateSession(s.session_id, { last_seen: now });
+            changed = true;
+            continue;
+          }
+          // tmux CONFIRMS dead — window present but pane_dead or a bare shell.
+          // Condemn exactly like the liveness tick: flip the spawn 'pane-dead'
+          // (still revivable) and tombstone the card. A window that is ABSENT is
+          // UNKNOWN, not dead — never condemn on silence (a wrong "dead" costs a
+          // duplicate billed session); leave it for a later sweep / boot reconcile.
+          if (win && (win.pane_dead || SHELL_RE.test(win.pane_cmd))) {
+            q.setSpawnStatus.run('pane-dead', sp.spawn_id);
+            forgetSpawn(sp.spawn_id);
+            tombstoneCard(s.session_id, { // D8
+              note: `pane confirmed dead — resume with claude --resume ${s.session_id}`,
+              at: now,
+              tickMsg: `💀 ${s.callsign} pane confirmed dead after long silence — window kept for scrollback`,
+              forgetModel: true,
+            });
+            changed = true;
+          }
         }
       }
     }
@@ -188,7 +190,7 @@ export function createRetention(ctx) {
     const wins = await tmuxAdapter.listScopedWindows(port);
     const byName = new Map(q.allSpawns.all().map(r => [r.tmux_window, r]));
     let windows_killed = 0;
-    for (const win of wins) {
+    for (const win of wins ?? []) {
       const sp = byName.get(win.window);
       if (!win.pane_dead || !sp || !['killed', 'pane-dead', 'gone'].includes(sp.status)) continue;
       const out = await tmuxAdapter.killWindowVerified(win.window);
@@ -244,4 +246,3 @@ export function createRetention(ctx) {
 
   return { retentionSweep, cleanup };
 }
-

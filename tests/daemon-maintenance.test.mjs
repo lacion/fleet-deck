@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { openDb } from '../scripts/fleetd/db.mjs';
 import { claudeTranscriptPath, createCore } from '../scripts/fleetd/derive.mjs';
-import { capturePane, pasteText, sendEnter, typeKeys } from '../scripts/fleetd/spawn.mjs';
+import { capturePane, exactWindowTarget, pasteText, sendEnter, typeKeys } from '../scripts/fleetd/spawn.mjs';
 
 function setEnv(t, values) {
   const before = new Map(Object.keys(values).map(k => [k, process.env[k]]));
@@ -97,6 +97,9 @@ test('spawn argv is deterministic and registration watchdog stalls once, then a 
     'FLEETDECK_RC_HARVEST_MS',
     'FLEETDECK_ADOPT_ARM_MS', 'FLEETDECK_ADOPT_DELAY_MS',
     'FLEETDECK_TEST_DAEMON_SCRIPT', 'FLEETDECK_VERSION_OVERRIDE',
+    // 0.16.0: the daemon's bearer never leaks into a spawned pane — see the
+    // identical note in spawn.test.mjs.
+    'FLEETDECK_TOKEN',
     // 0.15.0 LLM gateway — see the identical note in spawn.test.mjs.
     'ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY',
     'CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY',
@@ -139,7 +142,9 @@ test('revive reuses the env wrapper, kills a dead remnant, inserts a new row, an
   const { db, core, state, port, home } = memoryCore(t, {
     env: { HOME: userHome },
   });
-  const original = await core.spawn({ cwd, dangerously_skip_permissions: true });
+  // 0.16.0: unsupervised spawns need a fresh single-use arm token — the core
+  // harness mints one directly (the HTTP arm route is bearer-gated).
+  const original = await core.spawn({ cwd, dangerously_skip_permissions: true, arm_token: core.armUnsupervised() });
   const { spawn_id: oldId, session_id: sid } = original.body;
   core.hookSessionStart({ session_id: sid, cwd, source: 'startup' });
   db.prepare("UPDATE spawns SET status = 'gone' WHERE spawn_id = ?").run(oldId);
@@ -155,7 +160,9 @@ test('revive reuses the env wrapper, kills a dead remnant, inserts a new row, an
   // This test exercises the RELAUNCH path, so first mark the remnant pane dead:
   // a dead remnant is killed and a fresh row launched.
   state.windows[0].pane_dead = true;
-  const out = await core.revive(oldId);
+  // 0.16.0: reviving an unsupervised lineage re-launches the bypass, so it
+  // passes the same arm gate as a fresh unsupervised spawn.
+  const out = await core.revive(oldId, { arm_token: core.armUnsupervised() });
   assert.equal(out.status, 200);
   assert.notEqual(out.body.spawn_id, oldId);
   assert.deepEqual(state.killed, [original.body.tmux.window]);
@@ -204,7 +211,8 @@ test('owned-pane mail honors watcher priority and unclaims all rows when paste f
 
   state.calls.length = 0;
   const unregister = core.addWatchWaiter(sid, () => {});
-  posted = await core.postMail({ to: sid, from: 'human', text: 'watcher first' });
+  // 'human' is a reserved sender (0.16.0) — postMail refuses it even in-process.
+  posted = await core.postMail({ to: sid, from: 'operator', text: 'watcher first' });
   assert.equal(posted.targets[0].route, 'watcher');
   assert.equal(await core.tryOwnedPaneDelivery(sid), false);
   assert.deepEqual(state.calls, [], 'a registered waiter suppresses pane paste');
@@ -232,10 +240,12 @@ test('tmux input/capture helpers use isolated-socket argv without shell interpol
   });
   t.after(() => rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
 
-  assert.equal(await pasteText('@9', 'hello\nworld'), true);
-  assert.equal(await sendEnter('@9'), true);
-  assert.equal(await typeKeys('@9', '/rc fd4711-falcon'), true);
-  assert.equal(await capturePane('fd4711-falcon'), '');
+  const target = exactWindowTarget(4711, 'fd4711-falcon');
+  assert.equal(target, '=fleetdeck-4711:=fd4711-falcon');
+  assert.equal(await pasteText(target, 'hello\nworld'), true);
+  assert.equal(await sendEnter(target), true);
+  assert.equal(await typeKeys(target, '/rc fd4711-falcon'), true);
+  assert.equal(await capturePane(target), '');
   const calls = readFileSync(record, 'utf8').trim().split('\n').map(JSON.parse);
   // pasteText now uses a per-call unique buffer (fdmail-<uuid>, H-R4) and deletes
   // it in a finally, so assert the argv shape and the buffer-name relationship
@@ -244,12 +254,12 @@ test('tmux input/capture helpers use isolated-socket argv without shell interpol
   const bufName = setBuf[4];
   assert.match(bufName, /^fdmail-[0-9a-f-]+$/, 'set-buffer uses a unique fdmail-<uuid> buffer');
   assert.deepEqual(setBuf, ['-L', 'fd-test-socket', 'set-buffer', '-b', bufName, '--', 'hello\nworld']);
-  assert.deepEqual(pasteBuf, ['-L', 'fd-test-socket', 'paste-buffer', '-p', '-d', '-b', bufName, '-t', '@9']);
+  assert.deepEqual(pasteBuf, ['-L', 'fd-test-socket', 'paste-buffer', '-p', '-d', '-b', bufName, '-t', target]);
   assert.deepEqual(delBuf, ['-L', 'fd-test-socket', 'delete-buffer', '-b', bufName]);
   assert.deepEqual(rest, [
-    ['-L', 'fd-test-socket', 'send-keys', '-t', '@9', 'Enter'],
-    ['-L', 'fd-test-socket', 'send-keys', '-t', '@9', '-l', '--', '/rc fd4711-falcon'],
-    ['-L', 'fd-test-socket', 'capture-pane', '-p', '-t', 'fd4711-falcon'],
+    ['-L', 'fd-test-socket', 'send-keys', '-t', target, 'Enter'],
+    ['-L', 'fd-test-socket', 'send-keys', '-t', target, '-l', '--', '/rc fd4711-falcon'],
+    ['-L', 'fd-test-socket', 'capture-pane', '-p', '-t', target],
   ]);
 });
 

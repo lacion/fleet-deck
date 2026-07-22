@@ -24,7 +24,7 @@ const MAIL_HINT = {
 function SessionCard({
   s, compact, mailCount, mailMeta, conflictFiles, conflictPeers, ripple, priority, onOpen, onOpenTerm,
   onRevive, reviving, onEnableRemote, enablingRemote, onKill, onToggleWatch, watched,
-  onArmMove, onDisarm, adopting, onRename,
+  onArmMove, onDisarm, adopting, onRename, legacy,
 }) {
   const offline = s.col === 'offline';
   const needsyou = s.col === 'needsyou';
@@ -119,6 +119,15 @@ function SessionCard({
         {s.spawn?.skip_permissions && (
           <span className="fd-unsupchip" title="spawned with permissions bypassed — it will never ask before acting">
             unsupervised
+          </span>
+        )}
+        {legacy && (
+          // 0.16.0: this session is running pre-upgrade hooks — its card will
+          // not update (and looks deceptively idle) until the session is
+          // restarted. Clears itself the moment its first authenticated hook
+          // lands (i.e. after the restart).
+          <span className="fd-legacytag" title="running pre-0.16.0 hooks — dark on this board until the session is restarted">
+            ⬆ restart me
           </span>
         )}
         {s.spawn?.gateway && (

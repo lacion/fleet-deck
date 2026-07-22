@@ -25,14 +25,20 @@ permissions:
 
 jobs:
   publish:
+    # A human must approve before the OIDC credential mints. Without this, any
+    # push of a v* tag by anyone with repo write publishes to npm unreviewed —
+    # the drift gates below prove committed==rebuilt, never that the commit
+    # itself was reviewed. The `release` environment (repo Settings →
+    # Environments, required reviewers) is the checkpoint.
+    environment: release
     # GitHub-hosted runner required — OIDC trusted publishing does not support
     # self-hosted runners.
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           # Trusted publishing needs Node >= 22.14. Publishing is also the one job
           # that must never reuse a warm cache: what we ship is decided entirely by
@@ -61,7 +67,20 @@ jobs:
             exit 1
           fi
 
-      - run: npm ci
+      # A tag can point at ANY commit — including one that never survived review
+      # on main (a branch prepared weeks earlier carrying this version string).
+      # Publish only what main actually contains.
+      - name: Fail if the tagged commit is not on main
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_REF_NAME points at a commit that is not an ancestor of origin/main — cut the tag from main"
+            exit 1
+          fi
+
+      # No lifecycle scripts: esbuild ships its binary as an optional platform
+      # dep (verified 0.16.0), so nothing the install runs may execute code.
+      - run: npm ci --ignore-scripts
 
       - run: npm test
 
@@ -74,7 +93,7 @@ jobs:
         run: |
           npm run bundle
           git diff --exit-code scripts/fleetd/fleetd.bundle.mjs
-          npm --prefix board ci
+          npm --prefix board ci --ignore-scripts
           npm --prefix board run build
           git diff --exit-code scripts/fleetd/board-dist
 

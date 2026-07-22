@@ -283,7 +283,7 @@ test('hook catalog writes and /state carries repo_catalog plus settings', async 
 
   await postHook(daemon.baseUrl, 'SessionStart', {
     session_id: randomUUID(), cwd: root, hook_event_name: 'SessionStart', source: 'startup',
-  });
+  }, { token: daemon });
   const state = (await getJson(`${daemon.baseUrl}/state`)).json;
   const row = state.repo_catalog.find(repo => repo.root === root);
   assert.ok(row);

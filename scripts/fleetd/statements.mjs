@@ -223,9 +223,14 @@ export function createStatements(db) {
         AND col IN ('queued', 'idle', 'needsyou') AND last_seen < ?`),
     archiveCandidates: db.prepare(`SELECT * FROM sessions
       WHERE col = 'offline' AND archived_at IS NULL
-        AND COALESCE(ended_at, last_seen) < ?`),
+        AND COALESCE(ended_at, last_seen) < ?
+        AND NOT EXISTS (SELECT 1 FROM spawns
+          WHERE spawns.session_id = sessions.session_id AND spawns.status = 'stalled')`),
     setArchived: db.prepare('UPDATE sessions SET archived_at = ? WHERE session_id = ? AND archived_at IS NULL'),
-    archiveAllOffline: db.prepare("UPDATE sessions SET archived_at = ? WHERE col = 'offline' AND archived_at IS NULL"),
+    archiveAllOffline: db.prepare(`UPDATE sessions SET archived_at = ?
+      WHERE col = 'offline' AND archived_at IS NULL
+        AND NOT EXISTS (SELECT 1 FROM spawns
+          WHERE spawns.session_id = sessions.session_id AND spawns.status = 'stalled')`),
     expireRetainedMail: db.prepare(`UPDATE mail SET expired_at = ?
       WHERE delivered_at IS NULL AND expired_at IS NULL
         AND to_session IN (SELECT session_id FROM sessions
@@ -234,7 +239,7 @@ export function createStatements(db) {
       WHERE delivered_at IS NULL AND expired_at IS NULL
         AND to_session IN (SELECT session_id FROM sessions WHERE archived_at IS NOT NULL)`),
     goneArchivedSpawns: db.prepare(`UPDATE spawns SET status = 'gone'
-      WHERE status NOT IN ('killed', 'pane-dead', 'gone')
+      WHERE status NOT IN ('killed', 'pane-dead', 'gone', 'stalled')
         AND session_id IN (SELECT session_id FROM sessions WHERE archived_at IS NOT NULL)`),
     orphanWorktrees: db.prepare(`SELECT DISTINCT spawns.worktree_path FROM spawns
       JOIN sessions ON sessions.session_id = spawns.session_id

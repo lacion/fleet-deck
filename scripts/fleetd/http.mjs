@@ -97,7 +97,7 @@ const MIME = {
 // React sets inline style ATTRIBUTES (hence 'unsafe-inline' in style-src only —
 // there are no inline <script>s, so script-src stays 'self'). connect-src covers
 // the /state|/health|/api fetches and both WebSockets, same-origin under a proxy.
-const CSP_SHELL = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self' ws: wss:; img-src 'self' data: blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
+const CSP_SHELL = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self'; img-src 'self' data: blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
 
 // Serve one file from board-dist. Traversal-safe: the decoded request path is
 // resolved against BOARD_DIST and must stay strictly inside it (any '..' —
@@ -117,6 +117,10 @@ function serveBoardAsset(res, pathname, notFound) {
     'content-type': MIME[ext] || 'application/octet-stream',
     'content-length': data.length,
     'x-content-type-options': 'nosniff',
+    // The board boots from a ?t=<token> URL; no subresource (notably the
+    // Google Fonts stylesheet, which fires before token.js can scrub the URL)
+    // may ever see it as a Referer.
+    'referrer-policy': 'no-referrer',
   };
   if (ext === '.html') headers['content-security-policy'] = CSP_SHELL;
   res.writeHead(200, headers);
@@ -191,7 +195,7 @@ export function createHttp(core, {
     : { enabled: false, urls: [] };
 
   function snapshotWithLan() {
-    return { ...core.snapshot(), lan: lanInfo };
+    return { ...core.snapshot(), lan: lanInfo, legacy_upgrade: legacyBanner() };
   }
 
   function json(res, code, obj) {
@@ -254,34 +258,98 @@ export function createHttp(core, {
         // decision to trust the proxy, so this exemption survives the flag.
         return true;
       } else {
-        // PLAIN LOOPBACK (not via the proxy). REQUIRE_TOKEN
-        // (FLEETDECK_REQUIRE_TOKEN=on): on a multi-user machine every other OS
-        // user can reach 127.0.0.1 and today inherits this loopback exemption —
-        // tokenless /state, /api/spawn, the lot — and it is also the residual
-        // behind the Host-rewriting-proxy note above. With the flag on the
-        // exemption survives for exactly: a /hook/* path (Claude Code http hooks
-        // cannot attach an Authorization header — see hooks/hooks.json), /health
-        // (a tokenless liveness/version probe — deliberately absent from the
-        // CHANGELOG'd gated list; used by `fleetdeck status`, the supervisor's
-        // waitForHealth and the standalone health check; it carries no fleet
-        // data, just {ok,version,managed}), and the data-free public shell (a
-        // browser must load it before it can present a key). The isPublicShell
-        // arm is redundant on the HTTP path — the request handler short-circuits
-        // shell paths before calling authorized() — but it GUARDS THE WS-UPGRADE
-        // PATH, which calls authorized() directly with no such short-circuit.
-        // Everything else falls through to the bearer/?t= check below even on
-        // loopback. Purely ADDITIVE: with the flag off (the default) the loopback
-        // exemption is byte-for-byte as before, and this never loosens the
-        // proxyAuth/arrivedViaTrustedProxy gate above.
-        if (!requireToken
-          || url.pathname.startsWith('/hook/')
-          || url.pathname === '/health'
-          || isPublicShell(req.method, url.pathname)) return true;
+        // PLAIN LOOPBACK (not via the proxy). Since 0.16.0 the daemon always
+        // mints a token, and the loopback exemption shrinks to exactly two
+        // shapes: (a) /health and the data-free public shell, open for everyone;
+        // (b) /hook/*, open ONLY to callers that present the bearer — every
+        // hook now arrives through a command shim (scripts/fleet-hook.mjs /
+        // fleet-sessionstart.mjs / fleet-watch.mjs) that reads
+        // $FLEETDECK_HOME/token and attaches it, because Claude Code http hooks
+        // cannot. A tokenless /hook/* call is therefore no longer "a CLI that
+        // cannot authenticate" — it is exactly the forgery the shims exist to
+        // stop (a local process impersonating a session with one curl), so it
+        // falls through to the bearer check below and 401s. When REQUIRE_TOKEN
+        // is off (the default), every NON-hook loopback route keeps the
+        // historical exemption: the token gates only the specific powers named
+        // in REQUIRE_TOKEN_GATED_ROUTES (/ws/term, POST /mail, gateway settings
+        // writes, the unsupervised-spawn arm) — the powers a malicious same-UID
+        // process or a fleet agent itself must not wield anonymously.
+        // REQUIRE_TOKEN=on keeps its stronger meaning: everything except
+        // /health and the shell requires the bearer, hook shims included.
+        if (url.pathname === '/health' || isPublicShell(req.method, url.pathname)) return true;
+        if (!requireToken && !url.pathname.startsWith('/hook/')
+          && !tokenGatedRoute(req.method, url.pathname)) return true;
       }
     }
     const authorization = req.headers.authorization;
     const bearer = typeof authorization === 'string' ? /^Bearer (.+)$/.exec(authorization)?.[1] : undefined;
     return tokenMatches(bearer) || tokenMatches(url.searchParams.get('t'));
+  }
+
+  // 0.16.0 LOOPBACK GATES. Default loopback stays open for ordinary routes,
+  // but these powers require the bearer no matter where the call comes from:
+  // typing into a live pane (/ws/term), injecting mail into sessions, and
+  // arming an unsupervised spawn. The board, the hook shims and the fleet skill
+  // docs all present the token; a caller without it is precisely the attacker
+  // the gate names. Two gated powers need the parsed body and live at their
+  // handlers instead: gateway_* settings writes (POST /api/settings) and
+  // unsupervised spawn bodies (POST /api/spawn, adopt) — see those routes.
+  function tokenGatedRoute(method, pathname) {
+    if (pathname === '/ws/term') return true;
+    if (method !== 'POST') return false;
+    return pathname === '/mail' || pathname === '/api/spawn/arm-unsupervised';
+  }
+
+  // 0.16.0 UPGRADE WHISPER. Sessions started before this release run the OLD
+  // (0.15-era) hooks: plain http POSTs with no token. With the gate up, those
+  // calls must be REFUSED — a tokenless hook is exactly the forgery the gate
+  // exists to stop — but a refusal alone leaves the old session silently dark
+  // on the board until someone restarts it. So instead of a bare 401, a
+  // tokenless hook is answered in the CLI's own dialect: no state change
+  // (nothing is ingested, held, or derived), but the response carries a
+  // context whisper the old CLI shows its agent, which relays it to the human.
+  // A session that KEEPS calling (the agent saw the whisper and the human
+  // hasn't acted) escalates once: its next tokenless Stop is answered with a
+  // turn-blocking restart instruction — the strongest signal the hook protocol
+  // allows, sent at most once per session per daemon boot, and never losing
+  // work (the turn continues after the block). Forgery vs. legacy is
+  // deliberately NOT distinguished: both get the same response, the whisper
+  // carries no privileged data, and the request is always refused.
+  const legacyWhisperedSessions = new Set();
+  // The board banner reads these: which sessions are running pre-0.16.0 hooks
+  // (still to restart) and which have already proven they're on the new shims
+  // (an authenticated hook arrived). A session moves from the first set to
+  // the second exactly once — its first authenticated hook — so the banner
+  // self-heals as the human restarts things. In-memory: a daemon restart
+  // simply re-learns both from the next hooks each session emits.
+  const legacySessions = new Set();
+  const upgradedSessions = new Set();
+  function noteLegacySession(sid) {
+    if (typeof sid !== 'string' || !sid || sid === 'unknown') return;
+    if (upgradedSessions.has(sid)) return;
+    legacySessions.add(sid);
+  }
+  function noteUpgradedSession(sid) {
+    if (typeof sid !== 'string' || !sid || sid === 'unknown') return;
+    if (upgradedSessions.has(sid)) return;
+    upgradedSessions.add(sid);
+    legacySessions.delete(sid);
+  }
+  function legacyBanner() {
+    return { sessions: [...legacySessions], upgraded: upgradedSessions.size };
+  }
+  const LEGACY_WHISPER = '[FLEETDECK] This session is running pre-0.16.0 hooks and is no longer reaching the fleet daemon (hook calls now require a token). Tell the human: please RESTART this Claude session — after the restart it reconnects to the board automatically.';
+  const LEGACY_BLOCK_REASON = '[FLEETDECK] This session is running pre-0.16.0 hooks and cannot reach the fleet daemon. Stop and tell the human NOW: restart this Claude session (exit and relaunch in the same directory). Do not continue the current task until the human acknowledges — the session is running without fleet oversight.';
+  function legacyHookResponse(res, ev, name) {
+    const sid = typeof ev?.session_id === 'string' ? ev.session_id : null;
+    noteLegacySession(sid);
+    if (name === 'Stop' && sid && !legacyWhisperedSessions.has(sid)) {
+      legacyWhisperedSessions.add(sid);
+      return json(res, 200, { decision: 'block', reason: LEGACY_BLOCK_REASON });
+    }
+    return json(res, 200, {
+      hookSpecificOutput: { hookEventName: name, additionalContext: LEGACY_WHISPER },
+    });
   }
 
   // SAME-ORIGIN CONTRACT (C1/H-S3). Loopback auto-authorizes, and a browser is a
@@ -415,7 +483,16 @@ export function createHttp(core, {
   // table (Phase 3/4 hold-open relay — the response is parked, see the hook
   // branch below).
   const hookHandlers = {
-    SessionStart: ev => core.hookSessionStart(ev),
+    // 0.16.0: the hook that may have just performed the version takeover gets
+    // the upgrade lines appended — the human who started THAT session hears
+    // about every other session still needing a restart (see fleet-sessionstart).
+    SessionStart: ev => {
+      const out = core.hookSessionStart(ev);
+      if (ev?.fleet_takeover && out && typeof out === 'object') {
+        out.upgrade_lines = core.takeoverBriefLines(ev.fleet_takeover, legacyBanner());
+      }
+      return out;
+    },
     UserPromptSubmit: ev => core.hookUserPromptSubmit(ev),
     PostToolUse: ev => core.hookPostToolUse(ev),
     PreToolUse: ev => core.hookPostToolUse(ev), // same derivation branch as the spike
@@ -550,9 +627,15 @@ export function createHttp(core, {
     try {
       const url = new URL(req.url, `http://127.0.0.1:${port}`);
       const shell = isPublicShell(req.method, url.pathname);
-      if (!shell && !authorized(req, url)) {
+      // Hook paths are NOT refused here: a tokenless hook is answered (and
+      // refused) by legacyHookResponse AFTER its body is parsed — the upgrade
+      // whisper needs the session_id and event name, and the hook dialect
+      // never sends an error page. Everything else 401s as usual.
+      const isHookPath = url.pathname.startsWith('/hook/');
+      if (!shell && !isHookPath && !authorized(req, url)) {
         return json(res, 401, { ok: false, reason: 'unauthorized' });
       }
+      const hookAuthed = isHookPath ? authorized(req, url) : true;
       // DNS-REBINDING DEFENSE (C1/H-S3): a page pointed at a domain that
       // re-resolves to this box arrives with a foreign Host — refuse it on every
       // route that carries data or DOES something. The data-free public shell
@@ -710,6 +793,11 @@ export function createHttp(core, {
             const hook = /^\/hook\/([A-Za-z]+)$/.exec(url.pathname);
             if (hook) {
               const name = hook[1];
+              // 0.16.0 upgrade path: a tokenless hook is REFUSED here — nothing
+              // below may ingest, hold, or derive from it — and answered with
+              // the restart whisper (see legacyHookResponse).
+              if (!hookAuthed) return legacyHookResponse(res, ev, name);
+              noteUpgradedSession(ev?.session_id);
               // payload capture (validation aid): first 3 raw payloads per
               // hook event name, best-effort, never affects the response
               try { capture(name, ev); } catch { /* best-effort */ }
@@ -737,7 +825,10 @@ export function createHttp(core, {
             }
             if (url.pathname === '/mail') {
               core.postMail(ev)
-                .then(out => json(res, 200, out))
+                // 0.16.0: postMail returns {status, body} on a refusal and the
+                // historical bare delivery object on success (in-process
+                // callers consume the bare shape — the adapter lives HERE).
+                .then(out => json(res, out.status ?? 200, out.body ?? out))
                 .catch(err => {
                   console.error('fleetd mail error:', err);
                   json(res, 500, { ok: false, err: 'internal' });
@@ -765,6 +856,17 @@ export function createHttp(core, {
               return;
             }
             if (url.pathname === '/api/settings') {
+              // 0.16.0: gateway_* writes reroute every future session's LLM
+              // traffic, so they require the bearer even on loopback (a plain
+              // settings key like browse_root keeps the loopback exemption).
+              if (Object.keys(ev || {}).some(k => k.toLowerCase().startsWith('gateway_'))) {
+                const authorization = req.headers.authorization;
+                const bearer = typeof authorization === 'string' ? /^Bearer (.+)$/.exec(authorization)?.[1] : undefined;
+                if (!tokenMatches(bearer) && !tokenMatches(url.searchParams.get('t'))) {
+                  return json(res, 401, { ok: false, reason: 'gateway settings require the bearer token' });
+                }
+                logExec(url.pathname, req, ' gateway=true');
+              }
               const out = core.setSettings(ev);
               return json(res, out.status, out.body);
             }
@@ -779,6 +881,14 @@ export function createHttp(core, {
               const out = core.pasteImage(ev);
               return json(res, out.status, out.body);
             }
+            if (url.pathname === '/api/spawn/arm-unsupervised') {
+              // 0.16.0: mint the one-time capability an unsupervised spawn body
+              // must echo. Token-gated by tokenGatedRoute even on loopback, so
+              // this route existing means the caller already proved it holds
+              // the bearer — the API-side half of the board's red two-step.
+              logExec(url.pathname, req);
+              return json(res, 200, { ok: true, arm_token: core.armUnsupervised() });
+            }
             if (url.pathname === '/api/spawn') {
               // v1.2 board spawn (CONTRACT). Control API like the questions
               // answer path: real status codes, fail-loud — never a silent
@@ -787,7 +897,7 @@ export function createHttp(core, {
               // dangerously_skip_permissions: bool and permission_mode
               // "bypassPermissions" (validated/applied in derive.spawn too).
               logExec(url.pathname, req,
-                (ev?.dangerously_skip_permissions === true || ev?.permission_mode === 'bypassPermissions')
+                (ev?.dangerously_skip_permissions === true || (typeof ev?.permission_mode === 'string' && ev.permission_mode.toLowerCase() === 'bypasspermissions'))
                   ? ' unsupervised=true' : ' unsupervised=false');
               core.spawn(ev)
                 .then(out => json(res, out.status, out.body))
@@ -835,7 +945,7 @@ export function createHttp(core, {
               // (404/400/409/410) lives in derive; the CSRF/Host walls above
               // apply automatically like every other control POST.
               logExec(url.pathname, req,
-                (ev?.dangerously_skip_permissions === true || ev?.permission_mode === 'bypassPermissions')
+                (ev?.dangerously_skip_permissions === true || (typeof ev?.permission_mode === 'string' && ev.permission_mode.toLowerCase() === 'bypasspermissions'))
                   ? ' unsupervised=true' : ' unsupervised=false');
               core.adoptSession(adoptMatch[1], ev ?? {})
                 .then(out => json(res, out.status, out.body))

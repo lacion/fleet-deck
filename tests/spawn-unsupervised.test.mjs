@@ -79,6 +79,15 @@ function extractArgv(spec) {
   return findArray(spec, arr => arr.includes('claude'));
 }
 
+// 0.16.0: unsupervised spawns (dangerously_skip_permissions:true or
+// permission_mode:'bypassPermissions') require a fresh single-use arm_token
+// from POST /api/spawn/arm-unsupervised (itself bearer-gated).
+async function armUnsupervised(daemon) {
+  const res = await postJson(`${daemon.baseUrl}/api/spawn/arm-unsupervised`, {}, { token: daemon.token });
+  assert.equal(res.status, 200, `arm-unsupervised should 200 (got ${res.status}: ${JSON.stringify(res.json)})`);
+  return res.json.arm_token;
+}
+
 // ---------------------------------------------------------------------------
 
 test('unsupervised spawn: dangerously_skip_permissions:true adds --dangerously-skip-permissions to argv and sets spawn.skip_permissions true', async (t) => {
@@ -89,7 +98,7 @@ test('unsupervised spawn: dangerously_skip_permissions:true adds --dangerously-s
   const daemon = await startDaemon({ port, env: spawnCmdEnv({ recordFile: rec, postUrl: baseUrl }) });
   t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
-  const res = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd, dangerously_skip_permissions: true });
+  const res = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd, dangerously_skip_permissions: true, arm_token: await armUnsupervised(daemon) });
   assert.equal(res.status, 200, `spawn should 200 (got ${res.status}: ${JSON.stringify(res.json)})`);
   const sid = res.json.session_id;
 
@@ -112,7 +121,7 @@ test("unsupervised spawn: permission_mode 'bypassPermissions' adds --permission-
   const daemon = await startDaemon({ port, env: spawnCmdEnv({ recordFile: rec, postUrl: baseUrl }) });
   t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
-  const res = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd, permission_mode: 'bypassPermissions' });
+  const res = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd, permission_mode: 'bypassPermissions', arm_token: await armUnsupervised(daemon) });
   assert.equal(res.status, 200, `spawn should 200 (got ${res.status}: ${JSON.stringify(res.json)})`);
   const sid = res.json.session_id;
 
@@ -164,6 +173,7 @@ test('unsupervised spawn: both dangerously_skip_permissions:true AND permission_
 
   const res = await postJson(`${daemon.baseUrl}/api/spawn`, {
     cwd, dangerously_skip_permissions: true, permission_mode: 'bypassPermissions',
+    arm_token: await armUnsupervised(daemon),
   });
   assert.equal(res.status, 200, `spawn should 200 (got ${res.status}: ${JSON.stringify(res.json)})`);
   const sid = res.json.session_id;

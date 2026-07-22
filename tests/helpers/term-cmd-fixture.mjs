@@ -5,7 +5,7 @@
 //
 // Since v1.9 the daemon keeps ONE control client for the whole fleet and demuxes
 // %output by pane id, so this fixture must model several panes rather than one:
-// `list-panes -t =<session>:<window>` hands out a STABLE pane id per window
+// `list-panes -t =<session>:=<window>` hands out a STABLE pane id per window
 // (%1, %2, …, in first-seen order), and each pane streams output tagged with its
 // own id. A test can therefore prove that two viewers on two windows see two
 // different streams through a single fixture process.
@@ -32,7 +32,7 @@ function response(lines = [], ok = true) {
   process.stdout.write(`%${ok ? 'end' : 'error'} 100 ${n} 0\n`);
 }
 
-/** `list-panes -t =fleetdeck-21777:fd21777-viper-c7a7 -F '#{pane_id}'` → %1
+/** `list-panes -t =fleetdeck-21777:=fd21777-viper-c7a7 -F '#{pane_id}'` → %1
  *
  * Pane ids are handed out in first-seen order, which — with several viewers
  * connecting at once — is NOT the order the test opened its tiles in. So record
@@ -40,7 +40,7 @@ function response(lines = [], ok = true) {
  * here rather than assume it. */
 function paneForListPanes(line) {
   const target = /-t\s+=\S*?:(\S+)/.exec(line);
-  const window = target?.[1] ?? 'default';
+  const window = target?.[1]?.replace(/^=/, '') ?? 'default';
   if (!panes.has(window)) {
     panes.set(window, `%${panes.size + 1}`);
     note({ type: 'pane', window, pane: panes.get(window) });

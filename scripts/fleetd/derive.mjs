@@ -115,7 +115,21 @@ export function createCore(db, {
   // five copies of (await listScopedWindows(port)).find(w => w.window === X)
   // here so "which window is this" is asked exactly one way.
   async function findScopedWindow(name) {
-    return (await tmuxAdapter.listScopedWindows(port)).find(w => w.window === name);
+    const wins = await tmuxAdapter.listScopedWindows(port);
+    // The test override launches no tmux pane by contract, so a missing test
+    // server is authoritative absence. Production lookups remain fail-closed.
+    if (wins === null && tmuxAdapter.spawnOverrideCmd?.()) return undefined;
+    return wins === null ? null : wins.find(w => w.window === name);
+  }
+
+  // Production pane operations bind to the exact fleet session + exact window
+  // name found above, not the reusable @window_id. Injected test adapters from
+  // before this hardening have no exactWindowTarget helper and retain their
+  // stable-id contract through the fallback.
+  function scopedPaneTarget(win) {
+    return tmuxAdapter.exactWindowTarget
+      ? tmuxAdapter.exactWindowTarget(port, win.window)
+      : win.window_id;
   }
 
   // ----------------------------------------------------------- statements
@@ -574,7 +588,7 @@ export function createCore(db, {
     ADOPT_ARM_MS, ADOPT_DELAY_MS, // 0.7.0 Move-to-tmux (spawns arms, events fires)
     SNAPSHOT_FILES_PER_SESSION,
     q, updateSession, onMutate, tmuxAdapter, questions,
-    findScopedWindow, tick, logEvent, card, assignCallsign, applyTicket,
+    findScopedWindow, scopedPaneTarget, tick, logEvent, card, assignCallsign, applyTicket,
     modelMemo, stampTranscriptFloor, readTranscriptModel,
     // 0.7.1: naming + /clear succession, shared with events.mjs (the hook-time
     // interception), commands.mjs / http.mjs (the `name` surfaces), and
@@ -648,14 +662,14 @@ export function createCore(db, {
   const {
     spawn, revive, adoptSession, enableRemote, spawnKill, spawnCapability,
     spawnLivenessTick, reconcileSpawns, reconcileClearForks,
-    scheduleRegistrationRemoteHarvest, forgetSpawn, spawnState,
+    scheduleRegistrationRemoteHarvest, forgetSpawn, spawnState, armUnsupervised,
   } = ctx;
 
   // Hook state machine (applyEvent + hook endpoints + brief + plan capture) → events.mjs.
   Object.assign(ctx, createEvents(ctx));
   const {
     applyEvent, hookSessionStart, hookUserPromptSubmit, hookPostToolUse,
-    hookStop, hookSessionEnd, hookHoldQuestion,
+    hookStop, hookSessionEnd, hookHoldQuestion, takeoverBriefLines,
   } = ctx;
 
   // /state snapshot + fleetSize + live-terminal resolver → snapshot.mjs.
@@ -686,6 +700,7 @@ export function createCore(db, {
     hookStop,
     hookSessionEnd,
     hookHoldQuestion,
+    takeoverBriefLines, // 0.16.0 upgrade banner lines for the takeover SessionStart brief
     questions, // F3 relay surface: attachHold / socketClosed / answer / …
     addWatchWaiter,  // F3d-2 watch surface (GET /api/watch v2)
     // hasWatchWaiter is used only INTERNALLY (mail routing + snapshot); no
@@ -708,6 +723,7 @@ export function createCore(db, {
     enableRemote,      // POST /api/spawn/:id/rc → {status, body}
     spawnKill,         // POST /api/spawn/:id/kill → {status, body}
     spawnCapability,   // /health + /state `spawn` object
+    armUnsupervised,   // POST /api/spawn/arm-unsupervised → one-time arm token
     spawnLivenessTick, // owned-pane liveness, rides the agents-poll cadence
     reconcileSpawns,   // fleetd boot: rows ↔ tmux windows
     reconcileClearForks, // fleetd boot: heal cards split by a /clear before 0.7.1

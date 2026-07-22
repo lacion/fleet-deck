@@ -34,8 +34,28 @@ const {
   writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor,
   serviceInstall, UNIT, SUPERVISE,
 } = await import(new URL('../bin/fleetdeck.mjs', import.meta.url));
+const { parseTmuxVersion, tmuxVersionCapability, tmuxVersionSupported } = await import(new URL('../bin/tmux-version.mjs', import.meta.url));
 
 after(() => { try { fs.rmSync(TMP, { recursive: true, force: true }); } catch { /* best effort */ } });
+
+test('tmux version parser enforces 3.4+ and rejects unknown output', () => {
+  assert.deepEqual(parseTmuxVersion('tmux 3.4\n'), { major: 3, minor: 4, version: '3.4' });
+  assert.deepEqual(parseTmuxVersion('tmux 3.7b'), { major: 3, minor: 7, version: '3.7b' });
+  assert.deepEqual(parseTmuxVersion('tmux 4.0'), { major: 4, minor: 0, version: '4.0' });
+  assert.equal(parseTmuxVersion('tmux next-3.5'), null);
+  assert.equal(parseTmuxVersion('3.4'), null);
+  assert.equal(tmuxVersionSupported('tmux 3.3a'), false);
+  assert.equal(tmuxVersionSupported('tmux 3.4'), true);
+  assert.equal(tmuxVersionSupported('tmux 3.10'), true, 'minor versions compare numerically');
+  assert.equal(tmuxVersionSupported('unknown'), false);
+  assert.deepEqual(tmuxVersionCapability('tmux 3.3a'), {
+    available: false,
+    version: '3.3a',
+    reason: 'tmux 3.3a is too old; tmux 3.4+ required',
+  });
+  assert.deepEqual(tmuxVersionCapability('tmux 3.4'), { available: true, version: '3.4' });
+  assert.match(tmuxVersionCapability('unknown').reason, /version is unknown/);
+});
 
 // Save/clear every FLEETDECK_* var (so a stray one in the ambient environment
 // cannot skew a writeEnvFile test), then restore. FLEETDECK_HOME is cleared too,

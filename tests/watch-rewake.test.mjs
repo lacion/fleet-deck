@@ -56,9 +56,9 @@ function scratchCwd() {
 // kind whose answer ever becomes claimable mail) via the F3d Stop detection
 // path.
 async function pendingFreeform(daemon, sid, cwd, transcriptDir, questionText = 'Should the project use bcrypt or argon2?') {
-  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon });
   const transcriptPath = writeTranscript(transcriptDir, { sessionId: sid, assistantText: questionText });
-  await postHook(daemon.baseUrl, 'Stop', { session_id: sid, hook_event_name: 'Stop', cwd, transcript_path: transcriptPath });
+  await postHook(daemon.baseUrl, 'Stop', { session_id: sid, hook_event_name: 'Stop', cwd, transcript_path: transcriptPath }, { token: daemon.token });
   const state = (await getJson(`${daemon.baseUrl}/state`)).json;
   const q = (state.questions || []).find(x => x.session_id === sid && x.kind === 'freeform' && x.status === 'pending');
   assert.ok(q, 'setup: a pending freeform question should exist');
@@ -68,7 +68,7 @@ async function pendingFreeform(daemon, sid, cwd, transcriptDir, questionText = '
 // Register a plain live session (no question, no mail) — the v1.1 case the
 // watcher must now keep polling for instead of exiting.
 async function liveSession(daemon, sid, cwd) {
-  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon });
 }
 
 // Spawn scripts/fleet-watch.mjs the way the Stop command hook does: env for
@@ -158,7 +158,9 @@ test('/api/watch v2: claims assignment mail — status "mail", from "orchestrato
 
   const sid = randomUUID();
   await liveSession(daemon, sid, cwd);
-  await postJson(`${daemon.baseUrl}/mail`, { to: sid, from: 'orchestrator', text: '[FLEETDECK ASSIGNMENT] ship the release notes' });
+  // Reserved senders/frames 422 from POST /mail now — assignments arrive via
+  // the legitimate internal path: POST /command `assign <target> <text>`.
+  await postJson(`${daemon.baseUrl}/command`, { text: `assign ${sid} ship the release notes` });
 
   const res = await getJson(`${daemon.baseUrl}/api/watch?session=${sid}&hold_ms=2000`);
   assert.equal(res.json?.status, 'mail', 'v2 status name is "mail", not the v1 "answer"');
@@ -176,11 +178,11 @@ test('/api/watch v2: claims plain board mail too (no frame), same as any other s
 
   const sid = randomUUID();
   await liveSession(daemon, sid, cwd);
-  await postJson(`${daemon.baseUrl}/mail`, { to: sid, from: 'human', text: 'no rush, just checking in' });
+  await postJson(`${daemon.baseUrl}/mail`, { to: sid, from: 'operator', text: 'no rush, just checking in' }, { token: daemon.token });
 
   const res = await getJson(`${daemon.baseUrl}/api/watch?session=${sid}&hold_ms=2000`);
   assert.equal(res.json?.status, 'mail', 'plain mail must resolve the watch, not just answer/assignment mail');
-  assert.equal(res.json?.from, 'human');
+  assert.equal(res.json?.from, 'operator');
   assert.equal(res.json?.text, 'no rush, just checking in', 'plain mail carries no frame and must not gain one');
 });
 
@@ -191,16 +193,17 @@ test('/api/watch v2: never claims mail for an offline session — preserved for 
 
   const sid = randomUUID();
   await liveSession(daemon, sid, cwd);
-  await postJson(`${daemon.baseUrl}/mail`, { to: sid, from: 'orchestrator', text: '[FLEETDECK ASSIGNMENT] pick this up later' });
-  await postHook(daemon.baseUrl, 'SessionEnd', loadFixture('session-end', { session_id: sid, cwd }));
+  // Internal assignment path (POST /mail refuses reserved senders/frames).
+  await postJson(`${daemon.baseUrl}/command`, { text: `assign ${sid} pick this up later` });
+  await postHook(daemon.baseUrl, 'SessionEnd', loadFixture('session-end', { session_id: sid, cwd }), { token: daemon });
 
   const res = await getJson(`${daemon.baseUrl}/api/watch?session=${sid}&hold_ms=500`);
   assert.equal(res.json?.status, 'idle');
   assert.equal(res.json?.session_alive, false, 'an offline session must never have its mail claimed by the watch poll');
 
   // Resume: SessionStart(resume) + the first UserPromptSubmit must carry it.
-  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }, { source: 'resume' }));
-  const upRes = await postHook(daemon.baseUrl, 'UserPromptSubmit', loadFixture('user-prompt-submit', { session_id: sid, cwd }, { prompt: 'continue' }));
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }, { source: 'resume' }), { token: daemon });
+  const upRes = await postHook(daemon.baseUrl, 'UserPromptSubmit', loadFixture('user-prompt-submit', { session_id: sid, cwd }, { prompt: 'continue' }), { token: daemon });
   const ctx = upRes.json?.hookSpecificOutput?.additionalContext ?? '';
   assert.match(ctx, /\[FLEETDECK ASSIGNMENT\]/, `resumed session's first turn must carry the preserved assignment (got: ${ctx.slice(0, 150)})`);
   assert.ok(ctx.includes('pick this up later'));
@@ -238,7 +241,7 @@ test('/api/watch v2: a pending freeform answered during the poll resolves as "ma
   assert.ok(res.json?.mail_id, 'answer should reference the claimed mail row');
 
   // the claim marked the mail delivered -> turn-boundary path must NOT re-deliver
-  const upRes = await postHook(daemon.baseUrl, 'UserPromptSubmit', loadFixture('user-prompt-submit', { session_id: sid, cwd }, { prompt: 'continue' }));
+  const upRes = await postHook(daemon.baseUrl, 'UserPromptSubmit', loadFixture('user-prompt-submit', { session_id: sid, cwd }, { prompt: 'continue' }), { token: daemon });
   const ctx = upRes.json?.hookSpecificOutput?.additionalContext ?? '';
   assert.ok(!ctx.includes('[FLEETDECK ANSWER]'),
     `a watch-claimed answer must never re-deliver at the turn boundary (got: ${ctx.slice(0, 120)})`);
@@ -259,7 +262,7 @@ test('/api/watch: mailbox drained first (turn boundary) -> the poll stays idle a
 
   // answer, then let the TURN-BOUNDARY path drain it first
   await postJson(`${daemon.baseUrl}/api/questions/${q.id}/answer`, { text: 'argon2id' });
-  const upRes = await postHook(daemon.baseUrl, 'UserPromptSubmit', loadFixture('user-prompt-submit', { session_id: sid, cwd }, { prompt: 'continue' }));
+  const upRes = await postHook(daemon.baseUrl, 'UserPromptSubmit', loadFixture('user-prompt-submit', { session_id: sid, cwd }, { prompt: 'continue' }), { token: daemon });
   const ctx = upRes.json?.hookSpecificOutput?.additionalContext ?? '';
   assert.ok(ctx.includes('[FLEETDECK ANSWER]') && ctx.includes('argon2id'), 'sanity: the turn boundary delivered the answer');
 
@@ -308,7 +311,8 @@ test('fleet-watch v2: assignment mail arrives -> exit 2 with "[FLEETDECK ASSIGNM
   t.after(() => { try { w.child.kill('SIGKILL'); } catch { /* already gone */ } });
   await waitUntil(() => existsSync(pidFileOf(daemon.home, sid)), { label: 'watcher pid file' });
 
-  await postJson(`${daemon.baseUrl}/mail`, { to: sid, from: 'orchestrator', text: '[FLEETDECK ASSIGNMENT] build the thing' });
+  // Internal assignment path (POST /mail refuses reserved senders/frames).
+  await postJson(`${daemon.baseUrl}/command`, { text: `assign ${sid} build the thing` });
 
   const code = await w.exitWithin(6000, 'after assignment mail');
   assert.equal(code, 2, 'delivered assignment mail must exit 2 — the asyncRewake wake signal');
@@ -396,7 +400,7 @@ test('fleet-watch: SessionEnd tombstone makes the watcher exit 0 promptly (freef
   t.after(() => { try { w.child.kill('SIGKILL'); } catch { /* gone */ } });
   await waitUntil(() => existsSync(pidFileOf(daemon.home, sid)), { label: 'watcher pid file' });
 
-  await postHook(daemon.baseUrl, 'SessionEnd', loadFixture('session-end', { session_id: sid, cwd }));
+  await postHook(daemon.baseUrl, 'SessionEnd', loadFixture('session-end', { session_id: sid, cwd }), { token: daemon });
 
   const code = await w.exitWithin(6000, 'after SessionEnd');
   assert.equal(code, 0, 'a tombstoned session must release its watcher with exit 0');
@@ -460,8 +464,8 @@ test('E2E: an idle session with a running fleet-watch wakes on `assign auto`, fr
 
   const sid = randomUUID();
   // Idle session: SessionStart + Stop (Stop unconditionally derives col=idle).
-  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
-  await postHook(daemon.baseUrl, 'Stop', loadFixture('stop', { session_id: sid, cwd }));
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon });
+  await postHook(daemon.baseUrl, 'Stop', loadFixture('stop', { session_id: sid, cwd }), { token: daemon });
   let state = (await getJson(`${daemon.baseUrl}/state`)).json;
   assert.equal(state.sessions.find(s => s.session_id === sid)?.col, 'idle', 'sanity: the session should be idle before the watcher spawns');
 
@@ -481,7 +485,7 @@ test('E2E: an idle session with a running fleet-watch wakes on `assign auto`, fr
 
   // The watcher's claim already marked the mail delivered — the next turn
   // boundary must carry NO duplicate.
-  const upRes = await postHook(daemon.baseUrl, 'UserPromptSubmit', loadFixture('user-prompt-submit', { session_id: sid, cwd }, { prompt: 'on it' }));
+  const upRes = await postHook(daemon.baseUrl, 'UserPromptSubmit', loadFixture('user-prompt-submit', { session_id: sid, cwd }, { prompt: 'on it' }), { token: daemon });
   const ctx = upRes.json?.hookSpecificOutput?.additionalContext ?? '';
   assert.ok(!ctx.includes('[FLEETDECK ASSIGNMENT]'),
     `a watch-claimed assignment must never re-deliver at the turn boundary (got: ${ctx.slice(0, 150)})`);

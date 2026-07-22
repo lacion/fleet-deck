@@ -51,10 +51,30 @@ function clampFrom(from) {
   return dropOrphanSurrogate(from.slice(0, MAIL_FROM_MAX_LEN));
 }
 
+// 0.16.0 SENDER/FRAME RESERVATION. The fleet doctrine teaches agents to treat
+// [FLEETDECK ...] frames and the daemon's own sender names as carrying human
+// authority — so they must be unforgeable. Only the daemon's internal mail()
+// callers may send them; postMail (the external API) is forced unprivileged:
+// reserved senders 422, and a reserved frame prefix at the start of the text
+// 422s as well (a frame MID-text renders as mail content, not an envelope, so
+// only the leading position is checked). Ordinary callsign/session-id senders
+// and plain text are unaffected.
+const RESERVED_SENDERS = new Set(['orchestrator', 'fleetdeck', 'fleetdeck-answer', 'human']);
+// Leading whitespace AND control/zero-width characters: a frame smuggled past
+// as "\x00[FLEETDECK ANSWER]" renders identically in a pane to the real one.
+// eslint-disable-next-line no-control-regex
+const RESERVED_FRAME_RE = /^[\s\x00-\x1f\x7f-\x9f]*\[FLEETDECK[ \]]/i;
+// The pane envelope is a single line (`[FLEETDECK MAIL from <from>] <text>`):
+// a newline in `from` lets the text forge a line-two frame. Control chars are
+// already stripped from pane-bound text by sanitizePaneText, but `from` rides
+// inside the same paste — refuse them at the door instead.
+// eslint-disable-next-line no-control-regex
+const FROM_UNSAFE_RE = /[\r\n\x00-\x1f\x7f-\x9f]/;
+
 export function createMail(ctx) {
   const {
     db, q, tick, logEvent, onMutate, questions, tmuxAdapter,
-    findScopedWindow, PANE_MAIL_GRACE_MS,
+    findScopedWindow, scopedPaneTarget, PANE_MAIL_GRACE_MS,
   } = ctx;
 
   // ------------------------------------------------------------------- mail
@@ -155,8 +175,9 @@ export function createMail(ctx) {
     if (!pair) return false;
     if (!probe) return true;
     const win = await findScopedWindow(pair.sp.tmux_window);
+    if (win === null) return false; // tmux lookup UNKNOWN: hold, never infer absence
     if (!win || win.pane_dead) return false;
-    const pane = await tmuxAdapter.paneCurrentCommand(win.window_id);
+    const pane = await tmuxAdapter.paneCurrentCommand(scopedPaneTarget(win));
     return !!pane && !pane.dead && pane.cmd === 'claude';
   }
 
@@ -178,8 +199,10 @@ export function createMail(ctx) {
     const pair = ownedPaneRow(sid);                         // session + spawn
     if (!pair || hasWatchWaiter(sid)) return false;         // watcher priority
     const win = await findScopedWindow(pair.sp.tmux_window); // live scoped pane
+    if (win === null) return false;                         // UNKNOWN: leave mail queued
     if (!win || win.pane_dead) return false;
-    const pane = await tmuxAdapter.paneCurrentCommand(win.window_id);
+    const target = scopedPaneTarget(win);
+    const pane = await tmuxAdapter.paneCurrentCommand(target);
     if (!pane || pane.dead || pane.cmd !== 'claude') return false;
 
     // Re-check waiter priority after the asynchronous probes, then atomically
@@ -196,7 +219,7 @@ export function createMail(ctx) {
     const box = claimAllMail(sid);
     if (!box.length) return false;
     const text = box.map(m => `[FLEETDECK MAIL from ${m.from_id}] ${m.text}`).join('\n');
-    const pasted = await tmuxAdapter.pasteText(win.window_id, text);
+    const pasted = await tmuxAdapter.pasteText(target, text);
     if (!pasted) {                       // paste failed → redeliver at a later turn
       for (const m of box) q.unmarkDelivered.run(m.id);
       onMutate();
@@ -209,7 +232,7 @@ export function createMail(ctx) {
     // permission/question TUI. Leave it un-entered — recoverable — and keep it
     // marked delivered so it is never re-pasted.
     if (!ownedPaneRow(sid)) { onMutate(); return true; }
-    const entered = await tmuxAdapter.sendEnter(win.window_id);
+    const entered = await tmuxAdapter.sendEnter(target);
     if (!entered) {
       for (const m of box) q.unmarkDelivered.run(m.id);
       onMutate();
@@ -254,6 +277,17 @@ export function createMail(ctx) {
   }
 
   async function postMail({ to, from, text }) {
+    // External callers never wear the daemon's identities or its authority
+    // frames — see RESERVED_SENDERS above. 422 like every other body rejection.
+    if (from != null && RESERVED_SENDERS.has(String(from).toLowerCase())) {
+      return { status: 422, body: { ok: false, reason: `sender name '${from}' is reserved for the daemon` } };
+    }
+    if (from != null && FROM_UNSAFE_RE.test(String(from))) {
+      return { status: 422, body: { ok: false, reason: 'sender name may not contain control characters or newlines' } };
+    }
+    if (RESERVED_FRAME_RE.test(String(text ?? ''))) {
+      return { status: 422, body: { ok: false, reason: 'mail text may not open with a [FLEETDECK ...] frame — those are reserved for the daemon' } };
+    }
     const targets = resolveTargets(to);
     // Report delivery truth from the state immediately before insertion: a
     // live waiter wakes instantly ('watcher'), a verified owned Claude pane

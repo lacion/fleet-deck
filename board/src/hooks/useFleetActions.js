@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { cleanup, killSpawn, reasonOf, renameSession } from '../api.js';
+import { cleanup, killSpawn, reasonOf, renameSession, armUnsupervised } from '../api.js';
 import { safeUrl, validSuffix } from '../util.js';
 
 // The board-level fleet mutations that all report their outcome onto the shared
@@ -155,12 +155,22 @@ export function useFleetActions({ showNote, revive, reviveAll, enableRemoteActio
 
   // Fire the adopt/arm POST through the shared single-owner action (per-session
   // lock in useSpawnActions). skip → dangerously_skip_permissions:true (the
-  // dialog's two-step unsupervised gate); the safe default sends {}. Awaits the
-  // action's OWN promise (which always resolves — even on an in-flight
-  // early-return) so the dialog can close without ever hanging on the strip
-  // reporter, which only fires when a POST actually went out.
+  // dialog's two-step unsupervised gate); the safe default sends {}. 0.16.0: a
+  // skip adopt must also echo a fresh arm token from the daemon — mint it here
+  // and fold a refusal into the same strip reporter. Awaits the action's OWN
+  // promise (which always resolves — even on an in-flight early-return) so the
+  // dialog can close without ever hanging on the strip reporter, which only
+  // fires when a POST actually went out.
   const doAdopt = useCallback(async (s, { skip } = {}) => {
-    await adopt(s, skip ? { dangerously_skip_permissions: true } : {}, (r) => {
+    const body = {};
+    if (skip) {
+      body.dangerously_skip_permissions = true;
+      try {
+        const arm = await armUnsupervised();
+        if (arm.ok && arm.json?.arm_token) body.arm_token = arm.json.arm_token;
+      } catch { /* fall through: the daemon's 403 reason is the honest error */ }
+    }
+    await adopt(s, body, (r) => {
       reportAdopt(s.callsign || s.session_id, r);
     });
   }, [adopt, reportAdopt]);

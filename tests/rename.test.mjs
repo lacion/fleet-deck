@@ -54,7 +54,7 @@ async function boot(t, prefix) {
 
 async function startSession(daemon, cwd) {
   const sid = randomUUID();
-  const res = await postHook(daemon.baseUrl, 'SessionStart', { session_id: sid, cwd, source: 'startup' });
+  const res = await postHook(daemon.baseUrl, 'SessionStart', { session_id: sid, cwd, source: 'startup' }, { token: daemon.token });
   return { sid, callsign: res.json.callsign, animal: res.json.callsign.split('-')[0] };
 }
 
@@ -86,7 +86,7 @@ test('mail addressed to the birth name still reaches a renamed session', async (
   const { sid, callsign } = await startSession(daemon, cwd);
   await rename(daemon, sid, { suffix: 'shipping' });
 
-  const res = await postJson(`${daemon.baseUrl}/mail`, { to: callsign, from: 'operator', text: 'still finds you' });
+  const res = await postJson(`${daemon.baseUrl}/mail`, { to: callsign, from: 'operator', text: 'still finds you' }, { token: daemon.token });
   assert.equal(res.status, 200, JSON.stringify(res.json));
   const state = (await getJson(`${daemon.baseUrl}/state`)).json;
   assert.equal(state.mail_meta[sid].queued, 1, 'the old name is a fallback route, not a dead letter');
@@ -197,7 +197,7 @@ test('renaming a session with a live pane keeps its pane: the frozen tmux window
   const spawned = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd, prompt: 'work' });
   assert.equal(spawned.status, 200, JSON.stringify(spawned.json));
   const sid = spawned.json.session_id;
-  await postHook(daemon.baseUrl, 'SessionStart', { session_id: sid, cwd, source: 'startup' });
+  await postHook(daemon.baseUrl, 'SessionStart', { session_id: sid, cwd, source: 'startup' }, { token: daemon.token });
   const before = cardOf((await getJson(`${daemon.baseUrl}/state`)).json, sid);
   const window = before.spawn.tmux_window;
 
@@ -220,7 +220,7 @@ test('renaming a session with a live pane keeps its pane: the frozen tmux window
 test('an offline session cannot be renamed — its name is on its way back to the pool', async (t) => {
   const { daemon, cwd } = await boot(t, 'fleetdeck-rename-offline');
   const { sid } = await startSession(daemon, cwd);
-  await postHook(daemon.baseUrl, 'SessionEnd', { session_id: sid, cwd, reason: 'logout' });
+  await postHook(daemon.baseUrl, 'SessionEnd', { session_id: sid, cwd, reason: 'logout' }, { token: daemon.token });
 
   const res = await rename(daemon, sid, { suffix: 'too-late' });
   assert.equal(res.status, 409);

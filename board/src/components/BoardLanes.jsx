@@ -16,7 +16,7 @@ const EMPTY = [];
 // neither the lanes nor any card. The card props are kept referentially stable
 // (memoized derivation + stable callbacks) so the memo actually holds.
 function BoardLanes({
-  sessions, repos, conflicts, mailPending, mailMeta, compact, stale,
+  sessions, repos, conflicts, mailPending, mailMeta, compact, stale, legacyUpgrade,
   repoFilter, onRepoFilter, ripples, priorities, onOpenSession, onOpenTerm,
   reviving, revivingAll, onRevive, onReviveAll, enablingRemote, onEnableRemote, onKill,
   onToggleWatch, watch, onArmMove, onDisarm, adopting, onRename,
@@ -24,6 +24,13 @@ function BoardLanes({
   // SessionCard calls onOpen(s); the drawer keys off session_id. One stable
   // wrapper for the whole board rather than a fresh closure per card.
   const onOpen = useCallback((s) => onOpenSession(s.session_id), [onOpenSession]);
+  // 0.16.0: pre-upgrade sessions carry a per-card "restart me" tag. The daemon
+  // hands the ids as an array; a Set keeps per-card lookup O(1) and the
+  // reference stable across frames that don't change it.
+  const legacySet = useMemo(
+    () => new Set(legacyUpgrade?.sessions ?? []),
+    [legacyUpgrade],
+  );
 
   // M-P4 — the lane derivation is pure over (sessions, repos, conflicts,
   // repoFilter). Memoizing it keeps the derived Maps/arrays stable across an
@@ -177,6 +184,7 @@ function BoardLanes({
                         onDisarm={onDisarm}
                         adopting={!!adopting?.has(s.session_id)}
                         onRename={onRename}
+                        legacy={legacySet.has(s.session_id)}
                       />
                     ))}
                 </div>

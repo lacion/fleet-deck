@@ -26,8 +26,8 @@ test('restart durability: same FLEETDECK_HOME after kill+restart still has the s
 
   const first = await startDaemon({ port: randomPort(), home });
   try {
-    await postHook(first.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
-    await postHook(first.baseUrl, 'UserPromptSubmit', loadFixture('user-prompt-submit', { session_id: sid, cwd }));
+    await postHook(first.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: first });
+    await postHook(first.baseUrl, 'UserPromptSubmit', loadFixture('user-prompt-submit', { session_id: sid, cwd }), { token: first });
     const stateBefore = (await getJson(`${first.baseUrl}/state`)).json;
     const cardBefore = stateBefore.sessions.find(s => s.session_id === sid);
     assert.ok(cardBefore, 'session should be present before restart');

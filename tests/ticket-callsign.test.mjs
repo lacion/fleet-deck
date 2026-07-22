@@ -50,7 +50,7 @@ async function getCard(daemon, sid) {
   return findSession(await getState(daemon), sid);
 }
 function sessionStart(daemon, sid, cwd) {
-  return postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
+  return postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon.token });
 }
 function command(daemon, text) {
   return postJson(`${daemon.baseUrl}/command`, { text });
@@ -142,7 +142,7 @@ test('rename-once: a ticketless session renamed by a ticket-branch event; a late
 
   // An event whose server-derived branch carries a key → renamed ONCE.
   await postHook(daemon.baseUrl, 'UserPromptSubmit',
-    loadFixture('user-prompt-submit', { session_id: sid, cwd: repo77.worktree }, { prompt: 'work the fix' }));
+    loadFixture('user-prompt-submit', { session_id: sid, cwd: repo77.worktree }, { prompt: 'work the fix' }), { token: daemon.token });
   card = await getCard(daemon, sid);
   assert.equal(card.ticket, 'PROJ-77', 'the ticket-branch event detects and pins the ticket');
   assert.equal(card.ticket_source, 'branch');
@@ -157,7 +157,7 @@ test('rename-once: a ticketless session renamed by a ticket-branch event; a late
 
   // A later event from a DIFFERENT ticket branch must NOT rename again.
   await postHook(daemon.baseUrl, 'PostToolUse',
-    loadFixture('post-tool-use-bash', { session_id: sid, cwd: repoEng.worktree }));
+    loadFixture('post-tool-use-bash', { session_id: sid, cwd: repoEng.worktree }), { token: daemon.token });
   card = await getCard(daemon, sid);
   assert.equal(card.ticket, 'PROJ-77', 'auto-rename fires at most once — the ticket does not change');
   assert.equal(card.callsign, renamed, 'the callsign does not change on a later different-ticket branch');
@@ -198,7 +198,7 @@ test('manual ticket: override renames, blocks later auto-detect, re-override kee
 
   // 2) A later ticket-branch event must NOT override the manual pin.
   await postHook(daemon.baseUrl, 'UserPromptSubmit',
-    loadFixture('user-prompt-submit', { session_id: sid, cwd: repo99.worktree }, { prompt: 'context switch' }));
+    loadFixture('user-prompt-submit', { session_id: sid, cwd: repo99.worktree }, { prompt: 'context switch' }), { token: daemon.token });
   card = await getCard(daemon, sid);
   assert.equal(card.ticket, 'PROJ-55', 'ticket_source=manual permanently blocks auto-detect');
   assert.equal(card.callsign, manualCallsign);
@@ -227,7 +227,7 @@ test('manual ticket: override renames, blocks later auto-detect, re-override kee
 
   // 5) Auto-detect stays off after a clear.
   await postHook(daemon.baseUrl, 'PostToolUse',
-    loadFixture('post-tool-use-bash', { session_id: sid, cwd: repo99.worktree }));
+    loadFixture('post-tool-use-bash', { session_id: sid, cwd: repo99.worktree }), { token: daemon.token });
   card = await getCard(daemon, sid);
   assert.equal(card.ticket ?? null, null, 'a ticket-branch event after clear must not re-ticket (manual pin holds)');
   assert.equal(card.callsign, birthCallsign);
@@ -323,13 +323,13 @@ test('mail and assign to the birth name after a rename still deliver to the rena
   assert.notEqual(newCallsign, birthCallsign);
 
   // Mail to the BIRTH (now prev_callsign) name still routes to the session.
-  let mailRes = await postJson(`${daemon.baseUrl}/mail`, { to: birthCallsign, from: 'human', text: 'to the old name' });
+  let mailRes = await postJson(`${daemon.baseUrl}/mail`, { to: birthCallsign, from: 'operator', text: 'to the old name' }, { token: daemon.token });
   assert.equal(mailRes.status, 200);
   assert.equal(mailRes.json.delivered, 1, 'mail to the birth name still finds the renamed session');
   assert.equal(mailRes.json.targets[0].session_id, sid);
 
   // Mail to the NEW name is unaffected.
-  mailRes = await postJson(`${daemon.baseUrl}/mail`, { to: newCallsign, from: 'human', text: 'to the new name' });
+  mailRes = await postJson(`${daemon.baseUrl}/mail`, { to: newCallsign, from: 'operator', text: 'to the new name' }, { token: daemon.token });
   assert.equal(mailRes.json.delivered, 1, 'mail to the current name delivers');
   assert.equal(mailRes.json.targets[0].session_id, sid);
 
@@ -356,7 +356,7 @@ test('tombstone holds its animal: an ended-but-unarchived ticketed session block
   assert.match(callsignA, /^falcon-PROJ-42$/, 'the first session takes falcon on PROJ-42');
 
   // End A: offline, but NOT archived (retention is 24h) → it still holds its name.
-  await postHook(daemon.baseUrl, 'SessionEnd', loadFixture('session-end', { session_id: sidA, cwd: repo.worktree }));
+  await postHook(daemon.baseUrl, 'SessionEnd', loadFixture('session-end', { session_id: sidA, cwd: repo.worktree }), { token: daemon.token });
   const cardA = await getCard(daemon, sidA);
   assert.equal(cardA.col, 'offline', 'A is offline after SessionEnd');
   assert.ok(cardA.endedAt, 'A has an endedAt (tombstone), but is not archived');
@@ -481,10 +481,10 @@ test('updateSession round-trips ticket/ticket_source/prev_callsign across later 
   // on OTHER columns (last_seen/events/col/note/…). A column silently dropped
   // from the FIELDS whitelist would vanish here.
   await postHook(daemon.baseUrl, 'UserPromptSubmit',
-    loadFixture('user-prompt-submit', { session_id: sid, cwd: plain }, { prompt: 'keep going' }));
+    loadFixture('user-prompt-submit', { session_id: sid, cwd: plain }, { prompt: 'keep going' }), { token: daemon.token });
   await postHook(daemon.baseUrl, 'PostToolUse',
-    loadFixture('post-tool-use-edit', { session_id: sid, cwd: plain }));
-  await postHook(daemon.baseUrl, 'Stop', loadFixture('stop', { session_id: sid, cwd: plain }));
+    loadFixture('post-tool-use-edit', { session_id: sid, cwd: plain }), { token: daemon.token });
+  await postHook(daemon.baseUrl, 'Stop', loadFixture('stop', { session_id: sid, cwd: plain }), { token: daemon.token });
 
   card = await getCard(daemon, sid);
   assert.equal(card.ticket, 'PROJ-3', 'ticket persists across subsequent events');

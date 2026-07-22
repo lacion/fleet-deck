@@ -3,11 +3,10 @@
 // v1.2 — dynamic fleet (board-spawned sessions).
 // Spawn = explicit human click; the daemon owns the pane; all tmux command
 // construction is argv arrays, never a shell string containing user text.
-// This file never launches a real tmux pane or a real billed `claude`
-// session — every test uses the FLEETDECK_SPAWN_CMD override (see
-// tests/helpers/spawn-cmd-fixture.mjs), which stands in for tmux and lets us
-// inspect exactly what the daemon would have executed, and (when told via
-// env) plays the spawned pane's first hook event back at the daemon.
+// This file never launches a real billed `claude` session. Spawn tests use
+// FLEETDECK_SPAWN_CMD (tests/helpers/spawn-cmd-fixture.mjs) to inspect argv;
+// the reconciliation test alone starts an inert tmux `sleep` pane so an empty
+// fleet listing is authoritative rather than an unreachable-socket UNKNOWN.
 //
 // Coverage map (task brief bullets -> tests below):
 //   1. Capability flag
@@ -27,13 +26,12 @@
 //   5. Kill semantics
 //        -> "kill: unknown spawn id -> 404"
 //        -> "kill: a live (non-offline) card is refused without force -> 409"
-//        -> "kill: an offline card's kill is accepted, or 410 if the window is already gone"
+//        -> "kill: tmux lookup failure is 500 and keeps the spawn tracked"
 //   6. Stale flag
 //        -> "stale flag: a working card with no events for FLEETDECK_STALE_MS..."
 //   7. Unrouted text
 //        -> "unrouted assign-auto carries the task text verbatim (v1.2 CTA support)"
-//   8. Reconciliation (best-effort; see the test's own comments for what
-//      stays unverifiable without real tmux)
+//   8. Reconciliation
 //        -> "reconciliation: a spawn row whose window was never actually..."
 //   9. Regression: the full existing suite staying green is verified by
 //      running `node --test --test-concurrency=1` across the whole tests/
@@ -307,6 +305,9 @@ test('argv construction: prompt/model/permission-mode survive intact through the
     'FLEETDECK_RC_HARVEST_MS',
     'FLEETDECK_ADOPT_ARM_MS', 'FLEETDECK_ADOPT_DELAY_MS',
     'FLEETDECK_TEST_DAEMON_SCRIPT', 'FLEETDECK_VERSION_OVERRIDE',
+    // 0.16.0: the daemon's own bearer must never leak into a pane it spawns —
+    // an agent that knows FLEETDECK_TOKEN could drive every gated route.
+    'FLEETDECK_TOKEN',
     // 0.15.0 LLM gateway: a pane's provider must come from the spawn, never
     // from an ambient export the daemon happened to inherit. This spawn asked
     // for no gateway, so ALL FOUR stay scrubbed — the `keep` exemption in
@@ -588,17 +589,11 @@ test('kill: a live (non-offline) card is refused without force -> 409', async (t
   assert.equal(killRes.status, 409, `killing a live card without force should 409 (got ${killRes.status}: ${JSON.stringify(killRes.json)})`);
 });
 
-test("kill: an offline card's kill is accepted (200) or reports the window already gone (410) -- both are contract-legal here since the override never created a real tmux window", async (t) => {
-  // The contract only documents an override for the SPAWN step
-  // (FLEETDECK_SPAWN_CMD); kill presumably still name-verifies and shells
-  // out to real tmux kill-window. Because this suite never creates a REAL
-  // tmux window (creation was intercepted by the override), a real
-  // `tmux kill-window` against the recorded window name is expected to find
-  // nothing -- which the contract itself calls out as the 410 case ("window
-  // already gone"). An implementation may alternatively treat that as a
-  // harmless idempotent success (200, row -> killed). Both are accepted;
-  // whichever happens is logged via t.diagnostic so a real run pins the
-  // actual behavior.
+test("kill: tmux lookup failure is 500 and keeps the offline spawn tracked", async (t) => {
+  // FLEETDECK_SPAWN_CMD intercepts only creation, so this test has no tmux
+  // server or pane. That absence is still not proof the process is dead: an
+  // unlinked tmux socket looks identical while its server and panes keep
+  // running. Kill must fail closed and leave the row active for a later retry.
   const port = randomPort();
   const baseUrl = `http://127.0.0.1:${port}`;
   const rec = path.join(scratchDir(), 'specs.jsonl');
@@ -617,26 +612,20 @@ test("kill: an offline card's kill is accepted (200) or reports the window alrea
 
   await postHook(daemon.baseUrl, 'SessionEnd', {
     session_id: sid, hook_event_name: 'SessionEnd', cwd, reason: 'other',
-  });
+  }, { token: daemon });
   await waitUntil(async () => {
     const state = (await getJson(`${daemon.baseUrl}/state`)).json;
     return findSession(state, sid)?.col === 'offline' ? true : null;
   }, { label: 'card goes offline after SessionEnd' });
+  const beforeKillStatus = findSession((await getJson(`${daemon.baseUrl}/state`)).json, sid)?.spawn?.status;
 
   const killRes = await postJson(`${daemon.baseUrl}/api/spawn/${spawnId}/kill`, {});
-  assert.ok([200, 410].includes(killRes.status),
-    `killing an offline card should either succeed (200) or report the window already gone (410); got ${killRes.status}: ${JSON.stringify(killRes.json)}`);
-  t.diagnostic(`offline-card kill resolved as HTTP ${killRes.status}: ${JSON.stringify(killRes.json)}`);
-  if (killRes.status === 200) assert.equal(killRes.json?.ok, true);
-  if (killRes.status === 410) assert.equal(killRes.json?.ok, false);
+  assert.equal(killRes.status, 500, JSON.stringify(killRes.json));
+  assert.match(killRes.json?.reason ?? '', /tmux (?:window lookup failed|server generation unavailable or changed)/);
 
   const state = (await getJson(`${daemon.baseUrl}/state`)).json;
   const card = findSession(state, sid);
-  if (card?.spawn?.status) {
-    t.diagnostic(`spawn row status after kill attempt: ${card.spawn.status}`);
-    assert.ok(['killed', 'gone', 'pane-dead'].includes(card.spawn.status),
-      `expected a terminal spawn status after the kill attempt, got ${card.spawn.status}`);
-  }
+  assert.equal(card?.spawn?.status, beforeKillStatus, 'failed kill does not mutate the tracked spawn status');
 });
 
 // ---------------------------------------------------------------------------
@@ -650,8 +639,8 @@ test('stale flag: a working card with no events for FLEETDECK_STALE_MS gets stal
   t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
-  await postHook(daemon.baseUrl, 'SessionStart', { session_id: sid, hook_event_name: 'SessionStart', cwd, source: 'startup' });
-  await postHook(daemon.baseUrl, 'UserPromptSubmit', { session_id: sid, hook_event_name: 'UserPromptSubmit', cwd, prompt: 'do a thing' });
+  await postHook(daemon.baseUrl, 'SessionStart', { session_id: sid, hook_event_name: 'SessionStart', cwd, source: 'startup' }, { token: daemon });
+  await postHook(daemon.baseUrl, 'UserPromptSubmit', { session_id: sid, hook_event_name: 'UserPromptSubmit', cwd, prompt: 'do a thing' }, { token: daemon });
 
   let state = (await getJson(`${daemon.baseUrl}/state`)).json;
   let card = findSession(state, sid);
@@ -667,7 +656,7 @@ test('stale flag: a working card with no events for FLEETDECK_STALE_MS gets stal
 
   await postHook(daemon.baseUrl, 'PostToolUse', {
     session_id: sid, hook_event_name: 'PostToolUse', cwd, tool_name: 'Read', tool_input: { file_path: path.join(cwd, 'x.txt') },
-  });
+  }, { token: daemon });
   state = (await getJson(`${daemon.baseUrl}/state`)).json;
   card = findSession(state, sid);
   assert.ok(!card.stale, 'a fresh event must clear the stale flag');
@@ -693,17 +682,10 @@ test('unrouted assign-auto carries the task text verbatim on the response (v1.2 
 // ---------------------------------------------------------------------------
 
 test('reconciliation: a spawn row whose window was never actually created in real tmux flips to gone + card offline after a daemon restart on the same port', async (t) => {
-  // What this test CAN prove: the daemon's boot-time reconciliation path
-  // runs and marks a stale spawns row + its card as gone/offline when the
-  // expected window is absent. What it CANNOT prove without real tmux: that
-  // the name-matching is precise (i.e. it wouldn't ALSO mark a genuinely
-  // live, differently-named window as gone, or fail to notice a real
-  // same-named window that DOES still exist) -- the contract documents
-  // no test override for the reconciliation step itself (only for spawn
-  // creation), so this exercises the real `tmux list-windows`-style check
-  // against a tmux session that was never actually created (since creation
-  // went through FLEETDECK_SPAWN_CMD, not real tmux) -- the window is
-  // genuinely, not just simulatedly, absent.
+  // Spawn creation is intercepted, so the expected fleet window never exists.
+  // Before restart we create an unrelated inert tmux session on the same test
+  // socket: list-panes succeeds and returns a validated non-fleet row, making
+  // the resulting empty fleet list authoritative rather than UNKNOWN.
   const home = scratchDir('fleetdeck-spawn-home-');
   const cwd = scratchDir();
   const port = randomPort();
@@ -724,6 +706,17 @@ test('reconciliation: a spawn row whose window was never actually created in rea
   } finally {
     await first.stop({ keepHome: true });
   }
+
+  const tmuxSocket = `fleetdeck-test-${port}`;
+  try {
+    execFileSync('tmux', ['-L', tmuxSocket, '-f', '/dev/null', 'new-session', '-d', '-s', `reconcile-reachable-${port}`, 'sleep 3600']);
+  } catch {
+    t.skip('tmux server unavailable for authoritative-empty reconciliation');
+    return;
+  }
+  t.after(() => {
+    try { execFileSync('tmux', ['-L', tmuxSocket, 'kill-server'], { stdio: 'ignore' }); } catch { /* second.stop may already remove it */ }
+  });
 
   const second = await startDaemon({ port, home });
   t.after(async () => { await second.stop({ keepHome: false }); });

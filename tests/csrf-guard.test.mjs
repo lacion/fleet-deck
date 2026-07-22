@@ -109,9 +109,11 @@ test('C1: same-origin gate on POSTs, WS upgrades, Host, and Content-Type', async
   const origin = `http://127.0.0.1:${port}`;
 
   await t.test('cross-origin POST is refused (403), no side effect', async () => {
+    // 0.16.0: the bearer rides along so the AUTH wall passes and the 403 can
+    // only come from the same-origin gate under test.
     const res = await raw(port, {
       method: 'POST', path: '/mail',
-      headers: { ...JSON_CT, origin: 'https://evil.example' },
+      headers: { ...JSON_CT, origin: 'https://evil.example', authorization: `Bearer ${daemon.token}` },
       parts: [JSON.stringify({ to: 'all', from: 'board', text: 'hi' })],
     });
     assert.equal(res.status, 403, 'a page on another site must not drive /mail');
@@ -129,7 +131,7 @@ test('C1: same-origin gate on POSTs, WS upgrades, Host, and Content-Type', async
   await t.test('Sec-Fetch-Site: cross-site is refused (403) even with our own Origin absent', async () => {
     const res = await raw(port, {
       method: 'POST', path: '/mail',
-      headers: { ...JSON_CT, 'sec-fetch-site': 'cross-site' },
+      headers: { ...JSON_CT, 'sec-fetch-site': 'cross-site', authorization: `Bearer ${daemon.token}` },
       parts: [JSON.stringify({ to: 'all', from: 'board', text: 'hi' })],
     });
     assert.equal(res.status, 403);
@@ -138,16 +140,18 @@ test('C1: same-origin gate on POSTs, WS upgrades, Host, and Content-Type', async
   await t.test('same-origin POST is allowed (200)', async () => {
     const res = await raw(port, {
       method: 'POST', path: '/mail',
-      headers: { ...JSON_CT, origin },
+      headers: { ...JSON_CT, origin, authorization: `Bearer ${daemon.token}` },
       parts: [JSON.stringify({ to: 'all', from: 'board', text: 'hi' })],
     });
     assert.equal(res.status, 200, 'the board POSTing to its own origin must work');
   });
 
   await t.test('no-Origin loopback POST is allowed (the CLI/hook path)', async () => {
+    // 0.16.0: POST /mail is bearer-gated even on loopback — the "CLI path" is
+    // now the fleet skill / hook shims, which attach $FLEETDECK_HOME/token.
     const res = await raw(port, {
       method: 'POST', path: '/mail',
-      headers: { ...JSON_CT }, // a CLI tool sends no Origin
+      headers: { ...JSON_CT, authorization: `Bearer ${daemon.token}` }, // a shim sends no Origin, but does send the token
       parts: [JSON.stringify({ to: 'all', from: 'board', text: 'hi' })],
     });
     assert.equal(res.status, 200);
@@ -156,7 +160,7 @@ test('C1: same-origin gate on POSTs, WS upgrades, Host, and Content-Type', async
   await t.test('control POST without application/json is 415', async () => {
     const res = await raw(port, {
       method: 'POST', path: '/mail',
-      headers: { 'content-type': 'text/plain' }, // a CORS "simple" content-type — no preflight
+      headers: { 'content-type': 'text/plain', authorization: `Bearer ${daemon.token}` }, // a CORS "simple" content-type — no preflight
       parts: [JSON.stringify({ to: 'all', from: 'board', text: 'hi' })],
     });
     assert.equal(res.status, 415, 'a text/plain POST must be refused so /api/spawn needs a preflight');
@@ -165,7 +169,7 @@ test('C1: same-origin gate on POSTs, WS upgrades, Host, and Content-Type', async
   await t.test('hooks stay fail-open: bad content-type still 200 {}', async () => {
     const res = await raw(port, {
       method: 'POST', path: '/hook/UnknownHook',
-      headers: { 'content-type': 'text/plain' },
+      headers: { 'content-type': 'text/plain', authorization: `Bearer ${daemon.token}` },
       parts: ['{}'],
     });
     assert.equal(res.status, 200, 'a hook must never be broken by a content-type check');
@@ -174,7 +178,7 @@ test('C1: same-origin gate on POSTs, WS upgrades, Host, and Content-Type', async
   await t.test('a cross-origin hook is dropped but still answers 200 {} (never wedges a session)', async () => {
     const res = await raw(port, {
       method: 'POST', path: '/hook/UserPromptSubmit',
-      headers: { ...JSON_CT, origin: 'https://evil.example' },
+      headers: { ...JSON_CT, origin: 'https://evil.example', authorization: `Bearer ${daemon.token}` },
       parts: [JSON.stringify({ session_id: 'x', prompt: 'y' })],
     });
     assert.equal(res.status, 200);
@@ -273,7 +277,7 @@ test('M-B3: POST body is byte-exact and byte-capped', async t => {
     const sid = randomUUID();
     const cwd = mkdtempSync(path.join(tmpdir(), 'fleetdeck-mb3-'));
     t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
-    const start = await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
+    const start = await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon });
     assert.equal(start.status, 200);
 
     // 'A☃B' — the snowman is 3 bytes (E2 98 83). Split the JSON body one byte
@@ -287,7 +291,7 @@ test('M-B3: POST body is byte-exact and byte-capped', async t => {
     const cut = snowmanAt + 1; // mid-glyph
     const res = await raw(port, {
       method: 'POST', path: '/mail',
-      headers: { 'content-type': 'application/json', 'content-length': String(bodyBuf.length) },
+      headers: { 'content-type': 'application/json', 'content-length': String(bodyBuf.length), authorization: `Bearer ${daemon.token}` },
       parts: [bodyBuf.subarray(0, cut), bodyBuf.subarray(cut)],
     });
     assert.equal(res.status, 200, res.body);
@@ -304,7 +308,7 @@ test('M-B3: POST body is byte-exact and byte-capped', async t => {
     const huge = 'x'.repeat(1_100_000);
     const res = await raw(port, {
       method: 'POST', path: '/mail',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${daemon.token}` },
       parts: [JSON.stringify({ to: 'all', from: 'board', text: huge })],
     });
     assert.equal(res.status, 413, 'a body past the byte cap must be refused on a control path');
@@ -321,7 +325,7 @@ test('M-B3: POST body is byte-exact and byte-capped', async t => {
     assert.ok(Buffer.byteLength(text, 'utf8') > 1_000_000, 'sanity: the byte length is over the cap');
     const res = await raw(port, {
       method: 'POST', path: '/mail',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${daemon.token}` },
       parts: [JSON.stringify({ to: 'all', from: 'board', text })],
     });
     assert.equal(res.status, 413, 'a body whose BYTES exceed the cap must 413 even when its UTF-16 length does not');
@@ -355,9 +359,11 @@ test('trusted origins widen the walls by exactly the named origin', async t => {
   const { port } = daemon;
 
   await t.test('a POST from the trusted origin is allowed', async () => {
+    // 0.16.0: PROXY_AUTH=trust clears the AUTH wall; POST /mail is additionally
+    // bearer-gated as a route, so the proxied board still presents the token.
     const res = await raw(port, {
       method: 'POST', path: '/mail',
-      headers: { ...JSON_CT, origin: PROXY_ORIGIN, host: PROXY_HOST },
+      headers: { ...JSON_CT, origin: PROXY_ORIGIN, host: PROXY_HOST, authorization: `Bearer ${daemon.token}` },
       parts: [JSON.stringify({ to: 'all', from: 'board', text: 'through the proxy' })],
     });
     assert.equal(res.status, 200, 'the whole point: the board behind the proxy must be able to drive the fleet');
@@ -366,7 +372,7 @@ test('trusted origins widen the walls by exactly the named origin', async t => {
   await t.test('an untrusted origin is STILL refused', async () => {
     const res = await raw(port, {
       method: 'POST', path: '/mail',
-      headers: { ...JSON_CT, origin: 'https://evil.example', host: PROXY_HOST },
+      headers: { ...JSON_CT, origin: 'https://evil.example', host: PROXY_HOST, authorization: `Bearer ${daemon.token}` },
       parts: [JSON.stringify({ to: 'all', from: 'board', text: 'nope' })],
     });
     assert.equal(res.status, 403, 'trusting one origin must not trust every origin');
@@ -375,7 +381,7 @@ test('trusted origins widen the walls by exactly the named origin', async t => {
   await t.test('the scheme is part of the origin: http:// is not https://', async () => {
     const res = await raw(port, {
       method: 'POST', path: '/mail',
-      headers: { ...JSON_CT, origin: `http://${PROXY_HOST}`, host: PROXY_HOST },
+      headers: { ...JSON_CT, origin: `http://${PROXY_HOST}`, host: PROXY_HOST, authorization: `Bearer ${daemon.token}` },
       parts: [JSON.stringify({ to: 'all', from: 'board', text: 'downgraded' })],
     });
     assert.equal(res.status, 403, 'naming an https origin must not also trust its http twin');
@@ -410,7 +416,7 @@ test('trusted origins widen the walls by exactly the named origin', async t => {
   await t.test('a local CLI hook (no Origin) still sails through', async () => {
     const res = await raw(port, {
       method: 'POST', path: '/mail',
-      headers: JSON_CT,
+      headers: { ...JSON_CT, authorization: `Bearer ${daemon.token}` },
       parts: [JSON.stringify({ to: 'all', from: 'board', text: 'from the hook' })],
     });
     assert.equal(res.status, 200, 'the hook path must never be collateral damage of a proxy setting');
@@ -429,7 +435,7 @@ test('a wildcard trusted origin matches exactly one label', async t => {
 
   const post = (origin, host) => raw(port, {
     method: 'POST', path: '/mail',
-    headers: { ...JSON_CT, origin, host },
+    headers: { ...JSON_CT, origin, host, authorization: `Bearer ${daemon.token}` },
     parts: [JSON.stringify({ to: 'all', from: 'board', text: 'x' })],
   });
 
@@ -481,10 +487,13 @@ test('FLEETDECK_PROXY_AUTH=token still demands the token from a proxied browser'
     assert.equal(res.status, 200);
   });
 
-  await t.test('the local hook path (no Origin) is NOT dragged into the token gate', async () => {
+  await t.test('the local hook path (no Origin) is NOT dragged into the PROXY token gate', async () => {
+    // 0.16.0: POST /mail itself is bearer-gated on loopback too (the shims
+    // carry $FLEETDECK_HOME/token) — what this pins is that PROXY_AUTH=token
+    // does not drag the local path into the PROXY's token (FLEETDECK_TOKEN).
     const res = await raw(port, {
       method: 'POST', path: '/mail',
-      headers: JSON_CT,
+      headers: { ...JSON_CT, authorization: `Bearer ${daemon.token}` },
       parts: [JSON.stringify({ to: 'all', from: 'board', text: 'hook' })],
     });
     assert.equal(res.status, 200, 'turning on proxy auth must not break every local hook on the box');

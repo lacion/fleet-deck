@@ -3,11 +3,11 @@
 // FLEETDECK_REQUIRE_TOKEN=on — opt into the token even on pure loopback. On a
 // multi-user machine every other OS user can reach 127.0.0.1 and today inherits
 // the loopback auto-authorize (tokenless /state, /api/spawn, the lot). With the
-// flag on that exemption survives for exactly two callers: a /hook/* path
-// (Claude Code http hooks cannot attach an Authorization header) and the
-// data-free public shell (a browser must load it before it can present a key).
-// Everything else — data routes, exec routes, both WebSockets — falls through to
-// the bearer/?t= check even on loopback.
+// flag on that exemption survives only for the data-free public shell (a
+// browser must load it before it can present a key) and /health. Everything
+// else — data routes, exec routes, both WebSockets, and (since 0.16.0, in EVERY
+// mode) /hook/* — falls through to the bearer/?t= check even on loopback:
+// hooks now arrive through the command shims, which attach $FLEETDECK_HOME/token.
 //
 // The gate under test lives in http.mjs authorized(); it is additive, so the
 // LAST test pins that with the flag OFF a loopback data route stays wide open
@@ -100,7 +100,7 @@ function rawGet(port, pathname, headers = {}) {
   });
 }
 
-test('REQUIRE_TOKEN=on: loopback exemption survives only for hooks and the shell', async t => {
+test('REQUIRE_TOKEN=on: loopback exemption survives only for /health and the shell', async t => {
   const { baseUrl } = await startRT(t);
 
   // A data route is now gated on loopback — the 401 the standalone auth-failure
@@ -124,17 +124,30 @@ test('REQUIRE_TOKEN=on: loopback exemption survives only for hooks and the shell
   });
   assert.equal(spawn.status, 401, 'tokenless spawn must be refused even on loopback under the flag');
 
-  // A /hook/* path keeps the exemption: Claude Code http-type hooks cannot send
-  // an Authorization header, so gating them would break every session on the box.
+  // 0.16.0 INVERSION: /hook/* no longer keeps the exemption — hooks arrive
+  // through the command shims (scripts/fleet-hook.mjs et al.), which read
+  // $FLEETDECK_HOME/token and attach it. A tokenless hook is refused — but in
+  // the hook DIALECT (a restart whisper, never an error page): a pre-0.16.0
+  // session must not go silently dark, and a hook can never be broken.
   const sid = randomUUID();
   const cwd = mkdtempSync(path.join(tmpdir(), 'fleetdeck-rt-cwd-'));
   t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
-  const hook = await fetch(`${baseUrl}/hook/SessionStart`, {
+  const hookBody = JSON.stringify(loadFixture('session-start', { session_id: sid, cwd }));
+  const bareHook = await fetch(`${baseUrl}/hook/SessionStart`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(loadFixture('session-start', { session_id: sid, cwd })),
+    body: hookBody,
   });
-  assert.equal(hook.status, 200, 'a tokenless hook must still be accepted under the flag');
+  assert.equal(bareHook.status, 200, 'a tokenless hook is refused in the hook dialect, not with an error page');
+  const bareJson = await bareHook.json();
+  assert.match(bareJson?.hookSpecificOutput?.additionalContext ?? '', /restart/i, 'the whisper asks for a restart');
+  assert.equal(bareJson.ok ?? null, null, 'the refusal is not a processed hook');
+  const hook = await fetch(`${baseUrl}/hook/SessionStart`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${TOKEN}` },
+    body: hookBody,
+  });
+  assert.equal(hook.status, 200, 'the bearer must open /hook/* under the flag');
   assert.equal((await hook.json()).ok, true);
 
   // The data-free public shell stays open: a browser must load it before it can

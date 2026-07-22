@@ -32,7 +32,10 @@ export default function TokenGate({ attempts, onSubmit }) {
         <div className="hint">
           Open the link the daemon printed when it started:
           <span className="cmd">http://&lt;this-machine&gt;:4711/?t=<span className="c">&lt;key&gt;</span></span>
-          …or paste just the key here.
+          …or paste just the key here. Since 0.16.0 even the LOCAL board needs
+          it for the powerful actions (typing into terminals, mail, gateway
+          settings, unsupervised spawns) — the daemon prints the credentialed
+          link at startup (`fleetd board http://127.0.0.1:4711/?t=…`).
         </div>
         <div className="row">
           <input

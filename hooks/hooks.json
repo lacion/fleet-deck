@@ -14,7 +14,11 @@
     "UserPromptSubmit": [
       {
         "hooks": [
-          { "type": "http", "url": "http://127.0.0.1:4711/hook/UserPromptSubmit", "timeout": 3 }
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs\" UserPromptSubmit",
+            "timeout": 3
+          }
         ]
       }
     ],
@@ -22,7 +26,11 @@
       {
         "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash",
         "hooks": [
-          { "type": "http", "url": "http://127.0.0.1:4711/hook/PostToolUse", "timeout": 3 }
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs\" PostToolUse",
+            "timeout": 3
+          }
         ]
       }
     ],
@@ -30,35 +38,56 @@
       {
         "matcher": "AskUserQuestion",
         "hooks": [
-          { "type": "http", "url": "http://127.0.0.1:4711/hook/AskUserQuestion", "timeout": 65 }
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs\" AskUserQuestion",
+            "timeout": 65
+          }
         ]
       }
     ],
     "PermissionRequest": [
       {
         "hooks": [
-          { "type": "http", "url": "http://127.0.0.1:4711/hook/PermissionRequest", "timeout": 65 }
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs\" PermissionRequest",
+            "timeout": 65
+          }
         ]
       }
     ],
     "Elicitation": [
       {
         "hooks": [
-          { "type": "http", "url": "http://127.0.0.1:4711/hook/Elicitation", "timeout": 65 }
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs\" Elicitation",
+            "timeout": 65
+          }
         ]
       }
     ],
     "Notification": [
       {
         "hooks": [
-          { "type": "http", "url": "http://127.0.0.1:4711/hook/Notification", "timeout": 3, "async": true }
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs\" Notification",
+            "timeout": 3,
+            "async": true
+          }
         ]
       }
     ],
     "Stop": [
       {
         "hooks": [
-          { "type": "http", "url": "http://127.0.0.1:4711/hook/Stop", "timeout": 5 },
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs\" Stop",
+            "timeout": 5
+          },
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/fleet-watch.mjs\"",
@@ -73,14 +102,24 @@
     "SessionEnd": [
       {
         "hooks": [
-          { "type": "http", "url": "http://127.0.0.1:4711/hook/SessionEnd", "timeout": 3, "async": true }
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs\" SessionEnd",
+            "timeout": 3,
+            "async": true
+          }
         ]
       }
     ],
     "FileChanged": [
       {
         "hooks": [
-          { "type": "http", "url": "http://127.0.0.1:4711/hook/FileChanged", "timeout": 3, "async": true }
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs\" FileChanged",
+            "timeout": 3,
+            "async": true
+          }
         ]
       }
     ]

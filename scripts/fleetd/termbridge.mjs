@@ -30,7 +30,7 @@
 
 import { spawn } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
-import { sessionName } from './spawn.mjs';
+import { exactWindowTarget, sessionName } from './spawn.mjs';
 import { envInt } from './helpers.mjs';
 
 const ACTIVE_STATUSES = new Set(['spawning', 'stalled', 'live']);
@@ -325,7 +325,7 @@ export function createTermBridge({ port, resolveSpawn, log = () => {} } = {}) {
   // client. That restores the pre-v1.9 behaviour — contention and all — which is
   // strictly better than refusing to show a terminal at all.
   async function sizeWindow(c, window, cols, rows) {
-    const target = `=${session}:${window}`;
+    const target = exactWindowTarget(port, window);
     if (!c.manualSizing.has(window)) {
       const opt = await c.command(`set-option -w -t ${target} window-size manual`).catch(() => ({ ok: false }));
       if (opt.ok) c.manualSizing.add(window);
@@ -423,7 +423,7 @@ export function createTermBridge({ port, resolveSpawn, log = () => {} } = {}) {
       abortIfClosed();
 
       // Lowest pane index speaks for a split window, matching listScopedWindows.
-      const panes = await c.command(`list-panes -t =${session}:${row.tmux_window} -F '#{pane_id}'`);
+      const panes = await c.command(`list-panes -t ${exactWindowTarget(port, row.tmux_window)} -F '#{pane_id}'`);
       if (!panes.ok) throw new Error('terminal pane not found');
       const pane = panes.lines.map((s) => s.trim()).find((s) => /^%\d+$/.test(s));
       if (!pane) throw new Error('terminal pane not found');

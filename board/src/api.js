@@ -107,6 +107,13 @@ export function spawnSession(body) {
   return post('/api/spawn', body);
 }
 
+// 0.16.0 — mint the one-time capability an unsupervised spawn body must echo
+// as arm_token. The daemon gates unsupervised spawns server-side now; this is
+// the board's half of the red two-step. Single-use, 60s TTL.
+export function armUnsupervised() {
+  return post('/api/spawn/arm-unsupervised', {});
+}
+
 // v2.2 — persist the repos root override ({repos_dir: '/abs/path'} to set,
 // {repos_dir: null} to fall back to env/default). Survives daemon restarts —
 // it lives in the daemon's SQLite, not in this browser.
@@ -147,8 +154,11 @@ export function cleanup() {
 // omitted (the default) means the revived agent inherits whatever the dead
 // spawn had — today the daemon always inherits and ignores the override, so
 // this is forward-compat plumbing, not a live affordance.
-export function reviveSpawn(spawnId, remoteControl) {
+export function reviveSpawn(spawnId, remoteControl, armToken) {
   const body = typeof remoteControl === 'boolean' ? { remote_control: remoteControl } : {};
+  // 0.16.0: reviving an unsupervised lineage passes the daemon's arm gate, so
+  // the board mints one up front (see useSpawnActions).
+  if (armToken) body.arm_token = armToken;
   return post(`/api/spawn/${encodeURIComponent(spawnId)}/revive`, body);
 }
 

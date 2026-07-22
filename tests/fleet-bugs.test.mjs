@@ -516,6 +516,30 @@ test('Fix 3 [MED]: condemn and resurrect share ONE probe — a split pane (lowes
   assert.notEqual(cardOf(core, sid).col, 'offline');
 });
 
+test('Fix 3 [MED]: paneCurrentCommand UNKNOWN never advances death hysteresis', async (t) => {
+  const tmux = fakeTmux();
+  tmux.adapter.paneCurrentCommand = async () => null;
+  const { core, db, state } = memoryCore(t, { tmux });
+  const cwd = mkdtempSync(path.join(tmpdir(), 'fd-pane-unknown-'));
+  t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+  const spawn = await core.spawn({ cwd });
+  const sid = spawn.body.session_id;
+  core.hookSessionStart({ session_id: sid, cwd, source: 'startup' });
+  state.windows[0].pane_cmd = 'zsh'; // force the active-pane probe
+  const statusOf = () => db.prepare('SELECT status FROM spawns WHERE spawn_id = ?').get(spawn.body.spawn_id).status;
+
+  await core.spawnLivenessTick();
+  await core.spawnLivenessTick();
+  assert.equal(statusOf(), 'live', 'repeated UNKNOWN reads are never dead evidence');
+  assert.notEqual(cardOf(core, sid).col, 'offline');
+
+  tmux.adapter.paneCurrentCommand = async () => ({ dead: true, cmd: 'claude' });
+  await core.spawnLivenessTick();
+  assert.equal(statusOf(), 'live', 'the first actual dead read only arms hysteresis');
+  await core.spawnLivenessTick();
+  assert.equal(statusOf(), 'pane-dead', 'two consecutive proven-dead reads still condemn');
+});
+
 // ---------------------------------------------------------------------------
 // Fix 4 [LOW] — a resurrected card must be coherent immediately: no stale
 // needs-you reason chip, and a refreshed last_seen.

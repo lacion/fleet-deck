@@ -123,6 +123,11 @@ export function claudeEnvArgvPrefix(port, home, { keep = [] } = {}) {
     // permanently skews the upgrade-takeover comparison (the 2026-07-11 tmux
     // env-poisoning scar, new tenants).
     'FLEETDECK_TEST_DAEMON_SCRIPT', 'FLEETDECK_VERSION_OVERRIDE',
+    // The daemon's bearer. When the operator pins FLEETDECK_TOKEN in the env it
+    // would otherwise ride tmux's global env into every pane — a live
+    // credential handed to every agent (0.16.0). Agents that legitimately call
+    // the API read $FLEETDECK_HOME/token instead (same file the shims use).
+    'FLEETDECK_TOKEN',
     // LLM-gateway routing (see GATEWAY_ENV_VARS): whether a pane bills your
     // Anthropic account or a local proxy must come from the spawn, never from
     // whatever shell the daemon happened to boot in.

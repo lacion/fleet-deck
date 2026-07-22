@@ -93,7 +93,7 @@ function questionPlanId(q) {
  * entry), payload (what was actually POSTed, for byte-identity checks)}. */
 async function holdExitPlan(daemon, sid, cwd, holdMs, overrides = {}) {
   const payload = loadFixture(EXIT_PLAN_FIXTURE, { session_id: sid, cwd }, overrides);
-  const held = postHook(daemon.baseUrl, 'PermissionRequest', payload, { timeout: holdMs + 5000 });
+  const held = postHook(daemon.baseUrl, 'PermissionRequest', payload, { token: daemon, timeout: holdMs + 5000 });
   const q = await waitUntil(async () => {
     const state = (await getJson(`${daemon.baseUrl}/state`)).json;
     return questionsFor(state, sid, 'permission').find(x => x.payload?.tool_name === 'ExitPlanMode');
@@ -112,7 +112,7 @@ test('capture-before-answer: the plan row appears in /state (status proposed, pl
   t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
-  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon });
 
   const { held, q, payload } = await holdExitPlan(daemon, sid, cwd, holdMs);
   assert.equal(q.status, 'pending', 'sanity: the question must still be pending at this point');
@@ -155,7 +155,7 @@ test('answer path: {behavior:"allow"} approves the plan and the held response is
   t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
-  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon });
 
   const t0 = Date.now();
   const { held, q } = await holdExitPlan(daemon, sid, cwd, holdMs);
@@ -185,7 +185,7 @@ test('answer path: {behavior:"capture"} denies the held hook bare AND mails the 
   t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
-  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon });
 
   const t0 = Date.now();
   const { held, q } = await holdExitPlan(daemon, sid, cwd, holdMs);
@@ -208,7 +208,7 @@ test('answer path: {behavior:"capture"} denies the held hook bare AND mails the 
   assert.equal(plan1.status, 'captured', '{behavior:"capture"} should move the plan to captured');
 
   // the pinned mail must reach the planner at its next turn boundary
-  const upRes = await postHook(daemon.baseUrl, 'UserPromptSubmit', loadFixture('user-prompt-submit', { session_id: sid, cwd }, { prompt: 'continue' }));
+  const upRes = await postHook(daemon.baseUrl, 'UserPromptSubmit', loadFixture('user-prompt-submit', { session_id: sid, cwd }, { prompt: 'continue' }), { token: daemon });
   const ctx = upRes.json?.hookSpecificOutput?.additionalContext ?? '';
   assert.match(ctx, /\[FLEETDECK\] Your plan was captured/, `the planner's next UserPromptSubmit must carry the verbatim "[FLEETDECK] Your plan was captured" prefix (got: ${JSON.stringify(ctx)})`);
   assert.match(ctx, /do not execute it/i, 'the pinned capture mail should tell the planner not to execute the plan');
@@ -221,7 +221,7 @@ test('answer path: {behavior:"deny"} plainly denies the held hook; plan becomes 
   t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
-  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon });
 
   const { held, q } = await holdExitPlan(daemon, sid, cwd, holdMs);
   const planId = plansFor((await getJson(`${daemon.baseUrl}/state`)).json, sid)[0]?.plan_id;
@@ -247,7 +247,7 @@ test('answer path: an unanswered ExitPlanMode hold expires to {} and the plan st
   t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
-  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon });
 
   const t0 = Date.now();
   const { held } = await holdExitPlan(daemon, sid, cwd, holdMs);
@@ -274,11 +274,11 @@ test('regression: PermissionRequest tool_name=AskUserQuestion still answers {} i
   t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const sid = randomUUID();
-  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon });
 
   const payload = loadFixture('permission-request', { session_id: sid, cwd }, { tool_name: 'AskUserQuestion' });
   const t0 = Date.now();
-  const res = await postHook(daemon.baseUrl, 'PermissionRequest', payload);
+  const res = await postHook(daemon.baseUrl, 'PermissionRequest', payload, { token: daemon });
   const elapsed = Date.now() - t0;
 
   assert.equal(res.status, 200);
@@ -308,7 +308,7 @@ test('/state plans: caps at 20 non-archived rows, newest first; archiving frees 
     const sid = randomUUID();
     const planMd = `# Test Plan ${i}\n\n## Notes\n- marker ${i}\n- cap/ordering test fixture\n`;
     const payload = loadFixture(EXIT_PLAN_FIXTURE, { session_id: sid, cwd }, { tool_input: { plan: planMd } });
-    pending.push(postHook(daemon.baseUrl, 'PermissionRequest', payload, { timeout: holdMs + 4000 }));
+    pending.push(postHook(daemon.baseUrl, 'PermissionRequest', payload, { token: daemon, timeout: holdMs + 4000 }));
     // small stagger so created_at (ms epoch) strictly increases in creation order
     await new Promise(r => setTimeout(r, 8));
   }

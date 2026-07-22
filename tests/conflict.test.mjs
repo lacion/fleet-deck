@@ -21,7 +21,7 @@ function findSession(state, sid) {
 }
 
 async function registerAndGetCallsign(daemon, sid, cwd) {
-  const res = await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
+  const res = await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon });
   return res.json?.callsign;
 }
 
@@ -39,17 +39,17 @@ test('second session touching the same file gets a whisper naming the rival; riv
   const filePath = path.join(cwd, 'util.js');
 
   // A touches the file first: no rivals yet, no whisper.
-  const firstTouch = await postHook(daemon.baseUrl, 'PostToolUse', loadFixture('post-tool-use-edit', { session_id: sidA, cwd }, {
+  const firstTouch = await postHook(daemon.baseUrl, 'PostToolUse', loadFixture('post-tool-use-edit', { token: daemon, session_id: sidA, cwd }, {
     tool_name: 'Edit',
     tool_input: { file_path: filePath, old_string: 'a', new_string: 'b' },
-  }));
+  }), { token: daemon });
   assert.deepEqual(firstTouch.json, {}, 'first touch on a file should not produce a whisper');
 
   // B touches the same file: expect a whisper naming A.
-  const secondTouch = await postHook(daemon.baseUrl, 'PostToolUse', loadFixture('post-tool-use-edit', { session_id: sidB, cwd }, {
+  const secondTouch = await postHook(daemon.baseUrl, 'PostToolUse', loadFixture('post-tool-use-edit', { token: daemon, session_id: sidB, cwd }, {
     tool_name: 'Edit',
     tool_input: { file_path: filePath, old_string: 'b', new_string: 'c' },
-  }));
+  }), { token: daemon });
   const hso = secondTouch.json?.hookSpecificOutput;
   assert.ok(hso, 'second touch should produce hookSpecificOutput (whisper)');
   assert.equal(hso.hookEventName, 'PostToolUse');
@@ -82,13 +82,13 @@ test('a session that already ended still counts as a rival within the window', a
 
   const filePath = path.join(cwd, 'test.js');
 
-  await postHook(daemon.baseUrl, 'PostToolUse', loadFixture('post-tool-use-edit', { session_id: sidC, cwd }, {
+  await postHook(daemon.baseUrl, 'PostToolUse', loadFixture('post-tool-use-edit', { token: daemon, session_id: sidC, cwd }, {
     tool_name: 'Write',
     tool_input: { file_path: filePath, content: 'x' },
-  }));
+  }), { token: daemon });
 
   // C leaves the fleet (SessionEnd is the tombstone).
-  await postHook(daemon.baseUrl, 'SessionEnd', loadFixture('session-end', { session_id: sidC, cwd }));
+  await postHook(daemon.baseUrl, 'SessionEnd', loadFixture('session-end', { session_id: sidC, cwd }), { token: daemon });
   let state = (await getJson(`${daemon.baseUrl}/state`)).json;
   assert.equal(findSession(state, sidC).col, 'offline', 'C should be tombstoned before D touches the file');
 
@@ -100,10 +100,10 @@ test('a session that already ended still counts as a rival within the window', a
   // minutes is not practical for a test suite. The expiry boundary itself is
   // untested here; flag this if fleetd exposes a way to shrink the window
   // for tests (e.g. an env override), which would make it testable.
-  const res = await postHook(daemon.baseUrl, 'PostToolUse', loadFixture('post-tool-use-edit', { session_id: sidD, cwd }, {
+  const res = await postHook(daemon.baseUrl, 'PostToolUse', loadFixture('post-tool-use-edit', { token: daemon, session_id: sidD, cwd }, {
     tool_name: 'MultiEdit',
     tool_input: { file_path: filePath, edits: [{ old_string: 'x', new_string: 'y' }] },
-  }));
+  }), { token: daemon });
   const hso = res.json?.hookSpecificOutput;
   assert.ok(hso, 'D should still get a whisper about the now-offline C');
   assert.ok(hso.additionalContext.includes(callsignC), 'whisper should name the ended rival by callsign');

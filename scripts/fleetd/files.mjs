@@ -9,6 +9,7 @@
 // and time limits. The endpoints are read-only and never invoke a shell.
 
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { deriveRepo } from './repo-identity.mjs';
@@ -54,7 +55,39 @@ function validateRelPath(relPath) {
   // gate `fs/read?path=.git/config` (embedded remote credentials, on a plain
   // clone) and `fs/list?path=.git` (the whole object store) would still answer.
   // The wall belongs at the door every operation shares, not on each of them.
-  if (relPath.split(/[\\/]/).includes('.git')) throw new PathError(404, 'not found');
+  //
+  // 0.16.0 CREDENTIAL PATHS join the refusal, same shape: the global explorer
+  // roots at the daemon user's HOME by default, and a bearer holder (a phone on
+  // LAN, a fleet agent with the token) has no legitimate reason to read private
+  // keys, cloud credentials or the daemon's own token through it. Whole-segment
+  // names are refused anywhere in the tree (they are near-unique to credential
+  // dirs); `.docker` is refused only for its config.json — images.list and
+  // friends are harmless to browse. Compared case-insensitively: the default
+  // root is HOME on exactly the platforms (macOS, Windows) whose filesystems
+  // fold case.
+  const segments = relPath.toLowerCase().split(/[\\/]/);
+  if (segments.includes('.git')) throw new PathError(404, 'not found');
+  if (segments.some(s => CREDENTIAL_SEGMENTS.has(s))) throw new PathError(404, 'not found');
+  const dockerAt = segments.indexOf('.docker');
+  if (dockerAt !== -1 && segments[dockerAt + 1] === 'config.json') throw new PathError(404, 'not found');
+}
+
+const CREDENTIAL_SEGMENTS = new Set(['.ssh', '.aws', '.gnupg', '.netrc', '.kube']);
+
+// 0.16.0: is this entry NAME itself a denied credential path? Used by the
+// listing filter and the search walker, which never build a relPath through
+// validateRelPath for each entry.
+function deniedName(name) {
+  return CREDENTIAL_SEGMENTS.has(String(name).toLowerCase());
+}
+
+// 0.16.0: the same rule applied to a RELATIVE path (search hits from either
+// backend): any denied segment, or .docker/config.json specifically.
+function deniedRelPath(rel) {
+  const segs = String(rel).toLowerCase().split(/[\\/]/);
+  if (segs.some(s => CREDENTIAL_SEGMENTS.has(s))) return true;
+  const dockerAt = segs.indexOf('.docker');
+  return dockerAt !== -1 && segs[dockerAt + 1] === 'config.json';
 }
 
 // Pure lexical containment. Callers perform the realpath checks appropriate to
@@ -98,8 +131,30 @@ function realpathInside(realRoot, target) {
   let real;
   try { real = fs.realpathSync(target); } catch { throw new PathError(404, 'not found'); }
   if (!within(realRoot, real)) throw new PathError(404, 'not found');
+  // 0.16.0: the daemon's own state dir (token, db, captures) must never be
+  // readable through the explorer — a symlink inside a browse root pointing
+  // into it, or a HOME-rooted path naming it directly, resolves here either
+  // way. Resolved once per process; FLEETDECK_HOME does not move mid-flight.
+  if (fleetHomeReal === undefined) {
+    try { fleetHomeReal = fs.realpathSync(process.env.FLEETDECK_HOME || path.join(os.homedir() || '/tmp', '.fleetdeck')); }
+    catch { fleetHomeReal = null; }
+  }
+  if (fleetHomeReal && within(fleetHomeReal, real)) throw new PathError(404, 'not found');
+  // 0.16.0 (adversarial review): the lexical validateRelPath gate only sees
+  // the REQUESTED path. A symlink inside the root — work/ssh-link -> ~/.ssh —
+  // passes it with segments like ssh-link/id_ed25519 while resolving into a
+  // denied directory. Check the RESOLVED path's segments against the same
+  // denylist, so credential dirs are refused no matter which name points at
+  // them.
+  const realSegs = real.toLowerCase().split(path.sep);
+  if (realSegs.some(s => CREDENTIAL_SEGMENTS.has(s))
+    || (realSegs.includes('.docker') && realSegs[realSegs.length - 1] === 'config.json')) {
+    throw new PathError(404, 'not found');
+  }
   return real;
 }
+
+let fleetHomeReal;
 
 function resolveRoot(ctx, sid) {
   const session = ctx.q.getSession.get(sid);
@@ -290,8 +345,12 @@ async function gitSearch(root, q, mode, deadline) {
       cwd: root, timeoutMs: remaining(), maxBytes: SEARCH_OUTPUT_MAX,
     });
     const needle = q.toLocaleLowerCase();
+    // 0.16.0: the denylist gates fs/read on the same paths, so a TRACKED
+    // credential file (an accidentally committed .ssh/deploy_key,
+    // .aws/credentials) must not ride the git backend around it.
     const matches = out.stdout.toString('utf8').split('\0').filter(Boolean)
-      .filter(name => name.toLocaleLowerCase().includes(needle));
+      .filter(name => name.toLocaleLowerCase().includes(needle))
+      .filter(name => !deniedRelPath(name));
     return {
       hits: matches.slice(0, SEARCH_HITS).map(file => ({ path: file })),
       truncated: out.truncated || out.code !== 0 || matches.length > SEARCH_HITS,
@@ -309,6 +368,7 @@ async function gitSearch(root, q, mode, deadline) {
     });
   }
   const parsed = parseGitGrep(out.stdout, SEARCH_HITS);
+  parsed.hits = parsed.hits.filter(h => !deniedRelPath(h.path));
   return {
     hits: parsed.hits,
     truncated: out.truncated || (out.code !== 0 && out.code !== 1) || parsed.overflow,
@@ -341,7 +401,11 @@ async function walkSearch(root, q, mode, deadline) {
     try { names = fs.readdirSync(current.dir).sort((a, b) => a.localeCompare(b)); } catch { continue; }
     for (let i = names.length - 1; i >= 0; i -= 1) {
       const name = names[i];
-      if (name === '.git') continue;
+      if (name.toLowerCase() === '.git') continue;
+      // 0.16.0: the search walker never runs validateRelPath per entry, so the
+      // credential denylist must filter HERE — otherwise fs/search?mode=content
+      // reads ~/.aws and friends even though fs/read refuses them.
+      if (deniedName(name)) continue;
       if (++visited > WALK_ENTRY_MAX || Date.now() >= deadline) {
         truncated = true;
         stop = true;
@@ -411,7 +475,7 @@ export function createFiles(ctx) {
       const real = realpathInside(root, abs);
       const own = fs.lstatSync(abs);
       if (!own.isDirectory() || own.isSymbolicLink()) throw new PathError(404, 'not found');
-      const names = fs.readdirSync(real).filter(name => name !== '.git');
+      const names = fs.readdirSync(real).filter(name => name.toLowerCase() !== '.git' && !deniedName(name));
       const truncated = names.length > LIST_MAX;
       const entries = [];
       for (const name of names) {
@@ -444,7 +508,16 @@ export function createFiles(ctx) {
     try {
       const abs = safeJoin(root, relPath);
       if (abs === root) return { status: 404, body: { ok: false, reason: 'is a directory' } };
-      realpathInside(root, path.dirname(abs));
+      const realParent = realpathInside(root, path.dirname(abs));
+      // 0.16.0 (second review): the realpath segment check inside
+      // realpathInside sees the PARENT, so its basename-qualified
+      // .docker/config.json rule can never fire here — a symlink parent
+      // (dl -> ~/.docker) would serve the registry credentials. Re-check with
+      // the filename the parent check never sees.
+      if (path.basename(abs).toLowerCase() === 'config.json'
+        && realParent.toLowerCase().split(path.sep).includes('.docker')) {
+        throw new PathError(404, 'not found');
+      }
       let lst;
       try { lst = fs.lstatSync(abs); } catch { throw new PathError(404, 'not found'); }
       if (lst.isDirectory()) return { status: 404, body: { ok: false, reason: 'is a directory' } };

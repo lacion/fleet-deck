@@ -114,7 +114,7 @@ test('static serving: board, assets, traversal, API regression', async t => {
     const cwd = mkdtempSync(path.join(tmpdir(), 'fleetdeck-static-cwd-'));
     t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
 
-    const hook = await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }));
+    const hook = await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon });
     assert.equal(hook.status, 200);
     assert.equal(hook.json.ok, true);
     assert.ok(hook.json.callsign, 'SessionStart still assigns a callsign');
