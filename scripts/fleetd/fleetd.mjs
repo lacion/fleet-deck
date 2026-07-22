@@ -165,13 +165,24 @@ if (PROXY_AUTH === 'trust' && !TRUSTED_ORIGINS.length) {
 // the loopback exemption (tokenless /state, /api/spawn, the lot); this closes
 // that, and the documented Host-rewriting-proxy residual with it.
 const REQUIRE_TOKEN = (process.env.FLEETDECK_REQUIRE_TOKEN || '').trim().toLowerCase() === 'on';
+// The power-gate opt-out is valid only inside the existing plain-loopback trust
+// zone. It cannot weaken hook auth, a LAN listener, or REQUIRE_TOKEN mode.
+const TRUST_LOOPBACK_VALUE = (process.env.FLEETDECK_TRUST_LOOPBACK || '').trim().toLowerCase();
+if (TRUST_LOOPBACK_VALUE !== '' && TRUST_LOOPBACK_VALUE !== 'on' && TRUST_LOOPBACK_VALUE !== 'off') {
+  startupFatal(`FLEETDECK_TRUST_LOOPBACK must be 'on' or 'off' (got '${TRUST_LOOPBACK_VALUE}')`);
+}
+const TRUST_LOOPBACK = TRUST_LOOPBACK_VALUE === 'on';
+if (TRUST_LOOPBACK && REQUIRE_TOKEN) {
+  startupFatal('FLEETDECK_TRUST_LOOPBACK=on conflicts with FLEETDECK_REQUIRE_TOKEN=on');
+}
+if (TRUST_LOOPBACK && LAN_MODE) {
+  startupFatal('FLEETDECK_TRUST_LOOPBACK=on requires a loopback FLEETDECK_BIND');
+}
 
 // TOKEN CONTRACT (0.16.0: a token ALWAYS exists). Since 0.16.0 the daemon
-// mints/persists a token on every boot, default loopback included: the
-// authenticated hook shims, the token-gated loopback powers (/ws/term, POST
-// /mail, gateway settings writes, the unsupervised-spawn arm) and the local
-// board's ?t= URL all need a credential to present, and none of that may be
-// conditional on the operator opting into LAN mode. TOKEN_REQUIRED now means
+// mints/persists a token on every boot, default loopback included: hook shims
+// and the local board always have a credential, and the four power gates use it
+// unless the explicit plain-loopback opt-out applies. TOKEN_REQUIRED means
 // something narrower: a token READ failure is FATAL (the board is reachable
 // from outside this machine, or the operator demanded the token everywhere) —
 // where the default mode may fall back to minting a fresh one.
@@ -308,6 +319,7 @@ const { server } = createHttp(core, {
   proxyAuth: PROXY_AUTH,
   managed: MANAGED,
   requireToken: REQUIRE_TOKEN,
+  trustLoopback: TRUST_LOOPBACK,
   // validation aid: first 3 raw payloads per hook event → HOME/hook-payloads.jsonl
   capture: createPayloadCapture(HOME, { secrets: TOKEN ? [TOKEN] : [] }),
 });

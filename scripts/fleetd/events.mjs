@@ -27,7 +27,7 @@ function expectedTranscriptDir(cwd, homeDir = os.homedir()) {
 
 export function createEvents(ctx) {
   const {
-    q, db, card, updateSession, tick, logEvent, onMutate, port, questions,
+    q, db, card, updateSession, tick, logEvent, onMutate, port, home, questions,
     scheduleRegistrationRemoteHarvest, stampTranscriptFloor, readTranscriptModel,
     recordFile, whisperText, drainMail, notifyWatchers, modelMemo, forgetSpawn,
     applyTicket,
@@ -385,7 +385,11 @@ export function createEvents(ctx) {
     const otherRepos = new Set(elsewhere.map(s => s.repo_id ?? '(none)')).size;
     const repoLabel = c.repo_name ? ` in ${c.repo_name}` : '';
     const lines = [
-      `[FLEETDECK] You are on the fleet board as "${c.callsign}"${c.ticket ? ` (ticket ${c.ticket})` : ''} — live at http://127.0.0.1:${port}`,
+      // The token itself must never enter a session brief: briefs land in every
+      // transcript (~/.claude/projects/**.jsonl), and transcripts get shared.
+      // Name where the key lives instead — an auto-started daemon prints its
+      // credentialed URL only into fleetd.log, which nobody reads.
+      `[FLEETDECK] You are on the fleet board as "${c.callsign}"${c.ticket ? ` (ticket ${c.ticket})` : ''} — live at http://127.0.0.1:${port} (board key, if asked: \`fleetdeck token\` or ${home ? path.join(home, 'token') : '$FLEETDECK_HOME/token'})`,
       sameRepo.length
         ? `Other active sessions${repoLabel} (${sameRepo.length}):`
         : `No other sessions active${repoLabel} right now.`,

@@ -184,6 +184,7 @@ function trustedHostMatch(entry, host, port) {
 export function createHttp(core, {
   port, version = '0.0.0', capture = () => {}, token, lan = null,
   trustedOrigins = [], proxyAuth = 'token', managed = false, requireToken = false,
+  trustLoopback = false,
 }) {
   // The board renders its share panel from this: the exact URLs a peer can
   // open, token included (a browser cannot send an Authorization header on its
@@ -234,12 +235,28 @@ export function createHttp(core, {
   //     ever forwards, and coder_app defaults to share = "owner"). A trusted
   //     origin is then sufficient and the board needs no token at all.
   //
-  // Either way a LOCAL CLI hook is untouched: it sends our OWN loopback Host and
-  // no Origin, so arrivedViaTrustedProxy is false and the loopback exemption
-  // still applies. The proxy is caught by its EXTERNAL Host even with no Origin
-  // (see arrivedViaTrustedProxy for why the Origin signal alone was not enough).
+  // A LEGITIMATE local CLI hook sends our OWN loopback Host and no Origin, so
+  // arrivedViaTrustedProxy is false; the proxy is caught by its EXTERNAL Host
+  // even with no Origin (see arrivedViaTrustedProxy for why Origin alone was not
+  // enough). But a hostile local process can DELIBERATELY forge the trusted
+  // external Host/Origin, so hook authentication must never key off those
+  // headers — see the unconditional /hook/* guard immediately below.
   function authorized(req, url) {
-    if (isLoopbackAddress(req.socket?.remoteAddress)) {
+    // /hook/* is authenticated UNCONDITIONALLY: no loopback or proxy-trust path
+    // may waive it. Every hook arrives through a command shim
+    // (scripts/fleet-hook.mjs / fleet-sessionstart.mjs / fleet-watch.mjs) that
+    // reads $FLEETDECK_HOME/token and attaches the bearer, because Claude Code
+    // http hooks cannot. A tokenless /hook/* call — a legacy pre-0.16.0 CLI or a
+    // local forgery — must fall through to the bearer check below and 401. This
+    // guard LEADS the loopback block on purpose: the PROXY_AUTH=trust exemption
+    // (return true, below) would otherwise authorize a FORGED hook, because a
+    // direct loopback process can forge the trusted Host/Origin to make
+    // arrivedViaTrustedProxy(req) true and short-circuit before the plain-
+    // loopback hook exclusion is ever evaluated. Keeping the gate here means it
+    // holds under every mode: token proxy, trust proxy, plain loopback, LAN,
+    // REQUIRE_TOKEN, and TRUST_LOOPBACK alike.
+    const isHook = url.pathname.startsWith('/hook/');
+    if (isLoopbackAddress(req.socket?.remoteAddress) && !isHook) {
       // Use arrivedViaTrustedProxy, NOT viaTrustedProxy: the latter keys off
       // Origin alone and so waived the token for a proxied request that carried
       // no Origin — the no-Origin bypass fixed here.
@@ -258,27 +275,23 @@ export function createHttp(core, {
         // decision to trust the proxy, so this exemption survives the flag.
         return true;
       } else {
-        // PLAIN LOOPBACK (not via the proxy). Since 0.16.0 the daemon always
-        // mints a token, and the loopback exemption shrinks to exactly two
-        // shapes: (a) /health and the data-free public shell, open for everyone;
-        // (b) /hook/*, open ONLY to callers that present the bearer — every
-        // hook now arrives through a command shim (scripts/fleet-hook.mjs /
-        // fleet-sessionstart.mjs / fleet-watch.mjs) that reads
-        // $FLEETDECK_HOME/token and attaches it, because Claude Code http hooks
-        // cannot. A tokenless /hook/* call is therefore no longer "a CLI that
-        // cannot authenticate" — it is exactly the forgery the shims exist to
-        // stop (a local process impersonating a session with one curl), so it
-        // falls through to the bearer check below and 401s. When REQUIRE_TOKEN
-        // is off (the default), every NON-hook loopback route keeps the
-        // historical exemption: the token gates only the specific powers named
-        // in REQUIRE_TOKEN_GATED_ROUTES (/ws/term, POST /mail, gateway settings
-        // writes, the unsupervised-spawn arm) — the powers a malicious same-UID
-        // process or a fleet agent itself must not wield anonymously.
-        // REQUIRE_TOKEN=on keeps its stronger meaning: everything except
-        // /health and the shell requires the bearer, hook shims included.
+        // PLAIN LOOPBACK (not via the proxy). /hook/* never reaches here — the
+        // unconditional guard at the top of authorized() already excluded it.
+        // What remains is the ordinary loopback exemption: (a) /health and the
+        // data-free public shell, open for everyone; (b) since 0.16.0 the daemon
+        // always mints a token, so when REQUIRE_TOKEN is off (the default) every
+        // other loopback route keeps the historical exemption EXCEPT the
+        // specific powers named in REQUIRE_TOKEN_GATED_ROUTES (/ws/term, POST
+        // /mail, gateway settings writes, the unsupervised-spawn arm) — the
+        // powers a malicious same-UID process or a fleet agent itself must not
+        // wield anonymously. REQUIRE_TOKEN=on keeps its stronger meaning:
+        // everything except /health and the shell requires the bearer.
+        // TRUST_LOOPBACK=on restores the historical exemption for the named
+        // power routes too (the single-user opt-out); it does NOT touch hooks,
+        // which stay gated at the top regardless.
         if (url.pathname === '/health' || isPublicShell(req.method, url.pathname)) return true;
-        if (!requireToken && !url.pathname.startsWith('/hook/')
-          && !tokenGatedRoute(req.method, url.pathname)) return true;
+        if (!requireToken
+          && (trustLoopback || !tokenGatedRoute(req.method, url.pathname))) return true;
       }
     }
     const authorization = req.headers.authorization;
@@ -287,7 +300,7 @@ export function createHttp(core, {
   }
 
   // 0.16.0 LOOPBACK GATES. Default loopback stays open for ordinary routes,
-  // but these powers require the bearer no matter where the call comes from:
+  // but these powers require the bearer unless an explicit trust mode applies:
   // typing into a live pane (/ws/term), injecting mail into sessions, and
   // arming an unsupervised spawn. The board, the hook shims and the fleet skill
   // docs all present the token; a caller without it is precisely the attacker
@@ -856,13 +869,21 @@ export function createHttp(core, {
               return;
             }
             if (url.pathname === '/api/settings') {
-              // 0.16.0: gateway_* writes reroute every future session's LLM
-              // traffic, so they require the bearer even on loopback (a plain
-              // settings key like browse_root keeps the loopback exemption).
+              // gateway_* writes reroute every future session's LLM traffic and can
+              // leak the gateway credential, so they keep requiring the bearer even
+              // when everything else is waived. The ONLY waiver is the explicit
+              // single-user trust-loopback opt-out, and it keys off the real peer
+              // address (isLoopbackAddress) rather than any header — a direct
+              // loopback caller can forge Host/Origin to look proxied, so we must
+              // not waive this gate on arrivedViaTrustedProxy(). Proxy token mode,
+              // proxy trust mode, and LAN never inherit the waiver here.
               if (Object.keys(ev || {}).some(k => k.toLowerCase().startsWith('gateway_'))) {
                 const authorization = req.headers.authorization;
                 const bearer = typeof authorization === 'string' ? /^Bearer (.+)$/.exec(authorization)?.[1] : undefined;
-                if (!tokenMatches(bearer) && !tokenMatches(url.searchParams.get('t'))) {
+                const bearerWaived = trustLoopback
+                  && !arrivedViaTrustedProxy(req)
+                  && isLoopbackAddress(req.socket?.remoteAddress);
+                if (!bearerWaived && !tokenMatches(bearer) && !tokenMatches(url.searchParams.get('t'))) {
                   return json(res, 401, { ok: false, reason: 'gateway settings require the bearer token' });
                 }
                 logExec(url.pathname, req, ' gateway=true');

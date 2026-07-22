@@ -14,6 +14,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import http from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -254,3 +255,71 @@ test('fleet-hook.mjs fails open ({}) when the daemon is down', async (t) => {
   assert.equal(out.code, 0, 'shim exits 0 with the daemon down');
   assert.equal(out.stdout, '{}', 'shim emits the fail-open no-op');
 });
+
+// POST /hook/<Event> with arbitrary headers (Host/Origin), NO test-helper
+// token attaching — for asserting the forged-proxy bypass is closed.
+function rawHookPost(port, event, payload, headers = {}) {
+  const body = JSON.stringify(payload);
+  return new Promise((resolve, reject) => {
+    const req = http.request({
+      host: '127.0.0.1', port, path: `/hook/${event}`, method: 'POST',
+      headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body), ...headers },
+    }, res => {
+      let text = '';
+      res.on('data', c => { text += c; });
+      res.on('end', () => { let json = null; try { json = JSON.parse(text); } catch { /* leave null */ } resolve({ status: res.statusCode, json, text }); });
+    });
+    req.on('error', reject);
+    req.end(body);
+  });
+}
+
+// REGRESSION (0.16.1 adversarial review, HIGH): forged trusted Host/Origin must
+// not authenticate a hook under PROXY_AUTH=trust. arrivedViaTrustedProxy() reads
+// exactly those two headers and both are caller-controlled, so a direct loopback
+// process can forge the configured trusted origin to look proxied. Under
+// PROXY_AUTH=trust the proxy is the authenticator and a genuinely proxied request
+// needs no token — but /hook/* must NEVER inherit that waiver, or one curl could
+// impersonate any session (SessionStart/SessionEnd/Stop). authorized() gates
+// /hook/* UNCONDITIONALLY, ahead of the proxy-trust exemption, so this holds in
+// every mode. We prove it with TRUST_LOOPBACK both off and on (the flag is a
+// red herring for this bypass — it changes nothing about the hook gate).
+for (const trustLoopback of [false, true]) {
+  test(`forged trusted Host/Origin cannot authenticate a hook under PROXY_AUTH=trust (TRUST_LOOPBACK ${trustLoopback ? 'on' : 'off'})`, async (t) => {
+    const proxyOrigin = 'https://board.example.com';
+    const forged = { host: 'board.example.com', origin: proxyOrigin };
+    const env = { FLEETDECK_PROXY_AUTH: 'trust', FLEETDECK_TRUSTED_ORIGINS: proxyOrigin };
+    if (trustLoopback) env.FLEETDECK_TRUST_LOOPBACK = 'on';
+    const daemon = await startDaemon({ env });
+    t.after(() => daemon.stop());
+
+    const cwd = scratchCwd();
+    t.after(() => rmSync(cwd, { recursive: true, force: true }));
+
+    // The exact bypass: a tokenless SessionStart carrying the forged trusted
+    // headers. It must be refused in the hook dialect and register NO card —
+    // the handler is never invoked, no matter what those headers claim.
+    const forgedSid = randomUUID();
+    const res = await rawHookPost(daemon.port, 'SessionStart',
+      loadFixture('session-start', { session_id: forgedSid, cwd }), forged);
+    assert.equal(res.status, 200, 'answered in the hook dialect, not a proxy-authorized ok');
+    assert.ok(!res.json?.ok, 'the forged hook did NOT register a session (no ok brief)');
+    assert.match(res.json?.hookSpecificOutput?.additionalContext ?? '', /restart/i,
+      'it took the tokenless-refusal path (the upgrade whisper), not the trust exemption');
+    const state = (await getJson(`${daemon.baseUrl}/state`)).json;
+    assert.ok(!state.sessions.find(s => s.session_id === forgedSid),
+      'forged proxy-trust hook changed no state');
+
+    // Positive control: the SAME forged headers WITH the bearer succeed — the
+    // gate is about authentication, not about blocking proxied hooks outright.
+    const authedSid = randomUUID();
+    const authed = await rawHookPost(daemon.port, 'SessionStart',
+      loadFixture('session-start', { session_id: authedSid, cwd }),
+      { ...forged, authorization: `Bearer ${daemon.token}` });
+    assert.equal(authed.status, 200);
+    assert.ok(authed.json?.ok, 'an authenticated hook still works under proxy trust');
+    const state2 = (await getJson(`${daemon.baseUrl}/state`)).json;
+    assert.ok(state2.sessions.find(s => s.session_id === authedSid),
+      'the authenticated hook registered its session');
+  });
+}

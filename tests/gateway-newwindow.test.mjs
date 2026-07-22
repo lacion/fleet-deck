@@ -30,6 +30,15 @@ const TOKEN = 'zzUNIQUE-credential-9871';
 
 /** A fake `tmux` first on PATH that appends each invocation's argv as JSONL. */
 function stubTmux(t) {
+  // A dev shell running under fleetdeck exports FLEETDECK_HOME, which would
+  // switch the in-process adapter into generation-verified mode against this
+  // stub. These tests assert argv construction only — use the legacy seam.
+  const previousHome = process.env.FLEETDECK_HOME;
+  delete process.env.FLEETDECK_HOME;
+  t.after(() => {
+    if (previousHome == null) delete process.env.FLEETDECK_HOME;
+    else process.env.FLEETDECK_HOME = previousHome;
+  });
   const dir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-gwtmux-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const log = path.join(dir, 'argv.jsonl');

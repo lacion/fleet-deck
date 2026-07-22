@@ -238,6 +238,15 @@ test('tmux input/capture helpers use isolated-socket argv without shell interpol
     FD_TMUX_RECORD: record,
     FLEETDECK_TMUX_SOCKET: 'fd-test-socket',
   });
+  // Argv-shape test on the legacy adapter seam: an ambient FLEETDECK_HOME (a
+  // dev shell running under fleetdeck) would demand generation verification
+  // from this recording stub, which answers nothing.
+  const previousHome = process.env.FLEETDECK_HOME;
+  delete process.env.FLEETDECK_HOME;
+  t.after(() => {
+    if (previousHome == null) delete process.env.FLEETDECK_HOME;
+    else process.env.FLEETDECK_HOME = previousHome;
+  });
   t.after(() => rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
 
   const target = exactWindowTarget(4711, 'fd4711-falcon');
