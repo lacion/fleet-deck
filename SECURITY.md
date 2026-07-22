@@ -238,8 +238,8 @@ listener — the daemon refuses to start one). The token is generated `0600` int
 `0600` too. If you do open the board to your network, put it on a network you
 trust (Tailscale or an SSH tunnel beats exposing it directly), and treat the
 token like an SSH key. The README's
-[**The fine print**](README.md#the-fine-print-read-this-bit) and
-[**LAN mode**](README.md#opening-the-board-on-your-other-machine-lan-mode)
+[**The fine print**](README.md#the-fine-print) and
+[**LAN mode**](README.md#lan-mode)
 sections are the fuller version of all of this.
 
 One knob deserves an explicit callout: the global file explorer's root is
