@@ -244,6 +244,10 @@ test('resolveTarget promotes an unknown bare name through the default org, but a
   const requestOverride = await resolveTarget({ repo: 'other-module', repo_org: 'oneoff' });
   assert.equal(requestOverride.origin_url, 'https://github.com/oneoff/other-module.git',
     'explicit repo_org makes the current spawn deterministic even before settings persistence');
+  await assert.rejects(
+    () => resolveTarget({ repo: 'explicit/repo', repo_org: 'ignored-would-be-confusing' }),
+    err => err.status === 400 && /only to a bare repo/.test(err.message),
+  );
 
   const localRoot = path.join(reposDir, 'known');
   mkdirSync(localRoot);

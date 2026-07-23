@@ -399,6 +399,9 @@ export function createRepos(ctx) {
     const host = body?.repo_host ?? undefined;
     let parsed = parseRepoInput(body?.repo, host, transport);
     if (parsed.error) throw namedError(400, parsed.error);
+    if (body?.repo_org != null && parsed.kind !== 'name') {
+      throw namedError(400, 'repo_org applies only to a bare repo name');
+    }
     let origin_url = parsed.origin_url;
     let catalogRows = q.repoByName.all(parsed.repo_name);
     let dest;
