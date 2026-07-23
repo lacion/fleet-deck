@@ -97,6 +97,11 @@ export function useBoardHotkeys({
         return;
       }
       if (typing) return;
+      // Modified chords are NEVER board hotkeys: Cmd/Ctrl+C is the user COPYING
+      // (an unguarded 'c' here used to open Compose over their selection), and
+      // Alt-chords belong to the browser/OS. Shift stays allowed — '?' IS
+      // Shift+/ on most layouts.
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
       // M-F7 — under an open modal, don't let y/n · 1-9 · Enter (or j/k · c · ?)
       // leak past the overlay; Esc above already owns the modal. Read the same
       // synchronously-read refs so a stale closure can't misroute an answer.
