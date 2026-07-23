@@ -324,6 +324,20 @@ test('absent repo_transport on a fresh daemon composes an ssh origin (the new de
   assert.equal(res.json.clone.origin_url, 'git@github.com:org/repo.git');
 });
 
+test('persisted subgroup default org infers gitlab for a bare-name HTTPS API spawn', async t => {
+  const { daemon, reposDir } = await cloneKilledDaemon(t);
+  const set = await postJson(`${daemon.baseUrl}/api/settings`, {
+    repo_default_org: 'group/subgroup', repo_transport: 'https',
+  });
+  assert.equal(set.status, 200, set.text);
+  const res = await postJson(`${daemon.baseUrl}/api/spawn`, {
+    repo: 'module', branch: 'main', branch_mode: 'in-place',
+  });
+  assert.equal(res.status, 202, res.text);
+  assert.equal(res.json.clone.origin_url, 'https://gitlab.com/group/subgroup/module.git');
+  assert.equal(res.json.clone.dest, path.join(reposDir, 'module'));
+});
+
 test('absent repo_transport honors the persisted https setting', async t => {
   const { daemon } = await cloneKilledDaemon(t);
   const set = await postJson(`${daemon.baseUrl}/api/settings`, { repo_transport: 'https' });

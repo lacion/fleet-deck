@@ -29,6 +29,9 @@ test('parseRepoInput accepts supported forms and rejects argv/scheme hazards', (
   assert.equal(parseRepoInput('ssh://git@-oProxyCommand=reboot/x').error != null, true);
   assert.match(parseRepoInput('http://example.com/repo.git').error, /http.*refused/i);
   assert.match(parseRepoInput('file:///tmp/repo.git').error, /scheme.*refused/i);
+  assert.match(parseRepoInput('org/repo#fragment').error, /shorthand path segments/i);
+  assert.match(parseRepoInput('org/repo?query').error, /shorthand path segments/i);
+  assert.match(parseRepoInput('org/repo%2Fother').error, /shorthand path segments/i);
   assert.match(parseRepoInput('./repo').error, /relative/i);
 });
 
@@ -229,7 +232,10 @@ test('default org choice precedence and Coder seed are explicit', () => {
   assert.deepEqual(repoDefaultOrgChoice(), { value: null, source: 'default' });
   assert.equal(repoDefaultOrgProblem('owner'), null);
   assert.equal(repoDefaultOrgProblem('group/subgroup'), null);
-  for (const bad of ['', '-owner', 'a//b', 'a/../b', 'has space', 'x'.repeat(201)]) {
+  for (const bad of [
+    '', '-owner', 'a//b', 'a/../b', 'has space', 'group/sub#fragment',
+    'group/sub?query', 'group/sub%2Fother', 'group\\sub', 'x'.repeat(201),
+  ]) {
     assert.equal(typeof repoDefaultOrgProblem(bad), 'string', bad);
   }
 });
@@ -259,11 +265,16 @@ test('resolveTarget promotes an unknown bare name through the default org, but a
   assert.equal(local.root, localRoot, 'local catalog wins before default-org expansion');
 });
 
-test('default org composes with gitlab subgroups and explicit transport', async t => {
+test('default org infers gitlab for subgroups when the host is omitted', async t => {
   withReposDir(t);
   const { resolveTarget } = createRepos(fakeReposCtx({ repo_default_org: 'group/sub', repo_transport: 'ssh' }));
-  const out = await resolveTarget({ repo: 'module', repo_host: 'gitlab' });
+  const out = await resolveTarget({ repo: 'module' });
   assert.equal(out.origin_url, 'git@gitlab.com:group/sub/module.git');
+  await assert.rejects(
+    () => resolveTarget({ repo: 'other', repo_host: 'github' }),
+    err => err.status === 400 && /gitlab/i.test(err.message),
+    'an explicit github choice must fail loud instead of being silently replaced',
+  );
 });
 
 test('resolveTarget reuses a checkout whose scp-style origin matches the gitlab shorthand', async t => {
@@ -450,7 +461,7 @@ test('POST /api/settings validates values, caps fav_dirs, and refuses unknown ke
   assert.equal(badTransport.status, 400);
   assert.match(badTransport.json.reason, /repo_transport must be ssh or https/i);
 
-  for (const value of ['has space', '-owner', 'a//b', 'a/../b']) {
+  for (const value of ['has space', '-owner', 'a//b', 'a/../b', 'group/sub#fragment', 'group/sub?query', 'group/sub%2Fother']) {
     const badOrg = await postJson(`${daemon.baseUrl}/api/settings`, { repo_default_org: value });
     assert.equal(badOrg.status, 400, value);
     assert.match(badOrg.json.reason, /default org/i);

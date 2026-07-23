@@ -11,6 +11,7 @@ import { detectCoderWorkspaceRoot } from './config.mjs';
 
 const CONTROL_RE = /[\x00-\x1f\x7f]/;
 const SPACE_OR_CONTROL_RE = /[\s\x00-\x1f\x7f]/;
+const FORGE_SLUG_SEGMENT_RE = /^[A-Za-z0-9._-]+$/;
 // User-requested Coder seed: company workspaces type a bare repo name far more
 // often than a full owner/repo slug. Precedence is persisted setting → env →
 // this Coder-only seed → no default. Non-Coder installs never inherit it.
@@ -54,6 +55,9 @@ export function repoDefaultOrgProblem(value) {
   const parts = value.split('/');
   if (!parts.every(Boolean) || parts.some(p => p === '.' || p === '..')) {
     return 'default org must be an owner or clean group/subgroup path';
+  }
+  if (!parts.every(part => FORGE_SLUG_SEGMENT_RE.test(part))) {
+    return 'default org segments may contain only letters, numbers, dots, underscores, and hyphens';
   }
   return null;
 }
@@ -114,6 +118,9 @@ export function parseRepoInput(input, repoHost = 'github', repoTransport = 'http
   // before we re-append our own — the long-standing github behaviour, kept here.
   const parts = input.split('/');
   const cleanSegments = parts.every(Boolean) && !parts.some(part => part === '.' || part === '..');
+  if (cleanSegments && parts.length >= 2 && !parts.every(part => FORGE_SLUG_SEGMENT_RE.test(part))) {
+    return { error: 'shorthand path segments may contain only letters, numbers, dots, underscores, and hyphens' };
+  }
   if (cleanSegments && parts.length >= 2) {
     // repoNameOf strips a trailing '.git', so a final segment of exactly
     // '.git' ('org/.git', 'group/sub/.git') names NOTHING — downstream,
@@ -426,7 +433,11 @@ export function createRepos(ctx) {
         }
         const orgProblem = repoDefaultOrgProblem(org.value);
         if (orgProblem) throw namedError(400, `configured ${org.source} default org is invalid — ${orgProblem}`);
-        const expanded = parseRepoInput(`${org.value}/${parsed.repo_name}`, host, transport);
+        // A multi-segment namespace is a GitLab group/subgroup by definition.
+        // Infer that forge only when the caller omitted repo_host; an explicit
+        // github choice still fails loud instead of silently changing hosts.
+        const promotedHost = host ?? (org.value.includes('/') ? 'gitlab' : undefined);
+        const expanded = parseRepoInput(`${org.value}/${parsed.repo_name}`, promotedHost, transport);
         if (expanded.error) throw namedError(400, `default org "${org.value}" cannot resolve this repo — ${expanded.error}`);
         parsed = expanded;
         origin_url = parsed.origin_url;
