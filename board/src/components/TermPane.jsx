@@ -7,7 +7,7 @@ import { pasteImage } from '../api.js';
 import { imageFromClipboard } from '../util.js';
 
 // One live terminal onto one board-owned pane — the screen and the socket, with
-// no chrome around it. The full-size modal (TermModal) and each tile of the grid
+// no chrome around it. The floating window (TermWindow) and each tile of the grid
 // (TermGrid) are both just this, in a differently-shaped box.
 //
 // Speaks the daemon's /ws/term JSON-frame contract:

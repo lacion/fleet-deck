@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { sendMail, sendCommand, reasonOf } from '../api.js';
 import { basename, TURN_BOUNDARY_HINT } from '../util.js';
 import { useModal } from '../useModal.js';
+import { ORCH_COMMANDS } from '../helpText.js';
 
 // Honest per-target feedback from POST /mail `targets` ({session_id, callsign,
 // route}). watcher/pane routes deliver without the human doing anything;
@@ -137,6 +138,37 @@ export default function Compose({ initialTarget, sessions, repos, onClose, onSen
           onChange={(e) => { setText(e.target.value); if (note) setNote(null); if (unroutedText) setUnroutedText(null); }}
           onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) send(); }}
         />
+        {/* v2.6 — the grammar, discoverable: one line on the two modes, then a
+            chip per command that seeds the textarea. helpText.js is the shared
+            source, so these can't drift from the "?" overlay. Only for the
+            ORCHESTRATOR target — mail needs no grammar. */}
+        {target === 'daemon' && (
+          <div className="fd-composehint">
+            <span className="hint-line">
+              Commands run in the daemon — everything else you type here is logged as a note.
+              Mail (any other target) is plain text.
+            </span>
+            <span className="hint-chips">
+              {ORCH_COMMANDS.filter((c) => c.chip).map((c) => (
+                <button
+                  key={c.syntax}
+                  type="button"
+                  className="fd-cmdchip"
+                  title={c.does}
+                  // Seed the command PREFIX in front of whatever is typed — a
+                  // draft must never be thrown away by a chip click.
+                  onClick={() => {
+                    setText((cur) => (cur.startsWith(c.chip) ? cur : c.chip + cur.trimStart()));
+                    setNote(null); setErr(null); setUnroutedText(null);
+                    taRef.current?.focus();
+                  }}
+                >
+                  {c.chip.trim()}
+                </button>
+              ))}
+            </span>
+          </div>
+        )}
         <div className="foot">
           {note ? (
             <span className="note" style={{ color: 'var(--ok)' }}>{note}</span>

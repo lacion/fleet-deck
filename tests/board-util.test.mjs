@@ -19,6 +19,9 @@ import { fileURLToPath } from 'node:url';
 
 import {
   MODEL_FAMILIES,
+  TERMWIN_EDGE,
+  TERMWIN_MIN,
+  clampWinRect,
   imageFromClipboard,
   batchTotal,
   expandBatchTasks,
@@ -28,6 +31,7 @@ import {
   prettyModel,
   sessionTicker,
 } from '../board/src/util.js';
+import { HOTKEYS, ORCH_COMMANDS } from '../board/src/helpText.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -238,4 +242,83 @@ test('imageFromClipboard yields null when there is nothing to ingest', () => {
   assert.equal(imageFromClipboard([{ kind: 'string', type: 'image/png' }]), null);
   // a non-image file (e.g. a PDF) is not ours either
   assert.equal(imageFromClipboard([{ kind: 'file', type: 'application/pdf' }]), null);
+});
+
+// --- v2.6 floating terminal: rect clamping (TermWindow's geometry contract) ---
+//
+// The drag/resize math lives in clampWinRect so node --test can pin the one
+// property that makes a floating window livable: the drag bar can NEVER leave
+// the screen, whatever garbage localStorage or a monitor swap hands us.
+test('clampWinRect keeps a sane rect unchanged', () => {
+  const vp = { w: 1920, h: 1080 };
+  const r = clampWinRect({ x: 100, y: 80, w: 900, h: 600 }, vp);
+  assert.deepEqual(r, { x: 100, y: 80, w: 900, h: 600 });
+});
+
+test('clampWinRect pulls an off-screen rect back to a grabbable position', () => {
+  const vp = { w: 1280, h: 800 };
+  // shoved off the right/bottom: at least TERMWIN_EDGE must remain visible
+  const r = clampWinRect({ x: 5000, y: 5000, w: 600, h: 400 }, vp);
+  assert.equal(r.x, vp.w - TERMWIN_EDGE);
+  assert.equal(r.y, vp.h - TERMWIN_EDGE);
+  // shoved off the left: the window may hang out, but 48px stays reachable
+  const l = clampWinRect({ x: -5000, y: 100, w: 600, h: 400 }, vp);
+  assert.equal(l.x, TERMWIN_EDGE - 600);
+  // the TOP edge hard-stops at 0 — the drag bar itself must never go above
+  const t = clampWinRect({ x: 100, y: -50, w: 600, h: 400 }, vp);
+  assert.equal(t.y, 0);
+});
+
+test('clampWinRect enforces min size and viewport fit', () => {
+  const vp = { w: 1280, h: 800 };
+  const small = clampWinRect({ x: 0, y: 0, w: 10, h: 10 }, vp);
+  assert.equal(small.w, TERMWIN_MIN.w);
+  assert.equal(small.h, TERMWIN_MIN.h);
+  const big = clampWinRect({ x: 0, y: 0, w: 9999, h: 9999 }, vp);
+  assert.equal(big.w, vp.w);
+  assert.equal(big.h, vp.h);
+});
+
+test('clampWinRect sanitizes garbage to a centered default', () => {
+  const vp = { w: 1600, h: 1000 };
+  const r = clampWinRect({ x: NaN, y: 'nope', w: null, h: undefined }, vp);
+  assert.equal(r.w, 1060);
+  assert.equal(r.h, 720);
+  assert.equal(r.x, Math.round((vp.w - 1060) / 2));
+  assert.equal(r.y, Math.round((vp.h - 720) / 2));
+  // an empty object (first run — nothing saved) is the same story
+  const fresh = clampWinRect({}, vp);
+  assert.equal(fresh.w, 1060);
+  assert.ok(fresh.x >= TERMWIN_EDGE - fresh.w && fresh.x <= vp.w - TERMWIN_EDGE);
+});
+
+// --- v2.6 help overlay: the hotkey list and the handler cannot drift ---------
+//
+// helpText.js is what the human READS ("?" overlay); useBoardHotkeys.js is what
+// the board DOES. Pin that every key named in HOTKEYS appears in the handler
+// source, so removing/renaming a binding without updating the help (or vice
+// versa) fails here instead of silently lying to the user.
+test('every documented hotkey exists in the useBoardHotkeys source', () => {
+  const src = readFileSync(path.join(HERE, '..', 'board', 'src', 'hooks', 'useBoardHotkeys.js'), 'utf8');
+  const expectations = [
+    ["'j'", 'j'], ["'k'", 'k'], ["'ArrowDown'", '↓'], ["'ArrowUp'", '↑'],
+    ["'y'", 'y'], ["'n'", 'n'], ['[1-9]', '1-9'], ["'Enter'", 'Enter'],
+    ["'c'", 'c'], ["'?'", '?'], ["'Escape'", 'Esc'],
+  ];
+  for (const [needle, label] of expectations) {
+    assert.ok(src.includes(needle), `useBoardHotkeys.js lost the ${label} binding that helpText.js documents`);
+    assert.ok(
+      HOTKEYS.some((h) => h.keys.includes(label)),
+      `helpText.js HOTKEYS is missing the ${label} binding`,
+    );
+  }
+});
+
+test('every Compose chip inserts a prefix its own command grammar starts with', () => {
+  for (const c of ORCH_COMMANDS.filter((x) => x.chip)) {
+    assert.ok(
+      c.syntax.startsWith(c.chip.trimEnd()),
+      `chip "${c.chip}" does not match its syntax "${c.syntax}"`,
+    );
+  }
 });
