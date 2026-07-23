@@ -6,6 +6,7 @@ import path from 'node:path';
 import { openDb } from '../scripts/fleetd/db.mjs';
 import { claudeTranscriptPath, createCore } from '../scripts/fleetd/derive.mjs';
 import { capturePane, exactWindowTarget, pasteText, sendEnter, typeKeys } from '../scripts/fleetd/spawn.mjs';
+import { stallDiagnosticExcerpt } from '../scripts/fleetd/spawns.mjs';
 
 function setEnv(t, values) {
   const before = new Map(Object.keys(values).map(k => [k, process.env[k]]));
@@ -76,6 +77,17 @@ function memoryCore(t, { env = {}, tmux = fakeTmux(), home = '/daemon-home' } = 
   t.after(() => db.close());
   return { db, core, ...tmux, home };
 }
+
+test('stall diagnostic excerpt is line/byte bounded and redacts shape + exact secrets', () => {
+  const exact = 'corporate-token-with-no-known-shape';
+  const screen = Array.from({ length: 30 }, (_, i) => `line-${i} ${'🚀'.repeat(200)}`).join('\n')
+    + `\n${exact}\nsk-ant-1234567890SECRET\n`;
+  const out = stallDiagnosticExcerpt(screen, { secrets: [exact] });
+  assert.ok(Buffer.byteLength(out) <= 2000);
+  assert.ok(out.split('\n').length <= 18);
+  assert.doesNotMatch(out, /corporate-token|sk-ant-/);
+  assert.match(out, /\[redacted\]/);
+});
 
 test('spawn argv is deterministic and registration watchdog stalls once, then a late hook revives it', async (t) => {
   const { db, core, state, port, home } = memoryCore(t, {

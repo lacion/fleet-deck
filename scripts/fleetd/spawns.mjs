@@ -33,7 +33,7 @@ const STALL_DETAIL_LINES = 18;
 // strip any controls defensively, trim empty screen margins, keep only the tail
 // a human would see, redact known credential shapes, then bound the final value
 // before it enters SQLite and the /state broadcast.
-export function stallDiagnosticExcerpt(screen) {
+export function stallDiagnosticExcerpt(screen, { secrets = [] } = {}) {
   if (typeof screen !== 'string' || !screen) return null;
   const lines = screen
     .replace(/\r/g, '')
@@ -43,8 +43,19 @@ export function stallDiagnosticExcerpt(screen) {
   while (lines.length && !lines[0]) lines.shift();
   while (lines.length && !lines[lines.length - 1]) lines.pop();
   if (!lines.length) return null;
-  const tail = lines.slice(-STALL_DETAIL_LINES).join('\n');
-  return redactDiagnosticText(tail).slice(-STALL_DETAIL_MAX) || null;
+  let tail = redactDiagnosticText(lines.slice(-STALL_DETAIL_LINES).join('\n'));
+  for (const secret of secrets) {
+    if (typeof secret === 'string' && secret) tail = tail.split(secret).join('[redacted]');
+  }
+  // Bytes, not JS code units: a screen of emoji/CJK must still respect the 2KB
+  // SQLite/snapshot budget. Start from the byte tail, drop a partial leading
+  // UTF-8 character (U+FFFD), then correct any replacement expansion.
+  const bytes = Buffer.from(tail);
+  if (bytes.length > STALL_DETAIL_MAX) {
+    tail = bytes.subarray(bytes.length - STALL_DETAIL_MAX).toString('utf8').replace(/^�+/, '');
+    while (Buffer.byteLength(tail) > STALL_DETAIL_MAX) tail = tail.slice(1);
+  }
+  return tail || null;
 }
 
 export function createSpawns(ctx) {
@@ -1759,7 +1770,19 @@ export function createSpawns(ctx) {
           // card only if it won. A hook that registered meanwhile wins cleanly.
           let detail = null;
           try {
-            detail = stallDiagnosticExcerpt(await tmuxAdapter.capturePane?.(scopedPaneTarget(win)));
+            const exactSecrets = [];
+            try {
+              const token = fs.readFileSync(path.join(home, 'token'), 'utf8').trim();
+              if (token) exactSecrets.push(token);
+            } catch { /* token file unavailable — shape redaction still applies */ }
+            const gateway = resolveGatewayEnv?.() || {};
+            for (const [name, value] of Object.entries(gateway)) {
+              if (/(TOKEN|KEY|SECRET|PASSWORD)/i.test(name) && value) exactSecrets.push(String(value));
+            }
+            detail = stallDiagnosticExcerpt(
+              await tmuxAdapter.capturePane?.(scopedPaneTarget(win)),
+              { secrets: exactSecrets },
+            );
           } catch { /* diagnostics are best-effort; the stall itself still lands */ }
           if (!q.setSpawnStalled.run(detail, row.spawn_id).changes) continue;
           // Loud lane, deliberately: a stalled spawn is a human's problem now
