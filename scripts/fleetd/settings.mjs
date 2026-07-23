@@ -40,7 +40,7 @@ const FAV_DIRS_MAX = 20;
 const REPO_SETUP_MAX = 50;
 const SETUP_CMD_MAX = 2000;
 const ALLOWED_KEYS = [
-  'repos_dir', 'repo_transport', 'browse_root', 'fav_dirs', 'repo_setup',
+  'repos_dir', 'repo_transport', 'repo_default_org', 'browse_root', 'fav_dirs', 'repo_setup',
   'gateway_base_url', 'gateway_auth_style', 'gateway_token',
   'gateway_model_discovery', 'gateway_default',
 ];
@@ -102,7 +102,10 @@ function validatePathSetting(value, label) {
 }
 
 export function createSettings(ctx) {
-  const { q, onMutate, resolveReposDir, setReposDir } = ctx;
+  const {
+    q, onMutate, resolveReposDir, setReposDir,
+    resolveRepoDefaultOrg, validateRepoDefaultOrg,
+  } = ctx;
 
   function readSetting(key) {
     return q.getSetting.get(key)?.value ?? null;
@@ -378,6 +381,10 @@ export function createSettings(ctx) {
       },
       commit: v => q.setSetting.run('repo_transport', v ?? null, Date.now()),
     },
+    repo_default_org: {
+      prepare: v => validateRepoDefaultOrg(v),
+      commit: v => q.setSetting.run('repo_default_org', v ?? null, Date.now()),
+    },
     browse_root: {
       prepare: v => { if (v != null) validatePathSetting(v, 'browse_root'); return v; },
       commit: v => q.setSetting.run('browse_root', v ?? null, Date.now()),
@@ -452,12 +459,23 @@ export function createSettings(ctx) {
     q.setSetting.run('repo_transport', value, Date.now());
   }
 
+  // Same accepted-spawn persistence as transport: a board/curl caller may send
+  // repo_org explicitly with a bare repo so that spawn is deterministic even if
+  // an onBlur settings save is still in flight. Once accepted, that explicit
+  // choice becomes the durable default for the next bare name.
+  function persistRepoDefaultOrg(value) {
+    if (value == null) return;
+    try { validateRepoDefaultOrg(value); } catch { return; }
+    q.setSetting.run('repo_default_org', value, Date.now());
+  }
+
   // The whole settings object — GET /api/settings, the POST response, and the
   // /state snapshot all serve THIS shape (the shared board contract).
   function resolveSettings() {
     return {
       repos_dir: resolveReposDir(),
       repo_transport: resolveRepoTransport(),
+      repo_default_org: resolveRepoDefaultOrg(),
       browse_root: browseRootChoice(),
       fav_dirs: resolveFavDirs(),
       repo_setup: resolveRepoSetup(),
@@ -472,7 +490,7 @@ export function createSettings(ctx) {
   // export is the structural reason a future edit to the settings view cannot
   // accidentally start serializing the credential.
   return {
-    setSettings, resolveSettings, browseRootChoice, persistRepoTransport,
+    setSettings, resolveSettings, browseRootChoice, persistRepoTransport, persistRepoDefaultOrg,
     resolveGateway, resolveGatewayEnv,
   };
 }

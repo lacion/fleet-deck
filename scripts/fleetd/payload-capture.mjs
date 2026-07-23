@@ -93,6 +93,14 @@ function redactValue(text) {
   return out;
 }
 
+// Reuse the same known-credential shape scrubber for other bounded diagnostics
+// (notably a stalled spawn's captured pane excerpt). It is intentionally only
+// value-shape redaction — arbitrary free text can still contain an unrecognized
+// secret, so callers must keep diagnostics small and behind the board's token.
+export function redactDiagnosticText(text) {
+  return redactValue(String(text ?? ''));
+}
+
 // WHY this is a projection instead of `JSON.stringify(payload).slice(...)`:
 // hook payloads can contain multi-megabyte file contents/tool inputs. The
 // latter approach first materializes the very secret-bearing giant string we

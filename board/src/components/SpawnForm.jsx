@@ -43,6 +43,13 @@ const isShorthandRepo = (input) => {
   return s.split('/').every((seg) => seg && seg !== '.' && seg !== '..');
 };
 
+// A bare repo name can be promoted to <default-org>/<name> by the daemon when
+// no known local checkout exists. Client mirror for the preview/form guard only.
+const isBareRepo = (input) => {
+  const s = String(input || '').trim();
+  return !!s && !/[\s/:@]/.test(s) && !/^[-.~]/.test(s);
+};
+
 // The origin a shorthand resolves to, composed with the daemon's exact rule
 // (repos.mjs parseRepoInput): the input minus any trailing `.git`, then either
 // scp-style ssh (git@<github.com|gitlab.com>:<slug>.git) or https
@@ -146,6 +153,12 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
   // until the form closes. baseBody() sends it only for shorthand; the daemon
   // remembers an EXPLICIT pick on the accepted spawn, so there is no save here.
   const [repoTransport, setRepoTransport] = useState(() => settings?.repo_transport?.value || 'ssh');
+  // Bare repo names resolve through this namespace when they are not already in
+  // the local catalog. Seeded ONCE like transport (never flips under the human).
+  // On Coder the daemon resolves `textemma` unless an env/persisted choice wins.
+  const [defaultOrg, setDefaultOrg] = useState(() => settings?.repo_default_org?.value || '');
+  const [orgNote, setOrgNote] = useState(null);
+  const savedOrg = useRef(settings?.repo_default_org?.value || '');
   // the repos root: seeded from the daemon's resolved setting, editable here,
   // PERSISTED on commit (blur/Enter) — that is what survives reboots
   const [reposDir, setReposDir] = useState(settings?.repos_dir?.resolved || '');
@@ -206,21 +219,22 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
       || r.origin_url === repo.trim()
       || r.root === repo.trim())
     : null;
-  // v2.4 — shorthand-shaped input needs an explicit host toggle (github default);
-  // a catalog hit already has its root, so no clone and no host question there.
-  const shorthand = repoMode && isShorthandRepo(repo);
+  const bareRepo = repoMode && isBareRepo(repo);
+  const bareUsingDefault = bareRepo && !knownRepo && !!defaultOrg.trim();
+  const shorthandInput = bareUsingDefault ? `${defaultOrg.trim()}/${repo.trim()}` : repo.trim();
+  // v2.4 — shorthand-shaped input needs an explicit host toggle (github default).
+  // A bare name + default org is the same effective shorthand; a catalog hit is
+  // already local, so neither the org nor the host/transport controls apply.
+  const shorthand = repoMode && (isShorthandRepo(repo) || bareUsingDefault);
   const showHostToggle = shorthand && !knownRepo;
   // 3+ segments (group/sub/repo) is a gitlab-only shape: github shorthand is
   // exactly org/repo, and the daemon 400s a subgrouped github resolve — so the
-  // EFFECTIVE host overrides the pill for that shape, and the POST body and the
-  // origin preview both read it, never raw pill state (a confident preview of an
-  // origin the daemon will never produce is worse than no preview). The pill's
-  // own state stays untouched: trim back to two segments and the user's pick is
-  // right where they left it. Still a client mirror for instant feedback — the
-  // daemon keeps the last word (it also rejects an empty final `.git` segment;
-  // the inline 400 covers that one, no mirror needed).
-  const subgrouped = shorthand && repo.trim().split('/').length > 2;
+  // EFFECTIVE host overrides the pill for that shape.
+  const subgrouped = shorthand && shorthandInput.split('/').length > 2;
   const effectiveHost = subgrouped ? 'gitlab' : repoHost;
+  const repoOrgErr = bareRepo && !knownRepo && !defaultOrg.trim()
+    ? 'bare repo names need a default org (or enter owner/repo)'
+    : null;
   const branchErr = repoMode && branch.trim() ? branchProblem(branch.trim()) : null;
   const cwdRepo = !repoMode
     ? (sessions || []).find(s => (s.worktree || s.cwd) === cwd.trim())?.repo_name
@@ -247,6 +261,19 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
       setDirNote({ ok: v ? 'saved — future clones land here' : 'cleared — back to the default' });
     } else {
       setDirNote({ err: reasonOf(res, `save failed (${res.status})`) });
+    }
+  };
+
+  const commitDefaultOrg = async (value = defaultOrg) => {
+    const v = value.trim();
+    if (v === savedOrg.current) return;
+    const res = await saveSettings({ repo_default_org: v || null });
+    if (res.ok && res.json?.ok) {
+      savedOrg.current = res.json.settings?.repo_default_org?.value ?? v;
+      setDefaultOrg(savedOrg.current || '');
+      setOrgNote({ ok: v ? 'saved — bare repo names use this org' : 'cleared' });
+    } else {
+      setOrgNote({ err: reasonOf(res, `save failed (${res.status})`) });
     }
   };
 
@@ -339,6 +366,10 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
     // there, and absent means github, so back-compat holds for every other input.
     // The EFFECTIVE host, not the pill: subgroups force gitlab (see above).
     if (shorthand) body.repo_host = effectiveHost;
+    // Explicit on THIS spawn so clicking Spawn immediately after editing the org
+    // cannot race the input's async onBlur settings save. The daemon persists an
+    // accepted repo_org as the next default, mirroring repo_transport.
+    if (bareUsingDefault) body.repo_org = defaultOrg.trim();
     // v2.5 — repo_transport rides ONLY for shorthand, exactly like repo_host: the
     // daemon reads it only there, absent resolves to the persisted setting, and
     // the accepted spawn remembers an explicit pick (D2) — so there is no
@@ -449,7 +480,7 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
 
   // repo mode swaps the required fields: repo + a well-formed branch
   const targetReady = repoMode
-    ? !!(repo.trim() && branch.trim() && !branchErr)
+    ? !!(repo.trim() && branch.trim() && !branchErr && !repoOrgErr)
     : !!cwd.trim();
 
   const submit = async () => {
@@ -560,7 +591,7 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
                 <input
                   className="fd-input"
                   list="fd-repo-suggest"
-                  placeholder="org/repo · https://… · git@… · a name the fleet knows"
+                  placeholder="repo (uses default org) · org/repo · https://… · git@…"
                   value={repo}
                   onChange={(e) => { setRepo(e.target.value); setDirNote(null); if (err) setErr(null); }}
                   onKeyDown={onCtrlEnter}
@@ -570,6 +601,35 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
                   {repoSuggestions.map((p) => <option key={p} value={p} />)}
                 </datalist>
               </div>
+              {(!repo.trim() || bareRepo) && !knownRepo && (
+                <div className="frow top">
+                  <span className="fl">default org</span>
+                  <div className="fd-setupbox">
+                    <input
+                      className="fd-input"
+                      placeholder="owner or group/subgroup"
+                      value={defaultOrg}
+                      onChange={(e) => { setDefaultOrg(e.target.value); setOrgNote(null); if (err) setErr(null); }}
+                      onBlur={() => commitDefaultOrg()}
+                      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commitDefaultOrg(); } }}
+                    />
+                    <span className="hint">
+                      {orgNote?.ok
+                        ? `✓ ${orgNote.ok}`
+                        : orgNote?.err
+                          ? `✗ ${orgNote.err}`
+                          : bareUsingDefault
+                            ? `${repo.trim()} resolves to ${defaultOrg.trim()}/${repo.trim()} (${settings?.repo_default_org?.source || 'default'})`
+                            : settings?.repo_default_org?.source === 'coder'
+                              ? 'Coder default: textemma — edit to override'
+                              : 'used only for a bare repo name; owner/repo stays explicit'}
+                    </span>
+                  </div>
+                </div>
+              )}
+              {repoOrgErr && (
+                <div className="frow"><span className="fl" /><span className="fd-spawnerr">✗ {repoOrgErr}</span></div>
+              )}
               {/* v2.4 — shorthand is host-ambiguous; make the human pick. Reuses
                   the target-toggle look (fd-fsmodes / fd-target). github default.
                   Selection renders from the EFFECTIVE host: with 3+ segments the
@@ -697,7 +757,7 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
                                 // The EFFECTIVE host: subgroups preview gitlab, never a github
                                 // origin the daemon would refuse. The transport pick steers the
                                 // spelling (ssh git@… vs https://…), same as the daemon will.
-                                ? `not on this machine yet — cloned from ${shorthandOrigin(repo, effectiveHost, repoTransport)} on spawn; the root is remembered across restarts`
+                                ? `not on this machine yet — cloned from ${shorthandOrigin(shorthandInput, effectiveHost, repoTransport)} on spawn; the root is remembered across restarts`
                                 : 'not on this machine yet — cloned here on spawn; the root is remembered across restarts'}
                         </span>
                       </>

@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import os, { tmpdir } from 'node:os';
 import path from 'node:path';
-import { createRepos, parseRepoInput, quickBranchCheck } from '../scripts/fleetd/repos.mjs';
+import { createRepos, parseRepoInput, quickBranchCheck, repoDefaultOrgChoice, repoDefaultOrgProblem } from '../scripts/fleetd/repos.mjs';
 import { detectCoderWorkspaceRoot } from '../scripts/fleetd/config.mjs';
 import { startDaemon, randomPort } from './helpers/daemon.mjs';
 import { getJson, postHook, postJson } from './helpers/http.mjs';
@@ -193,11 +193,11 @@ test('resolveReposDir default is ~/projects off Coder (detection needs both sign
 
 // resolveTarget needs only these slivers of ctx: an empty catalog and no
 // repos_dir override (so FLEETDECK_REPOS_DIR decides the repos root).
-function fakeReposCtx() {
+function fakeReposCtx(settings = {}, catalog = []) {
   return {
     q: {
-      repoByName: { all: () => [] },
-      getSetting: { get: () => undefined },
+      repoByName: { all: name => catalog.filter(r => r.repo_name === name) },
+      getSetting: { get: key => (key in settings ? { value: settings[key] } : undefined) },
     },
     onMutate: () => {},
   };
@@ -221,6 +221,46 @@ function withReposDir(t) {
   });
   return reposDir;
 }
+
+test('default org choice precedence and Coder seed are explicit', () => {
+  assert.deepEqual(repoDefaultOrgChoice({ coder: true }), { value: 'textemma', source: 'coder' });
+  assert.deepEqual(repoDefaultOrgChoice({ env: 'envorg', coder: true }), { value: 'envorg', source: 'env' });
+  assert.deepEqual(repoDefaultOrgChoice({ setting: 'saved', env: 'envorg', coder: true }), { value: 'saved', source: 'override' });
+  assert.deepEqual(repoDefaultOrgChoice(), { value: null, source: 'default' });
+  assert.equal(repoDefaultOrgProblem('owner'), null);
+  assert.equal(repoDefaultOrgProblem('group/subgroup'), null);
+  for (const bad of ['', '-owner', 'a//b', 'a/../b', 'has space', 'x'.repeat(201)]) {
+    assert.equal(typeof repoDefaultOrgProblem(bad), 'string', bad);
+  }
+});
+
+test('resolveTarget promotes an unknown bare name through the default org, but a known checkout still wins', async t => {
+  const reposDir = withReposDir(t);
+  const { resolveTarget } = createRepos(fakeReposCtx({ repo_default_org: 'textemma', repo_transport: 'https' }));
+  const clone = await resolveTarget({ repo: 'earm-module' });
+  assert.equal(clone.mode, 'clone');
+  assert.equal(clone.origin_url, 'https://github.com/textemma/earm-module.git');
+  assert.equal(clone.dest, path.join(reposDir, 'earm-module'));
+  const requestOverride = await resolveTarget({ repo: 'other-module', repo_org: 'oneoff' });
+  assert.equal(requestOverride.origin_url, 'https://github.com/oneoff/other-module.git',
+    'explicit repo_org makes the current spawn deterministic even before settings persistence');
+
+  const localRoot = path.join(reposDir, 'known');
+  mkdirSync(localRoot);
+  execFileSync('git', ['init', '-q', localRoot]);
+  const catalog = [{ repo_name: 'known', root: localRoot, origin_url: null }];
+  const localResolver = createRepos(fakeReposCtx({ repo_default_org: 'textemma' }, catalog));
+  const local = await localResolver.resolveTarget({ repo: 'known' });
+  assert.equal(local.mode, 'local');
+  assert.equal(local.root, localRoot, 'local catalog wins before default-org expansion');
+});
+
+test('default org composes with gitlab subgroups and explicit transport', async t => {
+  withReposDir(t);
+  const { resolveTarget } = createRepos(fakeReposCtx({ repo_default_org: 'group/sub', repo_transport: 'ssh' }));
+  const out = await resolveTarget({ repo: 'module', repo_host: 'gitlab' });
+  assert.equal(out.origin_url, 'git@gitlab.com:group/sub/module.git');
+});
 
 test('resolveTarget reuses a checkout whose scp-style origin matches the gitlab shorthand', async t => {
   const reposDir = withReposDir(t);
@@ -334,7 +374,7 @@ test('POST /api/settings rejects an existing file', async t => {
   assert.match(response.json.reason, /file/i);
 });
 
-test('POST /api/settings round-trips repo_transport, browse_root and fav_dirs across restart', async t => {
+test('POST /api/settings round-trips repo transport/default-org, browse_root and fav_dirs across restart', async t => {
   const home = mkdtempSync(path.join(tmpdir(), 'fleetdeck-settings2-home-'));
   const browseDir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-browse-'));
   const favA = mkdtempSync(path.join(tmpdir(), 'fleetdeck-fav-a-'));
@@ -346,10 +386,11 @@ test('POST /api/settings round-trips repo_transport, browse_root and fav_dirs ac
   const first = await startDaemon({ port, home });
   try {
     const set = await postJson(`${first.baseUrl}/api/settings`, {
-      repo_transport: 'https', browse_root: browseDir, fav_dirs: [favA, favB, favA],
+      repo_transport: 'https', repo_default_org: 'textemma', browse_root: browseDir, fav_dirs: [favA, favB, favA],
     });
     assert.equal(set.status, 200, set.text);
     assert.equal(set.json.settings.repo_transport.value, 'https');
+    assert.deepEqual(set.json.settings.repo_default_org, { value: 'textemma', source: 'override' });
     assert.equal(set.json.settings.repo_transport.source, 'override');
     assert.equal(set.json.settings.browse_root.value, browseDir);
     assert.equal(set.json.settings.browse_root.source, 'override');
@@ -363,12 +404,14 @@ test('POST /api/settings round-trips repo_transport, browse_root and fav_dirs ac
   try {
     const got = await getJson(`${second.baseUrl}/api/settings`);
     assert.equal(got.json.settings.repo_transport.value, 'https');
+    assert.deepEqual(got.json.settings.repo_default_org, { value: 'textemma', source: 'override' });
     assert.equal(got.json.settings.browse_root.value, browseDir);
     assert.deepEqual(got.json.settings.fav_dirs, [favA, favB]);
     // /state carries the SAME settings object (shared board contract), plus the
     // legacy repos_dir key and home_dir label for stale boards.
     const state = (await getJson(`${second.baseUrl}/state`)).json;
     assert.equal(state.settings.repo_transport.value, 'https');
+    assert.equal(state.settings.repo_default_org.value, 'textemma');
     assert.equal(state.settings.browse_root.resolved, browseDir);
     assert.deepEqual(state.settings.fav_dirs, [favA, favB]);
     assert.ok(state.settings.repos_dir?.resolved);
@@ -377,9 +420,10 @@ test('POST /api/settings round-trips repo_transport, browse_root and fav_dirs ac
     // browse_root it must be THAT root, never os.homedir().
     assert.equal(state.home_dir, browseDir);
     // null clears the transport back to the ssh default; [] clears favourites.
-    const cleared = await postJson(`${second.baseUrl}/api/settings`, { repo_transport: null, fav_dirs: [] });
+    const cleared = await postJson(`${second.baseUrl}/api/settings`, { repo_transport: null, repo_default_org: null, fav_dirs: [] });
     assert.equal(cleared.status, 200);
     assert.equal(cleared.json.settings.repo_transport.source, 'default');
+    assert.notEqual(cleared.json.settings.repo_default_org.source, 'override');
     assert.equal(cleared.json.settings.repo_transport.value, 'ssh');
     assert.deepEqual(cleared.json.settings.fav_dirs, []);
   } finally {
@@ -401,6 +445,12 @@ test('POST /api/settings validates values, caps fav_dirs, and refuses unknown ke
   const badTransport = await postJson(`${daemon.baseUrl}/api/settings`, { repo_transport: 'sftp' });
   assert.equal(badTransport.status, 400);
   assert.match(badTransport.json.reason, /repo_transport must be ssh or https/i);
+
+  for (const value of ['has space', '-owner', 'a//b', 'a/../b']) {
+    const badOrg = await postJson(`${daemon.baseUrl}/api/settings`, { repo_default_org: value });
+    assert.equal(badOrg.status, 400, value);
+    assert.match(badOrg.json.reason, /default org/i);
+  }
 
   const browseFile = await postJson(`${daemon.baseUrl}/api/settings`, { browse_root: file });
   assert.equal(browseFile.status, 400);

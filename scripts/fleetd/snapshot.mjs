@@ -116,6 +116,7 @@ export function createSnapshot(ctx) {
             kind: sp.kind ?? 'claude',
             setup_cmd: sp.setup_cmd ?? null,
             stalled: sp.status === 'stalled', // watchdog chip ("never registered")
+            stall_detail: sp.status === 'stalled' ? (sp.stall_detail ?? null) : null,
             skip_permissions: !!sp.skip_permissions, // v1.3 unsupervised chip
             remote: { enabled: !!sp.remote_control, url: sp.remote_url ?? null },
             // Which provider is serving this pane. A boolean, never the profile:

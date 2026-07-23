@@ -21,6 +21,7 @@ function setEnv(t, values) {
 function fakeTmux(port = 4711) {
   const state = {
     windows: [], argv: null, calls: [], pasteOk: true, enterOk: true, killed: [],
+    captureText: '',
   };
   const adapter = {
     spawnOverrideCmd: () => null,
@@ -42,6 +43,10 @@ function fakeTmux(port = 4711) {
     paneCurrentCommand: async target => {
       const win = state.windows.find(w => w.window_id === target || w.window === target);
       return win ? { dead: win.pane_dead, cmd: win.pane_cmd } : null;
+    },
+    capturePane: async target => {
+      state.calls.push(['capturePane', target]);
+      return state.captureText;
     },
     pasteText: async (target, text) => {
       state.calls.push(['pasteText', target, text]);
@@ -115,6 +120,7 @@ test('spawn argv is deterministic and registration watchdog stalls once, then a 
     '--model', 'sonnet', '--permission-mode', 'acceptEdits', '--', 'do it',
   ]);
 
+  state.captureText = '\n\nFolder trust required\nOpen /workspace/repo?\nsk-ant-1234567890SECRET\n\n';
   await new Promise(resolve => setTimeout(resolve, 5));
   await core.spawnLivenessTick();
   let card = core.snapshot().sessions.find(s => s.session_id === out.body.session_id);
@@ -123,7 +129,11 @@ test('spawn argv is deterministic and registration watchdog stalls once, then a 
   assert.equal(card.col, 'needsyou', 'a stalled spawn must land in the loud lane');
   assert.equal(card.notification_type, 'spawn_stalled');
   assert.match(card.note, /pane up but never registered.*window/);
-  assert.ok(core.snapshot().ticker.some(x => /never phoned home/.test(x.msg)));
+  assert.match(card.spawn.stall_detail, /Folder trust required/);
+  assert.match(card.spawn.stall_detail, /\[redacted\]/, 'known credential shapes are scrubbed from the broadcast diagnostic');
+  assert.doesNotMatch(card.spawn.stall_detail, /sk-ant-/);
+  assert.ok(state.calls.some(([kind]) => kind === 'capturePane'), 'watchdog captures the pane once when it stalls');
+  assert.ok(core.snapshot().ticker.some(x => /never phoned home.*diagnostics captured/.test(x.msg)));
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM events WHERE hook_event = 'SpawnStalled'").get().n, 1);
 
   await core.spawnLivenessTick();

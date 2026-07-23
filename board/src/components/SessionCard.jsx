@@ -36,12 +36,16 @@ function SessionCard({
   const files = (s.files || []).map(basename);
   const hot = new Set(conflictFiles.map(basename));
   const shown = files.slice(0, 4);
-  // spawn watchdog (fix B): pane came up but the session never phoned home.
-  // spawn.status stays 'spawning'; the daemon also flips the card to needsyou
-  // with a descriptive note, so the chip is the compact echo of that state.
+  // Spawn watchdog: pane came up but the session never phoned home. The daemon
+  // captures the pane tail when it declares the stall; put the excerpt in the
+  // chip tooltip (and the full readable block in Drawer) so "never registered"
+  // says WHAT was on screen — trust dialog, crash, auth error — not just where.
   const stalled = !!s.spawn?.stalled;
-  const stalledTip = 'pane is up but never reached this daemon — likely env/port issue'
-    + (s.spawn?.tmux_window ? `; check tmux window ${s.spawn.tmux_window}` : '');
+  const stalledTip = [
+    'pane is up but never reached this daemon',
+    s.spawn?.tmux_window ? `window ${s.spawn.tmux_window}` : null,
+    s.spawn?.stall_detail ? `captured screen:\n${s.spawn.stall_detail}` : 'no pane excerpt was captured — open the live terminal',
+  ].filter(Boolean).join('\n\n');
   // mail route truth (fix C): snapshot mail_meta[sid] = {queued, oldest_at,
   // route}. Older daemons omit it — the badge falls back to a bare count.
   const mailHint = MAIL_HINT[mailMeta?.route];

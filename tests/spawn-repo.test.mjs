@@ -268,6 +268,19 @@ test('repo_host without repo is refused', async t => {
   assert.match(response.json.reason, /repo_host requires repo/i);
 });
 
+test('repo_org validates and requires a repo', async t => {
+  const daemon = await startDaemon();
+  t.after(() => daemon.stop());
+  const missing = await postJson(`${daemon.baseUrl}/api/spawn`, { repo_org: 'textemma', branch: 'main' });
+  assert.equal(missing.status, 400);
+  assert.match(missing.json.reason, /repo_org requires repo/i);
+  const bad = await postJson(`${daemon.baseUrl}/api/spawn`, {
+    repo: 'module', repo_org: 'bad org', branch: 'main', branch_mode: 'worktree',
+  });
+  assert.equal(bad.status, 400);
+  assert.match(bad.json.reason, /default org/i);
+});
+
 test('repo_host gitlab shorthand resolves a gitlab.com clone origin (ssh by default)', async t => {
   // A gitlab shorthand with nested subgroups is a clone request; the 202 echoes
   // the composed origin synchronously, so we assert the resolved gitlab.com URL
