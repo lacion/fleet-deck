@@ -24,7 +24,7 @@ const MAIL_HINT = {
 function SessionCard({
   s, compact, mailCount, mailMeta, conflictFiles, conflictPeers, ripple, priority, onOpen, onOpenTerm,
   onRevive, reviving, onEnableRemote, enablingRemote, onKill, onToggleWatch, watched,
-  onArmMove, onDisarm, adopting, onRename, onDismiss, legacy,
+  onArmMove, onDisarm, adopting, onRename, onDismiss, dismissing, legacy,
 }) {
   const offline = s.col === 'offline';
   const needsyou = s.col === 'needsyou';
@@ -87,6 +87,7 @@ function SessionCard({
   const dismissTimer = React.useRef(null);
   React.useEffect(() => () => { if (dismissTimer.current) clearTimeout(dismissTimer.current); }, []);
   const handleDismiss = () => {
+    if (dismissing) return; // in-flight: the POST guard also holds, this just avoids re-arming
     if (revivable && !dismissArmed) {
       setDismissArmed(true);
       dismissTimer.current = setTimeout(() => { dismissTimer.current = null; setDismissArmed(false); }, 4000);
@@ -330,13 +331,14 @@ function SessionCard({
             // dismisses on one click. The worktree on disk is left alone.
             <button
               type="button"
-              className={`fd-actbtn dismiss${dismissArmed ? ' hazard' : ''}`}
+              className={`fd-actbtn dismiss${dismissArmed ? ' hazard' : ''}${dismissing ? ' busy' : ''}`}
+              disabled={dismissing}
               title={revivable
                 ? 'dismiss this dead card — it is still revivable, so click again to confirm (you lose ⟲ revive)'
                 : 'dismiss this dead card — remove it from the board now (the worktree is left alone)'}
               onClick={handleDismiss}
             >
-              {dismissArmed ? '✕ sure? loses ⟲' : '✕ dismiss'}
+              {dismissing ? '✕ dismissing…' : dismissArmed ? '✕ sure? loses ⟲' : '✕ dismiss'}
             </button>
           )}
         </span>

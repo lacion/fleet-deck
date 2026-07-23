@@ -1553,7 +1553,22 @@ export function createSpawns(ctx) {
     }
   }
 
-  async function spawnLivenessTick() {
+  // Single-flight (adversarial-review R4): the fire-and-forget reconcile fired
+  // from the viewer path (http.mjs, gone pane) and per-card dismiss bypasses the
+  // agents-poll scheduler's own in-flight guard, so two ticks could overlap —
+  // double-advancing a spawn's condemnStreak past CONDEMN_DEAD_READS in one wall
+  // moment, or a stale in-flight tick resurrecting a row spawnKill had just
+  // marked 'killed' back to 'live'. Latch the tick to ONE run at a time: a
+  // concurrent caller gets the in-flight promise back and never makes a second
+  // pass over the rows. Both entry points are covered without touching the
+  // scheduler.
+  let livenessInFlight = null;
+  function spawnLivenessTick() {
+    if (livenessInFlight) return livenessInFlight;
+    livenessInFlight = runSpawnLivenessTick().finally(() => { livenessInFlight = null; });
+    return livenessInFlight;
+  }
+  async function runSpawnLivenessTick() {
     const rows = q.activeSpawns.all();
     // BUG 3: resurrection candidates count too — if EVERY spawn is already
     // 'pane-dead'/'gone' (rows empty) we must still probe tmux, or a fleet

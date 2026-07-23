@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { cleanup, killSpawn, reasonOf, renameSession, armUnsupervised, dismissSession } from '../api.js';
 import { safeUrl, validSuffix } from '../util.js';
 
@@ -31,6 +31,12 @@ export function useFleetActions({ showNote, revive, reviveAll, enableRemoteActio
   // drops the "your tmux window keeps its name" line when there is no window.
   const [renameAsk, setRenameAsk] = useState(null);
   const [renameBusy, setRenameBusy] = useState(false);
+  // Item 3 dismiss — a per-session in-flight guard (ref = synchronous source of
+  // truth at click time; the state Set mirrors it so the chip can show/disable
+  // "dismissing…"). Keyed on session_id: the card being dismissed is offline and
+  // may have no live spawn row, so the lock is the session, like adopt's.
+  const dismissRef = useRef(new Set());
+  const [dismissing, setDismissing] = useState(() => new Set());
 
   // Fix D — the daemon archives offline sessions, expires their mail/questions,
   // kills dead scoped panes, and LISTS (never deletes) orphaned worktrees for
@@ -215,12 +221,27 @@ export function useFleetActions({ showNote, revive, reviveAll, enableRemoteActio
   // refusal (409 not-offline / already dismissed / stalled, 404 unknown) reaches
   // it verbatim.
   const doDismiss = useCallback(async (s) => {
-    const label = s.callsign || s.session_id;
-    const res = await dismissSession(s.session_id);
-    if (res.ok && res.json?.ok !== false) {
-      showNote({ hd: '✓ DISMISSED', msg: `${label} — card cleared from the board · the worktree is left on disk` }, 8000);
-    } else {
-      showNote({ hd: '✗ DISMISS', err: `${label} — ${reasonOf(res, `dismiss failed (${res.status})`)}` }, 8000);
+    const id = s.session_id;
+    // Single-flight: the card disables its chip on `dismissing`, but the ref is
+    // the real guard — a double click can never fire a second POST.
+    if (!id || dismissRef.current.has(id)) return;
+    dismissRef.current.add(id);
+    setDismissing(new Set(dismissRef.current));
+    const label = s.callsign || id;
+    try {
+      const res = await dismissSession(id);
+      // A 409 "already dismissed" is a benign race (the card left the board a
+      // beat ago, or two clicks slipped through) — report it as success, not an
+      // alarming error the human has to reason about.
+      const alreadyGone = res.status === 409 && /already dismissed/.test(res.json?.reason || '');
+      if ((res.ok && res.json?.ok !== false) || alreadyGone) {
+        showNote({ hd: '✓ DISMISSED', msg: `${label} — card cleared from the board · the worktree is left on disk` }, 8000);
+      } else {
+        showNote({ hd: '✗ DISMISS', err: `${label} — ${reasonOf(res, `dismiss failed (${res.status})`)}` }, 8000);
+      }
+    } finally {
+      dismissRef.current.delete(id);
+      setDismissing(new Set(dismissRef.current));
     }
   }, [showNote]);
 
@@ -293,6 +314,6 @@ export function useFleetActions({ showNote, revive, reviveAll, enableRemoteActio
     killAsk, setKillAsk, killBusy, askKill, doKill,
     armAsk, setArmAsk, armBusy, askArm, doArm, doDisarm,
     renameAsk, setRenameAsk, renameBusy, askRename, doRename, doResetName,
-    doRevive, doReviveAll, doEnableRemote, doDismiss,
+    doRevive, doReviveAll, doEnableRemote, doDismiss, dismissing,
   };
 }

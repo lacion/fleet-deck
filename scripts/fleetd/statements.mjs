@@ -192,9 +192,9 @@ export function createStatements(db) {
     spawnBySession: db.prepare('SELECT * FROM spawns WHERE session_id = ? ORDER BY requested_at DESC, rowid DESC LIMIT 1'),
     // Per-card dismiss (Item 3): every spawn row of one lineage (a revive reuses
     // the window name across rows), so dismiss can find its dead remain-on-exit
-    // windows to kill; and the stalled-guard the dismiss precondition consults.
+    // windows to kill. Its precondition consults the existing activeSpawnBySession
+    // (spawning|stalled|live) to refuse a still-live-eligible card.
     spawnsForSession: db.prepare('SELECT * FROM spawns WHERE session_id = ?'),
-    stalledSpawnForSession: db.prepare("SELECT 1 FROM spawns WHERE session_id = ? AND status = 'stalled' LIMIT 1"),
     allSpawns: db.prepare('SELECT * FROM spawns ORDER BY requested_at, rowid'),
     activeSpawns: db.prepare("SELECT * FROM spawns WHERE status IN ('spawning', 'stalled', 'live')"),
     // BUG 3: 'pane-dead' and 'gone' were a ONE-WAY DOOR — activeSpawns never

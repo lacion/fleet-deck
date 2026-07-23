@@ -80,16 +80,16 @@ function seedOffline(db, sid, { callsign = `${sid}-1`, now = Date.now(), mail = 
 const touchCount = (db, sid) => db.prepare('SELECT COUNT(*) AS n FROM file_touches WHERE session_id = ?').get(sid).n;
 const spawnStatus = (db, id) => db.prepare('SELECT status FROM spawns WHERE spawn_id = ?').get(id)?.status;
 
-test('dismiss archives one offline card, expires its mail + questions, gones its spawn row, drops its ledger', async (t) => {
+test('dismiss archives one offline card and expires its mail, questions, and file ledger', async (t) => {
   const { db, core } = memoryCore(t);
   const now = Date.now();
   const sid = 'off-full';
   seedOffline(db, sid, { now, mail: true, question: true, touch: true });
-  // A non-terminal spawn row whose window is simply absent from tmux (no kill
-  // to do) — dismiss must still flip it 'gone' so it stops counting as active.
+  // A terminal spawn row (pane already condemned) — the realistic shape of an
+  // offline card. Its window is absent from tmux, so there is nothing to kill.
   db.prepare(`INSERT INTO spawns
     (spawn_id, session_id, callsign, tmux_session, tmux_window, requested_at, status)
-    VALUES ('sp-full', ?, 'off-full-1', 'fleetdeck-4711', 'fd4711-off-full-1', ?, 'live')`).run(sid, now);
+    VALUES ('sp-full', ?, 'off-full-1', 'fleetdeck-4711', 'fd4711-off-full-1', ?, 'pane-dead')`).run(sid, now);
   assert.equal(touchCount(db, sid), 1, 'sanity: the card starts with a file-ledger touch');
 
   const out = await core.dismissSession(sid);
@@ -100,8 +100,25 @@ test('dismiss archives one offline card, expires its mail + questions, gones its
   assert.ok(db.prepare('SELECT archived_at FROM sessions WHERE session_id = ?').get(sid).archived_at, 'archived');
   assert.ok(db.prepare('SELECT expired_at FROM mail WHERE to_session = ?').get(sid).expired_at, 'mail expired');
   assert.equal(db.prepare('SELECT status FROM questions WHERE session_id = ?').get(sid).status, 'expired', 'question expired');
-  assert.equal(spawnStatus(db, 'sp-full'), 'gone', 'the non-terminal spawn row is goned');
+  assert.equal(spawnStatus(db, 'sp-full'), 'pane-dead', 'a terminal spawn row is left terminal');
   assert.equal(touchCount(db, sid), 0, 'the file ledger is dropped so the radar cannot argue with a corpse');
+});
+
+test('dismiss gones a residual non-terminal (provisioning) spawn row', async (t) => {
+  const { db, core } = memoryCore(t);
+  const now = Date.now();
+  const sid = 'off-prov';
+  seedOffline(db, sid, { now });
+  // A 'provisioning' row is the ONLY non-terminal status that survives the
+  // active-spawn guard (it is pre-pane, not live-eligible) — dismiss must flip
+  // it 'gone' so a stranded provisional row stops shadowing the dismissed card.
+  db.prepare(`INSERT INTO spawns
+    (spawn_id, session_id, callsign, tmux_session, tmux_window, requested_at, status)
+    VALUES ('sp-prov', ?, 'off-prov-1', 'fleetdeck-4711', 'fd4711-off-prov-1', ?, 'provisioning')`).run(sid, now);
+
+  const out = await core.dismissSession(sid);
+  assert.equal(out.status, 200, JSON.stringify(out.body));
+  assert.equal(spawnStatus(db, 'sp-prov'), 'gone', 'the residual provisioning row is goned');
 });
 
 test('dismiss kills a dead remain-on-exit window this card owns', async (t) => {
@@ -127,23 +144,117 @@ test('dismiss kills a dead remain-on-exit window this card owns', async (t) => {
   assert.equal(spawnStatus(db, 'sp-dead'), 'pane-dead');
 });
 
-test('dismiss leaves a LIVE window alone (only dead panes are killed)', async (t) => {
+test('an already-gone spawn row with a dead pane is killed and stays dismissed', async (t) => {
   const tmux = fakeTmux();
   const { db, core, state } = memoryCore(t, { tmux });
   const now = Date.now();
-  const sid = 'off-livepane';
+  const sid = 'off-gone';
   seedOffline(db, sid, { now });
+  // A 'gone' row: currentWindowOwner excludes it, so the ownership re-check sees
+  // null (a corpse no revive has reclaimed) and the dead window is still killed.
   db.prepare(`INSERT INTO spawns
     (spawn_id, session_id, callsign, tmux_session, tmux_window, requested_at, status)
-    VALUES ('sp-live', ?, 'off-livepane-1', 'fleetdeck-4711', 'fd4711-off-livepane-1', ?, 'live')`).run(sid, now);
+    VALUES ('sp-gone', ?, 'off-gone-1', 'fleetdeck-4711', 'fd4711-off-gone-1', ?, 'gone')`).run(sid, now);
   state.windows.push({
-    session: 'fleetdeck-4711', window: 'fd4711-off-livepane-1', window_id: '@3', pane_dead: false, pane_cmd: 'claude',
+    session: 'fleetdeck-4711', window: 'fd4711-off-gone-1', window_id: '@4', pane_dead: true, pane_cmd: 'claude',
   });
 
   const out = await core.dismissSession(sid);
-  assert.equal(out.status, 200);
-  assert.equal(out.body.windows_killed, 0, 'a window whose pane is still a live claude is never killed here');
-  assert.deepEqual(state.killed, []);
+  assert.equal(out.status, 200, JSON.stringify(out.body));
+  assert.equal(out.body.windows_killed, 1, 'the dead corpse window is killed');
+  assert.deepEqual(state.killed, ['fd4711-off-gone-1']);
+  assert.ok(db.prepare('SELECT archived_at FROM sessions WHERE session_id = ?').get(sid).archived_at,
+    'the card stays dismissed');
+});
+
+test('dismiss refuses a card that still owns an active (live) spawn row (409) — kill it first', async (t) => {
+  // R3-review: dismissing a still-'live' row would flip it 'gone', and the next
+  // liveness tick would resurrect the card (resurrectSpawn clears archived_at) —
+  // a zombie the human can't re-dismiss. Refuse it up front; nothing is touched.
+  const tmux = fakeTmux();
+  const { db, core, state } = memoryCore(t, { tmux });
+  const now = Date.now();
+  const sid = 'off-liverow';
+  seedOffline(db, sid, { now });
+  db.prepare(`INSERT INTO spawns
+    (spawn_id, session_id, callsign, tmux_session, tmux_window, requested_at, status)
+    VALUES ('sp-liverow', ?, 'off-liverow-1', 'fleetdeck-4711', 'fd4711-off-liverow-1', ?, 'live')`).run(sid, now);
+  state.windows.push({
+    session: 'fleetdeck-4711', window: 'fd4711-off-liverow-1', window_id: '@3', pane_dead: false, pane_cmd: 'claude',
+  });
+
+  const out = await core.dismissSession(sid);
+  assert.equal(out.status, 409);
+  assert.match(out.body.reason, /live spawn — kill it/);
+  assert.equal(db.prepare('SELECT archived_at FROM sessions WHERE session_id = ?').get(sid).archived_at, null,
+    'a refused dismiss archives nothing');
+  assert.equal(spawnStatus(db, 'sp-liverow'), 'live', 'and the live spawn row is not goned');
+  assert.deepEqual(state.killed, [], 'and no window is killed');
+});
+
+test('dismiss bails out of killing when a hook resurrects the card mid-await', async (t) => {
+  // R1-review: all DB mutations are synchronous (one JS turn), but the window
+  // kill awaits. If a hook (UserPromptSubmit → applyEvent) clears archived_at
+  // during that await, the window is a live session's again — dismiss must
+  // re-read the session after the await and NOT kill it.
+  const tmux = fakeTmux();
+  const { db, core, state } = memoryCore(t, { tmux });
+  const now = Date.now();
+  const sid = 'off-resurrect';
+  seedOffline(db, sid, { now });
+  db.prepare(`INSERT INTO spawns
+    (spawn_id, session_id, callsign, tmux_session, tmux_window, requested_at, status)
+    VALUES ('sp-res', ?, 'off-resurrect-1', 'fleetdeck-4711', 'fd4711-off-resurrect-1', ?, 'pane-dead')`).run(sid, now);
+  state.windows.push({
+    session: 'fleetdeck-4711', window: 'fd4711-off-resurrect-1', window_id: '@5', pane_dead: true, pane_cmd: 'claude',
+  });
+  // Simulate a resurrection landing DURING the one await in the kill phase:
+  // listScopedWindows clears archived_at just before returning the window list.
+  tmux.adapter.listScopedWindows = async () => {
+    db.prepare('UPDATE sessions SET archived_at = NULL WHERE session_id = ?').run(sid);
+    return state.windows;
+  };
+
+  const out = await core.dismissSession(sid);
+  assert.equal(out.status, 200, JSON.stringify(out.body));
+  assert.equal(out.body.resurrected, true, 'the mid-dismiss resurrection is surfaced');
+  assert.equal(out.body.windows_killed, 0, 'a resurrected card’s window is not killed');
+  assert.deepEqual(state.killed, [], 'nothing was killed');
+});
+
+test('spawnLivenessTick is single-flight: two concurrent calls run the probe once', async (t) => {
+  // R4-review: the viewer path and dismiss fire spawnLivenessTick fire-and-forget,
+  // bypassing the scheduler's single-flight. The tick must latch itself so two
+  // overlapping calls make ONE pass over the rows (no double-condemn / no stale
+  // resume of a just-killed row).
+  const tmux = fakeTmux();
+  const { db, core } = memoryCore(t, { tmux });
+  const now = Date.now();
+  // An active spawn row makes the tick do work (probe tmux) rather than early-return.
+  db.prepare(`INSERT INTO spawns
+    (spawn_id, session_id, callsign, tmux_session, tmux_window, requested_at, status)
+    VALUES ('sp-sf', 'sf-1', 'sf-1', 'fleetdeck-4711', 'fd4711-sf-1', ?, 'live')`).run(now);
+  db.prepare(`INSERT INTO sessions
+    (session_id, callsign, col, note, events, started_at, last_seen, source)
+    VALUES ('sf-1', 'sf-1', 'working', 'busy', 0, ?, ?, 'hooks')`).run(now, now);
+
+  // Gate the probe so the first run is guaranteed still in-flight when the second
+  // call arrives; count invocations to prove only one run reached the probe.
+  let calls = 0;
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  tmux.adapter.listScopedWindows = async () => { calls += 1; await gate; return []; };
+
+  const a = core.spawnLivenessTick();
+  const b = core.spawnLivenessTick();
+  assert.equal(a, b, 'a concurrent caller gets the SAME in-flight promise');
+  release();
+  await Promise.all([a, b]);
+  assert.equal(calls, 1, 'the probe ran exactly once for two overlapping ticks');
+
+  // After it settles, the latch clears and a fresh call runs again.
+  await core.spawnLivenessTick();
+  assert.equal(calls, 2, 'a later, non-overlapping tick runs a fresh pass');
 });
 
 test('dismiss refuses a card that is not offline (409)', async (t) => {

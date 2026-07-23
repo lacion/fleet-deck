@@ -19,7 +19,7 @@ function BoardLanes({
   sessions, repos, conflicts, mailPending, mailMeta, compact, stale, legacyUpgrade,
   repoFilter, onRepoFilter, ripples, priorities, onOpenSession, onOpenTerm,
   reviving, revivingAll, onRevive, onReviveAll, enablingRemote, onEnableRemote, onKill,
-  onToggleWatch, watch, onArmMove, onDisarm, adopting, onRename, onDismiss,
+  onToggleWatch, watch, onArmMove, onDisarm, adopting, onRename, onDismiss, dismissing,
 }) {
   // SessionCard calls onOpen(s); the drawer keys off session_id. One stable
   // wrapper for the whole board rather than a fresh closure per card.
@@ -185,6 +185,7 @@ function BoardLanes({
                         adopting={!!adopting?.has(s.session_id)}
                         onRename={onRename}
                         onDismiss={onDismiss}
+                        dismissing={!!dismissing?.has(s.session_id)}
                         legacy={legacySet.has(s.session_id)}
                       />
                     ))}

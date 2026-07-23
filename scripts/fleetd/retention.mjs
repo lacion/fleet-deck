@@ -259,49 +259,86 @@ export function createRetention(ctx) {
     // human's to keep) and not already dismissed.
     if (s.col !== 'offline') return { status: 409, body: { ok: false, reason: `session is ${s.col}, not offline` } };
     if (s.archived_at != null) return { status: 409, body: { ok: false, reason: 'already dismissed' } };
-    // A 'stalled' spawn is a fail-loud human problem that even bulk cleanup
-    // refuses to sweep (archiveCandidates excludes it) — so dismiss refuses too,
-    // rather than paper over a "pane up but never phoned home".
-    if (q.stalledSpawnForSession.get(sid)) {
-      return { status: 409, body: { ok: false, reason: 'session has a stalled spawn — resolve it first' } };
+    // Refuse while the session still owns a live-eligible spawn row (R4-review):
+    //   • 'stalled'          — a fail-loud human problem bulk cleanup also refuses
+    //                          to sweep (archiveCandidates excludes it).
+    //   • 'spawning'/'live'   — an ACTIVE row. Dismissing it would flip it 'gone',
+    //                          and the very next liveness tick's resurrectSpawn
+    //                          would clear archived_at and re-float the card as a
+    //                          zombie the human can't re-dismiss until it dies.
+    //                          Kill it first (☠), then dismiss the corpse.
+    // (A genuinely-live claude sitting behind an ALREADY-'gone' row still gets
+    // resurrected by design — the board must never hide a live billed agent —
+    // exactly the same semantics as bulk Clear; dismiss simply refuses to CREATE
+    // that situation from a still-active row.)
+    const active = q.activeSpawnBySession.get(sid);
+    if (active) {
+      const reason = active.status === 'stalled'
+        ? 'session has a stalled spawn — resolve it first'
+        : `session still owns a ${active.status} spawn — kill it before dismissing`;
+      return { status: 409, body: { ok: false, reason } };
     }
 
-    // setArchived carries AND archived_at IS NULL, so .changes===0 means a
-    // concurrent dismiss claimed it a beat ago — report it already dismissed.
+    // --- atomic DB block (R1-review): NO awaits, so it completes in one JS turn
+    // and no hook event (applyEvent resurrection, /clear succession) can
+    // interleave and leave the card half-dismissed. setArchived carries
+    // `AND archived_at IS NULL`, so .changes===0 means a concurrent dismiss
+    // claimed it a beat ago — report it already dismissed and touch nothing else.
     if (!q.setArchived.run(now, sid).changes) {
       return { status: 409, body: { ok: false, reason: 'already dismissed' } };
     }
     const mail_expired = Number(q.expireMailForSession.run(now, sid).changes);
     const questions_expired = Number(questions.expireAllForSession(sid, { includeFreeform: true }));
-    // Its non-terminal spawn rows go 'gone' so countActiveSpawns stops counting
-    // a dismissed card (a 'stalled' row can't be here — refused above).
+    // Any residual non-terminal spawn row (only a rare pre-pane 'provisioning'
+    // survives the active-guard above) goes 'gone' so it stops counting active.
     q.goneSessionSpawns.run(sid);
+    // Drop just this card's file ledger so the conflict radar can't keep arguing
+    // on behalf of a corpse. In the sync block WITH the rest of the DB story, so
+    // a mid-await resurrection can never observe a torn state. The worktree on
+    // disk is deliberately LEFT in place (still listed in the Worktrees modal).
+    q.deleteTouchesForSession.run(sid);
 
-    // Kill only a DEAD remain-on-exit window this card owns — the exact rule
-    // cleanup uses (pane_dead + a terminal spawn status). A window whose pane is
-    // still a live claude is never touched here; the liveness tick owns that.
+    // --- window-kill phase: the only awaits. A hook can resurrect the card
+    // DURING an await (UserPromptSubmit → applyEvent clears archived_at); the
+    // window is then a live session's again and NOT ours to kill, so re-read the
+    // session after every await and bail the instant it is un-archived.
+    const alive = () => q.getSession.get(sid)?.archived_at == null;
     const myWindows = new Set(q.spawnsForSession.all(sid).map(r => r.tmux_window).filter(Boolean));
     let windows_killed = 0;
+    let resurrected = false;
     if (myWindows.size) {
       const wins = await tmuxAdapter.listScopedWindows(port);
-      const byName = new Map(q.allSpawns.all().map(r => [r.tmux_window, r]));
-      for (const win of wins ?? []) {
-        if (!myWindows.has(win.window)) continue;
-        const sp = byName.get(win.window);
-        if (!win.pane_dead || !sp || !['killed', 'pane-dead', 'gone'].includes(sp.status)) continue;
-        const out = await tmuxAdapter.killWindowVerified(win.window);
-        if (out.ok) windows_killed++;
+      if (alive()) {
+        resurrected = true;
+      } else {
+        for (const win of wins ?? []) {
+          if (!myWindows.has(win.window) || !win.pane_dead) continue;
+          // R2-review (stale window-owner): a concurrent revive() can insert a
+          // NEWER row owning this reused window name and stand a fresh live pane
+          // up on it; killWindowVerified re-resolves BY NAME, so it would kill
+          // the replacement. Kill only when the window is still owned by a
+          // pane-dead row of THIS session (or by no live-eligible row at all —
+          // currentWindowOwner excludes 'gone'/'killed', so null means a corpse
+          // no revive has reclaimed). Anything else (an active owner, or another
+          // session's row) means a live pane now lives there: skip it.
+          const owner = q.currentWindowOwner.get(win.window);
+          if (owner && (owner.session_id !== sid || owner.status !== 'pane-dead')) continue;
+          const out = await tmuxAdapter.killWindowVerified(win.window);
+          if (out.ok) windows_killed++;
+          if (alive()) { resurrected = true; break; }
+        }
       }
     }
 
-    // Drop just this card's file ledger so the conflict radar can't keep
-    // arguing on behalf of a corpse. The worktree on disk is deliberately LEFT
-    // in place (it stays listed in the Worktrees modal for explicit cleanup).
-    q.deleteTouchesForSession.run(sid);
-
     tick(`⌫ dismissed ${s.callsign} — card, ${mail_expired} mail, ${questions_expired} question(s)${windows_killed ? `, ${windows_killed} window(s)` : ''}`);
     onMutate();
-    return { status: 200, body: { ok: true, archived: 1, mail_expired, questions_expired, windows_killed } };
+    return {
+      status: 200,
+      // `resurrected` is surfaced only when it happened — a hook re-floated the
+      // card mid-dismiss, so the DB story already landed but the pane was left
+      // alone. The normal path omits it (the route's key set stays stable).
+      body: { ok: true, archived: 1, mail_expired, questions_expired, windows_killed, ...(resurrected ? { resurrected: true } : {}) },
+    };
   }
 
   return { retentionSweep, cleanup, dismissSession };

@@ -927,6 +927,7 @@ textarea.fd-input { font-family: var(--font-ui); font-size: 13px; resize: none; 
 .fd-actbtn.dismiss.hazard {
   color: var(--hazard); background: var(--hazard-bg); border-color: var(--hazard); font-weight: 600;
 }
+.fd-actbtn.dismiss.busy { cursor: default; opacity: .6; }
 
 /* ✎ in the drawer head — the rename door sitting ON the callsign it renames.
    Ghost-quiet until hovered: the head is an identity line, not a button bar. */
