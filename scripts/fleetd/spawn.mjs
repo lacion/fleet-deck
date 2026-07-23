@@ -616,6 +616,13 @@ export async function newWindow({ port, callsign, cwd, argv, env = null }) {
   // The exact fleet target is the guard: ensureSession never creates/accepts it
   // on a generation-mismatched replacement, so new-window fails there.
   const target = exactWindowTarget(port, window);
+  // Arm the session's default BEFORE starting the command. The per-window
+  // set below is too late for a setup command that exits immediately (`exit
+  // 7`): without this pre-arm tmux can delete the window between new-window
+  // returning and set-option, losing the error screen the setup contract
+  // promises to preserve. Scoped to this fleet session, never the user's tmux
+  // server globally; best-effort like the reinforcing per-window write below.
+  await tmux(['set-option', '-w', '-g', '-t', '=' + session, 'remain-on-exit', 'on']);
   const out = await tmux([
     'new-window', '-d', '-P', '-F', '#{window_id}',
     '-t', '=' + session + ':', // exact session, next free window index

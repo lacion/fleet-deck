@@ -13,7 +13,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CLAUDE_ENV_MARKERS, GATEWAY_ENV_VARS } from './fleetd/env-scrub.mjs';
+import { CLAUDE_ENV_MARKERS, GATEWAY_ENV_VARS, SPAWN_ENV_VARS } from './fleetd/env-scrub.mjs';
 // Version-takeover contract, imported as SOURCE from the sibling fleetd/ dir
 // (same unbundled pattern as env-scrub.mjs above) so this hook can evict a
 // strictly-older daemon and let the newest installed build own the port.
@@ -112,6 +112,7 @@ function bootEnv() {
     // pane-level `env -u` in claudeEnvArgvPrefix is the load-bearing guarantee,
     // this is the belt to its braces.
     ...GATEWAY_ENV_VARS,
+    ...SPAWN_ENV_VARS,
     // Test seams stop HERE: the hook itself may honor them (that's what tests
     // drive), but they must never ride the daemon's env into a tmux server's
     // global env and come back through a pane's SessionStart (the 2026-07-11

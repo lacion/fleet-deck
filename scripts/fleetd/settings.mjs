@@ -35,9 +35,12 @@ import path from 'node:path';
 import { detectCoderWorkspaceRoot } from './config.mjs';
 
 const CONTROL_RE = /[\x00-\x1f\x7f]/;
+const SETUP_CONTROL_RE = /[\x00-\x09\x0b-\x1f\x7f]/;
 const FAV_DIRS_MAX = 20;
+const REPO_SETUP_MAX = 50;
+const SETUP_CMD_MAX = 2000;
 const ALLOWED_KEYS = [
-  'repos_dir', 'repo_transport', 'browse_root', 'fav_dirs',
+  'repos_dir', 'repo_transport', 'browse_root', 'fav_dirs', 'repo_setup',
   'gateway_base_url', 'gateway_auth_style', 'gateway_token',
   'gateway_model_discovery', 'gateway_default',
 ];
@@ -180,6 +183,50 @@ export function createSettings(ctx) {
       out.push(resolved);
     }
     if (out.length > FAV_DIRS_MAX) throw namedError(400, `fav_dirs must list ${FAV_DIRS_MAX} directories or fewer — got ${out.length}`);
+    return out;
+  }
+
+  // Repo-name → visible POSIX-sh setup command. This is only a board prefill;
+  // the daemon never applies it implicitly to a spawn.
+  function resolveRepoSetup() {
+    const raw = readSetting('repo_setup');
+    if (raw == null) return {};
+    try {
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+      return Object.fromEntries(Object.entries(parsed)
+        .filter(([name, cmd]) => typeof name === 'string' && typeof cmd === 'string'));
+    } catch {
+      console.error('fleetd settings: repo_setup is corrupt JSON — serving {}');
+      return {};
+    }
+  }
+
+  function validateRepoSetup(value) {
+    if (value == null) return null;
+    if (typeof value !== 'object' || Array.isArray(value)) {
+      throw namedError(400, 'repo_setup must be an object mapping repo names to commands or null');
+    }
+    const entries = Object.entries(value);
+    if (entries.length > REPO_SETUP_MAX) {
+      throw namedError(400, `repo_setup must contain ${REPO_SETUP_MAX} entries or fewer — got ${entries.length}`);
+    }
+    const out = {};
+    for (const [name, cmd] of entries) {
+      if (!name || CONTROL_RE.test(name)) {
+        throw namedError(400, 'repo_setup keys must be non-empty repo names without control characters');
+      }
+      if (typeof cmd !== 'string') {
+        throw namedError(400, `repo_setup command for "${name}" must be a string`);
+      }
+      if (cmd.length > SETUP_CMD_MAX) {
+        throw namedError(400, `repo_setup command for "${name}" must be ${SETUP_CMD_MAX} characters or fewer — got ${cmd.length}`);
+      }
+      if (SETUP_CONTROL_RE.test(cmd)) {
+        throw namedError(400, `repo_setup command for "${name}" must not contain NUL or control characters other than newline`);
+      }
+      out[name] = cmd;
+    }
     return out;
   }
 
@@ -339,6 +386,10 @@ export function createSettings(ctx) {
       prepare: v => validateFavDirs(v),             // → normalized array | null
       commit: prepared => q.setSetting.run('fav_dirs', prepared == null ? null : JSON.stringify(prepared), Date.now()),
     },
+    repo_setup: {
+      prepare: v => validateRepoSetup(v),
+      commit: prepared => q.setSetting.run('repo_setup', prepared == null ? null : JSON.stringify(prepared), Date.now()),
+    },
     gateway_base_url: {
       prepare: v => (v == null ? null : validateGatewayBaseUrl(v)),
       commit: v => q.setSetting.run('gateway_base_url', v ?? null, Date.now()),
@@ -409,6 +460,7 @@ export function createSettings(ctx) {
       repo_transport: resolveRepoTransport(),
       browse_root: browseRootChoice(),
       fav_dirs: resolveFavDirs(),
+      repo_setup: resolveRepoSetup(),
       // MASKED by construction — see resolveGateway. Never inline the raw
       // gateway_token row here: this object is broadcast, not returned.
       gateway: resolveGateway(),
