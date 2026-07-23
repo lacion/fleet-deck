@@ -40,3 +40,8 @@ export const GATEWAY_ENV_VARS = [
   'ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY',
   'CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY',
 ];
+
+// Per-launch setup is deliberately supplied to one tmux window via `-e`.
+// Ambient copies must never reach another pane, and the wrapper unsets the
+// value before exec'ing Claude.
+export const SPAWN_ENV_VARS = ['FLEETDECK_SETUP_CMD'];

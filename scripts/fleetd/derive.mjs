@@ -45,6 +45,7 @@ const CALLSIGNS = ['falcon', 'otter', 'raven', 'lynx', 'orca', 'wren', 'viper', 
 //                           with no events (default 600 000 = 10 min)
 //   FLEETDECK_NUDGE_MS               — bring-up nudge delay (default 8 s)
 //   FLEETDECK_SPAWN_REGISTER_MS      — pane registration deadline (90 s)
+//   FLEETDECK_SETUP_REGISTER_MS      — setup-spawn registration deadline (10 m)
 //   FLEETDECK_PANE_MAIL_GRACE_MS     — watcher-first mail grace (1.5 s)
 //   FLEETDECK_PRESUME_DEAD_MS        — silent hook-session timeout (3 h)
 //   FLEETDECK_RETAIN_OFFLINE_MS      — offline retention window (24 h)
@@ -75,6 +76,7 @@ export function createCore(db, {
   const STALE_MS = envInt('FLEETDECK_STALE_MS', 600_000, { min: 1 });
   const NUDGE_MS = envInt('FLEETDECK_NUDGE_MS', 8_000, { min: 1 });
   const SPAWN_REGISTER_MS = envInt('FLEETDECK_SPAWN_REGISTER_MS', 90_000, { min: 1 });
+  const SETUP_REGISTER_MS = envInt('FLEETDECK_SETUP_REGISTER_MS', 600_000, { min: 1 });
   const PANE_MAIL_GRACE_MS = envInt('FLEETDECK_PANE_MAIL_GRACE_MS', 1_500, { min: 0 });
   const PRESUME_DEAD_MS = envInt('FLEETDECK_PRESUME_DEAD_MS', 10_800_000, { min: 1 });
   const RETAIN_OFFLINE_MS = envInt('FLEETDECK_RETAIN_OFFLINE_MS', 86_400_000, { min: 1 });
@@ -583,7 +585,7 @@ export function createCore(db, {
   // the setter on the returned object reaches code in every module.
   const ctx = {
     db, port, home, holdMs, t0, version,
-    STALE_MS, NUDGE_MS, SPAWN_REGISTER_MS, PANE_MAIL_GRACE_MS,
+    STALE_MS, NUDGE_MS, SPAWN_REGISTER_MS, SETUP_REGISTER_MS, PANE_MAIL_GRACE_MS,
     PRESUME_DEAD_MS, RETAIN_OFFLINE_MS, RC_HARVEST_MS, RETAIN_LEDGER_MS,
     ADOPT_ARM_MS, ADOPT_DELAY_MS, // 0.7.0 Move-to-tmux (spawns arms, events fires)
     SNAPSHOT_FILES_PER_SESSION,

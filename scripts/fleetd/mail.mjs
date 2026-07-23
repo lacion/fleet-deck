@@ -111,11 +111,12 @@ export function createMail(ctx) {
   function resolveTargets(to) {
     const all = q.visibleSessions.all();
     const active = all.filter(s => s.ended_at == null);
-    if (to === 'all') return active.map(s => s.session_id);
+    const fanout = active.filter(s => s.source !== 'shell');
+    if (to === 'all') return fanout.map(s => s.session_id);
     const m = /^repo:(.+)$/.exec(String(to ?? ''));
     if (m) {
       const key = m[1];
-      return active
+      return fanout
         .filter(s => s.repo_id === key || s.repo_name === key)
         .map(s => s.session_id);
     }
@@ -126,9 +127,17 @@ export function createMail(ctx) {
     // to both its new holder (matched above by current callsign) and the renamed
     // session that used to wear it. Both scopes are archived_at IS NULL (`all`),
     // so a dead-but-retained tombstone still catches mail to either of its names.
-    const direct = all.filter(s => s.session_id === to || s.callsign === to);
+    //
+    // Shell cards are excluded HERE, not just in postMail: every caller of this
+    // resolver (postMail, and the orchestrator's `assign` in commands.mjs which
+    // delivers via the raw mail() insert) must be unable to route text into a
+    // shell pane — typed mail into a shell EXECUTES. An assign naming a shell
+    // therefore resolves to nothing ("no such session"), and postMail turns the
+    // same miss into its loud 409 below.
+    const routable = all.filter(s => s.source !== 'shell');
+    const direct = routable.filter(s => s.session_id === to || s.callsign === to);
     if (direct.length) return direct.map(s => s.session_id);
-    return all.filter(s => s.prev_callsign === to).map(s => s.session_id);
+    return routable.filter(s => s.prev_callsign === to).map(s => s.session_id);
   }
 
   // ---------------------------------------- F3d-2 /api/watch core surface
@@ -161,7 +170,7 @@ export function createMail(ctx) {
 
   function ownedPaneRow(sid) {
     const c = q.getSession.get(sid);
-    if (!c || c.ended_at != null || !['queued', 'idle'].includes(c.col)) return null;
+    if (!c || c.source === 'shell' || c.ended_at != null || !['queued', 'idle'].includes(c.col)) return null;
     const sp = q.spawnBySession.get(sid);
     if (!sp || !['spawning', 'stalled', 'live'].includes(sp.status)) return null;
     return { c, sp };
@@ -287,6 +296,26 @@ export function createMail(ctx) {
     }
     if (RESERVED_FRAME_RE.test(String(text ?? ''))) {
       return { status: 422, body: { ok: false, reason: 'mail text may not open with a [FLEETDECK ...] frame — those are reserved for the daemon' } };
+    }
+    // A direct send whose name belongs to a shell card is refused LOUDLY (mail
+    // typed into a shell executes). Same current-name-wins priority as
+    // resolveTargets: only when the CURRENT match set (session_id / callsign)
+    // is empty does prev_callsign count — so a shell's abandoned birth name
+    // never blocks a live claude that now wears it, and a reissued name
+    // resolves to its present holder. The 409 fires only when everything the
+    // name resolves to is a shell; resolveTargets below independently refuses
+    // to route to shells, so this is the human-facing message, not the wall.
+    const everyone = q.visibleSessions.all();
+    const currentMatch = everyone.filter(s => s.session_id === to || s.callsign === to);
+    const namedByTo = currentMatch.length ? currentMatch : everyone.filter(s => s.prev_callsign === to);
+    if (namedByTo.length && namedByTo.every(s => s.source === 'shell')) {
+      return {
+        status: 409,
+        body: {
+          ok: false,
+          reason: `${namedByTo[0].callsign} is a shell pane — mail would be typed into a shell`,
+        },
+      };
     }
     const targets = resolveTargets(to);
     // Report delivery truth from the state immediately before insertion: a

@@ -6,7 +6,7 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
-import { CLAUDE_ENV_MARKERS, GATEWAY_ENV_VARS } from './env-scrub.mjs';
+import { CLAUDE_ENV_MARKERS, GATEWAY_ENV_VARS, SPAWN_ENV_VARS } from './env-scrub.mjs';
 
 // v1.2 env knobs are resolved once per core via this reader; see the knob doc
 // in derive.mjs where each threshold is bound.
@@ -114,6 +114,7 @@ export function claudeEnvArgvPrefix(port, home, { keep = [] } = {}) {
     'FLEETDECK_AGENTS_POLL_MS', 'FLEETDECK_HOLD_MS', 'FLEETDECK_STALE_MS',
     'FLEETDECK_NUDGE_MS', 'FLEETDECK_WATCH_MAX_MS',
     'FLEETDECK_WATCH_POLL_MS', 'FLEETDECK_SPAWN_REGISTER_MS',
+    'FLEETDECK_SETUP_REGISTER_MS',
     'FLEETDECK_PANE_MAIL_GRACE_MS', 'FLEETDECK_PRESUME_DEAD_MS',
     'FLEETDECK_RETAIN_OFFLINE_MS', 'FLEETDECK_RC_HARVEST_MS',
     'FLEETDECK_ADOPT_ARM_MS', 'FLEETDECK_ADOPT_DELAY_MS',
@@ -132,6 +133,8 @@ export function claudeEnvArgvPrefix(port, home, { keep = [] } = {}) {
     // Anthropic account or a local proxy must come from the spawn, never from
     // whatever shell the daemon happened to boot in.
     ...GATEWAY_ENV_VARS,
+    // Visible pre-Claude setup is likewise owned by one explicit spawn.
+    ...SPAWN_ENV_VARS,
   ].filter(name => !keepSet.has(name));
   return [
     'env', ...scrub.flatMap(name => ['-u', name]),

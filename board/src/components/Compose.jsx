@@ -43,7 +43,7 @@ export default function Compose({ initialTarget, sessions, repos, onClose, onSen
         return { id: `repo:${name}`, label: `repo:${name}` };
       }),
     ...sessions
-      .filter((s) => s.col !== 'offline')
+      .filter((s) => s.col !== 'offline' && s.source !== 'shell')
       .map((s) => ({ id: s.session_id, label: s.callsign || s.session_id })),
   ];
 

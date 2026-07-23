@@ -25,9 +25,11 @@ function SessionCard({
   s, compact, mailCount, mailMeta, conflictFiles, conflictPeers, ripple, priority, onOpen, onOpenTerm,
   onRevive, reviving, onEnableRemote, enablingRemote, onKill, onToggleWatch, watched,
   onArmMove, onDisarm, adopting, onRename, onDismiss, dismissing, legacy,
+  onSpawnShell, spawningShell,
 }) {
+  const shell = s.spawn?.kind === 'shell' || s.source === 'shell';
   const offline = s.col === 'offline';
-  const needsyou = s.col === 'needsyou';
+  const needsyou = !shell && s.col === 'needsyou';
   const inConflict = conflictFiles.length > 0;
   const fam = modelFamily(s.model);
   const pulseClass = colPulse(s.col);
@@ -66,7 +68,7 @@ function SessionCard({
   // opens the confirm dialog (offline 'now' → immediate copy, live 'arm' →
   // deferred copy); `isArmed` means a deferred move is waiting and the chip
   // becomes a one-click disarm (no dialog — nothing hazardous is undone).
-  const canMove = !!onArmMove && (adoptableNow(s) || adoptArmable(s));
+  const canMove = !shell && !!onArmMove && (adoptableNow(s) || adoptArmable(s));
   const isArmed = !!onDisarm && adoptArmed(s);
   const canAdopt = canMove || isArmed;
   // v2.1 Rename — the ONE action with no spawn gate at all. Renaming touches the
@@ -97,7 +99,8 @@ function SessionCard({
     setDismissArmed(false);
     onDismiss(s);
   };
-  const hasActs = canTerm || canKill || canWatch || canAdopt || canRename || canDismiss;
+  const canSpawnShell = !!onSpawnShell && !!(s.worktree || s.cwd);
+  const hasActs = canTerm || canKill || canWatch || canAdopt || canRename || canDismiss || canSpawnShell;
 
   const cls = [
     'fd-card',
@@ -161,7 +164,10 @@ function SessionCard({
             🛰 gateway
           </span>
         )}
-        {s.spawn?.remote?.enabled && (
+        {s.spawn?.setup_cmd && (
+          <span className="fd-setupchip" title={s.spawn.setup_cmd}>⚙ setup</span>
+        )}
+        {!shell && s.spawn?.remote?.enabled && (
           // v1.6: remote control is on. With a harvested (and vouched-for) link
           // the chip is the door to claude.ai; without a safe one it just states
           // the fact and points at the terminal.
@@ -186,7 +192,7 @@ function SessionCard({
             </span>
           )
         )}
-        {spawnRemoteAvailable(s) && onEnableRemote && (
+        {!shell && spawnRemoteAvailable(s) && onEnableRemote && (
           // v1.6: the enable door — live pane, not yet on remote control,
           // session at a turn boundary. R3-3: a real <button> (raised above the
           // card overlay); `disabled` while in flight replaces the old aria/guard.
@@ -201,7 +207,7 @@ function SessionCard({
             {enablingRemote ? 'enabling…' : '📱 enable remote'}
           </button>
         )}
-        {offline && s.spawn?.revivable && onRevive && (
+        {!shell && offline && s.spawn?.revivable && onRevive && (
           // v1.5: dead agent, surviving worktree + transcript — the resurrection
           // door. R3-3: a real <button> (raised above the card overlay);
           // `disabled` while in flight replaces the old aria/guard.
@@ -215,10 +221,10 @@ function SessionCard({
             {reviving ? 'reviving…' : '⟲ revive'}
           </button>
         )}
-        {stalled && (
+        {!shell && stalled && (
           <span className="fd-stalledchip" title={stalledTip}>never registered</span>
         )}
-        {s.stale && (
+        {!shell && s.stale && (
           <span className="fd-stalechip" title="no events for a while; may be stuck">stale</span>
         )}
         <span className="fd-spacer" />
@@ -227,9 +233,13 @@ function SessionCard({
             ✉ {mailCount}{mailStuck ? ' ⧗' : ''}
           </span>
         )}
-        <span className={`fd-mbadge ${fam}`} title={s.model || ''}>
-          {compact ? modelShort(s.model) : prettyModel(s.model)}
-        </span>
+        {shell ? (
+          <span className="fd-shellchip" title="shell-only terminal — no Claude conversation">&gt;_ shell</span>
+        ) : (
+          <span className={`fd-mbadge ${fam}`} title={s.model || ''}>
+            {compact ? modelShort(s.model) : prettyModel(s.model)}
+          </span>
+        )}
       </span>
       {!compact && (s.branch || wt) && (
         <span className="branch">
@@ -314,6 +324,17 @@ function SessionCard({
               ✎ rename
             </button>
           )}
+          {canSpawnShell && (
+            <button
+              type="button"
+              className={`fd-actbtn shell${spawningShell ? ' busy' : ''}`}
+              disabled={spawningShell}
+              title={`open a shell-only terminal in ${s.worktree || s.cwd}`}
+              onClick={() => onSpawnShell(s)}
+            >
+              {spawningShell ? 'opening…' : '⌨ shell'}
+            </button>
+          )}
           {canKill && (
             // opens the confirmation dialog — NEVER kills on this click
             <button
@@ -350,7 +371,7 @@ function SessionCard({
           ))}
           {files.length > shown.length && <span className="fd-filechip">+{files.length - shown.length}</span>}
           <span className="fd-spacer" />
-          <Sparkline data={s.sparkline} />
+          {!shell && <Sparkline data={s.sparkline} />}
           <Age className="age" from={s.lastSeen || s.startedAt} />
         </span>
       )}

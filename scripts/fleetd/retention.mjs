@@ -86,9 +86,11 @@ export function createRetention(ctx) {
           // is simply quiet — refresh last_seen so the clock restarts and leave
           // the card live. This is the "3.1h alive spawn got goned" fix.
           let alive = false;
+          const shell = sp.kind === 'shell';
+          const setupPhase = !!sp.setup_cmd && (sp.status === 'spawning' || sp.status === 'stalled');
           if (win && !win.pane_dead) {
             const pane = await tmuxAdapter.paneCurrentCommand(scopedPaneTarget(win));
-            alive = !!pane && !pane.dead && pane.cmd === 'claude';
+            alive = !!pane && !pane.dead && (shell || setupPhase || pane.cmd === 'claude');
           }
           if (alive) {
             updateSession(s.session_id, { last_seen: now });
@@ -100,11 +102,13 @@ export function createRetention(ctx) {
           // (still revivable) and tombstone the card. A window that is ABSENT is
           // UNKNOWN, not dead — never condemn on silence (a wrong "dead" costs a
           // duplicate billed session); leave it for a later sweep / boot reconcile.
-          if (win && (win.pane_dead || SHELL_RE.test(win.pane_cmd))) {
+          if (win && (win.pane_dead || (!shell && !setupPhase && SHELL_RE.test(win.pane_cmd)))) {
             q.setSpawnStatus.run('pane-dead', sp.spawn_id);
             forgetSpawn(sp.spawn_id);
             tombstoneCard(s.session_id, { // D8
-              note: `pane confirmed dead — resume with claude --resume ${s.session_id}`,
+              note: setupPhase
+                ? 'pane exited during setup/bring-up — open the terminal for the error'
+                : `pane confirmed dead — resume with claude --resume ${s.session_id}`,
               at: now,
               tickMsg: `💀 ${s.callsign} pane confirmed dead after long silence — window kept for scrollback`,
               forgetModel: true,

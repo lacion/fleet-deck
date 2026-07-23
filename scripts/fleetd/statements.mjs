@@ -102,6 +102,7 @@ export function createStatements(db) {
       FROM sessions s
       WHERE s.ended_at IS NULL
         AND s.col NOT IN ('offline', 'needsyou')
+        AND COALESCE(s.source, '') != 'shell' -- a shell pane cannot take an assignment (mail into it would execute)
         AND (? IS NULL OR s.repo_id = ? OR s.repo_name = ?)
       ORDER BY CASE s.col WHEN 'idle' THEN 0 WHEN 'queued' THEN 1 ELSE 2 END,
         undelivered ASC,
@@ -163,16 +164,16 @@ export function createStatements(db) {
     // v1.2 board-spawned sessions. "Active" = status spawning|stalled|live — the
     // rows that get liveness-checked, and the number the board shows as "N live".
     insertSpawn: db.prepare(`INSERT INTO spawns
-      (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, requested_at, status, skip_permissions, remote_control, origin_url, requested_branch, branch_mode, gateway)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'spawning', ?, ?, ?, ?, ?, ?)`),
+      (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, requested_at, status, skip_permissions, remote_control, origin_url, requested_branch, branch_mode, gateway, kind, setup_cmd)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'spawning', ?, ?, ?, ?, ?, ?, ?, ?)`),
     // H-R6: a spawn's durable row now exists BEFORE any external op (worktree
     // add / tmux window) so a crash in that gap can never orphan a worktree or
     // pane with no owning row. It is born 'provisioning' — excluded from
     // activeSpawns (never liveness-checked or counted live) until its pane
     // exists — and flipped to 'spawning' once launch succeeds.
     insertProvisionalSpawn: db.prepare(`INSERT INTO spawns
-      (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, requested_at, status, skip_permissions, remote_control, origin_url, requested_branch, branch_mode, gateway)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'provisioning', ?, ?, ?, ?, ?, ?)`),
+      (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, requested_at, status, skip_permissions, remote_control, origin_url, requested_branch, branch_mode, gateway, kind, setup_cmd)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'provisioning', ?, ?, ?, ?, ?, ?, ?, ?)`),
     setSpawnWorktree: db.prepare('UPDATE spawns SET worktree_path = ? WHERE spawn_id = ?'),
     staleProvisioningSpawns: db.prepare("SELECT * FROM spawns WHERE status = 'provisioning'"),
     // H-R5 / R2-5: the newest spawn row still laying claim to a tmux window (a
@@ -271,7 +272,7 @@ export function createStatements(db) {
     // and (b) the first real hook event flips it to 'hooks' as usual.
     insertSpawnedSession: db.prepare(`INSERT INTO sessions
       (session_id, callsign, cwd, repo_id, repo_name, branch, worktree, col, note, task, events, started_at, last_seen, blocked_this_turn, source)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', 'spawning…', ?, 0, ?, ?, 0, 'spawned')`),
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 0, ?)`),
     // v1.3 plan library (CONTRACT "B. Plan library"). Capture happens at
     // ExitPlanMode PermissionRequest intake (hookHoldQuestion), synchronously
     // with the question row insert. /state ships raw plan_md only — title

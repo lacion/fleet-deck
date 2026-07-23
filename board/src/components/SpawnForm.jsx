@@ -98,6 +98,10 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
   const [worktree, setWorktree] = useState(false);
   const [batch, setBatch] = useState(false);   // prompt box becomes a task list
   const [remote, setRemote] = useState(false); // v1.6: remote control from birth
+  const [shellOnly, setShellOnly] = useState(false);
+  const [setupCmd, setSetupCmd] = useState('');
+  const [saveSetupDefault, setSaveSetupDefault] = useState(false);
+  const setupRepoSeed = useRef(null);
   // v0.15 — LLM gateway. Seeded ONCE from the daemon's gateway_default, and
   // deliberately NOT live-adopted from later frames, for the same reason as the
   // transport pill above: a control that decides WHO IS BILLED must never flip
@@ -218,6 +222,18 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
   const subgrouped = shorthand && repo.trim().split('/').length > 2;
   const effectiveHost = subgrouped ? 'gitlab' : repoHost;
   const branchErr = repoMode && branch.trim() ? branchProblem(branch.trim()) : null;
+  const cwdRepo = !repoMode
+    ? (sessions || []).find(s => (s.worktree || s.cwd) === cwd.trim())?.repo_name
+      || (repoCatalog || []).find(r => r.root === cwd.trim())?.repo_name
+    : null;
+  const selectedRepoName = repoMode ? (knownRepo?.repo_name || repoName) : cwdRepo;
+
+  useEffect(() => {
+    if (setupRepoSeed.current === selectedRepoName) return;
+    setupRepoSeed.current = selectedRepoName;
+    setSetupCmd(selectedRepoName ? (settings?.repo_setup?.[selectedRepoName] || '') : '');
+    setSaveSetupDefault(false);
+  }, [selectedRepoName, settings?.repo_setup]);
 
   // the repos-root override persists on commit, not per keystroke — an
   // unfinished path half-typed into the box must never become a setting
@@ -277,7 +293,7 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
   // splitting it on newlines would fan a single brief out into dozens of agents.
   // In repo mode it's deferred (one human-chosen branch and N forced per-agent
   // worktrees contradict each other) — the note under the checkbox says so.
-  const canBatch = !planMode && !repoMode;
+  const canBatch = !planMode && !repoMode && !shellOnly;
   const batching = batch && canBatch;
   const tasks = useMemo(() => (batching ? parseBatchTasks(prompt) : []), [batching, prompt]);
   const total = batching ? batchTotal(tasks) : 1;
@@ -310,6 +326,9 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
 
   /** The POST body shared by every agent in this submit; `prompt` varies. */
   const baseBody = () => {
+    if (shellOnly && !repoMode && !planMode) {
+      return { kind: 'shell', cwd: cwd.trim() };
+    }
     // repo mode replaces cwd wholesale: the daemon refuses both together, and
     // branch_mode subsumes the worktree flag (it IS the worktree decision)
     const body = repoMode
@@ -343,7 +362,17 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
     // and the checkbox the human is looking at is the answer — even when it
     // agrees with the default it was seeded from.
     body.gateway = gatewayOn;
+    if (setupCmd !== '') body.setup_cmd = setupCmd;
     return body;
+  };
+
+  const persistSetupDefault = async () => {
+    if (!saveSetupDefault || !selectedRepoName) return true;
+    const next = { ...(settings?.repo_setup || {}), [selectedRepoName]: setupCmd };
+    const res = await saveSettings({ repo_setup: next });
+    if (res.ok && res.json?.ok) return true;
+    setErr(reasonOf(res, `setup default save failed (${res.status})`));
+    return false;
   };
 
   // One agent — the original path, byte for byte, including the plan-mark hook.
@@ -428,6 +457,10 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
     setBusy(true);
     setErr(null);
     try {
+      if (!await persistSetupDefault()) {
+        setBusy(false);
+        return;
+      }
       if (batching) await submitBatch();
       else await submitOne();
     } catch {
@@ -473,7 +506,7 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
                 <button
                   type="button"
                   className={`fd-target${repoMode ? ' on' : ''}`}
-                  onClick={() => { setTargetMode('repo'); setBatch(false); if (err) setErr(null); }}
+                  onClick={() => { setTargetMode('repo'); setBatch(false); setShellOnly(false); if (err) setErr(null); }}
                 >
                   repo + branch
                 </button>
@@ -496,6 +529,28 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
               <datalist id="fd-cwd-suggest">
                 {suggestions.map((p) => <option key={p} value={p} />)}
               </datalist>
+            </div>
+          )}
+          {!repoMode && !planMode && (
+            <div className="frow">
+              <span className="fl">session</span>
+              <label className="fd-check">
+                <input
+                  type="checkbox"
+                  checked={shellOnly}
+                  onChange={(e) => {
+                    const on = e.target.checked;
+                    setShellOnly(on);
+                    if (on) {
+                      setBatch(false); setWorktree(false); setRemote(false);
+                      setGateway(false); setUnsup(false); setArmed(false);
+                      setArmToken(null); setPermissionMode('default'); setGwEdit(false);
+                    }
+                    if (err) setErr(null);
+                  }}
+                />
+                shell only (no claude)
+              </label>
             </div>
           )}
           {repoMode && (
@@ -662,6 +717,7 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
                 ? 'One agent per line:\n  fix the flaky worktree test\n  3x audit the spawn path'
                 : 'Initial prompt (optional)'}
               value={prompt}
+              disabled={shellOnly}
               onChange={(e) => { setPrompt(e.target.value); if (err) setErr(null); }}
               onKeyDown={onCtrlEnter}
             />
@@ -701,6 +757,7 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
               className="fd-input"
               placeholder="default"
               value={model}
+              disabled={shellOnly}
               onChange={(e) => { setModel(e.target.value); if (err) setErr(null); }}
               onKeyDown={onCtrlEnter}
             />
@@ -710,6 +767,7 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
             <select
               className="fd-input"
               value={permissionMode}
+              disabled={shellOnly}
               onChange={(e) => {
                 setPermissionMode(e.target.value);
                 // bypassPermissions is the same hazard as "run unsupervised" —
@@ -732,7 +790,7 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
                 <input
                   type="checkbox"
                   checked={worktree || batching}
-                  disabled={batching}
+                  disabled={batching || shellOnly}
                   onChange={(e) => setWorktree(e.target.checked)}
                 />
                 {batching
@@ -741,6 +799,36 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
               </label>
             </div>
           )}
+          <div className="frow top">
+            <span className="fl">setup command</span>
+            <div className="fd-setupbox">
+              <textarea
+                className="fd-input"
+                rows={3}
+                placeholder="e.g. super code · python -m venv .venv"
+                value={setupCmd}
+                disabled={shellOnly}
+                onChange={(e) => { setSetupCmd(e.target.value); if (err) setErr(null); }}
+                onKeyDown={onCtrlEnter}
+              />
+              <span className="hint">runs visibly through POSIX sh; bashisms need <code>bash -c &apos;…&apos;</code></span>
+              {setupCmd !== '' && !shellOnly && (
+                <span className="fd-setupcallout">
+                  will run: <code>{setupCmd}</code>{batching ? ' · every batch spawn inherits this command' : ''}
+                </span>
+              )}
+              {setupCmd !== '' && !shellOnly && selectedRepoName && (
+                <label className="fd-check">
+                  <input
+                    type="checkbox"
+                    checked={saveSetupDefault}
+                    onChange={(e) => setSaveSetupDefault(e.target.checked)}
+                  />
+                  save as default for {selectedRepoName}
+                </label>
+              )}
+            </div>
+          </div>
           {/* v0.15 — LLM gateway: route this session's API traffic through a
               proxy (CLIProxyAPI, a corporate gateway) instead of Anthropic. */}
           <div className="frow">
@@ -750,7 +838,7 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
                 <input
                   type="checkbox"
                   checked={gatewayOn}
-                  disabled={!gwReady}
+                  disabled={!gwReady || shellOnly}
                   onChange={(e) => {
                     setGateway(e.target.checked);
                     // Claude Code turns Remote Control off on a non-Anthropic
@@ -764,6 +852,7 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
               <button
                 type="button"
                 className="fd-gwedit"
+                disabled={shellOnly}
                 onClick={() => { setGwEdit(v => !v); setGwNote(null); }}
               >
                 {gwReady ? 'edit' : 'set up'}
@@ -838,7 +927,7 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
               <input
                 type="checkbox"
                 checked={remote && !gatewayOn}
-                disabled={gatewayOn}
+                disabled={gatewayOn || shellOnly}
                 onChange={(e) => setRemote(e.target.checked)}
               />
               📱 drive it from claude.ai (web / phone)
@@ -861,6 +950,7 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
               <input
                 type="checkbox"
                 checked={unsupEffective}
+                disabled={shellOnly}
                 onChange={(e) => {
                   setUnsup(e.target.checked);
                   if (!e.target.checked) {
@@ -914,13 +1004,13 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
                   ? <span className="note">write at least one task, one per line</span>
                   : (
                     <span className="note">
-                      starts {total > 1 ? `${total} new billed Claude sessions` : 'a new billed Claude session'}
+                      {shellOnly ? 'opens a shell-only terminal' : `starts ${total > 1 ? `${total} new billed Claude sessions` : 'a new billed Claude session'}`}
                       {repoMode && !knownRepo && repoName ? ' — clones the repo first' : ''}
                     </span>
                   )}
           <span className="fd-spacer" />
           <button type="button" className="send" onClick={submit} disabled={!targetReady || busy || blocked || emptyBatch}>
-            {total > 1 ? `Spawn ${total} ⏎` : 'Spawn ⏎'}
+            {shellOnly ? 'Open shell ⏎' : total > 1 ? `Spawn ${total} ⏎` : 'Spawn ⏎'}
           </button>
         </div>
       </div>

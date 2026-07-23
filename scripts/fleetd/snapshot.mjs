@@ -113,6 +113,8 @@ export function createSnapshot(ctx) {
             spawn_id: sp.spawn_id,
             tmux_window: sp.tmux_window,
             status: sp.status,
+            kind: sp.kind ?? 'claude',
+            setup_cmd: sp.setup_cmd ?? null,
             stalled: sp.status === 'stalled', // watchdog chip ("never registered")
             skip_permissions: !!sp.skip_permissions, // v1.3 unsupervised chip
             remote: { enabled: !!sp.remote_control, url: sp.remote_url ?? null },
@@ -128,7 +130,7 @@ export function createSnapshot(ctx) {
             // short revivable TTL; deliberately NOT taken — the immediate
             // flip is a tested board contract, see revive.test.mjs; a cache
             // would need that test + a frontend sign-off. Coordination note.)
-            revivable: spawnRowRevivable(sp),
+            revivable: sp.kind === 'shell' ? false : spawnRowRevivable(sp),
           },
         } : {}),
         // 0.7.0 Move-to-tmux: {eligible:'now'|'arm'|null, armed, armed_until,

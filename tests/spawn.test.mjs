@@ -300,6 +300,7 @@ test('argv construction: prompt/model/permission-mode survive intact through the
     'FLEETDECK_AGENTS_POLL_MS', 'FLEETDECK_HOLD_MS', 'FLEETDECK_STALE_MS',
     'FLEETDECK_NUDGE_MS', 'FLEETDECK_WATCH_MAX_MS',
     'FLEETDECK_WATCH_POLL_MS', 'FLEETDECK_SPAWN_REGISTER_MS',
+    'FLEETDECK_SETUP_REGISTER_MS',
     'FLEETDECK_PANE_MAIL_GRACE_MS', 'FLEETDECK_PRESUME_DEAD_MS',
     'FLEETDECK_RETAIN_OFFLINE_MS',
     'FLEETDECK_RC_HARVEST_MS',
@@ -314,6 +315,7 @@ test('argv construction: prompt/model/permission-mode survive intact through the
     // claudeEnvArgvPrefix applies only to variables a gateway spawn supplies.
     'ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY',
     'CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY',
+    'FLEETDECK_SETUP_CMD',
   ];
   const expectedPrefix = [
     'env', ...scrub.flatMap(name => ['-u', name]),

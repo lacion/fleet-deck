@@ -15,11 +15,22 @@ import { ticketFromBranch, animalOf } from './tickets.mjs';
 import { claudeEnvArgvPrefix, claudeTranscriptPath, SHELL_RE, NOT_RESUMABLE_END } from './helpers.mjs';
 import { execFileP, baseBranch } from './exec.mjs';
 
+export const SETUP_WRAPPER = [
+  'cmd=$FLEETDECK_SETUP_CMD; unset FLEETDECK_SETUP_CMD',
+  'printf \'▶ fleetdeck setup: %s\\n\' "$cmd"',
+  'sh -c "$cmd"; rc=$?',
+  'if [ "$rc" -ne 0 ]; then printf \'✗ setup failed (exit %s) — claude not started\\n\' "$rc"; exit "$rc"; fi',
+  'exec "$@"',
+].join('\n');
+
+const SETUP_CMD_MAX = 2000;
+const SETUP_CONTROL_RE = /[\x00-\x09\x0b-\x1f\x7f]/;
+
 export function createSpawns(ctx) {
   const {
     q, updateSession, tick, logEvent, onMutate, assignCallsign,
     notifyWatchers, tombstoneCard, findScopedWindow, scopedPaneTarget, tmuxAdapter, port, home,
-    NUDGE_MS, SPAWN_REGISTER_MS, RC_HARVEST_MS,
+    NUDGE_MS, SPAWN_REGISTER_MS, SETUP_REGISTER_MS, RC_HARVEST_MS,
     ADOPT_ARM_MS, // 0.7.0 Move-to-tmux: arm-deadline window (default 30 min)
     // 0.7.1: the boot heal for /clear forks stranded BEFORE succession shipped.
     succeedSession, CLEAR_SUCCESSION_MS, hasLivePane,
@@ -171,11 +182,12 @@ export function createSpawns(ctx) {
   // CONTRACT flow step 1: pre-create the card so the callsign exists before
   // the pane does. Note is EXACTLY "spawning…"; col queued; source 'spawned'.
   function createSpawnedCard(sid, cwd, prompt, overrides = null) {
-    const repo = overrides ? {
-      repo_id: overrides.repo_id ?? null,
-      repo_name: overrides.repo_name ?? null,
-      worktree: overrides.worktree ?? null,
-    } : deriveRepo(cwd);
+    const derived = (!overrides || overrides.deriveRepo === true) ? deriveRepo(cwd) : {};
+    const repo = {
+      repo_id: overrides?.repo_id ?? derived.repo_id ?? null,
+      repo_name: overrides?.repo_name ?? derived.repo_name ?? null,
+      worktree: overrides?.worktree ?? derived.worktree ?? null,
+    };
     // Ticket inheritance is a naming moment: derive the ticket from the SOURCE
     // cwd's branch (fresh — bypass the 20s cache) BEFORE naming, so a spawn off a
     // ticket branch is born ticket-first exactly like a hook/agents birth. The
@@ -185,12 +197,14 @@ export function createSpawns(ctx) {
     const ticket = ticketFromBranch(branch);
     const callsign = assignCallsign(sid, ticket);
     const now = Date.now();
+    const col = overrides?.col ?? 'queued';
+    const note = overrides?.note ?? 'spawning…';
+    const source = overrides?.source ?? 'spawned';
     q.insertSpawnedSession.run(
       sid, callsign, cwd, repo.repo_id ?? null, repo.repo_name ?? null,
       branch ?? null, repo.worktree ?? null,
-      prompt ? String(prompt).slice(0, 80) : null, now, now,
+      col, note, prompt ? String(prompt).slice(0, 80) : null, now, now, source,
     );
-    if (overrides?.note) updateSession(sid, { note: overrides.note });
     if (ticket) updateSession(sid, { ticket, ticket_source: 'branch' });
     return q.getSession.get(sid);
   }
@@ -322,6 +336,7 @@ export function createSpawns(ctx) {
   // immediate). The caller has already confirmed pane_dead=0 and
   // pane_current_command='claude' AND that no newer row owns the window.
   function resurrectSpawn(row) {
+    const shell = row.kind === 'shell';
     q.setSpawnStatus.run('live', row.spawn_id);
     const c = q.getSession.get(row.session_id);
     updateSession(row.session_id, {
@@ -333,10 +348,10 @@ export function createSpawns(ctx) {
       // (otherwise the very next retention sweep could presume it dead again on
       // the pre-death last_seen).
       notification_type: null, last_seen: Date.now(),
-      note: 'pane is a live claude — restored to the board',
+      note: shell ? 'shell' : 'pane is a live claude — restored to the board',
     });
     forgetSpawn(row.spawn_id); // drop any stale nudge/harvest ephemera from the death (BUG 3: also clears condemnStreak)
-    tick(`✨ ${c?.callsign ?? row.callsign} restored — its pane was a live claude all along`);
+    tick(`✨ ${c?.callsign ?? row.callsign} restored — its pane was live all along`);
     notifyWatchers(row.session_id);
     onMutate();
   }
@@ -445,27 +460,45 @@ export function createSpawns(ctx) {
     gatewayEnv = null,
     created = { clone: false, worktree: !!worktree_path },
   }) {
+    const kind = body?.kind ?? 'claude';
+    const setupCmd = body?.setup_cmd ?? null;
+    const launchEnv = {
+      ...(gatewayEnv || {}),
+      ...(setupCmd ? { FLEETDECK_SETUP_CMD: setupCmd } : {}),
+    };
+    const launchEnvOrNull = Object.keys(launchEnv).length ? launchEnv : null;
     // This argv order is a public contract shared by cwd- and repo-mode spawns.
     // `keep` names the gateway variables tmux is about to set via `-e`: without
     // it the prefix's own `env -u` would strip them straight back off (see
     // claudeEnvArgvPrefix). The CREDENTIAL never enters argv — only the names of
     // the variables NOT being unset appear here, which is why the scrub list
     // shrinks rather than the assignment list growing.
-    const argv = [
-      ...claudeEnvArgvPrefix(port, home, { keep: gatewayEnv ? Object.keys(gatewayEnv) : [] }),
-      'claude', '--session-id', session_id,
-    ];
-    if (body?.model) argv.push('--model', body.model);
-    if (body?.permission_mode) argv.push('--permission-mode', body.permission_mode);
-    if (body?.dangerously_skip_permissions === true) argv.push('--dangerously-skip-permissions');
-    if (body?.remote_control === true) argv.push('--remote-control', callsign);
+    const claudeArgv = ['claude', '--session-id', session_id];
+    if (body?.model) claudeArgv.push('--model', body.model);
+    if (body?.permission_mode) claudeArgv.push('--permission-mode', body.permission_mode);
+    if (body?.dangerously_skip_permissions === true) claudeArgv.push('--dangerously-skip-permissions');
+    if (body?.remote_control === true) claudeArgv.push('--remote-control', callsign);
     // SECURITY (option injection): the prompt is untrusted human text and MUST
     // be the last, positional argv element — but WITHOUT a `--` terminator the
     // claude CLI (commander) parses a prompt like `--dangerously-skip-permissions`
     // as a FLAG, silently granting a bypass the spawn row records as
     // skip_permissions:false. `--` forces everything after it to be positional.
     // Nothing is ever pushed onto argv past this point.
-    if (body?.prompt) argv.push('--', body.prompt);
+    if (body?.prompt) claudeArgv.push('--', body.prompt);
+
+    const shellBin = (process.env.SHELL || '').trim()
+      || (fs.existsSync('/bin/bash') ? 'bash' : 'sh');
+    const argv = kind === 'shell'
+      ? [...claudeEnvArgvPrefix(port, home), shellBin]
+      : setupCmd
+        ? [
+            ...claudeEnvArgvPrefix(port, home, { keep: Object.keys(launchEnv) }),
+            'sh', '-c', SETUP_WRAPPER, 'fleetdeck-setup', ...claudeArgv,
+          ]
+        : [
+            ...claudeEnvArgvPrefix(port, home, { keep: gatewayEnv ? Object.keys(gatewayEnv) : [] }),
+            ...claudeArgv,
+          ];
 
     const compensate = reason => spawnCompensate({
       spawn_id, session_id, callsign, cwd: cleanupRoot, worktree_path,
@@ -478,6 +511,8 @@ export function createSpawns(ctx) {
         cwd: runCwd, requested_cwd: requestedCwd,
         prompt: body?.prompt ?? null, model: body?.model ?? null,
         permission_mode: body?.permission_mode ?? null, worktree_path,
+        kind,
+        setup_cmd: setupCmd,
         dangerously_skip_permissions: body?.dangerously_skip_permissions === true,
         skip_permissions: skipPermissions,
         remote_control: body?.remote_control === true,
@@ -491,6 +526,7 @@ export function createSpawns(ctx) {
         // below — the only one a real fleet takes — keeps the credential out of
         // argv entirely (see newWindow's `-e` contract).
         gateway_env: gatewayEnv,
+        env: launchEnvOrNull,
         tmux: { session: tmux_session, window: tmux_window },
         argv,
       };
@@ -499,7 +535,7 @@ export function createSpawns(ctx) {
     } else {
       try {
         await tmuxAdapter.ensureSession(port);
-        await tmuxAdapter.newWindow({ port, callsign, cwd: runCwd, argv, env: gatewayEnv });
+        await tmuxAdapter.newWindow({ port, callsign, cwd: runCwd, argv, env: launchEnvOrNull });
       } catch (err) {
         const cleanup = await compensate(String(err.message || err));
         const unresolved = cleanup?.resolved === false ? `; cleanup unresolved: ${cleanup.error}` : '';
@@ -507,10 +543,12 @@ export function createSpawns(ctx) {
       }
     }
 
-    q.setSpawnStatus.run('spawning', spawn_id);
-    updateSession(session_id, { note: 'spawning…' });
-    tick(`🚀 spawned ${callsign} — tmux window ${tmux_window}${skipPermissions ? ' (unsupervised)' : ''}${gatewayEnv ? ' (gateway)' : ''}`);
-    scheduleNudge(spawn_id, tmux_window, callsign);
+    q.setSpawnStatus.run(kind === 'shell' ? 'live' : 'spawning', spawn_id);
+    updateSession(session_id, kind === 'shell'
+      ? { col: 'idle', note: 'shell' }
+      : { note: 'spawning…' });
+    tick(`${kind === 'shell' ? '⌨' : '🚀'} spawned ${callsign} — tmux window ${tmux_window}${skipPermissions ? ' (unsupervised)' : ''}${gatewayEnv ? ' (gateway)' : ''}`);
+    if (kind !== 'shell') scheduleNudge(spawn_id, tmux_window, callsign);
     onMutate();
     return {
       status: 200,
@@ -524,6 +562,10 @@ export function createSpawns(ctx) {
     const cap = spawnCapability();
     if (!cap.available) {
       return { status: 400, body: { ok: false, reason: `spawning unavailable: ${cap.reason}` } };
+    }
+    const kind = body?.kind ?? 'claude';
+    if (kind !== 'claude' && kind !== 'shell') {
+      return { status: 400, body: { ok: false, reason: "kind must be 'claude' or 'shell'" } };
     }
     for (const k of ['cwd', 'repo', 'branch', 'branch_mode', 'prompt', 'model', 'permission_mode', 'repo_host', 'repo_transport']) {
       if (body?.[k] != null && typeof body[k] !== 'string') {
@@ -567,10 +609,37 @@ export function createSpawns(ctx) {
     if (body?.arm_token != null && typeof body.arm_token !== 'string') {
       return { status: 400, body: { ok: false, reason: 'arm_token must be a string' } };
     }
+    if (body?.setup_cmd != null) {
+      if (typeof body.setup_cmd !== 'string') {
+        return { status: 400, body: { ok: false, reason: 'setup_cmd must be a string' } };
+      }
+      if (body.setup_cmd.length > SETUP_CMD_MAX) {
+        return { status: 400, body: { ok: false, reason: `setup_cmd must be ${SETUP_CMD_MAX} characters or fewer — got ${body.setup_cmd.length}` } };
+      }
+      if (SETUP_CONTROL_RE.test(body.setup_cmd)) {
+        return { status: 400, body: { ok: false, reason: 'setup_cmd must not contain NUL or control characters other than newline' } };
+      }
+    }
+    if (kind === 'shell') {
+      const forbidden = [
+        'repo', 'branch', 'branch_mode', 'repo_host', 'repo_transport',
+        'prompt', 'model', 'permission_mode', 'dangerously_skip_permissions',
+        'remote_control', 'gateway', 'arm_token', 'setup_cmd',
+      ].find(k => body?.[k] != null);
+      if (forbidden || body?.worktree === true) {
+        const field = forbidden || 'worktree';
+        return {
+          status: 400,
+          body: { ok: false, reason: `shell sessions are cwd-only; ${field} is a Claude-only field` },
+        };
+      }
+    }
     // Decide the routing BEFORE anything is created. A gateway refusal must cost
     // the caller nothing — no clone, no worktree, no pane, no durable row — so
     // it lands here beside the other pure-body gates rather than at launch time.
-    const gateway = gatewayDecision(body?.gateway);
+    const gateway = kind === 'shell'
+      ? { use: false, env: null }
+      : gatewayDecision(body?.gateway);
     if (gateway.error) return { status: 400, body: { ok: false, reason: gateway.error } };
     const rcConflict = gatewayRemoteConflict(gateway.use, body?.remote_control === true);
     if (rcConflict) return { status: 400, body: { ok: false, reason: rcConflict } };
@@ -663,6 +732,7 @@ export function createSpawns(ctx) {
         spawn_id, session_id, callsign, tmux_session, tmux_window, targetPath,
         null, Date.now(), skipPermissions ? 1 : 0, body?.remote_control === true ? 1 : 0,
         target.origin_url ?? null, body.branch, branchMode, gateway.use ? 1 : 0,
+        kind, body?.setup_cmd || null,
       );
 
       const finishMaterialization = async (materialized, source) => {
@@ -794,7 +864,11 @@ export function createSpawns(ctx) {
 
     const session_id = randomUUID();
     const spawn_id = randomUUID();
-    const c = createSpawnedCard(session_id, cwd, body?.prompt);
+    const c = kind === 'shell'
+      ? createSpawnedCard(session_id, cwd, null, {
+          deriveRepo: true, source: 'shell', col: 'idle', note: 'shell',
+        })
+      : createSpawnedCard(session_id, cwd, body?.prompt);
     const callsign = c.callsign;
     const tmux_session = tmuxAdapter.sessionName(port);
     const tmux_window = tmuxAdapter.windowName(port, callsign);
@@ -802,6 +876,7 @@ export function createSpawns(ctx) {
       spawn_id, session_id, callsign, tmux_session, tmux_window, cwd,
       null, Date.now(), skipPermissions ? 1 : 0, body?.remote_control === true ? 1 : 0,
       null, null, null, gateway.use ? 1 : 0,
+      kind, body?.setup_cmd || null,
     );
 
     let worktree_path = null;
@@ -849,6 +924,9 @@ export function createSpawns(ctx) {
   async function revive(spawn_id, body = {}) {
     const row = q.getSpawn.get(spawn_id);
     if (!row) return { status: 404, body: { ok: false, reason: 'no such spawn' } };
+    if (row.kind === 'shell') {
+      return { status: 410, body: { ok: false, reason: 'shell sessions have no conversation to resume' } };
+    }
     if (!['pane-dead', 'killed', 'gone'].includes(row.status)) {
       return { status: 409, body: { ok: false, reason: `spawn is ${row.status}, not revivable` } };
     }
@@ -1086,7 +1164,7 @@ export function createSpawns(ctx) {
     // up. (adopt passes worktree_path:null — it never creates a worktree.)
     q.insertProvisionalSpawn.run(new_spawn_id, session_id, callsign, tmux_session,
       tmux_window, requested_cwd, worktree_path, Date.now(), skip_permissions ? 1 : 0,
-      remoteWanted ? 1 : 0, null, null, null, gatewayEnv ? 1 : 0);
+      remoteWanted ? 1 : 0, null, null, null, gatewayEnv ? 1 : 0, 'claude', null);
 
     const compensateResume = reason => spawnCompensate({
       spawn_id: new_spawn_id,
@@ -1360,6 +1438,9 @@ export function createSpawns(ctx) {
   async function enableRemote(spawn_id) {
     const row = q.getSpawn.get(spawn_id);
     if (!row) return { status: 404, body: { ok: false, reason: 'no such spawn' } };
+    if (row.kind === 'shell') {
+      return { status: 409, body: { ok: false, reason: 'remote control is unavailable for shell sessions' } };
+    }
     if (row.status !== 'live') {
       return { status: 409, body: { ok: false, reason: `spawn is ${row.status}, not live` } };
     }
@@ -1450,7 +1531,7 @@ export function createSpawns(ctx) {
       };
     }
     const c = q.getSession.get(row.session_id);
-    if (c && c.col !== 'offline' && force !== true) {
+    if (row.kind !== 'shell' && c && c.col !== 'offline' && force !== true) {
       return {
         status: 409,
         body: { ok: false, reason: `session ${c.callsign} is ${c.col}, not offline — pass force:true to kill anyway` },
@@ -1610,20 +1691,36 @@ export function createSpawns(ctx) {
       //   deadSignal: true = looks dead, false = live claude, null = some other
       //   command → UNKNOWN, no action (unchanged firstmate rule).
       let deadSignal;
+      let immediateDead = false;
+      const shell = row.kind === 'shell';
+      const setupPhase = !!row.setup_cmd && (row.status === 'spawning' || row.status === 'stalled');
       if (win.pane_dead) {
         deadSignal = true;
+        immediateDead = setupPhase;
+      } else if (shell) {
+        // A shell card exists to run arbitrary interactive commands. bash,
+        // vim, or a hand-started claude are all equally alive.
+        deadSignal = false;
       } else if (win.pane_cmd === 'claude') {
         deadSignal = false; // fast path: lowest pane already reads claude, no extra probe needed
       } else {
         const pane = await tmuxAdapter.paneCurrentCommand(scopedPaneTarget(win));
         if (pane && !pane.dead && pane.cmd === 'claude') deadSignal = false;       // active pane IS a live claude
-        else if (pane?.dead || (pane && SHELL_RE.test(pane.cmd))) deadSignal = true; // dead / bare shell remnant
+        else if (pane?.dead) {
+          deadSignal = true;
+          immediateDead = setupPhase;
+        } else if (setupPhase && pane) {
+          deadSignal = false; // setup may be sh, sleep, python, npm, …
+        } else if (pane && SHELL_RE.test(pane.cmd)) deadSignal = true; // bare shell remnant
         else deadSignal = null;                                                     // failed probe / other cmd → unknown
       }
       if (deadSignal === false) {
         condemnStreak.delete(row.spawn_id); // a live read resets the hysteresis counter
-        if (row.status === 'spawning' && Date.now() - row.requested_at > SPAWN_REGISTER_MS) {
-          const note = `pane up but never registered — env/port issue? window ${row.tmux_window}`;
+        const registerMs = row.setup_cmd ? SETUP_REGISTER_MS : SPAWN_REGISTER_MS;
+        if (row.status === 'spawning' && Date.now() - row.requested_at > registerMs) {
+          const note = row.setup_cmd
+            ? `pane up but never registered — setup may still be running; check window ${row.tmux_window}`
+            : `pane up but never registered — env/port issue? window ${row.tmux_window}`;
           q.setSpawnStatus.run('stalled', row.spawn_id);
           // Loud lane, deliberately: a stalled spawn is a human's problem now
           // (fail loud, never auto-respawn). The first late hook re-derives col.
@@ -1643,18 +1740,25 @@ export function createSpawns(ctx) {
       // dead reads before condemning a LIVE spawn, so a single transient dead
       // read cannot condemn a card the resurrect loop would only flip back next
       // tick. A genuinely dead pane just condemns one tick later.
-      const streak = (condemnStreak.get(row.spawn_id) ?? 0) + 1;
-      if (streak < CONDEMN_DEAD_READS) {
-        condemnStreak.set(row.spawn_id, streak);
-        continue;
+      if (!immediateDead) {
+        const streak = (condemnStreak.get(row.spawn_id) ?? 0) + 1;
+        if (streak < CONDEMN_DEAD_READS) {
+          condemnStreak.set(row.spawn_id, streak);
+          continue;
+        }
       }
       q.setSpawnStatus.run('pane-dead', row.spawn_id);
       forgetSpawn(row.spawn_id); // M-G2 (also clears the condemnStreak entry)
       const c = q.getSession.get(row.session_id);
       if (c && c.ended_at == null) {
+        const note = setupPhase
+          ? 'pane exited during setup/bring-up — open the terminal for the error'
+          : shell
+            ? 'shell pane exited — window kept for scrollback'
+            : `pane idle — resume with claude --resume ${row.session_id}`;
         tombstoneCard(row.session_id, { // D8
-          note: `pane idle — resume with claude --resume ${row.session_id}`,
-          tickMsg: `💀 ${c.callsign} pane died (claude no longer running) — window kept for scrollback`,
+          note,
+          tickMsg: `💀 ${c.callsign} pane died — window kept for scrollback`,
         });
       }
       onMutate();
@@ -1679,7 +1783,7 @@ export function createSpawns(ctx) {
       // stale on remain-on-exit panes; pane_dead already screened above). This
       // is the exact liveness test ownedPaneDeliverable trusts to type mail in.
       const pane = await tmuxAdapter.paneCurrentCommand(scopedPaneTarget(win));
-      if (!pane || pane.dead || pane.cmd !== 'claude') continue; // bare shell / not claude → stays condemned
+      if (!pane || pane.dead || (row.kind !== 'shell' && pane.cmd !== 'claude')) continue;
       resurrectSpawn(row);
     }
     // Keep the boot-computed orphan list honest: windows that disappear

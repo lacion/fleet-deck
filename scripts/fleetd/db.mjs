@@ -149,7 +149,9 @@ CREATE TABLE IF NOT EXISTS spawns (
   origin_url     TEXT,                   -- repo-mode clone source; NULL for cwd-mode spawns
   requested_branch TEXT,                 -- repo-mode branch requested by the board
   branch_mode    TEXT,                   -- repo-mode worktree | in-place
-  gateway        INTEGER DEFAULT 0       -- routed through the LLM gateway (settings.gateway_*)
+  gateway        INTEGER DEFAULT 0,      -- routed through the LLM gateway (settings.gateway_*)
+  kind           TEXT DEFAULT 'claude',  -- claude | shell
+  setup_cmd      TEXT                    -- visible pre-Claude POSIX sh setup
 );
 CREATE INDEX IF NOT EXISTS idx_spawns_session ON spawns(session_id);
 CREATE INDEX IF NOT EXISTS idx_spawns_status ON spawns(status);
@@ -283,6 +285,12 @@ function migrate(db) {
   }
   if (spawnCols.length && !spawnCols.includes('branch_mode')) {
     db.exec('ALTER TABLE spawns ADD COLUMN branch_mode TEXT');
+  }
+  if (spawnCols.length && !spawnCols.includes('kind')) {
+    db.exec("ALTER TABLE spawns ADD COLUMN kind TEXT DEFAULT 'claude'");
+  }
+  if (spawnCols.length && !spawnCols.includes('setup_cmd')) {
+    db.exec('ALTER TABLE spawns ADD COLUMN setup_cmd TEXT');
   }
 }
 
