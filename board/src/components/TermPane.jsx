@@ -140,7 +140,15 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
       } else if (f.t === 'exit') {
         end('exit', `agent ended — ${f.reason || 'pane closed'}`);
       } else if (f.t === 'err') {
-        end('err', `viewer refused: ${f.reason || 'unknown'}`);
+        // Belt-and-suspenders for a new board talking to an old daemon: a
+        // "pane gone / spawn not live" reason IS the agent ending, so render it
+        // with the calm exit styling rather than the alarming "viewer refused".
+        // A current daemon already sends these as {t:'exit'} (see http.mjs).
+        if (/pane (not found|is gone)|spawn is not live/.test(f.reason || '')) {
+          end('exit', `agent ended — ${f.reason}`);
+        } else {
+          end('err', `viewer refused: ${f.reason || 'unknown'}`);
+        }
       }
     };
     ws.onclose = () => { if (!st.done) end('close', 'connection closed'); };

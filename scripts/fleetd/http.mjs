@@ -1182,7 +1182,18 @@ export function createHttp(core, {
       });
       if (socketClosed) handle.close();
     } catch (err) {
-      send({ t: 'err', reason: err?.reason || err?.message || 'terminal unavailable' });
+      if (err?.gone) {
+        // The row said live but its pane was already gone (agent ended, tick
+        // hasn't reconciled). Report it as an exit ("the agent has ended"), not
+        // a scary "viewer refused", and kick a liveness reconcile so the stale
+        // row flips promptly instead of waiting for the ≤10s tick. We do NOT
+        // condemn the row here: window-absence is UNKNOWN by house doctrine —
+        // the tick owns condemnation with its condemnStreak hysteresis.
+        send({ t: 'exit', reason: err.reason });
+        core.spawnLivenessTick?.().catch(() => { /* fire-and-forget reconcile */ });
+      } else {
+        send({ t: 'err', reason: err?.reason || err?.message || 'terminal unavailable' });
+      }
       try { ws.close(); } catch { /* already gone */ }
     }
   });
