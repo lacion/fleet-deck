@@ -391,6 +391,47 @@ textarea.fd-input { font-family: var(--font-ui); font-size: 13px; resize: none; 
 .fd-compose .send { background: var(--act); color: var(--act-ink); border: none; border-radius: var(--r-ctl); padding: 8px 18px; font-size: 13px; font-weight: 600; cursor: pointer; }
 .fd-compose .send:hover { opacity: .9; }
 .fd-compose .send:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+/* v2.6 — the orchestrator-grammar hint under the textarea (daemon target only) */
+.fd-composehint { display: flex; flex-direction: column; gap: 7px; }
+.fd-composehint .hint-line { font-family: var(--font-data); font-size: var(--fs-micro); color: var(--faint); }
+.fd-composehint .hint-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.fd-cmdchip {
+  background: var(--code); border: 1px solid var(--border); border-radius: var(--r-chip);
+  color: var(--dim); font-family: var(--font-data); font-size: 11px; padding: 3px 9px; cursor: pointer;
+}
+.fd-cmdchip:hover { color: var(--text); border-color: var(--dim); }
+.fd-cmdchip:focus-visible { outline: 2px solid var(--act); outline-offset: 2px; }
+
+/* ============ help overlay (v2.6 — the "?" button / key) ============ */
+.fd-helpwrap { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: flex; align-items: flex-start; justify-content: center; padding: 6vh 3vw; z-index: 20; }
+.fd-help {
+  width: min(760px, 100%); max-height: 88vh;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  display: flex; flex-direction: column; overflow: hidden; text-align: left;
+  box-shadow: 0 24px 60px rgba(0,0,0,.4); animation: fdSlideIn .2s ease-out 1;
+}
+.fd-helphead {
+  flex: none; display: flex; align-items: center; gap: 10px;
+  padding: 12px 16px; border-bottom: 1px solid var(--border-soft);
+}
+.fd-helphead .lbl { font-family: var(--font-data); font-size: 11px; letter-spacing: 2px; color: var(--faint); }
+.fd-helpbody { flex: 1; min-height: 0; overflow-y: auto; padding: 14px 18px 18px; display: flex; flex-direction: column; gap: 18px; }
+.fd-helpbody h3 {
+  margin: 0 0 8px; font-family: var(--font-data); font-size: var(--fs-micro);
+  font-weight: 600; letter-spacing: var(--ls-label); color: var(--dim); text-transform: uppercase;
+}
+.fd-helpintro { margin: 0 0 10px; font-size: 12.5px; color: var(--dim); line-height: 1.5; }
+.fd-helpintro b { color: var(--text); }
+.fd-helplist { display: grid; grid-template-columns: minmax(150px, auto) 1fr; gap: 5px 14px; margin: 0; }
+.fd-helplist dt { font-family: var(--font-data); font-size: 12px; color: var(--text); white-space: nowrap; }
+.fd-helplist dt .ico { display: inline-block; width: 18px; color: var(--act); }
+.fd-helplist dt kbd, .fd-helplist dt code {
+  font-family: var(--font-data); font-size: 11px; color: var(--text);
+  background: var(--code); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px;
+}
+.fd-helplist dd { margin: 0; font-size: 12.5px; color: var(--dim); line-height: 1.45; }
+.fd-helplist.cmds { grid-template-columns: minmax(230px, auto) 1fr; }
+.fd-helplist.cmds dt { white-space: normal; }
 
 /* ============ spawn (v1.2 — dynamic fleet) ============ */
 .fd-spawncount { font-family: var(--font-data); font-size: 10px; color: var(--faint); }
@@ -669,19 +710,61 @@ textarea.fd-input { font-family: var(--font-ui); font-size: 13px; resize: none; 
 .fd.compact .fd-feed { height: 112px; }
 .fd.compact .fd-planlist { max-height: 240px; }
 
-/* ============ live terminal modal (v1.4) ============ */
-/* Above compose (20) — one terminal at a time, closed via ✕ ONLY (Esc goes
-   to the agent's TUI, never to the board while this is open). */
-.fd-termwrap {
-  position: fixed; inset: 0; background: rgba(0,0,0,.55);
-  display: flex; align-items: center; justify-content: center;
-  padding: 4vh 3vw; z-index: 30;
-}
-.fd-term {
-  width: min(1060px, 100%); height: min(720px, 100%);
+/* ============ floating live terminal (v2.6, was the v1.4 modal) ============ */
+/* One terminal at a time, closed via ✕ ONLY (Esc goes to the agent's TUI,
+   never to the board while typing in it). No scrim: the board behind stays
+   visible AND interactive — that is the point. z-15 sits above the drawer (10)
+   and BELOW every real modal (compose/spawn 20, grid/dirpicker 30), so dialogs
+   always open over it. Geometry comes inline from App (left/top/width/height),
+   clamped by clampWinRect so the drag bar can never leave the screen. */
+.fd-termfloat {
+  position: fixed; z-index: 15;
   background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
   display: flex; flex-direction: column; overflow: hidden; text-align: left;
   box-shadow: 0 24px 60px rgba(0,0,0,.4); animation: fdSlideIn .2s ease-out 1;
+}
+/* maximize toggle = the old modal's footprint, centered */
+.fd-termfloat.max {
+  left: 50% !important; top: 50% !important; transform: translate(-50%, -50%);
+  width: min(1060px, 94vw) !important; height: min(720px, 92vh) !important;
+}
+/* minimized: stays MOUNTED (socket + screen survive) but takes no space and no
+   keys (TermPane gets live=false, xterm stdin off). */
+.fd-termfloat.min { display: none; }
+.fd-termgrab { cursor: grab; user-select: none; touch-action: none; }
+.fd-termgrab:active { cursor: grabbing; }
+.fd-winbtn {
+  background: none; border: 1px solid transparent; border-radius: var(--r-ctl);
+  color: var(--dim); font-size: 13px; line-height: 1; padding: 5px 8px; cursor: pointer; flex: none;
+}
+.fd-winbtn:hover { color: var(--text); border-color: var(--dim); }
+.fd-winbtn:focus-visible { outline: 2px solid var(--act); outline-offset: 2px; }
+.fd-termresize {
+  position: absolute; right: 0; bottom: 0; width: 22px; height: 22px;
+  display: flex; align-items: flex-end; justify-content: flex-end;
+  padding: 0 3px 1px 0; cursor: nwse-resize; touch-action: none;
+  color: var(--faint); font-size: 10px; user-select: none;
+}
+.fd-termresize:hover { color: var(--dim); }
+/* the dock the minimized window collapses to */
+.fd-termdock { position: fixed; right: 14px; bottom: 14px; z-index: 15; display: flex; gap: 8px; }
+.fd-dockchip {
+  display: flex; align-items: center; gap: 7px;
+  background: var(--surface); border: 1px solid var(--act); border-radius: var(--r-ctl);
+  color: var(--text); font-family: var(--font-data); font-size: 12px; font-weight: 600;
+  padding: 8px 14px; cursor: pointer; box-shadow: 0 8px 24px rgba(0,0,0,.35);
+}
+.fd-dockchip:hover { background: var(--act-bg); }
+.fd-dockchip:focus-visible { outline: 2px solid var(--act); outline-offset: 2px; }
+/* small / touch viewports: full-screen like the old modal, no handles — a
+   floating window you can't precisely drag is worse than no window. */
+@media (max-width: 720px), (pointer: coarse) {
+  .fd-termfloat {
+    left: 0 !important; top: 0 !important; transform: none;
+    width: 100vw !important; height: 100vh !important; border-radius: 0;
+  }
+  .fd-termresize { display: none; }
+  .fd-termgrab { cursor: default; }
 }
 .fd-termhead {
   flex: none; display: flex; align-items: center; gap: 10px;

@@ -1,12 +1,15 @@
 import { useEffect } from 'react';
 import { getQuestion } from '../qbus.js';
 
-// The board's global keyboard shortcuts:
+// The board's global keyboard shortcuts (the canonical human-readable list is
+// HOTKEYS in board/src/helpText.js — shown by the "?" overlay; keep both in
+// the same commit):
 //   j / k · ↓ / ↑   move the inbox rail selection
 //   y / n           answer the selected permission (allow / deny)
 //   1-9             pick the n-th option of the selected choice
 //   Enter           focus the selected freeform's answer box
 //   c               open Compose (to all)
+//   ?               open the help overlay
 //   Esc             close the topmost overlay
 //
 // M-F6 — the answer keys reach the selected card through its registered
@@ -45,24 +48,35 @@ export function blockingOverlayOpen(overlays) {
 }
 
 export function useBoardHotkeys({
-  pendingQs, selQ, setSelQ, termOpen, killOpen, armOpen, renameOpen, fsOpen,
+  pendingQs, selQ, setSelQ, gridOpen, killOpen, armOpen, renameOpen, fsOpen,
   setKillAsk, setArmAsk, setRenameAsk, setDrawerSid, setCompose, setSpawnForm, setLanOpen, setWtOpen, setFsView,
-  // Overlay refs. The four above (term/kill/arm/rename) reach this hook directly;
-  // compose/spawnForm/lan/wt are plain state in App, which mirrors each into a ref
-  // (the same way useTermWindows mirrors killAsk→killOpen) and threads it here, so
-  // ALL overlays suppress the answer/nav keys. blockingOverlayOpen still ignores
-  // any entry that is nullish, so an unthreaded ref is simply inert. fsOpen (the
-  // file viewer) is a plain boolean, which blockingOverlayOpen also accepts.
-  composeOpen, spawnOpen, lanOpen, wtOpen,
+  setHelpOpen,
+  // Overlay refs. The four above (grid/kill/arm/rename) reach this hook directly;
+  // compose/spawnForm/lan/wt/help are plain state in App, which mirrors each into
+  // a ref (the same way useTermWindows mirrors killAsk→killOpen) and threads it
+  // here, so ALL overlays suppress the answer/nav keys. blockingOverlayOpen still
+  // ignores any entry that is nullish, so an unthreaded ref is simply inert.
+  // fsOpen (the file viewer) is a plain boolean, which blockingOverlayOpen also
+  // accepts.
+  //
+  // v2.6 — the FLOATING terminal window is deliberately absent from this hook:
+  // it is non-modal, so with focus on the BOARD the hotkeys work (that is the
+  // point of floating). Keys typed INTO the window never reach here — it stops
+  // propagation itself, exactly as the old modal did. Only the GRID (the wall,
+  // still full-screen) suppresses.
+  composeOpen, spawnOpen, lanOpen, wtOpen, helpOpen,
 }) {
   useEffect(() => {
     const onKey = (e) => {
       const tag = (e.target.tagName || '').toLowerCase();
       const typing = tag === 'input' || tag === 'textarea' || tag === 'select';
-      // Esc NEVER touches the live terminal — the agent's TUI needs it. The
-      // modal stops propagation itself; this guard covers stray focus too.
+      // Esc NEVER touches a live terminal — the agent's TUI needs it. The grid
+      // stops propagation itself; this guard covers stray focus too. The
+      // floating window is NOT closed by Esc either (✕ / dock only): with board
+      // focus, Esc falls through to the overlay chain below, and the window
+      // stays — closing a terminal must always be a deliberate click.
       if (e.key === 'Escape') {
-        if (termOpen.current) return;
+        if (gridOpen.current) return;
         // the kill / move-to-tmux / rename dialogs are modal over everything
         // else: Esc cancels the open one, and leaves the drawer it may have been
         // opened from standing (only one of the three is ever open at a time).
@@ -72,6 +86,8 @@ export function useBoardHotkeys({
         if (killOpen.current) { setKillAsk(null); return; }
         if (armOpen.current) { setArmAsk(null); return; }
         if (renameOpen.current) { setRenameAsk(null); return; }
+        // the help overlay peels off alone, like the dialogs above it
+        if (helpOpen?.current) { setHelpOpen(false); return; }
         // v2.2 — the file viewer opens OVER the drawer; Esc peels it off alone
         // so the drawer you launched it from is still there behind it. (Its
         // search box eats the first Esc itself when it holds a query.)
@@ -81,11 +97,13 @@ export function useBoardHotkeys({
         return;
       }
       if (typing) return;
-      // M-F7 — under an open modal, don't let y/n · 1-9 · Enter (or j/k · c)
+      // M-F7 — under an open modal, don't let y/n · 1-9 · Enter (or j/k · c · ?)
       // leak past the overlay; Esc above already owns the modal. Read the same
       // synchronously-read refs so a stale closure can't misroute an answer.
+      // (v2.6: gridOpen replaced termOpen here — the floating terminal window
+      // is non-modal by design and does not suppress.)
       if (blockingOverlayOpen([
-        termOpen, killOpen, armOpen, renameOpen, composeOpen, spawnOpen, lanOpen, wtOpen, fsOpen,
+        gridOpen, killOpen, armOpen, renameOpen, composeOpen, spawnOpen, lanOpen, wtOpen, fsOpen, helpOpen,
       ])) return;
       const idx = pendingQs.findIndex((q) => q.id === selQ);
       if (e.key === 'j' || e.key === 'ArrowDown') {
@@ -97,6 +115,11 @@ export function useBoardHotkeys({
       } else if (e.key === 'c') {
         e.preventDefault();
         setCompose({ target: 'all' });
+      } else if (e.key === '?') {
+        // Shift+/ arrives as key '?'; the `typing` guard above keeps a literal
+        // "?" typed into an input from opening help.
+        e.preventDefault();
+        setHelpOpen?.(true);
       } else {
         const q = pendingQs[idx];
         if (!q) return;
@@ -113,9 +136,9 @@ export function useBoardHotkeys({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-    // Setters (useState) and the termOpen/killOpen/armOpen/renameOpen refs are
+    // Setters (useState) and the gridOpen/killOpen/armOpen/renameOpen refs are
     // referentially stable, so this effect still only re-subscribes when the rail
     // selection changes (and when the file viewer opens/closes — fsOpen is a
     // plain boolean, not a ref).
-  }, [pendingQs, selQ, termOpen, killOpen, armOpen, renameOpen, fsOpen, composeOpen, spawnOpen, lanOpen, wtOpen, setKillAsk, setArmAsk, setRenameAsk, setDrawerSid, setCompose, setSpawnForm, setLanOpen, setWtOpen, setFsView]);
+  }, [pendingQs, selQ, gridOpen, killOpen, armOpen, renameOpen, fsOpen, composeOpen, spawnOpen, lanOpen, wtOpen, helpOpen, setKillAsk, setArmAsk, setRenameAsk, setDrawerSid, setCompose, setSpawnForm, setLanOpen, setWtOpen, setFsView, setHelpOpen]);
 }

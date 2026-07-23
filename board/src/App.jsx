@@ -26,10 +26,12 @@ import RenameDialog from './components/RenameDialog.jsx';
 import WorktreesModal from './components/WorktreesModal.jsx';
 import FileViewer from './components/FileViewer.jsx';
 import TokenGate from './components/TokenGate.jsx';
+import HelpOverlay from './components/HelpOverlay.jsx';
 
 // v1.4 — lazy: xterm.js (~300 kB) loads only when a terminal is opened.
 // v1.9 — the grid shares the same chunk: both are TermPane in a different box.
-const TermModal = React.lazy(() => import('./components/TermModal.jsx'));
+// v2.6 — TermWindow (floating) replaced the full-screen TermModal.
+const TermWindow = React.lazy(() => import('./components/TermWindow.jsx'));
 const TermGrid = React.lazy(() => import('./components/TermGrid.jsx'));
 
 // Stable empty singletons for absent snapshot fields — a fresh `[]`/`{}` per
@@ -51,6 +53,7 @@ export default function App() {
   const [lanOpen, setLanOpen] = useState(false); // v1.7 LAN share panel
   const [wtOpen, setWtOpen] = useState(false); // v1.9 worktrees modal
   const [fsView, setFsView] = useState(null); // v2.2 file viewer — null | {scope:'session', sid, callsign, root, path?} | {scope:'home'}
+  const [helpOpen, setHelpOpen] = useState(false); // v2.6 "?" overlay
   const [priorities, setPriorities] = useState(() => new Set());
   const [threads, setThreads] = useState({}); // sid -> [{text, at}] (this tab only)
 
@@ -85,8 +88,10 @@ export default function App() {
   // standing)
   const {
     term, setTerm, grid, setGrid, watch,
+    termMin, minimizeTerm, restoreTerm, closeTerm,
+    termMax, toggleTermMax, termRect, setTermRect,
     termableSessions, watchable, openTerm, toggleWatch, openGrid,
-    termOpen, killOpen, armOpen, renameOpen,
+    gridOpen, killOpen, armOpen, renameOpen,
   } = useTermWindows(sessions, killAsk, armAsk, renameAsk);
   // worktrees list — reloads on boot and whenever the fleet gains/loses a session
   const {
@@ -97,7 +102,7 @@ export default function App() {
   // R3-4 — the header "▦ Terminals" button is a persistent focus target: when
   // the grid promotes a tile to the full modal, the grid (and the ⤢ button that
   // opened the modal) unmount, so the modal has no live opener to restore to on
-  // close. This ref is its safety net (handed to TermModal + TermGrid).
+  // close. This ref is its safety net (handed to TermWindow + TermGrid).
   const termBtnRef = useRef(null);
 
   // 1 s clock: ages, countdown rings, header clock
@@ -129,12 +134,17 @@ export default function App() {
   const spawnOpenRef = useRef(false); spawnOpenRef.current = spawnForm != null;
   const lanOpenRef = useRef(false); lanOpenRef.current = lanOpen;
   const wtOpenRef = useRef(false); wtOpenRef.current = wtOpen;
+  const helpOpenRef = useRef(false); helpOpenRef.current = helpOpen;
 
-  // keyboard: j/k rail nav · y/n permission · 1-9 choice · c compose · Esc close
+  // keyboard: j/k rail nav · y/n permission · 1-9 choice · c compose · ? help ·
+  // Esc close. v2.6: the floating terminal window is non-modal and absent here;
+  // only the grid suppresses (gridOpen).
   useBoardHotkeys({
-    pendingQs, selQ, setSelQ, termOpen, killOpen, armOpen, renameOpen, fsOpen: !!fsView,
+    pendingQs, selQ, setSelQ, gridOpen, killOpen, armOpen, renameOpen, fsOpen: !!fsView,
     setKillAsk, setArmAsk, setRenameAsk, setDrawerSid, setCompose, setSpawnForm, setLanOpen, setWtOpen, setFsView,
+    setHelpOpen,
     composeOpen: composeOpenRef, spawnOpen: spawnOpenRef, lanOpen: lanOpenRef, wtOpen: wtOpenRef,
+    helpOpen: helpOpenRef,
   });
 
   const stale = status !== 'live';
@@ -251,6 +261,7 @@ export default function App() {
         onToggleCompact={() => setCompact(!compact)}
         theme={theme}
         onToggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+        onHelp={() => setHelpOpen(true)}
       />
 
       {/* ============ conflict strip ============ */}
@@ -512,18 +523,41 @@ export default function App() {
         />
       )}
 
-      {/* ============ live terminal (v1.4 — closes via ✕ ONLY) ============ */}
+      {/* ============ help overlay (v2.6 — the "?" button / key) ============ */}
+      {helpOpen && <HelpOverlay onClose={() => setHelpOpen(false)} />}
+
+      {/* ====== live terminal (v2.6 — FLOATING: drag/resize/minimize; the board
+              behind stays interactive. Closes via ✕ ONLY — never Esc.) ====== */}
       {term && (
         <React.Suspense fallback={null}>
-          <TermModal
+          <TermWindow
             key={term.spawnId}
             spawnId={term.spawnId}
             callsign={term.callsign}
             tmuxWindow={term.window}
             fallbackFocusRef={termBtnRef}
-            onClose={() => setTerm(null)}
+            onClose={closeTerm}
+            rect={termRect}
+            onRect={setTermRect}
+            minimized={termMin}
+            onMinimize={minimizeTerm}
+            maximized={termMax}
+            onToggleMax={toggleTermMax}
           />
         </React.Suspense>
+      )}
+      {/* the dock chip the minimized window collapses to — the socket stays up */}
+      {term && termMin && (
+        <div className="fd-termdock">
+          <button
+            type="button"
+            className="fd-dockchip"
+            title="restore the live terminal"
+            onClick={restoreTerm}
+          >
+            ▣ {term.callsign}
+          </button>
+        </div>
       )}
 
       {/* ============ the wall of screens (v1.9 — ✕ ONLY, same as above) ===== */}
@@ -533,7 +567,7 @@ export default function App() {
             tiles={grid}
             fallbackFocusRef={termBtnRef}
             onClose={() => setGrid(null)}
-            onExpand={(t) => { setGrid(null); setTerm(t); }}
+            onExpand={(t) => { setGrid(null); restoreTerm(); setTerm(t); }}
           />
         </React.Suspense>
       )}

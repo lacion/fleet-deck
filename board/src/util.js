@@ -193,6 +193,38 @@ export function expandBatchTasks(tasks) {
   return (tasks || []).flatMap((t) => Array.from({ length: t.count }, () => t.prompt));
 }
 
+// ---------------------------------------------------- floating terminal rect
+
+// The floating terminal window's geometry bounds. MIN is small enough for a
+// glance-sized terminal, the margin keeps the drag handle reachable when a
+// window is shoved off an edge (48px of header always stays on screen).
+export const TERMWIN_MIN = { w: 380, h: 260 };
+export const TERMWIN_EDGE = 48;
+
+/**
+ * Clamp a floating-window rect to a viewport so it is always grabbable:
+ * size fits (never larger than the viewport, never below TERMWIN_MIN) and at
+ * least TERMWIN_EDGE px of the window remains inside every viewport edge.
+ * Pure — also sanitizes a malformed rect (NaN/negative from a stale
+ * localStorage entry) to a centered default.
+ */
+export function clampWinRect(rect, viewport) {
+  const vw = Math.max(viewport?.w || 0, TERMWIN_MIN.w);
+  const vh = Math.max(viewport?.h || 0, TERMWIN_MIN.h);
+  const num = (v, fb) => (Number.isFinite(v) ? v : fb);
+  let w = Math.round(num(rect?.w, 1060));
+  let h = Math.round(num(rect?.h, 720));
+  w = Math.min(Math.max(w, TERMWIN_MIN.w), vw);
+  h = Math.min(Math.max(h, TERMWIN_MIN.h), vh);
+  // default position: centered
+  let x = Math.round(num(rect?.x, (vw - w) / 2));
+  let y = Math.round(num(rect?.y, (vh - h) / 2));
+  // keep at least TERMWIN_EDGE of the window inside every edge
+  x = Math.min(Math.max(x, TERMWIN_EDGE - w), vw - TERMWIN_EDGE);
+  y = Math.min(Math.max(y, 0), vh - TERMWIN_EDGE); // top edge hard-stops: the drag bar must stay reachable
+  return { x, y, w, h };
+}
+
 // v1.4 live terminal — a board-owned pane is viewable while the pane exists:
 // spawning (incl. the stalled watchdog state) or live; never after exit/kill.
 export function spawnTermable(s) {

@@ -20,6 +20,7 @@ export default function Header({
   lanEnabled, onShare,
   compact, onToggleCompact,
   theme, onToggleTheme,
+  onHelp,
 }) {
   const legacyN = legacyUpgrade?.sessions?.length ?? 0;
   return (
@@ -135,6 +136,10 @@ export default function Header({
       </button>
       <button type="button" className="fd-hbtn dim" aria-label="Toggle theme" onClick={onToggleTheme}>
         {theme === 'dark' ? '☀ Light' : '● Dark'}
+      </button>
+      {/* v2.6 — what everything does, on one screen. Also on the ? key. */}
+      <button type="button" className="fd-hbtn dim" aria-label="Help" title="What everything does" onClick={onHelp}>
+        ? Help <span className="fd-kbd">?</span>
       </button>
     </div>
   );
