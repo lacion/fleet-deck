@@ -102,6 +102,7 @@ export function createStatements(db) {
       FROM sessions s
       WHERE s.ended_at IS NULL
         AND s.col NOT IN ('offline', 'needsyou')
+        AND COALESCE(s.source, '') != 'shell' -- a shell pane cannot take an assignment (mail into it would execute)
         AND (? IS NULL OR s.repo_id = ? OR s.repo_name = ?)
       ORDER BY CASE s.col WHEN 'idle' THEN 0 WHEN 'queued' THEN 1 ELSE 2 END,
         undelivered ASC,

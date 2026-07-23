@@ -783,3 +783,47 @@ exit 1
     error: 'malformed tmux window listing',
   });
 });
+
+// Adversarial-review MAJOR-1 regression pin: arming remain-on-exit for fleet
+// windows must be SESSION-scoped, never server-global. The rejected first cut
+// used `set-option -w -g -t =<session>` — which, despite the -t, writes the
+// SERVER-GLOBAL window default (verified on tmux 3.7b) and would leak
+// remain-on-exit onto every window of the user's shared default socket. The
+// shipped mechanism is a session-scoped after-new-window hook; this pins BOTH
+// halves: a fast-dying fleet window keeps its dead pane (the setup-failure
+// screen survives), and a foreign session on the same server stays untouched.
+test('newWindow arms remain-on-exit for the fleet session only — never server-global', { skip: !tmuxOk() && 'tmux server unavailable' }, async (t) => {
+  useLegacyGenerationMode(t);
+  const port = 22_000 + randomInt(1_000);
+  const socket = `fleetdeck-adapter-${process.pid}-${randomBytes(4).toString('hex')}`;
+  const previousSocket = process.env.FLEETDECK_TMUX_SOCKET;
+  process.env.FLEETDECK_TMUX_SOCKET = socket;
+  const userSession = `user-${port}`;
+  t.after(() => {
+    try { tmux(socket, ['kill-server']); } catch { /* already gone */ }
+    if (previousSocket == null) delete process.env.FLEETDECK_TMUX_SOCKET;
+    else process.env.FLEETDECK_TMUX_SOCKET = previousSocket;
+  });
+
+  // A "user's own" session shares the server, exactly like the default socket.
+  tmux(socket, ['-f', '/dev/null', 'new-session', '-d', '-s', userSession, 'sleep 3600']);
+  await ensureSession(port);
+
+  // A fleet window whose command dies immediately: the dead pane must survive
+  // (remain-on-exit armed BEFORE the command could exit — the hook closes the
+  // new-window→set-option race a plain per-window set loses).
+  const win = await newWindow({ port, callsign: 'roe', cwd: tmpdir(), argv: ['sh', '-c', 'echo SETUPFAIL; exit 7'] });
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  const dead = tmux(socket, ['display-message', '-p', '-t', win.window_id, '#{pane_dead}']);
+  assert.equal(dead, '1', 'fast-exit fleet pane is kept dead, not deleted');
+
+  // The server-global default is untouched…
+  const globalOpt = spawnSync('tmux', ['-L', socket, 'show-options', '-g', '-w', 'remain-on-exit'], { encoding: 'utf8' }).stdout.trim();
+  assert.ok(!/\bon$/.test(globalOpt), `server-global remain-on-exit must stay off/unset — got "${globalOpt}"`);
+
+  // …and a window dying in the USER's session still closes normally.
+  tmux(socket, ['new-window', '-d', '-t', `=${userSession}:`, '-n', 'udie', 'true']);
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  const userWindows = tmux(socket, ['list-windows', '-t', `=${userSession}`, '-F', '#{window_name}']);
+  assert.ok(!userWindows.includes('udie'), 'a user window must still close on exit');
+});

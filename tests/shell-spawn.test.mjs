@@ -193,3 +193,79 @@ test('real tmux keeps a healthy bash shell and condemns it after exit', { skip: 
   assert.equal(card.col, 'offline');
   assert.match(card.note, /shell pane exited/);
 });
+
+// --- adversarial-review MAJOR-2: the ORCHESTRATOR path must not route into a
+// shell. /mail's walls (fan-out exclusion + direct 409) do not cover /command:
+// `assign` resolves through resolveTargets and delivers via the raw mail()
+// insert, and `assign auto`'s autoCandidate ranked an idle shell FIRST — a
+// task the orchestrator reports as delivered would sit undeliverable forever
+// (ownedPaneRow refuses to type into a shell). These pin all three walls.
+test('orchestrator assign/assign-auto never route a task into a shell pane', async t => {
+  const cwd = scratch('fd-shell-orch-');
+  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  const db = openDb(':memory:');
+  t.after(() => db.close());
+  const tmuxState = fakeAdapter();
+  const core = createCore(db, { port: 4711, home: '/tmp/fd-shell-orch-home', tmuxAdapter: tmuxState.adapter });
+
+  const spawned = await core.spawn({ kind: 'shell', cwd });
+  assert.equal(spawned.status, 200);
+  const shellCard = db.prepare('SELECT * FROM sessions WHERE session_id = ?').get(spawned.body.session_id);
+
+  // assign auto with ONLY an idle shell on the board: unrouted, never the shell
+  const auto = core.command('assign auto do the thing');
+  assert.equal(auto.ok, false);
+  assert.equal(auto.unrouted, true);
+
+  // direct assign naming the shell's callsign: resolves to nothing
+  const direct = core.command(`assign ${shellCard.callsign} do the thing`);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM mail WHERE to_session = ?').get(shellCard.session_id).n, 0,
+    'no mail row may ever target a shell session');
+
+  // and the shell's prev_callsign (after a rename) must not route either
+  core.applyCustomName(shellCard.session_id, 'renamed');
+  const renamed = db.prepare('SELECT * FROM sessions WHERE session_id = ?').get(shellCard.session_id);
+  assert.ok(renamed.prev_callsign, 'rename must record the birth name');
+  core.command(`assign ${renamed.prev_callsign} do the thing`);
+  core.command(`assign ${renamed.callsign} do the thing`);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM mail WHERE to_session = ?').get(shellCard.session_id).n, 0,
+    'neither of a shell\'s names may route orchestrator mail');
+});
+
+// --- adversarial-review MINOR-1: a shell's ABANDONED birth name must not block
+// mail to a live claude that now wears it. Current-name-wins, exactly like
+// resolveTargets: the 409 fires only when everything the name resolves to is a
+// shell.
+test('a shell prev_callsign does not block mail to the claude now wearing the name', async t => {
+  const cwd = scratch('fd-shell-prevname-');
+  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  const db = openDb(':memory:');
+  t.after(() => db.close());
+  const tmuxState = fakeAdapter();
+  const core = createCore(db, { port: 4711, home: '/tmp/fd-shell-prevname-home', tmuxAdapter: tmuxState.adapter });
+
+  const spawned = await core.spawn({ kind: 'shell', cwd });
+  const shellCard = db.prepare('SELECT * FROM sessions WHERE session_id = ?').get(spawned.body.session_id);
+  // rename the shell away from its birth name, then hand that name to a claude
+  core.applyCustomName(shellCard.session_id, 'moved');
+  const birth = db.prepare('SELECT prev_callsign FROM sessions WHERE session_id = ?').get(shellCard.session_id).prev_callsign;
+  db.prepare('UPDATE sessions SET callsign = ? WHERE session_id = ?').run(birth, seedClaude(db, cwd));
+
+  // postMail returns the plain body on success and {status, body} on refusal
+  const res = await core.postMail({ to: birth, from: 'tester', text: 'for the claude' });
+  assert.equal(res.ok, true, `mail to the reissued name must reach the claude (got ${JSON.stringify(res)})`);
+  assert.equal(res.delivered, 1, 'exactly the claude receives it');
+
+  // while a name that STILL resolves only to the shell keeps the loud 409
+  const refused = await core.postMail({ to: db.prepare('SELECT callsign FROM sessions WHERE session_id = ?').get(shellCard.session_id).callsign, from: 'tester', text: 'nope' });
+  assert.equal(refused.status, 409);
+  assert.match(refused.body.reason, /shell pane/);
+});
+
+// A hook-registered claude session row, minimal columns, for mail-routing tests.
+function seedClaude(db, cwd) {
+  const sid = 'claude-' + Math.random().toString(16).slice(2, 10);
+  db.prepare(`INSERT INTO sessions (session_id, callsign, cwd, col, source, started_at, last_seen)
+    VALUES (?, ?, ?, 'idle', 'hooks', ?, ?)`).run(sid, 'temp-' + sid.slice(-4), cwd, Date.now(), Date.now());
+  return sid;
+}
