@@ -129,6 +129,9 @@ export function createStatements(db) {
     aliveSessionIds: db.prepare('SELECT session_id FROM sessions WHERE ended_at IS NULL AND archived_at IS NULL'),
     deleteDeadTouches: db.prepare(`DELETE FROM file_touches WHERE session_id IN (
       SELECT session_id FROM sessions WHERE ended_at IS NOT NULL OR archived_at IS NOT NULL)`),
+    // Per-card dismiss (Item 3): drop just this card's file ledger so the
+    // conflict radar can't keep arguing on behalf of a corpse.
+    deleteTouchesForSession: db.prepare('DELETE FROM file_touches WHERE session_id = ?'),
     deleteArchivedMail: db.prepare(`DELETE FROM mail WHERE to_session IN (
       SELECT session_id FROM sessions WHERE archived_at IS NOT NULL)`),
     insertCommand: db.prepare('INSERT INTO commands (at, text, parsed_json) VALUES (?, ?, ?)'),
@@ -187,6 +190,11 @@ export function createStatements(db) {
       ORDER BY requested_at DESC, rowid DESC LIMIT 1`),
     getSpawn: db.prepare('SELECT * FROM spawns WHERE spawn_id = ?'),
     spawnBySession: db.prepare('SELECT * FROM spawns WHERE session_id = ? ORDER BY requested_at DESC, rowid DESC LIMIT 1'),
+    // Per-card dismiss (Item 3): every spawn row of one lineage (a revive reuses
+    // the window name across rows), so dismiss can find its dead remain-on-exit
+    // windows to kill; and the stalled-guard the dismiss precondition consults.
+    spawnsForSession: db.prepare('SELECT * FROM spawns WHERE session_id = ?'),
+    stalledSpawnForSession: db.prepare("SELECT 1 FROM spawns WHERE session_id = ? AND status = 'stalled' LIMIT 1"),
     allSpawns: db.prepare('SELECT * FROM spawns ORDER BY requested_at, rowid'),
     activeSpawns: db.prepare("SELECT * FROM spawns WHERE status IN ('spawning', 'stalled', 'live')"),
     // BUG 3: 'pane-dead' and 'gone' were a ONE-WAY DOOR — activeSpawns never
@@ -238,6 +246,17 @@ export function createStatements(db) {
     expireArchivedMail: db.prepare(`UPDATE mail SET expired_at = ?
       WHERE delivered_at IS NULL AND expired_at IS NULL
         AND to_session IN (SELECT session_id FROM sessions WHERE archived_at IS NOT NULL)`),
+    // Per-card dismiss (Item 3): the single-session analogues of the bulk
+    // cleanup statements below. expireMailForSession expires just this card's
+    // undelivered queue; goneSessionSpawns flips just its non-terminal spawn
+    // rows to 'gone' (same terminal-status exclusions as goneArchivedSpawns, so
+    // a killed/pane-dead/gone row is never disturbed and a 'stalled' row is
+    // never silently swept — dismiss refuses a stalled card up front).
+    expireMailForSession: db.prepare(`UPDATE mail SET expired_at = ?
+      WHERE to_session = ? AND delivered_at IS NULL AND expired_at IS NULL`),
+    goneSessionSpawns: db.prepare(`UPDATE spawns SET status = 'gone'
+      WHERE status NOT IN ('killed', 'pane-dead', 'gone', 'stalled')
+        AND session_id = ?`),
     goneArchivedSpawns: db.prepare(`UPDATE spawns SET status = 'gone'
       WHERE status NOT IN ('killed', 'pane-dead', 'gone', 'stalled')
         AND session_id IN (SELECT session_id FROM sessions WHERE archived_at IS NOT NULL)`),

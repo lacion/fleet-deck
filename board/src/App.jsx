@@ -78,7 +78,7 @@ export default function App() {
     killAsk, setKillAsk, killBusy, askKill, doKill,
     armAsk, setArmAsk, armBusy, askArm, doArm, doDisarm,
     renameAsk, setRenameAsk, renameBusy, askRename, doRename, doResetName,
-    doRevive, doReviveAll, doEnableRemote,
+    doRevive, doReviveAll, doEnableRemote, doDismiss,
   } = useFleetActions({ showNote, revive, reviveAll, enableRemoteAction, adopt });
   // terminal / grid / watch windows — killAsk + armAsk + renameAsk are threaded in
   // for the keydown mirrors (Esc cancels the topmost dialog, leaves the drawer
@@ -321,6 +321,7 @@ export default function App() {
               onDisarm={doDisarm}
               adopting={adopting}
               onRename={askRename}
+              onDismiss={doDismiss}
             />
           )}
           {/* v1.3 — PLANS library, between the lanes and the feed (never in

@@ -996,6 +996,22 @@ export function createHttp(core, {
               const out = core.applyCustomName(nameMatch[1], clearing ? null : body.suffix);
               return json(res, out.ok ? 200 : 409, out);
             }
+            const sessionDismissMatch = /^\/api\/sessions\/([^/]+)\/dismiss$/.exec(url.pathname);
+            if (sessionDismissMatch) {
+              // Item 3 "per-card dismiss": retire ONE offline card now, instead
+              // of waiting for 24h retention or the bulk Clear that archives
+              // every offline card at once. Every guard (404 unknown / 409 not
+              // offline / 409 already dismissed / 409 stalled spawn) lives in
+              // derive; the CSRF/Host walls above apply like any control POST.
+              logExec(url.pathname, req);
+              core.dismissSession(sessionDismissMatch[1])
+                .then(out => json(res, out.status, out.body))
+                .catch(err => {
+                  console.error('fleetd dismiss error:', err);
+                  json(res, 500, { ok: false, reason: 'internal' });
+                });
+              return;
+            }
             const rcMatch = /^\/api\/spawn\/([A-Za-z0-9-]+)\/rc$/.exec(url.pathname);
             if (rcMatch) {
               // Explicit human board action: derive enforces the idle/live

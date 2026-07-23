@@ -244,5 +244,65 @@ export function createRetention(ctx) {
     };
   }
 
-  return { retentionSweep, cleanup };
+  // Per-card dismiss (Item 3): cleanup scoped to ONE offline card. Bulk "Clear"
+  // archives every offline card at once; this retires exactly one, so a human
+  // can dismiss a single dead session without waiting for 24h retention or
+  // clearing the whole offline lane. It uses the same primitives cleanup does —
+  // archive, expire the card's mail + questions, gone its non-terminal spawn
+  // rows, kill a dead remain-on-exit window — just scoped by session_id, and
+  // returns a control-API {status, body} so the route can speak real codes.
+  async function dismissSession(sid) {
+    const now = Date.now();
+    const s = q.getSession.get(sid);
+    if (!s) return { status: 404, body: { ok: false, reason: 'no such session' } };
+    // A card is dismissible only once it is offline (a live/working card is the
+    // human's to keep) and not already dismissed.
+    if (s.col !== 'offline') return { status: 409, body: { ok: false, reason: `session is ${s.col}, not offline` } };
+    if (s.archived_at != null) return { status: 409, body: { ok: false, reason: 'already dismissed' } };
+    // A 'stalled' spawn is a fail-loud human problem that even bulk cleanup
+    // refuses to sweep (archiveCandidates excludes it) — so dismiss refuses too,
+    // rather than paper over a "pane up but never phoned home".
+    if (q.stalledSpawnForSession.get(sid)) {
+      return { status: 409, body: { ok: false, reason: 'session has a stalled spawn — resolve it first' } };
+    }
+
+    // setArchived carries AND archived_at IS NULL, so .changes===0 means a
+    // concurrent dismiss claimed it a beat ago — report it already dismissed.
+    if (!q.setArchived.run(now, sid).changes) {
+      return { status: 409, body: { ok: false, reason: 'already dismissed' } };
+    }
+    const mail_expired = Number(q.expireMailForSession.run(now, sid).changes);
+    const questions_expired = Number(questions.expireAllForSession(sid, { includeFreeform: true }));
+    // Its non-terminal spawn rows go 'gone' so countActiveSpawns stops counting
+    // a dismissed card (a 'stalled' row can't be here — refused above).
+    q.goneSessionSpawns.run(sid);
+
+    // Kill only a DEAD remain-on-exit window this card owns — the exact rule
+    // cleanup uses (pane_dead + a terminal spawn status). A window whose pane is
+    // still a live claude is never touched here; the liveness tick owns that.
+    const myWindows = new Set(q.spawnsForSession.all(sid).map(r => r.tmux_window).filter(Boolean));
+    let windows_killed = 0;
+    if (myWindows.size) {
+      const wins = await tmuxAdapter.listScopedWindows(port);
+      const byName = new Map(q.allSpawns.all().map(r => [r.tmux_window, r]));
+      for (const win of wins ?? []) {
+        if (!myWindows.has(win.window)) continue;
+        const sp = byName.get(win.window);
+        if (!win.pane_dead || !sp || !['killed', 'pane-dead', 'gone'].includes(sp.status)) continue;
+        const out = await tmuxAdapter.killWindowVerified(win.window);
+        if (out.ok) windows_killed++;
+      }
+    }
+
+    // Drop just this card's file ledger so the conflict radar can't keep
+    // arguing on behalf of a corpse. The worktree on disk is deliberately LEFT
+    // in place (it stays listed in the Worktrees modal for explicit cleanup).
+    q.deleteTouchesForSession.run(sid);
+
+    tick(`⌫ dismissed ${s.callsign} — card, ${mail_expired} mail, ${questions_expired} question(s)${windows_killed ? `, ${windows_killed} window(s)` : ''}`);
+    onMutate();
+    return { status: 200, body: { ok: true, archived: 1, mail_expired, questions_expired, windows_killed } };
+  }
+
+  return { retentionSweep, cleanup, dismissSession };
 }

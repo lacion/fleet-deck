@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { cleanup, killSpawn, reasonOf, renameSession, armUnsupervised } from '../api.js';
+import { cleanup, killSpawn, reasonOf, renameSession, armUnsupervised, dismissSession } from '../api.js';
 import { safeUrl, validSuffix } from '../util.js';
 
 // The board-level fleet mutations that all report their outcome onto the shared
@@ -208,6 +208,22 @@ export function useFleetActions({ showNote, revive, reviveAll, enableRemoteActio
     });
   }, [adopt, showNote]);
 
+  // Item 3 — dismiss ONE offline card now (cleanup scoped to a single session).
+  // The card's ✕ chip owns the two-step confirm for a revivable card; this only
+  // fires the POST. Success is quiet on the board — the card leaves the offline
+  // lane on the next snapshot — so the strip carries the confirmation, and every
+  // refusal (409 not-offline / already dismissed / stalled, 404 unknown) reaches
+  // it verbatim.
+  const doDismiss = useCallback(async (s) => {
+    const label = s.callsign || s.session_id;
+    const res = await dismissSession(s.session_id);
+    if (res.ok && res.json?.ok !== false) {
+      showNote({ hd: '✓ DISMISSED', msg: `${label} — card cleared from the board · the worktree is left on disk` }, 8000);
+    } else {
+      showNote({ hd: '✗ DISMISS', err: `${label} — ${reasonOf(res, `dismiss failed (${res.status})`)}` }, 8000);
+    }
+  }, [showNote]);
+
   // v2.1 Rename — open the dialog. Offered on ANY live card: a rename touches
   // only the session's name, so a session the board never spawned (no `s.spawn`)
   // is as renameable as a board-owned pane — hence the optional-chain on the
@@ -277,6 +293,6 @@ export function useFleetActions({ showNote, revive, reviveAll, enableRemoteActio
     killAsk, setKillAsk, killBusy, askKill, doKill,
     armAsk, setArmAsk, armBusy, askArm, doArm, doDisarm,
     renameAsk, setRenameAsk, renameBusy, askRename, doRename, doResetName,
-    doRevive, doReviveAll, doEnableRemote,
+    doRevive, doReviveAll, doEnableRemote, doDismiss,
   };
 }
