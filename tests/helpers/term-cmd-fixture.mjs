@@ -16,6 +16,22 @@ import readline from 'node:readline';
 const record = process.env.FLEETDECK_TEST_TERM_RECORD;
 let number = 0;
 
+// Fault injection (Item 6): make the viewer's per-window pane lookup report a
+// VANISHED window so the bridge takes its "pane gone" path. The knob value
+// selects the failure MODE:
+//   'error' | '*'  → `list-panes -t` itself fails (%error)  → bridge sees !ok
+//   'empty'        → the command succeeds but hands back no pane id
+//   <substring>    → fail (%error) only windows whose name contains the value
+// Only the per-window `list-panes -t` lookup is affected; the `list-panes -a`
+// window-close probe still answers truthfully so viewer teardown is unaffected.
+const noPaneKnob = process.env.FLEETDECK_TEST_TERM_NO_PANE;
+function noPaneModeFor(window) {
+  if (!noPaneKnob) return null;
+  if (noPaneKnob === 'empty') return 'empty';
+  if (noPaneKnob === 'error' || noPaneKnob === '*') return 'error';
+  return window.includes(noPaneKnob) ? 'error' : null;
+}
+
 // window name -> pane id, assigned on first sight and stable thereafter
 const panes = new Map();
 const streamed = new Set();
@@ -58,7 +74,12 @@ process.stdin.resume();
 input.on('line', line => {
   note({ type: 'line', line });
   if (line.startsWith('list-panes -t ')) {
-    response([paneForListPanes(line)]);
+    const target = /-t\s+=\S*?:(\S+)/.exec(line);
+    const window = target?.[1]?.replace(/^=/, '') ?? 'default';
+    const mode = noPaneModeFor(window);
+    if (mode === 'error') response([], false);      // window gone: list-panes fails
+    else if (mode === 'empty') response([]);         // window gone: no pane id comes back
+    else response([paneForListPanes(line)]);
   } else if (line.startsWith('list-panes -a')) {
     response([...panes.values()]); // window-close probe: every pane still alive
   } else if (line.startsWith('capture-pane ')) {

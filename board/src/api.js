@@ -125,6 +125,15 @@ export function killSpawn(spawnId, force) {
   return post(`/api/spawn/${encodeURIComponent(spawnId)}/kill`, { force: !!force });
 }
 
+// Item 3 — per-card dismiss: retire ONE offline card now (cleanup scoped to a
+// single session), instead of waiting for 24h retention or the bulk Clear.
+// 200 {ok:true, archived:1, mail_expired, questions_expired, windows_killed}
+// or 4xx {ok:false, reason} (404 unknown / 409 not offline / already dismissed
+// / stalled spawn). The board fires and shows failures.
+export function dismissSession(sessionId) {
+  return post(`/api/sessions/${encodeURIComponent(sessionId)}/dismiss`, {});
+}
+
 // v1.7 — Ctrl+V an image into a terminal pane. `data` is base64 (a data: URL
 // straight from FileReader is fine — the daemon strips the prefix). The daemon
 // writes the file and answers { path }; TermPane then TYPES that path through

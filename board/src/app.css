@@ -918,6 +918,16 @@ textarea.fd-input { font-family: var(--font-ui); font-size: 13px; resize: none; 
    the top of this file already raises it over the .fd-cardopen overlay — R3-3.) */
 .fd-actbtn.rename { color: var(--dim); }
 .fd-actbtn.rename:hover { border-color: var(--act); background: var(--act-bg); color: var(--act); }
+/* ✕ dismiss (Item 3) — retire ONE offline card now. Dim at rest (the card is
+   already in the offline lane, on its way out); hazard on hover. A revivable
+   card takes two clicks — the first arms `.hazard` ("✕ sure? loses ⟲") for ~4s
+   so a stray click can't throw away the ⟲ revive door, the second dismisses. */
+.fd-actbtn.dismiss { color: var(--dim); }
+.fd-actbtn.dismiss:hover { border-color: var(--hazard); background: var(--hazard-bg); color: var(--hazard); }
+.fd-actbtn.dismiss.hazard {
+  color: var(--hazard); background: var(--hazard-bg); border-color: var(--hazard); font-weight: 600;
+}
+.fd-actbtn.dismiss.busy { cursor: default; opacity: .6; }
 
 /* ✎ in the drawer head — the rename door sitting ON the callsign it renames.
    Ghost-quiet until hovered: the head is an identity line, not a button bar. */

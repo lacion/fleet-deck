@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocket } from 'ws';
 import { startDaemon } from './helpers/daemon.mjs';
-import { postJson } from './helpers/http.mjs';
+import { postJson, getJson } from './helpers/http.mjs';
 import { waitUntil as waitUntilBase } from './helpers/wait.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -32,8 +32,17 @@ const waitUntil = (fn, label, timeoutMs = 6000) =>
 function connect(url) {
   const ws = new WebSocket(url);
   const frames = [];
+  const closes = [];
   ws.on('message', raw => { try { frames.push(JSON.parse(raw.toString())); } catch { /* malformed server frame */ } });
-  return { ws, frames };
+  ws.on('close', (code, reason) => { closes.push({ code, reason: reason?.toString?.() ?? '' }); });
+  return { ws, frames, closes };
+}
+
+/** The spawn's board row: its column and spawn status, or null if not shown. */
+async function spawnRow(daemon, spawnId) {
+  const state = (await getJson(`${daemon.baseUrl}/state`)).json;
+  const s = state.sessions.find(x => x.spawn?.spawn_id === spawnId);
+  return s ? { col: s.col, status: s.spawn.status } : null;
 }
 
 function env(record, extra = {}) {
@@ -213,3 +222,47 @@ test('live terminal WS returns err for an unknown spawn when enabled', async t =
   assert.equal(records(record).filter(r => r.type === 'start').length, 0,
     'a refused viewer must not have launched a control client');
 });
+
+// Item 6: the row said live but its pane was already gone (the agent ended
+// between the ~10s liveness tick and this open). A vanished pane is the agent
+// ENDING, not a viewer fault — so the client must receive {t:'exit'}
+// ("agent ended — …"), never the alarming {t:'err'} ("viewer refused: …").
+// FLEETDECK_TEST_TERM_NO_PANE makes the fixture's per-window pane lookup report
+// the window as gone: 'error' fails list-panes (%error, termbridge.mjs:437),
+// 'empty' returns no pane id (termbridge.mjs:439). Both throws now carry gone.
+for (const mode of ['error', 'empty']) {
+  test(`live terminal WS reports a vanished pane as EXIT, not a refusal (${mode} lookup)`, async t => {
+    const dir = mkdtempSync(path.join(tmpdir(), `fleetdeck-term-gone-${mode}-`));
+    const record = path.join(dir, 'term.jsonl');
+    const daemon = await startDaemon({ env: env(record, { FLEETDECK_TEST_TERM_NO_PANE: mode }) });
+    t.after(async () => { await daemon.stop(); rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+    const spawned = await createSpawn(daemon, dir);
+
+    // The row is live-eligible before the open — so the viewer gets PAST the
+    // ACTIVE_STATUSES gate and genuinely exercises the vanished-pane path.
+    const before = await spawnRow(daemon, spawned.spawn_id);
+    assert.ok(before, 'sanity: the spawn is on the board');
+    assert.ok(['spawning', 'stalled', 'live'].includes(before.status),
+      `sanity: the row must be live-eligible, saw ${before.status}`);
+
+    const { ws, frames, closes } = connect(termUrl(daemon, spawned.spawn_id, 80, 24));
+    const exit = await waitUntil(() => frames.find(f => f.t === 'exit'), 'exit frame');
+    assert.match(exit.reason, /pane is gone|agent has ended/);
+    assert.equal(frames.some(f => f.t === 'err'), false,
+      'a vanished pane must never surface as "viewer refused"');
+
+    // The socket closes cleanly (a normal close, not a 1006 abnormal drop).
+    await waitUntil(() => closes.length > 0, 'socket close');
+    assert.ok([1000, 1005].includes(closes[0].code), `clean close, got ${closes[0].code}`);
+    assert.equal(ws.readyState, WebSocket.CLOSED);
+
+    // The viewer failure fires a fire-and-forget liveness reconcile but must NOT
+    // itself condemn the row: window-absence is UNKNOWN by house doctrine, so
+    // only the tick condemns — and here it has no matching tmux window to act on
+    // (the fixture spawns no real window). Give the kicked tick time to land,
+    // then prove the status the row had before is the status it still has.
+    await new Promise(r => setTimeout(r, 400));
+    const after = await spawnRow(daemon, spawned.spawn_id);
+    assert.deepEqual(after, before, 'the viewer failure must not flip the spawn row');
+  });
+}

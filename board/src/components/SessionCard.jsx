@@ -24,7 +24,7 @@ const MAIL_HINT = {
 function SessionCard({
   s, compact, mailCount, mailMeta, conflictFiles, conflictPeers, ripple, priority, onOpen, onOpenTerm,
   onRevive, reviving, onEnableRemote, enablingRemote, onKill, onToggleWatch, watched,
-  onArmMove, onDisarm, adopting, onRename, legacy,
+  onArmMove, onDisarm, adopting, onRename, onDismiss, dismissing, legacy,
 }) {
   const offline = s.col === 'offline';
   const needsyou = s.col === 'needsyou';
@@ -75,7 +75,29 @@ function SessionCard({
   // they are on their way to being archived (and their callsign released), so
   // naming one buys nothing and would only invite a refusal.
   const canRename = !!onRename && !offline;
-  const hasActs = canTerm || canKill || canWatch || canAdopt || canRename;
+  // Item 3 — ✕ dismiss: retire ONE offline card now (the daemon archives it),
+  // rather than waiting for 24h retention or the bulk Clear. Only offline cards
+  // carry it. A REVIVABLE card (same gate the ⟲ revive button uses above) would
+  // lose its resurrection door, so it takes an inline two-step: the first click
+  // arms a hazard-styled "sure?" that reverts after ~4s, the second dismisses.
+  // A non-revivable offline card dismisses on a single click.
+  const canDismiss = !!onDismiss && offline;
+  const revivable = !!s.spawn?.revivable;
+  const [dismissArmed, setDismissArmed] = React.useState(false);
+  const dismissTimer = React.useRef(null);
+  React.useEffect(() => () => { if (dismissTimer.current) clearTimeout(dismissTimer.current); }, []);
+  const handleDismiss = () => {
+    if (dismissing) return; // in-flight: the POST guard also holds, this just avoids re-arming
+    if (revivable && !dismissArmed) {
+      setDismissArmed(true);
+      dismissTimer.current = setTimeout(() => { dismissTimer.current = null; setDismissArmed(false); }, 4000);
+      return;
+    }
+    if (dismissTimer.current) { clearTimeout(dismissTimer.current); dismissTimer.current = null; }
+    setDismissArmed(false);
+    onDismiss(s);
+  };
+  const hasActs = canTerm || canKill || canWatch || canAdopt || canRename || canDismiss;
 
   const cls = [
     'fd-card',
@@ -301,6 +323,22 @@ function SessionCard({
               onClick={() => onKill(s)}
             >
               ☠ kill
+            </button>
+          )}
+          {canDismiss && (
+            // Item 3 — ✕ dismiss an offline card. A revivable card arms a
+            // two-step confirm first (it would lose ⟲ revive); everything else
+            // dismisses on one click. The worktree on disk is left alone.
+            <button
+              type="button"
+              className={`fd-actbtn dismiss${dismissArmed ? ' hazard' : ''}${dismissing ? ' busy' : ''}`}
+              disabled={dismissing}
+              title={revivable
+                ? 'dismiss this dead card — it is still revivable, so click again to confirm (you lose ⟲ revive)'
+                : 'dismiss this dead card — remove it from the board now (the worktree is left alone)'}
+              onClick={handleDismiss}
+            >
+              {dismissing ? '✕ dismissing…' : dismissArmed ? '✕ sure? loses ⟲' : '✕ dismiss'}
             </button>
           )}
         </span>

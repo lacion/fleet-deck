@@ -152,9 +152,15 @@ export class ControlModeParser {
 // Not exported: only thrown/caught inside this file. http.mjs duck-types the
 // failure via `err?.reason`, so no importer needs the class itself.
 class TermBridgeError extends Error {
-  constructor(reason) {
+  constructor(reason, { gone = false } = {}) {
     super(reason);
     this.reason = reason;
+    // gone: the row still says live but its window/pane is already absent (a
+    // race — remain-on-exit is best-effort and the ~10s liveness tick has not
+    // reconciled yet). http.mjs reports this as an 'exit' ("the agent ended"),
+    // not an 'err' ("viewer refused"), because a vanished pane is the agent
+    // ending, not a viewer fault.
+    this.gone = gone;
   }
 }
 
@@ -424,9 +430,13 @@ export function createTermBridge({ port, resolveSpawn, log = () => {} } = {}) {
 
       // Lowest pane index speaks for a split window, matching listScopedWindows.
       const panes = await c.command(`list-panes -t ${exactWindowTarget(port, row.tmux_window)} -F '#{pane_id}'`);
-      if (!panes.ok) throw new Error('terminal pane not found');
+      // The row passed the ACTIVE_STATUSES gate above, so tmux failing to list a
+      // pane — or listing none — means the window is already gone: the agent
+      // ended between the liveness tick and this open. That is not a viewer
+      // fault, so surface it as `gone` (http.mjs → 'exit', not 'err').
+      if (!panes.ok) throw new TermBridgeError('terminal pane is gone — the agent has ended', { gone: true });
       const pane = panes.lines.map((s) => s.trim()).find((s) => /^%\d+$/.test(s));
-      if (!pane) throw new Error('terminal pane not found');
+      if (!pane) throw new TermBridgeError('terminal pane is gone — the agent has ended', { gone: true });
       viewer.pane = pane;
 
       // Make the app repaint FIRST, then photograph the result.
@@ -483,6 +493,9 @@ export function createTermBridge({ port, resolveSpawn, log = () => {} } = {}) {
       viewer.flushPending();
     } catch (err) {
       viewer.finish(err?.message || 'terminal open failed', false);
+      // Preserve a TermBridgeError verbatim (notably its `gone` flag) rather
+      // than re-wrapping it into a plain, flagless TermBridgeError.
+      if (err instanceof TermBridgeError) throw err;
       throw new TermBridgeError(err?.message || 'terminal open failed');
     }
 
