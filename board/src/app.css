@@ -475,6 +475,11 @@ textarea.fd-input { font-family: var(--font-ui); font-size: 13px; resize: none; 
   border: 1px solid var(--border-soft); border-radius: 6px; padding: 8px 10px; color: var(--ok);
   overflow-x: auto; white-space: pre;
 }
+.fd-stalldiag { border: 1px solid var(--hazard); border-radius: var(--r-ctl); overflow: hidden; background: var(--hazard-bg); }
+.fd-stalldiag .hd { display: flex; align-items: center; gap: 8px; padding: 6px 8px; font-family: var(--font-data); font-size: 9.5px; letter-spacing: var(--ls-label); color: var(--hazard); border-bottom: 1px solid color-mix(in srgb, var(--hazard) 32%, transparent); }
+.fd-stalldiag .hd .fd-ghostbtn { margin-left: auto; padding: 1px 7px; font-size: 10px; }
+.fd-stalldiag pre { margin: 0; padding: 9px 10px; max-height: 240px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.45 var(--font-data); color: var(--text); background: var(--code); }
+.fd-stalldiag .none { padding: 9px 10px; font-size: 11.5px; color: var(--dim); }
 .fd-killrow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .fd-killrow .fd-ghostbtn { flex: none; }
 /* the drawer's kill button opens the confirmation dialog — it never kills on

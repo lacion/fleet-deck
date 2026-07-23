@@ -151,7 +151,8 @@ CREATE TABLE IF NOT EXISTS spawns (
   branch_mode    TEXT,                   -- repo-mode worktree | in-place
   gateway        INTEGER DEFAULT 0,      -- routed through the LLM gateway (settings.gateway_*)
   kind           TEXT DEFAULT 'claude',  -- claude | shell
-  setup_cmd      TEXT                    -- visible pre-Claude POSIX sh setup
+  setup_cmd      TEXT,                   -- visible pre-Claude POSIX sh setup
+  stall_detail   TEXT                    -- bounded/redacted pane excerpt captured when registration stalls
 );
 CREATE INDEX IF NOT EXISTS idx_spawns_session ON spawns(session_id);
 CREATE INDEX IF NOT EXISTS idx_spawns_status ON spawns(status);
@@ -291,6 +292,9 @@ function migrate(db) {
   }
   if (spawnCols.length && !spawnCols.includes('setup_cmd')) {
     db.exec('ALTER TABLE spawns ADD COLUMN setup_cmd TEXT');
+  }
+  if (spawnCols.length && !spawnCols.includes('stall_detail')) {
+    db.exec('ALTER TABLE spawns ADD COLUMN stall_detail TEXT');
   }
 }
 

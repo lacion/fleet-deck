@@ -14,6 +14,7 @@ import { deriveRepo, branchOf } from './repo-identity.mjs';
 import { ticketFromBranch, animalOf } from './tickets.mjs';
 import { claudeEnvArgvPrefix, claudeTranscriptPath, SHELL_RE, NOT_RESUMABLE_END } from './helpers.mjs';
 import { execFileP, baseBranch } from './exec.mjs';
+import { redactDiagnosticText } from './payload-capture.mjs';
 
 export const SETUP_WRAPPER = [
   'cmd=$FLEETDECK_SETUP_CMD; unset FLEETDECK_SETUP_CMD',
@@ -25,6 +26,37 @@ export const SETUP_WRAPPER = [
 
 const SETUP_CMD_MAX = 2000;
 const SETUP_CONTROL_RE = /[\x00-\x09\x0b-\x1f\x7f]/;
+const STALL_DETAIL_MAX = 2000;
+const STALL_DETAIL_LINES = 18;
+
+// `tmux capture-pane -p` is already rendered plain text (no -e escapes), but
+// strip any controls defensively, trim empty screen margins, keep only the tail
+// a human would see, redact known credential shapes, then bound the final value
+// before it enters SQLite and the /state broadcast.
+export function stallDiagnosticExcerpt(screen, { secrets = [] } = {}) {
+  if (typeof screen !== 'string' || !screen) return null;
+  const lines = screen
+    .replace(/\r/g, '')
+    .replace(/[\x00-\x09\x0b-\x1f\x7f]/g, '')
+    .split('\n')
+    .map(line => line.replace(/\s+$/g, ''));
+  while (lines.length && !lines[0]) lines.shift();
+  while (lines.length && !lines[lines.length - 1]) lines.pop();
+  if (!lines.length) return null;
+  let tail = redactDiagnosticText(lines.slice(-STALL_DETAIL_LINES).join('\n'));
+  for (const secret of secrets) {
+    if (typeof secret === 'string' && secret) tail = tail.split(secret).join('[redacted]');
+  }
+  // Bytes, not JS code units: a screen of emoji/CJK must still respect the 2KB
+  // SQLite/snapshot budget. Start from the byte tail, drop a partial leading
+  // UTF-8 character (U+FFFD), then correct any replacement expansion.
+  const bytes = Buffer.from(tail);
+  if (bytes.length > STALL_DETAIL_MAX) {
+    tail = bytes.subarray(bytes.length - STALL_DETAIL_MAX).toString('utf8').replace(/^�+/, '');
+    while (Buffer.byteLength(tail) > STALL_DETAIL_MAX) tail = tail.slice(1);
+  }
+  return tail || null;
+}
 
 export function createSpawns(ctx) {
   const {
@@ -35,8 +67,8 @@ export function createSpawns(ctx) {
     // 0.7.1: the boot heal for /clear forks stranded BEFORE succession shipped.
     succeedSession, CLEAR_SUCCESSION_MS, hasLivePane,
     validateBranch, resolveTarget, cloneRepo, materializeBranch, touchRepo,
-    claimTarget, targetOwner, reserveCloneSlot, persistRepoTransport,
-    resolveGateway, resolveGatewayEnv,
+    claimTarget, targetOwner, reserveCloneSlot, persistRepoTransport, persistRepoDefaultOrg,
+    validateRepoDefaultOrg, resolveGateway, resolveGatewayEnv,
   } = ctx;
 
   // ------------------------------------------- unsupervised arm gate (0.16.0)
@@ -567,7 +599,7 @@ export function createSpawns(ctx) {
     if (kind !== 'claude' && kind !== 'shell') {
       return { status: 400, body: { ok: false, reason: "kind must be 'claude' or 'shell'" } };
     }
-    for (const k of ['cwd', 'repo', 'branch', 'branch_mode', 'prompt', 'model', 'permission_mode', 'repo_host', 'repo_transport']) {
+    for (const k of ['cwd', 'repo', 'branch', 'branch_mode', 'prompt', 'model', 'permission_mode', 'repo_host', 'repo_transport', 'repo_org']) {
       if (body?.[k] != null && typeof body[k] !== 'string') {
         return { status: 400, body: { ok: false, reason: `${k} must be a string` } };
       }
@@ -593,6 +625,11 @@ export function createSpawns(ctx) {
       if (body?.repo == null) {
         return { status: 400, body: { ok: false, reason: 'repo_transport requires repo' } };
       }
+    }
+    if (body?.repo_org != null) {
+      if (body?.repo == null) return { status: 400, body: { ok: false, reason: 'repo_org requires repo' } };
+      try { validateRepoDefaultOrg(body.repo_org); }
+      catch (err) { return { status: err.status || 400, body: { ok: false, reason: err.message || String(err) } }; }
     }
     if (body?.worktree != null && typeof body.worktree !== 'boolean') {
       return { status: 400, body: { ok: false, reason: 'worktree must be a boolean' } };
@@ -622,7 +659,7 @@ export function createSpawns(ctx) {
     }
     if (kind === 'shell') {
       const forbidden = [
-        'repo', 'branch', 'branch_mode', 'repo_host', 'repo_transport',
+        'repo', 'branch', 'branch_mode', 'repo_host', 'repo_transport', 'repo_org',
         'prompt', 'model', 'permission_mode', 'dangerously_skip_permissions',
         'remote_control', 'gateway', 'arm_token', 'setup_cmd',
       ].find(k => body?.[k] != null);
@@ -707,12 +744,18 @@ export function createSpawns(ctx) {
       // request the daemon refused must never rewrite the remembered choice.
       // From here the spawn is committed to a card. A transport absent-and-
       // resolved-from-the-setting never rewrites it; and it steers shorthand
-      // only, so a URL/path/bare-name target (kind !== 'shorthand') persists
-      // nothing.
+      // only, so a URL/path/known-local-name target (kind !== 'shorthand')
+      // persists nothing. A bare name promoted through repo_org IS shorthand.
+      let settingChanged = false;
       if (body.repo_transport != null && target.kind === 'shorthand') {
         persistRepoTransport(body.repo_transport);
-        onMutate();
+        settingChanged = true;
       }
+      if (body.repo_org != null && target.kind === 'shorthand') {
+        persistRepoDefaultOrg(body.repo_org);
+        settingChanged = true;
+      }
+      if (settingChanged) onMutate();
 
       const session_id = randomUUID();
       const spawn_id = randomUUID();
@@ -1720,14 +1763,34 @@ export function createSpawns(ctx) {
         if (row.status === 'spawning' && Date.now() - row.requested_at > registerMs) {
           const note = row.setup_cmd
             ? `pane up but never registered — setup may still be running; check window ${row.tmux_window}`
-            : `pane up but never registered — env/port issue? window ${row.tmux_window}`;
-          q.setSpawnStatus.run('stalled', row.spawn_id);
+            : `pane up but never registered — open diagnostics or terminal; window ${row.tmux_window}`;
+          // Capture what the human would see BEFORE declaring the stall. The
+          // await creates a real race with a late SessionStart hook, so the SQL
+          // write is a compare-and-set (`AND status='spawning'`) and we update the
+          // card only if it won. A hook that registered meanwhile wins cleanly.
+          let detail = null;
+          try {
+            const exactSecrets = [];
+            try {
+              const token = fs.readFileSync(path.join(home, 'token'), 'utf8').trim();
+              if (token) exactSecrets.push(token);
+            } catch { /* token file unavailable — shape redaction still applies */ }
+            const gateway = resolveGatewayEnv?.() || {};
+            for (const [name, value] of Object.entries(gateway)) {
+              if (/(TOKEN|KEY|SECRET|PASSWORD)/i.test(name) && value) exactSecrets.push(String(value));
+            }
+            detail = stallDiagnosticExcerpt(
+              await tmuxAdapter.capturePane?.(scopedPaneTarget(win)),
+              { secrets: exactSecrets },
+            );
+          } catch { /* diagnostics are best-effort; the stall itself still lands */ }
+          if (!q.setSpawnStalled.run(detail, row.spawn_id).changes) continue;
           // Loud lane, deliberately: a stalled spawn is a human's problem now
           // (fail loud, never auto-respawn). The first late hook re-derives col.
           updateSession(row.session_id, { col: 'needsyou', notification_type: 'spawn_stalled', note });
           const c = q.getSession.get(row.session_id);
-          tick(`⚠ ${c?.callsign ?? row.callsign} pane is up but never phoned home`);
-          logEvent(row.session_id, 'SpawnStalled', null, note);
+          tick(`⚠ ${c?.callsign ?? row.callsign} pane is up but never phoned home${detail ? ' — diagnostics captured' : ''}`);
+          logEvent(row.session_id, 'SpawnStalled', null, detail ? `${note}\n${detail}` : note);
           onMutate();
         }
         continue; // alive; stalled is fail-loud state only, never remediation

@@ -11,6 +11,11 @@ import { detectCoderWorkspaceRoot } from './config.mjs';
 
 const CONTROL_RE = /[\x00-\x1f\x7f]/;
 const SPACE_OR_CONTROL_RE = /[\s\x00-\x1f\x7f]/;
+const FORGE_SLUG_SEGMENT_RE = /^[A-Za-z0-9._-]+$/;
+// User-requested Coder seed: company workspaces type a bare repo name far more
+// often than a full owner/repo slug. Precedence is persisted setting → env →
+// this Coder-only seed → no default. Non-Coder installs never inherit it.
+const CODER_DEFAULT_ORG = 'textemma';
 
 function namedError(status, message) {
   const err = new Error(message);
@@ -30,6 +35,31 @@ function repoNameOf(value) {
 // hostname (CVE-2017-1000117-class). The `@` split closes that.
 function unsafeDashSegment(value) {
   return String(value).split(/[/:@]/).some(segment => segment.startsWith('-'));
+}
+
+// A default forge namespace: `owner` on GitHub, `group/subgroup` on GitLab.
+// Return a reason (pure, testable) rather than throwing — the settings surface
+// and the spawn resolver use the same gate and choose their own HTTP wording.
+export function repoDefaultOrgChoice({ setting = null, env = null, coder = false } = {}) {
+  if (setting) return { value: setting, source: 'override' };
+  if (env) return { value: env, source: 'env' };
+  if (coder) return { value: CODER_DEFAULT_ORG, source: 'coder' };
+  return { value: null, source: 'default' };
+}
+
+export function repoDefaultOrgProblem(value) {
+  if (typeof value !== 'string' || !value) return 'default org must be a non-empty owner or group path';
+  if (value.length > 200) return 'default org must be 200 characters or fewer';
+  if (SPACE_OR_CONTROL_RE.test(value)) return 'default org must not contain whitespace or control characters';
+  if (value.startsWith('-') || unsafeDashSegment(value)) return 'default org must not contain a segment beginning with -';
+  const parts = value.split('/');
+  if (!parts.every(Boolean) || parts.some(p => p === '.' || p === '..')) {
+    return 'default org must be an owner or clean group/subgroup path';
+  }
+  if (!parts.every(part => FORGE_SLUG_SEGMENT_RE.test(part))) {
+    return 'default org segments may contain only letters, numbers, dots, underscores, and hyphens';
+  }
+  return null;
 }
 
 export function parseRepoInput(input, repoHost = 'github', repoTransport = 'https') {
@@ -88,6 +118,9 @@ export function parseRepoInput(input, repoHost = 'github', repoTransport = 'http
   // before we re-append our own — the long-standing github behaviour, kept here.
   const parts = input.split('/');
   const cleanSegments = parts.every(Boolean) && !parts.some(part => part === '.' || part === '..');
+  if (cleanSegments && parts.length >= 2 && !parts.every(part => FORGE_SLUG_SEGMENT_RE.test(part))) {
+    return { error: 'shorthand path segments may contain only letters, numbers, dots, underscores, and hyphens' };
+  }
   if (cleanSegments && parts.length >= 2) {
     // repoNameOf strips a trailing '.git', so a final segment of exactly
     // '.git' ('org/.git', 'group/sub/.git') names NOTHING — downstream,
@@ -298,6 +331,26 @@ export function createRepos(ctx) {
     return q.getSetting.get('repo_transport')?.value ?? 'ssh';
   }
 
+  // A bare repo name (`earm-module`) first keeps the long-standing local-catalog
+  // behavior. Only when no known checkout exists does this namespace turn it
+  // into `org/earm-module` and clone. Precedence mirrors the other settings:
+  // a persisted human choice wins, then an environment/template choice, then
+  // the Coder-only company seed requested by the user. No default elsewhere.
+  function resolveRepoDefaultOrg() {
+    return repoDefaultOrgChoice({
+      setting: q.getSetting.get('repo_default_org')?.value ?? null,
+      env: process.env.FLEETDECK_DEFAULT_ORG ?? null,
+      coder: !!detectCoderWorkspaceRoot(),
+    });
+  }
+
+  function validateRepoDefaultOrg(value) {
+    if (value == null) return null;
+    const problem = repoDefaultOrgProblem(value);
+    if (problem) throw namedError(400, problem);
+    return value;
+  }
+
   function setReposDir(value) {
     if (value === null) {
       q.setSetting.run('repos_dir', null, Date.now());
@@ -350,19 +403,46 @@ export function createRepos(ctx) {
     // persisted setting (default ssh). We pass a concrete transport, never
     // parseRepoInput's https default — the setting owns the ssh default.
     const transport = body?.repo_transport ?? resolveRepoTransport();
-    const parsed = parseRepoInput(body?.repo, body?.repo_host ?? undefined, transport);
+    const host = body?.repo_host ?? undefined;
+    let parsed = parseRepoInput(body?.repo, host, transport);
     if (parsed.error) throw namedError(400, parsed.error);
+    if (body?.repo_org != null && parsed.kind !== 'name') {
+      throw namedError(400, 'repo_org applies only to a bare repo name');
+    }
     let origin_url = parsed.origin_url;
     let catalogRows = q.repoByName.all(parsed.repo_name);
     let dest;
 
     if (parsed.kind === 'name') {
       const roots = [...new Set(catalogRows.map(row => row.root).filter(Boolean))];
-      if (!roots.length) throw namedError(404, `no known repo named "${parsed.repo_name}" — paste a URL or a path`);
       if (roots.length > 1) throw namedError(409, `more than one known repo named "${parsed.repo_name}": ${roots.join(', ')}`);
-      const row = catalogRows.find(item => item.root === roots[0]);
-      dest = roots[0];
-      origin_url = row?.origin_url ?? null;
+      if (roots.length === 1) {
+        const row = catalogRows.find(item => item.root === roots[0]);
+        dest = roots[0];
+        origin_url = row?.origin_url ?? null;
+      } else {
+        // No local/catalog hit: a configured default namespace promotes the bare
+        // name to real forge shorthand. Run the composed value through the SAME
+        // parseRepoInput safety/host/transport path as explicit org/repo input —
+        // never hand-compose a git URL here.
+        const org = body?.repo_org != null
+          ? { value: validateRepoDefaultOrg(body.repo_org), source: 'request' }
+          : resolveRepoDefaultOrg();
+        if (!org.value) {
+          throw namedError(404, `no known repo named "${parsed.repo_name}" — paste owner/repo, a URL, or set a default org`);
+        }
+        const orgProblem = repoDefaultOrgProblem(org.value);
+        if (orgProblem) throw namedError(400, `configured ${org.source} default org is invalid — ${orgProblem}`);
+        // A multi-segment namespace is a GitLab group/subgroup by definition.
+        // Infer that forge only when the caller omitted repo_host; an explicit
+        // github choice still fails loud instead of silently changing hosts.
+        const promotedHost = host ?? (org.value.includes('/') ? 'gitlab' : undefined);
+        const expanded = parseRepoInput(`${org.value}/${parsed.repo_name}`, promotedHost, transport);
+        if (expanded.error) throw namedError(400, `default org "${org.value}" cannot resolve this repo — ${expanded.error}`);
+        parsed = expanded;
+        origin_url = parsed.origin_url;
+        dest = path.join(resolveReposDir().resolved, parsed.repo_name);
+      }
     } else if (parsed.kind === 'path') {
       dest = path.resolve(body.repo);
     } else {
@@ -537,6 +617,7 @@ export function createRepos(ctx) {
 
   return {
     validateBranch, resolveReposDir, setReposDir, touchRepo,
+    resolveRepoDefaultOrg, validateRepoDefaultOrg,
     resolveTarget, cloneRepo, materializeBranch, claimTarget, targetOwner,
     reserveCloneSlot,
   };

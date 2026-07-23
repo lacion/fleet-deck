@@ -268,6 +268,19 @@ test('repo_host without repo is refused', async t => {
   assert.match(response.json.reason, /repo_host requires repo/i);
 });
 
+test('repo_org validates and requires a repo', async t => {
+  const daemon = await startDaemon();
+  t.after(() => daemon.stop());
+  const missing = await postJson(`${daemon.baseUrl}/api/spawn`, { repo_org: 'textemma', branch: 'main' });
+  assert.equal(missing.status, 400);
+  assert.match(missing.json.reason, /repo_org requires repo/i);
+  const bad = await postJson(`${daemon.baseUrl}/api/spawn`, {
+    repo: 'module', repo_org: 'bad org', branch: 'main', branch_mode: 'worktree',
+  });
+  assert.equal(bad.status, 400);
+  assert.match(bad.json.reason, /default org/i);
+});
+
 test('repo_host gitlab shorthand resolves a gitlab.com clone origin (ssh by default)', async t => {
   // A gitlab shorthand with nested subgroups is a clone request; the 202 echoes
   // the composed origin synchronously, so we assert the resolved gitlab.com URL
@@ -309,6 +322,20 @@ test('absent repo_transport on a fresh daemon composes an ssh origin (the new de
   });
   assert.equal(res.status, 202, res.text);
   assert.equal(res.json.clone.origin_url, 'git@github.com:org/repo.git');
+});
+
+test('persisted subgroup default org infers gitlab for a bare-name HTTPS API spawn', async t => {
+  const { daemon, reposDir } = await cloneKilledDaemon(t);
+  const set = await postJson(`${daemon.baseUrl}/api/settings`, {
+    repo_default_org: 'group/subgroup', repo_transport: 'https',
+  });
+  assert.equal(set.status, 200, set.text);
+  const res = await postJson(`${daemon.baseUrl}/api/spawn`, {
+    repo: 'module', branch: 'main', branch_mode: 'in-place',
+  });
+  assert.equal(res.status, 202, res.text);
+  assert.equal(res.json.clone.origin_url, 'https://gitlab.com/group/subgroup/module.git');
+  assert.equal(res.json.clone.dest, path.join(reposDir, 'module'));
 });
 
 test('absent repo_transport honors the persisted https setting', async t => {

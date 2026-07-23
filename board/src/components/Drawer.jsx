@@ -1,5 +1,5 @@
-import React, { useRef, useState } from 'react';
-import { human, hhmmss, basename, prettyModel, modelFamily, safeUrl, spawnKillable, spawnRemoteAvailable, colPulse, worktreeLabel, adoptableNow, adoptArmable, adoptArmed, relToRoot, TURN_BOUNDARY_HINT } from '../util.js';
+import React, { useEffect, useRef, useState } from 'react';
+import { human, hhmmss, basename, prettyModel, modelFamily, safeUrl, spawnKillable, spawnRemoteAvailable, colPulse, worktreeLabel, adoptableNow, adoptArmable, adoptArmed, relToRoot, TURN_BOUNDARY_HINT, copyText } from '../util.js';
 import { sendMail, reasonOf } from '../api.js';
 import { useModal } from '../useModal.js';
 
@@ -25,6 +25,9 @@ function OwnedPane({ s, onOpenTerm, onKill, onRevive, onEnableRemote, reviving, 
   // claude.ai link, so the round-trip runs ~3-6 s; a 409 (mid-turn / pane not
   // live) surfaces honestly.
   const [rc, setRc] = useState({ done: false, err: null, ok: null, url: null });
+  const [diagCopied, setDiagCopied] = useState(false);
+  const diagTimer = useRef(null);
+  useEffect(() => () => clearTimeout(diagTimer.current), []);
   const alive = s.col !== 'offline';
   const revivable = !alive && !!s.spawn.revivable;
   // snapshot truth first; the fresh POST response fills the gap until the
@@ -80,6 +83,28 @@ function OwnedPane({ s, onOpenTerm, onKill, onRevive, onEnableRemote, reviving, 
         $ tmux attach -t {tmuxSession}{'\n'}
         {'  '}window {win}
       </div>
+      {s.spawn.stalled && (
+        <div className="fd-stalldiag">
+          <div className="hd">
+            <span>CAPTURED WHEN REGISTRATION STALLED</span>
+            {s.spawn.stall_detail && (
+              <button
+                type="button"
+                className="fd-ghostbtn"
+                onClick={async () => {
+                  const ok = await copyText(s.spawn.stall_detail);
+                  setDiagCopied(ok);
+                  clearTimeout(diagTimer.current);
+                  diagTimer.current = setTimeout(() => setDiagCopied(false), 1800);
+                }}
+              >{diagCopied ? '✓ copied' : 'copy'}</button>
+            )}
+          </div>
+          {s.spawn.stall_detail
+            ? <pre>{s.spawn.stall_detail}</pre>
+            : <div className="none">No pane excerpt was captured. Open the live terminal to inspect the stalled process.</div>}
+        </div>
+      )}
       {/* v1.6 — the claude.ai door (or its pending placeholder) */}
       {remoteOn && (
         remoteUrl ? (

@@ -6,6 +6,7 @@ import path from 'node:path';
 import { openDb } from '../scripts/fleetd/db.mjs';
 import { claudeTranscriptPath, createCore } from '../scripts/fleetd/derive.mjs';
 import { capturePane, exactWindowTarget, pasteText, sendEnter, typeKeys } from '../scripts/fleetd/spawn.mjs';
+import { stallDiagnosticExcerpt } from '../scripts/fleetd/spawns.mjs';
 
 function setEnv(t, values) {
   const before = new Map(Object.keys(values).map(k => [k, process.env[k]]));
@@ -21,6 +22,7 @@ function setEnv(t, values) {
 function fakeTmux(port = 4711) {
   const state = {
     windows: [], argv: null, calls: [], pasteOk: true, enterOk: true, killed: [],
+    captureText: '',
   };
   const adapter = {
     spawnOverrideCmd: () => null,
@@ -42,6 +44,10 @@ function fakeTmux(port = 4711) {
     paneCurrentCommand: async target => {
       const win = state.windows.find(w => w.window_id === target || w.window === target);
       return win ? { dead: win.pane_dead, cmd: win.pane_cmd } : null;
+    },
+    capturePane: async target => {
+      state.calls.push(['capturePane', target]);
+      return state.captureText;
     },
     pasteText: async (target, text) => {
       state.calls.push(['pasteText', target, text]);
@@ -71,6 +77,17 @@ function memoryCore(t, { env = {}, tmux = fakeTmux(), home = '/daemon-home' } = 
   t.after(() => db.close());
   return { db, core, ...tmux, home };
 }
+
+test('stall diagnostic excerpt is line/byte bounded and redacts shape + exact secrets', () => {
+  const exact = 'corporate-token-with-no-known-shape';
+  const screen = Array.from({ length: 30 }, (_, i) => `line-${i} ${'🚀'.repeat(200)}`).join('\n')
+    + `\n${exact}\nsk-ant-1234567890SECRET\n`;
+  const out = stallDiagnosticExcerpt(screen, { secrets: [exact] });
+  assert.ok(Buffer.byteLength(out) <= 2000);
+  assert.ok(out.split('\n').length <= 18);
+  assert.doesNotMatch(out, /corporate-token|sk-ant-/);
+  assert.match(out, /\[redacted\]/);
+});
 
 test('spawn argv is deterministic and registration watchdog stalls once, then a late hook revives it', async (t) => {
   const { db, core, state, port, home } = memoryCore(t, {
@@ -115,6 +132,7 @@ test('spawn argv is deterministic and registration watchdog stalls once, then a 
     '--model', 'sonnet', '--permission-mode', 'acceptEdits', '--', 'do it',
   ]);
 
+  state.captureText = '\n\nFolder trust required\nOpen /workspace/repo?\nsk-ant-1234567890SECRET\n\n';
   await new Promise(resolve => setTimeout(resolve, 5));
   await core.spawnLivenessTick();
   let card = core.snapshot().sessions.find(s => s.session_id === out.body.session_id);
@@ -123,7 +141,11 @@ test('spawn argv is deterministic and registration watchdog stalls once, then a 
   assert.equal(card.col, 'needsyou', 'a stalled spawn must land in the loud lane');
   assert.equal(card.notification_type, 'spawn_stalled');
   assert.match(card.note, /pane up but never registered.*window/);
-  assert.ok(core.snapshot().ticker.some(x => /never phoned home/.test(x.msg)));
+  assert.match(card.spawn.stall_detail, /Folder trust required/);
+  assert.match(card.spawn.stall_detail, /\[redacted\]/, 'known credential shapes are scrubbed from the broadcast diagnostic');
+  assert.doesNotMatch(card.spawn.stall_detail, /sk-ant-/);
+  assert.ok(state.calls.some(([kind]) => kind === 'capturePane'), 'watchdog captures the pane once when it stalls');
+  assert.ok(core.snapshot().ticker.some(x => /never phoned home.*diagnostics captured/.test(x.msg)));
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM events WHERE hook_event = 'SpawnStalled'").get().n, 1);
 
   await core.spawnLivenessTick();
