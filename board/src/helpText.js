@@ -5,7 +5,7 @@
 
 export const HOTKEYS = [
   { keys: 'j / k · ↓ / ↑', does: 'move the inbox selection' },
-  { keys: 'y / n', does: 'allow / deny the selected permission' },
+  { keys: 'y / n', does: 'allow / deny the selected permission — live even while a floating terminal is open (its header says where your keys go)' },
   { keys: '1-9', does: 'pick the n-th option of the selected choice' },
   { keys: 'Enter', does: 'focus the selected freeform question’s answer box' },
   { keys: 'c', does: 'open Compose (to all)' },

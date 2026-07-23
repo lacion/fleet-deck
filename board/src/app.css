@@ -723,6 +723,11 @@ textarea.fd-input { font-family: var(--font-ui); font-size: 13px; resize: none; 
   display: flex; flex-direction: column; overflow: hidden; text-align: left;
   box-shadow: 0 24px 60px rgba(0,0,0,.4); animation: fdSlideIn .2s ease-out 1;
 }
+/* M1 — the float is non-modal, so "are my keys going here?" must read from
+   across the room: the amber ring IS the board's typing-here language (the
+   grid's focused tile uses the same treatment). No ring = keys go to the board. */
+.fd-termfloat.kbd { border-color: var(--act); box-shadow: 0 0 0 2px var(--act-bg), 0 0 0 3px var(--act), 0 24px 60px rgba(0,0,0,.4); }
+.fd-termfloat .fd-tilefocus, .fd-termfloat .fd-tilewatch { flex: none; }
 /* maximize toggle = the old modal's footprint, centered */
 .fd-termfloat.max {
   left: 50% !important; top: 50% !important; transform: translate(-50%, -50%);

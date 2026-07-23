@@ -21,6 +21,11 @@ import { clampWinRect, TERMWIN_MIN } from '../util.js';
 // While MINIMIZED the component stays mounted under display:none — the /ws/term
 // socket and the xterm screen survive — and stdin is forced off so a hidden
 // terminal can never receive a keystroke.
+// The small/touch media query the CSS uses to force full-screen — the gesture
+// engine checks the same query so a visually-inert drag can't still write
+// geometry to localStorage.
+const COARSE_MQ = '(max-width: 720px), (pointer: coarse)';
+
 export default function TermWindow({
   spawnId, callsign, tmuxWindow, fallbackFocusRef, onClose,
   rect, onRect, minimized, onMinimize, maximized, onToggleMax,
@@ -28,6 +33,12 @@ export default function TermWindow({
   // null | {kind:'exit'|'err'|'close', text} — non-destructive: the terminal
   // stays on screen, frozen, under the strip.
   const [note, setNote] = useState(null);
+  // M1 (adversarial review) — the float is NON-modal, so board answer keys
+  // (y/n/1-9) stay live when focus is on the board. "Are my keys going to this
+  // terminal right now?" must therefore be answerable at a glance, in the same
+  // amber language the grid's focused tile uses: track focus-within and say so
+  // in the header.
+  const [focused, setFocused] = useState(false);
   const dialogRef = useRef(null);
   // M-A2 (terminal variant) — restore focus to the opener on close, but NO Tab
   // trap and NO initial-focus steal: xterm claims focus itself and Tab must
@@ -55,6 +66,9 @@ export default function TermWindow({
   // One pointer gesture engine for both the drag bar and the resize corner.
   const gesture = (mode) => (e) => {
     if (maximized) return;
+    // n3 — on small/touch viewports the CSS forces full-screen (!important), so
+    // a drag is visually inert; don't let it silently commit geometry either.
+    if (window.matchMedia?.(COARSE_MQ).matches) return;
     if (e.button !== 0) return;
     if (mode === 'drag' && e.target.closest('button')) return; // header buttons are not a handle
     e.preventDefault();
@@ -65,13 +79,17 @@ export default function TermWindow({
     const move = (ev) => {
       const dx = ev.clientX - start.px;
       const dy = ev.clientY - start.py;
+      const vp = viewport();
+      // m1 — resizing grows from a fixed top-left, so cap the RIGHT/BOTTOM edge
+      // at the viewport too (drag deliberately may hang a window off an edge;
+      // resize must not). clampWinRect still owns min size + reachability.
       const next = mode === 'drag'
-        ? clampWinRect({ ...start, x: start.x + dx, y: start.y + dy }, viewport())
+        ? clampWinRect({ ...start, x: start.x + dx, y: start.y + dy }, vp)
         : clampWinRect({
           ...start,
-          w: Math.max(TERMWIN_MIN.w, start.w + dx),
-          h: Math.max(TERMWIN_MIN.h, start.h + dy),
-        }, viewport());
+          w: Math.min(Math.max(TERMWIN_MIN.w, start.w + dx), vp.w - start.x),
+          h: Math.min(Math.max(TERMWIN_MIN.h, start.h + dy), vp.h - start.y),
+        }, vp);
       liveRect.current = next;
       cancelAnimationFrame(raf.current);
       raf.current = requestAnimationFrame(() => applyStyle(next));
@@ -90,16 +108,22 @@ export default function TermWindow({
   };
 
   // Window resizes re-clamp the committed rect so the drag bar stays reachable.
+  // Debounced (m5): a browser-window drag fires dozens of resize events, and
+  // each commit is a state update + synchronous localStorage write.
   useEffect(() => {
+    let t = 0;
     const onWin = () => {
-      const next = clampWinRect(liveRect.current, { w: window.innerWidth, h: window.innerHeight });
-      if (next.x !== liveRect.current.x || next.y !== liveRect.current.y
-        || next.w !== liveRect.current.w || next.h !== liveRect.current.h) {
-        onRect(next);
-      }
+      clearTimeout(t);
+      t = setTimeout(() => {
+        const next = clampWinRect(liveRect.current, { w: window.innerWidth, h: window.innerHeight });
+        if (next.x !== liveRect.current.x || next.y !== liveRect.current.y
+          || next.w !== liveRect.current.w || next.h !== liveRect.current.h) {
+          onRect(next);
+        }
+      }, 150);
     };
     window.addEventListener('resize', onWin);
-    return () => window.removeEventListener('resize', onWin);
+    return () => { clearTimeout(t); window.removeEventListener('resize', onWin); };
   }, [onRect]);
 
   // Minimize must also take the keyboard away from the hidden terminal: blur
@@ -117,19 +141,28 @@ export default function TermWindow({
     // shields App's window-level shortcuts from keys typed INTO the terminal;
     // the old modal's blanket hotkey suppression is gone on purpose.
     <div
-      className={`fd-termfloat${maximized ? ' max' : ''}${minimized ? ' min' : ''}`}
+      className={`fd-termfloat${maximized ? ' max' : ''}${minimized ? ' min' : ''}${focused ? ' kbd' : ''}`}
       role="dialog"
       aria-modal="false"
       aria-label={`Live terminal ${callsign || spawnId}`}
       ref={dialogRef}
       style={maximized ? undefined : { left: rect.x, top: rect.y, width: rect.w, height: rect.h }}
       onKeyDown={(e) => e.stopPropagation()}
+      onFocus={() => setFocused(true)}
+      onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setFocused(false); }}
     >
       <div className="fd-termhead fd-termgrab" onPointerDown={gesture('drag')}>
         <span className="callsign">{callsign || spawnId}</span>
         {tmuxWindow && <span className="fd-panechip">⌗ {tmuxWindow}</span>}
+        {/* M1 — the float is non-modal, so this must be legible from across the
+            room: amber "⌨ typing here" when the terminal holds the keyboard
+            (the grid's focused-tile language), grey "keys go to the BOARD"
+            when it doesn't. */}
+        {focused
+          ? <span className="fd-tilefocus">⌨ typing here</span>
+          : <span className="fd-tilewatch">keys go to the board — click to type here</span>}
         <span className="fd-termhint">
-          ⌨ keystrokes go to the live agent — Esc included · <b>⇧⏎</b> for a newline
+          ⌨ Esc included · <b>⇧⏎</b> for a newline
         </span>
         <span className="fd-spacer" />
         <button type="button" className="fd-winbtn" aria-label="Minimize terminal" title="minimize to the dock" onClick={minimize}>─</button>
@@ -145,7 +178,10 @@ export default function TermWindow({
           </div>
         )}
       </div>
-      {!maximized && (
+      {/* m3 — the corner hides while the end-of-stream strip is up: it would
+          paint over the strip's Close button, and resizing a dead pane buys
+          nothing. */}
+      {!maximized && !note && (
         <div
           className="fd-termresize"
           aria-hidden="true"

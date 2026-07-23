@@ -88,7 +88,7 @@ export default function App() {
   // standing)
   const {
     term, setTerm, grid, setGrid, watch,
-    termMin, minimizeTerm, restoreTerm, closeTerm,
+    termMin, minimizeTerm, restoreTerm, closeTerm, expandTerm,
     termMax, toggleTermMax, termRect, setTermRect,
     termableSessions, watchable, openTerm, toggleWatch, openGrid,
     gridOpen, killOpen, armOpen, renameOpen,
@@ -100,8 +100,8 @@ export default function App() {
   } = useWorktrees(sessions.length);
 
   // R3-4 — the header "▦ Terminals" button is a persistent focus target: when
-  // the grid promotes a tile to the full modal, the grid (and the ⤢ button that
-  // opened the modal) unmount, so the modal has no live opener to restore to on
+  // the grid promotes a tile to the floating window, the grid (and the ⤢ button
+  // that opened it) unmount, so the window has no live opener to restore to on
   // close. This ref is its safety net (handed to TermWindow + TermGrid).
   const termBtnRef = useRef(null);
 
@@ -546,7 +546,10 @@ export default function App() {
           />
         </React.Suspense>
       )}
-      {/* the dock chip the minimized window collapses to — the socket stays up */}
+      {/* the dock chip the minimized window collapses to — the socket stays up.
+          autoFocus (m4): minimize blurs the hidden xterm, and a keyboard user
+          should land HERE, one Enter away from restoring, not back at the top
+          of the page. */}
       {term && termMin && (
         <div className="fd-termdock">
           <button
@@ -554,6 +557,7 @@ export default function App() {
             className="fd-dockchip"
             title="restore the live terminal"
             onClick={restoreTerm}
+            autoFocus
           >
             ▣ {term.callsign}
           </button>
@@ -567,7 +571,7 @@ export default function App() {
             tiles={grid}
             fallbackFocusRef={termBtnRef}
             onClose={() => setGrid(null)}
-            onExpand={(t) => { setGrid(null); restoreTerm(); setTerm(t); }}
+            onExpand={expandTerm}
           />
         </React.Suspense>
       )}

@@ -8,7 +8,7 @@ import { useEffect, useState } from 'react';
 //   3. focus is RESTORED to the element that opened the dialog when it closes.
 //
 // Two knobs, because two dialogs are special:
-//   · trap:false / initialFocus:false for the terminal modal + grid — a live
+//   · trap:false / initialFocus:false for the floating terminal + grid — a live
 //     terminal must receive Tab itself (autocomplete) and xterm claims its own
 //     focus, so we only keep focus-restore for those. Everything else traps.
 //   · initialFocus:false where the dialog already parks focus deliberately

@@ -155,13 +155,15 @@ export default function Compose({ initialTarget, sessions, repos, onClose, onSen
                   type="button"
                   className="fd-cmdchip"
                   title={c.does}
+                  // Seed the command PREFIX in front of whatever is typed — a
+                  // draft must never be thrown away by a chip click.
                   onClick={() => {
-                    setText(c.chip);
+                    setText((cur) => (cur.startsWith(c.chip) ? cur : c.chip + cur.trimStart()));
                     setNote(null); setErr(null); setUnroutedText(null);
                     taRef.current?.focus();
                   }}
                 >
-                  {c.syntax.split(' ')[0]}{c.syntax.includes('auto') ? ' auto' : ''}
+                  {c.chip.trim()}
                 </button>
               ))}
             </span>

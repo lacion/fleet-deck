@@ -79,13 +79,22 @@ export function useTermWindows(sessions, killAsk, armAsk, renameAsk) {
     if (!spawnTermable(s)) return;
     setGrid(null); // the window and the wall are one keyboard; never both
     setTermMin(false);
+    setTermMax(false); // m2 — maximize is per-viewing, never inherited
     setTerm(termIdentity(s));
   }, []);
 
-  const closeTerm = useCallback(() => { setTerm(null); setTermMin(false); }, []);
+  const closeTerm = useCallback(() => { setTerm(null); setTermMin(false); setTermMax(false); }, []);
   const minimizeTerm = useCallback(() => setTermMin(true), []);
   const restoreTerm = useCallback(() => setTermMin(false), []);
   const toggleTermMax = useCallback(() => setTermMax((m) => !m), []);
+  // The grid's ⤢ promotes a tile identity to the floating window — same reset
+  // discipline as openTerm (m2: no inherited minimize/maximize).
+  const expandTerm = useCallback((identity) => {
+    setGrid(null);
+    setTermMin(false);
+    setTermMax(false);
+    setTerm(identity);
+  }, []);
 
   const toggleWatch = useCallback((s) => {
     if (!spawnTermable(s)) return;
@@ -110,7 +119,7 @@ export function useTermWindows(sessions, killAsk, armAsk, renameAsk) {
 
   return {
     term, setTerm, grid, setGrid, watch,
-    termMin, minimizeTerm, restoreTerm, closeTerm,
+    termMin, minimizeTerm, restoreTerm, closeTerm, expandTerm,
     termMax, toggleTermMax, termRect, setTermRect,
     termableSessions, watchable,
     openTerm, toggleWatch, openGrid,
