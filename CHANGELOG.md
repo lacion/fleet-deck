@@ -5,6 +5,65 @@ All notable changes to Fleet Deck are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.18.0] - 2026-07-24
+
+This release turns a round of real user feedback into a more direct day-to-day
+board: terminals no longer cover the fleet, standalone shells and visible setup
+commands make workspace bring-up useful beyond Claude itself, dead cards can be
+dismissed one at a time, and stalled launches now show what was actually left on
+the pane. Repository spawns also learn a durable default organization, including
+Coder's `textemma` seed and GitLab subgroup inference.
+
+### Added
+
+- **Floating live terminals.** A terminal now opens in a draggable, resizable
+  window above the board, can be minimized to a dock chip without dropping its
+  WebSocket, remembers its position, and falls back to the full-screen viewer on
+  small/touch displays. The terminal keeps keyboard focus visually explicit so
+  board permission shortcuts cannot be mistaken for input sent to the pane.
+- **In-board help.** A `?` overlay documents keyboard shortcuts, card and header
+  actions, and orchestrator command grammar. Compose now includes compact,
+  clickable examples for broadcast, assign, ticket, and name commands.
+- **Standalone shell sessions.** Spawn a shell without Claude, or open a new shell
+  in any card's workspace. Shell cards remain terminal-first, can be killed
+  directly, never receive fleet mail, and are excluded from orchestrator routing.
+- **Visible setup commands before Claude starts.** Repo and directory spawns can
+  run an explicit setup command in the pane after materialization and before
+  launching Claude. Per-repository defaults can be saved; a failing setup remains
+  visible and prevents Claude from starting, while revive intentionally skips
+  setup for an already-materialized workspace.
+- **Default organizations for bare repository names.** A bare `repo` can resolve
+  through a persisted or environment-provided namespace. Coder workspaces seed
+  `textemma`; multi-segment group paths infer GitLab when no host was supplied;
+  explicit hosts still win or fail loudly. Namespace validation prevents URL and
+  scp delimiters from changing the requested clone target.
+- **Registration-stall diagnostics.** When a spawned pane never registers, Fleet
+  Deck captures a redacted, UTF-8-safe, byte-bounded tail of the pane and exposes
+  it in the card and Drawer, making setup errors, trust prompts, and environment
+  failures diagnosable without opening the terminal.
+- **Per-card dismissal.** Individual offline sessions can be removed without
+  clearing every tombstone. Revivable cards require a second confirmation, and
+  dismissal keeps their worktrees available in the Worktrees view.
+
+### Fixed
+
+- **Copy shortcuts no longer open Compose.** Modified key chords are excluded
+  from board hotkeys, so Command/Ctrl+C and ordinary copy/paste work normally.
+- **A vanished pane is reported as an ended agent, not a refused viewer.** The
+  terminal WebSocket sends a clean exit frame and triggers liveness reconciliation
+  when the database still says live but tmux has already removed the pane.
+- **Cold-start hooks authenticate the first registration.** SessionStart now
+  rereads the bearer token minted by a daemon it just started, so the first card
+  and roster brief are no longer silently lost on a fresh home.
+- **Shell/setup isolation stays inside Fleet Deck.** `remain-on-exit` is scoped to
+  the fleet tmux session rather than the shared server, shell sessions cannot
+  become mail or auto-assignment black holes, and the liveness watchdog recognizes
+  legitimate shell/setup phases instead of condemning them as dead Claude panes.
+- **The release smoke test is genuinely isolated.** It uses a unique temporary
+  home, dedicated port and tmux socket, authenticated hooks, exactly two workers,
+  process-group cleanup, verified graceful daemon shutdown, and never stops the
+  live board on port 4711.
+
 ## [0.17.0] - 2026-07-22
 
 Losing the tmux server took the whole board with it — silently, and then
@@ -449,6 +508,7 @@ Initial public release.
 - A brainless orchestrator: `assign auto` routes a task to the best existing session with a SQL query, not a model call — the core makes zero model calls.
 - One-command plugin install with a self-contained daemon bundle (`node:sqlite` state, nothing to `npm install`); the first session's SessionStart hook elects and launches the daemon. MIT licensed.
 
+[0.18.0]: https://github.com/lacion/fleet-deck/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/lacion/fleet-deck/compare/v0.16.1...v0.17.0
 [0.16.1]: https://github.com/lacion/fleet-deck/compare/v0.16.0...v0.16.1
 [0.16.0]: https://github.com/lacion/fleet-deck/compare/v0.15.0...v0.16.0
