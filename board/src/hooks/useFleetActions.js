@@ -11,7 +11,7 @@ import { safeUrl, validSuffix } from '../util.js';
 //
 // showNote comes from useFeedbackStrip; the spawn actions come from
 // useSpawnActions (App holds one instance and shares it with the drawer too).
-export function useFleetActions({ showNote, revive, reviveAll, enableRemoteAction, adopt }) {
+export function useFleetActions({ showNote, revive, reviveAll, enableRemoteAction, adopt, spawnShellAction }) {
   const [clearing, setClearing] = useState(false);
   // v1.8 kill — the card chip and the drawer button both open ONE dialog; the
   // POST only fires from its hazard button. null | {spawnId, callsign, window, alive}
@@ -99,6 +99,17 @@ export function useFleetActions({ showNote, revive, reviveAll, enableRemoteActio
       }
     });
   }, [enableRemoteAction, showNote]);
+
+  const doSpawnShell = useCallback((s) => {
+    const label = s.callsign || s.session_id;
+    spawnShellAction(s, (r) => {
+      if (!r.ok) {
+        showNote({ hd: '✗ SHELL', err: `${label} — ${r.reason}` }, 8000);
+      } else {
+        showNote({ hd: '✓ SHELL', msg: `${r.callsign || 'shell'} — terminal opened in ${s.worktree || s.cwd}` }, 8000);
+      }
+    });
+  }, [spawnShellAction, showNote]);
 
   // v1.8 — kill a board-spawned agent. The card chip and the drawer button only
   // ASK (this opens the dialog); the POST fires from the dialog's hazard button
@@ -277,6 +288,6 @@ export function useFleetActions({ showNote, revive, reviveAll, enableRemoteActio
     killAsk, setKillAsk, killBusy, askKill, doKill,
     armAsk, setArmAsk, armBusy, askArm, doArm, doDisarm,
     renameAsk, setRenameAsk, renameBusy, askRename, doRename, doResetName,
-    doRevive, doReviveAll, doEnableRemote,
+    doRevive, doReviveAll, doEnableRemote, doSpawnShell,
   };
 }

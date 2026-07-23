@@ -107,6 +107,10 @@ export function spawnSession(body) {
   return post('/api/spawn', body);
 }
 
+export function spawnShell(cwd) {
+  return post('/api/spawn', { kind: 'shell', cwd });
+}
+
 // 0.16.0 — mint the one-time capability an unsupervised spawn body must echo
 // as arm_token. The daemon gates unsupervised spawns server-side now; this is
 // the board's half of the red two-step. Single-use, 60s TTL.

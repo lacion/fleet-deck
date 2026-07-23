@@ -111,11 +111,12 @@ export function createMail(ctx) {
   function resolveTargets(to) {
     const all = q.visibleSessions.all();
     const active = all.filter(s => s.ended_at == null);
-    if (to === 'all') return active.map(s => s.session_id);
+    const fanout = active.filter(s => s.source !== 'shell');
+    if (to === 'all') return fanout.map(s => s.session_id);
     const m = /^repo:(.+)$/.exec(String(to ?? ''));
     if (m) {
       const key = m[1];
-      return active
+      return fanout
         .filter(s => s.repo_id === key || s.repo_name === key)
         .map(s => s.session_id);
     }
@@ -161,7 +162,7 @@ export function createMail(ctx) {
 
   function ownedPaneRow(sid) {
     const c = q.getSession.get(sid);
-    if (!c || c.ended_at != null || !['queued', 'idle'].includes(c.col)) return null;
+    if (!c || c.source === 'shell' || c.ended_at != null || !['queued', 'idle'].includes(c.col)) return null;
     const sp = q.spawnBySession.get(sid);
     if (!sp || !['spawning', 'stalled', 'live'].includes(sp.status)) return null;
     return { c, sp };
@@ -287,6 +288,18 @@ export function createMail(ctx) {
     }
     if (RESERVED_FRAME_RE.test(String(text ?? ''))) {
       return { status: 422, body: { ok: false, reason: 'mail text may not open with a [FLEETDECK ...] frame — those are reserved for the daemon' } };
+    }
+    const directShell = q.visibleSessions.all()
+      .find(s => s.source === 'shell'
+        && (s.session_id === to || s.callsign === to || s.prev_callsign === to));
+    if (directShell) {
+      return {
+        status: 409,
+        body: {
+          ok: false,
+          reason: `${directShell.callsign} is a shell pane — mail would be typed into a shell`,
+        },
+      };
     }
     const targets = resolveTargets(to);
     // Report delivery truth from the state immediately before insertion: a

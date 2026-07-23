@@ -68,7 +68,10 @@ export default function App() {
   // M-F2 — ONE owner of the revive + enable-remote POSTs and their per-spawn
   // in-flight sets, shared by the card chips (via useFleetActions below) and the
   // drawer's OWNED PANE. A card chip and its drawer button can't each fire a POST.
-  const { reviving, enabling, revivingAll, adopting, revive, reviveAll, enableRemote: enableRemoteAction, adopt } = useSpawnActions();
+  const {
+    reviving, enabling, revivingAll, adopting, shelling,
+    revive, reviveAll, enableRemote: enableRemoteAction, adopt, spawnShell: spawnShellAction,
+  } = useSpawnActions();
   // board-level mutations that report onto the strip: Clear, revive, enable-remote,
   // the two-step kill, the two-step Move-to-tmux (ASK opens the dialog; the POST
   // is the dialog's alone — disarm is the one direct click), and the two-step
@@ -78,8 +81,8 @@ export default function App() {
     killAsk, setKillAsk, killBusy, askKill, doKill,
     armAsk, setArmAsk, armBusy, askArm, doArm, doDisarm,
     renameAsk, setRenameAsk, renameBusy, askRename, doRename, doResetName,
-    doRevive, doReviveAll, doEnableRemote,
-  } = useFleetActions({ showNote, revive, reviveAll, enableRemoteAction, adopt });
+    doRevive, doReviveAll, doEnableRemote, doSpawnShell,
+  } = useFleetActions({ showNote, revive, reviveAll, enableRemoteAction, adopt, spawnShellAction });
   // terminal / grid / watch windows — killAsk + armAsk + renameAsk are threaded in
   // for the keydown mirrors (Esc cancels the topmost dialog, leaves the drawer
   // standing)
@@ -321,6 +324,8 @@ export default function App() {
               onDisarm={doDisarm}
               adopting={adopting}
               onRename={askRename}
+              onSpawnShell={spawnAvailable ? doSpawnShell : null}
+              shelling={shelling}
             />
           )}
           {/* v1.3 — PLANS library, between the lanes and the feed (never in

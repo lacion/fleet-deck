@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
-import { reviveSpawn, enableRemote, adoptSession, reasonOf, armUnsupervised } from './api.js';
+import { reviveSpawn, enableRemote, adoptSession, spawnShell, reasonOf, armUnsupervised } from './api.js';
 
 // M-F2 — revive and enable-remote used to be implemented TWICE: once on the
 // card chip (App) and once in the drawer's OWNED PANE (Drawer), each with its
@@ -29,10 +29,12 @@ export function useSpawnActions() {
   // the whole point), so the lock is the session. adopt, arm and disarm all POST
   // to the same endpoint on the same session, so they share ONE lock.
   const adoptRef = useRef(new Set());
+  const shellRef = useRef(new Set());
   const [reviving, setReviving] = useState(() => new Set());
   const [enabling, setEnabling] = useState(() => new Set());
   const [revivingAll, setRevivingAll] = useState(false);
   const [adopting, setAdopting] = useState(() => new Set());
+  const [shelling, setShelling] = useState(() => new Set());
 
   // 0.16.0: a revive of an unsupervised lineage passes the daemon's arm gate
   // (the 60s arm must never become a permanent replayable capability), so the
@@ -143,5 +145,26 @@ export function useSpawnActions() {
     }
   }, []);
 
-  return { reviving, enabling, revivingAll, adopting, revive, reviveAll, enableRemote: enable, adopt };
+  const shell = useCallback(async (s, onResult) => {
+    const id = s?.session_id;
+    const cwd = s?.worktree || s?.cwd;
+    if (!id || !cwd || shellRef.current.has(id)) return;
+    shellRef.current.add(id);
+    setShelling(new Set(shellRef.current));
+    try {
+      const res = await spawnShell(cwd);
+      const ok = res.ok && res.json?.ok !== false;
+      onResult?.(ok
+        ? { ok: true, callsign: res.json?.callsign || null }
+        : { ok: false, reason: reasonOf(res) });
+    } finally {
+      shellRef.current.delete(id);
+      setShelling(new Set(shellRef.current));
+    }
+  }, []);
+
+  return {
+    reviving, enabling, revivingAll, adopting, shelling,
+    revive, reviveAll, enableRemote: enable, adopt, spawnShell: shell,
+  };
 }

@@ -185,6 +185,12 @@ a.fd-remotechip.link { text-decoration: none; }
   min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   color: var(--dim); background: var(--border-soft);
 }
+.fd-shellchip, .fd-setupchip {
+  font-family: var(--font-data); font-size: 10px; padding: 1px 7px;
+  border-radius: var(--r-chip); white-space: nowrap;
+  color: var(--dim); background: var(--border-soft);
+}
+.fd-shellchip { color: var(--ok); }
 .fd-mbadge.fable { color: var(--m-fable); background: var(--m-fable-bg); }
 .fd-mbadge.quill { color: var(--m-quill); background: var(--m-quill-bg); }
 .fd-mbadge.comet { color: var(--m-comet); background: var(--m-comet-bg); }
@@ -398,6 +404,12 @@ textarea.fd-input { font-family: var(--font-ui); font-size: 13px; resize: none; 
 .fd-spawn .fd-form .frow.top { align-items: flex-start; }
 .fd-spawn .fd-form .frow.top .fl { padding-top: 8px; }
 .fd-spawn textarea.fd-input { flex: 1; }
+.fd-setupbox { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.fd-setupcallout {
+  font-family: var(--font-data); font-size: 10.5px; color: var(--ok);
+  padding: 6px 8px; border: 1px solid var(--border); border-radius: var(--r-ctl);
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
 .fd-check { display: flex; align-items: center; gap: 8px; font-size: var(--fs-body); color: var(--text); cursor: pointer; }
 .fd-check input[type="checkbox"] { accent-color: var(--act); margin: 0; }
 .fd-spawnerr { font-family: var(--font-data); font-size: 11.5px; color: var(--hazard); overflow-wrap: anywhere; }
@@ -918,6 +930,9 @@ textarea.fd-input { font-family: var(--font-ui); font-size: 13px; resize: none; 
    the top of this file already raises it over the .fd-cardopen overlay — R3-3.) */
 .fd-actbtn.rename { color: var(--dim); }
 .fd-actbtn.rename:hover { border-color: var(--act); background: var(--act-bg); color: var(--act); }
+.fd-actbtn.shell { color: var(--ok); }
+.fd-actbtn.shell:hover { border-color: var(--ok); color: var(--ok); }
+.fd-actbtn.shell.busy { cursor: default; opacity: .6; }
 
 /* ✎ in the drawer head — the rename door sitting ON the callsign it renames.
    Ghost-quiet until hovered: the head is an identity line, not a button bar. */
