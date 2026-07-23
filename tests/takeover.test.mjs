@@ -197,6 +197,29 @@ test('verifyDaemonPid accepts a genuine running daemon (pidfile match + fleetd /
 // 2. Integration — the real hook against real (and immortal) daemons.
 // ---------------------------------------------------------------------------
 
+test('a cold-boot SessionStart hook rereads the minted token and registers the first session', async (t) => {
+  const port = randomPort();
+  const home = mkdtempSync(path.join(tmpdir(), 'fleetdeck-cold-hook-home-'));
+  const cwd = scratchDir(t);
+  const sid = randomUUID();
+  t.after(async () => {
+    await killDaemonAt(port, home);
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  const hook = runHook({
+    port, home,
+    payload: loadFixture('session-start', { session_id: sid, cwd }),
+  });
+  assert.equal(await hook.exitWithin(10000, 'cold-boot SessionStart'), 0,
+    `the hook must fail open with exit 0 (stderr: ${hook.stderr})`);
+  await waitForHealth(`http://127.0.0.1:${port}`, 8000);
+
+  const state = (await getJson(`http://127.0.0.1:${port}/state`)).json;
+  assert.ok(state.sessions?.some(session => session.session_id === sid),
+    'the birth SessionStart must authenticate after cold boot and create the first card');
+});
+
 test('a newer hook replaces an older daemon: old exits 0, new owns the same port+HOME, a pre-seeded session survives, ticker says "replaced"', async (t) => {
   const port = randomPort();
   const home = mkdtempSync(path.join(tmpdir(), 'fleetdeck-takeover-home-'));

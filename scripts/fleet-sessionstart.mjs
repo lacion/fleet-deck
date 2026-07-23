@@ -35,16 +35,14 @@ const FLEETD = process.env.FLEETDECK_TEST_DAEMON_SCRIPT
   || (fs.existsSync(FLEETD_BUNDLE) ? FLEETD_BUNDLE : path.join(HERE, 'fleetd', 'fleetd.mjs'));
 const HOME = resolveHome();
 
-// FLEETDECK_REQUIRE_TOKEN support: when the operator opts every loopback caller
-// into the token, this hook must still reach the daemon. Read the persisted
-// token ($FLEETDECK_HOME/token, resolved exactly like every other path here)
-// ONCE at startup and tolerate its absence — in default loopback mode there is
-// no token file and the loopback exemption carries the hook. When a token IS
-// present we always attach it (harmless: the daemon ignores a bearer it does
-// not require). /hook/* keeps the loopback exemption even under the flag, so a
-// cold boot that mints the token after this read still succeeds.
-let TOKEN = null;
-try { TOKEN = fs.readFileSync(path.join(HOME, 'token'), 'utf8').trim() || null; } catch { /* no token file — default loopback mode */ }
+// Every /hook/* route requires the bearer, including plain loopback. A warm
+// hook reads the persisted token here; a cold hook reads null, boots fleetd,
+// then MUST reread after health succeeds because that boot minted the file.
+function readToken() {
+  try { return fs.readFileSync(path.join(HOME, 'token'), 'utf8').trim() || null; }
+  catch { return null; }
+}
+let TOKEN = readToken();
 
 // Hard deadline: whatever happens, exit 0 well inside the hook's 15s timeout.
 // The takeover path can outlast the default 3.8s budget (waiting for an old
@@ -236,6 +234,9 @@ try {
   // pre-upgrade hooks) so the human hears it from the session that caused it.
   if (replacedVersion) payload.fleet_takeover = replacedVersion;
   if (serverUp) {
+    // Cold boot: ensureServer() just minted HOME/token. Refresh before the first
+    // authenticated registration instead of silently losing the birth event.
+    TOKEN = readToken();
     const reg = await api('/hook/SessionStart', { method: 'POST', body: payload, timeout: 1200 });
     if (managedVersionDrift) {
       process.stdout.write(
