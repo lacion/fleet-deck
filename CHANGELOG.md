@@ -5,6 +5,47 @@ All notable changes to Fleet Deck are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.0] - 2026-07-24
+
+This release makes a failed repository spawn diagnosable. git already prints the
+remedy for most clone failures — an unregistered key, the URL to register it, a
+host it does not trust — but the board only ever showed the final `fatal:` line
+and discarded the rest into a log nobody reads. The remedy now reaches the card,
+credential-redacted and bounded.
+
+### Added
+
+- **The git failure remedy, on the card.** A failed clone or fetch keeps a
+  bounded tail of git's stderr as `spawns.fail_detail`, exposed on the snapshot
+  as `sessions[].spawn.fail_detail` for tombstoned and stalled rows, and revealed
+  by a per-card disclosure next to the existing note. The motivating case: a
+  Coder workspace answers a failed SSH clone with the workspace's own public key
+  and the exact URL to register it. That block was printed, thrown away, and
+  rediscovered by hand hours later. The column is added additively and backfilled
+  NULL, so pre-upgrade rows and every healthy card render exactly as before.
+
+### Security
+
+- **git stderr is redacted before it is stored or served.** A clone URL can carry
+  credentials, and git echoes URLs freely. The card note and the new detail are
+  now derived from a single hardened string, so the two sinks cannot disagree
+  about a secret: URL userinfo is scrubbed and fails *closed* past its length
+  bound, schemeless `user:token@host` pairs and secret-bearing query and fragment
+  parameters are covered, known token shapes are masked, and the caller
+  contributes the exact credential material it already holds for anything
+  shapeless. The excerpt is capped at 20 lines and 2000 bytes, with the cap
+  applied *after* redaction so truncation can never re-expose a masked secret.
+  Remote-authored `remote:` text is control-stripped and labelled as relayed.
+- The same positional scrub now also covers the stall diagnostic excerpt and the
+  worktree prune and add paths, which previously put raw git stderr into a note
+  or an HTTP body.
+
+### Fixed
+
+- The distilled one-line failure note is unchanged for every input without
+  embedded credentials, so existing cards and ticker lines read exactly as they
+  did.
+
 ## [0.18.0] - 2026-07-24
 
 This release turns a round of real user feedback into a more direct day-to-day
@@ -508,6 +549,7 @@ Initial public release.
 - A brainless orchestrator: `assign auto` routes a task to the best existing session with a SQL query, not a model call — the core makes zero model calls.
 - One-command plugin install with a self-contained daemon bundle (`node:sqlite` state, nothing to `npm install`); the first session's SessionStart hook elects and launches the daemon. MIT licensed.
 
+[0.19.0]: https://github.com/lacion/fleet-deck/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/lacion/fleet-deck/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/lacion/fleet-deck/compare/v0.16.1...v0.17.0
 [0.16.1]: https://github.com/lacion/fleet-deck/compare/v0.16.0...v0.16.1
