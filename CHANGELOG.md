@@ -5,6 +5,28 @@ All notable changes to Fleet Deck are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.1] - 2026-07-24
+
+### Fixed
+
+- **A card stranded mid-resume is released instead of reading `reviving…`
+  forever.** A revive (or adopt) marks its card as an in-flight resume and waits
+  for the new pane's first hook to move it on. If that hook never arrived — the
+  daemon was restarted during the launch, or the pane died the instant it was
+  exec'd — the card kept the transient note permanently, the board offered no way
+  to try again, and the only recovery was editing `fleetd.db` by hand. Neither
+  the spawn-row reconciler nor the tombstone path could fix it: both skip a
+  session that already has `ended_at`, which every resume target has by
+  definition. Such a card is now released back to offline and revivable, at
+  daemon boot and on the liveness tick, so a wedge created at runtime clears
+  without a restart.
+
+  The check is a proof, not a timeout: a resume inserts its provisional spawn row
+  *before* it flips the card, so a card presenting as in-flight with no spawn row
+  in `provisioning|spawning|stalled|live` cannot be a resume that is merely slow.
+  At boot the heal deliberately runs *after* row reconciliation, because a row the
+  previous daemon left `spawning` would otherwise read as a live resume.
+
 ## [0.19.0] - 2026-07-24
 
 This release makes a failed repository spawn diagnosable. git already prints the
@@ -549,6 +571,7 @@ Initial public release.
 - A brainless orchestrator: `assign auto` routes a task to the best existing session with a SQL query, not a model call — the core makes zero model calls.
 - One-command plugin install with a self-contained daemon bundle (`node:sqlite` state, nothing to `npm install`); the first session's SessionStart hook elects and launches the daemon. MIT licensed.
 
+[0.19.1]: https://github.com/lacion/fleet-deck/compare/v0.19.0...v0.19.1
 [0.19.0]: https://github.com/lacion/fleet-deck/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/lacion/fleet-deck/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/lacion/fleet-deck/compare/v0.16.1...v0.17.0
