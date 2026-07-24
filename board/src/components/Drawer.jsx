@@ -27,7 +27,12 @@ function OwnedPane({ s, onOpenTerm, onKill, onRevive, onEnableRemote, reviving, 
   const [rc, setRc] = useState({ done: false, err: null, ok: null, url: null });
   const [diagCopied, setDiagCopied] = useState(false);
   const diagTimer = useRef(null);
-  useEffect(() => () => clearTimeout(diagTimer.current), []);
+  // Its OWN latch, deliberately not shared with the stall diag above: both blocks
+  // can be on one card (a clone that failed, a pane that then never registered),
+  // and a shared latch would flash "✓ copied" on the block you did not copy.
+  const [failCopied, setFailCopied] = useState(false);
+  const failTimer = useRef(null);
+  useEffect(() => () => { clearTimeout(diagTimer.current); clearTimeout(failTimer.current); }, []);
   const alive = s.col !== 'offline';
   const revivable = !alive && !!s.spawn.revivable;
   // snapshot truth first; the fresh POST response fills the gap until the
@@ -103,6 +108,38 @@ function OwnedPane({ s, onOpenTerm, onKill, onRevive, onEnableRemote, reviving, 
           {s.spawn.stall_detail
             ? <pre>{s.spawn.stall_detail}</pre>
             : <div className="none">No pane excerpt was captured. Open the live terminal to inspect the stalled process.</div>}
+        </div>
+      )}
+      {s.spawn.fail_detail && (
+        // The card carries a ▸ disclosure of this same text; here it gets room to
+        // breathe AND a copy button, because the thing you need out of a failed
+        // clone is usually a URL to open or a public key to paste into a settings
+        // page — retyping either off a screenshot is how the hours get spent.
+        // No `.none` fallback, unlike the stall diag: the daemon writes this field
+        // only when it captured something, so the block simply does not render.
+        <div className="fd-faildiag">
+          <div className="hd">
+            <span>GIT OUTPUT WHEN THE SPAWN FAILED</span>
+            {/* Every `remote:` line in here was written by whoever runs the far
+                end of the clone (or, on an http:// remote, by anyone in the
+                middle) — git only relays it. It is bounded, control-stripped and
+                rendered as a text node, so it cannot script the board, but it CAN
+                print a plausible-looking instruction, and the button beside it
+                trains you to copy a URL or a key straight out of it. Say whose
+                words they are; do not present them as fleetdeck's advice. */}
+            <span className="src">relayed from the remote server</span>
+            <button
+              type="button"
+              className="fd-ghostbtn"
+              onClick={async () => {
+                const ok = await copyText(s.spawn.fail_detail);
+                setFailCopied(ok);
+                clearTimeout(failTimer.current);
+                failTimer.current = setTimeout(() => setFailCopied(false), 1800);
+              }}
+            >{failCopied ? '✓ copied' : 'copy'}</button>
+          </div>
+          <pre>{s.spawn.fail_detail}</pre>
         </div>
       )}
       {/* v1.6 — the claude.ai door (or its pending placeholder) */}

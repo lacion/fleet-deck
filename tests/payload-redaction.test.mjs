@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { createPayloadCapture } from '../scripts/fleetd/payload-capture.mjs';
+import { createPayloadCapture, redactDiagnosticText, scrubUrlCredentials } from '../scripts/fleetd/payload-capture.mjs';
 
 function scratchHome(t) {
   const dir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-redact-'));
@@ -137,6 +137,31 @@ test('an operator token with JSON-special chars is scrubbed in every form, bytes
   assert.equal(raw.includes('012345678'), false, 'no distinctive tail of the token may survive');
   assert.equal(payload.prompt, 'operator pasted [redacted] into the box');
   assert.equal(payload.note, 'unrelated');
+});
+
+test('scrubUrlCredentials removes URL userinfo, bytes and all, and is idempotent', () => {
+  const secret = 'glpat-AbCdEf1234567890';
+  const line = `fatal: unable to access 'https://luis:${secret}@gitlab.com/x/y.git/'`;
+  const out = scrubUrlCredentials(line);
+  assert.equal(out, "fatal: unable to access 'https://[redacted]@gitlab.com/x/y.git/'");
+  assert.equal(out.includes(secret), false, 'the raw token bytes must be gone');
+  assert.equal(out.includes('luis'), false, 'the username half goes too — a bare token is indistinguishable from one');
+  assert.equal(scrubUrlCredentials(out), out, 'a second pass must be a no-op');
+  // Shapes it must NOT touch: no userinfo, and scp-style (which has no password
+  // slot and whose legibility is the point of the git-stderr expander).
+  assert.equal(scrubUrlCredentials('https://github.com/settings/ssh/new'), 'https://github.com/settings/ssh/new');
+  assert.equal(scrubUrlCredentials('git@github.com:owner/repo.git'), 'git@github.com:owner/repo.git');
+});
+
+test('redactDiagnosticText is UNCHANGED: it still has no userinfo rule', () => {
+  // Pinned deliberately. scrubUrlCredentials is a SEPARATE export precisely so
+  // hook-payload capture stays bit-for-bit identical; if a future reader folds a
+  // userinfo pattern into SECRET_VALUE_RES instead, this fails and points at the
+  // capture-format cases above that would then need revisiting. The corollary
+  // for callers: the shape scrubber alone is NOT sufficient for a credentialed
+  // URL — they must compose both, as gitStderrDetail does.
+  const line = "fatal: unable to access 'https://luis:glpat-AbCdEf1234567890@gitlab.com/x/y.git/'";
+  assert.equal(redactDiagnosticText(line), line);
 });
 
 test('a giant value under a secret key is redacted, never truncated-but-leaked', (t) => {

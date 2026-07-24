@@ -6,7 +6,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileP, baseBranch, distillGitStderr } from './exec.mjs';
+import { execFileP, baseBranch, distillGitStderr, gitStderrDetail, redactGitText } from './exec.mjs';
+import { scrubUrlCredentials } from './payload-capture.mjs';
 import { detectCoderWorkspaceRoot } from './config.mjs';
 
 const CONTROL_RE = /[\x00-\x1f\x7f]/;
@@ -21,6 +22,61 @@ function namedError(status, message) {
   const err = new Error(message);
   err.status = status;
   return err;
+}
+
+// Anchored userinfo probe for a clone origin (not the free-text scrubber — that
+// one is global and runs over stderr). Greedy to the LAST `@` before the path,
+// matching scrubUrlCredentials, so `https://u:p@ss@host/x` yields `u:p@ss`.
+const ORIGIN_USERINFO_RE = /^[a-z][a-z0-9+.-]{0,32}:\/\/([^/?#\s]{0,512})@/i;
+// …and the OTHER place a bare credential hides in a URL: the query string or
+// fragment. `?access_token=` (Gitea), `?private_token=` / `?job_token=` (GitLab)
+// are real forms, and unlike userinfo they carry no positional marker a scrubber
+// can key off without knowing the parameter name. scrubUrlCredentials recognises
+// the common NAMES; harvesting the VALUES here as exact needles is what covers a
+// name it has never heard of. Value-only, name-agnostic, and applied through the
+// same >= 8 length filter as the userinfo halves below. The cost of being
+// name-agnostic is accepted deliberately: an innocent `?ref=some-long-branch`
+// becomes an exact needle and that branch name is redacted wherever it appears in
+// the stderr. A clone origin carrying a query string at all is rare, and losing a
+// branch name from a diagnostic is recoverable — losing a token is not.
+const ORIGIN_PARAM_VALUE_RE = /[?&#][^=&\s]{1,128}=([^&\s]{1,512})/g;
+
+// ONE hardening pass, BOTH human-facing outputs. Every path that turns a failed
+// git step into a note AND a durable detail goes through here, and — the point of
+// the rewrite — the note is derived from the SAME hardened string as the detail.
+// It was not: the note used to get only the positional URL scrub while the shape
+// scrub and these exact needles were applied inside gitStderrDetail, so
+// `fatal: helper rejected token ghp_…` masked the token in the expander and
+// printed it verbatim in the note six characters away. The note is the WORSE sink
+// of the two — card note, 120-char ticker line, HTTP 409 body, and the durable
+// SpawnFailed event that outlives the archived card — so it cannot be the one
+// with the weaker control. The remaining git failures in this file produce a note
+// only, and apply scrubUrlCredentials inline.
+//
+// `secrets` is the exact-needle list gitStderrDetail cannot derive for itself:
+// the userinfo of the origin we were handed, its `:`-split halves, and any query
+// or fragment parameter value, because git prints a bare password in
+// `remote: HTTP Basic: Access denied for user '…'` where no URL and no known
+// credential shape is present to key off. Components shorter than 8 characters
+// are dropped on purpose — a 3-character username like `git` used as an exact
+// needle would shred unrelated text (`git clone`, `.git/`) into `[redacted]` and
+// destroy the remedy's legibility. ACCEPTED RESIDUAL: a sub-8-character password
+// is therefore covered only in URL form, by the positional scrub.
+function originSecrets(origin_url) {
+  const origin = String(origin_url ?? '');
+  const userinfo = ORIGIN_USERINFO_RE.exec(origin)?.[1] ?? '';
+  const parts = userinfo ? [userinfo, ...userinfo.split(':')] : [];
+  for (const match of origin.matchAll(ORIGIN_PARAM_VALUE_RE)) parts.push(match[1]);
+  return [...new Set(parts.filter(part => part.length >= 8))];
+}
+
+function gitFailureText(err, origin_url = null) {
+  const secrets = originSecrets(origin_url);
+  const hardened = redactGitText(String(err ?? ''), secrets);
+  // Re-passing `secrets` is deliberate and harmless: gitStderrDetail runs the
+  // same idempotent pass over its input, and a caller that ever hands it raw
+  // stderr directly still gets the needles applied.
+  return { note: distillGitStderr(hardened), detail: gitStderrDetail(hardened, { secrets }) };
 }
 
 function repoNameOf(value) {
@@ -300,6 +356,25 @@ export function createRepos(ctx) {
     return () => { if (!released) { released = true; clonesInFlight -= 1; } };
   }
 
+  // Persist a failed git step's redacted excerpt on the spawn row that asked for
+  // it. The `spawn_id` guard is the point of the wrapper: materializeBranch is
+  // also reachable from paths that have no spawns row at all (its spawn_id
+  // defaults to ''), where the UPDATE would be a silent no-op — an intent worth
+  // stating rather than leaving to SQLite's zero-changes result.
+  //
+  // BEST EFFORT, and the try/catch is the load-bearing part. Both call sites sit
+  // inside cloneRepo's try block, whose catch rewrites any error without a
+  // `.status` into namedError(409, err.message) — so a throwing UPDATE (a busy or
+  // closing DB during shutdown, a statement error) would replace git's distilled
+  // verdict with a SQLite message. That is precisely the regression this whole
+  // change exists to prevent, in the one code path it owns: a failed attempt to
+  // RECORD a diagnostic must never DISPLACE the diagnostic.
+  function recordFailDetail(spawn_id, detail) {
+    if (!spawn_id) return;
+    try { q.setSpawnFailDetail.run(detail, spawn_id); }
+    catch (err) { console.error(`fleetd could not record fail_detail for ${spawn_id}: ${err?.message || err}`); }
+  }
+
   async function validateBranch(branch) {
     const quick = quickBranchCheck(branch);
     if (quick) throw namedError(400, quick);
@@ -523,8 +598,24 @@ export function createRepos(ctx) {
         // The full stderr goes to fleetd.log for diagnosis; the human-facing
         // failure carries git's own distilled `fatal:`/`error:` line, so a
         // private-repo auth failure no longer hides behind "Cloning into '…'".
+        // This log line keeps the RAW stderr and the RAW (possibly credentialed)
+        // origin_url on purpose — fleetd.log is 0600 and is the documented place
+        // where credentialed URLs are allowed to land. Nothing below it, in THIS
+        // file, is raw — scope that claim to repos.mjs and do not read it as a
+        // repo-wide invariant: spawns.mjs still returns the raw origin_url in its
+        // 202 spawn response (an accepted residual, since that value came from the
+        // caller in the same request).
         if (result.err) console.error(`fleetd clone failed — ${origin_url}\n${result.err}`);
-        throw namedError(409, distillGitStderr(result.err) || 'git clone failed');
+        const { note, detail } = gitFailureText(result.err, origin_url);
+        // …but the distilled line was ALL a human ever saw, and on the Coder
+        // workspace that motivated this it read "fatal: Could not read from
+        // remote repository." while the public key and the settings/ssh/new URL
+        // to register it sat one line above, in this same stderr, discarded.
+        // Persist the bounded excerpt now, while the provisional row is still
+        // here: compensation flips it to 'gone' but never deletes it, so the
+        // snapshot can offer it on the tombstone.
+        recordFailDetail(spawn_id, detail);
+        throw namedError(409, note || 'git clone failed');
       }
       fs.renameSync(temp, dest);
       return dest;
@@ -548,14 +639,43 @@ export function createRepos(ctx) {
     const remote = await execFileP('git', ['-C', root, 'show-ref', '--verify', '--quiet', `refs/remotes/origin/${branch}`], { timeout: 5_000 });
     const base = await baseBranch(root);
     if (!local.ok && !remote.ok && !base) {
-      throw namedError(409, fetched.ok
-        ? `branch ${branch} does not exist and no base branch is available to create it from`
-        : `branch ${branch} not found locally and fetch failed: ${distillGitStderr(fetched.err)}`);
+      if (fetched.ok) {
+        throw namedError(409, `branch ${branch} does not exist and no base branch is available to create it from`);
+      }
+      // This branch was STRICTLY WORSE than the clone bug being fixed here: the
+      // fetch is not one of this file's console.error sites, so its stderr was
+      // destroyed outright — distilled to one line for the card and otherwise
+      // gone, not even in fleetd.log. Same treatment as the clone now. The `||`
+      // fallback is new too: an empty stderr used to produce a dangling
+      // "fetch failed: " with nothing after the colon.
+      //
+      // Unlike the clone, this path was NEVER handed an origin_url — the remote
+      // lives in the checkout's own .git/config, which fleetd never wrote and
+      // never validated. Reading it back is what gives the exact-needle layer
+      // something to work with; without it a bare, shapeless password in the
+      // fetch stderr had no covering layer at all. argv only, no shell, local
+      // config read (no network), failure path only, and `.ok` is not required —
+      // a missing origin simply yields no needles.
+      const originUrl = await execFileP('git', ['-C', root, 'remote', 'get-url', 'origin'], { timeout: 5_000 });
+      const { note, detail } = gitFailureText(fetched.err, originUrl.ok ? originUrl.out.trim() : null);
+      recordFailDetail(spawn_id, detail);
+      throw namedError(409, `branch ${branch} not found locally and fetch failed: ${note || 'git fetch failed'}`);
     }
 
     if (mode === 'in-place') {
       const status = await execFileP('git', ['-C', root, 'status', '--porcelain'], { timeout: 30_000 });
-      if (!status.ok) throw namedError(409, status.err || 'git status failed');
+      // This and the three like it in the rest of this function (switch,
+      // worktree list, worktree add) put UNDISTILLED git stderr straight into a
+      // card note and an HTTP body. A credential control applied to the clone
+      // path but not to its immediate neighbours would be close to no control at
+      // all — a `remote:` line or a repository URL echoed by any of them can carry
+      // userinfo just as easily. They stay undistilled on purpose (a dirty-checkout
+      // or locked-worktree message is only useful in full); they just stop being
+      // unscrubbed. spawns.mjs' `git worktree add` and worktrees.mjs' `worktree
+      // prune` were swept into the same convention for uniformity, but this is a
+      // convention, not an enforced invariant: a new git call site does not
+      // inherit it automatically.
+      if (!status.ok) throw namedError(409, scrubUrlCredentials(status.err) || 'git status failed');
       const dirty = dirtyNames(status.out);
       if (dirty.length) {
         const shown = dirty.slice(0, 3).join(', ');
@@ -565,12 +685,12 @@ export function createRepos(ctx) {
         : remote.ok ? ['-C', root, 'switch', '--track', `origin/${branch}`]
           : ['-C', root, 'switch', '-c', branch, base.ref];
       const switched = await execFileP('git', args, { timeout: 30_000 });
-      if (!switched.ok) throw namedError(409, switched.err || 'git switch failed');
+      if (!switched.ok) throw namedError(409, scrubUrlCredentials(switched.err) || 'git switch failed');
       return { runCwd: root, created: { clone: !!clone, worktree: false }, reused: false };
     }
 
     const listed = await execFileP('git', ['-C', root, 'worktree', 'list', '--porcelain'], { timeout: 10_000 });
-    if (!listed.ok) throw namedError(409, listed.err || 'git worktree list failed');
+    if (!listed.ok) throw namedError(409, scrubUrlCredentials(listed.err) || 'git worktree list failed');
     const existing = parseWorktrees(listed.out).find(row => row.branch === branch);
     if (existing) return { runCwd: existing.path, created: { clone: !!clone, worktree: false }, reused: true };
 
@@ -596,7 +716,7 @@ export function createRepos(ctx) {
         await execFileP('git', ['-C', root, 'worktree', 'prune'], { timeout: 30_000 });
       }
     }
-    throw namedError(409, last?.err || 'git worktree add failed');
+    throw namedError(409, scrubUrlCredentials(last?.err) || 'git worktree add failed');
   }
 
   function canonicalTarget(dest) {

@@ -14,7 +14,7 @@ import { deriveRepo, branchOf } from './repo-identity.mjs';
 import { ticketFromBranch, animalOf } from './tickets.mjs';
 import { claudeEnvArgvPrefix, claudeTranscriptPath, SHELL_RE, NOT_RESUMABLE_END } from './helpers.mjs';
 import { execFileP, baseBranch } from './exec.mjs';
-import { redactDiagnosticText } from './payload-capture.mjs';
+import { redactDiagnosticText, scrubUrlCredentials } from './payload-capture.mjs';
 
 export const SETUP_WRAPPER = [
   'cmd=$FLEETDECK_SETUP_CMD; unset FLEETDECK_SETUP_CMD',
@@ -33,6 +33,18 @@ const STALL_DETAIL_LINES = 18;
 // strip any controls defensively, trim empty screen margins, keep only the tail
 // a human would see, redact known credential shapes, then bound the final value
 // before it enters SQLite and the /state broadcast.
+//
+// scrubUrlCredentials rides here for the same reason it rides gitStderrDetail,
+// and the omission was not cosmetic: the captured pane of a STALLED spawn very
+// often still has the command that stalled it on screen, and for a repo-mode
+// spawn that command is `git clone https://user:token@host/x.git`. A shape-only
+// scrub provably cannot see that — no entry in SECRET_VALUE_RES matches a GitLab
+// PAT or a corporate password (tests/payload-redaction.test.mjs pins that
+// absence deliberately) — and stall_detail reaches exactly the same surfaces as
+// fail_detail: the drawer <pre>, /state, every /ws frame, and a durable
+// SpawnStalled event note. Two sibling excerpts must not disagree about the same
+// control. The control class is left as-is here on purpose: a tmux-rendered
+// capture has no tabs to preserve and no C1 bytes to strip.
 export function stallDiagnosticExcerpt(screen, { secrets = [] } = {}) {
   if (typeof screen !== 'string' || !screen) return null;
   const lines = screen
@@ -43,7 +55,7 @@ export function stallDiagnosticExcerpt(screen, { secrets = [] } = {}) {
   while (lines.length && !lines[0]) lines.shift();
   while (lines.length && !lines[lines.length - 1]) lines.pop();
   if (!lines.length) return null;
-  let tail = redactDiagnosticText(lines.slice(-STALL_DETAIL_LINES).join('\n'));
+  let tail = redactDiagnosticText(scrubUrlCredentials(lines.slice(-STALL_DETAIL_LINES).join('\n')));
   for (const secret of secrets) {
     if (typeof secret === 'string' && secret) tail = tail.split(secret).join('[redacted]');
   }
@@ -370,6 +382,12 @@ export function createSpawns(ctx) {
   function resurrectSpawn(row) {
     const shell = row.kind === 'shell';
     q.setSpawnStatus.run('live', row.spawn_id);
+    // Same reason as the first-hook promotion in events.mjs: a row that is live
+    // again has no failure to explain, and leaving the excerpt behind means a
+    // later terminal transition re-exposes a stale clone failure on a card whose
+    // spawn worked. The snapshot's status gate hides it while 'live'; this is what
+    // stops it coming back.
+    if (row.fail_detail) q.setSpawnFailDetail.run(null, row.spawn_id);
     const c = q.getSession.get(row.session_id);
     updateSession(row.session_id, {
       col: 'idle', ended_at: null, archived_at: null,
@@ -938,11 +956,18 @@ export function createSpawns(ctx) {
       }
       worktree_path = candidate;
       if (!result.ok) {
+        // `git worktree add` is a purely local operation, so a credential in its
+        // stderr is unlikely — but repos.mjs now asserts that no path in the clone
+        // family puts unscrubbed git stderr into a note or an HTTP body, and a
+        // control applied unevenly reads to the next reader as a deliberate
+        // posture rather than a gap. One call, no behaviour change on stderr that
+        // holds no credential.
+        const addErr = scrubUrlCredentials(result.err);
         await spawnCompensate({
           spawn_id, session_id, callsign, cwd, worktree_path, tmux_window: null,
-          reason: `git worktree add: ${result.err}`,
+          reason: `git worktree add: ${addErr}`,
         });
-        return { status: 409, body: { ok: false, reason: `git worktree add failed: ${result.err}`.slice(0, 300) } };
+        return { status: 409, body: { ok: false, reason: `git worktree add failed: ${addErr}`.slice(0, 300) } };
       }
       q.setSpawnWorktree.run(worktree_path, spawn_id);
       const repo = deriveRepo(worktree_path);

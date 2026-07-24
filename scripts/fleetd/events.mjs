@@ -94,6 +94,16 @@ export function createEvents(ctx) {
     const sp = q.spawnBySession.get(sid);
     if (sp && (sp.status === 'spawning' || sp.status === 'stalled')) {
       q.setSpawnStatus.run('live', sp.spawn_id);
+      // A row promoted to 'live' has no failure to explain any more, so drop the
+      // git-stderr excerpt rather than leaving it for a later status to re-expose.
+      // The concrete path: a clone/fetch failure whose pane cleanup could not be
+      // VERIFIED leaves the row 'stalled' with the pane possibly alive
+      // (spawnCompensate); if that pane then registers we arrive here, and the
+      // snapshot's status gate hides the excerpt — but only until some later
+      // terminal transition flips the row to 'gone', at which point a card whose
+      // spawn actually succeeded would wear the old clone failure. The gate alone
+      // cannot fix that; only clearing on the way up can.
+      if (sp.fail_detail) q.setSpawnFailDetail.run(null, sp.spawn_id);
       tick(`🛰 ${c.callsign} pane is live (first hook event)`);
       if (sp.remote_control) scheduleRegistrationRemoteHarvest(sp.spawn_id);
     }

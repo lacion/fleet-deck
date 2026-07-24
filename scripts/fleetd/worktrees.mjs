@@ -10,6 +10,12 @@ import {
   mapLimit, chmodWritableWhereOwned, blockedPaths, shellQuote,
 } from './helpers.mjs';
 import { execFileP, baseBranch } from './exec.mjs';
+// A local `git worktree prune` should never print a credential — but its stderr
+// goes straight into an HTTP body below, and repos.mjs now asserts that no git
+// stderr reaches a note or a response unscrubbed. Uniformity is the point: a
+// control applied to some git call sites and not others is read by the next
+// reader as an intentional posture rather than the gap it actually is.
+import { scrubUrlCredentials } from './payload-capture.mjs';
 
 export function createWorktrees(ctx) {
   const { q, tick, onMutate } = ctx;
@@ -266,11 +272,11 @@ export function createWorktrees(ctx) {
           return { status: 409, body: { ok: false, reason: `could not remove worktree: ${err.code || err.message}` } };
         }
         const pruned = await execFileP('git', ['-C', repo, 'worktree', 'prune'], { timeout: 30_000 });
-        if (!pruned.ok) return { status: 409, body: { ok: false, reason: `git worktree prune failed: ${pruned.err}`.slice(0, 300) } };
+        if (!pruned.ok) return { status: 409, body: { ok: false, reason: `git worktree prune failed: ${scrubUrlCredentials(pruned.err)}`.slice(0, 300) } };
       }
     } else {
       const pruned = await execFileP('git', ['-C', repo, 'worktree', 'prune'], { timeout: 30_000 });
-      if (!pruned.ok) return { status: 409, body: { ok: false, reason: `git worktree prune failed: ${pruned.err}`.slice(0, 300) } };
+      if (!pruned.ok) return { status: 409, body: { ok: false, reason: `git worktree prune failed: ${scrubUrlCredentials(pruned.err)}`.slice(0, 300) } };
     }
 
     let branch_deleted = false;
