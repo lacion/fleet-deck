@@ -1718,6 +1718,12 @@ export function createSpawns(ctx) {
     return livenessInFlight;
   }
   async function runSpawnLivenessTick() {
+    // BEFORE the early return below, and before any tmux probe: a fleet whose
+    // every row is already settled takes that return, and a card stranded
+    // mid-resume is exactly the case where no row is left in flight to probe.
+    // Healing only after a probe would mean the wedge outlives the daemon that
+    // could clear it. A row this tick settles further down heals on the next one.
+    healInterruptedRevives();
     const rows = q.activeSpawns.all();
     // BUG 3: resurrection candidates count too — if EVERY spawn is already
     // 'pane-dead'/'gone' (rows empty) we must still probe tmux, or a fleet
@@ -1918,6 +1924,12 @@ export function createSpawns(ctx) {
       // server and turn inaccessible live panes into a false authoritative empty.
       const count = active.length + staleProvisioning.length;
       tick(`⚠ tmux window lookup failed at restart — leaving ${count} spawn row(s) as-is (unknown, not gone)`);
+      // Safe on this path too, and strictly better than waiting: the heal reads
+      // no tmux state, and an unsettled row still saying 'spawning' is exactly
+      // what its predicate treats as in-flight — so an unreachable tmux makes it
+      // conservative, never wrong. Without this, a card stranded by the very
+      // restart that cannot see tmux stays stranded until a tick gets an answer.
+      healInterruptedRevives();
       onMutate();
       return;
     }
@@ -1968,6 +1980,28 @@ export function createSpawns(ctx) {
       tick(`⚠ ${spawnState.orphans.length} unadopted fleetdeck window(s) in tmux (fd${port}-* with no spawn row)`);
       onMutate();
     }
+    // LAST, deliberately: the loops above settle rows this boot inherited, and
+    // the heal's whole predicate is "no row is in flight". Running it first would
+    // read a row this daemon has not settled yet — still 'spawning' from the dead
+    // daemon — decide the revive is live, and leave the card stranded anyway.
+    healInterruptedRevives();
+  }
+
+  // Release a card stranded mid-resume. See q.staleRevivingSessions for why this
+  // cannot race a real in-flight revive (the provisional row always precedes the
+  // card flip). Pure SQLite: it asks tmux nothing, which is what lets the
+  // liveness tick call it even on the paths that return before probing.
+  function healInterruptedRevives() {
+    const stranded = q.staleRevivingSessions.all();
+    for (const row of stranded) {
+      updateSession(row.session_id, {
+        col: 'offline',
+        note: 'revive was interrupted before the pane registered — revive again',
+      });
+      tick(`⟲ ${row.callsign} revive was interrupted — the card is revivable again`);
+    }
+    if (stranded.length) onMutate();
+    return stranded.length;
   }
 
   // 0.7.1 boot heal — the retroactive half of /clear succession.

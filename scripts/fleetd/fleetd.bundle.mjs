@@ -5710,6 +5710,27 @@ function createStatements(db2) {
     // 'killed' is deliberately absent: a human kill is a decision, not a
     // mistake, and must stay killed.
     resurrectableSpawns: db2.prepare("SELECT * FROM spawns WHERE status IN ('pane-dead', 'gone')"),
+    // An INTERRUPTED resume leaves the CARD presenting as in-flight forever.
+    // launchResume inserts its provisional spawn row BEFORE it flips the card to
+    // col='queued' + note='reviving…', so a card in that presentation with NO
+    // row in flight is provably stale: either the daemon driving it died
+    // mid-launch, or the pane died and its row was settled to
+    // killed/pane-dead/gone while the card kept the transient note. Neither the
+    // spawn-row reconciler nor tombstoneCard fixes this — both skip a session
+    // that already has ended_at (every resume target does), so the card kept the
+    // note and the board offered no revive affordance at all.
+    //
+    // Observed 2026-07-24: `claude` was absent from the daemon's PATH, so every
+    // revived pane died instantly (status 127) and its card stranded at
+    // 'reviving…'. The only recovery was editing the database by hand.
+    //
+    // ended_at IS NOT NULL scopes this to RESUMED sessions, so a fresh spawn's
+    // queued card — which has no ended_at until its first hook — can never match.
+    staleRevivingSessions: db2.prepare(`SELECT session_id, callsign FROM sessions
+      WHERE ended_at IS NOT NULL AND cleared_at IS NULL AND col = 'queued'
+        AND session_id NOT IN (
+          SELECT session_id FROM spawns
+           WHERE status IN ('provisioning', 'spawning', 'stalled', 'live'))`),
     activeSpawnBySession: db2.prepare("SELECT * FROM spawns WHERE session_id = ? AND status IN ('spawning', 'stalled', 'live') ORDER BY requested_at DESC, rowid DESC LIMIT 1"),
     // HIGH (revive single-flight): activeSpawnBySession deliberately EXCLUDES
     // 'provisioning' (a provisional row is not yet a live-eligible spawn). But
@@ -9744,6 +9765,7 @@ function createSpawns(ctx) {
     return livenessInFlight;
   }
   async function runSpawnLivenessTick() {
+    healInterruptedRevives();
     const rows = q.activeSpawns.all();
     const resurrectable = q.resurrectableSpawns.all();
     if (!rows.length && !resurrectable.length && !spawnState.orphans.length) return;
@@ -9867,6 +9889,7 @@ ${detail}` : note);
     if (wins === null) {
       const count = active.length + staleProvisioning.length;
       tick(`\u26A0 tmux window lookup failed at restart \u2014 leaving ${count} spawn row(s) as-is (unknown, not gone)`);
+      healInterruptedRevives();
       onMutate();
       return;
     }
@@ -9913,6 +9936,19 @@ ${detail}` : note);
       tick(`\u26A0 ${spawnState.orphans.length} unadopted fleetdeck window(s) in tmux (fd${port}-* with no spawn row)`);
       onMutate();
     }
+    healInterruptedRevives();
+  }
+  function healInterruptedRevives() {
+    const stranded = q.staleRevivingSessions.all();
+    for (const row of stranded) {
+      updateSession(row.session_id, {
+        col: "offline",
+        note: "revive was interrupted before the pane registered \u2014 revive again"
+      });
+      tick(`\u27F2 ${row.callsign} revive was interrupted \u2014 the card is revivable again`);
+    }
+    if (stranded.length) onMutate();
+    return stranded.length;
   }
   function reconcileClearForks() {
     let healed = 0;

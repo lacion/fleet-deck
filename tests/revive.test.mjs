@@ -228,3 +228,61 @@ test('snapshot spawn.revivable follows terminal status, cwd, and transcript exis
   card = findCard((await getJson(`${daemon.baseUrl}/state`)).json, sid);
   assert.equal(card.spawn.revivable, false);
 });
+
+test('a resume stranded mid-flight is released on the next boot, not stuck at reviving…', async (t) => {
+  const daemonHome = scratch('fleetdeck-revive-wedge-daemon-');
+  const userHome = scratch('fleetdeck-revive-wedge-user-');
+  const cwd = scratch('fleetdeck-revive-wedge-cwd-');
+  const record = path.join(userHome, 'spawn.jsonl');
+  const env = {
+    HOME: userHome,
+    FLEETDECK_SPAWN_CMD: SPAWN_CMD_FIXTURE,
+    FLEETDECK_TEST_SPAWN_RECORD: record,
+  };
+  const live = { daemon: await startDaemon({ home: daemonHome, env }) };
+  t.after(async () => {
+    await live.daemon.stop({ keepHome: true });
+    rmSync(daemonHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    rmSync(userHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  const arm = (await postJson(`${live.daemon.baseUrl}/api/spawn/arm-unsupervised`, {}, { token: live.daemon.token })).json.arm_token;
+  const spawned = await postJson(`${live.daemon.baseUrl}/api/spawn`, {
+    cwd, dangerously_skip_permissions: true, arm_token: arm,
+  });
+  assert.equal(spawned.status, 200);
+  const { spawn_id: spawnId, session_id: sid } = spawned.json;
+  await postHook(live.daemon.baseUrl, 'SessionStart', { session_id: sid, cwd, source: 'startup' }, { token: live.daemon });
+  writeTranscript(userHome, cwd, sid);
+
+  // The exact state the 2026-07-24 incident left behind: `claude` was missing
+  // from the daemon's PATH, so the revived pane died instantly (status 127), the
+  // row was settled, and the CARD kept the transient note. The spawn-row
+  // reconciler could not fix it (it skips a session that already has ended_at —
+  // every resume target does), so the board offered no way to try again and the
+  // only recovery was editing the database by hand.
+  withDb(daemonHome, db => {
+    db.prepare("UPDATE spawns SET status = 'killed' WHERE spawn_id = ?").run(spawnId);
+    db.prepare("UPDATE sessions SET col = 'queued', note = 'reviving…', ended_at = ? WHERE session_id = ?")
+      .run(Date.now(), sid);
+  });
+  let card = findCard((await getJson(`${live.daemon.baseUrl}/state`)).json, sid);
+  assert.equal(card.col, 'queued', 'precondition: the card presents as an in-flight resume');
+  assert.equal(card.note, 'reviving…');
+
+  await live.daemon.stop({ keepHome: true });
+  live.daemon = await startDaemon({ home: daemonHome, env });
+
+  // Boot reconciliation is fire-and-forget, so poll rather than assume a tick.
+  const deadline = Date.now() + 5000;
+  for (;;) {
+    card = findCard((await getJson(`${live.daemon.baseUrl}/state`)).json, sid);
+    if (card.col === 'offline' || Date.now() > deadline) break;
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  assert.equal(card.col, 'offline', 'the stranded card is released instead of reviving… forever');
+  assert.match(card.note, /revive was interrupted/);
+  assert.equal(card.spawn.revivable, true, 'and the board can offer revive again');
+  assert.ok(card.endedAt, 'releasing the card does not resurrect the ended session');
+});

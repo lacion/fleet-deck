@@ -206,6 +206,27 @@ export function createStatements(db) {
     // 'killed' is deliberately absent: a human kill is a decision, not a
     // mistake, and must stay killed.
     resurrectableSpawns: db.prepare("SELECT * FROM spawns WHERE status IN ('pane-dead', 'gone')"),
+    // An INTERRUPTED resume leaves the CARD presenting as in-flight forever.
+    // launchResume inserts its provisional spawn row BEFORE it flips the card to
+    // col='queued' + note='reviving…', so a card in that presentation with NO
+    // row in flight is provably stale: either the daemon driving it died
+    // mid-launch, or the pane died and its row was settled to
+    // killed/pane-dead/gone while the card kept the transient note. Neither the
+    // spawn-row reconciler nor tombstoneCard fixes this — both skip a session
+    // that already has ended_at (every resume target does), so the card kept the
+    // note and the board offered no revive affordance at all.
+    //
+    // Observed 2026-07-24: `claude` was absent from the daemon's PATH, so every
+    // revived pane died instantly (status 127) and its card stranded at
+    // 'reviving…'. The only recovery was editing the database by hand.
+    //
+    // ended_at IS NOT NULL scopes this to RESUMED sessions, so a fresh spawn's
+    // queued card — which has no ended_at until its first hook — can never match.
+    staleRevivingSessions: db.prepare(`SELECT session_id, callsign FROM sessions
+      WHERE ended_at IS NOT NULL AND cleared_at IS NULL AND col = 'queued'
+        AND session_id NOT IN (
+          SELECT session_id FROM spawns
+           WHERE status IN ('provisioning', 'spawning', 'stalled', 'live'))`),
     activeSpawnBySession: db.prepare("SELECT * FROM spawns WHERE session_id = ? AND status IN ('spawning', 'stalled', 'live') ORDER BY requested_at DESC, rowid DESC LIMIT 1"),
     // HIGH (revive single-flight): activeSpawnBySession deliberately EXCLUDES
     // 'provisioning' (a provisional row is not yet a live-eligible spawn). But
