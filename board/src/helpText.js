@@ -40,4 +40,5 @@ export const BOARD_ACTIONS = [
   { icon: '⟲', name: 'revive (card chip)', does: 'an offline agent whose worktree + transcript survived — resume it (card returns to QUEUED)' },
   { icon: '☠', name: 'kill (card chip)', does: 'stop a spawned agent — asks first; worktree and branch are left alone' },
   { icon: '✎', name: 'rename (card chip)', does: 'rename the session’s suffix; `ticket` in Compose pins a ticket name' },
+  { icon: '▸', name: 'git output (card chip)', does: 'on a spawn that died cloning: what git actually printed — the note is only the last line, the remedy is usually just above it' },
 ];

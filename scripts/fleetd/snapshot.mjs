@@ -117,6 +117,21 @@ export function createSnapshot(ctx) {
             setup_cmd: sp.setup_cmd ?? null,
             stalled: sp.status === 'stalled', // watchdog chip ("never registered")
             stall_detail: sp.status === 'stalled' ? (sp.stall_detail ?? null) : null,
+            // Why this gate is NOT a copy of stall_detail's `=== 'stalled'`: a
+            // failed clone ends at 'gone' (spawnCompensate's tombstone) or, when
+            // an unverified pane had to be cleaned up, at 'stalled' — so reusing
+            // that predicate would null the field in exactly the case it exists
+            // for. And why it is gated at all rather than emitted raw:
+            // resurrectableSpawns can flip a 'gone' row back to 'live', and the
+            // gate makes a stale failure expander disappear from a healthy card
+            // immediately, without waiting on a write. It is only half the
+            // control though — the gate HIDES, it does not FORGET, so a row that
+            // went 'stalled' with a detail, then registered 'live', then died
+            // 'gone' would wear the old failure again. Both 'live' transitions
+            // (events.mjs first hook, spawns.mjs resurrectSpawn) therefore NULL
+            // the column out. origin_url stays unexposed here — it is the one
+            // field that can carry credentials verbatim.
+            fail_detail: (sp.status === 'gone' || sp.status === 'stalled') ? (sp.fail_detail ?? null) : null,
             skip_permissions: !!sp.skip_permissions, // v1.3 unsupervised chip
             remote: { enabled: !!sp.remote_control, url: sp.remote_url ?? null },
             // Which provider is serving this pane. A boolean, never the profile:

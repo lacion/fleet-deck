@@ -89,6 +89,24 @@ test('stall diagnostic excerpt is line/byte bounded and redacts shape + exact se
   assert.match(out, /\[redacted\]/);
 });
 
+test('stall diagnostic excerpt also scrubs URL userinfo, which no shape rule can see', () => {
+  // The captured pane of a spawn that STALLED very often still shows the command
+  // that stalled it, and for a repo-mode spawn that command is a `git clone` of a
+  // credentialed URL. redactDiagnosticText is shape-only and provably cannot match
+  // a GitLab PAT or a corporate password (tests/payload-redaction.test.mjs pins
+  // that absence deliberately), and stall_detail reaches the same surfaces as
+  // fail_detail: the drawer <pre>, /state, every /ws frame, and a durable
+  // SpawnStalled event note. The two sibling excerpts must not disagree about the
+  // same control — this is the assertion that keeps them honest.
+  const out = stallDiagnosticExcerpt([
+    '$ git clone https://luis:glpat-AbCdEf1234567890@gitlab.com/o/r.git',
+    "fatal: Authentication failed for 'https://gitlab.com/o/r.git/'",
+  ].join('\n'));
+  assert.equal(out.includes('glpat-AbCdEf1234567890'), false, 'the PAT must not survive the pane excerpt');
+  assert.equal(out.includes('luis:'), false, 'nor the userinfo it sat in');
+  assert.ok(out.includes('https://[redacted]@gitlab.com/o/r.git'), out);
+});
+
 test('spawn argv is deterministic and registration watchdog stalls once, then a late hook revives it', async (t) => {
   const { db, core, state, port, home } = memoryCore(t, {
     env: { FLEETDECK_SPAWN_REGISTER_MS: 1 },

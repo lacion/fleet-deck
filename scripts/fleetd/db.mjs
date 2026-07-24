@@ -152,7 +152,16 @@ CREATE TABLE IF NOT EXISTS spawns (
   gateway        INTEGER DEFAULT 0,      -- routed through the LLM gateway (settings.gateway_*)
   kind           TEXT DEFAULT 'claude',  -- claude | shell
   setup_cmd      TEXT,                   -- visible pre-Claude POSIX sh setup
-  stall_detail   TEXT                    -- bounded/redacted pane excerpt captured when registration stalls
+  stall_detail   TEXT,                   -- bounded/redacted pane excerpt captured when registration stalls
+  -- Sibling of stall_detail, same budget and posture: the bounded/redacted git
+  -- stderr excerpt kept when a repo-mode spawn's clone or fetch fails, so the
+  -- REMEDY git printed above its fatal verdict survives to the card instead of
+  -- only reaching fleetd.log. NULL whenever nothing failed — and on every
+  -- pre-existing row, which is the truthful backfill (no detail was ever
+  -- captured). NOTE: the status enum comment above is already stale
+  -- ('provisioning' is missing from it, and is exactly the status a row holds
+  -- while its clone runs) — do not rely on it.
+  fail_detail    TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_spawns_session ON spawns(session_id);
 CREATE INDEX IF NOT EXISTS idx_spawns_status ON spawns(status);
@@ -295,6 +304,15 @@ function migrate(db) {
   }
   if (spawnCols.length && !spawnCols.includes('stall_detail')) {
     db.exec('ALTER TABLE spawns ADD COLUMN stall_detail TEXT');
+  }
+  // The other half of the DDL above: an existing DB never re-runs CREATE TABLE,
+  // so a new column has to arrive here too. NULL is the truthful backfill — no
+  // failure detail was ever captured before this shipped. The `spawnCols.length`
+  // guard is mandatory, not stylistic: PRAGMA table_info on a table that does
+  // not exist returns [], and the ALTER would throw on a DB whose spawns table
+  // the DDL is about to create.
+  if (spawnCols.length && !spawnCols.includes('fail_detail')) {
+    db.exec('ALTER TABLE spawns ADD COLUMN fail_detail TEXT');
   }
 }
 

@@ -46,6 +46,19 @@ function SessionCard({
     s.spawn?.tmux_window ? `window ${s.spawn.tmux_window}` : null,
     s.spawn?.stall_detail ? `captured screen:\n${s.spawn.stall_detail}` : 'no pane excerpt was captured — open the live terminal',
   ].filter(Boolean).join('\n\n');
+  // Failed spawn: git's own words. The note is a DISTILLED one-liner — the last
+  // `fatal:`/`error:` line and nothing else — because that is what fits on a
+  // card. It is also, routinely, the least useful line git printed: a clone that
+  // dies on a Coder workspace says only "Could not read from remote repository",
+  // while the lines immediately ABOVE it carried the workspace's public key and
+  // https://github.com/settings/ssh/new — the actual remedy. That excerpt used to
+  // exist only in fleetd.log, which nobody reads; it cost hours. The daemon now
+  // keeps a bounded, credential-redacted tail in spawn.fail_detail, and this
+  // disclosure is the one glance that ends that debugging session. Null on every
+  // healthy card and on every pre-upgrade row, so the card is unchanged when
+  // there is nothing to reveal.
+  const failDetail = s.spawn?.fail_detail || null;
+  const [failOpen, setFailOpen] = React.useState(false);
   // mail route truth (fix C): snapshot mail_meta[sid] = {queued, oldest_at,
   // route}. Older daemons omit it — the badge falls back to a bare count.
   const mailHint = MAIL_HINT[mailMeta?.route];
@@ -255,6 +268,31 @@ function SessionCard({
         <span className="note" style={{ flex: 1 }}>{s.note || s.task || '—'}</span>
         {compact && <Age className="age" from={s.lastSeen || s.startedAt} />}
       </span>
+      {failDetail && (
+        // The remedy, one click from the verdict. A <div> (not a <span>) because
+        // <pre> is flow content and may not sit inside phrasing content, and a
+        // SIBLING of the full-bleed .fd-cardopen overlay — never inside it, which
+        // would make this button open the drawer instead. app.css raises the whole
+        // block to z-index:2 so the revealed text is selectable: copying that
+        // settings/ssh/new URL is the entire point of the feature.
+        // Present in BOTH densities: a failed spawn is exactly the card you are
+        // staring at when the board is packed tight.
+        <div className="fd-faildiag">
+          <button
+            type="button"
+            className="fd-failtoggle"
+            aria-expanded={failOpen}
+            title={failOpen
+              ? 'hide git\'s output'
+              : 'show what git actually printed — the note above is only the last line, and the remedy (a key to register, a URL to open) is usually in the lines just above it'}
+            onClick={() => setFailOpen((v) => !v)}
+          >
+            <span className="tri" aria-hidden="true">{failOpen ? '▾' : '▸'}</span>
+            git output
+          </button>
+          {failOpen && <pre>{failDetail}</pre>}
+        </div>
+      )}
       {inConflict && conflictPeers.length > 0 && (
         <span className="contested">▲ contested with {conflictPeers.join(', ')}</span>
       )}

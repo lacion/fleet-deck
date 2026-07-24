@@ -13,7 +13,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -321,4 +321,88 @@ test('every Compose chip inserts a prefix its own command grammar starts with', 
       `chip "${c.chip}" does not match its syntax "${c.syntax}"`,
     );
   }
+});
+
+// --- the git-output disclosure on a failed spawn (source-grep guards) --------
+//
+// There is no JSX runner in this repo, so the two regressions that would silently
+// destroy this feature are pinned by reading the sources. Both are invisible in
+// review and obvious only on a real failed clone, which is exactly why they are
+// mechanized here.
+test('the failed-spawn git output is read by BOTH the card and the drawer', () => {
+  const card = readFileSync(path.join(HERE, '..', 'board', 'src', 'components', 'SessionCard.jsx'), 'utf8');
+  const drawer = readFileSync(path.join(HERE, '..', 'board', 'src', 'components', 'Drawer.jsx'), 'utf8');
+  assert.ok(card.includes('fail_detail'), 'SessionCard.jsx no longer reads spawn.fail_detail');
+  assert.ok(drawer.includes('fail_detail'), 'Drawer.jsx no longer reads spawn.fail_detail');
+  // keyboard reachability: a real <button> carrying disclosure state, not a
+  // div with an onClick (which Tab never reaches and Enter never fires)
+  assert.match(card, /className="fd-failtoggle"/, 'the card lost the fd-failtoggle disclosure button');
+  assert.match(card, /aria-expanded=\{failOpen\}/, 'the disclosure button lost aria-expanded');
+});
+
+test('the git-output block rides above the card overlay and cannot widen a lane', () => {
+  const appCss = readFileSync(path.join(HERE, '..', 'board', 'src', 'app.css'), 'utf8');
+  // Regression 1: .fd-cardopen is a full-bleed z-index:1 overlay. If the block is
+  // not raised above it, the toggle opens the drawer instead and the revealed
+  // text is unselectable — i.e. the remedy URL cannot be copied, which is the
+  // whole feature. Assert both selectors sit in the raise rule.
+  const raise = appCss.slice(appCss.indexOf('.fd-card .fd-cardacts .fd-actbtn'));
+  const rule = raise.slice(0, raise.indexOf('}') + 1);
+  assert.ok(rule.includes('z-index: 2'), 'the card raise rule moved — re-check this guard');
+  assert.ok(rule.includes('.fd-card .fd-faildiag'), 'app.css stopped raising .fd-faildiag above .fd-cardopen');
+  assert.ok(rule.includes('.fd-card .fd-faildiag pre'), 'app.css stopped raising the revealed <pre> above .fd-cardopen');
+  // Regression 2: the lane grid is repeat(5, minmax(150px, 1fr)); an unwrapped or
+  // unbounded <pre> gives the whole board horizontal scroll and buries the cards
+  // below it.
+  const pre = appCss.slice(appCss.indexOf('.fd-faildiag pre {'));
+  const preRule = pre.slice(0, pre.indexOf('}') + 1);
+  assert.ok(preRule.includes('white-space: pre-wrap'), '.fd-faildiag pre lost white-space: pre-wrap');
+  assert.ok(preRule.includes('overflow-wrap: anywhere'), '.fd-faildiag pre lost overflow-wrap: anywhere');
+  assert.match(preRule, /max-height: \d+px/, '.fd-faildiag pre lost its max-height');
+  assert.ok(preRule.includes('overflow: auto'), '.fd-faildiag pre lost overflow: auto');
+  // Regression 3 (contrast): a failed clone is tombstoned by construction, so this
+  // block always renders inside `.fd-card.offline { opacity: .45 }`. Opacity is a
+  // group property — nothing inside the block can undo it — which puts the revealed
+  // <pre> under AA on the one card whose purpose is reading and copying a key. The
+  // un-dim is therefore load-bearing, not polish, and the revive-chip exemption
+  // never covers it (a failed clone has no worktree, so it is not `revivable`).
+  assert.match(appCss, /\.fd-card\.offline:has\(\.fd-failtoggle\[aria-expanded="true"\]\) \{ opacity: \.\d+; \}/,
+    'app.css stopped un-dimming the tombstoned card while the git output is open');
+});
+
+test('the drawer names the remote as the author of the git output', () => {
+  // Not cosmetic: `remote:` lines are written by whoever runs the far end of the
+  // clone, the drawer puts a copy button next to them, and the UI copy trains the
+  // operator to lift a URL or a key straight out. The provenance caveat is the only
+  // thing standing between that and a phishing surface, so it is pinned.
+  const drawer = readFileSync(path.join(HERE, '..', 'board', 'src', 'components', 'Drawer.jsx'), 'utf8');
+  const appCss = readFileSync(path.join(HERE, '..', 'board', 'src', 'app.css'), 'utf8');
+  assert.match(drawer, /className="src">relayed from the remote server</,
+    'Drawer.jsx dropped the "relayed from the remote server" provenance label');
+  assert.ok(appCss.includes('.fd-faildiag .hd .src'), 'app.css lost the styling for that label');
+});
+
+test('the SHIPPED board-dist actually contains the git-output feature', () => {
+  // CI's board gate is `npm run build:board && git diff --exit-code
+  // scripts/fleetd/board-dist`, and `git diff` CANNOT SEE UNTRACKED FILES. A
+  // commit made with `git commit -a` stages the DELETED old hashed chunks and the
+  // rewritten index.html but silently drops the NEW ones, and CI still exits 0 —
+  // over an index.html referencing bundles that are not in the repo. Marketplace
+  // installs track git main ungated, so main would serve a blank board.
+  //
+  // These two assertions convert that class of accident from "green CI, blank
+  // board" into a test failure: every asset index.html references must exist, and
+  // the referenced bundles must carry this change.
+  const distDir = path.join(HERE, '..', 'scripts', 'fleetd', 'board-dist');
+  const html = readFileSync(path.join(distDir, 'index.html'), 'utf8');
+  const refs = [...html.matchAll(/(?:src|href)="\.\/(assets\/[^"]+)"/g)].map(m => m[1]);
+  assert.ok(refs.length >= 2, `index.html should reference the built assets; found ${refs.length}`);
+  for (const ref of refs) {
+    assert.ok(existsSync(path.join(distDir, ref)),
+      `board-dist/index.html references ${ref}, which is not on disk — the rebuilt asset was never staged`);
+  }
+  const js = refs.filter(ref => ref.endsWith('.js')).map(ref => readFileSync(path.join(distDir, ref), 'utf8')).join('\n');
+  const css = refs.filter(ref => ref.endsWith('.css')).map(ref => readFileSync(path.join(distDir, ref), 'utf8')).join('\n');
+  assert.ok(js.includes('fail_detail'), 'the shipped board bundle predates spawn.fail_detail — rerun npm run build:board');
+  assert.ok(css.includes('fd-faildiag'), 'the shipped board stylesheet predates .fd-faildiag — rerun npm run build:board');
 });

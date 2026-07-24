@@ -24,6 +24,12 @@
 // scrubbed verbatim from the finished line. What this canNOT catch is a secret
 // with no telltale key name and no recognizable shape sitting in arbitrary free
 // text — which is exactly why capture stays opt-in and the file stays 0600.
+//
+// Two of those layers are exported for reuse by diagnostics that DO reach the
+// board (a stalled spawn's pane excerpt, a failed clone's git stderr):
+// redactDiagnosticText (shape scrub) and scrubUrlCredentials (positional URL
+// userinfo scrub). Neither participates in the capture walk above beyond
+// redactValue; see each one's own comment for why they are separate.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -99,6 +105,135 @@ function redactValue(text) {
 // secret, so callers must keep diagnostics small and behind the board's token.
 export function redactDiagnosticText(text) {
   return redactValue(String(text ?? ''));
+}
+
+// URL_USERINFO_RE closes the hole redactDiagnosticText structurally cannot:
+// SECRET_VALUE_RES is a list of credential SHAPES, and
+// `https://luis:glpat-AbCdEf1234567890@gitlab.com/x/y.git` matches NONE of them
+// (the GitLab PAT prefix is not in the list, a corporate password has no shape
+// at all). git echoes exactly that string back in its own stderr —
+// `fatal: unable to access 'https://user:token@host/x.git/'` — so the moment a
+// git diagnostic became something the board can display, a shape-only scrubber
+// stopped being sufficient. This one is positional: whatever sits between
+// `scheme://` and the authority's last `@` is userinfo, and userinfo is by
+// definition credential material.
+//
+// The WHOLE userinfo is replaced, not just the password half, because we cannot
+// tell `https://alice@github.com` (a username) from
+// `https://glpat-xxxxxxxx@gitlab.com` (a bare-token URL — GitLab, GitHub and
+// Bitbucket all accept that form). Losing a legible username is the accepted
+// cost of never shipping a token.
+//
+// scp-style `git@github.com:owner/repo.git` is deliberately LEFT ALONE: that
+// form has no password slot, and mangling it would destroy precisely the
+// legibility this whole change exists for — the Coder remedy block that a
+// failed clone prints quotes ssh URLs of exactly that shape.
+//
+// The class excludes `/ ? #` and whitespace so a match can never cross out of
+// the authority (a bare `https://github.com/settings/ssh/new` is untouched), and
+// it is greedy so `https://user:p@ss@host/x` collapses on the LAST `@` before
+// the path — a literal `@` inside a password is the realistic mangling case and
+// must not survive as a hostname.
+//
+// ReDoS AUDIT (this pattern runs on the `remote:` text git relays from an
+// attacker-influenceable server, on strings up to execFile's ~1 MB stderr
+// buffer, so a super-linear pattern stalls the daemon — same standard as
+// SECRET_VALUE_RES above). BOTH unbounded runs had to be bounded:
+//   - the userinfo `{0,512}` is defensive only (real userinfo is orders of
+//     magnitude shorter) and makes the backtrack after a failed `@` constant.
+//   - the SCHEME run is the one that actually bit: `[a-z][a-z0-9+.-]*` on a long
+//     alphanumeric run matches to the end and backtracks looking for `://` at
+//     EVERY start position in the run → O(n^2), a measured 3.4s on 60 KB of
+//     `a`. Bounded to {0,32} (the longest real scheme here is `https`), per-start
+//     work is constant → linear; 60 KB now returns in single-digit ms.
+// Do not relax either bound without repeating this measurement. The same
+// standard applies to LAYERS 2-5 below: every added pattern either has a single
+// greedy trailing run with nothing required after it, or bounded runs whose only
+// backtrack positions fail in constant time, and the scheme run stays {0,32}
+// throughout. tests/git-stderr-detail.test.mjs times the whole composed scrub on
+// adversarial input and fails if it stops being effectively linear.
+const URL_USERINFO_RE = /([a-z][a-z0-9+.-]{0,32}:\/\/)([^/?#\s]{0,512}@)/gi;
+
+// LAYER 2 — the same shape, but tolerating WHITESPACE inside the PASSWORD half.
+// `https://user:my pass@host/x.git` leaves the class above unable to reach the
+// `@` at all, so the credential passed through untouched. fleetd's own clone
+// validation (repos.mjs SPACE_OR_CONTROL_RE) rejects such an origin, but
+// materializeBranch's fetch reads its remote from the CHECKOUT's .git/config,
+// which fleetd never validated — so the case is reachable.
+//
+// TWO restrictions carry this rule's safety, and neither is decorative:
+//   - the colon is REQUIRED, and the run BEFORE it still forbids whitespace. A
+//     username with a space in it is not a real input; a password with one is.
+//     Without those two, `https://gitlab.example for help: mail@example.com`
+//     collapses into `https://[redacted]@example.com` — ordinary prose mangled,
+//     on a line where nothing was ever secret.
+//   - newlines stay excluded, so a match can never span lines and swallow a
+//     multi-line remedy block.
+// The password run is bounded generously (4096) rather than tightly: LAYER 3
+// below cannot back this one up, because a userinfo containing whitespace is
+// invisible to its whitespace-free class too. ACCEPTED RESIDUAL: a userinfo
+// longer than 4096 characters that also contains whitespace is not covered.
+const URL_USERINFO_SPACED_RE = /([a-z][a-z0-9+.-]{0,32}:\/\/)([^/?#\s]{0,256}:[^/?#\r\n]{0,4096}@)/gi;
+
+// LAYER 3 — FAIL CLOSED past the bounds above. A bounded regex does not TRUNCATE
+// an over-long userinfo: it simply fails to match, and the credential passes
+// through verbatim. A 600-character userinfo therefore defeated LAYER 1 (512) and
+// LAYER 2 (256+256) completely, and reached the card note, the ticker, the
+// durable SpawnFailed event and /state — every surface the scrub exists to
+// protect. So any authority run longer than the LAYER 1 bound is redacted
+// WHOLESALE, host included. Over-redacting a 512-character hostname that never
+// held a credential is a legibility cost; leaking a 600-character token is not a
+// cost we are allowed to pay. Greedy run with nothing required after it, scheme
+// bounded as above → linear.
+const URL_AUTHORITY_OVERLONG_RE = /([a-z][a-z0-9+.-]{0,32}:\/\/)[^/?#\s]{512,}/gi;
+
+// LAYER 4 — a SCHEMELESS `user:token@host/x.git`. git echoes remote strings in
+// whatever form it was handed them, and none of the layers above fire without
+// `scheme://`. The colon is required for the same reason it is in LAYER 2, and
+// specifically so `git@github.com:owner/repo.git` — the scp-style form the whole
+// expander exists to keep legible — is left completely alone. Anchored on a
+// leading boundary so it cannot start mid-token (which is also what keeps it from
+// re-firing on an already-scrubbed `https://[redacted]@host`: `/` is not a
+// boundary character, and `[redacted]` holds no colon).
+// Quotes and brackets are excluded from BOTH halves as well as required at the
+// left edge: git quotes URLs in its own messages, and without that exclusion the
+// leading `'` is swallowed into the username run and vanishes from the output —
+// `read from 'user:tok@host'` became `read from [redacted]@host'`, quietly
+// destroying the delimiter a human reads the line by.
+const BARE_USERINFO_RE = /(^|[\s'"<([])([^\s:/@'"<>]{1,256}:[^\s/@'"<>]{1,512})@/g;
+
+// LAYER 5 — a credential in the QUERY STRING or FRAGMENT, which every layer above
+// structurally cannot see: their classes stop at `?` by design, so the authority
+// is all they ever inspect. `?access_token=` (Gitea), `?private_token=` (GitLab),
+// `?job_token=` (GitLab CI) are real bare-token URL forms, and a CI job token
+// matches no entry in SECRET_VALUE_RES. git echoes the URL it was given —
+// `fatal: unable to access 'https://host/o/r.git?access_token=…'` — so this was a
+// live leak on both the note and the detail.
+//
+// Implemented as a replace CALLBACK rather than one regex on purpose: matching
+// the parameter NAME as a single run and then testing it for secret words keeps
+// the pattern free of the nested bounded runs (`{0,64}…{0,64}=`) that would make
+// per-start-position work quadratic in the bounds on a 1 MB stderr. Start
+// positions are limited to `? & #`; the name class excludes `=`, so a failed
+// match backtracks over cheap, immediately-failing positions only.
+const URL_PARAM_RE = /([?&#][A-Za-z0-9_.-]{1,128}=)([^&\s'"<>]+)/g;
+const SECRET_PARAM_NAME_RE = /token|key|secret|password|passwd|passphrase|auth|credential|sig(?:nature)?|session/i;
+
+// Deliberately NOT folded into redactDiagnosticText / SECRET_VALUE_RES: hook
+// payload capture (the on-disk hook-payloads.jsonl format) must stay bit-for-bit
+// unchanged, so this change owns no blast radius there. Callers that display git
+// output compose the two explicitly.
+//
+// IDEMPOTENT (all five layers): a second pass rewrites `[redacted]@` and
+// `=[redacted]` to themselves, which is what lets callers scrub defensively at
+// more than one layer without corrupting the text.
+export function scrubUrlCredentials(text) {
+  return String(text ?? '')
+    .replace(URL_USERINFO_RE, `$1${REDACTED}@`)
+    .replace(URL_USERINFO_SPACED_RE, `$1${REDACTED}@`)
+    .replace(URL_AUTHORITY_OVERLONG_RE, `$1${REDACTED}`)
+    .replace(BARE_USERINFO_RE, `$1${REDACTED}@`)
+    .replace(URL_PARAM_RE, (whole, name, value) => (SECRET_PARAM_NAME_RE.test(name) ? `${name}${REDACTED}` : whole));
 }
 
 // WHY this is a projection instead of `JSON.stringify(payload).slice(...)`:

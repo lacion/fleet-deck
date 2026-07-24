@@ -217,6 +217,17 @@ export function createStatements(db) {
     countActiveSpawns: db.prepare("SELECT COUNT(*) AS n FROM spawns WHERE status IN ('spawning', 'stalled', 'live')"),
     setSpawnStatus: db.prepare('UPDATE spawns SET status = ? WHERE spawn_id = ?'),
     setSpawnStalled: db.prepare("UPDATE spawns SET status = 'stalled', stall_detail = ? WHERE spawn_id = ? AND status = 'spawning'"),
+    // Records a failed clone/fetch's redacted git-stderr excerpt (repos.mjs).
+    // NO compare-and-set predicate, deliberately: copying setSpawnStalled's
+    // `AND status = 'spawning'` above would match ZERO rows here, because a
+    // repo-mode row is 'provisioning' from insertProvisionalSpawn until
+    // launchPane flips it — i.e. it is 'provisioning' for the entire duration of
+    // the clone this statement exists to explain. The write would silently
+    // change nothing and throw the diagnostic away again, which is the bug.
+    // It does not need one either: the write happens before the throw while the
+    // provisional row still exists, and compensation only flips status to
+    // 'gone' (it never DELETEs the row), so the value survives to the snapshot.
+    setSpawnFailDetail: db.prepare('UPDATE spawns SET fail_detail = ? WHERE spawn_id = ?'),
     setSpawnRemote: db.prepare('UPDATE spawns SET remote_control = 1, remote_url = ? WHERE spawn_id = ?'),
     // WORKTREE OWNERSHIP CONTRACT: this is the allow-list behind the removal
     // API. A path is removable only when it appears here; no path supplied by

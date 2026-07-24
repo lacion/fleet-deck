@@ -149,9 +149,18 @@ a { color: var(--act); } a:hover { opacity: .85; }
 /* the interactive chips ride ABOVE the overlay so they get their own clicks;
    everything else stays under it, so a click there opens the drawer. Only the
    individual controls are raised (not the acts row), so gaps still open it. */
+/* The git-output disclosure is raised WHOLE — container and revealed <pre> — not
+   just its button, because the overlay would otherwise swallow the mousedown on
+   the text and the excerpt would be completely unselectable. Copying the remedy
+   (a settings/ssh/new URL, a workspace public key) out of it is the entire point,
+   so this block is the one place where "a click in the gap opens the drawer"
+   loses. The <pre> selector is redundant while it lives inside the container and
+   deliberately kept, so moving it out cannot silently re-break selection. */
 .fd-card .fd-cardacts .fd-actbtn,
 .fd-card .fd-revivechip,
 .fd-card .fd-remoteofferchip,
+.fd-card .fd-faildiag,
+.fd-card .fd-faildiag pre,
 .fd-card a.fd-remotechip.link { position: relative; z-index: 2; }
 /* these chips are <button>/<a> now — strip UA chrome so they still read as chips */
 button.fd-revivechip, button.fd-remoteofferchip, button.fd-actbtn {
@@ -1490,3 +1499,56 @@ textarea.fd-input { font-family: var(--font-ui); font-size: 13px; resize: none; 
 .fd-dprootbtn { flex: none; font-size: 11px; padding: 6px 10px; }
 .fd-dpnote { font-family: var(--font-data); font-size: 11px; color: var(--dim); }
 .fd-dpnote.err { color: var(--hazard); }
+
+/* ============ git output when a spawn's clone fails (v0.19) ============ */
+/* The card note is the distilled verdict (one `fatal:` line); THIS is everything
+   git said around it. Two surfaces, one class: a ▸ disclosure on the card, and a
+   framed read-and-copy panel in the drawer (sibling of .fd-stalldiag, whose label
+   and styling are bound to "CAPTURED WHEN REGISTRATION STALLED" — hence a class of
+   its own rather than a second meaning bolted onto that one). Hazard palette,
+   every value from tokens.css, so the light board keeps working. */
+.fd-faildiag { border: 1px solid var(--hazard); border-radius: var(--r-ctl); overflow: hidden; background: var(--hazard-bg); }
+.fd-faildiag .hd { display: flex; align-items: center; gap: 8px; padding: 6px 8px; font-family: var(--font-data); font-size: 9.5px; letter-spacing: var(--ls-label); color: var(--hazard); border-bottom: 1px solid color-mix(in srgb, var(--hazard) 32%, transparent); }
+/* Provenance, not decoration: `remote:` lines are authored by the far end of the
+   clone and the copy button beside them invites you to lift a URL or a key out of
+   the block. Lower-case and dim so it reads as a caveat, not a second title. */
+.fd-faildiag .hd .src { letter-spacing: 0; text-transform: none; color: var(--dim); }
+.fd-faildiag .hd .fd-ghostbtn { margin-left: auto; padding: 1px 7px; font-size: 10px; }
+/* pre-wrap + overflow-wrap + a max-height are load-bearing, not polish: the lane
+   grid is repeat(5, minmax(150px, 1fr)), so one long unbroken remote: line in a
+   raw <pre> would widen its column and hand the WHOLE board horizontal scroll,
+   and an 80-line excerpt would push every card below it off screen. */
+.fd-faildiag pre { margin: 0; padding: 9px 10px; max-height: 200px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.45 var(--font-data); color: var(--text); background: var(--code); }
+/* On a card the same block is a disclosure, not a panel: the card is already the
+   frame, so the container is invisible until something is revealed. */
+.fd-card .fd-faildiag { display: flex; flex-direction: column; gap: 5px; min-width: 0; border: 0; background: none; overflow: visible; }
+.fd-card .fd-faildiag pre { border: 1px solid var(--hazard); border-radius: var(--r-ctl); }
+/* ▸ git output — deliberately the quietest control on the card: dimmer than
+   ▣ terminal, and never amber (--act is reserved for "yours to act", and a dead
+   card is not asking you for anything). Hazard only on hover/open, matching the
+   ☠ kill and ✕ dismiss register. Real <button>, so Tab reaches it and Enter/Space
+   work with no key handling of our own. */
+.fd-failtoggle {
+  align-self: flex-start; display: inline-flex; align-items: center; gap: 5px; flex: none; margin: 0;
+  appearance: none; -webkit-appearance: none;
+  font-family: var(--font-data); font-size: 10.5px; line-height: 18px;
+  padding: 0 8px; border-radius: var(--r-ctl); white-space: nowrap;
+  background: transparent; border: 1px solid var(--border-soft); color: var(--dim); cursor: pointer;
+  transition: border-color var(--t-fast), color var(--t-fast), background var(--t-fast);
+}
+.fd-failtoggle:hover { border-color: var(--hazard); background: var(--hazard-bg); color: var(--hazard); }
+.fd-failtoggle[aria-expanded="true"] { border-color: var(--hazard); color: var(--hazard); }
+.fd-failtoggle:focus-visible { outline: 2px solid var(--act); outline-offset: 1px; }
+.fd-failtoggle .tri { font-family: var(--font-data); font-size: 10px; color: var(--faint); flex: none; }
+.fd-failtoggle:hover .tri, .fd-failtoggle[aria-expanded="true"] .tri { color: var(--hazard); }
+/* CONTRAST, not styling. A failed clone is tombstoned by construction, so this
+   block only ever renders inside `.fd-card.offline { opacity: .45 }` — and opacity
+   is a group property, so nothing inside the block can undo it. Composited, the
+   revealed <pre> lands near 4:1 and the 10.5px label near 2.2:1, i.e. under AA, on
+   the one card type whose entire purpose is reading and copying a public key. The
+   revive-chip exemptions further down do not help: a failed clone has no surviving
+   worktree, so it is never `revivable`. Un-dim on hover so the affordance is
+   discoverable, and nearly fully on reveal — the same `:has()` un-dim precedent as
+   the revive-chip pair at .fd-card.offline:has(.fd-revivechip). */
+.fd-card.offline:has(.fd-failtoggle):hover { opacity: .8; }
+.fd-card.offline:has(.fd-failtoggle[aria-expanded="true"]) { opacity: .92; }

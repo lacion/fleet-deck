@@ -9,6 +9,10 @@ import { fileURLToPath } from 'node:url';
 import { startDaemon, randomPort } from './helpers/daemon.mjs';
 import { getJson, postHook, postJson } from './helpers/http.mjs';
 import { makeRemoteRepo } from './helpers/gitrepo.mjs';
+// The local waitUntil below is UNSCALED and predates tests/helpers/wait.mjs; new
+// waits use the shared, WAIT_SCALE-aware one so the macOS advisory lane (issue
+// #2, WAIT_SCALE=3) gets its headroom.
+import { waitUntil as waitUntilScaled } from './helpers/wait.mjs';
 import { openDb } from '../scripts/fleetd/db.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -50,6 +54,15 @@ function spawnEnv(recordFile, reposDir, postUrl = null) {
 function countEvents(home, hookEvent) {
   const db = openDb(path.join(home, 'fleetd.db'));
   try { return db.prepare('SELECT COUNT(*) AS n FROM events WHERE hook_event = ?').get(hookEvent).n; }
+  finally { db.close(); }
+}
+
+// The durable half of a failure, read straight off disk. The card note and the
+// SpawnFailed note are derived from the SAME reason string, so a leak assertion
+// has to cover both surfaces or it proves nothing.
+function eventNotes(home, hookEvent) {
+  const db = openDb(path.join(home, 'fleetd.db'));
+  try { return db.prepare('SELECT note FROM events WHERE hook_event = ?').all(hookEvent).map(row => row.note ?? ''); }
   finally { db.close(); }
 }
 
@@ -108,6 +121,11 @@ test('repo mode in-place switches an existing branch and launches in that cwd', 
   assert.equal(card.branch, 'existing');
   assert.equal(card.spawn.requested_branch, 'existing');
   assert.equal(card.spawn.branch_mode, 'in-place');
+  // The HIDING half of the snapshot's fail_detail gate, which otherwise had no
+  // guard at all: every other assertion pins the field PRESENT on a tombstone, so
+  // dropping the status condition and emitting the column raw broke no test. A
+  // healthy card must never wear a failure expander.
+  assert.equal(card.spawn.fail_detail, null, 'a spawn that did not fail carries no git-failure excerpt');
 });
 
 test('dirty in-place checkout is refused with file names', async t => {
@@ -193,8 +211,172 @@ test('clone failure tombstones the card and removes destination plus temp', asyn
   // …and the full reason is durable in the events table (SpawnFailed), the
   // queryable audit trail alongside the full stderr in fleetd.log.
   assert.ok(countEvents(daemon.home, 'SpawnFailed') >= 1, 'a failed clone must log a durable SpawnFailed event');
+  // …and the tombstone now also carries the bounded git-stderr excerpt the board
+  // reveals in its per-card expander, because the distilled note above was ALL a
+  // human ever saw and the remedy lives in the lines it discards. A missing local
+  // origin prints only the verdict, so here the excerpt and the note say the same
+  // thing — the strictly-richer case is pinned by the PATH-shim test below. What
+  // this asserts is the plumbing (row → snapshot) and the two bounds that keep a
+  // pathological stderr out of the DB and off every /ws frame.
+  assert.equal(typeof card.spawn.fail_detail, 'string');
+  assert.match(card.spawn.fail_detail, /fatal: repository .*does not exist/i);
+  assert.ok(Buffer.byteLength(card.spawn.fail_detail) <= 2000, 'the excerpt is byte-bounded');
+  assert.ok(card.spawn.fail_detail.split('\n').length <= 20, 'the excerpt is line-bounded');
   assert.equal(existsSync(dest), false);
   assert.equal(existsSync(`${dest}.fd-cloning-${response.json.spawn_id.slice(0, 8)}`), false);
+});
+
+// ---------------------------------------------------------------------------
+// A `git` shim on PATH (the writeGitShim technique from
+// tests/derive-audit-reliability.test.mjs) is the only way to pin what the board
+// shows for a failed clone: real git's wording varies by version and transport,
+// and the two cases that matter — a Coder-style remedy block, and a stderr that
+// echoes a credentialed URL — cannot be produced on demand without a network.
+// Every non-clone call still goes to real git, so the daemon behaves normally.
+// ---------------------------------------------------------------------------
+
+function realGitPath() {
+  // Resolved from the UNSHIMMED PATH (call before installing the shim).
+  return execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+}
+
+function writeCloneShim(t) {
+  const dir = mkdtempSync(path.join(tmpdir(), 'fd-clone-shim-'));
+  writeFileSync(path.join(dir, 'git'),
+    '#!/usr/bin/env bash\n'
+    // argv is exactly ['clone', '--', <origin>, <temp>] — cloneRepo's, by
+    // construction (no shell anywhere in the daemon), so $3 is the origin.
+    + 'if [ "$1" = clone ] && [ -n "$FD_SHIM_CLONE" ]; then\n'
+    + '  if [ "$FD_SHIM_CLONE" = coder ]; then\n'
+    + '    {\n'
+    + '      printf "Cloning into \'%s\'...\\n" "$4"\n'
+    + '      printf \'Coder: this workspace authenticates to git with the key below.\\n\'\n'
+    + '      printf \'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFleetdeckTestKey000 coder@workspace\\n\'\n'
+    + '      printf \'Add it at https://github.com/settings/ssh/new before cloning a private repo.\\n\'\n'
+    + '      printf \'git@github.com: Permission denied (publickey).\\n\'\n'
+    + '      printf \'fatal: Could not read from remote repository.\\n\'\n'
+    + '    } >&2\n'
+    + '  else\n'
+    + '    {\n'
+    + '      printf "Cloning into \'%s\'...\\n" "$4"\n'
+    + '      printf \'remote: HTTP Basic: Access denied for user %s\\n\' "$FD_SHIM_SECRET"\n'
+    // The BARE secret rides the `fatal:` VERDICT line too, not only a `remote:`
+    // line — and that placement is the whole point of this fixture. The note is
+    // distillGitStderr's pick of the verdict line, so a secret that appears only
+    // above it is never in the note and a "no secret in /state" assertion passes
+    // VACUOUSLY for the note. It did: the note used to get the positional URL
+    // scrub ONLY, so a bare, shapeless credential on this line shipped verbatim to
+    // the card, the ticker, the 409 body and the durable SpawnFailed event.
+    + '      printf "fatal: unable to access \'%s/\': HTTP Basic: Access denied for user %s\\n" "$3" "$FD_SHIM_SECRET"\n'
+    + '    } >&2\n'
+    + '  fi\n'
+    + '  exit 128\n'
+    + 'fi\n'
+    + 'exec "$FD_REAL_GIT" "$@"\n',
+    { mode: 0o755 });
+  t.after(() => rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+  return dir;
+}
+
+// A daemon whose clones fail with a scripted stderr. Deliberately NOT built on
+// setup(): no remote repo is needed (the clone never runs real git) and the PATH
+// has to carry the shim.
+async function shimmedDaemon(t, shimEnv) {
+  const realGit = realGitPath();
+  const shimDir = writeCloneShim(t);
+  const reposDir = scratch('fleetdeck-shim-repos-');
+  const recordFile = path.join(scratch(), 'specs.jsonl');
+  const port = randomPort();
+  const daemon = await startDaemon({
+    port,
+    env: {
+      ...spawnEnv(recordFile, reposDir, `http://127.0.0.1:${port}`),
+      PATH: `${shimDir}:${process.env.PATH}`,
+      FD_REAL_GIT: realGit,
+      ...shimEnv,
+    },
+  });
+  t.after(async () => {
+    await daemon.stop();
+    rmSync(reposDir, { recursive: true, force: true });
+    rmSync(path.dirname(recordFile), { recursive: true, force: true });
+  });
+  return { daemon, reposDir };
+}
+
+async function tombstonedCard(daemon, session_id) {
+  return waitUntilScaled(async () => {
+    const state = (await getJson(`${daemon.baseUrl}/state`)).json;
+    const found = state.sessions.find(s => s.session_id === session_id);
+    return found?.col === 'offline' ? found : null;
+  }, { timeoutMs: 12_000, label: 'failed clone tombstone' });
+}
+
+test('the note stays the distilled verdict while fail_detail carries the remedy', async t => {
+  // THE deliverable, reproduced: on a Coder workspace the card said only
+  // "fatal: Could not read from remote repository." while the public key and the
+  // URL to register it — printed by git in the same stderr, two lines above —
+  // went nowhere but fleetd.log. Debugging that took hours. Both facts are now
+  // on the card: the verdict as the note, the remedy behind the expander.
+  const { daemon } = await shimmedDaemon(t, { FD_SHIM_CLONE: 'coder' });
+  const response = await postJson(`${daemon.baseUrl}/api/spawn`, {
+    repo: 'https://github.com/textemma/private-thing.git', branch: 'main', branch_mode: 'in-place',
+  });
+  assert.equal(response.status, 202, response.text);
+  const card = await tombstonedCard(daemon, response.json.session_id);
+
+  // The note is UNCHANGED in shape: one distilled line, no narration.
+  assert.match(card.note, /spawn failed: fatal: Could not read from remote repository\./);
+  assert.doesNotMatch(card.note, /Cloning into/i);
+  assert.doesNotMatch(card.note, /settings\/ssh\/new/, 'the remedy does not belong in an 80-column note');
+
+  // The detail is what was being thrown away.
+  const detail = card.spawn.fail_detail;
+  assert.match(detail, /https:\/\/github\.com\/settings\/ssh\/new/, 'the URL to visit must reach the board');
+  assert.match(detail, /ssh-ed25519 AAAAC3NzaC1lZDI1NTE5/, 'the key to paste there must reach it too');
+  assert.match(detail, /fatal: Could not read from remote repository\./);
+  assert.ok(detail.split('\n').length > card.note.split('\n').length,
+    'the detail must be strictly richer than the note — that is the whole point');
+  assert.ok(Buffer.byteLength(detail) <= 2000);
+  assert.ok(detail.split('\n').length <= 20);
+});
+
+test('a credential in the clone URL reaches NO surface of the API', async t => {
+  // The security control, end to end — and the bundle blind spot closed: the
+  // unit tests import exec.mjs directly, so without a /state-level assertion the
+  // redactor could be missing from the shipped fleetd.bundle.mjs and the suite
+  // would stay green. The shim guarantees the token IS in git's stderr; real
+  // git/curl sometimes strips it itself, which would pass vacuously.
+  const secret = 'glpat-DEADBEEFdeadbeef00';
+  const origin = `https://fdtest:${secret}@127.0.0.1:1/x.git`;
+  const { daemon } = await shimmedDaemon(t, { FD_SHIM_CLONE: 'credurl', FD_SHIM_SECRET: secret });
+  const response = await postJson(`${daemon.baseUrl}/api/spawn`, {
+    repo: origin, branch: 'main', branch_mode: 'in-place',
+  });
+  assert.equal(response.status, 202, response.text);
+  const card = await tombstonedCard(daemon, response.json.session_id);
+
+  // ONE assertion covering the note, the ticker line and fail_detail at once:
+  // the token must not appear anywhere in the whole snapshot payload.
+  const state = await getJson(`${daemon.baseUrl}/state`);
+  assert.equal(state.text.includes(secret), false, 'the token must appear NOWHERE in /state');
+  assert.equal(state.text.includes('fdtest:'), false, 'nor the userinfo it sat in');
+  // Both scrub paths are exercised: positional (the echoed URL) and exact-secret
+  // (the bare `HTTP Basic` credential, which matches no known credential shape).
+  assert.match(card.spawn.fail_detail, /\[redacted\]@127\.0\.0\.1:1\/x\.git/);
+  assert.match(card.spawn.fail_detail, /Access denied for user \[redacted\]/);
+  // And the NOTE specifically, on its own, not folded into the /state scan above:
+  // it is the surface with the widest reach (card, ticker, 409 body, durable
+  // event) and it used to be the one with the WEAKER control — the exact-secret
+  // needle was applied inside the detail only. The shim puts the bare secret on
+  // the verdict line precisely so this assertion can fail.
+  assert.equal(card.note.includes(secret), false, 'the note must not carry the bare secret');
+  assert.match(card.note, /Access denied for user \[redacted\]/, 'the note is hardened by the SAME pass as the detail');
+  // The SpawnFailed event is derived from the same reason string and is durable
+  // on disk long after the card is archived, so it gets its own proof.
+  const notes = eventNotes(daemon.home, 'SpawnFailed');
+  assert.ok(notes.length >= 1, 'the failure is still durably logged');
+  for (const note of notes) assert.equal(note.includes(secret), false, 'no token in a durable event note');
 });
 
 test('concurrent clone requests for one destination are single-flight', async t => {
