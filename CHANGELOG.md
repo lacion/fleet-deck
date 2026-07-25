@@ -5,7 +5,7 @@ All notable changes to Fleet Deck are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.19.3] - 2026-07-25
+## [0.20.0] - 2026-07-25
 
 The 0.19.2 copy chord worked and people still could not paste, because the copy
 they were actually performing was never the board's. Everything here comes out
@@ -681,7 +681,7 @@ Initial public release.
 - A brainless orchestrator: `assign auto` routes a task to the best existing session with a SQL query, not a model call — the core makes zero model calls.
 - One-command plugin install with a self-contained daemon bundle (`node:sqlite` state, nothing to `npm install`); the first session's SessionStart hook elects and launches the daemon. MIT licensed.
 
-[0.19.3]: https://github.com/lacion/fleet-deck/compare/v0.19.2...v0.19.3
+[0.20.0]: https://github.com/lacion/fleet-deck/compare/v0.19.2...v0.20.0
 [0.19.2]: https://github.com/lacion/fleet-deck/compare/v0.19.1...v0.19.2
 [0.19.1]: https://github.com/lacion/fleet-deck/compare/v0.19.0...v0.19.1
 [0.19.0]: https://github.com/lacion/fleet-deck/compare/v0.18.0...v0.19.0
