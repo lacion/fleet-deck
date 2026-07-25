@@ -23,14 +23,60 @@
 // Callers must treat `false` as "tell the human to copy it themselves" — a
 // silent lie is what cost three rounds of debugging here.
 export async function copyText(text) {
-  if (copyViaEvent(text)) return true;
-  try {
-    if (navigator.clipboard?.writeText) {
+  // Every attempt records WHICH link of the chain worked, because "it says
+  // copied and my clipboard is unchanged" is otherwise undebuggable from the
+  // outside: the page cannot see the OS clipboard, so the only evidence
+  // available is which step reported what. Left on the window on purpose —
+  // `__fdCopy` is what to ask a reporter for, and it costs one object.
+  const trace = { at: new Date().toISOString(), chars: text?.length ?? 0 };
+  const attempt = copyViaEvent(text);
+  Object.assign(trace, attempt);
+  if (attempt.ok) {
+    await verifyClipboard(trace, text);
+    return finishCopyTrace(trace, true);
+  }
+  if (navigator.clipboard?.writeText) {
+    try {
       await navigator.clipboard.writeText(text);
-      return true;
+      trace.writeText = 'resolved';
+      await verifyClipboard(trace, text);
+      return finishCopyTrace(trace, true);
+    } catch (err) {
+      trace.writeText = `rejected: ${err?.name || 'Error'} — ${err?.message || ''}`;
     }
-  } catch { /* denied, insecure context, or lost focus — nothing left to try */ }
-  return false;
+  } else {
+    trace.writeText = 'unavailable (not a secure context?)';
+  }
+  return finishCopyTrace(trace, false);
+}
+
+// Best-effort READ-BACK: the only way a page can learn whether the clipboard
+// actually changed. Chrome prompts for clipboard-read, so this runs ONLY when
+// the permission is already granted — a diagnostic may never put a permission
+// dialog in front of someone who just pressed Ctrl+C. When it does run it
+// settles the question the trace otherwise can only infer.
+async function verifyClipboard(trace, expected) {
+  try {
+    const perm = await navigator.permissions?.query({ name: 'clipboard-read' });
+    if (perm?.state !== 'granted') { trace.verified = `not checked (permission: ${perm?.state ?? 'unknown'})`; return; }
+    const got = await navigator.clipboard.readText();
+    trace.verified = got === expected
+      ? 'YES — the clipboard holds this text'
+      : `NO — the clipboard holds something else (${got.length} chars)`;
+  } catch (err) {
+    trace.verified = `read failed: ${err?.name || 'Error'}`;
+  }
+}
+
+function finishCopyTrace(trace, ok) {
+  trace.result = ok ? 'reported as copied' : 'refused';
+  trace.secureContext = typeof window !== 'undefined' ? window.isSecureContext : null;
+  trace.documentFocused = typeof document !== 'undefined' ? document.hasFocus() : null;
+  try { globalThis.__fdCopy = trace; } catch { /* frozen global — the log below still carries it */ }
+  // A copy that could not be PROVEN is a real defect somewhere in the stack, so
+  // it is loud. A proven one says nothing: the pane already shows a pill.
+  if (!ok) console.warn('[fleetdeck] copy could not be proven — nothing was put on the clipboard', trace);
+  return ok;
 }
 
 // Drive a real copy event and write the data ourselves. In-file only: copyText
@@ -38,7 +84,9 @@ export async function copyText(text) {
 // that asked for the copy, and it must finish before the caller can clear the
 // selection out from under it.
 function copyViaEvent(text) {
-  if (typeof document === 'undefined' || !document.execCommand) return false;
+  if (typeof document === 'undefined' || !document.execCommand) {
+    return { ok: false, execCommand: 'unavailable', copyEvent: 'not reached' };
+  }
   let fired = false;
   const onCopy = (e) => {
     fired = true;
@@ -64,9 +112,14 @@ function copyViaEvent(text) {
     document.body.appendChild(ta);
     ta.select();
     const ran = document.execCommand('copy');
-    return ran && fired;
-  } catch {
-    return false;
+    return {
+      // `fired` is the proof — see the header. `ran` alone is not.
+      ok: ran && fired,
+      execCommand: ran ? 'returned true' : 'returned false',
+      copyEvent: fired ? 'fired (our text was written to the event)' : 'NEVER FIRED',
+    };
+  } catch (err) {
+    return { ok: false, execCommand: `threw: ${err?.message || err}`, copyEvent: 'not reached' };
   } finally {
     document.removeEventListener('copy', onCopy, true);
     ta.remove();
@@ -512,6 +565,70 @@ export function imageFromClipboard(items) {
     if (it && it.kind === 'file' && /^image\//.test(it.type || '')) return it;
   }
   return null;
+}
+
+// ---------------------------------------------- tmux passthrough (OSC 52 only)
+
+// Built from char codes, never written literally: an ESC in source is an
+// invisible control character (the same reason NEWLINE_SEQ in TermPane.jsx is
+// built this way).
+const ESC = String.fromCharCode(27);
+const PT_OPEN = ESC + 'Ptmux;';
+const PT_CLOSE = ESC + '\\';
+// A selection can be large, but not unbounded: past this a partial wrapper is
+// flushed verbatim rather than buffered forever. Nothing is ever dropped for
+// being long — it is only stopped from pinning memory on a stream that never
+// closes the sequence.
+const PT_MAX = 1 << 20;
+
+/**
+ * Unwrap tmux PASSTHROUGH sequences carrying OSC 52, and ONLY those.
+ *
+ * A program that wants to reach the real terminal through tmux wraps its escape
+ * in `ESC P tmux ; <escape, every ESC doubled> ESC \`, and tmux unwraps it for
+ * the client. Fleet Deck's client is tmux CONTROL MODE, which is not a
+ * terminal — so tmux never unwraps anything, and the wrapper arrives at the
+ * board intact. xterm then sees a DCS it does not know and discards the lot,
+ * which is precisely how the agent's own "copied N characters" reached nobody.
+ * The board is the terminal here, so the board does tmux's half of the job.
+ *
+ * ONLY OSC 52 is unwrapped. Passthrough is a licence to send the terminal
+ * anything at all, and a pane renders bytes from files, tools and the network;
+ * honouring the general case would hand every one of those a direct line to the
+ * emulator. A clipboard WRITE is the one sequence worth carrying (and the
+ * reader that would carry it back is refused in TermPane).
+ *
+ * Streaming-safe: returns {out, carry}. `carry` is a partial wrapper held back
+ * for the next chunk — a socket frame can split a sequence anywhere.
+ */
+export function unwrapTmuxPassthrough(chunk, carry = '') {
+  let buf = carry + String(chunk ?? '');
+  if (!buf.includes(PT_OPEN)) {
+    // Hold back only a possible partial OPEN at the very end; everything else
+    // is already safe to render.
+    for (let n = Math.min(PT_OPEN.length - 1, buf.length); n > 0; n--) {
+      if (buf.endsWith(PT_OPEN.slice(0, n))) return { out: buf.slice(0, -n), carry: buf.slice(-n) };
+    }
+    return { out: buf, carry: '' };
+  }
+  let out = '';
+  while (true) {
+    const open = buf.indexOf(PT_OPEN);
+    if (open === -1) break;
+    out += buf.slice(0, open);
+    const rest = buf.slice(open + PT_OPEN.length);
+    const close = rest.indexOf(PT_CLOSE);
+    if (close === -1) {
+      // Incomplete — wait for more, unless it has grown past all reason.
+      if (rest.length > PT_MAX) { out += PT_OPEN + rest; buf = ''; break; }
+      return { out, carry: PT_OPEN + rest };
+    }
+    const inner = rest.slice(0, close).split(ESC + ESC).join(ESC);
+    // The whole point: keep the clipboard write, drop every other passthrough.
+    if (/^\]52;/.test(inner)) out += inner;
+    buf = rest.slice(close + PT_CLOSE.length);
+  }
+  return { out: out + buf, carry: '' };
 }
 
 // ------------------------------------------------------- copying out of a pane

@@ -24,6 +24,7 @@ import {
   clampWinRect,
   imageFromClipboard,
   isTermCopyChord,
+  unwrapTmuxPassthrough,
   termChordHints,
   batchTotal,
   expandBatchTasks,
@@ -530,11 +531,11 @@ test('copyText proves the copy through a real copy event, not a return value', (
   const src = readFileSync(path.join(HERE, '..', 'board', 'src', 'util.js'), 'utf8');
   assert.match(src, /addEventListener\('copy', onCopy, true\)/,
     'copyText no longer drives a real copy event — its success is unprovable again');
-  assert.match(src, /return ran && fired/,
+  assert.match(src, /ok: ran && fired/,
     'copyText must report the LISTENER firing, not execCommand\'s return value');
   // The event path has to run before the async API, or an accepted-then-dropped
   // writeText() short-circuits the only path that can prove itself.
-  const viaEvent = src.indexOf('if (copyViaEvent(text)) return true');
+  const viaEvent = src.indexOf('const attempt = copyViaEvent(text)');
   const viaApi = src.indexOf('navigator.clipboard?.writeText');
   assert.ok(viaEvent > 0 && viaEvent < viaApi,
     'copyViaEvent must be attempted BEFORE navigator.clipboard.writeText');
@@ -572,4 +573,66 @@ test('the daemon makes an upgrade impossible to miss and assets free to cache', 
   const src = readFileSync(path.join(HERE, '..', 'scripts', 'fleetd', 'http.mjs'), 'utf8');
   assert.match(src, /'cache-control': ext === '\.html' \? 'no-store' : 'public, max-age=31536000, immutable'/,
     'board assets lost their cache contract — a browser may serve a stale shell after an upgrade');
+});
+
+test('a copy that cannot be proven leaves evidence behind', () => {
+  // "It said copied and my clipboard is unchanged" is undebuggable from the
+  // outside — a page cannot read the OS clipboard — so every attempt records
+  // which link of the chain reported what, and an unproven one is loud.
+  const src = readFileSync(path.join(HERE, '..', 'board', 'src', 'util.js'), 'utf8');
+  assert.match(src, /globalThis\.__fdCopy = trace/,
+    'the last copy attempt must stay inspectable — it is what to ask a reporter for');
+  assert.match(src, /console\.warn\('\[fleetdeck\] copy could not be proven/,
+    'an unprovable copy must say so in the console');
+  // The read-back is the only real proof of arrival, but clipboard-read PROMPTS
+  // in Chrome — a diagnostic may never put a permission dialog in front of
+  // someone who just pressed Ctrl+C.
+  assert.match(src, /perm\?\.state !== 'granted'/,
+    'the clipboard read-back must be skipped unless the permission is ALREADY granted');
+});
+
+// --- tmux passthrough: the agent's own clipboard write ----------------------
+//
+// THE bug behind three rounds of "copy still does not work". Claude Code's TUI
+// owns the mouse, so the human's drag never reaches xterm; the TUI selects,
+// prints its own "copied N characters", and writes the clipboard with OSC 52 —
+// wrapped for tmux. Fleet Deck's client is tmux CONTROL MODE, which is not a
+// terminal, so tmux never unwraps it: the board receives ESC P tmux ; … ESC \\
+// intact, xterm sees an unknown DCS, and the whole clipboard write is discarded.
+// Confirmed on the wire 2026-07-25 (raw OSC 52 arrives bare; the wrapped form
+// arrives with its wrapper still on).
+
+const E = String.fromCharCode(27);
+const OSC52 = `${E}]52;c;SGVsbG8=${E === null ? '' : String.fromCharCode(7)}`;
+const wrap = (inner) => `${E}Ptmux;${inner.split(E).join(E + E)}${E}\\`;
+
+test('an agent clipboard write inside a tmux wrapper reaches the terminal', () => {
+  const { out, carry } = unwrapTmuxPassthrough(`before${wrap(OSC52)}after`);
+  assert.equal(out, `before${OSC52}after`, 'the OSC 52 must survive, unwrapped and un-doubled');
+  assert.equal(carry, '');
+});
+
+test('only OSC 52 is unwrapped — passthrough is not a general licence', () => {
+  // A pane renders bytes from files, tools and the network. Honouring arbitrary
+  // passthrough would hand every one of them a direct line to the emulator.
+  const evil = `${E}]0;retitled by a file you cat'd${String.fromCharCode(7)}`;
+  const { out } = unwrapTmuxPassthrough(`a${wrap(evil)}b`);
+  assert.equal(out, 'ab', 'a non-clipboard passthrough must be dropped, not forwarded');
+});
+
+test('a wrapper split across two frames is not lost', () => {
+  const whole = `x${wrap(OSC52)}y`;
+  for (const cut of [3, 9, 14, 20, whole.length - 2]) {
+    const first = unwrapTmuxPassthrough(whole.slice(0, cut));
+    const second = unwrapTmuxPassthrough(whole.slice(cut), first.carry);
+    assert.equal(first.out + second.out, `x${OSC52}y`, `split at ${cut} lost data`);
+    assert.equal(second.carry, '', `split at ${cut} left a dangling carry`);
+  }
+});
+
+test('ordinary pane output is passed through untouched', () => {
+  const plain = `${E}[1mbold${E}[0m rows and \r\n newlines`;
+  assert.deepEqual(unwrapTmuxPassthrough(plain), { out: plain, carry: '' });
+  // A lone ESC at a frame boundary must not be mistaken for a wrapper opening.
+  assert.deepEqual(unwrapTmuxPassthrough('tail'), { out: 'tail', carry: '' });
 });

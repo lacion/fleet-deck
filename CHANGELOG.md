@@ -7,11 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.19.3] - 2026-07-25
 
-The 0.19.2 copy chord worked and people still could not paste. Everything here
-comes out of that: one real bug, and three places the board answered a question
+The 0.19.2 copy chord worked and people still could not paste, because the copy
+they were actually performing was never the board's. Everything here comes out
+of chasing that: the real defect, and three places the board answered a question
 with something other than the truth.
 
 ### Fixed
+
+- **The agent's own copy now reaches your clipboard.** This is the one that was
+  broken all along. Claude Code's TUI turns mouse reporting on, so a drag across
+  a pane never reaches the emulator as a selection: the TUI does its own
+  selecting, prints its own *"copied N characters"*, and writes the clipboard
+  with **OSC 52** — the terminal's clipboard escape — wrapped for tmux
+  passthrough. Two things then threw it away. tmux hands Fleet Deck that wrapper
+  unopened, because our client is tmux *control mode*, which is not a terminal
+  and so never gets the unwrapping a real client would; and xterm has no OSC 52
+  handler at all (0, 1, 2, 4, 8, 10–12, 104, 110–112 — and that is the whole
+  table). So the agent reported a copy, the terminal discarded it, and the
+  clipboard kept whatever was in it. The board now does tmux's half of the job
+  and honours the write.
+
+  **Writes only, never reads.** OSC 52 has a read form that answers by typing
+  the clipboard back into the pane as though you had pasted it, and any byte a
+  pane renders — a file, a tool result, a fetched page — can ask for it. It is
+  refused, with a test pinning the refusal. Only the clipboard *write* is
+  unwrapped from a passthrough; every other passthrough sequence is dropped
+  rather than forwarded to the emulator.
+
+  *Limit worth knowing:* an agent-initiated copy has no user gesture behind it,
+  so it can only use `navigator.clipboard` — which does not exist on the
+  plain-http LAN board. On loopback it works; from another device it does not,
+  and Ctrl+C remains the way there.
 
 - **"✓ copied" now means the clipboard actually changed.** The pane reported
   success from the *return value* of a clipboard call, and neither call means

@@ -1,10 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { ClipboardAddon } from '@xterm/addon-clipboard';
 import '@xterm/xterm/css/xterm.css';
 import { hasToken, wsUrl } from '../token.js';
 import { pasteImage } from '../api.js';
-import { copyText, imageFromClipboard, isMacUA, isTermCopyChord, termChordHints } from '../util.js';
+import { copyText, imageFromClipboard, isMacUA, isTermCopyChord, termChordHints, unwrapTmuxPassthrough } from '../util.js';
 
 // One live terminal onto one board-owned pane — the screen and the socket, with
 // no chrome around it. The floating window (TermWindow) and each tile of the grid
@@ -46,6 +47,37 @@ const SELECT_HINT = `${termChordHints(IS_MAC).select} to select — the agent ow
 // click is a real thing to send a mouse-mode TUI; a 24px sweep is someone
 // trying to select text.
 const DRAG_SLOP = 24;
+
+// OSC 52 — THE COPY THE AGENT ITSELF PERFORMS.
+//
+// This is how the human actually copies out of a pane, and the board threw it
+// on the floor for its entire existence. Claude Code's TUI owns the mouse
+// (mouse reporting is on), so a drag never reaches xterm as a selection: the
+// TUI does its OWN selection, prints its own "copied N characters", and writes
+// the clipboard with OSC 52 — wrapped for tmux passthrough, which tmux forwards
+// and the daemon relays verbatim. Verified on 2026-07-25: the sequence arrives
+// at the viewer intact and xterm parsed it into nothing, because xterm's OSC
+// table has no 52 (0,1,2,4,8,10,11,12,104,110,111,112 — and that is all).
+//
+// So the agent said "copied", the board's own chord said "copied", and neither
+// had put anything anywhere. This addon closes it.
+//
+// WRITE ONLY, DELIBERATELY. OSC 52 has a READ form (`ESC ] 52 ; c ; ? BEL`)
+// that answers by TYPING the clipboard back into the pane as if the human had
+// pasted it. Any byte stream a pane renders can ask for that — a `cat` of a
+// hostile file, a fetched page, a tool result — so honouring it would let
+// anything on screen exfiltrate the operator's clipboard into a live agent's
+// stdin. readText therefore returns nothing, always. The one-way trade is the
+// whole point: the fleet may hand you text, never take it.
+const clipboardProvider = {
+  async readText() { return ''; },
+  async writeText(_selection, data) {
+    // Through the board's own copyText, not navigator.clipboard: the LAN board
+    // is plain http, where navigator.clipboard does not exist, and copyText
+    // owns the fallback that still works there.
+    if (data) await copyText(data);
+  },
+};
 
 function cssVar(name, fallback) {
   const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -125,6 +157,9 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
     termRef.current = term;
     const fit = new FitAddon();
     term.loadAddon(fit);
+    // The agent's own copies (OSC 52) land on the real clipboard — see the
+    // provider above for why writes are honoured and reads never are.
+    term.loadAddon(new ClipboardAddon(undefined, clipboardProvider));
     term.open(screenRef.current);
     try { fit.fit(); } catch { /* container not measurable yet — init frame corrects */ }
     if (live) term.focus();
@@ -137,7 +172,18 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
     // `seen` = did even one frame arrive? A socket that closes without ever
     // speaking was refused at the upgrade, not disconnected mid-stream, and the
     // two need different words — see the close handler.
-    const st = { done: false, seen: false, size: { cols: term.cols, rows: term.rows } };
+    const st = { done: false, seen: false, carry: '', size: { cols: term.cols, rows: term.rows } };
+
+    // Everything the pane sends passes through here on its way to the screen.
+    // tmux hands us its passthrough wrappers unopened (control mode is not a
+    // terminal, so tmux never does the unwrapping a real client would get), and
+    // the agent's own clipboard write is inside one — see
+    // unwrapTmuxPassthrough. `carry` holds a wrapper split across two frames.
+    const write = (data) => {
+      const { out, carry } = unwrapTmuxPassthrough(data, st.carry);
+      st.carry = carry;
+      return out;
+    };
 
     const end = (kind, text) => {
       if (st.done) return;
@@ -163,9 +209,10 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
         // Blank slate before the seed: reconnecting into a terminal that still
         // holds a previous session's cells would interleave two screens.
         term.reset();
-        if (f.screen) term.write(f.screen);
+        st.carry = '';
+        if (f.screen) term.write(write(f.screen));
       } else if (f.t === 'out') {
-        term.write(f.data ?? '');
+        term.write(write(f.data ?? ''));
       } else if (f.t === 'exit') {
         end('exit', `agent ended — ${f.reason || 'pane closed'}`);
       } else if (f.t === 'err') {
@@ -245,7 +292,7 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
           // Do NOT clear the selection here: it is the only copy the human has
           // left, and right-click → Copy needs it to still be on screen (xterm
           // loads the selection into its textarea for the context menu).
-          flash('err', 'the clipboard refused this copy — right-click → Copy instead');
+          flash('err', 'the clipboard refused this copy — right-click → Copy instead (why: console)');
         }
         // The execCommand fallback selects a throwaway textarea, which takes the
         // keyboard off xterm; hand it back so the pane can still be typed into.
