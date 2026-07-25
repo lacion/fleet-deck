@@ -5,7 +5,7 @@ import { ClipboardAddon } from '@xterm/addon-clipboard';
 import '@xterm/xterm/css/xterm.css';
 import { hasToken, wsUrl } from '../token.js';
 import { pasteImage } from '../api.js';
-import { copyText, imageFromClipboard, isMacUA, isTermCopyChord, termChordHints, unwrapTmuxPassthrough } from '../util.js';
+import { copyText, imageFromClipboard, isMacUA, isTermCopyChord, isTermPasteChord, termChordHints, unwrapTmuxPassthrough } from '../util.js';
 
 // One live terminal onto one board-owned pane — the screen and the socket, with
 // no chrome around it. The floating window (TermWindow) and each tile of the grid
@@ -324,6 +324,11 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
         e.preventDefault();
         return false;
       }
+      // Ctrl+V: take the chord away from xterm (which would send ^V) but leave
+      // the event ALONE otherwise — no preventDefault — so the browser performs
+      // its own trusted paste. xterm's paste handler then does the bracketing.
+      // See isTermPasteChord for why a remote terminal must not send ^V here.
+      if (isTermPasteChord(e, IS_MAC)) return false;
       if (e.type !== 'keydown' || e.key !== 'Enter' || e.metaKey) return true;
       if (!(e.shiftKey || e.ctrlKey || e.altKey)) return true; // bare Enter: submit, as always
       e.preventDefault();

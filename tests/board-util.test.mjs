@@ -24,6 +24,7 @@ import {
   clampWinRect,
   imageFromClipboard,
   isTermCopyChord,
+  isTermPasteChord,
   unwrapTmuxPassthrough,
   termChordHints,
   batchTotal,
@@ -635,4 +636,57 @@ test('ordinary pane output is passed through untouched', () => {
   assert.deepEqual(unwrapTmuxPassthrough(plain), { out: plain, carry: '' });
   // A lone ESC at a frame boundary must not be mistaken for a wrapper opening.
   assert.deepEqual(unwrapTmuxPassthrough('tail'), { out: 'tail', carry: '' });
+});
+
+// --- pasting INTO a pane -----------------------------------------------------
+//
+// In a terminal Ctrl+V is not paste — it is the byte ^V — because the terminal
+// and the program share a machine. Here they do not: the clipboard is in a
+// browser, and Claude Code answers ^V by hunting for an image on the DAEMON
+// HOST's clipboard, then saying "no image found". Truthful and useless, so the
+// board claims the chord.
+
+test('Ctrl+V is the paste chord off a Mac, and nothing to claim on one', () => {
+  const down = { type: 'keydown', key: 'v' };
+  assert.equal(isTermPasteChord({ ...down, ctrlKey: true }, false), true);
+  // ⌘V is already the browser's own paste and xterm never intercepts meta.
+  assert.equal(isTermPasteChord({ ...down, metaKey: true }, true), false);
+  assert.equal(isTermPasteChord({ ...down, ctrlKey: true }, true), false);
+  // Ctrl+Shift+V is the terminal's own paste and already works — leave it.
+  assert.equal(isTermPasteChord({ ...down, ctrlKey: true, shiftKey: true }, false), false);
+  assert.equal(isTermPasteChord({ ...down, ctrlKey: true, altKey: true }, false), false);
+  assert.equal(isTermPasteChord({ ...down }, false), false, 'bare v must type a v');
+  assert.equal(isTermPasteChord({ type: 'keyup', key: 'v', ctrlKey: true }, false), false);
+});
+
+test('the paste chord is surrendered to the BROWSER, never preventDefaulted', () => {
+  // The whole mechanism: stop xterm turning Ctrl+V into ^V, but leave the event
+  // alone so the browser performs its own TRUSTED paste. That needs no
+  // clipboard-read permission, and the resulting paste event reaches xterm's
+  // handler, which brackets it — without that, a multi-line paste submits
+  // itself line by line into a live agent.
+  const src = readFileSync(path.join(HERE, '..', 'board', 'src', 'components', 'TermPane.jsx'), 'utf8');
+  const line = src.split('\n').find(l => l.includes('isTermPasteChord(e'));
+  assert.ok(line, 'TermPane no longer claims the paste chord');
+  assert.ok(/return false;\s*$/.test(line.trim()),
+    'the paste chord must return false ALONE — a preventDefault here kills the browser paste');
+  assert.ok(!/preventDefault/.test(line), 'the paste chord must not preventDefault');
+});
+
+test('the headless image paste survives the Ctrl+V change', () => {
+  // Pasting a screenshot uploads it to the DAEMON's filesystem and types the
+  // path into the pane — the whole reason the feature exists on a headless
+  // server, where the agent can read a file but never a clipboard. It rides the
+  // browser's native paste event, which is exactly what the Ctrl+V handler
+  // preserves by not calling preventDefault. Verified end to end 2026-07-25:
+  // Ctrl+V delivers clipboardData.types ["Files"] and the path lands.
+  const src = readFileSync(path.join(HERE, '..', 'board', 'src', 'components', 'TermPane.jsx'), 'utf8');
+  assert.match(src, /screenEl\.addEventListener\('paste', onPaste, true\)/,
+    'the image-paste listener must stay in the CAPTURE phase — xterm handles paste on the textarea below it');
+  assert.match(src, /if \(!item\) return;/,
+    'a text paste must fall through to xterm untouched');
+  assert.match(src, /sendIn\(res\.json\.path \+ ' '\)/,
+    'the uploaded image must reach the pane as a PATH — the agent cannot read a clipboard');
+  assert.ok(src.includes('press Enter to send'),
+    'a paste must never submit on its own: keystrokes into a live agent are irreversible');
 });

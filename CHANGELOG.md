@@ -39,6 +39,17 @@ with something other than the truth.
   plain-http LAN board. On loopback it works; from another device it does not,
   and Ctrl+C remains the way there.
 
+- **Ctrl+V pastes your clipboard into the pane.** In a terminal Ctrl+V is not
+  paste — it is the byte `^V`, and pasting is Ctrl+Shift+V. That convention
+  assumes the terminal and the program share a machine. Here they do not: your
+  clipboard is in a browser, possibly on another computer, and Claude Code
+  answers `^V` by looking for an image on the *daemon host's* clipboard and
+  reporting "no image found" — truthful, and about the wrong machine. The board
+  now claims the chord and lets the BROWSER perform its own paste, which needs
+  no clipboard permission and still goes through xterm's bracketing, so a
+  multi-line paste cannot submit itself line by line. Ctrl+Shift+V, right-click
+  → Paste and ⌘V are unchanged.
+
 - **"✓ copied" now means the clipboard actually changed.** The pane reported
   success from the *return value* of a clipboard call, and neither call means
   what it looks like: `navigator.clipboard.writeText()` resolves when the write

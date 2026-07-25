@@ -664,6 +664,30 @@ export function isTermCopyChord(e, isMac = isMacUA()) {
   return isMac ? !!e.metaKey && !e.ctrlKey : !!e.ctrlKey && !e.metaKey;
 }
 
+// Should this keydown PASTE the browser's clipboard into the pane?
+//
+// In a terminal Ctrl+V is not paste — it is the raw byte ^V, and pasting is
+// Ctrl+Shift+V. That convention exists because the terminal and the program
+// share one machine. Here they do not: the clipboard is in a browser, possibly
+// on another computer entirely, and Claude Code answers ^V by looking for an
+// image on the DAEMON HOST's clipboard — a machine the human is not sitting at.
+// It then says "no image found", truthfully and uselessly. So the board claims
+// the chord and pastes what the human actually means: their own clipboard.
+//
+// The caller must NOT preventDefault: the whole trick is to stop xterm turning
+// the chord into ^V while letting the BROWSER perform its own native paste. The
+// resulting paste event is trusted, needs no clipboard-read permission, and
+// reaches xterm's own handler — which brackets it (ESC[200~) when the app asked
+// for bracketed paste, so a multi-line paste cannot submit itself line by line.
+//
+// On a Mac ⌘V is already the browser's paste and xterm never intercepts meta
+// chords, so there is nothing to claim.
+export function isTermPasteChord(e, isMac = isMacUA()) {
+  if (isMac || !e || e.type !== 'keydown') return false;
+  if (String(e.key ?? '').toLowerCase() !== 'v') return false;
+  return !!e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey;
+}
+
 // The two things about a live pane that are NOT guessable, in the hint bar's
 // voice. Selecting needs a modifier because the agent's TUI turns mouse
 // reporting ON: without one, a drag is a drag the AGENT sees, and xterm makes no
