@@ -11872,7 +11872,16 @@ function serveBoardAsset(res, pathname, notFound) {
     // The board boots from a ?t=<token> URL; no subresource (notably the
     // Google Fonts stylesheet, which fires before token.js can scrub the URL)
     // may ever see it as a Referer.
-    "referrer-policy": "no-referrer"
+    "referrer-policy": "no-referrer",
+    // UPGRADE CONTRACT. Vite fingerprints every asset, so /assets/* is safe to
+    // cache forever — but index.html is the ONLY thing that names the current
+    // fingerprints, and it shipped with no cache directives at all. A browser
+    // is then free to reuse yesterday's shell after an upgrade, which is not
+    // theoretical: it cost a user a full debugging session on 0.19.2, running
+    // the previous board while the daemon served the new one and nothing in
+    // either said so. `no-store` on the shell means an upgrade cannot be
+    // invisible; `immutable` on the fingerprinted assets means it stays cheap.
+    "cache-control": ext === ".html" ? "no-store" : "public, max-age=31536000, immutable"
   };
   if (ext === ".html") headers["content-security-policy"] = CSP_SHELL;
   res.writeHead(200, headers);

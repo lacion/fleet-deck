@@ -2,9 +2,9 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
-import { wsUrl } from '../token.js';
+import { hasToken, wsUrl } from '../token.js';
 import { pasteImage } from '../api.js';
-import { copyText, imageFromClipboard, isMacUA, isTermCopyChord } from '../util.js';
+import { copyText, imageFromClipboard, isMacUA, isTermCopyChord, termChordHints } from '../util.js';
 
 // One live terminal onto one board-owned pane — the screen and the socket, with
 // no chrome around it. The floating window (TermWindow) and each tile of the grid
@@ -37,6 +37,15 @@ const IS_MAC = isMacUA();
 const COPY_FLASH = IS_MAC
   ? 'copied'
   : 'copied — selection cleared, so the next Ctrl+C interrupts';
+
+// Taught at the moment the gesture fails, not in a header nobody reads: the
+// agent's TUI owns a plain drag, so one that selected nothing gets an answer.
+const SELECT_HINT = `${termChordHints(IS_MAC).select} to select — the agent owns a plain drag`;
+
+// How far a press must travel before we call it a drag rather than a click. A
+// click is a real thing to send a mouse-mode TUI; a 24px sweep is someone
+// trying to select text.
+const DRAG_SLOP = 24;
 
 function cssVar(name, fallback) {
   const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -125,7 +134,10 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
     const ws = new WebSocket(
       wsUrl('/ws/term', { spawn: spawnId, cols: term.cols, rows: term.rows }),
     );
-    const st = { done: false, size: { cols: term.cols, rows: term.rows } };
+    // `seen` = did even one frame arrive? A socket that closes without ever
+    // speaking was refused at the upgrade, not disconnected mid-stream, and the
+    // two need different words — see the close handler.
+    const st = { done: false, seen: false, size: { cols: term.cols, rows: term.rows } };
 
     const end = (kind, text) => {
       if (st.done) return;
@@ -139,6 +151,7 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
     ws.onmessage = (e) => {
       let f;
       try { f = JSON.parse(e.data); } catch { return; /* malformed frame */ }
+      st.seen = true;
       if (f.t === 'init') {
         // the server's size is truth for the screen it sends — resize BEFORE
         // writing so the ANSI snapshot lays out correctly (st.size first, so
@@ -167,7 +180,22 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
         }
       }
     };
-    ws.onclose = () => { if (!st.done) end('close', 'connection closed'); };
+    // A close with no frame before it is a REFUSED UPGRADE, and the daemon
+    // refuses one by destroying the socket — deliberately, so an unauthorized
+    // caller learns nothing, which also means the browser cannot tell us 401
+    // from "the network died". The board can still tell the human the one thing
+    // that distinguishes them: /ws/term is the only loopback route that demands
+    // the board key (gated since 0.16.0), and a board holding no key at all
+    // fails here and NOWHERE else — every other route on localhost is exempt,
+    // so the rest of the board looks perfectly healthy. Saying "connection
+    // closed" to that sent a user hunting a network fault for an afternoon.
+    ws.onclose = () => {
+      if (st.done) return;
+      if (st.seen) return end('close', 'connection closed');
+      end('err', hasToken()
+        ? 'the daemon refused this viewer before it opened — the board key may be stale (reopen the board from its ?t=… URL)'
+        : 'this board has no key, and a live terminal is the one thing that needs one — reopen the board from its ?t=… URL (`fleetdeck token`)');
+    };
 
     const sendIn = (data) => {
       if (st.done || term.options.disableStdin || ws.readyState !== WebSocket.OPEN) return false;
@@ -214,7 +242,10 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
           term.clearSelection();
           flash('ok', COPY_FLASH);
         } else {
-          flash('err', 'the browser refused the clipboard — right-click → Copy');
+          // Do NOT clear the selection here: it is the only copy the human has
+          // left, and right-click → Copy needs it to still be on screen (xterm
+          // loads the selection into its textarea for the context menu).
+          flash('err', 'the clipboard refused this copy — right-click → Copy instead');
         }
         // The execCommand fallback selects a throwaway textarea, which takes the
         // keyboard off xterm; hand it back so the pane can still be typed into.
@@ -303,6 +334,34 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
     const screenEl = screenRef.current;
     screenEl.addEventListener('paste', onPaste, true);
 
+    // THE FAILED GESTURE TEACHES ITSELF. While the agent's TUI has mouse
+    // reporting on, xterm hands it every plain drag and makes no selection —
+    // so "I dragged across the text and copied nothing" is silent by
+    // construction. Nothing in the pane answered it; the chord lived in a
+    // header hint, which is the same as nowhere. Now a sweep that cannot
+    // select says why, once per gesture, and only when a modifier would
+    // actually have changed the outcome.
+    let sweep = null;
+    const mouseModeOn = () => (term.modes?.mouseTrackingMode ?? 'none') !== 'none';
+    const onDown = (e) => {
+      // A press that already carries the modifier IS the selecting gesture.
+      sweep = e.button !== 0 || e.shiftKey || (IS_MAC && e.altKey)
+        ? null
+        : { x: e.clientX, y: e.clientY, taught: false };
+    };
+    const onMove = (e) => {
+      if (!sweep || sweep.taught) return;
+      if (Math.abs(e.clientX - sweep.x) + Math.abs(e.clientY - sweep.y) < DRAG_SLOP) return;
+      sweep.taught = true;
+      // Selection already works when the app is not tracking the mouse — say
+      // nothing there, or the hint becomes noise over a drag that succeeded.
+      if (mouseModeOn() && !term.hasSelection()) flash('hint', SELECT_HINT);
+    };
+    const onUp = () => { sweep = null; };
+    screenEl.addEventListener('mousedown', onDown);
+    screenEl.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+
     // fit()/init resizes land here; only genuine changes go up the wire
     const resizeSub = term.onResize(({ cols, rows }) => {
       if (cols === st.size.cols && rows === st.size.rows) return;
@@ -328,6 +387,9 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
       ro.disconnect();
       window.removeEventListener('resize', refit);
       screenEl.removeEventListener('paste', onPaste, true);
+      screenEl.removeEventListener('mousedown', onDown);
+      screenEl.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
       clearTimeout(pasteTimer.current);
       cancelAnimationFrame(raf);
       dataSub.dispose();
@@ -358,7 +420,10 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
       <div className="fd-termscreen" ref={screenRef} />
       {pasteStatus && (
         <div className={`fd-pastestatus ${pasteStatus.kind}`} role="status">
-          {pasteStatus.kind === 'busy' ? '⬆' : pasteStatus.kind === 'ok' ? '✓' : '⚠'} {pasteStatus.text}
+          {/* the hint's icon is deliberately NEUTRAL: its text already opens with
+              the modifier glyph, and that glyph is ⌥ on a Mac — a hardcoded ⇧
+              here rendered "⇧ ⇧drag" on Linux and a contradiction on macOS. */}
+          {pasteStatus.kind === 'busy' ? '⬆' : pasteStatus.kind === 'ok' ? '✓' : pasteStatus.kind === 'hint' ? 'ⓘ' : '⚠'} {pasteStatus.text}
         </div>
       )}
     </>

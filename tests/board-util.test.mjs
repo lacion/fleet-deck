@@ -515,3 +515,61 @@ test('the SHIPPED board-dist actually contains the copy chord', () => {
   assert.ok(js.includes('selection cleared'),
     'the shipped board bundle predates the pane copy fix — rerun npm run build:board');
 });
+
+// --- 0.19.3: a copy that cannot lie, and a gesture that teaches itself -------
+//
+// 0.19.2 shipped the copy chord and the user still could not paste: the pane
+// said "✓ copied" over a clipboard that never changed. Neither clipboard API
+// can be believed on its own — writeText() resolves when the write is ACCEPTED
+// (Chrome may drop it afterwards) and execCommand('copy') returns true for
+// "the command ran". Only the copy EVENT proves anything: if our listener fired,
+// the browser took our string. These pin that the proof is what gets reported,
+// and that the failure paths stay honest.
+
+test('copyText proves the copy through a real copy event, not a return value', () => {
+  const src = readFileSync(path.join(HERE, '..', 'board', 'src', 'util.js'), 'utf8');
+  assert.match(src, /addEventListener\('copy', onCopy, true\)/,
+    'copyText no longer drives a real copy event — its success is unprovable again');
+  assert.match(src, /return ran && fired/,
+    'copyText must report the LISTENER firing, not execCommand\'s return value');
+  // The event path has to run before the async API, or an accepted-then-dropped
+  // writeText() short-circuits the only path that can prove itself.
+  const viaEvent = src.indexOf('if (copyViaEvent(text)) return true');
+  const viaApi = src.indexOf('navigator.clipboard?.writeText');
+  assert.ok(viaEvent > 0 && viaEvent < viaApi,
+    'copyViaEvent must be attempted BEFORE navigator.clipboard.writeText');
+  assert.match(src, /active\?\.focus\?\.\(\)/,
+    'the fallback textarea steals focus; copyText must hand the keyboard back');
+});
+
+test('TermPane teaches the failed gesture and never nags over a working one', () => {
+  const src = readFileSync(path.join(HERE, '..', 'board', 'src', 'components', 'TermPane.jsx'), 'utf8');
+  // The hint fires ONLY when a modifier would have changed the outcome: the app
+  // is tracking the mouse AND the sweep selected nothing. Without the first
+  // condition it would fire over drags that selected fine.
+  assert.match(src, /if \(mouseModeOn\(\) && !term\.hasSelection\(\)\) flash\('hint'/,
+    'TermPane lost the guarded select hint');
+  assert.match(src, /term\.modes\?\.mouseTrackingMode/,
+    'mouse-mode detection must use xterm\'s public modes API');
+  assert.ok(src.includes('DRAG_SLOP'), 'a click is not a failed selection — the slop threshold is load-bearing');
+  // A failed copy must keep the selection: it is the only copy the human has
+  // left, and right-click → Copy needs it on screen.
+  const errBranch = src.slice(src.indexOf("flash('err', 'the clipboard refused"));
+  assert.ok(!/clearSelection/.test(errBranch.slice(0, 200)),
+    'a refused copy must NOT clear the selection');
+});
+
+test('a pane refused at the upgrade says so instead of "connection closed"', () => {
+  const src = readFileSync(path.join(HERE, '..', 'board', 'src', 'components', 'TermPane.jsx'), 'utf8');
+  assert.match(src, /st\.seen/, 'TermPane no longer tracks whether any frame arrived');
+  assert.match(src, /hasToken\(\)\s*\?/,
+    'the close path must distinguish "no board key" from "the daemon refused me"');
+  assert.match(src, /this board has no key/,
+    'a keyless board must name the actual problem — /ws/term is the only gated loopback route');
+});
+
+test('the daemon makes an upgrade impossible to miss and assets free to cache', () => {
+  const src = readFileSync(path.join(HERE, '..', 'scripts', 'fleetd', 'http.mjs'), 'utf8');
+  assert.match(src, /'cache-control': ext === '\.html' \? 'no-store' : 'public, max-age=31536000, immutable'/,
+    'board assets lost their cache contract — a browser may serve a stale shell after an upgrade');
+});
