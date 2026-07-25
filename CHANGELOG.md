@@ -5,6 +5,36 @@ All notable changes to Fleet Deck are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.2] - 2026-07-25
+
+### Fixed
+
+- **Copying text out of a live terminal works — and no longer interrupts the
+  agent instead.** Selecting inside a pane and pressing Ctrl+C put nothing on the
+  clipboard, for two independent reasons that each looked like the other's
+  symptom. Claude Code's TUI turns mouse reporting on, and a terminal emulator
+  answers a mouse-mode application by handing it the drag: the highlight you saw
+  was the agent's own TUI, not a selection, so there was never anything to copy.
+  And Ctrl+C could not have copied it anyway — in a terminal that chord is the
+  interrupt, sent as ETX with the keydown cancelled, so the browser's copy event
+  never fires. Every "copy" from the deck was an interrupt delivered into a live
+  agent.
+
+  Both halves are now closed. **⇧drag** (**⌥drag** on a Mac) selects inside a
+  pane, and **Ctrl+C** (**⌘C**) copies that selection — only when there is one,
+  so with nothing selected the chord is still the agent's interrupt, and the
+  selection is cleared the moment it is copied so the very next press interrupts
+  again. The pane confirms the copy in the same status pill an image paste uses.
+  Both terminal frames now name the two chords in their header, and the "?"
+  overlay spells them out; neither is guessable from the board. On a Mac the
+  selection modifier had to be enabled explicitly (`macOptionClickForcesSelection`),
+  without which a Mac could not select pane text at all.
+
+  The clipboard write goes through the same helper the LAN panel uses, so it
+  keeps working on the plain-http LAN board where `navigator.clipboard` does not
+  exist — and reports a failure instead of silently pretending. (0.18.0 made
+  Ctrl+C stop opening Compose; that fixed the *board*, never the pane.)
+
 ## [0.19.1] - 2026-07-24
 
 ### Fixed
@@ -571,6 +601,7 @@ Initial public release.
 - A brainless orchestrator: `assign auto` routes a task to the best existing session with a SQL query, not a model call — the core makes zero model calls.
 - One-command plugin install with a self-contained daemon bundle (`node:sqlite` state, nothing to `npm install`); the first session's SessionStart hook elects and launches the daemon. MIT licensed.
 
+[0.19.2]: https://github.com/lacion/fleet-deck/compare/v0.19.1...v0.19.2
 [0.19.1]: https://github.com/lacion/fleet-deck/compare/v0.19.0...v0.19.1
 [0.19.0]: https://github.com/lacion/fleet-deck/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/lacion/fleet-deck/compare/v0.17.0...v0.18.0
