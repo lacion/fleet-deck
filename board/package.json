@@ -1,7 +1,7 @@
 {
   "name": "fleetdeck-board",
   "private": true,
-  "version": "0.19.2",
+  "version": "0.20.0",
   "license": "MIT",
   "type": "module",
   "scripts": {
@@ -10,6 +10,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@xterm/addon-clipboard": "^0.2.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "react": "^19.2.8",

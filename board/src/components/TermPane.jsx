@@ -1,10 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { ClipboardAddon } from '@xterm/addon-clipboard';
 import '@xterm/xterm/css/xterm.css';
-import { wsUrl } from '../token.js';
+import { hasToken, wsUrl } from '../token.js';
 import { pasteImage } from '../api.js';
-import { copyText, imageFromClipboard, isMacUA, isTermCopyChord } from '../util.js';
+import { copyText, imageFromClipboard, isMacUA, isTermCopyChord, isTermPasteChord, termChordHints, unwrapTmuxPassthrough } from '../util.js';
 
 // One live terminal onto one board-owned pane — the screen and the socket, with
 // no chrome around it. The floating window (TermWindow) and each tile of the grid
@@ -37,6 +38,46 @@ const IS_MAC = isMacUA();
 const COPY_FLASH = IS_MAC
   ? 'copied'
   : 'copied — selection cleared, so the next Ctrl+C interrupts';
+
+// Taught at the moment the gesture fails, not in a header nobody reads: the
+// agent's TUI owns a plain drag, so one that selected nothing gets an answer.
+const SELECT_HINT = `${termChordHints(IS_MAC).select} to select — the agent owns a plain drag`;
+
+// How far a press must travel before we call it a drag rather than a click. A
+// click is a real thing to send a mouse-mode TUI; a 24px sweep is someone
+// trying to select text.
+const DRAG_SLOP = 24;
+
+// OSC 52 — THE COPY THE AGENT ITSELF PERFORMS.
+//
+// This is how the human actually copies out of a pane, and the board threw it
+// on the floor for its entire existence. Claude Code's TUI owns the mouse
+// (mouse reporting is on), so a drag never reaches xterm as a selection: the
+// TUI does its OWN selection, prints its own "copied N characters", and writes
+// the clipboard with OSC 52 — wrapped for tmux passthrough, which tmux forwards
+// and the daemon relays verbatim. Verified on 2026-07-25: the sequence arrives
+// at the viewer intact and xterm parsed it into nothing, because xterm's OSC
+// table has no 52 (0,1,2,4,8,10,11,12,104,110,111,112 — and that is all).
+//
+// So the agent said "copied", the board's own chord said "copied", and neither
+// had put anything anywhere. This addon closes it.
+//
+// WRITE ONLY, DELIBERATELY. OSC 52 has a READ form (`ESC ] 52 ; c ; ? BEL`)
+// that answers by TYPING the clipboard back into the pane as if the human had
+// pasted it. Any byte stream a pane renders can ask for that — a `cat` of a
+// hostile file, a fetched page, a tool result — so honouring it would let
+// anything on screen exfiltrate the operator's clipboard into a live agent's
+// stdin. readText therefore returns nothing, always. The one-way trade is the
+// whole point: the fleet may hand you text, never take it.
+const clipboardProvider = {
+  async readText() { return ''; },
+  async writeText(_selection, data) {
+    // Through the board's own copyText, not navigator.clipboard: the LAN board
+    // is plain http, where navigator.clipboard does not exist, and copyText
+    // owns the fallback that still works there.
+    if (data) await copyText(data);
+  },
+};
 
 function cssVar(name, fallback) {
   const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -116,6 +157,9 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
     termRef.current = term;
     const fit = new FitAddon();
     term.loadAddon(fit);
+    // The agent's own copies (OSC 52) land on the real clipboard — see the
+    // provider above for why writes are honoured and reads never are.
+    term.loadAddon(new ClipboardAddon(undefined, clipboardProvider));
     term.open(screenRef.current);
     try { fit.fit(); } catch { /* container not measurable yet — init frame corrects */ }
     if (live) term.focus();
@@ -125,7 +169,21 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
     const ws = new WebSocket(
       wsUrl('/ws/term', { spawn: spawnId, cols: term.cols, rows: term.rows }),
     );
-    const st = { done: false, size: { cols: term.cols, rows: term.rows } };
+    // `seen` = did even one frame arrive? A socket that closes without ever
+    // speaking was refused at the upgrade, not disconnected mid-stream, and the
+    // two need different words — see the close handler.
+    const st = { done: false, seen: false, carry: '', size: { cols: term.cols, rows: term.rows } };
+
+    // Everything the pane sends passes through here on its way to the screen.
+    // tmux hands us its passthrough wrappers unopened (control mode is not a
+    // terminal, so tmux never does the unwrapping a real client would get), and
+    // the agent's own clipboard write is inside one — see
+    // unwrapTmuxPassthrough. `carry` holds a wrapper split across two frames.
+    const write = (data) => {
+      const { out, carry } = unwrapTmuxPassthrough(data, st.carry);
+      st.carry = carry;
+      return out;
+    };
 
     const end = (kind, text) => {
       if (st.done) return;
@@ -139,6 +197,7 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
     ws.onmessage = (e) => {
       let f;
       try { f = JSON.parse(e.data); } catch { return; /* malformed frame */ }
+      st.seen = true;
       if (f.t === 'init') {
         // the server's size is truth for the screen it sends — resize BEFORE
         // writing so the ANSI snapshot lays out correctly (st.size first, so
@@ -150,9 +209,10 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
         // Blank slate before the seed: reconnecting into a terminal that still
         // holds a previous session's cells would interleave two screens.
         term.reset();
-        if (f.screen) term.write(f.screen);
+        st.carry = '';
+        if (f.screen) term.write(write(f.screen));
       } else if (f.t === 'out') {
-        term.write(f.data ?? '');
+        term.write(write(f.data ?? ''));
       } else if (f.t === 'exit') {
         end('exit', `agent ended — ${f.reason || 'pane closed'}`);
       } else if (f.t === 'err') {
@@ -167,7 +227,22 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
         }
       }
     };
-    ws.onclose = () => { if (!st.done) end('close', 'connection closed'); };
+    // A close with no frame before it is a REFUSED UPGRADE, and the daemon
+    // refuses one by destroying the socket — deliberately, so an unauthorized
+    // caller learns nothing, which also means the browser cannot tell us 401
+    // from "the network died". The board can still tell the human the one thing
+    // that distinguishes them: /ws/term is the only loopback route that demands
+    // the board key (gated since 0.16.0), and a board holding no key at all
+    // fails here and NOWHERE else — every other route on localhost is exempt,
+    // so the rest of the board looks perfectly healthy. Saying "connection
+    // closed" to that sent a user hunting a network fault for an afternoon.
+    ws.onclose = () => {
+      if (st.done) return;
+      if (st.seen) return end('close', 'connection closed');
+      end('err', hasToken()
+        ? 'the daemon refused this viewer before it opened — the board key may be stale (reopen the board from its ?t=… URL)'
+        : 'this board has no key, and a live terminal is the one thing that needs one — reopen the board from its ?t=… URL (`fleetdeck token`)');
+    };
 
     const sendIn = (data) => {
       if (st.done || term.options.disableStdin || ws.readyState !== WebSocket.OPEN) return false;
@@ -214,7 +289,10 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
           term.clearSelection();
           flash('ok', COPY_FLASH);
         } else {
-          flash('err', 'the browser refused the clipboard — right-click → Copy');
+          // Do NOT clear the selection here: it is the only copy the human has
+          // left, and right-click → Copy needs it to still be on screen (xterm
+          // loads the selection into its textarea for the context menu).
+          flash('err', 'the clipboard refused this copy — right-click → Copy instead (why: console)');
         }
         // The execCommand fallback selects a throwaway textarea, which takes the
         // keyboard off xterm; hand it back so the pane can still be typed into.
@@ -246,6 +324,11 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
         e.preventDefault();
         return false;
       }
+      // Ctrl+V: take the chord away from xterm (which would send ^V) but leave
+      // the event ALONE otherwise — no preventDefault — so the browser performs
+      // its own trusted paste. xterm's paste handler then does the bracketing.
+      // See isTermPasteChord for why a remote terminal must not send ^V here.
+      if (isTermPasteChord(e, IS_MAC)) return false;
       if (e.type !== 'keydown' || e.key !== 'Enter' || e.metaKey) return true;
       if (!(e.shiftKey || e.ctrlKey || e.altKey)) return true; // bare Enter: submit, as always
       e.preventDefault();
@@ -303,6 +386,34 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
     const screenEl = screenRef.current;
     screenEl.addEventListener('paste', onPaste, true);
 
+    // THE FAILED GESTURE TEACHES ITSELF. While the agent's TUI has mouse
+    // reporting on, xterm hands it every plain drag and makes no selection —
+    // so "I dragged across the text and copied nothing" is silent by
+    // construction. Nothing in the pane answered it; the chord lived in a
+    // header hint, which is the same as nowhere. Now a sweep that cannot
+    // select says why, once per gesture, and only when a modifier would
+    // actually have changed the outcome.
+    let sweep = null;
+    const mouseModeOn = () => (term.modes?.mouseTrackingMode ?? 'none') !== 'none';
+    const onDown = (e) => {
+      // A press that already carries the modifier IS the selecting gesture.
+      sweep = e.button !== 0 || e.shiftKey || (IS_MAC && e.altKey)
+        ? null
+        : { x: e.clientX, y: e.clientY, taught: false };
+    };
+    const onMove = (e) => {
+      if (!sweep || sweep.taught) return;
+      if (Math.abs(e.clientX - sweep.x) + Math.abs(e.clientY - sweep.y) < DRAG_SLOP) return;
+      sweep.taught = true;
+      // Selection already works when the app is not tracking the mouse — say
+      // nothing there, or the hint becomes noise over a drag that succeeded.
+      if (mouseModeOn() && !term.hasSelection()) flash('hint', SELECT_HINT);
+    };
+    const onUp = () => { sweep = null; };
+    screenEl.addEventListener('mousedown', onDown);
+    screenEl.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+
     // fit()/init resizes land here; only genuine changes go up the wire
     const resizeSub = term.onResize(({ cols, rows }) => {
       if (cols === st.size.cols && rows === st.size.rows) return;
@@ -328,6 +439,9 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
       ro.disconnect();
       window.removeEventListener('resize', refit);
       screenEl.removeEventListener('paste', onPaste, true);
+      screenEl.removeEventListener('mousedown', onDown);
+      screenEl.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
       clearTimeout(pasteTimer.current);
       cancelAnimationFrame(raf);
       dataSub.dispose();
@@ -358,7 +472,10 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
       <div className="fd-termscreen" ref={screenRef} />
       {pasteStatus && (
         <div className={`fd-pastestatus ${pasteStatus.kind}`} role="status">
-          {pasteStatus.kind === 'busy' ? '⬆' : pasteStatus.kind === 'ok' ? '✓' : '⚠'} {pasteStatus.text}
+          {/* the hint's icon is deliberately NEUTRAL: its text already opens with
+              the modifier glyph, and that glyph is ⌥ on a Mac — a hardcoded ⇧
+              here rendered "⇧ ⇧drag" on Linux and a contradiction on macOS. */}
+          {pasteStatus.kind === 'busy' ? '⬆' : pasteStatus.kind === 'ok' ? '✓' : pasteStatus.kind === 'hint' ? 'ⓘ' : '⚠'} {pasteStatus.text}
         </div>
       )}
     </>

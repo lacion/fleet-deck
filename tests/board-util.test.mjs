@@ -24,6 +24,8 @@ import {
   clampWinRect,
   imageFromClipboard,
   isTermCopyChord,
+  isTermPasteChord,
+  unwrapTmuxPassthrough,
   termChordHints,
   batchTotal,
   expandBatchTasks,
@@ -514,4 +516,177 @@ test('the SHIPPED board-dist actually contains the copy chord', () => {
     'the shipped board bundle predates the pane copy fix — rerun npm run build:board');
   assert.ok(js.includes('selection cleared'),
     'the shipped board bundle predates the pane copy fix — rerun npm run build:board');
+});
+
+// --- 0.19.3: a copy that cannot lie, and a gesture that teaches itself -------
+//
+// 0.19.2 shipped the copy chord and the user still could not paste: the pane
+// said "✓ copied" over a clipboard that never changed. Neither clipboard API
+// can be believed on its own — writeText() resolves when the write is ACCEPTED
+// (Chrome may drop it afterwards) and execCommand('copy') returns true for
+// "the command ran". Only the copy EVENT proves anything: if our listener fired,
+// the browser took our string. These pin that the proof is what gets reported,
+// and that the failure paths stay honest.
+
+test('copyText proves the copy through a real copy event, not a return value', () => {
+  const src = readFileSync(path.join(HERE, '..', 'board', 'src', 'util.js'), 'utf8');
+  assert.match(src, /addEventListener\('copy', onCopy, true\)/,
+    'copyText no longer drives a real copy event — its success is unprovable again');
+  assert.match(src, /ok: ran && fired/,
+    'copyText must report the LISTENER firing, not execCommand\'s return value');
+  // The event path has to run before the async API, or an accepted-then-dropped
+  // writeText() short-circuits the only path that can prove itself.
+  const viaEvent = src.indexOf('const attempt = copyViaEvent(text)');
+  const viaApi = src.indexOf('navigator.clipboard?.writeText');
+  assert.ok(viaEvent > 0 && viaEvent < viaApi,
+    'copyViaEvent must be attempted BEFORE navigator.clipboard.writeText');
+  assert.match(src, /active\?\.focus\?\.\(\)/,
+    'the fallback textarea steals focus; copyText must hand the keyboard back');
+});
+
+test('TermPane teaches the failed gesture and never nags over a working one', () => {
+  const src = readFileSync(path.join(HERE, '..', 'board', 'src', 'components', 'TermPane.jsx'), 'utf8');
+  // The hint fires ONLY when a modifier would have changed the outcome: the app
+  // is tracking the mouse AND the sweep selected nothing. Without the first
+  // condition it would fire over drags that selected fine.
+  assert.match(src, /if \(mouseModeOn\(\) && !term\.hasSelection\(\)\) flash\('hint'/,
+    'TermPane lost the guarded select hint');
+  assert.match(src, /term\.modes\?\.mouseTrackingMode/,
+    'mouse-mode detection must use xterm\'s public modes API');
+  assert.ok(src.includes('DRAG_SLOP'), 'a click is not a failed selection — the slop threshold is load-bearing');
+  // A failed copy must keep the selection: it is the only copy the human has
+  // left, and right-click → Copy needs it on screen.
+  const errBranch = src.slice(src.indexOf("flash('err', 'the clipboard refused"));
+  assert.ok(!/clearSelection/.test(errBranch.slice(0, 200)),
+    'a refused copy must NOT clear the selection');
+});
+
+test('a pane refused at the upgrade says so instead of "connection closed"', () => {
+  const src = readFileSync(path.join(HERE, '..', 'board', 'src', 'components', 'TermPane.jsx'), 'utf8');
+  assert.match(src, /st\.seen/, 'TermPane no longer tracks whether any frame arrived');
+  assert.match(src, /hasToken\(\)\s*\?/,
+    'the close path must distinguish "no board key" from "the daemon refused me"');
+  assert.match(src, /this board has no key/,
+    'a keyless board must name the actual problem — /ws/term is the only gated loopback route');
+});
+
+test('the daemon makes an upgrade impossible to miss and assets free to cache', () => {
+  const src = readFileSync(path.join(HERE, '..', 'scripts', 'fleetd', 'http.mjs'), 'utf8');
+  assert.match(src, /'cache-control': ext === '\.html' \? 'no-store' : 'public, max-age=31536000, immutable'/,
+    'board assets lost their cache contract — a browser may serve a stale shell after an upgrade');
+});
+
+test('a copy that cannot be proven leaves evidence behind', () => {
+  // "It said copied and my clipboard is unchanged" is undebuggable from the
+  // outside — a page cannot read the OS clipboard — so every attempt records
+  // which link of the chain reported what, and an unproven one is loud.
+  const src = readFileSync(path.join(HERE, '..', 'board', 'src', 'util.js'), 'utf8');
+  assert.match(src, /globalThis\.__fdCopy = trace/,
+    'the last copy attempt must stay inspectable — it is what to ask a reporter for');
+  assert.match(src, /console\.warn\('\[fleetdeck\] copy could not be proven/,
+    'an unprovable copy must say so in the console');
+  // The read-back is the only real proof of arrival, but clipboard-read PROMPTS
+  // in Chrome — a diagnostic may never put a permission dialog in front of
+  // someone who just pressed Ctrl+C.
+  assert.match(src, /perm\?\.state !== 'granted'/,
+    'the clipboard read-back must be skipped unless the permission is ALREADY granted');
+});
+
+// --- tmux passthrough: the agent's own clipboard write ----------------------
+//
+// THE bug behind three rounds of "copy still does not work". Claude Code's TUI
+// owns the mouse, so the human's drag never reaches xterm; the TUI selects,
+// prints its own "copied N characters", and writes the clipboard with OSC 52 —
+// wrapped for tmux. Fleet Deck's client is tmux CONTROL MODE, which is not a
+// terminal, so tmux never unwraps it: the board receives ESC P tmux ; … ESC \\
+// intact, xterm sees an unknown DCS, and the whole clipboard write is discarded.
+// Confirmed on the wire 2026-07-25 (raw OSC 52 arrives bare; the wrapped form
+// arrives with its wrapper still on).
+
+const E = String.fromCharCode(27);
+const OSC52 = `${E}]52;c;SGVsbG8=${E === null ? '' : String.fromCharCode(7)}`;
+const wrap = (inner) => `${E}Ptmux;${inner.split(E).join(E + E)}${E}\\`;
+
+test('an agent clipboard write inside a tmux wrapper reaches the terminal', () => {
+  const { out, carry } = unwrapTmuxPassthrough(`before${wrap(OSC52)}after`);
+  assert.equal(out, `before${OSC52}after`, 'the OSC 52 must survive, unwrapped and un-doubled');
+  assert.equal(carry, '');
+});
+
+test('only OSC 52 is unwrapped — passthrough is not a general licence', () => {
+  // A pane renders bytes from files, tools and the network. Honouring arbitrary
+  // passthrough would hand every one of them a direct line to the emulator.
+  const evil = `${E}]0;retitled by a file you cat'd${String.fromCharCode(7)}`;
+  const { out } = unwrapTmuxPassthrough(`a${wrap(evil)}b`);
+  assert.equal(out, 'ab', 'a non-clipboard passthrough must be dropped, not forwarded');
+});
+
+test('a wrapper split across two frames is not lost', () => {
+  const whole = `x${wrap(OSC52)}y`;
+  for (const cut of [3, 9, 14, 20, whole.length - 2]) {
+    const first = unwrapTmuxPassthrough(whole.slice(0, cut));
+    const second = unwrapTmuxPassthrough(whole.slice(cut), first.carry);
+    assert.equal(first.out + second.out, `x${OSC52}y`, `split at ${cut} lost data`);
+    assert.equal(second.carry, '', `split at ${cut} left a dangling carry`);
+  }
+});
+
+test('ordinary pane output is passed through untouched', () => {
+  const plain = `${E}[1mbold${E}[0m rows and \r\n newlines`;
+  assert.deepEqual(unwrapTmuxPassthrough(plain), { out: plain, carry: '' });
+  // A lone ESC at a frame boundary must not be mistaken for a wrapper opening.
+  assert.deepEqual(unwrapTmuxPassthrough('tail'), { out: 'tail', carry: '' });
+});
+
+// --- pasting INTO a pane -----------------------------------------------------
+//
+// In a terminal Ctrl+V is not paste — it is the byte ^V — because the terminal
+// and the program share a machine. Here they do not: the clipboard is in a
+// browser, and Claude Code answers ^V by hunting for an image on the DAEMON
+// HOST's clipboard, then saying "no image found". Truthful and useless, so the
+// board claims the chord.
+
+test('Ctrl+V is the paste chord off a Mac, and nothing to claim on one', () => {
+  const down = { type: 'keydown', key: 'v' };
+  assert.equal(isTermPasteChord({ ...down, ctrlKey: true }, false), true);
+  // ⌘V is already the browser's own paste and xterm never intercepts meta.
+  assert.equal(isTermPasteChord({ ...down, metaKey: true }, true), false);
+  assert.equal(isTermPasteChord({ ...down, ctrlKey: true }, true), false);
+  // Ctrl+Shift+V is the terminal's own paste and already works — leave it.
+  assert.equal(isTermPasteChord({ ...down, ctrlKey: true, shiftKey: true }, false), false);
+  assert.equal(isTermPasteChord({ ...down, ctrlKey: true, altKey: true }, false), false);
+  assert.equal(isTermPasteChord({ ...down }, false), false, 'bare v must type a v');
+  assert.equal(isTermPasteChord({ type: 'keyup', key: 'v', ctrlKey: true }, false), false);
+});
+
+test('the paste chord is surrendered to the BROWSER, never preventDefaulted', () => {
+  // The whole mechanism: stop xterm turning Ctrl+V into ^V, but leave the event
+  // alone so the browser performs its own TRUSTED paste. That needs no
+  // clipboard-read permission, and the resulting paste event reaches xterm's
+  // handler, which brackets it — without that, a multi-line paste submits
+  // itself line by line into a live agent.
+  const src = readFileSync(path.join(HERE, '..', 'board', 'src', 'components', 'TermPane.jsx'), 'utf8');
+  const line = src.split('\n').find(l => l.includes('isTermPasteChord(e'));
+  assert.ok(line, 'TermPane no longer claims the paste chord');
+  assert.ok(/return false;\s*$/.test(line.trim()),
+    'the paste chord must return false ALONE — a preventDefault here kills the browser paste');
+  assert.ok(!/preventDefault/.test(line), 'the paste chord must not preventDefault');
+});
+
+test('the headless image paste survives the Ctrl+V change', () => {
+  // Pasting a screenshot uploads it to the DAEMON's filesystem and types the
+  // path into the pane — the whole reason the feature exists on a headless
+  // server, where the agent can read a file but never a clipboard. It rides the
+  // browser's native paste event, which is exactly what the Ctrl+V handler
+  // preserves by not calling preventDefault. Verified end to end 2026-07-25:
+  // Ctrl+V delivers clipboardData.types ["Files"] and the path lands.
+  const src = readFileSync(path.join(HERE, '..', 'board', 'src', 'components', 'TermPane.jsx'), 'utf8');
+  assert.match(src, /screenEl\.addEventListener\('paste', onPaste, true\)/,
+    'the image-paste listener must stay in the CAPTURE phase — xterm handles paste on the textarea below it');
+  assert.match(src, /if \(!item\) return;/,
+    'a text paste must fall through to xterm untouched');
+  assert.match(src, /sendIn\(res\.json\.path \+ ' '\)/,
+    'the uploaded image must reach the pane as a PATH — the agent cannot read a clipboard');
+  assert.ok(src.includes('press Enter to send'),
+    'a paste must never submit on its own: keystrokes into a live agent are irreversible');
 });

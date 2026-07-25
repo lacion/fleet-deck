@@ -80,6 +80,13 @@ export function saveToken(raw) {
   emit();
 }
 
+/** Does this board hold a key at all? Lets a caller tell "the daemon refused
+ *  me" apart from "I never had anything to present" — /ws/term is gated even on
+ *  loopback, and a refused upgrade is indistinguishable from a dead network. */
+export function hasToken() {
+  return !!getToken();
+}
+
 /** Authorization header when a token is known — loopback simply has none. */
 export function authHeaders(base) {
   const t = getToken();

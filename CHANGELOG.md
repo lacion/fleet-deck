@@ -5,6 +5,86 @@ All notable changes to Fleet Deck are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.20.0] - 2026-07-25
+
+The 0.19.2 copy chord worked and people still could not paste, because the copy
+they were actually performing was never the board's. Everything here comes out
+of chasing that: the real defect, and three places the board answered a question
+with something other than the truth.
+
+### Fixed
+
+- **The agent's own copy now reaches your clipboard.** This is the one that was
+  broken all along. Claude Code's TUI turns mouse reporting on, so a drag across
+  a pane never reaches the emulator as a selection: the TUI does its own
+  selecting, prints its own *"copied N characters"*, and writes the clipboard
+  with **OSC 52** — the terminal's clipboard escape — wrapped for tmux
+  passthrough. Two things then threw it away. tmux hands Fleet Deck that wrapper
+  unopened, because our client is tmux *control mode*, which is not a terminal
+  and so never gets the unwrapping a real client would; and xterm has no OSC 52
+  handler at all (0, 1, 2, 4, 8, 10–12, 104, 110–112 — and that is the whole
+  table). So the agent reported a copy, the terminal discarded it, and the
+  clipboard kept whatever was in it. The board now does tmux's half of the job
+  and honours the write.
+
+  **Writes only, never reads.** OSC 52 has a read form that answers by typing
+  the clipboard back into the pane as though you had pasted it, and any byte a
+  pane renders — a file, a tool result, a fetched page — can ask for it. It is
+  refused, with a test pinning the refusal. Only the clipboard *write* is
+  unwrapped from a passthrough; every other passthrough sequence is dropped
+  rather than forwarded to the emulator.
+
+  *Limit worth knowing:* an agent-initiated copy has no user gesture behind it,
+  so it can only use `navigator.clipboard` — which does not exist on the
+  plain-http LAN board. On loopback it works; from another device it does not,
+  and Ctrl+C remains the way there.
+
+- **Ctrl+V pastes your clipboard into the pane.** In a terminal Ctrl+V is not
+  paste — it is the byte `^V`, and pasting is Ctrl+Shift+V. That convention
+  assumes the terminal and the program share a machine. Here they do not: your
+  clipboard is in a browser, possibly on another computer, and Claude Code
+  answers `^V` by looking for an image on the *daemon host's* clipboard and
+  reporting "no image found" — truthful, and about the wrong machine. The board
+  now claims the chord and lets the BROWSER perform its own paste, which needs
+  no clipboard permission and still goes through xterm's bracketing, so a
+  multi-line paste cannot submit itself line by line. Ctrl+Shift+V, right-click
+  → Paste and ⌘V are unchanged.
+
+- **"✓ copied" now means the clipboard actually changed.** The pane reported
+  success from the *return value* of a clipboard call, and neither call means
+  what it looks like: `navigator.clipboard.writeText()` resolves when the write
+  is ACCEPTED — Chrome can drop it afterwards, with no callback — and
+  `document.execCommand('copy')` returns true for "the command ran", including
+  runs the browser discards. A copy is now driven through a real `copy` event
+  whose listener writes the data, and it is the LISTENER FIRING that gets
+  reported: if it ran, the browser is holding the string. Nothing else is
+  called a success. A refused copy keeps the selection on screen, because
+  right-click → Copy is then the remaining path and it needs one.
+
+- **A drag that cannot select now says why, where it failed.** The agent's TUI
+  turns mouse reporting on, so a plain drag belongs to the agent and selects
+  nothing — 0.19.2 put that fact in a header hint and a help overlay, which is
+  the same as nowhere. A sweep across a pane that selects nothing now answers
+  itself: *⇧drag to select — the agent owns a plain drag* (⌥ on a Mac). It fires
+  only when a modifier would genuinely have changed the outcome, so a drag that
+  selected fine is never nagged, and a click is not mistaken for a selection.
+
+- **A terminal refused for want of the board key no longer reports a network
+  fault.** `/ws/term` is the one loopback route that requires the key, and the
+  daemon refuses it by destroying the socket — deliberately, so an unauthorized
+  caller learns nothing, which also means the browser cannot tell 401 from a
+  dead network. The board rendered that as "connection closed". A socket that
+  closes before its first frame now says which of the two it is, and a board
+  holding no key at all says so and names the fix. Every other loopback route is
+  exempt from the gate, so the rest of the board looks perfectly healthy — that
+  is exactly why the message had to carry the diagnosis.
+
+- **An upgrade can no longer be invisible.** `index.html` shipped with no cache
+  directives at all, leaving a browser free to keep serving the previous board
+  after an upgrade — with the daemon serving the new one and nothing anywhere
+  saying so. The shell is now `no-store`; the fingerprinted assets, which are
+  safe to keep forever, are `immutable`.
+
 ## [0.19.2] - 2026-07-25
 
 ### Fixed
@@ -601,6 +681,7 @@ Initial public release.
 - A brainless orchestrator: `assign auto` routes a task to the best existing session with a SQL query, not a model call — the core makes zero model calls.
 - One-command plugin install with a self-contained daemon bundle (`node:sqlite` state, nothing to `npm install`); the first session's SessionStart hook elects and launches the daemon. MIT licensed.
 
+[0.20.0]: https://github.com/lacion/fleet-deck/compare/v0.19.2...v0.20.0
 [0.19.2]: https://github.com/lacion/fleet-deck/compare/v0.19.1...v0.19.2
 [0.19.1]: https://github.com/lacion/fleet-deck/compare/v0.19.0...v0.19.1
 [0.19.0]: https://github.com/lacion/fleet-deck/compare/v0.18.0...v0.19.0

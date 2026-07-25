@@ -830,6 +830,11 @@ textarea.fd-input { font-family: var(--font-ui); font-size: 13px; resize: none; 
 .fd-pastestatus.ok { border-color: var(--ok); color: var(--ok); }
 .fd-pastestatus.err { border-color: var(--hazard); color: var(--hazard); }
 .fd-pastestatus.busy { border-color: var(--act); color: var(--act); }
+/* `hint` is neither success nor failure: it answers a gesture that did nothing
+   (a plain drag while the agent's TUI owns the mouse). Quiet on purpose — it
+   fires while the human is still moving the mouse and must not read as an
+   error they caused. */
+.fd-pastestatus.hint { border-color: var(--border); color: var(--dim); }
 /* end-of-stream strip — NON-destructive: the frozen screen stays visible */
 .fd-termnote {
   position: absolute; left: 0; right: 0; bottom: 0;
