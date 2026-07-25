@@ -1,6 +1,7 @@
 import React, { useRef, useState } from 'react';
 import TermPane from './TermPane.jsx';
 import { useModal } from '../useModal.js';
+import { termChordHints } from '../util.js';
 
 // The wall of screens (v1.9): N live terminals at once, one tile per agent.
 //
@@ -16,6 +17,9 @@ import { useModal } from '../useModal.js';
 // is the ✕, and ⤢ promotes one tile to the full-size modal.
 
 const COLS = (n) => (n <= 1 ? 1 : n <= 4 ? 2 : n <= 9 ? 3 : 4);
+
+// Same two unguessable chords the float's header names — see TermWindow.
+const CHORDS = termChordHints();
 
 export default function TermGrid({ tiles, fallbackFocusRef, onClose, onExpand }) {
   // The focused tile owns the keyboard. Default to the first — a grid with
@@ -59,7 +63,7 @@ export default function TermGrid({ tiles, fallbackFocusRef, onClose, onExpand })
           <span className="lbl">LIVE TERMINALS</span>
           <span className="fd-gridcount">{tiles.length}</span>
           <span className="fd-termhint">
-            ⌨ keystrokes go to the <b>focused</b> agent only — click a tile or press <b>Ctrl+←/→</b> to move the focus · <b>⇧⏎</b> for a newline
+            ⌨ keystrokes go to the <b>focused</b> agent only — click a tile or press <b>Ctrl+←/→</b> to move the focus · <b>⇧⏎</b> newline · <b>{CHORDS.select}</b> selects · <b>{CHORDS.copy}</b> copies
           </span>
           <span className="fd-spacer" />
           <button type="button" className="fd-x" aria-label="Close terminals" onClick={onClose}>✕</button>

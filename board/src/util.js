@@ -465,3 +465,48 @@ export function imageFromClipboard(items) {
   }
   return null;
 }
+
+// ------------------------------------------------------- copying out of a pane
+
+// Is this a Mac? Only ever used to pick which chord to LISTEN for and which
+// glyphs to PRINT, so a bad guess is cosmetic, never destructive. Reads the
+// modern hint first and falls back to the deprecated (but universal) platform
+// string; both are optional-chained so this file still loads under node --test.
+export function isMacUA() {
+  const nav = globalThis.navigator;
+  return /mac/i.test(nav?.userAgentData?.platform || nav?.platform || '');
+}
+
+// Should this keydown COPY the pane's selection instead of reaching the agent?
+//
+// In a terminal Ctrl+C is not "copy" — it is ETX, the interrupt, and xterm sends
+// it verbatim (that is why it is the one chord a terminal cannot simply hand to
+// the browser). So the board does what every GUI terminal does: Ctrl+C copies
+// ONLY when there is a selection to copy, and the caller clears that selection
+// afterwards so the very next Ctrl+C interrupts the agent as it always has. With
+// nothing selected this returns false and the keystroke is untouched.
+//
+// On a Mac the interrupt is Ctrl+C too, so we claim ⌘C there instead — a chord
+// the TUI has no use for. Ctrl+Shift+C is deliberately NOT claimed: Chrome and
+// Firefox both swallow it for devtools before a page ever sees it.
+//
+// Pure (a plain {type,key,ctrlKey,...} is enough) so it can be tested without a
+// DOM — the DOM shim in TermPane stays a two-line call.
+export function isTermCopyChord(e, isMac = isMacUA()) {
+  if (!e || e.type !== 'keydown') return false;
+  if (String(e.key ?? '').toLowerCase() !== 'c') return false;
+  if (e.shiftKey || e.altKey) return false;
+  return isMac ? !!e.metaKey && !e.ctrlKey : !!e.ctrlKey && !e.metaKey;
+}
+
+// The two things about a live pane that are NOT guessable, in the hint bar's
+// voice. Selecting needs a modifier because the agent's TUI turns mouse
+// reporting ON: without one, a drag is a drag the AGENT sees, and xterm makes no
+// selection at all — which is exactly what "I copied and got nothing" feels
+// like. xterm forces a local selection on Shift (⌥ on a Mac, which is why
+// TermPane sets macOptionClickForcesSelection).
+export function termChordHints(isMac = isMacUA()) {
+  return isMac
+    ? { select: '⌥drag', copy: '⌘C' }
+    : { select: '⇧drag', copy: 'Ctrl+C' };
+}

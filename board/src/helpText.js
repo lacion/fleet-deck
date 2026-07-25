@@ -35,7 +35,7 @@ export const BOARD_ACTIONS = [
   { icon: '⌫', name: 'Clear', does: 'archive every offline card, expire its mail, kill dead panes — worktrees are never touched' },
   { icon: '⑂', name: 'Worktrees', does: 'worktrees spawns left behind; the only place to remove one' },
   { icon: '⇄', name: 'Share', does: 'open this board from another device on your network' },
-  { icon: '▣', name: 'terminal (card chip)', does: 'a live terminal onto that agent’s pane — floating: drag to move, corner to resize, ─ to minimize to the dock' },
+  { icon: '▣', name: 'terminal (card chip)', does: 'a live terminal onto that agent’s pane — floating: drag to move, corner to resize, ─ to minimize to the dock. To copy out of it: ⇧drag (⌥drag on a Mac) selects, then Ctrl+C (⌘C) copies — the agent’s TUI owns a plain drag, and a plain Ctrl+C is still its interrupt' },
   { icon: '⌗', name: 'move to tmux (card chip)', does: 'adopt a session you started yourself into a board-owned pane' },
   { icon: '⟲', name: 'revive (card chip)', does: 'an offline agent whose worktree + transcript survived — resume it (card returns to QUEUED)' },
   { icon: '☠', name: 'kill (card chip)', does: 'stop a spawned agent — asks first; worktree and branch are left alone' },
