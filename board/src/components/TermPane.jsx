@@ -4,7 +4,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { wsUrl } from '../token.js';
 import { pasteImage } from '../api.js';
-import { imageFromClipboard } from '../util.js';
+import { copyText, imageFromClipboard, isMacUA, isTermCopyChord } from '../util.js';
 
 // One live terminal onto one board-owned pane — the screen and the socket, with
 // no chrome around it. The floating window (TermWindow) and each tile of the grid
@@ -26,6 +26,17 @@ import { imageFromClipboard } from '../util.js';
 // an invisible control character, and the next person to read this file
 // deserves better.
 const NEWLINE_SEQ = String.fromCharCode(27) + '\r';
+
+// Read once, not per keystroke: the copy chord is checked on EVERY key that
+// reaches a pane.
+const IS_MAC = isMacUA();
+
+// What a successful copy says. Only the Ctrl+C platforms need the second half:
+// there, the chord we just intercepted is also the agent's interrupt, and the
+// human has to know it went back to being one. ⌘C never was.
+const COPY_FLASH = IS_MAC
+  ? 'copied'
+  : 'copied — selection cleared, so the next Ctrl+C interrupts';
 
 function cssVar(name, fallback) {
   const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -95,6 +106,11 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
       fontFamily: cssVar('--font-data', "'IBM Plex Mono', monospace"),
       fontSize,
       scrollback: 5000,
+      // The agent's TUI enables mouse reporting, so xterm forwards a plain drag
+      // to the agent instead of selecting — on every platform, Shift forces a
+      // local selection instead, but on a Mac that escape hatch is ⌥ and is OFF
+      // by default. Without this a Mac has NO way to select pane text at all.
+      macOptionClickForcesSelection: true,
       theme: boardTermTheme(),
     });
     termRef.current = term;
@@ -159,9 +175,53 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
       return true;
     };
 
+    // Flash a transient status over the pane and auto-clear it. 'busy' persists
+    // (it is superseded by ok/err); ok/err self-dismiss. Shared by the two
+    // clipboard paths below — an image paste and a copy are both silent
+    // otherwise, and a silent clipboard is indistinguishable from a broken one.
+    const flash = (kind, text) => {
+      clearTimeout(pasteTimer.current);
+      setPasteStatus({ kind, text });
+      if (kind !== 'busy') pasteTimer.current = setTimeout(() => setPasteStatus(null), 4000);
+    };
+
     // keystrokes → agent, verbatim. xterm suppresses onData entirely while
     // disableStdin is set, so a non-live tile cannot reach the wire at all.
     const dataSub = term.onData(sendIn);
+
+    // Copy the selection to the system clipboard. Returns false when there is
+    // nothing selected, which is the signal to let the keystroke through as an
+    // ordinary interrupt.
+    //
+    // copyText, not the browser's own copy: xterm cancels the Ctrl+C keydown
+    // before a `copy` event can fire, and on the LAN board (plain http, not a
+    // secure context) navigator.clipboard does not exist at all — copyText owns
+    // that fallback and, crucially, reports failure instead of pretending.
+    //
+    // The selection is CLEARED on success on purpose: Ctrl+C is the agent's
+    // interrupt, and a chord that silently stops interrupting because a
+    // forgotten selection is still on screen would be a trap. Copy once, then
+    // the key is the interrupt again — and the flash says so.
+    const copySelection = () => {
+      const text = term.getSelection();
+      if (!text) return false;
+      copyText(text).then((ok) => {
+        // The clipboard write is async and the pane can close under it — every
+        // call below would then hit a disposed Terminal. termRef is nulled by
+        // this effect's cleanup, so it is also the "still mine?" check.
+        if (termRef.current !== term) return;
+        if (ok) {
+          term.clearSelection();
+          flash('ok', COPY_FLASH);
+        } else {
+          flash('err', 'the browser refused the clipboard — right-click → Copy');
+        }
+        // The execCommand fallback selects a throwaway textarea, which takes the
+        // keyboard off xterm; hand it back so the pane can still be typed into.
+        if (!term.options.disableStdin) term.focus();
+      });
+      return true;
+    };
 
     // Shift/Ctrl/Alt+Enter → a NEWLINE, not a submit.
     //
@@ -178,6 +238,14 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
     // the terminal — this only claims the modified chords, which xterm would
     // otherwise collapse into a bare CR and submit on you mid-sentence.
     term.attachCustomKeyEventHandler((e) => {
+      // Ctrl+C (⌘C on a Mac) WITH a selection: copy it, and swallow the key so
+      // the agent is not interrupted by what the human meant as a copy. With no
+      // selection nothing is claimed — see isTermCopyChord for why the chord
+      // cannot simply be left to the browser.
+      if (isTermCopyChord(e, IS_MAC) && copySelection()) {
+        e.preventDefault();
+        return false;
+      }
       if (e.type !== 'keydown' || e.key !== 'Enter' || e.metaKey) return true;
       if (!(e.shiftKey || e.ctrlKey || e.altKey)) return true; // bare Enter: submit, as always
       e.preventDefault();
@@ -200,14 +268,6 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
     // the typed path through sendIn keeps the grid's one-tile-types discipline:
     // a non-live tile refuses at the same gate a keystroke would (and we skip
     // the upload too — no point shipping bytes nothing may type).
-    // Flash a transient status over the pane and auto-clear it. 'busy' persists
-    // (it is superseded by ok/err); ok/err self-dismiss.
-    const flash = (kind, text) => {
-      clearTimeout(pasteTimer.current);
-      setPasteStatus({ kind, text });
-      if (kind !== 'busy') pasteTimer.current = setTimeout(() => setPasteStatus(null), 4000);
-    };
-
     const onPaste = (e) => {
       const item = imageFromClipboard(e.clipboardData?.items);
       if (!item) return; // text paste — xterm's own handler takes it from here

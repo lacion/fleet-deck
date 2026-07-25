@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import TermPane from './TermPane.jsx';
 import { useModal } from '../useModal.js';
-import { clampWinRect, TERMWIN_MIN } from '../util.js';
+import { clampWinRect, termChordHints, TERMWIN_MIN } from '../util.js';
 
 // The floating live terminal (v2.6) — replaces the full-screen TermModal so the
 // board behind it stays visible AND interactive. The screen and the socket live
@@ -25,6 +25,11 @@ import { clampWinRect, TERMWIN_MIN } from '../util.js';
 // engine checks the same query so a visually-inert drag can't still write
 // geometry to localStorage.
 const COARSE_MQ = '(max-width: 720px), (pointer: coarse)';
+
+// Selecting and copying inside a live pane are the two things nobody can guess
+// (the agent's TUI owns the mouse, and Ctrl+C is an interrupt), so the hint bar
+// says both out loud. See termChordHints / isTermCopyChord in util.js.
+const CHORDS = termChordHints();
 
 export default function TermWindow({
   spawnId, callsign, tmuxWindow, fallbackFocusRef, onClose,
@@ -162,7 +167,7 @@ export default function TermWindow({
           ? <span className="fd-tilefocus">⌨ typing here</span>
           : <span className="fd-tilewatch">keys go to the board — click to type here</span>}
         <span className="fd-termhint">
-          ⌨ Esc included · <b>⇧⏎</b> for a newline
+          ⌨ Esc included · <b>⇧⏎</b> newline · <b>{CHORDS.select}</b> selects · <b>{CHORDS.copy}</b> copies
         </span>
         <span className="fd-spacer" />
         <button type="button" className="fd-winbtn" aria-label="Minimize terminal" title="minimize to the dock" onClick={minimize}>─</button>

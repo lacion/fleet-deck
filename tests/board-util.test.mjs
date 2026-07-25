@@ -23,6 +23,8 @@ import {
   TERMWIN_MIN,
   clampWinRect,
   imageFromClipboard,
+  isTermCopyChord,
+  termChordHints,
   batchTotal,
   expandBatchTasks,
   modelFamily,
@@ -405,4 +407,111 @@ test('the SHIPPED board-dist actually contains the git-output feature', () => {
   const css = refs.filter(ref => ref.endsWith('.css')).map(ref => readFileSync(path.join(distDir, ref), 'utf8')).join('\n');
   assert.ok(js.includes('fail_detail'), 'the shipped board bundle predates spawn.fail_detail — rerun npm run build:board');
   assert.ok(css.includes('fd-faildiag'), 'the shipped board stylesheet predates .fd-faildiag — rerun npm run build:board');
+});
+
+// --- copying out of a live terminal pane ------------------------------------
+//
+// Reported 2026-07-25: "I open a terminal and copy from the deck, it's not
+// really copying anything, I can't paste." Two independent causes, both of them
+// invisible from the board:
+//
+//   1. Claude Code's TUI turns mouse reporting ON (tmux: mouse_any_flag=1), so
+//      xterm forwards a plain drag to the AGENT and makes no selection at all.
+//      There was nothing to copy — the drag only looked like a selection.
+//   2. Even with a selection, Ctrl+C never reached the clipboard: xterm sends
+//      it as ETX (the interrupt) and cancels the keydown, so the browser's own
+//      `copy` event never fires. So "copy" silently interrupted the agent.
+//
+// The fix claims Ctrl+C (⌘C on a Mac) ONLY when something is selected, and
+// clears the selection afterwards so the next press interrupts as always. These
+// pin the decision table — the DOM shim in TermPane is a two-line call.
+
+const KEYDOWN = { type: 'keydown', key: 'c' };
+
+test('Ctrl+C is the copy chord off a Mac, and ⌘C on one', () => {
+  assert.equal(isTermCopyChord({ ...KEYDOWN, ctrlKey: true }, false), true);
+  assert.equal(isTermCopyChord({ ...KEYDOWN, metaKey: true }, true), true);
+  // Each platform's OTHER chord stays the agent's: ⌘C means nothing to a TUI,
+  // and on a Mac Ctrl+C is still the interrupt.
+  assert.equal(isTermCopyChord({ ...KEYDOWN, metaKey: true }, false), false);
+  assert.equal(isTermCopyChord({ ...KEYDOWN, ctrlKey: true }, true), false);
+});
+
+test('the copy chord never swallows a key the agent needs', () => {
+  const no = (e, why) => assert.equal(isTermCopyChord(e, false), false, why);
+  no({ ...KEYDOWN }, 'bare c must type a c');
+  no({ ...KEYDOWN, ctrlKey: true, shiftKey: true }, 'Ctrl+Shift+C belongs to devtools');
+  no({ ...KEYDOWN, ctrlKey: true, altKey: true }, 'Ctrl+Alt+C is not the copy chord');
+  no({ ...KEYDOWN, key: 'v', ctrlKey: true }, 'Ctrl+V is the paste path');
+  no({ ...KEYDOWN, key: 'd', ctrlKey: true }, 'Ctrl+D must still reach the agent');
+  no({ type: 'keyup', key: 'c', ctrlKey: true }, 'keyup would copy a second time');
+  no({ type: 'keypress', key: 'c', ctrlKey: true }, 'keypress would copy a second time');
+  no(null, 'a missing event is not a chord');
+  // Caps Lock still spells the chord: xterm reports key:'C' with no shiftKey.
+  assert.equal(isTermCopyChord({ type: 'keydown', key: 'C', ctrlKey: true }, false), true);
+});
+
+test('the hint bar names the chord the platform actually answers to', () => {
+  assert.deepEqual(termChordHints(false), { select: '⇧drag', copy: 'Ctrl+C' });
+  assert.deepEqual(termChordHints(true), { select: '⌥drag', copy: '⌘C' });
+});
+
+test('TermPane wires the copy chord AND the Mac escape hatch for selecting', () => {
+  const src = readFileSync(path.join(HERE, '..', 'board', 'src', 'components', 'TermPane.jsx'), 'utf8');
+  assert.match(src, /isTermCopyChord\(e[^)]*\)\s*&&\s*copySelection\(\)/,
+    'TermPane no longer claims the copy chord — Ctrl+C is back to interrupting the agent');
+  assert.ok(src.includes('term.clearSelection()'),
+    'TermPane must clear the selection after copying, or Ctrl+C stops interrupting');
+  // Off a Mac xterm forces a local selection on Shift for free; on a Mac the
+  // escape hatch is ⌥ and it is OFF unless this option is set, which would
+  // leave a Mac with no way to select pane text at all.
+  assert.ok(src.includes('macOptionClickForcesSelection: true'),
+    'TermPane dropped macOptionClickForcesSelection — a Mac cannot select pane text without it');
+  // copyText, not navigator.clipboard: the LAN board is plain http, where
+  // navigator.clipboard does not exist.
+  assert.ok(/import \{[^}]*copyText[^}]*\} from '\.\.\/util\.js'/.test(src),
+    'TermPane must copy through util.js copyText — navigator.clipboard is absent on the LAN board');
+});
+
+test('both terminal frames tell the human how to select and copy', () => {
+  for (const file of ['TermWindow.jsx', 'TermGrid.jsx']) {
+    const src = readFileSync(path.join(HERE, '..', 'board', 'src', 'components', file), 'utf8');
+    assert.ok(src.includes('termChordHints'), `${file} lost the select/copy hint`);
+    assert.match(src, /CHORDS\.select.*CHORDS\.copy/s, `${file} names only half the chord pair`);
+  }
+});
+
+test('the SHIPPED board-dist actually contains the copy chord', () => {
+  // Same hazard the git-output test above pins — a green board gate over a
+  // board-dist that predates the fix — but the terminal lives in a LAZY chunk
+  // index.html never names, so that test's entry-only scan cannot see it. Walk
+  // the import graph instead: every chunk the entry reaches must be on disk (the
+  // untracked-new-hash accident), and the fix must be somewhere in it.
+  const assetsDir = path.join(HERE, '..', 'scripts', 'fleetd', 'board-dist', 'assets');
+  const html = readFileSync(path.join(assetsDir, '..', 'index.html'), 'utf8');
+  const queue = [...html.matchAll(/(?:src|href)="\.\/assets\/([^"]+\.js)"/g)].map(m => m[1]);
+  assert.ok(queue.length, 'index.html references no JS entry at all');
+  const seen = new Set();
+  const sources = [];
+  while (queue.length) {
+    const name = queue.shift();
+    if (seen.has(name)) continue;
+    seen.add(name);
+    const file = path.join(assetsDir, name);
+    assert.ok(existsSync(file),
+      `board-dist references assets/${name}, which is not on disk — the rebuilt chunk was never staged`);
+    const src = readFileSync(file, 'utf8');
+    sources.push(src);
+    // Vite emits lazy chunks as bare relative specifiers inside the parent
+    // chunk: import("./TermPane-<hash>.js").
+    for (const m of src.matchAll(/["'`]\.\/([\w.-]+\.js)["'`]/g)) queue.push(m[1]);
+  }
+  assert.ok(seen.size > 1, 'the lazy terminal chunks dropped out of the graph walk');
+  const js = sources.join('\n');
+  // Both markers survive minification: an options-object property name and a
+  // string literal.
+  assert.ok(js.includes('macOptionClickForcesSelection'),
+    'the shipped board bundle predates the pane copy fix — rerun npm run build:board');
+  assert.ok(js.includes('selection cleared'),
+    'the shipped board bundle predates the pane copy fix — rerun npm run build:board');
 });
