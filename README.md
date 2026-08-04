@@ -297,11 +297,11 @@ All optional; the defaults are what we run.
 
 ### The question answer window (and what happens after)
 
-A permission prompt, choice question or MCP form parks the hook while the board card waits for your answer — default 90 s (`FLEETDECK_HOLD_MS`, or the `hold_ms` setting via `POST /api/settings`; the env var wins). Three numbers move in lockstep and must never cross: daemon hold (default 90 s, clamped ≤110 s) < hook-shim watchdog (115 s, `scripts/fleet-hook.mjs`) < hooks.json `timeout` (120 s). Crossing them means your answer lands on a dead socket.
+A permission prompt, choice question or MCP form parks the hook while the board card waits for your answer — default 10 min (`FLEETDECK_HOLD_MS`, or the `hold_ms` setting via `POST /api/settings`; the env var wins). Three numbers move in lockstep and must never cross: daemon hold (default 600 s, clamped ≤650 s) < hook-shim watchdog (660 s, `scripts/fleet-hook.mjs`) < hooks.json `timeout` (720 s). Crossing them means your answer lands on a dead socket.
 
 When the window lapses, the hook fails open `{}` and the agent's own terminal prompt owns the decision — nothing is ever auto-answered. If the session then stays silent for a couple of seconds (still parked), the daemon **re-arms** the question as a fresh card, up to twice, stopping permanently on any activity from that session. A re-armed card is honest about what it is: the live window is gone, so its answer goes as a message delivered at the next turn boundary — it does not unblock an agent parked on stdin.
 
-**Mixed-version caveat.** Hooks ship inside the plugin; the daemon updates independently. A session started under an OLD plugin (65 s hook timeout) paired with a NEW daemon (90 s hold) auto-releases its prompts at ~63 s — the shim's own watchdog answers `{}` first, so a board answer past that point can't reach that session. That's the fail-open path working as designed, and the re-armed card is the recovery: answer it and the agent gets your decision as a message at its next turn boundary.
+**Mixed-version caveat.** Hooks ship inside the plugin; the daemon updates independently. A session started under an OLD plugin (65 s or 120 s hook timeout) paired with a NEW daemon (600 s hold) auto-releases its prompts at the old ceiling (~63 s on ≤0.19 hooks, ~115 s on 0.20/0.21.0 hooks) — the shim's own watchdog answers `{}` first, so a board answer past that point can't reach that session. That's the fail-open path working as designed, and the re-armed card is the recovery: answer it and the agent gets your decision as a message at its next turn boundary.
 
 | Variable | Default | What it does |
 | --- | --- | --- |
@@ -320,7 +320,7 @@ When the window lapses, the hook fails open `{}` and the agent's own terminal pr
 | `FLEETDECK_MDNS_NAME` | `fleetdeck` | The advertised name, i.e. `fleetdeck.local`. |
 | `FLEETDECK_SPAWN` | on | `off` disables spawning; the board hides every spawn control. |
 | `FLEETDECK_STALE_MS` | `600000` (10 min) | How long a working card runs without telemetry before it's badged stale. |
-| `FLEETDECK_HOLD_MS` | `90000` (90 s) | How long a question hook is held open awaiting a board answer. Clamped 250 ms–110 s — the lockstep invariant (hold < shim watchdog 115 s < hooks.json timeout 120 s) keeps a board answer off a dead socket. Also settable without a restart-env as the `hold_ms` setting (`POST /api/settings`); the env var is the override. |
+| `FLEETDECK_HOLD_MS` | `600000` (10 min) | How long a question hook is held open awaiting a board answer. Clamped 250 ms–650 s — the lockstep invariant (hold < shim watchdog 660 s < hooks.json timeout 720 s) keeps a board answer off a dead socket. Also settable without a restart-env as the `hold_ms` setting (`POST /api/settings`); the env var is the override. |
 | `FLEETDECK_NUDGE_MS` | `8000` (8 s) | Grace before a silent new pane gets its one bring-up Enter. Exactly once, and never into a folder-trust or MCP-approval dialog. |
 | `FLEETDECK_SPAWN_REGISTER_MS` | `90000` (90 s) | How long a spawned pane may run without phoning home before it's flagged `stalled` — loudly, never auto-respawned. |
 | `FLEETDECK_PANE_MAIL_GRACE_MS` | `1500` (1.5 s) | Head start given to the watcher before mail is typed into an owned pane. |

@@ -13,8 +13,14 @@ function CountdownRing({ q, now }) {
   const secs = Math.max(0, Math.ceil((q.expires_at - now) / 1000));
   const frac = Math.max(0, Math.min(1, (q.expires_at - now) / total));
   const color = secs <= 12 ? 'var(--hazard)' : 'var(--act)';
+  // The ring fits two glyphs: raw seconds under 100, whole minutes above —
+  // the 0.21.1 default window is 600 s and a 26 px ring cannot print "600".
+  const label = secs > 99 ? `${Math.ceil(secs / 60)}m` : `${secs}`;
+  const tip = secs > 99
+    ? `~${Math.ceil(secs / 60)} min until this falls back to the terminal`
+    : `${secs}s until this falls back to the terminal`;
   return (
-    <span className="fd-ring" title={`${secs}s until this falls back to the terminal`}>
+    <span className="fd-ring" title={tip}>
       <svg width="26" height="26" viewBox="0 0 26 26">
         <circle cx="13" cy="13" r="10.5" fill="none" stroke="var(--border)" strokeWidth="2.5" />
         <circle
@@ -24,7 +30,7 @@ function CountdownRing({ q, now }) {
           strokeDasharray="66" strokeDashoffset={66 * (1 - frac)}
         />
       </svg>
-      <span className="secs" style={{ color }}>{secs}</span>
+      <span className="secs" style={{ color }}>{label}</span>
     </span>
   );
 }

@@ -86,7 +86,7 @@
 // planner) — mail() nudges watchers on insert.
 const PLAN_CAPTURE_MAIL = '[FLEETDECK] Your plan was captured to the fleet plan library — do not execute it. Wrap up your turn.';
 
-const DEFAULT_HOLD_MS = 90_000;
+const DEFAULT_HOLD_MS = 600_000; // 10 min — an operator running a fleet answers on their own clock
 const MAX_HOLDS_PER_SESSION = 4;
 const SWEEP_MS = 5_000;
 const RESOLVED_IN_STATE = 8; // "last few resolved" in GET /state
@@ -101,30 +101,30 @@ const REARM_GRACE_MS = 3_000; // parked-on-native-prompt confirmation window
 // but an agent parked behind a stack of questions (or a session nobody ever
 // answers) must not re-raise cards forever — the rail filling with ghosts is
 // the failure mode the freeform-expiry comment below already names. Two re-arms
-// give the human three total chances (~4.5 min at the 90 s default) and then
+// give the human three total chances (~30 min at the 600 s default) and then
 // the daemon gets out of the way permanently — any activity ALSO stops it.
 const MAX_REARMS = 2;
 
-// FLEETDECK_HOLD_MS → the hold_ms SETTING (settings.mjs) → the 90 s default.
+// FLEETDECK_HOLD_MS → the hold_ms SETTING (settings.mjs) → the 600 s default.
 // THE LOCKSTEP INVARIANT: the daemon's hold window must stay under the shim
-// watchdog (scripts/fleet-hook.mjs WATCHDOG_MS, 115 s for hold events), which
-// must stay under the hooks.json `timeout` for the three hold hooks (120 s) —
+// watchdog (scripts/fleet-hook.mjs WATCHDOG_MS, 660 s for hold events), which
+// must stay under the hooks.json `timeout` for the three hold hooks (720 s) —
 // otherwise the board's answer lands on a dead socket and the hook fails open.
-// Old-plugin/new-daemon installs (a 65 s hook timeout with a 90 s daemon hold)
-// fail OPEN the same way they always did: the shim's own watchdog answers {}
-// and the terminal prompt owns the decision; the re-arm card is the recovery
-// path. The env var is the OVERRIDE (an operator's deliberate choice may sit
-// above the setting); the setting row arrives via `fallback` so questions.mjs
-// never has to know about the settings table.
+// Old-plugin/new-daemon installs (a 65 s or 120 s hook timeout with a 600 s
+// daemon hold) fail OPEN the same way they always did: the shim's own
+// watchdog answers {} and the terminal prompt owns the decision; the re-arm
+// card is the recovery path. The env var is the OVERRIDE (an operator's
+// deliberate choice may sit above the setting); the setting row arrives via
+// `fallback` so questions.mjs never has to know about the settings table.
 export function resolveHoldMs(env = process.env, fallback = null) {
   const raw = Number(env?.FLEETDECK_HOLD_MS);
   if (Number.isFinite(raw) && raw > 0) {
-    // 110 s ceiling keeps the resolved window under the 115 s shim watchdog —
+    // 650 s ceiling keeps the resolved window under the 660 s shim watchdog —
     // the lockstep invariant above, enforced at the door.
-    return Math.max(250, Math.min(raw, 110_000));
+    return Math.max(250, Math.min(raw, 650_000));
   }
   const stored = Number(fallback?.());
-  if (Number.isFinite(stored) && stored > 0) return Math.max(250, Math.min(stored, 110_000));
+  if (Number.isFinite(stored) && stored > 0) return Math.max(250, Math.min(stored, 650_000));
   return DEFAULT_HOLD_MS;
 }
 

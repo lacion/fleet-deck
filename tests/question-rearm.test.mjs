@@ -9,14 +9,15 @@
 //      the next turn boundary — the socket is gone, re-parking is impossible.
 //      Chains cap at MAX_REARMS=2 and ANY session activity stops the chain.
 //
-//   B. TTL as a first-class setting. Default hold 90 s; the clamp ceiling sits
-//      under the 115 s shim watchdog under the 120 s hooks.json timeout (the
-//      lockstep invariant); hold_ms is settable through POST /api/settings
-//      with FLEETDECK_HOLD_MS remaining the override.
+//   B. TTL as a first-class setting. Default hold 600 s; the clamp ceiling
+//      sits under the 660 s shim watchdog under the 720 s hooks.json timeout
+//      (the lockstep invariant); hold_ms is settable through POST
+//      /api/settings with FLEETDECK_HOLD_MS remaining the override.
 //
-// Windows here are SYNTHETIC (hundreds of ms) except test D, which pays one
-// real 89 s wait to prove the default window reaches a parked socket with
-// margin under the watchdog.
+// Windows here are SYNTHETIC (hundreds of ms); test D proves the TTL−1s
+// delivery margin against a real parked socket on a synthetic 8 s window
+// (the 600 s default is too long to pay in CI — the lockstep NUMBERS are
+// pinned in the resolveHoldMs unit test instead).
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -247,9 +248,9 @@ test('hold_ms: POST /api/settings sets the window for NEW holds; FLEETDECK_HOLD_
     await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
-  // Default first: 90 s, source 'default'.
+  // Default first: 600 s, source 'default'.
   let res = await getJson(`${daemon.baseUrl}/api/settings`);
-  assert.equal(res.json?.settings?.hold_ms?.value, 90_000, 'the default hold window is 90 s');
+  assert.equal(res.json?.settings?.hold_ms?.value, 600_000, 'the default hold window is 600 s');
   assert.equal(res.json?.settings?.hold_ms?.source, 'default');
 
   // Set it through the settings surface…
@@ -281,46 +282,56 @@ test('hold_ms: POST /api/settings sets the window for NEW holds; FLEETDECK_HOLD_
   assert.equal(res.json?.settings?.hold_ms?.source, 'env');
 });
 
-test('hold_ms: resolveHoldMs clamps to [250, 110_000] under the 115 s shim watchdog, default 90 s', () => {
-  assert.equal(resolveHoldMs({}), 90_000, 'no env, no setting → the 90 s default');
+test('hold_ms: resolveHoldMs clamps to [250, 650_000] under the 660 s shim watchdog, default 600 s', () => {
+  assert.equal(resolveHoldMs({}), 600_000, 'no env, no setting → the 600 s default');
   assert.equal(resolveHoldMs({ FLEETDECK_HOLD_MS: '45000' }), 45_000);
   assert.equal(resolveHoldMs({ FLEETDECK_HOLD_MS: '100' }), 250, 'floor clamps up');
-  assert.equal(resolveHoldMs({ FLEETDECK_HOLD_MS: '999999' }), 110_000,
-    'the ceiling must stay under the 115 s shim watchdog — the lockstep invariant (daemon hold < watchdog < hooks.json 120 s timeout)');
-  assert.equal(resolveHoldMs({ FLEETDECK_HOLD_MS: 'junk' }), 90_000, 'unparseable env falls through');
+  assert.equal(resolveHoldMs({ FLEETDECK_HOLD_MS: '999999' }), 650_000,
+    'the ceiling must stay under the 660 s shim watchdog — the lockstep invariant (daemon hold < watchdog < hooks.json 720 s timeout)');
+  assert.equal(resolveHoldMs({ FLEETDECK_HOLD_MS: 'junk' }), 600_000, 'unparseable env falls through');
   // The settings row is the fallback between env and default.
   assert.equal(resolveHoldMs({}, () => '30000'), 30_000, 'the settings row drives when env is absent');
   assert.equal(resolveHoldMs({ FLEETDECK_HOLD_MS: '45000' }, () => '30000'), 45_000, 'env overrides the settings row');
-  assert.equal(resolveHoldMs({}, () => '999999'), 110_000, 'the settings row is clamped identically');
+  assert.equal(resolveHoldMs({}, () => '999999'), 650_000, 'the settings row is clamped identically');
 });
 
 // ---------------------------------------------------------------------------
 // D. Watchdog margin: an answer at TTL−1s still reaches the parked socket
 // ---------------------------------------------------------------------------
 
-test('answer at TTL−1s: with the default 90 s window a board answer at ~89 s still reaches the parked hook response', async (t) => {
-  // The ONE real-time test in this suite — the margin this guards is between
-  // the daemon's default window and the shim watchdog (115 s) / hooks.json
-  // timeout (120 s), and only a real parked socket proves it.
-  const daemon = await startDaemon(); // default hold: 90 s
+test('answer at TTL−1s: a board answer one second before the window lapses still reaches the parked hook response', async (t) => {
+  // The margin this guards is between the daemon's hold window and the shim
+  // watchdog / hooks.json timeout, and only a real parked socket proves it.
+  // The default window is 600 s — too long to pay in CI — so this runs a
+  // synthetic 8 s hold and answers at 7 s: the same structural assertion
+  // (an answer at window−1s is delivered to a socket that is still live),
+  // one hundredth of the wall clock. The NUMBERS of the lockstep (600 <
+  // 660 < 720) are pinned in the resolveHoldMs unit test above and in
+  // hooks.json's _lockstep note.
+  const HOLD_MS = 8_000;
+  const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(HOLD_MS) } });
   const cwd = scratchCwd();
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+  let held = null;
+  t.after(async () => {
+    await (held ? held.catch(() => {}) : Promise.resolve());
+    await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
 
   const sid = randomUUID();
   await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon });
 
   const t0 = Date.now();
-  const held = postHook(
+  held = postHook(
     daemon.baseUrl, 'PermissionRequest',
     loadFixture('permission-request', { session_id: sid, cwd }),
-    { token: daemon, timeout: 120_000 },
+    { token: daemon, timeout: HOLD_MS + 30_000 },
   );
   const q = await waitUntil(async () => {
     const state = (await getJson(`${daemon.baseUrl}/state`)).json;
     return questionsFor(state, sid, 'permission').find(x => x.status === 'pending');
   }, { label: 'permission question to appear in /state' });
 
-  const wait = Math.max(0, 89_000 - (Date.now() - t0));
+  const wait = Math.max(0, (HOLD_MS - 1_000) - (Date.now() - t0));
   await sleep(wait);
 
   const ansRes = await postJson(`${daemon.baseUrl}/api/questions/${q.id}/answer`, { behavior: 'allow' });
@@ -329,5 +340,5 @@ test('answer at TTL−1s: with the default 90 s window a board answer at ~89 s s
 
   const heldRes = await held;
   assert.equal(heldRes.json?.hookSpecificOutput?.decision?.behavior, 'allow',
-    'the parked socket received the decision — ~26 s of margin remain under the 115 s shim watchdog');
+    'the parked socket received the decision one second before the window lapsed');
 });

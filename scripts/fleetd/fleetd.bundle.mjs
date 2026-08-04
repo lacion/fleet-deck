@@ -4137,7 +4137,7 @@ function animalOf(callsign) {
 
 // scripts/fleetd/questions.mjs
 var PLAN_CAPTURE_MAIL = "[FLEETDECK] Your plan was captured to the fleet plan library \u2014 do not execute it. Wrap up your turn.";
-var DEFAULT_HOLD_MS = 9e4;
+var DEFAULT_HOLD_MS = 6e5;
 var MAX_HOLDS_PER_SESSION = 4;
 var SWEEP_MS = 5e3;
 var RESOLVED_IN_STATE = 8;
@@ -4147,10 +4147,10 @@ var MAX_REARMS = 2;
 function resolveHoldMs(env = process.env, fallback = null) {
   const raw = Number(env?.FLEETDECK_HOLD_MS);
   if (Number.isFinite(raw) && raw > 0) {
-    return Math.max(250, Math.min(raw, 11e4));
+    return Math.max(250, Math.min(raw, 65e4));
   }
   const stored = Number(fallback?.());
-  if (Number.isFinite(stored) && stored > 0) return Math.max(250, Math.min(stored, 11e4));
+  if (Number.isFinite(stored) && stored > 0) return Math.max(250, Math.min(stored, 65e4));
   return DEFAULT_HOLD_MS;
 }
 function safeParse(json) {

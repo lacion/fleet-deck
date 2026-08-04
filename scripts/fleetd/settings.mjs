@@ -243,7 +243,7 @@ export function createSettings(ctx) {
   // handed to resolveHoldMs as its fallback) so a changed value steers NEW
   // holds immediately — live holds keep the window they parked with, same as
   // FLEETDECK_HOLD_MS always behaved. The env var stays the override, and
-  // resolveHoldMs (questions.mjs) owns the clamp ([250, 110_000], under the
+  // resolveHoldMs (questions.mjs) owns the clamp ([250, 650_000], under the
   // shim watchdog; the lockstep invariant lives at the definition).
   function validateHoldMs(value) {
     if (value == null) return null;
