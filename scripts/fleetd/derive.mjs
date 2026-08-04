@@ -52,6 +52,8 @@ const CALLSIGNS = ['falcon', 'otter', 'raven', 'lynx', 'orca', 'wren', 'viper', 
 //   FLEETDECK_REPOS_DIR              — default root for managed repository clones
 //   FLEETDECK_CLONE_TIMEOUT_MS        — git clone timeout (default 600 000 = 10 min)
 //   FLEETDECK_CLONE_CONCURRENCY       — max repos cloning at once (default 3)
+//   FLEETDECK_REARM_GRACE_MS         — UX 2.1 re-arm grace after hold expiry
+//                                      (default 3 s; 0 disables re-arming)
 // envInt (the reader) + mungeClaudeProjectCwd / claudeTranscriptPath /
 // spawnRowRevivable / claudeEnvArgvPrefix now live in helpers.mjs (re-exported
 // above).
@@ -59,7 +61,9 @@ const CALLSIGNS = ['falcon', 'otter', 'raven', 'lynx', 'orca', 'wren', 'viper', 
 export function createCore(db, {
   port = 4711,
   home = process.env.FLEETDECK_HOME || '',
-  holdMs = resolveHoldMs(),
+  // The default defers: q doesn't exist until createStatements runs below, so
+  // the hold_ms settings row is threaded in after (see the questions wiring).
+  holdMs = null,
   tmuxAdapter = defaultTmuxAdapter,
   // Daemon version, threaded from fleetd.mjs's package.json read so the
   // snapshot can tell the board which build is serving it (upgrade-takeover
@@ -139,11 +143,79 @@ export function createCore(db, {
   // live in statements.mjs now.
   const { q, updateSession } = createStatements(db);
 
+  // In-terminal plan settlement (UX 2.2, CONTRACT "B. Plan library"): plan
+  // capture is unconditional (events.mjs hookHoldQuestion), but the
+  // proposed → approved/captured/rejected flip only exists on the BOARD-answer
+  // path (planAnswered below). Approve the plan in the TERMINAL instead and
+  // the question row retires by turn boundary or hold timer while the plan
+  // row used to sit at 'proposed' forever, still offering Execute/Assign.
+  //
+  // Settlement is ACTIVITY-BASED, not hook-matcher-based — an ExitPlanMode
+  // approval may never emit a PostToolUse the daemon could correlate. The rule:
+  // a 'proposed' plan flips to the terminal status 'handled-in-terminal' when
+  // its linked question has been retired without a board answer AND the
+  // session shows activity. Two shapes:
+  //   • retire IS activity (turn-boundary/correlated expireOnActivity — the
+  //     session demonstrably moved on past its native prompt): settles in the
+  //     SAME tick, via the questions.mjs onRetired seam below.
+  //   • bare timer expiry / dismiss / orphan sweep (NOT activity): only ARM
+  //     the flip; settleTerminalPlans re-scans at the session's NEXT activity
+  //     event. Expiry alone NEVER settles — a planner killed mid-hold (daemon
+  //     restart, dead socket, unanswered hold) keeps its plan at 'proposed',
+  //     which is still the truth: nobody decided anything.
+  // Guards, both deliberate: the flip is guarded to 'proposed' (a board verdict
+  // or a library mark always wins), and pendingTerminalPlans skips plans whose
+  // question is still pending (a NEW plan question raised in the same turn is
+  // untouched).
+  //
+  // planHoldOpen: the plan-linked hold registry is questions.mjs's in-memory
+  // `holds` map, which nothing outside that module can see — so the module
+  // itself answers "is this question's hold socket still parked?" here. WHY
+  // it matters: a plan question created DURING the current activity event
+  // (hookHoldQuestion inserts the row BEFORE the HTTP layer parks the
+  // socket) already reads non-pending by the time expireOnActivity's
+  // post-loop callback pass runs — the status guard alone cannot tell it
+  // from a genuinely retired prompt. The parked socket can: nobody has
+  // decided a question whose chooser never rendered.
+  function planRetired(row, { activity = false } = {}) {
+    if (!row || !activity) return;
+    const p = q.planByQuestion.get(row.id);
+    if (!p || questions.isHeld(row.id)) return;
+    if (q.settleTerminalPlan.run(p.plan_id).changes) {
+      tick(`📚 plan #${p.plan_id} (${p.callsign ?? p.session_id}) handled in terminal`);
+      onMutate();
+    }
+  }
+
+  function settleTerminalPlans(sid) {
+    let changed = false;
+    for (const p of q.pendingTerminalPlans.all(sid)) {
+      if (p.question_id != null && questions.isHeld(p.question_id)) continue;
+      if (q.settleTerminalPlan.run(p.plan_id).changes) {
+        changed = true;
+        tick(`📚 plan #${p.plan_id} (${p.callsign ?? p.session_id}) handled in terminal`);
+      }
+    }
+    if (changed) onMutate();
+  }
+
   // F3 needs-you relay (questions.mjs): question rows + hold-open management.
   // mail/tick are function declarations below — hoisted, so passing them here
   // is safe; onMutate is captured lazily through the arrow.
   const questions = createQuestions(db, {
-    holdMs,
+    // UX 2.1: FLEETDECK_HOLD_MS stays the override; the hold_ms settings row
+    // is the board-tunable fallback (read live from SQLite here, at boot).
+    holdMs: holdMs ?? resolveHoldMs(process.env, () => q.getSetting.get('hold_ms')?.value ?? null),
+    // UX 2.1: and re-resolved per hold creation, so a hold_ms settings write
+    // steers NEW holds without a daemon restart. The fallback re-reads the row
+    // live (settings.mjs's resolveHoldMsRaw, threaded through ctx below — the
+    // arrow defers the lookup until the first hold, by which time createSettings
+    // has run).
+    resolveHoldWindow: () => resolveHoldMs(process.env, () => ctx.resolveHoldMsRaw?.() ?? null),
+    // UX 2.1 re-arm: how long after a hold expiry with NO session activity the
+    // question re-raises as a mail-delivered card (0 disables — some existing
+    // test suites would otherwise meet an unexpected second card).
+    rearmGraceMs: envInt('FLEETDECK_REARM_GRACE_MS', 3_000, { min: 0 }),
     mail: (sid, from, text) => ctx.mail(sid, from, text),
     tick: msg => tick(msg),
     callsignOf: sid => q.getSession.get(sid)?.callsign ?? null,
@@ -163,6 +235,10 @@ export function createCore(db, {
       q.setPlanStatus.run(status, p.plan_id);
       tick(`📚 plan #${p.plan_id} (${p.callsign ?? p.session_id}) ${status}`);
     },
+    // UX 2.2: the retirement seam — every unanswered retirement of a
+    // plan-linked question flows through planRetired (defined above; same-tick
+    // settle only when the retire itself was session activity).
+    onRetired: (row, opts) => planRetired(row, opts),
   });
 
   // ------------------------------------------------------------- model tracking
@@ -584,12 +660,14 @@ export function createCore(db, {
   // (and the return surface) can reach it. onMutate is the STABLE wrapper, so
   // the setter on the returned object reaches code in every module.
   const ctx = {
-    db, port, home, holdMs, t0, version,
+    // holdMs resolves WITH the settings fallback at the questions wiring above
+    // (q didn't exist at parameter-default time); ctx carries that same value.
+    db, port, home, holdMs: holdMs ?? resolveHoldMs(process.env, () => q.getSetting.get('hold_ms')?.value ?? null), t0, version,
     STALE_MS, NUDGE_MS, SPAWN_REGISTER_MS, SETUP_REGISTER_MS, PANE_MAIL_GRACE_MS,
     PRESUME_DEAD_MS, RETAIN_OFFLINE_MS, RC_HARVEST_MS, RETAIN_LEDGER_MS,
     ADOPT_ARM_MS, ADOPT_DELAY_MS, // 0.7.0 Move-to-tmux (spawns arms, events fires)
     SNAPSHOT_FILES_PER_SESSION,
-    q, updateSession, onMutate, tmuxAdapter, questions,
+    q, updateSession, onMutate, tmuxAdapter, questions, settleTerminalPlans,
     findScopedWindow, scopedPaneTarget, tick, logEvent, card, assignCallsign, applyTicket,
     modelMemo, stampTranscriptFloor, readTranscriptModel,
     // 0.7.1: naming + /clear succession, shared with events.mjs (the hook-time

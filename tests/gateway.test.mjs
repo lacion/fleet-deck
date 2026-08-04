@@ -638,3 +638,45 @@ test('gateway: a repo-mode spawn persists and delivers routing too', async (t) =
   assert.equal(card.spawn.requested_branch, 'gw-probe',
     'sanity: the neighbouring columns are still aligned');
 });
+
+// ---------------------------------------------------------------------------
+// UX 2.3 — the /api/spawn 500 guard. What used to escape spawn() as a bare
+// {reason:'internal'} (http.mjs) is now either classified in spawns.mjs (the
+// guarded repo-mode card-creation block) or bounded/redacted at the catch.
+// ---------------------------------------------------------------------------
+
+test('2.3: a credentialed origin URL reaches NO surface through the guarded card-creation path', async (t) => {
+  // The one repo-mode failure that was invisible end-to-end: an accepted 202
+  // clone whose request ECHOED a credential in the origin URL. origin_url is
+  // the one spawns column never in the snapshot (snapshot.mjs: "it is the one
+  // field that can carry credentials verbatim"), and the clone is shimmed to
+  // fail instantly, so the tombstone note / fail_detail / durable event all
+  // derive from git's stderr — which the daemon itself hardened. This pins
+  // that the guarded synchronous path, the detached failure path AND the
+  // snapshot gate agree: the credential is nowhere.
+  const secret = 'glpat-DEADBEEFdeadbeef00';
+  const origin = `https://fdtest:${secret}@127.0.0.1:1/x.git`;
+  const { daemon } = await gatewayDaemon({ FLEETDECK_CLONE_TIMEOUT_MS: '1', GIT_SSH_COMMAND: 'false' });
+  t.after(() => daemon.stop());
+
+  const spawn = await postJson(`${daemon.baseUrl}/api/spawn`, {
+    repo: origin, branch: 'main', branch_mode: 'in-place',
+  });
+  assert.equal(spawn.status, 202, spawn.text);
+
+  // The tombstone lands offline (the clone dies on the 1ms timeout / false
+  // ssh). The WHOLE snapshot — note, ticker, fail_detail — must be clean.
+  const deadline = Date.now() + 12_000;
+  let card = null;
+  while (Date.now() < deadline) {
+    const state = await getJson(`${daemon.baseUrl}/state`);
+    assert.equal(state.text.includes(secret), false, 'the credential must appear NOWHERE in /state');
+    assert.equal(state.text.includes('fdtest:'), false, 'nor the userinfo it sat in');
+    card = state.json.sessions.find(s => s.session_id === spawn.json.session_id);
+    if (card?.col === 'offline') break;
+    await new Promise(r => setTimeout(r, 100));
+  }
+  assert.equal(card?.col, 'offline', 'the failed clone tombstones the card');
+  assert.match(card.note, /spawn failed:/);
+  assert.equal(card.note.includes(secret), false, 'the tombstone note is hardened');
+});

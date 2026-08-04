@@ -40,7 +40,7 @@ const EMPTY_ARR = [];
 const EMPTY_OBJ = {};
 
 export default function App() {
-  const { snap, status } = useFleetState();
+  const { snap, status, prevSessions } = useFleetState();
   const { unauthorized, attempts } = useAuth(); // v1.7 LAN token
   const [now, setNow] = useState(Date.now());
   const [theme, setTheme] = useState(() => localStorage.getItem('fd-theme') || 'dark');
@@ -67,7 +67,8 @@ export default function App() {
   // one-shot conflict ripple (fires only when a conflict row FIRST appears)
   const ripples = useConflictRipples(snap);
   // shared feedback strip (Clear + revive + remote), {hd?,msg,orphans?,url?}|{hd?,err}
-  const { clearNote, setClearNote, showNote } = useFeedbackStrip();
+  // 2.3: the same hook owns the spawn-failure banner (any-source tombstones).
+  const { clearNote, setClearNote, showNote, spawnFail, watchSpawnFailures, dismissSpawnFail, toggleSpawnFailDetail } = useFeedbackStrip();
   // M-F2 — ONE owner of the revive + enable-remote POSTs and their per-spawn
   // in-flight sets, shared by the card chips (via useFleetActions below) and the
   // drawer's OWNED PANE. A card chip and its drawer button can't each fire a POST.
@@ -94,6 +95,7 @@ export default function App() {
     termMin, minimizeTerm, restoreTerm, closeTerm, expandTerm,
     termMax, toggleTermMax, termRect, setTermRect,
     termableSessions, watchable, openTerm, toggleWatch, openGrid,
+    closeGridTile,
     gridOpen, killOpen, armOpen, renameOpen,
   } = useTermWindows(sessions, killAsk, armAsk, renameAsk);
   // worktrees list — reloads on boot and whenever the fleet gains/loses a session
@@ -127,6 +129,13 @@ export default function App() {
     if (!pendingQs.some((q) => q.id === selQ)) setSelQ(pendingQs[0]?.id ?? null);
   }, [pendingQs, selQ]);
 
+  // 2.3 option 2 — the board-level spawn-failure watcher: any card that
+  // transitions to offline with a "spawn failed:" note banners once, whatever
+  // kicked the clone off. Dedup by session_id lives inside the hook.
+  useEffect(() => {
+    watchSpawnFailures(sessions, prevSessions);
+  }, [sessions, prevSessions, watchSpawnFailures]);
+
   // M-F7 — mirror the four remaining modal open-states into refs so the global
   // answer/nav hotkeys suppress while any is open. The keydown closure reads refs,
   // never React state (same reason useTermWindows mirrors killAsk→killOpen), so a
@@ -138,6 +147,10 @@ export default function App() {
   const lanOpenRef = useRef(false); lanOpenRef.current = lanOpen;
   const wtOpenRef = useRef(false); wtOpenRef.current = wtOpen;
   const helpOpenRef = useRef(false); helpOpenRef.current = helpOpen;
+  // the first-run help auto-open below consults these so it never stacks
+  const fsOpenRef = useRef(false); fsOpenRef.current = fsView != null;
+  const drawerOpenRef = useRef(false); drawerOpenRef.current = drawerSid != null;
+  const confirmOpenRef = useRef(false); confirmOpenRef.current = killAsk != null || armAsk != null || renameAsk != null;
 
   // keyboard: j/k rail nav · y/n permission · 1-9 choice · c compose · ? help ·
   // Esc close. v2.6: the floating terminal window is non-modal and absent here;
@@ -148,6 +161,23 @@ export default function App() {
     setHelpOpen,
     composeOpen: composeOpenRef, spawnOpen: spawnOpenRef, lanOpen: lanOpenRef, wtOpen: wtOpenRef,
     helpOpen: helpOpenRef,
+  });
+
+  // First-run concept help (fd-help-seen): open the "?" overlay exactly once,
+  // only when NOTHING else is up. The TokenGate early-return below prevents
+  // firing before auth; the ref bundle (mirrored above from the modal states)
+  // defers while Compose/Spawn/LAN/Worktrees/files/drawer/a confirm dialog —
+  // or help itself — is open, so the overlay never stacks. Marking `seen`
+  // happens when the overlay actually OPENS (a busy first load retries on the
+  // next render until it gets through, then never again).
+  useEffect(() => {
+    if (unauthorized) return;
+    try { if (localStorage.getItem('fd-help-seen')) return; } catch { return; }
+    if (composeOpenRef.current || spawnOpenRef.current || lanOpenRef.current
+      || wtOpenRef.current || helpOpenRef.current || fsOpenRef.current
+      || drawerOpenRef.current || confirmOpenRef.current) return;
+    try { localStorage.setItem('fd-help-seen', '1'); } catch { /* private mode: the flag won't stick, so this may greet again next load — still never stacked */ }
+    setHelpOpen(true);
   });
 
   const stale = status !== 'live';
@@ -206,6 +236,16 @@ export default function App() {
 
   // After a successful plan-execute spawn: mark executed via:'spawn:<id>'.
   // The SpawnForm shows whatever this returns — a 409 stays on screen.
+  //
+  // BUG-040 (board half): this mark used to be reachable for a plan whose
+  // spawn had already FAILED — the old code marked first and spawned second,
+  // so a refused POST still left the plan 'executed'. The mark now runs only
+  // here, after a spawn the daemon accepted (SpawnForm calls this solely on a
+  // 2xx), and a failed spawn leaves the plan's status untouched. The 409
+  // branch is what makes the remaining race honest: the daemon's transition
+  // matrix refuses executed-from-executed, so two competing executions can't
+  // both claim the plan — the loser reads the 409 verbatim instead of
+  // silently re-marking.
   const onSpawnedForPlan = async (json) => {
     if (!spawnForm?.planId) return null;
     const res = await markPlan(spawnForm.planId, { status: 'executed', via: `spawn:${json.spawn_id}` });
@@ -295,6 +335,34 @@ export default function App() {
         </div>
       )}
 
+      {/* ============ spawn-failure banner (2.3 — any-source, deduped) ============ */}
+      {spawnFail && (
+        <div className="fd-spawnfailstrip" role="alert">
+          <span className="hd">✗ SPAWN FAILED</span>
+          <span className="msg"><b>{spawnFail.callsign}</b> — {spawnFail.note}</span>
+          {/* fail_detail one click away, expanded inline: the distilled note is
+              git's last word and the remedy (a key to register, a URL to open)
+              usually sits in the lines above it — the same excerpt the offline
+              card's "git output" expander carries, without making the human
+              find that card first. */}
+          {spawnFail.detail && (
+            <button
+              type="button"
+              className="fd-failtoggle"
+              aria-expanded={spawnFail.open}
+              title={spawnFail.open ? 'hide what git printed' : 'show what git actually printed — the remedy is usually just above the last line'}
+              onClick={toggleSpawnFailDetail}
+            >
+              <span className="tri" aria-hidden="true">{spawnFail.open ? '▾' : '▸'}</span>
+              git output
+            </button>
+          )}
+          <span className="fd-spacer" />
+          <button type="button" className="fd-x" aria-label="Dismiss" onClick={dismissSpawnFail}>✕</button>
+          {spawnFail.open && <pre>{spawnFail.detail}</pre>}
+        </div>
+      )}
+
       {/* ============ main ============ */}
       <div className="fd-main">
         <div className="fd-board">
@@ -302,9 +370,25 @@ export default function App() {
             <div className="fd-empty">
               <div className="t1">NO SESSIONS REPORTING</div>
               <div className="t2">
-                The deck is quiet. Start a session anywhere on this machine and it will appear here within a heartbeat.
+                The deck is quiet. Start <code>claude</code> in any terminal on this machine —
+                the hooks report in within a heartbeat.
               </div>
-              <div className="cmd">$ fleetd up &amp;&amp; claude <span className="c"># hooks auto-attach</span></div>
+              {/* the daemon serving this board is already up, so the only command
+                  worth printing is the agent's own; standalone-CLI users run
+                  `fleetdeck serve` (verified against package.json bin) */}
+              <div className="cmd">$ claude <span className="c"># hooks auto-attach · standalone: fleetdeck serve</span></div>
+              <div className="fd-emptycta">
+                {/* gated on spawnAvailable: FLEETDECK_SPAWN=off must never offer
+                    a button that 403s */}
+                {spawnAvailable && (
+                  <button type="button" className="fd-ctabtn" onClick={() => setSpawnForm({})}>
+                    + Spawn your first agent
+                  </button>
+                )}
+                <button type="button" className="fd-ghostbtn" onClick={() => setHelpOpen(true)}>
+                  What is this?
+                </button>
+              </div>
             </div>
           ) : (
             <BoardLanes
@@ -362,6 +446,7 @@ export default function App() {
           now={now}
           selQ={selQ}
           onSelect={setSelQ}
+          onOpenTerm={openTerm}
         />
       </div>
 
@@ -538,7 +623,7 @@ export default function App() {
       {term && (
         <React.Suspense fallback={null}>
           <TermWindow
-            key={term.spawnId}
+            key={`${term.spawnId}:${term.n ?? 0}`}
             spawnId={term.spawnId}
             callsign={term.callsign}
             tmuxWindow={term.window}
@@ -579,6 +664,7 @@ export default function App() {
             fallbackFocusRef={termBtnRef}
             onClose={() => setGrid(null)}
             onExpand={expandTerm}
+            onRemoveTile={closeGridTile}
           />
         </React.Suspense>
       )}

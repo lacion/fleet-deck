@@ -45,6 +45,10 @@ export function useFleetState() {
   const [status, setStatus] = useState('reconnecting'); // live | reconnecting | offline
   const ref = useRef({ ws: null, timer: null, poll: null, failures: 0, closed: false, socketOpen: false });
   const { token, unauthorized } = useAuth();
+  // The previous frame's sessions, kept one frame behind `snap` (2.3): the
+  // spawn-failure banner needs "a card TRANSITIONED to offline", and a card
+  // that was already offline when the board loaded must not count as one.
+  const [prevSessions, setPrevSessions] = useState(EMPTY.sessions);
 
   useEffect(() => {
     if (unauthorized) return undefined; // gated — App owns the screen now
@@ -57,7 +61,10 @@ export function useFleetState() {
     // the WS broadcast (it rides only the token-gated GET /state). So a WS frame
     // carries no `lan`; preserve the last one we saw rather than clobbering the
     // share panel/LAN dot to null on every frame.
-    const apply = (data) => setSnap((prev) => ({ ...EMPTY, ...data, lan: data.lan ?? prev.lan }));
+    const apply = (data) => setSnap((prev) => {
+      setPrevSessions(prev.sessions || EMPTY.sessions);
+      return { ...EMPTY, ...data, lan: data.lan ?? prev.lan };
+    });
 
     // M-F3 — a /state poll started while the socket was down can still be in
     // flight when the WS opens; the WS pushes the authoritative snapshot on
@@ -138,5 +145,5 @@ export function useFleetState() {
     // a saved token must reconnect the socket that was refused without it
   }, [token, unauthorized]);
 
-  return { snap, status };
+  return { snap, status, prevSessions };
 }

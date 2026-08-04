@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { human, TURN_BOUNDARY_HINT } from '../util.js';
 import { renderMarkdown, planTitle } from '../markdown.js';
 import { sendMail, markPlan, reasonOf } from '../api.js';
@@ -9,10 +9,13 @@ import { sendMail, markPlan, reasonOf } from '../api.js';
 // crowds needs-you). Cards come from /state `plans` (non-archived, newest
 // first); no `plans` field at all → App hides this component entirely.
 //
-// Actions by status: Execute + Assign on proposed/approved/captured; Archive
-// on anything non-archived. Execute is spawn UI, so it hides with the spawn
-// capability. Every daemon 409 renders verbatim-honest, never swallowed.
+// Actions by status: Spawn executor + Assign on EXECUTABLE statuses; Archive
+// on anything non-archived. Spawn executor is spawn UI, so it hides with the
+// spawn capability. Every daemon 409 renders verbatim-honest, never swallowed.
 
+// Statuses a fresh executor session can be spawned for. Status-agnostic on
+// purpose: a new status (e.g. Phase 2.2's handled-in-terminal) joins or skips
+// the actions by editing THIS set, never the copy.
 const EXECUTABLE = new Set(['proposed', 'approved', 'captured']);
 
 function markErr(res, did) {
@@ -38,6 +41,10 @@ function PlanCard({ p, now, liveSessions, spawnAvailable, onExecute }) {
   const html = useMemo(() => (md.trim() ? renderMarkdown(md) : null), [md]);
 
   const executable = EXECUTABLE.has(p.status);
+  // Duplicate-worker tell: the session that proposed this plan may still be
+  // live (possibly mid-execution) — spawning a second executor is the footgun
+  // the "still live" annotation exists to catch.
+  const proposer = liveSessions.find((s) => s.session_id === p.session_id);
 
   const archive = async () => {
     setBusy(true);
@@ -87,6 +94,9 @@ function PlanCard({ p, now, liveSessions, spawnAvailable, onExecute }) {
         <span className="callsign">{p.callsign || p.session_id}</span>
         {p.repo_name && <span className="repo">{p.repo_name}</span>}
         <span className={`fd-pstatus ${p.status}`}>{p.status}</span>
+        {proposer && (
+          <span className="fd-planlive">proposed by {p.callsign || proposer.callsign || proposer.session_id} — still live</span>
+        )}
         <span className="fd-spacer" />
         <span className="age">{human(now - (p.created_at || now))}</span>
       </button>
@@ -99,9 +109,18 @@ function PlanCard({ p, now, liveSessions, spawnAvailable, onExecute }) {
       )}
       <div className="pactions">
         {executable && spawnAvailable && (
-          <button type="button" className="fd-planbtn exec" disabled={busy} onClick={() => onExecute(p)}>
-            Execute
-          </button>
+          <span className="execwrap">
+            <button
+              type="button"
+              className="fd-planbtn exec"
+              disabled={busy}
+              title="starts a NEW session with this plan as its prompt"
+              onClick={() => onExecute(p)}
+            >
+              Spawn executor…
+            </button>
+            <span className="micro">starts a NEW session with this plan as its prompt</span>
+          </span>
         )}
         {executable && (
           <button
@@ -158,7 +177,14 @@ function PlanCard({ p, now, liveSessions, spawnAvailable, onExecute }) {
 }
 
 export default function PlanLibrary({ plans, sessions, now, spawnAvailable, onExecute }) {
-  const [open, setOpen] = useState(() => localStorage.getItem('fd-plans-open') === '1');
+  // Never-toggled (no stored pref) defaults OPEN when the library is populated
+  // — an invisible plan library is a dead one. Once the user toggles, the
+  // stored '0'/'1' is their word and we keep it. The rail stays sacred: the
+  // strip still lives below the lanes and never touches needs-you.
+  const [open, setOpen] = useState(() => {
+    const stored = localStorage.getItem('fd-plans-open');
+    return stored === null ? plans.length > 0 : stored === '1';
+  });
   const toggle = () => {
     setOpen((o) => {
       localStorage.setItem('fd-plans-open', o ? '0' : '1');
@@ -167,6 +193,13 @@ export default function PlanLibrary({ plans, sessions, now, spawnAvailable, onEx
   };
   const liveSessions = (sessions || []).filter((s) => s.col !== 'offline');
 
+  // Snapshots stream in after mount — if the first one was empty and plans
+  // arrive later, apply the same never-toggled default: open once, only while
+  // the user still hasn't touched the toggle.
+  useEffect(() => {
+    if (!open && plans.length > 0 && localStorage.getItem('fd-plans-open') === null) setOpen(true);
+  }, [open, plans.length]);
+
   return (
     <div className="fd-plans">
       <button type="button" className="fd-planshead" onClick={toggle} aria-expanded={open}>
@@ -174,12 +207,14 @@ export default function PlanLibrary({ plans, sessions, now, spawnAvailable, onEx
         <span className="lbl">PLANS</span>
         {plans.length > 0 && <span className="count">{plans.length}</span>}
         <span className="fd-spacer" />
-        <span className="hint">the fleet plan library — execute, assign, or archive</span>
+        <span className="hint">the fleet plan library — spawn a NEW executor session, assign to a live one, or archive</span>
       </button>
       {open && (
         <div className="fd-planlist">
           {plans.length === 0 && (
-            <div className="none">no plans yet — capture an exit-plan question from the rail and it lands here</div>
+            <div className="none">
+              no plans yet — spawn with permission-mode: plan, then Approve or Capture its exit-plan question in NEEDS YOU and it lands here
+            </div>
           )}
           {plans.map((p) => (
             <PlanCard

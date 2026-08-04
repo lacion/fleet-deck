@@ -27,7 +27,9 @@ for (const [event, fixtureName, kind] of [
 ]) {
   test(`POST /hook/${event} holds, then resolves {} at expiry when unanswered (Phase 3)`, async (t) => {
     const holdMs = 1200;
-    const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
+    // Re-arm disabled (grace 0): this asserts the row reads 'expired' after the
+    // unanswered hold; the 2.1 re-arm window would keep it pending that long.
+    const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs), FLEETDECK_REARM_GRACE_MS: '0' } });
     const cwd = mkdtempSync(path.join(tmpdir(), 'fleetdeck-cwd-'));
     t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 

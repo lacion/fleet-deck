@@ -187,7 +187,9 @@ test('F3b: Elicitation holds open; board answer {action:"accept", content} resol
 
 test('hold expiry: an unanswered PermissionRequest resolves to {} within tolerance and the question becomes expired', async (t) => {
   const holdMs = 1200;
-  const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
+  // Re-arm disabled (grace 0): this test's subject is the expiry itself; the
+  // UX 2.1 re-arm lifecycle gets its own suite (question-rearm.test.mjs).
+  const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs), FLEETDECK_REARM_GRACE_MS: '0' } });
   const cwd = scratchCwd();
   t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
@@ -535,7 +537,10 @@ test('freeform questions SURVIVE SessionEnd and deliver on resume', async (t) =>
 
 test('concurrent holds per session are capped at 4; the 5th arrival expires the oldest', async (t) => {
   const holdMs = 4000;
-  const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
+  // Re-arm disabled: the cap eviction settles through the same expiry path and
+  // this test keeps its surviving holds parked past the eviction — an armed
+  // re-arm timer would fire mid-test and flip the assertion counts.
+  const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs), FLEETDECK_REARM_GRACE_MS: '0' } });
   const cwd = scratchCwd();
   t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 

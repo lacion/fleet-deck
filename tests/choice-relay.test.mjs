@@ -118,7 +118,10 @@ test('F3c: AskUserQuestion holds as kind=choice with parsed questions[]; {answer
 
 test('F3c: an unanswered AskUserQuestion hold expires to {} and the question becomes expired', async (t) => {
   const holdMs = 1200;
-  const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
+  // Re-arm disabled (grace 0): this test asserts the late answer 409s on the
+  // EXPIRED row — under the default grace the daemon would have re-armed the
+  // question into a fresh mail-delivered card (covered in question-rearm.test.mjs).
+  const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs), FLEETDECK_REARM_GRACE_MS: '0' } });
   const cwd = scratchCwd();
   t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 

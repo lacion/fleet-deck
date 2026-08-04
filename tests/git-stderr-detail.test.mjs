@@ -419,3 +419,48 @@ test('a legacy spawns table gains fail_detail additively, backfilled NULL', (t) 
   const twice = db.prepare('PRAGMA table_info(spawns)').all().filter(row => row.name === 'fail_detail');
   assert.equal(twice.length, 1);
 });
+
+// ---------------------------------------------------------------------------
+// 2.3 — spawnFailureReason: the classified 500 / guarded-tombstone reason.
+// It is a NEW surface for failure text (the /api/spawn 500 body, the banner's
+// headline via the tombstone note), so the same promise as above is pinned on
+// it directly: the diagnostic survives, the credential never does, and the
+// value stays a bounded one-liner whatever the throw looked like.
+// ---------------------------------------------------------------------------
+
+test('spawnFailureReason: one bounded line, hardened by the same pass', async () => {
+  const { spawnFailureReason } = await import('../scripts/fleetd/spawns.mjs');
+
+  // The plain case: an Error's message, not its stack. `internal` is gone —
+  // the reason names what actually broke.
+  assert.equal(spawnFailureReason(new Error('SQLITE_BUSY: database is locked')),
+    'SQLITE_BUSY: database is locked');
+  assert.equal(spawnFailureReason(new Error('')), 'internal error',
+    'a messageless throw still says SOMETHING, classified — never the old bare nothing');
+  assert.equal(spawnFailureReason(null), 'internal error');
+  assert.equal(spawnFailureReason(undefined, 'card insert failed'), 'card insert failed');
+
+  // Multi-line input (a git stderr carried verbatim in an Error message)
+  // collapses to ONE line — a note, a log line and a 500 body are all
+  // single-line registers.
+  const oneLine = spawnFailureReason(new Error('Cloning into \'x\'...\nfatal: Could not read from remote repository.'));
+  assert.equal(oneLine.includes('\n'), false, 'the reason is always one line');
+  assert.match(oneLine, /fatal: Could not read from remote repository\./);
+
+  // Bounded like the note register it lands in: a wall of text cannot ride a
+  // 500 body into the board.
+  const huge = spawnFailureReason(new Error('x'.repeat(5000)));
+  assert.ok(huge.length <= 300);
+
+  // THE SECURITY HALF: a credentialed URL or a bare forge token in a thrown
+  // message reaches the 500 body / banner headline redacted, because the
+  // reason goes through redactGitText — the same pass the note and detail get.
+  const urlErr = spawnFailureReason(new Error(
+    "fatal: unable to access 'https://luis:glpat-AbCdEf1234567890@gitlab.com/x/y.git/'"));
+  assert.equal(urlErr.includes('glpat-AbCdEf1234567890'), false,
+    'a PAT in a thrown message must not survive into the reason');
+  assert.ok(urlErr.includes('[redacted]@gitlab.com'));
+  const bare = spawnFailureReason(new Error('fatal: helper rejected token ghp_abcdefghij1234567890'));
+  assert.equal(bare.includes('ghp_abcdefghij1234567890'), false,
+    'a bare forge token in a thrown message is caught by the shape list');
+});

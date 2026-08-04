@@ -14,14 +14,16 @@ import { termChordHints } from '../util.js';
 //
 // Click a tile to move the focus. Esc is NOT a close key here for the same
 // reason it isn't in the modal: it belongs to the focused agent's TUI. Closing
-// is the ✕, and ⤢ promotes one tile to the full-size modal.
+// the wall is the header ✕; a tile's own ✕ detaches that VIEW only — the pane
+// keeps running, hard kill stays behind KillConfirm. ⤢ promotes a tile to the
+// full-size modal.
 
 const COLS = (n) => (n <= 1 ? 1 : n <= 4 ? 2 : n <= 9 ? 3 : 4);
 
 // Same two unguessable chords the float's header names — see TermWindow.
 const CHORDS = termChordHints();
 
-export default function TermGrid({ tiles, fallbackFocusRef, onClose, onExpand }) {
+export default function TermGrid({ tiles, fallbackFocusRef, onClose, onExpand, onRemoveTile }) {
   // The focused tile owns the keyboard. Default to the first — a grid with
   // nothing focused would look like a broken keyboard rather than a choice.
   const [focused, setFocused] = useState(tiles[0]?.spawnId ?? null);
@@ -49,6 +51,19 @@ export default function TermGrid({ tiles, fallbackFocusRef, onClose, onExpand })
       e.stopPropagation();
       cycle(e.key === 'ArrowRight' ? 1 : -1);
     }
+  };
+
+  // Detach one tile from the wall (view-only — the pane keeps running). The
+  // parent closes the wall when the LAST tile goes; here we re-aim the ⌨ focus
+  // deterministically at the first survivor (cycle() would fall back anyway,
+  // but a stale focus id is a state we never want even one render of) and prune
+  // the tile's ended-note.
+  const removeTile = (t) => {
+    if (!onRemoveTile) return;
+    const rest = tiles.filter((x) => x.spawnId !== t.spawnId);
+    if (t.spawnId === focused) setFocused(rest[0]?.spawnId ?? null);
+    setNotes((m) => (t.spawnId in m ? Object.fromEntries(Object.entries(m).filter(([k]) => k !== t.spawnId)) : m));
+    onRemoveTile(t);
   };
 
   return (
@@ -94,6 +109,16 @@ export default function TermGrid({ tiles, fallbackFocusRef, onClose, onExpand })
                     onMouseDown={(e) => e.stopPropagation()}
                     onClick={() => onExpand?.(t)}
                   >⤢</button>
+                  {onRemoveTile && (
+                    <button
+                      type="button"
+                      className="fd-ghostbtn"
+                      aria-label={`Close ${t.callsign || t.spawnId}`}
+                      title="remove from this wall — the pane keeps running"
+                      onMouseDown={(e) => e.stopPropagation()}
+                      onClick={() => removeTile(t)}
+                    >✕</button>
+                  )}
                 </div>
                 <div className="fd-tilebody">
                   <TermPane

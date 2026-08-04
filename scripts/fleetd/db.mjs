@@ -190,7 +190,10 @@ CREATE TABLE IF NOT EXISTS plans (
   question_id  INTEGER,             -- the held ExitPlanMode permission question
   plan_md      TEXT,                -- tool_input.plan, raw markdown (board derives titles)
   created_at   INTEGER,
-  status       TEXT DEFAULT 'proposed', -- proposed | approved | captured | rejected | executed | archived
+  status       TEXT DEFAULT 'proposed', -- proposed | approved | captured | rejected | handled-in-terminal | executed | archived
+                                        -- handled-in-terminal: the ExitPlanMode question was retired
+                                        -- unanswered AND the session then showed activity — the human
+                                        -- decided in the terminal (UX 2.2; derive.mjs planRetired).
   executed_via TEXT                 -- optional {via} recorded at mark {status:"executed"}
 );
 CREATE INDEX IF NOT EXISTS idx_plans_status ON plans(status);

@@ -1,6 +1,6 @@
 import React, { useRef } from 'react';
 import { useModal } from '../useModal.js';
-import { HOTKEYS, ORCH_COMMANDS, BOARD_ACTIONS } from '../helpText.js';
+import { HOTKEYS, ORCH_COMMANDS, BOARD_ACTIONS, CONCEPTS, GLOSSARY } from '../helpText.js';
 
 // The "?" overlay — everything the board can do, on one screen. Content lives
 // in helpText.js so Compose's command chips and this overlay can never drift
@@ -20,6 +20,20 @@ export default function HelpOverlay({ onClose }) {
         </div>
 
         <div className="fd-helpbody">
+          {/* the six nouns FIRST — this section is what the first-run
+              auto-open (App.jsx) exists to teach */}
+          <section>
+            <h3>Concepts</h3>
+            <dl className="fd-helplist">
+              {CONCEPTS.map((c) => (
+                <React.Fragment key={c.term}>
+                  <dt>{c.term}</dt>
+                  <dd>{c.def}</dd>
+                </React.Fragment>
+              ))}
+            </dl>
+          </section>
+
           <section>
             <h3>The board</h3>
             <p className="fd-helpintro">
@@ -61,6 +75,18 @@ export default function HelpOverlay({ onClose }) {
                 <React.Fragment key={c.syntax}>
                   <dt><code>{c.syntax}</code></dt>
                   <dd>{c.does}</dd>
+                </React.Fragment>
+              ))}
+            </dl>
+          </section>
+
+          <section>
+            <h3>Glossary</h3>
+            <dl className="fd-helplist">
+              {GLOSSARY.map((g) => (
+                <React.Fragment key={g.term}>
+                  <dt>{g.term}</dt>
+                  <dd>{g.def}</dd>
                 </React.Fragment>
               ))}
             </dl>

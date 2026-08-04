@@ -1,4 +1,5 @@
 {
+  "_lockstep": "The 720s timeouts on AskUserQuestion/PermissionRequest/Elicitation are one invariant with scripts/fleet-hook.mjs WATCHDOG_MS (660s) and the daemon hold window (scripts/fleetd/questions.mjs resolveHoldMs, default 600s, clamp ceiling 650s): hold < watchdog < timeout, or a board answer lands on a dead socket. Change all three together.",
   "hooks": {
     "SessionStart": [
       {
@@ -41,7 +42,7 @@
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs\" AskUserQuestion",
-            "timeout": 65
+            "timeout": 720
           }
         ]
       }
@@ -52,7 +53,7 @@
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs\" PermissionRequest",
-            "timeout": 65
+            "timeout": 720
           }
         ]
       }
@@ -63,7 +64,7 @@
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs\" Elicitation",
-            "timeout": 65
+            "timeout": 720
           }
         ]
       }

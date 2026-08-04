@@ -5,7 +5,8 @@
 // Threaded ctx state: q, db, card, updateSession, tick, logEvent, onMutate,
 // port, the questions relay, the spawn hooks (scheduleRegistrationRemoteHarvest,
 // forgetSpawn), the model-tracking pair, the ledger (recordFile/whisperText),
-// mail (drainMail), notifyWatchers and modelMemo.
+// mail (drainMail), notifyWatchers and modelMemo, and settleTerminalPlans (the
+// UX 2.2 activity gate for in-terminal plan decisions — see derive.mjs).
 
 import path from 'node:path';
 import os from 'node:os';
@@ -40,6 +41,13 @@ export function createEvents(ctx) {
     // order, recognise an heir that is already waiting.
     findClearedPredecessor, succeedSession, succeedForwardFromClear,
     touchRepo,
+    // UX 2.2: the activity gate for in-terminal plan decisions. Fires at the
+    // two ACTIVITY hook endpoints (UserPromptSubmit = turn boundary,
+    // PostToolUse = a tool call completed): any of this session's plans still
+    // 'proposed' whose question is no longer pending flips to
+    // 'handled-in-terminal'. Never fired at Stop/Notification/SessionEnd —
+    // none of those proves the human decided anything in the terminal.
+    settleTerminalPlans,
   } = ctx;
 
   // ---------------------------------------------- hook event -> card state
@@ -421,6 +429,12 @@ export function createEvents(ctx) {
     // permission/elicitation questions (live holds fail open with {};
     // freeform questions stay pending — they're the human's queue).
     questions.expireOnActivity(sid);
+    // UX 2.2 activity gate: expireOnActivity above already same-tick-settled
+    // any plan question THIS turn boundary retired (activity:true); this pass
+    // catches plans whose question retired EARLIER without activity (timer
+    // expiry, dismiss, orphan sweep) — the new prompt proves the human
+    // decided in the terminal and the agent moved on.
+    settleTerminalPlans(sid);
     const box = drainMail(sid);
     if (!box.length) return {};
     onMutate();
@@ -450,6 +464,9 @@ export function createEvents(ctx) {
     // freeform row, is left untouched; the turn-boundary UserPromptSubmit path
     // (hookUserPromptSubmit above) stays session-wide.
     questions.expireOnActivity(ev.session_id || 'unknown', { toolName: ev.tool_name, toolInput: ev.tool_input });
+    // UX 2.2 activity gate, same reasoning as the turn-boundary path above:
+    // a completed tool call settles any earlier-retired plan questions too.
+    settleTerminalPlans(ev.session_id || 'unknown');
     if (!conflict) return {};
     return {
       hookSpecificOutput: {

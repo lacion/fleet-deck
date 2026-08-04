@@ -170,6 +170,12 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
   const promptRef = useRef(null);
   const closeTimer = useRef(null);
   const dialogRef = useRef(null);
+  // 2.3 — the 202 watch: the accepted provisioning spawn's session_id, watched
+  // in the snapshot stream (sessions is threaded from App) until the card goes
+  // live (close as it does) or tombstones (stay open, say why).
+  const [watchSid, setWatchSid] = useState(null);
+  const watchTimer = useRef(null); // overall cap — a missed frame must never wedge the modal
+  const watchDone = useRef(false); // exactly one of success/failure/timeout resolves the watch
   // M-A2 — trap Tab + restore focus on close; the form parks initial focus
   // itself (cwd, or the plan caret) in the effect below.
   useModal(dialogRef, { initialFocus: false });
@@ -188,7 +194,53 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
       cwdRef.current?.focus();
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => () => clearTimeout(closeTimer.current), []);
+  useEffect(() => () => { clearTimeout(closeTimer.current); clearTimeout(watchTimer.current); }, []);
+
+  // 2.3 option 1 — watch the provisioning card in the live snapshot stream.
+  // The old flow closed 1400 ms after the 202 no matter what, so a failed
+  // clone surfaced only as a tombstoned card the human had to go find and
+  // expand. While the card provisions, its OWN note is mirrored into the form
+  // (cloning → preparing… — live narration instead of the frozen "(the card
+  // narrates from here)" line that used to excuse closing early). Success
+  // (col is neither queued nor offline — the first hook's idle flip, or any
+  // lane) closes the form with the card. Failure (ANY offline transition —
+  // "spawn failed:" tombstones carry the note + fail_detail inline, an
+  // unprefixed one resolves with the bare note rather than narrating a dead
+  // card for ten minutes). A missed frame can never wedge the modal: an
+  // overall cap (11 min — the daemon's clone cap is 600 s, tunable upward,
+  // so this must not race it) resolves to a plain note, and the header ✕
+  // stays live the whole time (onClose is untouched — the watch state dies
+  // with the form).
+  useEffect(() => {
+    if (!watchSid) return undefined;
+    const sess = (sessions || []).find((s) => s.session_id === watchSid);
+    if (!sess) return undefined; // not in a frame yet — the cap below bounds the wait
+    if (watchDone.current) return undefined;
+    if (sess.col === 'offline') {
+      // ANY offline transition ends the watch as a failure — a tombstone
+      // without the "spawn failed:" prefix (daemon crash mid-clone, watchdog
+      // sweep) is still a dead card; narrating it further would pin the modal
+      // on a corpse until the cap. The prefixed tombstone carries the
+      // distilled git remedy inline.
+      watchDone.current = true;
+      clearTimeout(watchTimer.current);
+      setBusy(false);
+      setNote(null);
+      const note = typeof sess.note === 'string' && sess.note ? sess.note : 'spawn failed — the card went offline';
+      setErr(sess.spawn?.fail_detail ? `${note}\n${sess.spawn.fail_detail}` : note);
+      return undefined;
+    }
+    if (sess.col && sess.col !== 'queued') {
+      watchDone.current = true;
+      clearTimeout(watchTimer.current);
+      setNote(`live — ${sess.callsign || 'new session'}`);
+      closeTimer.current = setTimeout(onClose, 1400);
+      return undefined;
+    }
+    // still queued: keep narrating the card's own note
+    if (sess.note && sess.note !== 'spawning…') setNote(sess.note);
+    return undefined;
+  }, [watchSid, sessions]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // v2.2 — snapshots keep flowing while the form is open; adopt a repos-root
   // that arrives (or changes under us) ONLY while the box is untouched — a
@@ -416,13 +468,39 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
       setBusy(false);
       return;
     }
-    // v2.2 — a 202 means the clone is running: the card narrates from here
-    // (note → live, or a tombstone carrying git's stderr). Same close flow.
-    setNote(res.json.provisioning
-      ? `cloning — ${res.json.callsign || res.json.session_id || 'new session'} (the card narrates from here)`
-      : `spawning — ${res.json.callsign || res.json.session_id || 'new session'}`);
-    // plan execution: mark the plan executed (via:'spawn:<id>'); a mark
-    // failure keeps the form open and says so — never close over a 409
+    // v2.2/2.3 — a 202 means the clone is running DETACHED (up to the daemon's
+    // 600 s cap). The old "the card narrates from here" close-at-1400ms flow
+    // dropped the human into silence and made a failed clone a card they had
+    // to go find. Instead the form now WATCHES the returned session_id in the
+    // snapshot stream (the effect above) and stays open until the card goes
+    // live or tombstones. A non-202 spawn keeps the original timed close.
+    if (res.json.provisioning) {
+      setNote(`cloning — ${res.json.callsign || res.json.session_id || 'new session'}`);
+      // Escape hatch: a missed snapshot frame must never wedge the modal. The
+      // daemon's clone cap is 600 s and user-tunable upward — 660 s here so a
+      // legitimately long clone doesn't lose the race to its own timeout.
+      // Timing out is NOT a failure — the board-level spawn-failure banner
+      // (2.3 option 2) still catches the tombstone after the form closes.
+      watchDone.current = false;
+      clearTimeout(watchTimer.current);
+      watchTimer.current = setTimeout(() => {
+        if (watchDone.current) return;
+        watchDone.current = true;
+        setBusy(false);
+        setNote((n) => `${n || 'provisioning'} — still going after 11 min; the card narrates from here`);
+        closeTimer.current = setTimeout(onClose, 4000);
+      }, 660_000);
+      setWatchSid(res.json.session_id);
+      // busy stays true while the watch owns the form — no re-submit mid-clone
+      return;
+    }
+    setNote(`spawning — ${res.json.callsign || res.json.session_id || 'new session'}`);
+    // plan execution (BUG-040): mark the plan executed (via:'spawn:<id>') only
+    // NOW that the spawn POST has succeeded; a failed spawn above returned
+    // before ever reaching this, so a refused spawn can no longer leave the
+    // plan 'executed'. A mark failure keeps the form open and says so — never
+    // close over a 409. Plan-execute spawns are cwd-mode (a 200), so this path
+    // never overlaps the 202 watch above.
     let extra = null;
     if (onSpawned) {
       try { extra = await onSpawned(res.json); } catch { extra = { ok: false, text: 'plan mark failed — daemon unreachable' }; }
@@ -482,6 +560,26 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
   const targetReady = repoMode
     ? !!(repo.trim() && branch.trim() && !branchErr && !repoOrgErr)
     : !!cwd.trim();
+
+  // Why the button is inert, said next to the button: the same gates
+  // targetReady (and the other disables) use, one source of truth — the field
+  // errors already render inline at their inputs; this repeats whichever one
+  // is actually blocking, or names the empty required field.
+  const blockReason = busy
+    ? null // the busy label owns the footer instead
+    : note
+      ? null // the success note owns it
+      : blocked
+        ? null // the arm-the-confirm note owns it
+        : emptyBatch
+          ? null // the batch note owns it
+          : repoMode
+            ? (!repo.trim() ? 'enter a repo'
+              : !branch.trim() ? 'enter a branch'
+              : repoOrgErr ? repoOrgErr
+              : branchErr ? `branch: ${branchErr}`
+              : null)
+            : (!cwd.trim() ? 'enter a working directory' : null);
 
   const submit = async () => {
     if (!targetReady || busy || note || blocked || emptyBatch) return;
@@ -843,6 +941,14 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
               <option value="bypassPermissions">bypassPermissions ⚠</option>
             </select>
           </div>
+          {permissionMode === 'plan' && (
+            <div className="frow">
+              <span className="fl" />
+              <span className="fd-spawnhint">
+                plan mode: the agent proposes a plan first — approve it from its NEEDS YOU card and it lands in the PLANS library
+              </span>
+            </div>
+          )}
           {!repoMode && (
             <div className="frow">
               <span className="fl">worktree</span>
@@ -1056,21 +1162,25 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
         <div className="foot">
           {busy && progress && !note
             ? <span className="note">spawning {progress.done} of {progress.total}…</span>
-            : note
-              ? <span className="note" style={{ color: 'var(--ok)' }}>{note}</span>
-              : blocked
-                ? <span className="note" style={{ color: 'var(--hazard)' }}>arm the unsupervised confirm — or uncheck it</span>
-                : emptyBatch
-                  ? <span className="note">write at least one task, one per line</span>
-                  : (
-                    <span className="note">
-                      {shellOnly ? 'opens a shell-only terminal' : `starts ${total > 1 ? `${total} new billed Claude sessions` : 'a new billed Claude session'}`}
-                      {repoMode && !knownRepo && repoName ? ' — clones the repo first' : ''}
-                    </span>
-                  )}
+            : busy && !note
+              ? <span className="note">spawning — the request can take a while (a fresh clone holds it open up to 2 min)…</span>
+              : note
+                ? <span className="note" style={{ color: 'var(--ok)' }}>{note}</span>
+                : blocked
+                  ? <span className="note" style={{ color: 'var(--hazard)' }}>arm the unsupervised confirm — or uncheck it</span>
+                  : emptyBatch
+                    ? <span className="note">write at least one task, one per line</span>
+                    : blockReason
+                      ? <span className="note" style={{ color: 'var(--hazard)' }}>✗ {blockReason}</span>
+                      : (
+                        <span className="note">
+                          {shellOnly ? 'opens a shell-only terminal' : `starts ${total > 1 ? `${total} new billed Claude sessions` : 'a new billed Claude session'}`}
+                          {repoMode && !knownRepo && repoName ? ' — clones the repo first' : ''}
+                        </span>
+                      )}
           <span className="fd-spacer" />
           <button type="button" className="send" onClick={submit} disabled={!targetReady || busy || blocked || emptyBatch}>
-            {shellOnly ? 'Open shell ⏎' : total > 1 ? `Spawn ${total} ⏎` : 'Spawn ⏎'}
+            {busy ? 'Spawning…' : shellOnly ? 'Open shell ⏎' : total > 1 ? `Spawn ${total} ⏎` : 'Spawn ⏎'}
           </button>
         </div>
       </div>
