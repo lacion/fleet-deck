@@ -53,6 +53,27 @@
 //   (b) hold expiry   → respond({}), status 'expired' (normal flow resumes in
 //                       the terminal — {} means "no decision" per docs §4)
 //   (c) client gone   → no respond, status 'expired'
+//
+// UX 2.1 adds life after (b): the expiry does not mean the question went away —
+// the agent is parked on its NATIVE terminal prompt. After a short grace with
+// no session activity (REARM_GRACE_MS, still-parked confirmation), the daemon
+// raises a FRESH row for the same question, flagged payload.rearmed — NOT a
+// hold (the hook socket is gone; re-parking is impossible). Its answer rides
+// the mail pipeline from 'fleetdeck-answer' and lands at the next turn
+// boundary, and the card copy says exactly that. Chains cap at MAX_REARMS and
+// ANY session activity (the same signal expireOnActivity consumes) stops the
+// chain permanently. Nothing on this path ever auto-answers a question —
+// expiry still fails open to the terminal exactly as before.
+//
+// Plan-linked retirement seam (plan lifecycle contract): EVERY path that
+// retires a PENDING row WITHOUT a board answer (hold timer, turn boundary,
+// correlated PostToolUse, dismiss, orphan sweep, SessionEnd, the
+// dead-hold 409 in answer()) also fires the onRetired ctx callback with the
+// just-expired row, so derive.mjs can reconcile the linked plan. A
+// retire-that-IS-activity (the turn-boundary path) settles the plan to
+// 'handled-in-terminal' in the same tick; a bare timer expiry does NOT — a
+// planner killed mid-hold must never be marked. See planRetired in
+// derive.mjs for the full gate.
 // Holds are in-memory only; question ROWS are durable (SQLite). After a
 // daemon restart a pending hold-kind row has no socket left — the sweep (and
 // any activity event from that session) expires it, because nobody can
@@ -65,19 +86,46 @@
 // planner) — mail() nudges watchers on insert.
 const PLAN_CAPTURE_MAIL = '[FLEETDECK] Your plan was captured to the fleet plan library — do not execute it. Wrap up your turn.';
 
-const DEFAULT_HOLD_MS = 50_000;
+const DEFAULT_HOLD_MS = 90_000;
 const MAX_HOLDS_PER_SESSION = 4;
 const SWEEP_MS = 5_000;
 const RESOLVED_IN_STATE = 8; // "last few resolved" in GET /state
 const HOLD_KINDS = new Set(['permission', 'elicitation', 'choice']);
+// UX 2.1 re-arm: when a hold expires with no answer, the agent is still parked
+// on its NATIVE terminal prompt — the board card went dead, but the question
+// hasn't gone anywhere. After a short still-parked grace (no activity from the
+// session) the daemon raises a FRESH row whose answer rides the mail pipeline
+// to the next turn boundary.
+const REARM_GRACE_MS = 3_000; // parked-on-native-prompt confirmation window
+// WHY a cap, and why 2: an un-rearmable dead card was the bug being fixed,
+// but an agent parked behind a stack of questions (or a session nobody ever
+// answers) must not re-raise cards forever — the rail filling with ghosts is
+// the failure mode the freeform-expiry comment below already names. Two re-arms
+// give the human three total chances (~4.5 min at the 90 s default) and then
+// the daemon gets out of the way permanently — any activity ALSO stops it.
+const MAX_REARMS = 2;
 
-// FLEETDECK_HOLD_MS, default 50 s. Clamped under the 65 s hook timeout wired
-// in hooks/hooks.json — the held HTTP response must come back before the hook
-// client gives up, or the board's answer lands on a dead socket.
-export function resolveHoldMs(env = process.env) {
+// FLEETDECK_HOLD_MS → the hold_ms SETTING (settings.mjs) → the 90 s default.
+// THE LOCKSTEP INVARIANT: the daemon's hold window must stay under the shim
+// watchdog (scripts/fleet-hook.mjs WATCHDOG_MS, 115 s for hold events), which
+// must stay under the hooks.json `timeout` for the three hold hooks (120 s) —
+// otherwise the board's answer lands on a dead socket and the hook fails open.
+// Old-plugin/new-daemon installs (a 65 s hook timeout with a 90 s daemon hold)
+// fail OPEN the same way they always did: the shim's own watchdog answers {}
+// and the terminal prompt owns the decision; the re-arm card is the recovery
+// path. The env var is the OVERRIDE (an operator's deliberate choice may sit
+// above the setting); the setting row arrives via `fallback` so questions.mjs
+// never has to know about the settings table.
+export function resolveHoldMs(env = process.env, fallback = null) {
   const raw = Number(env?.FLEETDECK_HOLD_MS);
-  if (!Number.isFinite(raw) || raw <= 0) return DEFAULT_HOLD_MS;
-  return Math.max(250, Math.min(raw, 60_000));
+  if (Number.isFinite(raw) && raw > 0) {
+    // 110 s ceiling keeps the resolved window under the 115 s shim watchdog —
+    // the lockstep invariant above, enforced at the door.
+    return Math.max(250, Math.min(raw, 110_000));
+  }
+  const stored = Number(fallback?.());
+  if (Number.isFinite(stored) && stored > 0) return Math.max(250, Math.min(stored, 110_000));
+  return DEFAULT_HOLD_MS;
 }
 
 function safeParse(json) {
@@ -122,6 +170,22 @@ export function createQuestions(db, {
   //       approved ('allow') | captured ('capture') | rejected ('deny')
   planIdFor = () => null,
   planAnswered = () => {},
+  // UX 2.1: live per-creation hold-window resolution. When set, create() calls
+  // it for EVERY new hold-kind row, so a hold_ms settings write steers new
+  // holds immediately instead of waiting out a daemon boot. Falls back to the
+  // boot-resolved holdMs when unset (tests, bare createQuestions callers).
+  resolveHoldWindow = null,
+  // Plan-linked retirement seam: fired with the freshly-expired row by EVERY
+  // path that retires a pending question WITHOUT a board answer. No-op for
+  // non-plan questions (derive.mjs's planRetired finds no linked plan row and
+  // returns). Deliberately fired AFTER the row is expired, outside any
+  // transaction — a callback throw must never un-retire the question.
+  onRetired = () => {},
+  // UX 2.1 re-arm knobs. rearmGraceMs is injectable for tests; 0 (or negative)
+  // DISABLES the whole re-arm machinery — an expiry then behaves exactly as it
+  // did before 2.1.
+  rearmGraceMs = REARM_GRACE_MS,
+  rearmMax = MAX_REARMS,
 } = {}) {
   const q = {
     insert: db.prepare(`INSERT INTO questions (session_id, kind, payload_json, status, created_at, expires_at)
@@ -137,11 +201,36 @@ export function createQuestions(db, {
   };
 
   const holds = new Map(); // question id -> { session_id, respond, timer }
+  // UX 2.1 re-arm ephemera (in-memory only — the same "a dead socket can never
+  // be re-parked" reasoning that keeps holds in-memory; a daemon restart simply
+  // forfeits any pending grace window, which fails safe to the pre-2.1 state):
+  //   rearmById   — expired row id -> { timer, chainRoot, armedAt, successor? };
+  //                 a LIVE timer means a grace window is armed. After the grace
+  //                 fires, the entry stays as a link to the successor row, so
+  //                 answering the successor cancels the chain through either id
+  //   rearmMeta   — re-armed successor row id -> { sourceId } (the back-link)
+  //   rearmChains — chain root id -> re-arm count so far (the MAX_REARMS cap)
+  const rearmById = new Map();
+  const rearmMeta = new Map();
+  const rearmChains = new Map();
 
   // -------------------------------------------------------------- creation
   function create(kind, sessionId, payload) {
     const now = Date.now();
-    const expiresAt = HOLD_KINDS.has(kind) ? now + holdMs : null; // freeform: no hold window
+    // The window resolves per creation when a resolver is wired: the hold_ms
+    // settings row can change between daemon boots (settings.mjs), and a hold
+    // parks with the window current at ITS birth. The resolver owns the clamp;
+    // a throwing one degrades to the boot window rather than failing a hook.
+    let windowMs = holdMs;
+    if (HOLD_KINDS.has(kind) && resolveHoldWindow) {
+      try { windowMs = resolveHoldWindow() ?? holdMs; } catch { windowMs = holdMs; }
+    }
+    // A RE-ARMED row gets NO expiry deadline: it is not a hold — there is no
+    // parked socket to fail open and nothing about it expires on a timer (its
+    // own grace chain is daemon ephemera, keyed off the source row). Stamping
+    // one would make the board countdown promise a fail-open that never comes.
+    const isRearm = payload?.rearmed === true;
+    const expiresAt = HOLD_KINDS.has(kind) && !isRearm ? now + windowMs : null; // freeform: no hold window
     const info = q.insert.run(sessionId ?? 'unknown', kind, JSON.stringify(payload ?? {}), now, expiresAt);
     return q.get.get(Number(info.lastInsertRowid));
   }
@@ -194,7 +283,141 @@ export function createQuestions(db, {
     if (q.markExpired.run(id).changes) {
       tick(`⌛ question #${id} expired unanswered — decide in the terminal`);
       onChange();
+      // UX 2.1: the expiry MAY re-arm. With a grace timer armed the row's
+      // payload carries rearm_pending:true (and expires_at extended to the
+      // grace deadline) so the orphan sweep — which would otherwise see a
+      // pending hold-kind row with no socket and expire it within 5 s — knows
+      // this expiry is supervised. onRetired stays fired HERE (with no
+      // activity flag — a bare timer expiry arms the plan gate, it does not
+      // settle); the re-arm machinery only ever raises a successor, never
+      // un-retires this row.
+      scheduleRearm(q.get.get(id));
+      onRetired(q.get.get(id));
     }
+  }
+
+  // ------------------------------------------------- UX 2.1: expiry re-arm
+  // A hold expiry is NOT the question going away: the hook failed open and the
+  // agent is still parked on its NATIVE terminal prompt, invisible to the
+  // board. This path gives that question a survivable second (and third) life.
+  // After REARM_GRACE_MS with NO activity from the session — still parked — a
+  // FRESH row is created for the same question. It is deliberately NOT a hold:
+  // the hook socket is gone, re-parking is impossible, so its answer rides the
+  // ordinary mail pipeline to the next turn boundary (the freeform delivery
+  // mechanism, proven since F3d). The payload flag rearmed:true is what Inbox
+  // keys the honest "sent as a message — delivered at the next turn boundary"
+  // copy on; the row keeps the original kind so the same buttons serialize the
+  // same answer body.
+  //
+  // A re-armed row is question-rail state, not a held socket, so it does NOT
+  // count against MAX_HOLDS_PER_SESSION — that cap exists to bound leaked
+  // sockets, and there is no socket here. Chains are capped separately at
+  // MAX_REARMS so a session nobody answers can't refill the rail forever.
+  function scheduleRearm(row) {
+    if (!(rearmGraceMs > 0)) return false;     // disabled (tests, future kill-switch)
+    if (!row || !HOLD_KINDS.has(row.kind)) return false; // freeform never expires on a timer
+    const chainRoot = safeParse(row.payload_json)?.chain_root ?? row.id;
+    const chain = rearmChains.get(chainRoot) ?? 0;
+    if (chain >= rearmMax) return false;
+    // rearm_pending marks the just-expired row as re-arm-supervised. It does
+    // two jobs: the orphan sweep skips it (a pending hold-kind row with no
+    // socket is sweep-bait, and the 5 s sweep would outrun a test-length grace
+    // window), and listForState extends expires_at to the grace deadline so
+    // the board reads hold+grace as one continuous window instead of a
+    // "expired" lie followed by a surprise card.
+    db.prepare(`UPDATE questions SET payload_json = ? WHERE id = ? AND status = 'expired'`)
+      .run(JSON.stringify({ ...(safeParse(row.payload_json) ?? {}), rearm_pending: true }), row.id);
+    const timer = setTimeout(() => {
+      try { fireRearm(row.id, chainRoot); } catch { /* a re-arm is recovery, never a crash */ }
+    }, rearmGraceMs);
+    timer.unref?.();
+    rearmById.set(row.id, { timer, chainRoot, armedAt: Date.now() });
+    return true;
+  }
+
+  // The grace window lapsed with no cancel signal: raise the successor. The
+  // source row is already expired (settleExpired did that); a fresh pending
+  // row appearing for the session inside the window (a new question raised by
+  // a session that demonstrably moved on) suppresses the re-arm — don't pile
+  // a recovery card on a session that is clearly talking again.
+  function fireRearm(sourceId, chainRoot) {
+    if (!rearmById.delete(sourceId)) return; // cancelled while the timer was queued
+    const row = q.get.get(sourceId);
+    if (!row || row.status !== 'expired') return;
+    if (q.pendingBySession.all(row.session_id).length > 0) return;
+    const payload = { ...(safeParse(row.payload_json) ?? {}), rearmed: true, chain_root: chainRoot };
+    delete payload.rearm_pending;
+    const fresh = create(row.kind, row.session_id, payload);
+    rearmChains.set(chainRoot, (rearmChains.get(chainRoot) ?? 0) + 1);
+    // The successor carries no socket and no timer — its OWN re-arm timer arms
+    // when its card is answered (the answer path) and its chain continues or
+    // closes there.
+    rearmMeta.set(fresh.id, { sourceId });
+    rearmById.set(row.id, { timer: null, chainRoot, successor: fresh.id });
+    tick(`🔁 question #${fresh.id} re-armed (was #${row.id}) — answering sends it as a message at the next turn boundary`);
+    onChange();
+  }
+
+  // An unanswered re-armed row eventually leaves the recent-resolved window —
+  // it was never answered, and the still-parked question deserves the chain's
+  // remaining budget. Called from the sweep; expires the row (its card has had
+  // its time on the rail), arms the NEXT grace window, and keeps the chain's
+  // bookkeeping pointing at the row the timer hangs off.
+  function recycleRearm(id) {
+    const meta = rearmMeta.get(id);
+    rearmMeta.delete(id);
+    if (!meta) return false;
+    const row = q.get.get(id);
+    if (!row || row.status !== 'pending') return false;
+    if (q.markExpired.run(id).changes === 0) return false;
+    const chainRoot = safeParse(row.payload_json)?.chain_root ?? id;
+    // The chain cap check lives in scheduleRearm's caller shape — inline here:
+    // past the cap the row simply stays expired and the chain closes.
+    if ((rearmChains.get(chainRoot) ?? 0) >= rearmMax) return true;
+    if (meta.sourceId != null) rearmById.delete(meta.sourceId);
+    const timer = setTimeout(() => {
+      try { fireRearm(id, chainRoot); } catch { /* a re-arm is recovery, never a crash */ }
+    }, rearmGraceMs);
+    timer.unref?.();
+    rearmById.set(id, { timer, chainRoot });
+    return true;
+  }
+
+  // Every cancel path below is a place where the question demonstrably left
+  // the "parked and unanswered" state — the ONLY state a re-armed card
+  // represents. Failing to cancel any one of them resurrects a dead question.
+  // `id` may be a grace-window row's id (timer armed) or a re-armed
+  // successor's id — the maps are cross-linked so either one finds both.
+  function cancelRearm(id) {
+    const m = rearmById.get(id) ?? rearmById.get(rearmMeta.get(id)?.sourceId);
+    if (m?.timer) clearTimeout(m.timer);
+    if (m) rearmById.delete(rearmMeta.get(id)?.sourceId ?? id);
+    if (m?.successor != null) rearmMeta.delete(m.successor);
+    rearmMeta.delete(id);
+  }
+
+  // The session demonstrably moved on (a tool completed, a new turn began, the
+  // session ended): everything re-arm related for it stands down. Cancel any
+  // armed grace timers and expire any pending re-armed rows — whatever was
+  // parked got answered (or abandoned) in the terminal, and the card must not
+  // outlive the question it represents.
+  function disarmRearmsForSession(sessionId) {
+    for (const [id, m] of [...rearmById]) {
+      if (m.timer) clearTimeout(m.timer);
+      rearmById.delete(id);
+      if (m.successor != null) rearmMeta.delete(m.successor);
+    }
+    const retired = [];
+    for (const r of q.pendingBySession.all(sessionId)) {
+      if (!HOLD_KINDS.has(r.kind)) continue; // freeform follows its own rules
+      if (safeParse(r.payload_json)?.rearmed !== true) continue;
+      if (q.markExpired.run(r.id).changes) retired.push(r.id);
+    }
+    // Same ordering rule as expireOnActivity: the batch retires before any
+    // callback runs. These fire WITH activity:true — the session moving on is
+    // exactly the signal, so a linked plan settles in the same tick.
+    for (const id of retired) onRetired(q.get.get(id), { activity: true });
+    return retired.length > 0;
   }
 
   // Path (c): the hook client disconnected before we responded. 'close' also
@@ -202,7 +425,10 @@ export function createQuestions(db, {
   function socketClosed(id) {
     if (!holds.has(id)) return;
     releaseHold(id);
-    if (q.markExpired.run(id).changes) onChange();
+    if (q.markExpired.run(id).changes) {
+      onChange();
+      onRetired(q.get.get(id));
+    }
   }
 
   // --------------------------------------------------------------- answers
@@ -224,6 +450,37 @@ export function createQuestions(db, {
     const who = callsignOf(row.session_id) || row.session_id;
 
     if (HOLD_KINDS.has(row.kind)) {
+      // UX 2.1: a RE-ARMED row has no held socket by construction — the hook
+      // failed open when the original hold expired and the native terminal
+      // prompt owns the decision. Its answer rides the ordinary mail pipeline
+      // (the freeform mechanism below, proven since F3d) and lands at the next
+      // turn boundary. Never claim it unblocks an agent parked on stdin — the
+      // board copy says exactly that. This branch runs BEFORE any wire-schema
+      // validation: there is no socket left to validate for, and the answer is
+      // serialized to plain text either way.
+      const payload = safeParse(row.payload_json);
+      if (payload?.rearmed === true) {
+        const detail = row.kind === 'permission' ? body?.behavior
+          : row.kind === 'choice' ? serializeChoiceAnswer(row, body)
+          : (body?.action === 'accept' || body?.action === 'decline') ? body.action : null;
+        if (detail == null) {
+          return { status: 400, body: { ok: false, err: 'body must match the question kind (behavior / answers|text / action)' } };
+        }
+        if (detail === 'capture') {
+          return { status: 400, body: { ok: false, err: '"capture" needs the live hold — the window for it has closed' } };
+        }
+        if (planIdFor(row.id) != null) planAnswered(row.id, detail);
+        const questionText = String(
+          payload?.tool_input?.questions?.[0]?.question ?? payload?.text ?? '',
+        ).slice(0, 80);
+        mail(row.session_id, 'fleetdeck-answer',
+          `[FLEETDECK ANSWER] ${row.kind} (answered after the hold expired) Q: ${questionText} — A: ${detail}`);
+        cancelRearm(row.id); // idempotent — a sibling card answering first already cancelled
+        q.markAnswered.run(JSON.stringify(body ?? {}), now, row.id);
+        tick(`💬 ${who}: re-armed ${row.kind} answered (${detail}) — queued for the next turn boundary`);
+        onChange();
+        return { status: 200, body: { ok: true, delivered: false, note: 'answer queued — delivered at next turn boundary' } };
+      }
       let hookResponse;
       let detail;
       let planBehavior = null; // v1.3: set on a plan question's allow/capture/deny
@@ -284,7 +541,10 @@ export function createQuestions(db, {
       if (!h) {
         // The held socket is gone (expired, client vanished, or daemon
         // restarted mid-hold): the decision cannot reach the session.
-        if (q.markExpired.run(row.id).changes) onChange();
+        if (q.markExpired.run(row.id).changes) {
+          onChange();
+          onRetired(q.get.get(row.id));
+        }
         return { status: 409, body: { ok: false, err: 'hold expired — the terminal prompt owns this decision now' } };
       }
       try { h.respond(hookResponse); } catch { /* socket died as we answered */ }
@@ -356,6 +616,13 @@ export function createQuestions(db, {
   // The resume path is untouched: expireAllForSession (SessionEnd) still spares
   // freeform, so an ENDED session's question survives for `claude --resume`.
   // Only a session that demonstrably kept going clears its own queue.
+  //
+  // Every retire here also fires onRetired, and the opts include `activity:
+  // true`: this path IS session activity by definition (a tool call completed,
+  // or a new turn began), so a plan question retired by it settles to
+  // 'handled-in-terminal' in the same tick — the human visibly decided in the
+  // terminal and the agent moved on. The same-turn guard lives on the plan
+  // side (planRetired never touches a plan whose question is still pending).
   function expireOnActivity(sessionId, { toolName, toolInput } = {}) {
     // A completed tool call correlates; a turn boundary (no toolName) is
     // session-wide.
@@ -365,9 +632,38 @@ export function createQuestions(db, {
       if (!correlated) return true; // turn boundary → session-wide (holds + freeform)
       if (!HOLD_KINDS.has(r.kind)) return false; // freeform has no tool identity
       const payload = safeParse(r.payload_json);
+      if (payload?.rearmed === true) return false; // re-armed rows disarm via disarmRearmsForSession below
       if (payload?.tool_name == null) return false; // elicitation & co. — not a tool call
       return toolCallKey(payload.tool_name, payload.tool_input) === activityKey;
     });
+    // UX 2.1 grace-window guard (the BUG-138 twin-hold rule, made explicit):
+    // activity keys on (tool_name, tool_input) ONLY — a twin hold for the SAME
+    // tool call expires by timer even though its tool already completed. When
+    // THIS activity lands inside that twin's re-arm grace window, the match is
+    // not proof the twin is still parked — the twin must NOT re-arm. The twin's
+    // row is already expired (settleExpired retired it; only its grace timer is
+    // pending), so cancelling the timer IS the whole settlement here. The row
+    // never read pending during the window, so pendingBySession can't see it —
+    // walk the grace map (rearmById entries with a LIVE timer) instead.
+    if (correlated) {
+      const graceCancelled = [];
+      for (const [id, m] of [...rearmById]) {
+        if (!m.timer) continue; // a successor link, not an armed grace window
+        const row = q.get.get(id);
+        if (!row || row.session_id !== sessionId) continue;
+        const payload = safeParse(row.payload_json);
+        if (payload?.tool_name == null) continue;
+        if (toolCallKey(payload.tool_name, payload.tool_input) !== activityKey) continue;
+        cancelRearm(id);
+        graceCancelled.push(id);
+      }
+      for (const id of graceCancelled) onRetired(q.get.get(id), { activity: true });
+    }
+    // UX 2.1: activity from this session is also the re-arm stop-condition —
+    // stand down every armed grace timer and retire every pending re-armed row
+    // for the session (still-parked is disproven by definition here). Fires on
+    // BOTH the correlated and the session-wide path.
+    const rearmDisarmed = disarmRearmsForSession(sessionId);
     // BUG 5: a single PostToolUse completes exactly ONE tool call. Two parallel
     // holds with IDENTICAL (tool_name, tool_input) share a toolCallKey, so the
     // filter above matches BOTH — and the old code expired both, releasing a
@@ -380,14 +676,22 @@ export function createQuestions(db, {
     if (correlated && rows.length > 1) {
       rows = [rows.find(r => holds.has(r.id)) ?? rows[0]];
     }
-    let changed = false;
+    // Order matters: expire FIRST, then fire onRetired only for rows that
+    // flipped. Firing inside the loop would interleave the plan-settle
+    // callback with the retire loop, and a callback that consults the
+    // pending-question set (derive.mjs's same-turn guard) would see a
+    // half-retired batch — or worse, retire NEW rows (a plan question raised
+    // in this same turn IS in the pending set right now) before its own loop
+    // turn. One full pass first keeps the callback's world consistent.
+    const retired = [];
     for (const r of rows) {
       const h = releaseHold(r.id);
       if (h) { try { h.respond({}); } catch { /* socket already gone */ } }
-      if (q.markExpired.run(r.id).changes) changed = true;
+      if (q.markExpired.run(r.id).changes) retired.push(r.id);
     }
-    if (changed) onChange();
-    return changed;
+    for (const id of retired) onRetired(q.get.get(id), { activity: true });
+    if (retired.length || rearmDisarmed) onChange();
+    return retired.length > 0 || rearmDisarmed;
   }
 
   // "Clear" on the board: answered, expired and dismissed cards leave the rail
@@ -402,26 +706,52 @@ export function createQuestions(db, {
   // The human already handled it elsewhere: retire the card, tell the session
   // nothing. Distinct from answering (which mails the answer to the session)
   // and from expiring a hold (which must fail a parked socket open).
-  function dismiss(id) {
+  // opts.activity: a dismissal that happened alongside session activity (e.g.
+  // BUG-041's execute-while-pending) is handed through to onRetired so the
+  // linked plan settles in the same tick; a plain board dismissal is not
+  // terminal activity, so the plan stays 'proposed' until the session next
+  // moves (the activity gate — a human dismissing a card has NOT decided the
+  // plan in the terminal).
+  function dismiss(id, { activity = false } = {}) {
     const row = q.get.get(id);
     if (!row) return { ok: false, reason: 'no such question' };
+    // The human declared the card handled — cancel any re-arm timer chained to
+    // it FIRST, or the dismissed question resurrects one grace window later.
+    // Runs before the status gate on purpose: a row inside its grace window
+    // reads 'expired' (the old early-return), yet has exactly the armed timer
+    // this cancel exists to kill.
+    cancelRearm(row.id);
     if (row.status !== 'pending') return { ok: true, already: true };
     const h = releaseHold(row.id);
     if (h) { try { h.respond({}); } catch { /* socket already gone */ } }
     const changed = q.markExpired.run(row.id).changes > 0;
-    if (changed) onChange();
+    if (changed) {
+      onChange();
+      onRetired(q.get.get(row.id), { activity });
+    }
     // WHY resolve through the session adapter: `questions` deliberately has
     // no callsign column, so reading row.callsign always returned dead null.
     return { ok: true, callsign: callsignOf(row.session_id) ?? null };
   }
 
   // Restart hygiene (periodic sweep): a pending hold-kind row with NO live
-  // hold can never deliver an answer — expire it. Never touches live holds.
+  // hold can never deliver an answer — expire it. Never touches live holds,
+  // and never expires a RE-ARMED row (payload.rearmed): it has no socket by
+  // construction, its answer goes by mail, and it is exactly as deliverable as
+  // a freeform row. Instead the sweep RECYCLES an aged re-armed row — a card
+  // that sat unanswered long enough to fall out of the recent-resolved window
+  // gets its chain's next grace window (recycleRearm), up to the cap.
   function expireOrphans() {
     let changed = false;
     for (const r of q.pending.all()) {
-      if (HOLD_KINDS.has(r.kind) && !holds.has(r.id)) {
-        if (q.markExpired.run(r.id).changes) changed = true;
+      if (!HOLD_KINDS.has(r.kind) || holds.has(r.id)) continue;
+      if (safeParse(r.payload_json)?.rearmed === true) {
+        if (Date.now() - r.created_at >= rearmGraceMs && recycleRearm(r.id)) changed = true;
+        continue;
+      }
+      if (q.markExpired.run(r.id).changes) {
+        changed = true;
+        onRetired(q.get.get(r.id));
       }
     }
     if (changed) onChange();
@@ -440,18 +770,44 @@ export function createQuestions(db, {
   // Returns the number of questions expired (truthy iff anything changed).
   function expireAllForSession(sessionId, { includeFreeform = false } = {}) {
     let expired = 0;
+    const retired = [];
     for (const r of q.pendingBySession.all(sessionId)) {
       if (!includeFreeform && !HOLD_KINDS.has(r.kind)) continue;
       const h = releaseHold(r.id);
       if (h) { try { h.respond({}); } catch { /* gone */ } }
-      if (q.markExpired.run(r.id).changes) expired++;
+      cancelRearm(r.id); // a dead session re-arms nothing
+      if (q.markExpired.run(r.id).changes) {
+        expired++;
+        retired.push(r.id);
+      }
     }
+    // Grace timers belong to EXPIRED rows, so the loop above can't see them —
+    // cancel any armed for this session or a dead session would still raise a
+    // re-armed card one window later.
+    for (const [id, m] of [...rearmById]) {
+      if (!m.timer) continue; // a successor link, not an armed grace window
+      if (q.get.get(id)?.session_id === sessionId) cancelRearm(id);
+    }
+    // Same ordering rule as expireOnActivity: retire the whole batch before
+    // any callback runs (these fire with no activity flag, but the plan
+    // gate's pending-set reads must still see a consistent world).
+    for (const id of retired) onRetired(q.get.get(id));
     if (expired) onChange();
     return expired;
   }
 
   function pendingOf(sessionId) {
     return q.pendingBySession.all(sessionId);
+  }
+
+  // Is this question's hold socket still parked? The holds map is private to
+  // this module, but the plan-settle gate (derive.mjs planRetired) needs it:
+  // a plan question created DURING the current activity event already reads
+  // non-pending when the retirement callbacks run (hookHoldQuestion inserts
+  // before the HTTP layer parks the socket), so the status column alone
+  // cannot distinguish "retired prompt" from "chooser never rendered".
+  function isHeld(id) {
+    return holds.has(id);
   }
 
   // -------------------------------------------------------------- snapshot
@@ -464,15 +820,26 @@ export function createQuestions(db, {
   function listForState() {
     return [...q.pending.all(), ...q.resolved.all()].map(r => {
       const plan_id = planIdFor(r.id);
+      // UX 2.1: a row inside its re-arm grace window reads expired in the DB
+      // (settleExpired retired it — the hook failed open and that fact must
+      // not be papered over) but its question is still live. Surface the grace
+      // deadline as expires_at so the card's countdown runs to the END of the
+      // window (hold + grace as one continuous open question) instead of
+      // showing "expired" for the grace seconds and then surprising the human
+      // with a fresh card. Keyed on the rearm_pending payload flag — a STALE
+      // in-memory grace entry must never graft a fake deadline onto an
+      // ordinary expired row (dismiss/activity/Sweep retire without arming).
+      const payload = safeParse(r.payload_json);
+      const grace = payload?.rearm_pending === true ? rearmById.get(r.id)?.armedAt : undefined;
       return {
         id: r.id,
         kind: r.kind,
         session_id: r.session_id,
         callsign: callsignOf(r.session_id),
-        payload: safeParse(r.payload_json),
+        payload,
         status: r.status,
         created_at: r.created_at,
-        expires_at: r.expires_at,
+        expires_at: grace != null ? grace + rearmGraceMs : r.expires_at,
         answered_at: r.answered_at,
         answer: safeParse(r.answer_json),
         held: holds.has(r.id),
@@ -498,6 +865,7 @@ export function createQuestions(db, {
     expireOrphans,
     expireAllForSession,
     pendingOf,
+    isHeld,
     listForState,
   };
 }

@@ -2,7 +2,11 @@ import React, { useEffect, useRef, useState } from 'react';
 import { sendMail, sendCommand, reasonOf } from '../api.js';
 import { basename, TURN_BOUNDARY_HINT } from '../util.js';
 import { useModal } from '../useModal.js';
-import { ORCH_COMMANDS } from '../helpText.js';
+import { ORCH_COMMANDS, GLOSSARY } from '../helpText.js';
+
+// The turn-boundary definition, single-sourced (helpText.js) — the footer's
+// title= is a bonus affordance that must never drift from the ? overlay.
+const TURN_BOUNDARY_DEF = GLOSSARY.find((g) => g.term === 'turn boundary')?.def || '';
 
 // Honest per-target feedback from POST /mail `targets` ({session_id, callsign,
 // route}). watcher/pane routes deliver without the human doing anything;
@@ -173,7 +177,12 @@ export default function Compose({ initialTarget, sessions, repos, onClose, onSen
           {note ? (
             <span className="note" style={{ color: 'var(--ok)' }}>{note}</span>
           ) : (
-            <span className="note">
+            <span
+              className="note"
+              title={target === 'daemon'
+                ? 'commands run in the daemon itself, the moment you send'
+                : TURN_BOUNDARY_DEF}
+            >
               {target === 'daemon' ? 'runs in the daemon immediately' : `delivers at the agent’s ${TURN_BOUNDARY_HINT}`}
             </span>
           )}

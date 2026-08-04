@@ -10,6 +10,15 @@ const termIdentity = (s) => ({
   window: s.spawn.tmux_window,
 });
 
+// 2.1 focus-terminal — a per-open stamp so re-asking for the terminal that is
+// ALREADY open still reads as a fresh request: TermWindow is keyed on it
+// (App.jsx), so a re-open REMOUNTS the window and replays its attention pulse
+// instead of no-oping on an identical identity. Monotonic (never Date.now —
+// two opens in the same millisecond must still differ). Only openTerm/
+// expandTerm stamp: the grid's tiles compare identities field-by-field and
+// must stay stamp-free.
+let termOpenStamp = 0;
+
 // v2.6 — the floating window's geometry, persisted so it reopens where you left
 // it. One key for all terminals (predictable), clamped on read: a rect saved on
 // a big monitor must still be grabbable on a laptop.
@@ -80,7 +89,7 @@ export function useTermWindows(sessions, killAsk, armAsk, renameAsk) {
     setGrid(null); // the window and the wall are one keyboard; never both
     setTermMin(false);
     setTermMax(false); // m2 — maximize is per-viewing, never inherited
-    setTerm(termIdentity(s));
+    setTerm({ ...termIdentity(s), n: ++termOpenStamp });
   }, []);
 
   const closeTerm = useCallback(() => { setTerm(null); setTermMin(false); setTermMax(false); }, []);
@@ -93,8 +102,33 @@ export function useTermWindows(sessions, killAsk, armAsk, renameAsk) {
     setGrid(null);
     setTermMin(false);
     setTermMax(false);
-    setTerm(identity);
+    setTerm({ ...identity, n: ++termOpenStamp }); // stamp: a promoted tile may already BE the open window
   }, []);
+
+  // v1.3 (ux) — view-only detach: the tile leaves the wall, the tmux pane
+  // stays alive (hard kill stays behind KillConfirm). The session also leaves
+  // the watch-set, or the next watch-seeded openGrid would resurrect the tile
+  // the human just closed. watch keys on session_id but the identity carries
+  // only spawnId/callsign — resolve via the live sessions; when the session is
+  // already gone the stale watch entry is filtered at open time anyway.
+  const closeGridTile = useCallback((identity) => {
+    setGrid((prev) => {
+      if (!prev) return prev;
+      const next = prev.filter((t) => !(t.spawnId === identity.spawnId && t.window === identity.window));
+      return next.length ? next : null; // last tile closes the wall
+    });
+    setWatch((prev) => {
+      if (!prev.size) return prev;
+      const sid = termableSessions.find((s) => s.spawn.spawn_id === identity.spawnId)?.session_id
+        // callsign IS the session_id for nameless agents — the only lossless
+        // fallback once the session row is gone.
+        ?? (prev.has(identity.callsign) ? identity.callsign : null);
+      if (!sid || !prev.has(sid)) return prev;
+      const next = new Set(prev);
+      next.delete(sid);
+      return next;
+    });
+  }, [termableSessions]);
 
   const toggleWatch = useCallback((s) => {
     if (!spawnTermable(s)) return;
@@ -122,7 +156,7 @@ export function useTermWindows(sessions, killAsk, armAsk, renameAsk) {
     termMin, minimizeTerm, restoreTerm, closeTerm, expandTerm,
     termMax, toggleTermMax, termRect, setTermRect,
     termableSessions, watchable,
-    openTerm, toggleWatch, openGrid,
+    openTerm, toggleWatch, openGrid, closeGridTile,
     gridOpen, killOpen, armOpen, renameOpen,
   };
 }

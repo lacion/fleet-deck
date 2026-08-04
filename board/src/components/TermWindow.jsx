@@ -44,6 +44,19 @@ export default function TermWindow({
   // amber language the grid's focused tile uses: track focus-within and say so
   // in the header.
   const [focused, setFocused] = useState(false);
+  // 2.1 focus-terminal — "Open terminal" on a needs-you card whose terminal is
+  // ALREADY open is a no-op in App's state (same spawnId → same key → no
+  // remount, no visual response). Every mount therefore replays the entrance
+  // pulse once, and the global animation kill under prefers-reduced-motion
+  // makes it a silent no-op there. When App hands this window a key that
+  // changes per request (e.g. `${spawnId}:${openNonce}`), the remount IS the
+  // pulse; direct App mounts just pulse the once on open.
+  const [pulsing, setPulsing] = useState(true);
+  useEffect(() => {
+    if (!pulsing) return undefined;
+    const t = setTimeout(() => setPulsing(false), 1000);
+    return () => clearTimeout(t);
+  }, [pulsing]);
   const dialogRef = useRef(null);
   // M-A2 (terminal variant) — restore focus to the opener on close, but NO Tab
   // trap and NO initial-focus steal: xterm claims focus itself and Tab must
@@ -146,7 +159,7 @@ export default function TermWindow({
     // shields App's window-level shortcuts from keys typed INTO the terminal;
     // the old modal's blanket hotkey suppression is gone on purpose.
     <div
-      className={`fd-termfloat${maximized ? ' max' : ''}${minimized ? ' min' : ''}${focused ? ' kbd' : ''}`}
+      className={`fd-termfloat${maximized ? ' max' : ''}${minimized ? ' min' : ''}${focused ? ' kbd' : ''}${pulsing ? ' attn' : ''}`}
       role="dialog"
       aria-modal="false"
       aria-label={`Live terminal ${callsign || spawnId}`}

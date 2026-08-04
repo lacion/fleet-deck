@@ -1,6 +1,7 @@
 import React, { useCallback, useMemo } from 'react';
 import SessionCard from './SessionCard.jsx';
 import { COLS, boardCol, basename, sessionsById, callsignOf } from '../util.js';
+import { COL_HINTS } from '../helpText.js';
 
 // One shared empty array for the "no conflict" case — a fresh `[]` per card
 // would defeat React.memo(SessionCard).
@@ -130,7 +131,9 @@ function BoardLanes({
       <div className={`fd-lanes${stale ? ' stale' : ''}`}>
         <div className="fd-colheads">
           {colHeads.map((c) => (
-            <div className="h" key={c.key}>
+            // the title= is a bonus affordance only — the full column story is
+            // derived (events.mjs) and the jargon resolves in the ? overlay
+            <div className="h" key={c.key} title={COL_HINTS[c.key]}>
               <span className="l">{c.label}</span>
               <span className="n">{c.count}</span>
               {c.key === 'offline' && onReviveAll && revivables.length >= 2 && (

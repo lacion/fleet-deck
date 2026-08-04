@@ -101,7 +101,11 @@ export default function LanPanel({ lan, onClose }) {
             <div className="fd-lanhow">
               <div className="h">To open it from your laptop or phone</div>
               <div className="s">Restart the daemon bound to your network:</div>
-              <div className="cmd">$ FLEETDECK_BIND=0.0.0.0 fleetd up</div>
+              {/* the real CLI (package.json bin + bin/fleetdeck.mjs): `fleetdeck serve`
+                  in the foreground, or `fleetdeck service restart` under a supervisor.
+                  `fleetd up` never existed. */}
+              <div className="cmd">$ FLEETDECK_BIND=0.0.0.0 fleetdeck serve</div>
+              <div className="s">…or <span className="mono">fleetdeck service restart</span> if the daemon runs under a supervisor.</div>
               <div className="s">
                 It prints a link with a key in it (<span className="mono">?t=…</span>) — open that link on the
                 other device. Over the network the board <em>requires</em> that key: it can spawn agents and

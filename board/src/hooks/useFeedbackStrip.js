@@ -24,5 +24,46 @@ export function useFeedbackStrip() {
 
   useEffect(() => () => clearTimeout(clearTimer.current), []);
 
-  return { clearNote, setClearNote, showNote };
+  // 2.3 option 2 — the spawn-failure banner. Any card that TRANSITIONS to
+  // offline wearing a "spawn failed:" note lands here: tombstones from THIS
+  // tab's SpawnForm (its own in-form watch covers those too, but a failure
+  // after the human closed the form must still surface) and failures from any
+  // other source — a curl'd /api/spawn, a second board tab, a killed daemon
+  // mid-clone. Dedup is by session_id in a ref: a card that stays offline
+  // across frames must banner exactly once, so the detection effect may depend
+  // on the whole sessions array and re-render loops can't re-fire it. Only
+  // tombstones (a spawn row, gone or stalled) count — an offline transition
+  // without one is just a session that ended, and bannering that would cry
+  // wolf on every normal exit.
+  const [spawnFail, setSpawnFail] = useState(null); // {sid, callsign, note, detail, open}
+  const seenRef = useRef(new Set());
+
+  const watchSpawnFailures = useCallback((sessions, prevSessions) => {
+    const prev = new Map((prevSessions || []).map((s) => [s.session_id, s]));
+    for (const s of sessions || []) {
+      if (s.col !== 'offline') continue;
+      if (typeof s.note !== 'string' || !s.note.startsWith('spawn failed:')) continue;
+      const sp = s.spawn;
+      if (!sp || (sp.status !== 'gone' && sp.status !== 'stalled')) continue;
+      if (prev.get(s.session_id)?.col === 'offline') continue; // was already dead
+      if (seenRef.current.has(s.session_id)) continue;           // bannered already
+      seenRef.current.add(s.session_id);
+      setSpawnFail({
+        sid: s.session_id,
+        callsign: s.callsign || s.session_id,
+        note: s.note,
+        // Already redacted and bounded daemon-side (gitStderrDetail) — the
+        // banner is a NEW audience for it, not a new control on it. Remote
+        // stderr is adversarial text; it renders as a text node, like the card's
+        // own expander, and is labeled git's words, not ours.
+        detail: sp.fail_detail || null,
+        open: false,
+      });
+    }
+  }, []);
+
+  const dismissSpawnFail = useCallback(() => setSpawnFail(null), []);
+  const toggleSpawnFailDetail = useCallback(() => setSpawnFail((f) => (f ? { ...f, open: !f.open } : f)), []);
+
+  return { clearNote, setClearNote, showNote, spawnFail, watchSpawnFailures, dismissSpawnFail, toggleSpawnFailDetail };
 }

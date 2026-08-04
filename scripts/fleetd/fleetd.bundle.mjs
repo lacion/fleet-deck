@@ -3898,7 +3898,10 @@ CREATE TABLE IF NOT EXISTS plans (
   question_id  INTEGER,             -- the held ExitPlanMode permission question
   plan_md      TEXT,                -- tool_input.plan, raw markdown (board derives titles)
   created_at   INTEGER,
-  status       TEXT DEFAULT 'proposed', -- proposed | approved | captured | rejected | executed | archived
+  status       TEXT DEFAULT 'proposed', -- proposed | approved | captured | rejected | handled-in-terminal | executed | archived
+                                        -- handled-in-terminal: the ExitPlanMode question was retired
+                                        -- unanswered AND the session then showed activity \u2014 the human
+                                        -- decided in the terminal (UX 2.2; derive.mjs planRetired).
   executed_via TEXT                 -- optional {via} recorded at mark {status:"executed"}
 );
 CREATE INDEX IF NOT EXISTS idx_plans_status ON plans(status);
@@ -4134,15 +4137,21 @@ function animalOf(callsign) {
 
 // scripts/fleetd/questions.mjs
 var PLAN_CAPTURE_MAIL = "[FLEETDECK] Your plan was captured to the fleet plan library \u2014 do not execute it. Wrap up your turn.";
-var DEFAULT_HOLD_MS = 5e4;
+var DEFAULT_HOLD_MS = 9e4;
 var MAX_HOLDS_PER_SESSION = 4;
 var SWEEP_MS = 5e3;
 var RESOLVED_IN_STATE = 8;
 var HOLD_KINDS = /* @__PURE__ */ new Set(["permission", "elicitation", "choice"]);
-function resolveHoldMs(env = process.env) {
+var REARM_GRACE_MS = 3e3;
+var MAX_REARMS = 2;
+function resolveHoldMs(env = process.env, fallback = null) {
   const raw = Number(env?.FLEETDECK_HOLD_MS);
-  if (!Number.isFinite(raw) || raw <= 0) return DEFAULT_HOLD_MS;
-  return Math.max(250, Math.min(raw, 6e4));
+  if (Number.isFinite(raw) && raw > 0) {
+    return Math.max(250, Math.min(raw, 11e4));
+  }
+  const stored = Number(fallback?.());
+  if (Number.isFinite(stored) && stored > 0) return Math.max(250, Math.min(stored, 11e4));
+  return DEFAULT_HOLD_MS;
 }
 function safeParse(json) {
   try {
@@ -4175,7 +4184,24 @@ function createQuestions(db2, {
   //       approved ('allow') | captured ('capture') | rejected ('deny')
   planIdFor = () => null,
   planAnswered = () => {
-  }
+  },
+  // UX 2.1: live per-creation hold-window resolution. When set, create() calls
+  // it for EVERY new hold-kind row, so a hold_ms settings write steers new
+  // holds immediately instead of waiting out a daemon boot. Falls back to the
+  // boot-resolved holdMs when unset (tests, bare createQuestions callers).
+  resolveHoldWindow = null,
+  // Plan-linked retirement seam: fired with the freshly-expired row by EVERY
+  // path that retires a pending question WITHOUT a board answer. No-op for
+  // non-plan questions (derive.mjs's planRetired finds no linked plan row and
+  // returns). Deliberately fired AFTER the row is expired, outside any
+  // transaction — a callback throw must never un-retire the question.
+  onRetired = () => {
+  },
+  // UX 2.1 re-arm knobs. rearmGraceMs is injectable for tests; 0 (or negative)
+  // DISABLES the whole re-arm machinery — an expiry then behaves exactly as it
+  // did before 2.1.
+  rearmGraceMs = REARM_GRACE_MS,
+  rearmMax = MAX_REARMS
 } = {}) {
   const q = {
     insert: db2.prepare(`INSERT INTO questions (session_id, kind, payload_json, status, created_at, expires_at)
@@ -4190,9 +4216,21 @@ function createQuestions(db2, {
       ORDER BY COALESCE(answered_at, expires_at, created_at) DESC, id DESC LIMIT ${RESOLVED_IN_STATE}`)
   };
   const holds = /* @__PURE__ */ new Map();
+  const rearmById = /* @__PURE__ */ new Map();
+  const rearmMeta = /* @__PURE__ */ new Map();
+  const rearmChains = /* @__PURE__ */ new Map();
   function create(kind, sessionId, payload) {
     const now = Date.now();
-    const expiresAt = HOLD_KINDS.has(kind) ? now + holdMs : null;
+    let windowMs = holdMs;
+    if (HOLD_KINDS.has(kind) && resolveHoldWindow) {
+      try {
+        windowMs = resolveHoldWindow() ?? holdMs;
+      } catch {
+        windowMs = holdMs;
+      }
+    }
+    const isRearm = payload?.rearmed === true;
+    const expiresAt = HOLD_KINDS.has(kind) && !isRearm ? now + windowMs : null;
     const info = q.insert.run(sessionId ?? "unknown", kind, JSON.stringify(payload ?? {}), now, expiresAt);
     return q.get.get(Number(info.lastInsertRowid));
   }
@@ -4234,12 +4272,90 @@ function createQuestions(db2, {
     if (q.markExpired.run(id).changes) {
       tick(`\u231B question #${id} expired unanswered \u2014 decide in the terminal`);
       onChange();
+      scheduleRearm(q.get.get(id));
+      onRetired(q.get.get(id));
     }
+  }
+  function scheduleRearm(row) {
+    if (!(rearmGraceMs > 0)) return false;
+    if (!row || !HOLD_KINDS.has(row.kind)) return false;
+    const chainRoot = safeParse(row.payload_json)?.chain_root ?? row.id;
+    const chain = rearmChains.get(chainRoot) ?? 0;
+    if (chain >= rearmMax) return false;
+    db2.prepare(`UPDATE questions SET payload_json = ? WHERE id = ? AND status = 'expired'`).run(JSON.stringify({ ...safeParse(row.payload_json) ?? {}, rearm_pending: true }), row.id);
+    const timer = setTimeout(() => {
+      try {
+        fireRearm(row.id, chainRoot);
+      } catch {
+      }
+    }, rearmGraceMs);
+    timer.unref?.();
+    rearmById.set(row.id, { timer, chainRoot, armedAt: Date.now() });
+    return true;
+  }
+  function fireRearm(sourceId, chainRoot) {
+    if (!rearmById.delete(sourceId)) return;
+    const row = q.get.get(sourceId);
+    if (!row || row.status !== "expired") return;
+    if (q.pendingBySession.all(row.session_id).length > 0) return;
+    const payload = { ...safeParse(row.payload_json) ?? {}, rearmed: true, chain_root: chainRoot };
+    delete payload.rearm_pending;
+    const fresh = create(row.kind, row.session_id, payload);
+    rearmChains.set(chainRoot, (rearmChains.get(chainRoot) ?? 0) + 1);
+    rearmMeta.set(fresh.id, { sourceId });
+    rearmById.set(row.id, { timer: null, chainRoot, successor: fresh.id });
+    tick(`\u{1F501} question #${fresh.id} re-armed (was #${row.id}) \u2014 answering sends it as a message at the next turn boundary`);
+    onChange();
+  }
+  function recycleRearm(id) {
+    const meta = rearmMeta.get(id);
+    rearmMeta.delete(id);
+    if (!meta) return false;
+    const row = q.get.get(id);
+    if (!row || row.status !== "pending") return false;
+    if (q.markExpired.run(id).changes === 0) return false;
+    const chainRoot = safeParse(row.payload_json)?.chain_root ?? id;
+    if ((rearmChains.get(chainRoot) ?? 0) >= rearmMax) return true;
+    if (meta.sourceId != null) rearmById.delete(meta.sourceId);
+    const timer = setTimeout(() => {
+      try {
+        fireRearm(id, chainRoot);
+      } catch {
+      }
+    }, rearmGraceMs);
+    timer.unref?.();
+    rearmById.set(id, { timer, chainRoot });
+    return true;
+  }
+  function cancelRearm(id) {
+    const m = rearmById.get(id) ?? rearmById.get(rearmMeta.get(id)?.sourceId);
+    if (m?.timer) clearTimeout(m.timer);
+    if (m) rearmById.delete(rearmMeta.get(id)?.sourceId ?? id);
+    if (m?.successor != null) rearmMeta.delete(m.successor);
+    rearmMeta.delete(id);
+  }
+  function disarmRearmsForSession(sessionId) {
+    for (const [id, m] of [...rearmById]) {
+      if (m.timer) clearTimeout(m.timer);
+      rearmById.delete(id);
+      if (m.successor != null) rearmMeta.delete(m.successor);
+    }
+    const retired = [];
+    for (const r of q.pendingBySession.all(sessionId)) {
+      if (!HOLD_KINDS.has(r.kind)) continue;
+      if (safeParse(r.payload_json)?.rearmed !== true) continue;
+      if (q.markExpired.run(r.id).changes) retired.push(r.id);
+    }
+    for (const id of retired) onRetired(q.get.get(id), { activity: true });
+    return retired.length > 0;
   }
   function socketClosed(id) {
     if (!holds.has(id)) return;
     releaseHold(id);
-    if (q.markExpired.run(id).changes) onChange();
+    if (q.markExpired.run(id).changes) {
+      onChange();
+      onRetired(q.get.get(id));
+    }
   }
   function answer(id, body) {
     const row = q.get.get(Number(id));
@@ -4248,6 +4364,30 @@ function createQuestions(db2, {
     const now = Date.now();
     const who = callsignOf(row.session_id) || row.session_id;
     if (HOLD_KINDS.has(row.kind)) {
+      const payload = safeParse(row.payload_json);
+      if (payload?.rearmed === true) {
+        const detail2 = row.kind === "permission" ? body?.behavior : row.kind === "choice" ? serializeChoiceAnswer(row, body) : body?.action === "accept" || body?.action === "decline" ? body.action : null;
+        if (detail2 == null) {
+          return { status: 400, body: { ok: false, err: "body must match the question kind (behavior / answers|text / action)" } };
+        }
+        if (detail2 === "capture") {
+          return { status: 400, body: { ok: false, err: '"capture" needs the live hold \u2014 the window for it has closed' } };
+        }
+        if (planIdFor(row.id) != null) planAnswered(row.id, detail2);
+        const questionText = String(
+          payload?.tool_input?.questions?.[0]?.question ?? payload?.text ?? ""
+        ).slice(0, 80);
+        mail(
+          row.session_id,
+          "fleetdeck-answer",
+          `[FLEETDECK ANSWER] ${row.kind} (answered after the hold expired) Q: ${questionText} \u2014 A: ${detail2}`
+        );
+        cancelRearm(row.id);
+        q.markAnswered.run(JSON.stringify(body ?? {}), now, row.id);
+        tick(`\u{1F4AC} ${who}: re-armed ${row.kind} answered (${detail2}) \u2014 queued for the next turn boundary`);
+        onChange();
+        return { status: 200, body: { ok: true, delivered: false, note: "answer queued \u2014 delivered at next turn boundary" } };
+      }
       let hookResponse;
       let detail;
       let planBehavior = null;
@@ -4293,7 +4433,10 @@ function createQuestions(db2, {
       }
       const h = releaseHold(row.id);
       if (!h) {
-        if (q.markExpired.run(row.id).changes) onChange();
+        if (q.markExpired.run(row.id).changes) {
+          onChange();
+          onRetired(q.get.get(row.id));
+        }
         return { status: 409, body: { ok: false, err: "hold expired \u2014 the terminal prompt owns this decision now" } };
       }
       try {
@@ -4328,13 +4471,29 @@ function createQuestions(db2, {
       if (!correlated) return true;
       if (!HOLD_KINDS.has(r.kind)) return false;
       const payload = safeParse(r.payload_json);
+      if (payload?.rearmed === true) return false;
       if (payload?.tool_name == null) return false;
       return toolCallKey(payload.tool_name, payload.tool_input) === activityKey;
     });
+    if (correlated) {
+      const graceCancelled = [];
+      for (const [id, m] of [...rearmById]) {
+        if (!m.timer) continue;
+        const row = q.get.get(id);
+        if (!row || row.session_id !== sessionId) continue;
+        const payload = safeParse(row.payload_json);
+        if (payload?.tool_name == null) continue;
+        if (toolCallKey(payload.tool_name, payload.tool_input) !== activityKey) continue;
+        cancelRearm(id);
+        graceCancelled.push(id);
+      }
+      for (const id of graceCancelled) onRetired(q.get.get(id), { activity: true });
+    }
+    const rearmDisarmed = disarmRearmsForSession(sessionId);
     if (correlated && rows.length > 1) {
       rows = [rows.find((r) => holds.has(r.id)) ?? rows[0]];
     }
-    let changed = false;
+    const retired = [];
     for (const r of rows) {
       const h = releaseHold(r.id);
       if (h) {
@@ -4343,19 +4502,21 @@ function createQuestions(db2, {
         } catch {
         }
       }
-      if (q.markExpired.run(r.id).changes) changed = true;
+      if (q.markExpired.run(r.id).changes) retired.push(r.id);
     }
-    if (changed) onChange();
-    return changed;
+    for (const id of retired) onRetired(q.get.get(id), { activity: true });
+    if (retired.length || rearmDisarmed) onChange();
+    return retired.length > 0 || rearmDisarmed;
   }
   function purgeResolved() {
     const out = db2.prepare("DELETE FROM questions WHERE status != 'pending'").run();
     if (out.changes) onChange();
     return out.changes;
   }
-  function dismiss(id) {
+  function dismiss(id, { activity = false } = {}) {
     const row = q.get.get(id);
     if (!row) return { ok: false, reason: "no such question" };
+    cancelRearm(row.id);
     if (row.status !== "pending") return { ok: true, already: true };
     const h = releaseHold(row.id);
     if (h) {
@@ -4365,14 +4526,23 @@ function createQuestions(db2, {
       }
     }
     const changed = q.markExpired.run(row.id).changes > 0;
-    if (changed) onChange();
+    if (changed) {
+      onChange();
+      onRetired(q.get.get(row.id), { activity });
+    }
     return { ok: true, callsign: callsignOf(row.session_id) ?? null };
   }
   function expireOrphans() {
     let changed = false;
     for (const r of q.pending.all()) {
-      if (HOLD_KINDS.has(r.kind) && !holds.has(r.id)) {
-        if (q.markExpired.run(r.id).changes) changed = true;
+      if (!HOLD_KINDS.has(r.kind) || holds.has(r.id)) continue;
+      if (safeParse(r.payload_json)?.rearmed === true) {
+        if (Date.now() - r.created_at >= rearmGraceMs && recycleRearm(r.id)) changed = true;
+        continue;
+      }
+      if (q.markExpired.run(r.id).changes) {
+        changed = true;
+        onRetired(q.get.get(r.id));
       }
     }
     if (changed) onChange();
@@ -4380,6 +4550,7 @@ function createQuestions(db2, {
   }
   function expireAllForSession(sessionId, { includeFreeform = false } = {}) {
     let expired = 0;
+    const retired = [];
     for (const r of q.pendingBySession.all(sessionId)) {
       if (!includeFreeform && !HOLD_KINDS.has(r.kind)) continue;
       const h = releaseHold(r.id);
@@ -4389,26 +4560,40 @@ function createQuestions(db2, {
         } catch {
         }
       }
-      if (q.markExpired.run(r.id).changes) expired++;
+      cancelRearm(r.id);
+      if (q.markExpired.run(r.id).changes) {
+        expired++;
+        retired.push(r.id);
+      }
     }
+    for (const [id, m] of [...rearmById]) {
+      if (!m.timer) continue;
+      if (q.get.get(id)?.session_id === sessionId) cancelRearm(id);
+    }
+    for (const id of retired) onRetired(q.get.get(id));
     if (expired) onChange();
     return expired;
   }
   function pendingOf(sessionId) {
     return q.pendingBySession.all(sessionId);
   }
+  function isHeld(id) {
+    return holds.has(id);
+  }
   function listForState() {
     return [...q.pending.all(), ...q.resolved.all()].map((r) => {
       const plan_id = planIdFor(r.id);
+      const payload = safeParse(r.payload_json);
+      const grace = payload?.rearm_pending === true ? rearmById.get(r.id)?.armedAt : void 0;
       return {
         id: r.id,
         kind: r.kind,
         session_id: r.session_id,
         callsign: callsignOf(r.session_id),
-        payload: safeParse(r.payload_json),
+        payload,
         status: r.status,
         created_at: r.created_at,
-        expires_at: r.expires_at,
+        expires_at: grace != null ? grace + rearmGraceMs : r.expires_at,
         answered_at: r.answered_at,
         answer: safeParse(r.answer_json),
         held: holds.has(r.id),
@@ -4434,6 +4619,7 @@ function createQuestions(db2, {
     expireOrphans,
     expireAllForSession,
     pendingOf,
+    isHeld,
     listForState
   };
 }
@@ -5819,6 +6005,18 @@ function createStatements(db2) {
       VALUES (?, ?, ?, ?, ?, ?, ?, 'proposed')`),
     getPlan: db2.prepare("SELECT * FROM plans WHERE plan_id = ?"),
     planByQuestion: db2.prepare("SELECT * FROM plans WHERE question_id = ? ORDER BY plan_id DESC LIMIT 1"),
+    // In-terminal plan settlement (plan lifecycle contract, UX 2.2):
+    // settleTerminalPlan is the status flip, guarded to 'proposed' so a plan
+    // the board already answered/marked/archived keeps its verdict;
+    // pendingTerminalPlans backs the activity gate — 'proposed' plans whose
+    // ExitPlanMode question is no longer pending, awaiting the session's next
+    // activity event to prove the human decided in the terminal.
+    settleTerminalPlan: db2.prepare(`UPDATE plans SET status = 'handled-in-terminal'
+      WHERE plan_id = ? AND status = 'proposed'`),
+    pendingTerminalPlans: db2.prepare(`SELECT p.* FROM plans p
+      LEFT JOIN questions qq ON qq.id = p.question_id
+      WHERE p.session_id = ? AND p.status = 'proposed'
+        AND (qq.id IS NULL OR qq.status != 'pending')`),
     plansForState: db2.prepare(`SELECT * FROM plans WHERE status != 'archived'
       ORDER BY created_at DESC, plan_id DESC LIMIT 20`),
     setPlanStatus: db2.prepare("UPDATE plans SET status = ? WHERE plan_id = ?"),
@@ -5957,6 +6155,7 @@ function claudeEnvArgvPrefix(port, home, { keep = [] } = {}) {
     "FLEETDECK_AGENTS_POLL_MS",
     "FLEETDECK_HOLD_MS",
     "FLEETDECK_STALE_MS",
+    "FLEETDECK_REARM_GRACE_MS",
     "FLEETDECK_NUDGE_MS",
     "FLEETDECK_WATCH_MAX_MS",
     "FLEETDECK_WATCH_POLL_MS",
@@ -6882,7 +7081,8 @@ var ALLOWED_KEYS = [
   "gateway_auth_style",
   "gateway_token",
   "gateway_model_discovery",
-  "gateway_default"
+  "gateway_default",
+  "hold_ms"
 ];
 var GATEWAY_TOKEN_MAX = 4096;
 function namedError2(status, message) {
@@ -7033,6 +7233,25 @@ function createSettings(ctx) {
     }
     return out;
   }
+  function validateHoldMs(value) {
+    if (value == null) return null;
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+      throw namedError2(400, "hold_ms must be a number of milliseconds or null");
+    }
+    return String(Math.trunc(value));
+  }
+  function resolveHoldMsRaw() {
+    return readSetting("hold_ms");
+  }
+  function resolveHoldMsSetting() {
+    const env = process.env.FLEETDECK_HOLD_MS;
+    if (Number.isFinite(Number(env)) && Number(env) > 0) {
+      return { value: resolveHoldMs(), source: "env" };
+    }
+    const stored = readSetting("hold_ms");
+    if (stored != null) return { value: resolveHoldMs({}, resolveHoldMsRaw), source: "override" };
+    return { value: resolveHoldMs({}), source: "default" };
+  }
   function validateGatewayBaseUrl(value) {
     if (typeof value !== "string" || !value) throw namedError2(400, "gateway_base_url must be a URL or null");
     if (CONTROL_RE2.test(value)) throw namedError2(400, "gateway_base_url must not contain NUL or control characters");
@@ -7142,6 +7361,10 @@ function createSettings(ctx) {
       prepare: (v) => validateRepoSetup(v),
       commit: (prepared) => q.setSetting.run("repo_setup", prepared == null ? null : JSON.stringify(prepared), Date.now())
     },
+    hold_ms: {
+      prepare: (v) => validateHoldMs(v),
+      commit: (v) => q.setSetting.run("hold_ms", v ?? null, Date.now())
+    },
     gateway_base_url: {
       prepare: (v) => v == null ? null : validateGatewayBaseUrl(v),
       commit: (v) => q.setSetting.run("gateway_base_url", v ?? null, Date.now())
@@ -7210,6 +7433,7 @@ function createSettings(ctx) {
       browse_root: browseRootChoice(),
       fav_dirs: resolveFavDirs(),
       repo_setup: resolveRepoSetup(),
+      hold_ms: resolveHoldMsSetting(),
       // MASKED by construction — see resolveGateway. Never inline the raw
       // gateway_token row here: this object is broadcast, not returned.
       gateway: resolveGateway()
@@ -7222,7 +7446,8 @@ function createSettings(ctx) {
     persistRepoTransport,
     persistRepoDefaultOrg,
     resolveGateway,
-    resolveGatewayEnv
+    resolveGatewayEnv,
+    resolveHoldMsRaw
   };
 }
 
@@ -8418,6 +8643,12 @@ function createPlans(ctx) {
       const via = body?.via?.trim() ? body.via.trim().slice(0, 200) : null;
       q.setPlanExecuted.run(via, p.plan_id);
       tick(`\u{1F4DA} plan #${p.plan_id} (${p.callsign ?? p.session_id}) marked executed${via ? ` via ${via}` : ""}`);
+      if (p.question_id != null) {
+        const qq = ctx.questions?.dismiss?.(p.question_id, { activity: true });
+        if (qq?.ok && !qq.already) {
+          tick(`\u{1F4DA} planner hold for plan #${p.plan_id} retired \u2014 question dismissed`);
+        }
+      }
     } else {
       if (p.status === "archived") {
         return { status: 409, body: { ok: false, err: "plan is already archived" } };
@@ -8446,6 +8677,13 @@ var SETUP_CMD_MAX2 = 2e3;
 var SETUP_CONTROL_RE2 = /[\x00-\x09\x0b-\x1f\x7f]/;
 var STALL_DETAIL_MAX = 2e3;
 var STALL_DETAIL_LINES = 18;
+var SPAWN_REASON_MAX = 300;
+function spawnFailureReason(err, fallback = "internal error") {
+  const raw = String(err?.message ?? err ?? "").trim();
+  if (!raw) return fallback;
+  const oneLine = redactGitText(raw.replace(/\r/g, "")).replace(/\n+/g, " ").trim();
+  return oneLine.length > SPAWN_REASON_MAX ? oneLine.slice(0, SPAWN_REASON_MAX) : oneLine;
+}
 function stallDiagnosticExcerpt(screen, { secrets = [] } = {}) {
   if (typeof screen !== "string" || !screen) return null;
   const lines = screen.replace(/\r/g, "").replace(/[\x00-\x09\x0b-\x1f\x7f]/g, "").split("\n").map((line) => line.replace(/\s+$/g, ""));
@@ -9019,11 +9257,20 @@ function createSpawns(ctx) {
       const session_id2 = randomUUID2();
       const spawn_id2 = randomUUID2();
       const initialNote = target.mode === "clone" ? `cloning ${target.repo_name}\u2026` : `preparing ${body.branch}\u2026`;
-      const c2 = createSpawnedCard(session_id2, targetPath, body?.prompt, {
-        repo_name: target.repo_name,
-        branch: body.branch,
-        note: initialNote
-      });
+      let c2;
+      try {
+        c2 = createSpawnedCard(session_id2, targetPath, body?.prompt, {
+          repo_name: target.repo_name,
+          branch: body.branch,
+          note: initialNote
+        });
+      } catch (err) {
+        releaseCloneSlot();
+        return {
+          status: 500,
+          body: { ok: false, reason: `could not create the spawn card: ${spawnFailureReason(err)}` }
+        };
+      }
       const callsign2 = c2.callsign;
       const releaseTarget = claimTarget(targetPath, callsign2);
       const tmux_session2 = tmuxAdapter.sessionName(port);
@@ -10041,7 +10288,14 @@ function createEvents(ctx) {
     findClearedPredecessor,
     succeedSession,
     succeedForwardFromClear,
-    touchRepo
+    touchRepo,
+    // UX 2.2: the activity gate for in-terminal plan decisions. Fires at the
+    // two ACTIVITY hook endpoints (UserPromptSubmit = turn boundary,
+    // PostToolUse = a tool call completed): any of this session's plans still
+    // 'proposed' whose question is no longer pending flips to
+    // 'handled-in-terminal'. Never fired at Stop/Notification/SessionEnd —
+    // none of those proves the human decided anything in the terminal.
+    settleTerminalPlans
   } = ctx;
   function applyEvent(ev) {
     const sid = ev.session_id || "unknown";
@@ -10268,6 +10522,7 @@ function createEvents(ctx) {
     applyEvent({ ...ev, hook_event_name: "UserPromptSubmit" });
     q.setBlocked.run(0, sid);
     questions.expireOnActivity(sid);
+    settleTerminalPlans(sid);
     const box = drainMail(sid);
     if (!box.length) return {};
     onMutate();
@@ -10282,6 +10537,7 @@ function createEvents(ctx) {
     const eventName = ev.hook_event_name || "PostToolUse";
     const { conflict } = applyEvent({ ...ev, hook_event_name: eventName });
     questions.expireOnActivity(ev.session_id || "unknown", { toolName: ev.tool_name, toolInput: ev.tool_input });
+    settleTerminalPlans(ev.session_id || "unknown");
     if (!conflict) return {};
     return {
       hookSpecificOutput: {
@@ -10898,7 +11154,9 @@ var CALLSIGNS = ["falcon", "otter", "raven", "lynx", "orca", "wren", "viper", "h
 function createCore(db2, {
   port = 4711,
   home = process.env.FLEETDECK_HOME || "",
-  holdMs = resolveHoldMs(),
+  // The default defers: q doesn't exist until createStatements runs below, so
+  // the hold_ms settings row is threaded in after (see the questions wiring).
+  holdMs = null,
   tmuxAdapter = spawn_exports,
   // Daemon version, threaded from fleetd.mjs's package.json read so the
   // snapshot can tell the board which build is serving it (upgrade-takeover
@@ -10932,8 +11190,40 @@ function createCore(db2, {
     return tmuxAdapter.exactWindowTarget ? tmuxAdapter.exactWindowTarget(port, win.window) : win.window_id;
   }
   const { q, updateSession } = createStatements(db2);
+  function planRetired(row, { activity = false } = {}) {
+    if (!row || !activity) return;
+    const p = q.planByQuestion.get(row.id);
+    if (!p || questions.isHeld(row.id)) return;
+    if (q.settleTerminalPlan.run(p.plan_id).changes) {
+      tick(`\u{1F4DA} plan #${p.plan_id} (${p.callsign ?? p.session_id}) handled in terminal`);
+      onMutate();
+    }
+  }
+  function settleTerminalPlans(sid) {
+    let changed = false;
+    for (const p of q.pendingTerminalPlans.all(sid)) {
+      if (p.question_id != null && questions.isHeld(p.question_id)) continue;
+      if (q.settleTerminalPlan.run(p.plan_id).changes) {
+        changed = true;
+        tick(`\u{1F4DA} plan #${p.plan_id} (${p.callsign ?? p.session_id}) handled in terminal`);
+      }
+    }
+    if (changed) onMutate();
+  }
   const questions = createQuestions(db2, {
-    holdMs,
+    // UX 2.1: FLEETDECK_HOLD_MS stays the override; the hold_ms settings row
+    // is the board-tunable fallback (read live from SQLite here, at boot).
+    holdMs: holdMs ?? resolveHoldMs(process.env, () => q.getSetting.get("hold_ms")?.value ?? null),
+    // UX 2.1: and re-resolved per hold creation, so a hold_ms settings write
+    // steers NEW holds without a daemon restart. The fallback re-reads the row
+    // live (settings.mjs's resolveHoldMsRaw, threaded through ctx below — the
+    // arrow defers the lookup until the first hold, by which time createSettings
+    // has run).
+    resolveHoldWindow: () => resolveHoldMs(process.env, () => ctx.resolveHoldMsRaw?.() ?? null),
+    // UX 2.1 re-arm: how long after a hold expiry with NO session activity the
+    // question re-raises as a mail-delivered card (0 disables — some existing
+    // test suites would otherwise meet an unexpected second card).
+    rearmGraceMs: envInt("FLEETDECK_REARM_GRACE_MS", 3e3, { min: 0 }),
     mail: (sid, from, text) => ctx.mail(sid, from, text),
     tick: (msg) => tick(msg),
     callsignOf: (sid) => q.getSession.get(sid)?.callsign ?? null,
@@ -10950,7 +11240,11 @@ function createCore(db2, {
       const status = behavior === "allow" ? "approved" : behavior === "capture" ? "captured" : "rejected";
       q.setPlanStatus.run(status, p.plan_id);
       tick(`\u{1F4DA} plan #${p.plan_id} (${p.callsign ?? p.session_id}) ${status}`);
-    }
+    },
+    // UX 2.2: the retirement seam — every unanswered retirement of a
+    // plan-linked question flows through planRetired (defined above; same-tick
+    // settle only when the retire itself was session activity).
+    onRetired: (row, opts) => planRetired(row, opts)
   });
   const modelMemo = /* @__PURE__ */ new Map();
   function stampTranscriptFloor(sid, transcriptPath) {
@@ -11166,10 +11460,12 @@ function createCore(db2, {
     q.insertEvent.run(sid, hookEvent ?? null, toolName ?? null, note ?? null, Date.now());
   }
   const ctx = {
+    // holdMs resolves WITH the settings fallback at the questions wiring above
+    // (q didn't exist at parameter-default time); ctx carries that same value.
     db: db2,
     port,
     home,
-    holdMs,
+    holdMs: holdMs ?? resolveHoldMs(process.env, () => q.getSetting.get("hold_ms")?.value ?? null),
     t0,
     version: version2,
     STALE_MS,
@@ -11190,6 +11486,7 @@ function createCore(db2, {
     onMutate,
     tmuxAdapter,
     questions,
+    settleTerminalPlans,
     findScopedWindow,
     scopedPaneTarget,
     tick,
@@ -12350,7 +12647,7 @@ function createHttp(core2, {
               );
               core2.spawn(ev).then((out) => json(res, out.status, out.body)).catch((err) => {
                 console.error("fleetd spawn error:", err);
-                json(res, 500, { ok: false, reason: "internal" });
+                json(res, 500, { ok: false, reason: spawnFailureReason(err) });
               });
               return;
             }

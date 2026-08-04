@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url';
 // 0.7.1: one validator for the custom-name suffix, shared with the `name`
 // orchestrator command so the REST route and the text command can never drift.
 import { validateNameSuffix } from './helpers.mjs';
+import { spawnFailureReason } from './spawns.mjs';
 import { WebSocketServer } from 'ws';
 import { createTermBridge } from './termbridge.mjs';
 
@@ -933,7 +934,16 @@ export function createHttp(core, {
                 .then(out => json(res, out.status, out.body))
                 .catch(err => {
                   console.error('fleetd spawn error:', err);
-                  json(res, 500, { ok: false, reason: 'internal' });
+                  // UX 2.3 option 4 — a spawn that escapes derive with a THROW
+                  // (not a classified {status, body}) used to answer bare
+                  // 'internal', the one spawn failure that said nothing at all.
+                  // spawnFailureReason bounds it to one redacted line — the
+                  // same register as a card note, message-only, never a stack.
+                  // A failure after the 202 was handed out never reaches here:
+                  // it lands in the detached chain's catch, which logs and
+                  // tombstones instead (spawns.mjs), and this json() then
+                  // harmlessly no-ops on the ended response.
+                  json(res, 500, { ok: false, reason: spawnFailureReason(err) });
                 });
               return;
             }

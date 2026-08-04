@@ -11,6 +11,8 @@ a { color: var(--act); } a:hover { opacity: .85; }
 @keyframes fdRipple { 0% { box-shadow:0 0 0 0 rgba(255,107,84,.55); } 100% { box-shadow:0 0 0 14px rgba(255,107,84,0); } }
 @keyframes fdSlideIn { from { opacity:0; transform:translateY(-6px); } to { opacity:1; transform:none; } }
 @keyframes fdDrawer { from { transform:translateX(24px); opacity:0; } to { transform:none; opacity:1; } }
+/* one-shot amber ping — "the window you asked for is THIS one" (see .fd-termfloat.attn) */
+@keyframes fdTermAttn { 0%,100% { box-shadow:0 24px 60px rgba(0,0,0,.4); } 35% { box-shadow:0 0 0 3px var(--act), 0 0 34px 6px var(--act-bg), 0 24px 60px rgba(0,0,0,.4); } }
 
 ::-webkit-scrollbar { width:8px; height:8px; }
 ::-webkit-scrollbar-thumb { background:var(--border); border-radius:4px; }
@@ -94,6 +96,10 @@ a { color: var(--act); } a:hover { opacity: .85; }
 .fd-empty .t2 { font-size: 15px; color: var(--dim); max-width: 380px; text-align: center; text-wrap: pretty; }
 .fd-empty .cmd { font-family: var(--font-data); font-size: 13px; background: var(--code); border: 1px solid var(--border); border-radius: 8px; padding: 12px 18px; color: var(--ok); }
 .fd-empty .cmd .c { color: var(--faint); }
+/* the empty board's two doors: spawn (hidden when FLEETDECK_SPAWN=off) + help */
+.fd-empty .fd-emptycta { display: flex; align-items: center; gap: 10px; }
+.fd-empty .fd-emptycta .fd-ctabtn { padding: 7px 16px; font-size: 12px; }
+.fd-empty .fd-emptycta .fd-ghostbtn { padding: 7px 16px; font-size: 12px; }
 
 /* repo chips */
 .fd-repochips { flex: none; display: flex; align-items: center; gap: 6px; padding: 12px 16px 0; flex-wrap: wrap; }
@@ -265,6 +271,8 @@ a.fd-remotechip.link { text-decoration: none; }
 .fd-kind.freeform { color: var(--ok); background: var(--free-bg); }
 .fd-kind.elicitation { color: var(--m-fable); background: var(--m-fable-bg); }
 .fd-kind.plan { color: var(--m-quill); background: var(--m-quill-bg); } /* v1.3 ExitPlanMode */
+/* 2.1 re-armed question — the hold window expired; the answer is mail now */
+.fd-kind.rearmed { color: var(--hazard); background: none; border: 1px solid var(--hazard); }
 .fd-q .repo { font-family: var(--font-data); font-size: 10px; color: var(--faint); border: 1px solid var(--border); border-radius: var(--r-chip); padding: 0 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .fd-q .age { font-family: var(--font-data); font-size: var(--fs-micro); color: var(--faint); white-space: nowrap; }
 .fd-q .title { font-size: var(--fs-title); font-weight: 600; line-height: 1.4; text-wrap: pretty; overflow-wrap: anywhere; }
@@ -280,6 +288,12 @@ a.fd-remotechip.link { text-decoration: none; }
 .fd-q .status.act { color: var(--act); }
 .fd-q .status.hazard { color: var(--hazard); }
 .fd-q .micro { font-family: var(--font-data); font-size: 10px; color: var(--faint); }
+/* 2.1 focus-terminal — on a DEAD card (expired/answered) this is navigation,
+   not a decision, so it borrows the drawer's "▣ Live terminal" ghost language
+   and stays full-strength inside .fd-q.done's fade: a button you can't read
+   is a button you can't find, which is the defect being fixed. */
+.fd-q .fd-openterm { align-self: flex-start; padding: 5px 11px; font-size: 12px; }
+.fd-q.done .fd-openterm { opacity: 1; }
 
 .fd-ring { position: relative; width: 26px; height: 26px; flex: none; display: flex; align-items: center; justify-content: center; }
 .fd-ring svg { position: absolute; inset: 0; transform: rotate(-90deg); }
@@ -462,7 +476,8 @@ textarea.fd-input { font-family: var(--font-ui); font-size: 13px; resize: none; 
 }
 .fd-check { display: flex; align-items: center; gap: 8px; font-size: var(--fs-body); color: var(--text); cursor: pointer; }
 .fd-check input[type="checkbox"] { accent-color: var(--act); margin: 0; }
-.fd-spawnerr { font-family: var(--font-data); font-size: 11.5px; color: var(--hazard); overflow-wrap: anywhere; }
+.fd-spawnerr { font-family: var(--font-data); font-size: 11.5px; color: var(--hazard); overflow-wrap: anywhere; white-space: pre-wrap; }
+.fd-spawnhint { font-family: var(--font-data); font-size: 10px; color: var(--faint); line-height: 1.5; flex: 1; min-width: 0; overflow-wrap: anywhere; }
 
 /* pane / stale chips on session cards */
 .fd-panechip {
@@ -633,6 +648,25 @@ textarea.fd-input { font-family: var(--font-ui); font-size: 13px; resize: none; 
 .fd-clearstrip.err { background: var(--hazard-bg); border-bottom-color: var(--hazard); }
 .fd-clearstrip.err .hd { color: var(--hazard); }
 
+/* 2.3 — spawn-failure banner: a card just tombstoned "spawn failed:" anywhere
+   in the fleet. Clearstrip's hazard register, but flex-wrap so the expanded
+   git output can drop to its own full-width line, and the note may wrap (a
+   distilled fatal: line plus a callsign routinely outgrows one strip line). */
+.fd-spawnfailstrip {
+  flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 7px 16px;
+  background: var(--hazard-bg); border-bottom: 1px solid var(--hazard);
+  font-family: var(--font-data); font-size: 12px; color: var(--dim);
+  animation: fdSlideIn .3s ease-out 1;
+}
+.fd-spawnfailstrip .hd { font-weight: 600; white-space: nowrap; color: var(--hazard); }
+.fd-spawnfailstrip .msg { color: var(--text); min-width: 0; overflow-wrap: anywhere; }
+.fd-spawnfailstrip pre {
+  flex-basis: 100%; margin: 2px 0 4px; padding: 9px 10px; max-height: 200px; overflow: auto;
+  white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.45 var(--font-data);
+  color: var(--text); background: var(--code);
+  border: 1px solid var(--hazard); border-radius: var(--r-ctl);
+}
+
 /* ============ v1.3 — rendered plan markdown (tiny local renderer) ============ */
 .fd-md { font-size: var(--fs-body); line-height: 1.5; color: var(--text); min-width: 0; }
 .fd-md h1, .fd-md h2, .fd-md h3 { font-family: var(--font-data); font-weight: 600; margin: 12px 0 4px; letter-spacing: .4px; }
@@ -705,6 +739,10 @@ textarea.fd-input { font-family: var(--font-ui); font-size: 13px; resize: none; 
 .fd-pstatus.rejected { color: var(--hazard); background: var(--hazard-bg); }
 .fd-pstatus.executed { color: var(--m-comet); background: var(--m-comet-bg); }
 .fd-pstatus.archived { color: var(--faint); background: var(--border-soft); }
+/* decided in the terminal, not on the board — muted like archived, since the
+   board recorded no verdict of its own (v2.7 plan reconciliation) */
+.fd-pstatus.handled-in-terminal { color: var(--faint); background: var(--border-soft); }
+.fd-plan .phead .fd-planlive { font-family: var(--font-data); font-size: 10px; color: var(--ok); flex: none; white-space: nowrap; }
 .fd-plan .pbody { padding: 0 11px; }
 .fd-plan .pbody .fd-md {
   max-height: 300px; overflow-y: auto; background: var(--surface);
@@ -720,6 +758,8 @@ textarea.fd-input { font-family: var(--font-ui); font-size: 13px; resize: none; 
 .fd-planbtn:disabled { opacity: .5; cursor: default; }
 .fd-planbtn.exec { background: var(--act); color: var(--act-ink); border-color: var(--act); font-weight: 600; }
 .fd-planbtn.exec:hover { opacity: .9; }
+.fd-plan .execwrap { display: inline-flex; align-items: baseline; gap: 7px; flex: none; }
+.fd-plan .execwrap .micro { font-family: var(--font-data); font-size: 10px; color: var(--faint); }
 .fd-planbtn.arch:hover { border-color: var(--hazard); color: var(--hazard); }
 .fd-plan .status { font-family: var(--font-data); font-size: 11px; color: var(--faint); min-width: 0; overflow-wrap: anywhere; }
 .fd-plan .status.ok { color: var(--ok); }
@@ -762,6 +802,11 @@ textarea.fd-input { font-family: var(--font-ui); font-size: 13px; resize: none; 
 /* minimized: stays MOUNTED (socket + screen survive) but takes no space and no
    keys (TermPane gets live=false, xterm stdin off). */
 .fd-termfloat.min { display: none; }
+/* 2.1 — "Open terminal" for a session whose float is ALREADY open changes no
+   state (same spawnId, same key, no remount), so the request needs its own
+   visible answer: TermWindow pulses once per mount, and an App key that varies
+   per request (spawnId:nonce) replays it by remounting. */
+.fd-termfloat.attn { animation: fdSlideIn .2s ease-out 1, fdTermAttn 1s ease-out 1; }
 .fd-termgrab { cursor: grab; user-select: none; touch-action: none; }
 .fd-termgrab:active { cursor: grabbing; }
 .fd-winbtn {

@@ -23,10 +23,16 @@ const HOME = resolveHome();
 const BASE = resolveBase(resolvePort());
 
 // Hook events whose daemon response parks until the board answers (the
-// hold-open relay in http.mjs). Their watchdog must sit just inside the 65s
-// hooks.json timeout; everything else mirrors the 3s telemetry hooks.
+// hold-open relay in http.mjs). THE LOCKSTEP INVARIANT: the daemon's hold
+// window (questions.mjs resolveHoldMs, default 90 s, clamp ceiling 110 s)
+// must stay UNDER this watchdog, and this watchdog must stay UNDER the
+// hooks.json `timeout` for these three events (120 s) — otherwise a board
+// answer lands on a dead socket and the hook fails open. All three places
+// carry this comment; change them together. The shim does not know the
+// daemon's configured window, so the watchdog tracks the hooks.json timeout
+// (its own hard ceiling) with margin.
 const HOLD_EVENTS = new Set(['PermissionRequest', 'Elicitation', 'AskUserQuestion']);
-const WATCHDOG_MS = HOLD_EVENTS.has(EVENT) ? 63_000 : 2_500;
+const WATCHDOG_MS = HOLD_EVENTS.has(EVENT) ? 115_000 : 2_500;
 const watchdog = setTimeout(() => { try { process.stdout.write('{}'); } catch { /* gone */ } process.exit(0); }, WATCHDOG_MS);
 
 // The token the shim exists to present. Absent only in a broken/odd install —

@@ -20,7 +20,7 @@ Run more than two or three Claude Code sessions and you lose track of them: whic
 
 - **Live status, derived not self-reported.** `queued → working → verifying → needs-you → idle → offline`, computed from hook telemetry. The model badge is read from the session transcript, so it follows a mid-session `/model` switch instead of freezing on whatever the session launched with.
 - **Conflict radar.** Two sessions touching the same file within 30 minutes get warned in context, and the board flashes hazard-red. Worktree-aware: the same file edited in two worktrees of one repo is a merge conflict surfacing early.
-- **Needs-you rail.** Permission prompts, multiple-choice questions, MCP forms and trailing questions become cards you answer from the board. The terminal prints `⎿ Allowed by PermissionRequest hook` and continues.
+- **Needs-you rail.** Permission prompts, multiple-choice questions, MCP forms and trailing questions become cards you answer from the board. The terminal prints `⎿ Allowed by PermissionRequest hook` and continues. Outlast the 90-second answer window and the question **re-arms**: a fresh card (badged RE-ARMED) whose answer is sent as a message, delivered at the next turn boundary — it cannot unblock an agent parked on its own prompt, and never pretends to.
 - **Mail between sessions.** Message one session, a repo, or everyone. Delivered at the next turn boundary; idle sessions are woken by a small watcher, usually within seconds.
 - **Routing without a model call.** `assign auto: fix the flaky test` picks a candidate — idle first, least buried, right repo — with a SQL query. The core makes zero model calls.
 - **Spawning.** `+ Spawn` starts a fresh interactive `claude` in a daemon-owned tmux window. Watch it on the board, attach to the pane, or kill it.
@@ -197,6 +197,14 @@ Claude Code does not keep a session id across a `/clear` — it ends the old ses
 
 **Upgrading an existing fleet** is automatic as of 0.7.0: a new session's SessionStart hook notices an older running daemon, asks it to step down (SIGTERM, graceful; state is SQLite, nothing is lost), and boots its own newer build. Strictly newer, never a downgrade, and it fails open onto the running daemon if the handoff looks uncertain. A manual restart is always safe.
 
+## The plan lifecycle
+
+Every ExitPlanMode prompt lands in the PLANS library the moment it is raised — the plan is captured before the hold even parks, so a crash mid-decision never loses it. From there exactly one decision owns each plan:
+
+- **Answer on the board.** The NEEDS YOU card's Approve / Capture & release / Deny flips the plan to `approved` / `captured` / `rejected` and resolves the parked hook with the matching wire decision. Capture also mails the planner the pinned "do not execute" notice.
+- **Decide in the terminal.** If the hold lapses (or the card is dismissed) and you approve or deny at the agent's own prompt instead, the daemon can't see the choice itself — but it can see what it causes. The next activity from that session (a new prompt, a completed tool call) settles the plan to `handled-in-terminal`, and the library stops offering Execute/Assign for it. A retirement that *is* activity — the turn boundary that retires the prompt — settles in the same tick. **Expiry alone never settles anything**: a planner killed mid-hold keeps its plan at `proposed`, which is still the truth — nobody decided.
+- **Execute or archive from the library.** `proposed` / `approved` / `captured` plans can be marked `executed` (optionally recording `via`) — and marking executed while the planner's own question is still parked dismisses that question, so the planner never sits on a stale prompt for a plan another worker now owns. `rejected` / `handled-in-terminal` / `executed` plans are terminal: they can't be executed again (the mark endpoint 409s), but like every non-archived status they can be `archived` off the list. The row stays in SQLite either way.
+
 ## Retention
 
 Cards do not pile up, and nothing is deleted:
@@ -287,6 +295,14 @@ For moving between your own machines, **Tailscale beats mDNS**: a stable private
 
 All optional; the defaults are what we run.
 
+### The question answer window (and what happens after)
+
+A permission prompt, choice question or MCP form parks the hook while the board card waits for your answer — default 90 s (`FLEETDECK_HOLD_MS`, or the `hold_ms` setting via `POST /api/settings`; the env var wins). Three numbers move in lockstep and must never cross: daemon hold (default 90 s, clamped ≤110 s) < hook-shim watchdog (115 s, `scripts/fleet-hook.mjs`) < hooks.json `timeout` (120 s). Crossing them means your answer lands on a dead socket.
+
+When the window lapses, the hook fails open `{}` and the agent's own terminal prompt owns the decision — nothing is ever auto-answered. If the session then stays silent for a couple of seconds (still parked), the daemon **re-arms** the question as a fresh card, up to twice, stopping permanently on any activity from that session. A re-armed card is honest about what it is: the live window is gone, so its answer goes as a message delivered at the next turn boundary — it does not unblock an agent parked on stdin.
+
+**Mixed-version caveat.** Hooks ship inside the plugin; the daemon updates independently. A session started under an OLD plugin (65 s hook timeout) paired with a NEW daemon (90 s hold) auto-releases its prompts at ~63 s — the shim's own watchdog answers `{}` first, so a board answer past that point can't reach that session. That's the fail-open path working as designed, and the re-armed card is the recovery: answer it and the agent gets your decision as a message at its next turn boundary.
+
 | Variable | Default | What it does |
 | --- | --- | --- |
 | `FLEETDECK_PORT` | `4711` | Daemon port. The hook shims honor it — read the one-port rule above before changing it. |
@@ -304,7 +320,7 @@ All optional; the defaults are what we run.
 | `FLEETDECK_MDNS_NAME` | `fleetdeck` | The advertised name, i.e. `fleetdeck.local`. |
 | `FLEETDECK_SPAWN` | on | `off` disables spawning; the board hides every spawn control. |
 | `FLEETDECK_STALE_MS` | `600000` (10 min) | How long a working card runs without telemetry before it's badged stale. |
-| `FLEETDECK_HOLD_MS` | `50000` (50 s) | How long a question hook is held open awaiting a board answer. Clamped 250 ms–60 s, under the 65 s hook timeout. |
+| `FLEETDECK_HOLD_MS` | `90000` (90 s) | How long a question hook is held open awaiting a board answer. Clamped 250 ms–110 s — the lockstep invariant (hold < shim watchdog 115 s < hooks.json timeout 120 s) keeps a board answer off a dead socket. Also settable without a restart-env as the `hold_ms` setting (`POST /api/settings`); the env var is the override. |
 | `FLEETDECK_NUDGE_MS` | `8000` (8 s) | Grace before a silent new pane gets its one bring-up Enter. Exactly once, and never into a folder-trust or MCP-approval dialog. |
 | `FLEETDECK_SPAWN_REGISTER_MS` | `90000` (90 s) | How long a spawned pane may run without phoning home before it's flagged `stalled` — loudly, never auto-respawned. |
 | `FLEETDECK_PANE_MAIL_GRACE_MS` | `1500` (1.5 s) | Head start given to the watcher before mail is typed into an owned pane. |

@@ -17,10 +17,19 @@
 //                           delivered at its next turn boundary
 //   {behavior:"deny"}    -> plan status 'rejected',  held response = bare deny
 //   hold expiry          -> plan stays 'proposed' (terminal chooser owns it)
+// IN-TERMINAL SETTLEMENT (UX 2.2): a plan question retired WITHOUT a board
+// answer flips its 'proposed' plan to the terminal status
+// 'handled-in-terminal' once the session shows ACTIVITY — the human decided
+// in the terminal and the agent moved on. A retirement that IS activity (the
+// turn-boundary expireOnActivity path) settles in the same tick; a bare
+// timer expiry with NO subsequent activity settles NEVER (a planner killed
+// mid-hold must not be marked).
 // LIBRARY: GET /state `plans` (non-archived, newest first, cap 20). POST
 // /api/plans/:id/mark {status} allows proposed|approved|captured -> executed
-// (optional {via} recorded) and any non-archived -> archived; 404 unknown,
-// 409 bad transition.
+// (optional {via} recorded) and any non-archived (incl. handled-in-terminal)
+// -> archived; 404 unknown, 409 bad transition. BUG-041 (daemon half):
+// marking executed while the plan's question is still PENDING dismisses that
+// question through the ordinary dismiss path (the held hook fails open).
 //
 // Coverage map (task brief bullets -> tests below):
 //   1. Capture-before-answer
@@ -40,6 +49,15 @@
 //        -> "mark: archived from each non-archived status ..." (also covers
 //           409 archived->executed and 409 rejected->executed as a bonus)
 //        -> "mark: 404 unknown plan id ..."
+//   6. In-terminal settlement (UX 2.2)
+//        -> "in-terminal: turn-boundary activity ..."
+//        -> "in-terminal: timer expiry then activity ..."
+//        -> "in-terminal: timer expiry with NO activity ..."
+//        -> "in-terminal: a plan question raised in the SAME turn ..."
+//        -> "in-terminal: board answer regression ..."
+//        -> "in-terminal: handled-in-terminal cannot be marked executed ..."
+//   7. BUG-041 daemon half
+//        -> "mark executed with the question still pending dismisses it ..."
 //
 // Fixture: tests/fixtures/exit-plan-mode.json — a PermissionRequest payload,
 // tool_name ExitPlanMode, tool_input.plan a realistic multi-line markdown
@@ -88,15 +106,27 @@ function questionPlanId(q) {
 }
 
 /** POST the ExitPlanMode fixture (held) and wait for its permission question
- * (kind 'permission', payload.tool_name === 'ExitPlanMode') to register in
- * /state. Returns {held (the pending fetch promise), q (the /state question
- * entry), payload (what was actually POSTed, for byte-identity checks)}. */
+ * (kind 'permission', payload.tool_name === 'ExitPlanMode', status pending)
+ * to register in /state. The finder takes the NEWEST pending match — tests
+ * that raise a second plan for the same session would otherwise re-find the
+ * first question's resolved row. `tool_input` in overrides is deep-merged
+ * one level over the fixture's (the shallow loadFixture merge would
+ * otherwise drop the plan text when a caller only needs to retitle the
+ * tool call). Returns {held (the pending fetch promise), q (the /state
+ * question entry), payload (what was actually POSTed, for byte-identity
+ * checks)}. */
 async function holdExitPlan(daemon, sid, cwd, holdMs, overrides = {}) {
-  const payload = loadFixture(EXIT_PLAN_FIXTURE, { session_id: sid, cwd }, overrides);
+  const merged = { ...overrides };
+  if (overrides.tool_input) {
+    merged.tool_input = { ...loadFixture(EXIT_PLAN_FIXTURE, { session_id: sid, cwd }).tool_input, ...overrides.tool_input };
+  }
+  const payload = loadFixture(EXIT_PLAN_FIXTURE, { session_id: sid, cwd }, merged);
   const held = postHook(daemon.baseUrl, 'PermissionRequest', payload, { token: daemon, timeout: holdMs + 5000 });
   const q = await waitUntil(async () => {
     const state = (await getJson(`${daemon.baseUrl}/state`)).json;
-    return questionsFor(state, sid, 'permission').find(x => x.payload?.tool_name === 'ExitPlanMode');
+    return questionsFor(state, sid, 'permission')
+      .filter(x => x.payload?.tool_name === 'ExitPlanMode' && x.status === 'pending')
+      .sort((a, b) => b.id - a.id)[0];
   }, { label: 'ExitPlanMode permission question to appear in /state' });
   return { held, q, payload };
 }
@@ -240,7 +270,10 @@ test('answer path: {behavior:"deny"} plainly denies the held hook; plan becomes 
   assert.equal(plan.status, 'rejected', '{behavior:"deny"} should move the plan to rejected');
 });
 
-test('answer path: an unanswered ExitPlanMode hold expires to {} and the plan stays proposed', async (t) => {
+test('answer path: an unanswered ExitPlanMode hold expires to {} and the plan stays proposed (no activity follows, so it must NEVER settle)', async (t) => {
+  // holdMs under the UX 2.1 re-arm floor keeps the expiry a single decisive
+  // event (a re-armed expiry would leave the row pending through the grace
+  // window and this test would need to wait it out).
   const holdMs = 1200;
   const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
   const cwd = scratchCwd();
@@ -257,6 +290,12 @@ test('answer path: an unanswered ExitPlanMode hold expires to {} and the plan st
   const elapsed = Date.now() - t0;
   assert.ok(Math.abs(elapsed - holdMs) <= 800, `hold should resolve within +/-800ms of ${holdMs}ms (took ${elapsed}ms)`);
   assert.deepEqual(heldRes.json, {}, 'expiry should resolve to {} same as any other permission hold');
+
+  // No activity may follow, or the UX 2.2 gate settles the plan — which is
+  // exactly what the dedicated in-terminal tests below assert. Wait out the
+  // re-arm grace floor (sub-floor holdMs disables re-arming, but the tick is
+  // cheap insurance) before reading the status.
+  await new Promise(r => setTimeout(r, 100));
 
   const state = (await getJson(`${daemon.baseUrl}/state`)).json;
   const plan = (state.plans || []).find(p => String(p.plan_id) === String(planId));
@@ -472,4 +511,232 @@ test('mark: 404 for an unknown plan id', async (t) => {
 
   const res = await postJson(`${daemon.baseUrl}/api/plans/does-not-exist-${randomUUID()}/mark`, { status: 'executed' });
   assert.equal(res.status, 404, `marking an unknown plan id should 404 (got ${res.status})`);
+});
+
+// ---------------------------------------------------------------------------
+// 6. In-terminal settlement (UX 2.2): a plan question retired WITHOUT a board
+// answer settles its 'proposed' plan to 'handled-in-terminal' once the
+// session shows ACTIVITY — never on bare timer expiry.
+// ---------------------------------------------------------------------------
+
+test('in-terminal: turn-boundary activity retires the question and settles the plan handled-in-terminal in the same tick', async (t) => {
+  // The real-world shape: the planner's ExitPlanMode hold expires to {}, the
+  // native terminal chooser owns the decision, the human approves there, and
+  // the agent's next turn (UserPromptSubmit) is the observable proof. The
+  // retire IS the activity, so no second event is needed.
+  const holdMs = 1000;
+  const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
+  const cwd = scratchCwd();
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+
+  const sid = randomUUID();
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon });
+  const { held } = await holdExitPlan(daemon, sid, cwd, holdMs);
+  const planId = plansFor((await getJson(`${daemon.baseUrl}/state`)).json, sid)[0]?.plan_id;
+  assert.ok(planId !== undefined, 'sanity: plan captured');
+  await held; // hold expires to {}; the terminal prompt owns the decision now
+
+  const state0 = (await getJson(`${daemon.baseUrl}/state`)).json;
+  assert.equal((state0.plans || []).find(p => String(p.plan_id) === String(planId))?.status, 'proposed',
+    'bare expiry must leave the plan proposed — no activity has been seen yet');
+
+  await postHook(daemon.baseUrl, 'UserPromptSubmit', loadFixture('user-prompt-submit', { session_id: sid, cwd }, { prompt: 'looks good, go' }), { token: daemon });
+
+  const state1 = (await getJson(`${daemon.baseUrl}/state`)).json;
+  const plan1 = (state1.plans || []).find(p => String(p.plan_id) === String(planId));
+  assert.equal(plan1?.status, 'handled-in-terminal',
+    `the turn boundary must settle the plan to handled-in-terminal within one snapshot refresh (got ${plan1?.status})`);
+  const q1 = questionsFor(state1, sid, 'permission').find(x => x.payload?.tool_name === 'ExitPlanMode');
+  assert.equal(q1?.status, 'expired', 'the question row retires as expired, not answered — nobody answered it from the board');
+});
+
+test('in-terminal: timer expiry THEN later PostToolUse activity settles handled-in-terminal (the deferred gate)', async (t) => {
+  const holdMs = 1000;
+  const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
+  const cwd = scratchCwd();
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+
+  const sid = randomUUID();
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon });
+  const { held } = await holdExitPlan(daemon, sid, cwd, holdMs);
+  const planId = plansFor((await getJson(`${daemon.baseUrl}/state`)).json, sid)[0]?.plan_id;
+  await held;
+
+  assert.equal(
+    (await getJson(`${daemon.baseUrl}/state`)).json.plans.find(p => String(p.plan_id) === String(planId))?.status,
+    'proposed', 'expiry alone is not a decision — the plan must wait for activity');
+
+  await postHook(daemon.baseUrl, 'PostToolUse', loadFixture('post-tool-use-edit', { session_id: sid, cwd }), { token: daemon });
+
+  const state = (await getJson(`${daemon.baseUrl}/state`)).json;
+  assert.equal((state.plans || []).find(p => String(p.plan_id) === String(planId))?.status, 'handled-in-terminal',
+    'the first activity event after expiry must settle the plan');
+});
+
+test('in-terminal: timer expiry with NO subsequent activity never settles — the plan stays proposed', async (t) => {
+  const holdMs = 900;
+  const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
+  const cwd = scratchCwd();
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+
+  const sid = randomUUID();
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon });
+  const { held } = await holdExitPlan(daemon, sid, cwd, holdMs);
+  const planId = plansFor((await getJson(`${daemon.baseUrl}/state`)).json, sid)[0]?.plan_id;
+  await held;
+
+  // Sit well past the expiry with NO hook activity from the session. A
+  // planner killed mid-hold looks exactly like this — marking it would be a
+  // lie the library then offers Execute/Assign against.
+  await new Promise(r => setTimeout(r, 1200));
+  const state = (await getJson(`${daemon.baseUrl}/state`)).json;
+  assert.equal((state.plans || []).find(p => String(p.plan_id) === String(planId))?.status, 'proposed',
+    'expiry with no activity must NEVER settle the plan (killed-planner guard)');
+});
+
+test('in-terminal: a plan question raised in the SAME turn (still pending, never parked) must NOT be flipped by the gate', async (t) => {
+  const holdMs = 60_000; // long window: no hold expires on its own in this test
+  const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
+  const cwd = scratchCwd();
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+
+  const sid = randomUUID();
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon });
+
+  // First plan: the human dismisses it on the board (retired unanswered,
+  // without session activity) — armed, awaiting the activity gate.
+  const first = await holdExitPlan(daemon, sid, cwd, holdMs);
+  const planId1 = plansFor((await getJson(`${daemon.baseUrl}/state`)).json, sid)[0]?.plan_id;
+  const disRes = await postJson(`${daemon.baseUrl}/api/questions/${first.q.id}/dismiss`, {});
+  assert.equal(disRes.status, 200);
+  assert.deepEqual((await first.held).json, {}, 'sanity: the dismissal failed the first hold open');
+
+  // A turn boundary arrives and the planner — in the SAME turn — raises a
+  // SECOND ExitPlanMode question. The hook order is deliberately
+  // UserPromptSubmit FIRST: the gate settles the dismissed plan at that
+  // boundary, and the second hold's row lands only when the CLI calls
+  // ExitPlanMode inside the new turn (its hookHoldQuestion runs applyEvent
+  // — activity — BEFORE the row insert and BEFORE the socket parks, so no
+  // activity-driven scan can ever see that plan as settleable). The second
+  // plan must stay proposed: its prompt has not been seen by anyone.
+  //
+  // tool_input gets a distinct command so the second question never
+  // coincides with the first one's identity anywhere identity is read.
+  const upsRes = await postHook(daemon.baseUrl, 'UserPromptSubmit', loadFixture('user-prompt-submit', { session_id: sid, cwd }, { prompt: 'looks good, one change' }), { token: daemon });
+  assert.equal(upsRes.status, 200);
+  const state1 = (await getJson(`${daemon.baseUrl}/state`)).json;
+  assert.equal((state1.plans || []).find(p => String(p.plan_id) === String(planId1))?.status, 'handled-in-terminal',
+    'the dismissed plan settles at the turn boundary');
+
+  const second = await holdExitPlan(daemon, sid, cwd, holdMs, { tool_input: { command: 'revise the plan' } });
+  const plansNow = plansFor((await getJson(`${daemon.baseUrl}/state`)).json, sid);
+  const planId2 = plansNow.find(p => String(p.plan_id) !== String(planId1))?.plan_id;
+  assert.ok(planId2 !== undefined, 'sanity: second plan captured');
+
+  const state = (await getJson(`${daemon.baseUrl}/state`)).json;
+  assert.equal((state.plans || []).find(p => String(p.plan_id) === String(planId2))?.status, 'proposed',
+    'the plan raised in the SAME turn must NOT be flipped — its prompt was never seen');
+  const q2 = questionsFor(state, sid, 'permission').find(x => x.id === second.q.id);
+  assert.equal(q2?.status, 'pending', 'the second question is still pending');
+  assert.equal(q2?.held, true, 'the second hold is still parked (its chooser never rendered)');
+
+  // clean up: answer the second hold from the board so nothing dangles.
+  const ansRes = await postJson(`${daemon.baseUrl}/api/questions/${second.q.id}/answer`, { behavior: 'deny' });
+  assert.equal(ansRes.status, 200);
+  await second.held;
+  const stateEnd = (await getJson(`${daemon.baseUrl}/state`)).json;
+  assert.equal((stateEnd.plans || []).find(p => String(p.plan_id) === String(planId2))?.status, 'rejected',
+    'board answer regression: deny on the second plan still flips it to rejected');
+});
+
+test('in-terminal: board answer regression — allow still flips approved and is never re-settled by later activity', async (t) => {
+  const holdMs = 1500;
+  const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
+  const cwd = scratchCwd();
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+
+  const sid = randomUUID();
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon });
+  const { held, q } = await holdExitPlan(daemon, sid, cwd, holdMs);
+  const planId = plansFor((await getJson(`${daemon.baseUrl}/state`)).json, sid)[0]?.plan_id;
+
+  const ansRes = await postJson(`${daemon.baseUrl}/api/questions/${q.id}/answer`, { behavior: 'allow' });
+  assert.equal(ansRes.status, 200);
+  await held;
+  assert.equal((await getJson(`${daemon.baseUrl}/state`)).json.plans.find(p => String(p.plan_id) === String(planId))?.status, 'approved');
+
+  // Later activity from the session must NOT touch the board's verdict.
+  await postHook(daemon.baseUrl, 'UserPromptSubmit', loadFixture('user-prompt-submit', { session_id: sid, cwd }, { prompt: 'continue' }), { token: daemon });
+  assert.equal((await getJson(`${daemon.baseUrl}/state`)).json.plans.find(p => String(p.plan_id) === String(planId))?.status, 'approved',
+    'the activity gate only ever touches proposed plans — a board verdict is final');
+});
+
+test('in-terminal: handled-in-terminal cannot be marked executed (409), can be archived', async (t) => {
+  const holdMs = 1000;
+  const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
+  const cwd = scratchCwd();
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+
+  const sid = randomUUID();
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon });
+  const { held } = await holdExitPlan(daemon, sid, cwd, holdMs);
+  const planId = plansFor((await getJson(`${daemon.baseUrl}/state`)).json, sid)[0]?.plan_id;
+  await held;
+  await postHook(daemon.baseUrl, 'UserPromptSubmit', loadFixture('user-prompt-submit', { session_id: sid, cwd }, { prompt: 'go' }), { token: daemon });
+  assert.equal((await getJson(`${daemon.baseUrl}/state`)).json.plans.find(p => String(p.plan_id) === String(planId))?.status, 'handled-in-terminal',
+    'sanity: plan settled before probing the mark matrix');
+
+  const execRes = await postJson(`${daemon.baseUrl}/api/plans/${planId}/mark`, { status: 'executed' });
+  assert.equal(execRes.status, 409,
+    `handled-in-terminal -> executed must 409 (got ${execRes.status}: ${JSON.stringify(execRes.json)})`);
+
+  const archRes = await postJson(`${daemon.baseUrl}/api/plans/${planId}/mark`, { status: 'archived' });
+  assert.equal(archRes.status, 200,
+    `handled-in-terminal -> archived should 200 like every non-archived status (got ${archRes.status}: ${JSON.stringify(archRes.json)})`);
+  const state = (await getJson(`${daemon.baseUrl}/state`)).json;
+  assert.ok(!(state.plans || []).some(p => String(p.plan_id) === String(planId)), 'archived plan leaves /state plans');
+});
+
+// ---------------------------------------------------------------------------
+// 7. BUG-041 (daemon half): marking a plan executed while its ExitPlanMode
+// question is STILL PENDING retires that question through the dismiss path —
+// the planner must not sit parked on a stale prompt.
+// ---------------------------------------------------------------------------
+
+test('mark executed with the question still pending dismisses it (fails the hold open with {})', async (t) => {
+  const holdMs = 60_000; // the hold must still be parked when the mark lands
+  const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
+  let held = Promise.resolve(null); // rebound once the hold POST is in flight
+  const cwd = scratchCwd();
+  // holdExitPlan's held POST outlives the daemon by the length of the hold
+  // window; the daemon's own SIGKILL/SIGTERM then leaves that fetch hung on
+  // an open-but-dead connection, outliving the daemon.stop() in t.after and
+  // wedging test-runner teardown. Kill the child ourselves first, then wait
+  // the stray fetch out before letting t.after remove the home dir.
+  t.after(async () => {
+    try { daemon.proc.kill('SIGKILL'); } catch { /* already gone */ }
+    await Promise.allSettled([held]);
+    await daemon.stop();
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  const sid = randomUUID();
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon });
+  const out = await holdExitPlan(daemon, sid, cwd, holdMs);
+  held = out.held;
+  const { q } = out;
+  const planId = plansFor((await getJson(`${daemon.baseUrl}/state`)).json, sid)[0]?.plan_id;
+
+  const markRes = await postJson(`${daemon.baseUrl}/api/plans/${planId}/mark`, { status: 'executed', via: 'assign' });
+  assert.equal(markRes.status, 200);
+
+  const heldRes = await held;
+  assert.deepEqual(heldRes.json, {},
+    'the parked hook must fail OPEN (dismiss path) — the planner resumes in the terminal instead of sitting on a stale prompt');
+
+  const state = (await getJson(`${daemon.baseUrl}/state`)).json;
+  const plan = (state.plans || []).find(p => String(p.plan_id) === String(planId));
+  assert.equal(plan?.status, 'executed', 'the mark itself is untouched');
+  const qrow = questionsFor(state, sid, 'permission').find(x => x.id === q.id);
+  assert.equal(qrow?.status, 'expired', 'the dismissed question retires as expired');
 });

@@ -623,3 +623,31 @@ test('repo_transport without repo is refused', async t => {
   assert.equal(res.status, 400);
   assert.match(res.json.reason, /repo_transport requires repo/i);
 });
+
+test('2.3: a credentialed URL thrown past the spawn guard still answers a bounded redacted 500', async t => {
+  // The classified-reason contract for the catch-all surface. The guarded
+  // repo-mode card-creation block (spawns.mjs) classifies its OWN failures,
+  // but anything that still escapes spawn() as a THROW now lands in http.mjs's
+  // spawnFailureReason instead of the old bare 'internal'. Pin the contract on
+  // the reason string ITSELF (the unit half lives in git-stderr-detail):
+  // bounded, one line, and credential-hardened — so a 500 body can never be
+  // the leak the snapshot already refuses to be. The shim's stderr carries a
+  // bare secret on the verdict line; the DETACHED chain owns that failure, so
+  // this asserts the surfaces that failure text actually reaches.
+  const secret = 'glpat-DEADBEEFdeadbeef00';
+  const origin = `https://fdtest:${secret}@127.0.0.1:1/x.git`;
+  const { daemon } = await shimmedDaemon(t, { FD_SHIM_CLONE: 'credurl', FD_SHIM_SECRET: secret });
+  const response = await postJson(`${daemon.baseUrl}/api/spawn`, {
+    repo: origin, branch: 'main', branch_mode: 'in-place',
+  });
+  assert.equal(response.status, 202, response.text);
+  const card = await tombstonedCard(daemon, response.json.session_id);
+
+  // The banner's inputs (2.3 option 2) are exactly these fields, so the
+  // redaction contract is pinned on them by name: the tombstone note the
+  // banner headlines, and the fail_detail it expands inline.
+  assert.equal(card.note.includes(secret), false, 'the banner headline (the note) is hardened');
+  assert.ok(card.spawn.fail_detail, 'the banner has a detail to expand');
+  assert.equal(card.spawn.fail_detail.includes(secret), false, 'the expanded detail is hardened');
+  assert.match(card.spawn.fail_detail, /\[redacted\]/);
+});

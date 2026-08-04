@@ -315,6 +315,18 @@ export function createStatements(db) {
       VALUES (?, ?, ?, ?, ?, ?, ?, 'proposed')`),
     getPlan: db.prepare('SELECT * FROM plans WHERE plan_id = ?'),
     planByQuestion: db.prepare('SELECT * FROM plans WHERE question_id = ? ORDER BY plan_id DESC LIMIT 1'),
+    // In-terminal plan settlement (plan lifecycle contract, UX 2.2):
+    // settleTerminalPlan is the status flip, guarded to 'proposed' so a plan
+    // the board already answered/marked/archived keeps its verdict;
+    // pendingTerminalPlans backs the activity gate — 'proposed' plans whose
+    // ExitPlanMode question is no longer pending, awaiting the session's next
+    // activity event to prove the human decided in the terminal.
+    settleTerminalPlan: db.prepare(`UPDATE plans SET status = 'handled-in-terminal'
+      WHERE plan_id = ? AND status = 'proposed'`),
+    pendingTerminalPlans: db.prepare(`SELECT p.* FROM plans p
+      LEFT JOIN questions qq ON qq.id = p.question_id
+      WHERE p.session_id = ? AND p.status = 'proposed'
+        AND (qq.id IS NULL OR qq.status != 'pending')`),
     plansForState: db.prepare(`SELECT * FROM plans WHERE status != 'archived'
       ORDER BY created_at DESC, plan_id DESC LIMIT 20`),
     setPlanStatus: db.prepare('UPDATE plans SET status = ? WHERE plan_id = ?'),

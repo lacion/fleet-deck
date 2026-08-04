@@ -15,6 +15,7 @@ import { ticketFromBranch, animalOf } from './tickets.mjs';
 import { claudeEnvArgvPrefix, claudeTranscriptPath, SHELL_RE, NOT_RESUMABLE_END } from './helpers.mjs';
 import { execFileP, baseBranch } from './exec.mjs';
 import { redactDiagnosticText, scrubUrlCredentials } from './payload-capture.mjs';
+import { redactGitText } from './exec.mjs';
 
 export const SETUP_WRAPPER = [
   'cmd=$FLEETDECK_SETUP_CMD; unset FLEETDECK_SETUP_CMD',
@@ -28,6 +29,29 @@ const SETUP_CMD_MAX = 2000;
 const SETUP_CONTROL_RE = /[\x00-\x09\x0b-\x1f\x7f]/;
 const STALL_DETAIL_MAX = 2000;
 const STALL_DETAIL_LINES = 18;
+
+// The bound on a classified spawn-failure reason: one glance, one log line, one
+// 500 body. fail_detail owns the long form; this is the verdict register.
+const SPAWN_REASON_MAX = 300;
+
+// A thrown spawn failure becomes the reason string a 500 body, a tombstone
+// note and a durable SpawnFailed event all derive from — so it goes through
+// the SAME hardening pass as git's own stderr before it goes anywhere
+// (redactGitText: URL-userinfo scrub first, then the credential shapes, then
+// the caller's exact needles). An Error message is not git output, but a
+// failed materialization's message routinely IS git stderr (materializeBranch
+// throws it verbatim), and a SQLite/IO error can carry a filesystem path that
+// embeds a sensitive directory name. A message is not a stack trace: anything
+// reaching here as Error stays message-only, so `internal at …` frames can
+// never ride this field. Null/empty collapses to a named fallback — a bare
+// 'internal' was exactly the dead-end UX 2.3 exists to kill.
+export function spawnFailureReason(err, fallback = 'internal error') {
+  const raw = String(err?.message ?? err ?? '').trim();
+  if (!raw) return fallback;
+  // One line: a note and a log line are single-line registers.
+  const oneLine = redactGitText(raw.replace(/\r/g, '')).replace(/\n+/g, ' ').trim();
+  return oneLine.length > SPAWN_REASON_MAX ? oneLine.slice(0, SPAWN_REASON_MAX) : oneLine;
+}
 
 // `tmux capture-pane -p` is already rendered plain text (no -e escapes), but
 // strip any controls defensively, trim empty screen margins, keep only the tail
@@ -780,11 +804,31 @@ export function createSpawns(ctx) {
       const initialNote = target.mode === 'clone'
         ? `cloning ${target.repo_name}…`
         : `preparing ${body.branch}…`;
-      const c = createSpawnedCard(session_id, targetPath, body?.prompt, {
-        repo_name: target.repo_name,
-        branch: body.branch,
-        note: initialNote,
-      });
+      // UX 2.3 option 4 — the LAST synchronous gate of the clone path. A throw
+      // from createSpawnedCard's branchOf probe, the callsign lottery or the
+      // card INSERT used to escape spawn() entirely, where http.mjs answered a
+      // bare {reason:'internal'} for what was really a boring, retryable fault
+      // (a flake in the 1.5s git probe, a busy DB). Classify it HERE, with the
+      // hardened/bounded reason, so the caller can retry instead of guessing.
+      // Between the slot's reservation and this point nothing external exists
+      // (no dir on disk, no pane), so the slot release is the only cleanup a
+      // refusal owes. The two materialization paths BELOW already own their
+      // failure surfaces (spawnCompensate tombstones + a real status body) —
+      // this guard deliberately covers the card-creation prefix only.
+      let c;
+      try {
+        c = createSpawnedCard(session_id, targetPath, body?.prompt, {
+          repo_name: target.repo_name,
+          branch: body.branch,
+          note: initialNote,
+        });
+      } catch (err) {
+        releaseCloneSlot();
+        return {
+          status: 500,
+          body: { ok: false, reason: `could not create the spawn card: ${spawnFailureReason(err)}` },
+        };
+      }
       const callsign = c.callsign;
       const releaseTarget = claimTarget(targetPath, callsign);
       const tmux_session = tmuxAdapter.sessionName(port);

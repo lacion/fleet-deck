@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { human, basename, questionView, sessionsById, TURN_BOUNDARY_HINT } from '../util.js';
+import { human, basename, questionView, sessionsById, spawnTermable, TURN_BOUNDARY_HINT } from '../util.js';
 import { renderMarkdown, planTitle } from '../markdown.js';
 import { answerQuestion, dismissQuestion, reasonOf } from '../api.js';
 import { registerQuestion } from '../qbus.js';
@@ -329,13 +329,40 @@ function statusLine(q, session) {
       const offline = session?.col === 'offline';
       return { cls: 'ok', text: offline ? '✓ queued — delivers on resume' : `✓ queued — delivers at ${TURN_BOUNDARY_HINT}` };
     }
+    // 2.1 — a re-armed card never had a socket to answer into; its "answer"
+    // is mail, so the resolved line keeps the same honesty as the live one.
+    if (q.payload?.rearmed) return { cls: 'ok', text: `✓ queued — delivers at ${TURN_BOUNDARY_HINT}` };
     return { cls: 'ok', text: '✓ answered from the board' };
   }
   if (q.status === 'expired') return { cls: '', text: '⏱ expired — the terminal owns this one' };
   return null;
 }
 
-function QuestionCard({ q, session, now, selected, onSelect, onDismissed }) {
+// 2.1 focus-terminal — an expired card is dead for answering: the hook already
+// failed open and the agent is parked on its NATIVE prompt in a pane somewhere.
+// The one recovery the board can offer is navigation, not an answer — a ghost
+// button (deliberately not the fd-allow/fd-deny language of a live decision)
+// that opens the floating terminal onto the owning session's pane, where the
+// prompt waits. Only when the session is termable: a plain `claude` in the
+// user's own terminal has no board-owned pane to open, so the button would be
+// a dead end; there the status line above already says where the decision
+// lives. onOpenTerm is optional — without it (or without the session row) the
+// card degrades to exactly the pre-2.1 render.
+function DeadCardNav({ q, session, onOpenTerm }) {
+  if (!onOpenTerm || !session || !spawnTermable(session)) return null;
+  return (
+    <button
+      type="button"
+      className="fd-ghostbtn fd-openterm"
+      title="open a live terminal onto this session's pane — the agent's own prompt is waiting there"
+      onClick={(e) => { e.stopPropagation(); onOpenTerm(session); }}
+    >
+      ▣ Open terminal
+    </button>
+  );
+}
+
+function QuestionCard({ q, session, now, selected, onSelect, onDismissed, onOpenTerm }) {
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState(null); // transient result of an answer POST
   // v1.8 — dismiss: the question you already answered in the terminal. Low
@@ -346,6 +373,12 @@ function QuestionCard({ q, session, now, selected, onSelect, onDismissed }) {
   // v1.3 — ExitPlanMode permissions are PLAN cards (they also carry plan_id)
   const isPlan = q.kind === 'permission' && q.payload?.tool_name === 'ExitPlanMode';
   const pending = q.status === 'pending';
+  // 2.1 — a re-armed card: the hold window expired and the daemon re-raised
+  // the still-unanswered question. There is NO parked socket behind it, so an
+  // answer goes as mail at the next turn boundary, never into the hook. The
+  // copy must keep that distinction honest — a live hold's buttons unblock
+  // the agent NOW, these don't.
+  const rearmed = q.payload?.rearmed === true;
   const holdKind = q.kind !== 'freeform';
   const holdLost = pending && holdKind && q.held === false;
   const done = !pending;
@@ -366,8 +399,8 @@ function QuestionCard({ q, session, now, selected, onSelect, onDismissed }) {
     const res = await answerQuestion(q.id, body);
     if (res.ok) {
       setNote({
-        cls: q.kind === 'freeform' ? 'act' : 'ok',
-        text: q.kind === 'freeform'
+        cls: q.kind === 'freeform' || rearmed ? 'act' : 'ok',
+        text: q.kind === 'freeform' || rearmed
           ? (offline ? `→ ${label} · queued — delivers on resume` : `→ ${label} · queued — delivers at ${TURN_BOUNDARY_HINT}`)
           : `→ ${label} — sent to agent`,
       });
@@ -375,7 +408,7 @@ function QuestionCard({ q, session, now, selected, onSelect, onDismissed }) {
       setNote({ cls: 'hazard', text: reasonOf(res, `answer failed (${res.status})`) });
     }
     setBusy(false);
-  }, [q.id, q.kind, offline]);
+  }, [q.id, q.kind, offline, rearmed]);
 
   const doDismiss = async () => {
     if (dismissing) return;
@@ -422,6 +455,14 @@ function QuestionCard({ q, session, now, selected, onSelect, onDismissed }) {
         <span className={`fd-kind ${isPlan ? 'plan' : q.kind}`}>
           {isPlan ? 'PLAN' : KIND_LABEL[q.kind] || q.kind?.toUpperCase()}
         </span>
+        {rearmed && pending && (
+          <span
+            className="fd-kind rearmed"
+            title="the live answer window expired — the agent is parked on its own terminal prompt; answering here sends a message instead"
+          >
+            RE-ARMED
+          </span>
+        )}
         {repoName && <span className="repo">{repoName}</span>}
         <span className="fd-spacer" />
         <span className="age">{human(now - (q.created_at || now))}</span>
@@ -440,6 +481,11 @@ function QuestionCard({ q, session, now, selected, onSelect, onDismissed }) {
         )}
       </div>
       <div className="title">{title}</div>
+      {rearmed && pending && (
+        <div className="status act">
+          ⏱ board window expired — the agent is parked on its own terminal prompt; answering sends a message, delivered at the next turn boundary
+        </div>
+      )}
       {holdLost && (
         <div className="status hazard">⚠ hold lost (daemon restarted) — decide in the terminal</div>
       )}
@@ -450,11 +496,12 @@ function QuestionCard({ q, session, now, selected, onSelect, onDismissed }) {
       {interactive && q.kind === 'elicitation' && <ElicitationBody view={view} busy={busy} onAnswer={onAnswer} />}
       {note && pending && <div className={`status ${note.cls}`}>{note.text}</div>}
       {resolved && <div className={`status ${resolved.cls}`}>{resolved.text}</div>}
+      {done && <DeadCardNav q={q} session={session} onOpenTerm={onOpenTerm} />}
     </div>
   );
 }
 
-export default function Inbox({ questions, sessions, now, selQ, onSelect }) {
+export default function Inbox({ questions, sessions, now, selQ, onSelect, onOpenTerm }) {
   const byId = sessionsById(sessions);
   // v1.8 — dismissed ids stay hidden in this tab. The daemon expires the
   // question, but an expired question still rides the snapshot for a while
@@ -491,6 +538,7 @@ export default function Inbox({ questions, sessions, now, selQ, onSelect }) {
             selected={q.id === selQ}
             onSelect={() => onSelect(q.id)}
             onDismissed={(id) => setDismissed((prev) => new Set(prev).add(id))}
+            onOpenTerm={onOpenTerm}
           />
         ))}
       </div>

@@ -33,6 +33,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { detectCoderWorkspaceRoot } from './config.mjs';
+import { resolveHoldMs } from './questions.mjs';
 
 const CONTROL_RE = /[\x00-\x1f\x7f]/;
 const SETUP_CONTROL_RE = /[\x00-\x09\x0b-\x1f\x7f]/;
@@ -43,6 +44,7 @@ const ALLOWED_KEYS = [
   'repos_dir', 'repo_transport', 'repo_default_org', 'browse_root', 'fav_dirs', 'repo_setup',
   'gateway_base_url', 'gateway_auth_style', 'gateway_token',
   'gateway_model_discovery', 'gateway_default',
+  'hold_ms',
 ];
 // A gateway credential is long-lived and grants API spend, so the ceiling is
 // generous but finite — an unbounded value would ride every /state frame's
@@ -233,6 +235,38 @@ export function createSettings(ctx) {
     return out;
   }
 
+  // ---------------------------------------------------------------- hold_ms
+  // UX 2.1: the question hold window as a first-class setting, tunable without
+  // an env var. Two readers, two shapes: the SETTINGS VIEW resolves it
+  // (resolveHoldMsSetting → resolveSettings, the /state broadcast); the
+  // QUESTIONS RELAY re-reads the raw row per hold creation (resolveHoldMsRaw,
+  // handed to resolveHoldMs as its fallback) so a changed value steers NEW
+  // holds immediately — live holds keep the window they parked with, same as
+  // FLEETDECK_HOLD_MS always behaved. The env var stays the override, and
+  // resolveHoldMs (questions.mjs) owns the clamp ([250, 110_000], under the
+  // shim watchdog; the lockstep invariant lives at the definition).
+  function validateHoldMs(value) {
+    if (value == null) return null;
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      throw namedError(400, 'hold_ms must be a number of milliseconds or null');
+    }
+    return String(Math.trunc(value)); // clamping happens at resolve time
+  }
+
+  function resolveHoldMsRaw() {
+    return readSetting('hold_ms');
+  }
+
+  function resolveHoldMsSetting() {
+    const env = process.env.FLEETDECK_HOLD_MS;
+    if (Number.isFinite(Number(env)) && Number(env) > 0) {
+      return { value: resolveHoldMs(), source: 'env' };
+    }
+    const stored = readSetting('hold_ms');
+    if (stored != null) return { value: resolveHoldMs({}, resolveHoldMsRaw), source: 'override' };
+    return { value: resolveHoldMs({}), source: 'default' };
+  }
+
   // ----------------------------------------------------------------- gateway
   // The LLM-gateway profile (0.15.0): where a `gateway:true` spawn sends its
   // API traffic instead of Anthropic — a local CLIProxyAPI, a corporate
@@ -397,6 +431,10 @@ export function createSettings(ctx) {
       prepare: v => validateRepoSetup(v),
       commit: prepared => q.setSetting.run('repo_setup', prepared == null ? null : JSON.stringify(prepared), Date.now()),
     },
+    hold_ms: {
+      prepare: v => validateHoldMs(v),
+      commit: v => q.setSetting.run('hold_ms', v ?? null, Date.now()),
+    },
     gateway_base_url: {
       prepare: v => (v == null ? null : validateGatewayBaseUrl(v)),
       commit: v => q.setSetting.run('gateway_base_url', v ?? null, Date.now()),
@@ -479,6 +517,7 @@ export function createSettings(ctx) {
       browse_root: browseRootChoice(),
       fav_dirs: resolveFavDirs(),
       repo_setup: resolveRepoSetup(),
+      hold_ms: resolveHoldMsSetting(),
       // MASKED by construction — see resolveGateway. Never inline the raw
       // gateway_token row here: this object is broadcast, not returned.
       gateway: resolveGateway(),
@@ -491,6 +530,6 @@ export function createSettings(ctx) {
   // accidentally start serializing the credential.
   return {
     setSettings, resolveSettings, browseRootChoice, persistRepoTransport, persistRepoDefaultOrg,
-    resolveGateway, resolveGatewayEnv,
+    resolveGateway, resolveGatewayEnv, resolveHoldMsRaw,
   };
 }
