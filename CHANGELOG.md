@@ -5,6 +5,85 @@ All notable changes to Fleet Deck are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.21.1] - 2026-08-05
+
+Ninety seconds was still too fast. 0.21.0 tripled the needs-you window; a
+week-one operator running several agents at once answered on their own clock,
+not the board's — so the window moves to ten minutes, everywhere it has to
+move to stay real.
+
+### Changed
+
+- **Needs-you holds: 90 s → 10 min.** A board answer has to beat three nested
+  timeouts or it lands on a dead socket, so all three moved in lockstep: the
+  daemon hold (default 600 s, clamp ceiling 650 s — `hold_ms` via
+  `POST /api/settings`, `FLEETDECK_HOLD_MS` stays the override), the hook
+  shim's watchdog (660 s), and the hooks.json timeouts for the three hold
+  hooks (720 s). The card's countdown ring prints whole minutes above 99 s —
+  a 26 px ring cannot print "600".
+- Sessions still on 0.20/0.21.0 hooks auto-release their prompts at ~115 s
+  against this daemon (the shim's watchdog, failing open as designed).
+  Answering the expired card still works: the decision arrives as mail at
+  the next turn boundary.
+- With the daemon down, a terminal prompt now waits up to 12 min before
+  failing open (was 65 s). That is the deliberate cost of a fleet-sized
+  answer window.
+
+## [0.21.0] - 2026-08-05
+
+A first-time user's week-one report, item by item: the board had a command
+that does not exist, a button that never said why it was dead, a wall you
+could only leave wholesale, a tab that spawned workers nobody asked for, and
+a question window measured in seconds. Every root cause is written up in
+`docs/ux-feedback-plan.md`.
+
+### Added
+
+- **First-run concept help and an honest empty state.** The empty board no
+  longer prints `$ fleetd up` (a command that has never existed); it names
+  the real path, offers a spawn CTA, and opens a concept overlay once per
+  profile — six nouns and a glossary (turn boundary, whisper, callsign,
+  arm, rail, capture & release, worktree), with tooltips on the lanes.
+- **Per-tile close on the Terminals wall.** Each tile gets its own ✕ —
+  a view-only detach that leaves the tmux pane running (kill stays behind
+  the one KillConfirm door). The watch-set forgets a closed tile so it
+  doesn't resurrect.
+- **"Open terminal" on dead needs-you cards.** An expired question's session
+  is parked on its native prompt; the card now jumps you straight to it.
+- **Expired questions re-arm.** A hold that lapses unanswered raises a fresh
+  card after a short still-parked grace (capped at 2, stopped by any
+  activity). Its answer rides the mail pipeline to the next turn boundary,
+  and the card says exactly that — it never claims to unblock a parked
+  prompt it can't reach.
+- **The board watches a provisioning spawn.** Repo-mode spawns (clone +
+  branch, the 202 path) used to close the form after 1.4 s of silence; the
+  form now narrates the card's own progress, closes as the session goes
+  live, and on failure shows the redacted git remedy inline. A board-wide
+  banner catches spawn failures from any source, deduped per session.
+- **`hold_ms` is a real setting** (`POST /api/settings`; env var wins) —
+  see 0.21.1 for the window it now steers by default.
+- Plan library: a live proposer is annotated ("proposed by X — still
+  live"), and the empty state names the creation path.
+
+### Fixed
+
+- **Plans approved in the terminal no longer sit `proposed` forever.** The
+  board only ever learned about its own answers; now, once the session
+  visibly moves on without one, the plan settles to `handled-in-terminal`
+  (never on timer expiry alone — a killed planner keeps its plan).
+  Approving in the terminal and approving on the board finally agree.
+- **"Execute" was a surprise spawn.** It is now "Spawn executor…", labelled
+  as starting a NEW session with the plan as its prompt — no more duplicate
+  workers.
+- **A failed plan-execution spawn could still mark the plan executed.**
+  The mark lands only after the spawn is accepted (BUG-040), and marking a
+  plan executed dismisses the planner's still-pending hold (BUG-041).
+- **The Spawn button never said no.** It now names the field blocking it
+  and shows a busy label through the request.
+- **`/api/spawn` 500s return bounded, redacted reasons** instead of
+  `internal`; the repo-mode card-creation path no longer throws past the
+  guard.
+
 ## [0.20.0] - 2026-07-25
 
 The 0.19.2 copy chord worked and people still could not paste, because the copy
@@ -681,6 +760,8 @@ Initial public release.
 - A brainless orchestrator: `assign auto` routes a task to the best existing session with a SQL query, not a model call — the core makes zero model calls.
 - One-command plugin install with a self-contained daemon bundle (`node:sqlite` state, nothing to `npm install`); the first session's SessionStart hook elects and launches the daemon. MIT licensed.
 
+[0.21.1]: https://github.com/lacion/fleet-deck/compare/v0.21.0...v0.21.1
+[0.21.0]: https://github.com/lacion/fleet-deck/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/lacion/fleet-deck/compare/v0.19.2...v0.20.0
 [0.19.2]: https://github.com/lacion/fleet-deck/compare/v0.19.1...v0.19.2
 [0.19.1]: https://github.com/lacion/fleet-deck/compare/v0.19.0...v0.19.1
