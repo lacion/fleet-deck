@@ -350,13 +350,22 @@ export function createHttp(core, {
   function noteLegacySession(sid) {
     if (typeof sid !== 'string' || !sid || sid === 'unknown') return;
     if (upgradedSessions.has(sid)) return;
+    if (legacySessions.has(sid)) return;
     legacySessions.add(sid);
+    // The board learns legacy_upgrade from the /ws frame now — a tokenless
+    // hook changes no session state (nothing else would broadcast), so push
+    // one ourselves or a live board never sees the restart banner appear.
+    scheduleBroadcast();
   }
   function noteUpgradedSession(sid) {
     if (typeof sid !== 'string' || !sid || sid === 'unknown') return;
     if (upgradedSessions.has(sid)) return;
     upgradedSessions.add(sid);
-    legacySessions.delete(sid);
+    const wasLegacy = legacySessions.delete(sid);
+    // Same push when a legacy session restarts (its banner entry must shrink)
+    // — unless the authenticated hook mutates session state anyway and will
+    // broadcast on its own (the common SessionStart path).
+    if (wasLegacy) scheduleBroadcast();
   }
   function legacyBanner() {
     return { sessions: [...legacySessions], upgraded: upgradedSessions.size };
@@ -1142,10 +1151,17 @@ export function createHttp(core, {
   // NOT snapshotWithLan() — the token-bearing lan.urls/lan.mdns must never ride
   // a frame a /ws client can read. The share URLs stay on GET /state, which is
   // token-gated in LAN mode (the board reads `lan` from its /state poll).
+  // legacy_upgrade is NOT secret (bare session ids + a count) and MUST ride the
+  // WS frame: the board treats a live /ws snapshot as authoritative and only
+  // preserves `lan` from later /state polls, so without this field the pre-0.16
+  // restart banner is wiped as soon as the socket opens and never comes back.
+  function wsSnapshot() {
+    return { type: 'snapshot', ...core.snapshot(), legacy_upgrade: legacyBanner() };
+  }
   function broadcast() {
     dirty = false;
     if (!wss.clients.size) return;
-    const msg = JSON.stringify({ type: 'snapshot', ...core.snapshot() });
+    const msg = JSON.stringify(wsSnapshot());
     for (const c of wss.clients) {
       if (c.readyState !== 1) continue;
       // H-R3/R1-2 backpressure: a peer that stopped draining must not make us
@@ -1173,7 +1189,7 @@ export function createHttp(core, {
   wss.on('connection', ws => {
     ws.isAlive = true;
     ws.on('pong', () => { ws.isAlive = true; });
-    try { ws.send(JSON.stringify({ type: 'snapshot', ...core.snapshot() })); } catch { /* client gone */ }
+    try { ws.send(JSON.stringify(wsSnapshot())); } catch { /* client gone */ }
   });
 
   termWss.on('connection', async (ws, req) => {

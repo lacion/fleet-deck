@@ -167,3 +167,43 @@ test('H-S1: the /ws snapshot carries no token; /state (authorized) still does', 
   assert.ok(!JSON.stringify(broadcast).includes(LAN_TOKEN), 'the broadcast snapshot must never contain the token');
   assert.equal(broadcast.lan, undefined, 'the broadcast snapshot must not carry lan either');
 });
+
+test('BUG-031: /ws frames carry legacy_upgrade and a tokenless hook pushes one live', async t => {
+  const daemon = await startDaemon();
+  t.after(() => daemon.stop());
+  const cwd = mkdtempSync(path.join(tmpdir(), 'fleetdeck-bug031-'));
+  t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+
+  // Connect snapshot: a live board's FIRST frame is authoritative — if it
+  // drops legacy_upgrade the restart banner is wiped the moment the socket
+  // opens and (the board stops /state polling) never comes back.
+  const { ws, frames } = connect(daemon.baseUrl.replace(/^http/, 'ws') + '/ws');
+  t.after(() => ws.close());
+  const first = await waitUntil(() => frames.find(f => f.type === 'snapshot'), 'connect snapshot');
+  assert.deepEqual(first.legacy_upgrade, { sessions: [], upgraded: 0 },
+    'the /ws connect snapshot must carry legacy_upgrade like /state does');
+
+  // A pre-0.16 session keeps posting tokenless hooks. That call changes no
+  // session state (it is refused), so without an explicit push a live board
+  // would never see the banner appear — the frame must arrive on the socket.
+  const sid = randomUUID();
+  await postHook(daemon.baseUrl, 'UserPromptSubmit', loadFixture('user-prompt-submit', { session_id: sid, cwd }));
+  const pushed = await waitUntil(
+    () => frames.find(f => f.type === 'snapshot' && f.legacy_upgrade?.sessions?.includes(sid)),
+    'broadcast listing the legacy session',
+  );
+  assert.equal(pushed.legacy_upgrade.upgraded, 0);
+  // The pushed frame is still the H-S1 clean shape: no lan block, no token.
+  assert.equal(pushed.lan, undefined, 'the legacy push must not smuggle the lan block onto /ws');
+
+  // The session restarts (its first AUTHENTICATED hook) → the next frame
+  // clears the banner entry on the live socket, no /state poll involved.
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon });
+  const healed = await waitUntil(
+    () => frames.find(f => f.type === 'snapshot'
+      && f.sessions?.some(s => s.session_id === sid)
+      && !f.legacy_upgrade?.sessions?.includes(sid)),
+    'broadcast after the restart clears the legacy entry',
+  );
+  assert.equal(healed.legacy_upgrade.upgraded, 1, 'reconnected count moved on the wire');
+});
