@@ -518,10 +518,17 @@ test('0.16.0 credential denylist: lexical, symlink, and search paths all refuse'
   mkdirSync(path.join(browse, 'work'));
   writeFileSync(path.join(browse, 'work', 'notes.txt'), 'ordinary notes\n');
 <<<<<<< /tmp/mf-ours
+<<<<<<< /tmp/mf-ours
   // .docker is NOT a denied segment — only its config.json is denied, by path.
   mkdirSync(path.join(browse, '.docker'));
   writeFileSync(path.join(browse, '.docker', 'config.json'), '{"auths":{"registry":{"auth":"DOCKER REGISTRY SECRET"}}}\n');
   writeFileSync(path.join(browse, '.docker', 'images.list'), 'DOCKER REGISTRY SECRET listed harmlessly\n');
+=======
+  // Credential dirs inside the browse root itself: listings must hide them.
+  mkdirSync(path.join(browse, '.ssh'));
+  writeFileSync(path.join(browse, '.ssh', 'id_ed25519'), 'PRIVATE KEY MATERIAL\n');
+  mkdirSync(path.join(browse, '.aws'));
+>>>>>>> /tmp/mf-theirs
   // The attack: a symlink inside the browse root pointing at a credential dir.
   symlinkSync(path.join(secrets, '.ssh'), path.join(browse, 'work', 'ssh-link'));
 
@@ -565,6 +572,7 @@ test('0.16.0 credential denylist: lexical, symlink, and search paths all refuse'
   // the in-root .ssh/.aws dirs must not appear next to ordinary entries.
   const rootList = await getJson(`${daemon.baseUrl}/api/fs/list?path=`);
   assert.equal(rootList.json.entries.some(e => e.name === 'work'), true, 'work dir visible');
+<<<<<<< /tmp/mf-ours
   for (const denied of ['.ssh', '.aws']) {
     assert.equal(rootList.json.entries.some(e => e.name === denied), false, `${denied} hidden from listing`);
   }
@@ -576,6 +584,13 @@ test('0.16.0 credential denylist: lexical, symlink, and search paths all refuse'
   // Search must not read denied trees: with the material inside the root,
   // only the walker's deniedName filter keeps the private key text unfindable
   // (the backend is walk — browse is not a git repo).
+=======
+  assert.equal(rootList.json.entries.some(e => e.name === '.ssh'), false, '.ssh hidden from listing');
+  assert.equal(rootList.json.entries.some(e => e.name === '.aws'), false, '.aws hidden from listing');
+
+  // Search must not read denied trees: the private key text is unfindable,
+  // and the search backend (walk — browse is not a git repo) skips the dir.
+>>>>>>> /tmp/mf-theirs
   const search = await getJson(`${daemon.baseUrl}/api/fs/search?q=${encodeURIComponent('PRIVATE KEY MATERIAL')}`);
   assert.deepEqual(search.json.hits, [], 'search never returns denied content');
 
