@@ -143,6 +143,43 @@ export function claudeEnvArgvPrefix(port, home, { keep = [] } = {}) {
   ];
 }
 
+// A canonical-path async mutex: one in-flight holder per key at a time, FIFO
+// waiters behind it. The daemon is single-threaded, so "acquire" is just a
+// Map check — but the holder then AWAITS multi-second git subprocesses while
+// still owning the path, and a second actor for the same path must queue
+// behind it rather than interleave into that window. Worktree custody is the
+// first user (removal holds the path through filesystem, branch, and DB
+// cleanup; every launch/revive into that directory acquires the same claim),
+// so a revive can never validate a still-standing directory that a removal is
+// about to delete (the BUG-060 post-final-check race). The returned release
+// MUST be invoked (idempotently — it releases at most once) on every exit
+// path; callers use try/finally.
+export function createKeyedMutex() {
+  const tails = new Map(); // canonical key -> promise chain tail
+  return async function acquire(key) {
+    const tail = tails.get(key) ?? Promise.resolve();
+    let releaseNow = () => {};
+    const mine = new Promise(resolve => { releaseNow = resolve; });
+    tails.set(key, tail.then(() => mine));
+    await tail;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      if (tails.get(key) === mine) tails.delete(key);
+      releaseNow();
+    };
+  };
+}
+
+// Canonical identity for a claim key: the real path when it resolves,
+// path.resolve otherwise (symlinked spellings of the same directory must
+// contend; a missing path still needs a stable key). Pure, mirrors
+// repos.mjs's canonicalTarget.
+export function canonicalPathKey(p) {
+  try { return fs.realpathSync(p); } catch { return path.resolve(p); }
+}
+
 // Bounded-concurrency map: run `fn` over `items` with at most `limit` in
 // flight, preserving input order in the result. Used by worktree inspection
 // (four probes at a time) but generic.

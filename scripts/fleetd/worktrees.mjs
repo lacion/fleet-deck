@@ -7,7 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  mapLimit, chmodWritableWhereOwned, blockedPaths, shellQuote,
+  mapLimit, chmodWritableWhereOwned, blockedPaths, shellQuote, canonicalPathKey,
 } from './helpers.mjs';
 import { execFileP, baseBranch } from './exec.mjs';
 // A local `git worktree prune` should never print a credential — but its stderr
@@ -63,7 +63,7 @@ async function repoOwnsWorktree(repo, worktreePath, worktreeExists) {
 
 
 export function createWorktrees(ctx) {
-  const { q, tick, onMutate } = ctx;
+  const { q, tick, onMutate, acquireWorktreePathLock } = ctx;
 
   // ------------------------------------------------------- worktree custody
   // CONTRACT: inspection is deliberately real git state, not remembered
@@ -275,6 +275,18 @@ export function createWorktrees(ctx) {
     if (typeof body?.path !== 'string') {
       return { status: 400, body: { ok: false, reason: 'not a fleet worktree' } };
     }
+    // BUG-060: hold this path's canonical claim for the WHOLE removal — the
+    // liveness gates, the awaited inspect/git-remove/prune/branch ops, and the
+    // DB purge. The pre-remove recheck below was never enough on its own: a
+    // revive could pass its own cwd/transcript validation and insert+launch
+    // AFTER that gate but while `git worktree remove` was still deleting the
+    // checkout, reporting success into a pane whose cwd had just disappeared.
+    // Every launch/revive into this directory acquires the same claim first,
+    // so it either queues behind the removal (and then fails its own
+    // "cwd no longer exists" validation) or lands before it (and the liveness
+    // gates then refuse the removal). Released on every exit path.
+    const releasePath = await acquireWorktreePathLock(canonicalPathKey(body.path));
+    try {
     const rows = q.worktreeSpawns.all().filter(row => row.worktree_path === body.path);
     const row = rows[0];
     if (!row) return { status: 400, body: { ok: false, reason: 'not a fleet worktree' } };
@@ -431,6 +443,9 @@ export function createWorktrees(ctx) {
     tick(`⌫ removed worktree ${row.worktree_path}${branch_deleted ? ` and branch ${branch}` : ''}`);
     onMutate();
     return { status: 200, body: { ok: true, removed: true, branch_deleted, rows_purged, path: row.worktree_path } };
+    } finally {
+      releasePath();
+    }
   }
 
   return { worktrees, removeWorktree };

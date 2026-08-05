@@ -4,12 +4,28 @@ import { execFileSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { openDb } from '../scripts/fleetd/db.mjs';
+import * as fleetdHelpers from '../scripts/fleetd/helpers.mjs';
 import { createStatements } from '../scripts/fleetd/statements.mjs';
 import { createWorktrees } from '../scripts/fleetd/worktrees.mjs';
+import { claudeTranscriptPath } from '../scripts/fleetd/derive.mjs';
+
+// The BUG-060 fix introduces createKeyedMutex; the pre-fix tree does not have
+// it. Resolve it dynamically so THIS test file still loads against the
+// unfixed sources — the race test below must fail on its own assertion (the
+// revive launching into the removed checkout), not on a module-load error.
+// Direct createWorktrees ctx below falls back to a fresh mutex per call,
+// which preserves those tests' single-removal semantics exactly.
+const createKeyedMutex = fleetdHelpers.createKeyedMutex ?? (() => { throw new Error('createKeyedMutex missing'); });
+const freshMutexCtx = () => (fleetdHelpers.createKeyedMutex ? { acquireWorktreePathLock: fleetdHelpers.createKeyedMutex() } : {});
 import { startDaemon } from './helpers/daemon.mjs';
 import { makeRepoWithWorktree, makePlainDir, makeRemoteRepo } from './helpers/gitrepo.mjs';
 import { getJson, postJson } from './helpers/http.mjs';
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const SPAWN_CMD_FIXTURE = path.join(HERE, 'helpers/spawn-cmd-fixture.mjs');
+try { chmodSync(SPAWN_CMD_FIXTURE, 0o755); } catch { /* best effort */ }
 
 function git(args, cwd) {
   return execFileSync('git', args, {
@@ -221,7 +237,7 @@ test('remove re-checks liveness after the git probes and aborts a revive that ra
     },
   };
 
-  const { removeWorktree } = createWorktrees({ q, tick() {}, onMutate() {} });
+  const { removeWorktree } = createWorktrees({ q, tick() {}, onMutate() {}, ...freshMutexCtx() });
   const res = await removeWorktree({ path: repo.worktree, force: true });
 
   assert.equal(res.status, 409, `a revive during the probe window must abort removal (got ${JSON.stringify(res.body)})`);
@@ -261,7 +277,7 @@ test('remove refuses a worktree whose spawn is launching (revive in flight, ende
     .run(repo.root, repo.root, repo.worktree, now);
 
   const { q } = createStatements(db);
-  const { removeWorktree } = createWorktrees({ q, tick() {}, onMutate() {} });
+  const { removeWorktree } = createWorktrees({ q, tick() {}, onMutate() {}, ...freshMutexCtx() });
   const res = await removeWorktree({ path: repo.worktree, force: true });
 
   assert.equal(res.status, 409, `a launching spawn must block removal (got ${JSON.stringify(res.body)})`);
@@ -313,7 +329,7 @@ test('remove keeps rows (rows_purged:0) when a revive lands during the git ops',
     },
   };
 
-  const { removeWorktree } = createWorktrees({ q, tick() {}, onMutate() {} });
+  const { removeWorktree } = createWorktrees({ q, tick() {}, onMutate() {}, ...freshMutexCtx() });
   const res = await removeWorktree({ path: repo.worktree, force: true });
 
   assert.equal(res.status, 200, `the tree is gone but this is not an error (got ${JSON.stringify(res.body)})`);
@@ -328,6 +344,7 @@ test('remove keeps rows (rows_purged:0) when a revive lands during the git ops',
   );
 });
 
+<<<<<<< /tmp/mf-ours
 // BUG-058: the liveness gate read only worktreeSpawns, whose
 // `worktree_path IS NOT NULL` filter drops cwd-only rows. A live shell (shells
 // refuse worktree:true outright — always cwd-only) or an adopted Claude
@@ -396,6 +413,112 @@ test('remove refuses while a cwd-only live shell occupies the worktree (BUG-058)
   const goneRes = await removeWorktree({ path: repo.worktree, force: true });
   assert.equal(goneRes.status, 200, `no live claim left — removal proceeds (got ${JSON.stringify(goneRes.body)})`);
   assert.equal(existsSync(repo.worktree), false);
+=======
+// BUG-060, the post-final-check window, pinned end-to-end. The pre-remove
+// liveness recheck passes, then the removal awaits its destructive git ops —
+// and a /api/spawn/:id/revive of the offline spawn lands in THAT window.
+// Without the canonical worktree-path claim the revive validates the
+// still-existing directory, inserts its provisional owner, and launches while
+// git deletes that checkout: a success reported into a pane whose cwd has
+// already disappeared. With the claim, the revive queues behind the removal
+// and then correctly refuses (410 — the cwd is gone), never launching a pane.
+//
+// The shim sits IN FRONT of the real git binary: the removal's
+// `worktree remove`/`prune` sleep ~3s under a marker file so the test can
+// catch the removal mid-destruction and fire the revive at the exact
+// vulnerable instant; every other git call (inspect probes, the test's own
+// bookkeeping) passes straight through. With the fix the revive's lock
+// acquisition queues behind the removal, so by the time it proceeds the cwd
+// is gone and it 410s; without it the revive launches into the
+// about-to-be-removed tree (the fixture records a pane) — the failure this
+// test pins.
+test('a revive landing during the awaited removal git ops is held to 410, never launched into a removed checkout', async (t) => {
+  const repo = makeRepoWithWorktree({ repoName: 'fleetdeck-remove-revive-lock' });
+  const daemonHome = mkdtempSync(path.join(tmpdir(), 'fd-bug060-daemon-'));
+  const userHome = mkdtempSync(path.join(tmpdir(), 'fd-bug060-user-'));
+  const record = path.join(userHome, 'spawn.jsonl');
+  const shimDir = mkdtempSync(path.join(tmpdir(), 'fd-bug060-shim-'));
+  const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+  t.after(async () => {
+    rmSync(daemonHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    rmSync(userHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    rmSync(shimDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    repo.cleanup();
+  });
+  writeFileSync(path.join(shimDir, 'git'), `#!/bin/sh
+# The removal's destructive ops run ~3s under a marker file so the test can
+# reliably catch the removal mid-destruction; every other git call (the
+# daemon's inspect probes included) passes straight through.
+case "$*" in
+  *"worktree remove"*|*"worktree prune"*)
+    touch "$FLEETDECK_TEST_REMOVING_FILE"
+    sleep 3
+    "\${FLEETDECK_TEST_REAL_GIT}" "$@"
+    rc=$?
+    rm -f "$FLEETDECK_TEST_REMOVING_FILE"
+    exit $rc
+    ;;
+esac
+exec "\${FLEETDECK_TEST_REAL_GIT}" "$@"
+`);
+  chmodSync(path.join(shimDir, 'git'), 0o755);
+
+  const daemon = await startDaemon({
+    home: daemonHome,
+    env: {
+      HOME: userHome,
+      FLEETDECK_SPAWN_CMD: SPAWN_CMD_FIXTURE,
+      FLEETDECK_TEST_SPAWN_RECORD: record,
+      PATH: `${shimDir}:${process.env.PATH}`,
+      FLEETDECK_TEST_REAL_GIT: realGit,
+      FLEETDECK_TEST_REMOVING_FILE: path.join(shimDir, 'removing'),
+    },
+  });
+  t.after(async () => { await daemon.stop({ keepHome: true }); });
+
+  // The daemon's FIRST agents-poll tick (1s after listen) runs the owned-pane
+  // liveness sweep, and its tmux probe (~5-10s against a slow/absent test
+  // server) single-flights the whole tick chain — starving request handling
+  // of prompt subprocess attention for that long once. Trigger it here and
+  // wait it out with a warm request, so the race below is decided by the lock
+  // and not by boot noise.
+  await postJson(`${daemon.baseUrl}/api/worktrees/remove`, { path: '/never-a-fleet-path' }, { timeout: 25000 });
+  await getJson(`${daemon.baseUrl}/api/worktrees`, { timeout: 25000 });
+
+  // The board-owned spawn lineage for this worktree, ended and revivable.
+  ownWorktree(daemonHome, repo, { sessionId: 'bug060-race' });
+  const transcript = claudeTranscriptPath(repo.worktree, 'bug060-race', userHome);
+  mkdirSync(path.dirname(transcript), { recursive: true });
+  writeFileSync(transcript, '{"type":"summary"}\n');
+
+  const removal = postJson(`${daemon.baseUrl}/api/worktrees/remove`, { path: repo.worktree, force: true }, { timeout: 25000 });
+  // Wait until removal is inside its ~3s destructive git op, THEN revive.
+  const deadline = Date.now() + 20000;
+  while (!existsSync(path.join(shimDir, 'removing'))) {
+    if (Date.now() > deadline) throw new Error('removal never reached git worktree remove');
+    await new Promise(resolve => setTimeout(resolve, 25));
+  }
+  // The removal is now mid-destruction. The revive races it: WITH the path
+  // claim it queues until the removal has deleted the checkout and purged,
+  // then 410s on the missing cwd; WITHOUT it the revive validates the
+  // still-standing tree and launches (the fixture would record a pane).
+  const revived = await postJson(`${daemon.baseUrl}/api/spawn/spawn-bug060-race/revive`, {}, { timeout: 25000 });
+
+  const removed = await removal;
+  assert.equal(removed.status, 200, `removal still completes (got ${JSON.stringify(removed.json)})`);
+  assert.equal(revived.status, 410, `the revive was held behind the removal and then refused (got ${revived.status}: ${JSON.stringify(revived.json)})`);
+  assert.match(revived.json.reason, /cwd no longer exists/);
+  assert.equal(existsSync(repo.worktree), false, 'the checkout was removed');
+  assert.ok(!existsSync(record), 'no pane was ever launched into the removed checkout');
+  assert.equal(removed.json.rows_purged >= 1, true, 'the removal purged its dead lineage');
+  withDb(daemonHome, db => {
+    // The dead lineage is gone, and the refused revive left no provisional
+    // row behind: exactly zero spawns remain for the session, none of them
+    // in a launching state.
+    const rows = db.prepare("SELECT status FROM spawns WHERE session_id = 'bug060-race'").all();
+    assert.deepEqual(rows, [], 'the refused revive left no spawn row behind');
+  });
+>>>>>>> /tmp/mf-theirs
 });
 
 test('POST remove with delete_branch deletes the worktree branch', async (t) => {

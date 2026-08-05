@@ -27,7 +27,7 @@ import { createSpawns } from './spawns.mjs';
 import { createEvents } from './events.mjs';
 import { createSnapshot } from './snapshot.mjs';
 import { createRetention } from './retention.mjs';
-import { envInt } from './helpers.mjs';
+import { createKeyedMutex, envInt } from './helpers.mjs';
 
 // Public re-exports: these helpers moved to helpers.mjs, but tests and other
 // scripts import them from derive.mjs — keep them importable from here.
@@ -707,6 +707,13 @@ export function createCore(db, {
   // needs and Object.assign's its own surface back onto ctx so later factories
   // (and the return surface) can reach it. onMutate is the STABLE wrapper, so
   // the setter on the returned object reaches code in every module.
+  // Canonical worktree-path mutex (BUG-060): removal holds a path's claim
+  // from inspection through filesystem, branch, and DB cleanup; every launch
+  // or revive into that directory acquires the same claim first, so it can
+  // never interleave into a removal's destructive window and launch a pane
+  // whose cwd has already disappeared. One claim per canonical path, FIFO.
+  const acquireWorktreePathLock = createKeyedMutex();
+
   const ctx = {
     // holdMs resolves WITH the settings fallback at the questions wiring above
     // (q didn't exist at parameter-default time); ctx carries that same value.
@@ -724,6 +731,7 @@ export function createCore(db, {
     // spawns.mjs (the boot heal for pairs stranded before this shipped).
     CLEAR_SUCCESSION_MS, applyCustomName, hasLivePane,
     findClearedPredecessor, succeedSession, succeedForwardFromClear,
+    acquireWorktreePathLock,
   };
 
   // Mail + /api/watch waiter registry + owned-pane delivery → mail.mjs.
