@@ -323,6 +323,54 @@ test('a ported ssh origin stays outside normalization (conservative fallback)', 
   );
 });
 
+test('a generic ssh server does not conflate repositories across usernames', async t => {
+  const reposDir = withReposDir(t);
+  // alice@ and bob@ can be entirely different accounts on one generic host —
+  // conflating them would "prove" this checkout is alice's repo and reuse it.
+  checkoutWithOrigin(reposDir, 'repo', 'bob@git.example.test:org/repo.git');
+  const { resolveTarget } = createRepos(fakeReposCtx());
+  await assert.rejects(
+    () => resolveTarget({ repo: 'alice@git.example.test:org/repo.git' }),
+    err => err.status === 409 && /exists and is not/.test(err.message),
+  );
+});
+
+test('a generic https server does not conflate case-distinct repository paths', async t => {
+  const reposDir = withReposDir(t);
+  // Only a recognized forge guarantees case-insensitive paths; on a generic
+  // host Org/repo and org/repo can be two different repositories.
+  checkoutWithOrigin(reposDir, 'repo', 'https://git.example.test/Org/repo.git');
+  const { resolveTarget } = createRepos(fakeReposCtx());
+  await assert.rejects(
+    () => resolveTarget({ repo: 'https://git.example.test/org/repo.git' }),
+    err => err.status === 409 && /exists and is not/.test(err.message),
+  );
+});
+
+test('a generic host still matches across transports and host case, username kept', async t => {
+  const reposDir = withReposDir(t);
+  // The sound part of generic-host normalization: DNS is case-insensitive and
+  // an scp spelling of an ssh URL is the same door — only the username and the
+  // path's case are identity.
+  const dest = checkoutWithOrigin(reposDir, 'repo', 'ssh://alice@GIT.example.test/Org/repo.git');
+  const { resolveTarget } = createRepos(fakeReposCtx());
+  const target = await resolveTarget({ repo: 'alice@git.example.test:Org/repo.git' });
+  assert.equal(target.mode, 'local');
+  assert.equal(target.root, dest);
+});
+
+test('a recognized forge still unifies case and userinfo across transports', async t => {
+  const reposDir = withReposDir(t);
+  // github.com/gitlab.com are case-insensitive in owner+repo and front every
+  // transport with one account-agnostic ssh user, so all these spellings ARE
+  // one repository and the checkout is reused.
+  const dest = checkoutWithOrigin(reposDir, 'repo', 'ssh://git@github.com/Org/Repo.git');
+  const { resolveTarget } = createRepos(fakeReposCtx());
+  const target = await resolveTarget({ repo: 'org/repo', repo_host: 'github', repo_transport: 'https' });
+  assert.equal(target.mode, 'local');
+  assert.equal(target.root, dest);
+});
+
 test('quickBranchCheck mirrors the board gates', () => {
   assert.equal(quickBranchCheck('feature/clean-name'), null);
   for (const branch of ['-bad', 'has space', 'a..b', 'a@{b', 'a.lock', '/bad', 'bad/', 'x'.repeat(201)]) {

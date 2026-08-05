@@ -236,15 +236,32 @@ function expandHome(value) {
   return value;
 }
 
-// A remote's identity is its host+path, not its transport spelling: on a forge,
-// `https://gitlab.com/org/repo.git`, `ssh://git@gitlab.com/org/repo.git` and
-// `git@gitlab.com:org/repo.git` are three doors into ONE repository. The reuse
-// guard in resolveTarget compares origins to prove a same-named checkout really
-// IS the requested repo; comparing raw strings made an ssh-cloned checkout
-// invisible to an https/shorthand spawn (409 "exists and is not", or a duplicate
-// clone). Reducing the three shapes to one lowercase `//host/path` key widens
-// reuse ONLY across spellings — two origins with a different host or path still
-// never match, so an unrelated tree remains exactly as un-reusable as before.
+// A remote's identity on a RECOGNIZED forge is its host+path, not its transport
+// spelling: `https://gitlab.com/org/repo.git`, `ssh://git@gitlab.com/org/repo.git`
+// and `git@gitlab.com:org/repo.git` are three doors into ONE repository. The
+// reuse guard in resolveTarget compares origins to prove a same-named checkout
+// really IS the requested repo; comparing raw strings made an ssh-cloned
+// checkout invisible to an https/shorthand spawn (409 "exists and is not", or a
+// duplicate clone). Reducing the three shapes to one lowercase `//host/path`
+// key widens reuse ONLY across spellings — two origins with a different host or
+// path still never match, so an unrelated tree remains exactly as un-reusable
+// as before.
+//
+// That unification is sound ONLY where the service's own semantics guarantee
+// it, so it applies to the explicitly recognized forges (github.com,
+// gitlab.com): both are case-insensitive in owner and repo name (you cannot
+// register `Org/repo` AND `org/Repo`), and both front every transport with the
+// single account-agnostic `git` ssh user, so no spelling of userinfo picks a
+// different repository. Everywhere else the "three doors" assumption is NOT
+// ours to make: a generic ssh host authenticates BY user (`alice@host` and
+// `bob@host` can be different accounts with different filesystems), an https
+// path can be case-sensitive, and unifying any of that would "prove" a checkout
+// is an unrelated repo — reuse would then edit, commit, and run hooks in the
+// WRONG tree across a credential boundary. Generic hosts therefore keep the
+// conservative comparison: scheme-agnostic (an ssh spelling of an https URL
+// string still matches, so a missed match is at worst the OLD 409/spare-clone
+// behaviour, never a wrong reuse) but username- and case-PRESERVING, with only
+// the hostname lowercased (DNS is case-insensitive everywhere).
 // Conservative by construction:
 //  - only https://, unported ssh://, and scp-style origins normalize; any other
 //    shape returns null and keeps the old lowercase string comparison — the
@@ -253,31 +270,33 @@ function expandHome(value) {
 //  - an ssh:// URL with an explicit port is NOT normalized: a nonstandard port
 //    can front a different server on the same hostname (forwards, multiplexed
 //    bastions), and proving it equal to the https/:22 repo is not ours to assume;
-//  - userinfo is dropped (it may carry credentials, and `git@` vs `oauth2@` does
-//    not change which repo is behind the door);
 //  - the `//host/path` key cannot collide with the other key families: realpath
 //    keys start with a single `/`, and an origin string starting with `//` is
 //    posix-absolute so it takes the realpath branch, never the fallback.
+const FORGE_HOSTS = new Set(['github.com', 'gitlab.com']);
+
 function normalizeRemoteOrigin(value) {
   const input = String(value);
+  let user = null;
   let host;
   let rest;
-  const url = /^(?:https|ssh):\/\/([^/?#]+)(\/[^?#]*)$/i.exec(input);
+  const url = /^(?:https|ssh):\/\/(?:([^/?#@]*)@)?([^/?#]+)(\/[^?#]*)$/i.exec(input);
   if (url) {
-    host = url[1];
-    const at = host.lastIndexOf('@');
-    if (at !== -1) host = host.slice(at + 1);
+    user = url[1] || null;
+    host = url[2];
     if (!host || host.includes(':')) return null; // ported (or hostless) — fall back
-    rest = url[2];
+    rest = url[3];
   } else {
     if (input.includes('://')) return null; // some other scheme — fall back
-    const scp = /^(?:[^/@:]+@)?([^/:@]+):(.+)$/.exec(input);
+    const scp = /^(?:([^/@:]+)@)?([^/:@]+):(.+)$/.exec(input);
     if (!scp) return null;
-    [, host, rest] = scp;
+    [, user, host, rest] = scp;
+    user = user || null;
   }
   const cleaned = rest.replace(/^\/+/, '').replace(/[\\/]+$/, '').replace(/\.git$/i, '');
   if (!cleaned) return null;
-  return `//${host}/${cleaned}`.toLowerCase();
+  if (FORGE_HOSTS.has(host.toLowerCase())) return `//${host}/${cleaned}`.toLowerCase();
+  return `//${host.toLowerCase()}/${user == null ? '' : `${user}@`}${cleaned}`;
 }
 
 function comparableOrigin(value) {
