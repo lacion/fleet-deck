@@ -108,6 +108,17 @@ export function createCommands(ctx) {
       return { ok: true, assigned_to };
     } else if (parsed.cmd === 'assign') {
       const targets = resolveTargets(parsed.target);
+      // Singular targeting must never fan out: a duplicated callsign resolves
+      // to two sessions, and silently assigning BOTH means two agents
+      // independently execute a task meant for one (duplicate compute,
+      // conflicting edits). Fan-out stays reserved for the explicit `all` and
+      // `repo:*` scopes; a multi-hit direct target is refused loudly, like
+      // `ticket`'s resolver above.
+      if (parsed.target !== 'all' && !/^repo:/.test(parsed.target) && targets.length > 1) {
+        logCommand({ refused: 'ambiguous' });
+        onMutate();
+        return { ok: false, reason: `"${parsed.target}" matches ${targets.length} sessions — use the session id` };
+      }
       // Same frame as auto-routing (v1.1): every routed task carries
       // [FLEETDECK ASSIGNMENT] so the wake path / doctrine skill can treat
       // assignments uniformly regardless of how they were targeted.

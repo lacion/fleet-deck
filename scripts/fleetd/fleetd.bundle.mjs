@@ -8558,6 +8558,11 @@ function createCommands(ctx) {
       return { ok: true, assigned_to };
     } else if (parsed.cmd === "assign") {
       const targets = resolveTargets(parsed.target);
+      if (parsed.target !== "all" && !/^repo:/.test(parsed.target) && targets.length > 1) {
+        logCommand({ refused: "ambiguous" });
+        onMutate();
+        return { ok: false, reason: `"${parsed.target}" matches ${targets.length} sessions \u2014 use the session id` };
+      }
       targets.forEach((sid) => mail(sid, "orchestrator", `[FLEETDECK ASSIGNMENT] ${parsed.text}`));
       delivered = targets.length;
       tick(`\u{1F4CC} orchestrator assign \u2192 ${parsed.target}${delivered ? "" : " (no such session)"}`);
