@@ -71,7 +71,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync, existsSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { startDaemon } from './helpers/daemon.mjs';
+import { startDaemon, randomPort } from './helpers/daemon.mjs';
 import { postHook, postJson, getJson } from './helpers/http.mjs';
 import { loadFixture } from './helpers/fixtures.mjs';
 import { waitUntil, waitForSpecRecords } from './helpers/wait.mjs';
@@ -439,36 +439,55 @@ test('/state plans: caps at 20 non-archived rows, newest first; archiving frees 
 // 5. mark transitions
 // ---------------------------------------------------------------------------
 
-test('mark: proposed -> executed (optional {via} recorded if exposed on /state, otherwise 200 alone is accepted)', async (t) => {
+test('mark: proposed -> executed records the optional {via} on /state, and it survives a daemon restart', async (t) => {
   const holdMs = 1000;
-  const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
+  const home = mkdtempSync(path.join(tmpdir(), 'fleetdeck-home-'));
   const cwd = scratchCwd();
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+  t.after(() => {
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
 
+  const daemon = await startDaemon({ home, env: { FLEETDECK_HOLD_MS: String(holdMs) } });
   const sid = randomUUID();
-  const { held } = await holdExitPlan(daemon, sid, cwd, holdMs);
-  const state0 = (await getJson(`${daemon.baseUrl}/state`)).json;
-  const plan0 = plansFor(state0, sid)[0];
-  assert.ok(plan0, 'sanity: plan captured');
-  assert.equal(plan0.status, 'proposed');
+  let planId;
+  try {
+    const { held } = await holdExitPlan(daemon, sid, cwd, holdMs);
+    const state0 = (await getJson(`${daemon.baseUrl}/state`)).json;
+    const plan0 = plansFor(state0, sid)[0];
+    assert.ok(plan0, 'sanity: plan captured');
+    assert.equal(plan0.status, 'proposed');
+    planId = plan0.plan_id;
 
-  const markRes = await postJson(`${daemon.baseUrl}/api/plans/${plan0.plan_id}/mark`, { status: 'executed', via: 'assign' });
-  assert.equal(markRes.status, 200, `proposed -> executed should 200 (got ${markRes.status}: ${JSON.stringify(markRes.json)})`);
+    const markRes = await postJson(`${daemon.baseUrl}/api/plans/${planId}/mark`, { status: 'executed', via: 'assign' });
+    assert.equal(markRes.status, 200, `proposed -> executed should 200 (got ${markRes.status}: ${JSON.stringify(markRes.json)})`);
 
-  const state1 = (await getJson(`${daemon.baseUrl}/state`)).json;
-  const plan1 = (state1.plans || []).find(p => String(p.plan_id) === String(plan0.plan_id));
-  assert.ok(plan1, 'executed plan should still be listed (non-archived)');
-  assert.equal(plan1.status, 'executed');
-  if (plan1.via !== undefined) {
-    assert.equal(plan1.via, 'assign', 'when `via` is exposed on /state it should carry the value passed to mark');
-  } else {
-    t.diagnostic('plan /state entry does not expose `via` — accepting 200 alone per the task brief');
+    const state1 = (await getJson(`${daemon.baseUrl}/state`)).json;
+    const plan1 = (state1.plans || []).find(p => String(p.plan_id) === String(planId));
+    assert.ok(plan1, 'executed plan should still be listed (non-archived)');
+    assert.equal(plan1.status, 'executed');
+    assert.equal(plan1.via, 'assign', '/state plan entry must expose the `via` recorded by the mark (provenance contract, BUG-206)');
+
+    await held; // let the still-open hold expire naturally; must not revert the mark
+    const state2 = (await getJson(`${daemon.baseUrl}/state`)).json;
+    const plan2 = (state2.plans || []).find(p => String(p.plan_id) === String(planId));
+    assert.equal(plan2?.status, 'executed', 'an unrelated hold timeout must not revert a plan already marked executed');
+    assert.equal(plan2?.via, 'assign', 'hold expiry must not clear the recorded via');
+  } finally {
+    // kill, but keep the SQLite files in `home` for the restart below
+    await daemon.stop({ keepHome: true });
   }
 
-  await held; // let the still-open hold expire naturally; must not revert the mark
-  const state2 = (await getJson(`${daemon.baseUrl}/state`)).json;
-  const plan2 = (state2.plans || []).find(p => String(p.plan_id) === String(plan0.plan_id));
-  assert.equal(plan2?.status, 'executed', 'an unrelated hold timeout must not revert a plan already marked executed');
+  // restart against the same FLEETDECK_HOME: executed_via is a durable column,
+  // so the recorded provenance must survive a daemon restart.
+  const revived = await startDaemon({ port: randomPort(), home });
+  t.after(async () => { await revived.stop({ keepHome: true }); });
+
+  const state3 = (await getJson(`${revived.baseUrl}/state`)).json;
+  const plan3 = (state3.plans || []).find(p => String(p.plan_id) === String(planId));
+  assert.ok(plan3, 'plan should still be listed after restart');
+  assert.equal(plan3.status, 'executed');
+  assert.equal(plan3.via, 'assign', 'recorded `via` must survive a daemon restart (durable plan history)');
 });
 
 test('mark: captured -> executed', async (t) => {

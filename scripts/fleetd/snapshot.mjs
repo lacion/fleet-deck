@@ -276,6 +276,7 @@ export function createSnapshot(ctx) {
         plan_md: p.plan_md,
         created_at: p.created_at,
         status: p.status,
+        via: p.executed_via, // optional {via} recorded by POST /api/plans/:id/mark
       })),
     };
   }
