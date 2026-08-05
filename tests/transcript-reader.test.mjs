@@ -150,3 +150,52 @@ test('tailLines yields newest-first with absolute byte offsets', () => {
     { line: 'aa', offset: 0 },
   ]);
 });
+
+// A user-line JSON + '\n' of EXACTLY n bytes, padded via `bulk` (n must be at
+// least the unpadded line's length).
+function paddedUserLine(n) {
+  const base = JSON.stringify(userLine()) + '\n';
+  const extra = n - base.length;
+  const line = extra <= 0 ? base : JSON.stringify(userLine({ bulk: extra - 1 })) + '\n';
+  assert.equal(line.length, n);
+  return line;
+}
+
+// A transcript whose ONLY assistant row starts exactly at EOF - `tier`: one
+// prefix line (so the read window starts at start > 0), then the assistant
+// row, then user lines filling the window to exactly `tier` bytes.
+function boundaryTranscript(dir, sessionId, tier) {
+  const first = JSON.stringify(assistantLine({ model: OPUS })) + '\n';
+  const base = JSON.stringify(userLine()) + '\n';
+  let window = first;
+  while (tier - window.length - base.length >= base.length) window += base;
+  window += paddedUserLine(tier - window.length);
+  assert.equal(window.length, tier);
+  const prefix = JSON.stringify(userLine()) + '\n';
+  const file = path.join(dir, `${sessionId}.jsonl`);
+  writeFileSync(file, prefix + window);
+  return { file, assistantOffset: prefix.length };
+}
+
+test('exact boundary: a row starting exactly at EOF - maxBytes is complete, not partial (BUG-194)', () => {
+  const dir = makeTranscriptDir();
+  const file = path.join(dir, 'edge.jsonl');
+  writeFileSync(file, 'aaaa\nbbbb\n'); // 'bbbb' starts at byte 5, preceded by '\n'
+  // The window starts exactly on the row boundary: the row is whole and must
+  // be yielded. (Before the fix it was discarded as supposedly partial.)
+  assert.deepEqual([...tailLines(file, { maxBytes: 5 })], [{ line: 'bbbb', offset: 5 }]);
+  // A genuinely mid-line start still drops the partial row.
+  assert.deepEqual([...tailLines(file, { maxBytes: 7 })], [{ line: 'bbbb', offset: 5 }]);
+});
+
+test('exact boundary at every read tier: the newest assistant model survives (BUG-194)', () => {
+  const dir = makeTranscriptDir();
+  // The three windows lastAssistantModel reads: 16 KB, 256 KB, 2 MB. At the
+  // 2 MB tier there is no wider retry, so dropping a boundary-aligned row
+  // there lost the model outright (the audit's 2,000,002-byte fixture).
+  for (const [i, tier] of [16_384, 262_144, 2_000_000].entries()) {
+    const { file, assistantOffset } = boundaryTranscript(dir, `boundary-${i}`, tier);
+    assert.equal(statSync(file).size - tier, assistantOffset); // row sits exactly on the window edge
+    assert.equal(lastAssistantModel(file), OPUS);
+  }
+});

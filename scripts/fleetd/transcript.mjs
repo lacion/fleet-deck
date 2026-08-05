@@ -36,7 +36,18 @@ export function tailLines(transcriptPath, { maxBytes = 262_144 } = {}) {
   // practice, but if a file shrinks between them, Buffer.alloc's unread tail
   // is NUL padding — never let those zeroes corrupt the newest JSONL record.
   let chunk = buf.subarray(0, nread).toString('utf8');
-  if (start > 0) chunk = chunk.slice(chunk.indexOf('\n') + 1); // drop the partial first line
+  // WHY: drop the first row ONLY when the read began mid-line. When the window
+  // starts exactly on a row boundary (byte start-1 is '\n') the first row is
+  // complete — discarding it anyway can hide the newest assistant model
+  // (BUG-194).
+  let firstRowIsPartial = start > 0;
+  if (firstRowIsPartial) {
+    const prev = Buffer.alloc(1);
+    const pfd = fs.openSync(transcriptPath, 'r');
+    try { fs.readSync(pfd, prev, 0, 1, start - 1); } finally { fs.closeSync(pfd); }
+    firstRowIsPartial = prev[0] !== 0x0a; // '\n'
+  }
+  if (firstRowIsPartial) chunk = chunk.slice(chunk.indexOf('\n') + 1); // drop the partial first line
 
   const lines = chunk.split('\n');
   const it = (function* () {
