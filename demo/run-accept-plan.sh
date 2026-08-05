@@ -376,7 +376,7 @@ cat > "$SETTINGS_FILE" <<EOF
   "enabledPlugins": { "fleetdeck@fleetdeck": false },
   "hooks": {
     "SessionStart": [
-      { "hooks": [{ "type": "command", "command": "node $SESSIONSTART_SCRIPT", "timeout": 15 }] }
+      { "hooks": [{ "type": "command", "command": "node \"$SESSIONSTART_SCRIPT\"", "timeout": 15 }] }
     ],
     "UserPromptSubmit": [
       { "hooks": [{ "type": "command", "command": "node $FLEET_HOOK_SCRIPT UserPromptSubmit", "timeout": 3 }] }
@@ -401,7 +401,7 @@ cat > "$SETTINGS_FILE" <<EOF
         { "type": "command", "command": "node $FLEET_HOOK_SCRIPT Stop", "timeout": 5 },
         {
           "type": "command",
-          "command": "node $WATCH_SCRIPT",
+          "command": "node \"$WATCH_SCRIPT\"",
           "asyncRewake": true,
           "rewakeMessage": "[FLEETDECK] Fleet board mail for you:",
           "rewakeSummary": "Fleet Deck: board mail delivered",

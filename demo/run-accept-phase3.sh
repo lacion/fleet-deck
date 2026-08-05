@@ -254,7 +254,7 @@ cat > "$PROJECT_DIR/.claude/settings.json" <<EOF
   "enabledPlugins": { "fleetdeck@fleetdeck": false },
   "hooks": {
     "SessionStart": [
-      { "hooks": [{ "type": "command", "command": "node $SESSIONSTART_SCRIPT", "timeout": 15 }] }
+      { "hooks": [{ "type": "command", "command": "node \"$SESSIONSTART_SCRIPT\"", "timeout": 15 }] }
     ],
     "UserPromptSubmit": [
       { "hooks": [{ "type": "command", "command": "node $FLEET_HOOK_SCRIPT UserPromptSubmit", "timeout": 3 }] }
