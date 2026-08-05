@@ -32,6 +32,7 @@ import {
   sendEnter,
   sessionName,
 } from '../scripts/fleetd/spawn.mjs';
+import { waitUntil } from './helpers/wait.mjs';
 
 function tmuxOk() {
   const socket = `fleetdeck-adapter-probe-${process.pid}-${randomBytes(4).toString('hex')}`;
@@ -671,7 +672,14 @@ test('tmux adapter parses scoped panes and kills only the exact fleet session wi
   const decoyWindowId = tmux(socket, ['display-message', '-p', '-t', `${decoySession}:${window}`, '#{window_id}']);
   assert.notEqual(fleetWindowId, decoyWindowId);
 
-  const windows = await listScopedWindows(port);
+  // new-session / split-window return before the panes' startup shells have
+  // execed `sleep`, so pane_current_command can still report the shell (zsh,
+  // bash, …) at this point. Poll until the fleet pane has execed before
+  // asserting its command, scaled like every other wait (BUG-182).
+  const windows = await waitUntil(async () => {
+    const found = await listScopedWindows(port);
+    return found?.[0]?.pane_cmd === 'sleep' ? found : null;
+  }, { label: `fleet pane ${fleetWindowId} execed sleep` });
   assert.deepEqual(windows, [{
     session: fleetSession,
     window,
@@ -679,7 +687,11 @@ test('tmux adapter parses scoped panes and kills only the exact fleet session wi
     pane_dead: false,
     pane_cmd: 'sleep',
   }]);
-  assert.deepEqual(await paneCurrentCommand(fleetWindowId), { dead: false, cmd: 'sleep' });
+  const pane = await waitUntil(async () => {
+    const found = await paneCurrentCommand(fleetWindowId);
+    return found?.cmd === 'sleep' ? found : null;
+  }, { label: `paneCurrentCommand(${fleetWindowId}) reports sleep` });
+  assert.deepEqual(pane, { dead: false, cmd: 'sleep' });
 
   const killed = await killWindowVerified(window);
   assert.deepEqual(killed, { ok: true, window_id: fleetWindowId });
