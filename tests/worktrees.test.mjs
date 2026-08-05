@@ -721,6 +721,84 @@ test('POST remove with delete_branch deletes the worktree branch', async (t) => 
   );
 });
 
+// The remove-vs-commit TOCTOU, pinned at the exact dangerous instant. The
+// removal's inspection reads a clean, merged worktree ('safe') against one
+// tip; while its awaited git probes yield the event loop, ANOTHER process
+// lands a clean unpushed commit on the branch — never part of the verdict the
+// operator approved — and the old unconditional `git branch -D` then deleted
+// the advanced branch anyway, silently discarding that commit. Racing a real
+// daemon is nondeterministic (the window is milliseconds on a scratch repo),
+// so we drive createWorktrees directly: a wrapper on the statement
+// removeWorktree re-reads MID-request fires the race synchronously —
+// ref + HEAD move, then the tree's files are deleted by rm (NOT `git worktree
+// remove`, which would move the ref itself) so the removal finds nothing on
+// disk and the old `-D` meets no checked-out guard. Pre-fix this deletes the
+// raced branch and the commit dangles; the compare-and-swap sees the tip
+// moved since inspection and keeps it.
+test('remove with delete_branch keeps a branch whose tip advanced after inspection', async (t) => {
+  const repo = makeRepoWithWorktree({ repoName: 'fleetdeck-branch-race' });
+  const home = mkdtempSync(path.join(tmpdir(), 'fd-branch-race-home-'));
+  t.after(() => {
+    repo.cleanup();
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  const db = openDb(path.join(home, 'fleetd.db'));
+  t.after(() => db.close());
+  const now = Date.now();
+  db.prepare(`INSERT INTO sessions
+    (session_id, callsign, cwd, branch, col, note, events, started_at, last_seen, ended_at, source)
+    VALUES ('branch-race', 'otter', ?, 'wt-branch', 'offline', 'test', 0, ?, ?, ?, 'spawned')`)
+    .run(repo.worktree, now, now, now);
+  db.prepare(`INSERT INTO spawns
+    (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, requested_at, status)
+    VALUES ('sp-branch-race', 'branch-race', 'otter', 'fleetdeck-test', ?, ?, ?, ?, 'pane-dead')`)
+    .run(repo.root, repo.root, repo.worktree, now);
+
+  // The racing commit, staged but not yet visible: ref and HEAD still read
+  // the inspected tip. Moving ref+HEAD TOGETHER keeps the tree clean —
+  // `git status` diffs the index (untouched) against HEAD, so a moved-in
+  // lockstep commit reads as a clean tree at the moved tip.
+  const racedCommit = git(['commit-tree', '-m', 'racing commit', '-p', 'wt-branch',
+    git(['rev-parse', 'wt-branch^{tree}'], repo.root)], repo.root);
+  const tip = git(['rev-parse', 'refs/heads/wt-branch'], repo.root);
+
+  const { q } = createStatements(db);
+  // removeWorktree reads worktreeSpawns twice before the git probes (rows +
+  // the initial liveness gate). The next read is the pre-removal liveness
+  // recheck — after inspection and the top-level probe have yielded the event
+  // loop. That is where the other process lands: commit on the branch, files
+  // gone. worktreePathIsLive still sees the same offline spawn rows, so the
+  // request proceeds to deletion exactly as the real race does.
+  let calls = 0;
+  let raced = false;
+  const realStmt = q.worktreeSpawns;
+  q.worktreeSpawns = {
+    all: (...args) => {
+      calls += 1;
+      if (calls >= 3 && !raced) {
+        raced = true;
+        git(['update-ref', 'refs/heads/wt-branch', racedCommit], repo.root);
+        git(['update-ref', 'HEAD', racedCommit], repo.worktree);
+        rmSync(repo.worktree, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+      }
+      return realStmt.all(...args);
+    },
+  };
+
+  const { removeWorktree } = createWorktrees({ q, tick() {}, onMutate() {} });
+  const res = await removeWorktree({ path: repo.worktree, delete_branch: true });
+
+  assert.equal(res.status, 200, `the removal itself is fine — only the branch is contested (got ${JSON.stringify(res.body)})`);
+  assert.equal(res.body.removed, true);
+  assert.equal(raced, true, 'the commit landed inside the removal window');
+  assert.equal(res.body.branch_deleted, false,
+    'a branch that advanced after inspection must NOT be deleted on the stale verdict');
+  assert.equal(git(['rev-parse', 'refs/heads/wt-branch'], repo.root), racedCommit,
+    'the racing commit still has a ref — it is not dangling');
+  assert.notEqual(racedCommit, tip, 'sanity: the tip really did advance');
+});
+
 // THE false alarm, pinned. A local `main` is a cache, and a stale one lies.
 // Live incident: a worktree whose work was ALREADY merged on origin read as
 // "9 commits that exist nowhere else", because the local main was ten commits

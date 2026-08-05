@@ -275,6 +275,15 @@ export function createWorktrees(ctx) {
       || q.liveWorktreeClaims.all().some(candidate => claimsPath(candidate, target));
   }
 
+  // The exact OID refs/heads/<branch> points at in <repo> right now, or null
+  // when it cannot be read. This is the compare-and-swap witness for branch
+  // deletion: a safety verdict is measured against ONE tip, so deleting the
+  // ref must prove the tip has not moved since the measurement.
+  async function branchTipOid(repo, branch) {
+    const tip = await execFileP('git', ['-C', repo, 'rev-parse', '--verify', `refs/heads/${branch}`], { timeout: 5_000 });
+    return tip.ok ? tip.out.trim() : null;
+  }
+
   async function removeWorktree(body = {}) {
     if (typeof body?.path !== 'string') {
       return { status: 400, body: { ok: false, reason: 'not a fleet worktree' } };
@@ -297,6 +306,14 @@ export function createWorktrees(ctx) {
     if (worktreePathIsLive(body.path)) return { status: 409, body: { ok: false, reason: 'session is still alive' } };
 
     const state = await inspectWorktree(row);
+    // The OID the verdict below was measured against. Worktree HEAD == its
+    // branch ref while the tree exists, so inspecting the tree IS inspecting
+    // the branch tip — capture it HERE, at inspection time. (Reading it later,
+    // beside the delete, would bless a commit that landed mid-request: exactly
+    // the stale-verdict loss this exists to prevent.)
+    const inspected_tip = state.exists && state.branch
+      ? await branchTipOid(row.worktree_path, state.branch)
+      : null;
     if ((state.verdict === 'has-work' || state.verdict === 'unknown') && body.force !== true) {
       return {
         status: 409,
@@ -444,8 +461,36 @@ export function createWorktrees(ctx) {
     let branch_deleted = false;
     const branch = state.branch ?? q.getSession.get(row.session_id)?.branch ?? null;
     if (body.delete_branch === true && branch) {
-      const deleted = await execFileP('git', ['-C', repo, 'branch', '-D', branch], { timeout: 30_000 });
-      branch_deleted = deleted.ok;
+      // Compare-and-swap against the INSPECTED tip. The safety verdict was
+      // measured against inspected_tip; a commit made DURING this request —
+      // another process landing clean unpushed work on the branch while the
+      // awaited probes above yielded the event loop — was never part of it,
+      // and an unconditional `git branch -D` would silently discard that
+      // commit even though the operator approved deletion when nothing would
+      // have been lost. So re-read the tip NOW and delete only when the ref
+      // still points at exactly what was vouched for, handing git the expected
+      // old value so a move in the final microseconds also refuses. A kept
+      // branch is reported (branch_deleted:false), not a 409 — the tree is
+      // already gone either way. (force is no exception: force overrides the
+      // VERDICT, it never was a licence to discard commits made mid-request.)
+      //
+      // When the tree was already gone there is no inspection to compare
+      // against (the branch name came from the session row) — and no loss is
+      // possible: everything the branch ever was survived the earlier tree
+      // removal, so deleting the ref is the unconditional `branch -D` this
+      // endpoint has always done there, checked-out guard included. `git
+      // update-ref` carries no checked-out guard, but by the time it runs the
+      // only worktree that could check this branch out — THIS one — is gone.
+      if (inspected_tip == null) {
+        const deleted = await execFileP('git', ['-C', repo, 'branch', '-D', branch], { timeout: 30_000 });
+        branch_deleted = deleted.ok;
+      } else if (await branchTipOid(repo, branch) === inspected_tip) {
+        const deleted = await execFileP(
+          'git', ['-C', repo, 'update-ref', '-d', `refs/heads/${branch}`, inspected_tip],
+          { timeout: 30_000 },
+        );
+        branch_deleted = deleted.ok;
+      }
     }
 
     // Final liveness gate before the DB purge. The awaited git remove/prune/branch
