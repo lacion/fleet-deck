@@ -788,7 +788,7 @@ export function createCore(db, {
   // POST route is untouched) plus resolveSettings, browseRootChoice (files.mjs)
   // and persistRepoTransport (spawns.mjs). It must precede files/spawns.
   Object.assign(ctx, createSettings(ctx));
-  const { resolveReposDir, setSettings, resolveSettings } = ctx;
+  const { resolveReposDir, setSettings, resolveSettings, setRepoSetupEntry } = ctx;
 
   // File-touch ledger + conflict radar → ledger.mjs.
   Object.assign(ctx, createLedger(ctx));
@@ -934,6 +934,7 @@ export function createCore(db, {
     resolveReposDir,    // repos-root resolver (still consumed via resolveSettings)
     resolveSettings,    // GET /api/settings + POST response + /state snapshot
     setSettings,        // POST /api/settings (whitelisted; settings.mjs)
+    setRepoSetupEntry,  // daemon-side per-repo setup-default writer (BUG-147)
     fsList,             // GET /api/sessions/:id/fs/list → {status, body}
     fsRead,             // GET /api/sessions/:id/fs/read → {status, body}
     fsSearch,           // GET /api/sessions/:id/fs/search → {status, body}

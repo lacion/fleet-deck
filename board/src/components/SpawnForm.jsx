@@ -457,8 +457,10 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
 
   const persistSetupDefault = async () => {
     if (!saveSetupDefault || !selectedRepoName) return true;
-    const next = { ...(settings?.repo_setup || {}), [selectedRepoName]: setupCmd };
-    const res = await saveSettings({ repo_setup: next });
+    // A per-repository PATCH, not a whole-object replace: the snapshot this
+    // board holds can be stale, and spreading it would silently delete another
+    // board's concurrent save (BUG-147). The daemon merges server-side.
+    const res = await saveSettings({ repo_setup_patch: { [selectedRepoName]: setupCmd } });
     if (res.ok && res.json?.ok) return true;
     setErr(reasonOf(res, `setup default save failed (${res.status})`));
     return false;
