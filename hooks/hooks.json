@@ -107,7 +107,7 @@
             "asyncRewake": true,
             "rewakeMessage": "[FLEETDECK] Fleet board mail for you:",
             "rewakeSummary": "Fleet Deck: board mail delivered",
-            "timeout": 7230
+            "timeout": 86430
           }
         ]
       }

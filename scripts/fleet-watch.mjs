@@ -51,8 +51,10 @@
 //       exit 0. Each later Stop spawns a fresh watcher, so coverage
 //       continues turn over turn; after the cap lapses, delivery falls back
 //       to turn-boundary (still correct, just not instant). hooks/hooks.json's
-//       Stop command-hook timeout is set above this cap so the CLI never
-//       kills the process out from under its own lifecycle logic.
+//       Stop command-hook timeout (86430 s) is set above the maximum value of
+//       this cap (24 h = 86400 s) with a 30 s shutdown margin, so the CLI never
+//       kills the process out from under its own lifecycle logic. Keep the two
+//       in lockstep with the clamp ceiling on MAX_MS below.
 //   (d) stdout: NEVER written. stderr: carries ONLY the final mail text (the
 //       CLI injects stderr||stdout on exit 2 — anything else here would
 //       pollute the rewake).

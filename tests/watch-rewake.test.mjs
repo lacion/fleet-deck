@@ -414,6 +414,25 @@ test('fleet-watch: SessionEnd tombstone makes the watcher exit 0 promptly (freef
   assert.equal(q?.status, 'pending', 'the freeform question still awaits its answer for a resumed session');
 });
 
+test('hooks.json: the asyncRewake Stop hook timeout exceeds the watcher lifetime ceiling with shutdown margin', () => {
+  // BUG-103: fleet-watch accepts FLEETDECK_WATCH_MAX_MS up to 24 h, but the
+  // hook timeout was fixed at 7230 s (~2 h) — any configured lifetime above
+  // that was killed by the CLI out from under the watcher's own cap logic.
+  // The timeout must sit above the full accepted maximum, with margin for
+  // the watcher's shutdown tail (final long-poll hold + fetch grace).
+  const hooks = JSON.parse(readFileSync(path.join(REPO_ROOT, 'hooks/hooks.json'), 'utf8'));
+  const entry = hooks.hooks.Stop
+    .flatMap(group => group.hooks)
+    .find(h => typeof h.command === 'string' && h.command.includes('fleet-watch.mjs'));
+  assert.ok(entry, 'hooks.json must register scripts/fleet-watch.mjs as a Stop hook');
+  assert.equal(entry.asyncRewake, true, 'the watcher hook must stay asyncRewake');
+  const WATCH_MAX_CEILING_S = 24 * 3600; // scripts/fleet-watch.mjs MAX_MS clamp ceiling
+  assert.ok(
+    entry.timeout > WATCH_MAX_CEILING_S,
+    `hook timeout ${entry.timeout}s must exceed the watcher lifetime ceiling ${WATCH_MAX_CEILING_S}s`,
+  );
+});
+
 test('fleet-watch v2: lifetime cap (FLEETDECK_WATCH_MAX_MS) makes the watcher exit 0 even with a live session and nothing pending', async (t) => {
   const daemon = await startDaemon();
   const cwd = scratchCwd();
