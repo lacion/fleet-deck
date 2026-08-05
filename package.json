@@ -41,7 +41,7 @@
     "smoke": "bash demo/run-smoke.sh"
   },
   "engines": {
-    "node": ">=22.5"
+    "node": "^22.13.0 || >=24.0.0"
   },
   "dependencies": {
     "ws": "^8.18.0"

@@ -120,6 +120,20 @@ async function status(args = []) {
 
 // ------------------------------------------------------------------ doctor
 
+// The supported Node range, kept in lockstep with package.json `engines`.
+// node:sqlite shipped behind --experimental-sqlite in 22.5 and only loads
+// WITHOUT the flag from 22.13.0 (and 24.x), so the floor is 22.13 — an older
+// Node in the 22 line satisfies `>=22.5` yet fails module linking with
+// ERR_UNKNOWN_BUILTIN_MODULE before fleetd opens its listener.
+const MIN_NODE_RANGE = '^22.13.0 || >=24.0.0';
+function nodeVersionSupported(version) {
+  const [major, minor] = String(version).split('.').map(Number);
+  if (Number.isNaN(major) || Number.isNaN(minor)) return false;
+  if (major === 22) return minor >= 13;
+  if (major === 23) return false;
+  return major >= 24;
+}
+
 async function onPath(cmd) {
   try { await execFileP('sh', ['-c', `command -v ${cmd}`], { timeout: 5000 }); return true; }
   catch { return false; }
@@ -133,9 +147,8 @@ async function doctor() {
   const problems = [];
   const warnings = [];
 
-  const [major, minor] = process.versions.node.split('.').map(Number);
-  if (major < 22 || (major === 22 && minor < 5)) {
-    problems.push(`Node ${process.versions.node} is too old — fleetd needs >= 22.5 for node:sqlite (no polyfill exists)`);
+  if (!nodeVersionSupported(process.versions.node)) {
+    problems.push(`Node ${process.versions.node} is too old — fleetd needs ${MIN_NODE_RANGE} for node:sqlite (no polyfill exists)`);
   }
 
   if (!await onPath('tmux')) {
@@ -544,4 +557,4 @@ if (IS_ENTRYPOINT) await main(process.argv.slice(2));
 // exported for tests only — the env-file validation, supervisor identity check,
 // and file generators are contracts. Nothing here runs on import (see
 // IS_ENTRYPOINT above), so importing is side-effect-free.
-export { writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor, serviceInstall, UNIT, SUPERVISE, doctor };
+export { writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor, serviceInstall, UNIT, SUPERVISE, doctor, MIN_NODE_RANGE, nodeVersionSupported };

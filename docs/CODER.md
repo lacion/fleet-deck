@@ -188,8 +188,9 @@ board up to read the warning.
 
 ## Your image needs
 
-- **Node ≥ 22.5** — the daemon stores state in `node:sqlite`, which landed in 22.5. There is no
-  polyfill and no fallback.
+- **Node ^22.13.0 || >=24.0.0** — the daemon stores state in `node:sqlite`, which shipped behind
+  a flag in 22.5 but only loads unflagged from 22.13.0 (and 24.x). Node 23 is unsupported. There
+  is no polyfill and no fallback.
 - **tmux** — every agent runs in a pane.
 - **The `claude` CLI**, and the Fleet Deck plugin installed for it.
 

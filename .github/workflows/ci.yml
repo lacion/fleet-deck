@@ -15,7 +15,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node-version: ['22', '24']
+        # '22.13.0' is pinned on purpose: it is the declared engine floor
+        # (node:sqlite loads unflagged from 22.13.0), and the moving '22' alias
+        # would silently stop exercising it as the 22 line advances.
+        node-version: ['22.13.0', '24']
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Install tmux
