@@ -69,15 +69,16 @@ function clampFrom(from) {
 // [FLEETDECK ...] frames and the daemon's own sender names as carrying human
 // authority — so they must be unforgeable. Only the daemon's internal mail()
 // callers may send them; postMail (the external API) is forced unprivileged:
-// reserved senders 422, and a reserved frame prefix at the start of the text
-// 422s as well (a frame MID-text renders as mail content, not an envelope, so
-// only the leading position is checked). Ordinary callsign/session-id senders
-// and plain text are unaffected.
+// reserved senders 422, and a reserved frame prefix at the start of ANY line
+// of the text 422s as well (a frame MID-line renders as mail content, not an
+// envelope, so only line-leading positions are checked). Ordinary
+// callsign/session-id senders and plain text are unaffected.
 const RESERVED_SENDERS = new Set(['orchestrator', 'fleetdeck', 'fleetdeck-answer', 'human']);
 // Leading whitespace AND control/zero-width characters: a frame smuggled past
 // as "\x00[FLEETDECK ANSWER]" renders identically in a pane to the real one.
 // eslint-disable-next-line no-control-regex
 const RESERVED_FRAME_RE = /^[\s\x00-\x1f\x7f-\x9f]*\[FLEETDECK[ \]]/i;
+<<<<<<< /tmp/mf-ours
 // BUG-032: Unicode format characters (general category Cf — zero-width spaces
 // and joiners, and EVERY bidi control: U+061C, U+200E/F, U+202A-E, U+2066-9)
 // are visually ignorable in a receiving pane, so "human​" renders as the
@@ -88,6 +89,16 @@ const RESERVED_FRAME_RE = /^[\s\x00-\x1f\x7f-\x9f]*\[FLEETDECK[ \]]/i;
 // at any offset — leading ("​[FLEETDECK ANSWER]") or interior
 // ("[FLEETDECK​ ANSWER]") alike.
 const stripFormatChars = (s) => s.replace(/\p{Cf}/gu, '');
+=======
+// BUG-036: delivery preserves linefeeds (watcher output is verbatim and
+// sanitizePaneText keeps \n), so a frame at the start of ANY logical line —
+// not just byte zero — renders as a genuine authority frame. Canonicalize
+// newlines exactly as the pane sink does (CRLF / lone CR → LF), then test the
+// start of every line.
+function hasReservedFrame(text) {
+  return String(text).replace(/\r\n?/g, '\n').split('\n').some(line => RESERVED_FRAME_RE.test(line));
+}
+>>>>>>> /tmp/mf-theirs
 // The pane envelope is a single line (`[FLEETDECK MAIL from <from>] <text>`):
 // a newline in `from` lets the text forge a line-two frame, and `from` is
 // interpolated VERBATIM between the envelope's own bracket delimiters — so a
@@ -424,8 +435,13 @@ export function createMail(ctx) {
     if (from != null && FROM_UNSAFE_RE.test(String(from))) {
       return { status: 422, body: { ok: false, reason: 'sender name may not contain control characters, newlines, or [ ] delimiters' } };
     }
+<<<<<<< /tmp/mf-ours
     if (RESERVED_FRAME_RE.test(stripFormatChars(String(text ?? '')))) {
       return { status: 422, body: { ok: false, reason: 'mail text may not open with a [FLEETDECK ...] frame — those are reserved for the daemon' } };
+=======
+    if (hasReservedFrame(text ?? '')) {
+      return { status: 422, body: { ok: false, reason: 'mail text may not open any line with a [FLEETDECK ...] frame — those are reserved for the daemon' } };
+>>>>>>> /tmp/mf-theirs
     }
     // A direct send whose name belongs to a shell card is refused LOUDLY (mail
     // typed into a shell executes). Same current-name-wins priority as
