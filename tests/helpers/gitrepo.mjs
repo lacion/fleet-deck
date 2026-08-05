@@ -37,9 +37,18 @@ function git(args, cwd) {
  */
 export function makeRepoWithWorktree({ repoName = 'fleetdeck-repo-test', branch = 'wt-branch' } = {}) {
   const base = mkdtempSync(path.join(tmpdir(), 'fleetdeck-git-'));
-  const root = path.join(base, repoName);
-  mkdirSync(root, { recursive: true });
+  try {
+    return build(base, repoName, branch);
+  } catch (err) {
+    // The base dir is allocated before any git call; if git is missing or a
+    // later step throws, callers never receive a handle with cleanup(), so
+    // the fixture must remove its own base here or every setup failure leaks
+    // a fleetdeck-git-* tree (BUG-207).
+    rmSync(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    throw err;
+  }
 
+<<<<<<< /tmp/mf-ours
   // -b main pins the initial branch: bare `git init` inherits the host's
   // init.defaultBranch (or git's built-in default), so tests downstream of
   // this fixture would pass or fail with the platform.
@@ -49,30 +58,43 @@ export function makeRepoWithWorktree({ repoName = 'fleetdeck-repo-test', branch 
   writeFileSync(path.join(root, 'shared.js'), '// seed\nmodule.exports = {};\n');
   git(['add', '.'], root);
   git(['commit', '-q', '-m', 'seed'], root);
+=======
+  function build(base, repoName, branch) {
+    const root = path.join(base, repoName);
+    mkdirSync(root, { recursive: true });
+>>>>>>> /tmp/mf-theirs
 
-  const worktree = path.join(base, `${repoName}-wt`);
-  git(['worktree', 'add', '-q', '-b', branch, worktree], root);
+    git(['init', '-q'], root);
+    git(['config', 'user.email', 'test@fleetdeck.local'], root);
+    git(['config', 'user.name', 'Fleet Deck Tests'], root);
+    writeFileSync(path.join(root, 'shared.js'), '// seed\nmodule.exports = {};\n');
+    git(['add', '.'], root);
+    git(['commit', '-q', '-m', 'seed'], root);
 
-  // --git-common-dir is usually printed relative (".git"); realpathSync()
-  // resolves a relative path against process.cwd(), NOT against `root`, so
-  // it must be joined against `root` first or this silently resolves inside
-  // whatever directory the test runner itself was launched from.
-  const gitCommonDirRaw = git(['rev-parse', '--git-common-dir'], root);
-  const gitCommonDir = realpathSync(
-    path.isAbsolute(gitCommonDirRaw) ? gitCommonDirRaw : path.resolve(root, gitCommonDirRaw)
-  );
+    const worktree = path.join(base, `${repoName}-wt`);
+    git(['worktree', 'add', '-q', '-b', branch, worktree], root);
 
-  return {
-    root: realpathSync(root),
-    worktree: realpathSync(worktree),
-    repoName,
-    branch,
-    gitCommonDir,
-    cleanup() {
-      try { git(['worktree', 'remove', '--force', worktree], root); } catch { /* ignore */ }
-      rmSync(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
-    },
-  };
+    // --git-common-dir is usually printed relative (".git"); realpathSync()
+    // resolves a relative path against process.cwd(), NOT against `root`, so
+    // it must be joined against `root` first or this silently resolves inside
+    // whatever directory the test runner itself was launched from.
+    const gitCommonDirRaw = git(['rev-parse', '--git-common-dir'], root);
+    const gitCommonDir = realpathSync(
+      path.isAbsolute(gitCommonDirRaw) ? gitCommonDirRaw : path.resolve(root, gitCommonDirRaw)
+    );
+
+    return {
+      root: realpathSync(root),
+      worktree: realpathSync(worktree),
+      repoName,
+      branch,
+      gitCommonDir,
+      cleanup() {
+        try { git(['worktree', 'remove', '--force', worktree], root); } catch { /* ignore */ }
+        rmSync(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+      },
+    };
+  }
 }
 
 /** Create a plain (non-git) scratch directory for the "falls back to cwd" case. */

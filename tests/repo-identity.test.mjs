@@ -42,8 +42,11 @@ function findConflictFor(state, relOrAbsName) {
 
 test('events from two worktrees of one repo collapse to one repo_id; cross-worktree collision is severity=info', async (t) => {
   const daemon = await startDaemon();
+  // Register each teardown the moment its resource exists: if fixture
+  // construction throws, the daemon must still be stopped (BUG-207).
+  t.after(() => daemon.stop());
   const repo = makeRepoWithWorktree({ repoName: 'fleetdeck-worktree-test' });
-  t.after(async () => { await daemon.stop(); repo.cleanup(); });
+  t.after(() => { repo.cleanup(); });
 
   const sidRoot = randomUUID();
   const sidWt = randomUUID();
@@ -79,8 +82,9 @@ test('events from two worktrees of one repo collapse to one repo_id; cross-workt
 
 test('two sessions in the same worktree colliding is severity=warning', async (t) => {
   const daemon = await startDaemon();
+  t.after(() => daemon.stop());
   const repo = makeRepoWithWorktree({ repoName: 'fleetdeck-sameworktree-test' });
-  t.after(async () => { await daemon.stop(); repo.cleanup(); });
+  t.after(() => { repo.cleanup(); });
 
   const sidA = randomUUID();
   const sidB = randomUUID();
@@ -190,8 +194,9 @@ test('unit: ledgerKey keeps dot-leading root files repo-relative; real parent es
 
 test('a non-git cwd falls back to repo_id = cwd', async (t) => {
   const daemon = await startDaemon();
+  t.after(() => daemon.stop());
   const plain = makePlainDir();
-  t.after(async () => { await daemon.stop(); plain.cleanup(); });
+  t.after(() => { plain.cleanup(); });
 
   const sid = randomUUID();
   await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd: plain.dir }), { token: daemon });
