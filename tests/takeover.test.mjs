@@ -35,7 +35,11 @@ import { getJson, postHook } from './helpers/http.mjs';
 import { loadFixture } from './helpers/fixtures.mjs';
 import { waitUntil, scaleMs } from './helpers/wait.mjs';
 import {
+<<<<<<< /tmp/mf-ours
   parseSemver, compareSemver, shouldTakeOver, verifyDaemonPid, replacementMatches,
+=======
+  parseSemver, compareSemver, shouldTakeOver, verifyDaemonPid, pidRecord,
+>>>>>>> /tmp/mf-theirs
 } from '../scripts/fleetd/takeover.mjs';
 
 const HOOK_SCRIPT = path.join(REPO_ROOT, 'scripts/fleet-sessionstart.mjs');
@@ -91,25 +95,33 @@ function runHook({ port, home, env = {}, payload }) {
 }
 
 // Reap a daemon the HOOK spawned (detached — nothing else owns its lifetime).
-// Find its pid via /health, else the pidfile; SIGTERM, wait, SIGKILL backstop;
-// then reap the isolated tmux server for the port. Leaking a daemon here would
-// reopen the exact class of bug this repo just cleaned up.
+// Leaking a daemon here would reopen the exact class of bug this repo just
+// cleaned up — but so would killing the WRONG one: the scratch port range is
+// shared with every other test process running on this machine, so the process
+// answering /health on `port` may belong to a concurrent run's HOME, not this
+// one (BUG-179). Cleanup therefore mirrors the hook's own verify-before-kill
+// gate: the candidate pid must be recorded in THIS home's pidfile AND pass
+// verifyDaemonPid(pid, home) before it is signalled, and the port-derived tmux
+// socket is only reaped once ownership is proven. Failing the gate leaks (a
+// tmpdir + an idle daemon on a scratch port), never kills a foreign process.
 async function killDaemonAt(port, home) {
   let pid = null;
   try { pid = (await getJson(`http://127.0.0.1:${port}/health`, { timeout: 500 })).json?.pid ?? null; }
   catch { /* fall through to the pidfile */ }
-  if (pid == null) {
-    try { pid = JSON.parse(readFileSync(path.join(home, 'fleetd.pid'), 'utf8'))?.pid ?? null; }
-    catch { /* nothing to reap */ }
+  if (!verifyDaemonPid(pid, home)) {
+    // The /health answerer is not provably this HOME's daemon — or /health is
+    // down. Either way the only pid we may trust is this HOME's OWN pidfile,
+    // and only if the verifier (pidfile match + fleetd /proc shape) accepts it.
+    try { pid = pidRecord(readFileSync(path.join(home, 'fleetd.pid'), 'utf8'))?.pid ?? null; }
+    catch { pid = null; }
+    if (!verifyDaemonPid(pid, home)) return; // not ours — do NOT signal, do NOT reap the tmux socket
   }
-  if (pid != null) {
-    try { process.kill(pid, 'SIGTERM'); } catch { /* already gone */ }
-    for (let i = 0; i < 20; i++) {
-      await new Promise(r => setTimeout(r, 100));
-      try { process.kill(pid, 0); } catch { pid = null; break; }
-    }
-    if (pid != null) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } }
+  try { process.kill(pid, 'SIGTERM'); } catch { /* already gone */ }
+  for (let i = 0; i < 20; i++) {
+    await new Promise(r => setTimeout(r, 100));
+    try { process.kill(pid, 0); } catch { pid = null; break; }
   }
+  if (pid != null) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } }
   try { spawnSync('tmux', ['-L', `fleetdeck-test-${port}`, 'kill-server'], { stdio: 'ignore', timeout: 3000 }); }
   catch { /* the common case is no server on the socket */ }
 }
@@ -244,6 +256,49 @@ test('verifyDaemonPid accepts a genuine running daemon (pidfile match + fleetd /
   assert.ok(health?.pid, 'health should report a pid');
   assert.equal(verifyDaemonPid(health.pid, daemon.home), true,
     'a real fleetd must verify (its pidfile matches and its /proc shape is node fleetd.mjs)');
+});
+
+test('killDaemonAt never terminates a daemon owned by another HOME that answers on the same port (BUG-179)', async (t) => {
+  // The scratch port range is shared across test processes. If another run's
+  // daemon answers /health on our port while OUR home holds nothing (or a
+  // different pid), cleanup must leave the foreign process AND the
+  // port-derived tmux socket alone — the old code SIGTERMed it blind.
+  const port = randomPort();
+  const foreignHome = mkdtempSync(path.join(tmpdir(), 'fleetdeck-foreign-home-'));
+  const home = mkdtempSync(path.join(tmpdir(), 'fleetdeck-orphan-home-'));
+  t.after(() => {
+    rmSync(foreignHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  // A "foreign" daemon: owns the port and its OWN pidfile, fleetd-disguised so
+  // even a verifier pointed at ITS home would accept it. Immortal, so a blind
+  // SIGTERM + SIGKILL backstop is what actually proves the gate (a mortal stub
+  // would die at the first wrong signal and SIGKILL would never matter).
+  const stub = spawn(process.execPath, [STUB, 'fleetd.mjs'], {
+    env: { ...process.env, FLEETDECK_PORT: String(port), FLEETDECK_HOME: foreignHome },
+    stdio: ['ignore', 'ignore', 'ignore'],
+  });
+  t.after(() => { try { stub.kill('SIGKILL'); } catch { /* gone */ } });
+  await waitForHealth(`http://127.0.0.1:${port}`, 8000);
+
+  // Liveness probe, not stub.exitCode: a child that dies from a signal keeps
+  // exitCode === null forever (only signalCode is set), so exitCode cannot
+  // distinguish "killed by cleanup" from "never signalled".
+  const stubAlive = () => { try { process.kill(stub.pid, 0); return true; } catch { return false; } };
+
+  // Case 1: OUR home has no pidfile at all. /health answers with the foreign
+  // pid — it must not be signalled. The wait outlasts the unfixed cleanup's
+  // SIGTERM + 2s poll + SIGKILL backstop path.
+  await killDaemonAt(port, home);
+  await new Promise(r => setTimeout(r, scaleMs(2600)));
+  assert.equal(stubAlive(), true, 'a foreign daemon with no pidfile in OUR home must survive cleanup');
+
+  // Case 2: OUR home pidfile points at a DIFFERENT pid. Still foreign.
+  writeFileSync(path.join(home, 'fleetd.pid'), JSON.stringify({ pid: stub.pid + 100000, port }));
+  await killDaemonAt(port, home);
+  await new Promise(r => setTimeout(r, scaleMs(2600)));
+  assert.equal(stubAlive(), true, 'a pidfile mismatch must refuse the kill even when /health answers');
 });
 
 // ---------------------------------------------------------------------------
