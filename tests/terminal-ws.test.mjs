@@ -283,6 +283,53 @@ test('live terminal WS returns err for an unknown spawn when enabled', async t =
     'a refused viewer must not have launched a control client');
 });
 
+// BUG-157: a watched window dies, tmux emits %window-close, and the bridge's
+// list-panes -a probe FAILS (%error — a control-client blip). The old code
+// swallowed that failure, and an idle viewer with no input in flight had no
+// other path that could observe the pane's death: it stayed in `viewers`,
+// pinning the shared control client until the WS keepalive or a later command
+// timeout. The bridge must re-list once after a settle delay; the fixture
+// (FLEETDECK_TEST_TERM_PROBE_FAILS=1) fails only the FIRST probe and answers
+// the recheck with an empty pane list — proof the pane is gone.
+test('a failed window-close probe is re-listed once so an idle viewer on a dead pane still finishes', async t => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-term-recheck-'));
+  const record = path.join(dir, 'term.jsonl');
+  const daemon = await startDaemon({
+    env: env(record, {
+      FLEETDECK_TEST_TERM_PROBE_FAILS: '1',
+      FLEETDECK_TERM_CLOSE_RECHECK_MS: '200',
+    }),
+  });
+  t.after(async () => { await daemon.stop(); rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+
+  const spawned = await createSpawn(daemon, dir);
+  const { ws, frames, closes } = connect(termUrl(daemon, spawned.spawn_id, 80, 24));
+  t.after(() => { if (ws.readyState !== WebSocket.CLOSED) ws.close(); });
+  await waitUntil(() => frames.find(f => f.t === 'init'), 'init frame');
+
+  // The viewer is now IDLE — no input, no resize. Only the window-close
+  // recheck can release it. %window-close's window id is made up; the probe
+  // answers by pane id, so the id itself is never consulted.
+  const procs = records(record).filter(r => r.type === 'start');
+  assert.equal(procs.length, 1, 'one shared control client');
+  const fixture = procs[0].pid;
+  process.kill(fixture, 'SIGUSR1');
+  await waitUntil(() => records(record).some(r => r.type === 'window-close'), 'fixture emitted %window-close');
+
+  const exit = await waitUntil(() => frames.find(f => f.t === 'exit'), 'exit frame');
+  assert.match(exit.reason, /pane closed/);
+  await waitUntil(() => closes.length > 0, 'socket close');
+
+  // The first probe failed, so this exit could only have come from a SECOND
+  // list-panes -a — the recheck — answering with the pane gone.
+  const probes = records(record).filter(r => /^list-panes -a /.test(r.line || ''));
+  assert.ok(probes.length >= 2, `the failed probe must be re-listed, saw ${probes.length}`);
+
+  // And releasing the last viewer hands the control client back: a fleet
+  // nobody is watching holds no tmux attach.
+  await waitUntil(() => records(record).some(r => r.type === 'signal' && r.signal === 'SIGTERM'), 'client released on last viewer');
+});
+
 // Item 6: the row said live but its pane was already gone (the agent ended
 // between the ~10s liveness tick and this open). A vanished pane is the agent
 // ENDING, not a viewer fault — so the client must receive {t:'exit'}

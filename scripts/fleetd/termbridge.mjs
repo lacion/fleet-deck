@@ -41,6 +41,11 @@ const ATTACH_TIMEOUT_MS = 5_000;
 // forever. Generous — every command here is a fast control op — and overridable
 // for tests.
 const COMMAND_TIMEOUT_MS = envInt('FLEETDECK_TERM_CMD_TIMEOUT_MS', 10_000, { min: 100 });
+// A FAILED window-close probe (a rejected or !ok list-panes) proves nothing —
+// so instead of guessing, re-list once after a short settle delay. Without
+// this an idle viewer whose pane just died never finishes: nothing else ever
+// sends that pane a command that could observe the death.
+const CLOSE_RECHECK_MS = envInt('FLEETDECK_TERM_CLOSE_RECHECK_MS', 1_000, { min: 50 });
 // M-R4: the most pending keystroke bytes we will hold for ONE viewer before
 // evicting it. A human types bytes; only a runaway paste/automation hits this.
 const MAX_INPUT_QUEUE_BYTES = envInt('FLEETDECK_TERM_INPUT_MAX_BYTES', 256 * 1024, { min: 1024 });
@@ -238,13 +243,13 @@ export function createTermBridge({ port, resolveSpawn, log = () => {} } = {}) {
         // list-panes answers for every viewer at once.
         if (!c.panes.size) return;
         c.command("list-panes -a -F '#{pane_id}'").then((res) => {
-          if (!res.ok) return;
+          if (!res.ok) return scheduleCloseRecheck();
           const alive = new Set(res.lines.map((s) => s.trim()));
           for (const [paneId, stream] of [...c.panes]) {
             if (alive.has(paneId)) continue;
             for (const v of [...stream.subs]) v.finish('terminal pane closed');
           }
-        }).catch(() => { /* a failed probe is not proof a pane died */ });
+        }).catch(() => scheduleCloseRecheck());
       }
     };
 
@@ -336,6 +341,30 @@ export function createTermBridge({ port, resolveSpawn, log = () => {} } = {}) {
     if (c.child && c.child.exitCode === null && !c.child.killed) {
       try { c.child.kill('SIGTERM'); } catch { /* already gone */ }
     }
+  }
+
+  /** A window-close probe failed: re-list ONCE after a short settle delay. The
+   * %window-close notification tells us SOME window died; if the re-list can be
+   * answered at all, any pane absent from it is provably gone and its viewers
+   * are finished. A second failure gives up (still no proof) — the M-R5 per-
+   * command deadline keeps the next viewer command from hanging forever either
+   * way. Serializes with in-flight close probes and skips clients that are
+   * already torn down. */
+  function scheduleCloseRecheck() {
+    const c = client;
+    if (!c || c.closed || !c.panes.size) return;
+    const timer = setTimeout(() => {
+      if (client !== c || c.closed || !c.panes.size) return;
+      c.command("list-panes -a -F '#{pane_id}'").then((res) => {
+        if (!res.ok) return;
+        const alive = new Set(res.lines.map((s) => s.trim()));
+        for (const [paneId, stream] of [...c.panes]) {
+          if (alive.has(paneId)) continue;
+          for (const v of [...stream.subs]) v.finish('terminal pane closed');
+        }
+      }).catch(() => { /* a failed probe is not proof a pane died */ });
+    }, CLOSE_RECHECK_MS);
+    timer.unref?.();
   }
 
   /** Attach (once) and wait for tmux to confirm. Concurrent openers share it. */

@@ -23,7 +23,8 @@ let number = 0;
 //   'empty'        → the command succeeds but hands back no pane id
 //   <substring>    → fail (%error) only windows whose name contains the value
 // Only the per-window `list-panes -t` lookup is affected; the `list-panes -a`
-// window-close probe still answers truthfully so viewer teardown is unaffected.
+// window-close probe still answers truthfully (unless PROBE_FAILS below says
+// otherwise) so viewer teardown is unaffected.
 const noPaneKnob = process.env.FLEETDECK_TEST_TERM_NO_PANE;
 function noPaneModeFor(window) {
   if (!noPaneKnob) return null;
@@ -35,6 +36,13 @@ function noPaneModeFor(window) {
 // window name -> pane id, assigned on first sight and stable thereafter
 const panes = new Map();
 const streamed = new Set();
+// Fault injection (BUG-157): make the window-close probe (`list-panes -a`)
+// FAIL so the bridge's failed-probe path is exercised. Without the recheck an
+// idle viewer whose pane just died would never finish; with it the probe is
+// retried after a settle delay and the second, healthy answer condemns the
+// dead pane.
+const probeFails = new Set((process.env.FLEETDECK_TEST_TERM_PROBE_FAILS || '0').split(',').map(Number).filter(Number.isInteger));
+let probeCalls = 0;
 
 function note(value) {
   if (!record) return;
@@ -81,6 +89,7 @@ input.on('line', line => {
     else if (mode === 'empty') response([]);         // window gone: no pane id comes back
     else response([paneForListPanes(line)]);
   } else if (line.startsWith('list-panes -a')) {
+<<<<<<< /tmp/mf-ours
     // window-close probe + BUG-055 pane_dead poll: '%N [dead]' per pane. The
     // plain-id form used by the close probe and the id+flag form used by the
     // dead poll both parse the same way, so answer both shapes. The dead knob
@@ -104,6 +113,11 @@ input.on('line', line => {
     note({ type: 'dbg2', out });
     response(out);
 >>>>>>> /tmp/mf-theirs
+=======
+    probeCalls += 1;
+    if (probeFails.has(probeCalls)) response([], false); // the probe itself fails: not proof a pane died
+    else response([...panes.values()]); // window-close probe: every pane still alive
+>>>>>>> /tmp/mf-theirs
   } else if (line.startsWith('capture-pane ')) {
     const pane = paneForTarget(line) || '%1';
     response([`seed ${pane} \u001b[31mred\u001b[0m`]);
@@ -124,6 +138,17 @@ input.on('line', line => {
 process.on('SIGTERM', () => {
   note({ type: 'signal', signal: 'SIGTERM' });
   process.exit(0);
+});
+
+// Test trigger: every pane "dies" and a %window-close notification is emitted
+// as if a watched window was just killed. From here on the window-close probe
+// (list-panes -a) answers with NO panes, so the bridge's probe can prove the
+// death. The window id is made up — the probe answers by pane id, so the id
+// itself is never consulted.
+process.on('SIGUSR1', () => {
+  panes.clear();
+  note({ type: 'window-close' });
+  process.stdout.write('%window-close @999\n');
 });
 
 note({ type: 'start' });
