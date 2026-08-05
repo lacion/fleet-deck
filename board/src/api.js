@@ -152,6 +152,15 @@ export function markPlan(planId, body) {
   return post(`/api/plans/${encodeURIComponent(planId)}/mark`, body);
 }
 
+// BUG-039 — assign an executable plan to a live session. The [FLEETDECK
+// ASSIGNMENT] frame is daemon-reserved (POST /mail 422s it), so the daemon
+// composes and mails the frame itself, then marks the plan executed — one
+// request, no client-composed reserved frame. body = {to, instructions?};
+// 404 unknown plan/target, 409 non-executable plan (verbatim-honest).
+export function assignPlan(planId, body) {
+  return post(`/api/plans/${encodeURIComponent(planId)}/assign`, body);
+}
+
 // Manual cleanup: archive offline cards, expire their undelivered mail, kill
 // dead scoped panes. Responds {ok, archived, mail_expired, windows_killed,
 // orphan_worktrees} — orphans are LISTED, never deleted by the daemon.

@@ -1113,6 +1113,16 @@ export function createHttp(core, {
               const out = core.planMark(Number(planMatch[1]), ev);
               return json(res, out.status, out.body);
             }
+            const assignMatch = /^\/api\/plans\/(\d+)\/assign$/.exec(url.pathname);
+            if (assignMatch) {
+              // BUG-039: daemon-side plan assignment — {to, instructions?}.
+              // The board must send the daemon-reserved [FLEETDECK ASSIGNMENT]
+              // frame, which POST /mail 422s, so the daemon composes it here
+              // through its internal mail() and marks the plan executed in the
+              // same request. 404 unknown plan/target, 409 non-executable plan.
+              const out = core.assignPlan(Number(assignMatch[1]), ev);
+              return json(res, out.status, out.body);
+            }
             return json(res, 404, { err: 'nope' });
           } catch (err) {
             console.error('fleetd handler error:', err);

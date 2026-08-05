@@ -514,6 +514,104 @@ test('mark: 404 for an unknown plan id', async (t) => {
 });
 
 // ---------------------------------------------------------------------------
+// 5b. BUG-039 — daemon-side Assign. The board's Assign control used to compose
+// the [FLEETDECK ASSIGNMENT] frame client-side and post it through /mail,
+// which 422s every reserved frame (0.16.0) — so Assign never delivered and
+// the plan was never marked executed. POST /api/plans/:id/assign is the
+// daemon-authorized path: it mails the framed plan through the internal
+// mail() and records the executed verdict in the same request.
+// ---------------------------------------------------------------------------
+
+test('assign: mails the daemon-reserved [FLEETDECK ASSIGNMENT] frame to the target and marks the plan executed', async (t) => {
+  const holdMs = 1500;
+  const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
+  const cwd = scratchCwd();
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+
+  // Planner holds ExitPlanMode → plan captured (status proposed).
+  const plannerSid = randomUUID();
+  const { held, payload } = await holdExitPlan(daemon, plannerSid, cwd, holdMs);
+  const state0 = (await getJson(`${daemon.baseUrl}/state`)).json;
+  const plan0 = plansFor(state0, plannerSid)[0];
+  assert.ok(plan0, 'sanity: plan captured');
+  assert.equal(plan0.status, 'proposed');
+
+  // Target: a live session the plan gets assigned to.
+  const targetSid = randomUUID();
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: targetSid, cwd }), { token: daemon });
+  const state1 = (await getJson(`${daemon.baseUrl}/state`)).json;
+  const targetCard = findSession(state1, targetSid);
+  assert.ok(targetCard, 'sanity: target session card exists');
+
+  const res = await postJson(`${daemon.baseUrl}/api/plans/${plan0.plan_id}/assign`, {
+    to: targetSid,
+    instructions: 'run only the migration',
+  });
+  assert.equal(res.status, 200, `assign should 200 (got ${res.status}: ${JSON.stringify(res.json)})`);
+  assert.equal(res.json?.ok, true);
+  assert.equal(res.json?.session_id, targetSid, 'assign should report the resolved target session id');
+
+  // The assignment frame reached the target's mailbox VERBATIM — the exact
+  // reserved frame POST /mail refuses to carry for an external caller.
+  const box = (await getJson(`${daemon.baseUrl}/mail?session=${encodeURIComponent(targetSid)}`)).json;
+  assert.equal(box.mail.length, 1, 'target should have exactly one mail (the assignment)');
+  const m = box.mail[0];
+  assert.equal(m.from, 'orchestrator', 'the assignment frame is daemon-sent (reserved sender, never board-forged)');
+  assert.ok(m.text.startsWith('[FLEETDECK ASSIGNMENT]'), `mail must open with the reserved assignment frame (got: ${m.text.slice(0, 60)}...)`);
+  assert.ok(m.text.includes('Custom instructions: run only the migration'), 'custom instructions ride the frame');
+  assert.ok(m.text.includes(payload.tool_input.plan), 'the full plan markdown is the frame body');
+
+  // The plan was recorded executed atomically with the assignment.
+  const state2 = (await getJson(`${daemon.baseUrl}/state`)).json;
+  const plan2 = (state2.plans || []).find(p => String(p.plan_id) === String(plan0.plan_id));
+  assert.equal(plan2?.status, 'executed', 'assign must mark the plan executed');
+  if (plan2?.via !== undefined) {
+    assert.equal(plan2.via, `assign:${targetSid}`, 'when `via` is exposed it should record the assign target');
+  }
+
+  // BUG-041 comes along for free: assigning while the planner's question is
+  // still pending dismisses it, and the held hook resolves.
+  const ans = await held;
+  assert.equal(ans.status, 200, 'the planner hold should resolve once the plan is assigned elsewhere');
+});
+
+test('assign: bad requests and bad transitions are refused without sending mail', async (t) => {
+  const holdMs = 1500;
+  const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
+  const cwd = scratchCwd();
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+
+  const plannerSid = randomUUID();
+  const { held, q } = await holdExitPlan(daemon, plannerSid, cwd, holdMs);
+  const state0 = (await getJson(`${daemon.baseUrl}/state`)).json;
+  const plan0 = plansFor(state0, plannerSid)[0];
+
+  const targetSid = randomUUID();
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: targetSid, cwd }), { token: daemon });
+
+  // 404 unknown plan / unknown target, 400 missing or mistyped fields.
+  const unknownPlan = await postJson(`${daemon.baseUrl}/api/plans/999999999/assign`, { to: targetSid });
+  assert.equal(unknownPlan.status, 404, `assigning an unknown plan should 404 (got ${unknownPlan.status})`);
+  const unknownTarget = await postJson(`${daemon.baseUrl}/api/plans/${plan0.plan_id}/assign`, { to: 'no-such-session-xyz' });
+  assert.equal(unknownTarget.status, 404, `assigning to an unknown target should 404 (got ${unknownTarget.status})`);
+  const missingTo = await postJson(`${daemon.baseUrl}/api/plans/${plan0.plan_id}/assign`, {});
+  assert.equal(missingTo.status, 400, `assign without a target should 400 (got ${missingTo.status})`);
+  const badInstr = await postJson(`${daemon.baseUrl}/api/plans/${plan0.plan_id}/assign`, { to: targetSid, instructions: 42 });
+  assert.equal(badInstr.status, 400, `non-string instructions should 400 (got ${badInstr.status})`);
+
+  // Reject the plan (deny answer) — a settled plan can no longer be assigned.
+  const ansRes = await postJson(`${daemon.baseUrl}/api/questions/${q.id}/answer`, { behavior: 'deny' });
+  assert.equal(ansRes.status, 200);
+  await held;
+  const rejected = await postJson(`${daemon.baseUrl}/api/plans/${plan0.plan_id}/assign`, { to: targetSid });
+  assert.equal(rejected.status, 409, `assigning a rejected plan should 409 (got ${rejected.status}: ${JSON.stringify(rejected.json)})`);
+
+  // None of the refused assigns queued mail for the target.
+  const box = (await getJson(`${daemon.baseUrl}/mail?session=${encodeURIComponent(targetSid)}`)).json;
+  assert.equal(box.mail.length, 0, 'a refused assign must never queue the reserved frame');
+});
+
+// ---------------------------------------------------------------------------
 // 6. In-terminal settlement (UX 2.2): a plan question retired WITHOUT a board
 // answer settles its 'proposed' plan to 'handled-in-terminal' once the
 // session shows ACTIVITY — never on bare timer expiry.

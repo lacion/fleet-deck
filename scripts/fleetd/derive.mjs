@@ -774,9 +774,9 @@ export function createCore(db, {
   Object.assign(ctx, createCommands(ctx));
   const { command } = ctx;
 
-  // v1.3 plan library mark → plans.mjs.
+  // v1.3 plan library mark + BUG-039 assign → plans.mjs.
   Object.assign(ctx, createPlans(ctx));
-  const { planMark } = ctx;
+  const { planMark, assignPlan } = ctx;
 
   // Worktree custody (inspection + allow-listed removal) → worktrees.mjs.
   Object.assign(ctx, createWorktrees(ctx));
@@ -876,6 +876,7 @@ export function createCore(db, {
     fsSearchHome,       // GET /api/fs/search → {status, body}
     // v1.3 plan library
     planMark,          // POST /api/plans/:id/mark → {status, body}
+    assignPlan,        // POST /api/plans/:id/assign → {status, body} (BUG-039)
     // 0.7.1 custom names: POST /api/sessions/:id/name and the `name` command
     // both land here (one rename write, one set of rules).
     applyCustomName,
