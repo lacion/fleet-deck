@@ -24,7 +24,17 @@ import { pidRecord, pidIsLive, livePidLooksLikeFleetd } from './takeover.mjs';
 import { resolveHome, resolvePort } from './config.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const PORT = resolvePort();
+// The port is the daemon's identity (pidfile, hooks, board URLs), so an
+// invalid FLEETDECK_PORT must refuse startup BEFORE HOME is claimed: write
+// the refusal straight to stderr and exit, exactly like startupFatal but
+// available ahead of its declaration and its pidfile cleanup.
+let PORT;
+try {
+  PORT = resolvePort();
+} catch (err) {
+  try { fs.writeSync(2, `fleetd refused to start: ${err.message}\n`); } catch { /* exit still wins */ }
+  process.exit(1);
+}
 const BIND = (process.env.FLEETDECK_BIND || '127.0.0.1').trim() || '127.0.0.1';
 const LAN_MODE = !isLoopbackAddress(BIND);
 const HOME = resolveHome();

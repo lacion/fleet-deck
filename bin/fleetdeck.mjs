@@ -43,6 +43,24 @@ const SOURCE = path.join(ROOT, 'scripts', 'fleetd', 'fleetd.mjs');
 const FLEETD = fs.existsSync(BUNDLE) ? BUNDLE : SOURCE;
 
 const HOME = process.env.FLEETDECK_HOME || path.join(os.homedir() || '/tmp', '.fleetdeck');
+<<<<<<< /tmp/mf-ours
+=======
+// Byte-identical to scripts/fleetd/config.mjs resolvePort (that module is not
+// importable from the published CLI — see the header comment there): reject
+// port 0 and every other non-1..65535 value so the CLI never targets a
+// daemon identity nothing can actually reach.
+function resolveCliPort() {
+  const raw = process.env.FLEETDECK_PORT;
+  if (raw === undefined || raw === '') return 4711;
+  const port = Number(raw);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    process.stderr.write(`fleetdeck: invalid FLEETDECK_PORT ${JSON.stringify(raw)} — expected an integer port in 1..65535 (port 0 is not supported)\n`);
+    process.exit(2);
+  }
+  return port;
+}
+const PORT = resolveCliPort();
+>>>>>>> /tmp/mf-theirs
 const SERVICE_NAME = 'fleetdeck';
 
 const ENV_FILE = path.join(HOME, 'service.env');

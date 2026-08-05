@@ -136,11 +136,31 @@ export function branchOf(cwd, { fresh = false } = {}) {
   return branch;
 }
 
+// Canonicalize an edited file's path before keying so that two lexical paths
+// resolving to the same inode (e.g. `alias/x.js` where `alias` is a symlink to
+// `real/`) share one ledger key and the conflict radar still fires. The file
+// may not exist yet (a Write creating it), so resolve the nearest existing
+// ancestor and re-append the unresolved suffix; on any failure the lexical
+// path stands — missing an alias is preferable to breaking keying.
+function canonFile(p) {
+  let target = path.resolve(p);
+  const suffix = [];
+  for (let i = 0; i < 64; i++) {
+    try { return path.join(fs.realpathSync(target), ...suffix.reverse()); } catch { /* keep walking */ }
+    const parent = path.dirname(target);
+    if (parent === target) return path.resolve(p);
+    suffix.push(path.basename(target));
+    target = parent;
+  }
+  return path.resolve(p);
+}
+
 // Ledger key for an edited file, used to detect conflicting concurrent edits:
 // (repo_id, repo-relative path); absolute path fallback outside git.
 // `session` (a card row) lets us skip the subprocess when the file sits inside
 // the session's own worktree — the common case.
 export function ledgerKey(absPath, session) {
+  absPath = canonFile(absPath);
   // Fast path: file inside the session's own git worktree (cache hit, no
   // subprocess). Only valid when that worktree really is git — a non-git
   // session must fall through to the absolute-path key like everyone else.

@@ -31,9 +31,19 @@ export function resolveHome() {
   return path.normalize(configured);
 }
 
-// FLEETDECK_PORT, or the well-known default 4711.
+// FLEETDECK_PORT, or the well-known default 4711. Must be an integer in
+// 1..65535: port 0 asks Node for an ephemeral port, but the pidfile, health
+// checks, hooks and board URLs would all keep advertising the literal 0 — a
+// live daemon no client can reach. Reject it (and every other non-port value)
+// here, before the daemon claims HOME under an unusable identity.
 export function resolvePort() {
-  return Number(process.env.FLEETDECK_PORT || 4711);
+  const raw = process.env.FLEETDECK_PORT;
+  if (raw === undefined || raw === '') return 4711;
+  const port = Number(raw);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`invalid FLEETDECK_PORT ${JSON.stringify(raw)} — expected an integer port in 1..65535 (port 0 is not supported)`);
+  }
+  return port;
 }
 
 // The loopback base URL the hook scripts POST their events to.

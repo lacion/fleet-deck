@@ -15,6 +15,7 @@ import { startDaemon } from './helpers/daemon.mjs';
 import { postHook, getJson } from './helpers/http.mjs';
 import { loadFixture } from './helpers/fixtures.mjs';
 import { makeRepoWithWorktree, makePlainDir } from './helpers/gitrepo.mjs';
+import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 
 function findSession(state, sid) {
   return state.sessions.find(s => s.session_id === sid);
@@ -84,6 +85,39 @@ test('two sessions in the same worktree colliding is severity=warning', async (t
   const conflict = findConflictFor(state, 'same-worktree.js');
   assert.ok(conflict, 'conflict on same-worktree.js should be recorded');
   assert.equal(conflict.severity, 'warning', 'same-worktree collision should be severity=warning');
+});
+
+test('edits through a symlinked directory alias collide with edits to the real path (BUG-127)', async (t) => {
+  const daemon = await startDaemon();
+  const repo = makeRepoWithWorktree({ repoName: 'fleetdeck-symlink-test' });
+  t.after(async () => { await daemon.stop(); repo.cleanup(); });
+
+  // `alias/` inside the repo is a symlink to the real subdirectory `real/`, so
+  // alias/x.js and real/x.js are the same inode under two lexical paths.
+  mkdirSync(path.join(repo.root, 'real'));
+  writeFileSync(path.join(repo.root, 'real', 'x.js'), '// seed\n');
+  symlinkSync(path.join(repo.root, 'real'), path.join(repo.root, 'alias'), 'dir');
+
+  const sidA = randomUUID();
+  const sidB = randomUUID();
+  const callsignA = await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sidA, cwd: repo.root }), { token: daemon })
+    .then(r => r.json?.callsign);
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sidB, cwd: repo.root }), { token: daemon });
+
+  // A edits the file at its real path; B edits the same inode via the alias.
+  // Both file_path values are lexical absolute paths, exactly what a tool call
+  // reports — canonicalizing them to one ledger key is the daemon's job.
+  const firstTouch = await postHook(daemon.baseUrl, 'PostToolUse', loadFixture('post-tool-use-edit', { session_id: sidA, cwd: repo.root }, {
+    tool_input: { file_path: path.join(repo.root, 'real', 'x.js'), old_string: 'a', new_string: 'b' },
+  }), { token: daemon });
+  assert.deepEqual(firstTouch.json, {}, 'first touch should not whisper');
+
+  const secondTouch = await postHook(daemon.baseUrl, 'PostToolUse', loadFixture('post-tool-use-edit', { session_id: sidB, cwd: repo.root }, {
+    tool_input: { file_path: path.join(repo.root, 'alias', 'x.js'), old_string: 'b', new_string: 'c' },
+  }), { token: daemon });
+  const hso = secondTouch.json?.hookSpecificOutput;
+  assert.ok(hso, 'editing the same inode through a symlinked alias must still whisper');
+  assert.ok(hso.additionalContext.includes(callsignA), 'whisper should name the rival by callsign');
 });
 
 test('a non-git cwd falls back to repo_id = cwd', async (t) => {
