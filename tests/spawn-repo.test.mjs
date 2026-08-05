@@ -186,7 +186,11 @@ test('clone provisioning returns 202 then launches from the cloned requested bra
 
 test('clone failure tombstones the card and removes destination plus temp', async t => {
   const { reposDir, daemon } = await setup(t);
-  const missing = path.join(scratch('fleetdeck-missing-origin-'), 'bad.git');
+  // The scratch PARENT must be owned by teardown too — nesting scratch() inside
+  // path.join lost the path and leaked a fleetdeck-missing-origin-* dir per run.
+  const missingParent = scratch('fleetdeck-missing-origin-');
+  t.after(() => rmSync(missingParent, { recursive: true, force: true }));
+  const missing = path.join(missingParent, 'bad.git');
   const response = await postJson(`${daemon.baseUrl}/api/spawn`, { repo: missing, branch: 'main', branch_mode: 'in-place' });
   assert.equal(response.status, 202, response.text);
   const dest = path.join(reposDir, 'bad');
