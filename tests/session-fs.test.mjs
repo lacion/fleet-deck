@@ -424,6 +424,10 @@ test('0.16.0 credential denylist: lexical, symlink, and search paths all refuse'
   writeFileSync(path.join(secrets, '.ssh', 'id_ed25519'), 'PRIVATE KEY MATERIAL\n');
   mkdirSync(path.join(browse, 'work'));
   writeFileSync(path.join(browse, 'work', 'notes.txt'), 'ordinary notes\n');
+  // .docker is NOT a denied segment — only its config.json is denied, by path.
+  mkdirSync(path.join(browse, '.docker'));
+  writeFileSync(path.join(browse, '.docker', 'config.json'), '{"auths":{"registry":{"auth":"DOCKER REGISTRY SECRET"}}}\n');
+  writeFileSync(path.join(browse, '.docker', 'images.list'), 'DOCKER REGISTRY SECRET listed harmlessly\n');
   // The attack: a symlink inside the browse root pointing at a credential dir.
   symlinkSync(path.join(secrets, '.ssh'), path.join(browse, 'work', 'ssh-link'));
 
@@ -457,6 +461,13 @@ test('0.16.0 credential denylist: lexical, symlink, and search paths all refuse'
   // and the search backend (walk — browse is not a git repo) skips the dir.
   const search = await getJson(`${daemon.baseUrl}/api/fs/search?q=${encodeURIComponent('PRIVATE KEY MATERIAL')}`);
   assert.deepEqual(search.json.hits, [], 'search never returns denied content');
+
+  // .docker/config.json is denied by PATH, not by segment: walk search must
+  // skip it in both modes even though it walks into the .docker directory.
+  const dockerContent = await getJson(`${daemon.baseUrl}/api/fs/search?q=${encodeURIComponent('DOCKER REGISTRY SECRET')}`);
+  assert.deepEqual(dockerContent.json.hits, [{ path: '.docker/images.list', line: 1, text: 'DOCKER REGISTRY SECRET listed harmlessly' }], 'content search skips .docker/config.json');
+  const dockerName = await getJson(`${daemon.baseUrl}/api/fs/search?mode=name&q=${encodeURIComponent('config.json')}`);
+  assert.deepEqual(dockerName.json.hits, [], 'name search hides .docker/config.json');
 
   // FLEETDECK_HOME containment: the daemon's own token is unservable even
   // when the browse root is home — here via a symlink chain into it.
