@@ -64,9 +64,13 @@ async function repoOwnsWorktree(repo, worktreePath, worktreeExists) {
 
 export function createWorktrees(ctx) {
 <<<<<<< /tmp/mf-ours
+<<<<<<< /tmp/mf-ours
   const { q, tick, onMutate, acquireWorktreePathLock } = ctx;
 =======
   const { q, tick, onMutate, claimWorktreeCustody } = ctx;
+>>>>>>> /tmp/mf-theirs
+=======
+  const { q, db, tick, onMutate } = ctx;
 >>>>>>> /tmp/mf-theirs
 
   // ------------------------------------------------------- worktree custody
@@ -503,9 +507,33 @@ export function createWorktrees(ctx) {
       return { status: 200, body: { ok: true, removed: true, branch_deleted, rows_purged: 0, spawn_became_live: true, path: row.worktree_path } };
     }
     const sessionIds = [...new Set(rows.map(candidate => candidate.session_id).filter(Boolean))];
-    const spawnsPurged = Number(q.deleteWorktreeSpawns.run(row.worktree_path).changes);
+    // One transaction, and dependents settle BEFORE their routing parents go:
+    // a bare session delete would orphan pending mail and pending questions —
+    // freeform questions deliberately survive SessionEnd (the session is
+    // resumable), so an ended spawned session can still own a pending queue.
+    // With the session row gone the board shows a ghost question, its answer
+    // and the original mail route to a callsign that no longer exists, and no
+    // retention query (they all locate targets THROUGH sessions) ever sweeps
+    // the rows. Hold-kind rows for an ENDED session have no parked socket or
+    // re-arm timer left to keep consistent, so the statement-level expiry is
+    // sufficient here — expireAllForSession's hold machinery has nothing to
+    // release for a session whose hooks already disconnected.
+    const now = Date.now();
+    let spawnsPurged = 0;
     let sessionsPurged = 0;
-    for (const sessionId of sessionIds) sessionsPurged += Number(q.deleteEndedSession.run(sessionId).changes);
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      for (const sessionId of sessionIds) {
+        q.expireMailForSession.run(now, sessionId);
+        q.expireQuestionsForSession.run(sessionId);
+      }
+      spawnsPurged = Number(q.deleteWorktreeSpawns.run(row.worktree_path).changes);
+      for (const sessionId of sessionIds) sessionsPurged += Number(q.deleteEndedSession.run(sessionId).changes);
+      db.exec('COMMIT');
+    } catch (err) {
+      try { db.exec('ROLLBACK'); } catch { /* the transaction is already gone */ }
+      return { status: 500, body: { ok: false, reason: `could not purge worktree rows: ${err.message}` } };
+    }
     const rows_purged = spawnsPurged + sessionsPurged;
     tick(`⌫ removed worktree ${row.worktree_path}${branch_deleted ? ` and branch ${branch}` : ''}`);
     onMutate();

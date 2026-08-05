@@ -164,6 +164,61 @@ test('POST remove refuses has-work without force, then force removes disk and ar
   });
 });
 
+// BUG-154: the purge behind remove used to be a bare spawn+session delete.
+// An ended spawned session can still own pending direct mail and a pending
+// FREEFORM question (freeform deliberately survives SessionEnd — the session
+// is resumable), and every expiry/retention query locates those rows THROUGH
+// the sessions table. Deleting the routing parent first stranded them: a
+// ghost pending question on the board whose answer queued more mail to a
+// callsign that no longer exists, and rows no retention sweep could ever
+// reach. The purge must settle dependents BEFORE the parents, atomically.
+test('POST remove expires pending mail and questions before purging the ended session', async (t) => {
+  const repo = makeRepoWithWorktree({ repoName: 'fleetdeck-orphan-purge' });
+  const daemon = await startDaemon();
+  t.after(async () => { await daemon.stop(); repo.cleanup(); });
+  ownWorktree(daemon.home, repo, { sessionId: 'orphan-purge' });
+
+  withDb(daemon.home, db => {
+    db.prepare('INSERT INTO mail (to_session, from_id, text, at, delivered_at) VALUES (?, ?, ?, ?, NULL)')
+      .run('orphan-purge', 'peer-otter', 'queued before the tree went away', Date.now());
+    // Freeform (survives SessionEnd by design) AND a hold-kind row left
+    // pending (its socket died with the session's hooks).
+    db.prepare(`INSERT INTO questions (session_id, kind, payload_json, status, created_at, expires_at)
+      VALUES ('orphan-purge', 'freeform', '{"text":"still needed?"}', 'pending', ?, NULL)`)
+      .run(Date.now());
+    db.prepare(`INSERT INTO questions (session_id, kind, payload_json, status, created_at, expires_at)
+      VALUES ('orphan-purge', 'permission', '{}', 'pending', ?, NULL)`)
+      .run(Date.now());
+    // An answered question is history, not a dependent — it must be untouched.
+    db.prepare(`INSERT INTO questions (session_id, kind, payload_json, status, answer_json, created_at, answered_at)
+      VALUES ('orphan-purge', 'freeform', '{"text":"earlier"}', 'answered', '{"text":"yes"}', ?, ?)`)
+      .run(Date.now(), Date.now());
+    // Another (live) session's rows must never be touched.
+    db.prepare('INSERT INTO mail (to_session, from_id, text, at, delivered_at) VALUES (?, ?, ?, ?, NULL)')
+      .run('someone-else', 'peer-otter', 'not yours to settle', Date.now());
+  });
+
+  const response = await postJson(`${daemon.baseUrl}/api/worktrees/remove`, { path: repo.worktree });
+  assert.equal(response.status, 200);
+  assert.equal(response.json.ok, true);
+  assert.equal(response.json.rows_purged, 2);
+
+  withDb(daemon.home, db => {
+    assert.equal(db.prepare('SELECT 1 FROM sessions WHERE session_id = ?').get('orphan-purge'), undefined);
+    assert.equal(db.prepare('SELECT 1 FROM spawns WHERE worktree_path = ?').get(repo.worktree), undefined);
+    const mail = db.prepare('SELECT * FROM mail WHERE to_session = ?').get('orphan-purge');
+    assert.ok(mail.expired_at != null, 'pending mail to a purged session is expired, not stranded');
+    const statuses = db.prepare('SELECT kind, status FROM questions WHERE session_id = ? ORDER BY id').all('orphan-purge');
+    assert.deepEqual(statuses.map(r => [r.kind, r.status]), [
+      ['freeform', 'expired'],
+      ['permission', 'expired'],
+      ['freeform', 'answered'],
+    ]);
+    const other = db.prepare('SELECT * FROM mail WHERE to_session = ?').get('someone-else');
+    assert.equal(other.expired_at, null, "another session's pending mail is untouched");
+  });
+});
+
 test('POST remove refuses while any owning session is alive', async (t) => {
   const repo = makeRepoWithWorktree({ repoName: 'fleetdeck-live-remove' });
   const daemon = await startDaemon();

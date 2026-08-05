@@ -422,6 +422,16 @@ export function createStatements(db) {
     // never silently swept — dismiss refuses a stalled card up front).
     expireMailForSession: db.prepare(`UPDATE mail SET expired_at = ?
       WHERE to_session = ? AND delivered_at IS NULL AND expired_at IS NULL`),
+    // The questions analogue, for session-row removal (worktree.mjs's purge):
+    // a bare session DELETE must never leave a pending question pointing at a
+    // callsign that no longer exists. Mail expiry has no questions.mjs hold
+    // machinery to keep consistent, so a prepared statement is enough —
+    // hold-kind rows for an ENDED session have no parked socket left (their
+    // holds died with the hook connection), and there are no re-arm timers to
+    // cancel for a dead session. answers to an expired row are refused by the
+    // status guard in questions.mjs answer().
+    expireQuestionsForSession: db.prepare(`UPDATE questions SET status = 'expired'
+      WHERE session_id = ? AND status = 'pending'`),
     goneSessionSpawns: db.prepare(`UPDATE spawns SET status = 'gone'
       WHERE status NOT IN ('killed', 'pane-dead', 'gone', 'stalled')
         AND session_id = ?`),
