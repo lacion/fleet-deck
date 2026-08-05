@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { openDb } from '../scripts/fleetd/db.mjs';
 import { startDaemon } from './helpers/daemon.mjs';
 import { getJson, postHook, postJson } from './helpers/http.mjs';
+import { scaleMs, waitUntil } from './helpers/wait.mjs';
 
 // tests/succession.test.mjs — 0.7.1 /clear session succession.
 //
@@ -293,6 +294,84 @@ test('the FORWARD /clear path refuses a lone orphan heir when TWO predecessors c
   assert.equal(cRow.archived_at, null, 'c was not retired on a guess');
 });
 
+test('a delayed rival /clear inside the settlement window cancels the forward claim — the heir stays on its own card', async (t) => {
+  // BUG-023, the exact live-daemon ordering: B's heir arrives FIRST (SessionEnd
+  // is an async hook, so the heir can beat its predecessor's /clear), then A's
+  // delayed clear lands while B's is still in flight. At that instant A is the
+  // ONLY cleared predecessor on record, so finalizing on momentary uniqueness
+  // irreversibly grafts A's callsign/pane/mail onto B's heir — and B's end,
+  // arriving a moment later, cannot undo the claim. The settlement interval
+  // must hold the claim open long enough for B's end to cancel it.
+  const { daemon, home, cwd } = await boot(t, 'fleetdeck-succ-settle', {
+    FLEETDECK_CLEAR_SETTLE_MS: '400',
+  });
+  const a = await startSession(daemon, cwd);
+  const b = await startSession(daemon, cwd);
+
+  // B's heir is born first — an orphan on its own card.
+  const heirB = randomUUID();
+  await postHook(daemon.baseUrl, 'SessionStart', { session_id: heirB, cwd, source: 'clear' }, { token: daemon.token });
+  const heirCallsign = cardOf((await getJson(`${daemon.baseUrl}/state`)).json, heirB).callsign;
+
+  // A's delayed /clear lands with no rival on record yet: the forward pass must
+  // NOT merge yet, only schedule the claim…
+  await postHook(daemon.baseUrl, 'SessionEnd', { session_id: a.sid, cwd, reason: 'clear' }, { token: daemon.token });
+  // …and B's /clear lands INSIDE the settlement window.
+  await postHook(daemon.baseUrl, 'SessionEnd', { session_id: b.sid, cwd, reason: 'clear' }, { token: daemon.token });
+
+  // Let the settlement timer fire. The only PASS outcome is that nothing
+  // happened, so this is a genuine settle-sleep, not a poll — scaled so the
+  // WAIT_SCALE CI lanes keep the timer comfortably inside the wait.
+  await new Promise(r => setTimeout(r, scaleMs(900)));
+
+  const state = (await getJson(`${daemon.baseUrl}/state`)).json;
+  const card = cardOf(state, heirB);
+  assert.ok(card, 'the heir kept its own card');
+  assert.equal(card.callsign, heirCallsign, 'wearing its own name, never A’s');
+  assert.notEqual(card.callsign, a.callsign);
+  assert.ok(cardOf(state, a.sid) && cardOf(state, b.sid), 'neither predecessor was retired on a guess');
+  const merges = withDb(home, db => db.prepare('SELECT session_id, succeeded_by FROM sessions WHERE succeeded_by IS NOT NULL').all());
+  assert.equal(merges.length, 0, 'no succession at all — the settlement re-read saw the rival and refused');
+  const aRow = withDb(home, db => db.prepare('SELECT succeeded_by, archived_at FROM sessions WHERE session_id = ?').get(a.sid));
+  assert.equal(aRow.succeeded_by, null, 'A never succeeded into B’s heir');
+  assert.equal(aRow.archived_at, null, 'A was not retired on a guess');
+});
+
+test('the settled forward claim still merges when no rival ever arrives', async (t) => {
+  // The settlement interval must not strand the NORMAL reorder case: a lone
+  // orphan heir, one clear, no rival — after the interval the claim is still
+  // uniquely corroborated, so the same one-card continuation lands, just one
+  // settlement later.
+  const { daemon, home, cwd } = await boot(t, 'fleetdeck-succ-settle-ok', {
+    FLEETDECK_CLEAR_SETTLE_MS: '300',
+  });
+  const { sid, callsign } = await startSession(daemon, cwd);
+
+  const heirSid = randomUUID();
+  await postHook(daemon.baseUrl, 'SessionStart', { session_id: heirSid, cwd, source: 'clear' }, { token: daemon.token });
+  await postHook(daemon.baseUrl, 'SessionEnd', { session_id: sid, cwd, reason: 'clear' }, { token: daemon.token });
+
+  // Immediately after the /clear the claim is only SCHEDULED — the split is
+  // still standing while the settlement window runs.
+  let state = (await getJson(`${daemon.baseUrl}/state`)).json;
+  assert.equal(cardsIn(state, cwd).length, 2, 'no merge before the interval elapses');
+
+  // Poll rather than sleep a fixed delay: the merge lands as soon as the
+  // settlement timer fires, and the wait scales for the slow CI lanes.
+  await waitUntil(async () => cardsIn((await getJson(`${daemon.baseUrl}/state`)).json, cwd).length === 1, {
+    timeoutMs: 5000, intervalMs: 100, label: 'settled forward succession merge',
+  });
+
+  state = (await getJson(`${daemon.baseUrl}/state`)).json;
+  assert.equal(cardsIn(state, cwd).length, 1, 'the settled claim merged — one card, as before');
+  const heir = cardOf(state, heirSid);
+  assert.ok(heir, 'the heir survived');
+  assert.equal(heir.callsign, callsign, 'wearing the lineage callsign');
+  const prev = withDb(home, db => db.prepare('SELECT archived_at, succeeded_by FROM sessions WHERE session_id = ?').get(sid));
+  assert.ok(prev.archived_at);
+  assert.equal(prev.succeeded_by, heirSid);
+});
+
 test('the boot heal repairs a pair already split by a /clear, and is idempotent', async (t) => {
   const { daemon, home, cwd, env } = await boot(t, 'fleetdeck-succ-heal', {
     // Succession off at hook time, so we can manufacture the exact pre-0.7.1
@@ -344,7 +423,12 @@ test('the boot heal repairs a pair already split by a /clear, and is idempotent'
 });
 
 test('hooks arriving out of order still land one card — the heir can beat its predecessor’s /clear', async (t) => {
-  const { daemon, home, cwd } = await boot(t, 'fleetdeck-succ-reorder');
+  const { daemon, home, cwd } = await boot(t, 'fleetdeck-succ-reorder', {
+    // The forward claim settles through FLEETDECK_CLEAR_SETTLE_MS in production;
+    // 0 keeps this reordering test on the synchronous path it was written for.
+    // The settled async path itself is pinned by the two settlement tests above.
+    FLEETDECK_CLEAR_SETTLE_MS: '0',
+  });
   const { sid, callsign } = await startSession(daemon, cwd);
 
   // SessionEnd is an ASYNC hook; SessionStart is not. So the heir's birth can

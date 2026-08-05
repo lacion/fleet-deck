@@ -11196,6 +11196,7 @@ function createCore(db2, {
   const RETAIN_LEDGER_MS = envInt("FLEETDECK_RETAIN_LEDGER_MS", 864e5, { min: 6e4 });
   const CLEAR_SUCCESSION_MS = envInt("FLEETDECK_CLEAR_SUCCESSION_MS", 3e4, { min: 0 });
   const CLEAR_AMBIGUITY_MS = 1e3;
+  const CLEAR_SETTLE_MS = envInt("FLEETDECK_CLEAR_SETTLE_MS", 250, { min: 0 });
   const SNAPSHOT_FILES_PER_SESSION = 50;
   async function findScopedWindow(name) {
     const wins = await tmuxAdapter.listScopedWindows(port);
@@ -11389,7 +11390,7 @@ function createCore(db2, {
     const paned = candidates.filter((c) => hasLivePane(c.session_id));
     return paned.length === 1 ? paned[0] : null;
   }
-  function succeedForwardFromClear(prevSid, cwd) {
+  function succeedForwardFromClear(prevSid, cwd, { settled = false } = {}) {
     const prev = q.getSession.get(prevSid);
     if (!prev || prev.succeeded_by != null || !cwd) return null;
     const now = Date.now();
@@ -11407,6 +11408,15 @@ function createCore(db2, {
     if (cands.length !== 1) return null;
     const rivals = q.clearedPredecessors.all(cwd, now - CLEAR_SUCCESSION_MS, prevSid);
     if (rivals.length) return null;
+    if (!settled && CLEAR_SETTLE_MS > 0) {
+      setTimeout(() => {
+        try {
+          succeedForwardFromClear(prevSid, cwd, { settled: true });
+        } catch {
+        }
+      }, CLEAR_SETTLE_MS).unref();
+      return null;
+    }
     return succeedSession(prev, cands[0].session_id, { rename: true });
   }
   function succeedSession(prev, sid, { rename: rename2 = false } = {}) {

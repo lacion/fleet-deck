@@ -113,6 +113,18 @@ export function createCore(db, {
   // as "the one that just happened", so the daemon refuses to pair them by time
   // and falls back to the pane as evidence (or to no merge at all).
   const CLEAR_AMBIGUITY_MS = 1_000;
+  // The forward succession (a /clear claiming an heir whose SessionStart already
+  // landed) is IRREVERSIBLE, so momentary uniqueness is not proof: SessionEnd is
+  // an async hook, and a second session's /clear in the same cwd can still be in
+  // flight when the first one arrives. The claim therefore settles through this
+  // bounded interval and re-reads the predecessor set before merging — a rival
+  // clear that lands inside it cancels the claim, leaving the split for the boot
+  // heal to pair correctly once every clear is on record. Sized on the same
+  // "the CLI fires both hooks in the same second" fact as CLEAR_AMBIGUITY_MS —
+  // several hook round-trips of cover, far too short for a human's deliberate
+  // second /clear to be swallowed. Set 0 in tests to keep the synchronous fast
+  // path.
+  const CLEAR_SETTLE_MS = envInt('FLEETDECK_CLEAR_SETTLE_MS', 250, { min: 0 });
   const SNAPSHOT_FILES_PER_SESSION = 50; // M-P2/M-G1: per-card cap on the ledger file list
 
   // D7: the single way to resolve one of THIS fleet's scoped tmux windows by
@@ -509,7 +521,10 @@ export function createCore(db, {
   // row first. Either way the hook-time interception misses, and without this
   // the pair silently stays split until the next boot heal. So when a /clear
   // lands, also look FORWARD: is the heir already here, orphaned, waiting?
-  function succeedForwardFromClear(prevSid, cwd) {
+  // `settled` marks the deferred re-check (see the settlement interval below):
+  // the first pass only SCHEDULES the claim, the second pass — after every
+  // in-flight hook has had its round-trip — is the one allowed to commit it.
+  function succeedForwardFromClear(prevSid, cwd, { settled = false } = {}) {
     const prev = q.getSession.get(prevSid);
     if (!prev || prev.succeeded_by != null || !cwd) return null;
     const now = Date.now();
@@ -548,6 +563,29 @@ export function createCore(db, {
     // just before this ran, so prev is a predecessor here, not a rival.)
     const rivals = q.clearedPredecessors.all(cwd, now - CLEAR_SUCCESSION_MS, prevSid);
     if (rivals.length) return null;
+    // Still not proof. The rival check above sees only clears already COMMITTED,
+    // but SessionEnd is an async hook: a second session's /clear in this same cwd
+    // can be mid-flight right now (the heir beat BOTH ends here — that reorder is
+    // the entire reason this forward pass exists). Committing on momentary
+    // uniqueness would graft prev's callsign, pane, mail, questions and file
+    // ledger onto a conversation that may be the sibling's, irreversibly — the
+    // later SessionEnd cannot undo the claim, and the supplied live-daemon
+    // ordering (B's heir, A's end, B's end) ended with A.succeeded_by = heirB.
+    // So defer through a bounded settlement interval and require the evidence to
+    // be unique at BOTH ends of it: re-read everything (the predecessor set, the
+    // heir, the whole candidate set) after the delay and only merge if nothing
+    // new arrived. A rival clear landing inside the window cancels the claim;
+    // the pair stays split and the boot heal pairs it correctly once every clear
+    // is on record. A genuinely new orphan arriving inside the window makes
+    // cands.length !== 1 on the re-read, which is the existing refuse-to-guess
+    // path. Tests set FLEETDECK_CLEAR_SETTLE_MS=0 and take the synchronous fast
+    // path below, so the settlement only runs when the knob is nonzero.
+    if (!settled && CLEAR_SETTLE_MS > 0) {
+      setTimeout(() => {
+        try { succeedForwardFromClear(prevSid, cwd, { settled: true }); } catch { /* the boot heal remains the backstop */ }
+      }, CLEAR_SETTLE_MS).unref();
+      return null;
+    }
     return succeedSession(prev, cands[0].session_id, { rename: true });
   }
 
