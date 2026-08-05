@@ -264,6 +264,11 @@ PASS=0; FAIL=0
 ok()  { echo "PASS: $1"; PASS=$((PASS+1)); }
 bad() { echo "FAIL: $1${2:+ -- $2}"; FAIL=$((FAIL+1)); }
 
+# Verdict logic for the permission-relay check (BUG-011: proof on disk, not
+# model prose). Sourced so tests/accept-phase3-perm-proof.test.mjs can
+# exercise the exact function this gate runs.
+. "$SCRIPT_DIR/perm-proof-check.sh"
+
 # ============================================== PART 1: permission relay
 # NO --dangerously-skip-permissions: the Bash call needs a permission
 # decision, which must come from the board via the held PermissionRequest.
@@ -294,8 +299,12 @@ let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{
   if [ -n "$QID" ]; then
     R=$(curl -s -X POST "$BASE/api/questions/$QID/answer" -H 'content-type: application/json' -d '{"behavior":"allow"}')
     echo "T+$i board approved permission question #$QID → $R"
-    APPROVED=yes
-    break
+    # The answer POST itself must have succeeded — a 4xx body would leave the
+    # hold to expire and fail open to the native terminal prompt.
+    if printf '%s' "$R" | grep -q '"ok":true'; then
+      APPROVED=yes
+      break
+    fi
   fi
   sleep 1
 done
@@ -304,11 +313,11 @@ done
 
 wait "$P1"; RC1=$?
 echo "permission session done rc=$RC1"
-if grep -q "FLEET_PERMISSION_OK" "$DEMO_LOGS/p3-perm.json"; then
-  ok "command executed after board approval (terminal never asked)"
-else
-  bad "command executed after board approval" "marker not in p3-perm.json (rc=$RC1)"
-fi
+# Proof of execution is the file on disk, not the model's prose: p3-perm.json
+# contains the marker simply because the prompt names it.
+PROOF_DETAIL=$(perm_proof_check "$RC1" "$PROJECT_DIR/fleet-perm-proof.txt" "$DEMO_LOGS/p3-perm.json" "$APPROVED") \
+  && ok "command executed after board approval (proof file on disk, terminal never asked)" \
+  || bad "command executed after board approval (proof file on disk)" "$PROOF_DETAIL"
 
 # ============================================== PART 2: freeform Q&A
 S2=$(node -e 'console.log(crypto.randomUUID())')
