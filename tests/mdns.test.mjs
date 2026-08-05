@@ -321,6 +321,7 @@ test('a goodbye is the same record set with TTL 0 and no cache-flush claim', () 
   assert.ok(goodbye.every(r => r.flush === false), 'a record being withdrawn must not also claim uniqueness');
 });
 
+<<<<<<< /tmp/mf-ours
 // ------------------------------------------------------------- update()
 
 // BUG-129: a network change (Wi-Fi roam, DHCP renewal, VPN up/down) must NOT
@@ -399,6 +400,103 @@ test('update() after stop() and with nothing to change is a quiet no-op', async 
   await assert.doesNotReject(async () => { await mdns.stop(); });
   assert.doesNotThrow(() => mdns.update({ addresses: ['198.51.100.9'] }), 'update() must not resurrect a stopped responder');
   assert.equal(logs.length, 0, 'a no-op update says nothing');
+=======
+// ------------------------------------------------- multicast egress (BUG-130)
+//
+// One socket joins the group on every advertised interface, but multicast
+// egress follows only the kernel's DEFAULT route — so announcements, multicast
+// replies and the goodbye must be repeated once per joined interface via
+// setMulticastInterface, or a dual-homed host is discoverable on one LAN and
+// invisible on the other. These use the injector so the "two interfaces" are
+// two fake sockets; no network is touched.
+
+/** A fake node:dgram with two interfaces, recording sends per interface. */
+function fakeDgramTwoIfaces() {
+  const sends = [];
+  let iface;
+  const socket = {
+    on() { return this; },
+    setMulticastTTL() {},
+    setMulticastLoopback() {},
+    setMulticastInterface(address) { iface = address; },
+    addMembership() {},
+    bind(_options, callback) { setImmediate(callback); return this; },
+    send(packet, _port, address, callback = () => {}) {
+      sends.push({ wire: Buffer.from(packet).toString('base64'), iface, address });
+      setImmediate(callback);
+      return this;
+    },
+    close(callback) { setImmediate(() => callback?.()); },
+  };
+  return { sends, dgram: { createSocket: () => socket } };
+}
+
+const TWO_IFACES = { port: 4711, addresses: ['192.0.2.7', '192.0.2.8'] };
+
+test('announcements and goodbyes leave through EVERY joined interface, not just the default route', async () => {
+  const { sends, dgram } = fakeDgramTwoIfaces();
+  const mdns = createMdns({ ...TWO_IFACES, inject: { dgram } });
+  mdns.start();
+  await new Promise(r => setTimeout(r, 30)); // bind + joins + first (delay 0) announcement
+  await mdns.stop();
+
+  const multicast = sends.filter(s => s.address === MDNS_ADDR);
+  const live = multicast.filter(s => decodeMessage(Buffer.from(s.wire, 'base64')).answers.some(r => r.ttl > 0));
+  const goodbye = multicast.filter(s => {
+    const answers = decodeMessage(Buffer.from(s.wire, 'base64')).answers;
+    return answers.length > 0 && answers.every(r => r.ttl === 0);
+  });
+
+  for (const address of TWO_IFACES.addresses) {
+    assert.ok(live.some(s => s.iface === address), `an announcement must egress via ${address}`);
+    assert.ok(goodbye.some(s => s.iface === address), `the goodbye must egress via ${address}`);
+  }
+  assert.equal(goodbye.length, 2, 'one goodbye per joined interface');
+});
+
+test('a multicast query gets its reply on every joined interface; a unicast (QU) reply goes once, to the querier', async () => {
+  const sends = [];
+  let handler;
+  const socket = {
+    on(event, fn) { if (event === 'message') handler = fn; return this; },
+    setMulticastTTL() {},
+    setMulticastLoopback() {},
+    setMulticastInterface(address) { this.iface = address; },
+    addMembership() {},
+    bind(_options, callback) { setImmediate(callback); return this; },
+    send(packet, _port, address, callback = () => {}) {
+      // setMulticastInterface only steers MULTICAST egress; unicast follows the
+      // routing table, so a unicast send is recorded with no multicast iface.
+      sends.push({ wire: Buffer.from(packet).toString('base64'), iface: address === MDNS_ADDR ? this.iface : undefined, address });
+      setImmediate(callback);
+      return this;
+    },
+    close(callback) { setImmediate(() => callback?.()); },
+  };
+  const dgram = { createSocket: () => socket };
+
+  const mdns = createMdns({ ...TWO_IFACES, inject: { dgram } });
+  mdns.start();
+  await new Promise(r => setTimeout(r, 30));
+  sends.length = 0;
+
+  // A QU query from the same multicast source port: one unicast reply, no fan-out.
+  handler(encodeMessage({ id: 0, flags: 0, questions: [{ name: HOST, type: TYPE.A, class: 1, unicast: true }] }), { address: '192.0.2.200', port: MDNS_PORT });
+  await new Promise(r => setTimeout(r, 20));
+  assert.equal(sends.length, 1, 'a unicast reply must not fan out across interfaces');
+  assert.equal(sends[0].address, '192.0.2.200');
+  assert.equal(sends[0].iface, undefined, 'a unicast reply must not be attributed to a multicast interface');
+
+  sends.length = 0;
+  // An ordinary multicast query (source port 5353, no QU bit).
+  handler(encodeMessage({ id: 0, flags: 0, questions: [{ name: HOST, type: TYPE.A, class: 1 }] }), { address: '192.0.2.200', port: MDNS_PORT });
+  await new Promise(r => setTimeout(r, 20));
+  const replies = sends.filter(s => s.address === MDNS_ADDR);
+  assert.equal(replies.length, 2, 'the multicast answer must be repeated per interface');
+  assert.deepEqual(new Set(replies.map(s => s.iface)), new Set(TWO_IFACES.addresses));
+
+  await mdns.stop();
+>>>>>>> /tmp/mf-theirs
 });
 
 // ------------------------------------------------------------ the socket

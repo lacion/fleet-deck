@@ -46,9 +46,9 @@ export async function load(url, context, nextLoad) {
         // responder must terminally disable itself after bind.
         addMembership() { if (process.env.FLEETDECK_MDNS_JOIN_FAILS) throw new Error('no multicast route'); }
         bind(_options, callback) { setImmediate(callback); return this; }
-        send(packet, _port, _address, callback = () => {}) {
+        send(packet, _port, address, callback = () => {}) {
           const wire = Buffer.from(packet).toString('base64');
-          record({ type: 'send', wire });
+          record({ type: 'send', wire, address });
           const timer = setTimeout(() => {
             record({ type: 'callback', wire });
             callback();

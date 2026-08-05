@@ -214,6 +214,11 @@ test('SIGTERM waits for the mDNS goodbye send callback before fleetd exits', { s
     const packet = decodeMessage(Buffer.from(item.wire, 'base64'));
     return packet?.answers.length > 0 && packet.answers.every(answer => answer.ttl === 0);
   });
+  // BUG-130: multicast egress follows only the kernel's default route, so the
+  // goodbye must be repeated out of EVERY interface the responder joined —
+  // the mocked host has exactly one (192.0.2.77, via the loader's node:os
+  // stub), so exactly one TTL-0 goodbye send is still the correct count here.
+  // The two-interface case is covered by the injector test in tests/mdns.test.mjs.
   assert.equal(goodbyeSends.length, 1, 'signal shutdown must enqueue exactly one TTL-0 goodbye');
   const goodbye = decodeMessage(Buffer.from(goodbyeSends[0].wire, 'base64'));
   assert.ok(goodbye.answers.some(answer => answer.typeName === 'PTR'

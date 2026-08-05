@@ -499,6 +499,7 @@ export function buildResponse(questions, options = {}, { ttl, flush = true } = {
 <<<<<<< /tmp/mf-ours
 <<<<<<< /tmp/mf-ours
 <<<<<<< /tmp/mf-ours
+<<<<<<< /tmp/mf-ours
 =======
 >>>>>>> /tmp/mf-theirs
  * @param {function} [opts.onDown]  called with a reason string the moment the
@@ -539,13 +540,33 @@ export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', 
   // speaks for the new addresses.
   let current = normalize(options);
 >>>>>>> /tmp/mf-theirs
+=======
+ * @param {object} [opts.inject]  test seam: { dgram } replaces node:dgram, so a
+ *   multi-interface host can be simulated without touching a network
+ * @returns {{start: function, stop: function}} both idempotent, neither throws
+ */
+export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', addresses = [], txt, log = () => {}, inject } = {}) {
+  const options = { port, name, instance, addresses, txt };
+  const ad = normalize(options);
+  const dgramImpl = inject?.dgram || dgram;
+>>>>>>> /tmp/mf-theirs
 
   let socket = null;
   let started = false;
   let stopping = null;
+<<<<<<< /tmp/mf-ours
   let dead = false;    // a REAL failure (socket/bind/multicast) — terminal, one-way
   let dormant = false; // merely addressless — update() may revive us
   let stopped = false; // stop() was called — nothing may resurrect the responder
+=======
+  let dead = false;
+  // Interface addresses that successfully joined the group. Multicast egress
+  // follows the kernel's default route only, so announcements/replies/goodbyes
+  // are repeated once per joined interface (setMulticastInterface) — otherwise
+  // a dual-homed host is discoverable on the default LAN and invisible on the
+  // others, despite advertising their addresses.
+  let joinedIfaces = [];
+>>>>>>> /tmp/mf-theirs
   const timers = new Set();
 
   const note = (message) => { try { log(message); } catch { /* a broken logger must not kill mDNS */ } };
@@ -567,16 +588,38 @@ export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', 
     if (onDown) { try { onDown(reason); } catch { /* a broken listener must not kill mDNS */ } }
   }
 
-  function send(packet, targetPort, targetAddress) {
+  function sendRaw(packet, targetPort, targetAddress, callback) {
     if (!socket || dead) return;
     try {
       socket.send(packet, targetPort, targetAddress, (err) => {
         // A send error is per-packet, not fatal: the LAN may just have no route
         // right now. Log at most once by routing repeat failures through die().
         if (err && err.code !== 'ENETUNREACH' && err.code !== 'EHOSTUNREACH') note(`mdns send failed: ${err.message}`);
+        callback?.(err);
       });
     } catch (err) {
       note(`mdns send failed: ${err.message}`);
+      callback?.(err);
+    }
+  }
+
+  function send(packet, targetPort, targetAddress) {
+    sendRaw(packet, targetPort, targetAddress);
+  }
+
+  // Multicast out of every interface we joined, not just the kernel's default
+  // route. Each attempt is fire-and-forget; done() fires when they have ALL
+  // settled (per-interface errors are tolerated — one wedged interface must not
+  // hold the goodbye path open). With no per-interface joins, the default
+  // single send IS the correct behaviour (joinedIfaces is empty), so callers
+  // fall back to plain send() themselves.
+  function sendMulticastAll(packet, done) {
+    if (!socket || dead) { done?.(); return; }
+    let pending = joinedIfaces.length;
+    const settled = () => { pending -= 1; if (pending <= 0) done?.(); };
+    for (const iface of joinedIfaces) {
+      try { socket.setMulticastInterface(iface); } catch { /* keep the last working egress */ }
+      sendRaw(packet, MDNS_PORT, MDNS_ADDR, settled);
     }
   }
 
@@ -584,7 +627,9 @@ export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', 
     try {
       const answers = buildAnnouncement(current, ttl === undefined ? {} : { ttl });
       if (!answers.length) return;
-      send(encodeMessage({ id: 0, flags: FLAGS_RESPONSE, answers }), MDNS_PORT, MDNS_ADDR);
+      const packet = encodeMessage({ id: 0, flags: FLAGS_RESPONSE, answers });
+      if (joinedIfaces.length) sendMulticastAll(packet);
+      else send(packet, MDNS_PORT, MDNS_ADDR);
     } catch (err) {
       note(`mdns announce failed: ${err.message}`);
     }
@@ -617,6 +662,7 @@ export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', 
       });
 
       if (legacy || questions.some(q => q.unicast)) send(packet, rinfo.port, rinfo.address);
+      else if (joinedIfaces.length) sendMulticastAll(packet);
       else send(packet, MDNS_PORT, MDNS_ADDR);
     } catch (err) {
       note(`mdns query handling error: ${err.message}`); // a stranger's junk packet
@@ -629,11 +675,20 @@ export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', 
 
     // Join on the default interface, then per-address so a multi-homed host (and
     // WSL2's mirrored stack) actually receives on the LAN interface. Per-interface
-    // failures are expected and swallowed — one successful join is enough.
+    // failures are expected and swallowed — one successful join is enough. The
+    // addresses that joined are remembered: multicast replies, announcements and
+    // the goodbye are repeated out of each, because multicast egress otherwise
+    // follows only the kernel's default route and secondary LANs never see us.
+    joinedIfaces = [];
     let joins = 0;
     try { socket.addMembership(MDNS_ADDR); joins += 1; } catch { /* no default multicast route */ }
+<<<<<<< /tmp/mf-ours
     for (const address of current.addresses) {
       try { socket.addMembership(MDNS_ADDR, address); joins += 1; } catch { /* already joined via this iface, or it has no multicast */ }
+=======
+    for (const address of ad.addresses) {
+      try { socket.addMembership(MDNS_ADDR, address); joinedIfaces.push(address); joins += 1; } catch { /* already joined via this iface, or it has no multicast */ }
+>>>>>>> /tmp/mf-theirs
     }
     if (joins === 0) { die('no multicast membership'); return; }
 
@@ -716,7 +771,7 @@ export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', 
     }
 
     try {
-      socket = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+      socket = dgramImpl.createSocket({ type: 'udp4', reuseAddr: true });
     } catch (err) {
       die('socket create failed', err);
       return;
@@ -765,10 +820,15 @@ export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', 
       try {
         const answers = buildAnnouncement(current, { ttl: 0 });
         const packet = encodeMessage({ id: 0, flags: FLAGS_RESPONSE, answers });
-        // Close on the send callback, but never wait forever on a wedged socket.
+        // Close on the send callback(s), but never wait forever on a wedged socket.
         const guard = setTimeout(finish, 250);
         guard.unref?.();
-        socket.send(packet, MDNS_PORT, MDNS_ADDR, () => { clearTimeout(guard); finish(); });
+        const done = () => { clearTimeout(guard); finish(); };
+        // The goodbye must reach every LAN we advertised on, not just the
+        // default route — a stale record on a secondary interface is exactly
+        // what the goodbye exists to retract.
+        if (joinedIfaces.length) sendMulticastAll(packet, done);
+        else socket.send(packet, MDNS_PORT, MDNS_ADDR, done);
       } catch {
         finish();
       }
