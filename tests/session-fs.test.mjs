@@ -100,6 +100,27 @@ test('git session list/read/search is typed, literal, ignored-aware, and exclude
   }
 });
 
+test('git content search stays plain with color.ui/color.grep always (BUG-027)', async t => {
+  const repo = makeRepoWithWorktree({ repoName: 'fleetdeck-session-fs-color' });
+  mkdirSync(path.join(repo.worktree, 'src'));
+  writeFileSync(path.join(repo.worktree, 'src', 'alpha.txt'), 'first line\nNeedle literal here\nthird line\n');
+  // The hostile operator config: grep wraps every path:line:text record in
+  // ANSI escapes, which used to defeat parseGitGrep into a confident hits:[].
+  for (const root of [repo.root, repo.worktree]) {
+    execFileSync('git', ['config', 'color.ui', 'always'], { cwd: root });
+    execFileSync('git', ['config', 'color.grep', 'always'], { cwd: root });
+  }
+  const daemon = await startDaemon();
+  t.after(async () => { await daemon.stop(); repo.cleanup(); });
+  seedSession(daemon.home, repo.root, { spawnPath: repo.worktree });
+
+  const content = await getJson(endpoint(daemon.baseUrl, 'fs-session', 'search', '?q=needle'));
+  assert.equal(content.status, 200);
+  assert.equal(content.json.backend, 'git');
+  assert.deepEqual(content.json.hits, [{ path: 'src/alpha.txt', line: 2, text: 'Needle literal here' }]);
+  assert.equal(content.json.truncated, false);
+});
+
 test('traversal and symlink escapes never expose siblings, and walk search never follows links', async t => {
   const plain = makePlainDir();
   const outside = path.join(path.dirname(plain.dir), `outside-${path.basename(plain.dir)}.txt`);

@@ -357,7 +357,10 @@ async function gitSearch(root, q, mode, deadline) {
     };
   }
 
-  const baseArgs = ['grep', '-I', '-n', '-i', '-F', '--untracked'];
+  // --no-color: a repo/global color.ui=always or color.grep=always makes grep
+  // emit ANSI-wrapped path:line:text, and parseGitGrep's plain regex would
+  // then drop every record — a confident hits:[] with truncated:false.
+  const baseArgs = ['grep', '-I', '-n', '-i', '-F', '--no-color', '--untracked'];
   let out = await runBounded('git', [...baseArgs, '--max-count=5', '-e', q, '--'], {
     cwd: root, timeoutMs: remaining(), maxBytes: SEARCH_OUTPUT_MAX,
   });
