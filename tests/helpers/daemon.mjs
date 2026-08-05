@@ -139,6 +139,26 @@ export function spawnRaw({
 }
 
 /**
+ * Register teardown for caller-owned scratch directories BEFORE attempting a
+ * daemon start that may reject (port collision, early crash, health timeout).
+ * t.after hooks run even when the test body throws, so cleanup registered at
+ * allocation time is what keeps a failed boot from leaking the trees — a hook
+ * registered only after a successful startDaemon never runs when the start
+ * rejects. Returns a holder: assign `holder.daemon` once startDaemon resolves
+ * and its stop folds into the same hook; left null, the stop is skipped.
+ */
+export function guardScratchDirs(t, dirs, { keepHome = true } = {}) {
+  const holder = { daemon: null };
+  t.after(async () => {
+    await holder.daemon?.stop({ keepHome });
+    for (const dir of dirs) {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    }
+  });
+  return holder;
+}
+
+/**
  * Spawn fleetd and wait for it to become healthy. Returns a handle with
  * baseUrl plus a stop() that kills the process and (by default) removes the
  * scratch FLEETDECK_HOME.
