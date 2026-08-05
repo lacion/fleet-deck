@@ -307,6 +307,7 @@ test('live terminal WS returns err for an unknown spawn when enabled', async t =
     'a refused viewer must not have launched a control client');
 });
 
+<<<<<<< /tmp/mf-ours
 // BUG-157: a watched window dies, tmux emits %window-close, and the bridge's
 // list-panes -a probe FAILS (%error — a control-client blip). The old code
 // swallowed that failure, and an idle viewer with no input in flight had no
@@ -353,6 +354,44 @@ test('a failed window-close probe is re-listed once so an idle viewer on a dead 
   // nobody is watching holds no tmux attach.
   await waitUntil(() => records(record).some(r => r.type === 'signal' && r.signal === 'SIGTERM'), 'client released on last viewer');
 });
+=======
+// BUG-159: the open-time SIGWINCH jiggle is three resize steps — size(rows),
+// size(rows-1), size(rows) — and only the first used to be checked. A failed
+// restore after a successful rows-1 step left the window SHORT while the init
+// frame advertised the requested rows: the client laid the shorter seed into
+// the wrong geometry and the first paint came out scrambled. Now a failed mid
+// or restore step aborts the open BEFORE capture — the client gets {t:'err'},
+// never a mismatched init — and the bridge makes a best-effort restore to the
+// requested rows (tmux 3.7b keeps the prior geometry on a failed resize).
+// FLEETDECK_TEST_TERM_FAIL_RESIZE makes the fixture fail exactly one jiggle step.
+for (const step of ['mid', 'restore']) {
+  test(`live terminal WS aborts the open when the jiggle's ${step} resize step fails`, async t => {
+    const dir = mkdtempSync(path.join(tmpdir(), `fleetdeck-term-jiggle-${step}-`));
+    const record = path.join(dir, 'term.jsonl');
+    const daemon = await startDaemon({ env: env(record, { FLEETDECK_TEST_TERM_FAIL_RESIZE: step }) });
+    t.after(async () => { await daemon.stop(); rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+    const spawned = await createSpawn(daemon, dir);
+
+    const { frames } = connect(termUrl(daemon, spawned.spawn_id, 80, 24));
+    const err = await waitUntil(() => frames.find(f => f.t === 'err'), 'resize-failure err');
+    assert.match(err.reason, /resize failed/);
+    assert.equal(frames.some(f => f.t === 'init'), false,
+      'a failed jiggle step must never ship an init whose rows the window does not have');
+    assert.equal(records(record).filter(r => (r.line || '').startsWith('capture-pane ')).length, 0,
+      'the seed must not be captured from a window that failed to reach the requested size');
+
+    // Best-effort recovery: whatever failed, the LAST resize on this window is
+    // a restore attempt to the requested geometry, so the pane is not left
+    // parked at rows-1 for the next viewer (or the human's own client).
+    const window = spawned.tmux.window;
+    await waitUntil(() => {
+      const resizes = records(record)
+        .filter(r => (r.line || '').startsWith(`resize-window -t =${spawned.tmux.session}:=${window} `));
+      return resizes.length > 0 && resizes.at(-1).line.endsWith('-x 80 -y 24');
+    }, 'final resize restores the requested rows');
+  });
+}
+>>>>>>> /tmp/mf-theirs
 
 // Item 6: the row said live but its pane was already gone (the agent ended
 // between the ~10s liveness tick and this open). A vanished pane is the agent

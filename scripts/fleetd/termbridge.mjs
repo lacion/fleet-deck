@@ -407,6 +407,13 @@ export function createTermBridge({ port, resolveSpawn, log = () => {} } = {}) {
   // Fallback: on a tmux too old for `resize-window`, go back to sizing the
   // client. That restores the pre-v1.9 behaviour — contention and all — which is
   // strictly better than refusing to show a terminal at all.
+  //
+  // The fallback is for UNSUPPORT, not failure: a resize-window that errors
+  // AFTER `window-size manual` was accepted (racing teardown, concurrent
+  // resize) is reported to the caller, not silently retried as a client
+  // refresh — otherwise the caller believes the window reached the requested
+  // geometry when only the client did (BUG-159: the open-time jiggle would
+  // then capture a short window and ship an init claiming the full rows).
   async function sizeWindow(c, window, cols, rows) {
     const target = exactWindowTarget(port, window);
     if (!c.manualSizing.has(window)) {
@@ -414,9 +421,7 @@ export function createTermBridge({ port, resolveSpawn, log = () => {} } = {}) {
       if (opt.ok) c.manualSizing.add(window);
     }
     if (c.manualSizing.has(window)) {
-      const res = await c.command(`resize-window -t ${target} -x ${cols} -y ${rows}`);
-      if (res.ok) return res;
-      c.manualSizing.delete(window); // resize-window is unavailable; stop pretending
+      return await c.command(`resize-window -t ${target} -x ${cols} -y ${rows}`);
     }
     let out = await c.command(`refresh-client -C ${cols},${rows}`);
     if (!out.ok) out = await c.command(`refresh-client -C ${cols}x${rows}`); // pre-3.2 syntax
@@ -551,9 +556,21 @@ export function createTermBridge({ port, resolveSpawn, log = () => {} } = {}) {
       // capture. The snapshot is now the app's own freshly-drawn screen.
       // This is a terminal event, not keystroke injection — nothing reaches the
       // pane's input, so it stays outside the keystroke doctrine.
+      // EVERY step of the jiggle must succeed, not just the first: a failed
+      // restore after a successful rows-1 step would leave the window SHORT
+      // while the init frame advertises the requested rows, and the client
+      // would lay the shorter seed into the wrong geometry. tmux 3.7b keeps
+      // the prior geometry on a failed resize-window, so recover by restoring
+      // the requested size — and if even that fails, abort before capture.
       if (!(await sizeWindow(c, row.tmux_window, size.cols, size.rows)).ok) throw new Error('terminal resize failed');
-      await sizeWindow(c, row.tmux_window, size.cols, Math.max(1, size.rows - 1));
-      await sizeWindow(c, row.tmux_window, size.cols, size.rows);
+      if (!(await sizeWindow(c, row.tmux_window, size.cols, Math.max(1, size.rows - 1))).ok) {
+        await sizeWindow(c, row.tmux_window, size.cols, size.rows);
+        throw new Error('terminal resize failed');
+      }
+      if (!(await sizeWindow(c, row.tmux_window, size.cols, size.rows)).ok) {
+        await sizeWindow(c, row.tmux_window, size.cols, size.rows);
+        throw new Error('terminal resize failed');
+      }
       await new Promise((r) => { const t = setTimeout(r, REPAINT_MS); t.unref?.(); });
       abortIfClosed();
 

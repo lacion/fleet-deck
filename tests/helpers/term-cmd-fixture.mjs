@@ -33,9 +33,19 @@ function noPaneModeFor(window) {
   return window.includes(noPaneKnob) ? 'error' : null;
 }
 
+// Fault injection (BUG-159): fail the openViewer SIGWINCH jiggle's resize steps.
+// The open sequence is size(rows), size(rows-1), size(rows); the knob value
+// picks which step(s) answer %error:
+//   'mid'     → only the rows-1 step fails
+//   'restore' → only the final restore-to-rows step fails
+// Real resize traffic (a client's later {t:'resize'} frame) is unaffected —
+// the bridge does not re-run the jiggle sequence there.
+const failResizeKnob = process.env.FLEETDECK_TEST_TERM_FAIL_RESIZE;
+
 // window name -> pane id, assigned on first sight and stable thereafter
 const panes = new Map();
 const streamed = new Set();
+<<<<<<< /tmp/mf-ours
 // Fault injection (BUG-157): make the window-close probe (`list-panes -a`)
 // FAIL so the bridge's failed-probe path is exercised. Without the recheck an
 // idle viewer whose pane just died would never finish; with it the probe is
@@ -55,6 +65,10 @@ const flood = (() => {
   return m ? { bytes: Number(m[1]), window: m[2] || null } : null;
 })();
 const flooded = new Set();
+=======
+// window name -> ordered rows of each resize-window seen (jiggle detection)
+const resizeSeqs = new Map();
+>>>>>>> /tmp/mf-theirs
 
 function note(value) {
   if (!record) return;
@@ -102,6 +116,7 @@ input.on('line', line => {
     else response([paneForListPanes(line)]);
   } else if (line.startsWith('list-panes -a')) {
 <<<<<<< /tmp/mf-ours
+<<<<<<< /tmp/mf-ours
     // window-close probe + BUG-055 pane_dead poll: '%N [dead]' per pane. The
     // plain-id form used by the close probe and the id+flag form used by the
     // dead poll both parse the same way, so answer both shapes. The dead knob
@@ -129,6 +144,20 @@ input.on('line', line => {
     probeCalls += 1;
     if (probeFails.has(probeCalls)) response([], false); // the probe itself fails: not proof a pane died
     else response([...panes.values()]); // window-close probe: every pane still alive
+>>>>>>> /tmp/mf-theirs
+=======
+    response([...panes.values()]); // window-close probe: every pane still alive
+  } else if (line.startsWith('resize-window ')) {
+    const rows = Number(/ -y (\d+)/.exec(line)?.[1]);
+    const window = /-t\s+=\S*?:(\S+)/.exec(line)?.[1]?.replace(/^=/, '') ?? 'default';
+    // Track the per-window resize sequence to identify the jiggle steps.
+    const seq = resizeSeqs.get(window) ?? [];
+    seq.push(rows);
+    resizeSeqs.set(window, seq);
+    let fail = false;
+    if (failResizeKnob === 'mid') fail = seq.length === 2 && rows === seq[0] - 1;
+    else if (failResizeKnob === 'restore') fail = seq.length === 3 && rows === seq[0];
+    if (fail) response([], false); else response([]);
 >>>>>>> /tmp/mf-theirs
   } else if (line.startsWith('capture-pane ')) {
     const pane = paneForTarget(line) || '%1';
