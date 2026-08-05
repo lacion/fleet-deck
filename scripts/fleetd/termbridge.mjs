@@ -493,19 +493,29 @@ export function createTermBridge({ port, resolveSpawn, log = () => {} } = {}) {
       await new Promise((r) => { const t = setTimeout(r, REPAINT_MS); t.unref?.(); });
       abortIfClosed();
 
+      // R1-4/BUG-056: subscribe BEFORE the seed is even requested — not after the
+      // capture resolves, and not after the cursor lookup below. The control
+      // client demuxes %output only to panes already in c.panes, so anything the
+      // app emits while this viewer is still opening is discarded forever
+      // otherwise. The capture made this concrete: tmux flushes
+      // `%end …\n%output %N …` in ONE stdout write, the stdout handler resolves
+      // the capture waiter and still processes that trailing %output in the same
+      // feed() loop, and Promise continuations are microtasks — they always run
+      // AFTER the current stack. Subscribing only after the await therefore
+      // guaranteed same-chunk post-capture bytes (the post-resize repaint's
+      // tail) never reached the viewer.
+      //
+      // There is no double-draw: the seed holds only what existed at capture
+      // time, and emit() buffers every earlier byte into viewer.pending until
+      // the init frame ships; flushPending() replays the buffer right after, in
+      // arrival order. Bytes from the resize jiggle above may arrive before the
+      // seed — they are the app's own freshly-drawn screen, which is exactly
+      // what the capture then photographs, so replaying them after the init
+      // repaints what is already shown.
+      subscribe(c, pane, viewer);
+
       const captured = await c.command(`capture-pane -p -e -t ${pane}`);
       if (!captured.ok) throw new Error('terminal pane capture failed');
-
-      // R1-4: subscribe NOW, the instant the seed is photographed — not after the
-      // cursor lookup below. Everything the app emitted while repainting is baked
-      // into `captured`, so subscribing later dropped every %output that landed
-      // during the cursor round-trip: the pane was not yet in c.panes, so the
-      // demux discarded it and the viewer stayed desynced until a later repaint.
-      // emit() buffers into viewer.pending until the init frame ships;
-      // flushPending() replays it right after, with no double-draw — the seed
-      // holds only what existed at capture time, the buffer only what arrived
-      // after.
-      subscribe(c, pane, viewer);
 
       const cursor = await c.command(`display-message -p -t ${pane} '#{cursor_x} #{cursor_y}'`);
       if (!cursor.ok) throw new Error('terminal cursor lookup failed');
