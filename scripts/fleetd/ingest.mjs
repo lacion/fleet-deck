@@ -1,11 +1,11 @@
 // ingest.mjs — agents-cli ingest (F1): the merge step for the secondary
 // session source. Threaded ctx state: q, assignCallsign, updateSession, tick,
-// onMutate. deriveRepo/branchOf resolve repo identity; pidAlive/colFromAgentState
+// onMutate. deriveRepo/branchOf resolve repo identity; pidOwnedBy/colFromAgentState
 // are pure helpers.
 
 import { deriveRepo, branchOf } from './repo-identity.mjs';
 import { ticketFromBranch } from './tickets.mjs';
-import { pidAlive, colFromAgentState } from './helpers.mjs';
+import { pidOwnedBy, colFromAgentState } from './helpers.mjs';
 
 export function createIngest(ctx) {
   const { q, assignCallsign, updateSession, tick, onMutate, touchRepo } = ctx;
@@ -32,21 +32,26 @@ export function createIngest(ctx) {
   //      registry keeps them for hours after completion (observed: two
   //      "blocked" background agents from that morning's work rendered as
   //      phantom WORKING cards). They never belong on the board.
-  //   2. An interactive entry must have a LIVE pid (kill(pid, 0)) — the
-  //      registry can outlive the process.
+  //   2. An interactive entry must own its pid: live AND with a process
+  //      start matching the record's startedAt (kill(pid, 0) alone proves
+  //      only that SOME process holds the pid — the registry outlives the
+  //      process, and the OS can hand a dead Claude's pid to an unrelated
+  //      process whose mere existence would then create/revive a phantom
+  //      routable card. Unverifiable ownership counts as absent).
   //   3. Absence tombstones agents-cli cards ONLY: a card this poller
   //      created, that hooks never claimed, and that the (filtered) poll no
   //      longer reports, is marked offline — the poller is the only
   //      lifecycle those cards have. Hook-sourced cards are untouched;
   //      SessionEnd remains their only tombstone.
-  // (pidAlive + colFromAgentState are pure helpers now — see helpers.mjs.)
+  // (pidOwnedBy + colFromAgentState are pure helpers now — see helpers.mjs.)
   function ingestAgentsPoll(records) {
     if (!Array.isArray(records)) return;
-    // Trust rules 1+2: interactive entries with a live pid are the only
-    // records that count — for creation, update AND the absence sweep below.
+    // Trust rules 1+2: interactive entries with VERIFIED pid ownership are
+    // the only records that count — for creation, update AND the absence
+    // sweep below (so a reused pid also tombstones the stale card).
     const live = records.filter(rec =>
       rec && typeof rec === 'object' && rec.sessionId
-      && rec.kind === 'interactive' && pidAlive(rec.pid));
+      && rec.kind === 'interactive' && pidOwnedBy(rec.pid, rec.startedAt));
 
     for (const rec of live) {
       const sid = rec.sessionId;

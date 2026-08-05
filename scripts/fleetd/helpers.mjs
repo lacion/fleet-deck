@@ -266,6 +266,63 @@ export function pidAlive(pid) {
   try { process.kill(pid, 0); return true; } catch { return false; }
 }
 
+// Process start time in ms since the epoch, or null when unverifiable. A bare
+// kill(pid, 0) proves only that SOME process holds the numeric pid — after a
+// Claude session exits, the OS can hand that pid to an unrelated process and
+// the stale registry record would still look alive (the phantom-agent scar).
+// The agents-cli registry reports startedAt, so compare it against the real
+// process start: a pid that has been reused reports a fresh start that cannot
+// match the record's (older) timestamp.
+//
+// Linux implementation: /proc/<pid>/stat field 22 (starttime, clock ticks
+// since boot) converted against live uptime instead of a wall-clock boot
+// time. Field 22 is parsed from the LAST ')' in the line so a comm
+// containing spaces or parens (field 2, wrapped in parens) cannot shift the
+// column positions. Clock ticks are 100/s on effectively every Linux
+// (USER_HZ); a non-100 clock only ever inflates the apparent age, which the
+// tolerance below absorbs.
+//
+// Why uptime and not /proc/stat btime: btime is the REAL clock at boot
+// plus every subsequent clock correction (NTP steps, VM suspend/resume) —
+// on exactly the long-lived WSL/VM fleets this daemon runs on it can be off
+// by minutes to hours, which would false-negative every legitimate record.
+// starttime and /proc/uptime tick off the SAME monotonic jiffies counter,
+// so now − (uptime − startTicks) is immune to wall-clock steps entirely.
+// On any platform without /proc (or any read/parse failure) this returns
+// null and callers MUST treat ownership as unverifiable — never silently
+// fall back to the pid-existence check that caused the bug.
+export function processStartMs(pid) {
+  if (!Number.isFinite(pid) || pid <= 0) return null;
+  try {
+    const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
+    const after = stat.slice(stat.lastIndexOf(')') + 2);
+    const startTicks = Number(after.split(' ')[19]);
+    const uptimeSeconds = Number(fs.readFileSync('/proc/uptime', 'utf8').split(' ')[0]);
+    if (!Number.isFinite(startTicks) || !Number.isFinite(uptimeSeconds)) return null;
+    return Date.now() - (uptimeSeconds - startTicks / 100) * 1000;
+  } catch {
+    return null; // dead pid, unparseable /proc, or no /proc at all
+  }
+}
+
+// ONE ownership verifier for agents-cli records (BUG-106): live pid AND a
+// process start that matches the record's startedAt within tolerance. The
+// agents registry's startedAt comes from a different clock read than the
+// kernel's, so an exact match would flake — 15 s is far wider than any
+// observed skew and far narrower than a realistic pid-reuse window. A record
+// without a usable startedAt, or a pid whose start cannot be read (dead,
+// unreadable, non-Linux), is treated as NOT OWNED — an unverifiable record is
+// never allowed to create, update, or revive a card, nor to keep the poller
+// in its active cadence.
+export const PID_START_TOLERANCE_MS = 15_000;
+
+export function pidOwnedBy(pid, startedAt) {
+  if (!Number.isFinite(startedAt) || startedAt <= 0) return false;
+  const startMs = processStartMs(pid);
+  if (startMs == null) return false;
+  return Math.abs(startMs - startedAt) <= PID_START_TOLERANCE_MS;
+}
+
 export function colFromAgentState(raw, isNew) {
   const s = String(raw ?? '').toLowerCase();
   if (s === 'busy' || s === 'running') return 'working';
