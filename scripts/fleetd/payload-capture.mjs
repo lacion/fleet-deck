@@ -19,8 +19,9 @@
 // Redaction rides that same single walk, in three layers: secret-looking KEYS
 // (token/secret/password/api-key/authorization/… incl. camelCase) get a marker
 // and their value is never descended into; string VALUES matching a known
-// credential shape (Anthropic/GitHub/Slack/AWS keys, JWTs, PEM private keys,
-// Bearer tokens) are masked in place; and the daemon's own access token is
+// credential shape (Anthropic/GitHub/GitLab/Google/OpenAI-style/Hugging Face/
+// DigitalOcean/Slack/AWS keys, JWTs, PEM private keys, Bearer tokens) are
+// masked in place; and the daemon's own access token is
 // scrubbed verbatim from the finished line. What this canNOT catch is a secret
 // with no telltale key name and no recognizable shape sitting in arbitrary free
 // text — which is exactly why capture stays opt-in and the file stays 0600.
@@ -91,6 +92,28 @@ const SECRET_VALUE_RES = [
   /eyJ[A-Za-z0-9_-]{10,4096}\.[A-Za-z0-9_-]{10,4096}\.[A-Za-z0-9_-]{10,4096}/g,
   /-----BEGIN [A-Z ]{0,40}PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]{0,40}PRIVATE KEY-----|$)/g,
   /Bearer\s+[A-Za-z0-9._~+/=-]{16,}/g,
+  // Forge/API prefixes the git path used to redact ONLY inside exec.mjs's
+  // redactGitText (as GIT_EXTRA_SECRET_RES) — so a bare `glpat-…` / `sk-…` /
+  // `AIza…` / `hf_…` / `dop_v1_…` relayed on a stalled spawn's pane excerpt
+  // (`remote: the provided token (glpat-…) is incorrect`) or captured in a hook
+  // payload's free-text field survived into stall_detail, the board drawer,
+  // /state, every /ws frame and the durable SpawnStalled note. They live in the
+  // SHARED list now so every consumer fails closed on the same shapes. ReDoS:
+  // each is a fixed prefix plus ONE greedy trailing run with nothing required
+  // after it (the lookbehind is zero-width and constant) — the same shape the
+  // audit above certifies linear. All match runs longer than the 10-byte
+  // `[redacted]` marker, preserving the shrink-only invariant.
+  //
+  // The `(?<![A-Za-z0-9_-])` left boundary is not decoration: without it the
+  // generic `sk-` rule fires INSIDE ordinary words, and `disk-quota-exceeded`
+  // becomes `di[redacted]` — destroying exactly the legibility these
+  // diagnostics exist to deliver. A false redaction is cheap to write and
+  // expensive to debug.
+  /(?<![A-Za-z0-9_-])gl(?:pat|rt|dt|soat|cbt|ptt|feat|agent)-[A-Za-z0-9_-]{16,}/g, // GitLab PAT / runner / deploy / OAuth / CI job families
+  /(?<![A-Za-z0-9_-])AIza[A-Za-z0-9_-]{30,}/g,                                     // Google API key
+  /(?<![A-Za-z0-9_-])sk-[A-Za-z0-9_-]{20,}/g,                                      // OpenAI-style (and, harmlessly, sk-ant-* again)
+  /(?<![A-Za-z0-9_-])hf_[A-Za-z0-9]{20,}/g,                                        // Hugging Face
+  /(?<![A-Za-z0-9_-])dop_v1_[A-Za-z0-9]{32,}/g,                                    // DigitalOcean
 ];
 
 function redactValue(text) {

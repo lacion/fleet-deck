@@ -127,30 +127,6 @@ export function distillGitStderr(text) {
 const GIT_DETAIL_LINES = 20;
 const GIT_DETAIL_MAX = 2000;
 
-// Credential SHAPES that SECRET_VALUE_RES does not carry, kept LOCAL to this
-// function on purpose: payload-capture's list governs the on-disk
-// hook-payloads.jsonl format, and this change owns no blast radius there (see the
-// comment on scrubUrlCredentials). git stderr has its own population of forges,
-// and the fetch path in repos.mjs has no origin URL in scope to derive an
-// exact-secret needle from, so a BARE forge token relayed on a `remote:` line —
-// `remote: the provided token (glpat-…) is incorrect` — had no covering layer at
-// all. ReDoS: each is a fixed prefix plus ONE greedy trailing run with nothing
-// required after it, the same shape the audit in payload-capture.mjs certifies
-// linear (the lookbehind is zero-width and constant). All match runs longer than
-// the 10-byte `[redacted]` marker.
-//
-// The `(?<![A-Za-z0-9_-])` left boundary is not decoration: without it the generic
-// `sk-` rule fires INSIDE ordinary words, and `disk-quota-exceeded-for-user`
-// becomes `di[redacted]` — destroying exactly the legibility this whole change
-// exists to deliver. A false redaction is cheap to write and expensive to debug.
-const GIT_EXTRA_SECRET_RES = [
-  /(?<![A-Za-z0-9_-])gl(?:pat|rt|dt|soat|cbt|ptt|feat|agent)-[A-Za-z0-9_-]{16,}/g, // GitLab PAT / runner / deploy / OAuth / CI job families
-  /(?<![A-Za-z0-9_-])AIza[A-Za-z0-9_-]{30,}/g,                                     // Google API key
-  /(?<![A-Za-z0-9_-])sk-[A-Za-z0-9_-]{20,}/g,                                      // OpenAI-style (and, harmlessly, sk-ant-* again)
-  /(?<![A-Za-z0-9_-])hf_[A-Za-z0-9]{20,}/g,                                        // Hugging Face
-  /(?<![A-Za-z0-9_-])dop_v1_[A-Za-z0-9]{32,}/g,                                    // DigitalOcean
-];
-
 // THE single hardening pass for git output, exported so that the NOTE and the
 // DETAIL derived from one stderr can never disagree about it. That was a real
 // defect and not a hypothetical: the note was given only the positional URL
@@ -162,12 +138,15 @@ const GIT_EXTRA_SECRET_RES = [
 // outlives the archived card. Callers harden ONCE and derive both.
 //
 // Order within the pass mirrors gitStderrDetail's contract: positional first
-// (a credentialed URL is invisible to a shape list), then the shape lists, then
-// the caller's exact needles. Every step is idempotent, so composing this with
-// gitStderrDetail — which runs it again over its own input — is safe by design.
+// (a credentialed URL is invisible to a shape list), then the shape list, then
+// the caller's exact needles. The forge/API shapes (glpat/AIza/sk-/hf_/dop_v1_)
+// this pass once applied from a LOCAL extra list now live in payload-capture's
+// shared SECRET_VALUE_RES, so redactDiagnosticText covers them and the two
+// halves of this file can never drift apart again. Every step is idempotent, so
+// composing this with gitStderrDetail — which runs it again over its own
+// input — is safe by design.
 export function redactGitText(text, secrets = []) {
   let out = redactDiagnosticText(scrubUrlCredentials(text));
-  for (const re of GIT_EXTRA_SECRET_RES) out = out.replace(re, '[redacted]');
   for (const secret of secrets) {
     if (typeof secret === 'string' && secret) out = out.split(secret).join('[redacted]');
   }

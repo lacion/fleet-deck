@@ -153,14 +153,50 @@ test('scrubUrlCredentials removes URL userinfo, bytes and all, and is idempotent
   assert.equal(scrubUrlCredentials('git@github.com:owner/repo.git'), 'git@github.com:owner/repo.git');
 });
 
+test('forge/API shapes git treats as secrets are masked by the SHARED scrubber, not just the git path', (t) => {
+  // BUG-038: these prefixes lived only in exec.mjs's git-local extra list, so a
+  // bare token relayed on a stalled spawn's pane (stallDiagnosticExcerpt applies
+  // redactDiagnosticText + scrubUrlCredentials only) or captured in a hook
+  // payload's free-text field survived into stall_detail, the board drawer,
+  // /state, every /ws frame and hook-payloads.jsonl. The shapes are in the
+  // shared SECRET_VALUE_RES now; this pins that they fire on BOTH consumers.
+  const cases = [
+    ['remote: the provided token (glpat-AbCdEf1234567890) is incorrect', 'glpat-'],
+    [`remote: rejected glrt-${'r'.repeat(20)}`, 'glrt-'],
+    [`remote: key AIza${'K'.repeat(35)} is not authorized`, 'AIza'],
+    [`remote: sk-${'p'.repeat(32)} revoked`, 'sk-p'],
+    [`remote: hf_${'h'.repeat(30)} expired`, 'hf_'],
+    [`remote: dop_v1_${'d'.repeat(40)} deleted`, 'dop_v1_'],
+  ];
+  for (const [line, leak] of cases) {
+    const scrubbed = redactDiagnosticText(line);
+    assert.equal(scrubbed.includes(leak), false, `${leak} must be masked by redactDiagnosticText: ${scrubbed}`);
+    assert.match(scrubbed, /\[redacted\]/);
+  }
+  // And the same shapes must not survive capture into hook-payloads.jsonl under
+  // an innocent free-text key.
+  const { raw } = captureOnce(t, {
+    log: cases.map(([line]) => line).join('\n'),
+  });
+  for (const leak of ['glpat-', 'glrt-', 'AIza', 'sk-p', 'hf_', 'dop_v1_']) {
+    assert.equal(raw.includes(leak), false, `${leak} must not reach the capture file`);
+  }
+  // The left boundary still protects ordinary prose from the generic sk- rule.
+  const prose = 'disk-quota-exceeded-for-user on volume';
+  assert.equal(redactDiagnosticText(prose), prose, 'innocent hyphenated words must survive verbatim');
+});
+
 test('redactDiagnosticText is UNCHANGED: it still has no userinfo rule', () => {
   // Pinned deliberately. scrubUrlCredentials is a SEPARATE export precisely so
   // hook-payload capture stays bit-for-bit identical; if a future reader folds a
   // userinfo pattern into SECRET_VALUE_RES instead, this fails and points at the
   // capture-format cases above that would then need revisiting. The corollary
   // for callers: the shape scrubber alone is NOT sufficient for a credentialed
-  // URL — they must compose both, as gitStderrDetail does.
-  const line = "fatal: unable to access 'https://luis:glpat-AbCdEf1234567890@gitlab.com/x/y.git/'";
+  // URL — they must compose both, as gitStderrDetail does. The password here is
+  // deliberately shapeless (a corporate password matches no SECRET_VALUE_RES
+  // entry); a glpat- in this slot would now be masked by the shared shape list,
+  // which would mask the very absence this test pins.
+  const line = "fatal: unable to access 'https://luis:c0rporate-pw-no-shape@gitlab.com/x/y.git/'";
   assert.equal(redactDiagnosticText(line), line);
 });
 

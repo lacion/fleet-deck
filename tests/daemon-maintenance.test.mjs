@@ -107,6 +107,28 @@ test('stall diagnostic excerpt also scrubs URL userinfo, which no shape rule can
   assert.ok(out.includes('https://[redacted]@gitlab.com/o/r.git'), out);
 });
 
+test('stall diagnostic excerpt masks bare forge/API tokens, not just URL userinfo', () => {
+  // BUG-038: a repo-mode spawn stalls while the pane still shows the forge's own
+  // rejection — `remote: the provided token (glpat-…) is incorrect`. These shapes
+  // used to be redacted only on the git path (exec.mjs redactGitText); this
+  // excerpt applied redactDiagnosticText + scrubUrlCredentials, which saw none of
+  // them, so the PAT rode stall_detail into the drawer, /state, every /ws frame
+  // and the durable SpawnStalled note. The shapes are in the shared list now.
+  const out = stallDiagnosticExcerpt([
+    '$ git fetch origin',
+    'remote: the provided token (glpat-AbCdEf1234567890) is incorrect',
+    `remote: key AIza${'K'.repeat(35)} is not authorized`,
+    `remote: sk-${'p'.repeat(32)} revoked`,
+    `remote: hf_${'h'.repeat(30)} expired`,
+    `remote: dop_v1_${'d'.repeat(40)} deleted`,
+    'fatal: authentication failed',
+  ].join('\n'));
+  for (const leak of ['glpat-', 'AIza', 'sk-p', 'hf_', 'dop_v1_']) {
+    assert.equal(out.includes(leak), false, `${leak} must not survive the pane excerpt: ${out}`);
+  }
+  assert.match(out, /fatal: authentication failed/, 'the verdict line stays legible');
+});
+
 test('spawn argv is deterministic and registration watchdog stalls once, then a late hook revives it', async (t) => {
   const { db, core, state, port, home } = memoryCore(t, {
     env: { FLEETDECK_SPAWN_REGISTER_MS: 1 },
