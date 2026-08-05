@@ -292,7 +292,49 @@ env "${CLAUDE_ENV_SCRUB[@]}" \
 PA=$!
 echo "T+0 session A launched sid=$SA"
 
-sleep 15
+# Gate the fanout on fleet state, never on wall-clock sleeps. `to:"all"`
+# resolves only ACTIVE sessions (scripts/fleetd/mail.mjs resolveTargets
+# filters ended_at IS NULL), and the verification below requires BOTH exact
+# sessions to drain the mail at a Stop boundary. The old T+15/T+29 sleeps let
+# a fast worker finish before the send: it was silently omitted from the
+# fanout and could never emit its boundary-delivery ticker entry — a
+# repeatable false failure on a faster model or machine. Poll the daemon's
+# own /state instead: launch B only once A is proven registered and live, and
+# mail only once BOTH exact session ids are.
+wait_for_fleet() { # sids... — every listed session registered AND not ended
+  node -e '
+    // `node -e` runs CJS (cwd may contain no package.json marking ESM).
+    const fs = require("node:fs");
+    const [home, port, ...sids] = process.argv.slice(1);
+    const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+    (async () => {
+      let token = null;
+      for (let i = 0; i < 900; i += 1) { // up to ~90 s for a slow election
+        if (!token) { try { token = fs.readFileSync(home + "/token", "utf8").trim(); } catch {} }
+        if (token) {
+          try {
+            const res = await fetch(`http://127.0.0.1:${port}/state`, {
+              headers: { authorization: `Bearer ${token}` },
+              signal: AbortSignal.timeout(500),
+            });
+            if (res.ok) {
+              const state = await res.json();
+              const live = new Set((state.sessions || []).filter(s => !s.endedAt).map(s => s.session_id));
+              if (sids.every(sid => live.has(sid))) return;
+            }
+          } catch {}
+        }
+        await sleep(100);
+      }
+      process.exitCode = 1;
+    })().catch(() => { process.exitCode = 1; });
+  ' "$SCRATCH_HOME" "$FLEETDECK_PORT" "$@"
+}
+
+if ! wait_for_fleet "$SA"; then
+  echo "FAIL: session A never registered as active on the smoke daemon"
+  exit 1
+fi
 
 env "${CLAUDE_ENV_SCRUB[@]}" \
   FLEETDECK_HOME="$SCRATCH_HOME" FLEETDECK_PORT="$FLEETDECK_PORT" \
@@ -306,9 +348,12 @@ env "${CLAUDE_ENV_SCRUB[@]}" \
 >>>>>>> /tmp/mf-theirs
   --output-format json > "$DEMO_LOGS/worker-b.json" 2> "$DEMO_LOGS/worker-b.err" &
 PB=$!
-echo "T+15 session B launched sid=$SB"
+echo "session B launched sid=$SB (A proven active)"
 
-sleep 14
+if ! wait_for_fleet "$SA" "$SB"; then
+  echo "FAIL: both smoke sessions never registered as active; refusing to mail a partial fleet"
+  exit 1
+fi
 TOKEN="$(cat "$SCRATCH_HOME/token" 2>/dev/null || true)"
 if [ -z "$TOKEN" ]; then
   echo "FAIL: smoke daemon did not mint its bearer token"
@@ -317,14 +362,13 @@ fi
 if curl -fsS -X POST "http://127.0.0.1:$FLEETDECK_PORT/mail" \
   -H 'content-type: application/json' -H "authorization: Bearer $TOKEN" \
   -d '{"to":"all","from":"luis","text":"Fleet check-in: another agent is editing this repo right now. End your final summary with a line FLEET-NOTE: listing files you touched."}'; then
-  echo " | T+29 mail sent"
+  echo " | mail sent (both sessions proven active)"
 else
   echo "FAIL: authenticated smoke mail was refused"
   exit 1
 fi
 
-sleep 12
-echo "T+41 (board screenshot skipped -- Phase 1 board is the ported spike board, no shot.mjs yet)"
+echo "(board screenshot skipped -- Phase 1 board is the ported spike board, no shot.mjs yet)"
 
 # `wait` propagates the worker's exit status — tolerated nonzero (rc=124 is an
 # accepted outcome), so capture it instead of letting errexit abort here.
