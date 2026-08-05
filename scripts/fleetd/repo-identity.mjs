@@ -58,9 +58,14 @@ function git(args, cwd) {
   // chain async as one coordinated change; silently changing this module's
   // return contract would instead write Promises into session state.
   try {
-    const out = execFileSync('git', args, {
+    const raw = execFileSync('git', args, {
       cwd, timeout: 1500, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim();
+    });
+    // Strip only the single record-terminating newline (LF, or CRLF under
+    // core.autocrlf) — never trim(): path-valued output (--show-toplevel,
+    // worktree list) may legitimately end in whitespace on POSIX, and
+    // trim() would corrupt such a path into one that does not exist.
+    const out = raw.replace(/\r?\n$/, '');
     return out || null;
   } catch {
     return null;

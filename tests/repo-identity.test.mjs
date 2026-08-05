@@ -10,12 +10,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { startDaemon } from './helpers/daemon.mjs';
 import { postHook, getJson } from './helpers/http.mjs';
 import { loadFixture } from './helpers/fixtures.mjs';
 import { makeRepoWithWorktree, makePlainDir } from './helpers/gitrepo.mjs';
+<<<<<<< /tmp/mf-ours
 import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
+=======
+import { deriveRepo, branchOf } from '../scripts/fleetd/repo-identity.mjs';
+>>>>>>> /tmp/mf-theirs
 
 function findSession(state, sid) {
   return state.sessions.find(s => s.session_id === sid);
@@ -132,4 +139,34 @@ test('a non-git cwd falls back to repo_id = cwd', async (t) => {
   const card = findSession(state, sid);
   assert.ok(card, 'session in a non-git cwd should still register');
   assert.equal(card.repo_id, plain.dir, 'non-git cwd should fall back to repo_id = cwd');
+});
+
+test('a repo whose path ends in a space keeps its full path (no trim corruption)', (t) => {
+  // BUG-141: the git() helper used trim() on ALL output, so a POSIX checkout
+  // path ending in whitespace came back corrupted -- `git rev-parse
+  // --show-toplevel` emits "<path>\n" and trim() ate the trailing space too,
+  // yielding a nonexistent worktree path. Only the record-terminating newline
+  // may be stripped.
+  const base = mkdtempSync(path.join(tmpdir(), 'fleetdeck-trailspace-'));
+  const spaced = path.join(base, 'repo with trailing space ');
+  t.after(() => { rmSync(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+
+  mkdirSync(spaced, { recursive: true });
+  execFileSync('git', ['init', '-q'], { cwd: spaced });
+  execFileSync('git', ['config', 'user.email', 'test@fleetdeck.local'], { cwd: spaced });
+  execFileSync('git', ['config', 'user.name', 'Fleet Deck Tests'], { cwd: spaced });
+  writeFileSync(path.join(spaced, 'shared.js'), '// seed\n');
+  execFileSync('git', ['add', '.'], { cwd: spaced });
+  execFileSync('git', ['commit', '-q', '-m', 'seed'], { cwd: spaced });
+
+  const expected = realpathSync(spaced);
+  assert.ok(expected.endsWith(' '), 'fixture path must end in a space');
+
+  const repo = deriveRepo(spaced);
+  assert.equal(repo.is_git, true, 'a spaced checkout should still be recognized as git');
+  assert.equal(repo.worktree, expected, 'worktree must keep its trailing space, not a trimmed nonexistent path');
+  assert.equal(repo.main_tree, expected, 'main tree must keep its trailing space');
+  assert.equal(repo.repo_id, realpathSync(path.join(spaced, '.git')), 'repo_id should be the canonicalized common git dir');
+  assert.equal(branchOf(spaced), execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: spaced, encoding: 'utf8' }).trim(),
+    'branch detection should still work from a spaced path');
 });
