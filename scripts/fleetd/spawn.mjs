@@ -1019,6 +1019,20 @@ export async function typeKeys(target, text) {
   return (await tmux(['send-keys', '-t', target, '-l', '--', String(text)])) !== null;
 }
 
+/** Literal text + Enter as ONE tmux invocation: `;` separates two send-keys
+ * commands inside a single tmux command queue, which the server executes
+ * back-to-back against the pane — so no other client (human keystrokes, mail
+ * delivery, a second daemon action) can interleave input between the text and
+ * its submission, and a caller that validated turn-state immediately
+ * beforehand never strands typed-but-unsent text in an active TUI the way a
+ * separate typeKeys → recheck → sendEnter sequence could (BUG-053). NOTE: `-l`
+ * applies to EVERY following key argument, so a trailing bare `Enter` in the
+ * same send-keys would be typed as the literal string "Enter" — the Enter must
+ * be its own non-`-l` send-keys command in the queue. */
+export async function typeAndEnter(target, text) {
+  return (await tmux(['send-keys', '-t', target, '-l', '--', String(text), ';', 'send-keys', '-t', target, 'Enter'])) !== null;
+}
+
 /** Independent pane-scrollback capture for remote-control URL harvesting.
  * Keep this adapter local rather than coupling daemon state to termbridge. */
 export async function capturePane(target) {

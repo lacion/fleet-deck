@@ -80,6 +80,7 @@ function makeAdapter(port = 4711, overrides = {}) {
     pasteText: async () => true,
     sendEnter: async () => true,
     typeKeys: async () => true,
+    typeAndEnter: async () => true,
     sendBringupEnter: async () => true,
     capturePane: async () => '',
     launchOverride: () => {},
