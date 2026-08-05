@@ -84,6 +84,7 @@ stop_scratch_daemon() {
     })().catch(() => { process.exitCode = 2; });
   ' "$pidfile" "$FLEETDECK_PORT" >/dev/null 2>&1
 }
+<<<<<<< /tmp/mf-ours
 
 # Tear down everything THIS run started — the detached scratch daemon and the
 # isolated tmux server. The user's daemon, default tmux server, and home are
@@ -123,6 +124,20 @@ cleanup() {
 }
 >>>>>>> /tmp/mf-theirs
 trap cleanup EXIT
+=======
+# A hung curl or claude run must never hold the gate forever: on the overall
+# deadline the EXIT trap still runs (verified tmux cleanup above) and the run
+# exits as a failure instead of blocking the caller.
+overall_deadline() {
+  echo "ABORT: overall deadline (${ACCEPT_DEADLINE_S}s) hit; cleaning up."
+  exit 124
+}
+ACCEPT_DEADLINE_S="${FLEETDECK_ACCEPT_DEADLINE_S:-600}"
+trap overall_deadline ALRM
+( sleep "$ACCEPT_DEADLINE_S" && kill -ALRM "$$" 2>/dev/null ) &
+DEADLINE_PID=$!
+trap cleanup_tmux_server EXIT
+>>>>>>> /tmp/mf-theirs
 
 # Claude-session env vars that must never leak into the sessions (and through
 # their SessionStart hook, into the elected daemon): a daemon or tmux server
@@ -355,13 +370,14 @@ echo "T+0 permission-relay session launched sid=$S1"
 # Poll for a pending permission question for S1, approve it from "the board".
 APPROVED=""
 for i in $(seq 1 90); do
-  QID=$(curl -s -m 1 "$BASE/state" 2>/dev/null | node -e "
+  QID=$(curl -s --connect-timeout 1 -m 1 "$BASE/state" 2>/dev/null | node -e "
 let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{
   try{ const s=JSON.parse(d);
     const q=(s.questions||[]).find(q=>q.session_id==='$S1'&&q.kind==='permission'&&q.status==='pending');
     console.log(q?q.id:'');
   }catch{console.log('')}})" 2>/dev/null)
   if [ -n "$QID" ]; then
+<<<<<<< /tmp/mf-ours
     R=$(curl -s -X POST "$BASE/api/questions/$QID/answer" -H 'content-type: application/json' -d '{"behavior":"allow"}')
     echo "T+$i board approved permission question #$QID → $R"
     # The answer POST itself must have succeeded — a 4xx body would leave the
@@ -370,6 +386,20 @@ let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{
       APPROVED=yes
       break
     fi
+=======
+    # Bounded + status-validated: a listener that accepts but never answers
+    # must fail the run, not hang it outside the 240s Claude watchdogs.
+    R=$(curl -sS --connect-timeout 2 -m 10 -w '\n%{http_code}' \
+      -X POST "$BASE/api/questions/$QID/answer" -H 'content-type: application/json' \
+      -d '{"behavior":"allow"}' 2>&1) && [ "${R##*$'\n'}" -ge 200 ] && [ "${R##*$'\n'}" -lt 300 ]
+    if [ $? -eq 0 ]; then
+      echo "T+$i board approved permission question #$QID → ${R%$'\n'*}"
+      APPROVED=yes
+    else
+      echo "T+$i permission answer POST failed or non-2xx: $R"
+    fi
+    break
+>>>>>>> /tmp/mf-theirs
   fi
   sleep 1
 done
@@ -393,7 +423,7 @@ run_with_timeout 240 claude -p "You need one decision from the human before doin
 echo "freeform session first run done rc=$? sid=$S2"
 
 # The trailing question should now be a freeform card. Answer it.
-QID2=$(curl -s "$BASE/state" | node -e "
+QID2=$(curl -s --connect-timeout 2 -m 5 "$BASE/state" 2>/dev/null | node -e "
 let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{
   try{ const s=JSON.parse(d);
     const q=(s.questions||[]).find(q=>q.session_id==='$S2'&&q.kind==='freeform'&&q.status==='pending');
@@ -401,9 +431,14 @@ let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{
   }catch{console.log('')}})")
 if [ -n "$QID2" ]; then
   ok "trailing question detected as freeform needs-you card"
-  curl -s -X POST "$BASE/api/questions/$QID2/answer" -H 'content-type: application/json' \
-    -d '{"text":"Use argon2 (argon2id). Do not use bcrypt."}' > /dev/null
-  echo "board answered freeform question #$QID2"
+  ANS_HTTP=$(curl -sS --connect-timeout 2 -m 10 -o /dev/null -w '%{http_code}' \
+    -X POST "$BASE/api/questions/$QID2/answer" -H 'content-type: application/json' \
+    -d '{"text":"Use argon2 (argon2id). Do not use bcrypt."}' 2>/dev/null) || ANS_HTTP=000
+  if [ "$ANS_HTTP" -ge 200 ] && [ "$ANS_HTTP" -lt 300 ]; then
+    echo "board answered freeform question #$QID2 (HTTP $ANS_HTTP)"
+  else
+    bad "board answer reached the session at its next boundary" "freeform answer POST returned HTTP $ANS_HTTP"
+  fi
 else
   bad "trailing question detected as freeform needs-you card" "no pending freeform question for $S2"
 fi
@@ -428,7 +463,7 @@ else
 fi
 
 # ============================================== evidence + wrap
-curl -s "$BASE/state" > "$DEMO_LOGS/p3-final-state.json"
+curl -s --connect-timeout 2 -m 10 "$BASE/state" > "$DEMO_LOGS/p3-final-state.json" 2>/dev/null || true
 echo
 echo "hook-payloads.jsonl captured event shapes (first 3 per event):"
 node -e "
