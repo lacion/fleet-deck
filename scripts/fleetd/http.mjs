@@ -1066,8 +1066,11 @@ export function createHttp(core, {
               return;
             }
             if (url.pathname === '/api/cleanup') {
+              // BUG-145: an incomplete Clear (tmux unreachable / a dead window
+              // that would not die) comes back {ok:false, reason} with NOTHING
+              // touched — speak a real code so the board can fail loud.
               core.cleanup()
-                .then(out => json(res, 200, out))
+                .then(out => json(res, out.ok === false ? 409 : 200, out))
                 .catch(err => {
                   console.error('fleetd cleanup error:', err);
                   json(res, 500, { ok: false, err: 'internal' });
@@ -1237,6 +1240,20 @@ export function createHttp(core, {
                 .then(out => json(res, out.status, out.body))
                 .catch(err => {
                   console.error('fleetd dismiss error:', err);
+                  json(res, 500, { ok: false, reason: 'internal' });
+                });
+              return;
+            }
+            // BUG-145 retry path: a dismiss whose window-kill phase failed
+            // returns retry:true; this POST re-attempts ONLY the dead-window
+            // kills for that already-archived card (idempotent).
+            const dismissRetryMatch = /^\/api\/sessions\/([^/]+)\/dismiss\/retry$/.exec(url.pathname);
+            if (dismissRetryMatch) {
+              logExec(url.pathname, req);
+              core.dismissRetry(dismissRetryMatch[1])
+                .then(out => json(res, out.status, out.body))
+                .catch(err => {
+                  console.error('fleetd dismiss-retry error:', err);
                   json(res, 500, { ok: false, reason: 'internal' });
                 });
               return;

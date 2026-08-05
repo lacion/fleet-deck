@@ -863,7 +863,7 @@ export function createCore(db, {
 
   // Retention sweep + manual cleanup → retention.mjs.
   Object.assign(ctx, createRetention(ctx));
-  const { retentionSweep, cleanup, dismissSession } = ctx;
+  const { retentionSweep, cleanup, dismissSession, dismissRetry } = ctx;
 
   // Run retention once at core boot, then alongside event pruning every 10m.
   // BUG 2: retentionSweep is async now (it may probe tmux for spawned silence),
@@ -928,6 +928,7 @@ export function createCore(db, {
     bootRetention,     // the boot sweep's settle promise — fleetd folds it into boot readiness
     cleanup,
     dismissSession,     // POST /api/sessions/:id/dismiss — per-card cleanup → {status, body}
+    dismissRetry,       // POST /api/sessions/:id/dismiss/retry — re-attempt the window kills of a partial dismiss (BUG-145)
     worktrees,          // GET /api/worktrees — bounded live git inspection
     removeWorktree,     // POST /api/worktrees/remove — allow-listed destruction
     resolveReposDir,    // repos-root resolver (still consumed via resolveSettings)
