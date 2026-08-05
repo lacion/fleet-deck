@@ -160,6 +160,10 @@ function toolCallKey(toolName, toolInput) {
 export function createQuestions(db, {
   holdMs = DEFAULT_HOLD_MS,
   mail = () => {},
+  // The mailbox's own clamp (mail.mjs MAIL_MAX_LEN). Framed answers that exceed
+  // it are REJECTED before settlement — see answerMailGuard below. Injectable
+  // for tests; must mirror the real mailbox clamp in production (derive.mjs).
+  mailMaxLen = 4000,
   tick = () => {},
   callsignOf = () => null,
   onChange = () => {},
@@ -431,6 +435,23 @@ export function createQuestions(db, {
     }
   }
 
+  // -------------------------------------------------- answer mail size guard
+  // BUG-137 (data loss): mail() clamps at MAIL_MAX_LEN and reports
+  // {truncated:true}, but the freeform / re-armed answer paths used to ignore
+  // the receipt and settle the row anyway — the human got "answer queued",
+  // the agent got a truncated instruction, and the question was gone. Framed
+  // answers ([FLEETDECK ANSWER] Q: … — A: …) that exceed the clamp are now
+  // REJECTED before anything is stored or settled: the row stays pending, the
+  // human is told to shorten, and nothing is lost silently. The 413 mirrors
+  // the board API's other body rejections (400/409/422 are taken; the HTTP
+  // layer passes our status through verbatim).
+  const ANSWER_TOO_LONG_ERR =
+    'answer too long — the mail pipeline would truncate it. Shorten it (or dismiss and answer in the terminal); the question is still pending.';
+  function answerMailGuard(frame) {
+    if (frame.length <= mailMaxLen) return null;
+    return { status: 413, body: { ok: false, err: ANSWER_TOO_LONG_ERR } };
+  }
+
   // --------------------------------------------------------------- answers
   // POST /api/questions/:id/answer body per kind:
   //   permission:  {behavior:"allow"|"deny"} — plus, for an ExitPlanMode plan
@@ -441,6 +462,9 @@ export function createQuestions(db, {
   //   elicitation: {action:"accept", content:{...}} | {action:"decline"}
   //   choice:      {answers:{"<question text>":"<label>"}} | {text:"..."}
   //   freeform:    {text:"..."}
+  // Mail-delivered answers (freeform + re-armed holds) pass the BUG-137 size
+  // guard first: a framed answer that would exceed the mailbox clamp 413s and
+  // the row stays pending — the mailbox never stores a truncated answer.
   // Returns { status, body } for the HTTP layer.
   function answer(id, body) {
     const row = q.get.get(Number(id));
@@ -454,10 +478,12 @@ export function createQuestions(db, {
       // failed open when the original hold expired and the native terminal
       // prompt owns the decision. Its answer rides the ordinary mail pipeline
       // (the freeform mechanism below, proven since F3d) and lands at the next
-      // turn boundary. Never claim it unblocks an agent parked on stdin — the
-      // board copy says exactly that. This branch runs BEFORE any wire-schema
-      // validation: there is no socket left to validate for, and the answer is
-      // serialized to plain text either way.
+      // turn boundary — subject to the same BUG-137 size guard (an oversized
+      // serialized answer 413s and the row stays pending). Never claim it
+      // unblocks an agent parked on stdin — the board copy says exactly that.
+      // This branch runs BEFORE any wire-schema validation: there is no
+      // socket left to validate for, and the answer is serialized to plain
+      // text either way.
       const payload = safeParse(row.payload_json);
       if (payload?.rearmed === true) {
         const detail = row.kind === 'permission' ? body?.behavior
@@ -469,12 +495,16 @@ export function createQuestions(db, {
         if (detail === 'capture') {
           return { status: 400, body: { ok: false, err: '"capture" needs the live hold — the window for it has closed' } };
         }
-        if (planIdFor(row.id) != null) planAnswered(row.id, detail);
         const questionText = String(
           payload?.tool_input?.questions?.[0]?.question ?? payload?.text ?? '',
         ).slice(0, 80);
-        mail(row.session_id, 'fleetdeck-answer',
-          `[FLEETDECK ANSWER] ${row.kind} (answered after the hold expired) Q: ${questionText} — A: ${detail}`);
+        const frame = `[FLEETDECK ANSWER] ${row.kind} (answered after the hold expired) Q: ${questionText} — A: ${detail}`;
+        // BUG-137: reject BEFORE the plan flip / row settle — an answer that
+        // would be truncated in transit settles nothing.
+        const rejected = answerMailGuard(frame);
+        if (rejected) return rejected;
+        if (planIdFor(row.id) != null) planAnswered(row.id, detail);
+        mail(row.session_id, 'fleetdeck-answer', frame);
         cancelRearm(row.id); // idempotent — a sibling card answering first already cancelled
         q.markAnswered.run(JSON.stringify(body ?? {}), now, row.id);
         tick(`💬 ${who}: re-armed ${row.kind} answered (${detail}) — queued for the next turn boundary`);
@@ -566,10 +596,15 @@ export function createQuestions(db, {
       const text = String(body?.text ?? '').trim();
       if (!text) return { status: 400, body: { ok: false, err: 'body must be {"text":"..."}' } };
       const questionText = String(safeParse(row.payload_json)?.text ?? '').slice(0, 80);
+      const frame = `[FLEETDECK ANSWER] Q: ${questionText} — A: ${text}`;
+      // BUG-137: reject BEFORE settle — a frame mail() would clamp would
+      // deliver a truncated instruction while the human loses the question.
+      const rejected = answerMailGuard(frame);
+      if (rejected) return rejected;
       // Turn-boundary delivery — the PROVEN mechanism (existing mail pipeline:
       // UserPromptSubmit additionalContext or Stop block). No new delivery
       // mechanisms here; asyncRewake is Phase 4.
-      mail(row.session_id, 'fleetdeck-answer', `[FLEETDECK ANSWER] Q: ${questionText} — A: ${text}`);
+      mail(row.session_id, 'fleetdeck-answer', frame);
       q.markAnswered.run(JSON.stringify({ text }), now, row.id);
       tick(`💬 answer for ${who} queued — lands at next turn boundary`);
       onChange();

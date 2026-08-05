@@ -331,6 +331,16 @@ export function createStatements(db) {
       ORDER BY created_at DESC, plan_id DESC LIMIT 20`),
     setPlanStatus: db.prepare('UPDATE plans SET status = ? WHERE plan_id = ?'),
     setPlanExecuted: db.prepare("UPDATE plans SET status = 'executed', executed_via = ? WHERE plan_id = ?"),
+    // BUG-040 — atomic pre-spawn execution claim: one guarded UPDATE flips an
+    // executable plan to 'executed' BEFORE the spawn launches anything, so
+    // concurrent claims serialize in SQLite and exactly one wins (changes===1).
+    // releasePlanExecution restores the pre-claim status after a spawn
+    // failure, guarded on this claim's own `via` so a concurrent archive/mark
+    // in the failure window is never reverted.
+    claimPlanExecution: db.prepare(`UPDATE plans SET status = 'executed', executed_via = ?
+      WHERE plan_id = ? AND status IN ('proposed', 'approved', 'captured')`),
+    releasePlanExecution: db.prepare(`UPDATE plans SET status = ?
+      WHERE plan_id = ? AND status = 'executed' AND executed_via = ?`),
   };
 
   const FIELDS = ['callsign', 'model', 'cwd', 'repo_id', 'repo_name', 'branch', 'worktree',

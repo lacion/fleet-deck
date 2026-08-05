@@ -13,9 +13,14 @@
 // paragraph or a short stack trace while keeping the tmux buffer sane; the mail
 // path now returns a `truncated` flag + the original length so POST /mail can
 // tell the sender the truth instead of quietly dropping the tail.
+<<<<<<< /tmp/mf-ours
 // Exported so commands.mjs can validate a fully framed command against the
 // very same cap BEFORE inserting any recipient rows (BUG-021) — one constant,
 // no drift between the clamp and the pre-flight check.
+=======
+// Exported so questions.mjs can reject framed answers that would be clamped
+// (BUG-137) instead of settling the question over a truncated message.
+>>>>>>> /tmp/mf-theirs
 export const MAIL_MAX_LEN = 4000;
 // BUG 6: .slice() cuts by UTF-16 code UNIT, so a clamp landing between the two
 // halves of an astral character (emoji, CJK extension B, …) keeps a lone high

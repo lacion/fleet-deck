@@ -18,7 +18,7 @@ import { createRepos } from './repos.mjs';
 import { createSettings } from './settings.mjs';
 import { createFiles } from './files.mjs';
 import { pasteImage } from './paste.mjs';
-import { createMail } from './mail.mjs';
+import { createMail, MAIL_MAX_LEN } from './mail.mjs';
 import { createLedger } from './ledger.mjs';
 import { createIngest } from './ingest.mjs';
 import { createCommands } from './commands.mjs';
@@ -229,6 +229,10 @@ export function createCore(db, {
     // test suites would otherwise meet an unexpected second card).
     rearmGraceMs: envInt('FLEETDECK_REARM_GRACE_MS', 3_000, { min: 0 }),
     mail: (sid, from, text) => ctx.mail(sid, from, text),
+    // BUG-137: the questions relay rejects framed answers that would exceed
+    // the mailbox clamp (reject-before-settle instead of silent truncation).
+    // Threaded from mail.mjs so the two can never drift apart.
+    mailMaxLen: MAIL_MAX_LEN,
     tick: msg => tick(msg),
     callsignOf: sid => q.getSession.get(sid)?.callsign ?? null,
     onChange: () => onMutate(),

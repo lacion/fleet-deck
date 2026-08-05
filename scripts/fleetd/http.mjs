@@ -927,9 +927,12 @@ export function createHttp(core, {
               // row → nudge) lives in derive.mjs. v1.3 adds
               // dangerously_skip_permissions: bool and permission_mode
               // "bypassPermissions" (validated/applied in derive.spawn too).
+              // BUG-040: plan_id on the body claims that plan's execution
+              // atomically BEFORE launch (see derive.spawn).
               logExec(url.pathname, req,
                 (ev?.dangerously_skip_permissions === true || (typeof ev?.permission_mode === 'string' && ev.permission_mode.toLowerCase() === 'bypasspermissions'))
-                  ? ' unsupervised=true' : ' unsupervised=false');
+                  ? ` unsupervised=true${ev?.plan_id != null ? ` plan=${ev.plan_id}` : ''}`
+                  : ` unsupervised=false${ev?.plan_id != null ? ` plan=${ev.plan_id}` : ''}`);
               core.spawn(ev)
                 .then(out => json(res, out.status, out.body))
                 .catch(err => {

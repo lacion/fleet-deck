@@ -22,11 +22,63 @@ import { execFile } from 'node:child_process';
 // security guarantee, and a richer diagnostic is never worth probing git for.
 import { redactDiagnosticText, scrubUrlCredentials } from './payload-capture.mjs';
 
+// Grace between the timeout's SIGTERM and the SIGKILL escalation below.
+// 1s is enough for tmux/git/agents-cli to exit cleanly on TERM, and bounds the
+// worst-case overshoot of any advertised deadline to timeout + 1s.
+const KILL_GRACE_MS = 1_000;
+
 export function execFileP(cmd, args, { timeout = 30_000, env } = {}) {
   return new Promise((resolve) => {
     try {
-      execFile(cmd, args, {
-        timeout,
+      let child;
+      let done = false;
+      let killTimer = null;
+      // Settle EXACTLY once, on whatever happens first — exit, error, or our
+      // own wall-clock deadline. execFile's `timeout` only SIGTERMs the child;
+      // the CALLBACK still waits for the pipes to close, so a child that
+      // ignores TERM (or that leaves a grandchild holding an inherited
+      // stdout/stderr pipe open) would keep the callback — and this promise —
+      // pending forever, silently wedging agents-poll's whole scheduling loop.
+      // The deadline timer therefore OWNS settlement: it kills the child, kills
+      // the attempt, and resolves regardless of what the child does later.
+      const settle = (fn) => {
+        if (done) return;
+        done = true;
+        if (killTimer) clearTimeout(killTimer);
+        resolve(fn());
+      };
+      const deadline = setTimeout(() => {
+        // Settle FIRST: settle() clears any armed killTimer, and only this
+        // timeout path can leave a child alive needing a KILL (every other
+        // settle means execFile's callback ran, i.e. the child already
+        // exited), so the escalation below is armed AFTER settlement on
+        // purpose.
+        settle(() => ({ ok: false, code: 'ETIMEDOUT', err: `timed out after ${timeout}ms` }));
+        if (child && !child.killed) {
+          try { child.kill('SIGTERM'); } catch { /* already gone */ }
+          // Escalate: a process may survive SIGTERM indefinitely (and on
+          // platforms where kill() is only advisory, so may SIGKILL — the
+          // resolve above is what actually bounds the attempt). child.killed
+          // is already true from the SIGTERM just sent, so re-check aliveness
+          // with signal 0 instead.
+          killTimer = setTimeout(() => {
+            let alive = true;
+            try { process.kill(child.pid, 0); } catch { alive = false; }
+            if (alive) { try { child.kill('SIGKILL'); } catch { /* already gone */ } }
+          }, KILL_GRACE_MS);
+          killTimer.unref?.();
+        }
+      }, timeout);
+      // The deadline (and the escalation grace below) exist only to bound THIS
+      // attempt; they must not keep the daemon's event loop alive when they are
+      // the only handles left.
+      deadline.unref?.();
+      child = execFile(cmd, args, {
+        // 0 disables execFile's own SIGTERM-only timeout: the deadline above is
+        // strictly stronger (same TERM, then KILL, then settle), and a second
+        // timer race inside execFile would change the shape of the callback
+        // error without changing settlement.
+        timeout: 0,
         windowsHide: true,
         // When an env is supplied it is MERGED over the daemon's own (never
         // replacing it), so PATH and the rest survive while a caller adds e.g.
@@ -34,8 +86,9 @@ export function execFileP(cmd, args, { timeout = 30_000, env } = {}) {
         // instead of hanging on a credential prompt.
         ...(env ? { env: { ...process.env, ...env } } : {}),
       }, (err, stdout, stderr) => {
-        if (err) return resolve({ ok: false, code: err.code, err: String(stderr || err.message || err).trim() });
-        resolve({ ok: true, out: stdout });
+        clearTimeout(deadline);
+        if (err) return settle(() => ({ ok: false, code: err.code, err: String(stderr || err.message || err).trim() }));
+        settle(() => ({ ok: true, out: stdout }));
       });
     } catch (err) {
       resolve({ ok: false, err: String(err.message || err) });
