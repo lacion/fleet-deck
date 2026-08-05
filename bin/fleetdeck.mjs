@@ -42,10 +42,45 @@ const SOURCE = path.join(ROOT, 'scripts', 'fleetd', 'fleetd.mjs');
 const FLEETD = fs.existsSync(BUNDLE) ? BUNDLE : SOURCE;
 
 const HOME = process.env.FLEETDECK_HOME || path.join(os.homedir() || '/tmp', '.fleetdeck');
-const PORT = Number(process.env.FLEETDECK_PORT || 4711);
 const SERVICE_NAME = 'fleetdeck';
 
 const ENV_FILE = path.join(HOME, 'service.env');
+
+// The installed service.env is the frozen config BOTH supervisors serve from (see
+// the ENV-FILE SAFETY CONTRACT below). A `status` / `service start|stop` run from
+// a shell where FLEETDECK_PORT is unset (or only partially re-exported) would
+// otherwise health-check the WRONG port — reporting a healthy custom-port service
+// down, and letting stop signal a different responder entirely. So when the
+// ambient env does not name a port, honor the port captured at install time.
+// An explicit ambient FLEETDECK_PORT still wins: the env file's own contract
+// tells you to re-run `service install` after changing config, and you may
+// legitimately point the CLI at a plugin-spawned (non-service) daemon.
+//
+// Both readers of this file (a POSIX `.`-source and systemd's EnvironmentFile)
+// strip one level of matching outer quotes, so a single-quoted value parses to
+// its inner text here too. Anything we cannot interpret safely (a junk port, a
+// value still carrying quote characters) is IGNORED — health checks fall back to
+// the default port rather than fetching an attacker-chosen one from a
+// hand-edited file.
+function parseServiceEnvPort(text) {
+  if (typeof text !== 'string') return null;
+  for (const line of text.split('\n')) {
+    const m = /^FLEETDECK_PORT=(.*)$/.exec(line);
+    if (!m) continue;
+    let v = m[1].trim();
+    if (v.length >= 2 && v.startsWith("'") && v.endsWith("'")) v = v.slice(1, -1);
+    const n = Number(v);
+    if (v !== '' && Number.isInteger(n) && n > 0 && n <= 65535) return n;
+  }
+  return null;
+}
+
+function serviceEnvPort() {
+  try { return parseServiceEnvPort(fs.readFileSync(ENV_FILE, 'utf8')); }
+  catch { return null; } // not installed yet — the default port applies
+}
+
+const PORT = process.env.FLEETDECK_PORT ? Number(process.env.FLEETDECK_PORT) : (serviceEnvPort() ?? 4711);
 const SUPERVISE_SH = path.join(HOME, 'supervise.sh');
 const SUPERVISOR_PID = path.join(HOME, 'supervisor.pid');
 const LOG_FILE = path.join(HOME, 'fleetd.log');
@@ -560,4 +595,8 @@ if (IS_ENTRYPOINT) await main(process.argv.slice(2));
 // exported for tests only — the env-file validation, supervisor identity check,
 // and file generators are contracts. Nothing here runs on import (see
 // IS_ENTRYPOINT above), so importing is side-effect-free.
+<<<<<<< /tmp/mf-ours
 export { writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor, serviceInstall, UNIT, SUPERVISE, doctor, MIN_NODE_RANGE, nodeVersionSupported };
+=======
+export { writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, parseServiceEnvPort, serviceEnvPort, supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor, serviceInstall, UNIT, SUPERVISE, doctor };
+>>>>>>> /tmp/mf-theirs

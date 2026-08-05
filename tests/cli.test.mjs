@@ -31,8 +31,14 @@ const SUPERVISOR_PID = path.join(HOME, 'supervisor.pid');
 const UNIT_FILE = path.join(XDG, 'systemd', 'user', 'fleetdeck.service');
 
 const {
+<<<<<<< /tmp/mf-ours
   writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor,
   serviceInstall, UNIT, SUPERVISE, MIN_NODE_RANGE, nodeVersionSupported,
+=======
+  writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, parseServiceEnvPort, serviceEnvPort,
+  supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor,
+  serviceInstall, UNIT, SUPERVISE,
+>>>>>>> /tmp/mf-theirs
 } = await import(new URL('../bin/fleetdeck.mjs', import.meta.url));
 const { parseTmuxVersion, tmuxVersionCapability, tmuxVersionSupported } = await import(new URL('../bin/tmux-version.mjs', import.meta.url));
 
@@ -182,6 +188,50 @@ test('ENV_VALUE_BARE_SAFE stays tight; ENV_VALUE_UNQUOTABLE is minimal (metachar
   for (const no of ['a\nb', 'a\tb', ('a' + String.fromCharCode(0) + 'b'), "a'b", 'a\\b']) {
     assert.ok(ENV_VALUE_UNQUOTABLE.test(no), `${JSON.stringify(no)} should be refused`);
   }
+});
+
+// ------------------------------------------------- service.env port reader
+
+// BUG-075: status/start/stop health checks must honor the FLEETDECK_PORT frozen
+// into the installed service.env, not just the CLI process's ambient env —
+// otherwise a healthy custom-port service is reported down and stop can signal a
+// different responder. parseServiceEnvPort is the strict reader; serviceEnvPort
+// reads the file it was pointed at.
+test('parseServiceEnvPort: reads bare and single-quoted ports, rejects junk', () => {
+  assert.equal(parseServiceEnvPort('FLEETDECK_PORT=4733\n'), 4733);
+  assert.equal(parseServiceEnvPort('FLEETDECK_PORT=4733'), 4733, 'no trailing newline still parses');
+  assert.equal(parseServiceEnvPort("FLEETDECK_PORT='4733'\n"), 4733, 'one level of single quotes strips (POSIX/.-source parity)');
+  assert.equal(parseServiceEnvPort('# comment\nFLEETDECK_TOKEN=abc\nFLEETDECK_PORT=4733\n'), 4733, 'finds it among other keys');
+  assert.equal(parseServiceEnvPort('FLEETDECK_PORT=4733  \n'), 4733, 'trailing whitespace is tolerated');
+  for (const junk of [
+    'FLEETDECK_PORT=abc',
+    'FLEETDECK_PORT=',
+    'FLEETDECK_PORT=0',
+    'FLEETDECK_PORT=65536',
+    'FLEETDECK_PORT=1.5',
+    'FLEETDECK_PORT=  12x',
+    'FLEETDECK_PORT="4733"',      // double quotes: written values never use them; refuse to guess
+    "FLEETDECK_PORT='47'33'",      // quote chars still in the value — a hand-edited file, ignored
+    'FLEETDECK_PORT=$(id)',        // injection-shaped value
+    'export FLEETDECK_PORT=4733',  // we never write `export`; a foreign line is not ours to trust
+    'OTHER_PORT=4733',
+    '',
+  ]) {
+    assert.equal(parseServiceEnvPort(junk), null, `${JSON.stringify(junk)} must be ignored`);
+  }
+  assert.equal(parseServiceEnvPort(null), null);
+  assert.equal(parseServiceEnvPort(42), null);
+});
+
+test('serviceEnvPort: returns the port from the installed file, null when absent/unreadable', () => {
+  try { fs.unlinkSync(ENV_FILE); } catch { /* absent */ }
+  assert.equal(serviceEnvPort(), null, 'no service.env (not installed) — the default port applies');
+  fs.writeFileSync(ENV_FILE, "FLEETDECK_PORT=4733\nFLEETDECK_TOKEN='tok'\n");
+  assert.equal(serviceEnvPort(), 4733);
+  fs.writeFileSync(ENV_FILE, 'FLEETDECK_PORT=$(id)\n');
+  assert.equal(serviceEnvPort(), null, 'an unparseable file is ignored, never fetched from');
+  // Leave no trace: later tests in this file write and assert ENV_FILE contents.
+  try { fs.unlinkSync(ENV_FILE); } catch { /* absent */ }
 });
 
 // ------------------------------------------------------- supervisorAlive
