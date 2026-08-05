@@ -739,6 +739,82 @@ test('reconciliation: a spawn row whose window was never actually created in rea
   }
 });
 
+test('restart reconciliation removes a spawn-owned worktree left by a spawn interrupted before launch (BUG-153)', async (t) => {
+  // The daemon can die AFTER a worktree spawn created and persisted its
+  // worktree but BEFORE the pane launch — the 'provisioning' gap. Boot
+  // reconciliation settles that row 'gone'; before the fix it left the
+  // worktree's directory, fd/<callsign> branch and git registration behind
+  // on every such restart. Simulating the death without killing the daemon
+  // mid-launch: spawn with worktree:true against the fixture backend, wait
+  // for the pane to register (by then the worktree is created AND the
+  // ownership bit persisted), rewind the row to 'provisioning' (the state a
+  // crash in that gap would have left it in), stop keeping the DB, and boot
+  // a fresh daemon on the same FLEETDECK_HOME with no fleet windows in tmux.
+  const home = scratchDir('fleetdeck-spawn-home-');
+  const port = randomPort();
+  const baseUrl = `http://127.0.0.1:${port}`;
+  const rec = path.join(scratchDir(), 'specs.jsonl');
+  const repo = makeRepoWithWorktree({ repoName: 'fleetdeck-bug153-worktree' });
+  t.after(() => { rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); repo.cleanup(); });
+
+  const first = await startDaemon({ port, home, env: spawnCmdEnv({ recordFile: rec, postUrl: baseUrl }) });
+  let sid; let spawnId; let callsign;
+  try {
+    const spawnRes = await postJson(`${first.baseUrl}/api/spawn`, { cwd: repo.root, worktree: true });
+    assert.equal(spawnRes.status, 200, `worktree spawn should 200 (got ${spawnRes.status}: ${JSON.stringify(spawnRes.json)})`);
+    ({ session_id: sid, spawn_id: spawnId, callsign } = spawnRes.json);
+    await waitUntil(async () => {
+      const state = (await getJson(`${first.baseUrl}/state`)).json;
+      return findSession(state, sid)?.spawn?.status === 'live' ? true : null;
+    }, { label: 'spawn reaches status live before the simulated crash' });
+  } finally {
+    await first.stop({ keepHome: true });
+  }
+
+  const worktreePath = path.join(path.dirname(repo.root), `${path.basename(repo.root)}--fd-${callsign}`);
+  assert.ok(existsSync(worktreePath), `sanity: the worktree ${worktreePath} exists before the simulated crash`);
+  const branchGone = () => !execFileSync('git', ['-C', repo.root, 'branch', '--list', `fd/${callsign}`], { encoding: 'utf8' }).trim();
+
+  // Rewind the row into the exact shape a crash between worktree persistence
+  // and pane launch would have left: 'provisioning', worktree_path set.
+  const { DatabaseSync } = await import('node:sqlite');
+  const db = new DatabaseSync(path.join(home, 'fleetd.db'));
+  try {
+    db.prepare("UPDATE spawns SET status = 'provisioning' WHERE spawn_id = ?").run(spawnId);
+  } finally {
+    db.close();
+  }
+
+  // An inert non-fleet session on the test socket makes the boot listing
+  // reachable and the empty fleet list authoritative (never UNKNOWN).
+  const tmuxSocket = `fleetdeck-test-${port}`;
+  try {
+    execFileSync('tmux', ['-L', tmuxSocket, '-f', '/dev/null', 'new-session', '-d', '-s', `reconcile-reachable-${port}`, 'sleep 3600']);
+  } catch {
+    t.skip('tmux server unavailable for authoritative-empty reconciliation');
+    return;
+  }
+  t.after(() => {
+    try { execFileSync('tmux', ['-L', tmuxSocket, 'kill-server'], { stdio: 'ignore' }); } catch { /* second.stop may already remove it */ }
+  });
+
+  const second = await startDaemon({ port, home });
+  t.after(async () => { await second.stop({ keepHome: false }); });
+
+  const card = await waitUntil(async () => {
+    const state = (await getJson(`${second.baseUrl}/state`)).json;
+    const c = findSession(state, sid);
+    return c && c.col === 'offline' ? c : null;
+  }, { label: 'restart reconciliation settles the interrupted spawn\'s card offline', timeoutMs: 12000 });
+  assert.equal(card.col, 'offline');
+
+  await waitUntil(() => !existsSync(worktreePath) || null,
+    { label: `stranded worktree ${worktreePath} is removed at boot`, timeoutMs: 12000 });
+  const listing = execFileSync('git', ['-C', repo.root, 'worktree', 'list', '--porcelain'], { encoding: 'utf8' });
+  assert.ok(!listing.includes(worktreePath), `git worktree list must no longer register ${worktreePath} (listing: ${listing})`);
+  assert.ok(branchGone(), `the stranded fd/${callsign} branch must be deleted with its worktree`);
+});
+
 // ---------------------------------------------------------------------------
 // 10. Ticket-first spawn naming (0.6.0)
 //

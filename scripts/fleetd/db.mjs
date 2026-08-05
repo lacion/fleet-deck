@@ -159,6 +159,8 @@ CREATE TABLE IF NOT EXISTS spawns (
   tmux_window   TEXT,               -- fd<port>-<callsign> (scoped, kill-verified)
   cwd           TEXT,               -- requested cwd (the form value)
   worktree_path TEXT,               -- effective cwd when worktree:true, else NULL
+  worktree_owned INTEGER,           -- 1: this spawn CREATED the worktree (boot cleanup may remove it);
+                                    -- 0: the worktree pre-existed and was only reused; NULL: unknown (pre-fix row)
   requested_at  INTEGER,
   status        TEXT DEFAULT 'spawning',  -- spawning | stalled | live | pane-dead | killed | gone
   skip_permissions INTEGER DEFAULT 0,    -- v1.3 unsupervised spawn (either bypass form)
@@ -362,6 +364,7 @@ function migrate(db) {
   if (spawnCols.length && !spawnCols.includes('fail_detail')) {
     db.exec('ALTER TABLE spawns ADD COLUMN fail_detail TEXT');
   }
+<<<<<<< /tmp/mf-ours
   // BUG-107 alias-table backfill for pre-existing rows: the current callsign
   // and the write-once prev_callsign anchor are the two names a row provably
   // still answers to. INSERT OR IGNORE makes re-runs free.
@@ -369,6 +372,15 @@ function migrate(db) {
     SELECT session_id, callsign, NULL FROM sessions WHERE callsign IS NOT NULL`);
   db.exec(`INSERT OR IGNORE INTO session_aliases (session_id, callsign, at)
     SELECT session_id, prev_callsign, NULL FROM sessions WHERE prev_callsign IS NOT NULL`);
+=======
+  // BUG-153: the ownership bit behind boot reconciliation's worktree removal.
+  // NULL is the truthful backfill — pre-fix rows never recorded whether their
+  // worktree was created or reused, so boot cleanup must leave those trees
+  // alone (exactly the pre-fix behaviour) rather than guess.
+  if (spawnCols.length && !spawnCols.includes('worktree_owned')) {
+    db.exec('ALTER TABLE spawns ADD COLUMN worktree_owned INTEGER');
+  }
+>>>>>>> /tmp/mf-theirs
 }
 
 export function openDb(file, fsImpl = { chmodSync, statSync }) {
