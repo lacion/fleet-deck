@@ -43,7 +43,7 @@ claude plugin install fleetdeck@fleetdeck
 
 Your next `claude` — any terminal, any repo, no wrapper — brings the fleet up and appears on the board. Type `/fleet` in any session for a live summary.
 
-> A marketplace install tracks the repo's **default branch**, not a pinned release: every push to `main` runs at your next SessionStart. The pipeline is gated (CODEOWNERS, hook-integrity CI, human-approved npm publishes), but if you want releases only, use the npm channel — `npm i -g fleetdeck` for [standalone mode](#standalone-mode) — or pin your marketplace clone to a tag.
+> **How updates actually reach you.** Claude Code installs a marketplace plugin by copying it into a versioned local cache, and that cached copy is what runs at every SessionStart — not the repo. Auto-update is off by default for third-party marketplaces, and even with it on, Claude Code only recognizes an update when the plugin's **version changes** in the manifest. Fleet Deck bumps `version` in `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json` for every distributable change for exactly this reason. To pull a new version, run `claude plugin marketplace update fleetdeck` and `claude plugin update fleetdeck@fleetdeck` (or manage it from `/plugin`), then start a new session. A push to `main` without a version bump never reaches an installed copy. If you want releases only, use the npm channel — `npm i -g fleetdeck` for [standalone mode](#standalone-mode) — or pin your marketplace clone to a tag.
 
 **Requirements.** Node 22.5+. Nothing to `npm install`: the daemon ships as one bundled file and keeps state in Node's built-in `node:sqlite`. Add **tmux 3.4+** to spawn workers or open their panes in the browser — Fleet Deck relies on 3.4's no-start probe to avoid attaching to a replacement server. Everything else works without tmux. Linux, WSL2 and macOS; Windows-native is untested.
 
@@ -57,6 +57,11 @@ claude plugin install fleetdeck@fleetdeck
 ```
 
 After changing anything under `scripts/`, run `npm run bundle` — the daemon runs the bundle, not the source. After changing the board, run `npm run build` in `board/`. Then restart the daemon, or bump the version and let the upgrade takeover do it.
+
+Two traps, both caused by the versioned plugin cache described above:
+
+- **A rebuilt clone is not a reinstall.** If you installed from this clone as a marketplace, Claude Code runs the cached copy from install time, not your working tree. After rebuilding, run `claude plugin marketplace update fleetdeck` and `claude plugin update fleetdeck@fleetdeck` — and bump the `version` in both manifests first, or the update is a no-op and you will validate the stale cache.
+- **To run the working tree directly**, skip the cache entirely: `claude --plugin-dir /path/to/fleet-deck`. That session's hooks come from your checkout, so what you test is what you just built.
 </details>
 
 ## Quick start
