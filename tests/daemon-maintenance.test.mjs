@@ -432,3 +432,44 @@ test('cleanup archives offline rows, expires mail, kills eligible dead panes, an
   assert.deepEqual(state.killed, ['fd4711-off-1']);
   assert.equal(core.snapshot().sessions.some(s => s.session_id === 'offline'), false);
 });
+
+test('cleanup does not kill a same-name replacement pane a revive stood up mid-kill (BUG-046)', async (t) => {
+  // Bulk Clear verified a terminal row owned the dead window, then awaited the
+  // name-based kill. A revive landing inside that await inserts a NEW live row
+  // for the same deterministic name and stands a fresh live pane up on it.
+  // Cleanup's kill-time expectation (window generation + current owner + no
+  // unseen spawn rows) must turn the kill into a stale no-op.
+  const tmux = fakeTmux();
+  const { db, core, state } = memoryCore(t, { tmux });
+  const now = Date.now();
+  db.prepare(`INSERT INTO sessions
+    (session_id, callsign, col, note, events, started_at, last_seen, ended_at, source)
+    VALUES ('offline-race', 'off-race-1', 'offline', 'ended', 0, ?, ?, ?, 'hooks')`).run(now, now, now);
+  db.prepare(`INSERT INTO spawns
+    (spawn_id, session_id, callsign, tmux_session, tmux_window, requested_at, status)
+    VALUES ('sp-race-old', 'offline-race', 'off-race-1', 'fleetdeck-4711', 'fd4711-off-race-1', ?, 'pane-dead')`).run(now);
+  state.windows.push({
+    session: 'fleetdeck-4711', window: 'fd4711-off-race-1', window_id: '@8', pane_dead: true, pane_cmd: 'claude',
+  });
+  tmux.adapter.killWindowVerified = async (name, opts) => {
+    // The revive lands during the kill's own awaits, after the pre-checks passed.
+    db.prepare(`INSERT INTO spawns
+      (spawn_id, session_id, callsign, tmux_session, tmux_window, requested_at, status)
+      VALUES ('sp-race-new', 'offline-race', 'off-race-1', 'fleetdeck-4711', 'fd4711-off-race-1', ?, 'live')`).run(now + 1);
+    state.windows = [{ session: 'fleetdeck-4711', window: name, window_id: '@88', pane_dead: false, pane_cmd: 'claude' }];
+    if (opts?.expectWindowId !== undefined) {
+      const win = state.windows.find(w => w.window === name);
+      if (!win || win.window_id !== opts.expectWindowId || (opts.expect && !opts.expect())) {
+        return { ok: false, stale: true, error: 'stale window owner' };
+      }
+    }
+    state.killed.push(name);
+    return { ok: true, window_id: '@88' };
+  };
+
+  const out = await core.cleanup();
+  assert.equal(out.windows_killed, 0, 'the replacement pane is NOT killed');
+  assert.deepEqual(state.killed, [], 'the name-based kill never fired');
+  assert.equal(db.prepare("SELECT status FROM spawns WHERE spawn_id = 'sp-race-new'").get().status, 'live',
+    'the revived spawn row is untouched');
+});

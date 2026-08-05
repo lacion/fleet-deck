@@ -703,11 +703,27 @@ export async function listScopedWindows(port) {
 
 /** Name-verified kill (CONTRACT): re-locate the window by its EXACT scoped
  * name at kill time and kill by window_id — a renamed/recycled window can
- * never be mis-killed via a stale index. Returns:
+ * never be mis-killed via a stale index.
+ *
+ * Optional `opts` (BUG-046 — a scoped window name is REUSABLE, so the tmux-side
+ * checks alone cannot see a same-name replacement a concurrent revive stood up
+ * while a dismiss/cleanup kill was awaiting):
+ *   opts.expectWindowId — the window_id the caller's listing observed for this
+ *     name. When the kill-time re-resolve finds a DIFFERENT id, the name has
+ *     been recycled onto a new window (a replacement pane): stale no-op.
+ *   opts.expect — a synchronous predicate re-run immediately before the kill,
+ *     AFTER the final name re-resolve, with no intervening await. It is the
+ *     caller's last word on DB ownership/generation (spawns.mjs owns no DB).
+ *     Any falsy return is a stale no-op: {ok:false, stale:true}. The kill
+ *     command itself is the only await after the last expect pass, and the
+ *     existing generation guard already pins that await to the same server, so
+ *     a failing predicate can never be followed by a kill of what it rejected.
+ * Returns:
  *   {ok:true, window_id}   killed
  *   {ok:false, gone:true}  no window with that exact name exists (410)
+ *   {ok:false, stale:true} an opts expectation failed — the kill was refused
  *   {ok:false, error}      tmux kill-window itself failed */
-export async function killWindowVerified(name) {
+export async function killWindowVerified(name, opts) {
   const scope = typeof name === 'string' ? /^fd(\d+)-[^\u0000-\u001f\u007f]+$/.exec(name) : null;
   if (!scope) return { ok: false, error: 'invalid scoped tmux window name' };
   const expectedSession = sessionName(scope[1]);
@@ -736,11 +752,19 @@ export async function killWindowVerified(name) {
   if (matches.length > 1) return { ok: false, error: 'ambiguous scoped tmux window name' };
   if (matches.length === 0) return { ok: false, gone: true };
   const hit = matches[0];
+  if (opts?.expectWindowId !== undefined && hit[2] !== opts.expectWindowId) {
+    return { ok: false, stale: true, error: 'window id changed — the scoped name was recycled' };
+  }
+  if (opts?.expect && !opts.expect()) return { ok: false, stale: true, error: 'stale window owner' };
   let killGeneration;
   try { killGeneration = await prepareServerGeneration(scope[1]); }
   catch (err) {
     return { ok: false, error: `tmux server generation verification failed: ${err?.message || err}` };
   }
+  // prepareServerGeneration awaited — re-run the caller's expectation now, so
+  // only the kill command itself can interleave after the final verdict (and
+  // the generation guard pins that last await to the same server).
+  if (opts?.expect && !opts.expect()) return { ok: false, stale: true, error: 'stale window owner' };
   let killed;
   if (!killGeneration.enabled) {
     killed = await tmuxResult(['kill-window', '-t', hit[2]]);

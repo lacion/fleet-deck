@@ -682,6 +682,77 @@ exit 1
   assert.deepEqual(await killWindowVerified(window), { ok: false, gone: true });
 });
 
+// BUG-046: a scoped window NAME is reusable. Dismiss/Clear verify DB ownership
+// and then await a name-based kill; a revive landing inside that await recreates
+// the same deterministic name with a fresh live pane, and the kill's re-resolve
+// happily destroys the replacement. killWindowVerified therefore accepts
+// {expectWindowId, expect} and refuses — {ok:false, stale:true} — when the
+// kill-time generation no longer matches what the caller verified.
+test('killWindowVerified refuses a recycled window name (expectWindowId mismatch)', { skip: !tmuxOk() && 'tmux server unavailable' }, async (t) => {
+  useLegacyGenerationMode(t);
+  const port = 21_000 + randomInt(1_000);
+  const socket = `fleetdeck-adapter-recycle-${process.pid}-${randomBytes(4).toString('hex')}`;
+  const session = sessionName(port);
+  const window = `fd${port}-recycled`;
+  const previousSocket = process.env.FLEETDECK_TMUX_SOCKET;
+  process.env.FLEETDECK_TMUX_SOCKET = socket;
+  t.after(() => {
+    try { tmux(socket, ['kill-server']); } catch { /* already gone */ }
+    if (previousSocket == null) delete process.env.FLEETDECK_TMUX_SOCKET;
+    else process.env.FLEETDECK_TMUX_SOCKET = previousSocket;
+  });
+
+  // The dead remnant the caller listed (a keeper window keeps the session — and
+  // therefore the server — alive when the remnant is killed below).
+  tmux(socket, ['-f', '/dev/null', 'new-session', '-d', '-s', session, '-n', 'keeper', 'sleep 3600']);
+  tmux(socket, ['new-window', '-d', '-t', `${session}:`, '-n', window, 'sleep 3600']);
+  const remnantId = tmux(socket, ['display-message', '-p', '-t', `=${session}:=${window}`, '#{window_id}']);
+  // The race: a revive kills the remnant and recreates the SAME name — a new
+  // window_id with a live replacement pane.
+  tmux(socket, ['kill-window', '-t', `=${session}:=${window}`]);
+  tmux(socket, ['new-window', '-d', '-t', `${session}:`, '-n', window, 'sleep 3600']);
+  const replacementId = tmux(socket, ['display-message', '-p', '-t', `=${session}:=${window}`, '#{window_id}']);
+  assert.notEqual(replacementId, remnantId, 'the recreated name is a different window generation');
+
+  const refused = await killWindowVerified(window, { expectWindowId: remnantId });
+  assert.equal(refused.ok, false);
+  assert.equal(refused.stale, true, 'a generation swap is a stale no-op, never a kill');
+  assert.equal(tmuxStatus(socket, ['has-session', '-t', `=${session}`]), 0, 'the replacement pane survived');
+
+  // The up-to-date id still kills — the option refuses only STALE expectations.
+  const killed = await killWindowVerified(window, { expectWindowId: replacementId });
+  assert.deepEqual(killed, { ok: true, window_id: replacementId });
+});
+
+test('killWindowVerified treats a failing expect predicate as a stale no-op', { skip: !tmuxOk() && 'tmux server unavailable' }, async (t) => {
+  useLegacyGenerationMode(t);
+  const port = 20_000 + randomInt(1_000);
+  const socket = `fleetdeck-adapter-expect-${process.pid}-${randomBytes(4).toString('hex')}`;
+  const session = sessionName(port);
+  const window = `fd${port}-expected`;
+  const previousSocket = process.env.FLEETDECK_TMUX_SOCKET;
+  process.env.FLEETDECK_TMUX_SOCKET = socket;
+  t.after(() => {
+    try { tmux(socket, ['kill-server']); } catch { /* already gone */ }
+    if (previousSocket == null) delete process.env.FLEETDECK_TMUX_SOCKET;
+    else process.env.FLEETDECK_TMUX_SOCKET = previousSocket;
+  });
+
+  tmux(socket, ['-f', '/dev/null', 'new-session', '-d', '-s', session, '-n', window, 'sleep 3600']);
+
+  let verdict = false; // the DB owner flipped live-eligible mid-kill
+  let calls = 0;
+  const refused = await killWindowVerified(window, { expect: () => { calls += 1; return verdict; } });
+  assert.equal(refused.ok, false);
+  assert.equal(refused.stale, true);
+  assert.ok(calls >= 1, 'the predicate was consulted');
+  assert.equal(tmuxStatus(socket, ['has-session', '-t', `=${session}`]), 0, 'nothing was killed');
+
+  verdict = true;
+  const killed = await killWindowVerified(window, { expect: () => verdict });
+  assert.equal(killed.ok, true, 'a passing expectation kills as before');
+});
+
 test('tmux outages during kill lookup and recheck stay errors, never become gone', async (t) => {
   useLegacyGenerationMode(t);
   const dir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-tmux-fail-'));

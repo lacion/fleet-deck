@@ -105,7 +105,7 @@ function validatePathSetting(value, label) {
 
 export function createSettings(ctx) {
   const {
-    q, onMutate, resolveReposDir, setReposDir,
+    db, q, onMutate, resolveReposDir, setReposDir,
     resolveRepoDefaultOrg, validateRepoDefaultOrg,
   } = ctx;
 
@@ -477,13 +477,30 @@ export function createSettings(ctx) {
     try {
       // Validate every named key first…
       const prepared = keys.map(k => ({ k, value: HANDLERS[k].prepare(body[k]) }));
-      // …then apply them all — nothing above wrote, so a throw here is impossible
-      // to reach with a half-validated body.
-      for (const { k, value } of prepared) HANDLERS[k].commit(value);
+      // …then apply them all in ONE transaction. Validation errors (400s) are
+      // already impossible below — every prepare ran — so a throw here is a
+      // STORAGE failure (SQLITE_BUSY/FULL, I/O). Without the transaction each
+      // commit was an independent autocommit and a failure mid-body left the
+      // earlier keys durable: the caller got an error AND a half-applied body —
+      // worst case a new gateway_base_url combined with the previous
+      // gateway_token, pointing a live credential at the wrong host. Roll the
+      // whole body back, report 5xx (this is not a caller mistake), and only
+      // broadcast onMutate once the commit actually landed.
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        for (const { k, value } of prepared) HANDLERS[k].commit(value);
+        db.exec('COMMIT');
+      } catch (err) {
+        try { db.exec('ROLLBACK'); } catch { /* preserve the original error */ }
+        throw err;
+      }
       onMutate();
       return { status: 200, body: { ok: true, settings: resolveSettings() } };
     } catch (err) {
-      return { status: err.status || 400, body: { ok: false, reason: err.message || String(err) } };
+      // A thrown 400 is a validator rejecting the caller's body; anything
+      // untagged is a storage failure the caller cannot fix by editing fields.
+      const status = err.status || 500;
+      return { status, body: { ok: false, reason: err.message || String(err) } };
     }
   }
 

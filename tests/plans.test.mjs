@@ -68,15 +68,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { startDaemon } from './helpers/daemon.mjs';
 import { postHook, postJson, getJson } from './helpers/http.mjs';
 import { loadFixture } from './helpers/fixtures.mjs';
-import { waitUntil } from './helpers/wait.mjs';
+import { waitUntil, waitForSpecRecords } from './helpers/wait.mjs';
+import { fileURLToPath } from 'node:url';
 
 const EXIT_PLAN_FIXTURE = 'exit-plan-mode';
+
+// BUG-040 tests spawn through the FLEETDECK_SPAWN_CMD test seam (see
+// tests/spawn.test.mjs) so no real billed `claude` ever launches.
+const SPAWN_CMD_FIXTURE = path.join(
+  path.dirname(fileURLToPath(import.meta.url)), 'helpers/spawn-cmd-fixture.mjs');
+try { chmodSync(SPAWN_CMD_FIXTURE, 0o755); } catch { /* best-effort */ }
 
 function scratchCwd() {
   return mkdtempSync(path.join(tmpdir(), 'fleetdeck-plans-cwd-'));
@@ -837,4 +844,145 @@ test('mark executed with the question still pending dismisses it (fails the hold
   assert.equal(plan?.status, 'executed', 'the mark itself is untouched');
   const qrow = questionsFor(state, sid, 'permission').find(x => x.id === q.id);
   assert.equal(qrow?.status, 'expired', 'the dismissed question retires as expired');
+});
+
+// ---------------------------------------------------------------------------
+// 8. BUG-040 — atomic pre-spawn execution claim. The board's plan-execute
+// flow used to spawn FIRST and mark the plan executed only after the daemon
+// accepted, so two boards acting on one stale snapshot both launched billed
+// agents before either mark could 409. plan_id now rides the spawn body and
+// the daemon claims the plan (one guarded UPDATE) BEFORE any clone, pane, or
+// durable row exists; a spawn failure releases the claim back to its
+// pre-claim status. Spawns here go through FLEETDECK_SPAWN_CMD (the fixture
+// records specs, never launches Claude).
+// ---------------------------------------------------------------------------
+
+async function captureProposedPlan(t, daemon, cwd) {
+  const sid = randomUUID();
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon });
+  const { held } = await holdExitPlan(daemon, sid, cwd, 1000);
+  const plan = plansFor((await getJson(`${daemon.baseUrl}/state`)).json, sid)[0];
+  assert.ok(plan, 'sanity: plan captured');
+  assert.equal(plan.status, 'proposed');
+  await held; // hold expires; a planner with no follow-up activity stays proposed
+  return plan;
+}
+
+function planById(state, planId) {
+  return (state.plans || []).find(p => String(p.plan_id) === String(planId));
+}
+
+test('BUG-040: spawn carrying plan_id claims the plan atomically BEFORE launch; a second claim 409s and launches nothing', async (t) => {
+  const recDir = scratchCwd();
+  const rec = path.join(recDir, 'specs.jsonl');
+  const cwd = scratchCwd();
+  const daemon = await startDaemon({ env: {
+    FLEETDECK_HOLD_MS: '1000',
+    FLEETDECK_SPAWN_CMD: SPAWN_CMD_FIXTURE,
+    FLEETDECK_TEST_SPAWN_RECORD: rec,
+  } });
+  t.after(async () => {
+    await daemon.stop();
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    rmSync(recDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  const plan = await captureProposedPlan(t, daemon, cwd);
+
+  const res = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd, prompt: 'Execute this approved plan exactly.', plan_id: plan.plan_id });
+  assert.equal(res.status, 200, `the claiming spawn should succeed (got ${res.status}: ${JSON.stringify(res.json)})`);
+  assert.equal(res.json.ok, true);
+
+  const state1 = (await getJson(`${daemon.baseUrl}/state`)).json;
+  const claimed = planById(state1, plan.plan_id);
+  assert.equal(claimed?.status, 'executed', 'the plan must be executed the moment the spawn is accepted, not after a client mark');
+  if (claimed?.via !== undefined) {
+    assert.equal(claimed.via, `spawn:${res.json.spawn_id}`, 'the recorded via must name the spawn that executed the plan');
+  }
+
+  // The race that motivated the fix: a second board on a stale snapshot
+  // executes the SAME plan. It must be refused before launch — and must
+  // never reach the spawn backend.
+  const res2 = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd, prompt: 'Execute this approved plan exactly.', plan_id: plan.plan_id });
+  assert.equal(res2.status, 409, `a second execution claim must 409 (got ${res2.status}: ${JSON.stringify(res2.json)})`);
+  assert.equal(res2.json.ok, false);
+
+  const specs = await waitForSpecRecords(rec, 1);
+  assert.equal(specs.length, 1, 'exactly ONE executor was launched; the losing claim never reached the spawn backend');
+
+  // The claim is terminal through the mark endpoint too — the old client-composed
+  // second mark (the race's honest half) still 409s verbatim.
+  const markRes = await postJson(`${daemon.baseUrl}/api/plans/${plan.plan_id}/mark`, { status: 'executed', via: 'spawn:late' });
+  assert.equal(markRes.status, 409, 'executed-from-executed still 409s');
+});
+
+test('BUG-040: a refused spawn releases the claim — plan returns to proposed and is executable again', async (t) => {
+  const recDir = scratchCwd();
+  const rec = path.join(recDir, 'specs.jsonl');
+  const cwd = scratchCwd();
+  const daemon = await startDaemon({ env: {
+    FLEETDECK_HOLD_MS: '1000',
+    FLEETDECK_SPAWN_CMD: SPAWN_CMD_FIXTURE,
+    FLEETDECK_TEST_SPAWN_RECORD: rec,
+  } });
+  t.after(async () => {
+    await daemon.stop();
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    rmSync(recDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  const plan = await captureProposedPlan(t, daemon, cwd);
+
+  // cwd missing → the spawn 400s AFTER the claim; the claim must be released.
+  const bad = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd: path.join(cwd, 'does-not-exist'), prompt: 'x', plan_id: plan.plan_id });
+  assert.equal(bad.status, 400, `a spawn with a missing cwd must still 400 (got ${bad.status}: ${JSON.stringify(bad.json)})`);
+
+  const state1 = (await getJson(`${daemon.baseUrl}/state`)).json;
+  assert.equal(planById(state1, plan.plan_id)?.status, 'proposed',
+    'a spawn the daemon refused must release the execution claim back to the pre-claim status');
+
+  // And the released plan is executable again — the retry path a human
+  // actually takes after fixing the failure.
+  const good = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd, prompt: 'Execute this approved plan exactly.', plan_id: plan.plan_id });
+  assert.equal(good.status, 200, `the retry after a released claim should succeed (got ${good.status}: ${JSON.stringify(good.json)})`);
+  const state2 = (await getJson(`${daemon.baseUrl}/state`)).json;
+  assert.equal(planById(state2, plan.plan_id)?.status, 'executed');
+
+  const specs = await waitForSpecRecords(rec, 1);
+  assert.equal(specs.length, 1, 'only the retried spawn launched an executor');
+});
+
+test('BUG-040: spawn claim refusals — unknown plan 404, non-executable plan 409, shell kind cannot carry plan_id', async (t) => {
+  const recDir = scratchCwd();
+  const rec = path.join(recDir, 'specs.jsonl');
+  const cwd = scratchCwd();
+  const daemon = await startDaemon({ env: {
+    FLEETDECK_HOLD_MS: '1000',
+    FLEETDECK_SPAWN_CMD: SPAWN_CMD_FIXTURE,
+    FLEETDECK_TEST_SPAWN_RECORD: rec,
+  } });
+  t.after(async () => {
+    await daemon.stop();
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    rmSync(recDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  const unknown = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd, prompt: 'x', plan_id: 999999 });
+  assert.equal(unknown.status, 404, `an unknown plan_id must 404 (got ${unknown.status}: ${JSON.stringify(unknown.json)})`);
+
+  const shell = await postJson(`${daemon.baseUrl}/api/spawn`, { kind: 'shell', cwd, plan_id: 1 });
+  assert.equal(shell.status, 400, `a shell spawn must refuse plan_id (got ${shell.status}: ${JSON.stringify(shell.json)})`);
+
+  // A rejected plan is not executable: capture one, deny it, then try.
+  const sid = randomUUID();
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon });
+  const { held, q } = await holdExitPlan(daemon, sid, cwd, 1000);
+  const planId = plansFor((await getJson(`${daemon.baseUrl}/state`)).json, sid)[0]?.plan_id;
+  const ansRes = await postJson(`${daemon.baseUrl}/api/questions/${q.id}/answer`, { behavior: 'deny' });
+  assert.equal(ansRes.status, 200);
+  await held;
+  const denied = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd, prompt: 'x', plan_id: planId });
+  assert.equal(denied.status, 409, `a rejected plan must refuse an execution claim (got ${denied.status}: ${JSON.stringify(denied.json)})`);
+
+  assert.equal(existsSync(rec), false, 'no refusal above may have reached the spawn backend');
 });

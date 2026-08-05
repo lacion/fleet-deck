@@ -222,6 +222,47 @@ test('dismiss bails out of killing when a hook resurrects the card mid-await', a
   assert.deepEqual(state.killed, [], 'nothing was killed');
 });
 
+test('dismiss does not kill a same-name replacement pane a revive stood up mid-kill (BUG-046)', async (t) => {
+  // The audit race: dismiss lists a dead remain-on-exit window and verifies DB
+  // ownership, then awaits the name-based kill. A revive landing INSIDE that
+  // await recreates the same deterministic window name with a fresh LIVE pane
+  // and a new spawn row. The kill-time expectation (window generation + current
+  // owner + not-resurrected) must turn the kill into a stale no-op.
+  const tmux = fakeTmux();
+  const { db, core, state } = memoryCore(t, { tmux });
+  const now = Date.now();
+  const sid = 'off-race';
+  seedOffline(db, sid, { now });
+  db.prepare(`INSERT INTO spawns
+    (spawn_id, session_id, callsign, tmux_session, tmux_window, requested_at, status)
+    VALUES ('sp-race-old', ?, 'off-race-1', 'fleetdeck-4711', 'fd4711-off-race-1', ?, 'pane-dead')`).run(sid, now);
+  state.windows.push({
+    session: 'fleetdeck-4711', window: 'fd4711-off-race-1', window_id: '@6', pane_dead: true, pane_cmd: 'claude',
+  });
+  // The revive lands during the kill's own awaits, after every pre-check passed:
+  // a new live-eligible row claims the name and the pane is replaced live.
+  tmux.adapter.killWindowVerified = async (name, opts) => {
+    db.prepare(`INSERT INTO spawns
+      (spawn_id, session_id, callsign, tmux_session, tmux_window, requested_at, status)
+      VALUES ('sp-race-new', ?, 'off-race-1', 'fleetdeck-4711', 'fd4711-off-race-1', ?, 'live')`).run(sid, now + 1);
+    state.windows = [{ session: 'fleetdeck-4711', window: name, window_id: '@66', pane_dead: false, pane_cmd: 'claude' }];
+    if (opts?.expectWindowId !== undefined) {
+      const win = state.windows.find(w => w.window === name);
+      if (!win || win.window_id !== opts.expectWindowId || (opts.expect && !opts.expect())) {
+        return { ok: false, stale: true, error: 'stale window owner' };
+      }
+    }
+    state.killed.push(name);
+    return { ok: true, window_id: '@66' };
+  };
+
+  const out = await core.dismissSession(sid);
+  assert.equal(out.status, 200, JSON.stringify(out.body));
+  assert.equal(out.body.windows_killed, 0, 'the replacement pane is NOT killed');
+  assert.deepEqual(state.killed, [], 'the name-based kill never fired');
+  assert.equal(spawnStatus(db, 'sp-race-new'), 'live', 'the revived spawn row is untouched');
+});
+
 test('spawnLivenessTick is single-flight: two concurrent calls run the probe once', async (t) => {
   // R4-review: the viewer path and dismiss fire spawnLivenessTick fire-and-forget,
   // bypassing the scheduler's single-flight. The tick must latch itself so two
