@@ -555,6 +555,10 @@ export function createHttp(core, {
     SessionEnd: ev => core.hookSessionEnd(ev),
     Notification: ev => (core.applyEvent({ ...ev, hook_event_name: 'Notification' }), {}),
     FileChanged: ev => (core.applyEvent({ ...ev, hook_event_name: 'FileChanged' }), {}),
+    // BUG-104: the shim emits this event's watchPaths itself (fleet-hook.mjs);
+    // the daemon side is pure telemetry — one note so a `cd` is visible in the
+    // session's event log.
+    CwdChanged: ev => (core.applyEvent({ ...ev, hook_event_name: 'CwdChanged' }), {}),
   };
 
   // F3a/F3b/F3c hold-open relay: create the durable question row, then park

@@ -1,4 +1,5 @@
 {
+  "_filechanged": "The FileChanged matcher is the plugin's structural always-on watch list, registered under every supported CLI (BUG-104 — a matcher-less FileChanged registers nothing, so the hook is wired but never fires). Its segments are literal top-level filenames, not regexes: config surfaces (claude|json), env surfaces (envrc|env), fleet decks (fleet|deck), and the 199 scratch pad that keeps the static list non-empty even with a dead hook. Segments must stay inside the exact-match alphabet (letters, digits, _, |) or the harness stops treating the value as a watch list. New-project and late-created files ride SessionStart/CwdChanged watchPaths (scripts/fleet-sessionstart.mjs, scripts/fleet-hook.mjs), which replace the dynamic watch list on every event. tests/filechanged-watch.test.mjs guards the alphabet and the structural segments.",
   "_lockstep": "The 720s timeouts on AskUserQuestion/PermissionRequest/Elicitation are one invariant with scripts/fleet-hook.mjs WATCHDOG_MS (660s) and the daemon hold window (scripts/fleetd/questions.mjs resolveHoldMs, default 600s, clamp ceiling 650s): hold < watchdog < timeout, or a board answer lands on a dead socket. Change all three together.",
   "hooks": {
     "SessionStart": [
@@ -126,10 +127,23 @@
     ],
     "FileChanged": [
       {
+        "matcher": "claude|json|envrc|env|fleet|deck|199",
         "hooks": [
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs\" FileChanged",
+            "timeout": 3,
+            "async": true
+          }
+        ]
+      }
+    ],
+    "CwdChanged": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs\" CwdChanged",
             "timeout": 3,
             "async": true
           }

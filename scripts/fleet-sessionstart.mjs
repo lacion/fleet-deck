@@ -1,10 +1,20 @@
 #!/usr/bin/env node
-// fleet-sessionstart.mjs — the ONLY command hook. Election + spawn + brief.
+// fleet-sessionstart.mjs — the ONLY command hook. Election + spawn + brief +
+// the dynamic FileChanged watch list (BUG-104).
 //
 // Reads the SessionStart hook payload on stdin, makes sure fleetd is up
 // (health check → spawn detached → poll ~3 s), POSTs /hook/SessionStart and
 // prints the daemon-composed roster brief to stdout (SessionStart stdout is
 // added to the session context).
+//
+// It also owns watch registration: hooks.json's FileChanged matcher can only
+// watch literal top-level filenames, so coverage of the files a session will
+// actually touch has to come from hookSpecificOutput.watchPaths. stdout is
+// therefore a single JSON object: the roster brief rides additionalContext and
+// watchPaths registers the session's cwd — the one absolute path that covers
+// every file the session may touch, including files created after startup.
+// fleet-hook.mjs refreshes the same list from CwdChanged, and every delivered
+// FileChanged event re-pins it.
 //
 // Design rule #1: this script must NEVER break the session. EVERY failure
 // path is a silent exit 0, and a watchdog guarantees we are gone in ~4 s.
@@ -256,23 +266,36 @@ try {
   // the daemon answers with upgrade lines (which other sessions still run
   // pre-upgrade hooks) so the human hears it from the session that caused it.
   if (replacedVersion) payload.fleet_takeover = replacedVersion;
+  // BUG-104: the FileChanged hook is dead weight without a watch list — a
+  // matcher-less FileChanged registers nothing, and matchers can only name
+  // literal top-level files. SessionStart's hookSpecificOutput.watchPaths is
+  // the dynamic registration channel: hand the harness the session's cwd (the
+  // one absolute path covering everything the session may touch, including
+  // files created after startup). The brief and the warnings move into
+  // additionalContext — SessionStart accepts BOTH plain stdout and JSON, but
+  // only the JSON form carries watchPaths.
+  const watchPaths = [typeof payload.cwd === 'string' && payload.cwd ? payload.cwd : process.cwd()];
+  const context = [];
   if (serverUp) {
     // Cold boot: ensureServer() just minted HOME/token. Refresh before the first
     // authenticated registration instead of silently losing the birth event.
     TOKEN = readToken();
     const reg = await api('/hook/SessionStart', { method: 'POST', body: payload, timeout: 1200 });
     if (managedVersionDrift) {
-      process.stdout.write(
+      context.push(
         `[FLEETDECK] The fleet daemon is a managed service running v${managedVersionDrift}, `
         + `but this plugin is v${ownVersion()}. The service owns the port and was left running. `
         + `Restart it to pick up the new version.\n`,
       );
     }
     if (Array.isArray(reg?.upgrade_lines)) {
-      for (const line of reg.upgrade_lines) process.stdout.write(`${line}\n`);
+      for (const line of reg.upgrade_lines) context.push(`${line}\n`);
     }
-    if (reg?.brief) process.stdout.write(reg.brief);
+    if (reg?.brief) context.push(reg.brief);
   }
+  const hookSpecificOutput = { hookEventName: 'SessionStart', watchPaths };
+  if (context.length) hookSpecificOutput.additionalContext = context.join('');
+  process.stdout.write(JSON.stringify({ hookSpecificOutput }));
 } catch { /* no fleet, no drama */ }
 clearTimeout(watchdog);
 process.exit(0);

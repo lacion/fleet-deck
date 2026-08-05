@@ -13,6 +13,14 @@
 // Design rule (same as fleet-sessionstart.mjs): NEVER break the session. Every
 // failure path is a silent exit 0 with '{}' on stdout, and the per-event
 // watchdog guarantees we are gone before hooks.json's own timeout would fire.
+//
+// BUG-104: this shim also refreshes the dynamic FileChanged watch list.
+// SessionStart (fleet-sessionstart.mjs) seeds hookSpecificOutput.watchPaths
+// with the session cwd; CwdChanged re-pins it when the working directory moves
+// (its watchPaths REPLACE the dynamic list, so an unchanged list must be
+// re-emitted or a `cd` would silently clear every registration), and each
+// delivered FileChanged re-pins it too. The daemon response is forwarded
+// verbatim for every event, with watchPaths merged in for these two.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -92,8 +100,31 @@ async function readStdinRaw() {
   return data;
 }
 
+// Events that refresh the dynamic FileChanged watch list (BUG-104). CwdChanged
+// watchPaths REPLACE the dynamic list, so the shim re-pins the current cwd on
+// both events — a bare daemon '{}' would otherwise wipe it.
+const WATCH_EVENTS = new Set(['CwdChanged', 'FileChanged']);
+function watchPathsFor(raw) {
+  try {
+    const cwd = JSON.parse(raw || '{}')?.cwd;
+    return typeof cwd === 'string' && cwd ? [cwd] : null;
+  } catch { return null; }
+}
+// Fold watchPaths into the daemon's response (it owns every other field — the
+// daemon knows nothing about harness watch registration). Non-JSON daemon
+// output passes through untouched rather than risking a mangled contract.
+function mergeWatchPaths(text, watchPaths) {
+  if (!watchPaths) return text;
+  try {
+    const out = JSON.parse(text || '{}');
+    out.hookSpecificOutput = { ...(out.hookSpecificOutput || {}), hookEventName: EVENT, watchPaths };
+    return JSON.stringify(out);
+  } catch { return text; }
+}
+
 try {
   const raw = await readStdinRaw();
+  const watchPaths = WATCH_EVENTS.has(EVENT) ? watchPathsFor(raw) : null;
   const headers = { 'content-type': 'application/json' };
   if (TOKEN) headers.authorization = `Bearer ${TOKEN}`;
   const ctl = new AbortController();
@@ -106,7 +137,8 @@ try {
     // Forward the daemon's response verbatim — hook stdout is how the CLI
     // receives additionalContext / hold decisions. A 401 carries no contract
     // body; emit the fail-open no-op instead.
-    process.stdout.write(res.ok && text ? text : '{}');
+    const body = res.ok && text ? text : '{}';
+    process.stdout.write(watchPaths ? mergeWatchPaths(body, watchPaths) : body);
   } finally { clearTimeout(t); }
 } catch { try { process.stdout.write('{}'); } catch { /* gone */ } }
 clearTimeout(watchdog);
