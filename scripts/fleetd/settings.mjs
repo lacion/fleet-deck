@@ -216,7 +216,11 @@ export function createSettings(ctx) {
     if (entries.length > REPO_SETUP_MAX) {
       throw namedError(400, `repo_setup must contain ${REPO_SETUP_MAX} entries or fewer — got ${entries.length}`);
     }
-    const out = {};
+    // Accumulate into entries, not `out[name] = cmd` on a plain object — a
+    // legitimate repo named "__proto__" would otherwise hit the inherited
+    // prototype setter, mutate the accumulator's prototype, and serialize
+    // back to {} while the API still reports 200.
+    const out = [];
     for (const [name, cmd] of entries) {
       if (!name || CONTROL_RE.test(name)) {
         throw namedError(400, 'repo_setup keys must be non-empty repo names without control characters');
@@ -230,9 +234,9 @@ export function createSettings(ctx) {
       if (SETUP_CONTROL_RE.test(cmd)) {
         throw namedError(400, `repo_setup command for "${name}" must not contain NUL or control characters other than newline`);
       }
-      out[name] = cmd;
+      out.push([name, cmd]);
     }
-    return out;
+    return Object.fromEntries(out);
   }
 
   // ---------------------------------------------------------------- hold_ms

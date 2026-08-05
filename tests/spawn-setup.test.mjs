@@ -184,6 +184,32 @@ test('repo_setup validates, persists, and rides settings broadcasts', async t =>
   assert.deepEqual(restored.json.settings.repo_setup, value);
 });
 
+test('repo_setup keeps a legitimate __proto__ repo entry through a raw JSON body', async t => {
+  const home = scratch('fd-setup-proto-home-');
+  const daemon = await startDaemon({ home });
+  t.after(async () => { await daemon.stop(); rmSync(home, { recursive: true, force: true }); });
+
+  // Raw JSON: object-literal syntax { __proto__: ... } would never create an
+  // own property, so the body must arrive as text.
+  const res = await fetch(`${daemon.baseUrl}/api/settings`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: '{"repo_setup":{"__proto__":"echo setup"}}',
+    signal: AbortSignal.timeout(5000),
+  });
+  assert.equal(res.status, 200);
+  const saved = JSON.parse(await res.text());
+  assert.equal(Object.keys(saved.settings.repo_setup)[0], '__proto__');
+  assert.equal(saved.settings.repo_setup.__proto__, 'echo setup');
+
+  const state = await getJson(`${daemon.baseUrl}/state`);
+  assert.equal(state.json.settings.repo_setup.__proto__, 'echo setup');
+
+  const restored = await getJson(`${daemon.baseUrl}/api/settings`);
+  assert.equal(restored.json.settings.repo_setup.__proto__, 'echo setup',
+    'the stored row must serialize the entry back, not an empty object');
+});
+
 test('real tmux setup failure stays visible, condemns immediately, and never starts Claude', { skip: !tmuxOk() && 'tmux unavailable' }, async t => {
   const cwd = scratch('fd-setup-fail-');
   const daemon = await startDaemon({
