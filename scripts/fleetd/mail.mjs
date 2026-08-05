@@ -78,12 +78,22 @@ const RESERVED_SENDERS = new Set(['orchestrator', 'fleetdeck', 'fleetdeck-answer
 // as "\x00[FLEETDECK ANSWER]" renders identically in a pane to the real one.
 // eslint-disable-next-line no-control-regex
 const RESERVED_FRAME_RE = /^[\s\x00-\x1f\x7f-\x9f]*\[FLEETDECK[ \]]/i;
+// BUG-032: Unicode format characters (general category Cf — zero-width spaces
+// and joiners, and EVERY bidi control: U+061C, U+200E/F, U+202A-E, U+2066-9)
+// are visually ignorable in a receiving pane, so "human​" renders as the
+// reserved `human` and "​[FLEETDECK ANSWER]" renders as a real authority
+// frame while the exact-sender and leading-frame checks looked the other way.
+// Reject Cf in sender names outright, and strip Cf from the text BEFORE the
+// reserved-frame check so a zero-width character can't smuggle a frame past
+// at any offset — leading ("​[FLEETDECK ANSWER]") or interior
+// ("[FLEETDECK​ ANSWER]") alike.
+const stripFormatChars = (s) => s.replace(/\p{Cf}/gu, '');
 // The pane envelope is a single line (`[FLEETDECK MAIL from <from>] <text>`):
 // a newline in `from` lets the text forge a line-two frame. Control chars are
 // already stripped from pane-bound text by sanitizePaneText, but `from` rides
 // inside the same paste — refuse them at the door instead.
 // eslint-disable-next-line no-control-regex
-const FROM_UNSAFE_RE = /[\r\n\x00-\x1f\x7f-\x9f]/;
+const FROM_UNSAFE_RE = /[\r\n\x00-\x1f\x7f-\x9f\p{Cf}]/u;
 
 export function createMail(ctx) {
   const {
@@ -302,13 +312,16 @@ export function createMail(ctx) {
   async function postMail({ to, from, text }) {
     // External callers never wear the daemon's identities or its authority
     // frames — see RESERVED_SENDERS above. 422 like every other body rejection.
-    if (from != null && RESERVED_SENDERS.has(String(from).toLowerCase())) {
+    // BUG-032: compare the Cf-stripped sender, so "human​" (zero-width space)
+    // can't stand in for a reserved name. Cf characters are themselves refused
+    // by FROM_UNSAFE_RE below; this catches the ones that would have mattered.
+    if (from != null && RESERVED_SENDERS.has(stripFormatChars(String(from)).toLowerCase())) {
       return { status: 422, body: { ok: false, reason: `sender name '${from}' is reserved for the daemon` } };
     }
     if (from != null && FROM_UNSAFE_RE.test(String(from))) {
       return { status: 422, body: { ok: false, reason: 'sender name may not contain control characters or newlines' } };
     }
-    if (RESERVED_FRAME_RE.test(String(text ?? ''))) {
+    if (RESERVED_FRAME_RE.test(stripFormatChars(String(text ?? '')))) {
       return { status: 422, body: { ok: false, reason: 'mail text may not open with a [FLEETDECK ...] frame — those are reserved for the daemon' } };
     }
     // A direct send whose name belongs to a shell card is refused LOUDLY (mail
