@@ -14,6 +14,7 @@
 
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -32,6 +33,7 @@ const UNIT_FILE = path.join(XDG, 'systemd', 'user', 'fleetdeck.service');
 
 const {
 <<<<<<< /tmp/mf-ours
+<<<<<<< /tmp/mf-ours
   writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor,
 <<<<<<< /tmp/mf-ours
 <<<<<<< /tmp/mf-ours
@@ -40,6 +42,9 @@ const {
 =======
   writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, parseServiceEnvPort, serviceEnvPort,
   supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor,
+=======
+  writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, shQuote, supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor,
+>>>>>>> /tmp/mf-theirs
   serviceInstall, UNIT, SUPERVISE,
 >>>>>>> /tmp/mf-theirs
 =======
@@ -415,13 +420,14 @@ test('quoteExecArg(): systemd-quotes ExecStart args so spaced/percent paths surv
 
 test('SUPERVISE(): sources the env file safely and backs off, never respawning a clean exit', () => {
   const s = SUPERVISE();
-  assert.ok(s.includes(`. "${ENV_FILE}"`), 'dot-sources the env file inside set -a/set +a');
-  assert.match(s, /set -a; \. "/, 'exports while sourcing so children inherit config');
+  assert.ok(s.includes(`. ${shQuote(ENV_FILE)}`), 'dot-sources the env file inside set -a/set +a');
+  assert.match(s, /set -a; \. '/, 'exports while sourcing so children inherit config');
   assert.ok(s.includes('-eq 0 ] && exit 0'), 'a clean SIGTERM shutdown is not respawned');
   assert.ok(s.includes('-eq 3 ] && exit 3'), 'a lost-port exit is not hot-looped');
   assert.ok(s.includes('serve'), 'execs `fleetdeck serve`');
 });
 
+<<<<<<< /tmp/mf-ours
 // -------------------------------------------- systemd unit path escaping (BUG-077)
 //
 // The unit's two path-bearing directives interpolate REAL paths (node binary,
@@ -467,4 +473,53 @@ test('UNIT(): normal paths stay byte-identical to the pre-fix unit (bare, no % p
   assert.ok(u.includes(`EnvironmentFile=-${ENV_FILE}`), 'env file directive unchanged for a normal path');
   assert.ok(u.includes(`ExecStart=${process.execPath} `), 'node binary stays bare when the path is safe');
   assert.doesNotMatch(u, /%%/, 'no escaping noise when no path needs it');
+=======
+// BUG-079: the wrapper embeds ENV_FILE, the Node executable, and the CLI path.
+// Inside DOUBLE quotes, $(), backticks, and $VAR in those paths stay live shell
+// syntax — a literal path like `$(printf injected)` was EXECUTED when the
+// wrapper resolved it. Every embedded path must be single-quoted instead, so
+// nothing in it expands.
+test('shQuote: single-quotes a path so no shell metacharacter expands', () => {
+  assert.equal(shQuote('/plain/path'), `'/plain/path'`);
+  assert.equal(shQuote('$(printf injected)'), `'$(printf injected)'`);
+  assert.equal(shQuote('/home/o`id`brien/x'), "'/home/o`id`brien/x'");
+  assert.equal(shQuote("/it's/a path"), `'/it'\\''s/a path'`, 'embedded single quote uses the \'"\'"\' idiom');
+});
+
+test('SUPERVISE(): embeds paths single-quoted — $(), backticks, and quotes in a path stay literal', () => {
+  const s = SUPERVISE();
+  // The generated script must not hand any embedded path to the shell inside
+  // double quotes, where $(...)/`...`/$VAR would still expand.
+  assert.doesNotMatch(s, /"\$\{/, 'no "${...}" double-quoted interpolation of embedded paths');
+  for (const embedded of [ENV_FILE, process.execPath]) {
+    assert.ok(s.includes(shQuote(embedded)), `${embedded} appears single-quoted`);
+  }
+  // The two reader lines for the env file: existence test and dot-source.
+  assert.ok(s.includes(`[ -f ${shQuote(ENV_FILE)} ]`), 'existence test is single-quoted');
+  assert.ok(s.includes(`. ${shQuote(ENV_FILE)};`), 'dot-source is single-quoted');
+  // The exec line: node and the CLI path are both single-quoted, serve stays bare.
+  const CLI = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', 'bin', 'fleetdeck.mjs');
+  assert.match(s, new RegExp(`^  ${escapeRe(shQuote(process.execPath))} ${escapeRe(shQuote(CLI))} serve &`, 'm'),
+    'exec line single-quotes both paths');
+});
+
+// The exact BUG-079 trigger, end to end: an ENV_FILE whose path contains
+// `$(printf injected)` must reach the shell as ONE literal word — sourcing it
+// must not execute the substitution. This runs real /bin/sh on a stubbed
+// wrapper line.
+test('SUPERVISE() quoting: a $(...) path is sourced literally, never executed', (t) => {
+  if (process.platform === 'win32') return t.skip('POSIX shell test');
+  const evil = path.join(TMP, 'home $(printf injected > INJECTION_MARK)');
+  fs.mkdirSync(evil, { recursive: true });
+  fs.writeFileSync(path.join(evil, 'service.env'), 'FLEETDECK_PORT=4711\n');
+  const envFile = path.join(evil, 'service.env');
+  // Mirror the wrapper's source line with the hostile path quoted by shQuote.
+  const script = `[ -f ${shQuote(envFile)} ] && { set -a; . ${shQuote(envFile)}; set +a; }\nprintf '%s' "$FLEETDECK_PORT"\n`;
+  const scriptFile = path.join(TMP, 'probe.sh');
+  fs.writeFileSync(scriptFile, script, { mode: 0o700 });
+  const r = spawnSync('sh', [scriptFile], { encoding: 'utf8', cwd: TMP });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout, '4711', 'the env file at the metachar path is sourced literally');
+  assert.ok(!fs.existsSync(path.join(TMP, 'INJECTION_MARK')), 'the $(printf injected) in the path was NOT executed');
+>>>>>>> /tmp/mf-theirs
 });
