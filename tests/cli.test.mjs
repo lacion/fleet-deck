@@ -16,6 +16,7 @@ import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -26,6 +27,18 @@ process.env.FLEETDECK_HOME = HOME;
 process.env.XDG_CONFIG_HOME = XDG;
 fs.mkdirSync(HOME, { recursive: true });
 
+// PORT must be a port where NOTHING answers: a dev box can have a real managed
+// fleetd on the default 4711, and the serviceStart test below needs the health
+// probe to see a dead port. Grab a free port, release it, and pin the CLI to it
+// (the module captures PORT at import time, just like HOME).
+const DEAD_PORT = await new Promise((resolve) => {
+  const srv = net.createServer().listen(0, '127.0.0.1', () => {
+    const p = srv.address().port;
+    srv.close(() => resolve(p));
+  });
+});
+process.env.FLEETDECK_PORT = String(DEAD_PORT);
+
 const ENV_FILE = path.join(HOME, 'service.env');
 const SUPERVISE_SH = path.join(HOME, 'supervise.sh');
 const SUPERVISOR_PID = path.join(HOME, 'supervisor.pid');
@@ -35,6 +48,7 @@ const {
 <<<<<<< /tmp/mf-ours
 <<<<<<< /tmp/mf-ours
   writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor,
+<<<<<<< /tmp/mf-ours
 <<<<<<< /tmp/mf-ours
 <<<<<<< /tmp/mf-ours
 <<<<<<< /tmp/mf-ours
@@ -55,6 +69,9 @@ const {
 >>>>>>> /tmp/mf-theirs
 =======
   serviceInstall, UNIT, SUPERVISE, quoteExecArg,
+>>>>>>> /tmp/mf-theirs
+=======
+  serviceInstall, serviceStart, UNIT, SUPERVISE,
 >>>>>>> /tmp/mf-theirs
 } = await import(new URL('../bin/fleetdeck.mjs', import.meta.url));
 const { parseTmuxVersion, tmuxVersionCapability, tmuxVersionSupported } = await import(new URL('../bin/tmux-version.mjs', import.meta.url));
@@ -329,6 +346,49 @@ test('argvIsOurSupervisor: matches only when SUPERVISE_SH is in the argv', () =>
   assert.equal(argvIsOurSupervisor(['sleep', '30']), false);
   assert.equal(argvIsOurSupervisor([]), false);
   assert.equal(argvIsOurSupervisor(null), false);
+});
+
+// -------------------------------------------------------- service start
+
+// BUG-080: a live supervisor wrapper is not a live BOARD. During a fleetd
+// crash-loop the wrapper is alive but sleeping in exponential backoff, so the
+// old kill(0)-only branch reported "already running" (exit 0) while nothing
+// answered on the port — indefinitely. "Started" must mean "answering": the
+// existing-supervisor branch must require a managed health response, and
+// report a degraded supervisor (nonzero, with the log path) otherwise.
+test('serviceStart: live supervisor + dead daemon → nonzero degraded report, not "already running"', async (t) => {
+  if (process.platform !== 'linux') return t.skip('supervisor identity check is /proc-based; skip off-Linux');
+  // Force the no-systemd branch the same way the serviceInstall test does.
+  const savedPath = process.env.PATH;
+  const emptyDir = path.join(TMP, 'nopath');
+  fs.mkdirSync(emptyDir, { recursive: true });
+  fs.writeFileSync(SUPERVISE_SH, '#!/bin/sh\n', { mode: 0o700 });
+  try { fs.rmSync(path.dirname(UNIT_FILE), { recursive: true, force: true }); } catch { /* absent */ }
+  // Stand in for the sleeping-in-backoff wrapper: a live process whose argv
+  // contains SUPERVISE_SH as its own element, so supervisorAlive() accepts it
+  // as ours (argvIsOurSupervisor is an exact-element match). Passing it as the
+  // $0 of `sh -c` keeps it in argv WITHOUT executing the script. The child
+  // must not outlive the test (an orphan would corrupt node:test's report
+  // channel), so it exits on its own after a few seconds even if killed late.
+  const { spawn } = await import('node:child_process');
+  const fake = spawn('sh', ['-c', 'sleep 5', SUPERVISE_SH], { detached: true, stdio: 'ignore' });
+  fake.unref();
+  t.after(() => { try { process.kill(fake.pid, 'SIGKILL'); } catch { /* already gone */ } });
+
+  process.env.PATH = emptyDir;
+  let rc;
+  try {
+    // Written INSIDE the PATH scope: serviceStart must see our live fake
+    // wrapper, and the supervisorAlive tests above leave the pidfile deleted.
+    fs.writeFileSync(SUPERVISOR_PID, String(fake.pid));
+    rc = await serviceStart();
+  } finally { process.env.PATH = savedPath; }
+
+  assert.equal(rc, 1, 'a wrapper with no daemon answering is degraded, not success');
+  // The pidfile must NOT have been rewritten by a second spawn — the pid of a
+  // re-spawned wrapper would differ from our fake one.
+  assert.equal(fs.readFileSync(SUPERVISOR_PID, 'utf8').trim(), String(fake.pid),
+    'no second supervisor was spawned over the live one');
 });
 
 // -------------------------------------------------------- service install

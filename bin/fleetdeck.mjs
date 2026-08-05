@@ -542,9 +542,22 @@ async function serviceStart() {
     err('✗ not installed — run `fleetdeck service install` first');
     return 1;
   }
-  if (supervisorAlive()) {
-    out('✓ already running');
-    return 0;
+  const sup = supervisorAlive();
+  if (sup) {
+    // A live wrapper is not a live BOARD: the supervisor sleeps in exponential
+    // backoff between respawns, so during a fleetd crash-loop kill(0) alone
+    // would report "already running" while nothing answers on the port —
+    // indefinitely. "Started" means "answering", same contract as the branch
+    // below: require a MANAGED health response (an unmanaged daemon on the
+    // port is a plugin-spawned squatter the wrapper is not supervising).
+    const h = await waitForHealth();
+    if (h?.managed) {
+      out('✓ already running');
+      return 0;
+    }
+    err(`✗ supervisor alive (pid ${sup}) but no managed daemon answering on :${PORT} — see ${LOG_FILE}`);
+    err('  the wrapper may be backing off between respawns; check the log, or `fleetdeck service stop` then start');
+    return 1;
   }
   // MUST return immediately: a coder_script that does not exit leaves the
   // workspace stuck "starting".
@@ -702,6 +715,7 @@ if (IS_ENTRYPOINT) await main(process.argv.slice(2));
 <<<<<<< /tmp/mf-ours
 <<<<<<< /tmp/mf-ours
 <<<<<<< /tmp/mf-ours
+<<<<<<< /tmp/mf-ours
 export { writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor, serviceInstall, UNIT, SUPERVISE, doctor, MIN_NODE_RANGE, nodeVersionSupported };
 =======
 export { writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, parseServiceEnvPort, serviceEnvPort, supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor, serviceInstall, UNIT, SUPERVISE, doctor };
@@ -717,4 +731,7 @@ export { writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, supervisorAliv
 >>>>>>> /tmp/mf-theirs
 =======
 export { writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, shQuote, supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor, serviceInstall, UNIT, SUPERVISE, doctor };
+>>>>>>> /tmp/mf-theirs
+=======
+export { writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor, serviceInstall, serviceStart, UNIT, SUPERVISE, doctor };
 >>>>>>> /tmp/mf-theirs
