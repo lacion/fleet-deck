@@ -163,11 +163,19 @@ export async function startDaemon({
   env = {},
   healthTimeoutMs = 10000,
 } = {}) {
+<<<<<<< /tmp/mf-ours
   // Only the home THIS call allocated may be removed on startup failure —
   // a caller-owned home (e.g. election.test's homeA) is never ours to delete,
   // failed startup or not.
   const ownHome = home === undefined;
   if (ownHome) home = freshHome();
+=======
+  // Track ownership explicitly: only a home the helper allocated may be
+  // removed by the helper. A caller-supplied home belongs to the caller's own
+  // teardown (e.g. the election suite's t.after), even on startup failure.
+  const ownsHome = home === undefined;
+  if (ownsHome) home = freshHome();
+>>>>>>> /tmp/mf-theirs
   const raw = spawnRaw({ port, home, scriptPath, env });
   const baseUrl = `http://127.0.0.1:${port}`;
   // Any 2xx /health on the port is NOT proof our child came up: two test
@@ -193,10 +201,18 @@ export async function startDaemon({
   } catch (err) {
     healthSettled = true;
     await raw.kill();
+<<<<<<< /tmp/mf-ours
     // The daemon died before we handed back a handle, so nothing else will
     // ever clean up the scratch home (db, token, log, pid state) — remove it
     // here. Caller-owned homes survive for post-mortem inspection.
     if (ownHome) {
+=======
+    // Startup failed, so no handle — and with it stop() — ever reaches the
+    // caller. Remove the scratch home here or it leaks one fleetdeck-test-*
+    // directory (database + token) per failed start. Caller-supplied homes
+    // are left untouched for the caller's own teardown.
+    if (ownsHome) {
+>>>>>>> /tmp/mf-theirs
       rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     }
     const detail = raw.stderr || raw.stdout || '(no output captured)';
