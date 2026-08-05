@@ -52,6 +52,7 @@ const {
 <<<<<<< /tmp/mf-ours
 <<<<<<< /tmp/mf-ours
 <<<<<<< /tmp/mf-ours
+<<<<<<< /tmp/mf-ours
   serviceInstall, UNIT, SUPERVISE, MIN_NODE_RANGE, nodeVersionSupported,
 =======
   writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, parseServiceEnvPort, serviceEnvPort,
@@ -72,6 +73,9 @@ const {
 >>>>>>> /tmp/mf-theirs
 =======
   serviceInstall, serviceStart, UNIT, SUPERVISE,
+>>>>>>> /tmp/mf-theirs
+=======
+  serviceInstall, UNIT, SUPERVISE, healthIsOurManagedDaemon,
 >>>>>>> /tmp/mf-theirs
 } = await import(new URL('../bin/fleetdeck.mjs', import.meta.url));
 const { parseTmuxVersion, tmuxVersionCapability, tmuxVersionSupported } = await import(new URL('../bin/tmux-version.mjs', import.meta.url));
@@ -488,6 +492,7 @@ test('SUPERVISE(): sources the env file safely and backs off, never respawning a
 });
 
 <<<<<<< /tmp/mf-ours
+<<<<<<< /tmp/mf-ours
 // -------------------------------------------- systemd unit path escaping (BUG-077)
 //
 // The unit's two path-bearing directives interpolate REAL paths (node binary,
@@ -581,5 +586,15 @@ test('SUPERVISE() quoting: a $(...) path is sourced literally, never executed', 
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stdout, '4711', 'the env file at the metachar path is sourced literally');
   assert.ok(!fs.existsSync(path.join(TMP, 'INJECTION_MARK')), 'the $(printf injected) in the path was NOT executed');
+>>>>>>> /tmp/mf-theirs
+=======
+test('healthIsOurManagedDaemon: an unmanaged health answer is refused (BUG-081)', async () => {
+  // The core of BUG-081: a responder without the managed marker must never be
+  // accepted as the managed service, regardless of pid/home proof.
+  assert.equal(await healthIsOurManagedDaemon(null), false);
+  assert.equal(await healthIsOurManagedDaemon({}), false);
+  assert.equal(await healthIsOurManagedDaemon({ pid: process.pid }), false);
+  assert.equal(await healthIsOurManagedDaemon({ managed: 0, pid: process.pid }), false);
+  assert.equal(await healthIsOurManagedDaemon({ managed: false, pid: process.pid }), false);
 >>>>>>> /tmp/mf-theirs
 });

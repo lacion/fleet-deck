@@ -518,13 +518,28 @@ function supervisorAlive() {
 // the process exists, which is a good ~100ms before fleetd has opened SQLite and
 // bound the port — long enough that a template's next step (or an impatient
 // human running `fleetdeck status`) sees a dead board and concludes it failed.
-async function waitForHealth({ tries = 20, everyMs = 250 } = {}) {
+async function waitForHealth({ tries = 20, everyMs = 250, expect } = {}) {
   for (let i = 0; i < tries; i += 1) {
     await new Promise(r => setTimeout(r, everyMs));
     const h = await health({ timeout: everyMs });
-    if (h) return h;
+    if (h && (!expect || expect(h))) return h;
   }
   return null;
+}
+
+// A health answer proves SOMETHING is listening on :PORT, not that it is the
+// managed service we just spawned. `service start` must accept only OUR daemon:
+// managed (started via `serve`, which sets FLEETDECK_MANAGED=1) AND positively
+// identified as the fleetd that claimed OUR FLEETDECK_HOME — its /health pid
+// must match the HOME/fleetd.pid ownership record and still carry a fleetd
+// /proc shape (the same verifyDaemonPid gate the hook's takeover path uses).
+// Without this, an unmanaged/foreign responder that already owns the port makes
+// `service start` print success for a service that does not exist: our wrapper
+// exits 3 after losing the port election while waitForHealth saw the squatter.
+async function healthIsOurManagedDaemon(h) {
+  if (!h?.managed) return false;
+  const { verifyDaemonPid } = await import(`file://${path.join(ROOT, 'scripts', 'fleetd', 'takeover.mjs')}`);
+  return verifyDaemonPid(h.pid, HOME);
 }
 
 async function serviceStart() {
@@ -570,8 +585,20 @@ async function serviceStart() {
   fs.closeSync(log);
   fs.writeFileSync(SUPERVISOR_PID, String(child.pid), { encoding: 'utf8', mode: 0o600 });
 
-  if (!await waitForHealth()) {
-    err(`✗ supervisor started (pid ${child.pid}) but no daemon answered on :${PORT} within 5s — see ${LOG_FILE}`);
+  const h = await waitForHealth({ expect: healthIsOurManagedDaemon });
+  if (!h) {
+    err(`✗ supervisor started (pid ${child.pid}) but no MANAGED daemon for this FLEETDECK_HOME answered on :${PORT} within 5s — see ${LOG_FILE}`);
+    if (await health({ timeout: 500 })) {
+      err('  something else already owns the port — `fleetdeck status` shows what is answering');
+    }
+    return 1;
+  }
+  // The daemon answering is ours, but the SUPERVISOR may already be gone (it
+  // exits 3 right after a lost port election, or could crash immediately).
+  // Reporting "up (supervisor pid N)" for a dead N would promise an always-on
+  // service nothing is supervising — fail instead of printing a corpse.
+  if (!supervisorAlive()) {
+    err(`✗ daemon up on :${PORT} but supervisor pid ${child.pid} already exited — no always-on service — see ${LOG_FILE}`);
     return 1;
   }
   out(`✓ fleetdeck up on http://127.0.0.1:${PORT} (supervisor pid ${child.pid})`);
@@ -716,6 +743,7 @@ if (IS_ENTRYPOINT) await main(process.argv.slice(2));
 <<<<<<< /tmp/mf-ours
 <<<<<<< /tmp/mf-ours
 <<<<<<< /tmp/mf-ours
+<<<<<<< /tmp/mf-ours
 export { writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor, serviceInstall, UNIT, SUPERVISE, doctor, MIN_NODE_RANGE, nodeVersionSupported };
 =======
 export { writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, parseServiceEnvPort, serviceEnvPort, supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor, serviceInstall, UNIT, SUPERVISE, doctor };
@@ -734,4 +762,7 @@ export { writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, shQuote, super
 >>>>>>> /tmp/mf-theirs
 =======
 export { writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor, serviceInstall, serviceStart, UNIT, SUPERVISE, doctor };
+>>>>>>> /tmp/mf-theirs
+=======
+export { writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor, serviceInstall, UNIT, SUPERVISE, doctor, healthIsOurManagedDaemon };
 >>>>>>> /tmp/mf-theirs
