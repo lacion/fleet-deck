@@ -424,8 +424,14 @@ export function createMail(ctx) {
   }
 
   async function postMail({ to, from, text }) {
+    // BUG-037: resolve the FINAL sender FIRST. The old flow validated the raw
+    // input and defaulted LATER (`from || 'human'`), so an omitted/empty/zero/
+    // false `from` sailed past the reserved check and was then stored — row and
+    // pane envelope both — as the reserved `human` identity. Resolve first,
+    // validate the resolved value, and default to the non-reserved 'board'.
     // External callers never wear the daemon's identities or its authority
     // frames — see RESERVED_SENDERS above. 422 like every other body rejection.
+<<<<<<< /tmp/mf-ours
     // BUG-032: compare the Cf-stripped sender, so "human​" (zero-width space)
     // can't stand in for a reserved name. Cf characters are themselves refused
     // by FROM_UNSAFE_RE below; this catches the ones that would have mattered.
@@ -434,6 +440,17 @@ export function createMail(ctx) {
     }
     if (from != null && FROM_UNSAFE_RE.test(String(from))) {
       return { status: 422, body: { ok: false, reason: 'sender name may not contain control characters, newlines, or [ ] delimiters' } };
+=======
+    const sender = from ?? 'board';
+    if (typeof sender !== 'string' || sender.length === 0) {
+      return { status: 422, body: { ok: false, reason: 'sender name must be a non-empty string' } };
+    }
+    if (RESERVED_SENDERS.has(sender.toLowerCase())) {
+      return { status: 422, body: { ok: false, reason: `sender name '${from}' is reserved for the daemon` } };
+    }
+    if (FROM_UNSAFE_RE.test(sender)) {
+      return { status: 422, body: { ok: false, reason: 'sender name may not contain control characters or newlines' } };
+>>>>>>> /tmp/mf-theirs
     }
 <<<<<<< /tmp/mf-ours
     if (RESERVED_FRAME_RE.test(stripFormatChars(String(text ?? '')))) {
@@ -473,8 +490,8 @@ export function createMail(ctx) {
       if (await ownedPaneDeliverable(sid)) return 'pane';
       return q.getSession.get(sid)?.ended_at != null ? 'offline-queued' : 'turn-boundary';
     }));
-    targets.forEach(sid => mail(sid, from || 'human', text));
-    tick(`✉ mail from ${from || 'human'} → ${to}`);
+    targets.forEach(sid => mail(sid, sender, text));
+    tick(`✉ mail from ${sender} → ${to}`);
     onMutate();
     // BUG 4: report truncation to the sender. All targets receive the same
     // text and share MAIL_MAX_LEN, so the clamp is computed once from the raw

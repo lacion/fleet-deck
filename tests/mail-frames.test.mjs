@@ -47,6 +47,33 @@ test('reserved sender names are refused; ordinary senders pass', async (t) => {
   assert.equal(ok.status, 200, 'a callsign sender is fine');
 });
 
+test('a falsy or non-string sender never becomes the reserved human identity (BUG-037)', async (t) => {
+  const daemon = await startDaemon();
+  t.after(() => daemon.stop());
+
+  const sid = randomUUID();
+  const cwd = scratchCwd();
+  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon });
+
+  // An omitted sender defaults to the non-reserved 'board' identity.
+  const omitted = await postJson(`${daemon.baseUrl}/mail`, { to: sid, text: 'hello' }, { token: daemon.token });
+  assert.equal(omitted.status, 200, 'omitted sender is accepted');
+
+  // Empty string, zero and false used to slip past the reserved check and be
+  // stored as 'human' — they are malformed senders now, never impersonations.
+  for (const from of ['', 0, false]) {
+    const res = await postJson(`${daemon.baseUrl}/mail`, { to: sid, from, text: 'impersonate me' }, { token: daemon.token });
+    assert.equal(res.status, 422, `falsy sender ${JSON.stringify(from)} must 422`);
+  }
+
+  const drained = await getJson(`${daemon.baseUrl}/mail?session=${encodeURIComponent(sid)}`);
+  const box = drained.json.mail ?? [];
+  assert.equal(box.length, 1, 'only the omitted-sender mail landed');
+  assert.equal(box[0].from, 'board', 'an omitted sender defaults to the non-reserved board identity');
+  assert.notEqual(box[0].from, 'human', 'the reserved human identity is never forged');
+});
+
 test('[FLEETDECK ...] frame prefixes are refused in external mail text', async (t) => {
   const daemon = await startDaemon();
   t.after(() => daemon.stop());
