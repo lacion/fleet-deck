@@ -221,3 +221,71 @@ test('dismiss resolves callsign through the session lookup instead of a nonexist
   assert.deepEqual(questions.dismiss(row.id), { ok: true, callsign: 'viper' });
   db.close();
 });
+
+// ---------------------------------------------------------------------------
+// BUG-137: mail-delivered answers (freeform + re-armed holds) must not be
+// silently truncated. mail() clamps at MAIL_MAX_LEN and reports
+// {truncated:true}, but the answer paths used to ignore the receipt and settle
+// the row anyway — the human got "answer queued", the agent got a truncated
+// instruction, and the question was gone. Oversized framed answers are now
+// rejected (413) BEFORE settle: the row stays pending and nothing is mailed.
+// mailMaxLen is shrunk here so the tests don't have to build 4 KB bodies.
+// ---------------------------------------------------------------------------
+test('BUG-137: an oversized freeform answer is rejected 413 and the question stays pending', () => {
+  const db = openDb(':memory:');
+  const mailed = [];
+  const questions = createQuestions(db, {
+    mail: (sid, from, text) => mailed.push({ sid, from, text }),
+    mailMaxLen: 120,
+  });
+  const row = questions.create('freeform', 's1', { text: 'Ship it?' });
+
+  const out = questions.answer(row.id, { text: 'yes — ' + 'x'.repeat(200) });
+
+  assert.equal(out.status, 413, 'an answer whose framed form exceeds the mailbox clamp is rejected');
+  assert.equal(out.body.ok, false);
+  assert.match(out.body.err, /too long/);
+  assert.equal(mailed.length, 0, 'nothing truncated ever reaches the mailbox');
+  assert.equal(questions.pendingOf('s1').length, 1, 'the question is still pending — the human can retry');
+  db.close();
+});
+
+test('BUG-137: an oversized re-armed hold answer is rejected 413; the row and its re-arm chain survive', () => {
+  const db = openDb(':memory:');
+  const mailed = [];
+  const questions = createQuestions(db, {
+    mail: (sid, from, text) => mailed.push({ sid, from, text }),
+    // The fixed re-arm frame ("[FLEETDECK ANSWER] permission (answered after
+    // the hold expired) Q: Run the migration? — A: allow") is ~95 code units —
+    // 80 puts even a bare decision over the clamp.
+    mailMaxLen: 80,
+    rearmGraceMs: 0, // chain bookkeeping only; no grace timers needed here
+  });
+  const row = questions.create('permission', 's1', { text: 'Run the migration?', rearmed: true });
+
+  const out = questions.answer(row.id, { behavior: 'allow' });
+
+  assert.equal(out.status, 413, 'even a short decision rejects when the fixed re-arm frame alone overflows');
+  assert.equal(out.body.ok, false);
+  assert.equal(mailed.length, 0, 'no truncated [FLEETDECK ANSWER] frame is mailed');
+  assert.equal(questions.pendingOf('s1').length, 1, 'the re-armed card stays on the rail');
+  db.close();
+});
+
+test('BUG-137: an answer that fits the clamp still settles and mails exactly as before', () => {
+  const db = openDb(':memory:');
+  const mailed = [];
+  const questions = createQuestions(db, {
+    mail: (sid, from, text) => mailed.push({ sid, from, text }),
+    mailMaxLen: 4000,
+  });
+  const row = questions.create('freeform', 's1', { text: 'Ship it?' });
+
+  const out = questions.answer(row.id, { text: 'yes, ship it' });
+
+  assert.equal(out.status, 200);
+  assert.equal(mailed.length, 1);
+  assert.match(mailed[0].text, /^\[FLEETDECK ANSWER\] Q: Ship it\? — A: yes, ship it$/);
+  assert.equal(questions.pendingOf('s1').length, 0, 'the question settled normally');
+  db.close();
+});

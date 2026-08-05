@@ -15,6 +15,7 @@
 // tell the sender the truth instead of quietly dropping the tail.
 <<<<<<< /tmp/mf-ours
 <<<<<<< /tmp/mf-ours
+<<<<<<< /tmp/mf-ours
 // Exported so commands.mjs can validate a fully framed command against the
 // very same cap BEFORE inserting any recipient rows (BUG-021) — one constant,
 // no drift between the clamp and the pre-flight check.
@@ -26,6 +27,10 @@
 // Exported so commands.mjs can validate a fully framed command against the
 // very same cap BEFORE inserting any recipient rows (BUG-021) — one constant,
 // no drift between the clamp and the pre-flight check.
+>>>>>>> /tmp/mf-theirs
+=======
+// Exported so questions.mjs can reject framed answers that would be clamped
+// (BUG-137) instead of settling the question over a truncated message.
 >>>>>>> /tmp/mf-theirs
 export const MAIL_MAX_LEN = 4000;
 // BUG 6: .slice() cuts by UTF-16 code UNIT, so a clamp landing between the two
