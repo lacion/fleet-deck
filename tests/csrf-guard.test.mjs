@@ -249,6 +249,34 @@ test('C1: same-origin gate on POSTs, WS upgrades, Host, and Content-Type', async
     assert.equal(cli.status, 200, 'a no-Origin watcher must still be served');
   });
 
+  // BUG-030: WHATWG URL normalizes an explicit default port away, so an Origin
+  // of plain http://127.0.0.1 / http://localhost (a page served by ANY other
+  // local service on :80) used to read as "port absent ⇒ allow". Against a
+  // daemon on a non-default port that opened the whole same-origin wall. The
+  // absent port must resolve to the SCHEME default (80/443), which is not our
+  // port — these must all 403/refuse. (The same-origin controls above already
+  // pin that the Origin carrying the real daemon port still succeeds.)
+  await t.test('a default-port loopback Origin is NOT same-origin with a non-default daemon port', async () => {
+    const bare = ['http://127.0.0.1', 'http://localhost'];
+    for (const o of bare) {
+      const get = await raw(port, { method: 'GET', path: '/mail?session=nobody', headers: { origin: o } });
+      assert.equal(get.status, 403, `mutating GET with Origin ${o} must be refused`);
+
+      const post = await raw(port, {
+        method: 'POST', path: '/mail',
+        headers: { ...JSON_CT, origin: o, authorization: `Bearer ${daemon.token}` },
+        parts: [JSON.stringify({ to: 'all', from: 'board', text: 'hi' })],
+      });
+      assert.equal(post.status, 403, `state-changing POST with Origin ${o} must be refused`);
+
+      const ws = await wsAttempt(`${baseUrl.replace(/^http/, 'ws')}/ws`, { headers: { origin: o } });
+      assert.equal(ws.outcome, 'refused', `WS upgrade with Origin ${o} must be refused`);
+    }
+    // https resolves its absent port to 443 — equally not our port.
+    const tls = await raw(port, { method: 'GET', path: '/mail?session=nobody', headers: { origin: 'https://127.0.0.1' } });
+    assert.equal(tls.status, 403, 'an https default-port Origin must be refused too');
+  });
+
   // Item-4 WS gaps, on RAW sockets so the forged headers actually reach the
   // server (the ws client silently drops Host / Sec-Fetch-Site). A control case
   // proves the guard is discriminating, not refusing every raw upgrade.

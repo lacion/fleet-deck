@@ -404,10 +404,20 @@ export function createHttp(core, {
   // value matches what isLoopbackAddress / the lanHosts set hold.
   const normHost = h => String(h || '').toLowerCase().replace(/^\[/, '').replace(/\]$/, '');
   // A parsed URL is ours when its hostname is loopback / an own LAN address /
-  // the .local name AND its port is our port (or absent, i.e. a default 80/443).
+  // the .local name AND its EFFECTIVE port is our port. WHATWG URL normalizes
+  // an explicit default port away (new URL('http://x:80').port === ''), so an
+  // absent port means the scheme default 80/443 — NOT "whatever port fleetd
+  // happens to listen on". Without resolving it, an Origin of plain
+  // http://127.0.0.1 (a page served by any other local service on :80) read
+  // as same-origin with a daemon on a non-default port, and the whole CSRF
+  // wall below fell open. (BUG-030)
+  function effectivePort(u) {
+    if (u.port) return u.port;
+    return u.protocol === 'https:' ? '443' : '80'; // Host-only parses under http://
+  }
   function hostAllowed(u) {
     const host = normHost(u.hostname);
-    return (isLoopbackAddress(host) || lanHosts.has(host)) && (u.port === '' || u.port === daemonPort);
+    return (isLoopbackAddress(host) || lanHosts.has(host)) && effectivePort(u) === daemonPort;
   }
   // The operator-named extension of "us" (see parseTrustedOrigins). Kept separate
   // from hostAllowed so that a deployment which configures nothing gets today's
