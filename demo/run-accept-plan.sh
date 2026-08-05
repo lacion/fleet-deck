@@ -9,12 +9,10 @@ set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FLEETDECK_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-PROJECT_DIR="$SCRIPT_DIR/project"
-SEED_UTIL="$PROJECT_DIR/.seed/util.js"
-UTIL_FILE="$PROJECT_DIR/util.js"
-TEST_FILE="$PROJECT_DIR/test.js"
+SEED_PROJECT="$SCRIPT_DIR/project"
 SESSIONSTART_SCRIPT="$FLEETDECK_ROOT/scripts/fleet-sessionstart.mjs"
 WATCH_SCRIPT="$FLEETDECK_ROOT/scripts/fleet-watch.mjs"
+<<<<<<< /tmp/mf-ours
 FLEET_HOOK_SCRIPT="$FLEETDECK_ROOT/scripts/fleet-hook.mjs"
 FLEETDECK_PORT=4711
 SCRATCH_HOME="$FLEETDECK_ROOT/.fleetdeck-test"
@@ -24,6 +22,16 @@ WINDOW_PREFIX="fd$FLEETDECK_PORT-"
 DAEMON_LOG="$SCRATCH_HOME/fleetd.log"
 PLAN_FILE="$SCRATCH_HOME/plan.md"
 EXECUTOR_SAMPLES="$SCRATCH_HOME/executor-state-samples.jsonl"
+=======
+
+# Assigned from mktemp after the cleanup trap is armed. An arbitrary override
+# is intentionally unsupported: cleanup recursively deletes these directories,
+# so each must be a unique path created by this run, never a caller-provided
+# target. A concurrent acceptance run must never reset, delete, or spawn into
+# this run's daemon home, evidence files, or fixture copy.
+SCRATCH_HOME=''
+PROJECT_DIR=''
+>>>>>>> /tmp/mf-theirs
 
 # Isolated tmux server for this run, NEVER the user's default server: tmux
 # bakes the first client's environment into a new server's global env, and
@@ -46,6 +54,16 @@ CLAUDE_ENV_SCRUB=(
 
 PASS=0
 FAIL=0
+SEED_UTIL="$SEED_PROJECT/.seed/util.js"
+UTIL_FILE=""
+TEST_FILE=""
+FLEETDECK_PORT=""
+BASE=""
+TMUX_SESSION=""
+WINDOW_PREFIX=""
+DAEMON_LOG=""
+PLAN_FILE=""
+EXECUTOR_SAMPLES=""
 DAEMON_PID=""
 PLANNER_SPAWN_ID=""
 PLANNER_SESSION_ID=""
@@ -106,7 +124,7 @@ cleanup_resources() {
 
   # Prefer the name-verified API while fleetd is alive. Both IDs came from
   # POST /api/spawn responses whose tmux session/window scopes were checked.
-  if [ -n "$DAEMON_PID" ] && kill -0 "$DAEMON_PID" 2>/dev/null; then
+  if [ -n "$DAEMON_PID" ] && kill -0 "$DAEMON_PID" 2>/dev/null && [ -n "$SCRATCH_HOME" ]; then
     force_kill_spawn "$PLANNER_SPAWN_ID" "$SCRATCH_HOME/cleanup-planner.json" >/dev/null
     force_kill_spawn "$EXECUTOR_SPAWN_ID" "$SCRATCH_HOME/cleanup-executor.json" >/dev/null
   fi
@@ -117,6 +135,7 @@ cleanup_resources() {
     tmux -L "$FLEETDECK_TMUX_SOCKET" kill-server 2>/dev/null || true
   fi
 
+<<<<<<< /tmp/mf-ours
   # Restore the pre-run bytes of every project file this gate touches (see
   # snapshot_project_files). Restoring the seed here instead would erase any
   # uncommitted local work the run overwrote.
@@ -145,6 +164,14 @@ cleanup_resources() {
   if [ -d "$PROJECT_DIR" ]; then
     find "$PROJECT_DIR" -mindepth 1 -maxdepth 1 -name '.pre-accept-*' -exec rm -rf {} + 2>/dev/null || true
   fi
+=======
+  if [ -n "$UTIL_FILE" ] && [ -f "$SEED_UTIL" ]; then
+    cp "$SEED_UTIL" "$UTIL_FILE" 2>/dev/null || true
+  fi
+  if [ -n "$TEST_FILE" ]; then
+    rm -f "$TEST_FILE"
+  fi
+>>>>>>> /tmp/mf-theirs
 
   if [ -n "$DAEMON_PID" ] && kill -0 "$DAEMON_PID" 2>/dev/null; then
     kill "$DAEMON_PID" 2>/dev/null || true
@@ -152,6 +179,14 @@ cleanup_resources() {
       kill -0 "$DAEMON_PID" 2>/dev/null || break
       sleep 0.25
     done
+  fi
+
+  # These are mktemp directories created by this run; safe to remove in full.
+  if [ -n "$SCRATCH_HOME" ]; then
+    rm -rf -- "$SCRATCH_HOME"
+  fi
+  if [ -n "$PROJECT_DIR" ]; then
+    rm -rf -- "$PROJECT_DIR"
   fi
 }
 
@@ -234,6 +269,7 @@ trap 'cleanup_resources; exit 130' INT
 echo "== Fleet Deck v1.3 live plan acceptance =="
 
 # --------------------------------------------------------------- reset
+<<<<<<< /tmp/mf-ours
 <<<<<<< /tmp/mf-ours
 # Stop recorded daemons only after their fleetd identity is proven (strict
 # pidfile + /health.pid + /proc shape — the production verifyDaemonPid gate).
@@ -334,6 +370,47 @@ if curl -s -m 1 "$BASE/health" >/dev/null 2>&1; then
   exit 1
 >>>>>>> /tmp/mf-theirs
 fi
+=======
+# Every mutable resource is unique to this run: an mktemp'd daemon home, an
+# mktemp'd copy of the demo fixture project, and a verified-free port — so a
+# concurrent acceptance run can never reset, delete, or spawn into this run's
+# state. Nothing here touches the production daemon or any other run.
+
+SCRATCH_HOME="$(mktemp -d "${TMPDIR:-/tmp}/fleetdeck-plan.XXXXXX")" || {
+  echo "ABORT: could not create a unique acceptance home"
+  exit 1
+}
+PROJECT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/fleetdeck-plan-project.XXXXXX")" || {
+  echo "ABORT: could not create a unique fixture project"
+  exit 1
+}
+cp -R "$SEED_PROJECT/." "$PROJECT_DIR/"
+SEED_UTIL="$PROJECT_DIR/.seed/util.js"
+UTIL_FILE="$PROJECT_DIR/util.js"
+TEST_FILE="$PROJECT_DIR/test.js"
+
+# Verified-free port, kernel-assigned on loopback. Never 4711 and never a
+# port with an existing listener: this run must not kill, force-clear, or
+# share a port with the production daemon or another acceptance run.
+FLEETDECK_PORT="$(node -e '
+  const net = require("node:net");
+  const probe = net.createServer();
+  probe.once("error", () => process.exit(1));
+  probe.listen(0, "127.0.0.1", () => {
+    process.stdout.write(String(probe.address().port));
+    probe.close();
+  });
+')" || {
+  echo "ABORT: could not allocate a free port"
+  exit 1
+}
+BASE="http://127.0.0.1:$FLEETDECK_PORT"
+TMUX_SESSION="fleetdeck-$FLEETDECK_PORT"
+WINDOW_PREFIX="fd$FLEETDECK_PORT-"
+DAEMON_LOG="$SCRATCH_HOME/fleetd.log"
+PLAN_FILE="$SCRATCH_HOME/plan.md"
+EXECUTOR_SAMPLES="$SCRATCH_HOME/executor-state-samples.jsonl"
+>>>>>>> /tmp/mf-theirs
 
 # Reset only this run's isolated tmux server (a per-pid socket, so normally a
 # no-op); never enumerate or touch the default server's sessions or windows.
@@ -341,6 +418,7 @@ if command -v tmux >/dev/null 2>&1; then
   tmux -L "$FLEETDECK_TMUX_SOCKET" kill-server 2>/dev/null || true
 fi
 
+<<<<<<< /tmp/mf-ours
 # Gate 1 launches a scratch daemon and then lets it spawn and control real
 # (billed) Claude sessions. Readiness is therefore bound to the child this
 # script launches: if anything still owns the port after the reset, refuse
@@ -357,6 +435,11 @@ if ! snapshot_project_files; then
   exit 1
 fi
 apply_gate_fixture
+=======
+mkdir -p "$PROJECT_DIR/.claude"
+cp "$SEED_UTIL" "$UTIL_FILE"
+rm -f "$TEST_FILE"
+>>>>>>> /tmp/mf-theirs
 
 # Regenerate the proven local demo hook wiring. The Stop command hook keeps
 <<<<<<< /tmp/mf-ours

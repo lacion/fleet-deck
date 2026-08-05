@@ -12,8 +12,7 @@ set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FLEETDECK_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-PROJECT_DIR="$SCRIPT_DIR/project"
-DEMO_LOGS="$SCRIPT_DIR/demo-logs"
+SEED_PROJECT="$SCRIPT_DIR/project"
 SESSIONSTART_SCRIPT="$FLEETDECK_ROOT/scripts/fleet-sessionstart.mjs"
 FLEET_HOOK_SCRIPT="$FLEETDECK_ROOT/scripts/fleet-hook.mjs"
 FLEETDECK_PORT="${FLEETDECK_PORT:-4711}"
@@ -28,6 +27,7 @@ BASE="http://127.0.0.1:$FLEETDECK_PORT"
 # production spawn) created there later.
 export FLEETDECK_TMUX_SOCKET="fdaccept-$$"
 
+<<<<<<< /tmp/mf-ours
 # Stop the scratch daemon this run's SessionStart hooks elect (if one comes
 # up): the SessionStart-launched fleetd runs detached and unref'd, so nothing
 # else will ever reclaim it. Signal only the process proven by BOTH this run's
@@ -138,6 +138,26 @@ trap overall_deadline ALRM
 DEADLINE_PID=$!
 trap cleanup_tmux_server EXIT
 >>>>>>> /tmp/mf-theirs
+=======
+# Per-run unique evidence dir + fixture copy: a concurrent acceptance run
+# must never reset, delete, or report against this run's artifacts.
+WORK_ROOT=''
+DEMO_LOGS=''
+TRANSCRIPT_PREFIX="fdp3-$$"
+
+# Kill the isolated tmux server (if anything ever spawned into it) with the
+# run; the default server is never touched. Also remove this run's mktemp'd
+# fixture/evidence copy — a unique path created below, never a shared one.
+cleanup_resources() {
+  command -v tmux >/dev/null 2>&1 && \
+    tmux -L "$FLEETDECK_TMUX_SOCKET" kill-server 2>/dev/null || true
+  if [ -n "$WORK_ROOT" ]; then
+    rm -rf -- "$WORK_ROOT"
+  fi
+  rm -rf -- "$HOME/.claude/projects/$TRANSCRIPT_PREFIX"
+}
+trap cleanup_resources EXIT
+>>>>>>> /tmp/mf-theirs
 
 # Claude-session env vars that must never leak into the sessions (and through
 # their SessionStart hook, into the elected daemon): a daemon or tmux server
@@ -192,6 +212,7 @@ run_with_timeout() {
 }
 
 # ---------------------------------------------------------------- reset
+<<<<<<< /tmp/mf-ours
 <<<<<<< /tmp/mf-ours
 # Stop recorded daemons only after their fleetd identity is proven (strict
 # pidfile + /health.pid + /proc shape — the production verifyDaemonPid gate).
@@ -301,6 +322,40 @@ rm -f "$DEMO_LOGS"/p3-*.json "$DEMO_LOGS"/p3-*.err
 rm -f "$PERM_PROOF_PRE"
 [ -f "$PERM_PROOF" ] && cp "$PERM_PROOF" "$PERM_PROOF_PRE"
 rm -f "$PERM_PROOF"
+=======
+# The destructive reset is allowed ONLY when the scratch home is the
+# script's own default (.fleetdeck-test): that directory belongs to these
+# acceptance runs, and the pid inside it was started by an earlier run of
+# this same gate. With FLEETDECK_HOME_OVERRIDE set the home is caller-owned
+# state, so this script never kills its pidfile or deletes it — a stale
+# pidfile is still ignored (fleetd claims it atomically at boot).
+SCRATCH_DEFAULTED=0
+if [ -z "${FLEETDECK_HOME_OVERRIDE:-}" ]; then
+  SCRATCH_DEFAULTED=1
+fi
+if [ "$SCRATCH_DEFAULTED" -eq 1 ]; then
+  [ -f "$SCRATCH_HOME/fleetd.pid" ] && kill "$(cat "$SCRATCH_HOME/fleetd.pid" 2>/dev/null)" 2>/dev/null
+  sleep 0.5
+  rm -rf "$SCRATCH_HOME"
+fi
+if curl -s -m 1 "$BASE/health" > /dev/null 2>&1; then
+  echo "ABORT: something is listening on :$FLEETDECK_PORT — this run never kills another listener; free the port or set FLEETDECK_PORT."
+  exit 1
+fi
+mkdir -p "$SCRATCH_HOME"
+
+# Unique fixture copy + evidence dir for this run (mktemp'd, removed by the
+# EXIT trap): two overlapping Phase 3 runs each edit and log to their own.
+WORK_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/fleetdeck-p3.XXXXXX")" || {
+  echo "ABORT: could not create a unique fixture/evidence dir"
+  exit 1
+}
+PROJECT_DIR="$WORK_ROOT/project"
+DEMO_LOGS="$WORK_ROOT/demo-logs"
+mkdir -p "$PROJECT_DIR" "$DEMO_LOGS"
+cp -R "$SEED_PROJECT/." "$PROJECT_DIR/"
+rm -f "$PROJECT_DIR/fleet-perm-proof.txt"
+>>>>>>> /tmp/mf-theirs
 
 # Same proven wiring as run-smoke.sh (incl. PermissionRequest/Elicitation 65s).
 # Every hook uses the current checkout's authenticated command shim. Native
@@ -456,6 +511,7 @@ else
   bad "board answer reached the session at its next boundary" "argon2 not referenced in resume output"
 fi
 <<<<<<< /tmp/mf-ours
+<<<<<<< /tmp/mf-ours
 # Claude Code stores sessions under ${CLAUDE_CONFIG_DIR:-$HOME/.claude} —
 # honor the override or a contributor with it set gets a false "missing relay".
 TRANSCRIPT_ROOT="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
@@ -464,6 +520,9 @@ TRANSCRIPT_DIR="$TRANSCRIPT_ROOT/projects/$(echo "$PROJECT_DIR" | sed 's|/|-|g')
 TRANSCRIPT_ROOT="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 MUNGED_PROJECT=$(node --input-type=module -e "import { mungeClaudeProjectCwd } from '$FLEETDECK_ROOT/scripts/fleetd/helpers.mjs'; console.log(mungeClaudeProjectCwd(process.argv[1]))" "$PROJECT_DIR")
 TRANSCRIPT_DIR="$TRANSCRIPT_ROOT/projects/$MUNGED_PROJECT"
+>>>>>>> /tmp/mf-theirs
+=======
+TRANSCRIPT_DIR="$HOME/.claude/projects/$TRANSCRIPT_PREFIX$(echo "$PROJECT_DIR" | sed 's|/|-|g')"
 >>>>>>> /tmp/mf-theirs
 if grep -q "FLEETDECK ANSWER" "$TRANSCRIPT_DIR/$S2.jsonl" 2>/dev/null; then
   ok "[FLEETDECK ANSWER] visible in resumed session transcript"

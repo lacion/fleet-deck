@@ -9,9 +9,10 @@ set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FLEETDECK_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-PROJECT_DIR="$SCRIPT_DIR/project"
+SEED_PROJECT="$SCRIPT_DIR/project"
 SESSIONSTART_SCRIPT="$FLEETDECK_ROOT/scripts/fleet-sessionstart.mjs"
 WATCH_SCRIPT="$FLEETDECK_ROOT/scripts/fleet-watch.mjs"
+<<<<<<< /tmp/mf-ours
 FLEET_HOOK_SCRIPT="$FLEETDECK_ROOT/scripts/fleet-hook.mjs"
 FLEETDECK_PORT=4711
 SCRATCH_HOME="$FLEETDECK_ROOT/.fleetdeck-test"
@@ -19,6 +20,16 @@ BASE="http://127.0.0.1:$FLEETDECK_PORT"
 TMUX_SESSION="fleetdeck-$FLEETDECK_PORT"
 WINDOW_PREFIX="fd$FLEETDECK_PORT-"
 OUTPUT_FILE="$PROJECT_DIR/spawn-accept-done.txt"
+=======
+
+# Assigned from mktemp after the cleanup trap is armed. An arbitrary override
+# is intentionally unsupported: cleanup recursively deletes these directories,
+# so each must be a unique path created by this run, never a caller-provided
+# target. A concurrent acceptance run must never reset, delete, or spawn into
+# this run's daemon home, evidence files, or fixture copy.
+SCRATCH_HOME=''
+PROJECT_DIR=''
+>>>>>>> /tmp/mf-theirs
 
 # Isolated tmux server for this run, NEVER the user's default server: tmux
 # bakes the first client's environment into a new server's global env, and
@@ -38,10 +49,15 @@ CLAUDE_ENV_SCRUB=(
   -u AI_AGENT -u CODEX_COMPANION_SESSION_ID -u CODEX_COMPANION_TRANSCRIPT_PATH
   -u TMUX -u TMUX_PANE
 )
-DAEMON_LOG="$SCRATCH_HOME/fleetd.log"
 
 PASS=0
 FAIL=0
+FLEETDECK_PORT=""
+BASE=""
+TMUX_SESSION=""
+WINDOW_PREFIX=""
+OUTPUT_FILE=""
+DAEMON_LOG=""
 DAEMON_PID=""
 SPAWN_ID=""
 SESSION_ID=""
@@ -80,7 +96,9 @@ cleanup_resources() {
   [ "$CLEANUP_DONE" -eq 0 ] || return 0
   CLEANUP_DONE=1
 
-  rm -f "$OUTPUT_FILE"
+  if [ -n "$OUTPUT_FILE" ]; then
+    rm -f "$OUTPUT_FILE"
+  fi
 
   if [ -n "$DAEMON_PID" ] && kill -0 "$DAEMON_PID" 2>/dev/null; then
     kill "$DAEMON_PID" 2>/dev/null || true
@@ -95,6 +113,14 @@ cleanup_resources() {
   if command -v tmux >/dev/null 2>&1; then
     tmux -L "$FLEETDECK_TMUX_SOCKET" kill-server 2>/dev/null || true
   fi
+
+  # These are mktemp directories created by this run; safe to remove in full.
+  if [ -n "$SCRATCH_HOME" ]; then
+    rm -rf -- "$SCRATCH_HOME"
+  fi
+  if [ -n "$PROJECT_DIR" ]; then
+    rm -rf -- "$PROJECT_DIR"
+  fi
 }
 
 trap cleanup_resources EXIT
@@ -102,6 +128,7 @@ trap cleanup_resources EXIT
 echo "== Fleet Deck v1.2 live spawn acceptance =="
 
 # --------------------------------------------------------------- reset
+<<<<<<< /tmp/mf-ours
 <<<<<<< /tmp/mf-ours
 # Stop recorded daemons only after their fleetd identity is proven (strict
 # pidfile + /health.pid + /proc shape — the production verifyDaemonPid gate).
@@ -202,9 +229,45 @@ if curl -s -m 1 "$BASE/health" >/dev/null 2>&1; then
   exit 1
 >>>>>>> /tmp/mf-theirs
 fi
+=======
+# Every mutable resource is unique to this run: an mktemp'd daemon home, an
+# mktemp'd copy of the demo fixture project, and a verified-free port — so a
+# concurrent acceptance run can never reset, delete, or spawn into this run's
+# state. Nothing here touches the production daemon or any other run.
 
-rm -rf "$SCRATCH_HOME"
-mkdir -p "$SCRATCH_HOME" "$PROJECT_DIR/.claude"
+SCRATCH_HOME="$(mktemp -d "${TMPDIR:-/tmp}/fleetdeck-spawn.XXXXXX")" || {
+  echo "ABORT: could not create a unique acceptance home"
+  exit 1
+}
+PROJECT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/fleetdeck-spawn-project.XXXXXX")" || {
+  echo "ABORT: could not create a unique fixture project"
+  exit 1
+}
+cp -R "$SEED_PROJECT/." "$PROJECT_DIR/"
+
+# Verified-free port, kernel-assigned on loopback. Never 4711 and never a
+# port with an existing listener: this run must not kill, force-clear, or
+# share a port with the production daemon or another acceptance run.
+FLEETDECK_PORT="$(node -e '
+  const net = require("node:net");
+  const probe = net.createServer();
+  probe.once("error", () => process.exit(1));
+  probe.listen(0, "127.0.0.1", () => {
+    process.stdout.write(String(probe.address().port));
+    probe.close();
+  });
+')" || {
+  echo "ABORT: could not allocate a free port"
+  exit 1
+}
+BASE="http://127.0.0.1:$FLEETDECK_PORT"
+TMUX_SESSION="fleetdeck-$FLEETDECK_PORT"
+WINDOW_PREFIX="fd$FLEETDECK_PORT-"
+OUTPUT_FILE="$PROJECT_DIR/spawn-accept-done.txt"
+DAEMON_LOG="$SCRATCH_HOME/fleetd.log"
+>>>>>>> /tmp/mf-theirs
+
+mkdir -p "$PROJECT_DIR/.claude"
 rm -f "$OUTPUT_FILE"
 
 # Regenerate the proven local demo hook wiring. The Stop command hook keeps
