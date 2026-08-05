@@ -53,15 +53,28 @@ FLEETDECK_PORT=4712 FLEETDECK_HOME=/tmp/fd-scratch npm start
 ```bash
 cd board
 npm install                 # board has its own dependency tree
-npm run dev                 # Vite dev server on http://127.0.0.1:5173
+FLEETDECK_PORT=4712 npm run dev   # Vite dev server on http://127.0.0.1:5173
 ```
 
 Vite proxies the daemon's endpoints so the dev board talks to a real fleetd:
 `/state`, `/health`, `/mail`, `/command`, `/api`, and the `/ws` (plus `/ws/term`)
-WebSocket upgrades all forward to `127.0.0.1:4711`. The proxy also rewrites the
-`Origin` header to the daemon's own address, because fleetd's C1 gate rejects
-any request whose Origin isn't itself — verify the exact list and the reasoning
-in `board/vite.config.js` before you touch it.
+WebSocket upgrades all forward to `127.0.0.1:$FLEETDECK_PORT` (default 4711).
+The proxy also rewrites the `Origin` header to the daemon's own address, because
+fleetd's C1 gate rejects any request whose Origin isn't itself — verify the
+exact list and the reasoning in `board/vite.config.js` before you touch it.
+
+**Export `FLEETDECK_PORT` for BOTH commands.** The Vite proxy reads the same
+variable the daemon does, but each command above is its own shell invocation —
+if you start the scratch daemon on 4712 and then run a bare `npm run dev`, the
+dev board proxies to 4711 and you are reading and mutating your REAL fleet
+(mail, commands, API writes, terminal input) while believing you're isolated.
+Safest is one export for the session:
+
+```bash
+export FLEETDECK_PORT=4712
+FLEETDECK_HOME=/tmp/fd-scratch npm start   # in one terminal
+cd board && npm run dev                    # in another
+```
 
 ## Tests
 
