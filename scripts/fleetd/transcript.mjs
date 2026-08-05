@@ -120,12 +120,29 @@ export function lastAssistantText(transcriptPath, { maxBytes = 2_000_000 } = {})
 //     from EOF. Most hook events therefore read 16 KB rather than 256 KB.
 function scanForModel(transcriptPath, maxBytes, minOffset) {
   const it = tailLines(transcriptPath, { maxBytes });
+  let newest = true;
   for (const { line, offset } of it) {
     // Cheap reject before JSON.parse: a tool_result line can be hundreds of KB
     // and parsing it just to discard it is the whole cost of this function.
-    if (!line.includes('"assistant"') || !line.includes('"model"')) continue;
+    // WHY: the newest row must still be parsed unconditionally so a partial
+    // append cannot resurrect an older turn's model (the same contract
+    // lastAssistantText enforces for text); only older rows get the cheap
+    // pre-parse reject.
+    const maybeAssistant = line.includes('"assistant"') && line.includes('"model"');
+    if (!newest && !maybeAssistant) continue;
     let entry;
-    try { entry = JSON.parse(line); } catch { continue; }
+    try { entry = JSON.parse(line); } catch {
+      // The newest non-empty line may still be in the middle of an append.
+      // Falling through to an older assistant turn reports a STALE model —
+      // and derive.mjs would cache it until the next size change — so "not
+      // stable yet" is represented as no result. Corruption deeper in history
+      // stays best-effort-skippable.
+      if (newest) return { model: null, found: false, truncated: false };
+      newest = false;
+      continue;
+    }
+    newest = false;
+    if (!maybeAssistant) continue;
     if (entry?.type !== 'assistant' || entry.isSidechain === true) continue; // a subagent is not the main thread
     const model = entry.message?.model;
     if (typeof model !== 'string' || !model.trim()) continue;

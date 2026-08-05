@@ -21,7 +21,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { lastAssistantModel, lastAssistantText, tailLines } from '../scripts/fleetd/transcript.mjs';
@@ -118,6 +118,25 @@ test('a transcript with no assistant model at all yields null, not a guess', () 
   assert.equal(lastAssistantModel(file), null);
 });
 
+test('partial append: a truncated newest line yields no model, not an older one', () => {
+  const dir = makeTranscriptDir();
+  const file = writeTranscriptLines(dir, 's7', [
+    userLine(), assistantLine({ model: FABLE }),
+  ]);
+  // Mid-append of the NEXT turn (say, a /model switch to opus): the newest
+  // line is truncated JSON. lastAssistantText already answers "no evidence
+  // yet" here; the model reader must hold the same contract, or derive.mjs
+  // caches the stale FABLE until the next size change.
+  appendFileSync(file, '{"type":"assistant","message":{"model":"claude-opus-4-8"'); // no newline, no closing braces
+  assert.equal(lastAssistantModel(file), null);
+  assert.equal(lastAssistantText(file), null); // same fixture, same contract
+
+  // The append completes — a normal write, newline-terminated — and the real
+  // model shows up.
+  appendFileSync(file, ',"content":[]}}\n');
+  assert.equal(lastAssistantModel(file), OPUS);
+});
+
 test('best-effort: absent, empty and corrupt transcripts return null and never throw', () => {
   const dir = makeTranscriptDir();
 
@@ -128,13 +147,16 @@ test('best-effort: absent, empty and corrupt transcripts return null and never t
   writeFileSync(empty, '');
   assert.equal(lastAssistantModel(empty), null);
 
-  // Garbage lines are skipped, and a good line after them still wins.
+  // Garbage lines DEEP in history are skipped, and a good line older than
+  // them still wins. The truncated row sits below a complete, parseable
+  // newest row — an unparseable NEWEST line is a partial append, which the
+  // "partial append" test above pins to null instead.
   const mixed = path.join(dir, 'mixed.jsonl');
   writeFileSync(mixed, [
     'not json at all',
-    '{"type":"assistant","message":{"model":',   // truncated JSON
     JSON.stringify(assistantLine({ model: OPUS })),
-    '{{{',
+    '{"type":"assistant","message":{"model":',   // truncated JSON, mid-history
+    JSON.stringify(userLine()),                  // complete newest row
   ].join('\n') + '\n');
   assert.equal(lastAssistantModel(mixed), OPUS);
 });
