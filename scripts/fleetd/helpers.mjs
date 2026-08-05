@@ -176,8 +176,12 @@ export function chmodWritableWhereOwned(root) {
       let st;
       try { st = fs.lstatSync(full); } catch { continue; }
       if (uid != null && st.uid !== uid) continue; // not ours — leave it alone
+      // chmodSync follows links — a symlink we own can point OUTSIDE the
+      // worktree, so it must be skipped before any chmod, not merely excluded
+      // from recursion below.
+      if (entry.isSymbolicLink()) continue;
       try { fs.chmodSync(full, st.mode | 0o200); } catch { /* best effort */ }
-      if (entry.isDirectory() && !entry.isSymbolicLink()) walk(full, depth + 1);
+      if (entry.isDirectory()) walk(full, depth + 1);
     }
   };
   try { walk(root); } catch { /* best effort: the retry will tell the truth */ }
