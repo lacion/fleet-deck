@@ -25,6 +25,7 @@ import {
   imageFromClipboard,
   isTermCopyChord,
   isTermPasteChord,
+  pasteTextSafe,
   unwrapTmuxPassthrough,
   termChordHints,
   batchTotal,
@@ -720,8 +721,8 @@ test('the headless image paste survives the Ctrl+V change', () => {
   const src = readFileSync(path.join(HERE, '..', 'board', 'src', 'components', 'TermPane.jsx'), 'utf8');
   assert.match(src, /screenEl\.addEventListener\('paste', onPaste, true\)/,
     'the image-paste listener must stay in the CAPTURE phase — xterm handles paste on the textarea below it');
-  assert.match(src, /if \(!item\) return;/,
-    'a text paste must fall through to xterm untouched');
+  assert.match(src, /if \(!item\) \{/,
+    'a text paste must enter the text branch and fall through to xterm when safe');
   assert.match(src, /sendIn\(res\.json\.path \+ ' '\)/,
     'the uploaded image must reach the pane as a PATH — the agent cannot read a clipboard');
   assert.ok(src.includes('press Enter to send'),

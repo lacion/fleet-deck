@@ -567,6 +567,32 @@ export function imageFromClipboard(items) {
   return null;
 }
 
+// ----------------------------------------------------------- paste-line gate
+
+// May this text be pasted into the pane as-is?
+//
+// xterm brackets a paste (ESC[200~ … ESC[201~) ONLY while the program in the
+// pane has enabled DEC private mode 2004 — and the board cannot know it has.
+// A fresh viewer seeds its screen from `capture-pane`, which carries CELLS, not
+// terminal mode state, so the emulator comes up with bracketedPasteMode false
+// even when the agent had asked for it. And some panes never ask: a shell that
+// does not enable bracketed paste (/bin/dash, a fresh sh) receives xterm's
+// paste verbatim, newlines and all — and a newline IS a submit. Pasting
+//
+//   echo ok
+//   rm -rf ~
+//
+// into such a pane does not land as one reviewable block; the shell executes
+// each line as it arrives. Multi-line text is therefore only safe to hand to
+// xterm when bracketed-paste mode is KNOWN on; single-line text is always safe
+// (a paste must never submit on its own, and with no newline it cannot).
+//
+// Pure — TermPane passes term.modes?.bracketedPasteMode and the clipboard's
+// text — so the rule itself is testable without a DOM.
+export function pasteTextSafe(text, bracketed) {
+  return !!bracketed || !/[\r\n]/.test(String(text ?? ''));
+}
+
 // ---------------------------------------------- tmux passthrough (OSC 52 only)
 
 // Built from char codes, never written literally: an ESC in source is an
@@ -677,8 +703,11 @@ export function isTermCopyChord(e, isMac = isMacUA()) {
 // The caller must NOT preventDefault: the whole trick is to stop xterm turning
 // the chord into ^V while letting the BROWSER perform its own native paste. The
 // resulting paste event is trusted, needs no clipboard-read permission, and
-// reaches xterm's own handler — which brackets it (ESC[200~) when the app asked
-// for bracketed paste, so a multi-line paste cannot submit itself line by line.
+// reaches xterm's own handler — which brackets it (ESC[200~) ONLY when the app
+// asked for bracketed paste (DEC mode 2004) and this emulator knows it did.
+// Where that is not knowable — a fresh capture-pane-seeded viewer, or a shell
+// that never enables 2004 — pasteTextSafe is the gate that keeps a multi-line
+// paste from submitting itself line by line.
 //
 // On a Mac ⌘V is already the browser's paste and xterm never intercepts meta
 // chords, so there is nothing to claim.
