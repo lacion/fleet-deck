@@ -14,7 +14,6 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -22,7 +21,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { startDaemon } from './helpers/daemon.mjs';
-import { postHook, postJson, getJson } from './helpers/http.mjs';
+import { postHook, postJson, getJson, rawRequest } from './helpers/http.mjs';
 import { loadFixture } from './helpers/fixtures.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -260,17 +259,14 @@ test('fleet-hook.mjs fails open ({}) when the daemon is down', async (t) => {
 // token attaching — for asserting the forged-proxy bypass is closed.
 function rawHookPost(port, event, payload, headers = {}) {
   const body = JSON.stringify(payload);
-  return new Promise((resolve, reject) => {
-    const req = http.request({
-      host: '127.0.0.1', port, path: `/hook/${event}`, method: 'POST',
-      headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body), ...headers },
-    }, res => {
-      let text = '';
-      res.on('data', c => { text += c; });
-      res.on('end', () => { let json = null; try { json = JSON.parse(text); } catch { /* leave null */ } resolve({ status: res.statusCode, json, text }); });
-    });
-    req.on('error', reject);
-    req.end(body);
+  return rawRequest({
+    port, path: `/hook/${event}`, method: 'POST',
+    headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body), ...headers },
+    body,
+  }).then(({ status, text }) => {
+    let json = null;
+    try { json = JSON.parse(text); } catch { /* leave null */ }
+    return { status, json, text };
   });
 }
 

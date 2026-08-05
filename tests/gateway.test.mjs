@@ -28,7 +28,6 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, chmodSync } from 'node:fs';
@@ -37,7 +36,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { randomPort, startDaemon } from './helpers/daemon.mjs';
-import { postJson, getJson, postHook } from './helpers/http.mjs';
+import { postJson, getJson, postHook, rawRequest } from './helpers/http.mjs';
 import { waitForSpecRecords } from './helpers/wait.mjs';
 import { claudeTranscriptPath } from '../scripts/fleetd/helpers.mjs';
 import { openDb } from '../scripts/fleetd/db.mjs';
@@ -59,18 +58,11 @@ function scratchDir() {
 }
 
 function rawJsonPost(port, pathname, body, headers = {}) {
-  return new Promise((resolve, reject) => {
-    const payload = JSON.stringify(body);
-    const req = http.request({
-      host: '127.0.0.1', port, path: pathname, method: 'POST',
-      headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload), ...headers },
-    }, res => {
-      let text = '';
-      res.on('data', chunk => { text += chunk; });
-      res.on('end', () => resolve({ status: res.statusCode, text }));
-    });
-    req.on('error', reject);
-    req.end(payload);
+  const payload = JSON.stringify(body);
+  return rawRequest({
+    port, path: pathname, method: 'POST',
+    headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload), ...headers },
+    body: payload,
   });
 }
 

@@ -2,10 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import http, { createServer } from 'node:http';
+import { createServer } from 'node:http';
 import path from 'node:path';
 import { WebSocket } from 'ws';
 import { randomPort, spawnRaw, startDaemon } from './helpers/daemon.mjs';
+import { rawRequest } from './helpers/http.mjs';
 import { waitForResponse, nonInternalIpv4s, scaleMs } from './helpers/wait.mjs';
 
 const LAN_TOKEN = 'fleetdeck-lan-test-token-0123456789';
@@ -95,6 +96,7 @@ function refused(url) {
 // the request would look local, quietly passing whether or not the fix is
 // present. node:http honours the override, so the proxy hole is actually
 // exercised. Resolves { status, body } and never rejects on a non-2xx.
+<<<<<<< /tmp/mf-ours
 function rawGet(port, pathname, headers = {}, host = '127.0.0.1') {
   return new Promise((resolve, reject) => {
     const req = http.request(
@@ -108,6 +110,11 @@ function rawGet(port, pathname, headers = {}, host = '127.0.0.1') {
     req.on('error', reject);
     req.end();
   });
+=======
+function rawGet(port, pathname, headers = {}) {
+  return rawRequest({ port, path: pathname, method: 'GET', headers })
+    .then(({ status, text }) => ({ status, body: text }));
+>>>>>>> /tmp/mf-theirs
 }
 
 test('default bind preserves unauthenticated loopback health and hook traffic', async t => {
