@@ -321,14 +321,55 @@ function writeEnvFile() {
   return lines.length;
 }
 
+// systemd-UNIT PATH SAFETY. The two path-bearing directives below interpolate
+// REAL paths (the node binary, this script, FLEETDECK_HOME/service.env) that the
+// user does not control the shape of — Node under `nvm/v24 linux/node`, a
+// FLEETDECK_HOME with a space, a project dir named `100%`. Written bare, systemd
+// would word-split a spaced path into extra argv, treat `"`/`'` as quoting
+// syntax, and expand `%` as a specifier (`%i`, `%h`, ...) — so a valid install
+// produced a unit that fails to start or reads the wrong env file.
+//
+// Escaping follows systemd.syntax(7):
+//  - `%` → `%%` FIRST, in every directive. Specifier expansion runs before
+//    tokenization, so it must be neutralized before any quoting.
+//  - ExecStart: each argv token that is not already one literal word is wrapped
+//    in double quotes, with `"` and `\` backslash-escaped inside. Quoted or not,
+//    a token stays exactly one argv element — systemd never word-splits inside
+//    quotes, and the bare-safe charset excludes every separator.
+//  - EnvironmentFile: takes ONE path (no tokenization), so instead of quoting
+//    we REFUSE paths the unquoted grammar cannot carry: whitespace, quotes, or
+//    a backslash get a clear install-time error naming the path. Anything else
+//    (spaces excluded — refused) is literal to end-of-line.
+const UNIT_VALUE_UNSAFE = /[\s"'\\]/;
+
+function unitEscape(s) {
+  return s.replace(/%/g, '%%');
+}
+
+function unitArg(s) {
+  const escaped = unitEscape(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  return ENV_VALUE_BARE_SAFE.test(s) ? escaped : `"${escaped}"`;
+}
+
+function unitEnvFilePath(p) {
+  if (UNIT_VALUE_UNSAFE.test(p)) {
+    throw new Error(
+      `FLEETDECK_HOME resolves to ${p}, which the systemd EnvironmentFile directive cannot `
+      + `carry (whitespace, quotes, and backslashes are not quotable there). Point FLEETDECK_HOME `
+      + `at a path without those characters and re-run \`fleetdeck service install\`.`,
+    );
+  }
+  return unitEscape(p);
+}
+
 const UNIT = () => `[Unit]
 Description=Fleet Deck — the always-on board for your Claude Code fleet
 After=network.target
 
 [Service]
 Type=simple
-EnvironmentFile=-${ENV_FILE}
-ExecStart=${process.execPath} ${path.join(HERE, 'fleetdeck.mjs')} serve
+EnvironmentFile=-${unitEnvFilePath(ENV_FILE)}
+ExecStart=${unitArg(process.execPath)} ${unitArg(path.join(HERE, 'fleetdeck.mjs'))} serve
 Restart=always
 RestartSec=2
 # exit 3 is "another daemon already owns the port" — restarting is a hot loop.
@@ -613,10 +654,14 @@ if (IS_ENTRYPOINT) await main(process.argv.slice(2));
 // IS_ENTRYPOINT above), so importing is side-effect-free.
 <<<<<<< /tmp/mf-ours
 <<<<<<< /tmp/mf-ours
+<<<<<<< /tmp/mf-ours
 export { writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor, serviceInstall, UNIT, SUPERVISE, doctor, MIN_NODE_RANGE, nodeVersionSupported };
 =======
 export { writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, parseServiceEnvPort, serviceEnvPort, supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor, serviceInstall, UNIT, SUPERVISE, doctor };
 >>>>>>> /tmp/mf-theirs
 =======
 export { writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor, serviceInstall, UNIT, SUPERVISE, doctor, token };
+>>>>>>> /tmp/mf-theirs
+=======
+export { writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor, serviceInstall, UNIT, SUPERVISE, doctor, unitEscape, unitArg, unitEnvFilePath };
 >>>>>>> /tmp/mf-theirs

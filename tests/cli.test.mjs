@@ -34,6 +34,7 @@ const {
 <<<<<<< /tmp/mf-ours
   writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor,
 <<<<<<< /tmp/mf-ours
+<<<<<<< /tmp/mf-ours
   serviceInstall, UNIT, SUPERVISE, MIN_NODE_RANGE, nodeVersionSupported,
 =======
   writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, parseServiceEnvPort, serviceEnvPort,
@@ -42,6 +43,9 @@ const {
 >>>>>>> /tmp/mf-theirs
 =======
   serviceInstall, UNIT, SUPERVISE, token,
+>>>>>>> /tmp/mf-theirs
+=======
+  serviceInstall, UNIT, SUPERVISE, unitEscape, unitArg, unitEnvFilePath,
 >>>>>>> /tmp/mf-theirs
 } = await import(new URL('../bin/fleetdeck.mjs', import.meta.url));
 const { parseTmuxVersion, tmuxVersionCapability, tmuxVersionSupported } = await import(new URL('../bin/tmux-version.mjs', import.meta.url));
@@ -379,4 +383,51 @@ test('SUPERVISE(): sources the env file safely and backs off, never respawning a
   assert.ok(s.includes('-eq 0 ] && exit 0'), 'a clean SIGTERM shutdown is not respawned');
   assert.ok(s.includes('-eq 3 ] && exit 3'), 'a lost-port exit is not hot-looped');
   assert.ok(s.includes('serve'), 'execs `fleetdeck serve`');
+});
+
+// -------------------------------------------- systemd unit path escaping (BUG-077)
+//
+// The unit's two path-bearing directives interpolate REAL paths (node binary,
+// this script, FLEETDECK_HOME/service.env). Written bare, systemd word-splits a
+// spaced path, treats quotes as syntax, and expands `%` as a specifier — a
+// valid install then fails to start or reads the wrong env file.
+
+test('unitEscape: doubles every % so systemd specifier expansion is a no-op', () => {
+  assert.equal(unitEscape('/opt/100%/fleet deck'), '/opt/100%%/fleet deck');
+  assert.equal(unitEscape('%i%h%%'), '%%i%%h%%%%');
+  assert.equal(unitEscape('/plain/path'), '/plain/path', 'no % → unchanged');
+});
+
+test('unitArg: one literal argv word per token, whatever the path contains', () => {
+  // bare-safe paths stay byte-identical to older installs
+  assert.equal(unitArg('/usr/bin/node'), '/usr/bin/node');
+  assert.equal(unitArg('/home/dev/.fleetdeck'), '/home/dev/.fleetdeck');
+  // a spaced path must be quoted so systemd keeps it ONE argv element
+  assert.equal(unitArg('/opt/fleet deck/bin/node'), '"/opt/fleet deck/bin/node"');
+  // % is escaped BEFORE the bare/quoted decision (specifier expansion precedes
+  // tokenization); a %-only path is still one bare word, just with %% doubling
+  assert.equal(unitArg('/opt/100%/node'), '/opt/100%%/node');
+  assert.equal(unitArg('/opt/100% dir/node'), '"/opt/100%% dir/node"');
+  // embedded double quotes and backslashes are escaped inside the quotes
+  assert.equal(unitArg('/opt/we"ird/node'), '"/opt/we\\"ird/node"');
+  assert.equal(unitArg('C:\\Program Files\\node\\node.exe'), '"C:\\\\Program Files\\\\node\\\\node.exe"');
+});
+
+test('unitEnvFilePath: literal paths pass through (%-escaped); whitespace/quotes/backslash are refused', () => {
+  assert.equal(unitEnvFilePath('/home/dev/.fleetdeck/service.env'), '/home/dev/.fleetdeck/service.env');
+  assert.equal(unitEnvFilePath('/home/100%/.fleetdeck/service.env'), '/home/100%%/.fleetdeck/service.env');
+  for (const bad of ['/home/fleet deck/service.env', '/home/we"ird/service.env', "/home/we'ird/service.env", '/home/we\\ird/service.env']) {
+    assert.throws(
+      () => unitEnvFilePath(bad),
+      (e) => e instanceof Error && /EnvironmentFile/.test(e.message) && /FLEETDECK_HOME/.test(e.message),
+      `${JSON.stringify(bad)} must be refused with an install-time error naming the knob`,
+    );
+  }
+});
+
+test('UNIT(): normal paths stay byte-identical to the pre-fix unit (bare, no % present)', () => {
+  const u = UNIT();
+  assert.ok(u.includes(`EnvironmentFile=-${ENV_FILE}`), 'env file directive unchanged for a normal path');
+  assert.ok(u.includes(`ExecStart=${process.execPath} `), 'node binary stays bare when the path is safe');
+  assert.doesNotMatch(u, /%%/, 'no escaping noise when no path needs it');
 });
