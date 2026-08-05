@@ -228,6 +228,7 @@ test('read, list, search-hit, and binary caps shape bounded responses', async t 
 });
 
 <<<<<<< /tmp/mf-ours
+<<<<<<< /tmp/mf-ours
 test('list bounds lstat work, not just response size, in oversized directories (BUG-114)', async t => {
   const plain = makePlainDir();
   t.after(() => plain.cleanup());
@@ -262,17 +263,37 @@ test('truncated git listings still mark gitignored entries in the returned page'
   writeFileSync(path.join(repo.worktree, '.gitignore'), '*.ignored\n');
   writeFileSync(path.join(repo.worktree, 'aaa-secret.ignored'), 'truncation must not hide ignore status\n');
   for (let i = 0; i < 8; i += 1) writeFileSync(path.join(repo.worktree, `file-${i}.txt`), 'filler\n');
+=======
+test('truncated git listings still mark gitignored entries ignored:true', async t => {
+  // Regression: check-ignore used to run only when the listing was NOT
+  // truncated, so a gitignored name inside the kept LIST_MAX slice came back
+  // ignored:false while the same name was ignored:true in a full listing.
+  const repo = makeRepoWithWorktree({ repoName: 'fleetdeck-truncated-ignores' });
+  writeFileSync(path.join(repo.worktree, '.gitignore'), 'mid.ignored\n');
+  writeFileSync(path.join(repo.worktree, 'mid.ignored'), 'must stay annotated\n');
+  for (const name of ['a1.txt', 'a2.txt', 'z1.txt', 'z2.txt', 'z3.txt']) {
+    writeFileSync(path.join(repo.worktree, name), 'filler\n');
+  }
+>>>>>>> /tmp/mf-theirs
   const daemon = await startDaemon({ env: { FLEETDECK_FS_LIST_MAX: '5' } });
   t.after(async () => { await daemon.stop(); repo.cleanup(); });
   seedSession(daemon.home, repo.root, { spawnPath: repo.worktree });
 
   const listed = await getJson(endpoint(daemon.baseUrl, 'fs-session', 'list'));
   assert.equal(listed.status, 200);
+<<<<<<< /tmp/mf-ours
   assert.equal(listed.json.git, true);
   assert.equal(listed.json.truncated, true);
   assert.equal(listed.json.entries.length, 5);
   const ignored = listed.json.entries.find(entry => entry.name === 'aaa-secret.ignored');
   assert.ok(ignored, 'gitignored file sorts into the returned page');
+  assert.equal(ignored.ignored, true);
+>>>>>>> /tmp/mf-theirs
+=======
+  assert.equal(listed.json.truncated, true);
+  assert.equal(listed.json.entries.length, 5);
+  const ignored = listed.json.entries.find(entry => entry.name === 'mid.ignored');
+  assert.ok(ignored, 'mid.ignored sorts into the kept slice');
   assert.equal(ignored.ignored, true);
 >>>>>>> /tmp/mf-theirs
 });

@@ -507,9 +507,15 @@ export function createFiles(ctx) {
         return ad - bd || a.name.localeCompare(b.name);
       });
       entries.splice(LIST_MAX);
+<<<<<<< /tmp/mf-ours
       // check-ignore runs on the spliced page (bounded by LIST_MAX) even when
       // truncated — truncation is a pagination signal, not a reason to drop
       // ignore metadata for every returned entry.
+=======
+      // check-ignore runs on the KEPT slice even when truncated: at most
+      // LIST_MAX paths, and the annotation must not vanish exactly when the
+      // listing is large.
+>>>>>>> /tmp/mf-theirs
       if (git) {
         const rels = entries.map(entry => entryPath(relPath, entry.name));
         const ignored = await ignoredPaths(root, rels, SEARCH_TIMEOUT_MS);
