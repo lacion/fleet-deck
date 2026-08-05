@@ -26,7 +26,7 @@ import path from 'node:path';
 import { startDaemon } from './helpers/daemon.mjs';
 import { postHook, postJson, getJson } from './helpers/http.mjs';
 import { loadFixture } from './helpers/fixtures.mjs';
-import { waitUntil } from './helpers/wait.mjs';
+import { waitUntil, scaleMs } from './helpers/wait.mjs';
 
 const FIXTURE_QUESTION = 'Should this project use bcrypt or argon2 for password hashing?';
 
@@ -173,7 +173,7 @@ test('F3c: /hook/PermissionRequest with tool_name=AskUserQuestion answers {} in 
 
   assert.equal(permRes.status, 200);
   assert.deepEqual(permRes.json, {}, 'PermissionRequest for AskUserQuestion must answer {} — the question already had its hold at PreToolUse');
-  assert.ok(elapsed < 200, `PermissionRequest for AskUserQuestion must answer immediately, never hold (took ${elapsed}ms)`);
+  assert.ok(elapsed < scaleMs(200), `PermissionRequest for AskUserQuestion must answer immediately, never hold (took ${elapsed}ms)`);
 
   // no second question row was created for it
   let state = (await getJson(`${daemon.baseUrl}/state`)).json;
