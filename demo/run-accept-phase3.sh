@@ -27,13 +27,79 @@ BASE="http://127.0.0.1:$FLEETDECK_PORT"
 # production spawn) created there later.
 export FLEETDECK_TMUX_SOCKET="fdaccept-$$"
 
-# Kill the isolated tmux server (if anything ever spawned into it) with the
-# run; the default server is never touched.
-cleanup_tmux_server() {
-  command -v tmux >/dev/null 2>&1 || return 0
-  tmux -L "$FLEETDECK_TMUX_SOCKET" kill-server 2>/dev/null || true
+# Stop the scratch daemon this run's SessionStart hooks elect (if one comes
+# up): the SessionStart-launched fleetd runs detached and unref'd, so nothing
+# else will ever reclaim it. Signal only the process proven by BOTH this run's
+# strict pid record and the pid /health reports on this run's port, then wait
+# for it to actually exit. Any doubt returns nonzero — cleanup leaves the
+# process alone rather than signalling something it cannot positively identify.
+stop_scratch_daemon() {
+  local pidfile="$SCRATCH_HOME/fleetd.pid"
+  # A SessionStart-elected daemon may still be booting (pidfile not yet
+  # written) when the gate exits. Give the strict pid record a moment to land;
+  # a listener with NO pid record is unprovable — fail cleanup, touch nothing.
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    [ -f "$pidfile" ] && break
+    if curl -fsS --max-time 0.2 "http://127.0.0.1:$FLEETDECK_PORT/health" >/dev/null 2>&1; then
+      return 1
+    fi
+    sleep 0.1
+  done
+  [ -f "$pidfile" ] || return 0
+  node -e '
+    const fs = require("node:fs");
+    const pidfile = process.argv[1];
+    const port = Number(process.argv[2]);
+    const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+    const live = pid => {
+      try { process.kill(pid, 0); return true; }
+      catch (err) { return err?.code !== "ESRCH"; }
+    };
+    let record;
+    try { record = JSON.parse(fs.readFileSync(pidfile, "utf8")); }
+    catch { process.exit(2); }
+    if (!Number.isInteger(record?.pid) || record.pid <= 0 || record.port !== port) process.exit(2);
+    (async () => {
+      let health = null;
+      for (let i = 0; i < 20; i += 1) {
+        try {
+          const res = await fetch(`http://127.0.0.1:${port}/health`, { signal: AbortSignal.timeout(250) });
+          const candidate = res.ok ? await res.json() : null;
+          if (candidate?.pid === record.pid) { health = candidate; break; }
+        } catch {}
+        await sleep(100);
+      }
+      if (!health) { process.exitCode = 2; return; }
+
+      try { process.kill(record.pid, "SIGTERM"); }
+      catch (err) { if (err?.code !== "ESRCH") process.exitCode = 2; return; }
+      for (let i = 0; i < 30; i += 1) {
+        await sleep(100);
+        if (!live(record.pid)) return;
+      }
+      // Never escalate to SIGKILL: an unproven shutdown is reported (and fails
+      // the run below) instead of risking a recycled PID.
+      process.exitCode = 2;
+    })().catch(() => { process.exitCode = 2; });
+  ' "$pidfile" "$FLEETDECK_PORT" >/dev/null 2>&1
 }
-trap cleanup_tmux_server EXIT
+
+# Tear down everything THIS run started — the detached scratch daemon and the
+# isolated tmux server. The user's daemon, default tmux server, and home are
+# never cleanup targets. If the daemon cannot be verified stopped, fail the
+# run: a surviving listener on :$FLEETDECK_PORT would poison later gates.
+cleanup() {
+  local daemon_rc=0
+  stop_scratch_daemon || daemon_rc=$?
+  if command -v tmux >/dev/null 2>&1; then
+    tmux -L "$FLEETDECK_TMUX_SOCKET" kill-server 2>/dev/null || true
+  fi
+  if [ "$daemon_rc" -ne 0 ]; then
+    echo "CLEANUP FAILED: scratch daemon not verified stopped; it may still be listening on :$FLEETDECK_PORT (home: $SCRATCH_HOME)" >&2
+    exit 1
+  fi
+}
+trap cleanup EXIT
 
 # Claude-session env vars that must never leak into the sessions (and through
 # their SessionStart hook, into the elected daemon): a daemon or tmux server
