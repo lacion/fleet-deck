@@ -84,6 +84,7 @@ input.on('line', line => {
     // window-close probe + BUG-055 pane_dead poll: '%N [dead]' per pane. The
     // plain-id form used by the close probe and the id+flag form used by the
     // dead poll both parse the same way, so answer both shapes. The dead knob
+<<<<<<< /tmp/mf-ours
     // is a substring matched against window names ('*' = every pane) — its
     // panes report pane_dead=1, modelling a remain-on-exit pane whose process
     // has exited.
@@ -92,6 +93,17 @@ input.on('line', line => {
     const isDead = (w) => dead === '*' || (dead != null && dead !== '' && w.includes(dead));
     response([...panes.entries()].map(([w, p]) =>
       withFlags ? `${p} ${isDead(w) ? 1 : 0}` : p));
+=======
+    // is a substring matched against window names — its panes report
+    // pane_dead=1, modelling a remain-on-exit pane whose process has exited.
+    const withFlags = /pane_dead/.test(line);
+    const dead = process.env.FLEETDECK_TEST_TERM_DEAD_PANE;
+    note({ type: 'dbg', withFlags, dead: dead ?? null, panes: [...panes.keys()] });
+    const out = [...panes.entries()].map(([w, p]) =>
+      withFlags ? `${p} ${dead && w.includes(dead) ? 1 : 0}` : p);
+    note({ type: 'dbg2', out });
+    response(out);
+>>>>>>> /tmp/mf-theirs
   } else if (line.startsWith('capture-pane ')) {
     const pane = paneForTarget(line) || '%1';
     response([`seed ${pane} \u001b[31mred\u001b[0m`]);

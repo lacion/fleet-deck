@@ -85,6 +85,41 @@ export function makePlainDir() {
 }
 
 /**
+ * Create a repo whose git metadata lives OUTSIDE the checkout
+ * (`git init --separate-git-dir <state>/<name>.git <checkout>`). In this
+ * layout `git worktree list --porcelain`'s FIRST record is the metadata
+ * directory itself, not the checkout — identity derivation must not catalog
+ * that metadata dir as the main tree (BUG-142).
+ *
+ * Returns:
+ *  - checkout: real path of the working tree (the expected main tree)
+ *  - gitDir: real path of the separate metadata directory
+ *  - repoName: basename of the checkout
+ *  - cleanup(): removes the containing tmp dir
+ */
+export function makeSeparateGitDirRepo({ repoName = 'fleetdeck-sepgit-test' } = {}) {
+  const base = mkdtempSync(path.join(tmpdir(), 'fleetdeck-sepgit-'));
+  const gitDir = path.join(base, 'state', `${repoName}.git`);
+  const checkout = path.join(base, 'work', repoName);
+  mkdirSync(path.dirname(gitDir), { recursive: true });
+  execFileSync('git', ['init', '-q', `--separate-git-dir=${gitDir}`, checkout]);
+  git(['config', 'user.email', 'test@fleetdeck.local'], checkout);
+  git(['config', 'user.name', 'Fleet Deck Tests'], checkout);
+  writeFileSync(path.join(checkout, 'shared.js'), '// seed\nmodule.exports = {};\n');
+  git(['add', '.'], checkout);
+  git(['commit', '-q', '-m', 'seed'], checkout);
+
+  return {
+    checkout: realpathSync(checkout),
+    gitDir: realpathSync(gitDir),
+    repoName,
+    cleanup() {
+      rmSync(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    },
+  };
+}
+
+/**
  * Create a networkless bare origin with a seeded main branch and optional
  * pushed branches. Call clone(name) for independent working copies whose
  * non-default branches exist only as origin/* refs.

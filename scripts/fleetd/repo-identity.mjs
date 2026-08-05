@@ -76,6 +76,17 @@ function canon(p) {
   try { return fs.realpathSync(p); } catch { return path.resolve(p); }
 }
 
+// A path from `worktree list --porcelain` is a usable checkout only if it is a
+// working tree. A bare repo (or a --separate-git-dir metadata directory) has
+// the shape of a git dir — HEAD + objects/ + refs/ — and no checked-out files.
+function isBareGitDir(absPath) {
+  try {
+    return fs.existsSync(path.join(absPath, 'HEAD'))
+      && fs.statSync(path.join(absPath, 'objects')).isDirectory()
+      && fs.statSync(path.join(absPath, 'refs')).isDirectory();
+  } catch { return false; }
+}
+
 export function deriveRepo(cwd) {
   if (!cwd) return { repo_id: null, repo_name: null, worktree: null, main_tree: null, is_git: false };
   // Validate before consulting the cache too: a formerly valid directory may
@@ -96,12 +107,19 @@ export function deriveRepo(cwd) {
     const commonAbs = canon(path.isAbsolute(common) ? common : path.resolve(cwd, common));
     const toplevel = git(['rev-parse', '--show-toplevel'], cwd);
     // Normal repositories and linked worktrees share <main>/.git. For less
-    // conventional layouts, git worktree list is authoritative about which
-    // checkout is the main tree (its first porcelain record).
-    const listedMain = path.basename(commonAbs) === '.git'
-      ? null
-      : git(['worktree', 'list', '--porcelain'], cwd)
-        ?.split('\n').find(line => line.startsWith('worktree '))?.slice(9);
+    // conventional layouts, git worktree list is the source of main-tree
+    // candidates — but only records that point at a real working tree count.
+    // With `git init --separate-git-dir`, the FIRST porcelain record is the
+    // metadata directory itself (git resolves the main worktree through the
+    // config's core.worktree, not its directory name), so taking the first
+    // record blindly would catalog the .git metadata dir as the main checkout.
+    const listedTrees = path.basename(commonAbs) === '.git'
+      ? []
+      : (git(['worktree', 'list', '--porcelain'], cwd) || '')
+          .split('\n')
+          .filter(line => line.startsWith('worktree '))
+          .map(line => line.slice(9));
+    const listedMain = listedTrees.find(p => path.basename(canon(p)) !== '.git' && !isBareGitDir(canon(p)));
     const mainTree = path.basename(commonAbs) === '.git'
       ? path.dirname(commonAbs)
       : canon(listedMain || toplevel || cwd);

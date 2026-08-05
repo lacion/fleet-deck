@@ -17,11 +17,15 @@ import path from 'node:path';
 import { startDaemon } from './helpers/daemon.mjs';
 import { postHook, getJson } from './helpers/http.mjs';
 import { loadFixture } from './helpers/fixtures.mjs';
+<<<<<<< /tmp/mf-ours
 import { makeRepoWithWorktree, makePlainDir } from './helpers/gitrepo.mjs';
 <<<<<<< /tmp/mf-ours
 import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 =======
 import { deriveRepo, branchOf } from '../scripts/fleetd/repo-identity.mjs';
+>>>>>>> /tmp/mf-theirs
+=======
+import { makeRepoWithWorktree, makePlainDir, makeSeparateGitDirRepo } from './helpers/gitrepo.mjs';
 >>>>>>> /tmp/mf-theirs
 
 function findSession(state, sid) {
@@ -141,6 +145,7 @@ test('a non-git cwd falls back to repo_id = cwd', async (t) => {
   assert.equal(card.repo_id, plain.dir, 'non-git cwd should fall back to repo_id = cwd');
 });
 
+<<<<<<< /tmp/mf-ours
 test('a repo whose path ends in a space keeps its full path (no trim corruption)', (t) => {
   // BUG-141: the git() helper used trim() on ALL output, so a POSIX checkout
   // path ending in whitespace came back corrupted -- `git rev-parse
@@ -169,4 +174,29 @@ test('a repo whose path ends in a space keeps its full path (no trim corruption)
   assert.equal(repo.repo_id, realpathSync(path.join(spaced, '.git')), 'repo_id should be the canonicalized common git dir');
   assert.equal(branchOf(spaced), execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: spaced, encoding: 'utf8' }).trim(),
     'branch detection should still work from a spaced path');
+=======
+// BUG-142: with `git init --separate-git-dir`, `git worktree list --porcelain`'s
+// FIRST record is the metadata directory itself (e.g. /state/repo.git), not a
+// working tree. Identity derivation must not catalog that metadata dir as the
+// main checkout: repo_name must be the checkout's basename and the repo
+// catalog root must be the real working tree.
+test('a --separate-git-dir repo catalogs the real checkout, not the metadata dir', async (t) => {
+  const daemon = await startDaemon();
+  const repo = makeSeparateGitDirRepo();
+  t.after(async () => { await daemon.stop(); repo.cleanup(); });
+
+  const sid = randomUUID();
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd: repo.checkout }), { token: daemon });
+
+  const state = (await getJson(`${daemon.baseUrl}/state`)).json;
+  const card = findSession(state, sid);
+  assert.ok(card, 'session in a separate-git-dir checkout should register');
+  assert.equal(card.repo_id, repo.gitDir, 'repo_id is the canonicalized --git-common-dir');
+  assert.equal(card.repo_name, repo.repoName, 'repo_name must be the checkout basename, not the metadata dir');
+  assert.equal(card.worktree, repo.checkout, 'worktree must be the real checkout');
+
+  const entry = (state.repo_catalog || []).find(r => r.repo_id === repo.gitDir);
+  assert.ok(entry, 'the repo should be cataloged');
+  assert.equal(entry.root, repo.checkout, 'catalog root must be the real checkout, not the metadata dir');
+>>>>>>> /tmp/mf-theirs
 });
