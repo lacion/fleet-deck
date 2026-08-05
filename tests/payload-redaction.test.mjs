@@ -39,6 +39,10 @@ test('secret-looking keys redact whole and are never descended into; siblings su
       apiKey: 'k'.repeat(20),        // camelCase — the [_\-.] boundary never fires,
       authToken: 'q'.repeat(20),     // so isSecretKey normalizes the hump to '_' first
       accessKeyId: 'AKIA' + 'B'.repeat(16),
+      // PLURALS — a singular-only word list used to record these verbatim.
+      api_keys: { primary: 'p'.repeat(20) },
+      clientSecrets: ['c'.repeat(20)],
+      access_tokens: ['t'.repeat(20)],
       cwd: '/home/dev/project',
       model: 'claude-opus-4',
     },
@@ -50,11 +54,15 @@ test('secret-looking keys redact whole and are never descended into; siblings su
   assert.equal(ti.apiKey, '[redacted]');
   assert.equal(ti.authToken, '[redacted]');
   assert.equal(ti.accessKeyId, '[redacted]');
+  assert.equal(ti.api_keys, '[redacted]');
+  assert.equal(ti.clientSecrets, '[redacted]');
+  assert.equal(ti.access_tokens, '[redacted]');
   // Sibling non-secret keys keep their exact values.
   assert.equal(ti.cwd, '/home/dev/project');
   assert.equal(ti.model, 'claude-opus-4');
   // And not one raw secret byte reached disk (the value was never walked).
-  for (const leak of ['ghp_', 'AKIA', 'zzzzz', 'yyyyy', 'kkkkk', 'qqqqq']) {
+  for (const leak of ['ghp_', 'AKIA', 'zzzzz', 'yyyyy', 'kkkkk', 'qqqqq', 'ppppp', 'ccccc', 'ttttt']) {
+<<<<<<< /tmp/mf-ours
     assert.equal(raw.includes(leak), false, `${leak} must not appear on disk`);
   }
 });
@@ -88,6 +96,8 @@ test('plural and camelCase-plural secret container keys redact like their singul
   assert.equal(payload.tool_input.clientSecrets, '[redacted]');
   assert.equal(env.region, 'us-east-1', 'sibling non-secret key keeps its value');
   for (const leak of ['aaaaa', 'bbbbb', 'kkkkk', 'lllll']) {
+=======
+>>>>>>> /tmp/mf-theirs
     assert.equal(raw.includes(leak), false, `${leak} must not appear on disk`);
   }
 });
@@ -206,6 +216,7 @@ test('scrubUrlCredentials removes URL userinfo, bytes and all, and is idempotent
 });
 
 <<<<<<< /tmp/mf-ours
+<<<<<<< /tmp/mf-ours
 test('forge/API shapes git treats as secrets are masked by the SHARED scrubber, not just the git path', (t) => {
   // BUG-038: these prefixes lived only in exec.mjs's git-local extra list, so a
   // bare token relayed on a stalled spawn's pane (stallDiagnosticExcerpt applies
@@ -275,7 +286,55 @@ test('redactDiagnosticText is UNCHANGED: it still has no userinfo rule', () => {
   // credentialed URL — they must compose both.
   const line = "fatal: unable to access 'https://luis:glpat-AbCdEf1234567890@gitlab.com/x/y.git/'";
 >>>>>>> /tmp/mf-theirs
+=======
+test('bare forge shapes (glpat/sk-/AIza/hf_/dop_v1_) are masked on every shared surface', (t) => {
+  // Until the shared shape list carried these, they were masked ONLY by
+  // exec.mjs's git-local GIT_EXTRA_SECRET_RES — so a bare glpat leaked through
+  // hook-payload capture, stallDiagnosticExcerpt's pane tail, and any future
+  // diagnostic importing redactDiagnosticText, while CI stayed green. Assert the
+  // SAME shapes on BOTH shared layers (the capture walk and redactDiagnosticText)
+  // so the two can never silently drift apart again.
+  const shaped = {
+    gitlab: `remote: token glpat-AbCdEf1234567890 rejected`,
+    google: `remote: key AIza${'K'.repeat(35)} is not authorized`,
+    openai: `remote: sk-${'p'.repeat(32)} revoked`,
+    hf: `remote: hf_${'h'.repeat(30)} expired`,
+    do: `remote: dop_v1_${'d'.repeat(40)} is not valid`,
+  };
+  for (const [name, text] of Object.entries(shaped)) {
+    assert.equal(redactDiagnosticText(text), text.replace(/(glpat|AIza|sk-|hf_|dop_v1_)[A-Za-z0-9_-]+/, '[redacted]'),
+      `redactDiagnosticText must mask the ${name} shape`);
+  }
+  const { payload, raw } = captureOnce(t, shaped);
+  for (const name of Object.keys(shaped)) {
+    assert.equal(payload[name], shaped[name].replace(/(glpat|AIza|sk-|hf_|dop_v1_)[A-Za-z0-9_-]+/, '[redacted]'),
+      `capture must mask the ${name} shape`);
+  }
+  for (const leak of ['glpat-AbCdEf', 'AIza' + 'K'.repeat(10), 'sk-' + 'p'.repeat(10), 'hf_' + 'h'.repeat(10), 'dop_v1_' + 'd'.repeat(10)]) {
+    assert.equal(raw.includes(leak), false, `${leak} must not appear on disk`);
+  }
+  // The sk- left boundary, pinned at the shared layer too: the generic rule must
+  // NOT fire inside an ordinary hyphenated word.
+  assert.equal(redactDiagnosticText('disk-quota-exceeded-for-user'), 'disk-quota-exceeded-for-user');
+});
+
+test('redactDiagnosticText still has no USERINFO rule — credentialed URLs need scrubUrlCredentials', () => {
+  // What the shape list does NOT cover, pinned deliberately. A credentialed URL's
+  // userinfo is POSITIONAL, not shaped — `https://luis:hunter2@host` matches no
+  // credential shape — so scrubUrlCredentials stays a separate export that
+  // callers compose explicitly, as gitStderrDetail and stallDiagnosticExcerpt do.
+  // If a future reader folds a userinfo pattern into SECRET_VALUE_RES instead,
+  // this fails and points at the capture-format cases above that would then need
+  // revisiting.
+  const line = "fatal: unable to access 'https://luis:hunter2-password@gitlab.com/x/y.git/'";
+>>>>>>> /tmp/mf-theirs
   assert.equal(redactDiagnosticText(line), line);
+  // But a SHAPED token inside userinfo is now masked in place by the shape pass
+  // alone (the URL wrapper survives). scrubUrlCredentials additionally removes
+  // the whole userinfo including the username half.
+  const shaped = "fatal: unable to access 'https://luis:glpat-AbCdEf1234567890@gitlab.com/x/y.git/'";
+  assert.equal(redactDiagnosticText(shaped), "fatal: unable to access 'https://luis:[redacted]@gitlab.com/x/y.git/'");
+  assert.equal(scrubUrlCredentials(shaped), "fatal: unable to access 'https://[redacted]@gitlab.com/x/y.git/'");
 });
 
 test('a giant value under a secret key is redacted, never truncated-but-leaked', (t) => {

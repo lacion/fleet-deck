@@ -127,6 +127,34 @@ export function distillGitStderr(text) {
 const GIT_DETAIL_LINES = 20;
 const GIT_DETAIL_MAX = 2000;
 
+<<<<<<< /tmp/mf-ours
+=======
+// Credential SHAPES, kept LOCAL to this function on purpose even though
+// SECRET_VALUE_RES now carries the same entries: payload-capture's list governs
+// the on-disk hook-payloads.jsonl format, and the git-local scrub must not
+// change just because the capture format did (see the comment on
+// scrubUrlCredentials). The duplication is the CONTRACT between the two
+// diagnostics and the capture walk — the fetch path in repos.mjs has no origin
+// URL in scope to derive an exact-secret needle from, so a BARE forge token
+// relayed on a `remote:` line — `remote: the provided token (glpat-…) is
+// incorrect` — has no other covering layer. ReDoS: each is a fixed prefix plus
+// ONE greedy trailing run with nothing required after it, the same shape the
+// audit in payload-capture.mjs certifies linear (the lookbehind is zero-width
+// and constant). All match runs longer than the 10-byte `[redacted]` marker.
+//
+// The `(?<![A-Za-z0-9_-])` left boundary is not decoration: without it the generic
+// `sk-` rule fires INSIDE ordinary words, and `disk-quota-exceeded-for-user`
+// becomes `di[redacted]` — destroying exactly the legibility this whole change
+// exists to deliver. A false redaction is cheap to write and expensive to debug.
+const GIT_EXTRA_SECRET_RES = [
+  /(?<![A-Za-z0-9_-])gl(?:pat|rt|dt|soat|cbt|ptt|feat|agent)-[A-Za-z0-9_-]{16,}/g, // GitLab PAT / runner / deploy / OAuth / CI job families
+  /(?<![A-Za-z0-9_-])AIza[A-Za-z0-9_-]{30,}/g,                                     // Google API key
+  /(?<![A-Za-z0-9_-])sk-[A-Za-z0-9_-]{20,}/g,                                      // OpenAI-style (and, harmlessly, sk-ant-* again)
+  /(?<![A-Za-z0-9_-])hf_[A-Za-z0-9]{20,}/g,                                        // Hugging Face
+  /(?<![A-Za-z0-9_-])dop_v1_[A-Za-z0-9]{32,}/g,                                    // DigitalOcean
+];
+
+>>>>>>> /tmp/mf-theirs
 // THE single hardening pass for git output, exported so that the NOTE and the
 // DETAIL derived from one stderr can never disagree about it. That was a real
 // defect and not a hypothetical: the note was given only the positional URL

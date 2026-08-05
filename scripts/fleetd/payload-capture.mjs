@@ -56,12 +56,19 @@ const REDACTED = '[redacted]';
 // 'monotonic' all survive. camelCase carries no such separator, so isSecretKey
 // first rewrites humps to '_'; that is precisely what lets 'apiKey',
 // 'authToken' and 'accessKeyId' redact while the negatives above still don't.
+<<<<<<< /tmp/mf-ours
 // The trailing `s?` admits the plural/container forms real env and tool JSON
 // actually use — 'api_keys', 'tokens', 'credentials', 'client_secrets',
 // 'apiKeys', 'TOKENS' — which carry the same live credentials as their
 // singulars. It cannot resurrect a negative: 'tokenizer' would need the `s` to
 // sit mid-word, and no stem is one letter short of an innocent word.
 const SECRET_KEY_RE = /(?:^|[_\-.])(token|secret|password|passwd|passphrase|api[_-]?key|apikey|auth(orization)?|bearer|cookie|credential|private[_-]?key|access[_-]?key|client[_-]?secret)s?(?:$|[_\-.])/i;
+=======
+// The plural `s?` is not decorative: real payloads nest credentials under
+// `api_keys`, `clientSecrets`, `tokens` (a hook event's `access_tokens` list),
+// and a singular-only list recorded those verbatim.
+const SECRET_KEY_RE = /(?:^|[_\-.])(tokens?|secrets?|passwords?|passwd|passphrases?|api[_-]?keys?|auth(orization)?s?|bearer|cookies?|credentials?|private[_-]?keys?|access[_-]?keys?|client[_-]?secrets?)(?:$|[_\-.])/i;
+>>>>>>> /tmp/mf-theirs
 
 function isSecretKey(key) {
   const normalized = String(key)
@@ -98,10 +105,20 @@ function isSecretKey(key) {
 //     bounded to {0,40} — every real label ("RSA", "OPENSSH", "ENCRYPTED", …)
 //     fits, and match semantics (incl. the truncated-block `…|$` fallback) are
 //     unchanged.
+// The `(?<![A-Za-z0-9_-])` left boundary on the 2026-08 additions is not
+// decoration — it is the same guard exec.mjs's GIT_EXTRA_SECRET_RES documents:
+// without it the generic `sk-` rule fires INSIDE ordinary words and
+// `disk-quota-exceeded-for-user` becomes `di[redacted]`. Keep any future
+// short-prefix shape behind the same lookbehind.
 const SECRET_VALUE_RES = [
   /sk-ant-[A-Za-z0-9_-]{10,}/g,
   /(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}/g,
   /github_pat_[A-Za-z0-9_]{20,}/g,
+  /(?<![A-Za-z0-9_-])gl(?:pat|rt|dt|soat|cbt|ptt|feat|agent)-[A-Za-z0-9_-]{16,}/g, // GitLab PAT / runner / deploy / OAuth / CI job families
+  /(?<![A-Za-z0-9_-])AIza[A-Za-z0-9_-]{30,}/g,                                     // Google API key
+  /(?<![A-Za-z0-9_-])sk-[A-Za-z0-9_-]{20,}/g,                                      // OpenAI-style (and, harmlessly, sk-ant-* again)
+  /(?<![A-Za-z0-9_-])hf_[A-Za-z0-9]{20,}/g,                                        // Hugging Face
+  /(?<![A-Za-z0-9_-])dop_v1_[A-Za-z0-9]{32,}/g,                                    // DigitalOcean
   /xox[baprs]-[A-Za-z0-9-]{10,}/g,
   /AKIA[A-Z0-9]{16}/g,
   /-----BEGIN [A-Z ]{0,40}PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]{0,40}PRIVATE KEY-----|$)/g,
