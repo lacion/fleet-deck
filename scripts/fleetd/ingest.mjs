@@ -86,19 +86,29 @@ export function createIngest(ctx) {
         onMutate();
       } else if (existing.source === 'agents-cli') {
         const repoChanged = repo.is_git && repo.repo_id !== existing.repo_id;
+        // Mutable identity fields refresh outside the repoChanged gate: an
+        // in-place checkout (same worktree, another branch) leaves repo_id
+        // stable, and a gated branch would stay stale for the card's whole
+        // lifetime — agents-cli cards have no hook telemetry to correct it.
+        // cwd/worktree move when a session's working directory does (e.g. a
+        // worktree-to-worktree move inside one repo). All three reads are
+        // TTL-cached in repo-identity.mjs, so the extra probes cost at most
+        // one git round per cwd per ~20s (branch) / ~5min (identity).
+        const cwdChanged = !!cwd && cwd !== existing.cwd;
+        const worktreeChanged = !!cwd && repo.worktree !== existing.worktree;
+        // Cached (20s TTL) read — a real checkout is picked up within a few
+        // poll cycles; `fresh` is reserved for naming moments.
+        const branch = cwd ? branchOf(cwd) : existing.branch;
         updateSession(sid, {
           col: colFromAgentState(rawState, false),
           note: 'seen via agents CLI',
           last_seen: Date.now(),
           ended_at: null, // reappearance revives an absence-tombstoned card
           end_reason: null, // and clears the absence guess stamped below
-          ...(repoChanged ? {
-            cwd,
-            repo_id: repo.repo_id,
-            repo_name: repo.repo_name,
-            worktree: repo.worktree,
-            branch: branchOf(cwd),
-          } : {}),
+          ...(repoChanged || cwdChanged ? { cwd } : {}),
+          ...(repoChanged ? { repo_id: repo.repo_id, repo_name: repo.repo_name } : {}),
+          ...(repoChanged || worktreeChanged ? { worktree: repo.worktree } : {}),
+          ...(branch !== existing.branch ? { branch } : {}),
         });
         if (repoChanged) {
           touchRepo({

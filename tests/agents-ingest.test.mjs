@@ -24,8 +24,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+<<<<<<< /tmp/mf-ours
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+=======
+import { spawnSync, execFileSync } from 'node:child_process';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+>>>>>>> /tmp/mf-theirs
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -66,6 +71,10 @@ function reusedPidRecord(overrides) {
 
 function findSession(state, sid) {
   return state.sessions.find(s => s.session_id === sid);
+}
+
+function gitIn(cwd, args) {
+  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 }
 
 function agentsFixtureEnv(fixtureFile, pollMs = 400) {
@@ -272,6 +281,7 @@ test('absence tombstones agents-cli cards; reappearance revives them', async (t)
   } finally { revDb.close(); }
 });
 
+<<<<<<< /tmp/mf-ours
 // BUG-106: pid existence is not ownership. When the process behind a registry
 // record dies and the OS reuses its pid, kill(pid, 0) still succeeds — but the
 // new process's start time cannot match the record's startedAt. Such a record
@@ -297,10 +307,34 @@ test('a reused pid (live process, stale startedAt) is not the recorded session',
     { pid: LIVE_PID, cwd, kind: 'interactive', startedAt: LIVE_STARTED_AT, sessionId: sidStale, name: 'about to go stale', status: 'busy' },
     { pid: LIVE_PID, cwd, kind: 'interactive', startedAt: LIVE_STARTED_AT, sessionId: sidLive, name: 'still mine', status: 'busy' },
   ]);
+=======
+// BUG-126: mutable identity fields must refresh on agents-cli polls even when
+// repo identity is unchanged. An in-place checkout (same worktree, another
+// branch) leaves repo_id stable — a branch read gated on repoChanged would
+// keep the birth branch for the card's whole lifetime, since agents-cli cards
+// have no hook telemetry to correct it.
+test('an in-place checkout refreshes an agents-cli card\'s branch (same repo_id)', async (t) => {
+  const scratchDir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-agents-scratch-'));
+  const fixtureFile = path.join(scratchDir, 'agents.json');
+  const repo = makeRepoWithWorktree({ repoName: 'agents-checkout-test' });
+  t.after(() => {
+    repo.cleanup();
+    rmSync(scratchDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  const sid = randomUUID();
+  // The session lives in the main tree, whose branch is the init default
+  // (master/main) — a new branch is created for the in-place checkout below
+  // (the helper's 'wt-branch' is already checked out in the linked worktree
+  // and git forbids checking the same branch out twice).
+  const record = { pid: LIVE_PID, cwd: repo.root, kind: 'interactive', startedAt: Date.now(), sessionId: sid, name: 'checkout agent', status: 'busy' };
+  writeFixture(fixtureFile, [record]);
+>>>>>>> /tmp/mf-theirs
 
   const daemon = await startDaemon({ env: agentsFixtureEnv(fixtureFile) });
   t.after(async () => { await daemon.stop(); });
 
+<<<<<<< /tmp/mf-ours
   await waitForSession(daemon.baseUrl, sidStale);
   await waitForSession(daemon.baseUrl, sidLive);
   await new Promise(r => setTimeout(r, 1200)); // several poll cycles
@@ -324,6 +358,26 @@ test('a reused pid (live process, stale startedAt) is not the recorded session',
 
   state = (await getJson(`${daemon.baseUrl}/state`)).json;
   assert.equal(findSession(state, sidLive).col, 'working', 'an owned record is unaffected by a sibling\'s pid reuse');
+=======
+  const card = await waitForSession(daemon.baseUrl, sid);
+  assert.equal(card.source, 'agents-cli');
+  const birthBranch = card.branch;
+  assert.notEqual(birthBranch, 'checkout-target', 'test setup: birth branch must differ from the checkout target');
+
+  // The agent checks out another branch IN PLACE — same cwd, same worktree,
+  // same repo_id. The board must follow within a few poll cycles (branchOf's
+  // 20s TTL bounds the lag).
+  gitIn(repo.root, ['switch', '-q', '-c', 'checkout-target']);
+
+  const updated = await waitUntil(async () => {
+    const state = (await getJson(`${daemon.baseUrl}/state`)).json;
+    const c = findSession(state, sid);
+    return c && c.branch === 'checkout-target' ? c : null;
+  }, { label: 'branch refresh after in-place checkout', timeoutMs: 45_000 });
+  assert.equal(updated.repo_id, repo.gitCommonDir, 'repo identity must be unchanged by an in-place checkout');
+  assert.equal(updated.worktree, repo.root, 'worktree must be unchanged by an in-place checkout');
+  assert.equal(updated.cwd, repo.root, 'cwd must be unchanged by an in-place checkout');
+>>>>>>> /tmp/mf-theirs
 });
 
 test('FLEETDECK_AGENTS_CMD=false disables the poller entirely', async (t) => {
