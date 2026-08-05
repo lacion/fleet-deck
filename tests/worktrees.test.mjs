@@ -328,6 +328,76 @@ test('remove keeps rows (rows_purged:0) when a revive lands during the git ops',
   );
 });
 
+// BUG-058: the liveness gate read only worktreeSpawns, whose
+// `worktree_path IS NOT NULL` filter drops cwd-only rows. A live shell (shells
+// refuse worktree:true outright — always cwd-only) or an adopted Claude
+// launched INTO a fleet worktree carries `worktree_path NULL, cwd = <tree>`,
+// so removal saw no live owner and deleted the directory under the running
+// process. The gate must key on the effective directory `worktree_path ?? cwd`
+// and treat containment as a claim. Pinned at the createWorktrees level (the
+// same direct-drive style as the revive-race tests above): three sub-cases —
+// cwd at the tree root, cwd in a SUBdirectory, and a lookalike PREFIX path
+// that must NOT count.
+test('remove refuses while a cwd-only live shell occupies the worktree (BUG-058)', async (t) => {
+  const repo = makeRepoWithWorktree({ repoName: 'fleetdeck-shell-live' });
+  const home = mkdtempSync(path.join(tmpdir(), 'fd-shell-live-home-'));
+  t.after(() => {
+    repo.cleanup();
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+  const db = openDb(path.join(home, 'fleetd.db'));
+  t.after(() => db.close());
+  const now = Date.now();
+
+  // The ended, worktree-keyed owner row — the allow-list entry that makes the
+  // path removable at all.
+  db.prepare(`INSERT INTO sessions
+    (session_id, callsign, cwd, branch, col, note, events, started_at, last_seen, ended_at, source)
+    VALUES ('wt-owner', 'otter', ?, 'wt-branch', 'offline', 'test', 0, ?, ?, ?, 'spawned')`)
+    .run(repo.worktree, now, now, now);
+  db.prepare(`INSERT INTO spawns
+    (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, requested_at, status)
+    VALUES ('sp-wt-owner', 'wt-owner', 'otter', 'fleetdeck-test', ?, ?, ?, ?, 'pane-dead')`)
+    .run(repo.root, repo.root, repo.worktree, now);
+
+  // The LIVE shell the human spawned into that worktree: cwd-only
+  // (worktree_path NULL), status 'live', session not ended — exactly the row
+  // POST /api/spawn with kind:'shell' writes.
+  db.prepare(`INSERT INTO sessions
+    (session_id, callsign, cwd, branch, col, note, events, started_at, last_seen, ended_at, source)
+    VALUES ('shell-in-wt', 'fox', ?, NULL, 'idle', 'shell', 0, ?, ?, NULL, 'shell')`)
+    .run(repo.worktree, now, now);
+  db.prepare(`INSERT INTO spawns
+    (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, requested_at, status, kind)
+    VALUES ('sp-shell-in-wt', 'shell-in-wt', 'fox', 'fleetdeck-test', 'fd-test-fox', ?, NULL, ?, 'live', 'shell')`)
+    .run(repo.worktree, now + 1);
+
+  const { q } = createStatements(db);
+  const { removeWorktree } = createWorktrees({ q, tick() {}, onMutate() {} });
+
+  const res = await removeWorktree({ path: repo.worktree, force: true });
+  assert.equal(res.status, 409, `a live shell in the tree must block removal (got ${JSON.stringify(res.body)})`);
+  assert.deepEqual(res.body, { ok: false, reason: 'session is still alive' });
+  assert.equal(existsSync(repo.worktree), true, 'the occupied worktree survives');
+
+  // Containment: the shell's cwd is a SUBdirectory of the target tree — it
+  // still loses its ground when the tree is removed, so it must still block.
+  db.prepare('UPDATE spawns SET cwd = ? WHERE spawn_id = ?')
+    .run(path.join(repo.worktree, 'sub', 'dir'), 'sp-shell-in-wt');
+  const subRes = await removeWorktree({ path: repo.worktree, force: true });
+  assert.equal(subRes.status, 409, 'a live shell in a subdirectory of the tree must also block removal');
+  assert.deepEqual(subRes.body, { ok: false, reason: 'session is still alive' });
+
+  // A lookalike PREFIX path ('<tree>-evil' shares the string prefix but is not
+  // inside the tree) must NOT count as a claim — and a dead cwd-only row must
+  // not count either. With those ruled out, removal proceeds.
+  db.prepare('UPDATE spawns SET cwd = ?, status = ? WHERE spawn_id = ?')
+    .run(`${repo.worktree}-evil`, 'pane-dead', 'sp-shell-in-wt');
+  const goneRes = await removeWorktree({ path: repo.worktree, force: true });
+  assert.equal(goneRes.status, 200, `no live claim left — removal proceeds (got ${JSON.stringify(goneRes.body)})`);
+  assert.equal(existsSync(repo.worktree), false);
+});
+
 test('POST remove with delete_branch deletes the worktree branch', async (t) => {
   const repo = makeRepoWithWorktree({ repoName: 'fleetdeck-branch-remove' });
   const daemon = await startDaemon();

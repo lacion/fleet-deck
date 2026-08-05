@@ -285,6 +285,19 @@ export function createStatements(db) {
       FROM spawns LEFT JOIN sessions ON sessions.session_id = spawns.session_id
       WHERE spawns.worktree_path IS NOT NULL
       ORDER BY spawns.requested_at DESC, spawns.rowid DESC`),
+    // WORKTREE LIVENESS CONTRACT: the removal gate must see every spawn whose
+    // EFFECTIVE directory could be the target tree — and worktreeSpawns above
+    // cannot, because its `worktree_path IS NOT NULL` filter drops the cwd-only
+    // rows: a live shell (`kind = 'shell'` refuses worktree:true outright) or an
+    // adopted Claude launched INTO a fleet worktree carries `worktree_path NULL,
+    // cwd = <that tree>`. The caller keys on the effective directory
+    // `worktree_path ?? cwd` — the same coalesce the launch paths use — and does
+    // the path-containment comparison (a spawn in a SUBdirectory of the target
+    // is still a live owner). Read-only, newest-first like its sibling.
+    liveWorktreeClaims: db.prepare(`SELECT spawns.*, sessions.ended_at AS session_ended_at
+      FROM spawns LEFT JOIN sessions ON sessions.session_id = spawns.session_id
+      WHERE spawns.status IN ('provisioning', 'spawning', 'live')
+      ORDER BY spawns.requested_at DESC, spawns.rowid DESC`),
     deleteWorktreeSpawns: db.prepare('DELETE FROM spawns WHERE worktree_path = ?'),
     deleteEndedSession: db.prepare('DELETE FROM sessions WHERE session_id = ? AND ended_at IS NOT NULL'),
     presumeDeadSessions: db.prepare(`SELECT * FROM sessions

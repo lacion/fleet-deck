@@ -197,12 +197,33 @@ export function createWorktrees(ctx) {
   // synchronous signal the revive does set; a not-yet-ended session is the other.
   // 'stalled' is deliberately NOT here: it is set later by the watchdog, never by
   // a revive, and the ended-session branch already governs it as before.
+  //
+  // Two claim sets, because worktreeSpawns alone is BLIND to cwd-only rows
+  // (its WHERE clause drops worktree_path NULL): a live shell spawned INTO a
+  // fleet worktree, or an adopted Claude resumed in one, carries
+  // `worktree_path NULL, cwd = <that tree>` and would be deleted underneath its
+  // running process. liveWorktreeClaims covers them: any launching/live spawn
+  // whose EFFECTIVE directory — `worktree_path ?? cwd`, the same coalesce the
+  // launch paths use — IS the target or lies INSIDE it (a shell cd'd into a
+  // subdirectory still loses its ground when the tree goes) blocks removal.
   const LAUNCHING_OR_LIVE = new Set(['provisioning', 'spawning', 'live']);
+  // Lexical containment on normalised absolute paths; the separator anchor
+  // keeps '/repo/tree' from claiming '/repo/tree-evil'. Rows are daemon-written
+  // absolute paths, and the one tree a symlinked /tmp would confuse this way is
+  // also protected by the first claim set (its owning row IS worktree-keyed).
+  function claimsPath(candidate, target) {
+    const effective = candidate.worktree_path ?? candidate.cwd;
+    if (typeof effective !== 'string' || !effective) return false;
+    const dir = path.resolve(effective);
+    return dir === target || dir.startsWith(target + path.sep);
+  }
   function worktreePathIsLive(worktreePath) {
+    const target = path.resolve(worktreePath);
     return q.worktreeSpawns.all().some(candidate =>
       candidate.worktree_path === worktreePath && (
         LAUNCHING_OR_LIVE.has(candidate.status) ||
-        (candidate.session_ended_at == null && q.getSession.get(candidate.session_id) != null)));
+        (candidate.session_ended_at == null && q.getSession.get(candidate.session_id) != null)))
+      || q.liveWorktreeClaims.all().some(candidate => claimsPath(candidate, target));
   }
 
   async function removeWorktree(body = {}) {
