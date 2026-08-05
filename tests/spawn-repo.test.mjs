@@ -571,9 +571,19 @@ test('a 409-refused explicit transport never rewrites the remembered setting', a
       // second request to collide with it: ssh "connects" straight into a 30s
       // sleep (`sh -c` swallows git's appended host/command args as positional
       // params) and the 5s clone timeout reaps it — the immediate second POST
-      // lands well inside that window, and nothing outlives teardown.
+      // lands well inside that window. The clone's tree is NOT gone when the
+      // timeout fires (see the teardown wait below: git dies instantly, its
+      // ssh substitute does not), so "reaped" here means the clone PROMISE
+      // settled — the test still owes the process table its own wait before
+      // daemon.stop().
       FLEETDECK_CLONE_TIMEOUT_MS: '5000',
-      GIT_SSH_COMMAND: 'sh -c "exec sleep 30"',
+      // The marker env makes this test's clone tree uniquely identifiable in
+      // the OS process table: git passes GIT_SSH_COMMAND through the shell,
+      // so the literal `env` prefix lands in the tree's surviving argv — a
+      // bare SendEnv=GIT_PROTOCOL would also match any ambient process whose
+      // own command line merely mentions it (editors, logs, other test
+      // runners), which a plain substring pgrep cannot exclude.
+      GIT_SSH_COMMAND: 'env FD_BUG177_FIXTURE=1 sh -c "exec sleep 30"',
     },
   });
   t.after(async () => {
@@ -600,6 +610,25 @@ test('a 409-refused explicit transport never rewrites the remembered setting', a
   assert.equal(got.json.settings.repo_transport.source, 'default',
     'a 409-refused spawn must not rewrite the remembered transport');
   assert.equal(got.json.settings.repo_transport.value, 'ssh');
+
+  // Wait for the FIRST spawn's clone to reach its terminal state (the tombstone
+  // card the 5s clone timeout produces) before teardown — and then for the
+  // process tree itself to be gone. Without this, daemon.stop() runs while the
+  // blocking ssh substitute is still mid-sleep: the execFile timeout SIGKILLs
+  // git, but git's own children (the sh -c wrapper and its sleep) are only
+  // SIGTERMed via the pipe and linger reparented to init until the 30s sleep
+  // ends on its own — outliving the test that already reported success. The
+  // tombstone alone is not proof the tree is gone, so poll the OS process
+  // table for this fixture's unique marker (FD_BUG177_FIXTURE=1 — exported
+  // by the env-wrapped GIT_SSH_COMMAND above into the tree's argv, and never
+  // appearing in any unrelated process's command line).
+  await tombstonedCard(daemon, first.json.session_id);
+  await waitUntil(() => {
+    try {
+      execFileSync('pgrep', ['-f', 'FD_BUG177_FIXTURE=1'], { stdio: ['ignore', 'pipe', 'ignore'] });
+      return null; // fixture tree still alive
+    } catch { return true; } // pgrep exit 1: nothing left
+  }, { timeoutMs: 35_000, label: 'clone fixture process tree reaped' });
 });
 
 test('repo mode rejects an unknown repo_transport value', async t => {
