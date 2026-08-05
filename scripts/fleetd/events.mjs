@@ -677,7 +677,20 @@ export function createEvents(ctx) {
     try {
       card(sid, ev.cwd); // plan intake needs the card's callsign/repo — create it without telemetry
       row = questions.create(kind, sid, ev);
+<<<<<<< /tmp/mf-ours
       const c = q.getSession.get(sid);
+=======
+      // TEST SEAM (BUG-204): deterministic fault injection BETWEEN the
+      // question insert and the plan insert, inside the transaction — the
+      // only way a test can prove the M-B6 rollback actually removes BOTH
+      // rows (otherwise it would need a real crash/SQLITE error mid-tick).
+      // Announced at boot by fleetd.mjs's seam banner like the other test
+      // seams; in production the var is unset and this is dead code.
+      if (process.env.FLEETDECK_TEST_FAIL_PLAN_INSERT) {
+        throw new Error('injected plan-insert failure (FLEETDECK_TEST_FAIL_PLAN_INSERT)');
+      }
+      const c = q.getSession.get(sid); // applyEvent ensured the card exists
+>>>>>>> /tmp/mf-theirs
       callsign = c?.callsign ?? sid;
       const planMd = typeof ev.tool_input?.plan === 'string'
         ? ev.tool_input.plan

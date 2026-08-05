@@ -617,7 +617,7 @@ server.listen(PORT, BIND, () => {
   // production they must be unset; announcing each active one at boot means a
   // leaked seam (the 2026-07-11 env scar) is visible in fleetd.log rather than
   // silently reshaping the daemon. Provenance only — the value is never logged.
-  for (const seam of ['FLEETDECK_SPAWN_CMD', 'FLEETDECK_TERM_CMD', 'FLEETDECK_TEST_DAEMON_SCRIPT', 'FLEETDECK_VERSION_OVERRIDE']) {
+  for (const seam of ['FLEETDECK_SPAWN_CMD', 'FLEETDECK_TERM_CMD', 'FLEETDECK_TEST_DAEMON_SCRIPT', 'FLEETDECK_VERSION_OVERRIDE', 'FLEETDECK_TEST_FAIL_PLAN_INSERT']) {
     if (process.env[seam]) console.error(`fleetd WARNING: test seam ${seam} active`);
   }
   // FLEETDECK_AGENTS_CMD is a seam ONLY when it names a real command: '' and

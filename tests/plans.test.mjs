@@ -119,9 +119,11 @@ function questionPlanId(q) {
  * first question's resolved row. `tool_input` in overrides is deep-merged
  * one level over the fixture's (the shallow loadFixture merge would
  * otherwise drop the plan text when a caller only needs to retitle the
- * tool call). Returns {held (the pending fetch promise), q (the /state
- * question entry), payload (what was actually POSTed, for byte-identity
- * checks)}. */
+ * tool call). Returns {held (the pending fetch promise), state (the ONE
+ * /state snapshot the question was found in — BUG-204: callers asserting
+ * question+plan coexistence must read BOTH from this snapshot, never re-GET),
+ * q (the /state question entry), payload (what was actually POSTed, for
+ * byte-identity checks)}. */
 async function holdExitPlan(daemon, sid, cwd, holdMs, overrides = {}) {
   const merged = { ...overrides };
   if (overrides.tool_input) {
@@ -129,13 +131,16 @@ async function holdExitPlan(daemon, sid, cwd, holdMs, overrides = {}) {
   }
   const payload = loadFixture(EXIT_PLAN_FIXTURE, { session_id: sid, cwd }, merged);
   const held = postHook(daemon.baseUrl, 'PermissionRequest', payload, { token: daemon, timeout: holdMs + 5000 });
+  let snapshot = null;
   const q = await waitUntil(async () => {
     const state = (await getJson(`${daemon.baseUrl}/state`)).json;
-    return questionsFor(state, sid, 'permission')
+    const found = questionsFor(state, sid, 'permission')
       .filter(x => x.payload?.tool_name === 'ExitPlanMode' && x.status === 'pending')
       .sort((a, b) => b.id - a.id)[0];
+    if (found) snapshot = state;
+    return found;
   }, { label: 'ExitPlanMode permission question to appear in /state' });
-  return { held, q, payload };
+  return { held, state: snapshot, q, payload };
 }
 
 // ---------------------------------------------------------------------------
@@ -151,10 +156,15 @@ test('capture-before-answer: the plan row appears in /state (status proposed, pl
   const sid = randomUUID();
   await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon });
 
-  const { held, q, payload } = await holdExitPlan(daemon, sid, cwd, holdMs);
+  const { held, state, q, payload } = await holdExitPlan(daemon, sid, cwd, holdMs);
   assert.equal(q.status, 'pending', 'sanity: the question must still be pending at this point');
 
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json;
+  // BUG-204: read the plan from the SAME /state snapshot that produced q.
+  // Capture is one synchronous tick (question row + plan row inside one
+  // BEGIN IMMEDIATE transaction), so a single snapshot must contain both —
+  // re-fetching /state here would let a split regression pass: the daemon
+  // could expose the question, yield the loop, and only then insert the
+  // plan, and a later GET would still see it.
   const plan = plansFor(state, sid)[0];
   assert.ok(plan, 'a plans row should exist for this session while the ExitPlanMode question is still pending (capture happens BEFORE holding)');
   assert.equal(plan.status, 'proposed', 'a freshly captured plan should be status:proposed');
@@ -179,6 +189,36 @@ test('capture-before-answer: the plan row appears in /state (status proposed, pl
   const ansRes = await postJson(`${daemon.baseUrl}/api/questions/${q.id}/answer`, { behavior: 'deny' });
   assert.equal(ansRes.status, 200);
   await held;
+});
+
+// The M-B6 transaction in hookHoldQuestion (question row + plan row in one
+// BEGIN IMMEDIATE) must roll BOTH back if the plan insert fails: no held
+// question, no plan row, and the hook fails OPEN (the planner's terminal
+// resumes normally instead of hanging on a hold the library can't honour).
+// The FLEETDECK_TEST_FAIL_PLAN_INSERT seam throws deterministically between
+// the two inserts — the exact interleaving a crash/SQLITE error mid-tick
+// would produce — so this doesn't need a real fault to exercise the path.
+test('capture rollback: a failing plan insert leaves NEITHER the question nor the plan visible, and the hook fails open', async (t) => {
+  const holdMs = 30000; // must never be waited out: fail-open answers immediately
+  const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs), FLEETDECK_TEST_FAIL_PLAN_INSERT: '1' } });
+  const cwd = scratchCwd();
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+
+  const sid = randomUUID();
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon });
+
+  const t0 = Date.now();
+  const payload = loadFixture(EXIT_PLAN_FIXTURE, { session_id: sid, cwd });
+  const res = await postHook(daemon.baseUrl, 'PermissionRequest', payload, { token: daemon, timeout: 5000 });
+  const elapsed = Date.now() - t0;
+  assert.equal(res.status, 200, 'a failed plan capture must not 5xx the hook');
+  assert.deepEqual(res.json, {}, 'fail-open: the terminal gets the bare immediate {} answer, not a held response');
+  assert.ok(elapsed < holdMs, `fail-open must resolve immediately, not after the ${holdMs}ms hold window (took ${elapsed}ms)`);
+
+  const state = (await getJson(`${daemon.baseUrl}/state`)).json;
+  assert.equal(questionsFor(state, sid, 'permission').length, 0,
+    'the question row must be rolled back with the plan — a held question whose plan can never exist would be unanswerable via capture');
+  assert.equal(plansFor(state, sid).length, 0, 'no plan row may survive the rollback');
 });
 
 // ---------------------------------------------------------------------------
