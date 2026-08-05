@@ -16,7 +16,7 @@ import { createCore } from './derive.mjs';
 import { createHttp, isLoopbackAddress, parseTrustedOrigins } from './http.mjs';
 import { startAgentsPoll } from './agents-poll.mjs';
 import { createPayloadCapture } from './payload-capture.mjs';
-import { createMdns } from './mdns.mjs';
+import { createMdns, hostLabel } from './mdns.mjs';
 // HOME-ownership pid helpers now live in takeover.mjs (the version-takeover
 // contract), so the daemon's own claimHome lock and the SessionStart hook's
 // evict-a-stale-daemon path share one implementation and can never drift.
@@ -314,8 +314,12 @@ if (versionOverride) {
 
 // mDNS name: `fleetdeck.local` by default, so a peer can reach the board
 // without knowing an IP. Peers running their OWN fleet would collide on that
-// name, hence the override.
-const MDNS_NAME = (process.env.FLEETDECK_MDNS_NAME || 'fleetdeck').trim() || 'fleetdeck';
+// name, hence the override. Canonicalized ONCE through mdns.mjs's hostLabel:
+// the responder rewrites dots/controls and truncates to a 63-byte DNS label,
+// so the share URL, the startup log line and the HTTP Host allowlist must be
+// built from the same label — interpolating the raw configured value would
+// publish a name that never resolves and refuse the name actually advertised.
+const MDNS_NAME = hostLabel((process.env.FLEETDECK_MDNS_NAME || 'fleetdeck').trim() || 'fleetdeck');
 function mdnsInstanceName() {
   // Discovery must remain optional even if the platform RNG fails after an
   // explicit token was supplied. The generic fallback still leaks no hostname.

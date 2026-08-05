@@ -95,10 +95,10 @@ function refused(url) {
 // the request would look local, quietly passing whether or not the fix is
 // present. node:http honours the override, so the proxy hole is actually
 // exercised. Resolves { status, body } and never rejects on a non-2xx.
-function rawGet(port, pathname, headers = {}) {
+function rawGet(port, pathname, headers = {}, host = '127.0.0.1') {
   return new Promise((resolve, reject) => {
     const req = http.request(
-      { host: '127.0.0.1', port, path: pathname, method: 'GET', headers },
+      { host, port, path: pathname, method: 'GET', headers },
       res => {
         let body = '';
         res.on('data', c => { body += c; });
@@ -196,6 +196,54 @@ test('LAN HTTP requires the query or bearer token for a non-loopback peer', asyn
 
   const wrong = await fetch(`${daemon.baseUrl}/health?t=definitely-wrong-token`);
   assert.equal(wrong.status, 401);
+});
+
+test('a dotted FLEETDECK_MDNS_NAME is canonicalized once: share URL, log line and Host wall all agree', async t => {
+  // BUG-119 REGRESSION PIN. The mDNS responder rewrites dots and truncates to a
+  // 63-byte DNS label before advertising. If fleetd interpolates the RAW
+  // configured name into the share URL / startup log, it publishes a name that
+  // never resolves, and the Host allowlist — built from that same raw URL —
+  // refuses the name actually on the wire. Everything must speak the canonical
+  // label ("deck.office" is configured, "deck-office.local" is advertised,
+  // published AND authorized).
+  const address = await reachableIpv4();
+  if (!address) return t.skip('host has no non-internal IPv4 interface');
+  const port = randomPort();
+  const home = scratchHome();
+  const raw = spawnRaw({
+    port,
+    home,
+    env: { FLEETDECK_BIND: address, FLEETDECK_TOKEN: LAN_TOKEN, FLEETDECK_MDNS_NAME: 'deck.office' },
+  });
+  t.after(async () => {
+    await raw.kill();
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+  const tokenParam = `?t=${encodeURIComponent(LAN_TOKEN)}`;
+  await waitForResponse(`http://${address}:${port}/health${tokenParam}`);
+
+  // The startup log announces the canonical host — the exact label the
+  // responder puts on the wire — never the raw dotted config value.
+  const deadline = Date.now() + scaleMs(5000);
+  while (!raw.stdout.includes('.local:') && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 25));
+  }
+  assert.match(raw.stdout, /deck-office\.local/, `startup log must announce the canonical label; stdout: ${raw.stdout}`);
+  assert.doesNotMatch(raw.stdout, /deck\.office\.local/, 'the raw dotted value must never be published');
+
+  // The share panel URL is the same canonical host.
+  const state = await fetch(`http://${address}:${port}/state${tokenParam}`);
+  assert.equal(state.status, 200);
+  const { lan } = await state.json();
+  assert.equal(new URL(lan.mdns).hostname, 'deck-office.local');
+
+  // And the DNS-rebinding wall authorizes that exact hostname — the name a
+  // peer that discovered the service over mDNS would actually send.
+  const discovered = await rawGet(port, '/state', {
+    Host: `deck-office.local:${port}`,
+    authorization: `Bearer ${LAN_TOKEN}`,
+  }, address);
+  assert.equal(discovered.status, 200, 'the advertised .local name must be in the Host allowlist');
 });
 
 test('proxy token mode: a loopback request bearing a trusted proxy Host but no Origin and no token is rejected', async t => {

@@ -24,6 +24,7 @@ import {
   encodeMessage,
   encodeName,
   encodeRecord,
+  hostLabel,
   normalize,
   parseQuestions,
   META_QUERY,
@@ -257,6 +258,21 @@ test('normalize drops junk addresses and turns a dotted instance into one legal 
   assert.deepEqual(ad.addresses, ['192.0.2.7'], 'only real IPv4 goes in an A record');
   assert.ok(!ad.instance.includes('.'), 'a dot in an instance name would split it into two labels');
   assert.equal(ad.host, HOST);
+});
+
+test('hostLabel returns exactly the label normalize() would advertise', () => {
+  // BUG-119: fleetd builds its share URL, startup log line and Host allowlist
+  // from ONE canonical label — if the surfaces and the advertisement ever
+  // diverge, the published name does not resolve and the advertised name is
+  // refused by the daemon's own Host wall.
+  for (const raw of ['deck.office', 'deck office', ' spaced ', 'x'.repeat(80), 'café.'.repeat(20)]) {
+    const canonical = hostLabel(raw);
+    assert.equal(normalize({ port: 4711, addresses: ['192.0.2.7'], name: raw }).host, `${canonical}.local`);
+    assert.ok(!canonical.includes('.'), 'a dot in the advertised host would split it into two labels');
+    assert.ok(Buffer.byteLength(canonical, 'utf8') <= 63, 'a DNS label never exceeds 63 bytes');
+  }
+  assert.equal(hostLabel('deck.office'), 'deck-office');
+  assert.equal(hostLabel(''), 'fleetdeck', 'an empty name falls back rather than advertising ".local"');
 });
 
 // ------------------------------------------------- announcements & goodbyes
