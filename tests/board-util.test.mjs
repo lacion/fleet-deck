@@ -842,3 +842,98 @@ test('the headless image paste survives the Ctrl+V change', () => {
   assert.ok(src.includes('press Enter to send'),
     'a paste must never submit on its own: keystrokes into a live agent are irreversible');
 });
+
+// --- BUG-085: a granted read-back that disagrees is a FAILED copy -----------
+//
+// copyText used to run verifyClipboard() purely for the trace: it wrote a
+// `verified: NO` line and returned true anyway, so TermPane cleared the only
+// visible selection and flashed "copied" over a clipboard that still held the
+// PREVIOUS text — the exact silent lie the whole trace exists to prevent.
+// These drive the real function with DOM mocks (no jsdom: the file needs only
+// `document`, `navigator` and a copy event) and pin the tri-state: an observed
+// mismatch fails the copy on BOTH write paths, an uncheckable clipboard keeps
+// the accepted write standing, and a match verifies it.
+
+function withCopyDom({ readBack, permState = 'granted', execRan = true, fireCopy = true }, fn) {
+  const realDoc = globalThis.document;
+  const realNav = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  const dispatched = [];
+  const listeners = [];
+  const ta = {
+    value: '',
+    style: {},
+    setAttribute() {},
+    select() {},
+    remove() {},
+  };
+  globalThis.document = {
+    activeElement: { focus() {} },
+    body: { appendChild() {} },
+    createElement: () => ta,
+    addEventListener: (type, cb) => listeners.push(cb),
+    removeEventListener: () => {},
+    execCommand: (cmd) => {
+      for (const cb of listeners) {
+        if (fireCopy) cb({ clipboardData: { setData(t, v) { ta.value = v; } }, preventDefault() {} });
+      }
+      return execRan;
+    },
+    hasFocus: () => true,
+  };
+  const nav = {
+    permissions: { query: async () => ({ state: permState }) },
+    clipboard: {
+      writeText: async () => { dispatched.push('writeText'); },
+      readText: async () => readBack,
+    },
+  };
+  Object.defineProperty(globalThis, 'navigator', { value: nav, configurable: true });
+  const restore = () => {
+    globalThis.document = realDoc;
+    Object.defineProperty(globalThis, 'navigator', realNav);
+    delete globalThis.__fdCopy;
+  };
+  return Promise.resolve()
+    .then(() => fn({ dispatched }))
+    .finally(restore);
+}
+
+test('copyText reports failure when the granted read-back disagrees (event path)', async () => {
+  await withCopyDom({ readBack: 'the PREVIOUS clipboard value' }, async () => {
+    const ok = await copyText('what I selected');
+    assert.equal(ok, false,
+      'an observed clipboard mismatch must fail the copy — TermPane clears the selection on true');
+    assert.match(globalThis.__fdCopy.verified, /^NO/);
+    assert.match(globalThis.__fdCopy.result, /^refused/,
+      'the trace must not call a mismatched copy "reported as copied"');
+  });
+});
+
+test('copyText reports failure when the granted read-back disagrees (writeText path)', async () => {
+  await withCopyDom({ readBack: 'stale text', execRan: false }, async ({ dispatched }) => {
+    const ok = await copyText('what I selected');
+    assert.deepEqual(dispatched, ['writeText'], 'the execCommand miss must fall through to writeText');
+    assert.equal(ok, false, 'a resolved writeText over a stale clipboard is still a failed copy');
+    assert.match(globalThis.__fdCopy.verified, /^NO/);
+    assert.match(globalThis.__fdCopy.result, /^refused/);
+  });
+});
+
+test('copyText verifies a copy the read-back confirms', async () => {
+  await withCopyDom({ readBack: 'what I selected' }, async () => {
+    const ok = await copyText('what I selected');
+    assert.equal(ok, true);
+    assert.match(globalThis.__fdCopy.verified, /^YES/);
+    assert.equal(globalThis.__fdCopy.result, 'verified as copied');
+  });
+});
+
+test('copyText keeps an accepted-but-uncheckable copy standing (permission not granted)', async () => {
+  await withCopyDom({ readBack: 'irrelevant — never read', permState: 'prompt' }, async () => {
+    const ok = await copyText('what I selected');
+    assert.equal(ok, true,
+      'an unchecked read-back must not fail a copy the browser accepted');
+    assert.match(globalThis.__fdCopy.verified, /^not checked/);
+    assert.equal(globalThis.__fdCopy.result, 'reported as copied (unverified)');
+  });
+});
