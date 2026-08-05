@@ -350,6 +350,7 @@ test('dismiss refuses a card whose spawn is stalled (consistency with archiveCan
   assert.equal(spawnStatus(db, 'sp-stalled'), 'stalled', 'and its spawn row is not goned');
 });
 
+<<<<<<< /tmp/mf-ours
 // ------------------------------------------------------------- BUG-145
 // Cleanup/dismiss used to treat a null tmux listing as empty and to ignore
 // {ok:false} kills, then report unconditional success — stale windows stayed
@@ -529,6 +530,33 @@ test('dismissRetry refuses cards that are not dismissed and unknown ids', async 
   assert.match(notDismissed.body.reason, /not dismissed/);
   const unknown = await core.dismissRetry(randomUUID());
   assert.equal(unknown.status, 404);
+=======
+// BUG-193: /health.fleet (and `fleetdeck status`'s "sessions") is the CURRENT
+// fleet — the cards /state can show. Dismissed and retention-archived rows are
+// history; counting them left health reporting a fleet after the board had
+// already emptied.
+test('BUG-193: fleetSize agrees with /state across dismiss and retention archival', async (t) => {
+  const { db, core } = memoryCore(t, { env: { FLEETDECK_RETAIN_OFFLINE_MS: 1_000 } });
+  const now = Date.now();
+
+  const live = 'live-one';
+  db.prepare(`INSERT INTO sessions
+    (session_id, callsign, col, note, events, started_at, last_seen, source)
+    VALUES (?, ?, 'idle', 'registered', 0, ?, ?, 'hooks')`).run(live, 'live-one-1', now, now);
+  seedOffline(db, 'off-dismiss', { now });
+  seedOffline(db, 'off-retain', { now: now - 2_000 }); // already past the retention window
+  assert.equal(core.fleetSize(), 3, 'sanity: three cards on the board');
+
+  const out = await core.dismissSession('off-dismiss');
+  assert.equal(out.status, 200, JSON.stringify(out.body));
+  assert.equal(core.fleetSize(), 2, 'a dismissed card leaves the health count with the board');
+
+  await core.retentionSweep(now + 1);
+  assert.equal(db.prepare('SELECT archived_at FROM sessions WHERE session_id = ?').get('off-retain').archived_at != null, true,
+    'sanity: the sweep retention-archived the stale offline card');
+  assert.equal(core.fleetSize(), 1, 'a retention-archived card leaves the health count with the board');
+  assert.equal(core.fleetSize(), core.snapshot().sessions.length, 'fleetSize === /state.sessions.length');
+>>>>>>> /tmp/mf-theirs
 });
 
 // -------------------------------------------------------- HTTP route wiring

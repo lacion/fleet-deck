@@ -56,6 +56,15 @@ export function createStatements(db) {
       )`),
     visibleSessions: db.prepare('SELECT * FROM sessions WHERE archived_at IS NULL ORDER BY started_at'),
     countSessions: db.prepare('SELECT COUNT(*) AS n FROM sessions'),
+    // BUG-193: /health.fleet (and `fleetdeck status`'s "sessions") is the size
+    // of the CURRENT fleet — the cards /state can show. An unscoped COUNT(*)
+    // also counted dismissed and retention-archived history, so dismissing or
+    // archiving the last card still reported a fleet of one (and growing with
+    // history). Same archived_at IS NULL scope as visibleSessions. Kept as a
+    // separate statement because derive.mjs's assignCallsign deliberately
+    // rotates from the ALL-rows count (a monotonic seed independent of
+    // archival).
+    countVisibleSessions: db.prepare('SELECT COUNT(*) AS n FROM sessions WHERE archived_at IS NULL'),
     insertSession: db.prepare(`INSERT INTO sessions
       (session_id, callsign, col, note, events, started_at, last_seen, blocked_this_turn)
       VALUES (?, ?, 'queued', 'registered', 0, ?, ?, 0)`),

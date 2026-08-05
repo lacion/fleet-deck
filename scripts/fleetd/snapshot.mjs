@@ -280,8 +280,12 @@ export function createSnapshot(ctx) {
     };
   }
 
+  // Health semantics (BUG-193): the CURRENT fleet — the cards /state can
+  // show. Dismissed and retention-archived rows are history, not fleet, so an
+  // unscoped COUNT(*) left /health.fleet and `fleetdeck status` permanently
+  // overstating the fleet by every card ever archived.
   function fleetSize() {
-    return q.countSessions.get().n;
+    return q.countVisibleSessions.get().n;
   }
 
   // Live-terminal target resolver (CONTRACT): the HTTP/WS layer gets a row
