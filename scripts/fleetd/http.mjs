@@ -875,9 +875,20 @@ export function createHttp(core, {
           return json(res, 200, { mail: box, ack_mail_ids: box.map(m => m.id) });
         }
         if (url.pathname === '/api/watch') return watchHook(req, res, url); // F3d-2 long-poll
-        if (url.pathname === '/' || url.pathname.startsWith('/assets/')) {
-          // built React board (Phase 5) from board-dist
+        if (url.pathname === '/' || url.pathname === '/index.html' || url.pathname.startsWith('/assets/')) {
+          // built React board (Phase 5) from board-dist. /index.html is the
+          // same shell as / — isPublicShell already lets it through the auth
+          // and Host walls, so it must not fall through to the JSON 404.
           return serveBoardAsset(res, url.pathname, () => json(res, 404, { err: 'nope' }));
+        }
+        if (url.pathname === '/favicon.ico') {
+          // The shell's favicon is a data: SVG (see CSP_SHELL), so board-dist
+          // ships no favicon.ico — but browsers auto-fetch this path and
+          // isPublicShell advertises it, so answer it instead of the JSON 404.
+          // 204 + no-store: no icon today, and no stale negative cache the day
+          // one ships.
+          res.writeHead(204, { 'cache-control': 'no-store' });
+          return res.end();
         }
         return json(res, 404, { err: 'nope' });
       }
