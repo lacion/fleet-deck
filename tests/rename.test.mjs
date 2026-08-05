@@ -1,13 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { chmodSync, mkdtempSync, rmSync } from 'node:fs';
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openDb } from '../scripts/fleetd/db.mjs';
 import { startDaemon } from './helpers/daemon.mjs';
 import { getJson, postHook, postJson } from './helpers/http.mjs';
+import { makeRepoWithWorktree } from './helpers/gitrepo.mjs';
 
 // tests/rename.test.mjs — 0.7.1 custom names.
 //
@@ -60,6 +62,10 @@ async function startSession(daemon, cwd) {
 
 const rename = (daemon, sid, body) => postJson(`${daemon.baseUrl}/api/sessions/${sid}/name`, body);
 const command = (daemon, text) => postJson(`${daemon.baseUrl}/command`, { text });
+
+const git = (args, cwd) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+const writeSeed = (dir, content) => writeFileSync(path.join(dir, 'seed.txt'), content);
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 test('renaming keeps the animal and takes the suffix, and answers in the shape Compose already renders', async (t) => {
   const { daemon, home, cwd } = await boot(t, 'fleetdeck-rename-happy');
@@ -151,21 +157,58 @@ test('clearing a custom name reverts to the ticket name, or to the birth name wh
   assert.equal(res.json.callsign, `${animal}-PROJ-9`, 'the automatic name for a ticketed card is its ticket name');
 });
 
-test('a human name outranks branch auto-detection, and an explicit ticket command still wins', async (t) => {
-  const { daemon, home, cwd } = await boot(t, 'fleetdeck-rename-precedence');
+test('a human name outranks branch auto-detection: a real ticket-branch checkout must not rename or ticket it', async (t) => {
+  const { daemon, home } = await boot(t, 'fleetdeck-rename-precedence');
+  // A real checkout, not a scratch dir: the defect this guards lives in the
+  // daemon's server-side branchOf() auto path, which a plain directory can
+  // never reach (BUG-170 — the old version of this test only exercised the
+  // manual `ticket` command, which uses source='manual' and would keep passing
+  // even if branch auto-detection started overwriting custom names).
+  const repo = makeRepoWithWorktree({ repoName: 'fd-rename-precedence', branch: 'plain-work' });
+  t.after(() => repo.cleanup());
+
+  // Ticketless birth on the plain branch → hex suffix, no ticket recorded.
+  const sid = randomUUID();
+  const start = await postHook(daemon.baseUrl, 'SessionStart', { session_id: sid, cwd: repo.worktree, source: 'startup' }, { token: daemon.token });
+  const animal = start.json.callsign.split('-')[0];
+  await rename(daemon, sid, { suffix: 'my-name' });
+  const named = cardOf((await getJson(`${daemon.baseUrl}/state`)).json, sid);
+  assert.equal(named.callsign, `${animal}-my-name`);
+
+  // Switch the worktree to a ticket-bearing branch; the daemon derives the
+  // branch server-side from cwd on the NEXT hook event — exactly the path that
+  // must never overwrite an explicit human name.
+  writeSeed(repo.worktree, 'seed on plain-work\n');
+  git(['add', '.'], repo.worktree);
+  git(['commit', '-q', '-m', 'seed plain-work'], repo.worktree);
+  git(['switch', '-q', '-c', 'feature/PROJ-7-auto'], repo.worktree);
+  // The daemon's branch cache holds 'plain-work' for up to 20 s — sit it out
+  // so the event below cannot pass for the wrong reason (stale branch read).
+  await sleep(21_000);
+  await postHook(daemon.baseUrl, 'UserPromptSubmit', { session_id: sid, cwd: repo.worktree, prompt: 'back on the ticket branch' }, { token: daemon.token });
+
+  const card = cardOf((await getJson(`${daemon.baseUrl}/state`)).json, sid);
+  assert.equal(card.branch, 'feature/PROJ-7-auto', 'the daemon saw the ticket branch — the auto path was actually reachable');
+  assert.equal(card.callsign, `${animal}-my-name`, 'automation never overwrites a human name');
+  assert.equal(card.ticket ?? null, null, 'branch detection must not even RECORD a ticket over a custom name');
+  const core = withDb(home, db => db.prepare('SELECT custom_suffix, ticket_source FROM sessions WHERE session_id = ?').get(sid));
+  assert.equal(core.custom_suffix, 'my-name');
+  assert.equal(core.ticket_source ?? null, null);
+});
+
+test('an explicit ticket command still wins over a human name', async (t) => {
+  const { daemon, home, cwd } = await boot(t, 'fleetdeck-rename-manual-wins');
   const { sid, animal } = await startSession(daemon, cwd);
   await rename(daemon, sid, { suffix: 'my-name' });
 
-  // The auto path (branch detection) must not rename over a human's choice.
-  const core = withDb(home, db => db.prepare('SELECT custom_suffix, ticket_source FROM sessions WHERE session_id = ?').get(sid));
-  assert.equal(core.custom_suffix, 'my-name');
-  const auto = await command(daemon, `ticket ${animal}-my-name PROJ-1`);
+  const res = await command(daemon, `ticket ${animal}-my-name PROJ-1`);
   // The manual `ticket` command IS an explicit human act, so it may rename —
   // and it clears the custom name on its way through (the card is now
   // ticket-named, and `name … clear` reverts to exactly that).
-  assert.equal(auto.json.callsign, `${animal}-PROJ-1`);
-  const after = withDb(home, db => db.prepare('SELECT custom_suffix FROM sessions WHERE session_id = ?').get(sid));
+  assert.equal(res.json.callsign, `${animal}-PROJ-1`);
+  const after = withDb(home, db => db.prepare('SELECT custom_suffix, ticket_source FROM sessions WHERE session_id = ?').get(sid));
   assert.equal(after.custom_suffix, null, 'an explicit ticket takes the name over from an explicit name');
+  assert.equal(after.ticket_source, 'manual');
 });
 
 test('the `name` command mirrors the REST route and is never silently filed as a note', async (t) => {
