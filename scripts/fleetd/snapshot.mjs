@@ -45,11 +45,17 @@ export function createSnapshot(ctx) {
     // v1.2: per-card spawn ownership (spawn object when a spawns row owns the
     // session) and the stale badge (working/verifying with no events for
     // FLEETDECK_STALE_MS — derived from lastSeen, zero new machinery).
-    const spawnBySid = new Map();
-    for (const r of q.allSpawns.all()) spawnBySid.set(r.session_id, r);
-    const pendingBySid = new Map(q.pendingCounts.all().map(r => [r.to_session, r]));
-    const callsignById = new Map(q.allSessions.all().map(s => [s.session_id, s.callsign]));
     const visible = q.visibleSessions.all();
+    // BUG-150: every frame used to rebuild spawnBySid from ALL spawn history
+    // (revive lineages accumulate forever) and callsignById from ALL sessions
+    // ever seen, although spawnBySid is only read for the visible cards and
+    // callsignById only for the ≤20 bounded conflict rows. Both scans grew
+    // with daemon lifetime while projecting a small visible fleet; the two
+    // statements below are scoped to exactly the rows this frame consumes.
+    const spawnBySid = new Map();
+    for (const r of q.spawnByVisibleSession.all()) spawnBySid.set(r.session_id, r);
+    const pendingBySid = new Map(q.pendingCounts.all().map(r => [r.to_session, r]));
+    const callsignById = new Map(q.conflictCallsigns.all().map(s => [s.session_id, s.callsign]));
     // M-P2: the owned-pane and watcher facts feed mail_meta.route below; compute
     // each ONCE per session here rather than re-running getSession +
     // spawnBySession inside the route derivation.

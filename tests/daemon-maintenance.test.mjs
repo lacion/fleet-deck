@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync, chmodSync, readFileSync, mkdirSync 
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { openDb } from '../scripts/fleetd/db.mjs';
+import { createStatements } from '../scripts/fleetd/statements.mjs';
 import { claudeTranscriptPath, createCore } from '../scripts/fleetd/derive.mjs';
 import { capturePane, exactWindowTarget, pasteText, sendEnter, typeKeys } from '../scripts/fleetd/spawn.mjs';
 import { stallDiagnosticExcerpt } from '../scripts/fleetd/spawns.mjs';
@@ -77,6 +78,44 @@ function memoryCore(t, { env = {}, tmux = fakeTmux(), home = '/daemon-home' } = 
   t.after(() => db.close());
   return { db, core, ...tmux, home };
 }
+
+test('BUG-150: snapshot spawns/callsigns come only from visible sessions + bounded conflicts', t => {
+  const { db, core } = memoryCore(t);
+  const now = Date.now();
+  db.prepare('INSERT INTO sessions (session_id, callsign, col, note, events, started_at, last_seen, blocked_this_turn, archived_at) VALUES (?, ?, ?, ?, 0, ?, ?, 0, ?)')
+    .run('live-1', 'wren-live', 'working', 'registered', now, now, null);
+  db.prepare('INSERT INTO sessions (session_id, callsign, col, note, events, started_at, last_seen, blocked_this_turn, archived_at) VALUES (?, ?, ?, ?, 0, ?, ?, 0, ?)')
+    .run('arch-1', 'comet-old', 'offline', 'ended', now - 1000, now - 1000, now - 500);
+  db.prepare('INSERT INTO sessions (session_id, callsign, col, note, events, started_at, last_seen, blocked_this_turn, archived_at) VALUES (?, ?, ?, ?, 0, ?, ?, 0, ?)')
+    .run('arch-2', 'ibis-old', 'offline', 'ended', now - 2000, now - 2000, now - 500);
+  // Spawn history: a live lineage (old dead row + newest live row) and a
+  // large dead history attached to an ARCHIVED session — the rows BUG-150
+  // stopped materializing on every frame.
+  db.prepare("INSERT INTO spawns (spawn_id, session_id, callsign, tmux_window, cwd, requested_at, status) VALUES ('sp-old', 'live-1', 'wren-live', 'fd4711-wren-live', '/x', ?, 'gone')")
+    .run(now - 5000);
+  db.prepare("INSERT INTO spawns (spawn_id, session_id, callsign, tmux_window, cwd, requested_at, status) VALUES ('sp-new', 'live-1', 'wren-live', 'fd4711-wren-live', '/x', ?, 'live')")
+    .run(now - 1000);
+  for (let i = 0; i < 100; i++) {
+    db.prepare("INSERT INTO spawns (spawn_id, session_id, callsign, tmux_window, cwd, requested_at, status) VALUES (?, 'arch-1', 'comet-old', ?, '/y', ?, 'gone')")
+      .run(`sp-arch-${i}`, `fd4711-comet-${i}`, now - 10000 + i);
+  }
+  // A bounded conflict naming an archived session: its callsign must still
+  // resolve even though that session never appears on the board.
+  db.prepare('INSERT INTO conflicts (at, repo_id, rel_path, severity, sessions_json) VALUES (?, ?, ?, ?, ?)')
+    .run(now, 'r1', 'src/x.mjs', 'warn', JSON.stringify(['arch-1', 'arch-2']));
+  // Pre-fix these reads returned EVERY spawn/session row; the fix scopes
+  // spawns to visible sessions and callsigns to conflict-referenced ones.
+  const { q } = createStatements(db);
+  assert.equal(q.spawnByVisibleSession.all().length, 2);
+  assert.deepEqual(q.conflictCallsigns.all().map(r => r.session_id).sort(), ['arch-1', 'arch-2']);
+  const snap = core.snapshot();
+  const card = snap.sessions.find(s => s.session_id === 'live-1');
+  // Newest lineage row still wins the card.
+  assert.equal(card.spawn.spawn_id, 'sp-new');
+  assert.equal(snap.sessions.some(s => s.session_id === 'arch-1'), false);
+  const conflict = snap.conflicts.find(c => c.rel_path === 'src/x.mjs');
+  assert.deepEqual(conflict.callsigns, ['comet-old', 'ibis-old']);
+});
 
 test('stall diagnostic excerpt is line/byte bounded and redacts shape + exact secrets', () => {
   const exact = 'corporate-token-with-no-known-shape';

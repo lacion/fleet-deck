@@ -27,6 +27,33 @@ export function createStatements(db) {
     // that keeps the animal never collides with itself.
     callsignTaken: db.prepare('SELECT 1 FROM sessions WHERE (callsign = ? OR prev_callsign = ?) AND archived_at IS NULL AND session_id != ? LIMIT 1'),
     allSessions: db.prepare('SELECT * FROM sessions ORDER BY started_at'),
+    // BUG-150: the snapshot's conflict-callsign lookup. The unbounded
+    // allSessions scan above fed a map whose ONLY consumer is
+    // recentConflicts' (≤20 rows, bounded) sessions_json, so every /state
+    // frame rebuilt id→callsign for EVERY archived session the daemon ever
+    // saw — growing with daemon lifetime while projecting a bounded list.
+    // Resolve callsigns for just the session ids the bounded conflict rows
+    // actually name: json_each explodes each sessions_json, the IN-fallback
+    // keeps any pre-json_each-id-column DB rows reachable, and the union
+    // halves dedupe themselves (UNION, not ALL). The json_valid gates mirror
+    // the M-B4/R2-6 guards in snapshot(): a corrupt or wrong-shape
+    // sessions_json must drop out of this lookup exactly as it drops out of
+    // the conflict list itself — never throw "malformed JSON" out of /state
+    // (json_each re-parses corrupt input per row and WOULD throw).
+    conflictCallsigns: db.prepare(`SELECT session_id, callsign FROM sessions
+      WHERE session_id IN (
+        SELECT je.value FROM conflicts c, json_each(c.sessions_json) je
+         WHERE c.id IN (SELECT id FROM conflicts ORDER BY id DESC LIMIT 20)
+           AND json_valid(c.sessions_json)
+           AND json_type(c.sessions_json) = 'array'
+      )
+      UNION
+      SELECT session_id, callsign FROM sessions
+      WHERE session_id IN (
+        SELECT c.sessions_json FROM conflicts c
+         WHERE c.id IN (SELECT id FROM conflicts ORDER BY id DESC LIMIT 20)
+           AND NOT json_valid(c.sessions_json)
+      )`),
     visibleSessions: db.prepare('SELECT * FROM sessions WHERE archived_at IS NULL ORDER BY started_at'),
     countSessions: db.prepare('SELECT COUNT(*) AS n FROM sessions'),
     insertSession: db.prepare(`INSERT INTO sessions
@@ -268,6 +295,17 @@ export function createStatements(db) {
     // (spawning|stalled|live) to refuse a still-live-eligible card.
     spawnsForSession: db.prepare('SELECT * FROM spawns WHERE session_id = ?'),
     allSpawns: db.prepare('SELECT * FROM spawns ORDER BY requested_at, rowid'),
+    // BUG-150: the snapshot's spawn-ownership map. The unbounded allSpawns
+    // scan above was materialized in full on EVERY /state frame (plus one
+    // Map/set per row) so the LAST row per session_id would win — yet only
+    // visible (non-archived) sessions ever read the map, and a fleet has a
+    // handful of those by design. Revive lineages keep spawning forever, so
+    // the scan grew monotonically with daemon lifetime. This correlated
+    // subquery returns only the NEWEST row (same requested_at,rowid order
+    // as spawnBySession) for each session the frame can actually display.
+    spawnByVisibleSession: db.prepare(`SELECT * FROM spawns
+      WHERE session_id IN (SELECT session_id FROM sessions WHERE archived_at IS NULL)
+      ORDER BY requested_at, rowid`),
     activeSpawns: db.prepare("SELECT * FROM spawns WHERE status IN ('spawning', 'stalled', 'live')"),
     // BUG 3: 'pane-dead' and 'gone' were a ONE-WAY DOOR — activeSpawns never
     // re-checked them, so a spawn wrongly condemned (BUG 1 /clear, BUG 2
