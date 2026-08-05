@@ -57,20 +57,39 @@ test('M-P1: a burst of mutations coalesces into far fewer broadcasts', async t =
   const cwd = mkdtempSync(path.join(tmpdir(), 'fleetdeck-coalesce-'));
   t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
 
+  // A bare temp dir is NOT a git repo, so nothing outside the daemon (hook
+  // repo-derivation, background ingest) can mutate the session and bump its
+  // events counter — every events tick observed below must be one of OUR hooks.
   const sid = randomUUID();
-  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon });
+  const started = await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon });
+  assert.equal(started.status, 200, 'the SessionStart hook must be accepted');
 
   const { ws, frames } = connect(daemon.baseUrl.replace(/^http/, 'ws') + '/ws');
   t.after(() => ws.close());
-  await waitUntil(() => frames.find(f => f.type === 'snapshot'), 'initial connect snapshot');
+  const first = await waitUntil(() => frames.find(f => f.type === 'snapshot'), 'initial connect snapshot');
+
+  // Record the baseline AFTER the connect snapshot has landed: any startup or
+  // SessionStart flush is already accounted for in `baselineEvents`, so the
+  // burst below is the only source of new events.
+  const baselineSession = first.sessions.find(s => s.session_id === sid);
+  assert.ok(baselineSession, 'the connect snapshot must carry the session');
+  const baselineEvents = baselineSession.events;
+  assert.equal(typeof baselineEvents, 'number', 'the snapshot must expose the session events counter');
 
   // Fire many mutations as close to simultaneously as the loop allows. Each
   // PostToolUse bumps the session (events++, last_seen) → onMutate. Unbatched,
   // that was one full snapshot rebuild+stringify+send PER hook.
   const N = 40;
   const baseline = frames.length;
-  await Promise.all(Array.from({ length: N }, () =>
+  const responses = await Promise.all(Array.from({ length: N }, () =>
     postHook(daemon.baseUrl, 'PostToolUse', loadFixture('post-tool-use-bash', { session_id: sid, cwd }), { token: daemon })));
+
+  // Every hook must actually have LANDED. The old test discarded the
+  // responses, so a run where all 40 were refused (or mutation broadcasting
+  // was broken) could still pass on an unrelated trailing snapshot.
+  for (const [i, res] of responses.entries()) {
+    assert.equal(res.status, 200, `PostToolUse #${i} must be accepted, got ${res.status}: ${res.text}`);
+  }
 
   // Let the trailing coalesce window (and any straddling ones) flush.
   await new Promise(r => setTimeout(r, 400));
@@ -80,10 +99,14 @@ test('M-P1: a burst of mutations coalesces into far fewer broadcasts', async t =
   assert.ok(broadcasts <= 10, `expected the ${N} mutations to coalesce into far fewer broadcasts, saw ${broadcasts}`);
   assert.ok(broadcasts < N, 'coalescing must produce fewer broadcasts than mutations');
 
-  // …and the board really did converge on the latest state.
+  // …and the board really did converge on the latest state: the final snapshot
+  // must carry every one of the N mutations, not merely the session row that
+  // already existed before the burst.
   const last = [...frames].reverse().find(f => f.type === 'snapshot');
   const session = last.sessions.find(s => s.session_id === sid);
   assert.ok(session, 'the coalesced snapshot still carries the mutated session');
+  assert.equal(session.events, baselineEvents + N,
+    `all ${N} burst mutations must land: expected events ${baselineEvents + N}, got ${session.events}`);
 });
 
 test('R1-2: a /ws client past the buffer cap is TERMINATED on broadcast, not silently skipped', async t => {
