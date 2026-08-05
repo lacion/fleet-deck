@@ -27,7 +27,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFile, spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { MIN_TMUX_VERSION, parseTmuxVersion, tmuxVersionSupported } from './tmux-version.mjs';
 
@@ -69,7 +69,10 @@ const err = (s) => process.stderr.write(`${s}\n`);
 // fleetd already has a tested graceful shutdown and we must not shadow it.
 async function serve() {
   process.env.FLEETDECK_MANAGED = '1';
-  await import(`file://${FLEETD}`);
+  // pathToFileURL, not string concat: a legal install path containing `#`, `?`,
+  // a raw `%`, or spaces must still resolve — `file://${path}` truncates at the
+  // fragment/query delimiters and throws URIError on a raw percent sequence.
+  await import(pathToFileURL(FLEETD).href);
 }
 
 // ------------------------------------------------------------------ health
