@@ -707,6 +707,40 @@ test('a wrapper split across two frames is not lost', () => {
   }
 });
 
+test('a FORBIDDEN wrapper split across frames stays dropped at every split point', () => {
+  // BUG-086: after consuming a complete wrapper the parser returned the residual
+  // buffer verbatim, so a frame ending on the next wrapper's leading ESC emitted
+  // that ESC. xterm keeps its escape-parser state across writes, so the next
+  // frame's raw `Ptmux;...` bytes reassembled the wrapper the filter had dropped
+  // — forbidden passthrough became a question of where a socket frame ended.
+  // The producer controls write timing; the filter must not care.
+  const evil = wrap(`${E}]0;retitled${String.fromCharCode(7)}`);
+  const whole = `a${wrap(OSC52)}b${evil}c`;
+  for (let cut = 0; cut <= whole.length; cut++) {
+    const first = unwrapTmuxPassthrough(whole.slice(0, cut));
+    const second = unwrapTmuxPassthrough(whole.slice(cut), first.carry);
+    assert.equal(first.out + second.out, `a${OSC52}bc`, `split at ${cut} leaked wrapper bytes`);
+    assert.equal(second.carry, '', `split at ${cut} left a dangling carry`);
+  }
+});
+
+test('filtering is partition-invariant over three frames at every split pair', () => {
+  const evil = wrap(`${E}]8;;https://evil.example${String.fromCharCode(7)}`);
+  const whole = `p${wrap(OSC52)}q${evil}r`;
+  const expected = `p${OSC52}qr`;
+  const unsplit = unwrapTmuxPassthrough(whole);
+  assert.deepEqual(unsplit, { out: expected, carry: '' }, 'the unsplit baseline itself is wrong');
+  for (let i = 0; i <= whole.length; i++) {
+    for (let j = i; j <= whole.length; j++) {
+      const a = unwrapTmuxPassthrough(whole.slice(0, i));
+      const b = unwrapTmuxPassthrough(whole.slice(i, j), a.carry);
+      const c = unwrapTmuxPassthrough(whole.slice(j), b.carry);
+      assert.equal(a.out + b.out + c.out, expected, `splits at ${i},${j} changed the output`);
+      assert.equal(c.carry, '', `splits at ${i},${j} left a dangling carry`);
+    }
+  }
+});
+
 test('ordinary pane output is passed through untouched', () => {
   const plain = `${E}[1mbold${E}[0m rows and \r\n newlines`;
   assert.deepEqual(unwrapTmuxPassthrough(plain), { out: plain, carry: '' });

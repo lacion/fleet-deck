@@ -678,14 +678,6 @@ const PT_MAX = 1 << 20;
  */
 export function unwrapTmuxPassthrough(chunk, carry = '') {
   let buf = carry + String(chunk ?? '');
-  if (!buf.includes(PT_OPEN)) {
-    // Hold back only a possible partial OPEN at the very end; everything else
-    // is already safe to render.
-    for (let n = Math.min(PT_OPEN.length - 1, buf.length); n > 0; n--) {
-      if (buf.endsWith(PT_OPEN.slice(0, n))) return { out: buf.slice(0, -n), carry: buf.slice(-n) };
-    }
-    return { out: buf, carry: '' };
-  }
   let out = '';
   while (true) {
     const open = buf.indexOf(PT_OPEN);
@@ -702,6 +694,16 @@ export function unwrapTmuxPassthrough(chunk, carry = '') {
     // The whole point: keep the clipboard write, drop every other passthrough.
     if (/^\]52;/.test(inner)) out += inner;
     buf = rest.slice(close + PT_CLOSE.length);
+  }
+  // Whatever is left holds no complete wrapper — but its TAIL may be the start
+  // of one whose remainder arrives in the next frame. Hold that suffix back
+  // rather than emitting it: emitted, the leading ESC of a split wrapper would
+  // reach xterm, which keeps its own escape-parser state across writes and
+  // would happily reassemble — and EXECUTE — a wrapper this filter exists to
+  // drop. Whether a forbidden passthrough is filtered must never depend on
+  // where a socket frame happened to end.
+  for (let n = Math.min(PT_OPEN.length - 1, buf.length); n > 0; n--) {
+    if (buf.endsWith(PT_OPEN.slice(0, n))) return { out: out + buf.slice(0, -n), carry: buf.slice(-n) };
   }
   return { out: out + buf, carry: '' };
 }
