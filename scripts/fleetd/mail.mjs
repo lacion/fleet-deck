@@ -65,6 +65,25 @@ function clampFrom(from) {
   return dropOrphanSurrogate(from.slice(0, MAIL_FROM_MAX_LEN));
 }
 
+// BUG-128: the mailbox is bounded not only per row (MAIL_MAX_LEN above) but
+// per PENDING mailbox. Without a budget, a valid burst of 4 KB messages to
+// one idle session accumulated without limit — and the owned-pane path then
+// joined the WHOLE backlog into one unbounded tmux paste. An insert that
+// would push a session past either bound is refused BEFORE the write
+// (backpressure): postMail turns the refusal into a loud 429 instead of
+// silently dropping the mail. Delivery channels are all FIFO-oldest-first
+// (drainMail, claimMail/nextMail, claimAllMail/pendingMailPage), so the
+// oldest messages are never starved by a refused new tail.
+const MAIL_PENDING_MAX = 100;
+const MAIL_PENDING_MAX_BYTES = 256 * 1024;
+// The owned-pane claim is a bounded BATCH, not the whole mailbox: at most
+// MAIL_PANE_BATCH rows / MAIL_PANE_BATCH_BYTES code units per paste (both
+// comfortably above any single row, so one oversized-but-legal row still fits
+// its own batch). Rows past the batch stay pending and are picked up by the
+// next delivery round instead of one giant buffer.
+const MAIL_PANE_BATCH = 25;
+const MAIL_PANE_BATCH_BYTES = 64 * 1024;
+
 // 0.16.0 SENDER/FRAME RESERVATION. The fleet doctrine teaches agents to treat
 // [FLEETDECK ...] frames and the daemon's own sender names as carrying human
 // authority — so they must be unforgeable. Only the daemon's internal mail()
@@ -133,7 +152,17 @@ const FROM_UNSAFE_RE = /[\r\n\x00-\x1f\x7f-\x9f[\]]/;
 export function createMail(ctx) {
   const {
     db, q, tick, logEvent, onMutate, questions, tmuxAdapter,
+<<<<<<< /tmp/mf-ours
     findScopedWindow, scopedPaneTarget, PANE_MAIL_GRACE_MS, MAIL_CLAIM_LEASE_MS,
+=======
+    findScopedWindow, scopedPaneTarget, PANE_MAIL_GRACE_MS,
+    // BUG-128: test-only budget overrides (createCore passes these through
+    // from its opts); production never sets them, so the constants rule.
+    MAIL_PENDING_MAX: PENDING_MAX = MAIL_PENDING_MAX,
+    MAIL_PENDING_MAX_BYTES: PENDING_MAX_BYTES = MAIL_PENDING_MAX_BYTES,
+    MAIL_PANE_BATCH: PANE_BATCH = MAIL_PANE_BATCH,
+    MAIL_PANE_BATCH_BYTES: PANE_BATCH_BYTES = MAIL_PANE_BATCH_BYTES,
+>>>>>>> /tmp/mf-theirs
   } = ctx;
 
   // BUG-034: a claim is now an EXPIRING IN-FLIGHT LEASE, not a delivery. The
@@ -158,9 +187,19 @@ export function createMail(ctx) {
   // delivery receipt (postMail → POST /mail) can tell the sender when the tail
   // was cut. The clamp itself lives here so every mail entry point — board
   // mail, orchestrator routing, question relays — is bounded identically.
+  // BUG-128: returns {refused, reason} instead when the pending budget below
+  // would be exceeded — the row is never inserted.
   function mail(toSession, from, text) {
     const raw = String(text ?? '');
-    q.insertMail.run(toSession, clampFrom(from), clampMail(raw), Date.now()); // BUG 6/12: surrogate-safe clamps
+    // BUG-128: backpressure. Price the would-be insert against the pending
+    // budget BEFORE writing — stats only, never a full mailbox scan. The sum
+    // uses the CLAMPED length, i.e. what would actually be stored.
+    const stored = clampMail(raw);
+    const stats = q.pendingMailStats.get(toSession);
+    if (stats.n >= PENDING_MAX || stats.bytes + stored.length > PENDING_MAX_BYTES) {
+      return { refused: true, reason: 'mailbox full' };
+    }
+    q.insertMail.run(toSession, clampFrom(from), stored, Date.now()); // BUG 6/12: surrogate-safe clamps
     // v1.1 mail-wake: ANY mail landing in the mailbox wakes any /api/watch
     // long-poll for that session — board answers, [FLEETDECK ASSIGNMENT]
     // routing and plain board/session mail alike (v1 nudged only on
@@ -169,11 +208,33 @@ export function createMail(ctx) {
     notifyWatchers(toSession);
     // A live /api/watch waiter gets first refusal. After the grace window,
     // daemon-owned idle/queued panes gain the second delivery channel.
+    // BUG-128: ONE coalesced timer per session, not one per row. Previously
+    // every insert armed its own probe, so N queued rows fired N timers that
+    // each forked tmux long after the first had drained the queue. The first
+    // row's grace deadline stands — later rows ride the same probe; a probe
+    // that leaves rows pending (a bounded batch) re-arms itself exactly once.
+    armPaneMailTimer(toSession);
+    return { truncated: raw.length > MAIL_MAX_LEN, original_length: raw.length };
+  }
+
+  // BUG-128: session_id -> the session's one pending grace timer. mail()
+  // coalesces every insert onto a single probe, and tryOwnedPaneDelivery
+  // re-arms it when a bounded batch left rows pending.
+  const paneMailTimers = new Map();
+  function armPaneMailTimer(sid) {
+    if (paneMailTimers.has(sid)) return;
     const timer = setTimeout(() => {
-      tryOwnedPaneDelivery(toSession).catch(() => { /* fail-open; mail stays pending */ });
+      paneMailTimers.delete(sid);
+      tryOwnedPaneDelivery(sid).catch(() => { /* fail-open; mail stays pending */ });
     }, PANE_MAIL_GRACE_MS);
     timer.unref?.();
-    return { truncated: raw.length > MAIL_MAX_LEN, original_length: raw.length };
+    paneMailTimers.set(sid, timer);
+  }
+  // Re-arm after a batch claim: a probe is presumably RUNNING (this is called
+  // from inside it), so drop the stale handle and schedule the next round.
+  function rearmPaneMailTimer(sid) {
+    paneMailTimers.delete(sid);
+    armPaneMailTimer(sid);
   }
 
   // BUG-034: drainMail SPLIT into claim/finalize phases.
@@ -341,6 +402,7 @@ export function createMail(ctx) {
     return !!pane && !pane.dead && pane.cmd === 'claude';
   }
 
+<<<<<<< /tmp/mf-ours
   // BUG-034: claimAllMail now LEASES — it commits claimed_at (the lease
   // deadline), NOT delivered_at. The owned-pane path below finalizes delivery
   // only after Enter is confirmed, and releases the lease on any failure —
@@ -352,8 +414,29 @@ export function createMail(ctx) {
       const box = q.pendingMail.all(sid, Date.now());
       const deadline = Date.now() + MAIL_CLAIM_LEASE_MS;
       for (const m of box) q.claimMail.run(deadline, m.id);
+=======
+  // BUG-128: one bounded BATCH, not the whole mailbox. Claims at most
+  // MAIL_PANE_BATCH rows AND MAIL_PANE_BATCH_BYTES of text (whichever bites
+  // first), atomically; anything past the batch stays pending for the next
+  // delivery round. Rows are oldest-first, so a batch boundary can only ever
+  // leave a TAIL pending, never starve an old row. The +1 page row lets the
+  // caller tell "empty after this" from "more waiting" without a count query.
+  function claimAllMail(sid) {
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      const page = q.pendingMailPage.all(sid, PANE_BATCH + 1);
+      const batch = [];
+      let bytes = 0;
+      for (const m of page) {
+        if (batch.length >= PANE_BATCH || (batch.length && bytes + m.text.length > PANE_BATCH_BYTES)) break;
+        batch.push(m);
+        bytes += m.text.length;
+      }
+      const now = Date.now();
+      for (const m of batch) q.markDelivered.run(now, m.id);
+>>>>>>> /tmp/mf-theirs
       db.exec('COMMIT');
-      return box;
+      return { batch, remaining: page.length > batch.length };
     } catch (err) {
       try { db.exec('ROLLBACK'); } catch { /* preserve original error */ }
       throw err;
@@ -381,8 +464,12 @@ export function createMail(ctx) {
     // permission or question TUI. Re-read the row FRESH through the same gate
     // and bail (claiming nothing) unless it is still an idle/queued owned pane.
     if (!ownedPaneRow(sid)) return false;
-    const box = claimAllMail(sid);
+    const { batch: box, remaining } = claimAllMail(sid);
     if (!box.length) return false;
+    // BUG-128: one bounded batch per paste. When rows remain pending, re-arm
+    // exactly one grace timer so the rest follows in later rounds (and a burst
+    // still coalesces to one probe per batch instead of one per row).
+    if (remaining) rearmPaneMailTimer(sid);
     const text = box.map(m => `[FLEETDECK MAIL from ${m.from_id}] ${m.text}`).join('\n');
     const pasted = await tmuxAdapter.pasteText(target, text);
     if (!pasted) {                       // paste failed → redeliver at a later turn
@@ -552,8 +639,29 @@ export function createMail(ctx) {
       if (await ownedPaneDeliverable(sid)) return 'pane';
       return q.getSession.get(sid)?.ended_at != null ? 'offline-queued' : 'turn-boundary';
     }));
+<<<<<<< /tmp/mf-ours
     targets.forEach(sid => mail(sid, sender, text));
     tick(`✉ mail from ${sender} → ${to}`);
+=======
+    // BUG-128: the per-mailbox pending budget can refuse an insert. That
+    // refusal is loud, never silent: if EVERY fanout target refused, the send
+    // 429s so the caller knows nothing landed; a partial fanout reports the
+    // refused targets with route 'refused'.
+    const outcomes = targets.map(sid => mail(sid, from || 'human', text));
+    const refusedAll = targets.length > 0 && outcomes.every(o => o.refused);
+    if (refusedAll) {
+      return {
+        status: 429,
+        body: {
+          ok: false,
+          reason: 'recipient mailbox is full — too much pending mail',
+          pending_max: PENDING_MAX,
+          pending_max_bytes: PENDING_MAX_BYTES,
+        },
+      };
+    }
+    tick(`✉ mail from ${from || 'human'} → ${to}`);
+>>>>>>> /tmp/mf-theirs
     onMutate();
     // BUG 4: report truncation to the sender. All targets receive the same
     // text and share MAIL_MAX_LEN, so the clamp is computed once from the raw
@@ -564,11 +672,11 @@ export function createMail(ctx) {
     const truncated = raw.length > MAIL_MAX_LEN;
     return {
       ok: true,
-      delivered: targets.length,
+      delivered: outcomes.filter(o => !o.refused).length,
       targets: targets.map((sid, i) => ({
         session_id: sid,
         callsign: q.getSession.get(sid)?.callsign ?? null,
-        route: routes[i],
+        route: outcomes[i].refused ? 'refused' : routes[i],
       })),
       ...(truncated ? { truncated: true, original_length: raw.length, max_length: MAIL_MAX_LEN } : {}),
     };

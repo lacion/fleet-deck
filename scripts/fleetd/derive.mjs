@@ -70,6 +70,9 @@ export function createCore(db, {
   // snapshot can tell the board which build is serving it (upgrade-takeover
   // observability). '0.0.0' mirrors /health's standalone-install fallback.
   version = '0.0.0',
+  // BUG-128: test-only overrides for the mail pending budget and pane batch
+  // bounds (mail.mjs defaults to its own constants when these are undefined).
+  MAIL_PENDING_MAX, MAIL_PENDING_MAX_BYTES, MAIL_PANE_BATCH, MAIL_PANE_BATCH_BYTES,
 } = {}) {
   const t0 = Date.now();
   // onMutate is reassignable through the setter on the returned surface; the
@@ -728,7 +731,11 @@ export function createCore(db, {
     // (q didn't exist at parameter-default time); ctx carries that same value.
     db, port, home, holdMs: holdMs ?? resolveHoldMs(process.env, () => q.getSetting.get('hold_ms')?.value ?? null), t0, version,
     STALE_MS, NUDGE_MS, SPAWN_REGISTER_MS, SETUP_REGISTER_MS, PANE_MAIL_GRACE_MS,
+<<<<<<< /tmp/mf-ours
     MAIL_CLAIM_LEASE_MS,
+=======
+    MAIL_PENDING_MAX, MAIL_PENDING_MAX_BYTES, MAIL_PANE_BATCH, MAIL_PANE_BATCH_BYTES, // BUG-128 test-only
+>>>>>>> /tmp/mf-theirs
     PRESUME_DEAD_MS, RETAIN_OFFLINE_MS, RC_HARVEST_MS, RETAIN_LEDGER_MS,
     ADOPT_ARM_MS, ADOPT_DELAY_MS, // 0.7.0 Move-to-tmux (spawns arms, events fires)
     SNAPSHOT_FILES_PER_SESSION,
@@ -883,7 +890,14 @@ export function createCore(db, {
     watchInfo,       // "
     registerWatchGen, // " (BUG-105: newest-wins watcher generation for the atomic claim)
     drainMail,
+<<<<<<< /tmp/mf-ours
     ackMail,           // POST /mail/ack — BUG-034 lease finalization
+=======
+    // BUG-128: the raw internal insert is on the surface so in-memory tests
+    // can queue a burst without the postMail routing/probe ceremony (commands
+    // .mjs and question relays already reach it through ctx).
+    mail,
+>>>>>>> /tmp/mf-theirs
     postMail,
     tryOwnedPaneDelivery,
     command,

@@ -106,6 +106,7 @@ export function createStatements(db) {
     // newest — the exact files the human is watching.)
     filesBySession: db.prepare('SELECT session_id, abs_path, MAX(at) AS recent FROM file_touches WHERE at > ? GROUP BY session_id, abs_path ORDER BY recent DESC'),
     insertMail: db.prepare('INSERT INTO mail (to_session, from_id, text, at, delivered_at) VALUES (?, ?, ?, ?, NULL)'),
+<<<<<<< /tmp/mf-ours
     // BUG-034: "claimable" = never delivered, never expired, and not under a
     // live in-flight lease. A row whose lease deadline passed (consumer or
     // daemon died mid-delivery) is claimable again — that is the whole point
@@ -114,6 +115,15 @@ export function createStatements(db) {
       WHERE to_session = ? AND delivered_at IS NULL AND expired_at IS NULL
         AND (claimed_at IS NULL OR claimed_at <= ?)
       ORDER BY at, id`),
+=======
+    pendingMail: db.prepare('SELECT * FROM mail WHERE to_session = ? AND delivered_at IS NULL AND expired_at IS NULL ORDER BY at, id'),
+    // BUG-128: the owned-pane claim and the pending-budget check must not read
+    // the whole mailbox. pendingMailPage fetches one bounded batch (the extra
+    // row lets tryOwnedPaneDelivery tell "more pending" apart from "empty");
+    // pendingMailStats prices a would-be insert without hydrating every row.
+    pendingMailPage: db.prepare('SELECT * FROM mail WHERE to_session = ? AND delivered_at IS NULL AND expired_at IS NULL ORDER BY at, id LIMIT ?'),
+    pendingMailStats: db.prepare('SELECT COUNT(*) AS n, COALESCE(SUM(LENGTH(text)), 0) AS bytes FROM mail WHERE to_session = ? AND delivered_at IS NULL AND expired_at IS NULL'),
+>>>>>>> /tmp/mf-theirs
     // /api/watch v2 claim: oldest undelivered mail from ANY sender (v1
     // claimed fleetdeck-answer rows only). Same BUG-034 lease filter.
     nextMail: db.prepare(`SELECT * FROM mail
