@@ -58,6 +58,7 @@ EXECUTOR_WINDOW=""
 PLAN_ID=""
 QID=""
 CLEANUP_DONE=0
+PROJECT_SNAPSHOT=""
 
 ok() {
   echo "PASS: $1"
@@ -115,10 +116,34 @@ cleanup_resources() {
     tmux -L "$FLEETDECK_TMUX_SOCKET" kill-server 2>/dev/null || true
   fi
 
-  if [ -f "$SEED_UTIL" ]; then
-    cp "$SEED_UTIL" "$UTIL_FILE" 2>/dev/null || true
+  # Restore the pre-run bytes of every project file this gate touches (see
+  # snapshot_project_files). Restoring the seed here instead would erase any
+  # uncommitted local work the run overwrote.
+  if [ -n "$PROJECT_SNAPSHOT" ] && [ -d "$PROJECT_SNAPSHOT" ]; then
+    if [ -f "$PROJECT_SNAPSHOT/util.js" ]; then
+      cp "$PROJECT_SNAPSHOT/util.js" "$UTIL_FILE" 2>/dev/null || true
+    else
+      rm -f "$UTIL_FILE"
+    fi
+    if [ -f "$PROJECT_SNAPSHOT/test.js" ]; then
+      cp "$PROJECT_SNAPSHOT/test.js" "$TEST_FILE" 2>/dev/null || true
+    else
+      rm -f "$TEST_FILE"
+    fi
+    if [ -f "$PROJECT_SNAPSHOT/claude-settings.json" ]; then
+      mkdir -p "$PROJECT_DIR/.claude"
+      cp "$PROJECT_SNAPSHOT/claude-settings.json" "$PROJECT_DIR/.claude/settings.json" 2>/dev/null || true
+    else
+      rm -f "$PROJECT_DIR/.claude/settings.json"
+    fi
+    PROJECT_SNAPSHOT=""
   fi
-  rm -f "$TEST_FILE"
+  # Sweep any lingering pre-run backup dirs (this run's, or a killed run's
+  # leftover that this run did not adopt). Runs AFTER the restore above —
+  # the snapshot lives inside PROJECT_DIR and matches the same glob.
+  if [ -d "$PROJECT_DIR" ]; then
+    find "$PROJECT_DIR" -mindepth 1 -maxdepth 1 -name '.pre-accept-*' -exec rm -rf {} + 2>/dev/null || true
+  fi
 
   if [ -n "$DAEMON_PID" ] && kill -0 "$DAEMON_PID" 2>/dev/null; then
     kill "$DAEMON_PID" 2>/dev/null || true
@@ -128,6 +153,79 @@ cleanup_resources() {
     done
   fi
 }
+
+# The three project files the gate's setup mutates. The settings file lives
+# under $PROJECT_DIR/.claude; the project itself is the executor's cwd, and
+# its content is what the gate both clobbers and verifies.
+SETTINGS_FILE="$PROJECT_DIR/.claude/settings.json"
+
+# Snapshot every project file this gate overwrites (BUG-012). Run BEFORE any
+# setup mutation; cleanup_resources restores these exact bytes, so a developer
+# with uncommitted util.js edits, a local test.js, or project .claude settings
+# never loses them to the gate. Files that did not exist pre-run are restored
+# to nonexistence; any leftover snapshot from a previously killed run is taken
+# as the true pre-run state instead of a snapshot of the wreckage.
+snapshot_project_files() {
+  local existing
+  existing=$(find "$PROJECT_DIR" -mindepth 1 -maxdepth 1 -type d -name '.pre-accept-*' -print -quit 2>/dev/null)
+  if [ -n "$existing" ]; then
+    PROJECT_SNAPSHOT="$existing"
+    return 0
+  fi
+  PROJECT_SNAPSHOT=$(mktemp -d "$PROJECT_DIR/.pre-accept-XXXXXX") || return 1
+  [ ! -f "$UTIL_FILE" ] || cp -p "$UTIL_FILE" "$PROJECT_SNAPSHOT/util.js"
+  [ ! -f "$TEST_FILE" ] || cp -p "$TEST_FILE" "$PROJECT_SNAPSHOT/test.js"
+  [ ! -f "$SETTINGS_FILE" ] || cp -p "$SETTINGS_FILE" "$PROJECT_SNAPSHOT/claude-settings.json"
+}
+
+# The destructive setup steps, factored out so the BUG-012 regression harness
+# exercises exactly what the live gate runs: seed-copy util.js, delete
+# test.js, regenerate hook settings, and (later) let the executor rewrite
+# util.js and create test.js.
+apply_gate_fixture() {
+  mkdir -p "$SCRATCH_HOME" "$PROJECT_DIR/.claude"
+  cp "$SEED_UTIL" "$UTIL_FILE"
+  rm -f "$TEST_FILE"
+  echo "{\"gate\":\"hook-settings\",\"base\":\"$BASE\"}" > "$SETTINGS_FILE"
+}
+
+# Standalone BUG-012 regression harness. Not used by the live gate; the test
+# suite (tests/accept-plan-snapshot.test.mjs) generates it by invoking this
+# script as `bash run-accept-plan.sh --emit-snapshot-harness <out>`, seeds
+# local content in a copied project dir, runs the harness, and asserts the
+# pre-run bytes and existence state survive. The harness sources the real
+# snapshot/mutate/restore code by extracting it from this file, so it can
+# never drift from the gate. Usage: bash <harness> [restore|legacy] —
+# "legacy" replays the pre-fix behavior (seed restore, no settings restore)
+# to prove the test catches the original defect.
+if [ "${1:-}" = "--emit-snapshot-harness" ]; then
+  {
+    sed -n '/^SCRIPT_DIR=/,/^EXECUTOR_SAMPLES=/p' "$0"
+    echo 'MODE="${1:-restore}"'
+    sed -n '/^SETTINGS_FILE=/p' "$0"
+    echo 'PROJECT_SNAPSHOT=""'
+    sed -n '/^snapshot_project_files() {/,/^}$/p' "$0"
+    sed -n '/^apply_gate_fixture() {/,/^}$/p' "$0"
+    cat <<'HARNESS'
+snapshot_project_files
+apply_gate_fixture
+# executor phase: the unsupervised spawn rewrites util.js and creates test.js
+echo "// executor edit" >> "$UTIL_FILE"
+echo "// executor test" > "$TEST_FILE"
+if [ "$MODE" = "legacy" ]; then
+  # pre-BUG-012-fix restore: seed bytes, no test.js, settings left clobbered
+  if [ -f "$SEED_UTIL" ]; then cp "$SEED_UTIL" "$UTIL_FILE" 2>/dev/null || true; fi
+  rm -f "$TEST_FILE"
+  exit 0
+fi
+if [ -f "$PROJECT_SNAPSHOT/util.js" ]; then cp "$PROJECT_SNAPSHOT/util.js" "$UTIL_FILE"; else rm -f "$UTIL_FILE"; fi
+if [ -f "$PROJECT_SNAPSHOT/test.js" ]; then cp "$PROJECT_SNAPSHOT/test.js" "$TEST_FILE"; else rm -f "$TEST_FILE"; fi
+if [ -f "$PROJECT_SNAPSHOT/claude-settings.json" ]; then cp "$PROJECT_SNAPSHOT/claude-settings.json" "$SETTINGS_FILE"; else rm -f "$SETTINGS_FILE"; fi
+rm -rf "$PROJECT_SNAPSHOT"
+HARNESS
+  } > "${2:?usage: run-accept-plan.sh --emit-snapshot-harness <output-file>}"
+  exit 0
+fi
 
 trap cleanup_resources EXIT ERR
 trap 'cleanup_resources; exit 130' INT
@@ -243,11 +341,15 @@ if command -v tmux >/dev/null 2>&1; then
 fi
 
 rm -rf "$SCRATCH_HOME"
-mkdir -p "$SCRATCH_HOME" "$PROJECT_DIR/.claude"
-cp "$SEED_UTIL" "$UTIL_FILE"
-rm -f "$TEST_FILE"
+mkdir -p "$SCRATCH_HOME"
+if ! snapshot_project_files; then
+  echo "FAIL: could not snapshot project files under $PROJECT_DIR -- refusing to run the gate" >&2
+  exit 1
+fi
+apply_gate_fixture
 
 # Regenerate the proven local demo hook wiring. The Stop command hook keeps
+<<<<<<< /tmp/mf-ours
 # the v1.1 asyncRewake fields verbatim from hooks/hooks.json. Every other
 # hook uses the current checkout's authenticated command shim: native HTTP
 # hooks cannot attach the bearer token required since 0.16.0, and the
@@ -256,6 +358,10 @@ rm -f "$TEST_FILE"
 # its duplicate hooks can never mask the checkout under test with cached
 # code.
 cat > "$PROJECT_DIR/.claude/settings.json" <<EOF
+=======
+# the v1.1 asyncRewake fields verbatim from hooks/hooks.json.
+cat > "$SETTINGS_FILE" <<EOF
+>>>>>>> /tmp/mf-theirs
 {
   "enabledPlugins": { "fleetdeck@fleetdeck": false },
   "hooks": {
@@ -658,13 +764,39 @@ else
 fi
 
 # --------------------------------------------------------------- gate 9
+# Verify cleanup restored the exact pre-run bytes and existence state. Stash
+# a copy of the snapshot under SCRATCH_HOME first — cleanup_resources removes
+# the in-project snapshot dir as part of its restore. Note: re-running the
+# gate re-seeds these files from .seed before the next snapshot, so a run
+# whose pre-run state was a previous run's wreckage restores that wreckage —
+# this gate compares against the snapshot, not the seed.
+SNAPSHOT_CHECK="$SCRATCH_HOME/pre-run-snapshot"
+rm -rf "$SNAPSHOT_CHECK"
+if [ -n "$PROJECT_SNAPSHOT" ] && [ -d "$PROJECT_SNAPSHOT" ]; then
+  cp -r "$PROJECT_SNAPSHOT" "$SNAPSHOT_CHECK" 2>/dev/null || true
+fi
+
 cleanup_resources
 CLEANUP_OK=yes
-[ -f "$UTIL_FILE" ] || CLEANUP_OK=""
-if [ -f "$UTIL_FILE" ] && [ -f "$SEED_UTIL" ] && ! cmp -s "$UTIL_FILE" "$SEED_UTIL"; then
+if [ -d "$SNAPSHOT_CHECK" ]; then
+  if [ -f "$SNAPSHOT_CHECK/util.js" ]; then
+    cmp -s "$UTIL_FILE" "$SNAPSHOT_CHECK/util.js" || CLEANUP_OK=""
+  else
+    [ ! -e "$UTIL_FILE" ] || CLEANUP_OK=""
+  fi
+  if [ -f "$SNAPSHOT_CHECK/test.js" ]; then
+    cmp -s "$TEST_FILE" "$SNAPSHOT_CHECK/test.js" || CLEANUP_OK=""
+  else
+    [ ! -e "$TEST_FILE" ] || CLEANUP_OK=""
+  fi
+  if [ -f "$SNAPSHOT_CHECK/claude-settings.json" ]; then
+    cmp -s "$SETTINGS_FILE" "$SNAPSHOT_CHECK/claude-settings.json" || CLEANUP_OK=""
+  else
+    [ ! -e "$SETTINGS_FILE" ] || CLEANUP_OK=""
+  fi
+else
   CLEANUP_OK=""
 fi
-[ ! -e "$TEST_FILE" ] || CLEANUP_OK=""
 if [ -n "$DAEMON_PID" ] && kill -0 "$DAEMON_PID" 2>/dev/null; then
   CLEANUP_OK=""
 fi
