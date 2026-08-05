@@ -274,15 +274,20 @@ A managed daemon is never evicted by a plugin hook. Normally the newest installe
 
 ### LAN mode
 
-By default fleetd listens on `127.0.0.1`. Set **`FLEETDECK_BIND=0.0.0.0`** and it binds every interface, printing a ready-to-paste URL per address:
+By default fleetd listens on `127.0.0.1`. Set **`FLEETDECK_BIND=0.0.0.0`** and it binds every interface, printing one LAN line per address:
 
 ```
 fleetd up on http://0.0.0.0:4711 (pid 12345, …)
-fleetd LAN http://192.168.8.223:4711/?t=2a62f3c9…
-fleetd LAN http://fleetdeck.local:4711/?t=2a62f3c9…   (mDNS — needs a resolver on the peer)
+fleetd LAN http://192.168.8.223:4711/?t=<hidden> (credential available in share panel)
+fleetd LAN http://fleetdeck.local:4711/?t=<hidden> (mDNS; credential available in share panel)
 ```
 
-Open one on the other machine; the key is consumed at boot and scrubbed out of the address bar. The header's **⇄ Share** panel shows the same links with a QR code.
+Note the `?t=<hidden>`: fleetd's stdout usually lands in `fleetd.log` (often `0644`), so the log deliberately redacts the key rather than becoming a second token store. To get a complete, ready-to-paste URL:
+
+- open the header's **⇄ Share** panel on the board — it shows the full links with a QR code; or
+- run **`fleetdeck token`** to print the bearer, or **`fleetdeck status --show-token`** for the full link.
+
+Paste the key onto the printed LAN URL as `?t=<token>`; the key is consumed at boot and scrubbed out of the address bar.
 
 <p align="center">
   <img src="docs/assets/share-lan.gif" alt="The board's Share panel: a QR code and the LAN URLs, each carrying the key." width="100%">
