@@ -243,42 +243,11 @@ rm -f "$DEMO_LOGS"/worker-a.json "$DEMO_LOGS"/worker-a.err "$DEMO_LOGS"/worker-b
 # Every hook uses the current checkout's authenticated command shim. Native
 # HTTP hooks cannot attach the bearer token required since 0.16.0.
 mkdir -p "$PROJECT_DIR/.claude"
-cat > "$PROJECT_DIR/.claude/settings.json" <<EOF
-{
-  "hooks": {
-    "SessionStart": [
-      { "hooks": [{ "type": "command", "command": "node \"$SESSIONSTART_SCRIPT\"", "timeout": 15 }] }
-    ],
-    "UserPromptSubmit": [
-      { "hooks": [{ "type": "command", "command": "node \"$FLEET_HOOK_SCRIPT\" UserPromptSubmit", "timeout": 3 }] }
-    ],
-    "PostToolUse": [
-      { "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash", "hooks": [{ "type": "command", "command": "node \"$FLEET_HOOK_SCRIPT\" PostToolUse", "timeout": 3 }] }
-    ],
-    "PreToolUse": [
-      { "matcher": "AskUserQuestion", "hooks": [{ "type": "command", "command": "node \"$FLEET_HOOK_SCRIPT\" AskUserQuestion", "timeout": 65 }] }
-    ],
-    "PermissionRequest": [
-      { "hooks": [{ "type": "command", "command": "node \"$FLEET_HOOK_SCRIPT\" PermissionRequest", "timeout": 65 }] }
-    ],
-    "Elicitation": [
-      { "hooks": [{ "type": "command", "command": "node \"$FLEET_HOOK_SCRIPT\" Elicitation", "timeout": 65 }] }
-    ],
-    "Notification": [
-      { "hooks": [{ "type": "command", "command": "node \"$FLEET_HOOK_SCRIPT\" Notification", "timeout": 3, "async": true }] }
-    ],
-    "Stop": [
-      { "hooks": [{ "type": "command", "command": "node \"$FLEET_HOOK_SCRIPT\" Stop", "timeout": 5 }] }
-    ],
-    "SessionEnd": [
-      { "hooks": [{ "type": "command", "command": "node \"$FLEET_HOOK_SCRIPT\" SessionEnd", "timeout": 3, "async": true }] }
-    ],
-    "FileChanged": [
-      { "hooks": [{ "type": "command", "command": "node \"$FLEET_HOOK_SCRIPT\" FileChanged", "timeout": 3, "async": true }] }
-    ]
-  }
-}
-EOF
+# Rendered through JSON.stringify (never a heredoc): a checkout path with a
+# quote or backslash must not corrupt the generated JSON.
+node "$SCRIPT_DIR/render-smoke-settings.mjs" \
+  "$SESSIONSTART_SCRIPT" "$FLEET_HOOK_SCRIPT" \
+  "$PROJECT_DIR/.claude/settings.json"
 
 # ---------------------------------------------------------- 3. launch fleet
 SA=$(node -e 'console.log(crypto.randomUUID())')
