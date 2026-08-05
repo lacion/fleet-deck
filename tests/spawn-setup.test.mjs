@@ -330,10 +330,13 @@ test('real tmux long-running setup is not condemned while sh/setup binary runs',
 
   const spawned = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd, setup_cmd: 'sleep 30' });
   assert.equal(spawned.status, 200);
-  await new Promise(resolve => setTimeout(resolve, 750));
-  const card = (await getJson(`${daemon.baseUrl}/state`)).json.sessions
-    .find(s => s.session_id === spawned.json.session_id);
-  assert.notEqual(card.spawn.status, 'pane-dead');
-  assert.ok(card.spawn.status === 'spawning' || card.spawn.status === 'stalled');
-  if (card.spawn.status === 'stalled') assert.match(card.note, /setup may still be running/);
+  // Require the liveness poller to actually run and classify the still-running
+  // setup: a row observed still in its initial 'spawning' state proves nothing
+  // about the scheduler (BUG-178).
+  const card = await waitUntil(async () => {
+    const s = (await getJson(`${daemon.baseUrl}/state`)).json.sessions
+      .find(row => row.session_id === spawned.json.session_id);
+    return s?.spawn?.status === 'stalled' ? s : null;
+  }, { timeoutMs: 5000, label: 'long-running setup stall classification' });
+  assert.match(card.note, /setup may still be running/);
 });
