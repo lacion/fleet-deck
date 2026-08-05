@@ -40,7 +40,8 @@ import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { startDaemon, randomPort, REPO_ROOT } from './helpers/daemon.mjs';
+import http from 'node:http';
+import { startDaemon, REPO_ROOT } from './helpers/daemon.mjs';
 import { postHook, postJson, getJson } from './helpers/http.mjs';
 import { loadFixture } from './helpers/fixtures.mjs';
 import { makeTranscriptDir, writeTranscript } from './helpers/transcript.mjs';
@@ -528,18 +529,56 @@ test('fleet-watch v2: lifetime cap (FLEETDECK_WATCH_MAX_MS) makes the watcher ex
   assert.ok(!existsSync(pidFileOf(daemon.home, sid)), 'pid file cleaned up on the cap exit too');
 });
 
-test('fleet-watch: fleetd unreachable -> exits 0 after 3 consecutive failed polls, silently', async (t) => {
+test('fleet-watch: fleetd unreachable -> exits 0 after exactly 3 consecutive failed polls, alive through failures 1-2, silently', async (t) => {
   const home = mkdtempSync(path.join(tmpdir(), 'fleetdeck-watch-'));
   t.after(() => rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
 
-  const sid = randomUUID();
-  const w = spawnWatcher({ port: randomPort(), home, sid, env: { FLEETDECK_WATCH_POLL_MS: '200' } }); // nobody listening
-  t.after(() => { try { w.child.kill('SIGKILL'); } catch { /* gone */ } });
+  // A dedicated bound stub that deliberately hangs every poll — each request
+  // fails on the watcher's own timeout, so no port collision can yield a
+  // false pass, and attempts are countable. Bound to a real port, so the
+  // watcher definitely reaches a live TCP endpoint that never answers.
+  let attempts = 0;
+  const sockets = new Set();
+  const stub = http.createServer((_req, res) => {
+    attempts += 1;
+    // hold the request open; the watcher's AbortSignal.timeout ends it
+    res.on('error', () => {});
+    _req.on('error', () => {});
+  });
+  stub.on('connection', s => { sockets.add(s); s.on('close', () => sockets.delete(s)); });
+  await new Promise((resolve, reject) => {
+    stub.once('error', reject);
+    stub.listen(0, '127.0.0.1', resolve);
+  });
+  t.after(() => { for (const s of sockets) s.destroy(); stub.close(); });
+  const port = stub.address().port;
 
-  const code = await w.exitWithin(8000, 'against a dead daemon');
+  const sid = randomUUID();
+  const w = spawnWatcher({ port, home, sid, env: { FLEETDECK_WATCH_POLL_MS: '200' } });
+  t.after(() => { try { w.child.kill('SIGKILL'); } catch { /* gone */ } });
+  await waitUntil(() => existsSync(pidFileOf(home, sid)), { label: 'watcher pid file' });
+
+  // Survives failure one...
+  await waitUntil(() => attempts >= 2 && stillAlive(w.child), {
+    timeoutMs: 15000,
+    intervalMs: 25,
+    label: 'watcher alive after failure #1 (attempt #2 started)',
+  });
+  // ...and failure two...
+  await waitUntil(() => attempts >= 3 && stillAlive(w.child), {
+    timeoutMs: 15000,
+    intervalMs: 25,
+    label: 'watcher alive after failure #2 (attempt #3 started)',
+  });
+
+  // ...and exits 0 ONLY after failure three completes.
+  const code = await w.exitWithin(8000, 'after the third consecutive failure');
   assert.equal(code, 0, 'an unreachable fleetd must never keep a watcher alive');
   assert.equal(w.stderr, '', 'failures are silent — stderr is reserved for the mail text');
   assert.equal(w.stdout, '');
+  assert.equal(attempts, 3, `exactly 3 polls must be attempted before standing down (saw ${attempts})`);
+  await new Promise(r => setTimeout(r, scaleMs(1200))); // no 4th attempt sneaks in after exit
+  assert.equal(attempts, 3, 'the watcher must stop polling once it exits');
   assert.ok(!existsSync(pidFileOf(home, sid)), 'pid file cleaned up on the failure exit too');
 });
 
