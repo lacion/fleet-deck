@@ -217,7 +217,17 @@ fi
 # ---------------------------------------------------------------- 1. reset
 # Final guard: never kill an unknown listener by port. The selected isolated
 # port must already be free after the scratch-owned pid cleanup above.
-if curl -s -m 1 "http://127.0.0.1:$FLEETDECK_PORT/health" > /dev/null 2>&1; then
+# Occupancy is proven by an EXCLUSIVE bind attempt, not a health GET: a
+# listener that stalls, closes, or speaks a non-HTTP protocol would pass a
+# curl probe and only surface as a fleetd bind failure after the paid workers
+# have already started.
+if ! node -e '
+  const net = require("node:net");
+  const port = Number(process.argv[1]);
+  const probe = net.createServer();
+  probe.once("error", () => process.exit(1));
+  probe.listen({ port, host: "127.0.0.1", exclusive: true }, () => probe.close(() => process.exit(0)));
+' "$FLEETDECK_PORT"; then
   echo "ABORT: something is already listening on isolated port :$FLEETDECK_PORT."
   exit 1
 fi
