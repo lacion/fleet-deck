@@ -311,8 +311,13 @@ function writeEnvFile() {
     lines.push(ENV_VALUE_BARE_SAFE.test(v) ? `${k}=${v}` : `${k}='${v}'`);
   }
   fs.mkdirSync(HOME, { recursive: true });
-  // 0600: FLEETDECK_TOKEN may legitimately live here.
+  // 0600: FLEETDECK_TOKEN may legitimately live here. The mode option protects
+  // only a NEWLY CREATED file — Node ignores it when the file already exists,
+  // so a pre-existing permissive service.env would survive a reinstall. chmod
+  // after every write to repair an existing inode, and fail the install when
+  // the owner-only contract cannot be established.
   fs.writeFileSync(ENV_FILE, `${lines.join('\n')}\n`, { encoding: 'utf8', mode: 0o600 });
+  fs.chmodSync(ENV_FILE, 0o600);
   return lines.length;
 }
 
@@ -533,6 +538,17 @@ async function token(args) {
     const { randomBytes } = await import('node:crypto');
     fs.mkdirSync(HOME, { recursive: true });
     fs.writeFileSync(file, randomBytes(32).toString('hex'), { encoding: 'utf8', mode: 0o600 });
+    // The mode option above applies only when the write CREATES the file — an
+    // existing token keeps its inode's permissions, so a pre-existing 0644
+    // token would stay world-readable through rotation. chmod on every rotate
+    // and refuse to report success when the owner-only contract cannot be
+    // established — the new secret must not stay exposed.
+    try {
+      fs.chmodSync(file, 0o600);
+    } catch (e) {
+      err(`✗ token rotated at ${file} but could not be locked to 0600 (${e?.message || e}) — fix its permissions before it is used`);
+      return 1;
+    }
     out('✓ token rotated — restart the daemon for it to take effect');
   }
   try {
@@ -596,7 +612,11 @@ if (IS_ENTRYPOINT) await main(process.argv.slice(2));
 // and file generators are contracts. Nothing here runs on import (see
 // IS_ENTRYPOINT above), so importing is side-effect-free.
 <<<<<<< /tmp/mf-ours
+<<<<<<< /tmp/mf-ours
 export { writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor, serviceInstall, UNIT, SUPERVISE, doctor, MIN_NODE_RANGE, nodeVersionSupported };
 =======
 export { writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, parseServiceEnvPort, serviceEnvPort, supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor, serviceInstall, UNIT, SUPERVISE, doctor };
+>>>>>>> /tmp/mf-theirs
+=======
+export { writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor, serviceInstall, UNIT, SUPERVISE, doctor, token };
 >>>>>>> /tmp/mf-theirs

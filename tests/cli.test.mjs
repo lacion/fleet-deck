@@ -33,11 +33,15 @@ const UNIT_FILE = path.join(XDG, 'systemd', 'user', 'fleetdeck.service');
 const {
 <<<<<<< /tmp/mf-ours
   writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor,
+<<<<<<< /tmp/mf-ours
   serviceInstall, UNIT, SUPERVISE, MIN_NODE_RANGE, nodeVersionSupported,
 =======
   writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, parseServiceEnvPort, serviceEnvPort,
   supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor,
   serviceInstall, UNIT, SUPERVISE,
+>>>>>>> /tmp/mf-theirs
+=======
+  serviceInstall, UNIT, SUPERVISE, token,
 >>>>>>> /tmp/mf-theirs
 } = await import(new URL('../bin/fleetdeck.mjs', import.meta.url));
 const { parseTmuxVersion, tmuxVersionCapability, tmuxVersionSupported } = await import(new URL('../bin/tmux-version.mjs', import.meta.url));
@@ -174,6 +178,19 @@ for (const [label, bad] of [
   });
 }
 
+// BUG-076: writeFileSync's mode option is IGNORED on an existing file, so a
+// pre-created permissive service.env must be chmod-repaired by a rewrite —
+// otherwise a reinstall leaves FLEETDECK_TOKEN group/world-readable.
+test('writeEnvFile: tightens a pre-existing 0644 service.env to 0600 (BUG-076)', (t) => {
+  if (process.platform === 'win32') return t.skip('POSIX modes');
+  fs.writeFileSync(ENV_FILE, 'FLEETDECK_STALE=1\n', { mode: 0o644 });
+  fs.chmodSync(ENV_FILE, 0o644); // writeFileSync mode is best-effort; pin it
+  assert.equal(fs.statSync(ENV_FILE).mode & 0o777, 0o644, 'precondition: permissive file on disk');
+  withCleanFleetEnv({ FLEETDECK_PORT: '4711' }, () => writeEnvFile());
+  assert.equal(fs.statSync(ENV_FILE).mode & 0o777, 0o600, 'rewrite must repair an existing inode to owner-only');
+  fs.unlinkSync(ENV_FILE); // leave no permissive seed for later ENV_FILE tests
+});
+
 test('ENV_VALUE_BARE_SAFE stays tight; ENV_VALUE_UNQUOTABLE is minimal (metachars are quotable, not refused)', () => {
   for (const ok of ['', '4711', 'trust', 'https://*.example.com', 'a,b,c', 'AbC+/=', '/home/dev/.fleetdeck', 'x@y%z']) {
     assert.ok(ENV_VALUE_BARE_SAFE.test(ok), `${JSON.stringify(ok)} should be written bare`);
@@ -190,6 +207,7 @@ test('ENV_VALUE_BARE_SAFE stays tight; ENV_VALUE_UNQUOTABLE is minimal (metachar
   }
 });
 
+<<<<<<< /tmp/mf-ours
 // ------------------------------------------------- service.env port reader
 
 // BUG-075: status/start/stop health checks must honor the FLEETDECK_PORT frozen
@@ -232,6 +250,33 @@ test('serviceEnvPort: returns the port from the installed file, null when absent
   assert.equal(serviceEnvPort(), null, 'an unparseable file is ignored, never fetched from');
   // Leave no trace: later tests in this file write and assert ENV_FILE contents.
   try { fs.unlinkSync(ENV_FILE); } catch { /* absent */ }
+=======
+// -------------------------------------------------------- token --rotate
+
+// BUG-076: the same mode-option blind spot in `fleetdeck token --rotate` — a
+// pre-existing permissive token file must be chmod-repaired by rotation, or the
+// fresh secret stays group/world-readable.
+test('token --rotate: tightens a pre-existing 0644 token to 0600 (BUG-076)', async (t) => {
+  if (process.platform === 'win32') return t.skip('POSIX modes');
+  const TOKEN_FILE = path.join(HOME, 'token');
+  fs.writeFileSync(TOKEN_FILE, 'oldstaletoken0123456789abcdef', { mode: 0o644 });
+  fs.chmodSync(TOKEN_FILE, 0o644);
+  assert.equal(fs.statSync(TOKEN_FILE).mode & 0o777, 0o644, 'precondition: permissive file on disk');
+
+  const outChunks = [];
+  const write = process.stdout.write;
+  process.stdout.write = (s) => { outChunks.push(String(s)); return true; };
+  let rc;
+  try { rc = await token(['--rotate']); }
+  finally { process.stdout.write = write; }
+
+  assert.equal(rc, 0);
+  assert.equal(fs.statSync(TOKEN_FILE).mode & 0o777, 0o600, 'rotation must repair an existing inode to owner-only');
+  const rotated = fs.readFileSync(TOKEN_FILE, 'utf8').trim();
+  assert.match(rotated, /^[0-9a-f]{64}$/, 'a fresh 32-byte hex token was written');
+  assert.notEqual(rotated, 'oldstaletoken0123456789abcdef');
+  assert.ok(outChunks.some(c => c.includes('token rotated')), 'success was reported');
+>>>>>>> /tmp/mf-theirs
 });
 
 // ------------------------------------------------------- supervisorAlive
@@ -282,6 +327,9 @@ test('serviceInstall (no-systemd path): writes 0700 supervise.sh + 0600 env, no 
   const savedPath = process.env.PATH;
   const emptyDir = path.join(TMP, 'nopath');
   fs.mkdirSync(emptyDir, { recursive: true });
+  // Fresh inode: a permissive ENV_FILE left by an earlier test would survive the
+  // write on UNFIXED code and fail the 0600 assertion for the wrong reason.
+  try { fs.unlinkSync(ENV_FILE); } catch { /* absent */ }
   try { fs.unlinkSync(SUPERVISE_SH); } catch { /* absent */ }
   try { fs.rmSync(path.dirname(UNIT_FILE), { recursive: true, force: true }); } catch { /* absent */ }
 
