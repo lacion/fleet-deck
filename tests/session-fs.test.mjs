@@ -419,11 +419,19 @@ test('FLEETDECK_BROWSE_ROOT roots the global explorer, and the browse_root setti
 
 test('0.16.0 credential denylist: lexical, symlink, and search paths all refuse', async t => {
   const browse = mkdtempSync(path.join(tmpdir(), 'fleetdeck-deny-root-'));
-  const secrets = mkdtempSync(path.join(tmpdir(), 'fleetdeck-deny-secrets-'));
-  mkdirSync(path.join(secrets, '.ssh'));
-  writeFileSync(path.join(secrets, '.ssh', 'id_ed25519'), 'PRIVATE KEY MATERIAL\n');
+  // Production default is HOME-rooted browsing, where ~/.ssh and
+  // ~/.fleetdeck/token sit INSIDE the browse root — so every secret below
+  // lives under `browse`. Plain containment would happily serve each of them;
+  // every refusal here must come from the denylist / fleetHomeReal gates, or
+  // the suite would stay green with those gates deleted (0.16.0 walls could
+  // regress silently — the false-confidence layout this test used to have).
+  mkdirSync(path.join(browse, '.ssh'));
+  writeFileSync(path.join(browse, '.ssh', 'id_ed25519'), 'PRIVATE KEY MATERIAL\n');
+  mkdirSync(path.join(browse, '.aws'));
+  writeFileSync(path.join(browse, '.aws', 'credentials'), 'AWS SECRET MATERIAL\n');
   mkdirSync(path.join(browse, 'work'));
   writeFileSync(path.join(browse, 'work', 'notes.txt'), 'ordinary notes\n');
+<<<<<<< /tmp/mf-ours
   // .docker is NOT a denied segment — only its config.json is denied, by path.
   mkdirSync(path.join(browse, '.docker'));
   writeFileSync(path.join(browse, '.docker', 'config.json'), '{"auths":{"registry":{"auth":"DOCKER REGISTRY SECRET"}}}\n');
@@ -432,16 +440,30 @@ test('0.16.0 credential denylist: lexical, symlink, and search paths all refuse'
   symlinkSync(path.join(secrets, '.ssh'), path.join(browse, 'work', 'ssh-link'));
 
   const daemon = await startDaemon({ env: { CODER: '', CODER_WORKSPACE_NAME: '', CODER_AGENT_URL: '' } });
+=======
+  // The attack: a symlink inside the browse root pointing at an IN-ROOT
+  // credential dir. realpathInside's containment check passes — only the
+  // resolved-path segment denylist can refuse this.
+  symlinkSync(path.join(browse, '.ssh'), path.join(browse, 'work', 'ssh-link'));
+  // The daemon's home (holding its token) sits INSIDE the browse root too,
+  // so only the fleetHomeReal gate keeps it unservable.
+  const fleetHome = path.join(browse, 'fleet-home');
+
+  const daemon = await startDaemon({
+    home: fleetHome,
+    env: { CODER: '', CODER_WORKSPACE_NAME: '', CODER_AGENT_URL: '' },
+  });
+>>>>>>> /tmp/mf-theirs
   t.after(async () => {
     await daemon.stop();
     rmSync(browse, { recursive: true, force: true });
-    rmSync(secrets, { recursive: true, force: true });
   });
   const set = await postJson(`${daemon.baseUrl}/api/settings`, { browse_root: browse });
   assert.equal(set.status, 200, set.text);
 
-  // Lexical: a direct path naming a denied segment 404s on both read and list.
-  for (const p of ['.ssh', '.aws', '.gnupg', '.netrc', '.kube', '.docker%2Fconfig.json']) {
+  // Lexical: a direct path naming a denied segment 404s — and the targets
+  // really exist under the root, so a missing lexical gate would 200, not 404.
+  for (const p of ['.ssh%2Fid_ed25519', '.aws%2Fcredentials', '.gnupg', '.netrc', '.kube', '.docker%2Fconfig.json']) {
     const res = await getJson(`${daemon.baseUrl}/api/fs/read?path=${p}`);
     assert.equal(res.status, 404, `read ${p}`);
   }
@@ -453,15 +475,25 @@ test('0.16.0 credential denylist: lexical, symlink, and search paths all refuse'
   assert.equal((await getJson(`${daemon.baseUrl}/api/fs/read?path=work%2Fssh-link%2Fid_ed25519`)).status, 404, 'symlinked read');
   assert.equal((await getJson(`${daemon.baseUrl}/api/fs/list?path=work%2Fssh-link`)).status, 404, 'symlinked list');
 
-  // Listings hide denied entries entirely (like .git), they do not render.
+  // Listings hide denied entries entirely (like .git), they do not render —
+  // the in-root .ssh/.aws dirs must not appear next to ordinary entries.
   const rootList = await getJson(`${daemon.baseUrl}/api/fs/list?path=`);
   assert.equal(rootList.json.entries.some(e => e.name === 'work'), true, 'work dir visible');
+  for (const denied of ['.ssh', '.aws']) {
+    assert.equal(rootList.json.entries.some(e => e.name === denied), false, `${denied} hidden from listing`);
+  }
+  // The daemon home dir itself may appear in a listing, but descending into
+  // it must 404 via the fleetHomeReal gate — inside the root, containment
+  // alone would list it.
+  assert.equal((await getJson(`${daemon.baseUrl}/api/fs/list?path=fleet-home`)).status, 404, 'fleet home list');
 
-  // Search must not read denied trees: the private key text is unfindable,
-  // and the search backend (walk — browse is not a git repo) skips the dir.
+  // Search must not read denied trees: with the material inside the root,
+  // only the walker's deniedName filter keeps the private key text unfindable
+  // (the backend is walk — browse is not a git repo).
   const search = await getJson(`${daemon.baseUrl}/api/fs/search?q=${encodeURIComponent('PRIVATE KEY MATERIAL')}`);
   assert.deepEqual(search.json.hits, [], 'search never returns denied content');
 
+<<<<<<< /tmp/mf-ours
   // .docker/config.json is denied by PATH, not by segment: walk search must
   // skip it in both modes even though it walks into the .docker directory.
   const dockerContent = await getJson(`${daemon.baseUrl}/api/fs/search?q=${encodeURIComponent('DOCKER REGISTRY SECRET')}`);
@@ -471,6 +503,12 @@ test('0.16.0 credential denylist: lexical, symlink, and search paths all refuse'
 
   // FLEETDECK_HOME containment: the daemon's own token is unservable even
   // when the browse root is home — here via a symlink chain into it.
+=======
+  // FLEETDECK_HOME containment: the token lives at browse/fleet-home/token,
+  // inside the root — a clean relative path reaches it unless fleetHomeReal
+  // refuses it. The symlink chain must be refused the same way.
+  assert.equal((await getJson(`${daemon.baseUrl}/api/fs/read?path=fleet-home%2Ftoken`)).status, 404, 'fleet home token, direct path');
+>>>>>>> /tmp/mf-theirs
   symlinkSync(daemon.home, path.join(browse, 'work', 'fleet-home-link'));
   assert.equal((await getJson(`${daemon.baseUrl}/api/fs/read?path=work%2Ffleet-home-link%2Ftoken`)).status, 404, 'fleet home token');
 });
