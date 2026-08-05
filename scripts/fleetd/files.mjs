@@ -484,8 +484,19 @@ export function createFiles(ctx) {
       if (!own.isDirectory() || own.isSymbolicLink()) throw new PathError(404, 'not found');
       const names = fs.readdirSync(real).filter(name => name.toLowerCase() !== '.git' && !deniedName(name));
       const truncated = names.length > LIST_MAX;
+      // 0.21.x (BUG-114): LIST_MAX must bound the WORK, not just the response —
+      // an lstat per name on a huge directory (node_modules dump, mail spool)
+      // stalls the daemon's single thread long after the response was already
+      // decided. Sort the cheap NAMES first, then lstat only a bounded window
+      // of candidates: dirs then files in name order, stopping once the
+      // surviving entries could fill the page. Anything past the window cannot
+      // make the cut, so its stat was wasted work.
+      const candidates = names.slice().sort((a, b) => a.localeCompare(b));
       const entries = [];
-      for (const name of names) {
+      let scanned = 0;
+      for (const name of candidates) {
+        if (entries.length >= LIST_MAX || scanned >= LIST_MAX + entries.length) break;
+        scanned += 1;
         let st;
         try { st = fs.lstatSync(path.join(real, name)); } catch { continue; }
         entries.push({ name, type: fileType(st), size: st.size, mtime: st.mtimeMs, ignored: false });

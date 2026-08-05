@@ -2,12 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import http, { createServer } from 'node:http';
-import {
+import fs, {
   mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync,
 } from 'node:fs';
 import { networkInterfaces, tmpdir } from 'node:os';
 import path from 'node:path';
 import { openDb } from '../scripts/fleetd/db.mjs';
+import { createFiles, LIST_MAX } from '../scripts/fleetd/files.mjs';
 import { startDaemon } from './helpers/daemon.mjs';
 import { makePlainDir, makeRepoWithWorktree } from './helpers/gitrepo.mjs';
 import { getJson, postJson } from './helpers/http.mjs';
@@ -224,6 +225,36 @@ test('read, list, search-hit, and binary caps shape bounded responses', async t 
   const binary = await getJson(endpoint(daemon.baseUrl, 'fs-session', 'read', '?path=image.png'));
   assert.equal(binary.json.binary, true);
   assert.equal(Object.hasOwn(binary.json, 'content'), false);
+});
+
+test('list bounds lstat work, not just response size, in oversized directories (BUG-114)', async t => {
+  const plain = makePlainDir();
+  t.after(() => plain.cleanup());
+  // Directories FIRST in locale order (aaa-*), then a swarm of files — the
+  // worst case for a naive candidate window: it would lstat the whole swarm
+  // before the leading dirs filled the page. LIST_MAX is a module constant
+  // (default 1000), so total names = LIST_MAX dirs + LIST_MAX files.
+  for (let i = 0; i < LIST_MAX; i += 1) mkdirSync(path.join(plain.dir, `aaa-${String(i).padStart(5, '0')}`));
+  for (let i = 0; i < LIST_MAX; i += 1) writeFileSync(path.join(plain.dir, `zzz-${String(i).padStart(5, '0')}.txt`), 'x\n');
+
+  let lstatCount = 0;
+  const realLstat = fs.lstatSync;
+  fs.lstatSync = function counted(...args) { lstatCount += 1; return realLstat.apply(this, args); };
+  t.after(() => { fs.lstatSync = realLstat; });
+
+  const fakeCtx = {
+    q: { getSession: { get: () => null }, spawnBySession: { get: () => null } },
+    browseRootChoice: () => ({ source: 'override', resolved: plain.dir }),
+  };
+  const res = await createFiles(fakeCtx).fsListHome('');
+  assert.equal(res.status, 200);
+  assert.equal(res.body.truncated, true);
+  assert.equal(res.body.entries.length, LIST_MAX);
+  assert.equal(res.body.entries.every(entry => entry.type === 'dir'), true, 'leading dirs still fill the page');
+  assert.ok(
+    lstatCount <= LIST_MAX + 10,
+    `lstat work must be bounded by LIST_MAX (${LIST_MAX}), not the directory size (${2 * LIST_MAX}); saw ${lstatCount}`,
+  );
 });
 
 test('unknown and removed roots report lifecycle status, and FIFO reads refuse promptly', async t => {
