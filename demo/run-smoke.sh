@@ -368,6 +368,7 @@ else
   exit 1
 fi
 
+<<<<<<< /tmp/mf-ours
 echo "(board screenshot skipped -- Phase 1 board is the ported spike board, no shot.mjs yet)"
 
 # `wait` propagates the worker's exit status — tolerated nonzero (rc=124 is an
@@ -400,6 +401,41 @@ if [ -z "$STATE_GOT" ]; then
   echo "FAIL: final /state capture never showed both sessions tombstoned offline"
   exit 1
 fi
+=======
+sleep 12
+echo "T+41 (board screenshot skipped -- Phase 1 board is the ported spike board, no shot.mjs yet)"
+
+wait "$PA"; RC_A=$?; echo "session A done rc=$RC_A"; PA=''
+wait "$PB"; RC_B=$?; echo "session B done rc=$RC_B"; PB=''
+
+# The SessionEnd hook is async ("async": true in the rendered settings): Claude
+# Code does NOT await it before exiting, so the shim can still be posting the
+# tombstone for ~2.5s after `wait` returns (fleet-hook.mjs's watchdog). Poll
+# /state on a bounded deadline until both sessions are tombstoned (offline with
+# endedAt) before capturing evidence — a single immediate fetch races the shim
+# and fails the lifecycle criterion on slower machines.
+SMOKE_STATE_DEADLINE="${FLEETDECK_SMOKE_STATE_DEADLINE_MS:-30000}"
+DEADLINE_END=$((SECONDS + (SMOKE_STATE_DEADLINE + 999) / 1000))
+while :; do
+  if curl -fsS "http://127.0.0.1:$FLEETDECK_PORT/state" \
+    -H "authorization: Bearer $TOKEN" > "$DEMO_LOGS/final-state.json" \
+  && node -e '
+    const state = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+    const byId = Object.fromEntries((state.sessions || []).map(s => [s.session_id, s]));
+    const done = [process.argv[2], process.argv[3]].every(sid => byId[sid] && byId[sid].col === "offline" && byId[sid].endedAt);
+    process.exit(done ? 0 : 1);
+  ' "$DEMO_LOGS/final-state.json" "$SA" "$SB"; then
+    break
+  fi
+  if [ "$SECONDS" -ge "$DEADLINE_END" ]; then
+    echo "WARNING: tombstones still pending after ${SMOKE_STATE_DEADLINE_MS}ms; capturing state as-is" >&2
+    curl -fsS "http://127.0.0.1:$FLEETDECK_PORT/state" \
+      -H "authorization: Bearer $TOKEN" > "$DEMO_LOGS/final-state.json"
+    break
+  fi
+  sleep 0.5
+done
+>>>>>>> /tmp/mf-theirs
 echo "ROUND COMPLETE — captured $DEMO_LOGS/final-state.json"
 echo
 
