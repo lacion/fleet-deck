@@ -606,3 +606,108 @@ test('POST /api/settings applies a mixed subset and never half-writes on a bad f
   assert.equal(after.json.settings.repos_dir.value, reposDir, 'a rejected body must not have rewritten repos_dir');
   assert.equal(after.json.settings.repo_transport.value, 'https');
 });
+
+// ---------------------------------------------------------------------------
+// BUG-044 — the four UNDISTILLED stderr paths in materializeBranch (status,
+// switch, worktree list, worktree add) used to scrub only URL userinfo. A
+// repository hook or git extension printing a STANDALONE forge token
+// (`remote: helper rejected token ghp_…`) had no covering layer: the token
+// rode the throw into the HTTP body, card note, ticker, event log and state
+// snapshot verbatim. They now go through redactGitText, the same hardening
+// pass clone/fetch get via gitFailureText. Real git answers every call except
+// the one under test; a PATH shim fails that one with token-shaped stderr.
+// ---------------------------------------------------------------------------
+
+// Captured at module load, BEFORE any test installs the PATH shim — resolving
+// it lazily (as the TOCTOU shim's realGitPath does, inside the test) would find
+// our own shim, and `exec "$FD_REAL_GIT" "$@"` would recurse forever.
+const REAL_GIT = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+
+// A `git` that passes everything through to real git, except the first call
+// whose joined argv contains FD_SHIM_MATCH: that one prints FD_SHIM_ERR to
+// stderr and exits 1 — a hook/extension relaying a bare credential, which
+// shape-only redaction must catch where URL scrubbing could not.
+function writeStderrGitShim(t) {
+  const dir = mkdtempSync(path.join(tmpdir(), 'fd-gitshim-stderr-'));
+  const shim = path.join(dir, 'git');
+  writeFileSync(shim,
+    '#!/usr/bin/env bash\n'
+    + 'if [ -n "$FD_SHIM_MATCH" ] && [[ " $* " == *"$FD_SHIM_MATCH"* ]]; then\n'
+    + '  printf \'%s\\n\' "$FD_SHIM_ERR" >&2\n'
+    + '  exit 1\n'
+    + 'fi\n'
+    + 'exec "$FD_REAL_GIT" "$@"\n',
+    { mode: 0o755 });
+  t.after(() => rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+  return dir;
+}
+
+// Install the shim on PATH only AFTER the fixture repo exists: the helper's
+// own init/clone/push calls run through `git` too, and must reach real git.
+function shimEnv(t, { match, stderr }) {
+  const shimDir = writeStderrGitShim(t);
+  const previous = {
+    PATH: process.env.PATH,
+    FD_REAL_GIT: process.env.FD_REAL_GIT,
+    FD_SHIM_MATCH: process.env.FD_SHIM_MATCH,
+    FD_SHIM_ERR: process.env.FD_SHIM_ERR,
+  };
+  process.env.PATH = `${shimDir}:${process.env.PATH}`;
+  process.env.FD_REAL_GIT = REAL_GIT;
+  process.env.FD_SHIM_MATCH = match;
+  process.env.FD_SHIM_ERR = stderr;
+  t.after(() => {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+}
+
+// The shape SECRET_VALUE_RES does not carry — only exec.mjs' git-local shape
+// list masks it, so a bare-scrubUrlCredentials site leaks it verbatim.
+const SHIM_TOKEN = `ghp_${'B'.repeat(36)}`;
+const SHIM_STDERR = `remote: helper rejected token ${SHIM_TOKEN}\nfatal: the repository hook refused the operation.`;
+
+async function assertShimmedFailureRedacts(t, { match, fallback, branch = 'fd-bug044-target', mode = 'in-place' }) {
+  const remote = makeRemoteRepo({ repoName: 'fd-bug044', branches: ['fd-bug044-target'] });
+  t.after(() => remote.cleanup());
+  const root = remote.clone('checkout');
+  shimEnv(t, { match, stderr: SHIM_STDERR });
+  const { materializeBranch } = createRepos(fakeReposCtx());
+
+  const err = await materializeBranch({ root, branch, mode })
+    .then(() => { throw new Error('materializeBranch unexpectedly succeeded'); },
+      caught => caught);
+  assert.equal(err.status, 409, `the shimmed git failure surfaces as a 409: ${err?.message}`);
+  assert.equal(err.message.includes(SHIM_TOKEN), false,
+    `a standalone forge token must not reach the HTTP body / card note verbatim: ${err.message}`);
+  assert.ok(err.message.includes('[redacted]'), `the token is masked, not dropped: ${err.message}`);
+  assert.match(err.message, /the repository hook refused the operation/,
+    'the diagnostic itself survives redaction — only the credential is masked');
+  assert.ok(!err.message.startsWith(fallback), `real stderr reached the throw (not the bare "${fallback}" fallback)`);
+}
+
+test('BUG-044: git status failure stderr is hardened by the full redaction pass, not URL-only', async t => {
+  await assertShimmedFailureRedacts(t, { match: ' status ', fallback: 'git status failed' });
+});
+
+test('BUG-044: git switch failure stderr is hardened by the full redaction pass, not URL-only', async t => {
+  await assertShimmedFailureRedacts(t, { match: ' switch ', fallback: 'git switch failed' });
+});
+
+test('BUG-044: git worktree list failure stderr is hardened by the full redaction pass, not URL-only', async t => {
+  // Match the porcelain flag, not ' list ': the site under test runs
+  // `worktree list --porcelain`, and a plain-'list' pattern would ALSO shadow
+  // the earlier `show-ref --verify` probes — which are allowed to fail (their
+  // .ok is not required), quietly skipping the call this test exists for.
+  await assertShimmedFailureRedacts(t, { match: ' --porcelain ', fallback: 'git worktree list failed' });
+});
+
+test('BUG-044: git worktree add failure stderr is hardened by the full redaction pass, not URL-only', async t => {
+  // ' add ' is safe as a needle: the only `worktree add` in the flow is the
+  // site itself (unlike ' switch '/' status ', which legitimately pass earlier
+  // too). Worktree mode, not in-place: the `git switch -c <branch> <base>`
+  // in-place path contains no ' add ' and would succeed unshimmed.
+  await assertShimmedFailureRedacts(t, { match: ' add ', fallback: 'git worktree add failed', branch: 'fd-bug044-other', mode: 'worktree' });
+});

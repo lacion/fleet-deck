@@ -7,7 +7,6 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileP, baseBranch, distillGitStderr, gitStderrDetail, redactGitText } from './exec.mjs';
-import { scrubUrlCredentials } from './payload-capture.mjs';
 import { detectCoderWorkspaceRoot } from './config.mjs';
 
 const CONTROL_RE = /[\x00-\x1f\x7f]/;
@@ -726,7 +725,15 @@ export function createRepos(ctx) {
       // prune` were swept into the same convention for uniformity, but this is a
       // convention, not an enforced invariant: a new git call site does not
       // inherit it automatically.
-      if (!status.ok) throw namedError(409, scrubUrlCredentials(status.err) || 'git status failed');
+      //
+      // redactGitText, not bare scrubUrlCredentials: a repo hook or git
+      // extension can print a STANDALONE token (`remote: helper rejected token
+      // ghp_…`) that the positional URL scrub provably cannot see — it would
+      // ride this throw into the HTTP body, card note, ticker, event log and
+      // state snapshot verbatim. Clone/fetch go through gitFailureText, which
+      // hardens with the same pass; these sites stay undistilled, so they call
+      // it directly instead of paying gitFailureText's distill+detail pair.
+      if (!status.ok) throw namedError(409, redactGitText(status.err) || 'git status failed');
       const dirty = dirtyNames(status.out);
       if (dirty.length) {
         const shown = dirty.slice(0, 3).join(', ');
@@ -736,12 +743,12 @@ export function createRepos(ctx) {
         : remote.ok ? ['-C', root, 'switch', '--track', `origin/${branch}`]
           : ['-C', root, 'switch', '-c', branch, base.ref];
       const switched = await execFileP('git', args, { timeout: 30_000 });
-      if (!switched.ok) throw namedError(409, scrubUrlCredentials(switched.err) || 'git switch failed');
+      if (!switched.ok) throw namedError(409, redactGitText(switched.err) || 'git switch failed');
       return { runCwd: root, created: { clone: !!clone, worktree: false }, reused: false };
     }
 
     const listed = await execFileP('git', ['-C', root, 'worktree', 'list', '--porcelain'], { timeout: 10_000 });
-    if (!listed.ok) throw namedError(409, scrubUrlCredentials(listed.err) || 'git worktree list failed');
+    if (!listed.ok) throw namedError(409, redactGitText(listed.err) || 'git worktree list failed');
     const existing = parseWorktrees(listed.out).find(row => row.branch === branch);
     if (existing) return { runCwd: existing.path, created: { clone: !!clone, worktree: false }, reused: true };
 
@@ -767,7 +774,7 @@ export function createRepos(ctx) {
         await execFileP('git', ['-C', root, 'worktree', 'prune'], { timeout: 30_000 });
       }
     }
-    throw namedError(409, scrubUrlCredentials(last?.err) || 'git worktree add failed');
+    throw namedError(409, redactGitText(last?.err) || 'git worktree add failed');
   }
 
   function canonicalTarget(dest) {
