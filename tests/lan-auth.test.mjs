@@ -281,6 +281,41 @@ test('proxy token mode: a loopback request bearing a trusted proxy Host but no O
   assert.equal(withToken.status, 200, 'a proxied request that presents the token must be authorized');
 });
 
+test('token-required mode: /index.html stays public and serves the shell', async t => {
+  // PROXY_AUTH=token removes the loopback exemption for every route except
+  // /health and the public shell. /index.html is classified as public shell,
+  // so it must not only pass the token gate but actually SERVE the board
+  // document — before the fix it passed the gate and fell through to a JSON
+  // 404, a blank board for any proxy that normalizes to /index.html.
+  const PROXY_HOST = 'board.example.com';
+  const daemon = await startDaemon({
+    env: {
+      FLEETDECK_TRUSTED_ORIGINS: `https://${PROXY_HOST}`,
+      FLEETDECK_PROXY_AUTH: 'token',
+      FLEETDECK_TOKEN: LAN_TOKEN,
+    },
+  });
+  t.after(() => daemon.stop());
+
+  const boardDist = path.join(import.meta.dirname, '..', 'scripts/fleetd/board-dist');
+  const expected = readFileSync(path.join(boardDist, 'index.html'), 'utf8');
+
+  // Through the trusted proxy, no token: the shell is public by contract.
+  const proxied = await rawGet(daemon.port, '/index.html', { Host: PROXY_HOST });
+  assert.equal(proxied.status, 200, 'the public shell must not require the token');
+  assert.match(proxied.body, /<div id="root">/, 'the response must be the HTML shell, not the JSON 404');
+  assert.equal(proxied.body, expected, '/index.html must serve the same shell as /');
+
+  // Same verdict on plain loopback: the shell exemption precedes the token.
+  const local = await rawGet(daemon.port, '/index.html', { Host: `127.0.0.1:${daemon.port}` });
+  assert.equal(local.status, 200);
+  assert.equal(local.body, expected);
+
+  // The gate itself is untouched: data routes still cost the token.
+  const gated = await rawGet(daemon.port, '/state', { Host: PROXY_HOST });
+  assert.equal(gated.status, 401, 'token-required mode must still gate fleet data');
+});
+
 test('LAN snapshot WebSocket rejects no token and accepts the query token', async t => {
   const address = await reachableIpv4();
   if (!address) return t.skip('host has no non-internal IPv4 interface');

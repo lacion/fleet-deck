@@ -877,8 +877,15 @@ export function createHttp(core, {
         if (url.pathname === '/api/watch') return watchHook(req, res, url); // F3d-2 long-poll
         if (url.pathname === '/' || url.pathname === '/index.html' || url.pathname.startsWith('/assets/')) {
           // built React board (Phase 5) from board-dist. /index.html is the
+<<<<<<< /tmp/mf-ours
           // same shell as / — isPublicShell already lets it through the auth
           // and Host walls, so it must not fall through to the JSON 404.
+=======
+          // conventional entry URL — a bookmark, proxy rewrite or health check
+          // that normalizes to it must boot the same shell isPublicShell
+          // already classifies as public; it resolves to the same
+          // board-dist/index.html as '/'.
+>>>>>>> /tmp/mf-theirs
           return serveBoardAsset(res, url.pathname, () => json(res, 404, { err: 'nope' }));
         }
         if (url.pathname === '/favicon.ico') {
