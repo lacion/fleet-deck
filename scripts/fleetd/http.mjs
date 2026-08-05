@@ -201,12 +201,18 @@ export function createHttp(core, {
   // first navigation). Absent/disabled ⇒ the panel says "local only" rather
   // than inventing a URL. Only ever handed to an ALREADY-AUTHORIZED caller —
   // snapshot() is behind the same gate as everything else.
-  const lanInfo = lan?.enabled
-    ? { enabled: true, urls: lan.urls ?? [], mdns: lan.mdns ?? null }
-    : { enabled: false, urls: [] };
+  // `lan` may be a function, resolved per snapshot: fleetd uses that to drop
+  // lan.mdns the moment the mDNS responder stands down, so the share panel
+  // never keeps offering a URL that can no longer resolve.
+  function currentLan() {
+    const source = typeof lan === 'function' ? lan() : lan;
+    return source?.enabled
+      ? { enabled: true, urls: source.urls ?? [], mdns: source.mdns ?? null }
+      : { enabled: false, urls: [] };
+  }
 
   function snapshotWithLan() {
-    return { ...core.snapshot(), lan: lanInfo, legacy_upgrade: legacyBanner() };
+    return { ...core.snapshot(), lan: currentLan(), legacy_upgrade: legacyBanner() };
   }
 
   function json(res, code, obj) {
@@ -406,7 +412,8 @@ export function createHttp(core, {
     }
   } catch { /* restricted sandbox: loopback stays allowed regardless */ }
   try {
-    if (lan?.mdns) lanHosts.add(new URL(lan.mdns).hostname.toLowerCase());
+    const lanSeed = typeof lan === 'function' ? lan() : lan;
+    if (lanSeed?.mdns) lanHosts.add(new URL(lanSeed.mdns).hostname.toLowerCase());
   } catch { /* malformed mDNS URL — skip it; the IP URLs still work */ }
 
   // WHATWG URL keeps the brackets on an IPv6 hostname ([::1]); strip them so the

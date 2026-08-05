@@ -817,6 +817,7 @@ export async function listScopedWindows(port) {
 }
 
 /** Name-verified kill (CONTRACT): re-locate the window by its EXACT scoped
+<<<<<<< /tmp/mf-ours
  * name at kill time and kill by window_id — a renamed/recycled window can
  * never be mis-killed via a stale index.
  *
@@ -834,6 +835,12 @@ export async function listScopedWindows(port) {
  *     existing generation guard already pins that await to the same server, so
  *     a failing predicate can never be followed by a kill of what it rejected.
  * Returns:
+=======
+ * name at kill time and kill BY THAT EXACT NAME — tmux re-resolves the
+ * `=<session>:=<name>` target atomically at the moment of the kill, so a
+ * renamed/recycled window can never be mis-killed via a stale index or a
+ * reused @id. Returns:
+>>>>>>> /tmp/mf-theirs
  *   {ok:true, window_id}   killed
  *   {ok:false, gone:true}  no window with that exact name exists (410)
  *   {ok:false, stale:true} an opts expectation failed — the kill was refused
@@ -841,6 +848,11 @@ export async function listScopedWindows(port) {
 export async function killWindowVerified(name, opts) {
   const scope = typeof name === 'string' ? /^fd(\d+)-[^\u0000-\u001f\u007f]+$/.exec(name) : null;
   if (!scope) return { ok: false, error: 'invalid scoped tmux window name' };
+  // Names with tmux target syntax characters are rejected here: the kill below
+  // targets the exact name `=<session>:=<name>` resolved atomically server-side,
+  // and tmux cannot express arbitrary names containing those characters in that
+  // syntax. Daemon-minted callsigns never contain them.
+  if (/[=;:.]/.test(name)) return { ok: false, error: 'invalid scoped tmux window name' };
   const expectedSession = sessionName(scope[1]);
   const format = ['#{session_name}', '#{window_name}', '#{window_id}'].join(FIELD_SEP);
   const listArgs = ['list-panes', '-a', '-f', `#{==:#{session_name},${expectedSession}}`, '-F', format];
@@ -867,10 +879,21 @@ export async function killWindowVerified(name, opts) {
   if (matches.length > 1) return { ok: false, error: 'ambiguous scoped tmux window name' };
   if (matches.length === 0) return { ok: false, gone: true };
   const hit = matches[0];
+<<<<<<< /tmp/mf-ours
   if (opts?.expectWindowId !== undefined && hit[2] !== opts.expectWindowId) {
     return { ok: false, stale: true, error: 'window id changed — the scoped name was recycled' };
   }
   if (opts?.expect && !opts.expect()) return { ok: false, stale: true, error: 'stale window owner' };
+=======
+  // Kill by the exact fleet name, never by the looked-up @id: tmux resolves
+  // `=<session>:=<name>` ATOMICALLY inside the same server command queue the
+  // kill runs in, so a rename/recycle between the lookup above and the kill
+  // cannot redirect it onto a repurposed window — the target is still
+  // corroborated against the verified session and name at the instant it acts.
+  // An @id captured earlier would not be: window ids are reusable, and only
+  // generation+PID at that queue would still match.
+  const killTarget = `=${expectedSession}:=${name}`;
+>>>>>>> /tmp/mf-theirs
   let killGeneration;
   try { killGeneration = await prepareServerGeneration(scope[1]); }
   catch (err) {
@@ -882,16 +905,17 @@ export async function killWindowVerified(name, opts) {
   if (opts?.expect && !opts.expect()) return { ok: false, stale: true, error: 'stale window owner' };
   let killed;
   if (!killGeneration.enabled) {
-    killed = await tmuxResult(['kill-window', '-t', hit[2]]);
+    killed = await tmuxResult(['kill-window', '-t', killTarget]);
   } else if (!killGeneration.verified || killGeneration.expected === null) {
     return { ok: false, error: 'tmux server generation unavailable or changed' };
   } else {
     // The conditional and kill execute in one server command queue. A socket
-    // swap after lookup cannot redirect @id at a replacement server: its absent
-    // or different generation/PID selects the harmless marker branch instead.
+    // swap after lookup cannot redirect the kill at a replacement server: its
+    // absent or different generation/PID selects the harmless marker branch
+    // instead.
     killed = await tmuxResult([
       'if-shell', '-F', `#{&&:#{==:#{${generationOption(scope[1])}},${killGeneration.expected.generation}},#{==:#{pid},${killGeneration.expected.serverPid}}}`,
-      `kill-window -t ${hit[2]}`,
+      `kill-window -t ${killTarget}`,
       `display-message -p ${GENERATION_MISMATCH}`,
     ], { noStart: true });
     if (killed.ok && killed.out.trim() === GENERATION_MISMATCH) {

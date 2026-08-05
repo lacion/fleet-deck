@@ -475,9 +475,16 @@ export function buildResponse(questions, options = {}, { ttl, flush = true } = {
  * @param {string[]} [opts.addresses] LAN IPv4s to advertise (non-internal only)
  * @param {object} [opts.txt]       extra TXT keys, merged over {path, board}
  * @param {function} [opts.log]
- * @returns {{start: function, stop: function}} both idempotent, neither throws
+ * @param {function} [opts.onDown]  called with a reason string the moment the
+ *                                  responder terminally disables itself (bind,
+ *                                  membership or socket failure) — never on a
+ *                                  clean stop(). Lets the publisher retract a
+ *                                  URL that would no longer resolve.
+ * @returns {{start: function, stop: function, alive: function}} start/stop are
+ *          idempotent and never throw; alive() reports whether the responder
+ *          is bound and answering
  */
-export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', addresses = [], txt, log = () => {} } = {}) {
+export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', addresses = [], txt, log = () => {}, onDown = null } = {}) {
   const options = { port, name, instance, addresses, txt };
   const ad = normalize(options);
 
@@ -499,6 +506,11 @@ export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', 
     const doomed = socket;
     socket = null;
     try { doomed?.close(); } catch { /* already closed */ }
+    // The daemon publishes the .local URL when start() returns, but bind and
+    // membership failures only surface HERE, one event-loop turn later. Report
+    // the terminal disable so the publisher can retract the URL instead of
+    // advertising a name that will never resolve.
+    if (onDown) { try { onDown(reason); } catch { /* a broken listener must not kill mDNS */ } }
   }
 
   function send(packet, targetPort, targetAddress) {
@@ -648,5 +660,5 @@ export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', 
     return stopping;
   }
 
-  return { start, stop };
+  return { start, stop, alive: () => started && !dead && socket !== null };
 }

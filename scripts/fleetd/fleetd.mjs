@@ -313,7 +313,10 @@ const LAN_INFO = LAN_MODE
 const { server } = createHttp(core, {
   port: PORT,
   token: TOKEN,
-  lan: LAN_INFO,
+  // lan.mdns reflects the responder's LIVE state, not the boot snapshot: if the
+  // responder disables itself after start() (no multicast membership, a socket
+  // error), the share panel stops offering a URL that cannot resolve.
+  lan: () => (LAN_INFO.mdns && mdns && !mdns.alive() ? { ...LAN_INFO, mdns: null } : LAN_INFO),
   version,
   trustedOrigins: TRUSTED_ORIGINS,
   proxyAuth: PROXY_AUTH,
@@ -410,6 +413,11 @@ server.listen(PORT, BIND, () => {
     // no-op on EADDRINUSE (a real avahi owns 5353), EPERM or a network that
     // drops multicast. The IP URLs above always work regardless.
     if (process.env.FLEETDECK_MDNS?.trim().toLowerCase() !== 'off' && addresses.length) {
+      // start() cannot report readiness: bind and multicast membership only
+      // resolve asynchronously. Announce the .local URL only on a tick where
+      // the responder is actually alive — never after it has already stood
+      // down, or the banner and share panel would offer a URL that cannot
+      // resolve (the disable itself is logged by mdns.mjs via onDown/log).
       mdns = createMdns({
         port: PORT,
         name: MDNS_NAME,
@@ -420,7 +428,11 @@ server.listen(PORT, BIND, () => {
         log: msg => console.error(`fleetd mdns: ${msg}`),
       });
       mdns.start();
-      console.log(`fleetd LAN http://${MDNS_NAME}.local:${PORT}/?t=<hidden> (mDNS; credential available in share panel)`);
+      setImmediate(() => {
+        if (mdns?.alive()) {
+          console.log(`fleetd LAN http://${MDNS_NAME}.local:${PORT}/?t=<hidden> (mDNS; credential available in share panel)`);
+        }
+      });
     }
   }
   // v1.2 restart reconciliation: spawn rows survive in SQLite, panes survive

@@ -500,3 +500,58 @@ test('stop() before start() is a no-op that resolves', async () => {
   assert.doesNotThrow(() => mdns.start());
   await mdns.stop();
 });
+
+// ------------------------------------------- terminal-disable notification
+//
+// BUG-122: start() returns before bind + membership resolve, so the daemon
+// published the .local URL even when the responder disabled itself one tick
+// later. onDown is the publisher's signal to retract the URL; alive() is what
+// /state consults so the share panel stops offering it.
+
+test('a terminally degraded responder fires onDown with the reason and reports alive() false', () => {
+  for (const options of [{}, { port: 4711 }, { port: 4711, addresses: ['not-an-ip'] }, { port: 0, addresses: ['192.0.2.7'] }]) {
+    const downs = [];
+    const mdns = createMdns({ ...options, log: () => {}, onDown: reason => downs.push(String(reason)) });
+    mdns.start();
+    assert.equal(mdns.alive(), false, `a degraded responder is not alive: ${JSON.stringify(options)}`);
+    assert.equal(downs.length, 1, `onDown fires exactly once per dead responder: ${JSON.stringify(options)}`);
+    assert.ok(downs[0].length > 0, 'onDown carries the disable reason');
+    mdns.start(); // idempotent: a second start must not re-fire onDown
+    assert.equal(downs.length, 1);
+  }
+});
+
+test('stop() never fires onDown — a clean goodbye is not a failure', async (t) => {
+  // Deterministic half: a responder that degraded BEFORE any socket exists.
+  const early = [];
+  const degraded = createMdns({ log: () => {}, onDown: reason => early.push(String(reason)) });
+  degraded.start();
+  assert.equal(early.length, 1, 'the boot-time disable fired once');
+  await degraded.stop();
+  assert.equal(early.length, 1, 'stop() after a disable does not re-fire onDown');
+
+  // Live half: a responder that actually bound must report alive and stay
+  // silent through a clean stop. Real sockets are environment-shaped — skip
+  // rather than fail when 5353/multicast are unavailable, exactly like the
+  // wire tests above.
+  const logs = [];
+  const downs = [];
+  const mdns = createMdns({ port: 4711, addresses: ['192.0.2.7'], log: m => logs.push(String(m)), onDown: reason => downs.push(String(reason)) });
+  mdns.start();
+  t.after(() => mdns.stop());
+  await new Promise(r => setTimeout(r, scaleMs(250)));
+  const disabled = logs.find(m => m.includes('mdns disabled'));
+  if (disabled) return t.skip(`responder degraded to a no-op in this environment: ${disabled}`);
+
+  assert.equal(mdns.alive(), true, 'a bound responder reports alive');
+  assert.equal(downs.length, 0, 'a healthy responder never fires onDown');
+  await mdns.stop();
+  assert.equal(downs.length, 0, 'stop() is a shutdown, not a disable');
+  assert.equal(mdns.alive(), false, 'a stopped responder is not alive');
+});
+
+test('a throwing onDown listener cannot take the responder down', () => {
+  const mdns = createMdns({ log: () => {}, onDown: () => { throw new Error('listener exploded'); } });
+  assert.doesNotThrow(() => mdns.start());
+  assert.equal(mdns.alive(), false);
+});

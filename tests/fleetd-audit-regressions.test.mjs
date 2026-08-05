@@ -121,6 +121,67 @@ test('Linux PID reuse by a non-fleetd process does not retain a stale HOME lock'
   assert.equal(existsSync(pidFile), false, 'startupFatal must release the newly claimed pidfile');
 });
 
+test('a disabled mDNS responder keeps the .local URL out of the startup banner', { skip: BUNDLE_SKIP }, async (t) => {
+  // BUG-122: fleetd printed the mDNS success line immediately after start(),
+  // but bind + multicast membership resolve asynchronously — with no multicast
+  // route the responder disables itself one tick later and the banner (and
+  // share panel) kept offering a URL that could never resolve. The banner may
+  // only appear on a tick where the responder is actually alive.
+  const home = freshHome('fleetdeck-mdns-banner-');
+  const consoleRecord = path.join(home, 'console.log');
+  t.after(() => rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+  const daemon = spawnRaw({
+    port: randomPort(),
+    home,
+    env: loaderOptions({
+      FLEETDECK_BIND: '0.0.0.0',
+      FLEETDECK_TOKEN: 'mdns-banner-token-0123456789abcdef',
+      FLEETDECK_MDNS_JOIN_FAILS: '1', // loader seam: every membership join fails
+      FLEETDECK_TEST_CONSOLE_RECORD: consoleRecord,
+    }),
+  });
+  t.after(() => daemon.kill());
+
+  // Wait for the disable to be OBSERVABLE (stderr), then read the recorded
+  // stdout: the disable happens one tick after listen, exactly when a fix that
+  // checks aliveness would gate the banner — so ordering is settled by now.
+  await waitUntil(() => {
+    if (daemon.proc.exitCode !== null) throw new Error(`daemon exited ${daemon.proc.exitCode}:\n${daemon.stdout}\n${daemon.stderr}`);
+    return daemon.stderr.includes('mdns disabled') || null;
+  }, 'mocked mDNS responder to disable itself');
+
+  const output = readFileSync(consoleRecord, 'utf8');
+  assert.equal(output.includes('.local'), false, `banner advertised an unresolvable .local URL:\n${output}`);
+  assert.match(output, /fleetd LAN http:\/\/192\.0\.2\.77:\d+\/\?t=<hidden>/, 'the IP URLs must still be announced');
+});
+
+test('a live mDNS responder still gets its .local URL into the startup banner', { skip: BUNDLE_SKIP }, async (t) => {
+  // The complement: gating the banner on aliveness must not silence the
+  // healthy path — with the default mock (joins succeed) the line survives.
+  const home = freshHome('fleetdeck-mdns-banner-ok-');
+  const consoleRecord = path.join(home, 'console.log');
+  t.after(() => rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+  const daemon = spawnRaw({
+    port: randomPort(),
+    home,
+    env: loaderOptions({
+      FLEETDECK_BIND: '0.0.0.0',
+      FLEETDECK_TOKEN: 'mdns-banner-token-0123456789abcdef',
+      FLEETDECK_TEST_CONSOLE_RECORD: consoleRecord,
+    }),
+  });
+  t.after(() => daemon.kill());
+
+  await waitUntil(() => {
+    if (daemon.proc.exitCode !== null) throw new Error(`daemon exited ${daemon.proc.exitCode}:\n${daemon.stdout}\n${daemon.stderr}`);
+    return daemon.stderr.includes('mdns responding for') || null;
+  }, 'mocked mDNS responder to come up');
+
+  const output = readFileSync(consoleRecord, 'utf8');
+  assert.match(output, /fleetd LAN http:\/\/fleetdeck\.local:\d+\/\?t=<hidden> \(mDNS; credential available in share panel\)/,
+    `healthy responder lost its banner line:\n${output}`);
+});
+
 test('SIGTERM waits for the mDNS goodbye send callback before fleetd exits', { skip: BUNDLE_SKIP }, async (t) => {
   const home = freshHome('fleetdeck-goodbye-');
   const record = path.join(home, 'mdns.jsonl');

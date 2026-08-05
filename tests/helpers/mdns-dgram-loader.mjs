@@ -41,7 +41,10 @@ export async function load(url, context, nextLoad) {
         on() { return this; }
         setMulticastTTL() {}
         setMulticastLoopback() {}
-        addMembership() {}
+        // BUG-122 regression seam: FLEETDECK_MDNS_JOIN_FAILS=1 models a network
+        // with no multicast route — every membership join fails and the
+        // responder must terminally disable itself after bind.
+        addMembership() { if (process.env.FLEETDECK_MDNS_JOIN_FAILS) throw new Error('no multicast route'); }
         bind(_options, callback) { setImmediate(callback); return this; }
         send(packet, _port, _address, callback = () => {}) {
           const wire = Buffer.from(packet).toString('base64');

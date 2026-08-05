@@ -975,6 +975,7 @@ test('newWindow arms remain-on-exit for the fleet session only — never server-
   assert.ok(!userWindows.includes('udie'), 'a user window must still close on exit');
 });
 
+<<<<<<< /tmp/mf-ours
 // BUG-050 regression pin: an orphan window already holding the deterministic
 // fleet name must make newWindow REFUSE — without launching a second agent.
 // The old order (create under the final name, postcondition afterwards) let
@@ -992,12 +993,90 @@ test('newWindow refuses an occupied scoped name before any agent starts', { skip
   const session = sessionName(port);
   const callsign = 'occupied';
   const window = `fd${port}-${callsign}`;
+=======
+// BUG-051 regression: the kill must be re-targeted BY EXACT NAME at the moment
+// it executes. A real concurrent rename between the lookup and the kill cannot
+// be timed deterministically in a test, so a fake tmux performs the
+// BUG-051 race inline: the list answers "the name lives at @0", the wrapper
+// renames the name onto @1 and puts a repurposed window at @0, and the next
+// command is the kill. Kill-by-@id destroys the repurposed window and reports
+// success; kill-by-exact-name re-resolves and kills the window that still
+// carries the name.
+test('a renamed, repurposed window id is never killed by a stale @id', async (t) => {
+  useLegacyGenerationMode(t);
+  const dir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-tmux-staleid-'));
+  const port = 29_996;
+  const fleetSession = sessionName(port);
+  const window = `fd${port}-staleid`;
+  const repurposed = 'repurposed-by-human';
+  const kills = path.join(dir, 'kills');
+  const previous = new Map([
+    ['PATH', process.env.PATH],
+    ['FLEETDECK_TMUX_SOCKET', process.env.FLEETDECK_TMUX_SOCKET],
+  ]);
+
+  writeFileSync(path.join(dir, 'tmux'), `#!/bin/sh
+case " $* " in
+  *" list-panes "*)
+    printf '%s\\t%s\\t%s\\n' '${fleetSession}' '${window}' '@0'
+    printf '%s\\t%s\\t%s\\n' '${fleetSession}' '${repurposed}' '@1'
+    exit 0
+    ;;
+  *" kill-window "*)
+    # The race, resolved at kill time: '@0' is now the repurposed window and
+    # the scoped name moved to @1. An exact-name target =session:=name must
+    # therefore act on @1; a stale numeric @id acts on the repurposed @0.
+    case " $* " in
+      *" -t @0 "*) printf 'KILLED-REPURPOSED\\n' >> "$FLEETDECK_FAKE_KILLS" ;;
+      *" -t @1 "*) printf 'KILLED-MOVED\\n' >> "$FLEETDECK_FAKE_KILLS" ;;
+      *" =${fleetSession}:=${window} "*) printf 'KILLED-MOVED\\n' >> "$FLEETDECK_FAKE_KILLS" ;;
+      *) printf 'KILLED-UNKNOWN\\n' >> "$FLEETDECK_FAKE_KILLS" ;;
+    esac
+    # Post-kill recheck, when reached: the name is gone, the repurposed @0 lives.
+    printf '%s\\t%s\\t%s\\n' '${fleetSession}' '${repurposed}' '@0'
+    exit 0
+    ;;
+esac
+exit 1
+`);
+  chmodSync(path.join(dir, 'tmux'), 0o700);
+  process.env.PATH = `${dir}:${process.env.PATH}`;
+  process.env.FLEETDECK_TMUX_SOCKET = 'adapter-staleid';
+  process.env.FLEETDECK_FAKE_KILLS = kills;
+  t.after(() => {
+    for (const [key, value] of previous) {
+      if (value == null) delete process.env[key];
+      else process.env[key] = value;
+    }
+    delete process.env.FLEETDECK_FAKE_KILLS;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const killed = await killWindowVerified(window);
+  assert.deepEqual(killed, { ok: true, window_id: '@0' }, 'the kill reports the id the lookup selected');
+  assert.equal(
+    readFileSync(kills, 'utf8').trim(),
+    'KILLED-MOVED',
+    'the kill landed on the window still carrying the scoped name, never the repurposed @id',
+  );
+});
+
+test('tmux-target-syntax characters in a scoped kill name are rejected, never parsed as targets', { skip: !tmuxOk() && 'tmux server unavailable' }, async (t) => {
+  useLegacyGenerationMode(t);
+  const port = 27_000 + randomInt(1_000);
+  const socket = `fleetdeck-adapter-trap-${process.pid}-${randomBytes(4).toString('hex')}`;
+  const fleetSession = sessionName(port);
+  const innocent = 'innocent';
+  const previousSocket = process.env.FLEETDECK_TMUX_SOCKET;
+  process.env.FLEETDECK_TMUX_SOCKET = socket;
+>>>>>>> /tmp/mf-theirs
   t.after(() => {
     try { tmux(socket, ['kill-server']); } catch { /* already gone */ }
     if (previousSocket == null) delete process.env.FLEETDECK_TMUX_SOCKET;
     else process.env.FLEETDECK_TMUX_SOCKET = previousSocket;
   });
 
+<<<<<<< /tmp/mf-ours
   await ensureSession(port);
   // An orphan (or manually created) window already owns the deterministic name.
   tmux(socket, ['new-window', '-d', '-t', `=${session}:`, '-n', window, 'sleep 3600']);
@@ -1018,4 +1097,19 @@ test('newWindow refuses an occupied scoped name before any agent starts', { skip
   const panes = tmux(socket, ['list-panes', '-a', '-F', '#{pane_current_command}']).split('\n');
   assert.equal(panes.filter(c => c === 'sleep').length, 1,
     'no second agent process was launched or leaked');
+=======
+  // A scoped window name containing ':' passes the caller's loose scoped-name
+  // regex but, if pasted into `=<session>:=<name>`, parses as target syntax
+  // ("kill the window named <innocent>") instead of one literal name.
+  tmux(socket, ['-f', '/dev/null', 'new-session', '-d', '-s', fleetSession, '-n', innocent, 'sleep 3600']);
+  tmux(socket, ['new-window', '-d', '-t', `=${fleetSession}:`, '-n', `fd${port}-a:${innocent}`, 'sleep 3600']);
+
+  assert.deepEqual(await killWindowVerified(`fd${port}-a:${innocent}`), {
+    ok: false,
+    error: 'invalid scoped tmux window name',
+  });
+  assert.equal(tmuxStatus(socket, ['has-session', '-t', `=${fleetSession}`]), 0);
+  const names = tmux(socket, ['list-windows', '-t', `=${fleetSession}`, '-F', '#{window_name}']).split('\n');
+  assert.deepEqual(names, [innocent, `fd${port}-a:${innocent}`], 'nothing was killed by target-syntax injection');
+>>>>>>> /tmp/mf-theirs
 });
