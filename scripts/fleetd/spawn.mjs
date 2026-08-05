@@ -334,14 +334,19 @@ async function prepareServerGenerationUnlocked(home, port) {
       };
     }
     if (expected.serverPid !== null && await retireDeadGeneration(home, port, expected)) {
-      // The recorded owner is definitively gone. Resume first-contact: claim a
-      // reachable replacement, or fall through to the no-claim case below and
-      // let ensureSession create a fresh server.
-      expected = null;
-      server = await readServerGeneration(port);
-    } else {
-      return { enabled: true, expected, verified: false };
+      // The recorded owner is definitively gone, and every pane it hosted went
+      // with it — report THIS operation as the old generation's loss before
+      // anything else. The liveness tick settles its rows off this signal
+      // (fleetServerAbsent), so it must fire on the retiring call itself; if
+      // this call instead fell through and claimed a reachable replacement
+      // (which also deletes the death certificate), no later call could ever
+      // prove that loss again, and the old fleet's rows would read 'live'
+      // forever. The loss is ALSO authoritatively empty for readers — nothing
+      // the dead server hosted can outlive it — while writers (ensureSession)
+      // see the certificate below and recover on their re-invocation.
+      return { enabled: true, expected: null, verified: false, oldGenerationLost: true, authoritativeEmpty: true };
     }
+    return { enabled: true, expected, verified: false };
   }
   if (!server.reachable) {
     // Nothing answering the socket. An empty fleet is a CLAIM ABOUT LIVE PANES,
@@ -370,6 +375,20 @@ async function prepareServerGenerationUnlocked(home, port) {
       return { enabled: true, expected: null, verified: false, authoritativeEmpty: true };
     }
     return { enabled: true, expected: null, verified: false };
+  }
+
+  // A REACHABLE server with no claim on file. While a death certificate covers
+  // this port, that server is an interloper until proven otherwise: the label
+  // was just vacated by a server we proved dead, and anything already bound to
+  // it (an orphaned replacement, a human's scratch server, another fleet that
+  // collided with this label) is foreign state we must not claim, mutate, or
+  // trust. Claiming it would also delete the certificate — the only remaining
+  // proof that the old generation's panes are gone — so adoption here would
+  // erase the fleet-death signal before settlement ever sees it. Decline: the
+  // first claimant that MUST have a server (ensureSession) proves this one
+  // foreign with the certificate, stops it, and creates its own.
+  if (await hasRetiredGeneration(home, port)) {
+    return { enabled: true, expected: null, verified: false, blockedByCertificate: true, authoritativeEmpty: true };
   }
 
   // Upgrade/first-contact claim. Preserve a valid option set by an earlier
@@ -450,15 +469,21 @@ async function generationVerifiedResult(port, args) {
  * the second is a fleet-wide loss, and only it licenses settling live rows
  * without probing their panes — a pane cannot outlive the server that ran it.
  *
- * True requires the same proof an authoritatively-empty listing does: a death
- * certificate for the server we claimed (its PID proven gone by ESRCH) AND
- * tmux's own absence verdict. A reachable server, a failed probe, or no
- * certificate all return false, so callers never act on a guess — the caller
- * that condemns rows must never be the one to invent the evidence. */
+ * Two proofs qualify. One is the death certificate plus tmux's own absence
+ * verdict, exactly as for an authoritatively-empty listing. The other is the
+ * retirement itself: this call proved the claimed owner dead by ESRCH, which is
+ * stronger than any listing, and it must stand on its own because whatever now
+ * answers the socket — even an unrelated replacement server someone started on
+ * the same label — cannot resurrect the old generation's panes. A reachable
+ * replacement therefore does NOT turn this false on the retiring call; only a
+ * certificate-less probe, a failed probe, or a live claim do, so callers never
+ * act on a guess — the caller that condemns rows must never be the one to
+ * invent the evidence. */
 export async function fleetServerAbsent(port) {
   try {
     const state = await prepareServerGeneration(port);
-    return state.enabled === true && state.authoritativeEmpty === true;
+    return state.enabled === true
+      && (state.authoritativeEmpty === true || state.oldGenerationLost === true);
   } catch {
     return false; // an unreadable identity proves nothing
   }
@@ -540,9 +565,52 @@ export async function ensureSession(port) {
   // With no expected generation and no reachable server, first-run creation is
   // allowed. Every path after this call either claims that server or fails.
   if (state.expected === null) {
+    if (state.blockedByCertificate) {
+      // A death certificate covers this label, so the server answering it is
+      // FOREIGN by definition (a replacement that raced the old server's death,
+      // a human's scratch server, another fleet). Its panes are not ours, but
+      // neither are they recoverable by anyone through this fleet, and it is
+      // squatter's-rights-blocking the only recovery path the fleet has: stop
+      // the exact PID read from it — never a bare `kill-server`, which would
+      // shoot whatever the label points at when it fires — then create below.
+      // SIGTERM first, exactly as `kill-server` would ask, escalating to
+      // SIGKILL only if it lingers; the SIGKILL fallback covers wedged foreign
+      // servers, because a live one answering the label blocks recovery just
+      // the same.
+      const interloper = await readServerGeneration(port);
+      if (interloper.reachable && interloper.serverPid !== null) {
+        if (pidState(interloper.serverPid) === 'alive') {
+          try { process.kill(interloper.serverPid, 'SIGTERM'); } catch { /* already gone */ }
+          for (let i = 0; i < 50 && pidState(interloper.serverPid) === 'alive'; i += 1) {
+            await new Promise(resolve => setTimeout(resolve, 20));
+          }
+          if (pidState(interloper.serverPid) === 'alive') {
+            try { process.kill(interloper.serverPid, 'SIGKILL'); } catch { /* exited between probe and signal */ }
+          }
+        }
+        // SIGKILL'd tmux leaves its socket file behind until the filesystem
+        // catches up; wait for the label to drain so the create below cannot
+        // land on the corpse of the server it just replaced.
+        for (let i = 0; i < 50; i += 1) {
+          if (!(await readServerGeneration(port)).reachable) break;
+          await new Promise(resolve => setTimeout(resolve, 20));
+        }
+      }
+    }
     const created = await tmuxResult(['new-session', '-d', '-s', name]);
     if (created.ok) {
-      const claimed = await prepareServerGeneration(port);
+      let claimed = await prepareServerGeneration(port);
+      // The certificate was honored: it declined the interloper above and we
+      // evicted it by PID. The create then made a server we MUST claim — but
+      // the claim path declines any reachable server while a certificate
+      // covers the label, and this fresh server looks exactly like a second
+      // interloper. The certificate already spent its authority (the eviction
+      // happened inside this call), so retire it and re-ask: the retry takes
+      // the normal first-contact claim path for the server we just made.
+      if (!claimed.verified && claimed.blockedByCertificate === true) {
+        await clearRetiredGeneration(generationHome(), port);
+        claimed = await prepareServerGeneration(port);
+      }
       if (claimed.verified) {
         const confirmed = await generationVerifiedResult(port, ['has-session', '-t', '=' + name]);
         if (sessionConfirmed(confirmed)) return name;

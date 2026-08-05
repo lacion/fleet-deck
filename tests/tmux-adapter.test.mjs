@@ -24,6 +24,7 @@ import path from 'node:path';
 import {
   ensureSession,
   exactWindowTarget,
+  fleetServerAbsent,
   killWindowVerified,
   listScopedWindows,
   newWindow,
@@ -382,6 +383,81 @@ test('a dead tmux owner keeps its old fleet authoritatively empty across repeate
     'a live claim supersedes the certificate — the old proof must not outlive this server',
   );
   assert.deepEqual(await listScopedWindows(port), [], 'the reclaimed server answers from its own identity');
+});
+
+// REGRESSION (BUG-049): when the claimed server died and an UNRELATED server
+// bound the same socket label before the next probe, the retiring call used to
+// immediately adopt the replacement — claim it, delete the death certificate,
+// and hand the liveness tick a verified EMPTY listing. The tick saw
+// fleetServerAbsent === false and never settled the old generation's rows, so
+// every pane that died with the old server kept reading 'live' forever and
+// Revive answered 409 "not revivable". The retiring call must report the old
+// generation's loss, and must never claim the replacement; the death signal
+// must survive long enough for settlement.
+test('retiring a dead owner never adopts a replacement and keeps the fleet-death signal', { skip: !tmuxOk() && 'tmux server unavailable' }, async (t) => {
+  const port = 25_300 + randomInt(400);
+  const env = isolatedTmuxEnv('fleetdeck-tmux-generation-orphan-');
+  const replacementSession = `orphan-${port}`;
+  let replacementPid = null;
+  t.after(async () => {
+    await stopPid(replacementPid);
+    restoreEnv(env.previous);
+    rmSync(env.home, { recursive: true, force: true });
+  });
+
+  assert.equal(await ensureSession(port), sessionName(port));
+  const file = path.join(env.home, `tmux-generation-${port}`);
+  const first = JSON.parse(readFileSync(file, 'utf8'));
+
+  tmux(env.socket, ['kill-server']);
+  for (let i = 0; i < 50 && pidAlive(first.serverPid); i += 1) {
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  assert.equal(pidAlive(first.serverPid), false, 'the persisted owner is definitively dead');
+
+  // Someone starts an unrelated server on the same label before the next probe.
+  tmux(env.socket, ['-f', '/dev/null', 'new-session', '-d', '-s', replacementSession, 'sleep 3600']);
+  replacementPid = Number(tmux(env.socket, ['display-message', '-p', '#{pid}']));
+  assert.notEqual(replacementPid, first.serverPid, 'same label now reaches a different tmux server');
+
+  // The call that retires the dead owner proves the whole old generation lost.
+  // A replacement answering the socket must not mute that signal: nothing on
+  // the new server can resurrect panes that died with the old one.
+  assert.equal(await fleetServerAbsent(port), true, 'the retiring call reports the old generation lost');
+
+  // And the retirement must not have adopted the replacement: no new claim may
+  // be written and the death certificate must survive, or the fleet-death
+  // signal is gone for every caller after this one.
+  assert.equal(existsSync(file), false, 'the replacement server is never claimed by the retiring call');
+  assert.equal(existsSync(`${file}.retired`), true, 'the death certificate survives the reachable replacement');
+  const certificate = JSON.parse(readFileSync(`${file}.retired`, 'utf8'));
+  assert.equal(certificate.retiredGeneration, first.generation, 'the certificate still names the lost generation');
+
+  // Later calls must not quietly adopt it either: while the death certificate
+  // covers this label, a reachable server on it is an interloper — the label
+  // was just vacated by a server we proved dead — so readers still answer the
+  // old fleet's emptiness (its panes are provably gone with it) and no claim
+  // or mutation ever lands on the replacement.
+  assert.deepEqual(await listScopedWindows(port), [], 'the interloper never reads as the old fleet — the old fleet stays authoritatively empty');
+  assert.equal(await fleetServerAbsent(port), true, 'the fleet-death signal survives the reachable replacement');
+  assert.equal(existsSync(file), false, 'no later call claims the replacement either');
+  assert.equal(existsSync(`${file}.retired`), true, 'the death certificate still covers the label');
+  assert.ok(pidAlive(replacementPid), 'read paths never kill the interloper');
+
+  // Recovery is ensureSession's job, and it is the one caller that may evict:
+  // it proves the interloper foreign with the certificate, stops exactly that
+  // PID, and stands up its own claimed server in its place.
+  assert.equal(await ensureSession(port), sessionName(port));
+  const second = JSON.parse(readFileSync(file, 'utf8'));
+  assert.notEqual(second.generation, first.generation);
+  assert.ok(pidAlive(second.serverPid), 'the recovered server is a live, claimed generation');
+  await stopPid(second.serverPid);
+  assert.equal(pidAlive(replacementPid), false, 'ensureSession stopped the foreign interloper to recover');
+  assert.equal(
+    existsSync(`${file}.retired`),
+    false,
+    'a live claim supersedes the certificate — the old proof must not outlive this server',
+  );
 });
 
 test('a home that never claimed a server stays UNKNOWN about an absent fleet', async (t) => {
