@@ -247,6 +247,68 @@ test('F3c: {text} freeform fallback answers a choice hold with the text as the r
 });
 
 // ---------------------------------------------------------------------------
+// BUG-139: an answer is the operator's decision, not a display string — it
+// is relayed in full (never the 300-unit display clamp), and a serialized
+// answer over the documented 2000-unit limit is rejected BEFORE the hold is
+// released rather than silently clipped. Length is compared in code units
+// but slicing never happens, so no surrogate pair can be split.
+// ---------------------------------------------------------------------------
+
+test('BUG-139: a long {text} answer (>300 units) is relayed to the agent in full — no silent clip', async (t) => {
+  const holdMs = 4000;
+  const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
+  const cwd = scratchCwd();
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+
+  const sid = randomUUID();
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon });
+
+  const { held, q } = await holdChoice(daemon, sid, cwd, holdMs);
+
+  const long = `neither — ${'x'.repeat(400)}`;
+  const ansRes = await postJson(`${daemon.baseUrl}/api/questions/${q.id}/answer`, { text: long });
+  assert.equal(ansRes.status, 200, 'a >300-unit answer under the 2000-unit limit must be accepted');
+  const heldRes = await held;
+  assert.equal(
+    heldRes.json?.hookSpecificOutput?.permissionDecisionReason,
+    `User answered via Fleet Deck: ${long}`,
+    'the agent must receive the COMPLETE answer — no display clamp, no ellipsis',
+  );
+});
+
+test('BUG-139: an answer over the 2000-unit limit is rejected with 400 and the hold stays pending (no silent truncation)', async (t) => {
+  const holdMs = 60000;
+  const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
+  const cwd = scratchCwd();
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+
+  const sid = randomUUID();
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon });
+
+  const { held, q } = await holdChoice(daemon, sid, cwd, holdMs);
+
+  const big = await postJson(`${daemon.baseUrl}/api/questions/${q.id}/answer`, { text: 'y'.repeat(2500) });
+  assert.equal(big.status, 400, 'an oversized serialized answer must be rejected, not clipped');
+  assert.match(big.json?.err ?? '', /too long/);
+  let state = (await getJson(`${daemon.baseUrl}/state`)).json;
+  assert.equal(
+    state.questions.find(x => String(x.id) === String(q.id))?.status, 'pending',
+    'a rejected answer must NOT settle the hold — the operator can retry',
+  );
+
+  const longAnswers = { [FIXTURE_QUESTION]: 'z'.repeat(2500) };
+  const big2 = await postJson(`${daemon.baseUrl}/api/questions/${q.id}/answer`, { answers: longAnswers });
+  assert.equal(big2.status, 400, 'an oversized answers-map serialization is rejected too');
+  state = (await getJson(`${daemon.baseUrl}/state`)).json;
+  assert.equal(state.questions.find(x => String(x.id) === String(q.id))?.status, 'pending', 'still retryable');
+
+  const ok = await postJson(`${daemon.baseUrl}/api/questions/${q.id}/answer`, { answers: { [FIXTURE_QUESTION]: 'bcrypt' } });
+  assert.equal(ok.status, 200, 'the hold is still answerable after the rejections');
+  const heldRes = await held;
+  assert.equal(heldRes.json?.hookSpecificOutput?.permissionDecisionReason, 'User answered via Fleet Deck: bcrypt');
+});
+
+// ---------------------------------------------------------------------------
 // activity / SessionEnd expiry parity with the permission kind
 // ---------------------------------------------------------------------------
 

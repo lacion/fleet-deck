@@ -537,9 +537,13 @@ export function createQuestions(db, {
       // text either way.
       const payload = safeParse(row.payload_json);
       if (payload?.rearmed === true) {
-        const detail = row.kind === 'permission' ? body?.behavior
+        const detail0 = row.kind === 'permission' ? body?.behavior
           : row.kind === 'choice' ? serializeChoiceAnswer(row, body)
           : (body?.action === 'accept' || body?.action === 'decline') ? body.action : null;
+        if (detail0 && typeof detail0 === 'object' && detail0.over != null) {
+          return { status: 400, body: { ok: false, err: `answer too long — ${detail0.over} code units exceeds the 2000-unit answer limit; shorten the answer or answer at the terminal` } };
+        }
+        const detail = detail0;
         if (detail == null) {
           return { status: 400, body: { ok: false, err: 'body must match the question kind (behavior / answers|text / action)' } };
         }
@@ -591,6 +595,9 @@ export function createQuestions(db, {
         if (planId != null) planBehavior = behavior;
       } else if (row.kind === 'choice') {
         const serialized = serializeChoiceAnswer(row, body);
+        if (serialized && typeof serialized === 'object') {
+          return { status: 400, body: { ok: false, err: `answer too long — ${serialized.over} code units exceeds the 2000-unit answer limit; shorten the answer or answer at the terminal` } };
+        }
         if (!serialized) {
           return { status: 400, body: { ok: false, err: 'body must be {"answers":{"<question text>":"<label>"}} or {"text":"..."}' } };
         }
@@ -990,17 +997,36 @@ export function createQuestions(db, {
 // shorter `header` when the payload lets us match it. Values may be a string
 // or an array of labels (multiSelect). Returns null when the body carries
 // nothing usable — the HTTP layer turns that into a 400.
+//
+// An answer is the operator's decision, NOT a display string: it is relayed
+// in full, never clipped by the 300-unit display clamp (BUG-139). Only a
+// serialized answer over ANSWER_MAX code units is rejected outright (the
+// HTTP layer turns the { over: n } marker into a 400) — settling the hold
+// with a silently truncated answer would feed the agent a partial decision
+// that cannot be recovered through the terminal chooser. The limit compares
+// STRING CODE UNITS (Array.from never slices), so no surrogate pair is
+// ever split. Any text a multi-question chooser legitimately produces is
+// far under the cap; it guards against pathological bodies only.
+const ANSWER_MAX = 2000;
+
 function serializeChoiceAnswer(row, body) {
-  if (typeof body?.text === 'string' && body.text.trim()) return clipQuestion(body.text.trim());
+  if (typeof body?.text === 'string' && body.text.trim()) {
+    const t = body.text.trim();
+    return t.length <= ANSWER_MAX ? t : { over: t.length };
+  }
   const answers = body?.answers;
   if (!answers || typeof answers !== 'object' || Array.isArray(answers)) return null;
   const fmt = v => (Array.isArray(v) ? v.map(x => String(x)).join(', ') : String(v ?? '')).trim();
   const entries = Object.entries(answers).filter(([, v]) => fmt(v) !== '');
   if (!entries.length) return null;
-  if (entries.length === 1) return clipQuestion(fmt(entries[0][1]));
+  if (entries.length === 1) {
+    const t = fmt(entries[0][1]);
+    return t.length <= ANSWER_MAX ? t : { over: t.length };
+  }
   const qs = safeParse(row?.payload_json)?.tool_input?.questions;
   const headerOf = qText => (Array.isArray(qs) ? qs.find(x => x?.question === qText)?.header : null);
-  return clipQuestion(entries.map(([qText, v]) => `${headerOf(qText) || qText}: ${fmt(v)}`).join('; '));
+  const t = entries.map(([qText, v]) => `${headerOf(qText) || qText}: ${fmt(v)}`).join('; ');
+  return t.length <= ANSWER_MAX ? t : { over: t.length };
 }
 
 // --------------------------------------------------------------------------
