@@ -2,14 +2,23 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+<<<<<<< /tmp/mf-ours
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+=======
+import { execFileSync } from 'node:child_process';
+import { chmodSync, mkdtempSync, rmSync } from 'node:fs';
+>>>>>>> /tmp/mf-theirs
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openDb } from '../scripts/fleetd/db.mjs';
 import { startDaemon } from './helpers/daemon.mjs';
 import { getJson, postHook, postJson } from './helpers/http.mjs';
+<<<<<<< /tmp/mf-ours
 import { makeRepoWithWorktree } from './helpers/gitrepo.mjs';
+=======
+import { waitUntil } from './helpers/wait.mjs';
+>>>>>>> /tmp/mf-theirs
 
 // tests/rename.test.mjs — 0.7.1 custom names.
 //
@@ -63,9 +72,16 @@ async function startSession(daemon, cwd) {
 const rename = (daemon, sid, body) => postJson(`${daemon.baseUrl}/api/sessions/${sid}/name`, body);
 const command = (daemon, text) => postJson(`${daemon.baseUrl}/command`, { text });
 
+<<<<<<< /tmp/mf-ours
 const git = (args, cwd) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 const writeSeed = (dir, content) => writeFileSync(path.join(dir, 'seed.txt'), content);
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+=======
+const tmuxOk = () => {
+  try { execFileSync('tmux', ['-V'], { stdio: 'ignore' }); return true; } catch { return false; }
+};
+const tmux = (socket, args) => execFileSync('tmux', ['-L', socket, ...args], { encoding: 'utf8' }).trim();
+>>>>>>> /tmp/mf-theirs
 
 test('renaming keeps the animal and takes the suffix, and answers in the shape Compose already renders', async (t) => {
   const { daemon, home, cwd } = await boot(t, 'fleetdeck-rename-happy');
@@ -235,14 +251,38 @@ test('the `name` command mirrors the REST route and is never silently filed as a
   assert.match(scoped.json.reason, /one session/);
 });
 
-test('renaming a session with a live pane keeps its pane: the frozen tmux window still drives it', async (t) => {
-  const { daemon, home, cwd } = await boot(t, 'fleetdeck-rename-pane');
-  const spawned = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd, prompt: 'work' });
+// This one drives a REAL pane: no FLEETDECK_SPAWN_CMD, so the spawn path opens
+// a genuine window on the test-isolated tmux server (startDaemon scopes
+// FLEETDECK_TMUX_SOCKET per port and stop() reaps it). A regression that
+// re-targets pane operations at the mutable callsign instead of the frozen
+// spawn window cannot hide here — the rename and the kill both resolve
+// against a pane that actually exists. (BUG-171: the previous version asserted
+// only DB/snapshot fields, so a stranded renamed pane still read green.)
+test('renaming a session with a live pane keeps its pane: the frozen tmux window still drives it', { skip: !tmuxOk() && 'tmux unavailable' }, async (t) => {
+  const home = scratch('fleetdeck-rename-pane-daemon-');
+  const cwd = scratch('fleetdeck-rename-pane-cwd-');
+  const daemon = await startDaemon({
+    home,
+    env: {
+      SHELL: '/bin/bash',
+      FLEETDECK_AGENTS_POLL_MS: '100',
+      FLEETDECK_NUDGE_MS: '60000',
+    },
+  });
+  const socket = `fleetdeck-test-${daemon.port}`;
+  t.after(async () => {
+    await daemon.stop({ keepHome: true });
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  const spawned = await postJson(`${daemon.baseUrl}/api/spawn`, { kind: 'shell', cwd });
   assert.equal(spawned.status, 200, JSON.stringify(spawned.json));
   const sid = spawned.json.session_id;
   await postHook(daemon.baseUrl, 'SessionStart', { session_id: sid, cwd, source: 'startup' }, { token: daemon.token });
   const before = cardOf((await getJson(`${daemon.baseUrl}/state`)).json, sid);
   const window = before.spawn.tmux_window;
+  assert.equal(spawned.json.tmux.window, window, 'the row names the window the daemon just created');
 
   const res = await rename(daemon, sid, { suffix: 'renamed-worker' });
   assert.equal(res.status, 200);
@@ -256,8 +296,23 @@ test('renaming a session with a live pane keeps its pane: the frozen tmux window
   assert.equal(after.callsign, res.json.callsign, 'the card took the new name');
   assert.equal(after.spawn.tmux_window, window, 'and kept the window that actually exists');
   assert.equal(after.spawn.status, 'live', 'the pane is still live and still owned');
-  const row = withDb(home, db => db.prepare('SELECT status FROM spawns WHERE tmux_window = ?').get(window));
-  assert.equal(row.status, 'live');
+
+  // The post-rename proof this test exists for: a pane operation must still
+  // reach the REAL pane. The frozen window is on the test's isolated tmux
+  // server — resolved by the recorded window name, never by the new callsign.
+  tmux(socket, ['send-keys', '-t', `fleetdeck-${daemon.port}:${window}`, 'echo still-drivable', 'Enter']);
+  const seen = await waitUntil(() => {
+    try { return tmux(socket, ['capture-pane', '-p', '-t', `fleetdeck-${daemon.port}:${window}`]); } catch { return null; }
+  }, { timeoutMs: 5000, label: 'typed line to reach the renamed pane' });
+  assert.match(seen, /still-drivable/, 'the frozen window accepted input after the rename');
+
+  // And the daemon's own post-rename pane operation — the name-verified kill —
+  // must target that same recorded window: 200 with the window actually gone
+  // from the real server (the session's default window 0 may outlive it).
+  const killed = await postJson(`${daemon.baseUrl}/api/spawn/${before.spawn.spawn_id}/kill`, { force: true });
+  assert.equal(killed.status, 200, JSON.stringify(killed.json));
+  const remaining = tmux(socket, ['list-windows', '-t', `fleetdeck-${daemon.port}`, '-F', '#W']).split('\n');
+  assert.ok(!remaining.includes(window), `kill-window removed ${window} from the real tmux server (left: ${remaining})`);
 });
 
 test('an offline session cannot be renamed — its name is on its way back to the pool', async (t) => {
