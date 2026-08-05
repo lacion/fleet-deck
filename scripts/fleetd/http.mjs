@@ -195,6 +195,7 @@ export function createHttp(core, {
   port, version = '0.0.0', capture = () => {}, token, lan = null,
   trustedOrigins = [], proxyAuth = 'token', managed = false, requireToken = false,
   trustLoopback = false,
+  startup = null,
 }) {
   // The board renders its share panel from this: the exact URLs a peer can
   // open, token included (a browser cannot send an Authorization header on its
@@ -722,6 +723,18 @@ export function createHttp(core, {
           return json(res, 200, {
             ok: true, fleet: core.fleetSize(), pid: process.pid, version, managed,
             spawn: core.spawnCapability(),
+            // Boot-reconciliation readiness. Both heals are kicked fire-and-forget
+            // from the listen callback, so /health answering 200 is NOT proof they
+            // have run — and the asynchronous half (reconcileSpawns) pushes a
+            // mutation broadcast when it settles a row. A client with zero
+            // tolerance for a broadcast it did not cause (the /ws backpressure
+            // hardening test) needs a deterministic "startup mutation window is
+            // closed" signal; 'settled' flips only when BOTH heals are done.
+            // No status exposed (a boot tmux failure still settles); the startup
+            // refusals that would leave it 'reconciling' forever never reach
+            // listen. Tests poll /health → http.mjs stays the consumer of
+            // readiness, so no timer keeps the loop alive.
+            startup: startup?.reconciliationStatus?.() ?? null,
           });
         }
         if (url.pathname === '/state') return json(res, 200, snapshotWithLan());
@@ -1187,6 +1200,18 @@ export function createHttp(core, {
   // single snapshot rebuild+stringify+send instead of N.
   let dirty = false;
   let flushTimer = null;
+  // Waiters parked until the coalesced flush has actually fired. Boot
+  // reconciliation settles its heals, then must ALSO let the flush those heals
+  // scheduled drain before reporting 'settled' — otherwise a /ws client that
+  // connects the instant readiness flips can still be caught by the trailing
+  // startup broadcast (BUG-066). whenBroadcastIdle() resolves with no pending
+  // flush: immediately when none is scheduled, otherwise when the current one
+  // runs.
+  let idleWaiters = [];
+  function whenBroadcastIdle() {
+    if (!flushTimer) return Promise.resolve();
+    return new Promise(resolve => idleWaiters.push(resolve));
+  }
   // H-S1: the broadcast/connect snapshot deliberately uses core.snapshot() and
   // NOT snapshotWithLan() — the token-bearing lan.urls/lan.mdns must never ride
   // a frame a /ws client can read. The share URLs stay on GET /state, which is
@@ -1223,6 +1248,10 @@ export function createHttp(core, {
     flushTimer = setTimeout(() => {
       flushTimer = null;
       if (dirty) broadcast();
+      // Wake anyone waiting for the flush to drain (boot readiness settle).
+      const waiters = idleWaiters;
+      idleWaiters = [];
+      for (const resolve of waiters) resolve();
     }, BROADCAST_COALESCE_MS);
     flushTimer.unref?.();
   }
@@ -1319,6 +1348,7 @@ export function createHttp(core, {
   core.onMutate = scheduleBroadcast;
 
   // Only `server` is used externally (fleetd.mjs listens on it); wss/termWss/
-  // broadcast stay internal.
-  return { server };
+  // broadcast stay internal. whenBroadcastIdle is exported so the boot
+  // readiness settle can wait out the coalesced flush the heals scheduled.
+  return { server, whenBroadcastIdle };
 }

@@ -299,6 +299,22 @@ const DB_FILE = path.join(HOME, 'fleetd.db');
 const db = openDb(DB_FILE);
 const core = createCore(db, { port: PORT, version }); // holdMs resolves from FLEETDECK_HOLD_MS inside
 
+// BOOT-RECONCILIATION READINESS: the listen callback kicks the boot heals
+// fire-and-forget (see below), so /health answering 200 has never meant they
+// ran. createCore itself also fires one async sweep (the boot retentionSweep);
+// fold it into the same readiness so `settled` truly closes the startup
+// mutation window a strict /ws client must wait out before connecting. The
+// settled PROMISE object is wired in after createHttp returns so a response
+// never awaits a heal — /health stays sub-millisecond even with tmux down —
+// and settling 'settled' from the heals' own .finally is safe even in the
+// artificial all-synchronous path (readiness() is never consulted before that).
+let settleReconciliation;
+const bootReconciliation = new Promise(resolve => { settleReconciliation = resolve; });
+const bootReadiness = {
+  reconciliationStatus: () => (settleReconciliation === null ? 'settled' : 'reconciling'),
+  readiness: bootReconciliation,
+};
+
 // The board's share panel owns the complete credentialed URLs. Startup logs only
 // describe the same endpoints with the credential deliberately redacted.
 const MDNS_ENABLED = LAN_MODE && process.env.FLEETDECK_MDNS?.trim().toLowerCase() !== 'off';
@@ -310,7 +326,7 @@ const LAN_INFO = LAN_MODE
   }
   : { enabled: false, urls: [] };
 
-const { server } = createHttp(core, {
+const { server, whenBroadcastIdle } = createHttp(core, {
   port: PORT,
   token: TOKEN,
   // lan.mdns reflects the responder's LIVE state, not the boot snapshot: if the
@@ -323,6 +339,7 @@ const { server } = createHttp(core, {
   managed: MANAGED,
   requireToken: REQUIRE_TOKEN,
   trustLoopback: TRUST_LOOPBACK,
+  startup: bootReadiness,
   // validation aid: first 3 raw payloads per hook event → HOME/hook-payloads.jsonl
   capture: createPayloadCapture(HOME, { secrets: TOKEN ? [TOKEN] : [] }),
 });
@@ -448,7 +465,23 @@ server.listen(PORT, BIND, () => {
   } catch (err) {
     console.error('fleetd /clear fork heal error:', err);
   }
-  core.reconcileSpawns().catch(err => console.error('fleetd spawn reconciliation error:', err));
+  core.reconcileSpawns().catch(err => console.error('fleetd spawn reconciliation error:', err))
+    // The boot retentionSweep kicked inside createCore is the other half of
+    // the startup mutation window — `settled` means BOTH are done. Each leg
+    // already carries its own .catch above, so this chain cannot reject.
+    .then(() => core.bootRetention)
+    // The heals' onMutate calls only SCHEDULE a coalesced broadcast; the flush
+    // fires up to BROADCAST_COALESCE_MS later. Settling 'settled' the instant
+    // the heals resolve would let a strict /ws client connect into that
+    // trailing flush and take a broadcast it did not cause (BUG-066). Wait out
+    // the pending flush before flipping the signal.
+    .then(() => whenBroadcastIdle())
+    .finally(() => {
+      // Settling is irreversible: flip the status /health reports FIRST, then
+      // resolve the (unexposed) readiness promise for in-process embedders.
+      settleReconciliation();
+      settleReconciliation = null;
+    });
   startAgentsPoll(core); // F1 secondary session source; first run shortly after listen
 });
 

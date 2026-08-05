@@ -16,6 +16,7 @@ import { randomPort, spawnRaw, startDaemon } from './helpers/daemon.mjs';
 import { postHook } from './helpers/http.mjs';
 import { loadFixture } from './helpers/fixtures.mjs';
 import { waitUntil as waitUntilBase, waitForResponse, nonInternalIpv4s } from './helpers/wait.mjs';
+import { openDb } from '../scripts/fleetd/db.mjs';
 
 const LAN_TOKEN = 'fleetdeck-ws-hardening-token-0123456789';
 
@@ -30,6 +31,25 @@ function connect(url, options) {
 // (fn, label) with an authored 5000ms budget and a 20ms poll.
 const waitUntil = (fn, label, timeoutMs = 5000) =>
   waitUntilBase(fn, { label, timeoutMs, intervalMs: 20 });
+
+// Boot reconciliation (reconcileSpawns + the boot retentionSweep) runs
+// fire-and-forget from the listen callback, so startDaemon's /health wait does
+// NOT mean the startup mutation window has closed — and those heals broadcast.
+// A /ws client with zero tolerance for a broadcast it did not cause (the
+// over-cap eviction test below, cap forced to -1) must wait out that window
+// before connecting, or the trailing startup broadcast terminates it and the
+// "not evicted before any broadcast" assertion flakes (BUG-066). The daemon
+// reports 'settled' on /health once BOTH heals are done AND the coalesced
+// flush they scheduled has drained.
+async function waitForSettled(baseUrl, label = 'boot reconciliation settled') {
+  await waitUntil(async () => {
+    try {
+      const res = await fetch(`${baseUrl}/health`, { signal: AbortSignal.timeout(500) });
+      const body = await res.json();
+      return body?.startup === 'settled' ? true : null;
+    } catch { return null; }
+  }, label, 10000);
+}
 
 test('M-P1: a burst of mutations coalesces into far fewer broadcasts', async t => {
   const daemon = await startDaemon();
@@ -78,6 +98,11 @@ test('R1-2: a /ws client past the buffer cap is TERMINATED on broadcast, not sil
   const cwd = mkdtempSync(path.join(tmpdir(), 'fleetdeck-evict-'));
   t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
 
+  // With the cap at -1 EVERY broadcast terminates this client — including the
+  // trailing boot-reconciliation flush. Wait out the startup mutation window
+  // so the only broadcast in play is the one this test causes (BUG-066).
+  await waitForSettled(daemon.baseUrl);
+
   const { ws, frames } = connect(daemon.baseUrl.replace(/^http/, 'ws') + '/ws');
   t.after(() => ws.close());
   let closed = false;
@@ -102,6 +127,69 @@ test('R1-2: a /ws client past the buffer cap is TERMINATED on broadcast, not sil
     'fresh connect snapshot carries the mutation the evicted client missed',
   );
   assert.ok(fresh, 'a reconnecting client recovers the state via the connect snapshot');
+});
+
+test('BUG-066: /health "settled" closes the startup mutation window — an over-cap client connecting after it is never caught by the boot broadcast', async t => {
+  // The race this pins: boot reconcileSpawns is fire-and-forget, and its
+  // onMutate only SCHEDULES a coalesced broadcast that fires up to
+  // BROADCAST_COALESCE_MS after the heals resolve. A strict /ws client (cap
+  // forced to -1, so every broadcast terminates it) that connects the instant
+  // startDaemon's /health wait returns can still be caught by that trailing
+  // startup flush — evicted before the test's own mutation, exactly the flake
+  // the over-cap test above used to hit. This reproduces the window
+  // DETERMINISTICALLY: restart against a HOME holding a stale 'live' spawn row
+  // whose tmux window is gone, so boot reconciliation unconditionally settles
+  // the row and broadcasts. A correct 'settled' must not flip until that flush
+  // has drained, so a client connecting after it survives to the test's own
+  // mutation.
+  const home = mkdtempSync(path.join(tmpdir(), 'fleetdeck-066-home-'));
+  const cwd = mkdtempSync(path.join(tmpdir(), 'fleetdeck-066-cwd-'));
+  t.after(() => {
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+  const port = randomPort();
+  const sid = randomUUID();
+
+  // First boot: seed a session + a 'live' spawn row pointing at a window that
+  // will not exist at the second boot.
+  const first = await startDaemon({ port, home });
+  const db = openDb(path.join(home, 'fleetd.db'));
+  const now = Date.now();
+  db.prepare(`INSERT INTO sessions (session_id, callsign, cwd, col, note, events, started_at, last_seen, blocked_this_turn, source)
+    VALUES (?, ?, ?, 'working', 'seeded for BUG-066', 0, ?, ?, 0, 'hooks')`)
+    .run(sid, 'bug066', cwd, now, now);
+  db.prepare(`INSERT INTO spawns (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, requested_at, status, skip_permissions, remote_control, gateway, kind)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 'live', 0, 0, 0, 'claude')`)
+    .run(999001, sid, 'bug066', `fleetdeck-${port}`, `fd${port}-bug066`, cwd, now);
+  db.close();
+  await first.stop({ keepHome: true });
+
+  // Second boot against the SAME home: boot reconciliation condemns the stale
+  // row → onMutate → coalesced broadcast. Over-cap from birth so ANY broadcast
+  // terminates the client.
+  const daemon = await startDaemon({ port, home, env: { FLEETDECK_WS_BUFFER_MAX: '-1' } });
+  t.after(() => daemon.stop());
+
+  // The fix under test: 'settled' must not flip until the startup broadcast has
+  // drained. Connect immediately after it does — there must be no residual
+  // startup flush left to terminate this client.
+  await waitForSettled(daemon.baseUrl, 'boot reconciliation settled after restart');
+  const { ws, frames } = connect(daemon.baseUrl.replace(/^http/, 'ws') + '/ws');
+  t.after(() => ws.close());
+  let closed = false;
+  ws.on('close', () => { closed = true; });
+  await waitUntil(() => frames.find(f => f.type === 'snapshot'), 'connect snapshot after settle');
+  // Give any (incorrectly) trailing startup flush ample room to fire. On the
+  // unfixed readiness this is where the over-cap client died.
+  await new Promise(r => setTimeout(r, 300));
+  assert.equal(closed, false, 'no startup broadcast may remain once /health reports settled');
+
+  // …and the client is still functional: the test's OWN mutation must be the
+  // thing that terminates it (the over-cap contract still holds).
+  const sid2 = randomUUID();
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid2, cwd }), { token: daemon });
+  await waitUntil(() => closed, 'over-cap client terminated by the test-driven broadcast');
 });
 
 // ---- H-S1 needs a real LAN bind so a token exists at all. Skip when the host

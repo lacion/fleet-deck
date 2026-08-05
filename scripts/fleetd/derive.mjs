@@ -852,7 +852,7 @@ export function createCore(db, {
   // its already-resolved promise, so the boot sweep's DB effects still land
   // synchronously for the common case. .catch() contains any tmux-probe
   // rejection so a fire-and-forget sweep can never become an unhandled reject.
-  retentionSweep().catch(err => console.error('fleetd retention sweep error:', err));
+  const bootRetention = retentionSweep().catch(err => console.error('fleetd retention sweep error:', err));
   setInterval(() => {
     try { q.pruneEvents.run(Date.now() - 24 * 3600 * 1000); } catch { /* hygiene only */ }
     retentionSweep().catch(() => { /* hygiene only */ });
@@ -898,6 +898,7 @@ export function createCore(db, {
     // is re-exported so tests can drive the tmux-verified presume-dead path
     // (BUG 2) deterministically; production callers keep using the interval.
     retentionSweep,
+    bootRetention,     // the boot sweep's settle promise — fleetd folds it into boot readiness
     cleanup,
     dismissSession,     // POST /api/sessions/:id/dismiss — per-card cleanup → {status, body}
     worktrees,          // GET /api/worktrees — bounded live git inspection
