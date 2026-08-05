@@ -974,3 +974,48 @@ test('newWindow arms remain-on-exit for the fleet session only — never server-
   const userWindows = tmux(socket, ['list-windows', '-t', `=${userSession}`, '-F', '#{window_name}']);
   assert.ok(!userWindows.includes('udie'), 'a user window must still close on exit');
 });
+
+// BUG-050 regression pin: an orphan window already holding the deterministic
+// fleet name must make newWindow REFUSE — without launching a second agent.
+// The old order (create under the final name, postcondition afterwards) let
+// tmux accept a duplicate name, started the billed command, and only then
+// failed the exact-name check — while name-based compensation refused the
+// now-ambiguous duplicate set, orphaning a live agent. The adapter must
+// launch under a unique temporary name, verify the final name is free, and
+// claim it by id; failure rolls back by that id, so no agent survives.
+test('newWindow refuses an occupied scoped name before any agent starts', { skip: !tmuxOk() && 'tmux server unavailable' }, async (t) => {
+  useLegacyGenerationMode(t);
+  const port = 22_000 + randomInt(1_000);
+  const socket = `fleetdeck-adapter-${process.pid}-${randomBytes(4).toString('hex')}`;
+  const previousSocket = process.env.FLEETDECK_TMUX_SOCKET;
+  process.env.FLEETDECK_TMUX_SOCKET = socket;
+  const session = sessionName(port);
+  const callsign = 'occupied';
+  const window = `fd${port}-${callsign}`;
+  t.after(() => {
+    try { tmux(socket, ['kill-server']); } catch { /* already gone */ }
+    if (previousSocket == null) delete process.env.FLEETDECK_TMUX_SOCKET;
+    else process.env.FLEETDECK_TMUX_SOCKET = previousSocket;
+  });
+
+  await ensureSession(port);
+  // An orphan (or manually created) window already owns the deterministic name.
+  tmux(socket, ['new-window', '-d', '-t', `=${session}:`, '-n', window, 'sleep 3600']);
+  const orphanId = tmux(socket, ['display-message', '-p', '-t', `=${session}:=${window}`, '#{window_id}']);
+
+  await assert.rejects(
+    newWindow({ port, callsign, cwd: tmpdir(), argv: ['sleep', '3600'] }),
+    /already exists/,
+    'a taken scoped name rejects the spawn',
+  );
+  const names = tmux(socket, ['list-windows', '-t', `=${session}`, '-F', '#{window_name}']).split('\n');
+  assert.deepEqual(names.filter(n => n === window), [window],
+    'no duplicate same-name window was created');
+  assert.deepEqual(names.filter(n => n.startsWith(`${window}~`)), [],
+    'the provisional window was rolled back, not left running');
+  const ids = tmux(socket, ['list-windows', '-a', '-F', '#{window_id}']).split('\n');
+  assert.ok(ids.includes(orphanId), 'the orphan window itself is untouched');
+  const panes = tmux(socket, ['list-panes', '-a', '-F', '#{pane_current_command}']).split('\n');
+  assert.equal(panes.filter(c => c === 'sleep').length, 1,
+    'no second agent process was launched or leaked');
+});

@@ -696,16 +696,62 @@ export async function newWindow({ port, callsign, cwd, argv, env = null }) {
   // fleet session alone. Idempotent; best-effort like the per-window write.
   await tmux(['set-hook', '-t', '=' + session + ':', 'after-new-window',
     'set-option -w remain-on-exit on']);
+  // Launch under an adapter-owned UNIQUE temporary name, never the final
+  // scoped name: tmux happily permits duplicate window names, and starting the
+  // (potentially billed) agent before learning the name is occupied used to
+  // leave that agent running after the exact-name postcondition failed — with
+  // name-based compensation refusing the now-ambiguous duplicate set, so
+  // nothing owned, killed, or cleaned it up. The temp name contains the final
+  // name but no '-' after the fd<port>- prefix, so scoped listings, probes,
+  // and kills (fd<port>-*) never match it. The returned @id is the ONLY handle
+  // used from here on; rollback kills by that id, which duplicate names
+  // cannot make ambiguous.
+  const provisional = `${window}~${randomUUID()}`;
   const out = await tmux([
     'new-window', '-d', '-P', '-F', '#{window_id}',
     '-t', '=' + session + ':', // exact session, next free window index
-    '-n', window,
+    '-n', provisional,
     '-c', cwd,
     ...envArgs,
     '--', ...argv,
   ]);
   if (out === null) throw new Error(`tmux new-window failed for ${window}`);
   const window_id = out.trim();
+  // Best-effort and deliberately awaited: every failure past this point kills
+  // the window we just launched, by its id, so a failed spawn never leaves a
+  // running agent behind.
+  const rollback = () => tmux(['kill-window', '-t', window_id]);
+  const inspect = args => generation.enabled
+    ? generationVerifiedResult(port, args)
+    : tmuxResult(args);
+  // Verify the final name is FREE before taking it — after the launch, so a
+  // same-generation race in which two spawns pass an earlier check together
+  // still cannot leave two same-name windows: the loser's rename fails. The
+  // probe CANNOT target the final name: tmux prefix-matches window targets
+  // even with the '=' exact prefix (verified on tmux 3.4), which would match
+  // the provisional window itself and report the name as occupied. Listing
+  // the exact fleet session's windows and comparing names verbatim is exact.
+  const occupancy = await inspect([
+    'list-windows', '-t', '=' + session + ':', '-F', '#{window_name}',
+  ]);
+  if (!occupancy.ok) {
+    await rollback();
+    throw new Error(generation.enabled
+      ? `tmux new-window generation postcondition failed for ${window}`
+      : `tmux new-window occupancy check failed for ${window}`);
+  }
+  const names = occupancy.out.endsWith('\n') ? occupancy.out.slice(0, -1) : occupancy.out;
+  if (names.split('\n').some(name => name === window)) {
+    await rollback();
+    throw new Error(`tmux new-window refused: ${window} already exists`);
+  }
+  // Rename by id. tmux rejects the rename when the final name is already
+  // taken (the launch-time race above), which fails closed with rollback.
+  const renamed = await tmuxResult(['rename-window', '-t', window_id, window]);
+  if (!renamed.ok) {
+    await rollback();
+    throw new Error(`tmux new-window could not claim the scoped name ${window}`);
+  }
   if (generation.enabled) {
     const confirmed = await generationVerifiedResult(port, [
       'display-message', '-p', '-t', target,
@@ -713,6 +759,7 @@ export async function newWindow({ port, callsign, cwd, argv, env = null }) {
     ]);
     const expected = [session, window, window_id].join(FIELD_SEP) + '\n';
     if (!confirmed.ok || confirmed.out !== expected) {
+      await rollback();
       throw new Error(`tmux new-window generation postcondition failed for ${window}`);
     }
   }
