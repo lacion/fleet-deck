@@ -359,7 +359,7 @@ if [ -z "$TOKEN" ]; then
   echo "FAIL: smoke daemon did not mint its bearer token"
   exit 1
 fi
-if curl -fsS -X POST "http://127.0.0.1:$FLEETDECK_PORT/mail" \
+if curl -fsS --connect-timeout 5 --max-time 15 -X POST "http://127.0.0.1:$FLEETDECK_PORT/mail" \
   -H 'content-type: application/json' -H "authorization: Bearer $TOKEN" \
   -d '{"to":"all","from":"luis","text":"Fleet check-in: another agent is editing this repo right now. End your final summary with a line FLEET-NOTE: listing files you touched."}'; then
   echo " | mail sent (both sessions proven active)"
@@ -375,8 +375,31 @@ echo "(board screenshot skipped -- Phase 1 board is the ported spike board, no s
 wait "$PA" || RC_A=$?; echo "session A done rc=$RC_A"; PA=''
 wait "$PB" || RC_B=$?; echo "session B done rc=$RC_B"; PB=''
 
-curl -fsS "http://127.0.0.1:$FLEETDECK_PORT/state" \
-  -H "authorization: Bearer $TOKEN" > "$DEMO_LOGS/final-state.json"
+# Bounded tombstone poll: the SessionEnd hooks tombstone asynchronously, so
+# retry the final /state capture until both sessions read offline. Every
+# attempt carries hard timeouts so a stalled daemon can never wedge the run
+# past the worker watchdog.
+STATE_GOT=''
+for i in $(seq 1 12); do
+  if curl -fsS --connect-timeout 5 --max-time 15 "http://127.0.0.1:$FLEETDECK_PORT/state" \
+    -H "authorization: Bearer $TOKEN" > "$DEMO_LOGS/final-state.json" 2>/dev/null; then
+    if node -e "
+      const s = JSON.parse(require('fs').readFileSync('$DEMO_LOGS/final-state.json', 'utf8'));
+      const byId = Object.fromEntries((s.sessions || []).map(x => [x.session_id, x]));
+      const off = id => byId[id] && byId[id].col === 'offline' && !!byId[id].endedAt;
+      process.exit(off('$SA') && off('$SB') ? 0 : 1);
+    "; then
+      STATE_GOT=1
+      break
+    fi
+  fi
+  echo " | waiting for tombstones (attempt $i/12)"
+  sleep 5
+done
+if [ -z "$STATE_GOT" ]; then
+  echo "FAIL: final /state capture never showed both sessions tombstoned offline"
+  exit 1
+fi
 echo "ROUND COMPLETE — captured $DEMO_LOGS/final-state.json"
 echo
 
