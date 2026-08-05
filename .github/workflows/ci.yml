@@ -140,4 +140,19 @@ jobs:
           else
             BASE="${{ github.event.before }}"
           fi
+<<<<<<< /tmp/mf-ours
           node scripts/check-plugin-payload.mjs "$BASE"
+=======
+          # Push to main with the same before/after (e.g. branch creation) — nothing to check.
+          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+            echo "no base to compare — skipping"
+            exit 0
+          fi
+          git fetch --no-tags origin "$BASE" || true
+          # The old predicate inferred a bump from a changed manifest PATHNAME —
+          # editing package.json's description at an unchanged version passed,
+          # even though Claude Code's plugin cache key (the version value) never
+          # moved. The checker resolves the plugin version at base and head and
+          # requires a real semantic increase plus manifest/lock-root agreement.
+          node scripts/check-release-gate.mjs "$BASE" HEAD
+>>>>>>> /tmp/mf-theirs
