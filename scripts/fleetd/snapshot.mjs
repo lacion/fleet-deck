@@ -6,6 +6,7 @@
 // spawn module. spawnRowRevivable is a pure helper.
 
 import { spawnRowRevivable, sessionAdoptableNow } from './helpers.mjs';
+import { scrubUrlCredentials } from './payload-capture.mjs';
 
 export function createSnapshot(ctx) {
   const {
@@ -199,7 +200,15 @@ export function createSnapshot(ctx) {
         repo_id: repo.repo_id,
         repo_name: repo.repo_name,
         root: repo.root,
-        origin_url: repo.origin_url ?? null,
+        // The persisted origin comes verbatim from `git remote get-url origin`
+        // (repos.mjs touchRepo backfill) and can carry credentials —
+        // `https://user:PAT@host/org/repo.git`, `?access_token=…`. The spawn-row
+        // snapshot withholds its origin outright for exactly this reason (see
+        // the fail_detail gate note above); the catalog needs the URL itself for
+        // spawn-form completion, so it goes out through the same positional
+        // userinfo + secret-query-param scrub every other board-facing git
+        // string gets (payload-capture.mjs). The raw value stays server-side.
+        origin_url: repo.origin_url == null ? null : scrubUrlCredentials(repo.origin_url),
         default_branch: repo.default_branch ?? null,
         last_used_at: repo.last_used_at,
       })),
