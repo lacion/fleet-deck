@@ -358,6 +358,57 @@ test('M-B3: POST body is byte-exact and byte-capped', async t => {
     });
     assert.equal(res.status, 413, 'a body whose BYTES exceed the cap must 413 even when its UTF-16 length does not');
   });
+
+  await t.test('an oversized declared Content-Length cannot wedge the keep-alive connection', async () => {
+    // BUG-125: the declared-length 413 path used to answer and return without
+    // reading the request stream or destroying it. Under keep-alive Node then
+    // held the socket open waiting for a body that (here) never fully arrives —
+    // a second request on the same connection timed out instead of being
+    // served. The fix answers once and tears the request down; the regression
+    // contract is that the connection is CLOSED after the 413 (so no client
+    // can hang on it) and the daemon keeps serving fresh connections.
+    await new Promise((resolve, reject) => {
+      let responded = false;
+      let closed = false;
+      const done = () => {
+        if (responded && closed) { clearTimeout(timer); resolve(); }
+      };
+      const timer = setTimeout(() => reject(new Error(
+        `server wedged the keep-alive connection (responded=${responded}, socketClosed=${closed})`,
+      )), 2000);
+      timer.unref();
+      const req = http.request({
+        host: '127.0.0.1', port, path: '/mail', method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'content-length': String(2_000_000), // over MAX_BODY, declared up front
+          authorization: `Bearer ${daemon.token}`,
+        },
+      }, res => {
+        let body = '';
+        res.on('data', d => { body += d; });
+        res.on('end', () => {
+          try {
+            assert.equal(res.statusCode, 413, `expected 413, got ${res.statusCode}: ${body}`);
+            assert.equal(res.complete, true, 'the 413 response itself must be fully readable');
+          } catch (err) { clearTimeout(timer); return reject(err); }
+          responded = true;
+          done();
+        });
+      });
+      req.on('error', err => { clearTimeout(timer); reject(err); });
+      // Send only a fragment of the declared body and keep the socket open —
+      // the pre-fix server left the connection half-parsed at exactly this
+      // point. With the fix the server closes it: BOTH the 413 must arrive
+      // AND the socket must close promptly instead of lingering.
+      req.write('{"partial":');
+      req.on('socket', s => s.on('close', () => { closed = true; done(); }));
+    });
+
+    // And the daemon is unharmed: a fresh request is served immediately.
+    const health = await fetch(`${daemon.baseUrl}/health`).then(r => r.json());
+    assert.equal(health.ok, true, 'the daemon must keep serving after refusing an oversized body');
+  });
 });
 
 // ---------------------------------------------------------------------------

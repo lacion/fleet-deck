@@ -926,12 +926,25 @@ export function createHttp(core, {
         let size = 0;
         let tooLarge = false;
         const bodyCap = url.pathname === '/api/paste-image' ? MAX_PASTE_BODY : MAX_BODY;
+        // An oversized body is answered ONCE and the request torn down with it:
+        // returning here without consuming the unread body leaves a keep-alive
+        // socket half-parsed (the client may not even have finished sending),
+        // and Node will neither reuse nor free it — a client or proxy that
+        // declares a huge body would pile up lingering sockets on the control
+        // plane. shouldKeepAlive=false makes Node close the connection right
+        // after this response instead of waiting for a body that never comes.
+        const refuseOversize = () => {
+          res.shouldKeepAlive = false;
+          if (isHook) json(res, 200, {});
+          else json(res, 413, { ok: false, reason: 'payload too large' });
+          req.destroy();
+        };
         // Refuse an oversized body by its declared Content-Length before reading
         // a byte — the streaming cap below still catches a lying/absent header,
         // but this avoids buffering megabytes only to reject them.
         const declared = Number(req.headers['content-length']);
         if (Number.isFinite(declared) && declared > bodyCap) {
-          return isHook ? json(res, 200, {}) : json(res, 413, { ok: false, reason: 'payload too large' });
+          return refuseOversize();
         }
         req.on('data', d => {
           if (tooLarge) return;
@@ -940,7 +953,7 @@ export function createHttp(core, {
             tooLarge = true;
             // 413 on control paths; hooks keep the fail-open 200 {}. Stop
             // accumulating either way so the body can't grow without bound.
-            return isHook ? json(res, 200, {}) : json(res, 413, { ok: false, reason: 'payload too large' });
+            return refuseOversize();
           }
           chunks.push(d);
         });
