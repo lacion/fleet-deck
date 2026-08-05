@@ -346,6 +346,14 @@ export function createStatements(db) {
     provisioningSpawnBySession: db.prepare("SELECT * FROM spawns WHERE session_id = ? AND status = 'provisioning' ORDER BY requested_at DESC, rowid DESC LIMIT 1"),
     countActiveSpawns: db.prepare("SELECT COUNT(*) AS n FROM spawns WHERE status IN ('spawning', 'stalled', 'live')"),
     setSpawnStatus: db.prepare('UPDATE spawns SET status = ? WHERE spawn_id = ?'),
+    // BUG-152: resurrection is a compare-and-set. The liveness tick snapshots a
+    // 'pane-dead'/'gone' row and the window owner BEFORE awaiting
+    // paneCurrentCommand; a human kill (or any terminal transition) landing
+    // during that await must not be overwritten by the stale probe's verdict.
+    // The write only wins while the row is still 'pane-dead'/'gone' — a 'killed'
+    // row (a human decision) makes it change zero rows, and the card is left
+    // alone. Same pattern as setSpawnStalled below.
+    setSpawnResurrected: db.prepare("UPDATE spawns SET status = 'live' WHERE spawn_id = ? AND status IN ('pane-dead', 'gone')"),
     setSpawnStalled: db.prepare("UPDATE spawns SET status = 'stalled', stall_detail = ? WHERE spawn_id = ? AND status = 'spawning'"),
     // Records a failed clone/fetch's redacted git-stderr excerpt (repos.mjs).
     // NO compare-and-set predicate, deliberately: copying setSpawnStalled's

@@ -317,6 +317,52 @@ test('BUG 3: a human-KILLED spawn stays killed even if a live claude pane exists
     'a human kill is a decision, not a mistake — never resurrected');
 });
 
+test('BUG-152: a kill landing DURING the resurrection probe is never undone by the stale verdict', async (t) => {
+  // The resurrect loop snapshots a 'pane-dead' row + its window owner, then
+  // awaits paneCurrentCommand. Simulate the race: the kill lands mid-await
+  // (the probe still returns its earlier live observation). Without the
+  // compare-and-set, resurrection overwrites the terminal 'killed' state with
+  // 'live' and lifts the card off the offline shelf on a dead window.
+  const tmux = fakeTmux();
+  const ctx = memoryCore(t, { tmux });
+  const { core, db } = ctx;
+  const cwd = mkdtempSync(path.join(tmpdir(), 'fd-race-'));
+  t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+
+  const spawn = await core.spawn({ cwd });
+  const sid = spawn.body.session_id;
+  const spawnId = spawn.body.spawn_id;
+  core.hookSessionStart({ session_id: sid, cwd, source: 'startup' }); // pane live claude
+  // Wrongly condemned to 'pane-dead' + tombstoned (the BUG 3 scenario) — the
+  // human then kills the spawn from the board while the tick is probing.
+  db.prepare("UPDATE spawns SET status = 'pane-dead' WHERE spawn_id = ?").run(spawnId);
+  db.prepare("UPDATE sessions SET col = 'offline', note = 'pane died', ended_at = ? WHERE session_id = ?")
+    .run(Date.now(), sid);
+
+  const basePaneCurrentCommand = tmux.adapter.paneCurrentCommand;
+  let probeCalls = 0;
+  tmux.adapter.paneCurrentCommand = async target => {
+    probeCalls += 1;
+    if (probeCalls === 1) {
+      // The resurrect loop's confirmatory probe is the first paneCurrentCommand
+      // this tick. The human's kill lands while it is in flight; it removes the
+      // window and marks the row 'killed' — but the probe still answers with
+      // its earlier live observation.
+      const res = await core.spawnKill(spawnId, true);
+      assert.equal(res.status, 200, 'sanity: the mid-probe kill succeeds');
+    }
+    return basePaneCurrentCommand(target);
+  };
+
+  await core.spawnLivenessTick();
+
+  assert.equal(db.prepare('SELECT status FROM spawns WHERE spawn_id = ?').get(spawnId).status, 'killed',
+    'a successful human kill must survive a concurrently probing liveness tick');
+  const card = cardOf(core, sid);
+  assert.equal(card.col, 'offline', 'the card stays on the offline shelf — no false live card');
+  assert.notEqual(card.endedAt, null, 'ended_at stays stamped — the kill is not undone');
+});
+
 test('BUG 3: revive() ADOPTS a gone spawn whose window is a live claude (no 409, no duplicate)', async (t) => {
   const userHome = mkdtempSync(path.join(tmpdir(), 'fd-adopt-home-'));
   const cwd = mkdtempSync(path.join(tmpdir(), 'fd-adopt-cwd-'));
