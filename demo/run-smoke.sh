@@ -18,6 +18,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FLEETDECK_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SEED_DIR="$SCRIPT_DIR/project"
 DEMO_LOGS="$SCRIPT_DIR/demo-logs"
+TIMEOUT_LAUNCHER="$SCRIPT_DIR/run-with-timeout.mjs"
 SESSIONSTART_SCRIPT="$FLEETDECK_ROOT/scripts/fleet-sessionstart.mjs"
 FLEET_HOOK_SCRIPT="$FLEETDECK_ROOT/scripts/fleet-hook.mjs"
 
@@ -64,12 +65,18 @@ SMOKE_STARTED=0
 stop_worker() {
   local pgid="$1"
   [ -n "$pgid" ] || return 0
-  kill -TERM -- "-$pgid" 2>/dev/null || true
+  # The workers run under demo/run-with-timeout.mjs, which — unlike the old
+  # `setsid timeout` — is NOT its own process-group leader: $PA's group is this
+  # script's group, so `kill -- -$PA` is ESRCH (or worse). Signal the group
+  # when it exists (setsid semantics) and fall back to the launcher pid; the
+  # launcher forwards TERM into the worker's detached group and escalates to
+  # SIGKILL inside its own 1 s grace, within the 2 s window polled below.
+  kill -TERM -- "-$pgid" 2>/dev/null || kill -TERM -- "$pgid" 2>/dev/null || true
   for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
-    kill -0 -- "-$pgid" 2>/dev/null || break
+    kill -0 -- "$pgid" 2>/dev/null || break
     sleep 0.1
   done
-  kill -KILL -- "-$pgid" 2>/dev/null || true
+  kill -KILL -- "-$pgid" 2>/dev/null || kill -KILL -- "$pgid" 2>/dev/null || true
   wait "$pgid" 2>/dev/null || true
 }
 stop_smoke_daemon() {
@@ -199,12 +206,13 @@ echo "SMOKE_MODEL           = $SMOKE_MODEL"
 echo "SMOKE_EFFORT          = $SMOKE_EFFORT"
 echo
 
-for required in timeout setsid; do
-  if ! command -v "$required" >/dev/null 2>&1; then
-    echo "ABORT: smoke requires $required on PATH"
-    exit 1
-  fi
-done
+# The workers are launched through demo/run-with-timeout.mjs, the portable
+# (setsid + GNU timeout) equivalent: macOS ships neither utility, and Node
+# gives the same process-group-plus-deadline semantics on every platform.
+if ! command -v node >/dev/null 2>&1; then
+  echo "ABORT: smoke requires node on PATH"
+  exit 1
+fi
 
 # ---------------------------------------------------------------- 1. reset
 # Final guard: never kill an unknown listener by port. The selected isolated
@@ -281,10 +289,14 @@ SMOKE_STARTED=1
 env "${CLAUDE_ENV_SCRUB[@]}" \
   FLEETDECK_HOME="$SCRATCH_HOME" FLEETDECK_PORT="$FLEETDECK_PORT" \
   FLEETDECK_TMUX_SOCKET="$FLEETDECK_TMUX_SOCKET" FLEETDECK_AGENTS_CMD=false \
+<<<<<<< /tmp/mf-ours
   setsid timeout 300 claude -p "Add an exported function slugify(s) to util.js (lowercase, trim, spaces to dashes, strip punctuation). Add assert-based tests for it in test.js (create or extend). Verify each edge case one at a time with separate 'node -e' commands: spaces, capitals, punctuation, empty string. Then run node test.js. Preserve any existing exports. Work step by step, one small change per edit." \
 <<<<<<< /tmp/mf-ours
   --session-id "$SA" --dangerously-skip-permissions \
 =======
+=======
+  node "$TIMEOUT_LAUNCHER" 300 claude -p "Add an exported function slugify(s) to util.js (lowercase, trim, spaces to dashes, strip punctuation). Add assert-based tests for it in test.js (create or extend). Verify each edge case one at a time with separate 'node -e' commands: spaces, capitals, punctuation, empty string. Then run node test.js. Preserve any existing exports. Work step by step, one small change per edit." \
+>>>>>>> /tmp/mf-theirs
   --session-id "$SA" --max-turns 24 --dangerously-skip-permissions \
   --model "$SMOKE_MODEL" --effort "$SMOKE_EFFORT" --setting-sources user,project \
 >>>>>>> /tmp/mf-theirs
@@ -339,10 +351,14 @@ fi
 env "${CLAUDE_ENV_SCRUB[@]}" \
   FLEETDECK_HOME="$SCRATCH_HOME" FLEETDECK_PORT="$FLEETDECK_PORT" \
   FLEETDECK_TMUX_SOCKET="$FLEETDECK_TMUX_SOCKET" FLEETDECK_AGENTS_CMD=false \
+<<<<<<< /tmp/mf-ours
   setsid timeout 300 claude -p "Add an exported function titleCase(s) to util.js (capitalize each word). Add assert-based tests for it in test.js (create or extend). Verify edge cases one at a time with separate 'node -e' commands: single word, multiple words, empty string. Then run node test.js. IMPORTANT: preserve any existing exports and tests you find. Work step by step, one small change per edit." \
 <<<<<<< /tmp/mf-ours
   --session-id "$SB" --dangerously-skip-permissions \
 =======
+=======
+  node "$TIMEOUT_LAUNCHER" 300 claude -p "Add an exported function titleCase(s) to util.js (capitalize each word). Add assert-based tests for it in test.js (create or extend). Verify edge cases one at a time with separate 'node -e' commands: single word, multiple words, empty string. Then run node test.js. IMPORTANT: preserve any existing exports and tests you find. Work step by step, one small change per edit." \
+>>>>>>> /tmp/mf-theirs
   --session-id "$SB" --max-turns 24 --dangerously-skip-permissions \
   --model "$SMOKE_MODEL" --effort "$SMOKE_EFFORT" --setting-sources user,project \
 >>>>>>> /tmp/mf-theirs
@@ -482,10 +498,16 @@ for (const [label, rc, file] of [
   let result = null;
   try { result = JSON.parse(readFileSync(demoLogs + '/' + file, 'utf8')); }
   catch (e) { fail('worker ' + label + ' emitted a structured result', e.message); }
+<<<<<<< /tmp/mf-ours
   // rc 124 is the authored wall-clock timeout; error_max_turns is the harness
   // turn ceiling. Both cut the worker off before its Stop hook could fire.
   exhausted[label] = rc === 124
     || (result != null && result.subtype === 'error_max_turns');
+=======
+  // 124 is the launcher’s deadline verdict: GNU timeout on Linux, the
+  // portable demo/run-with-timeout.mjs everywhere (macOS has neither GNU
+  // timeout nor setsid).
+>>>>>>> /tmp/mf-theirs
   const acceptedStatus = rc === 0 || rc === 124;
   if (!acceptedStatus) fail('worker ' + label + ' process status', 'rc=' + rc);
   else if (exhausted[label]) {
