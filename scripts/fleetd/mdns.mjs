@@ -43,6 +43,14 @@
 //   - Name compression is implemented for PARSING (queries from real stacks are
 //     full of pointers) and deliberately NOT used when emitting. Our packets are a
 //     few hundred bytes; correctness beats the savings.
+//   - The names we claim are UNIQUE (the A record carries the cache-flush bit), so
+//     RFC 6762 §8.1 applies: probe before announcing. We issue three probe queries
+//     250ms apart with our would-be records in the AUTHORITY section; any answer —
+//     or a probe from a lexicographically later authority — is a conflict, and a
+//     conflict disables discovery (logged once) rather than two hosts answering the
+//     same name with different addresses. Once claimed, a response carrying
+//     records that clash with ours is also a conflict, and we stand down instead
+//     of entering an infinite defense war (§9, §8.2).
 //
 // A multihomed host gets one socket PER multicast-capable interface
 // (createLinks below): each link answers and announces out of its own
@@ -79,6 +87,11 @@ const SERVICE_TYPES = ['_fleetdeck._tcp.local', '_http._tcp.local'];
 export const META_QUERY = '_services._dns-sd._udp.local';
 
 const ANNOUNCE_DELAYS_MS = [0, 1000, 2000]; // RFC 6762 §8.3: 2-3 announcements, ~1s apart
+// RFC 6762 §8.1: a unique record set is PROBED before it is announced — three
+// queries, 250ms apart. Claiming blind is what lets two hosts both own
+// `fleetdeck.local` with different addresses.
+const PROBE_COUNT = 3;
+const PROBE_INTERVAL_MS = 250;
 
 // ------------------------------------------------------------------ wire codec
 
@@ -239,13 +252,13 @@ export function parseQuestions(buf) {
   return questions;
 }
 
-export function encodeMessage({ id = 0, flags = FLAGS_RESPONSE, questions = [], answers = [], additionals = [] } = {}) {
+export function encodeMessage({ id = 0, flags = FLAGS_RESPONSE, questions = [], answers = [], authorities = [], additionals = [] } = {}) {
   const header = Buffer.alloc(12);
   header.writeUInt16BE(id & 0xffff, 0);
   header.writeUInt16BE(flags & 0xffff, 2);
   header.writeUInt16BE(questions.length, 4);
   header.writeUInt16BE(answers.length, 6);
-  header.writeUInt16BE(0, 8);
+  header.writeUInt16BE(authorities.length, 8);
   header.writeUInt16BE(additionals.length, 10);
 
   const parts = [header];
@@ -255,7 +268,7 @@ export function encodeMessage({ id = 0, flags = FLAGS_RESPONSE, questions = [], 
     tail.writeUInt16BE((q.class || CLASS_IN) | (q.unicast ? QU_BIT : 0), 2);
     parts.push(encodeName(q.name), tail);
   }
-  for (const record of [...answers, ...additionals]) parts.push(encodeRecord(record));
+  for (const record of [...answers, ...authorities, ...additionals]) parts.push(encodeRecord(record));
   return Buffer.concat(parts);
 }
 
@@ -440,7 +453,7 @@ function metaRecords(ad, ttl) {
 }
 
 function keyOf(record) {
-  return `${String(record.name).toLowerCase()}|${record.type}|${JSON.stringify(record.data)}`;
+  return `${String(record.name).toLowerCase()}|${typeNumber(record.type)}|${JSON.stringify(record.data)}`;
 }
 
 /** Everything we own, in one Answer section: what an unsolicited announcement
@@ -509,6 +522,71 @@ export function buildResponse(questions, options = {}, { ttl, flush = true } = {
     !answerKeys.has(keyOf(r)) && !extraKeys.has(keyOf(r)) && extraKeys.add(keyOf(r)));
 
   return { answers: dedupedAnswers, additionals: dedupedAdditionals };
+}
+
+/** The probe query: QU questions (§8.1 — answers should come unicast) naming each
+ * of our unique names, with the records we would publish as tie-break authorities. */
+export function buildProbeQuestions(options = {}) {
+  const ad = normalize(options);
+  const questions = [
+    { name: ad.host, type: TYPE.A, class: CLASS_IN, unicast: true },
+    ...ad.services.map(service => ({ name: service.name, type: TYPE.SRV, class: CLASS_IN, unicast: true })),
+  ];
+  const authorities = buildAnnouncement(options, { ttl: 0 })
+    .filter(record => record.type === 'A' || record.type === 'SRV');
+  return { questions, authorities };
+}
+
+/** Does a packet from someone else deny us our names? During probing, an answer
+ * for one of our unique names — or a probe of the same name whose authority data
+ * sorts AFTER ours — means we lost the claim (§8.1 tie-break: later data probes
+ * again next try; earlier data loses immediately). Once announced, any response
+ * record on a name we own whose rdata differs from ours is a conflict (§9). */
+export function uniqueConflict(msg, options = {}, { phase } = {}) {
+  const ad = normalize(options);
+  const hosts = new Set([ad.host.toLowerCase()]);
+  const services = new Set(ad.services.map(service => service.name.toLowerCase()));
+  const own = new Map();
+  for (const record of buildAnnouncement(options)) {
+    if (record.type === 'A' || record.type === 'SRV') {
+      own.set(`${String(record.name).toLowerCase()}|${typeNumber(record.type)}`, keyOf(record));
+    }
+  }
+
+  const decoded = decodeMessage(msg);
+  if (!decoded) return false;
+
+  // A response touching a name we claim, whose rdata differs from ours. Decoded
+  // records carry the NUMERIC type; the keyOf data payloads encode identically.
+  for (const record of [...decoded.answers, ...decoded.additionals]) {
+    const key = own.get(`${String(record.name).toLowerCase()}|${record.type}`);
+    if (key && keyOf(record) !== key) return true;
+  }
+
+  if (phase === 'probing') {
+    // RFC 6762 §8.1 tie-break between simultaneous probes: equal rdata is a tie
+    // (defer to later traffic — answering with the same data never conflicts);
+    // unequal rdata, the lexicographically later authority wins and the earlier
+    // yields. A probe carrying authority data beats one carrying none, and a
+    // larger authority set (more claimed records backing it) beats a smaller.
+    const ours = buildProbeQuestions(options).authorities;
+    const oursKeys = new Set(ours.map(keyOf));
+    const theirsKeys = new Set(decoded.authorities.map(keyOf));
+    const equalSet = theirsKeys.size === oursKeys.size && [...theirsKeys].every(k => oursKeys.has(k));
+    const theyWin = !equalSet && decoded.authorities.length > 0 && (
+      decoded.authorities.length > ours.length ||
+      (decoded.authorities.length === ours.length &&
+        [...theirsKeys].sort().join('') > [...oursKeys].sort().join(''))
+    );
+    if (theyWin) {
+      for (const q of decoded.questions) {
+        const name = String(q.name || '').replace(/\.$/, '').toLowerCase();
+        const names = q.type === TYPE.A || q.type === TYPE.ANY ? hosts : services;
+        if (names.has(name)) return true;
+      }
+    }
+  }
+  return false;
 }
 
 // ------------------------------------------------------------- the responder
@@ -658,6 +736,35 @@ export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', 
     }
   }
 
+  let probed = false;   // set once probing has run — re-probing mid-life only triggers goodbye spam
+  let claimed = false;  // probing finished without a conflict: the names are ours
+
+  function schedule(fn, delay) {
+    const timer = setTimeout(() => { timers.delete(timer); fn(); }, delay);
+    timer.unref?.(); // mDNS must never hold the daemon's event loop open
+    timers.add(timer);
+  }
+
+  /** RFC 6762 §8.1: ask for our unique names three times, 250ms apart, before
+   * announcing. Any conflict disables discovery (die) rather than letting two
+   * hosts answer `fleetdeck.local` with different addresses. */
+  function probe(attempt = 0) {
+    if (dead || !socket) return;
+    if (attempt >= PROBE_COUNT) {
+      claimed = true;
+      for (const delay of ANNOUNCE_DELAYS_MS) schedule(() => announce(), delay);
+      note(`mdns responding for ${ad.host}:${ad.port}${ad.addresses.length ? ` (${ad.addresses.join(', ')})` : ' (no LAN address to advertise)'}`);
+      return;
+    }
+    try {
+      const { questions, authorities } = buildProbeQuestions(options);
+      send(encodeMessage({ id: 0, flags: 0, questions, authorities }), MDNS_PORT, MDNS_ADDR);
+    } catch (err) {
+      note(`mdns probe failed: ${err.message}`);
+    }
+    schedule(() => probe(attempt + 1), PROBE_INTERVAL_MS);
+  }
+
   function announce(ttl) {
     try {
       const answers = buildAnnouncement(current, ttl === undefined ? {} : { ttl });
@@ -683,6 +790,7 @@ export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', 
     if (!links.length && started && !stopping) die('no multicast interface left');
   }
 
+<<<<<<< /tmp/mf-ours
   /** One interface: its own socket, its own outbound interface, and an
    * advertisement scoped to the addresses valid on that link. */
   function createLink({ interfaceName = '', fallback = false } = {}) {
@@ -722,10 +830,47 @@ export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', 
     }
 
 <<<<<<< /tmp/mf-ours
+=======
+  /** Post-claim conflict: withdraw our records (TTL 0, §10.1) THEN stand down.
+   * The send must land before die() runs — die() closes the socket, and a
+   * closed socket flushes nothing. */
+  function withdrawAndDie(reason) {
+    let down = false;
+    const finish = () => { if (!down) { down = true; die(reason); } };
+    try {
+      const answers = buildAnnouncement(options, { ttl: 0 });
+      const packet = encodeMessage({ id: 0, flags: FLAGS_RESPONSE, answers });
+      const guard = setTimeout(finish, 250);
+      guard.unref?.();
+      socket.send(packet, MDNS_PORT, MDNS_ADDR, () => { clearTimeout(guard); finish(); });
+    } catch { finish(); }
+  }
+
+>>>>>>> /tmp/mf-theirs
   function onMessage(msg, rinfo) {
     try {
       const header = parseHeader(msg);
-      if (!header || header.qdcount === 0) return;
+      if (!header) return;
+
+      // Conflict detection BEFORE the question gate: responses carry no
+      // questions at all, and both probe answers and another owner's records
+      // arrive as responses. Note the loopback echo of our own probe can carry
+      // questions — but its authorities are byte-identical to ours, so it loses
+      // its own tie-break and passes.
+      if (socket && rinfo.port === MDNS_PORT && !stopping && probed && !claimed) {
+        if (uniqueConflict(msg, options, { phase: 'probing' })) {
+          die(`name conflict for ${ad.host} — another device owns this name`);
+          return;
+        }
+      } else if (socket && rinfo.port === MDNS_PORT && !stopping && claimed && (header.flags & QR_BIT) !== 0) {
+        // RFC 6762 §9: defending forever is the worst outcome (two hosts
+        // announcing in a loop), so one conflicting response stands us down.
+        if (uniqueConflict(msg, options, { phase: 'announced' })) {
+          withdrawAndDie(`name conflict for ${ad.host} — another device owns this name`);
+          return;
+        }
+      }
+      if (header.qdcount === 0) return;
       if ((header.flags & QR_BIT) !== 0) return; // a response, including our own echo
 
       const questions = parseQuestions(msg);
@@ -904,6 +1049,7 @@ export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', 
     }
     if (joins === 0) { die('no multicast membership'); return; }
 
+<<<<<<< /tmp/mf-ours
     scheduleAnnounce();
     note(`mdns responding for ${current.host}:${current.port}${current.addresses.length ? ` (${current.addresses.join(', ')})` : ' (no LAN address to advertise)'}`);
   }
@@ -978,6 +1124,10 @@ export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', 
       created.push(createLink({ fallback: true }));
     }
     return created.filter(link => link.open());
+>>>>>>> /tmp/mf-theirs
+=======
+    probed = true;
+    probe();
 >>>>>>> /tmp/mf-theirs
   }
 

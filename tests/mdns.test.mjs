@@ -18,6 +18,7 @@ import dgram from 'node:dgram';
 import {
   createMdns,
   buildAnnouncement,
+  buildProbeQuestions,
   buildResponse,
   decodeMessage,
   decodeName,
@@ -28,6 +29,7 @@ import {
   normalize,
   hostLabel,
   parseQuestions,
+  uniqueConflict,
   META_QUERY,
   MDNS_ADDR,
   MDNS_PORT,
@@ -687,6 +689,7 @@ test('stop() puts goodbye records (TTL 0) on the multicast group', async (t) => 
   assert.ok(goodbye.answers.some(r => r.typeName === 'PTR' && r.name === SVC), 'the service PTR must be withdrawn');
 });
 
+<<<<<<< /tmp/mf-ours
 test('update() retires the old A record (TTL 0) and announces the new one (BUG-118)', async (t) => {
   // Same multicast-loopback requirement as the goodbye test above: an
   // interface-change refresh has no question to answer, so both packets only
@@ -695,6 +698,112 @@ test('update() retires the old A record (TTL 0) and announces the new one (BUG-1
   if (!listener) return t.skip('udp4 port 5353 is already owned by another responder');
   t.after(() => close(listener));
 
+=======
+// ------------------------------------------------- probing & conflict handling
+//
+// BUG-133: our A/SRV records carry the cache-flush bit — a claim of UNIQUE
+// ownership — but startup announced them without the RFC 6762 §8.1 probe, and
+// responses that could signal a conflict were discarded. Two hosts on the
+// default `fleetdeck.local` then both answered authoritatively with different
+// addresses. These tests pin the probe-first lifecycle and the stand-down.
+
+test('buildProbeQuestions asks QU questions for every unique name, carrying our records as tie-break authorities', () => {
+  const { questions, authorities } = buildProbeQuestions(AD);
+
+  // RFC 6762 §8.1: the QU bit is set so answers come back unicast, and the
+  // questions name exactly the records we intend to claim — the host A and one
+  // SRV per advertised service type.
+  assert.deepEqual(questions.map(q => [q.name, q.type, q.unicast]), [
+    [HOST, TYPE.A, true],
+    [`Fleet Deck.${SVC}`, TYPE.SRV, true],
+    [`Fleet Deck.${HTTP_SVC}`, TYPE.SRV, true],
+  ]);
+
+  const authorityNames = authorities.map(r => `${r.typeName || r.type} ${r.name}`);
+  assert.ok(authorityNames.includes(`A ${HOST}`), 'our A record is the tie-break authority for the host question');
+  assert.ok(authorityNames.includes(`SRV Fleet Deck.${SVC}`));
+  assert.ok(authorityNames.includes(`SRV Fleet Deck.${HTTP_SVC}`));
+  assert.ok(authorities.every(r => r.ttl === 0), 'probe authorities carry TTL 0 — we are asking, not publishing');
+});
+
+test('uniqueConflict flags a probe answer for our host with a different address', () => {
+  const theirAnswer = encodeMessage({
+    answers: [{ name: HOST, type: 'A', ttl: 120, flush: true, data: '192.0.2.99' }],
+  });
+  assert.equal(uniqueConflict(theirAnswer, AD, { phase: 'probing' }), true,
+    'someone else answering our unique name during probing means we lost the claim');
+});
+
+test('uniqueConflict does not flag our own looped-back records or a stranger\'s names', () => {
+  // Multicast loopback echoes our own probe: identical authorities must not be
+  // self-detected as a conflict, or no host could ever finish probing.
+  const { questions, authorities } = buildProbeQuestions(AD);
+  const ownProbe = encodeMessage({ id: 0, flags: 0, questions, authorities });
+  assert.equal(uniqueConflict(ownProbe, AD, { phase: 'probing' }), false, 'our own probe echo is not a conflict');
+
+  const ownAnnouncement = encodeMessage({ answers: buildAnnouncement(AD) });
+  assert.equal(uniqueConflict(ownAnnouncement, AD, { phase: 'announced' }), false, 'our own announcement echo is not a conflict');
+
+  const strangers = encodeMessage({
+    answers: [{ name: 'someone-else.local', type: 'A', ttl: 120, flush: true, data: '192.0.2.99' }],
+  });
+  for (const phase of ['probing', 'announced']) {
+    assert.equal(uniqueConflict(strangers, AD, { phase }), false, `a neighbour's records are none of our business (${phase})`);
+  }
+});
+
+test('uniqueConflict applies the lexicographic tie-break between simultaneous probes', () => {
+  // Two hosts probe the same name at the same time, each carrying its would-be
+  // records as authorities: the lexicographically LATER authority data wins and
+  // probes again; the earlier one yields (RFC 6762 §8.1). The competing probes
+  // below mirror ours record-for-record so ONLY the rdata decides.
+  const rivalAuthorities = (data) => [
+    { name: HOST, type: 'A', ttl: 0, flush: false, data },
+    { name: `Fleet Deck.${SVC}`, type: 'SRV', ttl: 0, flush: false, data: { priority: 0, weight: 0, port: 4711, target: HOST } },
+    { name: `Fleet Deck.${HTTP_SVC}`, type: 'SRV', ttl: 0, flush: false, data: { priority: 0, weight: 0, port: 4711, target: HOST } },
+  ];
+  const rivalProbe = (data) => encodeMessage({
+    flags: 0,
+    questions: [{ name: HOST, type: TYPE.A, class: 1 }],
+    authorities: rivalAuthorities(data),
+  });
+
+  assert.equal(uniqueConflict(rivalProbe('255.255.255.255'), AD, { phase: 'probing' }), true,
+    'a later-sorting probe authority beats ours');
+  assert.equal(uniqueConflict(rivalProbe('0.0.0.1'), AD, { phase: 'probing' }), false,
+    'an earlier-sorting probe authority loses to ours');
+  assert.equal(uniqueConflict(rivalProbe('192.0.2.7'), AD, { phase: 'probing' }), false,
+    'an identical probe (our own loopback, or a twin with the same data) is a tie, not a conflict');
+
+  const emptyProbe = encodeMessage({
+    flags: 0,
+    questions: [{ name: HOST, type: TYPE.A, class: 1 }],
+  });
+  assert.equal(uniqueConflict(emptyProbe, AD, { phase: 'probing' }), false, 'a probe with no authority data concedes');
+});
+
+test('uniqueConflict flags a clashing record after the name was claimed, in any phase', () => {
+  // The conflict window never closes: once announced, a response carrying an
+  // SRV that points somewhere we do not is someone else on our name (§9).
+  const clashingSrv = encodeMessage({
+    answers: [{
+      name: INSTANCE, type: 'SRV', ttl: 120, flush: true,
+      data: { priority: 0, weight: 0, port: 9999, target: HOST },
+    }],
+  });
+  assert.equal(uniqueConflict(clashingSrv, AD, { phase: 'announced' }), true);
+  assert.equal(uniqueConflict(clashingSrv, AD, { phase: 'probing' }), true, 'an answer in the Answer section conflicts during probing too');
+});
+
+/** The socket tests below need udp4 port 5353 and a multicast join. Both can be
+ * unavailable for legitimate reasons (a real avahi already owns the port; a
+ * container with no multicast), so they SKIP with a reason rather than fail. */
+
+test('start() probes before it announces, and a conflicting answer during probing disables discovery', async (t) => {
+  const listener = await bindShared(MDNS_PORT);
+  if (!listener) return t.skip('udp4 port 5353 is already owned by another responder');
+  t.after(() => close(listener));
+>>>>>>> /tmp/mf-theirs
   try {
     listener.addMembership(MDNS_ADDR);
   } catch (err) {
@@ -707,6 +816,7 @@ test('update() retires the old A record (TTL 0) and announces the new one (BUG-1
   mdns.start();
   t.after(() => mdns.stop());
 
+<<<<<<< /tmp/mf-ours
   // The startup announcement doubles as the loopback probe (see the goodbye test).
   const opening = await inbox.waitFor(p => p.isResponse && p.answers.some(r => r.ttl > 0), 'the startup announcement');
   if (!opening) {
@@ -758,6 +868,84 @@ test('update() retires the old A record (TTL 0) and announces the new one (BUG-1
   assert.ok(reply, 'the responder must answer queries after an update');
   assert.deepEqual(reply.answers.filter(r => r.typeName === 'A').map(r => r.data), ['192.0.2.9'],
     'post-roam answers must carry the new address, not the retired one');
+=======
+  // RFC 6762 §8.1: the FIRST thing on the wire must be probe queries for our
+  // unique names — never the announcement. The looped-back probes double as the
+  // multicast-reception probe; without them nothing below can be observed here.
+  const probe = await inbox.waitFor(
+    p => !p.isResponse && p.questions.some(q => q.name === HOST),
+    'a probe query for our host name',
+  );
+  if (!probe) {
+    return t.skip(`multicast loopback does not deliver to this host — cannot observe probes. logs: ${JSON.stringify(logs)}`);
+  }
+  assert.equal(probe.authorities.length, 3, 'the probe carries our unique records as tie-break authorities');
+  assert.ok(probe.questions.every(q => q.unicast), 'probe questions ask for unicast answers (§8.1)');
+  assert.ok(!inbox.packets.some(p => p.isResponse && p.answers.some(r => r.ttl > 0)),
+    'no announcement may go out before probing has finished');
+
+  // Another device already owns the name: answer the probe with a DIFFERENT
+  // address. The responder must stand down, not announce alongside.
+  listener.send(encodeMessage({
+    answers: [{ name: HOST, type: 'A', ttl: 120, flush: true, data: '192.0.2.99' }],
+  }), MDNS_PORT, MDNS_ADDR);
+
+  const deadline = Date.now() + scaleMs(4000);
+  while (!logs.some(m => m.includes('mdns disabled') && m.includes('conflict')) && Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, 25));
+  }
+  assert.ok(logs.some(m => m.includes('mdns disabled') && m.includes('conflict')),
+    `a probe answer claiming our name must disable discovery. logs: ${JSON.stringify(logs)}`);
+  assert.ok(!inbox.packets.some(p => p.isResponse && p.answers.some(r => r.ttl > 0 && r.data === '192.0.2.7')),
+    'we must never publish our records onto a name someone else owns');
+});
+
+test('start() announces only after a quiet probing window, and a later conflict withdraws our records', async (t) => {
+  const listener = await bindShared(MDNS_PORT);
+  if (!listener) return t.skip('udp4 port 5353 is already owned by another responder');
+  t.after(() => close(listener));
+  try {
+    listener.addMembership(MDNS_ADDR);
+  } catch (err) {
+    return t.skip(`cannot join ${MDNS_ADDR} in this environment (${err.code || err.message})`);
+  }
+  const inbox = collect(listener);
+
+  const logs = [];
+  const mdns = createMdns({ port: 4711, addresses: ['192.0.2.7'], log: m => logs.push(String(m)) });
+  mdns.start();
+  t.after(() => mdns.stop());
+
+  // Probe first, THEN the announcement carrying our A record. If neither is
+  // observable, multicast reception is unavailable here and there is nothing
+  // to test in this environment.
+  const probeSeen = await inbox.waitFor(p => !p.isResponse && p.questions.some(q => q.name === HOST), 'a probe');
+  if (!probeSeen) return t.skip('multicast loopback does not deliver to this host — cannot observe probing');
+  const announcement = await inbox.waitFor(
+    p => p.isResponse && p.answers.some(r => r.ttl > 0 && r.typeName === 'A' && r.data === '192.0.2.7'),
+    'the announcement after probing',
+  );
+  assert.ok(announcement, `probing finished quietly but no announcement followed. logs: ${JSON.stringify(logs)}`);
+  assert.ok(logs.some(m => m.includes('mdns responding')), 'the claimed name is reported once probing wins');
+
+  // Post-claim conflict (RFC 6762 §9): a response carrying OUR name but THEIR
+  // address. Defending forever is a war, so we withdraw (TTL 0) and stand down.
+  listener.send(encodeMessage({
+    answers: [{ name: HOST, type: 'A', ttl: 120, flush: true, data: '192.0.2.99' }],
+  }), MDNS_PORT, MDNS_ADDR);
+
+  const goodbye = await inbox.waitFor(
+    p => p.isResponse && p.answers.length > 0 && p.answers.some(r => r.ttl === 0 && r.typeName === 'A' && r.data === '192.0.2.7'),
+    'the goodbye withdrawing our A record',
+  );
+  assert.ok(goodbye, `a post-claim conflict must withdraw our records. packets: ${JSON.stringify(inbox.packets.map(p => p.answers.map(r => `${r.typeName}/${r.ttl}`)))}`);
+  const deadline = Date.now() + scaleMs(4000);
+  while (!logs.some(m => m.includes('mdns disabled') && m.includes('conflict')) && Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, 25));
+  }
+  assert.ok(logs.some(m => m.includes('mdns disabled') && m.includes('conflict')),
+    `a post-claim conflict must disable discovery. logs: ${JSON.stringify(logs)}`);
+>>>>>>> /tmp/mf-theirs
 });
 
 // ------------------------------------------------------- degrading safely
