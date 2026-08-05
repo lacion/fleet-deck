@@ -455,7 +455,10 @@ if grep -qi "argon2" "$DEMO_LOGS/p3-resume.json"; then
 else
   bad "board answer reached the session at its next boundary" "argon2 not referenced in resume output"
 fi
-TRANSCRIPT_DIR="$HOME/.claude/projects/$(echo "$PROJECT_DIR" | sed 's|/|-|g')"
+# Claude Code stores sessions under ${CLAUDE_CONFIG_DIR:-$HOME/.claude} —
+# honor the override or a contributor with it set gets a false "missing relay".
+TRANSCRIPT_ROOT="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+TRANSCRIPT_DIR="$TRANSCRIPT_ROOT/projects/$(echo "$PROJECT_DIR" | sed 's|/|-|g')"
 if grep -q "FLEETDECK ANSWER" "$TRANSCRIPT_DIR/$S2.jsonl" 2>/dev/null; then
   ok "[FLEETDECK ANSWER] visible in resumed session transcript"
 else
