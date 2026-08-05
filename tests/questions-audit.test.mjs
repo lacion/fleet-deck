@@ -127,6 +127,78 @@ test('BUG 5: IDENTICAL-input parallel holds — a single PostToolUse expires exa
   db.close();
 });
 
+test('BUG-138: completing an ANSWERED duplicate permission does NOT expire its still-pending identical twin', () => {
+  const db = openDb(':memory:');
+  const questions = createQuestions(db, { holdMs: 60_000 });
+
+  // Two parallel permission holds for the SAME tool call (identical
+  // tool_name + tool_input → one shared toolCallKey). The board answers A;
+  // A's row flips to 'answered' and leaves the pending set that
+  // expireOnActivity correlates against. When A's OWN completing PostToolUse
+  // then arrives, the old code matched only pending twin B and expired it —
+  // the second permission vanished from the board and fell back to the
+  // terminal, even though the human had never decided it.
+  const perm = fixture('permission-request', { session: 's1' }); // Bash `rm -rf build/`
+  const repliesA = [];
+  const repliesB = [];
+  const rowA = questions.create('permission', 's1', perm);
+  const rowB = questions.create('permission', 's1', perm);
+  questions.attachHold(rowA, b => repliesA.push(b));
+  questions.attachHold(rowB, b => repliesB.push(b));
+
+  const res = questions.answer(rowA.id, { behavior: 'allow' });
+  assert.equal(res.status, 200);
+  assert.deepEqual(questions.pendingOf('s1').map(r => r.id), [rowB.id], 'only twin B remains pending');
+
+  // A's tool completes — its PostToolUse carries the same (tool_name, tool_input).
+  const changed = questions.expireOnActivity('s1', { toolName: perm.tool_name, toolInput: perm.tool_input });
+
+  assert.equal(changed, false, 'the answered call absorbs its own completion — nothing pending was retired');
+  assert.deepEqual(repliesB, [], 'the still-pending twin keeps its hold — the board card stays live');
+  assert.deepEqual(questions.pendingOf('s1').map(r => r.id), [rowB.id],
+    'B survives its answered sibling’s completion');
+
+  // B is then decided in the TERMINAL (no board answer, no ledger entry): its
+  // own identical PostToolUse retires it exactly as before the fix.
+  const changed2 = questions.expireOnActivity('s1', { toolName: perm.tool_name, toolInput: perm.tool_input });
+  assert.equal(changed2, true);
+  assert.deepEqual(repliesB, [{}], 'a completion with no recorded answer still retires its hold');
+  assert.deepEqual(questions.pendingOf('s1'), []);
+  db.close();
+});
+
+test('BUG-138 (triple): one answered hold absorbs exactly ONE completion; further identical completions retire twins in order', () => {
+  const db = openDb(':memory:');
+  const questions = createQuestions(db, { holdMs: 60_000 });
+
+  // Three parallel identical holds; the board answers only A. Each completing
+  // PostToolUse settles exactly one call: A's completion is absorbed by the
+  // answer ledger, then B's and C's completions retire their own holds —
+  // proving the ledger is counted, not a blanket suppression for the key.
+  const perm = fixture('permission-request', { session: 's1' });
+  const repliesB = [];
+  const repliesC = [];
+  const rowA = questions.create('permission', 's1', perm);
+  const rowB = questions.create('permission', 's1', perm);
+  const rowC = questions.create('permission', 's1', perm);
+  questions.attachHold(rowA, () => {});
+  questions.attachHold(rowB, b => repliesB.push(b));
+  questions.attachHold(rowC, b => repliesC.push(b));
+
+  assert.equal(questions.answer(rowA.id, { behavior: 'allow' }).status, 200);
+
+  const act = () => questions.expireOnActivity('s1', { toolName: perm.tool_name, toolInput: perm.tool_input });
+  assert.equal(act(), false, 'A’s completion is consumed by its answer — both twins survive');
+  assert.deepEqual(questions.pendingOf('s1').map(r => r.id), [rowB.id, rowC.id]);
+  assert.equal(act(), true, 'the next completion retires the oldest remaining twin');
+  assert.deepEqual(repliesB, [{}]);
+  assert.deepEqual(questions.pendingOf('s1').map(r => r.id), [rowC.id]);
+  assert.equal(act(), true);
+  assert.deepEqual(repliesC, [{}]);
+  assert.deepEqual(questions.pendingOf('s1'), []);
+  db.close();
+});
+
 test('M-B1 (b2): a completing tool call that matches NO hold (e.g. a Read that needed no permission) leaves every hold pending', () => {
   const db = openDb(':memory:');
   const questions = createQuestions(db, { holdMs: 60_000 });

@@ -97,6 +97,13 @@ const HOLD_KINDS = new Set(['permission', 'elicitation', 'choice']);
 // session) the daemon raises a FRESH row whose answer rides the mail pipeline
 // to the next turn boundary.
 const REARM_GRACE_MS = 3_000; // parked-on-native-prompt confirmation window
+// BUG-138: a board-answered hold leaves a short-lived completed-correlation
+// record so its OWN completing PostToolUse is consumed against the ledger
+// instead of expiring a still-pending identical twin (details on the ledger
+// below). A real completion follows its answer by seconds at most; the TTL
+// only bounds a false-positive window for a LATER identical call — a
+// completed call never legitimately sends a second PostToolUse.
+const COMPLETED_KEY_TTL_MS = 60_000;
 // WHY a cap, and why 2: an un-rearmable dead card was the bug being fixed,
 // but an agent parked behind a stack of questions (or a session nobody ever
 // answers) must not re-raise cards forever — the rail filling with ghosts is
@@ -217,6 +224,19 @@ export function createQuestions(db, {
   const rearmById = new Map();
   const rearmMeta = new Map();
   const rearmChains = new Map();
+  // BUG-138: completed-correlation ledger (in-memory — the same daemon-lifetime
+  // ephemera class as `holds`; a daemon restart abandons every held socket
+  // anyway, so the hook side can no longer complete through us). Identity:
+  //   session_id -> Map<toolCallKey, count>   (count = board answers on that key)
+  // WHY: with two parallel holds on IDENTICAL (tool_name, tool_input), answering
+  // A retires its row to 'answered' — and expireOnActivity searches PENDING rows
+  // only, so A's completing PostToolUse then sees only twin B and expires it,
+  // even though B is still parked on the human. Recording each answered hold's
+  // key here lets a correlated completion be consumed against the ledger FIRST
+  // (each answer absorbs exactly one completion), so a twin's hold survives its
+  // sibling's completion. Answered-in-terminal completions are unaffected: they
+  // left no ledger entry and retire a matching pending hold exactly as before.
+  const completedKeys = new Map();
 
   // -------------------------------------------------------------- creation
   function create(kind, sessionId, payload) {
@@ -276,6 +296,37 @@ export function createQuestions(db, {
     clearTimeout(h.timer);
     holds.delete(id);
     return h;
+  }
+
+  // -------------------------------------------- BUG-138: completion ledger
+  // noteCompleted / consumeCompleted implement the completedKeys ledger above.
+  // TTL'd entries: the timer deletes ONLY this entry (verified by identity), so
+  // answers and expirations interleaving on one key can never double-count.
+  function noteCompleted(sessionId, key) {
+    let byKey = completedKeys.get(sessionId);
+    if (!byKey) completedKeys.set(sessionId, (byKey = new Map()));
+    byKey.set(key, (byKey.get(key) ?? 0) + 1);
+    const entry = byKey;
+    const timer = setTimeout(() => {
+      if (completedKeys.get(sessionId) !== entry) return; // session ledger already dropped
+      const n = entry.get(key);
+      if (n == null) return;
+      if (n <= 1) entry.delete(key); else entry.set(key, n - 1);
+      if (entry.size === 0) completedKeys.delete(sessionId);
+    }, COMPLETED_KEY_TTL_MS);
+    timer.unref?.();
+  }
+
+  // A correlated PostToolUse landed: if a board answer on this exact key is
+  // still awaiting ITS completion, consume it (one answer absorbs one
+  // completion) and tell expireOnActivity to leave the pending twins alone.
+  function consumeCompleted(sessionId, key) {
+    const byKey = completedKeys.get(sessionId);
+    const n = byKey?.get(key);
+    if (!n) return false;
+    if (n <= 1) byKey.delete(key); else byKey.set(key, n - 1);
+    if (byKey.size === 0) completedKeys.delete(sessionId);
+    return true;
   }
 
   // Path (b): hold window lapsed (timer) or evicted by the per-session cap —
@@ -578,6 +629,13 @@ export function createQuestions(db, {
         return { status: 409, body: { ok: false, err: 'hold expired — the terminal prompt owns this decision now' } };
       }
       try { h.respond(hookResponse); } catch { /* socket died as we answered */ }
+      // BUG-138: the board settled this hold, so its row now reads 'answered'
+      // and a correlated PostToolUse can no longer tell THIS call's completion
+      // from an identical twin's. Record the key so the completion is consumed
+      // against this answer instead of expiring a still-pending twin.
+      if (payload?.tool_name != null) {
+        noteCompleted(row.session_id, toolCallKey(payload.tool_name, payload.tool_input));
+      }
       q.markAnswered.run(JSON.stringify(body ?? {}), now, row.id);
       // v1.3 plan side effects — only after the hold actually settled (an
       // expired hold 409s above and the plan stays 'proposed', per contract):
@@ -699,6 +757,16 @@ export function createQuestions(db, {
     // for the session (still-parked is disproven by definition here). Fires on
     // BOTH the correlated and the session-wide path.
     const rearmDisarmed = disarmRearmsForSession(sessionId);
+    // BUG-138: a correlated completion that a board answer is still waiting on
+    // belongs to the ANSWERED call, not to any pending twin. Consume the ledger
+    // entry (one answer absorbs exactly one completion) and retire nothing —
+    // without this, answering hold A made A's own PostToolUse expire B, the
+    // still-pending identical twin, and the second permission vanished from the
+    // board while the human had never decided it.
+    if (correlated && consumeCompleted(sessionId, activityKey)) {
+      if (rearmDisarmed) onChange();
+      return rearmDisarmed;
+    }
     // BUG 5: a single PostToolUse completes exactly ONE tool call. Two parallel
     // holds with IDENTICAL (tool_name, tool_input) share a toolCallKey, so the
     // filter above matches BOTH — and the old code expired both, releasing a
@@ -823,6 +891,9 @@ export function createQuestions(db, {
       if (!m.timer) continue; // a successor link, not an armed grace window
       if (q.get.get(id)?.session_id === sessionId) cancelRearm(id);
     }
+    // BUG-138: a dead session's completions can no longer arrive — drop its
+    // ledger so a later session reusing the id can't consume stale entries.
+    completedKeys.delete(sessionId);
     // Same ordering rule as expireOnActivity: retire the whole batch before
     // any callback runs (these fire with no activity flag, but the plan
     // gate's pending-set reads must still see a consistent world).
