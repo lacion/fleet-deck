@@ -5,6 +5,7 @@
 
 import { parseCommand, validateNameSuffix } from './helpers.mjs';
 import { normalizeTicket } from './tickets.mjs';
+import { MAIL_MAX_LEN } from './mail.mjs';
 
 export function createCommands(ctx) {
   const {
@@ -57,6 +58,26 @@ export function createCommands(ctx) {
     const logCommand = extra =>
       q.insertCommand.run(Date.now(), String(text ?? ''), JSON.stringify(extra ? { ...parsed, ...extra } : parsed));
     let delivered = 0;
+    if (parsed.cmd === 'broadcast' || parsed.cmd === 'assign_auto' || parsed.cmd === 'assign') {
+      // BUG-021: the mail() clamp reports {truncated, original_length}, but the
+      // command path used to ignore that receipt — /command returned ok:true
+      // while agents received a body with its tail silently cut (acceptance
+      // criteria, safety constraints, diagnostics lost). Validate the FULLY
+      // FRAMED body (assignments prepend [FLEETDECK ASSIGNMENT], which itself
+      // counts against the cap) against MAIL_MAX_LEN BEFORE inserting any
+      // recipient row, and reject the command atomically: nothing is stored,
+      // nothing half-delivered, and the operator is told to shorten or split
+      // instead of believing a partial instruction landed intact.
+      const frame = parsed.cmd === 'broadcast' ? '' : '[FLEETDECK ASSIGNMENT] ';
+      const framed = `${frame}${parsed.text}`;
+      if (framed.length > MAIL_MAX_LEN) {
+        const reason = `message too long (${framed.length} > ${MAIL_MAX_LEN} code units) — shorten it or split it into multiple commands`;
+        logCommand({ rejected: true, reason });
+        tick(`⚠ command rejected: ${reason}`);
+        onMutate();
+        return { ok: false, reason, max_length: MAIL_MAX_LEN, original_length: framed.length };
+      }
+    }
     if (parsed.cmd === 'broadcast') {
       const targets = resolveTargets('all');
       targets.forEach(sid => mail(sid, 'orchestrator', parsed.text));

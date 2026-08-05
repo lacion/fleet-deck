@@ -8525,6 +8525,17 @@ function createCommands(ctx) {
     const parsed = parseCommand(text);
     const logCommand = (extra) => q.insertCommand.run(Date.now(), String(text ?? ""), JSON.stringify(extra ? { ...parsed, ...extra } : parsed));
     let delivered = 0;
+    if (parsed.cmd === "broadcast" || parsed.cmd === "assign_auto" || parsed.cmd === "assign") {
+      const frame = parsed.cmd === "broadcast" ? "" : "[FLEETDECK ASSIGNMENT] ";
+      const framed = `${frame}${parsed.text}`;
+      if (framed.length > MAIL_MAX_LEN) {
+        const reason = `message too long (${framed.length} > ${MAIL_MAX_LEN} code units) \u2014 shorten it or split it into multiple commands`;
+        logCommand({ rejected: true, reason });
+        tick(`\u26A0 command rejected: ${reason}`);
+        onMutate();
+        return { ok: false, reason, max_length: MAIL_MAX_LEN, original_length: framed.length };
+      }
+    }
     if (parsed.cmd === "broadcast") {
       const targets = resolveTargets("all");
       targets.forEach((sid) => mail(sid, "orchestrator", parsed.text));

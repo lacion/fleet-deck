@@ -332,6 +332,83 @@ test('BUG 4: a normal-sized message is delivered whole with no truncated flag', 
   assert.equal(stored, msg, 'normal mail is stored verbatim');
 });
 
+// ---------------------------------------------------------------------------
+// BUG-021 — /command (broadcast / assign / assign auto) must never deliver a
+// silently truncated framed body. mail() has always returned a truncation
+// receipt; the command path ignored it, so an oversize task returned ok:true
+// while agents acted on a body with its tail cut. The command is now rejected
+// ATOMICALLY before any recipient row is inserted.
+// ---------------------------------------------------------------------------
+
+test('BUG-021: an oversize broadcast is rejected atomically — no mail rows, no silent ok', async (t) => {
+  const { db, core } = memoryCore(t);
+  const cwd = mkdtempSync(path.join(tmpdir(), 'fd-cmd-big-'));
+  t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+  const spawn = await core.spawn({ cwd });
+  const sid = spawn.body.session_id;
+  core.hookSessionStart({ session_id: sid, cwd, source: 'startup' });
+
+  const out = core.command(`broadcast ${'x'.repeat(5000)}`);
+
+  assert.equal(out.ok, false, 'the operator is TOLD the message is too long — never a silent {ok:true}');
+  assert.match(out.reason, /too long/);
+  assert.equal(out.original_length, 5000);
+  assert.equal(out.max_length, 4000);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM mail').get().n, 0,
+    'atomic rejection: not a single recipient row is inserted');
+});
+
+test('BUG-021: an oversize direct assign is rejected atomically', async (t) => {
+  const { db, core } = memoryCore(t);
+  const cwd = mkdtempSync(path.join(tmpdir(), 'fd-cmd-assign-big-'));
+  t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+  const spawn = await core.spawn({ cwd });
+  const sid = spawn.body.session_id;
+  core.hookSessionStart({ session_id: sid, cwd, source: 'startup' });
+  const callsign = db.prepare('SELECT callsign FROM sessions WHERE session_id = ?').get(sid).callsign;
+
+  const out = core.command(`assign ${callsign} ${'y'.repeat(5000)}`);
+
+  assert.equal(out.ok, false);
+  assert.match(out.reason, /too long/);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM mail WHERE to_session = ?').get(sid).n, 0,
+    'the agent never receives a tail-less [FLEETDECK ASSIGNMENT]');
+});
+
+test('BUG-021: assign auto is framed BEFORE the cap check — a body that fits unframed but overflows once framed is rejected', async (t) => {
+  const { db, core } = memoryCore(t);
+  const cwd = mkdtempSync(path.join(tmpdir(), 'fd-cmd-auto-frame-'));
+  t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+  const spawn = await core.spawn({ cwd });
+  const sid = spawn.body.session_id;
+  core.hookSessionStart({ session_id: sid, cwd, source: 'startup' });
+
+  // '[FLEETDECK ASSIGNMENT] ' is 23 code units: 3990 fits unframed, not framed.
+  const out = core.command(`assign auto ${'z'.repeat(3990)}`);
+
+  assert.equal(out.ok, false, 'the frame itself counts against the cap — it rides inside the paste');
+  assert.equal(out.original_length, 23 + 3990);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM mail').get().n, 0);
+});
+
+test('BUG-021: a normal-size assign still delivers whole (no rejection fields)', async (t) => {
+  const { db, core } = memoryCore(t);
+  const cwd = mkdtempSync(path.join(tmpdir(), 'fd-cmd-ok-'));
+  t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+  const spawn = await core.spawn({ cwd });
+  const sid = spawn.body.session_id;
+  core.hookSessionStart({ session_id: sid, cwd, source: 'startup' });
+  const callsign = db.prepare('SELECT callsign FROM sessions WHERE session_id = ?').get(sid).callsign;
+
+  const msg = 'fix the flaky pane_cmd race and run the full suite';
+  const out = core.command(`assign ${callsign} ${msg}`);
+
+  assert.equal(out.ok, true);
+  assert.equal(out.reason, undefined, 'no rejection when nothing was too long');
+  const stored = db.prepare('SELECT text FROM mail WHERE to_session = ? ORDER BY id DESC LIMIT 1').get(sid).text;
+  assert.equal(stored, `[FLEETDECK ASSIGNMENT] ${msg}`, 'the framed task is stored verbatim');
+});
+
 // ===========================================================================
 // AUDIT HARDENING — edge gaps in the NEW resurrection / revive-adoption code
 // (and one over-expiry residual) found by adversarial review. Numbers below
