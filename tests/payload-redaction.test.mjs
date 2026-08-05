@@ -141,9 +141,11 @@ test('a known daemon secret is scrubbed from the finished line, bytes and all', 
 test('an adversarial JWT-shaped string cannot stall the synchronous capture (ReDoS guard)', (t) => {
   // Pre-fix, the JWT shape /eyJ…{10,}\.{10,}\.{10,}/ backtracked quadratically:
   // on ('eyJ'.repeat(N) + '.' + 'a'.repeat(M)) the first unbounded run rescans
-  // to the lone dot at every 'eyJ' start (~4.5s at this size, measured). With
-  // each segment bounded to {10,4096} per-start work is constant → linear.
-  // Capture runs synchronously inside the hook handler, so this MUST stay fast.
+  // to the lone dot at every 'eyJ' start (~4.5s at this size, measured). The
+  // fix is maskCompactTokens, a single-forward-pass scanner with no regex
+  // engine: each 'eyJ' candidate consumes one segment walk and a confirmed
+  // token is never re-scanned, so this input is linear. Capture runs
+  // synchronously inside the hook handler, so this MUST stay fast.
   const evil = 'eyJ'.repeat(32000) + '.' + 'a'.repeat(1000); // ~97 KB
   const started = Date.now();
   const { raw } = captureOnce(t, { blob: evil }, { maxPayloadBytes: 97_000 });
@@ -152,6 +154,22 @@ test('an adversarial JWT-shaped string cannot stall the synchronous capture (ReD
   // point is purely that redaction returns promptly and a record is written.
   assert.ok(raw.length > 0, 'capture produced a line');
   assert.ok(elapsed < 2_000, `redaction must not hang; took ${elapsed}ms`);
+});
+
+test('a JWT with a header segment over 4096 chars is still masked, in capture and diagnostics', (t) => {
+  // REGRESSION (BUG-135): the old bounded regex eyJ…{10,4096}\.…{10,4096}\.…{10,4096}
+  // failed CLOSED the wrong way — a valid JWT whose protected header carries a
+  // large x5c certificate chain (6,702 characters in the audited reproduction)
+  // matched NOTHING, and the full credential reached hook-payloads.jsonl and
+  // redactDiagnosticText verbatim. The scanner has no upper bound.
+  const header = 'eyJ' + 'hbGciOiJSUzI1NiJ9'.repeat(400) + 'x5c'.repeat(800); // ~10 KB, all base64url
+  const jwt = `${header}.${'p'.repeat(7000)}.${'s'.repeat(43)}`;
+  assert.equal(jwt.length > 4096 * 2, true, 'fixture really is the audited shape');
+  const { payload, raw } = captureOnce(t, { session: `auth=${jwt};` });
+  assert.equal(payload.session, 'auth=[redacted];');
+  assert.equal(raw.includes(header.slice(0, 64)), false, 'no prefix of the giant header may reach disk');
+  assert.equal(raw.includes('pppppppppp'), false, 'no slice of the payload segment may reach disk');
+  assert.equal(redactDiagnosticText(`token ${jwt} end`), 'token [redacted] end');
 });
 
 test('an operator token with JSON-special chars is scrubbed in every form, bytes and all', (t) => {

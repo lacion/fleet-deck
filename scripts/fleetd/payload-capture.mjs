@@ -63,9 +63,9 @@ function isSecretKey(key) {
 
 // SECRET_VALUE_RES are known credential SHAPES, masked wherever they appear
 // inside a recorded string. INVARIANT the byte accounting leans on: every one
-// of these matches a run strictly longer than the 10-byte REDACTED marker, so
-// masking can only shrink (never grow) an already-budgeted slice — see
-// textWithinBudget. The PEM alternative tolerates a block the byte budget cut
+// of these (and maskCompactTokens below) matches a run strictly longer than
+// the 10-byte REDACTED marker, so masking can only shrink (never grow) an
+// already-budgeted slice — see textWithinBudget. The PEM alternative tolerates a block the byte budget cut
 // off mid-key (…|$), so a half-captured private key still masks.
 //
 // ReDoS AUDIT (capture runs synchronously in the hook handler, so a pattern
@@ -77,12 +77,13 @@ function isSecretKey(key) {
 //     one forward pass or fails locally — linear, left as-is. Bounding their
 //     tails would risk under-masking a legitimately long token.
 //   - AKIA is fixed-width — trivially linear.
-//   - JWT had THREE unbounded runs joined by literal dots; on a string like
-//     ('eyJ'.repeat(N) + '.' + 'a'.repeat(M)) the first run scans to the lone
-//     dot at every one of the N 'eyJ' start positions → O(n^2), a measured
-//     ~2s stall at 64KB. Bounding each segment to {10,4096} (real JWT segments
-//     are far shorter) makes per-start work constant → linear, and a normal JWT
-//     still matches.
+//   - JWT is no longer a regex at all: see maskCompactTokens below. A regex had
+//     exactly two ways to be wrong, and both shipped at some point — unbounded
+//     runs were O(n^2) on adversarial text, and bounding them to {10,4096}
+//     FAILED CLOSED the wrong way: a real JWT with a segment over the bound (a
+//     large x5c certificate chain in the protected header) matched NOTHING and
+//     crossed the redaction boundary verbatim. The scanner is a single forward
+//     pass with no upper bound, so neither failure mode can recur.
 //   - PEM was measured safe (lazy `[\s\S]*?`, anchored, `…|$` still tolerates a
 //     truncated block). The two `[A-Z ]*` key-type labels are defensively
 //     bounded to {0,40} — every real label ("RSA", "OPENSSH", "ENCRYPTED", …)
@@ -94,7 +95,6 @@ const SECRET_VALUE_RES = [
   /github_pat_[A-Za-z0-9_]{20,}/g,
   /xox[baprs]-[A-Za-z0-9-]{10,}/g,
   /AKIA[A-Z0-9]{16}/g,
-  /eyJ[A-Za-z0-9_-]{10,4096}\.[A-Za-z0-9_-]{10,4096}\.[A-Za-z0-9_-]{10,4096}/g,
   /-----BEGIN [A-Z ]{0,40}PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]{0,40}PRIVATE KEY-----|$)/g,
   /Bearer\s+[A-Za-z0-9._~+/=-]{16,}/g,
   // Forge/API prefixes the git path used to redact ONLY inside exec.mjs's
@@ -121,10 +121,88 @@ const SECRET_VALUE_RES = [
   /(?<![A-Za-z0-9_-])dop_v1_[A-Za-z0-9]{32,}/g,                                    // DigitalOcean
 ];
 
+// Compact-serialized JWTs (JOSE compact form, also used by PASETOv2) are
+// recognized by maskCompactTokens — a linear single-pass scanner, NOT an entry
+// in SECRET_VALUE_RES. It replaces what used to be a regex of three bounded
+// runs, which had BOTH failure modes a credential-shape rule can have:
+//   - UNBOUNDED runs were O(n^2) on adversarial text ('eyJ'.repeat(N) + '.' +
+//     'a'.repeat(M) rescans to the lone dot at every 'eyJ' start — a measured
+//     ~2s stall at 64KB, inside the synchronous hook handler).
+//   - BOUNDING those runs to {10,4096} fixed the stall but failed CLOSED the
+//     wrong way: a valid JWT whose header carries a large x5c certificate
+//     chain blows past 4096 characters, matched nothing, and the full
+//     credential crossed the redaction boundary into hook-payloads.jsonl and
+//     board diagnostics VERBATIM. A bounded regex does not truncate an
+//     over-long token — it simply never matches (the same lesson
+//     URL_AUTHORITY_OVERLONG_RE exists to teach).
+// The scanner has no upper bound, so no valid token can outgrow it, and it
+// advances strictly forward from every candidate start (worst case one false
+// start per 'eyJ' occurrence — each consumed in a single segment walk), so it
+// stays linear on the same adversarial inputs.
+//
+// Shape: eyJ<base64url>{10,} '.' <base64url>{10,} '.' <base64url>{10,} —
+// every real JWT header starts with the bytes `{"` (base64url `eyJ`), segments
+// are joined by exactly two separators, and the minimum lengths (identical to
+// the retired regex) keep ordinary prose from ever matching. The b64urlChars
+// bitset makes each character test O(1) with no regex engine involved; a
+// 6700-byte header segment masks in the same forward pass a 20-byte one does.
+//
+// LINEARITY: a NAIVE per-candidate walk is O(n^2) on ('eyJ'.repeat(N) + '.' +
+// 'a'.repeat(M)) — every 'eyJ' start re-walks the same run to the lone dot.
+// The skip-ahead on each failure branch is what keeps it linear: when the walk
+// from a candidate fails, every LATER start inside a run it already crossed
+// sees strictly fewer of the required separators ahead of it and fails
+// identically, so the loop resumes past the crossed run instead of re-walking
+// it (a candidate inside a run whose walk stopped at a '.' that followed a
+// too-short run CAN still match, so those branches only skip to that run's
+// start). Each run of the text is therefore walked O(1) times.
+const B64URL_CHARS = (() => {
+  const bits = new Uint8Array(128);
+  for (let c = 48; c <= 57; c++) bits[c] = 1;  // 0-9
+  for (let c = 65; c <= 90; c++) bits[c] = 1;  // A-Z
+  for (let c = 97; c <= 122; c++) bits[c] = 1; // a-z
+  bits[45] = 1; // -
+  bits[95] = 1; // _
+  return bits;
+})();
+const isB64url = (code) => code < 128 && B64URL_CHARS[code] === 1;
+
+function maskCompactTokens(text) {
+  const MIN_SEG = 10; // per segment, same floor as the retired regex
+  let out = null; // lazy: untouched input is returned identity, no copy made
+  let lastEnd = 0;
+  for (let i = 0; (i = text.indexOf('eyJ', i)) !== -1 && i + 35 <= text.length; i++) {
+    let j = i + 3;
+    const seg1Start = j;
+    while (j < text.length && isB64url(text.charCodeAt(j))) j++;
+    // Any start inside this run ends at the same j and fails the same way.
+    if (j - seg1Start < MIN_SEG || text.charCodeAt(j) !== 46 /* . */) { i = j - 1; continue; }
+    j++;
+    const seg2Start = j;
+    while (j < text.length && isB64url(text.charCodeAt(j))) j++;
+    if (j - seg2Start < MIN_SEG) {
+      // Run ends at a '.' but is short: a start inside it can still match, so
+      // only skip the runs proven dead (through seg2's start).
+      i = seg2Start - 1; continue;
+    }
+    if (text.charCodeAt(j) !== 46 /* . */) { i = j - 1; continue; } // no separator → dead through j
+    j++;
+    const seg3Start = j;
+    while (j < text.length && isB64url(text.charCodeAt(j))) j++;
+    if (j - seg3Start < MIN_SEG) { i = seg3Start - 1; continue; }
+    // Confirmed token at [i, j). Consume it so the loop never re-scans inside
+    // an already-masked region.
+    out = (out ?? '') + text.slice(lastEnd, i) + REDACTED;
+    lastEnd = j;
+    i = j - 1; // the for-loop's i++ moves past the token
+  }
+  return out === null ? text : out + text.slice(lastEnd);
+}
+
 function redactValue(text) {
   let out = text;
   for (const re of SECRET_VALUE_RES) out = out.replace(re, REDACTED);
-  return out;
+  return maskCompactTokens(out);
 }
 
 // Reuse the same known-credential shape scrubber for other bounded diagnostics
