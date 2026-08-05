@@ -591,3 +591,94 @@ test('a read-only directory the daemon owns is made writable and the removal ret
   assert.equal(res.status, 200, `removal should recover from a read-only dir it owns (got: ${JSON.stringify(res.json)})`);
   assert.equal(existsSync(wt), false, 'the worktree is gone from disk');
 });
+
+// BUG-059, the cross-repository data-loss path, pinned end to end. The
+// remembered spawn cwd (repository A) is deleted and RECREATED as a different
+// repository B while A's fleet worktree stays registered. Unverified, removal
+// resolves B from the stale cwd, manually deletes A's worktree after B's
+// `git worktree remove` refuses it, and then runs `git branch -D wt-branch`
+// IN B — erasing an unrelated repository's branch and its unique commit.
+// The fix must prove repo ownership (canonical common-dir / the repo's own
+// worktree registry) before ANY destructive step: refuse 409, touch neither
+// A's worktree nor B's branch, and keep the DB rows.
+test('POST remove refuses when the recorded cwd has been replaced by a different repository', async (t) => {
+  const repoA = makeRepoWithWorktree({ repoName: 'fleetdeck-replaced-repo' });
+  const daemon = await startDaemon();
+  t.after(async () => { await daemon.stop(); repoA.cleanup(); });
+  ownWorktree(daemon.home, repoA, { sessionId: 'replaced-repo' });
+
+  // Unique work on the worktree branch — the commits the wrong `branch -D`
+  // would erase had they ever lived in B.
+  writeFileSync(path.join(repoA.worktree, 'unique.txt'), 'exists nowhere else\n');
+  git(['add', 'unique.txt'], repoA.worktree);
+  git(['commit', '-q', '-m', 'unique work'], repoA.worktree);
+
+  // Replace the recorded cwd: A's main checkout dies, and the SAME path comes
+  // back as an unrelated repository B that happens to carry a branch named
+  // exactly 'wt-branch' — pointing at its own unique commit.
+  const branchCommitBefore = git(['rev-parse', 'wt-branch'], repoA.root);
+  rmSync(repoA.root, { recursive: true, force: true });
+  mkdirSync(repoA.root, { recursive: true });
+  git(['init', '-q'], repoA.root);
+  git(['config', 'user.email', 'test@fleetdeck.local'], repoA.root);
+  git(['config', 'user.name', 'Fleet Deck Tests'], repoA.root);
+  writeFileSync(path.join(repoA.root, 'b-only.txt'), 'B precious\n');
+  git(['add', '.'], repoA.root);
+  git(['commit', '-q', '-m', 'B unique commit'], repoA.root);
+  git(['branch', 'wt-branch'], repoA.root);
+  const bCommit = git(['rev-parse', 'wt-branch'], repoA.root);
+  assert.notEqual(bCommit, branchCommitBefore, 'sanity: B really is a different repository');
+
+  const response = await postJson(`${daemon.baseUrl}/api/worktrees/remove`, {
+    path: repoA.worktree,
+    force: true,
+    delete_branch: true,
+  });
+  assert.equal(response.status, 409, `removal must refuse a replaced repository (got: ${JSON.stringify(response.json)})`);
+  assert.equal(response.json.ok, false);
+  assert.equal(existsSync(repoA.worktree), true, "A's worktree must not be removed via B");
+  assert.equal(git(['rev-parse', 'wt-branch'], repoA.root), bCommit, "B's branch and its unique commit survive");
+  withDb(daemon.home, db => {
+    assert.ok(db.prepare('SELECT 1 FROM spawns WHERE worktree_path = ?').get(repoA.worktree),
+      'the refused removal keeps its spawn rows for a later, provable cleanup');
+  });
+});
+
+// Same trap, worktree already gone from disk: with no directory to read a
+// common-dir from, the repo's OWN worktree registry is the only witness that
+// the fleet worktree ever belonged to it. A replaced repository's registry
+// never names the path, so removal must refuse before `branch -D` and keep
+// the DB rows.
+test('POST remove refuses a replaced repository even when the worktree is already gone from disk', async (t) => {
+  const repoA = makeRepoWithWorktree({ repoName: 'fleetdeck-replaced-gone' });
+  const daemon = await startDaemon();
+  t.after(async () => { await daemon.stop(); repoA.cleanup(); });
+  ownWorktree(daemon.home, repoA, { sessionId: 'replaced-gone' });
+
+  // Drop the worktree from disk WITHOUT git's knowledge (a crashed cleanup),
+  // then replace A's main checkout with repository B at the same path.
+  rmSync(repoA.worktree, { recursive: true, force: true });
+  rmSync(repoA.root, { recursive: true, force: true });
+  mkdirSync(repoA.root, { recursive: true });
+  git(['init', '-q'], repoA.root);
+  git(['config', 'user.email', 'test@fleetdeck.local'], repoA.root);
+  git(['config', 'user.name', 'Fleet Deck Tests'], repoA.root);
+  writeFileSync(path.join(repoA.root, 'b-only.txt'), 'B precious\n');
+  git(['add', '.'], repoA.root);
+  git(['commit', '-q', '-m', 'B unique commit'], repoA.root);
+  git(['branch', 'wt-branch'], repoA.root);
+  const bCommit = git(['rev-parse', 'wt-branch'], repoA.root);
+
+  const response = await postJson(`${daemon.baseUrl}/api/worktrees/remove`, {
+    path: repoA.worktree,
+    force: true,
+    delete_branch: true,
+  });
+  assert.equal(response.status, 409, `a gone worktree still may not redirect into B (got: ${JSON.stringify(response.json)})`);
+  assert.equal(response.json.ok, false);
+  assert.equal(git(['rev-parse', 'wt-branch'], repoA.root), bCommit, "B's branch survives even with the worktree gone");
+  withDb(daemon.home, db => {
+    assert.ok(db.prepare('SELECT 1 FROM spawns WHERE worktree_path = ?').get(repoA.worktree),
+      'rows survive the refusal — nothing destructive ran');
+  });
+});

@@ -17,6 +17,51 @@ import { execFileP, baseBranch } from './exec.mjs';
 // reader as an intentional posture rather than the gap it actually is.
 import { scrubUrlCredentials } from './payload-capture.mjs';
 
+// Pure path canonicalization (same rule as repo-identity.mjs canon()).
+function canonical(p) {
+  try { return fs.realpathSync(p); } catch { return path.resolve(p); }
+}
+
+// Canonicalized `git rev-parse --git-common-dir` for a directory — the one
+// value a repository and ALL of its worktrees share (repo-identity's repo_id
+// rule). null when git cannot read the directory as a repository at all.
+async function gitCommonDir(dir) {
+  const result = await execFileP('git', ['-C', dir, 'rev-parse', '--git-common-dir'], { timeout: 5_000 });
+  if (!result.ok) return null;
+  const raw = result.out.trim();
+  if (!raw) return null;
+  // May be relative (usually ".git"); resolve against the directory itself.
+  return canonical(path.isAbsolute(raw) ? raw : path.resolve(dir, raw));
+}
+
+// BUG-059 (data-loss): `repo` below is derived from a REMEMBERED spawn cwd, and a
+// remembered path proves nothing — the directory can have been deleted and
+// recreated as a DIFFERENT repository since the spawn, while the fleet
+// worktree still belongs to the original one. Every repo-scoped argv built
+// from it (`worktree remove`/`prune`, and above all `branch -D`, which erases
+// unique commits) would then be aimed at an unrelated repository. So before
+// any destructive step, prove the candidate repository OWNS the target
+// worktree with a witness that does not consult the remembered cwd:
+//  - worktree on disk and git-readable: canonical common-dirs must be equal.
+//    (This still works for a half-removed tree — rev-parse follows the
+//    worktree's .git link without consulting the repo's admin registry.)
+//  - worktree already gone from disk: the repo's OWN worktree registry names
+//    the path only if the worktree was created from this repository.
+async function repoOwnsWorktree(repo, worktreePath, worktreeExists) {
+  if (worktreeExists) {
+    const [repoCommon, worktreeCommon] = await Promise.all([
+      gitCommonDir(repo), gitCommonDir(worktreePath),
+    ]);
+    return repoCommon != null && worktreeCommon != null && repoCommon === worktreeCommon;
+  }
+  const list = await execFileP('git', ['-C', repo, 'worktree', 'list', '--porcelain'], { timeout: 5_000 });
+  if (!list.ok) return false;
+  const target = canonical(worktreePath);
+  return list.out.split('\n').some(line =>
+    line.startsWith('worktree ') && canonical(line.slice(9).trim()) === target);
+}
+
+
 export function createWorktrees(ctx) {
   const { q, tick, onMutate } = ctx;
 
@@ -252,6 +297,25 @@ export function createWorktrees(ctx) {
     const repoResult = await execFileP('git', ['-C', row.cwd, 'rev-parse', '--show-toplevel'], { timeout: 5_000 });
     if (!repoResult.ok) return { status: 409, body: { ok: false, reason: 'main repository unavailable' } };
     const repo = repoResult.out.trim();
+
+    // BUG-059 (data-loss): `repo` came from a remembered spawn cwd — prove it
+    // actually OWNS this worktree before building any repo-scoped destructive
+    // argv from it. Without this check, a recorded cwd that has been deleted
+    // and recreated as a different repository B silently redirects the fallback
+    // directory removal's prune and, worst of all, `git branch -D` into B —
+    // deleting an unrelated repository's branch and its unique commits. Refuse
+    // everything destructive when ownership cannot be proven; the spawn rows
+    // stay, so the worktree can be cleaned up once the path resolves again.
+    if (!(await repoOwnsWorktree(repo, row.worktree_path, state.exists))) {
+      return {
+        status: 409,
+        body: {
+          ok: false,
+          reason: 'recorded cwd now resolves to a different repository than this worktree belongs to — refusing to remove or delete branches in it',
+          repo: canonical(repo),
+        },
+      };
+    }
 
     // CONTRACT: re-validate liveness HERE, after every awaited probe and right
     // before the first destructive step. The gate above was decided before
