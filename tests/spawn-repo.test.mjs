@@ -9,10 +9,14 @@ import { fileURLToPath } from 'node:url';
 import { startDaemon, randomPort } from './helpers/daemon.mjs';
 import { getJson, postHook, postJson } from './helpers/http.mjs';
 import { makeRemoteRepo } from './helpers/gitrepo.mjs';
-// The local waitUntil below is UNSCALED and predates tests/helpers/wait.mjs; new
-// waits use the shared, WAIT_SCALE-aware one so the macOS advisory lane (issue
-// #2, WAIT_SCALE=3) gets its headroom.
-import { waitUntil as waitUntilScaled } from './helpers/wait.mjs';
+// All waits route through the shared, WAIT_SCALE-aware helper so the macOS
+// advisory lane (issue #2, WAIT_SCALE=3) gets its headroom.
+import { waitUntil } from './helpers/wait.mjs';
+// Test-only export (leading underscore, never imported): lets the BUG-176
+// regression in wait-scaling.test.mjs prove by identity that every waitUntil
+// in THIS module is the scaled shared helper — the exported binding and every
+// call site below resolve to the same function object.
+export const __waitUntilForScaleCheck = waitUntil;
 import { openDb } from '../scripts/fleetd/db.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -30,16 +34,6 @@ function git(args, cwd) {
 function records(file) {
   if (!existsSync(file)) return [];
   return readFileSync(file, 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line));
-}
-
-async function waitUntil(fn, { timeoutMs = 12_000, label = 'condition' } = {}) {
-  const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    const value = await fn();
-    if (value) return value;
-    if (Date.now() >= deadline) throw new Error(`timed out waiting for ${label}`);
-    await new Promise(resolve => setTimeout(resolve, 75));
-  }
 }
 
 function spawnEnv(recordFile, reposDir, postUrl = null) {
@@ -113,7 +107,7 @@ test('repo mode in-place switches an existing branch and launches in that cwd', 
   const { root, recordFile, daemon } = await setup(t);
   const response = await postJson(`${daemon.baseUrl}/api/spawn`, { repo: root, branch: 'existing', branch_mode: 'in-place' });
   assert.equal(response.status, 200, response.text);
-  const spec = (await waitUntil(() => records(recordFile)[0], { label: 'spawn fixture record' })).parsed;
+  const spec = (await waitUntil(() => records(recordFile)[0], { timeoutMs: 12_000, label: 'spawn fixture record' })).parsed;
   assert.equal(spec.cwd, root);
   assert.equal(git(['branch', '--show-current'], root), 'existing');
   const state = (await getJson(`${daemon.baseUrl}/state`)).json;
@@ -163,7 +157,7 @@ test('worktree mode reuses an existing checkout of the requested branch', async 
   git(['worktree', 'add', '-q', '--track', '-b', 'reuse-me', existing, 'origin/main'], root);
   const response = await postJson(`${daemon.baseUrl}/api/spawn`, { repo: root, branch: 'reuse-me', branch_mode: 'worktree' });
   assert.equal(response.status, 200, response.text);
-  const spec = (await waitUntil(() => records(recordFile)[0], { label: 'reuse fixture record' })).parsed;
+  const spec = (await waitUntil(() => records(recordFile)[0], { timeoutMs: 12_000, label: 'reuse fixture record' })).parsed;
   assert.equal(spec.cwd, existing);
   assert.equal(existsSync(`${root}--fd-reuse-me`), false);
 });
@@ -186,7 +180,7 @@ test('clone provisioning returns 202 then launches from the cloned requested bra
   assert.equal(response.status, 202, response.text);
   assert.equal(response.json.provisioning, true);
   const dest = path.join(reposDir, remote.repoName);
-  await waitUntil(() => records(recordFile).length && existsSync(dest), { label: 'clone launch' });
+  await waitUntil(() => records(recordFile).length && existsSync(dest), { timeoutMs: 12_000, label: 'clone launch' });
   assert.equal(git(['branch', '--show-current'], dest), 'remote-only');
 });
 
@@ -305,7 +299,7 @@ async function shimmedDaemon(t, shimEnv) {
 }
 
 async function tombstonedCard(daemon, session_id) {
-  return waitUntilScaled(async () => {
+  return waitUntil(async () => {
     const state = (await getJson(`${daemon.baseUrl}/state`)).json;
     const found = state.sessions.find(s => s.session_id === session_id);
     return found?.col === 'offline' ? found : null;
@@ -428,7 +422,7 @@ test('a same-named checkout with no matching origin is not reused when the reque
   const response = await postJson(`${daemon.baseUrl}/api/spawn`, { repo: remote.origin, branch: 'main', branch_mode: 'in-place' });
   assert.equal(response.status, 202, response.text); // cloned, not reused
   const dest = path.join(reposDir, remote.repoName);
-  await waitUntil(() => records(recordFile).length && existsSync(dest), { label: 'clone-not-reuse' });
+  await waitUntil(() => records(recordFile).length && existsSync(dest), { timeoutMs: 12_000, label: 'clone-not-reuse' });
   const spec = records(recordFile)[0].parsed;
   assert.equal(spec.cwd, dest);          // ran in the freshly cloned tree…
   assert.notEqual(spec.cwd, decoy);      // …never in the unrelated same-named decoy
