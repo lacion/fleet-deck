@@ -227,6 +227,7 @@ test('read, list, search-hit, and binary caps shape bounded responses', async t 
   assert.equal(Object.hasOwn(binary.json, 'content'), false);
 });
 
+<<<<<<< /tmp/mf-ours
 test('list bounds lstat work, not just response size, in oversized directories (BUG-114)', async t => {
   const plain = makePlainDir();
   t.after(() => plain.cleanup());
@@ -255,6 +256,25 @@ test('list bounds lstat work, not just response size, in oversized directories (
     lstatCount <= LIST_MAX + 10,
     `lstat work must be bounded by LIST_MAX (${LIST_MAX}), not the directory size (${2 * LIST_MAX}); saw ${lstatCount}`,
   );
+=======
+test('truncated git listings still mark gitignored entries in the returned page', async t => {
+  const repo = makeRepoWithWorktree({ repoName: 'fleetdeck-session-fs-trunc' });
+  writeFileSync(path.join(repo.worktree, '.gitignore'), '*.ignored\n');
+  writeFileSync(path.join(repo.worktree, 'aaa-secret.ignored'), 'truncation must not hide ignore status\n');
+  for (let i = 0; i < 8; i += 1) writeFileSync(path.join(repo.worktree, `file-${i}.txt`), 'filler\n');
+  const daemon = await startDaemon({ env: { FLEETDECK_FS_LIST_MAX: '5' } });
+  t.after(async () => { await daemon.stop(); repo.cleanup(); });
+  seedSession(daemon.home, repo.root, { spawnPath: repo.worktree });
+
+  const listed = await getJson(endpoint(daemon.baseUrl, 'fs-session', 'list'));
+  assert.equal(listed.status, 200);
+  assert.equal(listed.json.git, true);
+  assert.equal(listed.json.truncated, true);
+  assert.equal(listed.json.entries.length, 5);
+  const ignored = listed.json.entries.find(entry => entry.name === 'aaa-secret.ignored');
+  assert.ok(ignored, 'gitignored file sorts into the returned page');
+  assert.equal(ignored.ignored, true);
+>>>>>>> /tmp/mf-theirs
 });
 
 test('unknown and removed roots report lifecycle status, and FIFO reads refuse promptly', async t => {
