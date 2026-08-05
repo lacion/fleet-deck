@@ -832,18 +832,31 @@ test('mark executed with the question still pending dismisses it (fails the hold
   const { q } = out;
   const planId = plansFor((await getJson(`${daemon.baseUrl}/state`)).json, sid)[0]?.plan_id;
 
+  // RACE-SENSITIVE: the hold must STILL be parked when the mark lands. If a
+  // shortened hold window or scheduler jitter lets the timer expire first,
+  // the timer's own fail-open ({}) makes every assertion below pass — so this
+  // check is the only thing proving the mark, not the timer, retired the row.
+  const rowBefore = questionsFor((await getJson(`${daemon.baseUrl}/state`)).json, sid, 'permission')
+    .find(x => x.id === q.id);
+  assert.equal(rowBefore?.status, 'pending',
+    'PRECONDITION: the question must still be pending when the mark lands — otherwise this test passes vacuously (timer expiry also releases the hold with {})');
   const markRes = await postJson(`${daemon.baseUrl}/api/plans/${planId}/mark`, { status: 'executed', via: 'assign' });
   assert.equal(markRes.status, 200);
+  // The mark must have retired the row IMMEDIATELY, not at hold expiry:
+  // observe the row well inside the remaining hold window.
+  const stateNow = (await getJson(`${daemon.baseUrl}/state`)).json;
+  const rowNow = questionsFor(stateNow, sid, 'permission').find(x => x.id === q.id);
+  assert.equal(rowNow?.status, 'expired',
+    'the question must retire AT the mark (well before the 60s hold expires) — a row still pending here means the mark left a live execution authority (BUG-041)');
 
   const heldRes = await held;
   assert.deepEqual(heldRes.json, {},
     'the parked hook must fail OPEN (dismiss path) — the planner resumes in the terminal instead of sitting on a stale prompt');
 
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json;
+  const state = stateNow;
   const plan = (state.plans || []).find(p => String(p.plan_id) === String(planId));
   assert.equal(plan?.status, 'executed', 'the mark itself is untouched');
-  const qrow = questionsFor(state, sid, 'permission').find(x => x.id === q.id);
-  assert.equal(qrow?.status, 'expired', 'the dismissed question retires as expired');
+  assert.equal(rowNow?.status, 'expired', 'the dismissed question retires as expired');
 });
 
 // ---------------------------------------------------------------------------
