@@ -4,6 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import {
   chmodSync,
   existsSync,
@@ -31,11 +32,37 @@ function scratch(t, prefix = 'fleetdeck-audit-') {
 }
 
 function exitOf(child, timeoutMs = 6000) {
-  return Promise.race([
-    new Promise(resolve => child.once('exit', (code, signal) => resolve({ code, signal }))),
-    new Promise((_, reject) => setTimeout(() => reject(new Error('child did not exit in time')), timeoutMs)),
-  ]);
+  return new Promise((resolve, reject) => {
+    const onExit = (code, signal) => {
+      clearTimeout(timer);
+      resolve({ code, signal });
+    };
+    const timer = setTimeout(() => {
+      child.removeListener('exit', onExit);
+      reject(new Error('child did not exit in time'));
+    }, timeoutMs);
+    child.once('exit', onExit);
+  });
 }
+
+test('exitOf clears its timeout when the child exits first and drops the listener when the timeout wins', async () => {
+  const handlesBefore = process._getActiveHandles().length;
+
+  // Exit path: a settled child must not leave its timeout timer referenced.
+  const fast = new EventEmitter();
+  const fastWait = exitOf(fast, 60_000);
+  fast.emit('exit', 0, null);
+  assert.deepEqual(await fastWait, { code: 0, signal: null });
+  assert.ok(
+    process._getActiveHandles().length <= handlesBefore,
+    'a prompt child exit must not leave the timeout timer referenced',
+  );
+
+  // Timeout path: the loser must drop its exit listener so the child can be GC'd.
+  const slow = new EventEmitter();
+  await assert.rejects(exitOf(slow, 25), /did not exit in time/);
+  assert.equal(slow.listenerCount('exit'), 0, 'the timed-out wait must remove its exit listener');
+});
 
 test('payload capture is off by default and enabled only by the explicit on flag', (t) => {
   const home = scratch(t);
