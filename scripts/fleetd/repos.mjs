@@ -236,6 +236,7 @@ function expandHome(value) {
   return value;
 }
 
+<<<<<<< /tmp/mf-ours
 // A remote's identity on a RECOGNIZED forge is its host+path, not its transport
 // spelling: `https://gitlab.com/org/repo.git`, `ssh://git@gitlab.com/org/repo.git`
 // and `git@gitlab.com:org/repo.git` are three doors into ONE repository. The
@@ -262,9 +263,23 @@ function expandHome(value) {
 // string still matches, so a missed match is at worst the OLD 409/spare-clone
 // behaviour, never a wrong reuse) but username- and case-PRESERVING, with only
 // the hostname lowercased (DNS is case-insensitive everywhere).
+=======
+// A remote's identity is its host+path, not its transport spelling: on a forge,
+// `https://gitlab.com/org/repo.git`, `ssh://git@gitlab.com/org/repo.git` and
+// `git@gitlab.com:org/repo.git` are three doors into ONE repository. The reuse
+// guard in resolveTarget compares origins to prove a same-named checkout really
+// IS the requested repo; comparing raw strings made an ssh-cloned checkout
+// invisible to an https/shorthand spawn (409 "exists and is not", or a duplicate
+// clone). Reducing the three shapes to one `//host/path` key widens reuse ONLY
+// across spellings — two origins with a different host or path still never
+// match, so an unrelated tree remains exactly as un-reusable as before. Only the
+// HOSTNAME is lowercased (DNS is case-insensitive); the path keeps its case,
+// because on a case-sensitive forge `Org/repo` and `org/repo` are DIFFERENT
+// repositories and folding them would reuse the wrong checkout.
+>>>>>>> /tmp/mf-theirs
 // Conservative by construction:
 //  - only https://, unported ssh://, and scp-style origins normalize; any other
-//    shape returns null and keeps the old lowercase string comparison — the
+//    shape returns null and keeps the old fallback string comparison — the
 //    worst outcome of a missed match is the OLD behaviour (a spare clone or a
 //    409), never a wrong reuse;
 //  - an ssh:// URL with an explicit port is NOT normalized: a nonstandard port
@@ -295,8 +310,25 @@ function normalizeRemoteOrigin(value) {
   }
   const cleaned = rest.replace(/^\/+/, '').replace(/[\\/]+$/, '').replace(/\.git$/i, '');
   if (!cleaned) return null;
+<<<<<<< /tmp/mf-ours
   if (FORGE_HOSTS.has(host.toLowerCase())) return `//${host}/${cleaned}`.toLowerCase();
   return `//${host.toLowerCase()}/${user == null ? '' : `${user}@`}${cleaned}`;
+=======
+  return `//${host.toLowerCase()}/${cleaned}`;
+}
+
+// Split an origin's case-insensitive leading component (URL scheme, plus the
+// scp-style userinfo@host up to the `:`) from the remainder. Only the former
+// may be case-folded — a scheme is case-insensitive by RFC 3986, and the
+// scp-prefix lowercases the hostname with it. The remainder is a repository
+// path (or an opaque non-URL string), whose case can distinguish repositories.
+function foldOriginCaseInsensitivePrefix(origin) {
+  const scp = /^[^/@:]+@/.exec(origin);
+  if (scp) return scp[0].toLowerCase() + origin.slice(scp[0].length);
+  const scheme = /^[A-Za-z][A-Za-z0-9+.-]{0,32}:/.exec(origin);
+  if (scheme) return scheme[0].toLowerCase() + origin.slice(scheme[0].length);
+  return origin;
+>>>>>>> /tmp/mf-theirs
 }
 
 function comparableOrigin(value) {
@@ -305,7 +337,7 @@ function comparableOrigin(value) {
     try { return fs.realpathSync(value); } catch { return path.resolve(value); }
   }
   return normalizeRemoteOrigin(value)
-    ?? String(value).replace(/[\\/]+$/, '').replace(/\.git$/i, '').toLowerCase();
+    ?? foldOriginCaseInsensitivePrefix(String(value).replace(/[\\/]+$/, '').replace(/\.git$/i, ''));
 }
 
 function exists(pathname) {

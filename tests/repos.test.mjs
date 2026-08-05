@@ -301,6 +301,30 @@ test('resolveTarget reuses a checkout whose unported ssh:// origin matches the g
   assert.equal(target.root, dest);
 });
 
+test('resolveTarget folds ONLY the hostname — same-host paths differing in case never match', async t => {
+  const reposDir = withReposDir(t);
+  // DNS is case-insensitive; a repository PATH is not — on a case-sensitive
+  // forge Org/repo and org/repo are different repositories, so reusing this
+  // checkout for the lowercase spawn would run the agent in the wrong tree.
+  checkoutWithOrigin(reposDir, 'repo', 'https://example.com/Org/repo.git');
+  const { resolveTarget } = createRepos(fakeReposCtx({ repo_transport: 'https' }));
+  await assert.rejects(
+    () => resolveTarget({ repo: 'https://example.com/org/repo.git' }),
+    err => err.status === 409 && /exists and is not/.test(err.message),
+  );
+});
+
+test('resolveTarget matches origins that differ ONLY in scheme/hostname case', async t => {
+  const reposDir = withReposDir(t);
+  // Hostname case IS noise (DNS is case-insensitive) and so is the scheme — a
+  // checkout cloned via an uppercase-spelled origin is still the same repo.
+  const dest = checkoutWithOrigin(reposDir, 'repo', 'HTTPS://EXAMPLE.COM/org/repo.git');
+  const { resolveTarget } = createRepos(fakeReposCtx({ repo_transport: 'https' }));
+  const target = await resolveTarget({ repo: 'https://example.com/org/repo.git' });
+  assert.equal(target.mode, 'local');
+  assert.equal(target.root, dest);
+});
+
 test('resolveTarget still refuses a same-named checkout with a different origin', async t => {
   const reposDir = withReposDir(t);
   checkoutWithOrigin(reposDir, 'repo', 'git@gitlab.com:other/repo.git');
