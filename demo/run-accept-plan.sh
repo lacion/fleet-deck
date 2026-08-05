@@ -340,6 +340,15 @@ if command -v tmux >/dev/null 2>&1; then
   tmux -L "$FLEETDECK_TMUX_SOCKET" kill-server 2>/dev/null || true
 fi
 
+# Gate 1 launches a scratch daemon and then lets it spawn and control real
+# (billed) Claude sessions. Readiness is therefore bound to the child this
+# script launches: if anything still owns the port after the reset, refuse
+# outright rather than risk steering someone else's live fleet below.
+if curl -s -m 1 "$BASE/health" >/dev/null 2>&1; then
+  echo "FATAL: port $FLEETDECK_PORT still answers after reset; refusing to run the plan gate against an unowned listener" >&2
+  exit 1
+fi
+
 rm -rf "$SCRATCH_HOME"
 mkdir -p "$SCRATCH_HOME"
 if ! snapshot_project_files; then
@@ -423,17 +432,33 @@ if [ -n "$TMUX_READY" ]; then
     node "$FLEETDECK_ROOT/scripts/fleetd/fleetd.mjs" > "$DAEMON_LOG" 2>&1 &
   DAEMON_PID=$!
   for _ in $(seq 1 40); do
-    STATE=$(curl -s -m 1 "$BASE/state" 2>/dev/null || true)
-    if STATE_JSON="$STATE" node -e '
+    # Readiness must name THIS run's child, not merely any qualifying /state:
+    # /health.pid has to equal DAEMON_PID and the scratch pidfile has to
+    # record the same pid on this port. A listener that survives the reset or
+    # a supervisor restart can otherwise answer first (the scratch child then
+    # loses the bind and exits 3) and the billed gates below would steer that
+    # foreign fleet.
+    HEALTH=$(curl -s -m 1 "$BASE/health" 2>/dev/null || true)
+    if HEALTH_JSON="$HEALTH" EXPECTED_PID="$DAEMON_PID" EXPECTED_PORT="$FLEETDECK_PORT" \
+      PID_FILE="$SCRATCH_HOME/fleetd.pid" node -e '
+      const fs = require("fs");
       try {
-        const s = JSON.parse(process.env.STATE_JSON || "{}");
-        process.exit(s.spawn?.available === true ? 0 : 1);
+        const h = JSON.parse(process.env.HEALTH_JSON || "{}");
+        const expectedPid = Number(process.env.EXPECTED_PID);
+        if (h.ok !== true || h.spawn?.available !== true || h.pid !== expectedPid) process.exit(1);
+        const record = JSON.parse(fs.readFileSync(process.env.PID_FILE, "utf8"));
+        process.exit(record?.pid === expectedPid && record?.port === Number(process.env.EXPECTED_PORT) ? 0 : 1);
       } catch { process.exit(1); }
     '; then
       DAEMON_READY=yes
       break
     fi
-    kill -0 "$DAEMON_PID" 2>/dev/null || break
+    # The child losing the bind (EADDRINUSE) is terminal: whatever answered
+    # above is not ours, so abort instead of running the plan gates against it.
+    if ! kill -0 "$DAEMON_PID" 2>/dev/null; then
+      echo "FATAL: scratch fleetd (pid $DAEMON_PID) exited before becoming ready; the port is owned by another listener — aborting to avoid steering a foreign fleet" >&2
+      exit 1
+    fi
     sleep 0.25
   done
 fi
