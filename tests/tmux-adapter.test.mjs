@@ -652,6 +652,7 @@ test('tmux adapter parses scoped panes and kills only the exact fleet session wi
   // Create the decoy first so an all-server scan encounters the wrong, same-name
   // window before the daemon-owned one. Exact session corroboration must exclude it.
 <<<<<<< /tmp/mf-ours
+<<<<<<< /tmp/mf-ours
   // Exec-form ('--', argv...) exactly like production newWindow (spawn.mjs
   // passes '--', ...argv): pane_current_command is 'sleep' immediately.
   // Shell-form ('sleep 3600') reports the LOGIN shell until exec completes,
@@ -667,11 +668,21 @@ test('tmux adapter parses scoped panes and kills only the exact fleet session wi
   tmux(socket, ['new-session', '-d', '-s', fleetSession, '-n', window, 'sleep', '3600']);
   tmux(socket, ['split-window', '-d', '-t', `${fleetSession}:${window}`, 'sleep', '3600']);
 >>>>>>> /tmp/mf-theirs
+=======
+  // Direct argv after `--`, matching production newWindow: no startup shell, so
+  // pane_current_command is `sleep` from the start. (A single 'sleep 3600'
+  // shell-command string leaves the pane reporting the login shell — e.g. `zsh`
+  // — until exec settles, which raced this assertion on zsh/macOS hosts.)
+  tmux(socket, ['-f', '/dev/null', 'new-session', '-d', '-s', decoySession, '-n', window, '--', 'sleep', '3600']);
+  tmux(socket, ['new-session', '-d', '-s', fleetSession, '-n', window, '--', 'sleep', '3600']);
+  tmux(socket, ['split-window', '-d', '-t', `${fleetSession}:${window}`, '--', 'sleep', '3600']);
+>>>>>>> /tmp/mf-theirs
 
   const fleetWindowId = tmux(socket, ['display-message', '-p', '-t', `${fleetSession}:${window}`, '#{window_id}']);
   const decoyWindowId = tmux(socket, ['display-message', '-p', '-t', `${decoySession}:${window}`, '#{window_id}']);
   assert.notEqual(fleetWindowId, decoyWindowId);
 
+<<<<<<< /tmp/mf-ours
   // new-session / split-window return before the panes' startup shells have
   // execed `sleep`, so pane_current_command can still report the shell (zsh,
   // bash, …) at this point. Poll until the fleet pane has execed before
@@ -680,6 +691,14 @@ test('tmux adapter parses scoped panes and kills only the exact fleet session wi
     const found = await listScopedWindows(port);
     return found?.[0]?.pane_cmd === 'sleep' ? found : null;
   }, { label: `fleet pane ${fleetWindowId} execed sleep` });
+=======
+  // Bounded readiness poll (not a fixed sleep): even with direct argv, tmux
+  // does not promise the pane has exec'd by the time the create call returns.
+  const windows = await waitUntil(async () => {
+    const listed = await listScopedWindows(port);
+    return listed?.length === 1 && listed[0].pane_cmd === 'sleep' ? listed : null;
+  }, { timeoutMs: 5_000, intervalMs: 25, label: `pane of ${fleetSession}:${window} to exec sleep` });
+>>>>>>> /tmp/mf-theirs
   assert.deepEqual(windows, [{
     session: fleetSession,
     window,
