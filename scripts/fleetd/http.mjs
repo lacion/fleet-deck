@@ -212,6 +212,7 @@ export function createHttp(core, {
       ? { enabled: true, urls: source.urls ?? [], mdns: source.mdns ?? null }
       : { enabled: false, urls: [] };
   }
+<<<<<<< /tmp/mf-ours
 =======
   // snapshot() is behind the same gate as everything else. refreshLan() replaces
   // the URL set when the host's interfaces change, so a roaming daemon stops
@@ -226,6 +227,8 @@ export function createHttp(core, {
       ? { enabled: true, urls: nextLan.urls ?? [], mdns: nextLan.mdns ?? null }
       : { enabled: false, urls: [] };
   }
+=======
+>>>>>>> /tmp/mf-theirs
 
   function snapshotWithLan() {
     return { ...core.snapshot(), lan: currentLan(), legacy_upgrade: legacyBanner() };

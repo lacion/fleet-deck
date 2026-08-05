@@ -497,6 +497,9 @@ export function buildResponse(questions, options = {}, { ttl, flush = true } = {
  * @param {object} [opts.txt]       extra TXT keys, merged over {path, board}
  * @param {function} [opts.log]
 <<<<<<< /tmp/mf-ours
+<<<<<<< /tmp/mf-ours
+=======
+>>>>>>> /tmp/mf-theirs
  * @param {function} [opts.onDown]  called with a reason string the moment the
  *                                  responder terminally disables itself (bind,
  *                                  membership or socket failure) — never on a
@@ -505,6 +508,7 @@ export function buildResponse(questions, options = {}, { ttl, flush = true } = {
  * @returns {{start: function, stop: function, alive: function}} start/stop are
  *          idempotent and never throw; alive() reports whether the responder
  *          is bound and answering
+<<<<<<< /tmp/mf-ours
  */
 export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', addresses = [], txt, log = () => {}, onDown = null } = {}) {
 =======
@@ -513,6 +517,10 @@ export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', 
 export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', addresses = [], txt, log = () => {} } = {}) {
   // Mutable: update() replaces the address set in place when the host's LAN
   // interfaces change, so every later announce/response speaks the new set.
+>>>>>>> /tmp/mf-theirs
+=======
+ */
+export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', addresses = [], txt, log = () => {}, onDown = null } = {}) {
 >>>>>>> /tmp/mf-theirs
   const options = { port, name, instance, addresses, txt };
   let ad = normalize(options);
@@ -738,8 +746,12 @@ export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', 
   }
 
 <<<<<<< /tmp/mf-ours
+<<<<<<< /tmp/mf-ours
   return { start, stop, alive: () => started && !dead && socket !== null };
 =======
   return { start, stop, update };
+>>>>>>> /tmp/mf-theirs
+=======
+  return { start, stop, alive: () => started && !dead && socket !== null };
 >>>>>>> /tmp/mf-theirs
 }
