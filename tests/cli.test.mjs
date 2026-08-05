@@ -19,6 +19,7 @@ import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'fleetdeck-cli-'));
 const HOME = path.join(TMP, 'home');
@@ -42,12 +43,14 @@ process.env.FLEETDECK_PORT = String(DEAD_PORT);
 const ENV_FILE = path.join(HOME, 'service.env');
 const SUPERVISE_SH = path.join(HOME, 'supervise.sh');
 const SUPERVISOR_PID = path.join(HOME, 'supervisor.pid');
+const FLEETD_PID = path.join(HOME, 'fleetd.pid');
 const UNIT_FILE = path.join(XDG, 'systemd', 'user', 'fleetdeck.service');
 
 const {
 <<<<<<< /tmp/mf-ours
 <<<<<<< /tmp/mf-ours
   writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor,
+<<<<<<< /tmp/mf-ours
 <<<<<<< /tmp/mf-ours
 <<<<<<< /tmp/mf-ours
 <<<<<<< /tmp/mf-ours
@@ -76,6 +79,9 @@ const {
 >>>>>>> /tmp/mf-theirs
 =======
   serviceInstall, UNIT, SUPERVISE, healthIsOurManagedDaemon,
+>>>>>>> /tmp/mf-theirs
+=======
+  healthPidIsOurDaemon, serviceInstall, UNIT, SUPERVISE,
 >>>>>>> /tmp/mf-theirs
 } = await import(new URL('../bin/fleetdeck.mjs', import.meta.url));
 const { parseTmuxVersion, tmuxVersionCapability, tmuxVersionSupported } = await import(new URL('../bin/tmux-version.mjs', import.meta.url));
@@ -352,6 +358,7 @@ test('argvIsOurSupervisor: matches only when SUPERVISE_SH is in the argv', () =>
   assert.equal(argvIsOurSupervisor(null), false);
 });
 
+<<<<<<< /tmp/mf-ours
 // -------------------------------------------------------- service start
 
 // BUG-080: a live supervisor wrapper is not a live BOARD. During a fleetd
@@ -393,6 +400,74 @@ test('serviceStart: live supervisor + dead daemon → nonzero degraded report, n
   // re-spawned wrapper would differ from our fake one.
   assert.equal(fs.readFileSync(SUPERVISOR_PID, 'utf8').trim(), String(fake.pid),
     'no second supervisor was spawned over the live one');
+=======
+// ---------------------------------------------------- healthPidIsOurDaemon
+// BUG-082: the no-systemd `service stop` used to SIGTERM whatever pid ANY
+// health-compatible responder on the port returned. The gate must only accept
+// a pid that a managed responder reports AND that matches OUR home's
+// fleetd.pid (pid + recorded port) AND that still looks like a live fleetd.
+
+// A live, fleetd-shaped same-user process: `node .../scripts/fleetd/fleetd.mjs`.
+// Detached + unref'd with piped stdio so it cannot corrupt node:test's report
+// channel; every test that spawns one kills it in a finally.
+function spawnFakeFleetd() {
+  const fleetdPath = path.resolve(import.meta.dirname, '..', 'scripts', 'fleetd', 'fleetd.mjs');
+  const child = spawn(process.execPath, [fleetdPath], { detached: true, stdio: 'ignore' });
+  child.unref();
+  return child;
+}
+
+test('healthPidIsOurDaemon: accepts only a managed responder whose pid matches fleetd.pid (pid + port) and /proc identity', (t) => {
+  if (process.platform !== 'linux') return t.skip('identity check is /proc-based; skip off-Linux');
+  const child = spawnFakeFleetd();
+  try {
+    fs.writeFileSync(FLEETD_PID, JSON.stringify({ pid: child.pid, port: 4711 }));
+    assert.equal(healthPidIsOurDaemon({ pid: child.pid, managed: true }), true, 'our own managed daemon must pass');
+    assert.equal(healthPidIsOurDaemon({ pid: child.pid, managed: false }), false, 'a plugin-spawned (unmanaged) daemon is not ours to stop');
+    assert.equal(healthPidIsOurDaemon({ pid: child.pid }), false, 'a health body without `managed` is not a managed fleetd');
+  } finally {
+    try { process.kill(child.pid, 'SIGKILL'); } catch { /* already gone */ }
+    try { fs.unlinkSync(FLEETD_PID); } catch { /* absent */ }
+  }
+});
+
+test('healthPidIsOurDaemon: rejects a foreign responder whose pid is not in fleetd.pid', (t) => {
+  if (process.platform !== 'linux') return t.skip('identity check is /proc-based; skip off-Linux');
+  const child = spawnFakeFleetd();
+  try {
+    // Another installation's daemon recorded in ITS home — our pidfile names a
+    // different (dead) pid, so the responder's live pid must NOT be signalled.
+    fs.writeFileSync(FLEETD_PID, JSON.stringify({ pid: 1073741823, port: 4711 }));
+    assert.equal(healthPidIsOurDaemon({ pid: child.pid, managed: true }), false, 'pid not recorded in OUR fleetd.pid');
+    // A fake local server claiming the recorded pid of a NON-fleetd live process
+    // (this test runner) must also fail the /proc identity leg.
+    fs.writeFileSync(FLEETD_PID, JSON.stringify({ pid: process.pid, port: 4711 }));
+    assert.equal(healthPidIsOurDaemon({ pid: process.pid, managed: true }), false, 'pidfile match but the live process is not a fleetd');
+  } finally {
+    try { process.kill(child.pid, 'SIGKILL'); } catch { /* already gone */ }
+    try { fs.unlinkSync(FLEETD_PID); } catch { /* absent */ }
+  }
+});
+
+test('healthPidIsOurDaemon: rejects a recorded port that is not the selected PORT', (t) => {
+  if (process.platform !== 'linux') return t.skip('identity check is /proc-based; skip off-Linux');
+  const child = spawnFakeFleetd();
+  try {
+    fs.writeFileSync(FLEETD_PID, JSON.stringify({ pid: child.pid, port: 9999 }));
+    assert.equal(healthPidIsOurDaemon({ pid: child.pid, managed: true }), false, 'fleetd.pid records a different port than the CLI selected');
+  } finally {
+    try { process.kill(child.pid, 'SIGKILL'); } catch { /* already gone */ }
+    try { fs.unlinkSync(FLEETD_PID); } catch { /* absent */ }
+  }
+});
+
+test('healthPidIsOurDaemon: no pidfile → false (cannot prove ownership, never kill)', () => {
+  try { fs.unlinkSync(FLEETD_PID); } catch { /* absent */ }
+  assert.equal(healthPidIsOurDaemon({ pid: process.pid, managed: true }), false);
+  assert.equal(healthPidIsOurDaemon(null), false);
+  assert.equal(healthPidIsOurDaemon({}), false);
+  assert.equal(healthPidIsOurDaemon({ pid: 'not-a-number', managed: true }), false);
+>>>>>>> /tmp/mf-theirs
 });
 
 // -------------------------------------------------------- service install

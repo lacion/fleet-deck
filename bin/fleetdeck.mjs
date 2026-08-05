@@ -30,6 +30,7 @@ import { execFile, spawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { MIN_TMUX_VERSION, parseTmuxVersion, tmuxVersionSupported } from './tmux-version.mjs';
+import { pidRecord, livePidLooksLikeFleetd } from '../scripts/fleetd/takeover.mjs';
 
 const execFileP = promisify(execFile);
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -83,6 +84,7 @@ function serviceEnvPort() {
 const PORT = process.env.FLEETDECK_PORT ? Number(process.env.FLEETDECK_PORT) : (serviceEnvPort() ?? 4711);
 const SUPERVISE_SH = path.join(HOME, 'supervise.sh');
 const SUPERVISOR_PID = path.join(HOME, 'supervisor.pid');
+const FLEETD_PID = path.join(HOME, 'fleetd.pid');
 const LOG_FILE = path.join(HOME, 'fleetd.log');
 const UNIT_FILE = path.join(
   process.env.XDG_CONFIG_HOME || path.join(os.homedir() || '/tmp', '.config'),
@@ -514,6 +516,35 @@ function supervisorAlive() {
   } catch { return 0; }
 }
 
+// STOP-TARGET IDENTITY CONTRACT. The no-systemd stop path used to SIGTERM
+// whatever pid ANY health-compatible responder on our port returned — a fake
+// local server, or another installation's daemon answering on a recycled port,
+// could aim our SIGTERM at an arbitrary same-user process. So, exactly like the
+// hook's takeover gate (takeover.mjs `verifyDaemonPid`), a health pid is only
+// signalled when EVERY one of these holds:
+//   - the responder claims to be a MANAGED daemon (h.managed) — `service stop`
+//     owns the supervised install only; a plugin-spawned daemon is not ours to kill;
+//   - the pid matches the one recorded in OUR HOME's fleetd.pid (the HOME
+//     ownership lock), and any port recorded there matches our selected PORT;
+//   - the live process still carries a fleetd /proc shape (livePidLooksLikeFleetd).
+// Any disagreement → false, and the caller reports the foreign responder and
+// leaves it untouched rather than signalling a process it cannot identify.
+function healthPidIsOurDaemon(h) {
+  if (!h || h.managed !== true) return false;
+  const pid = Number(h.pid);
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  let record = null;
+  try {
+    record = pidRecord(fs.readFileSync(FLEETD_PID, 'utf8'));
+  } catch {
+    // No/unreadable pidfile: cannot prove ownership → do not kill.
+    return false;
+  }
+  if (record?.pid !== pid) return false;
+  if (record.port !== null && record.port !== PORT) return false;
+  return livePidLooksLikeFleetd(pid);
+}
+
 // "Started" must mean "answering", not "spawned". systemctl returns as soon as
 // the process exists, which is a good ~100ms before fleetd has opened SQLite and
 // bound the port — long enough that a template's next step (or an impatient
@@ -620,14 +651,19 @@ async function serviceStop() {
   try { fs.unlinkSync(SUPERVISOR_PID); } catch { /* best effort */ }
 
   const h = await health({ timeout: 500 });
-  if (h?.pid) {
+  const ours = h?.pid ? healthPidIsOurDaemon(h) : false;
+  if (ours) {
     try { process.kill(h.pid, 'SIGTERM'); } catch { /* already gone */ }
     for (let i = 0; i < 12; i += 1) {
       await new Promise(r => setTimeout(r, 250));
       if (!await health({ timeout: 250 })) break;
     }
+  } else if (h?.pid) {
+    // A responder answered /health but failed the identity gate — a foreign
+    // daemon or a fake server squatting on our port. Do NOT signal it.
+    err(`⚠ a daemon is answering on :${PORT} (pid ${h.pid}) but it is not this home's managed fleetd — leaving it untouched`);
   }
-  out(sup || h ? '✓ stopped' : 'ℹ nothing was running');
+  out(sup || ours ? '✓ stopped' : 'ℹ nothing was running');
   return 0;
 }
 
@@ -744,6 +780,7 @@ if (IS_ENTRYPOINT) await main(process.argv.slice(2));
 <<<<<<< /tmp/mf-ours
 <<<<<<< /tmp/mf-ours
 <<<<<<< /tmp/mf-ours
+<<<<<<< /tmp/mf-ours
 export { writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor, serviceInstall, UNIT, SUPERVISE, doctor, MIN_NODE_RANGE, nodeVersionSupported };
 =======
 export { writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, parseServiceEnvPort, serviceEnvPort, supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor, serviceInstall, UNIT, SUPERVISE, doctor };
@@ -765,4 +802,7 @@ export { writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, supervisorAliv
 >>>>>>> /tmp/mf-theirs
 =======
 export { writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor, serviceInstall, UNIT, SUPERVISE, doctor, healthIsOurManagedDaemon };
+>>>>>>> /tmp/mf-theirs
+=======
+export { writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor, healthPidIsOurDaemon, serviceInstall, UNIT, SUPERVISE, doctor };
 >>>>>>> /tmp/mf-theirs
