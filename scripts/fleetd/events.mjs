@@ -53,7 +53,15 @@ export function createEvents(ctx) {
   // ---------------------------------------------- hook event -> card state
   // Faithful port of the spike's applyEvent switch.
   function applyEvent(ev) {
-    const sid = ev.session_id || 'unknown';
+    // No usable session id → no state at all. The old `|| 'unknown'` fallback
+    // keyed a real card on the literal string 'unknown', so every malformed
+    // hook payload collapsed into one shared phantom card that each subsequent
+    // ID-less event kept mutating. The authenticated hook boundary in http.mjs
+    // refuses to DISPATCH such payloads; this guard is the same rule for the
+    // telemetry-only paths that call applyEvent directly. Fail open: the hook
+    // response is unaffected, the board simply never sees the event.
+    const sid = typeof ev?.session_id === 'string' && ev.session_id ? ev.session_id : null;
+    if (!sid) return { card: null, conflict: null };
     let c = card(sid, ev.cwd);
 <<<<<<< /tmp/mf-ours
     // Heuristic tombstones are reversible: a late hook proves the process was
@@ -392,6 +400,11 @@ export function createEvents(ctx) {
   }
 
   // ------------------------------------------------------ hook endpoints
+  // The HTTP hook boundary (http.mjs) refuses to dispatch a payload whose
+  // session_id is not a non-empty string — these handlers never see one, and
+  // applyEvent guards the telemetry-only callers the same way. No sid
+  // fallback here: a missing id must no-op, never mint the shared phantom
+  // 'unknown' card the old `|| 'unknown'` collapse created.
   function hookSessionStart(ev) {
     // 0.7.1 /clear succession, intercepted HERE because applyEvent → card()
     // births a card on first touch: by the time applyEvent runs, an unrecognised
@@ -401,7 +414,7 @@ export function createEvents(ctx) {
     // arriving with source='clear' (or 'compact', handled defensively — if that
     // one keeps its id, this branch simply never fires), look for the session in
     // this cwd that just cleared, and continue IT instead of starting a stranger.
-    const sid = ev.session_id || 'unknown';
+    const sid = ev.session_id || '';
     if (ev.source === 'clear' || ev.source === 'compact') {
       const existing = q.getSession.get(sid);
       // Usually the heir is brand-new. But the agents-cli poller can beat its
@@ -478,7 +491,7 @@ export function createEvents(ctx) {
   }
 
   function hookUserPromptSubmit(ev) {
-    const sid = ev.session_id || 'unknown';
+    const sid = ev.session_id || '';
     applyEvent({ ...ev, hook_event_name: 'UserPromptSubmit' });
     q.setBlocked.run(0, sid); // new turn started — clear the one-block-per-turn flag
     // F3e auto-resolution: activity settles this session's pending
@@ -521,10 +534,10 @@ export function createEvents(ctx) {
     // (tool_name, tool_input). A hold for a DIFFERENT tool call, and every
     // freeform row, is left untouched; the turn-boundary UserPromptSubmit path
     // (hookUserPromptSubmit above) stays session-wide.
-    questions.expireOnActivity(ev.session_id || 'unknown', { toolName: ev.tool_name, toolInput: ev.tool_input });
+    questions.expireOnActivity(ev.session_id || '', { toolName: ev.tool_name, toolInput: ev.tool_input });
     // UX 2.2 activity gate, same reasoning as the turn-boundary path above:
     // a completed tool call settles any earlier-retired plan questions too.
-    settleTerminalPlans(ev.session_id || 'unknown');
+    settleTerminalPlans(ev.session_id || '');
     if (!conflict) return {};
     return {
       hookSpecificOutput: {
@@ -539,7 +552,7 @@ export function createEvents(ctx) {
   // clears on the next UserPromptSubmit or the next Stop that passes with no
   // mail. NEVER reads stop_hook_active. Stop is never a tombstone.
   function hookStop(ev) {
-    const sid = ev.session_id || 'unknown';
+    const sid = ev.session_id || '';
     const c = card(sid);
     if (!c.blocked_this_turn) {
       const box = drainMail(sid);
@@ -575,7 +588,7 @@ export function createEvents(ctx) {
   // (docs §6 say 2.1.206 does NOT — hook-payloads.jsonl capture pins the
   // truth), else the transcript tail at payload.transcript_path.
   function detectFreeform(ev) {
-    const sid = ev.session_id || 'unknown';
+    const sid = ev.session_id || '';
     try {
       const fromPayload = typeof ev.last_assistant_message === 'string' && ev.last_assistant_message.trim()
         ? ev.last_assistant_message : null;
@@ -615,7 +628,7 @@ export function createEvents(ctx) {
       : eventName === 'AskUserQuestion' ? 'choice'
       : 'permission';
     applyEvent({ ...ev, hook_event_name: eventName });
-    const sid = ev.session_id || 'unknown';
+    const sid = ev.session_id || '';
     const isPlan = eventName === 'PermissionRequest' && ev?.tool_name === 'ExitPlanMode';
     if (!isPlan) {
       const row = questions.create(kind, sid, ev);
@@ -659,6 +672,7 @@ export function createEvents(ctx) {
   // SessionEnd: THE tombstone — pending hold-kind questions die with it;
   // freeform questions outlive the session (answer deliverable on --resume).
   function hookSessionEnd(ev) {
+<<<<<<< /tmp/mf-ours
     const sid = ev.session_id || 'unknown';
     const { staleRunEnd } = applyEvent({ ...ev, hook_event_name: 'SessionEnd' });
     // BUG-025: the end came from a previous process of this session id (a
@@ -668,6 +682,10 @@ export function createEvents(ctx) {
     // memo, arming an auto-adopt and waking its watchers all belong to the
     // dead process, not the live one.
     if (staleRunEnd) return {};
+=======
+    const sid = ev.session_id || '';
+    applyEvent({ ...ev, hook_event_name: 'SessionEnd' });
+>>>>>>> /tmp/mf-theirs
     // BUG 1: a /clear (reason='clear') is NOT a session end — see the guarded
     // SessionEnd case in applyEvent above, which keeps the card live. Mirror
     // that here: do NOT mark the pane 'pane-dead' and do NOT drop the model

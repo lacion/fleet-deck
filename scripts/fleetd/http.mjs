@@ -532,6 +532,10 @@ export function createHttp(core, {
   // PermissionRequest / Elicitation / AskUserQuestion are handled OUT of this
   // table (Phase 3/4 hold-open relay — the response is parked, see the hook
   // branch below).
+  // Payloads WITHOUT a session_id still ingest best-effort telemetry (an
+  // unknown-name hook, telemetry-only Notification/FileChanged, and the
+  // AskUserQuestion→PermissionRequest pairing all stay visible), but they are
+  // never DISPATCHED to a hook handler — the dispatch gate below refuses them.
   const hookHandlers = {
     // 0.16.0: the hook that may have just performed the version takeover gets
     // the upgrade lines appended — the human who started THAT session hears
@@ -922,6 +926,16 @@ export function createHttp(core, {
               if (!handler) {
                 // unknown hook event: ingest telemetry anyway, respond no-op
                 core.applyEvent({ hook_event_name: name, ...ev });
+                return json(res, 200, {});
+              }
+              // A hook payload without a usable session_id must never reach
+              // the state machine: the events.mjs sid fallback would key the
+              // card on the literal string 'unknown', collapsing EVERY
+              // malformed payload into one shared phantom card that each
+              // subsequent ID-less event then mutates. Fail open like every
+              // hook path — 200 {} with no dispatch — so a broken payload
+              // no-ops instead of corrupting the board.
+              if (typeof ev?.session_id !== 'string' || !ev.session_id) {
                 return json(res, 200, {});
               }
               return json(res, 200, handler(ev) ?? {});
