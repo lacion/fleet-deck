@@ -199,6 +199,26 @@ while (Date.now() < deadline) {
   // the same way: exit 2, raw text on stderr, no local reframing.
   if ((out?.status === 'mail' || out?.status === 'answer') && typeof out.text === 'string') {
     cleanupPidFile();
+    // BUG-034: the claim was a LEASE — acknowledge it now that the body is in
+    // hand, BEFORE exiting. Without this ack the lease lapses and the mail is
+    // re-delivered later (at-least-once); with it the row is final-delivered.
+    // Best-effort with a tight timeout: a failed ack costs a duplicate, never
+    // a loss, and must never keep the rewake from firing. Old servers (no
+    // /mail/ack route, or an 'answer'-shaped reply with no mail_id) 404/quietly
+    // no-op — the claim semantics there were already final, nothing changes.
+    if (out.status === 'mail' && Number.isSafeInteger(out.mail_id)) {
+      try {
+        await fetch(`${BASE}/mail/ack`, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            ...(TOKEN ? { authorization: `Bearer ${TOKEN}` } : {}),
+          },
+          body: JSON.stringify({ mail_id: out.mail_id }),
+          signal: AbortSignal.timeout(2_000),
+        });
+      } catch { /* ack lost → duplicate re-delivery, never a loss */ }
+    }
     process.stderr.write(out.text); // the ONLY thing ever written anywhere
     process.exit(2);                // rewake: CLI injects stderr behind rewakeMessage
   }

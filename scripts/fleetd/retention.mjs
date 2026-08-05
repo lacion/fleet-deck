@@ -171,6 +171,11 @@ export function createRetention(ctx) {
     if (q.pruneCommands.run(ledgerCutoff).changes) changed = true;
     if (q.pruneConflicts.run(ledgerCutoff).changes) changed = true;
     if (q.pruneSettledMail.run(ledgerCutoff).changes) changed = true;
+    // BUG-034: an in-flight mail claim (claimed_at lease) whose deadline
+    // passed never got its acknowledgement — the consumer disconnected or the
+    // daemon restarted mid-delivery. Hand the row back to the claimable pool
+    // so the next watcher / turn boundary / pane delivery re-delivers it.
+    if (q.expireStalledClaims.run(now).changes) changed = true;
     if (changed) onMutate();
     return { changed };
   }

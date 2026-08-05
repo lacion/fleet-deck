@@ -551,7 +551,10 @@ export function createEvents(ctx) {
     }
     // Stop passes.
     applyEvent({ ...ev, hook_event_name: 'Stop' });
-    const stillPending = q.pendingMail.all(sid).length > 0;
+    // BUG-034: pendingMail's second arg is the lease-deadline cutoff — a row
+    // out on an unacked lease does NOT clear the one-block flag here; it will
+    // block a later Stop once the lease lapses.
+    const stillPending = q.pendingMail.all(sid, Date.now()).length > 0;
     if (!stillPending) q.setBlocked.run(0, sid); // cleared on a Stop that passes with no mail
     detectFreeform(ev); // F3d — only on a PASSING Stop (a block continues the turn)
     return {};

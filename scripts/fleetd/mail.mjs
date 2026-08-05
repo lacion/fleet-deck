@@ -98,8 +98,25 @@ const FROM_UNSAFE_RE = /[\r\n\x00-\x1f\x7f-\x9f\p{Cf}]/u;
 export function createMail(ctx) {
   const {
     db, q, tick, logEvent, onMutate, questions, tmuxAdapter,
-    findScopedWindow, scopedPaneTarget, PANE_MAIL_GRACE_MS,
+    findScopedWindow, scopedPaneTarget, PANE_MAIL_GRACE_MS, MAIL_CLAIM_LEASE_MS,
   } = ctx;
+
+  // BUG-034: a claim is now an EXPIRING IN-FLIGHT LEASE, not a delivery. The
+  // three loss windows the audit pinned are all the same shape — the text left
+  // the mailbox (delivered_at committed) BEFORE the consumer provably had it,
+  // so a disconnect/restart dropped it with no retry path:
+  //   - /api/watch claimed then wrote the response — a socket that closed
+  //     mid-response lost the mail (http.mjs documented the window).
+  //   - claimAllMail committed delivered_at for a whole box before the tmux
+  //     paste — a daemon exit in between lost all of it.
+  //   - the board's GET /mail drain finalized before the browser held the body.
+  // The lease (mail.claimed_at = deadline, delivered_at still NULL) takes the
+  // row out of every other claim path while it is in flight; delivery is
+  // finalized only by explicit ack (the watcher's POST /mail/ack, the board's
+  // ack mail_ids, a confirmed tmux Enter) or by the hook drains, whose reply
+  // IS the side effect. retentionSweep hands back any lease whose deadline
+  // passed, so a dead consumer or a daemon restart re-delivers — no mail can
+  // be permanently claimed without acknowledgement ever again.
 
   // ------------------------------------------------------------------- mail
   // BUG 4: returns {truncated, original_length} so callers that surface a
@@ -124,11 +141,56 @@ export function createMail(ctx) {
     return { truncated: raw.length > MAIL_MAX_LEN, original_length: raw.length };
   }
 
-  function drainMail(sid) {
-    const box = q.pendingMail.all(sid);
+  // BUG-034: drainMail SPLIT into claim/finalize phases.
+  //   - Hook paths (UserPromptSubmit additionalContext, Stop-block reason)
+  //     keep finalizing at claim time: the text leaves the mailbox only as
+  //     part of the hook reply that hands it to the session — that reply IS
+  //     the acknowledgement, so finalize-at-claim loses nothing.
+  //   - The board's GET /mail uses { lease: true } and must hand back
+  //     ack_mail_ids once it holds the body; an unacked poll re-delivers when
+  //     the lease lapses instead of losing the mail to a mid-response close.
+  // `id` now rides every drained item so ack surfaces can name the rows.
+  function drainMail(sid, { lease = false } = {}) {
+<<<<<<< /tmp/mf-ours
     const now = Date.now();
-    for (const m of box) q.markDelivered.run(now, m.id);
-    return box.map(m => ({ from: m.from_id, text: m.text, at: m.at }));
+    const box = q.pendingMail.all(sid, now);
+    if (lease) {
+      const deadline = now + MAIL_CLAIM_LEASE_MS;
+      for (const m of box) q.claimMail.run(deadline, m.id);
+    } else {
+      for (const m of box) q.markDelivered.run(now, m.id);
+    }
+    return box.map(m => ({ id: m.id, from: m.from_id, text: m.text, at: m.at }));
+  }
+
+  // Explicit acknowledgement for leased mail (watch claim, board /mail GET).
+  // The statements guard on delivered_at IS NULL, so a late or double ack
+  // settles silently instead of touching a row that already moved on.
+  function ackMail(ids) {
+    if (!Array.isArray(ids)) return { acked: 0 };
+    const now = Date.now();
+=======
+    const now = Date.now();
+    const box = q.pendingMail.all(sid, now);
+    if (lease) {
+      const deadline = now + MAIL_CLAIM_LEASE_MS;
+      for (const m of box) q.claimMail.run(deadline, m.id);
+    } else {
+      for (const m of box) q.markDelivered.run(now, m.id);
+    }
+    return box.map(m => ({ id: m.id, from: m.from_id, text: m.text, at: m.at }));
+  }
+
+  // Explicit acknowledgement for leased mail (watch claim, board /mail GET).
+  // The statements guard on delivered_at IS NULL, so a late or double ack
+  // settles silently instead of touching a row that already moved on.
+  function ackMail(ids) {
+    if (!Array.isArray(ids)) return { acked: 0 };
+    const now = Date.now();
+>>>>>>> /tmp/mf-theirs
+    let acked = 0;
+    for (const id of ids) if (Number.isSafeInteger(id)) acked += Number(q.ackMail.run(now, id).changes);
+    return { acked };
   }
 
   // resolve a /mail "to" target to session ids
@@ -214,12 +276,17 @@ export function createMail(ctx) {
     return !!pane && !pane.dead && pane.cmd === 'claude';
   }
 
+  // BUG-034: claimAllMail now LEASES — it commits claimed_at (the lease
+  // deadline), NOT delivered_at. The owned-pane path below finalizes delivery
+  // only after Enter is confirmed, and releases the lease on any failure —
+  // including the daemon dying between commit and paste, where the passed
+  // deadline re-opens the rows for the next delivery path.
   function claimAllMail(sid) {
     db.exec('BEGIN IMMEDIATE');
     try {
-      const box = q.pendingMail.all(sid);
-      const now = Date.now();
-      for (const m of box) q.markDelivered.run(now, m.id);
+      const box = q.pendingMail.all(sid, Date.now());
+      const deadline = Date.now() + MAIL_CLAIM_LEASE_MS;
+      for (const m of box) q.claimMail.run(deadline, m.id);
       db.exec('COMMIT');
       return box;
     } catch (err) {
@@ -254,7 +321,7 @@ export function createMail(ctx) {
     const text = box.map(m => `[FLEETDECK MAIL from ${m.from_id}] ${m.text}`).join('\n');
     const pasted = await tmuxAdapter.pasteText(target, text);
     if (!pasted) {                       // paste failed → redeliver at a later turn
-      for (const m of box) q.unmarkDelivered.run(m.id);
+      for (const m of box) q.releaseClaim.run(m.id);
       onMutate();
       return false;
     }
@@ -264,7 +331,12 @@ export function createMail(ctx) {
     // bounded) text is already in the pane, but Enter would fire it into a
     // permission/question TUI. Leave it un-entered — recoverable — and keep it
     // marked delivered so it is never re-pasted.
-    if (!ownedPaneRow(sid)) { onMutate(); return true; }
+    if (!ownedPaneRow(sid)) {
+      const now = Date.now();
+      for (const m of box) q.ackMail.run(now, m.id); // pasted = side effect landed
+      onMutate();
+      return true;
+    }
     const entered = await tmuxAdapter.sendEnter(target);
     // BUG-033: once pasteText succeeded the text is already IN the pane, so a
     // failed/uncertain Enter must NOT unmark the rows — requeueing them would
@@ -273,10 +345,20 @@ export function createMail(ctx) {
     // operator can recover the un-entered text sitting in the composer. The
     // pre-paste unmark above remains the only requeue path.
     if (!entered) {
+<<<<<<< /tmp/mf-ours
       logEvent(sid, 'MailPaneEnterFailed', null,
         `pasted ${box.length} mail into ${pair.sp.tmux_window} but Enter failed — left un-entered, NOT requeued (text already in pane)`);
+=======
+      for (const m of box) q.releaseClaim.run(m.id);
+>>>>>>> /tmp/mf-theirs
       onMutate();
       return false;
+    }
+    // Enter confirmed: the text is submitted to the agent — THAT is the
+    // acknowledgement for the pane channel. Finalize delivery only now.
+    {
+      const now = Date.now();
+      for (const m of box) q.ackMail.run(now, m.id);
     }
     tick(`✉ delivered ${box.length} mail to ${pair.c.callsign} (typed into pane)`);
     logEvent(sid, 'MailPaneDelivery', null, `typed ${box.length} mail into ${pair.sp.tmux_window}`);
@@ -286,18 +368,23 @@ export function createMail(ctx) {
 
   // ATOMIC claim of the oldest undelivered mail for a session — ANY sender
   // (/api/watch v2; v1 claimed board answers only). mail.delivered_at is THE
-  // single source of truth for delivery: this claim, the UserPromptSubmit
-  // drain, the Stop-block drain and GET /mail all run synchronously on the
-  // daemon's only thread and all filter on delivered_at IS NULL — whichever
-  // runs first wins, and expired rows are excluded everywhere. No mail can
-  // ever be delivered twice.
+  // single source of truth for delivery, claimed_at (BUG-034) the in-flight
+  // lease: this claim, the UserPromptSubmit drain, the Stop-block drain and
+  // GET /mail all run synchronously on the daemon's only thread and all
+  // filter on delivered_at IS NULL plus a live-lease check — whichever runs
+  // first wins, and expired rows are excluded everywhere. No mail can ever
+  // be delivered twice, and (new) no mail can be lost to a claim whose
+  // consumer never acknowledged it: the claim below only LEASES the row; the
+  // watcher acks with POST /mail/ack once it holds the body, and a claim
+  // whose deadline passes becomes claimable again.
   // `text` is returned RAW, its own frame included ([FLEETDECK ANSWER] …,
   // [FLEETDECK ASSIGNMENT] …, or plain board/session mail) — v2's
   // rewakeMessage is neutral, so each mail must carry its own frame.
   function claimMail(sid) {
-    const m = q.nextMail.get(sid);
+    const now = Date.now();
+    const m = q.nextMail.get(sid, now);
     if (!m) return null;
-    q.markDelivered.run(Date.now(), m.id);
+    q.claimMail.run(now + MAIL_CLAIM_LEASE_MS, m.id);
     onMutate();
     return { mail_id: m.id, at: m.at, from: m.from_id, text: m.text };
   }
@@ -384,7 +471,7 @@ export function createMail(ctx) {
   }
 
   return {
-    mail, drainMail, resolveTargets,
+    mail, drainMail, ackMail, resolveTargets,
     notifyWatchers, addWatchWaiter, hasWatchWaiter,
     ownedPaneRow, ownedPaneDeliverable, tryOwnedPaneDelivery,
     claimMail, watchInfo, postMail,

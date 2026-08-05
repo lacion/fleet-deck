@@ -97,7 +97,15 @@ CREATE TABLE IF NOT EXISTS mail (
   text         TEXT,
   at           INTEGER,
   delivered_at INTEGER,
-  expired_at   INTEGER
+  expired_at   INTEGER,
+  -- BUG-034: an in-flight delivery LEASE. Set (with delivered_at still NULL)
+  -- when a claim path hands the text to a consumer whose acknowledgement has
+  -- not yet landed (/api/watch response, owned-pane paste, board /mail GET);
+  -- finalized (delivered_at set) only on explicit ack or a completed side
+  -- effect. Stamped as the lease DEADLINE — a daemon that exits mid-flight
+  -- leaves rows whose deadline simply passes, so a restarted daemon claims
+  -- them again.
+  claimed_at   INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_mail_to ON mail(to_session, delivered_at);
 CREATE TABLE IF NOT EXISTS events (
@@ -291,6 +299,11 @@ function migrate(db) {
   const mailCols = db.prepare('PRAGMA table_info(mail)').all().map(r => r.name);
   if (!mailCols.includes('expired_at')) {
     db.exec('ALTER TABLE mail ADD COLUMN expired_at INTEGER');
+  }
+  // BUG-034 lease column. NULL backfill is truthful for every pre-existing
+  // row: nothing was ever claimed under a lease before this shipped.
+  if (!mailCols.includes('claimed_at')) {
+    db.exec('ALTER TABLE mail ADD COLUMN claimed_at INTEGER');
   }
   const spawnCols = db.prepare('PRAGMA table_info(spawns)').all().map(r => r.name);
   if (spawnCols.length && !spawnCols.includes('skip_permissions')) {

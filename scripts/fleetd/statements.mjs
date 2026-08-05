@@ -85,10 +85,20 @@ export function createStatements(db) {
     // newest — the exact files the human is watching.)
     filesBySession: db.prepare('SELECT session_id, abs_path, MAX(at) AS recent FROM file_touches WHERE at > ? GROUP BY session_id, abs_path ORDER BY recent DESC'),
     insertMail: db.prepare('INSERT INTO mail (to_session, from_id, text, at, delivered_at) VALUES (?, ?, ?, ?, NULL)'),
-    pendingMail: db.prepare('SELECT * FROM mail WHERE to_session = ? AND delivered_at IS NULL AND expired_at IS NULL ORDER BY at, id'),
+    // BUG-034: "claimable" = never delivered, never expired, and not under a
+    // live in-flight lease. A row whose lease deadline passed (consumer or
+    // daemon died mid-delivery) is claimable again — that is the whole point
+    // of the lease: nothing stays claimed without an acknowledgement forever.
+    pendingMail: db.prepare(`SELECT * FROM mail
+      WHERE to_session = ? AND delivered_at IS NULL AND expired_at IS NULL
+        AND (claimed_at IS NULL OR claimed_at <= ?)
+      ORDER BY at, id`),
     // /api/watch v2 claim: oldest undelivered mail from ANY sender (v1
-    // claimed fleetdeck-answer rows only).
-    nextMail: db.prepare('SELECT * FROM mail WHERE to_session = ? AND delivered_at IS NULL AND expired_at IS NULL ORDER BY at, id LIMIT 1'),
+    // claimed fleetdeck-answer rows only). Same BUG-034 lease filter.
+    nextMail: db.prepare(`SELECT * FROM mail
+      WHERE to_session = ? AND delivered_at IS NULL AND expired_at IS NULL
+        AND (claimed_at IS NULL OR claimed_at <= ?)
+      ORDER BY at, id LIMIT 1`),
     // v1.1 `assign auto` routing (POST /command contract): deterministic,
     // zero model calls. Candidates = non-ended sessions whose col is not
     // offline/needsyou (stuck sessions get no new work), scoped to a repo
@@ -112,6 +122,17 @@ export function createStatements(db) {
       FROM mail WHERE delivered_at IS NULL AND expired_at IS NULL GROUP BY to_session`),
     markDelivered: db.prepare('UPDATE mail SET delivered_at = ? WHERE id = ?'),
     unmarkDelivered: db.prepare('UPDATE mail SET delivered_at = NULL WHERE id = ?'),
+    // BUG-034 in-flight lease. claimMail leases (claims) without delivering;
+    // ackMail finalizes ONLY a row still under lease (the WHERE guard makes a
+    // late or double ack a no-op instead of resurrecting a row that already
+    // moved on); releaseClaim/expireStalledClaims hand the row back.
+    claimMail: db.prepare('UPDATE mail SET claimed_at = ? WHERE id = ? AND delivered_at IS NULL AND claimed_at IS NULL'),
+    ackMail: db.prepare('UPDATE mail SET delivered_at = ?, claimed_at = NULL WHERE id = ? AND delivered_at IS NULL AND claimed_at IS NOT NULL'),
+    releaseClaim: db.prepare('UPDATE mail SET claimed_at = NULL WHERE id = ? AND delivered_at IS NULL'),
+    // Retention is the sweeper that outlives consumer processes: any claim
+    // whose deadline passed never got its ack, so the mail goes back to the
+    // claimable pool for the next watcher / turn boundary / pane delivery.
+    expireStalledClaims: db.prepare('UPDATE mail SET claimed_at = NULL WHERE delivered_at IS NULL AND claimed_at IS NOT NULL AND claimed_at <= ?'),
     insertEvent: db.prepare('INSERT INTO events (session_id, hook_event, tool_name, note, at) VALUES (?, ?, ?, ?, ?)'),
     sparkline: db.prepare('SELECT session_id, (at / 60000) AS minute, COUNT(*) AS n FROM events WHERE at > ? GROUP BY session_id, minute'),
     insertTicker: db.prepare('INSERT INTO ticker (at, msg) VALUES (?, ?)'),

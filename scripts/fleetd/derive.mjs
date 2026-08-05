@@ -82,6 +82,12 @@ export function createCore(db, {
   const SPAWN_REGISTER_MS = envInt('FLEETDECK_SPAWN_REGISTER_MS', 90_000, { min: 1 });
   const SETUP_REGISTER_MS = envInt('FLEETDECK_SETUP_REGISTER_MS', 600_000, { min: 1 });
   const PANE_MAIL_GRACE_MS = envInt('FLEETDECK_PANE_MAIL_GRACE_MS', 1_500, { min: 0 });
+  // BUG-034: how long an in-flight mail claim (watch response, owned-pane
+  // paste, board /mail GET) stays exclusively leased waiting for its ack
+  // before the retention sweep hands it back for redelivery. 30 s covers a
+  // slow hook/HTTP round-trip with headroom; a daemon that dies mid-flight
+  // simply lets the deadline pass and the next daemon re-claims.
+  const MAIL_CLAIM_LEASE_MS = envInt('FLEETDECK_MAIL_CLAIM_LEASE_MS', 30_000, { min: 1 });
   const PRESUME_DEAD_MS = envInt('FLEETDECK_PRESUME_DEAD_MS', 10_800_000, { min: 1 });
   const RETAIN_OFFLINE_MS = envInt('FLEETDECK_RETAIN_OFFLINE_MS', 86_400_000, { min: 1 });
   const RC_HARVEST_MS = envInt('FLEETDECK_RC_HARVEST_MS', 2_500, { min: 0 });
@@ -706,6 +712,7 @@ export function createCore(db, {
     // (q didn't exist at parameter-default time); ctx carries that same value.
     db, port, home, holdMs: holdMs ?? resolveHoldMs(process.env, () => q.getSetting.get('hold_ms')?.value ?? null), t0, version,
     STALE_MS, NUDGE_MS, SPAWN_REGISTER_MS, SETUP_REGISTER_MS, PANE_MAIL_GRACE_MS,
+    MAIL_CLAIM_LEASE_MS,
     PRESUME_DEAD_MS, RETAIN_OFFLINE_MS, RC_HARVEST_MS, RETAIN_LEDGER_MS,
     ADOPT_ARM_MS, ADOPT_DELAY_MS, // 0.7.0 Move-to-tmux (spawns arms, events fires)
     SNAPSHOT_FILES_PER_SESSION,
@@ -722,7 +729,7 @@ export function createCore(db, {
   // Mail + /api/watch waiter registry + owned-pane delivery → mail.mjs.
   Object.assign(ctx, createMail(ctx));
   const {
-    mail, drainMail, resolveTargets, notifyWatchers, addWatchWaiter,
+    mail, drainMail, ackMail, resolveTargets, notifyWatchers, addWatchWaiter,
     hasWatchWaiter, ownedPaneRow, ownedPaneDeliverable, tryOwnedPaneDelivery,
     claimMail, watchInfo, postMail,
   } = ctx;
@@ -830,6 +837,7 @@ export function createCore(db, {
     claimMail,       // "
     watchInfo,       // "
     drainMail,
+    ackMail,           // POST /mail/ack — BUG-034 lease finalization
     postMail,
     tryOwnedPaneDelivery,
     command,

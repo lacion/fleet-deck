@@ -570,10 +570,15 @@ export function createHttp(core, {
   //   {status:'mail', mail_id, at, from, text}
   //     The OLDEST undelivered mail for <sid> — from ANY sender — existed
   //     (or arrived during the hold) and was ATOMICALLY claimed by this
-  //     response: the mail row's delivered_at is set in the same synchronous
-  //     step that resolves the poll, so the turn-boundary path
-  //     (UserPromptSubmit/Stop-block/GET /mail drains, which all filter
-  //     delivered_at IS NULL) can never re-deliver it. `text` is the RAW
+  //     response. BUG-034: the claim is an EXPIRING IN-FLIGHT LEASE, not a
+  //     delivery — claimed_at is set (deadline) while delivered_at stays
+  //     NULL, so the turn-boundary path (UserPromptSubmit/Stop-block/GET
+  //     /mail drains, which all filter delivered_at IS NULL plus a
+  //     live-lease check) can never re-deliver it WHILE the lease lives, and
+  //     the watcher finalizes delivery with POST /mail/ack once it holds the
+  //     body. A claim whose response never reached the watcher simply lets
+  //     the lease lapse — the retention sweep releases it and the mail is
+  //     re-delivered instead of lost. `text` is the RAW
   //     mail text including its own frame ([FLEETDECK ANSWER] …,
   //     [FLEETDECK ASSIGNMENT] …, or plain board/session mail) — no prefix
   //     stripping; the Stop hook's rewakeMessage is neutral in v2 and each
@@ -598,9 +603,9 @@ export function createHttp(core, {
   //
   //   Races: mailbox drained first → delivered_at already set → the poll's
   //   claim finds nothing and the hold simply lapses to idle. Watcher socket
-  //   gone → 'close' unregisters the waiter, nothing claimed. Accepted
-  //   window: a claim whose response the watcher never reads loses
-  //   auto-delivery (the mail row is marked delivered either way).
+  //   gone → 'close' unregisters the waiter, nothing claimed. A claim whose
+  //   response the watcher never reads is no longer a loss window (BUG-034):
+  //   without the ack the lease lapses and the mail comes back.
   function watchHook(req, res, url) {
     const sid = url.searchParams.get('session') || '';
     const holdRaw = Number(url.searchParams.get('hold_ms'));
@@ -767,9 +772,19 @@ export function createHttp(core, {
         }
         if (url.pathname === '/mail') {
           const sid = url.searchParams.get('session') || '';
-          const box = core.drainMail(sid);
+          // BUG-034: the poll ACKNOWLEDGES the mail it already holds. Rows it
+          // names are finalized (their leases were live when it drained them);
+          // acking anything else is a guarded no-op (a final response never
+          // carries a stale backlog — every poll acks what IT drained).
+          const ackIds = url.searchParams.get('ack') ?? '';
+          if (ackIds) core.ackMail(ackIds.split(',').map(Number));
+          // The new drain is LEASED: the board must hand the ids back as
+          // ack_mail_ids on its next poll. A poll whose response never
+          // reached the board leaves the rows leased, not delivered — the
+          // retention sweep releases the lease and the mail is re-delivered.
+          const box = core.drainMail(sid, { lease: true });
           if (box.length) broadcast();
-          return json(res, 200, { mail: box });
+          return json(res, 200, { mail: box, ack_mail_ids: box.map(m => m.id) });
         }
         if (url.pathname === '/api/watch') return watchHook(req, res, url); // F3d-2 long-poll
         if (url.pathname === '/' || url.pathname.startsWith('/assets/')) {
@@ -864,6 +879,14 @@ export function createHttp(core, {
                 return json(res, 200, {});
               }
               return json(res, 200, handler(ev) ?? {});
+            }
+            // BUG-034: explicit acknowledgement for a leased /api/watch claim.
+            // The watcher POSTs {mail_id} once it HOLDS the claimed body (a
+            // claim whose response never arrived never acks, so the lease
+            // lapses and the mail is re-delivered instead of lost).
+            if (url.pathname === '/mail/ack') {
+              const out = core.ackMail([ev.mail_id]);
+              return json(res, 200, { ok: true, ...out });
             }
             if (url.pathname === '/mail') {
               core.postMail(ev)
