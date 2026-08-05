@@ -22,6 +22,7 @@ import {
   TERMWIN_EDGE,
   TERMWIN_MIN,
   clampWinRect,
+  copyText,
   imageFromClipboard,
   isTermCopyChord,
   isTermPasteChord,
@@ -628,6 +629,43 @@ test('a copy that cannot be proven leaves evidence behind', () => {
   // someone who just pressed Ctrl+C.
   assert.match(src, /perm\?\.state !== 'granted'/,
     'the clipboard read-back must be skipped unless the permission is ALREADY granted');
+});
+
+test('a granted read-back that PROVES a mismatch must veto the writeText fallback', async () => {
+  // BUG-069: writeText() resolving means the write was ACCEPTED, not that the
+  // clipboard changed — Chrome can drop it afterwards. When clipboard-read is
+  // already granted, the read-back settles the question, and a proven mismatch
+  // must report failure so TermPane keeps the selection instead of flashing
+  // "✓ copied" over a stale clipboard. Drive copyText for real with a stubbed
+  // DOM/navigator: no execCommand, a writeText that resolves, a readText that
+  // returns something else.
+  // Node ≥21 defines a global `navigator` getter — plain assignment throws, so
+  // stub with defineProperty (configurable) and restore the originals after.
+  const real = {
+    navigator: Object.getOwnPropertyDescriptor(globalThis, 'navigator'),
+    document: Object.getOwnPropertyDescriptor(globalThis, 'document'),
+    window: Object.getOwnPropertyDescriptor(globalThis, 'window'),
+  };
+  const stub = (name, value) => Object.defineProperty(globalThis, name, { value, configurable: true, writable: true });
+  stub('navigator', {
+    permissions: { query: async () => ({ state: 'granted' }) },
+    clipboard: {
+      writeText: async () => {}, // accepted — but never lands
+      readText: async () => 'something pasted from another app an hour earlier',
+    },
+  });
+  stub('document', undefined); // no execCommand — the async fallback runs
+  stub('window', undefined);
+  try {
+    assert.equal(await copyText('the text that was meant to be copied'), false,
+      'a read-back mismatch must NOT be reported as copied');
+    assert.match(globalThis.__fdCopy.verified, /^NO —/,
+      'the trace must record the proven mismatch');
+  } finally {
+    for (const [k, d] of Object.entries(real)) {
+      if (d) Object.defineProperty(globalThis, k, d); else delete globalThis[k];
+    }
+  }
 });
 
 // --- tmux passthrough: the agent's own clipboard write ----------------------

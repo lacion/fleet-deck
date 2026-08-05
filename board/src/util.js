@@ -39,8 +39,12 @@ export async function copyText(text) {
     try {
       await navigator.clipboard.writeText(text);
       trace.writeText = 'resolved';
-      await verifyClipboard(trace, text);
-      return finishCopyTrace(trace, true);
+      // A resolved writeText is only an ACCEPTED write — Chrome can still drop
+      // it. When the read-back is permitted and PROVES the clipboard holds
+      // something else, that evidence beats the resolution: report failure so
+      // the caller keeps the selection instead of flashing a lie.
+      const verdict = await verifyClipboard(trace, text);
+      return finishCopyTrace(trace, verdict !== 'no');
     } catch (err) {
       trace.writeText = `rejected: ${err?.name || 'Error'} — ${err?.message || ''}`;
     }
@@ -55,16 +59,25 @@ export async function copyText(text) {
 // the permission is already granted — a diagnostic may never put a permission
 // dialog in front of someone who just pressed Ctrl+C. When it does run it
 // settles the question the trace otherwise can only infer.
+//
+// Tri-state verdict: 'yes' (the clipboard provably holds our text), 'no' (it
+// provably does NOT — the caller must not claim success), or 'unknown' (the
+// read-back could not run — no permission, no readText, or it threw — and an
+// unprovable true still beats refusing to copy at all).
 async function verifyClipboard(trace, expected) {
   try {
     const perm = await navigator.permissions?.query({ name: 'clipboard-read' });
-    if (perm?.state !== 'granted') { trace.verified = `not checked (permission: ${perm?.state ?? 'unknown'})`; return; }
+    if (perm?.state !== 'granted') { trace.verified = `not checked (permission: ${perm?.state ?? 'unknown'})`; return 'unknown'; }
     const got = await navigator.clipboard.readText();
-    trace.verified = got === expected
-      ? 'YES — the clipboard holds this text'
-      : `NO — the clipboard holds something else (${got.length} chars)`;
+    if (got === expected) {
+      trace.verified = 'YES — the clipboard holds this text';
+      return 'yes';
+    }
+    trace.verified = `NO — the clipboard holds something else (${got.length} chars)`;
+    return 'no';
   } catch (err) {
     trace.verified = `read failed: ${err?.name || 'Error'}`;
+    return 'unknown';
   }
 }
 
