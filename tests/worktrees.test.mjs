@@ -8,7 +8,7 @@ import { openDb } from '../scripts/fleetd/db.mjs';
 import { createStatements } from '../scripts/fleetd/statements.mjs';
 import { createWorktrees } from '../scripts/fleetd/worktrees.mjs';
 import { startDaemon } from './helpers/daemon.mjs';
-import { makeRepoWithWorktree, makePlainDir } from './helpers/gitrepo.mjs';
+import { makeRepoWithWorktree, makePlainDir, makeRemoteRepo } from './helpers/gitrepo.mjs';
 import { getJson, postJson } from './helpers/http.mjs';
 
 function git(args, cwd) {
@@ -393,6 +393,93 @@ test('work already on the remote is SAFE even when the local base branch is stal
   assert.equal(item.unpushed, 0, 'commits that exist on a remote are NOT "nowhere else"');
   assert.equal(item.verdict, 'safe', 'a stale local base must not manufacture a has-work verdict');
   assert.equal(item.base, 'origin/main', 'the base measured against must be the remote one');
+});
+
+// THE stale-cache trap, pinned. A commit that was pushed AND fetched lives on
+// the local refs/remotes/* — but if the remote branch is force-reset elsewhere
+// and nobody fetches again, `rev-list HEAD --not --remotes` still certifies the
+// commit as safely copied, and a 'safe' removal deletes the last branch that
+// references it. The inspector must fetch+prune the remote before its verdict,
+// and must treat an unreachable remote as UNKNOWN, never as safe.
+test('a stale remote-tracking ref cannot certify a force-reset-away commit as safe', async (t) => {
+  const remote = makeRemoteRepo({ repoName: 'fleetdeck-vanish' });
+  t.after(() => remote.cleanup());
+  const repo = remote.clone();
+  const wt = path.join(remote.base, 'clone-1-wt');
+  execFileSync('git', ['-C', repo, 'worktree', 'add', '-b', 'fd/vanish', wt], { stdio: 'ignore' });
+
+  // the agent commits work in its worktree and pushes it…
+  writeFileSync(path.join(wt, 'work.txt'), 'the only copy\n');
+  execFileSync('git', ['-C', wt, 'add', '-A'], { stdio: 'ignore' });
+  execFileSync('git', ['-C', wt, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-m', 'agent work'], { stdio: 'ignore' });
+  execFileSync('git', ['-C', wt, 'push', 'origin', 'fd/vanish'], { stdio: 'ignore' });
+  // …and the clone fetches, caching the pushed commit on refs/remotes/*
+  execFileSync('git', ['-C', repo, 'fetch', 'origin'], { stdio: 'ignore' });
+
+  // elsewhere, the branch is force-reset away — but the local cache never
+  // hears about it. (Delete the ref DIRECTLY in the bare origin: a
+  // `push --delete` from this clone would also prune its own remote-tracking
+  // ref and destroy the stale-cache setup this test exists to create.)
+  execFileSync('git', ['-C', remote.origin, 'update-ref', '-d', 'refs/heads/fd/vanish'], { stdio: 'ignore' });
+  const stillCached = execFileSync('git', ['-C', wt, 'rev-list', '--count', 'HEAD', '--not', '--remotes'], {
+    encoding: 'utf8',
+  }).trim();
+  assert.equal(stillCached, '0', 'sanity: the stale cache alone would still certify the commit as safe');
+
+  const daemon = await startDaemon();
+  t.after(async () => { await daemon.stop(); });
+  const db = openDb(path.join(daemon.home, 'fleetd.db'));
+  t.after(() => db.close());
+  db.prepare(`INSERT INTO sessions (session_id, callsign, cwd, col, started_at, last_seen, ended_at, source)
+    VALUES ('s-vanish', 'vanish-1', ?, 'offline', 1, 1, 2, 'spawned')`).run(repo);
+  db.prepare(`INSERT INTO spawns (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, requested_at, status)
+    VALUES ('sp-vanish', 's-vanish', 'vanish-1', 'fleetdeck-1', 'fd1-vanish-1', ?, ?, 1, 'gone')`).run(repo, wt);
+
+  const res = await getJson(`${daemon.baseUrl}/api/worktrees`);
+  const item = res.json.worktrees.find(w => w.path === wt);
+  assert.ok(item, 'the worktree is listed');
+  assert.equal(item.unpushed, 1, 'after a fresh fetch+prune the vanished remote copy no longer counts');
+  assert.equal(item.verdict, 'has-work', 'the last branch holding the commit must never read as safe');
+
+  // And removal must refuse without force — the refresh just proved the only
+  // remaining copy is this worktree's own branch.
+  const rm = await postJson(`${daemon.baseUrl}/api/worktrees/remove`, { path: wt });
+  assert.equal(rm.status, 409);
+  assert.equal(rm.json.verdict, 'has-work');
+  assert.equal(existsSync(path.join(wt, 'work.txt')), true, 'the only copy of the work survives');
+});
+
+// The flip side of the same contract: when the remote cannot be refreshed at
+// all, the inspector knows nothing about what still exists there — and
+// "nothing proven lost" must never be sold as "safe".
+test('an unreachable remote keeps the verdict at unknown instead of certifying safe', async (t) => {
+  const remote = makeRemoteRepo({ repoName: 'fleetdeck-offline' });
+  const repo = remote.clone();
+  const wt = path.join(remote.base, 'clone-1-wt');
+  execFileSync('git', ['-C', repo, 'worktree', 'add', '-b', 'fd/offline', wt], { stdio: 'ignore' });
+  t.after(() => remote.cleanup()); // removes the whole base, wt included
+  // the origin the cached refs describe is GONE — every refresh attempt fails
+  rmSync(remote.origin, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+
+  const daemon = await startDaemon();
+  t.after(async () => { await daemon.stop(); });
+  const db = openDb(path.join(daemon.home, 'fleetd.db'));
+  t.after(() => db.close());
+  db.prepare(`INSERT INTO sessions (session_id, callsign, cwd, col, started_at, last_seen, ended_at, source)
+    VALUES ('s-offline', 'off-1', ?, 'offline', 1, 1, 2, 'spawned')`).run(repo);
+  db.prepare(`INSERT INTO spawns (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, requested_at, status)
+    VALUES ('sp-offline', 's-offline', 'off-1', 'fleetdeck-1', 'fd1-off-1', ?, ?, 1, 'gone')`).run(repo, wt);
+
+  const res = await getJson(`${daemon.baseUrl}/api/worktrees`);
+  const item = res.json.worktrees.find(w => w.path === wt);
+  assert.ok(item, 'the worktree is listed');
+  assert.equal(item.verdict, 'unknown', 'an unrefreshable remote is ignorance, not safety');
+  assert.match(item.note ?? '', /could not refresh the remote/);
+
+  const rm = await postJson(`${daemon.baseUrl}/api/worktrees/remove`, { path: wt });
+  assert.equal(rm.status, 409, 'removal without force must refuse an unknown verdict');
+  assert.equal(rm.json.verdict, 'unknown');
+  assert.equal(existsSync(wt), true, 'nothing is destroyed on unproven knowledge');
 });
 
 // A worktree is a working directory: build tooling leaves read-only files in

@@ -71,6 +71,32 @@ export function createWorktrees(ctx) {
   // Falls back to the local branch only when no remote-tracking ref exists at
   // all (a repo with no remote); the caller flags that as base_is_local so the
   // board can say its knowledge is local-only.
+  //
+  // Remote-tracking refs are a CACHE of the remote's state, and a stale cache
+  // lies in the dangerous direction: a commit that was pushed, fetched, and
+  // then force-reset away on the server still exists on the local
+  // refs/remotes/*, so `rev-list HEAD --not --remotes` would certify it as
+  // safely copied while the alleged remote copy is gone. Before any verdict a
+  // human can destroy on, refresh that cache from the actual remote —
+  // prompting disabled so an unreachable or auth-gated remote fails fast
+  // instead of hanging the board — and prune the refs the remote no longer
+  // has. A refresh that cannot complete means the cache is of unknown vintage,
+  // and UNKNOWN is then the only honest verdict: never 'safe'.
+  async function refreshRemoteKnowledge(worktreePath) {
+    const remotes = await execFileP('git', ['-C', worktreePath, 'remote'], { timeout: 5_000 });
+    if (!remotes.ok) return { ok: false, err: remotes.err };
+    const names = remotes.out.split(/\r?\n/).map(name => name.trim()).filter(Boolean);
+    if (!names.length) return { ok: false, err: 'no remote is configured to refresh against' };
+    for (const name of names) {
+      const fetched = await execFileP('git', ['-C', worktreePath, 'fetch', '--prune', name], {
+        timeout: 30_000,
+        env: { GIT_TERMINAL_PROMPT: '0' },
+      });
+      if (!fetched.ok) return { ok: false, err: fetched.err };
+    }
+    return { ok: true };
+  }
+
   async function inspectWorktree(row) {
     let exists = false;
     try { exists = fs.existsSync(row.worktree_path); } catch { /* unknown path state stays gone */ }
@@ -113,6 +139,23 @@ export function createWorktrees(ctx) {
       item.last_commit = { sha, subject, at: Number(at) };
     }
 
+    // Refresh the remote knowledge BEFORE the verdict is computed, every time:
+    // without a fresh fetch+prune the reachability answers below are as stale
+    // as the last fetch, and a force-reset on the server turns a vanished
+    // remote copy into a cached 'safe' that destroys the last local branch
+    // holding the commits. An unreachable remote is not proof of danger — but
+    // it is proof of ignorance, so the verdict stays UNKNOWN (which still
+    // requires force to remove) rather than a 'safe' we cannot stand behind.
+    if (!base.local) {
+      const refreshed = await refreshRemoteKnowledge(row.worktree_path);
+      if (!refreshed.ok) {
+        item.note = 'could not refresh the remote before judging this worktree — '
+          + 'its remote knowledge may be stale, so nothing here can be certified as safe. '
+          + 'Check the remote and refresh again.';
+        return item;
+      }
+    }
+
     const [ahead, unpushed, merged] = await Promise.all([
       execFileP('git', ['-C', row.worktree_path, 'rev-list', '--count', `${base.ref}..HEAD`], { timeout: 5_000 }),
       // THE question, and the only one that decides whether deleting this
@@ -120,8 +163,8 @@ export function createWorktrees(ctx) {
       // "ahead of my upstream", not "ahead of my local main" — both of those
       // say yes to work that is already safely merged on the server. `--not
       // --remotes` asks git for commits that exist on no remote we know of.
-      // (Knowledge is as of the last fetch; the board says so, and `?fetch=1`
-      // refreshes it.)
+      // The refs were just fetched and pruned above, so "we know of" is as of
+      // THIS inspection, not the last time somebody happened to fetch.
       execFileP('git', ['-C', row.worktree_path, 'rev-list', '--count', 'HEAD', '--not', '--remotes'], { timeout: 5_000 }),
       execFileP('git', ['-C', row.worktree_path, 'merge-base', '--is-ancestor', 'HEAD', base.ref], { timeout: 5_000 }),
     ]);
