@@ -63,8 +63,14 @@ export function createStatements(db) {
     // Boot heal (reconcileClearForks): pre-0.7.1 rows have no cleared_at, so a
     // stranded pair is reconstructed from the event log instead. These two read
     // the 24h-retained events table.
+    // The heal's predecessor predicate is a session whose LAST word was a
+    // /clear. Tie-break on rowid, not just `at`: the hooks of two interleaved
+    // lineages (end A, end B, start B′, start A′) can share a millisecond, and
+    // then "last" by timestamp alone is a coin flip — exactly the ambiguity the
+    // heal is forbidden from resolving by chance. Insertion order is the order
+    // the events actually reached the daemon.
     lastEventOf: db.prepare(`SELECT hook_event, note, at FROM events
-      WHERE session_id = ? ORDER BY at DESC LIMIT 1`),
+      WHERE session_id = ? ORDER BY at DESC, rowid DESC LIMIT 1`),
     clearBornSessionsSince: db.prepare(`SELECT DISTINCT e.session_id, e.at FROM events e
       WHERE e.hook_event = 'SessionStart' AND e.note = 'session clear' AND e.at BETWEEN ? AND ?
       ORDER BY e.at ASC`),
