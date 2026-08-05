@@ -203,6 +203,7 @@ export function createHttp(core, {
   // than inventing a URL. Only ever handed to an ALREADY-AUTHORIZED caller —
 <<<<<<< /tmp/mf-ours
   // snapshot() is behind the same gate as everything else.
+<<<<<<< /tmp/mf-ours
   // `lan` may be a function, resolved per snapshot: fleetd uses that to drop
   // lan.mdns the moment the mDNS responder stands down, so the share panel
   // never keeps offering a URL that can no longer resolve.
@@ -217,6 +218,10 @@ export function createHttp(core, {
   // snapshot() is behind the same gate as everything else. refreshLan() replaces
   // the URL set when the host's interfaces change, so a roaming daemon stops
   // advertising an address it no longer answers on.
+=======
+  // `let`, not `const`: refreshLan() swaps this atomically when the LAN address
+  // set changes, so the share panel shows the address the host has NOW.
+>>>>>>> /tmp/mf-theirs
   let lanInfo = lan?.enabled
     ? { enabled: true, urls: lan.urls ?? [], mdns: lan.mdns ?? null }
     : { enabled: false, urls: [] };
@@ -420,6 +425,7 @@ export function createHttp(core, {
   const daemonPort = String(port);
   // Hostnames that count as "us": loopback (localhost, 127/8, ::1 — via
   // isLoopbackAddress), every address this host actually answers on, and the
+<<<<<<< /tmp/mf-ours
   // advertised mDNS .local name. Built once — a LAN address is not going to
   // change under the daemon's feet.
   //
@@ -450,6 +456,35 @@ export function createHttp(core, {
     return hosts;
   }
 >>>>>>> /tmp/mf-theirs
+=======
+  // advertised mDNS .local name. The address set is REFRESHED from the interface
+  // list on every checked request (cheaply, via os.getAddresses): Wi-Fi roaming,
+  // DHCP renewal and VPN changes DO move the LAN address under a long-lived
+  // daemon, and a snapshot taken at startup would otherwise reject the board's
+  // own new address as a DNS-rebinding attempt for the daemon's whole lifetime.
+  const lanHosts = new Set();
+  const osGetAddresses = typeof os.getAddresses === 'function'
+    ? () => os.getAddresses()
+    : () => Object.values(os.networkInterfaces()).flat();
+  // The advertised .local name is a STANDING member of the allowlist, not
+  // interface data: the per-request refresh clears and rebuilds the address set,
+  // so it must re-add this name every time or the very first checked request via
+  // the mDNS URL would evict it and 403 as a DNS-rebinding attempt.
+  let mdnsHost = null;
+  try {
+    if (lan?.mdns) mdnsHost = new URL(lan.mdns).hostname.toLowerCase();
+  } catch { /* malformed mDNS URL — skip it; the IP URLs still work */ }
+  function refreshLanHosts() {
+    try {
+      lanHosts.clear();
+      for (const entry of osGetAddresses()) {
+        if (entry?.address) lanHosts.add(String(entry.address).toLowerCase());
+      }
+      if (mdnsHost) lanHosts.add(mdnsHost);
+    } catch { /* restricted sandbox: loopback stays allowed regardless */ }
+  }
+  refreshLanHosts();
+>>>>>>> /tmp/mf-theirs
 
   // WHATWG URL keeps the brackets on an IPv6 hostname ([::1]); strip them so the
   // value matches what isLoopbackAddress / the lanHosts set hold.
@@ -467,6 +502,7 @@ export function createHttp(core, {
     return u.protocol === 'https:' ? '443' : '80'; // Host-only parses under http://
   }
   function hostAllowed(u) {
+    refreshLanHosts();
     const host = normHost(u.hostname);
 <<<<<<< /tmp/mf-ours
     return (isLoopbackAddress(host) || lanHosts.has(host)) && effectivePort(u) === daemonPort;
@@ -1457,6 +1493,7 @@ export function createHttp(core, {
   core.onMutate = scheduleBroadcast;
 
 <<<<<<< /tmp/mf-ours
+<<<<<<< /tmp/mf-ours
   // Only `server` is used externally (fleetd.mjs listens on it); wss/termWss/
   // broadcast stay internal. whenBroadcastIdle is exported so the boot
   // readiness settle can wait out the coalesced flush the heals scheduled.
@@ -1466,5 +1503,20 @@ export function createHttp(core, {
   // the former, and feeds the latter a fresh LAN URL set when the host's
   // interfaces change); wss/termWss/broadcast stay internal.
   return { server, refreshLan };
+>>>>>>> /tmp/mf-theirs
+=======
+  // fleetd.mjs drives refreshLan from its network-change poll, in the same tick
+  // as the mDNS update, so the share panel and the Host allowlist (refreshed per
+  // request from the same interface data) never disagree for long. wss/termWss/
+  // broadcast stay internal.
+  return {
+    server,
+    refreshLan(lan) {
+      refreshLanHosts();
+      lanInfo = lan?.enabled
+        ? { enabled: true, urls: lan.urls ?? [], mdns: lan.mdns ?? null }
+        : { enabled: false, urls: [] };
+    },
+  };
 >>>>>>> /tmp/mf-theirs
 }

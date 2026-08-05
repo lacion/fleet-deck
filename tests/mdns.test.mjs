@@ -321,6 +321,86 @@ test('a goodbye is the same record set with TTL 0 and no cache-flush claim', () 
   assert.ok(goodbye.every(r => r.flush === false), 'a record being withdrawn must not also claim uniqueness');
 });
 
+// ------------------------------------------------------------- update()
+
+// BUG-129: a network change (Wi-Fi roam, DHCP renewal, VPN up/down) must NOT
+// leave the responder advertising the startup snapshot for the daemon's whole
+// lifetime. update() re-bases the advertisement on the address set the host has
+// NOW: withdrawn records get a TTL-0 goodbye, the fresh set is announced.
+
+test('update() re-bases the advertisement: queries answer with the NEW addresses', async (t) => {
+  const probe = await bindShared(MDNS_PORT);
+  if (!probe) return t.skip('udp4 port 5353 is already owned by another responder');
+  await close(probe);
+  if (await foreignResponderOn5353()) return t.skip('another responder shares udp/5353 — unicast delivery is ambiguous in this environment');
+
+  const logs = [];
+  const mdns = createMdns({ port: 4711, addresses: ['192.0.2.7'], log: m => logs.push(String(m)) });
+  mdns.start();
+  t.after(() => mdns.stop());
+  await new Promise(r => setTimeout(r, scaleMs(250)));
+  const disabled = logs.find(m => m.includes('mdns disabled'));
+  if (disabled) return t.skip(`responder degraded to a no-op in this environment: ${disabled}`);
+
+  // The DHCP lease hands us a new address: the old one is gone.
+  mdns.update({ addresses: ['198.51.100.9'] }); // RFC 5737 TEST-NET-2
+
+  const asker = await bindShared(0);
+  assert.ok(asker, 'the test needs an ephemeral udp4 socket');
+  t.after(() => close(asker));
+  const inbox = collect(asker);
+  asker.send(encodeMessage({ id: 2, flags: 0, questions: [{ name: HOST, type: TYPE.A, class: 1 }] }), MDNS_PORT, '127.0.0.1');
+
+  const reply = await inbox.waitFor(p => p.isResponse && p.answers.some(r => r.typeName === 'A'), 'the A answer after update');
+  assert.ok(reply, `no mDNS response arrived after update(). logs: ${JSON.stringify(logs)}`);
+  assert.deepEqual(reply.answers.filter(r => r.typeName === 'A').map(r => r.data), ['198.51.100.9'],
+    'the responder must answer with the new address, not the startup snapshot');
+});
+
+test('update() goodbyes the removed addresses and announces the new set', async (t) => {
+  const listener = await bindShared(MDNS_PORT);
+  if (!listener) return t.skip('udp4 port 5353 is already owned by another responder');
+  t.after(() => close(listener));
+  try {
+    listener.addMembership(MDNS_ADDR);
+  } catch (err) {
+    return t.skip(`cannot join ${MDNS_ADDR} in this environment (${err.code || err.message})`);
+  }
+  const inbox = collect(listener);
+
+  const logs = [];
+  const mdns = createMdns({ port: 4711, addresses: ['192.0.2.7'], log: m => logs.push(String(m)) });
+  mdns.start();
+  t.after(() => mdns.stop());
+
+  const opening = await inbox.waitFor(p => p.isResponse && p.answers.some(r => r.ttl > 0), 'an announcement');
+  if (!opening) return t.skip(`multicast loopback does not deliver to this host — cannot observe goodbyes. logs: ${JSON.stringify(logs)}`);
+  inbox.packets.length = 0;
+
+  mdns.update({ addresses: ['198.51.100.9'] });
+
+  const goodbye = await inbox.waitFor(p => p.isResponse && p.answers.length > 0 && p.answers.every(r => r.ttl === 0), 'the goodbye');
+  assert.ok(goodbye, 'a removed address must be withdrawn with a TTL-0 goodbye');
+  assert.ok(goodbye.answers.some(r => r.typeName === 'A' && r.data === '192.0.2.7'),
+    'the goodbye must name the OLD address, so peer caches drop the stale route');
+  assert.ok(!goodbye.answers.some(r => r.typeName === 'A' && r.data === '198.51.100.9'),
+    'a goodbye must not withdraw the address we still own');
+
+  const announce = await inbox.waitFor(p => p.isResponse && p.answers.some(r => r.typeName === 'A' && r.ttl > 0), 'the re-announcement');
+  assert.ok(announce, 'the new address set must be announced');
+  assert.ok(announce.answers.some(r => r.typeName === 'A' && r.data === '198.51.100.9'),
+    'the announcement must carry the NEW address');
+});
+
+test('update() after stop() and with nothing to change is a quiet no-op', async () => {
+  const logs = [];
+  const mdns = createMdns({ port: 4711, addresses: ['192.0.2.7'], log: m => logs.push(String(m)) });
+  assert.doesNotThrow(() => mdns.update({ addresses: ['198.51.100.9'] }), 'update() before start() must not throw or bind');
+  await assert.doesNotReject(async () => { await mdns.stop(); });
+  assert.doesNotThrow(() => mdns.update({ addresses: ['198.51.100.9'] }), 'update() must not resurrect a stopped responder');
+  assert.equal(logs.length, 0, 'a no-op update says nothing');
+});
+
 // ------------------------------------------------------------ the socket
 
 /** Bind a udp4 socket, resolving null (rather than throwing) if 5353 is taken. */
@@ -611,6 +691,7 @@ test('stop() before start() is a no-op that resolves', async () => {
   await mdns.stop();
 });
 
+<<<<<<< /tmp/mf-ours
 // ------------------------------------------- terminal-disable notification
 //
 // BUG-122: start() returns before bind + membership resolve, so the daemon
@@ -664,4 +745,35 @@ test('a throwing onDown listener cannot take the responder down', () => {
   const mdns = createMdns({ log: () => {}, onDown: () => { throw new Error('listener exploded'); } });
   assert.doesNotThrow(() => mdns.start());
   assert.equal(mdns.alive(), false);
+=======
+test('update() revives a responder that started with no LAN address at all', async (t) => {
+  const probe = await bindShared(MDNS_PORT);
+  if (!probe) return t.skip('udp4 port 5353 is already owned by another responder');
+  await close(probe);
+  if (await foreignResponderOn5353()) return t.skip('another responder shares udp/5353 — unicast delivery is ambiguous in this environment');
+
+  const logs = [];
+  // Boot with the network still down: no address, nothing to advertise.
+  const mdns = createMdns({ port: 4711, addresses: [], log: m => logs.push(String(m)) });
+  mdns.start();
+  t.after(() => mdns.stop());
+  assert.ok(logs.some(m => m.includes('no non-internal IPv4 address')), 'the dormant reason must be logged');
+
+  // The network comes up: the responder must bind, join and answer — not stay
+  // dead for the daemon's lifetime (the old one-way door, BUG-129).
+  mdns.update({ addresses: ['192.0.2.7'] });
+  await new Promise(r => setTimeout(r, scaleMs(250)));
+  const disabled = logs.find(m => m.includes('mdns disabled') && !m.includes('no non-internal IPv4'));
+  if (disabled) return t.skip(`responder degraded to a no-op in this environment: ${disabled}`);
+
+  const asker = await bindShared(0);
+  assert.ok(asker, 'the test needs an ephemeral udp4 socket');
+  t.after(() => close(asker));
+  const inbox = collect(asker);
+  asker.send(encodeMessage({ id: 3, flags: 0, questions: [{ name: HOST, type: TYPE.A, class: 1 }] }), MDNS_PORT, '127.0.0.1');
+
+  const reply = await inbox.waitFor(p => p.isResponse && p.answers.some(r => r.typeName === 'A'), 'the A answer after revival');
+  assert.ok(reply, `a responder revived by update() must answer queries. logs: ${JSON.stringify(logs)}`);
+  assert.equal(reply.answers.find(r => r.typeName === 'A').data, '192.0.2.7');
+>>>>>>> /tmp/mf-theirs
 });

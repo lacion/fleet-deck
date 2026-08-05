@@ -498,6 +498,7 @@ export function buildResponse(questions, options = {}, { ttl, flush = true } = {
  * @param {function} [opts.log]
 <<<<<<< /tmp/mf-ours
 <<<<<<< /tmp/mf-ours
+<<<<<<< /tmp/mf-ours
 =======
 >>>>>>> /tmp/mf-theirs
  * @param {function} [opts.onDown]  called with a reason string the moment the
@@ -513,6 +514,11 @@ export function buildResponse(questions, options = {}, { ttl, flush = true } = {
 export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', addresses = [], txt, log = () => {}, onDown = null } = {}) {
 =======
  * @returns {{start: function, stop: function, update: function}} start/stop idempotent, none throw
+=======
+ * @returns {{start: function, stop: function, update: function}} start/stop are
+ * idempotent and never throw; update() re-bases the advertisement on a fresh LAN
+ * address set (goodbye for withdrawn records, membership re-join, re-announce).
+>>>>>>> /tmp/mf-theirs
  */
 export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', addresses = [], txt, log = () => {} } = {}) {
   // Mutable: update() replaces the address set in place when the host's LAN
@@ -523,12 +529,23 @@ export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', 
 export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', addresses = [], txt, log = () => {}, onDown = null } = {}) {
 >>>>>>> /tmp/mf-theirs
   const options = { port, name, instance, addresses, txt };
+<<<<<<< /tmp/mf-ours
   let ad = normalize(options);
+=======
+  // The LIVE advertisement. Identity (host/instance/port/txt) is fixed for the
+  // responder's life, but the address set is a property of the NETWORK, and the
+  // network moves: Wi-Fi roaming, DHCP renewal, a VPN coming up. update() swaps
+  // this snapshot atomically; every answer and announcement built after the swap
+  // speaks for the new addresses.
+  let current = normalize(options);
+>>>>>>> /tmp/mf-theirs
 
   let socket = null;
   let started = false;
   let stopping = null;
-  let dead = false;
+  let dead = false;    // a REAL failure (socket/bind/multicast) — terminal, one-way
+  let dormant = false; // merely addressless — update() may revive us
+  let stopped = false; // stop() was called — nothing may resurrect the responder
   const timers = new Set();
 
   const note = (message) => { try { log(message); } catch { /* a broken logger must not kill mDNS */ } };
@@ -565,7 +582,7 @@ export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', 
 
   function announce(ttl) {
     try {
-      const answers = buildAnnouncement(options, ttl === undefined ? {} : { ttl });
+      const answers = buildAnnouncement(current, ttl === undefined ? {} : { ttl });
       if (!answers.length) return;
       send(encodeMessage({ id: 0, flags: FLAGS_RESPONSE, answers }), MDNS_PORT, MDNS_ADDR);
     } catch (err) {
@@ -583,10 +600,12 @@ export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', 
       if (!questions.length) return;
 
       // RFC 6762 §6.7: a source port other than 5353 is a legacy unicast resolver.
+      // The query is answered against the CURRENT advertisement (current), never
+      // the startup snapshot — a network change re-bases what we claim to own.
       const legacy = rinfo.port !== MDNS_PORT;
       const { answers, additionals } = legacy
-        ? buildResponse(questions, options, { ttl: LEGACY_TTL, flush: false })
-        : buildResponse(questions, options);
+        ? buildResponse(questions, current, { ttl: LEGACY_TTL, flush: false })
+        : buildResponse(questions, current);
       if (!answers.length) return; // not ours — stay silent
 
       const packet = encodeMessage({
@@ -613,17 +632,21 @@ export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', 
     // failures are expected and swallowed — one successful join is enough.
     let joins = 0;
     try { socket.addMembership(MDNS_ADDR); joins += 1; } catch { /* no default multicast route */ }
-    for (const address of ad.addresses) {
+    for (const address of current.addresses) {
       try { socket.addMembership(MDNS_ADDR, address); joins += 1; } catch { /* already joined via this iface, or it has no multicast */ }
     }
     if (joins === 0) { die('no multicast membership'); return; }
 
+    scheduleAnnounce();
+    note(`mdns responding for ${current.host}:${current.port}${current.addresses.length ? ` (${current.addresses.join(', ')})` : ' (no LAN address to advertise)'}`);
+  }
+
+  function scheduleAnnounce() {
     for (const delay of ANNOUNCE_DELAYS_MS) {
       const timer = setTimeout(() => { timers.delete(timer); announce(); }, delay);
       timer.unref?.(); // mDNS must never hold the daemon's event loop open
       timers.add(timer);
     }
-    note(`mdns responding for ${ad.host}:${ad.port}${ad.addresses.length ? ` (${ad.addresses.join(', ')})` : ' (no LAN address to advertise)'}`);
   }
 
   /**
@@ -675,14 +698,20 @@ export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', 
   }
 
   function start() {
-    if (started || dead) return;
+    if (started || stopped) return;
     started = true;
 
-    if (!ad.port) { die('no port to advertise'); return; }
-    if (!ad.addresses.length) {
+    if (!current.port) { die('no port to advertise'); return; }
+    if (!current.addresses.length) {
       // Nothing to put in an A record; SRV would point at a name that resolves to
-      // nothing. Better to say so once than to advertise a dead host.
-      die('no non-internal IPv4 address');
+      // nothing. Degrade for NOW — but the network may only be down at boot
+      // (Wi-Fi still associating, DHCP pending), so update() is allowed to retry
+      // the moment an address shows up instead of this being a one-way door.
+      // The message keeps die()'s exact shape, and it is said ONCE — repeated
+      // start() calls on an addressless responder stay as quiet as before.
+      if (!dormant) note('mdns disabled (no non-internal IPv4 address) — the board still works over its IP');
+      started = false;
+      dormant = true;
       return;
     }
 
@@ -715,6 +744,7 @@ export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', 
     // the daemon's signal path and a no-op shutdown is not news.
     if (!started || dead || !socket) {
       dead = true;
+      stopped = true;
       for (const t of timers) clearTimeout(t);
       timers.clear();
       stopping = Promise.resolve();
@@ -729,10 +759,11 @@ export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', 
         const doomed = socket;
         socket = null;
         dead = true;
+        stopped = true;
         try { doomed?.close(resolve); } catch { resolve(); }
       };
       try {
-        const answers = buildAnnouncement(options, { ttl: 0 });
+        const answers = buildAnnouncement(current, { ttl: 0 });
         const packet = encodeMessage({ id: 0, flags: FLAGS_RESPONSE, answers });
         // Close on the send callback, but never wait forever on a wedged socket.
         const guard = setTimeout(finish, 250);
@@ -747,11 +778,69 @@ export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', 
 
 <<<<<<< /tmp/mf-ours
 <<<<<<< /tmp/mf-ours
+<<<<<<< /tmp/mf-ours
   return { start, stop, alive: () => started && !dead && socket !== null };
 =======
   return { start, stop, update };
 >>>>>>> /tmp/mf-theirs
 =======
   return { start, stop, alive: () => started && !dead && socket !== null };
+>>>>>>> /tmp/mf-theirs
+=======
+  /**
+   * The network changed under us (Wi-Fi roam, DHCP renewal, VPN up/down): re-base
+   * the advertisement on the LAN addresses the host has NOW. Records for removed
+   * addresses are withdrawn with a TTL-0 goodbye (RFC 6762 §10.1) so a peer's
+   * cache drops the stale route at once; multicast memberships are re-joined for
+   * the new addresses; the fresh set is announced. Never throws — discovery is a
+   * convenience, and a transient interface flap must not take the daemon with it.
+   */
+  function update({ addresses } = {}) {
+    try {
+      if (stopped || dead || stopping) return;
+      const next = normalize({ ...options, addresses });
+      const previous = current;
+      current = next;
+
+      if (dormant) {
+        // start() found no LAN address at boot and stood down — the network just
+        // gave us one, so try the whole bind/join dance again. A real failure
+        // inside start() still lands in die() and stays terminal.
+        dormant = false;
+        if (next.addresses.length) start();
+        return;
+      }
+      if (!started || !socket) return;
+
+      // Withdraw ONLY the records that no longer hold (old A records for removed
+      // addresses). A goodbye for something we still own would flicker the cache.
+      const keep = new Set(next.addresses);
+      const removed = previous.addresses.filter(a => !keep.has(a));
+      if (removed.length) {
+        try {
+          const answers = buildAnnouncement({ ...options, addresses: removed }, { ttl: 0 });
+          if (answers.length) send(encodeMessage({ id: 0, flags: FLAGS_RESPONSE, answers }), MDNS_PORT, MDNS_ADDR);
+        } catch (err) {
+          note(`mdns goodbye failed: ${err.message}`);
+        }
+      }
+
+      // Join the group via any new interface so queries addressed to it reach us.
+      for (const address of next.addresses) {
+        try { socket.addMembership(MDNS_ADDR, address); } catch { /* already joined via this iface, or it has no multicast */ }
+      }
+
+      if (!next.addresses.length) {
+        note('mdns paused (no non-internal IPv4 address) — waiting for the network to come back');
+        return;
+      }
+      announce(); // probe-and-claim is skipped: ownership of fleetdeck.local does not move with an address change
+      note(`mdns addresses updated (${next.addresses.join(', ') || 'none'})`);
+    } catch (err) {
+      note(`mdns update failed: ${err.message}`);
+    }
+  }
+
+  return { start, stop, update };
 >>>>>>> /tmp/mf-theirs
 }

@@ -387,7 +387,11 @@ function lanInfoFor(addresses) {
 const LAN_INFO = lanInfoFor(lanAddresses());
 
 <<<<<<< /tmp/mf-ours
+<<<<<<< /tmp/mf-ours
 const { server, whenBroadcastIdle } = createHttp(core, {
+=======
+const { server, refreshLan } = createHttp(core, {
+>>>>>>> /tmp/mf-theirs
 =======
 const { server, refreshLan } = createHttp(core, {
 >>>>>>> /tmp/mf-theirs
@@ -442,6 +446,7 @@ function lanAddresses() {
 
 let mdns = null;
 
+<<<<<<< /tmp/mf-ours
 // BUG-118: the LAN address set is a snapshot of a moving target. A laptop that
 // roams wifi or takes a new DHCP lease leaves /state, the share panel and the
 // mDNS A records pointing at an address the daemon no longer answers on — and
@@ -483,6 +488,61 @@ function startLanAddressWatch() {
   };
   const timer = setInterval(check, LAN_REFRESH_MS);
   timer.unref?.(); // a refresh timer must never hold the daemon's event loop open
+=======
+// NETWORK LIFECYCLE: the address snapshot baked into LAN_INFO (share URLs), the
+// mDNS advertisement, and the HTTP Host allowlist all go stale when the network
+// moves (Wi-Fi roam, DHCP renewal, VPN up/down) — a long-lived daemon would keep
+// answering with dead A records and reject its own new address until restart.
+// So LAN mode polls the interface list; on any change the share URLs and the
+// allowlist are refreshed atomically (one tick, from the same snapshot) and the
+// responder withdraws/announces records for the delta. The allowlist ALSO
+// refreshes per request from the same interface data, so even between polls a
+// request arriving via a fresh address is recognized as ours.
+let lastLanAddresses = null;
+function refreshNetwork(addresses) {
+  lastLanAddresses = addresses;
+  try {
+    refreshLan?.({
+      enabled: true,
+      urls: addresses.map(a => `http://${a}:${PORT}/?t=${encodeURIComponent(TOKEN)}`),
+      mdns: MDNS_ENABLED ? `http://${MDNS_NAME}.local:${PORT}/?t=${encodeURIComponent(TOKEN)}` : null,
+    });
+  } catch (err) { console.error('fleetd share-URL refresh error:', err); }
+  try { mdns?.update({ addresses }); } catch { /* discovery is never load-bearing */ }
+  for (const address of addresses) {
+    console.log(`fleetd LAN http://${address}:${PORT}/?t=<hidden> (credential available in share panel)`);
+  }
+}
+function sameAddresses(a, b) {
+  return a.length === b.length && [...a].sort().join(' ') === [...b].sort().join(' ');
+}
+function watchNetwork() {
+  const poll = () => {
+    let addresses = null;
+    try { addresses = lanAddresses(); } catch { /* enumeration is best effort */ }
+    if (addresses && lastLanAddresses && !sameAddresses(addresses, lastLanAddresses)) {
+      console.log(`fleetd network change (${lastLanAddresses.join(', ') || 'none'} -> ${addresses.join(', ') || 'none'})`);
+      refreshNetwork(addresses);
+      // A responder that never started (no address at boot) is created on the
+      // same transition — the network coming up is exactly its cue.
+      if (!mdns && MDNS_ENABLED && addresses.length) startMdns(addresses);
+    }
+  };
+  const timer = setInterval(poll, 15000);
+  timer.unref?.(); // a discovery convenience must never hold the daemon's event loop open
+}
+function startMdns(addresses) {
+  mdns = createMdns({
+    port: PORT,
+    name: MDNS_NAME,
+    // DNS-SD instance labels are broadcast beyond the machine. A short
+    // random discriminator avoids collisions without disclosing its OS name.
+    instance: mdnsInstanceName(),
+    addresses,
+    log: msg => console.error(`fleetd mdns: ${msg}`),
+  });
+  mdns.start();
+>>>>>>> /tmp/mf-theirs
 }
 
 server.listen(PORT, BIND, () => {
@@ -529,12 +589,10 @@ server.listen(PORT, BIND, () => {
     // LOG CREDENTIAL CONTRACT: the real query-bearing URLs live in the board's
     // share panel. stdout is commonly redirected to fleetd.log (often 0644), so
     // it may identify the endpoint but must never become a second token store.
-    const addresses = lanAddresses();
-    for (const address of addresses) {
-      console.log(`fleetd LAN http://${address}:${PORT}/?t=<hidden> (credential available in share panel)`);
-    }
+    refreshNetwork(lanAddresses());
     // Discovery is a convenience, never a dependency: mdns.mjs degrades to a
     // no-op on EADDRINUSE (a real avahi owns 5353), EPERM or a network that
+<<<<<<< /tmp/mf-ours
     // drops multicast. The IP URLs above always work regardless.
     if (process.env.FLEETDECK_MDNS?.trim().toLowerCase() !== 'off' && addresses.length) {
       // start() cannot report readiness: bind and multicast membership only
@@ -559,6 +617,16 @@ server.listen(PORT, BIND, () => {
       });
     }
     startLanAddressWatch();
+=======
+    // drops multicast. The IP URLs above always work regardless. No address at
+    // boot no longer forfeits discovery: the network poll starts the responder
+    // the moment the first address appears.
+    if (MDNS_ENABLED && lastLanAddresses.length) {
+      startMdns(lastLanAddresses);
+      console.log(`fleetd LAN http://${MDNS_NAME}.local:${PORT}/?t=<hidden> (mDNS; credential available in share panel)`);
+    }
+    watchNetwork();
+>>>>>>> /tmp/mf-theirs
   }
   // v1.2 restart reconciliation: spawn rows survive in SQLite, panes survive
   // in tmux — re-join them (rows with a missing window → 'gone' + card
