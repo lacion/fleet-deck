@@ -165,8 +165,29 @@ test('grid: many viewers share ONE control client, each sized and streamed indep
     const out = await waitUntil(() => tile.frames.find(f => f.t === 'out'), `tile ${i} output`);
     assert.ok(out.data.includes(`live ${pane}`),
       `tile ${i} must receive its own pane (${pane}), got ${JSON.stringify(out.data)}`);
-    const foreign = tile.frames.filter(f => f.t === 'out' && !f.data.includes(`live ${pane}`));
-    assert.deepEqual(foreign, [], `tile ${i} must never receive another pane's output`);
+    // BUG-180: the old predicate counted a frame as safe whenever it contained
+    // the own marker — so a demux regression that sent one tile a MIXED frame
+    // (its own pane's marker AND another pane's) passed isolation. Assert the
+    // strict form instead: every output frame must exclude every OTHER pane's
+    // marker, own-marker frames included.
+    const others = [...paneOf.values()].filter(p => p !== pane);
+    const mixed = tile.frames.filter(f => f.t === 'out' && others.some(p => f.data.includes(`live ${p}`)));
+    assert.deepEqual(mixed.map(f => f.data), [],
+      `tile ${i} (pane ${pane}) received another pane's output, possibly in a mixed frame`);
+
+  // The predicate itself: a frame mixing the own marker with a foreign one must
+  // be condemned. Simulating the exact regression (demux sends tile 0
+  // "live %1 ... live %2") proves the new assertion fails where the old one
+  // passed silently.
+  {
+    const pane = paneOf.get(spawns[0].tmux.window);
+    const others = [...paneOf.values()].filter(p => p !== pane);
+    const mixedFrame = { t: 'out', data: `live ${pane} ... live ${others[0]}` };
+    const condemned = [mixedFrame].filter(f => f.t === 'out' && others.some(p => f.data.includes(`live ${p}`)));
+    assert.equal(condemned.length, 1, 'a mixed own+foreign frame must be condemned by the new predicate');
+    const oldPredicateMisses = [mixedFrame].filter(f => f.t === 'out' && !f.data.includes(`live ${pane}`));
+    assert.equal(oldPredicateMisses.length, 0, 'the OLD predicate would have accepted this mixed frame — that was BUG-180');
+  }
   }
 
   // Closing one tile must not take the shared client — and everyone else — down.
