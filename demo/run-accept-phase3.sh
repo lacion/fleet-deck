@@ -100,6 +100,28 @@ cleanup() {
     exit 1
   fi
 }
+<<<<<<< /tmp/mf-ours
+=======
+
+# The permission proof is a generated artifact and must never outlive the run.
+# A pre-existing local file is snapshotted below and restored verbatim here;
+# otherwise the proof is removed only when its content matches what Part 1
+# asked the session to write (a tampered/unexpected file is left alone).
+PERM_PROOF="$PROJECT_DIR/fleet-perm-proof.txt"
+PERM_PROOF_PRE="$DEMO_LOGS/p3-perm-proof.pre-existing"
+cleanup_perm_proof() {
+  if [ -f "$PERM_PROOF_PRE" ]; then
+    cp -f "$PERM_PROOF_PRE" "$PERM_PROOF"
+    rm -f "$PERM_PROOF_PRE"
+  elif [ "$(cat "$PERM_PROOF" 2>/dev/null)" = "FLEET_PERMISSION_OK" ]; then
+    rm -f "$PERM_PROOF"
+  fi
+}
+cleanup() {
+  cleanup_tmux_server
+  cleanup_perm_proof
+}
+>>>>>>> /tmp/mf-theirs
 trap cleanup EXIT
 
 # Claude-session env vars that must never leak into the sessions (and through
@@ -217,7 +239,10 @@ if curl -s -m 1 "$BASE/health" > /dev/null 2>&1; then
   exit 1
 fi
 rm -rf "$SCRATCH_HOME"; mkdir -p "$SCRATCH_HOME" "$DEMO_LOGS"
-rm -f "$DEMO_LOGS"/p3-*.json "$DEMO_LOGS"/p3-*.err "$PROJECT_DIR/fleet-perm-proof.txt"
+rm -f "$DEMO_LOGS"/p3-*.json "$DEMO_LOGS"/p3-*.err
+rm -f "$PERM_PROOF_PRE"
+[ -f "$PERM_PROOF" ] && cp "$PERM_PROOF" "$PERM_PROOF_PRE"
+rm -f "$PERM_PROOF"
 
 # Same proven wiring as run-smoke.sh (incl. PermissionRequest/Elicitation 65s).
 # Every hook uses the current checkout's authenticated command shim. Native
