@@ -30,7 +30,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+<<<<<<< /tmp/mf-ours
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, chmodSync, existsSync } from 'node:fs';
+=======
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, chmodSync, readdirSync, existsSync } from 'node:fs';
+>>>>>>> /tmp/mf-theirs
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -614,15 +618,41 @@ test('gateway: a repo-mode spawn persists and delivers routing too', async (t) =
   // positional bind drifting by one would silently write `gateway` into the
   // wrong column. Every other gateway test here is cwd-mode.
   const root = scratchDir();
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  // Worktree mode materializes the checkout BESIDE the repo
+  // (<root>--fd-gw-probe in repos.mjs materializeBranch), so removing only
+  // root would strand the worktree directory and its admin record in tmp.
+  // Remove it through git BEFORE root goes away (afterwards the repo that owns
+  // the worktree metadata is gone), then prune in case anything still points
+  // at it.
+  const worktree = `${root}--fd-gw-probe`;
+  t.after(() => {
+    try { execFileSync('git', ['-C', root, 'worktree', 'remove', '--force', worktree]); } catch { /* best effort */ }
+    try { execFileSync('git', ['-C', root, 'worktree', 'prune']); } catch { /* best effort */ }
+    rmSync(root, { recursive: true, force: true });
+  });
   execFileSync('git', ['init', '-q', root]);
   execFileSync('git', ['-C', root, 'commit', '-q', '--allow-empty', '-m', 'init'],
     { env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' } });
+
+  // Baseline before the spawn: the drain assertion below must prove this test
+  // leaves NOTHING behind, not merely that it cleans up after itself. A
+  // pre-existing sibling from an older, leakier run would make that proof
+  // vacuous.
+  assert.equal(readdirSync(tmpdir()).some(name => name.endsWith('--fd-gw-probe')), false,
+    'a --fd-gw-probe sibling from an earlier run is still in tmpdir; remove it before this test can prove its own teardown');
 
   const spawn = await postJson(`${daemon.baseUrl}/api/spawn`, {
     repo: root, branch: 'gw-probe', branch_mode: 'worktree', gateway: true,
   });
   assert.equal(spawn.status, 200, spawn.text);
+
+  // The drain probe. The t.after above is what makes it pass; without the
+  // worktree removal there, the sibling checkout the daemon just created would
+  // still be sitting in tmpdir at process exit.
+  t.after(() => {
+    assert.equal(existsSync(worktree), false,
+      `teardown must not strand the repo-mode worktree ${worktree}`);
+  });
 
   const [rec] = await waitForSpecRecords(record, 1);
   assert.equal(rec.parsed.gateway, true);
