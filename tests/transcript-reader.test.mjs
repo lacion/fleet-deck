@@ -21,7 +21,11 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+<<<<<<< /tmp/mf-ours
 import { appendFileSync, statSync, writeFileSync } from 'node:fs';
+=======
+import { rmSync, statSync, writeFileSync } from 'node:fs';
+>>>>>>> /tmp/mf-theirs
 import path from 'node:path';
 
 import { lastAssistantModel, lastAssistantText, tailLines } from '../scripts/fleetd/transcript.mjs';
@@ -38,8 +42,9 @@ const FABLE = 'claude-fable-5';
 const OPUS = 'claude-opus-4-8';
 const HAIKU = 'claude-haiku-4-5';
 
-test('follows a switch: fable turns then opus turns → the model is opus', () => {
+test('follows a switch: fable turns then opus turns → the model is opus', (t) => {
   const dir = makeTranscriptDir();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   const file = writeTranscriptLines(dir, 's1', [
     userLine(), assistantLine({ model: FABLE }),
     userLine(), assistantLine({ model: FABLE }),
@@ -48,8 +53,9 @@ test('follows a switch: fable turns then opus turns → the model is opus', () =
   assert.equal(lastAssistantModel(file), OPUS);
 });
 
-test('sidechain: a subagent running another model never overwrites the main thread', () => {
+test('sidechain: a subagent running another model never overwrites the main thread', (t) => {
   const dir = makeTranscriptDir();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   const file = writeTranscriptLines(dir, 's2', [
     userLine(), assistantLine({ model: OPUS }),
     // A Task subagent's turns land AFTER the main thread's, and can run a
@@ -60,8 +66,9 @@ test('sidechain: a subagent running another model never overwrites the main thre
   assert.equal(lastAssistantModel(file), OPUS);
 });
 
-test('tool_use-only: an entry with no text block still yields its model', () => {
+test('tool_use-only: an entry with no text block still yields its model', (t) => {
   const dir = makeTranscriptDir();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   const file = writeTranscriptLines(dir, 's3', [
     userLine(), assistantLine({ model: FABLE, text: 'starting' }),
     userLine(), toolUseLine({ model: OPUS }), // mid-turn, no text yet
@@ -74,8 +81,9 @@ test('tool_use-only: an entry with no text block still yields its model', () => 
   assert.equal(lastAssistantText(file), 'starting');
 });
 
-test('minOffset: a resumed session ignores the previous run, then follows the new one', () => {
+test('minOffset: a resumed session ignores the previous run, then follows the new one', (t) => {
   const dir = makeTranscriptDir();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   // The previous run, already on disk when `claude --resume` reopens the file.
   const file = writeTranscriptLines(dir, 's4', [
     userLine(), assistantLine({ model: FABLE }),
@@ -100,8 +108,9 @@ test('minOffset: a resumed session ignores the previous run, then follows the ne
   assert.equal(lastAssistantModel(file, { minOffset: floor }), FABLE);
 });
 
-test('retry: an assistant line pushed >256 KB from EOF by a huge tool result is still found', () => {
+test('retry: an assistant line pushed >256 KB from EOF by a huge tool result is still found', (t) => {
   const dir = makeTranscriptDir();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   // 400 KB of user payload after the last assistant turn — past the 256 KB
   // first window, so only the 2 MB retry can reach it.
   const file = writeTranscriptLines(dir, 's5', [
@@ -112,12 +121,14 @@ test('retry: an assistant line pushed >256 KB from EOF by a huge tool result is 
   assert.equal(lastAssistantModel(file), OPUS);
 });
 
-test('a transcript with no assistant model at all yields null, not a guess', () => {
+test('a transcript with no assistant model at all yields null, not a guess', (t) => {
   const dir = makeTranscriptDir();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   const file = writeTranscriptLines(dir, 's6', [userLine(), userLine()]);
   assert.equal(lastAssistantModel(file), null);
 });
 
+<<<<<<< /tmp/mf-ours
 test('partial append: a truncated newest line yields no model, not an older one', () => {
   const dir = makeTranscriptDir();
   const file = writeTranscriptLines(dir, 's7', [
@@ -138,7 +149,11 @@ test('partial append: a truncated newest line yields no model, not an older one'
 });
 
 test('best-effort: absent, empty and corrupt transcripts return null and never throw', () => {
+=======
+test('best-effort: absent, empty and corrupt transcripts return null and never throw', (t) => {
+>>>>>>> /tmp/mf-theirs
   const dir = makeTranscriptDir();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
 
   assert.equal(lastAssistantModel(path.join(dir, 'nope.jsonl')), null);
   assert.equal(lastAssistantText(path.join(dir, 'nope.jsonl')), null);
@@ -161,8 +176,9 @@ test('best-effort: absent, empty and corrupt transcripts return null and never t
   assert.equal(lastAssistantModel(mixed), OPUS);
 });
 
-test('tailLines yields newest-first with absolute byte offsets', () => {
+test('tailLines yields newest-first with absolute byte offsets', (t) => {
   const dir = makeTranscriptDir();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   const file = path.join(dir, 'offsets.jsonl');
   writeFileSync(file, 'aa\nbb\ncc\n'); // offsets 0, 3, 6
   const got = [...tailLines(file)];
