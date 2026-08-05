@@ -869,8 +869,20 @@ export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', 
 >>>>>>> /tmp/mf-theirs
     }
 
+<<<<<<< /tmp/mf-ours
     return link;
   }
+=======
+  function onBound() {
+    // RFC 6762 §11: EVERY mDNS packet — multicast or unicast — must leave with
+    // IP TTL 255, because receivers are entitled to verify it as proof the
+    // source is on-link. setMulticastTTL covers only the multicast replies;
+    // QU and legacy answers go by unicast and would otherwise carry the
+    // platform default (commonly 64), so a strict peer discards them.
+    try { socket.setTTL(255); } catch (err) { die('cannot set unicast TTL 255', err); return; }
+    try { socket.setMulticastTTL(255); } catch (err) { die('cannot set multicast TTL 255', err); return; }
+    try { socket.setMulticastLoopback(true); } catch { /* not fatal */ }
+>>>>>>> /tmp/mf-theirs
 
 <<<<<<< /tmp/mf-ours
     // Join on the default interface, then per-address so a multi-homed host (and

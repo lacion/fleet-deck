@@ -121,6 +121,7 @@ test('Linux PID reuse by a non-fleetd process does not retain a stale HOME lock'
   assert.equal(existsSync(pidFile), false, 'startupFatal must release the newly claimed pidfile');
 });
 
+<<<<<<< /tmp/mf-ours
 test('a disabled mDNS responder keeps the .local URL out of the startup banner', { skip: BUNDLE_SKIP }, async (t) => {
   // BUG-122: fleetd printed the mDNS success line immediately after start(),
   // but bind + multicast membership resolve asynchronously — with no multicast
@@ -180,6 +181,63 @@ test('a live mDNS responder still gets its .local URL into the startup banner', 
   const output = readFileSync(consoleRecord, 'utf8');
   assert.match(output, /fleetd LAN http:\/\/fleetdeck\.local:\d+\/\?t=<hidden> \(mDNS; credential available in share panel\)/,
     `healthy responder lost its banner line:\n${output}`);
+=======
+test('the mDNS responder arms unicast and multicast TTL 255 before answering', { skip: BUNDLE_SKIP }, async (t) => {
+  // RFC 6762 §11: every packet an mDNS responder sends — multicast OR unicast —
+  // must carry IP TTL 255, and receivers may verify it as proof the source is
+  // on-link. A responder that configures only setMulticastTTL answers QU and
+  // legacy queries with the platform default (commonly 64) and strict peers
+  // discard them, so TTL 255 on BOTH paths is a precondition for going live.
+  const home = freshHome('fleetdeck-mdns-ttl-');
+  const record = path.join(home, 'mdns.jsonl');
+  t.after(() => rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+
+  const daemon = spawnRaw({
+    port: randomPort(),
+    home,
+    env: loaderOptions({ FLEETDECK_BIND: '0.0.0.0', FLEETDECK_MDNS_RECORD: record }),
+  });
+  t.after(() => daemon.kill());
+
+  const observed = await waitUntil(() => {
+    if (daemon.proc.exitCode !== null) throw new Error(`daemon exited ${daemon.proc.exitCode}:\n${daemon.stdout}\n${daemon.stderr}`);
+    try {
+      const records = readFileSync(record, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse);
+      return records.some(item => item.type === 'send') ? records : null;
+    } catch { return null; }
+  }, 'mDNS TTL configuration and first announcement');
+
+  assert.ok(observed.some(item => item.type === 'setTTL' && item.value === 255),
+    'unicast (QU/legacy) replies must leave with IP TTL 255, not the platform default');
+  assert.ok(observed.some(item => item.type === 'setMulticastTTL' && item.value === 255),
+    'multicast replies must leave with IP TTL 255');
+
+  // And when the platform refuses the unicast TTL, the responder must stand
+  // down with an actionable log instead of answering with a non-255 TTL.
+  const failHome = freshHome('fleetdeck-mdns-ttl-fail-');
+  const failRecord = path.join(failHome, 'mdns.jsonl');
+  t.after(() => rmSync(failHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+  const refused = spawnRaw({
+    port: randomPort(),
+    home: failHome,
+    env: loaderOptions({
+      FLEETDECK_BIND: '0.0.0.0',
+      FLEETDECK_MDNS_RECORD: failRecord,
+      FLEETDECK_MDNS_FAIL_TTL: 'unicast',
+    }),
+  });
+  t.after(() => refused.kill());
+
+  // The mDNS log goes to stderr (console.error), not the console record.
+  await waitUntil(() => {
+    if (refused.proc.exitCode !== null) throw new Error(`daemon exited ${refused.proc.exitCode}:\n${refused.stdout}\n${refused.stderr}`);
+    return refused.stderr.includes('mdns disabled');
+  }, 'mDNS standing down when TTL 255 is refused');
+  assert.match(refused.stderr, /mdns disabled \(cannot set unicast TTL 255\)/);
+  const failRecords = readFileSync(failRecord, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse);
+  assert.ok(!failRecords.some(item => item.type === 'send'),
+    'a responder that cannot set TTL 255 must never announce');
+>>>>>>> /tmp/mf-theirs
 });
 
 test('SIGTERM waits for the mDNS goodbye send callback before fleetd exits', { skip: BUNDLE_SKIP }, async (t) => {

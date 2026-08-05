@@ -41,7 +41,17 @@ export async function load(url, context, nextLoad) {
       class MockSocket {
         constructor() { this.id = nextId++; }
         on() { return this; }
-        setMulticastTTL() {}
+        // FLEETDECK_MDNS_FAIL_TTL=unicast|multicast simulates a platform that
+        // refuses the corresponding setsockopt, so tests can drive the
+        // responder's TTL degradation path.
+        setTTL(value) {
+          record({ type: 'setTTL', value });
+          if (process.env.FLEETDECK_MDNS_FAIL_TTL === 'unicast') throw new Error('mock: IP_TTL refused');
+        }
+        setMulticastTTL(value) {
+          record({ type: 'setMulticastTTL', value });
+          if (process.env.FLEETDECK_MDNS_FAIL_TTL === 'multicast') throw new Error('mock: IP_MULTICAST_TTL refused');
+        }
         setMulticastLoopback() {}
 <<<<<<< /tmp/mf-ours
         // BUG-122 regression seam: FLEETDECK_MDNS_JOIN_FAILS=1 models a network
