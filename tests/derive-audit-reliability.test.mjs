@@ -688,6 +688,33 @@ test('M-B6: an ExitPlanMode plan-persist failure rolls the question row back and
   assert.equal(row, null, 'the hook fails OPEN (no relay) when the plan cannot be persisted');
   const after = db.prepare('SELECT COUNT(*) AS n FROM questions').get().n;
   assert.equal(after, before, 'the question row is rolled back — no held question without its linked plan');
+  // BUG-112: the needs-you telemetry must not survive the rollback either —
+  // the old order (applyEvent BEFORE the intake transaction) left a needs-you
+  // card pointing at a question that no longer existed.
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM sessions WHERE session_id = 's'").get().n, 0,
+    'no card is dealt for an intake that rolled back');
+});
+
+test('BUG-112: a plan-intake failure on an EXISTING card leaves the card exactly as it was', (t) => {
+  const cwd = mkdtempSync(path.join(tmpdir(), 'fd-b112-cwd-'));
+  t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+  const { db, core } = memoryCore(t);
+
+  // Bring the card up through the ordinary hook path, then park it in a known
+  // pre-plan state.
+  core.hookSessionStart({ session_id: 's', cwd, source: 'startup' });
+  db.prepare("UPDATE sessions SET col = 'idle', note = 'turn finished, waiting' WHERE session_id = 's'").run();
+  const before = db.prepare("SELECT col, events, note FROM sessions WHERE session_id = 's'").get();
+
+  db.exec('DROP TABLE plans'); // plan insert now throws at runtime
+  const ev = { session_id: 's', cwd, tool_name: 'ExitPlanMode', tool_input: { plan: '# Plan\n' } };
+  const row = core.hookHoldQuestion(ev, 'PermissionRequest');
+
+  assert.equal(row, null, 'the hook fails OPEN');
+  const after = db.prepare("SELECT col, events, note FROM sessions WHERE session_id = 's'").get();
+  assert.deepEqual(after, before,
+    'a failed plan intake leaves the card, its event count, and its note untouched — no orphan needs-you alert');
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM questions').get().n, 0, 'no durable question was left behind');
 });
 
 test('M-B6: on the happy path both the question row and its plan row persist and are linked', (t) => {
@@ -704,6 +731,12 @@ test('M-B6: on the happy path both the question row and its plan row persist and
   assert.ok(plan, 'a plan row exists, linked by question_id');
   assert.equal(plan.plan_md, planMd, 'plan markdown is captured byte-identical');
   assert.equal(plan.status, 'proposed');
+  // BUG-112: the telemetry now lands AFTER the durable intake — the board must
+  // still show the needs-you card for the question it can actually answer.
+  const card = db.prepare("SELECT col, events FROM sessions WHERE session_id = 's'").get();
+  assert.ok(card, 'the intake dealt a card');
+  assert.equal(card.col, 'needsyou', 'the card moves to needsyou once the intake committed');
+  assert.equal(card.events, 1, 'the PermissionRequest event is counted exactly once');
 });
 
 // ---------------------------------------------------------------------------

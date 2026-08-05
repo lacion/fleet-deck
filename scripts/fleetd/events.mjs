@@ -627,10 +627,15 @@ export function createEvents(ctx) {
     const kind = eventName === 'Elicitation' ? 'elicitation'
       : eventName === 'AskUserQuestion' ? 'choice'
       : 'permission';
+<<<<<<< /tmp/mf-ours
     applyEvent({ ...ev, hook_event_name: eventName });
     const sid = ev.session_id || '';
+=======
+    const sid = ev.session_id || 'unknown';
+>>>>>>> /tmp/mf-theirs
     const isPlan = eventName === 'PermissionRequest' && ev?.tool_name === 'ExitPlanMode';
     if (!isPlan) {
+      applyEvent({ ...ev, hook_event_name: eventName });
       const row = questions.create(kind, sid, ev);
       onMutate();
       return row;
@@ -643,13 +648,25 @@ export function createEvents(ctx) {
     // transaction; on any failure roll BOTH back and fail the hook OPEN (return
     // null → http.mjs answers {} and the terminal resumes normally), rather
     // than relaying a hold the library can never honour.
+    //
+    // BUG-112: the M-B6 transaction closed over only the two durable inserts;
+    // the applyEvent telemetry (needsyou card move, event counter, join tick)
+    // ran BEFORE it, so a plan-insert failure still left a permanent needs-you
+    // card pointing at a question that had been rolled back. Run the durable
+    // intake FIRST, and only after COMMIT apply the needs-you transition — a
+    // failed intake now leaves the board exactly as it was, and a committed
+    // one shows its telemetry immediately after. In the tiny window between
+    // COMMIT and applyEvent the card shows its prior column; the question row
+    // exists but no hold is parked yet (http.mjs parks on the returned row),
+    // so nothing can resolve it before the telemetry lands.
     let row = null;
     let planRowId = null;
     let callsign = null;
     db.exec('BEGIN IMMEDIATE');
     try {
+      card(sid, ev.cwd); // plan intake needs the card's callsign/repo — create it without telemetry
       row = questions.create(kind, sid, ev);
-      const c = q.getSession.get(sid); // applyEvent ensured the card exists
+      const c = q.getSession.get(sid);
       callsign = c?.callsign ?? sid;
       const planMd = typeof ev.tool_input?.plan === 'string'
         ? ev.tool_input.plan
@@ -664,6 +681,10 @@ export function createEvents(ctx) {
       onMutate();
       return null;
     }
+    // The durable intake committed — now the telemetry. applyEvent applies the
+    // needs-you transition (card, event count, tickers) for a question that is
+    // guaranteed to exist, so the board can never point at a rolled-back row.
+    applyEvent({ ...ev, hook_event_name: eventName });
     tick(`📋 ${callsign} proposed a plan — captured to the library (#${planRowId})`);
     onMutate();
     return row;
