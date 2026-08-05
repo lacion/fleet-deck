@@ -55,9 +55,10 @@ export function createEvents(ctx) {
   function applyEvent(ev) {
     const sid = ev.session_id || 'unknown';
     let c = card(sid, ev.cwd);
-    // Retention tombstones are reversible: a late hook proves the process was
-    // alive (or resumed). Clear both timestamps so an archived presumed-dead
-    // card becomes visible again before normal derivation continues.
+    // Heuristic tombstones are reversible: a late hook proves the process was
+    // alive (or resumed) when retention only GUESSED it dead. Clear both
+    // timestamps so an archived presumed-dead card becomes visible again
+    // before normal derivation continues.
     //
     // M-B5: resurrection must also lift the card OUT of the offline column.
     // The Pre/PostToolUse column rule is "queued|needsyou → working, else keep
@@ -77,7 +78,20 @@ export function createEvents(ctx) {
     // invisible either way — visibleSessions filters archived rows out); just
     // never un-retire it.
     const superseded = c.succeeded_by != null;
-    if (!superseded && (c.ended_at != null || c.archived_at != null)) {
+    // BUG-024: only a HEURISTIC tombstone may be reversed by ordinary
+    // activity. end_reason='presumed' (retention's silence guess, the
+    // agents-cli absence guess) or NULL (a pre-0.7.0 row with no provenance)
+    // is a guess a late hook disproves — resurrect it. A HOOK-PROVEN
+    // SessionEnd (any other end_reason) is different: async hooks
+    // (Notification, FileChanged) are launched BEFORE exit but can ARRIVE
+    // after it, and resurrecting on one would float a process that has
+    // already exited as a live card that can win assignment and report alive
+    // to watchers. Those still fall through and update the row's counters,
+    // but only a fresh SessionStart — a genuinely resumed/new run of this id
+    // — brings the card back.
+    const heuristicEnd = c.end_reason == null || c.end_reason === 'presumed';
+    const canResurrect = heuristicEnd || ev.hook_event_name === 'SessionStart';
+    if (!superseded && canResurrect && (c.ended_at != null || c.archived_at != null)) {
       // 0.7.0: a session that comes back alive is no longer ended, so its
       // end_reason (the hook reason, or retention's 'presumed' guess) is stale —
       // clear it so adopt-now's presumed-dead guard reads the fresh liveness.

@@ -414,6 +414,10 @@ async function walkSearch(root, q, mode, deadline) {
       if (visited % WALK_YIELD_EVERY === 0) await yieldToLoop();
       const abs = path.join(current.dir, name);
       const rel = entryPath(current.rel, name);
+      // deniedName above only covers whole-segment names; the path-level rule
+      // (.docker/config.json) must gate here too, or walk search reads files
+      // fs/read refuses — the git backend already filters via deniedRelPath.
+      if (deniedRelPath(rel)) continue;
       let st;
       try { st = fs.lstatSync(abs); } catch { continue; }
       if (st.isSymbolicLink()) continue;

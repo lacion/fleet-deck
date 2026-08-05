@@ -600,13 +600,15 @@ test('M-B4: a corrupt conflicts row does not 500 /state — it is dropped, good 
 // ---------------------------------------------------------------------------
 
 for (const event of ['PreToolUse', 'PostToolUse']) {
-  test(`M-B5: a resurrecting ${event} lifts an offline card out of the offline column`, (t) => {
+  test(`M-B5: a resurrecting ${event} lifts a presumed-dead offline card out of the offline column`, (t) => {
     const cwd = mkdtempSync(path.join(tmpdir(), 'fd-mb5-cwd-'));
     t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
     const { db, core } = memoryCore(t);
 
     core.applyEvent({ session_id: 's', hook_event_name: 'SessionStart', cwd, source: 'startup' });
-    core.applyEvent({ session_id: 's', hook_event_name: 'SessionEnd', cwd });
+    // Retention's silence tombstone is a GUESS (end_reason='presumed') — BUG-024
+    // keeps ordinary activity able to reverse exactly this kind of tombstone.
+    db.prepare("UPDATE sessions SET col='offline', ended_at=?, end_reason='presumed' WHERE session_id='s'").run(Date.now());
     let card = db.prepare("SELECT * FROM sessions WHERE session_id='s'").get();
     assert.equal(card.col, 'offline', 'precondition: the card is tombstoned offline');
     assert.ok(card.ended_at);
@@ -618,6 +620,52 @@ for (const event of ['PreToolUse', 'PostToolUse']) {
     assert.equal(card.col, 'working', `a ${event} resurrection re-derives a live lane, not offline`);
   });
 }
+
+// ---------------------------------------------------------------------------
+// BUG-024
+// ---------------------------------------------------------------------------
+
+for (const event of ['FileChanged', 'Notification']) {
+  test(`BUG-024: a late async ${event} does NOT resurrect a hook-proven dead session`, (t) => {
+    const cwd = mkdtempSync(path.join(tmpdir(), 'fd-bug024-cwd-'));
+    t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+    const { db, core } = memoryCore(t);
+
+    core.applyEvent({ session_id: 's', hook_event_name: 'SessionStart', cwd, source: 'startup' });
+    core.applyEvent({ session_id: 's', hook_event_name: 'SessionEnd', cwd, reason: 'other' });
+    let card = db.prepare("SELECT * FROM sessions WHERE session_id='s'").get();
+    assert.equal(card.col, 'offline', 'precondition: the card is tombstoned offline');
+    assert.ok(card.ended_at);
+    assert.equal(card.end_reason, 'other', 'precondition: the end is hook-PROVEN, not guessed');
+
+    // The async hook was launched before exit but lands after SessionEnd.
+    const ev = event === 'FileChanged'
+      ? { session_id: 's', hook_event_name: 'FileChanged', cwd, file_path: path.join(cwd, 'a.js') }
+      : { session_id: 's', hook_event_name: 'Notification', cwd, notification_type: 'auth_success', message: 'signed in' };
+    core.applyEvent(ev);
+    card = db.prepare("SELECT * FROM sessions WHERE session_id='s'").get();
+    assert.ok(card.ended_at != null, `a late ${event} must not clear a proven SessionEnd tombstone`);
+    assert.equal(card.col, 'offline', `a late ${event} must not float a dead session back to a live lane`);
+    assert.equal(card.end_reason, 'other', 'the proven end reason survives');
+  });
+}
+
+test('BUG-024: a fresh SessionStart DOES reverse a hook-proven SessionEnd (resume path)', (t) => {
+  const cwd = mkdtempSync(path.join(tmpdir(), 'fd-bug024-start-'));
+  t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+  const { db, core } = memoryCore(t);
+
+  core.applyEvent({ session_id: 's', hook_event_name: 'SessionStart', cwd, source: 'startup' });
+  core.applyEvent({ session_id: 's', hook_event_name: 'SessionEnd', cwd, reason: 'logout' });
+
+  // `claude --resume` starts a new run under the same id: SessionStart is the
+  // bring-up proof that legitimately brings the card back.
+  core.applyEvent({ session_id: 's', hook_event_name: 'SessionStart', cwd, source: 'resume' });
+  const card = db.prepare("SELECT * FROM sessions WHERE session_id='s'").get();
+  assert.equal(card.ended_at, null, 'SessionStart resurrects the card');
+  assert.equal(card.col, 'queued', 'the resumed session re-derives a live lane');
+  assert.equal(card.end_reason, null, 'the stale end reason is cleared');
+});
 
 // ---------------------------------------------------------------------------
 // M-B6

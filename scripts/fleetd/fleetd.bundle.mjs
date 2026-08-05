@@ -7806,6 +7806,7 @@ async function walkSearch(root, q, mode, deadline) {
       if (visited % WALK_YIELD_EVERY === 0) await yieldToLoop();
       const abs = path8.join(current.dir, name);
       const rel = entryPath(current.rel, name);
+      if (deniedRelPath(rel)) continue;
       let st;
       try {
         st = fs9.lstatSync(abs);
@@ -10317,7 +10318,9 @@ function createEvents(ctx) {
     const sid = ev.session_id || "unknown";
     let c = card(sid, ev.cwd);
     const superseded = c.succeeded_by != null;
-    if (!superseded && (c.ended_at != null || c.archived_at != null)) {
+    const heuristicEnd = c.end_reason == null || c.end_reason === "presumed";
+    const canResurrect = heuristicEnd || ev.hook_event_name === "SessionStart";
+    if (!superseded && canResurrect && (c.ended_at != null || c.archived_at != null)) {
       updateSession(sid, { ended_at: null, archived_at: null, col: "queued", end_reason: null });
       c = { ...c, ended_at: null, archived_at: null, col: "queued", end_reason: null };
     }
