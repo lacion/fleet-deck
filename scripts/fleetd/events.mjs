@@ -26,6 +26,12 @@ function expectedTranscriptDir(cwd, homeDir = os.homedir()) {
   return path.join(homeDir, '.claude', 'projects', mungeClaudeProjectCwd(cwd));
 }
 
+// Test seam (BUG-166): hook-auth.test.mjs's sabotage daemon wraps the whole
+// core in a Proxy and swaps ctx.questions. For that swap to reach the hook
+// handlers, createEvents must be invoked on the WRAPPER (the object the HTTP
+// layer and the swap see), not on the raw ctx derive.mjs built — otherwise
+// the handlers close over the raw ctx and a ctx.questions swap is invisible
+// to them. derive.mjs calls createEvents with its ctx explicitly.
 export function createEvents(ctx) {
   const {
     q, db, card, updateSession, tick, logEvent, onMutate, port, home, questions,
@@ -497,7 +503,12 @@ export function createEvents(ctx) {
     // F3e auto-resolution: activity settles this session's pending
     // permission/elicitation questions (live holds fail open with {};
     // freeform questions stay pending — they're the human's queue).
-    questions.expireOnActivity(sid);
+    // Late binding is a regression pin (BUG-166): dispatching through
+    // ctx.questions at call time lets tests/hook-auth.test.mjs swap the
+    // relay in a live daemon and prove a forged (refused) UserPromptSubmit
+    // never reaches this call — a destructured create-time binding would
+    // route around the swap and the security test would go silent again.
+    ctx.questions.expireOnActivity(sid);
     // UX 2.2 activity gate: expireOnActivity above already same-tick-settled
     // any plan question THIS turn boundary retired (activity:true); this pass
     // catches plans whose question retired EARLIER without activity (timer

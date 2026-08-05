@@ -15,7 +15,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -23,6 +23,9 @@ import { fileURLToPath } from 'node:url';
 import { startDaemon } from './helpers/daemon.mjs';
 import { postHook, postJson, getJson, rawRequest } from './helpers/http.mjs';
 import { loadFixture } from './helpers/fixtures.mjs';
+import { waitUntil } from './helpers/wait.mjs';
+import { openDb } from '../scripts/fleetd/db.mjs';
+import { createCore } from '../scripts/fleetd/derive.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SHIM = path.join(HERE, '..', 'scripts', 'fleet-hook.mjs');
@@ -64,7 +67,86 @@ test('tokenless /hook/* is refused with the upgrade whisper; the bearer opens it
 });
 
 test('forged UserPromptSubmit can no longer drain a mailbox or expire holds', async (t) => {
-  const daemon = await startDaemon();
+  // Long hold window: the forgery must not expire the hold, and the board
+  // answer must resolve it well before the window closes on its own.
+  const holdMs = 6000;
+
+  // Regression sabotage (BUG-166). The daemon's AUTHENTICATED activity path
+  // (events.mjs hookUserPromptSubmit → expireOnActivity — F3e, expiry by
+  // design) is deliberately weaponized in this daemon: every pending question
+  // of the active session is expired before the real relay runs. This stands
+  // in for the defect where the forged call REACHES that path: with the gate
+  // intact the tokenless forgery is refused before any ingestion, the
+  // sabotage never fires, and the hold survives; if the gate regresses the
+  // forgery becomes session activity, the hold expires, and the assertions
+  // below fail. The swap goes through a fleetd wrapper because the daemon's
+  // core is module-private: the wrapper hands createHttp a Proxy of the whole
+  // core whose `questions` getter returns a relay with a sabotaged
+  // expireOnActivity (everything else delegates, so held sockets still settle
+  // and stop() stays clean). events.mjs pins hookUserPromptSubmit to dispatch
+  // through ctx.questions at call time, and the unit test below locks that
+  // binding in place.
+  // REGRESSION SEAM DEPENDENCY: events.mjs must dispatch the activity expiry
+  // through ctx.questions at call time — if it destructures
+  // `questions.expireOnActivity` at createCore time, the core Proxy below
+  // routes around the real relay, the forged call expires the hold, and this
+  // test FAILS even though the gate is intact. Rebind the seam in the wrapper
+  // (and update the companion guard test below) if that ever changes.
+  const wrapDir = scratchCwd('fleetdeck-hookauth-wrap-');
+  t.after(() => rmSync(wrapDir, { recursive: true, force: true }));
+  const FLEETD_DIR = path.join(HERE, '..', 'scripts', 'fleetd');
+  const wrapper = path.join(wrapDir, 'fleetd-wrapper.mjs');
+  writeFileSync(wrapper, `
+import path from 'node:path';
+import { writeFileSync } from 'node:fs';
+import { openDb } from ${JSON.stringify(path.join(FLEETD_DIR, 'db.mjs'))};
+import { createCore } from ${JSON.stringify(path.join(FLEETD_DIR, 'derive.mjs'))};
+import { createHttp } from ${JSON.stringify(path.join(FLEETD_DIR, 'http.mjs'))};
+
+const PORT = Number(process.env.FLEETDECK_PORT);
+const HOME = process.env.FLEETDECK_HOME;
+const db = openDb(path.join(HOME, 'fleetd.db'));
+const core = createCore(db, { port: PORT });
+
+// Wrap the WHOLE core: createHttp receives the proxy, so every hook handler
+// reads ctx.questions through it and the sabotage is in the request path.
+const sabotagedQuestions = new Proxy(core.questions, {
+  get(target, prop, receiver) {
+    if (prop === 'expireOnActivity') {
+      return (sessionId, opts) => {
+        for (const r of target.pendingOf(sessionId)) {
+          db.prepare("UPDATE questions SET status = 'expired' WHERE id = ?").run(r.id);
+        }
+        return target.expireOnActivity(sessionId, opts);
+      };
+    }
+    const value = Reflect.get(target, prop, receiver);
+    return typeof value === 'function' ? value.bind(target) : value;
+  },
+});
+const coreProxy = new Proxy(core, {
+  get(target, prop, receiver) {
+    if (prop === 'questions') return sabotagedQuestions;
+    const value = Reflect.get(target, prop, receiver);
+    return typeof value === 'function' ? value.bind(target) : value;
+  },
+});
+
+// Mirror fleetd.mjs's boot contract: a persisted bearer token the test can
+// read, then the HTTP surface.
+const TOKEN = 't'.repeat(64);
+writeFileSync(path.join(HOME, 'token'), TOKEN, { mode: 0o600 });
+const { server } = createHttp(coreProxy, { port: PORT, token: TOKEN });
+server.listen(PORT, '127.0.0.1');
+`);
+  // The wrapper lives outside the repo, so node_modules resolution for the
+  // daemon's one runtime dep (ws) needs a hand.
+  symlinkSync(path.join(HERE, '..', 'node_modules'), path.join(wrapDir, 'node_modules'), 'dir');
+
+  const daemon = await startDaemon({
+    scriptPath: wrapper,
+    env: { FLEETDECK_HOLD_MS: String(holdMs) },
+  });
   t.after(() => daemon.stop());
 
   const victim = randomUUID();
@@ -73,6 +155,21 @@ test('forged UserPromptSubmit can no longer drain a mailbox or expire holds', as
 
   await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: victim, cwd }), { token: daemon });
   await postJson(`${daemon.baseUrl}/mail`, { to: victim, from: 'operator', text: 'secret instructions' }, { token: daemon.token });
+
+  // Open a REAL long-lived hold on the victim session — the other thing a
+  // forged UserPromptSubmit used to be able to sabotage. (Session activity
+  // expires pending holds by design; a forged hook is refused before it can
+  // count as activity, which is what the rest of this test pins.)
+  const held = postHook(
+    daemon.baseUrl, 'PermissionRequest',
+    loadFixture('permission-request', { session_id: victim, cwd }),
+    { token: daemon, timeout: holdMs + 5000 },
+  );
+  const q = await waitUntil(async () => {
+    const state = (await getJson(`${daemon.baseUrl}/state`)).json;
+    return (state.questions || []).find(x => x.session_id === victim && x.kind === 'permission');
+  }, { label: 'permission hold to appear in /state' });
+  assert.equal(q.status, 'pending', 'hold is live before the forgery');
 
   // The attack from the red-team report: one tokenless curl that used to
   // receive the victim's pending mail verbatim AND mark it delivered.
@@ -85,6 +182,82 @@ test('forged UserPromptSubmit can no longer drain a mailbox or expire holds', as
   const drained = await getJson(`${daemon.baseUrl}/mail?session=${encodeURIComponent(victim)}`);
   assert.equal(drained.json.mail?.length, 1, 'mail was neither stolen nor marked delivered');
   assert.equal(drained.json.mail[0].text, 'secret instructions');
+
+  // The hold is intact too: still pending in /state, and the forged curl did
+  // not resolve the open request (a spurious {} answer would settle it).
+  const stateAfterForgery = (await getJson(`${daemon.baseUrl}/state`)).json;
+  const qAfter = stateAfterForgery.questions.find(x => String(x.id) === String(q.id));
+  assert.equal(qAfter?.status, 'pending', 'the forged UserPromptSubmit did not expire the pending hold');
+  const settled = await Promise.race([
+    held.then(() => 'resolved'),
+    new Promise(r => setTimeout(r, 300)).then(() => 'still-held'),
+  ]);
+  assert.equal(settled, 'still-held', 'the forged UserPromptSubmit did not resolve the held hook');
+
+  // And the hold is still genuinely answerable: a board answer resolves the
+  // held request with the permission decision, long before the hold window
+  // would have expired it to {}.
+  const ansRes = await postJson(`${daemon.baseUrl}/api/questions/${q.id}/answer`, { behavior: 'allow' });
+  assert.equal(ansRes.status, 200, 'the surviving hold still takes a board answer');
+  const heldRes = await held;
+  assert.deepEqual(heldRes.json, {
+    hookSpecificOutput: {
+      hookEventName: 'PermissionRequest',
+      decision: { behavior: 'allow' },
+    },
+  }, 'the held PermissionRequest resolves with the board answer, not an expiry');
+});
+
+// Companion guard for the test above: it locks events.mjs's late binding —
+// hookUserPromptSubmit must dispatch the activity-expiry through
+// ctx.questions AT CALL TIME, never a create-time destructure. This test
+// drives hookUserPromptSubmit DIRECTLY (unauthorized processing of the
+// payload — exactly what the forged request must never cause) after swapping
+// ctx.questions for one whose expireOnActivity expires the session's pending
+// holds: the simulated activity-path regression. If a refactor rebinds the
+// call, the swap stops firing, the row stays pending here, and the forged-
+// forgery test above silently degrades back to a mailbox-only check.
+test('unauthorized UserPromptSubmit processing expires a pending hold (regression simulation)', async (t) => {
+  const db = openDb(':memory:');
+  t.after(() => db.close());
+  const core = createCore(db, { port: 21600, home: scratchCwd('fleetdeck-hookauth-core-') });
+
+  const sid = randomUUID();
+  const cwd = scratchCwd();
+  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  core.hookSessionStart(loadFixture('session-start', { session_id: sid, cwd }));
+
+  // Open a REAL hold and park a responder on it.
+  const row = core.hookHoldQuestion(loadFixture('permission-request', { session_id: sid, cwd }), 'PermissionRequest');
+  assert.ok(row && row.id != null, 'hold intake created a question row');
+  let responded = null;
+  core.questions.attachHold(row, obj => { responded = obj; });
+
+  // Sabotage: a regression in the activity path that expires holds. Same
+  // Proxy shape as the daemon wrapper in the test above — the expired-row
+  // lookup goes through the relay's own prepared statements (pendingOf),
+  // never a second prepare, so it sees the same live connection state.
+  const real = core.questions;
+  core.questions = new Proxy(real, {
+    get(target, prop, receiver) {
+      if (prop === 'expireOnActivity') {
+        return (sessionId, opts) => {
+          for (const r of target.pendingOf(sessionId)) {
+            db.prepare("UPDATE questions SET status = 'expired' WHERE id = ?").run(r.id);
+          }
+          return target.expireOnActivity(sessionId, opts);
+        };
+      }
+      const value = Reflect.get(target, prop, receiver);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+
+  core.hookUserPromptSubmit(loadFixture('user-prompt-submit', { session_id: sid, cwd }));
+
+  const after = db.prepare('SELECT status FROM questions WHERE id = ?').get(row.id);
+  assert.equal(after.status, 'expired', 'the swapped-in expiry ran — the seam is live');
+  assert.deepEqual(responded, {}, 'the held responder was released by the real relay, fail-open');
 });
 
 test('forged /clear succession graft is refused tokenless', async (t) => {
