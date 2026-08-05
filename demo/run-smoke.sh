@@ -435,14 +435,17 @@ echo "ROUND COMPLETE — captured $DEMO_LOGS/final-state.json"
 echo
 
 # --------------------------------------------------------------- 4. verify
+# Values arrive via argv, never via interpolation into the JS source: an
+# apostrophe (or any JS-special character) in DEMO_LOGS would otherwise corrupt
+# the inline program and fail the verifier after the model cost is spent.
 node --input-type=module -e "
 import { readFileSync, existsSync } from 'node:fs';
 
-const demoLogs = '$DEMO_LOGS';
-const sidA = '$SA';
-const sidB = '$SB';
-const rcA = Number('$RC_A');
-const rcB = Number('$RC_B');
+const demoLogs = process.argv[1];
+const sidA = process.argv[2];
+const sidB = process.argv[3];
+const rcA = Number(process.argv[4]);
+const rcB = Number(process.argv[5]);
 
 let failures = 0;
 let inconclusives = 0;
@@ -547,4 +550,4 @@ else fail('both tombstoned offline at the end', 'A col=' + (byId[sidA] || {}).co
 
 if (inconclusives) console.log('INCONCLUSIVE: ' + inconclusives + ' check(s) unscored because the harness cut a worker off');
 if (failures) process.exit(1);
-"
+" "$DEMO_LOGS" "$SA" "$SB" "$RC_A" "$RC_B"
