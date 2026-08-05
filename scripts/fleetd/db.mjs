@@ -69,7 +69,15 @@ CREATE TABLE IF NOT EXISTS sessions (
   -- 0.7.1 custom names: the human-chosen suffix of <animal>-<suffix>. Presence
   -- means "a human named this card", which is what blocks branch auto-detection
   -- from renaming over it.
-  custom_suffix     TEXT
+  custom_suffix     TEXT,
+  -- Run generation (BUG-025): SessionEnd is an ASYNC hook while SessionStart is
+  -- synchronous, so a claude --resume (a NEW process reusing the SAME session
+  -- id) can register before the previous process's SessionEnd lands — and the
+  -- late end would then tombstone the live resumed card. The hook shims mint one
+  -- fleet_run nonce per PROCESS and attach it to every event they send; the
+  -- active run is persisted here at SessionStart and a SessionEnd applies only
+  -- when its nonce matches. NULL on rows whose hooks predate the shims.
+  run_id            TEXT
 );
 CREATE TABLE IF NOT EXISTS file_touches (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -272,6 +280,13 @@ function migrate(db) {
   }
   if (!cols.includes('custom_suffix')) {
     db.exec('ALTER TABLE sessions ADD COLUMN custom_suffix TEXT');
+  }
+  // Run generation (BUG-025). NULL backfill is truthful — pre-existing rows
+  // registered before the hook shims minted fleet_run nonces, and a NULL here
+  // makes any tagged SessionEnd conservatively skip the tombstone (the dead
+  // card then converges via retention instead of killing a resumed process).
+  if (!cols.includes('run_id')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN run_id TEXT');
   }
   const mailCols = db.prepare('PRAGMA table_info(mail)').all().map(r => r.name);
   if (!mailCols.includes('expired_at')) {

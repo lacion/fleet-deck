@@ -342,7 +342,9 @@ export function createStatements(db) {
     // session_id without minting a card, which is exactly what adopt needs.
     'adopt_armed_until', 'adopt_armed_skip', 'end_reason',
     // 0.7.1 /clear succession + custom names.
-    'cleared_at', 'succeeded_by', 'custom_suffix'];
+    'cleared_at', 'succeeded_by', 'custom_suffix',
+    // Run generation (BUG-025): the active process's fleet_run nonce.
+    'run_id'];
   // M-P8: updateSession is the hottest write path (every hook event runs it
   // one to three times). Each call used to compile a brand-new UPDATE, so
   // SQLite re-parsed and re-planned identical statements forever. The set of

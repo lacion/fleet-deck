@@ -16,11 +16,50 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { resolveHome, resolvePort, resolveBase } from './fleetd/config.mjs';
 
 const EVENT = process.argv[2];
 const HOME = resolveHome();
 const BASE = resolveBase(resolvePort());
+
+// Run generation (BUG-025): ONE nonce per CLI process, minted by whichever
+// shim runs first (the SessionStart hook, or this one when a mid-session event
+// is the process's first) and shared via a dotfile in FLEETDECK_HOME —
+// hooks spawn a fresh shim process per event, so the file is the handoff.
+// SessionStart persists it as the card's active run; the daemon then refuses
+// to tombstone on a SessionEnd from any OTHER (older, delayed-async) run of
+// the same session id. Mint-and-attach only when the payload carries none —
+// never overwrite a nonce a newer daemon-side flow already set. Any failure
+// leaves the event untagged, which the daemon treats as the historical
+// unconditional-tombstone path (fail open, never break the session).
+let RUN = null;
+try {
+  const runFile = path.join(HOME, `run-${process.ppid}`);
+  try {
+    RUN = fs.readFileSync(runFile, 'utf8').trim() || null;
+  } catch {
+    RUN = randomUUID();
+    // 0600 like the rest of HOME's state (token, log, db). A stale file from a
+    // crashed CLI could be re-read by an unrelated later process only if the
+    // pid was recycled AND the event carries the same session_id — worst case
+    // that session's own SessionEnd is then skipped, failing safe toward a
+    // live card the retention sweep later settles.
+    fs.writeFileSync(runFile, RUN, { mode: 0o600 });
+  }
+} catch { RUN = null; }
+
+function withRun(raw) {
+  if (!RUN) return raw;
+  try {
+    const body = raw ? JSON.parse(raw) : {};
+    if (body && typeof body === 'object' && body.fleet_run == null) {
+      body.fleet_run = RUN;
+      return JSON.stringify(body);
+    }
+  } catch { /* unparseable body — forward verbatim */ }
+  return raw;
+}
 
 // Hook events whose daemon response parks until the board answers (the
 // hold-open relay in http.mjs). THE LOCKSTEP INVARIANT: the daemon's hold
@@ -61,7 +100,7 @@ try {
   const t = setTimeout(() => ctl.abort(), WATCHDOG_MS - 400);
   try {
     const res = await fetch(`${BASE}/hook/${EVENT}`, {
-      method: 'POST', headers, body: raw || '{}', signal: ctl.signal,
+      method: 'POST', headers, body: withRun(raw) || '{}', signal: ctl.signal,
     });
     const text = await res.text();
     // Forward the daemon's response verbatim — hook stdout is how the CLI

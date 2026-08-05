@@ -12,6 +12,7 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { CLAUDE_ENV_MARKERS, GATEWAY_ENV_VARS, SPAWN_ENV_VARS } from './fleetd/env-scrub.mjs';
 // Version-takeover contract, imported as SOURCE from the sibling fleetd/ dir
@@ -228,6 +229,28 @@ async function ensureServer() {
 try {
   const payload = await readStdin();
   payload.hook_event_name = payload.hook_event_name || 'SessionStart';
+  // Run generation (BUG-025): mint/read THIS CLI process's run nonce and stamp
+  // it on the registration. SessionStart is usually the process's first hook,
+  // so this hook owns the mint; fleet-hook.mjs (same run-<ppid> dotfile, mint
+  // only when absent) tags the process's later events — SessionEnd included —
+  // with the same nonce. The daemon refuses to tombstone a card on a
+  // SessionEnd whose nonce is not the active run, which is what stops a
+  // delayed async SessionEnd from the PREVIOUS `claude --resume` process
+  // (same session id) from killing the live one. Every failure path leaves the
+  // payload untagged (the daemon's historical behavior) — never break the
+  // session.
+  try {
+    if (payload.fleet_run == null) {
+      const runFile = path.join(HOME, `run-${process.ppid}`);
+      let run = null;
+      try { run = fs.readFileSync(runFile, 'utf8').trim() || null; } catch { /* first hook of this process */ }
+      if (!run) {
+        run = randomUUID();
+        fs.writeFileSync(runFile, run, { mode: 0o600 });
+      }
+      payload.fleet_run = run;
+    }
+  } catch { /* untagged registration still registers */ }
   const serverUp = await ensureServer();
   // 0.16.0: if THIS hook evicted an older daemon, say so on the registration —
   // the daemon answers with upgrade lines (which other sessions still run

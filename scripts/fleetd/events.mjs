@@ -55,10 +55,34 @@ export function createEvents(ctx) {
   function applyEvent(ev) {
     const sid = ev.session_id || 'unknown';
     let c = card(sid, ev.cwd);
+<<<<<<< /tmp/mf-ours
     // Heuristic tombstones are reversible: a late hook proves the process was
     // alive (or resumed) when retention only GUESSED it dead. Clear both
     // timestamps so an archived presumed-dead card becomes visible again
     // before normal derivation continues.
+=======
+    // Run generation (BUG-025): SessionEnd is an ASYNC hook while SessionStart
+    // is synchronous, so a `claude --resume` (a NEW process reusing the SAME
+    // session id) can register and go live BEFORE the previous process's
+    // SessionEnd lands. Every hook shim mints one fleet_run nonce per PROCESS
+    // and SessionStart persists it as the card's active run; a tagged
+    // SessionEnd whose nonce is not the active run belongs to a dead process
+    // and must NOT tombstone the live one (offline/ended_at/end_reason, pane
+    // 'pane-dead', holds expiry, watcher wake — hookSessionEnd below skips its
+    // side effects on the same verdict). The event still flows through
+    // applyEvent as plain telemetry (last_seen, note, log line).
+    // Comparisons treat NULL as "unknown", never "match": an UNTAGGED
+    // SessionEnd (old shims, tests, manual curls) keeps the historical
+    // unconditional tombstone, but a TAGGED one against a row whose run_id was
+    // never recorded conservatively skips the kill rather than risk
+    // tombstoning a live resumed process — the truly dead card then converges
+    // via retention's silence sweep.
+    const staleRunEnd = ev.hook_event_name === 'SessionEnd'
+      && ev.fleet_run != null && c.run_id !== ev.fleet_run;
+    // Retention tombstones are reversible: a late hook proves the process was
+    // alive (or resumed). Clear both timestamps so an archived presumed-dead
+    // card becomes visible again before normal derivation continues.
+>>>>>>> /tmp/mf-theirs
     //
     // M-B5: resurrection must also lift the card OUT of the offline column.
     // The Pre/PostToolUse column rule is "queued|needsyou → working, else keep
@@ -154,6 +178,11 @@ export function createEvents(ctx) {
     if (ev.hook_event_name === 'SessionStart') {
       stampTranscriptFloor(sid, ev.transcript_path);
       if (payloadModel) upd.model = payloadModel;
+      // Run generation (BUG-025): this start (re)registers the sending process
+      // as the session's ACTIVE run — including a --resume reusing the id.
+      // Recorded unconditionally (null when the shim predates the nonces) so a
+      // later start can only make the check stricter, never resurrect a stale one.
+      upd.run_id = ev.fleet_run ?? null;
     } else if (payloadModel) {
       upd.model = payloadModel;
     } else if (ev.transcript_path) {
@@ -326,6 +355,13 @@ export function createEvents(ctx) {
           set.note = 'context cleared (/clear) — still live';
           set.cleared_at = Date.now();
           tick(`🧹 ${c.callsign} ran /clear — context reset, session still live`);
+        } else if (staleRunEnd) {
+          // BUG-025: this end belongs to a PREVIOUS process of this session id
+          // — its SessionEnd hook was still in flight when a --resume
+          // re-registered the id. Tombstoning here would offline the LIVE
+          // resumed run, settle its holds as dead and mark its pane 'pane-dead'.
+          set.note = 'session ended (stale async end from a previous run — ignored)';
+          tick(`⏭ ${c.callsign} ignored a delayed SessionEnd from a previous run`);
         } else {
           set.col = 'offline';
           set.ended_at = Date.now();
@@ -346,7 +382,7 @@ export function createEvents(ctx) {
     c = { ...c, ...set };
     logEvent(sid, ev.hook_event_name, ev.tool_name, c.note);
     onMutate();
-    return { card: c, conflict };
+    return { card: c, conflict, staleRunEnd };
   }
 
   // ------------------------------------------------------ hook endpoints
@@ -613,7 +649,14 @@ export function createEvents(ctx) {
   // freeform questions outlive the session (answer deliverable on --resume).
   function hookSessionEnd(ev) {
     const sid = ev.session_id || 'unknown';
-    applyEvent({ ...ev, hook_event_name: 'SessionEnd' });
+    const { staleRunEnd } = applyEvent({ ...ev, hook_event_name: 'SessionEnd' });
+    // BUG-025: the end came from a previous process of this session id (a
+    // delayed async hook racing a --resume). The tombstone itself was already
+    // refused inside applyEvent; skip EVERY side effect too — expiring the
+    // live run's holds, condemning its pane 'pane-dead', dropping the model
+    // memo, arming an auto-adopt and waking its watchers all belong to the
+    // dead process, not the live one.
+    if (staleRunEnd) return {};
     // BUG 1: a /clear (reason='clear') is NOT a session end — see the guarded
     // SessionEnd case in applyEvent above, which keeps the card live. Mirror
     // that here: do NOT mark the pane 'pane-dead' and do NOT drop the model

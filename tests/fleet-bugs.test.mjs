@@ -726,3 +726,81 @@ test('Fix 7 [LOW]: a silent override-process spawn (no tmux window) is presumed 
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM spawns WHERE status IN ('spawning','stalled','live')").get().n, 0,
     'it stops counting toward active spawns');
 });
+
+// ---------------------------------------------------------------------------
+// BUG-025 — a delayed async SessionEnd from a previous process must NOT
+// tombstone a newer process that resumed the same session id (`claude
+// --resume` keeps the id). hooks/hooks.json makes SessionEnd async and
+// SessionStart synchronous, so the order SessionStart(B) → SessionEnd(A) is
+// real. The fix: hook shims mint one fleet_run nonce per CLI process,
+// SessionStart persists it as the card's active run, and a SessionEnd whose
+// nonce is not the active run is ignored (telemetry only).
+// ---------------------------------------------------------------------------
+
+test('BUG-025: a delayed SessionEnd from a previous run must NOT tombstone a live resumed session', async (t) => {
+  const { core, db } = memoryCore(t);
+  const cwd = mkdtempSync(path.join(tmpdir(), 'fd-resume-'));
+  t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+
+  const spawn = await core.spawn({ cwd });
+  const sid = spawn.body.session_id;
+
+  // Process A starts and exits; its SessionEnd hook is async and lands LATE.
+  core.hookSessionStart({ session_id: sid, cwd, source: 'startup', fleet_run: 'run-A' });
+  assert.equal(cardOf(core, sid).spawn.status, 'live');
+
+  // Process B (`claude --resume`) starts with the SAME session id and becomes
+  // live BEFORE A's SessionEnd arrives.
+  core.hookSessionStart({ session_id: sid, cwd, source: 'resume', fleet_run: 'run-B' });
+  const hold = core.hookHoldQuestion({
+    session_id: sid, cwd, tool_name: 'Bash',
+    tool_input: { command: 'rm -rf build' }, fleet_run: 'run-B',
+  }, 'PermissionRequest');
+  assert.ok(hold?.id, 'the resumed run is awaiting a permission decision');
+  assert.equal(cardOf(core, sid).col, 'needsyou', 'sanity: run B is live and needs a human');
+
+  // NOW A's delayed SessionEnd lands, tagged with A's run nonce.
+  core.hookSessionEnd({ session_id: sid, cwd, reason: 'other', fleet_run: 'run-A' });
+
+  const card = cardOf(core, sid);
+  assert.notEqual(card.col, 'offline', 'a stale async end must NOT tombstone the live resumed card');
+  assert.equal(card.col, 'needsyou', 'the live run keeps its derived column');
+  assert.equal(card.endedAt, null, 'a stale async end must NOT stamp ended_at');
+  assert.equal(card.spawn.status, 'live', 'a stale async end must NOT condemn the pane to pane-dead');
+  assert.equal(db.prepare('SELECT status FROM spawns WHERE session_id = ?').get(sid).status, 'live');
+  assert.equal(db.prepare("SELECT status FROM questions WHERE id = ?").get(hold.id).status, 'pending',
+    'a stale async end must NOT settle the LIVE run\'s holds');
+  // ...and when the LIVE run genuinely ends later, its own end still lands.
+  core.hookSessionEnd({ session_id: sid, cwd, reason: 'other', fleet_run: 'run-B' });
+  assert.equal(cardOf(core, sid).col, 'offline', 'the active run\'s own SessionEnd still tombstones');
+  assert.ok(cardOf(core, sid).endedAt);
+});
+
+test('BUG-025: an untagged SessionEnd keeps the historical unconditional tombstone', async (t) => {
+  const { core } = memoryCore(t);
+  const cwd = mkdtempSync(path.join(tmpdir(), 'fd-untagged-'));
+  t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+
+  const sid = 'untagged-end';
+  core.hookSessionStart({ session_id: sid, cwd, source: 'startup', fleet_run: 'run-A' });
+  // No fleet_run on the end: pre-shim hooks (and anything else that never
+  // minted a nonce) must behave exactly as before.
+  core.hookSessionEnd({ session_id: sid, cwd, reason: 'other' });
+  assert.equal(cardOf(core, sid).col, 'offline');
+  assert.ok(cardOf(core, sid).endedAt);
+});
+
+test('BUG-025: a tagged SessionEnd against a row with no recorded run conservatively skips the tombstone', async (t) => {
+  const { core } = memoryCore(t);
+  const cwd = mkdtempSync(path.join(tmpdir(), 'fd-norun-'));
+  t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+
+  const sid = 'no-run-row';
+  // A row registered before the shims minted nonces (run_id stays NULL).
+  core.hookSessionStart({ session_id: sid, cwd, source: 'startup' });
+  // A TAGGED end cannot be proven to belong to the active run — fail safe
+  // toward the live card; retention's silence sweep settles a truly dead one.
+  core.hookSessionEnd({ session_id: sid, cwd, reason: 'other', fleet_run: 'run-A' });
+  assert.notEqual(cardOf(core, sid).col, 'offline');
+  assert.equal(cardOf(core, sid).endedAt, null);
+});
