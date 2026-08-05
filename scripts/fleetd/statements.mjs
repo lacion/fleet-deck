@@ -114,7 +114,16 @@ export function createStatements(db) {
     // snapshot's per-session cap keeps the files a card touched most recently.
     // (Was MIN(at) ASC, which kept a busy card's OLDEST 50 and dropped its
     // newest — the exact files the human is watching.)
-    filesBySession: db.prepare('SELECT session_id, abs_path, MAX(at) AS recent FROM file_touches WHERE at > ? GROUP BY session_id, abs_path ORDER BY recent DESC'),
+    // BUG-149: the cap itself also lives in SQL (per-session ROW_NUMBER,
+    // bounded by the second arg = SNAPSHOT_FILES_PER_SESSION). Without it a
+    // session touching tens of thousands of distinct vendored/generated files
+    // made EVERY frame materialize and ship every grouped row to JS just to
+    // discard all but 50 — the synchronous SQLite walk blocking hook handling.
+    filesBySession: db.prepare(`SELECT session_id, abs_path, recent FROM (
+      SELECT session_id, abs_path, MAX(at) AS recent,
+        ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY MAX(at) DESC) AS rn
+      FROM file_touches WHERE at > ? GROUP BY session_id, abs_path
+    ) WHERE rn <= ? ORDER BY recent DESC`),
     insertMail: db.prepare('INSERT INTO mail (to_session, from_id, text, at, delivered_at) VALUES (?, ?, ?, ?, NULL)'),
 <<<<<<< /tmp/mf-ours
     // BUG-034: "claimable" = never delivered, never expired, and not under a

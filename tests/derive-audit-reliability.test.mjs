@@ -31,6 +31,7 @@ import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { openDb } from '../scripts/fleetd/db.mjs';
+import { createStatements } from '../scripts/fleetd/statements.mjs';
 import { claudeTranscriptPath, createCore } from '../scripts/fleetd/derive.mjs';
 
 const HOUR = 3_600_000;
@@ -1056,4 +1057,36 @@ test('R2-8: when git can no longer read the tree at the final status check, remo
   assert.equal(res.status, 200, `an unreadable tree falls through to rmSync: ${JSON.stringify(res.body)}`);
   assert.equal(res.body.removed, true);
   assert.equal(existsSync(wt), false, 'the daemon removed the directory itself when git could not');
+});
+
+// ---------------------------------------------------------------------------
+// BUG-149
+// ---------------------------------------------------------------------------
+
+test('BUG-149: filesBySession enforces the per-session cap in SQL, not after materialization', (t) => {
+  const { db, core } = memoryCore(t);
+  const now = Date.now();
+  db.prepare(`INSERT INTO sessions (session_id, callsign, col, note, events, started_at, last_seen, source)
+    VALUES ('sn', 'an', 'working', 'x', 1, ?, ?, 'hooks')`).run(now, now);
+
+  // 200 distinct files for one session (cap 50) — enough that an unbounded
+  // statement would return 200 grouped rows while only 50 may cross the
+  // SQL→JS boundary per frame. The R2-7 test only pins the final payload,
+  // which was already capped in JS; this pins the STATEMENT's cardinality.
+  const ins = db.prepare('INSERT INTO file_touches (repo_id, rel_path, abs_path, session_id, worktree, at) VALUES (?,?,?,?,?,?)');
+  for (let i = 0; i < 200; i++) {
+    ins.run('r', `f${i}.js`, `/x/f${i}.js`, 'sn', null, now - (200 - i) * 1000);
+  }
+
+  const { q } = createStatements(db);
+  const rows = q.filesBySession.all(now - 24 * HOUR, 50);
+  assert.equal(rows.length, 50, 'the statement returns at most the per-session cap, not every grouped row');
+  assert.equal(rows[0].abs_path, '/x/f199.js', 'newest touch first');
+  assert.equal(rows.at(-1).abs_path, '/x/f150.js', 'the 51st-newest is the last row returned');
+  assert.ok(!rows.some(r => r.abs_path === '/x/f149.js'), 'older files never leave SQLite');
+
+  // The full snapshot still renders the same capped, newest-first card list.
+  const card = core.snapshot().sessions.find(s => s.session_id === 'sn');
+  assert.equal(card.files.length, 50);
+  assert.equal(card.files[0], '/x/f199.js');
 });

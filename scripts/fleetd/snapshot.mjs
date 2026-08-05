@@ -24,8 +24,13 @@ export function createSnapshot(ctx) {
     // unbounded table nor ship an unbounded file list per card on every frame.
     // R2-7: filesBySession is ordered newest-touch-first, so taking the first
     // SNAPSHOT_FILES_PER_SESSION keeps each card's MOST RECENT files.
+    // BUG-149: the per-session cap is now enforced in SQL too (ROW_NUMBER
+    // partition in statements.mjs, same SNAPSHOT_FILES_PER_SESSION passed as
+    // the second arg) — a session with a six-figure distinct-touch ledger no
+    // longer ships every grouped row across the boundary just to drop them
+    // here. The JS check stays as a harmless backstop.
     const filesBySid = new Map();
-    for (const row of q.filesBySession.all(now - RETAIN_LEDGER_MS)) {
+    for (const row of q.filesBySession.all(now - RETAIN_LEDGER_MS, SNAPSHOT_FILES_PER_SESSION)) {
       let list = filesBySid.get(row.session_id);
       if (!list) { list = []; filesBySid.set(row.session_id, list); }
       if (list.length < SNAPSHOT_FILES_PER_SESSION) list.push(row.abs_path);
