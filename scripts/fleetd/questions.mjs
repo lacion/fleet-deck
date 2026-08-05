@@ -996,6 +996,7 @@ export function createQuestions(db, {
 // format); for multi-question calls each is swapped for the question's
 // shorter `header` when the payload lets us match it. Values may be a string
 // or an array of labels (multiSelect). Returns null when the body carries
+<<<<<<< /tmp/mf-ours
 // nothing usable — the HTTP layer turns that into a 400.
 //
 // An answer is the operator's decision, NOT a display string: it is relayed
@@ -1009,6 +1010,20 @@ export function createQuestions(db, {
 // far under the cap; it guards against pathological bodies only.
 const ANSWER_MAX = 2000;
 
+=======
+// nothing usable — the HTTP layer turns that into a 400 and the hold STAYS
+// open for a corrected answer.
+//
+// An answers map is validated against the held question's own schema before a
+// single label is serialized. Without this check a malformed or stale client
+// (wrong key, an object value → "[object Object]") would settle the hold with
+// a meaningless answer — the question flips to 'answered', irreversibly
+// suppressing the native chooser. The rules:
+//   • every key must be the `question` text of a payload question;
+//   • every value must be a non-empty string, or an array of non-empty strings
+//     (arrays only when that question is multiSelect);
+//   • every label must come from that question's options[].
+>>>>>>> /tmp/mf-theirs
 function serializeChoiceAnswer(row, body) {
   if (typeof body?.text === 'string' && body.text.trim()) {
     const t = body.text.trim();
@@ -1016,17 +1031,43 @@ function serializeChoiceAnswer(row, body) {
   }
   const answers = body?.answers;
   if (!answers || typeof answers !== 'object' || Array.isArray(answers)) return null;
-  const fmt = v => (Array.isArray(v) ? v.map(x => String(x)).join(', ') : String(v ?? '')).trim();
-  const entries = Object.entries(answers).filter(([, v]) => fmt(v) !== '');
+  const entries = Object.entries(answers);
   if (!entries.length) return null;
+<<<<<<< /tmp/mf-ours
   if (entries.length === 1) {
     const t = fmt(entries[0][1]);
     return t.length <= ANSWER_MAX ? t : { over: t.length };
   }
+=======
+>>>>>>> /tmp/mf-theirs
   const qs = safeParse(row?.payload_json)?.tool_input?.questions;
+  if (Array.isArray(qs) && !validChoiceAnswers(qs, entries)) return null;
+  const fmt = v => (Array.isArray(v) ? v.join(', ') : v).trim();
+  if (entries.some(([, v]) => fmt(v) === '')) return null;
+  if (entries.length === 1) return clipQuestion(fmt(entries[0][1]));
   const headerOf = qText => (Array.isArray(qs) ? qs.find(x => x?.question === qText)?.header : null);
   const t = entries.map(([qText, v]) => `${headerOf(qText) || qText}: ${fmt(v)}`).join('; ');
   return t.length <= ANSWER_MAX ? t : { over: t.length };
+}
+
+// A label is valid only as one of the question's option labels.
+function validChoiceLabel(question, label) {
+  if (!label) return false;
+  return (Array.isArray(question?.options) ? question.options : []).some(o => o?.label === label);
+}
+
+function validChoiceAnswers(questions, entries) {
+  return entries.every(([qText, v]) => {
+    const question = questions.find(x => x?.question === qText);
+    if (!question) return false; // key must be a held question's text
+    if (typeof v === 'string') return validChoiceLabel(question, v.trim());
+    if (Array.isArray(v)) {
+      // an array of labels only for a multiSelect question, all non-empty strings
+      if (question.multiSelect !== true || !v.length) return false;
+      return v.every(x => typeof x === 'string' && validChoiceLabel(question, x.trim()));
+    }
+    return false; // never String()-coerce objects/numbers into the reason
+  });
 }
 
 // --------------------------------------------------------------------------

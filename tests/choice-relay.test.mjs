@@ -247,6 +247,7 @@ test('F3c: {text} freeform fallback answers a choice hold with the text as the r
 });
 
 // ---------------------------------------------------------------------------
+<<<<<<< /tmp/mf-ours
 // BUG-139: an answer is the operator's decision, not a display string — it
 // is relayed in full (never the 300-unit display clamp), and a serialized
 // answer over the documented 2000-unit limit is rejected BEFORE the hold is
@@ -255,6 +256,15 @@ test('F3c: {text} freeform fallback answers a choice hold with the text as the r
 // ---------------------------------------------------------------------------
 
 test('BUG-139: a long {text} answer (>300 units) is relayed to the agent in full — no silent clip', async (t) => {
+=======
+// BUG-140: an answers map that does not match the held question schema must
+// be REJECTED (400) and the hold must stay open — never String()-coerce an
+// object into "[object Object]", settle the question, and suppress the
+// native chooser with meaningless input
+// ---------------------------------------------------------------------------
+
+test('BUG-140: malformed answers maps are rejected with 400 and the choice hold stays open for a valid answer', async (t) => {
+>>>>>>> /tmp/mf-theirs
   const holdMs = 4000;
   const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
   const cwd = scratchCwd();
@@ -265,6 +275,7 @@ test('BUG-139: a long {text} answer (>300 units) is relayed to the agent in full
 
   const { held, q } = await holdChoice(daemon, sid, cwd, holdMs);
 
+<<<<<<< /tmp/mf-ours
   const long = `neither — ${'x'.repeat(400)}`;
   const ansRes = await postJson(`${daemon.baseUrl}/api/questions/${q.id}/answer`, { text: long });
   assert.equal(ansRes.status, 200, 'a >300-unit answer under the 2000-unit limit must be accepted');
@@ -304,6 +315,27 @@ test('BUG-139: an answer over the 2000-unit limit is rejected with 400 and the h
 
   const ok = await postJson(`${daemon.baseUrl}/api/questions/${q.id}/answer`, { answers: { [FIXTURE_QUESTION]: 'bcrypt' } });
   assert.equal(ok.status, 200, 'the hold is still answerable after the rejections');
+=======
+  const malformed = [
+    { answers: { [FIXTURE_QUESTION]: { bogus: 'object' } } },          // object value → would become "[object Object]"
+    { answers: { 'what is this question?': 'argon2' } },               // key is not a held question's text
+    { answers: { [FIXTURE_QUESTION]: 'scrypt' } },                     // label not among the question's options
+    { answers: { [FIXTURE_QUESTION]: ['bcrypt', 'argon2'] } },         // array on a non-multiSelect question
+    { answers: { [FIXTURE_QUESTION]: 42 } },                           // non-string scalar
+  ];
+  for (const body of malformed) {
+    const res = await postJson(`${daemon.baseUrl}/api/questions/${q.id}/answer`, body);
+    assert.equal(res.status, 400, `malformed answers must be rejected: ${JSON.stringify(body)}`);
+    const state = (await getJson(`${daemon.baseUrl}/state`)).json;
+    const qNow = state.questions.find(x => String(x.id) === String(q.id));
+    assert.equal(qNow?.status, 'pending', 'a rejected answer must not settle the question');
+    assert.equal(qNow?.held, true, 'a rejected answer must keep the hold open');
+  }
+
+  // the hold is still answerable with a valid map afterwards
+  const good = await postJson(`${daemon.baseUrl}/api/questions/${q.id}/answer`, { answers: { [FIXTURE_QUESTION]: 'bcrypt' } });
+  assert.equal(good.status, 200);
+>>>>>>> /tmp/mf-theirs
   const heldRes = await held;
   assert.equal(heldRes.json?.hookSpecificOutput?.permissionDecisionReason, 'User answered via Fleet Deck: bcrypt');
 });
