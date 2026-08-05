@@ -7,6 +7,7 @@
 // Transition rules are a faithful port of fleetdeck-spike/server/fleetd.mjs.
 
 import fs from 'node:fs';
+import path from 'node:path';
 import { branchOf } from './repo-identity.mjs';
 import { ticketFromBranch, animalOf } from './tickets.mjs';
 import { createQuestions, resolveHoldMs } from './questions.mjs';
@@ -786,7 +787,35 @@ export function createCore(db, {
   Object.assign(ctx, createPlans(ctx));
   const { planMark, assignPlan } = ctx;
 
-  // Worktree custody (inspection + allow-listed removal) → worktrees.mjs.
+  // Worktree custody (inspection + allow-listed removal) → worktrees.mjs. The
+  // custody lease below must be threaded BEFORE both worktrees and spawns are
+  // built: it is the shared state removeWorktree and revive() serialize on.
+  // It lives HERE, on the per-core ctx — not in helpers.mjs (whose contract is
+  // closure-free purity) and not module-scoped in worktrees.mjs (module scope
+  // is per-PROCESS, so two cores in one test process would share one map and
+  // block each other's unrelated removals across separate databases).
+  //
+  // remove and revive previously had no shared path lease: every liveness
+  // re-check inside remove is only a snapshot, so a revive could slip in
+  // BETWEEN the pre-remove check and the awaited `git worktree remove` —
+  // validate the still-existing cwd, insert its 'provisioning' row and launch
+  // a pane in a directory removal was about to delete (the final gate would
+  // then report success for a live card pointing at a nonexistent checkout).
+  // One claim per canonical path, taken with NO await between check and set,
+  // held through git removal + optional branch delete + row purge (remove) and
+  // through window reconciliation + the synchronous provisional-row insert
+  // (revive), makes exactly one of them win.
+  const custodyLeases = new Map(); // canonical worktree path -> lease owner
+  const canonicalWorktreePath = p => {
+    try { return fs.realpathSync(p); } catch { return path.resolve(p); }
+  };
+  ctx.claimWorktreeCustody = (p, owner) => {
+    const canonical = canonicalWorktreePath(p);
+    if (custodyLeases.has(canonical)) return null;
+    custodyLeases.set(canonical, owner);
+    let released = false;
+    return () => { if (!released) { released = true; custodyLeases.delete(canonical); } };
+  };
   Object.assign(ctx, createWorktrees(ctx));
   const { worktrees, removeWorktree } = ctx;
 

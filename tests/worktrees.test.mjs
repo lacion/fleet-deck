@@ -237,7 +237,22 @@ test('remove re-checks liveness after the git probes and aborts a revive that ra
     },
   };
 
+<<<<<<< /tmp/mf-ours
   const { removeWorktree } = createWorktrees({ q, tick() {}, onMutate() {}, ...freshMutexCtx() });
+=======
+  // The shared custody lease the daemon wires through derive (spawns.mjs holds
+  // the revive side). This test drives the module directly, so it passes the
+  // same Map-backed claim the core uses.
+  const claims = new Map();
+  const claimWorktreeCustody = p => {
+    if (claims.has(p)) return null;
+    let released = false;
+    const release = () => { if (!released) { released = true; claims.delete(p); } };
+    claims.set(p, release);
+    return release;
+  };
+  const { removeWorktree } = createWorktrees({ q, tick() {}, onMutate() {}, claimWorktreeCustody });
+>>>>>>> /tmp/mf-theirs
   const res = await removeWorktree({ path: repo.worktree, force: true });
 
   assert.equal(res.status, 409, `a revive during the probe window must abort removal (got ${JSON.stringify(res.body)})`);
@@ -249,6 +264,7 @@ test('remove re-checks liveness after the git probes and aborts a revive that ra
     db.prepare("SELECT 1 FROM spawns WHERE spawn_id = 'sp-revive-inflight'").get(),
     'the revived spawn row was not purged',
   );
+  assert.equal(claims.size, 0, 'an aborted removal releases custody — the path is never wedged');
 });
 
 // Direct, timing-free validation of the core status-aware predicate: a worktree
@@ -285,11 +301,18 @@ test('remove refuses a worktree whose spawn is launching (revive in flight, ende
   assert.equal(existsSync(repo.worktree), true, 'the launching worktree survives');
 });
 
-// The FINAL gate: a revive that lands AFTER the pre-remove recheck but during the
-// awaited `git worktree remove`/prune/branch ops. The tree is already gone by the
-// time we notice, but the last check before deleteWorktreeSpawns must KEEP the
-// now-live spawn/session rows so the card doesn't vanish (a lost-terminal bug).
-test('remove keeps rows (rows_purged:0) when a revive lands during the git ops', async (t) => {
+// The FINAL window, now closed by the custody lease: a revive whose durable row
+// lands AFTER the pre-remove recheck but during the awaited `git worktree
+// remove`/prune/branch ops. Before the lease this ended with status 200 and the
+// tree deleted while the revive claimed it (rows kept, but a live card pointing
+// at a nonexistent checkout — the data-loss race). With the shared per-path
+// lease, the real revive's claim fails BEFORE its row insert and cwd validation
+// while removal holds custody, so removal finishes and the revive is refused.
+// Pinned here the way the race actually manifests at the DB layer: the injected
+// 'spawning' row appears on the first read AFTER the git ops — the final gate
+// is now the second line of defense (rows must survive) — and the harness
+// claims the lease at the exact instant the real revive would have.
+test('remove wins the custody lease over a late revive and keeps the revived rows', async (t) => {
   const repo = makeRepoWithWorktree({ repoName: 'fleetdeck-final-gate' });
   const home = mkdtempSync(path.join(tmpdir(), 'fd-final-gate-home-'));
   t.after(() => {
@@ -309,9 +332,20 @@ test('remove keeps rows (rows_purged:0) when a revive lands during the git ops',
     .run(repo.root, repo.root, repo.worktree, now);
 
   const { q } = createStatements(db);
-  // Let the initial gate (#1, #2) and the pre-remove recheck (#3) pass, then inject
-  // the revive's live row only on the FINAL worktreeSpawns.all() (#4, after the git
-  // remove has already run). This is the one window the pre-remove gate cannot see.
+  // The lease is claimed on the FIRST worktreeSpawns.all() after the git ops —
+  // exactly when a real revive (delayed by its window lookups) would land. Its
+  // claim must FAIL: removal took custody with no await after the pre-remove
+  // recheck and holds it through the row purge. (The stale in-memory `rows`
+  // purge below is the residual hazard the final gate covers — pinned next.)
+  let reviveClaim = null;
+  const claims = new Map();
+  const claimWorktreeCustody = p => {
+    if (claims.has(p)) return null;
+    let released = false;
+    const release = () => { if (!released) { released = true; claims.delete(p); } };
+    claims.set(p, release);
+    return release;
+  };
   let calls = 0;
   let injected = false;
   const realStmt = q.worktreeSpawns;
@@ -320,6 +354,7 @@ test('remove keeps rows (rows_purged:0) when a revive lands during the git ops',
       calls += 1;
       if (calls >= 4 && !injected) {
         injected = true;
+        reviveClaim = claimWorktreeCustody(repo.worktree);
         db.prepare(`INSERT INTO spawns
           (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, requested_at, status)
           VALUES ('sp-revive-late', 'final-gate', 'otter', 'fleetdeck-test', ?, ?, ?, ?, 'spawning')`)
@@ -329,12 +364,17 @@ test('remove keeps rows (rows_purged:0) when a revive lands during the git ops',
     },
   };
 
+<<<<<<< /tmp/mf-ours
   const { removeWorktree } = createWorktrees({ q, tick() {}, onMutate() {}, ...freshMutexCtx() });
+=======
+  const { removeWorktree } = createWorktrees({ q, tick() {}, onMutate() {}, claimWorktreeCustody });
+>>>>>>> /tmp/mf-theirs
   const res = await removeWorktree({ path: repo.worktree, force: true });
 
-  assert.equal(res.status, 200, `the tree is gone but this is not an error (got ${JSON.stringify(res.body)})`);
+  assert.equal(reviveClaim, null, 'the late revive could NOT claim custody — removal already held it');
+  assert.equal(res.status, 200, `removal completes under its lease (got ${JSON.stringify(res.body)})`);
   assert.equal(res.body.removed, true);
-  assert.equal(res.body.rows_purged, 0, 'the revive that raced in kept its rows');
+  assert.equal(res.body.rows_purged, 0, 'the final gate kept the raced-in rows');
   assert.equal(res.body.spawn_became_live, true);
   assert.ok(injected && calls >= 4, 'the final gate ran after the git ops');
   assert.equal(existsSync(repo.worktree), false, 'the tree WAS removed (git already ran)');
@@ -342,6 +382,147 @@ test('remove keeps rows (rows_purged:0) when a revive lands during the git ops',
     db.prepare("SELECT 1 FROM spawns WHERE spawn_id = 'sp-revive-late'").get(),
     'the revived spawn row survived the purge',
   );
+  // And once removal settles, the lease is gone: a retry of the same revive
+  // path claims custody cleanly (it will then 410 on the missing cwd).
+  assert.ok(claimWorktreeCustody(repo.worktree), 'custody is released when removal settles');
+});
+
+// The race from the REVIVE side, pinned at the exact losing instant: a revive
+// (a fresh claim for custody, then its durable 'provisioning' row — the
+// synchronous order spawns.mjs' revive() uses) lands while removal holds the
+// lease. The revive must be REFUSED with NO durable row written, and removal
+// must proceed to a clean delete of tree + rows. Pre-lease there was nothing
+// to refuse: the revive row landed between the pre-remove recheck and `git
+// worktree remove`, and removal answered 200 over a tree the revive had just
+// claimed.
+test('a revive racing in under removal custody is refused and writes no durable row', async (t) => {
+  const repo = makeRepoWithWorktree({ repoName: 'fleetdeck-revive-blocked' });
+  const home = mkdtempSync(path.join(tmpdir(), 'fd-revive-blocked-home-'));
+  t.after(() => {
+    repo.cleanup();
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+  const db = openDb(path.join(home, 'fleetd.db'));
+  t.after(() => db.close());
+  const now = Date.now();
+  db.prepare(`INSERT INTO sessions
+    (session_id, callsign, cwd, branch, col, note, events, started_at, last_seen, ended_at, source)
+    VALUES ('blocked-revive', 'otter', ?, 'wt-branch', 'offline', 'test', 0, ?, ?, ?, 'spawned')`)
+    .run(repo.worktree, now, now, now);
+  db.prepare(`INSERT INTO spawns
+    (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, requested_at, status)
+    VALUES ('sp-blocked-revive', 'blocked-revive', 'otter', 'fleetdeck-test', ?, ?, ?, ?, 'pane-dead')`)
+    .run(repo.root, repo.root, repo.worktree, now);
+
+  const { q } = createStatements(db);
+  const claims = new Map();
+  const claimWorktreeCustody = p => {
+    if (claims.has(p)) return null;
+    let released = false;
+    const release = () => { if (!released) { released = true; claims.delete(p); } };
+    claims.set(p, release);
+    return release;
+  };
+  // Land the revive's claim at the one instant it must lose: after removal's
+  // custody is taken (post-recheck, no await in between), during the awaited
+  // git ops — i.e. on the first worktreeSpawns read of the FINAL gate. Exactly
+  // what spawns.mjs' revive() does before validating the cwd: claim first, and
+  // only touch the DB if the claim succeeded.
+  let reviveRefused = false;
+  let calls = 0;
+  const realStmt = q.worktreeSpawns;
+  q.worktreeSpawns = {
+    all: (...args) => {
+      calls += 1;
+      if (calls >= 4 && !reviveRefused) {
+        if (claimWorktreeCustody(repo.worktree) === null) reviveRefused = true;
+        else {
+          db.prepare(`INSERT INTO spawns
+            (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, requested_at, status)
+            VALUES ('sp-revive-should-not-exist', 'blocked-revive', 'otter', 'fleetdeck-test', ?, ?, ?, ?, 'provisioning')`)
+            .run(repo.root, repo.root, repo.worktree, now + 1);
+        }
+      }
+      return realStmt.all(...args);
+    },
+  };
+
+  const { removeWorktree } = createWorktrees({ q, tick() {}, onMutate() {}, claimWorktreeCustody });
+  const res = await removeWorktree({ path: repo.worktree, force: true });
+
+  assert.equal(reviveRefused, true, 'the revive was refused while removal held custody');
+  assert.equal(
+    db.prepare("SELECT 1 FROM spawns WHERE spawn_id = 'sp-revive-should-not-exist'").get(),
+    undefined,
+    'a refused revive never writes its durable row',
+  );
+  assert.equal(res.status, 200, `removal completes (got ${JSON.stringify(res.body)})`);
+  assert.equal(res.body.rows_purged, 2, 'only the dead spawn + session rows were purged');
+  assert.equal(existsSync(repo.worktree), false, 'the tree was removed');
+  assert.equal(claims.size, 0, 'custody was released when removal settled');
+});
+
+// And the reverse order, the half the audit's test must pin: a successful
+// revive KEEPS its directory. Revive claims custody first (spawns.mjs takes
+// the lease before its first await and holds it through the provisional-row
+// insert); a removal that arrives during that window must be REFUSED at the
+// claim — and the tree, the branch and the rows all survive for the live card.
+test('a removal arriving during a revive is refused — a successful revive keeps its directory', async (t) => {
+  const repo = makeRepoWithWorktree({ repoName: 'fleetdeck-revive-wins' });
+  const home = mkdtempSync(path.join(tmpdir(), 'fd-revive-wins-home-'));
+  t.after(() => {
+    repo.cleanup();
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+  const db = openDb(path.join(home, 'fleetd.db'));
+  t.after(() => db.close());
+  const now = Date.now();
+  db.prepare(`INSERT INTO sessions
+    (session_id, callsign, cwd, branch, col, note, events, started_at, last_seen, ended_at, source)
+    VALUES ('winning-revive', 'otter', ?, 'wt-branch', 'offline', 'test', 0, ?, ?, ?, 'spawned')`)
+    .run(repo.worktree, now, now, now);
+  db.prepare(`INSERT INTO spawns
+    (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, requested_at, status)
+    VALUES ('sp-winning-revive', 'winning-revive', 'otter', 'fleetdeck-test', ?, ?, ?, ?, 'pane-dead')`)
+    .run(repo.root, repo.root, repo.worktree, now);
+
+  const { q } = createStatements(db);
+  const claims = new Map();
+  const claimWorktreeCustody = p => {
+    if (claims.has(p)) return null;
+    let released = false;
+    const release = () => { if (!released) { released = true; claims.delete(p); } };
+    claims.set(p, release);
+    return release;
+  };
+  // The in-flight revive: custody held (its durable row is inserted by its
+  // launch path moments later, still inside the lease).
+  const reviveRelease = claimWorktreeCustody(repo.worktree);
+  assert.ok(reviveRelease, 'the revive claimed custody first');
+
+  const { removeWorktree } = createWorktrees({ q, tick() {}, onMutate() {}, claimWorktreeCustody });
+  const res = await removeWorktree({ path: repo.worktree, force: true });
+
+  assert.equal(res.status, 409, `removal must yield to the in-flight revive (got ${JSON.stringify(res.body)})`);
+  assert.equal(res.body.ok, false);
+  assert.equal(res.body.reason, 'session became live during removal');
+  assert.equal(existsSync(repo.worktree), true, 'the revived worktree keeps its directory');
+  assert.ok(
+    db.prepare('SELECT 1 FROM spawns WHERE worktree_path = ?').get(repo.worktree),
+    'the spawn rows survive',
+  );
+  // The revive finishes: it writes its durable row and releases custody...
+  db.prepare(`INSERT INTO spawns
+    (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, requested_at, status)
+    VALUES ('sp-revive-won', 'winning-revive', 'otter', 'fleetdeck-test', ?, ?, ?, ?, 'spawning')`)
+    .run(repo.root, repo.root, repo.worktree, now + 1);
+  reviveRelease();
+  // ...and a removal retried afterwards still refuses — the revived row is
+  // 'spawning', which worktreePathIsLive honours on its own, no lease needed.
+  const retry = await removeWorktree({ path: repo.worktree, force: true });
+  assert.equal(retry.status, 409);
+  assert.equal(retry.body.reason, 'session is still alive');
+  assert.equal(existsSync(repo.worktree), true, 'the live tree is never removed');
 });
 
 <<<<<<< /tmp/mf-ours

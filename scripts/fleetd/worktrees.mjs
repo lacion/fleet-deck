@@ -63,7 +63,11 @@ async function repoOwnsWorktree(repo, worktreePath, worktreeExists) {
 
 
 export function createWorktrees(ctx) {
+<<<<<<< /tmp/mf-ours
   const { q, tick, onMutate, acquireWorktreePathLock } = ctx;
+=======
+  const { q, tick, onMutate, claimWorktreeCustody } = ctx;
+>>>>>>> /tmp/mf-theirs
 
   // ------------------------------------------------------- worktree custody
   // CONTRACT: inspection is deliberately real git state, not remembered
@@ -343,6 +347,24 @@ export function createWorktrees(ctx) {
       return { status: 409, body: { ok: false, reason: 'session became live during removal' } };
     }
 
+    // Claim custody of this path with NO await between the liveness re-check
+    // and the claim, and hold it through the ENTIRE destructive tail below
+    // (git worktree remove → rm/prune fallback → optional branch -D → row
+    // purge). Every re-check in this function is a snapshot; without the lease
+    // a revive could still slip in after THIS check — validate the
+    // still-existing cwd, insert its 'provisioning' row and launch its pane in
+    // the very directory the awaited `git worktree remove` was about to
+    // delete, leaving a successful revive (and a live card) pointing at a
+    // nonexistent checkout. revive() claims the same per-path lease before its
+    // first await, so exactly one operation wins — and a winning revive keeps
+    // its directory. Derive wires claimWorktreeCustody per-core; tests driving
+    // this module directly opt in.
+    const releaseCustody = claimWorktreeCustody?.(row.worktree_path, 'remove');
+    if (!releaseCustody && claimWorktreeCustody) {
+      return { status: 409, body: { ok: false, reason: 'session became live during removal' } };
+    }
+    try {
+
     if (state.exists) {
       // "Permission denied" is a diagnosis, not an answer. A worktree is a
       // WORKING directory: build tooling leaves read-only files in it, and a
@@ -444,7 +466,13 @@ export function createWorktrees(ctx) {
     onMutate();
     return { status: 200, body: { ok: true, removed: true, branch_deleted, rows_purged, path: row.worktree_path } };
     } finally {
+<<<<<<< /tmp/mf-ours
       releasePath();
+=======
+      // Release on EVERY exit path (success, refusal, or throw) so a failed
+      // removal can never wedge the path against future removes or revives.
+      releaseCustody?.();
+>>>>>>> /tmp/mf-theirs
     }
   }
 
