@@ -650,6 +650,7 @@ test('tmux adapter parses scoped panes and kills only the exact fleet session wi
 
   // Create the decoy first so an all-server scan encounters the wrong, same-name
   // window before the daemon-owned one. Exact session corroboration must exclude it.
+<<<<<<< /tmp/mf-ours
   // Exec-form ('--', argv...) exactly like production newWindow (spawn.mjs
   // passes '--', ...argv): pane_current_command is 'sleep' immediately.
   // Shell-form ('sleep 3600') reports the LOGIN shell until exec completes,
@@ -657,6 +658,14 @@ test('tmux adapter parses scoped panes and kills only the exact fleet session wi
   tmux(socket, ['-f', '/dev/null', 'new-session', '-d', '-s', decoySession, '-n', window, '--', 'sleep', '3600']);
   tmux(socket, ['new-session', '-d', '-s', fleetSession, '-n', window, '--', 'sleep', '3600']);
   tmux(socket, ['split-window', '-d', '-t', `${fleetSession}:${window}`, '--', 'sleep', '3600']);
+=======
+  // Pass the command as direct argv elements so tmux execs sleep itself; the
+  // shell-string form would race the pane's shell startup against the
+  // pane_current_command assertions below.
+  tmux(socket, ['-f', '/dev/null', 'new-session', '-d', '-s', decoySession, '-n', window, 'sleep', '3600']);
+  tmux(socket, ['new-session', '-d', '-s', fleetSession, '-n', window, 'sleep', '3600']);
+  tmux(socket, ['split-window', '-d', '-t', `${fleetSession}:${window}`, 'sleep', '3600']);
+>>>>>>> /tmp/mf-theirs
 
   const fleetWindowId = tmux(socket, ['display-message', '-p', '-t', `${fleetSession}:${window}`, '#{window_id}']);
   const decoyWindowId = tmux(socket, ['display-message', '-p', '-t', `${decoySession}:${window}`, '#{window_id}']);
