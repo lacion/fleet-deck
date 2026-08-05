@@ -89,11 +89,20 @@ const RESERVED_FRAME_RE = /^[\s\x00-\x1f\x7f-\x9f]*\[FLEETDECK[ \]]/i;
 // ("[FLEETDECK​ ANSWER]") alike.
 const stripFormatChars = (s) => s.replace(/\p{Cf}/gu, '');
 // The pane envelope is a single line (`[FLEETDECK MAIL from <from>] <text>`):
-// a newline in `from` lets the text forge a line-two frame. Control chars are
-// already stripped from pane-bound text by sanitizePaneText, but `from` rides
-// inside the same paste — refuse them at the door instead.
+// a newline in `from` lets the text forge a line-two frame, and `from` is
+// interpolated VERBATIM between the envelope's own bracket delimiters — so a
+// `]` closes the envelope early and a following `[FLEETDECK ASSIGNMENT`
+// synthesizes an exact reserved frame inside a daemon-owned pane
+// (`[FLEETDECK MAIL from peer] [FLEETDECK ASSIGNMENT] …`). Bracket delimiters
+// are therefore as forbidden as controls. Control chars are already stripped
+// from pane-bound text by sanitizePaneText, but `from` rides inside the same
+// paste — refuse them at the door instead.
 // eslint-disable-next-line no-control-regex
+<<<<<<< /tmp/mf-ours
 const FROM_UNSAFE_RE = /[\r\n\x00-\x1f\x7f-\x9f\p{Cf}]/u;
+=======
+const FROM_UNSAFE_RE = /[\r\n\x00-\x1f\x7f-\x9f[\]]/;
+>>>>>>> /tmp/mf-theirs
 
 export function createMail(ctx) {
   const {
@@ -413,7 +422,7 @@ export function createMail(ctx) {
       return { status: 422, body: { ok: false, reason: `sender name '${from}' is reserved for the daemon` } };
     }
     if (from != null && FROM_UNSAFE_RE.test(String(from))) {
-      return { status: 422, body: { ok: false, reason: 'sender name may not contain control characters or newlines' } };
+      return { status: 422, body: { ok: false, reason: 'sender name may not contain control characters, newlines, or [ ] delimiters' } };
     }
     if (RESERVED_FRAME_RE.test(stripFormatChars(String(text ?? '')))) {
       return { status: 422, body: { ok: false, reason: 'mail text may not open with a [FLEETDECK ...] frame — those are reserved for the daemon' } };
