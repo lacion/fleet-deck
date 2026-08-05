@@ -291,7 +291,7 @@ test('F3d: Stop trailing-question freeform detection creates a needsyou card, an
   t.diagnostic(`freeform answer delivered via: ${deliveryChannel}`);
 });
 
-test('F3d (probe): Stop with last_assistant_message present on the live payload', async (t) => {
+test('F3d: Stop with last_assistant_message present on the live payload detects the payload question, not the transcript tail', async (t) => {
   const daemon = await startDaemon();
   const cwd = scratchCwd();
   const transcriptDir = makeTranscriptDir();
@@ -322,13 +322,12 @@ test('F3d (probe): Stop with last_assistant_message present on the live payload'
   assert.equal(stopRes.status, 200, 'Stop should 200 regardless of which detection path is taken');
 
   const state = (await getJson(`${daemon.baseUrl}/state`)).json;
-  const q = questionsFor(state, sid, 'freeform')[0];
-  if (q) {
-    t.diagnostic('implementation reads last_assistant_message from the live Stop payload when present (freeform question created from it, not the transcript tail)');
-    assert.equal(q.status, 'pending');
-  } else {
-    t.diagnostic('implementation reads only the transcript_path tail (per the F3d plan) -- last_assistant_message on the live payload is not used for detection; no freeform question created here, which is an accepted alternative');
-  }
+  const qs = questionsFor(state, sid, 'freeform');
+  assert.equal(qs.length, 1, 'exactly one freeform question should be created from the live Stop payload (the transcript tail is a non-question, so a fallback to it would create none)');
+  const q = qs[0];
+  assert.equal(q.status, 'pending');
+  assert.equal(q.payload?.text, 'Should I use REST or GraphQL for this endpoint?',
+    'the pending question must come from last_assistant_message on the live payload, not the stale transcript tail');
 });
 
 // ---------------------------------------------------------------------------
