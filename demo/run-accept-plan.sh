@@ -57,6 +57,7 @@ EXECUTOR_CALLSIGN=""
 EXECUTOR_WINDOW=""
 PLAN_ID=""
 QID=""
+ARM_TOKEN=""
 CLEANUP_DONE=0
 PROJECT_SNAPSHOT=""
 
@@ -471,6 +472,14 @@ else
   bad "reset complete & daemon ready with real tmux" "$REASON"
 fi
 
+# The bearer the daemon minted at boot (FLEETDECK_HOME/token — the same file
+# the hook shims read). Needed for the token-gated powers this gate exercises:
+# arming an unsupervised spawn (POST /api/spawn/arm-unsupervised).
+TOKEN="$(cat "$SCRATCH_HOME/token" 2>/dev/null || true)"
+if [ -n "$DAEMON_READY" ] && [ -z "$TOKEN" ]; then
+  bad "daemon bearer token" "$SCRATCH_HOME/token missing or empty"
+fi
+
 # --------------------------------------------------------------- gate 2
 PLANNER_HTTP=000
 PLANNER_JOINED=""
@@ -649,13 +658,35 @@ if [ -n "$PLAN_ID" ]; then
   fi
 fi
 
-if [ -s "$PLAN_FILE" ]; then
-  EXECUTOR_BODY=$(PROJECT_DIR="$PROJECT_DIR" PLAN_FILE="$PLAN_FILE" node -e '
+if [ -s "$PLAN_FILE" ] && [ -n "$TOKEN" ]; then
+  # Unsupervised spawns are refused (403) without a fresh single-use arm token
+  # — the API half of the board's two-step confirmation. Mint one over the
+  # bearer-gated arm endpoint and fail this gate immediately if refused.
+  ARM_HTTP=$(curl -sS -m 10 -o "$SCRATCH_HOME/arm-unsupervised.json" -w '%{http_code}' \
+    -X POST "$BASE/api/spawn/arm-unsupervised" \
+    -H 'content-type: application/json' -H "authorization: Bearer $TOKEN" \
+    -d '{}' 2>/dev/null || true)
+  ARM_TOKEN=$(ARM_JSON_FILE="$SCRATCH_HOME/arm-unsupervised.json" node -e '
+    const fs = require("fs");
+    try {
+      const r = JSON.parse(fs.readFileSync(process.env.ARM_JSON_FILE, "utf8"));
+      if (typeof r.arm_token !== "string" || !r.arm_token) process.exit(1);
+      process.stdout.write(r.arm_token);
+    } catch { process.exit(1); }
+  ' 2>/dev/null || true)
+  if [ "$ARM_HTTP" != 200 ] || [ -z "$ARM_TOKEN" ]; then
+    bad "arm unsupervised spawn" "HTTP $ARM_HTTP or no arm_token in response"
+  fi
+fi
+
+if [ -s "$PLAN_FILE" ] && [ -n "$ARM_TOKEN" ]; then
+  EXECUTOR_BODY=$(PROJECT_DIR="$PROJECT_DIR" PLAN_FILE="$PLAN_FILE" ARM_TOKEN="$ARM_TOKEN" node -e '
     const fs = require("fs");
     const plan = fs.readFileSync(process.env.PLAN_FILE, "utf8");
     process.stdout.write(JSON.stringify({
       cwd: process.env.PROJECT_DIR,
       dangerously_skip_permissions: true,
+      arm_token: process.env.ARM_TOKEN,
       prompt: "Execute this approved plan exactly. Custom instructions: work quickly, no questions.\n\n---\n" + plan
     }));
   ')
@@ -711,7 +742,9 @@ fi
 if [ -n "$EXECUTOR_UNSUPERVISED" ]; then
   ok "executor spawned unsupervised"
 else
-  bad "executor spawned unsupervised" "HTTP $EXECUTOR_HTTP or spawn.skip_permissions was not true within 30s"
+  REASON="HTTP $EXECUTOR_HTTP or spawn.skip_permissions was not true within 30s"
+  [ -n "$ARM_TOKEN" ] || REASON="unsupervised arm token was refused, so the executor spawn was never attempted"
+  bad "executor spawned unsupervised" "$REASON"
 fi
 
 # --------------------------------------------------------------- gate 7
