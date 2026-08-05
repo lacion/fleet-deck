@@ -159,3 +159,60 @@ test('ordinary loopback routes keep the historical exemption', async (t) => {
   const cleanup = await postJson(`${daemon.baseUrl}/api/cleanup`, {});
   assert.equal(cleanup.status, 200, 'POST /api/cleanup open');
 });
+
+// BUG-186 — /health must SAY whether a tokenless caller can upgrade /ws/term,
+// because the board's pre-frame close diagnosis keys off it (board/src/
+// termDiag.js). Under a mode that waives the key, "you need a key" is a false
+// diagnosis — the real fault is the proxy's upgrade forwarding or the
+// transport. Each assertion pairs the capability with the ground truth it
+// claims: an actual tokenless upgrade attempt.
+test('/health auth.term_token mirrors the /ws/term gate under every trust mode', async (t) => {
+  await t.test('default loopback: gated, and the upgrade really refuses', async () => {
+    const daemon = await startDaemon();
+    t.after(() => daemon.stop());
+
+    const health = await getJson(`${daemon.baseUrl}/health`);
+    assert.equal(health.json?.auth?.term_token, true, 'default loopback gates /ws/term on the key');
+    assert.equal(
+      await wsTermAttempt(`ws://127.0.0.1:${daemon.port}/ws/term?spawn=whatever`),
+      'refused', 'the capability must not contradict the gate it describes',
+    );
+  });
+
+  await t.test('TRUST_LOOPBACK=on: waived, and the upgrade really opens', async () => {
+    const daemon = await startDaemon({ env: { FLEETDECK_TRUST_LOOPBACK: 'on' } });
+    t.after(() => daemon.stop());
+
+    const health = await getJson(`${daemon.baseUrl}/health`);
+    assert.equal(health.json?.auth?.term_token, false, 'trust-loopback waives the /ws/term key');
+    assert.equal(
+      await wsTermAttempt(`ws://127.0.0.1:${daemon.port}/ws/term?spawn=whatever`),
+      'opened', 'a tokenless upgrade must open when the capability says it can',
+    );
+  });
+
+  await t.test('PROXY_AUTH=trust: waived, and a proxied upgrade really opens tokenless', async () => {
+    const PROXY_HOST = 'fd.example.com';
+    const daemon = await startDaemon({
+      env: {
+        FLEETDECK_TRUSTED_ORIGINS: `https://${PROXY_HOST}`,
+        FLEETDECK_PROXY_AUTH: 'trust',
+      },
+    });
+    t.after(() => daemon.stop());
+
+    const health = await getJson(`${daemon.baseUrl}/health`);
+    assert.equal(health.json?.auth?.term_token, false, 'proxy-trust waives the /ws/term key');
+    // The tokenless browser the bug is about: arriving THROUGH the trusted
+    // proxy (its Host), the upgrade opens without any ?t=.
+    const proxied = await new Promise((resolve) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${daemon.port}/ws/term?spawn=whatever`, {
+        headers: { host: PROXY_HOST, origin: `https://${PROXY_HOST}` },
+      });
+      const timer = setTimeout(() => { ws.terminate(); resolve('timeout'); }, 3000);
+      ws.on('open', () => { clearTimeout(timer); ws.close(); resolve('opened'); });
+      ws.on('error', () => { clearTimeout(timer); resolve('refused'); });
+    });
+    assert.equal(proxied, 'opened', 'the trusted-proxy browser needs no key — the diagnosis must not claim it does');
+  });
+});

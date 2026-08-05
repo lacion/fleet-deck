@@ -197,6 +197,21 @@ export function createHttp(core, {
   trustLoopback = false,
   startup = null,
 }) {
+  // CAPABILITY: may a tokenless caller upgrade /ws/term? The board reads this
+  // off /health to diagnose a pre-frame terminal close (see board/src/
+  // termDiag.js): a refusal under a mode that WAIVES the key is a transport
+  // fault, not a missing credential, and the UI must say so. The decision must
+  // mirror authorized() for the one caller the board cannot distinguish — a
+  // loopback peer — and authorized() itself cannot answer it: no daemon
+  // endpoint can tell whether the BROWSER's upgrade will travel the trusted
+  // proxy (waived under PROXY_AUTH=trust) or a direct socket (gated). So this
+  // is the union of every tokenless path that exists:
+  //   PROXY_AUTH=trust → the proxied browser needs no key;
+  //   TRUST_LOOPBACK=on → the plain-loopback power gates are waived;
+  //   otherwise the 0.16.0 gate stands: /ws/term demands the bearer on
+  //   loopback too (LAN/REQUIRE_TOKEN only ever make it stricter).
+  const termAuth = { term_token: !(proxyAuth === 'trust' || trustLoopback) };
+
   // The board renders its share panel from this: the exact URLs a peer can
   // open, token included (a browser cannot send an Authorization header on its
   // first navigation). Absent/disabled ⇒ the panel says "local only" rather
@@ -826,6 +841,7 @@ export function createHttp(core, {
           // hook already fetches before it decides whether to evict us.
           return json(res, 200, {
             ok: true, fleet: core.fleetSize(), pid: process.pid, version, managed,
+<<<<<<< /tmp/mf-ours
             spawn: core.spawnCapability(),
             // Boot-reconciliation readiness. Both heals are kicked fire-and-forget
             // from the listen callback, so /health answering 200 is NOT proof they
@@ -839,6 +855,9 @@ export function createHttp(core, {
             // listen. Tests poll /health → http.mjs stays the consumer of
             // readiness, so no timer keeps the loop alive.
             startup: startup?.reconciliationStatus?.() ?? null,
+=======
+            spawn: core.spawnCapability(), auth: termAuth,
+>>>>>>> /tmp/mf-theirs
           });
         }
         if (url.pathname === '/state') return json(res, 200, snapshotWithLan());

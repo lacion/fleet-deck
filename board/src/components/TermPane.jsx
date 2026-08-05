@@ -4,8 +4,14 @@ import { FitAddon } from '@xterm/addon-fit';
 import { ClipboardAddon } from '@xterm/addon-clipboard';
 import '@xterm/xterm/css/xterm.css';
 import { hasToken, wsUrl } from '../token.js';
+<<<<<<< /tmp/mf-ours
 import { pasteImage } from '../api.js';
 import { copyText, imageFromClipboard, isMacUA, isTermCopyChord, isTermPasteChord, pasteTextSafe, termChordHints, unwrapTmuxPassthrough } from '../util.js';
+=======
+import { pasteImage, fetchHealth } from '../api.js';
+import { refusedUpgradeText } from '../termDiag.js';
+import { copyText, imageFromClipboard, isMacUA, isTermCopyChord, isTermPasteChord, termChordHints, unwrapTmuxPassthrough } from '../util.js';
+>>>>>>> /tmp/mf-theirs
 
 // One live terminal onto one board-owned pane — the screen and the socket, with
 // no chrome around it. The floating window (TermWindow) and each tile of the grid
@@ -248,21 +254,24 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
         }
       }
     };
-    // A close with no frame before it is a REFUSED UPGRADE, and the daemon
-    // refuses one by destroying the socket — deliberately, so an unauthorized
-    // caller learns nothing, which also means the browser cannot tell us 401
-    // from "the network died". The board can still tell the human the one thing
-    // that distinguishes them: /ws/term is the only loopback route that demands
-    // the board key (gated since 0.16.0), and a board holding no key at all
-    // fails here and NOWHERE else — every other route on localhost is exempt,
-    // so the rest of the board looks perfectly healthy. Saying "connection
-    // closed" to that sent a user hunting a network fault for an afternoon.
+    // A close with no frame before it is a REFUSED UPGRADE — see termDiag.js
+    // for the full diagnostic contract. The short version: the daemon destroys
+    // the socket without a word, so the browser cannot tell 401 from "the
+    // network died", and "no local key ⇒ you need a key" is only sound when the
+    // deployment actually gates /ws/term on one. PROXY_AUTH=trust and
+    // TRUST_LOOPBACK=on both authorize tokenless upgrades, and under either one
+    // the missing-key sentence is a FALSE diagnosis — the real fault is the
+    // proxy dropping the upgrade or the transport dying. So the daemon's own
+    // /health capability (auth.term_token) is the arbiter; when /health cannot
+    // be asked (old daemon, or the fetch itself failed), the historical
+    // key-based inference is the safe fallback.
     ws.onclose = () => {
       if (st.done) return;
       if (st.seen) return end('close', 'connection closed');
-      end('err', hasToken()
-        ? 'the daemon refused this viewer before it opened — the board key may be stale (reopen the board from its ?t=… URL)'
-        : 'this board has no key, and a live terminal is the one thing that needs one — reopen the board from its ?t=… URL (`fleetdeck token`)');
+      fetchHealth().then((health) => {
+        if (st.done) return; // a retry/unmount already ended this pane
+        end('err', refusedUpgradeText(hasToken(), health?.auth?.term_token));
+      });
     };
 
     const sendIn = (data) => {

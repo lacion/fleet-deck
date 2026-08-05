@@ -603,10 +603,14 @@ test('TermPane teaches the failed gesture and never nags over a working one', ()
 test('a pane refused at the upgrade says so instead of "connection closed"', () => {
   const src = readFileSync(path.join(HERE, '..', 'board', 'src', 'components', 'TermPane.jsx'), 'utf8');
   assert.match(src, /st\.seen/, 'TermPane no longer tracks whether any frame arrived');
-  assert.match(src, /hasToken\(\)\s*\?/,
-    'the close path must distinguish "no board key" from "the daemon refused me"');
-  assert.match(src, /this board has no key/,
-    'a keyless board must name the actual problem — /ws/term is the only gated loopback route');
+  // The key-vs-refusal distinction moved into termDiag.js (BUG-186): TermPane
+  // keys the diagnosis off the daemon's /health capability, not hasToken()
+  // alone, so the trust modes no longer get the false missing-key sentence.
+  assert.match(src, /refusedUpgradeText\(hasToken\(\), health\?\.auth\?\.term_token\)/,
+    'the close path must distinguish "no board key" from "the daemon refused me" via the daemon capability');
+  const diag = readFileSync(path.join(HERE, '..', 'board', 'src', 'termDiag.js'), 'utf8');
+  assert.match(diag, /this board has no key/,
+    'a keyless board under a gating daemon must name the actual problem — /ws/term is the only gated loopback route');
 });
 
 test('the daemon makes an upgrade impossible to miss and assets free to cache', () => {
