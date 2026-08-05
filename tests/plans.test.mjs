@@ -287,8 +287,13 @@ test('answer path: {behavior:"capture"} denies the held hook bare AND mails the 
   // the pinned mail must reach the planner at its next turn boundary
   const upRes = await postHook(daemon.baseUrl, 'UserPromptSubmit', loadFixture('user-prompt-submit', { session_id: sid, cwd }, { prompt: 'continue' }), { token: daemon });
   const ctx = upRes.json?.hookSpecificOutput?.additionalContext ?? '';
-  assert.match(ctx, /\[FLEETDECK\] Your plan was captured/, `the planner's next UserPromptSubmit must carry the verbatim "[FLEETDECK] Your plan was captured" prefix (got: ${JSON.stringify(ctx)})`);
-  assert.match(ctx, /do not execute it/i, 'the pinned capture mail should tell the planner not to execute the plan');
+  // CONTRACT v1.3 pins this sentence VERBATIM (questions.mjs PLAN_CAPTURE_MAIL)
+  // — assert the full literal, not loose fragments, so the stop-and-wrap-up
+  // guidance cannot silently change while a prefix/suffix check still passes.
+  // includes(), not equality: unrelated queued mail may ride the same
+  // additionalContext before or after the pinned sentence.
+  const PINNED_CAPTURE_MAIL = '[FLEETDECK] Your plan was captured to the fleet plan library — do not execute it. Wrap up your turn.';
+  assert.ok(ctx.includes(PINNED_CAPTURE_MAIL), `the planner's next UserPromptSubmit must carry the pinned capture mail VERBATIM — ${JSON.stringify(PINNED_CAPTURE_MAIL)} (got: ${JSON.stringify(ctx)})`);
 });
 
 test('answer path: {behavior:"deny"} plainly denies the held hook; plan becomes rejected', async (t) => {
