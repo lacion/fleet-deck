@@ -117,9 +117,20 @@ not open with a `[FLEETDECK ...]` frame (also refused). Reuse the same
 >>>>>>> /tmp/mf-theirs
 
 `to` accepts a session_id, a callsign (from the roster brief or board),
+<<<<<<< /tmp/mf-ours
 `all`, or `repo:<repo name>`. Delivery is at the target's **next turn
 boundary** — never instant; do not wait for a reply, keep working.
 `curl -s -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:$PORT/state"`
+=======
+`all`, or `repo:<repo name>`. Delivery route depends on the target: a
+session blocked on a watcher wakes **immediately**, a verified owned pane
+gets the mail **typed in after a grace window**, any other live session
+receives it at its **next turn boundary**, and an ended session's mail is
+**queued for a future `--resume`**. The `POST /mail` response reports the
+actual `route` per target, and `/state`'s `mail_meta` shows each session's
+current route. Do not wait for a reply, keep working.
+`curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:4711/state`
+>>>>>>> /tmp/mf-theirs
 shows the current roster if you need a target.
 
 ## When you are deputized
