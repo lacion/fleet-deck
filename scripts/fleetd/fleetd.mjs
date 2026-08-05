@@ -3,8 +3,11 @@
 // One process per FLEETDECK_HOME, one port, loopback by default (explicit LAN opt-in).
 // State lives in SQLite (FLEETDECK_HOME/fleetd.db, WAL) so it survives daemon
 // restarts, including a deliberate port change. The HOME pid guard prevents two
-// different ports from reconciling that same state; port bind remains the election
-// between daemons using different homes, and EADDRINUSE losers exit 3.
+// different ports from reconciling that same state — with ONE version-aware
+// exception (BUG-156): a strictly newer, unmanaged boot supersedes a strictly
+// older, unmanaged incumbent instead of refusing, so concurrent upgrade
+// takeovers settle on the newest build. Port bind remains the election between
+// daemons using different homes, and EADDRINUSE losers exit 3.
 
 import fs from 'node:fs';
 import crypto from 'node:crypto';
@@ -20,7 +23,7 @@ import { createMdns, hostLabel } from './mdns.mjs';
 // HOME-ownership pid helpers now live in takeover.mjs (the version-takeover
 // contract), so the daemon's own claimHome lock and the SessionStart hook's
 // evict-a-stale-daemon path share one implementation and can never drift.
-import { pidRecord, pidIsLive, livePidLooksLikeFleetd } from './takeover.mjs';
+import { pidRecord, pidIsLive, livePidLooksLikeFleetd, shouldTakeOver, verifyDaemonPid, terminateDaemon } from './takeover.mjs';
 import { resolveHome, resolvePort } from './config.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -110,6 +113,24 @@ try { fs.chmodSync(HOME, 0o700); } catch { /* dir confidentiality is best effort
 const PID_FILE = path.join(HOME, 'fleetd.pid');
 let ownsPidFile = false;
 
+// The daemon's OWN version, resolved BEFORE claimHome: the same-HOME
+// arbitration below needs it to decide whether a live incumbent is a strictly
+// older build this boot should supersede (BUG-156). Historically this block
+// sat further down; the rules are unchanged.
+let version = '0.0.0';
+// Test-only override: FLEETDECK_VERSION_OVERRIDE lets the takeover suite stand
+// up an "older" or "newer" daemon deterministically without editing (or
+// depending on the current value of) package.json. Trimmed, and it wins over
+// the package.json read below when present. Production installs never set it.
+const versionOverride = process.env.FLEETDECK_VERSION_OVERRIDE?.trim();
+if (versionOverride) {
+  version = versionOverride;
+} else {
+  try {
+    version = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../package.json'), 'utf8')).version || version;
+  } catch { /* standalone install; /health just reports 0.0.0 */ }
+}
+
 function removeOwnedPidFile() {
   if (!ownsPidFile) return;
   try {
@@ -119,7 +140,49 @@ function removeOwnedPidFile() {
   ownsPidFile = false;
 }
 
-function claimHome() {
+// BUG-156: when the pidfile names a LIVE fleetd, "HOME is taken" used to be
+// unconditionally fatal — but a same-HOME challenger is usually a takeover
+// REPLACEMENT (two concurrent newer hooks both spawn after evicting the stale
+// daemon; the port-bind election that resolves them has no notion of version,
+// so the OLDER candidate's build can claim HOME+port first and the newest
+// build would die here, settling the upgrade on superseded code). Arbitrate
+// by version instead: probe the incumbent's loopback /health — deliberately
+// token-free — and when THIS boot is a strictly newer, unmanaged build, evict
+// the incumbent (SIGTERM + wait-for-death, the takeover contract's own
+// terminateDaemon, no SIGKILL) and take HOME. Every guard of the hook-side
+// takeover applies unchanged (strictly newer only, both versions parse,
+// neither is the 0.0.0 sentinel, a managed daemon on either side never
+// fights), and every uncertain answer falls back to the historical refusal.
+// Async (fetch + death-poll), so claimHome awaits it.
+async function supersedeIfNewer(record) {
+  // A MANAGED daemon never fights for HOME: it is owned by a supervisor that
+  // will restart whatever is killed — evicting from inside boot restarts the
+  // very race FLEETDECK_MANAGED exists to prevent (the SessionStart hook's
+  // managed no-evict guard is the other half of this rule).
+  if (MANAGED) return false;
+  let incumbent;
+  try {
+    // The incumbent's port comes from its OWN pidfile record; a legacy
+    // port-less record cannot be probed, so it keeps the historical refusal.
+    if (!Number.isInteger(record.port)) return false;
+    const res = await fetch(`http://127.0.0.1:${record.port}/health`, { signal: AbortSignal.timeout(1500) });
+    incumbent = await res.json();
+  } catch { return false; } // unreachable/unparseable: unknown incumbent, refuse as before
+  // A managed INCUMBENT owns its port+HOME outright (a `fleetdeck serve`
+  // service); a hook-spawned challenger must never SIGTERM it.
+  if (incumbent?.managed) return false;
+  // The incumbent's /health pid must agree with the pidfile record we are
+  // arbitrating — otherwise we would signal a process the record does not
+  // name (verifyDaemonPid re-checks this against the pidfile + /proc shape).
+  if (!shouldTakeOver(version, incumbent?.version)) return false;
+  if (incumbent?.pid !== record.pid) return false;
+  if (!verifyDaemonPid(record.pid, HOME)) return false;
+  if (!(await terminateDaemon(record.pid))) return false; // wedged: leave it serving, refuse
+  console.log(`fleetd v${version} superseded v${incumbent.version}: a strictly newer build claimed FLEETDECK_HOME`);
+  return true; // the caller's next attempt sees the freed (or stale, soon-reaped) pidfile
+}
+
+async function claimHome() {
   // WHY `wx`: checking then writing is a race when two launchers start together.
   // The pidfile is the HOME ownership lock, not merely diagnostic bookkeeping.
   for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -145,6 +208,14 @@ function claimHome() {
       startupFatal(`cannot read FLEETDECK_HOME pidfile (${err?.code || err?.message || 'unknown error'})`);
     }
     if (record && pidIsLive(record.pid) && (record.port === null || livePidLooksLikeFleetd(record.pid))) {
+      // Version arbitration (BUG-156): a live incumbent is not automatically
+      // the winner — a strictly newer, unmanaged boot supersedes a strictly
+      // older, unmanaged one. supersedeIfNewer SIGTERMs the incumbent and
+      // waits for its death; the loop's next attempt then claims the freed
+      // pidfile (or re-reads the incumbent's stale record and clears it via
+      // the dead-record path below, since terminateDaemon resolved only after
+      // ESRCH). False → the historical refusal, byte for byte.
+      if (await supersedeIfNewer(record)) continue;
       const port = record.port === null ? 'an unknown port (legacy pidfile)' : `port ${record.port}`;
       startupFatal(`FLEETDECK_HOME is already used by live fleetd pid ${record.pid} on ${port}; use a separate FLEETDECK_HOME for another daemon (if that PID was recycled, remove stale pidfile ${PID_FILE})`);
     }
@@ -166,7 +237,7 @@ function claimHome() {
   startupFatal('could not claim FLEETDECK_HOME pidfile after concurrent startup attempts');
 }
 
-claimHome();
+await claimHome();
 
 // PROXY CONFIG. Both knobs are security-relevant, so a malformed value is a
 // startup refusal, never a silent fallback to something laxer: an operator who
@@ -312,20 +383,6 @@ if (TOKEN) {
       console.error(`fleetd: WARNING: cannot tighten FLEETDECK_HOME/token to owner-only 0600 (${why}) — the token stays readable by other local accounts this boot`);
     }
   }
-}
-
-let version = '0.0.0';
-// Test-only override: FLEETDECK_VERSION_OVERRIDE lets the takeover suite stand
-// up an "older" or "newer" daemon deterministically without editing (or
-// depending on the current value of) package.json. Trimmed, and it wins over
-// the package.json read below when present. Production installs never set it.
-const versionOverride = process.env.FLEETDECK_VERSION_OVERRIDE?.trim();
-if (versionOverride) {
-  version = versionOverride;
-} else {
-  try {
-    version = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../package.json'), 'utf8')).version || version;
-  } catch { /* standalone install; /health just reports 0.0.0 */ }
 }
 
 // mDNS name: `fleetdeck.local` by default, so a peer can reach the board

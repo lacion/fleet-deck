@@ -28,7 +28,7 @@ import { CLAUDE_ENV_MARKERS, GATEWAY_ENV_VARS, SPAWN_ENV_VARS } from './fleetd/e
 // Version-takeover contract, imported as SOURCE from the sibling fleetd/ dir
 // (same unbundled pattern as env-scrub.mjs above) so this hook can evict a
 // strictly-older daemon and let the newest installed build own the port.
-import { shouldTakeOver, verifyDaemonPid, terminateDaemon } from './fleetd/takeover.mjs';
+import { shouldTakeOver, verifyDaemonPid, terminateDaemon, replacementMatches } from './fleetd/takeover.mjs';
 import { resolveHome, resolvePort, resolveBase } from './fleetd/config.mjs';
 
 const PORT = resolvePort();
@@ -166,7 +166,11 @@ function ownVersion() {
 // proving it really is our daemon), wait for it to die, and spawn our newer
 // build onto the freed port. Every uncertain branch fails open — a stale
 // daemon still serving beats a broken session.
-async function ensureServer() {
+// `round` counts re-entries after a competing takeover candidate's build won
+// the port election: the loop re-arbitrates against the daemon now serving,
+// and hard-caps so two evenly-matched candidates can never re-take over each
+// other past the hook's watchdog.
+async function ensureServer(round = 0) {
   const health = await api('/health', { timeout: 250 });
   if (health) {
     // A daemon is already up. ownVersion() is read only on this branch — the
@@ -231,7 +235,34 @@ async function ensureServer() {
   }
   for (let i = 0; i < 12; i++) {
     await new Promise(r => setTimeout(r, 250));
-    if (await api('/health', { timeout: 250 })) return true;
+    const spawned = await api('/health', { timeout: 250 });
+    if (spawned) {
+      // A daemon answers, but whose? Only a hook that just evicted an older
+      // build can be RACING another candidate doing the same — a cold-boot
+      // competitor simply fails to bind and this poll never sees it (its
+      // winner, whoever spawned it, reports this hook's own version anyway).
+      // If the winner is not our build, do NOT accept its code as the result
+      // of our upgrade: fail open onto it for this session and re-arbitrate.
+      // Round 2's /health then applies the normal strictly-newer rule — we
+      // evict it when we are newer, keep it when we are not — so a rapid
+      // multi-version upgrade converges on the NEWEST build instead of
+      // whichever candidate happened to claim the port first. Skipping the
+      // check on the cold-boot path also keeps ownVersion() (a package.json
+      // read) off that path, as documented in ensureServer.
+      if (replacedVersion && !replacementMatches(ownVersion(), spawned.version)) {
+        // The recursion cap is the anti-flap guarantee: if the competitor
+        // somehow evicts us back (only possible with two equal "newest"
+        // builds fighting), a third round is out of budget — return true and
+        // serve the session on whatever healthy daemon answered.
+        if (round >= 1) return true;
+        // A second takeover may outlast this round's remaining budget the
+        // same way the first did — re-extend from the hook's start, still
+        // well inside hooks.json's 15s ceiling.
+        rearmWatchdog(8000);
+        return ensureServer(round + 1);
+      }
+      return true;
+    }
   }
   return false;
 }

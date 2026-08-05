@@ -35,7 +35,7 @@ import { getJson, postHook } from './helpers/http.mjs';
 import { loadFixture } from './helpers/fixtures.mjs';
 import { waitUntil, scaleMs } from './helpers/wait.mjs';
 import {
-  parseSemver, compareSemver, shouldTakeOver, verifyDaemonPid,
+  parseSemver, compareSemver, shouldTakeOver, verifyDaemonPid, replacementMatches,
 } from '../scripts/fleetd/takeover.mjs';
 
 const HOOK_SCRIPT = path.join(REPO_ROOT, 'scripts/fleet-sessionstart.mjs');
@@ -156,6 +156,7 @@ test('semver: parse, numeric compare, and the strictly-newer + 0.0.0/unparseable
   assert.equal(shouldTakeOver(null, '0.6.0'), false);
 });
 
+<<<<<<< /tmp/mf-ours
 test('semver: prerelease precedence — RC-to-RC and RC-to-final upgrades take over', () => {
   // The semver.org §11 chain on a shared core: every step is strictly newer.
   const chain = ['1.0.0-alpha', '1.0.0-alpha.1', '1.0.0-alpha.beta', '1.0.0-beta',
@@ -184,6 +185,25 @@ test('semver: prerelease precedence — RC-to-RC and RC-to-final upgrades take o
   // A newer core still dominates any prerelease of an older core.
   assert.equal(shouldTakeOver('0.21.0-rc.1', '0.20.0'), true);
   assert.equal(shouldTakeOver('0.20.0', '0.21.0-rc.1'), false);
+=======
+test('replacementMatches: the post-spawn version gate accepts only the hook\'s exact build', () => {
+  // Exact equality is the whole contract: a competing candidate's daemon that
+  // won the port race must NEVER be accepted as the result of our upgrade,
+  // whether it is OLDER (the BUG-156 case) or NEWER (a wrong build is a wrong
+  // build — the incumbent's own boot-time re-election resolves that direction).
+  assert.equal(replacementMatches('0.20.2', '0.20.2'), true);
+  assert.equal(replacementMatches('0.20.2', '0.20.1'), false, 'an older race winner is not our replacement');
+  assert.equal(replacementMatches('0.20.1', '0.20.2'), false, 'a newer race winner is not ours either (exact match)');
+  // Fail-closed shape guards: /health is attacker-influenceable JSON and the
+  // hook must never accept a replacement it cannot positively version-match.
+  assert.equal(replacementMatches('0.20.2', undefined), false);
+  assert.equal(replacementMatches('0.20.2', null), false);
+  assert.equal(replacementMatches(null, '0.20.2'), false);
+  assert.equal(replacementMatches(undefined, undefined), false);
+  assert.equal(replacementMatches('', ''), false, 'empty strings never match — an unreadable package.json cannot claim a replacement');
+  assert.equal(replacementMatches('0.20.2', '0.20.20'), false, 'string equality, never a prefix');
+  assert.equal(replacementMatches(2, 2), false, 'non-strings never match');
+>>>>>>> /tmp/mf-theirs
 });
 
 test('verifyDaemonPid refuses a non-fleetd-shaped live pid, a pidfile mismatch, and a missing pidfile', async (t) => {
@@ -396,6 +416,56 @@ test('stretch: two racing newer hooks converge on exactly one replacement daemon
   assert.equal(health.version, PKG_VERSION);
   const again = await waitForHealth(`http://127.0.0.1:${port}`, 3000);
   assert.equal(again.pid, health.pid, 'the port is owned by a single, stable daemon (no flapping)');
+});
+
+test('a takeover hook does not accept a competing candidate\'s older build that won the port race (BUG-156)', async (t) => {
+  // BUG-156: two newer hooks (0.20.1 and 0.20.2) concurrently evict 0.20.0.
+  // Both observe the old pid die, both spawn, and "first bind wins" resolves
+  // the race — with no notion of version. Before the fix the hook accepted ANY
+  // truthy /health after its spawn, so the newest installed hook happily kept
+  // the session on the OLDER candidate's daemon and the upgrade settled on
+  // superseded code.
+  //
+  // Deterministic model of that race's worst case: the competing candidate's
+  // build is ALREADY serving when this hook's takeover replacement tries to
+  // bind. The hook's spawn dies on EADDRINUSE, the poll sees the COMPETITOR's
+  // /health — 0.0.2, not this hook's PKG_VERSION — and must re-arbitrate
+  // (evict the strictly-older competitor and spawn again) instead of
+  // accepting it. The staged competitor is a REAL daemon pinned to 0.0.2 on
+  // the SAME home, which is exactly what the second hook's replacement would
+  // have been.
+  const port = randomPort();
+  const home = mkdtempSync(path.join(tmpdir(), 'fleetdeck-bug156-home-'));
+  const cwd = scratchDir(t);
+  t.after(async () => {
+    await killDaemonAt(port, home);
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  // The competing candidate's daemon: version 0.0.2 — strictly OLDER than the
+  // hook's PKG_VERSION, strictly NEWER than the 0.0.1 both candidates evicted
+  // (already gone in this staging).
+  const competitor = await startDaemon({ port, home, env: { FLEETDECK_VERSION_OVERRIDE: '0.0.2' } });
+  const competitorPid = (await getJson(`${competitor.baseUrl}/health`)).json.pid;
+
+  // A hook whose own spawn will lose the bind to the competitor: the
+  // version-check path is what turns "healthy but not mine" into
+  // re-arbitration. OLD code would return true on the competitor's bare
+  // /health and the test's final assertions would fail (0.0.2 still serving).
+  const hook = runHook({ port, home, payload: loadFixture('session-start', { session_id: randomUUID(), cwd }) });
+  const code = await hook.exitWithin(14000, 'BUG-156 re-arbitrating hook');
+  assert.equal(code, 0, `the hook must exit 0 (stderr: ${hook.stderr})`);
+
+  // The competitor's older build was evicted and the hook's own newer build
+  // owns the port — the upgrade settles on the NEWEST installed code.
+  await waitUntil(() => competitor.proc.exitCode !== null, { timeoutMs: 5000, label: 'competitor daemon exit' });
+  assert.equal(competitor.proc.exitCode, 0, 'the evicted competitor exits 0 via its graceful SIGTERM shutdown');
+  const health = await waitForHealth(`http://127.0.0.1:${port}`, 8000);
+  assert.equal(health.version, PKG_VERSION,
+    'the hook must not accept the competing candidate\'s older build — the newest build must own the port');
+  assert.notEqual(health.pid, competitorPid, 'the survivor is a replacement, not the competitor');
+  const again = await waitForHealth(`http://127.0.0.1:${port}`, 3000);
+  assert.equal(again.pid, health.pid, 'a single, stable daemon owns the port (no eviction flap)');
 });
 
 // ---------------------------------------------------------------------------

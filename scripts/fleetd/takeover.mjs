@@ -188,6 +188,25 @@ export function verifyDaemonPid(pid, home) {
   return livePidLooksLikeFleetd(pid);
 }
 
+// A replaced daemon must report EXACTLY the hook's own build before the hook
+// accepts it. Two newer hooks (0.20.1 and 0.20.2) can evict the same stale
+// daemon together: both observe the old pid die, both spawn, and the port-bind
+// election keeps only one — with no notion of version. A bare truthy /health
+// would let the 0.20.2 hook accept 0.20.1's code (or vice versa), settling the
+// upgrade on whichever build happened to bind first instead of the newest
+// installed one. After a takeover spawn the hook therefore re-checks
+// health.version; a different version means a competitor won the race, so the
+// hook re-enters ensureServer with that daemon now healthy and the normal
+// strictly-newer takeover resolves the ordering. A shared home is trusted to
+// be same-user (claimHome + the pidfile + token all live there), so the
+// identity check is deliberately string equality — not "at least as new":
+// exact match is the whole contract and cannot settle on a WRONG build even if
+// the env is somehow shared across users.
+export function replacementMatches(ownVersion, healthVersion) {
+  return typeof ownVersion === 'string' && typeof healthVersion === 'string'
+    && ownVersion.length > 0 && ownVersion === healthVersion;
+}
+
 const defaultSleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 // SIGTERM the daemon and resolve to whether it actually DIED within timeoutMs.
