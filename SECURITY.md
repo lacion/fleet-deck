@@ -80,9 +80,12 @@ Two honest caveats, spelled out rather than implied:
   require the bearer — which removes every *tokenless* attack from local
   processes, other OS users, and anything sandboxed away from the filesystem.
 
-Since 0.16.0 the daemon mints a token on **every** boot (loopback included) and
-prints the credentialed local URL (`fleetd board http://127.0.0.1:4711/?t=…` to
-the `0600` log). Every hook event arrives through a command shim
+Since 0.16.0 the daemon always has a token (loopback included): it is minted
+and persisted to `$FLEETDECK_HOME/token` when absent, then **reused** on later
+boots — restarting the daemon does not rotate it. To rotate an exposed token,
+run `fleetdeck token --rotate` and restart the daemon, or delete the token file
+and restart. The daemon prints the credentialed local URL (`fleetd board
+http://127.0.0.1:4711/?t=…` to the `0600` log). Every hook event arrives through a command shim
 (`scripts/fleet-hook.mjs`, `fleet-sessionstart.mjs`, `fleet-watch.mjs`) that
 reads the token file and attaches it — Claude Code http hooks cannot carry
 headers, which is why the shims exist. A tokenless hook is always refused (no
