@@ -598,3 +598,54 @@ test('0.16.0 credential denylist: lexical, symlink, and search paths all refuse'
   symlinkSync(daemon.home, path.join(browse, 'work', 'fleet-home-link'));
   assert.equal((await getJson(`${daemon.baseUrl}/api/fs/read?path=work%2Ffleet-home-link%2Ftoken`)).status, 404, 'fleet home token');
 });
+
+test('0.16.0 credential denylist: walk search never returns .docker/config.json', async t => {
+  // The walk backend (browse is NOT a git repo) never runs validateRelPath per
+  // entry, so the .docker/config.json special case — a denied FILE inside an
+  // allowed dir — must be enforced by the walker itself. Read refuses this
+  // exact path; content and name search must not ride around that wall.
+  const browse = mkdtempSync(path.join(tmpdir(), 'fleetdeck-deny-docker-'));
+  mkdirSync(path.join(browse, '.docker'));
+  writeFileSync(
+    path.join(browse, '.docker', 'config.json'),
+    '{"auths":{"registry.example.com":{"auth":"DOCKERREGISTRYNEEDLE"}}}\n',
+  );
+  // Allowed neighbors prove the refusal is the config.json special case, not
+  // a blanket .docker ban: other files under .docker stay listable/readable.
+  writeFileSync(path.join(browse, '.docker', 'daemon.json'), '{ "DOCKERREGISTRYNEEDLE": true }\n');
+  writeFileSync(path.join(browse, 'readme.txt'), 'DOCKERREGISTRYNEEDLE here too\n');
+
+  const daemon = await startDaemon({ env: { CODER: '', CODER_WORKSPACE_NAME: '', CODER_AGENT_URL: '' } });
+  t.after(async () => {
+    await daemon.stop();
+    rmSync(browse, { recursive: true, force: true });
+  });
+  const set = await postJson(`${daemon.baseUrl}/api/settings`, { browse_root: browse });
+  assert.equal(set.status, 200, set.text);
+
+  const content = await getJson(`${daemon.baseUrl}/api/fs/search?mode=content&q=DOCKERREGISTRYNEEDLE`);
+  assert.equal(content.status, 200, content.text);
+  assert.equal(content.json.backend, 'walk', 'browse root is not a git repo, so the walk backend runs');
+  assert.equal(
+    content.json.hits.some(h => h.path.toLowerCase().split('/').includes('.docker') && h.path.endsWith('config.json')),
+    false, 'content search never returns .docker/config.json',
+  );
+  assert.equal(content.json.hits.some(h => h.path === 'readme.txt'), true, 'ordinary file still matches');
+  assert.equal(content.json.hits.some(h => h.path.split('/').pop() === 'daemon.json'), true,
+    'other .docker/* files remain searchable');
+
+  const names = await getJson(`${daemon.baseUrl}/api/fs/search?mode=name&q=config.json`);
+  assert.equal(names.status, 200, names.text);
+  assert.deepEqual(names.json.hits, [], 'name search never returns .docker/config.json');
+
+  // The special case is config.json ONLY: .docker itself stays visible and
+  // its other entries stay listable and readable, as designed.
+  const rootList = await getJson(`${daemon.baseUrl}/api/fs/list?path=`);
+  assert.equal(rootList.json.entries.some(e => e.name === '.docker'), true, '.docker dir stays listable');
+  const dockerList = await getJson(`${daemon.baseUrl}/api/fs/list?path=.docker`);
+  assert.equal(dockerList.status, 200, dockerList.text);
+  assert.equal(dockerList.json.entries.some(e => e.name === 'daemon.json'), true, 'daemon.json listed');
+  const neighbor = await getJson(`${daemon.baseUrl}/api/fs/read?path=.docker%2Fdaemon.json`);
+  assert.equal(neighbor.status, 200, neighbor.text);
+  assert.equal((await getJson(`${daemon.baseUrl}/api/fs/read?path=.docker%2Fconfig.json`)).status, 404, 'read config.json');
+});

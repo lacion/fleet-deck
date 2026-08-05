@@ -409,6 +409,11 @@ async function walkSearch(root, q, mode, deadline) {
       // credential denylist must filter HERE — otherwise fs/search?mode=content
       // reads ~/.aws and friends even though fs/read refuses them.
       if (deniedName(name)) continue;
+      // ...and the .docker/config.json special case must filter here too:
+      // .docker is a denied FILE inside an allowed dir, so deniedName never
+      // sees it — without the relPath check the walk backend returns hits for
+      // the exact registry credentials fs/read refuses.
+      if (deniedRelPath(entryPath(current.rel, name))) continue;
       if (++visited > WALK_ENTRY_MAX || Date.now() >= deadline) {
         truncated = true;
         stop = true;
