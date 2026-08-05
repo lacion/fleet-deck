@@ -455,10 +455,16 @@ if grep -qi "argon2" "$DEMO_LOGS/p3-resume.json"; then
 else
   bad "board answer reached the session at its next boundary" "argon2 not referenced in resume output"
 fi
+<<<<<<< /tmp/mf-ours
 # Claude Code stores sessions under ${CLAUDE_CONFIG_DIR:-$HOME/.claude} —
 # honor the override or a contributor with it set gets a false "missing relay".
 TRANSCRIPT_ROOT="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 TRANSCRIPT_DIR="$TRANSCRIPT_ROOT/projects/$(echo "$PROJECT_DIR" | sed 's|/|-|g')"
+=======
+TRANSCRIPT_ROOT="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+MUNGED_PROJECT=$(node --input-type=module -e "import { mungeClaudeProjectCwd } from '$FLEETDECK_ROOT/scripts/fleetd/helpers.mjs'; console.log(mungeClaudeProjectCwd(process.argv[1]))" "$PROJECT_DIR")
+TRANSCRIPT_DIR="$TRANSCRIPT_ROOT/projects/$MUNGED_PROJECT"
+>>>>>>> /tmp/mf-theirs
 if grep -q "FLEETDECK ANSWER" "$TRANSCRIPT_DIR/$S2.jsonl" 2>/dev/null; then
   ok "[FLEETDECK ANSWER] visible in resumed session transcript"
 else
