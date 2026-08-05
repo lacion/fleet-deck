@@ -134,17 +134,16 @@ trap 'cleanup_resources; exit 130' INT
 echo "== Fleet Deck v1.3 live plan acceptance =="
 
 # --------------------------------------------------------------- reset
-# Match the established demo reset discipline: stop known daemon pidfiles
-# first, then clear an orphan listener only when Fleet Deck's health endpoint
-# proves the process on the port is Fleet Deck.
+# Stop recorded daemons only after their fleetd identity is proven (strict
+# pidfile + /health.pid + /proc shape — the production verifyDaemonPid gate).
+# A legacy plain-PID pidfile can name a PID the OS has since recycled for an
+# unrelated process; those are never signalled (BUG-008). Then clear an orphan
+# listener only when Fleet Deck's health endpoint proves the process on the
+# port is Fleet Deck.
 REAL_HOME="${HOME:-/root}/.fleetdeck"
-if [ -f "$REAL_HOME/fleetd.pid" ]; then
-  kill "$(cat "$REAL_HOME/fleetd.pid" 2>/dev/null)" 2>/dev/null || true
-fi
-if [ -f "$SCRATCH_HOME/fleetd.pid" ]; then
-  kill "$(cat "$SCRATCH_HOME/fleetd.pid" 2>/dev/null)" 2>/dev/null || true
-fi
-sleep 0.5
+. "$SCRIPT_DIR/lib/kill-verified-daemon.sh"
+stop_pidfile_daemon "$REAL_HOME" || { echo "ABORT: unowned live pid in $REAL_HOME/fleetd.pid — not touching it."; exit 1; }
+stop_pidfile_daemon "$SCRATCH_HOME" || { echo "ABORT: unowned live pid in $SCRATCH_HOME/fleetd.pid — not touching it."; exit 1; }
 if curl -s -m 1 "$BASE/health" 2>/dev/null | grep -q '"ok"'; then
   fuser -k "$FLEETDECK_PORT/tcp" 2>/dev/null || true
   sleep 0.5
