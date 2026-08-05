@@ -117,6 +117,7 @@ CLAUDE_ENV_SCRUB=(
 echo "== Fleet Deck Phase 3 acceptance =="
 
 # ---------------------------------------------------------------- reset
+<<<<<<< /tmp/mf-ours
 # Stop recorded daemons only after their fleetd identity is proven (strict
 # pidfile + /health.pid + /proc shape — the production verifyDaemonPid gate).
 # A legacy plain-PID pidfile can name a PID the OS has since recycled for an
@@ -128,9 +129,90 @@ stop_pidfile_daemon "$SCRATCH_HOME" || { echo "ABORT: unowned live pid in $SCRAT
 if curl -s -m 1 "$BASE/health" 2>/dev/null | grep -q '"ok"'; then
   fuser -k "$FLEETDECK_PORT/tcp" 2>/dev/null || true
   sleep 0.5
+=======
+# Signal only a daemon proven by ALL THREE identities: the strict JSON pid
+# record under the pidfile's home, a /health reply on this port that reports
+# the same pid, and a live node+fleetd process shape. NEVER kill by port
+# (fuser -k kills every client of the port, and a substring health grep
+# matches any body containing "ok" — including {"ok":false}); any listener
+# that cannot be positively identified aborts the run instead.
+stop_identified_daemon() {
+  local pidfile="$1"
+  [ -f "$pidfile" ] || return 0
+  node -e '
+    const fs = require("node:fs");
+    const path = require("node:path");
+    const { execFileSync } = require("node:child_process");
+    const pidfile = process.argv[1];
+    const expectedPort = Number(process.argv[2]);
+    const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+    const live = pid => {
+      try { process.kill(pid, 0); return true; }
+      catch (err) { return err?.code !== "ESRCH"; }
+    };
+    let record;
+    try { record = JSON.parse(fs.readFileSync(pidfile, "utf8")); }
+    catch { process.exit(2); }
+    if (!Number.isInteger(record?.pid) || record.pid <= 0 || record.port !== expectedPort) process.exit(2);
+    (async () => {
+      // /health must report the pid recorded in the pidfile. Two resets can race (the real
+      // home and the scratch home recording the same daemon), so a port that
+      // goes silent mid-poll also satisfies the proof — the identified daemon
+      // is already gone. Any OTHER pid on the port is a refusal.
+      let health = null;
+      for (let i = 0; i < 20; i += 1) {
+        try {
+          const res = await fetch(`http://127.0.0.1:${expectedPort}/health`, { signal: AbortSignal.timeout(250) });
+          const candidate = res.ok ? await res.json() : null;
+          if (candidate?.pid === record.pid) { health = candidate; break; }
+          if (candidate) { process.exitCode = 2; return; }
+        } catch {}
+        if (!live(record.pid)) return;
+        await sleep(100);
+      }
+      if (!health) { process.exitCode = 2; return; }
+
+      let nodeLike = false;
+      let fleetdScript = false;
+      try {
+        if (process.platform === "linux") {
+          const executable = path.basename(fs.readlinkSync(`/proc/${record.pid}/exe`)).replace(/ \(deleted\)$/, "");
+          const argv = fs.readFileSync(`/proc/${record.pid}/cmdline`, "utf8").split("\0").filter(Boolean);
+          nodeLike = /^(?:node|nodejs)$/i.test(executable);
+          fleetdScript = argv.some(value => /(?:^|[\/\\])fleetd(?:\.bundle)?\.mjs$/.test(value));
+        } else {
+          const executable = execFileSync("ps", ["-p", String(record.pid), "-o", "comm="], { encoding: "utf8", timeout: 1000 }).trim();
+          const command = execFileSync("ps", ["-p", String(record.pid), "-o", "command="], { encoding: "utf8", timeout: 1000 });
+          nodeLike = /^(?:node|nodejs)$/i.test(path.basename(executable));
+          fleetdScript = /(?:^|[\/\\])fleetd(?:\.bundle)?\.mjs(?=$|\s|")/.test(command);
+        }
+      } catch { process.exitCode = 2; return; }
+      if (!nodeLike || !fleetdScript) { process.exitCode = 2; return; }
+
+      try { process.kill(record.pid, "SIGTERM"); }
+      catch (err) { if (err?.code !== "ESRCH") { process.exitCode = 2; return; } }
+      for (let i = 0; i < 30; i += 1) {
+        await sleep(100);
+        if (!live(record.pid)) return;
+      }
+      // Never escalate to SIGKILL: a graceful shutdown that cannot be proven
+      // aborts the run instead of risking a recycled PID.
+      process.exitCode = 2;
+    })().catch(() => { process.exitCode = 2; });
+  ' "$pidfile" "$FLEETDECK_PORT" >/dev/null 2>&1
+}
+REAL_HOME="${HOME:-/root}/.fleetdeck"
+if ! stop_identified_daemon "$REAL_HOME/fleetd.pid"; then
+  echo "ABORT: daemon recorded in $REAL_HOME/fleetd.pid could not be positively identified and stopped."
+  exit 1
+fi
+if ! stop_identified_daemon "$SCRATCH_HOME/fleetd.pid"; then
+  echo "ABORT: daemon recorded in $SCRATCH_HOME/fleetd.pid could not be positively identified and stopped."
+  exit 1
+>>>>>>> /tmp/mf-theirs
 fi
 if curl -s -m 1 "$BASE/health" > /dev/null 2>&1; then
-  echo "ABORT: something is still listening on :$FLEETDECK_PORT after reset."
+  echo "ABORT: something is still listening on :$FLEETDECK_PORT after reset; refusing to kill an unidentified listener."
   exit 1
 fi
 rm -rf "$SCRATCH_HOME"; mkdir -p "$SCRATCH_HOME" "$DEMO_LOGS"
