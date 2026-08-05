@@ -33,6 +33,7 @@ function noPaneModeFor(window) {
   return window.includes(noPaneKnob) ? 'error' : null;
 }
 
+<<<<<<< /tmp/mf-ours
 // Fault injection (BUG-159): fail the openViewer SIGWINCH jiggle's resize steps.
 // The open sequence is size(rows), size(rows-1), size(rows); the knob value
 // picks which step(s) answer %error:
@@ -41,6 +42,52 @@ function noPaneModeFor(window) {
 // Real resize traffic (a client's later {t:'resize'} frame) is unaffected —
 // the bridge does not re-run the jiggle sequence there.
 const failResizeKnob = process.env.FLEETDECK_TEST_TERM_FAIL_RESIZE;
+=======
+// Fault injection (BUG-165): the default branch below used to answer EVERY
+// non-list/capture/cursor command with a bare success, so no test could reach
+// the bridge's lifecycle edges — resize failure, dead-pane send-keys policy,
+// command-timeout teardown, or %window-close. These knobs open those edges:
+//
+//   FLEETDECK_TEST_TERM_HANG_MS     — delay every reply by N ms ('800'), or
+//                                     only replies to commands starting with a
+//                                     prefix ('send-keys:60000'). NOTE: a reply
+//                                     past FLEETDECK_TERM_CMD_TIMEOUT_MS does
+//                                     NOT unblock the waiter — the deadline
+//                                     teardown kills the whole control client
+//                                     (a late reply would resolve the wrong
+//                                     FIFO waiter), and SIGTERM here exits the
+//                                     fixture, so the child 'exit' event is
+//                                     what finally rejects the wedged command.
+//                                     Scope with care: delaying only SOME
+//                                     replies lets a later command's reply
+//                                     overtake the wedged one in FIFO order.
+//   FLEETDECK_TEST_TERM_FAIL_RESIZE — resize-window answers %error instead of
+//                                     %end. The open path takes its 'terminal
+//                                     resize failed' throw; an established
+//                                     viewer's resize takes viewer.finish.
+//   FLEETDECK_TEST_TERM_DEAD_PANE   — send-keys answers %error (the pane died
+//                                     under an established viewer → input()
+//                                     must finish that viewer) and list-panes -a
+//                                     reports NO panes, so a %window-close probe
+//                                     (FLEETDECK_TEST_TERM_CLOSE_WINDOW, emitted
+//                                     once the first pane streams) condemns it.
+// <cmd> on a knob's value scopes the fault to commands starting with that word.
+const hangKnob = process.env.FLEETDECK_TEST_TERM_HANG_MS;
+function hangFor(cmd) {
+  if (!hangKnob) return 0;
+  const [prefix, ms] = hangKnob.split(':');
+  if (ms !== undefined) return cmd.startsWith(prefix) ? (Number(ms) || 0) : 0;
+  return Number(prefix) || 0;
+}
+const failResizeKnob = process.env.FLEETDECK_TEST_TERM_FAIL_RESIZE;
+const deadPaneKnob = process.env.FLEETDECK_TEST_TERM_DEAD_PANE;
+const closeWindowKnob = process.env.FLEETDECK_TEST_TERM_CLOSE_WINDOW;
+let closeWindowSent = false;
+function knobHits(knob, cmd) {
+  if (!knob) return false;
+  return knob === '1' || knob === '*' || cmd.startsWith(knob);
+}
+>>>>>>> /tmp/mf-theirs
 
 // window name -> pane id, assigned on first sight and stable thereafter
 const panes = new Map();
@@ -75,11 +122,19 @@ function note(value) {
   try { appendFileSync(record, JSON.stringify({ pid: process.pid, ...value }) + '\n'); } catch { /* fixture reporting only */ }
 }
 
-function response(lines = [], ok = true) {
+function response(lines = [], ok = true, cmd = '') {
   const n = ++number;
-  process.stdout.write(`%begin 100 ${n} 0\n`);
-  for (const line of lines) process.stdout.write(line + '\n');
-  process.stdout.write(`%${ok ? 'end' : 'error'} 100 ${n} 0\n`);
+  const write = () => {
+    process.stdout.write(`%begin 100 ${n} 0\n`);
+    for (const line of lines) process.stdout.write(line + '\n');
+    process.stdout.write(`%${ok ? 'end' : 'error'} 100 ${n} 0\n`);
+  };
+  // Replies are matched to commands by FIFO order, so a wedged reply stalls
+  // the shared control stream — exactly what the bridge's COMMAND_TIMEOUT_MS
+  // teardown exists for.
+  const delay = hangFor(cmd);
+  if (delay > 0) setTimeout(write, delay);
+  else write();
 }
 
 /** `list-panes -t =fleetdeck-21777:=fd21777-viper-c7a7 -F '#{pane_id}'` → %1
@@ -111,10 +166,11 @@ input.on('line', line => {
     const target = /-t\s+=\S*?:(\S+)/.exec(line);
     const window = target?.[1]?.replace(/^=/, '') ?? 'default';
     const mode = noPaneModeFor(window);
-    if (mode === 'error') response([], false);      // window gone: list-panes fails
-    else if (mode === 'empty') response([]);         // window gone: no pane id comes back
-    else response([paneForListPanes(line)]);
+    if (mode === 'error') response([], false, line);     // window gone: list-panes fails
+    else if (mode === 'empty') response([], true, line); // window gone: no pane id comes back
+    else response([paneForListPanes(line)], true, line);
   } else if (line.startsWith('list-panes -a')) {
+<<<<<<< /tmp/mf-ours
 <<<<<<< /tmp/mf-ours
 <<<<<<< /tmp/mf-ours
     // window-close probe + BUG-055 pane_dead poll: '%N [dead]' per pane. The
@@ -159,11 +215,29 @@ input.on('line', line => {
     else if (failResizeKnob === 'restore') fail = seq.length === 3 && rows === seq[0];
     if (fail) response([], false); else response([]);
 >>>>>>> /tmp/mf-theirs
+=======
+    // window-close probe: every pane still alive — unless DEAD_PANE says the
+    // pane died, in which case the probe must answer truthfully (none alive)
+    // so the bridge finishes the viewers watching it.
+    response(deadPaneKnob ? [] : [...panes.values()], true, line);
+  } else if (line.startsWith('send-keys ')) {
+    // A dead pane refuses input. The bridge's input() must treat !ok as
+    // 'terminal pane closed' and finish the viewer — bare-success here hid it.
+    response([], !knobHits(deadPaneKnob, line), line);
+  } else if (line.startsWith('resize-window ') || line.startsWith('refresh-client ')) {
+    // resize-window unsupported/failed. refresh-client is grouped in because it
+    // is the bridge's documented FALLBACK for a failed resize-window — failing
+    // only resize-window would exercise the fallback, not the failure. With
+    // both refusing, the open path throws 'terminal resize failed' and an
+    // established viewer's resize finishes it with the same reason.
+    response([], !knobHits(failResizeKnob, line), line);
+>>>>>>> /tmp/mf-theirs
   } else if (line.startsWith('capture-pane ')) {
     const pane = paneForTarget(line) || '%1';
-    response([`seed ${pane} \u001b[31mred\u001b[0m`]);
+    response([`seed ${pane} \u001b[31mred\u001b[0m`], true, line);
   } else if (line.includes("'#{cursor_x} #{cursor_y}'")) {
     const pane = paneForTarget(line) || '%1';
+<<<<<<< /tmp/mf-ours
     if (flood && !flooded.has(pane) && (!flood.window || [...panes].find(([, p]) => p === pane)?.[0] === flood.window)) {
       // Withhold the cursor reply and emit the flood FIRST: the bridge is
       // subscribed by now, so these bytes land in viewer.pending while init is
@@ -175,14 +249,26 @@ input.on('line', line => {
       }
     }
     response(['2 3']);
+=======
+    response(['2 3'], true, line);
+>>>>>>> /tmp/mf-theirs
     // One output burst per pane, tagged with that pane's id, so a grid test can
     // prove each viewer received ITS stream and not its neighbour's.
     if (!streamed.has(pane)) {
       streamed.add(pane);
       setTimeout(() => process.stdout.write(`%output ${pane} live ${pane}\\033[32m!\\033[0m\n`), 25);
     }
+    // Once a pane is established, optionally report its window closing. Real
+    // tmux sends %window-close when a window dies; the bridge answers with a
+    // list-panes -a probe and finishes only the viewers whose pane is actually
+    // gone — so this alone must NOT take a viewer down (pair it with
+    // DEAD_PANE to make the probe condemn).
+    if (closeWindowKnob && !closeWindowSent) {
+      closeWindowSent = true;
+      setTimeout(() => process.stdout.write('%window-close @1\n'), 40);
+    }
   } else {
-    response([]);
+    response([], true, line);
   }
 });
 
