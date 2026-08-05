@@ -223,6 +223,7 @@ test('SIGTERM waits for the mDNS goodbye send callback before fleetd exits', { s
     'fleetd must remain alive until the goodbye send callback runs');
 });
 
+<<<<<<< /tmp/mf-ours
 
 test('a LAN address change refreshes discovery: mDNS retires the old address and announces the new one (BUG-118)', { skip: BUNDLE_SKIP }, async (t) => {
   const home = freshHome('fleetdeck-lan-roam-');
@@ -232,10 +233,25 @@ test('a LAN address change refreshes discovery: mDNS retires the old address and
   t.after(() => rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
 
   const child = spawnRaw({
+=======
+test('a dotted FLEETDECK_MDNS_NAME yields ONE canonical host: banner, log and advertisement agree', { skip: BUNDLE_SKIP }, async (t) => {
+  // BUG-120: the responder canonicalizes a raw name like "team.deck" to the
+  // "team-deck.local" it can legally advertise. Anything else the daemon says
+  // about the mDNS host — the startup banner and the LAN log line (and, behind
+  // them, /state's lan.mdns and the Host allowlist built from it) — must name
+  // that SAME host, or the share URL resolves nowhere and the advertised Host
+  // is rejected with 403.
+  const home = freshHome('fleetdeck-mdns-canonical-');
+  const record = path.join(home, 'mdns.jsonl');
+  const consoleRecord = path.join(home, 'console.log');
+  t.after(() => rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+  const daemon = spawnRaw({
+>>>>>>> /tmp/mf-theirs
     port: randomPort(),
     home,
     env: loaderOptions({
       FLEETDECK_BIND: '0.0.0.0',
+<<<<<<< /tmp/mf-ours
       FLEETDECK_TOKEN: 'lan-roam-token-0123456789abcdef',
       FLEETDECK_MDNS_RECORD: record,
       FLEETDECK_MDNS_SEND_DELAY_MS: '0',
@@ -284,4 +300,34 @@ test('a LAN address change refreshes discovery: mDNS retires the old address and
   assert.match(consoleLines, /fleetd LAN addresses now 198\.51\.100\.88/, `roam was not logged:\n${log}`);
   assert.equal(consoleLines.includes('lan-roam-token-0123456789abcdef'), false, 'the token must never reach a console line');
   assert.match(log, /refreshLan .*198\.51\.100\.88/, `share-panel LAN state did not follow the roam:\n${log}`);
+=======
+      FLEETDECK_TOKEN: 'mdns-canonical-token-0123456789abcdef',
+      FLEETDECK_MDNS_NAME: 'team.deck',
+      FLEETDECK_MDNS_RECORD: record,
+      FLEETDECK_TEST_CONSOLE_RECORD: consoleRecord,
+    }),
+  });
+  t.after(() => daemon.kill());
+
+  await waitUntil(() => {
+    if (daemon.proc.exitCode !== null) throw new Error(`daemon exited ${daemon.proc.exitCode}:\n${daemon.stdout}\n${daemon.stderr}`);
+    try { return readFileSync(record, 'utf8').includes('"type":"send"'); } catch { return false; }
+  }, 'initial mocked mDNS announcement');
+
+  const send = readFileSync(record, 'utf8').trim().split('\n').filter(Boolean)
+    .map(JSON.parse).find(item => item.type === 'send');
+  const packet = decodeMessage(Buffer.from(send.wire, 'base64'));
+  const aRecord = packet.answers.find(answer => answer.typeName === 'A');
+  assert.equal(aRecord.name, 'team-deck.local', 'the wire advertises the canonicalized label');
+
+  const output = await waitUntil(() => {
+    try {
+      const text = readFileSync(consoleRecord, 'utf8');
+      return text.includes('(mDNS;') ? text : null;
+    } catch { return null; }
+  }, 'mDNS LAN log line');
+  assert.match(output, /fleetd LAN http:\/\/team-deck\.local:\d+\/\?t=<hidden> \(mDNS;/,
+    `the log must name the advertised host, not the raw env value:\n${output}`);
+  assert.ok(!output.includes('team.deck.local'), `the unsplittable raw name must never be printed:\n${output}`);
+>>>>>>> /tmp/mf-theirs
 });

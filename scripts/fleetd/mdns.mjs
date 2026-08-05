@@ -354,19 +354,30 @@ function label(value, fallback) {
   return bytes.toString('utf8').replace(/\ufffd+$/, '') || fallback;
 }
 
+<<<<<<< /tmp/mf-ours
 /** The canonical host label behind every surface that speaks the mDNS name.
  * fleetd derives its share URL, startup log line, responder and Host allowlist
  * from this one string: normalize() rewrites dots/controls and truncates to
  * 63 bytes, so a caller that interpolates the raw configured value would
  * publish a name that never resolves and advertise a name its own HTTP layer
  * refuses. Pure; always the exact label normalize() would advertise. */
+=======
+/** The canonical host label for a configured mDNS name. Exported so the daemon
+ * can build its share URL, Host allowlist and logs from the SAME label the
+ * responder advertises — a raw name like "team.deck" would otherwise resolve
+ * nowhere and fail Host authorization against the advertised "team-deck.local". */
+>>>>>>> /tmp/mf-theirs
 export function hostLabel(value, fallback = 'fleetdeck') {
   return label(value, fallback);
 }
 
 /** Options -> the concrete thing we advertise. Pure; safe to call per packet. */
 export function normalize(options = {}) {
+<<<<<<< /tmp/mf-ours
   const host = `${hostLabel(options.name || 'fleetdeck')}.local`;
+=======
+  const host = `${hostLabel(options.name, 'fleetdeck')}.local`;
+>>>>>>> /tmp/mf-theirs
   const instance = label(options.instance || 'Fleet Deck', 'Fleet Deck');
   const port = Number(options.port) || 0;
   const addresses = (Array.isArray(options.addresses) ? options.addresses : []).filter(isIPv4);

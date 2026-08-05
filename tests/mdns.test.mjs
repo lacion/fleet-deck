@@ -26,6 +26,7 @@ import {
   encodeRecord,
   hostLabel,
   normalize,
+  hostLabel,
   parseQuestions,
   META_QUERY,
   MDNS_ADDR,
@@ -260,6 +261,7 @@ test('normalize drops junk addresses and turns a dotted instance into one legal 
   assert.equal(ad.host, HOST);
 });
 
+<<<<<<< /tmp/mf-ours
 test('hostLabel returns exactly the label normalize() would advertise', () => {
   // BUG-119: fleetd builds its share URL, startup log line and Host allowlist
   // from ONE canonical label — if the surfaces and the advertisement ever
@@ -273,6 +275,25 @@ test('hostLabel returns exactly the label normalize() would advertise', () => {
   }
   assert.equal(hostLabel('deck.office'), 'deck-office');
   assert.equal(hostLabel(''), 'fleetdeck', 'an empty name falls back rather than advertising ".local"');
+=======
+// BUG-120: the daemon builds its share URL, Host allowlist and logs from
+// hostLabel(), so those must agree byte-for-byte with the host normalize()
+// actually advertises — for every shape of FLEETDECK_MDNS_NAME.
+test('hostLabel is the same canonical host normalize() advertises', () => {
+  const cases = [
+    ['team.deck', 'team-deck'],             // a dot would split one label into two
+    ['team\u0007deck', 'team-deck'],       // control bytes never reach the wire
+    ['  spaced  ', 'spaced'],               // trim, like the daemon already did
+    ['\u00e9'.repeat(40), '\u00e9'.repeat(31)], // byte-wise truncation drops a half-eaten tail
+    ['', 'fleetdeck'],                      // empty falls back
+  ];
+  for (const [raw, expected] of cases) {
+    const canonical = hostLabel(raw || 'fleetdeck', 'fleetdeck');
+    assert.equal(canonical, expected, `hostLabel(${JSON.stringify(raw)})`);
+    assert.equal(normalize({ name: canonical, port: 4711 }).host, `${canonical}.local`,
+      `the advertised host must be built from the same label: ${JSON.stringify(raw)}`);
+  }
+>>>>>>> /tmp/mf-theirs
 });
 
 // ------------------------------------------------- announcements & goodbyes

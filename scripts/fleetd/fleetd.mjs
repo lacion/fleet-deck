@@ -314,12 +314,20 @@ if (versionOverride) {
 
 // mDNS name: `fleetdeck.local` by default, so a peer can reach the board
 // without knowing an IP. Peers running their OWN fleet would collide on that
+<<<<<<< /tmp/mf-ours
 // name, hence the override. Canonicalized ONCE through mdns.mjs's hostLabel:
 // the responder rewrites dots/controls and truncates to a 63-byte DNS label,
 // so the share URL, the startup log line and the HTTP Host allowlist must be
 // built from the same label — interpolating the raw configured value would
 // publish a name that never resolves and refuse the name actually advertised.
 const MDNS_NAME = hostLabel((process.env.FLEETDECK_MDNS_NAME || 'fleetdeck').trim() || 'fleetdeck');
+=======
+// name, hence the override. The label is canonicalized ONCE via mdns's own
+// rules, so the share URL, the Host allowlist and the logs below name exactly
+// the host the responder advertises — the raw env value may carry dots,
+// control bytes or an overlong label the wire format would rewrite anyway.
+const MDNS_NAME = hostLabel((process.env.FLEETDECK_MDNS_NAME || 'fleetdeck').trim(), 'fleetdeck');
+>>>>>>> /tmp/mf-theirs
 function mdnsInstanceName() {
   // Discovery must remain optional even if the platform RNG fails after an
   // explicit token was supplied. The generic fallback still leaks no hostname.

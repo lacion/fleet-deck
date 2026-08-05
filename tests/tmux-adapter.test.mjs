@@ -980,6 +980,9 @@ test('newWindow arms remain-on-exit for the fleet session only — never server-
 });
 
 <<<<<<< /tmp/mf-ours
+<<<<<<< /tmp/mf-ours
+=======
+>>>>>>> /tmp/mf-theirs
 // BUG-050 regression pin: an orphan window already holding the deterministic
 // fleet name must make newWindow REFUSE — without launching a second agent.
 // The old order (create under the final name, postcondition afterwards) let
@@ -997,6 +1000,7 @@ test('newWindow refuses an occupied scoped name before any agent starts', { skip
   const session = sessionName(port);
   const callsign = 'occupied';
   const window = `fd${port}-${callsign}`;
+<<<<<<< /tmp/mf-ours
 =======
 // BUG-051 regression: the kill must be re-targeted BY EXACT NAME at the moment
 // it executes. A real concurrent rename between the lookup and the kill cannot
@@ -1074,6 +1078,8 @@ test('tmux-target-syntax characters in a scoped kill name are rejected, never pa
   const previousSocket = process.env.FLEETDECK_TMUX_SOCKET;
   process.env.FLEETDECK_TMUX_SOCKET = socket;
 >>>>>>> /tmp/mf-theirs
+=======
+>>>>>>> /tmp/mf-theirs
   t.after(() => {
     try { tmux(socket, ['kill-server']); } catch { /* already gone */ }
     if (previousSocket == null) delete process.env.FLEETDECK_TMUX_SOCKET;
@@ -1081,6 +1087,9 @@ test('tmux-target-syntax characters in a scoped kill name are rejected, never pa
   });
 
 <<<<<<< /tmp/mf-ours
+<<<<<<< /tmp/mf-ours
+=======
+>>>>>>> /tmp/mf-theirs
   await ensureSession(port);
   // An orphan (or manually created) window already owns the deterministic name.
   tmux(socket, ['new-window', '-d', '-t', `=${session}:`, '-n', window, 'sleep 3600']);
@@ -1101,6 +1110,7 @@ test('tmux-target-syntax characters in a scoped kill name are rejected, never pa
   const panes = tmux(socket, ['list-panes', '-a', '-F', '#{pane_current_command}']).split('\n');
   assert.equal(panes.filter(c => c === 'sleep').length, 1,
     'no second agent process was launched or leaked');
+<<<<<<< /tmp/mf-ours
 =======
   // A scoped window name containing ':' passes the caller's loose scoped-name
   // regex but, if pasted into `=<session>:=<name>`, parses as target syntax
@@ -1115,5 +1125,7 @@ test('tmux-target-syntax characters in a scoped kill name are rejected, never pa
   assert.equal(tmuxStatus(socket, ['has-session', '-t', `=${fleetSession}`]), 0);
   const names = tmux(socket, ['list-windows', '-t', `=${fleetSession}`, '-F', '#{window_name}']).split('\n');
   assert.deepEqual(names, [innocent, `fd${port}-a:${innocent}`], 'nothing was killed by target-syntax injection');
+>>>>>>> /tmp/mf-theirs
+=======
 >>>>>>> /tmp/mf-theirs
 });
