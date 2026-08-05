@@ -13,7 +13,7 @@ set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FLEETDECK_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-PROJECT_DIR="$SCRIPT_DIR/project"
+SEED_DIR="$SCRIPT_DIR/project"
 DEMO_LOGS="$SCRIPT_DIR/demo-logs"
 SESSIONSTART_SCRIPT="$FLEETDECK_ROOT/scripts/fleet-sessionstart.mjs"
 FLEET_HOOK_SCRIPT="$FLEETDECK_ROOT/scripts/fleet-hook.mjs"
@@ -27,6 +27,12 @@ FLEETDECK_PORT="${FLEETDECK_SMOKE_PORT:-24711}"
 # it must be a unique path created by this run, never a caller-provided target.
 SCRATCH_HOME=''
 
+# Unique per-run copy of the demo fixture, created under the scratch home.
+# The workers edit THIS directory -- the tracked checkout under demo/project
+# is never touched, so a developer's uncommitted work there (or an abort
+# before setup completes) can never be reset or deleted by this script.
+PROJECT_DIR=''
+
 # Isolated tmux server for THIS run only, never the user's default server.
 # The fleetd elected by the workers' SessionStart hook inherits this env and
 # runs all its tmux calls as `tmux -L $FLEETDECK_TMUX_SOCKET`. Without it, a
@@ -37,7 +43,10 @@ export FLEETDECK_TMUX_SOCKET="fdaccept-$$"
 
 # Everything the smoke starts is isolated and torn down on success, failure, or
 # interruption. The user's daemon, tmux server, database, and project files are
-# never cleanup targets.
+# never cleanup targets. PROJECT_DIR lives under SCRATCH_HOME, so project
+# teardown is the single recursive scratch-home delete below -- no per-file
+# restore of the tracked fixture is needed (or safe: an EXIT trap can never
+# know what the pre-run bytes were).
 PA=''
 PB=''
 SMOKE_STARTED=0
@@ -134,10 +143,6 @@ cleanup() {
   if command -v tmux >/dev/null 2>&1; then
     tmux -L "$FLEETDECK_TMUX_SOCKET" kill-server 2>/dev/null || true
   fi
-  cp "$PROJECT_DIR/.seed/util.js" "$PROJECT_DIR/util.js" 2>/dev/null || true
-  cp "$PROJECT_DIR/.seed/app.js" "$PROJECT_DIR/app.js" 2>/dev/null || true
-  rm -f "$PROJECT_DIR/test.js" "$PROJECT_DIR/.claude/settings.json"
-  rmdir "$PROJECT_DIR/.claude" 2>/dev/null || true
   if [ -n "$SCRATCH_HOME" ] && [ "$daemon_stopped" -eq 0 ]; then
     rm -rf -- "$SCRATCH_HOME"
   elif [ -n "$SCRATCH_HOME" ]; then
@@ -150,6 +155,14 @@ SCRATCH_HOME="$(mktemp -d "${TMPDIR:-/tmp}/fleetdeck-smoke.XXXXXX")" || {
   echo "ABORT: could not create a unique smoke home"
   exit 1
 }
+
+# Working copy of the demo fixture for THIS run only. Everything the smoke
+# mutates -- the workers' edits, test.js, .claude/settings.json -- lands here
+# and dies with the scratch home. The tracked fixture under demo/project is
+# read exactly once, right here.
+PROJECT_DIR="$SCRATCH_HOME/project"
+mkdir -p "$PROJECT_DIR"
+cp -R "$SEED_DIR/." "$PROJECT_DIR/"
 
 # Claude-session env vars that must never leak into the workers (and through
 # their SessionStart hook, into the elected daemon): a daemon or tmux server
@@ -166,6 +179,7 @@ CLAUDE_ENV_SCRUB=(
 
 echo "== Fleet Deck Phase 1 smoke =="
 echo "FLEETDECK_ROOT        = $FLEETDECK_ROOT"
+echo "SEED_DIR              = $SEED_DIR"
 echo "PROJECT_DIR           = $PROJECT_DIR"
 echo "SCRATCH_HOME          = $SCRATCH_HOME"
 echo "FLEETDECK_PORT        = $FLEETDECK_PORT"
@@ -187,11 +201,9 @@ if curl -s -m 1 "http://127.0.0.1:$FLEETDECK_PORT/health" > /dev/null 2>&1; then
   exit 1
 fi
 
-# Reset seed files; test.js must never be committed -- the workers create it.
-cp "$PROJECT_DIR/.seed/util.js" "$PROJECT_DIR/util.js"
-cp "$PROJECT_DIR/.seed/app.js" "$PROJECT_DIR/app.js"
-rm -f "$PROJECT_DIR/test.js"
-
+# The working copy starts pristine from the checkout -- the run-scoped copy
+# above is the only reset this script performs. test.js never exists at start;
+# the workers create it.
 mkdir -p "$DEMO_LOGS"
 rm -f "$DEMO_LOGS"/worker-a.json "$DEMO_LOGS"/worker-a.err "$DEMO_LOGS"/worker-b.json "$DEMO_LOGS"/worker-b.err \
       "$DEMO_LOGS"/sid-a.txt "$DEMO_LOGS"/sid-b.txt "$DEMO_LOGS"/final-state.json
