@@ -114,23 +114,23 @@ test('bad suffixes are refused loudly — charset, leading dash, length, reserve
 
 test('a name already held by another card is refused', async (t) => {
   const { daemon, cwd } = await boot(t, 'fleetdeck-rename-collide');
-  const a = await startSession(daemon, cwd);
-  const b = await startSession(daemon, cwd);
-  // Name A explicitly, then try to give B the exact same full callsign by using
-  // A's animal — impossible via the suffix alone unless the animals match, so
-  // instead point B's rename at A's current suffix under A's animal: the clash
-  // the daemon must catch is on the FULL callsign.
+  // The animal rotation is 12 deep, so on a fresh daemon the 1st and the 13th
+  // session are guaranteed the SAME animal — create that pair deliberately so
+  // the clash below is deterministic, not a coin flip the test can skip.
+  const sessions = [];
+  for (let i = 0; i < 13; i++) sessions.push(await startSession(daemon, cwd));
+  const a = sessions[0];
+  const b = sessions[12];
+  assert.equal(b.animal, a.animal, 'sessions 1 and 13 wrap the 12-animal rotation onto the same animal');
+  // Name A explicitly, then give B the same suffix: same animal + same suffix =
+  // the same full callsign, and the daemon must refuse it unconditionally.
   await rename(daemon, a.sid, { suffix: 'hot-seat' });
   const bRenamed = await rename(daemon, b.sid, { suffix: 'hot-seat' });
-  if (a.animal === b.animal) {
-    assert.equal(bRenamed.status, 409, 'same animal + same suffix = the same card name');
-    assert.match(bRenamed.json.reason, /already taken/);
-  } else {
-    // Different animals: <animalB>-hot-seat is a genuinely different name, so it
-    // is allowed — names are the FULL callsign, not the suffix alone.
-    assert.equal(bRenamed.status, 200);
-    assert.notEqual(bRenamed.json.callsign, `${a.animal}-hot-seat`);
-  }
+  assert.equal(bRenamed.status, 409, 'same animal + same suffix = the same card name');
+  assert.match(bRenamed.json.reason, /already taken/);
+  // And B keeps its own name — the refusal must not have renamed anything.
+  const card = cardOf((await getJson(`${daemon.baseUrl}/state`)).json, b.sid);
+  assert.equal(card.callsign, b.callsign);
 });
 
 test('clearing a custom name reverts to the ticket name, or to the birth name when there is no ticket', async (t) => {
