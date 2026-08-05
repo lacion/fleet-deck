@@ -9,7 +9,10 @@
 #
 # This script spends real Claude usage (two `claude -p --dangerously-skip-
 # permissions` sessions). Do not run it casually.
-set -u
+# errexit + pipefail: any failed step (including the `cd "$PROJECT_DIR"` before
+# the unrestricted worker launches) aborts the smoke instead of letting
+# `--dangerously-skip-permissions` workers run loose in the caller's cwd.
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FLEETDECK_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -257,7 +260,12 @@ RC_B=0
 echo "$SA" > "$DEMO_LOGS/sid-a.txt"
 echo "$SB" > "$DEMO_LOGS/sid-b.txt"
 
-cd "$PROJECT_DIR"
+# Belt and braces under errexit: never let the unrestricted workers below
+# launch in the caller's directory if the fixture cannot be entered.
+cd "$PROJECT_DIR" || {
+  echo "ABORT: could not enter project fixture $PROJECT_DIR"
+  exit 1
+}
 SMOKE_STARTED=1
 
 env "${CLAUDE_ENV_SCRUB[@]}" \
@@ -298,8 +306,10 @@ fi
 sleep 12
 echo "T+41 (board screenshot skipped -- Phase 1 board is the ported spike board, no shot.mjs yet)"
 
-wait "$PA"; RC_A=$?; echo "session A done rc=$RC_A"; PA=''
-wait "$PB"; RC_B=$?; echo "session B done rc=$RC_B"; PB=''
+# `wait` propagates the worker's exit status — tolerated nonzero (rc=124 is an
+# accepted outcome), so capture it instead of letting errexit abort here.
+wait "$PA" || RC_A=$?; echo "session A done rc=$RC_A"; PA=''
+wait "$PB" || RC_B=$?; echo "session B done rc=$RC_B"; PB=''
 
 curl -fsS "http://127.0.0.1:$FLEETDECK_PORT/state" \
   -H "authorization: Bearer $TOKEN" > "$DEMO_LOGS/final-state.json"
