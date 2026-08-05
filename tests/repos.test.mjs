@@ -6,7 +6,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'nod
 import os, { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createRepos, parseRepoInput, quickBranchCheck, repoDefaultOrgChoice, repoDefaultOrgProblem } from '../scripts/fleetd/repos.mjs';
-import { detectCoderWorkspaceRoot } from '../scripts/fleetd/config.mjs';
+import { detectCoderWorkspaceRoot, resolveHome } from '../scripts/fleetd/config.mjs';
 import { startDaemon, randomPort } from './helpers/daemon.mjs';
 import { getJson, postHook, postJson } from './helpers/http.mjs';
 import { makeRemoteRepo } from './helpers/gitrepo.mjs';
@@ -168,6 +168,46 @@ test('detectCoderWorkspaceRoot needs both a Coder signal and the probe directory
     assert.equal(detectCoderWorkspaceRoot({ env: { CODER: '1' }, probeDir: file }), null);
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('resolveHome always returns one absolute path, independent of the process cwd', () => {
+  const previousHome = process.env.FLEETDECK_HOME;
+  try {
+    // A RELATIVE FLEETDECK_HOME used to pass through verbatim, so the daemon and
+    // each hook — started from different cwds — resolved different state trees
+    // and the hook's token never matched the daemon's. Anchored to the user's
+    // home (the documented base), every process converges on one dir.
+    process.env.FLEETDECK_HOME = 'state';
+    const anchored = resolveHome();
+    assert.equal(path.isAbsolute(anchored), true);
+    assert.equal(anchored, path.join(os.homedir(), 'state'));
+    // Same answer from ANY working directory — the regression itself.
+    const other = mkdtempSync(path.join(tmpdir(), 'fleetdeck-home-cwd-'));
+    try {
+      process.chdir(other);
+      assert.equal(resolveHome(), anchored);
+    } finally {
+      process.chdir(path.dirname(other));
+      rmSync(other, { recursive: true, force: true });
+    }
+    // Unset → the ~/.fleetdeck default.
+    delete process.env.FLEETDECK_HOME;
+    assert.equal(resolveHome(), path.join(os.homedir() || '/tmp', '.fleetdeck'));
+    // An absolute value is honored, but dot segments are normalized away so
+    // '/x/../y' and '/y' name ONE state dir, not two.
+    const absolute = mkdtempSync(path.join(tmpdir(), 'fleetdeck-home-'));
+    try {
+      process.env.FLEETDECK_HOME = absolute;
+      assert.equal(resolveHome(), absolute);
+      process.env.FLEETDECK_HOME = path.join(absolute, 'sub', '..');
+      assert.equal(resolveHome(), absolute);
+    } finally {
+      rmSync(absolute, { recursive: true, force: true });
+    }
+  } finally {
+    if (previousHome == null) delete process.env.FLEETDECK_HOME;
+    else process.env.FLEETDECK_HOME = previousHome;
   }
 });
 

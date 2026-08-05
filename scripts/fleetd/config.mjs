@@ -15,8 +15,20 @@ import path from 'node:path';
 // the OS reports no home directory. Read from the environment on EVERY call, so a
 // test can point it elsewhere per-process; the entry points capture it once at
 // startup exactly as they did when this lived inline in each of them.
+//
+// ALWAYS ABSOLUTE CONTRACT: the daemon and every hook/watch process run this
+// resolver independently, each from its own working directory — a relative
+// FLEETDECK_HOME would silently fork one fleet's state (token, pidfile, DB) into
+// one tree per cwd, so every process would hold a different token for the same
+// daemon and authenticated updates would be refused. Anchor a relative value to
+// the user's home (the documented base) so all processes converge on ONE state
+// dir, and normalize the result so dot segments can never fork identity either.
 export function resolveHome() {
-  return process.env.FLEETDECK_HOME || path.join(os.homedir() || '/tmp', '.fleetdeck');
+  const fallbackBase = os.homedir() || '/tmp';
+  const configured = process.env.FLEETDECK_HOME?.trim();
+  if (!configured) return path.join(fallbackBase, '.fleetdeck');
+  if (!path.isAbsolute(configured)) return path.resolve(fallbackBase, configured);
+  return path.normalize(configured);
 }
 
 // FLEETDECK_PORT, or the well-known default 4711.
