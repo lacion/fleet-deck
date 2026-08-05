@@ -69,15 +69,35 @@ const DRAG_SLOP = 24;
 // anything on screen exfiltrate the operator's clipboard into a live agent's
 // stdin. readText therefore returns nothing, always. The one-way trade is the
 // whole point: the fleet may hand you text, never take it.
-const clipboardProvider = {
+// One hard ceiling on what an OSC 52 may put on the operator's clipboard.
+// xterm parses the sequence before the provider sees it, so this cannot be
+// attacked with an unterminated BEL-less stream — but a pane renders bytes
+// from files, tools and the network, and none of them needs a megabyte of
+// clipboard. 64 KiB is past any legitimate "copied N characters".
+const OSC52_MAX = 64 * 1024;
+
+// THE FOCUS GATE, and why one exists at all. Every mounted tile loads this
+// addon, but only ONE tile is live — the human's. An unfocused (watch-only)
+// tile still streams output, and any byte in that stream can carry OSC 52:
+// a background agent, a file it cat'd, a fetched page. Honouring those writes
+// would let anything on any screen silently replace the operator's clipboard
+// with attacker-chosen text — commands, URLs — that may later be pasted
+// somewhere trusted. So writes are honoured only while the pane's own term
+// says it may type: live and un-ended. The gate reads term.options.disableStdin
+// (the same flag the keystroke gate enforces) rather than the `live` prop,
+// because focus flips are applied to the live Terminal in place — the effect
+// that creates this provider does not re-run when they happen.
+const clipboardProvider = (term) => ({
   async readText() { return ''; },
   async writeText(_selection, data) {
+    if (term.options.disableStdin) return; // watch-only / ended pane: refuse
+    if (data.length > OSC52_MAX) return;
     // Through the board's own copyText, not navigator.clipboard: the LAN board
     // is plain http, where navigator.clipboard does not exist, and copyText
     // owns the fallback that still works there.
     if (data) await copyText(data);
   },
-};
+});
 
 function cssVar(name, fallback) {
   const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -158,8 +178,9 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
     const fit = new FitAddon();
     term.loadAddon(fit);
     // The agent's own copies (OSC 52) land on the real clipboard — see the
-    // provider above for why writes are honoured and reads never are.
-    term.loadAddon(new ClipboardAddon(undefined, clipboardProvider));
+    // provider above for why writes are honoured on the live pane only and
+    // reads never are.
+    term.loadAddon(new ClipboardAddon(undefined, clipboardProvider(term)));
     term.open(screenRef.current);
     try { fit.fit(); } catch { /* container not measurable yet — init frame corrects */ }
     if (live) term.focus();

@@ -714,6 +714,82 @@ test('ordinary pane output is passed through untouched', () => {
   assert.deepEqual(unwrapTmuxPassthrough('tail'), { out: 'tail', carry: '' });
 });
 
+// --- the OSC 52 provider answers to the pane's focus -------------------------
+//
+// BUG-084: the clipboard provider was module-scoped and write-capable on EVERY
+// mounted tile, so output in an unfocused (watch-only) grid tile could silently
+// replace the operator's clipboard — with attacker-chosen text if any agent,
+// file or fetched page in the stream emitted OSC 52. These exercise the
+// provider's exact shape, pulled out of TermPane.jsx so the pattern stays
+// pinned to the source (the negative cases below FAIL against the old
+// module-scoped provider, which wrote unconditionally and had no gate to stub).
+
+function extractClipboardProvider(src) {
+  // From OSC52_MAX (the provider's cap constant, defined just above it) so the
+  // slice is self-contained.
+  const start = src.indexOf('const OSC52_MAX = ');
+  const end = src.indexOf('function cssVar(', start);
+  assert.ok(start > 0 && end > start, 'TermPane.jsx no longer defines OSC52_MAX/clipboardProvider before cssVar');
+  // copyText is the one free identifier the factory closes over — inject a spy.
+  const spy = 'const copyText = globalThis.__copySpy;';
+  return new Function(`${spy}\n${src.slice(start, end)}\nreturn clipboardProvider;`)();
+}
+
+function loadProvider() {
+  const src = readFileSync(path.join(HERE, '..', 'board', 'src', 'components', 'TermPane.jsx'), 'utf8');
+  return { src, provider: extractClipboardProvider(src) };
+}
+
+test('OSC 52 writes are honoured on the live pane and refused on a watch-only one', async () => {
+  const calls = [];
+  globalThis.__copySpy = async (d) => { calls.push(d); return true; };
+  const { src, provider } = loadProvider();
+
+  // A factory handed the pane's own term, and loaded with it: the provider
+  // must read the LIVE stdin flag, not a `live` prop frozen at mount (focus
+  // flips are applied in place — the effect holding this provider never
+  // re-runs, so a captured prop would go stale the moment focus moved).
+  assert.match(src, /clipboardProvider\s*=\s*\(term\)\s*=>/,
+    'the provider must take the pane term — a module-scoped one cannot see focus');
+  assert.match(src, /new ClipboardAddon\(undefined, clipboardProvider\(term\)\)/,
+    'the addon must be loaded with THIS pane\'s term');
+
+  const term = { options: { disableStdin: true } }; // a watch-only tile
+  const p = provider(term);
+  await p.writeText('c', 'rm -rf ~ && ');
+  assert.deepEqual(calls, [], 'a watch-only pane\'s OSC 52 must never reach the clipboard');
+
+  // Focus moves TO the tile (the in-place effect clears disableStdin) and the
+  // SAME provider now honours the write — a provider snapshotting `live` at
+  // mount could never do this.
+  term.options.disableStdin = false;
+  await p.writeText('c', 'the human\'s own copy');
+  assert.deepEqual(calls, ["the human's own copy"], 'the live pane\'s OSC 52 must reach the clipboard');
+
+  // ...and away again (an ended pane sets disableStdin too — covered by the
+  // same flag).
+  term.options.disableStdin = true;
+  await p.writeText('c', 'one more from a dead pane');
+  assert.deepEqual(calls, ["the human's own copy"], 'a pane that ended must stop writing the clipboard');
+});
+
+test('OSC 52 reads stay one-way and writes are size-capped', async () => {
+  const calls = [];
+  globalThis.__copySpy = async (d) => { calls.push(d); return true; };
+  const { src, provider } = loadProvider();
+
+  const p = provider({ options: { disableStdin: false } });
+  assert.equal(await p.readText(), '',
+    'OSC 52\'s read form must answer nothing — honouring it exfiltrates the clipboard into stdin');
+
+  assert.match(src, /data\.length > OSC52_MAX/, 'the provider lost its size cap');
+  const big = 'x'.repeat(64 * 1024 + 1);
+  await p.writeText('c', big);
+  assert.deepEqual(calls, [], 'an oversized OSC 52 payload must be refused');
+  await p.writeText('c', 'x'.repeat(64 * 1024));
+  assert.equal(calls.length, 1, 'a payload at the cap is still a legitimate copy');
+});
+
 // --- pasting INTO a pane -----------------------------------------------------
 //
 // In a terminal Ctrl+V is not paste — it is the byte ^V — because the terminal
