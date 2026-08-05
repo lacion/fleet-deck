@@ -24,6 +24,7 @@ import { pidRecord, pidIsLive, livePidLooksLikeFleetd } from './takeover.mjs';
 import { resolveHome, resolvePort } from './config.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+<<<<<<< /tmp/mf-ours
 // The port is the daemon's identity (pidfile, hooks, board URLs), so an
 // invalid FLEETDECK_PORT must refuse startup BEFORE HOME is claimed: write
 // the refusal straight to stderr and exit, exactly like startupFatal but
@@ -33,6 +34,21 @@ try {
   PORT = resolvePort();
 } catch (err) {
   try { fs.writeSync(2, `fleetd refused to start: ${err.message}\n`); } catch { /* exit still wins */ }
+=======
+const PORT = resolvePort();
+// PORT VALIDATION CONTRACT: resolvePort() deliberately cannot throw (the hook
+// scripts import it too and must always be able to REPORT to some port), so
+// the daemon — the only process that LISTENS — rejects a malformed port up
+// front. Without this, server.listen's synchronous argument validation throws
+// AFTER claimHome wrote the pidfile: the async server 'error' handler below
+// never runs, and HOME stays claimed by a stale pidfile whose recorded port is
+// garbage, wedging supervised restarts until the pidfile is removed by hand.
+// Range mirrors net.Server.listen exactly: 0-65535, where 0 is the legal
+// ephemeral bind. This runs before mkdir/claimHome, so a refused boot touches
+// nothing and owns nothing.
+if (!Number.isInteger(PORT) || PORT < 0 || PORT > 65535) {
+  try { fs.writeSync(2, `fleetd refused to start: FLEETDECK_PORT must be an integer between 0 and 65535 (got '${process.env.FLEETDECK_PORT}')\n`); } catch { /* exit still wins */ }
+>>>>>>> /tmp/mf-theirs
   process.exit(1);
 }
 const BIND = (process.env.FLEETDECK_BIND || '127.0.0.1').trim() || '127.0.0.1';
