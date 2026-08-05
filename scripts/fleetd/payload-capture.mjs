@@ -16,21 +16,30 @@
 // append), and every failure — unwritable home, full disk, giant payload — is
 // swallowed. Capture must never affect a hook response.
 //
-// Redaction rides that same single walk, in three layers: secret-looking KEYS
+// Redaction rides that same single walk, in four layers: secret-looking KEYS
 // (token/secret/password/api-key/authorization/… incl. camelCase) get a marker
 // and their value is never descended into; string VALUES matching a known
+<<<<<<< /tmp/mf-ours
 // credential shape (Anthropic/GitHub/GitLab/Google/OpenAI-style/Hugging Face/
 // DigitalOcean/Slack/AWS keys, JWTs, PEM private keys, Bearer tokens) are
 // masked in place; and the daemon's own access token is
 // scrubbed verbatim from the finished line. What this canNOT catch is a secret
 // with no telltale key name and no recognizable shape sitting in arbitrary free
 // text — which is exactly why capture stays opt-in and the file stays 0600.
+=======
+// credential shape (Anthropic/GitHub/Slack/AWS keys, JWTs, PEM private keys,
+// Bearer tokens) are masked in place; credentialed URLs (userinfo, secret query
+// params) are scrubbed positionally via scrubUrlCredentials; and the daemon's
+// own access token is scrubbed verbatim from the finished line. What this
+// canNOT catch is a secret with no telltale key name, no recognizable shape,
+// and no URL structure sitting in arbitrary free text — which is exactly why
+// capture stays opt-in and the file stays 0600.
+>>>>>>> /tmp/mf-theirs
 //
 // Two of those layers are exported for reuse by diagnostics that DO reach the
 // board (a stalled spawn's pane excerpt, a failed clone's git stderr):
 // redactDiagnosticText (shape scrub) and scrubUrlCredentials (positional URL
-// userinfo scrub). Neither participates in the capture walk above beyond
-// redactValue; see each one's own comment for why they are separate.
+// userinfo scrub). See each one's own comment for why they stay separate.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -325,10 +334,11 @@ const BARE_USERINFO_RE = /(^|[\s'"<([])([^\s:/@'"<>]{1,256}:[^\s/@'"<>]{1,512})@
 const URL_PARAM_RE = /([?&#][A-Za-z0-9_.-]{1,128}=)([^&\s'"<>]+)/g;
 const SECRET_PARAM_NAME_RE = /token|key|secret|password|passwd|passphrase|auth|credential|sig(?:nature)?|session/i;
 
-// Deliberately NOT folded into redactDiagnosticText / SECRET_VALUE_RES: hook
-// payload capture (the on-disk hook-payloads.jsonl format) must stay bit-for-bit
-// unchanged, so this change owns no blast radius there. Callers that display git
-// output compose the two explicitly.
+// Deliberately NOT folded into redactDiagnosticText / SECRET_VALUE_RES: that
+// shape scrubber's contract is value-shapes only, and callers that display git
+// output compose the two explicitly. Hook payload capture composes them too —
+// textWithinBudget below applies scrubUrlCredentials on top of redactValue so a
+// credentialed URL in a hook string field cannot reach disk intact.
 //
 // IDEMPOTENT (all five layers): a second pass rewrites `[redacted]@` and
 // `=[redacted]` to themselves, which is what lets callers scrub defensively at
@@ -364,9 +374,11 @@ function boundedPayload(value, maxBytes) {
     const truncated = out.length < String(value).length;
     // VALUE REDACTION rides here, AFTER the slice: a giant secret is bounded
     // first (never fully materialized) and only then masked. Because every
-    // SECRET_VALUE_RES match is longer than the marker it becomes, this can only
-    // shrink `out`; `remaining` was already charged for the pre-mask bytes, so
-    // we never emit more than was accounted for and the budget stays sound.
+    // SECRET_VALUE_RES match is longer than the marker it becomes, shape
+    // masking can only shrink `out`. scrubUrlCredentials can grow it slightly
+    // (a short userinfo becomes the 10-byte marker), but the growth is bounded
+    // per occurrence and the finished line's exact size is still checked
+    // against the file cap before append, so the budget stays sound.
     // KNOWN RESIDUAL (accepted): masking runs on the post-slice string, so a
     // real credential that straddles the exact byte-budget boundary is cut to a
     // sub-min-length prefix its shape regex no longer recognizes, and that
@@ -374,7 +386,7 @@ function boundedPayload(value, maxBytes) {
     // re-materialize the multi-MB secret the budget exists to avoid. This is a
     // narrow leak of a partial token onto an opt-in, 0600 file; documented so
     // the next reader knows it is known and why it is tolerated.
-    out = redactValue(out);
+    out = scrubUrlCredentials(redactValue(out));
     return truncated ? `${out}${marker}` : out;
   }
 

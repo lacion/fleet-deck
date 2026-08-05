@@ -1,10 +1,11 @@
 // tests/payload-redaction.test.mjs — the "secrets are scrubbed" promise made
 // executable. FLEETDECK_CAPTURE_PAYLOADS is a raw-telemetry escape hatch
 // (README env table; SECURITY.md capture threat), so these assertions pin that
-// the three redaction layers — secret KEY names, known credential SHAPES in
-// string values, and the daemon's own token — actually fire on the bytes that
-// reach hook-payloads.jsonl, and that a giant secret is MASKED rather than
-// merely truncated-but-leaked.
+// the four redaction layers — secret KEY names, known credential SHAPES in
+// string values, credentialed URLs (userinfo + secret query params), and the
+// daemon's own token — actually fire on the bytes that reach
+// hook-payloads.jsonl, and that a giant secret is MASKED rather than merely
+// truncated-but-leaked.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -204,6 +205,7 @@ test('scrubUrlCredentials removes URL userinfo, bytes and all, and is idempotent
   assert.equal(scrubUrlCredentials('git@github.com:owner/repo.git'), 'git@github.com:owner/repo.git');
 });
 
+<<<<<<< /tmp/mf-ours
 test('forge/API shapes git treats as secrets are masked by the SHARED scrubber, not just the git path', (t) => {
   // BUG-038: these prefixes lived only in exec.mjs's git-local extra list, so a
   // bare token relayed on a stalled spawn's pane (stallDiagnosticExcerpt applies
@@ -248,6 +250,31 @@ test('redactDiagnosticText is UNCHANGED: it still has no userinfo rule', () => {
   // entry); a glpat- in this slot would now be masked by the shared shape list,
   // which would mask the very absence this test pins.
   const line = "fatal: unable to access 'https://luis:c0rporate-pw-no-shape@gitlab.com/x/y.git/'";
+=======
+test('capture scrubs credentialed URLs that match no credential shape', (t) => {
+  // BUG-136: a glpat- in URL userinfo and a ?private_token= query credential
+  // match NO SECRET_VALUE_RES entry, so before the capture walk composed
+  // scrubUrlCredentials they reached hook-payloads.jsonl verbatim.
+  const token = 'glpat-AbCdEf1234567890';
+  const { payload, raw } = captureOnce(t, {
+    prompt: `clone https://luis:${token}@gitlab.com/o/r.git then push`,
+    error: `fatal: unable to access 'https://host/o/r.git?private_token=${token}'`,
+  });
+  assert.equal(raw.includes(token), false, 'the token must not reach disk in any form');
+  assert.equal(payload.prompt, 'clone https://[redacted]@gitlab.com/o/r.git then push');
+  assert.equal(payload.error, "fatal: unable to access 'https://host/o/r.git?private_token=[redacted]'");
+});
+
+test('redactDiagnosticText is UNCHANGED: it still has no userinfo rule', () => {
+  // Pinned deliberately. scrubUrlCredentials stays a SEPARATE export whose
+  // contract is positional URL scrubbing on top of the shape scrub; if a future
+  // reader folds a userinfo pattern into SECRET_VALUE_RES instead, this fails
+  // and points at the cases that compose the two (gitStderrDetail, and the
+  // capture walk's textWithinBudget) that would then need revisiting. The
+  // corollary for callers: the shape scrubber alone is NOT sufficient for a
+  // credentialed URL — they must compose both.
+  const line = "fatal: unable to access 'https://luis:glpat-AbCdEf1234567890@gitlab.com/x/y.git/'";
+>>>>>>> /tmp/mf-theirs
   assert.equal(redactDiagnosticText(line), line);
 });
 
