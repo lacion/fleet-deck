@@ -25,6 +25,14 @@ FLEET_HOOK_SCRIPT="$FLEETDECK_ROOT/scripts/fleet-hook.mjs"
 # FLEETDECK_PORT from the current session can never redirect this run to :4711.
 FLEETDECK_PORT="${FLEETDECK_SMOKE_PORT:-24711}"
 
+# Pinned worker model and effort. Claude Code otherwise resolves the model and
+# effort from machine-local configuration (user settings, settings.local.json,
+# env), so identical Fleet Deck source could run different models, cross the
+# timing/turn thresholds, and cost differently per machine. Smoke-specific
+# overrides only, so ambient config can never re-target them.
+SMOKE_MODEL="${FLEETDECK_SMOKE_MODEL:-sonnet}"
+SMOKE_EFFORT="${FLEETDECK_SMOKE_EFFORT:-low}"
+
 # Assigned from mktemp after the cleanup trap is armed. An arbitrary override
 # is intentionally unsupported: cleanup recursively deletes this directory, so
 # it must be a unique path created by this run, never a caller-provided target.
@@ -187,6 +195,8 @@ echo "PROJECT_DIR           = $PROJECT_DIR"
 echo "SCRATCH_HOME          = $SCRATCH_HOME"
 echo "FLEETDECK_PORT        = $FLEETDECK_PORT"
 echo "FLEETDECK_TMUX_SOCKET = $FLEETDECK_TMUX_SOCKET"
+echo "SMOKE_MODEL           = $SMOKE_MODEL"
+echo "SMOKE_EFFORT          = $SMOKE_EFFORT"
 echo
 
 for required in timeout setsid; do
@@ -272,7 +282,12 @@ env "${CLAUDE_ENV_SCRUB[@]}" \
   FLEETDECK_HOME="$SCRATCH_HOME" FLEETDECK_PORT="$FLEETDECK_PORT" \
   FLEETDECK_TMUX_SOCKET="$FLEETDECK_TMUX_SOCKET" FLEETDECK_AGENTS_CMD=false \
   setsid timeout 300 claude -p "Add an exported function slugify(s) to util.js (lowercase, trim, spaces to dashes, strip punctuation). Add assert-based tests for it in test.js (create or extend). Verify each edge case one at a time with separate 'node -e' commands: spaces, capitals, punctuation, empty string. Then run node test.js. Preserve any existing exports. Work step by step, one small change per edit." \
+<<<<<<< /tmp/mf-ours
   --session-id "$SA" --dangerously-skip-permissions \
+=======
+  --session-id "$SA" --max-turns 24 --dangerously-skip-permissions \
+  --model "$SMOKE_MODEL" --effort "$SMOKE_EFFORT" --setting-sources user,project \
+>>>>>>> /tmp/mf-theirs
   --output-format json > "$DEMO_LOGS/worker-a.json" 2> "$DEMO_LOGS/worker-a.err" &
 PA=$!
 echo "T+0 session A launched sid=$SA"
@@ -283,7 +298,12 @@ env "${CLAUDE_ENV_SCRUB[@]}" \
   FLEETDECK_HOME="$SCRATCH_HOME" FLEETDECK_PORT="$FLEETDECK_PORT" \
   FLEETDECK_TMUX_SOCKET="$FLEETDECK_TMUX_SOCKET" FLEETDECK_AGENTS_CMD=false \
   setsid timeout 300 claude -p "Add an exported function titleCase(s) to util.js (capitalize each word). Add assert-based tests for it in test.js (create or extend). Verify edge cases one at a time with separate 'node -e' commands: single word, multiple words, empty string. Then run node test.js. IMPORTANT: preserve any existing exports and tests you find. Work step by step, one small change per edit." \
+<<<<<<< /tmp/mf-ours
   --session-id "$SB" --dangerously-skip-permissions \
+=======
+  --session-id "$SB" --max-turns 24 --dangerously-skip-permissions \
+  --model "$SMOKE_MODEL" --effort "$SMOKE_EFFORT" --setting-sources user,project \
+>>>>>>> /tmp/mf-theirs
   --output-format json > "$DEMO_LOGS/worker-b.json" 2> "$DEMO_LOGS/worker-b.err" &
 PB=$!
 echo "T+15 session B launched sid=$SB"
