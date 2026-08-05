@@ -266,8 +266,15 @@ export function createMail(ctx) {
     // marked delivered so it is never re-pasted.
     if (!ownedPaneRow(sid)) { onMutate(); return true; }
     const entered = await tmuxAdapter.sendEnter(target);
+    // BUG-033: once pasteText succeeded the text is already IN the pane, so a
+    // failed/uncertain Enter must NOT unmark the rows — requeueing them would
+    // re-paste the same text on a later turn and submit it twice (duplicated
+    // prompts, repeated non-idempotent side effects). Keep them delivered; the
+    // operator can recover the un-entered text sitting in the composer. The
+    // pre-paste unmark above remains the only requeue path.
     if (!entered) {
-      for (const m of box) q.unmarkDelivered.run(m.id);
+      logEvent(sid, 'MailPaneEnterFailed', null,
+        `pasted ${box.length} mail into ${pair.sp.tmux_window} but Enter failed — left un-entered, NOT requeued (text already in pane)`);
       onMutate();
       return false;
     }

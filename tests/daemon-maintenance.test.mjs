@@ -270,6 +270,35 @@ test('owned-pane mail honors watcher priority and unclaims all rows when paste f
   assert.deepEqual(state.calls, [['pasteText', '@1', '[FLEETDECK MAIL from ops] retry me']]);
 });
 
+test('owned-pane mail: failed Enter after successful paste does NOT requeue (BUG-033)', async (t) => {
+  const { db, core, state } = memoryCore(t);
+  const cwd = mkdtempSync(path.join(tmpdir(), 'fd-mail-enter-'));
+  t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+  const spawn = await core.spawn({ cwd });
+  const sid = spawn.body.session_id;
+  core.hookSessionStart({ session_id: sid, cwd, source: 'startup' });
+
+  state.enterOk = false;
+  const posted = await core.postMail({ to: sid, from: 'ops', text: 'paste ok, enter fails' });
+  assert.equal(posted.targets[0].route, 'pane');
+  assert.equal(await core.tryOwnedPaneDelivery(sid), false, 'Enter failure still reports non-delivery');
+  assert.deepEqual(state.calls, [
+    ['pasteText', '@1', '[FLEETDECK MAIL from ops] paste ok, enter fails'],
+    ['sendEnter', '@1'],
+  ]);
+  // The text is already in the composer: requeueing would re-paste and submit
+  // it a second time. The rows must stay delivered.
+  const row = db.prepare('SELECT delivered_at FROM mail ORDER BY id LIMIT 1').get();
+  assert.ok(row.delivered_at, 'rows pasted into the pane must NOT be requeued when Enter fails');
+  assert.equal(core.snapshot().mail_meta[sid].queued, 0, 'no pending mail remains to re-paste');
+
+  // A later delivery pass must not touch the pane again — nothing is pending.
+  state.calls.length = 0;
+  state.enterOk = true;
+  assert.equal(await core.tryOwnedPaneDelivery(sid), false, 'no pending mail: nothing to paste');
+  assert.deepEqual(state.calls, [], 'the already-pasted text is never re-pasted');
+});
+
 test('tmux input/capture helpers use isolated-socket argv without shell interpolation', async (t) => {
   const dir = mkdtempSync(path.join(tmpdir(), 'fd-tmux-argv-'));
   const record = path.join(dir, 'argv.jsonl');
