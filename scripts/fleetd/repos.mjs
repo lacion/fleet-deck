@@ -7,7 +7,6 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileP, baseBranch, distillGitStderr, gitStderrDetail, redactGitText } from './exec.mjs';
-import { scrubUrlCredentials } from './payload-capture.mjs';
 import { detectCoderWorkspaceRoot } from './config.mjs';
 
 const CONTROL_RE = /[\x00-\x1f\x7f]/;
@@ -236,48 +235,80 @@ function expandHome(value) {
   return value;
 }
 
-// A remote's identity is its host+path, not its transport spelling: on a forge,
-// `https://gitlab.com/org/repo.git`, `ssh://git@gitlab.com/org/repo.git` and
-// `git@gitlab.com:org/repo.git` are three doors into ONE repository. The reuse
-// guard in resolveTarget compares origins to prove a same-named checkout really
-// IS the requested repo; comparing raw strings made an ssh-cloned checkout
-// invisible to an https/shorthand spawn (409 "exists and is not", or a duplicate
-// clone). Reducing the three shapes to one lowercase `//host/path` key widens
-// reuse ONLY across spellings — two origins with a different host or path still
-// never match, so an unrelated tree remains exactly as un-reusable as before.
+// A remote's identity on a RECOGNIZED forge is its host+path, not its transport
+// spelling: `https://gitlab.com/org/repo.git`, `ssh://git@gitlab.com/org/repo.git`
+// and `git@gitlab.com:org/repo.git` are three doors into ONE repository. The
+// reuse guard in resolveTarget compares origins to prove a same-named checkout
+// really IS the requested repo; comparing raw strings made an ssh-cloned
+// checkout invisible to an https/shorthand spawn (409 "exists and is not", or a
+// duplicate clone). Reducing the three shapes to one lowercase `//host/path`
+// key widens reuse ONLY across spellings — two origins with a different host or
+// path still never match, so an unrelated tree remains exactly as un-reusable
+// as before.
+//
+// That unification is sound ONLY where the service's own semantics guarantee
+// it, so it applies to the explicitly recognized forges (github.com,
+// gitlab.com): both are case-insensitive in owner and repo name (you cannot
+// register `Org/repo` AND `org/Repo`), and both front every transport with the
+// single account-agnostic `git` ssh user, so no spelling of userinfo picks a
+// different repository. Everywhere else the "three doors" assumption is NOT
+// ours to make: a generic ssh host authenticates BY user (`alice@host` and
+// `bob@host` can be different accounts with different filesystems), an https
+// path can be case-sensitive, and unifying any of that would "prove" a checkout
+// is an unrelated repo — reuse would then edit, commit, and run hooks in the
+// WRONG tree across a credential boundary. Generic hosts therefore keep the
+// conservative comparison: scheme-agnostic (an ssh spelling of an https URL
+// string still matches, so a missed match is at worst the OLD 409/spare-clone
+// behaviour, never a wrong reuse) but username- and case-PRESERVING, with only
+// the hostname lowercased (DNS is case-insensitive everywhere).
 // Conservative by construction:
 //  - only https://, unported ssh://, and scp-style origins normalize; any other
-//    shape returns null and keeps the old lowercase string comparison — the
+//    shape returns null and keeps the old fallback string comparison — the
 //    worst outcome of a missed match is the OLD behaviour (a spare clone or a
 //    409), never a wrong reuse;
 //  - an ssh:// URL with an explicit port is NOT normalized: a nonstandard port
 //    can front a different server on the same hostname (forwards, multiplexed
 //    bastions), and proving it equal to the https/:22 repo is not ours to assume;
-//  - userinfo is dropped (it may carry credentials, and `git@` vs `oauth2@` does
-//    not change which repo is behind the door);
 //  - the `//host/path` key cannot collide with the other key families: realpath
 //    keys start with a single `/`, and an origin string starting with `//` is
 //    posix-absolute so it takes the realpath branch, never the fallback.
+const FORGE_HOSTS = new Set(['github.com', 'gitlab.com']);
+
 function normalizeRemoteOrigin(value) {
   const input = String(value);
+  let user = null;
   let host;
   let rest;
-  const url = /^(?:https|ssh):\/\/([^/?#]+)(\/[^?#]*)$/i.exec(input);
+  const url = /^(?:https|ssh):\/\/(?:([^/?#@]*)@)?([^/?#]+)(\/[^?#]*)$/i.exec(input);
   if (url) {
-    host = url[1];
-    const at = host.lastIndexOf('@');
-    if (at !== -1) host = host.slice(at + 1);
+    user = url[1] || null;
+    host = url[2];
     if (!host || host.includes(':')) return null; // ported (or hostless) — fall back
-    rest = url[2];
+    rest = url[3];
   } else {
     if (input.includes('://')) return null; // some other scheme — fall back
-    const scp = /^(?:[^/@:]+@)?([^/:@]+):(.+)$/.exec(input);
+    const scp = /^(?:([^/@:]+)@)?([^/:@]+):(.+)$/.exec(input);
     if (!scp) return null;
-    [, host, rest] = scp;
+    [, user, host, rest] = scp;
+    user = user || null;
   }
   const cleaned = rest.replace(/^\/+/, '').replace(/[\\/]+$/, '').replace(/\.git$/i, '');
   if (!cleaned) return null;
-  return `//${host}/${cleaned}`.toLowerCase();
+  if (FORGE_HOSTS.has(host.toLowerCase())) return `//${host}/${cleaned}`.toLowerCase();
+  return `//${host.toLowerCase()}/${user == null ? '' : `${user}@`}${cleaned}`;
+}
+
+// Split an origin's case-insensitive leading component (URL scheme, plus the
+// scp-style userinfo@host up to the `:`) from the remainder. Only the former
+// may be case-folded — a scheme is case-insensitive by RFC 3986, and the
+// scp-prefix lowercases the hostname with it. The remainder is a repository
+// path (or an opaque non-URL string), whose case can distinguish repositories.
+function foldOriginCaseInsensitivePrefix(origin) {
+  const scp = /^[^/@:]+@/.exec(origin);
+  if (scp) return scp[0].toLowerCase() + origin.slice(scp[0].length);
+  const scheme = /^[A-Za-z][A-Za-z0-9+.-]{0,32}:/.exec(origin);
+  if (scheme) return scheme[0].toLowerCase() + origin.slice(scheme[0].length);
+  return origin;
 }
 
 function comparableOrigin(value) {
@@ -286,7 +317,7 @@ function comparableOrigin(value) {
     try { return fs.realpathSync(value); } catch { return path.resolve(value); }
   }
   return normalizeRemoteOrigin(value)
-    ?? String(value).replace(/[\\/]+$/, '').replace(/\.git$/i, '').toLowerCase();
+    ?? foldOriginCaseInsensitivePrefix(String(value).replace(/[\\/]+$/, '').replace(/\.git$/i, ''));
 }
 
 function exists(pathname) {
@@ -675,7 +706,15 @@ export function createRepos(ctx) {
       // prune` were swept into the same convention for uniformity, but this is a
       // convention, not an enforced invariant: a new git call site does not
       // inherit it automatically.
-      if (!status.ok) throw namedError(409, scrubUrlCredentials(status.err) || 'git status failed');
+      //
+      // redactGitText, not bare scrubUrlCredentials: a repo hook or git
+      // extension can print a STANDALONE token (`remote: helper rejected token
+      // ghp_…`) that the positional URL scrub provably cannot see — it would
+      // ride this throw into the HTTP body, card note, ticker, event log and
+      // state snapshot verbatim. Clone/fetch go through gitFailureText, which
+      // hardens with the same pass; these sites stay undistilled, so they call
+      // it directly instead of paying gitFailureText's distill+detail pair.
+      if (!status.ok) throw namedError(409, redactGitText(status.err) || 'git status failed');
       const dirty = dirtyNames(status.out);
       if (dirty.length) {
         const shown = dirty.slice(0, 3).join(', ');
@@ -685,12 +724,12 @@ export function createRepos(ctx) {
         : remote.ok ? ['-C', root, 'switch', '--track', `origin/${branch}`]
           : ['-C', root, 'switch', '-c', branch, base.ref];
       const switched = await execFileP('git', args, { timeout: 30_000 });
-      if (!switched.ok) throw namedError(409, scrubUrlCredentials(switched.err) || 'git switch failed');
+      if (!switched.ok) throw namedError(409, redactGitText(switched.err) || 'git switch failed');
       return { runCwd: root, created: { clone: !!clone, worktree: false }, reused: false };
     }
 
     const listed = await execFileP('git', ['-C', root, 'worktree', 'list', '--porcelain'], { timeout: 10_000 });
-    if (!listed.ok) throw namedError(409, scrubUrlCredentials(listed.err) || 'git worktree list failed');
+    if (!listed.ok) throw namedError(409, redactGitText(listed.err) || 'git worktree list failed');
     const existing = parseWorktrees(listed.out).find(row => row.branch === branch);
     if (existing) return { runCwd: existing.path, created: { clone: !!clone, worktree: false }, reused: true };
 
@@ -716,7 +755,7 @@ export function createRepos(ctx) {
         await execFileP('git', ['-C', root, 'worktree', 'prune'], { timeout: 30_000 });
       }
     }
-    throw namedError(409, scrubUrlCredentials(last?.err) || 'git worktree add failed');
+    throw namedError(409, redactGitText(last?.err) || 'git worktree add failed');
   }
 
   function canonicalTarget(dest) {

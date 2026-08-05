@@ -1,10 +1,11 @@
 // tests/payload-redaction.test.mjs — the "secrets are scrubbed" promise made
 // executable. FLEETDECK_CAPTURE_PAYLOADS is a raw-telemetry escape hatch
 // (README env table; SECURITY.md capture threat), so these assertions pin that
-// the three redaction layers — secret KEY names, known credential SHAPES in
-// string values, and the daemon's own token — actually fire on the bytes that
-// reach hook-payloads.jsonl, and that a giant secret is MASKED rather than
-// merely truncated-but-leaked.
+// the four redaction layers — secret KEY names, known credential SHAPES in
+// string values, credentialed URLs (userinfo + secret query params), and the
+// daemon's own token — actually fire on the bytes that reach
+// hook-payloads.jsonl, and that a giant secret is MASKED rather than merely
+// truncated-but-leaked.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -38,6 +39,10 @@ test('secret-looking keys redact whole and are never descended into; siblings su
       apiKey: 'k'.repeat(20),        // camelCase — the [_\-.] boundary never fires,
       authToken: 'q'.repeat(20),     // so isSecretKey normalizes the hump to '_' first
       accessKeyId: 'AKIA' + 'B'.repeat(16),
+      // PLURALS — a singular-only word list used to record these verbatim.
+      api_keys: { primary: 'p'.repeat(20) },
+      clientSecrets: ['c'.repeat(20)],
+      access_tokens: ['t'.repeat(20)],
       cwd: '/home/dev/project',
       model: 'claude-opus-4',
     },
@@ -49,11 +54,47 @@ test('secret-looking keys redact whole and are never descended into; siblings su
   assert.equal(ti.apiKey, '[redacted]');
   assert.equal(ti.authToken, '[redacted]');
   assert.equal(ti.accessKeyId, '[redacted]');
+  assert.equal(ti.api_keys, '[redacted]');
+  assert.equal(ti.clientSecrets, '[redacted]');
+  assert.equal(ti.access_tokens, '[redacted]');
   // Sibling non-secret keys keep their exact values.
   assert.equal(ti.cwd, '/home/dev/project');
   assert.equal(ti.model, 'claude-opus-4');
   // And not one raw secret byte reached disk (the value was never walked).
-  for (const leak of ['ghp_', 'AKIA', 'zzzzz', 'yyyyy', 'kkkkk', 'qqqqq']) {
+  for (const leak of ['ghp_', 'AKIA', 'zzzzz', 'yyyyy', 'kkkkk', 'qqqqq', 'ppppp', 'ccccc', 'ttttt']) {
+    assert.equal(raw.includes(leak), false, `${leak} must not appear on disk`);
+  }
+});
+
+test('plural and camelCase-plural secret container keys redact like their singulars', (t) => {
+  const { payload, raw } = captureOnce(t, {
+    tool_input: {
+      env: {
+        api_keys: 'a'.repeat(20),
+        tokens: 'b'.repeat(20),
+        secrets: 'c'.repeat(20),
+        credentials: 'd'.repeat(20),
+        private_keys: 'e'.repeat(20),
+        access_keys: 'f'.repeat(20),
+        client_secrets: 'g'.repeat(20),
+        API_KEYS: 'h'.repeat(20),
+        TOKENS: 'i'.repeat(20),
+        passwords: 'j'.repeat(20),
+        region: 'us-east-1',
+      },
+      apiKeys: 'k'.repeat(20),        // camelCase plural — normalizes to api_Keys
+      clientSecrets: 'l'.repeat(20),
+    },
+  });
+  const env = payload.tool_input.env;
+  for (const key of ['api_keys', 'tokens', 'secrets', 'credentials', 'private_keys',
+    'access_keys', 'client_secrets', 'API_KEYS', 'TOKENS', 'passwords']) {
+    assert.equal(env[key], '[redacted]', `${key} must redact`);
+  }
+  assert.equal(payload.tool_input.apiKeys, '[redacted]');
+  assert.equal(payload.tool_input.clientSecrets, '[redacted]');
+  assert.equal(env.region, 'us-east-1', 'sibling non-secret key keeps its value');
+  for (const leak of ['aaaaa', 'bbbbb', 'kkkkk', 'lllll']) {
     assert.equal(raw.includes(leak), false, `${leak} must not appear on disk`);
   }
 });
@@ -108,9 +149,11 @@ test('a known daemon secret is scrubbed from the finished line, bytes and all', 
 test('an adversarial JWT-shaped string cannot stall the synchronous capture (ReDoS guard)', (t) => {
   // Pre-fix, the JWT shape /eyJ…{10,}\.{10,}\.{10,}/ backtracked quadratically:
   // on ('eyJ'.repeat(N) + '.' + 'a'.repeat(M)) the first unbounded run rescans
-  // to the lone dot at every 'eyJ' start (~4.5s at this size, measured). With
-  // each segment bounded to {10,4096} per-start work is constant → linear.
-  // Capture runs synchronously inside the hook handler, so this MUST stay fast.
+  // to the lone dot at every 'eyJ' start (~4.5s at this size, measured). The
+  // fix is maskCompactTokens, a single-forward-pass scanner with no regex
+  // engine: each 'eyJ' candidate consumes one segment walk and a confirmed
+  // token is never re-scanned, so this input is linear. Capture runs
+  // synchronously inside the hook handler, so this MUST stay fast.
   const evil = 'eyJ'.repeat(32000) + '.' + 'a'.repeat(1000); // ~97 KB
   const started = Date.now();
   const { raw } = captureOnce(t, { blob: evil }, { maxPayloadBytes: 97_000 });
@@ -119,6 +162,22 @@ test('an adversarial JWT-shaped string cannot stall the synchronous capture (ReD
   // point is purely that redaction returns promptly and a record is written.
   assert.ok(raw.length > 0, 'capture produced a line');
   assert.ok(elapsed < 2_000, `redaction must not hang; took ${elapsed}ms`);
+});
+
+test('a JWT with a header segment over 4096 chars is still masked, in capture and diagnostics', (t) => {
+  // REGRESSION (BUG-135): the old bounded regex eyJ…{10,4096}\.…{10,4096}\.…{10,4096}
+  // failed CLOSED the wrong way — a valid JWT whose protected header carries a
+  // large x5c certificate chain (6,702 characters in the audited reproduction)
+  // matched NOTHING, and the full credential reached hook-payloads.jsonl and
+  // redactDiagnosticText verbatim. The scanner has no upper bound.
+  const header = 'eyJ' + 'hbGciOiJSUzI1NiJ9'.repeat(400) + 'x5c'.repeat(800); // ~10 KB, all base64url
+  const jwt = `${header}.${'p'.repeat(7000)}.${'s'.repeat(43)}`;
+  assert.equal(jwt.length > 4096 * 2, true, 'fixture really is the audited shape');
+  const { payload, raw } = captureOnce(t, { session: `auth=${jwt};` });
+  assert.equal(payload.session, 'auth=[redacted];');
+  assert.equal(raw.includes(header.slice(0, 64)), false, 'no prefix of the giant header may reach disk');
+  assert.equal(raw.includes('pppppppppp'), false, 'no slice of the payload segment may reach disk');
+  assert.equal(redactDiagnosticText(`token ${jwt} end`), 'token [redacted] end');
 });
 
 test('an operator token with JSON-special chars is scrubbed in every form, bytes and all', (t) => {
@@ -153,15 +212,101 @@ test('scrubUrlCredentials removes URL userinfo, bytes and all, and is idempotent
   assert.equal(scrubUrlCredentials('git@github.com:owner/repo.git'), 'git@github.com:owner/repo.git');
 });
 
-test('redactDiagnosticText is UNCHANGED: it still has no userinfo rule', () => {
-  // Pinned deliberately. scrubUrlCredentials is a SEPARATE export precisely so
-  // hook-payload capture stays bit-for-bit identical; if a future reader folds a
-  // userinfo pattern into SECRET_VALUE_RES instead, this fails and points at the
-  // capture-format cases above that would then need revisiting. The corollary
-  // for callers: the shape scrubber alone is NOT sufficient for a credentialed
-  // URL — they must compose both, as gitStderrDetail does.
-  const line = "fatal: unable to access 'https://luis:glpat-AbCdEf1234567890@gitlab.com/x/y.git/'";
+test('capture scrubs credentialed URLs that match no credential shape', (t) => {
+  // BUG-136: a glpat- in URL userinfo and a ?private_token= query credential
+  // match NO SECRET_VALUE_RES entry, so before the capture walk composed
+  // scrubUrlCredentials they reached hook-payloads.jsonl verbatim.
+  const token = 'glpat-AbCdEf1234567890';
+  const { payload, raw } = captureOnce(t, {
+    prompt: `clone https://luis:${token}@gitlab.com/o/r.git then push`,
+    error: `fatal: unable to access 'https://host/o/r.git?private_token=${token}'`,
+  });
+  assert.equal(raw.includes(token), false, 'the token must not reach disk in any form');
+  assert.equal(payload.prompt, 'clone https://[redacted]@gitlab.com/o/r.git then push');
+  assert.equal(payload.error, "fatal: unable to access 'https://host/o/r.git?private_token=[redacted]'");
+});
+
+test('forge/API shapes git treats as secrets are masked by the SHARED scrubber, not just the git path', (t) => {
+  // BUG-038: these prefixes lived only in exec.mjs's git-local extra list, so a
+  // bare token relayed on a stalled spawn's pane (stallDiagnosticExcerpt applies
+  // redactDiagnosticText + scrubUrlCredentials only) or captured in a hook
+  // payload's free-text field survived into stall_detail, the board drawer,
+  // /state, every /ws frame and hook-payloads.jsonl. The shapes are in the
+  // shared SECRET_VALUE_RES now; this pins that they fire on BOTH consumers.
+  const cases = [
+    ['remote: the provided token (glpat-AbCdEf1234567890) is incorrect', 'glpat-'],
+    [`remote: rejected glrt-${'r'.repeat(20)}`, 'glrt-'],
+    [`remote: key AIza${'K'.repeat(35)} is not authorized`, 'AIza'],
+    [`remote: sk-${'p'.repeat(32)} revoked`, 'sk-p'],
+    [`remote: hf_${'h'.repeat(30)} expired`, 'hf_'],
+    [`remote: dop_v1_${'d'.repeat(40)} deleted`, 'dop_v1_'],
+  ];
+  for (const [line, leak] of cases) {
+    const scrubbed = redactDiagnosticText(line);
+    assert.equal(scrubbed.includes(leak), false, `${leak} must be masked by redactDiagnosticText: ${scrubbed}`);
+    assert.match(scrubbed, /\[redacted\]/);
+  }
+  // And the same shapes must not survive capture into hook-payloads.jsonl under
+  // an innocent free-text key.
+  const { raw } = captureOnce(t, {
+    log: cases.map(([line]) => line).join('\n'),
+  });
+  for (const leak of ['glpat-', 'glrt-', 'AIza', 'sk-p', 'hf_', 'dop_v1_']) {
+    assert.equal(raw.includes(leak), false, `${leak} must not reach the capture file`);
+  }
+  // The left boundary still protects ordinary prose from the generic sk- rule.
+  const prose = 'disk-quota-exceeded-for-user on volume';
+  assert.equal(redactDiagnosticText(prose), prose, 'innocent hyphenated words must survive verbatim');
+});
+
+test('bare forge shapes (glpat/sk-/AIza/hf_/dop_v1_) are masked on every shared surface', (t) => {
+  // Until the shared shape list carried these, they were masked ONLY by
+  // exec.mjs's git-local GIT_EXTRA_SECRET_RES — so a bare glpat leaked through
+  // hook-payload capture, stallDiagnosticExcerpt's pane tail, and any future
+  // diagnostic importing redactDiagnosticText, while CI stayed green. Assert the
+  // SAME shapes on BOTH shared layers (the capture walk and redactDiagnosticText)
+  // so the two can never silently drift apart again.
+  const shaped = {
+    gitlab: `remote: token glpat-AbCdEf1234567890 rejected`,
+    google: `remote: key AIza${'K'.repeat(35)} is not authorized`,
+    openai: `remote: sk-${'p'.repeat(32)} revoked`,
+    hf: `remote: hf_${'h'.repeat(30)} expired`,
+    do: `remote: dop_v1_${'d'.repeat(40)} is not valid`,
+  };
+  for (const [name, text] of Object.entries(shaped)) {
+    assert.equal(redactDiagnosticText(text), text.replace(/(glpat|AIza|sk-|hf_|dop_v1_)[A-Za-z0-9_-]+/, '[redacted]'),
+      `redactDiagnosticText must mask the ${name} shape`);
+  }
+  const { payload, raw } = captureOnce(t, shaped);
+  for (const name of Object.keys(shaped)) {
+    assert.equal(payload[name], shaped[name].replace(/(glpat|AIza|sk-|hf_|dop_v1_)[A-Za-z0-9_-]+/, '[redacted]'),
+      `capture must mask the ${name} shape`);
+  }
+  for (const leak of ['glpat-AbCdEf', 'AIza' + 'K'.repeat(10), 'sk-' + 'p'.repeat(10), 'hf_' + 'h'.repeat(10), 'dop_v1_' + 'd'.repeat(10)]) {
+    assert.equal(raw.includes(leak), false, `${leak} must not appear on disk`);
+  }
+  // The sk- left boundary, pinned at the shared layer too: the generic rule must
+  // NOT fire inside an ordinary hyphenated word.
+  assert.equal(redactDiagnosticText('disk-quota-exceeded-for-user'), 'disk-quota-exceeded-for-user');
+});
+
+test('redactDiagnosticText still has no USERINFO rule — credentialed URLs need scrubUrlCredentials', () => {
+  // What the shape list does NOT cover, pinned deliberately. A credentialed URL's
+  // userinfo is POSITIONAL, not shaped — `https://luis:hunter2@host` matches no
+  // credential shape — so scrubUrlCredentials stays a separate export that
+  // callers compose explicitly, as gitStderrDetail and stallDiagnosticExcerpt do
+  // (and, since BUG-136, the capture walk's textWithinBudget). If a future
+  // reader folds a userinfo pattern into SECRET_VALUE_RES instead, this fails
+  // and points at the capture-format cases above that would then need
+  // revisiting.
+  const line = "fatal: unable to access 'https://luis:hunter2-password@gitlab.com/x/y.git/'";
   assert.equal(redactDiagnosticText(line), line);
+  // But a SHAPED token inside userinfo is now masked in place by the shape pass
+  // alone (the URL wrapper survives). scrubUrlCredentials additionally removes
+  // the whole userinfo including the username half.
+  const shaped = "fatal: unable to access 'https://luis:glpat-AbCdEf1234567890@gitlab.com/x/y.git/'";
+  assert.equal(redactDiagnosticText(shaped), "fatal: unable to access 'https://luis:[redacted]@gitlab.com/x/y.git/'");
+  assert.equal(scrubUrlCredentials(shaped), "fatal: unable to access 'https://[redacted]@gitlab.com/x/y.git/'");
 });
 
 test('a giant value under a secret key is redacted, never truncated-but-leaked', (t) => {

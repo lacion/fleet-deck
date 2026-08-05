@@ -68,15 +68,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { startDaemon } from './helpers/daemon.mjs';
+import { startDaemon, randomPort } from './helpers/daemon.mjs';
 import { postHook, postJson, getJson } from './helpers/http.mjs';
 import { loadFixture } from './helpers/fixtures.mjs';
-import { waitUntil } from './helpers/wait.mjs';
+import { waitUntil, waitForSpecRecords } from './helpers/wait.mjs';
+import { fileURLToPath } from 'node:url';
 
 const EXIT_PLAN_FIXTURE = 'exit-plan-mode';
+
+// BUG-040 tests spawn through the FLEETDECK_SPAWN_CMD test seam (see
+// tests/spawn.test.mjs) so no real billed `claude` ever launches.
+const SPAWN_CMD_FIXTURE = path.join(
+  path.dirname(fileURLToPath(import.meta.url)), 'helpers/spawn-cmd-fixture.mjs');
+try { chmodSync(SPAWN_CMD_FIXTURE, 0o755); } catch { /* best-effort */ }
 
 function scratchCwd() {
   return mkdtempSync(path.join(tmpdir(), 'fleetdeck-plans-cwd-'));
@@ -112,9 +119,11 @@ function questionPlanId(q) {
  * first question's resolved row. `tool_input` in overrides is deep-merged
  * one level over the fixture's (the shallow loadFixture merge would
  * otherwise drop the plan text when a caller only needs to retitle the
- * tool call). Returns {held (the pending fetch promise), q (the /state
- * question entry), payload (what was actually POSTed, for byte-identity
- * checks)}. */
+ * tool call). Returns {held (the pending fetch promise), state (the ONE
+ * /state snapshot the question was found in — BUG-204: callers asserting
+ * question+plan coexistence must read BOTH from this snapshot, never re-GET),
+ * q (the /state question entry), payload (what was actually POSTed, for
+ * byte-identity checks)}. */
 async function holdExitPlan(daemon, sid, cwd, holdMs, overrides = {}) {
   const merged = { ...overrides };
   if (overrides.tool_input) {
@@ -122,13 +131,16 @@ async function holdExitPlan(daemon, sid, cwd, holdMs, overrides = {}) {
   }
   const payload = loadFixture(EXIT_PLAN_FIXTURE, { session_id: sid, cwd }, merged);
   const held = postHook(daemon.baseUrl, 'PermissionRequest', payload, { token: daemon, timeout: holdMs + 5000 });
+  let snapshot = null;
   const q = await waitUntil(async () => {
     const state = (await getJson(`${daemon.baseUrl}/state`)).json;
-    return questionsFor(state, sid, 'permission')
+    const found = questionsFor(state, sid, 'permission')
       .filter(x => x.payload?.tool_name === 'ExitPlanMode' && x.status === 'pending')
       .sort((a, b) => b.id - a.id)[0];
+    if (found) snapshot = state;
+    return found;
   }, { label: 'ExitPlanMode permission question to appear in /state' });
-  return { held, q, payload };
+  return { held, state: snapshot, q, payload };
 }
 
 // ---------------------------------------------------------------------------
@@ -144,10 +156,15 @@ test('capture-before-answer: the plan row appears in /state (status proposed, pl
   const sid = randomUUID();
   await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon });
 
-  const { held, q, payload } = await holdExitPlan(daemon, sid, cwd, holdMs);
+  const { held, state, q, payload } = await holdExitPlan(daemon, sid, cwd, holdMs);
   assert.equal(q.status, 'pending', 'sanity: the question must still be pending at this point');
 
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json;
+  // BUG-204: read the plan from the SAME /state snapshot that produced q.
+  // Capture is one synchronous tick (question row + plan row inside one
+  // BEGIN IMMEDIATE transaction), so a single snapshot must contain both —
+  // re-fetching /state here would let a split regression pass: the daemon
+  // could expose the question, yield the loop, and only then insert the
+  // plan, and a later GET would still see it.
   const plan = plansFor(state, sid)[0];
   assert.ok(plan, 'a plans row should exist for this session while the ExitPlanMode question is still pending (capture happens BEFORE holding)');
   assert.equal(plan.status, 'proposed', 'a freshly captured plan should be status:proposed');
@@ -172,6 +189,36 @@ test('capture-before-answer: the plan row appears in /state (status proposed, pl
   const ansRes = await postJson(`${daemon.baseUrl}/api/questions/${q.id}/answer`, { behavior: 'deny' });
   assert.equal(ansRes.status, 200);
   await held;
+});
+
+// The M-B6 transaction in hookHoldQuestion (question row + plan row in one
+// BEGIN IMMEDIATE) must roll BOTH back if the plan insert fails: no held
+// question, no plan row, and the hook fails OPEN (the planner's terminal
+// resumes normally instead of hanging on a hold the library can't honour).
+// The FLEETDECK_TEST_FAIL_PLAN_INSERT seam throws deterministically between
+// the two inserts — the exact interleaving a crash/SQLITE error mid-tick
+// would produce — so this doesn't need a real fault to exercise the path.
+test('capture rollback: a failing plan insert leaves NEITHER the question nor the plan visible, and the hook fails open', async (t) => {
+  const holdMs = 30000; // must never be waited out: fail-open answers immediately
+  const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs), FLEETDECK_TEST_FAIL_PLAN_INSERT: '1' } });
+  const cwd = scratchCwd();
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+
+  const sid = randomUUID();
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon });
+
+  const t0 = Date.now();
+  const payload = loadFixture(EXIT_PLAN_FIXTURE, { session_id: sid, cwd });
+  const res = await postHook(daemon.baseUrl, 'PermissionRequest', payload, { token: daemon, timeout: 5000 });
+  const elapsed = Date.now() - t0;
+  assert.equal(res.status, 200, 'a failed plan capture must not 5xx the hook');
+  assert.deepEqual(res.json, {}, 'fail-open: the terminal gets the bare immediate {} answer, not a held response');
+  assert.ok(elapsed < holdMs, `fail-open must resolve immediately, not after the ${holdMs}ms hold window (took ${elapsed}ms)`);
+
+  const state = (await getJson(`${daemon.baseUrl}/state`)).json;
+  assert.equal(questionsFor(state, sid, 'permission').length, 0,
+    'the question row must be rolled back with the plan — a held question whose plan can never exist would be unanswerable via capture');
+  assert.equal(plansFor(state, sid).length, 0, 'no plan row may survive the rollback');
 });
 
 // ---------------------------------------------------------------------------
@@ -240,8 +287,13 @@ test('answer path: {behavior:"capture"} denies the held hook bare AND mails the 
   // the pinned mail must reach the planner at its next turn boundary
   const upRes = await postHook(daemon.baseUrl, 'UserPromptSubmit', loadFixture('user-prompt-submit', { session_id: sid, cwd }, { prompt: 'continue' }), { token: daemon });
   const ctx = upRes.json?.hookSpecificOutput?.additionalContext ?? '';
-  assert.match(ctx, /\[FLEETDECK\] Your plan was captured/, `the planner's next UserPromptSubmit must carry the verbatim "[FLEETDECK] Your plan was captured" prefix (got: ${JSON.stringify(ctx)})`);
-  assert.match(ctx, /do not execute it/i, 'the pinned capture mail should tell the planner not to execute the plan');
+  // CONTRACT v1.3 pins this sentence VERBATIM (questions.mjs PLAN_CAPTURE_MAIL)
+  // — assert the full literal, not loose fragments, so the stop-and-wrap-up
+  // guidance cannot silently change while a prefix/suffix check still passes.
+  // includes(), not equality: unrelated queued mail may ride the same
+  // additionalContext before or after the pinned sentence.
+  const PINNED_CAPTURE_MAIL = '[FLEETDECK] Your plan was captured to the fleet plan library — do not execute it. Wrap up your turn.';
+  assert.ok(ctx.includes(PINNED_CAPTURE_MAIL), `the planner's next UserPromptSubmit must carry the pinned capture mail VERBATIM — ${JSON.stringify(PINNED_CAPTURE_MAIL)} (got: ${JSON.stringify(ctx)})`);
 });
 
 test('answer path: {behavior:"deny"} plainly denies the held hook; plan becomes rejected', async (t) => {
@@ -387,36 +439,55 @@ test('/state plans: caps at 20 non-archived rows, newest first; archiving frees 
 // 5. mark transitions
 // ---------------------------------------------------------------------------
 
-test('mark: proposed -> executed (optional {via} recorded if exposed on /state, otherwise 200 alone is accepted)', async (t) => {
+test('mark: proposed -> executed records the optional {via} on /state, and it survives a daemon restart', async (t) => {
   const holdMs = 1000;
-  const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
+  const home = mkdtempSync(path.join(tmpdir(), 'fleetdeck-home-'));
   const cwd = scratchCwd();
-  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+  t.after(() => {
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
 
+  const daemon = await startDaemon({ home, env: { FLEETDECK_HOLD_MS: String(holdMs) } });
   const sid = randomUUID();
-  const { held } = await holdExitPlan(daemon, sid, cwd, holdMs);
-  const state0 = (await getJson(`${daemon.baseUrl}/state`)).json;
-  const plan0 = plansFor(state0, sid)[0];
-  assert.ok(plan0, 'sanity: plan captured');
-  assert.equal(plan0.status, 'proposed');
+  let planId;
+  try {
+    const { held } = await holdExitPlan(daemon, sid, cwd, holdMs);
+    const state0 = (await getJson(`${daemon.baseUrl}/state`)).json;
+    const plan0 = plansFor(state0, sid)[0];
+    assert.ok(plan0, 'sanity: plan captured');
+    assert.equal(plan0.status, 'proposed');
+    planId = plan0.plan_id;
 
-  const markRes = await postJson(`${daemon.baseUrl}/api/plans/${plan0.plan_id}/mark`, { status: 'executed', via: 'assign' });
-  assert.equal(markRes.status, 200, `proposed -> executed should 200 (got ${markRes.status}: ${JSON.stringify(markRes.json)})`);
+    const markRes = await postJson(`${daemon.baseUrl}/api/plans/${planId}/mark`, { status: 'executed', via: 'assign' });
+    assert.equal(markRes.status, 200, `proposed -> executed should 200 (got ${markRes.status}: ${JSON.stringify(markRes.json)})`);
 
-  const state1 = (await getJson(`${daemon.baseUrl}/state`)).json;
-  const plan1 = (state1.plans || []).find(p => String(p.plan_id) === String(plan0.plan_id));
-  assert.ok(plan1, 'executed plan should still be listed (non-archived)');
-  assert.equal(plan1.status, 'executed');
-  if (plan1.via !== undefined) {
-    assert.equal(plan1.via, 'assign', 'when `via` is exposed on /state it should carry the value passed to mark');
-  } else {
-    t.diagnostic('plan /state entry does not expose `via` — accepting 200 alone per the task brief');
+    const state1 = (await getJson(`${daemon.baseUrl}/state`)).json;
+    const plan1 = (state1.plans || []).find(p => String(p.plan_id) === String(planId));
+    assert.ok(plan1, 'executed plan should still be listed (non-archived)');
+    assert.equal(plan1.status, 'executed');
+    assert.equal(plan1.via, 'assign', '/state plan entry must expose the `via` recorded by the mark (provenance contract, BUG-206)');
+
+    await held; // let the still-open hold expire naturally; must not revert the mark
+    const state2 = (await getJson(`${daemon.baseUrl}/state`)).json;
+    const plan2 = (state2.plans || []).find(p => String(p.plan_id) === String(planId));
+    assert.equal(plan2?.status, 'executed', 'an unrelated hold timeout must not revert a plan already marked executed');
+    assert.equal(plan2?.via, 'assign', 'hold expiry must not clear the recorded via');
+  } finally {
+    // kill, but keep the SQLite files in `home` for the restart below
+    await daemon.stop({ keepHome: true });
   }
 
-  await held; // let the still-open hold expire naturally; must not revert the mark
-  const state2 = (await getJson(`${daemon.baseUrl}/state`)).json;
-  const plan2 = (state2.plans || []).find(p => String(p.plan_id) === String(plan0.plan_id));
-  assert.equal(plan2?.status, 'executed', 'an unrelated hold timeout must not revert a plan already marked executed');
+  // restart against the same FLEETDECK_HOME: executed_via is a durable column,
+  // so the recorded provenance must survive a daemon restart.
+  const revived = await startDaemon({ port: randomPort(), home });
+  t.after(async () => { await revived.stop({ keepHome: true }); });
+
+  const state3 = (await getJson(`${revived.baseUrl}/state`)).json;
+  const plan3 = (state3.plans || []).find(p => String(p.plan_id) === String(planId));
+  assert.ok(plan3, 'plan should still be listed after restart');
+  assert.equal(plan3.status, 'executed');
+  assert.equal(plan3.via, 'assign', 'recorded `via` must survive a daemon restart (durable plan history)');
 });
 
 test('mark: captured -> executed', async (t) => {
@@ -511,6 +582,104 @@ test('mark: 404 for an unknown plan id', async (t) => {
 
   const res = await postJson(`${daemon.baseUrl}/api/plans/does-not-exist-${randomUUID()}/mark`, { status: 'executed' });
   assert.equal(res.status, 404, `marking an unknown plan id should 404 (got ${res.status})`);
+});
+
+// ---------------------------------------------------------------------------
+// 5b. BUG-039 — daemon-side Assign. The board's Assign control used to compose
+// the [FLEETDECK ASSIGNMENT] frame client-side and post it through /mail,
+// which 422s every reserved frame (0.16.0) — so Assign never delivered and
+// the plan was never marked executed. POST /api/plans/:id/assign is the
+// daemon-authorized path: it mails the framed plan through the internal
+// mail() and records the executed verdict in the same request.
+// ---------------------------------------------------------------------------
+
+test('assign: mails the daemon-reserved [FLEETDECK ASSIGNMENT] frame to the target and marks the plan executed', async (t) => {
+  const holdMs = 1500;
+  const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
+  const cwd = scratchCwd();
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+
+  // Planner holds ExitPlanMode → plan captured (status proposed).
+  const plannerSid = randomUUID();
+  const { held, payload } = await holdExitPlan(daemon, plannerSid, cwd, holdMs);
+  const state0 = (await getJson(`${daemon.baseUrl}/state`)).json;
+  const plan0 = plansFor(state0, plannerSid)[0];
+  assert.ok(plan0, 'sanity: plan captured');
+  assert.equal(plan0.status, 'proposed');
+
+  // Target: a live session the plan gets assigned to.
+  const targetSid = randomUUID();
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: targetSid, cwd }), { token: daemon });
+  const state1 = (await getJson(`${daemon.baseUrl}/state`)).json;
+  const targetCard = findSession(state1, targetSid);
+  assert.ok(targetCard, 'sanity: target session card exists');
+
+  const res = await postJson(`${daemon.baseUrl}/api/plans/${plan0.plan_id}/assign`, {
+    to: targetSid,
+    instructions: 'run only the migration',
+  });
+  assert.equal(res.status, 200, `assign should 200 (got ${res.status}: ${JSON.stringify(res.json)})`);
+  assert.equal(res.json?.ok, true);
+  assert.equal(res.json?.session_id, targetSid, 'assign should report the resolved target session id');
+
+  // The assignment frame reached the target's mailbox VERBATIM — the exact
+  // reserved frame POST /mail refuses to carry for an external caller.
+  const box = (await getJson(`${daemon.baseUrl}/mail?session=${encodeURIComponent(targetSid)}`)).json;
+  assert.equal(box.mail.length, 1, 'target should have exactly one mail (the assignment)');
+  const m = box.mail[0];
+  assert.equal(m.from, 'orchestrator', 'the assignment frame is daemon-sent (reserved sender, never board-forged)');
+  assert.ok(m.text.startsWith('[FLEETDECK ASSIGNMENT]'), `mail must open with the reserved assignment frame (got: ${m.text.slice(0, 60)}...)`);
+  assert.ok(m.text.includes('Custom instructions: run only the migration'), 'custom instructions ride the frame');
+  assert.ok(m.text.includes(payload.tool_input.plan), 'the full plan markdown is the frame body');
+
+  // The plan was recorded executed atomically with the assignment.
+  const state2 = (await getJson(`${daemon.baseUrl}/state`)).json;
+  const plan2 = (state2.plans || []).find(p => String(p.plan_id) === String(plan0.plan_id));
+  assert.equal(plan2?.status, 'executed', 'assign must mark the plan executed');
+  if (plan2?.via !== undefined) {
+    assert.equal(plan2.via, `assign:${targetSid}`, 'when `via` is exposed it should record the assign target');
+  }
+
+  // BUG-041 comes along for free: assigning while the planner's question is
+  // still pending dismisses it, and the held hook resolves.
+  const ans = await held;
+  assert.equal(ans.status, 200, 'the planner hold should resolve once the plan is assigned elsewhere');
+});
+
+test('assign: bad requests and bad transitions are refused without sending mail', async (t) => {
+  const holdMs = 1500;
+  const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
+  const cwd = scratchCwd();
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+
+  const plannerSid = randomUUID();
+  const { held, q } = await holdExitPlan(daemon, plannerSid, cwd, holdMs);
+  const state0 = (await getJson(`${daemon.baseUrl}/state`)).json;
+  const plan0 = plansFor(state0, plannerSid)[0];
+
+  const targetSid = randomUUID();
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: targetSid, cwd }), { token: daemon });
+
+  // 404 unknown plan / unknown target, 400 missing or mistyped fields.
+  const unknownPlan = await postJson(`${daemon.baseUrl}/api/plans/999999999/assign`, { to: targetSid });
+  assert.equal(unknownPlan.status, 404, `assigning an unknown plan should 404 (got ${unknownPlan.status})`);
+  const unknownTarget = await postJson(`${daemon.baseUrl}/api/plans/${plan0.plan_id}/assign`, { to: 'no-such-session-xyz' });
+  assert.equal(unknownTarget.status, 404, `assigning to an unknown target should 404 (got ${unknownTarget.status})`);
+  const missingTo = await postJson(`${daemon.baseUrl}/api/plans/${plan0.plan_id}/assign`, {});
+  assert.equal(missingTo.status, 400, `assign without a target should 400 (got ${missingTo.status})`);
+  const badInstr = await postJson(`${daemon.baseUrl}/api/plans/${plan0.plan_id}/assign`, { to: targetSid, instructions: 42 });
+  assert.equal(badInstr.status, 400, `non-string instructions should 400 (got ${badInstr.status})`);
+
+  // Reject the plan (deny answer) — a settled plan can no longer be assigned.
+  const ansRes = await postJson(`${daemon.baseUrl}/api/questions/${q.id}/answer`, { behavior: 'deny' });
+  assert.equal(ansRes.status, 200);
+  await held;
+  const rejected = await postJson(`${daemon.baseUrl}/api/plans/${plan0.plan_id}/assign`, { to: targetSid });
+  assert.equal(rejected.status, 409, `assigning a rejected plan should 409 (got ${rejected.status}: ${JSON.stringify(rejected.json)})`);
+
+  // None of the refused assigns queued mail for the target.
+  const box = (await getJson(`${daemon.baseUrl}/mail?session=${encodeURIComponent(targetSid)}`)).json;
+  assert.equal(box.mail.length, 0, 'a refused assign must never queue the reserved frame');
 });
 
 // ---------------------------------------------------------------------------
@@ -727,16 +896,170 @@ test('mark executed with the question still pending dismisses it (fails the hold
   const { q } = out;
   const planId = plansFor((await getJson(`${daemon.baseUrl}/state`)).json, sid)[0]?.plan_id;
 
+  // RACE-SENSITIVE: the hold must STILL be parked when the mark lands. If a
+  // shortened hold window or scheduler jitter lets the timer expire first,
+  // the timer's own fail-open ({}) makes every assertion below pass — so this
+  // check is the only thing proving the mark, not the timer, retired the row.
+  const rowBefore = questionsFor((await getJson(`${daemon.baseUrl}/state`)).json, sid, 'permission')
+    .find(x => x.id === q.id);
+  assert.equal(rowBefore?.status, 'pending',
+    'PRECONDITION: the question must still be pending when the mark lands — otherwise this test passes vacuously (timer expiry also releases the hold with {})');
   const markRes = await postJson(`${daemon.baseUrl}/api/plans/${planId}/mark`, { status: 'executed', via: 'assign' });
   assert.equal(markRes.status, 200);
+  // The mark must have retired the row IMMEDIATELY, not at hold expiry:
+  // observe the row well inside the remaining hold window.
+  const stateNow = (await getJson(`${daemon.baseUrl}/state`)).json;
+  const rowNow = questionsFor(stateNow, sid, 'permission').find(x => x.id === q.id);
+  assert.equal(rowNow?.status, 'expired',
+    'the question must retire AT the mark (well before the 60s hold expires) — a row still pending here means the mark left a live execution authority (BUG-041)');
 
   const heldRes = await held;
   assert.deepEqual(heldRes.json, {},
     'the parked hook must fail OPEN (dismiss path) — the planner resumes in the terminal instead of sitting on a stale prompt');
 
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json;
+  const state = stateNow;
   const plan = (state.plans || []).find(p => String(p.plan_id) === String(planId));
   assert.equal(plan?.status, 'executed', 'the mark itself is untouched');
-  const qrow = questionsFor(state, sid, 'permission').find(x => x.id === q.id);
-  assert.equal(qrow?.status, 'expired', 'the dismissed question retires as expired');
+  assert.equal(rowNow?.status, 'expired', 'the dismissed question retires as expired');
+});
+
+// ---------------------------------------------------------------------------
+// 8. BUG-040 — atomic pre-spawn execution claim. The board's plan-execute
+// flow used to spawn FIRST and mark the plan executed only after the daemon
+// accepted, so two boards acting on one stale snapshot both launched billed
+// agents before either mark could 409. plan_id now rides the spawn body and
+// the daemon claims the plan (one guarded UPDATE) BEFORE any clone, pane, or
+// durable row exists; a spawn failure releases the claim back to its
+// pre-claim status. Spawns here go through FLEETDECK_SPAWN_CMD (the fixture
+// records specs, never launches Claude).
+// ---------------------------------------------------------------------------
+
+async function captureProposedPlan(t, daemon, cwd) {
+  const sid = randomUUID();
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon });
+  const { held } = await holdExitPlan(daemon, sid, cwd, 1000);
+  const plan = plansFor((await getJson(`${daemon.baseUrl}/state`)).json, sid)[0];
+  assert.ok(plan, 'sanity: plan captured');
+  assert.equal(plan.status, 'proposed');
+  await held; // hold expires; a planner with no follow-up activity stays proposed
+  return plan;
+}
+
+function planById(state, planId) {
+  return (state.plans || []).find(p => String(p.plan_id) === String(planId));
+}
+
+test('BUG-040: spawn carrying plan_id claims the plan atomically BEFORE launch; a second claim 409s and launches nothing', async (t) => {
+  const recDir = scratchCwd();
+  const rec = path.join(recDir, 'specs.jsonl');
+  const cwd = scratchCwd();
+  const daemon = await startDaemon({ env: {
+    FLEETDECK_HOLD_MS: '1000',
+    FLEETDECK_SPAWN_CMD: SPAWN_CMD_FIXTURE,
+    FLEETDECK_TEST_SPAWN_RECORD: rec,
+  } });
+  t.after(async () => {
+    await daemon.stop();
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    rmSync(recDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  const plan = await captureProposedPlan(t, daemon, cwd);
+
+  const res = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd, prompt: 'Execute this approved plan exactly.', plan_id: plan.plan_id });
+  assert.equal(res.status, 200, `the claiming spawn should succeed (got ${res.status}: ${JSON.stringify(res.json)})`);
+  assert.equal(res.json.ok, true);
+
+  const state1 = (await getJson(`${daemon.baseUrl}/state`)).json;
+  const claimed = planById(state1, plan.plan_id);
+  assert.equal(claimed?.status, 'executed', 'the plan must be executed the moment the spawn is accepted, not after a client mark');
+  if (claimed?.via !== undefined) {
+    assert.equal(claimed.via, `spawn:${res.json.spawn_id}`, 'the recorded via must name the spawn that executed the plan');
+  }
+
+  // The race that motivated the fix: a second board on a stale snapshot
+  // executes the SAME plan. It must be refused before launch — and must
+  // never reach the spawn backend.
+  const res2 = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd, prompt: 'Execute this approved plan exactly.', plan_id: plan.plan_id });
+  assert.equal(res2.status, 409, `a second execution claim must 409 (got ${res2.status}: ${JSON.stringify(res2.json)})`);
+  assert.equal(res2.json.ok, false);
+
+  const specs = await waitForSpecRecords(rec, 1);
+  assert.equal(specs.length, 1, 'exactly ONE executor was launched; the losing claim never reached the spawn backend');
+
+  // The claim is terminal through the mark endpoint too — the old client-composed
+  // second mark (the race's honest half) still 409s verbatim.
+  const markRes = await postJson(`${daemon.baseUrl}/api/plans/${plan.plan_id}/mark`, { status: 'executed', via: 'spawn:late' });
+  assert.equal(markRes.status, 409, 'executed-from-executed still 409s');
+});
+
+test('BUG-040: a refused spawn releases the claim — plan returns to proposed and is executable again', async (t) => {
+  const recDir = scratchCwd();
+  const rec = path.join(recDir, 'specs.jsonl');
+  const cwd = scratchCwd();
+  const daemon = await startDaemon({ env: {
+    FLEETDECK_HOLD_MS: '1000',
+    FLEETDECK_SPAWN_CMD: SPAWN_CMD_FIXTURE,
+    FLEETDECK_TEST_SPAWN_RECORD: rec,
+  } });
+  t.after(async () => {
+    await daemon.stop();
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    rmSync(recDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  const plan = await captureProposedPlan(t, daemon, cwd);
+
+  // cwd missing → the spawn 400s AFTER the claim; the claim must be released.
+  const bad = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd: path.join(cwd, 'does-not-exist'), prompt: 'x', plan_id: plan.plan_id });
+  assert.equal(bad.status, 400, `a spawn with a missing cwd must still 400 (got ${bad.status}: ${JSON.stringify(bad.json)})`);
+
+  const state1 = (await getJson(`${daemon.baseUrl}/state`)).json;
+  assert.equal(planById(state1, plan.plan_id)?.status, 'proposed',
+    'a spawn the daemon refused must release the execution claim back to the pre-claim status');
+
+  // And the released plan is executable again — the retry path a human
+  // actually takes after fixing the failure.
+  const good = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd, prompt: 'Execute this approved plan exactly.', plan_id: plan.plan_id });
+  assert.equal(good.status, 200, `the retry after a released claim should succeed (got ${good.status}: ${JSON.stringify(good.json)})`);
+  const state2 = (await getJson(`${daemon.baseUrl}/state`)).json;
+  assert.equal(planById(state2, plan.plan_id)?.status, 'executed');
+
+  const specs = await waitForSpecRecords(rec, 1);
+  assert.equal(specs.length, 1, 'only the retried spawn launched an executor');
+});
+
+test('BUG-040: spawn claim refusals — unknown plan 404, non-executable plan 409, shell kind cannot carry plan_id', async (t) => {
+  const recDir = scratchCwd();
+  const rec = path.join(recDir, 'specs.jsonl');
+  const cwd = scratchCwd();
+  const daemon = await startDaemon({ env: {
+    FLEETDECK_HOLD_MS: '1000',
+    FLEETDECK_SPAWN_CMD: SPAWN_CMD_FIXTURE,
+    FLEETDECK_TEST_SPAWN_RECORD: rec,
+  } });
+  t.after(async () => {
+    await daemon.stop();
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    rmSync(recDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  const unknown = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd, prompt: 'x', plan_id: 999999 });
+  assert.equal(unknown.status, 404, `an unknown plan_id must 404 (got ${unknown.status}: ${JSON.stringify(unknown.json)})`);
+
+  const shell = await postJson(`${daemon.baseUrl}/api/spawn`, { kind: 'shell', cwd, plan_id: 1 });
+  assert.equal(shell.status, 400, `a shell spawn must refuse plan_id (got ${shell.status}: ${JSON.stringify(shell.json)})`);
+
+  // A rejected plan is not executable: capture one, deny it, then try.
+  const sid = randomUUID();
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon });
+  const { held, q } = await holdExitPlan(daemon, sid, cwd, 1000);
+  const planId = plansFor((await getJson(`${daemon.baseUrl}/state`)).json, sid)[0]?.plan_id;
+  const ansRes = await postJson(`${daemon.baseUrl}/api/questions/${q.id}/answer`, { behavior: 'deny' });
+  assert.equal(ansRes.status, 200);
+  await held;
+  const denied = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd, prompt: 'x', plan_id: planId });
+  assert.equal(denied.status, 409, `a rejected plan must refuse an execution claim (got ${denied.status}: ${JSON.stringify(denied.json)})`);
+
+  assert.equal(existsSync(rec), false, 'no refusal above may have reached the spawn backend');
 });

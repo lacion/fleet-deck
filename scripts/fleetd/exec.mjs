@@ -22,11 +22,63 @@ import { execFile } from 'node:child_process';
 // security guarantee, and a richer diagnostic is never worth probing git for.
 import { redactDiagnosticText, scrubUrlCredentials } from './payload-capture.mjs';
 
+// Grace between the timeout's SIGTERM and the SIGKILL escalation below.
+// 1s is enough for tmux/git/agents-cli to exit cleanly on TERM, and bounds the
+// worst-case overshoot of any advertised deadline to timeout + 1s.
+const KILL_GRACE_MS = 1_000;
+
 export function execFileP(cmd, args, { timeout = 30_000, env } = {}) {
   return new Promise((resolve) => {
     try {
-      execFile(cmd, args, {
-        timeout,
+      let child;
+      let done = false;
+      let killTimer = null;
+      // Settle EXACTLY once, on whatever happens first — exit, error, or our
+      // own wall-clock deadline. execFile's `timeout` only SIGTERMs the child;
+      // the CALLBACK still waits for the pipes to close, so a child that
+      // ignores TERM (or that leaves a grandchild holding an inherited
+      // stdout/stderr pipe open) would keep the callback — and this promise —
+      // pending forever, silently wedging agents-poll's whole scheduling loop.
+      // The deadline timer therefore OWNS settlement: it kills the child, kills
+      // the attempt, and resolves regardless of what the child does later.
+      const settle = (fn) => {
+        if (done) return;
+        done = true;
+        if (killTimer) clearTimeout(killTimer);
+        resolve(fn());
+      };
+      const deadline = setTimeout(() => {
+        // Settle FIRST: settle() clears any armed killTimer, and only this
+        // timeout path can leave a child alive needing a KILL (every other
+        // settle means execFile's callback ran, i.e. the child already
+        // exited), so the escalation below is armed AFTER settlement on
+        // purpose.
+        settle(() => ({ ok: false, code: 'ETIMEDOUT', err: `timed out after ${timeout}ms` }));
+        if (child && !child.killed) {
+          try { child.kill('SIGTERM'); } catch { /* already gone */ }
+          // Escalate: a process may survive SIGTERM indefinitely (and on
+          // platforms where kill() is only advisory, so may SIGKILL — the
+          // resolve above is what actually bounds the attempt). child.killed
+          // is already true from the SIGTERM just sent, so re-check aliveness
+          // with signal 0 instead.
+          killTimer = setTimeout(() => {
+            let alive = true;
+            try { process.kill(child.pid, 0); } catch { alive = false; }
+            if (alive) { try { child.kill('SIGKILL'); } catch { /* already gone */ } }
+          }, KILL_GRACE_MS);
+          killTimer.unref?.();
+        }
+      }, timeout);
+      // The deadline (and the escalation grace below) exist only to bound THIS
+      // attempt; they must not keep the daemon's event loop alive when they are
+      // the only handles left.
+      deadline.unref?.();
+      child = execFile(cmd, args, {
+        // 0 disables execFile's own SIGTERM-only timeout: the deadline above is
+        // strictly stronger (same TERM, then KILL, then settle), and a second
+        // timer race inside execFile would change the shape of the callback
+        // error without changing settlement.
+        timeout: 0,
         windowsHide: true,
         // When an env is supplied it is MERGED over the daemon's own (never
         // replacing it), so PATH and the rest survive while a caller adds e.g.
@@ -34,8 +86,9 @@ export function execFileP(cmd, args, { timeout = 30_000, env } = {}) {
         // instead of hanging on a credential prompt.
         ...(env ? { env: { ...process.env, ...env } } : {}),
       }, (err, stdout, stderr) => {
-        if (err) return resolve({ ok: false, code: err.code, err: String(stderr || err.message || err).trim() });
-        resolve({ ok: true, out: stdout });
+        clearTimeout(deadline);
+        if (err) return settle(() => ({ ok: false, code: err.code, err: String(stderr || err.message || err).trim() }));
+        settle(() => ({ ok: true, out: stdout }));
       });
     } catch (err) {
       resolve({ ok: false, err: String(err.message || err) });
@@ -74,30 +127,6 @@ export function distillGitStderr(text) {
 const GIT_DETAIL_LINES = 20;
 const GIT_DETAIL_MAX = 2000;
 
-// Credential SHAPES that SECRET_VALUE_RES does not carry, kept LOCAL to this
-// function on purpose: payload-capture's list governs the on-disk
-// hook-payloads.jsonl format, and this change owns no blast radius there (see the
-// comment on scrubUrlCredentials). git stderr has its own population of forges,
-// and the fetch path in repos.mjs has no origin URL in scope to derive an
-// exact-secret needle from, so a BARE forge token relayed on a `remote:` line —
-// `remote: the provided token (glpat-…) is incorrect` — had no covering layer at
-// all. ReDoS: each is a fixed prefix plus ONE greedy trailing run with nothing
-// required after it, the same shape the audit in payload-capture.mjs certifies
-// linear (the lookbehind is zero-width and constant). All match runs longer than
-// the 10-byte `[redacted]` marker.
-//
-// The `(?<![A-Za-z0-9_-])` left boundary is not decoration: without it the generic
-// `sk-` rule fires INSIDE ordinary words, and `disk-quota-exceeded-for-user`
-// becomes `di[redacted]` — destroying exactly the legibility this whole change
-// exists to deliver. A false redaction is cheap to write and expensive to debug.
-const GIT_EXTRA_SECRET_RES = [
-  /(?<![A-Za-z0-9_-])gl(?:pat|rt|dt|soat|cbt|ptt|feat|agent)-[A-Za-z0-9_-]{16,}/g, // GitLab PAT / runner / deploy / OAuth / CI job families
-  /(?<![A-Za-z0-9_-])AIza[A-Za-z0-9_-]{30,}/g,                                     // Google API key
-  /(?<![A-Za-z0-9_-])sk-[A-Za-z0-9_-]{20,}/g,                                      // OpenAI-style (and, harmlessly, sk-ant-* again)
-  /(?<![A-Za-z0-9_-])hf_[A-Za-z0-9]{20,}/g,                                        // Hugging Face
-  /(?<![A-Za-z0-9_-])dop_v1_[A-Za-z0-9]{32,}/g,                                    // DigitalOcean
-];
-
 // THE single hardening pass for git output, exported so that the NOTE and the
 // DETAIL derived from one stderr can never disagree about it. That was a real
 // defect and not a hypothetical: the note was given only the positional URL
@@ -109,12 +138,15 @@ const GIT_EXTRA_SECRET_RES = [
 // outlives the archived card. Callers harden ONCE and derive both.
 //
 // Order within the pass mirrors gitStderrDetail's contract: positional first
-// (a credentialed URL is invisible to a shape list), then the shape lists, then
-// the caller's exact needles. Every step is idempotent, so composing this with
-// gitStderrDetail — which runs it again over its own input — is safe by design.
+// (a credentialed URL is invisible to a shape list), then the shape list, then
+// the caller's exact needles. The forge/API shapes (glpat/AIza/sk-/hf_/dop_v1_)
+// this pass once applied from a LOCAL extra list now live in payload-capture's
+// shared SECRET_VALUE_RES, so redactDiagnosticText covers them and the two
+// halves of this file can never drift apart again. Every step is idempotent, so
+// composing this with gitStderrDetail — which runs it again over its own
+// input — is safe by design.
 export function redactGitText(text, secrets = []) {
   let out = redactDiagnosticText(scrubUrlCredentials(text));
-  for (const re of GIT_EXTRA_SECRET_RES) out = out.replace(re, '[redacted]');
   for (const secret of secrets) {
     if (typeof secret === 'string' && secret) out = out.split(secret).join('[redacted]');
   }
@@ -192,14 +224,29 @@ export function gitStderrDetail(text, { secrets = [] } = {}) {
 // Resolve the repository's primary integration ref, built on execFileP above.
 // Prefer origin/HEAD, then conventional remote main/master, and only fall back
 // to a local branch when the repo has no matching remote-tracking ref (a repo
-// with no remote) — the caller flags that as local-only. Shared by the worktree
-// inspector and repo-mode spawns so the base is computed exactly one way.
+// with no remote) — the caller flags that as local-only. For the local fallback
+// the primary branch is DERIVED, not guessed: `git worktree list --porcelain`
+// lists the main worktree first, and its `branch refs/heads/<name>` entry names
+// the integration branch whatever it is called — trunk, develop, any custom
+// default — so a no-remote repo on a non-conventional name still resolves
+// instead of losing branch/dirty/ahead evidence. Conventional main/master stay
+// as the last resort for a main worktree in detached HEAD. Shared by the
+// worktree inspector and repo-mode spawns so the base is computed exactly one
+// way.
 export async function baseBranch(worktree) {
   const head = await execFileP('git', ['-C', worktree, 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], { timeout: 5_000 });
   if (head.ok && head.out.trim()) return { ref: head.out.trim(), local: false };
   for (const name of ['main', 'master']) {
     const remote = await execFileP('git', ['-C', worktree, 'show-ref', '--verify', '--quiet', `refs/remotes/origin/${name}`], { timeout: 5_000 });
     if (remote.ok) return { ref: `origin/${name}`, local: false };
+  }
+  const trees = await execFileP('git', ['-C', worktree, 'worktree', 'list', '--porcelain'], { timeout: 5_000 });
+  if (trees.ok) {
+    // Entries are blank-line-separated; the main worktree is always first.
+    // A bare or detached main worktree has no `branch` line and falls through.
+    const first = trees.out.split('\n\n', 1)[0];
+    const branch = /^branch refs\/heads\/(.+)$/m.exec(first);
+    if (branch && branch[1].trim()) return { ref: branch[1].trim(), local: true };
   }
   for (const name of ['main', 'master']) {
     const local = await execFileP('git', ['-C', worktree, 'show-ref', '--verify', '--quiet', `refs/heads/${name}`], { timeout: 5_000 });

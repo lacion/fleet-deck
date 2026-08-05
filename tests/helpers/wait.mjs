@@ -11,8 +11,9 @@
 // need to scale a bespoke timeout, and waitUntil / waitForResponse /
 // waitForSpecRecords for the common polling shapes.
 
-import { networkInterfaces } from 'node:os';
-import { existsSync, readFileSync } from 'node:fs';
+import { networkInterfaces, tmpdir } from 'node:os';
+import { existsSync, readFileSync, mkdtempSync, rmSync } from 'node:fs';
+import path from 'node:path';
 
 // Read once, clamped to a sane minimum of 1: a stray sub-1 value can only ever
 // ADD headroom, never shrink an authored timeout below its written value (which
@@ -98,4 +99,20 @@ export async function waitForSpecRecords(file, minCount, opts) {
     const recs = readSpecRecords(file);
     return recs.length >= minCount ? recs : null;
   }, { timeoutMs: 8000, label: `>= ${minCount} recorded spec(s) in ${file}`, ...opts });
+}
+
+/**
+ * Create a scratch spec-record file (mkdtemp'd dir + <name>, default
+ * specs.jsonl) whose OWNING directory is removed at test teardown. The old
+ * pattern — `path.join(scratchDir(), 'specs.jsonl')` kept only as a string —
+ * lost the directory, so teardown could never remove it and every run leaked
+ * its record dir into the OS temp tree. Pass the test context `t` so cleanup
+ * is registered on `t.after`; the rm is registered BEFORE anything else the
+ * caller adds (t.after callbacks run in reverse order of registration), so it
+ * fires LAST — after the daemon has stopped and finished writing to the file.
+ */
+export function makeSpecRecordFile(t, { prefix = 'fleetdeck-spawn-record-', name = 'specs.jsonl' } = {}) {
+  const dir = mkdtempSync(path.join(tmpdir(), prefix));
+  t.after(() => { rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+  return path.join(dir, name);
 }

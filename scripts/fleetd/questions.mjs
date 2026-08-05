@@ -97,6 +97,13 @@ const HOLD_KINDS = new Set(['permission', 'elicitation', 'choice']);
 // session) the daemon raises a FRESH row whose answer rides the mail pipeline
 // to the next turn boundary.
 const REARM_GRACE_MS = 3_000; // parked-on-native-prompt confirmation window
+// BUG-138: a board-answered hold leaves a short-lived completed-correlation
+// record so its OWN completing PostToolUse is consumed against the ledger
+// instead of expiring a still-pending identical twin (details on the ledger
+// below). A real completion follows its answer by seconds at most; the TTL
+// only bounds a false-positive window for a LATER identical call — a
+// completed call never legitimately sends a second PostToolUse.
+const COMPLETED_KEY_TTL_MS = 60_000;
 // WHY a cap, and why 2: an un-rearmable dead card was the bug being fixed,
 // but an agent parked behind a stack of questions (or a session nobody ever
 // answers) must not re-raise cards forever — the rail filling with ghosts is
@@ -160,6 +167,10 @@ function toolCallKey(toolName, toolInput) {
 export function createQuestions(db, {
   holdMs = DEFAULT_HOLD_MS,
   mail = () => {},
+  // The mailbox's own clamp (mail.mjs MAIL_MAX_LEN). Framed answers that exceed
+  // it are REJECTED before settlement — see answerMailGuard below. Injectable
+  // for tests; must mirror the real mailbox clamp in production (derive.mjs).
+  mailMaxLen = 4000,
   tick = () => {},
   callsignOf = () => null,
   onChange = () => {},
@@ -213,6 +224,19 @@ export function createQuestions(db, {
   const rearmById = new Map();
   const rearmMeta = new Map();
   const rearmChains = new Map();
+  // BUG-138: completed-correlation ledger (in-memory — the same daemon-lifetime
+  // ephemera class as `holds`; a daemon restart abandons every held socket
+  // anyway, so the hook side can no longer complete through us). Identity:
+  //   session_id -> Map<toolCallKey, count>   (count = board answers on that key)
+  // WHY: with two parallel holds on IDENTICAL (tool_name, tool_input), answering
+  // A retires its row to 'answered' — and expireOnActivity searches PENDING rows
+  // only, so A's completing PostToolUse then sees only twin B and expires it,
+  // even though B is still parked on the human. Recording each answered hold's
+  // key here lets a correlated completion be consumed against the ledger FIRST
+  // (each answer absorbs exactly one completion), so a twin's hold survives its
+  // sibling's completion. Answered-in-terminal completions are unaffected: they
+  // left no ledger entry and retire a matching pending hold exactly as before.
+  const completedKeys = new Map();
 
   // -------------------------------------------------------------- creation
   function create(kind, sessionId, payload) {
@@ -272,6 +296,37 @@ export function createQuestions(db, {
     clearTimeout(h.timer);
     holds.delete(id);
     return h;
+  }
+
+  // -------------------------------------------- BUG-138: completion ledger
+  // noteCompleted / consumeCompleted implement the completedKeys ledger above.
+  // TTL'd entries: the timer deletes ONLY this entry (verified by identity), so
+  // answers and expirations interleaving on one key can never double-count.
+  function noteCompleted(sessionId, key) {
+    let byKey = completedKeys.get(sessionId);
+    if (!byKey) completedKeys.set(sessionId, (byKey = new Map()));
+    byKey.set(key, (byKey.get(key) ?? 0) + 1);
+    const entry = byKey;
+    const timer = setTimeout(() => {
+      if (completedKeys.get(sessionId) !== entry) return; // session ledger already dropped
+      const n = entry.get(key);
+      if (n == null) return;
+      if (n <= 1) entry.delete(key); else entry.set(key, n - 1);
+      if (entry.size === 0) completedKeys.delete(sessionId);
+    }, COMPLETED_KEY_TTL_MS);
+    timer.unref?.();
+  }
+
+  // A correlated PostToolUse landed: if a board answer on this exact key is
+  // still awaiting ITS completion, consume it (one answer absorbs one
+  // completion) and tell expireOnActivity to leave the pending twins alone.
+  function consumeCompleted(sessionId, key) {
+    const byKey = completedKeys.get(sessionId);
+    const n = byKey?.get(key);
+    if (!n) return false;
+    if (n <= 1) byKey.delete(key); else byKey.set(key, n - 1);
+    if (byKey.size === 0) completedKeys.delete(sessionId);
+    return true;
   }
 
   // Path (b): hold window lapsed (timer) or evicted by the per-session cap —
@@ -431,6 +486,23 @@ export function createQuestions(db, {
     }
   }
 
+  // -------------------------------------------------- answer mail size guard
+  // BUG-137 (data loss): mail() clamps at MAIL_MAX_LEN and reports
+  // {truncated:true}, but the freeform / re-armed answer paths used to ignore
+  // the receipt and settle the row anyway — the human got "answer queued",
+  // the agent got a truncated instruction, and the question was gone. Framed
+  // answers ([FLEETDECK ANSWER] Q: … — A: …) that exceed the clamp are now
+  // REJECTED before anything is stored or settled: the row stays pending, the
+  // human is told to shorten, and nothing is lost silently. The 413 mirrors
+  // the board API's other body rejections (400/409/422 are taken; the HTTP
+  // layer passes our status through verbatim).
+  const ANSWER_TOO_LONG_ERR =
+    'answer too long — the mail pipeline would truncate it. Shorten it (or dismiss and answer in the terminal); the question is still pending.';
+  function answerMailGuard(frame) {
+    if (frame.length <= mailMaxLen) return null;
+    return { status: 413, body: { ok: false, err: ANSWER_TOO_LONG_ERR } };
+  }
+
   // --------------------------------------------------------------- answers
   // POST /api/questions/:id/answer body per kind:
   //   permission:  {behavior:"allow"|"deny"} — plus, for an ExitPlanMode plan
@@ -441,6 +513,9 @@ export function createQuestions(db, {
   //   elicitation: {action:"accept", content:{...}} | {action:"decline"}
   //   choice:      {answers:{"<question text>":"<label>"}} | {text:"..."}
   //   freeform:    {text:"..."}
+  // Mail-delivered answers (freeform + re-armed holds) pass the BUG-137 size
+  // guard first: a framed answer that would exceed the mailbox clamp 413s and
+  // the row stays pending — the mailbox never stores a truncated answer.
   // Returns { status, body } for the HTTP layer.
   function answer(id, body) {
     const row = q.get.get(Number(id));
@@ -454,27 +529,37 @@ export function createQuestions(db, {
       // failed open when the original hold expired and the native terminal
       // prompt owns the decision. Its answer rides the ordinary mail pipeline
       // (the freeform mechanism below, proven since F3d) and lands at the next
-      // turn boundary. Never claim it unblocks an agent parked on stdin — the
-      // board copy says exactly that. This branch runs BEFORE any wire-schema
-      // validation: there is no socket left to validate for, and the answer is
-      // serialized to plain text either way.
+      // turn boundary — subject to the same BUG-137 size guard (an oversized
+      // serialized answer 413s and the row stays pending). Never claim it
+      // unblocks an agent parked on stdin — the board copy says exactly that.
+      // This branch runs BEFORE any wire-schema validation: there is no
+      // socket left to validate for, and the answer is serialized to plain
+      // text either way.
       const payload = safeParse(row.payload_json);
       if (payload?.rearmed === true) {
-        const detail = row.kind === 'permission' ? body?.behavior
+        const detail0 = row.kind === 'permission' ? body?.behavior
           : row.kind === 'choice' ? serializeChoiceAnswer(row, body)
           : (body?.action === 'accept' || body?.action === 'decline') ? body.action : null;
+        if (detail0 && typeof detail0 === 'object' && detail0.over != null) {
+          return { status: 400, body: { ok: false, err: `answer too long — ${detail0.over} code units exceeds the 2000-unit answer limit; shorten the answer or answer at the terminal` } };
+        }
+        const detail = detail0;
         if (detail == null) {
           return { status: 400, body: { ok: false, err: 'body must match the question kind (behavior / answers|text / action)' } };
         }
         if (detail === 'capture') {
           return { status: 400, body: { ok: false, err: '"capture" needs the live hold — the window for it has closed' } };
         }
-        if (planIdFor(row.id) != null) planAnswered(row.id, detail);
         const questionText = String(
           payload?.tool_input?.questions?.[0]?.question ?? payload?.text ?? '',
         ).slice(0, 80);
-        mail(row.session_id, 'fleetdeck-answer',
-          `[FLEETDECK ANSWER] ${row.kind} (answered after the hold expired) Q: ${questionText} — A: ${detail}`);
+        const frame = `[FLEETDECK ANSWER] ${row.kind} (answered after the hold expired) Q: ${questionText} — A: ${detail}`;
+        // BUG-137: reject BEFORE the plan flip / row settle — an answer that
+        // would be truncated in transit settles nothing.
+        const rejected = answerMailGuard(frame);
+        if (rejected) return rejected;
+        if (planIdFor(row.id) != null) planAnswered(row.id, detail);
+        mail(row.session_id, 'fleetdeck-answer', frame);
         cancelRearm(row.id); // idempotent — a sibling card answering first already cancelled
         q.markAnswered.run(JSON.stringify(body ?? {}), now, row.id);
         tick(`💬 ${who}: re-armed ${row.kind} answered (${detail}) — queued for the next turn boundary`);
@@ -510,6 +595,9 @@ export function createQuestions(db, {
         if (planId != null) planBehavior = behavior;
       } else if (row.kind === 'choice') {
         const serialized = serializeChoiceAnswer(row, body);
+        if (serialized && typeof serialized === 'object') {
+          return { status: 400, body: { ok: false, err: `answer too long — ${serialized.over} code units exceeds the 2000-unit answer limit; shorten the answer or answer at the terminal` } };
+        }
         if (!serialized) {
           return { status: 400, body: { ok: false, err: 'body must be {"answers":{"<question text>":"<label>"}} or {"text":"..."}' } };
         }
@@ -548,6 +636,13 @@ export function createQuestions(db, {
         return { status: 409, body: { ok: false, err: 'hold expired — the terminal prompt owns this decision now' } };
       }
       try { h.respond(hookResponse); } catch { /* socket died as we answered */ }
+      // BUG-138: the board settled this hold, so its row now reads 'answered'
+      // and a correlated PostToolUse can no longer tell THIS call's completion
+      // from an identical twin's. Record the key so the completion is consumed
+      // against this answer instead of expiring a still-pending twin.
+      if (payload?.tool_name != null) {
+        noteCompleted(row.session_id, toolCallKey(payload.tool_name, payload.tool_input));
+      }
       q.markAnswered.run(JSON.stringify(body ?? {}), now, row.id);
       // v1.3 plan side effects — only after the hold actually settled (an
       // expired hold 409s above and the plan stays 'proposed', per contract):
@@ -566,10 +661,15 @@ export function createQuestions(db, {
       const text = String(body?.text ?? '').trim();
       if (!text) return { status: 400, body: { ok: false, err: 'body must be {"text":"..."}' } };
       const questionText = String(safeParse(row.payload_json)?.text ?? '').slice(0, 80);
+      const frame = `[FLEETDECK ANSWER] Q: ${questionText} — A: ${text}`;
+      // BUG-137: reject BEFORE settle — a frame mail() would clamp would
+      // deliver a truncated instruction while the human loses the question.
+      const rejected = answerMailGuard(frame);
+      if (rejected) return rejected;
       // Turn-boundary delivery — the PROVEN mechanism (existing mail pipeline:
       // UserPromptSubmit additionalContext or Stop block). No new delivery
       // mechanisms here; asyncRewake is Phase 4.
-      mail(row.session_id, 'fleetdeck-answer', `[FLEETDECK ANSWER] Q: ${questionText} — A: ${text}`);
+      mail(row.session_id, 'fleetdeck-answer', frame);
       q.markAnswered.run(JSON.stringify({ text }), now, row.id);
       tick(`💬 answer for ${who} queued — lands at next turn boundary`);
       onChange();
@@ -664,6 +764,16 @@ export function createQuestions(db, {
     // for the session (still-parked is disproven by definition here). Fires on
     // BOTH the correlated and the session-wide path.
     const rearmDisarmed = disarmRearmsForSession(sessionId);
+    // BUG-138: a correlated completion that a board answer is still waiting on
+    // belongs to the ANSWERED call, not to any pending twin. Consume the ledger
+    // entry (one answer absorbs exactly one completion) and retire nothing —
+    // without this, answering hold A made A's own PostToolUse expire B, the
+    // still-pending identical twin, and the second permission vanished from the
+    // board while the human had never decided it.
+    if (correlated && consumeCompleted(sessionId, activityKey)) {
+      if (rearmDisarmed) onChange();
+      return rearmDisarmed;
+    }
     // BUG 5: a single PostToolUse completes exactly ONE tool call. Two parallel
     // holds with IDENTICAL (tool_name, tool_input) share a toolCallKey, so the
     // filter above matches BOTH — and the old code expired both, releasing a
@@ -788,6 +898,9 @@ export function createQuestions(db, {
       if (!m.timer) continue; // a successor link, not an armed grace window
       if (q.get.get(id)?.session_id === sessionId) cancelRearm(id);
     }
+    // BUG-138: a dead session's completions can no longer arrive — drop its
+    // ledger so a later session reusing the id can't consume stale entries.
+    completedKeys.delete(sessionId);
     // Same ordering rule as expireOnActivity: retire the whole batch before
     // any callback runs (these fire with no activity flag, but the plan
     // gate's pending-set reads must still see a consistent world).
@@ -883,18 +996,69 @@ export function createQuestions(db, {
 // format); for multi-question calls each is swapped for the question's
 // shorter `header` when the payload lets us match it. Values may be a string
 // or an array of labels (multiSelect). Returns null when the body carries
-// nothing usable — the HTTP layer turns that into a 400.
+// nothing usable — the HTTP layer turns that into a 400 and the hold STAYS
+// open for a corrected answer.
+//
+// An answers map is validated against the held question's own schema before a
+// single label is serialized. Without this check a malformed or stale client
+// (wrong key, an object value → "[object Object]") would settle the hold with
+// a meaningless answer — the question flips to 'answered', irreversibly
+// suppressing the native chooser. The rules:
+//   • every key must be the `question` text of a payload question;
+//   • every value must be a non-empty string, or an array of non-empty strings
+//     (arrays only when that question is multiSelect);
+//   • every label must come from that question's options[].
+//
+// An answer is the operator's decision, NOT a display string: it is relayed
+// in full, never clipped by the 300-unit display clamp (BUG-139). Only a
+// serialized answer over ANSWER_MAX code units is rejected outright (the
+// HTTP layer turns the { over: n } marker into a 400) — settling the hold
+// with a silently truncated answer would feed the agent a partial decision
+// that cannot be recovered through the terminal chooser. The limit compares
+// STRING CODE UNITS (Array.from never slices), so no surrogate pair is
+// ever split. Any text a multi-question chooser legitimately produces is
+// far under the cap; it guards against pathological bodies only.
+const ANSWER_MAX = 2000;
 function serializeChoiceAnswer(row, body) {
-  if (typeof body?.text === 'string' && body.text.trim()) return clipQuestion(body.text.trim());
+  if (typeof body?.text === 'string' && body.text.trim()) {
+    const t = body.text.trim();
+    return t.length <= ANSWER_MAX ? t : { over: t.length };
+  }
   const answers = body?.answers;
   if (!answers || typeof answers !== 'object' || Array.isArray(answers)) return null;
-  const fmt = v => (Array.isArray(v) ? v.map(x => String(x)).join(', ') : String(v ?? '')).trim();
-  const entries = Object.entries(answers).filter(([, v]) => fmt(v) !== '');
+  const entries = Object.entries(answers);
   if (!entries.length) return null;
-  if (entries.length === 1) return clipQuestion(fmt(entries[0][1]));
   const qs = safeParse(row?.payload_json)?.tool_input?.questions;
+  if (Array.isArray(qs) && !validChoiceAnswers(qs, entries)) return null;
+  const fmt = v => (Array.isArray(v) ? v.join(', ') : v).trim();
+  if (entries.some(([, v]) => fmt(v) === '')) return null;
+  if (entries.length === 1) {
+    const t = fmt(entries[0][1]);
+    return t.length <= ANSWER_MAX ? t : { over: t.length };
+  }
   const headerOf = qText => (Array.isArray(qs) ? qs.find(x => x?.question === qText)?.header : null);
-  return clipQuestion(entries.map(([qText, v]) => `${headerOf(qText) || qText}: ${fmt(v)}`).join('; '));
+  const t = entries.map(([qText, v]) => `${headerOf(qText) || qText}: ${fmt(v)}`).join('; ');
+  return t.length <= ANSWER_MAX ? t : { over: t.length };
+}
+
+// A label is valid only as one of the question's option labels.
+function validChoiceLabel(question, label) {
+  if (!label) return false;
+  return (Array.isArray(question?.options) ? question.options : []).some(o => o?.label === label);
+}
+
+function validChoiceAnswers(questions, entries) {
+  return entries.every(([qText, v]) => {
+    const question = questions.find(x => x?.question === qText);
+    if (!question) return false; // key must be a held question's text
+    if (typeof v === 'string') return validChoiceLabel(question, v.trim());
+    if (Array.isArray(v)) {
+      // an array of labels only for a multiSelect question, all non-empty strings
+      if (question.multiSelect !== true || !v.length) return false;
+      return v.every(x => typeof x === 'string' && validChoiceLabel(question, x.trim()));
+    }
+    return false; // never String()-coerce objects/numbers into the reason
+  });
 }
 
 // --------------------------------------------------------------------------

@@ -184,6 +184,100 @@ test('repo_setup validates, persists, and rides settings broadcasts', async t =>
   assert.deepEqual(restored.json.settings.repo_setup, value);
 });
 
+test('repo_setup keeps a legitimate __proto__ repo entry through a raw JSON body', async t => {
+  const home = scratch('fd-setup-proto-home-');
+  const daemon = await startDaemon({ home });
+  t.after(async () => { await daemon.stop(); rmSync(home, { recursive: true, force: true }); });
+
+  // Raw JSON: object-literal syntax { __proto__: ... } would never create an
+  // own property, so the body must arrive as text.
+  const res = await fetch(`${daemon.baseUrl}/api/settings`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: '{"repo_setup":{"__proto__":"echo setup"}}',
+    signal: AbortSignal.timeout(5000),
+  });
+  assert.equal(res.status, 200);
+  const saved = JSON.parse(await res.text());
+  assert.equal(Object.keys(saved.settings.repo_setup)[0], '__proto__');
+  assert.equal(saved.settings.repo_setup.__proto__, 'echo setup');
+
+  const state = await getJson(`${daemon.baseUrl}/state`);
+  assert.equal(state.json.settings.repo_setup.__proto__, 'echo setup');
+
+  const restored = await getJson(`${daemon.baseUrl}/api/settings`);
+  assert.equal(restored.json.settings.repo_setup.__proto__, 'echo setup',
+    'the stored row must serialize the entry back, not an empty object');
+});
+
+test('repo_setup_patch merges per-repository saves, deletes on the sentinel, and validates like repo_setup', async t => {
+  const home = scratch('fd-setup-patch-home-');
+  const daemon = await startDaemon({ home });
+  t.after(async () => { await daemon.stop(); rmSync(home, { recursive: true, force: true }); });
+
+  const post = body => postJson(`${daemon.baseUrl}/api/settings`, body);
+  const current = async () => (await getJson(`${daemon.baseUrl}/api/settings`)).json.settings.repo_setup;
+
+  // Two boards holding the SAME stale snapshot each save their own repository;
+  // the merge must keep both — a whole-object replace would keep only the last.
+  const boardA = await post({ repo_setup_patch: { repoA: 'echo A' } });
+  assert.equal(boardA.status, 200);
+  assert.deepEqual(boardA.json.settings.repo_setup, { repoA: 'echo A' });
+  const boardB = await post({ repo_setup_patch: { repoB: 'echo B' } });
+  assert.equal(boardB.status, 200);
+  assert.deepEqual(boardB.json.settings.repo_setup, { repoA: 'echo A', repoB: 'echo B' });
+
+  // A patch OVERWRITES one entry in place without touching the other.
+  const updated = await post({ repo_setup_patch: { repoA: 'echo A2' } });
+  assert.deepEqual(updated.json.settings.repo_setup, { repoA: 'echo A2', repoB: 'echo B' });
+
+  // A stale whole-object writer (the old board shape) still works and CANNOT
+  // resurrect a deleted entry — its own snapshot simply never had it.
+  const whole = await post({ repo_setup: { repoC: 'echo C' } });
+  assert.deepEqual(whole.json.settings.repo_setup, { repoC: 'echo C' });
+
+  // Patches apply onto the whole-object state, and the tombstone deletes.
+  const merged = await post({ repo_setup_patch: { repoD: 'echo D', repoC: '__delete' } });
+  assert.equal(merged.status, 200);
+  assert.deepEqual(await current(), { repoD: 'echo D' });
+
+  // Deleting the last entry clears the row, and a null patch clears everything.
+  await post({ repo_setup_patch: { repoD: '__delete' } });
+  assert.deepEqual(await current(), {});
+  await post({ repo_setup_patch: { repoA: 'echo A' } });
+  await post({ repo_setup_patch: null });
+  assert.deepEqual(await current(), {});
+
+  // The same gates as repo_setup, entry by entry, and nothing half-applies.
+  for (const body of [
+    { repo_setup_patch: [] },
+    { repo_setup_patch: { repoA: 7 } },
+    { repo_setup_patch: { repoA: 'x'.repeat(2001) } },
+    { repo_setup_patch: { 'bad\tname': 'true' } },
+    { repo_setup_patch: { repoA: 'ok', repoB: 7 } },
+  ]) {
+    const rejected = await post(body);
+    assert.equal(rejected.status, 400, JSON.stringify(body));
+  }
+  assert.deepEqual(await current(), {});
+});
+
+test('setRepoSetupEntry writes one repo without a broadcast and drops junk', async t => {
+  const db = openDb(':memory:');
+  t.after(() => db.close());
+  const core = createCore(db, { port: 4712, home: '/tmp/fd-setup-entry-home', tmuxAdapter: null });
+  const repoSetup = () => core.resolveSettings().repo_setup;
+
+  core.setRepoSetupEntry('fleetdeck', 'super code');
+  core.setRepoSetupEntry('other', 'echo hi');
+  assert.deepEqual(repoSetup(), { fleetdeck: 'super code', other: 'echo hi' });
+  core.setRepoSetupEntry('fleetdeck', null); // null deletes its entry
+  assert.deepEqual(repoSetup(), { other: 'echo hi' });
+  core.setRepoSetupEntry('bad\tname', 'true'); // invalid: silently no-ops
+  core.setRepoSetupEntry('other', 'x'.repeat(2001));
+  assert.deepEqual(repoSetup(), { other: 'echo hi' });
+});
+
 test('real tmux setup failure stays visible, condemns immediately, and never starts Claude', { skip: !tmuxOk() && 'tmux unavailable' }, async t => {
   const cwd = scratch('fd-setup-fail-');
   const daemon = await startDaemon({
@@ -235,10 +329,13 @@ test('real tmux long-running setup is not condemned while sh/setup binary runs',
 
   const spawned = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd, setup_cmd: 'sleep 30' });
   assert.equal(spawned.status, 200);
-  await new Promise(resolve => setTimeout(resolve, 750));
-  const card = (await getJson(`${daemon.baseUrl}/state`)).json.sessions
-    .find(s => s.session_id === spawned.json.session_id);
-  assert.notEqual(card.spawn.status, 'pane-dead');
-  assert.ok(card.spawn.status === 'spawning' || card.spawn.status === 'stalled');
-  if (card.spawn.status === 'stalled') assert.match(card.note, /setup may still be running/);
+  // Require the liveness poller to actually run and classify the still-running
+  // setup: a row observed still in its initial 'spawning' state proves nothing
+  // about the scheduler (BUG-178).
+  const card = await waitUntil(async () => {
+    const s = (await getJson(`${daemon.baseUrl}/state`)).json.sessions
+      .find(row => row.session_id === spawned.json.session_id);
+    return s?.spawn?.status === 'stalled' ? s : null;
+  }, { timeoutMs: 5000, label: 'long-running setup stall classification' });
+  assert.match(card.note, /setup may still be running/);
 });

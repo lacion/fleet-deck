@@ -2,10 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import http, { createServer } from 'node:http';
+import { createServer } from 'node:http';
 import path from 'node:path';
 import { WebSocket } from 'ws';
 import { randomPort, spawnRaw, startDaemon } from './helpers/daemon.mjs';
+import { rawRequest } from './helpers/http.mjs';
 import { waitForResponse, nonInternalIpv4s, scaleMs } from './helpers/wait.mjs';
 
 const LAN_TOKEN = 'fleetdeck-lan-test-token-0123456789';
@@ -94,20 +95,17 @@ function refused(url) {
 // cannot be crafted with fetch: the header would fall back to 127.0.0.1:port and
 // the request would look local, quietly passing whether or not the fix is
 // present. node:http honours the override, so the proxy hole is actually
-// exercised. Resolves { status, body } and never rejects on a non-2xx.
-function rawGet(port, pathname, headers = {}) {
-  return new Promise((resolve, reject) => {
-    const req = http.request(
-      { host: '127.0.0.1', port, path: pathname, method: 'GET', headers },
-      res => {
-        let body = '';
-        res.on('data', c => { body += c; });
-        res.on('end', () => resolve({ status: res.statusCode, body }));
-      },
-    );
-    req.on('error', reject);
-    req.end();
-  });
+// exercised. The deadline comes from the shared rawRequest helper (BUG-162:
+// without a scaled timeout a route that accepts but never answers hung the
+// suite until the outer CI timeout). A caller MAY override the TARGET host —
+// the mDNS Host-wall test must reach the daemon via its LAN interface, not
+// loopback; it is expressed as an explicit Host header because the shared
+// helper connects over loopback. Resolves { status, body } and never rejects
+// on a non-2xx.
+function rawGet(port, pathname, headers = {}, host = '127.0.0.1') {
+  const withHost = host === '127.0.0.1' ? headers : { ...headers, Host: headers.Host ?? `${host}:${port}` };
+  return rawRequest({ port, path: pathname, method: 'GET', headers: withHost })
+    .then(({ status, text }) => ({ status, body: text }));
 }
 
 test('default bind preserves unauthenticated loopback health and hook traffic', async t => {
@@ -198,6 +196,54 @@ test('LAN HTTP requires the query or bearer token for a non-loopback peer', asyn
   assert.equal(wrong.status, 401);
 });
 
+test('a dotted FLEETDECK_MDNS_NAME is canonicalized once: share URL, log line and Host wall all agree', async t => {
+  // BUG-119 REGRESSION PIN. The mDNS responder rewrites dots and truncates to a
+  // 63-byte DNS label before advertising. If fleetd interpolates the RAW
+  // configured name into the share URL / startup log, it publishes a name that
+  // never resolves, and the Host allowlist — built from that same raw URL —
+  // refuses the name actually on the wire. Everything must speak the canonical
+  // label ("deck.office" is configured, "deck-office.local" is advertised,
+  // published AND authorized).
+  const address = await reachableIpv4();
+  if (!address) return t.skip('host has no non-internal IPv4 interface');
+  const port = randomPort();
+  const home = scratchHome();
+  const raw = spawnRaw({
+    port,
+    home,
+    env: { FLEETDECK_BIND: address, FLEETDECK_TOKEN: LAN_TOKEN, FLEETDECK_MDNS_NAME: 'deck.office' },
+  });
+  t.after(async () => {
+    await raw.kill();
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+  const tokenParam = `?t=${encodeURIComponent(LAN_TOKEN)}`;
+  await waitForResponse(`http://${address}:${port}/health${tokenParam}`);
+
+  // The startup log announces the canonical host — the exact label the
+  // responder puts on the wire — never the raw dotted config value.
+  const deadline = Date.now() + scaleMs(5000);
+  while (!raw.stdout.includes('.local:') && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 25));
+  }
+  assert.match(raw.stdout, /deck-office\.local/, `startup log must announce the canonical label; stdout: ${raw.stdout}`);
+  assert.doesNotMatch(raw.stdout, /deck\.office\.local/, 'the raw dotted value must never be published');
+
+  // The share panel URL is the same canonical host.
+  const state = await fetch(`http://${address}:${port}/state${tokenParam}`);
+  assert.equal(state.status, 200);
+  const { lan } = await state.json();
+  assert.equal(new URL(lan.mdns).hostname, 'deck-office.local');
+
+  // And the DNS-rebinding wall authorizes that exact hostname — the name a
+  // peer that discovered the service over mDNS would actually send.
+  const discovered = await rawGet(port, '/state', {
+    Host: `deck-office.local:${port}`,
+    authorization: `Bearer ${LAN_TOKEN}`,
+  }, address);
+  assert.equal(discovered.status, 200, 'the advertised .local name must be in the Host allowlist');
+});
+
 test('proxy token mode: a loopback request bearing a trusted proxy Host but no Origin and no token is rejected', async t => {
   // NO-ORIGIN PROXY-HOLE REGRESSION (C1/H-S3). A reverse proxy connects to the
   // daemon over loopback. viaTrustedProxy keyed off the Origin header alone, so a
@@ -231,6 +277,41 @@ test('proxy token mode: a loopback request bearing a trusted proxy Host but no O
   // The same proxied request, now carrying the bearer token, is authorized.
   const withToken = await rawGet(daemon.port, '/state', { Host: PROXY_HOST, authorization: `Bearer ${LAN_TOKEN}` });
   assert.equal(withToken.status, 200, 'a proxied request that presents the token must be authorized');
+});
+
+test('token-required mode: /index.html stays public and serves the shell', async t => {
+  // PROXY_AUTH=token removes the loopback exemption for every route except
+  // /health and the public shell. /index.html is classified as public shell,
+  // so it must not only pass the token gate but actually SERVE the board
+  // document — before the fix it passed the gate and fell through to a JSON
+  // 404, a blank board for any proxy that normalizes to /index.html.
+  const PROXY_HOST = 'board.example.com';
+  const daemon = await startDaemon({
+    env: {
+      FLEETDECK_TRUSTED_ORIGINS: `https://${PROXY_HOST}`,
+      FLEETDECK_PROXY_AUTH: 'token',
+      FLEETDECK_TOKEN: LAN_TOKEN,
+    },
+  });
+  t.after(() => daemon.stop());
+
+  const boardDist = path.join(import.meta.dirname, '..', 'scripts/fleetd/board-dist');
+  const expected = readFileSync(path.join(boardDist, 'index.html'), 'utf8');
+
+  // Through the trusted proxy, no token: the shell is public by contract.
+  const proxied = await rawGet(daemon.port, '/index.html', { Host: PROXY_HOST });
+  assert.equal(proxied.status, 200, 'the public shell must not require the token');
+  assert.match(proxied.body, /<div id="root">/, 'the response must be the HTML shell, not the JSON 404');
+  assert.equal(proxied.body, expected, '/index.html must serve the same shell as /');
+
+  // Same verdict on plain loopback: the shell exemption precedes the token.
+  const local = await rawGet(daemon.port, '/index.html', { Host: `127.0.0.1:${daemon.port}` });
+  assert.equal(local.status, 200);
+  assert.equal(local.body, expected);
+
+  // The gate itself is untouched: data routes still cost the token.
+  const gated = await rawGet(daemon.port, '/state', { Host: PROXY_HOST });
+  assert.equal(gated.status, 401, 'token-required mode must still gate fleet data');
 });
 
 test('LAN snapshot WebSocket rejects no token and accepts the query token', async t => {

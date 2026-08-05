@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { human, TURN_BOUNDARY_HINT } from '../util.js';
 import { renderMarkdown, planTitle } from '../markdown.js';
-import { sendMail, markPlan, reasonOf } from '../api.js';
+import { assignPlan, markPlan, reasonOf } from '../api.js';
 
 // v1.3 PLANS library — collapsible strip between the lanes and the feed
 // (contract offered rail-under-questions as the alternative; the rail is the
@@ -64,21 +64,18 @@ function PlanCard({ p, now, liveSessions, spawnAvailable, onExecute }) {
     setBusy(true);
     setNote(null);
     const cs = liveSessions.find((s) => s.session_id === target)?.callsign || target;
-    const text = `[FLEETDECK ASSIGNMENT] Execute this approved plan exactly. Custom instructions: ${instr.trim()}\n\n---\n${p.plan_md}`;
+    // BUG-039 — the [FLEETDECK ASSIGNMENT] frame is daemon-reserved (POST /mail
+    // 422s it), so the daemon composes and mails it: one request assigns the
+    // plan and marks it executed, never a client-composed reserved frame.
     try {
-      const res = await sendMail(target, text);
-      if (!res.ok) {
-        setNote({ cls: 'hazard', text: reasonOf(res, `mail failed (${res.status})`) });
+      const res = await assignPlan(p.plan_id, { to: target, instructions: instr.trim() });
+      if (res.ok) {
+        setNote({ cls: 'ok', text: `✓ assigned to ${res.json?.callsign || cs} — marked executed` });
+        setAssigning(false);
+        setInstr('');
+        setTarget(null);
       } else {
-        const mres = await markPlan(p.plan_id, { status: 'executed', via: `assign:${target}` });
-        if (mres.ok) {
-          setNote({ cls: 'ok', text: `✓ assigned to ${cs} — marked executed` });
-          setAssigning(false);
-          setInstr('');
-          setTarget(null);
-        } else {
-          setNote({ cls: 'hazard', text: markErr(mres, `assigned to ${cs}`) });
-        }
+        setNote({ cls: 'hazard', text: markErr(res, null) });
       }
     } catch {
       setNote({ cls: 'hazard', text: 'daemon unreachable' });

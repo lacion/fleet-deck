@@ -149,7 +149,13 @@ test('shell kill needs no force; liveness accepts any running command; retention
   const sid = first.body.session_id;
   const spawnId = first.body.spawn_id;
   tmuxState.state.windows[0].pane_cmd = 'vim';
-  await core.spawnLivenessTick();
+  // Production requires CONDEMN_DEAD_READS (=2 in spawns.mjs) consecutive dead
+  // reads before condemning a live spawn, so one tick can only ever record a
+  // dead streak of 1 and still observe 'live' — a liveness regression against
+  // arbitrary commands would stay hidden behind a green test. Drive one full
+  // condemnation cycle's worth of completed ticks; the shell must remain live
+  // through every one of them.
+  for (let tick = 0; tick < 2; tick++) await core.spawnLivenessTick();
   assert.equal(db.prepare('SELECT status FROM spawns WHERE spawn_id=?').get(spawnId).status, 'live');
 
   db.prepare('UPDATE sessions SET last_seen=? WHERE session_id=?').run(1, sid);

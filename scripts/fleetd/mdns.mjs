@@ -43,12 +43,28 @@
 //   - Name compression is implemented for PARSING (queries from real stacks are
 //     full of pointers) and deliberately NOT used when emitting. Our packets are a
 //     few hundred bytes; correctness beats the savings.
+//   - The names we claim are UNIQUE (the A record carries the cache-flush bit), so
+//     RFC 6762 §8.1 applies: probe before announcing. We issue three probe queries
+//     250ms apart with our would-be records in the AUTHORITY section; any answer —
+//     or a probe from a lexicographically later authority — is a conflict, and a
+//     conflict disables discovery (logged once) rather than two hosts answering the
+//     same name with different addresses. Once claimed, a response carrying
+//     records that clash with ours is also a conflict, and we stand down instead
+//     of entering an infinite defense war (§9, §8.2).
+//
+// A multihomed host gets one socket PER multicast-capable interface
+// (createLinks below): each link answers and announces out of its own
+// interface, advertising only the A record valid on that link. A packet that
+// leaves on the OS-selected default interface while claiming addresses from
+// another LAN is exactly the "browser resolves us, cannot connect" failure
+// this module exists to prevent.
 //
 // Everything above the socket is pure and exported (encodeName/decodeName,
 // encodeRecord, parseQuestions, buildResponse, buildAnnouncement, encodeMessage,
 // decodeMessage) so the wire format is unit-testable without touching a network.
 
 import dgram from 'node:dgram';
+import os from 'node:os';
 
 export const MDNS_ADDR = '224.0.0.251';
 export const MDNS_PORT = 5353;
@@ -71,6 +87,11 @@ const SERVICE_TYPES = ['_fleetdeck._tcp.local', '_http._tcp.local'];
 export const META_QUERY = '_services._dns-sd._udp.local';
 
 const ANNOUNCE_DELAYS_MS = [0, 1000, 2000]; // RFC 6762 §8.3: 2-3 announcements, ~1s apart
+// RFC 6762 §8.1: a unique record set is PROBED before it is announced — three
+// queries, 250ms apart. Claiming blind is what lets two hosts both own
+// `fleetdeck.local` with different addresses.
+const PROBE_COUNT = 3;
+const PROBE_INTERVAL_MS = 250;
 
 // ------------------------------------------------------------------ wire codec
 
@@ -231,13 +252,13 @@ export function parseQuestions(buf) {
   return questions;
 }
 
-export function encodeMessage({ id = 0, flags = FLAGS_RESPONSE, questions = [], answers = [], additionals = [] } = {}) {
+export function encodeMessage({ id = 0, flags = FLAGS_RESPONSE, questions = [], answers = [], authorities = [], additionals = [] } = {}) {
   const header = Buffer.alloc(12);
   header.writeUInt16BE(id & 0xffff, 0);
   header.writeUInt16BE(flags & 0xffff, 2);
   header.writeUInt16BE(questions.length, 4);
   header.writeUInt16BE(answers.length, 6);
-  header.writeUInt16BE(0, 8);
+  header.writeUInt16BE(authorities.length, 8);
   header.writeUInt16BE(additionals.length, 10);
 
   const parts = [header];
@@ -247,7 +268,7 @@ export function encodeMessage({ id = 0, flags = FLAGS_RESPONSE, questions = [], 
     tail.writeUInt16BE((q.class || CLASS_IN) | (q.unicast ? QU_BIT : 0), 2);
     parts.push(encodeName(q.name), tail);
   }
-  for (const record of [...answers, ...additionals]) parts.push(encodeRecord(record));
+  for (const record of [...answers, ...authorities, ...additionals]) parts.push(encodeRecord(record));
   return Buffer.concat(parts);
 }
 
@@ -354,9 +375,19 @@ function label(value, fallback) {
   return bytes.toString('utf8').replace(/\ufffd+$/, '') || fallback;
 }
 
+/** The canonical host label behind every surface that speaks the mDNS name.
+ * fleetd derives its share URL, startup log line, responder and Host allowlist
+ * from this one string: normalize() rewrites dots/controls and truncates to
+ * 63 bytes, so a caller that interpolates the raw configured value would
+ * publish a name that never resolves and advertise a name its own HTTP layer
+ * refuses. Pure; always the exact label normalize() would advertise. */
+export function hostLabel(value, fallback = 'fleetdeck') {
+  return label(value, fallback);
+}
+
 /** Options -> the concrete thing we advertise. Pure; safe to call per packet. */
 export function normalize(options = {}) {
-  const host = `${label(options.name || 'fleetdeck', 'fleetdeck')}.local`;
+  const host = `${hostLabel(options.name, 'fleetdeck')}.local`;
   const instance = label(options.instance || 'Fleet Deck', 'Fleet Deck');
   const port = Number(options.port) || 0;
   const addresses = (Array.isArray(options.addresses) ? options.addresses : []).filter(isIPv4);
@@ -367,6 +398,23 @@ export function normalize(options = {}) {
 
 function ttlFor(type, override) {
   return override === undefined ? DEFAULT_TTL[type] : override;
+}
+
+/** Every non-internal IPv4 mapped to the interface name that owns it. Pure apart
+ * from the OS call; never throws — a responder that cannot read its interfaces
+ * simply has nothing to say. */
+export function addressInterfaces() {
+  const map = new Map();
+  try {
+    for (const [name, entries] of Object.entries(os.networkInterfaces())) {
+      for (const entry of entries || []) {
+        if ((entry.family === 'IPv4' || entry.family === 4) && !entry.internal && isIPv4(entry.address)) {
+          map.set(entry.address, name);
+        }
+      }
+    }
+  } catch { /* interfaces change under us; the fallback link below covers it */ }
+  return map;
 }
 
 function aRecords(ad, ttl, flush) {
@@ -394,7 +442,7 @@ function metaRecords(ad, ttl) {
 }
 
 function keyOf(record) {
-  return `${String(record.name).toLowerCase()}|${record.type}|${JSON.stringify(record.data)}`;
+  return `${String(record.name).toLowerCase()}|${typeNumber(record.type)}|${JSON.stringify(record.data)}`;
 }
 
 /** Everything we own, in one Answer section: what an unsolicited announcement
@@ -465,6 +513,71 @@ export function buildResponse(questions, options = {}, { ttl, flush = true } = {
   return { answers: dedupedAnswers, additionals: dedupedAdditionals };
 }
 
+/** The probe query: QU questions (§8.1 — answers should come unicast) naming each
+ * of our unique names, with the records we would publish as tie-break authorities. */
+export function buildProbeQuestions(options = {}) {
+  const ad = normalize(options);
+  const questions = [
+    { name: ad.host, type: TYPE.A, class: CLASS_IN, unicast: true },
+    ...ad.services.map(service => ({ name: service.name, type: TYPE.SRV, class: CLASS_IN, unicast: true })),
+  ];
+  const authorities = buildAnnouncement(options, { ttl: 0 })
+    .filter(record => record.type === 'A' || record.type === 'SRV');
+  return { questions, authorities };
+}
+
+/** Does a packet from someone else deny us our names? During probing, an answer
+ * for one of our unique names — or a probe of the same name whose authority data
+ * sorts AFTER ours — means we lost the claim (§8.1 tie-break: later data probes
+ * again next try; earlier data loses immediately). Once announced, any response
+ * record on a name we own whose rdata differs from ours is a conflict (§9). */
+export function uniqueConflict(msg, options = {}, { phase } = {}) {
+  const ad = normalize(options);
+  const hosts = new Set([ad.host.toLowerCase()]);
+  const services = new Set(ad.services.map(service => service.name.toLowerCase()));
+  const own = new Map();
+  for (const record of buildAnnouncement(options)) {
+    if (record.type === 'A' || record.type === 'SRV') {
+      own.set(`${String(record.name).toLowerCase()}|${typeNumber(record.type)}`, keyOf(record));
+    }
+  }
+
+  const decoded = decodeMessage(msg);
+  if (!decoded) return false;
+
+  // A response touching a name we claim, whose rdata differs from ours. Decoded
+  // records carry the NUMERIC type; the keyOf data payloads encode identically.
+  for (const record of [...decoded.answers, ...decoded.additionals]) {
+    const key = own.get(`${String(record.name).toLowerCase()}|${record.type}`);
+    if (key && keyOf(record) !== key) return true;
+  }
+
+  if (phase === 'probing') {
+    // RFC 6762 §8.1 tie-break between simultaneous probes: equal rdata is a tie
+    // (defer to later traffic — answering with the same data never conflicts);
+    // unequal rdata, the lexicographically later authority wins and the earlier
+    // yields. A probe carrying authority data beats one carrying none, and a
+    // larger authority set (more claimed records backing it) beats a smaller.
+    const ours = buildProbeQuestions(options).authorities;
+    const oursKeys = new Set(ours.map(keyOf));
+    const theirsKeys = new Set(decoded.authorities.map(keyOf));
+    const equalSet = theirsKeys.size === oursKeys.size && [...theirsKeys].every(k => oursKeys.has(k));
+    const theyWin = !equalSet && decoded.authorities.length > 0 && (
+      decoded.authorities.length > ours.length ||
+      (decoded.authorities.length === ours.length &&
+        [...theirsKeys].sort().join('') > [...oursKeys].sort().join(''))
+    );
+    if (theyWin) {
+      for (const q of decoded.questions) {
+        const name = String(q.name || '').replace(/\.$/, '').toLowerCase();
+        const names = q.type === TYPE.A || q.type === TYPE.ANY ? hosts : services;
+        if (names.has(name)) return true;
+      }
+    }
+  }
+  return false;
+}
+
 // ------------------------------------------------------------- the responder
 
 /**
@@ -475,21 +588,54 @@ export function buildResponse(questions, options = {}, { ttl, flush = true } = {
  * @param {string[]} [opts.addresses] LAN IPv4s to advertise (non-internal only)
  * @param {object} [opts.txt]       extra TXT keys, merged over {path, board}
  * @param {function} [opts.log]
- * @returns {{start: function, stop: function}} both idempotent, neither throws
+/**
+ * @param {object} opts
+ * @param {number} opts.port        the board's HTTP port (advertised in SRV)
+ * @param {string} [opts.name]      host label; 'fleetdeck' -> fleetdeck.local
+ * @param {string} [opts.instance]  human service instance name
+ * @param {string[]} [opts.addresses] LAN IPv4s to advertise (non-internal only)
+ * @param {object} [opts.txt]       extra TXT keys, merged over {path, board}
+ * @param {function} [opts.log]
+ * @param {function} [opts.onDown]  called with a reason string the moment the
+ *                                  responder terminally disables itself (bind,
+ *                                  membership or socket failure) — never on a
+ *                                  clean stop(). Lets the publisher retract a
+ *                                  URL that would no longer resolve.
+ * @param {object} [opts.inject]  test seam: { dgram } replaces node:dgram, so a
+ *   multi-interface host can be simulated without touching a network
+ * @returns {{start: function, stop: function, update: function, alive: function}}
+ *          start/stop are idempotent and never throw; update() re-bases the
+ *          advertisement on a fresh LAN address set (goodbye for withdrawn
+ *          records, membership re-join, re-announce); alive() reports whether
+ *          the responder is bound and answering
  */
-export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', addresses = [], txt, log = () => {} } = {}) {
+export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', addresses = [], txt, log = () => {}, onDown = null, inject } = {}) {
   const options = { port, name, instance, addresses, txt };
-  const ad = normalize(options);
-
-  let socket = null;
-  let started = false;
-  let stopping = null;
-  let dead = false;
-  const timers = new Set();
+  const dgramImpl = inject?.dgram || dgram;
+  // The LIVE advertisement. Identity (host/instance/port/txt) is fixed for the
+  // responder's life, but the address set is a property of the NETWORK, and the
+  // network moves: Wi-Fi roaming, DHCP renewal, a VPN coming up. update() swaps
+  // this snapshot atomically; every answer and announcement built after the swap
+  // speaks for the new addresses.
+  let ad = normalize(options);
 
   const note = (message) => { try { log(message); } catch { /* a broken logger must not kill mDNS */ } };
 
-  // One-way door: every failure lands here, says why once, and leaves the daemon alone.
+  let started = false;
+  let stopping = null;
+  let dead = false;    // a REAL failure (socket/bind/multicast) — terminal, one-way
+  let dormant = false; // merely addressless — update() may revive us
+  let stopped = false; // stop() was called — nothing may resurrect the responder
+  // Interface addresses that successfully joined the group. Multicast egress
+  // follows the kernel's default route only, so announcements/replies/goodbyes
+  // are repeated once per joined interface (setMulticastInterface) — otherwise
+  // a dual-homed host is discoverable on the default LAN and invisible on the
+  // others, despite advertising their addresses.
+  let joinedIfaces = [];
+  const timers = new Set();
+
+  // One-way door: every fatal failure lands here, says why once, and leaves the
+  // daemon alone.
   function die(reason, err) {
     if (dead) return;
     dead = true;
@@ -499,45 +645,146 @@ export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', 
     const doomed = socket;
     socket = null;
     try { doomed?.close(); } catch { /* already closed */ }
+    // The daemon publishes the .local URL when start() returns, but bind and
+    // membership failures only surface HERE, one event-loop turn later. Report
+    // the terminal disable so the publisher can retract the URL instead of
+    // advertising a name that will never resolve.
+    if (onDown) { try { onDown(reason); } catch { /* a broken listener must not kill mDNS */ } }
   }
 
-  function send(packet, targetPort, targetAddress) {
+  function sendRaw(packet, targetPort, targetAddress, callback) {
     if (!socket || dead) return;
     try {
       socket.send(packet, targetPort, targetAddress, (err) => {
         // A send error is per-packet, not fatal: the LAN may just have no route
         // right now. Log at most once by routing repeat failures through die().
         if (err && err.code !== 'ENETUNREACH' && err.code !== 'EHOSTUNREACH') note(`mdns send failed: ${err.message}`);
+        callback?.(err);
       });
     } catch (err) {
       note(`mdns send failed: ${err.message}`);
+      callback?.(err);
     }
+  }
+
+  function send(packet, targetPort, targetAddress) {
+    sendRaw(packet, targetPort, targetAddress);
+  }
+
+  // Multicast out of every interface we joined, not just the kernel's default
+  // route. Each attempt is fire-and-forget; done() fires when they have ALL
+  // settled (per-interface errors are tolerated — one wedged interface must not
+  // hold the goodbye path open). With no per-interface joins, the default
+  // single send IS the correct behaviour (joinedIfaces is empty), so callers
+  // fall back to plain send() themselves.
+  function sendMulticastAll(packet, done) {
+    if (!socket || dead) { done?.(); return; }
+    let pending = joinedIfaces.length;
+    const settled = () => { pending -= 1; if (pending <= 0) done?.(); };
+    for (const iface of joinedIfaces) {
+      try { socket.setMulticastInterface(iface); } catch { /* keep the last working egress */ }
+      sendRaw(packet, MDNS_PORT, MDNS_ADDR, settled);
+    }
+  }
+
+  let probed = false;   // set once probing has run — re-probing mid-life only triggers goodbye spam
+  let claimed = false;  // probing finished without a conflict: the names are ours
+
+  function schedule(fn, delay) {
+    const timer = setTimeout(() => { timers.delete(timer); fn(); }, delay);
+    timer.unref?.(); // mDNS must never hold the daemon's event loop open
+    timers.add(timer);
+  }
+
+  /** RFC 6762 §8.1: ask for our unique names three times, 250ms apart, before
+   * announcing. Any conflict disables discovery (die) rather than letting two
+   * hosts answer `fleetdeck.local` with different addresses. */
+  function probe(attempt = 0) {
+    if (dead || !socket) return;
+    if (attempt >= PROBE_COUNT) {
+      claimed = true;
+      for (const delay of ANNOUNCE_DELAYS_MS) schedule(() => announce(), delay);
+      note(`mdns responding for ${ad.host}:${ad.port}${ad.addresses.length ? ` (${ad.addresses.join(', ')})` : ' (no LAN address to advertise)'}`);
+      return;
+    }
+    try {
+      const { questions, authorities } = buildProbeQuestions(options);
+      send(encodeMessage({ id: 0, flags: 0, questions, authorities }), MDNS_PORT, MDNS_ADDR);
+    } catch (err) {
+      note(`mdns probe failed: ${err.message}`);
+    }
+    schedule(() => probe(attempt + 1), PROBE_INTERVAL_MS);
   }
 
   function announce(ttl) {
     try {
-      const answers = buildAnnouncement(options, ttl === undefined ? {} : { ttl });
+      const answers = buildAnnouncement(ad, ttl === undefined ? {} : { ttl });
       if (!answers.length) return;
-      send(encodeMessage({ id: 0, flags: FLAGS_RESPONSE, answers }), MDNS_PORT, MDNS_ADDR);
+      const packet = encodeMessage({ id: 0, flags: FLAGS_RESPONSE, answers });
+      if (joinedIfaces.length) sendMulticastAll(packet);
+      else send(packet, MDNS_PORT, MDNS_ADDR);
     } catch (err) {
       note(`mdns announce failed: ${err.message}`);
     }
   }
 
+  /** Post-claim conflict: withdraw our records (TTL 0, §10.1) THEN stand down.
+   * The send must land before die() runs — die() closes the socket, and a
+   * closed socket flushes nothing. */
+  function withdrawAndDie(reason) {
+    let down = false;
+    const finish = () => { if (!down) { down = true; die(reason); } };
+    try {
+      const answers = buildAnnouncement(options, { ttl: 0 });
+      const packet = encodeMessage({ id: 0, flags: FLAGS_RESPONSE, answers });
+      const guard = setTimeout(finish, 250);
+      guard.unref?.();
+      if (joinedIfaces.length) {
+        // The withdrawal must reach every LAN we advertised on, not just the
+        // default route — settle all egress sends, then die exactly once.
+        sendMulticastAll(packet, finish);
+      } else {
+        socket.send(packet, MDNS_PORT, MDNS_ADDR, () => { clearTimeout(guard); finish(); });
+      }
+    } catch { finish(); }
+  }
+
   function onMessage(msg, rinfo) {
     try {
       const header = parseHeader(msg);
-      if (!header || header.qdcount === 0) return;
+      if (!header) return;
+
+      // Conflict detection BEFORE the question gate: responses carry no
+      // questions at all, and both probe answers and another owner's records
+      // arrive as responses. Note the loopback echo of our own probe can carry
+      // questions — but its authorities are byte-identical to ours, so it loses
+      // its own tie-break and passes.
+      if (socket && rinfo.port === MDNS_PORT && !stopping && probed && !claimed) {
+        if (uniqueConflict(msg, options, { phase: 'probing' })) {
+          die(`name conflict for ${ad.host} — another device owns this name`);
+          return;
+        }
+      } else if (socket && rinfo.port === MDNS_PORT && !stopping && claimed && (header.flags & QR_BIT) !== 0) {
+        // RFC 6762 §9: defending forever is the worst outcome (two hosts
+        // announcing in a loop), so one conflicting response stands us down.
+        if (uniqueConflict(msg, options, { phase: 'announced' })) {
+          withdrawAndDie(`name conflict for ${ad.host} — another device owns this name`);
+          return;
+        }
+      }
+      if (header.qdcount === 0) return;
       if ((header.flags & QR_BIT) !== 0) return; // a response, including our own echo
 
       const questions = parseQuestions(msg);
       if (!questions.length) return;
 
       // RFC 6762 §6.7: a source port other than 5353 is a legacy unicast resolver.
+      // The query is answered against the CURRENT advertisement (ad), never
+      // the startup snapshot — a network change re-bases what we claim to own.
       const legacy = rinfo.port !== MDNS_PORT;
       const { answers, additionals } = legacy
-        ? buildResponse(questions, options, { ttl: LEGACY_TTL, flush: false })
-        : buildResponse(questions, options);
+        ? buildResponse(questions, ad, { ttl: LEGACY_TTL, flush: false })
+        : buildResponse(questions, ad);
       if (!answers.length) return; // not ours — stay silent
 
       const packet = encodeMessage({
@@ -549,6 +796,7 @@ export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', 
       });
 
       if (legacy || questions.some(q => q.unicast)) send(packet, rinfo.port, rinfo.address);
+      else if (joinedIfaces.length) sendMulticastAll(packet);
       else send(packet, MDNS_PORT, MDNS_ADDR);
     } catch (err) {
       note(`mdns query handling error: ${err.message}`); // a stranger's junk packet
@@ -556,41 +804,58 @@ export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', 
   }
 
   function onBound() {
-    try { socket.setMulticastTTL(255); } catch { /* not fatal; kernel default is 1 */ }
+    // RFC 6762 §11: EVERY mDNS packet — multicast or unicast — must leave with
+    // IP TTL 255, because receivers are entitled to verify it as proof the
+    // source is on-link. setMulticastTTL covers only the multicast replies;
+    // QU and legacy answers go by unicast and would otherwise carry the
+    // platform default (commonly 64), so a strict peer discards them.
+    try { socket.setTTL(255); } catch (err) { die('cannot set unicast TTL 255', err); return; }
+    try { socket.setMulticastTTL(255); } catch (err) { die('cannot set multicast TTL 255', err); return; }
     try { socket.setMulticastLoopback(true); } catch { /* not fatal */ }
 
     // Join on the default interface, then per-address so a multi-homed host (and
     // WSL2's mirrored stack) actually receives on the LAN interface. Per-interface
-    // failures are expected and swallowed — one successful join is enough.
+    // failures are expected and swallowed — one successful join is enough. The
+    // addresses that joined are remembered: multicast replies, announcements and
+    // the goodbye are repeated out of each, because multicast egress otherwise
+    // follows only the kernel's default route and secondary LANs never see us.
+    joinedIfaces = [];
     let joins = 0;
     try { socket.addMembership(MDNS_ADDR); joins += 1; } catch { /* no default multicast route */ }
     for (const address of ad.addresses) {
-      try { socket.addMembership(MDNS_ADDR, address); joins += 1; } catch { /* already joined via this iface, or it has no multicast */ }
+      try { socket.addMembership(MDNS_ADDR, address); joinedIfaces.push(address); joins += 1; } catch { /* already joined via this iface, or it has no multicast */ }
     }
     if (joins === 0) { die('no multicast membership'); return; }
 
-    for (const delay of ANNOUNCE_DELAYS_MS) {
-      const timer = setTimeout(() => { timers.delete(timer); announce(); }, delay);
-      timer.unref?.(); // mDNS must never hold the daemon's event loop open
-      timers.add(timer);
-    }
-    note(`mdns responding for ${ad.host}:${ad.port}${ad.addresses.length ? ` (${ad.addresses.join(', ')})` : ' (no LAN address to advertise)'}`);
+    probed = true;
+    probe();
   }
 
+  let socket = null;
+
   function start() {
-    if (started || dead) return;
+    if (started || stopped) return;
     started = true;
 
     if (!ad.port) { die('no port to advertise'); return; }
     if (!ad.addresses.length) {
       // Nothing to put in an A record; SRV would point at a name that resolves to
-      // nothing. Better to say so once than to advertise a dead host.
-      die('no non-internal IPv4 address');
+      // nothing. Degrade for NOW — but the network may only be down at boot
+      // (Wi-Fi still associating, DHCP pending), so update() is allowed to retry
+      // the moment an address shows up instead of this being a one-way door.
+      // The message keeps die()'s exact shape, and it is said ONCE — repeated
+      // start() calls on an addressless responder stay as quiet as before.
+      if (!dormant) {
+        note('mdns disabled (no non-internal IPv4 address) — the board still works over its IP');
+        if (onDown) { try { onDown('no non-internal IPv4 address'); } catch { /* a broken listener must not kill mDNS */ } }
+      }
+      started = false;
+      dormant = true;
       return;
     }
 
     try {
-      socket = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+      socket = dgramImpl.createSocket({ type: 'udp4', reuseAddr: true });
     } catch (err) {
       die('socket create failed', err);
       return;
@@ -600,7 +865,6 @@ export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', 
     // which is FINE: it will answer for the host anyway. We simply stand down.
     socket.on('error', err => die(err.code === 'EADDRINUSE' ? 'port 5353 already owned by another responder' : (err.code || 'socket error'), err));
     socket.on('message', onMessage);
-
     try {
       socket.bind({ port: MDNS_PORT }, () => { try { onBound(); } catch (err) { die('bind setup failed', err); } });
     } catch (err) {
@@ -608,8 +872,74 @@ export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', 
     }
   }
 
-  /** Goodbye (TTL 0, RFC 6762 §10.1) then close. Returns a promise that always
-   * resolves — a shutdown path must not be able to reject. */
+  /**
+   * Swap the advertised LAN IPv4 set after an interface change. Accepts either
+   * the bare array (the daemon's LAN watcher hands over what it polled) or
+   * `{ addresses }`. Removed addresses go out as TTL-0 goodbyes (RFC 6762
+   * §10.1 — flush off, exactly the A records being retired, never the shared
+   * service records), then the new set announces on the same cadence as
+   * startup. A responder that started with no LAN address at all (dormant,
+   * not dead) re-runs the whole bind/join dance. No-op after stop()/die(), or
+   * when the set is unchanged. Never throws: discovery must not be able to
+   * take the daemon down mid-roam any more than at startup.
+   */
+  function update(nextAddresses) {
+    if (dead || stopped || stopping) return false;
+    try {
+      const raw = Array.isArray(nextAddresses) ? nextAddresses : nextAddresses?.addresses;
+      const addresses = (Array.isArray(raw) ? raw : []).filter(isIPv4);
+
+      if (dormant) {
+        // start() found no LAN address at boot and stood down — the network just
+        // gave us one, so try the whole bind/join dance again. A real failure
+        // inside start() still lands in die() and stays terminal.
+        if (!addresses.length) return false;
+        options.addresses = addresses;
+        ad = normalize(options);
+        dormant = false;
+        start();
+        return !dead;
+      }
+      if (!started || !socket) return false;
+      if (!addresses.length) {
+        // Never advertise a host with no A records (the same rule start()
+        // enforces). Keep the last set: every address may be momentarily gone
+        // mid-roam, and the next poll brings a real set.
+        return false;
+      }
+      if (addresses.length === ad.addresses.length && addresses.every(a => ad.addresses.includes(a))) return false;
+
+      const removed = ad.addresses.filter(a => !addresses.includes(a));
+      const added = addresses.filter(a => !ad.addresses.includes(a));
+      options.addresses = addresses;
+      ad = normalize(options);
+      if (removed.length) {
+        const goodbye = encodeMessage({
+          id: 0,
+          flags: FLAGS_RESPONSE,
+          answers: removed.map(address => ({ name: ad.host, type: 'A', ttl: 0, flush: false, data: address })),
+        });
+        if (joinedIfaces.length) sendMulticastAll(goodbye);
+        else send(goodbye, MDNS_PORT, MDNS_ADDR);
+      }
+      for (const address of added) {
+        try {
+          socket.addMembership(MDNS_ADDR, address);
+          if (!joinedIfaces.includes(address)) joinedIfaces.push(address);
+        } catch { /* already joined, or no multicast here */ }
+      }
+      for (const delay of ANNOUNCE_DELAYS_MS) schedule(() => announce(), delay);
+      note(`mdns addresses updated (${ad.addresses.join(', ')})`);
+      return true;
+    } catch (err) {
+      note(`mdns address update failed: ${err.message}`);
+      return false;
+    }
+  }
+
+  /** Goodbye (TTL 0, RFC 6762 §10.1) on every joined interface, then close.
+   * Returns a promise that always resolves — a shutdown path must not be able
+   * to reject. */
   function stop() {
     if (stopping) return stopping;
 
@@ -618,6 +948,7 @@ export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', 
     // the daemon's signal path and a no-op shutdown is not news.
     if (!started || dead || !socket) {
       dead = true;
+      stopped = true;
       for (const t of timers) clearTimeout(t);
       timers.clear();
       stopping = Promise.resolve();
@@ -632,15 +963,21 @@ export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', 
         const doomed = socket;
         socket = null;
         dead = true;
+        stopped = true;
         try { doomed?.close(resolve); } catch { resolve(); }
       };
       try {
-        const answers = buildAnnouncement(options, { ttl: 0 });
+        const answers = buildAnnouncement(ad, { ttl: 0 });
         const packet = encodeMessage({ id: 0, flags: FLAGS_RESPONSE, answers });
-        // Close on the send callback, but never wait forever on a wedged socket.
+        // Close on the send callback(s), but never wait forever on a wedged socket.
         const guard = setTimeout(finish, 250);
         guard.unref?.();
-        socket.send(packet, MDNS_PORT, MDNS_ADDR, () => { clearTimeout(guard); finish(); });
+        const done = () => { clearTimeout(guard); finish(); };
+        // The goodbye must reach every LAN we advertised on, not just the
+        // default route — a stale record on a secondary interface is exactly
+        // what the goodbye exists to retract.
+        if (joinedIfaces.length) sendMulticastAll(packet, done);
+        else socket.send(packet, MDNS_PORT, MDNS_ADDR, done);
       } catch {
         finish();
       }
@@ -648,5 +985,5 @@ export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', 
     return stopping;
   }
 
-  return { start, stop };
+  return { start, stop, update, alive: () => started && !dead && socket !== null };
 }

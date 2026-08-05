@@ -165,8 +165,29 @@ test('grid: many viewers share ONE control client, each sized and streamed indep
     const out = await waitUntil(() => tile.frames.find(f => f.t === 'out'), `tile ${i} output`);
     assert.ok(out.data.includes(`live ${pane}`),
       `tile ${i} must receive its own pane (${pane}), got ${JSON.stringify(out.data)}`);
-    const foreign = tile.frames.filter(f => f.t === 'out' && !f.data.includes(`live ${pane}`));
-    assert.deepEqual(foreign, [], `tile ${i} must never receive another pane's output`);
+    // BUG-180: the old predicate counted a frame as safe whenever it contained
+    // the own marker — so a demux regression that sent one tile a MIXED frame
+    // (its own pane's marker AND another pane's) passed isolation. Assert the
+    // strict form instead: every output frame must exclude every OTHER pane's
+    // marker, own-marker frames included.
+    const others = [...paneOf.values()].filter(p => p !== pane);
+    const mixed = tile.frames.filter(f => f.t === 'out' && others.some(p => f.data.includes(`live ${p}`)));
+    assert.deepEqual(mixed.map(f => f.data), [],
+      `tile ${i} (pane ${pane}) received another pane's output, possibly in a mixed frame`);
+
+  // The predicate itself: a frame mixing the own marker with a foreign one must
+  // be condemned. Simulating the exact regression (demux sends tile 0
+  // "live %1 ... live %2") proves the new assertion fails where the old one
+  // passed silently.
+  {
+    const pane = paneOf.get(spawns[0].tmux.window);
+    const others = [...paneOf.values()].filter(p => p !== pane);
+    const mixedFrame = { t: 'out', data: `live ${pane} ... live ${others[0]}` };
+    const condemned = [mixedFrame].filter(f => f.t === 'out' && others.some(p => f.data.includes(`live ${p}`)));
+    assert.equal(condemned.length, 1, 'a mixed own+foreign frame must be condemned by the new predicate');
+    const oldPredicateMisses = [mixedFrame].filter(f => f.t === 'out' && !f.data.includes(`live ${pane}`));
+    assert.equal(oldPredicateMisses.length, 0, 'the OLD predicate would have accepted this mixed frame — that was BUG-180');
+  }
   }
 
   // Closing one tile must not take the shared client — and everyone else — down.
@@ -198,6 +219,89 @@ test('the shared control client is released once the last viewer leaves', async 
   await waitUntil(() => records(record).some(r => r.type === 'signal' && r.signal === 'SIGTERM'), 'client released on last viewer');
 });
 
+// BUG-055: a remain-on-exit pane whose process has exited emits NO
+// %window-close, still answers list-panes, and still answers send-keys with ok
+// — so neither of the bridge's old death signals fired and an open viewer
+// stayed 'live' on a dead pane forever, silently discarding keystrokes. The
+// bridge must poll #{pane_dead} for its subscribed panes and end the viewer.
+// Here every pane reports pane_dead=1 from the first poll: the viewer opens
+// (the row still says live — the ~10s liveness tick hasn't reconciled), and
+// the very next dead-poll tick must end it with {t:'exit'}.
+test('live terminal WS ends the viewer when its pane is dead under remain-on-exit (BUG-055)', async t => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-term-dead-'));
+  const record = path.join(dir, 'term.jsonl');
+  const daemon = await startDaemon({
+    env: env(record, {
+      FLEETDECK_TEST_TERM_DEAD_PANE: '*',       // every fixture pane is dead
+      FLEETDECK_TERM_DEAD_POLL_MS: '100',       // don't sit through the 5s default
+    }),
+  });
+  t.after(async () => { await daemon.stop(); rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+  const spawned = await createSpawn(daemon, dir);
+  const { ws, frames, closes } = connect(termUrl(daemon, spawned.spawn_id, 80, 24));
+
+  await waitUntil(() => frames.find(f => f.t === 'init'), 'init frame');
+  const exit = await waitUntil(() => frames.find(f => f.t === 'exit'), 'exit frame from the pane_dead poll');
+  assert.match(exit.reason, /pane closed/);
+  assert.equal(frames.some(f => f.t === 'err'), false,
+    'a dead pane is the agent ending, never "viewer refused"');
+  await waitUntil(() => closes.length > 0, 'socket close');
+  assert.ok([1000, 1005].includes(closes[0].code), `clean close, got ${closes[0].code}`);
+  assert.equal(ws.readyState, WebSocket.CLOSED);
+
+  // send-keys success is not liveness proof — but the poll must already have
+  // finished the viewer, so nothing may ever reach the (dead) pane.
+  assert.equal(records(record).filter(r => /send-keys/.test(r.line || '')).length, 0);
+  // The viewer's end is also the last viewer leaving: the shared control
+  // client is handed back rather than pinned on a dead fleet.
+  await waitUntil(() => records(record).some(r => r.type === 'signal' && r.signal === 'SIGTERM'),
+    'control client released once the dead-pane viewer ended');
+});
+
+// The same poll must NOT kill a viewer on a LIVE pane: a dead read is only
+// acted on when pane_dead is exactly 1, so a healthy pane's viewer survives.
+test('live terminal WS keeps the viewer open while pane_dead is 0 (BUG-055)', async t => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-term-alive-'));
+  const record = path.join(dir, 'term.jsonl');
+  const daemon = await startDaemon({ env: env(record, { FLEETDECK_TERM_DEAD_POLL_MS: '100' }) });
+  t.after(async () => { await daemon.stop(); rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+  const spawned = await createSpawn(daemon, dir);
+  const { ws, frames } = connect(termUrl(daemon, spawned.spawn_id, 80, 24));
+
+  await waitUntil(() => frames.find(f => f.t === 'init'), 'init frame');
+  // Several poll intervals pass with pane_dead=0: the viewer must stay live.
+  await waitUntil(
+    () => records(record).filter(r => /list-panes -a/.test(r.line || '')).length >= 3,
+    'several dead-poll rounds',
+  );
+  assert.equal(frames.some(f => f.t === 'exit'), false, 'a live pane must never end its viewer');
+  assert.equal(frames.some(f => f.t === 'err'), false);
+  ws.close();
+});
+
+// BUG-158: %output that lands between subscribe and the init frame is buffered
+// in viewer.pending. That buffer is BYTE-BOUNDED like the keystroke queue — a
+// pane flooding past FLEETDECK_TERM_PENDING_MAX_BYTES before its init ships is
+// finished for a resync (exit frame), never hoarded unbounded in daemon memory.
+test('pre-init output past the pending byte bound resyncs the viewer instead of buffering unbounded', async t => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-term-flood-'));
+  const record = path.join(dir, 'term.jsonl');
+  const daemon = await startDaemon({
+    env: env(record, {
+      FLEETDECK_TERM_PENDING_MAX_BYTES: '4096',
+      FLEETDECK_TEST_TERM_PREINIT_FLOOD: '65536',
+    }),
+  });
+  t.after(async () => { await daemon.stop(); rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+  const spawned = await createSpawn(daemon, dir);
+
+  const { frames, closes } = connect(termUrl(daemon, spawned.spawn_id, 80, 24));
+  const exit = await waitUntil(() => frames.find(f => f.t === 'exit'), 'exit frame');
+  assert.match(exit.reason, /output overflow before init/);
+  assert.equal(frames.some(f => f.t === 'init'), false,
+    'a flooded pre-init buffer must not ship a seed it can no longer replay');
+  await waitUntil(() => closes.length > 0, 'socket close');
+});
 test('live terminal WS refuses an unknown spawn and honors FLEETDECK_TERM=off', async t => {
   const dir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-term-refuse-'));
   const record = path.join(dir, 'term.jsonl');
@@ -221,6 +325,216 @@ test('live terminal WS returns err for an unknown spawn when enabled', async t =
   // An unresolvable spawn must not leave a control client attached behind it.
   assert.equal(records(record).filter(r => r.type === 'start').length, 0,
     'a refused viewer must not have launched a control client');
+});
+
+// BUG-157: a watched window dies, tmux emits %window-close, and the bridge's
+// list-panes -a probe FAILS (%error — a control-client blip). The old code
+// swallowed that failure, and an idle viewer with no input in flight had no
+// other path that could observe the pane's death: it stayed in `viewers`,
+// pinning the shared control client until the WS keepalive or a later command
+// timeout. The bridge must re-list once after a settle delay; the fixture
+// (FLEETDECK_TEST_TERM_PROBE_FAILS=1) fails only the FIRST probe and answers
+// the recheck with an empty pane list — proof the pane is gone.
+test('a failed window-close probe is re-listed once so an idle viewer on a dead pane still finishes', async t => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-term-recheck-'));
+  const record = path.join(dir, 'term.jsonl');
+  const daemon = await startDaemon({
+    env: env(record, {
+      FLEETDECK_TEST_TERM_PROBE_FAILS: '1',
+      FLEETDECK_TERM_CLOSE_RECHECK_MS: '200',
+    }),
+  });
+  t.after(async () => { await daemon.stop(); rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+
+  const spawned = await createSpawn(daemon, dir);
+  const { ws, frames, closes } = connect(termUrl(daemon, spawned.spawn_id, 80, 24));
+  t.after(() => { if (ws.readyState !== WebSocket.CLOSED) ws.close(); });
+  await waitUntil(() => frames.find(f => f.t === 'init'), 'init frame');
+
+  // The viewer is now IDLE — no input, no resize. Only the window-close
+  // recheck can release it. %window-close's window id is made up; the probe
+  // answers by pane id, so the id itself is never consulted.
+  const procs = records(record).filter(r => r.type === 'start');
+  assert.equal(procs.length, 1, 'one shared control client');
+  const fixture = procs[0].pid;
+  process.kill(fixture, 'SIGUSR1');
+  await waitUntil(() => records(record).some(r => r.type === 'window-close'), 'fixture emitted %window-close');
+
+  const exit = await waitUntil(() => frames.find(f => f.t === 'exit'), 'exit frame');
+  assert.match(exit.reason, /pane closed/);
+  await waitUntil(() => closes.length > 0, 'socket close');
+
+  // The first probe failed, so this exit could only have come from a SECOND
+  // list-panes -a — the recheck — answering with the pane gone.
+  const probes = records(record).filter(r => /^list-panes -a /.test(r.line || ''));
+  assert.ok(probes.length >= 2, `the failed probe must be re-listed, saw ${probes.length}`);
+
+  // And releasing the last viewer hands the control client back: a fleet
+  // nobody is watching holds no tmux attach.
+  await waitUntil(() => records(record).some(r => r.type === 'signal' && r.signal === 'SIGTERM'), 'client released on last viewer');
+});
+// BUG-159: the open-time SIGWINCH jiggle is three resize steps — size(rows),
+// size(rows-1), size(rows) — and only the first used to be checked. A failed
+// restore after a successful rows-1 step left the window SHORT while the init
+// frame advertised the requested rows: the client laid the shorter seed into
+// the wrong geometry and the first paint came out scrambled. Now a failed mid
+// or restore step aborts the open BEFORE capture — the client gets {t:'err'},
+// never a mismatched init — and the bridge makes a best-effort restore to the
+// requested rows (tmux 3.7b keeps the prior geometry on a failed resize).
+// FLEETDECK_TEST_TERM_FAIL_RESIZE makes the fixture fail exactly one jiggle step.
+for (const step of ['mid', 'restore']) {
+  test(`live terminal WS aborts the open when the jiggle's ${step} resize step fails`, async t => {
+    const dir = mkdtempSync(path.join(tmpdir(), `fleetdeck-term-jiggle-${step}-`));
+    const record = path.join(dir, 'term.jsonl');
+    const daemon = await startDaemon({ env: env(record, { FLEETDECK_TEST_TERM_FAIL_RESIZE: step }) });
+    t.after(async () => { await daemon.stop(); rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+    const spawned = await createSpawn(daemon, dir);
+
+    const { frames } = connect(termUrl(daemon, spawned.spawn_id, 80, 24));
+    const err = await waitUntil(() => frames.find(f => f.t === 'err'), 'resize-failure err');
+    assert.match(err.reason, /resize failed/);
+    assert.equal(frames.some(f => f.t === 'init'), false,
+      'a failed jiggle step must never ship an init whose rows the window does not have');
+    assert.equal(records(record).filter(r => (r.line || '').startsWith('capture-pane ')).length, 0,
+      'the seed must not be captured from a window that failed to reach the requested size');
+
+    // Best-effort recovery: whatever failed, the LAST resize on this window is
+    // a restore attempt to the requested geometry, so the pane is not left
+    // parked at rows-1 for the next viewer (or the human's own client).
+    const window = spawned.tmux.window;
+    await waitUntil(() => {
+      const resizes = records(record)
+        .filter(r => (r.line || '').startsWith(`resize-window -t =${spawned.tmux.session}:=${window} `));
+      return resizes.length > 0 && resizes.at(-1).line.endsWith('-x 80 -y 24');
+    }, 'final resize restores the requested rows');
+  });
+}
+// BUG-165: the fixture's bare-success default branch used to hide every
+// lifecycle edge — these fault knobs (see term-cmd-fixture.mjs) open them.
+
+test('live terminal WS: failed resize refuses the open (FAIL_RESIZE fault)', async t => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-term-resize-fail-'));
+  const record = path.join(dir, 'term.jsonl');
+  const daemon = await startDaemon({ env: env(record, { FLEETDECK_TEST_TERM_FAIL_RESIZE: '1' }) });
+  t.after(async () => { await daemon.stop(); rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+  const spawned = await createSpawn(daemon, dir);
+
+  const { frames, closes } = connect(termUrl(daemon, spawned.spawn_id, 80, 24));
+  const err = await waitUntil(() => frames.find(f => f.t === 'err'), 'resize-failure err frame');
+  assert.match(err.reason, /resize failed/);
+  assert.equal(frames.some(f => f.t === 'init'), false, 'a failed resize must never ship an init frame');
+  await waitUntil(() => closes.length > 0, 'socket close after refused open');
+
+  // A refused open must release the shared client too — the fleet is unwatched.
+  await waitUntil(() => records(record).some(r => r.type === 'signal' && r.signal === 'SIGTERM'), 'client released after failed open');
+});
+
+test('live terminal WS: send-keys %error finishes the viewer (DEAD_PANE fault)', async t => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-term-sendkeys-dead-'));
+  const record = path.join(dir, 'term.jsonl');
+  const daemon = await startDaemon({ env: env(record, { FLEETDECK_TEST_TERM_DEAD_PANE: '1' }) });
+  t.after(async () => { await daemon.stop(); rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+  const spawned = await createSpawn(daemon, dir);
+  const { ws, frames } = connect(termUrl(daemon, spawned.spawn_id, 80, 24));
+  await waitUntil(() => frames.find(f => f.t === 'init'), 'init frame');
+
+  // The pane died under an established viewer: tmux refuses the keystroke with
+  // %error and the bridge must end the viewer, not swallow it silently.
+  ws.send(JSON.stringify({ t: 'in', data: 'x' }));
+  const exit = await waitUntil(() => frames.find(f => f.t === 'exit'), 'exit frame after dead-pane input');
+  assert.match(exit.reason, /pane closed/);
+});
+
+test('live terminal WS: wedged control reply trips the command deadline and tears the client down (HANG fault)', async t => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-term-hang-'));
+  const record = path.join(dir, 'term.jsonl');
+  const daemon = await startDaemon({
+    env: env(record, {
+      // Every reply arrives 800ms late; the bridge's per-command deadline is
+      // 300ms (M-R5). A wedged reply must NOT hang the viewer open forever:
+      // the deadline tears the WHOLE client down (a late reply would resolve
+      // the wrong FIFO waiter), rejecting every waiter with the timeout —
+      // which surfaces as an open refusal here — and SIGTERMing the fixture,
+      // so nothing stays pinned on the shared client.
+      FLEETDECK_TEST_TERM_HANG_MS: '800',
+      FLEETDECK_TERM_CMD_TIMEOUT_MS: '300',
+      FLEETDECK_TERM_REPAINT_MS: '1',
+    }),
+  });
+  t.after(async () => { await daemon.stop(); rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+  const spawned = await createSpawn(daemon, dir);
+
+  const { frames, closes } = connect(termUrl(daemon, spawned.spawn_id, 80, 24));
+  const err = await waitUntil(() => frames.find(f => f.t === 'err'), 'wedged command refusal');
+  assert.match(err.reason, /timed out/);
+  assert.equal(frames.some(f => f.t === 'init'), false, 'a wedged seed must never ship an init frame');
+  await waitUntil(() => closes.length > 0, 'socket close after wedged open');
+
+  // The wedged client is killed, not left attached behind the refused viewer.
+  await waitUntil(() => records(record).some(r => r.type === 'signal' && r.signal === 'SIGTERM'), 'wedged client SIGTERMd by teardown');
+  // And the bridge recovers: the next open gets a fresh client, whose own
+  // first command wedges and dies the same way — proving teardown creates no
+  // stuck global state.
+  const again = connect(termUrl(daemon, spawned.spawn_id, 80, 24));
+  t.after(() => again.ws.close());
+  await waitUntil(() => records(record).filter(r => r.type === 'start').length >= 2, 'fresh client for the next viewer');
+  const retry = await waitUntil(() => again.frames.find(f => f.t === 'err'), 'retried open also wedged');
+  assert.match(retry.reason, /timed out/);
+});
+
+test('live terminal WS: input past the queue bound evicts the viewer (overflow)', async t => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-term-overflow-'));
+  const record = path.join(dir, 'term.jsonl');
+  const daemon = await startDaemon({
+    env: env(record, {
+      // The queue bound is 1024 (its floor); the fixture never answers
+      // send-keys, so the input chain never drains and the second paste lands
+      // on a still-full queue — it must evict the viewer rather than pile
+      // send-keys commands into the control client.
+      FLEETDECK_TERM_INPUT_MAX_BYTES: '1024',
+      FLEETDECK_TEST_TERM_HANG_MS: 'send-keys:60000',
+    }),
+  });
+  t.after(async () => { await daemon.stop(); rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+  const spawned = await createSpawn(daemon, dir);
+  const { ws, frames } = connect(termUrl(daemon, spawned.spawn_id, 80, 24));
+  await waitUntil(() => frames.find(f => f.t === 'init'), 'init frame');
+
+  ws.send(JSON.stringify({ t: 'in', data: 'x'.repeat(1024) })); // fills the bound, never acked
+  ws.send(JSON.stringify({ t: 'in', data: 'y' }));              // one byte past it → evict
+  const exit = await waitUntil(() => frames.find(f => f.t === 'exit'), 'overflow eviction exit');
+  assert.match(exit.reason, /input overflow/);
+});
+
+test('live terminal WS: %window-close with the pane dead finishes exactly that viewer', async t => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-term-winclose-'));
+  const record = path.join(dir, 'term.jsonl');
+  // CLOSE_WINDOW alone must be survivable (a close the probe clears is not
+  // ours); paired with DEAD_PANE the probe finds no pane alive and condemns.
+  const daemon = await startDaemon({ env: env(record, { FLEETDECK_TEST_TERM_CLOSE_WINDOW: '1' }) });
+  t.after(async () => { await daemon.stop(); rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+  const spawned = await createSpawn(daemon, dir);
+  const tile = connect(termUrl(daemon, spawned.spawn_id, 80, 24));
+  t.after(() => tile.ws.close());
+  await waitUntil(() => tile.frames.find(f => f.t === 'init'), 'init frame');
+
+  // The probe reports every pane alive (no DEAD_PANE knob): the close was some
+  // other window's, and this viewer must ride through it untouched.
+  await new Promise(r => setTimeout(r, 400));
+  assert.equal(tile.frames.some(f => f.t === 'exit'), false, 'a cleared %window-close must not finish the viewer');
+  assert.equal(tile.closes.length, 0, 'a cleared %window-close must not close the socket');
+  tile.ws.close();
+  await waitUntil(() => records(record).some(r => r.type === 'signal' && r.signal === 'SIGTERM'), 'client released after viewer leaves');
+
+  // Now the pane really is dead: the same %window-close probe finds nothing
+  // alive and the viewer must be told its pane closed.
+  const dead = await startDaemon({ env: env(path.join(dir, 'term-dead.jsonl'), { FLEETDECK_TEST_TERM_CLOSE_WINDOW: '1', FLEETDECK_TEST_TERM_DEAD_PANE: '1' }) });
+  t.after(() => dead.stop());
+  const deadSpawn = await createSpawn(dead, dir);
+  const dying = connect(termUrl(dead, deadSpawn.spawn_id, 80, 24));
+  await waitUntil(() => dying.frames.find(f => f.t === 'init'), 'dead-pane init frame');
+  const exit = await waitUntil(() => dying.frames.find(f => f.t === 'exit'), 'window-close exit frame');
+  assert.match(exit.reason, /pane closed/);
 });
 
 // Item 6: the row said live but its pane was already gone (the agent ended

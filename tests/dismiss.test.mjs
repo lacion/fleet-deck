@@ -222,6 +222,47 @@ test('dismiss bails out of killing when a hook resurrects the card mid-await', a
   assert.deepEqual(state.killed, [], 'nothing was killed');
 });
 
+test('dismiss does not kill a same-name replacement pane a revive stood up mid-kill (BUG-046)', async (t) => {
+  // The audit race: dismiss lists a dead remain-on-exit window and verifies DB
+  // ownership, then awaits the name-based kill. A revive landing INSIDE that
+  // await recreates the same deterministic window name with a fresh LIVE pane
+  // and a new spawn row. The kill-time expectation (window generation + current
+  // owner + not-resurrected) must turn the kill into a stale no-op.
+  const tmux = fakeTmux();
+  const { db, core, state } = memoryCore(t, { tmux });
+  const now = Date.now();
+  const sid = 'off-race';
+  seedOffline(db, sid, { now });
+  db.prepare(`INSERT INTO spawns
+    (spawn_id, session_id, callsign, tmux_session, tmux_window, requested_at, status)
+    VALUES ('sp-race-old', ?, 'off-race-1', 'fleetdeck-4711', 'fd4711-off-race-1', ?, 'pane-dead')`).run(sid, now);
+  state.windows.push({
+    session: 'fleetdeck-4711', window: 'fd4711-off-race-1', window_id: '@6', pane_dead: true, pane_cmd: 'claude',
+  });
+  // The revive lands during the kill's own awaits, after every pre-check passed:
+  // a new live-eligible row claims the name and the pane is replaced live.
+  tmux.adapter.killWindowVerified = async (name, opts) => {
+    db.prepare(`INSERT INTO spawns
+      (spawn_id, session_id, callsign, tmux_session, tmux_window, requested_at, status)
+      VALUES ('sp-race-new', ?, 'off-race-1', 'fleetdeck-4711', 'fd4711-off-race-1', ?, 'live')`).run(sid, now + 1);
+    state.windows = [{ session: 'fleetdeck-4711', window: name, window_id: '@66', pane_dead: false, pane_cmd: 'claude' }];
+    if (opts?.expectWindowId !== undefined) {
+      const win = state.windows.find(w => w.window === name);
+      if (!win || win.window_id !== opts.expectWindowId || (opts.expect && !opts.expect())) {
+        return { ok: false, stale: true, error: 'stale window owner' };
+      }
+    }
+    state.killed.push(name);
+    return { ok: true, window_id: '@66' };
+  };
+
+  const out = await core.dismissSession(sid);
+  assert.equal(out.status, 200, JSON.stringify(out.body));
+  assert.equal(out.body.windows_killed, 0, 'the replacement pane is NOT killed');
+  assert.deepEqual(state.killed, [], 'the name-based kill never fired');
+  assert.equal(spawnStatus(db, 'sp-race-new'), 'live', 'the revived spawn row is untouched');
+});
+
 test('spawnLivenessTick is single-flight: two concurrent calls run the probe once', async (t) => {
   // R4-review: the viewer path and dismiss fire spawnLivenessTick fire-and-forget,
   // bypassing the scheduler's single-flight. The tick must latch itself so two
@@ -307,6 +348,214 @@ test('dismiss refuses a card whose spawn is stalled (consistency with archiveCan
   assert.equal(db.prepare('SELECT archived_at FROM sessions WHERE session_id = ?').get(sid).archived_at, null,
     'a stalled card is left entirely untouched');
   assert.equal(spawnStatus(db, 'sp-stalled'), 'stalled', 'and its spawn row is not goned');
+});
+
+// ------------------------------------------------------------- BUG-145
+// Cleanup/dismiss used to treat a null tmux listing as empty and to ignore
+// {ok:false} kills, then report unconditional success — stale windows stayed
+// hidden with no retry path (a dismissed card 409s 'already dismissed' on a
+// second dismiss). Now: Clear aborts BEFORE touching anything; dismiss lands
+// its DB story but reports an explicit incomplete result with retry:true, and
+// the /dismiss/retry endpoint re-attempts just the window kills.
+test('cleanup aborts with ok:false when the tmux listing is UNKNOWN — nothing is touched', async (t) => {
+  const tmux = fakeTmux();
+  const { db, core } = memoryCore(t, { tmux });
+  const now = Date.now();
+  db.prepare(`INSERT INTO sessions
+    (session_id, callsign, col, note, events, started_at, last_seen, ended_at, source)
+    VALUES ('off-list', 'off-list-1', 'offline', 'ended', 0, ?, ?, ?, 'hooks')`).run(now, now, now);
+  db.prepare(`INSERT INTO mail (to_session, from_id, text, at, delivered_at, expired_at)
+    VALUES ('off-list', 'ops', 'pending', ?, NULL, NULL)`).run(now);
+  // A terminal row NAMING a window: the fleet may own a dead pane tmux can no
+  // longer report on, so an UNKNOWN listing cannot be read as "nothing to kill".
+  db.prepare(`INSERT INTO spawns
+    (spawn_id, session_id, callsign, tmux_session, tmux_window, requested_at, status)
+    VALUES ('sp-list', 'off-list', 'off-list-1', 'fleetdeck-4711', 'fd4711-off-list-1', ?, 'pane-dead')`).run(now);
+  tmux.adapter.listScopedWindows = async () => null; // tmux unreachable / generation check failed
+
+  const out = await core.cleanup();
+  assert.equal(out.ok, false, 'an UNKNOWN listing must never read as an empty fleet');
+  assert.match(out.reason, /listing unavailable.*retry Clear/);
+  assert.equal(db.prepare("SELECT archived_at FROM sessions WHERE session_id = 'off-list'").get().archived_at, null,
+    'the card is NOT archived — the whole Clear is retryable');
+  assert.equal(db.prepare("SELECT expired_at FROM mail WHERE to_session = 'off-list'").get().expired_at, null,
+    'and its mail is not expired either');
+
+  // The retry path: tmux recovers, a plain Clear now succeeds.
+  tmux.adapter.listScopedWindows = async () => [];
+  const retry = await core.cleanup();
+  assert.equal(retry.ok, true);
+  assert.equal(retry.archived, 1);
+});
+
+test('cleanup with NO terminal-named windows succeeds even when tmux is unreachable', async (t) => {
+  // The honest complement: with no spawn row anywhere naming a window, an
+  // unreachable tmux cannot be hiding one of THIS fleet's panes — the DB is the
+  // complete roster of what the fleet ever owned. Clear must not wedge behind a
+  // probe it has no use for.
+  const tmux = fakeTmux();
+  const { db, core } = memoryCore(t, { tmux });
+  const now = Date.now();
+  db.prepare(`INSERT INTO sessions
+    (session_id, callsign, col, note, events, started_at, last_seen, ended_at, source)
+    VALUES ('off-none', 'off-none-1', 'offline', 'ended', 0, ?, ?, ?, 'hooks')`).run(now, now, now);
+  tmux.adapter.listScopedWindows = async () => null;
+
+  const out = await core.cleanup();
+  assert.equal(out.ok, true, JSON.stringify(out));
+  assert.equal(out.archived, 1);
+});
+
+test('cleanup aborts with ok:false when a dead window refuses to die — listing each failure', async (t) => {
+  const tmux = fakeTmux();
+  const { db, core, state } = memoryCore(t, { tmux });
+  const now = Date.now();
+  db.prepare(`INSERT INTO sessions
+    (session_id, callsign, col, note, events, started_at, last_seen, ended_at, source)
+    VALUES ('off-kill', 'off-kill-1', 'offline', 'ended', 0, ?, ?, ?, 'hooks')`).run(now, now, now);
+  db.prepare(`INSERT INTO spawns
+    (spawn_id, session_id, callsign, tmux_session, tmux_window, requested_at, status)
+    VALUES ('sp-kill', 'off-kill', 'off-kill-1', 'fleetdeck-4711', 'fd4711-off-kill-1', ?, 'pane-dead')`).run(now);
+  state.windows.push({
+    session: 'fleetdeck-4711', window: 'fd4711-off-kill-1', window_id: '@8', pane_dead: true, pane_cmd: 'claude',
+  });
+  tmux.adapter.killWindowVerified = async () => ({ ok: false, error: 'kill-window denied' });
+
+  const out = await core.cleanup();
+  assert.equal(out.ok, false, 'a failed kill must never be counted as cleared');
+  assert.match(out.reason, /fd4711-off-kill-1: kill-window denied/, 'the reason names the window and the tmux error');
+  assert.equal(db.prepare("SELECT archived_at FROM sessions WHERE session_id = 'off-kill'").get().archived_at, null,
+    'nothing was cleared — the next Clear is a full retry');
+});
+
+test('dismiss reports an explicit incomplete result when a dead window refuses to die, and the retry endpoint clears it', async (t) => {
+  const tmux = fakeTmux();
+  const { db, core, state } = memoryCore(t, { tmux });
+  const now = Date.now();
+  const sid = 'off-killfail';
+  seedOffline(db, sid, { now });
+  db.prepare(`INSERT INTO spawns
+    (spawn_id, session_id, callsign, tmux_session, tmux_window, requested_at, status)
+    VALUES ('sp-kf', ?, 'off-killfail-1', 'fleetdeck-4711', 'fd4711-off-killfail-1', ?, 'pane-dead')`).run(sid, now);
+  state.windows.push({
+    session: 'fleetdeck-4711', window: 'fd4711-off-killfail-1', window_id: '@10', pane_dead: true, pane_cmd: 'claude',
+  });
+  tmux.adapter.killWindowVerified = async () => ({ ok: false, error: 'generation changed mid-kill' });
+
+  const out = await core.dismissSession(sid);
+  assert.equal(out.status, 409, 'the partial dismiss is NOT a 200 success');
+  assert.equal(out.body.ok, false);
+  assert.equal(out.body.retry, true, 'the failure carries an actionable retry path');
+  assert.equal(out.body.archived, 1, 'the DB story did land — this is partial truth, not a refusal');
+  assert.match(out.body.reason, /fd4711-off-killfail-1: generation changed mid-kill/);
+  assert.ok(db.prepare('SELECT archived_at FROM sessions WHERE session_id = ?').get(sid).archived_at,
+    'the card is archived');
+
+  // The OLD trap: a second plain dismiss is a dead end ('already dismissed').
+  const again = await core.dismissSession(sid);
+  assert.equal(again.status, 409);
+  assert.match(again.body.reason, /already dismissed/);
+
+  // The NEW path: the retry endpoint re-attempts ONLY the window kills.
+  const blocked = await core.dismissRetry(sid);
+  assert.equal(blocked.status, 409, 'still failing — retry stays armed');
+  assert.equal(blocked.body.retry, true);
+
+  tmux.adapter.killWindowVerified = async name => {
+    state.killed.push(name);
+    return { ok: true, window_id: '@10' };
+  };
+  const retried = await core.dismissRetry(sid);
+  assert.equal(retried.status, 200, JSON.stringify(retried.body));
+  assert.equal(retried.body.ok, true);
+  assert.equal(retried.body.windows_killed, 1);
+  assert.deepEqual(state.killed, ['fd4711-off-killfail-1']);
+});
+
+test('dismiss reports an incomplete result when the tmux listing is UNKNOWN mid-kill', async (t) => {
+  const tmux = fakeTmux();
+  const { db, core, state } = memoryCore(t, { tmux });
+  const now = Date.now();
+  const sid = 'off-nullwins';
+  seedOffline(db, sid, { now });
+  db.prepare(`INSERT INTO spawns
+    (spawn_id, session_id, callsign, tmux_session, tmux_window, requested_at, status)
+    VALUES ('sp-nw', ?, 'off-nullwins-1', 'fleetdeck-4711', 'fd4711-off-nullwins-1', ?, 'pane-dead')`).run(sid, now);
+  state.windows.push({
+    session: 'fleetdeck-4711', window: 'fd4711-off-nullwins-1', window_id: '@11', pane_dead: true, pane_cmd: 'claude',
+  });
+  tmux.adapter.listScopedWindows = async () => null;
+
+  const out = await core.dismissSession(sid);
+  assert.equal(out.status, 409);
+  assert.equal(out.body.retry, true);
+  assert.match(out.body.reason, /listing unavailable/);
+  assert.equal(out.body.windows_killed, 0, 'a null listing can never read as an empty fleet');
+  assert.deepEqual(state.killed, []);
+
+  // Retry with tmux back: the dead window is killed now.
+  tmux.adapter.listScopedWindows = async () => state.windows;
+  const retried = await core.dismissRetry(sid);
+  assert.equal(retried.status, 200);
+  assert.deepEqual(state.killed, ['fd4711-off-nullwins-1']);
+});
+
+test('a fresh proof of absence ({ok:false, gone:true}) counts as cleared, not as a failure', async (t) => {
+  const tmux = fakeTmux();
+  const { db, core, state } = memoryCore(t, { tmux });
+  const now = Date.now();
+  const sid = 'off-goneproof';
+  seedOffline(db, sid, { now });
+  db.prepare(`INSERT INTO spawns
+    (spawn_id, session_id, callsign, tmux_session, tmux_window, requested_at, status)
+    VALUES ('sp-gp', ?, 'off-goneproof-1', 'fleetdeck-4711', 'fd4711-off-goneproof-1', ?, 'pane-dead')`).run(sid, now);
+  // The listing still shows the corpse, but by kill time the window is gone —
+  // killWindowVerified's name re-resolution proves absence. That is a SUCCESS.
+  state.windows.push({
+    session: 'fleetdeck-4711', window: 'fd4711-off-goneproof-1', window_id: '@12', pane_dead: true, pane_cmd: 'claude',
+  });
+  tmux.adapter.killWindowVerified = async () => ({ ok: false, gone: true });
+
+  const out = await core.dismissSession(sid);
+  assert.equal(out.status, 200, JSON.stringify(out.body));
+  assert.equal(out.body.windows_killed, 1, 'verified absence clears the pane');
+});
+
+test('dismissRetry refuses cards that are not dismissed and unknown ids', async (t) => {
+  const { db, core } = memoryCore(t);
+  seedOffline(db, 'off-notdismissed');
+  const notDismissed = await core.dismissRetry('off-notdismissed');
+  assert.equal(notDismissed.status, 409);
+  assert.match(notDismissed.body.reason, /not dismissed/);
+  const unknown = await core.dismissRetry(randomUUID());
+  assert.equal(unknown.status, 404);
+});
+
+// BUG-193: /health.fleet (and `fleetdeck status`'s "sessions") is the CURRENT
+// fleet — the cards /state can show. Dismissed and retention-archived rows are
+// history; counting them left health reporting a fleet after the board had
+// already emptied.
+test('BUG-193: fleetSize agrees with /state across dismiss and retention archival', async (t) => {
+  const { db, core } = memoryCore(t, { env: { FLEETDECK_RETAIN_OFFLINE_MS: 1_000 } });
+  const now = Date.now();
+
+  const live = 'live-one';
+  db.prepare(`INSERT INTO sessions
+    (session_id, callsign, col, note, events, started_at, last_seen, source)
+    VALUES (?, ?, 'idle', 'registered', 0, ?, ?, 'hooks')`).run(live, 'live-one-1', now, now);
+  seedOffline(db, 'off-dismiss', { now });
+  seedOffline(db, 'off-retain', { now: now - 2_000 }); // already past the retention window
+  assert.equal(core.fleetSize(), 3, 'sanity: three cards on the board');
+
+  const out = await core.dismissSession('off-dismiss');
+  assert.equal(out.status, 200, JSON.stringify(out.body));
+  assert.equal(core.fleetSize(), 2, 'a dismissed card leaves the health count with the board');
+
+  await core.retentionSweep(now + 1);
+  assert.equal(db.prepare('SELECT archived_at FROM sessions WHERE session_id = ?').get('off-retain').archived_at != null, true,
+    'sanity: the sweep retention-archived the stale offline card');
+  assert.equal(core.fleetSize(), 1, 'a retention-archived card leaves the health count with the board');
+  assert.equal(core.fleetSize(), core.snapshot().sessions.length, 'fleetSize === /state.sessions.length');
 });
 
 // -------------------------------------------------------- HTTP route wiring

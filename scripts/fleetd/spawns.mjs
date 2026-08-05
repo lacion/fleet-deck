@@ -703,7 +703,7 @@ export function createSpawns(ctx) {
       const forbidden = [
         'repo', 'branch', 'branch_mode', 'repo_host', 'repo_transport', 'repo_org',
         'prompt', 'model', 'permission_mode', 'dangerously_skip_permissions',
-        'remote_control', 'gateway', 'arm_token', 'setup_cmd',
+        'remote_control', 'gateway', 'arm_token', 'setup_cmd', 'plan_id',
       ].find(k => body?.[k] != null);
       if (forbidden || body?.worktree === true) {
         const field = forbidden || 'worktree';
@@ -752,6 +752,58 @@ export function createSpawns(ctx) {
     const armRefusal = unsupervisedGate(skipPermissions, body);
     if (armRefusal) return { status: 403, body: { ok: false, reason: armRefusal } };
 
+    // BUG-040 — atomic pre-spawn execution claim. plan_id on the body means
+    // "this spawn IS the execution of that plan" (the board's plan-execute
+    // flow; the old client-composed flow spawned first and marked afterwards,
+    // so two boards on one stale snapshot both launched before either mark
+    // could 409). The claim is a single guarded UPDATE — the plan flips
+    // proposed|approved|captured → executed here, BEFORE any clone, worktree,
+    // pane, or durable row exists — so concurrent claims serialize in SQLite
+    // and exactly one wins; the loser 409s without launching. The transition
+    // matrix mirrors plans.mjs's executed-from set exactly. The board drops
+    // its post-spawn mark when it sends plan_id, so a double-flip cannot
+    // occur; a claim release (below) covers every failure after this point,
+    // including a throw escaping launchPane.
+    let planClaim = null; // { plan_id, restoreStatus, via } while a claim is owed
+    if (body?.plan_id != null) {
+      const pid = Number(body.plan_id);
+      if (!Number.isInteger(pid) || pid < 1) {
+        return { status: 400, body: { ok: false, reason: 'plan_id must be a positive integer' } };
+      }
+      const plan = q.getPlan.get(pid);
+      if (!plan) return { status: 404, body: { ok: false, reason: 'no such plan' } };
+      const via = `spawn:${randomUUID().slice(0, 8)}`;
+      const r = q.claimPlanExecution.run(via, pid);
+      if (r.changes !== 1) {
+        return { status: 409, body: { ok: false, reason: `plan #${pid} is ${plan.status} — already executed or not executable` } };
+      }
+      planClaim = { plan_id: pid, restoreStatus: plan.status, via };
+      tick(`📚 plan #${pid} execution claimed by spawn${plan.callsign ? ` (planned by ${plan.callsign})` : ''}`);
+      // A still-parked planner hold for this plan is retired by the SAME
+      // decision that claimed it (plans.mjs's daemon half of BUG-041; the
+      // claim just moved earlier than the mark used to).
+      if (plan.question_id != null) {
+        const qq = ctx.questions?.dismiss?.(plan.question_id, { activity: true });
+        if (qq?.ok && !qq.already) {
+          tick(`📚 planner hold for plan #${pid} retired — question dismissed`);
+        }
+      }
+    }
+    const releasePlanClaim = () => {
+      if (!planClaim) return;
+      // Restore the pre-claim status ONLY if the row still carries this
+      // claim's via — a concurrent archive/mark in the failure window must
+      // not be reverted.
+      q.releasePlanExecution.run(planClaim.restoreStatus, planClaim.plan_id, planClaim.via);
+      tick(`📚 plan #${planClaim.plan_id} execution claim released (spawn failed) — back to ${planClaim.restoreStatus}`);
+      onMutate();
+      planClaim = null;
+    };
+    const wrapSpawnFailure = (fn) => async (...a) => {
+      try { return await fn(...a); }
+      catch (err) { releasePlanClaim(); throw err; }
+    };
+
     if (hasRepo) {
       if (body?.worktree === true) {
         return { status: 400, body: { ok: false, reason: 'branch_mode replaces worktree in repo mode' } };
@@ -762,14 +814,15 @@ export function createSpawns(ctx) {
         return { status: 400, body: { ok: false, reason: 'branch_mode must be worktree or in-place' } };
       }
       try { await validateBranch(body.branch); }
-      catch (err) { return { status: 400, body: { ok: false, reason: err.message || String(err) } }; }
+      catch (err) { releasePlanClaim(); return { status: 400, body: { ok: false, reason: err.message || String(err) } }; }
 
       let target;
       try { target = await resolveTarget(body); }
-      catch (err) { return { status: err.status || 400, body: { ok: false, reason: err.message || String(err) } }; }
+      catch (err) { releasePlanClaim(); return { status: err.status || 400, body: { ok: false, reason: err.message || String(err) } }; }
       const targetPath = target.mode === 'clone' ? target.dest : target.root;
       const owner = targetOwner(targetPath);
       if (owner) {
+        releasePlanClaim();
         return { status: 409, body: { ok: false, reason: `${path.resolve(targetPath)} is already being provisioned by ${owner}` } };
       }
       // Reserve a clone slot BEFORE any card/row exists, so a full pool returns a
@@ -777,7 +830,7 @@ export function createSpawns(ctx) {
       let releaseCloneSlot = () => {};
       if (target.mode === 'clone') {
         try { releaseCloneSlot = reserveCloneSlot(); }
-        catch (err) { return { status: err.status || 429, body: { ok: false, reason: err.message || String(err) } }; }
+        catch (err) { releasePlanClaim(); return { status: err.status || 429, body: { ok: false, reason: err.message || String(err) } }; }
       }
       // D2: an EXPLICIT transport on an ACCEPTED shorthand spawn becomes the
       // remembered default for the next one (and for curl users) — not a pill
@@ -824,6 +877,7 @@ export function createSpawns(ctx) {
         });
       } catch (err) {
         releaseCloneSlot();
+        releasePlanClaim();
         return {
           status: 500,
           body: { ok: false, reason: `could not create the spawn card: ${spawnFailureReason(err)}` },
@@ -878,19 +932,27 @@ export function createSpawns(ctx) {
               tmux_window: null, reason: err.message || String(err),
               created: { clone: false, worktree: false },
             });
+            releasePlanClaim();
             return { status: err.status || 409, body: { ok: false, reason: err.message || String(err) } };
           }
           worktree_path = branchMode === 'worktree' ? materialized.runCwd : null;
           try {
             await finishMaterialization(materialized, 'spawn');
             paneMayExist = true;
-            return await launchPane({
+            const out = await wrapSpawnFailure(launchPane)({
               spawn_id, session_id, callsign, tmux_session, tmux_window,
               requestedCwd: target.root, runCwd: materialized.runCwd,
               cleanupRoot: target.root, worktree_path, body, skipPermissions,
               gatewayEnv: gateway.env,
               created: materialized.created,
             });
+            if (out.status >= 400) releasePlanClaim();
+            else if (planClaim) {
+              q.setPlanExecuted.run(`spawn:${spawn_id}`, planClaim.plan_id);
+              planClaim = null;
+              onMutate();
+            }
+            return out;
           } catch (err) {
             // in-place already ran `git switch`; compensation won't revert the
             // user's own checkout, so say plainly that it was left on the branch.
@@ -901,6 +963,7 @@ export function createSpawns(ctx) {
               spawn_id, session_id, callsign, cwd: target.root, worktree_path,
               tmux_window: paneMayExist ? tmux_window : null, reason, created: materialized.created,
             });
+            releasePlanClaim();
             return { status: err.status || 409, body: { ok: false, reason } };
           }
         } finally {
@@ -932,6 +995,11 @@ export function createSpawns(ctx) {
             cleanupRoot: target.dest, worktree_path, body, skipPermissions, created,
             gatewayEnv: gateway.env,
           });
+          if (planClaim) {
+            q.setPlanExecuted.run(`spawn:${spawn_id}`, planClaim.plan_id);
+            planClaim = null;
+            onMutate();
+          }
         } catch (err) {
           const reason = branchMode === 'in-place' && created.clone
             ? `${err.message || String(err)} — ${path.basename(target.dest)} was left switched to ${body.branch}`
@@ -940,6 +1008,7 @@ export function createSpawns(ctx) {
             spawn_id, session_id, callsign, cwd: target.dest, worktree_path,
             tmux_window: paneMayExist ? tmux_window : null, reason, created,
           });
+          releasePlanClaim();
         } finally {
           releaseCloneSlot();
           releaseTarget();
@@ -961,9 +1030,11 @@ export function createSpawns(ctx) {
     let st = null;
     try { st = fs.statSync(cwd); } catch { /* missing */ }
     if (!cwd || !st?.isDirectory()) {
+      releasePlanClaim();
       return { status: 400, body: { ok: false, reason: 'cwd missing or not a directory' } };
     }
     if (body?.worktree === true && !deriveRepo(cwd).is_git) {
+      releasePlanClaim();
       return { status: 409, body: { ok: false, reason: 'cwd is not a git repository — cannot spawn into a worktree' } };
     }
 
@@ -1011,6 +1082,7 @@ export function createSpawns(ctx) {
           spawn_id, session_id, callsign, cwd, worktree_path, tmux_window: null,
           reason: `git worktree add: ${addErr}`,
         });
+        releasePlanClaim();
         return { status: 409, body: { ok: false, reason: `git worktree add failed: ${addErr}`.slice(0, 300) } };
       }
       q.setSpawnWorktree.run(worktree_path, spawn_id);
@@ -1023,11 +1095,18 @@ export function createSpawns(ctx) {
     // The deterministic-argv build + override/tmux launch + status flip is
     // shared with repo-mode spawns; it lives in launchPane() (incl. the `--`
     // end-of-options fix carried over from origin/main's audit).
-    return launchPane({
+    const out = await wrapSpawnFailure(launchPane)({
       spawn_id, session_id, callsign, tmux_session, tmux_window,
       requestedCwd: cwd, runCwd: worktree_path ?? cwd, cleanupRoot: cwd,
       worktree_path, body, skipPermissions, gatewayEnv: gateway.env,
     });
+    if (out.status >= 400) releasePlanClaim();
+    else if (planClaim) {
+      q.setPlanExecuted.run(`spawn:${spawn_id}`, planClaim.plan_id);
+      planClaim = null;
+      onMutate();
+    }
+    return out;
   }
 
   // POST /api/spawn/:id/revive — resume a terminal board-owned Claude

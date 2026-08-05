@@ -3,7 +3,17 @@
 // compiles every statement once at core boot and hands back the map + the
 // updateSession writer the rest of the core threads through `ctx`.
 
+// One map per DB handle: createCore calls createStatements exactly once, and a
+// re-derivation for the same handle returns the SAME map — same prepared
+// statement objects — so test seams (and any second factory) that resolve the
+// map from a handle reach the exact statements the core commits through,
+// rather than compiling a detached second set. DatabaseSync identity keys the
+// cache; the map itself is the WeakMap value, so it dies with the handle.
+const statementsByDb = new WeakMap();
+
 export function createStatements(db) {
+  const cached = statementsByDb.get(db);
+  if (cached) return cached;
   // ------------------------------------------------------------- statements
   const q = {
     getSession: db.prepare('SELECT * FROM sessions WHERE session_id = ?'),
@@ -17,8 +27,44 @@ export function createStatements(db) {
     // that keeps the animal never collides with itself.
     callsignTaken: db.prepare('SELECT 1 FROM sessions WHERE (callsign = ? OR prev_callsign = ?) AND archived_at IS NULL AND session_id != ? LIMIT 1'),
     allSessions: db.prepare('SELECT * FROM sessions ORDER BY started_at'),
+    // BUG-150: the snapshot's conflict-callsign lookup. The unbounded
+    // allSessions scan above fed a map whose ONLY consumer is
+    // recentConflicts' (≤20 rows, bounded) sessions_json, so every /state
+    // frame rebuilt id→callsign for EVERY archived session the daemon ever
+    // saw — growing with daemon lifetime while projecting a bounded list.
+    // Resolve callsigns for just the session ids the bounded conflict rows
+    // actually name: json_each explodes each sessions_json, the IN-fallback
+    // keeps any pre-json_each-id-column DB rows reachable, and the union
+    // halves dedupe themselves (UNION, not ALL). The json_valid gates mirror
+    // the M-B4/R2-6 guards in snapshot(): a corrupt or wrong-shape
+    // sessions_json must drop out of this lookup exactly as it drops out of
+    // the conflict list itself — never throw "malformed JSON" out of /state
+    // (json_each re-parses corrupt input per row and WOULD throw).
+    conflictCallsigns: db.prepare(`SELECT session_id, callsign FROM sessions
+      WHERE session_id IN (
+        SELECT je.value FROM conflicts c, json_each(c.sessions_json) je
+         WHERE c.id IN (SELECT id FROM conflicts ORDER BY id DESC LIMIT 20)
+           AND json_valid(c.sessions_json)
+           AND json_type(c.sessions_json) = 'array'
+      )
+      UNION
+      SELECT session_id, callsign FROM sessions
+      WHERE session_id IN (
+        SELECT c.sessions_json FROM conflicts c
+         WHERE c.id IN (SELECT id FROM conflicts ORDER BY id DESC LIMIT 20)
+           AND NOT json_valid(c.sessions_json)
+      )`),
     visibleSessions: db.prepare('SELECT * FROM sessions WHERE archived_at IS NULL ORDER BY started_at'),
     countSessions: db.prepare('SELECT COUNT(*) AS n FROM sessions'),
+    // BUG-193: /health.fleet (and `fleetdeck status`'s "sessions") is the size
+    // of the CURRENT fleet — the cards /state can show. An unscoped COUNT(*)
+    // also counted dismissed and retention-archived history, so dismissing or
+    // archiving the last card still reported a fleet of one (and growing with
+    // history). Same archived_at IS NULL scope as visibleSessions. Kept as a
+    // separate statement because derive.mjs's assignCallsign deliberately
+    // rotates from the ALL-rows count (a monotonic seed independent of
+    // archival).
+    countVisibleSessions: db.prepare('SELECT COUNT(*) AS n FROM sessions WHERE archived_at IS NULL'),
     insertSession: db.prepare(`INSERT INTO sessions
       (session_id, callsign, col, note, events, started_at, last_seen, blocked_this_turn)
       VALUES (?, ?, 'queued', 'registered', 0, ?, ?, 0)`),
@@ -60,11 +106,32 @@ export function createStatements(db) {
     // successor collide with its own past self — a hazard banner reading
     // "wren-a9e1 and wren-a9e1 both touching X".
     reassignTouches: db.prepare('UPDATE file_touches SET session_id = ? WHERE session_id = ?'),
+    // BUG-107 alias table: the set of names a card has ever worn, so direct
+    // target resolution survives any ticket/name/clear sequence. rememberAlias
+    // is INSERT OR IGNORE (every rename re-records the outgoing name; a revert
+    // to a previously worn name must not bump its `at`), and the heir of a
+    // /clear succession inherits the lineage's whole history.
+    rememberAlias: db.prepare('INSERT OR IGNORE INTO session_aliases (session_id, callsign, at) VALUES (?, ?, ?)'),
+    reassignAliases: db.prepare('UPDATE session_aliases SET session_id = ? WHERE session_id = ?'),
+    // Live sessions wearing ? as their name-in-history (current, anchor or any
+    // dropped name). Used as the LAST fallback by target resolvers — after
+    // current-name matches and the write-once prev_callsign anchor — so a
+    // reissued name always binds to its present holder first.
+    aliasesMatch: db.prepare(`SELECT DISTINCT s.* FROM sessions s
+      WHERE s.archived_at IS NULL
+        AND (s.session_id IN (SELECT session_id FROM session_aliases WHERE callsign = ?)
+             OR s.prev_callsign = ?)`),
     // Boot heal (reconcileClearForks): pre-0.7.1 rows have no cleared_at, so a
     // stranded pair is reconstructed from the event log instead. These two read
     // the 24h-retained events table.
+    // The heal's predecessor predicate is a session whose LAST word was a
+    // /clear. Tie-break on rowid, not just `at`: the hooks of two interleaved
+    // lineages (end A, end B, start B′, start A′) can share a millisecond, and
+    // then "last" by timestamp alone is a coin flip — exactly the ambiguity the
+    // heal is forbidden from resolving by chance. Insertion order is the order
+    // the events actually reached the daemon.
     lastEventOf: db.prepare(`SELECT hook_event, note, at FROM events
-      WHERE session_id = ? ORDER BY at DESC LIMIT 1`),
+      WHERE session_id = ? ORDER BY at DESC, rowid DESC LIMIT 1`),
     clearBornSessionsSince: db.prepare(`SELECT DISTINCT e.session_id, e.at FROM events e
       WHERE e.hook_event = 'SessionStart' AND e.note = 'session clear' AND e.at BETWEEN ? AND ?
       ORDER BY e.at ASC`),
@@ -83,12 +150,43 @@ export function createStatements(db) {
     // snapshot's per-session cap keeps the files a card touched most recently.
     // (Was MIN(at) ASC, which kept a busy card's OLDEST 50 and dropped its
     // newest — the exact files the human is watching.)
-    filesBySession: db.prepare('SELECT session_id, abs_path, MAX(at) AS recent FROM file_touches WHERE at > ? GROUP BY session_id, abs_path ORDER BY recent DESC'),
+    // BUG-149: the cap itself also lives in SQL (per-session ROW_NUMBER,
+    // bounded by the second arg = SNAPSHOT_FILES_PER_SESSION). Without it a
+    // session touching tens of thousands of distinct vendored/generated files
+    // made EVERY frame materialize and ship every grouped row to JS just to
+    // discard all but 50 — the synchronous SQLite walk blocking hook handling.
+    filesBySession: db.prepare(`SELECT session_id, abs_path, recent FROM (
+      SELECT session_id, abs_path, MAX(at) AS recent,
+        ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY MAX(at) DESC) AS rn
+      FROM file_touches WHERE at > ? GROUP BY session_id, abs_path
+    ) WHERE rn <= ? ORDER BY recent DESC`),
     insertMail: db.prepare('INSERT INTO mail (to_session, from_id, text, at, delivered_at) VALUES (?, ?, ?, ?, NULL)'),
-    pendingMail: db.prepare('SELECT * FROM mail WHERE to_session = ? AND delivered_at IS NULL AND expired_at IS NULL ORDER BY at, id'),
+    // BUG-034: "claimable" = never delivered, never expired, and not under a
+    // live in-flight lease. A row whose lease deadline passed (consumer or
+    // daemon died mid-delivery) is claimable again — that is the whole point
+    // of the lease: nothing stays claimed without an acknowledgement forever.
+    pendingMail: db.prepare(`SELECT * FROM mail
+      WHERE to_session = ? AND delivered_at IS NULL AND expired_at IS NULL
+        AND (claimed_at IS NULL OR claimed_at <= ?)
+      ORDER BY at, id`),
+    // BUG-128: the owned-pane claim and the pending-budget check must not read
+    // the whole mailbox. pendingMailPage fetches one bounded batch (the extra
+    // row lets tryOwnedPaneDelivery tell "more pending" apart from "empty");
+    // pendingMailStats prices a would-be insert without hydrating every row.
+    // Both carry the same BUG-034 lease filter as pendingMail.
+    pendingMailPage: db.prepare(`SELECT * FROM mail
+      WHERE to_session = ? AND delivered_at IS NULL AND expired_at IS NULL
+        AND (claimed_at IS NULL OR claimed_at <= ?)
+      ORDER BY at, id LIMIT ?`),
+    pendingMailStats: db.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(LENGTH(text)), 0) AS bytes FROM mail
+      WHERE to_session = ? AND delivered_at IS NULL AND expired_at IS NULL
+        AND (claimed_at IS NULL OR claimed_at <= ?)`),
     // /api/watch v2 claim: oldest undelivered mail from ANY sender (v1
-    // claimed fleetdeck-answer rows only).
-    nextMail: db.prepare('SELECT * FROM mail WHERE to_session = ? AND delivered_at IS NULL AND expired_at IS NULL ORDER BY at, id LIMIT 1'),
+    // claimed fleetdeck-answer rows only). Same BUG-034 lease filter.
+    nextMail: db.prepare(`SELECT * FROM mail
+      WHERE to_session = ? AND delivered_at IS NULL AND expired_at IS NULL
+        AND (claimed_at IS NULL OR claimed_at <= ?)
+      ORDER BY at, id LIMIT 1`),
     // v1.1 `assign auto` routing (POST /command contract): deterministic,
     // zero model calls. Candidates = non-ended sessions whose col is not
     // offline/needsyou (stuck sessions get no new work), scoped to a repo
@@ -112,6 +210,17 @@ export function createStatements(db) {
       FROM mail WHERE delivered_at IS NULL AND expired_at IS NULL GROUP BY to_session`),
     markDelivered: db.prepare('UPDATE mail SET delivered_at = ? WHERE id = ?'),
     unmarkDelivered: db.prepare('UPDATE mail SET delivered_at = NULL WHERE id = ?'),
+    // BUG-034 in-flight lease. claimMail leases (claims) without delivering;
+    // ackMail finalizes ONLY a row still under lease (the WHERE guard makes a
+    // late or double ack a no-op instead of resurrecting a row that already
+    // moved on); releaseClaim/expireStalledClaims hand the row back.
+    claimMail: db.prepare('UPDATE mail SET claimed_at = ? WHERE id = ? AND delivered_at IS NULL AND claimed_at IS NULL'),
+    ackMail: db.prepare('UPDATE mail SET delivered_at = ?, claimed_at = NULL WHERE id = ? AND delivered_at IS NULL AND claimed_at IS NOT NULL'),
+    releaseClaim: db.prepare('UPDATE mail SET claimed_at = NULL WHERE id = ? AND delivered_at IS NULL'),
+    // Retention is the sweeper that outlives consumer processes: any claim
+    // whose deadline passed never got its ack, so the mail goes back to the
+    // claimable pool for the next watcher / turn boundary / pane delivery.
+    expireStalledClaims: db.prepare('UPDATE mail SET claimed_at = NULL WHERE delivered_at IS NULL AND claimed_at IS NOT NULL AND claimed_at <= ?'),
     insertEvent: db.prepare('INSERT INTO events (session_id, hook_event, tool_name, note, at) VALUES (?, ?, ?, ?, ?)'),
     sparkline: db.prepare('SELECT session_id, (at / 60000) AS minute, COUNT(*) AS n FROM events WHERE at > ? GROUP BY session_id, minute'),
     insertTicker: db.prepare('INSERT INTO ticker (at, msg) VALUES (?, ?)'),
@@ -164,17 +273,21 @@ export function createStatements(db) {
     // v1.2 board-spawned sessions. "Active" = status spawning|stalled|live — the
     // rows that get liveness-checked, and the number the board shows as "N live".
     insertSpawn: db.prepare(`INSERT INTO spawns
-      (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, requested_at, status, skip_permissions, remote_control, origin_url, requested_branch, branch_mode, gateway, kind, setup_cmd)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'spawning', ?, ?, ?, ?, ?, ?, ?, ?)`),
+      (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, worktree_owned, requested_at, status, skip_permissions, remote_control, origin_url, requested_branch, branch_mode, gateway, kind, setup_cmd)
+      VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, 'spawning', ?, ?, ?, ?, ?, ?, ?, ?)`),
     // H-R6: a spawn's durable row now exists BEFORE any external op (worktree
     // add / tmux window) so a crash in that gap can never orphan a worktree or
     // pane with no owning row. It is born 'provisioning' — excluded from
     // activeSpawns (never liveness-checked or counted live) until its pane
     // exists — and flipped to 'spawning' once launch succeeds.
     insertProvisionalSpawn: db.prepare(`INSERT INTO spawns
-      (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, requested_at, status, skip_permissions, remote_control, origin_url, requested_branch, branch_mode, gateway, kind, setup_cmd)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'provisioning', ?, ?, ?, ?, ?, ?, ?, ?)`),
-    setSpawnWorktree: db.prepare('UPDATE spawns SET worktree_path = ? WHERE spawn_id = ?'),
+      (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, worktree_owned, requested_at, status, skip_permissions, remote_control, origin_url, requested_branch, branch_mode, gateway, kind, setup_cmd)
+      VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, 'provisioning', ?, ?, ?, ?, ?, ?, ?, ?)`),
+    // BUG-153: the ownership bit is persisted with the path, at the moment the
+    // spawn learns whether materializeBranch created the tree or reused a
+    // pre-existing one. Boot reconciliation reads it to decide whether the
+    // verified removal path applies to an interrupted spawn's worktree.
+    setSpawnWorktree: db.prepare('UPDATE spawns SET worktree_path = ?, worktree_owned = ? WHERE spawn_id = ?'),
     staleProvisioningSpawns: db.prepare("SELECT * FROM spawns WHERE status = 'provisioning'"),
     // H-R5 / R2-5: the newest spawn row still laying claim to a tmux window (a
     // revive reuses the dead row's window name, so a lineage can have several
@@ -197,6 +310,17 @@ export function createStatements(db) {
     // (spawning|stalled|live) to refuse a still-live-eligible card.
     spawnsForSession: db.prepare('SELECT * FROM spawns WHERE session_id = ?'),
     allSpawns: db.prepare('SELECT * FROM spawns ORDER BY requested_at, rowid'),
+    // BUG-150: the snapshot's spawn-ownership map. The unbounded allSpawns
+    // scan above was materialized in full on EVERY /state frame (plus one
+    // Map/set per row) so the LAST row per session_id would win — yet only
+    // visible (non-archived) sessions ever read the map, and a fleet has a
+    // handful of those by design. Revive lineages keep spawning forever, so
+    // the scan grew monotonically with daemon lifetime. This correlated
+    // subquery returns only the NEWEST row (same requested_at,rowid order
+    // as spawnBySession) for each session the frame can actually display.
+    spawnByVisibleSession: db.prepare(`SELECT * FROM spawns
+      WHERE session_id IN (SELECT session_id FROM sessions WHERE archived_at IS NULL)
+      ORDER BY requested_at, rowid`),
     activeSpawns: db.prepare("SELECT * FROM spawns WHERE status IN ('spawning', 'stalled', 'live')"),
     // BUG 3: 'pane-dead' and 'gone' were a ONE-WAY DOOR — activeSpawns never
     // re-checked them, so a spawn wrongly condemned (BUG 1 /clear, BUG 2
@@ -237,6 +361,14 @@ export function createStatements(db) {
     provisioningSpawnBySession: db.prepare("SELECT * FROM spawns WHERE session_id = ? AND status = 'provisioning' ORDER BY requested_at DESC, rowid DESC LIMIT 1"),
     countActiveSpawns: db.prepare("SELECT COUNT(*) AS n FROM spawns WHERE status IN ('spawning', 'stalled', 'live')"),
     setSpawnStatus: db.prepare('UPDATE spawns SET status = ? WHERE spawn_id = ?'),
+    // BUG-152: resurrection is a compare-and-set. The liveness tick snapshots a
+    // 'pane-dead'/'gone' row and the window owner BEFORE awaiting
+    // paneCurrentCommand; a human kill (or any terminal transition) landing
+    // during that await must not be overwritten by the stale probe's verdict.
+    // The write only wins while the row is still 'pane-dead'/'gone' — a 'killed'
+    // row (a human decision) makes it change zero rows, and the card is left
+    // alone. Same pattern as setSpawnStalled below.
+    setSpawnResurrected: db.prepare("UPDATE spawns SET status = 'live' WHERE spawn_id = ? AND status IN ('pane-dead', 'gone')"),
     setSpawnStalled: db.prepare("UPDATE spawns SET status = 'stalled', stall_detail = ? WHERE spawn_id = ? AND status = 'spawning'"),
     // Records a failed clone/fetch's redacted git-stderr excerpt (repos.mjs).
     // NO compare-and-set predicate, deliberately: copying setSpawnStalled's
@@ -257,6 +389,19 @@ export function createStatements(db) {
     worktreeSpawns: db.prepare(`SELECT spawns.*, sessions.ended_at AS session_ended_at
       FROM spawns LEFT JOIN sessions ON sessions.session_id = spawns.session_id
       WHERE spawns.worktree_path IS NOT NULL
+      ORDER BY spawns.requested_at DESC, spawns.rowid DESC`),
+    // WORKTREE LIVENESS CONTRACT: the removal gate must see every spawn whose
+    // EFFECTIVE directory could be the target tree — and worktreeSpawns above
+    // cannot, because its `worktree_path IS NOT NULL` filter drops the cwd-only
+    // rows: a live shell (`kind = 'shell'` refuses worktree:true outright) or an
+    // adopted Claude launched INTO a fleet worktree carries `worktree_path NULL,
+    // cwd = <that tree>`. The caller keys on the effective directory
+    // `worktree_path ?? cwd` — the same coalesce the launch paths use — and does
+    // the path-containment comparison (a spawn in a SUBdirectory of the target
+    // is still a live owner). Read-only, newest-first like its sibling.
+    liveWorktreeClaims: db.prepare(`SELECT spawns.*, sessions.ended_at AS session_ended_at
+      FROM spawns LEFT JOIN sessions ON sessions.session_id = spawns.session_id
+      WHERE spawns.status IN ('provisioning', 'spawning', 'live')
       ORDER BY spawns.requested_at DESC, spawns.rowid DESC`),
     deleteWorktreeSpawns: db.prepare('DELETE FROM spawns WHERE worktree_path = ?'),
     deleteEndedSession: db.prepare('DELETE FROM sessions WHERE session_id = ? AND ended_at IS NOT NULL'),
@@ -288,6 +433,16 @@ export function createStatements(db) {
     // never silently swept — dismiss refuses a stalled card up front).
     expireMailForSession: db.prepare(`UPDATE mail SET expired_at = ?
       WHERE to_session = ? AND delivered_at IS NULL AND expired_at IS NULL`),
+    // The questions analogue, for session-row removal (worktree.mjs's purge):
+    // a bare session DELETE must never leave a pending question pointing at a
+    // callsign that no longer exists. Mail expiry has no questions.mjs hold
+    // machinery to keep consistent, so a prepared statement is enough —
+    // hold-kind rows for an ENDED session have no parked socket left (their
+    // holds died with the hook connection), and there are no re-arm timers to
+    // cancel for a dead session. answers to an expired row are refused by the
+    // status guard in questions.mjs answer().
+    expireQuestionsForSession: db.prepare(`UPDATE questions SET status = 'expired'
+      WHERE session_id = ? AND status = 'pending'`),
     goneSessionSpawns: db.prepare(`UPDATE spawns SET status = 'gone'
       WHERE status NOT IN ('killed', 'pane-dead', 'gone', 'stalled')
         AND session_id = ?`),
@@ -331,6 +486,16 @@ export function createStatements(db) {
       ORDER BY created_at DESC, plan_id DESC LIMIT 20`),
     setPlanStatus: db.prepare('UPDATE plans SET status = ? WHERE plan_id = ?'),
     setPlanExecuted: db.prepare("UPDATE plans SET status = 'executed', executed_via = ? WHERE plan_id = ?"),
+    // BUG-040 — atomic pre-spawn execution claim: one guarded UPDATE flips an
+    // executable plan to 'executed' BEFORE the spawn launches anything, so
+    // concurrent claims serialize in SQLite and exactly one wins (changes===1).
+    // releasePlanExecution restores the pre-claim status after a spawn
+    // failure, guarded on this claim's own `via` so a concurrent archive/mark
+    // in the failure window is never reverted.
+    claimPlanExecution: db.prepare(`UPDATE plans SET status = 'executed', executed_via = ?
+      WHERE plan_id = ? AND status IN ('proposed', 'approved', 'captured')`),
+    releasePlanExecution: db.prepare(`UPDATE plans SET status = ?
+      WHERE plan_id = ? AND status = 'executed' AND executed_via = ?`),
   };
 
   const FIELDS = ['callsign', 'model', 'cwd', 'repo_id', 'repo_name', 'branch', 'worktree',
@@ -342,7 +507,9 @@ export function createStatements(db) {
     // session_id without minting a card, which is exactly what adopt needs.
     'adopt_armed_until', 'adopt_armed_skip', 'end_reason',
     // 0.7.1 /clear succession + custom names.
-    'cleared_at', 'succeeded_by', 'custom_suffix'];
+    'cleared_at', 'succeeded_by', 'custom_suffix',
+    // Run generation (BUG-025): the active process's fleet_run nonce.
+    'run_id'];
   // M-P8: updateSession is the hottest write path (every hook event runs it
   // one to three times). Each call used to compile a brand-new UPDATE, so
   // SQLite re-parsed and re-planned identical statements forever. The set of
@@ -365,5 +532,7 @@ export function createStatements(db) {
     stmt.run(...keys.map(k => upd[k] ?? null), sid);
   }
 
-  return { q, FIELDS, updateSession };
+  const statements = { q, FIELDS, updateSession };
+  statementsByDb.set(db, statements);
+  return statements;
 }

@@ -214,16 +214,18 @@ test('manual ticket: override renames, blocks later auto-detect, re-override kee
   assert.equal(card.ticket, 'ENG-9');
   assert.equal(card.prev_callsign, birthCallsign, 'prev_callsign is write-once — still the birth name after re-ticket');
 
-  // 4) Clear reverts to the birth name and pins the auto path OFF. The dropped
-  // ticketed name moves into prev_callsign (never nulled) so peers that cached
-  // it from briefs/ticker can still route mail to it.
+  // 4) Clear reverts to the birth name and pins the auto path OFF. prev_callsign
+  // is the write-once birth-name ANCHOR (BUG-107): wearing the birth name again
+  // means no anchor, and the dropped ticketed name stays routable via the alias
+  // table instead of squatting in the anchor slot (where the next rename would
+  // re-anchor on it and forget the birth name for good).
   res = await command(daemon, `ticket ${sid} clear`);
   assert.equal(res.json.ok, true, 'ticket clear should succeed');
   card = await getCard(daemon, sid);
   assert.equal(card.callsign, birthCallsign, 'clear reverts the callsign to the birth name');
   assert.equal(card.ticket ?? null, null, 'clear drops the ticket');
   assert.equal(card.ticket_source, 'manual', 'clear pins ticket_source=manual so auto-detect stays off');
-  assert.equal(card.prev_callsign, engCallsign, 'clear keeps the dropped ticketed name routable via prev_callsign');
+  assert.equal(card.prev_callsign ?? null, null, 'back on the birth name → no anchor; the dropped name lives in the alias table');
 
   // 5) Auto-detect stays off after a clear.
   await postHook(daemon.baseUrl, 'PostToolUse',
@@ -337,6 +339,60 @@ test('mail and assign to the birth name after a rename still deliver to the rena
   const assignRes = await command(daemon, `assign ${birthCallsign} audit the mailbox`);
   assert.equal(assignRes.json.ok, true);
   assert.equal(assignRes.json.delivered, 1, 'assign to the birth name reaches the renamed session');
+});
+
+test('BUG-107: re-ticket → clear → re-ticket never forgets the birth callsign — mail, assign and ticket commands to it still deliver', async (t) => {
+  const plain = plainDir();
+  const daemon = await startDaemon();
+  t.after(async () => { await daemon.stop(); rmSync(plain, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+
+  const sid = randomUUID();
+  const start = await sessionStart(daemon, sid, plain);
+  const birthCallsign = start.json.callsign; // e.g. falcon-928e — the SessionStart name in every peer's brief
+
+  // The exact sequence from the finding: ticket, re-ticket, clear, re-ticket.
+  let res = await command(daemon, `ticket ${birthCallsign} PROJ-1`);
+  assert.equal(res.json.ok, true);
+  const projCallsign = res.json.callsign;
+  res = await command(daemon, `ticket ${sid} ENG-2`);
+  assert.equal(res.json.ok, true);
+  const engCallsign = res.json.callsign;
+  res = await command(daemon, `ticket ${sid} clear`);
+  assert.equal(res.json.ok, true);
+  res = await command(daemon, `ticket ${sid} OPS-3`);
+  assert.equal(res.json.ok, true);
+  const opsCallsign = res.json.callsign;
+
+  let card = await getCard(daemon, sid);
+  assert.equal(card.callsign, opsCallsign);
+  assert.equal(card.prev_callsign, birthCallsign,
+    'the anchor is write-once across the WHOLE sequence — the clear must not re-anchor on the dropped name');
+
+  // Mail to the birth name still finds the session.
+  let mailRes = await postJson(`${daemon.baseUrl}/mail`, { to: birthCallsign, from: 'operator', text: 'to the birth name' }, { token: daemon.token });
+  assert.equal(mailRes.status, 200);
+  assert.equal(mailRes.json.delivered, 1, 'mail to the birth callsign delivers after clear + re-ticket');
+  assert.equal(mailRes.json.targets[0].session_id, sid);
+
+  // Assign to the birth name delivers too.
+  const assignRes = await command(daemon, `assign ${birthCallsign} check the mailbox`);
+  assert.equal(assignRes.json.ok, true);
+  assert.equal(assignRes.json.delivered, 1, 'assign to the birth callsign delivers after clear + re-ticket');
+
+  // Every INTERMEDIATE name the card wore and dropped stays routable as well.
+  for (const dropped of [projCallsign, engCallsign]) {
+    mailRes = await postJson(`${daemon.baseUrl}/mail`, { to: dropped, from: 'operator', text: 'to a dropped name' }, { token: daemon.token });
+    assert.equal(mailRes.json.delivered, 1, `mail to the dropped name ${dropped} still delivers`);
+    assert.equal(mailRes.json.targets[0].session_id, sid);
+  }
+
+  // And the ticket command still resolves the card by its birth name.
+  const retarget = await command(daemon, `ticket ${birthCallsign} QA-4`);
+  assert.equal(retarget.json.ok, true, 'the ticket command resolves the birth name after the sequence');
+  assert.equal(retarget.json.session_id, sid);
+  card = await getCard(daemon, sid);
+  assert.equal(card.ticket, 'QA-4');
+  assert.equal(card.prev_callsign, birthCallsign, 'still the birth anchor after one more rename');
 });
 
 // ---------------------------------------------------------------------------

@@ -1,10 +1,20 @@
 #!/usr/bin/env node
-// fleet-sessionstart.mjs — the ONLY command hook. Election + spawn + brief.
+// fleet-sessionstart.mjs — the ONLY command hook. Election + spawn + brief +
+// the dynamic FileChanged watch list (BUG-104).
 //
 // Reads the SessionStart hook payload on stdin, makes sure fleetd is up
 // (health check → spawn detached → poll ~3 s), POSTs /hook/SessionStart and
 // prints the daemon-composed roster brief to stdout (SessionStart stdout is
 // added to the session context).
+//
+// It also owns watch registration: hooks.json's FileChanged matcher can only
+// watch literal top-level filenames, so coverage of the files a session will
+// actually touch has to come from hookSpecificOutput.watchPaths. stdout is
+// therefore a single JSON object: the roster brief rides additionalContext and
+// watchPaths registers the session's cwd — the one absolute path that covers
+// every file the session may touch, including files created after startup.
+// fleet-hook.mjs refreshes the same list from CwdChanged, and every delivered
+// FileChanged event re-pins it.
 //
 // Design rule #1: this script must NEVER break the session. EVERY failure
 // path is a silent exit 0, and a watchdog guarantees we are gone in ~4 s.
@@ -12,12 +22,13 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { CLAUDE_ENV_MARKERS, GATEWAY_ENV_VARS, SPAWN_ENV_VARS } from './fleetd/env-scrub.mjs';
 // Version-takeover contract, imported as SOURCE from the sibling fleetd/ dir
 // (same unbundled pattern as env-scrub.mjs above) so this hook can evict a
 // strictly-older daemon and let the newest installed build own the port.
-import { shouldTakeOver, verifyDaemonPid, terminateDaemon } from './fleetd/takeover.mjs';
+import { shouldTakeOver, verifyDaemonPid, terminateDaemon, replacementMatches } from './fleetd/takeover.mjs';
 import { resolveHome, resolvePort, resolveBase } from './fleetd/config.mjs';
 
 const PORT = resolvePort();
@@ -155,7 +166,11 @@ function ownVersion() {
 // proving it really is our daemon), wait for it to die, and spawn our newer
 // build onto the freed port. Every uncertain branch fails open — a stale
 // daemon still serving beats a broken session.
-async function ensureServer() {
+// `round` counts re-entries after a competing takeover candidate's build won
+// the port election: the loop re-arbitrates against the daemon now serving,
+// and hard-caps so two evenly-matched candidates can never re-take over each
+// other past the hook's watchdog.
+async function ensureServer(round = 0) {
   const health = await api('/health', { timeout: 250 });
   if (health) {
     // A daemon is already up. ownVersion() is read only on this branch — the
@@ -220,7 +235,34 @@ async function ensureServer() {
   }
   for (let i = 0; i < 12; i++) {
     await new Promise(r => setTimeout(r, 250));
-    if (await api('/health', { timeout: 250 })) return true;
+    const spawned = await api('/health', { timeout: 250 });
+    if (spawned) {
+      // A daemon answers, but whose? Only a hook that just evicted an older
+      // build can be RACING another candidate doing the same — a cold-boot
+      // competitor simply fails to bind and this poll never sees it (its
+      // winner, whoever spawned it, reports this hook's own version anyway).
+      // If the winner is not our build, do NOT accept its code as the result
+      // of our upgrade: fail open onto it for this session and re-arbitrate.
+      // Round 2's /health then applies the normal strictly-newer rule — we
+      // evict it when we are newer, keep it when we are not — so a rapid
+      // multi-version upgrade converges on the NEWEST build instead of
+      // whichever candidate happened to claim the port first. Skipping the
+      // check on the cold-boot path also keeps ownVersion() (a package.json
+      // read) off that path, as documented in ensureServer.
+      if (replacedVersion && !replacementMatches(ownVersion(), spawned.version)) {
+        // The recursion cap is the anti-flap guarantee: if the competitor
+        // somehow evicts us back (only possible with two equal "newest"
+        // builds fighting), a third round is out of budget — return true and
+        // serve the session on whatever healthy daemon answered.
+        if (round >= 1) return true;
+        // A second takeover may outlast this round's remaining budget the
+        // same way the first did — re-extend from the hook's start, still
+        // well inside hooks.json's 15s ceiling.
+        rearmWatchdog(8000);
+        return ensureServer(round + 1);
+      }
+      return true;
+    }
   }
   return false;
 }
@@ -228,28 +270,63 @@ async function ensureServer() {
 try {
   const payload = await readStdin();
   payload.hook_event_name = payload.hook_event_name || 'SessionStart';
+  // Run generation (BUG-025): mint/read THIS CLI process's run nonce and stamp
+  // it on the registration. SessionStart is usually the process's first hook,
+  // so this hook owns the mint; fleet-hook.mjs (same run-<ppid> dotfile, mint
+  // only when absent) tags the process's later events — SessionEnd included —
+  // with the same nonce. The daemon refuses to tombstone a card on a
+  // SessionEnd whose nonce is not the active run, which is what stops a
+  // delayed async SessionEnd from the PREVIOUS `claude --resume` process
+  // (same session id) from killing the live one. Every failure path leaves the
+  // payload untagged (the daemon's historical behavior) — never break the
+  // session.
+  try {
+    if (payload.fleet_run == null) {
+      const runFile = path.join(HOME, `run-${process.ppid}`);
+      let run = null;
+      try { run = fs.readFileSync(runFile, 'utf8').trim() || null; } catch { /* first hook of this process */ }
+      if (!run) {
+        run = randomUUID();
+        fs.writeFileSync(runFile, run, { mode: 0o600 });
+      }
+      payload.fleet_run = run;
+    }
+  } catch { /* untagged registration still registers */ }
   const serverUp = await ensureServer();
   // 0.16.0: if THIS hook evicted an older daemon, say so on the registration —
   // the daemon answers with upgrade lines (which other sessions still run
   // pre-upgrade hooks) so the human hears it from the session that caused it.
   if (replacedVersion) payload.fleet_takeover = replacedVersion;
+  // BUG-104: the FileChanged hook is dead weight without a watch list — a
+  // matcher-less FileChanged registers nothing, and matchers can only name
+  // literal top-level files. SessionStart's hookSpecificOutput.watchPaths is
+  // the dynamic registration channel: hand the harness the session's cwd (the
+  // one absolute path covering everything the session may touch, including
+  // files created after startup). The brief and the warnings move into
+  // additionalContext — SessionStart accepts BOTH plain stdout and JSON, but
+  // only the JSON form carries watchPaths.
+  const watchPaths = [typeof payload.cwd === 'string' && payload.cwd ? payload.cwd : process.cwd()];
+  const context = [];
   if (serverUp) {
     // Cold boot: ensureServer() just minted HOME/token. Refresh before the first
     // authenticated registration instead of silently losing the birth event.
     TOKEN = readToken();
     const reg = await api('/hook/SessionStart', { method: 'POST', body: payload, timeout: 1200 });
     if (managedVersionDrift) {
-      process.stdout.write(
+      context.push(
         `[FLEETDECK] The fleet daemon is a managed service running v${managedVersionDrift}, `
         + `but this plugin is v${ownVersion()}. The service owns the port and was left running. `
         + `Restart it to pick up the new version.\n`,
       );
     }
     if (Array.isArray(reg?.upgrade_lines)) {
-      for (const line of reg.upgrade_lines) process.stdout.write(`${line}\n`);
+      for (const line of reg.upgrade_lines) context.push(`${line}\n`);
     }
-    if (reg?.brief) process.stdout.write(reg.brief);
+    if (reg?.brief) context.push(reg.brief);
   }
+  const hookSpecificOutput = { hookEventName: 'SessionStart', watchPaths };
+  if (context.length) hookSpecificOutput.additionalContext = context.join('');
+  process.stdout.write(JSON.stringify({ hookSpecificOutput }));
 } catch { /* no fleet, no drama */ }
 clearTimeout(watchdog);
 process.exit(0);

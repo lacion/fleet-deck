@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openDb } from '../scripts/fleetd/db.mjs';
 import { claudeTranscriptPath, mungeClaudeProjectCwd } from '../scripts/fleetd/derive.mjs';
-import { startDaemon } from './helpers/daemon.mjs';
+import { guardScratchDirs, startDaemon } from './helpers/daemon.mjs';
 import { getJson, postHook, postJson } from './helpers/http.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -61,19 +61,14 @@ test('revive resumes the same session into a new spawn row and its resume hook m
   const userHome = scratch('fleetdeck-revive-user-');
   const cwd = scratch('fleetdeck-revive-cwd-');
   const record = path.join(userHome, 'spawn.jsonl');
-  const daemon = await startDaemon({
+  const holder = guardScratchDirs(t, [daemonHome, userHome, cwd]);
+  const daemon = holder.daemon = await startDaemon({
     home: daemonHome,
     env: {
       HOME: userHome,
       FLEETDECK_SPAWN_CMD: SPAWN_CMD_FIXTURE,
       FLEETDECK_TEST_SPAWN_RECORD: record,
     },
-  });
-  t.after(async () => {
-    await daemon.stop({ keepHome: true });
-    rmSync(daemonHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
-    rmSync(userHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
-    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   // 0.16.0: an unsupervised spawn body must echo a fresh single-use arm token.
@@ -134,19 +129,14 @@ test('revive refusals cover unknown/live/missing cwd/missing transcript/active s
   const userHome = scratch('fleetdeck-revive-refuse-user-');
   const cwd = scratch('fleetdeck-revive-refuse-cwd-');
   const record = path.join(userHome, 'spawn.jsonl');
-  const daemon = await startDaemon({
+  const holder = guardScratchDirs(t, [daemonHome, userHome, cwd]);
+  const daemon = holder.daemon = await startDaemon({
     home: daemonHome,
     env: {
       HOME: userHome,
       FLEETDECK_SPAWN_CMD: SPAWN_CMD_FIXTURE,
       FLEETDECK_TEST_SPAWN_RECORD: record,
     },
-  });
-  t.after(async () => {
-    await daemon.stop({ keepHome: true });
-    rmSync(daemonHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
-    rmSync(userHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
-    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   let res = await postJson(`${daemon.baseUrl}/api/spawn/${randomUUID()}/revive`, {});
@@ -197,15 +187,10 @@ test('snapshot spawn.revivable follows terminal status, cwd, and transcript exis
   const daemonHome = scratch('fleetdeck-revive-state-daemon-');
   const userHome = scratch('fleetdeck-revive-state-user-');
   const cwd = scratch('fleetdeck-revive-state-cwd-');
-  const daemon = await startDaemon({
+  const holder = guardScratchDirs(t, [daemonHome, userHome, cwd]);
+  const daemon = holder.daemon = await startDaemon({
     home: daemonHome,
     env: { HOME: userHome, FLEETDECK_SPAWN_CMD: SPAWN_CMD_FIXTURE },
-  });
-  t.after(async () => {
-    await daemon.stop({ keepHome: true });
-    rmSync(daemonHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
-    rmSync(userHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
-    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
   const spawned = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd });
   const { spawn_id: spawnId, session_id: sid } = spawned.json;
@@ -239,13 +224,8 @@ test('a resume stranded mid-flight is released on the next boot, not stuck at re
     FLEETDECK_SPAWN_CMD: SPAWN_CMD_FIXTURE,
     FLEETDECK_TEST_SPAWN_RECORD: record,
   };
-  const live = { daemon: await startDaemon({ home: daemonHome, env }) };
-  t.after(async () => {
-    await live.daemon.stop({ keepHome: true });
-    rmSync(daemonHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
-    rmSync(userHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
-    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
-  });
+  const live = guardScratchDirs(t, [daemonHome, userHome, cwd]);
+  live.daemon = await startDaemon({ home: daemonHome, env });
 
   const arm = (await postJson(`${live.daemon.baseUrl}/api/spawn/arm-unsupervised`, {}, { token: live.daemon.token })).json.arm_token;
   const spawned = await postJson(`${live.daemon.baseUrl}/api/spawn`, {
@@ -285,4 +265,21 @@ test('a resume stranded mid-flight is released on the next boot, not stuck at re
   assert.match(card.note, /revive was interrupted/);
   assert.equal(card.spawn.revivable, true, 'and the board can offer revive again');
   assert.ok(card.endedAt, 'releasing the card does not resurrect the ended session');
+});
+
+test('revive harness cleans caller-owned scratch dirs even when the daemon never starts', async (t) => {
+  const daemonHome = scratch('fleetdeck-revive-nostart-daemon-');
+  const userHome = scratch('fleetdeck-revive-nostart-user-');
+  const cwd = scratch('fleetdeck-revive-nostart-cwd-');
+  await t.test('a revive test whose daemon rejects on boot', async (st) => {
+    const holder = guardScratchDirs(st, [daemonHome, userHome, cwd]);
+    await assert.rejects(
+      startDaemon({ home: daemonHome, env: { HOME: userHome }, healthTimeoutMs: 200 }),
+      /never became healthy/,
+    );
+    assert.equal(holder.daemon, null, 'no daemon handle exists to stop after a failed boot');
+  });
+  assert.equal(existsSync(daemonHome), false, 'daemon home was removed despite the failed start');
+  assert.equal(existsSync(userHome), false, 'user home was removed despite the failed start');
+  assert.equal(existsSync(cwd), false, 'cwd was removed despite the failed start');
 });

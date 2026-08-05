@@ -127,6 +127,78 @@ test('BUG 5: IDENTICAL-input parallel holds — a single PostToolUse expires exa
   db.close();
 });
 
+test('BUG-138: completing an ANSWERED duplicate permission does NOT expire its still-pending identical twin', () => {
+  const db = openDb(':memory:');
+  const questions = createQuestions(db, { holdMs: 60_000 });
+
+  // Two parallel permission holds for the SAME tool call (identical
+  // tool_name + tool_input → one shared toolCallKey). The board answers A;
+  // A's row flips to 'answered' and leaves the pending set that
+  // expireOnActivity correlates against. When A's OWN completing PostToolUse
+  // then arrives, the old code matched only pending twin B and expired it —
+  // the second permission vanished from the board and fell back to the
+  // terminal, even though the human had never decided it.
+  const perm = fixture('permission-request', { session: 's1' }); // Bash `rm -rf build/`
+  const repliesA = [];
+  const repliesB = [];
+  const rowA = questions.create('permission', 's1', perm);
+  const rowB = questions.create('permission', 's1', perm);
+  questions.attachHold(rowA, b => repliesA.push(b));
+  questions.attachHold(rowB, b => repliesB.push(b));
+
+  const res = questions.answer(rowA.id, { behavior: 'allow' });
+  assert.equal(res.status, 200);
+  assert.deepEqual(questions.pendingOf('s1').map(r => r.id), [rowB.id], 'only twin B remains pending');
+
+  // A's tool completes — its PostToolUse carries the same (tool_name, tool_input).
+  const changed = questions.expireOnActivity('s1', { toolName: perm.tool_name, toolInput: perm.tool_input });
+
+  assert.equal(changed, false, 'the answered call absorbs its own completion — nothing pending was retired');
+  assert.deepEqual(repliesB, [], 'the still-pending twin keeps its hold — the board card stays live');
+  assert.deepEqual(questions.pendingOf('s1').map(r => r.id), [rowB.id],
+    'B survives its answered sibling’s completion');
+
+  // B is then decided in the TERMINAL (no board answer, no ledger entry): its
+  // own identical PostToolUse retires it exactly as before the fix.
+  const changed2 = questions.expireOnActivity('s1', { toolName: perm.tool_name, toolInput: perm.tool_input });
+  assert.equal(changed2, true);
+  assert.deepEqual(repliesB, [{}], 'a completion with no recorded answer still retires its hold');
+  assert.deepEqual(questions.pendingOf('s1'), []);
+  db.close();
+});
+
+test('BUG-138 (triple): one answered hold absorbs exactly ONE completion; further identical completions retire twins in order', () => {
+  const db = openDb(':memory:');
+  const questions = createQuestions(db, { holdMs: 60_000 });
+
+  // Three parallel identical holds; the board answers only A. Each completing
+  // PostToolUse settles exactly one call: A's completion is absorbed by the
+  // answer ledger, then B's and C's completions retire their own holds —
+  // proving the ledger is counted, not a blanket suppression for the key.
+  const perm = fixture('permission-request', { session: 's1' });
+  const repliesB = [];
+  const repliesC = [];
+  const rowA = questions.create('permission', 's1', perm);
+  const rowB = questions.create('permission', 's1', perm);
+  const rowC = questions.create('permission', 's1', perm);
+  questions.attachHold(rowA, () => {});
+  questions.attachHold(rowB, b => repliesB.push(b));
+  questions.attachHold(rowC, b => repliesC.push(b));
+
+  assert.equal(questions.answer(rowA.id, { behavior: 'allow' }).status, 200);
+
+  const act = () => questions.expireOnActivity('s1', { toolName: perm.tool_name, toolInput: perm.tool_input });
+  assert.equal(act(), false, 'A’s completion is consumed by its answer — both twins survive');
+  assert.deepEqual(questions.pendingOf('s1').map(r => r.id), [rowB.id, rowC.id]);
+  assert.equal(act(), true, 'the next completion retires the oldest remaining twin');
+  assert.deepEqual(repliesB, [{}]);
+  assert.deepEqual(questions.pendingOf('s1').map(r => r.id), [rowC.id]);
+  assert.equal(act(), true);
+  assert.deepEqual(repliesC, [{}]);
+  assert.deepEqual(questions.pendingOf('s1'), []);
+  db.close();
+});
+
 test('M-B1 (b2): a completing tool call that matches NO hold (e.g. a Read that needed no permission) leaves every hold pending', () => {
   const db = openDb(':memory:');
   const questions = createQuestions(db, { holdMs: 60_000 });
@@ -219,5 +291,73 @@ test('dismiss resolves callsign through the session lookup instead of a nonexist
   const row = questions.create('freeform', 'known-session', { text: 'Still needed?' });
 
   assert.deepEqual(questions.dismiss(row.id), { ok: true, callsign: 'viper' });
+  db.close();
+});
+
+// ---------------------------------------------------------------------------
+// BUG-137: mail-delivered answers (freeform + re-armed holds) must not be
+// silently truncated. mail() clamps at MAIL_MAX_LEN and reports
+// {truncated:true}, but the answer paths used to ignore the receipt and settle
+// the row anyway — the human got "answer queued", the agent got a truncated
+// instruction, and the question was gone. Oversized framed answers are now
+// rejected (413) BEFORE settle: the row stays pending and nothing is mailed.
+// mailMaxLen is shrunk here so the tests don't have to build 4 KB bodies.
+// ---------------------------------------------------------------------------
+test('BUG-137: an oversized freeform answer is rejected 413 and the question stays pending', () => {
+  const db = openDb(':memory:');
+  const mailed = [];
+  const questions = createQuestions(db, {
+    mail: (sid, from, text) => mailed.push({ sid, from, text }),
+    mailMaxLen: 120,
+  });
+  const row = questions.create('freeform', 's1', { text: 'Ship it?' });
+
+  const out = questions.answer(row.id, { text: 'yes — ' + 'x'.repeat(200) });
+
+  assert.equal(out.status, 413, 'an answer whose framed form exceeds the mailbox clamp is rejected');
+  assert.equal(out.body.ok, false);
+  assert.match(out.body.err, /too long/);
+  assert.equal(mailed.length, 0, 'nothing truncated ever reaches the mailbox');
+  assert.equal(questions.pendingOf('s1').length, 1, 'the question is still pending — the human can retry');
+  db.close();
+});
+
+test('BUG-137: an oversized re-armed hold answer is rejected 413; the row and its re-arm chain survive', () => {
+  const db = openDb(':memory:');
+  const mailed = [];
+  const questions = createQuestions(db, {
+    mail: (sid, from, text) => mailed.push({ sid, from, text }),
+    // The fixed re-arm frame ("[FLEETDECK ANSWER] permission (answered after
+    // the hold expired) Q: Run the migration? — A: allow") is ~95 code units —
+    // 80 puts even a bare decision over the clamp.
+    mailMaxLen: 80,
+    rearmGraceMs: 0, // chain bookkeeping only; no grace timers needed here
+  });
+  const row = questions.create('permission', 's1', { text: 'Run the migration?', rearmed: true });
+
+  const out = questions.answer(row.id, { behavior: 'allow' });
+
+  assert.equal(out.status, 413, 'even a short decision rejects when the fixed re-arm frame alone overflows');
+  assert.equal(out.body.ok, false);
+  assert.equal(mailed.length, 0, 'no truncated [FLEETDECK ANSWER] frame is mailed');
+  assert.equal(questions.pendingOf('s1').length, 1, 'the re-armed card stays on the rail');
+  db.close();
+});
+
+test('BUG-137: an answer that fits the clamp still settles and mails exactly as before', () => {
+  const db = openDb(':memory:');
+  const mailed = [];
+  const questions = createQuestions(db, {
+    mail: (sid, from, text) => mailed.push({ sid, from, text }),
+    mailMaxLen: 4000,
+  });
+  const row = questions.create('freeform', 's1', { text: 'Ship it?' });
+
+  const out = questions.answer(row.id, { text: 'yes, ship it' });
+
+  assert.equal(out.status, 200);
+  assert.equal(mailed.length, 1);
+  assert.match(mailed[0].text, /^\[FLEETDECK ANSWER\] Q: Ship it\? — A: yes, ship it$/);
+  assert.equal(questions.pendingOf('s1').length, 0, 'the question settled normally');
   db.close();
 });

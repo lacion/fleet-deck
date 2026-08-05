@@ -61,6 +61,21 @@ function get(url) {
   return request(url, { headers: authHeaders() });
 }
 
+// GET /health — open on loopback AND behind a trusted proxy, so it is the one
+// route a terminal pane can ask "does this daemon gate /ws/term on a key?" when
+// its upgrade dies pre-frame. Returns the parsed body or null on any failure —
+// a missing answer must never stand in for one (termDiag falls back to the
+// historical key-based inference on null).
+export async function fetchHealth() {
+  try {
+    const res = await fetch(apiUrl('/health'), { headers: authHeaders(), signal: AbortSignal.timeout(5000) });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null; // unreachable/timeout — the close diagnosis degrades, never blocks
+  }
+}
+
 // GET /state — the board's paint-and-poll snapshot. Returns null on any
 // failure (401 included: the gate, not the caller, reports that one).
 export async function fetchState() {
@@ -150,6 +165,15 @@ export function pasteImage(data) {
 // the daemon 409s bad transitions and the board surfaces that honestly.
 export function markPlan(planId, body) {
   return post(`/api/plans/${encodeURIComponent(planId)}/mark`, body);
+}
+
+// BUG-039 — assign an executable plan to a live session. The [FLEETDECK
+// ASSIGNMENT] frame is daemon-reserved (POST /mail 422s it), so the daemon
+// composes and mails the frame itself, then marks the plan executed — one
+// request, no client-composed reserved frame. body = {to, instructions?};
+// 404 unknown plan/target, 409 non-executable plan (verbatim-honest).
+export function assignPlan(planId, body) {
+  return post(`/api/plans/${encodeURIComponent(planId)}/assign`, body);
 }
 
 // Manual cleanup: archive offline cards, expire their undelivered mail, kill

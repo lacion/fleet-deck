@@ -196,17 +196,34 @@ export function createHttp(core, {
   trustedOrigins = [], proxyAuth = 'token', managed = false, requireToken = false,
   trustLoopback = false,
 }) {
+  // CAPABILITY: may a tokenless caller upgrade /ws/term? The board reads this
+  // off /health to diagnose a pre-frame terminal close (see board/src/
+  // termDiag.js): a refusal under a mode that WAIVES the key is a transport
+  // fault, not a missing credential, and the UI must say so. The decision must
+  // mirror authorized() for the one caller the board cannot distinguish — a
+  // loopback peer — and authorized() itself cannot answer it: no daemon
+  // endpoint can tell whether the BROWSER's upgrade will travel the trusted
+  // proxy (waived under PROXY_AUTH=trust) or a direct socket (gated). So this
+  // is the union of every tokenless path that exists:
+  //   PROXY_AUTH=trust → the proxied browser needs no key;
+  //   TRUST_LOOPBACK=on → the plain-loopback power gates are waived;
+  //   otherwise the 0.16.0 gate stands: /ws/term demands the bearer on
+  //   loopback too (LAN/REQUIRE_TOKEN only ever make it stricter).
+  const termAuth = { term_token: !(proxyAuth === 'trust' || trustLoopback) };
+
   // The board renders its share panel from this: the exact URLs a peer can
   // open, token included (a browser cannot send an Authorization header on its
   // first navigation). Absent/disabled ⇒ the panel says "local only" rather
   // than inventing a URL. Only ever handed to an ALREADY-AUTHORIZED caller —
   // snapshot() is behind the same gate as everything else.
-  const lanInfo = lan?.enabled
+  // `let`, not `const`: refreshLan() swaps this atomically when the LAN address
+  // set changes, so the share panel shows the address the host has NOW.
+  let lanInfo = lan?.enabled
     ? { enabled: true, urls: lan.urls ?? [], mdns: lan.mdns ?? null }
     : { enabled: false, urls: [] };
 
   function snapshotWithLan() {
-    return { ...core.snapshot(), lan: lanInfo, legacy_upgrade: legacyBanner() };
+    return { ...core.snapshot(), lan: currentLan(), legacy_upgrade: legacyBanner() };
   }
 
   function json(res, code, obj) {
@@ -386,19 +403,33 @@ export function createHttp(core, {
   const daemonPort = String(port);
   // Hostnames that count as "us": loopback (localhost, 127/8, ::1 — via
   // isLoopbackAddress), every address this host actually answers on, and the
-  // advertised mDNS .local name. Built once — a LAN address is not going to
-  // change under the daemon's feet.
+  // advertised mDNS .local name. The address set is REFRESHED from the interface
+  // list on every checked request (cheaply, via os.getAddresses): Wi-Fi roaming,
+  // DHCP renewal and VPN changes DO move the LAN address under a long-lived
+  // daemon, and a snapshot taken at startup would otherwise reject the board's
+  // own new address as a DNS-rebinding attempt for the daemon's whole lifetime.
   const lanHosts = new Set();
+  const osGetAddresses = typeof os.getAddresses === 'function'
+    ? () => os.getAddresses()
+    : () => Object.values(os.networkInterfaces()).flat();
+  // The advertised .local name is a STANDING member of the allowlist, not
+  // interface data: the per-request refresh clears and rebuilds the address set,
+  // so it must re-add this name every time or the very first checked request via
+  // the mDNS URL would evict it and 403 as a DNS-rebinding attempt.
+  let mdnsHost = null;
   try {
-    for (const entries of Object.values(os.networkInterfaces())) {
-      for (const entry of entries || []) {
+    if (lan?.mdns) mdnsHost = new URL(lan.mdns).hostname.toLowerCase();
+  } catch { /* malformed mDNS URL — skip it; the IP URLs still work */ }
+  function refreshLanHosts() {
+    try {
+      lanHosts.clear();
+      for (const entry of osGetAddresses()) {
         if (entry?.address) lanHosts.add(String(entry.address).toLowerCase());
       }
-    }
-  } catch { /* restricted sandbox: loopback stays allowed regardless */ }
-  try {
-    if (lan?.mdns) lanHosts.add(new URL(lan.mdns).hostname.toLowerCase());
-  } catch { /* malformed mDNS URL — skip it; the IP URLs still work */ }
+      if (mdnsHost) lanHosts.add(mdnsHost);
+    } catch { /* restricted sandbox: loopback stays allowed regardless */ }
+  }
+  refreshLanHosts();
 
   // WHATWG URL keeps the brackets on an IPv6 hostname ([::1]); strip them so the
   // value matches what isLoopbackAddress / the lanHosts set hold.
@@ -406,8 +437,9 @@ export function createHttp(core, {
   // A parsed URL is ours when its hostname is loopback / an own LAN address /
   // the .local name AND its port is our port (or absent, i.e. a default 80/443).
   function hostAllowed(u) {
+    refreshLanHosts();
     const host = normHost(u.hostname);
-    return (isLoopbackAddress(host) || lanHosts.has(host)) && (u.port === '' || u.port === daemonPort);
+    return (isLoopbackAddress(host) || lanHosts().has(host)) && (u.port === '' || u.port === daemonPort);
   }
   // The operator-named extension of "us" (see parseTrustedOrigins). Kept separate
   // from hostAllowed so that a deployment which configures nothing gets today's
@@ -582,17 +614,28 @@ export function createHttp(core, {
   //   gone → 'close' unregisters the waiter, nothing claimed. Accepted
   //   window: a claim whose response the watcher never reads loses
   //   auto-delivery (the mail row is marked delivered either way).
+  //
+  //   BUG-105: the watcher sends its per-process generation token as `wg`.
+  //   Registration (newest wins, mirroring the client's pidfile) and every
+  //   claim attempt run synchronously on the daemon's only thread, so a
+  //   SUPERSEDED watcher's in-flight poll can no longer claim mail out from
+  //   under its successor: once the newer poll registers its token, the older
+  //   request's claim attempt fails the generation check and it lapses to
+  //   idle (the mail stays queued for the current generation to claim). No
+  //   `wg` (a hand-rolled poll, an older watcher) claims exactly as before.
   function watchHook(req, res, url) {
     const sid = url.searchParams.get('session') || '';
     const holdRaw = Number(url.searchParams.get('hold_ms'));
     const holdMs = Number.isFinite(holdRaw) ? Math.max(0, Math.min(holdRaw, 25_000)) : 25_000;
+    const wg = url.searchParams.get('wg') || null;
+    if (wg) core.registerWatchGen(sid, wg); // newest wins; before any claim attempt
 
     const attempt = () => {
       const info = core.watchInfo(sid);
       if (!info.session_alive) return { status: 'idle', ...info };
-      const claimed = core.claimMail(sid);
+      const claimed = core.claimMail(sid, wg);
       if (claimed) return { status: 'mail', ...claimed };
-      return null; // session alive, no undelivered mail → hold (mail-wake)
+      return null; // session alive, no claimable mail (or stale generation) → hold
     };
 
     const immediate = attempt();
@@ -690,7 +733,7 @@ export function createHttp(core, {
           // hook already fetches before it decides whether to evict us.
           return json(res, 200, {
             ok: true, fleet: core.fleetSize(), pid: process.pid, version, managed,
-            spawn: core.spawnCapability(),
+            spawn: core.spawnCapability(), auth: termAuth,
           });
         }
         if (url.pathname === '/state') return json(res, 200, snapshotWithLan());
@@ -753,8 +796,12 @@ export function createHttp(core, {
           return json(res, 200, { mail: box });
         }
         if (url.pathname === '/api/watch') return watchHook(req, res, url); // F3d-2 long-poll
-        if (url.pathname === '/' || url.pathname.startsWith('/assets/')) {
-          // built React board (Phase 5) from board-dist
+        if (shell) {
+          // built React board (Phase 5) from board-dist — every path the auth
+          // layer declared a public shell must actually be SERVED as one, so a
+          // proxy/health-check that asks for /index.html explicitly gets the
+          // same document as / (BUG-192). Missing files (e.g. favicon.ico)
+          // still 404 via the notFound callback.
           return serveBoardAsset(res, url.pathname, () => json(res, 404, { err: 'nope' }));
         }
         return json(res, 404, { err: 'nope' });
@@ -1249,7 +1296,17 @@ export function createHttp(core, {
   keepalive.unref();
   core.onMutate = scheduleBroadcast;
 
-  // Only `server` is used externally (fleetd.mjs listens on it); wss/termWss/
+  // fleetd.mjs drives refreshLan from its network-change poll, in the same tick
+  // as the mDNS update, so the share panel and the Host allowlist (refreshed per
+  // request from the same interface data) never disagree for long. wss/termWss/
   // broadcast stay internal.
-  return { server };
+  return {
+    server,
+    refreshLan(lan) {
+      refreshLanHosts();
+      lanInfo = lan?.enabled
+        ? { enabled: true, urls: lan.urls ?? [], mdns: lan.mdns ?? null }
+        : { enabled: false, urls: [] };
+    },
+  };
 }

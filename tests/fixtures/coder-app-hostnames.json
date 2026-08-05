@@ -1,0 +1,22 @@
+{
+  "comment": "Contract fixture for docs/CODER.md (BUG-019). Coder v2.34.7 coderd/database/db2sdk/db2sdk.go AppSubdomain(): for a NAMED coder_app (slug does not match appurl.PortRegex) the agent name is cleared, and the hostname is AppSlugOrPort--WorkspaceName--Username. Only a raw-PORT app keeps the agent name: Port--AgentName--WorkspaceName--Username. docs/CODER.md must only ever trust the named-app form (no agent component) for the `fleetdeck` coder_app.",
+  "coder_version": "v2.34.7",
+  "wildcard_domain": "coder.example.com",
+  "workspace": "dev",
+  "owner": "luis",
+  "agent": "main",
+  "named_app": {
+    "slug": "fleetdeck",
+    "hostname": "fleetdeck--dev--luis",
+    "origin": "https://fleetdeck--dev--luis.coder.example.com"
+  },
+  "port_app": {
+    "port": "4711",
+    "hostname": "4711--main--dev--luis",
+    "origin": "https://4711--main--dev--luis.coder.example.com"
+  },
+  "never_trusted": [
+    "fleetdeck--luis--dev--main.coder.example.com",
+    "fleetdeck--main--dev--luis.coder.example.com"
+  ]
+}

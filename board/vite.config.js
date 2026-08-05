@@ -1,10 +1,16 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-// The locally running fleetd we proxy `npm run dev` to (default port 4711),
-// in its two schemes.
-const FLEETD_HTTP = 'http://127.0.0.1:4711';
-const FLEETD_WS = 'ws://127.0.0.1:4711';
+// The locally running fleetd we proxy `npm run dev` to, in its two schemes.
+// FLEETDECK_PORT is the same variable the daemon itself reads (see
+// scripts/fleetd/ports.mjs), so one env var points both sides at the same
+// scratch daemon. Default 4711 — but when you run a scratch daemon on 4712
+// to stay off your real fleet (CONTRIBUTING.md), export FLEETDECK_PORT=4712
+// for `npm run dev` too, or the dev board silently reads and mutates the
+// REAL fleet on 4711 (mail, commands, API writes, terminal input).
+const FLEETD_PORT = process.env.FLEETDECK_PORT || '4711';
+const FLEETD_HTTP = `http://127.0.0.1:${FLEETD_PORT}`;
+const FLEETD_WS = `ws://127.0.0.1:${FLEETD_PORT}`;
 // The Origin the daemon's C1 gate accepts is its OWN address. Browsers send an
 // Origin of http(s):// even for a WebSocket upgrade, so the http scheme is the
 // right value for both HTTP requests AND /ws + /ws/term upgrades.
@@ -42,7 +48,7 @@ export default defineConfig({
     outDir: '../scripts/fleetd/board-dist',
     emptyOutDir: true,
   },
-  // `npm run dev` against a locally running fleetd (default port 4711).
+  // `npm run dev` against a locally running fleetd (FLEETDECK_PORT, default 4711).
   server: {
     proxy: {
       '/state': httpProxy,

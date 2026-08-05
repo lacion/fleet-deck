@@ -457,3 +457,30 @@ test('adopt validates the request body', async (t) => {
   assert.equal(res.status, 400);
   assert.match(res.json.reason, /disarm must be a boolean/);
 });
+
+test('a deferred adopt firing after its arm deadline EXPIRED stands down — no pane past the authorization window', async (t) => {
+  // The arm is a 30-minute authorization window. SessionEnd validates it when
+  // scheduling the grace timer, but the move only fires AFTER the grace delay —
+  // a deadline that passes inside that window must cancel the move, not
+  // launch a resume pane on an expired authorization (BUG-151).
+  const { daemon, daemonHome, userHome, cwd, record } = await boot(t, 'fleetdeck-adopt-expired', { FLEETDECK_ADOPT_DELAY_MS: '250' });
+  const { sid } = await startLiveSession(daemon, cwd);
+  writeTranscript(userHome, cwd, sid);
+  const armed = await postJson(`${daemon.baseUrl}/api/sessions/${sid}/adopt`, {});
+  assert.equal(armed.json.armed, true);
+
+  // The deadline lands BEFORE the 250 ms deferred adopt fires (SessionEnd's
+  // trigger check passes now, the consumption check runs later).
+  withDb(daemonHome, db => db.prepare('UPDATE sessions SET adopt_armed_until = ? WHERE session_id = ?').run(Date.now() + 100, sid));
+  await endSession(daemon, sid, cwd);
+  await sleep(600); // deadline passes at +100 ms; the deferred adopt fires at +250 ms
+
+  assert.equal(records(record).length, 0, 'no pane launched after the arm deadline expired');
+  const stored = withDb(daemonHome, db => db.prepare('SELECT adopt_armed_until, adopt_armed_skip FROM sessions WHERE session_id = ?').get(sid));
+  assert.equal(stored.adopt_armed_until, null, 'the expired arm was cleared, not consumed into a launch');
+  assert.equal(stored.adopt_armed_skip, null);
+  const state = (await getJson(`${daemon.baseUrl}/state`)).json;
+  assert.equal(findCard(state, sid).adopt.armed, false);
+  assert.ok(tickerHas(state, 'canceled'), 'the expiry cancel is said once in the ticker');
+  assert.equal(tickerHas(state, '✗ move-to-tmux failed'), false, 'an expired arm is a cancel, not a failure');
+});

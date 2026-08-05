@@ -9,20 +9,19 @@ set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FLEETDECK_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-PROJECT_DIR="$SCRIPT_DIR/project"
-SEED_UTIL="$PROJECT_DIR/.seed/util.js"
-UTIL_FILE="$PROJECT_DIR/util.js"
-TEST_FILE="$PROJECT_DIR/test.js"
+SEED_PROJECT="$SCRIPT_DIR/project"
 SESSIONSTART_SCRIPT="$FLEETDECK_ROOT/scripts/fleet-sessionstart.mjs"
 WATCH_SCRIPT="$FLEETDECK_ROOT/scripts/fleet-watch.mjs"
-FLEETDECK_PORT=4711
-SCRATCH_HOME="$FLEETDECK_ROOT/.fleetdeck-test"
-BASE="http://127.0.0.1:$FLEETDECK_PORT"
-TMUX_SESSION="fleetdeck-$FLEETDECK_PORT"
-WINDOW_PREFIX="fd$FLEETDECK_PORT-"
-DAEMON_LOG="$SCRATCH_HOME/fleetd.log"
-PLAN_FILE="$SCRATCH_HOME/plan.md"
-EXECUTOR_SAMPLES="$SCRATCH_HOME/executor-state-samples.jsonl"
+FLEET_HOOK_SCRIPT="$FLEETDECK_ROOT/scripts/fleet-hook.mjs"
+
+# SCRATCH_HOME and PROJECT_DIR are assigned from mktemp after the cleanup
+# trap is armed. An arbitrary override is intentionally unsupported: cleanup
+# recursively deletes these directories, so each must be a unique path
+# created by this run, never a caller-provided target. A concurrent
+# acceptance run must never reset, delete, or spawn into this run's daemon
+# home, evidence files, or fixture copy.
+SCRATCH_HOME=''
+PROJECT_DIR=''
 
 # Isolated tmux server for this run, NEVER the user's default server: tmux
 # bakes the first client's environment into a new server's global env, and
@@ -45,6 +44,16 @@ CLAUDE_ENV_SCRUB=(
 
 PASS=0
 FAIL=0
+SEED_UTIL="$SEED_PROJECT/.seed/util.js"
+UTIL_FILE=""
+TEST_FILE=""
+FLEETDECK_PORT=""
+BASE=""
+TMUX_SESSION=""
+WINDOW_PREFIX=""
+DAEMON_LOG=""
+PLAN_FILE=""
+EXECUTOR_SAMPLES=""
 DAEMON_PID=""
 PLANNER_SPAWN_ID=""
 PLANNER_SESSION_ID=""
@@ -56,7 +65,9 @@ EXECUTOR_CALLSIGN=""
 EXECUTOR_WINDOW=""
 PLAN_ID=""
 QID=""
+ARM_TOKEN=""
 CLEANUP_DONE=0
+PROJECT_SNAPSHOT=""
 
 ok() {
   echo "PASS: $1"
@@ -103,7 +114,7 @@ cleanup_resources() {
 
   # Prefer the name-verified API while fleetd is alive. Both IDs came from
   # POST /api/spawn responses whose tmux session/window scopes were checked.
-  if [ -n "$DAEMON_PID" ] && kill -0 "$DAEMON_PID" 2>/dev/null; then
+  if [ -n "$DAEMON_PID" ] && kill -0 "$DAEMON_PID" 2>/dev/null && [ -n "$SCRATCH_HOME" ]; then
     force_kill_spawn "$PLANNER_SPAWN_ID" "$SCRATCH_HOME/cleanup-planner.json" >/dev/null
     force_kill_spawn "$EXECUTOR_SPAWN_ID" "$SCRATCH_HOME/cleanup-executor.json" >/dev/null
   fi
@@ -114,10 +125,37 @@ cleanup_resources() {
     tmux -L "$FLEETDECK_TMUX_SOCKET" kill-server 2>/dev/null || true
   fi
 
-  if [ -f "$SEED_UTIL" ]; then
-    cp "$SEED_UTIL" "$UTIL_FILE" 2>/dev/null || true
+  # Restore the pre-run bytes of every project file this gate touches (see
+  # snapshot_project_files). Restoring the seed here instead would erase any
+  # uncommitted local work the run overwrote. This runs BEFORE the whole
+  # PROJECT_DIR is removed below: the fixture copy is deleted in full, so
+  # the restore serves the harness / any retained copy and proves the
+  # snapshot logic against a real directory.
+  if [ -n "$PROJECT_SNAPSHOT" ] && [ -d "$PROJECT_SNAPSHOT" ]; then
+    if [ -f "$PROJECT_SNAPSHOT/util.js" ]; then
+      cp "$PROJECT_SNAPSHOT/util.js" "$UTIL_FILE" 2>/dev/null || true
+    else
+      rm -f "$UTIL_FILE"
+    fi
+    if [ -f "$PROJECT_SNAPSHOT/test.js" ]; then
+      cp "$PROJECT_SNAPSHOT/test.js" "$TEST_FILE" 2>/dev/null || true
+    else
+      rm -f "$TEST_FILE"
+    fi
+    if [ -f "$PROJECT_SNAPSHOT/claude-settings.json" ]; then
+      mkdir -p "$PROJECT_DIR/.claude"
+      cp "$PROJECT_SNAPSHOT/claude-settings.json" "$PROJECT_DIR/.claude/settings.json" 2>/dev/null || true
+    else
+      rm -f "$PROJECT_DIR/.claude/settings.json"
+    fi
+    PROJECT_SNAPSHOT=""
   fi
-  rm -f "$TEST_FILE"
+  # Sweep any lingering pre-run backup dirs (this run's, or a killed run's
+  # leftover that this run did not adopt). Runs AFTER the restore above —
+  # the snapshot lives inside PROJECT_DIR and matches the same glob.
+  if [ -d "$PROJECT_DIR" ]; then
+    find "$PROJECT_DIR" -mindepth 1 -maxdepth 1 -name '.pre-accept-*' -exec rm -rf {} + 2>/dev/null || true
+  fi
 
   if [ -n "$DAEMON_PID" ] && kill -0 "$DAEMON_PID" 2>/dev/null; then
     kill "$DAEMON_PID" 2>/dev/null || true
@@ -126,7 +164,88 @@ cleanup_resources() {
       sleep 0.25
     done
   fi
+
+  # These are mktemp directories created by this run; safe to remove in full.
+  if [ -n "$SCRATCH_HOME" ]; then
+    rm -rf -- "$SCRATCH_HOME"
+  fi
+  if [ -n "$PROJECT_DIR" ]; then
+    rm -rf -- "$PROJECT_DIR"
+  fi
 }
+
+# The three project files the gate's setup mutates. The settings file lives
+# under $PROJECT_DIR/.claude; the project itself is the executor's cwd, and
+# its content is what the gate both clobbers and verifies.
+SETTINGS_FILE="$PROJECT_DIR/.claude/settings.json"
+
+# Snapshot every project file this gate overwrites (BUG-012). Run BEFORE any
+# setup mutation; cleanup_resources restores these exact bytes, so a developer
+# with uncommitted util.js edits, a local test.js, or project .claude settings
+# never loses them to the gate. Files that did not exist pre-run are restored
+# to nonexistence; any leftover snapshot from a previously killed run is taken
+# as the true pre-run state instead of a snapshot of the wreckage.
+snapshot_project_files() {
+  local existing
+  existing=$(find "$PROJECT_DIR" -mindepth 1 -maxdepth 1 -type d -name '.pre-accept-*' -print -quit 2>/dev/null)
+  if [ -n "$existing" ]; then
+    PROJECT_SNAPSHOT="$existing"
+    return 0
+  fi
+  PROJECT_SNAPSHOT=$(mktemp -d "$PROJECT_DIR/.pre-accept-XXXXXX") || return 1
+  [ ! -f "$UTIL_FILE" ] || cp -p "$UTIL_FILE" "$PROJECT_SNAPSHOT/util.js"
+  [ ! -f "$TEST_FILE" ] || cp -p "$TEST_FILE" "$PROJECT_SNAPSHOT/test.js"
+  [ ! -f "$SETTINGS_FILE" ] || cp -p "$SETTINGS_FILE" "$PROJECT_SNAPSHOT/claude-settings.json"
+}
+
+# The destructive setup steps, factored out so the BUG-012 regression harness
+# exercises exactly what the live gate runs: seed-copy util.js, delete
+# test.js, regenerate hook settings, and (later) let the executor rewrite
+# util.js and create test.js.
+apply_gate_fixture() {
+  mkdir -p "$SCRATCH_HOME" "$PROJECT_DIR/.claude"
+  cp "$SEED_UTIL" "$UTIL_FILE"
+  rm -f "$TEST_FILE"
+  echo "{\"gate\":\"hook-settings\",\"base\":\"$BASE\"}" > "$SETTINGS_FILE"
+}
+
+# Standalone BUG-012 regression harness. Not used by the live gate; the test
+# suite (tests/accept-plan-snapshot.test.mjs) generates it by invoking this
+# script as `bash run-accept-plan.sh --emit-snapshot-harness <out>`, seeds
+# local content in a copied project dir, runs the harness, and asserts the
+# pre-run bytes and existence state survive. The harness sources the real
+# snapshot/mutate/restore code by extracting it from this file, so it can
+# never drift from the gate. Usage: bash <harness> [restore|legacy] —
+# "legacy" replays the pre-fix behavior (seed restore, no settings restore)
+# to prove the test catches the original defect.
+if [ "${1:-}" = "--emit-snapshot-harness" ]; then
+  {
+    sed -n '/^SCRIPT_DIR=/,/^EXECUTOR_SAMPLES=/p' "$0"
+    echo 'MODE="${1:-restore}"'
+    sed -n '/^SETTINGS_FILE=/p' "$0"
+    echo 'PROJECT_SNAPSHOT=""'
+    sed -n '/^snapshot_project_files() {/,/^}$/p' "$0"
+    sed -n '/^apply_gate_fixture() {/,/^}$/p' "$0"
+    cat <<'HARNESS'
+snapshot_project_files
+apply_gate_fixture
+# executor phase: the unsupervised spawn rewrites util.js and creates test.js
+echo "// executor edit" >> "$UTIL_FILE"
+echo "// executor test" > "$TEST_FILE"
+if [ "$MODE" = "legacy" ]; then
+  # pre-BUG-012-fix restore: seed bytes, no test.js, settings left clobbered
+  if [ -f "$SEED_UTIL" ]; then cp "$SEED_UTIL" "$UTIL_FILE" 2>/dev/null || true; fi
+  rm -f "$TEST_FILE"
+  exit 0
+fi
+if [ -f "$PROJECT_SNAPSHOT/util.js" ]; then cp "$PROJECT_SNAPSHOT/util.js" "$UTIL_FILE"; else rm -f "$UTIL_FILE"; fi
+if [ -f "$PROJECT_SNAPSHOT/test.js" ]; then cp "$PROJECT_SNAPSHOT/test.js" "$TEST_FILE"; else rm -f "$TEST_FILE"; fi
+if [ -f "$PROJECT_SNAPSHOT/claude-settings.json" ]; then cp "$PROJECT_SNAPSHOT/claude-settings.json" "$SETTINGS_FILE"; else rm -f "$SETTINGS_FILE"; fi
+rm -rf "$PROJECT_SNAPSHOT"
+HARNESS
+  } > "${2:?usage: run-accept-plan.sh --emit-snapshot-harness <output-file>}"
+  exit 0
+fi
 
 trap cleanup_resources EXIT ERR
 trap 'cleanup_resources; exit 130' INT
@@ -134,20 +253,73 @@ trap 'cleanup_resources; exit 130' INT
 echo "== Fleet Deck v1.3 live plan acceptance =="
 
 # --------------------------------------------------------------- reset
-# Match the established demo reset discipline: stop known daemon pidfiles
-# first, then clear an orphan listener only when Fleet Deck's health endpoint
-# proves the process on the port is Fleet Deck.
-REAL_HOME="${HOME:-/root}/.fleetdeck"
-if [ -f "$REAL_HOME/fleetd.pid" ]; then
-  kill "$(cat "$REAL_HOME/fleetd.pid" 2>/dev/null)" 2>/dev/null || true
+# Stop recorded daemons only after their fleetd identity is proven (strict
+# pidfile + /health.pid + /proc shape — the production verifyDaemonPid gate,
+# via demo/lib/kill-verified-daemon.sh). A legacy plain-PID pidfile can name
+# a PID the OS has since recycled for an unrelated process; those are never
+# signalled (BUG-008). NEVER kill by port: a port-wide kill signals every
+# client of the port, and a substring health grep matches any body containing
+# "ok" — including {"ok":false} (BUG-009). Any listener that cannot be
+# positively identified aborts the run instead. Run BEFORE allocating this
+# run's resources, while SCRATCH_HOME is still empty: the old global home,
+# when it exists at all, belongs to the pre-fix gate that wrote it. When the
+# helper is absent (a bare script copy), the unique-per-run resources below
+# already guarantee this run touches nothing it did not create (BUG-097).
+if [ -f "$SCRIPT_DIR/lib/kill-verified-daemon.sh" ]; then
+  . "$SCRIPT_DIR/lib/kill-verified-daemon.sh"
+  PROD_HOME="${HOME:-/root}/.fleetdeck"
+  OLD_GLOBAL_HOME="$FLEETDECK_ROOT/.fleetdeck-test"
+  stop_pidfile_daemon "$PROD_HOME" || { echo "ABORT: unowned live pid in $PROD_HOME/fleetd.pid — not touching it."; exit 1; }
+  stop_pidfile_daemon "$OLD_GLOBAL_HOME" || { echo "ABORT: unowned live pid in $OLD_GLOBAL_HOME/fleetd.pid — not touching it."; exit 1; }
 fi
-if [ -f "$SCRATCH_HOME/fleetd.pid" ]; then
-  kill "$(cat "$SCRATCH_HOME/fleetd.pid" 2>/dev/null)" 2>/dev/null || true
-fi
-sleep 0.5
-if curl -s -m 1 "$BASE/health" 2>/dev/null | grep -q '"ok"'; then
-  fuser -k "$FLEETDECK_PORT/tcp" 2>/dev/null || true
-  sleep 0.5
+stop_pidfile_daemon "$PROD_HOME" || { echo "ABORT: unowned live pid in $PROD_HOME/fleetd.pid — not touching it."; exit 1; }
+stop_pidfile_daemon "$OLD_GLOBAL_HOME" || { echo "ABORT: unowned live pid in $OLD_GLOBAL_HOME/fleetd.pid — not touching it."; exit 1; }
+
+# Every mutable resource is unique to this run: an mktemp'd daemon home, an
+# mktemp'd copy of the demo fixture project, and a verified-free port — so a
+# concurrent acceptance run can never reset, delete, or spawn into this run's
+# state (BUG-097).
+SCRATCH_HOME="$(mktemp -d "${TMPDIR:-/tmp}/fleetdeck-plan.XXXXXX")" || {
+  echo "ABORT: could not create a unique acceptance home"
+  exit 1
+}
+PROJECT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/fleetdeck-plan-project.XXXXXX")" || {
+  echo "ABORT: could not create a unique fixture project"
+  exit 1
+}
+cp -R "$SEED_PROJECT/." "$PROJECT_DIR/"
+SEED_UTIL="$PROJECT_DIR/.seed/util.js"
+UTIL_FILE="$PROJECT_DIR/util.js"
+TEST_FILE="$PROJECT_DIR/test.js"
+
+# Verified-free port, kernel-assigned on loopback. Never 4711 and never a
+# port with an existing listener: this run must not kill, force-clear, or
+# share a port with the production daemon or another acceptance run.
+FLEETDECK_PORT="$(node -e '
+  const net = require("node:net");
+  const probe = net.createServer();
+  probe.once("error", () => process.exit(1));
+  probe.listen(0, "127.0.0.1", () => {
+    process.stdout.write(String(probe.address().port));
+    probe.close();
+  });
+')" || {
+  echo "ABORT: could not allocate a free port"
+  exit 1
+}
+BASE="http://127.0.0.1:$FLEETDECK_PORT"
+TMUX_SESSION="fleetdeck-$FLEETDECK_PORT"
+WINDOW_PREFIX="fd$FLEETDECK_PORT-"
+DAEMON_LOG="$SCRATCH_HOME/fleetd.log"
+PLAN_FILE="$SCRATCH_HOME/plan.md"
+EXECUTOR_SAMPLES="$SCRATCH_HOME/executor-state-samples.jsonl"
+
+# The probe released the port; nothing should have claimed it in between, and
+# this run owns no listener here yet. Anything answering is a foreign,
+# unidentified listener: refuse outright rather than kill by port.
+if curl -s -m 1 "$BASE/health" >/dev/null 2>&1; then
+  echo "ABORT: something is still listening on :$FLEETDECK_PORT after reset; refusing to kill an unidentified listener."
+  exit 1
 fi
 
 # Reset only this run's isolated tmux server (a per-pid socket, so normally a
@@ -156,43 +328,63 @@ if command -v tmux >/dev/null 2>&1; then
   tmux -L "$FLEETDECK_TMUX_SOCKET" kill-server 2>/dev/null || true
 fi
 
-rm -rf "$SCRATCH_HOME"
-mkdir -p "$SCRATCH_HOME" "$PROJECT_DIR/.claude"
-cp "$SEED_UTIL" "$UTIL_FILE"
-rm -f "$TEST_FILE"
+# Gate 1 launches a scratch daemon and then lets it spawn and control real
+# (billed) Claude sessions. Readiness is therefore bound to the child this
+# script launches: if anything still owns the port after the reset, refuse
+# outright rather than risk steering someone else's live fleet below.
+if curl -s -m 1 "$BASE/health" >/dev/null 2>&1; then
+  echo "FATAL: port $FLEETDECK_PORT still answers after reset; refusing to run the plan gate against an unowned listener" >&2
+  exit 1
+fi
+
+# Snapshot the fixture copy's pre-run state (BUG-012) and then apply the
+# destructive gate fixture through the exact same factored-out helper the
+# regression harness exercises.
+if ! snapshot_project_files; then
+  echo "FAIL: could not snapshot project files under $PROJECT_DIR -- refusing to run the gate" >&2
+  exit 1
+fi
+apply_gate_fixture
 
 # Regenerate the proven local demo hook wiring. The Stop command hook keeps
-# the v1.1 asyncRewake fields verbatim from hooks/hooks.json.
-cat > "$PROJECT_DIR/.claude/settings.json" <<EOF
+# the v1.1 asyncRewake fields verbatim from hooks/hooks.json. Every other
+# hook uses the current checkout's authenticated command shim: native HTTP
+# hooks cannot attach the bearer token required since 0.16.0, and the
+# daemon's legacy unauthenticated /hook/* refusal would silently swallow
+# every event. enabledPlugins disables any installed Fleet Deck plugin so
+# its duplicate hooks can never mask the checkout under test with cached
+# code.
+cat > "$SETTINGS_FILE" <<EOF
 {
+  "enabledPlugins": { "fleetdeck@fleetdeck": false },
   "hooks": {
     "SessionStart": [
-      { "hooks": [{ "type": "command", "command": "node $SESSIONSTART_SCRIPT", "timeout": 15 }] }
+      { "hooks": [{ "type": "command", "command": "node \"$SESSIONSTART_SCRIPT\"", "timeout": 15 }] }
     ],
     "UserPromptSubmit": [
-      { "hooks": [{ "type": "http", "url": "$BASE/hook/UserPromptSubmit", "timeout": 3 }] }
+      { "hooks": [{ "type": "command", "command": "node $FLEET_HOOK_SCRIPT UserPromptSubmit", "timeout": 3 }] }
     ],
     "PostToolUse": [
-      { "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash", "hooks": [{ "type": "http", "url": "$BASE/hook/PostToolUse", "timeout": 3 }] }
+      { "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash", "hooks": [{ "type": "command", "command": "node $FLEET_HOOK_SCRIPT PostToolUse", "timeout": 3 }] }
     ],
     "PreToolUse": [
-      { "matcher": "AskUserQuestion", "hooks": [{ "type": "http", "url": "$BASE/hook/AskUserQuestion", "timeout": 65 }] }
+      { "matcher": "AskUserQuestion", "hooks": [{ "type": "command", "command": "node $FLEET_HOOK_SCRIPT AskUserQuestion", "timeout": 65 }] }
     ],
     "PermissionRequest": [
-      { "hooks": [{ "type": "http", "url": "$BASE/hook/PermissionRequest", "timeout": 65 }] }
+      { "hooks": [{ "type": "command", "command": "node $FLEET_HOOK_SCRIPT PermissionRequest", "timeout": 65 }] }
     ],
     "Elicitation": [
-      { "hooks": [{ "type": "http", "url": "$BASE/hook/Elicitation", "timeout": 65 }] }
+      { "hooks": [{ "type": "command", "command": "node $FLEET_HOOK_SCRIPT Elicitation", "timeout": 65 }] }
     ],
     "Notification": [
-      { "hooks": [{ "type": "http", "url": "$BASE/hook/Notification", "timeout": 3, "async": true }] }
+      { "hooks": [{ "type": "command", "command": "node $FLEET_HOOK_SCRIPT Notification", "timeout": 3, "async": true }] }
     ],
     "Stop": [
       { "hooks": [
-        { "type": "http", "url": "$BASE/hook/Stop", "timeout": 5 },
+        { "type": "command", "command": "node $FLEET_HOOK_SCRIPT Stop", "timeout": 5 },
         {
           "type": "command",
-          "command": "node $WATCH_SCRIPT",
+          "command": "node \"$WATCH_SCRIPT\"",
           "asyncRewake": true,
           "rewakeMessage": "[FLEETDECK] Fleet board mail for you:",
           "rewakeSummary": "Fleet Deck: board mail delivered",
@@ -201,10 +393,10 @@ cat > "$PROJECT_DIR/.claude/settings.json" <<EOF
       ] }
     ],
     "SessionEnd": [
-      { "hooks": [{ "type": "http", "url": "$BASE/hook/SessionEnd", "timeout": 3, "async": true }] }
+      { "hooks": [{ "type": "command", "command": "node $FLEET_HOOK_SCRIPT SessionEnd", "timeout": 3, "async": true }] }
     ],
     "FileChanged": [
-      { "hooks": [{ "type": "http", "url": "$BASE/hook/FileChanged", "timeout": 3, "async": true }] }
+      { "hooks": [{ "type": "command", "command": "node $FLEET_HOOK_SCRIPT FileChanged", "timeout": 3, "async": true }] }
     ]
   }
 }
@@ -224,17 +416,33 @@ if [ -n "$TMUX_READY" ]; then
     node "$FLEETDECK_ROOT/scripts/fleetd/fleetd.mjs" > "$DAEMON_LOG" 2>&1 &
   DAEMON_PID=$!
   for _ in $(seq 1 40); do
-    STATE=$(curl -s -m 1 "$BASE/state" 2>/dev/null || true)
-    if STATE_JSON="$STATE" node -e '
+    # Readiness must name THIS run's child, not merely any qualifying /state:
+    # /health.pid has to equal DAEMON_PID and the scratch pidfile has to
+    # record the same pid on this port. A listener that survives the reset or
+    # a supervisor restart can otherwise answer first (the scratch child then
+    # loses the bind and exits 3) and the billed gates below would steer that
+    # foreign fleet.
+    HEALTH=$(curl -s -m 1 "$BASE/health" 2>/dev/null || true)
+    if HEALTH_JSON="$HEALTH" EXPECTED_PID="$DAEMON_PID" EXPECTED_PORT="$FLEETDECK_PORT" \
+      PID_FILE="$SCRATCH_HOME/fleetd.pid" node -e '
+      const fs = require("fs");
       try {
-        const s = JSON.parse(process.env.STATE_JSON || "{}");
-        process.exit(s.spawn?.available === true ? 0 : 1);
+        const h = JSON.parse(process.env.HEALTH_JSON || "{}");
+        const expectedPid = Number(process.env.EXPECTED_PID);
+        if (h.ok !== true || h.spawn?.available !== true || h.pid !== expectedPid) process.exit(1);
+        const record = JSON.parse(fs.readFileSync(process.env.PID_FILE, "utf8"));
+        process.exit(record?.pid === expectedPid && record?.port === Number(process.env.EXPECTED_PORT) ? 0 : 1);
       } catch { process.exit(1); }
     '; then
       DAEMON_READY=yes
       break
     fi
-    kill -0 "$DAEMON_PID" 2>/dev/null || break
+    # The child losing the bind (EADDRINUSE) is terminal: whatever answered
+    # above is not ours, so abort instead of running the plan gates against it.
+    if ! kill -0 "$DAEMON_PID" 2>/dev/null; then
+      echo "FATAL: scratch fleetd (pid $DAEMON_PID) exited before becoming ready; the port is owned by another listener — aborting to avoid steering a foreign fleet" >&2
+      exit 1
+    fi
     sleep 0.25
   done
 fi
@@ -245,6 +453,14 @@ else
   REASON="/state did not report spawn.available=true"
   [ -n "$TMUX_READY" ] || REASON="tmux is not available"
   bad "reset complete & daemon ready with real tmux" "$REASON"
+fi
+
+# The bearer the daemon minted at boot (FLEETDECK_HOME/token — the same file
+# the hook shims read). Needed for the token-gated powers this gate exercises:
+# arming an unsupervised spawn (POST /api/spawn/arm-unsupervised).
+TOKEN="$(cat "$SCRATCH_HOME/token" 2>/dev/null || true)"
+if [ -n "$DAEMON_READY" ] && [ -z "$TOKEN" ]; then
+  bad "daemon bearer token" "$SCRATCH_HOME/token missing or empty"
 fi
 
 # --------------------------------------------------------------- gate 2
@@ -425,13 +641,35 @@ if [ -n "$PLAN_ID" ]; then
   fi
 fi
 
-if [ -s "$PLAN_FILE" ]; then
-  EXECUTOR_BODY=$(PROJECT_DIR="$PROJECT_DIR" PLAN_FILE="$PLAN_FILE" node -e '
+if [ -s "$PLAN_FILE" ] && [ -n "$TOKEN" ]; then
+  # Unsupervised spawns are refused (403) without a fresh single-use arm token
+  # — the API half of the board's two-step confirmation. Mint one over the
+  # bearer-gated arm endpoint and fail this gate immediately if refused.
+  ARM_HTTP=$(curl -sS -m 10 -o "$SCRATCH_HOME/arm-unsupervised.json" -w '%{http_code}' \
+    -X POST "$BASE/api/spawn/arm-unsupervised" \
+    -H 'content-type: application/json' -H "authorization: Bearer $TOKEN" \
+    -d '{}' 2>/dev/null || true)
+  ARM_TOKEN=$(ARM_JSON_FILE="$SCRATCH_HOME/arm-unsupervised.json" node -e '
+    const fs = require("fs");
+    try {
+      const r = JSON.parse(fs.readFileSync(process.env.ARM_JSON_FILE, "utf8"));
+      if (typeof r.arm_token !== "string" || !r.arm_token) process.exit(1);
+      process.stdout.write(r.arm_token);
+    } catch { process.exit(1); }
+  ' 2>/dev/null || true)
+  if [ "$ARM_HTTP" != 200 ] || [ -z "$ARM_TOKEN" ]; then
+    bad "arm unsupervised spawn" "HTTP $ARM_HTTP or no arm_token in response"
+  fi
+fi
+
+if [ -s "$PLAN_FILE" ] && [ -n "$ARM_TOKEN" ]; then
+  EXECUTOR_BODY=$(PROJECT_DIR="$PROJECT_DIR" PLAN_FILE="$PLAN_FILE" ARM_TOKEN="$ARM_TOKEN" node -e '
     const fs = require("fs");
     const plan = fs.readFileSync(process.env.PLAN_FILE, "utf8");
     process.stdout.write(JSON.stringify({
       cwd: process.env.PROJECT_DIR,
       dangerously_skip_permissions: true,
+      arm_token: process.env.ARM_TOKEN,
       prompt: "Execute this approved plan exactly. Custom instructions: work quickly, no questions.\n\n---\n" + plan
     }));
   ')
@@ -487,7 +725,9 @@ fi
 if [ -n "$EXECUTOR_UNSUPERVISED" ]; then
   ok "executor spawned unsupervised"
 else
-  bad "executor spawned unsupervised" "HTTP $EXECUTOR_HTTP or spawn.skip_permissions was not true within 30s"
+  REASON="HTTP $EXECUTOR_HTTP or spawn.skip_permissions was not true within 30s"
+  [ -n "$ARM_TOKEN" ] || REASON="unsupervised arm token was refused, so the executor spawn was never attempted"
+  bad "executor spawned unsupervised" "$REASON"
 fi
 
 # --------------------------------------------------------------- gate 7
@@ -548,8 +788,14 @@ else
 fi
 
 # --------------------------------------------------------------- gate 8
+# Mark the plan executed ONLY when gate 7 actually proved execution: the
+# implementation + function artifacts passed mechanical validation (EXECUTED)
+# and no executor permission card was observed across the sampled boundary
+# (NO_PERMISSION_CARD). Marking on PLAN_ID alone would record failed or
+# never-ran work as executed — and against the wrong daemon could corrupt a
+# real production plan's state.
 MARK_HTTP=000
-if [ -n "$PLAN_ID" ]; then
+if [ -n "$PLAN_ID" ] && [ -n "$EXECUTED" ] && [ -n "$NO_PERMISSION_CARD" ]; then
   MARK_BODY=$(node -e '
     process.stdout.write(JSON.stringify({status: "executed", via: "accept-script"}));
   ')
@@ -558,20 +804,49 @@ if [ -n "$PLAN_ID" ]; then
     -d "$MARK_BODY" 2>/dev/null || true)
 fi
 
-if [ "$MARK_HTTP" = 200 ]; then
+if [ -z "$PLAN_ID" ]; then
+  bad "plan marked executed" "no plan ID was captured"
+elif [ -z "$EXECUTED" ] || [ -z "$NO_PERMISSION_CARD" ]; then
+  bad "plan marked executed" "gate 7 did not prove execution; refusing to mark a non-executed plan"
+elif [ "$MARK_HTTP" = 200 ]; then
   ok "plan marked executed"
 else
   bad "plan marked executed" "HTTP $MARK_HTTP"
 fi
 
 # --------------------------------------------------------------- gate 9
+# Verify cleanup restored the exact pre-run bytes and existence state. Stash
+# a copy of the snapshot under SCRATCH_HOME first — cleanup_resources removes
+# the in-project snapshot dir as part of its restore. Note: re-running the
+# gate re-seeds these files from .seed before the next snapshot, so a run
+# whose pre-run state was a previous run's wreckage restores that wreckage —
+# this gate compares against the snapshot, not the seed.
+SNAPSHOT_CHECK="$SCRATCH_HOME/pre-run-snapshot"
+rm -rf "$SNAPSHOT_CHECK"
+if [ -n "$PROJECT_SNAPSHOT" ] && [ -d "$PROJECT_SNAPSHOT" ]; then
+  cp -r "$PROJECT_SNAPSHOT" "$SNAPSHOT_CHECK" 2>/dev/null || true
+fi
+
 cleanup_resources
 CLEANUP_OK=yes
-[ -f "$UTIL_FILE" ] || CLEANUP_OK=""
-if [ -f "$UTIL_FILE" ] && [ -f "$SEED_UTIL" ] && ! cmp -s "$UTIL_FILE" "$SEED_UTIL"; then
+if [ -d "$SNAPSHOT_CHECK" ]; then
+  if [ -f "$SNAPSHOT_CHECK/util.js" ]; then
+    cmp -s "$UTIL_FILE" "$SNAPSHOT_CHECK/util.js" || CLEANUP_OK=""
+  else
+    [ ! -e "$UTIL_FILE" ] || CLEANUP_OK=""
+  fi
+  if [ -f "$SNAPSHOT_CHECK/test.js" ]; then
+    cmp -s "$TEST_FILE" "$SNAPSHOT_CHECK/test.js" || CLEANUP_OK=""
+  else
+    [ ! -e "$TEST_FILE" ] || CLEANUP_OK=""
+  fi
+  # Gate 9 runs after cleanup_resources, which deletes the whole mktemp'd
+  # PROJECT_DIR: the correct post-cleanup state is "settings file absent",
+  # whether or not it existed pre-run.
+  [ ! -e "$SETTINGS_FILE" ] || CLEANUP_OK=""
+else
   CLEANUP_OK=""
 fi
-[ ! -e "$TEST_FILE" ] || CLEANUP_OK=""
 if [ -n "$DAEMON_PID" ] && kill -0 "$DAEMON_PID" 2>/dev/null; then
   CLEANUP_OK=""
 fi

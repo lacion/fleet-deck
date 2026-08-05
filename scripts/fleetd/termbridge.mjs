@@ -41,15 +41,35 @@ const ATTACH_TIMEOUT_MS = 5_000;
 // forever. Generous — every command here is a fast control op — and overridable
 // for tests.
 const COMMAND_TIMEOUT_MS = envInt('FLEETDECK_TERM_CMD_TIMEOUT_MS', 10_000, { min: 100 });
+// A FAILED window-close probe (a rejected or !ok list-panes) proves nothing —
+// so instead of guessing, re-list once after a short settle delay. Without
+// this an idle viewer whose pane just died never finishes: nothing else ever
+// sends that pane a command that could observe the death.
+const CLOSE_RECHECK_MS = envInt('FLEETDECK_TERM_CLOSE_RECHECK_MS', 1_000, { min: 50 });
 // M-R4: the most pending keystroke bytes we will hold for ONE viewer before
 // evicting it. A human types bytes; only a runaway paste/automation hits this.
 const MAX_INPUT_QUEUE_BYTES = envInt('FLEETDECK_TERM_INPUT_MAX_BYTES', 256 * 1024, { min: 1024 });
+// The pre-init OUTPUT gap buffer gets the same bound as keystrokes: a chatty
+// TUI repainting through the seed/cursor/init round-trips pushes into
+// viewer.pending, which used to grow with no cap. A pane that floods past the
+// bound before init ships is resynced (finished): holding it unbounded grew
+// daemon memory per open viewer and the flushPending burst that finally
+// shipped it could trip MAX_TERM_WS_BUFFER and disconnect the viewer anyway.
+const MAX_PENDING_OUTPUT_BYTES = envInt('FLEETDECK_TERM_PENDING_MAX_BYTES', MAX_INPUT_QUEUE_BYTES, { min: 1024 });
 
 // Cursor home + erase screen: a fresh viewer must never inherit stale cells.
 const CLEAR_SCREEN = '\u001b[H\u001b[2J';
 // Delay before the post-seed repaint jiggle — long enough that the seed has
 // rendered, short enough that the human never sees the snapshot's seams.
 const REPAINT_MS = envInt('FLEETDECK_TERM_REPAINT_MS', 80);
+
+// BUG-055: how often the shared client re-reads #{pane_dead} for the panes it
+// is watching. A remain-on-exit pane (the fleet's dead-pane detection default)
+// emits NO %window-close when its process exits, still lists, and still
+// answers send-keys with %end ok — so neither of the bridge's old death
+// signals fires and an open viewer would stay 'live' on a dead pane forever,
+// silently discarding keystrokes. pane_dead is the only honest tell.
+const PANE_DEAD_POLL_MS = envInt('FLEETDECK_TERM_DEAD_POLL_MS', 5_000, { min: 100 });
 
 function dimensions(cols, rows) {
   const c = Number(cols);
@@ -230,15 +250,41 @@ export function createTermBridge({ port, resolveSpawn, log = () => {} } = {}) {
         // list-panes answers for every viewer at once.
         if (!c.panes.size) return;
         c.command("list-panes -a -F '#{pane_id}'").then((res) => {
-          if (!res.ok) return;
+          if (!res.ok) return scheduleCloseRecheck();
           const alive = new Set(res.lines.map((s) => s.trim()));
           for (const [paneId, stream] of [...c.panes]) {
             if (alive.has(paneId)) continue;
             for (const v of [...stream.subs]) v.finish('terminal pane closed');
           }
-        }).catch(() => { /* a failed probe is not proof a pane died */ });
+        }).catch(() => scheduleCloseRecheck());
       }
     };
+
+    // BUG-055: periodic #{pane_dead} re-read for every subscribed pane. This is
+    // the ONLY signal that fires when a remain-on-exit pane's process exits —
+    // %window-close never comes, list-panes still lists, send-keys still
+    // answers ok. A dead pane is the agent ENDING (spawns.mjs's liveness tick
+    // condemns on the same flag), so viewers get the same 'terminal pane
+    // closed' exit as a genuinely vanished pane. A failed/ambiguous read is
+    // not proof of death, matching the window-close probe above.
+    c.deadTimer = setInterval(() => {
+      if (c.closed || !c.panes.size) return;
+      c.command("list-panes -a -F '#{pane_id} #{pane_dead}'").then((res) => {
+        log(`BUG055 ok=${res.ok} lines=${JSON.stringify(res.lines)} panes=${[...c.panes.keys()]}`);
+        if (!res.ok || c.closed) return;
+        const state = new Map();
+        for (const line of res.lines) {
+          const m = /^(%\d+)\s+([01])$/.exec(line.trim());
+          if (m) state.set(m[1], m[2]);
+        }
+        for (const [paneId, stream] of [...c.panes]) {
+          log(`BUG055 pane=${paneId} state=${state.get(paneId)} subs=${stream.subs.size}`);
+          if (state.get(paneId) !== '1') continue;
+          for (const v of [...stream.subs]) v.finish('terminal pane closed');
+        }
+      }).catch(() => { /* a failed probe is not proof a pane died */ });
+    }, PANE_DEAD_POLL_MS);
+    c.deadTimer.unref?.();
 
     const override = process.env.FLEETDECK_TERM_CMD?.trim();
     const socket = process.env.FLEETDECK_TMUX_SOCKET?.trim();
@@ -289,12 +335,37 @@ export function createTermBridge({ port, resolveSpawn, log = () => {} } = {}) {
     if (!c || c.closed) return;
     c.closed = true;
     client = null;
+    clearInterval(c.deadTimer);
     c.readyReject(new Error(reason));
     for (const waiter of c.waiters.splice(0)) waiter.reject(new Error(reason));
     for (const v of [...viewers]) v.finish(reason);
     if (c.child && c.child.exitCode === null && !c.child.killed) {
       try { c.child.kill('SIGTERM'); } catch { /* already gone */ }
     }
+  }
+
+  /** A window-close probe failed: re-list ONCE after a short settle delay. The
+   * %window-close notification tells us SOME window died; if the re-list can be
+   * answered at all, any pane absent from it is provably gone and its viewers
+   * are finished. A second failure gives up (still no proof) — the M-R5 per-
+   * command deadline keeps the next viewer command from hanging forever either
+   * way. Serializes with in-flight close probes and skips clients that are
+   * already torn down. */
+  function scheduleCloseRecheck() {
+    const c = client;
+    if (!c || c.closed || !c.panes.size) return;
+    const timer = setTimeout(() => {
+      if (client !== c || c.closed || !c.panes.size) return;
+      c.command("list-panes -a -F '#{pane_id}'").then((res) => {
+        if (!res.ok) return;
+        const alive = new Set(res.lines.map((s) => s.trim()));
+        for (const [paneId, stream] of [...c.panes]) {
+          if (alive.has(paneId)) continue;
+          for (const v of [...stream.subs]) v.finish('terminal pane closed');
+        }
+      }).catch(() => { /* a failed probe is not proof a pane died */ });
+    }, CLOSE_RECHECK_MS);
+    timer.unref?.();
   }
 
   /** Attach (once) and wait for tmux to confirm. Concurrent openers share it. */
@@ -330,6 +401,13 @@ export function createTermBridge({ port, resolveSpawn, log = () => {} } = {}) {
   // Fallback: on a tmux too old for `resize-window`, go back to sizing the
   // client. That restores the pre-v1.9 behaviour — contention and all — which is
   // strictly better than refusing to show a terminal at all.
+  //
+  // The fallback is for UNSUPPORT, not failure: a resize-window that errors
+  // AFTER `window-size manual` was accepted (racing teardown, concurrent
+  // resize) is reported to the caller, not silently retried as a client
+  // refresh — otherwise the caller believes the window reached the requested
+  // geometry when only the client did (BUG-159: the open-time jiggle would
+  // then capture a short window and ship an init claiming the full rows).
   async function sizeWindow(c, window, cols, rows) {
     const target = exactWindowTarget(port, window);
     if (!c.manualSizing.has(window)) {
@@ -337,9 +415,7 @@ export function createTermBridge({ port, resolveSpawn, log = () => {} } = {}) {
       if (opt.ok) c.manualSizing.add(window);
     }
     if (c.manualSizing.has(window)) {
-      const res = await c.command(`resize-window -t ${target} -x ${cols} -y ${rows}`);
-      if (res.ok) return res;
-      c.manualSizing.delete(window); // resize-window is unavailable; stop pretending
+      return await c.command(`resize-window -t ${target} -x ${cols} -y ${rows}`);
     }
     let out = await c.command(`refresh-client -C ${cols},${rows}`);
     if (!out.ok) out = await c.command(`refresh-client -C ${cols}x${rows}`); // pre-3.2 syntax
@@ -387,6 +463,7 @@ export function createTermBridge({ port, resolveSpawn, log = () => {} } = {}) {
       finished: false,
       pending: [],                  // R1-4: %output that arrived after we
                                     // subscribed but before the init frame shipped
+      pendingBytes: 0,              // byte bound on the above (BUG-158)
       queuedInput: 0,               // M-R4: pending input bytes not yet sent
       inputChain: Promise.resolve(), // M-R4: serializes this viewer's send-keys
       emit(data) {
@@ -394,8 +471,26 @@ export function createTermBridge({ port, resolveSpawn, log = () => {} } = {}) {
         // R1-4: subscribed but not yet initialized — BUFFER, never drop. We now
         // subscribe right after capture-pane (see below), so output landing
         // during the cursor lookup + init build must be held until the seed has
-        // shipped, then replayed in order by flushPending().
-        if (!this.initialized) { this.pending.push(data); return; }
+        // shipped, then replayed in order by flushPending(). The buffer is BYTE-
+        // BOUNDED like the keystroke queue (M-R4): past the bound the seed this
+        // viewer is waiting for can no longer be replayed faithfully, so we
+        // finish for a resync rather than hoard unbounded pane output.
+        if (!this.initialized) {
+          const bytes = Buffer.byteLength(data, 'utf8');
+          if (this.pendingBytes + bytes > MAX_PENDING_OUTPUT_BYTES) {
+            // finish() only notifies ESTABLISHED viewers, and this one never
+            // got its init — but the socket is exactly who must hear this
+            // (onClose sends 'exit', which the board reads as "resync"), so
+            // stand in as established. The open below then completes against a
+            // finished viewer: its init send is dropped by the closed socket.
+            this.established = true;
+            this.finish('terminal output overflow before init');
+            return;
+          }
+          this.pendingBytes += bytes;
+          this.pending.push(data);
+          return;
+        }
         try { send({ t: 'out', data }); } catch { this.finish('terminal socket closed', false); }
       },
       // R1-4: replay the gap buffer AFTER the init frame, in arrival order. The
@@ -404,6 +499,7 @@ export function createTermBridge({ port, resolveSpawn, log = () => {} } = {}) {
       flushPending() {
         const buffered = this.pending;
         this.pending = [];
+        this.pendingBytes = 0;
         for (const data of buffered) {
           if (this.finished) return;
           try { send({ t: 'out', data }); } catch { this.finish('terminal socket closed', false); }
@@ -454,25 +550,47 @@ export function createTermBridge({ port, resolveSpawn, log = () => {} } = {}) {
       // capture. The snapshot is now the app's own freshly-drawn screen.
       // This is a terminal event, not keystroke injection — nothing reaches the
       // pane's input, so it stays outside the keystroke doctrine.
+      // EVERY step of the jiggle must succeed, not just the first: a failed
+      // restore after a successful rows-1 step would leave the window SHORT
+      // while the init frame advertises the requested rows, and the client
+      // would lay the shorter seed into the wrong geometry. tmux 3.7b keeps
+      // the prior geometry on a failed resize-window, so recover by restoring
+      // the requested size — and if even that fails, abort before capture.
       if (!(await sizeWindow(c, row.tmux_window, size.cols, size.rows)).ok) throw new Error('terminal resize failed');
-      await sizeWindow(c, row.tmux_window, size.cols, Math.max(1, size.rows - 1));
-      await sizeWindow(c, row.tmux_window, size.cols, size.rows);
+      if (!(await sizeWindow(c, row.tmux_window, size.cols, Math.max(1, size.rows - 1))).ok) {
+        await sizeWindow(c, row.tmux_window, size.cols, size.rows);
+        throw new Error('terminal resize failed');
+      }
+      if (!(await sizeWindow(c, row.tmux_window, size.cols, size.rows)).ok) {
+        await sizeWindow(c, row.tmux_window, size.cols, size.rows);
+        throw new Error('terminal resize failed');
+      }
       await new Promise((r) => { const t = setTimeout(r, REPAINT_MS); t.unref?.(); });
       abortIfClosed();
 
+      // R1-4/BUG-056: subscribe BEFORE the seed is even requested — not after the
+      // capture resolves, and not after the cursor lookup below. The control
+      // client demuxes %output only to panes already in c.panes, so anything the
+      // app emits while this viewer is still opening is discarded forever
+      // otherwise. The capture made this concrete: tmux flushes
+      // `%end …\n%output %N …` in ONE stdout write, the stdout handler resolves
+      // the capture waiter and still processes that trailing %output in the same
+      // feed() loop, and Promise continuations are microtasks — they always run
+      // AFTER the current stack. Subscribing only after the await therefore
+      // guaranteed same-chunk post-capture bytes (the post-resize repaint's
+      // tail) never reached the viewer.
+      //
+      // There is no double-draw: the seed holds only what existed at capture
+      // time, and emit() buffers every earlier byte into viewer.pending until
+      // the init frame ships; flushPending() replays the buffer right after, in
+      // arrival order. Bytes from the resize jiggle above may arrive before the
+      // seed — they are the app's own freshly-drawn screen, which is exactly
+      // what the capture then photographs, so replaying them after the init
+      // repaints what is already shown.
+      subscribe(c, pane, viewer);
+
       const captured = await c.command(`capture-pane -p -e -t ${pane}`);
       if (!captured.ok) throw new Error('terminal pane capture failed');
-
-      // R1-4: subscribe NOW, the instant the seed is photographed — not after the
-      // cursor lookup below. Everything the app emitted while repainting is baked
-      // into `captured`, so subscribing later dropped every %output that landed
-      // during the cursor round-trip: the pane was not yet in c.panes, so the
-      // demux discarded it and the viewer stayed desynced until a later repaint.
-      // emit() buffers into viewer.pending until the init frame ships;
-      // flushPending() replays it right after, with no double-draw — the seed
-      // holds only what existed at capture time, the buffer only what arrived
-      // after.
-      subscribe(c, pane, viewer);
 
       const cursor = await c.command(`display-message -p -t ${pane} '#{cursor_x} #{cursor_y}'`);
       if (!cursor.ok) throw new Error('terminal cursor lookup failed');

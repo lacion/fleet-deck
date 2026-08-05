@@ -4,8 +4,9 @@ import { FitAddon } from '@xterm/addon-fit';
 import { ClipboardAddon } from '@xterm/addon-clipboard';
 import '@xterm/xterm/css/xterm.css';
 import { hasToken, wsUrl } from '../token.js';
-import { pasteImage } from '../api.js';
-import { copyText, imageFromClipboard, isMacUA, isTermCopyChord, isTermPasteChord, termChordHints, unwrapTmuxPassthrough } from '../util.js';
+import { pasteImage, fetchHealth } from '../api.js';
+import { refusedUpgradeText } from '../termDiag.js';
+import { copyText, imageFromClipboard, isMacUA, isTermCopyChord, isTermPasteChord, pasteTextSafe, termChordHints, unwrapTmuxPassthrough } from '../util.js';
 
 // One live terminal onto one board-owned pane — the screen and the socket, with
 // no chrome around it. The floating window (TermWindow) and each tile of the grid
@@ -69,15 +70,35 @@ const DRAG_SLOP = 24;
 // anything on screen exfiltrate the operator's clipboard into a live agent's
 // stdin. readText therefore returns nothing, always. The one-way trade is the
 // whole point: the fleet may hand you text, never take it.
-const clipboardProvider = {
+// One hard ceiling on what an OSC 52 may put on the operator's clipboard.
+// xterm parses the sequence before the provider sees it, so this cannot be
+// attacked with an unterminated BEL-less stream — but a pane renders bytes
+// from files, tools and the network, and none of them needs a megabyte of
+// clipboard. 64 KiB is past any legitimate "copied N characters".
+const OSC52_MAX = 64 * 1024;
+
+// THE FOCUS GATE, and why one exists at all. Every mounted tile loads this
+// addon, but only ONE tile is live — the human's. An unfocused (watch-only)
+// tile still streams output, and any byte in that stream can carry OSC 52:
+// a background agent, a file it cat'd, a fetched page. Honouring those writes
+// would let anything on any screen silently replace the operator's clipboard
+// with attacker-chosen text — commands, URLs — that may later be pasted
+// somewhere trusted. So writes are honoured only while the pane's own term
+// says it may type: live and un-ended. The gate reads term.options.disableStdin
+// (the same flag the keystroke gate enforces) rather than the `live` prop,
+// because focus flips are applied to the live Terminal in place — the effect
+// that creates this provider does not re-run when they happen.
+const clipboardProvider = (term) => ({
   async readText() { return ''; },
   async writeText(_selection, data) {
+    if (term.options.disableStdin) return; // watch-only / ended pane: refuse
+    if (data.length > OSC52_MAX) return;
     // Through the board's own copyText, not navigator.clipboard: the LAN board
     // is plain http, where navigator.clipboard does not exist, and copyText
     // owns the fallback that still works there.
     if (data) await copyText(data);
   },
-};
+});
 
 function cssVar(name, fallback) {
   const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -158,8 +179,9 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
     const fit = new FitAddon();
     term.loadAddon(fit);
     // The agent's own copies (OSC 52) land on the real clipboard — see the
-    // provider above for why writes are honoured and reads never are.
-    term.loadAddon(new ClipboardAddon(undefined, clipboardProvider));
+    // provider above for why writes are honoured on the live pane only and
+    // reads never are.
+    term.loadAddon(new ClipboardAddon(undefined, clipboardProvider(term)));
     term.open(screenRef.current);
     try { fit.fit(); } catch { /* container not measurable yet — init frame corrects */ }
     if (live) term.focus();
@@ -227,21 +249,24 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
         }
       }
     };
-    // A close with no frame before it is a REFUSED UPGRADE, and the daemon
-    // refuses one by destroying the socket — deliberately, so an unauthorized
-    // caller learns nothing, which also means the browser cannot tell us 401
-    // from "the network died". The board can still tell the human the one thing
-    // that distinguishes them: /ws/term is the only loopback route that demands
-    // the board key (gated since 0.16.0), and a board holding no key at all
-    // fails here and NOWHERE else — every other route on localhost is exempt,
-    // so the rest of the board looks perfectly healthy. Saying "connection
-    // closed" to that sent a user hunting a network fault for an afternoon.
+    // A close with no frame before it is a REFUSED UPGRADE — see termDiag.js
+    // for the full diagnostic contract. The short version: the daemon destroys
+    // the socket without a word, so the browser cannot tell 401 from "the
+    // network died", and "no local key ⇒ you need a key" is only sound when the
+    // deployment actually gates /ws/term on one. PROXY_AUTH=trust and
+    // TRUST_LOOPBACK=on both authorize tokenless upgrades, and under either one
+    // the missing-key sentence is a FALSE diagnosis — the real fault is the
+    // proxy dropping the upgrade or the transport dying. So the daemon's own
+    // /health capability (auth.term_token) is the arbiter; when /health cannot
+    // be asked (old daemon, or the fetch itself failed), the historical
+    // key-based inference is the safe fallback.
     ws.onclose = () => {
       if (st.done) return;
       if (st.seen) return end('close', 'connection closed');
-      end('err', hasToken()
-        ? 'the daemon refused this viewer before it opened — the board key may be stale (reopen the board from its ?t=… URL)'
-        : 'this board has no key, and a live terminal is the one thing that needs one — reopen the board from its ?t=… URL (`fleetdeck token`)');
+      fetchHealth().then((health) => {
+        if (st.done) return; // a retry/unmount already ended this pane
+        end('err', refusedUpgradeText(hasToken(), health?.auth?.term_token));
+      });
     };
 
     const sendIn = (data) => {
@@ -326,8 +351,10 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
       }
       // Ctrl+V: take the chord away from xterm (which would send ^V) but leave
       // the event ALONE otherwise — no preventDefault — so the browser performs
-      // its own trusted paste. xterm's paste handler then does the bracketing.
-      // See isTermPasteChord for why a remote terminal must not send ^V here.
+      // its own trusted paste. xterm's paste handler then does the bracketing
+      // when the pane asked for it; the capture-phase paste listener refuses
+      // the multi-line case when it did not (see onPaste). See isTermPasteChord
+      // for why a remote terminal must not send ^V here.
       if (isTermPasteChord(e, IS_MAC)) return false;
       if (e.type !== 'keydown' || e.key !== 'Enter' || e.metaKey) return true;
       if (!(e.shiftKey || e.ctrlKey || e.altKey)) return true; // bare Enter: submit, as always
@@ -353,7 +380,25 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
     // the upload too — no point shipping bytes nothing may type).
     const onPaste = (e) => {
       const item = imageFromClipboard(e.clipboardData?.items);
-      if (!item) return; // text paste — xterm's own handler takes it from here
+      if (!item) {
+        // Text paste. xterm brackets it ONLY while the program in the pane has
+        // enabled DEC mode 2004 — and the board cannot know it has: a fresh
+        // viewer seeds its screen from capture-pane, which carries cells, not
+        // terminal mode state, so this emulator comes up with
+        // bracketedPasteMode false even when the agent asked for it. With the
+        // mode off (or unreconstructable — same thing here) xterm sends the
+        // text VERBATIM, and in a shell like dash each newline executes as it
+        // arrives: a multi-line paste submits itself line by line. That case
+        // is refused outright — it is the whole reason this listener exists.
+        // Single-line text can never self-submit, so it falls through.
+        const text = e.clipboardData?.getData('text/plain') ?? '';
+        if (!pasteTextSafe(text, term.modes?.bracketedPasteMode)) {
+          e.preventDefault();
+          e.stopPropagation();
+          flash('err', 'multi-line paste blocked — this pane did not ask for bracketed paste (a shell like dash), so pasting would run each line as it lands. Paste one line at a time.');
+        }
+        return;
+      }
       e.preventDefault();
       e.stopPropagation();
       if (st.done || term.options.disableStdin) return; // non-live tile: refuse before uploading

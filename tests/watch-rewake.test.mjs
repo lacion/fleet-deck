@@ -40,7 +40,8 @@ import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { startDaemon, randomPort, REPO_ROOT } from './helpers/daemon.mjs';
+import http from 'node:http';
+import { startDaemon, REPO_ROOT } from './helpers/daemon.mjs';
 import { postHook, postJson, getJson } from './helpers/http.mjs';
 import { loadFixture } from './helpers/fixtures.mjs';
 import { makeTranscriptDir, writeTranscript } from './helpers/transcript.mjs';
@@ -274,6 +275,43 @@ test('/api/watch: mailbox drained first (turn boundary) -> the poll stays idle a
   assert.equal(res.json?.status, 'idle', 'a drained mailbox must leave the watch poll idle — never a second delivery');
 });
 
+test('BUG-105: a superseded watcher generation cannot claim mail — the newest generation wins mid-poll and the mail survives for it', async (t) => {
+  const daemon = await startDaemon();
+  const cwd = scratchCwd();
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+
+  const sid = randomUUID();
+  await liveSession(daemon, sid, cwd);
+
+  // Watcher A parks in a long poll with generation gen-old. Mail arriving
+  // during the hold would previously resolve THIS poll with status 'mail' —
+  // claimed (marked delivered) for a watcher that may already be superseded.
+  const stale = getJson(`${daemon.baseUrl}/api/watch?session=${sid}&hold_ms=5000&wg=gen-old`, { timeout: 10000 });
+  await new Promise(r => setTimeout(r, 300)); // let A's poll park and register gen-old
+
+  // Watcher B takes over: its first poll registers gen-new (newest wins) and
+  // itself holds with nothing to claim yet.
+  const fresh = getJson(`${daemon.baseUrl}/api/watch?session=${sid}&hold_ms=5000&wg=gen-new`, { timeout: 10000 });
+  await new Promise(r => setTimeout(r, 300)); // let B's poll park and supersede gen-old
+
+  // Mail lands mid-poll: it must wake the CURRENT generation, never A's.
+  await postJson(`${daemon.baseUrl}/mail`, { to: sid, from: 'operator', text: 'mid-poll takeover mail' }, { token: daemon.token });
+
+  const freshRes = await fresh;
+  assert.equal(freshRes.json?.status, 'mail', 'the current generation must claim the mail');
+  assert.equal(freshRes.json?.text, 'mid-poll takeover mail');
+
+  const staleRes = await stale;
+  assert.equal(staleRes.json?.status, 'idle', 'a superseded generation must never resolve with claimed mail');
+
+  // The mail was claimed exactly once, by B — the turn-boundary drain must
+  // find nothing left to re-deliver.
+  const upRes = await postHook(daemon.baseUrl, 'UserPromptSubmit', loadFixture('user-prompt-submit', { session_id: sid, cwd }, { prompt: 'continue' }), { token: daemon });
+  const ctx = upRes.json?.hookSpecificOutput?.additionalContext ?? '';
+  assert.ok(!ctx.includes('mid-poll takeover mail'),
+    `the generation-guarded claim must still mark the mail delivered (got: ${ctx.slice(0, 150)})`);
+});
+
 // ---------------------------------------------------------------------------
 // fleet-watch.mjs v2 lifecycle, against a scratch daemon
 // ---------------------------------------------------------------------------
@@ -383,6 +421,42 @@ test('fleet-watch: single-flight per session — a newer watcher supersedes the 
   assert.match(w2.stderr, /ship it/);
 });
 
+test('BUG-105: a watcher superseded while its poll is in flight never wakes on the mail — it exits 0 and the successor claims and delivers instead', async (t) => {
+  const daemon = await startDaemon();
+  const cwd = scratchCwd();
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+
+  const sid = randomUUID();
+  await liveSession(daemon, sid, cwd);
+  const pidFile = pidFileOf(daemon.home, sid);
+
+  const w1 = spawnWatcher({ port: daemon.port, home: daemon.home, sid });
+  t.after(() => { try { w1.child.kill('SIGKILL'); } catch { /* gone */ } });
+  await waitUntil(() => existsSync(pidFile) && readFileSync(pidFile, 'utf8').trim() === String(w1.child.pid),
+    { label: 'watcher #1 owns the pid file' });
+  // W1 is now blocked in a long poll (hold 400 ms per cycle).
+
+  const w2 = spawnWatcher({ port: daemon.port, home: daemon.home, sid });
+  t.after(() => { try { w2.child.kill('SIGKILL'); } catch { /* gone */ } });
+  await waitUntil(() => existsSync(pidFile) && readFileSync(pidFile, 'utf8').trim() === String(w2.child.pid),
+    { label: 'watcher #2 owns the pid file' });
+
+  // Mail arrives while w1's poll is (very likely) still in flight. Whether
+  // or not the timing lands inside w1's hold, the invariant must hold: the
+  // superseded watcher never emits the wake.
+  await postJson(`${daemon.baseUrl}/mail`, { to: sid, from: 'operator', text: 'mid-poll handoff mail' }, { token: daemon.token });
+
+  const code1 = await w1.exitWithin(6000, 'superseded watcher with mail in flight');
+  assert.equal(code1, 0, 'the superseded watcher must exit 0 — never the wake signal');
+  assert.equal(w1.stderr, '', 'the superseded watcher must never write mail text to stderr');
+  assert.equal(w1.stdout, '');
+
+  const code2 = await w2.exitWithin(6000, 'successor watcher after mail');
+  assert.equal(code2, 2, 'the successor claims the mail and wakes (exit 2)');
+  assert.match(w2.stderr, /mid-poll handoff mail/);
+  assert.equal(w2.stdout, '');
+});
+
 test('fleet-watch: SessionEnd tombstone makes the watcher exit 0 promptly (freeform question may still be pending)', async (t) => {
   const daemon = await startDaemon();
   const cwd = scratchCwd();
@@ -414,6 +488,25 @@ test('fleet-watch: SessionEnd tombstone makes the watcher exit 0 promptly (freef
   assert.equal(q?.status, 'pending', 'the freeform question still awaits its answer for a resumed session');
 });
 
+test('hooks.json: the asyncRewake Stop hook timeout exceeds the watcher lifetime ceiling with shutdown margin', () => {
+  // BUG-103: fleet-watch accepts FLEETDECK_WATCH_MAX_MS up to 24 h, but the
+  // hook timeout was fixed at 7230 s (~2 h) — any configured lifetime above
+  // that was killed by the CLI out from under the watcher's own cap logic.
+  // The timeout must sit above the full accepted maximum, with margin for
+  // the watcher's shutdown tail (final long-poll hold + fetch grace).
+  const hooks = JSON.parse(readFileSync(path.join(REPO_ROOT, 'hooks/hooks.json'), 'utf8'));
+  const entry = hooks.hooks.Stop
+    .flatMap(group => group.hooks)
+    .find(h => typeof h.command === 'string' && h.command.includes('fleet-watch.mjs'));
+  assert.ok(entry, 'hooks.json must register scripts/fleet-watch.mjs as a Stop hook');
+  assert.equal(entry.asyncRewake, true, 'the watcher hook must stay asyncRewake');
+  const WATCH_MAX_CEILING_S = 24 * 3600; // scripts/fleet-watch.mjs MAX_MS clamp ceiling
+  assert.ok(
+    entry.timeout > WATCH_MAX_CEILING_S,
+    `hook timeout ${entry.timeout}s must exceed the watcher lifetime ceiling ${WATCH_MAX_CEILING_S}s`,
+  );
+});
+
 test('fleet-watch v2: lifetime cap (FLEETDECK_WATCH_MAX_MS) makes the watcher exit 0 even with a live session and nothing pending', async (t) => {
   const daemon = await startDaemon();
   const cwd = scratchCwd();
@@ -436,18 +529,56 @@ test('fleet-watch v2: lifetime cap (FLEETDECK_WATCH_MAX_MS) makes the watcher ex
   assert.ok(!existsSync(pidFileOf(daemon.home, sid)), 'pid file cleaned up on the cap exit too');
 });
 
-test('fleet-watch: fleetd unreachable -> exits 0 after 3 consecutive failed polls, silently', async (t) => {
+test('fleet-watch: fleetd unreachable -> exits 0 after exactly 3 consecutive failed polls, alive through failures 1-2, silently', async (t) => {
   const home = mkdtempSync(path.join(tmpdir(), 'fleetdeck-watch-'));
   t.after(() => rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
 
-  const sid = randomUUID();
-  const w = spawnWatcher({ port: randomPort(), home, sid, env: { FLEETDECK_WATCH_POLL_MS: '200' } }); // nobody listening
-  t.after(() => { try { w.child.kill('SIGKILL'); } catch { /* gone */ } });
+  // A dedicated bound stub that deliberately hangs every poll — each request
+  // fails on the watcher's own timeout, so no port collision can yield a
+  // false pass, and attempts are countable. Bound to a real port, so the
+  // watcher definitely reaches a live TCP endpoint that never answers.
+  let attempts = 0;
+  const sockets = new Set();
+  const stub = http.createServer((_req, res) => {
+    attempts += 1;
+    // hold the request open; the watcher's AbortSignal.timeout ends it
+    res.on('error', () => {});
+    _req.on('error', () => {});
+  });
+  stub.on('connection', s => { sockets.add(s); s.on('close', () => sockets.delete(s)); });
+  await new Promise((resolve, reject) => {
+    stub.once('error', reject);
+    stub.listen(0, '127.0.0.1', resolve);
+  });
+  t.after(() => { for (const s of sockets) s.destroy(); stub.close(); });
+  const port = stub.address().port;
 
-  const code = await w.exitWithin(8000, 'against a dead daemon');
+  const sid = randomUUID();
+  const w = spawnWatcher({ port, home, sid, env: { FLEETDECK_WATCH_POLL_MS: '200' } });
+  t.after(() => { try { w.child.kill('SIGKILL'); } catch { /* gone */ } });
+  await waitUntil(() => existsSync(pidFileOf(home, sid)), { label: 'watcher pid file' });
+
+  // Survives failure one...
+  await waitUntil(() => attempts >= 2 && stillAlive(w.child), {
+    timeoutMs: 15000,
+    intervalMs: 25,
+    label: 'watcher alive after failure #1 (attempt #2 started)',
+  });
+  // ...and failure two...
+  await waitUntil(() => attempts >= 3 && stillAlive(w.child), {
+    timeoutMs: 15000,
+    intervalMs: 25,
+    label: 'watcher alive after failure #2 (attempt #3 started)',
+  });
+
+  // ...and exits 0 ONLY after failure three completes.
+  const code = await w.exitWithin(8000, 'after the third consecutive failure');
   assert.equal(code, 0, 'an unreachable fleetd must never keep a watcher alive');
   assert.equal(w.stderr, '', 'failures are silent — stderr is reserved for the mail text');
   assert.equal(w.stdout, '');
+  assert.equal(attempts, 3, `exactly 3 polls must be attempted before standing down (saw ${attempts})`);
+  await new Promise(r => setTimeout(r, scaleMs(1200))); // no 4th attempt sneaks in after exit
+  assert.equal(attempts, 3, 'the watcher must stop polling once it exits');
   assert.ok(!existsSync(pidFileOf(home, sid)), 'pid file cleaned up on the failure exit too');
 });
 

@@ -3715,11 +3715,11 @@ var require_websocket_server = __commonJS({
 import fs16 from "node:fs";
 import crypto2 from "node:crypto";
 import os9 from "node:os";
-import path15 from "node:path";
+import path17 from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // scripts/fleetd/db.mjs
-import { chmodSync } from "node:fs";
+import { chmodSync, statSync } from "node:fs";
 var emitWarning = process.emitWarning;
 process.emitWarning = function fleetdSqliteWarningFilter(warning, type, ...args) {
   const name = warning instanceof Error ? warning.name : typeof type === "string" ? type : type?.type;
@@ -3759,7 +3759,9 @@ CREATE TABLE IF NOT EXISTS sessions (
   archived_at       INTEGER,
   ticket            TEXT,               -- current Jira key (raven-PROJ-123's PROJ-123) or NULL
   ticket_source     TEXT,               -- 'branch' | 'manual'; NULL = never set (auto path still open)
-  prev_callsign     TEXT,               -- birth callsign, write-once on the FIRST rename (stale-ref anchor for mail)
+  prev_callsign     TEXT,               -- birth callsign, write-once on the FIRST rename (stale-ref anchor for mail);
+                                        -- the anchor never moves, even when a rename gives the slot a new owner
+                                        -- (a ticket-clear revert writes the lineage's birth name, not the dropped one)
   -- 0.7.0 Move-to-tmux (adopt): three additive columns, all NULL for pre-0.7.0
   -- rows (never armed, never proven-ended). adopt_armed_until stores the arm
   -- DEADLINE (ms epoch) so a consumer just checks it against now() in JS --
@@ -3777,7 +3779,15 @@ CREATE TABLE IF NOT EXISTS sessions (
   -- 0.7.1 custom names: the human-chosen suffix of <animal>-<suffix>. Presence
   -- means "a human named this card", which is what blocks branch auto-detection
   -- from renaming over it.
-  custom_suffix     TEXT
+  custom_suffix     TEXT,
+  -- Run generation (BUG-025): SessionEnd is an ASYNC hook while SessionStart is
+  -- synchronous, so a claude --resume (a NEW process reusing the SAME session
+  -- id) can register before the previous process's SessionEnd lands \u2014 and the
+  -- late end would then tombstone the live resumed card. The hook shims mint one
+  -- fleet_run nonce per PROCESS and attach it to every event they send; the
+  -- active run is persisted here at SessionStart and a SessionEnd applies only
+  -- when its nonce matches. NULL on rows whose hooks predate the shims.
+  run_id            TEXT
 );
 CREATE TABLE IF NOT EXISTS file_touches (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -3797,7 +3807,15 @@ CREATE TABLE IF NOT EXISTS mail (
   text         TEXT,
   at           INTEGER,
   delivered_at INTEGER,
-  expired_at   INTEGER
+  expired_at   INTEGER,
+  -- BUG-034: an in-flight delivery LEASE. Set (with delivered_at still NULL)
+  -- when a claim path hands the text to a consumer whose acknowledgement has
+  -- not yet landed (/api/watch response, owned-pane paste, board /mail GET);
+  -- finalized (delivered_at set) only on explicit ack or a completed side
+  -- effect. Stamped as the lease DEADLINE \u2014 a daemon that exits mid-flight
+  -- leaves rows whose deadline simply passes, so a restarted daemon claims
+  -- them again.
+  claimed_at   INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_mail_to ON mail(to_session, delivered_at);
 CREATE TABLE IF NOT EXISTS events (
@@ -3849,6 +3867,8 @@ CREATE TABLE IF NOT EXISTS spawns (
   tmux_window   TEXT,               -- fd<port>-<callsign> (scoped, kill-verified)
   cwd           TEXT,               -- requested cwd (the form value)
   worktree_path TEXT,               -- effective cwd when worktree:true, else NULL
+  worktree_owned INTEGER,           -- 1: this spawn CREATED the worktree (boot cleanup may remove it);
+                                    -- 0: the worktree pre-existed and was only reused; NULL: unknown (pre-fix row)
   requested_at  INTEGER,
   status        TEXT DEFAULT 'spawning',  -- spawning | stalled | live | pane-dead | killed | gone
   skip_permissions INTEGER DEFAULT 0,    -- v1.3 unsupervised spawn (either bypass form)
@@ -3906,6 +3926,21 @@ CREATE TABLE IF NOT EXISTS plans (
 );
 CREATE INDEX IF NOT EXISTS idx_plans_status ON plans(status);
 CREATE INDEX IF NOT EXISTS idx_plans_question ON plans(question_id);
+-- Alias table (BUG-107): every callsign a card has ever worn, in the order it
+-- wore it. prev_callsign is ONE slot \u2014 a ticket-clear revert used to overwrite
+-- the birth-name anchor with the dropped ticketed name, and the next rename
+-- then permanently forgot the SessionStart callsign. Every rename INSERT OR
+-- IGNOREs the outgoing name here (idempotent), and mail/assign/command target
+-- resolution falls back to this set after current names and the anchor, so a
+-- supported ticket/name/clear sequence can never orphan a name a peer or an
+-- automation is still using.
+CREATE TABLE IF NOT EXISTS session_aliases (
+  session_id TEXT,
+  callsign   TEXT,
+  at         INTEGER,                   -- when this card stopped wearing the name
+  PRIMARY KEY (session_id, callsign)
+);
+CREATE INDEX IF NOT EXISTS idx_aliases_callsign ON session_aliases(callsign);
 `;
 function migrate(db2) {
   const cols = db2.prepare("PRAGMA table_info(sessions)").all().map((r) => r.name);
@@ -3945,9 +3980,15 @@ function migrate(db2) {
   if (!cols.includes("custom_suffix")) {
     db2.exec("ALTER TABLE sessions ADD COLUMN custom_suffix TEXT");
   }
+  if (!cols.includes("run_id")) {
+    db2.exec("ALTER TABLE sessions ADD COLUMN run_id TEXT");
+  }
   const mailCols = db2.prepare("PRAGMA table_info(mail)").all().map((r) => r.name);
   if (!mailCols.includes("expired_at")) {
     db2.exec("ALTER TABLE mail ADD COLUMN expired_at INTEGER");
+  }
+  if (!mailCols.includes("claimed_at")) {
+    db2.exec("ALTER TABLE mail ADD COLUMN claimed_at INTEGER");
   }
   const spawnCols = db2.prepare("PRAGMA table_info(spawns)").all().map((r) => r.name);
   if (spawnCols.length && !spawnCols.includes("skip_permissions")) {
@@ -3983,23 +4024,46 @@ function migrate(db2) {
   if (spawnCols.length && !spawnCols.includes("fail_detail")) {
     db2.exec("ALTER TABLE spawns ADD COLUMN fail_detail TEXT");
   }
+  if (spawnCols.length && !spawnCols.includes("worktree_owned")) {
+    db2.exec("ALTER TABLE spawns ADD COLUMN worktree_owned INTEGER");
+  }
+  db2.exec(`INSERT OR IGNORE INTO session_aliases (session_id, callsign, at)
+    SELECT session_id, callsign, NULL FROM sessions WHERE callsign IS NOT NULL`);
+  db2.exec(`INSERT OR IGNORE INTO session_aliases (session_id, callsign, at)
+    SELECT session_id, prev_callsign, NULL FROM sessions WHERE prev_callsign IS NOT NULL`);
 }
-function openDb(file) {
+function openDb(file, fsImpl = { chmodSync, statSync }) {
   const db2 = new DatabaseSync(file);
   db2.exec(DDL);
   migrate(db2);
   if (file !== ":memory:") {
     try {
-      chmodSync(file, 384);
-    } catch {
+      fsImpl.chmodSync(file, 384);
+      const mode = fsImpl.statSync(file).mode & 511;
+      if (mode & 63) {
+        throw Object.assign(new Error(`mode still ${mode.toString(8)} after chmod 0600`), { code: "EMODE" });
+      }
+    } catch (err) {
+      db2.close();
+      throw new Error(
+        `fleetd.db owner-only confidentiality could not be established (${err?.code || err?.message || "unknown error"}); refusing to start with the state database readable by other users`,
+        { cause: err }
+      );
     }
-    try {
-      chmodSync(`${file}-wal`, 384);
-    } catch {
-    }
-    try {
-      chmodSync(`${file}-shm`, 384);
-    } catch {
+    for (const sidecar of [`${file}-wal`, `${file}-shm`]) {
+      try {
+        fsImpl.chmodSync(sidecar, 384);
+        if (fsImpl.statSync(sidecar).mode & 63) {
+          throw Object.assign(new Error("mode still permissive after chmod 0600"), { code: "EMODE" });
+        }
+      } catch (err) {
+        if (err?.code === "ENOENT") continue;
+        db2.close();
+        throw new Error(
+          `fleetd.db sidecar owner-only confidentiality could not be established (${err?.code || err?.message || "unknown error"}); refusing to start with the state database readable by other users`,
+          { cause: err }
+        );
+      }
     }
   }
   return db2;
@@ -4007,6 +4071,7 @@ function openDb(file) {
 
 // scripts/fleetd/derive.mjs
 import fs13 from "node:fs";
+import path14 from "node:path";
 
 // scripts/fleetd/repo-identity.mjs
 import { execFileSync } from "node:child_process";
@@ -4043,12 +4108,13 @@ function isDirectory(cwd) {
 }
 function git(args, cwd) {
   try {
-    const out = execFileSync("git", args, {
+    const raw = execFileSync("git", args, {
       cwd,
       timeout: 1500,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"]
-    }).trim();
+    });
+    const out = raw.replace(/\r?\n$/, "");
     return out || null;
   } catch {
     return null;
@@ -4059,6 +4125,13 @@ function canon(p) {
     return fs.realpathSync(p);
   } catch {
     return path.resolve(p);
+  }
+}
+function isBareGitDir(absPath) {
+  try {
+    return fs.existsSync(path.join(absPath, "HEAD")) && fs.statSync(path.join(absPath, "objects")).isDirectory() && fs.statSync(path.join(absPath, "refs")).isDirectory();
+  } catch {
+    return false;
   }
 }
 function deriveRepo(cwd) {
@@ -4074,7 +4147,8 @@ function deriveRepo(cwd) {
   if (common) {
     const commonAbs = canon(path.isAbsolute(common) ? common : path.resolve(cwd, common));
     const toplevel = git(["rev-parse", "--show-toplevel"], cwd);
-    const listedMain = path.basename(commonAbs) === ".git" ? null : git(["worktree", "list", "--porcelain"], cwd)?.split("\n").find((line) => line.startsWith("worktree "))?.slice(9);
+    const listedTrees = path.basename(commonAbs) === ".git" ? [] : (git(["worktree", "list", "--porcelain"], cwd) || "").split("\n").filter((line) => line.startsWith("worktree ")).map((line) => line.slice(9));
+    const listedMain = listedTrees.find((p) => path.basename(canon(p)) !== ".git" && !isBareGitDir(canon(p)));
     const mainTree = path.basename(commonAbs) === ".git" ? path.dirname(commonAbs) : canon(listedMain || toplevel || cwd);
     out = {
       repo_id: commonAbs,
@@ -4101,17 +4175,36 @@ function branchOf(cwd, { fresh = false } = {}) {
   cacheSet(branchCache, cwd, branch, branch == null ? NEGATIVE_TTL_MS : BRANCH_TTL_MS, now);
   return branch;
 }
+function canonFile(p) {
+  let target = path.resolve(p);
+  const suffix = [];
+  for (let i = 0; i < 64; i++) {
+    try {
+      return path.join(fs.realpathSync(target), ...suffix.reverse());
+    } catch {
+    }
+    const parent = path.dirname(target);
+    if (parent === target) return path.resolve(p);
+    suffix.push(path.basename(target));
+    target = parent;
+  }
+  return path.resolve(p);
+}
+function insideTree(rel) {
+  return rel !== "" && rel !== ".." && !rel.startsWith(".." + path.sep) && !path.isAbsolute(rel);
+}
 function ledgerKey(absPath, session) {
+  absPath = canonFile(absPath);
   if (session?.worktree && session.repo_id && deriveRepo(session.cwd).is_git) {
     const rel = path.relative(session.worktree, absPath);
-    if (rel && !rel.startsWith("..") && !path.isAbsolute(rel)) {
+    if (insideTree(rel)) {
       return { repo_id: session.repo_id, rel_path: rel, worktree: session.worktree };
     }
   }
   const repo = deriveRepo(path.dirname(absPath));
   if (repo.is_git) {
     const rel = path.relative(repo.worktree, absPath);
-    if (rel && !rel.startsWith("..") && !path.isAbsolute(rel)) {
+    if (insideTree(rel)) {
       return { repo_id: repo.repo_id, rel_path: rel, worktree: repo.worktree };
     }
   }
@@ -4143,6 +4236,7 @@ var SWEEP_MS = 5e3;
 var RESOLVED_IN_STATE = 8;
 var HOLD_KINDS = /* @__PURE__ */ new Set(["permission", "elicitation", "choice"]);
 var REARM_GRACE_MS = 3e3;
+var COMPLETED_KEY_TTL_MS = 6e4;
 var MAX_REARMS = 2;
 function resolveHoldMs(env = process.env, fallback = null) {
   const raw = Number(env?.FLEETDECK_HOLD_MS);
@@ -4172,6 +4266,10 @@ function createQuestions(db2, {
   holdMs = DEFAULT_HOLD_MS,
   mail = () => {
   },
+  // The mailbox's own clamp (mail.mjs MAIL_MAX_LEN). Framed answers that exceed
+  // it are REJECTED before settlement — see answerMailGuard below. Injectable
+  // for tests; must mirror the real mailbox clamp in production (derive.mjs).
+  mailMaxLen = 4e3,
   tick = () => {
   },
   callsignOf = () => null,
@@ -4219,6 +4317,7 @@ function createQuestions(db2, {
   const rearmById = /* @__PURE__ */ new Map();
   const rearmMeta = /* @__PURE__ */ new Map();
   const rearmChains = /* @__PURE__ */ new Map();
+  const completedKeys = /* @__PURE__ */ new Map();
   function create(kind, sessionId, payload) {
     const now = Date.now();
     let windowMs = holdMs;
@@ -4260,6 +4359,30 @@ function createQuestions(db2, {
     clearTimeout(h.timer);
     holds.delete(id);
     return h;
+  }
+  function noteCompleted(sessionId, key) {
+    let byKey = completedKeys.get(sessionId);
+    if (!byKey) completedKeys.set(sessionId, byKey = /* @__PURE__ */ new Map());
+    byKey.set(key, (byKey.get(key) ?? 0) + 1);
+    const entry = byKey;
+    const timer = setTimeout(() => {
+      if (completedKeys.get(sessionId) !== entry) return;
+      const n = entry.get(key);
+      if (n == null) return;
+      if (n <= 1) entry.delete(key);
+      else entry.set(key, n - 1);
+      if (entry.size === 0) completedKeys.delete(sessionId);
+    }, COMPLETED_KEY_TTL_MS);
+    timer.unref?.();
+  }
+  function consumeCompleted(sessionId, key) {
+    const byKey = completedKeys.get(sessionId);
+    const n = byKey?.get(key);
+    if (!n) return false;
+    if (n <= 1) byKey.delete(key);
+    else byKey.set(key, n - 1);
+    if (byKey.size === 0) completedKeys.delete(sessionId);
+    return true;
   }
   function settleExpired(id) {
     const h = releaseHold(id);
@@ -4357,6 +4480,11 @@ function createQuestions(db2, {
       onRetired(q.get.get(id));
     }
   }
+  const ANSWER_TOO_LONG_ERR = "answer too long \u2014 the mail pipeline would truncate it. Shorten it (or dismiss and answer in the terminal); the question is still pending.";
+  function answerMailGuard(frame) {
+    if (frame.length <= mailMaxLen) return null;
+    return { status: 413, body: { ok: false, err: ANSWER_TOO_LONG_ERR } };
+  }
   function answer(id, body) {
     const row = q.get.get(Number(id));
     if (!row) return { status: 404, body: { ok: false, err: "no such question" } };
@@ -4366,22 +4494,25 @@ function createQuestions(db2, {
     if (HOLD_KINDS.has(row.kind)) {
       const payload = safeParse(row.payload_json);
       if (payload?.rearmed === true) {
-        const detail2 = row.kind === "permission" ? body?.behavior : row.kind === "choice" ? serializeChoiceAnswer(row, body) : body?.action === "accept" || body?.action === "decline" ? body.action : null;
+        const detail0 = row.kind === "permission" ? body?.behavior : row.kind === "choice" ? serializeChoiceAnswer(row, body) : body?.action === "accept" || body?.action === "decline" ? body.action : null;
+        if (detail0 && typeof detail0 === "object" && detail0.over != null) {
+          return { status: 400, body: { ok: false, err: `answer too long \u2014 ${detail0.over} code units exceeds the 2000-unit answer limit; shorten the answer or answer at the terminal` } };
+        }
+        const detail2 = detail0;
         if (detail2 == null) {
           return { status: 400, body: { ok: false, err: "body must match the question kind (behavior / answers|text / action)" } };
         }
         if (detail2 === "capture") {
           return { status: 400, body: { ok: false, err: '"capture" needs the live hold \u2014 the window for it has closed' } };
         }
-        if (planIdFor(row.id) != null) planAnswered(row.id, detail2);
         const questionText = String(
           payload?.tool_input?.questions?.[0]?.question ?? payload?.text ?? ""
         ).slice(0, 80);
-        mail(
-          row.session_id,
-          "fleetdeck-answer",
-          `[FLEETDECK ANSWER] ${row.kind} (answered after the hold expired) Q: ${questionText} \u2014 A: ${detail2}`
-        );
+        const frame = `[FLEETDECK ANSWER] ${row.kind} (answered after the hold expired) Q: ${questionText} \u2014 A: ${detail2}`;
+        const rejected = answerMailGuard(frame);
+        if (rejected) return rejected;
+        if (planIdFor(row.id) != null) planAnswered(row.id, detail2);
+        mail(row.session_id, "fleetdeck-answer", frame);
         cancelRearm(row.id);
         q.markAnswered.run(JSON.stringify(body ?? {}), now, row.id);
         tick(`\u{1F4AC} ${who}: re-armed ${row.kind} answered (${detail2}) \u2014 queued for the next turn boundary`);
@@ -4412,6 +4543,9 @@ function createQuestions(db2, {
         if (planId != null) planBehavior = behavior;
       } else if (row.kind === "choice") {
         const serialized = serializeChoiceAnswer(row, body);
+        if (serialized && typeof serialized === "object") {
+          return { status: 400, body: { ok: false, err: `answer too long \u2014 ${serialized.over} code units exceeds the 2000-unit answer limit; shorten the answer or answer at the terminal` } };
+        }
         if (!serialized) {
           return { status: 400, body: { ok: false, err: 'body must be {"answers":{"<question text>":"<label>"}} or {"text":"..."}' } };
         }
@@ -4443,6 +4577,9 @@ function createQuestions(db2, {
         h.respond(hookResponse);
       } catch {
       }
+      if (payload?.tool_name != null) {
+        noteCompleted(row.session_id, toolCallKey(payload.tool_name, payload.tool_input));
+      }
       q.markAnswered.run(JSON.stringify(body ?? {}), now, row.id);
       if (planBehavior) {
         planAnswered(row.id, planBehavior);
@@ -4456,7 +4593,10 @@ function createQuestions(db2, {
       const text = String(body?.text ?? "").trim();
       if (!text) return { status: 400, body: { ok: false, err: 'body must be {"text":"..."}' } };
       const questionText = String(safeParse(row.payload_json)?.text ?? "").slice(0, 80);
-      mail(row.session_id, "fleetdeck-answer", `[FLEETDECK ANSWER] Q: ${questionText} \u2014 A: ${text}`);
+      const frame = `[FLEETDECK ANSWER] Q: ${questionText} \u2014 A: ${text}`;
+      const rejected = answerMailGuard(frame);
+      if (rejected) return rejected;
+      mail(row.session_id, "fleetdeck-answer", frame);
       q.markAnswered.run(JSON.stringify({ text }), now, row.id);
       tick(`\u{1F4AC} answer for ${who} queued \u2014 lands at next turn boundary`);
       onChange();
@@ -4490,6 +4630,10 @@ function createQuestions(db2, {
       for (const id of graceCancelled) onRetired(q.get.get(id), { activity: true });
     }
     const rearmDisarmed = disarmRearmsForSession(sessionId);
+    if (correlated && consumeCompleted(sessionId, activityKey)) {
+      if (rearmDisarmed) onChange();
+      return rearmDisarmed;
+    }
     if (correlated && rows.length > 1) {
       rows = [rows.find((r) => holds.has(r.id)) ?? rows[0]];
     }
@@ -4570,6 +4714,7 @@ function createQuestions(db2, {
       if (!m.timer) continue;
       if (q.get.get(id)?.session_id === sessionId) cancelRearm(id);
     }
+    completedKeys.delete(sessionId);
     for (const id of retired) onRetired(q.get.get(id));
     if (expired) onChange();
     return expired;
@@ -4623,17 +4768,43 @@ function createQuestions(db2, {
     listForState
   };
 }
+var ANSWER_MAX = 2e3;
 function serializeChoiceAnswer(row, body) {
-  if (typeof body?.text === "string" && body.text.trim()) return clipQuestion(body.text.trim());
+  if (typeof body?.text === "string" && body.text.trim()) {
+    const t2 = body.text.trim();
+    return t2.length <= ANSWER_MAX ? t2 : { over: t2.length };
+  }
   const answers = body?.answers;
   if (!answers || typeof answers !== "object" || Array.isArray(answers)) return null;
-  const fmt = (v) => (Array.isArray(v) ? v.map((x) => String(x)).join(", ") : String(v ?? "")).trim();
-  const entries = Object.entries(answers).filter(([, v]) => fmt(v) !== "");
+  const entries = Object.entries(answers);
   if (!entries.length) return null;
-  if (entries.length === 1) return clipQuestion(fmt(entries[0][1]));
   const qs = safeParse(row?.payload_json)?.tool_input?.questions;
+  if (Array.isArray(qs) && !validChoiceAnswers(qs, entries)) return null;
+  const fmt = (v) => (Array.isArray(v) ? v.join(", ") : v).trim();
+  if (entries.some(([, v]) => fmt(v) === "")) return null;
+  if (entries.length === 1) {
+    const t2 = fmt(entries[0][1]);
+    return t2.length <= ANSWER_MAX ? t2 : { over: t2.length };
+  }
   const headerOf = (qText) => Array.isArray(qs) ? qs.find((x) => x?.question === qText)?.header : null;
-  return clipQuestion(entries.map(([qText, v]) => `${headerOf(qText) || qText}: ${fmt(v)}`).join("; "));
+  const t = entries.map(([qText, v]) => `${headerOf(qText) || qText}: ${fmt(v)}`).join("; ");
+  return t.length <= ANSWER_MAX ? t : { over: t.length };
+}
+function validChoiceLabel(question, label2) {
+  if (!label2) return false;
+  return (Array.isArray(question?.options) ? question.options : []).some((o) => o?.label === label2);
+}
+function validChoiceAnswers(questions, entries) {
+  return entries.every(([qText, v]) => {
+    const question = questions.find((x) => x?.question === qText);
+    if (!question) return false;
+    if (typeof v === "string") return validChoiceLabel(question, v.trim());
+    if (Array.isArray(v)) {
+      if (question.multiSelect !== true || !v.length) return false;
+      return v.every((x) => typeof x === "string" && validChoiceLabel(question, x.trim()));
+    }
+    return false;
+  });
 }
 var CHOICE_RE = /\b(should I|do you want|would you like|which|prefer|option [AB1-9]|let me know)\b/i;
 function detectTrailingQuestion(text) {
@@ -4682,7 +4853,18 @@ function tailLines(transcriptPath, { maxBytes = 262144 } = {}) {
     fs2.closeSync(fd);
   }
   let chunk = buf.subarray(0, nread).toString("utf8");
-  if (start > 0) chunk = chunk.slice(chunk.indexOf("\n") + 1);
+  let firstRowIsPartial = start > 0;
+  if (firstRowIsPartial) {
+    const prev = Buffer.alloc(1);
+    const pfd = fs2.openSync(transcriptPath, "r");
+    try {
+      fs2.readSync(pfd, prev, 0, 1, start - 1);
+    } finally {
+      fs2.closeSync(pfd);
+    }
+    firstRowIsPartial = prev[0] !== 10;
+  }
+  if (firstRowIsPartial) chunk = chunk.slice(chunk.indexOf("\n") + 1);
   const lines = chunk.split("\n");
   const it = (function* () {
     let end = stat.size;
@@ -4724,14 +4906,20 @@ function lastAssistantText(transcriptPath, { maxBytes = 2e6 } = {}) {
 }
 function scanForModel(transcriptPath, maxBytes, minOffset) {
   const it = tailLines(transcriptPath, { maxBytes });
+  let newest = true;
   for (const { line, offset } of it) {
-    if (!line.includes('"assistant"') || !line.includes('"model"')) continue;
+    const maybeAssistant = line.includes('"assistant"') && line.includes('"model"');
+    if (!newest && !maybeAssistant) continue;
     let entry;
     try {
       entry = JSON.parse(line);
     } catch {
+      if (newest) return { model: null, found: false, truncated: false };
+      newest = false;
       continue;
     }
+    newest = false;
+    if (!maybeAssistant) continue;
     if (entry?.type !== "assistant" || entry.isSidechain === true) continue;
     const model = entry.message?.model;
     if (typeof model !== "string" || !model.trim()) continue;
@@ -4773,6 +4961,7 @@ __export(spawn_exports, {
   sessionName: () => sessionName,
   spawnOverrideCmd: () => spawnOverrideCmd,
   tmuxCapability: () => tmuxCapability,
+  typeAndEnter: () => typeAndEnter,
   typeKeys: () => typeKeys,
   windowName: () => windowName
 });
@@ -4790,7 +4979,7 @@ var PER_EVENT = 3;
 var NOOP = () => {
 };
 var REDACTED = "[redacted]";
-var SECRET_KEY_RE = /(?:^|[_\-.])(token|secret|password|passwd|passphrase|api[_-]?key|apikey|auth(orization)?|bearer|cookie|credential|private[_-]?key|access[_-]?key|client[_-]?secret)(?:$|[_\-.])/i;
+var SECRET_KEY_RE = /(?:^|[_\-.])(token|secret|password|passwd|passphrase|api[_-]?key|apikey|auth(orization)?|bearer|cookie|credential|private[_-]?key|access[_-]?key|client[_-]?secret)s?(?:$|[_\-.])/i;
 function isSecretKey(key) {
   const normalized = String(key).replace(/([a-z0-9])([A-Z])/g, "$1_$2").replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2");
   return SECRET_KEY_RE.test(normalized);
@@ -4799,16 +4988,98 @@ var SECRET_VALUE_RES = [
   /sk-ant-[A-Za-z0-9_-]{10,}/g,
   /(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}/g,
   /github_pat_[A-Za-z0-9_]{20,}/g,
+  /(?<![A-Za-z0-9_-])gl(?:pat|rt|dt|soat|cbt|ptt|feat|agent)-[A-Za-z0-9_-]{16,}/g,
+  // GitLab PAT / runner / deploy / OAuth / CI job families
+  /(?<![A-Za-z0-9_-])AIza[A-Za-z0-9_-]{30,}/g,
+  // Google API key
+  /(?<![A-Za-z0-9_-])sk-[A-Za-z0-9_-]{20,}/g,
+  // OpenAI-style (and, harmlessly, sk-ant-* again)
+  /(?<![A-Za-z0-9_-])hf_[A-Za-z0-9]{20,}/g,
+  // Hugging Face
+  /(?<![A-Za-z0-9_-])dop_v1_[A-Za-z0-9]{32,}/g,
+  // DigitalOcean
   /xox[baprs]-[A-Za-z0-9-]{10,}/g,
   /AKIA[A-Z0-9]{16}/g,
-  /eyJ[A-Za-z0-9_-]{10,4096}\.[A-Za-z0-9_-]{10,4096}\.[A-Za-z0-9_-]{10,4096}/g,
   /-----BEGIN [A-Z ]{0,40}PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]{0,40}PRIVATE KEY-----|$)/g,
-  /Bearer\s+[A-Za-z0-9._~+/=-]{16,}/g
+  /Bearer\s+[A-Za-z0-9._~+/=-]{16,}/g,
+  // Forge/API prefixes the git path used to redact ONLY inside exec.mjs's
+  // redactGitText (as GIT_EXTRA_SECRET_RES) — so a bare `glpat-…` / `sk-…` /
+  // `AIza…` / `hf_…` / `dop_v1_…` relayed on a stalled spawn's pane excerpt
+  // (`remote: the provided token (glpat-…) is incorrect`) or captured in a hook
+  // payload's free-text field survived into stall_detail, the board drawer,
+  // /state, every /ws frame and the durable SpawnStalled note. They live in the
+  // SHARED list now so every consumer fails closed on the same shapes. ReDoS:
+  // each is a fixed prefix plus ONE greedy trailing run with nothing required
+  // after it (the lookbehind is zero-width and constant) — the same shape the
+  // audit above certifies linear. All match runs longer than the 10-byte
+  // `[redacted]` marker, preserving the shrink-only invariant.
+  //
+  // The `(?<![A-Za-z0-9_-])` left boundary is not decoration: without it the
+  // generic `sk-` rule fires INSIDE ordinary words, and `disk-quota-exceeded`
+  // becomes `di[redacted]` — destroying exactly the legibility these
+  // diagnostics exist to deliver. A false redaction is cheap to write and
+  // expensive to debug.
+  /(?<![A-Za-z0-9_-])gl(?:pat|rt|dt|soat|cbt|ptt|feat|agent)-[A-Za-z0-9_-]{16,}/g,
+  // GitLab PAT / runner / deploy / OAuth / CI job families
+  /(?<![A-Za-z0-9_-])AIza[A-Za-z0-9_-]{30,}/g,
+  // Google API key
+  /(?<![A-Za-z0-9_-])sk-[A-Za-z0-9_-]{20,}/g,
+  // OpenAI-style (and, harmlessly, sk-ant-* again)
+  /(?<![A-Za-z0-9_-])hf_[A-Za-z0-9]{20,}/g,
+  // Hugging Face
+  /(?<![A-Za-z0-9_-])dop_v1_[A-Za-z0-9]{32,}/g
+  // DigitalOcean
 ];
+var B64URL_CHARS = (() => {
+  const bits = new Uint8Array(128);
+  for (let c = 48; c <= 57; c++) bits[c] = 1;
+  for (let c = 65; c <= 90; c++) bits[c] = 1;
+  for (let c = 97; c <= 122; c++) bits[c] = 1;
+  bits[45] = 1;
+  bits[95] = 1;
+  return bits;
+})();
+var isB64url = (code) => code < 128 && B64URL_CHARS[code] === 1;
+function maskCompactTokens(text) {
+  const MIN_SEG = 10;
+  let out = null;
+  let lastEnd = 0;
+  for (let i = 0; (i = text.indexOf("eyJ", i)) !== -1 && i + 35 <= text.length; i++) {
+    let j = i + 3;
+    const seg1Start = j;
+    while (j < text.length && isB64url(text.charCodeAt(j))) j++;
+    if (j - seg1Start < MIN_SEG || text.charCodeAt(j) !== 46) {
+      i = j - 1;
+      continue;
+    }
+    j++;
+    const seg2Start = j;
+    while (j < text.length && isB64url(text.charCodeAt(j))) j++;
+    if (j - seg2Start < MIN_SEG) {
+      i = seg2Start - 1;
+      continue;
+    }
+    if (text.charCodeAt(j) !== 46) {
+      i = j - 1;
+      continue;
+    }
+    j++;
+    const seg3Start = j;
+    while (j < text.length && isB64url(text.charCodeAt(j))) j++;
+    if (j - seg3Start < MIN_SEG) {
+      i = seg3Start - 1;
+      continue;
+    }
+    out = (out ?? "") + text.slice(lastEnd, i) + REDACTED;
+    lastEnd = j;
+    i = j - 1;
+  }
+  return out === null ? text : out + text.slice(lastEnd);
+}
 function redactValue(text) {
   let out = text;
   for (const re of SECRET_VALUE_RES) out = out.replace(re, REDACTED);
-  return out;
+  return maskCompactTokens(out);
 }
 function redactDiagnosticText(text) {
   return redactValue(String(text ?? ""));
@@ -4832,7 +5103,7 @@ function boundedPayload(value, maxBytes) {
     while (out && Buffer.byteLength(out) > remaining) out = out.slice(0, Math.floor(out.length * 0.75));
     remaining -= Buffer.byteLength(out);
     const truncated = out.length < String(value2).length;
-    out = redactValue(out);
+    out = scrubUrlCredentials(redactValue(out));
     return truncated ? `${out}${marker}` : out;
   }
   function visit(current, depth = 0) {
@@ -4925,11 +5196,50 @@ function createPayloadCapture(homeDir, {
 }
 
 // scripts/fleetd/exec.mjs
+var KILL_GRACE_MS = 1e3;
 function execFileP(cmd, args, { timeout = 3e4, env } = {}) {
   return new Promise((resolve) => {
     try {
-      execFile(cmd, args, {
-        timeout,
+      let child;
+      let done = false;
+      let killTimer = null;
+      const settle = (fn) => {
+        if (done) return;
+        done = true;
+        if (killTimer) clearTimeout(killTimer);
+        resolve(fn());
+      };
+      const deadline = setTimeout(() => {
+        settle(() => ({ ok: false, code: "ETIMEDOUT", err: `timed out after ${timeout}ms` }));
+        if (child && !child.killed) {
+          try {
+            child.kill("SIGTERM");
+          } catch {
+          }
+          killTimer = setTimeout(() => {
+            let alive = true;
+            try {
+              process.kill(child.pid, 0);
+            } catch {
+              alive = false;
+            }
+            if (alive) {
+              try {
+                child.kill("SIGKILL");
+              } catch {
+              }
+            }
+          }, KILL_GRACE_MS);
+          killTimer.unref?.();
+        }
+      }, timeout);
+      deadline.unref?.();
+      child = execFile(cmd, args, {
+        // 0 disables execFile's own SIGTERM-only timeout: the deadline above is
+        // strictly stronger (same TERM, then KILL, then settle), and a second
+        // timer race inside execFile would change the shape of the callback
+        // error without changing settlement.
+        timeout: 0,
         windowsHide: true,
         // When an env is supplied it is MERGED over the daemon's own (never
         // replacing it), so PATH and the rest survive while a caller adds e.g.
@@ -4937,8 +5247,9 @@ function execFileP(cmd, args, { timeout = 3e4, env } = {}) {
         // instead of hanging on a credential prompt.
         ...env ? { env: { ...process.env, ...env } } : {}
       }, (err, stdout, stderr) => {
-        if (err) return resolve({ ok: false, code: err.code, err: String(stderr || err.message || err).trim() });
-        resolve({ ok: true, out: stdout });
+        clearTimeout(deadline);
+        if (err) return settle(() => ({ ok: false, code: err.code, err: String(stderr || err.message || err).trim() }));
+        settle(() => ({ ok: true, out: stdout }));
       });
     } catch (err) {
       resolve({ ok: false, err: String(err.message || err) });
@@ -4958,21 +5269,8 @@ function distillGitStderr(text) {
 }
 var GIT_DETAIL_LINES = 20;
 var GIT_DETAIL_MAX = 2e3;
-var GIT_EXTRA_SECRET_RES = [
-  /(?<![A-Za-z0-9_-])gl(?:pat|rt|dt|soat|cbt|ptt|feat|agent)-[A-Za-z0-9_-]{16,}/g,
-  // GitLab PAT / runner / deploy / OAuth / CI job families
-  /(?<![A-Za-z0-9_-])AIza[A-Za-z0-9_-]{30,}/g,
-  // Google API key
-  /(?<![A-Za-z0-9_-])sk-[A-Za-z0-9_-]{20,}/g,
-  // OpenAI-style (and, harmlessly, sk-ant-* again)
-  /(?<![A-Za-z0-9_-])hf_[A-Za-z0-9]{20,}/g,
-  // Hugging Face
-  /(?<![A-Za-z0-9_-])dop_v1_[A-Za-z0-9]{32,}/g
-  // DigitalOcean
-];
 function redactGitText(text, secrets = []) {
   let out = redactDiagnosticText(scrubUrlCredentials(text));
-  for (const re of GIT_EXTRA_SECRET_RES) out = out.replace(re, "[redacted]");
   for (const secret of secrets) {
     if (typeof secret === "string" && secret) out = out.split(secret).join("[redacted]");
   }
@@ -5002,6 +5300,12 @@ async function baseBranch(worktree) {
   for (const name of ["main", "master"]) {
     const remote = await execFileP("git", ["-C", worktree, "show-ref", "--verify", "--quiet", `refs/remotes/origin/${name}`], { timeout: 5e3 });
     if (remote.ok) return { ref: `origin/${name}`, local: false };
+  }
+  const trees = await execFileP("git", ["-C", worktree, "worktree", "list", "--porcelain"], { timeout: 5e3 });
+  if (trees.ok) {
+    const first = trees.out.split("\n\n", 1)[0];
+    const branch = /^branch refs\/heads\/(.+)$/m.exec(first);
+    if (branch && branch[1].trim()) return { ref: branch[1].trim(), local: true };
   }
   for (const name of ["main", "master"]) {
     const local = await execFileP("git", ["-C", worktree, "show-ref", "--verify", "--quiet", `refs/heads/${name}`], { timeout: 5e3 });
@@ -5300,17 +5604,18 @@ async function prepareServerGenerationUnlocked(home, port) {
       };
     }
     if (expected.serverPid !== null && await retireDeadGeneration(home, port, expected)) {
-      expected = null;
-      server2 = await readServerGeneration(port);
-    } else {
-      return { enabled: true, expected, verified: false };
+      return { enabled: true, expected: null, verified: false, oldGenerationLost: true, authoritativeEmpty: true };
     }
+    return { enabled: true, expected, verified: false };
   }
   if (!server2.reachable) {
     if (server2.absent && await hasRetiredGeneration(home, port)) {
       return { enabled: true, expected: null, verified: false, authoritativeEmpty: true };
     }
     return { enabled: true, expected: null, verified: false };
+  }
+  if (await hasRetiredGeneration(home, port)) {
+    return { enabled: true, expected: null, verified: false, blockedByCertificate: true, authoritativeEmpty: true };
   }
   if (server2.generation === null) {
     const candidate = randomUUID();
@@ -5377,7 +5682,7 @@ async function generationVerifiedResult(port, args) {
 async function fleetServerAbsent(port) {
   try {
     const state = await prepareServerGeneration(port);
-    return state.enabled === true && state.authoritativeEmpty === true;
+    return state.enabled === true && (state.authoritativeEmpty === true || state.oldGenerationLost === true);
   } catch {
     return false;
   }
@@ -5433,9 +5738,37 @@ async function ensureSession(port) {
     throw new Error(`tmux could not create session ${name}`);
   }
   if (state.expected === null) {
+    if (state.blockedByCertificate) {
+      const interloper = await readServerGeneration(port);
+      if (interloper.reachable && interloper.serverPid !== null) {
+        if (pidState(interloper.serverPid) === "alive") {
+          try {
+            process.kill(interloper.serverPid, "SIGTERM");
+          } catch {
+          }
+          for (let i = 0; i < 50 && pidState(interloper.serverPid) === "alive"; i += 1) {
+            await new Promise((resolve) => setTimeout(resolve, 20));
+          }
+          if (pidState(interloper.serverPid) === "alive") {
+            try {
+              process.kill(interloper.serverPid, "SIGKILL");
+            } catch {
+            }
+          }
+        }
+        for (let i = 0; i < 50; i += 1) {
+          if (!(await readServerGeneration(port)).reachable) break;
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+      }
+    }
     const created2 = await tmuxResult(["new-session", "-d", "-s", name]);
     if (created2.ok) {
-      const claimed = await prepareServerGeneration(port);
+      let claimed = await prepareServerGeneration(port);
+      if (!claimed.verified && claimed.blockedByCertificate === true) {
+        await clearRetiredGeneration(generationHome(), port);
+        claimed = await prepareServerGeneration(port);
+      }
       if (claimed.verified) {
         const confirmed = await generationVerifiedResult(port, ["has-session", "-t", "=" + name]);
         if (sessionConfirmed(confirmed)) return name;
@@ -5482,6 +5815,7 @@ async function newWindow({ port, callsign, cwd, argv, env = null }) {
     "after-new-window",
     "set-option -w remain-on-exit on"
   ]);
+  const provisional = `${window}~${randomUUID()}`;
   const out = await tmux([
     "new-window",
     "-d",
@@ -5492,7 +5826,7 @@ async function newWindow({ port, callsign, cwd, argv, env = null }) {
     "=" + session + ":",
     // exact session, next free window index
     "-n",
-    window,
+    provisional,
     "-c",
     cwd,
     ...envArgs,
@@ -5501,6 +5835,29 @@ async function newWindow({ port, callsign, cwd, argv, env = null }) {
   ]);
   if (out === null) throw new Error(`tmux new-window failed for ${window}`);
   const window_id = out.trim();
+  const rollback = () => tmux(["kill-window", "-t", window_id]);
+  const inspect = (args) => generation.enabled ? generationVerifiedResult(port, args) : tmuxResult(args);
+  const occupancy = await inspect([
+    "list-windows",
+    "-t",
+    "=" + session + ":",
+    "-F",
+    "#{window_name}"
+  ]);
+  if (!occupancy.ok) {
+    await rollback();
+    throw new Error(generation.enabled ? `tmux new-window generation postcondition failed for ${window}` : `tmux new-window occupancy check failed for ${window}`);
+  }
+  const names = occupancy.out.endsWith("\n") ? occupancy.out.slice(0, -1) : occupancy.out;
+  if (names.split("\n").some((name) => name === window)) {
+    await rollback();
+    throw new Error(`tmux new-window refused: ${window} already exists`);
+  }
+  const renamed = await tmuxResult(["rename-window", "-t", window_id, window]);
+  if (!renamed.ok) {
+    await rollback();
+    throw new Error(`tmux new-window could not claim the scoped name ${window}`);
+  }
   if (generation.enabled) {
     const confirmed = await generationVerifiedResult(port, [
       "display-message",
@@ -5511,6 +5868,7 @@ async function newWindow({ port, callsign, cwd, argv, env = null }) {
     ]);
     const expected = [session, window, window_id].join(FIELD_SEP) + "\n";
     if (!confirmed.ok || confirmed.out !== expected) {
+      await rollback();
       throw new Error(`tmux new-window generation postcondition failed for ${window}`);
     }
   }
@@ -5557,9 +5915,10 @@ async function listScopedWindows(port) {
   }
   return wins;
 }
-async function killWindowVerified(name) {
+async function killWindowVerified(name, opts) {
   const scope = typeof name === "string" ? /^fd(\d+)-[^\u0000-\u001f\u007f]+$/.exec(name) : null;
   if (!scope) return { ok: false, error: "invalid scoped tmux window name" };
+  if (/[=;:.]/.test(name)) return { ok: false, error: "invalid scoped tmux window name" };
   const expectedSession = sessionName(scope[1]);
   const format = ["#{session_name}", "#{window_name}", "#{window_id}"].join(FIELD_SEP);
   const listArgs = ["list-panes", "-a", "-f", `#{==:#{session_name},${expectedSession}}`, "-F", format];
@@ -5586,15 +5945,21 @@ async function killWindowVerified(name) {
   if (matches.length > 1) return { ok: false, error: "ambiguous scoped tmux window name" };
   if (matches.length === 0) return { ok: false, gone: true };
   const hit = matches[0];
+  if (opts?.expectWindowId !== void 0 && hit[2] !== opts.expectWindowId) {
+    return { ok: false, stale: true, error: "window id changed \u2014 the scoped name was recycled" };
+  }
+  if (opts?.expect && !opts.expect()) return { ok: false, stale: true, error: "stale window owner" };
+  const killTarget = `=${expectedSession}:=${name}`;
   let killGeneration;
   try {
     killGeneration = await prepareServerGeneration(scope[1]);
   } catch (err) {
     return { ok: false, error: `tmux server generation verification failed: ${err?.message || err}` };
   }
+  if (opts?.expect && !opts.expect()) return { ok: false, stale: true, error: "stale window owner" };
   let killed;
   if (!killGeneration.enabled) {
-    killed = await tmuxResult(["kill-window", "-t", hit[2]]);
+    killed = await tmuxResult(["kill-window", "-t", killTarget]);
   } else if (!killGeneration.verified || killGeneration.expected === null) {
     return { ok: false, error: "tmux server generation unavailable or changed" };
   } else {
@@ -5602,7 +5967,7 @@ async function killWindowVerified(name) {
       "if-shell",
       "-F",
       `#{&&:#{==:#{${generationOption(scope[1])}},${killGeneration.expected.generation}},#{==:#{pid},${killGeneration.expected.serverPid}}}`,
-      `kill-window -t ${hit[2]}`,
+      `kill-window -t ${killTarget}`,
       `display-message -p ${GENERATION_MISMATCH}`
     ], { noStart: true });
     if (killed.ok && killed.out.trim() === GENERATION_MISMATCH) {
@@ -5664,6 +6029,9 @@ async function sendEnter(target) {
 async function typeKeys(target, text) {
   return await tmux(["send-keys", "-t", target, "-l", "--", String(text)]) !== null;
 }
+async function typeAndEnter(target, text) {
+  return await tmux(["send-keys", "-t", target, "-l", "--", String(text), ";", "send-keys", "-t", target, "Enter"]) !== null;
+}
 async function capturePane(target) {
   const args = ["capture-pane", "-p", "-t", target];
   const port = exactTargetPort(target);
@@ -5694,7 +6062,10 @@ function launchOverride(cmd, spec, onError = () => {
 }
 
 // scripts/fleetd/statements.mjs
+var statementsByDb = /* @__PURE__ */ new WeakMap();
 function createStatements(db2) {
+  const cached = statementsByDb.get(db2);
+  if (cached) return cached;
   const q = {
     getSession: db2.prepare("SELECT * FROM sessions WHERE session_id = ?"),
     // 0.6.0 ticket callsigns: is a candidate name already held by ANOTHER row?
@@ -5707,8 +6078,44 @@ function createStatements(db2) {
     // that keeps the animal never collides with itself.
     callsignTaken: db2.prepare("SELECT 1 FROM sessions WHERE (callsign = ? OR prev_callsign = ?) AND archived_at IS NULL AND session_id != ? LIMIT 1"),
     allSessions: db2.prepare("SELECT * FROM sessions ORDER BY started_at"),
+    // BUG-150: the snapshot's conflict-callsign lookup. The unbounded
+    // allSessions scan above fed a map whose ONLY consumer is
+    // recentConflicts' (≤20 rows, bounded) sessions_json, so every /state
+    // frame rebuilt id→callsign for EVERY archived session the daemon ever
+    // saw — growing with daemon lifetime while projecting a bounded list.
+    // Resolve callsigns for just the session ids the bounded conflict rows
+    // actually name: json_each explodes each sessions_json, the IN-fallback
+    // keeps any pre-json_each-id-column DB rows reachable, and the union
+    // halves dedupe themselves (UNION, not ALL). The json_valid gates mirror
+    // the M-B4/R2-6 guards in snapshot(): a corrupt or wrong-shape
+    // sessions_json must drop out of this lookup exactly as it drops out of
+    // the conflict list itself — never throw "malformed JSON" out of /state
+    // (json_each re-parses corrupt input per row and WOULD throw).
+    conflictCallsigns: db2.prepare(`SELECT session_id, callsign FROM sessions
+      WHERE session_id IN (
+        SELECT je.value FROM conflicts c, json_each(c.sessions_json) je
+         WHERE c.id IN (SELECT id FROM conflicts ORDER BY id DESC LIMIT 20)
+           AND json_valid(c.sessions_json)
+           AND json_type(c.sessions_json) = 'array'
+      )
+      UNION
+      SELECT session_id, callsign FROM sessions
+      WHERE session_id IN (
+        SELECT c.sessions_json FROM conflicts c
+         WHERE c.id IN (SELECT id FROM conflicts ORDER BY id DESC LIMIT 20)
+           AND NOT json_valid(c.sessions_json)
+      )`),
     visibleSessions: db2.prepare("SELECT * FROM sessions WHERE archived_at IS NULL ORDER BY started_at"),
     countSessions: db2.prepare("SELECT COUNT(*) AS n FROM sessions"),
+    // BUG-193: /health.fleet (and `fleetdeck status`'s "sessions") is the size
+    // of the CURRENT fleet — the cards /state can show. An unscoped COUNT(*)
+    // also counted dismissed and retention-archived history, so dismissing or
+    // archiving the last card still reported a fleet of one (and growing with
+    // history). Same archived_at IS NULL scope as visibleSessions. Kept as a
+    // separate statement because derive.mjs's assignCallsign deliberately
+    // rotates from the ALL-rows count (a monotonic seed independent of
+    // archival).
+    countVisibleSessions: db2.prepare("SELECT COUNT(*) AS n FROM sessions WHERE archived_at IS NULL"),
     insertSession: db2.prepare(`INSERT INTO sessions
       (session_id, callsign, col, note, events, started_at, last_seen, blocked_this_turn)
       VALUES (?, ?, 'queued', 'registered', 0, ?, ?, 0)`),
@@ -5750,11 +6157,32 @@ function createStatements(db2) {
     // successor collide with its own past self — a hazard banner reading
     // "wren-a9e1 and wren-a9e1 both touching X".
     reassignTouches: db2.prepare("UPDATE file_touches SET session_id = ? WHERE session_id = ?"),
+    // BUG-107 alias table: the set of names a card has ever worn, so direct
+    // target resolution survives any ticket/name/clear sequence. rememberAlias
+    // is INSERT OR IGNORE (every rename re-records the outgoing name; a revert
+    // to a previously worn name must not bump its `at`), and the heir of a
+    // /clear succession inherits the lineage's whole history.
+    rememberAlias: db2.prepare("INSERT OR IGNORE INTO session_aliases (session_id, callsign, at) VALUES (?, ?, ?)"),
+    reassignAliases: db2.prepare("UPDATE session_aliases SET session_id = ? WHERE session_id = ?"),
+    // Live sessions wearing ? as their name-in-history (current, anchor or any
+    // dropped name). Used as the LAST fallback by target resolvers — after
+    // current-name matches and the write-once prev_callsign anchor — so a
+    // reissued name always binds to its present holder first.
+    aliasesMatch: db2.prepare(`SELECT DISTINCT s.* FROM sessions s
+      WHERE s.archived_at IS NULL
+        AND (s.session_id IN (SELECT session_id FROM session_aliases WHERE callsign = ?)
+             OR s.prev_callsign = ?)`),
     // Boot heal (reconcileClearForks): pre-0.7.1 rows have no cleared_at, so a
     // stranded pair is reconstructed from the event log instead. These two read
     // the 24h-retained events table.
+    // The heal's predecessor predicate is a session whose LAST word was a
+    // /clear. Tie-break on rowid, not just `at`: the hooks of two interleaved
+    // lineages (end A, end B, start B′, start A′) can share a millisecond, and
+    // then "last" by timestamp alone is a coin flip — exactly the ambiguity the
+    // heal is forbidden from resolving by chance. Insertion order is the order
+    // the events actually reached the daemon.
     lastEventOf: db2.prepare(`SELECT hook_event, note, at FROM events
-      WHERE session_id = ? ORDER BY at DESC LIMIT 1`),
+      WHERE session_id = ? ORDER BY at DESC, rowid DESC LIMIT 1`),
     clearBornSessionsSince: db2.prepare(`SELECT DISTINCT e.session_id, e.at FROM events e
       WHERE e.hook_event = 'SessionStart' AND e.note = 'session clear' AND e.at BETWEEN ? AND ?
       ORDER BY e.at ASC`),
@@ -5773,12 +6201,43 @@ function createStatements(db2) {
     // snapshot's per-session cap keeps the files a card touched most recently.
     // (Was MIN(at) ASC, which kept a busy card's OLDEST 50 and dropped its
     // newest — the exact files the human is watching.)
-    filesBySession: db2.prepare("SELECT session_id, abs_path, MAX(at) AS recent FROM file_touches WHERE at > ? GROUP BY session_id, abs_path ORDER BY recent DESC"),
+    // BUG-149: the cap itself also lives in SQL (per-session ROW_NUMBER,
+    // bounded by the second arg = SNAPSHOT_FILES_PER_SESSION). Without it a
+    // session touching tens of thousands of distinct vendored/generated files
+    // made EVERY frame materialize and ship every grouped row to JS just to
+    // discard all but 50 — the synchronous SQLite walk blocking hook handling.
+    filesBySession: db2.prepare(`SELECT session_id, abs_path, recent FROM (
+      SELECT session_id, abs_path, MAX(at) AS recent,
+        ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY MAX(at) DESC) AS rn
+      FROM file_touches WHERE at > ? GROUP BY session_id, abs_path
+    ) WHERE rn <= ? ORDER BY recent DESC`),
     insertMail: db2.prepare("INSERT INTO mail (to_session, from_id, text, at, delivered_at) VALUES (?, ?, ?, ?, NULL)"),
-    pendingMail: db2.prepare("SELECT * FROM mail WHERE to_session = ? AND delivered_at IS NULL AND expired_at IS NULL ORDER BY at, id"),
+    // BUG-034: "claimable" = never delivered, never expired, and not under a
+    // live in-flight lease. A row whose lease deadline passed (consumer or
+    // daemon died mid-delivery) is claimable again — that is the whole point
+    // of the lease: nothing stays claimed without an acknowledgement forever.
+    pendingMail: db2.prepare(`SELECT * FROM mail
+      WHERE to_session = ? AND delivered_at IS NULL AND expired_at IS NULL
+        AND (claimed_at IS NULL OR claimed_at <= ?)
+      ORDER BY at, id`),
+    // BUG-128: the owned-pane claim and the pending-budget check must not read
+    // the whole mailbox. pendingMailPage fetches one bounded batch (the extra
+    // row lets tryOwnedPaneDelivery tell "more pending" apart from "empty");
+    // pendingMailStats prices a would-be insert without hydrating every row.
+    // Both carry the same BUG-034 lease filter as pendingMail.
+    pendingMailPage: db2.prepare(`SELECT * FROM mail
+      WHERE to_session = ? AND delivered_at IS NULL AND expired_at IS NULL
+        AND (claimed_at IS NULL OR claimed_at <= ?)
+      ORDER BY at, id LIMIT ?`),
+    pendingMailStats: db2.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(LENGTH(text)), 0) AS bytes FROM mail
+      WHERE to_session = ? AND delivered_at IS NULL AND expired_at IS NULL
+        AND (claimed_at IS NULL OR claimed_at <= ?)`),
     // /api/watch v2 claim: oldest undelivered mail from ANY sender (v1
-    // claimed fleetdeck-answer rows only).
-    nextMail: db2.prepare("SELECT * FROM mail WHERE to_session = ? AND delivered_at IS NULL AND expired_at IS NULL ORDER BY at, id LIMIT 1"),
+    // claimed fleetdeck-answer rows only). Same BUG-034 lease filter.
+    nextMail: db2.prepare(`SELECT * FROM mail
+      WHERE to_session = ? AND delivered_at IS NULL AND expired_at IS NULL
+        AND (claimed_at IS NULL OR claimed_at <= ?)
+      ORDER BY at, id LIMIT 1`),
     // v1.1 `assign auto` routing (POST /command contract): deterministic,
     // zero model calls. Candidates = non-ended sessions whose col is not
     // offline/needsyou (stuck sessions get no new work), scoped to a repo
@@ -5802,6 +6261,17 @@ function createStatements(db2) {
       FROM mail WHERE delivered_at IS NULL AND expired_at IS NULL GROUP BY to_session`),
     markDelivered: db2.prepare("UPDATE mail SET delivered_at = ? WHERE id = ?"),
     unmarkDelivered: db2.prepare("UPDATE mail SET delivered_at = NULL WHERE id = ?"),
+    // BUG-034 in-flight lease. claimMail leases (claims) without delivering;
+    // ackMail finalizes ONLY a row still under lease (the WHERE guard makes a
+    // late or double ack a no-op instead of resurrecting a row that already
+    // moved on); releaseClaim/expireStalledClaims hand the row back.
+    claimMail: db2.prepare("UPDATE mail SET claimed_at = ? WHERE id = ? AND delivered_at IS NULL AND claimed_at IS NULL"),
+    ackMail: db2.prepare("UPDATE mail SET delivered_at = ?, claimed_at = NULL WHERE id = ? AND delivered_at IS NULL AND claimed_at IS NOT NULL"),
+    releaseClaim: db2.prepare("UPDATE mail SET claimed_at = NULL WHERE id = ? AND delivered_at IS NULL"),
+    // Retention is the sweeper that outlives consumer processes: any claim
+    // whose deadline passed never got its ack, so the mail goes back to the
+    // claimable pool for the next watcher / turn boundary / pane delivery.
+    expireStalledClaims: db2.prepare("UPDATE mail SET claimed_at = NULL WHERE delivered_at IS NULL AND claimed_at IS NOT NULL AND claimed_at <= ?"),
     insertEvent: db2.prepare("INSERT INTO events (session_id, hook_event, tool_name, note, at) VALUES (?, ?, ?, ?, ?)"),
     sparkline: db2.prepare("SELECT session_id, (at / 60000) AS minute, COUNT(*) AS n FROM events WHERE at > ? GROUP BY session_id, minute"),
     insertTicker: db2.prepare("INSERT INTO ticker (at, msg) VALUES (?, ?)"),
@@ -5854,17 +6324,21 @@ function createStatements(db2) {
     // v1.2 board-spawned sessions. "Active" = status spawning|stalled|live — the
     // rows that get liveness-checked, and the number the board shows as "N live".
     insertSpawn: db2.prepare(`INSERT INTO spawns
-      (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, requested_at, status, skip_permissions, remote_control, origin_url, requested_branch, branch_mode, gateway, kind, setup_cmd)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'spawning', ?, ?, ?, ?, ?, ?, ?, ?)`),
+      (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, worktree_owned, requested_at, status, skip_permissions, remote_control, origin_url, requested_branch, branch_mode, gateway, kind, setup_cmd)
+      VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, 'spawning', ?, ?, ?, ?, ?, ?, ?, ?)`),
     // H-R6: a spawn's durable row now exists BEFORE any external op (worktree
     // add / tmux window) so a crash in that gap can never orphan a worktree or
     // pane with no owning row. It is born 'provisioning' — excluded from
     // activeSpawns (never liveness-checked or counted live) until its pane
     // exists — and flipped to 'spawning' once launch succeeds.
     insertProvisionalSpawn: db2.prepare(`INSERT INTO spawns
-      (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, requested_at, status, skip_permissions, remote_control, origin_url, requested_branch, branch_mode, gateway, kind, setup_cmd)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'provisioning', ?, ?, ?, ?, ?, ?, ?, ?)`),
-    setSpawnWorktree: db2.prepare("UPDATE spawns SET worktree_path = ? WHERE spawn_id = ?"),
+      (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, worktree_path, worktree_owned, requested_at, status, skip_permissions, remote_control, origin_url, requested_branch, branch_mode, gateway, kind, setup_cmd)
+      VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, 'provisioning', ?, ?, ?, ?, ?, ?, ?, ?)`),
+    // BUG-153: the ownership bit is persisted with the path, at the moment the
+    // spawn learns whether materializeBranch created the tree or reused a
+    // pre-existing one. Boot reconciliation reads it to decide whether the
+    // verified removal path applies to an interrupted spawn's worktree.
+    setSpawnWorktree: db2.prepare("UPDATE spawns SET worktree_path = ?, worktree_owned = ? WHERE spawn_id = ?"),
     staleProvisioningSpawns: db2.prepare("SELECT * FROM spawns WHERE status = 'provisioning'"),
     // H-R5 / R2-5: the newest spawn row still laying claim to a tmux window (a
     // revive reuses the dead row's window name, so a lineage can have several
@@ -5887,6 +6361,17 @@ function createStatements(db2) {
     // (spawning|stalled|live) to refuse a still-live-eligible card.
     spawnsForSession: db2.prepare("SELECT * FROM spawns WHERE session_id = ?"),
     allSpawns: db2.prepare("SELECT * FROM spawns ORDER BY requested_at, rowid"),
+    // BUG-150: the snapshot's spawn-ownership map. The unbounded allSpawns
+    // scan above was materialized in full on EVERY /state frame (plus one
+    // Map/set per row) so the LAST row per session_id would win — yet only
+    // visible (non-archived) sessions ever read the map, and a fleet has a
+    // handful of those by design. Revive lineages keep spawning forever, so
+    // the scan grew monotonically with daemon lifetime. This correlated
+    // subquery returns only the NEWEST row (same requested_at,rowid order
+    // as spawnBySession) for each session the frame can actually display.
+    spawnByVisibleSession: db2.prepare(`SELECT * FROM spawns
+      WHERE session_id IN (SELECT session_id FROM sessions WHERE archived_at IS NULL)
+      ORDER BY requested_at, rowid`),
     activeSpawns: db2.prepare("SELECT * FROM spawns WHERE status IN ('spawning', 'stalled', 'live')"),
     // BUG 3: 'pane-dead' and 'gone' were a ONE-WAY DOOR — activeSpawns never
     // re-checked them, so a spawn wrongly condemned (BUG 1 /clear, BUG 2
@@ -5927,6 +6412,14 @@ function createStatements(db2) {
     provisioningSpawnBySession: db2.prepare("SELECT * FROM spawns WHERE session_id = ? AND status = 'provisioning' ORDER BY requested_at DESC, rowid DESC LIMIT 1"),
     countActiveSpawns: db2.prepare("SELECT COUNT(*) AS n FROM spawns WHERE status IN ('spawning', 'stalled', 'live')"),
     setSpawnStatus: db2.prepare("UPDATE spawns SET status = ? WHERE spawn_id = ?"),
+    // BUG-152: resurrection is a compare-and-set. The liveness tick snapshots a
+    // 'pane-dead'/'gone' row and the window owner BEFORE awaiting
+    // paneCurrentCommand; a human kill (or any terminal transition) landing
+    // during that await must not be overwritten by the stale probe's verdict.
+    // The write only wins while the row is still 'pane-dead'/'gone' — a 'killed'
+    // row (a human decision) makes it change zero rows, and the card is left
+    // alone. Same pattern as setSpawnStalled below.
+    setSpawnResurrected: db2.prepare("UPDATE spawns SET status = 'live' WHERE spawn_id = ? AND status IN ('pane-dead', 'gone')"),
     setSpawnStalled: db2.prepare("UPDATE spawns SET status = 'stalled', stall_detail = ? WHERE spawn_id = ? AND status = 'spawning'"),
     // Records a failed clone/fetch's redacted git-stderr excerpt (repos.mjs).
     // NO compare-and-set predicate, deliberately: copying setSpawnStalled's
@@ -5947,6 +6440,19 @@ function createStatements(db2) {
     worktreeSpawns: db2.prepare(`SELECT spawns.*, sessions.ended_at AS session_ended_at
       FROM spawns LEFT JOIN sessions ON sessions.session_id = spawns.session_id
       WHERE spawns.worktree_path IS NOT NULL
+      ORDER BY spawns.requested_at DESC, spawns.rowid DESC`),
+    // WORKTREE LIVENESS CONTRACT: the removal gate must see every spawn whose
+    // EFFECTIVE directory could be the target tree — and worktreeSpawns above
+    // cannot, because its `worktree_path IS NOT NULL` filter drops the cwd-only
+    // rows: a live shell (`kind = 'shell'` refuses worktree:true outright) or an
+    // adopted Claude launched INTO a fleet worktree carries `worktree_path NULL,
+    // cwd = <that tree>`. The caller keys on the effective directory
+    // `worktree_path ?? cwd` — the same coalesce the launch paths use — and does
+    // the path-containment comparison (a spawn in a SUBdirectory of the target
+    // is still a live owner). Read-only, newest-first like its sibling.
+    liveWorktreeClaims: db2.prepare(`SELECT spawns.*, sessions.ended_at AS session_ended_at
+      FROM spawns LEFT JOIN sessions ON sessions.session_id = spawns.session_id
+      WHERE spawns.status IN ('provisioning', 'spawning', 'live')
       ORDER BY spawns.requested_at DESC, spawns.rowid DESC`),
     deleteWorktreeSpawns: db2.prepare("DELETE FROM spawns WHERE worktree_path = ?"),
     deleteEndedSession: db2.prepare("DELETE FROM sessions WHERE session_id = ? AND ended_at IS NOT NULL"),
@@ -5978,6 +6484,16 @@ function createStatements(db2) {
     // never silently swept — dismiss refuses a stalled card up front).
     expireMailForSession: db2.prepare(`UPDATE mail SET expired_at = ?
       WHERE to_session = ? AND delivered_at IS NULL AND expired_at IS NULL`),
+    // The questions analogue, for session-row removal (worktree.mjs's purge):
+    // a bare session DELETE must never leave a pending question pointing at a
+    // callsign that no longer exists. Mail expiry has no questions.mjs hold
+    // machinery to keep consistent, so a prepared statement is enough —
+    // hold-kind rows for an ENDED session have no parked socket left (their
+    // holds died with the hook connection), and there are no re-arm timers to
+    // cancel for a dead session. answers to an expired row are refused by the
+    // status guard in questions.mjs answer().
+    expireQuestionsForSession: db2.prepare(`UPDATE questions SET status = 'expired'
+      WHERE session_id = ? AND status = 'pending'`),
     goneSessionSpawns: db2.prepare(`UPDATE spawns SET status = 'gone'
       WHERE status NOT IN ('killed', 'pane-dead', 'gone', 'stalled')
         AND session_id = ?`),
@@ -6020,7 +6536,17 @@ function createStatements(db2) {
     plansForState: db2.prepare(`SELECT * FROM plans WHERE status != 'archived'
       ORDER BY created_at DESC, plan_id DESC LIMIT 20`),
     setPlanStatus: db2.prepare("UPDATE plans SET status = ? WHERE plan_id = ?"),
-    setPlanExecuted: db2.prepare("UPDATE plans SET status = 'executed', executed_via = ? WHERE plan_id = ?")
+    setPlanExecuted: db2.prepare("UPDATE plans SET status = 'executed', executed_via = ? WHERE plan_id = ?"),
+    // BUG-040 — atomic pre-spawn execution claim: one guarded UPDATE flips an
+    // executable plan to 'executed' BEFORE the spawn launches anything, so
+    // concurrent claims serialize in SQLite and exactly one wins (changes===1).
+    // releasePlanExecution restores the pre-claim status after a spawn
+    // failure, guarded on this claim's own `via` so a concurrent archive/mark
+    // in the failure window is never reverted.
+    claimPlanExecution: db2.prepare(`UPDATE plans SET status = 'executed', executed_via = ?
+      WHERE plan_id = ? AND status IN ('proposed', 'approved', 'captured')`),
+    releasePlanExecution: db2.prepare(`UPDATE plans SET status = ?
+      WHERE plan_id = ? AND status = 'executed' AND executed_via = ?`)
   };
   const FIELDS = [
     "callsign",
@@ -6054,7 +6580,9 @@ function createStatements(db2) {
     // 0.7.1 /clear succession + custom names.
     "cleared_at",
     "succeeded_by",
-    "custom_suffix"
+    "custom_suffix",
+    // Run generation (BUG-025): the active process's fleet_run nonce.
+    "run_id"
   ];
   const updateStmts = /* @__PURE__ */ new Map();
   const FIELD_SET = new Set(FIELDS);
@@ -6069,11 +6597,14 @@ function createStatements(db2) {
     }
     stmt.run(...keys.map((k) => upd[k] ?? null), sid);
   }
-  return { q, FIELDS, updateSession };
+  const statements = { q, FIELDS, updateSession };
+  statementsByDb.set(db2, statements);
+  return statements;
 }
 
 // scripts/fleetd/worktrees.mjs
 import fs5 from "node:fs";
+import path5 from "node:path";
 
 // scripts/fleetd/helpers.mjs
 import path4 from "node:path";
@@ -6193,6 +6724,33 @@ function claudeEnvArgvPrefix(port, home, { keep = [] } = {}) {
     `FLEETDECK_HOME=${home}`
   ];
 }
+function createKeyedMutex() {
+  const tails = /* @__PURE__ */ new Map();
+  return async function acquire(key) {
+    const tail = tails.get(key) ?? Promise.resolve();
+    let releaseNow = () => {
+    };
+    const mine = new Promise((resolve) => {
+      releaseNow = resolve;
+    });
+    tails.set(key, tail.then(() => mine));
+    await tail;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      if (tails.get(key) === mine) tails.delete(key);
+      releaseNow();
+    };
+  };
+}
+function canonicalPathKey(p) {
+  try {
+    return fs4.realpathSync(p);
+  } catch {
+    return path4.resolve(p);
+  }
+}
 async function mapLimit(items, limit, fn) {
   const out = new Array(items.length);
   let next = 0;
@@ -6225,11 +6783,12 @@ function chmodWritableWhereOwned(root) {
         continue;
       }
       if (uid != null && st.uid !== uid) continue;
+      if (entry.isSymbolicLink()) continue;
       try {
         fs4.chmodSync(full, st.mode | 128);
       } catch {
       }
-      if (entry.isDirectory() && !entry.isSymbolicLink()) walk(full, depth + 1);
+      if (entry.isDirectory()) walk(full, depth + 1);
     }
   };
   try {
@@ -6282,14 +6841,25 @@ function blockedPaths(root, limit = 8) {
   return out;
 }
 var shellQuote = (s) => /^[A-Za-z0-9_@%+=:,./-]+$/.test(s) ? s : `'${String(s).replace(/'/g, `'\\''`)}'`;
-function pidAlive(pid) {
-  if (!Number.isFinite(pid) || pid <= 0) return false;
+function processStartMs(pid) {
+  if (!Number.isFinite(pid) || pid <= 0) return null;
   try {
-    process.kill(pid, 0);
-    return true;
+    const stat = fs4.readFileSync(`/proc/${pid}/stat`, "utf8");
+    const after = stat.slice(stat.lastIndexOf(")") + 2);
+    const startTicks = Number(after.split(" ")[19]);
+    const uptimeSeconds = Number(fs4.readFileSync("/proc/uptime", "utf8").split(" ")[0]);
+    if (!Number.isFinite(startTicks) || !Number.isFinite(uptimeSeconds)) return null;
+    return Date.now() - (uptimeSeconds - startTicks / 100) * 1e3;
   } catch {
-    return false;
+    return null;
   }
+}
+var PID_START_TOLERANCE_MS = 15e3;
+function pidOwnedBy(pid, startedAt) {
+  if (!Number.isFinite(startedAt) || startedAt <= 0) return false;
+  const startMs = processStartMs(pid);
+  if (startMs == null) return false;
+  return Math.abs(startMs - startedAt) <= PID_START_TOLERANCE_MS;
 }
 function colFromAgentState(raw, isNew) {
   const s = String(raw ?? "").toLowerCase();
@@ -6338,8 +6908,35 @@ function validateNameSuffix(suffix) {
 var SHELL_RE = /^(sh|bash|zsh|zsh-.*)$/;
 
 // scripts/fleetd/worktrees.mjs
+function canonical(p) {
+  try {
+    return fs5.realpathSync(p);
+  } catch {
+    return path5.resolve(p);
+  }
+}
+async function gitCommonDir(dir) {
+  const result = await execFileP("git", ["-C", dir, "rev-parse", "--git-common-dir"], { timeout: 5e3 });
+  if (!result.ok) return null;
+  const raw = result.out.trim();
+  if (!raw) return null;
+  return canonical(path5.isAbsolute(raw) ? raw : path5.resolve(dir, raw));
+}
+async function repoOwnsWorktree(repo, worktreePath, worktreeExists) {
+  if (worktreeExists) {
+    const [repoCommon, worktreeCommon] = await Promise.all([
+      gitCommonDir(repo),
+      gitCommonDir(worktreePath)
+    ]);
+    return repoCommon != null && worktreeCommon != null && repoCommon === worktreeCommon;
+  }
+  const list = await execFileP("git", ["-C", repo, "worktree", "list", "--porcelain"], { timeout: 5e3 });
+  if (!list.ok) return false;
+  const target = canonical(worktreePath);
+  return list.out.split("\n").some((line) => line.startsWith("worktree ") && canonical(line.slice(9).trim()) === target);
+}
 function createWorktrees(ctx) {
-  const { q, tick, onMutate } = ctx;
+  const { q, db: db2, tick, onMutate, acquireWorktreePathLock, claimWorktreeCustody } = ctx;
   function worktreeRows() {
     const seen = /* @__PURE__ */ new Set();
     return q.worktreeSpawns.all().filter((row) => {
@@ -6369,6 +6966,20 @@ function createWorktrees(ctx) {
       // why we cannot vouch for it — the board shows this verbatim
       verdict: exists2 ? "unknown" : "gone"
     };
+  }
+  async function refreshRemoteKnowledge(worktreePath) {
+    const remotes = await execFileP("git", ["-C", worktreePath, "remote"], { timeout: 5e3 });
+    if (!remotes.ok) return { ok: false, err: remotes.err };
+    const names = remotes.out.split(/\r?\n/).map((name) => name.trim()).filter(Boolean);
+    if (!names.length) return { ok: false, err: "no remote is configured to refresh against" };
+    for (const name of names) {
+      const fetched = await execFileP("git", ["-C", worktreePath, "fetch", "--prune", name], {
+        timeout: 3e4,
+        env: { GIT_TERMINAL_PROMPT: "0" }
+      });
+      if (!fetched.ok) return { ok: false, err: fetched.err };
+    }
+    return { ok: true };
   }
   async function inspectWorktree(row) {
     let exists2 = false;
@@ -6400,6 +7011,13 @@ function createWorktrees(ctx) {
       const [sha, subject, at] = log.out.trimEnd().split("\0");
       item.last_commit = { sha, subject, at: Number(at) };
     }
+    if (!base.local) {
+      const refreshed = await refreshRemoteKnowledge(row.worktree_path);
+      if (!refreshed.ok) {
+        item.note = "could not refresh the remote before judging this worktree \u2014 its remote knowledge may be stale, so nothing here can be certified as safe. Check the remote and refresh again.";
+        return item;
+      }
+    }
     const [ahead, unpushed, merged] = await Promise.all([
       execFileP("git", ["-C", row.worktree_path, "rev-list", "--count", `${base.ref}..HEAD`], { timeout: 5e3 }),
       // THE question, and the only one that decides whether deleting this
@@ -6407,8 +7025,8 @@ function createWorktrees(ctx) {
       // "ahead of my upstream", not "ahead of my local main" — both of those
       // say yes to work that is already safely merged on the server. `--not
       // --remotes` asks git for commits that exist on no remote we know of.
-      // (Knowledge is as of the last fetch; the board says so, and `?fetch=1`
-      // refreshes it.)
+      // The refs were just fetched and pruned above, so "we know of" is as of
+      // THIS inspection, not the last time somebody happened to fetch.
       execFileP("git", ["-C", row.worktree_path, "rev-list", "--count", "HEAD", "--not", "--remotes"], { timeout: 5e3 }),
       execFileP("git", ["-C", row.worktree_path, "merge-base", "--is-ancestor", "HEAD", base.ref], { timeout: 5e3 })
     ]);
@@ -6424,100 +7042,160 @@ function createWorktrees(ctx) {
     return { ok: true, worktrees: await mapLimit(worktreeRows(), 4, inspectWorktree) };
   }
   const LAUNCHING_OR_LIVE = /* @__PURE__ */ new Set(["provisioning", "spawning", "live"]);
+  function claimsPath(candidate, target) {
+    const effective = candidate.worktree_path ?? candidate.cwd;
+    if (typeof effective !== "string" || !effective) return false;
+    const dir = path5.resolve(effective);
+    return dir === target || dir.startsWith(target + path5.sep);
+  }
   function worktreePathIsLive(worktreePath) {
-    return q.worktreeSpawns.all().some((candidate) => candidate.worktree_path === worktreePath && (LAUNCHING_OR_LIVE.has(candidate.status) || candidate.session_ended_at == null && q.getSession.get(candidate.session_id) != null));
+    const target = path5.resolve(worktreePath);
+    return q.worktreeSpawns.all().some((candidate) => candidate.worktree_path === worktreePath && (LAUNCHING_OR_LIVE.has(candidate.status) || candidate.session_ended_at == null && q.getSession.get(candidate.session_id) != null)) || q.liveWorktreeClaims.all().some((candidate) => claimsPath(candidate, target));
+  }
+  async function branchTipOid(repo, branch) {
+    const tip = await execFileP("git", ["-C", repo, "rev-parse", "--verify", `refs/heads/${branch}`], { timeout: 5e3 });
+    return tip.ok ? tip.out.trim() : null;
   }
   async function removeWorktree(body = {}) {
     if (typeof body?.path !== "string") {
       return { status: 400, body: { ok: false, reason: "not a fleet worktree" } };
     }
-    const rows = q.worktreeSpawns.all().filter((row2) => row2.worktree_path === body.path);
-    const row = rows[0];
-    if (!row) return { status: 400, body: { ok: false, reason: "not a fleet worktree" } };
-    if (worktreePathIsLive(body.path)) return { status: 409, body: { ok: false, reason: "session is still alive" } };
-    const state = await inspectWorktree(row);
-    if ((state.verdict === "has-work" || state.verdict === "unknown") && body.force !== true) {
-      return {
-        status: 409,
-        body: {
-          ok: false,
-          reason: state.verdict === "has-work" ? "worktree has uncommitted or unpushed work" : "worktree safety is unknown",
-          verdict: state.verdict,
-          dirty: state.dirty,
-          unpushed: state.unpushed
-        }
-      };
-    }
-    const repoResult = await execFileP("git", ["-C", row.cwd, "rev-parse", "--show-toplevel"], { timeout: 5e3 });
-    if (!repoResult.ok) return { status: 409, body: { ok: false, reason: "main repository unavailable" } };
-    const repo = repoResult.out.trim();
-    if (worktreePathIsLive(row.worktree_path)) {
-      return { status: 409, body: { ok: false, reason: "session became live during removal" } };
-    }
-    if (state.exists) {
-      chmodWritableWhereOwned(row.worktree_path);
-      const args = ["-C", repo, "worktree", "remove"];
-      if (body.force === true) args.push("--force");
-      args.push(row.worktree_path);
-      const removed = await execFileP("git", args, { timeout: 3e4 });
-      if (!removed.ok) {
-        const blocked = blockedPaths(row.worktree_path);
-        if (blocked.length) {
-          return {
-            status: 409,
-            body: {
-              ok: false,
-              reason: `blocked by ${blocked.length} path(s) this daemon may not delete \u2014 owned by ${[...new Set(blocked.map((b) => b.owner))].join(", ")}. Fleet Deck runs as you and never escalates to root.`,
-              blocked_paths: blocked.map((b) => b.path),
-              blocked_owner: blocked[0].owner,
-              fix_command: `sudo rm -rf ${blocked.map((b) => shellQuote(b.path)).join(" ")} && git -C ${shellQuote(repo)} worktree prune`
+    const releasePath = await acquireWorktreePathLock(canonicalPathKey(body.path));
+    try {
+      const rows = q.worktreeSpawns.all().filter((row2) => row2.worktree_path === body.path);
+      const row = rows[0];
+      if (!row) return { status: 400, body: { ok: false, reason: "not a fleet worktree" } };
+      if (worktreePathIsLive(body.path)) return { status: 409, body: { ok: false, reason: "session is still alive" } };
+      const state = await inspectWorktree(row);
+      const inspected_tip = state.exists && state.branch ? await branchTipOid(row.worktree_path, state.branch) : null;
+      if ((state.verdict === "has-work" || state.verdict === "unknown") && body.force !== true) {
+        return {
+          status: 409,
+          body: {
+            ok: false,
+            reason: state.verdict === "has-work" ? "worktree has uncommitted or unpushed work" : "worktree safety is unknown",
+            verdict: state.verdict,
+            dirty: state.dirty,
+            unpushed: state.unpushed
+          }
+        };
+      }
+      const repoResult = await execFileP("git", ["-C", row.cwd, "rev-parse", "--show-toplevel"], { timeout: 5e3 });
+      if (!repoResult.ok) return { status: 409, body: { ok: false, reason: "main repository unavailable" } };
+      const repo = repoResult.out.trim();
+      if (!await repoOwnsWorktree(repo, row.worktree_path, state.exists)) {
+        return {
+          status: 409,
+          body: {
+            ok: false,
+            reason: "recorded cwd now resolves to a different repository than this worktree belongs to \u2014 refusing to remove or delete branches in it",
+            repo: canonical(repo)
+          }
+        };
+      }
+      if (worktreePathIsLive(row.worktree_path)) {
+        return { status: 409, body: { ok: false, reason: "session became live during removal" } };
+      }
+      const releaseCustody = claimWorktreeCustody?.(row.worktree_path, "remove");
+      if (!releaseCustody && claimWorktreeCustody) {
+        return { status: 409, body: { ok: false, reason: "session became live during removal" } };
+      }
+      try {
+        if (state.exists) {
+          chmodWritableWhereOwned(row.worktree_path);
+          const args = ["-C", repo, "worktree", "remove"];
+          if (body.force === true) args.push("--force");
+          args.push(row.worktree_path);
+          const removed = await execFileP("git", args, { timeout: 3e4 });
+          if (!removed.ok) {
+            const blocked = blockedPaths(row.worktree_path);
+            if (blocked.length) {
+              return {
+                status: 409,
+                body: {
+                  ok: false,
+                  reason: `blocked by ${blocked.length} path(s) this daemon may not delete \u2014 owned by ${[...new Set(blocked.map((b) => b.owner))].join(", ")}. Fleet Deck runs as you and never escalates to root.`,
+                  blocked_paths: blocked.map((b) => b.path),
+                  blocked_owner: blocked[0].owner,
+                  fix_command: `sudo rm -rf ${blocked.map((b) => shellQuote(b.path)).join(" ")} && git -C ${shellQuote(repo)} worktree prune`
+                }
+              };
             }
-          };
-        }
-        if (body.force !== true) {
-          const porcelain = await execFileP("git", ["-C", row.worktree_path, "status", "--porcelain"], { timeout: 5e3 });
-          if (porcelain.ok && porcelain.out.trim() !== "") {
-            return {
-              status: 409,
-              body: {
-                ok: false,
-                reason: "git refused to remove this worktree and it still has uncommitted changes \u2014 pass force to delete",
-                verdict: "has-work",
-                dirty: porcelain.out.split(/\r?\n/).filter(Boolean).length
+            if (body.force !== true) {
+              const porcelain = await execFileP("git", ["-C", row.worktree_path, "status", "--porcelain"], { timeout: 5e3 });
+              if (porcelain.ok && porcelain.out.trim() !== "") {
+                return {
+                  status: 409,
+                  body: {
+                    ok: false,
+                    reason: "git refused to remove this worktree and it still has uncommitted changes \u2014 pass force to delete",
+                    verdict: "has-work",
+                    dirty: porcelain.out.split(/\r?\n/).filter(Boolean).length
+                  }
+                };
               }
-            };
+            }
+            try {
+              fs5.rmSync(row.worktree_path, { recursive: true, force: true });
+            } catch (err) {
+              return { status: 409, body: { ok: false, reason: `could not remove worktree: ${err.code || err.message}` } };
+            }
+            const pruned = await execFileP("git", ["-C", repo, "worktree", "prune"], { timeout: 3e4 });
+            if (!pruned.ok) return { status: 409, body: { ok: false, reason: `git worktree prune failed: ${scrubUrlCredentials(pruned.err)}`.slice(0, 300) } };
+          }
+        } else {
+          const pruned = await execFileP("git", ["-C", repo, "worktree", "prune"], { timeout: 3e4 });
+          if (!pruned.ok) return { status: 409, body: { ok: false, reason: `git worktree prune failed: ${scrubUrlCredentials(pruned.err)}`.slice(0, 300) } };
+        }
+        let branch_deleted = false;
+        const branch = state.branch ?? q.getSession.get(row.session_id)?.branch ?? null;
+        if (body.delete_branch === true && branch) {
+          if (inspected_tip == null) {
+            const deleted = await execFileP("git", ["-C", repo, "branch", "-D", branch], { timeout: 3e4 });
+            branch_deleted = deleted.ok;
+          } else if (await branchTipOid(repo, branch) === inspected_tip) {
+            const deleted = await execFileP(
+              "git",
+              ["-C", repo, "update-ref", "-d", `refs/heads/${branch}`, inspected_tip],
+              { timeout: 3e4 }
+            );
+            branch_deleted = deleted.ok;
           }
         }
-        try {
-          fs5.rmSync(row.worktree_path, { recursive: true, force: true });
-        } catch (err) {
-          return { status: 409, body: { ok: false, reason: `could not remove worktree: ${err.code || err.message}` } };
+        if (worktreePathIsLive(row.worktree_path)) {
+          onMutate();
+          return { status: 200, body: { ok: true, removed: true, branch_deleted, rows_purged: 0, spawn_became_live: true, path: row.worktree_path } };
         }
-        const pruned = await execFileP("git", ["-C", repo, "worktree", "prune"], { timeout: 3e4 });
-        if (!pruned.ok) return { status: 409, body: { ok: false, reason: `git worktree prune failed: ${scrubUrlCredentials(pruned.err)}`.slice(0, 300) } };
+        const sessionIds = [...new Set(rows.map((candidate) => candidate.session_id).filter(Boolean))];
+        const now = Date.now();
+        let spawnsPurged = 0;
+        let sessionsPurged = 0;
+        db2.exec("BEGIN IMMEDIATE");
+        try {
+          for (const sessionId of sessionIds) {
+            q.expireMailForSession.run(now, sessionId);
+            q.expireQuestionsForSession.run(sessionId);
+          }
+          spawnsPurged = Number(q.deleteWorktreeSpawns.run(row.worktree_path).changes);
+          for (const sessionId of sessionIds) sessionsPurged += Number(q.deleteEndedSession.run(sessionId).changes);
+          db2.exec("COMMIT");
+        } catch (err) {
+          try {
+            db2.exec("ROLLBACK");
+          } catch {
+          }
+          return { status: 500, body: { ok: false, reason: `could not purge worktree rows: ${err.message}` } };
+        }
+        const rows_purged = spawnsPurged + sessionsPurged;
+        tick(`\u232B removed worktree ${row.worktree_path}${branch_deleted ? ` and branch ${branch}` : ""}`);
+        onMutate();
+        return { status: 200, body: { ok: true, removed: true, branch_deleted, rows_purged, path: row.worktree_path } };
+      } finally {
+        releaseCustody?.();
       }
-    } else {
-      const pruned = await execFileP("git", ["-C", repo, "worktree", "prune"], { timeout: 3e4 });
-      if (!pruned.ok) return { status: 409, body: { ok: false, reason: `git worktree prune failed: ${scrubUrlCredentials(pruned.err)}`.slice(0, 300) } };
+    } finally {
+      releasePath();
     }
-    let branch_deleted = false;
-    const branch = state.branch ?? q.getSession.get(row.session_id)?.branch ?? null;
-    if (body.delete_branch === true && branch) {
-      const deleted = await execFileP("git", ["-C", repo, "branch", "-D", branch], { timeout: 3e4 });
-      branch_deleted = deleted.ok;
-    }
-    if (worktreePathIsLive(row.worktree_path)) {
-      onMutate();
-      return { status: 200, body: { ok: true, removed: true, branch_deleted, rows_purged: 0, spawn_became_live: true, path: row.worktree_path } };
-    }
-    const sessionIds = [...new Set(rows.map((candidate) => candidate.session_id).filter(Boolean))];
-    const spawnsPurged = Number(q.deleteWorktreeSpawns.run(row.worktree_path).changes);
-    let sessionsPurged = 0;
-    for (const sessionId of sessionIds) sessionsPurged += Number(q.deleteEndedSession.run(sessionId).changes);
-    const rows_purged = spawnsPurged + sessionsPurged;
-    tick(`\u232B removed worktree ${row.worktree_path}${branch_deleted ? ` and branch ${branch}` : ""}`);
-    onMutate();
-    return { status: 200, body: { ok: true, removed: true, branch_deleted, rows_purged, path: row.worktree_path } };
   }
   return { worktrees, removeWorktree };
 }
@@ -6525,17 +7203,27 @@ function createWorktrees(ctx) {
 // scripts/fleetd/repos.mjs
 import fs7 from "node:fs";
 import os3 from "node:os";
-import path6 from "node:path";
+import path7 from "node:path";
 
 // scripts/fleetd/config.mjs
 import fs6 from "node:fs";
 import os2 from "node:os";
-import path5 from "node:path";
+import path6 from "node:path";
 function resolveHome() {
-  return process.env.FLEETDECK_HOME || path5.join(os2.homedir() || "/tmp", ".fleetdeck");
+  const fallbackBase = os2.homedir() || "/tmp";
+  const configured = process.env.FLEETDECK_HOME?.trim();
+  if (!configured) return path6.join(fallbackBase, ".fleetdeck");
+  if (!path6.isAbsolute(configured)) return path6.resolve(fallbackBase, configured);
+  return path6.normalize(configured);
 }
 function resolvePort() {
-  return Number(process.env.FLEETDECK_PORT || 4711);
+  const raw = process.env.FLEETDECK_PORT;
+  if (raw === void 0 || raw === "") return 4711;
+  const port = Number(raw);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`invalid FLEETDECK_PORT ${JSON.stringify(raw)} \u2014 expected an integer port in 1..65535 (port 0 is not supported)`);
+  }
+  return port;
 }
 function detectCoderWorkspaceRoot({ env = process.env, probeDir = "/workspace" } = {}) {
   const present = (v) => typeof v === "string" && v !== "";
@@ -6574,7 +7262,7 @@ function gitFailureText(err, origin_url = null) {
 }
 function repoNameOf(value) {
   const clean = String(value).replace(/[\\/]+$/, "");
-  return path6.basename(clean).replace(/\.git$/i, "");
+  return path7.basename(clean).replace(/\.git$/i, "");
 }
 function unsafeDashSegment(value) {
   return String(value).split(/[/:@]/).some((segment) => segment.startsWith("-"));
@@ -6641,7 +7329,7 @@ function parseRepoInput(input, repoHost = "github", repoTransport = "https") {
     if (scheme === "http") return { error: "plain http repository URLs are refused \u2014 use https or ssh" };
     return { error: `repository URL scheme "${scheme}" is refused \u2014 use https or ssh` };
   }
-  if (path6.isAbsolute(input)) {
+  if (path7.isAbsolute(input)) {
     const repo_name = repoNameOf(input);
     if (!repo_name) return { error: "absolute repository path must name a repository" };
     return { kind: "path", origin_url: null, repo_name };
@@ -6672,7 +7360,7 @@ function parseRepoInput(input, repoHost = "github", repoTransport = "https") {
     }
     return { error: "group/subgroup paths need the gitlab host or a full repository URL" };
   }
-  if (parts.length > 1 || input === "." || input === ".." || input.startsWith("." + path6.sep)) {
+  if (parts.length > 1 || input === "." || input === ".." || input.startsWith("." + path7.sep)) {
     return { error: "relative repository paths are refused \u2014 use an absolute path" };
   }
   return { kind: "name", origin_url: null, repo_name: repoNameOf(input) };
@@ -6690,40 +7378,50 @@ function quickBranchCheck(branch) {
 }
 function expandHome(value) {
   if (value === "~") return os3.homedir();
-  if (value.startsWith("~/")) return path6.join(os3.homedir(), value.slice(2));
+  if (value.startsWith("~/")) return path7.join(os3.homedir(), value.slice(2));
   return value;
 }
+var FORGE_HOSTS = /* @__PURE__ */ new Set(["github.com", "gitlab.com"]);
 function normalizeRemoteOrigin(value) {
   const input = String(value);
+  let user = null;
   let host;
   let rest;
-  const url = /^(?:https|ssh):\/\/([^/?#]+)(\/[^?#]*)$/i.exec(input);
+  const url = /^(?:https|ssh):\/\/(?:([^/?#@]*)@)?([^/?#]+)(\/[^?#]*)$/i.exec(input);
   if (url) {
-    host = url[1];
-    const at = host.lastIndexOf("@");
-    if (at !== -1) host = host.slice(at + 1);
+    user = url[1] || null;
+    host = url[2];
     if (!host || host.includes(":")) return null;
-    rest = url[2];
+    rest = url[3];
   } else {
     if (input.includes("://")) return null;
-    const scp = /^(?:[^/@:]+@)?([^/:@]+):(.+)$/.exec(input);
+    const scp = /^(?:([^/@:]+)@)?([^/:@]+):(.+)$/.exec(input);
     if (!scp) return null;
-    [, host, rest] = scp;
+    [, user, host, rest] = scp;
+    user = user || null;
   }
   const cleaned = rest.replace(/^\/+/, "").replace(/[\\/]+$/, "").replace(/\.git$/i, "");
   if (!cleaned) return null;
-  return `//${host}/${cleaned}`.toLowerCase();
+  if (FORGE_HOSTS.has(host.toLowerCase())) return `//${host}/${cleaned}`.toLowerCase();
+  return `//${host.toLowerCase()}/${user == null ? "" : `${user}@`}${cleaned}`;
+}
+function foldOriginCaseInsensitivePrefix(origin) {
+  const scp = /^[^/@:]+@/.exec(origin);
+  if (scp) return scp[0].toLowerCase() + origin.slice(scp[0].length);
+  const scheme = /^[A-Za-z][A-Za-z0-9+.-]{0,32}:/.exec(origin);
+  if (scheme) return scheme[0].toLowerCase() + origin.slice(scheme[0].length);
+  return origin;
 }
 function comparableOrigin(value) {
   if (!value) return null;
-  if (path6.isAbsolute(value)) {
+  if (path7.isAbsolute(value)) {
     try {
       return fs7.realpathSync(value);
     } catch {
-      return path6.resolve(value);
+      return path7.resolve(value);
     }
   }
-  return normalizeRemoteOrigin(value) ?? String(value).replace(/[\\/]+$/, "").replace(/\.git$/i, "").toLowerCase();
+  return normalizeRemoteOrigin(value) ?? foldOriginCaseInsensitivePrefix(String(value).replace(/[\\/]+$/, "").replace(/\.git$/i, ""));
 }
 function exists(pathname) {
   try {
@@ -6809,13 +7507,13 @@ function createRepos(ctx) {
   function resolveReposDir() {
     const override = q.getSetting.get("repos_dir")?.value;
     if (override != null) {
-      return { value: override, source: "override", resolved: path6.resolve(expandHome(override)) };
+      return { value: override, source: "override", resolved: path7.resolve(expandHome(override)) };
     }
     if (process.env.FLEETDECK_REPOS_DIR) {
       const value2 = process.env.FLEETDECK_REPOS_DIR;
-      return { value: value2, source: "env", resolved: path6.resolve(expandHome(value2)) };
+      return { value: value2, source: "env", resolved: path7.resolve(expandHome(value2)) };
     }
-    const value = detectCoderWorkspaceRoot() ?? path6.join(os3.homedir(), "projects");
+    const value = detectCoderWorkspaceRoot() ?? path7.join(os3.homedir(), "projects");
     return { value, source: "default", resolved: value };
   }
   function resolveRepoTransport() {
@@ -6842,9 +7540,9 @@ function createRepos(ctx) {
     if (typeof value !== "string" || !value) throw namedError(400, "repos_dir must be an absolute path or null");
     if (CONTROL_RE.test(value)) throw namedError(400, "repos_dir must not contain NUL or control characters");
     const expanded = expandHome(value);
-    if (!path6.isAbsolute(expanded)) throw namedError(400, "repos_dir must be an absolute path (or begin with ~/)");
-    const resolved = path6.resolve(expanded);
-    if (path6.dirname(resolved) === resolved) throw namedError(400, "repos_dir must not be the filesystem root");
+    if (!path7.isAbsolute(expanded)) throw namedError(400, "repos_dir must be an absolute path (or begin with ~/)");
+    const resolved = path7.resolve(expanded);
+    if (path7.dirname(resolved) === resolved) throw namedError(400, "repos_dir must not be the filesystem root");
     try {
       if (fs7.existsSync(resolved)) {
         if (!fs7.statSync(resolved).isDirectory()) throw namedError(400, "repos_dir points to an existing file");
@@ -6898,12 +7596,12 @@ function createRepos(ctx) {
         if (expanded.error) throw namedError(400, `default org "${org.value}" cannot resolve this repo \u2014 ${expanded.error}`);
         parsed = expanded;
         origin_url = parsed.origin_url;
-        dest = path6.join(resolveReposDir().resolved, parsed.repo_name);
+        dest = path7.join(resolveReposDir().resolved, parsed.repo_name);
       }
     } else if (parsed.kind === "path") {
-      dest = path6.resolve(body.repo);
+      dest = path7.resolve(body.repo);
     } else {
-      dest = path6.join(resolveReposDir().resolved, parsed.repo_name);
+      dest = path7.join(resolveReposDir().resolved, parsed.repo_name);
     }
     if (parsed.kind === "path") {
       const kind = await gitRepoKind(dest);
@@ -6912,7 +7610,7 @@ function createRepos(ctx) {
       }
       if (exists(dest) && kind !== "bare") throw namedError(409, `${dest} exists and is not ${body.repo}`);
       origin_url = dest;
-      dest = path6.join(resolveReposDir().resolved, parsed.repo_name);
+      dest = path7.join(resolveReposDir().resolved, parsed.repo_name);
     }
     const candidates = [dest];
     if (parsed.kind !== "path") {
@@ -6992,7 +7690,7 @@ ${result.err}`);
     }
     if (mode === "in-place") {
       const status = await execFileP("git", ["-C", root, "status", "--porcelain"], { timeout: 3e4 });
-      if (!status.ok) throw namedError(409, scrubUrlCredentials(status.err) || "git status failed");
+      if (!status.ok) throw namedError(409, redactGitText(status.err) || "git status failed");
       const dirty = dirtyNames(status.out);
       if (dirty.length) {
         const shown = dirty.slice(0, 3).join(", ");
@@ -7000,15 +7698,15 @@ ${result.err}`);
       }
       const args = local.ok ? ["-C", root, "switch", branch] : remote.ok ? ["-C", root, "switch", "--track", `origin/${branch}`] : ["-C", root, "switch", "-c", branch, base.ref];
       const switched = await execFileP("git", args, { timeout: 3e4 });
-      if (!switched.ok) throw namedError(409, scrubUrlCredentials(switched.err) || "git switch failed");
+      if (!switched.ok) throw namedError(409, redactGitText(switched.err) || "git switch failed");
       return { runCwd: root, created: { clone: !!clone, worktree: false }, reused: false };
     }
     const listed = await execFileP("git", ["-C", root, "worktree", "list", "--porcelain"], { timeout: 1e4 });
-    if (!listed.ok) throw namedError(409, scrubUrlCredentials(listed.err) || "git worktree list failed");
+    if (!listed.ok) throw namedError(409, redactGitText(listed.err) || "git worktree list failed");
     const existing = parseWorktrees(listed.out).find((row) => row.branch === branch);
     if (existing) return { runCwd: existing.path, created: { clone: !!clone, worktree: false }, reused: true };
     const safeBranch = branch.replaceAll("/", "-");
-    const basePath = path6.join(path6.dirname(root), `${path6.basename(root)}--fd-${safeBranch}`);
+    const basePath = path7.join(path7.dirname(root), `${path7.basename(root)}--fd-${safeBranch}`);
     const dedupPath = `${basePath}-${String(sid).slice(0, 4) || "repo"}`;
     const candidates = exists(basePath) ? [dedupPath] : [basePath, dedupPath];
     let last = null;
@@ -7026,21 +7724,21 @@ ${result.err}`);
         await execFileP("git", ["-C", root, "worktree", "prune"], { timeout: 3e4 });
       }
     }
-    throw namedError(409, scrubUrlCredentials(last?.err) || "git worktree add failed");
+    throw namedError(409, redactGitText(last?.err) || "git worktree add failed");
   }
   function canonicalTarget(dest) {
     try {
       return fs7.realpathSync(dest);
     } catch {
-      return path6.resolve(dest);
+      return path7.resolve(dest);
     }
   }
   function claimTarget(dest, callsign) {
-    const canonical = canonicalTarget(dest);
-    const owner = provisioningTargets.get(canonical);
-    if (owner) throw namedError(409, `${canonical} is already being provisioned by ${owner}`);
-    provisioningTargets.set(canonical, callsign);
-    return () => provisioningTargets.delete(canonical);
+    const canonical2 = canonicalTarget(dest);
+    const owner = provisioningTargets.get(canonical2);
+    if (owner) throw namedError(409, `${canonical2} is already being provisioned by ${owner}`);
+    provisioningTargets.set(canonical2, callsign);
+    return () => provisioningTargets.delete(canonical2);
   }
   function targetOwner(dest) {
     return provisioningTargets.get(canonicalTarget(dest)) ?? null;
@@ -7064,7 +7762,7 @@ ${result.err}`);
 // scripts/fleetd/settings.mjs
 import fs8 from "node:fs";
 import os4 from "node:os";
-import path7 from "node:path";
+import path8 from "node:path";
 var CONTROL_RE2 = /[\x00-\x1f\x7f]/;
 var SETUP_CONTROL_RE = /[\x00-\x09\x0b-\x1f\x7f]/;
 var FAV_DIRS_MAX = 20;
@@ -7077,6 +7775,7 @@ var ALLOWED_KEYS = [
   "browse_root",
   "fav_dirs",
   "repo_setup",
+  "repo_setup_patch",
   "gateway_base_url",
   "gateway_auth_style",
   "gateway_token",
@@ -7092,16 +7791,16 @@ function namedError2(status, message) {
 }
 function expandHome2(value) {
   if (value === "~") return os4.homedir();
-  if (value.startsWith("~/")) return path7.join(os4.homedir(), value.slice(2));
+  if (value.startsWith("~/")) return path8.join(os4.homedir(), value.slice(2));
   return value;
 }
 function validatePathSetting(value, label2) {
   if (typeof value !== "string" || !value) throw namedError2(400, `${label2} must be an absolute path or null`);
   if (CONTROL_RE2.test(value)) throw namedError2(400, `${label2} must not contain NUL or control characters`);
   const expanded = expandHome2(value);
-  if (!path7.isAbsolute(expanded)) throw namedError2(400, `${label2} must be an absolute path (or begin with ~/)`);
-  const resolved = path7.resolve(expanded);
-  if (path7.dirname(resolved) === resolved) throw namedError2(400, `${label2} must not be the filesystem root`);
+  if (!path8.isAbsolute(expanded)) throw namedError2(400, `${label2} must be an absolute path (or begin with ~/)`);
+  const resolved = path8.resolve(expanded);
+  if (path8.dirname(resolved) === resolved) throw namedError2(400, `${label2} must not be the filesystem root`);
   try {
     if (fs8.existsSync(resolved) && !fs8.statSync(resolved).isDirectory()) {
       throw namedError2(400, `${label2} points to an existing file`);
@@ -7111,8 +7810,8 @@ function validatePathSetting(value, label2) {
     throw namedError2(400, `cannot inspect ${label2}: ${err.message || err}`);
   }
   try {
-    const canonical = fs8.realpathSync(resolved);
-    if (path7.dirname(canonical) === canonical) throw namedError2(400, `${label2} must not be the filesystem root`);
+    const canonical2 = fs8.realpathSync(resolved);
+    if (path8.dirname(canonical2) === canonical2) throw namedError2(400, `${label2} must not be the filesystem root`);
   } catch (err) {
     if (err?.status) throw err;
   }
@@ -7120,6 +7819,7 @@ function validatePathSetting(value, label2) {
 }
 function createSettings(ctx) {
   const {
+    db: db2,
     q,
     onMutate,
     resolveReposDir,
@@ -7138,11 +7838,11 @@ function createSettings(ctx) {
   function browseRootChoice() {
     const setting = readSetting("browse_root");
     if (setting != null) {
-      return { value: setting, source: "override", resolved: path7.resolve(expandHome2(setting)) };
+      return { value: setting, source: "override", resolved: path8.resolve(expandHome2(setting)) };
     }
     const env = process.env.FLEETDECK_BROWSE_ROOT;
     if (env) {
-      return { value: env, source: "env", resolved: path7.resolve(expandHome2(env)) };
+      return { value: env, source: "env", resolved: path8.resolve(expandHome2(env)) };
     }
     const detected = detectCoderWorkspaceRoot();
     if (detected) {
@@ -7178,8 +7878,8 @@ function createSettings(ctx) {
       if (typeof entry !== "string" || !entry) throw namedError2(400, "each fav_dir must be a non-empty string");
       if (CONTROL_RE2.test(entry)) throw namedError2(400, "a fav_dir must not contain NUL or control characters");
       const expanded = expandHome2(entry);
-      if (!path7.isAbsolute(expanded)) throw namedError2(400, "a fav_dir must be an absolute path (or begin with ~/)");
-      const resolved = path7.resolve(expanded);
+      if (!path8.isAbsolute(expanded)) throw namedError2(400, "a fav_dir must be an absolute path (or begin with ~/)");
+      const resolved = path8.resolve(expanded);
       let isDir = false;
       try {
         isDir = fs8.statSync(resolved).isDirectory();
@@ -7211,11 +7911,13 @@ function createSettings(ctx) {
     if (typeof value !== "object" || Array.isArray(value)) {
       throw namedError2(400, "repo_setup must be an object mapping repo names to commands or null");
     }
-    const entries = Object.entries(value);
+    return validateRepoSetupEntries(Object.entries(value));
+  }
+  function validateRepoSetupEntries(entries) {
     if (entries.length > REPO_SETUP_MAX) {
       throw namedError2(400, `repo_setup must contain ${REPO_SETUP_MAX} entries or fewer \u2014 got ${entries.length}`);
     }
-    const out = {};
+    const out = [];
     for (const [name, cmd] of entries) {
       if (!name || CONTROL_RE2.test(name)) {
         throw namedError2(400, "repo_setup keys must be non-empty repo names without control characters");
@@ -7229,7 +7931,25 @@ function createSettings(ctx) {
       if (SETUP_CONTROL_RE.test(cmd)) {
         throw namedError2(400, `repo_setup command for "${name}" must not contain NUL or control characters other than newline`);
       }
-      out[name] = cmd;
+      out.push([name, cmd]);
+    }
+    return Object.fromEntries(out);
+  }
+  function validateRepoSetupPatch(value) {
+    if (value == null) return null;
+    if (typeof value !== "object" || Array.isArray(value)) {
+      throw namedError2(400, 'repo_setup_patch must be an object mapping repo names to commands, "__delete" entries, or null');
+    }
+    const out = {};
+    for (const [name, cmd] of Object.entries(value)) {
+      if (cmd === "__delete") {
+        if (!name || CONTROL_RE2.test(name)) {
+          throw namedError2(400, "repo_setup_patch keys must be non-empty repo names without control characters");
+        }
+        out[name] = cmd;
+        continue;
+      }
+      Object.assign(out, validateRepoSetupEntries([[name, cmd]]));
     }
     return out;
   }
@@ -7361,6 +8081,25 @@ function createSettings(ctx) {
       prepare: (v) => validateRepoSetup(v),
       commit: (prepared) => q.setSetting.run("repo_setup", prepared == null ? null : JSON.stringify(prepared), Date.now())
     },
+    repo_setup_patch: {
+      prepare: (v) => validateRepoSetupPatch(v),
+      commit: (prepared) => {
+        if (prepared == null || Object.keys(prepared).length === 0) {
+          q.setSetting.run("repo_setup", null, Date.now());
+          return;
+        }
+        const merged = resolveRepoSetup();
+        for (const [name, cmd] of Object.entries(prepared)) {
+          if (cmd === "__delete") delete merged[name];
+          else merged[name] = cmd;
+        }
+        q.setSetting.run(
+          "repo_setup",
+          Object.keys(merged).length === 0 ? null : JSON.stringify(merged),
+          Date.now()
+        );
+      }
+    },
     hold_ms: {
       prepare: (v) => validateHoldMs(v),
       commit: (v) => q.setSetting.run("hold_ms", v ?? null, Date.now())
@@ -7405,11 +8144,27 @@ function createSettings(ctx) {
     }
     try {
       const prepared = keys.map((k) => ({ k, value: HANDLERS[k].prepare(body[k]) }));
-      for (const { k, value } of prepared) HANDLERS[k].commit(value);
-      onMutate();
+      if (!db2) {
+        for (const { k, value } of prepared) HANDLERS[k].commit(value);
+        onMutate();
+        return { status: 200, body: { ok: true, settings: resolveSettings() } };
+      }
+      db2.exec("BEGIN IMMEDIATE");
+      try {
+        for (const { k, value } of prepared) HANDLERS[k].commit(value);
+        onMutate();
+        db2.exec("COMMIT");
+      } catch (err) {
+        try {
+          db2.exec("ROLLBACK");
+        } catch {
+        }
+        throw err;
+      }
       return { status: 200, body: { ok: true, settings: resolveSettings() } };
     } catch (err) {
-      return { status: err.status || 400, body: { ok: false, reason: err.message || String(err) } };
+      const status = err.status || 500;
+      return { status, body: { ok: false, reason: err.message || String(err) } };
     }
   }
   function persistRepoTransport(value) {
@@ -7424,6 +8179,15 @@ function createSettings(ctx) {
       return;
     }
     q.setSetting.run("repo_default_org", value, Date.now());
+  }
+  function setRepoSetupEntry(name, cmd) {
+    let prepared;
+    try {
+      prepared = validateRepoSetupPatch({ [name]: cmd ?? "__delete" });
+    } catch {
+      return;
+    }
+    HANDLERS.repo_setup_patch.commit(prepared);
   }
   function resolveSettings() {
     return {
@@ -7447,14 +8211,15 @@ function createSettings(ctx) {
     persistRepoDefaultOrg,
     resolveGateway,
     resolveGatewayEnv,
-    resolveHoldMsRaw
+    resolveHoldMsRaw,
+    setRepoSetupEntry
   };
 }
 
 // scripts/fleetd/files.mjs
 import fs9 from "node:fs";
 import os5 from "node:os";
-import path8 from "node:path";
+import path9 from "node:path";
 import { spawn } from "node:child_process";
 function envInt2(name, fallback, { min = 1 } = {}) {
   const n = Number(process.env[name]);
@@ -7480,10 +8245,10 @@ var PathError = class extends Error {
   }
 };
 function within(root, candidate) {
-  return candidate === root || candidate.startsWith(root + path8.sep);
+  return candidate === root || candidate.startsWith(root + path9.sep);
 }
 function validateRelPath(relPath) {
-  if (typeof relPath !== "string" || relPath.length > 4096 || relPath.includes("\0") || path8.isAbsolute(relPath) || relPath.split(/[\\/]/).includes("..")) {
+  if (typeof relPath !== "string" || relPath.length > 4096 || relPath.includes("\0") || path9.isAbsolute(relPath) || relPath.split(/[\\/]/).includes("..")) {
     throw new PathError(400, "invalid path");
   }
   const segments = relPath.toLowerCase().split(/[\\/]/);
@@ -7504,7 +8269,7 @@ function deniedRelPath(rel) {
 }
 function safeJoin(realRoot, relPath) {
   validateRelPath(relPath);
-  const abs = path8.resolve(realRoot, relPath || ".");
+  const abs = path9.resolve(realRoot, relPath || ".");
   if (!within(realRoot, abs)) throw new PathError(400, "invalid path");
   return abs;
 }
@@ -7542,13 +8307,13 @@ function realpathInside(realRoot, target) {
   if (!within(realRoot, real)) throw new PathError(404, "not found");
   if (fleetHomeReal === void 0) {
     try {
-      fleetHomeReal = fs9.realpathSync(process.env.FLEETDECK_HOME || path8.join(os5.homedir() || "/tmp", ".fleetdeck"));
+      fleetHomeReal = fs9.realpathSync(process.env.FLEETDECK_HOME || path9.join(os5.homedir() || "/tmp", ".fleetdeck"));
     } catch {
       fleetHomeReal = null;
     }
   }
   if (fleetHomeReal && within(fleetHomeReal, real)) throw new PathError(404, "not found");
-  const realSegs = real.toLowerCase().split(path8.sep);
+  const realSegs = real.toLowerCase().split(path9.sep);
   if (realSegs.some((s) => CREDENTIAL_SEGMENTS.has(s)) || realSegs.includes(".docker") && realSegs[realSegs.length - 1] === "config.json") {
     throw new PathError(404, "not found");
   }
@@ -7577,7 +8342,7 @@ function resolveBrowseRoot(ctx) {
   } catch {
     return { error: { status: 410, body: { ok: false, reason: browseRootGoneReason(source, resolved) } } };
   }
-  if (path8.dirname(root) === root) {
+  if (path9.dirname(root) === root) {
     return {
       error: {
         status: 410,
@@ -7682,7 +8447,7 @@ function runBounded(cmd, args, {
   });
 }
 function entryPath(relDir, name) {
-  return relDir ? path8.posix.join(relDir.split(path8.sep).join("/"), name) : name;
+  return relDir ? path9.posix.join(relDir.split(path9.sep).join("/"), name) : name;
 }
 async function ignoredPaths(root, paths, timeoutMs) {
   if (!paths.length) return /* @__PURE__ */ new Set();
@@ -7748,7 +8513,7 @@ async function gitSearch(root, q, mode, deadline) {
       truncated: out2.truncated || out2.code !== 0 || matches.length > SEARCH_HITS
     };
   }
-  const baseArgs = ["grep", "-I", "-n", "-i", "-F", "--untracked"];
+  const baseArgs = ["grep", "-I", "-n", "-i", "-F", "--no-color", "--untracked"];
   let out = await runBounded("git", [...baseArgs, "--max-count=5", "-e", q, "--"], {
     cwd: root,
     timeoutMs: remaining(),
@@ -7798,14 +8563,16 @@ async function walkSearch(root, q, mode, deadline) {
       const name = names[i];
       if (name.toLowerCase() === ".git") continue;
       if (deniedName(name)) continue;
+      if (deniedRelPath(entryPath(current.rel, name))) continue;
       if (++visited > WALK_ENTRY_MAX || Date.now() >= deadline) {
         truncated = true;
         stop = true;
         break;
       }
       if (visited % WALK_YIELD_EVERY === 0) await yieldToLoop();
-      const abs = path8.join(current.dir, name);
+      const abs = path9.join(current.dir, name);
       const rel = entryPath(current.rel, name);
+      if (deniedRelPath(rel)) continue;
       let st;
       try {
         st = fs9.lstatSync(abs);
@@ -7879,11 +8646,15 @@ function createFiles(ctx) {
       if (!own.isDirectory() || own.isSymbolicLink()) throw new PathError(404, "not found");
       const names = fs9.readdirSync(real).filter((name) => name.toLowerCase() !== ".git" && !deniedName(name));
       const truncated = names.length > LIST_MAX;
+      const candidates = names.slice().sort((a, b) => a.localeCompare(b));
       const entries = [];
-      for (const name of names) {
+      let scanned = 0;
+      for (const name of candidates) {
+        if (entries.length >= LIST_MAX || scanned >= LIST_MAX + entries.length) break;
+        scanned += 1;
         let st;
         try {
-          st = fs9.lstatSync(path8.join(real, name));
+          st = fs9.lstatSync(path9.join(real, name));
         } catch {
           continue;
         }
@@ -7895,7 +8666,7 @@ function createFiles(ctx) {
         return ad - bd || a.name.localeCompare(b.name);
       });
       entries.splice(LIST_MAX);
-      if (git2 && !truncated) {
+      if (git2) {
         const rels = entries.map((entry) => entryPath(relPath, entry.name));
         const ignored = await ignoredPaths(root, rels, SEARCH_TIMEOUT_MS);
         for (let i = 0; i < entries.length; i += 1) entries[i].ignored = ignored.has(rels[i]);
@@ -7917,8 +8688,8 @@ function createFiles(ctx) {
     try {
       const abs = safeJoin(root, relPath);
       if (abs === root) return { status: 404, body: { ok: false, reason: "is a directory" } };
-      const realParent = realpathInside(root, path8.dirname(abs));
-      if (path8.basename(abs).toLowerCase() === "config.json" && realParent.toLowerCase().split(path8.sep).includes(".docker")) {
+      const realParent = realpathInside(root, path9.dirname(abs));
+      if (path9.basename(abs).toLowerCase() === "config.json" && realParent.toLowerCase().split(path9.sep).includes(".docker")) {
         throw new PathError(404, "not found");
       }
       let lst;
@@ -8002,15 +8773,15 @@ function createFiles(ctx) {
 // scripts/fleetd/paste.mjs
 import fs10 from "node:fs";
 import os6 from "node:os";
-import path9 from "node:path";
+import path10 from "node:path";
 import crypto from "node:crypto";
 var MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 var PRUNE_AFTER_MS = 24 * 60 * 60 * 1e3;
 var MAX_KEPT_PASTES = 50;
 var ACCEPT = "png, jpeg, gif, webp";
 function pasteDir() {
-  const home = process.env.FLEETDECK_HOME || path9.join(os6.homedir() || os6.tmpdir(), ".fleetdeck");
-  return path9.join(home, "pastes");
+  const home = process.env.FLEETDECK_HOME || path10.join(os6.homedir() || os6.tmpdir(), ".fleetdeck");
+  return path10.join(home, "pastes");
 }
 function sniffImage(buf) {
   if (buf.length >= 8 && buf[0] === 137 && buf[1] === 80 && buf[2] === 78 && buf[3] === 71 && buf[4] === 13 && buf[5] === 10 && buf[6] === 26 && buf[7] === 10) return "png";
@@ -8026,7 +8797,7 @@ function looksBase64(s) {
 function ensurePasteDir() {
   const dir = pasteDir();
   try {
-    fs10.mkdirSync(path9.dirname(dir), { recursive: true });
+    fs10.mkdirSync(path10.dirname(dir), { recursive: true });
   } catch {
   }
   try {
@@ -8052,7 +8823,7 @@ function pruneOldPastes(dir, now = Date.now(), protect = null) {
   }
   const regular = [];
   for (const name of names) {
-    const p = path9.join(dir, name);
+    const p = path10.join(dir, name);
     if (protect && p === protect) continue;
     let st;
     try {
@@ -8106,7 +8877,7 @@ function pasteImage(ev) {
     return { status: 500, body: { ok: false, reason: "cannot prepare paste dir" } };
   }
   const name = `paste-${crypto.randomUUID()}.${ext}`;
-  const file = path9.join(dir, name);
+  const file = path10.join(dir, name);
   const tmp = `${file}.tmp`;
   try {
     fs10.writeFileSync(tmp, buf, { mode: 384, flag: "wx" });
@@ -8138,9 +8909,17 @@ function clampFrom(from) {
   if (typeof from !== "string" || from.length <= MAIL_FROM_MAX_LEN) return from;
   return dropOrphanSurrogate(from.slice(0, MAIL_FROM_MAX_LEN));
 }
+var MAIL_PENDING_MAX = 100;
+var MAIL_PENDING_MAX_BYTES = 256 * 1024;
+var MAIL_PANE_BATCH = 25;
+var MAIL_PANE_BATCH_BYTES = 64 * 1024;
 var RESERVED_SENDERS = /* @__PURE__ */ new Set(["orchestrator", "fleetdeck", "fleetdeck-answer", "human"]);
 var RESERVED_FRAME_RE = /^[\s\x00-\x1f\x7f-\x9f]*\[FLEETDECK[ \]]/i;
-var FROM_UNSAFE_RE = /[\r\n\x00-\x1f\x7f-\x9f]/;
+var stripFormatChars = (s) => s.replace(/\p{Cf}/gu, "");
+function hasReservedFrame(text) {
+  return stripFormatChars(String(text)).replace(/\r\n?/g, "\n").split("\n").some((line) => RESERVED_FRAME_RE.test(line));
+}
+var FROM_UNSAFE_RE = /[\r\n\x00-\x1f\x7f-\x9f\p{Cf}[\]]/u;
 function createMail(ctx) {
   const {
     db: db2,
@@ -8152,24 +8931,59 @@ function createMail(ctx) {
     tmuxAdapter,
     findScopedWindow,
     scopedPaneTarget,
-    PANE_MAIL_GRACE_MS
+    PANE_MAIL_GRACE_MS,
+    MAIL_CLAIM_LEASE_MS,
+    // BUG-128: test-only budget overrides (createCore passes these through
+    // from its opts); production never sets them, so the constants rule.
+    MAIL_PENDING_MAX: PENDING_MAX = MAIL_PENDING_MAX,
+    MAIL_PENDING_MAX_BYTES: PENDING_MAX_BYTES = MAIL_PENDING_MAX_BYTES,
+    MAIL_PANE_BATCH: PANE_BATCH = MAIL_PANE_BATCH,
+    MAIL_PANE_BATCH_BYTES: PANE_BATCH_BYTES = MAIL_PANE_BATCH_BYTES
   } = ctx;
   function mail(toSession, from, text) {
     const raw = String(text ?? "");
-    q.insertMail.run(toSession, clampFrom(from), clampMail(raw), Date.now());
+    const stored = clampMail(raw);
+    const stats = q.pendingMailStats.get(toSession);
+    if (stats.n >= PENDING_MAX || stats.bytes + stored.length > PENDING_MAX_BYTES) {
+      return { refused: true, reason: "mailbox full" };
+    }
+    q.insertMail.run(toSession, clampFrom(from), stored, Date.now());
     notifyWatchers(toSession);
+    armPaneMailTimer(toSession);
+    return { truncated: raw.length > MAIL_MAX_LEN, original_length: raw.length };
+  }
+  const paneMailTimers = /* @__PURE__ */ new Map();
+  function armPaneMailTimer(sid) {
+    if (paneMailTimers.has(sid)) return;
     const timer = setTimeout(() => {
-      tryOwnedPaneDelivery(toSession).catch(() => {
+      paneMailTimers.delete(sid);
+      tryOwnedPaneDelivery(sid).catch(() => {
       });
     }, PANE_MAIL_GRACE_MS);
     timer.unref?.();
-    return { truncated: raw.length > MAIL_MAX_LEN, original_length: raw.length };
+    paneMailTimers.set(sid, timer);
   }
-  function drainMail(sid) {
-    const box = q.pendingMail.all(sid);
+  function rearmPaneMailTimer(sid) {
+    paneMailTimers.delete(sid);
+    armPaneMailTimer(sid);
+  }
+  function drainMail(sid, { lease = false } = {}) {
     const now = Date.now();
-    for (const m of box) q.markDelivered.run(now, m.id);
-    return box.map((m) => ({ from: m.from_id, text: m.text, at: m.at }));
+    const box = q.pendingMail.all(sid, now);
+    if (lease) {
+      const deadline = now + MAIL_CLAIM_LEASE_MS;
+      for (const m of box) q.claimMail.run(deadline, m.id);
+    } else {
+      for (const m of box) q.markDelivered.run(now, m.id);
+    }
+    return box.map((m) => ({ id: m.id, from: m.from_id, text: m.text, at: m.at }));
+  }
+  function ackMail(ids) {
+    if (!Array.isArray(ids)) return { acked: 0 };
+    const now = Date.now();
+    let acked = 0;
+    for (const id of ids) if (Number.isSafeInteger(id)) acked += Number(q.ackMail.run(now, id).changes);
+    return { acked };
   }
   function resolveTargets(to) {
     const all = q.visibleSessions.all();
@@ -8184,9 +8998,20 @@ function createMail(ctx) {
     const routable = all.filter((s) => s.source !== "shell");
     const direct = routable.filter((s) => s.session_id === to || s.callsign === to);
     if (direct.length) return direct.map((s) => s.session_id);
-    return routable.filter((s) => s.prev_callsign === to).map((s) => s.session_id);
+    const anchored = routable.filter((s) => s.prev_callsign === to);
+    if (anchored.length) return anchored.map((s) => s.session_id);
+    return q.aliasesMatch.all(to, to).filter((s) => s.source !== "shell").map((s) => s.session_id);
   }
   const watchWaiters = /* @__PURE__ */ new Map();
+  const watchGens = /* @__PURE__ */ new Map();
+  function registerWatchGen(sid, token) {
+    if (typeof token !== "string" || !token) return false;
+    if (watchGens.get(sid) !== token) watchGens.set(sid, token);
+    return true;
+  }
+  function isWatchGen(sid, token) {
+    return typeof token === "string" && token !== "" && watchGens.get(sid) === token;
+  }
   function notifyWatchers(sid) {
     for (const fn of [...watchWaiters.get(sid) ?? []]) {
       try {
@@ -8229,11 +9054,19 @@ function createMail(ctx) {
   function claimAllMail(sid) {
     db2.exec("BEGIN IMMEDIATE");
     try {
-      const box = q.pendingMail.all(sid);
       const now = Date.now();
-      for (const m of box) q.markDelivered.run(now, m.id);
+      const page = q.pendingMailPage.all(sid, now, PANE_BATCH + 1);
+      const batch = [];
+      let bytes = 0;
+      for (const m of page) {
+        if (batch.length >= PANE_BATCH || batch.length && bytes + m.text.length > PANE_BATCH_BYTES) break;
+        batch.push(m);
+        bytes += m.text.length;
+      }
+      const deadline = now + MAIL_CLAIM_LEASE_MS;
+      for (const m of batch) q.claimMail.run(deadline, m.id);
       db2.exec("COMMIT");
-      return box;
+      return { batch, remaining: page.length > batch.length };
     } catch (err) {
       try {
         db2.exec("ROLLBACK");
@@ -8253,34 +9086,48 @@ function createMail(ctx) {
     if (!pane || pane.dead || pane.cmd !== "claude") return false;
     if (hasWatchWaiter(sid)) return false;
     if (!ownedPaneRow(sid)) return false;
-    const box = claimAllMail(sid);
+    const { batch: box, remaining } = claimAllMail(sid);
     if (!box.length) return false;
+    if (remaining) rearmPaneMailTimer(sid);
     const text = box.map((m) => `[FLEETDECK MAIL from ${m.from_id}] ${m.text}`).join("\n");
     const pasted = await tmuxAdapter.pasteText(target, text);
     if (!pasted) {
-      for (const m of box) q.unmarkDelivered.run(m.id);
+      for (const m of box) q.releaseClaim.run(m.id);
       onMutate();
       return false;
     }
     if (!ownedPaneRow(sid)) {
+      const now = Date.now();
+      for (const m of box) q.ackMail.run(now, m.id);
       onMutate();
       return true;
     }
     const entered = await tmuxAdapter.sendEnter(target);
     if (!entered) {
-      for (const m of box) q.unmarkDelivered.run(m.id);
+      logEvent(
+        sid,
+        "MailPaneEnterFailed",
+        null,
+        `pasted ${box.length} mail into ${pair.sp.tmux_window} but Enter failed \u2014 left un-entered, NOT requeued (text already in pane)`
+      );
       onMutate();
       return false;
+    }
+    {
+      const now = Date.now();
+      for (const m of box) q.ackMail.run(now, m.id);
     }
     tick(`\u2709 delivered ${box.length} mail to ${pair.c.callsign} (typed into pane)`);
     logEvent(sid, "MailPaneDelivery", null, `typed ${box.length} mail into ${pair.sp.tmux_window}`);
     onMutate();
     return true;
   }
-  function claimMail(sid) {
-    const m = q.nextMail.get(sid);
+  function claimMail(sid, gen = null) {
+    if (gen !== null && !isWatchGen(sid, gen)) return null;
+    const now = Date.now();
+    const m = q.nextMail.get(sid, now);
     if (!m) return null;
-    q.markDelivered.run(Date.now(), m.id);
+    q.claimMail.run(now + MAIL_CLAIM_LEASE_MS, m.id);
     onMutate();
     return { mail_id: m.id, at: m.at, from: m.from_id, text: m.text };
   }
@@ -8298,18 +9145,23 @@ function createMail(ctx) {
     };
   }
   async function postMail({ to, from, text }) {
-    if (from != null && RESERVED_SENDERS.has(String(from).toLowerCase())) {
+    const sender = from ?? "board";
+    if (typeof sender !== "string" || sender.length === 0) {
+      return { status: 422, body: { ok: false, reason: "sender name must be a non-empty string" } };
+    }
+    if (RESERVED_SENDERS.has(stripFormatChars(sender).toLowerCase())) {
       return { status: 422, body: { ok: false, reason: `sender name '${from}' is reserved for the daemon` } };
     }
-    if (from != null && FROM_UNSAFE_RE.test(String(from))) {
-      return { status: 422, body: { ok: false, reason: "sender name may not contain control characters or newlines" } };
+    if (FROM_UNSAFE_RE.test(sender)) {
+      return { status: 422, body: { ok: false, reason: "sender name may not contain control characters, newlines, or [ ] delimiters" } };
     }
-    if (RESERVED_FRAME_RE.test(String(text ?? ""))) {
-      return { status: 422, body: { ok: false, reason: "mail text may not open with a [FLEETDECK ...] frame \u2014 those are reserved for the daemon" } };
+    if (hasReservedFrame(text ?? "")) {
+      return { status: 422, body: { ok: false, reason: "mail text may not open any line with a [FLEETDECK ...] frame \u2014 those are reserved for the daemon" } };
     }
     const everyone = q.visibleSessions.all();
     const currentMatch = everyone.filter((s) => s.session_id === to || s.callsign === to);
-    const namedByTo = currentMatch.length ? currentMatch : everyone.filter((s) => s.prev_callsign === to);
+    const anchoredMatch = currentMatch.length ? currentMatch : everyone.filter((s) => s.prev_callsign === to);
+    const namedByTo = anchoredMatch.length ? anchoredMatch : q.aliasesMatch.all(to, to);
     if (namedByTo.length && namedByTo.every((s) => s.source === "shell")) {
       return {
         status: 409,
@@ -8325,18 +9177,30 @@ function createMail(ctx) {
       if (await ownedPaneDeliverable(sid)) return "pane";
       return q.getSession.get(sid)?.ended_at != null ? "offline-queued" : "turn-boundary";
     }));
-    targets.forEach((sid) => mail(sid, from || "human", text));
-    tick(`\u2709 mail from ${from || "human"} \u2192 ${to}`);
+    const outcomes = targets.map((sid) => mail(sid, sender, text));
+    const refusedAll = targets.length > 0 && outcomes.every((o) => o.refused);
+    if (refusedAll) {
+      return {
+        status: 429,
+        body: {
+          ok: false,
+          reason: "recipient mailbox is full \u2014 too much pending mail",
+          pending_max: PENDING_MAX,
+          pending_max_bytes: PENDING_MAX_BYTES
+        }
+      };
+    }
+    tick(`\u2709 mail from ${sender} \u2192 ${to}`);
     onMutate();
     const raw = String(text ?? "");
     const truncated = raw.length > MAIL_MAX_LEN;
     return {
       ok: true,
-      delivered: targets.length,
+      delivered: outcomes.filter((o) => !o.refused).length,
       targets: targets.map((sid, i) => ({
         session_id: sid,
         callsign: q.getSession.get(sid)?.callsign ?? null,
-        route: routes[i]
+        route: outcomes[i].refused ? "refused" : routes[i]
       })),
       ...truncated ? { truncated: true, original_length: raw.length, max_length: MAIL_MAX_LEN } : {}
     };
@@ -8344,6 +9208,7 @@ function createMail(ctx) {
   return {
     mail,
     drainMail,
+    ackMail,
     resolveTargets,
     notifyWatchers,
     addWatchWaiter,
@@ -8353,19 +9218,20 @@ function createMail(ctx) {
     tryOwnedPaneDelivery,
     claimMail,
     watchInfo,
-    postMail
+    postMail,
+    registerWatchGen
   };
 }
 
 // scripts/fleetd/ledger.mjs
-import path10 from "node:path";
+import path11 from "node:path";
 var CONFLICT_WINDOW_MS = 30 * 60 * 1e3;
 function createLedger(ctx) {
   const { q, card, mail, tick } = ctx;
   function recordFile(sid, absFile, editorCard) {
     if (!absFile) return null;
     const now = Date.now();
-    const abs = path10.isAbsolute(absFile) ? absFile : path10.resolve(editorCard.cwd || "/", absFile);
+    const abs = path11.isAbsolute(absFile) ? absFile : path11.resolve(editorCard.cwd || "/", absFile);
     const key = ledgerKey(abs, editorCard);
     const touches = q.recentTouches.all(key.repo_id ?? "", key.rel_path, now - CONFLICT_WINDOW_MS);
     const rivalTouches = touches.filter((t) => {
@@ -8380,7 +9246,7 @@ function createLedger(ctx) {
     const severity = sameTree ? "warning" : "info";
     const rivalNames = rivals.map((r) => card(r).callsign).join(", ");
     q.insertConflict.run(now, key.repo_id ?? "", key.rel_path, severity, JSON.stringify([sid, ...rivals]));
-    tick(`\u26A0 conflict: ${editorCard.callsign} and ${rivalNames} both touching ${path10.basename(key.rel_path)}`);
+    tick(`\u26A0 conflict: ${editorCard.callsign} and ${rivalNames} both touching ${path11.basename(key.rel_path)}`);
     for (const r of rivals) {
       mail(r, "fleetdeck", severity === "warning" ? `Heads up: ${editorCard.callsign} is also editing ${key.rel_path}. Coordinate before you overwrite each other.` : `Heads up: ${editorCard.callsign} is editing ${key.rel_path} in another worktree of this repo \u2014 a future merge conflict announcing itself early.`);
     }
@@ -8398,7 +9264,7 @@ function createIngest(ctx) {
   const { q, assignCallsign, updateSession, tick, onMutate, touchRepo } = ctx;
   function ingestAgentsPoll(records) {
     if (!Array.isArray(records)) return;
-    const live = records.filter((rec) => rec && typeof rec === "object" && rec.sessionId && rec.kind === "interactive" && pidAlive(rec.pid));
+    const live = records.filter((rec) => rec && typeof rec === "object" && rec.sessionId && rec.kind === "interactive" && pidOwnedBy(rec.pid, rec.startedAt));
     for (const rec of live) {
       const sid = rec.sessionId;
       const rawState = rec.state ?? rec.status;
@@ -8438,6 +9304,9 @@ function createIngest(ctx) {
         onMutate();
       } else if (existing.source === "agents-cli") {
         const repoChanged = repo.is_git && repo.repo_id !== existing.repo_id;
+        const cwdChanged = !!cwd && cwd !== existing.cwd;
+        const worktreeChanged = !!cwd && repo.worktree !== existing.worktree;
+        const branch = cwd ? branchOf(cwd) : existing.branch;
         updateSession(sid, {
           col: colFromAgentState(rawState, false),
           note: "seen via agents CLI",
@@ -8446,13 +9315,10 @@ function createIngest(ctx) {
           // reappearance revives an absence-tombstoned card
           end_reason: null,
           // and clears the absence guess stamped below
-          ...repoChanged ? {
-            cwd,
-            repo_id: repo.repo_id,
-            repo_name: repo.repo_name,
-            worktree: repo.worktree,
-            branch: branchOf(cwd)
-          } : {}
+          ...repoChanged || cwdChanged ? { cwd } : {},
+          ...repoChanged ? { repo_id: repo.repo_id, repo_name: repo.repo_name } : {},
+          ...repoChanged || worktreeChanged ? { worktree: repo.worktree } : {},
+          ...branch !== existing.branch ? { branch } : {}
         });
         if (repoChanged) {
           touchRepo({
@@ -8506,7 +9372,8 @@ function createCommands(ctx) {
     let result = { ok: true, renamed: false, callsign: c.callsign, ticket: null };
     if (c.prev_callsign && !q.callsignTaken.get(c.prev_callsign, c.prev_callsign, sid)) {
       upd.callsign = c.prev_callsign;
-      upd.prev_callsign = c.callsign;
+      upd.prev_callsign = null;
+      q.rememberAlias.run(sid, c.callsign, Date.now());
       tick(`\u{1F3AB} ${c.callsign} reverted to ${c.prev_callsign} (ticket cleared)`);
       result = { ok: true, renamed: true, callsign: c.prev_callsign, ticket: null, previous: c.callsign };
     } else {
@@ -8517,14 +9384,27 @@ function createCommands(ctx) {
   }
   function resolveTicketTarget(target) {
     const matches = q.visibleSessions.all().filter((s) => s.ended_at == null && (s.session_id === target || s.callsign === target || s.prev_callsign === target));
-    if (matches.length === 0) return { error: `no live session matching "${target}"` };
     if (matches.length > 1) return { error: `"${target}" is ambiguous \u2014 use the session id` };
-    return { sid: matches[0].session_id };
+    const found = matches.length ? matches : q.aliasesMatch.all(target, target).filter((s) => s.ended_at == null);
+    if (found.length === 0) return { error: `no live session matching "${target}"` };
+    if (found.length > 1) return { error: `"${target}" is ambiguous \u2014 use the session id` };
+    return { sid: found[0].session_id };
   }
   function command(text) {
     const parsed = parseCommand(text);
     const logCommand = (extra) => q.insertCommand.run(Date.now(), String(text ?? ""), JSON.stringify(extra ? { ...parsed, ...extra } : parsed));
     let delivered = 0;
+    if (parsed.cmd === "broadcast" || parsed.cmd === "assign_auto" || parsed.cmd === "assign") {
+      const frame = parsed.cmd === "broadcast" ? "" : "[FLEETDECK ASSIGNMENT] ";
+      const framed = `${frame}${parsed.text}`;
+      if (framed.length > MAIL_MAX_LEN) {
+        const reason = `message too long (${framed.length} > ${MAIL_MAX_LEN} code units) \u2014 shorten it or split it into multiple commands`;
+        logCommand({ rejected: true, reason });
+        tick(`\u26A0 command rejected: ${reason}`);
+        onMutate();
+        return { ok: false, reason, max_length: MAIL_MAX_LEN, original_length: framed.length };
+      }
+    }
     if (parsed.cmd === "broadcast") {
       const targets = resolveTargets("all");
       targets.forEach((sid) => mail(sid, "orchestrator", parsed.text));
@@ -8547,6 +9427,11 @@ function createCommands(ctx) {
       return { ok: true, assigned_to };
     } else if (parsed.cmd === "assign") {
       const targets = resolveTargets(parsed.target);
+      if (parsed.target !== "all" && !/^repo:/.test(parsed.target) && targets.length > 1) {
+        logCommand({ refused: "ambiguous" });
+        onMutate();
+        return { ok: false, reason: `"${parsed.target}" matches ${targets.length} sessions \u2014 use the session id` };
+      }
       targets.forEach((sid) => mail(sid, "orchestrator", `[FLEETDECK ASSIGNMENT] ${parsed.text}`));
       delivered = targets.length;
       tick(`\u{1F4CC} orchestrator assign \u2192 ${parsed.target}${delivered ? "" : " (no such session)"}`);
@@ -8624,7 +9509,7 @@ function createCommands(ctx) {
 
 // scripts/fleetd/plans.mjs
 function createPlans(ctx) {
-  const { q, tick, onMutate } = ctx;
+  const { q, tick, onMutate, mail, resolveTargets } = ctx;
   const EXECUTABLE_FROM = /* @__PURE__ */ new Set(["proposed", "approved", "captured"]);
   function planMark(plan_id, body) {
     const p = q.getPlan.get(Number(plan_id));
@@ -8659,12 +9544,37 @@ function createPlans(ctx) {
     onMutate();
     return { status: 200, body: { ok: true, plan_id: p.plan_id, status: target } };
   }
-  return { planMark };
+  function assignPlan(plan_id, body) {
+    const p = q.getPlan.get(Number(plan_id));
+    if (!p) return { status: 404, body: { ok: false, err: "no such plan" } };
+    const to = typeof body?.to === "string" ? body.to.trim() : "";
+    if (!to) return { status: 400, body: { ok: false, err: "to must be a session id or callsign" } };
+    if (body?.instructions != null && typeof body.instructions !== "string") {
+      return { status: 400, body: { ok: false, err: "instructions must be a string" } };
+    }
+    if (!EXECUTABLE_FROM.has(p.status)) {
+      return { status: 409, body: { ok: false, err: `cannot assign a ${p.status} plan` } };
+    }
+    const target = resolveTargets(to).map((sid) => q.getSession.get(sid)).find((s) => s && s.ended_at == null);
+    if (!target) return { status: 404, body: { ok: false, err: `no live session matching "${to}"` } };
+    const marked = planMark(p.plan_id, { status: "executed", via: `assign:${target.session_id}` });
+    if (!marked.body.ok) return marked;
+    const instr = body?.instructions?.trim();
+    const text = `[FLEETDECK ASSIGNMENT] Execute this approved plan exactly. Custom instructions: ${instr || ""}
+
+---
+${p.plan_md ?? ""}`;
+    mail(target.session_id, "orchestrator", text);
+    tick(`\u{1F4DA} plan #${p.plan_id} assigned to ${target.callsign ?? target.session_id}`);
+    onMutate();
+    return { status: 200, body: { ok: true, plan_id: p.plan_id, status: "executed", session_id: target.session_id, callsign: target.callsign ?? null } };
+  }
+  return { planMark, assignPlan };
 }
 
 // scripts/fleetd/spawns.mjs
 import fs11 from "node:fs";
-import path11 from "node:path";
+import path12 from "node:path";
 import { randomUUID as randomUUID2, randomBytes } from "node:crypto";
 var SETUP_WRAPPER = [
   "cmd=$FLEETDECK_SETUP_CMD; unset FLEETDECK_SETUP_CMD",
@@ -9178,7 +10088,8 @@ function createSpawns(ctx) {
         "remote_control",
         "gateway",
         "arm_token",
-        "setup_cmd"
+        "setup_cmd",
+        "plan_id"
       ].find((k) => body?.[k] != null);
       if (forbidden || body?.worktree === true) {
         const field = forbidden || "worktree";
@@ -9210,6 +10121,43 @@ function createSpawns(ctx) {
     const skipPermissions = body?.dangerously_skip_permissions === true || typeof body?.permission_mode === "string" && body.permission_mode.toLowerCase() === "bypasspermissions";
     const armRefusal = unsupervisedGate(skipPermissions, body);
     if (armRefusal) return { status: 403, body: { ok: false, reason: armRefusal } };
+    let planClaim = null;
+    if (body?.plan_id != null) {
+      const pid = Number(body.plan_id);
+      if (!Number.isInteger(pid) || pid < 1) {
+        return { status: 400, body: { ok: false, reason: "plan_id must be a positive integer" } };
+      }
+      const plan = q.getPlan.get(pid);
+      if (!plan) return { status: 404, body: { ok: false, reason: "no such plan" } };
+      const via = `spawn:${randomUUID2().slice(0, 8)}`;
+      const r = q.claimPlanExecution.run(via, pid);
+      if (r.changes !== 1) {
+        return { status: 409, body: { ok: false, reason: `plan #${pid} is ${plan.status} \u2014 already executed or not executable` } };
+      }
+      planClaim = { plan_id: pid, restoreStatus: plan.status, via };
+      tick(`\u{1F4DA} plan #${pid} execution claimed by spawn${plan.callsign ? ` (planned by ${plan.callsign})` : ""}`);
+      if (plan.question_id != null) {
+        const qq = ctx.questions?.dismiss?.(plan.question_id, { activity: true });
+        if (qq?.ok && !qq.already) {
+          tick(`\u{1F4DA} planner hold for plan #${pid} retired \u2014 question dismissed`);
+        }
+      }
+    }
+    const releasePlanClaim = () => {
+      if (!planClaim) return;
+      q.releasePlanExecution.run(planClaim.restoreStatus, planClaim.plan_id, planClaim.via);
+      tick(`\u{1F4DA} plan #${planClaim.plan_id} execution claim released (spawn failed) \u2014 back to ${planClaim.restoreStatus}`);
+      onMutate();
+      planClaim = null;
+    };
+    const wrapSpawnFailure = (fn) => async (...a) => {
+      try {
+        return await fn(...a);
+      } catch (err) {
+        releasePlanClaim();
+        throw err;
+      }
+    };
     if (hasRepo) {
       if (body?.worktree === true) {
         return { status: 400, body: { ok: false, reason: "branch_mode replaces worktree in repo mode" } };
@@ -9222,18 +10170,21 @@ function createSpawns(ctx) {
       try {
         await validateBranch(body.branch);
       } catch (err) {
+        releasePlanClaim();
         return { status: 400, body: { ok: false, reason: err.message || String(err) } };
       }
       let target;
       try {
         target = await resolveTarget(body);
       } catch (err) {
+        releasePlanClaim();
         return { status: err.status || 400, body: { ok: false, reason: err.message || String(err) } };
       }
       const targetPath = target.mode === "clone" ? target.dest : target.root;
       const owner = targetOwner(targetPath);
       if (owner) {
-        return { status: 409, body: { ok: false, reason: `${path11.resolve(targetPath)} is already being provisioned by ${owner}` } };
+        releasePlanClaim();
+        return { status: 409, body: { ok: false, reason: `${path12.resolve(targetPath)} is already being provisioned by ${owner}` } };
       }
       let releaseCloneSlot = () => {
       };
@@ -9241,6 +10192,7 @@ function createSpawns(ctx) {
         try {
           releaseCloneSlot = reserveCloneSlot();
         } catch (err) {
+          releasePlanClaim();
           return { status: err.status || 429, body: { ok: false, reason: err.message || String(err) } };
         }
       }
@@ -9266,6 +10218,7 @@ function createSpawns(ctx) {
         });
       } catch (err) {
         releaseCloneSlot();
+        releasePlanClaim();
         return {
           status: 500,
           body: { ok: false, reason: `could not create the spawn card: ${spawnFailureReason(err)}` }
@@ -9339,13 +10292,14 @@ function createSpawns(ctx) {
               reason: err.message || String(err),
               created: { clone: false, worktree: false }
             });
+            releasePlanClaim();
             return { status: err.status || 409, body: { ok: false, reason: err.message || String(err) } };
           }
           worktree_path2 = branchMode === "worktree" ? materialized.runCwd : null;
           try {
             await finishMaterialization(materialized, "spawn");
             paneMayExist = true;
-            return await launchPane({
+            const out2 = await wrapSpawnFailure(launchPane)({
               spawn_id: spawn_id2,
               session_id: session_id2,
               callsign: callsign2,
@@ -9360,8 +10314,15 @@ function createSpawns(ctx) {
               gatewayEnv: gateway.env,
               created: materialized.created
             });
+            if (out2.status >= 400) releasePlanClaim();
+            else if (planClaim) {
+              q.setPlanExecuted.run(`spawn:${spawn_id2}`, planClaim.plan_id);
+              planClaim = null;
+              onMutate();
+            }
+            return out2;
           } catch (err) {
-            const reason = branchMode === "in-place" ? `${err.message || String(err)} \u2014 ${path11.basename(target.root)} was left switched to ${body.branch}` : err.message || String(err);
+            const reason = branchMode === "in-place" ? `${err.message || String(err)} \u2014 ${path12.basename(target.root)} was left switched to ${body.branch}` : err.message || String(err);
             await spawnCompensate({
               spawn_id: spawn_id2,
               session_id: session_id2,
@@ -9372,6 +10333,7 @@ function createSpawns(ctx) {
               reason,
               created: materialized.created
             });
+            releasePlanClaim();
             return { status: err.status || 409, body: { ok: false, reason } };
           }
         } finally {
@@ -9414,8 +10376,13 @@ function createSpawns(ctx) {
             created,
             gatewayEnv: gateway.env
           });
+          if (planClaim) {
+            q.setPlanExecuted.run(`spawn:${spawn_id2}`, planClaim.plan_id);
+            planClaim = null;
+            onMutate();
+          }
         } catch (err) {
-          const reason = branchMode === "in-place" && created.clone ? `${err.message || String(err)} \u2014 ${path11.basename(target.dest)} was left switched to ${body.branch}` : err.message || String(err);
+          const reason = branchMode === "in-place" && created.clone ? `${err.message || String(err)} \u2014 ${path12.basename(target.dest)} was left switched to ${body.branch}` : err.message || String(err);
           await spawnCompensate({
             spawn_id: spawn_id2,
             session_id: session_id2,
@@ -9426,6 +10393,7 @@ function createSpawns(ctx) {
             reason,
             created
           });
+          releasePlanClaim();
         } finally {
           releaseCloneSlot();
           releaseTarget();
@@ -9451,9 +10419,11 @@ function createSpawns(ctx) {
     } catch {
     }
     if (!cwd || !st?.isDirectory()) {
+      releasePlanClaim();
       return { status: 400, body: { ok: false, reason: "cwd missing or not a directory" } };
     }
     if (body?.worktree === true && !deriveRepo(cwd).is_git) {
+      releasePlanClaim();
       return { status: 409, body: { ok: false, reason: "cwd is not a git repository \u2014 cannot spawn into a worktree" } };
     }
     const session_id = randomUUID2();
@@ -9489,7 +10459,7 @@ function createSpawns(ctx) {
     if (body?.worktree === true) {
       const ticketNamed = c.ticket && String(callsign).endsWith(`-${c.ticket}`);
       const baseName = ticketNamed ? `${c.ticket}-${animalOf(callsign)}` : callsign;
-      const pathFor = (name) => path11.join(path11.dirname(cwd), `${path11.basename(cwd)}--fd-${name}`);
+      const pathFor = (name) => path12.join(path12.dirname(cwd), `${path12.basename(cwd)}--fd-${name}`);
       const dedup = `${baseName}-${session_id.slice(0, 4)}`;
       const names = fs11.existsSync(pathFor(baseName)) ? [dedup] : [baseName, dedup];
       let candidate;
@@ -9511,6 +10481,7 @@ function createSpawns(ctx) {
           tmux_window: null,
           reason: `git worktree add: ${addErr}`
         });
+        releasePlanClaim();
         return { status: 409, body: { ok: false, reason: `git worktree add failed: ${addErr}`.slice(0, 300) } };
       }
       q.setSpawnWorktree.run(worktree_path, spawn_id);
@@ -9523,7 +10494,7 @@ function createSpawns(ctx) {
         branch: branchOf(worktree_path)
       });
     }
-    return launchPane({
+    const out = await wrapSpawnFailure(launchPane)({
       spawn_id,
       session_id,
       callsign,
@@ -9537,6 +10508,13 @@ function createSpawns(ctx) {
       skipPermissions,
       gatewayEnv: gateway.env
     });
+    if (out.status >= 400) releasePlanClaim();
+    else if (planClaim) {
+      q.setPlanExecuted.run(`spawn:${spawn_id}`, planClaim.plan_id);
+      planClaim = null;
+      onMutate();
+    }
+    return out;
   }
   async function revive(spawn_id, body = {}) {
     const row = q.getSpawn.get(spawn_id);
@@ -10064,7 +11042,7 @@ function createSpawns(ctx) {
           try {
             const exactSecrets = [];
             try {
-              const token = fs11.readFileSync(path11.join(home, "token"), "utf8").trim();
+              const token = fs11.readFileSync(path12.join(home, "token"), "utf8").trim();
               if (token) exactSecrets.push(token);
             } catch {
             }
@@ -10248,12 +11226,12 @@ ${detail}` : note);
 }
 
 // scripts/fleetd/events.mjs
-import path12 from "node:path";
+import path13 from "node:path";
 import os7 from "node:os";
 var EDIT_TOOLS = ["Edit", "Write", "MultiEdit", "NotebookEdit"];
 var TEST_RUNNER_RE = /\b(pytest|jest|vitest|go test|cargo test|npm (run )?test)\b/;
 function expectedTranscriptDir(cwd, homeDir = os7.homedir()) {
-  return path12.join(homeDir, ".claude", "projects", mungeClaudeProjectCwd(cwd));
+  return path13.join(homeDir, ".claude", "projects", mungeClaudeProjectCwd(cwd));
 }
 function createEvents(ctx) {
   const {
@@ -10298,10 +11276,14 @@ function createEvents(ctx) {
     settleTerminalPlans
   } = ctx;
   function applyEvent(ev) {
-    const sid = ev.session_id || "unknown";
+    const sid = typeof ev?.session_id === "string" && ev.session_id ? ev.session_id : null;
+    if (!sid) return { card: null, conflict: null };
     let c = card(sid, ev.cwd);
+    const staleRunEnd = ev.hook_event_name === "SessionEnd" && ev.fleet_run != null && c.run_id !== ev.fleet_run;
     const superseded = c.succeeded_by != null;
-    if (!superseded && (c.ended_at != null || c.archived_at != null)) {
+    const heuristicEnd = c.end_reason == null || c.end_reason === "presumed";
+    const canResurrect = heuristicEnd || ev.hook_event_name === "SessionStart";
+    if (!superseded && canResurrect && (c.ended_at != null || c.archived_at != null)) {
       updateSession(sid, { ended_at: null, archived_at: null, col: "queued", end_reason: null });
       c = { ...c, ended_at: null, archived_at: null, col: "queued", end_reason: null };
     }
@@ -10334,6 +11316,7 @@ function createEvents(ctx) {
     if (ev.hook_event_name === "SessionStart") {
       stampTranscriptFloor(sid, ev.transcript_path);
       if (payloadModel) upd.model = payloadModel;
+      upd.run_id = ev.fleet_run ?? null;
     } else if (payloadModel) {
       upd.model = payloadModel;
     } else if (ev.transcript_path) {
@@ -10375,7 +11358,8 @@ function createEvents(ctx) {
         tick(`${c.callsign} got a prompt`);
         break;
       case "PreToolUse":
-      case "PostToolUse": {
+      case "PostToolUse":
+      case "PostToolUseFailure": {
         set.col = c.col === "needsyou" ? "working" : c.col === "queued" ? "working" : c.col;
         set.notification_type = null;
         set.last_tool = ev.tool_name ?? null;
@@ -10383,7 +11367,7 @@ function createEvents(ctx) {
         const file = input.file_path || input.notebook_path;
         if (EDIT_TOOLS.includes(ev.tool_name) && file) {
           conflict = recordFile(sid, file, c);
-          set.note = `editing ${path12.basename(file)}`;
+          set.note = `editing ${path13.basename(file)}`;
         } else if (ev.tool_name === "Bash" && input.command) {
           const cmd = String(input.command);
           if (TEST_RUNNER_RE.test(cmd)) {
@@ -10401,10 +11385,13 @@ function createEvents(ctx) {
         const file = ev.file_path || ev.tool_input?.file_path || ev.path || null;
         if (file) {
           conflict = recordFile(sid, file, c);
-          set.note = `changed ${path12.basename(file)}`;
+          set.note = `changed ${path13.basename(file)}`;
         }
         break;
       }
+      case "CwdChanged":
+        set.note = `cwd \u2192 ${path13.basename(ev.cwd || "") || "cwd changed"}`;
+        break;
       case "Notification": {
         const ntype = ev.notification_type ?? null;
         const RESOLVED_TYPES = ["auth_success", "elicitation_complete", "elicitation_response", "agent_completed"];
@@ -10448,6 +11435,9 @@ function createEvents(ctx) {
           set.note = "context cleared (/clear) \u2014 still live";
           set.cleared_at = Date.now();
           tick(`\u{1F9F9} ${c.callsign} ran /clear \u2014 context reset, session still live`);
+        } else if (staleRunEnd) {
+          set.note = "session ended (stale async end from a previous run \u2014 ignored)";
+          tick(`\u23ED ${c.callsign} ignored a delayed SessionEnd from a previous run`);
         } else {
           set.col = "offline";
           set.ended_at = Date.now();
@@ -10463,16 +11453,16 @@ function createEvents(ctx) {
     c = { ...c, ...set };
     logEvent(sid, ev.hook_event_name, ev.tool_name, c.note);
     onMutate();
-    return { card: c, conflict };
+    return { card: c, conflict, staleRunEnd };
   }
   function hookSessionStart(ev) {
-    const sid = ev.session_id || "unknown";
+    const sid = ev.session_id || "";
     if (ev.source === "clear" || ev.source === "compact") {
       const existing = q.getSession.get(sid);
       const placeholder = existing && existing.events === 0 && existing.succeeded_by == null && !q.successorClaimed.get(sid) && !q.spawnBySession.get(sid);
       if (!existing || placeholder) {
         const prev = findClearedPredecessor(sid, ev.cwd, Date.now());
-        if (prev && ev.transcript_path && path12.dirname(String(ev.transcript_path)) !== expectedTranscriptDir(ev.cwd)) {
+        if (prev && ev.transcript_path && path13.dirname(String(ev.transcript_path)) !== expectedTranscriptDir(ev.cwd)) {
           logEvent(
             sid,
             "ClearSuccessionRefused",
@@ -10507,7 +11497,7 @@ function createEvents(ctx) {
       // transcript (~/.claude/projects/**.jsonl), and transcripts get shared.
       // Name where the key lives instead — an auto-started daemon prints its
       // credentialed URL only into fleetd.log, which nobody reads.
-      `[FLEETDECK] You are on the fleet board as "${c.callsign}"${c.ticket ? ` (ticket ${c.ticket})` : ""} \u2014 live at http://127.0.0.1:${port} (board key, if asked: \`fleetdeck token\` or ${home ? path12.join(home, "token") : "$FLEETDECK_HOME/token"})`,
+      `[FLEETDECK] You are on the fleet board as "${c.callsign}"${c.ticket ? ` (ticket ${c.ticket})` : ""} \u2014 live at http://127.0.0.1:${port} (board key, if asked: \`fleetdeck token\` or ${home ? path13.join(home, "token") : "$FLEETDECK_HOME/token"})`,
       sameRepo.length ? `Other active sessions${repoLabel} (${sameRepo.length}):` : `No other sessions active${repoLabel} right now.`,
       ...sameRepo.map((s) => `  - ${s.callsign} [${s.col}] ${s.note}${s.branch ? " \u2014 " + s.branch : ""}${s.worktree && s.worktree !== c.worktree ? " @ " + s.worktree : ""}`)
     ];
@@ -10518,10 +11508,10 @@ function createEvents(ctx) {
     return lines.join("\n");
   }
   function hookUserPromptSubmit(ev) {
-    const sid = ev.session_id || "unknown";
+    const sid = ev.session_id || "";
     applyEvent({ ...ev, hook_event_name: "UserPromptSubmit" });
     q.setBlocked.run(0, sid);
-    questions.expireOnActivity(sid);
+    ctx.questions.expireOnActivity(sid);
     settleTerminalPlans(sid);
     const box = drainMail(sid);
     if (!box.length) return {};
@@ -10536,8 +11526,8 @@ function createEvents(ctx) {
   function hookPostToolUse(ev) {
     const eventName = ev.hook_event_name || "PostToolUse";
     const { conflict } = applyEvent({ ...ev, hook_event_name: eventName });
-    questions.expireOnActivity(ev.session_id || "unknown", { toolName: ev.tool_name, toolInput: ev.tool_input });
-    settleTerminalPlans(ev.session_id || "unknown");
+    questions.expireOnActivity(ev.session_id || "", { toolName: ev.tool_name, toolInput: ev.tool_input });
+    settleTerminalPlans(ev.session_id || "");
     if (!conflict) return {};
     return {
       hookSpecificOutput: {
@@ -10547,7 +11537,7 @@ function createEvents(ctx) {
     };
   }
   function hookStop(ev) {
-    const sid = ev.session_id || "unknown";
+    const sid = ev.session_id || "";
     const c = card(sid);
     if (!c.blocked_this_turn) {
       const box = drainMail(sid);
@@ -10565,13 +11555,13 @@ function createEvents(ctx) {
       }
     }
     applyEvent({ ...ev, hook_event_name: "Stop" });
-    const stillPending = q.pendingMail.all(sid).length > 0;
+    const stillPending = q.pendingMail.all(sid, Date.now()).length > 0;
     if (!stillPending) q.setBlocked.run(0, sid);
     detectFreeform(ev);
     return {};
   }
   function detectFreeform(ev) {
-    const sid = ev.session_id || "unknown";
+    const sid = ev.session_id || "";
     try {
       const fromPayload = typeof ev.last_assistant_message === "string" && ev.last_assistant_message.trim() ? ev.last_assistant_message : null;
       const text = fromPayload ?? (ev.transcript_path ? lastAssistantText(ev.transcript_path) : null);
@@ -10597,10 +11587,10 @@ function createEvents(ctx) {
   }
   function hookHoldQuestion(ev, eventName) {
     const kind = eventName === "Elicitation" ? "elicitation" : eventName === "AskUserQuestion" ? "choice" : "permission";
-    applyEvent({ ...ev, hook_event_name: eventName });
-    const sid = ev.session_id || "unknown";
+    const sid = ev.session_id || "";
     const isPlan = eventName === "PermissionRequest" && ev?.tool_name === "ExitPlanMode";
     if (!isPlan) {
+      applyEvent({ ...ev, hook_event_name: eventName });
       const row2 = questions.create(kind, sid, ev);
       onMutate();
       return row2;
@@ -10610,7 +11600,11 @@ function createEvents(ctx) {
     let callsign = null;
     db2.exec("BEGIN IMMEDIATE");
     try {
+      card(sid, ev.cwd);
       row = questions.create(kind, sid, ev);
+      if (process.env.FLEETDECK_TEST_FAIL_PLAN_INSERT) {
+        throw new Error("injected plan-insert failure (FLEETDECK_TEST_FAIL_PLAN_INSERT)");
+      }
       const c = q.getSession.get(sid);
       callsign = c?.callsign ?? sid;
       const planMd = typeof ev.tool_input?.plan === "string" ? ev.tool_input.plan : String(ev.tool_input?.plan ?? "");
@@ -10634,13 +11628,15 @@ function createEvents(ctx) {
       onMutate();
       return null;
     }
+    applyEvent({ ...ev, hook_event_name: eventName });
     tick(`\u{1F4CB} ${callsign} proposed a plan \u2014 captured to the library (#${planRowId})`);
     onMutate();
     return row;
   }
   function hookSessionEnd(ev) {
-    const sid = ev.session_id || "unknown";
-    applyEvent({ ...ev, hook_event_name: "SessionEnd" });
+    const sid = ev.session_id || "";
+    const { staleRunEnd } = applyEvent({ ...ev, hook_event_name: "SessionEnd" });
+    if (staleRunEnd) return {};
     questions.expireAllForSession(sid);
     if (ev.reason === "clear") {
       succeedForwardFromClear(sid, ev.cwd);
@@ -10703,7 +11699,7 @@ function createSnapshot(ctx) {
   function snapshot() {
     const now = Date.now();
     const filesBySid = /* @__PURE__ */ new Map();
-    for (const row of q.filesBySession.all(now - RETAIN_LEDGER_MS)) {
+    for (const row of q.filesBySession.all(now - RETAIN_LEDGER_MS, SNAPSHOT_FILES_PER_SESSION)) {
       let list = filesBySid.get(row.session_id);
       if (!list) {
         list = [];
@@ -10718,11 +11714,11 @@ function createSnapshot(ctx) {
       const idx = 29 - (nowMin - row.minute);
       if (idx >= 0 && idx < 30) sparkBySid.get(row.session_id)[idx] = row.n;
     }
-    const spawnBySid = /* @__PURE__ */ new Map();
-    for (const r of q.allSpawns.all()) spawnBySid.set(r.session_id, r);
-    const pendingBySid = new Map(q.pendingCounts.all().map((r) => [r.to_session, r]));
-    const callsignById = new Map(q.allSessions.all().map((s) => [s.session_id, s.callsign]));
     const visible = q.visibleSessions.all();
+    const spawnBySid = /* @__PURE__ */ new Map();
+    for (const r of q.spawnByVisibleSession.all()) spawnBySid.set(r.session_id, r);
+    const pendingBySid = new Map(q.pendingCounts.all().map((r) => [r.to_session, r]));
+    const callsignById = new Map(q.conflictCallsigns.all().map((s) => [s.session_id, s.callsign]));
     const waiterBySid = /* @__PURE__ */ new Map();
     const ownedPaneBySid = /* @__PURE__ */ new Map();
     for (const s of visible) {
@@ -10858,7 +11854,15 @@ function createSnapshot(ctx) {
         repo_id: repo.repo_id,
         repo_name: repo.repo_name,
         root: repo.root,
-        origin_url: repo.origin_url ?? null,
+        // The persisted origin comes verbatim from `git remote get-url origin`
+        // (repos.mjs touchRepo backfill) and can carry credentials —
+        // `https://user:PAT@host/org/repo.git`, `?access_token=…`. The spawn-row
+        // snapshot withholds its origin outright for exactly this reason (see
+        // the fail_detail gate note above); the catalog needs the URL itself for
+        // spawn-form completion, so it goes out through the same positional
+        // userinfo + secret-query-param scrub every other board-facing git
+        // string gets (payload-capture.mjs). The raw value stays server-side.
+        origin_url: repo.origin_url == null ? null : scrubUrlCredentials(repo.origin_url),
         default_branch: repo.default_branch ?? null,
         last_used_at: repo.last_used_at
       })),
@@ -10916,12 +11920,14 @@ function createSnapshot(ctx) {
         repo_name: p.repo_name,
         plan_md: p.plan_md,
         created_at: p.created_at,
-        status: p.status
+        status: p.status,
+        via: p.executed_via
+        // optional {via} recorded by POST /api/plans/:id/mark
       }))
     };
   }
   function fleetSize() {
-    return q.countSessions.get().n;
+    return q.countVisibleSessions.get().n;
   }
   function terminalSpawn(spawnId) {
     return q.getSpawn.get(spawnId) || null;
@@ -10982,6 +11988,13 @@ function createRetention(ctx) {
       const wins = await tmuxAdapter.listScopedWindows(port);
       if (wins !== null) {
         for (const { s, sp } of spawned) {
+          const stillOurs = () => {
+            const cur = q.activeSpawnBySession.get(s.session_id);
+            if (!cur || cur.spawn_id !== sp.spawn_id) return false;
+            const owner = q.currentWindowOwner.get(sp.tmux_window);
+            return !owner || owner.spawn_id === sp.spawn_id;
+          };
+          if (!stillOurs()) continue;
           const win = wins.find((w) => w.window === sp.tmux_window);
           let alive = false;
           const shell = sp.kind === "shell";
@@ -10991,11 +12004,13 @@ function createRetention(ctx) {
             alive = !!pane && !pane.dead && (shell || setupPhase || pane.cmd === "claude");
           }
           if (alive) {
+            if (!stillOurs()) continue;
             updateSession(s.session_id, { last_seen: now });
             changed = true;
             continue;
           }
           if (win && (win.pane_dead || !shell && !setupPhase && SHELL_RE.test(win.pane_cmd))) {
+            if (!stillOurs()) continue;
             q.setSpawnStatus.run("pane-dead", sp.spawn_id);
             forgetSpawn(sp.spawn_id);
             tombstoneCard(s.session_id, {
@@ -11032,17 +12047,42 @@ function createRetention(ctx) {
     }
     if (q.expireRetainedMail.run(now, now - RETAIN_OFFLINE_MS).changes) changed = true;
     if (q.goneArchivedSpawns.run().changes) changed = true;
+    const touchCutoff = now - Math.max(RETAIN_LEDGER_MS, CONFLICT_WINDOW_MS);
+    if (q.pruneTouches.run(touchCutoff).changes) changed = true;
     const ledgerCutoff = now - RETAIN_LEDGER_MS;
-    if (q.pruneTouches.run(ledgerCutoff).changes) changed = true;
     if (q.pruneCommands.run(ledgerCutoff).changes) changed = true;
     if (q.pruneConflicts.run(ledgerCutoff).changes) changed = true;
     if (q.pruneSettledMail.run(ledgerCutoff).changes) changed = true;
+    if (q.expireStalledClaims.run(now).changes) changed = true;
     if (changed) onMutate();
     return { changed };
   }
   async function cleanup() {
     const now = Date.now();
     const archiving = q.archiveCandidates.all(now + 1).map((r) => r.session_id);
+    const byName = new Map(q.allSpawns.all().map((r) => [r.tmux_window, r]));
+    const namedDead = [...byName.values()].filter((sp) => sp.tmux_window && ["killed", "pane-dead", "gone"].includes(sp.status));
+    let windows_killed = 0;
+    if (namedDead.length) {
+      const wins = await tmuxAdapter.listScopedWindows(port);
+      if (wins === null) {
+        return { ok: false, reason: "tmux window listing unavailable \u2014 nothing was cleared; retry Clear" };
+      }
+      const window_errors = [];
+      for (const win of wins) {
+        const sp = byName.get(win.window);
+        if (!win.pane_dead || !sp || !["killed", "pane-dead", "gone"].includes(sp.status)) continue;
+        const out = await tmuxAdapter.killWindowVerified(win.window);
+        if (out.ok || out.gone) windows_killed++;
+        else window_errors.push(`${win.window}: ${out.error || "kill failed"}`);
+      }
+      if (window_errors.length) {
+        return {
+          ok: false,
+          reason: `${window_errors.length} window(s) could not be killed \u2014 ${window_errors.join("; ").slice(0, 200)} \u2014 nothing was cleared; retry Clear`
+        };
+      }
+    }
     const archived = Number(q.archiveAllOffline.run(now).changes);
     const mail_expired = Number(q.expireArchivedMail.run(now).changes);
     let questions_expired = 0;
@@ -11050,15 +12090,6 @@ function createRetention(ctx) {
       questions_expired += Number(questions.expireAllForSession(sid, { includeFreeform: true }));
     }
     q.goneArchivedSpawns.run();
-    const wins = await tmuxAdapter.listScopedWindows(port);
-    const byName = new Map(q.allSpawns.all().map((r) => [r.tmux_window, r]));
-    let windows_killed = 0;
-    for (const win of wins ?? []) {
-      const sp = byName.get(win.window);
-      if (!win.pane_dead || !sp || !["killed", "pane-dead", "gone"].includes(sp.status)) continue;
-      const out = await tmuxAdapter.killWindowVerified(win.window);
-      if (out.ok) windows_killed++;
-    }
     const alive = new Set(q.aliveSessionIds.all().map((r) => r.session_id));
     let conflicts_cleared = 0;
     for (const row of q.allConflicts.all()) {
@@ -11118,21 +12149,48 @@ function createRetention(ctx) {
     const myWindows = new Set(q.spawnsForSession.all(sid).map((r) => r.tmux_window).filter(Boolean));
     let windows_killed = 0;
     let resurrected = false;
+    const window_errors = [];
+    const incomplete = (reason) => ({
+      status: 409,
+      body: {
+        ok: false,
+        archived: 1,
+        mail_expired,
+        questions_expired,
+        windows_killed,
+        retry: true,
+        reason,
+        ...resurrected ? { resurrected: true } : {}
+      }
+    });
     if (myWindows.size) {
       const wins = await tmuxAdapter.listScopedWindows(port);
       if (alive()) {
         resurrected = true;
+      } else if (wins === null) {
+        return incomplete("tmux window listing unavailable \u2014 card archived, dead window(s) not killed; dismiss again to retry");
       } else {
-        for (const win of wins ?? []) {
+        for (const win of wins) {
           if (!myWindows.has(win.window) || !win.pane_dead) continue;
           const owner = q.currentWindowOwner.get(win.window);
           if (owner && (owner.session_id !== sid || owner.status !== "pane-dead")) continue;
-          const out = await tmuxAdapter.killWindowVerified(win.window);
-          if (out.ok) windows_killed++;
+          const out = await tmuxAdapter.killWindowVerified(win.window, {
+            expectWindowId: win.window_id,
+            expect: () => {
+              const owner2 = q.currentWindowOwner.get(win.window);
+              if (owner2 && (owner2.session_id !== sid || owner2.status !== "pane-dead")) return false;
+              return !alive();
+            }
+          });
+          if (out.ok || out.gone) windows_killed++;
+          else window_errors.push(`${win.window}: ${out.error || "kill failed"}`);
           if (alive()) {
             resurrected = true;
             break;
           }
+        }
+        if (window_errors.length) {
+          return incomplete(`${window_errors.length} window(s) could not be killed \u2014 ${window_errors.join("; ").slice(0, 200)} \u2014 card archived; dismiss again to retry`);
         }
       }
     }
@@ -11146,7 +12204,37 @@ function createRetention(ctx) {
       body: { ok: true, archived: 1, mail_expired, questions_expired, windows_killed, ...resurrected ? { resurrected: true } : {} }
     };
   }
-  return { retentionSweep, cleanup, dismissSession };
+  async function dismissRetry(sid) {
+    const s = q.getSession.get(sid);
+    if (!s) return { status: 404, body: { ok: false, reason: "no such session" } };
+    if (s.archived_at == null) return { status: 409, body: { ok: false, reason: "session is not dismissed \u2014 nothing to retry" } };
+    const myWindows = new Set(q.spawnsForSession.all(sid).map((r) => r.tmux_window).filter(Boolean));
+    if (!myWindows.size) {
+      return { status: 200, body: { ok: true, windows_killed: 0 } };
+    }
+    const wins = await tmuxAdapter.listScopedWindows(port);
+    if (wins === null) {
+      return { status: 409, body: { ok: false, retry: true, reason: "tmux window listing unavailable \u2014 retry again" } };
+    }
+    let windows_killed = 0;
+    const window_errors = [];
+    for (const win of wins) {
+      if (!myWindows.has(win.window) || !win.pane_dead) continue;
+      const owner = q.currentWindowOwner.get(win.window);
+      if (owner && (owner.session_id !== sid || owner.status !== "pane-dead")) continue;
+      const out = await tmuxAdapter.killWindowVerified(win.window);
+      if (out.ok || out.gone) windows_killed++;
+      else window_errors.push(`${win.window}: ${out.error || "kill failed"}`);
+    }
+    if (window_errors.length) {
+      return {
+        status: 409,
+        body: { ok: false, retry: true, windows_killed, reason: `${window_errors.length} window(s) could not be killed \u2014 ${window_errors.join("; ").slice(0, 200)} \u2014 retry again` }
+      };
+    }
+    return { status: 200, body: { ok: true, windows_killed } };
+  }
+  return { retentionSweep, cleanup, dismissSession, dismissRetry };
 }
 
 // scripts/fleetd/derive.mjs
@@ -11161,7 +12249,13 @@ function createCore(db2, {
   // Daemon version, threaded from fleetd.mjs's package.json read so the
   // snapshot can tell the board which build is serving it (upgrade-takeover
   // observability). '0.0.0' mirrors /health's standalone-install fallback.
-  version: version2 = "0.0.0"
+  version: version2 = "0.0.0",
+  // BUG-128: test-only overrides for the mail pending budget and pane batch
+  // bounds (mail.mjs defaults to its own constants when these are undefined).
+  MAIL_PENDING_MAX: MAIL_PENDING_MAX2,
+  MAIL_PENDING_MAX_BYTES: MAIL_PENDING_MAX_BYTES2,
+  MAIL_PANE_BATCH: MAIL_PANE_BATCH2,
+  MAIL_PANE_BATCH_BYTES: MAIL_PANE_BATCH_BYTES2
 } = {}) {
   const t0 = Date.now();
   let onMutateImpl = () => {
@@ -11172,6 +12266,7 @@ function createCore(db2, {
   const SPAWN_REGISTER_MS = envInt("FLEETDECK_SPAWN_REGISTER_MS", 9e4, { min: 1 });
   const SETUP_REGISTER_MS = envInt("FLEETDECK_SETUP_REGISTER_MS", 6e5, { min: 1 });
   const PANE_MAIL_GRACE_MS = envInt("FLEETDECK_PANE_MAIL_GRACE_MS", 1500, { min: 0 });
+  const MAIL_CLAIM_LEASE_MS = envInt("FLEETDECK_MAIL_CLAIM_LEASE_MS", 3e4, { min: 1 });
   const PRESUME_DEAD_MS = envInt("FLEETDECK_PRESUME_DEAD_MS", 108e5, { min: 1 });
   const RETAIN_OFFLINE_MS = envInt("FLEETDECK_RETAIN_OFFLINE_MS", 864e5, { min: 1 });
   const RC_HARVEST_MS = envInt("FLEETDECK_RC_HARVEST_MS", 2500, { min: 0 });
@@ -11180,6 +12275,7 @@ function createCore(db2, {
   const RETAIN_LEDGER_MS = envInt("FLEETDECK_RETAIN_LEDGER_MS", 864e5, { min: 6e4 });
   const CLEAR_SUCCESSION_MS = envInt("FLEETDECK_CLEAR_SUCCESSION_MS", 3e4, { min: 0 });
   const CLEAR_AMBIGUITY_MS = 1e3;
+  const CLEAR_SETTLE_MS = envInt("FLEETDECK_CLEAR_SETTLE_MS", 250, { min: 0 });
   const SNAPSHOT_FILES_PER_SESSION = 50;
   async function findScopedWindow(name) {
     const wins = await tmuxAdapter.listScopedWindows(port);
@@ -11225,6 +12321,10 @@ function createCore(db2, {
     // test suites would otherwise meet an unexpected second card).
     rearmGraceMs: envInt("FLEETDECK_REARM_GRACE_MS", 3e3, { min: 0 }),
     mail: (sid, from, text) => ctx.mail(sid, from, text),
+    // BUG-137: the questions relay rejects framed answers that would exceed
+    // the mailbox clamp (reject-before-settle instead of silent truncation).
+    // Threaded from mail.mjs so the two can never drift apart.
+    mailMaxLen: MAIL_MAX_LEN,
     tick: (msg) => tick(msg),
     callsignOf: (sid) => q.getSession.get(sid)?.callsign ?? null,
     onChange: () => onMutate(),
@@ -11285,6 +12385,7 @@ function createCore(db2, {
       const callsign = assignCallsign(sid, ticket);
       const now = Date.now();
       q.insertSession.run(sid, callsign, now, now);
+      q.rememberAlias.run(sid, callsign, now);
       if (ticket) updateSession(sid, { ticket, ticket_source: "branch" });
       c = q.getSession.get(sid);
       tick(`${callsign} joined the fleet`);
@@ -11293,6 +12394,7 @@ function createCore(db2, {
   }
   function renameCallsign(sid, c, next, { tickMsg, extra = {} }) {
     const previous = c.callsign;
+    q.rememberAlias.run(sid, previous, Date.now());
     updateSession(sid, {
       callsign: next,
       // prev_callsign is WRITE-ONCE: set to the birth callsign on the first
@@ -11373,7 +12475,7 @@ function createCore(db2, {
     const paned = candidates.filter((c) => hasLivePane(c.session_id));
     return paned.length === 1 ? paned[0] : null;
   }
-  function succeedForwardFromClear(prevSid, cwd) {
+  function succeedForwardFromClear(prevSid, cwd, { settled = false } = {}) {
     const prev = q.getSession.get(prevSid);
     if (!prev || prev.succeeded_by != null || !cwd) return null;
     const now = Date.now();
@@ -11391,6 +12493,15 @@ function createCore(db2, {
     if (cands.length !== 1) return null;
     const rivals = q.clearedPredecessors.all(cwd, now - CLEAR_SUCCESSION_MS, prevSid);
     if (rivals.length) return null;
+    if (!settled && CLEAR_SETTLE_MS > 0) {
+      setTimeout(() => {
+        try {
+          succeedForwardFromClear(prevSid, cwd, { settled: true });
+        } catch {
+        }
+      }, CLEAR_SETTLE_MS).unref();
+      return null;
+    }
     return succeedSession(prev, cands[0].session_id, { rename: true });
   }
   function succeedSession(prev, sid, { rename: rename2 = false } = {}) {
@@ -11415,7 +12526,7 @@ function createCore(db2, {
           updateSession(sid, { callsign });
         }
         updateSession(sid, {
-          prev_callsign: prev.prev_callsign ?? null,
+          prev_callsign: prev.prev_callsign ?? (prev.callsign === callsign ? null : prev.callsign),
           ticket: prev.ticket ?? null,
           ticket_source: prev.ticket_source ?? null,
           custom_suffix: prev.custom_suffix ?? null,
@@ -11427,7 +12538,7 @@ function createCore(db2, {
         updateSession(sid, {
           ticket: prev.ticket ?? null,
           ticket_source: prev.ticket_source ?? null,
-          prev_callsign: prev.prev_callsign ?? null,
+          prev_callsign: prev.prev_callsign ?? (prev.callsign === callsign ? null : prev.callsign),
           custom_suffix: prev.custom_suffix ?? null,
           adopt_armed_until: prev.adopt_armed_until ?? null,
           adopt_armed_skip: prev.adopt_armed_skip ?? null
@@ -11437,6 +12548,7 @@ function createCore(db2, {
       q.reassignPendingMail.run(sid, prev.session_id);
       q.reassignPendingQuestions.run(sid, prev.session_id);
       q.reassignTouches.run(sid, prev.session_id);
+      q.reassignAliases.run(sid, prev.session_id);
       db2.exec("COMMIT");
     } catch (err) {
       try {
@@ -11459,6 +12571,7 @@ function createCore(db2, {
   function logEvent(sid, hookEvent, toolName, note) {
     q.insertEvent.run(sid, hookEvent ?? null, toolName ?? null, note ?? null, Date.now());
   }
+  const acquireWorktreePathLock = createKeyedMutex();
   const ctx = {
     // holdMs resolves WITH the settings fallback at the questions wiring above
     // (q didn't exist at parameter-default time); ctx carries that same value.
@@ -11473,6 +12586,12 @@ function createCore(db2, {
     SPAWN_REGISTER_MS,
     SETUP_REGISTER_MS,
     PANE_MAIL_GRACE_MS,
+    MAIL_CLAIM_LEASE_MS,
+    MAIL_PENDING_MAX: MAIL_PENDING_MAX2,
+    MAIL_PENDING_MAX_BYTES: MAIL_PENDING_MAX_BYTES2,
+    MAIL_PANE_BATCH: MAIL_PANE_BATCH2,
+    MAIL_PANE_BATCH_BYTES: MAIL_PANE_BATCH_BYTES2,
+    // BUG-128 test-only
     PRESUME_DEAD_MS,
     RETAIN_OFFLINE_MS,
     RC_HARVEST_MS,
@@ -11505,12 +12624,14 @@ function createCore(db2, {
     hasLivePane,
     findClearedPredecessor,
     succeedSession,
-    succeedForwardFromClear
+    succeedForwardFromClear,
+    acquireWorktreePathLock
   };
   Object.assign(ctx, createMail(ctx));
   const {
     mail,
     drainMail,
+    ackMail,
     resolveTargets,
     notifyWatchers,
     addWatchWaiter,
@@ -11520,7 +12641,8 @@ function createCore(db2, {
     tryOwnedPaneDelivery,
     claimMail,
     watchInfo,
-    postMail
+    postMail,
+    registerWatchGen
   } = ctx;
   function tombstoneCard(sid, { note, at = Date.now(), tickMsg = null, notify = true, forgetModel = false, mutate = false }) {
     updateSession(sid, { col: "offline", ended_at: at, note });
@@ -11532,7 +12654,7 @@ function createCore(db2, {
   ctx.tombstoneCard = tombstoneCard;
   Object.assign(ctx, createRepos(ctx));
   Object.assign(ctx, createSettings(ctx));
-  const { resolveReposDir, setSettings, resolveSettings } = ctx;
+  const { resolveReposDir, setSettings, resolveSettings, setRepoSetupEntry } = ctx;
   Object.assign(ctx, createLedger(ctx));
   const { recordFile, whisperText } = ctx;
   Object.assign(ctx, createIngest(ctx));
@@ -11540,7 +12662,27 @@ function createCore(db2, {
   Object.assign(ctx, createCommands(ctx));
   const { command } = ctx;
   Object.assign(ctx, createPlans(ctx));
-  const { planMark } = ctx;
+  const { planMark, assignPlan } = ctx;
+  const custodyLeases = /* @__PURE__ */ new Map();
+  const canonicalWorktreePath = (p) => {
+    try {
+      return fs13.realpathSync(p);
+    } catch {
+      return path14.resolve(p);
+    }
+  };
+  ctx.claimWorktreeCustody = (p, owner) => {
+    const canonical2 = canonicalWorktreePath(p);
+    if (custodyLeases.has(canonical2)) return null;
+    custodyLeases.set(canonical2, owner);
+    let released = false;
+    return () => {
+      if (!released) {
+        released = true;
+        custodyLeases.delete(canonical2);
+      }
+    };
+  };
   Object.assign(ctx, createWorktrees(ctx));
   const { worktrees, removeWorktree } = ctx;
   Object.assign(ctx, createFiles(ctx));
@@ -11575,8 +12717,8 @@ function createCore(db2, {
   Object.assign(ctx, createSnapshot(ctx));
   const { snapshot, fleetSize, terminalSpawn } = ctx;
   Object.assign(ctx, createRetention(ctx));
-  const { retentionSweep, cleanup, dismissSession } = ctx;
-  retentionSweep().catch((err) => console.error("fleetd retention sweep error:", err));
+  const { retentionSweep, cleanup, dismissSession, dismissRetry } = ctx;
+  const bootRetention = retentionSweep().catch((err) => console.error("fleetd retention sweep error:", err));
   setInterval(() => {
     try {
       q.pruneEvents.run(Date.now() - 24 * 3600 * 1e3);
@@ -11605,7 +12747,15 @@ function createCore(db2, {
     // "
     watchInfo,
     // "
+    registerWatchGen,
+    // " (BUG-105: newest-wins watcher generation for the atomic claim)
     drainMail,
+    ackMail,
+    // POST /mail/ack — BUG-034 lease finalization
+    // BUG-128: the raw internal insert is on the surface so in-memory tests
+    // can queue a burst without the postMail routing/probe ceremony (commands
+    // .mjs and question relays already reach it through ctx).
+    mail,
     postMail,
     tryOwnedPaneDelivery,
     command,
@@ -11640,9 +12790,13 @@ function createCore(db2, {
     // is re-exported so tests can drive the tmux-verified presume-dead path
     // (BUG 2) deterministically; production callers keep using the interval.
     retentionSweep,
+    bootRetention,
+    // the boot sweep's settle promise — fleetd folds it into boot readiness
     cleanup,
     dismissSession,
     // POST /api/sessions/:id/dismiss — per-card cleanup → {status, body}
+    dismissRetry,
+    // POST /api/sessions/:id/dismiss/retry — re-attempt the window kills of a partial dismiss (BUG-145)
     worktrees,
     // GET /api/worktrees — bounded live git inspection
     removeWorktree,
@@ -11653,6 +12807,8 @@ function createCore(db2, {
     // GET /api/settings + POST response + /state snapshot
     setSettings,
     // POST /api/settings (whitelisted; settings.mjs)
+    setRepoSetupEntry,
+    // daemon-side per-repo setup-default writer (BUG-147)
     fsList,
     // GET /api/sessions/:id/fs/list → {status, body}
     fsRead,
@@ -11668,6 +12824,8 @@ function createCore(db2, {
     // v1.3 plan library
     planMark,
     // POST /api/plans/:id/mark → {status, body}
+    assignPlan,
+    // POST /api/plans/:id/assign → {status, body} (BUG-039)
     // 0.7.1 custom names: POST /api/sessions/:id/name and the `name` command
     // both land here (one rename write, one set of rules).
     applyCustomName,
@@ -11685,7 +12843,7 @@ import http from "node:http";
 import { timingSafeEqual } from "node:crypto";
 import os8 from "node:os";
 import fs14 from "node:fs";
-import path13 from "node:path";
+import path15 from "node:path";
 import { fileURLToPath } from "node:url";
 
 // node_modules/ws/wrapper.mjs
@@ -11705,9 +12863,12 @@ var ACTIVE_STATUSES = /* @__PURE__ */ new Set(["spawning", "stalled", "live"]);
 var INPUT_CHUNK_BYTES = 1024;
 var ATTACH_TIMEOUT_MS = 5e3;
 var COMMAND_TIMEOUT_MS = envInt("FLEETDECK_TERM_CMD_TIMEOUT_MS", 1e4, { min: 100 });
+var CLOSE_RECHECK_MS = envInt("FLEETDECK_TERM_CLOSE_RECHECK_MS", 1e3, { min: 50 });
 var MAX_INPUT_QUEUE_BYTES = envInt("FLEETDECK_TERM_INPUT_MAX_BYTES", 256 * 1024, { min: 1024 });
+var MAX_PENDING_OUTPUT_BYTES = envInt("FLEETDECK_TERM_PENDING_MAX_BYTES", MAX_INPUT_QUEUE_BYTES, { min: 1024 });
 var CLEAR_SCREEN = "\x1B[H\x1B[2J";
 var REPAINT_MS = envInt("FLEETDECK_TERM_REPAINT_MS", 80);
+var PANE_DEAD_POLL_MS = envInt("FLEETDECK_TERM_DEAD_POLL_MS", 5e3, { min: 100 });
 function dimensions(cols, rows) {
   const c = Number(cols);
   const r = Number(rows);
@@ -11855,16 +13016,34 @@ function createTermBridge({ port, resolveSpawn, log = () => {
       } else if (ev.type === "window-close") {
         if (!c.panes.size) return;
         c.command("list-panes -a -F '#{pane_id}'").then((res) => {
-          if (!res.ok) return;
+          if (!res.ok) return scheduleCloseRecheck();
           const alive = new Set(res.lines.map((s) => s.trim()));
           for (const [paneId, stream] of [...c.panes]) {
             if (alive.has(paneId)) continue;
             for (const v of [...stream.subs]) v.finish("terminal pane closed");
           }
-        }).catch(() => {
-        });
+        }).catch(() => scheduleCloseRecheck());
       }
     };
+    c.deadTimer = setInterval(() => {
+      if (c.closed || !c.panes.size) return;
+      c.command("list-panes -a -F '#{pane_id} #{pane_dead}'").then((res) => {
+        log(`BUG055 ok=${res.ok} lines=${JSON.stringify(res.lines)} panes=${[...c.panes.keys()]}`);
+        if (!res.ok || c.closed) return;
+        const state = /* @__PURE__ */ new Map();
+        for (const line of res.lines) {
+          const m = /^(%\d+)\s+([01])$/.exec(line.trim());
+          if (m) state.set(m[1], m[2]);
+        }
+        for (const [paneId, stream] of [...c.panes]) {
+          log(`BUG055 pane=${paneId} state=${state.get(paneId)} subs=${stream.subs.size}`);
+          if (state.get(paneId) !== "1") continue;
+          for (const v of [...stream.subs]) v.finish("terminal pane closed");
+        }
+      }).catch(() => {
+      });
+    }, PANE_DEAD_POLL_MS);
+    c.deadTimer.unref?.();
     const override = process.env.FLEETDECK_TERM_CMD?.trim();
     const socket = process.env.FLEETDECK_TMUX_SOCKET?.trim();
     const argv = socket ? ["-L", socket, "-C", "attach-session", "-t", "=" + session] : ["-C", "attach-session", "-t", "=" + session];
@@ -11905,6 +13084,7 @@ function createTermBridge({ port, resolveSpawn, log = () => {
     if (!c || c.closed) return;
     c.closed = true;
     client = null;
+    clearInterval(c.deadTimer);
     c.readyReject(new Error(reason));
     for (const waiter of c.waiters.splice(0)) waiter.reject(new Error(reason));
     for (const v of [...viewers]) v.finish(reason);
@@ -11914,6 +13094,23 @@ function createTermBridge({ port, resolveSpawn, log = () => {
       } catch {
       }
     }
+  }
+  function scheduleCloseRecheck() {
+    const c = client;
+    if (!c || c.closed || !c.panes.size) return;
+    const timer = setTimeout(() => {
+      if (client !== c || c.closed || !c.panes.size) return;
+      c.command("list-panes -a -F '#{pane_id}'").then((res) => {
+        if (!res.ok) return;
+        const alive = new Set(res.lines.map((s) => s.trim()));
+        for (const [paneId, stream] of [...c.panes]) {
+          if (alive.has(paneId)) continue;
+          for (const v of [...stream.subs]) v.finish("terminal pane closed");
+        }
+      }).catch(() => {
+      });
+    }, CLOSE_RECHECK_MS);
+    timer.unref?.();
   }
   async function ensureClient() {
     if (!client) client = createClient();
@@ -11939,9 +13136,7 @@ function createTermBridge({ port, resolveSpawn, log = () => {
       if (opt.ok) c.manualSizing.add(window);
     }
     if (c.manualSizing.has(window)) {
-      const res = await c.command(`resize-window -t ${target} -x ${cols} -y ${rows}`);
-      if (res.ok) return res;
-      c.manualSizing.delete(window);
+      return await c.command(`resize-window -t ${target} -x ${cols} -y ${rows}`);
     }
     let out = await c.command(`refresh-client -C ${cols},${rows}`);
     if (!out.ok) out = await c.command(`refresh-client -C ${cols}x${rows}`);
@@ -11984,6 +13179,8 @@ function createTermBridge({ port, resolveSpawn, log = () => {
       pending: [],
       // R1-4: %output that arrived after we
       // subscribed but before the init frame shipped
+      pendingBytes: 0,
+      // byte bound on the above (BUG-158)
       queuedInput: 0,
       // M-R4: pending input bytes not yet sent
       inputChain: Promise.resolve(),
@@ -11991,6 +13188,13 @@ function createTermBridge({ port, resolveSpawn, log = () => {
       emit(data) {
         if (this.finished) return;
         if (!this.initialized) {
+          const bytes = Buffer.byteLength(data, "utf8");
+          if (this.pendingBytes + bytes > MAX_PENDING_OUTPUT_BYTES) {
+            this.established = true;
+            this.finish("terminal output overflow before init");
+            return;
+          }
+          this.pendingBytes += bytes;
           this.pending.push(data);
           return;
         }
@@ -12006,6 +13210,7 @@ function createTermBridge({ port, resolveSpawn, log = () => {
       flushPending() {
         const buffered = this.pending;
         this.pending = [];
+        this.pendingBytes = 0;
         for (const data of buffered) {
           if (this.finished) return;
           try {
@@ -12039,16 +13244,22 @@ function createTermBridge({ port, resolveSpawn, log = () => {
       if (!pane) throw new TermBridgeError("terminal pane is gone \u2014 the agent has ended", { gone: true });
       viewer.pane = pane;
       if (!(await sizeWindow(c, row.tmux_window, size.cols, size.rows)).ok) throw new Error("terminal resize failed");
-      await sizeWindow(c, row.tmux_window, size.cols, Math.max(1, size.rows - 1));
-      await sizeWindow(c, row.tmux_window, size.cols, size.rows);
+      if (!(await sizeWindow(c, row.tmux_window, size.cols, Math.max(1, size.rows - 1))).ok) {
+        await sizeWindow(c, row.tmux_window, size.cols, size.rows);
+        throw new Error("terminal resize failed");
+      }
+      if (!(await sizeWindow(c, row.tmux_window, size.cols, size.rows)).ok) {
+        await sizeWindow(c, row.tmux_window, size.cols, size.rows);
+        throw new Error("terminal resize failed");
+      }
       await new Promise((r) => {
         const t = setTimeout(r, REPAINT_MS);
         t.unref?.();
       });
       abortIfClosed();
+      subscribe(c, pane, viewer);
       const captured = await c.command(`capture-pane -p -e -t ${pane}`);
       if (!captured.ok) throw new Error("terminal pane capture failed");
-      subscribe(c, pane, viewer);
       const cursor = await c.command(`display-message -p -t ${pane} '#{cursor_x} #{cursor_y}'`);
       if (!cursor.ok) throw new Error("terminal cursor lookup failed");
       const match = /^(\d+)\s+(\d+)$/.exec(cursor.lines.at(-1)?.trim() || "");
@@ -12129,7 +13340,7 @@ function isLoopbackAddress(address) {
   const value = String(address || "").trim().toLowerCase();
   return value === "localhost" || value === "::1" || /^127(?:\.[0-9]{1,3}){3}$/.test(value) || /^::ffff:127(?:\.[0-9]{1,3}){3}$/.test(value);
 }
-var BOARD_DIST = path13.join(path13.dirname(fileURLToPath(import.meta.url)), "board-dist");
+var BOARD_DIST = path15.join(path15.dirname(fileURLToPath(import.meta.url)), "board-dist");
 var MIME = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -12153,15 +13364,15 @@ function serveBoardAsset(res, pathname, notFound) {
     return notFound();
   }
   const rel = decoded === "/" ? "index.html" : decoded.replace(/^\/+/, "");
-  const abs = path13.resolve(BOARD_DIST, rel);
-  if (abs !== BOARD_DIST && !abs.startsWith(BOARD_DIST + path13.sep)) return notFound();
+  const abs = path15.resolve(BOARD_DIST, rel);
+  if (abs !== BOARD_DIST && !abs.startsWith(BOARD_DIST + path15.sep)) return notFound();
   let data;
   try {
     data = fs14.readFileSync(abs);
   } catch {
     return notFound();
   }
-  const ext = path13.extname(abs).toLowerCase();
+  const ext = path15.extname(abs).toLowerCase();
   const headers = {
     "content-type": MIME[ext] || "application/octet-stream",
     "content-length": data.length,
@@ -12236,9 +13447,10 @@ function createHttp(core2, {
   requireToken = false,
   trustLoopback = false
 }) {
-  const lanInfo = lan?.enabled ? { enabled: true, urls: lan.urls ?? [], mdns: lan.mdns ?? null } : { enabled: false, urls: [] };
+  const termAuth = { term_token: !(proxyAuth === "trust" || trustLoopback) };
+  let lanInfo = lan?.enabled ? { enabled: true, urls: lan.urls ?? [], mdns: lan.mdns ?? null } : { enabled: false, urls: [] };
   function snapshotWithLan() {
-    return { ...core2.snapshot(), lan: lanInfo, legacy_upgrade: legacyBanner() };
+    return { ...core2.snapshot(), lan: currentLan(), legacy_upgrade: legacyBanner() };
   }
   function json(res, code, obj) {
     const body = JSON.stringify(obj);
@@ -12308,22 +13520,28 @@ function createHttp(core2, {
   }
   const daemonPort = String(port);
   const lanHosts = /* @__PURE__ */ new Set();
+  const osGetAddresses = typeof os8.getAddresses === "function" ? () => os8.getAddresses() : () => Object.values(os8.networkInterfaces()).flat();
+  let mdnsHost = null;
   try {
-    for (const entries of Object.values(os8.networkInterfaces())) {
-      for (const entry of entries || []) {
+    if (lan?.mdns) mdnsHost = new URL(lan.mdns).hostname.toLowerCase();
+  } catch {
+  }
+  function refreshLanHosts() {
+    try {
+      lanHosts.clear();
+      for (const entry of osGetAddresses()) {
         if (entry?.address) lanHosts.add(String(entry.address).toLowerCase());
       }
+      if (mdnsHost) lanHosts.add(mdnsHost);
+    } catch {
     }
-  } catch {
   }
-  try {
-    if (lan?.mdns) lanHosts.add(new URL(lan.mdns).hostname.toLowerCase());
-  } catch {
-  }
+  refreshLanHosts();
   const normHost = (h) => String(h || "").toLowerCase().replace(/^\[/, "").replace(/\]$/, "");
   function hostAllowed(u) {
+    refreshLanHosts();
     const host = normHost(u.hostname);
-    return (isLoopbackAddress(host) || lanHosts.has(host)) && (u.port === "" || u.port === daemonPort);
+    return (isLoopbackAddress(host) || lanHosts().has(host)) && (u.port === "" || u.port === daemonPort);
   }
   function authorityTrusted(u) {
     const host = normHost(u.hostname);
@@ -12428,10 +13646,12 @@ function createHttp(core2, {
     const sid = url.searchParams.get("session") || "";
     const holdRaw = Number(url.searchParams.get("hold_ms"));
     const holdMs = Number.isFinite(holdRaw) ? Math.max(0, Math.min(holdRaw, 25e3)) : 25e3;
+    const wg = url.searchParams.get("wg") || null;
+    if (wg) core2.registerWatchGen(sid, wg);
     const attempt = () => {
       const info = core2.watchInfo(sid);
       if (!info.session_alive) return { status: "idle", ...info };
-      const claimed = core2.claimMail(sid);
+      const claimed = core2.claimMail(sid, wg);
       if (claimed) return { status: "mail", ...claimed };
       return null;
     };
@@ -12487,7 +13707,8 @@ function createHttp(core2, {
             pid: process.pid,
             version: version2,
             managed,
-            spawn: core2.spawnCapability()
+            spawn: core2.spawnCapability(),
+            auth: termAuth
           });
         }
         if (url.pathname === "/state") return json(res, 200, snapshotWithLan());
@@ -12533,7 +13754,7 @@ function createHttp(core2, {
           return json(res, 200, { mail: box });
         }
         if (url.pathname === "/api/watch") return watchHook(req, res, url);
-        if (url.pathname === "/" || url.pathname.startsWith("/assets/")) {
+        if (shell) {
           return serveBoardAsset(res, url.pathname, () => json(res, 404, { err: "nope" }));
         }
         return json(res, 404, { err: "nope" });
@@ -12908,7 +14129,13 @@ function createHttp(core2, {
   }, WS_PING_MS);
   keepalive.unref();
   core2.onMutate = scheduleBroadcast;
-  return { server: server2 };
+  return {
+    server: server2,
+    refreshLan(lan2) {
+      refreshLanHosts();
+      lanInfo = lan2?.enabled ? { enabled: true, urls: lan2.urls ?? [], mdns: lan2.mdns ?? null } : { enabled: false, urls: [] };
+    }
+  };
 }
 
 // scripts/fleetd/agents-poll.mjs
@@ -12933,15 +14160,7 @@ async function runOnce(argv) {
 }
 function hasLiveInteractive(records) {
   if (!Array.isArray(records)) return false;
-  return records.some((rec) => {
-    if (!rec || rec.kind !== "interactive" || !Number.isFinite(rec.pid) || rec.pid <= 0) return false;
-    try {
-      process.kill(rec.pid, 0);
-      return true;
-    } catch {
-      return false;
-    }
-  });
+  return records.some((rec) => !!rec && rec.kind === "interactive" && pidOwnedBy(rec.pid, rec.startedAt));
 }
 function startAgentsPoll(core2) {
   const argv = resolveArgv();
@@ -13015,6 +14234,8 @@ var LEGACY_TTL = 10;
 var SERVICE_TYPES = ["_fleetdeck._tcp.local", "_http._tcp.local"];
 var META_QUERY = "_services._dns-sd._udp.local";
 var ANNOUNCE_DELAYS_MS = [0, 1e3, 2e3];
+var PROBE_COUNT = 3;
+var PROBE_INTERVAL_MS = 250;
 function encodeName(name) {
   const labels = String(name).replace(/\.$/, "").split(".").filter(Boolean);
   const parts = [];
@@ -13152,13 +14373,13 @@ function parseQuestions(buf) {
   }
   return questions;
 }
-function encodeMessage({ id = 0, flags = FLAGS_RESPONSE, questions = [], answers = [], additionals = [] } = {}) {
+function encodeMessage({ id = 0, flags = FLAGS_RESPONSE, questions = [], answers = [], authorities = [], additionals = [] } = {}) {
   const header = Buffer.alloc(12);
   header.writeUInt16BE(id & 65535, 0);
   header.writeUInt16BE(flags & 65535, 2);
   header.writeUInt16BE(questions.length, 4);
   header.writeUInt16BE(answers.length, 6);
-  header.writeUInt16BE(0, 8);
+  header.writeUInt16BE(authorities.length, 8);
   header.writeUInt16BE(additionals.length, 10);
   const parts = [header];
   for (const q of questions) {
@@ -13167,8 +14388,98 @@ function encodeMessage({ id = 0, flags = FLAGS_RESPONSE, questions = [], answers
     tail.writeUInt16BE((q.class || CLASS_IN) | (q.unicast ? QU_BIT : 0), 2);
     parts.push(encodeName(q.name), tail);
   }
-  for (const record of [...answers, ...additionals]) parts.push(encodeRecord(record));
+  for (const record of [...answers, ...authorities, ...additionals]) parts.push(encodeRecord(record));
   return Buffer.concat(parts);
+}
+function decodeRecords(buf, offset, count) {
+  const records = [];
+  let pos = offset;
+  for (let i = 0; i < count; i += 1) {
+    let decoded;
+    try {
+      decoded = decodeName(buf, pos);
+    } catch {
+      break;
+    }
+    pos = decoded.offset;
+    if (pos + 10 > buf.length) break;
+    const type = buf.readUInt16BE(pos);
+    const rclass = buf.readUInt16BE(pos + 2);
+    const ttl = buf.readUInt32BE(pos + 4);
+    const rdlength = buf.readUInt16BE(pos + 8);
+    pos += 10;
+    if (pos + rdlength > buf.length) break;
+    let data;
+    try {
+      switch (type) {
+        case TYPE.A:
+          data = Array.from(buf.subarray(pos, pos + 4)).join(".");
+          break;
+        case TYPE.PTR:
+          data = decodeName(buf, pos).name;
+          break;
+        case TYPE.SRV:
+          data = {
+            priority: buf.readUInt16BE(pos),
+            weight: buf.readUInt16BE(pos + 2),
+            port: buf.readUInt16BE(pos + 4),
+            target: decodeName(buf, pos + 6).name
+          };
+          break;
+        case TYPE.TXT: {
+          const strings = [];
+          for (let p = pos; p < pos + rdlength; ) {
+            const len = buf[p];
+            strings.push(buf.toString("utf8", p + 1, p + 1 + len));
+            p += 1 + len;
+          }
+          data = strings;
+          break;
+        }
+        default:
+          data = Buffer.from(buf.subarray(pos, pos + rdlength));
+      }
+    } catch {
+      data = Buffer.from(buf.subarray(pos, pos + rdlength));
+    }
+    records.push({
+      name: decoded.name,
+      type,
+      typeName: TYPE_NAME[type] || String(type),
+      class: rclass & ~FLUSH_BIT,
+      flush: (rclass & FLUSH_BIT) !== 0,
+      ttl,
+      data
+    });
+    pos += rdlength;
+  }
+  return { records, offset: pos };
+}
+function decodeMessage(buf) {
+  const header = parseHeader(buf);
+  if (!header) return null;
+  const questions = parseQuestions(buf);
+  let offset = 12;
+  for (let i = 0; i < header.qdcount; i += 1) {
+    try {
+      const decoded = decodeName(buf, offset);
+      offset = decoded.offset + 4;
+    } catch {
+      break;
+    }
+  }
+  const answers = decodeRecords(buf, offset, header.ancount);
+  const authorities = decodeRecords(buf, answers.offset, header.nscount);
+  const additionals = decodeRecords(buf, authorities.offset, header.arcount);
+  return {
+    id: header.id,
+    flags: header.flags,
+    isResponse: (header.flags & QR_BIT) !== 0,
+    questions,
+    answers: answers.records,
+    authorities: authorities.records,
+    additionals: additionals.records
+  };
 }
 var IPV4 = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
 function isIPv4(address) {
@@ -13180,8 +14491,11 @@ function label(value, fallback) {
   const bytes = Buffer.from(text || fallback, "utf8").subarray(0, 63);
   return bytes.toString("utf8").replace(/\ufffd+$/, "") || fallback;
 }
+function hostLabel(value, fallback = "fleetdeck") {
+  return label(value, fallback);
+}
 function normalize(options = {}) {
-  const host = `${label(options.name || "fleetdeck", "fleetdeck")}.local`;
+  const host = `${hostLabel(options.name, "fleetdeck")}.local`;
   const instance = label(options.instance || "Fleet Deck", "Fleet Deck");
   const port = Number(options.port) || 0;
   const addresses = (Array.isArray(options.addresses) ? options.addresses : []).filter(isIPv4);
@@ -13226,7 +14540,7 @@ function metaRecords(ad, ttl) {
   }));
 }
 function keyOf(record) {
-  return `${String(record.name).toLowerCase()}|${record.type}|${JSON.stringify(record.data)}`;
+  return `${String(record.name).toLowerCase()}|${typeNumber(record.type)}|${JSON.stringify(record.data)}`;
 }
 function buildAnnouncement(options = {}, { ttl } = {}) {
   const ad = normalize(options);
@@ -13279,21 +14593,65 @@ function buildResponse(questions, options = {}, { ttl, flush = true } = {}) {
   const dedupedAdditionals = additionals.filter((r) => !answerKeys.has(keyOf(r)) && !extraKeys.has(keyOf(r)) && extraKeys.add(keyOf(r)));
   return { answers: dedupedAnswers, additionals: dedupedAdditionals };
 }
-function createMdns({ port, name = "fleetdeck", instance = "Fleet Deck", addresses = [], txt, log = () => {
-} } = {}) {
-  const options = { port, name, instance, addresses, txt };
+function buildProbeQuestions(options = {}) {
   const ad = normalize(options);
-  let socket = null;
-  let started = false;
-  let stopping = null;
-  let dead = false;
-  const timers = /* @__PURE__ */ new Set();
+  const questions = [
+    { name: ad.host, type: TYPE.A, class: CLASS_IN, unicast: true },
+    ...ad.services.map((service) => ({ name: service.name, type: TYPE.SRV, class: CLASS_IN, unicast: true }))
+  ];
+  const authorities = buildAnnouncement(options, { ttl: 0 }).filter((record) => record.type === "A" || record.type === "SRV");
+  return { questions, authorities };
+}
+function uniqueConflict(msg, options = {}, { phase } = {}) {
+  const ad = normalize(options);
+  const hosts = /* @__PURE__ */ new Set([ad.host.toLowerCase()]);
+  const services = new Set(ad.services.map((service) => service.name.toLowerCase()));
+  const own = /* @__PURE__ */ new Map();
+  for (const record of buildAnnouncement(options)) {
+    if (record.type === "A" || record.type === "SRV") {
+      own.set(`${String(record.name).toLowerCase()}|${typeNumber(record.type)}`, keyOf(record));
+    }
+  }
+  const decoded = decodeMessage(msg);
+  if (!decoded) return false;
+  for (const record of [...decoded.answers, ...decoded.additionals]) {
+    const key = own.get(`${String(record.name).toLowerCase()}|${record.type}`);
+    if (key && keyOf(record) !== key) return true;
+  }
+  if (phase === "probing") {
+    const ours = buildProbeQuestions(options).authorities;
+    const oursKeys = new Set(ours.map(keyOf));
+    const theirsKeys = new Set(decoded.authorities.map(keyOf));
+    const equalSet = theirsKeys.size === oursKeys.size && [...theirsKeys].every((k) => oursKeys.has(k));
+    const theyWin = !equalSet && decoded.authorities.length > 0 && (decoded.authorities.length > ours.length || decoded.authorities.length === ours.length && [...theirsKeys].sort().join("") > [...oursKeys].sort().join(""));
+    if (theyWin) {
+      for (const q of decoded.questions) {
+        const name = String(q.name || "").replace(/\.$/, "").toLowerCase();
+        const names = q.type === TYPE.A || q.type === TYPE.ANY ? hosts : services;
+        if (names.has(name)) return true;
+      }
+    }
+  }
+  return false;
+}
+function createMdns({ port, name = "fleetdeck", instance = "Fleet Deck", addresses = [], txt, log = () => {
+}, onDown = null, inject } = {}) {
+  const options = { port, name, instance, addresses, txt };
+  const dgramImpl = inject?.dgram || dgram;
+  let ad = normalize(options);
   const note = (message) => {
     try {
       log(message);
     } catch {
     }
   };
+  let started = false;
+  let stopping = null;
+  let dead = false;
+  let dormant = false;
+  let stopped = false;
+  let joinedIfaces = [];
+  const timers = /* @__PURE__ */ new Set();
   function die(reason, err) {
     if (dead) return;
     dead = true;
@@ -13306,35 +14664,129 @@ function createMdns({ port, name = "fleetdeck", instance = "Fleet Deck", address
       doomed?.close();
     } catch {
     }
+    if (onDown) {
+      try {
+        onDown(reason);
+      } catch {
+      }
+    }
   }
-  function send(packet, targetPort, targetAddress) {
+  function sendRaw(packet, targetPort, targetAddress, callback) {
     if (!socket || dead) return;
     try {
       socket.send(packet, targetPort, targetAddress, (err) => {
         if (err && err.code !== "ENETUNREACH" && err.code !== "EHOSTUNREACH") note(`mdns send failed: ${err.message}`);
+        callback?.(err);
       });
     } catch (err) {
       note(`mdns send failed: ${err.message}`);
+      callback?.(err);
     }
+  }
+  function send(packet, targetPort, targetAddress) {
+    sendRaw(packet, targetPort, targetAddress);
+  }
+  function sendMulticastAll(packet, done) {
+    if (!socket || dead) {
+      done?.();
+      return;
+    }
+    let pending = joinedIfaces.length;
+    const settled = () => {
+      pending -= 1;
+      if (pending <= 0) done?.();
+    };
+    for (const iface of joinedIfaces) {
+      try {
+        socket.setMulticastInterface(iface);
+      } catch {
+      }
+      sendRaw(packet, MDNS_PORT, MDNS_ADDR, settled);
+    }
+  }
+  let probed = false;
+  let claimed = false;
+  function schedule(fn, delay) {
+    const timer = setTimeout(() => {
+      timers.delete(timer);
+      fn();
+    }, delay);
+    timer.unref?.();
+    timers.add(timer);
+  }
+  function probe2(attempt = 0) {
+    if (dead || !socket) return;
+    if (attempt >= PROBE_COUNT) {
+      claimed = true;
+      for (const delay of ANNOUNCE_DELAYS_MS) schedule(() => announce(), delay);
+      note(`mdns responding for ${ad.host}:${ad.port}${ad.addresses.length ? ` (${ad.addresses.join(", ")})` : " (no LAN address to advertise)"}`);
+      return;
+    }
+    try {
+      const { questions, authorities } = buildProbeQuestions(options);
+      send(encodeMessage({ id: 0, flags: 0, questions, authorities }), MDNS_PORT, MDNS_ADDR);
+    } catch (err) {
+      note(`mdns probe failed: ${err.message}`);
+    }
+    schedule(() => probe2(attempt + 1), PROBE_INTERVAL_MS);
   }
   function announce(ttl) {
     try {
-      const answers = buildAnnouncement(options, ttl === void 0 ? {} : { ttl });
+      const answers = buildAnnouncement(ad, ttl === void 0 ? {} : { ttl });
       if (!answers.length) return;
-      send(encodeMessage({ id: 0, flags: FLAGS_RESPONSE, answers }), MDNS_PORT, MDNS_ADDR);
+      const packet = encodeMessage({ id: 0, flags: FLAGS_RESPONSE, answers });
+      if (joinedIfaces.length) sendMulticastAll(packet);
+      else send(packet, MDNS_PORT, MDNS_ADDR);
     } catch (err) {
       note(`mdns announce failed: ${err.message}`);
+    }
+  }
+  function withdrawAndDie(reason) {
+    let down = false;
+    const finish = () => {
+      if (!down) {
+        down = true;
+        die(reason);
+      }
+    };
+    try {
+      const answers = buildAnnouncement(options, { ttl: 0 });
+      const packet = encodeMessage({ id: 0, flags: FLAGS_RESPONSE, answers });
+      const guard = setTimeout(finish, 250);
+      guard.unref?.();
+      if (joinedIfaces.length) {
+        sendMulticastAll(packet, finish);
+      } else {
+        socket.send(packet, MDNS_PORT, MDNS_ADDR, () => {
+          clearTimeout(guard);
+          finish();
+        });
+      }
+    } catch {
+      finish();
     }
   }
   function onMessage(msg, rinfo) {
     try {
       const header = parseHeader(msg);
-      if (!header || header.qdcount === 0) return;
+      if (!header) return;
+      if (socket && rinfo.port === MDNS_PORT && !stopping && probed && !claimed) {
+        if (uniqueConflict(msg, options, { phase: "probing" })) {
+          die(`name conflict for ${ad.host} \u2014 another device owns this name`);
+          return;
+        }
+      } else if (socket && rinfo.port === MDNS_PORT && !stopping && claimed && (header.flags & QR_BIT) !== 0) {
+        if (uniqueConflict(msg, options, { phase: "announced" })) {
+          withdrawAndDie(`name conflict for ${ad.host} \u2014 another device owns this name`);
+          return;
+        }
+      }
+      if (header.qdcount === 0) return;
       if ((header.flags & QR_BIT) !== 0) return;
       const questions = parseQuestions(msg);
       if (!questions.length) return;
       const legacy = rinfo.port !== MDNS_PORT;
-      const { answers, additionals } = legacy ? buildResponse(questions, options, { ttl: LEGACY_TTL, flush: false }) : buildResponse(questions, options);
+      const { answers, additionals } = legacy ? buildResponse(questions, ad, { ttl: LEGACY_TTL, flush: false }) : buildResponse(questions, ad);
       if (!answers.length) return;
       const packet = encodeMessage({
         id: legacy ? header.id : 0,
@@ -13345,6 +14797,7 @@ function createMdns({ port, name = "fleetdeck", instance = "Fleet Deck", address
         additionals
       });
       if (legacy || questions.some((q) => q.unicast)) send(packet, rinfo.port, rinfo.address);
+      else if (joinedIfaces.length) sendMulticastAll(packet);
       else send(packet, MDNS_PORT, MDNS_ADDR);
     } catch (err) {
       note(`mdns query handling error: ${err.message}`);
@@ -13352,13 +14805,22 @@ function createMdns({ port, name = "fleetdeck", instance = "Fleet Deck", address
   }
   function onBound() {
     try {
+      socket.setTTL(255);
+    } catch (err) {
+      die("cannot set unicast TTL 255", err);
+      return;
+    }
+    try {
       socket.setMulticastTTL(255);
-    } catch {
+    } catch (err) {
+      die("cannot set multicast TTL 255", err);
+      return;
     }
     try {
       socket.setMulticastLoopback(true);
     } catch {
     }
+    joinedIfaces = [];
     let joins = 0;
     try {
       socket.addMembership(MDNS_ADDR);
@@ -13368,6 +14830,7 @@ function createMdns({ port, name = "fleetdeck", instance = "Fleet Deck", address
     for (const address of ad.addresses) {
       try {
         socket.addMembership(MDNS_ADDR, address);
+        joinedIfaces.push(address);
         joins += 1;
       } catch {
       }
@@ -13376,29 +14839,33 @@ function createMdns({ port, name = "fleetdeck", instance = "Fleet Deck", address
       die("no multicast membership");
       return;
     }
-    for (const delay of ANNOUNCE_DELAYS_MS) {
-      const timer = setTimeout(() => {
-        timers.delete(timer);
-        announce();
-      }, delay);
-      timer.unref?.();
-      timers.add(timer);
-    }
-    note(`mdns responding for ${ad.host}:${ad.port}${ad.addresses.length ? ` (${ad.addresses.join(", ")})` : " (no LAN address to advertise)"}`);
+    probed = true;
+    probe2();
   }
+  let socket = null;
   function start() {
-    if (started || dead) return;
+    if (started || stopped) return;
     started = true;
     if (!ad.port) {
       die("no port to advertise");
       return;
     }
     if (!ad.addresses.length) {
-      die("no non-internal IPv4 address");
+      if (!dormant) {
+        note("mdns disabled (no non-internal IPv4 address) \u2014 the board still works over its IP");
+        if (onDown) {
+          try {
+            onDown("no non-internal IPv4 address");
+          } catch {
+          }
+        }
+      }
+      started = false;
+      dormant = true;
       return;
     }
     try {
-      socket = dgram.createSocket({ type: "udp4", reuseAddr: true });
+      socket = dgramImpl.createSocket({ type: "udp4", reuseAddr: true });
     } catch (err) {
       die("socket create failed", err);
       return;
@@ -13417,10 +14884,57 @@ function createMdns({ port, name = "fleetdeck", instance = "Fleet Deck", address
       die("bind failed", err);
     }
   }
+  function update(nextAddresses) {
+    if (dead || stopped || stopping) return false;
+    try {
+      const raw = Array.isArray(nextAddresses) ? nextAddresses : nextAddresses?.addresses;
+      const addresses2 = (Array.isArray(raw) ? raw : []).filter(isIPv4);
+      if (dormant) {
+        if (!addresses2.length) return false;
+        options.addresses = addresses2;
+        ad = normalize(options);
+        dormant = false;
+        start();
+        return !dead;
+      }
+      if (!started || !socket) return false;
+      if (!addresses2.length) {
+        return false;
+      }
+      if (addresses2.length === ad.addresses.length && addresses2.every((a) => ad.addresses.includes(a))) return false;
+      const removed = ad.addresses.filter((a) => !addresses2.includes(a));
+      const added = addresses2.filter((a) => !ad.addresses.includes(a));
+      options.addresses = addresses2;
+      ad = normalize(options);
+      if (removed.length) {
+        const goodbye = encodeMessage({
+          id: 0,
+          flags: FLAGS_RESPONSE,
+          answers: removed.map((address) => ({ name: ad.host, type: "A", ttl: 0, flush: false, data: address }))
+        });
+        if (joinedIfaces.length) sendMulticastAll(goodbye);
+        else send(goodbye, MDNS_PORT, MDNS_ADDR);
+      }
+      for (const address of added) {
+        try {
+          socket.addMembership(MDNS_ADDR, address);
+          if (!joinedIfaces.includes(address)) joinedIfaces.push(address);
+        } catch {
+        }
+      }
+      for (const delay of ANNOUNCE_DELAYS_MS) schedule(() => announce(), delay);
+      note(`mdns addresses updated (${ad.addresses.join(", ")})`);
+      return true;
+    } catch (err) {
+      note(`mdns address update failed: ${err.message}`);
+      return false;
+    }
+  }
   function stop() {
     if (stopping) return stopping;
     if (!started || dead || !socket) {
       dead = true;
+      stopped = true;
       for (const t of timers) clearTimeout(t);
       timers.clear();
       stopping = Promise.resolve();
@@ -13433,6 +14947,7 @@ function createMdns({ port, name = "fleetdeck", instance = "Fleet Deck", address
         const doomed = socket;
         socket = null;
         dead = true;
+        stopped = true;
         try {
           doomed?.close(resolve);
         } catch {
@@ -13440,26 +14955,28 @@ function createMdns({ port, name = "fleetdeck", instance = "Fleet Deck", address
         }
       };
       try {
-        const answers = buildAnnouncement(options, { ttl: 0 });
+        const answers = buildAnnouncement(ad, { ttl: 0 });
         const packet = encodeMessage({ id: 0, flags: FLAGS_RESPONSE, answers });
         const guard = setTimeout(finish, 250);
         guard.unref?.();
-        socket.send(packet, MDNS_PORT, MDNS_ADDR, () => {
+        const done = () => {
           clearTimeout(guard);
           finish();
-        });
+        };
+        if (joinedIfaces.length) sendMulticastAll(packet, done);
+        else socket.send(packet, MDNS_PORT, MDNS_ADDR, done);
       } catch {
         finish();
       }
     });
     return stopping;
   }
-  return { start, stop };
+  return { start, stop, update, alive: () => started && !dead && socket !== null };
 }
 
 // scripts/fleetd/takeover.mjs
 import fs15 from "node:fs";
-import path14 from "node:path";
+import path16 from "node:path";
 function pidRecord(text) {
   try {
     const parsed = JSON.parse(String(text));
@@ -13482,7 +14999,7 @@ function pidIsLive(pid) {
 function livePidLooksLikeFleetd(pid) {
   if (process.platform !== "linux") return true;
   try {
-    const executable = path14.basename(fs15.readlinkSync(`/proc/${pid}/exe`)).replace(/ \(deleted\)$/, "");
+    const executable = path16.basename(fs15.readlinkSync(`/proc/${pid}/exe`)).replace(/ \(deleted\)$/, "");
     const argv = fs15.readFileSync(`/proc/${pid}/cmdline`).toString("utf8").split("\0").filter(Boolean);
     const nodeLike = /^(?:node|nodejs|fleetd)$/i.test(executable);
     const fleetdScript = argv.some((arg) => /(?:^|[/\\])fleetd(?:\.bundle)?\.mjs$/.test(arg));
@@ -13491,10 +15008,111 @@ function livePidLooksLikeFleetd(pid) {
     return err?.code !== "ENOENT";
   }
 }
+function parseSemver(input) {
+  if (typeof input !== "string") return null;
+  const noBuild = input.trim().replace(/^v/i, "").split("+", 1)[0];
+  const dash = noBuild.indexOf("-");
+  const coreText = dash === -1 ? noBuild : noBuild.slice(0, dash);
+  const parts = coreText.split(".");
+  if (parts.length !== 3) return null;
+  const core2 = [];
+  for (const p of parts) {
+    if (!/^\d+$/.test(p)) return null;
+    core2.push(Number(p));
+  }
+  const pre = [];
+  if (dash !== -1) {
+    const preText = noBuild.slice(dash + 1);
+    if (preText === "") return null;
+    for (const ident of preText.split(".")) {
+      if (ident === "") return null;
+      pre.push(/^\d+$/.test(ident) ? Number(ident) : ident);
+    }
+  }
+  return { core: core2, pre };
+}
+function isZeroVersion(nums) {
+  return nums.every((n) => n === 0);
+}
+function compareSemver(a, b) {
+  for (let i = 0; i < a.core.length; i += 1) {
+    if (a.core[i] > b.core[i]) return 1;
+    if (a.core[i] < b.core[i]) return -1;
+  }
+  if (a.pre.length === 0 && b.pre.length === 0) return 0;
+  if (a.pre.length === 0) return 1;
+  if (b.pre.length === 0) return -1;
+  const len = Math.min(a.pre.length, b.pre.length);
+  for (let i = 0; i < len; i += 1) {
+    const x = a.pre[i];
+    const y = b.pre[i];
+    if (x === y) continue;
+    const xNum = typeof x === "number";
+    const yNum = typeof y === "number";
+    if (xNum && yNum) return x > y ? 1 : -1;
+    if (xNum) return -1;
+    if (yNum) return 1;
+    return x > y ? 1 : -1;
+  }
+  if (a.pre.length === b.pre.length) return 0;
+  return a.pre.length > b.pre.length ? 1 : -1;
+}
+function shouldTakeOver(ownVersion, daemonVersion) {
+  const own = parseSemver(ownVersion);
+  const other = parseSemver(daemonVersion);
+  if (!own || !other) return false;
+  if (isZeroVersion(own.core) || isZeroVersion(other.core)) return false;
+  return compareSemver(own, other) > 0;
+}
+function verifyDaemonPid(pid, home) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  let record = null;
+  try {
+    record = pidRecord(fs15.readFileSync(path16.join(home, "fleetd.pid"), "utf8"));
+  } catch {
+    return false;
+  }
+  if (record?.pid !== pid) return false;
+  return livePidLooksLikeFleetd(pid);
+}
+var defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+async function terminateDaemon(pid, { timeoutMs = 2e3, sleep = defaultSleep } = {}) {
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch (err) {
+    if (err?.code === "ESRCH") return true;
+    return false;
+  }
+  const stepMs = 100;
+  const steps = Math.max(1, Math.ceil(timeoutMs / stepMs));
+  for (let i = 0; i < steps; i += 1) {
+    await sleep(stepMs);
+    if (!pidIsLive(pid)) return true;
+  }
+  return !pidIsLive(pid);
+}
 
 // scripts/fleetd/fleetd.mjs
-var __dirname = path15.dirname(fileURLToPath2(import.meta.url));
-var PORT = resolvePort();
+var __dirname = path17.dirname(fileURLToPath2(import.meta.url));
+var PORT;
+try {
+  PORT = resolvePort();
+} catch (err) {
+  try {
+    fs16.writeSync(2, `fleetd refused to start: ${err.message}
+`);
+  } catch {
+  }
+  process.exit(1);
+}
+if (!Number.isInteger(PORT) || PORT < 0 || PORT > 65535) {
+  try {
+    fs16.writeSync(2, `fleetd refused to start: FLEETDECK_PORT must be an integer between 0 and 65535 (got '${process.env.FLEETDECK_PORT}')
+`);
+  } catch {
+  }
+  process.exit(1);
+}
 var BIND = (process.env.FLEETDECK_BIND || "127.0.0.1").trim() || "127.0.0.1";
 var LAN_MODE = !isLoopbackAddress(BIND);
 var HOME = resolveHome();
@@ -13524,8 +15142,18 @@ try {
   fs16.chmodSync(HOME, 448);
 } catch {
 }
-var PID_FILE = path15.join(HOME, "fleetd.pid");
+var PID_FILE = path17.join(HOME, "fleetd.pid");
 var ownsPidFile = false;
+var version = "0.0.0";
+var versionOverride = process.env.FLEETDECK_VERSION_OVERRIDE?.trim();
+if (versionOverride) {
+  version = versionOverride;
+} else {
+  try {
+    version = JSON.parse(fs16.readFileSync(path17.resolve(__dirname, "../../package.json"), "utf8")).version || version;
+  } catch {
+  }
+}
 function removeOwnedPidFile() {
   if (!ownsPidFile) return;
   try {
@@ -13535,7 +15163,25 @@ function removeOwnedPidFile() {
   }
   ownsPidFile = false;
 }
-function claimHome() {
+async function supersedeIfNewer(record) {
+  if (MANAGED) return false;
+  let incumbent;
+  try {
+    if (!Number.isInteger(record.port)) return false;
+    const res = await fetch(`http://127.0.0.1:${record.port}/health`, { signal: AbortSignal.timeout(1500) });
+    incumbent = await res.json();
+  } catch {
+    return false;
+  }
+  if (incumbent?.managed) return false;
+  if (!shouldTakeOver(version, incumbent?.version)) return false;
+  if (incumbent?.pid !== record.pid) return false;
+  if (!verifyDaemonPid(record.pid, HOME)) return false;
+  if (!await terminateDaemon(record.pid)) return false;
+  console.log(`fleetd v${version} superseded v${incumbent.version}: a strictly newer build claimed FLEETDECK_HOME`);
+  return true;
+}
+async function claimHome() {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
       fs16.writeFileSync(PID_FILE, JSON.stringify({ pid: process.pid, port: PORT }), {
@@ -13560,6 +15206,7 @@ function claimHome() {
       startupFatal(`cannot read FLEETDECK_HOME pidfile (${err?.code || err?.message || "unknown error"})`);
     }
     if (record && pidIsLive(record.pid) && (record.port === null || livePidLooksLikeFleetd(record.pid))) {
+      if (await supersedeIfNewer(record)) continue;
       const port = record.port === null ? "an unknown port (legacy pidfile)" : `port ${record.port}`;
       startupFatal(`FLEETDECK_HOME is already used by live fleetd pid ${record.pid} on ${port}; use a separate FLEETDECK_HOME for another daemon (if that PID was recycled, remove stale pidfile ${PID_FILE})`);
     }
@@ -13577,7 +15224,7 @@ function claimHome() {
   }
   startupFatal("could not claim FLEETDECK_HOME pidfile after concurrent startup attempts");
 }
-claimHome();
+await claimHome();
 var TRUSTED_ORIGINS = [];
 try {
   TRUSTED_ORIGINS = parseTrustedOrigins(process.env.FLEETDECK_TRUSTED_ORIGINS);
@@ -13604,7 +15251,7 @@ if (TRUST_LOOPBACK && LAN_MODE) {
   startupFatal("FLEETDECK_TRUST_LOOPBACK=on requires a loopback FLEETDECK_BIND");
 }
 var TOKEN_REQUIRED = LAN_MODE || REQUIRE_TOKEN || TRUSTED_ORIGINS.length > 0 && PROXY_AUTH === "token";
-var TOKEN_FILE = path15.join(HOME, "token");
+var TOKEN_FILE = path17.join(HOME, "token");
 var TOKEN;
 if (Object.hasOwn(process.env, "FLEETDECK_TOKEN")) {
   TOKEN = String(process.env.FLEETDECK_TOKEN).trim();
@@ -13650,10 +15297,6 @@ if (TOKEN) {
   if (onDisk === null || onDisk.trim() !== TOKEN) {
     try {
       fs16.writeFileSync(TOKEN_FILE, TOKEN, { encoding: "utf8", mode: 384 });
-      try {
-        fs16.chmodSync(TOKEN_FILE, 384);
-      } catch {
-      }
     } catch (err) {
       if (TOKEN_REQUIRED) {
         startupFatal(`cannot persist FLEETDECK_HOME/token (${err?.code || err?.message || "unknown error"})`);
@@ -13661,18 +15304,19 @@ if (TOKEN) {
       console.error(`fleetd: WARNING: cannot persist FLEETDECK_HOME/token (${err?.code || err?.message || "unknown error"}) \u2014 hook shims and the gated loopback routes will not authenticate this boot`);
     }
   }
-}
-var version = "0.0.0";
-var versionOverride = process.env.FLEETDECK_VERSION_OVERRIDE?.trim();
-if (versionOverride) {
-  version = versionOverride;
-} else {
-  try {
-    version = JSON.parse(fs16.readFileSync(path15.resolve(__dirname, "../../package.json"), "utf8")).version || version;
-  } catch {
+  if (onDisk !== null) {
+    try {
+      fs16.chmodSync(TOKEN_FILE, 384);
+    } catch (err) {
+      const why = err?.code || err?.message || "unknown error";
+      if (TOKEN_REQUIRED) {
+        startupFatal(`cannot tighten FLEETDECK_HOME/token to owner-only 0600 (${why})`);
+      }
+      console.error(`fleetd: WARNING: cannot tighten FLEETDECK_HOME/token to owner-only 0600 (${why}) \u2014 the token stays readable by other local accounts this boot`);
+    }
   }
 }
-var MDNS_NAME = (process.env.FLEETDECK_MDNS_NAME || "fleetdeck").trim() || "fleetdeck";
+var MDNS_NAME = hostLabel((process.env.FLEETDECK_MDNS_NAME || "fleetdeck").trim() || "fleetdeck", "fleetdeck");
 function mdnsInstanceName() {
   try {
     return `Fleet Deck ${crypto2.randomBytes(3).toString("hex")}`;
@@ -13680,25 +15324,40 @@ function mdnsInstanceName() {
     return "Fleet Deck";
   }
 }
-var DB_FILE = path15.join(HOME, "fleetd.db");
+var DB_FILE = path17.join(HOME, "fleetd.db");
 var db = openDb(DB_FILE);
 var core = createCore(db, { port: PORT, version });
+var settleReconciliation;
+var bootReconciliation = new Promise((resolve) => {
+  settleReconciliation = resolve;
+});
+var bootReadiness = {
+  reconciliationStatus: () => settleReconciliation === null ? "settled" : "reconciling",
+  readiness: bootReconciliation
+};
 var MDNS_ENABLED = LAN_MODE && process.env.FLEETDECK_MDNS?.trim().toLowerCase() !== "off";
-var LAN_INFO = LAN_MODE ? {
-  enabled: true,
-  urls: lanAddresses().map((a) => `http://${a}:${PORT}/?t=${encodeURIComponent(TOKEN)}`),
-  mdns: MDNS_ENABLED ? `http://${MDNS_NAME}.local:${PORT}/?t=${encodeURIComponent(TOKEN)}` : null
-} : { enabled: false, urls: [] };
-var { server } = createHttp(core, {
+function lanInfoFor(addresses) {
+  return LAN_MODE ? {
+    enabled: true,
+    urls: addresses.map((a) => `http://${a}:${PORT}/?t=${encodeURIComponent(TOKEN)}`),
+    mdns: MDNS_ENABLED ? `http://${MDNS_NAME}.local:${PORT}/?t=${encodeURIComponent(TOKEN)}` : null
+  } : { enabled: false, urls: [] };
+}
+var LAN_INFO = lanInfoFor(lanAddresses());
+var { server, whenBroadcastIdle, refreshLan } = createHttp(core, {
   port: PORT,
   token: TOKEN,
-  lan: LAN_INFO,
+  // lan.mdns reflects the responder's LIVE state, not the boot snapshot: if the
+  // responder disables itself after start() (no multicast membership, a socket
+  // error), the share panel stops offering a URL that cannot resolve.
+  lan: () => LAN_INFO.mdns && mdns && !mdns.alive() ? { ...LAN_INFO, mdns: null } : LAN_INFO,
   version,
   trustedOrigins: TRUSTED_ORIGINS,
   proxyAuth: PROXY_AUTH,
   managed: MANAGED,
   requireToken: REQUIRE_TOKEN,
   trustLoopback: TRUST_LOOPBACK,
+  startup: bootReadiness,
   // validation aid: first 3 raw payloads per hook event → HOME/hook-payloads.jsonl
   capture: createPayloadCapture(HOME, { secrets: TOKEN ? [TOKEN] : [] })
 });
@@ -13733,13 +15392,78 @@ function lanAddresses() {
   return [...addresses];
 }
 var mdns = null;
+var LAN_REFRESH_MS = (() => {
+  const n = Number(process.env.FLEETDECK_LAN_REFRESH_MS);
+  return Number.isFinite(n) && n > 0 ? n : 3e4;
+})();
+function sameAddresses(a, b) {
+  return a.length === b.length && [...a].sort().join(" ") === [...b].sort().join(" ");
+}
+function startMdns(addresses) {
+  mdns = createMdns({
+    port: PORT,
+    name: MDNS_NAME,
+    // DNS-SD instance labels are broadcast beyond the machine. A short
+    // random discriminator avoids collisions without disclosing its OS name.
+    instance: mdnsInstanceName(),
+    addresses,
+    log: (msg) => console.error(`fleetd mdns: ${msg}`)
+  });
+  mdns.start();
+  setImmediate(() => {
+    if (mdns?.alive()) {
+      console.log(`fleetd LAN http://${MDNS_NAME}.local:${PORT}/?t=<hidden> (mDNS; credential available in share panel)`);
+    }
+  });
+}
+function refreshNetwork(addresses) {
+  lastLanAddresses = addresses;
+  try {
+    refreshLan(lanInfoFor(addresses));
+  } catch (err) {
+    console.error("fleetd share-URL refresh error:", err);
+  }
+  try {
+    mdns?.update({ addresses });
+  } catch {
+  }
+  for (const address of addresses) {
+    console.log(`fleetd LAN http://${address}:${PORT}/?t=<hidden> (credential available in share panel)`);
+  }
+}
+var lastLanAddresses = null;
+function watchNetwork() {
+  if (!LAN_MODE) return;
+  const poll = () => {
+    let addresses = null;
+    try {
+      addresses = lanAddresses();
+    } catch {
+    }
+    if (addresses && lastLanAddresses && !sameAddresses(addresses, lastLanAddresses)) {
+      const gone = lastLanAddresses.filter((a) => !addresses.includes(a));
+      console.log(`fleetd network change (${lastLanAddresses.join(", ") || "none"} -> ${addresses.join(", ") || "none"})`);
+      refreshNetwork(addresses);
+      if (!addresses.length) {
+        console.log("fleetd LAN interface lost; board still reachable at its last addresses only until the link returns");
+      }
+      if (!mdns && MDNS_ENABLED && addresses.length) startMdns(addresses);
+      try {
+        core.tick(`\u{1F310} LAN address changed \u2014 share panel updated${gone.length ? ` (was ${gone.join(", ")})` : ""}`);
+      } catch {
+      }
+    }
+  };
+  const timer = setInterval(poll, LAN_REFRESH_MS);
+  timer.unref?.();
+}
 server.listen(PORT, BIND, () => {
   const boundHost = BIND.includes(":") && !BIND.startsWith("[") ? `[${BIND}]` : BIND;
   console.log(`fleetd up on http://${boundHost}:${PORT} (pid ${process.pid}, db ${DB_FILE})`);
   if (!LAN_MODE) {
     console.log(`fleetd board http://127.0.0.1:${PORT}/?t=${encodeURIComponent(TOKEN)}`);
   }
-  for (const seam of ["FLEETDECK_SPAWN_CMD", "FLEETDECK_TERM_CMD", "FLEETDECK_TEST_DAEMON_SCRIPT", "FLEETDECK_VERSION_OVERRIDE"]) {
+  for (const seam of ["FLEETDECK_SPAWN_CMD", "FLEETDECK_TERM_CMD", "FLEETDECK_TEST_DAEMON_SCRIPT", "FLEETDECK_VERSION_OVERRIDE", "FLEETDECK_TEST_FAIL_PLAN_INSERT"]) {
     if (process.env[seam]) console.error(`fleetd WARNING: test seam ${seam} active`);
   }
   const agentsCmd = process.env.FLEETDECK_AGENTS_CMD;
@@ -13758,30 +15482,21 @@ server.listen(PORT, BIND, () => {
     }
   }
   if (LAN_MODE) {
-    const addresses = lanAddresses();
-    for (const address of addresses) {
-      console.log(`fleetd LAN http://${address}:${PORT}/?t=<hidden> (credential available in share panel)`);
+    refreshNetwork(lanAddresses());
+    if (MDNS_ENABLED && lastLanAddresses.length) {
+      startMdns(lastLanAddresses);
     }
-    if (process.env.FLEETDECK_MDNS?.trim().toLowerCase() !== "off" && addresses.length) {
-      mdns = createMdns({
-        port: PORT,
-        name: MDNS_NAME,
-        // DNS-SD instance labels are broadcast beyond the machine. A short
-        // random discriminator avoids collisions without disclosing its OS name.
-        instance: mdnsInstanceName(),
-        addresses,
-        log: (msg) => console.error(`fleetd mdns: ${msg}`)
-      });
-      mdns.start();
-      console.log(`fleetd LAN http://${MDNS_NAME}.local:${PORT}/?t=<hidden> (mDNS; credential available in share panel)`);
-    }
+    watchNetwork();
   }
   try {
     core.reconcileClearForks();
   } catch (err) {
     console.error("fleetd /clear fork heal error:", err);
   }
-  core.reconcileSpawns().catch((err) => console.error("fleetd spawn reconciliation error:", err));
+  core.reconcileSpawns().catch((err) => console.error("fleetd spawn reconciliation error:", err)).then(() => core.bootRetention).then(() => whenBroadcastIdle()).finally(() => {
+    settleReconciliation();
+    settleReconciliation = null;
+  });
   startAgentsPoll(core);
 });
 var shuttingDown = false;

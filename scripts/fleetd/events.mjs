@@ -26,6 +26,12 @@ function expectedTranscriptDir(cwd, homeDir = os.homedir()) {
   return path.join(homeDir, '.claude', 'projects', mungeClaudeProjectCwd(cwd));
 }
 
+// Test seam (BUG-166): hook-auth.test.mjs's sabotage daemon wraps the whole
+// core in a Proxy and swaps ctx.questions. For that swap to reach the hook
+// handlers, createEvents must be invoked on the WRAPPER (the object the HTTP
+// layer and the swap see), not on the raw ctx derive.mjs built — otherwise
+// the handlers close over the raw ctx and a ctx.questions swap is invisible
+// to them. derive.mjs calls createEvents with its ctx explicitly.
 export function createEvents(ctx) {
   const {
     q, db, card, updateSession, tick, logEvent, onMutate, port, home, questions,
@@ -53,11 +59,38 @@ export function createEvents(ctx) {
   // ---------------------------------------------- hook event -> card state
   // Faithful port of the spike's applyEvent switch.
   function applyEvent(ev) {
-    const sid = ev.session_id || 'unknown';
+    // No usable session id → no state at all. The old `|| 'unknown'` fallback
+    // keyed a real card on the literal string 'unknown', so every malformed
+    // hook payload collapsed into one shared phantom card that each subsequent
+    // ID-less event kept mutating. The authenticated hook boundary in http.mjs
+    // refuses to DISPATCH such payloads; this guard is the same rule for the
+    // telemetry-only paths that call applyEvent directly. Fail open: the hook
+    // response is unaffected, the board simply never sees the event.
+    const sid = typeof ev?.session_id === 'string' && ev.session_id ? ev.session_id : null;
+    if (!sid) return { card: null, conflict: null };
     let c = card(sid, ev.cwd);
-    // Retention tombstones are reversible: a late hook proves the process was
-    // alive (or resumed). Clear both timestamps so an archived presumed-dead
-    // card becomes visible again before normal derivation continues.
+    // Run generation (BUG-025): SessionEnd is an ASYNC hook while SessionStart
+    // is synchronous, so a `claude --resume` (a NEW process reusing the SAME
+    // session id) can register and go live BEFORE the previous process's
+    // SessionEnd lands. Every hook shim mints one fleet_run nonce per PROCESS
+    // and SessionStart persists it as the card's active run; a tagged
+    // SessionEnd whose nonce is not the active run belongs to a dead process
+    // and must NOT tombstone the live one (offline/ended_at/end_reason, pane
+    // 'pane-dead', holds expiry, watcher wake — hookSessionEnd below skips its
+    // side effects on the same verdict). The event still flows through
+    // applyEvent as plain telemetry (last_seen, note, log line).
+    // Comparisons treat NULL as "unknown", never "match": an UNTAGGED
+    // SessionEnd (old shims, tests, manual curls) keeps the historical
+    // unconditional tombstone, but a TAGGED one against a row whose run_id was
+    // never recorded conservatively skips the kill rather than risk
+    // tombstoning a live resumed process — the truly dead card then converges
+    // via retention's silence sweep.
+    const staleRunEnd = ev.hook_event_name === 'SessionEnd'
+      && ev.fleet_run != null && c.run_id !== ev.fleet_run;
+    // Heuristic tombstones are reversible: a late hook proves the process was
+    // alive (or resumed) when retention only GUESSED it dead. Clear both
+    // timestamps so an archived presumed-dead card becomes visible again
+    // before normal derivation continues.
     //
     // M-B5: resurrection must also lift the card OUT of the offline column.
     // The Pre/PostToolUse column rule is "queued|needsyou → working, else keep
@@ -77,7 +110,20 @@ export function createEvents(ctx) {
     // invisible either way — visibleSessions filters archived rows out); just
     // never un-retire it.
     const superseded = c.succeeded_by != null;
-    if (!superseded && (c.ended_at != null || c.archived_at != null)) {
+    // BUG-024: only a HEURISTIC tombstone may be reversed by ordinary
+    // activity. end_reason='presumed' (retention's silence guess, the
+    // agents-cli absence guess) or NULL (a pre-0.7.0 row with no provenance)
+    // is a guess a late hook disproves — resurrect it. A HOOK-PROVEN
+    // SessionEnd (any other end_reason) is different: async hooks
+    // (Notification, FileChanged) are launched BEFORE exit but can ARRIVE
+    // after it, and resurrecting on one would float a process that has
+    // already exited as a live card that can win assignment and report alive
+    // to watchers. Those still fall through and update the row's counters,
+    // but only a fresh SessionStart — a genuinely resumed/new run of this id
+    // — brings the card back.
+    const heuristicEnd = c.end_reason == null || c.end_reason === 'presumed';
+    const canResurrect = heuristicEnd || ev.hook_event_name === 'SessionStart';
+    if (!superseded && canResurrect && (c.ended_at != null || c.archived_at != null)) {
       // 0.7.0: a session that comes back alive is no longer ended, so its
       // end_reason (the hook reason, or retention's 'presumed' guess) is stale —
       // clear it so adopt-now's presumed-dead guard reads the fresh liveness.
@@ -140,6 +186,11 @@ export function createEvents(ctx) {
     if (ev.hook_event_name === 'SessionStart') {
       stampTranscriptFloor(sid, ev.transcript_path);
       if (payloadModel) upd.model = payloadModel;
+      // Run generation (BUG-025): this start (re)registers the sending process
+      // as the session's ACTIVE run — including a --resume reusing the id.
+      // Recorded unconditionally (null when the shim predates the nonces) so a
+      // later start can only make the check stricter, never resurrect a stale one.
+      upd.run_id = ev.fleet_run ?? null;
     } else if (payloadModel) {
       upd.model = payloadModel;
     } else if (ev.transcript_path) {
@@ -202,7 +253,8 @@ export function createEvents(ctx) {
         tick(`${c.callsign} got a prompt`);
         break;
       case 'PreToolUse':
-      case 'PostToolUse': {
+      case 'PostToolUse':
+      case 'PostToolUseFailure': { // BUG-102: a failed tool call finished too — same card activity
         set.col = c.col === 'needsyou' ? 'working' : (c.col === 'queued' ? 'working' : c.col);
         set.notification_type = null; // activity clears the needs-you reason (F3e)
         set.last_tool = ev.tool_name ?? null;
@@ -233,6 +285,11 @@ export function createEvents(ctx) {
         }
         break;
       }
+      case 'CwdChanged':
+        // BUG-104: telemetry only — the watch-list refresh for the new cwd is
+        // emitted by the hook shim (fleet-hook.mjs), not by this response.
+        set.note = `cwd → ${path.basename(ev.cwd || '') || 'cwd changed'}`;
+        break;
       case 'Notification': {
         // F3e safety net: the board must always SHOW a stuck session, with
         // the reason. notification_type values (docs §8): permission_prompt,
@@ -312,6 +369,13 @@ export function createEvents(ctx) {
           set.note = 'context cleared (/clear) — still live';
           set.cleared_at = Date.now();
           tick(`🧹 ${c.callsign} ran /clear — context reset, session still live`);
+        } else if (staleRunEnd) {
+          // BUG-025: this end belongs to a PREVIOUS process of this session id
+          // — its SessionEnd hook was still in flight when a --resume
+          // re-registered the id. Tombstoning here would offline the LIVE
+          // resumed run, settle its holds as dead and mark its pane 'pane-dead'.
+          set.note = 'session ended (stale async end from a previous run — ignored)';
+          tick(`⏭ ${c.callsign} ignored a delayed SessionEnd from a previous run`);
         } else {
           set.col = 'offline';
           set.ended_at = Date.now();
@@ -332,10 +396,15 @@ export function createEvents(ctx) {
     c = { ...c, ...set };
     logEvent(sid, ev.hook_event_name, ev.tool_name, c.note);
     onMutate();
-    return { card: c, conflict };
+    return { card: c, conflict, staleRunEnd };
   }
 
   // ------------------------------------------------------ hook endpoints
+  // The HTTP hook boundary (http.mjs) refuses to dispatch a payload whose
+  // session_id is not a non-empty string — these handlers never see one, and
+  // applyEvent guards the telemetry-only callers the same way. No sid
+  // fallback here: a missing id must no-op, never mint the shared phantom
+  // 'unknown' card the old `|| 'unknown'` collapse created.
   function hookSessionStart(ev) {
     // 0.7.1 /clear succession, intercepted HERE because applyEvent → card()
     // births a card on first touch: by the time applyEvent runs, an unrecognised
@@ -345,7 +414,7 @@ export function createEvents(ctx) {
     // arriving with source='clear' (or 'compact', handled defensively — if that
     // one keeps its id, this branch simply never fires), look for the session in
     // this cwd that just cleared, and continue IT instead of starting a stranger.
-    const sid = ev.session_id || 'unknown';
+    const sid = ev.session_id || '';
     if (ev.source === 'clear' || ev.source === 'compact') {
       const existing = q.getSession.get(sid);
       // Usually the heir is brand-new. But the agents-cli poller can beat its
@@ -422,13 +491,18 @@ export function createEvents(ctx) {
   }
 
   function hookUserPromptSubmit(ev) {
-    const sid = ev.session_id || 'unknown';
+    const sid = ev.session_id || '';
     applyEvent({ ...ev, hook_event_name: 'UserPromptSubmit' });
     q.setBlocked.run(0, sid); // new turn started — clear the one-block-per-turn flag
     // F3e auto-resolution: activity settles this session's pending
     // permission/elicitation questions (live holds fail open with {};
     // freeform questions stay pending — they're the human's queue).
-    questions.expireOnActivity(sid);
+    // Late binding is a regression pin (BUG-166): dispatching through
+    // ctx.questions at call time lets tests/hook-auth.test.mjs swap the
+    // relay in a live daemon and prove a forged (refused) UserPromptSubmit
+    // never reaches this call — a destructured create-time binding would
+    // route around the swap and the security test would go silent again.
+    ctx.questions.expireOnActivity(sid);
     // UX 2.2 activity gate: expireOnActivity above already same-tick-settled
     // any plan question THIS turn boundary retired (activity:true); this pass
     // catches plans whose question retired EARLIER without activity (timer
@@ -446,8 +520,10 @@ export function createEvents(ctx) {
     };
   }
 
-  // http.mjs routes BOTH /hook/PreToolUse and /hook/PostToolUse here (same
-  // derivation branch as the spike). The conflict whisper must therefore
+  // http.mjs routes /hook/PreToolUse, /hook/PostToolUse AND
+  // /hook/PostToolUseFailure here (same derivation branch as the spike; a
+  // failed tool call also retires its correlated hold — BUG-102). The conflict
+  // whisper must therefore
   // declare the caller's ACTUAL event name — a PreToolUse client that receives
   // hookSpecificOutput.hookEventName:'PostToolUse' may drop the mismatched
   // whisper (M-B2). The event's own hook_event_name is authoritative (Claude
@@ -463,10 +539,10 @@ export function createEvents(ctx) {
     // (tool_name, tool_input). A hold for a DIFFERENT tool call, and every
     // freeform row, is left untouched; the turn-boundary UserPromptSubmit path
     // (hookUserPromptSubmit above) stays session-wide.
-    questions.expireOnActivity(ev.session_id || 'unknown', { toolName: ev.tool_name, toolInput: ev.tool_input });
+    questions.expireOnActivity(ev.session_id || '', { toolName: ev.tool_name, toolInput: ev.tool_input });
     // UX 2.2 activity gate, same reasoning as the turn-boundary path above:
     // a completed tool call settles any earlier-retired plan questions too.
-    settleTerminalPlans(ev.session_id || 'unknown');
+    settleTerminalPlans(ev.session_id || '');
     if (!conflict) return {};
     return {
       hookSpecificOutput: {
@@ -481,7 +557,7 @@ export function createEvents(ctx) {
   // clears on the next UserPromptSubmit or the next Stop that passes with no
   // mail. NEVER reads stop_hook_active. Stop is never a tombstone.
   function hookStop(ev) {
-    const sid = ev.session_id || 'unknown';
+    const sid = ev.session_id || '';
     const c = card(sid);
     if (!c.blocked_this_turn) {
       const box = drainMail(sid);
@@ -501,7 +577,10 @@ export function createEvents(ctx) {
     }
     // Stop passes.
     applyEvent({ ...ev, hook_event_name: 'Stop' });
-    const stillPending = q.pendingMail.all(sid).length > 0;
+    // BUG-034: pendingMail's second arg is the lease-deadline cutoff — a row
+    // out on an unacked lease does NOT clear the one-block flag here; it will
+    // block a later Stop once the lease lapses.
+    const stillPending = q.pendingMail.all(sid, Date.now()).length > 0;
     if (!stillPending) q.setBlocked.run(0, sid); // cleared on a Stop that passes with no mail
     detectFreeform(ev); // F3d — only on a PASSING Stop (a block continues the turn)
     return {};
@@ -514,7 +593,7 @@ export function createEvents(ctx) {
   // (docs §6 say 2.1.206 does NOT — hook-payloads.jsonl capture pins the
   // truth), else the transcript tail at payload.transcript_path.
   function detectFreeform(ev) {
-    const sid = ev.session_id || 'unknown';
+    const sid = ev.session_id || '';
     try {
       const fromPayload = typeof ev.last_assistant_message === 'string' && ev.last_assistant_message.trim()
         ? ev.last_assistant_message : null;
@@ -553,10 +632,10 @@ export function createEvents(ctx) {
     const kind = eventName === 'Elicitation' ? 'elicitation'
       : eventName === 'AskUserQuestion' ? 'choice'
       : 'permission';
-    applyEvent({ ...ev, hook_event_name: eventName });
-    const sid = ev.session_id || 'unknown';
+    const sid = ev.session_id || '';
     const isPlan = eventName === 'PermissionRequest' && ev?.tool_name === 'ExitPlanMode';
     if (!isPlan) {
+      applyEvent({ ...ev, hook_event_name: eventName });
       const row = questions.create(kind, sid, ev);
       onMutate();
       return row;
@@ -569,13 +648,37 @@ export function createEvents(ctx) {
     // transaction; on any failure roll BOTH back and fail the hook OPEN (return
     // null → http.mjs answers {} and the terminal resumes normally), rather
     // than relaying a hold the library can never honour.
+    //
+    // BUG-112: the M-B6 transaction closed over only the two durable inserts;
+    // the applyEvent telemetry (needsyou card move, event counter, join tick)
+    // ran BEFORE it, so a plan-insert failure still left a permanent needs-you
+    // card pointing at a question that had been rolled back. Run the durable
+    // intake FIRST, and only after COMMIT apply the needs-you transition — a
+    // failed intake now leaves the board exactly as it was, and a committed
+    // one shows its telemetry immediately after. In the tiny window between
+    // COMMIT and applyEvent the card shows its prior column; the question row
+    // exists but no hold is parked yet (http.mjs parks on the returned row),
+    // so nothing can resolve it before the telemetry lands.
     let row = null;
     let planRowId = null;
     let callsign = null;
     db.exec('BEGIN IMMEDIATE');
     try {
+      card(sid, ev.cwd); // plan intake needs the card's callsign/repo — create it without telemetry
       row = questions.create(kind, sid, ev);
-      const c = q.getSession.get(sid); // applyEvent ensured the card exists
+      // TEST SEAM (BUG-204): deterministic fault injection BETWEEN the
+      // question insert and the plan insert, inside the transaction — the
+      // only way a test can prove the M-B6 rollback actually removes BOTH
+      // rows (otherwise it would need a real crash/SQLITE error mid-tick).
+      // Announced at boot by fleetd.mjs's seam banner like the other test
+      // seams; in production the var is unset and this is dead code.
+      if (process.env.FLEETDECK_TEST_FAIL_PLAN_INSERT) {
+        throw new Error('injected plan-insert failure (FLEETDECK_TEST_FAIL_PLAN_INSERT)');
+      }
+      // The card was ensured above (card() inside this transaction); applyEvent
+      // telemetry runs only AFTER COMMIT (BUG-112), so a failed intake leaves
+      // no stale needs-you card behind.
+      const c = q.getSession.get(sid);
       callsign = c?.callsign ?? sid;
       const planMd = typeof ev.tool_input?.plan === 'string'
         ? ev.tool_input.plan
@@ -590,6 +693,10 @@ export function createEvents(ctx) {
       onMutate();
       return null;
     }
+    // The durable intake committed — now the telemetry. applyEvent applies the
+    // needs-you transition (card, event count, tickers) for a question that is
+    // guaranteed to exist, so the board can never point at a rolled-back row.
+    applyEvent({ ...ev, hook_event_name: eventName });
     tick(`📋 ${callsign} proposed a plan — captured to the library (#${planRowId})`);
     onMutate();
     return row;
@@ -598,8 +705,15 @@ export function createEvents(ctx) {
   // SessionEnd: THE tombstone — pending hold-kind questions die with it;
   // freeform questions outlive the session (answer deliverable on --resume).
   function hookSessionEnd(ev) {
-    const sid = ev.session_id || 'unknown';
-    applyEvent({ ...ev, hook_event_name: 'SessionEnd' });
+    const sid = ev.session_id || '';
+    const { staleRunEnd } = applyEvent({ ...ev, hook_event_name: 'SessionEnd' });
+    // BUG-025: the end came from a previous process of this session id (a
+    // delayed async hook racing a --resume). The tombstone itself was already
+    // refused inside applyEvent; skip EVERY side effect too — expiring the
+    // live run's holds, condemning its pane 'pane-dead', dropping the model
+    // memo, arming an auto-adopt and waking its watchers all belong to the
+    // dead process, not the live one.
+    if (staleRunEnd) return {};
     // BUG 1: a /clear (reason='clear') is NOT a session end — see the guarded
     // SessionEnd case in applyEvent above, which keeps the card live. Mirror
     // that here: do NOT mark the pane 'pane-dead' and do NOT drop the model

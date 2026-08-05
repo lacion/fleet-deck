@@ -7,7 +7,7 @@
 import path from 'node:path';
 import { ledgerKey } from './repo-identity.mjs';
 
-const CONFLICT_WINDOW_MS = 30 * 60 * 1000;
+export const CONFLICT_WINDOW_MS = 30 * 60 * 1000;
 
 export function createLedger(ctx) {
   const { q, card, mail, tick } = ctx;

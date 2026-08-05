@@ -9,7 +9,7 @@ import { useBoardHotkeys } from './hooks/useBoardHotkeys.js';
 import { useFleetActions } from './hooks/useFleetActions.js';
 import { ClockContext } from './clock.jsx';
 import { basename, safeUrl, spawnTermable, sessionsById, callsignOf, sessionTicker } from './util.js';
-import { sendMail, markPlan, reasonOf, fsList, fsRead, fsSearch, fsListHome, fsReadHome, fsSearchHome } from './api.js';
+import { sendMail, reasonOf, fsList, fsRead, fsSearch, fsListHome, fsReadHome, fsSearchHome } from './api.js';
 import { useAuth, saveToken } from './token.js';
 import Header from './components/Header.jsx';
 import BoardLanes from './components/BoardLanes.jsx';
@@ -234,29 +234,16 @@ export default function App() {
     });
   };
 
-  // After a successful plan-execute spawn: mark executed via:'spawn:<id>'.
-  // The SpawnForm shows whatever this returns — a 409 stays on screen.
-  //
-  // BUG-040 (board half): this mark used to be reachable for a plan whose
-  // spawn had already FAILED — the old code marked first and spawned second,
-  // so a refused POST still left the plan 'executed'. The mark now runs only
-  // here, after a spawn the daemon accepted (SpawnForm calls this solely on a
-  // 2xx), and a failed spawn leaves the plan's status untouched. The 409
-  // branch is what makes the remaining race honest: the daemon's transition
-  // matrix refuses executed-from-executed, so two competing executions can't
-  // both claim the plan — the loser reads the 409 verbatim instead of
-  // silently re-marking.
-  const onSpawnedForPlan = async (json) => {
+  // BUG-040 (board half): plan execution is claimed server-side now — the
+  // spawn POST carries plan_id and the daemon flips the plan to executed
+  // atomically BEFORE launching (the old spawn-first-mark-after flow let two
+  // boards both launch off one stale snapshot; only their marks serialized).
+  // This hook just confirms the outcome the claim already recorded. A
+  // pre-claim daemon ignores plan_id, spawns, and leaves the plan executable
+  // — degrading to a silent retry instead of a false "executed".
+  const onSpawnedForPlan = async () => {
     if (!spawnForm?.planId) return null;
-    const res = await markPlan(spawnForm.planId, { status: 'executed', via: `spawn:${json.spawn_id}` });
-    if (res.ok) return { ok: true, text: 'plan marked executed' };
-    const reason = res.reason;
-    return {
-      ok: false,
-      text: res.status === 409
-        ? `spawned, but the plan mark hit 409 — ${reason || 'bad transition'}`
-        : `spawned, but marking the plan failed (${reason || res.status})`,
-    };
+    return { ok: true, text: 'plan execution claimed with the spawn' };
   };
 
   // v1.7 — a 401 means this board is on the network and we don't hold its key.
@@ -575,6 +562,7 @@ export default function App() {
           prefillPrompt={spawnForm.prompt || ''}
           prefillCwd={spawnForm.cwd || ''}
           planMode={!!spawnForm.planId}
+          planId={spawnForm.planId || null}
           onSpawned={spawnForm.planId ? onSpawnedForPlan : undefined}
           onClose={() => setSpawnForm(null)}
         />

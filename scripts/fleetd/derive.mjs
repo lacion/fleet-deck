@@ -7,6 +7,7 @@
 // Transition rules are a faithful port of fleetdeck-spike/server/fleetd.mjs.
 
 import fs from 'node:fs';
+import path from 'node:path';
 import { branchOf } from './repo-identity.mjs';
 import { ticketFromBranch, animalOf } from './tickets.mjs';
 import { createQuestions, resolveHoldMs } from './questions.mjs';
@@ -18,7 +19,7 @@ import { createRepos } from './repos.mjs';
 import { createSettings } from './settings.mjs';
 import { createFiles } from './files.mjs';
 import { pasteImage } from './paste.mjs';
-import { createMail } from './mail.mjs';
+import { createMail, MAIL_MAX_LEN } from './mail.mjs';
 import { createLedger } from './ledger.mjs';
 import { createIngest } from './ingest.mjs';
 import { createCommands } from './commands.mjs';
@@ -27,7 +28,7 @@ import { createSpawns } from './spawns.mjs';
 import { createEvents } from './events.mjs';
 import { createSnapshot } from './snapshot.mjs';
 import { createRetention } from './retention.mjs';
-import { envInt } from './helpers.mjs';
+import { createKeyedMutex, envInt } from './helpers.mjs';
 
 // Public re-exports: these helpers moved to helpers.mjs, but tests and other
 // scripts import them from derive.mjs — keep them importable from here.
@@ -69,6 +70,9 @@ export function createCore(db, {
   // snapshot can tell the board which build is serving it (upgrade-takeover
   // observability). '0.0.0' mirrors /health's standalone-install fallback.
   version = '0.0.0',
+  // BUG-128: test-only overrides for the mail pending budget and pane batch
+  // bounds (mail.mjs defaults to its own constants when these are undefined).
+  MAIL_PENDING_MAX, MAIL_PENDING_MAX_BYTES, MAIL_PANE_BATCH, MAIL_PANE_BATCH_BYTES,
 } = {}) {
   const t0 = Date.now();
   // onMutate is reassignable through the setter on the returned surface; the
@@ -82,6 +86,12 @@ export function createCore(db, {
   const SPAWN_REGISTER_MS = envInt('FLEETDECK_SPAWN_REGISTER_MS', 90_000, { min: 1 });
   const SETUP_REGISTER_MS = envInt('FLEETDECK_SETUP_REGISTER_MS', 600_000, { min: 1 });
   const PANE_MAIL_GRACE_MS = envInt('FLEETDECK_PANE_MAIL_GRACE_MS', 1_500, { min: 0 });
+  // BUG-034: how long an in-flight mail claim (watch response, owned-pane
+  // paste, board /mail GET) stays exclusively leased waiting for its ack
+  // before the retention sweep hands it back for redelivery. 30 s covers a
+  // slow hook/HTTP round-trip with headroom; a daemon that dies mid-flight
+  // simply lets the deadline pass and the next daemon re-claims.
+  const MAIL_CLAIM_LEASE_MS = envInt('FLEETDECK_MAIL_CLAIM_LEASE_MS', 30_000, { min: 1 });
   const PRESUME_DEAD_MS = envInt('FLEETDECK_PRESUME_DEAD_MS', 10_800_000, { min: 1 });
   const RETAIN_OFFLINE_MS = envInt('FLEETDECK_RETAIN_OFFLINE_MS', 86_400_000, { min: 1 });
   const RC_HARVEST_MS = envInt('FLEETDECK_RC_HARVEST_MS', 2_500, { min: 0 });
@@ -101,7 +111,11 @@ export function createCore(db, {
   // are aged out of SQLite after this window, and the snapshot only aggregates
   // file touches newer than it. Defaults to 24h (matching the events prune).
   // Daemon-internal only — deliberately NOT in the claudeEnvArgvPrefix scrub
-  // list, since a spawned `claude` child never reads it.
+  // list, since a spawned `claude` child never reads it. envInt's below-min
+  // semantics fall back to the DEFAULT (24h), never to the min, so the
+  // dangerous range is an ACCEPTED horizon between one minute and the fixed
+  // 30-minute conflict window — retention.mjs therefore clamps the file-touch
+  // pruning cutoff to CONFLICT_WINDOW_MS itself (BUG-144).
   const RETAIN_LEDGER_MS = envInt('FLEETDECK_RETAIN_LEDGER_MS', 86_400_000, { min: 60_000 });
   // 0.7.1 /clear succession: how long after a session's /clear a brand-new
   // session id starting in the SAME cwd is read as that session continuing.
@@ -113,6 +127,18 @@ export function createCore(db, {
   // as "the one that just happened", so the daemon refuses to pair them by time
   // and falls back to the pane as evidence (or to no merge at all).
   const CLEAR_AMBIGUITY_MS = 1_000;
+  // The forward succession (a /clear claiming an heir whose SessionStart already
+  // landed) is IRREVERSIBLE, so momentary uniqueness is not proof: SessionEnd is
+  // an async hook, and a second session's /clear in the same cwd can still be in
+  // flight when the first one arrives. The claim therefore settles through this
+  // bounded interval and re-reads the predecessor set before merging — a rival
+  // clear that lands inside it cancels the claim, leaving the split for the boot
+  // heal to pair correctly once every clear is on record. Sized on the same
+  // "the CLI fires both hooks in the same second" fact as CLEAR_AMBIGUITY_MS —
+  // several hook round-trips of cover, far too short for a human's deliberate
+  // second /clear to be swallowed. Set 0 in tests to keep the synchronous fast
+  // path.
+  const CLEAR_SETTLE_MS = envInt('FLEETDECK_CLEAR_SETTLE_MS', 250, { min: 0 });
   const SNAPSHOT_FILES_PER_SESSION = 50; // M-P2/M-G1: per-card cap on the ledger file list
 
   // D7: the single way to resolve one of THIS fleet's scoped tmux windows by
@@ -217,6 +243,10 @@ export function createCore(db, {
     // test suites would otherwise meet an unexpected second card).
     rearmGraceMs: envInt('FLEETDECK_REARM_GRACE_MS', 3_000, { min: 0 }),
     mail: (sid, from, text) => ctx.mail(sid, from, text),
+    // BUG-137: the questions relay rejects framed answers that would exceed
+    // the mailbox clamp (reject-before-settle instead of silent truncation).
+    // Threaded from mail.mjs so the two can never drift apart.
+    mailMaxLen: MAIL_MAX_LEN,
     tick: msg => tick(msg),
     callsignOf: sid => q.getSession.get(sid)?.callsign ?? null,
     onChange: () => onMutate(),
@@ -308,6 +338,7 @@ export function createCore(db, {
       const callsign = assignCallsign(sid, ticket);
       const now = Date.now();
       q.insertSession.run(sid, callsign, now, now);
+      q.rememberAlias.run(sid, callsign, now); // BUG-107: the birth name is an alias from day one
       // Birth is NOT a rename: the card is inserted already ticket-named, so
       // there is no prev_callsign and a single "joined" tick. Record ticket +
       // source even on the hex fallback — detection was consumed, and the auto
@@ -339,6 +370,10 @@ export function createCore(db, {
   // authoritative; the window name is an internal handle, not a label.
   function renameCallsign(sid, c, next, { tickMsg, extra = {} }) {
     const previous = c.callsign;
+    // BUG-107: prev_callsign has ONE slot and must stay the birth anchor, so
+    // every DROPPED name is also recorded in the alias table — that is the set
+    // target resolution falls back to after the anchor.
+    q.rememberAlias.run(sid, previous, Date.now());
     updateSession(sid, {
       callsign: next,
       // prev_callsign is WRITE-ONCE: set to the birth callsign on the first
@@ -509,7 +544,10 @@ export function createCore(db, {
   // row first. Either way the hook-time interception misses, and without this
   // the pair silently stays split until the next boot heal. So when a /clear
   // lands, also look FORWARD: is the heir already here, orphaned, waiting?
-  function succeedForwardFromClear(prevSid, cwd) {
+  // `settled` marks the deferred re-check (see the settlement interval below):
+  // the first pass only SCHEDULES the claim, the second pass — after every
+  // in-flight hook has had its round-trip — is the one allowed to commit it.
+  function succeedForwardFromClear(prevSid, cwd, { settled = false } = {}) {
     const prev = q.getSession.get(prevSid);
     if (!prev || prev.succeeded_by != null || !cwd) return null;
     const now = Date.now();
@@ -548,6 +586,29 @@ export function createCore(db, {
     // just before this ran, so prev is a predecessor here, not a rival.)
     const rivals = q.clearedPredecessors.all(cwd, now - CLEAR_SUCCESSION_MS, prevSid);
     if (rivals.length) return null;
+    // Still not proof. The rival check above sees only clears already COMMITTED,
+    // but SessionEnd is an async hook: a second session's /clear in this same cwd
+    // can be mid-flight right now (the heir beat BOTH ends here — that reorder is
+    // the entire reason this forward pass exists). Committing on momentary
+    // uniqueness would graft prev's callsign, pane, mail, questions and file
+    // ledger onto a conversation that may be the sibling's, irreversibly — the
+    // later SessionEnd cannot undo the claim, and the supplied live-daemon
+    // ordering (B's heir, A's end, B's end) ended with A.succeeded_by = heirB.
+    // So defer through a bounded settlement interval and require the evidence to
+    // be unique at BOTH ends of it: re-read everything (the predecessor set, the
+    // heir, the whole candidate set) after the delay and only merge if nothing
+    // new arrived. A rival clear landing inside the window cancels the claim;
+    // the pair stays split and the boot heal pairs it correctly once every clear
+    // is on record. A genuinely new orphan arriving inside the window makes
+    // cands.length !== 1 on the re-read, which is the existing refuse-to-guess
+    // path. Tests set FLEETDECK_CLEAR_SETTLE_MS=0 and take the synchronous fast
+    // path below, so the settlement only runs when the knob is nonzero.
+    if (!settled && CLEAR_SETTLE_MS > 0) {
+      setTimeout(() => {
+        try { succeedForwardFromClear(prevSid, cwd, { settled: true }); } catch { /* the boot heal remains the backstop */ }
+      }, CLEAR_SETTLE_MS).unref();
+      return null;
+    }
     return succeedSession(prev, cands[0].session_id, { rename: true });
   }
 
@@ -597,7 +658,7 @@ export function createCore(db, {
         updateSession(sid, { callsign });
       }
       updateSession(sid, {
-        prev_callsign: prev.prev_callsign ?? null,
+        prev_callsign: prev.prev_callsign ?? (prev.callsign === callsign ? null : prev.callsign),
         ticket: prev.ticket ?? null,
         ticket_source: prev.ticket_source ?? null,
         custom_suffix: prev.custom_suffix ?? null,
@@ -612,7 +673,7 @@ export function createCore(db, {
       updateSession(sid, {
         ticket: prev.ticket ?? null,
         ticket_source: prev.ticket_source ?? null,
-        prev_callsign: prev.prev_callsign ?? null,
+        prev_callsign: prev.prev_callsign ?? (prev.callsign === callsign ? null : prev.callsign),
         custom_suffix: prev.custom_suffix ?? null,
         adopt_armed_until: prev.adopt_armed_until ?? null,
         adopt_armed_skip: prev.adopt_armed_skip ?? null,
@@ -627,6 +688,9 @@ export function createCore(db, {
     q.reassignPendingMail.run(sid, prev.session_id);
     q.reassignPendingQuestions.run(sid, prev.session_id);
     q.reassignTouches.run(sid, prev.session_id);
+    // BUG-107: the lineage's whole name history follows the card too, so mail
+    // to any name the lineage ever wore reaches the heir.
+    q.reassignAliases.run(sid, prev.session_id);
       db.exec('COMMIT');
     } catch (err) {
       try { db.exec('ROLLBACK'); } catch { /* the transaction is already gone */ }
@@ -659,11 +723,20 @@ export function createCore(db, {
   // needs and Object.assign's its own surface back onto ctx so later factories
   // (and the return surface) can reach it. onMutate is the STABLE wrapper, so
   // the setter on the returned object reaches code in every module.
+  // Canonical worktree-path mutex (BUG-060): removal holds a path's claim
+  // from inspection through filesystem, branch, and DB cleanup; every launch
+  // or revive into that directory acquires the same claim first, so it can
+  // never interleave into a removal's destructive window and launch a pane
+  // whose cwd has already disappeared. One claim per canonical path, FIFO.
+  const acquireWorktreePathLock = createKeyedMutex();
+
   const ctx = {
     // holdMs resolves WITH the settings fallback at the questions wiring above
     // (q didn't exist at parameter-default time); ctx carries that same value.
     db, port, home, holdMs: holdMs ?? resolveHoldMs(process.env, () => q.getSetting.get('hold_ms')?.value ?? null), t0, version,
     STALE_MS, NUDGE_MS, SPAWN_REGISTER_MS, SETUP_REGISTER_MS, PANE_MAIL_GRACE_MS,
+    MAIL_CLAIM_LEASE_MS,
+    MAIL_PENDING_MAX, MAIL_PENDING_MAX_BYTES, MAIL_PANE_BATCH, MAIL_PANE_BATCH_BYTES, // BUG-128 test-only
     PRESUME_DEAD_MS, RETAIN_OFFLINE_MS, RC_HARVEST_MS, RETAIN_LEDGER_MS,
     ADOPT_ARM_MS, ADOPT_DELAY_MS, // 0.7.0 Move-to-tmux (spawns arms, events fires)
     SNAPSHOT_FILES_PER_SESSION,
@@ -675,14 +748,15 @@ export function createCore(db, {
     // spawns.mjs (the boot heal for pairs stranded before this shipped).
     CLEAR_SUCCESSION_MS, applyCustomName, hasLivePane,
     findClearedPredecessor, succeedSession, succeedForwardFromClear,
+    acquireWorktreePathLock,
   };
 
   // Mail + /api/watch waiter registry + owned-pane delivery → mail.mjs.
   Object.assign(ctx, createMail(ctx));
   const {
-    mail, drainMail, resolveTargets, notifyWatchers, addWatchWaiter,
+    mail, drainMail, ackMail, resolveTargets, notifyWatchers, addWatchWaiter,
     hasWatchWaiter, ownedPaneRow, ownedPaneDeliverable, tryOwnedPaneDelivery,
-    claimMail, watchInfo, postMail,
+    claimMail, watchInfo, postMail, registerWatchGen,
   } = ctx;
 
   // D8: the offline-tombstone write, in one place. Every terminal transition
@@ -711,7 +785,7 @@ export function createCore(db, {
   // POST route is untouched) plus resolveSettings, browseRootChoice (files.mjs)
   // and persistRepoTransport (spawns.mjs). It must precede files/spawns.
   Object.assign(ctx, createSettings(ctx));
-  const { resolveReposDir, setSettings, resolveSettings } = ctx;
+  const { resolveReposDir, setSettings, resolveSettings, setRepoSetupEntry } = ctx;
 
   // File-touch ledger + conflict radar → ledger.mjs.
   Object.assign(ctx, createLedger(ctx));
@@ -725,11 +799,39 @@ export function createCore(db, {
   Object.assign(ctx, createCommands(ctx));
   const { command } = ctx;
 
-  // v1.3 plan library mark → plans.mjs.
+  // v1.3 plan library mark + BUG-039 assign → plans.mjs.
   Object.assign(ctx, createPlans(ctx));
-  const { planMark } = ctx;
+  const { planMark, assignPlan } = ctx;
 
-  // Worktree custody (inspection + allow-listed removal) → worktrees.mjs.
+  // Worktree custody (inspection + allow-listed removal) → worktrees.mjs. The
+  // custody lease below must be threaded BEFORE both worktrees and spawns are
+  // built: it is the shared state removeWorktree and revive() serialize on.
+  // It lives HERE, on the per-core ctx — not in helpers.mjs (whose contract is
+  // closure-free purity) and not module-scoped in worktrees.mjs (module scope
+  // is per-PROCESS, so two cores in one test process would share one map and
+  // block each other's unrelated removals across separate databases).
+  //
+  // remove and revive previously had no shared path lease: every liveness
+  // re-check inside remove is only a snapshot, so a revive could slip in
+  // BETWEEN the pre-remove check and the awaited `git worktree remove` —
+  // validate the still-existing cwd, insert its 'provisioning' row and launch
+  // a pane in a directory removal was about to delete (the final gate would
+  // then report success for a live card pointing at a nonexistent checkout).
+  // One claim per canonical path, taken with NO await between check and set,
+  // held through git removal + optional branch delete + row purge (remove) and
+  // through window reconciliation + the synchronous provisional-row insert
+  // (revive), makes exactly one of them win.
+  const custodyLeases = new Map(); // canonical worktree path -> lease owner
+  const canonicalWorktreePath = p => {
+    try { return fs.realpathSync(p); } catch { return path.resolve(p); }
+  };
+  ctx.claimWorktreeCustody = (p, owner) => {
+    const canonical = canonicalWorktreePath(p);
+    if (custodyLeases.has(canonical)) return null;
+    custodyLeases.set(canonical, owner);
+    let released = false;
+    return () => { if (!released) { released = true; custodyLeases.delete(canonical); } };
+  };
   Object.assign(ctx, createWorktrees(ctx));
   const { worktrees, removeWorktree } = ctx;
 
@@ -758,7 +860,7 @@ export function createCore(db, {
 
   // Retention sweep + manual cleanup → retention.mjs.
   Object.assign(ctx, createRetention(ctx));
-  const { retentionSweep, cleanup, dismissSession } = ctx;
+  const { retentionSweep, cleanup, dismissSession, dismissRetry } = ctx;
 
   // Run retention once at core boot, then alongside event pruning every 10m.
   // BUG 2: retentionSweep is async now (it may probe tmux for spawned silence),
@@ -766,7 +868,7 @@ export function createCore(db, {
   // its already-resolved promise, so the boot sweep's DB effects still land
   // synchronously for the common case. .catch() contains any tmux-probe
   // rejection so a fire-and-forget sweep can never become an unhandled reject.
-  retentionSweep().catch(err => console.error('fleetd retention sweep error:', err));
+  const bootRetention = retentionSweep().catch(err => console.error('fleetd retention sweep error:', err));
   setInterval(() => {
     try { q.pruneEvents.run(Date.now() - 24 * 3600 * 1000); } catch { /* hygiene only */ }
     retentionSweep().catch(() => { /* hygiene only */ });
@@ -787,7 +889,13 @@ export function createCore(db, {
     // http.mjs/fleetd.mjs caller consumes it, so it is not re-exported here.
     claimMail,       // "
     watchInfo,       // "
+    registerWatchGen, // " (BUG-105: newest-wins watcher generation for the atomic claim)
     drainMail,
+    ackMail,           // POST /mail/ack — BUG-034 lease finalization
+    // BUG-128: the raw internal insert is on the surface so in-memory tests
+    // can queue a burst without the postMail routing/probe ceremony (commands
+    // .mjs and question relays already reach it through ctx).
+    mail,
     postMail,
     tryOwnedPaneDelivery,
     command,
@@ -811,13 +919,16 @@ export function createCore(db, {
     // is re-exported so tests can drive the tmux-verified presume-dead path
     // (BUG 2) deterministically; production callers keep using the interval.
     retentionSweep,
+    bootRetention,     // the boot sweep's settle promise — fleetd folds it into boot readiness
     cleanup,
     dismissSession,     // POST /api/sessions/:id/dismiss — per-card cleanup → {status, body}
+    dismissRetry,       // POST /api/sessions/:id/dismiss/retry — re-attempt the window kills of a partial dismiss (BUG-145)
     worktrees,          // GET /api/worktrees — bounded live git inspection
     removeWorktree,     // POST /api/worktrees/remove — allow-listed destruction
     resolveReposDir,    // repos-root resolver (still consumed via resolveSettings)
     resolveSettings,    // GET /api/settings + POST response + /state snapshot
     setSettings,        // POST /api/settings (whitelisted; settings.mjs)
+    setRepoSetupEntry,  // daemon-side per-repo setup-default writer (BUG-147)
     fsList,             // GET /api/sessions/:id/fs/list → {status, body}
     fsRead,             // GET /api/sessions/:id/fs/read → {status, body}
     fsSearch,           // GET /api/sessions/:id/fs/search → {status, body}
@@ -826,6 +937,7 @@ export function createCore(db, {
     fsSearchHome,       // GET /api/fs/search → {status, body}
     // v1.3 plan library
     planMark,          // POST /api/plans/:id/mark → {status, body}
+    assignPlan,        // POST /api/plans/:id/assign → {status, body} (BUG-039)
     // 0.7.1 custom names: POST /api/sessions/:id/name and the `name` command
     // both land here (one rename write, one set of rules).
     applyCustomName,

@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { openDb } from '../scripts/fleetd/db.mjs';
 import { startDaemon } from './helpers/daemon.mjs';
 import { getJson, postHook, postJson } from './helpers/http.mjs';
+import { scaleMs, waitUntil } from './helpers/wait.mjs';
 
 // tests/succession.test.mjs — 0.7.1 /clear session succession.
 //
@@ -293,6 +294,84 @@ test('the FORWARD /clear path refuses a lone orphan heir when TWO predecessors c
   assert.equal(cRow.archived_at, null, 'c was not retired on a guess');
 });
 
+test('a delayed rival /clear inside the settlement window cancels the forward claim — the heir stays on its own card', async (t) => {
+  // BUG-023, the exact live-daemon ordering: B's heir arrives FIRST (SessionEnd
+  // is an async hook, so the heir can beat its predecessor's /clear), then A's
+  // delayed clear lands while B's is still in flight. At that instant A is the
+  // ONLY cleared predecessor on record, so finalizing on momentary uniqueness
+  // irreversibly grafts A's callsign/pane/mail onto B's heir — and B's end,
+  // arriving a moment later, cannot undo the claim. The settlement interval
+  // must hold the claim open long enough for B's end to cancel it.
+  const { daemon, home, cwd } = await boot(t, 'fleetdeck-succ-settle', {
+    FLEETDECK_CLEAR_SETTLE_MS: '400',
+  });
+  const a = await startSession(daemon, cwd);
+  const b = await startSession(daemon, cwd);
+
+  // B's heir is born first — an orphan on its own card.
+  const heirB = randomUUID();
+  await postHook(daemon.baseUrl, 'SessionStart', { session_id: heirB, cwd, source: 'clear' }, { token: daemon.token });
+  const heirCallsign = cardOf((await getJson(`${daemon.baseUrl}/state`)).json, heirB).callsign;
+
+  // A's delayed /clear lands with no rival on record yet: the forward pass must
+  // NOT merge yet, only schedule the claim…
+  await postHook(daemon.baseUrl, 'SessionEnd', { session_id: a.sid, cwd, reason: 'clear' }, { token: daemon.token });
+  // …and B's /clear lands INSIDE the settlement window.
+  await postHook(daemon.baseUrl, 'SessionEnd', { session_id: b.sid, cwd, reason: 'clear' }, { token: daemon.token });
+
+  // Let the settlement timer fire. The only PASS outcome is that nothing
+  // happened, so this is a genuine settle-sleep, not a poll — scaled so the
+  // WAIT_SCALE CI lanes keep the timer comfortably inside the wait.
+  await new Promise(r => setTimeout(r, scaleMs(900)));
+
+  const state = (await getJson(`${daemon.baseUrl}/state`)).json;
+  const card = cardOf(state, heirB);
+  assert.ok(card, 'the heir kept its own card');
+  assert.equal(card.callsign, heirCallsign, 'wearing its own name, never A’s');
+  assert.notEqual(card.callsign, a.callsign);
+  assert.ok(cardOf(state, a.sid) && cardOf(state, b.sid), 'neither predecessor was retired on a guess');
+  const merges = withDb(home, db => db.prepare('SELECT session_id, succeeded_by FROM sessions WHERE succeeded_by IS NOT NULL').all());
+  assert.equal(merges.length, 0, 'no succession at all — the settlement re-read saw the rival and refused');
+  const aRow = withDb(home, db => db.prepare('SELECT succeeded_by, archived_at FROM sessions WHERE session_id = ?').get(a.sid));
+  assert.equal(aRow.succeeded_by, null, 'A never succeeded into B’s heir');
+  assert.equal(aRow.archived_at, null, 'A was not retired on a guess');
+});
+
+test('the settled forward claim still merges when no rival ever arrives', async (t) => {
+  // The settlement interval must not strand the NORMAL reorder case: a lone
+  // orphan heir, one clear, no rival — after the interval the claim is still
+  // uniquely corroborated, so the same one-card continuation lands, just one
+  // settlement later.
+  const { daemon, home, cwd } = await boot(t, 'fleetdeck-succ-settle-ok', {
+    FLEETDECK_CLEAR_SETTLE_MS: '300',
+  });
+  const { sid, callsign } = await startSession(daemon, cwd);
+
+  const heirSid = randomUUID();
+  await postHook(daemon.baseUrl, 'SessionStart', { session_id: heirSid, cwd, source: 'clear' }, { token: daemon.token });
+  await postHook(daemon.baseUrl, 'SessionEnd', { session_id: sid, cwd, reason: 'clear' }, { token: daemon.token });
+
+  // Immediately after the /clear the claim is only SCHEDULED — the split is
+  // still standing while the settlement window runs.
+  let state = (await getJson(`${daemon.baseUrl}/state`)).json;
+  assert.equal(cardsIn(state, cwd).length, 2, 'no merge before the interval elapses');
+
+  // Poll rather than sleep a fixed delay: the merge lands as soon as the
+  // settlement timer fires, and the wait scales for the slow CI lanes.
+  await waitUntil(async () => cardsIn((await getJson(`${daemon.baseUrl}/state`)).json, cwd).length === 1, {
+    timeoutMs: 5000, intervalMs: 100, label: 'settled forward succession merge',
+  });
+
+  state = (await getJson(`${daemon.baseUrl}/state`)).json;
+  assert.equal(cardsIn(state, cwd).length, 1, 'the settled claim merged — one card, as before');
+  const heir = cardOf(state, heirSid);
+  assert.ok(heir, 'the heir survived');
+  assert.equal(heir.callsign, callsign, 'wearing the lineage callsign');
+  const prev = withDb(home, db => db.prepare('SELECT archived_at, succeeded_by FROM sessions WHERE session_id = ?').get(sid));
+  assert.ok(prev.archived_at);
+  assert.equal(prev.succeeded_by, heirSid);
+});
+
 test('the boot heal repairs a pair already split by a /clear, and is idempotent', async (t) => {
   const { daemon, home, cwd, env } = await boot(t, 'fleetdeck-succ-heal', {
     // Succession off at hook time, so we can manufacture the exact pre-0.7.1
@@ -344,7 +423,12 @@ test('the boot heal repairs a pair already split by a /clear, and is idempotent'
 });
 
 test('hooks arriving out of order still land one card — the heir can beat its predecessor’s /clear', async (t) => {
-  const { daemon, home, cwd } = await boot(t, 'fleetdeck-succ-reorder');
+  const { daemon, home, cwd } = await boot(t, 'fleetdeck-succ-reorder', {
+    // The forward claim settles through FLEETDECK_CLEAR_SETTLE_MS in production;
+    // 0 keeps this reordering test on the synchronous path it was written for.
+    // The settled async path itself is pinned by the two settlement tests above.
+    FLEETDECK_CLEAR_SETTLE_MS: '0',
+  });
   const { sid, callsign } = await startSession(daemon, cwd);
 
   // SessionEnd is an ASYNC hook; SessionStart is not. So the heir's birth can
@@ -365,13 +449,17 @@ test('hooks arriving out of order still land one card — the heir can beat its 
   assert.equal(prev.succeeded_by, heirSid);
 });
 
-test('the boot heal never merges two lineages into one heir', async (t) => {
+test('the boot heal leaves two pane-less lineages split rather than guessing the pairing', async (t) => {
   const { daemon, home, cwd, env } = await boot(t, 'fleetdeck-succ-nomerge', {
     FLEETDECK_CLEAR_SUCCESSION_MS: '0', // succession off at hook time: manufacture the wreckage
   });
-  // Two pane-less sessions in ONE cwd, clearing a few seconds apart. Walking
-  // predecessors would hand BOTH of them the earlier heir — dumping one
-  // conversation's mail, questions and file ledger onto the other's card.
+  // Two pane-less sessions in ONE cwd, clearing seconds apart. Neither card has
+  // a pane, so at boot nothing corroborates which heir continues which
+  // predecessor: A's clear sits inside BOTH heirs' correlation windows. The old
+  // heal "paired by order" — but order is arrival, not lineage (see the
+  // interleaved test below), so the only honest outcome is NO merge. The
+  // visible cost of this bug is a stranded PANE; two pane-less splits are
+  // duplicate cards, recoverable by hand, while a wrong merge is not.
   const a = await startSession(daemon, cwd);
   const heirA = (await clearInto(daemon, cwd, a.sid)).newSid;
   const b = await startSession(daemon, cwd);
@@ -385,13 +473,98 @@ test('the boot heal never merges two lineages into one heir', async (t) => {
   t.after(() => healed.stop({ keepHome: true }));
   state = (await getJson(`${healed.baseUrl}/state`)).json;
 
-  // Each heir continues its OWN predecessor — two cards, two lineages, no merge.
-  assert.equal(cardsIn(state, cwd).length, 2, 'two lineages stay two cards');
-  assert.equal(cardOf(state, heirA).callsign, a.callsign, 'heir A continues A');
-  assert.equal(cardOf(state, heirB).callsign, b.callsign, 'heir B continues B');
+  assert.equal(cardsIn(state, cwd).length, 4, 'no corroboration → the split stands');
+  for (const s of [a, b, { sid: heirA }, { sid: heirB }]) {
+    assert.ok(cardOf(state, s.sid), 'every session kept its own card');
+  }
   const claims = withDb(home, db => db.prepare('SELECT session_id, succeeded_by FROM sessions WHERE succeeded_by IS NOT NULL').all());
-  assert.equal(claims.length, 2);
-  assert.equal(new Set(claims.map(r => r.succeeded_by)).size, 2, 'no heir was claimed twice');
+  assert.equal(claims.length, 0, 'no succession — never two lineages merged into one heir');
+});
+
+test('the boot heal pairs an interleaved clear when exactly ONE candidate owns a live pane', async (t) => {
+  const { daemon, home, cwd, env } = await boot(t, 'fleetdeck-succ-panecorr', {
+    FLEETDECK_CLEAR_SUCCESSION_MS: '0', // manufacture the pre-0.7.1 wreckage
+  });
+  // The corroborated ambiguity: A was SPAWNED (its card holds the live pane —
+  // the stranded pane is the harm this heal exists to undo) while B is a bare
+  // terminal session. Both clear; both heirs arrive. A's pane proves the
+  // pairing for its heir even though both clears sit in the window.
+  const spawned = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd, prompt: 'work' });
+  assert.equal(spawned.status, 200, JSON.stringify(spawned.json));
+  const a = { sid: spawned.json.session_id, callsign: spawned.json.callsign };
+  await postHook(daemon.baseUrl, 'SessionStart', { session_id: a.sid, cwd, source: 'startup' }, { token: daemon.token });
+  const b = await startSession(daemon, cwd);
+  await postHook(daemon.baseUrl, 'SessionEnd', { session_id: a.sid, cwd, reason: 'clear' }, { token: daemon.token });
+  await postHook(daemon.baseUrl, 'SessionEnd', { session_id: b.sid, cwd, reason: 'clear' }, { token: daemon.token });
+  const heirA = { sid: randomUUID() };
+  await postHook(daemon.baseUrl, 'SessionStart', { session_id: heirA.sid, cwd, source: 'clear' }, { token: daemon.token });
+  const heirB = { sid: randomUUID() };
+  await postHook(daemon.baseUrl, 'SessionStart', { session_id: heirB.sid, cwd, source: 'clear' }, { token: daemon.token });
+
+  let state = (await getJson(`${daemon.baseUrl}/state`)).json;
+  assert.equal(cardsIn(state, cwd).length, 4, 'four cards: the bug, doubled');
+  const window = cardOf(state, a.sid).spawn.tmux_window;
+  assert.ok(window, 'A holds the stranded pane');
+  await daemon.stop({ keepHome: true });
+
+  const healed = await startDaemon({ home, env: { ...env, FLEETDECK_CLEAR_SUCCESSION_MS: '30000' } });
+  t.after(() => healed.stop({ keepHome: true }));
+  state = (await getJson(`${healed.baseUrl}/state`)).json;
+
+  // A's pane breaks the tie for its heir — and once A is claimed, B is the ONLY
+  // candidate left in the other heir's window, so it heals too: two cards, and
+  // each lineage continues itself. The pane is what let the heal start at all;
+  // without it (the pane-less tests above) neither pair would have merged.
+  assert.equal(cardsIn(state, cwd).length, 2, 'both lineages healed, onto their own heirs');
+  const healedHeir = cardOf(state, heirA.sid);
+  assert.ok(healedHeir, 'the heir survived');
+  assert.equal(healedHeir.callsign, a.callsign, 'wearing the lineage callsign');
+  assert.equal(healedHeir.spawn?.tmux_window, window, 'and the pane came with it');
+  assert.equal(cardOf(state, heirB.sid)?.callsign, b.callsign, 'B continued onto its own heir');
+  const rows = withDb(home, db => db.prepare('SELECT session_id, succeeded_by, end_reason FROM sessions WHERE succeeded_by IS NOT NULL ORDER BY session_id').all());
+  assert.deepEqual(rows.map(r => [r.session_id, r.succeeded_by, r.end_reason]),
+    [[a.sid, heirA.sid, 'superseded'], [b.sid, heirB.sid, 'superseded']].sort((x, y) => x[0].localeCompare(y[0])));
+});
+
+test('the boot heal refuses to pair by order when clears and heirs interleave — a wrong merge is worse than a split', async (t) => {
+  const { daemon, home, cwd, env } = await boot(t, 'fleetdeck-succ-cross', {
+    FLEETDECK_CLEAR_SUCCESSION_MS: '0', // succession off at hook time: manufacture the pre-0.7.1 wreckage
+  });
+  // A and B /clear in one cwd. Their ends land A,B — but their heirs are born
+  // B′,A′ (SessionEnd is an async hook, SessionStart is not, so one lineage's
+  // two hooks are not ordered against the other's). Clears interleave inside
+  // each heir's correlation window, so every heir sees BOTH predecessors as
+  // candidates. The old heal sorted by clear time and handed the FIRST heir
+  // the OLDEST clear: A→heirB, B→heirA — a permanent swap of callsigns, panes,
+  // mail, questions and tickets between two unrelated conversations.
+  const a = await startSession(daemon, cwd);
+  const b = await startSession(daemon, cwd);
+  await postHook(daemon.baseUrl, 'SessionEnd', { session_id: a.sid, cwd, reason: 'clear' }, { token: daemon.token });
+  await postHook(daemon.baseUrl, 'SessionEnd', { session_id: b.sid, cwd, reason: 'clear' }, { token: daemon.token });
+  const heirB = { sid: randomUUID() };
+  heirB.callsign = (await postHook(daemon.baseUrl, 'SessionStart', { session_id: heirB.sid, cwd, source: 'clear' }, { token: daemon.token })).json.callsign;
+  const heirA = { sid: randomUUID() };
+  heirA.callsign = (await postHook(daemon.baseUrl, 'SessionStart', { session_id: heirA.sid, cwd, source: 'clear' }, { token: daemon.token })).json.callsign;
+  assert.notEqual(heirB.callsign, a.callsign, 'heir B′ arrived as a stranger (succession was off)');
+  assert.notEqual(heirA.callsign, b.callsign);
+
+  let state = (await getJson(`${daemon.baseUrl}/state`)).json;
+  assert.equal(cardsIn(state, cwd).length, 4, 'four cards: the split, doubled');
+  await daemon.stop({ keepHome: true });
+
+  // Restart: the heal must refuse to guess instead of pairing by event order.
+  const healed = await startDaemon({ home, env: { ...env, FLEETDECK_CLEAR_SUCCESSION_MS: '30000' } });
+  t.after(() => healed.stop({ keepHome: true }));
+  state = (await getJson(`${healed.baseUrl}/state`)).json;
+
+  assert.equal(cardsIn(state, cwd).length, 4, 'the split stands — no lineage was cross-wired');
+  for (const s of [a, b, heirA, heirB]) {
+    const card = cardOf(state, s.sid);
+    assert.ok(card, `every session kept its card — missing ${s.callsign} (${s.sid.slice(0, 8)}); cards: ${cardsIn(state, cwd).map(c => c.session_id.slice(0, 8) + ':' + c.callsign).join(' ')}`);
+    assert.equal(card.callsign, s.callsign, `${s.callsign} kept its own callsign`);
+  }
+  const claims = withDb(home, db => db.prepare('SELECT session_id, succeeded_by FROM sessions WHERE succeeded_by IS NOT NULL').all());
+  assert.equal(claims.length, 0, 'no succession at all — the heal refused the ambiguous pairing');
 });
 
 test('a healed card keeps the name the fleet knows — the throwaway never becomes the mail anchor', async (t) => {

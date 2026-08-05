@@ -24,8 +24,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync, execFileSync } from 'node:child_process';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -50,8 +50,26 @@ function deadPid() {
   return p.pid;
 }
 
+// A pid whose numeric handle is LIVE but owned by the wrong process (BUG-106):
+// kill(pid, 0) succeeds on our own test process, yet its start time (~now)
+// cannot match a registry record claiming the session began long ago — the
+// exact shape of a stale record whose pid the OS has since reused.
+function reusedPidRecord(overrides) {
+  return {
+    pid: LIVE_PID,
+    kind: 'interactive',
+    startedAt: Date.now() - 6 * 60 * 60 * 1000, // "started 6h ago"
+    status: 'busy',
+    ...overrides,
+  };
+}
+
 function findSession(state, sid) {
   return state.sessions.find(s => s.session_id === sid);
+}
+
+function gitIn(cwd, args) {
+  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 }
 
 function agentsFixtureEnv(fixtureFile, pollMs = 400) {
@@ -69,6 +87,25 @@ function writeFixture(file, records) {
 // Scaled poller (helpers/wait.mjs) carrying this file's authored 8000ms /
 // 150ms-interval defaults; call sites keep their opts unchanged.
 const waitUntil = (fn, opts = {}) => waitUntilBase(fn, { timeoutMs: 8000, intervalMs: 150, ...opts });
+
+// Per-process pid start (same /proc/<pid>/stat field 22 + /proc/uptime math
+// as scripts/fleetd/helpers.mjs processStartMs, reproduced here so fixtures
+// can mint a startedAt that REALLY matches the pid they claim — a live
+// registry's startedAt is the process's actual start, not Date.now() at
+// fixture-write time, and on fleets with a stepped wall clock (WSL/VM) the
+// two disagree by far more than the ownership tolerance.
+function procStartMs(pid) {
+  const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
+  const after = stat.slice(stat.lastIndexOf(')') + 2);
+  const startTicks = Number(after.split(' ')[19]);
+  const uptimeSeconds = Number(readFileSync('/proc/uptime', 'utf8').split(' ')[0]);
+  return Date.now() - (uptimeSeconds - startTicks / 100) * 1000;
+}
+
+// A startedAt for a record genuinely owned by our live test process. Spawned
+// daemons and THIS test process are both alive for the whole test, so the
+// once-per-file snapshot stays within tolerance of any daemon's own read.
+const LIVE_STARTED_AT = procStartMs(process.pid);
 
 async function waitForSession(baseUrl, sid, opts) {
   return waitUntil(async () => {
@@ -94,9 +131,9 @@ test('poller cards live interactive entries only: background and dead-pid entrie
 
   writeFixture(fixtureFile, [
     // legit: interactive + live pid, main tree, busy
-    { pid: LIVE_PID, cwd: repo.root, kind: 'interactive', startedAt: now, sessionId: sidRoot, name: 'root task', status: 'busy' },
+    { pid: LIVE_PID, cwd: repo.root, kind: 'interactive', startedAt: LIVE_STARTED_AT, sessionId: sidRoot, name: 'root task', status: 'busy' },
     // legit: interactive + live pid, linked worktree, waiting (undocumented state observed live)
-    { pid: LIVE_PID, cwd: repo.worktree, kind: 'interactive', startedAt: now, sessionId: sidWorktree, name: 'worktree task', status: 'waiting', waitingFor: 'permission prompt' },
+    { pid: LIVE_PID, cwd: repo.worktree, kind: 'interactive', startedAt: LIVE_STARTED_AT, sessionId: sidWorktree, name: 'worktree task', status: 'waiting', waitingFor: 'permission prompt' },
     // registry garbage #1: a background subagent stuck "blocked" (trust rule 1)
     { id: 'bg1', cwd: repo.root, kind: 'background', startedAt: now, sessionId: sidBackground, name: 'stale background agent', state: 'blocked' },
     // registry garbage #2: interactive entry whose process is gone (trust rule 2)
@@ -145,7 +182,7 @@ test('a hook event for the same sessionId flips source to hooks and the poller s
 
   const sid = randomUUID();
   writeFixture(fixtureFile, [
-    { pid: LIVE_PID, cwd, kind: 'interactive', startedAt: Date.now(), sessionId: sid, name: 'predates plugin', status: 'busy' },
+    { pid: LIVE_PID, cwd, kind: 'interactive', startedAt: LIVE_STARTED_AT, sessionId: sid, name: 'predates plugin', status: 'busy' },
   ]);
 
   const daemon = await startDaemon({ env: agentsFixtureEnv(fixtureFile) });
@@ -166,7 +203,7 @@ test('a hook event for the same sessionId flips source to hooks and the poller s
 
   // Phase 3a: differing poll state must not move the column any more.
   writeFixture(fixtureFile, [
-    { pid: LIVE_PID, cwd, kind: 'interactive', startedAt: Date.now(), sessionId: sid, name: 'predates plugin', status: 'waiting' },
+    { pid: LIVE_PID, cwd, kind: 'interactive', startedAt: LIVE_STARTED_AT, sessionId: sid, name: 'predates plugin', status: 'waiting' },
   ]);
   await new Promise(r => setTimeout(r, 1200)); // several 400ms poll cycles
 
@@ -195,7 +232,7 @@ test('absence tombstones agents-cli cards; reappearance revives them', async (t)
   });
 
   const sid = randomUUID();
-  const record = { pid: LIVE_PID, cwd, kind: 'interactive', startedAt: Date.now(), sessionId: sid, name: 'ephemeral', status: 'busy' };
+  const record = { pid: LIVE_PID, cwd, kind: 'interactive', startedAt: LIVE_STARTED_AT, sessionId: sid, name: 'ephemeral', status: 'busy' };
   writeFixture(fixtureFile, [record]);
 
   const daemon = await startDaemon({ env: agentsFixtureEnv(fixtureFile) });
@@ -239,6 +276,104 @@ test('absence tombstones agents-cli cards; reappearance revives them', async (t)
   } finally { revDb.close(); }
 });
 
+// BUG-106: pid existence is not ownership. When the process behind a registry
+// record dies and the OS reuses its pid, kill(pid, 0) still succeeds — but the
+// new process's start time cannot match the record's startedAt. Such a record
+// must be treated as absent: never carded, never revived, and any stale card
+// it would have stood for must be tombstoned.
+test('a reused pid (live process, stale startedAt) is not the recorded session', async (t) => {
+  const scratchDir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-agents-scratch-'));
+  const fixtureFile = path.join(scratchDir, 'agents.json');
+  const cwd = mkdtempSync(path.join(tmpdir(), 'fleetdeck-cwd-'));
+  t.after(() => {
+    rmSync(scratchDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  const sidGhost = randomUUID();
+  const sidStale = randomUUID();
+  const sidLive = randomUUID();
+
+  // Phase 1: ghost (reused pid, never carded) + two genuinely-owned records.
+  writeFixture(fixtureFile, [
+    reusedPidRecord({ cwd, sessionId: sidGhost, name: 'phantom from a reused pid' }),
+    { pid: LIVE_PID, cwd, kind: 'interactive', startedAt: LIVE_STARTED_AT, sessionId: sidStale, name: 'about to go stale', status: 'busy' },
+    { pid: LIVE_PID, cwd, kind: 'interactive', startedAt: LIVE_STARTED_AT, sessionId: sidLive, name: 'still mine', status: 'busy' },
+  ]);
+
+  const daemon = await startDaemon({ env: agentsFixtureEnv(fixtureFile) });
+  t.after(async () => { await daemon.stop(); });
+
+  await waitForSession(daemon.baseUrl, sidStale);
+  await waitForSession(daemon.baseUrl, sidLive);
+  await new Promise(r => setTimeout(r, 1200)); // several poll cycles
+  let state = (await getJson(`${daemon.baseUrl}/state`)).json;
+  assert.equal(findSession(state, sidGhost), undefined,
+    'a live pid whose process started long after the record claims must never be carded');
+
+  // Phase 2: the pid behind sidStale is "reused" (same live pid, stale
+  // startedAt). The stale card must be tombstoned offline, while the still-
+  // owned sidLive card is untouched.
+  writeFixture(fixtureFile, [
+    reusedPidRecord({ cwd, sessionId: sidStale, name: 'about to go stale' }),
+    { pid: LIVE_PID, cwd, kind: 'interactive', startedAt: LIVE_STARTED_AT, sessionId: sidLive, name: 'still mine', status: 'busy' },
+  ]);
+  const staleCard = await waitUntil(async () => {
+    const s = (await getJson(`${daemon.baseUrl}/state`)).json;
+    const c = findSession(s, sidStale);
+    return c && c.col === 'offline' ? c : null;
+  }, { label: 'reused-pid tombstone' });
+  assert.equal(staleCard.note, 'no longer reported by agents CLI');
+
+  state = (await getJson(`${daemon.baseUrl}/state`)).json;
+  assert.equal(findSession(state, sidLive).col, 'working', 'an owned record is unaffected by a sibling\'s pid reuse');
+});
+
+// BUG-126: mutable identity fields must refresh on agents-cli polls even when
+// repo identity is unchanged. An in-place checkout (same worktree, another
+// branch) leaves repo_id stable — a branch read gated on repoChanged would
+// keep the birth branch for the card's whole lifetime, since agents-cli cards
+// have no hook telemetry to correct it.
+test('an in-place checkout refreshes an agents-cli card\'s branch (same repo_id)', async (t) => {
+  const scratchDir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-agents-scratch-'));
+  const fixtureFile = path.join(scratchDir, 'agents.json');
+  const repo = makeRepoWithWorktree({ repoName: 'agents-checkout-test' });
+  t.after(() => {
+    repo.cleanup();
+    rmSync(scratchDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  const sid = randomUUID();
+  // The session lives in the main tree, whose branch is the init default
+  // (master/main) — a new branch is created for the in-place checkout below
+  // (the helper's 'wt-branch' is already checked out in the linked worktree
+  // and git forbids checking the same branch out twice).
+  const record = { pid: LIVE_PID, cwd: repo.root, kind: 'interactive', startedAt: Date.now(), sessionId: sid, name: 'checkout agent', status: 'busy' };
+  writeFixture(fixtureFile, [record]);
+
+  const daemon = await startDaemon({ env: agentsFixtureEnv(fixtureFile) });
+  t.after(async () => { await daemon.stop(); });
+
+  const card = await waitForSession(daemon.baseUrl, sid);
+  assert.equal(card.source, 'agents-cli');
+  const birthBranch = card.branch;
+  assert.notEqual(birthBranch, 'checkout-target', 'test setup: birth branch must differ from the checkout target');
+
+  // The agent checks out another branch IN PLACE — same cwd, same worktree,
+  // same repo_id. The board must follow within a few poll cycles (branchOf's
+  // 20s TTL bounds the lag).
+  gitIn(repo.root, ['switch', '-q', '-c', 'checkout-target']);
+
+  const updated = await waitUntil(async () => {
+    const state = (await getJson(`${daemon.baseUrl}/state`)).json;
+    const c = findSession(state, sid);
+    return c && c.branch === 'checkout-target' ? c : null;
+  }, { label: 'branch refresh after in-place checkout', timeoutMs: 45_000 });
+  assert.equal(updated.repo_id, repo.gitCommonDir, 'repo identity must be unchanged by an in-place checkout');
+  assert.equal(updated.worktree, repo.root, 'worktree must be unchanged by an in-place checkout');
+  assert.equal(updated.cwd, repo.root, 'cwd must be unchanged by an in-place checkout');
+});
+
 test('FLEETDECK_AGENTS_CMD=false disables the poller entirely', async (t) => {
   const scratchDir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-agents-scratch-'));
   const fixtureFile = path.join(scratchDir, 'agents.json');
@@ -250,7 +385,7 @@ test('FLEETDECK_AGENTS_CMD=false disables the poller entirely', async (t) => {
 
   const sid = randomUUID();
   writeFixture(fixtureFile, [
-    { pid: LIVE_PID, cwd, kind: 'interactive', startedAt: Date.now(), sessionId: sid, name: 'should never appear', status: 'busy' },
+    { pid: LIVE_PID, cwd, kind: 'interactive', startedAt: LIVE_STARTED_AT, sessionId: sid, name: 'should never appear', status: 'busy' },
   ]);
 
   const daemon = await startDaemon({
@@ -304,7 +439,7 @@ test('FLEETDECK_AGENTS_CMD is argv-only: a `>` is data, never a shell redirectio
 
   const sid = randomUUID();
   writeFixture(fixtureFile, [
-    { pid: LIVE_PID, cwd, kind: 'interactive', startedAt: Date.now(), sessionId: sid, name: 'no-shell canary', status: 'busy' },
+    { pid: LIVE_PID, cwd, kind: 'interactive', startedAt: LIVE_STARTED_AT, sessionId: sid, name: 'no-shell canary', status: 'busy' },
   ]);
 
   const daemon = await startDaemon({
@@ -354,7 +489,7 @@ test('agents-cli birth on a ticket branch → a ticketed callsign', async (t) =>
 
   const sid = randomUUID();
   writeFixture(fixtureFile, [
-    { pid: LIVE_PID, cwd: repo.worktree, kind: 'interactive', startedAt: Date.now(), sessionId: sid, name: 'ticketed agent', status: 'busy' },
+    { pid: LIVE_PID, cwd: repo.worktree, kind: 'interactive', startedAt: LIVE_STARTED_AT, sessionId: sid, name: 'ticketed agent', status: 'busy' },
   ]);
 
   const daemon = await startDaemon({ env: agentsFixtureEnv(fixtureFile) });

@@ -32,15 +32,25 @@ export async function copyText(text) {
   const attempt = copyViaEvent(text);
   Object.assign(trace, attempt);
   if (attempt.ok) {
-    await verifyClipboard(trace, text);
-    return finishCopyTrace(trace, true);
+    // A granted read-back OVERRULES the accepted write: the clipboard provably
+    // holding something else means this copy failed, whatever the event said —
+    // reporting success here would clear the human's selection over a clipboard
+    // that still holds the PREVIOUS text.
+    const verified = await verifyClipboard(trace, text);
+    return finishCopyTrace(trace, verified !== false);
   }
   if (navigator.clipboard?.writeText) {
     try {
       await navigator.clipboard.writeText(text);
       trace.writeText = 'resolved';
-      await verifyClipboard(trace, text);
-      return finishCopyTrace(trace, true);
+      // A resolved writeText is only an ACCEPTED write — Chrome can still drop
+      // it. When the read-back is permitted and PROVES the clipboard holds
+      // something else, that evidence beats the resolution: report failure so
+      // the caller keeps the selection instead of flashing a lie. An unchecked
+      // read-back is NOT failure — the accepted write is the best evidence
+      // there is, so it stands.
+      const verdict = await verifyClipboard(trace, text);
+      return finishCopyTrace(trace, verdict !== 'no');
     } catch (err) {
       trace.writeText = `rejected: ${err?.name || 'Error'} — ${err?.message || ''}`;
     }
@@ -55,21 +65,35 @@ export async function copyText(text) {
 // the permission is already granted — a diagnostic may never put a permission
 // dialog in front of someone who just pressed Ctrl+C. When it does run it
 // settles the question the trace otherwise can only infer.
+//
+// Tri-state verdict: 'yes' (the clipboard provably holds our text), 'no' (it
+// provably does NOT — the caller must not claim success), or 'unknown' (the
+// read-back could not run — no permission, no readText, or it threw — and an
+// unprovable true still beats refusing to copy at all).
 async function verifyClipboard(trace, expected) {
   try {
     const perm = await navigator.permissions?.query({ name: 'clipboard-read' });
-    if (perm?.state !== 'granted') { trace.verified = `not checked (permission: ${perm?.state ?? 'unknown'})`; return; }
+    if (perm?.state !== 'granted') { trace.verified = `not checked (permission: ${perm?.state ?? 'unknown'})`; return 'unknown'; }
     const got = await navigator.clipboard.readText();
-    trace.verified = got === expected
-      ? 'YES — the clipboard holds this text'
-      : `NO — the clipboard holds something else (${got.length} chars)`;
+    if (got === expected) {
+      trace.verified = 'YES — the clipboard holds this text';
+      return 'yes';
+    }
+    trace.verified = `NO — the clipboard holds something else (${got.length} chars)`;
+    return 'no';
   } catch (err) {
     trace.verified = `read failed: ${err?.name || 'Error'}`;
+    return 'unknown';
   }
 }
 
 function finishCopyTrace(trace, ok) {
-  trace.result = ok ? 'reported as copied' : 'refused';
+  // `ok` alone can't say which: a verified NO also lands here, and the trace
+  // must distinguish "provably copied" from "accepted but uncheckable" (and
+  // "refused" from "accepted, then PROVEN to have landed nowhere").
+  trace.result = ok
+    ? (trace.verified?.startsWith('YES') ? 'verified as copied' : 'reported as copied (unverified)')
+    : (trace.verified?.startsWith('NO') ? 'refused — the clipboard holds something else' : 'refused');
   trace.secureContext = typeof window !== 'undefined' ? window.isSecureContext : null;
   trace.documentFocused = typeof document !== 'undefined' ? document.hasFocus() : null;
   try { globalThis.__fdCopy = trace; } catch { /* frozen global — the log below still carries it */ }
@@ -567,6 +591,32 @@ export function imageFromClipboard(items) {
   return null;
 }
 
+// ----------------------------------------------------------- paste-line gate
+
+// May this text be pasted into the pane as-is?
+//
+// xterm brackets a paste (ESC[200~ … ESC[201~) ONLY while the program in the
+// pane has enabled DEC private mode 2004 — and the board cannot know it has.
+// A fresh viewer seeds its screen from `capture-pane`, which carries CELLS, not
+// terminal mode state, so the emulator comes up with bracketedPasteMode false
+// even when the agent had asked for it. And some panes never ask: a shell that
+// does not enable bracketed paste (/bin/dash, a fresh sh) receives xterm's
+// paste verbatim, newlines and all — and a newline IS a submit. Pasting
+//
+//   echo ok
+//   rm -rf ~
+//
+// into such a pane does not land as one reviewable block; the shell executes
+// each line as it arrives. Multi-line text is therefore only safe to hand to
+// xterm when bracketed-paste mode is KNOWN on; single-line text is always safe
+// (a paste must never submit on its own, and with no newline it cannot).
+//
+// Pure — TermPane passes term.modes?.bracketedPasteMode and the clipboard's
+// text — so the rule itself is testable without a DOM.
+export function pasteTextSafe(text, bracketed) {
+  return !!bracketed || !/[\r\n]/.test(String(text ?? ''));
+}
+
 // ---------------------------------------------- tmux passthrough (OSC 52 only)
 
 // Built from char codes, never written literally: an ESC in source is an
@@ -603,14 +653,6 @@ const PT_MAX = 1 << 20;
  */
 export function unwrapTmuxPassthrough(chunk, carry = '') {
   let buf = carry + String(chunk ?? '');
-  if (!buf.includes(PT_OPEN)) {
-    // Hold back only a possible partial OPEN at the very end; everything else
-    // is already safe to render.
-    for (let n = Math.min(PT_OPEN.length - 1, buf.length); n > 0; n--) {
-      if (buf.endsWith(PT_OPEN.slice(0, n))) return { out: buf.slice(0, -n), carry: buf.slice(-n) };
-    }
-    return { out: buf, carry: '' };
-  }
   let out = '';
   while (true) {
     const open = buf.indexOf(PT_OPEN);
@@ -627,6 +669,16 @@ export function unwrapTmuxPassthrough(chunk, carry = '') {
     // The whole point: keep the clipboard write, drop every other passthrough.
     if (/^\]52;/.test(inner)) out += inner;
     buf = rest.slice(close + PT_CLOSE.length);
+  }
+  // Whatever is left holds no complete wrapper — but its TAIL may be the start
+  // of one whose remainder arrives in the next frame. Hold that suffix back
+  // rather than emitting it: emitted, the leading ESC of a split wrapper would
+  // reach xterm, which keeps its own escape-parser state across writes and
+  // would happily reassemble — and EXECUTE — a wrapper this filter exists to
+  // drop. Whether a forbidden passthrough is filtered must never depend on
+  // where a socket frame happened to end.
+  for (let n = Math.min(PT_OPEN.length - 1, buf.length); n > 0; n--) {
+    if (buf.endsWith(PT_OPEN.slice(0, n))) return { out: out + buf.slice(0, -n), carry: buf.slice(-n) };
   }
   return { out: out + buf, carry: '' };
 }
@@ -677,8 +729,11 @@ export function isTermCopyChord(e, isMac = isMacUA()) {
 // The caller must NOT preventDefault: the whole trick is to stop xterm turning
 // the chord into ^V while letting the BROWSER perform its own native paste. The
 // resulting paste event is trusted, needs no clipboard-read permission, and
-// reaches xterm's own handler — which brackets it (ESC[200~) when the app asked
-// for bracketed paste, so a multi-line paste cannot submit itself line by line.
+// reaches xterm's own handler — which brackets it (ESC[200~) ONLY when the app
+// asked for bracketed paste (DEC mode 2004) and this emulator knows it did.
+// Where that is not knowable — a fresh capture-pane-seeded viewer, or a shell
+// that never enables 2004 — pasteTextSafe is the gate that keeps a multi-line
+// paste from submitting itself line by line.
 //
 // On a Mac ⌘V is already the browser's paste and xterm never intercepts meta
 // chords, so there is nothing to claim.

@@ -357,7 +357,10 @@ async function gitSearch(root, q, mode, deadline) {
     };
   }
 
-  const baseArgs = ['grep', '-I', '-n', '-i', '-F', '--untracked'];
+  // --no-color: a repo/global color.ui=always or color.grep=always makes grep
+  // emit ANSI-wrapped path:line:text, and parseGitGrep's plain regex would
+  // then drop every record — a confident hits:[] with truncated:false.
+  const baseArgs = ['grep', '-I', '-n', '-i', '-F', '--no-color', '--untracked'];
   let out = await runBounded('git', [...baseArgs, '--max-count=5', '-e', q, '--'], {
     cwd: root, timeoutMs: remaining(), maxBytes: SEARCH_OUTPUT_MAX,
   });
@@ -406,6 +409,11 @@ async function walkSearch(root, q, mode, deadline) {
       // credential denylist must filter HERE — otherwise fs/search?mode=content
       // reads ~/.aws and friends even though fs/read refuses them.
       if (deniedName(name)) continue;
+      // ...and the .docker/config.json special case must filter here too:
+      // .docker is a denied FILE inside an allowed dir, so deniedName never
+      // sees it — without the relPath check the walk backend returns hits for
+      // the exact registry credentials fs/read refuses.
+      if (deniedRelPath(entryPath(current.rel, name))) continue;
       if (++visited > WALK_ENTRY_MAX || Date.now() >= deadline) {
         truncated = true;
         stop = true;
@@ -414,6 +422,10 @@ async function walkSearch(root, q, mode, deadline) {
       if (visited % WALK_YIELD_EVERY === 0) await yieldToLoop();
       const abs = path.join(current.dir, name);
       const rel = entryPath(current.rel, name);
+      // deniedName above only covers whole-segment names; the path-level rule
+      // (.docker/config.json) must gate here too, or walk search reads files
+      // fs/read refuses — the git backend already filters via deniedRelPath.
+      if (deniedRelPath(rel)) continue;
       let st;
       try { st = fs.lstatSync(abs); } catch { continue; }
       if (st.isSymbolicLink()) continue;
@@ -477,8 +489,19 @@ export function createFiles(ctx) {
       if (!own.isDirectory() || own.isSymbolicLink()) throw new PathError(404, 'not found');
       const names = fs.readdirSync(real).filter(name => name.toLowerCase() !== '.git' && !deniedName(name));
       const truncated = names.length > LIST_MAX;
+      // 0.21.x (BUG-114): LIST_MAX must bound the WORK, not just the response —
+      // an lstat per name on a huge directory (node_modules dump, mail spool)
+      // stalls the daemon's single thread long after the response was already
+      // decided. Sort the cheap NAMES first, then lstat only a bounded window
+      // of candidates: dirs then files in name order, stopping once the
+      // surviving entries could fill the page. Anything past the window cannot
+      // make the cut, so its stat was wasted work.
+      const candidates = names.slice().sort((a, b) => a.localeCompare(b));
       const entries = [];
-      for (const name of names) {
+      let scanned = 0;
+      for (const name of candidates) {
+        if (entries.length >= LIST_MAX || scanned >= LIST_MAX + entries.length) break;
+        scanned += 1;
         let st;
         try { st = fs.lstatSync(path.join(real, name)); } catch { continue; }
         entries.push({ name, type: fileType(st), size: st.size, mtime: st.mtimeMs, ignored: false });
@@ -489,7 +512,11 @@ export function createFiles(ctx) {
         return ad - bd || a.name.localeCompare(b.name);
       });
       entries.splice(LIST_MAX);
-      if (git && !truncated) {
+      // check-ignore runs on the spliced page (bounded by LIST_MAX) even when
+      // truncated — truncation is a pagination signal, not a reason to drop
+      // ignore metadata for every returned entry: the annotation must not
+      // vanish exactly when the listing is large.
+      if (git) {
         const rels = entries.map(entry => entryPath(relPath, entry.name));
         const ignored = await ignoredPaths(root, rels, SEARCH_TIMEOUT_MS);
         for (let i = 0; i < entries.length; i += 1) entries[i].ignored = ignored.has(rels[i]);
