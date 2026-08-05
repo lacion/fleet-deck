@@ -44,6 +44,18 @@ const streamed = new Set();
 const probeFails = new Set((process.env.FLEETDECK_TEST_TERM_PROBE_FAILS || '0').split(',').map(Number).filter(Number.isInteger));
 let probeCalls = 0;
 
+// Fault injection (BUG-158): make a pane FLOOD %output while the bridge is
+// still in its pre-init window (the cursor round-trip that follows
+// capture-pane — the response is withheld until the flood lands). Value:
+//   '<n>'            → n bytes of flood, aimed at the FIRST pane seen
+//   '<n>@<window>'   → n bytes, aimed only at that window's pane
+const preInitFloodKnob = process.env.FLEETDECK_TEST_TERM_PREINIT_FLOOD;
+const flood = (() => {
+  const m = /^(\d+)(?:@(.+))?$/.exec(preInitFloodKnob || '');
+  return m ? { bytes: Number(m[1]), window: m[2] || null } : null;
+})();
+const flooded = new Set();
+
 function note(value) {
   if (!record) return;
   try { appendFileSync(record, JSON.stringify({ pid: process.pid, ...value }) + '\n'); } catch { /* fixture reporting only */ }
@@ -123,6 +135,16 @@ input.on('line', line => {
     response([`seed ${pane} \u001b[31mred\u001b[0m`]);
   } else if (line.includes("'#{cursor_x} #{cursor_y}'")) {
     const pane = paneForTarget(line) || '%1';
+    if (flood && !flooded.has(pane) && (!flood.window || [...panes].find(([, p]) => p === pane)?.[0] === flood.window)) {
+      // Withhold the cursor reply and emit the flood FIRST: the bridge is
+      // subscribed by now, so these bytes land in viewer.pending while init is
+      // still being built — exactly the pre-init gap BUG-158 bounds.
+      flooded.add(pane);
+      const chunk = 'F'.repeat(Math.min(flood.bytes, 64 * 1024));
+      for (let left = flood.bytes; left > 0; left -= chunk.length) {
+        process.stdout.write(`%output ${pane} ${chunk.slice(0, left)}\n`);
+      }
+    }
     response(['2 3']);
     // One output burst per pane, tagged with that pane's id, so a grid test can
     // prove each viewer received ITS stream and not its neighbour's.

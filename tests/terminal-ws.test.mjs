@@ -198,6 +198,7 @@ test('the shared control client is released once the last viewer leaves', async 
   await waitUntil(() => records(record).some(r => r.type === 'signal' && r.signal === 'SIGTERM'), 'client released on last viewer');
 });
 
+<<<<<<< /tmp/mf-ours
 // BUG-055: a remain-on-exit pane whose process has exited emits NO
 // %window-close, still answers list-panes, and still answers send-keys with ok
 // — so neither of the bridge's old death signals fired and an open viewer
@@ -213,10 +214,24 @@ test('live terminal WS ends the viewer when its pane is dead under remain-on-exi
     env: env(record, {
       FLEETDECK_TEST_TERM_DEAD_PANE: '*',       // every fixture pane is dead
       FLEETDECK_TERM_DEAD_POLL_MS: '100',       // don't sit through the 5s default
+=======
+// BUG-158: %output that lands between subscribe and the init frame is buffered
+// in viewer.pending. That buffer is BYTE-BOUNDED like the keystroke queue — a
+// pane flooding past FLEETDECK_TERM_PENDING_MAX_BYTES before its init ships is
+// finished for a resync (exit frame), never hoarded unbounded in daemon memory.
+test('pre-init output past the pending byte bound resyncs the viewer instead of buffering unbounded', async t => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-term-flood-'));
+  const record = path.join(dir, 'term.jsonl');
+  const daemon = await startDaemon({
+    env: env(record, {
+      FLEETDECK_TERM_PENDING_MAX_BYTES: '4096',
+      FLEETDECK_TEST_TERM_PREINIT_FLOOD: '65536',
+>>>>>>> /tmp/mf-theirs
     }),
   });
   t.after(async () => { await daemon.stop(); rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
   const spawned = await createSpawn(daemon, dir);
+<<<<<<< /tmp/mf-ours
   const { ws, frames, closes } = connect(termUrl(daemon, spawned.spawn_id, 80, 24));
 
   await waitUntil(() => frames.find(f => f.t === 'init'), 'init frame');
@@ -256,6 +271,15 @@ test('live terminal WS keeps the viewer open while pane_dead is 0 (BUG-055)', as
   assert.equal(frames.some(f => f.t === 'exit'), false, 'a live pane must never end its viewer');
   assert.equal(frames.some(f => f.t === 'err'), false);
   ws.close();
+=======
+
+  const { frames, closes } = connect(termUrl(daemon, spawned.spawn_id, 80, 24));
+  const exit = await waitUntil(() => frames.find(f => f.t === 'exit'), 'exit frame');
+  assert.match(exit.reason, /output overflow before init/);
+  assert.equal(frames.some(f => f.t === 'init'), false,
+    'a flooded pre-init buffer must not ship a seed it can no longer replay');
+  await waitUntil(() => closes.length > 0, 'socket close');
+>>>>>>> /tmp/mf-theirs
 });
 
 test('live terminal WS refuses an unknown spawn and honors FLEETDECK_TERM=off', async t => {

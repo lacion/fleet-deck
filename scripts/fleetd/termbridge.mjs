@@ -49,6 +49,13 @@ const CLOSE_RECHECK_MS = envInt('FLEETDECK_TERM_CLOSE_RECHECK_MS', 1_000, { min:
 // M-R4: the most pending keystroke bytes we will hold for ONE viewer before
 // evicting it. A human types bytes; only a runaway paste/automation hits this.
 const MAX_INPUT_QUEUE_BYTES = envInt('FLEETDECK_TERM_INPUT_MAX_BYTES', 256 * 1024, { min: 1024 });
+// The pre-init OUTPUT gap buffer gets the same bound as keystrokes: a chatty
+// TUI repainting through the seed/cursor/init round-trips pushes into
+// viewer.pending, which used to grow with no cap. A pane that floods past the
+// bound before init ships is resynced (finished): holding it unbounded grew
+// daemon memory per open viewer and the flushPending burst that finally
+// shipped it could trip MAX_TERM_WS_BUFFER and disconnect the viewer anyway.
+const MAX_PENDING_OUTPUT_BYTES = envInt('FLEETDECK_TERM_PENDING_MAX_BYTES', MAX_INPUT_QUEUE_BYTES, { min: 1024 });
 
 // Cursor home + erase screen: a fresh viewer must never inherit stale cells.
 const CLEAR_SCREEN = '\u001b[H\u001b[2J';
@@ -457,6 +464,7 @@ export function createTermBridge({ port, resolveSpawn, log = () => {} } = {}) {
       finished: false,
       pending: [],                  // R1-4: %output that arrived after we
                                     // subscribed but before the init frame shipped
+      pendingBytes: 0,              // byte bound on the above (BUG-158)
       queuedInput: 0,               // M-R4: pending input bytes not yet sent
       inputChain: Promise.resolve(), // M-R4: serializes this viewer's send-keys
       emit(data) {
@@ -464,8 +472,26 @@ export function createTermBridge({ port, resolveSpawn, log = () => {} } = {}) {
         // R1-4: subscribed but not yet initialized — BUFFER, never drop. We now
         // subscribe right after capture-pane (see below), so output landing
         // during the cursor lookup + init build must be held until the seed has
-        // shipped, then replayed in order by flushPending().
-        if (!this.initialized) { this.pending.push(data); return; }
+        // shipped, then replayed in order by flushPending(). The buffer is BYTE-
+        // BOUNDED like the keystroke queue (M-R4): past the bound the seed this
+        // viewer is waiting for can no longer be replayed faithfully, so we
+        // finish for a resync rather than hoard unbounded pane output.
+        if (!this.initialized) {
+          const bytes = Buffer.byteLength(data, 'utf8');
+          if (this.pendingBytes + bytes > MAX_PENDING_OUTPUT_BYTES) {
+            // finish() only notifies ESTABLISHED viewers, and this one never
+            // got its init — but the socket is exactly who must hear this
+            // (onClose sends 'exit', which the board reads as "resync"), so
+            // stand in as established. The open below then completes against a
+            // finished viewer: its init send is dropped by the closed socket.
+            this.established = true;
+            this.finish('terminal output overflow before init');
+            return;
+          }
+          this.pendingBytes += bytes;
+          this.pending.push(data);
+          return;
+        }
         try { send({ t: 'out', data }); } catch { this.finish('terminal socket closed', false); }
       },
       // R1-4: replay the gap buffer AFTER the init frame, in arrival order. The
@@ -474,6 +500,7 @@ export function createTermBridge({ port, resolveSpawn, log = () => {} } = {}) {
       flushPending() {
         const buffered = this.pending;
         this.pending = [];
+        this.pendingBytes = 0;
         for (const data of buffered) {
           if (this.finished) return;
           try { send({ t: 'out', data }); } catch { this.finish('terminal socket closed', false); }
