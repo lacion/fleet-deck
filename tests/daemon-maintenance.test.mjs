@@ -399,6 +399,27 @@ test('retention presumes dead, archives, expires mail, hides archived rows, and 
   assert.equal(revived.col, 'working');
 });
 
+test('BUG-144: a short ledger horizon never prunes touches the conflict radar still considers', async (t) => {
+  // An accepted ledger horizon (envInt floor: 1 minute) far shorter than the
+  // fixed 30-minute conflict window — the audit's reproduction shape.
+  const { db, core } = memoryCore(t, { env: { FLEETDECK_RETAIN_LEDGER_MS: 60_000 } });
+  const now = Date.now();
+  // A touch five minutes old — inside the fixed 30-minute conflict window the
+  // radar promises to consider, but far outside the one-minute ledger
+  // horizon — plus a 90-second-old command (outside that same horizon).
+  db.prepare(`INSERT INTO file_touches (repo_id, rel_path, abs_path, session_id, worktree, at)
+    VALUES ('repo', 'a.js', '/repo/a.js', 's1', NULL, ?)`).run(now - 5 * 60_000);
+  db.prepare(`INSERT INTO commands (at, text, parsed_json) VALUES (?, '/rc x', NULL)`).run(now - 90_000);
+
+  await core.retentionSweep();
+
+  // The touch survives: touch pruning is floored at CONFLICT_WINDOW_MS, so a
+  // rival editing a.js five minutes later still gets the conflict warning.
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM file_touches').get().n, 1);
+  // The other ledgers still age on the configured (short) horizon.
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM commands').get().n, 0);
+});
+
 test('cleanup archives offline rows, expires mail, kills eligible dead panes, and only lists worktrees', async (t) => {
   const tmux = fakeTmux();
   const { db, core, state } = memoryCore(t, { tmux });

@@ -111,7 +111,11 @@ export function createCore(db, {
   // are aged out of SQLite after this window, and the snapshot only aggregates
   // file touches newer than it. Defaults to 24h (matching the events prune).
   // Daemon-internal only — deliberately NOT in the claudeEnvArgvPrefix scrub
-  // list, since a spawned `claude` child never reads it.
+  // list, since a spawned `claude` child never reads it. envInt's below-min
+  // semantics fall back to the DEFAULT (24h), never to the min, so the
+  // dangerous range is an ACCEPTED horizon between one minute and the fixed
+  // 30-minute conflict window — retention.mjs therefore clamps the file-touch
+  // pruning cutoff to CONFLICT_WINDOW_MS itself (BUG-144).
   const RETAIN_LEDGER_MS = envInt('FLEETDECK_RETAIN_LEDGER_MS', 86_400_000, { min: 60_000 });
   // 0.7.1 /clear succession: how long after a session's /clear a brand-new
   // session id starting in the SAME cwd is read as that session continuing.

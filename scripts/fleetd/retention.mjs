@@ -9,6 +9,7 @@
 
 import fs from 'node:fs';
 import { SHELL_RE, NOT_RESUMABLE_END } from './helpers.mjs';
+import { CONFLICT_WINDOW_MS } from './ledger.mjs';
 
 export function createRetention(ctx) {
   const {
@@ -183,8 +184,14 @@ export function createRetention(ctx) {
     // looks back CONFLICT_WINDOW_MS anyway, and the snapshot windows its query
     // to the same cutoff); commands, conflicts, and settled mail are pruned to
     // the same horizon. Pending mail is never age-pruned here.
+    // File touches are the conflict radar's only evidence, so their pruning
+    // floor is the radar's own window: envInt's below-min value falls back to
+    // the 24h default, but an accepted horizon between one minute and
+    // CONFLICT_WINDOW_MS would prune touches the radar still promises to
+    // consider (BUG-144). Commands/conflicts/mail keep the configured horizon.
+    const touchCutoff = now - Math.max(RETAIN_LEDGER_MS, CONFLICT_WINDOW_MS);
+    if (q.pruneTouches.run(touchCutoff).changes) changed = true;
     const ledgerCutoff = now - RETAIN_LEDGER_MS;
-    if (q.pruneTouches.run(ledgerCutoff).changes) changed = true;
     if (q.pruneCommands.run(ledgerCutoff).changes) changed = true;
     if (q.pruneConflicts.run(ledgerCutoff).changes) changed = true;
     if (q.pruneSettledMail.run(ledgerCutoff).changes) changed = true;
