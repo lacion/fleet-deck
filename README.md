@@ -256,7 +256,16 @@ A managed daemon is never evicted by a plugin hook. Normally the newest installe
 - **Unsupervised means unsupervised.** `--dangerously-skip-permissions` workers never produce permission cards. The checkbox is red and asks twice. Pair it with a fresh worktree.
 - **The permission relay is interactive-only.** Headless `claude -p` sessions deny permission-needing tools without consulting hooks — CLI behavior, not ours. Spawned workers are interactive precisely so their prompts reach the board.
 - **Version pin: Claude Code CLI 2.1.206+ (tested through 2.1.207).** Fleet Deck relies on a few undocumented behaviors; a guard test fails loudly if a CLI update drops them, and contract tests replay recorded hook payloads so schema drift is caught in CI.
-- **Ports.** `FLEETDECK_PORT` / `FLEETDECK_HOME`. Hooks default to 4711, so a truly separate fleet also needs the port swapped in a copy of `hooks/hooks.json`. On multi-user machines give each OS user their own port.
+- **Ports.** `FLEETDECK_PORT` / `FLEETDECK_HOME`. Hooks default to 4711, but the shims resolve the port and home from the environment at invocation time — `hooks/hooks.json` contains no port to edit, so there is nothing to copy or swap. A truly separate fleet instead needs **every** Claude Code process it owns to inherit the same `FLEETDECK_PORT` and `FLEETDECK_HOME` as its daemon:
+
+  ```sh
+  export FLEETDECK_PORT=4712 FLEETDECK_HOME=~/.fleetdeck-alt
+  fleetdeck serve &        # or `fleetdeck service install` + `start`, which
+                           # snapshots both variables into service.env
+  claude                   # hooks from this session now report to :4712
+  ```
+
+  On multi-user machines give each OS user their own port.
 
 ### tmux isolation and the one-port rule
 
