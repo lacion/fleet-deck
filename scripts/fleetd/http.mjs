@@ -930,6 +930,7 @@ export function createHttp(core, {
           return json(res, 200, { mail: box, ack_mail_ids: box.map(m => m.id) });
         }
         if (url.pathname === '/api/watch') return watchHook(req, res, url); // F3d-2 long-poll
+<<<<<<< /tmp/mf-ours
         if (url.pathname === '/' || url.pathname === '/index.html' || url.pathname.startsWith('/assets/')) {
           // built React board (Phase 5) from board-dist. /index.html is the
 <<<<<<< /tmp/mf-ours
@@ -940,6 +941,14 @@ export function createHttp(core, {
           // that normalizes to it must boot the same shell isPublicShell
           // already classifies as public; it resolves to the same
           // board-dist/index.html as '/'.
+>>>>>>> /tmp/mf-theirs
+=======
+        if (shell) {
+          // built React board (Phase 5) from board-dist — every path the auth
+          // layer declared a public shell must actually be SERVED as one, so a
+          // proxy/health-check that asks for /index.html explicitly gets the
+          // same document as / (BUG-192). Missing files (e.g. favicon.ico)
+          // still 404 via the notFound callback.
 >>>>>>> /tmp/mf-theirs
           return serveBoardAsset(res, url.pathname, () => json(res, 404, { err: 'nope' }));
         }

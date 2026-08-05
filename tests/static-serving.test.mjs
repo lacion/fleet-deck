@@ -48,6 +48,13 @@ async function getText(url) {
   return { status: res.status, type: res.headers.get('content-type') || '', text: await res.text() };
 }
 
+async function getHeaders(url) {
+  const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+  const headers = {};
+  res.headers.forEach((value, name) => { headers[name] = value; });
+  return { status: res.status, headers, text: await res.text() };
+}
+
 test('static serving: board, assets, traversal, API regression', async t => {
   const daemon = await startDaemon();
   t.after(() => daemon.stop());
@@ -63,6 +70,7 @@ test('static serving: board, assets, traversal, API regression', async t => {
     indexHtml = res.text;
   });
 
+<<<<<<< /tmp/mf-ours
 <<<<<<< /tmp/mf-ours
   await t.test('GET /index.html serves the same shell as GET /', async () => {
     // /index.html is part of the public-shell contract (isPublicShell lets it
@@ -91,6 +99,18 @@ test('static serving: board, assets, traversal, API regression', async t => {
     assert.equal(res.text, '');
 =======
     assert.match(res.text, /<div id="root">/);
+>>>>>>> /tmp/mf-theirs
+=======
+  await t.test('GET /index.html serves the same shell as / (BUG-192)', async () => {
+    const root = await getHeaders(daemon.baseUrl + '/');
+    const explicit = await getHeaders(daemon.baseUrl + '/index.html');
+    assert.equal(explicit.status, 200);
+    assert.equal(explicit.text, root.text, 'same body as /');
+    for (const h of ['content-type', 'content-security-policy', 'referrer-policy', 'cache-control']) {
+      assert.equal(explicit.headers[h], root.headers[h], `${h} matches /`);
+    }
+    assert.equal(explicit.headers['content-security-policy'].includes("default-src 'self'"), true, 'shell CSP present');
+    assert.equal(explicit.headers['cache-control'], 'no-store', 'shell is never cached');
 >>>>>>> /tmp/mf-theirs
   });
 
