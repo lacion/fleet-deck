@@ -165,13 +165,33 @@ export async function startDaemon({
 } = {}) {
   const raw = spawnRaw({ port, home, scriptPath, env });
   const baseUrl = `http://127.0.0.1:${port}`;
+  // Any 2xx /health on the port is NOT proof our child came up: two test
+  // processes can draw the same scratch port, and the election loser exits 3
+  // while the winner keeps answering. Require the health body to name our
+  // child's PID, and race the poll against the child exiting, so a dead
+  // child is never handed back as a live handle onto another run's daemon.
+  let healthSettled = false;
+  const childExited = new Promise((_, reject) => {
+    if (raw.proc.exitCode !== null) {
+      reject(new Error(`daemon (pid ${raw.proc.pid}) exited with code ${raw.proc.exitCode} before becoming healthy`));
+      return;
+    }
+    raw.proc.once('exit', code => {
+      if (!healthSettled) reject(new Error(`daemon (pid ${raw.proc.pid}) exited with code ${code} before becoming healthy`));
+    });
+  });
   try {
-    await waitForHealth(baseUrl, healthTimeoutMs);
+    const health = await Promise.race([waitForHealth(baseUrl, healthTimeoutMs), childExited]);
+    if (health?.pid !== raw.proc.pid) {
+      throw new Error(`/health on ${baseUrl} answered for pid ${health?.pid ?? '(none)'}, not our child's pid ${raw.proc.pid} — the port belongs to another daemon`);
+    }
   } catch (err) {
+    healthSettled = true;
     await raw.kill();
     const detail = raw.stderr || raw.stdout || '(no output captured)';
     throw new Error(`${err.message}\n--- daemon output ---\n${detail}`);
   }
+  healthSettled = true;
   // 0.16.0: the daemon always mints/persists a token, and /hook/*, POST /mail,
   // /ws/term and gateway_* writes now require it. Surface it on the handle so
   // tests can act as the authenticated caller (postHook, postJson {token}).

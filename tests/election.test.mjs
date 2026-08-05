@@ -15,7 +15,14 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+<<<<<<< /tmp/mf-ours
 import { startDaemon, spawnRaw, randomPort, waitForHealth } from './helpers/daemon.mjs';
+=======
+import { fileURLToPath } from 'node:url';
+import { startDaemon, spawnRaw, randomPort } from './helpers/daemon.mjs';
+>>>>>>> /tmp/mf-theirs
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 test('a second daemon on the same port loses the election and exits with code 3', async (t) => {
   const port = randomPort();
@@ -40,6 +47,7 @@ test('a second daemon on the same port loses the election and exits with code 3'
   assert.equal(health.status, 200, 'the winning daemon should remain healthy after the collision');
 });
 
+<<<<<<< /tmp/mf-ours
 <<<<<<< /tmp/mf-ours
 // BUG-121 regression: a malformed FLEETDECK_PORT made server.listen throw
 // synchronously AFTER the pid guard claimed HOME — the async server 'error'
@@ -173,5 +181,51 @@ test('a MANAGED challenger never fights for HOME, even against an older unmanage
   const health = await (await fetch(`http://127.0.0.1:${port}/health`)).json();
   assert.equal(health.pid, incumbentPid, 'the unmanaged incumbent keeps serving');
   assert.equal(incumbent.proc.exitCode, null, 'the incumbent was never signalled');
+>>>>>>> /tmp/mf-theirs
+=======
+test('startDaemon refuses a /health answered by a different pid (BUG-164)', async (t) => {
+  const port = randomPort();
+  const homeA = mkdtempSync(path.join(tmpdir(), 'fleetdeck-home-a-'));
+  const homeB = mkdtempSync(path.join(tmpdir(), 'fleetdeck-home-b-'));
+  t.after(() => {
+    rmSync(homeA, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    rmSync(homeB, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  const winner = await startDaemon({ port, home: homeA });
+  t.after(async () => { await winner.stop(); });
+
+  // The loser's child exits 3 after losing the bind while /health keeps
+  // answering with the winner's pid. startDaemon must reject — it must never
+  // hand back a handle onto another run's daemon and never read the loser's
+  // HOME token as the identity of the winner.
+  await assert.rejects(
+    startDaemon({ port, home: homeB, healthTimeoutMs: 3000 }),
+    /pid/i,
+    'a /health body naming another pid must not be accepted as proof of readiness'
+  );
+});
+
+test('startDaemon rejects when the child exits before any /health answer (BUG-164)', async (t) => {
+  const port = randomPort();
+  const home = mkdtempSync(path.join(tmpdir(), 'fleetdeck-home-dead-'));
+  t.after(() => {
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  // A daemon script that dies immediately: without racing readiness against
+  // the child's exit, startDaemon would poll the (unbound) port until the
+  // health timeout instead of failing as soon as the child is gone.
+  const start = Date.now();
+  await assert.rejects(
+    startDaemon({
+      port,
+      home,
+      scriptPath: path.join(HERE, 'helpers', 'stub-dying-daemon.mjs'),
+      healthTimeoutMs: 60000,
+    }),
+    /exited with code/,
+  );
+  assert.ok(Date.now() - start < 30000, 'should fail fast on child exit, not poll until the health timeout');
 >>>>>>> /tmp/mf-theirs
 });
