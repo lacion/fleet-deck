@@ -119,23 +119,26 @@ async function killDaemonAt(port, home) {
 // ---------------------------------------------------------------------------
 
 test('semver: parse, numeric compare, and the strictly-newer + 0.0.0/unparseable refusal rules', () => {
-  // parseSemver: three all-digit segments; leading v and -/+ suffix tolerated.
-  assert.deepEqual(parseSemver('0.6.0'), [0, 6, 0]);
-  assert.deepEqual(parseSemver('v1.2.3'), [1, 2, 3]);
-  assert.deepEqual(parseSemver('0.6.10-rc.1'), [0, 6, 10]);
-  assert.deepEqual(parseSemver('1.0.0+build.9'), [1, 0, 0]);
+  // parseSemver: three all-digit core segments; leading v tolerated; build
+  // metadata ignored; a prerelease is kept (numeric identifiers as numbers).
+  assert.deepEqual(parseSemver('0.6.0'), { core: [0, 6, 0], pre: [] });
+  assert.deepEqual(parseSemver('v1.2.3'), { core: [1, 2, 3], pre: [] });
+  assert.deepEqual(parseSemver('0.6.10-rc.1'), { core: [0, 6, 10], pre: ['rc', 1] });
+  assert.deepEqual(parseSemver('1.0.0+build.9'), { core: [1, 0, 0], pre: [] });
+  assert.deepEqual(parseSemver('1.0.0-rc.2+build.9'), { core: [1, 0, 0], pre: ['rc', 2] });
   assert.equal(parseSemver('1.2'), null, 'fewer than three segments is unorderable');
   assert.equal(parseSemver('1.2.x'), null, 'a non-numeric segment is unorderable');
+  assert.equal(parseSemver('1.0.0-'), null, 'an empty prerelease is unorderable');
   assert.equal(parseSemver('latest'), null);
   assert.equal(parseSemver(''), null);
   assert.equal(parseSemver(null), null);
   assert.equal(parseSemver(undefined), null);
 
   // compareSemver is numeric, never lexicographic (0.6.10 > 0.6.2).
-  assert.equal(compareSemver([0, 6, 10], [0, 6, 2]), 1);
-  assert.equal(compareSemver([0, 6, 2], [0, 6, 10]), -1);
-  assert.equal(compareSemver([1, 0, 0], [0, 9, 9]), 1);
-  assert.equal(compareSemver([0, 6, 0], [0, 6, 0]), 0);
+  assert.equal(compareSemver(parseSemver('0.6.10'), parseSemver('0.6.2')), 1);
+  assert.equal(compareSemver(parseSemver('0.6.2'), parseSemver('0.6.10')), -1);
+  assert.equal(compareSemver(parseSemver('1.0.0'), parseSemver('0.9.9')), 1);
+  assert.equal(compareSemver(parseSemver('0.6.0'), parseSemver('0.6.0')), 0);
 
   // shouldTakeOver: strictly newer, both parse, neither is the 0.0.0 sentinel.
   assert.equal(shouldTakeOver('0.7.0', '0.6.0'), true);
@@ -151,6 +154,36 @@ test('semver: parse, numeric compare, and the strictly-newer + 0.0.0/unparseable
   assert.equal(shouldTakeOver('0.7.0', 'garbage'), false);
   assert.equal(shouldTakeOver('garbage', '0.6.0'), false);
   assert.equal(shouldTakeOver(null, '0.6.0'), false);
+});
+
+test('semver: prerelease precedence — RC-to-RC and RC-to-final upgrades take over', () => {
+  // The semver.org §11 chain on a shared core: every step is strictly newer.
+  const chain = ['1.0.0-alpha', '1.0.0-alpha.1', '1.0.0-alpha.beta', '1.0.0-beta',
+    '1.0.0-beta.2', '1.0.0-beta.11', '1.0.0-rc.1', '1.0.0'];
+  for (let i = 1; i < chain.length; i += 1) {
+    assert.equal(compareSemver(parseSemver(chain[i]), parseSemver(chain[i - 1])), 1,
+      `${chain[i]} must sort above ${chain[i - 1]}`);
+    assert.equal(shouldTakeOver(chain[i], chain[i - 1]), true,
+      `${chain[i]} must take over ${chain[i - 1]}`);
+    assert.equal(shouldTakeOver(chain[i - 1], chain[i]), false,
+      `${chain[i - 1]} must never take over ${chain[i]}`);
+  }
+
+  // The reported upgrade paths, on the core the audit named.
+  assert.equal(shouldTakeOver('0.20.0-rc.2', '0.20.0-rc.1'), true, 'RC2 must evict RC1');
+  assert.equal(shouldTakeOver('0.20.0', '0.20.0-rc.2'), true, 'final must evict the RC');
+  assert.equal(shouldTakeOver('0.20.0-rc.1', '0.20.0-rc.2'), false, 'an older RC never evicts a newer one');
+  assert.equal(shouldTakeOver('0.20.0-rc.1', '0.20.0'), false, 'an RC never evicts its final');
+  assert.equal(shouldTakeOver('0.20.0-rc.1', '0.20.0-rc.1'), false, 'an identical version never evicts');
+  assert.equal(shouldTakeOver('0.20.0-rc.1', '0.20.0-rc.01'), false,
+    'numeric identifier equality is by VALUE, so a respawn loop is impossible');
+  // Build metadata is ignored for ordering — equal versions never evict.
+  assert.equal(shouldTakeOver('0.20.0-rc.1+build.2', '0.20.0-rc.1+build.1'), false);
+  assert.equal(shouldTakeOver('0.20.0+build.2', '0.20.0-rc.1'), true,
+    'build metadata does not hide the final-over-RC precedence');
+  // A newer core still dominates any prerelease of an older core.
+  assert.equal(shouldTakeOver('0.21.0-rc.1', '0.20.0'), true);
+  assert.equal(shouldTakeOver('0.20.0', '0.21.0-rc.1'), false);
 });
 
 test('verifyDaemonPid refuses a non-fleetd-shaped live pid, a pidfile mismatch, and a missing pidfile', async (t) => {
