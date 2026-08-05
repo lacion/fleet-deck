@@ -805,8 +805,14 @@ else
 fi
 
 # --------------------------------------------------------------- gate 8
+# Mark the plan executed ONLY when gate 7 actually proved execution: the
+# implementation + function artifacts passed mechanical validation (EXECUTED)
+# and no executor permission card was observed across the sampled boundary
+# (NO_PERMISSION_CARD). Marking on PLAN_ID alone would record failed or
+# never-ran work as executed — and against the wrong daemon could corrupt a
+# real production plan's state.
 MARK_HTTP=000
-if [ -n "$PLAN_ID" ]; then
+if [ -n "$PLAN_ID" ] && [ -n "$EXECUTED" ] && [ -n "$NO_PERMISSION_CARD" ]; then
   MARK_BODY=$(node -e '
     process.stdout.write(JSON.stringify({status: "executed", via: "accept-script"}));
   ')
@@ -815,7 +821,11 @@ if [ -n "$PLAN_ID" ]; then
     -d "$MARK_BODY" 2>/dev/null || true)
 fi
 
-if [ "$MARK_HTTP" = 200 ]; then
+if [ -z "$PLAN_ID" ]; then
+  bad "plan marked executed" "no plan ID was captured"
+elif [ -z "$EXECUTED" ] || [ -z "$NO_PERMISSION_CARD" ]; then
+  bad "plan marked executed" "gate 7 did not prove execution; refusing to mark a non-executed plan"
+elif [ "$MARK_HTTP" = 200 ]; then
   ok "plan marked executed"
 else
   bad "plan marked executed" "HTTP $MARK_HTTP"
