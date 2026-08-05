@@ -546,6 +546,11 @@ export function createHttp(core, {
     UserPromptSubmit: ev => core.hookUserPromptSubmit(ev),
     PostToolUse: ev => core.hookPostToolUse(ev),
     PreToolUse: ev => core.hookPostToolUse(ev), // same derivation branch as the spike
+    // BUG-102: a FAILED tool call is still a completed tool call — route it
+    // through the same correlated expiry so its permission hold retires now
+    // instead of after the full hold window. hookPostToolUse keeps the event's
+    // own name (PostToolUseFailure) in applyEvent and any whisper.
+    PostToolUseFailure: ev => core.hookPostToolUse(ev),
     Stop: ev => core.hookStop(ev),
     SessionEnd: ev => core.hookSessionEnd(ev),
     Notification: ev => (core.applyEvent({ ...ev, hook_event_name: 'Notification' }), {}),

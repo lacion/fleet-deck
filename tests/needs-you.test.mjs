@@ -436,6 +436,55 @@ test('subsequent activity (UserPromptSubmit) returns col to working and expires 
   assert.deepEqual(heldRes.json, {}, 'activity-expired hold should resolve to {}');
 });
 
+test('BUG-102: a FAILED tool call (PostToolUseFailure) retires its correlated permission hold promptly — the board must not show needsyou for an operation that already finished unsuccessfully', async (t) => {
+  const holdMs = 6000; // long enough that early resolution can only be activity-driven, not the natural timeout
+  const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
+  const cwd = scratchCwd();
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+
+  const sid = randomUUID();
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon });
+
+  // The human permits the Bash call in the terminal; the tool runs and FAILS.
+  // The completing PostToolUseFailure carries the SAME (tool_name, tool_input)
+  // as the held PermissionRequest — the failure fixture matches the permission
+  // fixture verbatim.
+  const held = postHook(
+    daemon.baseUrl, 'PermissionRequest',
+    loadFixture('permission-request', { session_id: sid, cwd }),
+    { token: daemon, timeout: holdMs + 5000 },
+  );
+
+  const q = await waitUntil(async () => {
+    const state = (await getJson(`${daemon.baseUrl}/state`)).json;
+    return questionsFor(state, sid, 'permission')[0];
+  }, { label: 'permission question registered' });
+
+  let state = (await getJson(`${daemon.baseUrl}/state`)).json;
+  assert.equal(findSession(state, sid).col, 'needsyou', 'a held permission request should show needsyou on the board');
+
+  const t0 = Date.now();
+  const failRes = await postHook(
+    daemon.baseUrl, 'PostToolUseFailure',
+    loadFixture('post-tool-use-failure', { session_id: sid, cwd }),
+    { token: daemon },
+  );
+  assert.deepEqual(failRes.json, {}, 'PostToolUseFailure should respond {} like every no-conflict tool hook');
+
+  const heldRes = await held;
+  const elapsed = Date.now() - t0;
+  assert.ok(elapsed < holdMs, `the failed tool call should retire its hold promptly, not wait out the full ${holdMs}ms hold (took ${elapsed}ms)`);
+  assert.deepEqual(heldRes.json, {}, 'the failure-retired hold should fail open with {}');
+
+  state = (await getJson(`${daemon.baseUrl}/state`)).json;
+  const q2 = state.questions.find(x => String(x.id) === String(q.id));
+  assert.ok(q2, 'the permission question should still be present in /state');
+  assert.equal(q2.status, 'expired', 'PostToolUseFailure should expire its correlated pending permission question');
+  const card = findSession(state, sid);
+  assert.equal(card.col, 'working', 'a failed Bash call is still activity — the card must not stay needsyou');
+  assert.equal(card.lastTool, 'Bash', 'the failed tool is recorded like a successful one');
+});
+
 // ---------------------------------------------------------------------------
 // 5. SessionEnd expires all pending questions for the session
 // ---------------------------------------------------------------------------

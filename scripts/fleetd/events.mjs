@@ -245,7 +245,8 @@ export function createEvents(ctx) {
         tick(`${c.callsign} got a prompt`);
         break;
       case 'PreToolUse':
-      case 'PostToolUse': {
+      case 'PostToolUse':
+      case 'PostToolUseFailure': { // BUG-102: a failed tool call finished too — same card activity
         set.col = c.col === 'needsyou' ? 'working' : (c.col === 'queued' ? 'working' : c.col);
         set.notification_type = null; // activity clears the needs-you reason (F3e)
         set.last_tool = ev.tool_name ?? null;
@@ -496,8 +497,10 @@ export function createEvents(ctx) {
     };
   }
 
-  // http.mjs routes BOTH /hook/PreToolUse and /hook/PostToolUse here (same
-  // derivation branch as the spike). The conflict whisper must therefore
+  // http.mjs routes /hook/PreToolUse, /hook/PostToolUse AND
+  // /hook/PostToolUseFailure here (same derivation branch as the spike; a
+  // failed tool call also retires its correlated hold — BUG-102). The conflict
+  // whisper must therefore
   // declare the caller's ACTUAL event name — a PreToolUse client that receives
   // hookSpecificOutput.hookEventName:'PostToolUse' may drop the mismatched
   // whisper (M-B2). The event's own hook_event_name is authoritative (Claude
