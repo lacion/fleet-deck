@@ -350,7 +350,6 @@ test('dismiss refuses a card whose spawn is stalled (consistency with archiveCan
   assert.equal(spawnStatus(db, 'sp-stalled'), 'stalled', 'and its spawn row is not goned');
 });
 
-<<<<<<< /tmp/mf-ours
 // ------------------------------------------------------------- BUG-145
 // Cleanup/dismiss used to treat a null tmux listing as empty and to ignore
 // {ok:false} kills, then report unconditional success — stale windows stayed
@@ -530,7 +529,8 @@ test('dismissRetry refuses cards that are not dismissed and unknown ids', async 
   assert.match(notDismissed.body.reason, /not dismissed/);
   const unknown = await core.dismissRetry(randomUUID());
   assert.equal(unknown.status, 404);
-=======
+});
+
 // BUG-193: /health.fleet (and `fleetdeck status`'s "sessions") is the CURRENT
 // fleet — the cards /state can show. Dismissed and retention-archived rows are
 // history; counting them left health reporting a fleet after the board had
@@ -556,7 +556,6 @@ test('BUG-193: fleetSize agrees with /state across dismiss and retention archiva
     'sanity: the sweep retention-archived the stale offline card');
   assert.equal(core.fleetSize(), 1, 'a retention-archived card leaves the health count with the board');
   assert.equal(core.fleetSize(), core.snapshot().sessions.length, 'fleetSize === /state.sessions.length');
->>>>>>> /tmp/mf-theirs
 });
 
 // -------------------------------------------------------- HTTP route wiring

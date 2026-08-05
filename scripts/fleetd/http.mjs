@@ -195,7 +195,6 @@ export function createHttp(core, {
   port, version = '0.0.0', capture = () => {}, token, lan = null,
   trustedOrigins = [], proxyAuth = 'token', managed = false, requireToken = false,
   trustLoopback = false,
-  startup = null,
 }) {
   // CAPABILITY: may a tokenless caller upgrade /ws/term? The board reads this
   // off /health to diagnose a pre-frame terminal close (see board/src/
@@ -216,39 +215,12 @@ export function createHttp(core, {
   // open, token included (a browser cannot send an Authorization header on its
   // first navigation). Absent/disabled ⇒ the panel says "local only" rather
   // than inventing a URL. Only ever handed to an ALREADY-AUTHORIZED caller —
-<<<<<<< /tmp/mf-ours
   // snapshot() is behind the same gate as everything else.
-<<<<<<< /tmp/mf-ours
-  // `lan` may be a function, resolved per snapshot: fleetd uses that to drop
-  // lan.mdns the moment the mDNS responder stands down, so the share panel
-  // never keeps offering a URL that can no longer resolve.
-  function currentLan() {
-    const source = typeof lan === 'function' ? lan() : lan;
-    return source?.enabled
-      ? { enabled: true, urls: source.urls ?? [], mdns: source.mdns ?? null }
-      : { enabled: false, urls: [] };
-  }
-<<<<<<< /tmp/mf-ours
-=======
-  // snapshot() is behind the same gate as everything else. refreshLan() replaces
-  // the URL set when the host's interfaces change, so a roaming daemon stops
-  // advertising an address it no longer answers on.
-=======
   // `let`, not `const`: refreshLan() swaps this atomically when the LAN address
   // set changes, so the share panel shows the address the host has NOW.
->>>>>>> /tmp/mf-theirs
   let lanInfo = lan?.enabled
     ? { enabled: true, urls: lan.urls ?? [], mdns: lan.mdns ?? null }
     : { enabled: false, urls: [] };
->>>>>>> /tmp/mf-theirs
-
-  function refreshLan(nextLan) {
-    lanInfo = nextLan?.enabled
-      ? { enabled: true, urls: nextLan.urls ?? [], mdns: nextLan.mdns ?? null }
-      : { enabled: false, urls: [] };
-  }
-=======
->>>>>>> /tmp/mf-theirs
 
   function snapshotWithLan() {
     return { ...core.snapshot(), lan: currentLan(), legacy_upgrade: legacyBanner() };
@@ -395,22 +367,13 @@ export function createHttp(core, {
   function noteLegacySession(sid) {
     if (typeof sid !== 'string' || !sid || sid === 'unknown') return;
     if (upgradedSessions.has(sid)) return;
-    if (legacySessions.has(sid)) return;
     legacySessions.add(sid);
-    // The board learns legacy_upgrade from the /ws frame now — a tokenless
-    // hook changes no session state (nothing else would broadcast), so push
-    // one ourselves or a live board never sees the restart banner appear.
-    scheduleBroadcast();
   }
   function noteUpgradedSession(sid) {
     if (typeof sid !== 'string' || !sid || sid === 'unknown') return;
     if (upgradedSessions.has(sid)) return;
     upgradedSessions.add(sid);
-    const wasLegacy = legacySessions.delete(sid);
-    // Same push when a legacy session restarts (its banner entry must shrink)
-    // — unless the authenticated hook mutates session state anyway and will
-    // broadcast on its own (the common SessionStart path).
-    if (wasLegacy) scheduleBroadcast();
+    legacySessions.delete(sid);
   }
   function legacyBanner() {
     return { sessions: [...legacySessions], upgraded: upgradedSessions.size };
@@ -440,38 +403,6 @@ export function createHttp(core, {
   const daemonPort = String(port);
   // Hostnames that count as "us": loopback (localhost, 127/8, ::1 — via
   // isLoopbackAddress), every address this host actually answers on, and the
-<<<<<<< /tmp/mf-ours
-  // advertised mDNS .local name. Built once — a LAN address is not going to
-  // change under the daemon's feet.
-  //
-  // BUG-118: the set is enumerated per request, not frozen at startup — after a
-  // DHCP roam or network change the daemon must authorize its NEW addresses
-  // without a restart. It is a Set over a handful of strings; rebuilding it on
-  // the (already rate-limited) request path costs microseconds.
-  function lanHosts() {
-    const hosts = new Set();
-    try {
-      for (const entries of Object.values(os.networkInterfaces())) {
-        for (const entry of entries || []) {
-          if (entry?.address) hosts.add(String(entry.address).toLowerCase());
-        }
-      }
-<<<<<<< /tmp/mf-ours
-    }
-  } catch { /* restricted sandbox: loopback stays allowed regardless */ }
-  try {
-    const lanSeed = typeof lan === 'function' ? lan() : lan;
-    if (lanSeed?.mdns) lanHosts.add(new URL(lanSeed.mdns).hostname.toLowerCase());
-  } catch { /* malformed mDNS URL — skip it; the IP URLs still work */ }
-=======
-    } catch { /* restricted sandbox: loopback stays allowed regardless */ }
-    try {
-      if (lan?.mdns) hosts.add(new URL(lan.mdns).hostname.toLowerCase());
-    } catch { /* malformed mDNS URL — skip it; the IP URLs still work */ }
-    return hosts;
-  }
->>>>>>> /tmp/mf-theirs
-=======
   // advertised mDNS .local name. The address set is REFRESHED from the interface
   // list on every checked request (cheaply, via os.getAddresses): Wi-Fi roaming,
   // DHCP renewal and VPN changes DO move the LAN address under a long-lived
@@ -499,31 +430,16 @@ export function createHttp(core, {
     } catch { /* restricted sandbox: loopback stays allowed regardless */ }
   }
   refreshLanHosts();
->>>>>>> /tmp/mf-theirs
 
   // WHATWG URL keeps the brackets on an IPv6 hostname ([::1]); strip them so the
   // value matches what isLoopbackAddress / the lanHosts set hold.
   const normHost = h => String(h || '').toLowerCase().replace(/^\[/, '').replace(/\]$/, '');
   // A parsed URL is ours when its hostname is loopback / an own LAN address /
-  // the .local name AND its EFFECTIVE port is our port. WHATWG URL normalizes
-  // an explicit default port away (new URL('http://x:80').port === ''), so an
-  // absent port means the scheme default 80/443 — NOT "whatever port fleetd
-  // happens to listen on". Without resolving it, an Origin of plain
-  // http://127.0.0.1 (a page served by any other local service on :80) read
-  // as same-origin with a daemon on a non-default port, and the whole CSRF
-  // wall below fell open. (BUG-030)
-  function effectivePort(u) {
-    if (u.port) return u.port;
-    return u.protocol === 'https:' ? '443' : '80'; // Host-only parses under http://
-  }
+  // the .local name AND its port is our port (or absent, i.e. a default 80/443).
   function hostAllowed(u) {
     refreshLanHosts();
     const host = normHost(u.hostname);
-<<<<<<< /tmp/mf-ours
-    return (isLoopbackAddress(host) || lanHosts.has(host)) && effectivePort(u) === daemonPort;
-=======
     return (isLoopbackAddress(host) || lanHosts().has(host)) && (u.port === '' || u.port === daemonPort);
->>>>>>> /tmp/mf-theirs
   }
   // The operator-named extension of "us" (see parseTrustedOrigins). Kept separate
   // from hostAllowed so that a deployment which configures nothing gets today's
@@ -621,10 +537,6 @@ export function createHttp(core, {
   // PermissionRequest / Elicitation / AskUserQuestion are handled OUT of this
   // table (Phase 3/4 hold-open relay — the response is parked, see the hook
   // branch below).
-  // Payloads WITHOUT a session_id still ingest best-effort telemetry (an
-  // unknown-name hook, telemetry-only Notification/FileChanged, and the
-  // AskUserQuestion→PermissionRequest pairing all stay visible), but they are
-  // never DISPATCHED to a hook handler — the dispatch gate below refuses them.
   const hookHandlers = {
     // 0.16.0: the hook that may have just performed the version takeover gets
     // the upgrade lines appended — the human who started THAT session hears
@@ -639,19 +551,10 @@ export function createHttp(core, {
     UserPromptSubmit: ev => core.hookUserPromptSubmit(ev),
     PostToolUse: ev => core.hookPostToolUse(ev),
     PreToolUse: ev => core.hookPostToolUse(ev), // same derivation branch as the spike
-    // BUG-102: a FAILED tool call is still a completed tool call — route it
-    // through the same correlated expiry so its permission hold retires now
-    // instead of after the full hold window. hookPostToolUse keeps the event's
-    // own name (PostToolUseFailure) in applyEvent and any whisper.
-    PostToolUseFailure: ev => core.hookPostToolUse(ev),
     Stop: ev => core.hookStop(ev),
     SessionEnd: ev => core.hookSessionEnd(ev),
     Notification: ev => (core.applyEvent({ ...ev, hook_event_name: 'Notification' }), {}),
     FileChanged: ev => (core.applyEvent({ ...ev, hook_event_name: 'FileChanged' }), {}),
-    // BUG-104: the shim emits this event's watchPaths itself (fleet-hook.mjs);
-    // the daemon side is pure telemetry — one note so a `cd` is visible in the
-    // session's event log.
-    CwdChanged: ev => (core.applyEvent({ ...ev, hook_event_name: 'CwdChanged' }), {}),
   };
 
   // F3a/F3b/F3c hold-open relay: create the durable question row, then park
@@ -680,15 +583,10 @@ export function createHttp(core, {
   //   {status:'mail', mail_id, at, from, text}
   //     The OLDEST undelivered mail for <sid> — from ANY sender — existed
   //     (or arrived during the hold) and was ATOMICALLY claimed by this
-  //     response. BUG-034: the claim is an EXPIRING IN-FLIGHT LEASE, not a
-  //     delivery — claimed_at is set (deadline) while delivered_at stays
-  //     NULL, so the turn-boundary path (UserPromptSubmit/Stop-block/GET
-  //     /mail drains, which all filter delivered_at IS NULL plus a
-  //     live-lease check) can never re-deliver it WHILE the lease lives, and
-  //     the watcher finalizes delivery with POST /mail/ack once it holds the
-  //     body. A claim whose response never reached the watcher simply lets
-  //     the lease lapse — the retention sweep releases it and the mail is
-  //     re-delivered instead of lost. `text` is the RAW
+  //     response: the mail row's delivered_at is set in the same synchronous
+  //     step that resolves the poll, so the turn-boundary path
+  //     (UserPromptSubmit/Stop-block/GET /mail drains, which all filter
+  //     delivered_at IS NULL) can never re-deliver it. `text` is the RAW
   //     mail text including its own frame ([FLEETDECK ANSWER] …,
   //     [FLEETDECK ASSIGNMENT] …, or plain board/session mail) — no prefix
   //     stripping; the Stop hook's rewakeMessage is neutral in v2 and each
@@ -713,11 +611,6 @@ export function createHttp(core, {
   //
   //   Races: mailbox drained first → delivered_at already set → the poll's
   //   claim finds nothing and the hold simply lapses to idle. Watcher socket
-<<<<<<< /tmp/mf-ours
-  //   gone → 'close' unregisters the waiter, nothing claimed. A claim whose
-  //   response the watcher never reads is no longer a loss window (BUG-034):
-  //   without the ack the lease lapses and the mail comes back.
-=======
   //   gone → 'close' unregisters the waiter, nothing claimed. Accepted
   //   window: a claim whose response the watcher never reads loses
   //   auto-delivery (the mail row is marked delivered either way).
@@ -730,7 +623,6 @@ export function createHttp(core, {
   //   request's claim attempt fails the generation check and it lapses to
   //   idle (the mail stays queued for the current generation to claim). No
   //   `wg` (a hand-rolled poll, an older watcher) claims exactly as before.
->>>>>>> /tmp/mf-theirs
   function watchHook(req, res, url) {
     const sid = url.searchParams.get('session') || '';
     const holdRaw = Number(url.searchParams.get('hold_ms'));
@@ -841,23 +733,7 @@ export function createHttp(core, {
           // hook already fetches before it decides whether to evict us.
           return json(res, 200, {
             ok: true, fleet: core.fleetSize(), pid: process.pid, version, managed,
-<<<<<<< /tmp/mf-ours
-            spawn: core.spawnCapability(),
-            // Boot-reconciliation readiness. Both heals are kicked fire-and-forget
-            // from the listen callback, so /health answering 200 is NOT proof they
-            // have run — and the asynchronous half (reconcileSpawns) pushes a
-            // mutation broadcast when it settles a row. A client with zero
-            // tolerance for a broadcast it did not cause (the /ws backpressure
-            // hardening test) needs a deterministic "startup mutation window is
-            // closed" signal; 'settled' flips only when BOTH heals are done.
-            // No status exposed (a boot tmux failure still settles); the startup
-            // refusals that would leave it 'reconciling' forever never reach
-            // listen. Tests poll /health → http.mjs stays the consumer of
-            // readiness, so no timer keeps the loop alive.
-            startup: startup?.reconciliationStatus?.() ?? null,
-=======
             spawn: core.spawnCapability(), auth: termAuth,
->>>>>>> /tmp/mf-theirs
           });
         }
         if (url.pathname === '/state') return json(res, 200, snapshotWithLan());
@@ -915,51 +791,18 @@ export function createHttp(core, {
         }
         if (url.pathname === '/mail') {
           const sid = url.searchParams.get('session') || '';
-          // BUG-034: the poll ACKNOWLEDGES the mail it already holds. Rows it
-          // names are finalized (their leases were live when it drained them);
-          // acking anything else is a guarded no-op (a final response never
-          // carries a stale backlog — every poll acks what IT drained).
-          const ackIds = url.searchParams.get('ack') ?? '';
-          if (ackIds) core.ackMail(ackIds.split(',').map(Number));
-          // The new drain is LEASED: the board must hand the ids back as
-          // ack_mail_ids on its next poll. A poll whose response never
-          // reached the board leaves the rows leased, not delivered — the
-          // retention sweep releases the lease and the mail is re-delivered.
-          const box = core.drainMail(sid, { lease: true });
+          const box = core.drainMail(sid);
           if (box.length) broadcast();
-          return json(res, 200, { mail: box, ack_mail_ids: box.map(m => m.id) });
+          return json(res, 200, { mail: box });
         }
         if (url.pathname === '/api/watch') return watchHook(req, res, url); // F3d-2 long-poll
-<<<<<<< /tmp/mf-ours
-        if (url.pathname === '/' || url.pathname === '/index.html' || url.pathname.startsWith('/assets/')) {
-          // built React board (Phase 5) from board-dist. /index.html is the
-<<<<<<< /tmp/mf-ours
-          // same shell as / — isPublicShell already lets it through the auth
-          // and Host walls, so it must not fall through to the JSON 404.
-=======
-          // conventional entry URL — a bookmark, proxy rewrite or health check
-          // that normalizes to it must boot the same shell isPublicShell
-          // already classifies as public; it resolves to the same
-          // board-dist/index.html as '/'.
->>>>>>> /tmp/mf-theirs
-=======
         if (shell) {
           // built React board (Phase 5) from board-dist — every path the auth
           // layer declared a public shell must actually be SERVED as one, so a
           // proxy/health-check that asks for /index.html explicitly gets the
           // same document as / (BUG-192). Missing files (e.g. favicon.ico)
           // still 404 via the notFound callback.
->>>>>>> /tmp/mf-theirs
           return serveBoardAsset(res, url.pathname, () => json(res, 404, { err: 'nope' }));
-        }
-        if (url.pathname === '/favicon.ico') {
-          // The shell's favicon is a data: SVG (see CSP_SHELL), so board-dist
-          // ships no favicon.ico — but browsers auto-fetch this path and
-          // isPublicShell advertises it, so answer it instead of the JSON 404.
-          // 204 + no-store: no icon today, and no stale negative cache the day
-          // one ships.
-          res.writeHead(204, { 'cache-control': 'no-store' });
-          return res.end();
         }
         return json(res, 404, { err: 'nope' });
       }
@@ -990,25 +833,12 @@ export function createHttp(core, {
         let size = 0;
         let tooLarge = false;
         const bodyCap = url.pathname === '/api/paste-image' ? MAX_PASTE_BODY : MAX_BODY;
-        // An oversized body is answered ONCE and the request torn down with it:
-        // returning here without consuming the unread body leaves a keep-alive
-        // socket half-parsed (the client may not even have finished sending),
-        // and Node will neither reuse nor free it — a client or proxy that
-        // declares a huge body would pile up lingering sockets on the control
-        // plane. shouldKeepAlive=false makes Node close the connection right
-        // after this response instead of waiting for a body that never comes.
-        const refuseOversize = () => {
-          res.shouldKeepAlive = false;
-          if (isHook) json(res, 200, {});
-          else json(res, 413, { ok: false, reason: 'payload too large' });
-          req.destroy();
-        };
         // Refuse an oversized body by its declared Content-Length before reading
         // a byte — the streaming cap below still catches a lying/absent header,
         // but this avoids buffering megabytes only to reject them.
         const declared = Number(req.headers['content-length']);
         if (Number.isFinite(declared) && declared > bodyCap) {
-          return refuseOversize();
+          return isHook ? json(res, 200, {}) : json(res, 413, { ok: false, reason: 'payload too large' });
         }
         req.on('data', d => {
           if (tooLarge) return;
@@ -1017,7 +847,7 @@ export function createHttp(core, {
             tooLarge = true;
             // 413 on control paths; hooks keep the fail-open 200 {}. Stop
             // accumulating either way so the body can't grow without bound.
-            return refuseOversize();
+            return isHook ? json(res, 200, {}) : json(res, 413, { ok: false, reason: 'payload too large' });
           }
           chunks.push(d);
         });
@@ -1061,25 +891,7 @@ export function createHttp(core, {
                 core.applyEvent({ hook_event_name: name, ...ev });
                 return json(res, 200, {});
               }
-              // A hook payload without a usable session_id must never reach
-              // the state machine: the events.mjs sid fallback would key the
-              // card on the literal string 'unknown', collapsing EVERY
-              // malformed payload into one shared phantom card that each
-              // subsequent ID-less event then mutates. Fail open like every
-              // hook path — 200 {} with no dispatch — so a broken payload
-              // no-ops instead of corrupting the board.
-              if (typeof ev?.session_id !== 'string' || !ev.session_id) {
-                return json(res, 200, {});
-              }
               return json(res, 200, handler(ev) ?? {});
-            }
-            // BUG-034: explicit acknowledgement for a leased /api/watch claim.
-            // The watcher POSTs {mail_id} once it HOLDS the claimed body (a
-            // claim whose response never arrived never acks, so the lease
-            // lapses and the mail is re-delivered instead of lost).
-            if (url.pathname === '/mail/ack') {
-              const out = core.ackMail([ev.mail_id]);
-              return json(res, 200, { ok: true, ...out });
             }
             if (url.pathname === '/mail') {
               core.postMail(ev)
@@ -1094,11 +906,8 @@ export function createHttp(core, {
               return;
             }
             if (url.pathname === '/api/cleanup') {
-              // BUG-145: an incomplete Clear (tmux unreachable / a dead window
-              // that would not die) comes back {ok:false, reason} with NOTHING
-              // touched — speak a real code so the board can fail loud.
               core.cleanup()
-                .then(out => json(res, out.ok === false ? 409 : 200, out))
+                .then(out => json(res, 200, out))
                 .catch(err => {
                   console.error('fleetd cleanup error:', err);
                   json(res, 500, { ok: false, err: 'internal' });
@@ -1165,12 +974,9 @@ export function createHttp(core, {
               // row → nudge) lives in derive.mjs. v1.3 adds
               // dangerously_skip_permissions: bool and permission_mode
               // "bypassPermissions" (validated/applied in derive.spawn too).
-              // BUG-040: plan_id on the body claims that plan's execution
-              // atomically BEFORE launch (see derive.spawn).
               logExec(url.pathname, req,
                 (ev?.dangerously_skip_permissions === true || (typeof ev?.permission_mode === 'string' && ev.permission_mode.toLowerCase() === 'bypasspermissions'))
-                  ? ` unsupervised=true${ev?.plan_id != null ? ` plan=${ev.plan_id}` : ''}`
-                  : ` unsupervised=false${ev?.plan_id != null ? ` plan=${ev.plan_id}` : ''}`);
+                  ? ' unsupervised=true' : ' unsupervised=false');
               core.spawn(ev)
                 .then(out => json(res, out.status, out.body))
                 .catch(err => {
@@ -1272,20 +1078,6 @@ export function createHttp(core, {
                 });
               return;
             }
-            // BUG-145 retry path: a dismiss whose window-kill phase failed
-            // returns retry:true; this POST re-attempts ONLY the dead-window
-            // kills for that already-archived card (idempotent).
-            const dismissRetryMatch = /^\/api\/sessions\/([^/]+)\/dismiss\/retry$/.exec(url.pathname);
-            if (dismissRetryMatch) {
-              logExec(url.pathname, req);
-              core.dismissRetry(dismissRetryMatch[1])
-                .then(out => json(res, out.status, out.body))
-                .catch(err => {
-                  console.error('fleetd dismiss-retry error:', err);
-                  json(res, 500, { ok: false, reason: 'internal' });
-                });
-              return;
-            }
             const rcMatch = /^\/api\/spawn\/([A-Za-z0-9-]+)\/rc$/.exec(url.pathname);
             if (rcMatch) {
               // Explicit human board action: derive enforces the idle/live
@@ -1321,16 +1113,6 @@ export function createHttp(core, {
               // via?} — 404 unknown id, 409 bad transition. Matrix documented
               // at core.planMark (derive.mjs).
               const out = core.planMark(Number(planMatch[1]), ev);
-              return json(res, out.status, out.body);
-            }
-            const assignMatch = /^\/api\/plans\/(\d+)\/assign$/.exec(url.pathname);
-            if (assignMatch) {
-              // BUG-039: daemon-side plan assignment — {to, instructions?}.
-              // The board must send the daemon-reserved [FLEETDECK ASSIGNMENT]
-              // frame, which POST /mail 422s, so the daemon composes it here
-              // through its internal mail() and marks the plan executed in the
-              // same request. 404 unknown plan/target, 409 non-executable plan.
-              const out = core.assignPlan(Number(assignMatch[1]), ev);
               return json(res, out.status, out.body);
             }
             return json(res, 404, { err: 'nope' });
@@ -1390,33 +1172,14 @@ export function createHttp(core, {
   // single snapshot rebuild+stringify+send instead of N.
   let dirty = false;
   let flushTimer = null;
-  // Waiters parked until the coalesced flush has actually fired. Boot
-  // reconciliation settles its heals, then must ALSO let the flush those heals
-  // scheduled drain before reporting 'settled' — otherwise a /ws client that
-  // connects the instant readiness flips can still be caught by the trailing
-  // startup broadcast (BUG-066). whenBroadcastIdle() resolves with no pending
-  // flush: immediately when none is scheduled, otherwise when the current one
-  // runs.
-  let idleWaiters = [];
-  function whenBroadcastIdle() {
-    if (!flushTimer) return Promise.resolve();
-    return new Promise(resolve => idleWaiters.push(resolve));
-  }
   // H-S1: the broadcast/connect snapshot deliberately uses core.snapshot() and
   // NOT snapshotWithLan() — the token-bearing lan.urls/lan.mdns must never ride
   // a frame a /ws client can read. The share URLs stay on GET /state, which is
   // token-gated in LAN mode (the board reads `lan` from its /state poll).
-  // legacy_upgrade is NOT secret (bare session ids + a count) and MUST ride the
-  // WS frame: the board treats a live /ws snapshot as authoritative and only
-  // preserves `lan` from later /state polls, so without this field the pre-0.16
-  // restart banner is wiped as soon as the socket opens and never comes back.
-  function wsSnapshot() {
-    return { type: 'snapshot', ...core.snapshot(), legacy_upgrade: legacyBanner() };
-  }
   function broadcast() {
     dirty = false;
     if (!wss.clients.size) return;
-    const msg = JSON.stringify(wsSnapshot());
+    const msg = JSON.stringify({ type: 'snapshot', ...core.snapshot() });
     for (const c of wss.clients) {
       if (c.readyState !== 1) continue;
       // H-R3/R1-2 backpressure: a peer that stopped draining must not make us
@@ -1438,17 +1201,13 @@ export function createHttp(core, {
     flushTimer = setTimeout(() => {
       flushTimer = null;
       if (dirty) broadcast();
-      // Wake anyone waiting for the flush to drain (boot readiness settle).
-      const waiters = idleWaiters;
-      idleWaiters = [];
-      for (const resolve of waiters) resolve();
     }, BROADCAST_COALESCE_MS);
     flushTimer.unref?.();
   }
   wss.on('connection', ws => {
     ws.isAlive = true;
     ws.on('pong', () => { ws.isAlive = true; });
-    try { ws.send(JSON.stringify(wsSnapshot())); } catch { /* client gone */ }
+    try { ws.send(JSON.stringify({ type: 'snapshot', ...core.snapshot() })); } catch { /* client gone */ }
   });
 
   termWss.on('connection', async (ws, req) => {
@@ -1537,19 +1296,6 @@ export function createHttp(core, {
   keepalive.unref();
   core.onMutate = scheduleBroadcast;
 
-<<<<<<< /tmp/mf-ours
-<<<<<<< /tmp/mf-ours
-  // Only `server` is used externally (fleetd.mjs listens on it); wss/termWss/
-  // broadcast stay internal. whenBroadcastIdle is exported so the boot
-  // readiness settle can wait out the coalesced flush the heals scheduled.
-  return { server, whenBroadcastIdle };
-=======
-  // Only `server` and `refreshLan` are used externally (fleetd.mjs listens on
-  // the former, and feeds the latter a fresh LAN URL set when the host's
-  // interfaces change); wss/termWss/broadcast stay internal.
-  return { server, refreshLan };
->>>>>>> /tmp/mf-theirs
-=======
   // fleetd.mjs drives refreshLan from its network-change poll, in the same tick
   // as the mDNS update, so the share panel and the Host allowlist (refreshed per
   // request from the same interface data) never disagree for long. wss/termWss/
@@ -1563,5 +1309,4 @@ export function createHttp(core, {
         : { enabled: false, urls: [] };
     },
   };
->>>>>>> /tmp/mf-theirs
 }

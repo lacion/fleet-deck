@@ -12,26 +12,16 @@ FLEETDECK_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SEED_PROJECT="$SCRIPT_DIR/project"
 SESSIONSTART_SCRIPT="$FLEETDECK_ROOT/scripts/fleet-sessionstart.mjs"
 WATCH_SCRIPT="$FLEETDECK_ROOT/scripts/fleet-watch.mjs"
-<<<<<<< /tmp/mf-ours
 FLEET_HOOK_SCRIPT="$FLEETDECK_ROOT/scripts/fleet-hook.mjs"
-FLEETDECK_PORT=4711
-SCRATCH_HOME="$FLEETDECK_ROOT/.fleetdeck-test"
-BASE="http://127.0.0.1:$FLEETDECK_PORT"
-TMUX_SESSION="fleetdeck-$FLEETDECK_PORT"
-WINDOW_PREFIX="fd$FLEETDECK_PORT-"
-DAEMON_LOG="$SCRATCH_HOME/fleetd.log"
-PLAN_FILE="$SCRATCH_HOME/plan.md"
-EXECUTOR_SAMPLES="$SCRATCH_HOME/executor-state-samples.jsonl"
-=======
 
-# Assigned from mktemp after the cleanup trap is armed. An arbitrary override
-# is intentionally unsupported: cleanup recursively deletes these directories,
-# so each must be a unique path created by this run, never a caller-provided
-# target. A concurrent acceptance run must never reset, delete, or spawn into
-# this run's daemon home, evidence files, or fixture copy.
+# SCRATCH_HOME and PROJECT_DIR are assigned from mktemp after the cleanup
+# trap is armed. An arbitrary override is intentionally unsupported: cleanup
+# recursively deletes these directories, so each must be a unique path
+# created by this run, never a caller-provided target. A concurrent
+# acceptance run must never reset, delete, or spawn into this run's daemon
+# home, evidence files, or fixture copy.
 SCRATCH_HOME=''
 PROJECT_DIR=''
->>>>>>> /tmp/mf-theirs
 
 # Isolated tmux server for this run, NEVER the user's default server: tmux
 # bakes the first client's environment into a new server's global env, and
@@ -135,10 +125,12 @@ cleanup_resources() {
     tmux -L "$FLEETDECK_TMUX_SOCKET" kill-server 2>/dev/null || true
   fi
 
-<<<<<<< /tmp/mf-ours
   # Restore the pre-run bytes of every project file this gate touches (see
   # snapshot_project_files). Restoring the seed here instead would erase any
-  # uncommitted local work the run overwrote.
+  # uncommitted local work the run overwrote. This runs BEFORE the whole
+  # PROJECT_DIR is removed below: the fixture copy is deleted in full, so
+  # the restore serves the harness / any retained copy and proves the
+  # snapshot logic against a real directory.
   if [ -n "$PROJECT_SNAPSHOT" ] && [ -d "$PROJECT_SNAPSHOT" ]; then
     if [ -f "$PROJECT_SNAPSHOT/util.js" ]; then
       cp "$PROJECT_SNAPSHOT/util.js" "$UTIL_FILE" 2>/dev/null || true
@@ -164,14 +156,6 @@ cleanup_resources() {
   if [ -d "$PROJECT_DIR" ]; then
     find "$PROJECT_DIR" -mindepth 1 -maxdepth 1 -name '.pre-accept-*' -exec rm -rf {} + 2>/dev/null || true
   fi
-=======
-  if [ -n "$UTIL_FILE" ] && [ -f "$SEED_UTIL" ]; then
-    cp "$SEED_UTIL" "$UTIL_FILE" 2>/dev/null || true
-  fi
-  if [ -n "$TEST_FILE" ]; then
-    rm -f "$TEST_FILE"
-  fi
->>>>>>> /tmp/mf-theirs
 
   if [ -n "$DAEMON_PID" ] && kill -0 "$DAEMON_PID" 2>/dev/null; then
     kill "$DAEMON_PID" 2>/dev/null || true
@@ -269,113 +253,32 @@ trap 'cleanup_resources; exit 130' INT
 echo "== Fleet Deck v1.3 live plan acceptance =="
 
 # --------------------------------------------------------------- reset
-<<<<<<< /tmp/mf-ours
-<<<<<<< /tmp/mf-ours
 # Stop recorded daemons only after their fleetd identity is proven (strict
-# pidfile + /health.pid + /proc shape — the production verifyDaemonPid gate).
-# A legacy plain-PID pidfile can name a PID the OS has since recycled for an
-# unrelated process; those are never signalled (BUG-008). Then clear an orphan
-# listener only when Fleet Deck's health endpoint proves the process on the
-# port is Fleet Deck.
-REAL_HOME="${HOME:-/root}/.fleetdeck"
-. "$SCRIPT_DIR/lib/kill-verified-daemon.sh"
-stop_pidfile_daemon "$REAL_HOME" || { echo "ABORT: unowned live pid in $REAL_HOME/fleetd.pid — not touching it."; exit 1; }
-stop_pidfile_daemon "$SCRATCH_HOME" || { echo "ABORT: unowned live pid in $SCRATCH_HOME/fleetd.pid — not touching it."; exit 1; }
-if curl -s -m 1 "$BASE/health" 2>/dev/null | grep -q '"ok"'; then
-  fuser -k "$FLEETDECK_PORT/tcp" 2>/dev/null || true
-  sleep 0.5
-=======
-# Signal only a daemon proven by ALL THREE identities: the strict JSON pid
-# record under the pidfile's home, a /health reply on this port that reports
-# the same pid, and a live node+fleetd process shape. NEVER kill by port
-# (fuser -k kills every client of the port, and a substring health grep
-# matches any body containing "ok" — including {"ok":false}); any listener
-# that cannot be positively identified aborts the run instead.
-stop_identified_daemon() {
-  local pidfile="$1"
-  [ -f "$pidfile" ] || return 0
-  node -e '
-    const fs = require("node:fs");
-    const path = require("node:path");
-    const { execFileSync } = require("node:child_process");
-    const pidfile = process.argv[1];
-    const expectedPort = Number(process.argv[2]);
-    const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-    const live = pid => {
-      try { process.kill(pid, 0); return true; }
-      catch (err) { return err?.code !== "ESRCH"; }
-    };
-    let record;
-    try { record = JSON.parse(fs.readFileSync(pidfile, "utf8")); }
-    catch { process.exit(2); }
-    if (!Number.isInteger(record?.pid) || record.pid <= 0 || record.port !== expectedPort) process.exit(2);
-    (async () => {
-      // /health must report the pid recorded in the pidfile. Two resets can race (the real
-      // home and the scratch home recording the same daemon), so a port that
-      // goes silent mid-poll also satisfies the proof — the identified daemon
-      // is already gone. Any OTHER pid on the port is a refusal.
-      let health = null;
-      for (let i = 0; i < 20; i += 1) {
-        try {
-          const res = await fetch(`http://127.0.0.1:${expectedPort}/health`, { signal: AbortSignal.timeout(250) });
-          const candidate = res.ok ? await res.json() : null;
-          if (candidate?.pid === record.pid) { health = candidate; break; }
-          if (candidate) { process.exitCode = 2; return; }
-        } catch {}
-        if (!live(record.pid)) return;
-        await sleep(100);
-      }
-      if (!health) { process.exitCode = 2; return; }
+# pidfile + /health.pid + /proc shape — the production verifyDaemonPid gate,
+# via demo/lib/kill-verified-daemon.sh). A legacy plain-PID pidfile can name
+# a PID the OS has since recycled for an unrelated process; those are never
+# signalled (BUG-008). NEVER kill by port: a port-wide kill signals every
+# client of the port, and a substring health grep matches any body containing
+# "ok" — including {"ok":false} (BUG-009). Any listener that cannot be
+# positively identified aborts the run instead. Run BEFORE allocating this
+# run's resources, while SCRATCH_HOME is still empty: the old global home,
+# when it exists at all, belongs to the pre-fix gate that wrote it. When the
+# helper is absent (a bare script copy), the unique-per-run resources below
+# already guarantee this run touches nothing it did not create (BUG-097).
+if [ -f "$SCRIPT_DIR/lib/kill-verified-daemon.sh" ]; then
+  . "$SCRIPT_DIR/lib/kill-verified-daemon.sh"
+  PROD_HOME="${HOME:-/root}/.fleetdeck"
+  OLD_GLOBAL_HOME="$FLEETDECK_ROOT/.fleetdeck-test"
+  stop_pidfile_daemon "$PROD_HOME" || { echo "ABORT: unowned live pid in $PROD_HOME/fleetd.pid — not touching it."; exit 1; }
+  stop_pidfile_daemon "$OLD_GLOBAL_HOME" || { echo "ABORT: unowned live pid in $OLD_GLOBAL_HOME/fleetd.pid — not touching it."; exit 1; }
+fi
+stop_pidfile_daemon "$PROD_HOME" || { echo "ABORT: unowned live pid in $PROD_HOME/fleetd.pid — not touching it."; exit 1; }
+stop_pidfile_daemon "$OLD_GLOBAL_HOME" || { echo "ABORT: unowned live pid in $OLD_GLOBAL_HOME/fleetd.pid — not touching it."; exit 1; }
 
-      let nodeLike = false;
-      let fleetdScript = false;
-      try {
-        if (process.platform === "linux") {
-          const executable = path.basename(fs.readlinkSync(`/proc/${record.pid}/exe`)).replace(/ \(deleted\)$/, "");
-          const argv = fs.readFileSync(`/proc/${record.pid}/cmdline`, "utf8").split("\0").filter(Boolean);
-          nodeLike = /^(?:node|nodejs)$/i.test(executable);
-          fleetdScript = argv.some(value => /(?:^|[\/\\])fleetd(?:\.bundle)?\.mjs$/.test(value));
-        } else {
-          const executable = execFileSync("ps", ["-p", String(record.pid), "-o", "comm="], { encoding: "utf8", timeout: 1000 }).trim();
-          const command = execFileSync("ps", ["-p", String(record.pid), "-o", "command="], { encoding: "utf8", timeout: 1000 });
-          nodeLike = /^(?:node|nodejs)$/i.test(path.basename(executable));
-          fleetdScript = /(?:^|[\/\\])fleetd(?:\.bundle)?\.mjs(?=$|\s|")/.test(command);
-        }
-      } catch { process.exitCode = 2; return; }
-      if (!nodeLike || !fleetdScript) { process.exitCode = 2; return; }
-
-      try { process.kill(record.pid, "SIGTERM"); }
-      catch (err) { if (err?.code !== "ESRCH") { process.exitCode = 2; return; } }
-      for (let i = 0; i < 30; i += 1) {
-        await sleep(100);
-        if (!live(record.pid)) return;
-      }
-      // Never escalate to SIGKILL: a graceful shutdown that cannot be proven
-      // aborts the run instead of risking a recycled PID.
-      process.exitCode = 2;
-    })().catch(() => { process.exitCode = 2; });
-  ' "$pidfile" "$FLEETDECK_PORT" >/dev/null 2>&1
-}
-REAL_HOME="${HOME:-/root}/.fleetdeck"
-if ! stop_identified_daemon "$REAL_HOME/fleetd.pid"; then
-  echo "ABORT: daemon recorded in $REAL_HOME/fleetd.pid could not be positively identified and stopped."
-  exit 1
-fi
-if ! stop_identified_daemon "$SCRATCH_HOME/fleetd.pid"; then
-  echo "ABORT: daemon recorded in $SCRATCH_HOME/fleetd.pid could not be positively identified and stopped."
-  exit 1
-fi
-if curl -s -m 1 "$BASE/health" >/dev/null 2>&1; then
-  echo "ABORT: something is still listening on :$FLEETDECK_PORT after reset; refusing to kill an unidentified listener."
-  exit 1
->>>>>>> /tmp/mf-theirs
-fi
-=======
 # Every mutable resource is unique to this run: an mktemp'd daemon home, an
 # mktemp'd copy of the demo fixture project, and a verified-free port — so a
 # concurrent acceptance run can never reset, delete, or spawn into this run's
-# state. Nothing here touches the production daemon or any other run.
-
+# state (BUG-097).
 SCRATCH_HOME="$(mktemp -d "${TMPDIR:-/tmp}/fleetdeck-plan.XXXXXX")" || {
   echo "ABORT: could not create a unique acceptance home"
   exit 1
@@ -410,7 +313,14 @@ WINDOW_PREFIX="fd$FLEETDECK_PORT-"
 DAEMON_LOG="$SCRATCH_HOME/fleetd.log"
 PLAN_FILE="$SCRATCH_HOME/plan.md"
 EXECUTOR_SAMPLES="$SCRATCH_HOME/executor-state-samples.jsonl"
->>>>>>> /tmp/mf-theirs
+
+# The probe released the port; nothing should have claimed it in between, and
+# this run owns no listener here yet. Anything answering is a foreign,
+# unidentified listener: refuse outright rather than kill by port.
+if curl -s -m 1 "$BASE/health" >/dev/null 2>&1; then
+  echo "ABORT: something is still listening on :$FLEETDECK_PORT after reset; refusing to kill an unidentified listener."
+  exit 1
+fi
 
 # Reset only this run's isolated tmux server (a per-pid socket, so normally a
 # no-op); never enumerate or touch the default server's sessions or windows.
@@ -418,7 +328,6 @@ if command -v tmux >/dev/null 2>&1; then
   tmux -L "$FLEETDECK_TMUX_SOCKET" kill-server 2>/dev/null || true
 fi
 
-<<<<<<< /tmp/mf-ours
 # Gate 1 launches a scratch daemon and then lets it spawn and control real
 # (billed) Claude sessions. Readiness is therefore bound to the child this
 # script launches: if anything still owns the port after the reset, refuse
@@ -428,21 +337,16 @@ if curl -s -m 1 "$BASE/health" >/dev/null 2>&1; then
   exit 1
 fi
 
-rm -rf "$SCRATCH_HOME"
-mkdir -p "$SCRATCH_HOME"
+# Snapshot the fixture copy's pre-run state (BUG-012) and then apply the
+# destructive gate fixture through the exact same factored-out helper the
+# regression harness exercises.
 if ! snapshot_project_files; then
   echo "FAIL: could not snapshot project files under $PROJECT_DIR -- refusing to run the gate" >&2
   exit 1
 fi
 apply_gate_fixture
-=======
-mkdir -p "$PROJECT_DIR/.claude"
-cp "$SEED_UTIL" "$UTIL_FILE"
-rm -f "$TEST_FILE"
->>>>>>> /tmp/mf-theirs
 
 # Regenerate the proven local demo hook wiring. The Stop command hook keeps
-<<<<<<< /tmp/mf-ours
 # the v1.1 asyncRewake fields verbatim from hooks/hooks.json. Every other
 # hook uses the current checkout's authenticated command shim: native HTTP
 # hooks cannot attach the bearer token required since 0.16.0, and the
@@ -450,11 +354,7 @@ rm -f "$TEST_FILE"
 # every event. enabledPlugins disables any installed Fleet Deck plugin so
 # its duplicate hooks can never mask the checkout under test with cached
 # code.
-cat > "$PROJECT_DIR/.claude/settings.json" <<EOF
-=======
-# the v1.1 asyncRewake fields verbatim from hooks/hooks.json.
 cat > "$SETTINGS_FILE" <<EOF
->>>>>>> /tmp/mf-theirs
 {
   "enabledPlugins": { "fleetdeck@fleetdeck": false },
   "hooks": {
@@ -940,11 +840,10 @@ if [ -d "$SNAPSHOT_CHECK" ]; then
   else
     [ ! -e "$TEST_FILE" ] || CLEANUP_OK=""
   fi
-  if [ -f "$SNAPSHOT_CHECK/claude-settings.json" ]; then
-    cmp -s "$SETTINGS_FILE" "$SNAPSHOT_CHECK/claude-settings.json" || CLEANUP_OK=""
-  else
-    [ ! -e "$SETTINGS_FILE" ] || CLEANUP_OK=""
-  fi
+  # Gate 9 runs after cleanup_resources, which deletes the whole mktemp'd
+  # PROJECT_DIR: the correct post-cleanup state is "settings file absent",
+  # whether or not it existed pre-run.
+  [ ! -e "$SETTINGS_FILE" ] || CLEANUP_OK=""
 else
   CLEANUP_OK=""
 fi

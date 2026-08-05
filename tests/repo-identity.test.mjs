@@ -11,26 +11,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync, rmSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { startDaemon } from './helpers/daemon.mjs';
 import { postHook, getJson } from './helpers/http.mjs';
 import { loadFixture } from './helpers/fixtures.mjs';
-<<<<<<< /tmp/mf-ours
-import { makeRepoWithWorktree, makePlainDir } from './helpers/gitrepo.mjs';
-<<<<<<< /tmp/mf-ours
-<<<<<<< /tmp/mf-ours
-import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
-=======
-import { deriveRepo, branchOf } from '../scripts/fleetd/repo-identity.mjs';
->>>>>>> /tmp/mf-theirs
-=======
 import { makeRepoWithWorktree, makePlainDir, makeSeparateGitDirRepo } from './helpers/gitrepo.mjs';
->>>>>>> /tmp/mf-theirs
-=======
-import { ledgerKey } from '../scripts/fleetd/repo-identity.mjs';
->>>>>>> /tmp/mf-theirs
+import { deriveRepo, branchOf, ledgerKey } from '../scripts/fleetd/repo-identity.mjs';
 
 function findSession(state, sid) {
   return state.sessions.find(s => s.session_id === sid);
@@ -106,7 +94,6 @@ test('two sessions in the same worktree colliding is severity=warning', async (t
   assert.equal(conflict.severity, 'warning', 'same-worktree collision should be severity=warning');
 });
 
-<<<<<<< /tmp/mf-ours
 test('edits through a symlinked directory alias collide with edits to the real path (BUG-127)', async (t) => {
   const daemon = await startDaemon();
   const repo = makeRepoWithWorktree({ repoName: 'fleetdeck-symlink-test' });
@@ -138,7 +125,8 @@ test('edits through a symlinked directory alias collide with edits to the real p
   const hso = secondTouch.json?.hookSpecificOutput;
   assert.ok(hso, 'editing the same inode through a symlinked alias must still whisper');
   assert.ok(hso.additionalContext.includes(callsignA), 'whisper should name the rival by callsign');
-=======
+});
+
 test('root files named with leading dots (`..config`, `...hidden`) still key repo-relatively, so cross-worktree edits collide', async (t) => {
   const daemon = await startDaemon();
   const repo = makeRepoWithWorktree({ repoName: 'fleetdeck-dotfile-test' });
@@ -189,7 +177,6 @@ test('unit: ledgerKey keeps dot-leading root files repo-relative; real parent es
     { repo_id: '', rel_path: path.join(path.dirname(repo.root), '..config'), worktree: null },
     'a file that truly escapes upward must still fall back to an absolute key',
   );
->>>>>>> /tmp/mf-theirs
 });
 
 test('a non-git cwd falls back to repo_id = cwd', async (t) => {
@@ -207,7 +194,6 @@ test('a non-git cwd falls back to repo_id = cwd', async (t) => {
   assert.equal(card.repo_id, plain.dir, 'non-git cwd should fall back to repo_id = cwd');
 });
 
-<<<<<<< /tmp/mf-ours
 test('a repo whose path ends in a space keeps its full path (no trim corruption)', (t) => {
   // BUG-141: the git() helper used trim() on ALL output, so a POSIX checkout
   // path ending in whitespace came back corrupted -- `git rev-parse
@@ -236,7 +222,8 @@ test('a repo whose path ends in a space keeps its full path (no trim corruption)
   assert.equal(repo.repo_id, realpathSync(path.join(spaced, '.git')), 'repo_id should be the canonicalized common git dir');
   assert.equal(branchOf(spaced), execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: spaced, encoding: 'utf8' }).trim(),
     'branch detection should still work from a spaced path');
-=======
+});
+
 // BUG-142: with `git init --separate-git-dir`, `git worktree list --porcelain`'s
 // FIRST record is the metadata directory itself (e.g. /state/repo.git), not a
 // working tree. Identity derivation must not catalog that metadata dir as the
@@ -260,5 +247,4 @@ test('a --separate-git-dir repo catalogs the real checkout, not the metadata dir
   const entry = (state.repo_catalog || []).find(r => r.repo_id === repo.gitDir);
   assert.ok(entry, 'the repo should be cataloged');
   assert.equal(entry.root, repo.checkout, 'catalog root must be the real checkout, not the metadata dir');
->>>>>>> /tmp/mf-theirs
 });

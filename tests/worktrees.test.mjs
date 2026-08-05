@@ -292,9 +292,6 @@ test('remove re-checks liveness after the git probes and aborts a revive that ra
     },
   };
 
-<<<<<<< /tmp/mf-ours
-  const { removeWorktree } = createWorktrees({ q, tick() {}, onMutate() {}, ...freshMutexCtx() });
-=======
   // The shared custody lease the daemon wires through derive (spawns.mjs holds
   // the revive side). This test drives the module directly, so it passes the
   // same Map-backed claim the core uses.
@@ -306,8 +303,7 @@ test('remove re-checks liveness after the git probes and aborts a revive that ra
     claims.set(p, release);
     return release;
   };
-  const { removeWorktree } = createWorktrees({ q, tick() {}, onMutate() {}, claimWorktreeCustody });
->>>>>>> /tmp/mf-theirs
+  const { removeWorktree } = createWorktrees({ q, tick() {}, onMutate() {}, claimWorktreeCustody, ...freshMutexCtx() });
   const res = await removeWorktree({ path: repo.worktree, force: true });
 
   assert.equal(res.status, 409, `a revive during the probe window must abort removal (got ${JSON.stringify(res.body)})`);
@@ -419,11 +415,7 @@ test('remove wins the custody lease over a late revive and keeps the revived row
     },
   };
 
-<<<<<<< /tmp/mf-ours
-  const { removeWorktree } = createWorktrees({ q, tick() {}, onMutate() {}, ...freshMutexCtx() });
-=======
-  const { removeWorktree } = createWorktrees({ q, tick() {}, onMutate() {}, claimWorktreeCustody });
->>>>>>> /tmp/mf-theirs
+  const { removeWorktree } = createWorktrees({ q, tick() {}, onMutate() {}, claimWorktreeCustody, ...freshMutexCtx() });
   const res = await removeWorktree({ path: repo.worktree, force: true });
 
   assert.equal(reviveClaim, null, 'the late revive could NOT claim custody — removal already held it');
@@ -580,7 +572,6 @@ test('a removal arriving during a revive is refused — a successful revive keep
   assert.equal(existsSync(repo.worktree), true, 'the live tree is never removed');
 });
 
-<<<<<<< /tmp/mf-ours
 // BUG-058: the liveness gate read only worktreeSpawns, whose
 // `worktree_path IS NOT NULL` filter drops cwd-only rows. A live shell (shells
 // refuse worktree:true outright — always cwd-only) or an adopted Claude
@@ -649,7 +640,8 @@ test('remove refuses while a cwd-only live shell occupies the worktree (BUG-058)
   const goneRes = await removeWorktree({ path: repo.worktree, force: true });
   assert.equal(goneRes.status, 200, `no live claim left — removal proceeds (got ${JSON.stringify(goneRes.body)})`);
   assert.equal(existsSync(repo.worktree), false);
-=======
+});
+
 // BUG-060, the post-final-check window, pinned end-to-end. The pre-remove
 // liveness recheck passes, then the removal awaits its destructive git ops —
 // and a /api/spawn/:id/revive of the offline spawn lands in THAT window.
@@ -754,7 +746,6 @@ exec "\${FLEETDECK_TEST_REAL_GIT}" "$@"
     const rows = db.prepare("SELECT status FROM spawns WHERE session_id = 'bug060-race'").all();
     assert.deepEqual(rows, [], 'the refused revive left no spawn row behind');
   });
->>>>>>> /tmp/mf-theirs
 });
 
 test('POST remove with delete_branch deletes the worktree branch', async (t) => {

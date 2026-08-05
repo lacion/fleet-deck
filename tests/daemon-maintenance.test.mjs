@@ -146,7 +146,6 @@ test('stall diagnostic excerpt also scrubs URL userinfo, which no shape rule can
   assert.ok(out.includes('https://[redacted]@gitlab.com/o/r.git'), out);
 });
 
-<<<<<<< /tmp/mf-ours
 test('stall diagnostic excerpt masks bare forge/API tokens, not just URL userinfo', () => {
   // BUG-038: a repo-mode spawn stalls while the pane still shows the forge's own
   // rejection — `remote: the provided token (glpat-…) is incorrect`. These shapes
@@ -167,7 +166,8 @@ test('stall diagnostic excerpt masks bare forge/API tokens, not just URL userinf
     assert.equal(out.includes(leak), false, `${leak} must not survive the pane excerpt: ${out}`);
   }
   assert.match(out, /fatal: authentication failed/, 'the verdict line stays legible');
-=======
+});
+
 test('stall diagnostic excerpt masks BARE forge shapes, not just URL userinfo', () => {
   // A stalled pane can show the token bare — a pasted `export`, a CI echo — with
   // no URL around it. Until SECRET_VALUE_RES carried the forge shapes, only the
@@ -184,7 +184,6 @@ test('stall diagnostic excerpt masks BARE forge shapes, not just URL userinfo', 
     assert.equal(out.includes(leak), false, `${leak} must not survive the pane excerpt`);
   }
   assert.match(out, /stall reason follows/, 'the legible tail still survives');
->>>>>>> /tmp/mf-theirs
 });
 
 test('spawn argv is deterministic and registration watchdog stalls once, then a late hook revives it', async (t) => {

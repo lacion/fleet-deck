@@ -35,11 +35,7 @@ import { getJson, postHook } from './helpers/http.mjs';
 import { loadFixture } from './helpers/fixtures.mjs';
 import { waitUntil, scaleMs } from './helpers/wait.mjs';
 import {
-<<<<<<< /tmp/mf-ours
-  parseSemver, compareSemver, shouldTakeOver, verifyDaemonPid, replacementMatches,
-=======
-  parseSemver, compareSemver, shouldTakeOver, verifyDaemonPid, pidRecord,
->>>>>>> /tmp/mf-theirs
+  parseSemver, compareSemver, shouldTakeOver, verifyDaemonPid, pidRecord, replacementMatches,
 } from '../scripts/fleetd/takeover.mjs';
 
 const HOOK_SCRIPT = path.join(REPO_ROOT, 'scripts/fleet-sessionstart.mjs');
@@ -168,7 +164,6 @@ test('semver: parse, numeric compare, and the strictly-newer + 0.0.0/unparseable
   assert.equal(shouldTakeOver(null, '0.6.0'), false);
 });
 
-<<<<<<< /tmp/mf-ours
 test('semver: prerelease precedence — RC-to-RC and RC-to-final upgrades take over', () => {
   // The semver.org §11 chain on a shared core: every step is strictly newer.
   const chain = ['1.0.0-alpha', '1.0.0-alpha.1', '1.0.0-alpha.beta', '1.0.0-beta',
@@ -197,7 +192,8 @@ test('semver: prerelease precedence — RC-to-RC and RC-to-final upgrades take o
   // A newer core still dominates any prerelease of an older core.
   assert.equal(shouldTakeOver('0.21.0-rc.1', '0.20.0'), true);
   assert.equal(shouldTakeOver('0.20.0', '0.21.0-rc.1'), false);
-=======
+});
+
 test('replacementMatches: the post-spawn version gate accepts only the hook\'s exact build', () => {
   // Exact equality is the whole contract: a competing candidate's daemon that
   // won the port race must NEVER be accepted as the result of our upgrade,
@@ -215,7 +211,6 @@ test('replacementMatches: the post-spawn version gate accepts only the hook\'s e
   assert.equal(replacementMatches('', ''), false, 'empty strings never match — an unreadable package.json cannot claim a replacement');
   assert.equal(replacementMatches('0.20.2', '0.20.20'), false, 'string equality, never a prefix');
   assert.equal(replacementMatches(2, 2), false, 'non-strings never match');
->>>>>>> /tmp/mf-theirs
 });
 
 test('verifyDaemonPid refuses a non-fleetd-shaped live pid, a pidfile mismatch, and a missing pidfile', async (t) => {

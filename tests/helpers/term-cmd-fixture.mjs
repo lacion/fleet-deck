@@ -33,16 +33,18 @@ function noPaneModeFor(window) {
   return window.includes(noPaneKnob) ? 'error' : null;
 }
 
-<<<<<<< /tmp/mf-ours
 // Fault injection (BUG-159): fail the openViewer SIGWINCH jiggle's resize steps.
 // The open sequence is size(rows), size(rows-1), size(rows); the knob value
 // picks which step(s) answer %error:
 //   'mid'     → only the rows-1 step fails
 //   'restore' → only the final restore-to-rows step fails
 // Real resize traffic (a client's later {t:'resize'} frame) is unaffected —
-// the bridge does not re-run the jiggle sequence there.
-const failResizeKnob = process.env.FLEETDECK_TEST_TERM_FAIL_RESIZE;
-=======
+// the bridge does not re-run the jiggle sequence there. ('mid'/'restore' are
+// jiggle-step selectors on FLEETDECK_TEST_TERM_FAIL_RESIZE; the BUG-165 values
+// below — '1', '*', or a command prefix — select failure by command instead.
+// The two schemes never collide: a resize-window line never starts with 'mid'
+// or 'restore'.)
+//
 // Fault injection (BUG-165): the default branch below used to answer EVERY
 // non-list/capture/cursor command with a bare success, so no test could reach
 // the bridge's lifecycle edges — resize failure, dead-pane send-keys policy,
@@ -87,12 +89,10 @@ function knobHits(knob, cmd) {
   if (!knob) return false;
   return knob === '1' || knob === '*' || cmd.startsWith(knob);
 }
->>>>>>> /tmp/mf-theirs
 
 // window name -> pane id, assigned on first sight and stable thereafter
 const panes = new Map();
 const streamed = new Set();
-<<<<<<< /tmp/mf-ours
 // Fault injection (BUG-157): make the window-close probe (`list-panes -a`)
 // FAIL so the bridge's failed-probe path is exercised. Without the recheck an
 // idle viewer whose pane just died would never finish; with it the probe is
@@ -112,10 +112,9 @@ const flood = (() => {
   return m ? { bytes: Number(m[1]), window: m[2] || null } : null;
 })();
 const flooded = new Set();
-=======
+
 // window name -> ordered rows of each resize-window seen (jiggle detection)
 const resizeSeqs = new Map();
->>>>>>> /tmp/mf-theirs
 
 function note(value) {
   if (!record) return;
@@ -170,56 +169,32 @@ input.on('line', line => {
     else if (mode === 'empty') response([], true, line); // window gone: no pane id comes back
     else response([paneForListPanes(line)], true, line);
   } else if (line.startsWith('list-panes -a')) {
-<<<<<<< /tmp/mf-ours
-<<<<<<< /tmp/mf-ours
-<<<<<<< /tmp/mf-ours
     // window-close probe + BUG-055 pane_dead poll: '%N [dead]' per pane. The
     // plain-id form used by the close probe and the id+flag form used by the
     // dead poll both parse the same way, so answer both shapes. The dead knob
-<<<<<<< /tmp/mf-ours
     // is a substring matched against window names ('*' = every pane) — its
     // panes report pane_dead=1, modelling a remain-on-exit pane whose process
     // has exited.
-    const withFlags = /pane_dead/.test(line);
-    const dead = process.env.FLEETDECK_TEST_TERM_DEAD_PANE;
-    const isDead = (w) => dead === '*' || (dead != null && dead !== '' && w.includes(dead));
-    response([...panes.entries()].map(([w, p]) =>
-      withFlags ? `${p} ${isDead(w) ? 1 : 0}` : p));
-=======
-    // is a substring matched against window names — its panes report
-    // pane_dead=1, modelling a remain-on-exit pane whose process has exited.
-    const withFlags = /pane_dead/.test(line);
-    const dead = process.env.FLEETDECK_TEST_TERM_DEAD_PANE;
-    note({ type: 'dbg', withFlags, dead: dead ?? null, panes: [...panes.keys()] });
-    const out = [...panes.entries()].map(([w, p]) =>
-      withFlags ? `${p} ${dead && w.includes(dead) ? 1 : 0}` : p);
-    note({ type: 'dbg2', out });
-    response(out);
->>>>>>> /tmp/mf-theirs
-=======
+    //
+    // BUG-157: the probe itself can be made to FAIL (PROBE_FAILS call numbers)
+    // so the bridge's failed-probe path is exercised — a failed probe is not
+    // proof a pane died, so the bridge must retry after a settle delay and let
+    // the second, healthy answer condemn the dead pane.
     probeCalls += 1;
-    if (probeFails.has(probeCalls)) response([], false); // the probe itself fails: not proof a pane died
-    else response([...panes.values()]); // window-close probe: every pane still alive
->>>>>>> /tmp/mf-theirs
-=======
-    response([...panes.values()]); // window-close probe: every pane still alive
-  } else if (line.startsWith('resize-window ')) {
-    const rows = Number(/ -y (\d+)/.exec(line)?.[1]);
-    const window = /-t\s+=\S*?:(\S+)/.exec(line)?.[1]?.replace(/^=/, '') ?? 'default';
-    // Track the per-window resize sequence to identify the jiggle steps.
-    const seq = resizeSeqs.get(window) ?? [];
-    seq.push(rows);
-    resizeSeqs.set(window, seq);
-    let fail = false;
-    if (failResizeKnob === 'mid') fail = seq.length === 2 && rows === seq[0] - 1;
-    else if (failResizeKnob === 'restore') fail = seq.length === 3 && rows === seq[0];
-    if (fail) response([], false); else response([]);
->>>>>>> /tmp/mf-theirs
-=======
-    // window-close probe: every pane still alive — unless DEAD_PANE says the
-    // pane died, in which case the probe must answer truthfully (none alive)
-    // so the bridge finishes the viewers watching it.
-    response(deadPaneKnob ? [] : [...panes.values()], true, line);
+    if (probeFails.has(probeCalls)) {
+      response([], false, line); // the probe itself fails: not proof a pane died
+    } else {
+      const withFlags = /pane_dead/.test(line);
+      const isDead = (w) => deadPaneKnob === '*' || (deadPaneKnob != null && deadPaneKnob !== '' && w.includes(deadPaneKnob));
+      if (withFlags) {
+        response([...panes.entries()].map(([w, p]) => `${p} ${isDead(w) ? 1 : 0}`), true, line);
+      } else {
+        // window-close probe: every pane still alive — unless DEAD_PANE says
+        // the pane died, in which case the probe must answer truthfully (none
+        // alive) so the bridge finishes the viewers watching it.
+        response(deadPaneKnob ? [] : [...panes.values()], true, line);
+      }
+    }
   } else if (line.startsWith('send-keys ')) {
     // A dead pane refuses input. The bridge's input() must treat !ok as
     // 'terminal pane closed' and finish the viewer — bare-success here hid it.
@@ -230,14 +205,26 @@ input.on('line', line => {
     // only resize-window would exercise the fallback, not the failure. With
     // both refusing, the open path throws 'terminal resize failed' and an
     // established viewer's resize finishes it with the same reason.
-    response([], !knobHits(failResizeKnob, line), line);
->>>>>>> /tmp/mf-theirs
+    //
+    // BUG-159: 'mid'/'restore' knob values fail a single SIGWINCH jiggle step,
+    // identified by the per-window resize sequence (rows, rows-1, rows).
+    let fail = knobHits(failResizeKnob, line);
+    if (line.startsWith('resize-window ')) {
+      const rows = Number(/ -y (\d+)/.exec(line)?.[1]);
+      const window = /-t\s+=\S*?:(\S+)/.exec(line)?.[1]?.replace(/^=/, '') ?? 'default';
+      // Track the per-window resize sequence to identify the jiggle steps.
+      const seq = resizeSeqs.get(window) ?? [];
+      seq.push(rows);
+      resizeSeqs.set(window, seq);
+      if (failResizeKnob === 'mid') fail = seq.length === 2 && rows === seq[0] - 1;
+      else if (failResizeKnob === 'restore') fail = seq.length === 3 && rows === seq[0];
+    }
+    response([], !fail, line);
   } else if (line.startsWith('capture-pane ')) {
     const pane = paneForTarget(line) || '%1';
-    response([`seed ${pane} \u001b[31mred\u001b[0m`], true, line);
+    response([`seed ${pane} [31mred[0m`], true, line);
   } else if (line.includes("'#{cursor_x} #{cursor_y}'")) {
     const pane = paneForTarget(line) || '%1';
-<<<<<<< /tmp/mf-ours
     if (flood && !flooded.has(pane) && (!flood.window || [...panes].find(([, p]) => p === pane)?.[0] === flood.window)) {
       // Withhold the cursor reply and emit the flood FIRST: the bridge is
       // subscribed by now, so these bytes land in viewer.pending while init is
@@ -248,10 +235,7 @@ input.on('line', line => {
         process.stdout.write(`%output ${pane} ${chunk.slice(0, left)}\n`);
       }
     }
-    response(['2 3']);
-=======
     response(['2 3'], true, line);
->>>>>>> /tmp/mf-theirs
     // One output burst per pane, tagged with that pane's id, so a grid test can
     // prove each viewer received ITS stream and not its neighbour's.
     if (!streamed.has(pane)) {

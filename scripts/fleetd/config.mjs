@@ -31,18 +31,14 @@ export function resolveHome() {
   return path.normalize(configured);
 }
 
-<<<<<<< /tmp/mf-ours
 // FLEETDECK_PORT, or the well-known default 4711. Must be an integer in
 // 1..65535: port 0 asks Node for an ephemeral port, but the pidfile, health
 // checks, hooks and board URLs would all keep advertising the literal 0 — a
 // live daemon no client can reach. Reject it (and every other non-port value)
-// here, before the daemon claims HOME under an unusable identity.
-=======
-// FLEETDECK_PORT, or the well-known default 4711. Deliberately never throws:
-// the hook scripts resolve a port to REPORT to and must not crash on a malformed
-// value. The daemon (fleetd.mjs) is the only consumer that LISTENS, and it
-// validates the integer 0-65535 range itself before claiming HOME.
->>>>>>> /tmp/mf-theirs
+// here, before the daemon claims HOME under an unusable identity. The daemon
+// (fleetd.mjs) catches this throw at startup and refuses BEFORE touching HOME;
+// it also re-validates the returned range itself, so it stays safe under
+// either resolvePort contract.
 export function resolvePort() {
   const raw = process.env.FLEETDECK_PORT;
   if (raw === undefined || raw === '') return 4711;

@@ -21,11 +21,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-<<<<<<< /tmp/mf-ours
-import { appendFileSync, statSync, writeFileSync } from 'node:fs';
-=======
-import { rmSync, statSync, writeFileSync } from 'node:fs';
->>>>>>> /tmp/mf-theirs
+import { appendFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { lastAssistantModel, lastAssistantText, tailLines } from '../scripts/fleetd/transcript.mjs';
@@ -128,9 +124,9 @@ test('a transcript with no assistant model at all yields null, not a guess', (t)
   assert.equal(lastAssistantModel(file), null);
 });
 
-<<<<<<< /tmp/mf-ours
-test('partial append: a truncated newest line yields no model, not an older one', () => {
+test('partial append: a truncated newest line yields no model, not an older one', (t) => {
   const dir = makeTranscriptDir();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   const file = writeTranscriptLines(dir, 's7', [
     userLine(), assistantLine({ model: FABLE }),
   ]);
@@ -148,10 +144,7 @@ test('partial append: a truncated newest line yields no model, not an older one'
   assert.equal(lastAssistantModel(file), OPUS);
 });
 
-test('best-effort: absent, empty and corrupt transcripts return null and never throw', () => {
-=======
 test('best-effort: absent, empty and corrupt transcripts return null and never throw', (t) => {
->>>>>>> /tmp/mf-theirs
   const dir = makeTranscriptDir();
   t.after(() => rmSync(dir, { recursive: true, force: true }));
 

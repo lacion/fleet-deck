@@ -121,7 +121,6 @@ test('Linux PID reuse by a non-fleetd process does not retain a stale HOME lock'
   assert.equal(existsSync(pidFile), false, 'startupFatal must release the newly claimed pidfile');
 });
 
-<<<<<<< /tmp/mf-ours
 test('a disabled mDNS responder keeps the .local URL out of the startup banner', { skip: BUNDLE_SKIP }, async (t) => {
   // BUG-122: fleetd printed the mDNS success line immediately after start(),
   // but bind + multicast membership resolve asynchronously — with no multicast
@@ -181,7 +180,8 @@ test('a live mDNS responder still gets its .local URL into the startup banner', 
   const output = readFileSync(consoleRecord, 'utf8');
   assert.match(output, /fleetd LAN http:\/\/fleetdeck\.local:\d+\/\?t=<hidden> \(mDNS; credential available in share panel\)/,
     `healthy responder lost its banner line:\n${output}`);
-=======
+});
+
 test('the mDNS responder arms unicast and multicast TTL 255 before answering', { skip: BUNDLE_SKIP }, async (t) => {
   // RFC 6762 §11: every packet an mDNS responder sends — multicast OR unicast —
   // must carry IP TTL 255, and receivers may verify it as proof the source is
@@ -237,7 +237,6 @@ test('the mDNS responder arms unicast and multicast TTL 255 before answering', {
   const failRecords = readFileSync(failRecord, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse);
   assert.ok(!failRecords.some(item => item.type === 'send'),
     'a responder that cannot set TTL 255 must never announce');
->>>>>>> /tmp/mf-theirs
 });
 
 test('SIGTERM waits for the mDNS goodbye send callback before fleetd exits', { skip: BUNDLE_SKIP }, async (t) => {
@@ -286,9 +285,6 @@ test('SIGTERM waits for the mDNS goodbye send callback before fleetd exits', { s
     'fleetd must remain alive until the goodbye send callback runs');
 });
 
-<<<<<<< /tmp/mf-ours
-<<<<<<< /tmp/mf-ours
-
 test('a LAN address change refreshes discovery: mDNS retires the old address and announces the new one (BUG-118)', { skip: BUNDLE_SKIP }, async (t) => {
   const home = freshHome('fleetdeck-lan-roam-');
   const record = path.join(home, 'mdns.jsonl');
@@ -297,61 +293,20 @@ test('a LAN address change refreshes discovery: mDNS retires the old address and
   t.after(() => rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
 
   const child = spawnRaw({
-=======
-test('a dotted FLEETDECK_MDNS_NAME yields ONE canonical host: banner, log and advertisement agree', { skip: BUNDLE_SKIP }, async (t) => {
-  // BUG-120: the responder canonicalizes a raw name like "team.deck" to the
-  // "team-deck.local" it can legally advertise. Anything else the daemon says
-  // about the mDNS host — the startup banner and the LAN log line (and, behind
-  // them, /state's lan.mdns and the Host allowlist built from it) — must name
-  // that SAME host, or the share URL resolves nowhere and the advertised Host
-  // is rejected with 403.
-  const home = freshHome('fleetdeck-mdns-canonical-');
-  const record = path.join(home, 'mdns.jsonl');
-  const consoleRecord = path.join(home, 'console.log');
-  t.after(() => rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
-  const daemon = spawnRaw({
->>>>>>> /tmp/mf-theirs
-=======
-test('a multihomed daemon answers and withdraws per interface, each link advertising only its own address', { skip: BUNDLE_SKIP }, async (t) => {
-  // BUG-131: one socket + the kernel's multicast route means every reply leaves
-  // on the OS-selected interface while the packet claims A records for BOTH
-  // LANs — peers on the other link resolve an address they cannot reach. The
-  // fix is one link (socket + outbound interface + scoped advertisement) per
-  // interface. This test drives the daemon with two mocked interfaces and
-  // asserts the wire evidence: two links, each pinned to its own interface,
-  // each announcing and withdrawing only its own address.
-  const home = freshHome('fleetdeck-multihome-');
-  const record = path.join(home, 'mdns.jsonl');
-  t.after(() => rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
-
-  const netifs = {
-    lan0: [{ family: 'IPv4', internal: false, address: '192.0.2.10' }],
-    lan1: [{ family: 'IPv4', internal: false, address: '192.0.2.11' }],
-  };
-  const child = spawnRaw({
->>>>>>> /tmp/mf-theirs
     port: randomPort(),
     home,
     env: loaderOptions({
       FLEETDECK_BIND: '0.0.0.0',
-<<<<<<< /tmp/mf-ours
-<<<<<<< /tmp/mf-ours
       FLEETDECK_TOKEN: 'lan-roam-token-0123456789abcdef',
       FLEETDECK_MDNS_RECORD: record,
       FLEETDECK_MDNS_SEND_DELAY_MS: '0',
       FLEETDECK_TEST_CONSOLE_RECORD: consoleRecord,
       FLEETDECK_TEST_NET_FILE: netFile,
       FLEETDECK_LAN_REFRESH_MS: '100',
-=======
-      FLEETDECK_TOKEN: 'multihome-race-token-0123456789abcdef',
-      FLEETDECK_MDNS_RECORD: record,
-      FLEETDECK_TEST_NETIFS: JSON.stringify(netifs),
->>>>>>> /tmp/mf-theirs
     }),
   });
   t.after(() => child.kill());
 
-<<<<<<< /tmp/mf-ours
   const packets = () => {
     try {
       return readFileSync(record, 'utf8').trim().split('\n').filter(Boolean)
@@ -390,7 +345,24 @@ test('a multihomed daemon answers and withdraws per interface, each link adverti
   assert.match(consoleLines, /fleetd LAN addresses now 198\.51\.100\.88/, `roam was not logged:\n${log}`);
   assert.equal(consoleLines.includes('lan-roam-token-0123456789abcdef'), false, 'the token must never reach a console line');
   assert.match(log, /refreshLan .*198\.51\.100\.88/, `share-panel LAN state did not follow the roam:\n${log}`);
-=======
+});
+
+test('a dotted FLEETDECK_MDNS_NAME yields ONE canonical host: banner, log and advertisement agree', { skip: BUNDLE_SKIP }, async (t) => {
+  // BUG-120: the responder canonicalizes a raw name like "team.deck" to the
+  // "team-deck.local" it can legally advertise. Anything else the daemon says
+  // about the mDNS host — the startup banner and the LAN log line (and, behind
+  // them, /state's lan.mdns and the Host allowlist built from it) — must name
+  // that SAME host, or the share URL resolves nowhere and the advertised Host
+  // is rejected with 403.
+  const home = freshHome('fleetdeck-mdns-canonical-');
+  const record = path.join(home, 'mdns.jsonl');
+  const consoleRecord = path.join(home, 'console.log');
+  t.after(() => rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+  const daemon = spawnRaw({
+    port: randomPort(),
+    home,
+    env: loaderOptions({
+      FLEETDECK_BIND: '0.0.0.0',
       FLEETDECK_TOKEN: 'mdns-canonical-token-0123456789abcdef',
       FLEETDECK_MDNS_NAME: 'team.deck',
       FLEETDECK_MDNS_RECORD: record,
@@ -419,8 +391,36 @@ test('a multihomed daemon answers and withdraws per interface, each link adverti
   assert.match(output, /fleetd LAN http:\/\/team-deck\.local:\d+\/\?t=<hidden> \(mDNS;/,
     `the log must name the advertised host, not the raw env value:\n${output}`);
   assert.ok(!output.includes('team.deck.local'), `the unsplittable raw name must never be printed:\n${output}`);
->>>>>>> /tmp/mf-theirs
-=======
+});
+
+test('a multihomed daemon answers and withdraws per interface, each link advertising only its own address', { skip: BUNDLE_SKIP }, async (t) => {
+  // BUG-131: one socket + the kernel's multicast route means every reply leaves
+  // on the OS-selected interface while the packet claims A records for BOTH
+  // LANs — peers on the other link resolve an address they cannot reach. The
+  // fix is one link (socket + outbound interface + scoped advertisement) per
+  // interface. This test drives the daemon with two mocked interfaces and
+  // asserts the wire evidence: two links, each pinned to its own interface,
+  // each announcing and withdrawing only its own address.
+  const home = freshHome('fleetdeck-multihome-');
+  const record = path.join(home, 'mdns.jsonl');
+  t.after(() => rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+
+  const netifs = {
+    lan0: [{ family: 'IPv4', internal: false, address: '192.0.2.10' }],
+    lan1: [{ family: 'IPv4', internal: false, address: '192.0.2.11' }],
+  };
+  const child = spawnRaw({
+    port: randomPort(),
+    home,
+    env: loaderOptions({
+      FLEETDECK_BIND: '0.0.0.0',
+      FLEETDECK_TOKEN: 'multihome-race-token-0123456789abcdef',
+      FLEETDECK_MDNS_RECORD: record,
+      FLEETDECK_TEST_NETIFS: JSON.stringify(netifs),
+    }),
+  });
+  t.after(() => child.kill());
+
   // Two pinned links means at least two setiface records — one per interface.
   await waitUntil(() => {
     try {
@@ -463,5 +463,4 @@ test('a multihomed daemon answers and withdraws per interface, each link adverti
     'both LAN addresses must be announced, each on its own link');
   assert.deepEqual(new Set(goodbyeByAddress.keys()), new Set(['192.0.2.10', '192.0.2.11']),
     'both LAN addresses must be withdrawn on shutdown');
->>>>>>> /tmp/mf-theirs
 });

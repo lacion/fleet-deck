@@ -105,23 +105,12 @@ curl -s -X POST "http://127.0.0.1:$PORT/mail" -H 'content-type: application/json
 Since 0.16.0 the token file always exists and `POST /mail` requires it —
 without the header the call 401s. Two rules on content: your `from` must be
 your own session id or callsign (the daemon's names — `orchestrator`,
-<<<<<<< /tmp/mf-ours
 `fleetdeck`, `fleetdeck-answer`, `human` — are refused), and no LINE of your
 text may open with a `[FLEETDECK ...]` frame (also refused — a frame on a
 later line forges a daemon envelope). Reuse the same
-`$TOKEN` for every daemon call below.
-=======
-`fleetdeck`, `fleetdeck-answer`, `human` — are refused), and your text must
-not open with a `[FLEETDECK ...]` frame (also refused). Reuse the same
 `$PORT` and `$TOKEN` for every daemon call below.
->>>>>>> /tmp/mf-theirs
 
 `to` accepts a session_id, a callsign (from the roster brief or board),
-<<<<<<< /tmp/mf-ours
-`all`, or `repo:<repo name>`. Delivery is at the target's **next turn
-boundary** — never instant; do not wait for a reply, keep working.
-`curl -s -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:$PORT/state"`
-=======
 `all`, or `repo:<repo name>`. Delivery route depends on the target: a
 session blocked on a watcher wakes **immediately**, a verified owned pane
 gets the mail **typed in after a grace window**, any other live session
@@ -129,8 +118,7 @@ receives it at its **next turn boundary**, and an ended session's mail is
 **queued for a future `--resume`**. The `POST /mail` response reports the
 actual `route` per target, and `/state`'s `mail_meta` shows each session's
 current route. Do not wait for a reply, keep working.
-`curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:4711/state`
->>>>>>> /tmp/mf-theirs
+`curl -s -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:$PORT/state"`
 shows the current roster if you need a target.
 
 ## When you are deputized

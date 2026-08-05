@@ -2,23 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-<<<<<<< /tmp/mf-ours
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-=======
-import { execFileSync } from 'node:child_process';
-import { chmodSync, mkdtempSync, rmSync } from 'node:fs';
->>>>>>> /tmp/mf-theirs
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openDb } from '../scripts/fleetd/db.mjs';
 import { startDaemon } from './helpers/daemon.mjs';
 import { getJson, postHook, postJson } from './helpers/http.mjs';
-<<<<<<< /tmp/mf-ours
 import { makeRepoWithWorktree } from './helpers/gitrepo.mjs';
-=======
 import { waitUntil } from './helpers/wait.mjs';
->>>>>>> /tmp/mf-theirs
 
 // tests/rename.test.mjs — 0.7.1 custom names.
 //
@@ -72,16 +64,14 @@ async function startSession(daemon, cwd) {
 const rename = (daemon, sid, body) => postJson(`${daemon.baseUrl}/api/sessions/${sid}/name`, body);
 const command = (daemon, text) => postJson(`${daemon.baseUrl}/command`, { text });
 
-<<<<<<< /tmp/mf-ours
 const git = (args, cwd) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 const writeSeed = (dir, content) => writeFileSync(path.join(dir, 'seed.txt'), content);
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-=======
+
 const tmuxOk = () => {
   try { execFileSync('tmux', ['-V'], { stdio: 'ignore' }); return true; } catch { return false; }
 };
 const tmux = (socket, args) => execFileSync('tmux', ['-L', socket, ...args], { encoding: 'utf8' }).trim();
->>>>>>> /tmp/mf-theirs
 
 test('renaming keeps the animal and takes the suffix, and answers in the shape Compose already renders', async (t) => {
   const { daemon, home, cwd } = await boot(t, 'fleetdeck-rename-happy');

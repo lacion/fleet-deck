@@ -219,7 +219,6 @@ test('the shared control client is released once the last viewer leaves', async 
   await waitUntil(() => records(record).some(r => r.type === 'signal' && r.signal === 'SIGTERM'), 'client released on last viewer');
 });
 
-<<<<<<< /tmp/mf-ours
 // BUG-055: a remain-on-exit pane whose process has exited emits NO
 // %window-close, still answers list-panes, and still answers send-keys with ok
 // — so neither of the bridge's old death signals fired and an open viewer
@@ -235,24 +234,10 @@ test('live terminal WS ends the viewer when its pane is dead under remain-on-exi
     env: env(record, {
       FLEETDECK_TEST_TERM_DEAD_PANE: '*',       // every fixture pane is dead
       FLEETDECK_TERM_DEAD_POLL_MS: '100',       // don't sit through the 5s default
-=======
-// BUG-158: %output that lands between subscribe and the init frame is buffered
-// in viewer.pending. That buffer is BYTE-BOUNDED like the keystroke queue — a
-// pane flooding past FLEETDECK_TERM_PENDING_MAX_BYTES before its init ships is
-// finished for a resync (exit frame), never hoarded unbounded in daemon memory.
-test('pre-init output past the pending byte bound resyncs the viewer instead of buffering unbounded', async t => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-term-flood-'));
-  const record = path.join(dir, 'term.jsonl');
-  const daemon = await startDaemon({
-    env: env(record, {
-      FLEETDECK_TERM_PENDING_MAX_BYTES: '4096',
-      FLEETDECK_TEST_TERM_PREINIT_FLOOD: '65536',
->>>>>>> /tmp/mf-theirs
     }),
   });
   t.after(async () => { await daemon.stop(); rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
   const spawned = await createSpawn(daemon, dir);
-<<<<<<< /tmp/mf-ours
   const { ws, frames, closes } = connect(termUrl(daemon, spawned.spawn_id, 80, 24));
 
   await waitUntil(() => frames.find(f => f.t === 'init'), 'init frame');
@@ -292,7 +277,23 @@ test('live terminal WS keeps the viewer open while pane_dead is 0 (BUG-055)', as
   assert.equal(frames.some(f => f.t === 'exit'), false, 'a live pane must never end its viewer');
   assert.equal(frames.some(f => f.t === 'err'), false);
   ws.close();
-=======
+});
+
+// BUG-158: %output that lands between subscribe and the init frame is buffered
+// in viewer.pending. That buffer is BYTE-BOUNDED like the keystroke queue — a
+// pane flooding past FLEETDECK_TERM_PENDING_MAX_BYTES before its init ships is
+// finished for a resync (exit frame), never hoarded unbounded in daemon memory.
+test('pre-init output past the pending byte bound resyncs the viewer instead of buffering unbounded', async t => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-term-flood-'));
+  const record = path.join(dir, 'term.jsonl');
+  const daemon = await startDaemon({
+    env: env(record, {
+      FLEETDECK_TERM_PENDING_MAX_BYTES: '4096',
+      FLEETDECK_TEST_TERM_PREINIT_FLOOD: '65536',
+    }),
+  });
+  t.after(async () => { await daemon.stop(); rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+  const spawned = await createSpawn(daemon, dir);
 
   const { frames, closes } = connect(termUrl(daemon, spawned.spawn_id, 80, 24));
   const exit = await waitUntil(() => frames.find(f => f.t === 'exit'), 'exit frame');
@@ -300,9 +301,7 @@ test('live terminal WS keeps the viewer open while pane_dead is 0 (BUG-055)', as
   assert.equal(frames.some(f => f.t === 'init'), false,
     'a flooded pre-init buffer must not ship a seed it can no longer replay');
   await waitUntil(() => closes.length > 0, 'socket close');
->>>>>>> /tmp/mf-theirs
 });
-
 test('live terminal WS refuses an unknown spawn and honors FLEETDECK_TERM=off', async t => {
   const dir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-term-refuse-'));
   const record = path.join(dir, 'term.jsonl');
@@ -328,8 +327,6 @@ test('live terminal WS returns err for an unknown spawn when enabled', async t =
     'a refused viewer must not have launched a control client');
 });
 
-<<<<<<< /tmp/mf-ours
-<<<<<<< /tmp/mf-ours
 // BUG-157: a watched window dies, tmux emits %window-close, and the bridge's
 // list-panes -a probe FAILS (%error — a control-client blip). The old code
 // swallowed that failure, and an idle viewer with no input in flight had no
@@ -376,7 +373,6 @@ test('a failed window-close probe is re-listed once so an idle viewer on a dead 
   // nobody is watching holds no tmux attach.
   await waitUntil(() => records(record).some(r => r.type === 'signal' && r.signal === 'SIGTERM'), 'client released on last viewer');
 });
-=======
 // BUG-159: the open-time SIGWINCH jiggle is three resize steps — size(rows),
 // size(rows-1), size(rows) — and only the first used to be checked. A failed
 // restore after a successful rows-1 step left the window SHORT while the init
@@ -413,8 +409,6 @@ for (const step of ['mid', 'restore']) {
     }, 'final resize restores the requested rows');
   });
 }
->>>>>>> /tmp/mf-theirs
-=======
 // BUG-165: the fixture's bare-success default branch used to hide every
 // lifecycle edge — these fault knobs (see term-cmd-fixture.mjs) open them.
 
@@ -542,7 +536,6 @@ test('live terminal WS: %window-close with the pane dead finishes exactly that v
   const exit = await waitUntil(() => dying.frames.find(f => f.t === 'exit'), 'window-close exit frame');
   assert.match(exit.reason, /pane closed/);
 });
->>>>>>> /tmp/mf-theirs
 
 // Item 6: the row said live but its pane was already gone (the agent ended
 // between the ~10s liveness tick and this open). A vanished pane is the agent

@@ -260,40 +260,6 @@ export function createRetention(ctx) {
       questions_expired += Number(questions.expireAllForSession(sid, { includeFreeform: true }));
     }
     q.goneArchivedSpawns.run();
-<<<<<<< /tmp/mf-ours
-
-    const wins = await tmuxAdapter.listScopedWindows(port);
-    const byName = new Map(q.allSpawns.all().map(r => [r.tmux_window, r]));
-    // A spawn row (any lineage, any status) owning a window name we are about to
-    // kill by; captured BEFORE the first kill await so each re-check below sees
-    // whether a concurrent revive spawned a NEW row for this name mid-cleanup.
-    const ownedNames = new Set(q.allSpawns.all().map(r => r.tmux_window));
-    const knownSpawnIds = new Set(q.allSpawns.all().map(r => r.spawn_id));
-    let windows_killed = 0;
-    for (const win of wins ?? []) {
-      const sp = byName.get(win.window);
-      if (!win.pane_dead || !sp || !['killed', 'pane-dead', 'gone'].includes(sp.status)) continue;
-      // BUG-046: the checks above predate every kill await. While one kill was
-      // in flight, a revive can recreate this deterministic window name with a
-      // fresh live pane and a NEW spawn row — the name now belongs to live work.
-      // Re-verify ownership at kill time (spawns.mjs owns no DB) and treat ANY
-      // change as a stale no-op: a row this snapshot never saw, the current
-      // owner no longer terminal, or the window/pane generation moved on.
-      const out = await tmuxAdapter.killWindowVerified(win.window, {
-        expectWindowId: win.window_id,
-        expect: () => {
-          const sp2 = byName.get(win.window);
-          if (!sp2 || !['killed', 'pane-dead', 'gone'].includes(sp2.status)) return false;
-          if (!ownedNames.has(win.window)) return true; // the name had no row before
-          if (q.allSpawns.all().some(r => r.tmux_window === win.window && !knownSpawnIds.has(r.spawn_id))) return false;
-          const owner = q.currentWindowOwner.get(win.window);
-          return !owner || ['killed', 'pane-dead', 'gone'].includes(owner.status);
-        },
-      });
-      if (out.ok) windows_killed++;
-    }
-=======
->>>>>>> /tmp/mf-theirs
     // CLEAR MEANS CLEAR. Archiving the cards was never enough: the conflict
     // banner kept shouting about files two dead sessions once touched, the rail
     // kept a wall of answered questions, and the feed kept narrating a fleet
@@ -439,7 +405,6 @@ export function createRetention(ctx) {
           // session's row) means a live pane now lives there: skip it.
           const owner = q.currentWindowOwner.get(win.window);
           if (owner && (owner.session_id !== sid || owner.status !== 'pane-dead')) continue;
-<<<<<<< /tmp/mf-ours
           // BUG-046: the check above still predates the kill's own awaits — a
           // revive can land DURING them, after the owner check passed. Move the
           // verdict to kill time: the kill primitive re-runs `expect` after its
@@ -455,13 +420,12 @@ export function createRetention(ctx) {
               return !alive();
             },
           });
-          if (out.ok) windows_killed++;
-=======
-          const out = await tmuxAdapter.killWindowVerified(win.window);
-          // {ok:false, gone:true} is fresh proof of absence — that counts as cleared.
+          // BUG-145: {ok:false, gone:true} is fresh proof of absence — that
+          // counts as cleared. A kill that comes back {ok:false} without proof
+          // of absence leaves the window standing, holding its reusable name —
+          // never report success; surface it for the retry path below.
           if (out.ok || out.gone) windows_killed++;
           else window_errors.push(`${win.window}: ${out.error || 'kill failed'}`);
->>>>>>> /tmp/mf-theirs
           if (alive()) { resurrected = true; break; }
         }
         if (window_errors.length) {

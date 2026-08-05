@@ -70,37 +70,18 @@ test('static serving: board, assets, traversal, API regression', async t => {
     indexHtml = res.text;
   });
 
-<<<<<<< /tmp/mf-ours
-<<<<<<< /tmp/mf-ours
-  await t.test('GET /index.html serves the same shell as GET /', async () => {
+  await t.test('GET /index.html serves the same shell as GET / (conventional entry URL)', async () => {
     // /index.html is part of the public-shell contract (isPublicShell lets it
-    // through the auth and Host walls), so it must return the board, not the
-    // JSON 404 a bare pathname match used to give it.
-=======
-  await t.test('GET /index.html serves the same shell (conventional entry URL)', async () => {
-    // /index.html is part of the public-shell contract (isPublicShell), so a
-    // bookmark, proxy rewrite or health check that normalizes to it must boot
-    // the board — not fall through to the JSON 404.
->>>>>>> /tmp/mf-theirs
+    // through the auth and Host walls), so a bookmark, proxy rewrite or health
+    // check that normalizes to it must boot the board — not fall through to
+    // the JSON 404 a bare pathname match used to give it.
     const res = await getText(daemon.baseUrl + '/index.html');
     assert.equal(res.status, 200);
     assert.match(res.type, /text\/html/);
     assert.equal(res.text, readFileSync(path.join(BOARD_DIST, 'index.html'), 'utf8'));
-<<<<<<< /tmp/mf-ours
+    assert.match(res.text, /<div id="root">/);
   });
 
-  await t.test('GET /favicon.ico is answered, not a JSON 404', async () => {
-    // The shell's favicon is a data: SVG, so board-dist ships no favicon.ico —
-    // but browsers auto-fetch the path and the public-shell contract names it,
-    // so the daemon answers 204 (no icon today, no-store so a future icon is
-    // never hidden behind a stale negative cache).
-    const res = await getText(daemon.baseUrl + '/favicon.ico');
-    assert.equal(res.status, 204);
-    assert.equal(res.text, '');
-=======
-    assert.match(res.text, /<div id="root">/);
->>>>>>> /tmp/mf-theirs
-=======
   await t.test('GET /index.html serves the same shell as / (BUG-192)', async () => {
     const root = await getHeaders(daemon.baseUrl + '/');
     const explicit = await getHeaders(daemon.baseUrl + '/index.html');
@@ -111,7 +92,16 @@ test('static serving: board, assets, traversal, API regression', async t => {
     }
     assert.equal(explicit.headers['content-security-policy'].includes("default-src 'self'"), true, 'shell CSP present');
     assert.equal(explicit.headers['cache-control'], 'no-store', 'shell is never cached');
->>>>>>> /tmp/mf-theirs
+  });
+
+  await t.test('GET /favicon.ico is answered, not a JSON 404', async () => {
+    // The shell's favicon is a data: SVG, so board-dist ships no favicon.ico —
+    // but browsers auto-fetch the path and the public-shell contract names it,
+    // so the daemon answers 204 (no icon today, no-store so a future icon is
+    // never hidden behind a stale negative cache).
+    const res = await getText(daemon.baseUrl + '/favicon.ico');
+    assert.equal(res.status, 204);
+    assert.equal(res.text, '');
   });
 
   await t.test('GET /assets/* serves the hashed build assets with correct MIME types', async () => {

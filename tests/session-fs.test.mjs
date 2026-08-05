@@ -241,8 +241,6 @@ test('read, list, search-hit, and binary caps shape bounded responses', async t 
   assert.equal(Object.hasOwn(binary.json, 'content'), false);
 });
 
-<<<<<<< /tmp/mf-ours
-<<<<<<< /tmp/mf-ours
 test('list bounds lstat work, not just response size, in oversized directories (BUG-114)', async t => {
   const plain = makePlainDir();
   t.after(() => plain.cleanup());
@@ -271,14 +269,28 @@ test('list bounds lstat work, not just response size, in oversized directories (
     lstatCount <= LIST_MAX + 10,
     `lstat work must be bounded by LIST_MAX (${LIST_MAX}), not the directory size (${2 * LIST_MAX}); saw ${lstatCount}`,
   );
-=======
-test('truncated git listings still mark gitignored entries in the returned page', async t => {
+});
+
+test('truncated git listings still mark gitignored entries in the returned page (BUG-115)', async t => {
   const repo = makeRepoWithWorktree({ repoName: 'fleetdeck-session-fs-trunc' });
   writeFileSync(path.join(repo.worktree, '.gitignore'), '*.ignored\n');
   writeFileSync(path.join(repo.worktree, 'aaa-secret.ignored'), 'truncation must not hide ignore status\n');
   for (let i = 0; i < 8; i += 1) writeFileSync(path.join(repo.worktree, `file-${i}.txt`), 'filler\n');
-=======
-test('truncated git listings still mark gitignored entries ignored:true', async t => {
+  const daemon = await startDaemon({ env: { FLEETDECK_FS_LIST_MAX: '5' } });
+  t.after(async () => { await daemon.stop(); repo.cleanup(); });
+  seedSession(daemon.home, repo.root, { spawnPath: repo.worktree });
+
+  const listed = await getJson(endpoint(daemon.baseUrl, 'fs-session', 'list'));
+  assert.equal(listed.status, 200);
+  assert.equal(listed.json.git, true);
+  assert.equal(listed.json.truncated, true);
+  assert.equal(listed.json.entries.length, 5);
+  const ignored = listed.json.entries.find(entry => entry.name === 'aaa-secret.ignored');
+  assert.ok(ignored, 'gitignored file sorts into the returned page');
+  assert.equal(ignored.ignored, true);
+});
+
+test('truncated git listings still mark gitignored entries ignored:true (BUG-116)', async t => {
   // Regression: check-ignore used to run only when the listing was NOT
   // truncated, so a gitignored name inside the kept LIST_MAX slice came back
   // ignored:false while the same name was ignored:true in a full listing.
@@ -288,28 +300,17 @@ test('truncated git listings still mark gitignored entries ignored:true', async 
   for (const name of ['a1.txt', 'a2.txt', 'z1.txt', 'z2.txt', 'z3.txt']) {
     writeFileSync(path.join(repo.worktree, name), 'filler\n');
   }
->>>>>>> /tmp/mf-theirs
   const daemon = await startDaemon({ env: { FLEETDECK_FS_LIST_MAX: '5' } });
   t.after(async () => { await daemon.stop(); repo.cleanup(); });
   seedSession(daemon.home, repo.root, { spawnPath: repo.worktree });
 
   const listed = await getJson(endpoint(daemon.baseUrl, 'fs-session', 'list'));
   assert.equal(listed.status, 200);
-<<<<<<< /tmp/mf-ours
-  assert.equal(listed.json.git, true);
-  assert.equal(listed.json.truncated, true);
-  assert.equal(listed.json.entries.length, 5);
-  const ignored = listed.json.entries.find(entry => entry.name === 'aaa-secret.ignored');
-  assert.ok(ignored, 'gitignored file sorts into the returned page');
-  assert.equal(ignored.ignored, true);
->>>>>>> /tmp/mf-theirs
-=======
   assert.equal(listed.json.truncated, true);
   assert.equal(listed.json.entries.length, 5);
   const ignored = listed.json.entries.find(entry => entry.name === 'mid.ignored');
   assert.ok(ignored, 'mid.ignored sorts into the kept slice');
   assert.equal(ignored.ignored, true);
->>>>>>> /tmp/mf-theirs
 });
 
 test('unknown and removed roots report lifecycle status, and FIFO reads refuse promptly', async t => {
@@ -517,23 +518,10 @@ test('0.16.0 credential denylist: lexical, symlink, and search paths all refuse'
   writeFileSync(path.join(browse, '.aws', 'credentials'), 'AWS SECRET MATERIAL\n');
   mkdirSync(path.join(browse, 'work'));
   writeFileSync(path.join(browse, 'work', 'notes.txt'), 'ordinary notes\n');
-<<<<<<< /tmp/mf-ours
-<<<<<<< /tmp/mf-ours
   // .docker is NOT a denied segment — only its config.json is denied, by path.
   mkdirSync(path.join(browse, '.docker'));
   writeFileSync(path.join(browse, '.docker', 'config.json'), '{"auths":{"registry":{"auth":"DOCKER REGISTRY SECRET"}}}\n');
   writeFileSync(path.join(browse, '.docker', 'images.list'), 'DOCKER REGISTRY SECRET listed harmlessly\n');
-=======
-  // Credential dirs inside the browse root itself: listings must hide them.
-  mkdirSync(path.join(browse, '.ssh'));
-  writeFileSync(path.join(browse, '.ssh', 'id_ed25519'), 'PRIVATE KEY MATERIAL\n');
-  mkdirSync(path.join(browse, '.aws'));
->>>>>>> /tmp/mf-theirs
-  // The attack: a symlink inside the browse root pointing at a credential dir.
-  symlinkSync(path.join(secrets, '.ssh'), path.join(browse, 'work', 'ssh-link'));
-
-  const daemon = await startDaemon({ env: { CODER: '', CODER_WORKSPACE_NAME: '', CODER_AGENT_URL: '' } });
-=======
   // The attack: a symlink inside the browse root pointing at an IN-ROOT
   // credential dir. realpathInside's containment check passes — only the
   // resolved-path segment denylist can refuse this.
@@ -546,7 +534,6 @@ test('0.16.0 credential denylist: lexical, symlink, and search paths all refuse'
     home: fleetHome,
     env: { CODER: '', CODER_WORKSPACE_NAME: '', CODER_AGENT_URL: '' },
   });
->>>>>>> /tmp/mf-theirs
   t.after(async () => {
     await daemon.stop();
     rmSync(browse, { recursive: true, force: true });
@@ -572,7 +559,6 @@ test('0.16.0 credential denylist: lexical, symlink, and search paths all refuse'
   // the in-root .ssh/.aws dirs must not appear next to ordinary entries.
   const rootList = await getJson(`${daemon.baseUrl}/api/fs/list?path=`);
   assert.equal(rootList.json.entries.some(e => e.name === 'work'), true, 'work dir visible');
-<<<<<<< /tmp/mf-ours
   for (const denied of ['.ssh', '.aws']) {
     assert.equal(rootList.json.entries.some(e => e.name === denied), false, `${denied} hidden from listing`);
   }
@@ -584,17 +570,9 @@ test('0.16.0 credential denylist: lexical, symlink, and search paths all refuse'
   // Search must not read denied trees: with the material inside the root,
   // only the walker's deniedName filter keeps the private key text unfindable
   // (the backend is walk — browse is not a git repo).
-=======
-  assert.equal(rootList.json.entries.some(e => e.name === '.ssh'), false, '.ssh hidden from listing');
-  assert.equal(rootList.json.entries.some(e => e.name === '.aws'), false, '.aws hidden from listing');
-
-  // Search must not read denied trees: the private key text is unfindable,
-  // and the search backend (walk — browse is not a git repo) skips the dir.
->>>>>>> /tmp/mf-theirs
   const search = await getJson(`${daemon.baseUrl}/api/fs/search?q=${encodeURIComponent('PRIVATE KEY MATERIAL')}`);
   assert.deepEqual(search.json.hits, [], 'search never returns denied content');
 
-<<<<<<< /tmp/mf-ours
   // .docker/config.json is denied by PATH, not by segment: walk search must
   // skip it in both modes even though it walks into the .docker directory.
   const dockerContent = await getJson(`${daemon.baseUrl}/api/fs/search?q=${encodeURIComponent('DOCKER REGISTRY SECRET')}`);
@@ -602,14 +580,10 @@ test('0.16.0 credential denylist: lexical, symlink, and search paths all refuse'
   const dockerName = await getJson(`${daemon.baseUrl}/api/fs/search?mode=name&q=${encodeURIComponent('config.json')}`);
   assert.deepEqual(dockerName.json.hits, [], 'name search hides .docker/config.json');
 
-  // FLEETDECK_HOME containment: the daemon's own token is unservable even
-  // when the browse root is home — here via a symlink chain into it.
-=======
   // FLEETDECK_HOME containment: the token lives at browse/fleet-home/token,
   // inside the root — a clean relative path reaches it unless fleetHomeReal
   // refuses it. The symlink chain must be refused the same way.
   assert.equal((await getJson(`${daemon.baseUrl}/api/fs/read?path=fleet-home%2Ftoken`)).status, 404, 'fleet home token, direct path');
->>>>>>> /tmp/mf-theirs
   symlinkSync(daemon.home, path.join(browse, 'work', 'fleet-home-link'));
   assert.equal((await getJson(`${daemon.baseUrl}/api/fs/read?path=work%2Ffleet-home-link%2Ftoken`)).status, 404, 'fleet home token');
 });

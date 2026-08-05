@@ -27,7 +27,6 @@ import {
   encodeRecord,
   hostLabel,
   normalize,
-  hostLabel,
   parseQuestions,
   uniqueConflict,
   META_QUERY,
@@ -263,7 +262,6 @@ test('normalize drops junk addresses and turns a dotted instance into one legal 
   assert.equal(ad.host, HOST);
 });
 
-<<<<<<< /tmp/mf-ours
 test('hostLabel returns exactly the label normalize() would advertise', () => {
   // BUG-119: fleetd builds its share URL, startup log line and Host allowlist
   // from ONE canonical label — if the surfaces and the advertisement ever
@@ -277,7 +275,8 @@ test('hostLabel returns exactly the label normalize() would advertise', () => {
   }
   assert.equal(hostLabel('deck.office'), 'deck-office');
   assert.equal(hostLabel(''), 'fleetdeck', 'an empty name falls back rather than advertising ".local"');
-=======
+});
+
 // BUG-120: the daemon builds its share URL, Host allowlist and logs from
 // hostLabel(), so those must agree byte-for-byte with the host normalize()
 // actually advertises — for every shape of FLEETDECK_MDNS_NAME.
@@ -295,7 +294,6 @@ test('hostLabel is the same canonical host normalize() advertises', () => {
     assert.equal(normalize({ name: canonical, port: 4711 }).host, `${canonical}.local`,
       `the advertised host must be built from the same label: ${JSON.stringify(raw)}`);
   }
->>>>>>> /tmp/mf-theirs
 });
 
 // ------------------------------------------------- announcements & goodbyes
@@ -323,7 +321,6 @@ test('a goodbye is the same record set with TTL 0 and no cache-flush claim', () 
   assert.ok(goodbye.every(r => r.flush === false), 'a record being withdrawn must not also claim uniqueness');
 });
 
-<<<<<<< /tmp/mf-ours
 // ------------------------------------------------------------- update()
 
 // BUG-129: a network change (Wi-Fi roam, DHCP renewal, VPN up/down) must NOT
@@ -402,7 +399,8 @@ test('update() after stop() and with nothing to change is a quiet no-op', async 
   await assert.doesNotReject(async () => { await mdns.stop(); });
   assert.doesNotThrow(() => mdns.update({ addresses: ['198.51.100.9'] }), 'update() must not resurrect a stopped responder');
   assert.equal(logs.length, 0, 'a no-op update says nothing');
-=======
+});
+
 // ------------------------------------------------- multicast egress (BUG-130)
 //
 // One socket joins the group on every advertised interface, but multicast
@@ -498,7 +496,6 @@ test('a multicast query gets its reply on every joined interface; a unicast (QU)
   assert.deepEqual(new Set(replies.map(s => s.iface)), new Set(TWO_IFACES.addresses));
 
   await mdns.stop();
->>>>>>> /tmp/mf-theirs
 });
 
 // ------------------------------------------------------------ the socket
@@ -689,7 +686,6 @@ test('stop() puts goodbye records (TTL 0) on the multicast group', async (t) => 
   assert.ok(goodbye.answers.some(r => r.typeName === 'PTR' && r.name === SVC), 'the service PTR must be withdrawn');
 });
 
-<<<<<<< /tmp/mf-ours
 test('update() retires the old A record (TTL 0) and announces the new one (BUG-118)', async (t) => {
   // Same multicast-loopback requirement as the goodbye test above: an
   // interface-change refresh has no question to answer, so both packets only
@@ -697,8 +693,71 @@ test('update() retires the old A record (TTL 0) and announces the new one (BUG-1
   const listener = await bindShared(MDNS_PORT);
   if (!listener) return t.skip('udp4 port 5353 is already owned by another responder');
   t.after(() => close(listener));
+  try {
+    listener.addMembership(MDNS_ADDR);
+  } catch (err) {
+    return t.skip(`cannot join ${MDNS_ADDR} in this environment (${err.code || err.message})`);
+  }
+  const inbox = collect(listener);
 
-=======
+  const logs = [];
+  const mdns = createMdns({ port: 4711, addresses: ['192.0.2.7'], log: m => logs.push(String(m)) });
+  mdns.start();
+  t.after(() => mdns.stop());
+
+  // The startup announcement doubles as the loopback probe (see the goodbye test).
+  const opening = await inbox.waitFor(p => p.isResponse && p.answers.some(r => r.ttl > 0), 'the startup announcement');
+  if (!opening) {
+    return t.skip(`multicast loopback does not deliver to this host — cannot observe the refresh. logs: ${JSON.stringify(logs)}`);
+  }
+  inbox.packets.length = 0;
+
+  // The host roams from 192.0.2.7 (network A) to 192.0.2.9 (network B).
+  assert.equal(mdns.update(['192.0.2.9']), true, 'an address change must be applied');
+  assert.equal(mdns.update(['192.0.2.9']), false, 're-applying the same set is a no-op');
+
+  // RFC 6762 §10.1: the withdrawn address goes out TTL 0, as exactly the A
+  // record being retired — the shared service records (PTR/SRV/TXT) are NOT
+  // touched, so a roam must not flush a healthy service cache.
+  const goodbye = await inbox.waitFor(
+    p => p.isResponse && p.answers.length > 0 && p.answers.every(r => r.ttl === 0),
+    'the TTL-0 goodbye for the removed address',
+  );
+  assert.ok(goodbye, `update() must say goodbye for the removed address. packets: ${JSON.stringify(inbox.packets.map(p => p.answers.map(r => `${r.typeName}/${r.ttl}/${r.data}`)))}`);
+  assert.deepEqual(goodbye.answers, [
+    { name: HOST, type: TYPE.A, typeName: 'A', class: 1, flush: false, ttl: 0, data: '192.0.2.7' },
+  ], 'the goodbye is exactly the retired A record');
+
+  const announced = await inbox.waitFor(
+    p => p.isResponse && p.answers.some(r => r.typeName === 'A' && r.data === '192.0.2.9' && r.ttl > 0),
+    'an announcement carrying the new address',
+  );
+  assert.ok(announced, 'the new address must be announced on the group');
+  assert.ok(!announced.answers.some(r => r.typeName === 'A' && r.data === '192.0.2.7'),
+    'the retired address must not be re-announced');
+
+  // An empty update (every interface momentarily gone mid-roam) must not empty
+  // the advertisement — start()'s "never advertise a dead host" rule holds here too.
+  assert.equal(mdns.update([]), false, 'an empty address set never empties the advertisement');
+  assert.equal(mdns.update(['not-an-ip']), false, 'junk input never empties the advertisement either');
+
+  // A legacy unicast query after the roam is answered from the NEW set.
+  const asker = await bindShared(0);
+  if (!asker) return t.skip('no ephemeral udp4 socket for the legacy query');
+  t.after(() => close(asker));
+  const queryInbox = collect(asker);
+  const query = encodeMessage({
+    id: 0x1234,
+    flags: 0,
+    questions: [{ name: HOST, type: TYPE.A, class: 1 }],
+  });
+  asker.send(query, MDNS_PORT, '127.0.0.1');
+  const reply = await queryInbox.waitFor(p => p.isResponse && p.answers.some(r => r.typeName === 'A'), 'the post-update A answer');
+  assert.ok(reply, 'the responder must answer queries after an update');
+  assert.deepEqual(reply.answers.filter(r => r.typeName === 'A').map(r => r.data), ['192.0.2.9'],
+    'post-roam answers must carry the new address, not the retired one');
+});
+
 // ------------------------------------------------- probing & conflict handling
 //
 // BUG-133: our A/SRV records carry the cache-flush bit — a claim of UNIQUE
@@ -803,7 +862,6 @@ test('start() probes before it announces, and a conflicting answer during probin
   const listener = await bindShared(MDNS_PORT);
   if (!listener) return t.skip('udp4 port 5353 is already owned by another responder');
   t.after(() => close(listener));
->>>>>>> /tmp/mf-theirs
   try {
     listener.addMembership(MDNS_ADDR);
   } catch (err) {
@@ -816,59 +874,6 @@ test('start() probes before it announces, and a conflicting answer during probin
   mdns.start();
   t.after(() => mdns.stop());
 
-<<<<<<< /tmp/mf-ours
-  // The startup announcement doubles as the loopback probe (see the goodbye test).
-  const opening = await inbox.waitFor(p => p.isResponse && p.answers.some(r => r.ttl > 0), 'the startup announcement');
-  if (!opening) {
-    return t.skip(`multicast loopback does not deliver to this host — cannot observe the refresh. logs: ${JSON.stringify(logs)}`);
-  }
-  inbox.packets.length = 0;
-
-  // The host roams from 192.0.2.7 (network A) to 192.0.2.9 (network B).
-  assert.equal(mdns.update(['192.0.2.9']), true, 'an address change must be applied');
-  assert.equal(mdns.update(['192.0.2.9']), false, 're-applying the same set is a no-op');
-
-  // RFC 6762 §10.1: the withdrawn address goes out TTL 0, as exactly the A
-  // record being retired — the shared service records (PTR/SRV/TXT) are NOT
-  // touched, so a roam must not flush a healthy service cache.
-  const goodbye = await inbox.waitFor(
-    p => p.isResponse && p.answers.length > 0 && p.answers.every(r => r.ttl === 0),
-    'the TTL-0 goodbye for the removed address',
-  );
-  assert.ok(goodbye, `update() must say goodbye for the removed address. packets: ${JSON.stringify(inbox.packets.map(p => p.answers.map(r => `${r.typeName}/${r.ttl}/${r.data}`)))}`);
-  assert.deepEqual(goodbye.answers, [
-    { name: HOST, type: TYPE.A, typeName: 'A', class: 1, flush: false, ttl: 0, data: '192.0.2.7' },
-  ], 'the goodbye is exactly the retired A record');
-
-  const announced = await inbox.waitFor(
-    p => p.isResponse && p.answers.some(r => r.typeName === 'A' && r.data === '192.0.2.9' && r.ttl > 0),
-    'an announcement carrying the new address',
-  );
-  assert.ok(announced, 'the new address must be announced on the group');
-  assert.ok(!announced.answers.some(r => r.typeName === 'A' && r.data === '192.0.2.7'),
-    'the retired address must not be re-announced');
-
-  // An empty update (every interface momentarily gone mid-roam) must not empty
-  // the advertisement — start()'s "never advertise a dead host" rule holds here too.
-  assert.equal(mdns.update([]), false, 'an empty address set never empties the advertisement');
-  assert.equal(mdns.update(['not-an-ip']), false, 'junk input never empties the advertisement either');
-
-  // A legacy unicast query after the roam is answered from the NEW set.
-  const asker = await bindShared(0);
-  if (!asker) return t.skip('no ephemeral udp4 socket for the legacy query');
-  t.after(() => close(asker));
-  const queryInbox = collect(asker);
-  const query = encodeMessage({
-    id: 0x1234,
-    flags: 0,
-    questions: [{ name: HOST, type: TYPE.A, class: 1 }],
-  });
-  asker.send(query, MDNS_PORT, '127.0.0.1');
-  const reply = await queryInbox.waitFor(p => p.isResponse && p.answers.some(r => r.typeName === 'A'), 'the post-update A answer');
-  assert.ok(reply, 'the responder must answer queries after an update');
-  assert.deepEqual(reply.answers.filter(r => r.typeName === 'A').map(r => r.data), ['192.0.2.9'],
-    'post-roam answers must carry the new address, not the retired one');
-=======
   // RFC 6762 §8.1: the FIRST thing on the wire must be probe queries for our
   // unique names — never the announcement. The looped-back probes double as the
   // multicast-reception probe; without them nothing below can be observed here.
@@ -945,7 +950,6 @@ test('start() announces only after a quiet probing window, and a later conflict 
   }
   assert.ok(logs.some(m => m.includes('mdns disabled') && m.includes('conflict')),
     `a post-claim conflict must disable discovery. logs: ${JSON.stringify(logs)}`);
->>>>>>> /tmp/mf-theirs
 });
 
 // ------------------------------------------------------- degrading safely
@@ -977,7 +981,6 @@ test('stop() before start() is a no-op that resolves', async () => {
   await mdns.stop();
 });
 
-<<<<<<< /tmp/mf-ours
 // ------------------------------------------- terminal-disable notification
 //
 // BUG-122: start() returns before bind + membership resolve, so the daemon
@@ -1031,7 +1034,8 @@ test('a throwing onDown listener cannot take the responder down', () => {
   const mdns = createMdns({ log: () => {}, onDown: () => { throw new Error('listener exploded'); } });
   assert.doesNotThrow(() => mdns.start());
   assert.equal(mdns.alive(), false);
-=======
+});
+
 test('update() revives a responder that started with no LAN address at all', async (t) => {
   const probe = await bindShared(MDNS_PORT);
   if (!probe) return t.skip('udp4 port 5353 is already owned by another responder');
@@ -1061,5 +1065,4 @@ test('update() revives a responder that started with no LAN address at all', asy
   const reply = await inbox.waitFor(p => p.isResponse && p.answers.some(r => r.typeName === 'A'), 'the A answer after revival');
   assert.ok(reply, `a responder revived by update() must answer queries. logs: ${JSON.stringify(logs)}`);
   assert.equal(reply.answers.find(r => r.typeName === 'A').data, '192.0.2.7');
->>>>>>> /tmp/mf-theirs
 });

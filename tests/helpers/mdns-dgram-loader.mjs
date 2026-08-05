@@ -53,23 +53,18 @@ export async function load(url, context, nextLoad) {
           if (process.env.FLEETDECK_MDNS_FAIL_TTL === 'multicast') throw new Error('mock: IP_MULTICAST_TTL refused');
         }
         setMulticastLoopback() {}
-<<<<<<< /tmp/mf-ours
+        setMulticastInterface(address) { record({ type: 'setiface', id: this.id, address }); }
         // BUG-122 regression seam: FLEETDECK_MDNS_JOIN_FAILS=1 models a network
         // with no multicast route — every membership join fails and the
         // responder must terminally disable itself after bind.
-        addMembership() { if (process.env.FLEETDECK_MDNS_JOIN_FAILS) throw new Error('no multicast route'); }
-=======
-        setMulticastInterface(address) { record({ type: 'setiface', id: this.id, address }); }
-        addMembership(_group, address) { record({ type: 'join', id: this.id, address: address || null }); }
->>>>>>> /tmp/mf-theirs
+        addMembership(_group, address) {
+          record({ type: 'join', id: this.id, address: address || null });
+          if (process.env.FLEETDECK_MDNS_JOIN_FAILS) throw new Error('no multicast route');
+        }
         bind(_options, callback) { setImmediate(callback); return this; }
         send(packet, _port, address, callback = () => {}) {
           const wire = Buffer.from(packet).toString('base64');
-<<<<<<< /tmp/mf-ours
-          record({ type: 'send', wire, address });
-=======
-          record({ type: 'send', id: this.id, wire });
->>>>>>> /tmp/mf-theirs
+          record({ type: 'send', id: this.id, wire, address });
           const timer = setTimeout(() => {
             record({ type: 'callback', id: this.id, wire });
             callback();
@@ -133,34 +128,30 @@ export async function load(url, context, nextLoad) {
       shortCircuit: true,
       source: `
         import realOs from 'node:os';
-<<<<<<< /tmp/mf-ours
         import { readFileSync } from 'node:fs';
-        // A mock interface "roam": fleetd's LAN watcher polls
-        // os.networkInterfaces(), so a DHCP roam is modelled as a FILE the test
-        // rewrites mid-run (env vars cannot change inside a running child).
-        // When the seam file is absent the set is network A — exactly what the
-        // pre-existing suites relied on.
+        // Two interface seams compose: FLEETDECK_TEST_NET_FILE models a DHCP
+        // "roam" (fleetd's LAN watcher polls os.networkInterfaces(), and a file
+        // can be rewritten mid-run while env vars cannot), while
+        // FLEETDECK_TEST_NETIFS statically pins a multihomed interface set at
+        // spawn. NET_FILE wins when present; absent both seams the set is
+        // network A — exactly what the pre-existing suites relied on.
         const NET_A = [{ family: 'IPv4', internal: false, address: '192.0.2.77' }];
         const seamFile = process.env.FLEETDECK_TEST_NET_FILE;
+        const staticNetifs = process.env.FLEETDECK_TEST_NETIFS ? JSON.parse(process.env.FLEETDECK_TEST_NETIFS) : null;
         const ifaces = () => {
-          if (!seamFile) return NET_A;
-          try {
-            const parsed = JSON.parse(readFileSync(seamFile, 'utf8'));
-            if (Array.isArray(parsed) && parsed.length) return parsed;
-          } catch { /* mid-write or absent: keep advertising network A */ }
-          return NET_A;
+          if (seamFile) {
+            try {
+              const parsed = JSON.parse(readFileSync(seamFile, 'utf8'));
+              if (Array.isArray(parsed) && parsed.length) return { ethernet: parsed };
+            } catch { /* mid-write or absent: keep advertising network A */ }
+            return { ethernet: NET_A };
+          }
+          if (staticNetifs) return staticNetifs;
+          return { ethernet: NET_A };
         };
         export default {
           ...realOs,
-          networkInterfaces: () => ({ ethernet: ifaces() }),
-=======
-        const interfaces = process.env.FLEETDECK_TEST_NETIFS
-          ? JSON.parse(process.env.FLEETDECK_TEST_NETIFS)
-          : { ethernet: [{ family: 'IPv4', internal: false, address: '192.0.2.77' }] };
-        export default {
-          ...realOs,
-          networkInterfaces: () => interfaces,
->>>>>>> /tmp/mf-theirs
+          networkInterfaces: () => ifaces(),
         };
       `,
     };

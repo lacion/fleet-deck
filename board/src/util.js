@@ -43,17 +43,14 @@ export async function copyText(text) {
     try {
       await navigator.clipboard.writeText(text);
       trace.writeText = 'resolved';
-<<<<<<< /tmp/mf-ours
       // A resolved writeText is only an ACCEPTED write — Chrome can still drop
       // it. When the read-back is permitted and PROVES the clipboard holds
       // something else, that evidence beats the resolution: report failure so
-      // the caller keeps the selection instead of flashing a lie.
+      // the caller keeps the selection instead of flashing a lie. An unchecked
+      // read-back is NOT failure — the accepted write is the best evidence
+      // there is, so it stands.
       const verdict = await verifyClipboard(trace, text);
       return finishCopyTrace(trace, verdict !== 'no');
-=======
-      if (await verifyClipboard(trace, text) === false) return finishCopyTrace(trace, false);
-      return finishCopyTrace(trace, true);
->>>>>>> /tmp/mf-theirs
     } catch (err) {
       trace.writeText = `rejected: ${err?.name || 'Error'} — ${err?.message || ''}`;
     }
@@ -69,7 +66,6 @@ export async function copyText(text) {
 // dialog in front of someone who just pressed Ctrl+C. When it does run it
 // settles the question the trace otherwise can only infer.
 //
-<<<<<<< /tmp/mf-ours
 // Tri-state verdict: 'yes' (the clipboard provably holds our text), 'no' (it
 // provably does NOT — the caller must not claim success), or 'unknown' (the
 // read-back could not run — no permission, no readText, or it threw — and an
@@ -88,27 +84,6 @@ async function verifyClipboard(trace, expected) {
   } catch (err) {
     trace.verified = `read failed: ${err?.name || 'Error'}`;
     return 'unknown';
-=======
-// Tri-state, and the caller treats ONLY the observed mismatch as failure:
-//   true      the clipboard provably holds this text
-//   false     it provably holds something else — the write was dropped
-//   undefined it could not be checked (no permission, read failed) — the
-//             accepted write is the best evidence there is, so it stands
-async function verifyClipboard(trace, expected) {
-  try {
-    const perm = await navigator.permissions?.query({ name: 'clipboard-read' });
-    if (perm?.state !== 'granted') { trace.verified = `not checked (permission: ${perm?.state ?? 'unknown'})`; return undefined; }
-    const got = await navigator.clipboard.readText();
-    if (got === expected) {
-      trace.verified = 'YES — the clipboard holds this text';
-      return true;
-    }
-    trace.verified = `NO — the clipboard holds something else (${got.length} chars)`;
-    return false;
-  } catch (err) {
-    trace.verified = `read failed: ${err?.name || 'Error'}`;
-    return undefined;
->>>>>>> /tmp/mf-theirs
   }
 }
 

@@ -12,24 +12,16 @@ FLEETDECK_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SEED_PROJECT="$SCRIPT_DIR/project"
 SESSIONSTART_SCRIPT="$FLEETDECK_ROOT/scripts/fleet-sessionstart.mjs"
 WATCH_SCRIPT="$FLEETDECK_ROOT/scripts/fleet-watch.mjs"
-<<<<<<< /tmp/mf-ours
 FLEET_HOOK_SCRIPT="$FLEETDECK_ROOT/scripts/fleet-hook.mjs"
-FLEETDECK_PORT=4711
-SCRATCH_HOME="$FLEETDECK_ROOT/.fleetdeck-test"
-BASE="http://127.0.0.1:$FLEETDECK_PORT"
-TMUX_SESSION="fleetdeck-$FLEETDECK_PORT"
-WINDOW_PREFIX="fd$FLEETDECK_PORT-"
-OUTPUT_FILE="$PROJECT_DIR/spawn-accept-done.txt"
-=======
 
-# Assigned from mktemp after the cleanup trap is armed. An arbitrary override
-# is intentionally unsupported: cleanup recursively deletes these directories,
-# so each must be a unique path created by this run, never a caller-provided
-# target. A concurrent acceptance run must never reset, delete, or spawn into
-# this run's daemon home, evidence files, or fixture copy.
+# SCRATCH_HOME and PROJECT_DIR are assigned from mktemp after the cleanup trap
+# is armed. An arbitrary override is intentionally unsupported: cleanup
+# recursively deletes these directories, so each must be a unique path created
+# by this run, never a caller-provided target. A concurrent acceptance run
+# must never reset, delete, or spawn into this run's daemon home, evidence
+# files, or fixture copy.
 SCRATCH_HOME=''
 PROJECT_DIR=''
->>>>>>> /tmp/mf-theirs
 
 # Isolated tmux server for this run, NEVER the user's default server: tmux
 # bakes the first client's environment into a new server's global env, and
@@ -128,28 +120,51 @@ trap cleanup_resources EXIT
 echo "== Fleet Deck v1.2 live spawn acceptance =="
 
 # --------------------------------------------------------------- reset
-<<<<<<< /tmp/mf-ours
-<<<<<<< /tmp/mf-ours
-# Stop recorded daemons only after their fleetd identity is proven (strict
-# pidfile + /health.pid + /proc shape — the production verifyDaemonPid gate).
-# A legacy plain-PID pidfile can name a PID the OS has since recycled for an
-# unrelated process; those are never signalled (BUG-008). Then clear an orphan
-# listener only when Fleet Deck's health endpoint proves the process on the
-# port is Fleet Deck.
-REAL_HOME="${HOME:-/root}/.fleetdeck"
-. "$SCRIPT_DIR/lib/kill-verified-daemon.sh"
-stop_pidfile_daemon "$REAL_HOME" || { echo "ABORT: unowned live pid in $REAL_HOME/fleetd.pid — not touching it."; exit 1; }
-stop_pidfile_daemon "$SCRATCH_HOME" || { echo "ABORT: unowned live pid in $SCRATCH_HOME/fleetd.pid — not touching it."; exit 1; }
-if curl -s -m 1 "$BASE/health" 2>/dev/null | grep -q '"ok"'; then
-  fuser -k "$FLEETDECK_PORT/tcp" 2>/dev/null || true
-  sleep 0.5
-=======
-# Signal only a daemon proven by ALL THREE identities: the strict JSON pid
-# record under the pidfile's home, a /health reply on this port that reports
-# the same pid, and a live node+fleetd process shape. NEVER kill by port
-# (fuser -k kills every client of the port, and a substring health grep
-# matches any body containing "ok" — including {"ok":false}); any listener
-# that cannot be positively identified aborts the run instead.
+# Every mutable resource is unique to this run: an mktemp'd daemon home, an
+# mktemp'd copy of the demo fixture project, and a verified-free port — so a
+# concurrent acceptance run can never reset, delete, or spawn into this run's
+# state. Nothing here touches the production daemon or any other run.
+
+SCRATCH_HOME="$(mktemp -d "${TMPDIR:-/tmp}/fleetdeck-spawn.XXXXXX")" || {
+  echo "ABORT: could not create a unique acceptance home"
+  exit 1
+}
+PROJECT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/fleetdeck-spawn-project.XXXXXX")" || {
+  echo "ABORT: could not create a unique fixture project"
+  exit 1
+}
+cp -R "$SEED_PROJECT/." "$PROJECT_DIR/"
+
+# Verified-free port, kernel-assigned on loopback. Never 4711 and never a
+# port with an existing listener: this run must not kill, force-clear, or
+# share a port with the production daemon or another acceptance run.
+FLEETDECK_PORT="$(node -e '
+  const net = require("node:net");
+  const probe = net.createServer();
+  probe.once("error", () => process.exit(1));
+  probe.listen(0, "127.0.0.1", () => {
+    process.stdout.write(String(probe.address().port));
+    probe.close();
+  });
+')" || {
+  echo "ABORT: could not allocate a free port"
+  exit 1
+}
+BASE="http://127.0.0.1:$FLEETDECK_PORT"
+TMUX_SESSION="fleetdeck-$FLEETDECK_PORT"
+WINDOW_PREFIX="fd$FLEETDECK_PORT-"
+OUTPUT_FILE="$PROJECT_DIR/spawn-accept-done.txt"
+DAEMON_LOG="$SCRATCH_HOME/fleetd.log"
+
+# Stop recorded daemons only after their fleetd identity is proven: signal
+# only a daemon proven by ALL THREE identities — the strict JSON pid record
+# under the pidfile's home, a /health reply on this port that reports the same
+# pid, and a live node+fleetd process shape. NEVER kill by port (fuser -k
+# kills every client of the port, and a substring health grep matches any body
+# containing "ok" — including {"ok":false}); any listener that cannot be
+# positively identified aborts the run instead. A legacy plain-PID pidfile can
+# name a PID the OS has since recycled for an unrelated process; those are
+# never signalled.
 stop_identified_daemon() {
   local pidfile="$1"
   [ -f "$pidfile" ] || return 0
@@ -227,45 +242,7 @@ fi
 if curl -s -m 1 "$BASE/health" >/dev/null 2>&1; then
   echo "ABORT: something is still listening on :$FLEETDECK_PORT after reset; refusing to kill an unidentified listener."
   exit 1
->>>>>>> /tmp/mf-theirs
 fi
-=======
-# Every mutable resource is unique to this run: an mktemp'd daemon home, an
-# mktemp'd copy of the demo fixture project, and a verified-free port — so a
-# concurrent acceptance run can never reset, delete, or spawn into this run's
-# state. Nothing here touches the production daemon or any other run.
-
-SCRATCH_HOME="$(mktemp -d "${TMPDIR:-/tmp}/fleetdeck-spawn.XXXXXX")" || {
-  echo "ABORT: could not create a unique acceptance home"
-  exit 1
-}
-PROJECT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/fleetdeck-spawn-project.XXXXXX")" || {
-  echo "ABORT: could not create a unique fixture project"
-  exit 1
-}
-cp -R "$SEED_PROJECT/." "$PROJECT_DIR/"
-
-# Verified-free port, kernel-assigned on loopback. Never 4711 and never a
-# port with an existing listener: this run must not kill, force-clear, or
-# share a port with the production daemon or another acceptance run.
-FLEETDECK_PORT="$(node -e '
-  const net = require("node:net");
-  const probe = net.createServer();
-  probe.once("error", () => process.exit(1));
-  probe.listen(0, "127.0.0.1", () => {
-    process.stdout.write(String(probe.address().port));
-    probe.close();
-  });
-')" || {
-  echo "ABORT: could not allocate a free port"
-  exit 1
-}
-BASE="http://127.0.0.1:$FLEETDECK_PORT"
-TMUX_SESSION="fleetdeck-$FLEETDECK_PORT"
-WINDOW_PREFIX="fd$FLEETDECK_PORT-"
-OUTPUT_FILE="$PROJECT_DIR/spawn-accept-done.txt"
-DAEMON_LOG="$SCRATCH_HOME/fleetd.log"
->>>>>>> /tmp/mf-theirs
 
 mkdir -p "$PROJECT_DIR/.claude"
 rm -f "$OUTPUT_FILE"

@@ -47,42 +47,13 @@ const FLEETD_PID = path.join(HOME, 'fleetd.pid');
 const UNIT_FILE = path.join(XDG, 'systemd', 'user', 'fleetdeck.service');
 
 const {
-<<<<<<< /tmp/mf-ours
-<<<<<<< /tmp/mf-ours
-  writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor,
-<<<<<<< /tmp/mf-ours
-<<<<<<< /tmp/mf-ours
-<<<<<<< /tmp/mf-ours
-<<<<<<< /tmp/mf-ours
-<<<<<<< /tmp/mf-ours
-<<<<<<< /tmp/mf-ours
-  serviceInstall, UNIT, SUPERVISE, MIN_NODE_RANGE, nodeVersionSupported,
-=======
-  writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, parseServiceEnvPort, serviceEnvPort,
+  writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE,
+  parseServiceEnvPort, serviceEnvPort, shQuote, token,
   supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor,
-=======
-  writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, shQuote, supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor,
->>>>>>> /tmp/mf-theirs
-  serviceInstall, UNIT, SUPERVISE,
->>>>>>> /tmp/mf-theirs
-=======
-  serviceInstall, UNIT, SUPERVISE, token,
->>>>>>> /tmp/mf-theirs
-=======
-  serviceInstall, UNIT, SUPERVISE, unitEscape, unitArg, unitEnvFilePath,
->>>>>>> /tmp/mf-theirs
-=======
-  serviceInstall, UNIT, SUPERVISE, quoteExecArg,
->>>>>>> /tmp/mf-theirs
-=======
   serviceInstall, serviceStart, UNIT, SUPERVISE,
->>>>>>> /tmp/mf-theirs
-=======
-  serviceInstall, UNIT, SUPERVISE, healthIsOurManagedDaemon,
->>>>>>> /tmp/mf-theirs
-=======
-  healthPidIsOurDaemon, serviceInstall, UNIT, SUPERVISE,
->>>>>>> /tmp/mf-theirs
+  MIN_NODE_RANGE, nodeVersionSupported,
+  unitEscape, unitArg, unitEnvFilePath, quoteExecArg,
+  healthIsOurManagedDaemon, healthPidIsOurDaemon,
 } = await import(new URL('../bin/fleetdeck.mjs', import.meta.url));
 const { parseTmuxVersion, tmuxVersionCapability, tmuxVersionSupported } = await import(new URL('../bin/tmux-version.mjs', import.meta.url));
 
@@ -247,7 +218,6 @@ test('ENV_VALUE_BARE_SAFE stays tight; ENV_VALUE_UNQUOTABLE is minimal (metachar
   }
 });
 
-<<<<<<< /tmp/mf-ours
 // ------------------------------------------------- service.env port reader
 
 // BUG-075: status/start/stop health checks must honor the FLEETDECK_PORT frozen
@@ -290,7 +260,8 @@ test('serviceEnvPort: returns the port from the installed file, null when absent
   assert.equal(serviceEnvPort(), null, 'an unparseable file is ignored, never fetched from');
   // Leave no trace: later tests in this file write and assert ENV_FILE contents.
   try { fs.unlinkSync(ENV_FILE); } catch { /* absent */ }
-=======
+});
+
 // -------------------------------------------------------- token --rotate
 
 // BUG-076: the same mode-option blind spot in `fleetdeck token --rotate` — a
@@ -316,7 +287,6 @@ test('token --rotate: tightens a pre-existing 0644 token to 0600 (BUG-076)', asy
   assert.match(rotated, /^[0-9a-f]{64}$/, 'a fresh 32-byte hex token was written');
   assert.notEqual(rotated, 'oldstaletoken0123456789abcdef');
   assert.ok(outChunks.some(c => c.includes('token rotated')), 'success was reported');
->>>>>>> /tmp/mf-theirs
 });
 
 // ------------------------------------------------------- supervisorAlive
@@ -358,7 +328,6 @@ test('argvIsOurSupervisor: matches only when SUPERVISE_SH is in the argv', () =>
   assert.equal(argvIsOurSupervisor(null), false);
 });
 
-<<<<<<< /tmp/mf-ours
 // -------------------------------------------------------- service start
 
 // BUG-080: a live supervisor wrapper is not a live BOARD. During a fleetd
@@ -400,7 +369,8 @@ test('serviceStart: live supervisor + dead daemon → nonzero degraded report, n
   // re-spawned wrapper would differ from our fake one.
   assert.equal(fs.readFileSync(SUPERVISOR_PID, 'utf8').trim(), String(fake.pid),
     'no second supervisor was spawned over the live one');
-=======
+});
+
 // ---------------------------------------------------- healthPidIsOurDaemon
 // BUG-082: the no-systemd `service stop` used to SIGTERM whatever pid ANY
 // health-compatible responder on the port returned. The gate must only accept
@@ -467,7 +437,6 @@ test('healthPidIsOurDaemon: no pidfile → false (cannot prove ownership, never 
   assert.equal(healthPidIsOurDaemon(null), false);
   assert.equal(healthPidIsOurDaemon({}), false);
   assert.equal(healthPidIsOurDaemon({ pid: 'not-a-number', managed: true }), false);
->>>>>>> /tmp/mf-theirs
 });
 
 // -------------------------------------------------------- service install
@@ -566,8 +535,6 @@ test('SUPERVISE(): sources the env file safely and backs off, never respawning a
   assert.ok(s.includes('serve'), 'execs `fleetdeck serve`');
 });
 
-<<<<<<< /tmp/mf-ours
-<<<<<<< /tmp/mf-ours
 // -------------------------------------------- systemd unit path escaping (BUG-077)
 //
 // The unit's two path-bearing directives interpolate REAL paths (node binary,
@@ -613,7 +580,8 @@ test('UNIT(): normal paths stay byte-identical to the pre-fix unit (bare, no % p
   assert.ok(u.includes(`EnvironmentFile=-${ENV_FILE}`), 'env file directive unchanged for a normal path');
   assert.ok(u.includes(`ExecStart=${process.execPath} `), 'node binary stays bare when the path is safe');
   assert.doesNotMatch(u, /%%/, 'no escaping noise when no path needs it');
-=======
+});
+
 // BUG-079: the wrapper embeds ENV_FILE, the Node executable, and the CLI path.
 // Inside DOUBLE quotes, $(), backticks, and $VAR in those paths stay live shell
 // syntax — a literal path like `$(printf injected)` was EXECUTED when the
@@ -661,8 +629,8 @@ test('SUPERVISE() quoting: a $(...) path is sourced literally, never executed', 
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stdout, '4711', 'the env file at the metachar path is sourced literally');
   assert.ok(!fs.existsSync(path.join(TMP, 'INJECTION_MARK')), 'the $(printf injected) in the path was NOT executed');
->>>>>>> /tmp/mf-theirs
-=======
+});
+
 test('healthIsOurManagedDaemon: an unmanaged health answer is refused (BUG-081)', async () => {
   // The core of BUG-081: a responder without the managed marker must never be
   // accepted as the managed service, regardless of pid/home proof.
@@ -671,5 +639,4 @@ test('healthIsOurManagedDaemon: an unmanaged health answer is refused (BUG-081)'
   assert.equal(await healthIsOurManagedDaemon({ pid: process.pid }), false);
   assert.equal(await healthIsOurManagedDaemon({ managed: 0, pid: process.pid }), false);
   assert.equal(await healthIsOurManagedDaemon({ managed: false, pid: process.pid }), false);
->>>>>>> /tmp/mf-theirs
 });

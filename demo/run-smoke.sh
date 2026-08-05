@@ -268,17 +268,9 @@ SMOKE_STARTED=1
 env "${CLAUDE_ENV_SCRUB[@]}" \
   FLEETDECK_HOME="$SCRATCH_HOME" FLEETDECK_PORT="$FLEETDECK_PORT" \
   FLEETDECK_TMUX_SOCKET="$FLEETDECK_TMUX_SOCKET" FLEETDECK_AGENTS_CMD=false \
-<<<<<<< /tmp/mf-ours
-  setsid timeout 300 claude -p "Add an exported function slugify(s) to util.js (lowercase, trim, spaces to dashes, strip punctuation). Add assert-based tests for it in test.js (create or extend). Verify each edge case one at a time with separate 'node -e' commands: spaces, capitals, punctuation, empty string. Then run node test.js. Preserve any existing exports. Work step by step, one small change per edit." \
-<<<<<<< /tmp/mf-ours
-  --session-id "$SA" --dangerously-skip-permissions \
-=======
-=======
   node "$TIMEOUT_LAUNCHER" 300 claude -p "Add an exported function slugify(s) to util.js (lowercase, trim, spaces to dashes, strip punctuation). Add assert-based tests for it in test.js (create or extend). Verify each edge case one at a time with separate 'node -e' commands: spaces, capitals, punctuation, empty string. Then run node test.js. Preserve any existing exports. Work step by step, one small change per edit." \
->>>>>>> /tmp/mf-theirs
   --session-id "$SA" --max-turns 24 --dangerously-skip-permissions \
   --model "$SMOKE_MODEL" --effort "$SMOKE_EFFORT" --setting-sources user,project \
->>>>>>> /tmp/mf-theirs
   --output-format json > "$DEMO_LOGS/worker-a.json" 2> "$DEMO_LOGS/worker-a.err" &
 PA=$!
 echo "T+0 session A launched sid=$SA"
@@ -330,17 +322,9 @@ fi
 env "${CLAUDE_ENV_SCRUB[@]}" \
   FLEETDECK_HOME="$SCRATCH_HOME" FLEETDECK_PORT="$FLEETDECK_PORT" \
   FLEETDECK_TMUX_SOCKET="$FLEETDECK_TMUX_SOCKET" FLEETDECK_AGENTS_CMD=false \
-<<<<<<< /tmp/mf-ours
-  setsid timeout 300 claude -p "Add an exported function titleCase(s) to util.js (capitalize each word). Add assert-based tests for it in test.js (create or extend). Verify edge cases one at a time with separate 'node -e' commands: single word, multiple words, empty string. Then run node test.js. IMPORTANT: preserve any existing exports and tests you find. Work step by step, one small change per edit." \
-<<<<<<< /tmp/mf-ours
-  --session-id "$SB" --dangerously-skip-permissions \
-=======
-=======
   node "$TIMEOUT_LAUNCHER" 300 claude -p "Add an exported function titleCase(s) to util.js (capitalize each word). Add assert-based tests for it in test.js (create or extend). Verify edge cases one at a time with separate 'node -e' commands: single word, multiple words, empty string. Then run node test.js. IMPORTANT: preserve any existing exports and tests you find. Work step by step, one small change per edit." \
->>>>>>> /tmp/mf-theirs
   --session-id "$SB" --max-turns 24 --dangerously-skip-permissions \
   --model "$SMOKE_MODEL" --effort "$SMOKE_EFFORT" --setting-sources user,project \
->>>>>>> /tmp/mf-theirs
   --output-format json > "$DEMO_LOGS/worker-b.json" 2> "$DEMO_LOGS/worker-b.err" &
 PB=$!
 echo "session B launched sid=$SB (A proven active)"
@@ -363,7 +347,6 @@ else
   exit 1
 fi
 
-<<<<<<< /tmp/mf-ours
 echo "(board screenshot skipped -- Phase 1 board is the ported spike board, no shot.mjs yet)"
 
 # `wait` propagates the worker's exit status — tolerated nonzero (rc=124 is an
@@ -371,66 +354,38 @@ echo "(board screenshot skipped -- Phase 1 board is the ported spike board, no s
 wait "$PA" || RC_A=$?; echo "session A done rc=$RC_A"; PA=''
 wait "$PB" || RC_B=$?; echo "session B done rc=$RC_B"; PB=''
 
-# Bounded tombstone poll: the SessionEnd hooks tombstone asynchronously, so
-# retry the final /state capture until both sessions read offline. Every
-# attempt carries hard timeouts so a stalled daemon can never wedge the run
-# past the worker watchdog.
+# Bounded tombstone poll: the SessionEnd hook is async ("async": true in the
+# rendered settings) — Claude Code does NOT await it before exiting, so the
+# shim can still be posting the tombstone for ~2.5s after `wait` returns
+# (fleet-hook.mjs's watchdog). Poll /state on a bounded deadline until both
+# sessions are tombstoned (offline with endedAt) before capturing evidence — a
+# single immediate fetch races the shim and fails the lifecycle criterion on
+# slower machines. Every attempt carries hard timeouts so a stalled daemon can
+# never wedge the run past the worker watchdog.
 STATE_GOT=''
-for i in $(seq 1 12); do
-  if curl -fsS --connect-timeout 5 --max-time 15 "http://127.0.0.1:$FLEETDECK_PORT/state" \
-    -H "authorization: Bearer $TOKEN" > "$DEMO_LOGS/final-state.json" 2>/dev/null; then
-    if node -e "
-      const s = JSON.parse(require('fs').readFileSync('$DEMO_LOGS/final-state.json', 'utf8'));
-      const byId = Object.fromEntries((s.sessions || []).map(x => [x.session_id, x]));
-      const off = id => byId[id] && byId[id].col === 'offline' && !!byId[id].endedAt;
-      process.exit(off('$SA') && off('$SB') ? 0 : 1);
-    "; then
-      STATE_GOT=1
-      break
-    fi
-  fi
-  echo " | waiting for tombstones (attempt $i/12)"
-  sleep 5
-done
-if [ -z "$STATE_GOT" ]; then
-  echo "FAIL: final /state capture never showed both sessions tombstoned offline"
-  exit 1
-fi
-=======
-sleep 12
-echo "T+41 (board screenshot skipped -- Phase 1 board is the ported spike board, no shot.mjs yet)"
-
-wait "$PA"; RC_A=$?; echo "session A done rc=$RC_A"; PA=''
-wait "$PB"; RC_B=$?; echo "session B done rc=$RC_B"; PB=''
-
-# The SessionEnd hook is async ("async": true in the rendered settings): Claude
-# Code does NOT await it before exiting, so the shim can still be posting the
-# tombstone for ~2.5s after `wait` returns (fleet-hook.mjs's watchdog). Poll
-# /state on a bounded deadline until both sessions are tombstoned (offline with
-# endedAt) before capturing evidence — a single immediate fetch races the shim
-# and fails the lifecycle criterion on slower machines.
 SMOKE_STATE_DEADLINE="${FLEETDECK_SMOKE_STATE_DEADLINE_MS:-30000}"
 DEADLINE_END=$((SECONDS + (SMOKE_STATE_DEADLINE + 999) / 1000))
 while :; do
-  if curl -fsS "http://127.0.0.1:$FLEETDECK_PORT/state" \
-    -H "authorization: Bearer $TOKEN" > "$DEMO_LOGS/final-state.json" \
+  if curl -fsS --connect-timeout 5 --max-time 15 "http://127.0.0.1:$FLEETDECK_PORT/state" \
+    -H "authorization: Bearer $TOKEN" > "$DEMO_LOGS/final-state.json" 2>/dev/null \
   && node -e '
     const state = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
     const byId = Object.fromEntries((state.sessions || []).map(s => [s.session_id, s]));
     const done = [process.argv[2], process.argv[3]].every(sid => byId[sid] && byId[sid].col === "offline" && byId[sid].endedAt);
     process.exit(done ? 0 : 1);
   ' "$DEMO_LOGS/final-state.json" "$SA" "$SB"; then
+    STATE_GOT=1
     break
   fi
   if [ "$SECONDS" -ge "$DEADLINE_END" ]; then
-    echo "WARNING: tombstones still pending after ${SMOKE_STATE_DEADLINE_MS}ms; capturing state as-is" >&2
-    curl -fsS "http://127.0.0.1:$FLEETDECK_PORT/state" \
+    echo "WARNING: tombstones still pending after ${SMOKE_STATE_DEADLINE}ms; capturing state as-is" >&2
+    curl -fsS --connect-timeout 5 --max-time 15 "http://127.0.0.1:$FLEETDECK_PORT/state" \
       -H "authorization: Bearer $TOKEN" > "$DEMO_LOGS/final-state.json"
     break
   fi
+  echo " | waiting for tombstones"
   sleep 0.5
 done
->>>>>>> /tmp/mf-theirs
 echo "ROUND COMPLETE — captured $DEMO_LOGS/final-state.json"
 echo
 
@@ -480,16 +435,12 @@ for (const [label, rc, file] of [
   let result = null;
   try { result = JSON.parse(readFileSync(demoLogs + '/' + file, 'utf8')); }
   catch (e) { fail('worker ' + label + ' emitted a structured result', e.message); }
-<<<<<<< /tmp/mf-ours
-  // rc 124 is the authored wall-clock timeout; error_max_turns is the harness
-  // turn ceiling. Both cut the worker off before its Stop hook could fire.
+  // rc 124 is the authored wall-clock deadline verdict — the portable
+  // demo/run-with-timeout.mjs launcher everywhere (macOS has neither GNU
+  // timeout nor setsid); error_max_turns is the harness turn ceiling. Both
+  // cut the worker off before its Stop hook could fire.
   exhausted[label] = rc === 124
     || (result != null && result.subtype === 'error_max_turns');
-=======
-  // 124 is the launcher’s deadline verdict: GNU timeout on Linux, the
-  // portable demo/run-with-timeout.mjs everywhere (macOS has neither GNU
-  // timeout nor setsid).
->>>>>>> /tmp/mf-theirs
   const acceptedStatus = rc === 0 || rc === 124;
   if (!acceptedStatus) fail('worker ' + label + ' process status', 'rc=' + rc);
   else if (exhausted[label]) {

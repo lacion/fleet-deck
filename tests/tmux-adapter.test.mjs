@@ -651,54 +651,28 @@ test('tmux adapter parses scoped panes and kills only the exact fleet session wi
 
   // Create the decoy first so an all-server scan encounters the wrong, same-name
   // window before the daemon-owned one. Exact session corroboration must exclude it.
-<<<<<<< /tmp/mf-ours
-<<<<<<< /tmp/mf-ours
-  // Exec-form ('--', argv...) exactly like production newWindow (spawn.mjs
-  // passes '--', ...argv): pane_current_command is 'sleep' immediately.
-  // Shell-form ('sleep 3600') reports the LOGIN shell until exec completes,
-  // which made the pane_cmd assertions below race on zsh/bash hosts.
+  // Direct argv after `--`, exactly like production newWindow (spawn.mjs passes
+  // '--', ...argv): tmux execs sleep itself, so pane_current_command is 'sleep'
+  // immediately. The shell-string form ('sleep 3600') leaves the pane reporting
+  // its login shell (zsh, bash, …) until exec completes, which raced the
+  // pane_cmd assertions below on zsh/macOS hosts.
   tmux(socket, ['-f', '/dev/null', 'new-session', '-d', '-s', decoySession, '-n', window, '--', 'sleep', '3600']);
   tmux(socket, ['new-session', '-d', '-s', fleetSession, '-n', window, '--', 'sleep', '3600']);
   tmux(socket, ['split-window', '-d', '-t', `${fleetSession}:${window}`, '--', 'sleep', '3600']);
-=======
-  // Pass the command as direct argv elements so tmux execs sleep itself; the
-  // shell-string form would race the pane's shell startup against the
-  // pane_current_command assertions below.
-  tmux(socket, ['-f', '/dev/null', 'new-session', '-d', '-s', decoySession, '-n', window, 'sleep', '3600']);
-  tmux(socket, ['new-session', '-d', '-s', fleetSession, '-n', window, 'sleep', '3600']);
-  tmux(socket, ['split-window', '-d', '-t', `${fleetSession}:${window}`, 'sleep', '3600']);
->>>>>>> /tmp/mf-theirs
-=======
-  // Direct argv after `--`, matching production newWindow: no startup shell, so
-  // pane_current_command is `sleep` from the start. (A single 'sleep 3600'
-  // shell-command string leaves the pane reporting the login shell — e.g. `zsh`
-  // — until exec settles, which raced this assertion on zsh/macOS hosts.)
-  tmux(socket, ['-f', '/dev/null', 'new-session', '-d', '-s', decoySession, '-n', window, '--', 'sleep', '3600']);
-  tmux(socket, ['new-session', '-d', '-s', fleetSession, '-n', window, '--', 'sleep', '3600']);
-  tmux(socket, ['split-window', '-d', '-t', `${fleetSession}:${window}`, '--', 'sleep', '3600']);
->>>>>>> /tmp/mf-theirs
 
   const fleetWindowId = tmux(socket, ['display-message', '-p', '-t', `${fleetSession}:${window}`, '#{window_id}']);
   const decoyWindowId = tmux(socket, ['display-message', '-p', '-t', `${decoySession}:${window}`, '#{window_id}']);
   assert.notEqual(fleetWindowId, decoyWindowId);
 
-<<<<<<< /tmp/mf-ours
-  // new-session / split-window return before the panes' startup shells have
-  // execed `sleep`, so pane_current_command can still report the shell (zsh,
-  // bash, …) at this point. Poll until the fleet pane has execed before
-  // asserting its command, scaled like every other wait (BUG-182).
-  const windows = await waitUntil(async () => {
-    const found = await listScopedWindows(port);
-    return found?.[0]?.pane_cmd === 'sleep' ? found : null;
-  }, { label: `fleet pane ${fleetWindowId} execed sleep` });
-=======
   // Bounded readiness poll (not a fixed sleep): even with direct argv, tmux
-  // does not promise the pane has exec'd by the time the create call returns.
+  // does not promise the pane has exec'd by the time new-session/split-window
+  // return — pane_current_command can still report the shell (zsh, bash, …) at
+  // this point. Poll until the fleet pane has execed before asserting its
+  // command, scaled like every other wait.
   const windows = await waitUntil(async () => {
     const listed = await listScopedWindows(port);
     return listed?.length === 1 && listed[0].pane_cmd === 'sleep' ? listed : null;
-  }, { timeoutMs: 5_000, intervalMs: 25, label: `pane of ${fleetSession}:${window} to exec sleep` });
->>>>>>> /tmp/mf-theirs
+  }, { timeoutMs: 5_000, intervalMs: 25, label: `pane of ${fleetSession}:${window} (${fleetWindowId}) to exec sleep` });
   assert.deepEqual(windows, [{
     session: fleetSession,
     window,
@@ -1019,10 +993,6 @@ test('newWindow arms remain-on-exit for the fleet session only — never server-
   assert.ok(!userWindows.includes('udie'), 'a user window must still close on exit');
 });
 
-<<<<<<< /tmp/mf-ours
-<<<<<<< /tmp/mf-ours
-=======
->>>>>>> /tmp/mf-theirs
 // BUG-050 regression pin: an orphan window already holding the deterministic
 // fleet name must make newWindow REFUSE — without launching a second agent.
 // The old order (create under the final name, postcondition afterwards) let
@@ -1040,8 +1010,34 @@ test('newWindow refuses an occupied scoped name before any agent starts', { skip
   const session = sessionName(port);
   const callsign = 'occupied';
   const window = `fd${port}-${callsign}`;
-<<<<<<< /tmp/mf-ours
-=======
+  t.after(() => {
+    try { tmux(socket, ['kill-server']); } catch { /* already gone */ }
+    if (previousSocket == null) delete process.env.FLEETDECK_TMUX_SOCKET;
+    else process.env.FLEETDECK_TMUX_SOCKET = previousSocket;
+  });
+
+  await ensureSession(port);
+  // An orphan (or manually created) window already owns the deterministic name.
+  tmux(socket, ['new-window', '-d', '-t', `=${session}:`, '-n', window, 'sleep 3600']);
+  const orphanId = tmux(socket, ['display-message', '-p', '-t', `=${session}:=${window}`, '#{window_id}']);
+
+  await assert.rejects(
+    newWindow({ port, callsign, cwd: tmpdir(), argv: ['sleep', '3600'] }),
+    /already exists/,
+    'a taken scoped name rejects the spawn',
+  );
+  const names = tmux(socket, ['list-windows', '-t', `=${session}`, '-F', '#{window_name}']).split('\n');
+  assert.deepEqual(names.filter(n => n === window), [window],
+    'no duplicate same-name window was created');
+  assert.deepEqual(names.filter(n => n.startsWith(`${window}~`)), [],
+    'the provisional window was rolled back, not left running');
+  const ids = tmux(socket, ['list-windows', '-a', '-F', '#{window_id}']).split('\n');
+  assert.ok(ids.includes(orphanId), 'the orphan window itself is untouched');
+  const panes = tmux(socket, ['list-panes', '-a', '-F', '#{pane_current_command}']).split('\n');
+  assert.equal(panes.filter(c => c === 'sleep').length, 1,
+    'no second agent process was launched or leaked');
+});
+
 // BUG-051 regression: the kill must be re-targeted BY EXACT NAME at the moment
 // it executes. A real concurrent rename between the lookup and the kill cannot
 // be timed deterministically in a test, so a fake tmux performs the
@@ -1109,6 +1105,9 @@ exit 1
   );
 });
 
+// A scoped window name containing ':' passes the caller's loose scoped-name
+// regex but, if pasted into `=<session>:=<name>`, parses as target syntax
+// ("kill the window named <innocent>") instead of one literal name.
 test('tmux-target-syntax characters in a scoped kill name are rejected, never parsed as targets', { skip: !tmuxOk() && 'tmux server unavailable' }, async (t) => {
   useLegacyGenerationMode(t);
   const port = 27_000 + randomInt(1_000);
@@ -1117,44 +1116,12 @@ test('tmux-target-syntax characters in a scoped kill name are rejected, never pa
   const innocent = 'innocent';
   const previousSocket = process.env.FLEETDECK_TMUX_SOCKET;
   process.env.FLEETDECK_TMUX_SOCKET = socket;
->>>>>>> /tmp/mf-theirs
-=======
->>>>>>> /tmp/mf-theirs
   t.after(() => {
     try { tmux(socket, ['kill-server']); } catch { /* already gone */ }
     if (previousSocket == null) delete process.env.FLEETDECK_TMUX_SOCKET;
     else process.env.FLEETDECK_TMUX_SOCKET = previousSocket;
   });
 
-<<<<<<< /tmp/mf-ours
-<<<<<<< /tmp/mf-ours
-=======
->>>>>>> /tmp/mf-theirs
-  await ensureSession(port);
-  // An orphan (or manually created) window already owns the deterministic name.
-  tmux(socket, ['new-window', '-d', '-t', `=${session}:`, '-n', window, 'sleep 3600']);
-  const orphanId = tmux(socket, ['display-message', '-p', '-t', `=${session}:=${window}`, '#{window_id}']);
-
-  await assert.rejects(
-    newWindow({ port, callsign, cwd: tmpdir(), argv: ['sleep', '3600'] }),
-    /already exists/,
-    'a taken scoped name rejects the spawn',
-  );
-  const names = tmux(socket, ['list-windows', '-t', `=${session}`, '-F', '#{window_name}']).split('\n');
-  assert.deepEqual(names.filter(n => n === window), [window],
-    'no duplicate same-name window was created');
-  assert.deepEqual(names.filter(n => n.startsWith(`${window}~`)), [],
-    'the provisional window was rolled back, not left running');
-  const ids = tmux(socket, ['list-windows', '-a', '-F', '#{window_id}']).split('\n');
-  assert.ok(ids.includes(orphanId), 'the orphan window itself is untouched');
-  const panes = tmux(socket, ['list-panes', '-a', '-F', '#{pane_current_command}']).split('\n');
-  assert.equal(panes.filter(c => c === 'sleep').length, 1,
-    'no second agent process was launched or leaked');
-<<<<<<< /tmp/mf-ours
-=======
-  // A scoped window name containing ':' passes the caller's loose scoped-name
-  // regex but, if pasted into `=<session>:=<name>`, parses as target syntax
-  // ("kill the window named <innocent>") instead of one literal name.
   tmux(socket, ['-f', '/dev/null', 'new-session', '-d', '-s', fleetSession, '-n', innocent, 'sleep 3600']);
   tmux(socket, ['new-window', '-d', '-t', `=${fleetSession}:`, '-n', `fd${port}-a:${innocent}`, 'sleep 3600']);
 
@@ -1165,7 +1132,4 @@ test('tmux-target-syntax characters in a scoped kill name are rejected, never pa
   assert.equal(tmuxStatus(socket, ['has-session', '-t', `=${fleetSession}`]), 0);
   const names = tmux(socket, ['list-windows', '-t', `=${fleetSession}`, '-F', '#{window_name}']).split('\n');
   assert.deepEqual(names, [innocent, `fd${port}-a:${innocent}`], 'nothing was killed by target-syntax injection');
->>>>>>> /tmp/mf-theirs
-=======
->>>>>>> /tmp/mf-theirs
 });

@@ -19,22 +19,14 @@
 // Redaction rides that same single walk, in four layers: secret-looking KEYS
 // (token/secret/password/api-key/authorization/… incl. camelCase) get a marker
 // and their value is never descended into; string VALUES matching a known
-<<<<<<< /tmp/mf-ours
 // credential shape (Anthropic/GitHub/GitLab/Google/OpenAI-style/Hugging Face/
 // DigitalOcean/Slack/AWS keys, JWTs, PEM private keys, Bearer tokens) are
-// masked in place; and the daemon's own access token is
-// scrubbed verbatim from the finished line. What this canNOT catch is a secret
-// with no telltale key name and no recognizable shape sitting in arbitrary free
-// text — which is exactly why capture stays opt-in and the file stays 0600.
-=======
-// credential shape (Anthropic/GitHub/Slack/AWS keys, JWTs, PEM private keys,
-// Bearer tokens) are masked in place; credentialed URLs (userinfo, secret query
-// params) are scrubbed positionally via scrubUrlCredentials; and the daemon's
-// own access token is scrubbed verbatim from the finished line. What this
-// canNOT catch is a secret with no telltale key name, no recognizable shape,
-// and no URL structure sitting in arbitrary free text — which is exactly why
-// capture stays opt-in and the file stays 0600.
->>>>>>> /tmp/mf-theirs
+// masked in place; credentialed URLs (userinfo, secret query params) are
+// scrubbed positionally via scrubUrlCredentials; and the daemon's own access
+// token is scrubbed verbatim from the finished line. What this canNOT catch
+// is a secret with no telltale key name, no recognizable shape, and no URL
+// structure sitting in arbitrary free text — which is exactly why capture
+// stays opt-in and the file stays 0600.
 //
 // Two of those layers are exported for reuse by diagnostics that DO reach the
 // board (a stalled spawn's pane excerpt, a failed clone's git stderr):
@@ -56,19 +48,15 @@ const REDACTED = '[redacted]';
 // 'monotonic' all survive. camelCase carries no such separator, so isSecretKey
 // first rewrites humps to '_'; that is precisely what lets 'apiKey',
 // 'authToken' and 'accessKeyId' redact while the negatives above still don't.
-<<<<<<< /tmp/mf-ours
 // The trailing `s?` admits the plural/container forms real env and tool JSON
 // actually use — 'api_keys', 'tokens', 'credentials', 'client_secrets',
 // 'apiKeys', 'TOKENS' — which carry the same live credentials as their
-// singulars. It cannot resurrect a negative: 'tokenizer' would need the `s` to
-// sit mid-word, and no stem is one letter short of an innocent word.
+// singulars. The plural is not decorative: real payloads nest credentials
+// under `api_keys`, `clientSecrets`, `tokens` (a hook event's `access_tokens`
+// list), and a singular-only list recorded those verbatim. It cannot resurrect
+// a negative: 'tokenizer' would need the `s` to sit mid-word, and no stem is
+// one letter short of an innocent word.
 const SECRET_KEY_RE = /(?:^|[_\-.])(token|secret|password|passwd|passphrase|api[_-]?key|apikey|auth(orization)?|bearer|cookie|credential|private[_-]?key|access[_-]?key|client[_-]?secret)s?(?:$|[_\-.])/i;
-=======
-// The plural `s?` is not decorative: real payloads nest credentials under
-// `api_keys`, `clientSecrets`, `tokens` (a hook event's `access_tokens` list),
-// and a singular-only list recorded those verbatim.
-const SECRET_KEY_RE = /(?:^|[_\-.])(tokens?|secrets?|passwords?|passwd|passphrases?|api[_-]?keys?|auth(orization)?s?|bearer|cookies?|credentials?|private[_-]?keys?|access[_-]?keys?|client[_-]?secrets?)(?:$|[_\-.])/i;
->>>>>>> /tmp/mf-theirs
 
 function isSecretKey(key) {
   const normalized = String(key)

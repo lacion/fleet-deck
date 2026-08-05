@@ -13,25 +13,11 @@
 // paragraph or a short stack trace while keeping the tmux buffer sane; the mail
 // path now returns a `truncated` flag + the original length so POST /mail can
 // tell the sender the truth instead of quietly dropping the tail.
-<<<<<<< /tmp/mf-ours
-<<<<<<< /tmp/mf-ours
-<<<<<<< /tmp/mf-ours
 // Exported so commands.mjs can validate a fully framed command against the
 // very same cap BEFORE inserting any recipient rows (BUG-021) — one constant,
-// no drift between the clamp and the pre-flight check.
-=======
-// Exported so questions.mjs can reject framed answers that would be clamped
-// (BUG-137) instead of settling the question over a truncated message.
->>>>>>> /tmp/mf-theirs
-=======
-// Exported so commands.mjs can validate a fully framed command against the
-// very same cap BEFORE inserting any recipient rows (BUG-021) — one constant,
-// no drift between the clamp and the pre-flight check.
->>>>>>> /tmp/mf-theirs
-=======
-// Exported so questions.mjs can reject framed answers that would be clamped
-// (BUG-137) instead of settling the question over a truncated message.
->>>>>>> /tmp/mf-theirs
+// no drift between the clamp and the pre-flight check — and so questions.mjs
+// can reject framed answers that would be clamped (BUG-137) instead of
+// settling the question over a truncated message.
 export const MAIL_MAX_LEN = 4000;
 // BUG 6: .slice() cuts by UTF-16 code UNIT, so a clamp landing between the two
 // halves of an astral character (emoji, CJK extension B, …) keeps a lone high
@@ -93,17 +79,10 @@ const MAIL_PANE_BATCH_BYTES = 64 * 1024;
 // [FLEETDECK ...] frames and the daemon's own sender names as carrying human
 // authority — so they must be unforgeable. Only the daemon's internal mail()
 // callers may send them; postMail (the external API) is forced unprivileged:
-<<<<<<< /tmp/mf-ours
-// reserved senders 422, and a reserved frame prefix at the start of ANY line
-// of the text 422s as well (a frame MID-line renders as mail content, not an
-// envelope, so only line-leading positions are checked). Ordinary
-// callsign/session-id senders and plain text are unaffected.
-=======
 // reserved senders 422, and a reserved frame prefix at the start of ANY
 // logical line of the text 422s as well (a frame MID-line renders as mail
 // content, not an envelope, so only line-leading positions are checked).
 // Ordinary callsign/session-id senders and plain text are unaffected.
->>>>>>> /tmp/mf-theirs
 const RESERVED_SENDERS = new Set(['orchestrator', 'fleetdeck', 'fleetdeck-answer', 'human']);
 // Leading whitespace AND control/zero-width characters: a frame smuggled past
 // as "\x00[FLEETDECK ANSWER]" renders identically in a pane to the real one.
@@ -112,9 +91,7 @@ const RESERVED_SENDERS = new Set(['orchestrator', 'fleetdeck', 'fleetdeck-answer
 // the pane renders each line as its own row, so "preface\n[FLEETDECK ANSWER]"
 // would render line two exactly like a daemon frame.
 // eslint-disable-next-line no-control-regex
-<<<<<<< /tmp/mf-ours
 const RESERVED_FRAME_RE = /^[\s\x00-\x1f\x7f-\x9f]*\[FLEETDECK[ \]]/i;
-<<<<<<< /tmp/mf-ours
 // BUG-032: Unicode format characters (general category Cf — zero-width spaces
 // and joiners, and EVERY bidi control: U+061C, U+200E/F, U+202A-E, U+2066-9)
 // are visually ignorable in a receiving pane, so "human​" renders as the
@@ -125,19 +102,14 @@ const RESERVED_FRAME_RE = /^[\s\x00-\x1f\x7f-\x9f]*\[FLEETDECK[ \]]/i;
 // at any offset — leading ("​[FLEETDECK ANSWER]") or interior
 // ("[FLEETDECK​ ANSWER]") alike.
 const stripFormatChars = (s) => s.replace(/\p{Cf}/gu, '');
-=======
-// BUG-036: delivery preserves linefeeds (watcher output is verbatim and
-// sanitizePaneText keeps \n), so a frame at the start of ANY logical line —
-// not just byte zero — renders as a genuine authority frame. Canonicalize
+// BUG-036/BUG-063: delivery preserves linefeeds (watcher output is verbatim
+// and sanitizePaneText keeps \n), so a frame at the start of ANY logical line
+// — not just byte zero — renders as a genuine authority frame. Canonicalize
 // newlines exactly as the pane sink does (CRLF / lone CR → LF), then test the
-// start of every line.
+// start of every line (on the Cf-stripped text, per BUG-032 above).
 function hasReservedFrame(text) {
-  return String(text).replace(/\r\n?/g, '\n').split('\n').some(line => RESERVED_FRAME_RE.test(line));
+  return stripFormatChars(String(text)).replace(/\r\n?/g, '\n').split('\n').some(line => RESERVED_FRAME_RE.test(line));
 }
->>>>>>> /tmp/mf-theirs
-=======
-const RESERVED_FRAME_RE = /^[\s\x00-\x1f\x7f-\x9f]*\[FLEETDECK[ \]]/im;
->>>>>>> /tmp/mf-theirs
 // The pane envelope is a single line (`[FLEETDECK MAIL from <from>] <text>`):
 // a newline in `from` lets the text forge a line-two frame, and `from` is
 // interpolated VERBATIM between the envelope's own bracket delimiters — so a
@@ -148,26 +120,20 @@ const RESERVED_FRAME_RE = /^[\s\x00-\x1f\x7f-\x9f]*\[FLEETDECK[ \]]/im;
 // from pane-bound text by sanitizePaneText, but `from` rides inside the same
 // paste — refuse them at the door instead.
 // eslint-disable-next-line no-control-regex
-<<<<<<< /tmp/mf-ours
-const FROM_UNSAFE_RE = /[\r\n\x00-\x1f\x7f-\x9f\p{Cf}]/u;
-=======
-const FROM_UNSAFE_RE = /[\r\n\x00-\x1f\x7f-\x9f[\]]/;
->>>>>>> /tmp/mf-theirs
+// BUG-032 adds \p{Cf} (format chars can smuggle a reserved sender name);
+// BUG-035 adds [ and ] (brackets become envelope syntax in the pane paste).
+const FROM_UNSAFE_RE = /[\r\n\x00-\x1f\x7f-\x9f\p{Cf}[\]]/u;
 
 export function createMail(ctx) {
   const {
     db, q, tick, logEvent, onMutate, questions, tmuxAdapter,
-<<<<<<< /tmp/mf-ours
     findScopedWindow, scopedPaneTarget, PANE_MAIL_GRACE_MS, MAIL_CLAIM_LEASE_MS,
-=======
-    findScopedWindow, scopedPaneTarget, PANE_MAIL_GRACE_MS,
     // BUG-128: test-only budget overrides (createCore passes these through
     // from its opts); production never sets them, so the constants rule.
     MAIL_PENDING_MAX: PENDING_MAX = MAIL_PENDING_MAX,
     MAIL_PENDING_MAX_BYTES: PENDING_MAX_BYTES = MAIL_PENDING_MAX_BYTES,
     MAIL_PANE_BATCH: PANE_BATCH = MAIL_PANE_BATCH,
     MAIL_PANE_BATCH_BYTES: PANE_BATCH_BYTES = MAIL_PANE_BATCH_BYTES,
->>>>>>> /tmp/mf-theirs
   } = ctx;
 
   // BUG-034: a claim is now an EXPIRING IN-FLIGHT LEASE, not a delivery. The
@@ -252,7 +218,6 @@ export function createMail(ctx) {
   //     the lease lapses instead of losing the mail to a mid-response close.
   // `id` now rides every drained item so ack surfaces can name the rows.
   function drainMail(sid, { lease = false } = {}) {
-<<<<<<< /tmp/mf-ours
     const now = Date.now();
     const box = q.pendingMail.all(sid, now);
     if (lease) {
@@ -270,25 +235,6 @@ export function createMail(ctx) {
   function ackMail(ids) {
     if (!Array.isArray(ids)) return { acked: 0 };
     const now = Date.now();
-=======
-    const now = Date.now();
-    const box = q.pendingMail.all(sid, now);
-    if (lease) {
-      const deadline = now + MAIL_CLAIM_LEASE_MS;
-      for (const m of box) q.claimMail.run(deadline, m.id);
-    } else {
-      for (const m of box) q.markDelivered.run(now, m.id);
-    }
-    return box.map(m => ({ id: m.id, from: m.from_id, text: m.text, at: m.at }));
-  }
-
-  // Explicit acknowledgement for leased mail (watch claim, board /mail GET).
-  // The statements guard on delivered_at IS NULL, so a late or double ack
-  // settles silently instead of touching a row that already moved on.
-  function ackMail(ids) {
-    if (!Array.isArray(ids)) return { acked: 0 };
-    const now = Date.now();
->>>>>>> /tmp/mf-theirs
     let acked = 0;
     for (const id of ids) if (Number.isSafeInteger(id)) acked += Number(q.ackMail.run(now, id).changes);
     return { acked };
@@ -407,19 +353,11 @@ export function createMail(ctx) {
     return !!pane && !pane.dead && pane.cmd === 'claude';
   }
 
-<<<<<<< /tmp/mf-ours
   // BUG-034: claimAllMail now LEASES — it commits claimed_at (the lease
   // deadline), NOT delivered_at. The owned-pane path below finalizes delivery
   // only after Enter is confirmed, and releases the lease on any failure —
   // including the daemon dying between commit and paste, where the passed
   // deadline re-opens the rows for the next delivery path.
-  function claimAllMail(sid) {
-    db.exec('BEGIN IMMEDIATE');
-    try {
-      const box = q.pendingMail.all(sid, Date.now());
-      const deadline = Date.now() + MAIL_CLAIM_LEASE_MS;
-      for (const m of box) q.claimMail.run(deadline, m.id);
-=======
   // BUG-128: one bounded BATCH, not the whole mailbox. Claims at most
   // MAIL_PANE_BATCH rows AND MAIL_PANE_BATCH_BYTES of text (whichever bites
   // first), atomically; anything past the batch stays pending for the next
@@ -429,7 +367,8 @@ export function createMail(ctx) {
   function claimAllMail(sid) {
     db.exec('BEGIN IMMEDIATE');
     try {
-      const page = q.pendingMailPage.all(sid, PANE_BATCH + 1);
+      const now = Date.now();
+      const page = q.pendingMailPage.all(sid, now, PANE_BATCH + 1);
       const batch = [];
       let bytes = 0;
       for (const m of page) {
@@ -437,9 +376,8 @@ export function createMail(ctx) {
         batch.push(m);
         bytes += m.text.length;
       }
-      const now = Date.now();
-      for (const m of batch) q.markDelivered.run(now, m.id);
->>>>>>> /tmp/mf-theirs
+      const deadline = now + MAIL_CLAIM_LEASE_MS;
+      for (const m of batch) q.claimMail.run(deadline, m.id);
       db.exec('COMMIT');
       return { batch, remaining: page.length > batch.length };
     } catch (err) {
@@ -502,12 +440,8 @@ export function createMail(ctx) {
     // operator can recover the un-entered text sitting in the composer. The
     // pre-paste unmark above remains the only requeue path.
     if (!entered) {
-<<<<<<< /tmp/mf-ours
       logEvent(sid, 'MailPaneEnterFailed', null,
         `pasted ${box.length} mail into ${pair.sp.tmux_window} but Enter failed — left un-entered, NOT requeued (text already in pane)`);
-=======
-      for (const m of box) q.releaseClaim.run(m.id);
->>>>>>> /tmp/mf-theirs
       onMutate();
       return false;
     }
@@ -537,18 +471,13 @@ export function createMail(ctx) {
   // `text` is returned RAW, its own frame included ([FLEETDECK ANSWER] …,
   // [FLEETDECK ASSIGNMENT] …, or plain board/session mail) — v2's
   // rewakeMessage is neutral, so each mail must carry its own frame.
-<<<<<<< /tmp/mf-ours
-  function claimMail(sid) {
-    const now = Date.now();
-    const m = q.nextMail.get(sid, now);
-=======
   // BUG-105: when a generation token is supplied it must still be the current
   // generation at claim time (registerWatchGen runs first, synchronously, in
   // the same tick); a superseded watcher's in-flight poll claims nothing.
   function claimMail(sid, gen = null) {
     if (gen !== null && !isWatchGen(sid, gen)) return null;
-    const m = q.nextMail.get(sid);
->>>>>>> /tmp/mf-theirs
+    const now = Date.now();
+    const m = q.nextMail.get(sid, now);
     if (!m) return null;
     q.claimMail.run(now + MAIL_CLAIM_LEASE_MS, m.id);
     onMutate();
@@ -577,39 +506,21 @@ export function createMail(ctx) {
     // validate the resolved value, and default to the non-reserved 'board'.
     // External callers never wear the daemon's identities or its authority
     // frames — see RESERVED_SENDERS above. 422 like every other body rejection.
-<<<<<<< /tmp/mf-ours
-    // BUG-032: compare the Cf-stripped sender, so "human​" (zero-width space)
-    // can't stand in for a reserved name. Cf characters are themselves refused
-    // by FROM_UNSAFE_RE below; this catches the ones that would have mattered.
-    if (from != null && RESERVED_SENDERS.has(stripFormatChars(String(from)).toLowerCase())) {
-      return { status: 422, body: { ok: false, reason: `sender name '${from}' is reserved for the daemon` } };
-    }
-    if (from != null && FROM_UNSAFE_RE.test(String(from))) {
-      return { status: 422, body: { ok: false, reason: 'sender name may not contain control characters, newlines, or [ ] delimiters' } };
-=======
     const sender = from ?? 'board';
     if (typeof sender !== 'string' || sender.length === 0) {
       return { status: 422, body: { ok: false, reason: 'sender name must be a non-empty string' } };
     }
-    if (RESERVED_SENDERS.has(sender.toLowerCase())) {
+    // BUG-032: compare the Cf-stripped sender, so "human​" (zero-width space)
+    // can't stand in for a reserved name. Cf characters are themselves refused
+    // by FROM_UNSAFE_RE below; this catches the ones that would have mattered.
+    if (RESERVED_SENDERS.has(stripFormatChars(sender).toLowerCase())) {
       return { status: 422, body: { ok: false, reason: `sender name '${from}' is reserved for the daemon` } };
     }
     if (FROM_UNSAFE_RE.test(sender)) {
-      return { status: 422, body: { ok: false, reason: 'sender name may not contain control characters or newlines' } };
->>>>>>> /tmp/mf-theirs
+      return { status: 422, body: { ok: false, reason: 'sender name may not contain control characters, newlines, or [ ] delimiters' } };
     }
-<<<<<<< /tmp/mf-ours
-<<<<<<< /tmp/mf-ours
-    if (RESERVED_FRAME_RE.test(stripFormatChars(String(text ?? '')))) {
-      return { status: 422, body: { ok: false, reason: 'mail text may not open with a [FLEETDECK ...] frame — those are reserved for the daemon' } };
-=======
     if (hasReservedFrame(text ?? '')) {
       return { status: 422, body: { ok: false, reason: 'mail text may not open any line with a [FLEETDECK ...] frame — those are reserved for the daemon' } };
->>>>>>> /tmp/mf-theirs
-=======
-    if (RESERVED_FRAME_RE.test(String(text ?? ''))) {
-      return { status: 422, body: { ok: false, reason: 'no line of mail text may open with a [FLEETDECK ...] frame — those are reserved for the daemon' } };
->>>>>>> /tmp/mf-theirs
     }
     // A direct send whose name belongs to a shell card is refused LOUDLY (mail
     // typed into a shell executes). Same current-name-wins priority as
@@ -644,15 +555,11 @@ export function createMail(ctx) {
       if (await ownedPaneDeliverable(sid)) return 'pane';
       return q.getSession.get(sid)?.ended_at != null ? 'offline-queued' : 'turn-boundary';
     }));
-<<<<<<< /tmp/mf-ours
-    targets.forEach(sid => mail(sid, sender, text));
-    tick(`✉ mail from ${sender} → ${to}`);
-=======
     // BUG-128: the per-mailbox pending budget can refuse an insert. That
     // refusal is loud, never silent: if EVERY fanout target refused, the send
     // 429s so the caller knows nothing landed; a partial fanout reports the
     // refused targets with route 'refused'.
-    const outcomes = targets.map(sid => mail(sid, from || 'human', text));
+    const outcomes = targets.map(sid => mail(sid, sender, text));
     const refusedAll = targets.length > 0 && outcomes.every(o => o.refused);
     if (refusedAll) {
       return {
@@ -665,8 +572,7 @@ export function createMail(ctx) {
         },
       };
     }
-    tick(`✉ mail from ${from || 'human'} → ${to}`);
->>>>>>> /tmp/mf-theirs
+    tick(`✉ mail from ${sender} → ${to}`);
     onMutate();
     // BUG 4: report truncation to the sender. All targets receive the same
     // text and share MAIL_MAX_LEN, so the clamp is computed once from the raw

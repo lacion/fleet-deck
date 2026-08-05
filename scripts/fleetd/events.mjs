@@ -69,12 +69,6 @@ export function createEvents(ctx) {
     const sid = typeof ev?.session_id === 'string' && ev.session_id ? ev.session_id : null;
     if (!sid) return { card: null, conflict: null };
     let c = card(sid, ev.cwd);
-<<<<<<< /tmp/mf-ours
-    // Heuristic tombstones are reversible: a late hook proves the process was
-    // alive (or resumed) when retention only GUESSED it dead. Clear both
-    // timestamps so an archived presumed-dead card becomes visible again
-    // before normal derivation continues.
-=======
     // Run generation (BUG-025): SessionEnd is an ASYNC hook while SessionStart
     // is synchronous, so a `claude --resume` (a NEW process reusing the SAME
     // session id) can register and go live BEFORE the previous process's
@@ -93,10 +87,10 @@ export function createEvents(ctx) {
     // via retention's silence sweep.
     const staleRunEnd = ev.hook_event_name === 'SessionEnd'
       && ev.fleet_run != null && c.run_id !== ev.fleet_run;
-    // Retention tombstones are reversible: a late hook proves the process was
-    // alive (or resumed). Clear both timestamps so an archived presumed-dead
-    // card becomes visible again before normal derivation continues.
->>>>>>> /tmp/mf-theirs
+    // Heuristic tombstones are reversible: a late hook proves the process was
+    // alive (or resumed) when retention only GUESSED it dead. Clear both
+    // timestamps so an archived presumed-dead card becomes visible again
+    // before normal derivation continues.
     //
     // M-B5: resurrection must also lift the card OUT of the offline column.
     // The Pre/PostToolUse column rule is "queued|needsyou → working, else keep
@@ -638,12 +632,7 @@ export function createEvents(ctx) {
     const kind = eventName === 'Elicitation' ? 'elicitation'
       : eventName === 'AskUserQuestion' ? 'choice'
       : 'permission';
-<<<<<<< /tmp/mf-ours
-    applyEvent({ ...ev, hook_event_name: eventName });
     const sid = ev.session_id || '';
-=======
-    const sid = ev.session_id || 'unknown';
->>>>>>> /tmp/mf-theirs
     const isPlan = eventName === 'PermissionRequest' && ev?.tool_name === 'ExitPlanMode';
     if (!isPlan) {
       applyEvent({ ...ev, hook_event_name: eventName });
@@ -677,9 +666,6 @@ export function createEvents(ctx) {
     try {
       card(sid, ev.cwd); // plan intake needs the card's callsign/repo — create it without telemetry
       row = questions.create(kind, sid, ev);
-<<<<<<< /tmp/mf-ours
-      const c = q.getSession.get(sid);
-=======
       // TEST SEAM (BUG-204): deterministic fault injection BETWEEN the
       // question insert and the plan insert, inside the transaction — the
       // only way a test can prove the M-B6 rollback actually removes BOTH
@@ -689,8 +675,10 @@ export function createEvents(ctx) {
       if (process.env.FLEETDECK_TEST_FAIL_PLAN_INSERT) {
         throw new Error('injected plan-insert failure (FLEETDECK_TEST_FAIL_PLAN_INSERT)');
       }
-      const c = q.getSession.get(sid); // applyEvent ensured the card exists
->>>>>>> /tmp/mf-theirs
+      // The card was ensured above (card() inside this transaction); applyEvent
+      // telemetry runs only AFTER COMMIT (BUG-112), so a failed intake leaves
+      // no stale needs-you card behind.
+      const c = q.getSession.get(sid);
       callsign = c?.callsign ?? sid;
       const planMd = typeof ev.tool_input?.plan === 'string'
         ? ev.tool_input.plan
@@ -717,8 +705,7 @@ export function createEvents(ctx) {
   // SessionEnd: THE tombstone — pending hold-kind questions die with it;
   // freeform questions outlive the session (answer deliverable on --resume).
   function hookSessionEnd(ev) {
-<<<<<<< /tmp/mf-ours
-    const sid = ev.session_id || 'unknown';
+    const sid = ev.session_id || '';
     const { staleRunEnd } = applyEvent({ ...ev, hook_event_name: 'SessionEnd' });
     // BUG-025: the end came from a previous process of this session id (a
     // delayed async hook racing a --resume). The tombstone itself was already
@@ -727,10 +714,6 @@ export function createEvents(ctx) {
     // memo, arming an auto-adopt and waking its watchers all belong to the
     // dead process, not the live one.
     if (staleRunEnd) return {};
-=======
-    const sid = ev.session_id || '';
-    applyEvent({ ...ev, hook_event_name: 'SessionEnd' });
->>>>>>> /tmp/mf-theirs
     // BUG 1: a /clear (reason='clear') is NOT a session end — see the guarded
     // SessionEnd case in applyEvent above, which keeps the card live. Mirror
     // that here: do NOT mark the pane 'pane-dead' and do NOT drop the model

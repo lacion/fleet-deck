@@ -27,7 +27,6 @@ BASE="http://127.0.0.1:$FLEETDECK_PORT"
 # production spawn) created there later.
 export FLEETDECK_TMUX_SOCKET="fdaccept-$$"
 
-<<<<<<< /tmp/mf-ours
 # Stop the scratch daemon this run's SessionStart hooks elect (if one comes
 # up): the SessionStart-launched fleetd runs detached and unref'd, so nothing
 # else will ever reclaim it. Signal only the process proven by BOTH this run's
@@ -84,47 +83,53 @@ stop_scratch_daemon() {
     })().catch(() => { process.exitCode = 2; });
   ' "$pidfile" "$FLEETDECK_PORT" >/dev/null 2>&1
 }
-<<<<<<< /tmp/mf-ours
+
+# Per-run unique evidence dir + fixture copy: a concurrent acceptance run
+# must never reset, delete, or report against this run's artifacts.
+WORK_ROOT=''
+DEMO_LOGS=''
+PROJECT_DIR=''
+PERM_PROOF=''
+PERM_PROOF_PRE=''
+TRANSCRIPT_PREFIX="fdp3-$$"
 
 # Tear down everything THIS run started — the detached scratch daemon and the
 # isolated tmux server. The user's daemon, default tmux server, and home are
 # never cleanup targets. If the daemon cannot be verified stopped, fail the
 # run: a surviving listener on :$FLEETDECK_PORT would poison later gates.
+# Also remove this run's mktemp'd fixture/evidence copy — a unique path
+# created below, never a shared one — and restore/remove the permission
+# proof, a generated artifact that must never outlive the run.
 cleanup() {
   local daemon_rc=0
   stop_scratch_daemon || daemon_rc=$?
   if command -v tmux >/dev/null 2>&1; then
     tmux -L "$FLEETDECK_TMUX_SOCKET" kill-server 2>/dev/null || true
   fi
+  if [ -n "$WORK_ROOT" ]; then
+    rm -rf -- "$WORK_ROOT"
+  fi
+  rm -rf -- "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/$TRANSCRIPT_PREFIX"
+  cleanup_perm_proof
   if [ "$daemon_rc" -ne 0 ]; then
     echo "CLEANUP FAILED: scratch daemon not verified stopped; it may still be listening on :$FLEETDECK_PORT (home: $SCRATCH_HOME)" >&2
     exit 1
   fi
 }
-<<<<<<< /tmp/mf-ours
-=======
 
-# The permission proof is a generated artifact and must never outlive the run.
-# A pre-existing local file is snapshotted below and restored verbatim here;
-# otherwise the proof is removed only when its content matches what Part 1
-# asked the session to write (a tampered/unexpected file is left alone).
-PERM_PROOF="$PROJECT_DIR/fleet-perm-proof.txt"
-PERM_PROOF_PRE="$DEMO_LOGS/p3-perm-proof.pre-existing"
+# A pre-existing local proof file is snapshotted below and restored verbatim
+# here; otherwise the proof is removed only when its content matches what
+# Part 1 asked the session to write (a tampered/unexpected file is left alone).
 cleanup_perm_proof() {
-  if [ -f "$PERM_PROOF_PRE" ]; then
+  [ -n "$PERM_PROOF" ] || return 0
+  if [ -n "$PERM_PROOF_PRE" ] && [ -f "$PERM_PROOF_PRE" ]; then
     cp -f "$PERM_PROOF_PRE" "$PERM_PROOF"
     rm -f "$PERM_PROOF_PRE"
   elif [ "$(cat "$PERM_PROOF" 2>/dev/null)" = "FLEET_PERMISSION_OK" ]; then
     rm -f "$PERM_PROOF"
   fi
 }
-cleanup() {
-  cleanup_tmux_server
-  cleanup_perm_proof
-}
->>>>>>> /tmp/mf-theirs
-trap cleanup EXIT
-=======
+
 # A hung curl or claude run must never hold the gate forever: on the overall
 # deadline the EXIT trap still runs (verified tmux cleanup above) and the run
 # exits as a failure instead of blocking the caller.
@@ -136,28 +141,7 @@ ACCEPT_DEADLINE_S="${FLEETDECK_ACCEPT_DEADLINE_S:-600}"
 trap overall_deadline ALRM
 ( sleep "$ACCEPT_DEADLINE_S" && kill -ALRM "$$" 2>/dev/null ) &
 DEADLINE_PID=$!
-trap cleanup_tmux_server EXIT
->>>>>>> /tmp/mf-theirs
-=======
-# Per-run unique evidence dir + fixture copy: a concurrent acceptance run
-# must never reset, delete, or report against this run's artifacts.
-WORK_ROOT=''
-DEMO_LOGS=''
-TRANSCRIPT_PREFIX="fdp3-$$"
-
-# Kill the isolated tmux server (if anything ever spawned into it) with the
-# run; the default server is never touched. Also remove this run's mktemp'd
-# fixture/evidence copy — a unique path created below, never a shared one.
-cleanup_resources() {
-  command -v tmux >/dev/null 2>&1 && \
-    tmux -L "$FLEETDECK_TMUX_SOCKET" kill-server 2>/dev/null || true
-  if [ -n "$WORK_ROOT" ]; then
-    rm -rf -- "$WORK_ROOT"
-  fi
-  rm -rf -- "$HOME/.claude/projects/$TRANSCRIPT_PREFIX"
-}
-trap cleanup_resources EXIT
->>>>>>> /tmp/mf-theirs
+trap cleanup EXIT
 
 # Claude-session env vars that must never leak into the sessions (and through
 # their SessionStart hook, into the elected daemon): a daemon or tmux server
@@ -212,26 +196,6 @@ run_with_timeout() {
 }
 
 # ---------------------------------------------------------------- reset
-<<<<<<< /tmp/mf-ours
-<<<<<<< /tmp/mf-ours
-# Stop recorded daemons only after their fleetd identity is proven (strict
-# pidfile + /health.pid + /proc shape — the production verifyDaemonPid gate).
-# A legacy plain-PID pidfile can name a PID the OS has since recycled for an
-# unrelated process; those are never signalled (BUG-008).
-REAL_HOME="${HOME:-/root}/.fleetdeck"
-. "$SCRIPT_DIR/lib/kill-verified-daemon.sh"
-stop_pidfile_daemon "$REAL_HOME" || { echo "ABORT: unowned live pid in $REAL_HOME/fleetd.pid — not touching it."; exit 1; }
-stop_pidfile_daemon "$SCRATCH_HOME" || { echo "ABORT: unowned live pid in $SCRATCH_HOME/fleetd.pid — not touching it."; exit 1; }
-if curl -s -m 1 "$BASE/health" 2>/dev/null | grep -q '"ok"'; then
-  # `fuser -k` is Linux-only (stock macOS fuser cannot kill). Prefer lsof,
-  # which both platforms ship; keep fuser as the fallback for lsof-less Linux.
-  if command -v lsof >/dev/null 2>&1; then
-    lsof -ti "tcp:$FLEETDECK_PORT" | xargs kill 2>/dev/null || true
-  else
-    fuser -k "$FLEETDECK_PORT/tcp" 2>/dev/null || true
-  fi
-  sleep 0.5
-=======
 # Signal only a daemon proven by ALL THREE identities: the strict JSON pid
 # record under the pidfile's home, a /health reply on this port that reports
 # the same pid, and a live node+fleetd process shape. NEVER kill by port
@@ -303,43 +267,35 @@ stop_identified_daemon() {
     })().catch(() => { process.exitCode = 2; });
   ' "$pidfile" "$FLEETDECK_PORT" >/dev/null 2>&1
 }
+
+# The destructive reset is allowed ONLY when a home is the script's own
+# scratch home: its default (.fleetdeck-test) belongs to these acceptance
+# runs, and the pid inside it was started by an earlier run of this same
+# gate. With FLEETDECK_HOME_OVERRIDE set the home is caller-owned state, so
+# this script never kills its pidfile or deletes it — a stale pidfile is
+# still ignored (fleetd claims it atomically at boot). Either way the daemon
+# is stopped only after its fleetd identity is proven (strict pidfile +
+# /health.pid + process shape): a legacy plain-PID pidfile can name a PID
+# the OS has since recycled for an unrelated process, and those are never
+# signalled. The real home is only REPORTED: killing a pidfile the user may
+# be running would destroy their fleet.
 REAL_HOME="${HOME:-/root}/.fleetdeck"
-if ! stop_identified_daemon "$REAL_HOME/fleetd.pid"; then
-  echo "ABORT: daemon recorded in $REAL_HOME/fleetd.pid could not be positively identified and stopped."
-  exit 1
+if [ -f "$REAL_HOME/fleetd.pid" ]; then
+  echo "NOTE: a fleetd pid record exists at $REAL_HOME/fleetd.pid — left untouched."
 fi
-if ! stop_identified_daemon "$SCRATCH_HOME/fleetd.pid"; then
-  echo "ABORT: daemon recorded in $SCRATCH_HOME/fleetd.pid could not be positively identified and stopped."
-  exit 1
->>>>>>> /tmp/mf-theirs
-fi
-if curl -s -m 1 "$BASE/health" > /dev/null 2>&1; then
-  echo "ABORT: something is still listening on :$FLEETDECK_PORT after reset; refusing to kill an unidentified listener."
-  exit 1
-fi
-rm -rf "$SCRATCH_HOME"; mkdir -p "$SCRATCH_HOME" "$DEMO_LOGS"
-rm -f "$DEMO_LOGS"/p3-*.json "$DEMO_LOGS"/p3-*.err
-rm -f "$PERM_PROOF_PRE"
-[ -f "$PERM_PROOF" ] && cp "$PERM_PROOF" "$PERM_PROOF_PRE"
-rm -f "$PERM_PROOF"
-=======
-# The destructive reset is allowed ONLY when the scratch home is the
-# script's own default (.fleetdeck-test): that directory belongs to these
-# acceptance runs, and the pid inside it was started by an earlier run of
-# this same gate. With FLEETDECK_HOME_OVERRIDE set the home is caller-owned
-# state, so this script never kills its pidfile or deletes it — a stale
-# pidfile is still ignored (fleetd claims it atomically at boot).
 SCRATCH_DEFAULTED=0
 if [ -z "${FLEETDECK_HOME_OVERRIDE:-}" ]; then
   SCRATCH_DEFAULTED=1
 fi
+if ! stop_identified_daemon "$SCRATCH_HOME/fleetd.pid"; then
+  echo "ABORT: daemon recorded in $SCRATCH_HOME/fleetd.pid could not be positively identified and stopped."
+  exit 1
+fi
 if [ "$SCRATCH_DEFAULTED" -eq 1 ]; then
-  [ -f "$SCRATCH_HOME/fleetd.pid" ] && kill "$(cat "$SCRATCH_HOME/fleetd.pid" 2>/dev/null)" 2>/dev/null
-  sleep 0.5
   rm -rf "$SCRATCH_HOME"
 fi
 if curl -s -m 1 "$BASE/health" > /dev/null 2>&1; then
-  echo "ABORT: something is listening on :$FLEETDECK_PORT — this run never kills another listener; free the port or set FLEETDECK_PORT."
+  echo "ABORT: something is still listening on :$FLEETDECK_PORT after reset; refusing to kill an unidentified listener."
   exit 1
 fi
 mkdir -p "$SCRATCH_HOME"
@@ -352,50 +308,26 @@ WORK_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/fleetdeck-p3.XXXXXX")" || {
 }
 PROJECT_DIR="$WORK_ROOT/project"
 DEMO_LOGS="$WORK_ROOT/demo-logs"
+PERM_PROOF="$PROJECT_DIR/fleet-perm-proof.txt"
+PERM_PROOF_PRE="$DEMO_LOGS/p3-perm-proof.pre-existing"
 mkdir -p "$PROJECT_DIR" "$DEMO_LOGS"
 cp -R "$SEED_PROJECT/." "$PROJECT_DIR/"
-rm -f "$PROJECT_DIR/fleet-perm-proof.txt"
->>>>>>> /tmp/mf-theirs
+rm -f "$PERM_PROOF_PRE"
+[ -f "$PERM_PROOF" ] && cp "$PERM_PROOF" "$PERM_PROOF_PRE"
+rm -f "$PERM_PROOF"
 
 # Same proven wiring as run-smoke.sh (incl. PermissionRequest/Elicitation 65s).
 # Every hook uses the current checkout's authenticated command shim. Native
 # HTTP hooks cannot attach the bearer token required since 0.16.0, and the
 # daemon's legacy unauthenticated /hook/* refusal would silently swallow every
 # event, so a tokenless wiring here tests nothing but the refusal path.
-cat > "$PROJECT_DIR/.claude/settings.json" <<EOF
-{
-  "enabledPlugins": { "fleetdeck@fleetdeck": false },
-  "hooks": {
-    "SessionStart": [
-      { "hooks": [{ "type": "command", "command": "node \"$SESSIONSTART_SCRIPT\"", "timeout": 15 }] }
-    ],
-    "UserPromptSubmit": [
-      { "hooks": [{ "type": "command", "command": "node $FLEET_HOOK_SCRIPT UserPromptSubmit", "timeout": 3 }] }
-    ],
-    "PostToolUse": [
-      { "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash", "hooks": [{ "type": "command", "command": "node $FLEET_HOOK_SCRIPT PostToolUse", "timeout": 3 }] }
-    ],
-    "PreToolUse": [
-      { "matcher": "AskUserQuestion", "hooks": [{ "type": "command", "command": "node $FLEET_HOOK_SCRIPT AskUserQuestion", "timeout": 65 }] }
-    ],
-    "PermissionRequest": [
-      { "hooks": [{ "type": "command", "command": "node $FLEET_HOOK_SCRIPT PermissionRequest", "timeout": 65 }] }
-    ],
-    "Elicitation": [
-      { "hooks": [{ "type": "command", "command": "node $FLEET_HOOK_SCRIPT Elicitation", "timeout": 65 }] }
-    ],
-    "Notification": [
-      { "hooks": [{ "type": "command", "command": "node $FLEET_HOOK_SCRIPT Notification", "timeout": 3, "async": true }] }
-    ],
-    "Stop": [
-      { "hooks": [{ "type": "command", "command": "node $FLEET_HOOK_SCRIPT Stop", "timeout": 5 }] }
-    ],
-    "SessionEnd": [
-      { "hooks": [{ "type": "command", "command": "node $FLEET_HOOK_SCRIPT SessionEnd", "timeout": 3, "async": true }] }
-    ]
-  }
-}
-EOF
+mkdir -p "$PROJECT_DIR/.claude"
+# Rendered through JSON.stringify (never a heredoc): a checkout path with a
+# space, quote, or backslash must not corrupt or split the generated hook
+# commands (BUG-092).
+node "$SCRIPT_DIR/render-smoke-settings.mjs" \
+  "$SESSIONSTART_SCRIPT" "$FLEET_HOOK_SCRIPT" \
+  "$PROJECT_DIR/.claude/settings.json"
 
 cd "$PROJECT_DIR"
 PASS=0; FAIL=0
@@ -432,21 +364,14 @@ let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{
     console.log(q?q.id:'');
   }catch{console.log('')}})" 2>/dev/null)
   if [ -n "$QID" ]; then
-<<<<<<< /tmp/mf-ours
-    R=$(curl -s -X POST "$BASE/api/questions/$QID/answer" -H 'content-type: application/json' -d '{"behavior":"allow"}')
-    echo "T+$i board approved permission question #$QID → $R"
-    # The answer POST itself must have succeeded — a 4xx body would leave the
-    # hold to expire and fail open to the native terminal prompt.
-    if printf '%s' "$R" | grep -q '"ok":true'; then
-      APPROVED=yes
-      break
-    fi
-=======
     # Bounded + status-validated: a listener that accepts but never answers
-    # must fail the run, not hang it outside the 240s Claude watchdogs.
+    # must fail the run, not hang it outside the 240s Claude watchdogs. A 4xx
+    # body would leave the hold to expire and fail open to the native
+    # terminal prompt, so only a 2xx answer counts as board approval.
     R=$(curl -sS --connect-timeout 2 -m 10 -w '\n%{http_code}' \
       -X POST "$BASE/api/questions/$QID/answer" -H 'content-type: application/json' \
-      -d '{"behavior":"allow"}' 2>&1) && [ "${R##*$'\n'}" -ge 200 ] && [ "${R##*$'\n'}" -lt 300 ]
+      -d '{"behavior":"allow"}' 2>&1) \
+      && [ "${R##*$'\n'}" -ge 200 ] && [ "${R##*$'\n'}" -lt 300 ]
     if [ $? -eq 0 ]; then
       echo "T+$i board approved permission question #$QID → ${R%$'\n'*}"
       APPROVED=yes
@@ -454,7 +379,6 @@ let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{
       echo "T+$i permission answer POST failed or non-2xx: $R"
     fi
     break
->>>>>>> /tmp/mf-theirs
   fi
   sleep 1
 done
@@ -510,20 +434,16 @@ if grep -qi "argon2" "$DEMO_LOGS/p3-resume.json"; then
 else
   bad "board answer reached the session at its next boundary" "argon2 not referenced in resume output"
 fi
-<<<<<<< /tmp/mf-ours
-<<<<<<< /tmp/mf-ours
 # Claude Code stores sessions under ${CLAUDE_CONFIG_DIR:-$HOME/.claude} —
-# honor the override or a contributor with it set gets a false "missing relay".
-TRANSCRIPT_ROOT="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
-TRANSCRIPT_DIR="$TRANSCRIPT_ROOT/projects/$(echo "$PROJECT_DIR" | sed 's|/|-|g')"
-=======
+# honor the override or a contributor with it set gets a false "missing
+# relay". The project directory name uses the SAME slash-and-dot cwd munging
+# the daemon uses (helpers.mjs — a dot in the checkout path would otherwise
+# point the gate at a directory Claude never writes), prefixed with this
+# run's TRANSCRIPT_PREFIX so a concurrent acceptance run never reads or
+# reaps another run's transcript evidence.
 TRANSCRIPT_ROOT="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 MUNGED_PROJECT=$(node --input-type=module -e "import { mungeClaudeProjectCwd } from '$FLEETDECK_ROOT/scripts/fleetd/helpers.mjs'; console.log(mungeClaudeProjectCwd(process.argv[1]))" "$PROJECT_DIR")
-TRANSCRIPT_DIR="$TRANSCRIPT_ROOT/projects/$MUNGED_PROJECT"
->>>>>>> /tmp/mf-theirs
-=======
-TRANSCRIPT_DIR="$HOME/.claude/projects/$TRANSCRIPT_PREFIX$(echo "$PROJECT_DIR" | sed 's|/|-|g')"
->>>>>>> /tmp/mf-theirs
+TRANSCRIPT_DIR="$TRANSCRIPT_ROOT/projects/$TRANSCRIPT_PREFIX$MUNGED_PROJECT"
 if grep -q "FLEETDECK ANSWER" "$TRANSCRIPT_DIR/$S2.jsonl" 2>/dev/null; then
   ok "[FLEETDECK ANSWER] visible in resumed session transcript"
 else
@@ -540,5 +460,8 @@ try{ const lines=fs.readFileSync('$SCRATCH_HOME/hook-payloads.jsonl','utf8').tri
   for(const l of lines){ const j=JSON.parse(l); console.log(' ', j.event || j.hook_event_name, '→ keys:', (j.keys||[]).join(',')); }
 }catch(e){ console.log('  (no capture file:', e.message+')') }"
 echo
+# The gate's work is done: disarm the deadline watcher so a finished run
+# exits now instead of lingering until ACCEPT_DEADLINE_S.
+kill "$DEADLINE_PID" 2>/dev/null || true
 echo "RESULT: $PASS pass, $FAIL fail"
 [ "$FAIL" -eq 0 ]

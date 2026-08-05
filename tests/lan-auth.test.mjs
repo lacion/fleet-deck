@@ -95,26 +95,17 @@ function refused(url) {
 // cannot be crafted with fetch: the header would fall back to 127.0.0.1:port and
 // the request would look local, quietly passing whether or not the fix is
 // present. node:http honours the override, so the proxy hole is actually
-// exercised. Resolves { status, body } and never rejects on a non-2xx.
-<<<<<<< /tmp/mf-ours
+// exercised. The deadline comes from the shared rawRequest helper (BUG-162:
+// without a scaled timeout a route that accepts but never answers hung the
+// suite until the outer CI timeout). A caller MAY override the TARGET host —
+// the mDNS Host-wall test must reach the daemon via its LAN interface, not
+// loopback; it is expressed as an explicit Host header because the shared
+// helper connects over loopback. Resolves { status, body } and never rejects
+// on a non-2xx.
 function rawGet(port, pathname, headers = {}, host = '127.0.0.1') {
-  return new Promise((resolve, reject) => {
-    const req = http.request(
-      { host, port, path: pathname, method: 'GET', headers },
-      res => {
-        let body = '';
-        res.on('data', c => { body += c; });
-        res.on('end', () => resolve({ status: res.statusCode, body }));
-      },
-    );
-    req.on('error', reject);
-    req.end();
-  });
-=======
-function rawGet(port, pathname, headers = {}) {
-  return rawRequest({ port, path: pathname, method: 'GET', headers })
+  const withHost = host === '127.0.0.1' ? headers : { ...headers, Host: headers.Host ?? `${host}:${port}` };
+  return rawRequest({ port, path: pathname, method: 'GET', headers: withHost })
     .then(({ status, text }) => ({ status, body: text }));
->>>>>>> /tmp/mf-theirs
 }
 
 test('default bind preserves unauthenticated loopback health and hook traffic', async t => {

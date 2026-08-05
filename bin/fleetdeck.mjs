@@ -43,15 +43,18 @@ const SOURCE = path.join(ROOT, 'scripts', 'fleetd', 'fleetd.mjs');
 const FLEETD = fs.existsSync(BUNDLE) ? BUNDLE : SOURCE;
 
 const HOME = process.env.FLEETDECK_HOME || path.join(os.homedir() || '/tmp', '.fleetdeck');
-<<<<<<< /tmp/mf-ours
-=======
 // Byte-identical to scripts/fleetd/config.mjs resolvePort (that module is not
 // importable from the published CLI — see the header comment there): reject
 // port 0 and every other non-1..65535 value so the CLI never targets a
-// daemon identity nothing can actually reach.
+// daemon identity nothing can actually reach. An explicit ambient
+// FLEETDECK_PORT still wins; when it is unset we fall back to the port frozen
+// into the installed service.env (BUG-075), and only then to the default.
+// NOTE: resolveCliPort is only CALLED after serviceEnvPort/ENV_FILE below are
+// initialized — moving the call above their const declarations would hit the
+// temporal dead zone.
 function resolveCliPort() {
   const raw = process.env.FLEETDECK_PORT;
-  if (raw === undefined || raw === '') return 4711;
+  if (raw === undefined || raw === '') return serviceEnvPort() ?? 4711;
   const port = Number(raw);
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     process.stderr.write(`fleetdeck: invalid FLEETDECK_PORT ${JSON.stringify(raw)} — expected an integer port in 1..65535 (port 0 is not supported)\n`);
@@ -59,8 +62,6 @@ function resolveCliPort() {
   }
   return port;
 }
-const PORT = resolveCliPort();
->>>>>>> /tmp/mf-theirs
 const SERVICE_NAME = 'fleetdeck';
 
 const ENV_FILE = path.join(HOME, 'service.env');
@@ -99,7 +100,7 @@ function serviceEnvPort() {
   catch { return null; } // not installed yet — the default port applies
 }
 
-const PORT = process.env.FLEETDECK_PORT ? Number(process.env.FLEETDECK_PORT) : (serviceEnvPort() ?? 4711);
+const PORT = resolveCliPort();
 const SUPERVISE_SH = path.join(HOME, 'supervise.sh');
 const SUPERVISOR_PID = path.join(HOME, 'supervisor.pid');
 const FLEETD_PID = path.join(HOME, 'fleetd.pid');
@@ -341,7 +342,6 @@ function writeEnvFile() {
   return lines.length;
 }
 
-<<<<<<< /tmp/mf-ours
 // systemd-UNIT PATH SAFETY. The two path-bearing directives below interpolate
 // REAL paths (the node binary, this script, FLEETDECK_HOME/service.env) that the
 // user does not control the shape of — Node under `nvm/v24 linux/node`, a
@@ -353,20 +353,48 @@ function writeEnvFile() {
 // Escaping follows systemd.syntax(7):
 //  - `%` → `%%` FIRST, in every directive. Specifier expansion runs before
 //    tokenization, so it must be neutralized before any quoting.
-//  - ExecStart: each argv token that is not already one literal word is wrapped
-//    in double quotes, with `"` and `\` backslash-escaped inside. Quoted or not,
-//    a token stays exactly one argv element — systemd never word-splits inside
-//    quotes, and the bare-safe charset excludes every separator.
+//  - ExecStart: EVERY argv token is double-quoted (quoteExecArg, BUG-078;
+//    unitArg retains BUG-077's conditional bare form for its exported
+//    contract). Inside the quotes `%` is already doubled and `'` is
+//    backslash-escaped — the two escapes systemd resolves there. What quoting
+//    cannot carry is REFUSED with a clear install-time error: control
+//    characters (they break the line format) and `"`.
 //  - EnvironmentFile: takes ONE path (no tokenization), so instead of quoting
 //    we REFUSE paths the unquoted grammar cannot carry: whitespace, quotes, or
 //    a backslash get a clear install-time error naming the path. Anything else
 //    (spaces excluded — refused) is literal to end-of-line.
 const UNIT_VALUE_UNSAFE = /[\s"'\\]/;
+const EXEC_ARG_UNQUOTABLE = /[\u0000-\u001f"]/;
 
 function unitEscape(s) {
   return s.replace(/%/g, '%%');
 }
 
+// BUG-078's ExecStart quoting: EVERY token is double-quoted (BUG-077 kept a
+// bare fast path; it was dropped because systemd's ExecStart grammar makes a
+// bare token with an embedded quote unsafe, while a quoted token stays exactly
+// one argv element whatever it contains). Inside the quotes `%` is doubled and
+// `'` backslash-escaped — the escapes systemd resolves there. What quoting
+// cannot carry — control characters (they break the line format) and `"` —
+// is refused with a clear install-time error.
+function quoteExecArg(p) {
+  if (EXEC_ARG_UNQUOTABLE.test(p)) {
+    throw new Error(
+      `cannot write ${UNIT_FILE}: the path ${JSON.stringify(p)} contains a control character `
+      + 'or double quote, which cannot be represented in a systemd ExecStart line. '
+      + 'Install Node and fleetdeck at a path without those characters.',
+    );
+  }
+  return `"${p.replaceAll('%', '%%').replaceAll("'", "\\'")}"`;
+}
+
+// BUG-077's ExecStart helper, kept as the exported contract: a bare-safe token
+// (after %-escaping, which runs before the bare/quoted decision because
+// specifier expansion precedes tokenization) passes through byte-identical to
+// older installs; anything else is quoted, with `"` and `\` escaped inside.
+// NOTE: the generated unit itself uses quoteExecArg (always-quote, refuse `"`)
+// — the adversarially verified BUG-078 emission; unitArg remains for callers
+// that need the older conditional form.
 function unitArg(s) {
   const escaped = unitEscape(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
   return ENV_VALUE_BARE_SAFE.test(s) ? escaped : `"${escaped}"`;
@@ -381,36 +409,6 @@ function unitEnvFilePath(p) {
     );
   }
   return unitEscape(p);
-=======
-// systemd ExecStart argument quoting. The first token of ExecStart is parsed
-// with systemd's OWN command-line rules (NOT shell rules): whitespace splits
-// arguments, and a bare path containing a space — a legal Node install location
-// like `/tmp/node space/node` — is truncated at the first space and the service
-// fails to start (`Command .../node is not executable`). Double-quoting an
-// argument makes systemd take it literally, with \' and \" as the only escapes
-// it resolves inside double quotes. Separately, `%` introduces specifier
-// expansion in EVERY unit-file setting, quoted or not (`%%` is a literal
-// percent) — an unescaped `%` in a path like `/opt/100%/node` would make
-// systemd reject the unit outright. So: refuse what cannot be represented
-// (newline/control chars break the line format; a double quote cannot be
-// escaped in a way that survives the specifier pass), escape `%` FIRST (it is
-// resolved before quote parsing), then wrap in double quotes, escaping any
-// embedded single quote (an unescaped `'` would start systemd's single-quote
-// mode and swallow the closing `"`). This is deliberately separate from the
-// EnvironmentFile handling above — EnvironmentFile has different quoting rules
-// (it resolves backslash escapes even inside single quotes, systemd#10659).
-const EXEC_ARG_UNQUOTABLE = /[\u0000-\u001f"]/;
-
-function quoteExecArg(p) {
-  if (EXEC_ARG_UNQUOTABLE.test(p)) {
-    throw new Error(
-      `cannot write ${UNIT_FILE}: the path ${JSON.stringify(p)} contains a control character `
-      + 'or double quote, which cannot be represented in a systemd ExecStart line. '
-      + 'Install Node and fleetdeck at a path without those characters.',
-    );
-  }
-  return `"${p.replaceAll('%', '%%').replaceAll("'", "\\'")}"`;
->>>>>>> /tmp/mf-theirs
 }
 
 const UNIT = () => `[Unit]
@@ -419,13 +417,8 @@ After=network.target
 
 [Service]
 Type=simple
-<<<<<<< /tmp/mf-ours
 EnvironmentFile=-${unitEnvFilePath(ENV_FILE)}
-ExecStart=${unitArg(process.execPath)} ${unitArg(path.join(HERE, 'fleetdeck.mjs'))} serve
-=======
-EnvironmentFile=-${ENV_FILE}
 ExecStart=${quoteExecArg(process.execPath)} ${quoteExecArg(path.join(HERE, 'fleetdeck.mjs'))} serve
->>>>>>> /tmp/mf-theirs
 Restart=always
 RestartSec=2
 # exit 3 is "another daemon already owns the port" — restarting is a hot loop.
@@ -559,6 +552,10 @@ function healthPidIsOurDaemon(h) {
     return false;
   }
   if (record?.pid !== pid) return false;
+  // The pidfile predates port recording (or another daemon in the chain wrote
+  // it before the port was frozen in): a missing recorded port cannot
+  // DISPROVE ownership, so only a recorded port that disagrees with the
+  // selected PORT vetoes the kill.
   if (record.port !== null && record.port !== PORT) return false;
   return livePidLooksLikeFleetd(pid);
 }
@@ -791,36 +788,4 @@ if (IS_ENTRYPOINT) await main(process.argv.slice(2));
 // exported for tests only — the env-file validation, supervisor identity check,
 // and file generators are contracts. Nothing here runs on import (see
 // IS_ENTRYPOINT above), so importing is side-effect-free.
-<<<<<<< /tmp/mf-ours
-<<<<<<< /tmp/mf-ours
-<<<<<<< /tmp/mf-ours
-<<<<<<< /tmp/mf-ours
-<<<<<<< /tmp/mf-ours
-<<<<<<< /tmp/mf-ours
-<<<<<<< /tmp/mf-ours
-<<<<<<< /tmp/mf-ours
-export { writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor, serviceInstall, UNIT, SUPERVISE, doctor, MIN_NODE_RANGE, nodeVersionSupported };
-=======
-export { writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, parseServiceEnvPort, serviceEnvPort, supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor, serviceInstall, UNIT, SUPERVISE, doctor };
->>>>>>> /tmp/mf-theirs
-=======
-export { writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor, serviceInstall, UNIT, SUPERVISE, doctor, token };
->>>>>>> /tmp/mf-theirs
-=======
-export { writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor, serviceInstall, UNIT, SUPERVISE, doctor, unitEscape, unitArg, unitEnvFilePath };
->>>>>>> /tmp/mf-theirs
-=======
-export { writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor, serviceInstall, UNIT, SUPERVISE, quoteExecArg, doctor };
->>>>>>> /tmp/mf-theirs
-=======
-export { writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, shQuote, supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor, serviceInstall, UNIT, SUPERVISE, doctor };
->>>>>>> /tmp/mf-theirs
-=======
-export { writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor, serviceInstall, serviceStart, UNIT, SUPERVISE, doctor };
->>>>>>> /tmp/mf-theirs
-=======
-export { writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor, serviceInstall, UNIT, SUPERVISE, doctor, healthIsOurManagedDaemon };
->>>>>>> /tmp/mf-theirs
-=======
-export { writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor, healthPidIsOurDaemon, serviceInstall, UNIT, SUPERVISE, doctor };
->>>>>>> /tmp/mf-theirs
+export { writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, parseServiceEnvPort, serviceEnvPort, shQuote, supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor, healthPidIsOurDaemon, healthIsOurManagedDaemon, serviceInstall, serviceStart, UNIT, SUPERVISE, unitEscape, unitArg, quoteExecArg, unitEnvFilePath, doctor, MIN_NODE_RANGE, nodeVersionSupported, token };

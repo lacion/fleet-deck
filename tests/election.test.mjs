@@ -15,12 +15,8 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-<<<<<<< /tmp/mf-ours
-import { startDaemon, spawnRaw, randomPort, waitForHealth } from './helpers/daemon.mjs';
-=======
 import { fileURLToPath } from 'node:url';
-import { startDaemon, spawnRaw, randomPort } from './helpers/daemon.mjs';
->>>>>>> /tmp/mf-theirs
+import { startDaemon, spawnRaw, randomPort, waitForHealth } from './helpers/daemon.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -47,8 +43,6 @@ test('a second daemon on the same port loses the election and exits with code 3'
   assert.equal(health.status, 200, 'the winning daemon should remain healthy after the collision');
 });
 
-<<<<<<< /tmp/mf-ours
-<<<<<<< /tmp/mf-ours
 // BUG-121 regression: a malformed FLEETDECK_PORT made server.listen throw
 // synchronously AFTER the pid guard claimed HOME — the async server 'error'
 // handler never ran, so the stale pidfile (recording a garbage port) wedged
@@ -68,7 +62,8 @@ test('a malformed FLEETDECK_PORT refuses to start before claiming HOME (no stale
     assert.match(refused.stderr, /FLEETDECK_PORT/, `stderr should name the offending variable. stderr: ${refused.stderr}`);
     assert.equal(existsSync(path.join(home, 'fleetd.pid')), false, `FLEETDECK_PORT='${bad}' must not leave a pidfile behind`);
   }
-=======
+});
+
 // BUG-156 regression: a second daemon on the same HOME is usually a takeover
 // REPLACEMENT (two concurrent newer hooks both spawn after evicting the stale
 // daemon). Plain "first claim wins" has no notion of version, so the OLDER
@@ -181,8 +176,8 @@ test('a MANAGED challenger never fights for HOME, even against an older unmanage
   const health = await (await fetch(`http://127.0.0.1:${port}/health`)).json();
   assert.equal(health.pid, incumbentPid, 'the unmanaged incumbent keeps serving');
   assert.equal(incumbent.proc.exitCode, null, 'the incumbent was never signalled');
->>>>>>> /tmp/mf-theirs
-=======
+});
+
 test('startDaemon refuses a /health answered by a different pid (BUG-164)', async (t) => {
   const port = randomPort();
   const homeA = mkdtempSync(path.join(tmpdir(), 'fleetdeck-home-a-'));
@@ -227,5 +222,4 @@ test('startDaemon rejects when the child exits before any /health answer (BUG-16
     /exited with code/,
   );
   assert.ok(Date.now() - start < 30000, 'should fail fast on child exit, not poll until the health timeout');
->>>>>>> /tmp/mf-theirs
 });

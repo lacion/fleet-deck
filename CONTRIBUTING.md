@@ -20,25 +20,17 @@ npm run build:board         # → scripts/fleetd/board-dist/
 
 ## Prerequisites
 
-<<<<<<< /tmp/mf-ours
 - **Node ^22.13.0 || >=24.0.0** — a hard floor, not a suggestion. The daemon keeps
   its state in Node's built-in `node:sqlite`, which shipped behind a flag in 22.5
   and only loads WITHOUT `--experimental-sqlite` from 22.13.0 (and 24.x). Node 23
   is unsupported. There is no polyfill and no fallback; an older Node won't boot
   the daemon.
-- **tmux** — needed for anything spawn-, terminal-, or pane-related, and the
-  test suite drives a *real* tmux server to exercise it. It never touches your
-=======
-- **Node >= 22.5** — a hard floor, not a suggestion. The daemon keeps its state
-  in Node's built-in `node:sqlite`, which first shipped in 22.5. There is no
-  polyfill and no fallback; an older Node won't boot the daemon.
 - **tmux 3.4+** — needed for anything spawn-, terminal-, or pane-related, and
   the test suite drives a *real* tmux server to exercise it. 3.4 is a hard
   floor, enforced by `bin/tmux-version.mjs`: Fleet Deck's no-start probe
   (`-N`) was introduced there, so an older tmux is rejected as unavailable.
   Check with `tmux -V`; some distributions still package 3.2/3.3, so if yours
   does, install tmux from a newer release or build it from source. It never touches your
->>>>>>> /tmp/mf-theirs
   tmux, though: every test daemon runs its tmux commands against an isolated
   named server (`tmux -L fleetdeck-test-<port>`, set via `FLEETDECK_TMUX_SOCKET`
   in `tests/helpers/daemon.mjs`), and the demo scripts do the same with a

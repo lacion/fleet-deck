@@ -184,7 +184,6 @@ test('repo_setup validates, persists, and rides settings broadcasts', async t =>
   assert.deepEqual(restored.json.settings.repo_setup, value);
 });
 
-<<<<<<< /tmp/mf-ours
 test('repo_setup keeps a legitimate __proto__ repo entry through a raw JSON body', async t => {
   const home = scratch('fd-setup-proto-home-');
   const daemon = await startDaemon({ home });
@@ -209,7 +208,8 @@ test('repo_setup keeps a legitimate __proto__ repo entry through a raw JSON body
   const restored = await getJson(`${daemon.baseUrl}/api/settings`);
   assert.equal(restored.json.settings.repo_setup.__proto__, 'echo setup',
     'the stored row must serialize the entry back, not an empty object');
-=======
+});
+
 test('repo_setup_patch merges per-repository saves, deletes on the sentinel, and validates like repo_setup', async t => {
   const home = scratch('fd-setup-patch-home-');
   const daemon = await startDaemon({ home });
@@ -276,7 +276,6 @@ test('setRepoSetupEntry writes one repo without a broadcast and drops junk', asy
   core.setRepoSetupEntry('bad\tname', 'true'); // invalid: silently no-ops
   core.setRepoSetupEntry('other', 'x'.repeat(2001));
   assert.deepEqual(repoSetup(), { other: 'echo hi' });
->>>>>>> /tmp/mf-theirs
 });
 
 test('real tmux setup failure stays visible, condemns immediately, and never starts Claude', { skip: !tmuxOk() && 'tmux unavailable' }, async t => {

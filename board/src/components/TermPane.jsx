@@ -4,14 +4,9 @@ import { FitAddon } from '@xterm/addon-fit';
 import { ClipboardAddon } from '@xterm/addon-clipboard';
 import '@xterm/xterm/css/xterm.css';
 import { hasToken, wsUrl } from '../token.js';
-<<<<<<< /tmp/mf-ours
-import { pasteImage } from '../api.js';
-import { copyText, imageFromClipboard, isMacUA, isTermCopyChord, isTermPasteChord, pasteTextSafe, termChordHints, unwrapTmuxPassthrough } from '../util.js';
-=======
 import { pasteImage, fetchHealth } from '../api.js';
 import { refusedUpgradeText } from '../termDiag.js';
-import { copyText, imageFromClipboard, isMacUA, isTermCopyChord, isTermPasteChord, termChordHints, unwrapTmuxPassthrough } from '../util.js';
->>>>>>> /tmp/mf-theirs
+import { copyText, imageFromClipboard, isMacUA, isTermCopyChord, isTermPasteChord, pasteTextSafe, termChordHints, unwrapTmuxPassthrough } from '../util.js';
 
 // One live terminal onto one board-owned pane — the screen and the socket, with
 // no chrome around it. The floating window (TermWindow) and each tile of the grid

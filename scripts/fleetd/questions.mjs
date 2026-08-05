@@ -996,21 +996,6 @@ export function createQuestions(db, {
 // format); for multi-question calls each is swapped for the question's
 // shorter `header` when the payload lets us match it. Values may be a string
 // or an array of labels (multiSelect). Returns null when the body carries
-<<<<<<< /tmp/mf-ours
-// nothing usable — the HTTP layer turns that into a 400.
-//
-// An answer is the operator's decision, NOT a display string: it is relayed
-// in full, never clipped by the 300-unit display clamp (BUG-139). Only a
-// serialized answer over ANSWER_MAX code units is rejected outright (the
-// HTTP layer turns the { over: n } marker into a 400) — settling the hold
-// with a silently truncated answer would feed the agent a partial decision
-// that cannot be recovered through the terminal chooser. The limit compares
-// STRING CODE UNITS (Array.from never slices), so no surrogate pair is
-// ever split. Any text a multi-question chooser legitimately produces is
-// far under the cap; it guards against pathological bodies only.
-const ANSWER_MAX = 2000;
-
-=======
 // nothing usable — the HTTP layer turns that into a 400 and the hold STAYS
 // open for a corrected answer.
 //
@@ -1023,7 +1008,17 @@ const ANSWER_MAX = 2000;
 //   • every value must be a non-empty string, or an array of non-empty strings
 //     (arrays only when that question is multiSelect);
 //   • every label must come from that question's options[].
->>>>>>> /tmp/mf-theirs
+//
+// An answer is the operator's decision, NOT a display string: it is relayed
+// in full, never clipped by the 300-unit display clamp (BUG-139). Only a
+// serialized answer over ANSWER_MAX code units is rejected outright (the
+// HTTP layer turns the { over: n } marker into a 400) — settling the hold
+// with a silently truncated answer would feed the agent a partial decision
+// that cannot be recovered through the terminal chooser. The limit compares
+// STRING CODE UNITS (Array.from never slices), so no surrogate pair is
+// ever split. Any text a multi-question chooser legitimately produces is
+// far under the cap; it guards against pathological bodies only.
+const ANSWER_MAX = 2000;
 function serializeChoiceAnswer(row, body) {
   if (typeof body?.text === 'string' && body.text.trim()) {
     const t = body.text.trim();
@@ -1033,18 +1028,14 @@ function serializeChoiceAnswer(row, body) {
   if (!answers || typeof answers !== 'object' || Array.isArray(answers)) return null;
   const entries = Object.entries(answers);
   if (!entries.length) return null;
-<<<<<<< /tmp/mf-ours
-  if (entries.length === 1) {
-    const t = fmt(entries[0][1]);
-    return t.length <= ANSWER_MAX ? t : { over: t.length };
-  }
-=======
->>>>>>> /tmp/mf-theirs
   const qs = safeParse(row?.payload_json)?.tool_input?.questions;
   if (Array.isArray(qs) && !validChoiceAnswers(qs, entries)) return null;
   const fmt = v => (Array.isArray(v) ? v.join(', ') : v).trim();
   if (entries.some(([, v]) => fmt(v) === '')) return null;
-  if (entries.length === 1) return clipQuestion(fmt(entries[0][1]));
+  if (entries.length === 1) {
+    const t = fmt(entries[0][1]);
+    return t.length <= ANSWER_MAX ? t : { over: t.length };
+  }
   const headerOf = qText => (Array.isArray(qs) ? qs.find(x => x?.question === qText)?.header : null);
   const t = entries.map(([qText, v]) => `${headerOf(qText) || qText}: ${fmt(v)}`).join('; ');
   return t.length <= ANSWER_MAX ? t : { over: t.length };

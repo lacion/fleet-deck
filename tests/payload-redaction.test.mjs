@@ -62,7 +62,6 @@ test('secret-looking keys redact whole and are never descended into; siblings su
   assert.equal(ti.model, 'claude-opus-4');
   // And not one raw secret byte reached disk (the value was never walked).
   for (const leak of ['ghp_', 'AKIA', 'zzzzz', 'yyyyy', 'kkkkk', 'qqqqq', 'ppppp', 'ccccc', 'ttttt']) {
-<<<<<<< /tmp/mf-ours
     assert.equal(raw.includes(leak), false, `${leak} must not appear on disk`);
   }
 });
@@ -96,8 +95,6 @@ test('plural and camelCase-plural secret container keys redact like their singul
   assert.equal(payload.tool_input.clientSecrets, '[redacted]');
   assert.equal(env.region, 'us-east-1', 'sibling non-secret key keeps its value');
   for (const leak of ['aaaaa', 'bbbbb', 'kkkkk', 'lllll']) {
-=======
->>>>>>> /tmp/mf-theirs
     assert.equal(raw.includes(leak), false, `${leak} must not appear on disk`);
   }
 });
@@ -215,8 +212,20 @@ test('scrubUrlCredentials removes URL userinfo, bytes and all, and is idempotent
   assert.equal(scrubUrlCredentials('git@github.com:owner/repo.git'), 'git@github.com:owner/repo.git');
 });
 
-<<<<<<< /tmp/mf-ours
-<<<<<<< /tmp/mf-ours
+test('capture scrubs credentialed URLs that match no credential shape', (t) => {
+  // BUG-136: a glpat- in URL userinfo and a ?private_token= query credential
+  // match NO SECRET_VALUE_RES entry, so before the capture walk composed
+  // scrubUrlCredentials they reached hook-payloads.jsonl verbatim.
+  const token = 'glpat-AbCdEf1234567890';
+  const { payload, raw } = captureOnce(t, {
+    prompt: `clone https://luis:${token}@gitlab.com/o/r.git then push`,
+    error: `fatal: unable to access 'https://host/o/r.git?private_token=${token}'`,
+  });
+  assert.equal(raw.includes(token), false, 'the token must not reach disk in any form');
+  assert.equal(payload.prompt, 'clone https://[redacted]@gitlab.com/o/r.git then push');
+  assert.equal(payload.error, "fatal: unable to access 'https://host/o/r.git?private_token=[redacted]'");
+});
+
 test('forge/API shapes git treats as secrets are masked by the SHARED scrubber, not just the git path', (t) => {
   // BUG-038: these prefixes lived only in exec.mjs's git-local extra list, so a
   // bare token relayed on a stalled spawn's pane (stallDiagnosticExcerpt applies
@@ -250,43 +259,6 @@ test('forge/API shapes git treats as secrets are masked by the SHARED scrubber, 
   assert.equal(redactDiagnosticText(prose), prose, 'innocent hyphenated words must survive verbatim');
 });
 
-test('redactDiagnosticText is UNCHANGED: it still has no userinfo rule', () => {
-  // Pinned deliberately. scrubUrlCredentials is a SEPARATE export precisely so
-  // hook-payload capture stays bit-for-bit identical; if a future reader folds a
-  // userinfo pattern into SECRET_VALUE_RES instead, this fails and points at the
-  // capture-format cases above that would then need revisiting. The corollary
-  // for callers: the shape scrubber alone is NOT sufficient for a credentialed
-  // URL — they must compose both, as gitStderrDetail does. The password here is
-  // deliberately shapeless (a corporate password matches no SECRET_VALUE_RES
-  // entry); a glpat- in this slot would now be masked by the shared shape list,
-  // which would mask the very absence this test pins.
-  const line = "fatal: unable to access 'https://luis:c0rporate-pw-no-shape@gitlab.com/x/y.git/'";
-=======
-test('capture scrubs credentialed URLs that match no credential shape', (t) => {
-  // BUG-136: a glpat- in URL userinfo and a ?private_token= query credential
-  // match NO SECRET_VALUE_RES entry, so before the capture walk composed
-  // scrubUrlCredentials they reached hook-payloads.jsonl verbatim.
-  const token = 'glpat-AbCdEf1234567890';
-  const { payload, raw } = captureOnce(t, {
-    prompt: `clone https://luis:${token}@gitlab.com/o/r.git then push`,
-    error: `fatal: unable to access 'https://host/o/r.git?private_token=${token}'`,
-  });
-  assert.equal(raw.includes(token), false, 'the token must not reach disk in any form');
-  assert.equal(payload.prompt, 'clone https://[redacted]@gitlab.com/o/r.git then push');
-  assert.equal(payload.error, "fatal: unable to access 'https://host/o/r.git?private_token=[redacted]'");
-});
-
-test('redactDiagnosticText is UNCHANGED: it still has no userinfo rule', () => {
-  // Pinned deliberately. scrubUrlCredentials stays a SEPARATE export whose
-  // contract is positional URL scrubbing on top of the shape scrub; if a future
-  // reader folds a userinfo pattern into SECRET_VALUE_RES instead, this fails
-  // and points at the cases that compose the two (gitStderrDetail, and the
-  // capture walk's textWithinBudget) that would then need revisiting. The
-  // corollary for callers: the shape scrubber alone is NOT sufficient for a
-  // credentialed URL — they must compose both.
-  const line = "fatal: unable to access 'https://luis:glpat-AbCdEf1234567890@gitlab.com/x/y.git/'";
->>>>>>> /tmp/mf-theirs
-=======
 test('bare forge shapes (glpat/sk-/AIza/hf_/dop_v1_) are masked on every shared surface', (t) => {
   // Until the shared shape list carried these, they were masked ONLY by
   // exec.mjs's git-local GIT_EXTRA_SECRET_RES — so a bare glpat leaked through
@@ -322,12 +294,12 @@ test('redactDiagnosticText still has no USERINFO rule — credentialed URLs need
   // What the shape list does NOT cover, pinned deliberately. A credentialed URL's
   // userinfo is POSITIONAL, not shaped — `https://luis:hunter2@host` matches no
   // credential shape — so scrubUrlCredentials stays a separate export that
-  // callers compose explicitly, as gitStderrDetail and stallDiagnosticExcerpt do.
-  // If a future reader folds a userinfo pattern into SECRET_VALUE_RES instead,
-  // this fails and points at the capture-format cases above that would then need
+  // callers compose explicitly, as gitStderrDetail and stallDiagnosticExcerpt do
+  // (and, since BUG-136, the capture walk's textWithinBudget). If a future
+  // reader folds a userinfo pattern into SECRET_VALUE_RES instead, this fails
+  // and points at the capture-format cases above that would then need
   // revisiting.
   const line = "fatal: unable to access 'https://luis:hunter2-password@gitlab.com/x/y.git/'";
->>>>>>> /tmp/mf-theirs
   assert.equal(redactDiagnosticText(line), line);
   // But a SHAPED token inside userinfo is now masked in place by the shape pass
   // alone (the URL wrapper survives). scrubUrlCredentials additionally removes

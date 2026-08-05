@@ -63,15 +63,7 @@ async function repoOwnsWorktree(repo, worktreePath, worktreeExists) {
 
 
 export function createWorktrees(ctx) {
-<<<<<<< /tmp/mf-ours
-<<<<<<< /tmp/mf-ours
-  const { q, tick, onMutate, acquireWorktreePathLock } = ctx;
-=======
-  const { q, tick, onMutate, claimWorktreeCustody } = ctx;
->>>>>>> /tmp/mf-theirs
-=======
-  const { q, db, tick, onMutate } = ctx;
->>>>>>> /tmp/mf-theirs
+  const { q, db, tick, onMutate, acquireWorktreePathLock, claimWorktreeCustody } = ctx;
 
   // ------------------------------------------------------- worktree custody
   // CONTRACT: inspection is deliberately real git state, not remembered
@@ -539,13 +531,13 @@ export function createWorktrees(ctx) {
     onMutate();
     return { status: 200, body: { ok: true, removed: true, branch_deleted, rows_purged, path: row.worktree_path } };
     } finally {
-<<<<<<< /tmp/mf-ours
-      releasePath();
-=======
-      // Release on EVERY exit path (success, refusal, or throw) so a failed
-      // removal can never wedge the path against future removes or revives.
+      // Release the custody lease on EVERY exit path (success, refusal, or
+      // throw) so a failed removal can never wedge the path against future
+      // removes or revives.
       releaseCustody?.();
->>>>>>> /tmp/mf-theirs
+    }
+    } finally {
+      releasePath();
     }
   }
 
