@@ -35,6 +35,7 @@ const {
   writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor,
 <<<<<<< /tmp/mf-ours
 <<<<<<< /tmp/mf-ours
+<<<<<<< /tmp/mf-ours
   serviceInstall, UNIT, SUPERVISE, MIN_NODE_RANGE, nodeVersionSupported,
 =======
   writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, parseServiceEnvPort, serviceEnvPort,
@@ -46,6 +47,9 @@ const {
 >>>>>>> /tmp/mf-theirs
 =======
   serviceInstall, UNIT, SUPERVISE, unitEscape, unitArg, unitEnvFilePath,
+>>>>>>> /tmp/mf-theirs
+=======
+  serviceInstall, UNIT, SUPERVISE, quoteExecArg,
 >>>>>>> /tmp/mf-theirs
 } = await import(new URL('../bin/fleetdeck.mjs', import.meta.url));
 const { parseTmuxVersion, tmuxVersionCapability, tmuxVersionSupported } = await import(new URL('../bin/tmux-version.mjs', import.meta.url));
@@ -374,6 +378,39 @@ test('UNIT(): a well-formed systemd user unit that execs `serve` and guards exit
   assert.match(u, /^Restart=always$/m);
   assert.match(u, /^RestartPreventExitStatus=3$/m, 'does not hot-loop on the port-lost exit');
   assert.match(u, /^WantedBy=default\.target$/m);
+});
+
+test('quoteExecArg(): systemd-quotes ExecStart args so spaced/percent paths survive (BUG-078)', () => {
+  // systemd splits a bare ExecStart token on whitespace, so a legal Node path
+  // with a space was truncated at the first space and the service could not
+  // start. Quoting must also neutralize `%` (specifier expansion applies to
+  // every unit-file setting, quoted or not) and an embedded single quote
+  // (which would otherwise start systemd's single-quote mode and swallow the
+  // closing double quote).
+  assert.equal(quoteExecArg('/usr/bin/node'), '"/usr/bin/node"', 'plain path: quoted, unchanged');
+  assert.equal(
+    quoteExecArg('/tmp/node space/node'),
+    '"/tmp/node space/node"',
+    'a spaced path stays ONE argument inside double quotes',
+  );
+  assert.equal(
+    quoteExecArg('/opt/100%/node'),
+    '"/opt/100%%/node"',
+    'a literal percent is escaped as %% (specifier expansion runs even inside quotes)',
+  );
+  assert.equal(
+    quoteExecArg("/opt/it's here/node"),
+    String.raw`"/opt/it\'s here/node"`,
+    'an embedded single quote is escaped so it cannot swallow the closing double quote',
+  );
+  assert.throws(() => quoteExecArg('/tmp/node\nspace/node'), /cannot be represented/, 'newline refused');
+  assert.throws(() => quoteExecArg('/tmp/node"quote/node'), /cannot be represented/, 'double quote refused');
+
+  // The generated unit quotes BOTH executable and script path. (The real
+  // process.execPath / HERE on this machine may already contain spaces, so
+  // assert the quoting invariant rather than exact paths.)
+  const execLine = UNIT().split('\n').find((l) => l.startsWith('ExecStart='));
+  assert.match(execLine, /^ExecStart="[^"]*" "[^"]*" serve$/, 'both paths double-quoted, serve bare');
 });
 
 test('SUPERVISE(): sources the env file safely and backs off, never respawning a clean exit', () => {

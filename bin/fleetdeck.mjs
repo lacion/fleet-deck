@@ -321,6 +321,7 @@ function writeEnvFile() {
   return lines.length;
 }
 
+<<<<<<< /tmp/mf-ours
 // systemd-UNIT PATH SAFETY. The two path-bearing directives below interpolate
 // REAL paths (the node binary, this script, FLEETDECK_HOME/service.env) that the
 // user does not control the shape of — Node under `nvm/v24 linux/node`, a
@@ -360,6 +361,36 @@ function unitEnvFilePath(p) {
     );
   }
   return unitEscape(p);
+=======
+// systemd ExecStart argument quoting. The first token of ExecStart is parsed
+// with systemd's OWN command-line rules (NOT shell rules): whitespace splits
+// arguments, and a bare path containing a space — a legal Node install location
+// like `/tmp/node space/node` — is truncated at the first space and the service
+// fails to start (`Command .../node is not executable`). Double-quoting an
+// argument makes systemd take it literally, with \' and \" as the only escapes
+// it resolves inside double quotes. Separately, `%` introduces specifier
+// expansion in EVERY unit-file setting, quoted or not (`%%` is a literal
+// percent) — an unescaped `%` in a path like `/opt/100%/node` would make
+// systemd reject the unit outright. So: refuse what cannot be represented
+// (newline/control chars break the line format; a double quote cannot be
+// escaped in a way that survives the specifier pass), escape `%` FIRST (it is
+// resolved before quote parsing), then wrap in double quotes, escaping any
+// embedded single quote (an unescaped `'` would start systemd's single-quote
+// mode and swallow the closing `"`). This is deliberately separate from the
+// EnvironmentFile handling above — EnvironmentFile has different quoting rules
+// (it resolves backslash escapes even inside single quotes, systemd#10659).
+const EXEC_ARG_UNQUOTABLE = /[\u0000-\u001f"]/;
+
+function quoteExecArg(p) {
+  if (EXEC_ARG_UNQUOTABLE.test(p)) {
+    throw new Error(
+      `cannot write ${UNIT_FILE}: the path ${JSON.stringify(p)} contains a control character `
+      + 'or double quote, which cannot be represented in a systemd ExecStart line. '
+      + 'Install Node and fleetdeck at a path without those characters.',
+    );
+  }
+  return `"${p.replaceAll('%', '%%').replaceAll("'", "\\'")}"`;
+>>>>>>> /tmp/mf-theirs
 }
 
 const UNIT = () => `[Unit]
@@ -368,8 +399,13 @@ After=network.target
 
 [Service]
 Type=simple
+<<<<<<< /tmp/mf-ours
 EnvironmentFile=-${unitEnvFilePath(ENV_FILE)}
 ExecStart=${unitArg(process.execPath)} ${unitArg(path.join(HERE, 'fleetdeck.mjs'))} serve
+=======
+EnvironmentFile=-${ENV_FILE}
+ExecStart=${quoteExecArg(process.execPath)} ${quoteExecArg(path.join(HERE, 'fleetdeck.mjs'))} serve
+>>>>>>> /tmp/mf-theirs
 Restart=always
 RestartSec=2
 # exit 3 is "another daemon already owns the port" — restarting is a hot loop.
@@ -655,6 +691,7 @@ if (IS_ENTRYPOINT) await main(process.argv.slice(2));
 <<<<<<< /tmp/mf-ours
 <<<<<<< /tmp/mf-ours
 <<<<<<< /tmp/mf-ours
+<<<<<<< /tmp/mf-ours
 export { writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor, serviceInstall, UNIT, SUPERVISE, doctor, MIN_NODE_RANGE, nodeVersionSupported };
 =======
 export { writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, parseServiceEnvPort, serviceEnvPort, supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor, serviceInstall, UNIT, SUPERVISE, doctor };
@@ -664,4 +701,7 @@ export { writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, supervisorAliv
 >>>>>>> /tmp/mf-theirs
 =======
 export { writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor, serviceInstall, UNIT, SUPERVISE, doctor, unitEscape, unitArg, unitEnvFilePath };
+>>>>>>> /tmp/mf-theirs
+=======
+export { writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor, serviceInstall, UNIT, SUPERVISE, quoteExecArg, doctor };
 >>>>>>> /tmp/mf-theirs
