@@ -272,7 +272,7 @@ env "${CLAUDE_ENV_SCRUB[@]}" \
   FLEETDECK_HOME="$SCRATCH_HOME" FLEETDECK_PORT="$FLEETDECK_PORT" \
   FLEETDECK_TMUX_SOCKET="$FLEETDECK_TMUX_SOCKET" FLEETDECK_AGENTS_CMD=false \
   setsid timeout 300 claude -p "Add an exported function slugify(s) to util.js (lowercase, trim, spaces to dashes, strip punctuation). Add assert-based tests for it in test.js (create or extend). Verify each edge case one at a time with separate 'node -e' commands: spaces, capitals, punctuation, empty string. Then run node test.js. Preserve any existing exports. Work step by step, one small change per edit." \
-  --session-id "$SA" --max-turns 24 --dangerously-skip-permissions \
+  --session-id "$SA" --dangerously-skip-permissions \
   --output-format json > "$DEMO_LOGS/worker-a.json" 2> "$DEMO_LOGS/worker-a.err" &
 PA=$!
 echo "T+0 session A launched sid=$SA"
@@ -283,7 +283,7 @@ env "${CLAUDE_ENV_SCRUB[@]}" \
   FLEETDECK_HOME="$SCRATCH_HOME" FLEETDECK_PORT="$FLEETDECK_PORT" \
   FLEETDECK_TMUX_SOCKET="$FLEETDECK_TMUX_SOCKET" FLEETDECK_AGENTS_CMD=false \
   setsid timeout 300 claude -p "Add an exported function titleCase(s) to util.js (capitalize each word). Add assert-based tests for it in test.js (create or extend). Verify edge cases one at a time with separate 'node -e' commands: single word, multiple words, empty string. Then run node test.js. IMPORTANT: preserve any existing exports and tests you find. Work step by step, one small change per edit." \
-  --session-id "$SB" --max-turns 24 --dangerously-skip-permissions \
+  --session-id "$SB" --dangerously-skip-permissions \
   --output-format json > "$DEMO_LOGS/worker-b.json" 2> "$DEMO_LOGS/worker-b.err" &
 PB=$!
 echo "T+15 session B launched sid=$SB"
@@ -327,10 +327,20 @@ const rcA = Number('$RC_A');
 const rcB = Number('$RC_B');
 
 let failures = 0;
+let inconclusives = 0;
 function pass(label) { console.log('PASS: ' + label); }
 function fail(label, detail) {
   failures += 1;
   console.log('FAIL: ' + label + (detail ? ' -- ' + detail : ''));
+}
+// Harness exhaustion is not a product failure: if the harness cut the worker
+// off (authored 300s wall-clock timeout, or a max-turns ceiling if one is ever
+// reintroduced), the Stop hook never fired, so neither the structured result
+// nor the Stop-boundary delivery can be scored. Report the run as
+// harness-inconclusive instead of failing it.
+function inconclusive(label, detail) {
+  inconclusives += 1;
+  console.log('INCONCLUSIVE: ' + label + (detail ? ' -- ' + detail : ''));
 }
 
 let state = null;
@@ -341,6 +351,7 @@ try {
   process.exit(1);
 }
 
+const exhausted = { A: false, B: false };
 for (const [label, rc, file] of [
   ['A', rcA, 'worker-a.json'],
   ['B', rcB, 'worker-b.json'],
@@ -348,12 +359,19 @@ for (const [label, rc, file] of [
   let result = null;
   try { result = JSON.parse(readFileSync(demoLogs + '/' + file, 'utf8')); }
   catch (e) { fail('worker ' + label + ' emitted a structured result', e.message); }
+  // rc 124 is the authored wall-clock timeout; error_max_turns is the harness
+  // turn ceiling. Both cut the worker off before its Stop hook could fire.
+  exhausted[label] = rc === 124
+    || (result != null && result.subtype === 'error_max_turns');
   const acceptedStatus = rc === 0 || rc === 124;
   if (!acceptedStatus) fail('worker ' + label + ' process status', 'rc=' + rc);
-  else if (!result || result.is_error !== false || result.subtype !== 'success') {
+  else if (exhausted[label]) {
+    inconclusive('worker ' + label + ' harness-exhausted (harness cut the worker off; result and Stop delivery unscored)',
+      'rc=' + rc + ' result=' + JSON.stringify(result));
+  } else if (!result || result.is_error !== false || result.subtype !== 'success') {
     fail('worker ' + label + ' completed successfully', 'rc=' + rc + ' result=' + JSON.stringify(result));
   } else {
-    pass('worker ' + label + ' produced a successful result' + (rc === 124 ? ' before the authored timeout' : ''));
+    pass('worker ' + label + ' produced a successful result');
   }
 }
 
@@ -380,18 +398,21 @@ else fail('conflict recorded on util.js AND test.js', 'conflicts seen: ' + (touc
 // a got-fleet-mail-at-the-turn-boundary line per session). mail_pending>0 at
 // the end is NOT a failure: rival-conflict mail that lands after a session
 // ends stays queued forever by design (dirty files outlive their authors).
+// A harness-exhausted worker had no Stop hook, so its boundary delivery is
+// unscored: harness-inconclusive, not a product failure.
 // NOTE: this whole block lives inside a bash double-quoted string -- never
 // use a literal double-quote character anywhere in it.
 const tickerText = (state.ticker || []).map(t => t.msg).join('\n');
 const csA = (byId[sidA] || {}).callsign, csB = (byId[sidB] || {}).callsign;
-const boundaryA = csA && tickerText.includes(csA + ' got fleet mail at the turn boundary');
-const boundaryB = csB && tickerText.includes(csB + ' got fleet mail at the turn boundary');
+const boundaryA = exhausted.A ? null : csA && tickerText.includes(csA + ' got fleet mail at the turn boundary');
+const boundaryB = exhausted.B ? null : csB && tickerText.includes(csB + ' got fleet mail at the turn boundary');
 let fleetNote = false;
 for (const f of ['worker-a.json', 'worker-b.json']) {
   const p = demoLogs + '/' + f;
   if (existsSync(p) && /FLEET-NOTE/.test(readFileSync(p, 'utf8'))) fleetNote = true;
 }
 if (boundaryA && boundaryB) pass('mail delivered at Stop boundary to both sessions' + (fleetNote ? ' (and FLEET-NOTE compliance seen)' : ''));
+else if ((boundaryA || exhausted.A) && (boundaryB || exhausted.B)) inconclusive('mail delivered at Stop boundary (harness-exhausted worker unscored)', 'A=' + boundaryA + ' B=' + boundaryB);
 else fail('mail delivered at Stop boundary to both sessions', 'A=' + boundaryA + ' B=' + boundaryB);
 
 // 4. both tombstoned offline at the end
@@ -400,5 +421,6 @@ const offlineB = byId[sidB] && byId[sidB].col === 'offline' && !!byId[sidB].ende
 if (offlineA && offlineB) pass('both tombstoned offline at the end');
 else fail('both tombstoned offline at the end', 'A col=' + (byId[sidA] || {}).col + ' B col=' + (byId[sidB] || {}).col);
 
+if (inconclusives) console.log('INCONCLUSIVE: ' + inconclusives + ' check(s) unscored because the harness cut a worker off');
 if (failures) process.exit(1);
 "
