@@ -53,8 +53,10 @@ test('telemetry derivation walks queued -> working -> editing -> verifying -> ne
   state = (await getJson(`${daemon.baseUrl}/state`)).json;
   card = findSession(state, sid);
   assert.equal(card.col, 'working', 'UserPromptSubmit should derive col=working');
-  assert.ok(card.task && prompt.startsWith(card.task) || card.task === prompt.slice(0, card.task.length),
-    'task should capture (a prefix of) the prompt');
+  assert.ok(typeof card.task === 'string' && card.task.length > 0,
+    'task capture should persist a non-empty string');
+  assert.equal(card.task, prompt.slice(0, 80),
+    'task should capture the exact stored prompt prefix (daemon slices to 80 chars)');
 
   // Edit-tool PostToolUse -> editing note
   const filePath = path.join(scratchCwd, 'util.js');
