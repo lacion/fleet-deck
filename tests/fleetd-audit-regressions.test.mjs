@@ -229,6 +229,7 @@ test('SIGTERM waits for the mDNS goodbye send callback before fleetd exits', { s
 });
 
 <<<<<<< /tmp/mf-ours
+<<<<<<< /tmp/mf-ours
 
 test('a LAN address change refreshes discovery: mDNS retires the old address and announces the new one (BUG-118)', { skip: BUNDLE_SKIP }, async (t) => {
   const home = freshHome('fleetdeck-lan-roam-');
@@ -252,10 +253,30 @@ test('a dotted FLEETDECK_MDNS_NAME yields ONE canonical host: banner, log and ad
   t.after(() => rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
   const daemon = spawnRaw({
 >>>>>>> /tmp/mf-theirs
+=======
+test('a multihomed daemon answers and withdraws per interface, each link advertising only its own address', { skip: BUNDLE_SKIP }, async (t) => {
+  // BUG-131: one socket + the kernel's multicast route means every reply leaves
+  // on the OS-selected interface while the packet claims A records for BOTH
+  // LANs — peers on the other link resolve an address they cannot reach. The
+  // fix is one link (socket + outbound interface + scoped advertisement) per
+  // interface. This test drives the daemon with two mocked interfaces and
+  // asserts the wire evidence: two links, each pinned to its own interface,
+  // each announcing and withdrawing only its own address.
+  const home = freshHome('fleetdeck-multihome-');
+  const record = path.join(home, 'mdns.jsonl');
+  t.after(() => rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+
+  const netifs = {
+    lan0: [{ family: 'IPv4', internal: false, address: '192.0.2.10' }],
+    lan1: [{ family: 'IPv4', internal: false, address: '192.0.2.11' }],
+  };
+  const child = spawnRaw({
+>>>>>>> /tmp/mf-theirs
     port: randomPort(),
     home,
     env: loaderOptions({
       FLEETDECK_BIND: '0.0.0.0',
+<<<<<<< /tmp/mf-ours
 <<<<<<< /tmp/mf-ours
       FLEETDECK_TOKEN: 'lan-roam-token-0123456789abcdef',
       FLEETDECK_MDNS_RECORD: record,
@@ -263,10 +284,16 @@ test('a dotted FLEETDECK_MDNS_NAME yields ONE canonical host: banner, log and ad
       FLEETDECK_TEST_CONSOLE_RECORD: consoleRecord,
       FLEETDECK_TEST_NET_FILE: netFile,
       FLEETDECK_LAN_REFRESH_MS: '100',
+=======
+      FLEETDECK_TOKEN: 'multihome-race-token-0123456789abcdef',
+      FLEETDECK_MDNS_RECORD: record,
+      FLEETDECK_TEST_NETIFS: JSON.stringify(netifs),
+>>>>>>> /tmp/mf-theirs
     }),
   });
   t.after(() => child.kill());
 
+<<<<<<< /tmp/mf-ours
   const packets = () => {
     try {
       return readFileSync(record, 'utf8').trim().split('\n').filter(Boolean)
@@ -334,5 +361,49 @@ test('a dotted FLEETDECK_MDNS_NAME yields ONE canonical host: banner, log and ad
   assert.match(output, /fleetd LAN http:\/\/team-deck\.local:\d+\/\?t=<hidden> \(mDNS;/,
     `the log must name the advertised host, not the raw env value:\n${output}`);
   assert.ok(!output.includes('team.deck.local'), `the unsplittable raw name must never be printed:\n${output}`);
+>>>>>>> /tmp/mf-theirs
+=======
+  // Two pinned links means at least two setiface records — one per interface.
+  await waitUntil(() => {
+    try {
+      const lines = readFileSync(record, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse);
+      return lines.filter(item => item.type === 'setiface').length >= 2 ? true : null;
+    } catch { return null; }
+  }, 'both interfaces pinned for outbound multicast');
+
+  child.proc.kill('SIGTERM');
+  const code = await child.waitForExit(5000);
+  assert.equal(code, 0, `fleetd did not shut down cleanly:\n${child.stdout}\n${child.stderr}`);
+
+  const records = readFileSync(record, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse);
+
+  // Each link must pin its outbound multicast interface (setMulticastInterface)
+  // and join the group through it — otherwise the kernel route decides for us.
+  const setifaces = records.filter(item => item.type === 'setiface');
+  assert.deepEqual(new Set(setifaces.map(item => item.address)), new Set(['192.0.2.10', '192.0.2.11']),
+    'each interface must be selected as the outbound multicast interface for its own link');
+
+  // Every live announcement on a link advertises only that link's address; every
+  // address gets a TTL-0 goodbye on its own link.
+  const liveByAddress = new Map();
+  const goodbyeByAddress = new Map();
+  for (const item of records) {
+    if (item.type !== 'send') continue;
+    const packet = decodeMessage(Buffer.from(item.wire, 'base64'));
+    if (!packet?.answers.length) continue;
+    const claimed = packet.answers.filter(r => r.typeName === 'A').map(r => r.data);
+    if (!claimed.length) continue;
+    if (packet.answers.every(r => r.ttl === 0)) {
+      for (const a of claimed) goodbyeByAddress.set(a, (goodbyeByAddress.get(a) || 0) + 1);
+    } else {
+      for (const a of claimed) liveByAddress.set(a, (liveByAddress.get(a) || 0) + 1);
+      assert.equal(claimed.length, 1,
+        `a link must advertise only its own address, got ${claimed.join(', ')}`);
+    }
+  }
+  assert.deepEqual(new Set(liveByAddress.keys()), new Set(['192.0.2.10', '192.0.2.11']),
+    'both LAN addresses must be announced, each on its own link');
+  assert.deepEqual(new Set(goodbyeByAddress.keys()), new Set(['192.0.2.10', '192.0.2.11']),
+    'both LAN addresses must be withdrawn on shutdown');
 >>>>>>> /tmp/mf-theirs
 });

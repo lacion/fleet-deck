@@ -17,7 +17,7 @@ export async function resolve(specifier, context, nextResolve) {
   if (specifier === './http.mjs' && context.parentURL?.endsWith('/scripts/fleetd/fleetd.mjs')) {
     return { url: HTTP_URL, shortCircuit: true };
   }
-  if (specifier === 'node:os' && context.parentURL?.endsWith('/scripts/fleetd/fleetd.mjs')) {
+  if (specifier === 'node:os' && (context.parentURL?.endsWith('/scripts/fleetd/fleetd.mjs') || context.parentURL?.endsWith('/scripts/fleetd/mdns.mjs'))) {
     return { url: OS_URL, shortCircuit: true };
   }
   return nextResolve(specifier, context);
@@ -37,20 +37,31 @@ export async function load(url, context, nextLoad) {
         appendFileSync(recordFile, JSON.stringify({ ...value, at: Date.now() }) + '\\n');
       }
 
+      let nextId = 0;
       class MockSocket {
+        constructor() { this.id = nextId++; }
         on() { return this; }
         setMulticastTTL() {}
         setMulticastLoopback() {}
+<<<<<<< /tmp/mf-ours
         // BUG-122 regression seam: FLEETDECK_MDNS_JOIN_FAILS=1 models a network
         // with no multicast route — every membership join fails and the
         // responder must terminally disable itself after bind.
         addMembership() { if (process.env.FLEETDECK_MDNS_JOIN_FAILS) throw new Error('no multicast route'); }
+=======
+        setMulticastInterface(address) { record({ type: 'setiface', id: this.id, address }); }
+        addMembership(_group, address) { record({ type: 'join', id: this.id, address: address || null }); }
+>>>>>>> /tmp/mf-theirs
         bind(_options, callback) { setImmediate(callback); return this; }
         send(packet, _port, address, callback = () => {}) {
           const wire = Buffer.from(packet).toString('base64');
+<<<<<<< /tmp/mf-ours
           record({ type: 'send', wire, address });
+=======
+          record({ type: 'send', id: this.id, wire });
+>>>>>>> /tmp/mf-theirs
           const timer = setTimeout(() => {
-            record({ type: 'callback', wire });
+            record({ type: 'callback', id: this.id, wire });
             callback();
           }, delay);
           timer.unref?.();
@@ -112,6 +123,7 @@ export async function load(url, context, nextLoad) {
       shortCircuit: true,
       source: `
         import realOs from 'node:os';
+<<<<<<< /tmp/mf-ours
         import { readFileSync } from 'node:fs';
         // A mock interface "roam": fleetd's LAN watcher polls
         // os.networkInterfaces(), so a DHCP roam is modelled as a FILE the test
@@ -131,6 +143,14 @@ export async function load(url, context, nextLoad) {
         export default {
           ...realOs,
           networkInterfaces: () => ({ ethernet: ifaces() }),
+=======
+        const interfaces = process.env.FLEETDECK_TEST_NETIFS
+          ? JSON.parse(process.env.FLEETDECK_TEST_NETIFS)
+          : { ethernet: [{ family: 'IPv4', internal: false, address: '192.0.2.77' }] };
+        export default {
+          ...realOs,
+          networkInterfaces: () => interfaces,
+>>>>>>> /tmp/mf-theirs
         };
       `,
     };
