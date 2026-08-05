@@ -80,6 +80,21 @@ export function createRetention(ctx) {
       const wins = await tmuxAdapter.listScopedWindows(port);
       if (wins !== null) {
         for (const { s, sp } of spawned) {
+          // BUG-045 (stale probe tombstones a revived spawn): every value in
+          // {s, sp} was read BEFORE the listScopedWindows await — a revive that
+          // landed during it (or during the paneCurrentCommand await below) can
+          // have settled this row and stood a NEWER live row up on the same
+          // window. Condemning on the stale row would tombstone a live, billed
+          // agent. So before any write, re-read the world and require that the
+          // SAME spawn row is still the session's live-eligible spawn AND the
+          // window's current owner (both re-checked after every tmux await).
+          const stillOurs = () => {
+            const cur = q.activeSpawnBySession.get(s.session_id);
+            if (!cur || cur.spawn_id !== sp.spawn_id) return false;
+            const owner = q.currentWindowOwner.get(sp.tmux_window);
+            return !owner || owner.spawn_id === sp.spawn_id;
+          };
+          if (!stillOurs()) continue;
           const win = wins.find(w => w.window === sp.tmux_window);
           // Alive: window present, pane not dead, and paneCurrentCommand confirms
           // claude (pane_cmd can read stale on remain-on-exit panes). The agent
@@ -93,6 +108,7 @@ export function createRetention(ctx) {
             alive = !!pane && !pane.dead && (shell || setupPhase || pane.cmd === 'claude');
           }
           if (alive) {
+            if (!stillOurs()) continue; // a revive interleaved the pane probe
             updateSession(s.session_id, { last_seen: now });
             changed = true;
             continue;
@@ -103,6 +119,7 @@ export function createRetention(ctx) {
           // UNKNOWN, not dead — never condemn on silence (a wrong "dead" costs a
           // duplicate billed session); leave it for a later sweep / boot reconcile.
           if (win && (win.pane_dead || (!shell && !setupPhase && SHELL_RE.test(win.pane_cmd)))) {
+            if (!stillOurs()) continue; // a revive interleaved the tmux awaits
             q.setSpawnStatus.run('pane-dead', sp.spawn_id);
             forgetSpawn(sp.spawn_id);
             tombstoneCard(s.session_id, { // D8

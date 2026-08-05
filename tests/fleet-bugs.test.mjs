@@ -186,6 +186,71 @@ test('BUG 2: a pane-less hook-only session keeps the silence-based presume-dead 
 });
 
 // ---------------------------------------------------------------------------
+// BUG-045 — a stale retention probe must not tombstone a newly revived spawn
+// ---------------------------------------------------------------------------
+
+test('BUG-045: a revive landing mid-sweep stops the stale probe from condemning the revived card', async (t) => {
+  const tmux = fakeTmux();
+  const { db, core, state } = memoryCore(t, { tmux });
+  const now = Date.now();
+  const silent = now - 4 * HOUR;
+
+  // Old spawn row, snapshotted as live-eligible by the sweep's candidate pass.
+  db.prepare(`INSERT INTO sessions
+    (session_id, callsign, col, note, events, started_at, last_seen, source)
+    VALUES ('rev', 'rev-1', 'idle', 'waiting at its prompt', 0, ?, ?, 'hooks')`).run(silent, silent);
+  db.prepare(`INSERT INTO spawns
+    (spawn_id, session_id, callsign, tmux_session, tmux_window, requested_at, status)
+    VALUES ('sp-old', 'rev', 'rev-1', 'fleetdeck-4711', 'fd4711-rev-1', ?, 'live')`).run(silent);
+  // The snapshot tmux returns: the OLD pane, dead.
+  state.windows.push({ session: 'fleetdeck-4711', window: 'fd4711-rev-1', window_id: '@r', pane_dead: true, pane_cmd: 'claude' });
+
+  // During the listScopedWindows await, the old row is settled and revive()
+  // stands a NEWER live row up on the same window name — exactly the race
+  // BUG-045 describes. The stale {s, sp} pair must never be written back.
+  const baseList = tmux.adapter.listScopedWindows;
+  tmux.adapter.listScopedWindows = async port => {
+    const wins = await baseList(port);
+    db.prepare("UPDATE spawns SET status = 'gone' WHERE spawn_id = 'sp-old'").run();
+    db.prepare(`INSERT INTO spawns
+      (spawn_id, session_id, callsign, tmux_session, tmux_window, requested_at, status)
+      VALUES ('sp-new', 'rev', 'rev-1', 'fleetdeck-4711', 'fd4711-rev-1', ?, 'live')`).run(now);
+    return wins;
+  };
+
+  await core.retentionSweep(now);
+
+  assert.equal(db.prepare("SELECT status FROM spawns WHERE spawn_id = 'sp-new'").get().status, 'live',
+    'the revived spawn must NOT be flipped pane-dead by the stale probe');
+  const card = db.prepare("SELECT * FROM sessions WHERE session_id = 'rev'").get();
+  assert.equal(card.ended_at, null, 'the revived card must NOT be tombstoned');
+  assert.notEqual(card.col, 'offline', 'the revived card must stay live');
+});
+
+test('BUG-045 control: with no mid-sweep revive, a tmux-confirmed dead pane is still condemned', async (t) => {
+  const tmux = fakeTmux();
+  const { db, core, state } = memoryCore(t, { tmux });
+  const now = Date.now();
+  const silent = now - 4 * HOUR;
+
+  db.prepare(`INSERT INTO sessions
+    (session_id, callsign, col, note, events, started_at, last_seen, source)
+    VALUES ('stilldead', 'sd-1', 'idle', 'waiting at its prompt', 0, ?, ?, 'hooks')`).run(silent, silent);
+  db.prepare(`INSERT INTO spawns
+    (spawn_id, session_id, callsign, tmux_session, tmux_window, requested_at, status)
+    VALUES ('sp-sd', 'stilldead', 'sd-1', 'fleetdeck-4711', 'fd4711-sd-1', ?, 'live')`).run(silent);
+  state.windows.push({ session: 'fleetdeck-4711', window: 'fd4711-sd-1', window_id: '@s', pane_dead: true, pane_cmd: 'claude' });
+
+  await core.retentionSweep(now);
+
+  assert.equal(db.prepare("SELECT status FROM spawns WHERE spawn_id = 'sp-sd'").get().status, 'pane-dead',
+    'the revalidation must not weaken the plain dead-pane verdict');
+  const card = db.prepare("SELECT * FROM sessions WHERE session_id = 'stilldead'").get();
+  assert.equal(card.col, 'offline');
+  assert.ok(card.ended_at);
+});
+
+// ---------------------------------------------------------------------------
 // BUG 3 — dead spawn states are re-checked and resurrected when tmux disagrees
 // ---------------------------------------------------------------------------
 
