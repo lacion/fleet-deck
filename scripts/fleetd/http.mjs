@@ -201,6 +201,7 @@ export function createHttp(core, {
   // open, token included (a browser cannot send an Authorization header on its
   // first navigation). Absent/disabled ⇒ the panel says "local only" rather
   // than inventing a URL. Only ever handed to an ALREADY-AUTHORIZED caller —
+<<<<<<< /tmp/mf-ours
   // snapshot() is behind the same gate as everything else.
   // `lan` may be a function, resolved per snapshot: fleetd uses that to drop
   // lan.mdns the moment the mDNS responder stands down, so the share panel
@@ -209,6 +210,20 @@ export function createHttp(core, {
     const source = typeof lan === 'function' ? lan() : lan;
     return source?.enabled
       ? { enabled: true, urls: source.urls ?? [], mdns: source.mdns ?? null }
+      : { enabled: false, urls: [] };
+  }
+=======
+  // snapshot() is behind the same gate as everything else. refreshLan() replaces
+  // the URL set when the host's interfaces change, so a roaming daemon stops
+  // advertising an address it no longer answers on.
+  let lanInfo = lan?.enabled
+    ? { enabled: true, urls: lan.urls ?? [], mdns: lan.mdns ?? null }
+    : { enabled: false, urls: [] };
+>>>>>>> /tmp/mf-theirs
+
+  function refreshLan(nextLan) {
+    lanInfo = nextLan?.enabled
+      ? { enabled: true, urls: nextLan.urls ?? [], mdns: nextLan.mdns ?? null }
       : { enabled: false, urls: [] };
   }
 
@@ -404,18 +419,34 @@ export function createHttp(core, {
   // isLoopbackAddress), every address this host actually answers on, and the
   // advertised mDNS .local name. Built once — a LAN address is not going to
   // change under the daemon's feet.
-  const lanHosts = new Set();
-  try {
-    for (const entries of Object.values(os.networkInterfaces())) {
-      for (const entry of entries || []) {
-        if (entry?.address) lanHosts.add(String(entry.address).toLowerCase());
+  //
+  // BUG-118: the set is enumerated per request, not frozen at startup — after a
+  // DHCP roam or network change the daemon must authorize its NEW addresses
+  // without a restart. It is a Set over a handful of strings; rebuilding it on
+  // the (already rate-limited) request path costs microseconds.
+  function lanHosts() {
+    const hosts = new Set();
+    try {
+      for (const entries of Object.values(os.networkInterfaces())) {
+        for (const entry of entries || []) {
+          if (entry?.address) hosts.add(String(entry.address).toLowerCase());
+        }
       }
+<<<<<<< /tmp/mf-ours
     }
   } catch { /* restricted sandbox: loopback stays allowed regardless */ }
   try {
     const lanSeed = typeof lan === 'function' ? lan() : lan;
     if (lanSeed?.mdns) lanHosts.add(new URL(lanSeed.mdns).hostname.toLowerCase());
   } catch { /* malformed mDNS URL — skip it; the IP URLs still work */ }
+=======
+    } catch { /* restricted sandbox: loopback stays allowed regardless */ }
+    try {
+      if (lan?.mdns) hosts.add(new URL(lan.mdns).hostname.toLowerCase());
+    } catch { /* malformed mDNS URL — skip it; the IP URLs still work */ }
+    return hosts;
+  }
+>>>>>>> /tmp/mf-theirs
 
   // WHATWG URL keeps the brackets on an IPv6 hostname ([::1]); strip them so the
   // value matches what isLoopbackAddress / the lanHosts set hold.
@@ -434,7 +465,11 @@ export function createHttp(core, {
   }
   function hostAllowed(u) {
     const host = normHost(u.hostname);
+<<<<<<< /tmp/mf-ours
     return (isLoopbackAddress(host) || lanHosts.has(host)) && effectivePort(u) === daemonPort;
+=======
+    return (isLoopbackAddress(host) || lanHosts().has(host)) && (u.port === '' || u.port === daemonPort);
+>>>>>>> /tmp/mf-theirs
   }
   // The operator-named extension of "us" (see parseTrustedOrigins). Kept separate
   // from hostAllowed so that a deployment which configures nothing gets today's
@@ -1387,8 +1422,15 @@ export function createHttp(core, {
   keepalive.unref();
   core.onMutate = scheduleBroadcast;
 
+<<<<<<< /tmp/mf-ours
   // Only `server` is used externally (fleetd.mjs listens on it); wss/termWss/
   // broadcast stay internal. whenBroadcastIdle is exported so the boot
   // readiness settle can wait out the coalesced flush the heals scheduled.
   return { server, whenBroadcastIdle };
+=======
+  // Only `server` and `refreshLan` are used externally (fleetd.mjs listens on
+  // the former, and feeds the latter a fresh LAN URL set when the host's
+  // interfaces change); wss/termWss/broadcast stay internal.
+  return { server, refreshLan };
+>>>>>>> /tmp/mf-theirs
 }

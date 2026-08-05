@@ -475,6 +475,7 @@ export function buildResponse(questions, options = {}, { ttl, flush = true } = {
  * @param {string[]} [opts.addresses] LAN IPv4s to advertise (non-internal only)
  * @param {object} [opts.txt]       extra TXT keys, merged over {path, board}
  * @param {function} [opts.log]
+<<<<<<< /tmp/mf-ours
  * @param {function} [opts.onDown]  called with a reason string the moment the
  *                                  responder terminally disables itself (bind,
  *                                  membership or socket failure) — never on a
@@ -485,8 +486,15 @@ export function buildResponse(questions, options = {}, { ttl, flush = true } = {
  *          is bound and answering
  */
 export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', addresses = [], txt, log = () => {}, onDown = null } = {}) {
+=======
+ * @returns {{start: function, stop: function, update: function}} start/stop idempotent, none throw
+ */
+export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', addresses = [], txt, log = () => {} } = {}) {
+  // Mutable: update() replaces the address set in place when the host's LAN
+  // interfaces change, so every later announce/response speaks the new set.
+>>>>>>> /tmp/mf-theirs
   const options = { port, name, instance, addresses, txt };
-  const ad = normalize(options);
+  let ad = normalize(options);
 
   let socket = null;
   let started = false;
@@ -589,6 +597,54 @@ export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', 
     note(`mdns responding for ${ad.host}:${ad.port}${ad.addresses.length ? ` (${ad.addresses.join(', ')})` : ' (no LAN address to advertise)'}`);
   }
 
+  /**
+   * Swap the advertised LAN IPv4 set after an interface change. Removed
+   * addresses go out as TTL-0 goodbyes (RFC 6762 §10.1 — flush off, exactly the
+   * A record being retired, never the shared service records), then the new set
+   * announces on the same cadence as startup. No-op before start, after die(),
+   * or when the set is unchanged. Never throws: discovery must not be able to
+   * take the daemon down mid-roam any more than at startup.
+   */
+  function update(nextAddresses) {
+    if (!started || dead) return false;
+    try {
+      const addresses = (Array.isArray(nextAddresses) ? nextAddresses : []).filter(isIPv4);
+      if (!addresses.length) {
+        // Never advertise a host with no A records (the same rule start()
+        // enforces). Keep the last set: every address may be momentarily gone
+        // mid-roam, and the next poll brings a real set.
+        return false;
+      }
+      if (addresses.length === ad.addresses.length && addresses.every(a => ad.addresses.includes(a))) return false;
+
+      const removed = ad.addresses.filter(a => !addresses.includes(a));
+      const added = addresses.filter(a => !ad.addresses.includes(a));
+      options.addresses = addresses;
+      ad = normalize(options);
+      if (removed.length) {
+        const goodbye = encodeMessage({
+          id: 0,
+          flags: FLAGS_RESPONSE,
+          answers: removed.map(address => ({ name: ad.host, type: 'A', ttl: 0, flush: false, data: address })),
+        });
+        send(goodbye, MDNS_PORT, MDNS_ADDR);
+      }
+      for (const address of added) {
+        try { socket?.addMembership(MDNS_ADDR, address); } catch { /* already joined, or no multicast here */ }
+      }
+      for (const delay of ANNOUNCE_DELAYS_MS) {
+        const timer = setTimeout(() => { timers.delete(timer); announce(); }, delay);
+        timer.unref?.();
+        timers.add(timer);
+      }
+      note(`mdns addresses updated (${ad.addresses.join(', ')})`);
+      return true;
+    } catch (err) {
+      note(`mdns address update failed: ${err.message}`);
+      return false;
+    }
+  }
+
   function start() {
     if (started || dead) return;
     started = true;
@@ -660,5 +716,9 @@ export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', 
     return stopping;
   }
 
+<<<<<<< /tmp/mf-ours
   return { start, stop, alive: () => started && !dead && socket !== null };
+=======
+  return { start, stop, update };
+>>>>>>> /tmp/mf-theirs
 }

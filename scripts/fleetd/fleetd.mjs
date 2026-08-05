@@ -345,15 +345,24 @@ const bootReadiness = {
 // The board's share panel owns the complete credentialed URLs. Startup logs only
 // describe the same endpoints with the credential deliberately redacted.
 const MDNS_ENABLED = LAN_MODE && process.env.FLEETDECK_MDNS?.trim().toLowerCase() !== 'off';
-const LAN_INFO = LAN_MODE
-  ? {
-    enabled: true,
-    urls: lanAddresses().map(a => `http://${a}:${PORT}/?t=${encodeURIComponent(TOKEN)}`),
-    mdns: MDNS_ENABLED ? `http://${MDNS_NAME}.local:${PORT}/?t=${encodeURIComponent(TOKEN)}` : null,
-  }
-  : { enabled: false, urls: [] };
+// One builder so startup and the interface-change refresh below can never drift
+// on how a LAN status object is shaped.
+function lanInfoFor(addresses) {
+  return LAN_MODE
+    ? {
+      enabled: true,
+      urls: addresses.map(a => `http://${a}:${PORT}/?t=${encodeURIComponent(TOKEN)}`),
+      mdns: MDNS_ENABLED ? `http://${MDNS_NAME}.local:${PORT}/?t=${encodeURIComponent(TOKEN)}` : null,
+    }
+    : { enabled: false, urls: [] };
+}
+const LAN_INFO = lanInfoFor(lanAddresses());
 
+<<<<<<< /tmp/mf-ours
 const { server, whenBroadcastIdle } = createHttp(core, {
+=======
+const { server, refreshLan } = createHttp(core, {
+>>>>>>> /tmp/mf-theirs
   port: PORT,
   token: TOKEN,
   // lan.mdns reflects the responder's LIVE state, not the boot snapshot: if the
@@ -404,6 +413,49 @@ function lanAddresses() {
 }
 
 let mdns = null;
+
+// BUG-118: the LAN address set is a snapshot of a moving target. A laptop that
+// roams wifi or takes a new DHCP lease leaves /state, the share panel and the
+// mDNS A records pointing at an address the daemon no longer answers on — and
+// the HTTP Host allowlist refusing the new one. A slow poll re-derives all of
+// them from os.networkInterfaces(); there is no portable interface-change
+// event worth the platform code (netlink/notify) to consume.
+const LAN_REFRESH_MS = (() => {
+  const n = Number(process.env.FLEETDECK_LAN_REFRESH_MS);
+  return Number.isFinite(n) && n > 0 ? n : 30_000;
+})();
+
+function sameAddresses(a, b) {
+  return a.length === b.length && a.every(address => b.includes(address));
+}
+
+function startLanAddressWatch() {
+  if (!LAN_MODE) return;
+  let known = lanAddresses();
+  const check = () => {
+    try {
+      const current = lanAddresses();
+      if (sameAddresses(current, known)) return;
+      const gone = known.filter(a => !current.includes(a));
+      known = current;
+      refreshLan(lanInfoFor(current));
+      mdns?.update(current);
+      if (current.length) {
+        console.log(`fleetd LAN addresses now ${current.join(', ')}${gone.length ? ` (was ${gone.join(', ')})` : ''}`);
+      } else {
+        console.log('fleetd LAN interface lost; board still reachable at its last addresses only until the link returns');
+      }
+      // A board left open across a roam keeps showing the stale URL set until
+      // its next /state poll otherwise. tick() rides the same coalesced
+      // broadcast as every other feed line.
+      try { core.tick('🌐 LAN address changed — share panel updated'); } catch { /* feed line is non-essential */ }
+    } catch (err) {
+      console.error('fleetd LAN address refresh error:', err?.message || err);
+    }
+  };
+  const timer = setInterval(check, LAN_REFRESH_MS);
+  timer.unref?.(); // a refresh timer must never hold the daemon's event loop open
+}
 
 server.listen(PORT, BIND, () => {
   const boundHost = BIND.includes(':') && !BIND.startsWith('[') ? `[${BIND}]` : BIND;
@@ -478,6 +530,7 @@ server.listen(PORT, BIND, () => {
         }
       });
     }
+    startLanAddressWatch();
   }
   // v1.2 restart reconciliation: spawn rows survive in SQLite, panes survive
   // in tmux — re-join them (rows with a missing window → 'gone' + card

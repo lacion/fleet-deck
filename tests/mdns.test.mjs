@@ -472,6 +472,79 @@ test('stop() puts goodbye records (TTL 0) on the multicast group', async (t) => 
   assert.ok(goodbye.answers.some(r => r.typeName === 'PTR' && r.name === SVC), 'the service PTR must be withdrawn');
 });
 
+test('update() retires the old A record (TTL 0) and announces the new one (BUG-118)', async (t) => {
+  // Same multicast-loopback requirement as the goodbye test above: an
+  // interface-change refresh has no question to answer, so both packets only
+  // ever reach 224.0.0.251.
+  const listener = await bindShared(MDNS_PORT);
+  if (!listener) return t.skip('udp4 port 5353 is already owned by another responder');
+  t.after(() => close(listener));
+
+  try {
+    listener.addMembership(MDNS_ADDR);
+  } catch (err) {
+    return t.skip(`cannot join ${MDNS_ADDR} in this environment (${err.code || err.message})`);
+  }
+  const inbox = collect(listener);
+
+  const logs = [];
+  const mdns = createMdns({ port: 4711, addresses: ['192.0.2.7'], log: m => logs.push(String(m)) });
+  mdns.start();
+  t.after(() => mdns.stop());
+
+  // The startup announcement doubles as the loopback probe (see the goodbye test).
+  const opening = await inbox.waitFor(p => p.isResponse && p.answers.some(r => r.ttl > 0), 'the startup announcement');
+  if (!opening) {
+    return t.skip(`multicast loopback does not deliver to this host — cannot observe the refresh. logs: ${JSON.stringify(logs)}`);
+  }
+  inbox.packets.length = 0;
+
+  // The host roams from 192.0.2.7 (network A) to 192.0.2.9 (network B).
+  assert.equal(mdns.update(['192.0.2.9']), true, 'an address change must be applied');
+  assert.equal(mdns.update(['192.0.2.9']), false, 're-applying the same set is a no-op');
+
+  // RFC 6762 §10.1: the withdrawn address goes out TTL 0, as exactly the A
+  // record being retired — the shared service records (PTR/SRV/TXT) are NOT
+  // touched, so a roam must not flush a healthy service cache.
+  const goodbye = await inbox.waitFor(
+    p => p.isResponse && p.answers.length > 0 && p.answers.every(r => r.ttl === 0),
+    'the TTL-0 goodbye for the removed address',
+  );
+  assert.ok(goodbye, `update() must say goodbye for the removed address. packets: ${JSON.stringify(inbox.packets.map(p => p.answers.map(r => `${r.typeName}/${r.ttl}/${r.data}`)))}`);
+  assert.deepEqual(goodbye.answers, [
+    { name: HOST, type: TYPE.A, typeName: 'A', class: 1, flush: false, ttl: 0, data: '192.0.2.7' },
+  ], 'the goodbye is exactly the retired A record');
+
+  const announced = await inbox.waitFor(
+    p => p.isResponse && p.answers.some(r => r.typeName === 'A' && r.data === '192.0.2.9' && r.ttl > 0),
+    'an announcement carrying the new address',
+  );
+  assert.ok(announced, 'the new address must be announced on the group');
+  assert.ok(!announced.answers.some(r => r.typeName === 'A' && r.data === '192.0.2.7'),
+    'the retired address must not be re-announced');
+
+  // An empty update (every interface momentarily gone mid-roam) must not empty
+  // the advertisement — start()'s "never advertise a dead host" rule holds here too.
+  assert.equal(mdns.update([]), false, 'an empty address set never empties the advertisement');
+  assert.equal(mdns.update(['not-an-ip']), false, 'junk input never empties the advertisement either');
+
+  // A legacy unicast query after the roam is answered from the NEW set.
+  const asker = await bindShared(0);
+  if (!asker) return t.skip('no ephemeral udp4 socket for the legacy query');
+  t.after(() => close(asker));
+  const queryInbox = collect(asker);
+  const query = encodeMessage({
+    id: 0x1234,
+    flags: 0,
+    questions: [{ name: HOST, type: TYPE.A, class: 1 }],
+  });
+  asker.send(query, MDNS_PORT, '127.0.0.1');
+  const reply = await queryInbox.waitFor(p => p.isResponse && p.answers.some(r => r.typeName === 'A'), 'the post-update A answer');
+  assert.ok(reply, 'the responder must answer queries after an update');
+  assert.deepEqual(reply.answers.filter(r => r.typeName === 'A').map(r => r.data), ['192.0.2.9'],
+    'post-roam answers must carry the new address, not the retired one');
+});
+
 // ------------------------------------------------------- degrading safely
 
 test('createMdns never throws and start()/stop() are idempotent, whatever it is handed', async () => {

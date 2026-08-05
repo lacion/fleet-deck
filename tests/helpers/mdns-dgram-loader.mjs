@@ -93,7 +93,15 @@ export async function load(url, context, nextLoad) {
             server.keepalive = setInterval(() => {}, 60_000);
             setImmediate(callback);
           };
-          return { server };
+          // refreshLan mirrors the real createHttp's return contract: fleetd's
+          // LAN watcher calls it when the mocked interfaces change. Recording
+          // the calls lets a test assert the share-panel state followed a roam.
+          const lanRefreshes = [];
+          function refreshLan(nextLan) {
+            lanRefreshes.push(nextLan);
+            if (consoleRecord) appendFileSync(consoleRecord, 'refreshLan ' + JSON.stringify(nextLan) + '\\n');
+          }
+          return { server, refreshLan };
         }
       `,
     };
@@ -104,9 +112,25 @@ export async function load(url, context, nextLoad) {
       shortCircuit: true,
       source: `
         import realOs from 'node:os';
+        import { readFileSync } from 'node:fs';
+        // A mock interface "roam": fleetd's LAN watcher polls
+        // os.networkInterfaces(), so a DHCP roam is modelled as a FILE the test
+        // rewrites mid-run (env vars cannot change inside a running child).
+        // When the seam file is absent the set is network A — exactly what the
+        // pre-existing suites relied on.
+        const NET_A = [{ family: 'IPv4', internal: false, address: '192.0.2.77' }];
+        const seamFile = process.env.FLEETDECK_TEST_NET_FILE;
+        const ifaces = () => {
+          if (!seamFile) return NET_A;
+          try {
+            const parsed = JSON.parse(readFileSync(seamFile, 'utf8'));
+            if (Array.isArray(parsed) && parsed.length) return parsed;
+          } catch { /* mid-write or absent: keep advertising network A */ }
+          return NET_A;
+        };
         export default {
           ...realOs,
-          networkInterfaces: () => ({ ethernet: [{ family: 'IPv4', internal: false, address: '192.0.2.77' }] }),
+          networkInterfaces: () => ({ ethernet: ifaces() }),
         };
       `,
     };

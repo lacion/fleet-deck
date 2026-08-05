@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, appendFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -221,4 +221,67 @@ test('SIGTERM waits for the mDNS goodbye send callback before fleetd exits', { s
   'DNS-SD instance uses a random discriminator instead of the OS hostname');
   assert.ok(records.some(item => item.type === 'callback' && item.wire === goodbyeSends[0].wire),
     'fleetd must remain alive until the goodbye send callback runs');
+});
+
+
+test('a LAN address change refreshes discovery: mDNS retires the old address and announces the new one (BUG-118)', { skip: BUNDLE_SKIP }, async (t) => {
+  const home = freshHome('fleetdeck-lan-roam-');
+  const record = path.join(home, 'mdns.jsonl');
+  const consoleRecord = path.join(home, 'console.log');
+  const netFile = path.join(home, 'net.json');
+  t.after(() => rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+
+  const child = spawnRaw({
+    port: randomPort(),
+    home,
+    env: loaderOptions({
+      FLEETDECK_BIND: '0.0.0.0',
+      FLEETDECK_TOKEN: 'lan-roam-token-0123456789abcdef',
+      FLEETDECK_MDNS_RECORD: record,
+      FLEETDECK_MDNS_SEND_DELAY_MS: '0',
+      FLEETDECK_TEST_CONSOLE_RECORD: consoleRecord,
+      FLEETDECK_TEST_NET_FILE: netFile,
+      FLEETDECK_LAN_REFRESH_MS: '100',
+    }),
+  });
+  t.after(() => child.kill());
+
+  const packets = () => {
+    try {
+      return readFileSync(record, 'utf8').trim().split('\n').filter(Boolean)
+        .map(JSON.parse)
+        .filter(item => item.type === 'send')
+        .map(item => decodeMessage(Buffer.from(item.wire, 'base64')))
+        .filter(Boolean);
+    } catch { return []; }
+  };
+
+  // Startup announces the mocked network-A address (192.0.2.77).
+  await waitUntil(() => {
+    if (child.proc.exitCode !== null) throw new Error(`daemon exited ${child.proc.exitCode}:\n${child.stdout}\n${child.stderr}`);
+    return packets().some(p => p.isResponse && p.answers.some(r => r.typeName === 'A' && r.data === '192.0.2.77' && r.ttl > 0)) || null;
+  }, 'startup announcement for network A');
+
+  // The roam: the mocked os.networkInterfaces() starts answering 198.51.100.88.
+  writeFileSync(netFile, JSON.stringify([{ family: 'IPv4', internal: false, address: '198.51.100.88' }]));
+
+  // The watcher must retire the OLD address (TTL-0 A goodbye) and announce the NEW one.
+  await waitUntil(() => {
+    const sent = packets();
+    const goodbye = sent.some(p => p.isResponse && p.answers.length > 0
+      && p.answers.every(r => r.ttl === 0)
+      && p.answers.some(r => r.typeName === 'A' && r.data === '192.0.2.77'));
+    const announced = sent.some(p => p.isResponse
+      && p.answers.some(r => r.typeName === 'A' && r.data === '198.51.100.88' && r.ttl > 0));
+    return (goodbye && announced) || null;
+  }, 'mDNS goodbye for network A and announcement for network B');
+
+  // The roam is observable in the startup log too. (refreshLan lines recorded by
+  // the http mock carry the token BY DESIGN — the share panel's credentialed URLs
+  // are its whole point; the token-log contract only covers the console lines.)
+  const log = readFileSync(consoleRecord, 'utf8');
+  const consoleLines = log.split('\n').filter(line => !line.startsWith('refreshLan ')).join('\n');
+  assert.match(consoleLines, /fleetd LAN addresses now 198\.51\.100\.88/, `roam was not logged:\n${log}`);
+  assert.equal(consoleLines.includes('lan-roam-token-0123456789abcdef'), false, 'the token must never reach a console line');
+  assert.match(log, /refreshLan .*198\.51\.100\.88/, `share-panel LAN state did not follow the roam:\n${log}`);
 });
