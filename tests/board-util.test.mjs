@@ -13,7 +13,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -516,6 +516,43 @@ test('the SHIPPED board-dist actually contains the copy chord', () => {
     'the shipped board bundle predates the pane copy fix — rerun npm run build:board');
   assert.ok(js.includes('selection cleared'),
     'the shipped board bundle predates the pane copy fix — rerun npm run build:board');
+});
+
+test('the SHIPPED board-dist asset graph covers every referenced non-JS asset too', () => {
+  // The graph walk above follows only .js specifiers, but Vite also hands the
+  // runtime a lazy CSS dependency map (__vite__mapDeps) and index.html links
+  // the entry stylesheet. A lazy stylesheet that is rebuilt but never staged
+  // passes both that walk and a `git diff` gate (the rebuild is UNTRACKED),
+  // and the board then ships a terminal whose lazy import 404s. Walk every
+  // referenced asset — JS, CSS, font, image — and reject stale extras on disk
+  // that nothing references.
+  const assetsDir = path.join(HERE, '..', 'scripts', 'fleetd', 'board-dist', 'assets');
+  const html = readFileSync(path.join(assetsDir, '..', 'index.html'), 'utf8');
+  const ASSET = /\.(?:js|css|woff2?|ttf|otf|png|jpe?g|gif|svg|webp|ico)$/;
+  const queue = [...html.matchAll(/(?:src|href)="\.\/assets\/([^"]+)"/g)].map(m => m[1]);
+  assert.ok(queue.length, 'index.html references no assets at all');
+  const seen = new Set();
+  while (queue.length) {
+    const name = queue.shift();
+    if (seen.has(name)) continue;
+    seen.add(name);
+    const file = path.join(assetsDir, name);
+    assert.ok(existsSync(file),
+      `board-dist references assets/${name}, which is not on disk — the rebuilt asset was never staged`);
+    if (!/\.(?:js|css|html)$/.test(name)) continue;
+    const src = readFileSync(file, 'utf8');
+    // Quoted relative specifiers cover both lazy JS (import("./chunk.js")) and
+    // Vite's dependency map entries ("./TermPane-<hash>.css").
+    for (const m of src.matchAll(/["'`]\.\/([\w.-]+)["'`]/g)) {
+      if (ASSET.test(m[1])) queue.push(m[1]);
+    }
+  }
+  assert.ok([...seen].some(n => n.endsWith('.css')),
+    'the graph walk found no stylesheet — the lazy CSS dependency map went unchecked');
+  for (const extra of readdirSync(assetsDir)) {
+    assert.ok(seen.has(extra),
+      `board-dist/assets/${extra} is on disk but nothing references it — a stale build leftover`);
+  }
 });
 
 // --- 0.19.3: a copy that cannot lie, and a gesture that teaches itself -------

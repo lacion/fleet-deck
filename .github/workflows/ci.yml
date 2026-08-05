@@ -68,7 +68,15 @@ jobs:
       - run: npm --prefix board ci --ignore-scripts
       - run: npm --prefix board run build
       - name: Fail if committed board build is stale
-        run: git diff --exit-code scripts/fleetd/board-dist
+        # git diff alone ignores UNTRACKED rebuild output (a fresh hashed chunk
+        # or lazy stylesheet the commit forgot to stage), so gate on porcelain.
+        run: |
+          git diff --exit-code scripts/fleetd/board-dist
+          if [ -n "$(git status --porcelain --untracked-files=all -- scripts/fleetd/board-dist)" ]; then
+            echo "::error::board build produced untracked files — stage the rebuilt board-dist"
+            git status --porcelain --untracked-files=all -- scripts/fleetd/board-dist
+            exit 1
+          fi
 
   test-macos:
     runs-on: macos-latest

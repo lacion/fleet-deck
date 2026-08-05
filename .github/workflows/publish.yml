@@ -95,6 +95,13 @@ jobs:
           npm --prefix board ci --ignore-scripts
           npm --prefix board run build
           git diff --exit-code scripts/fleetd/board-dist
+          # git diff ignores UNTRACKED rebuild output (a fresh hashed chunk or
+          # lazy stylesheet the tag forgot to stage) — gate on porcelain too.
+          if [ -n "$(git status --porcelain --untracked-files=all -- scripts/fleetd/board-dist)" ]; then
+            echo "::error::board build produced untracked files — stage the rebuilt board-dist"
+            git status --porcelain --untracked-files=all -- scripts/fleetd/board-dist
+            exit 1
+          fi
 
       # No --provenance (automatic), no NODE_AUTH_TOKEN (OIDC).
       - run: npm publish --access public
