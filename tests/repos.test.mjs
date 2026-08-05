@@ -6,7 +6,14 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'nod
 import os, { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createRepos, parseRepoInput, quickBranchCheck, repoDefaultOrgChoice, repoDefaultOrgProblem } from '../scripts/fleetd/repos.mjs';
+<<<<<<< /tmp/mf-ours
 import { detectCoderWorkspaceRoot, resolveHome } from '../scripts/fleetd/config.mjs';
+=======
+import { detectCoderWorkspaceRoot } from '../scripts/fleetd/config.mjs';
+import { openDb } from '../scripts/fleetd/db.mjs';
+import { createCore } from '../scripts/fleetd/derive.mjs';
+import { createStatements } from '../scripts/fleetd/statements.mjs';
+>>>>>>> /tmp/mf-theirs
 import { startDaemon, randomPort } from './helpers/daemon.mjs';
 import { getJson, postHook, postJson } from './helpers/http.mjs';
 import { makeRemoteRepo } from './helpers/gitrepo.mjs';
@@ -710,6 +717,7 @@ test('POST /api/settings applies a mixed subset and never half-writes on a bad f
   assert.equal(after.json.settings.repo_transport.value, 'https');
 });
 
+<<<<<<< /tmp/mf-ours
 // ---------------------------------------------------------------------------
 // BUG-044 — the four UNDISTILLED stderr paths in materializeBranch (status,
 // switch, worktree list, worktree add) used to scrub only URL userinfo. A
@@ -813,4 +821,43 @@ test('BUG-044: git worktree add failure stderr is hardened by the full redaction
   // too). Worktree mode, not in-place: the `git switch -c <branch> <base>`
   // in-place path contains no ' add ' and would succeed unshimmed.
   await assertShimmedFailureRedacts(t, { match: ' add ', fallback: 'git worktree add failed', branch: 'fd-bug044-other', mode: 'worktree' });
+=======
+test('settings writes are atomic: a failing later write rolls back the earlier ones', async t => {
+  // BUG-148: setSettings committed each key as an independent autocommit, so a
+  // later write error (SQLITE_FULL on the second key, simulated here by a
+  // throw on the shared prepared statement) returned an error while the FIRST
+  // key's change stayed durable. The commit loop now runs inside one IMMEDIATE
+  // transaction, so the returned error is the truth: nothing changed.
+  const db = openDb(':memory:');
+  t.after(() => db.close());
+  const core = createCore(db, { port: 4713, home: '/tmp/fd-atomic-settings-home' });
+
+  const q = db.prepare("SELECT value FROM settings WHERE key = ?");
+  // createCore doesn't re-export q; settings.mjs commits through the SAME
+  // prepared statement object createStatements(db) built, so re-deriving the
+  // map here reaches the writer setSettings uses.
+  const { q: statements } = createStatements(db);
+  const originalRun = statements.setSetting.run.bind(statements.setSetting);
+  let poisoned = true;
+  statements.setSetting.run = (key, value, at) => {
+    if (poisoned && key === 'gateway_token') throw new Error('SQLITE_FULL simulated: database or disk is full');
+    return originalRun(key, value, at);
+  };
+  const rejected = core.setSettings({ repo_default_org: 'textemma', gateway_token: 'tok-1' });
+  assert.equal(rejected.status, 400);
+  assert.match(rejected.body.reason, /SQLITE_FULL/);
+  assert.equal(q.get('repo_default_org'), undefined,
+    'the earlier write must be rolled back with the later failure');
+  assert.equal(q.get('gateway_token'), undefined);
+  assert.equal(core.resolveSettings().gateway.token_set, false);
+
+  // The aborted transaction must leave the statement usable: unpoison and the
+  // same multi-key body applies in full.
+  poisoned = false;
+  const ok = core.setSettings({ repo_default_org: 'textemma', gateway_token: 'tok-1' });
+  assert.equal(ok.status, 200, ok.body.reason);
+  assert.equal(q.get('repo_default_org')?.value, 'textemma');
+  assert.equal(q.get('gateway_token')?.value, 'tok-1');
+  statements.setSetting.run = originalRun;
+>>>>>>> /tmp/mf-theirs
 });

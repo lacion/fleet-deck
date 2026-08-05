@@ -3,7 +3,17 @@
 // compiles every statement once at core boot and hands back the map + the
 // updateSession writer the rest of the core threads through `ctx`.
 
+// One map per DB handle: createCore calls createStatements exactly once, and a
+// re-derivation for the same handle returns the SAME map — same prepared
+// statement objects — so test seams (and any second factory) that resolve the
+// map from a handle reach the exact statements the core commits through,
+// rather than compiling a detached second set. DatabaseSync identity keys the
+// cache; the map itself is the WeakMap value, so it dies with the handle.
+const statementsByDb = new WeakMap();
+
 export function createStatements(db) {
+  const cached = statementsByDb.get(db);
+  if (cached) return cached;
   // ------------------------------------------------------------- statements
   const q = {
     getSession: db.prepare('SELECT * FROM sessions WHERE session_id = ?'),
@@ -442,5 +452,7 @@ export function createStatements(db) {
     stmt.run(...keys.map(k => upd[k] ?? null), sid);
   }
 
-  return { q, FIELDS, updateSession };
+  const statements = { q, FIELDS, updateSession };
+  statementsByDb.set(db, statements);
+  return statements;
 }

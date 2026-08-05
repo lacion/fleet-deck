@@ -531,6 +531,7 @@ export function createSettings(ctx) {
     try {
       // Validate every named key first…
       const prepared = keys.map(k => ({ k, value: HANDLERS[k].prepare(body[k]) }));
+<<<<<<< /tmp/mf-ours
       // …then apply them all in ONE transaction. Validation errors (400s) are
       // already impossible below — every prepare ran — so a throw here is a
       // STORAGE failure (SQLITE_BUSY/FULL, I/O). Without the transaction each
@@ -543,12 +544,37 @@ export function createSettings(ctx) {
       db.exec('BEGIN IMMEDIATE');
       try {
         for (const { k, value } of prepared) HANDLERS[k].commit(value);
+=======
+      // …then apply them all — nothing above wrote, so a validation throw here is
+      // impossible to reach with a half-validated body. (Derive/test contexts
+      // without a raw `db` handle keep the old autocommit path — the daemon's
+      // ctx always carries one.)
+      if (!db) {
+        for (const { k, value } of prepared) HANDLERS[k].commit(value);
+        onMutate();
+        return { status: 200, body: { ok: true, settings: resolveSettings() } };
+      }
+      // Validation alone is not atomicity, though: each commit was an
+      // independent autocommit, so a LATER write failing (SQLITE_FULL on a later
+      // key, an onMutate() throw) used to return the error below with the
+      // EARLIER keys already durable — a rejected request that still changed
+      // repository/browser/gateway behavior. One
+      // IMMEDIATE transaction around the commits + the callback closes that:
+      // any failure rolls back every write, so the returned error is the truth.
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        for (const { k, value } of prepared) HANDLERS[k].commit(value);
+        onMutate();
+>>>>>>> /tmp/mf-theirs
         db.exec('COMMIT');
       } catch (err) {
         try { db.exec('ROLLBACK'); } catch { /* preserve the original error */ }
         throw err;
       }
+<<<<<<< /tmp/mf-ours
       onMutate();
+=======
+>>>>>>> /tmp/mf-theirs
       return { status: 200, body: { ok: true, settings: resolveSettings() } };
     } catch (err) {
       // A thrown 400 is a validator rejecting the caller's body; anything
