@@ -154,7 +154,7 @@ export function spawnRaw({
  */
 export async function startDaemon({
   port = randomPort(),
-  home = freshHome(),
+  home,
   // FLEETDECK_TEST_DAEMON_SCRIPT lets this repo's own dry-check point the
   // whole suite at a local reference stub while scripts/fleetd/fleetd.mjs is
   // still being built, without editing any test file or touching scripts/.
@@ -163,6 +163,11 @@ export async function startDaemon({
   env = {},
   healthTimeoutMs = 10000,
 } = {}) {
+  // Only the home THIS call allocated may be removed on startup failure —
+  // a caller-owned home (e.g. election.test's homeA) is never ours to delete,
+  // failed startup or not.
+  const ownHome = home === undefined;
+  if (ownHome) home = freshHome();
   const raw = spawnRaw({ port, home, scriptPath, env });
   const baseUrl = `http://127.0.0.1:${port}`;
   // Any 2xx /health on the port is NOT proof our child came up: two test
@@ -188,6 +193,12 @@ export async function startDaemon({
   } catch (err) {
     healthSettled = true;
     await raw.kill();
+    // The daemon died before we handed back a handle, so nothing else will
+    // ever clean up the scratch home (db, token, log, pid state) — remove it
+    // here. Caller-owned homes survive for post-mortem inspection.
+    if (ownHome) {
+      rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    }
     const detail = raw.stderr || raw.stdout || '(no output captured)';
     throw new Error(`${err.message}\n--- daemon output ---\n${detail}`);
   }
