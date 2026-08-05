@@ -198,6 +198,66 @@ test('the shared control client is released once the last viewer leaves', async 
   await waitUntil(() => records(record).some(r => r.type === 'signal' && r.signal === 'SIGTERM'), 'client released on last viewer');
 });
 
+// BUG-055: a remain-on-exit pane whose process has exited emits NO
+// %window-close, still answers list-panes, and still answers send-keys with ok
+// — so neither of the bridge's old death signals fired and an open viewer
+// stayed 'live' on a dead pane forever, silently discarding keystrokes. The
+// bridge must poll #{pane_dead} for its subscribed panes and end the viewer.
+// Here every pane reports pane_dead=1 from the first poll: the viewer opens
+// (the row still says live — the ~10s liveness tick hasn't reconciled), and
+// the very next dead-poll tick must end it with {t:'exit'}.
+test('live terminal WS ends the viewer when its pane is dead under remain-on-exit (BUG-055)', async t => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-term-dead-'));
+  const record = path.join(dir, 'term.jsonl');
+  const daemon = await startDaemon({
+    env: env(record, {
+      FLEETDECK_TEST_TERM_DEAD_PANE: '*',       // every fixture pane is dead
+      FLEETDECK_TERM_DEAD_POLL_MS: '100',       // don't sit through the 5s default
+    }),
+  });
+  t.after(async () => { await daemon.stop(); rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+  const spawned = await createSpawn(daemon, dir);
+  const { ws, frames, closes } = connect(termUrl(daemon, spawned.spawn_id, 80, 24));
+
+  await waitUntil(() => frames.find(f => f.t === 'init'), 'init frame');
+  const exit = await waitUntil(() => frames.find(f => f.t === 'exit'), 'exit frame from the pane_dead poll');
+  assert.match(exit.reason, /pane closed/);
+  assert.equal(frames.some(f => f.t === 'err'), false,
+    'a dead pane is the agent ending, never "viewer refused"');
+  await waitUntil(() => closes.length > 0, 'socket close');
+  assert.ok([1000, 1005].includes(closes[0].code), `clean close, got ${closes[0].code}`);
+  assert.equal(ws.readyState, WebSocket.CLOSED);
+
+  // send-keys success is not liveness proof — but the poll must already have
+  // finished the viewer, so nothing may ever reach the (dead) pane.
+  assert.equal(records(record).filter(r => /send-keys/.test(r.line || '')).length, 0);
+  // The viewer's end is also the last viewer leaving: the shared control
+  // client is handed back rather than pinned on a dead fleet.
+  await waitUntil(() => records(record).some(r => r.type === 'signal' && r.signal === 'SIGTERM'),
+    'control client released once the dead-pane viewer ended');
+});
+
+// The same poll must NOT kill a viewer on a LIVE pane: a dead read is only
+// acted on when pane_dead is exactly 1, so a healthy pane's viewer survives.
+test('live terminal WS keeps the viewer open while pane_dead is 0 (BUG-055)', async t => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-term-alive-'));
+  const record = path.join(dir, 'term.jsonl');
+  const daemon = await startDaemon({ env: env(record, { FLEETDECK_TERM_DEAD_POLL_MS: '100' }) });
+  t.after(async () => { await daemon.stop(); rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+  const spawned = await createSpawn(daemon, dir);
+  const { ws, frames } = connect(termUrl(daemon, spawned.spawn_id, 80, 24));
+
+  await waitUntil(() => frames.find(f => f.t === 'init'), 'init frame');
+  // Several poll intervals pass with pane_dead=0: the viewer must stay live.
+  await waitUntil(
+    () => records(record).filter(r => /list-panes -a/.test(r.line || '')).length >= 3,
+    'several dead-poll rounds',
+  );
+  assert.equal(frames.some(f => f.t === 'exit'), false, 'a live pane must never end its viewer');
+  assert.equal(frames.some(f => f.t === 'err'), false);
+  ws.close();
+});
+
 test('live terminal WS refuses an unknown spawn and honors FLEETDECK_TERM=off', async t => {
   const dir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-term-refuse-'));
   const record = path.join(dir, 'term.jsonl');

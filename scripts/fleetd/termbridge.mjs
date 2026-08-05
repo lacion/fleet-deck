@@ -51,6 +51,14 @@ const CLEAR_SCREEN = '\u001b[H\u001b[2J';
 // rendered, short enough that the human never sees the snapshot's seams.
 const REPAINT_MS = envInt('FLEETDECK_TERM_REPAINT_MS', 80);
 
+// BUG-055: how often the shared client re-reads #{pane_dead} for the panes it
+// is watching. A remain-on-exit pane (the fleet's dead-pane detection default)
+// emits NO %window-close when its process exits, still lists, and still
+// answers send-keys with %end ok — so neither of the bridge's old death
+// signals fires and an open viewer would stay 'live' on a dead pane forever,
+// silently discarding keystrokes. pane_dead is the only honest tell.
+const PANE_DEAD_POLL_MS = envInt('FLEETDECK_TERM_DEAD_POLL_MS', 5_000, { min: 100 });
+
 function dimensions(cols, rows) {
   const c = Number(cols);
   const r = Number(rows);
@@ -240,6 +248,30 @@ export function createTermBridge({ port, resolveSpawn, log = () => {} } = {}) {
       }
     };
 
+    // BUG-055: periodic #{pane_dead} re-read for every subscribed pane. This is
+    // the ONLY signal that fires when a remain-on-exit pane's process exits —
+    // %window-close never comes, list-panes still lists, send-keys still
+    // answers ok. A dead pane is the agent ENDING (spawns.mjs's liveness tick
+    // condemns on the same flag), so viewers get the same 'terminal pane
+    // closed' exit as a genuinely vanished pane. A failed/ambiguous read is
+    // not proof of death, matching the window-close probe above.
+    c.deadTimer = setInterval(() => {
+      if (c.closed || !c.panes.size) return;
+      c.command("list-panes -a -F '#{pane_id} #{pane_dead}'").then((res) => {
+        if (!res.ok || c.closed) return;
+        const state = new Map();
+        for (const line of res.lines) {
+          const m = /^(%\d+)\s+([01])$/.exec(line.trim());
+          if (m) state.set(m[1], m[2]);
+        }
+        for (const [paneId, stream] of [...c.panes]) {
+          if (state.get(paneId) !== '1') continue;
+          for (const v of [...stream.subs]) v.finish('terminal pane closed');
+        }
+      }).catch(() => { /* a failed probe is not proof a pane died */ });
+    }, PANE_DEAD_POLL_MS);
+    c.deadTimer.unref?.();
+
     const override = process.env.FLEETDECK_TERM_CMD?.trim();
     const socket = process.env.FLEETDECK_TMUX_SOCKET?.trim();
     const argv = socket
@@ -289,6 +321,7 @@ export function createTermBridge({ port, resolveSpawn, log = () => {} } = {}) {
     if (!c || c.closed) return;
     c.closed = true;
     client = null;
+    clearInterval(c.deadTimer);
     c.readyReject(new Error(reason));
     for (const waiter of c.waiters.splice(0)) waiter.reject(new Error(reason));
     for (const v of [...viewers]) v.finish(reason);

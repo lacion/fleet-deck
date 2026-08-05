@@ -81,7 +81,17 @@ input.on('line', line => {
     else if (mode === 'empty') response([]);         // window gone: no pane id comes back
     else response([paneForListPanes(line)]);
   } else if (line.startsWith('list-panes -a')) {
-    response([...panes.values()]); // window-close probe: every pane still alive
+    // window-close probe + BUG-055 pane_dead poll: '%N [dead]' per pane. The
+    // plain-id form used by the close probe and the id+flag form used by the
+    // dead poll both parse the same way, so answer both shapes. The dead knob
+    // is a substring matched against window names ('*' = every pane) — its
+    // panes report pane_dead=1, modelling a remain-on-exit pane whose process
+    // has exited.
+    const withFlags = /pane_dead/.test(line);
+    const dead = process.env.FLEETDECK_TEST_TERM_DEAD_PANE;
+    const isDead = (w) => dead === '*' || (dead != null && dead !== '' && w.includes(dead));
+    response([...panes.entries()].map(([w, p]) =>
+      withFlags ? `${p} ${isDead(w) ? 1 : 0}` : p));
   } else if (line.startsWith('capture-pane ')) {
     const pane = paneForTarget(line) || '%1';
     response([`seed ${pane} \u001b[31mred\u001b[0m`]);
