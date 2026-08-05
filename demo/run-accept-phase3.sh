@@ -139,6 +139,43 @@ CLAUDE_ENV_SCRUB=(
 
 echo "== Fleet Deck Phase 3 acceptance =="
 
+# --------------------------------------------- portability preflight
+# `run_with_timeout` supervises the `claude -p` runs below. GNU `timeout` is
+# not part of stock macOS; accept Homebrew coreutils' `gtimeout`, and fall
+# back to Node (a documented prerequisite) otherwise. Detect BEFORE any
+# mutation: the reset below kills daemons and overwrites settings.
+TIMEOUT_CMD=""
+if command -v timeout >/dev/null 2>&1; then
+  TIMEOUT_CMD=timeout
+elif command -v gtimeout >/dev/null 2>&1; then
+  TIMEOUT_CMD=gtimeout
+fi
+run_with_timeout() {
+  local secs="$1"; shift
+  # A scrubbed environment is mandatory: un-scrubbed vars (CLAUDECODE,
+  # CLAUDE_CODE_SESSION_ID, ...) would leak through the SessionStart hook
+  # into the elected daemon and misdirect later spawns.
+  local env_prefix=(
+    env "${CLAUDE_ENV_SCRUB[@]}"
+    FLEETDECK_HOME="$SCRATCH_HOME" FLEETDECK_PORT="$FLEETDECK_PORT"
+    FLEETDECK_TMUX_SOCKET="$FLEETDECK_TMUX_SOCKET"
+  )
+  if [ -n "$TIMEOUT_CMD" ]; then
+    "${env_prefix[@]}" "$TIMEOUT_CMD" "$secs" "$@"
+  else
+    "${env_prefix[@]}" node -e '
+      const [secs, cmd, ...args] = process.argv.slice(1);
+      const child = require("node:child_process").spawn(cmd, args, { stdio: "inherit" });
+      const killer = setTimeout(() => { child.kill("SIGTERM"); }, Number(secs) * 1000);
+      child.on("exit", (code, signal) => {
+        clearTimeout(killer);
+        if (signal) process.kill(process.pid, signal);
+        else process.exit(code ?? 1);
+      });
+    ' "$secs" "$@"
+  fi
+}
+
 # ---------------------------------------------------------------- reset
 <<<<<<< /tmp/mf-ours
 # Stop recorded daemons only after their fleetd identity is proven (strict
@@ -150,7 +187,13 @@ REAL_HOME="${HOME:-/root}/.fleetdeck"
 stop_pidfile_daemon "$REAL_HOME" || { echo "ABORT: unowned live pid in $REAL_HOME/fleetd.pid — not touching it."; exit 1; }
 stop_pidfile_daemon "$SCRATCH_HOME" || { echo "ABORT: unowned live pid in $SCRATCH_HOME/fleetd.pid — not touching it."; exit 1; }
 if curl -s -m 1 "$BASE/health" 2>/dev/null | grep -q '"ok"'; then
-  fuser -k "$FLEETDECK_PORT/tcp" 2>/dev/null || true
+  # `fuser -k` is Linux-only (stock macOS fuser cannot kill). Prefer lsof,
+  # which both platforms ship; keep fuser as the fallback for lsof-less Linux.
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -ti "tcp:$FLEETDECK_PORT" | xargs kill 2>/dev/null || true
+  else
+    fuser -k "$FLEETDECK_PORT/tcp" 2>/dev/null || true
+  fi
   sleep 0.5
 =======
 # Signal only a daemon proven by ALL THREE identities: the strict JSON pid
@@ -302,10 +345,7 @@ bad() { echo "FAIL: $1${2:+ -- $2}"; FAIL=$((FAIL+1)); }
 # Fleet Deck plugin's duplicate hooks can never mask the checkout under test
 # with cached code (and the settings.json above disables it outright).
 S1=$(node -e 'console.log(crypto.randomUUID())')
-env "${CLAUDE_ENV_SCRUB[@]}" \
-  FLEETDECK_HOME="$SCRATCH_HOME" FLEETDECK_PORT="$FLEETDECK_PORT" \
-  FLEETDECK_TMUX_SOCKET="$FLEETDECK_TMUX_SOCKET" \
-  timeout 240 claude -p "Use the Bash tool to create a file named fleet-perm-proof.txt containing exactly the text FLEET_PERMISSION_OK (e.g. printf 'FLEET_PERMISSION_OK' > fleet-perm-proof.txt), then cat it and report its contents. Then stop." \
+run_with_timeout 240 claude -p "Use the Bash tool to create a file named fleet-perm-proof.txt containing exactly the text FLEET_PERMISSION_OK (e.g. printf 'FLEET_PERMISSION_OK' > fleet-perm-proof.txt), then cat it and report its contents. Then stop." \
   --session-id "$S1" --max-turns 6 --permission-mode default \
   --plugin-dir "$FLEETDECK_ROOT" \
   --output-format json > "$DEMO_LOGS/p3-perm.json" 2> "$DEMO_LOGS/p3-perm.err" &
@@ -346,10 +386,7 @@ PROOF_DETAIL=$(perm_proof_check "$RC1" "$PROJECT_DIR/fleet-perm-proof.txt" "$DEM
 
 # ============================================== PART 2: freeform Q&A
 S2=$(node -e 'console.log(crypto.randomUUID())')
-env "${CLAUDE_ENV_SCRUB[@]}" \
-  FLEETDECK_HOME="$SCRATCH_HOME" FLEETDECK_PORT="$FLEETDECK_PORT" \
-  FLEETDECK_TMUX_SOCKET="$FLEETDECK_TMUX_SOCKET" \
-  timeout 240 claude -p "You need one decision from the human before doing anything: should the project use bcrypt or argon2 for password hashing? Do not decide yourself and do not do any other work. End your reply with that single question addressed to me." \
+run_with_timeout 240 claude -p "You need one decision from the human before doing anything: should the project use bcrypt or argon2 for password hashing? Do not decide yourself and do not do any other work. End your reply with that single question addressed to me." \
   --session-id "$S2" --max-turns 4 --dangerously-skip-permissions \
   --plugin-dir "$FLEETDECK_ROOT" \
   --output-format json > "$DEMO_LOGS/p3-freeform.json" 2> "$DEMO_LOGS/p3-freeform.err"
@@ -372,10 +409,7 @@ else
 fi
 
 # Next boundary: resume the same session; UserPromptSubmit must deliver the answer.
-env "${CLAUDE_ENV_SCRUB[@]}" \
-  FLEETDECK_HOME="$SCRATCH_HOME" FLEETDECK_PORT="$FLEETDECK_PORT" \
-  FLEETDECK_TMUX_SOCKET="$FLEETDECK_TMUX_SOCKET" \
-  timeout 240 claude -p --resume "$S2" "Continue based on my answer. State which algorithm you will use and why, in one sentence." \
+run_with_timeout 240 claude -p --resume "$S2" "Continue based on my answer. State which algorithm you will use and why, in one sentence." \
   --max-turns 4 --dangerously-skip-permissions \
   --plugin-dir "$FLEETDECK_ROOT" \
   --output-format json > "$DEMO_LOGS/p3-resume.json" 2> "$DEMO_LOGS/p3-resume.err"

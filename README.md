@@ -374,7 +374,7 @@ npm run build:board                  # rebuild the React board into board-dist/
 
 `npm test` runs serially (`--test-concurrency=1`) by necessity, not preference: every test boots a real daemon that binds a real port and drives a real tmux server. Run them in parallel and they contend for both, producing one or two failures a run — a different one each time, each passing in isolation.
 
-The `demo/` scripts are live acceptance gates that start *real* Claude sessions and therefore cost money: `run-smoke.sh` (two sessions colliding on purpose), `run-accept-phase3.sh` (a permission and a trailing question answered from the board), `run-accept-spawn.sh` (spawn → assign → board-approved permission → kill), `run-accept-plan.sh` (plan → capture → unsupervised execution). Run them deliberately.
+The `demo/` scripts are live acceptance gates that start *real* Claude sessions and therefore cost money: `run-smoke.sh` (two sessions colliding on purpose), `run-accept-phase3.sh` (a permission and a trailing question answered from the board), `run-accept-spawn.sh` (spawn → assign → board-approved permission → kill), `run-accept-plan.sh` (plan → capture → unsupervised execution). Run them deliberately. `run-accept-phase3.sh` supervises its `claude -p` runs with GNU `timeout`, Homebrew coreutils' `gtimeout` on macOS, or a Node fallback when neither exists; `run-smoke.sh` requires GNU `timeout` and `setsid` (Linux/WSL2) and aborts up front without them.
 
 ## Credits
 
