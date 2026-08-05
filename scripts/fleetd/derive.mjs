@@ -740,7 +740,7 @@ export function createCore(db, {
   const {
     mail, drainMail, ackMail, resolveTargets, notifyWatchers, addWatchWaiter,
     hasWatchWaiter, ownedPaneRow, ownedPaneDeliverable, tryOwnedPaneDelivery,
-    claimMail, watchInfo, postMail,
+    claimMail, watchInfo, postMail, registerWatchGen,
   } = ctx;
 
   // D8: the offline-tombstone write, in one place. Every terminal transition
@@ -873,6 +873,7 @@ export function createCore(db, {
     // http.mjs/fleetd.mjs caller consumes it, so it is not re-exported here.
     claimMail,       // "
     watchInfo,       // "
+    registerWatchGen, // " (BUG-105: newest-wins watcher generation for the atomic claim)
     drainMail,
     ackMail,           // POST /mail/ack — BUG-034 lease finalization
     postMail,

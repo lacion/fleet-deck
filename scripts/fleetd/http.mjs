@@ -620,20 +620,37 @@ export function createHttp(core, {
   //
   //   Races: mailbox drained first → delivered_at already set → the poll's
   //   claim finds nothing and the hold simply lapses to idle. Watcher socket
+<<<<<<< /tmp/mf-ours
   //   gone → 'close' unregisters the waiter, nothing claimed. A claim whose
   //   response the watcher never reads is no longer a loss window (BUG-034):
   //   without the ack the lease lapses and the mail comes back.
+=======
+  //   gone → 'close' unregisters the waiter, nothing claimed. Accepted
+  //   window: a claim whose response the watcher never reads loses
+  //   auto-delivery (the mail row is marked delivered either way).
+  //
+  //   BUG-105: the watcher sends its per-process generation token as `wg`.
+  //   Registration (newest wins, mirroring the client's pidfile) and every
+  //   claim attempt run synchronously on the daemon's only thread, so a
+  //   SUPERSEDED watcher's in-flight poll can no longer claim mail out from
+  //   under its successor: once the newer poll registers its token, the older
+  //   request's claim attempt fails the generation check and it lapses to
+  //   idle (the mail stays queued for the current generation to claim). No
+  //   `wg` (a hand-rolled poll, an older watcher) claims exactly as before.
+>>>>>>> /tmp/mf-theirs
   function watchHook(req, res, url) {
     const sid = url.searchParams.get('session') || '';
     const holdRaw = Number(url.searchParams.get('hold_ms'));
     const holdMs = Number.isFinite(holdRaw) ? Math.max(0, Math.min(holdRaw, 25_000)) : 25_000;
+    const wg = url.searchParams.get('wg') || null;
+    if (wg) core.registerWatchGen(sid, wg); // newest wins; before any claim attempt
 
     const attempt = () => {
       const info = core.watchInfo(sid);
       if (!info.session_alive) return { status: 'idle', ...info };
-      const claimed = core.claimMail(sid);
+      const claimed = core.claimMail(sid, wg);
       if (claimed) return { status: 'mail', ...claimed };
-      return null; // session alive, no undelivered mail → hold (mail-wake)
+      return null; // session alive, no claimable mail (or stale generation) → hold
     };
 
     const immediate = attempt();

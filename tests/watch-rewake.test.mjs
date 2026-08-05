@@ -274,6 +274,43 @@ test('/api/watch: mailbox drained first (turn boundary) -> the poll stays idle a
   assert.equal(res.json?.status, 'idle', 'a drained mailbox must leave the watch poll idle — never a second delivery');
 });
 
+test('BUG-105: a superseded watcher generation cannot claim mail — the newest generation wins mid-poll and the mail survives for it', async (t) => {
+  const daemon = await startDaemon();
+  const cwd = scratchCwd();
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+
+  const sid = randomUUID();
+  await liveSession(daemon, sid, cwd);
+
+  // Watcher A parks in a long poll with generation gen-old. Mail arriving
+  // during the hold would previously resolve THIS poll with status 'mail' —
+  // claimed (marked delivered) for a watcher that may already be superseded.
+  const stale = getJson(`${daemon.baseUrl}/api/watch?session=${sid}&hold_ms=5000&wg=gen-old`, { timeout: 10000 });
+  await new Promise(r => setTimeout(r, 300)); // let A's poll park and register gen-old
+
+  // Watcher B takes over: its first poll registers gen-new (newest wins) and
+  // itself holds with nothing to claim yet.
+  const fresh = getJson(`${daemon.baseUrl}/api/watch?session=${sid}&hold_ms=5000&wg=gen-new`, { timeout: 10000 });
+  await new Promise(r => setTimeout(r, 300)); // let B's poll park and supersede gen-old
+
+  // Mail lands mid-poll: it must wake the CURRENT generation, never A's.
+  await postJson(`${daemon.baseUrl}/mail`, { to: sid, from: 'operator', text: 'mid-poll takeover mail' }, { token: daemon.token });
+
+  const freshRes = await fresh;
+  assert.equal(freshRes.json?.status, 'mail', 'the current generation must claim the mail');
+  assert.equal(freshRes.json?.text, 'mid-poll takeover mail');
+
+  const staleRes = await stale;
+  assert.equal(staleRes.json?.status, 'idle', 'a superseded generation must never resolve with claimed mail');
+
+  // The mail was claimed exactly once, by B — the turn-boundary drain must
+  // find nothing left to re-deliver.
+  const upRes = await postHook(daemon.baseUrl, 'UserPromptSubmit', loadFixture('user-prompt-submit', { session_id: sid, cwd }, { prompt: 'continue' }), { token: daemon });
+  const ctx = upRes.json?.hookSpecificOutput?.additionalContext ?? '';
+  assert.ok(!ctx.includes('mid-poll takeover mail'),
+    `the generation-guarded claim must still mark the mail delivered (got: ${ctx.slice(0, 150)})`);
+});
+
 // ---------------------------------------------------------------------------
 // fleet-watch.mjs v2 lifecycle, against a scratch daemon
 // ---------------------------------------------------------------------------
@@ -381,6 +418,42 @@ test('fleet-watch: single-flight per session — a newer watcher supersedes the 
   const code2 = await w2.exitWithin(6000, 'newest watcher after board answer');
   assert.equal(code2, 2, 'the surviving (newest) watcher gets the answer');
   assert.match(w2.stderr, /ship it/);
+});
+
+test('BUG-105: a watcher superseded while its poll is in flight never wakes on the mail — it exits 0 and the successor claims and delivers instead', async (t) => {
+  const daemon = await startDaemon();
+  const cwd = scratchCwd();
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+
+  const sid = randomUUID();
+  await liveSession(daemon, sid, cwd);
+  const pidFile = pidFileOf(daemon.home, sid);
+
+  const w1 = spawnWatcher({ port: daemon.port, home: daemon.home, sid });
+  t.after(() => { try { w1.child.kill('SIGKILL'); } catch { /* gone */ } });
+  await waitUntil(() => existsSync(pidFile) && readFileSync(pidFile, 'utf8').trim() === String(w1.child.pid),
+    { label: 'watcher #1 owns the pid file' });
+  // W1 is now blocked in a long poll (hold 400 ms per cycle).
+
+  const w2 = spawnWatcher({ port: daemon.port, home: daemon.home, sid });
+  t.after(() => { try { w2.child.kill('SIGKILL'); } catch { /* gone */ } });
+  await waitUntil(() => existsSync(pidFile) && readFileSync(pidFile, 'utf8').trim() === String(w2.child.pid),
+    { label: 'watcher #2 owns the pid file' });
+
+  // Mail arrives while w1's poll is (very likely) still in flight. Whether
+  // or not the timing lands inside w1's hold, the invariant must hold: the
+  // superseded watcher never emits the wake.
+  await postJson(`${daemon.baseUrl}/mail`, { to: sid, from: 'operator', text: 'mid-poll handoff mail' }, { token: daemon.token });
+
+  const code1 = await w1.exitWithin(6000, 'superseded watcher with mail in flight');
+  assert.equal(code1, 0, 'the superseded watcher must exit 0 — never the wake signal');
+  assert.equal(w1.stderr, '', 'the superseded watcher must never write mail text to stderr');
+  assert.equal(w1.stdout, '');
+
+  const code2 = await w2.exitWithin(6000, 'successor watcher after mail');
+  assert.equal(code2, 2, 'the successor claims the mail and wakes (exit 2)');
+  assert.match(w2.stderr, /mid-poll handoff mail/);
+  assert.equal(w2.stdout, '');
 });
 
 test('fleet-watch: SessionEnd tombstone makes the watcher exit 0 promptly (freeform question may still be pending)', async (t) => {

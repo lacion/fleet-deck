@@ -266,6 +266,27 @@ export function createMail(ctx) {
   // contract) on behalf of scripts/fleet-watch.mjs, the asyncRewake watcher.
   const watchWaiters = new Map(); // session_id -> Set<fn>
 
+  // BUG-105: per-session watcher generation. fleet-watch.mjs (single-flight,
+  // NEWEST WINS) mints a random token per watcher and sends it as `wg` on
+  // every /api/watch poll; registerWatchGen (called synchronously from the
+  // route before any claim attempt) makes the newest token the current
+  // generation. The mail claim then runs ONLY when the request's token still
+  // IS the current generation — so a superseded watcher blocked in its poll
+  // cannot claim mail out from under its successor even if the mail lands
+  // mid-poll. The watcher mirrors this client-side: it re-checks pidfile
+  // ownership before acting on any response, so a claim that slipped through
+  // an old server's pre-generation code is never acted on (exit 0, not 2).
+  // Read-only surfaces (watchInfo, hasWatchWaiter) stay untokened.
+  const watchGens = new Map(); // session_id -> current generation token
+  function registerWatchGen(sid, token) {
+    if (typeof token !== 'string' || !token) return false;
+    if (watchGens.get(sid) !== token) watchGens.set(sid, token);
+    return true;
+  }
+  function isWatchGen(sid, token) {
+    return typeof token === 'string' && token !== '' && watchGens.get(sid) === token;
+  }
+
   function notifyWatchers(sid) {
     for (const fn of [...(watchWaiters.get(sid) ?? [])]) {
       try { fn(); } catch { /* a dead waiter must not break the notifier */ }
@@ -415,9 +436,18 @@ export function createMail(ctx) {
   // `text` is returned RAW, its own frame included ([FLEETDECK ANSWER] …,
   // [FLEETDECK ASSIGNMENT] …, or plain board/session mail) — v2's
   // rewakeMessage is neutral, so each mail must carry its own frame.
+<<<<<<< /tmp/mf-ours
   function claimMail(sid) {
     const now = Date.now();
     const m = q.nextMail.get(sid, now);
+=======
+  // BUG-105: when a generation token is supplied it must still be the current
+  // generation at claim time (registerWatchGen runs first, synchronously, in
+  // the same tick); a superseded watcher's in-flight poll claims nothing.
+  function claimMail(sid, gen = null) {
+    if (gen !== null && !isWatchGen(sid, gen)) return null;
+    const m = q.nextMail.get(sid);
+>>>>>>> /tmp/mf-theirs
     if (!m) return null;
     q.claimMail.run(now + MAIL_CLAIM_LEASE_MS, m.id);
     onMutate();
@@ -536,6 +566,6 @@ export function createMail(ctx) {
     mail, drainMail, ackMail, resolveTargets,
     notifyWatchers, addWatchWaiter, hasWatchWaiter,
     ownedPaneRow, ownedPaneDeliverable, tryOwnedPaneDelivery,
-    claimMail, watchInfo, postMail,
+    claimMail, watchInfo, postMail, registerWatchGen,
   };
 }

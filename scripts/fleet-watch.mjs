@@ -37,11 +37,17 @@
 //   (a) single-flight per session, NEWEST WINS: write own pid to
 //       FLEETDECK_HOME/watch-<sid>.pid, wait 150 ms, re-read — if the file
 //       no longer holds our pid a newer watcher took over and we exit 0.
-//       Ownership is re-checked before every poll, so a superseded older
-//       watcher exits within one poll cycle. The pid file is removed on exit
-//       only while it still holds our own pid (never clobber the successor's).
-//       Best-effort: if two watchers briefly overlap mid-poll, /api/watch's
-//       atomic mail claim still guarantees at-most-once delivery.
+//       Ownership is re-checked before every poll AND before acting on any
+//       poll response (BUG-105 — a successor may have taken over while the
+//       request was blocked), so a superseded older watcher exits within one
+//       poll cycle and never wakes the session. Each watcher also mints a
+//       per-process generation token sent as `wg`: the server registers it
+//       newest-wins and refuses to claim mail for a superseded generation,
+//       closing the residual window where a stale in-flight poll could mark
+//       mail delivered before its successor's first poll landed. The pid
+//       file is removed on exit only while it still holds our own pid (never
+//       clobber the successor's). /api/watch's atomic mail claim still
+//       guarantees at-most-once delivery underneath all of this.
 //   (b) exit 0 immediately when fleetd reports the session offline/ended
 //       (session_alive:false), or when fleetd is unreachable for 3
 //       consecutive polls. Unlike v1, a session with nothing pending is NOT
@@ -66,6 +72,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { resolveHome, resolvePort, resolveBase } from './fleetd/config.mjs';
 
 const PORT = resolvePort();
@@ -169,6 +176,16 @@ try {
 await sleep(150);
 if (!ownsPidFile()) { pidFile = null; process.exit(0); } // a newer watcher took over
 
+// BUG-105: per-watcher generation token, sent as `wg` on every poll. The
+// server registers it NEWEST-WINS before any claim attempt and refuses to
+// mark mail delivered for a poll whose generation has been superseded — so
+// an older watcher blocked in a long poll can no longer claim (and then act
+// on) mail that arrived after its successor took over. On a pre-fix server
+// the param is ignored and the post-response ownership re-check below is the
+// backstop. Unique per PROCESS, not persisted: a minted token that lost the
+// startup race must never resurrect as a later poll's claim.
+const GEN = randomUUID();
+
 let failures = 0;
 const deadline = startedAt + MAX_MS;
 
@@ -180,7 +197,7 @@ while (Date.now() < deadline) {
   let out = null;
   try {
     const res = await fetch(
-      `${BASE}/api/watch?session=${encodeURIComponent(sid)}&hold_ms=${holdMs}`,
+      `${BASE}/api/watch?session=${encodeURIComponent(sid)}&hold_ms=${holdMs}&wg=${encodeURIComponent(GEN)}`,
       {
         headers: TOKEN ? { authorization: `Bearer ${TOKEN}` } : undefined,
         signal: AbortSignal.timeout(holdMs + 5_000),
@@ -195,6 +212,14 @@ while (Date.now() < deadline) {
     continue;
   }
   failures = 0;
+
+  // BUG-105 (belt): ownership was last checked BEFORE this poll blocked — a
+  // successor may have taken over while the request was in flight. Re-check
+  // before acting on ANY response: a superseded watcher never wakes the
+  // session, even if a (pre-fix) server let its claim through. Mail claimed
+  // in that window stays marked delivered and is re-read at the next turn
+  // boundary — never double-woken, never silently lost from the transcript.
+  if (!ownsPidFile()) { pidFile = null; process.exit(0); } // superseded mid-poll
 
   // v2 'mail' (any sender, raw framed text) — and the transitional v1
   // 'answer' shape some in-rollout servers may still send — wake the session
