@@ -512,11 +512,21 @@ const unexpected = sessions.filter(session => session.session_id !== sidA && ses
 if (!unexpected.length) pass('scratch fleet contains only the two smoke workers');
 else fail('scratch fleet contains only the two smoke workers', unexpected.map(s => s.callsign || s.session_id).join(', '));
 
-// 2. conflict recorded on util.js AND test.js
+// 2. conflict recorded on util.js AND test.js, with BOTH workers in each
+// conflict. Exact normalized rel_path membership only: the old unanchored
+// /util\.js/ + /test\.js/ substring checks passed on decoys like
+// not-util.js.bak and contest.js while neither required file had a conflict.
 const conflicts = state.conflicts || [];
 const touchedNames = conflicts.map(c => (c.rel_path || c.file || '')).join(' | ');
-const hasUtil = /util\.js/.test(touchedNames);
-const hasTest = /test\.js/.test(touchedNames);
+const conflictInvolvingBoth = base => conflicts.some(c => {
+  const raw = c.rel_path || c.file || '';
+  const normalized = raw.replace(/\\/g, '/');
+  const exact = normalized === base || normalized.endsWith('/' + base);
+  const participants = Array.isArray(c.sessions) ? c.sessions : [];
+  return exact && participants.includes(sidA) && participants.includes(sidB);
+});
+const hasUtil = conflictInvolvingBoth('util.js');
+const hasTest = conflictInvolvingBoth('test.js');
 if (hasUtil && hasTest) pass('conflict recorded on util.js AND test.js');
 else fail('conflict recorded on util.js AND test.js', 'conflicts seen: ' + (touchedNames || '(none)'));
 
