@@ -1,7 +1,7 @@
 // db.mjs — SQLite store for fleetd (node:sqlite DatabaseSync, WAL mode).
 // All timestamps are ms epoch integers.
 
-import { chmodSync } from 'node:fs';
+import { chmodSync, statSync } from 'node:fs';
 
 // Suppress ONLY the warning raised while node:sqlite itself is imported. WHY:
 // removing `warning` listeners here clobbers handlers installed by launchers,
@@ -371,7 +371,7 @@ function migrate(db) {
     SELECT session_id, prev_callsign, NULL FROM sessions WHERE prev_callsign IS NOT NULL`);
 }
 
-export function openDb(file) {
+export function openDb(file, fsImpl = { chmodSync, statSync }) {
   const db = new DatabaseSync(file);
   db.exec(DDL);
   migrate(db);
@@ -391,11 +391,46 @@ export function openDb(file) {
   // unrelated ./:memory: file if one happened to exist in cwd. Each chmod is also
   // wrapped because the WAL/SHM sidecars are created lazily on first write (and
   // recreated after a checkpoint), so they may be absent right now — ENOENT there
-  // must not become a spurious throw.
+  // must not become a spurious throw. The MAIN file is different: SQLite has
+  // already opened it by now, so it exists, and an unverifiable owner-only mode
+  // there means the declared confidentiality boundary silently degraded (shared
+  // HOME not owned by the daemon UID, permissive pre-created DB, a filesystem
+  // that refuses chmod) while other local users keep read access. Refuse rather
+  // than serve state the contract says is private. (`fsImpl` exists so tests
+  // can simulate a chmod refusal — a real EPERM needs a foreign-owned file,
+  // which an unprivileged test cannot construct.)
   if (file !== ':memory:') {
-    try { chmodSync(file, 0o600); } catch { /* non-file DB / not yet on disk */ }
-    try { chmodSync(`${file}-wal`, 0o600); } catch { /* WAL created lazily; dir mode covers the gap */ }
-    try { chmodSync(`${file}-shm`, 0o600); } catch { /* SHM created lazily; dir mode covers the gap */ }
+    try {
+      fsImpl.chmodSync(file, 0o600);
+      const mode = fsImpl.statSync(file).mode & 0o777;
+      if (mode & 0o077) {
+        throw Object.assign(new Error(`mode still ${mode.toString(8)} after chmod 0600`), { code: 'EMODE' });
+      }
+    } catch (err) {
+      db.close();
+      throw new Error(
+        `fleetd.db owner-only confidentiality could not be established (${err?.code || err?.message || 'unknown error'}); refusing to start with the state database readable by other users`,
+        { cause: err },
+      );
+    }
+    for (const sidecar of [`${file}-wal`, `${file}-shm`]) {
+      // Lazily absent sidecars are expected — ENOENT only. Any OTHER failure
+      // (EPERM on a shared HOME, a mode the stat proves is still permissive)
+      // breaks the same contract on a file that already exists, so refuse too.
+      try {
+        fsImpl.chmodSync(sidecar, 0o600);
+        if (fsImpl.statSync(sidecar).mode & 0o077) {
+          throw Object.assign(new Error('mode still permissive after chmod 0600'), { code: 'EMODE' });
+        }
+      } catch (err) {
+        if (err?.code === 'ENOENT') continue;
+        db.close();
+        throw new Error(
+          `fleetd.db sidecar owner-only confidentiality could not be established (${err?.code || err?.message || 'unknown error'}); refusing to start with the state database readable by other users`,
+          { cause: err },
+        );
+      }
+    }
   }
   return db;
 }
