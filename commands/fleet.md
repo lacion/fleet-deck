@@ -5,7 +5,11 @@ allowed-tools: Bash(curl:*), Bash(cat:*)
 
 ## Fleet state (raw)
 
+<<<<<<< /tmp/mf-ours
 !`PORT=${FLEETDECK_PORT:-4711}; TOKEN=$(cat "${FLEETDECK_HOME:-$HOME/.fleetdeck}/token" 2>/dev/null); curl -sf -m 2 ${TOKEN:+-H "Authorization: Bearer $TOKEN"} "http://127.0.0.1:$PORT/state" || echo FLEET_DAEMON_DOWN`
+=======
+!`PORT=${FLEETDECK_PORT:-4711}; case "$PORT" in ''|*[!0-9]*) PORT=4711;; esac; TOKEN=$(cat "${FLEETDECK_HOME:-$HOME/.fleetdeck}/token" 2>/dev/null); curl -sf -m 2 ${TOKEN:+-H "Authorization: Bearer $TOKEN"} "http://127.0.0.1:$PORT/state" || echo FLEET_DAEMON_DOWN`
+>>>>>>> /tmp/mf-theirs
 
 ## Your task
 
