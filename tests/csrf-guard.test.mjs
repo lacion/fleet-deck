@@ -176,13 +176,69 @@ test('C1: same-origin gate on POSTs, WS upgrades, Host, and Content-Type', async
   });
 
   await t.test('a cross-origin hook is dropped but still answers 200 {} (never wedges a session)', async () => {
+    // BUG-161: the 200 {} alone proves NOTHING — a regression that waves the
+    // forged Origin through still answers the empty hook response (there was
+    // no mail to deliver). Only a live VICTIM proves the request was dropped
+    // before it could touch state: a real session with queued mail and a real
+    // live hold, where a processed UserPromptSubmit would DRAIN the mail and
+    // RELEASE the hold. Assert the byte-observable state survives unchanged.
+    const victim = randomUUID();
+    const cwd = mkdtempSync(path.join(tmpdir(), 'fleetdeck-csrf-'));
+    t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+
+    const start = await postHook(baseUrl, 'SessionStart', loadFixture('session-start', { session_id: victim, cwd }), { token: daemon });
+    assert.equal(start.status, 200, 'setup: the victim session must register');
+
+    // A real pending hold. The response parks (hold-open relay); it settles
+    // later via dismiss() once the CSRF assertions are done.
+    const hold = postHook(baseUrl, 'PermissionRequest', loadFixture('permission-request', { session_id: victim, cwd }), { token: daemon, timeout: 30_000 });
+
+    // Mail queued for the victim (a processed UserPromptSubmit would drain it).
+    const posted = await raw(port, {
+      method: 'POST', path: '/mail',
+      headers: { ...JSON_CT, authorization: `Bearer ${daemon.token}` },
+      parts: [JSON.stringify({ to: victim, from: 'board', text: 'csrf-victim-mail' })],
+    });
+    assert.equal(posted.status, 200, 'setup: the victim must have mail to lose');
+
+    // The attacker: a page on another site forging an authenticated hook FOR
+    // THE VICTIM. crossSiteReason must turn it away before any hook handler,
+    // drain, or expiry runs — while still answering the fail-open dialect.
     const res = await raw(port, {
       method: 'POST', path: '/hook/UserPromptSubmit',
       headers: { ...JSON_CT, origin: 'https://evil.example', authorization: `Bearer ${daemon.token}` },
-      parts: [JSON.stringify({ session_id: 'x', prompt: 'y' })],
+      parts: [JSON.stringify({ session_id: victim, prompt: 'attacker prompt' })],
     });
     assert.equal(res.status, 200);
     assert.deepEqual(JSON.parse(res.body), {});
+
+    // The mail must NOT be drained: the GET /mail drain still finds it.
+    const box = await fetch(`${baseUrl}/mail?session=${victim}`).then(r => r.json());
+    assert.equal(box.mail?.length, 1, `the hostile-origin hook must not drain the victim's mail: ${JSON.stringify(box)}`);
+    assert.equal(box.mail[0].text, 'csrf-victim-mail');
+
+    // The hold must NOT be released: the question is still pending and held.
+    const state = await fetch(`${baseUrl}/state`).then(r => r.json());
+    const qrow = state.questions.find(q => q.session_id === victim);
+    assert.ok(qrow, 'the victim hold must still exist');
+    assert.equal(qrow.status, 'pending', 'a dropped hook must not settle the victim hold');
+    assert.equal(qrow.held, true, 'a dropped hook must not release the live hold');
+    assert.equal(state.mail_meta[victim].queued, 0, 'the drain above, not the hostile hook, consumed the mail');
+
+    // The forged session_id must NOT be upgraded to a card of its own.
+    assert.equal(state.sessions.filter(s => s.session_id === victim).length, 1,
+      'no second card may appear under the forged session id');
+
+    // Teardown: the victim card is parked in needs-you (the live hold) —
+    // releasing it keeps this daemon's state clean for the subtests below.
+    const answer = await raw(port, {
+      method: 'POST', path: `/api/questions/${qrow.id}/dismiss`,
+      headers: { ...JSON_CT, authorization: `Bearer ${daemon.token}` },
+      parts: ['{}'],
+    });
+    assert.equal(answer.status, 200, `dismiss must release the victim hold: ${answer.body}`);
+    const settled = await hold;
+    assert.deepEqual(settled.json, {}, 'the dismissed hold fails open');
   });
 
   await t.test('DNS rebinding: a foreign Host is refused on a data route (403)', async () => {
