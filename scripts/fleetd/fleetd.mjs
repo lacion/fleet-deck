@@ -266,17 +266,34 @@ if (TOKEN) {
   if (onDisk === null || onDisk.trim() !== TOKEN) {
     try {
       // mode 0o600 applies on create; an existing (stale) file is rewritten in
-      // place — no 'wx', we INTEND to replace a differing token — then chmod in
-      // case it pre-existed with looser permissions (writeFileSync ignores mode
-      // on an existing file). A persistence failure is fatal: a file-only client
-      // that cannot read the current token is silently locked out otherwise.
+      // place — no 'wx', we INTEND to replace a differing token — and the chmod
+      // below covers a file that pre-existed with looser permissions
+      // (writeFileSync ignores mode on an existing file). A persistence failure
+      // is fatal: a file-only client that cannot read the current token is
+      // silently locked out otherwise.
       fs.writeFileSync(TOKEN_FILE, TOKEN, { encoding: 'utf8', mode: 0o600 });
-      try { fs.chmodSync(TOKEN_FILE, 0o600); } catch { /* best-effort tighten */ }
     } catch (err) {
       if (TOKEN_REQUIRED) {
         startupFatal(`cannot persist FLEETDECK_HOME/token (${err?.code || err?.message || 'unknown error'})`);
       }
       console.error(`fleetd: WARNING: cannot persist FLEETDECK_HOME/token (${err?.code || err?.message || 'unknown error'}) — hook shims and the gated loopback routes will not authenticate this boot`);
+    }
+  }
+  // TIGHTEN THE TOKEN FILE ON EVERY BOOT, not only when it was (re)written: a
+  // matching file keeps its old mode, so an operator-preprovisioned 0644 token
+  // in a group/other-traversable HOME stays readable by another local account —
+  // a cross-UID bearer leak against the documented owner-only contract. (A file
+  // this boot created already got 0600 from the write paths above; umask can
+  // only strip bits.) When the token is REQUIRED, a chmod refusal is fatal —
+  // the owner-only contract cannot be honored — while default loopback degrades
+  // to a warning, mirroring the best-effort HOME chmod at startup.
+  if (onDisk !== null) {
+    try { fs.chmodSync(TOKEN_FILE, 0o600); } catch (err) {
+      const why = err?.code || err?.message || 'unknown error';
+      if (TOKEN_REQUIRED) {
+        startupFatal(`cannot tighten FLEETDECK_HOME/token to owner-only 0600 (${why})`);
+      }
+      console.error(`fleetd: WARNING: cannot tighten FLEETDECK_HOME/token to owner-only 0600 (${why}) — the token stays readable by other local accounts this boot`);
     }
   }
 }

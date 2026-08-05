@@ -10,7 +10,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, existsSync, mkdtempSync, rmSync, statSync } from 'node:fs';
+import { readFileSync, existsSync, mkdtempSync, rmSync, statSync, writeFileSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import WebSocket from 'ws';
@@ -40,6 +40,23 @@ test('the token is minted 0600 on every boot, and the file matches the daemon', 
   assert.equal(mode, 0o600, 'token file is owner-only');
   assert.equal(readFileSync(file, 'utf8').trim(), daemon.token, 'handle surfaces the same token');
   assert.ok(daemon.token.length >= 32, 'token has real entropy');
+});
+
+test('a matching preexisting token file is tightened to 0600', async (t) => {
+  // BUG-117: an operator may preprovision the correct token — e.g. with the
+  // documented FLEETDECK_TOKEN contract in mind — at a permissive mode. The
+  // daemon used to chmod only on (re)write, so a matching 0644 file stayed
+  // readable by other local accounts. Boot must tighten it unconditionally.
+  const home = scratchHome();
+  const file = path.join(home, 'token');
+  writeFileSync(file, '0123456789abcdef0123456789abcdef', { encoding: 'utf8' });
+  chmodSync(file, 0o644);
+  const daemon = await startDaemon({ home });
+  t.after(async () => { await daemon.stop({ keepHome: true }); rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+
+  const mode = statSync(file).mode & 0o777;
+  assert.equal(mode, 0o600, 'preexisting 0644 token file is tightened to owner-only');
+  assert.equal(readFileSync(file, 'utf8').trim(), daemon.token, 'token content is unchanged by the tightening');
 });
 
 test('gateway_* settings writes require the bearer; plain settings keys stay open', async (t) => {
