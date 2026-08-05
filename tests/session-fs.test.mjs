@@ -98,6 +98,20 @@ test('git session list/read/search is typed, literal, ignored-aware, and exclude
   for (const q of ['-e', '((', 'a.*b']) {
     const adversarial = await getJson(endpoint(daemon.baseUrl, 'fs-session', 'search', `?q=${encodeURIComponent(q)}`));
     assert.equal(adversarial.status, 200, `${q} is a literal query, not an option or regex`);
+    assert.equal(adversarial.json.backend, 'git');
+    assert.deepEqual(adversarial.json.hits, [], `${q} matches nothing in the seeded tree`);
+  }
+
+  writeFileSync(path.join(repo.worktree, 'adversarial.txt'),
+    'aXXb regex-only cousin\na.*b literal needle\n(( literal parens\n-e literal dash e\n');
+  const literalHits = { '-e': 4, '((': 3, 'a.*b': 2 };
+  for (const [q, line] of Object.entries(literalHits)) {
+    const literal = await getJson(endpoint(daemon.baseUrl, 'fs-session', 'search', `?q=${encodeURIComponent(q)}`));
+    assert.equal(literal.status, 200, `${q} still resolves after the fixture lands`);
+    assert.equal(literal.json.backend, 'git');
+    assert.equal(literal.json.hits.length, 1, `${q} matches its literal line exactly once`);
+    assert.deepEqual(literal.json.hits[0].path, 'adversarial.txt');
+    assert.equal(literal.json.hits[0].line, line);
   }
 });
 
