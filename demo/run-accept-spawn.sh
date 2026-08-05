@@ -12,6 +12,7 @@ FLEETDECK_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PROJECT_DIR="$SCRIPT_DIR/project"
 SESSIONSTART_SCRIPT="$FLEETDECK_ROOT/scripts/fleet-sessionstart.mjs"
 WATCH_SCRIPT="$FLEETDECK_ROOT/scripts/fleet-watch.mjs"
+FLEET_HOOK_SCRIPT="$FLEETDECK_ROOT/scripts/fleet-hook.mjs"
 FLEETDECK_PORT=4711
 SCRATCH_HOME="$FLEETDECK_ROOT/.fleetdeck-test"
 BASE="http://127.0.0.1:$FLEETDECK_PORT"
@@ -207,36 +208,43 @@ mkdir -p "$SCRATCH_HOME" "$PROJECT_DIR/.claude"
 rm -f "$OUTPUT_FILE"
 
 # Regenerate the proven local demo hook wiring. The Stop command hook keeps
-# the v1.1 asyncRewake fields verbatim from hooks/hooks.json. This known
-# baseline is intentionally left in place after the test: cleanup uses no git
-# command and therefore cannot overwrite unrelated working-tree changes.
+# the v1.1 asyncRewake fields verbatim from hooks/hooks.json. Every other
+# hook uses the current checkout's authenticated command shim: native HTTP
+# hooks cannot attach the bearer token required since 0.16.0, and the
+# daemon's legacy unauthenticated /hook/* refusal would silently swallow
+# every event. enabledPlugins disables any installed Fleet Deck plugin so
+# its duplicate hooks can never mask the checkout under test with cached
+# code. This known baseline is intentionally left in place after the test:
+# cleanup uses no git command and therefore cannot overwrite unrelated
+# working-tree changes.
 cat > "$PROJECT_DIR/.claude/settings.json" <<EOF
 {
+  "enabledPlugins": { "fleetdeck@fleetdeck": false },
   "hooks": {
     "SessionStart": [
       { "hooks": [{ "type": "command", "command": "node $SESSIONSTART_SCRIPT", "timeout": 15 }] }
     ],
     "UserPromptSubmit": [
-      { "hooks": [{ "type": "http", "url": "$BASE/hook/UserPromptSubmit", "timeout": 3 }] }
+      { "hooks": [{ "type": "command", "command": "node $FLEET_HOOK_SCRIPT UserPromptSubmit", "timeout": 3 }] }
     ],
     "PostToolUse": [
-      { "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash", "hooks": [{ "type": "http", "url": "$BASE/hook/PostToolUse", "timeout": 3 }] }
+      { "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash", "hooks": [{ "type": "command", "command": "node $FLEET_HOOK_SCRIPT PostToolUse", "timeout": 3 }] }
     ],
     "PreToolUse": [
-      { "matcher": "AskUserQuestion", "hooks": [{ "type": "http", "url": "$BASE/hook/AskUserQuestion", "timeout": 65 }] }
+      { "matcher": "AskUserQuestion", "hooks": [{ "type": "command", "command": "node $FLEET_HOOK_SCRIPT AskUserQuestion", "timeout": 65 }] }
     ],
     "PermissionRequest": [
-      { "hooks": [{ "type": "http", "url": "$BASE/hook/PermissionRequest", "timeout": 65 }] }
+      { "hooks": [{ "type": "command", "command": "node $FLEET_HOOK_SCRIPT PermissionRequest", "timeout": 65 }] }
     ],
     "Elicitation": [
-      { "hooks": [{ "type": "http", "url": "$BASE/hook/Elicitation", "timeout": 65 }] }
+      { "hooks": [{ "type": "command", "command": "node $FLEET_HOOK_SCRIPT Elicitation", "timeout": 65 }] }
     ],
     "Notification": [
-      { "hooks": [{ "type": "http", "url": "$BASE/hook/Notification", "timeout": 3, "async": true }] }
+      { "hooks": [{ "type": "command", "command": "node $FLEET_HOOK_SCRIPT Notification", "timeout": 3, "async": true }] }
     ],
     "Stop": [
       { "hooks": [
-        { "type": "http", "url": "$BASE/hook/Stop", "timeout": 5 },
+        { "type": "command", "command": "node $FLEET_HOOK_SCRIPT Stop", "timeout": 5 },
         {
           "type": "command",
           "command": "node $WATCH_SCRIPT",
@@ -248,10 +256,10 @@ cat > "$PROJECT_DIR/.claude/settings.json" <<EOF
       ] }
     ],
     "SessionEnd": [
-      { "hooks": [{ "type": "http", "url": "$BASE/hook/SessionEnd", "timeout": 3, "async": true }] }
+      { "hooks": [{ "type": "command", "command": "node $FLEET_HOOK_SCRIPT SessionEnd", "timeout": 3, "async": true }] }
     ],
     "FileChanged": [
-      { "hooks": [{ "type": "http", "url": "$BASE/hook/FileChanged", "timeout": 3, "async": true }] }
+      { "hooks": [{ "type": "command", "command": "node $FLEET_HOOK_SCRIPT FileChanged", "timeout": 3, "async": true }] }
     ]
   }
 }

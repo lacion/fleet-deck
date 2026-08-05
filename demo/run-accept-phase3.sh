@@ -15,6 +15,7 @@ FLEETDECK_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PROJECT_DIR="$SCRIPT_DIR/project"
 DEMO_LOGS="$SCRIPT_DIR/demo-logs"
 SESSIONSTART_SCRIPT="$FLEETDECK_ROOT/scripts/fleet-sessionstart.mjs"
+FLEET_HOOK_SCRIPT="$FLEETDECK_ROOT/scripts/fleet-hook.mjs"
 FLEETDECK_PORT="${FLEETDECK_PORT:-4711}"
 SCRATCH_HOME="${FLEETDECK_HOME_OVERRIDE:-$FLEETDECK_ROOT/.fleetdeck-test}"
 BASE="http://127.0.0.1:$FLEETDECK_PORT"
@@ -219,35 +220,40 @@ rm -rf "$SCRATCH_HOME"; mkdir -p "$SCRATCH_HOME" "$DEMO_LOGS"
 rm -f "$DEMO_LOGS"/p3-*.json "$DEMO_LOGS"/p3-*.err "$PROJECT_DIR/fleet-perm-proof.txt"
 
 # Same proven wiring as run-smoke.sh (incl. PermissionRequest/Elicitation 65s).
+# Every hook uses the current checkout's authenticated command shim. Native
+# HTTP hooks cannot attach the bearer token required since 0.16.0, and the
+# daemon's legacy unauthenticated /hook/* refusal would silently swallow every
+# event, so a tokenless wiring here tests nothing but the refusal path.
 cat > "$PROJECT_DIR/.claude/settings.json" <<EOF
 {
+  "enabledPlugins": { "fleetdeck@fleetdeck": false },
   "hooks": {
     "SessionStart": [
       { "hooks": [{ "type": "command", "command": "node $SESSIONSTART_SCRIPT", "timeout": 15 }] }
     ],
     "UserPromptSubmit": [
-      { "hooks": [{ "type": "http", "url": "$BASE/hook/UserPromptSubmit", "timeout": 3 }] }
+      { "hooks": [{ "type": "command", "command": "node $FLEET_HOOK_SCRIPT UserPromptSubmit", "timeout": 3 }] }
     ],
     "PostToolUse": [
-      { "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash", "hooks": [{ "type": "http", "url": "$BASE/hook/PostToolUse", "timeout": 3 }] }
+      { "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash", "hooks": [{ "type": "command", "command": "node $FLEET_HOOK_SCRIPT PostToolUse", "timeout": 3 }] }
     ],
     "PreToolUse": [
-      { "matcher": "AskUserQuestion", "hooks": [{ "type": "http", "url": "$BASE/hook/AskUserQuestion", "timeout": 65 }] }
+      { "matcher": "AskUserQuestion", "hooks": [{ "type": "command", "command": "node $FLEET_HOOK_SCRIPT AskUserQuestion", "timeout": 65 }] }
     ],
     "PermissionRequest": [
-      { "hooks": [{ "type": "http", "url": "$BASE/hook/PermissionRequest", "timeout": 65 }] }
+      { "hooks": [{ "type": "command", "command": "node $FLEET_HOOK_SCRIPT PermissionRequest", "timeout": 65 }] }
     ],
     "Elicitation": [
-      { "hooks": [{ "type": "http", "url": "$BASE/hook/Elicitation", "timeout": 65 }] }
+      { "hooks": [{ "type": "command", "command": "node $FLEET_HOOK_SCRIPT Elicitation", "timeout": 65 }] }
     ],
     "Notification": [
-      { "hooks": [{ "type": "http", "url": "$BASE/hook/Notification", "timeout": 3, "async": true }] }
+      { "hooks": [{ "type": "command", "command": "node $FLEET_HOOK_SCRIPT Notification", "timeout": 3, "async": true }] }
     ],
     "Stop": [
-      { "hooks": [{ "type": "http", "url": "$BASE/hook/Stop", "timeout": 5 }] }
+      { "hooks": [{ "type": "command", "command": "node $FLEET_HOOK_SCRIPT Stop", "timeout": 5 }] }
     ],
     "SessionEnd": [
-      { "hooks": [{ "type": "http", "url": "$BASE/hook/SessionEnd", "timeout": 3, "async": true }] }
+      { "hooks": [{ "type": "command", "command": "node $FLEET_HOOK_SCRIPT SessionEnd", "timeout": 3, "async": true }] }
     ]
   }
 }
@@ -261,12 +267,17 @@ bad() { echo "FAIL: $1${2:+ -- $2}"; FAIL=$((FAIL+1)); }
 # ============================================== PART 1: permission relay
 # NO --dangerously-skip-permissions: the Bash call needs a permission
 # decision, which must come from the board via the held PermissionRequest.
+# --plugin-dir "$FLEETDECK_ROOT": a --plugin-dir plugin shadows an installed
+# marketplace plugin of the same name for the session, so any installed
+# Fleet Deck plugin's duplicate hooks can never mask the checkout under test
+# with cached code (and the settings.json above disables it outright).
 S1=$(node -e 'console.log(crypto.randomUUID())')
 env "${CLAUDE_ENV_SCRUB[@]}" \
   FLEETDECK_HOME="$SCRATCH_HOME" FLEETDECK_PORT="$FLEETDECK_PORT" \
   FLEETDECK_TMUX_SOCKET="$FLEETDECK_TMUX_SOCKET" \
   timeout 240 claude -p "Use the Bash tool to create a file named fleet-perm-proof.txt containing exactly the text FLEET_PERMISSION_OK (e.g. printf 'FLEET_PERMISSION_OK' > fleet-perm-proof.txt), then cat it and report its contents. Then stop." \
   --session-id "$S1" --max-turns 6 --permission-mode default \
+  --plugin-dir "$FLEETDECK_ROOT" \
   --output-format json > "$DEMO_LOGS/p3-perm.json" 2> "$DEMO_LOGS/p3-perm.err" &
 P1=$!
 echo "T+0 permission-relay session launched sid=$S1"
@@ -306,6 +317,7 @@ env "${CLAUDE_ENV_SCRUB[@]}" \
   FLEETDECK_TMUX_SOCKET="$FLEETDECK_TMUX_SOCKET" \
   timeout 240 claude -p "You need one decision from the human before doing anything: should the project use bcrypt or argon2 for password hashing? Do not decide yourself and do not do any other work. End your reply with that single question addressed to me." \
   --session-id "$S2" --max-turns 4 --dangerously-skip-permissions \
+  --plugin-dir "$FLEETDECK_ROOT" \
   --output-format json > "$DEMO_LOGS/p3-freeform.json" 2> "$DEMO_LOGS/p3-freeform.err"
 echo "freeform session first run done rc=$? sid=$S2"
 
@@ -331,6 +343,7 @@ env "${CLAUDE_ENV_SCRUB[@]}" \
   FLEETDECK_TMUX_SOCKET="$FLEETDECK_TMUX_SOCKET" \
   timeout 240 claude -p --resume "$S2" "Continue based on my answer. State which algorithm you will use and why, in one sentence." \
   --max-turns 4 --dangerously-skip-permissions \
+  --plugin-dir "$FLEETDECK_ROOT" \
   --output-format json > "$DEMO_LOGS/p3-resume.json" 2> "$DEMO_LOGS/p3-resume.err"
 echo "freeform session resume done rc=$?"
 
