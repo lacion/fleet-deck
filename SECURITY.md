@@ -40,13 +40,9 @@ it. A proof-of-concept web page or `curl` is worth a thousand words.
 
 ## Supported versions
 
-| Version | Supported |
-| --- | --- |
-| 0.16.x  | ✅ |
-| < 0.16  | ❌ |
-
-Fleet Deck is pre-1.0. Only the latest release gets security fixes — if you're
-behind, the fix is to upgrade.
+Only the latest published release is supported. Fleet Deck is pre-1.0 and
+there are no backports: security fixes ship on the current release line only,
+so if you're behind, the fix is to upgrade.
 
 ## Threat model / scope
 
