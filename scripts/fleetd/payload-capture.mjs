@@ -47,7 +47,12 @@ const REDACTED = '[redacted]';
 // 'monotonic' all survive. camelCase carries no such separator, so isSecretKey
 // first rewrites humps to '_'; that is precisely what lets 'apiKey',
 // 'authToken' and 'accessKeyId' redact while the negatives above still don't.
-const SECRET_KEY_RE = /(?:^|[_\-.])(token|secret|password|passwd|passphrase|api[_-]?key|apikey|auth(orization)?|bearer|cookie|credential|private[_-]?key|access[_-]?key|client[_-]?secret)(?:$|[_\-.])/i;
+// The trailing `s?` admits the plural/container forms real env and tool JSON
+// actually use — 'api_keys', 'tokens', 'credentials', 'client_secrets',
+// 'apiKeys', 'TOKENS' — which carry the same live credentials as their
+// singulars. It cannot resurrect a negative: 'tokenizer' would need the `s` to
+// sit mid-word, and no stem is one letter short of an innocent word.
+const SECRET_KEY_RE = /(?:^|[_\-.])(token|secret|password|passwd|passphrase|api[_-]?key|apikey|auth(orization)?|bearer|cookie|credential|private[_-]?key|access[_-]?key|client[_-]?secret)s?(?:$|[_\-.])/i;
 
 function isSecretKey(key) {
   const normalized = String(key)

@@ -58,6 +58,39 @@ test('secret-looking keys redact whole and are never descended into; siblings su
   }
 });
 
+test('plural and camelCase-plural secret container keys redact like their singulars', (t) => {
+  const { payload, raw } = captureOnce(t, {
+    tool_input: {
+      env: {
+        api_keys: 'a'.repeat(20),
+        tokens: 'b'.repeat(20),
+        secrets: 'c'.repeat(20),
+        credentials: 'd'.repeat(20),
+        private_keys: 'e'.repeat(20),
+        access_keys: 'f'.repeat(20),
+        client_secrets: 'g'.repeat(20),
+        API_KEYS: 'h'.repeat(20),
+        TOKENS: 'i'.repeat(20),
+        passwords: 'j'.repeat(20),
+        region: 'us-east-1',
+      },
+      apiKeys: 'k'.repeat(20),        // camelCase plural — normalizes to api_Keys
+      clientSecrets: 'l'.repeat(20),
+    },
+  });
+  const env = payload.tool_input.env;
+  for (const key of ['api_keys', 'tokens', 'secrets', 'credentials', 'private_keys',
+    'access_keys', 'client_secrets', 'API_KEYS', 'TOKENS', 'passwords']) {
+    assert.equal(env[key], '[redacted]', `${key} must redact`);
+  }
+  assert.equal(payload.tool_input.apiKeys, '[redacted]');
+  assert.equal(payload.tool_input.clientSecrets, '[redacted]');
+  assert.equal(env.region, 'us-east-1', 'sibling non-secret key keeps its value');
+  for (const leak of ['aaaaa', 'bbbbb', 'kkkkk', 'lllll']) {
+    assert.equal(raw.includes(leak), false, `${leak} must not appear on disk`);
+  }
+});
+
 test('innocent keys that merely contain a secret substring survive verbatim', (t) => {
   const { payload } = captureOnce(t, {
     tokenizer: 'gpt2',
