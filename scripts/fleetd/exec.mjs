@@ -224,14 +224,29 @@ export function gitStderrDetail(text, { secrets = [] } = {}) {
 // Resolve the repository's primary integration ref, built on execFileP above.
 // Prefer origin/HEAD, then conventional remote main/master, and only fall back
 // to a local branch when the repo has no matching remote-tracking ref (a repo
-// with no remote) — the caller flags that as local-only. Shared by the worktree
-// inspector and repo-mode spawns so the base is computed exactly one way.
+// with no remote) — the caller flags that as local-only. For the local fallback
+// the primary branch is DERIVED, not guessed: `git worktree list --porcelain`
+// lists the main worktree first, and its `branch refs/heads/<name>` entry names
+// the integration branch whatever it is called — trunk, develop, any custom
+// default — so a no-remote repo on a non-conventional name still resolves
+// instead of losing branch/dirty/ahead evidence. Conventional main/master stay
+// as the last resort for a main worktree in detached HEAD. Shared by the
+// worktree inspector and repo-mode spawns so the base is computed exactly one
+// way.
 export async function baseBranch(worktree) {
   const head = await execFileP('git', ['-C', worktree, 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], { timeout: 5_000 });
   if (head.ok && head.out.trim()) return { ref: head.out.trim(), local: false };
   for (const name of ['main', 'master']) {
     const remote = await execFileP('git', ['-C', worktree, 'show-ref', '--verify', '--quiet', `refs/remotes/origin/${name}`], { timeout: 5_000 });
     if (remote.ok) return { ref: `origin/${name}`, local: false };
+  }
+  const trees = await execFileP('git', ['-C', worktree, 'worktree', 'list', '--porcelain'], { timeout: 5_000 });
+  if (trees.ok) {
+    // Entries are blank-line-separated; the main worktree is always first.
+    // A bare or detached main worktree has no `branch` line and falls through.
+    const first = trees.out.split('\n\n', 1)[0];
+    const branch = /^branch refs\/heads\/(.+)$/m.exec(first);
+    if (branch && branch[1].trim()) return { ref: branch[1].trim(), local: true };
   }
   for (const name of ['main', 'master']) {
     const local = await execFileP('git', ['-C', worktree, 'show-ref', '--verify', '--quiet', `refs/heads/${name}`], { timeout: 5_000 });

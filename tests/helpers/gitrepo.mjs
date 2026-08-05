@@ -40,7 +40,10 @@ export function makeRepoWithWorktree({ repoName = 'fleetdeck-repo-test', branch 
   const root = path.join(base, repoName);
   mkdirSync(root, { recursive: true });
 
-  git(['init', '-q'], root);
+  // -b main pins the initial branch: bare `git init` inherits the host's
+  // init.defaultBranch (or git's built-in default), so tests downstream of
+  // this fixture would pass or fail with the platform.
+  git(['init', '-q', '-b', 'main'], root);
   git(['config', 'user.email', 'test@fleetdeck.local'], root);
   git(['config', 'user.name', 'Fleet Deck Tests'], root);
   writeFileSync(path.join(root, 'shared.js'), '// seed\nmodule.exports = {};\n');
