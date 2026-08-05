@@ -182,6 +182,14 @@ function canonFile(p) {
 // (repo_id, repo-relative path); absolute path fallback outside git.
 // `session` (a card row) lets us skip the subprocess when the file sits inside
 // the session's own worktree — the common case.
+// Containment predicate for a path relative to a tree root: the file sits
+// inside the tree unless the relative path escapes upward. Only the `..`
+// segment itself escapes — a legitimate root file whose name merely starts
+// with two dots (`..config`, `...hidden`) is still inside the tree.
+function insideTree(rel) {
+  return rel !== '' && rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel);
+}
+
 export function ledgerKey(absPath, session) {
   absPath = canonFile(absPath);
   // Fast path: file inside the session's own git worktree (cache hit, no
@@ -189,14 +197,14 @@ export function ledgerKey(absPath, session) {
   // session must fall through to the absolute-path key like everyone else.
   if (session?.worktree && session.repo_id && deriveRepo(session.cwd).is_git) {
     const rel = path.relative(session.worktree, absPath);
-    if (rel && !rel.startsWith('..') && !path.isAbsolute(rel)) {
+    if (insideTree(rel)) {
       return { repo_id: session.repo_id, rel_path: rel, worktree: session.worktree };
     }
   }
   const repo = deriveRepo(path.dirname(absPath)); // cached per directory
   if (repo.is_git) {
     const rel = path.relative(repo.worktree, absPath);
-    if (rel && !rel.startsWith('..') && !path.isAbsolute(rel)) {
+    if (insideTree(rel)) {
       return { repo_id: repo.repo_id, rel_path: rel, worktree: repo.worktree };
     }
   }

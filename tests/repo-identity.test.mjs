@@ -20,12 +20,16 @@ import { loadFixture } from './helpers/fixtures.mjs';
 <<<<<<< /tmp/mf-ours
 import { makeRepoWithWorktree, makePlainDir } from './helpers/gitrepo.mjs';
 <<<<<<< /tmp/mf-ours
+<<<<<<< /tmp/mf-ours
 import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 =======
 import { deriveRepo, branchOf } from '../scripts/fleetd/repo-identity.mjs';
 >>>>>>> /tmp/mf-theirs
 =======
 import { makeRepoWithWorktree, makePlainDir, makeSeparateGitDirRepo } from './helpers/gitrepo.mjs';
+>>>>>>> /tmp/mf-theirs
+=======
+import { ledgerKey } from '../scripts/fleetd/repo-identity.mjs';
 >>>>>>> /tmp/mf-theirs
 
 function findSession(state, sid) {
@@ -98,6 +102,7 @@ test('two sessions in the same worktree colliding is severity=warning', async (t
   assert.equal(conflict.severity, 'warning', 'same-worktree collision should be severity=warning');
 });
 
+<<<<<<< /tmp/mf-ours
 test('edits through a symlinked directory alias collide with edits to the real path (BUG-127)', async (t) => {
   const daemon = await startDaemon();
   const repo = makeRepoWithWorktree({ repoName: 'fleetdeck-symlink-test' });
@@ -129,6 +134,58 @@ test('edits through a symlinked directory alias collide with edits to the real p
   const hso = secondTouch.json?.hookSpecificOutput;
   assert.ok(hso, 'editing the same inode through a symlinked alias must still whisper');
   assert.ok(hso.additionalContext.includes(callsignA), 'whisper should name the rival by callsign');
+=======
+test('root files named with leading dots (`..config`, `...hidden`) still key repo-relatively, so cross-worktree edits collide', async (t) => {
+  const daemon = await startDaemon();
+  const repo = makeRepoWithWorktree({ repoName: 'fleetdeck-dotfile-test' });
+  t.after(async () => { await daemon.stop(); repo.cleanup(); });
+
+  const sidRoot = randomUUID();
+  const sidWt = randomUUID();
+
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sidRoot, cwd: repo.root }), { token: daemon });
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sidWt, cwd: repo.worktree }), { token: daemon });
+
+  // Root session edits ..config through the worktree fast path; worktree
+  // session edits the same logical file through the directory-lookup path.
+  // Both must land on (repo_id, '..config'), not two different absolute keys.
+  await postHook(daemon.baseUrl, 'PostToolUse', loadFixture('post-tool-use-edit', { token: daemon, session_id: sidRoot, cwd: repo.root }, {
+    tool_input: { file_path: path.join(repo.root, '..config'), old_string: 'a', new_string: 'b' },
+  }), { token: daemon });
+  const res = await postHook(daemon.baseUrl, 'PostToolUse', loadFixture('post-tool-use-edit', { token: daemon, session_id: sidWt, cwd: repo.worktree }, {
+    tool_input: { file_path: path.join(repo.worktree, '..config'), old_string: 'a', new_string: 'c' },
+  }), { token: daemon });
+  assert.ok(res.json?.hookSpecificOutput, 'editing ..config from another worktree should whisper');
+
+  const state = (await getJson(`${daemon.baseUrl}/state`)).json;
+  const conflict = findConflictFor(state, '..config');
+  assert.ok(conflict, 'conflict on ..config should be recorded');
+  assert.equal(conflict.severity, 'info', 'cross-worktree collision on ..config should be severity=info');
+  assert.equal(conflict.rel_path, '..config', 'ledger should keep the repo-relative name, not an absolute fallback');
+});
+
+test('unit: ledgerKey keeps dot-leading root files repo-relative; real parent escapes still fall back to absolute keys', async (t) => {
+  const repo = makeRepoWithWorktree({ repoName: 'fleetdeck-ledgerkey-test' });
+  t.after(() => { repo.cleanup(); });
+
+  const session = { cwd: repo.root, worktree: repo.root, repo_id: repo.gitCommonDir };
+
+  assert.deepEqual(
+    ledgerKey(path.join(repo.root, '..config'), session),
+    { repo_id: repo.gitCommonDir, rel_path: '..config', worktree: repo.root },
+    'a root file named ..config is inside the tree, not a parent escape',
+  );
+  assert.deepEqual(
+    ledgerKey(path.join(repo.root, '...hidden'), session),
+    { repo_id: repo.gitCommonDir, rel_path: '...hidden', worktree: repo.root },
+    'a root file named ...hidden is inside the tree, not a parent escape',
+  );
+  assert.deepEqual(
+    ledgerKey(path.join(path.dirname(repo.root), '..config'), session),
+    { repo_id: '', rel_path: path.join(path.dirname(repo.root), '..config'), worktree: null },
+    'a file that truly escapes upward must still fall back to an absolute key',
+  );
+>>>>>>> /tmp/mf-theirs
 });
 
 test('a non-git cwd falls back to repo_id = cwd', async (t) => {
