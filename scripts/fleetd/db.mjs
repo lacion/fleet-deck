@@ -51,7 +51,9 @@ CREATE TABLE IF NOT EXISTS sessions (
   archived_at       INTEGER,
   ticket            TEXT,               -- current Jira key (raven-PROJ-123's PROJ-123) or NULL
   ticket_source     TEXT,               -- 'branch' | 'manual'; NULL = never set (auto path still open)
-  prev_callsign     TEXT,               -- birth callsign, write-once on the FIRST rename (stale-ref anchor for mail)
+  prev_callsign     TEXT,               -- birth callsign, write-once on the FIRST rename (stale-ref anchor for mail);
+                                        -- the anchor never moves, even when a rename gives the slot a new owner
+                                        -- (a ticket-clear revert writes the lineage's birth name, not the dropped one)
   -- 0.7.0 Move-to-tmux (adopt): three additive columns, all NULL for pre-0.7.0
   -- rows (never armed, never proven-ended). adopt_armed_until stores the arm
   -- DEADLINE (ms epoch) so a consumer just checks it against now() in JS --
@@ -214,6 +216,21 @@ CREATE TABLE IF NOT EXISTS plans (
 );
 CREATE INDEX IF NOT EXISTS idx_plans_status ON plans(status);
 CREATE INDEX IF NOT EXISTS idx_plans_question ON plans(question_id);
+-- Alias table (BUG-107): every callsign a card has ever worn, in the order it
+-- wore it. prev_callsign is ONE slot — a ticket-clear revert used to overwrite
+-- the birth-name anchor with the dropped ticketed name, and the next rename
+-- then permanently forgot the SessionStart callsign. Every rename INSERT OR
+-- IGNOREs the outgoing name here (idempotent), and mail/assign/command target
+-- resolution falls back to this set after current names and the anchor, so a
+-- supported ticket/name/clear sequence can never orphan a name a peer or an
+-- automation is still using.
+CREATE TABLE IF NOT EXISTS session_aliases (
+  session_id TEXT,
+  callsign   TEXT,
+  at         INTEGER,                   -- when this card stopped wearing the name
+  PRIMARY KEY (session_id, callsign)
+);
+CREATE INDEX IF NOT EXISTS idx_aliases_callsign ON session_aliases(callsign);
 `;
 
 // Additive schema migration: DBs created before the agents-cli ingest
@@ -345,6 +362,13 @@ function migrate(db) {
   if (spawnCols.length && !spawnCols.includes('fail_detail')) {
     db.exec('ALTER TABLE spawns ADD COLUMN fail_detail TEXT');
   }
+  // BUG-107 alias-table backfill for pre-existing rows: the current callsign
+  // and the write-once prev_callsign anchor are the two names a row provably
+  // still answers to. INSERT OR IGNORE makes re-runs free.
+  db.exec(`INSERT OR IGNORE INTO session_aliases (session_id, callsign, at)
+    SELECT session_id, callsign, NULL FROM sessions WHERE callsign IS NOT NULL`);
+  db.exec(`INSERT OR IGNORE INTO session_aliases (session_id, callsign, at)
+    SELECT session_id, prev_callsign, NULL FROM sessions WHERE prev_callsign IS NOT NULL`);
 }
 
 export function openDb(file) {

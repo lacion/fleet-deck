@@ -18,10 +18,12 @@ export function createCommands(ctx) {
   // later branch switch must not re-ticket a session a human deliberately
   // cleared. Revert to the birth callsign when one was recorded AND is still
   // free; if it was reissued to a newer session, keep the current name rather
-  // than collide. On revert the DROPPED ticketed name moves into prev_callsign
-  // (never nulled): peers' briefs and the ticker still reference it, so it must
-  // stay mail-routable — the row holds the same two-name set as before the
-  // clear (columns merely swap), so no other session's uniqueness changes.
+  // than collide. BUG-107: on revert the birth name moves back into CALLSIGN
+  // and prev_callsign becomes NULL — it is the write-once stale-ref ANCHOR,
+  // never a scratch slot. Keeping the dropped ticketed name there (the old
+  // "columns merely swap" behaviour) meant the very next rename re-anchored on
+  // that intermediate alias and permanently forgot the SessionStart callsign.
+  // The dropped name stays routable via the alias table instead.
   function clearTicket(sid) {
     const c = q.getSession.get(sid);
     if (!c || c.ended_at != null) return { ok: false, reason: 'no live session for that target' };
@@ -29,7 +31,8 @@ export function createCommands(ctx) {
     let result = { ok: true, renamed: false, callsign: c.callsign, ticket: null };
     if (c.prev_callsign && !q.callsignTaken.get(c.prev_callsign, c.prev_callsign, sid)) {
       upd.callsign = c.prev_callsign;
-      upd.prev_callsign = c.callsign;
+      upd.prev_callsign = null;
+      q.rememberAlias.run(sid, c.callsign, Date.now());
       tick(`🎫 ${c.callsign} reverted to ${c.prev_callsign} (ticket cleared)`);
       result = { ok: true, renamed: true, callsign: c.prev_callsign, ticket: null, previous: c.callsign };
     } else {
@@ -41,15 +44,19 @@ export function createCommands(ctx) {
 
   // Resolve a manual `ticket` target to exactly one live (non-ended,
   // non-archived) session by session_id | current callsign | birth callsign
-  // (prev_callsign — the stale name a human may still be typing). Returns
-  // { sid } on a unique hit, or { error } (0 → none, >1 → ambiguous).
+  // (prev_callsign — the stale name a human may still be typing), then by the
+  // full alias history (BUG-107: a name the card wore and dropped at any
+  // point). Returns { sid } on a unique hit, or { error } (0 → none, >1 →
+  // ambiguous).
   function resolveTicketTarget(target) {
     const matches = q.visibleSessions.all().filter(s =>
       s.ended_at == null
       && (s.session_id === target || s.callsign === target || s.prev_callsign === target));
-    if (matches.length === 0) return { error: `no live session matching "${target}"` };
     if (matches.length > 1) return { error: `"${target}" is ambiguous — use the session id` };
-    return { sid: matches[0].session_id };
+    const found = matches.length ? matches : q.aliasesMatch.all(target, target).filter(s => s.ended_at == null);
+    if (found.length === 0) return { error: `no live session matching "${target}"` };
+    if (found.length > 1) return { error: `"${target}" is ambiguous — use the session id` };
+    return { sid: found[0].session_id };
   }
 
   // ------------------------------------------------------------- commands

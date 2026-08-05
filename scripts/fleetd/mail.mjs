@@ -258,7 +258,16 @@ export function createMail(ctx) {
     const routable = all.filter(s => s.source !== 'shell');
     const direct = routable.filter(s => s.session_id === to || s.callsign === to);
     if (direct.length) return direct.map(s => s.session_id);
-    return routable.filter(s => s.prev_callsign === to).map(s => s.session_id);
+    const anchored = routable.filter(s => s.prev_callsign === to);
+    if (anchored.length) return anchored.map(s => s.session_id);
+    // BUG-107: last fallback — the alias history. A name dropped by ANY
+    // supported rename sequence (ticket → re-ticket → clear → re-ticket) still
+    // routes to the card that wore it. Same priority discipline as the anchor
+    // fallback: reached only when no current name or anchor claims the name,
+    // so a reissued name binds to its present holder and never forks.
+    return q.aliasesMatch.all(to, to)
+      .filter(s => s.source !== 'shell')
+      .map(s => s.session_id);
   }
 
   // ---------------------------------------- F3d-2 /api/watch core surface
@@ -520,7 +529,10 @@ export function createMail(ctx) {
     // to route to shells, so this is the human-facing message, not the wall.
     const everyone = q.visibleSessions.all();
     const currentMatch = everyone.filter(s => s.session_id === to || s.callsign === to);
-    const namedByTo = currentMatch.length ? currentMatch : everyone.filter(s => s.prev_callsign === to);
+    const anchoredMatch = currentMatch.length ? currentMatch : everyone.filter(s => s.prev_callsign === to);
+    // Mirror resolveTargets' last fallback (BUG-107): an alias-history name
+    // held only by shells is still a loud refusal, not a silent drop.
+    const namedByTo = anchoredMatch.length ? anchoredMatch : q.aliasesMatch.all(to, to);
     if (namedByTo.length && namedByTo.every(s => s.source === 'shell')) {
       return {
         status: 409,

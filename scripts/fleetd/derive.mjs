@@ -331,6 +331,7 @@ export function createCore(db, {
       const callsign = assignCallsign(sid, ticket);
       const now = Date.now();
       q.insertSession.run(sid, callsign, now, now);
+      q.rememberAlias.run(sid, callsign, now); // BUG-107: the birth name is an alias from day one
       // Birth is NOT a rename: the card is inserted already ticket-named, so
       // there is no prev_callsign and a single "joined" tick. Record ticket +
       // source even on the hex fallback — detection was consumed, and the auto
@@ -362,6 +363,10 @@ export function createCore(db, {
   // authoritative; the window name is an internal handle, not a label.
   function renameCallsign(sid, c, next, { tickMsg, extra = {} }) {
     const previous = c.callsign;
+    // BUG-107: prev_callsign has ONE slot and must stay the birth anchor, so
+    // every DROPPED name is also recorded in the alias table — that is the set
+    // target resolution falls back to after the anchor.
+    q.rememberAlias.run(sid, previous, Date.now());
     updateSession(sid, {
       callsign: next,
       // prev_callsign is WRITE-ONCE: set to the birth callsign on the first
@@ -646,7 +651,7 @@ export function createCore(db, {
         updateSession(sid, { callsign });
       }
       updateSession(sid, {
-        prev_callsign: prev.prev_callsign ?? null,
+        prev_callsign: prev.prev_callsign ?? (prev.callsign === callsign ? null : prev.callsign),
         ticket: prev.ticket ?? null,
         ticket_source: prev.ticket_source ?? null,
         custom_suffix: prev.custom_suffix ?? null,
@@ -661,7 +666,7 @@ export function createCore(db, {
       updateSession(sid, {
         ticket: prev.ticket ?? null,
         ticket_source: prev.ticket_source ?? null,
-        prev_callsign: prev.prev_callsign ?? null,
+        prev_callsign: prev.prev_callsign ?? (prev.callsign === callsign ? null : prev.callsign),
         custom_suffix: prev.custom_suffix ?? null,
         adopt_armed_until: prev.adopt_armed_until ?? null,
         adopt_armed_skip: prev.adopt_armed_skip ?? null,
@@ -676,6 +681,9 @@ export function createCore(db, {
     q.reassignPendingMail.run(sid, prev.session_id);
     q.reassignPendingQuestions.run(sid, prev.session_id);
     q.reassignTouches.run(sid, prev.session_id);
+    // BUG-107: the lineage's whole name history follows the card too, so mail
+    // to any name the lineage ever wore reaches the heir.
+    q.reassignAliases.run(sid, prev.session_id);
       db.exec('COMMIT');
     } catch (err) {
       try { db.exec('ROLLBACK'); } catch { /* the transaction is already gone */ }

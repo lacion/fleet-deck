@@ -60,6 +60,21 @@ export function createStatements(db) {
     // successor collide with its own past self — a hazard banner reading
     // "wren-a9e1 and wren-a9e1 both touching X".
     reassignTouches: db.prepare('UPDATE file_touches SET session_id = ? WHERE session_id = ?'),
+    // BUG-107 alias table: the set of names a card has ever worn, so direct
+    // target resolution survives any ticket/name/clear sequence. rememberAlias
+    // is INSERT OR IGNORE (every rename re-records the outgoing name; a revert
+    // to a previously worn name must not bump its `at`), and the heir of a
+    // /clear succession inherits the lineage's whole history.
+    rememberAlias: db.prepare('INSERT OR IGNORE INTO session_aliases (session_id, callsign, at) VALUES (?, ?, ?)'),
+    reassignAliases: db.prepare('UPDATE session_aliases SET session_id = ? WHERE session_id = ?'),
+    // Live sessions wearing ? as their name-in-history (current, anchor or any
+    // dropped name). Used as the LAST fallback by target resolvers — after
+    // current-name matches and the write-once prev_callsign anchor — so a
+    // reissued name always binds to its present holder first.
+    aliasesMatch: db.prepare(`SELECT DISTINCT s.* FROM sessions s
+      WHERE s.archived_at IS NULL
+        AND (s.session_id IN (SELECT session_id FROM session_aliases WHERE callsign = ?)
+             OR s.prev_callsign = ?)`),
     // Boot heal (reconcileClearForks): pre-0.7.1 rows have no cleared_at, so a
     // stranded pair is reconstructed from the event log instead. These two read
     // the 24h-retained events table.
