@@ -91,8 +91,32 @@ export function createEvents(ctx) {
     // would strand a dead card as live until retention's silence sweep hours
     // later (composes BUG-024/025 with the shim-delivered SessionEnd of
     // max-turns-abort; a null run_id is "unknown", which tombstones, not "stale").
+    //
+    // BUT the nonce alone is not enough evidence, and trusting it alone strands
+    // a card FOREVER: if the mismatched end is the session's REAL end (its
+    // predecessor's nonce was recorded, no resume ever came), refusing the
+    // tombstone leaves a dead agent sitting in 'queued' with ended_at NULL —
+    // and dismissSession refuses anything that is not offline, so the card
+    // cannot be cleared from the board by any route the UI or API offers.
+    // Observed live: a killed spawn whose card read
+    // "session ended (stale async end from a previous run — ignored)" and could
+    // neither be dismissed nor revived.
+    //
+    // So require the thing the guard actually exists to protect: a live run.
+    // This session's OWN spawn row is the daemon's independent witness — when
+    // it is terminal (killed / gone / pane-dead) there is no resumed process to
+    // shield, so a mismatched nonce cannot mean "racing a resume" and the end
+    // must tombstone. A session with NO spawn row at all (a plain hook-only
+    // CLI, never board-spawned) keeps the pure-nonce behaviour: no counter-
+    // evidence exists, and wrongly tombstoning a live run is the worse error
+    // (it can arm an auto-adopt and duplicate a billed session), so those stay
+    // for retention's silence sweep as before.
+    const endSpawn = ev.hook_event_name === 'SessionEnd' ? q.spawnBySession.get(sid) : null;
+    const spawnProvenTerminal = !!endSpawn
+      && ['killed', 'gone', 'pane-dead'].includes(endSpawn.status);
     const staleRunEnd = ev.hook_event_name === 'SessionEnd'
-      && ev.fleet_run != null && c.run_id != null && c.run_id !== ev.fleet_run;
+      && ev.fleet_run != null && c.run_id != null && c.run_id !== ev.fleet_run
+      && !spawnProvenTerminal;
     // Heuristic tombstones are reversible: a late hook proves the process was
     // alive (or resumed) when retention only GUESSED it dead. Clear both
     // timestamps so an archived presumed-dead card becomes visible again

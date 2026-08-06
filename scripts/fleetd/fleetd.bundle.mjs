@@ -11388,7 +11388,9 @@ function createEvents(ctx) {
     const sid = typeof ev?.session_id === "string" && ev.session_id ? ev.session_id : null;
     if (!sid) return { card: null, conflict: null };
     let c = card(sid, ev.cwd);
-    const staleRunEnd = ev.hook_event_name === "SessionEnd" && ev.fleet_run != null && c.run_id != null && c.run_id !== ev.fleet_run;
+    const endSpawn = ev.hook_event_name === "SessionEnd" ? q.spawnBySession.get(sid) : null;
+    const spawnProvenTerminal = !!endSpawn && ["killed", "gone", "pane-dead"].includes(endSpawn.status);
+    const staleRunEnd = ev.hook_event_name === "SessionEnd" && ev.fleet_run != null && c.run_id != null && c.run_id !== ev.fleet_run && !spawnProvenTerminal;
     const superseded = c.succeeded_by != null;
     const heuristicEnd = c.end_reason == null || c.end_reason === "presumed";
     const canResurrect = heuristicEnd || ev.hook_event_name === "SessionStart";
@@ -13155,7 +13157,6 @@ function createTermBridge({ port, resolveSpawn, log = () => {
     c.deadTimer = setInterval(() => {
       if (c.closed || !c.panes.size) return;
       c.command("list-panes -a -F '#{pane_id} #{pane_dead}'").then((res) => {
-        log(`BUG055 ok=${res.ok} lines=${JSON.stringify(res.lines)} panes=${[...c.panes.keys()]}`);
         if (!res.ok || c.closed) return;
         const state = /* @__PURE__ */ new Map();
         for (const line of res.lines) {
@@ -13163,7 +13164,6 @@ function createTermBridge({ port, resolveSpawn, log = () => {
           if (m) state.set(m[1], m[2]);
         }
         for (const [paneId, stream] of [...c.panes]) {
-          log(`BUG055 pane=${paneId} state=${state.get(paneId)} subs=${stream.subs.size}`);
           if (state.get(paneId) !== "1") continue;
           for (const v of [...stream.subs]) v.finish("terminal pane closed");
         }

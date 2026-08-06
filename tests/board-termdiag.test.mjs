@@ -19,7 +19,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { refusedUpgradeText } from '../board/src/termDiag.js';
+import { MAX_RECONNECT, reconnectPlan, refusedUpgradeText } from '../board/src/termDiag.js';
 
 test('a held key still blames the key (it may be stale)', () => {
   for (const gates of [true, false, null, undefined]) {
@@ -52,4 +52,39 @@ test('an unknown capability falls back to the historical key-based inference', (
     const text = refusedUpgradeText(false, gates);
     assert.match(text, /no key/, `gates=${gates} must degrade to the pre-fix inference`);
   }
+});
+
+// ---------------------------------------------------------------------------
+// BB2-2 — a dropped transport must not latch the pane dead.
+//
+// Before this, ANY close after the first frame ran end(): disableStdin on, note
+// set, socket closed, and the socket effect only re-runs when the SPAWN
+// changes. So a daemon restart (every version takeover does one), a slept
+// laptop or a re-routed tailnet left every open terminal rendering its last
+// screen while silently swallowing keystrokes — indistinguishable from a hung
+// agent, and curable only by closing and reopening the tile.
+// ---------------------------------------------------------------------------
+
+test('a transient close (frames were seen) retries with backoff', () => {
+  assert.deepEqual(reconnectPlan(true, 0), { action: 'retry', delayMs: 500 });
+  assert.deepEqual(reconnectPlan(true, 1), { action: 'retry', delayMs: 1000 });
+  assert.deepEqual(reconnectPlan(true, 2), { action: 'retry', delayMs: 2000 });
+});
+
+test('backoff is capped so a wall of tiles cannot storm a daemon still booting', () => {
+  for (let n = 0; n < MAX_RECONNECT; n++) {
+    const plan = reconnectPlan(true, n);
+    assert.equal(plan.action, 'retry');
+    assert.ok(plan.delayMs <= 5000, `attempt ${n} must stay capped, got ${plan.delayMs}`);
+  }
+});
+
+test('a PRE-FRAME close is never retried — it is a refused upgrade, and retrying cannot fix auth', () => {
+  assert.deepEqual(reconnectPlan(false, 0), { action: 'diagnose' });
+  assert.deepEqual(reconnectPlan(false, 3), { action: 'diagnose' });
+});
+
+test('retries are bounded — the pane eventually settles instead of reconnecting forever', () => {
+  assert.deepEqual(reconnectPlan(true, MAX_RECONNECT), { action: 'give-up' });
+  assert.deepEqual(reconnectPlan(true, MAX_RECONNECT + 1), { action: 'give-up' });
 });
