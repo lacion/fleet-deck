@@ -275,7 +275,12 @@ test('revive harness cleans caller-owned scratch dirs even when the daemon never
     const holder = guardScratchDirs(st, [daemonHome, userHome, cwd]);
     await assert.rejects(
       startDaemon({ home: daemonHome, env: { HOME: userHome }, healthTimeoutMs: 200 }),
-      /never became healthy/,
+      // On a fast/restricted runner fleetd can exit before the 200 ms health
+      // probe even fires (e.g. a LAN/mDNS bind that fails fast), so the boot
+      // failure surfaces as either "never became healthy" (probe timeout) or
+      // "exited … before becoming healthy" (early crash) — both are the
+      // daemon failing to start, which is all this test asserts.
+      /never became healthy|before becoming healthy/,
     );
     assert.equal(holder.daemon, null, 'no daemon handle exists to stop after a failed boot');
   });
