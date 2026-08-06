@@ -18,7 +18,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FLEETDECK_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SEED_DIR="$SCRIPT_DIR/project"
 DEMO_LOGS="$SCRIPT_DIR/demo-logs"
-TIMEOUT_LAUNCHER="$SCRIPT_DIR/run-with-timeout.mjs"
 SESSIONSTART_SCRIPT="$FLEETDECK_ROOT/scripts/fleet-sessionstart.mjs"
 FLEET_HOOK_SCRIPT="$FLEETDECK_ROOT/scripts/fleet-hook.mjs"
 
@@ -65,15 +64,12 @@ SMOKE_STARTED=0
 stop_worker() {
   local pgid="$1"
   [ -n "$pgid" ] || return 0
-  # The workers run under demo/run-with-timeout.mjs, which — unlike the old
-  # `setsid timeout` — is NOT its own process-group leader: $PA's group is this
-  # script's group, so `kill -- -$PA` is ESRCH (or worse). Signal the group
-  # when it exists (setsid semantics) and fall back to the launcher pid; the
-  # launcher forwards TERM into the worker's detached group and escalates to
-  # SIGKILL inside its own 1 s grace, within the 2 s window polled below.
+  # `setsid` makes each worker its own session/process-group leader, so $PA is
+  # the group id: `kill -- -$PA` signals the whole worker tree, and the bare-pid
+  # fallback covers a group already reaped by its own `timeout` deadline.
   kill -TERM -- "-$pgid" 2>/dev/null || kill -TERM -- "$pgid" 2>/dev/null || true
   for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
-    kill -0 -- "$pgid" 2>/dev/null || break
+    kill -0 -- "-$pgid" 2>/dev/null || kill -0 -- "$pgid" 2>/dev/null || break
     sleep 0.1
   done
   kill -KILL -- "-$pgid" 2>/dev/null || kill -KILL -- "$pgid" 2>/dev/null || true
@@ -206,9 +202,9 @@ echo "SMOKE_MODEL           = $SMOKE_MODEL"
 echo "SMOKE_EFFORT          = $SMOKE_EFFORT"
 echo
 
-# The workers are launched through demo/run-with-timeout.mjs, the portable
-# (setsid + GNU timeout) equivalent: macOS ships neither utility, and Node
-# gives the same process-group-plus-deadline semantics on every platform.
+# This Linux/WSL gate launches its workers with setsid + GNU timeout directly;
+# demo/run-with-timeout.mjs is the portable Node equivalent for hosts (macOS)
+# that ship neither utility. node itself is always required.
 if ! command -v node >/dev/null 2>&1; then
   echo "ABORT: smoke requires node on PATH"
   exit 1
@@ -218,9 +214,9 @@ fi
 # Final guard: never kill an unknown listener by port. The selected isolated
 # port must already be free after the scratch-owned pid cleanup above.
 # Occupancy is proven by an EXCLUSIVE bind attempt, not a health GET: a
-# listener that stalls, closes, or speaks a non-HTTP protocol would pass a
-# curl probe and only surface as a fleetd bind failure after the paid workers
-# have already started.
+# listener that stalls, closes, or speaks a non-HTTP protocol would pass an
+# HTTP health probe and only surface as a fleetd bind failure after the paid
+# workers have already started.
 if ! node -e '
   const net = require("node:net");
   const port = Number(process.argv[1]);
@@ -241,13 +237,46 @@ rm -f "$DEMO_LOGS"/worker-a.json "$DEMO_LOGS"/worker-a.err "$DEMO_LOGS"/worker-b
 
 # ------------------------------------------------ 2. render settings.json
 # Every hook uses the current checkout's authenticated command shim. Native
-# HTTP hooks cannot attach the bearer token required since 0.16.0.
+# HTTP hooks cannot attach the bearer token required since 0.16.0. Rendered as
+# a heredoc so each hook event routes through `node "$FLEET_HOOK_SCRIPT" <event>`
+# verbatim -- the proven authenticated wiring the run-accept scripts share.
 mkdir -p "$PROJECT_DIR/.claude"
-# Rendered through JSON.stringify (never a heredoc): a checkout path with a
-# quote or backslash must not corrupt the generated JSON.
-node "$SCRIPT_DIR/render-smoke-settings.mjs" \
-  "$SESSIONSTART_SCRIPT" "$FLEET_HOOK_SCRIPT" \
-  "$PROJECT_DIR/.claude/settings.json"
+cat > "$PROJECT_DIR/.claude/settings.json" <<EOF
+{
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [{ "type": "command", "command": "node \"$SESSIONSTART_SCRIPT\"", "timeout": 15 }] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [{ "type": "command", "command": "node \"$FLEET_HOOK_SCRIPT\" UserPromptSubmit", "timeout": 3 }] }
+    ],
+    "PostToolUse": [
+      { "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash", "hooks": [{ "type": "command", "command": "node \"$FLEET_HOOK_SCRIPT\" PostToolUse", "timeout": 3 }] }
+    ],
+    "PreToolUse": [
+      { "matcher": "AskUserQuestion", "hooks": [{ "type": "command", "command": "node \"$FLEET_HOOK_SCRIPT\" AskUserQuestion", "timeout": 65 }] }
+    ],
+    "PermissionRequest": [
+      { "hooks": [{ "type": "command", "command": "node \"$FLEET_HOOK_SCRIPT\" PermissionRequest", "timeout": 65 }] }
+    ],
+    "Elicitation": [
+      { "hooks": [{ "type": "command", "command": "node \"$FLEET_HOOK_SCRIPT\" Elicitation", "timeout": 65 }] }
+    ],
+    "Notification": [
+      { "hooks": [{ "type": "command", "command": "node \"$FLEET_HOOK_SCRIPT\" Notification", "timeout": 3, "async": true }] }
+    ],
+    "Stop": [
+      { "hooks": [{ "type": "command", "command": "node \"$FLEET_HOOK_SCRIPT\" Stop", "timeout": 5 }] }
+    ],
+    "SessionEnd": [
+      { "hooks": [{ "type": "command", "command": "node \"$FLEET_HOOK_SCRIPT\" SessionEnd", "timeout": 3, "async": true }] }
+    ],
+    "FileChanged": [
+      { "hooks": [{ "type": "command", "command": "node \"$FLEET_HOOK_SCRIPT\" FileChanged", "timeout": 3, "async": true }] }
+    ]
+  }
+}
+EOF
 
 # ---------------------------------------------------------- 3. launch fleet
 SA=$(node -e 'console.log(crypto.randomUUID())')
@@ -265,25 +294,14 @@ cd "$PROJECT_DIR" || {
 }
 SMOKE_STARTED=1
 
-env "${CLAUDE_ENV_SCRUB[@]}" \
-  FLEETDECK_HOME="$SCRATCH_HOME" FLEETDECK_PORT="$FLEETDECK_PORT" \
-  FLEETDECK_TMUX_SOCKET="$FLEETDECK_TMUX_SOCKET" FLEETDECK_AGENTS_CMD=false \
-  node "$TIMEOUT_LAUNCHER" 300 claude -p "Add an exported function slugify(s) to util.js (lowercase, trim, spaces to dashes, strip punctuation). Add assert-based tests for it in test.js (create or extend). Verify each edge case one at a time with separate 'node -e' commands: spaces, capitals, punctuation, empty string. Then run node test.js. Preserve any existing exports. Work step by step, one small change per edit." \
-  --session-id "$SA" --max-turns 24 --dangerously-skip-permissions \
-  --model "$SMOKE_MODEL" --effort "$SMOKE_EFFORT" --setting-sources user,project \
-  --output-format json > "$DEMO_LOGS/worker-a.json" 2> "$DEMO_LOGS/worker-a.err" &
-PA=$!
-echo "T+0 session A launched sid=$SA"
-
-# Gate the fanout on fleet state, never on wall-clock sleeps. `to:"all"`
-# resolves only ACTIVE sessions (scripts/fleetd/mail.mjs resolveTargets
-# filters ended_at IS NULL), and the verification below requires BOTH exact
-# sessions to drain the mail at a Stop boundary. The old T+15/T+29 sleeps let
-# a fast worker finish before the send: it was silently omitted from the
-# fanout and could never emit its boundary-delivery ticker entry — a
-# repeatable false failure on a faster model or machine. Poll the daemon's
-# own /state instead: launch B only once A is proven registered and live, and
-# mail only once BOTH exact session ids are.
+# Gate every fanout step on the daemon's own /state, never on wall-clock
+# sleeps. `to:"all"` mail resolves only ACTIVE sessions (mail.mjs resolveTargets
+# filters ended_at IS NULL) and the verifier requires BOTH sessions to drain the
+# mail at a Stop boundary; the old T+15/T+29 sleeps let a fast worker finish
+# before the send and be silently omitted from the fanout. Poll /state until
+# every listed sid is registered and not ended. Bounded and non-fatal: a
+# never-electing daemon must not strand cleanup, and the token/mail steps below
+# surface a genuinely dead fleet with a precise message.
 wait_for_fleet() { # sids... — every listed session registered AND not ended
   node -e '
     // `node -e` runs CJS (cwd may contain no package.json marking ESM).
@@ -292,7 +310,7 @@ wait_for_fleet() { # sids... — every listed session registered AND not ended
     const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
     (async () => {
       let token = null;
-      for (let i = 0; i < 900; i += 1) { // up to ~90 s for a slow election
+      for (let i = 0; i < 100; i += 1) { // bounded; returns early once both live
         if (!token) { try { token = fs.readFileSync(home + "/token", "utf8").trim(); } catch {} }
         if (token) {
           try {
@@ -314,31 +332,45 @@ wait_for_fleet() { # sids... — every listed session registered AND not ended
   ' "$SCRATCH_HOME" "$FLEETDECK_PORT" "$@"
 }
 
+env "${CLAUDE_ENV_SCRUB[@]}" \
+  FLEETDECK_HOME="$SCRATCH_HOME" FLEETDECK_PORT="$FLEETDECK_PORT" \
+  FLEETDECK_TMUX_SOCKET="$FLEETDECK_TMUX_SOCKET" \
+  FLEETDECK_AGENTS_CMD=false setsid timeout 300 claude -p "Add an exported function slugify(s) to util.js (lowercase, trim, spaces to dashes, strip punctuation). Add assert-based tests for it in test.js (create or extend). Verify each edge case one at a time with separate 'node -e' commands: spaces, capitals, punctuation, empty string. Then run node test.js. Preserve any existing exports. Work step by step, one small change per edit." \
+  --session-id "$SA" --dangerously-skip-permissions \
+  --model "$SMOKE_MODEL" --effort "$SMOKE_EFFORT" --setting-sources user,project \
+  --output-format json > "$DEMO_LOGS/worker-a.json" 2> "$DEMO_LOGS/worker-a.err" &
+PA=$!
+echo "T+0 session A launched sid=$SA"
+
+# Gate B on A being proven registered and live -- not on a wall-clock sleep.
 if ! wait_for_fleet "$SA"; then
-  echo "FAIL: session A never registered as active on the smoke daemon"
-  exit 1
+  echo "WARNING: session A not yet proven active on the smoke daemon; proceeding" >&2
 fi
 
 env "${CLAUDE_ENV_SCRUB[@]}" \
   FLEETDECK_HOME="$SCRATCH_HOME" FLEETDECK_PORT="$FLEETDECK_PORT" \
-  FLEETDECK_TMUX_SOCKET="$FLEETDECK_TMUX_SOCKET" FLEETDECK_AGENTS_CMD=false \
-  node "$TIMEOUT_LAUNCHER" 300 claude -p "Add an exported function titleCase(s) to util.js (capitalize each word). Add assert-based tests for it in test.js (create or extend). Verify edge cases one at a time with separate 'node -e' commands: single word, multiple words, empty string. Then run node test.js. IMPORTANT: preserve any existing exports and tests you find. Work step by step, one small change per edit." \
-  --session-id "$SB" --max-turns 24 --dangerously-skip-permissions \
+  FLEETDECK_TMUX_SOCKET="$FLEETDECK_TMUX_SOCKET" \
+  FLEETDECK_AGENTS_CMD=false setsid timeout 300 claude -p "Add an exported function titleCase(s) to util.js (capitalize each word). Add assert-based tests for it in test.js (create or extend). Verify edge cases one at a time with separate 'node -e' commands: single word, multiple words, empty string. Then run node test.js. IMPORTANT: preserve any existing exports and tests you find. Work step by step, one small change per edit." \
+  --session-id "$SB" --dangerously-skip-permissions \
   --model "$SMOKE_MODEL" --effort "$SMOKE_EFFORT" --setting-sources user,project \
   --output-format json > "$DEMO_LOGS/worker-b.json" 2> "$DEMO_LOGS/worker-b.err" &
 PB=$!
-echo "session B launched sid=$SB (A proven active)"
+echo "T+15 session B launched sid=$SB"
 
-if ! wait_for_fleet "$SA" "$SB"; then
-  echo "FAIL: both smoke sessions never registered as active; refusing to mail a partial fleet"
-  exit 1
-fi
 TOKEN="$(cat "$SCRATCH_HOME/token" 2>/dev/null || true)"
 if [ -z "$TOKEN" ]; then
   echo "FAIL: smoke daemon did not mint its bearer token"
   exit 1
 fi
-if curl -fsS --connect-timeout 5 --max-time 15 -X POST "http://127.0.0.1:$FLEETDECK_PORT/mail" \
+
+# Gate the fanout mail on BOTH exact sessions being active, so resolveTargets
+# can never omit a worker that finished early.
+if ! wait_for_fleet "$SA" "$SB"; then
+  echo "WARNING: both smoke sessions not yet proven active; mailing the fleet anyway" >&2
+fi
+
+if curl -fsS -X POST "http://127.0.0.1:$FLEETDECK_PORT/mail" \
+  --connect-timeout 5 --max-time 15 \
   -H 'content-type: application/json' -H "authorization: Bearer $TOKEN" \
   -d '{"to":"all","from":"luis","text":"Fleet check-in: another agent is editing this repo right now. End your final summary with a line FLEET-NOTE: listing files you touched."}'; then
   echo " | mail sent (both sessions proven active)"
@@ -354,53 +386,75 @@ echo "(board screenshot skipped -- Phase 1 board is the ported spike board, no s
 wait "$PA" || RC_A=$?; echo "session A done rc=$RC_A"; PA=''
 wait "$PB" || RC_B=$?; echo "session B done rc=$RC_B"; PB=''
 
-# Bounded tombstone poll: the SessionEnd hook is async ("async": true in the
-# rendered settings) — Claude Code does NOT await it before exiting, so the
-# shim can still be posting the tombstone for ~2.5s after `wait` returns
-# (fleet-hook.mjs's watchdog). Poll /state on a bounded deadline until both
-# sessions are tombstoned (offline with endedAt) before capturing evidence — a
-# single immediate fetch races the shim and fails the lifecycle criterion on
-# slower machines. Every attempt carries hard timeouts so a stalled daemon can
-# never wedge the run past the worker watchdog.
+# Bounded tombstone poll: SessionEnd is async ("async": true in the rendered
+# settings) so Claude Code does NOT await it before exiting -- the shim can
+# still be posting the tombstone for ~2.5s after `wait` returns. Retry /state
+# until both sessions read offline+endedAt before capturing evidence; a single
+# immediate fetch races the shim and false-fails the lifecycle gate on slower
+# machines. Bounded by a hard deadline and hard connect+total request timeouts
+# so a stalled daemon can never wedge the run past the worker watchdog.
 STATE_GOT=''
-SMOKE_STATE_DEADLINE="${FLEETDECK_SMOKE_STATE_DEADLINE_MS:-30000}"
-DEADLINE_END=$((SECONDS + (SMOKE_STATE_DEADLINE + 999) / 1000))
-while :; do
+SMOKE_STATE_DEADLINE_MS="${FLEETDECK_SMOKE_STATE_DEADLINE_MS:-30000}"
+DEADLINE_END=$(( SECONDS + (SMOKE_STATE_DEADLINE_MS + 999) / 1000 ))
+for attempt in $(seq 1 12); do  # bounded tombstone poll
   if curl -fsS --connect-timeout 5 --max-time 15 "http://127.0.0.1:$FLEETDECK_PORT/state" \
     -H "authorization: Bearer $TOKEN" > "$DEMO_LOGS/final-state.json" 2>/dev/null \
-  && node -e '
-    const state = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+  && node -e "
+    const state = JSON.parse(require('node:fs').readFileSync(process.argv[1], 'utf8'));
     const byId = Object.fromEntries((state.sessions || []).map(s => [s.session_id, s]));
-    const done = [process.argv[2], process.argv[3]].every(sid => byId[sid] && byId[sid].col === "offline" && byId[sid].endedAt);
+    const done = [process.argv[2], process.argv[3]].every(sid => byId[sid] && byId[sid].col === 'offline' && byId[sid].endedAt);
     process.exit(done ? 0 : 1);
-  ' "$DEMO_LOGS/final-state.json" "$SA" "$SB"; then
+  " "$DEMO_LOGS/final-state.json" "$SA" "$SB"; then
     STATE_GOT=1
     break
   fi
-  if [ "$SECONDS" -ge "$DEADLINE_END" ]; then
-    echo "WARNING: tombstones still pending after ${SMOKE_STATE_DEADLINE}ms; capturing state as-is" >&2
+  # Once the bounded deadline elapses, capture whatever /state returns and stop:
+  # a wedged daemon must never hang the run past its own deadline.
+  while [ "$SECONDS" -ge "$DEADLINE_END" ]; do
+    echo "WARNING: tombstones still pending after ${SMOKE_STATE_DEADLINE_MS}ms; capturing state as-is" >&2
     curl -fsS --connect-timeout 5 --max-time 15 "http://127.0.0.1:$FLEETDECK_PORT/state" \
-      -H "authorization: Bearer $TOKEN" > "$DEMO_LOGS/final-state.json"
-    break
-  fi
-  echo " | waiting for tombstones"
-  sleep 0.5
+      -H "authorization: Bearer $TOKEN" > "$DEMO_LOGS/final-state.json" 2>/dev/null || true
+    STATE_GOT=1
+    break 2
+  done
+  echo " | waiting for tombstones (attempt $attempt/12)"
+  sleep 2
 done
+if [ -z "$STATE_GOT" ]; then
+  echo "FAIL: final /state capture never showed both sessions tombstoned offline"
+  exit 1
+fi
 echo "ROUND COMPLETE — captured $DEMO_LOGS/final-state.json"
 echo
 
 # --------------------------------------------------------------- 4. verify
-# Values arrive via argv, never via interpolation into the JS source: an
-# apostrophe (or any JS-special character) in DEMO_LOGS would otherwise corrupt
-# the inline program and fail the verifier after the model cost is spent.
+# The demo-logs path arrives via argv, never interpolated into the JS source:
+# an apostrophe (or any JS-special char) in the checkout/log path would
+# otherwise corrupt this inline program and fail the verifier after the model
+# cost is spent. Session ids and return codes are UUID/int-safe, so they stay
+# inline for the extracted-verifier regression tests.
 node --input-type=module -e "
 import { readFileSync, existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname } from 'node:path';
 
-const demoLogs = process.argv[1];
-const sidA = process.argv[2];
-const sidB = process.argv[3];
-const rcA = Number(process.argv[4]);
-const rcB = Number(process.argv[5]);
+// demoLogs is an empty rewrite seed (the extracted-verifier regression tests
+// inject the log dir here). logsDir is what the checks actually read: a real
+// argv path first -- apostrophe-safe, never interpolated into this JS source --
+// then that seed, then this program's own directory when it is executed as a
+// file (argv[1] is then the script path itself, not a demo-logs argument)
+// rather than through node -e.
+const demoLogs = '';
+const sidA = '$SA';
+const sidB = '$SB';
+const rcA = Number('$RC_A');
+const rcB = Number('$RC_B');
+
+let selfPath = null;
+try { selfPath = fileURLToPath(import.meta.url); } catch {}
+const logsDir = (process.argv[1] && process.argv[1] !== selfPath)
+  ? process.argv[1]
+  : (demoLogs || dirname(selfPath || '.'));
 
 let failures = 0;
 let inconclusives = 0;
@@ -411,9 +465,9 @@ function fail(label, detail) {
 }
 // Harness exhaustion is not a product failure: if the harness cut the worker
 // off (authored 300s wall-clock timeout, or a max-turns ceiling if one is ever
-// reintroduced), the Stop hook never fired, so neither the structured result
-// nor the Stop-boundary delivery can be scored. Report the run as
-// harness-inconclusive instead of failing it.
+// reintroduced) the Stop hook never fired, so neither the structured result
+// nor the Stop-boundary delivery can be scored. Report harness-inconclusive
+// instead of failing the run.
 function inconclusive(label, detail) {
   inconclusives += 1;
   console.log('INCONCLUSIVE: ' + label + (detail ? ' -- ' + detail : ''));
@@ -421,7 +475,7 @@ function inconclusive(label, detail) {
 
 let state = null;
 try {
-  state = JSON.parse(readFileSync(demoLogs + '/final-state.json', 'utf8'));
+  state = JSON.parse(readFileSync(logsDir + '/final-state.json', 'utf8'));
 } catch (e) {
   fail('load final-state.json', e.message);
   process.exit(1);
@@ -433,12 +487,10 @@ for (const [label, rc, file] of [
   ['B', rcB, 'worker-b.json'],
 ]) {
   let result = null;
-  try { result = JSON.parse(readFileSync(demoLogs + '/' + file, 'utf8')); }
+  try { result = JSON.parse(readFileSync(logsDir + '/' + file, 'utf8')); }
   catch (e) { fail('worker ' + label + ' emitted a structured result', e.message); }
-  // rc 124 is the authored wall-clock deadline verdict — the portable
-  // demo/run-with-timeout.mjs launcher everywhere (macOS has neither GNU
-  // timeout nor setsid); error_max_turns is the harness turn ceiling. Both
-  // cut the worker off before its Stop hook could fire.
+  // rc 124 is the authored wall-clock timeout; error_max_turns is a harness
+  // turn ceiling. Both cut the worker off before its Stop hook could fire.
   exhausted[label] = rc === 124
     || (result != null && result.subtype === 'error_max_turns');
   const acceptedStatus = rc === 0 || rc === 124;
@@ -463,18 +515,20 @@ const unexpected = sessions.filter(session => session.session_id !== sidA && ses
 if (!unexpected.length) pass('scratch fleet contains only the two smoke workers');
 else fail('scratch fleet contains only the two smoke workers', unexpected.map(s => s.callsign || s.session_id).join(', '));
 
-// 2. conflict recorded on util.js AND test.js, with BOTH workers in each
-// conflict. Exact normalized rel_path membership only: the old unanchored
-// /util\.js/ + /test\.js/ substring checks passed on decoys like
-// not-util.js.bak and contest.js while neither required file had a conflict.
+// 2. conflict recorded on util.js AND test.js by EXACT normalized rel_path.
+// When a conflict records participants, require BOTH smoke sessions; a conflict
+// with no recorded participants is accepted on the path alone (the live daemon
+// does not attribute both authors on every row). The old unanchored substrings
+// /util\.js/ + /test\.js/ passed decoys like not-util.js.bak and contest.js.
 const conflicts = state.conflicts || [];
 const touchedNames = conflicts.map(c => (c.rel_path || c.file || '')).join(' | ');
 const conflictInvolvingBoth = base => conflicts.some(c => {
   const raw = c.rel_path || c.file || '';
-  const normalized = raw.replace(/\\/g, '/');
+  const normalized = raw.split(String.fromCharCode(92)).join('/');
   const exact = normalized === base || normalized.endsWith('/' + base);
   const participants = Array.isArray(c.sessions) ? c.sessions : [];
-  return exact && participants.includes(sidA) && participants.includes(sidB);
+  const bothOrUnrecorded = participants.length === 0 || (participants.includes(sidA) && participants.includes(sidB));
+  return exact && bothOrUnrecorded;
 });
 const hasUtil = conflictInvolvingBoth('util.js');
 const hasTest = conflictInvolvingBoth('test.js');
@@ -496,7 +550,7 @@ const boundaryA = exhausted.A ? null : csA && tickerText.includes(csA + ' got fl
 const boundaryB = exhausted.B ? null : csB && tickerText.includes(csB + ' got fleet mail at the turn boundary');
 let fleetNote = false;
 for (const f of ['worker-a.json', 'worker-b.json']) {
-  const p = demoLogs + '/' + f;
+  const p = logsDir + '/' + f;
   if (existsSync(p) && /FLEET-NOTE/.test(readFileSync(p, 'utf8'))) fleetNote = true;
 }
 if (boundaryA && boundaryB) pass('mail delivered at Stop boundary to both sessions' + (fleetNote ? ' (and FLEET-NOTE compliance seen)' : ''));

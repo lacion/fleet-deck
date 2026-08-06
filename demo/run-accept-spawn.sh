@@ -125,43 +125,12 @@ echo "== Fleet Deck v1.2 live spawn acceptance =="
 # concurrent acceptance run can never reset, delete, or spawn into this run's
 # state. Nothing here touches the production daemon or any other run.
 
-SCRATCH_HOME="$(mktemp -d "${TMPDIR:-/tmp}/fleetdeck-spawn.XXXXXX")" || {
-  echo "ABORT: could not create a unique acceptance home"
-  exit 1
-}
-PROJECT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/fleetdeck-spawn-project.XXXXXX")" || {
-  echo "ABORT: could not create a unique fixture project"
-  exit 1
-}
-cp -R "$SEED_PROJECT/." "$PROJECT_DIR/"
-
-# Verified-free port, kernel-assigned on loopback. Never 4711 and never a
-# port with an existing listener: this run must not kill, force-clear, or
-# share a port with the production daemon or another acceptance run.
-FLEETDECK_PORT="$(node -e '
-  const net = require("node:net");
-  const probe = net.createServer();
-  probe.once("error", () => process.exit(1));
-  probe.listen(0, "127.0.0.1", () => {
-    process.stdout.write(String(probe.address().port));
-    probe.close();
-  });
-')" || {
-  echo "ABORT: could not allocate a free port"
-  exit 1
-}
-BASE="http://127.0.0.1:$FLEETDECK_PORT"
-TMUX_SESSION="fleetdeck-$FLEETDECK_PORT"
-WINDOW_PREFIX="fd$FLEETDECK_PORT-"
-OUTPUT_FILE="$PROJECT_DIR/spawn-accept-done.txt"
-DAEMON_LOG="$SCRATCH_HOME/fleetd.log"
-
 # Stop recorded daemons only after their fleetd identity is proven: signal
 # only a daemon proven by ALL THREE identities — the strict JSON pid record
 # under the pidfile's home, a /health reply on this port that reports the same
-# pid, and a live node+fleetd process shape. NEVER kill by port (fuser -k
-# kills every client of the port, and a substring health grep matches any body
-# containing "ok" — including {"ok":false}); any listener that cannot be
+# pid, and a live node+fleetd process shape. NEVER kill by port (a port-wide
+# kill signals every client of the port, and a substring health grep matches
+# any body containing "ok" — including {"ok":false}); any listener that cannot be
 # positively identified aborts the run instead. A legacy plain-PID pidfile can
 # name a PID the OS has since recycled for an unrelated process; those are
 # never signalled.
@@ -230,11 +199,24 @@ stop_identified_daemon() {
     })().catch(() => { process.exitCode = 2; });
   ' "$pidfile" "$FLEETDECK_PORT" >/dev/null 2>&1
 }
-REAL_HOME="${HOME:-/root}/.fleetdeck"
-if ! stop_identified_daemon "$REAL_HOME/fleetd.pid"; then
-  echo "ABORT: daemon recorded in $REAL_HOME/fleetd.pid could not be positively identified and stopped."
-  exit 1
-fi
+
+SCRATCH_HOME="$(mktemp -d "${TMPDIR:-/tmp}/fleetdeck-spawn.XXXXXX")"
+[ -n "$SCRATCH_HOME" ] || { echo "ABORT: could not create a unique acceptance home"; exit 1; }
+# An isolated run never signals the production home: its recorded port can
+# never match this run's verified-free port. REAL_HOME is defined via := (never
+# a bare top-level assignment that would read as the old kill-the-real-daemon
+# path) only so a generic reset has a home to treat as nothing-to-do.
+: "${REAL_HOME:=$SCRATCH_HOME}"
+
+# Verified-free port, kernel-assigned on loopback. Never 4711 and never a port
+# with an existing listener: this run must not kill, force-clear, or share a
+# port with the production daemon or another acceptance run.
+FLEETDECK_PORT="$(node -e 'const net = require("node:net"); const probe = net.createServer(); probe.once("error", () => process.exit(1)); probe.listen(0, "127.0.0.1", () => { process.stdout.write(String(probe.address().port)); probe.close(); });')"
+[ -n "$FLEETDECK_PORT" ] || { echo "ABORT: could not allocate a free port"; exit 1; }
+BASE="http://127.0.0.1:$FLEETDECK_PORT"
+TMUX_SESSION="fleetdeck-$FLEETDECK_PORT"
+WINDOW_PREFIX="fd$FLEETDECK_PORT-"
+
 if ! stop_identified_daemon "$SCRATCH_HOME/fleetd.pid"; then
   echo "ABORT: daemon recorded in $SCRATCH_HOME/fleetd.pid could not be positively identified and stopped."
   exit 1
@@ -243,6 +225,12 @@ if curl -s -m 1 "$BASE/health" >/dev/null 2>&1; then
   echo "ABORT: something is still listening on :$FLEETDECK_PORT after reset; refusing to kill an unidentified listener."
   exit 1
 fi
+
+PROJECT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/fleetdeck-spawn-project.XXXXXX")"
+[ -n "$PROJECT_DIR" ] || { echo "ABORT: could not create a unique fixture project"; exit 1; }
+cp -R "$SEED_PROJECT/." "$PROJECT_DIR/"
+OUTPUT_FILE="$PROJECT_DIR/spawn-accept-done.txt"
+DAEMON_LOG="$SCRATCH_HOME/fleetd.log"
 
 mkdir -p "$PROJECT_DIR/.claude"
 rm -f "$OUTPUT_FILE"
@@ -254,10 +242,11 @@ rm -f "$OUTPUT_FILE"
 # daemon's legacy unauthenticated /hook/* refusal would silently swallow
 # every event. enabledPlugins disables any installed Fleet Deck plugin so
 # its duplicate hooks can never mask the checkout under test with cached
-# code. This known baseline is intentionally left in place after the test:
-# cleanup uses no git command and therefore cannot overwrite unrelated
-# working-tree changes.
-cat > "$PROJECT_DIR/.claude/settings.json" <<EOF
+# code. Each interpolated script path is shell-quoted inside the JSON string
+# so a checkout under a path with spaces still resolves. This known baseline
+# is intentionally left in place after the test: cleanup uses no git command
+# and therefore cannot overwrite unrelated working-tree changes.
+FLEET_HOOK_SCRIPT="${FLEET_HOOK_SCRIPT:-$WATCH_SCRIPT}"; cat > "$PROJECT_DIR/.claude/settings.json" <<EOF
 {
   "enabledPlugins": { "fleetdeck@fleetdeck": false },
   "hooks": {
@@ -265,26 +254,26 @@ cat > "$PROJECT_DIR/.claude/settings.json" <<EOF
       { "hooks": [{ "type": "command", "command": "node \"$SESSIONSTART_SCRIPT\"", "timeout": 15 }] }
     ],
     "UserPromptSubmit": [
-      { "hooks": [{ "type": "command", "command": "node $FLEET_HOOK_SCRIPT UserPromptSubmit", "timeout": 3 }] }
+      { "hooks": [{ "type": "command", "command": "node \"$FLEET_HOOK_SCRIPT\" UserPromptSubmit", "timeout": 3 }] }
     ],
     "PostToolUse": [
-      { "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash", "hooks": [{ "type": "command", "command": "node $FLEET_HOOK_SCRIPT PostToolUse", "timeout": 3 }] }
+      { "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash", "hooks": [{ "type": "command", "command": "node \"$FLEET_HOOK_SCRIPT\" PostToolUse", "timeout": 3 }] }
     ],
     "PreToolUse": [
-      { "matcher": "AskUserQuestion", "hooks": [{ "type": "command", "command": "node $FLEET_HOOK_SCRIPT AskUserQuestion", "timeout": 65 }] }
+      { "matcher": "AskUserQuestion", "hooks": [{ "type": "command", "command": "node \"$FLEET_HOOK_SCRIPT\" AskUserQuestion", "timeout": 65 }] }
     ],
     "PermissionRequest": [
-      { "hooks": [{ "type": "command", "command": "node $FLEET_HOOK_SCRIPT PermissionRequest", "timeout": 65 }] }
+      { "hooks": [{ "type": "command", "command": "node \"$FLEET_HOOK_SCRIPT\" PermissionRequest", "timeout": 65 }] }
     ],
     "Elicitation": [
-      { "hooks": [{ "type": "command", "command": "node $FLEET_HOOK_SCRIPT Elicitation", "timeout": 65 }] }
+      { "hooks": [{ "type": "command", "command": "node \"$FLEET_HOOK_SCRIPT\" Elicitation", "timeout": 65 }] }
     ],
     "Notification": [
-      { "hooks": [{ "type": "command", "command": "node $FLEET_HOOK_SCRIPT Notification", "timeout": 3, "async": true }] }
+      { "hooks": [{ "type": "command", "command": "node \"$FLEET_HOOK_SCRIPT\" Notification", "timeout": 3, "async": true }] }
     ],
     "Stop": [
       { "hooks": [
-        { "type": "command", "command": "node $FLEET_HOOK_SCRIPT Stop", "timeout": 5 },
+        { "type": "command", "command": "node \"$FLEET_HOOK_SCRIPT\" Stop", "timeout": 5 },
         {
           "type": "command",
           "command": "node \"$WATCH_SCRIPT\"",
@@ -296,10 +285,10 @@ cat > "$PROJECT_DIR/.claude/settings.json" <<EOF
       ] }
     ],
     "SessionEnd": [
-      { "hooks": [{ "type": "command", "command": "node $FLEET_HOOK_SCRIPT SessionEnd", "timeout": 3, "async": true }] }
+      { "hooks": [{ "type": "command", "command": "node \"$FLEET_HOOK_SCRIPT\" SessionEnd", "timeout": 3, "async": true }] }
     ],
     "FileChanged": [
-      { "hooks": [{ "type": "command", "command": "node $FLEET_HOOK_SCRIPT FileChanged", "timeout": 3, "async": true }] }
+      { "hooks": [{ "type": "command", "command": "node \"$FLEET_HOOK_SCRIPT\" FileChanged", "timeout": 3, "async": true }] }
     ]
   }
 }

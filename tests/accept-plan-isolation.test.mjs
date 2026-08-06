@@ -111,7 +111,17 @@ test('a foreign listener that wins the port is never sent plan-gate mutations', 
       probe.close(() => resolve(p));
     });
   });
-  fs.writeFileSync(scriptCopy, original.replace(portLine[0], `FLEETDECK_PORT=${port}`));
+  // BUG-097 made the shipped script mktemp its SCRATCH_HOME (unique per run);
+  // this test needs a KNOWN home to poll the stub's child-ready.txt, so pin the
+  // script COPY's SCRATCH_HOME to `scratch`. The shipped script is unchanged
+  // (its mktemp behavior is covered by demo-accept-isolation).
+  let patched = original.replace(portLine[0], `FLEETDECK_PORT=${port}`);
+  patched = patched.replace(
+    /SCRATCH_HOME="\$\(mktemp -d "\$\{TMPDIR:-\/tmp\}\/fleetdeck-plan\.XXXXXX"\)"/,
+    `mkdir -p ${JSON.stringify(scratch)}; SCRATCH_HOME=${JSON.stringify(scratch)}`,
+  );
+  assert.ok(patched.includes(`SCRATCH_HOME=${JSON.stringify(scratch)}`), 'must pin the script copy SCRATCH_HOME');
+  fs.writeFileSync(scriptCopy, patched);
 
   const child = spawn('bash', [scriptCopy], {
     cwd: repo,

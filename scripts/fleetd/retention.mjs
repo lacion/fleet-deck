@@ -237,9 +237,27 @@ export function createRetention(ctx) {
       for (const win of wins) {
         const sp = byName.get(win.window);
         if (!win.pane_dead || !sp || !['killed', 'pane-dead', 'gone'].includes(sp.status)) continue;
-        const out = await tmuxAdapter.killWindowVerified(win.window);
+        // BUG-046: the pane_dead + terminal-status checks above predate the
+        // kill's own awaits — a revive can land DURING them and stand a fresh
+        // live pane up on this deterministic name. Move the verdict to kill
+        // time: pass the window generation and an owner re-check so a
+        // generation/owner swap degrades to a stale no-op instead of destroying
+        // the replacement pane. Mirrors the bulk-Clear path below.
+        const out = await tmuxAdapter.killWindowVerified(win.window, {
+          expectWindowId: win.window_id,
+          expect: () => {
+            const owner2 = q.currentWindowOwner.get(win.window);
+            // currentWindowOwner excludes gone/killed; a live-eligible owner
+            // (or one for a different session) means a revive reclaimed the name.
+            return !(owner2 && (owner2.session_id !== sp.session_id || owner2.status !== 'pane-dead'));
+          },
+        });
         // {ok:false, gone:true} is fresh proof of absence — that counts as cleared.
         if (out.ok || out.gone) windows_killed++;
+        // BUG-046: {ok:false, stale:true} means the kill's re-check caught a
+        // revive reclaiming this window name mid-kill — the pane there now is
+        // live work, not the corpse we verified. Leave it; never an error.
+        else if (out.stale) { /* revive reclaimed the name — no-op */ }
         // A kill that comes back {ok:false} without proof of absence leaves the
         // window standing on the fleet's tmux session, holding its reusable
         // name — never report success.
@@ -425,6 +443,16 @@ export function createRetention(ctx) {
           // of absence leaves the window standing, holding its reusable name —
           // never report success; surface it for the retry path below.
           if (out.ok || out.gone) windows_killed++;
+          // BUG-046: {ok:false, stale:true} means the kill's own re-check caught
+          // a revive reclaiming this window name mid-kill (generation/owner
+          // swap). The pane standing there now is LIVE work, not the corpse we
+          // set out to kill — a correct no-op, NOT an unkilled dead window. It
+          // must NOT become a window_error: doing so would 409 the dismiss and
+          // falsely imply a dead window still stands, and (worse) the retry would
+          // then chase a name that rightly belongs to the replacement. Composes
+          // with BUG-145: only a genuine {ok:false} (no gone, no stale) is a
+          // failure that keeps the retry path open.
+          else if (out.stale) { /* revive reclaimed the name mid-kill — leave it */ }
           else window_errors.push(`${win.window}: ${out.error || 'kill failed'}`);
           if (alive()) { resurrected = true; break; }
         }
@@ -471,6 +499,9 @@ export function createRetention(ctx) {
       if (owner && (owner.session_id !== sid || owner.status !== 'pane-dead')) continue;
       const out = await tmuxAdapter.killWindowVerified(win.window);
       if (out.ok || out.gone) windows_killed++;
+      // BUG-046: a stale verdict (a revive reclaimed the name) is a no-op here
+      // too, never a retry-worthy failure.
+      else if (out.stale) { /* revive reclaimed the name — leave it */ }
       else window_errors.push(`${win.window}: ${out.error || 'kill failed'}`);
     }
     if (window_errors.length) {

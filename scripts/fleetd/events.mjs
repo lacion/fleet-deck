@@ -81,12 +81,18 @@ export function createEvents(ctx) {
     // applyEvent as plain telemetry (last_seen, note, log line).
     // Comparisons treat NULL as "unknown", never "match": an UNTAGGED
     // SessionEnd (old shims, tests, manual curls) keeps the historical
-    // unconditional tombstone, but a TAGGED one against a row whose run_id was
-    // never recorded conservatively skips the kill rather than risk
-    // tombstoning a live resumed process — the truly dead card then converges
-    // via retention's silence sweep.
+    // unconditional tombstone. A tagged end is stale ONLY when the card has a
+    // DIFFERENT run on record (c.run_id != null && != this nonce) — the real
+    // --resume race, because a resumed process's own SessionStart shim would
+    // have already recorded ITS nonce here. When c.run_id was never recorded
+    // (null), a tagged end cannot be racing a live resume (that resume would
+    // have set run_id), so it must still tombstone: a --max-turns abort skips
+    // Stop entirely and its SessionEnd is the only signal — refusing it here
+    // would strand a dead card as live until retention's silence sweep hours
+    // later (composes BUG-024/025 with the shim-delivered SessionEnd of
+    // max-turns-abort; a null run_id is "unknown", which tombstones, not "stale").
     const staleRunEnd = ev.hook_event_name === 'SessionEnd'
-      && ev.fleet_run != null && c.run_id !== ev.fleet_run;
+      && ev.fleet_run != null && c.run_id != null && c.run_id !== ev.fleet_run;
     // Heuristic tombstones are reversible: a late hook proves the process was
     // alive (or resumed) when retention only GUESSED it dead. Clear both
     // timestamps so an archived presumed-dead card becomes visible again

@@ -840,7 +840,10 @@ test('settings writes are atomic: a failing later write rolls back the earlier o
     return originalRun(key, value, at);
   };
   const rejected = core.setSettings({ repo_default_org: 'textemma', gateway_token: 'tok-1' });
-  assert.equal(rejected.status, 400);
+  // A storage failure is a SERVER error: BUG-047 (P1) upgraded this path from
+  // the old 400 to 5xx, and settings-transaction.test.mjs pins that. BUG-148
+  // only asserts atomic rollback (below), so accept the authoritative 5xx.
+  assert.ok(rejected.status >= 500 && rejected.status < 600, `storage failure must be 5xx, got ${rejected.status}`);
   assert.match(rejected.body.reason, /SQLITE_FULL/);
   assert.equal(q.get('repo_default_org'), undefined,
     'the earlier write must be rolled back with the later failure');

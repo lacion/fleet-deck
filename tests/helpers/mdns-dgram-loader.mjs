@@ -34,6 +34,7 @@ export async function load(url, context, nextLoad) {
       const recordFile = process.env.FLEETDECK_MDNS_RECORD;
       const delay = Number(process.env.FLEETDECK_MDNS_SEND_DELAY_MS || 150);
       function record(value) {
+        if (!recordFile) return;
         appendFileSync(recordFile, JSON.stringify({ ...value, at: Date.now() }) + '\\n');
       }
 

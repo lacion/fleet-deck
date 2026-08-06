@@ -30,7 +30,7 @@ import { execFile, spawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { MIN_TMUX_VERSION, parseTmuxVersion, tmuxVersionSupported } from './tmux-version.mjs';
-import { pidRecord, livePidLooksLikeFleetd } from '../scripts/fleetd/takeover.mjs';
+import { createRequire } from 'node:module';
 
 const execFileP = promisify(execFile);
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -540,10 +540,28 @@ function supervisorAlive() {
 //   - the live process still carries a fleetd /proc shape (livePidLooksLikeFleetd).
 // Any disagreement → false, and the caller reports the foreign responder and
 // leaves it untouched rather than signalling a process it cannot identify.
+//
+// takeover.mjs is loaded LAZILY here, never as a top-level import (BUG-074
+// composition): the published CLI and the serve regression must boot from a
+// minimal packed runtime that ships only bin/ + the daemon bundle — no source
+// scripts/fleetd/ tree — so an eager import would be an ERR_MODULE_NOT_FOUND
+// before `serve` ever runs. require(esm) (Node >= 22.13, our engine floor) loads
+// it SYNCHRONOUSLY so this stays a sync predicate for its callers and tests;
+// healthIsOurManagedDaemon, being async, dynamic-imports the same module.
+const requireHere = createRequire(import.meta.url);
+let takeoverPidHelpers = null;
+function loadTakeoverPidHelpers() {
+  if (!takeoverPidHelpers) {
+    takeoverPidHelpers = requireHere(path.join(ROOT, 'scripts', 'fleetd', 'takeover.mjs'));
+  }
+  return takeoverPidHelpers;
+}
+
 function healthPidIsOurDaemon(h) {
   if (!h || h.managed !== true) return false;
   const pid = Number(h.pid);
   if (!Number.isInteger(pid) || pid <= 0) return false;
+  const { pidRecord, livePidLooksLikeFleetd } = loadTakeoverPidHelpers();
   let record = null;
   try {
     record = pidRecord(fs.readFileSync(FLEETD_PID, 'utf8'));

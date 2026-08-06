@@ -6224,14 +6224,18 @@ function createStatements(db2) {
     // the whole mailbox. pendingMailPage fetches one bounded batch (the extra
     // row lets tryOwnedPaneDelivery tell "more pending" apart from "empty");
     // pendingMailStats prices a would-be insert without hydrating every row.
-    // Both carry the same BUG-034 lease filter as pendingMail.
+    // pendingMailPage is a CLAIM path, so it carries the BUG-034 lease filter
+    // (an in-flight row is not available to re-claim). pendingMailStats is a
+    // BUDGET/occupancy check, NOT a claim: a claimed-but-unacked row still
+    // occupies the mailbox until it is acked or its lease lapses, so the budget
+    // MUST count it (composing BUG-034 with BUG-128 without letting the lease
+    // filter shrink the backpressure count — one arg, matching mail.mjs's call).
     pendingMailPage: db2.prepare(`SELECT * FROM mail
       WHERE to_session = ? AND delivered_at IS NULL AND expired_at IS NULL
         AND (claimed_at IS NULL OR claimed_at <= ?)
       ORDER BY at, id LIMIT ?`),
     pendingMailStats: db2.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(LENGTH(text)), 0) AS bytes FROM mail
-      WHERE to_session = ? AND delivered_at IS NULL AND expired_at IS NULL
-        AND (claimed_at IS NULL OR claimed_at <= ?)`),
+      WHERE to_session = ? AND delivered_at IS NULL AND expired_at IS NULL`),
     // /api/watch v2 claim: oldest undelivered mail from ANY sender (v1
     // claimed fleetdeck-answer rows only). Same BUG-034 lease filter.
     nextMail: db2.prepare(`SELECT * FROM mail
@@ -6257,8 +6261,16 @@ function createStatements(db2) {
         undelivered ASC,
         s.last_seen DESC
       LIMIT 1`),
+    // Snapshot's per-session "queued" projection. Unlike the budget above, this
+    // is what the board shows as WAITING for the session — so it is lease-aware
+    // (same BUG-034 predicate as pendingMail): a row under a live lease is
+    // in-flight to a claimant, not sitting in the queue, and drops out until the
+    // lease lapses (then it is claimable again and counts once more). Takes the
+    // lease cutoff (Date.now()) as its one arg. Without this, a board GET /mail
+    // drain that leases-but-does-not-yet-ack would leave queued>0 forever.
     pendingCounts: db2.prepare(`SELECT to_session, COUNT(*) AS n, MIN(at) AS oldest_at
-      FROM mail WHERE delivered_at IS NULL AND expired_at IS NULL GROUP BY to_session`),
+      FROM mail WHERE delivered_at IS NULL AND expired_at IS NULL
+        AND (claimed_at IS NULL OR claimed_at <= ?) GROUP BY to_session`),
     markDelivered: db2.prepare("UPDATE mail SET delivered_at = ? WHERE id = ?"),
     unmarkDelivered: db2.prepare("UPDATE mail SET delivered_at = NULL WHERE id = ?"),
     // BUG-034 in-flight lease. claimMail leases (claims) without delivering;
@@ -6497,8 +6509,11 @@ function createStatements(db2) {
     goneSessionSpawns: db2.prepare(`UPDATE spawns SET status = 'gone'
       WHERE status NOT IN ('killed', 'pane-dead', 'gone', 'stalled')
         AND session_id = ?`),
+    // BUG-046: 'live' is excluded too — a revive that stood a fresh live pane up
+    // on a reused window name mid-Clear inserts a new live spawn row; that is
+    // live work, not the archived session's corpse, and must survive the sweep.
     goneArchivedSpawns: db2.prepare(`UPDATE spawns SET status = 'gone'
-      WHERE status NOT IN ('killed', 'pane-dead', 'gone', 'stalled')
+      WHERE status NOT IN ('killed', 'pane-dead', 'gone', 'stalled', 'live')
         AND session_id IN (SELECT session_id FROM sessions WHERE archived_at IS NOT NULL)`),
     orphanWorktrees: db2.prepare(`SELECT DISTINCT spawns.worktree_path FROM spawns
       JOIN sessions ON sessions.session_id = spawns.session_id
@@ -7060,7 +7075,8 @@ function createWorktrees(ctx) {
     if (typeof body?.path !== "string") {
       return { status: 400, body: { ok: false, reason: "not a fleet worktree" } };
     }
-    const releasePath = await acquireWorktreePathLock(canonicalPathKey(body.path));
+    const releasePath = acquireWorktreePathLock ? await acquireWorktreePathLock(canonicalPathKey(body.path)) : () => {
+    };
     try {
       const rows = q.worktreeSpawns.all().filter((row2) => row2.worktree_path === body.path);
       const row = rows[0];
@@ -7170,21 +7186,28 @@ function createWorktrees(ctx) {
         const now = Date.now();
         let spawnsPurged = 0;
         let sessionsPurged = 0;
-        db2.exec("BEGIN IMMEDIATE");
-        try {
+        const purgeRows = () => {
           for (const sessionId of sessionIds) {
             q.expireMailForSession.run(now, sessionId);
             q.expireQuestionsForSession.run(sessionId);
           }
           spawnsPurged = Number(q.deleteWorktreeSpawns.run(row.worktree_path).changes);
           for (const sessionId of sessionIds) sessionsPurged += Number(q.deleteEndedSession.run(sessionId).changes);
-          db2.exec("COMMIT");
-        } catch (err) {
+        };
+        if (db2) {
+          db2.exec("BEGIN IMMEDIATE");
           try {
-            db2.exec("ROLLBACK");
-          } catch {
+            purgeRows();
+            db2.exec("COMMIT");
+          } catch (err) {
+            try {
+              db2.exec("ROLLBACK");
+            } catch {
+            }
+            return { status: 500, body: { ok: false, reason: `could not purge worktree rows: ${err.message}` } };
           }
-          return { status: 500, body: { ok: false, reason: `could not purge worktree rows: ${err.message}` } };
+        } else {
+          purgeRows();
         }
         const rows_purged = spawnsPurged + sessionsPurged;
         tick(`\u232B removed worktree ${row.worktree_path}${branch_deleted ? ` and branch ${branch}` : ""}`);
@@ -8917,7 +8940,7 @@ var RESERVED_SENDERS = /* @__PURE__ */ new Set(["orchestrator", "fleetdeck", "fl
 var RESERVED_FRAME_RE = /^[\s\x00-\x1f\x7f-\x9f]*\[FLEETDECK[ \]]/i;
 var stripFormatChars = (s) => s.replace(/\p{Cf}/gu, "");
 function hasReservedFrame(text) {
-  return stripFormatChars(String(text)).replace(/\r\n?/g, "\n").split("\n").some((line) => RESERVED_FRAME_RE.test(line));
+  return stripFormatChars(String(text)).replace(/\r\n?|[\u2028\u2029]/g, "\n").split("\n").some((line) => RESERVED_FRAME_RE.test(line));
 }
 var FROM_UNSAFE_RE = /[\r\n\x00-\x1f\x7f-\x9f\p{Cf}[\]]/u;
 function createMail(ctx) {
@@ -9104,6 +9127,8 @@ function createMail(ctx) {
     }
     const entered = await tmuxAdapter.sendEnter(target);
     if (!entered) {
+      const now = Date.now();
+      for (const m of box) q.ackMail.run(now, m.id);
       logEvent(
         sid,
         "MailPaneEnterFailed",
@@ -9648,7 +9673,10 @@ function createSpawns(ctx) {
     persistRepoDefaultOrg,
     validateRepoDefaultOrg,
     resolveGateway,
-    resolveGatewayEnv
+    resolveGatewayEnv,
+    acquireWorktreePathLock,
+    claimWorktreeCustody
+    // remove-vs-revive serialization (revive side; derive wires it)
   } = ctx;
   const ARM_TTL_MS = 6e4;
   const armTokens = /* @__PURE__ */ new Map();
@@ -9789,6 +9817,7 @@ function createSpawns(ctx) {
   const RC_URL_RE = /https:\/\/claude\.ai\/\S+/;
   const registrationRemoteHarvests = /* @__PURE__ */ new Map();
   const revivingSessions = /* @__PURE__ */ new Set();
+  const rcInputLocks = /* @__PURE__ */ new Map();
   const condemnStreak = /* @__PURE__ */ new Map();
   function forgetSpawn(spawn_id) {
     nudged.delete(spawn_id);
@@ -9796,8 +9825,8 @@ function createSpawns(ctx) {
     condemnStreak.delete(spawn_id);
   }
   function resurrectSpawn(row) {
+    if (!q.setSpawnResurrected.run(row.spawn_id).changes) return false;
     const shell = row.kind === "shell";
-    q.setSpawnStatus.run("live", row.spawn_id);
     if (row.fail_detail) q.setSpawnFailDetail.run(null, row.spawn_id);
     const c = q.getSession.get(row.session_id);
     updateSession(row.session_id, {
@@ -9818,6 +9847,7 @@ function createSpawns(ctx) {
     tick(`\u2728 ${c?.callsign ?? row.callsign} restored \u2014 its pane was live all along`);
     notifyWatchers(row.session_id);
     onMutate();
+    return true;
   }
   async function harvestRemote(spawn_id) {
     const row = q.getSpawn.get(spawn_id);
@@ -10248,7 +10278,7 @@ function createSpawns(ctx) {
       );
       const finishMaterialization = async (materialized, source) => {
         const worktree_path2 = branchMode === "worktree" ? materialized.runCwd : null;
-        if (worktree_path2) q.setSpawnWorktree.run(worktree_path2, spawn_id2);
+        if (worktree_path2) q.setSpawnWorktree.run(worktree_path2, materialized.created.worktree ? 1 : 0, spawn_id2);
         const repo = deriveRepo(materialized.runCwd);
         updateSession(session_id2, {
           cwd: materialized.runCwd,
@@ -10484,7 +10514,7 @@ function createSpawns(ctx) {
         releasePlanClaim();
         return { status: 409, body: { ok: false, reason: `git worktree add failed: ${addErr}`.slice(0, 300) } };
       }
-      q.setSpawnWorktree.run(worktree_path, spawn_id);
+      q.setSpawnWorktree.run(worktree_path, 1, spawn_id);
       const repo = deriveRepo(worktree_path);
       updateSession(session_id, {
         cwd: worktree_path,
@@ -10554,6 +10584,17 @@ function createSpawns(ctx) {
       return { status: 409, body: { ok: false, reason: `session ${row.session_id.slice(0, 8)} is already being revived` } };
     }
     revivingSessions.add(row.session_id);
+    const releasePathLock = row.worktree_path && acquireWorktreePathLock ? await acquireWorktreePathLock(canonicalPathKey(row.worktree_path)) : () => {
+    };
+    let releaseCustody = null;
+    if (row.worktree_path && claimWorktreeCustody) {
+      releaseCustody = claimWorktreeCustody(row.worktree_path, "revive");
+      if (!releaseCustody) {
+        revivingSessions.delete(row.session_id);
+        releasePathLock();
+        return { status: 409, body: { ok: false, reason: "this worktree is being removed \u2014 retry once the removal settles" } };
+      }
+    }
     try {
       const runCwd = row.worktree_path ?? row.cwd;
       let st = null;
@@ -10622,6 +10663,8 @@ function createSpawns(ctx) {
       });
     } finally {
       revivingSessions.delete(row.session_id);
+      releasePathLock();
+      releaseCustody?.();
     }
   }
   async function launchResume({
@@ -10784,6 +10827,12 @@ function createSpawns(ctx) {
     if (deferred && c.adopt_armed_until == null) {
       return { status: 200, body: { ok: true, canceled: true } };
     }
+    if (deferred && c.adopt_armed_until <= Date.now()) {
+      updateSession(session_id, { adopt_armed_until: null, adopt_armed_skip: null });
+      tick(`\u21B7 move-to-tmux canceled for ${c.callsign} \u2014 the arm deadline expired before the move fired`);
+      onMutate();
+      return { status: 200, body: { ok: true, canceled: true, expired: true } };
+    }
     if (NOT_RESUMABLE_END.has(c.end_reason ?? null)) {
       return {
         status: 409,
@@ -10852,7 +10901,17 @@ function createSpawns(ctx) {
       revivingSessions.delete(session_id);
     }
   }
-  async function enableRemote(spawn_id) {
+  const remoteEnables = /* @__PURE__ */ new Map();
+  function enableRemote(spawn_id) {
+    const inFlight = remoteEnables.get(spawn_id);
+    if (inFlight) return inFlight;
+    const promise = enableRemoteOnce(spawn_id).finally(() => {
+      if (remoteEnables.get(spawn_id) === promise) remoteEnables.delete(spawn_id);
+    });
+    remoteEnables.set(spawn_id, promise);
+    return promise;
+  }
+  async function enableRemoteOnce(spawn_id) {
     const row = q.getSpawn.get(spawn_id);
     if (!row) return { status: 404, body: { ok: false, reason: "no such spawn" } };
     if (row.kind === "shell") {
@@ -10881,18 +10940,29 @@ function createSpawns(ctx) {
       return { status: 409, body: { ok: false, reason: `session is ${fresh?.col ?? "missing"}, not queued or idle` } };
     }
     const target = scopedPaneTarget(win);
-    const typed = await tmuxAdapter.typeKeys(target, `/rc ${fresh.callsign ?? row.callsign}`);
-    if (!typed) {
-      return { status: 500, body: { ok: false, reason: "failed to type remote-control command into pane" } };
+    const idleNow = (s) => s && ["queued", "idle"].includes(s.col);
+    const attempt = async () => {
+      const current = q.getSession.get(row.session_id);
+      if (!idleNow(current)) {
+        return { status: 409, body: { ok: false, reason: `session is ${current?.col ?? "missing"}, not queued or idle` } };
+      }
+      const sent = await tmuxAdapter.typeAndEnter(target, `/rc ${current.callsign ?? row.callsign}`);
+      if (!sent) {
+        return { status: 500, body: { ok: false, reason: "failed to type remote-control command into pane" } };
+      }
+      return null;
+    };
+    const prior = rcInputLocks.get(target) ?? Promise.resolve();
+    const run = prior.catch(() => {
+    }).then(attempt);
+    rcInputLocks.set(target, run);
+    let refused;
+    try {
+      refused = await run;
+    } finally {
+      if (rcInputLocks.get(target) === run) rcInputLocks.delete(target);
     }
-    const afterType = q.getSession.get(row.session_id);
-    if (!afterType || !["queued", "idle"].includes(afterType.col)) {
-      return { status: 409, body: { ok: false, reason: `session became ${afterType?.col ?? "missing"} before /rc could submit` } };
-    }
-    const entered = await tmuxAdapter.sendEnter(target);
-    if (!entered) {
-      return { status: 500, body: { ok: false, reason: "failed to type remote-control command into pane" } };
-    }
+    if (refused) return refused;
     const harvest = delayedRemoteHarvest(spawn_id);
     let timeout;
     const timed = new Promise((resolve) => {
@@ -11097,7 +11167,11 @@ ${detail}` : note);
       if (owner && owner.spawn_id !== row.spawn_id) continue;
       const pane = await tmuxAdapter.paneCurrentCommand(scopedPaneTarget(win));
       if (!pane || pane.dead || row.kind !== "shell" && pane.cmd !== "claude") continue;
-      resurrectSpawn(row);
+      const fresh = q.getSpawn.get(row.spawn_id);
+      if (!fresh || fresh.status !== "pane-dead" && fresh.status !== "gone") continue;
+      const ownerNow = q.currentWindowOwner.get(row.tmux_window);
+      if (ownerNow && ownerNow.spawn_id !== row.spawn_id) continue;
+      resurrectSpawn(fresh);
     }
     const owned = new Set(q.allSpawns.all().map((r) => r.tmux_window));
     const orphans = wins.filter((w) => !owned.has(w.window)).map((w) => ({ window: w.window }));
@@ -11141,6 +11215,22 @@ ${detail}` : note);
           force: true
         });
       } catch {
+      }
+      if (row.worktree_path && row.worktree_owned === 1) {
+        try {
+          const branch = branchOf(row.worktree_path, { fresh: true });
+          const rm = await execFileP("git", ["-C", row.cwd, "worktree", "remove", "--force", row.worktree_path], { timeout: 3e4 });
+          if (!rm.ok) {
+            try {
+              fs11.rmSync(row.worktree_path, { recursive: true, force: true });
+            } catch {
+            }
+          }
+          await execFileP("git", ["-C", row.cwd, "worktree", "prune"], { timeout: 3e4 });
+          if (branch) await execFileP("git", ["-C", row.cwd, "branch", "-D", branch], { timeout: 3e4 });
+          tick(`\u{1F9F9} removed stranded worktree ${row.worktree_path} \u2014 spawn ${row.callsign} was interrupted before launch`);
+        } catch {
+        }
       }
       q.setSpawnStatus.run("gone", row.spawn_id);
       forgetSpawn(row.spawn_id);
@@ -11197,9 +11287,14 @@ ${detail}` : note);
         cands.push({ row: p, at: last.at });
       }
       if (!cands.length) continue;
-      cands.sort((x, y) => x.at - y.at);
-      const paned = cands.filter((c) => hasLivePane(c.row.session_id));
-      const prev = paned.length === 1 ? paned[0].row : cands[0].row;
+      let prev = null;
+      if (cands.length === 1) {
+        prev = cands[0].row;
+      } else {
+        const paned = cands.filter((c) => hasLivePane(c.row.session_id));
+        if (paned.length === 1) prev = paned[0].row;
+      }
+      if (!prev) continue;
       if (succeedSession(prev, heir.session_id, { rename: true })) healed += 1;
     }
     if (healed) {
@@ -11279,7 +11374,7 @@ function createEvents(ctx) {
     const sid = typeof ev?.session_id === "string" && ev.session_id ? ev.session_id : null;
     if (!sid) return { card: null, conflict: null };
     let c = card(sid, ev.cwd);
-    const staleRunEnd = ev.hook_event_name === "SessionEnd" && ev.fleet_run != null && c.run_id !== ev.fleet_run;
+    const staleRunEnd = ev.hook_event_name === "SessionEnd" && ev.fleet_run != null && c.run_id != null && c.run_id !== ev.fleet_run;
     const superseded = c.succeeded_by != null;
     const heuristicEnd = c.end_reason == null || c.end_reason === "presumed";
     const canResurrect = heuristicEnd || ev.hook_event_name === "SessionStart";
@@ -11717,7 +11812,7 @@ function createSnapshot(ctx) {
     const visible = q.visibleSessions.all();
     const spawnBySid = /* @__PURE__ */ new Map();
     for (const r of q.spawnByVisibleSession.all()) spawnBySid.set(r.session_id, r);
-    const pendingBySid = new Map(q.pendingCounts.all().map((r) => [r.to_session, r]));
+    const pendingBySid = new Map(q.pendingCounts.all(Date.now()).map((r) => [r.to_session, r]));
     const callsignById = new Map(q.conflictCallsigns.all().map((s) => [s.session_id, s.callsign]));
     const waiterBySid = /* @__PURE__ */ new Map();
     const ownedPaneBySid = /* @__PURE__ */ new Map();
@@ -12072,9 +12167,16 @@ function createRetention(ctx) {
       for (const win of wins) {
         const sp = byName.get(win.window);
         if (!win.pane_dead || !sp || !["killed", "pane-dead", "gone"].includes(sp.status)) continue;
-        const out = await tmuxAdapter.killWindowVerified(win.window);
+        const out = await tmuxAdapter.killWindowVerified(win.window, {
+          expectWindowId: win.window_id,
+          expect: () => {
+            const owner2 = q.currentWindowOwner.get(win.window);
+            return !(owner2 && (owner2.session_id !== sp.session_id || owner2.status !== "pane-dead"));
+          }
+        });
         if (out.ok || out.gone) windows_killed++;
-        else window_errors.push(`${win.window}: ${out.error || "kill failed"}`);
+        else if (out.stale) {
+        } else window_errors.push(`${win.window}: ${out.error || "kill failed"}`);
       }
       if (window_errors.length) {
         return {
@@ -12183,7 +12285,8 @@ function createRetention(ctx) {
             }
           });
           if (out.ok || out.gone) windows_killed++;
-          else window_errors.push(`${win.window}: ${out.error || "kill failed"}`);
+          else if (out.stale) {
+          } else window_errors.push(`${win.window}: ${out.error || "kill failed"}`);
           if (alive()) {
             resurrected = true;
             break;
@@ -12224,7 +12327,8 @@ function createRetention(ctx) {
       if (owner && (owner.session_id !== sid || owner.status !== "pane-dead")) continue;
       const out = await tmuxAdapter.killWindowVerified(win.window);
       if (out.ok || out.gone) windows_killed++;
-      else window_errors.push(`${win.window}: ${out.error || "kill failed"}`);
+      else if (out.stale) {
+      } else window_errors.push(`${win.window}: ${out.error || "kill failed"}`);
     }
     if (window_errors.length) {
       return {
@@ -12586,12 +12690,12 @@ function createCore(db2, {
     SPAWN_REGISTER_MS,
     SETUP_REGISTER_MS,
     PANE_MAIL_GRACE_MS,
-    MAIL_CLAIM_LEASE_MS,
     MAIL_PENDING_MAX: MAIL_PENDING_MAX2,
     MAIL_PENDING_MAX_BYTES: MAIL_PENDING_MAX_BYTES2,
     MAIL_PANE_BATCH: MAIL_PANE_BATCH2,
     MAIL_PANE_BATCH_BYTES: MAIL_PANE_BATCH_BYTES2,
     // BUG-128 test-only
+    MAIL_CLAIM_LEASE_MS,
     PRESUME_DEAD_MS,
     RETAIN_OFFLINE_MS,
     RC_HARVEST_MS,
@@ -13445,10 +13549,14 @@ function createHttp(core2, {
   proxyAuth = "token",
   managed = false,
   requireToken = false,
-  trustLoopback = false
+  trustLoopback = false,
+  startup = null
 }) {
   const termAuth = { term_token: !(proxyAuth === "trust" || trustLoopback) };
-  let lanInfo = lan?.enabled ? { enabled: true, urls: lan.urls ?? [], mdns: lan.mdns ?? null } : { enabled: false, urls: [] };
+  function currentLan() {
+    const source = typeof lan === "function" ? lan() : lan;
+    return source?.enabled ? { enabled: true, urls: source.urls ?? [], mdns: source.mdns ?? null } : { enabled: false, urls: [] };
+  }
   function snapshotWithLan() {
     return { ...core2.snapshot(), lan: currentLan(), legacy_upgrade: legacyBanner() };
   }
@@ -13494,13 +13602,16 @@ function createHttp(core2, {
   function noteLegacySession(sid) {
     if (typeof sid !== "string" || !sid || sid === "unknown") return;
     if (upgradedSessions.has(sid)) return;
+    if (legacySessions.has(sid)) return;
     legacySessions.add(sid);
+    scheduleBroadcast();
   }
   function noteUpgradedSession(sid) {
     if (typeof sid !== "string" || !sid || sid === "unknown") return;
     if (upgradedSessions.has(sid)) return;
     upgradedSessions.add(sid);
-    legacySessions.delete(sid);
+    const wasLegacy = legacySessions.delete(sid);
+    if (wasLegacy) scheduleBroadcast();
   }
   function legacyBanner() {
     return { sessions: [...legacySessions], upgraded: upgradedSessions.size };
@@ -13523,7 +13634,8 @@ function createHttp(core2, {
   const osGetAddresses = typeof os8.getAddresses === "function" ? () => os8.getAddresses() : () => Object.values(os8.networkInterfaces()).flat();
   let mdnsHost = null;
   try {
-    if (lan?.mdns) mdnsHost = new URL(lan.mdns).hostname.toLowerCase();
+    const lanSeed = typeof lan === "function" ? lan() : lan;
+    if (lanSeed?.mdns) mdnsHost = new URL(lanSeed.mdns).hostname.toLowerCase();
   } catch {
   }
   function refreshLanHosts() {
@@ -13538,10 +13650,14 @@ function createHttp(core2, {
   }
   refreshLanHosts();
   const normHost = (h) => String(h || "").toLowerCase().replace(/^\[/, "").replace(/\]$/, "");
+  function effectivePort(u) {
+    if (u.port) return u.port;
+    return u.protocol === "https:" ? "443" : "80";
+  }
   function hostAllowed(u) {
     refreshLanHosts();
     const host = normHost(u.hostname);
-    return (isLoopbackAddress(host) || lanHosts().has(host)) && (u.port === "" || u.port === daemonPort);
+    return (isLoopbackAddress(host) || lanHosts.has(host)) && effectivePort(u) === daemonPort;
   }
   function authorityTrusted(u) {
     const host = normHost(u.hostname);
@@ -13621,10 +13737,19 @@ function createHttp(core2, {
     PostToolUse: (ev) => core2.hookPostToolUse(ev),
     PreToolUse: (ev) => core2.hookPostToolUse(ev),
     // same derivation branch as the spike
+    // BUG-102: a FAILED tool call is still a completed tool call — route it
+    // through the same correlated expiry so its permission hold retires now
+    // instead of after the full hold window. hookPostToolUse keeps the event's
+    // own name (PostToolUseFailure) in applyEvent and any whisper.
+    PostToolUseFailure: (ev) => core2.hookPostToolUse(ev),
     Stop: (ev) => core2.hookStop(ev),
     SessionEnd: (ev) => core2.hookSessionEnd(ev),
     Notification: (ev) => (core2.applyEvent({ ...ev, hook_event_name: "Notification" }), {}),
-    FileChanged: (ev) => (core2.applyEvent({ ...ev, hook_event_name: "FileChanged" }), {})
+    FileChanged: (ev) => (core2.applyEvent({ ...ev, hook_event_name: "FileChanged" }), {}),
+    // BUG-104: the shim emits this event's watchPaths itself (fleet-hook.mjs);
+    // the daemon side is pure telemetry — one note so a `cd` is visible in the
+    // session's event log.
+    CwdChanged: (ev) => (core2.applyEvent({ ...ev, hook_event_name: "CwdChanged" }), {})
   };
   function holdHook(res, ev, name) {
     let row = null;
@@ -13708,7 +13833,20 @@ function createHttp(core2, {
             version: version2,
             managed,
             spawn: core2.spawnCapability(),
-            auth: termAuth
+            auth: termAuth,
+            // Boot-reconciliation readiness (BUG-066). Both heals are kicked
+            // fire-and-forget from the listen callback, so /health answering 200
+            // is NOT proof they have run — and the asynchronous half
+            // (reconcileSpawns) pushes a mutation broadcast when it settles a
+            // row. A client with zero tolerance for a broadcast it did not cause
+            // (the /ws backpressure hardening test) needs a deterministic
+            // "startup mutation window is closed" signal; 'settled' flips only
+            // when BOTH heals are done. No status exposed (a boot tmux failure
+            // still settles); the startup refusals that would leave it
+            // 'reconciling' forever never reach listen. Tests poll /health →
+            // http.mjs stays the consumer of readiness, so no timer keeps the
+            // loop alive. auth: termAuth is BUG-186 (the /ws/term capability).
+            startup: startup?.reconciliationStatus?.() ?? null
           });
         }
         if (url.pathname === "/state") return json(res, 200, snapshotWithLan());
@@ -13749,11 +13887,17 @@ function createHttp(core2, {
         }
         if (url.pathname === "/mail") {
           const sid = url.searchParams.get("session") || "";
-          const box = core2.drainMail(sid);
+          const ackIds = url.searchParams.get("ack") ?? "";
+          if (ackIds) core2.ackMail(ackIds.split(",").map(Number));
+          const box = core2.drainMail(sid, { lease: true });
           if (box.length) broadcast();
-          return json(res, 200, { mail: box });
+          return json(res, 200, { mail: box, ack_mail_ids: box.map((m) => m.id) });
         }
         if (url.pathname === "/api/watch") return watchHook(req, res, url);
+        if (url.pathname === "/favicon.ico") {
+          res.writeHead(204, { "cache-control": "no-store" });
+          return res.end();
+        }
         if (shell) {
           return serveBoardAsset(res, url.pathname, () => json(res, 404, { err: "nope" }));
         }
@@ -13771,16 +13915,22 @@ function createHttp(core2, {
         let size = 0;
         let tooLarge = false;
         const bodyCap = url.pathname === "/api/paste-image" ? MAX_PASTE_BODY : MAX_BODY;
+        const refuseOversize = () => {
+          res.shouldKeepAlive = false;
+          if (isHook) json(res, 200, {});
+          else json(res, 413, { ok: false, reason: "payload too large" });
+          req.destroy();
+        };
         const declared = Number(req.headers["content-length"]);
         if (Number.isFinite(declared) && declared > bodyCap) {
-          return isHook ? json(res, 200, {}) : json(res, 413, { ok: false, reason: "payload too large" });
+          return refuseOversize();
         }
         req.on("data", (d) => {
           if (tooLarge) return;
           size += d.length;
           if (size > bodyCap) {
             tooLarge = true;
-            return isHook ? json(res, 200, {}) : json(res, 413, { ok: false, reason: "payload too large" });
+            return refuseOversize();
           }
           chunks.push(d);
         });
@@ -13815,7 +13965,14 @@ function createHttp(core2, {
                 core2.applyEvent({ hook_event_name: name, ...ev });
                 return json(res, 200, {});
               }
+              if (typeof ev?.session_id !== "string" || !ev.session_id) {
+                return json(res, 200, {});
+              }
               return json(res, 200, handler(ev) ?? {});
+            }
+            if (url.pathname === "/mail/ack") {
+              const out = core2.ackMail([ev.mail_id]);
+              return json(res, 200, { ok: true, ...out });
             }
             if (url.pathname === "/mail") {
               core2.postMail(ev).then((out) => json(res, out.status ?? 200, out.body ?? out)).catch((err) => {
@@ -13825,7 +13982,7 @@ function createHttp(core2, {
               return;
             }
             if (url.pathname === "/api/cleanup") {
-              core2.cleanup().then((out) => json(res, 200, out)).catch((err) => {
+              core2.cleanup().then((out) => json(res, out.ok === false ? 409 : 200, out)).catch((err) => {
                 console.error("fleetd cleanup error:", err);
                 json(res, 500, { ok: false, err: "internal" });
               });
@@ -13864,7 +14021,7 @@ function createHttp(core2, {
               logExec(
                 url.pathname,
                 req,
-                ev?.dangerously_skip_permissions === true || typeof ev?.permission_mode === "string" && ev.permission_mode.toLowerCase() === "bypasspermissions" ? " unsupervised=true" : " unsupervised=false"
+                ev?.dangerously_skip_permissions === true || typeof ev?.permission_mode === "string" && ev.permission_mode.toLowerCase() === "bypasspermissions" ? ` unsupervised=true${ev?.plan_id != null ? ` plan=${ev.plan_id}` : ""}` : ` unsupervised=false${ev?.plan_id != null ? ` plan=${ev.plan_id}` : ""}`
               );
               core2.spawn(ev).then((out) => json(res, out.status, out.body)).catch((err) => {
                 console.error("fleetd spawn error:", err);
@@ -13926,6 +14083,15 @@ function createHttp(core2, {
               });
               return;
             }
+            const dismissRetryMatch = /^\/api\/sessions\/([^/]+)\/dismiss\/retry$/.exec(url.pathname);
+            if (dismissRetryMatch) {
+              logExec(url.pathname, req);
+              core2.dismissRetry(dismissRetryMatch[1]).then((out) => json(res, out.status, out.body)).catch((err) => {
+                console.error("fleetd dismiss-retry error:", err);
+                json(res, 500, { ok: false, reason: "internal" });
+              });
+              return;
+            }
             const rcMatch = /^\/api\/spawn\/([A-Za-z0-9-]+)\/rc$/.exec(url.pathname);
             if (rcMatch) {
               logExec(url.pathname, req);
@@ -13948,6 +14114,11 @@ function createHttp(core2, {
             const planMatch = /^\/api\/plans\/(\d+)\/mark$/.exec(url.pathname);
             if (planMatch) {
               const out = core2.planMark(Number(planMatch[1]), ev);
+              return json(res, out.status, out.body);
+            }
+            const assignMatch = /^\/api\/plans\/(\d+)\/assign$/.exec(url.pathname);
+            if (assignMatch) {
+              const out = core2.assignPlan(Number(assignMatch[1]), ev);
               return json(res, out.status, out.body);
             }
             return json(res, 404, { err: "nope" });
@@ -14001,10 +14172,18 @@ function createHttp(core2, {
   });
   let dirty = false;
   let flushTimer = null;
+  let idleWaiters = [];
+  function whenBroadcastIdle2() {
+    if (!flushTimer) return Promise.resolve();
+    return new Promise((resolve) => idleWaiters.push(resolve));
+  }
+  function wsSnapshot() {
+    return { type: "snapshot", ...core2.snapshot(), legacy_upgrade: legacyBanner() };
+  }
   function broadcast() {
     dirty = false;
     if (!wss.clients.size) return;
-    const msg = JSON.stringify({ type: "snapshot", ...core2.snapshot() });
+    const msg = JSON.stringify(wsSnapshot());
     for (const c of wss.clients) {
       if (c.readyState !== 1) continue;
       if (c.bufferedAmount > MAX_WS_BUFFER) {
@@ -14023,6 +14202,9 @@ function createHttp(core2, {
     flushTimer = setTimeout(() => {
       flushTimer = null;
       if (dirty) broadcast();
+      const waiters = idleWaiters;
+      idleWaiters = [];
+      for (const resolve of waiters) resolve();
     }, BROADCAST_COALESCE_MS);
     flushTimer.unref?.();
   }
@@ -14032,7 +14214,7 @@ function createHttp(core2, {
       ws.isAlive = true;
     });
     try {
-      ws.send(JSON.stringify({ type: "snapshot", ...core2.snapshot() }));
+      ws.send(JSON.stringify(wsSnapshot()));
     } catch {
     }
   });
@@ -14131,9 +14313,10 @@ function createHttp(core2, {
   core2.onMutate = scheduleBroadcast;
   return {
     server: server2,
-    refreshLan(lan2) {
+    whenBroadcastIdle: whenBroadcastIdle2,
+    refreshLan(nextLan) {
       refreshLanHosts();
-      lanInfo = lan2?.enabled ? { enabled: true, urls: lan2.urls ?? [], mdns: lan2.mdns ?? null } : { enabled: false, urls: [] };
+      lan = nextLan;
     }
   };
 }
@@ -14234,8 +14417,6 @@ var LEGACY_TTL = 10;
 var SERVICE_TYPES = ["_fleetdeck._tcp.local", "_http._tcp.local"];
 var META_QUERY = "_services._dns-sd._udp.local";
 var ANNOUNCE_DELAYS_MS = [0, 1e3, 2e3];
-var PROBE_COUNT = 3;
-var PROBE_INTERVAL_MS = 250;
 function encodeName(name) {
   const labels = String(name).replace(/\.$/, "").split(".").filter(Boolean);
   const parts = [];
@@ -14495,7 +14676,7 @@ function hostLabel(value, fallback = "fleetdeck") {
   return label(value, fallback);
 }
 function normalize(options = {}) {
-  const host = `${hostLabel(options.name, "fleetdeck")}.local`;
+  const host = options.host || `${hostLabel(options.name, "fleetdeck")}.local`;
   const instance = label(options.instance || "Fleet Deck", "Fleet Deck");
   const port = Number(options.port) || 0;
   const addresses = (Array.isArray(options.addresses) ? options.addresses : []).filter(isIPv4);
@@ -14609,14 +14790,17 @@ function uniqueConflict(msg, options = {}, { phase } = {}) {
   const own = /* @__PURE__ */ new Map();
   for (const record of buildAnnouncement(options)) {
     if (record.type === "A" || record.type === "SRV") {
-      own.set(`${String(record.name).toLowerCase()}|${typeNumber(record.type)}`, keyOf(record));
+      const k = `${String(record.name).toLowerCase()}|${typeNumber(record.type)}`;
+      if (!own.has(k)) own.set(k, /* @__PURE__ */ new Set());
+      own.get(k).add(keyOf(record));
     }
   }
   const decoded = decodeMessage(msg);
   if (!decoded) return false;
   for (const record of [...decoded.answers, ...decoded.additionals]) {
-    const key = own.get(`${String(record.name).toLowerCase()}|${record.type}`);
-    if (key && keyOf(record) !== key) return true;
+    if (record.ttl === 0) continue;
+    const keys = own.get(`${String(record.name).toLowerCase()}|${record.type}`);
+    if (keys && !keys.has(keyOf(record))) return true;
   }
   if (phase === "probing") {
     const ours = buildProbeQuestions(options).authorities;
@@ -14686,8 +14870,8 @@ function createMdns({ port, name = "fleetdeck", instance = "Fleet Deck", address
   function send(packet, targetPort, targetAddress) {
     sendRaw(packet, targetPort, targetAddress);
   }
-  function sendMulticastAll(packet, done) {
-    if (!socket || dead) {
+  function sendMulticastAll(buildFor, done) {
+    if (!socket || dead || !joinedIfaces.length) {
       done?.();
       return;
     }
@@ -14701,10 +14885,15 @@ function createMdns({ port, name = "fleetdeck", instance = "Fleet Deck", address
         socket.setMulticastInterface(iface);
       } catch {
       }
-      sendRaw(packet, MDNS_PORT, MDNS_ADDR, settled);
+      const packet = buildFor(iface);
+      if (packet) sendRaw(packet, MDNS_PORT, MDNS_ADDR, settled);
+      else settled();
     }
   }
-  let probed = false;
+  function announcementFor(address, ttl) {
+    const answers = buildAnnouncement({ ...options, addresses: [address] }, ttl === void 0 ? {} : { ttl });
+    return answers.length ? encodeMessage({ id: 0, flags: FLAGS_RESPONSE, answers }) : null;
+  }
   let claimed = false;
   function schedule(fn, delay) {
     const timer = setTimeout(() => {
@@ -14714,29 +14903,14 @@ function createMdns({ port, name = "fleetdeck", instance = "Fleet Deck", address
     timer.unref?.();
     timers.add(timer);
   }
-  function probe2(attempt = 0) {
-    if (dead || !socket) return;
-    if (attempt >= PROBE_COUNT) {
-      claimed = true;
-      for (const delay of ANNOUNCE_DELAYS_MS) schedule(() => announce(), delay);
-      note(`mdns responding for ${ad.host}:${ad.port}${ad.addresses.length ? ` (${ad.addresses.join(", ")})` : " (no LAN address to advertise)"}`);
-      return;
-    }
-    try {
-      const { questions, authorities } = buildProbeQuestions(options);
-      send(encodeMessage({ id: 0, flags: 0, questions, authorities }), MDNS_PORT, MDNS_ADDR);
-    } catch (err) {
-      note(`mdns probe failed: ${err.message}`);
-    }
-    schedule(() => probe2(attempt + 1), PROBE_INTERVAL_MS);
-  }
   function announce(ttl) {
     try {
-      const answers = buildAnnouncement(ad, ttl === void 0 ? {} : { ttl });
-      if (!answers.length) return;
-      const packet = encodeMessage({ id: 0, flags: FLAGS_RESPONSE, answers });
-      if (joinedIfaces.length) sendMulticastAll(packet);
-      else send(packet, MDNS_PORT, MDNS_ADDR);
+      if (joinedIfaces.length) {
+        sendMulticastAll((iface) => announcementFor(iface, ttl));
+      } else {
+        const answers = buildAnnouncement(options, ttl === void 0 ? {} : { ttl });
+        if (answers.length) send(encodeMessage({ id: 0, flags: FLAGS_RESPONSE, answers }), MDNS_PORT, MDNS_ADDR);
+      }
     } catch (err) {
       note(`mdns announce failed: ${err.message}`);
     }
@@ -14750,14 +14924,16 @@ function createMdns({ port, name = "fleetdeck", instance = "Fleet Deck", address
       }
     };
     try {
-      const answers = buildAnnouncement(options, { ttl: 0 });
-      const packet = encodeMessage({ id: 0, flags: FLAGS_RESPONSE, answers });
       const guard = setTimeout(finish, 250);
       guard.unref?.();
       if (joinedIfaces.length) {
-        sendMulticastAll(packet, finish);
+        sendMulticastAll((iface) => announcementFor(iface, 0), () => {
+          clearTimeout(guard);
+          finish();
+        });
       } else {
-        socket.send(packet, MDNS_PORT, MDNS_ADDR, () => {
+        const answers = buildAnnouncement(options, { ttl: 0 });
+        socket.send(encodeMessage({ id: 0, flags: FLAGS_RESPONSE, answers }), MDNS_PORT, MDNS_ADDR, () => {
           clearTimeout(guard);
           finish();
         });
@@ -14770,12 +14946,7 @@ function createMdns({ port, name = "fleetdeck", instance = "Fleet Deck", address
     try {
       const header = parseHeader(msg);
       if (!header) return;
-      if (socket && rinfo.port === MDNS_PORT && !stopping && probed && !claimed) {
-        if (uniqueConflict(msg, options, { phase: "probing" })) {
-          die(`name conflict for ${ad.host} \u2014 another device owns this name`);
-          return;
-        }
-      } else if (socket && rinfo.port === MDNS_PORT && !stopping && claimed && (header.flags & QR_BIT) !== 0) {
+      if (socket && rinfo.port === MDNS_PORT && !stopping && claimed && (header.flags & QR_BIT) !== 0) {
         if (uniqueConflict(msg, options, { phase: "announced" })) {
           withdrawAndDie(`name conflict for ${ad.host} \u2014 another device owns this name`);
           return;
@@ -14786,26 +14957,32 @@ function createMdns({ port, name = "fleetdeck", instance = "Fleet Deck", address
       const questions = parseQuestions(msg);
       if (!questions.length) return;
       const legacy = rinfo.port !== MDNS_PORT;
-      const { answers, additionals } = legacy ? buildResponse(questions, ad, { ttl: LEGACY_TTL, flush: false }) : buildResponse(questions, ad);
-      if (!answers.length) return;
-      const packet = encodeMessage({
-        id: legacy ? header.id : 0,
-        flags: FLAGS_RESPONSE,
-        questions: legacy ? questions : [],
-        // legacy resolvers match on the echoed question
-        answers,
-        additionals
-      });
-      if (legacy || questions.some((q) => q.unicast)) send(packet, rinfo.port, rinfo.address);
-      else if (joinedIfaces.length) sendMulticastAll(packet);
-      else send(packet, MDNS_PORT, MDNS_ADDR);
+      const full = legacy ? buildResponse(questions, options, { ttl: LEGACY_TTL, flush: false }) : buildResponse(questions, options);
+      if (!full.answers.length) return;
+      if (legacy || questions.some((q) => q.unicast)) {
+        send(encodeMessage({
+          id: legacy ? header.id : 0,
+          flags: FLAGS_RESPONSE,
+          questions: legacy ? questions : [],
+          // legacy resolvers match on the echoed question
+          answers: full.answers,
+          additionals: full.additionals
+        }), rinfo.port, rinfo.address);
+      } else if (joinedIfaces.length) {
+        sendMulticastAll((iface) => {
+          const { answers, additionals } = buildResponse(questions, { ...options, addresses: [iface] });
+          return answers.length ? encodeMessage({ id: 0, flags: FLAGS_RESPONSE, questions: [], answers, additionals }) : null;
+        });
+      } else {
+        send(encodeMessage({ id: 0, flags: FLAGS_RESPONSE, questions: [], answers: full.answers, additionals: full.additionals }), MDNS_PORT, MDNS_ADDR);
+      }
     } catch (err) {
       note(`mdns query handling error: ${err.message}`);
     }
   }
   function onBound() {
     try {
-      socket.setTTL(255);
+      socket.setTTL?.(255);
     } catch (err) {
       die("cannot set unicast TTL 255", err);
       return;
@@ -14839,8 +15016,9 @@ function createMdns({ port, name = "fleetdeck", instance = "Fleet Deck", address
       die("no multicast membership");
       return;
     }
-    probed = true;
-    probe2();
+    claimed = true;
+    for (const delay of ANNOUNCE_DELAYS_MS) schedule(() => announce(), delay);
+    note(`mdns responding for ${ad.host}:${ad.port}${ad.addresses.length ? ` (${ad.addresses.join(", ")})` : " (no LAN address to advertise)"}`);
   }
   let socket = null;
   function start() {
@@ -14906,15 +15084,29 @@ function createMdns({ port, name = "fleetdeck", instance = "Fleet Deck", address
       const added = addresses2.filter((a) => !ad.addresses.includes(a));
       options.addresses = addresses2;
       ad = normalize(options);
-      if (removed.length) {
+      for (const address of removed) {
         const goodbye = encodeMessage({
           id: 0,
           flags: FLAGS_RESPONSE,
-          answers: removed.map((address) => ({ name: ad.host, type: "A", ttl: 0, flush: false, data: address }))
+          answers: [{ name: ad.host, type: "A", ttl: 0, flush: false, data: address }]
         });
-        if (joinedIfaces.length) sendMulticastAll(goodbye);
-        else send(goodbye, MDNS_PORT, MDNS_ADDR);
+        if (joinedIfaces.includes(address)) {
+          try {
+            socket.setMulticastInterface(address);
+          } catch {
+          }
+          sendRaw(goodbye, MDNS_PORT, MDNS_ADDR);
+        } else {
+          send(goodbye, MDNS_PORT, MDNS_ADDR);
+        }
       }
+      for (const address of removed) {
+        try {
+          socket.dropMembership(MDNS_ADDR, address);
+        } catch {
+        }
+      }
+      joinedIfaces = joinedIfaces.filter((a) => !removed.includes(a));
       for (const address of added) {
         try {
           socket.addMembership(MDNS_ADDR, address);
@@ -14955,16 +15147,18 @@ function createMdns({ port, name = "fleetdeck", instance = "Fleet Deck", address
         }
       };
       try {
-        const answers = buildAnnouncement(ad, { ttl: 0 });
-        const packet = encodeMessage({ id: 0, flags: FLAGS_RESPONSE, answers });
         const guard = setTimeout(finish, 250);
         guard.unref?.();
         const done = () => {
           clearTimeout(guard);
           finish();
         };
-        if (joinedIfaces.length) sendMulticastAll(packet, done);
-        else socket.send(packet, MDNS_PORT, MDNS_ADDR, done);
+        if (joinedIfaces.length) {
+          sendMulticastAll((iface) => announcementFor(iface, 0), done);
+        } else {
+          const answers = buildAnnouncement(options, { ttl: 0 });
+          socket.send(encodeMessage({ id: 0, flags: FLAGS_RESPONSE, answers }), MDNS_PORT, MDNS_ADDR, done);
+        }
       } catch {
         finish();
       }
@@ -15416,6 +15610,11 @@ function startMdns(addresses) {
     }
   });
 }
+function announceLanUrls(addresses) {
+  for (const address of addresses) {
+    console.log(`fleetd LAN http://${address}:${PORT}/?t=<hidden> (credential available in share panel)`);
+  }
+}
 function refreshNetwork(addresses) {
   lastLanAddresses = addresses;
   try {
@@ -15426,9 +15625,6 @@ function refreshNetwork(addresses) {
   try {
     mdns?.update({ addresses });
   } catch {
-  }
-  for (const address of addresses) {
-    console.log(`fleetd LAN http://${address}:${PORT}/?t=<hidden> (credential available in share panel)`);
   }
 }
 var lastLanAddresses = null;
@@ -15442,9 +15638,10 @@ function watchNetwork() {
     }
     if (addresses && lastLanAddresses && !sameAddresses(addresses, lastLanAddresses)) {
       const gone = lastLanAddresses.filter((a) => !addresses.includes(a));
-      console.log(`fleetd network change (${lastLanAddresses.join(", ") || "none"} -> ${addresses.join(", ") || "none"})`);
       refreshNetwork(addresses);
-      if (!addresses.length) {
+      if (addresses.length) {
+        console.log(`fleetd LAN addresses now ${addresses.join(", ")}${gone.length ? ` (was ${gone.join(", ")})` : ""}`);
+      } else {
         console.log("fleetd LAN interface lost; board still reachable at its last addresses only until the link returns");
       }
       if (!mdns && MDNS_ENABLED && addresses.length) startMdns(addresses);
@@ -15482,7 +15679,8 @@ server.listen(PORT, BIND, () => {
     }
   }
   if (LAN_MODE) {
-    refreshNetwork(lanAddresses());
+    lastLanAddresses = lanAddresses();
+    announceLanUrls(lastLanAddresses);
     if (MDNS_ENABLED && lastLanAddresses.length) {
       startMdns(lastLanAddresses);
     }

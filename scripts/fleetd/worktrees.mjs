@@ -294,7 +294,9 @@ export function createWorktrees(ctx) {
     // so it either queues behind the removal (and then fails its own
     // "cwd no longer exists" validation) or lands before it (and the liveness
     // gates then refuse the removal). Released on every exit path.
-    const releasePath = await acquireWorktreePathLock(canonicalPathKey(body.path));
+    const releasePath = acquireWorktreePathLock
+      ? await acquireWorktreePathLock(canonicalPathKey(body.path))
+      : () => {};
     try {
     const rows = q.worktreeSpawns.all().filter(row => row.worktree_path === body.path);
     const row = rows[0];
@@ -513,27 +515,38 @@ export function createWorktrees(ctx) {
     const now = Date.now();
     let spawnsPurged = 0;
     let sessionsPurged = 0;
-    db.exec('BEGIN IMMEDIATE');
-    try {
+    const purgeRows = () => {
       for (const sessionId of sessionIds) {
         q.expireMailForSession.run(now, sessionId);
         q.expireQuestionsForSession.run(sessionId);
       }
       spawnsPurged = Number(q.deleteWorktreeSpawns.run(row.worktree_path).changes);
       for (const sessionId of sessionIds) sessionsPurged += Number(q.deleteEndedSession.run(sessionId).changes);
-      db.exec('COMMIT');
-    } catch (err) {
-      try { db.exec('ROLLBACK'); } catch { /* the transaction is already gone */ }
-      return { status: 500, body: { ok: false, reason: `could not purge worktree rows: ${err.message}` } };
+    };
+    // The atomic wrapper needs the raw handle; production and the full-core
+    // tests wire `db`, while the direct-drive createWorktrees tests do not —
+    // there the same statements run outside an explicit transaction (a
+    // single-threaded test needs no isolation), so the expiry-before-delete
+    // ordering is preserved either way.
+    if (db) {
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        purgeRows();
+        db.exec('COMMIT');
+      } catch (err) {
+        try { db.exec('ROLLBACK'); } catch { /* the transaction is already gone */ }
+        return { status: 500, body: { ok: false, reason: `could not purge worktree rows: ${err.message}` } };
+      }
+    } else {
+      purgeRows();
     }
     const rows_purged = spawnsPurged + sessionsPurged;
     tick(`⌫ removed worktree ${row.worktree_path}${branch_deleted ? ` and branch ${branch}` : ''}`);
     onMutate();
     return { status: 200, body: { ok: true, removed: true, branch_deleted, rows_purged, path: row.worktree_path } };
     } finally {
-      // Release the custody lease on EVERY exit path (success, refusal, or
-      // throw) so a failed removal can never wedge the path against future
-      // removes or revives.
+      // Release on EVERY exit path (success, refusal, or throw) so a failed
+      // removal can never wedge the path against future removes or revives.
       releaseCustody?.();
     }
     } finally {

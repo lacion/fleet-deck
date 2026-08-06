@@ -56,7 +56,7 @@ test('startDaemon removes its own scratch home when startup fails (BUG-201)', as
   const before = new Set(readdirSync(tmpdir()).filter(n => n.startsWith('fleetdeck-test-')));
   await assert.rejects(
     startDaemon({ port: blocker.port, scriptPath: CRASH_STUB, healthTimeoutMs: 1500 }),
-    /never became healthy/,
+    /(never became|before becoming) healthy/,
   );
   const leaked = readdirSync(tmpdir()).filter(n => n.startsWith('fleetdeck-test-') && !before.has(n));
   assert.deepEqual(leaked, [], `failed startup leaked scratch home(s): ${leaked.join(', ')}`);
@@ -70,7 +70,7 @@ test('startDaemon preserves a caller-owned home when startup fails', async (t) =
 
   await assert.rejects(
     startDaemon({ port: blocker.port, home, scriptPath: CRASH_STUB, healthTimeoutMs: 1500 }),
-    /never became healthy/,
+    /(never became|before becoming) healthy/,
   );
   assert.ok(existsSync(home), 'caller-owned home must survive a failed startup');
   assert.ok(existsSync(path.join(home, 'crashed.marker')), 'post-mortem evidence must be left in place');

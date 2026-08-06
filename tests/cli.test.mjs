@@ -391,7 +391,7 @@ test('healthPidIsOurDaemon: accepts only a managed responder whose pid matches f
   if (process.platform !== 'linux') return t.skip('identity check is /proc-based; skip off-Linux');
   const child = spawnFakeFleetd();
   try {
-    fs.writeFileSync(FLEETD_PID, JSON.stringify({ pid: child.pid, port: 4711 }));
+    fs.writeFileSync(FLEETD_PID, JSON.stringify({ pid: child.pid, port: DEAD_PORT }));
     assert.equal(healthPidIsOurDaemon({ pid: child.pid, managed: true }), true, 'our own managed daemon must pass');
     assert.equal(healthPidIsOurDaemon({ pid: child.pid, managed: false }), false, 'a plugin-spawned (unmanaged) daemon is not ours to stop');
     assert.equal(healthPidIsOurDaemon({ pid: child.pid }), false, 'a health body without `managed` is not a managed fleetd');
@@ -407,11 +407,11 @@ test('healthPidIsOurDaemon: rejects a foreign responder whose pid is not in flee
   try {
     // Another installation's daemon recorded in ITS home — our pidfile names a
     // different (dead) pid, so the responder's live pid must NOT be signalled.
-    fs.writeFileSync(FLEETD_PID, JSON.stringify({ pid: 1073741823, port: 4711 }));
+    fs.writeFileSync(FLEETD_PID, JSON.stringify({ pid: 1073741823, port: DEAD_PORT }));
     assert.equal(healthPidIsOurDaemon({ pid: child.pid, managed: true }), false, 'pid not recorded in OUR fleetd.pid');
     // A fake local server claiming the recorded pid of a NON-fleetd live process
     // (this test runner) must also fail the /proc identity leg.
-    fs.writeFileSync(FLEETD_PID, JSON.stringify({ pid: process.pid, port: 4711 }));
+    fs.writeFileSync(FLEETD_PID, JSON.stringify({ pid: process.pid, port: DEAD_PORT }));
     assert.equal(healthPidIsOurDaemon({ pid: process.pid, managed: true }), false, 'pidfile match but the live process is not a fleetd');
   } finally {
     try { process.kill(child.pid, 'SIGKILL'); } catch { /* already gone */ }
@@ -575,11 +575,13 @@ test('unitEnvFilePath: literal paths pass through (%-escaped); whitespace/quotes
   }
 });
 
-test('UNIT(): normal paths stay byte-identical to the pre-fix unit (bare, no % present)', () => {
+test('UNIT(): normal paths need no %-escaping; ExecStart is quoted (BUG-078 supersedes the old bare form)', () => {
   const u = UNIT();
   assert.ok(u.includes(`EnvironmentFile=-${ENV_FILE}`), 'env file directive unchanged for a normal path');
-  assert.ok(u.includes(`ExecStart=${process.execPath} `), 'node binary stays bare when the path is safe');
-  assert.doesNotMatch(u, /%%/, 'no escaping noise when no path needs it');
+  // BUG-078 always double-quotes the ExecStart tokens (hostile-path safety), so
+  // even a safe node path is quoted — this supersedes BUG-077's "stays bare".
+  assert.ok(u.includes(`ExecStart="${process.execPath}" `), 'node binary is double-quoted');
+  assert.doesNotMatch(u, /%%/, 'no %-escaping noise when no path needs it');
 });
 
 // BUG-079: the wrapper embeds ENV_FILE, the Node executable, and the CLI path.

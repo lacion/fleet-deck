@@ -105,10 +105,15 @@ const stripFormatChars = (s) => s.replace(/\p{Cf}/gu, '');
 // BUG-036/BUG-063: delivery preserves linefeeds (watcher output is verbatim
 // and sanitizePaneText keeps \n), so a frame at the start of ANY logical line
 // — not just byte zero — renders as a genuine authority frame. Canonicalize
-// newlines exactly as the pane sink does (CRLF / lone CR → LF), then test the
-// start of every line (on the Cf-stripped text, per BUG-032 above).
+// EVERY JS line terminator the pane can break on — CRLF, lone CR, and the
+// unicode line/paragraph separators U+2028/U+2029 (BUG-063's multiline anchor
+// caught these; a CRLF-only split silently dropped them) — to LF, then test
+// the start of every line (on the Cf-stripped text, per BUG-032 above).
 function hasReservedFrame(text) {
-  return stripFormatChars(String(text)).replace(/\r\n?/g, '\n').split('\n').some(line => RESERVED_FRAME_RE.test(line));
+  return stripFormatChars(String(text))
+    .replace(/\r\n?|[\u2028\u2029]/g, '\n')
+    .split('\n')
+    .some(line => RESERVED_FRAME_RE.test(line));
 }
 // The pane envelope is a single line (`[FLEETDECK MAIL from <from>] <text>`):
 // a newline in `from` lets the text forge a line-two frame, and `from` is
@@ -433,13 +438,18 @@ export function createMail(ctx) {
       return true;
     }
     const entered = await tmuxAdapter.sendEnter(target);
-    // BUG-033: once pasteText succeeded the text is already IN the pane, so a
-    // failed/uncertain Enter must NOT unmark the rows — requeueing them would
-    // re-paste the same text on a later turn and submit it twice (duplicated
-    // prompts, repeated non-idempotent side effects). Keep them delivered; the
-    // operator can recover the un-entered text sitting in the composer. The
-    // pre-paste unmark above remains the only requeue path.
+    // BUG-033 × BUG-034: once pasteText succeeded the text is already IN the
+    // pane, so a failed/uncertain Enter must NOT requeue the rows — re-pasting
+    // would submit the same text twice (duplicated prompts, repeated
+    // non-idempotent side effects). Under the lease model claimAllMail only
+    // LEASED these rows, so a bare return would leave them claimed-but-unacked
+    // and retentionSweep would later hand them back and re-deliver (a delayed
+    // re-paste). FINALIZE delivery instead: the paste itself is the side effect
+    // that landed, exactly like the "pane flipped" branch above. The pre-paste
+    // releaseClaim remains the only requeue path.
     if (!entered) {
+      const now = Date.now();
+      for (const m of box) q.ackMail.run(now, m.id); // pasted = side effect landed; never re-paste
       logEvent(sid, 'MailPaneEnterFailed', null,
         `pasted ${box.length} mail into ${pair.sp.tmux_window} but Enter failed — left un-entered, NOT requeued (text already in pane)`);
       onMutate();

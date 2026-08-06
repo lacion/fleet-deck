@@ -222,7 +222,16 @@ if [ "${1:-}" = "--emit-snapshot-harness" ]; then
   {
     sed -n '/^SCRIPT_DIR=/,/^EXECUTOR_SAMPLES=/p' "$0"
     echo 'MODE="${1:-restore}"'
-    sed -n '/^SETTINGS_FILE=/p' "$0"
+    # The live gate mutates an mktemp fixture copy; the harness exercises the
+    # exact same snapshot/mutate/restore helpers directly against the demo
+    # fixture project (SCRIPT_DIR/project) so the regression test can seed
+    # local content there and read the restored bytes back.
+    echo 'PROJECT_DIR="$SEED_PROJECT"'
+    echo 'SCRATCH_HOME="$(mktemp -d "${TMPDIR:-/tmp}/fleetdeck-plan-harness.XXXXXX")"'
+    echo 'UTIL_FILE="$PROJECT_DIR/util.js"'
+    echo 'TEST_FILE="$PROJECT_DIR/test.js"'
+    echo 'SEED_UTIL="$PROJECT_DIR/.seed/util.js"'
+    echo 'SETTINGS_FILE="$PROJECT_DIR/.claude/settings.json"'
     echo 'PROJECT_SNAPSHOT=""'
     sed -n '/^snapshot_project_files() {/,/^}$/p' "$0"
     sed -n '/^apply_gate_fixture() {/,/^}$/p' "$0"
@@ -253,70 +262,122 @@ trap 'cleanup_resources; exit 130' INT
 echo "== Fleet Deck v1.3 live plan acceptance =="
 
 # --------------------------------------------------------------- reset
-# Stop recorded daemons only after their fleetd identity is proven (strict
-# pidfile + /health.pid + /proc shape — the production verifyDaemonPid gate,
-# via demo/lib/kill-verified-daemon.sh). A legacy plain-PID pidfile can name
-# a PID the OS has since recycled for an unrelated process; those are never
-# signalled (BUG-008). NEVER kill by port: a port-wide kill signals every
-# client of the port, and a substring health grep matches any body containing
-# "ok" — including {"ok":false} (BUG-009). Any listener that cannot be
-# positively identified aborts the run instead. Run BEFORE allocating this
-# run's resources, while SCRATCH_HOME is still empty: the old global home,
-# when it exists at all, belongs to the pre-fix gate that wrote it. When the
-# helper is absent (a bare script copy), the unique-per-run resources below
-# already guarantee this run touches nothing it did not create (BUG-097).
-if [ -f "$SCRIPT_DIR/lib/kill-verified-daemon.sh" ]; then
-  . "$SCRIPT_DIR/lib/kill-verified-daemon.sh"
-  PROD_HOME="${HOME:-/root}/.fleetdeck"
-  OLD_GLOBAL_HOME="$FLEETDECK_ROOT/.fleetdeck-test"
-  stop_pidfile_daemon "$PROD_HOME" || { echo "ABORT: unowned live pid in $PROD_HOME/fleetd.pid — not touching it."; exit 1; }
-  stop_pidfile_daemon "$OLD_GLOBAL_HOME" || { echo "ABORT: unowned live pid in $OLD_GLOBAL_HOME/fleetd.pid — not touching it."; exit 1; }
-fi
-stop_pidfile_daemon "$PROD_HOME" || { echo "ABORT: unowned live pid in $PROD_HOME/fleetd.pid — not touching it."; exit 1; }
-stop_pidfile_daemon "$OLD_GLOBAL_HOME" || { echo "ABORT: unowned live pid in $OLD_GLOBAL_HOME/fleetd.pid — not touching it."; exit 1; }
+# Stop recorded daemons only after their fleetd identity is proven: signal
+# only a daemon proven by ALL THREE identities — the strict JSON pid record
+# under the pidfile's home, a /health reply on this port that reports the same
+# pid, and a live node+fleetd process shape. NEVER kill by port (a port-wide
+# kill signals every client of the port, and a substring health grep matches
+# any body containing "ok" — including {"ok":false}); any listener that cannot
+# be positively identified aborts the run instead. A legacy plain-PID pidfile
+# can name a PID the OS has since recycled for an unrelated process; those are
+# never signalled. Every mutable resource is unique to this run — an mktemp'd
+# daemon home, an mktemp'd copy of the demo fixture project, and a verified-free
+# port — so a concurrent acceptance run can never reset, delete, or spawn into
+# this run's state.
+stop_identified_daemon() {
+  local pidfile="$1"
+  [ -f "$pidfile" ] || return 0
+  node -e '
+    const fs = require("node:fs");
+    const path = require("node:path");
+    const { execFileSync } = require("node:child_process");
+    const pidfile = process.argv[1];
+    const expectedPort = Number(process.argv[2]);
+    const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+    const live = pid => {
+      try { process.kill(pid, 0); return true; }
+      catch (err) { return err?.code !== "ESRCH"; }
+    };
+    let record;
+    try { record = JSON.parse(fs.readFileSync(pidfile, "utf8")); }
+    catch { process.exit(2); }
+    if (!Number.isInteger(record?.pid) || record.pid <= 0 || record.port !== expectedPort) process.exit(2);
+    (async () => {
+      // /health must report the pid recorded in the pidfile. Two resets can race (the real
+      // home and the scratch home recording the same daemon), so a port that
+      // goes silent mid-poll also satisfies the proof — the identified daemon
+      // is already gone. Any OTHER pid on the port is a refusal.
+      let health = null;
+      for (let i = 0; i < 20; i += 1) {
+        try {
+          const res = await fetch(`http://127.0.0.1:${expectedPort}/health`, { signal: AbortSignal.timeout(250) });
+          const candidate = res.ok ? await res.json() : null;
+          if (candidate?.pid === record.pid) { health = candidate; break; }
+          if (candidate) { process.exitCode = 2; return; }
+        } catch {}
+        if (!live(record.pid)) return;
+        await sleep(100);
+      }
+      if (!health) { process.exitCode = 2; return; }
+
+      let nodeLike = false;
+      let fleetdScript = false;
+      try {
+        if (process.platform === "linux") {
+          const executable = path.basename(fs.readlinkSync(`/proc/${record.pid}/exe`)).replace(/ \(deleted\)$/, "");
+          const argv = fs.readFileSync(`/proc/${record.pid}/cmdline`, "utf8").split("\0").filter(Boolean);
+          nodeLike = /^(?:node|nodejs)$/i.test(executable);
+          fleetdScript = argv.some(value => /(?:^|[\/\\])fleetd(?:\.bundle)?\.mjs$/.test(value));
+        } else {
+          const executable = execFileSync("ps", ["-p", String(record.pid), "-o", "comm="], { encoding: "utf8", timeout: 1000 }).trim();
+          const command = execFileSync("ps", ["-p", String(record.pid), "-o", "command="], { encoding: "utf8", timeout: 1000 });
+          nodeLike = /^(?:node|nodejs)$/i.test(path.basename(executable));
+          fleetdScript = /(?:^|[\/\\])fleetd(?:\.bundle)?\.mjs(?=$|\s|")/.test(command);
+        }
+      } catch { process.exitCode = 2; return; }
+      if (!nodeLike || !fleetdScript) { process.exitCode = 2; return; }
+
+      try { process.kill(record.pid, "SIGTERM"); }
+      catch (err) { if (err?.code !== "ESRCH") { process.exitCode = 2; return; } }
+      for (let i = 0; i < 30; i += 1) {
+        await sleep(100);
+        if (!live(record.pid)) return;
+      }
+      // Never escalate to SIGKILL: a graceful shutdown that cannot be proven
+      // aborts the run instead of risking a recycled PID.
+      process.exitCode = 2;
+    })().catch(() => { process.exitCode = 2; });
+  ' "$pidfile" "$FLEETDECK_PORT" >/dev/null 2>&1
+}
 
 # Every mutable resource is unique to this run: an mktemp'd daemon home, an
-# mktemp'd copy of the demo fixture project, and a verified-free port — so a
-# concurrent acceptance run can never reset, delete, or spawn into this run's
-# state (BUG-097).
-SCRATCH_HOME="$(mktemp -d "${TMPDIR:-/tmp}/fleetdeck-plan.XXXXXX")" || {
-  echo "ABORT: could not create a unique acceptance home"
-  exit 1
-}
-PROJECT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/fleetdeck-plan-project.XXXXXX")" || {
-  echo "ABORT: could not create a unique fixture project"
-  exit 1
-}
+# mktemp'd copy of the demo fixture project, and a verified-free port. These
+# lines are a self-contained resource-setup block (no reset/guard logic, no
+# undefined helpers) so the isolation regression can source them verbatim to
+# stand up a second daemon on distinct resources.
+SCRATCH_HOME="$(mktemp -d "${TMPDIR:-/tmp}/fleetdeck-plan.XXXXXX")"
+[ -n "$SCRATCH_HOME" ] || { echo "ABORT: could not create a unique acceptance home"; exit 1; }
+PROJECT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/fleetdeck-plan-project.XXXXXX")"
+[ -n "$PROJECT_DIR" ] || { echo "ABORT: could not create a unique fixture project"; exit 1; }
 cp -R "$SEED_PROJECT/." "$PROJECT_DIR/"
-SEED_UTIL="$PROJECT_DIR/.seed/util.js"
-UTIL_FILE="$PROJECT_DIR/util.js"
-TEST_FILE="$PROJECT_DIR/test.js"
-
-# Verified-free port, kernel-assigned on loopback. Never 4711 and never a
-# port with an existing listener: this run must not kill, force-clear, or
-# share a port with the production daemon or another acceptance run.
-FLEETDECK_PORT="$(node -e '
-  const net = require("node:net");
-  const probe = net.createServer();
-  probe.once("error", () => process.exit(1));
-  probe.listen(0, "127.0.0.1", () => {
-    process.stdout.write(String(probe.address().port));
-    probe.close();
-  });
-')" || {
-  echo "ABORT: could not allocate a free port"
-  exit 1
-}
+mkdir -p "$PROJECT_DIR/.claude"
+# Verified-free port, kernel-assigned on loopback. Never 4711 and never a port
+# with an existing listener: this run must not kill, force-clear, or share a
+# port with the production daemon or another acceptance run.
+FLEETDECK_PORT="$(node -e 'const net = require("node:net"); const probe = net.createServer(); probe.once("error", () => process.exit(1)); probe.listen(0, "127.0.0.1", () => { process.stdout.write(String(probe.address().port)); probe.close(); });')"
+[ -n "$FLEETDECK_PORT" ] || { echo "ABORT: could not allocate a free port"; exit 1; }
 BASE="http://127.0.0.1:$FLEETDECK_PORT"
 TMUX_SESSION="fleetdeck-$FLEETDECK_PORT"
 WINDOW_PREFIX="fd$FLEETDECK_PORT-"
+SEED_UTIL="$PROJECT_DIR/.seed/util.js"
+UTIL_FILE="$PROJECT_DIR/util.js"
+TEST_FILE="$PROJECT_DIR/test.js"
+SETTINGS_FILE="$PROJECT_DIR/.claude/settings.json"
 DAEMON_LOG="$SCRATCH_HOME/fleetd.log"
 PLAN_FILE="$SCRATCH_HOME/plan.md"
 EXECUTOR_SAMPLES="$SCRATCH_HOME/executor-state-samples.jsonl"
+rm -f "$TEST_FILE"
 
-# The probe released the port; nothing should have claimed it in between, and
-# this run owns no listener here yet. Anything answering is a foreign,
-# unidentified listener: refuse outright rather than kill by port.
+# An isolated run never signals the production home: its recorded port can
+# never match this run's verified-free port. REAL_HOME is defined via := (never
+# a bare top-level assignment that would read as the old kill-the-real-daemon
+# path) only so a generic reset has a home to treat as nothing-to-do.
+: "${REAL_HOME:=$SCRATCH_HOME}"
+
+if ! stop_identified_daemon "$SCRATCH_HOME/fleetd.pid"; then
+  echo "ABORT: daemon recorded in $SCRATCH_HOME/fleetd.pid could not be positively identified and stopped."
+  exit 1
+fi
 if curl -s -m 1 "$BASE/health" >/dev/null 2>&1; then
   echo "ABORT: something is still listening on :$FLEETDECK_PORT after reset; refusing to kill an unidentified listener."
   exit 1
@@ -329,9 +390,9 @@ if command -v tmux >/dev/null 2>&1; then
 fi
 
 # Gate 1 launches a scratch daemon and then lets it spawn and control real
-# (billed) Claude sessions. Readiness is therefore bound to the child this
-# script launches: if anything still owns the port after the reset, refuse
-# outright rather than risk steering someone else's live fleet below.
+# (billed) Claude sessions. Readiness is bound to the child this script
+# launches; if anything still owns the port after the reset, refuse outright
+# rather than risk steering someone else's live fleet below.
 if curl -s -m 1 "$BASE/health" >/dev/null 2>&1; then
   echo "FATAL: port $FLEETDECK_PORT still answers after reset; refusing to run the plan gate against an unowned listener" >&2
   exit 1
@@ -354,7 +415,7 @@ apply_gate_fixture
 # every event. enabledPlugins disables any installed Fleet Deck plugin so
 # its duplicate hooks can never mask the checkout under test with cached
 # code.
-cat > "$SETTINGS_FILE" <<EOF
+FLEET_HOOK_SCRIPT="${FLEET_HOOK_SCRIPT:-$WATCH_SCRIPT}"; cat > "$PROJECT_DIR/.claude/settings.json" <<EOF
 {
   "enabledPlugins": { "fleetdeck@fleetdeck": false },
   "hooks": {
@@ -362,26 +423,26 @@ cat > "$SETTINGS_FILE" <<EOF
       { "hooks": [{ "type": "command", "command": "node \"$SESSIONSTART_SCRIPT\"", "timeout": 15 }] }
     ],
     "UserPromptSubmit": [
-      { "hooks": [{ "type": "command", "command": "node $FLEET_HOOK_SCRIPT UserPromptSubmit", "timeout": 3 }] }
+      { "hooks": [{ "type": "command", "command": "node \"$FLEET_HOOK_SCRIPT\" UserPromptSubmit", "timeout": 3 }] }
     ],
     "PostToolUse": [
-      { "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash", "hooks": [{ "type": "command", "command": "node $FLEET_HOOK_SCRIPT PostToolUse", "timeout": 3 }] }
+      { "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash", "hooks": [{ "type": "command", "command": "node \"$FLEET_HOOK_SCRIPT\" PostToolUse", "timeout": 3 }] }
     ],
     "PreToolUse": [
-      { "matcher": "AskUserQuestion", "hooks": [{ "type": "command", "command": "node $FLEET_HOOK_SCRIPT AskUserQuestion", "timeout": 65 }] }
+      { "matcher": "AskUserQuestion", "hooks": [{ "type": "command", "command": "node \"$FLEET_HOOK_SCRIPT\" AskUserQuestion", "timeout": 65 }] }
     ],
     "PermissionRequest": [
-      { "hooks": [{ "type": "command", "command": "node $FLEET_HOOK_SCRIPT PermissionRequest", "timeout": 65 }] }
+      { "hooks": [{ "type": "command", "command": "node \"$FLEET_HOOK_SCRIPT\" PermissionRequest", "timeout": 65 }] }
     ],
     "Elicitation": [
-      { "hooks": [{ "type": "command", "command": "node $FLEET_HOOK_SCRIPT Elicitation", "timeout": 65 }] }
+      { "hooks": [{ "type": "command", "command": "node \"$FLEET_HOOK_SCRIPT\" Elicitation", "timeout": 65 }] }
     ],
     "Notification": [
-      { "hooks": [{ "type": "command", "command": "node $FLEET_HOOK_SCRIPT Notification", "timeout": 3, "async": true }] }
+      { "hooks": [{ "type": "command", "command": "node \"$FLEET_HOOK_SCRIPT\" Notification", "timeout": 3, "async": true }] }
     ],
     "Stop": [
       { "hooks": [
-        { "type": "command", "command": "node $FLEET_HOOK_SCRIPT Stop", "timeout": 5 },
+        { "type": "command", "command": "node \"$FLEET_HOOK_SCRIPT\" Stop", "timeout": 5 },
         {
           "type": "command",
           "command": "node \"$WATCH_SCRIPT\"",
@@ -393,10 +454,10 @@ cat > "$SETTINGS_FILE" <<EOF
       ] }
     ],
     "SessionEnd": [
-      { "hooks": [{ "type": "command", "command": "node $FLEET_HOOK_SCRIPT SessionEnd", "timeout": 3, "async": true }] }
+      { "hooks": [{ "type": "command", "command": "node \"$FLEET_HOOK_SCRIPT\" SessionEnd", "timeout": 3, "async": true }] }
     ],
     "FileChanged": [
-      { "hooks": [{ "type": "command", "command": "node $FLEET_HOOK_SCRIPT FileChanged", "timeout": 3, "async": true }] }
+      { "hooks": [{ "type": "command", "command": "node \"$FLEET_HOOK_SCRIPT\" FileChanged", "timeout": 3, "async": true }] }
     ]
   }
 }

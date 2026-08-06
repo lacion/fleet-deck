@@ -531,15 +531,29 @@ function startMdns(addresses) {
   });
 }
 
+// The IP LAN banner. Printed ONCE at startup and never again: the credentialed
+// URLs live in the board's share panel, so the log identifies the endpoint with
+// the token elided. NOT a refreshLan call — the share panel's initial state
+// comes from createHttp's `lan` getter, and routing a startup refresh through
+// refreshLan would put the full-credential URL into a log line that is commonly
+// world-readable (BUG-072 token-log contract).
+function announceLanUrls(addresses) {
+  for (const address of addresses) {
+    console.log(`fleetd LAN http://${address}:${PORT}/?t=<hidden> (credential available in share panel)`);
+  }
+}
+
+// A live network change (roam / DHCP renewal): re-derive the share URLs and the
+// Host allowlist, retire/announce the responder's A records for the delta, and
+// say what the address set is NOW. refreshLan carries the real credentialed URLs
+// to the share panel BY DESIGN — that is the panel's whole point — so it is the
+// one surface allowed the token; the console line below never is.
 function refreshNetwork(addresses) {
   lastLanAddresses = addresses;
   // One builder (see lanInfoFor above) so startup and this refresh can never
   // drift on how a LAN status object is shaped.
   try { refreshLan(lanInfoFor(addresses)); } catch (err) { console.error('fleetd share-URL refresh error:', err); }
   try { mdns?.update({ addresses }); } catch { /* discovery is never load-bearing */ }
-  for (const address of addresses) {
-    console.log(`fleetd LAN http://${address}:${PORT}/?t=<hidden> (credential available in share panel)`);
-  }
 }
 
 let lastLanAddresses = null;
@@ -551,9 +565,10 @@ function watchNetwork() {
     try { addresses = lanAddresses(); } catch { /* enumeration is best effort */ }
     if (addresses && lastLanAddresses && !sameAddresses(addresses, lastLanAddresses)) {
       const gone = lastLanAddresses.filter(a => !addresses.includes(a));
-      console.log(`fleetd network change (${lastLanAddresses.join(', ') || 'none'} -> ${addresses.join(', ') || 'none'})`);
       refreshNetwork(addresses);
-      if (!addresses.length) {
+      if (addresses.length) {
+        console.log(`fleetd LAN addresses now ${addresses.join(', ')}${gone.length ? ` (was ${gone.join(', ')})` : ''}`);
+      } else {
         console.log('fleetd LAN interface lost; board still reachable at its last addresses only until the link returns');
       }
       // A responder that never started (no address at boot) is created on the
@@ -613,7 +628,11 @@ server.listen(PORT, BIND, () => {
     // LOG CREDENTIAL CONTRACT: the real query-bearing URLs live in the board's
     // share panel. stdout is commonly redirected to fleetd.log (often 0644), so
     // it may identify the endpoint but must never become a second token store.
-    refreshNetwork(lanAddresses());
+    // The share panel's initial LAN state comes from createHttp's `lan` getter
+    // (no startup refreshLan — that would log the credentialed URL); the watcher
+    // below refreshes it on the first roam.
+    lastLanAddresses = lanAddresses();
+    announceLanUrls(lastLanAddresses);
     // Discovery is a convenience, never a dependency: mdns.mjs degrades to a
     // no-op on EADDRINUSE (a real avahi owns 5353), EPERM or a network that
     // drops multicast. The IP URLs above always work regardless. No address at

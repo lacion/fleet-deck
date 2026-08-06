@@ -54,7 +54,7 @@ export function createSnapshot(ctx) {
     // statements below are scoped to exactly the rows this frame consumes.
     const spawnBySid = new Map();
     for (const r of q.spawnByVisibleSession.all()) spawnBySid.set(r.session_id, r);
-    const pendingBySid = new Map(q.pendingCounts.all().map(r => [r.to_session, r]));
+    const pendingBySid = new Map(q.pendingCounts.all(Date.now()).map(r => [r.to_session, r]));
     const callsignById = new Map(q.conflictCallsigns.all().map(s => [s.session_id, s.callsign]));
     // M-P2: the owned-pane and watcher facts feed mail_meta.route below; compute
     // each ONCE per session here rather than re-running getSession +

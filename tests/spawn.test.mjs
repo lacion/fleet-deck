@@ -753,7 +753,9 @@ test('restart reconciliation removes a spawn-owned worktree left by a spawn inte
   const home = scratchDir('fleetdeck-spawn-home-');
   const port = randomPort();
   const baseUrl = `http://127.0.0.1:${port}`;
-  const rec = path.join(scratchDir(), 'specs.jsonl');
+  // BUG-213: use the cleaned helper so the spec-record dir (not just the file)
+  // is removed on teardown — a bare scratchDir() here leaked its owning dir.
+  const rec = makeSpecRecordFile(t);
   const repo = makeRepoWithWorktree({ repoName: 'fleetdeck-bug153-worktree' });
   t.after(() => { rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); repo.cleanup(); });
 

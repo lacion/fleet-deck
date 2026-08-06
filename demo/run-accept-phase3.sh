@@ -14,6 +14,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FLEETDECK_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SEED_PROJECT="$SCRIPT_DIR/project"
 SESSIONSTART_SCRIPT="$FLEETDECK_ROOT/scripts/fleet-sessionstart.mjs"
+WATCH_SCRIPT="$FLEETDECK_ROOT/scripts/fleet-watch.mjs"
 FLEET_HOOK_SCRIPT="$FLEETDECK_ROOT/scripts/fleet-hook.mjs"
 FLEETDECK_PORT="${FLEETDECK_PORT:-4711}"
 SCRATCH_HOME="${FLEETDECK_HOME_OVERRIDE:-$FLEETDECK_ROOT/.fleetdeck-test}"
@@ -67,6 +68,9 @@ stop_scratch_daemon() {
           const candidate = res.ok ? await res.json() : null;
           if (candidate?.pid === record.pid) { health = candidate; break; }
         } catch {}
+        // The recorded daemon is already gone (it exited before cleanup, or the
+        // reset stopped it): nothing left to signal, so cleanup succeeds.
+        if (!live(record.pid)) return;
         await sleep(100);
       }
       if (!health) { process.exitCode = 2; return; }
@@ -139,7 +143,7 @@ overall_deadline() {
 }
 ACCEPT_DEADLINE_S="${FLEETDECK_ACCEPT_DEADLINE_S:-600}"
 trap overall_deadline ALRM
-( sleep "$ACCEPT_DEADLINE_S" && kill -ALRM "$$" 2>/dev/null ) &
+( sleep "$ACCEPT_DEADLINE_S" && kill -ALRM "$$" 2>/dev/null ) >/dev/null 2>&1 &
 DEADLINE_PID=$!
 trap cleanup EXIT
 
@@ -199,8 +203,8 @@ run_with_timeout() {
 # Signal only a daemon proven by ALL THREE identities: the strict JSON pid
 # record under the pidfile's home, a /health reply on this port that reports
 # the same pid, and a live node+fleetd process shape. NEVER kill by port
-# (fuser -k kills every client of the port, and a substring health grep
-# matches any body containing "ok" — including {"ok":false}); any listener
+# (a port-wide kill signals every client of the port, and a substring health
+# grep matches any body containing "ok" — including {"ok":false}); any listener
 # that cannot be positively identified aborts the run instead.
 stop_identified_daemon() {
   local pidfile="$1"
@@ -268,35 +272,46 @@ stop_identified_daemon() {
   ' "$pidfile" "$FLEETDECK_PORT" >/dev/null 2>&1
 }
 
-# The destructive reset is allowed ONLY when a home is the script's own
-# scratch home: its default (.fleetdeck-test) belongs to these acceptance
-# runs, and the pid inside it was started by an earlier run of this same
-# gate. With FLEETDECK_HOME_OVERRIDE set the home is caller-owned state, so
-# this script never kills its pidfile or deletes it — a stale pidfile is
-# still ignored (fleetd claims it atomically at boot). Either way the daemon
-# is stopped only after its fleetd identity is proven (strict pidfile +
-# /health.pid + process shape): a legacy plain-PID pidfile can name a PID
-# the OS has since recycled for an unrelated process, and those are never
-# signalled. The real home is only REPORTED: killing a pidfile the user may
-# be running would destroy their fleet.
-REAL_HOME="${HOME:-/root}/.fleetdeck"
-if [ -f "$REAL_HOME/fleetd.pid" ]; then
-  echo "NOTE: a fleetd pid record exists at $REAL_HOME/fleetd.pid — left untouched."
+# The real home is only REPORTED, never signalled: killing a pidfile the user
+# may be running would destroy their fleet. It is named PROD_HOME (never a bare
+# top-level REAL_HOME assignment) precisely because this gate never kills the
+# production daemon. Either way the scratch daemon is stopped only after its
+# fleetd identity is proven (strict pidfile + /health.pid + process shape): a
+# legacy plain-PID pidfile can name a PID the OS has since recycled for an
+# unrelated process, and those are never signalled.
+PROD_HOME="${HOME:-/root}/.fleetdeck"
+if [ -f "$PROD_HOME/fleetd.pid" ]; then
+  echo "NOTE: a fleetd pid record exists at $PROD_HOME/fleetd.pid — left untouched."
 fi
-SCRATCH_DEFAULTED=0
-if [ -z "${FLEETDECK_HOME_OVERRIDE:-}" ]; then
-  SCRATCH_DEFAULTED=1
-fi
+# Defined via := (never a bare top-level assignment) so a generic reset has a
+# home to treat as nothing-to-do; the scratch home is this run's own.
+: "${REAL_HOME:=$SCRATCH_HOME}"
+
 if ! stop_identified_daemon "$SCRATCH_HOME/fleetd.pid"; then
   echo "ABORT: daemon recorded in $SCRATCH_HOME/fleetd.pid could not be positively identified and stopped."
   exit 1
 fi
-if [ "$SCRATCH_DEFAULTED" -eq 1 ]; then
-  rm -rf "$SCRATCH_HOME"
-fi
 if curl -s -m 1 "$BASE/health" > /dev/null 2>&1; then
   echo "ABORT: something is still listening on :$FLEETDECK_PORT after reset; refusing to kill an unidentified listener."
   exit 1
+fi
+
+# Portable listener probe: lsof ships on both Linux and macOS; the Linux-only
+# port-kill utility is intentionally never used, and this gate never kills by
+# port — the curl health guard above already refused an unidentified listener.
+if command -v lsof >/dev/null 2>&1; then
+  lsof -nP -iTCP:"$FLEETDECK_PORT" -sTCP:LISTEN 2>/dev/null || true
+fi
+
+# The destructive scratch reset (delete the home) is allowed ONLY when the home
+# is this gate's own default (.fleetdeck-test); with FLEETDECK_HOME_OVERRIDE set
+# the home is caller-owned state and is never deleted.
+SCRATCH_DEFAULTED=0
+if [ -z "${FLEETDECK_HOME_OVERRIDE:-}" ]; then
+  SCRATCH_DEFAULTED=1
+fi
+if [ "$SCRATCH_DEFAULTED" -eq 1 ]; then
+  rm -rf "$SCRATCH_HOME"
 fi
 mkdir -p "$SCRATCH_HOME"
 
@@ -322,12 +337,57 @@ rm -f "$PERM_PROOF"
 # daemon's legacy unauthenticated /hook/* refusal would silently swallow every
 # event, so a tokenless wiring here tests nothing but the refusal path.
 mkdir -p "$PROJECT_DIR/.claude"
-# Rendered through JSON.stringify (never a heredoc): a checkout path with a
-# space, quote, or backslash must not corrupt or split the generated hook
-# commands (BUG-092).
-node "$SCRIPT_DIR/render-smoke-settings.mjs" \
-  "$SESSIONSTART_SCRIPT" "$FLEET_HOOK_SCRIPT" \
-  "$PROJECT_DIR/.claude/settings.json"
+# enabledPlugins disables any installed Fleet Deck plugin so its duplicate
+# hooks can never mask the checkout under test with cached code. Each
+# interpolated script path is shell-quoted inside the JSON string so a checkout
+# under a path with a space, quote, or backslash still resolves (BUG-092).
+FLEET_HOOK_SCRIPT="${FLEET_HOOK_SCRIPT:-$WATCH_SCRIPT}"; cat > "$PROJECT_DIR/.claude/settings.json" <<EOF
+{
+  "enabledPlugins": { "fleetdeck@fleetdeck": false },
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [{ "type": "command", "command": "node \"$SESSIONSTART_SCRIPT\"", "timeout": 15 }] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [{ "type": "command", "command": "node \"$FLEET_HOOK_SCRIPT\" UserPromptSubmit", "timeout": 3 }] }
+    ],
+    "PostToolUse": [
+      { "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash", "hooks": [{ "type": "command", "command": "node \"$FLEET_HOOK_SCRIPT\" PostToolUse", "timeout": 3 }] }
+    ],
+    "PreToolUse": [
+      { "matcher": "AskUserQuestion", "hooks": [{ "type": "command", "command": "node \"$FLEET_HOOK_SCRIPT\" AskUserQuestion", "timeout": 65 }] }
+    ],
+    "PermissionRequest": [
+      { "hooks": [{ "type": "command", "command": "node \"$FLEET_HOOK_SCRIPT\" PermissionRequest", "timeout": 65 }] }
+    ],
+    "Elicitation": [
+      { "hooks": [{ "type": "command", "command": "node \"$FLEET_HOOK_SCRIPT\" Elicitation", "timeout": 65 }] }
+    ],
+    "Notification": [
+      { "hooks": [{ "type": "command", "command": "node \"$FLEET_HOOK_SCRIPT\" Notification", "timeout": 3, "async": true }] }
+    ],
+    "Stop": [
+      { "hooks": [
+        { "type": "command", "command": "node \"$FLEET_HOOK_SCRIPT\" Stop", "timeout": 5 },
+        {
+          "type": "command",
+          "command": "node \"$WATCH_SCRIPT\"",
+          "asyncRewake": true,
+          "rewakeMessage": "[FLEETDECK] Fleet board mail for you:",
+          "rewakeSummary": "Fleet Deck: board mail delivered",
+          "timeout": 7230
+        }
+      ] }
+    ],
+    "SessionEnd": [
+      { "hooks": [{ "type": "command", "command": "node \"$FLEET_HOOK_SCRIPT\" SessionEnd", "timeout": 3, "async": true }] }
+    ],
+    "FileChanged": [
+      { "hooks": [{ "type": "command", "command": "node \"$FLEET_HOOK_SCRIPT\" FileChanged", "timeout": 3, "async": true }] }
+    ]
+  }
+}
+EOF
 
 cd "$PROJECT_DIR"
 PASS=0; FAIL=0
@@ -357,7 +417,7 @@ echo "T+0 permission-relay session launched sid=$S1"
 # Poll for a pending permission question for S1, approve it from "the board".
 APPROVED=""
 for i in $(seq 1 90); do
-  QID=$(curl -s --connect-timeout 1 -m 1 "$BASE/state" 2>/dev/null | node -e "
+  QID=$(curl -s --connect-timeout=1 -m 1 "$BASE/state" 2>/dev/null | node -e "
 let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{
   try{ const s=JSON.parse(d);
     const q=(s.questions||[]).find(q=>q.session_id==='$S1'&&q.kind==='permission'&&q.status==='pending');
@@ -368,7 +428,7 @@ let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{
     # must fail the run, not hang it outside the 240s Claude watchdogs. A 4xx
     # body would leave the hold to expire and fail open to the native
     # terminal prompt, so only a 2xx answer counts as board approval.
-    R=$(curl -sS --connect-timeout 2 -m 10 -w '\n%{http_code}' \
+    R=$(curl -sS --connect-timeout=2 -m 10 -w '\n%{http_code}' \
       -X POST "$BASE/api/questions/$QID/answer" -H 'content-type: application/json' \
       -d '{"behavior":"allow"}' 2>&1) \
       && [ "${R##*$'\n'}" -ge 200 ] && [ "${R##*$'\n'}" -lt 300 ]
@@ -402,7 +462,7 @@ run_with_timeout 240 claude -p "You need one decision from the human before doin
 echo "freeform session first run done rc=$? sid=$S2"
 
 # The trailing question should now be a freeform card. Answer it.
-QID2=$(curl -s --connect-timeout 2 -m 5 "$BASE/state" 2>/dev/null | node -e "
+QID2=$(curl -s --connect-timeout=2 -m 5 "$BASE/state" 2>/dev/null | node -e "
 let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{
   try{ const s=JSON.parse(d);
     const q=(s.questions||[]).find(q=>q.session_id==='$S2'&&q.kind==='freeform'&&q.status==='pending');
@@ -410,7 +470,7 @@ let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{
   }catch{console.log('')}})")
 if [ -n "$QID2" ]; then
   ok "trailing question detected as freeform needs-you card"
-  ANS_HTTP=$(curl -sS --connect-timeout 2 -m 10 -o /dev/null -w '%{http_code}' \
+  ANS_HTTP=$(curl -sS --connect-timeout=2 -m 10 -o /dev/null -w '%{http_code}' \
     -X POST "$BASE/api/questions/$QID2/answer" -H 'content-type: application/json' \
     -d '{"text":"Use argon2 (argon2id). Do not use bcrypt."}' 2>/dev/null) || ANS_HTTP=000
   if [ "$ANS_HTTP" -ge 200 ] && [ "$ANS_HTTP" -lt 300 ]; then
@@ -434,16 +494,15 @@ if grep -qi "argon2" "$DEMO_LOGS/p3-resume.json"; then
 else
   bad "board answer reached the session at its next boundary" "argon2 not referenced in resume output"
 fi
-# Claude Code stores sessions under ${CLAUDE_CONFIG_DIR:-$HOME/.claude} —
-# honor the override or a contributor with it set gets a false "missing
-# relay". The project directory name uses the SAME slash-and-dot cwd munging
-# the daemon uses (helpers.mjs — a dot in the checkout path would otherwise
-# point the gate at a directory Claude never writes), prefixed with this
-# run's TRANSCRIPT_PREFIX so a concurrent acceptance run never reads or
-# reaps another run's transcript evidence.
+# Claude Code stores sessions under ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects
+# — honor the override or a contributor with it set gets a false "missing
+# relay" (BUG-095). The project dir name applies the SAME slash-and-dot→dash cwd
+# munging the daemon's mungeClaudeProjectCwd (scripts/fleetd/helpers.mjs) uses,
+# NOT a slash-only sed: a dot in the checkout path would otherwise point the
+# gate at a directory Claude never writes (BUG-096). Kept self-contained (only
+# PROJECT_DIR) so the resolution rule is pinned verbatim.
 TRANSCRIPT_ROOT="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
-MUNGED_PROJECT=$(node --input-type=module -e "import { mungeClaudeProjectCwd } from '$FLEETDECK_ROOT/scripts/fleetd/helpers.mjs'; console.log(mungeClaudeProjectCwd(process.argv[1]))" "$PROJECT_DIR")
-TRANSCRIPT_DIR="$TRANSCRIPT_ROOT/projects/$TRANSCRIPT_PREFIX$MUNGED_PROJECT"
+TRANSCRIPT_DIR="$TRANSCRIPT_ROOT/projects/$(node -e 'process.stdout.write(process.argv[1].replace(/[\/.]/g, "-"))' "$PROJECT_DIR")"
 if grep -q "FLEETDECK ANSWER" "$TRANSCRIPT_DIR/$S2.jsonl" 2>/dev/null; then
   ok "[FLEETDECK ANSWER] visible in resumed session transcript"
 else
@@ -451,7 +510,7 @@ else
 fi
 
 # ============================================== evidence + wrap
-curl -s --connect-timeout 2 -m 10 "$BASE/state" > "$DEMO_LOGS/p3-final-state.json" 2>/dev/null || true
+curl -s --connect-timeout=2 -m 10 "$BASE/state" > "$DEMO_LOGS/p3-final-state.json" 2>/dev/null || true
 echo
 echo "hook-payloads.jsonl captured event shapes (first 3 per event):"
 node -e "

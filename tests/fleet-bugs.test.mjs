@@ -901,7 +901,7 @@ test('BUG-025: an untagged SessionEnd keeps the historical unconditional tombsto
   assert.ok(cardOf(core, sid).endedAt);
 });
 
-test('BUG-025: a tagged SessionEnd against a row with no recorded run conservatively skips the tombstone', async (t) => {
+test('BUG-025: a tagged SessionEnd against a row with no recorded run tombstones (reconciled with max-turns abort)', async (t) => {
   const { core } = memoryCore(t);
   const cwd = mkdtempSync(path.join(tmpdir(), 'fd-norun-'));
   t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
@@ -909,9 +909,15 @@ test('BUG-025: a tagged SessionEnd against a row with no recorded run conservati
   const sid = 'no-run-row';
   // A row registered before the shims minted nonces (run_id stays NULL).
   core.hookSessionStart({ session_id: sid, cwd, source: 'startup' });
-  // A TAGGED end cannot be proven to belong to the active run — fail safe
-  // toward the live card; retention's silence sweep settles a truly dead one.
+  // Reconciliation with BUG-024/max-turns (max-turns-abort.test.mjs): the stale
+  // guard only suppresses a tagged end when the card HAS a run_id to disprove it
+  // (`staleRunEnd && run_id != null`). With run_id NULL we cannot prove the end
+  // stale, and a real abort (e.g. --max-turns, whose SessionEnd the shim tags)
+  // must NOT linger as "live" — so it tombstones. BUG-025's real protection
+  // (a resumed session with a run_id + a delayed OLD-run end → skip) is intact
+  // and covered by the "delayed SessionEnd must NOT tombstone a live resumed
+  // session" test above.
   core.hookSessionEnd({ session_id: sid, cwd, reason: 'other', fleet_run: 'run-A' });
-  assert.notEqual(cardOf(core, sid).col, 'offline');
-  assert.equal(cardOf(core, sid).endedAt, null);
+  assert.equal(cardOf(core, sid).col, 'offline');
+  assert.notEqual(cardOf(core, sid).endedAt, null);
 });

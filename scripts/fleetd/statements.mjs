@@ -173,14 +173,18 @@ export function createStatements(db) {
     // the whole mailbox. pendingMailPage fetches one bounded batch (the extra
     // row lets tryOwnedPaneDelivery tell "more pending" apart from "empty");
     // pendingMailStats prices a would-be insert without hydrating every row.
-    // Both carry the same BUG-034 lease filter as pendingMail.
+    // pendingMailPage is a CLAIM path, so it carries the BUG-034 lease filter
+    // (an in-flight row is not available to re-claim). pendingMailStats is a
+    // BUDGET/occupancy check, NOT a claim: a claimed-but-unacked row still
+    // occupies the mailbox until it is acked or its lease lapses, so the budget
+    // MUST count it (composing BUG-034 with BUG-128 without letting the lease
+    // filter shrink the backpressure count — one arg, matching mail.mjs's call).
     pendingMailPage: db.prepare(`SELECT * FROM mail
       WHERE to_session = ? AND delivered_at IS NULL AND expired_at IS NULL
         AND (claimed_at IS NULL OR claimed_at <= ?)
       ORDER BY at, id LIMIT ?`),
     pendingMailStats: db.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(LENGTH(text)), 0) AS bytes FROM mail
-      WHERE to_session = ? AND delivered_at IS NULL AND expired_at IS NULL
-        AND (claimed_at IS NULL OR claimed_at <= ?)`),
+      WHERE to_session = ? AND delivered_at IS NULL AND expired_at IS NULL`),
     // /api/watch v2 claim: oldest undelivered mail from ANY sender (v1
     // claimed fleetdeck-answer rows only). Same BUG-034 lease filter.
     nextMail: db.prepare(`SELECT * FROM mail
@@ -206,8 +210,16 @@ export function createStatements(db) {
         undelivered ASC,
         s.last_seen DESC
       LIMIT 1`),
+    // Snapshot's per-session "queued" projection. Unlike the budget above, this
+    // is what the board shows as WAITING for the session — so it is lease-aware
+    // (same BUG-034 predicate as pendingMail): a row under a live lease is
+    // in-flight to a claimant, not sitting in the queue, and drops out until the
+    // lease lapses (then it is claimable again and counts once more). Takes the
+    // lease cutoff (Date.now()) as its one arg. Without this, a board GET /mail
+    // drain that leases-but-does-not-yet-ack would leave queued>0 forever.
     pendingCounts: db.prepare(`SELECT to_session, COUNT(*) AS n, MIN(at) AS oldest_at
-      FROM mail WHERE delivered_at IS NULL AND expired_at IS NULL GROUP BY to_session`),
+      FROM mail WHERE delivered_at IS NULL AND expired_at IS NULL
+        AND (claimed_at IS NULL OR claimed_at <= ?) GROUP BY to_session`),
     markDelivered: db.prepare('UPDATE mail SET delivered_at = ? WHERE id = ?'),
     unmarkDelivered: db.prepare('UPDATE mail SET delivered_at = NULL WHERE id = ?'),
     // BUG-034 in-flight lease. claimMail leases (claims) without delivering;
@@ -446,8 +458,11 @@ export function createStatements(db) {
     goneSessionSpawns: db.prepare(`UPDATE spawns SET status = 'gone'
       WHERE status NOT IN ('killed', 'pane-dead', 'gone', 'stalled')
         AND session_id = ?`),
+    // BUG-046: 'live' is excluded too — a revive that stood a fresh live pane up
+    // on a reused window name mid-Clear inserts a new live spawn row; that is
+    // live work, not the archived session's corpse, and must survive the sweep.
     goneArchivedSpawns: db.prepare(`UPDATE spawns SET status = 'gone'
-      WHERE status NOT IN ('killed', 'pane-dead', 'gone', 'stalled')
+      WHERE status NOT IN ('killed', 'pane-dead', 'gone', 'stalled', 'live')
         AND session_id IN (SELECT session_id FROM sessions WHERE archived_at IS NOT NULL)`),
     orphanWorktrees: db.prepare(`SELECT DISTINCT spawns.worktree_path FROM spawns
       JOIN sessions ON sessions.session_id = spawns.session_id

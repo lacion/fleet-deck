@@ -735,8 +735,8 @@ export function createCore(db, {
     // (q didn't exist at parameter-default time); ctx carries that same value.
     db, port, home, holdMs: holdMs ?? resolveHoldMs(process.env, () => q.getSetting.get('hold_ms')?.value ?? null), t0, version,
     STALE_MS, NUDGE_MS, SPAWN_REGISTER_MS, SETUP_REGISTER_MS, PANE_MAIL_GRACE_MS,
-    MAIL_CLAIM_LEASE_MS,
     MAIL_PENDING_MAX, MAIL_PENDING_MAX_BYTES, MAIL_PANE_BATCH, MAIL_PANE_BATCH_BYTES, // BUG-128 test-only
+    MAIL_CLAIM_LEASE_MS,
     PRESUME_DEAD_MS, RETAIN_OFFLINE_MS, RC_HARVEST_MS, RETAIN_LEDGER_MS,
     ADOPT_ARM_MS, ADOPT_DELAY_MS, // 0.7.0 Move-to-tmux (spawns arms, events fires)
     SNAPSHOT_FILES_PER_SESSION,
