@@ -13667,6 +13667,11 @@ function createHttp(core2, {
       for (const entry of osGetAddresses()) {
         if (entry?.address) lanHosts.add(String(entry.address).toLowerCase());
       }
+      try {
+        const live = typeof lan === "function" ? lan() : lan;
+        if (live?.mdns) mdnsHost = new URL(live.mdns).hostname.toLowerCase();
+      } catch {
+      }
       if (mdnsHost) lanHosts.add(mdnsHost);
     } catch {
     }

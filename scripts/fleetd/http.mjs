@@ -444,6 +444,18 @@ export function createHttp(core, {
       for (const entry of osGetAddresses()) {
         if (entry?.address) lanHosts.add(String(entry.address).toLowerCase());
       }
+      // Re-resolve the advertised .local name from the LIVE lan source each
+      // refresh, and keep it sticky once seen. The share URL is rendered from
+      // the same live thunk (currentLan), so the two must never diverge
+      // (BUG-119). Seeding mdnsHost ONLY at construction missed a responder that
+      // finished binding AFTER the HTTP layer was built — the exact name we then
+      // advertised got 403'd as a DNS-rebinding attempt. Sticky, because a
+      // transient responder blip must not evict a name we already published
+      // (BUG-122/051), which is also why we never clear it back to null here.
+      try {
+        const live = typeof lan === 'function' ? lan() : lan;
+        if (live?.mdns) mdnsHost = new URL(live.mdns).hostname.toLowerCase();
+      } catch { /* malformed/absent live mDNS URL — keep the last known name */ }
       if (mdnsHost) lanHosts.add(mdnsHost);
     } catch { /* restricted sandbox: loopback stays allowed regardless */ }
   }

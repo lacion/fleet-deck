@@ -11,9 +11,9 @@ import { scaleMs } from './wait.mjs';
  *  that accepts the connection but never answers would hang the whole test
  *  process until the outer CI timeout. The scaled timer destroys the request
  *  and rejects with route diagnostics instead. Never rejects on a non-2xx. */
-export function rawRequest({ port, path, method = 'GET', headers = {}, body = null, timeout = 5000 }) {
+export function rawRequest({ port, path, method = 'GET', headers = {}, body = null, timeout = 5000, host = '127.0.0.1' }) {
   return new Promise((resolve, reject) => {
-    const req = http.request({ host: '127.0.0.1', port, path, method, headers }, res => {
+    const req = http.request({ host, port, path, method, headers }, res => {
       let text = '';
       res.on('data', chunk => { text += chunk; });
       res.on('end', () => resolve({ status: res.statusCode, text }));

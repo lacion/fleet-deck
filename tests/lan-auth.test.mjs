@@ -104,7 +104,7 @@ function refused(url) {
 // on a non-2xx.
 function rawGet(port, pathname, headers = {}, host = '127.0.0.1') {
   const withHost = host === '127.0.0.1' ? headers : { ...headers, Host: headers.Host ?? `${host}:${port}` };
-  return rawRequest({ port, path: pathname, method: 'GET', headers: withHost })
+  return rawRequest({ port, path: pathname, method: 'GET', headers: withHost, host })
     .then(({ status, text }) => ({ status, body: text }));
 }
 
