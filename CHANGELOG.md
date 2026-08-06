@@ -5,6 +5,22 @@ All notable changes to Fleet Deck are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.22.1] - 2026-08-06
+
+A build-chain security patch, out the same day. Dependabot's alert, our
+release gates: postcss (transitive build tooling under the board's
+Vite/Tailwind pipeline) allowed an attacker-controlled `sourceMappingURL` to
+read arbitrary `.map` files when `from` is unset — the incomplete fix of
+GHSA-6g55-p6wh-862q, patched upstream in 8.5.23.
+
+### Security
+
+- **postcss 8.5.19 → 8.5.26 in `/board`** (with nanoid 3.3.16 → 3.3.17 as its
+  dependency floor). The rebuilt board bundle is byte-identical — the
+  vulnerable code path lives in the build chain, not in anything Fleet Deck
+  ships — but the lockfile is part of the plugin's release-bound payload
+  closure, so the fix rides a release rather than drifting in silently.
+
 ## [0.22.0] - 2026-08-06
 
 The bug bash. A line-by-line audit of Fleet Deck — the daemon, the board, the
