@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.22.1] - 2026-08-06
 
+### Fixed
+
+- **Spawning worked only under a UTF-8 locale.** tmux sanitizes its formatted
+  output according to the *server's* locale: under UTF-8 a literal TAB
+  round-trips intact, under C/POSIX tmux rewrites it to `_` — in
+  `display-message` and `list-*` alike, identically on tmux 3.4 and 3.7b. The
+  daemon's tmux field separator was a TAB, so on a C-locale server every format
+  round-trip collapsed to a single field: the server generation could never be
+  claimed and **every spawn failed**, with the board otherwise loading and
+  authenticating normally. A C locale is the default in minimal containers and
+  common under systemd and cron. The separator is now `~`, which tmux never
+  rewrites and which cannot occur in any delimited value. A new test pins the
+  contract against a C-locale server — the axis nothing previously covered,
+  since developer machines and CI both run UTF-8.
+- **A session that died mid-turn left a card nothing could clear.** `working`
+  and `verifying` are held back from the silence sweep so a long tool call is
+  never mistaken for death — but that left them with no horizon at all, so a
+  hook session killed mid-turn kept `ended_at` NULL forever, and dismiss
+  refuses any card that is not offline. Those columns now age out on their own
+  longer horizon (`FLEETDECK_PRESUME_DEAD_WORKING_MS`, default 9 h) through the
+  same tmux adjudication as every other candidate, so a genuinely working agent
+  still proves itself alive and only a pane-less or confirmed-dead row is
+  presumed ended — reversibly, as always.
+- **A dead agent could strand an unremovable card.** A `SessionEnd` whose run
+  nonce did not match the card's active run was discarded to protect a live
+  `--resume`; when that end was the session's *real* end the card stayed
+  `queued` with no `ended_at`, and could be neither dismissed nor revived. The
+  guard now also requires a live run to actually protect: a spawn already
+  `killed`/`gone`/`pane-dead` means the end must tombstone.
+- **A dropped terminal connection froze the pane.** Any close after the first
+  frame disabled input permanently, so a daemon restart, a slept laptop or a
+  re-routed network left open terminals rendering a stale screen and silently
+  swallowing keystrokes until the tile was closed and reopened. Transient
+  closes now reconnect with capped backoff; a refused upgrade still diagnoses
+  instead of retrying.
+- Removed debug logging that shipped in 0.22.0 and wrote two journal lines
+  every five seconds per subscribed terminal pane.
+
+
 A build-chain security patch, out the same day. Dependabot's alert, our
 release gates: postcss (transitive build tooling under the board's
 Vite/Tailwind pipeline) allowed an attacker-controlled `sourceMappingURL` to
