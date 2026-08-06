@@ -28,7 +28,18 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: npm
       - run: npm ci --ignore-scripts
-      - run: npm test
+      # Node 22's test runner corrupts its parent<->child IPC under CI load
+      # ("Unable to deserialize cloned data" — nodejs/node#64061; fixed by
+      # #64706, which current Node 24 ships but whose 22.x backport is
+      # unreleased as of 2026-08). The filewise runner executes each test file
+      # in-process (no runner IPC) with the same per-file process isolation.
+      # REVERT to plain `npm test` here when a 22.x release carries the fix.
+      - if: matrix.node-version != '24'
+        run: npm run test:filewise
+        env:
+          FLEETDECK_TEST_WAIT_SCALE: 3
+      - if: matrix.node-version == '24'
+        run: npm test
         # Shared-runner lanes are slow and noisy in exactly the way the macOS
         # advisory lane is — every wait routes through the WAIT_SCALE knob
         # (tests/helpers/wait.mjs), so give the Linux lanes the same headroom
@@ -51,7 +62,9 @@ jobs:
       - run: npm run bundle
       - name: Fail if committed bundle is stale
         run: git diff --exit-code scripts/fleetd/fleetd.bundle.mjs
-      - run: npm run test:bundle
+      # filewise for the same reason as the Node 22 test lane above
+      # (nodejs/node#64061) — this job runs on Node 22.
+      - run: npm run test:bundle:filewise
         env:
           FLEETDECK_TEST_WAIT_SCALE: 3
 
@@ -91,7 +104,9 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci --ignore-scripts
-      - run: npm test
+      # filewise for the same reason as the Node 22 test lane above
+      # (nodejs/node#64061) — this job runs on Node 22.
+      - run: npm run test:filewise
         env:
           FLEETDECK_TEST_WAIT_SCALE: 3
 

@@ -16,6 +16,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
+import { createServer } from 'node:http';
 import {
   chmodSync,
   cpSync,
@@ -61,8 +62,12 @@ function seedDaemonProofs(t, sandbox, binDir, smokePort) {
   // The first SIGUSR1 swaps this process for a tiny health server answering
   // with the recorded pid; the smoke's SIGTERM then closes it and the process
   // exits, satisfying the liveness poll.
+  // NOTE: this handler is live ESM — `require()` here threw ReferenceError,
+  // and because the signal can arrive after the registering test has ended
+  // (slow CI), the throw surfaced as async-activity-after-test in whichever
+  // test happened to be current, failing the whole file. createServer is a
+  // top-level import now.
   process.once('SIGUSR1', () => {
-    const { createServer } = require('node:http');
     const server = createServer((req, res) => {
       if (req.url === '/health') {
         res.writeHead(200, { 'content-type': 'application/json' });
