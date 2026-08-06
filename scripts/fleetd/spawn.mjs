@@ -35,10 +35,33 @@ import path from 'node:path';
 import { MIN_TMUX_VERSION, tmuxVersionCapability } from '../../bin/tmux-version.mjs';
 
 const TMUX_TIMEOUT_MS = 5_000;
-// tmux's formatted-output printer escapes a literal unit separator as "\\037".
-// TAB survives as a delimiter on supported tmux versions; the strict field,
-// session, and id validation below rejects malformed or shifted records.
-const FIELD_SEP = '\t';
+// SEPARATOR CONTRACT — printable ASCII only, and here is why that is not a
+// style preference.
+//
+// tmux sanitizes its own formatted output, and what counts as "safe to print"
+// depends on the SERVER's locale, not ours. Under a UTF-8 locale a literal TAB
+// round-trips intact; under the C/POSIX locale tmux rewrites it to "_" — in
+// `display-message -p` and in `list-* -F` alike. That is not a version quirk:
+// verified identical on tmux 3.4 and 3.7b.
+//
+//   LC_ALL=C.UTF-8  tmux display-message -p "A<TAB>B"  ->  A<TAB>B
+//   LC_ALL=C        tmux display-message -p "A<TAB>B"  ->  A_B
+//
+// A C locale is the DEFAULT in minimal containers, and is common for systemd
+// units and cron, so this is a mainstream configuration rather than an exotic
+// one. With TAB as the separator every round-trip below collapses to a single
+// field there: the generation read yields no pid, the UUID match fails, the
+// server generation can never be claimed, and EVERY spawn fails — while a
+// UTF-8 developer machine and a UTF-8 CI runner both look perfectly healthy.
+//
+// So the separator must be a character tmux never rewrites in any locale, and
+// one that cannot occur inside a delimited value. "~" satisfies both: the
+// fields are a hex+dash UUID, a pid, `fleetdeck-<port>`, `fd<port>-<callsign>`
+// (callsign charset is enforced elsewhere), `@N`, 0/1, and finally a process
+// name — and "~" carries no meaning in tmux format syntax. A literal unit
+// separator is NOT usable: tmux escapes it as "\\037". The strict field,
+// session, and id validation below still rejects malformed or shifted records.
+const FIELD_SEP = '~';
 
 // Run one tmux command (argv), retaining failure details for probes whose
 // callers must distinguish authoritative absence from UNKNOWN.

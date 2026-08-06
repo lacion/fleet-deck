@@ -5349,7 +5349,7 @@ function tmuxVersionCapability(output) {
 
 // scripts/fleetd/spawn.mjs
 var TMUX_TIMEOUT_MS = 5e3;
-var FIELD_SEP = "	";
+var FIELD_SEP = "~";
 async function tmuxResult(args, { noStart = false } = {}) {
   try {
     const socket = process.env.FLEETDECK_TMUX_SOCKET?.trim();
