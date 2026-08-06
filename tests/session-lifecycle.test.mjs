@@ -53,8 +53,10 @@ test('telemetry derivation walks queued -> working -> editing -> verifying -> ne
   state = (await getJson(`${daemon.baseUrl}/state`)).json;
   card = findSession(state, sid);
   assert.equal(card.col, 'working', 'UserPromptSubmit should derive col=working');
-  assert.ok(card.task && prompt.startsWith(card.task) || card.task === prompt.slice(0, card.task.length),
-    'task should capture (a prefix of) the prompt');
+  assert.ok(typeof card.task === 'string' && card.task.length > 0,
+    'task capture should persist a non-empty string');
+  assert.equal(card.task, prompt.slice(0, 80),
+    'task should capture the exact stored prompt prefix (daemon slices to 80 chars)');
 
   // Edit-tool PostToolUse -> editing note
   const filePath = path.join(scratchCwd, 'util.js');
@@ -76,14 +78,25 @@ test('telemetry derivation walks queued -> working -> editing -> verifying -> ne
   card = findSession(state, sid);
   assert.equal(card.col, 'verifying', 'npm test should derive col=verifying');
 
-  // Bash "pytest" also -> verifying (regex covers both invocations independently)
-  await postHook(daemon.baseUrl, 'PostToolUse', loadFixture('post-tool-use-bash', tokens, {
-    tool_name: 'Bash',
-    tool_input: { command: 'pytest -q' },
+  // Bash "pytest" also -> verifying (regex covers both invocations independently).
+  // Reset the card to working first: an UNRECOGNISED Bash command preserves the
+  // column, so asserting from the npm-test-established `verifying` would pass
+  // even if pytest recognition were gone. The fresh transition is the proof.
+  await postHook(daemon.baseUrl, 'UserPromptSubmit', loadFixture('user-prompt-submit', tokens, {
+    prompt: 'Now run the python tests.',
   }), { token: daemon });
   state = (await getJson(`${daemon.baseUrl}/state`)).json;
   card = findSession(state, sid);
-  assert.equal(card.col, 'verifying', 'pytest should derive col=verifying');
+  assert.equal(card.col, 'working', 'UserPromptSubmit should reset col=working before the pytest assertion');
+
+  const pytestRes = await postHook(daemon.baseUrl, 'PostToolUse', loadFixture('post-tool-use-bash', tokens, {
+    tool_name: 'Bash',
+    tool_input: { command: 'pytest -q' },
+  }), { token: daemon });
+  assert.equal(pytestRes.status, 200, 'pytest hook should 200');
+  state = (await getJson(`${daemon.baseUrl}/state`)).json;
+  card = findSession(state, sid);
+  assert.equal(card.col, 'verifying', 'pytest should derive col=verifying from a non-verifying state');
 
   // Notification -> needsyou
   await postHook(daemon.baseUrl, 'Notification', loadFixture('notification', tokens, {

@@ -334,14 +334,19 @@ async function prepareServerGenerationUnlocked(home, port) {
       };
     }
     if (expected.serverPid !== null && await retireDeadGeneration(home, port, expected)) {
-      // The recorded owner is definitively gone. Resume first-contact: claim a
-      // reachable replacement, or fall through to the no-claim case below and
-      // let ensureSession create a fresh server.
-      expected = null;
-      server = await readServerGeneration(port);
-    } else {
-      return { enabled: true, expected, verified: false };
+      // The recorded owner is definitively gone, and every pane it hosted went
+      // with it — report THIS operation as the old generation's loss before
+      // anything else. The liveness tick settles its rows off this signal
+      // (fleetServerAbsent), so it must fire on the retiring call itself; if
+      // this call instead fell through and claimed a reachable replacement
+      // (which also deletes the death certificate), no later call could ever
+      // prove that loss again, and the old fleet's rows would read 'live'
+      // forever. The loss is ALSO authoritatively empty for readers — nothing
+      // the dead server hosted can outlive it — while writers (ensureSession)
+      // see the certificate below and recover on their re-invocation.
+      return { enabled: true, expected: null, verified: false, oldGenerationLost: true, authoritativeEmpty: true };
     }
+    return { enabled: true, expected, verified: false };
   }
   if (!server.reachable) {
     // Nothing answering the socket. An empty fleet is a CLAIM ABOUT LIVE PANES,
@@ -370,6 +375,20 @@ async function prepareServerGenerationUnlocked(home, port) {
       return { enabled: true, expected: null, verified: false, authoritativeEmpty: true };
     }
     return { enabled: true, expected: null, verified: false };
+  }
+
+  // A REACHABLE server with no claim on file. While a death certificate covers
+  // this port, that server is an interloper until proven otherwise: the label
+  // was just vacated by a server we proved dead, and anything already bound to
+  // it (an orphaned replacement, a human's scratch server, another fleet that
+  // collided with this label) is foreign state we must not claim, mutate, or
+  // trust. Claiming it would also delete the certificate — the only remaining
+  // proof that the old generation's panes are gone — so adoption here would
+  // erase the fleet-death signal before settlement ever sees it. Decline: the
+  // first claimant that MUST have a server (ensureSession) proves this one
+  // foreign with the certificate, stops it, and creates its own.
+  if (await hasRetiredGeneration(home, port)) {
+    return { enabled: true, expected: null, verified: false, blockedByCertificate: true, authoritativeEmpty: true };
   }
 
   // Upgrade/first-contact claim. Preserve a valid option set by an earlier
@@ -450,15 +469,21 @@ async function generationVerifiedResult(port, args) {
  * the second is a fleet-wide loss, and only it licenses settling live rows
  * without probing their panes — a pane cannot outlive the server that ran it.
  *
- * True requires the same proof an authoritatively-empty listing does: a death
- * certificate for the server we claimed (its PID proven gone by ESRCH) AND
- * tmux's own absence verdict. A reachable server, a failed probe, or no
- * certificate all return false, so callers never act on a guess — the caller
- * that condemns rows must never be the one to invent the evidence. */
+ * Two proofs qualify. One is the death certificate plus tmux's own absence
+ * verdict, exactly as for an authoritatively-empty listing. The other is the
+ * retirement itself: this call proved the claimed owner dead by ESRCH, which is
+ * stronger than any listing, and it must stand on its own because whatever now
+ * answers the socket — even an unrelated replacement server someone started on
+ * the same label — cannot resurrect the old generation's panes. A reachable
+ * replacement therefore does NOT turn this false on the retiring call; only a
+ * certificate-less probe, a failed probe, or a live claim do, so callers never
+ * act on a guess — the caller that condemns rows must never be the one to
+ * invent the evidence. */
 export async function fleetServerAbsent(port) {
   try {
     const state = await prepareServerGeneration(port);
-    return state.enabled === true && state.authoritativeEmpty === true;
+    return state.enabled === true
+      && (state.authoritativeEmpty === true || state.oldGenerationLost === true);
   } catch {
     return false; // an unreadable identity proves nothing
   }
@@ -540,9 +565,52 @@ export async function ensureSession(port) {
   // With no expected generation and no reachable server, first-run creation is
   // allowed. Every path after this call either claims that server or fails.
   if (state.expected === null) {
+    if (state.blockedByCertificate) {
+      // A death certificate covers this label, so the server answering it is
+      // FOREIGN by definition (a replacement that raced the old server's death,
+      // a human's scratch server, another fleet). Its panes are not ours, but
+      // neither are they recoverable by anyone through this fleet, and it is
+      // squatter's-rights-blocking the only recovery path the fleet has: stop
+      // the exact PID read from it — never a bare `kill-server`, which would
+      // shoot whatever the label points at when it fires — then create below.
+      // SIGTERM first, exactly as `kill-server` would ask, escalating to
+      // SIGKILL only if it lingers; the SIGKILL fallback covers wedged foreign
+      // servers, because a live one answering the label blocks recovery just
+      // the same.
+      const interloper = await readServerGeneration(port);
+      if (interloper.reachable && interloper.serverPid !== null) {
+        if (pidState(interloper.serverPid) === 'alive') {
+          try { process.kill(interloper.serverPid, 'SIGTERM'); } catch { /* already gone */ }
+          for (let i = 0; i < 50 && pidState(interloper.serverPid) === 'alive'; i += 1) {
+            await new Promise(resolve => setTimeout(resolve, 20));
+          }
+          if (pidState(interloper.serverPid) === 'alive') {
+            try { process.kill(interloper.serverPid, 'SIGKILL'); } catch { /* exited between probe and signal */ }
+          }
+        }
+        // SIGKILL'd tmux leaves its socket file behind until the filesystem
+        // catches up; wait for the label to drain so the create below cannot
+        // land on the corpse of the server it just replaced.
+        for (let i = 0; i < 50; i += 1) {
+          if (!(await readServerGeneration(port)).reachable) break;
+          await new Promise(resolve => setTimeout(resolve, 20));
+        }
+      }
+    }
     const created = await tmuxResult(['new-session', '-d', '-s', name]);
     if (created.ok) {
-      const claimed = await prepareServerGeneration(port);
+      let claimed = await prepareServerGeneration(port);
+      // The certificate was honored: it declined the interloper above and we
+      // evicted it by PID. The create then made a server we MUST claim — but
+      // the claim path declines any reachable server while a certificate
+      // covers the label, and this fresh server looks exactly like a second
+      // interloper. The certificate already spent its authority (the eviction
+      // happened inside this call), so retire it and re-ask: the retry takes
+      // the normal first-contact claim path for the server we just made.
+      if (!claimed.verified && claimed.blockedByCertificate === true) {
+        await clearRetiredGeneration(generationHome(), port);
+        claimed = await prepareServerGeneration(port);
+      }
       if (claimed.verified) {
         const confirmed = await generationVerifiedResult(port, ['has-session', '-t', '=' + name]);
         if (sessionConfirmed(confirmed)) return name;
@@ -628,16 +696,62 @@ export async function newWindow({ port, callsign, cwd, argv, env = null }) {
   // fleet session alone. Idempotent; best-effort like the per-window write.
   await tmux(['set-hook', '-t', '=' + session + ':', 'after-new-window',
     'set-option -w remain-on-exit on']);
+  // Launch under an adapter-owned UNIQUE temporary name, never the final
+  // scoped name: tmux happily permits duplicate window names, and starting the
+  // (potentially billed) agent before learning the name is occupied used to
+  // leave that agent running after the exact-name postcondition failed — with
+  // name-based compensation refusing the now-ambiguous duplicate set, so
+  // nothing owned, killed, or cleaned it up. The temp name contains the final
+  // name but no '-' after the fd<port>- prefix, so scoped listings, probes,
+  // and kills (fd<port>-*) never match it. The returned @id is the ONLY handle
+  // used from here on; rollback kills by that id, which duplicate names
+  // cannot make ambiguous.
+  const provisional = `${window}~${randomUUID()}`;
   const out = await tmux([
     'new-window', '-d', '-P', '-F', '#{window_id}',
     '-t', '=' + session + ':', // exact session, next free window index
-    '-n', window,
+    '-n', provisional,
     '-c', cwd,
     ...envArgs,
     '--', ...argv,
   ]);
   if (out === null) throw new Error(`tmux new-window failed for ${window}`);
   const window_id = out.trim();
+  // Best-effort and deliberately awaited: every failure past this point kills
+  // the window we just launched, by its id, so a failed spawn never leaves a
+  // running agent behind.
+  const rollback = () => tmux(['kill-window', '-t', window_id]);
+  const inspect = args => generation.enabled
+    ? generationVerifiedResult(port, args)
+    : tmuxResult(args);
+  // Verify the final name is FREE before taking it — after the launch, so a
+  // same-generation race in which two spawns pass an earlier check together
+  // still cannot leave two same-name windows: the loser's rename fails. The
+  // probe CANNOT target the final name: tmux prefix-matches window targets
+  // even with the '=' exact prefix (verified on tmux 3.4), which would match
+  // the provisional window itself and report the name as occupied. Listing
+  // the exact fleet session's windows and comparing names verbatim is exact.
+  const occupancy = await inspect([
+    'list-windows', '-t', '=' + session + ':', '-F', '#{window_name}',
+  ]);
+  if (!occupancy.ok) {
+    await rollback();
+    throw new Error(generation.enabled
+      ? `tmux new-window generation postcondition failed for ${window}`
+      : `tmux new-window occupancy check failed for ${window}`);
+  }
+  const names = occupancy.out.endsWith('\n') ? occupancy.out.slice(0, -1) : occupancy.out;
+  if (names.split('\n').some(name => name === window)) {
+    await rollback();
+    throw new Error(`tmux new-window refused: ${window} already exists`);
+  }
+  // Rename by id. tmux rejects the rename when the final name is already
+  // taken (the launch-time race above), which fails closed with rollback.
+  const renamed = await tmuxResult(['rename-window', '-t', window_id, window]);
+  if (!renamed.ok) {
+    await rollback();
+    throw new Error(`tmux new-window could not claim the scoped name ${window}`);
+  }
   if (generation.enabled) {
     const confirmed = await generationVerifiedResult(port, [
       'display-message', '-p', '-t', target,
@@ -645,6 +759,7 @@ export async function newWindow({ port, callsign, cwd, argv, env = null }) {
     ]);
     const expected = [session, window, window_id].join(FIELD_SEP) + '\n';
     if (!confirmed.ok || confirmed.out !== expected) {
+      await rollback();
       throw new Error(`tmux new-window generation postcondition failed for ${window}`);
     }
   }
@@ -702,14 +817,37 @@ export async function listScopedWindows(port) {
 }
 
 /** Name-verified kill (CONTRACT): re-locate the window by its EXACT scoped
- * name at kill time and kill by window_id — a renamed/recycled window can
- * never be mis-killed via a stale index. Returns:
+ * name at kill time and kill BY THAT EXACT NAME — tmux re-resolves the
+ * `=<session>:=<name>` target atomically at the moment of the kill, so a
+ * renamed/recycled window can never be mis-killed via a stale index or a
+ * reused @id.
+ *
+ * Optional `opts` (BUG-046 — a scoped window name is REUSABLE, so the tmux-side
+ * checks alone cannot see a same-name replacement a concurrent revive stood up
+ * while a dismiss/cleanup kill was awaiting):
+ *   opts.expectWindowId — the window_id the caller's listing observed for this
+ *     name. When the kill-time re-resolve finds a DIFFERENT id, the name has
+ *     been recycled onto a new window (a replacement pane): stale no-op.
+ *   opts.expect — a synchronous predicate re-run immediately before the kill,
+ *     AFTER the final name re-resolve, with no intervening await. It is the
+ *     caller's last word on DB ownership/generation (spawns.mjs owns no DB).
+ *     Any falsy return is a stale no-op: {ok:false, stale:true}. The kill
+ *     command itself is the only await after the last expect pass, and the
+ *     existing generation guard already pins that await to the same server, so
+ *     a failing predicate can never be followed by a kill of what it rejected.
+ * Returns:
  *   {ok:true, window_id}   killed
  *   {ok:false, gone:true}  no window with that exact name exists (410)
+ *   {ok:false, stale:true} an opts expectation failed — the kill was refused
  *   {ok:false, error}      tmux kill-window itself failed */
-export async function killWindowVerified(name) {
+export async function killWindowVerified(name, opts) {
   const scope = typeof name === 'string' ? /^fd(\d+)-[^\u0000-\u001f\u007f]+$/.exec(name) : null;
   if (!scope) return { ok: false, error: 'invalid scoped tmux window name' };
+  // Names with tmux target syntax characters are rejected here: the kill below
+  // targets the exact name `=<session>:=<name>` resolved atomically server-side,
+  // and tmux cannot express arbitrary names containing those characters in that
+  // syntax. Daemon-minted callsigns never contain them.
+  if (/[=;:.]/.test(name)) return { ok: false, error: 'invalid scoped tmux window name' };
   const expectedSession = sessionName(scope[1]);
   const format = ['#{session_name}', '#{window_name}', '#{window_id}'].join(FIELD_SEP);
   const listArgs = ['list-panes', '-a', '-f', `#{==:#{session_name},${expectedSession}}`, '-F', format];
@@ -736,23 +874,40 @@ export async function killWindowVerified(name) {
   if (matches.length > 1) return { ok: false, error: 'ambiguous scoped tmux window name' };
   if (matches.length === 0) return { ok: false, gone: true };
   const hit = matches[0];
+  if (opts?.expectWindowId !== undefined && hit[2] !== opts.expectWindowId) {
+    return { ok: false, stale: true, error: 'window id changed — the scoped name was recycled' };
+  }
+  if (opts?.expect && !opts.expect()) return { ok: false, stale: true, error: 'stale window owner' };
+  // Kill by the exact fleet name, never by the looked-up @id: tmux resolves
+  // `=<session>:=<name>` ATOMICALLY inside the same server command queue the
+  // kill runs in, so a rename/recycle between the lookup above and the kill
+  // cannot redirect it onto a repurposed window — the target is still
+  // corroborated against the verified session and name at the instant it acts.
+  // An @id captured earlier would not be: window ids are reusable, and only
+  // generation+PID at that queue would still match.
+  const killTarget = `=${expectedSession}:=${name}`;
   let killGeneration;
   try { killGeneration = await prepareServerGeneration(scope[1]); }
   catch (err) {
     return { ok: false, error: `tmux server generation verification failed: ${err?.message || err}` };
   }
+  // prepareServerGeneration awaited — re-run the caller's expectation now, so
+  // only the kill command itself can interleave after the final verdict (and
+  // the generation guard pins that last await to the same server).
+  if (opts?.expect && !opts.expect()) return { ok: false, stale: true, error: 'stale window owner' };
   let killed;
   if (!killGeneration.enabled) {
-    killed = await tmuxResult(['kill-window', '-t', hit[2]]);
+    killed = await tmuxResult(['kill-window', '-t', killTarget]);
   } else if (!killGeneration.verified || killGeneration.expected === null) {
     return { ok: false, error: 'tmux server generation unavailable or changed' };
   } else {
     // The conditional and kill execute in one server command queue. A socket
-    // swap after lookup cannot redirect @id at a replacement server: its absent
-    // or different generation/PID selects the harmless marker branch instead.
+    // swap after lookup cannot redirect the kill at a replacement server: its
+    // absent or different generation/PID selects the harmless marker branch
+    // instead.
     killed = await tmuxResult([
       'if-shell', '-F', `#{&&:#{==:#{${generationOption(scope[1])}},${killGeneration.expected.generation}},#{==:#{pid},${killGeneration.expected.serverPid}}}`,
-      `kill-window -t ${hit[2]}`,
+      `kill-window -t ${killTarget}`,
       `display-message -p ${GENERATION_MISMATCH}`,
     ], { noStart: true });
     if (killed.ok && killed.out.trim() === GENERATION_MISMATCH) {
@@ -854,6 +1009,20 @@ export async function sendEnter(target) {
  * parsing; unlike bracketed paste this reaches Claude as typed slash input. */
 export async function typeKeys(target, text) {
   return (await tmux(['send-keys', '-t', target, '-l', '--', String(text)])) !== null;
+}
+
+/** Literal text + Enter as ONE tmux invocation: `;` separates two send-keys
+ * commands inside a single tmux command queue, which the server executes
+ * back-to-back against the pane — so no other client (human keystrokes, mail
+ * delivery, a second daemon action) can interleave input between the text and
+ * its submission, and a caller that validated turn-state immediately
+ * beforehand never strands typed-but-unsent text in an active TUI the way a
+ * separate typeKeys → recheck → sendEnter sequence could (BUG-053). NOTE: `-l`
+ * applies to EVERY following key argument, so a trailing bare `Enter` in the
+ * same send-keys would be typed as the literal string "Enter" — the Enter must
+ * be its own non-`-l` send-keys command in the queue. */
+export async function typeAndEnter(target, text) {
+  return (await tmux(['send-keys', '-t', target, '-l', '--', String(text), ';', 'send-keys', '-t', target, 'Enter'])) !== null;
 }
 
 /** Independent pane-scrollback capture for remote-control URL harvesting.

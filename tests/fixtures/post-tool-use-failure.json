@@ -1,0 +1,10 @@
+{
+  "session_id": "__SESSION__",
+  "hook_event_name": "PostToolUseFailure",
+  "cwd": "__CWD__",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "rm -rf build/"
+  },
+  "error": "command failed with exit code 1"
+}

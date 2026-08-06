@@ -28,16 +28,15 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, chmodSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, chmodSync, readdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { randomPort, startDaemon } from './helpers/daemon.mjs';
-import { postJson, getJson, postHook } from './helpers/http.mjs';
+import { postJson, getJson, postHook, rawRequest } from './helpers/http.mjs';
 import { waitForSpecRecords } from './helpers/wait.mjs';
 import { claudeTranscriptPath } from '../scripts/fleetd/helpers.mjs';
 import { openDb } from '../scripts/fleetd/db.mjs';
@@ -59,18 +58,11 @@ function scratchDir() {
 }
 
 function rawJsonPost(port, pathname, body, headers = {}) {
-  return new Promise((resolve, reject) => {
-    const payload = JSON.stringify(body);
-    const req = http.request({
-      host: '127.0.0.1', port, path: pathname, method: 'POST',
-      headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload), ...headers },
-    }, res => {
-      let text = '';
-      res.on('data', chunk => { text += chunk; });
-      res.on('end', () => resolve({ status: res.statusCode, text }));
-    });
-    req.on('error', reject);
-    req.end(payload);
+  const payload = JSON.stringify(body);
+  return rawRequest({
+    port, path: pathname, method: 'POST',
+    headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload), ...headers },
+    body: payload,
   });
 }
 
@@ -81,9 +73,16 @@ function rawJsonPost(port, pathname, body, headers = {}) {
  * tests below fabricate one there (writeTranscript). Without this the revive
  * calls 410 on "resume transcript no longer exists" and the inheritance rules
  * they exist to prove go completely untested. */
-async function gatewayDaemon(extraEnv = {}) {
-  const record = path.join(scratchDir(), 'spec.jsonl');
+async function gatewayDaemon(t, extraEnv = {}) {
+  const recordDir = scratchDir();
+  const record = path.join(recordDir, 'spec.jsonl');
   const userHome = scratchDir();
+  // Both scratch trees hold credential-bearing spawn specs and fabricated
+  // transcripts, and daemon.stop() removes only the daemon's own home —
+  // register their teardown BEFORE the boot so a failed startDaemon still
+  // cleans them up (BUG-163).
+  t.after(() => rmSync(recordDir, { recursive: true, force: true }));
+  t.after(() => rmSync(userHome, { recursive: true, force: true }));
   const daemon = await startDaemon({
     env: {
       HOME: userHome,
@@ -202,7 +201,7 @@ test('gateway: gateway_* writes require the bearer even under proxy trust — Ho
 });
 
 test('gateway: the token is stored, usable, and never served back to a client', async (t) => {
-  const { daemon } = await gatewayDaemon();
+  const { daemon } = await gatewayDaemon(t);
   t.after(() => daemon.stop());
 
   const saved = await configure(daemon);
@@ -237,7 +236,7 @@ test('gateway: the token is stored, usable, and never served back to a client', 
 });
 
 test('gateway: a half-configured profile is not ready and refuses a spawn that asked for it', async (t) => {
-  const { daemon } = await gatewayDaemon();
+  const { daemon } = await gatewayDaemon(t);
   t.after(() => daemon.stop());
 
   // A base URL with no credential would reach the proxy and 401 — which reads
@@ -255,7 +254,7 @@ test('gateway: a half-configured profile is not ready and refuses a spawn that a
 });
 
 test('gateway: settings validation refuses bad URLs, schemes and auth styles', async (t) => {
-  const { daemon } = await gatewayDaemon();
+  const { daemon } = await gatewayDaemon(t);
   t.after(() => daemon.stop());
 
   const bad = [
@@ -300,7 +299,7 @@ test('gateway: settings validation refuses bad URLs, schemes and auth styles', a
 // ---------------------------------------------------------------- routing
 
 test('gateway: a spawn that did not ask for one has all four variables scrubbed', async (t) => {
-  const { daemon, record } = await gatewayDaemon();
+  const { daemon, record } = await gatewayDaemon(t);
   t.after(() => daemon.stop());
   await configure(daemon);   // configured, but this spawn does not opt in
 
@@ -320,7 +319,7 @@ test('gateway: a spawn that did not ask for one has all four variables scrubbed'
 });
 
 test('gateway: gateway:true delivers the env and exempts exactly those names from the scrub', async (t) => {
-  const { daemon, record } = await gatewayDaemon();
+  const { daemon, record } = await gatewayDaemon(t);
   t.after(() => daemon.stop());
   await configure(daemon);
 
@@ -356,7 +355,7 @@ test('gateway: gateway:true delivers the env and exempts exactly those names fro
 });
 
 test('gateway: auth_style picks the header, so it picks the variable', async (t) => {
-  const { daemon, record } = await gatewayDaemon();
+  const { daemon, record } = await gatewayDaemon(t);
   t.after(() => daemon.stop());
   // ANTHROPIC_API_KEY travels as x-api-key; ANTHROPIC_AUTH_TOKEN as
   // Authorization: Bearer. A credential in the wrong one 401s at the gateway.
@@ -380,7 +379,7 @@ test('gateway: auth_style picks the header, so it picks the variable', async (t)
 });
 
 test('gateway: gateway_default routes a spawn that says nothing, and gateway:false still opts out', async (t) => {
-  const { daemon, record } = await gatewayDaemon();
+  const { daemon, record } = await gatewayDaemon(t);
   t.after(() => daemon.stop());
   await configure(daemon, { gateway_default: true });
 
@@ -402,7 +401,7 @@ test('gateway: gateway_default routes a spawn that says nothing, and gateway:fal
 // ------------------------------------------------- remote-control conflict
 
 test('gateway: remote control and the gateway are refused together, with a reason that explains why', async (t) => {
-  const { daemon } = await gatewayDaemon();
+  const { daemon } = await gatewayDaemon(t);
   t.after(() => daemon.stop());
   await configure(daemon);
 
@@ -430,7 +429,7 @@ test('gateway: remote control and the gateway are refused together, with a reaso
 });
 
 test('gateway: a non-boolean gateway flag is refused', async (t) => {
-  const { daemon } = await gatewayDaemon();
+  const { daemon } = await gatewayDaemon(t);
   t.after(() => daemon.stop());
   const cwd = scratchDir();
   t.after(() => rmSync(cwd, { recursive: true, force: true }));
@@ -443,7 +442,7 @@ test('gateway: a non-boolean gateway flag is refused', async (t) => {
 // ------------------------------------------------------------------ revive
 
 test('gateway: routing survives death — a revive inherits the row, not the current default', async (t) => {
-  const { daemon, record, userHome } = await gatewayDaemon();
+  const { daemon, record, userHome } = await gatewayDaemon(t);
   t.after(() => daemon.stop());
   // gateway_default STARTS ON so the flip below is a real state change. Without
   // this the "flip it off" POST is a no-op (the default is already false) and
@@ -477,7 +476,7 @@ test('gateway: routing survives death — a revive inherits the row, not the cur
 });
 
 test('gateway: a lineage that never used the gateway is not rerouted by flipping the default on', async (t) => {
-  const { daemon, record, userHome } = await gatewayDaemon();
+  const { daemon, record, userHome } = await gatewayDaemon(t);
   t.after(() => daemon.stop());
   await configure(daemon);
 
@@ -502,7 +501,7 @@ test('gateway: a lineage that never used the gateway is not rerouted by flipping
 });
 
 test('gateway: an explicit flag on the revive overrides what the row inherited', async (t) => {
-  const { daemon, record, userHome } = await gatewayDaemon();
+  const { daemon, record, userHome } = await gatewayDaemon(t);
   t.after(() => daemon.stop());
   await configure(daemon);
 
@@ -521,7 +520,7 @@ test('gateway: an explicit flag on the revive overrides what the row inherited',
 // ------------------------------------------------------------------ clearing
 
 test('gateway: clearing the token disarms the profile without forgetting the URL', async (t) => {
-  const { daemon } = await gatewayDaemon();
+  const { daemon } = await gatewayDaemon(t);
   t.after(() => daemon.stop());
   await configure(daemon);
 
@@ -539,7 +538,7 @@ test('gateway: clearing the token disarms the profile without forgetting the URL
 });
 
 test('gateway: a revive stranded by a cleared token blames the settings, not the caller', async (t) => {
-  const { daemon, record, userHome } = await gatewayDaemon();
+  const { daemon, record, userHome } = await gatewayDaemon(t);
   t.after(() => daemon.stop());
   await configure(daemon);
 
@@ -571,7 +570,7 @@ test('gateway: a revive stranded by a cleared token blames the settings, not the
 // -------------------------------------------------------------------- adopt
 
 test('gateway: adopt consults the default, because it has no lineage to inherit', async (t) => {
-  const { daemon, record, userHome } = await gatewayDaemon();
+  const { daemon, record, userHome } = await gatewayDaemon(t);
   t.after(() => daemon.stop());
   await configure(daemon, { gateway_default: true });
 
@@ -606,7 +605,7 @@ test('gateway: adopt consults the default, because it has no lineage to inherit'
 // ---------------------------------------------------------------- repo mode
 
 test('gateway: a repo-mode spawn persists and delivers routing too', async (t) => {
-  const { daemon, record, userHome } = await gatewayDaemon();
+  const { daemon, record, userHome } = await gatewayDaemon(t);
   t.after(() => daemon.stop());
   await configure(daemon);
 
@@ -615,15 +614,41 @@ test('gateway: a repo-mode spawn persists and delivers routing too', async (t) =
   // positional bind drifting by one would silently write `gateway` into the
   // wrong column. Every other gateway test here is cwd-mode.
   const root = scratchDir();
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  // Worktree mode materializes the checkout BESIDE the repo
+  // (<root>--fd-gw-probe in repos.mjs materializeBranch), so removing only
+  // root would strand the worktree directory and its admin record in tmp.
+  // Remove it through git BEFORE root goes away (afterwards the repo that owns
+  // the worktree metadata is gone), then prune in case anything still points
+  // at it.
+  const worktree = `${root}--fd-gw-probe`;
+  t.after(() => {
+    try { execFileSync('git', ['-C', root, 'worktree', 'remove', '--force', worktree]); } catch { /* best effort */ }
+    try { execFileSync('git', ['-C', root, 'worktree', 'prune']); } catch { /* best effort */ }
+    rmSync(root, { recursive: true, force: true });
+  });
   execFileSync('git', ['init', '-q', root]);
   execFileSync('git', ['-C', root, 'commit', '-q', '--allow-empty', '-m', 'init'],
     { env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' } });
+
+  // Baseline before the spawn: the drain assertion below must prove this test
+  // leaves NOTHING behind, not merely that it cleans up after itself. A
+  // pre-existing sibling from an older, leakier run would make that proof
+  // vacuous.
+  assert.equal(readdirSync(tmpdir()).some(name => name.endsWith('--fd-gw-probe')), false,
+    'a --fd-gw-probe sibling from an earlier run is still in tmpdir; remove it before this test can prove its own teardown');
 
   const spawn = await postJson(`${daemon.baseUrl}/api/spawn`, {
     repo: root, branch: 'gw-probe', branch_mode: 'worktree', gateway: true,
   });
   assert.equal(spawn.status, 200, spawn.text);
+
+  // The drain probe. The t.after above is what makes it pass; without the
+  // worktree removal there, the sibling checkout the daemon just created would
+  // still be sitting in tmpdir at process exit.
+  t.after(() => {
+    assert.equal(existsSync(worktree), false,
+      `teardown must not strand the repo-mode worktree ${worktree}`);
+  });
 
   const [rec] = await waitForSpecRecords(record, 1);
   assert.equal(rec.parsed.gateway, true);
@@ -656,7 +681,7 @@ test('2.3: a credentialed origin URL reaches NO surface through the guarded card
   // snapshot gate agree: the credential is nowhere.
   const secret = 'glpat-DEADBEEFdeadbeef00';
   const origin = `https://fdtest:${secret}@127.0.0.1:1/x.git`;
-  const { daemon } = await gatewayDaemon({ FLEETDECK_CLONE_TIMEOUT_MS: '1', GIT_SSH_COMMAND: 'false' });
+  const { daemon } = await gatewayDaemon(t, { FLEETDECK_CLONE_TIMEOUT_MS: '1', GIT_SSH_COMMAND: 'false' });
   t.after(() => daemon.stop());
 
   const spawn = await postJson(`${daemon.baseUrl}/api/spawn`, {
@@ -679,4 +704,24 @@ test('2.3: a credentialed origin URL reaches NO surface through the guarded card
   assert.equal(card?.col, 'offline', 'the failed clone tombstones the card');
   assert.match(card.note, /spawn failed:/);
   assert.equal(card.note.includes(secret), false, 'the tombstone note is hardened');
+});
+
+// ------------------------------------------------------------------ lifecycle
+
+test('gateway: helper scratch trees (record dir + user home) are torn down after the test', async (t) => {
+  // BUG-163: gatewayDaemon() allocated two credential-bearing scratch trees
+  // per call (the spawn-spec record dir and the fabricated user HOME) and
+  // returned no cleanup owner for either — daemon.stop() removes only the
+  // daemon's own home, so every helper invocation leaked both. Boot one
+  // daemon, note the paths, and assert they are gone once this test's
+  // t.after hooks have run.
+  const { daemon, record, userHome } = await gatewayDaemon(t);
+  t.after(() => daemon.stop());
+  const recordDir = path.dirname(record);
+  assert.ok(existsSync(recordDir));
+  assert.ok(existsSync(userHome));
+  t.after(() => {
+    assert.equal(existsSync(recordDir), false, 'the record scratch dir must be removed after the test');
+    assert.equal(existsSync(userHome), false, 'the user-home scratch dir must be removed after the test');
+  });
 });

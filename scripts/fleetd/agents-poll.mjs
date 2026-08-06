@@ -20,6 +20,7 @@
 //     CLI half of the poll entirely.
 
 import { execFileP } from './exec.mjs';
+import { pidOwnedBy } from './helpers.mjs';
 
 // FLEETDECK_AGENTS_POLL_MS: test hook to shrink the cadence (floor 100 ms);
 // production default ~10 s.
@@ -57,14 +58,14 @@ async function runOnce(argv) {
 
 function hasLiveInteractive(records) {
   if (!Array.isArray(records)) return false;
-  // Cadence must use the same trust boundary as derive.mjs ingestion. The CLI
-  // registry retains background agents and dead processes for hours; treating
-  // those ghosts as fleet activity would defeat idle backoff on precisely the
-  // machines where the registry is noisiest.
-  return records.some(rec => {
-    if (!rec || rec.kind !== 'interactive' || !Number.isFinite(rec.pid) || rec.pid <= 0) return false;
-    try { process.kill(rec.pid, 0); return true; } catch { return false; }
-  });
+  // Cadence must use the same trust boundary as derive.mjs ingestion — the
+  // SAME ownership verifier, not a second pid-existence check: the CLI
+  // registry retains background agents, dead processes, and pids the OS has
+  // since handed to unrelated processes; treating any of those ghosts as
+  // fleet activity would defeat idle backoff on precisely the machines where
+  // the registry is noisiest.
+  return records.some(rec =>
+    !!rec && rec.kind === 'interactive' && pidOwnedBy(rec.pid, rec.startedAt));
 }
 
 /**

@@ -97,7 +97,7 @@ const shorthandOrigin = (input, host, transport) => {
 //
 // Since the daemon no longer caps how many agents may be live, the preview
 // below — the exact list, counted, before you click — IS the guardrail.
-export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, prefillPrompt, prefillCwd, planMode, onClose, onSpawned }) {
+export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, prefillPrompt, prefillCwd, planMode, planId, onClose, onSpawned }) {
   const [cwd, setCwd] = useState(prefillCwd || '');
   const [prompt, setPrompt] = useState(prefillPrompt || '');
   const [model, setModel] = useState('');
@@ -408,6 +408,11 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
     if (shellOnly && !repoMode && !planMode) {
       return { kind: 'shell', cwd: cwd.trim() };
     }
+    // BUG-040 (board half): plan_id rides the spawn body so the daemon claims
+    // the plan's execution atomically BEFORE launching — spawn-first-mark-
+    // after let two boards both launch off one stale snapshot. A claim refusal
+    // (409 — already executed/claimed) arrives as an ordinary spawn failure.
+    const planBody = planId ? { plan_id: planId } : null;
     // repo mode replaces cwd wholesale: the daemon refuses both together, and
     // branch_mode subsumes the worktree flag (it IS the worktree decision)
     const body = repoMode
@@ -446,13 +451,16 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
     // agrees with the default it was seeded from.
     body.gateway = gatewayOn;
     if (setupCmd !== '') body.setup_cmd = setupCmd;
+    if (planBody) Object.assign(body, planBody);
     return body;
   };
 
   const persistSetupDefault = async () => {
     if (!saveSetupDefault || !selectedRepoName) return true;
-    const next = { ...(settings?.repo_setup || {}), [selectedRepoName]: setupCmd };
-    const res = await saveSettings({ repo_setup: next });
+    // A per-repository PATCH, not a whole-object replace: the snapshot this
+    // board holds can be stale, and spreading it would silently delete another
+    // board's concurrent save (BUG-147). The daemon merges server-side.
+    const res = await saveSettings({ repo_setup_patch: { [selectedRepoName]: setupCmd } });
     if (res.ok && res.json?.ok) return true;
     setErr(reasonOf(res, `setup default save failed (${res.status})`));
     return false;
@@ -495,12 +503,11 @@ export default function SpawnForm({ sessions, repoCatalog, settings, homeDir, pr
       return;
     }
     setNote(`spawning — ${res.json.callsign || res.json.session_id || 'new session'}`);
-    // plan execution (BUG-040): mark the plan executed (via:'spawn:<id>') only
-    // NOW that the spawn POST has succeeded; a failed spawn above returned
-    // before ever reaching this, so a refused spawn can no longer leave the
-    // plan 'executed'. A mark failure keeps the form open and says so — never
-    // close over a 409. Plan-execute spawns are cwd-mode (a 200), so this path
-    // never overlaps the 202 watch above.
+    // plan execution (BUG-040): with plan_id on the body the daemon claimed
+    // and recorded the execution server-side — the board marks NOTHING after
+    // the fact. onSpawned stays as a legacy-notification hook (a daemon that
+    // predates the claim endpoint and claims nothing still leaves the plan
+    // executable for a retry; the mark endpoint keeps its transition matrix).
     let extra = null;
     if (onSpawned) {
       try { extra = await onSpawned(res.json); } catch { extra = { ok: false, text: 'plan mark failed — daemon unreachable' }; }

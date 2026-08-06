@@ -31,6 +31,7 @@ import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { openDb } from '../scripts/fleetd/db.mjs';
+import { createStatements } from '../scripts/fleetd/statements.mjs';
 import { claudeTranscriptPath, createCore } from '../scripts/fleetd/derive.mjs';
 
 const HOUR = 3_600_000;
@@ -80,6 +81,7 @@ function makeAdapter(port = 4711, overrides = {}) {
     pasteText: async () => true,
     sendEnter: async () => true,
     typeKeys: async () => true,
+    typeAndEnter: async () => true,
     sendBringupEnter: async () => true,
     capturePane: async () => '',
     launchOverride: () => {},
@@ -600,13 +602,15 @@ test('M-B4: a corrupt conflicts row does not 500 /state — it is dropped, good 
 // ---------------------------------------------------------------------------
 
 for (const event of ['PreToolUse', 'PostToolUse']) {
-  test(`M-B5: a resurrecting ${event} lifts an offline card out of the offline column`, (t) => {
+  test(`M-B5: a resurrecting ${event} lifts a presumed-dead offline card out of the offline column`, (t) => {
     const cwd = mkdtempSync(path.join(tmpdir(), 'fd-mb5-cwd-'));
     t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
     const { db, core } = memoryCore(t);
 
     core.applyEvent({ session_id: 's', hook_event_name: 'SessionStart', cwd, source: 'startup' });
-    core.applyEvent({ session_id: 's', hook_event_name: 'SessionEnd', cwd });
+    // Retention's silence tombstone is a GUESS (end_reason='presumed') — BUG-024
+    // keeps ordinary activity able to reverse exactly this kind of tombstone.
+    db.prepare("UPDATE sessions SET col='offline', ended_at=?, end_reason='presumed' WHERE session_id='s'").run(Date.now());
     let card = db.prepare("SELECT * FROM sessions WHERE session_id='s'").get();
     assert.equal(card.col, 'offline', 'precondition: the card is tombstoned offline');
     assert.ok(card.ended_at);
@@ -618,6 +622,52 @@ for (const event of ['PreToolUse', 'PostToolUse']) {
     assert.equal(card.col, 'working', `a ${event} resurrection re-derives a live lane, not offline`);
   });
 }
+
+// ---------------------------------------------------------------------------
+// BUG-024
+// ---------------------------------------------------------------------------
+
+for (const event of ['FileChanged', 'Notification']) {
+  test(`BUG-024: a late async ${event} does NOT resurrect a hook-proven dead session`, (t) => {
+    const cwd = mkdtempSync(path.join(tmpdir(), 'fd-bug024-cwd-'));
+    t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+    const { db, core } = memoryCore(t);
+
+    core.applyEvent({ session_id: 's', hook_event_name: 'SessionStart', cwd, source: 'startup' });
+    core.applyEvent({ session_id: 's', hook_event_name: 'SessionEnd', cwd, reason: 'other' });
+    let card = db.prepare("SELECT * FROM sessions WHERE session_id='s'").get();
+    assert.equal(card.col, 'offline', 'precondition: the card is tombstoned offline');
+    assert.ok(card.ended_at);
+    assert.equal(card.end_reason, 'other', 'precondition: the end is hook-PROVEN, not guessed');
+
+    // The async hook was launched before exit but lands after SessionEnd.
+    const ev = event === 'FileChanged'
+      ? { session_id: 's', hook_event_name: 'FileChanged', cwd, file_path: path.join(cwd, 'a.js') }
+      : { session_id: 's', hook_event_name: 'Notification', cwd, notification_type: 'auth_success', message: 'signed in' };
+    core.applyEvent(ev);
+    card = db.prepare("SELECT * FROM sessions WHERE session_id='s'").get();
+    assert.ok(card.ended_at != null, `a late ${event} must not clear a proven SessionEnd tombstone`);
+    assert.equal(card.col, 'offline', `a late ${event} must not float a dead session back to a live lane`);
+    assert.equal(card.end_reason, 'other', 'the proven end reason survives');
+  });
+}
+
+test('BUG-024: a fresh SessionStart DOES reverse a hook-proven SessionEnd (resume path)', (t) => {
+  const cwd = mkdtempSync(path.join(tmpdir(), 'fd-bug024-start-'));
+  t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+  const { db, core } = memoryCore(t);
+
+  core.applyEvent({ session_id: 's', hook_event_name: 'SessionStart', cwd, source: 'startup' });
+  core.applyEvent({ session_id: 's', hook_event_name: 'SessionEnd', cwd, reason: 'logout' });
+
+  // `claude --resume` starts a new run under the same id: SessionStart is the
+  // bring-up proof that legitimately brings the card back.
+  core.applyEvent({ session_id: 's', hook_event_name: 'SessionStart', cwd, source: 'resume' });
+  const card = db.prepare("SELECT * FROM sessions WHERE session_id='s'").get();
+  assert.equal(card.ended_at, null, 'SessionStart resurrects the card');
+  assert.equal(card.col, 'queued', 'the resumed session re-derives a live lane');
+  assert.equal(card.end_reason, null, 'the stale end reason is cleared');
+});
 
 // ---------------------------------------------------------------------------
 // M-B6
@@ -639,6 +689,33 @@ test('M-B6: an ExitPlanMode plan-persist failure rolls the question row back and
   assert.equal(row, null, 'the hook fails OPEN (no relay) when the plan cannot be persisted');
   const after = db.prepare('SELECT COUNT(*) AS n FROM questions').get().n;
   assert.equal(after, before, 'the question row is rolled back — no held question without its linked plan');
+  // BUG-112: the needs-you telemetry must not survive the rollback either —
+  // the old order (applyEvent BEFORE the intake transaction) left a needs-you
+  // card pointing at a question that no longer existed.
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM sessions WHERE session_id = 's'").get().n, 0,
+    'no card is dealt for an intake that rolled back');
+});
+
+test('BUG-112: a plan-intake failure on an EXISTING card leaves the card exactly as it was', (t) => {
+  const cwd = mkdtempSync(path.join(tmpdir(), 'fd-b112-cwd-'));
+  t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+  const { db, core } = memoryCore(t);
+
+  // Bring the card up through the ordinary hook path, then park it in a known
+  // pre-plan state.
+  core.hookSessionStart({ session_id: 's', cwd, source: 'startup' });
+  db.prepare("UPDATE sessions SET col = 'idle', note = 'turn finished, waiting' WHERE session_id = 's'").run();
+  const before = db.prepare("SELECT col, events, note FROM sessions WHERE session_id = 's'").get();
+
+  db.exec('DROP TABLE plans'); // plan insert now throws at runtime
+  const ev = { session_id: 's', cwd, tool_name: 'ExitPlanMode', tool_input: { plan: '# Plan\n' } };
+  const row = core.hookHoldQuestion(ev, 'PermissionRequest');
+
+  assert.equal(row, null, 'the hook fails OPEN');
+  const after = db.prepare("SELECT col, events, note FROM sessions WHERE session_id = 's'").get();
+  assert.deepEqual(after, before,
+    'a failed plan intake leaves the card, its event count, and its note untouched — no orphan needs-you alert');
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM questions').get().n, 0, 'no durable question was left behind');
 });
 
 test('M-B6: on the happy path both the question row and its plan row persist and are linked', (t) => {
@@ -655,6 +732,12 @@ test('M-B6: on the happy path both the question row and its plan row persist and
   assert.ok(plan, 'a plan row exists, linked by question_id');
   assert.equal(plan.plan_md, planMd, 'plan markdown is captured byte-identical');
   assert.equal(plan.status, 'proposed');
+  // BUG-112: the telemetry now lands AFTER the durable intake — the board must
+  // still show the needs-you card for the question it can actually answer.
+  const card = db.prepare("SELECT col, events FROM sessions WHERE session_id = 's'").get();
+  assert.ok(card, 'the intake dealt a card');
+  assert.equal(card.col, 'needsyou', 'the card moves to needsyou once the intake committed');
+  assert.equal(card.events, 1, 'the PermissionRequest event is counted exactly once');
 });
 
 // ---------------------------------------------------------------------------
@@ -974,4 +1057,36 @@ test('R2-8: when git can no longer read the tree at the final status check, remo
   assert.equal(res.status, 200, `an unreadable tree falls through to rmSync: ${JSON.stringify(res.body)}`);
   assert.equal(res.body.removed, true);
   assert.equal(existsSync(wt), false, 'the daemon removed the directory itself when git could not');
+});
+
+// ---------------------------------------------------------------------------
+// BUG-149
+// ---------------------------------------------------------------------------
+
+test('BUG-149: filesBySession enforces the per-session cap in SQL, not after materialization', (t) => {
+  const { db, core } = memoryCore(t);
+  const now = Date.now();
+  db.prepare(`INSERT INTO sessions (session_id, callsign, col, note, events, started_at, last_seen, source)
+    VALUES ('sn', 'an', 'working', 'x', 1, ?, ?, 'hooks')`).run(now, now);
+
+  // 200 distinct files for one session (cap 50) — enough that an unbounded
+  // statement would return 200 grouped rows while only 50 may cross the
+  // SQL→JS boundary per frame. The R2-7 test only pins the final payload,
+  // which was already capped in JS; this pins the STATEMENT's cardinality.
+  const ins = db.prepare('INSERT INTO file_touches (repo_id, rel_path, abs_path, session_id, worktree, at) VALUES (?,?,?,?,?,?)');
+  for (let i = 0; i < 200; i++) {
+    ins.run('r', `f${i}.js`, `/x/f${i}.js`, 'sn', null, now - (200 - i) * 1000);
+  }
+
+  const { q } = createStatements(db);
+  const rows = q.filesBySession.all(now - 24 * HOUR, 50);
+  assert.equal(rows.length, 50, 'the statement returns at most the per-session cap, not every grouped row');
+  assert.equal(rows[0].abs_path, '/x/f199.js', 'newest touch first');
+  assert.equal(rows.at(-1).abs_path, '/x/f150.js', 'the 51st-newest is the last row returned');
+  assert.ok(!rows.some(r => r.abs_path === '/x/f149.js'), 'older files never leave SQLite');
+
+  // The full snapshot still renders the same capped, newest-first card list.
+  const card = core.snapshot().sessions.find(s => s.session_id === 'sn');
+  assert.equal(card.files.length, 50);
+  assert.equal(card.files[0], '/x/f199.js');
 });

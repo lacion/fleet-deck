@@ -7,7 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  mapLimit, chmodWritableWhereOwned, blockedPaths, shellQuote,
+  mapLimit, chmodWritableWhereOwned, blockedPaths, shellQuote, canonicalPathKey,
 } from './helpers.mjs';
 import { execFileP, baseBranch } from './exec.mjs';
 // A local `git worktree prune` should never print a credential — but its stderr
@@ -17,8 +17,53 @@ import { execFileP, baseBranch } from './exec.mjs';
 // reader as an intentional posture rather than the gap it actually is.
 import { scrubUrlCredentials } from './payload-capture.mjs';
 
+// Pure path canonicalization (same rule as repo-identity.mjs canon()).
+function canonical(p) {
+  try { return fs.realpathSync(p); } catch { return path.resolve(p); }
+}
+
+// Canonicalized `git rev-parse --git-common-dir` for a directory — the one
+// value a repository and ALL of its worktrees share (repo-identity's repo_id
+// rule). null when git cannot read the directory as a repository at all.
+async function gitCommonDir(dir) {
+  const result = await execFileP('git', ['-C', dir, 'rev-parse', '--git-common-dir'], { timeout: 5_000 });
+  if (!result.ok) return null;
+  const raw = result.out.trim();
+  if (!raw) return null;
+  // May be relative (usually ".git"); resolve against the directory itself.
+  return canonical(path.isAbsolute(raw) ? raw : path.resolve(dir, raw));
+}
+
+// BUG-059 (data-loss): `repo` below is derived from a REMEMBERED spawn cwd, and a
+// remembered path proves nothing — the directory can have been deleted and
+// recreated as a DIFFERENT repository since the spawn, while the fleet
+// worktree still belongs to the original one. Every repo-scoped argv built
+// from it (`worktree remove`/`prune`, and above all `branch -D`, which erases
+// unique commits) would then be aimed at an unrelated repository. So before
+// any destructive step, prove the candidate repository OWNS the target
+// worktree with a witness that does not consult the remembered cwd:
+//  - worktree on disk and git-readable: canonical common-dirs must be equal.
+//    (This still works for a half-removed tree — rev-parse follows the
+//    worktree's .git link without consulting the repo's admin registry.)
+//  - worktree already gone from disk: the repo's OWN worktree registry names
+//    the path only if the worktree was created from this repository.
+async function repoOwnsWorktree(repo, worktreePath, worktreeExists) {
+  if (worktreeExists) {
+    const [repoCommon, worktreeCommon] = await Promise.all([
+      gitCommonDir(repo), gitCommonDir(worktreePath),
+    ]);
+    return repoCommon != null && worktreeCommon != null && repoCommon === worktreeCommon;
+  }
+  const list = await execFileP('git', ['-C', repo, 'worktree', 'list', '--porcelain'], { timeout: 5_000 });
+  if (!list.ok) return false;
+  const target = canonical(worktreePath);
+  return list.out.split('\n').some(line =>
+    line.startsWith('worktree ') && canonical(line.slice(9).trim()) === target);
+}
+
+
 export function createWorktrees(ctx) {
-  const { q, tick, onMutate } = ctx;
+  const { q, db, tick, onMutate, acquireWorktreePathLock, claimWorktreeCustody } = ctx;
 
   // ------------------------------------------------------- worktree custody
   // CONTRACT: inspection is deliberately real git state, not remembered
@@ -71,6 +116,32 @@ export function createWorktrees(ctx) {
   // Falls back to the local branch only when no remote-tracking ref exists at
   // all (a repo with no remote); the caller flags that as base_is_local so the
   // board can say its knowledge is local-only.
+  //
+  // Remote-tracking refs are a CACHE of the remote's state, and a stale cache
+  // lies in the dangerous direction: a commit that was pushed, fetched, and
+  // then force-reset away on the server still exists on the local
+  // refs/remotes/*, so `rev-list HEAD --not --remotes` would certify it as
+  // safely copied while the alleged remote copy is gone. Before any verdict a
+  // human can destroy on, refresh that cache from the actual remote —
+  // prompting disabled so an unreachable or auth-gated remote fails fast
+  // instead of hanging the board — and prune the refs the remote no longer
+  // has. A refresh that cannot complete means the cache is of unknown vintage,
+  // and UNKNOWN is then the only honest verdict: never 'safe'.
+  async function refreshRemoteKnowledge(worktreePath) {
+    const remotes = await execFileP('git', ['-C', worktreePath, 'remote'], { timeout: 5_000 });
+    if (!remotes.ok) return { ok: false, err: remotes.err };
+    const names = remotes.out.split(/\r?\n/).map(name => name.trim()).filter(Boolean);
+    if (!names.length) return { ok: false, err: 'no remote is configured to refresh against' };
+    for (const name of names) {
+      const fetched = await execFileP('git', ['-C', worktreePath, 'fetch', '--prune', name], {
+        timeout: 30_000,
+        env: { GIT_TERMINAL_PROMPT: '0' },
+      });
+      if (!fetched.ok) return { ok: false, err: fetched.err };
+    }
+    return { ok: true };
+  }
+
   async function inspectWorktree(row) {
     let exists = false;
     try { exists = fs.existsSync(row.worktree_path); } catch { /* unknown path state stays gone */ }
@@ -113,6 +184,23 @@ export function createWorktrees(ctx) {
       item.last_commit = { sha, subject, at: Number(at) };
     }
 
+    // Refresh the remote knowledge BEFORE the verdict is computed, every time:
+    // without a fresh fetch+prune the reachability answers below are as stale
+    // as the last fetch, and a force-reset on the server turns a vanished
+    // remote copy into a cached 'safe' that destroys the last local branch
+    // holding the commits. An unreachable remote is not proof of danger — but
+    // it is proof of ignorance, so the verdict stays UNKNOWN (which still
+    // requires force to remove) rather than a 'safe' we cannot stand behind.
+    if (!base.local) {
+      const refreshed = await refreshRemoteKnowledge(row.worktree_path);
+      if (!refreshed.ok) {
+        item.note = 'could not refresh the remote before judging this worktree — '
+          + 'its remote knowledge may be stale, so nothing here can be certified as safe. '
+          + 'Check the remote and refresh again.';
+        return item;
+      }
+    }
+
     const [ahead, unpushed, merged] = await Promise.all([
       execFileP('git', ['-C', row.worktree_path, 'rev-list', '--count', `${base.ref}..HEAD`], { timeout: 5_000 }),
       // THE question, and the only one that decides whether deleting this
@@ -120,8 +208,8 @@ export function createWorktrees(ctx) {
       // "ahead of my upstream", not "ahead of my local main" — both of those
       // say yes to work that is already safely merged on the server. `--not
       // --remotes` asks git for commits that exist on no remote we know of.
-      // (Knowledge is as of the last fetch; the board says so, and `?fetch=1`
-      // refreshes it.)
+      // The refs were just fetched and pruned above, so "we know of" is as of
+      // THIS inspection, not the last time somebody happened to fetch.
       execFileP('git', ['-C', row.worktree_path, 'rev-list', '--count', 'HEAD', '--not', '--remotes'], { timeout: 5_000 }),
       execFileP('git', ['-C', row.worktree_path, 'merge-base', '--is-ancestor', 'HEAD', base.ref], { timeout: 5_000 }),
     ]);
@@ -154,24 +242,76 @@ export function createWorktrees(ctx) {
   // synchronous signal the revive does set; a not-yet-ended session is the other.
   // 'stalled' is deliberately NOT here: it is set later by the watchdog, never by
   // a revive, and the ended-session branch already governs it as before.
+  //
+  // Two claim sets, because worktreeSpawns alone is BLIND to cwd-only rows
+  // (its WHERE clause drops worktree_path NULL): a live shell spawned INTO a
+  // fleet worktree, or an adopted Claude resumed in one, carries
+  // `worktree_path NULL, cwd = <that tree>` and would be deleted underneath its
+  // running process. liveWorktreeClaims covers them: any launching/live spawn
+  // whose EFFECTIVE directory — `worktree_path ?? cwd`, the same coalesce the
+  // launch paths use — IS the target or lies INSIDE it (a shell cd'd into a
+  // subdirectory still loses its ground when the tree goes) blocks removal.
   const LAUNCHING_OR_LIVE = new Set(['provisioning', 'spawning', 'live']);
+  // Lexical containment on normalised absolute paths; the separator anchor
+  // keeps '/repo/tree' from claiming '/repo/tree-evil'. Rows are daemon-written
+  // absolute paths, and the one tree a symlinked /tmp would confuse this way is
+  // also protected by the first claim set (its owning row IS worktree-keyed).
+  function claimsPath(candidate, target) {
+    const effective = candidate.worktree_path ?? candidate.cwd;
+    if (typeof effective !== 'string' || !effective) return false;
+    const dir = path.resolve(effective);
+    return dir === target || dir.startsWith(target + path.sep);
+  }
   function worktreePathIsLive(worktreePath) {
+    const target = path.resolve(worktreePath);
     return q.worktreeSpawns.all().some(candidate =>
       candidate.worktree_path === worktreePath && (
         LAUNCHING_OR_LIVE.has(candidate.status) ||
-        (candidate.session_ended_at == null && q.getSession.get(candidate.session_id) != null)));
+        (candidate.session_ended_at == null && q.getSession.get(candidate.session_id) != null)))
+      || q.liveWorktreeClaims.all().some(candidate => claimsPath(candidate, target));
+  }
+
+  // The exact OID refs/heads/<branch> points at in <repo> right now, or null
+  // when it cannot be read. This is the compare-and-swap witness for branch
+  // deletion: a safety verdict is measured against ONE tip, so deleting the
+  // ref must prove the tip has not moved since the measurement.
+  async function branchTipOid(repo, branch) {
+    const tip = await execFileP('git', ['-C', repo, 'rev-parse', '--verify', `refs/heads/${branch}`], { timeout: 5_000 });
+    return tip.ok ? tip.out.trim() : null;
   }
 
   async function removeWorktree(body = {}) {
     if (typeof body?.path !== 'string') {
       return { status: 400, body: { ok: false, reason: 'not a fleet worktree' } };
     }
+    // BUG-060: hold this path's canonical claim for the WHOLE removal — the
+    // liveness gates, the awaited inspect/git-remove/prune/branch ops, and the
+    // DB purge. The pre-remove recheck below was never enough on its own: a
+    // revive could pass its own cwd/transcript validation and insert+launch
+    // AFTER that gate but while `git worktree remove` was still deleting the
+    // checkout, reporting success into a pane whose cwd had just disappeared.
+    // Every launch/revive into this directory acquires the same claim first,
+    // so it either queues behind the removal (and then fails its own
+    // "cwd no longer exists" validation) or lands before it (and the liveness
+    // gates then refuse the removal). Released on every exit path.
+    const releasePath = acquireWorktreePathLock
+      ? await acquireWorktreePathLock(canonicalPathKey(body.path))
+      : () => {};
+    try {
     const rows = q.worktreeSpawns.all().filter(row => row.worktree_path === body.path);
     const row = rows[0];
     if (!row) return { status: 400, body: { ok: false, reason: 'not a fleet worktree' } };
     if (worktreePathIsLive(body.path)) return { status: 409, body: { ok: false, reason: 'session is still alive' } };
 
     const state = await inspectWorktree(row);
+    // The OID the verdict below was measured against. Worktree HEAD == its
+    // branch ref while the tree exists, so inspecting the tree IS inspecting
+    // the branch tip — capture it HERE, at inspection time. (Reading it later,
+    // beside the delete, would bless a commit that landed mid-request: exactly
+    // the stale-verdict loss this exists to prevent.)
+    const inspected_tip = state.exists && state.branch
+      ? await branchTipOid(row.worktree_path, state.branch)
+      : null;
     if ((state.verdict === 'has-work' || state.verdict === 'unknown') && body.force !== true) {
       return {
         status: 409,
@@ -189,6 +329,25 @@ export function createWorktrees(ctx) {
     if (!repoResult.ok) return { status: 409, body: { ok: false, reason: 'main repository unavailable' } };
     const repo = repoResult.out.trim();
 
+    // BUG-059 (data-loss): `repo` came from a remembered spawn cwd — prove it
+    // actually OWNS this worktree before building any repo-scoped destructive
+    // argv from it. Without this check, a recorded cwd that has been deleted
+    // and recreated as a different repository B silently redirects the fallback
+    // directory removal's prune and, worst of all, `git branch -D` into B —
+    // deleting an unrelated repository's branch and its unique commits. Refuse
+    // everything destructive when ownership cannot be proven; the spawn rows
+    // stay, so the worktree can be cleaned up once the path resolves again.
+    if (!(await repoOwnsWorktree(repo, row.worktree_path, state.exists))) {
+      return {
+        status: 409,
+        body: {
+          ok: false,
+          reason: 'recorded cwd now resolves to a different repository than this worktree belongs to — refusing to remove or delete branches in it',
+          repo: canonical(repo),
+        },
+      };
+    }
+
     // CONTRACT: re-validate liveness HERE, after every awaited probe and right
     // before the first destructive step. The gate above was decided before
     // inspectWorktree's multi-second git probes AND the repo rev-parse yielded the
@@ -202,6 +361,24 @@ export function createWorktrees(ctx) {
     if (worktreePathIsLive(row.worktree_path)) {
       return { status: 409, body: { ok: false, reason: 'session became live during removal' } };
     }
+
+    // Claim custody of this path with NO await between the liveness re-check
+    // and the claim, and hold it through the ENTIRE destructive tail below
+    // (git worktree remove → rm/prune fallback → optional branch -D → row
+    // purge). Every re-check in this function is a snapshot; without the lease
+    // a revive could still slip in after THIS check — validate the
+    // still-existing cwd, insert its 'provisioning' row and launch its pane in
+    // the very directory the awaited `git worktree remove` was about to
+    // delete, leaving a successful revive (and a live card) pointing at a
+    // nonexistent checkout. revive() claims the same per-path lease before its
+    // first await, so exactly one operation wins — and a winning revive keeps
+    // its directory. Derive wires claimWorktreeCustody per-core; tests driving
+    // this module directly opt in.
+    const releaseCustody = claimWorktreeCustody?.(row.worktree_path, 'remove');
+    if (!releaseCustody && claimWorktreeCustody) {
+      return { status: 409, body: { ok: false, reason: 'session became live during removal' } };
+    }
+    try {
 
     if (state.exists) {
       // "Permission denied" is a diagnosis, not an answer. A worktree is a
@@ -282,8 +459,36 @@ export function createWorktrees(ctx) {
     let branch_deleted = false;
     const branch = state.branch ?? q.getSession.get(row.session_id)?.branch ?? null;
     if (body.delete_branch === true && branch) {
-      const deleted = await execFileP('git', ['-C', repo, 'branch', '-D', branch], { timeout: 30_000 });
-      branch_deleted = deleted.ok;
+      // Compare-and-swap against the INSPECTED tip. The safety verdict was
+      // measured against inspected_tip; a commit made DURING this request —
+      // another process landing clean unpushed work on the branch while the
+      // awaited probes above yielded the event loop — was never part of it,
+      // and an unconditional `git branch -D` would silently discard that
+      // commit even though the operator approved deletion when nothing would
+      // have been lost. So re-read the tip NOW and delete only when the ref
+      // still points at exactly what was vouched for, handing git the expected
+      // old value so a move in the final microseconds also refuses. A kept
+      // branch is reported (branch_deleted:false), not a 409 — the tree is
+      // already gone either way. (force is no exception: force overrides the
+      // VERDICT, it never was a licence to discard commits made mid-request.)
+      //
+      // When the tree was already gone there is no inspection to compare
+      // against (the branch name came from the session row) — and no loss is
+      // possible: everything the branch ever was survived the earlier tree
+      // removal, so deleting the ref is the unconditional `branch -D` this
+      // endpoint has always done there, checked-out guard included. `git
+      // update-ref` carries no checked-out guard, but by the time it runs the
+      // only worktree that could check this branch out — THIS one — is gone.
+      if (inspected_tip == null) {
+        const deleted = await execFileP('git', ['-C', repo, 'branch', '-D', branch], { timeout: 30_000 });
+        branch_deleted = deleted.ok;
+      } else if (await branchTipOid(repo, branch) === inspected_tip) {
+        const deleted = await execFileP(
+          'git', ['-C', repo, 'update-ref', '-d', `refs/heads/${branch}`, inspected_tip],
+          { timeout: 30_000 },
+        );
+        branch_deleted = deleted.ok;
+      }
     }
 
     // Final liveness gate before the DB purge. The awaited git remove/prune/branch
@@ -296,13 +501,57 @@ export function createWorktrees(ctx) {
       return { status: 200, body: { ok: true, removed: true, branch_deleted, rows_purged: 0, spawn_became_live: true, path: row.worktree_path } };
     }
     const sessionIds = [...new Set(rows.map(candidate => candidate.session_id).filter(Boolean))];
-    const spawnsPurged = Number(q.deleteWorktreeSpawns.run(row.worktree_path).changes);
+    // One transaction, and dependents settle BEFORE their routing parents go:
+    // a bare session delete would orphan pending mail and pending questions —
+    // freeform questions deliberately survive SessionEnd (the session is
+    // resumable), so an ended spawned session can still own a pending queue.
+    // With the session row gone the board shows a ghost question, its answer
+    // and the original mail route to a callsign that no longer exists, and no
+    // retention query (they all locate targets THROUGH sessions) ever sweeps
+    // the rows. Hold-kind rows for an ENDED session have no parked socket or
+    // re-arm timer left to keep consistent, so the statement-level expiry is
+    // sufficient here — expireAllForSession's hold machinery has nothing to
+    // release for a session whose hooks already disconnected.
+    const now = Date.now();
+    let spawnsPurged = 0;
     let sessionsPurged = 0;
-    for (const sessionId of sessionIds) sessionsPurged += Number(q.deleteEndedSession.run(sessionId).changes);
+    const purgeRows = () => {
+      for (const sessionId of sessionIds) {
+        q.expireMailForSession.run(now, sessionId);
+        q.expireQuestionsForSession.run(sessionId);
+      }
+      spawnsPurged = Number(q.deleteWorktreeSpawns.run(row.worktree_path).changes);
+      for (const sessionId of sessionIds) sessionsPurged += Number(q.deleteEndedSession.run(sessionId).changes);
+    };
+    // The atomic wrapper needs the raw handle; production and the full-core
+    // tests wire `db`, while the direct-drive createWorktrees tests do not —
+    // there the same statements run outside an explicit transaction (a
+    // single-threaded test needs no isolation), so the expiry-before-delete
+    // ordering is preserved either way.
+    if (db) {
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        purgeRows();
+        db.exec('COMMIT');
+      } catch (err) {
+        try { db.exec('ROLLBACK'); } catch { /* the transaction is already gone */ }
+        return { status: 500, body: { ok: false, reason: `could not purge worktree rows: ${err.message}` } };
+      }
+    } else {
+      purgeRows();
+    }
     const rows_purged = spawnsPurged + sessionsPurged;
     tick(`⌫ removed worktree ${row.worktree_path}${branch_deleted ? ` and branch ${branch}` : ''}`);
     onMutate();
     return { status: 200, body: { ok: true, removed: true, branch_deleted, rows_purged, path: row.worktree_path } };
+    } finally {
+      // Release on EVERY exit path (success, refusal, or throw) so a failed
+      // removal can never wedge the path against future removes or revives.
+      releaseCustody?.();
+    }
+    } finally {
+      releasePath();
+    }
   }
 
   return { worktrees, removeWorktree };

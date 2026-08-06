@@ -165,7 +165,7 @@ function setEnv(t, values) {
 function fakeTmux(port = 4711) {
   const state = {
     windows: [], argv: null, calls: [], pasteOk: true, enterOk: true, killed: [],
-    onPaneProbe: null,
+    onPaneProbe: null, paneProbes: 0,
   };
   const adapter = {
     spawnOverrideCmd: () => null,
@@ -188,6 +188,7 @@ function fakeTmux(port = 4711) {
       // The injection point: a hook landing mid-probe (BUG 8) runs here, between
       // tryOwnedPaneDelivery's eligibility gate and its post-probe recheck.
       if (state.onPaneProbe) state.onPaneProbe();
+      state.paneProbes++; // BUG-128: probes are observable (timer-storm detection)
       const win = state.windows.find(w => w.window_id === target || w.window === target);
       return win ? { dead: win.pane_dead, cmd: win.pane_cmd } : null;
     },
@@ -283,4 +284,129 @@ test('BUG 8: owned-pane mail bails without pasting when the turn-state flips to 
   assert.equal(row.delivered_at, null, 'a bailed delivery claims no mail — it stays pending');
   assert.equal(core.snapshot().mail_meta[sid].queued, 1,
     'the mailbox still shows the undelivered message');
+});
+
+test('BUG-128: a burst of mail coalesces onto ONE grace timer — one tmux probe per session, not one per row', async (t) => {
+  const { db, core, state } = memoryCore(t, { env: { FLEETDECK_PANE_MAIL_GRACE_MS: 25 } });
+  const cwd = mkdtempSync(path.join(tmpdir(), 'fd-mail-coalesce-'));
+  t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+  const spawn = await core.spawn({ cwd });
+  const sid = spawn.body.session_id;
+  core.hookSessionStart({ session_id: sid, cwd, source: 'startup' });
+
+  // Queue a burst against the idle owned pane via postMail: every row goes
+  // through mail()'s timer path. (Direct core.mail is NOT used so this test
+  // also runs against the pre-fix core, where each row arms its own timer and
+  // every stray probe re-pastes the still-pending tail.)
+  for (let i = 0; i < 5; i++) {
+    const posted = await core.postMail({ to: sid, from: 'ops', text: `burst ${i}` });
+    assert.equal(posted.ok, true, `burst ${i} queued`);
+  }
+
+  // Past the grace window, the whole burst has been delivered by ONE probe:
+  // exactly one pane probe, one paste. postMail's own pre-insert route probes
+  // (ownedPaneDeliverable) also call paneCurrentCommand, so measure the
+  // DELIVERY probes: total probes minus the 5 route probes from the posts.
+  await new Promise(r => setTimeout(r, 400));
+  assert.equal(state.windows.length, 1, 'setup: one owned window');
+  assert.equal(state.paneProbes - 5, 1, 'the whole burst is delivered by ONE tmux probe, not one per row');
+  const pastes = state.calls.filter(c => c[0] === 'pasteText');
+  assert.equal(pastes.length, 1, 'the burst becomes ONE paste, not one probe per row');
+  const text = pastes[0][2];
+  for (let i = 0; i < 5; i++) assert.ok(text.includes(`burst ${i}`), `paste carries burst ${i}`);
+  assert.equal(core.snapshot().mail_meta[sid].queued, 0, 'mailbox drained by the single probe');
+
+  // The defect's signature: with one timer per ROW, the burst leaves 4 stray
+  // timers that each fire a full tmux probe AFTER the queue is already
+  // drained — the timer/tmux storm of BUG-128. Coalescing means: the probe
+  // count above stays 1 and nothing more fires.
+  const callsAfterDrain = state.calls.length;
+  await new Promise(r => setTimeout(r, 300));
+  assert.equal(state.calls.length, callsAfterDrain, 'no stray per-row timers fire after the drain');
+});
+
+test('BUG-128: the pending mailbox has a count and byte budget — over-budget inserts are refused before the write', async (t) => {
+  // Tiny overridden budgets (createCore passes them through to mail.mjs) so
+  // the test doesn't queue hundreds of rows.
+  setEnv(t, { FLEETDECK_NUDGE_MS: 1_000_000, FLEETDECK_PANE_MAIL_GRACE_MS: 1_000_000 });
+  const db2 = openDb(':memory:');
+  const core2 = createCore(db2, {
+    port: 4712, home: '/daemon-home', tmuxAdapter: fakeTmux().adapter,
+    MAIL_PENDING_MAX: 3, MAIL_PENDING_MAX_BYTES: 100,
+  });
+  t.after(() => db2.close());
+  const cwd = mkdtempSync(path.join(tmpdir(), 'fd-mail-budget-'));
+  t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+  const spawn = await core2.spawn({ cwd });
+  const sid = spawn.body.session_id;
+  core2.hookSessionStart({ session_id: sid, cwd, source: 'startup' });
+
+  // Count budget: three fit, the fourth is refused LOUDLY by postMail (429)
+  // and never stored. On the pre-fix core there is no budget at all, so the
+  // fourth insert succeeds and this test fails at the 429 assertion.
+  for (let i = 0; i < 3; i++) {
+    const r = await core2.postMail({ to: sid, from: 'ops', text: `m${i}` });
+    assert.equal(r.ok, true, `mail ${i} fits the count budget`);
+  }
+  const res = await core2.postMail({ to: sid, from: 'ops', text: 'one too many' });
+  assert.equal(res.status, 429, 'a fully-refused fanout 429s');
+  assert.equal(res.body.ok, false);
+  assert.match(res.body.reason, /mailbox is full/);
+  const count = db2.prepare('SELECT COUNT(*) AS n FROM mail WHERE to_session = ? AND delivered_at IS NULL').get(sid).n;
+  assert.equal(count, 3, 'the refused row was never inserted');
+
+  // Byte budget: drain, then a message whose clamped length would push the
+  // pending bytes over the cap is refused even under the count limit.
+  db2.prepare('UPDATE mail SET delivered_at = 1 WHERE to_session = ?').run(sid);
+  const fits = await core2.postMail({ to: sid, from: 'ops', text: 'x'.repeat(90) });
+  assert.equal(fits.ok, true, 'a drained mailbox accepts again');
+  const tooBig = await core2.postMail({ to: sid, from: 'ops', text: 'y'.repeat(50) });
+  assert.equal(tooBig.status, 429, 'the byte budget refuses once the pending sum would exceed the cap');
+  const stillCount = db2.prepare('SELECT COUNT(*) AS n FROM mail WHERE to_session = ? AND delivered_at IS NULL').get(sid).n;
+  assert.equal(stillCount, 1, 'the byte-refused row was never inserted');
+});
+
+test('BUG-128: owned-pane delivery pastes a bounded batch and leaves the rest pending', async (t) => {
+  const db = openDb(':memory:');
+  const tmux = fakeTmux(4713);
+  const core = createCore(db, {
+    port: 4713, home: '/daemon-home', tmuxAdapter: tmux.adapter,
+    MAIL_PENDING_MAX: 10, MAIL_PENDING_MAX_BYTES: 1_000_000,
+    MAIL_PANE_BATCH: 3, MAIL_PANE_BATCH_BYTES: 1_000_000,
+  });
+  setEnv(t, { FLEETDECK_NUDGE_MS: 1_000_000, FLEETDECK_PANE_MAIL_GRACE_MS: 1_000_000 });
+  t.after(() => db.close());
+  const cwd = mkdtempSync(path.join(tmpdir(), 'fd-mail-batch-'));
+  t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+  const spawn = await core.spawn({ cwd });
+  const sid = spawn.body.session_id;
+  core.hookSessionStart({ session_id: sid, cwd, source: 'startup' });
+
+  // Queue 5 rows directly (the insert columns predate this fix, so the same
+  // statements run against the pre-fix core — where the claim below takes ALL
+  // FIVE into one paste and the "tail stays pending" assertions fail).
+  const insert = db.prepare('INSERT INTO mail (to_session, from_id, text, at, delivered_at) VALUES (?, ?, ?, ?, NULL)');
+  for (let i = 0; i < 5; i++) insert.run(sid, 'ops', `batch-msg-${i}`, Date.now() + i);
+
+  const delivered = await core.tryOwnedPaneDelivery(sid);
+  assert.equal(delivered, true, 'delivery succeeds for the bounded batch');
+  const pastes = tmux.state.calls.filter(c => c[0] === 'pasteText');
+  assert.equal(pastes.length, 1, 'one paste for the batch');
+  const text = pastes[0][2];
+  for (let i = 0; i < 3; i++) assert.ok(text.includes(`batch-msg-${i}`), `batch carries msg ${i}`);
+  assert.ok(!text.includes('batch-msg-3') && !text.includes('batch-msg-4'),
+    'rows past the batch bound are NOT in this paste');
+
+  // The remainder stayed pending (never claimed), oldest-first order intact.
+  const pending = db.prepare('SELECT text FROM mail WHERE to_session = ? AND delivered_at IS NULL ORDER BY at, id').all(sid);
+  assert.deepEqual(pending.map(r => r.text), ['batch-msg-3', 'batch-msg-4'],
+    'the unclaimed tail is still pending for the next round');
+
+  // A second round delivers the rest — bounded batches drain, never stall.
+  const delivered2 = await core.tryOwnedPaneDelivery(sid);
+  assert.equal(delivered2, true, 'the second round delivers the remainder');
+  const pastes2 = tmux.state.calls.filter(c => c[0] === 'pasteText');
+  assert.ok(pastes2[1][2].includes('batch-msg-3') && pastes2[1][2].includes('batch-msg-4'),
+    'the tail arrives in the next paste');
+  assert.equal(core.snapshot().mail_meta[sid].queued, 0, 'mailbox fully drained after two rounds');
 });

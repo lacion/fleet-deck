@@ -273,3 +273,39 @@ test('plain "assign <callsign> <text>" still delivers directly to that session',
   assert.equal(res2.json?.ok, true);
   assert.equal(res2.json?.delivered, 0, 'assigning to an unknown callsign should deliver to nobody');
 });
+
+test('an ambiguous direct assign (a callsign shared by two live sessions) is refused; the session id disambiguates', async (t) => {
+  const daemon = await startDaemon();
+  const cwd = scratchCwd();
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+
+  // Same rotation collision tests/ticket-callsign.test.mjs pins: ticketless
+  // births name from (countSessions % 12 → animal) + sid4, so session #1
+  // (count 0 → falcon) and session #13 (count 12 → falcon) share a callsign
+  // when both session ids start with the same 4 hex chars.
+  const sessionStart = sid => postHook(daemon.baseUrl, 'SessionStart',
+    loadFixture('session-start', { session_id: sid, cwd }), { token: daemon.token });
+  const sidA = 'dead' + randomUUID().slice(4);
+  const startA = await sessionStart(sidA);
+  for (let i = 0; i < 11; i++) await sessionStart(randomUUID()); // advance count 1 → 12
+  const sidB = 'dead' + randomUUID().slice(4);
+  const startB = await sessionStart(sidB);
+  assert.equal(startA.json.callsign, startB.json.callsign,
+    'precondition: two live ticketless sessions share a callsign (rotation collision)');
+  const shared = startA.json.callsign;
+
+  // The shared callsign must NOT fan the task out to both holders.
+  const res = await postJson(`${daemon.baseUrl}/command`, { text: `assign ${shared} refactor the thing once` });
+  assert.equal(res.json?.ok, false, 'an ambiguous direct assign is refused, not fanned out');
+  assert.match(String(res.json?.reason ?? ''), /session id/i,
+    'the refusal should point the human at the session id');
+  assert.equal(await mailboxOf(daemon, sidA).then(b => b.length), 0, 'holder A must receive nothing');
+  assert.equal(await mailboxOf(daemon, sidB).then(b => b.length), 0, 'holder B must receive nothing');
+
+  // The session id resolves to exactly one session — the task lands once.
+  const byId = await postJson(`${daemon.baseUrl}/command`, { text: `assign ${sidA} refactor the thing once` });
+  assert.equal(byId.json?.ok, true);
+  assert.equal(byId.json?.delivered, 1, 'assign by session id delivers to exactly one session');
+  assert.equal(await mailboxOf(daemon, sidA).then(b => b.length), 1);
+  assert.equal(await mailboxOf(daemon, sidB).then(b => b.length), 0, 'the other holder stays untouched');
+});

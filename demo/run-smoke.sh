@@ -9,11 +9,14 @@
 #
 # This script spends real Claude usage (two `claude -p --dangerously-skip-
 # permissions` sessions). Do not run it casually.
-set -u
+# errexit + pipefail: any failed step (including the `cd "$PROJECT_DIR"` before
+# the unrestricted worker launches) aborts the smoke instead of letting
+# `--dangerously-skip-permissions` workers run loose in the caller's cwd.
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FLEETDECK_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-PROJECT_DIR="$SCRIPT_DIR/project"
+SEED_DIR="$SCRIPT_DIR/project"
 DEMO_LOGS="$SCRIPT_DIR/demo-logs"
 SESSIONSTART_SCRIPT="$FLEETDECK_ROOT/scripts/fleet-sessionstart.mjs"
 FLEET_HOOK_SCRIPT="$FLEETDECK_ROOT/scripts/fleet-hook.mjs"
@@ -22,10 +25,24 @@ FLEET_HOOK_SCRIPT="$FLEETDECK_ROOT/scripts/fleet-hook.mjs"
 # FLEETDECK_PORT from the current session can never redirect this run to :4711.
 FLEETDECK_PORT="${FLEETDECK_SMOKE_PORT:-24711}"
 
+# Pinned worker model and effort. Claude Code otherwise resolves the model and
+# effort from machine-local configuration (user settings, settings.local.json,
+# env), so identical Fleet Deck source could run different models, cross the
+# timing/turn thresholds, and cost differently per machine. Smoke-specific
+# overrides only, so ambient config can never re-target them.
+SMOKE_MODEL="${FLEETDECK_SMOKE_MODEL:-sonnet}"
+SMOKE_EFFORT="${FLEETDECK_SMOKE_EFFORT:-low}"
+
 # Assigned from mktemp after the cleanup trap is armed. An arbitrary override
 # is intentionally unsupported: cleanup recursively deletes this directory, so
 # it must be a unique path created by this run, never a caller-provided target.
 SCRATCH_HOME=''
+
+# Unique per-run copy of the demo fixture, created under the scratch home.
+# The workers edit THIS directory -- the tracked checkout under demo/project
+# is never touched, so a developer's uncommitted work there (or an abort
+# before setup completes) can never be reset or deleted by this script.
+PROJECT_DIR=''
 
 # Isolated tmux server for THIS run only, never the user's default server.
 # The fleetd elected by the workers' SessionStart hook inherits this env and
@@ -37,19 +54,25 @@ export FLEETDECK_TMUX_SOCKET="fdaccept-$$"
 
 # Everything the smoke starts is isolated and torn down on success, failure, or
 # interruption. The user's daemon, tmux server, database, and project files are
-# never cleanup targets.
+# never cleanup targets. PROJECT_DIR lives under SCRATCH_HOME, so project
+# teardown is the single recursive scratch-home delete below -- no per-file
+# restore of the tracked fixture is needed (or safe: an EXIT trap can never
+# know what the pre-run bytes were).
 PA=''
 PB=''
 SMOKE_STARTED=0
 stop_worker() {
   local pgid="$1"
   [ -n "$pgid" ] || return 0
-  kill -TERM -- "-$pgid" 2>/dev/null || true
+  # `setsid` makes each worker its own session/process-group leader, so $PA is
+  # the group id: `kill -- -$PA` signals the whole worker tree, and the bare-pid
+  # fallback covers a group already reaped by its own `timeout` deadline.
+  kill -TERM -- "-$pgid" 2>/dev/null || kill -TERM -- "$pgid" 2>/dev/null || true
   for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
-    kill -0 -- "-$pgid" 2>/dev/null || break
+    kill -0 -- "-$pgid" 2>/dev/null || kill -0 -- "$pgid" 2>/dev/null || break
     sleep 0.1
   done
-  kill -KILL -- "-$pgid" 2>/dev/null || true
+  kill -KILL -- "-$pgid" 2>/dev/null || kill -KILL -- "$pgid" 2>/dev/null || true
   wait "$pgid" 2>/dev/null || true
 }
 stop_smoke_daemon() {
@@ -134,10 +157,6 @@ cleanup() {
   if command -v tmux >/dev/null 2>&1; then
     tmux -L "$FLEETDECK_TMUX_SOCKET" kill-server 2>/dev/null || true
   fi
-  cp "$PROJECT_DIR/.seed/util.js" "$PROJECT_DIR/util.js" 2>/dev/null || true
-  cp "$PROJECT_DIR/.seed/app.js" "$PROJECT_DIR/app.js" 2>/dev/null || true
-  rm -f "$PROJECT_DIR/test.js" "$PROJECT_DIR/.claude/settings.json"
-  rmdir "$PROJECT_DIR/.claude" 2>/dev/null || true
   if [ -n "$SCRATCH_HOME" ] && [ "$daemon_stopped" -eq 0 ]; then
     rm -rf -- "$SCRATCH_HOME"
   elif [ -n "$SCRATCH_HOME" ]; then
@@ -150,6 +169,14 @@ SCRATCH_HOME="$(mktemp -d "${TMPDIR:-/tmp}/fleetdeck-smoke.XXXXXX")" || {
   echo "ABORT: could not create a unique smoke home"
   exit 1
 }
+
+# Working copy of the demo fixture for THIS run only. Everything the smoke
+# mutates -- the workers' edits, test.js, .claude/settings.json -- lands here
+# and dies with the scratch home. The tracked fixture under demo/project is
+# read exactly once, right here.
+PROJECT_DIR="$SCRATCH_HOME/project"
+mkdir -p "$PROJECT_DIR"
+cp -R "$SEED_DIR/." "$PROJECT_DIR/"
 
 # Claude-session env vars that must never leak into the workers (and through
 # their SessionStart hook, into the elected daemon): a daemon or tmux server
@@ -166,39 +193,53 @@ CLAUDE_ENV_SCRUB=(
 
 echo "== Fleet Deck Phase 1 smoke =="
 echo "FLEETDECK_ROOT        = $FLEETDECK_ROOT"
+echo "SEED_DIR              = $SEED_DIR"
 echo "PROJECT_DIR           = $PROJECT_DIR"
 echo "SCRATCH_HOME          = $SCRATCH_HOME"
 echo "FLEETDECK_PORT        = $FLEETDECK_PORT"
 echo "FLEETDECK_TMUX_SOCKET = $FLEETDECK_TMUX_SOCKET"
+echo "SMOKE_MODEL           = $SMOKE_MODEL"
+echo "SMOKE_EFFORT          = $SMOKE_EFFORT"
 echo
 
-for required in timeout setsid; do
-  if ! command -v "$required" >/dev/null 2>&1; then
-    echo "ABORT: smoke requires $required on PATH"
-    exit 1
-  fi
-done
+# This Linux/WSL gate launches its workers with setsid + GNU timeout directly;
+# demo/run-with-timeout.mjs is the portable Node equivalent for hosts (macOS)
+# that ship neither utility. node itself is always required.
+if ! command -v node >/dev/null 2>&1; then
+  echo "ABORT: smoke requires node on PATH"
+  exit 1
+fi
 
 # ---------------------------------------------------------------- 1. reset
 # Final guard: never kill an unknown listener by port. The selected isolated
 # port must already be free after the scratch-owned pid cleanup above.
-if curl -s -m 1 "http://127.0.0.1:$FLEETDECK_PORT/health" > /dev/null 2>&1; then
+# Occupancy is proven by an EXCLUSIVE bind attempt, not a health GET: a
+# listener that stalls, closes, or speaks a non-HTTP protocol would pass an
+# HTTP health probe and only surface as a fleetd bind failure after the paid
+# workers have already started.
+if ! node -e '
+  const net = require("node:net");
+  const port = Number(process.argv[1]);
+  const probe = net.createServer();
+  probe.once("error", () => process.exit(1));
+  probe.listen({ port, host: "127.0.0.1", exclusive: true }, () => probe.close(() => process.exit(0)));
+' "$FLEETDECK_PORT"; then
   echo "ABORT: something is already listening on isolated port :$FLEETDECK_PORT."
   exit 1
 fi
 
-# Reset seed files; test.js must never be committed -- the workers create it.
-cp "$PROJECT_DIR/.seed/util.js" "$PROJECT_DIR/util.js"
-cp "$PROJECT_DIR/.seed/app.js" "$PROJECT_DIR/app.js"
-rm -f "$PROJECT_DIR/test.js"
-
+# The working copy starts pristine from the checkout -- the run-scoped copy
+# above is the only reset this script performs. test.js never exists at start;
+# the workers create it.
 mkdir -p "$DEMO_LOGS"
 rm -f "$DEMO_LOGS"/worker-a.json "$DEMO_LOGS"/worker-a.err "$DEMO_LOGS"/worker-b.json "$DEMO_LOGS"/worker-b.err \
       "$DEMO_LOGS"/sid-a.txt "$DEMO_LOGS"/sid-b.txt "$DEMO_LOGS"/final-state.json
 
 # ------------------------------------------------ 2. render settings.json
 # Every hook uses the current checkout's authenticated command shim. Native
-# HTTP hooks cannot attach the bearer token required since 0.16.0.
+# HTTP hooks cannot attach the bearer token required since 0.16.0. Rendered as
+# a heredoc so each hook event routes through `node "$FLEET_HOOK_SCRIPT" <event>`
+# verbatim -- the proven authenticated wiring the run-accept scripts share.
 mkdir -p "$PROJECT_DIR/.claude"
 cat > "$PROJECT_DIR/.claude/settings.json" <<EOF
 {
@@ -245,93 +286,222 @@ RC_B=0
 echo "$SA" > "$DEMO_LOGS/sid-a.txt"
 echo "$SB" > "$DEMO_LOGS/sid-b.txt"
 
-cd "$PROJECT_DIR"
+# Belt and braces under errexit: never let the unrestricted workers below
+# launch in the caller's directory if the fixture cannot be entered.
+cd "$PROJECT_DIR" || {
+  echo "ABORT: could not enter project fixture $PROJECT_DIR"
+  exit 1
+}
 SMOKE_STARTED=1
+
+# Gate every fanout step on the daemon's own /state, never on wall-clock
+# sleeps. `to:"all"` mail resolves only ACTIVE sessions (mail.mjs resolveTargets
+# filters ended_at IS NULL) and the verifier requires BOTH sessions to drain the
+# mail at a Stop boundary; the old T+15/T+29 sleeps let a fast worker finish
+# before the send and be silently omitted from the fanout. Poll /state until
+# every listed sid is registered and not ended. Bounded and non-fatal: a
+# never-electing daemon must not strand cleanup, and the token/mail steps below
+# surface a genuinely dead fleet with a precise message.
+wait_for_fleet() { # sids... — every listed session registered AND not ended
+  node -e '
+    // `node -e` runs CJS (cwd may contain no package.json marking ESM).
+    const fs = require("node:fs");
+    const [home, port, ...sids] = process.argv.slice(1);
+    const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+    (async () => {
+      let token = null;
+      for (let i = 0; i < 100; i += 1) { // bounded; returns early once both live
+        if (!token) { try { token = fs.readFileSync(home + "/token", "utf8").trim(); } catch {} }
+        if (token) {
+          try {
+            const res = await fetch(`http://127.0.0.1:${port}/state`, {
+              headers: { authorization: `Bearer ${token}` },
+              signal: AbortSignal.timeout(500),
+            });
+            if (res.ok) {
+              const state = await res.json();
+              const live = new Set((state.sessions || []).filter(s => !s.endedAt).map(s => s.session_id));
+              if (sids.every(sid => live.has(sid))) return;
+            }
+          } catch {}
+        }
+        await sleep(100);
+      }
+      process.exitCode = 1;
+    })().catch(() => { process.exitCode = 1; });
+  ' "$SCRATCH_HOME" "$FLEETDECK_PORT" "$@"
+}
 
 env "${CLAUDE_ENV_SCRUB[@]}" \
   FLEETDECK_HOME="$SCRATCH_HOME" FLEETDECK_PORT="$FLEETDECK_PORT" \
-  FLEETDECK_TMUX_SOCKET="$FLEETDECK_TMUX_SOCKET" FLEETDECK_AGENTS_CMD=false \
-  setsid timeout 300 claude -p "Add an exported function slugify(s) to util.js (lowercase, trim, spaces to dashes, strip punctuation). Add assert-based tests for it in test.js (create or extend). Verify each edge case one at a time with separate 'node -e' commands: spaces, capitals, punctuation, empty string. Then run node test.js. Preserve any existing exports. Work step by step, one small change per edit." \
-  --session-id "$SA" --max-turns 24 --dangerously-skip-permissions \
+  FLEETDECK_TMUX_SOCKET="$FLEETDECK_TMUX_SOCKET" \
+  FLEETDECK_AGENTS_CMD=false setsid timeout 300 claude -p "Add an exported function slugify(s) to util.js (lowercase, trim, spaces to dashes, strip punctuation). Add assert-based tests for it in test.js (create or extend). Verify each edge case one at a time with separate 'node -e' commands: spaces, capitals, punctuation, empty string. Then run node test.js. Preserve any existing exports. Work step by step, one small change per edit." \
+  --session-id "$SA" --dangerously-skip-permissions \
+  --model "$SMOKE_MODEL" --effort "$SMOKE_EFFORT" --setting-sources user,project \
   --output-format json > "$DEMO_LOGS/worker-a.json" 2> "$DEMO_LOGS/worker-a.err" &
 PA=$!
 echo "T+0 session A launched sid=$SA"
 
-sleep 15
+# Gate B on A being proven registered and live -- not on a wall-clock sleep.
+if ! wait_for_fleet "$SA"; then
+  echo "WARNING: session A not yet proven active on the smoke daemon; proceeding" >&2
+fi
 
 env "${CLAUDE_ENV_SCRUB[@]}" \
   FLEETDECK_HOME="$SCRATCH_HOME" FLEETDECK_PORT="$FLEETDECK_PORT" \
-  FLEETDECK_TMUX_SOCKET="$FLEETDECK_TMUX_SOCKET" FLEETDECK_AGENTS_CMD=false \
-  setsid timeout 300 claude -p "Add an exported function titleCase(s) to util.js (capitalize each word). Add assert-based tests for it in test.js (create or extend). Verify edge cases one at a time with separate 'node -e' commands: single word, multiple words, empty string. Then run node test.js. IMPORTANT: preserve any existing exports and tests you find. Work step by step, one small change per edit." \
-  --session-id "$SB" --max-turns 24 --dangerously-skip-permissions \
+  FLEETDECK_TMUX_SOCKET="$FLEETDECK_TMUX_SOCKET" \
+  FLEETDECK_AGENTS_CMD=false setsid timeout 300 claude -p "Add an exported function titleCase(s) to util.js (capitalize each word). Add assert-based tests for it in test.js (create or extend). Verify edge cases one at a time with separate 'node -e' commands: single word, multiple words, empty string. Then run node test.js. IMPORTANT: preserve any existing exports and tests you find. Work step by step, one small change per edit." \
+  --session-id "$SB" --dangerously-skip-permissions \
+  --model "$SMOKE_MODEL" --effort "$SMOKE_EFFORT" --setting-sources user,project \
   --output-format json > "$DEMO_LOGS/worker-b.json" 2> "$DEMO_LOGS/worker-b.err" &
 PB=$!
 echo "T+15 session B launched sid=$SB"
 
-sleep 14
 TOKEN="$(cat "$SCRATCH_HOME/token" 2>/dev/null || true)"
 if [ -z "$TOKEN" ]; then
   echo "FAIL: smoke daemon did not mint its bearer token"
   exit 1
 fi
+
+# Gate the fanout mail on BOTH exact sessions being active, so resolveTargets
+# can never omit a worker that finished early.
+if ! wait_for_fleet "$SA" "$SB"; then
+  echo "WARNING: both smoke sessions not yet proven active; mailing the fleet anyway" >&2
+fi
+
 if curl -fsS -X POST "http://127.0.0.1:$FLEETDECK_PORT/mail" \
+  --connect-timeout 5 --max-time 15 \
   -H 'content-type: application/json' -H "authorization: Bearer $TOKEN" \
   -d '{"to":"all","from":"luis","text":"Fleet check-in: another agent is editing this repo right now. End your final summary with a line FLEET-NOTE: listing files you touched."}'; then
-  echo " | T+29 mail sent"
+  echo " | mail sent (both sessions proven active)"
 else
   echo "FAIL: authenticated smoke mail was refused"
   exit 1
 fi
 
-sleep 12
-echo "T+41 (board screenshot skipped -- Phase 1 board is the ported spike board, no shot.mjs yet)"
+echo "(board screenshot skipped -- Phase 1 board is the ported spike board, no shot.mjs yet)"
 
-wait "$PA"; RC_A=$?; echo "session A done rc=$RC_A"; PA=''
-wait "$PB"; RC_B=$?; echo "session B done rc=$RC_B"; PB=''
+# `wait` propagates the worker's exit status — tolerated nonzero (rc=124 is an
+# accepted outcome), so capture it instead of letting errexit abort here.
+wait "$PA" || RC_A=$?; echo "session A done rc=$RC_A"; PA=''
+wait "$PB" || RC_B=$?; echo "session B done rc=$RC_B"; PB=''
 
-curl -fsS "http://127.0.0.1:$FLEETDECK_PORT/state" \
-  -H "authorization: Bearer $TOKEN" > "$DEMO_LOGS/final-state.json"
+# Bounded tombstone poll: SessionEnd is async ("async": true in the rendered
+# settings) so Claude Code does NOT await it before exiting -- the shim can
+# still be posting the tombstone for ~2.5s after `wait` returns. Retry /state
+# until both sessions read offline+endedAt before capturing evidence; a single
+# immediate fetch races the shim and false-fails the lifecycle gate on slower
+# machines. Bounded by a hard deadline and hard connect+total request timeouts
+# so a stalled daemon can never wedge the run past the worker watchdog.
+STATE_GOT=''
+SMOKE_STATE_DEADLINE_MS="${FLEETDECK_SMOKE_STATE_DEADLINE_MS:-30000}"
+DEADLINE_END=$(( SECONDS + (SMOKE_STATE_DEADLINE_MS + 999) / 1000 ))
+for attempt in $(seq 1 12); do  # bounded tombstone poll
+  if curl -fsS --connect-timeout 5 --max-time 15 "http://127.0.0.1:$FLEETDECK_PORT/state" \
+    -H "authorization: Bearer $TOKEN" > "$DEMO_LOGS/final-state.json" 2>/dev/null \
+  && node -e "
+    const state = JSON.parse(require('node:fs').readFileSync(process.argv[1], 'utf8'));
+    const byId = Object.fromEntries((state.sessions || []).map(s => [s.session_id, s]));
+    const done = [process.argv[2], process.argv[3]].every(sid => byId[sid] && byId[sid].col === 'offline' && byId[sid].endedAt);
+    process.exit(done ? 0 : 1);
+  " "$DEMO_LOGS/final-state.json" "$SA" "$SB"; then
+    STATE_GOT=1
+    break
+  fi
+  # Once the bounded deadline elapses, capture whatever /state returns and stop:
+  # a wedged daemon must never hang the run past its own deadline.
+  while [ "$SECONDS" -ge "$DEADLINE_END" ]; do
+    echo "WARNING: tombstones still pending after ${SMOKE_STATE_DEADLINE_MS}ms; capturing state as-is" >&2
+    curl -fsS --connect-timeout 5 --max-time 15 "http://127.0.0.1:$FLEETDECK_PORT/state" \
+      -H "authorization: Bearer $TOKEN" > "$DEMO_LOGS/final-state.json" 2>/dev/null || true
+    STATE_GOT=1
+    break 2
+  done
+  echo " | waiting for tombstones (attempt $attempt/12)"
+  sleep 2
+done
+if [ -z "$STATE_GOT" ]; then
+  echo "FAIL: final /state capture never showed both sessions tombstoned offline"
+  exit 1
+fi
 echo "ROUND COMPLETE — captured $DEMO_LOGS/final-state.json"
 echo
 
 # --------------------------------------------------------------- 4. verify
+# The demo-logs path arrives via argv, never interpolated into the JS source:
+# an apostrophe (or any JS-special char) in the checkout/log path would
+# otherwise corrupt this inline program and fail the verifier after the model
+# cost is spent. Session ids and return codes are UUID/int-safe, so they stay
+# inline for the extracted-verifier regression tests.
 node --input-type=module -e "
 import { readFileSync, existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname } from 'node:path';
 
-const demoLogs = '$DEMO_LOGS';
+// demoLogs is an empty rewrite seed (the extracted-verifier regression tests
+// inject the log dir here). logsDir is what the checks actually read: a real
+// argv path first -- apostrophe-safe, never interpolated into this JS source --
+// then that seed, then this program's own directory when it is executed as a
+// file (argv[1] is then the script path itself, not a demo-logs argument)
+// rather than through node -e.
+const demoLogs = '';
 const sidA = '$SA';
 const sidB = '$SB';
 const rcA = Number('$RC_A');
 const rcB = Number('$RC_B');
 
+let selfPath = null;
+try { selfPath = fileURLToPath(import.meta.url); } catch {}
+const logsDir = (process.argv[1] && process.argv[1] !== selfPath)
+  ? process.argv[1]
+  : (demoLogs || dirname(selfPath || '.'));
+
 let failures = 0;
+let inconclusives = 0;
 function pass(label) { console.log('PASS: ' + label); }
 function fail(label, detail) {
   failures += 1;
   console.log('FAIL: ' + label + (detail ? ' -- ' + detail : ''));
 }
+// Harness exhaustion is not a product failure: if the harness cut the worker
+// off (authored 300s wall-clock timeout, or a max-turns ceiling if one is ever
+// reintroduced) the Stop hook never fired, so neither the structured result
+// nor the Stop-boundary delivery can be scored. Report harness-inconclusive
+// instead of failing the run.
+function inconclusive(label, detail) {
+  inconclusives += 1;
+  console.log('INCONCLUSIVE: ' + label + (detail ? ' -- ' + detail : ''));
+}
 
 let state = null;
 try {
-  state = JSON.parse(readFileSync(demoLogs + '/final-state.json', 'utf8'));
+  state = JSON.parse(readFileSync(logsDir + '/final-state.json', 'utf8'));
 } catch (e) {
   fail('load final-state.json', e.message);
   process.exit(1);
 }
 
+const exhausted = { A: false, B: false };
 for (const [label, rc, file] of [
   ['A', rcA, 'worker-a.json'],
   ['B', rcB, 'worker-b.json'],
 ]) {
   let result = null;
-  try { result = JSON.parse(readFileSync(demoLogs + '/' + file, 'utf8')); }
+  try { result = JSON.parse(readFileSync(logsDir + '/' + file, 'utf8')); }
   catch (e) { fail('worker ' + label + ' emitted a structured result', e.message); }
+  // rc 124 is the authored wall-clock timeout; error_max_turns is a harness
+  // turn ceiling. Both cut the worker off before its Stop hook could fire.
+  exhausted[label] = rc === 124
+    || (result != null && result.subtype === 'error_max_turns');
   const acceptedStatus = rc === 0 || rc === 124;
   if (!acceptedStatus) fail('worker ' + label + ' process status', 'rc=' + rc);
-  else if (!result || result.is_error !== false || result.subtype !== 'success') {
+  else if (exhausted[label]) {
+    inconclusive('worker ' + label + ' harness-exhausted (harness cut the worker off; result and Stop delivery unscored)',
+      'rc=' + rc + ' result=' + JSON.stringify(result));
+  } else if (!result || result.is_error !== false || result.subtype !== 'success') {
     fail('worker ' + label + ' completed successfully', 'rc=' + rc + ' result=' + JSON.stringify(result));
   } else {
-    pass('worker ' + label + ' produced a successful result' + (rc === 124 ? ' before the authored timeout' : ''));
+    pass('worker ' + label + ' produced a successful result');
   }
 }
 
@@ -345,11 +515,23 @@ const unexpected = sessions.filter(session => session.session_id !== sidA && ses
 if (!unexpected.length) pass('scratch fleet contains only the two smoke workers');
 else fail('scratch fleet contains only the two smoke workers', unexpected.map(s => s.callsign || s.session_id).join(', '));
 
-// 2. conflict recorded on util.js AND test.js
+// 2. conflict recorded on util.js AND test.js by EXACT normalized rel_path.
+// When a conflict records participants, require BOTH smoke sessions; a conflict
+// with no recorded participants is accepted on the path alone (the live daemon
+// does not attribute both authors on every row). The old unanchored substrings
+// /util\.js/ + /test\.js/ passed decoys like not-util.js.bak and contest.js.
 const conflicts = state.conflicts || [];
 const touchedNames = conflicts.map(c => (c.rel_path || c.file || '')).join(' | ');
-const hasUtil = /util\.js/.test(touchedNames);
-const hasTest = /test\.js/.test(touchedNames);
+const conflictInvolvingBoth = base => conflicts.some(c => {
+  const raw = c.rel_path || c.file || '';
+  const normalized = raw.split(String.fromCharCode(92)).join('/');
+  const exact = normalized === base || normalized.endsWith('/' + base);
+  const participants = Array.isArray(c.sessions) ? c.sessions : [];
+  const bothOrUnrecorded = participants.length === 0 || (participants.includes(sidA) && participants.includes(sidB));
+  return exact && bothOrUnrecorded;
+});
+const hasUtil = conflictInvolvingBoth('util.js');
+const hasTest = conflictInvolvingBoth('test.js');
 if (hasUtil && hasTest) pass('conflict recorded on util.js AND test.js');
 else fail('conflict recorded on util.js AND test.js', 'conflicts seen: ' + (touchedNames || '(none)'));
 
@@ -358,18 +540,21 @@ else fail('conflict recorded on util.js AND test.js', 'conflicts seen: ' + (touc
 // a got-fleet-mail-at-the-turn-boundary line per session). mail_pending>0 at
 // the end is NOT a failure: rival-conflict mail that lands after a session
 // ends stays queued forever by design (dirty files outlive their authors).
+// A harness-exhausted worker had no Stop hook, so its boundary delivery is
+// unscored: harness-inconclusive, not a product failure.
 // NOTE: this whole block lives inside a bash double-quoted string -- never
 // use a literal double-quote character anywhere in it.
 const tickerText = (state.ticker || []).map(t => t.msg).join('\n');
 const csA = (byId[sidA] || {}).callsign, csB = (byId[sidB] || {}).callsign;
-const boundaryA = csA && tickerText.includes(csA + ' got fleet mail at the turn boundary');
-const boundaryB = csB && tickerText.includes(csB + ' got fleet mail at the turn boundary');
+const boundaryA = exhausted.A ? null : csA && tickerText.includes(csA + ' got fleet mail at the turn boundary');
+const boundaryB = exhausted.B ? null : csB && tickerText.includes(csB + ' got fleet mail at the turn boundary');
 let fleetNote = false;
 for (const f of ['worker-a.json', 'worker-b.json']) {
-  const p = demoLogs + '/' + f;
+  const p = logsDir + '/' + f;
   if (existsSync(p) && /FLEET-NOTE/.test(readFileSync(p, 'utf8'))) fleetNote = true;
 }
 if (boundaryA && boundaryB) pass('mail delivered at Stop boundary to both sessions' + (fleetNote ? ' (and FLEET-NOTE compliance seen)' : ''));
+else if ((boundaryA || exhausted.A) && (boundaryB || exhausted.B)) inconclusive('mail delivered at Stop boundary (harness-exhausted worker unscored)', 'A=' + boundaryA + ' B=' + boundaryB);
 else fail('mail delivered at Stop boundary to both sessions', 'A=' + boundaryA + ' B=' + boundaryB);
 
 // 4. both tombstoned offline at the end
@@ -378,5 +563,6 @@ const offlineB = byId[sidB] && byId[sidB].col === 'offline' && !!byId[sidB].ende
 if (offlineA && offlineB) pass('both tombstoned offline at the end');
 else fail('both tombstoned offline at the end', 'A col=' + (byId[sidA] || {}).col + ' B col=' + (byId[sidB] || {}).col);
 
+if (inconclusives) console.log('INCONCLUSIVE: ' + inconclusives + ' check(s) unscored because the harness cut a worker off');
 if (failures) process.exit(1);
-"
+" "$DEMO_LOGS" "$SA" "$SB" "$RC_A" "$RC_B"

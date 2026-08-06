@@ -186,6 +186,71 @@ test('BUG 2: a pane-less hook-only session keeps the silence-based presume-dead 
 });
 
 // ---------------------------------------------------------------------------
+// BUG-045 — a stale retention probe must not tombstone a newly revived spawn
+// ---------------------------------------------------------------------------
+
+test('BUG-045: a revive landing mid-sweep stops the stale probe from condemning the revived card', async (t) => {
+  const tmux = fakeTmux();
+  const { db, core, state } = memoryCore(t, { tmux });
+  const now = Date.now();
+  const silent = now - 4 * HOUR;
+
+  // Old spawn row, snapshotted as live-eligible by the sweep's candidate pass.
+  db.prepare(`INSERT INTO sessions
+    (session_id, callsign, col, note, events, started_at, last_seen, source)
+    VALUES ('rev', 'rev-1', 'idle', 'waiting at its prompt', 0, ?, ?, 'hooks')`).run(silent, silent);
+  db.prepare(`INSERT INTO spawns
+    (spawn_id, session_id, callsign, tmux_session, tmux_window, requested_at, status)
+    VALUES ('sp-old', 'rev', 'rev-1', 'fleetdeck-4711', 'fd4711-rev-1', ?, 'live')`).run(silent);
+  // The snapshot tmux returns: the OLD pane, dead.
+  state.windows.push({ session: 'fleetdeck-4711', window: 'fd4711-rev-1', window_id: '@r', pane_dead: true, pane_cmd: 'claude' });
+
+  // During the listScopedWindows await, the old row is settled and revive()
+  // stands a NEWER live row up on the same window name — exactly the race
+  // BUG-045 describes. The stale {s, sp} pair must never be written back.
+  const baseList = tmux.adapter.listScopedWindows;
+  tmux.adapter.listScopedWindows = async port => {
+    const wins = await baseList(port);
+    db.prepare("UPDATE spawns SET status = 'gone' WHERE spawn_id = 'sp-old'").run();
+    db.prepare(`INSERT INTO spawns
+      (spawn_id, session_id, callsign, tmux_session, tmux_window, requested_at, status)
+      VALUES ('sp-new', 'rev', 'rev-1', 'fleetdeck-4711', 'fd4711-rev-1', ?, 'live')`).run(now);
+    return wins;
+  };
+
+  await core.retentionSweep(now);
+
+  assert.equal(db.prepare("SELECT status FROM spawns WHERE spawn_id = 'sp-new'").get().status, 'live',
+    'the revived spawn must NOT be flipped pane-dead by the stale probe');
+  const card = db.prepare("SELECT * FROM sessions WHERE session_id = 'rev'").get();
+  assert.equal(card.ended_at, null, 'the revived card must NOT be tombstoned');
+  assert.notEqual(card.col, 'offline', 'the revived card must stay live');
+});
+
+test('BUG-045 control: with no mid-sweep revive, a tmux-confirmed dead pane is still condemned', async (t) => {
+  const tmux = fakeTmux();
+  const { db, core, state } = memoryCore(t, { tmux });
+  const now = Date.now();
+  const silent = now - 4 * HOUR;
+
+  db.prepare(`INSERT INTO sessions
+    (session_id, callsign, col, note, events, started_at, last_seen, source)
+    VALUES ('stilldead', 'sd-1', 'idle', 'waiting at its prompt', 0, ?, ?, 'hooks')`).run(silent, silent);
+  db.prepare(`INSERT INTO spawns
+    (spawn_id, session_id, callsign, tmux_session, tmux_window, requested_at, status)
+    VALUES ('sp-sd', 'stilldead', 'sd-1', 'fleetdeck-4711', 'fd4711-sd-1', ?, 'live')`).run(silent);
+  state.windows.push({ session: 'fleetdeck-4711', window: 'fd4711-sd-1', window_id: '@s', pane_dead: true, pane_cmd: 'claude' });
+
+  await core.retentionSweep(now);
+
+  assert.equal(db.prepare("SELECT status FROM spawns WHERE spawn_id = 'sp-sd'").get().status, 'pane-dead',
+    'the revalidation must not weaken the plain dead-pane verdict');
+  const card = db.prepare("SELECT * FROM sessions WHERE session_id = 'stilldead'").get();
+  assert.equal(card.col, 'offline');
+  assert.ok(card.ended_at);
+});
+
+// ---------------------------------------------------------------------------
 // BUG 3 — dead spawn states are re-checked and resurrected when tmux disagrees
 // ---------------------------------------------------------------------------
 
@@ -250,6 +315,52 @@ test('BUG 3: a human-KILLED spawn stays killed even if a live claude pane exists
 
   assert.equal(db.prepare('SELECT status FROM spawns WHERE spawn_id = ?').get(spawnId).status, 'killed',
     'a human kill is a decision, not a mistake — never resurrected');
+});
+
+test('BUG-152: a kill landing DURING the resurrection probe is never undone by the stale verdict', async (t) => {
+  // The resurrect loop snapshots a 'pane-dead' row + its window owner, then
+  // awaits paneCurrentCommand. Simulate the race: the kill lands mid-await
+  // (the probe still returns its earlier live observation). Without the
+  // compare-and-set, resurrection overwrites the terminal 'killed' state with
+  // 'live' and lifts the card off the offline shelf on a dead window.
+  const tmux = fakeTmux();
+  const ctx = memoryCore(t, { tmux });
+  const { core, db } = ctx;
+  const cwd = mkdtempSync(path.join(tmpdir(), 'fd-race-'));
+  t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+
+  const spawn = await core.spawn({ cwd });
+  const sid = spawn.body.session_id;
+  const spawnId = spawn.body.spawn_id;
+  core.hookSessionStart({ session_id: sid, cwd, source: 'startup' }); // pane live claude
+  // Wrongly condemned to 'pane-dead' + tombstoned (the BUG 3 scenario) — the
+  // human then kills the spawn from the board while the tick is probing.
+  db.prepare("UPDATE spawns SET status = 'pane-dead' WHERE spawn_id = ?").run(spawnId);
+  db.prepare("UPDATE sessions SET col = 'offline', note = 'pane died', ended_at = ? WHERE session_id = ?")
+    .run(Date.now(), sid);
+
+  const basePaneCurrentCommand = tmux.adapter.paneCurrentCommand;
+  let probeCalls = 0;
+  tmux.adapter.paneCurrentCommand = async target => {
+    probeCalls += 1;
+    if (probeCalls === 1) {
+      // The resurrect loop's confirmatory probe is the first paneCurrentCommand
+      // this tick. The human's kill lands while it is in flight; it removes the
+      // window and marks the row 'killed' — but the probe still answers with
+      // its earlier live observation.
+      const res = await core.spawnKill(spawnId, true);
+      assert.equal(res.status, 200, 'sanity: the mid-probe kill succeeds');
+    }
+    return basePaneCurrentCommand(target);
+  };
+
+  await core.spawnLivenessTick();
+
+  assert.equal(db.prepare('SELECT status FROM spawns WHERE spawn_id = ?').get(spawnId).status, 'killed',
+    'a successful human kill must survive a concurrently probing liveness tick');
+  const card = cardOf(core, sid);
+  assert.equal(card.col, 'offline', 'the card stays on the offline shelf — no false live card');
+  assert.notEqual(card.endedAt, null, 'ended_at stays stamped — the kill is not undone');
 });
 
 test('BUG 3: revive() ADOPTS a gone spawn whose window is a live claude (no 409, no duplicate)', async (t) => {
@@ -330,6 +441,83 @@ test('BUG 4: a normal-sized message is delivered whole with no truncated flag', 
   assert.equal('original_length' in out, false);
   const stored = db.prepare('SELECT text FROM mail WHERE to_session = ? ORDER BY id DESC LIMIT 1').get(sid).text;
   assert.equal(stored, msg, 'normal mail is stored verbatim');
+});
+
+// ---------------------------------------------------------------------------
+// BUG-021 — /command (broadcast / assign / assign auto) must never deliver a
+// silently truncated framed body. mail() has always returned a truncation
+// receipt; the command path ignored it, so an oversize task returned ok:true
+// while agents acted on a body with its tail cut. The command is now rejected
+// ATOMICALLY before any recipient row is inserted.
+// ---------------------------------------------------------------------------
+
+test('BUG-021: an oversize broadcast is rejected atomically — no mail rows, no silent ok', async (t) => {
+  const { db, core } = memoryCore(t);
+  const cwd = mkdtempSync(path.join(tmpdir(), 'fd-cmd-big-'));
+  t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+  const spawn = await core.spawn({ cwd });
+  const sid = spawn.body.session_id;
+  core.hookSessionStart({ session_id: sid, cwd, source: 'startup' });
+
+  const out = core.command(`broadcast ${'x'.repeat(5000)}`);
+
+  assert.equal(out.ok, false, 'the operator is TOLD the message is too long — never a silent {ok:true}');
+  assert.match(out.reason, /too long/);
+  assert.equal(out.original_length, 5000);
+  assert.equal(out.max_length, 4000);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM mail').get().n, 0,
+    'atomic rejection: not a single recipient row is inserted');
+});
+
+test('BUG-021: an oversize direct assign is rejected atomically', async (t) => {
+  const { db, core } = memoryCore(t);
+  const cwd = mkdtempSync(path.join(tmpdir(), 'fd-cmd-assign-big-'));
+  t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+  const spawn = await core.spawn({ cwd });
+  const sid = spawn.body.session_id;
+  core.hookSessionStart({ session_id: sid, cwd, source: 'startup' });
+  const callsign = db.prepare('SELECT callsign FROM sessions WHERE session_id = ?').get(sid).callsign;
+
+  const out = core.command(`assign ${callsign} ${'y'.repeat(5000)}`);
+
+  assert.equal(out.ok, false);
+  assert.match(out.reason, /too long/);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM mail WHERE to_session = ?').get(sid).n, 0,
+    'the agent never receives a tail-less [FLEETDECK ASSIGNMENT]');
+});
+
+test('BUG-021: assign auto is framed BEFORE the cap check — a body that fits unframed but overflows once framed is rejected', async (t) => {
+  const { db, core } = memoryCore(t);
+  const cwd = mkdtempSync(path.join(tmpdir(), 'fd-cmd-auto-frame-'));
+  t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+  const spawn = await core.spawn({ cwd });
+  const sid = spawn.body.session_id;
+  core.hookSessionStart({ session_id: sid, cwd, source: 'startup' });
+
+  // '[FLEETDECK ASSIGNMENT] ' is 23 code units: 3990 fits unframed, not framed.
+  const out = core.command(`assign auto ${'z'.repeat(3990)}`);
+
+  assert.equal(out.ok, false, 'the frame itself counts against the cap — it rides inside the paste');
+  assert.equal(out.original_length, 23 + 3990);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM mail').get().n, 0);
+});
+
+test('BUG-021: a normal-size assign still delivers whole (no rejection fields)', async (t) => {
+  const { db, core } = memoryCore(t);
+  const cwd = mkdtempSync(path.join(tmpdir(), 'fd-cmd-ok-'));
+  t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+  const spawn = await core.spawn({ cwd });
+  const sid = spawn.body.session_id;
+  core.hookSessionStart({ session_id: sid, cwd, source: 'startup' });
+  const callsign = db.prepare('SELECT callsign FROM sessions WHERE session_id = ?').get(sid).callsign;
+
+  const msg = 'fix the flaky pane_cmd race and run the full suite';
+  const out = core.command(`assign ${callsign} ${msg}`);
+
+  assert.equal(out.ok, true);
+  assert.equal(out.reason, undefined, 'no rejection when nothing was too long');
+  const stored = db.prepare('SELECT text FROM mail WHERE to_session = ? ORDER BY id DESC LIMIT 1').get(sid).text;
+  assert.equal(stored, `[FLEETDECK ASSIGNMENT] ${msg}`, 'the framed task is stored verbatim');
 });
 
 // ===========================================================================
@@ -648,4 +836,88 @@ test('Fix 7 [LOW]: a silent override-process spawn (no tmux window) is presumed 
     'the override spawn row is condemned (revivable), never left stale live');
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM spawns WHERE status IN ('spawning','stalled','live')").get().n, 0,
     'it stops counting toward active spawns');
+});
+
+// ---------------------------------------------------------------------------
+// BUG-025 — a delayed async SessionEnd from a previous process must NOT
+// tombstone a newer process that resumed the same session id (`claude
+// --resume` keeps the id). hooks/hooks.json makes SessionEnd async and
+// SessionStart synchronous, so the order SessionStart(B) → SessionEnd(A) is
+// real. The fix: hook shims mint one fleet_run nonce per CLI process,
+// SessionStart persists it as the card's active run, and a SessionEnd whose
+// nonce is not the active run is ignored (telemetry only).
+// ---------------------------------------------------------------------------
+
+test('BUG-025: a delayed SessionEnd from a previous run must NOT tombstone a live resumed session', async (t) => {
+  const { core, db } = memoryCore(t);
+  const cwd = mkdtempSync(path.join(tmpdir(), 'fd-resume-'));
+  t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+
+  const spawn = await core.spawn({ cwd });
+  const sid = spawn.body.session_id;
+
+  // Process A starts and exits; its SessionEnd hook is async and lands LATE.
+  core.hookSessionStart({ session_id: sid, cwd, source: 'startup', fleet_run: 'run-A' });
+  assert.equal(cardOf(core, sid).spawn.status, 'live');
+
+  // Process B (`claude --resume`) starts with the SAME session id and becomes
+  // live BEFORE A's SessionEnd arrives.
+  core.hookSessionStart({ session_id: sid, cwd, source: 'resume', fleet_run: 'run-B' });
+  const hold = core.hookHoldQuestion({
+    session_id: sid, cwd, tool_name: 'Bash',
+    tool_input: { command: 'rm -rf build' }, fleet_run: 'run-B',
+  }, 'PermissionRequest');
+  assert.ok(hold?.id, 'the resumed run is awaiting a permission decision');
+  assert.equal(cardOf(core, sid).col, 'needsyou', 'sanity: run B is live and needs a human');
+
+  // NOW A's delayed SessionEnd lands, tagged with A's run nonce.
+  core.hookSessionEnd({ session_id: sid, cwd, reason: 'other', fleet_run: 'run-A' });
+
+  const card = cardOf(core, sid);
+  assert.notEqual(card.col, 'offline', 'a stale async end must NOT tombstone the live resumed card');
+  assert.equal(card.col, 'needsyou', 'the live run keeps its derived column');
+  assert.equal(card.endedAt, null, 'a stale async end must NOT stamp ended_at');
+  assert.equal(card.spawn.status, 'live', 'a stale async end must NOT condemn the pane to pane-dead');
+  assert.equal(db.prepare('SELECT status FROM spawns WHERE session_id = ?').get(sid).status, 'live');
+  assert.equal(db.prepare("SELECT status FROM questions WHERE id = ?").get(hold.id).status, 'pending',
+    'a stale async end must NOT settle the LIVE run\'s holds');
+  // ...and when the LIVE run genuinely ends later, its own end still lands.
+  core.hookSessionEnd({ session_id: sid, cwd, reason: 'other', fleet_run: 'run-B' });
+  assert.equal(cardOf(core, sid).col, 'offline', 'the active run\'s own SessionEnd still tombstones');
+  assert.ok(cardOf(core, sid).endedAt);
+});
+
+test('BUG-025: an untagged SessionEnd keeps the historical unconditional tombstone', async (t) => {
+  const { core } = memoryCore(t);
+  const cwd = mkdtempSync(path.join(tmpdir(), 'fd-untagged-'));
+  t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+
+  const sid = 'untagged-end';
+  core.hookSessionStart({ session_id: sid, cwd, source: 'startup', fleet_run: 'run-A' });
+  // No fleet_run on the end: pre-shim hooks (and anything else that never
+  // minted a nonce) must behave exactly as before.
+  core.hookSessionEnd({ session_id: sid, cwd, reason: 'other' });
+  assert.equal(cardOf(core, sid).col, 'offline');
+  assert.ok(cardOf(core, sid).endedAt);
+});
+
+test('BUG-025: a tagged SessionEnd against a row with no recorded run tombstones (reconciled with max-turns abort)', async (t) => {
+  const { core } = memoryCore(t);
+  const cwd = mkdtempSync(path.join(tmpdir(), 'fd-norun-'));
+  t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+
+  const sid = 'no-run-row';
+  // A row registered before the shims minted nonces (run_id stays NULL).
+  core.hookSessionStart({ session_id: sid, cwd, source: 'startup' });
+  // Reconciliation with BUG-024/max-turns (max-turns-abort.test.mjs): the stale
+  // guard only suppresses a tagged end when the card HAS a run_id to disprove it
+  // (`staleRunEnd && run_id != null`). With run_id NULL we cannot prove the end
+  // stale, and a real abort (e.g. --max-turns, whose SessionEnd the shim tags)
+  // must NOT linger as "live" — so it tombstones. BUG-025's real protection
+  // (a resumed session with a run_id + a delayed OLD-run end → skip) is intact
+  // and covered by the "delayed SessionEnd must NOT tombstone a live resumed
+  // session" test above.
+  core.hookSessionEnd({ session_id: sid, cwd, reason: 'other', fleet_run: 'run-A' });
+  assert.equal(cardOf(core, sid).col, 'offline');
+  assert.notEqual(cardOf(core, sid).endedAt, null);
 });

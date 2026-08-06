@@ -77,38 +77,74 @@ function livePidLooksLikeFleetd(pid) {
 export { pidRecord, pidIsLive, livePidLooksLikeFleetd };
 
 // --------------------------------------------------------------------- semver
-// Version comparison uses ONLY the leading numeric major.minor.patch segments
-// (a build/prerelease suffix like `-rc.1` or `+sha` is ignored for ordering).
-// parseSemver returns an integer array for a well-formed version, or null when
-// it cannot establish an order — and null on either side means "no takeover".
+// Full SemVer precedence over major.minor.patch PLUS prerelease identifiers
+// (only build metadata after `+` is ignored, per spec — a prerelease suffix
+// like `-rc.1` participates in ordering, so rc.2 > rc.1 and final > rc).
+// parseSemver returns { core: [major, minor, patch], pre: [identifiers] } —
+// numeric prerelease identifiers as numbers, alphanumeric as strings, and an
+// empty `pre` for a final release — or null when it cannot establish an
+// order. null on either side means "no takeover".
 
 export function parseSemver(input) {
   if (typeof input !== 'string') return null;
-  // Strip a leading `v` and any prerelease/build suffix, then require exactly
-  // three all-digit segments. Anything else (empty, `latest`, `1.x`) is null.
-  const core = input.trim().replace(/^v/i, '').split(/[-+]/, 1)[0];
-  const parts = core.split('.');
+  // Strip a leading `v`, split off any build metadata (never ordered), then
+  // split off the prerelease. Require exactly three all-digit core segments
+  // and well-formed (non-empty) prerelease identifiers. Anything else (empty,
+  // `latest`, `1.x`, `1.0.0-`) is null.
+  const noBuild = input.trim().replace(/^v/i, '').split('+', 1)[0];
+  const dash = noBuild.indexOf('-');
+  const coreText = dash === -1 ? noBuild : noBuild.slice(0, dash);
+  const parts = coreText.split('.');
   if (parts.length !== 3) return null;
-  const nums = [];
+  const core = [];
   for (const p of parts) {
     if (!/^\d+$/.test(p)) return null;
-    nums.push(Number(p));
+    core.push(Number(p));
   }
-  return nums;
+  const pre = [];
+  if (dash !== -1) {
+    const preText = noBuild.slice(dash + 1);
+    if (preText === '') return null;
+    for (const ident of preText.split('.')) {
+      if (ident === '') return null;
+      pre.push(/^\d+$/.test(ident) ? Number(ident) : ident);
+    }
+  }
+  return { core, pre };
 }
 
 function isZeroVersion(nums) {
   return nums.every(n => n === 0);
 }
 
-// -1 / 0 / 1 numeric comparison of two parseSemver arrays (same length by
-// construction — both are three-segment).
+// -1 / 0 / 1 full SemVer precedence of two parseSemver results. Core compares
+// numerically; on a core tie the prerelease decides per semver.org §11: a
+// version WITH a prerelease precedes the same core without one, identifiers
+// compare numerically when both numeric, numeric always sorts below
+// alphanumeric, and a shorter identifier list is lower when all shared
+// identifiers are equal (rc.1 < rc.2 < rc.10 < rc.1.1 < final).
 export function compareSemver(a, b) {
-  for (let i = 0; i < a.length; i += 1) {
-    if (a[i] > b[i]) return 1;
-    if (a[i] < b[i]) return -1;
+  for (let i = 0; i < a.core.length; i += 1) {
+    if (a.core[i] > b.core[i]) return 1;
+    if (a.core[i] < b.core[i]) return -1;
   }
-  return 0;
+  if (a.pre.length === 0 && b.pre.length === 0) return 0;
+  if (a.pre.length === 0) return 1;
+  if (b.pre.length === 0) return -1;
+  const len = Math.min(a.pre.length, b.pre.length);
+  for (let i = 0; i < len; i += 1) {
+    const x = a.pre[i];
+    const y = b.pre[i];
+    if (x === y) continue;
+    const xNum = typeof x === 'number';
+    const yNum = typeof y === 'number';
+    if (xNum && yNum) return x > y ? 1 : -1;
+    if (xNum) return -1;
+    if (yNum) return 1;
+    return x > y ? 1 : -1;
+  }
+  if (a.pre.length === b.pre.length) return 0;
+  return a.pre.length > b.pre.length ? 1 : -1;
 }
 
 // The single takeover predicate: is `ownVersion` a strictly-newer, non-sentinel
@@ -124,7 +160,7 @@ export function shouldTakeOver(ownVersion, daemonVersion) {
   // would make every SessionStart kill it and respawn a daemon that comes back
   // reporting 0.0.0 again — an endless takeover loop. A genuine upgrade always
   // carries a non-zero version on BOTH ends, so refuse whenever either is 0.0.0.
-  if (isZeroVersion(own) || isZeroVersion(other)) return false;
+  if (isZeroVersion(own.core) || isZeroVersion(other.core)) return false;
   return compareSemver(own, other) > 0;
 }
 
@@ -150,6 +186,25 @@ export function verifyDaemonPid(pid, home) {
   // check is unavailable and returns true, so there the pidfile match is the
   // whole gate (matches the daemon's own claimHome behaviour).
   return livePidLooksLikeFleetd(pid);
+}
+
+// A replaced daemon must report EXACTLY the hook's own build before the hook
+// accepts it. Two newer hooks (0.20.1 and 0.20.2) can evict the same stale
+// daemon together: both observe the old pid die, both spawn, and the port-bind
+// election keeps only one — with no notion of version. A bare truthy /health
+// would let the 0.20.2 hook accept 0.20.1's code (or vice versa), settling the
+// upgrade on whichever build happened to bind first instead of the newest
+// installed one. After a takeover spawn the hook therefore re-checks
+// health.version; a different version means a competitor won the race, so the
+// hook re-enters ensureServer with that daemon now healthy and the normal
+// strictly-newer takeover resolves the ordering. A shared home is trusted to
+// be same-user (claimHome + the pidfile + token all live there), so the
+// identity check is deliberately string equality — not "at least as new":
+// exact match is the whole contract and cannot settle on a WRONG build even if
+// the env is somehow shared across users.
+export function replacementMatches(ownVersion, healthVersion) {
+  return typeof ownVersion === 'string' && typeof healthVersion === 'string'
+    && ownVersion.length > 0 && ownVersion === healthVersion;
 }
 
 const defaultSleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));

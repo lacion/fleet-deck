@@ -139,6 +139,26 @@ export function spawnRaw({
 }
 
 /**
+ * Register teardown for caller-owned scratch directories BEFORE attempting a
+ * daemon start that may reject (port collision, early crash, health timeout).
+ * t.after hooks run even when the test body throws, so cleanup registered at
+ * allocation time is what keeps a failed boot from leaking the trees — a hook
+ * registered only after a successful startDaemon never runs when the start
+ * rejects. Returns a holder: assign `holder.daemon` once startDaemon resolves
+ * and its stop folds into the same hook; left null, the stop is skipped.
+ */
+export function guardScratchDirs(t, dirs, { keepHome = true } = {}) {
+  const holder = { daemon: null };
+  t.after(async () => {
+    await holder.daemon?.stop({ keepHome });
+    for (const dir of dirs) {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    }
+  });
+  return holder;
+}
+
+/**
  * Spawn fleetd and wait for it to become healthy. Returns a handle with
  * baseUrl plus a stop() that kills the process and (by default) removes the
  * scratch FLEETDECK_HOME.
@@ -154,7 +174,7 @@ export function spawnRaw({
  */
 export async function startDaemon({
   port = randomPort(),
-  home = freshHome(),
+  home,
   // FLEETDECK_TEST_DAEMON_SCRIPT lets this repo's own dry-check point the
   // whole suite at a local reference stub while scripts/fleetd/fleetd.mjs is
   // still being built, without editing any test file or touching scripts/.
@@ -163,15 +183,50 @@ export async function startDaemon({
   env = {},
   healthTimeoutMs = 10000,
 } = {}) {
+  // Track ownership explicitly: only the home THIS call allocated may be
+  // removed by the helper (on startup failure or in stop()). A caller-owned
+  // home (e.g. election.test's homeA) belongs to the caller's own teardown
+  // (e.g. the election suite's t.after) and is never ours to delete, failed
+  // startup or not.
+  const ownsHome = home === undefined;
+  if (ownsHome) home = freshHome();
   const raw = spawnRaw({ port, home, scriptPath, env });
   const baseUrl = `http://127.0.0.1:${port}`;
+  // Any 2xx /health on the port is NOT proof our child came up: two test
+  // processes can draw the same scratch port, and the election loser exits 3
+  // while the winner keeps answering. Require the health body to name our
+  // child's PID, and race the poll against the child exiting, so a dead
+  // child is never handed back as a live handle onto another run's daemon.
+  let healthSettled = false;
+  const childExited = new Promise((_, reject) => {
+    if (raw.proc.exitCode !== null) {
+      reject(new Error(`daemon (pid ${raw.proc.pid}) exited with code ${raw.proc.exitCode} before becoming healthy`));
+      return;
+    }
+    raw.proc.once('exit', code => {
+      if (!healthSettled) reject(new Error(`daemon (pid ${raw.proc.pid}) exited with code ${code} before becoming healthy`));
+    });
+  });
   try {
-    await waitForHealth(baseUrl, healthTimeoutMs);
+    const health = await Promise.race([waitForHealth(baseUrl, healthTimeoutMs), childExited]);
+    if (health?.pid !== raw.proc.pid) {
+      throw new Error(`/health on ${baseUrl} answered for pid ${health?.pid ?? '(none)'}, not our child's pid ${raw.proc.pid} — the port belongs to another daemon`);
+    }
   } catch (err) {
+    healthSettled = true;
     await raw.kill();
+    // Startup failed, so no handle — and with it stop() — ever reaches the
+    // caller, and nothing else will ever clean up the scratch home. Remove it
+    // here or it leaks one fleetdeck-test-* directory (database, token, log,
+    // pid state) per failed start. Caller-owned homes survive untouched for
+    // the caller's own teardown and post-mortem inspection.
+    if (ownsHome) {
+      rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    }
     const detail = raw.stderr || raw.stdout || '(no output captured)';
     throw new Error(`${err.message}\n--- daemon output ---\n${detail}`);
   }
+  healthSettled = true;
   // 0.16.0: the daemon always mints/persists a token, and /hook/*, POST /mail,
   // /ws/term and gateway_* writes now require it. Surface it on the handle so
   // tests can act as the authenticated caller (postHook, postJson {token}).

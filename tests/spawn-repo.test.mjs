@@ -9,10 +9,14 @@ import { fileURLToPath } from 'node:url';
 import { startDaemon, randomPort } from './helpers/daemon.mjs';
 import { getJson, postHook, postJson } from './helpers/http.mjs';
 import { makeRemoteRepo } from './helpers/gitrepo.mjs';
-// The local waitUntil below is UNSCALED and predates tests/helpers/wait.mjs; new
-// waits use the shared, WAIT_SCALE-aware one so the macOS advisory lane (issue
-// #2, WAIT_SCALE=3) gets its headroom.
-import { waitUntil as waitUntilScaled } from './helpers/wait.mjs';
+// All waits route through the shared, WAIT_SCALE-aware helper so the macOS
+// advisory lane (issue #2, WAIT_SCALE=3) gets its headroom.
+import { waitUntil } from './helpers/wait.mjs';
+// Test-only export (leading underscore, never imported): lets the BUG-176
+// regression in wait-scaling.test.mjs prove by identity that every waitUntil
+// in THIS module is the scaled shared helper — the exported binding and every
+// call site below resolve to the same function object.
+export const __waitUntilForScaleCheck = waitUntil;
 import { openDb } from '../scripts/fleetd/db.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -30,16 +34,6 @@ function git(args, cwd) {
 function records(file) {
   if (!existsSync(file)) return [];
   return readFileSync(file, 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line));
-}
-
-async function waitUntil(fn, { timeoutMs = 12_000, label = 'condition' } = {}) {
-  const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    const value = await fn();
-    if (value) return value;
-    if (Date.now() >= deadline) throw new Error(`timed out waiting for ${label}`);
-    await new Promise(resolve => setTimeout(resolve, 75));
-  }
 }
 
 function spawnEnv(recordFile, reposDir, postUrl = null) {
@@ -113,7 +107,7 @@ test('repo mode in-place switches an existing branch and launches in that cwd', 
   const { root, recordFile, daemon } = await setup(t);
   const response = await postJson(`${daemon.baseUrl}/api/spawn`, { repo: root, branch: 'existing', branch_mode: 'in-place' });
   assert.equal(response.status, 200, response.text);
-  const spec = (await waitUntil(() => records(recordFile)[0], { label: 'spawn fixture record' })).parsed;
+  const spec = (await waitUntil(() => records(recordFile)[0], { timeoutMs: 12_000, label: 'spawn fixture record' })).parsed;
   assert.equal(spec.cwd, root);
   assert.equal(git(['branch', '--show-current'], root), 'existing');
   const state = (await getJson(`${daemon.baseUrl}/state`)).json;
@@ -163,7 +157,7 @@ test('worktree mode reuses an existing checkout of the requested branch', async 
   git(['worktree', 'add', '-q', '--track', '-b', 'reuse-me', existing, 'origin/main'], root);
   const response = await postJson(`${daemon.baseUrl}/api/spawn`, { repo: root, branch: 'reuse-me', branch_mode: 'worktree' });
   assert.equal(response.status, 200, response.text);
-  const spec = (await waitUntil(() => records(recordFile)[0], { label: 'reuse fixture record' })).parsed;
+  const spec = (await waitUntil(() => records(recordFile)[0], { timeoutMs: 12_000, label: 'reuse fixture record' })).parsed;
   assert.equal(spec.cwd, existing);
   assert.equal(existsSync(`${root}--fd-reuse-me`), false);
 });
@@ -186,13 +180,17 @@ test('clone provisioning returns 202 then launches from the cloned requested bra
   assert.equal(response.status, 202, response.text);
   assert.equal(response.json.provisioning, true);
   const dest = path.join(reposDir, remote.repoName);
-  await waitUntil(() => records(recordFile).length && existsSync(dest), { label: 'clone launch' });
+  await waitUntil(() => records(recordFile).length && existsSync(dest), { timeoutMs: 12_000, label: 'clone launch' });
   assert.equal(git(['branch', '--show-current'], dest), 'remote-only');
 });
 
 test('clone failure tombstones the card and removes destination plus temp', async t => {
   const { reposDir, daemon } = await setup(t);
-  const missing = path.join(scratch('fleetdeck-missing-origin-'), 'bad.git');
+  // The scratch PARENT must be owned by teardown too — nesting scratch() inside
+  // path.join lost the path and leaked a fleetdeck-missing-origin-* dir per run.
+  const missingParent = scratch('fleetdeck-missing-origin-');
+  t.after(() => rmSync(missingParent, { recursive: true, force: true }));
+  const missing = path.join(missingParent, 'bad.git');
   const response = await postJson(`${daemon.baseUrl}/api/spawn`, { repo: missing, branch: 'main', branch_mode: 'in-place' });
   assert.equal(response.status, 202, response.text);
   const dest = path.join(reposDir, 'bad');
@@ -305,7 +303,7 @@ async function shimmedDaemon(t, shimEnv) {
 }
 
 async function tombstonedCard(daemon, session_id) {
-  return waitUntilScaled(async () => {
+  return waitUntil(async () => {
     const state = (await getJson(`${daemon.baseUrl}/state`)).json;
     const found = state.sessions.find(s => s.session_id === session_id);
     return found?.col === 'offline' ? found : null;
@@ -428,7 +426,7 @@ test('a same-named checkout with no matching origin is not reused when the reque
   const response = await postJson(`${daemon.baseUrl}/api/spawn`, { repo: remote.origin, branch: 'main', branch_mode: 'in-place' });
   assert.equal(response.status, 202, response.text); // cloned, not reused
   const dest = path.join(reposDir, remote.repoName);
-  await waitUntil(() => records(recordFile).length && existsSync(dest), { label: 'clone-not-reuse' });
+  await waitUntil(() => records(recordFile).length && existsSync(dest), { timeoutMs: 12_000, label: 'clone-not-reuse' });
   const spec = records(recordFile)[0].parsed;
   assert.equal(spec.cwd, dest);          // ran in the freshly cloned tree…
   assert.notEqual(spec.cwd, decoy);      // …never in the unrelated same-named decoy
@@ -577,9 +575,19 @@ test('a 409-refused explicit transport never rewrites the remembered setting', a
       // second request to collide with it: ssh "connects" straight into a 30s
       // sleep (`sh -c` swallows git's appended host/command args as positional
       // params) and the 5s clone timeout reaps it — the immediate second POST
-      // lands well inside that window, and nothing outlives teardown.
+      // lands well inside that window. The clone's tree is NOT gone when the
+      // timeout fires (see the teardown wait below: git dies instantly, its
+      // ssh substitute does not), so "reaped" here means the clone PROMISE
+      // settled — the test still owes the process table its own wait before
+      // daemon.stop().
       FLEETDECK_CLONE_TIMEOUT_MS: '5000',
-      GIT_SSH_COMMAND: 'sh -c "exec sleep 30"',
+      // The marker env makes this test's clone tree uniquely identifiable in
+      // the OS process table: git passes GIT_SSH_COMMAND through the shell,
+      // so the literal `env` prefix lands in the tree's surviving argv — a
+      // bare SendEnv=GIT_PROTOCOL would also match any ambient process whose
+      // own command line merely mentions it (editors, logs, other test
+      // runners), which a plain substring pgrep cannot exclude.
+      GIT_SSH_COMMAND: 'env FD_BUG177_FIXTURE=1 sh -c "exec sleep 30"',
     },
   });
   t.after(async () => {
@@ -606,6 +614,25 @@ test('a 409-refused explicit transport never rewrites the remembered setting', a
   assert.equal(got.json.settings.repo_transport.source, 'default',
     'a 409-refused spawn must not rewrite the remembered transport');
   assert.equal(got.json.settings.repo_transport.value, 'ssh');
+
+  // Wait for the FIRST spawn's clone to reach its terminal state (the tombstone
+  // card the 5s clone timeout produces) before teardown — and then for the
+  // process tree itself to be gone. Without this, daemon.stop() runs while the
+  // blocking ssh substitute is still mid-sleep: the execFile timeout SIGKILLs
+  // git, but git's own children (the sh -c wrapper and its sleep) are only
+  // SIGTERMed via the pipe and linger reparented to init until the 30s sleep
+  // ends on its own — outliving the test that already reported success. The
+  // tombstone alone is not proof the tree is gone, so poll the OS process
+  // table for this fixture's unique marker (FD_BUG177_FIXTURE=1 — exported
+  // by the env-wrapped GIT_SSH_COMMAND above into the tree's argv, and never
+  // appearing in any unrelated process's command line).
+  await tombstonedCard(daemon, first.json.session_id);
+  await waitUntil(() => {
+    try {
+      execFileSync('pgrep', ['-f', 'FD_BUG177_FIXTURE=1'], { stdio: ['ignore', 'pipe', 'ignore'] });
+      return null; // fixture tree still alive
+    } catch { return true; } // pgrep exit 1: nothing left
+  }, { timeoutMs: 35_000, label: 'clone fixture process tree reaped' });
 });
 
 test('repo mode rejects an unknown repo_transport value', async t => {

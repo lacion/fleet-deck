@@ -5,6 +5,109 @@ All notable changes to Fleet Deck are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.22.0] - 2026-08-06
+
+The bug bash. A line-by-line audit of Fleet Deck — the daemon, the board, the
+acceptance gates, and the test suite itself — turned up 214 defects, and this
+release fixes every one of them: 66 that could bite an operator running a real
+fleet this week, and 148 quieter ones underneath. No new surface and nothing
+you asked for that changed behavior; just the board doing what it always
+claimed to, in the places it didn't.
+
+Three themes ran through the findings. Fleet Deck steers real processes and
+real working trees, so the sharpest bugs were the ones that could *destroy*
+something — a plan setup that overwrote uncommitted work, a cleanup that killed
+the wrong pane, a worktree removal that raced a revive and deleted a live
+checkout. The second was the mail and identity layer: a localhost board still
+has a trust boundary, and several ways existed to forge a human-authoritative
+frame or leak a token git already knew was a secret. The third was the test
+suite lying — nearly fifty findings were gates that passed on prose, raced
+their own setup, or leaked daemons into the next test, which is the worst kind
+of bug because it hides all the others.
+
+### Security
+
+- **Mail frames can no longer be forged.** Several ways to synthesize a
+  reserved, human-authoritative frame — via sender delimiters inside an
+  owned-pane envelope, a later logical line, multiline peer mail, Unicode
+  format characters, or a falsy sender coerced into the human identity — are
+  all closed. External senders are confined to external identities.
+- **Tokens stop leaking through the cracks.** Repo-mode switch failures no
+  longer surface standalone token-shaped secrets; the repository catalog no
+  longer publishes credential-bearing remote URLs; the shared-shape scrub now
+  redacts the forge tokens git itself treats as secret; and a failed
+  multi-key settings write can no longer persist a gateway URL still paired
+  with the previous credential.
+- **Filesystem and host walls hold.** Worktree cleanup no longer follows
+  symlinks to chmod targets outside the worktree, `walk` search no longer
+  leaks `.docker/config.json` content the read wall denied, and an
+  Origin/Host with a missing port no longer matches any daemon port.
+- **Restarting the daemon rotates an exposed bearer token**, and the Node
+  runtime contract for `node:sqlite` is now explicit rather than resting on
+  an experimental default.
+
+### Fixed
+
+- **Destructive operations prove their target first.** Plan setup no longer
+  overwrites local working-tree content; a failed project-directory change no
+  longer launches unrestricted agents in the caller's directory; smoke cleanup
+  no longer destroys pre-existing checkout files before setup succeeds; and
+  branch deletion can no longer be redirected into an unrelated repository by
+  a replaced main checkout.
+- **Pane and window kills verify identity at the moment they fire.** Dismiss
+  and bulk cleanup no longer kill a replacement pane created during the kill
+  await, `killWindowVerified` no longer kills a renamed, repurposed window by
+  a stale ID, and acceptance reset can no longer signal a recycled PID or every
+  process bound to the port.
+- **Worktree removal and revive stopped racing over live checkouts.** A revive
+  that lands after the final pre-remove check, a clean commit racing removal on
+  a stale safety verdict, and live shell / cwd-only sessions invisible to the
+  liveness gate could each delete a checkout still in use; all now re-check
+  under the race.
+- **Session lineage and tombstones survive delayed hooks.** A delayed activity
+  hook no longer resurrects a hook-proven-dead session, a late prior SessionEnd
+  no longer tombstones a newer process reusing the session ID, a stale
+  retention probe no longer tombstones a freshly revived spawn, and forward
+  succession no longer attaches an heir to the wrong session.
+- **Mail and message tails are no longer silently dropped.** Assignments and
+  broadcasts keep their tails, a failed Enter no longer requeues text already
+  pasted, mail is no longer claimed before the receiver acknowledges the side
+  effect, and post-capture `%output` in the same stdout chunk is captured
+  instead of lost.
+- **Long-running subprocesses can't wedge the board.** `execFileP` timeouts
+  that used to hang indefinitely — wedging polling and pane liveness — now bound
+  themselves, and remain-on-exit dead panes end an open viewer instead of
+  holding it open forever.
+- **Git and remote handling got more careful.** Content search passes
+  `--no-color` so ANSI output no longer yields empty hits, remote-origin
+  normalization no longer folds case-sensitive paths or conflates distinct
+  repositories on generic SSH servers, and stale remote-tracking refs can no
+  longer certify a vanished commit as safe to delete.
+- **Concurrency around remote-enable and spawning is serialized.** Duplicate
+  `/rc` submissions, leftover `/rc` text in an active turn, and concurrent
+  duplicate plan execution are all prevented; `newWindow` checks for an
+  occupied deterministic name before launching a duplicate process.
+- **The test suite stopped lying.** Nearly fifty gates that gave false
+  confidence are fixed: permission execution that passed on model prose without
+  reading the file, a plan marked executed when execution failed, a credential
+  denylist that never exercised its resolved-path and fleet-home walls, a
+  fixed 24-turn ceiling that rejected successful runs, and a long tail of
+  leaked daemons, raced setups, and assertions that never asserted.
+
+### Added
+
+- **The release can no longer ship a lie about itself.** Three checked-in
+  verifiers now gate every push, PR, and tag: a plugin-payload closure that
+  covers the _complete_ behavior-bearing payload (daemon sources and bundle,
+  board and board-dist, hooks) and demands a real semantic version bump when
+  any of it changes; a release gate that resolves the plugin version at base
+  and head and requires an actual increase plus manifest/lock-root agreement;
+  and a version contract that fails the tag build unless all nine version
+  strings — the tag, four manifests, and both lockfile roots — agree.
+
+Every finding was fixed on its own branch with a regression test, then
+recomposed and verified together.
+
 ## [0.21.1] - 2026-08-05
 
 Ninety seconds was still too fast. 0.21.0 tripled the needs-you window; a

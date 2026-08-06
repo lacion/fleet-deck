@@ -15,7 +15,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node-version: ['22', '24']
+        # '22.13.0' is pinned on purpose: it is the declared engine floor
+        # (node:sqlite loads unflagged from 22.13.0), and the moving '22' alias
+        # would silently stop exercising it as the 22 line advances.
+        node-version: ['22.13.0', '24']
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Install tmux
@@ -25,7 +28,18 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: npm
       - run: npm ci --ignore-scripts
-      - run: npm test
+      # Node 22's test runner corrupts its parent<->child IPC under CI load
+      # ("Unable to deserialize cloned data" — nodejs/node#64061; fixed by
+      # #64706, which current Node 24 ships but whose 22.x backport is
+      # unreleased as of 2026-08). The filewise runner executes each test file
+      # in-process (no runner IPC) with the same per-file process isolation.
+      # REVERT to plain `npm test` here when a 22.x release carries the fix.
+      - if: matrix.node-version != '24'
+        run: npm run test:filewise
+        env:
+          FLEETDECK_TEST_WAIT_SCALE: 3
+      - if: matrix.node-version == '24'
+        run: npm test
         # Shared-runner lanes are slow and noisy in exactly the way the macOS
         # advisory lane is — every wait routes through the WAIT_SCALE knob
         # (tests/helpers/wait.mjs), so give the Linux lanes the same headroom
@@ -48,7 +62,9 @@ jobs:
       - run: npm run bundle
       - name: Fail if committed bundle is stale
         run: git diff --exit-code scripts/fleetd/fleetd.bundle.mjs
-      - run: npm run test:bundle
+      # filewise for the same reason as the Node 22 test lane above
+      # (nodejs/node#64061) — this job runs on Node 22.
+      - run: npm run test:bundle:filewise
         env:
           FLEETDECK_TEST_WAIT_SCALE: 3
 
@@ -65,7 +81,15 @@ jobs:
       - run: npm --prefix board ci --ignore-scripts
       - run: npm --prefix board run build
       - name: Fail if committed board build is stale
-        run: git diff --exit-code scripts/fleetd/board-dist
+        # git diff alone ignores UNTRACKED rebuild output (a fresh hashed chunk
+        # or lazy stylesheet the commit forgot to stage), so gate on porcelain.
+        run: |
+          git diff --exit-code scripts/fleetd/board-dist
+          if [ -n "$(git status --porcelain --untracked-files=all -- scripts/fleetd/board-dist)" ]; then
+            echo "::error::board build produced untracked files — stage the rebuilt board-dist"
+            git status --porcelain --untracked-files=all -- scripts/fleetd/board-dist
+            exit 1
+          fi
 
   test-macos:
     runs-on: macos-latest
@@ -80,7 +104,9 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci --ignore-scripts
-      - run: npm test
+      # filewise for the same reason as the Node 22 test lane above
+      # (nodejs/node#64061) — this job runs on Node 22.
+      - run: npm run test:filewise
         env:
           FLEETDECK_TEST_WAIT_SCALE: 3
 
@@ -114,12 +140,17 @@ jobs:
 
   # 0.16.0 — the hook scripts run on every installed machine at every
   # SessionStart with the user's full environment, and marketplace installs
-  # track git main UNGATED (no npm publish, no tag). The bundle drift gate
-  # covers only the bundled artifacts, so this job is the checkpoint for the
-  # unbundled execution path: hooks.json, the three hook scripts, and the
-  # fleetd/ source modules they import (config, takeover, env-scrub). Any
+  # track git main UNGATED (no npm publish, no tag). The marketplace plugin
+  # cache keys on the plugin.json version, so the watched closure is the
+  # COMPLETE behavior-bearing payload — hooks, bin/, all of scripts/fleetd/
+  # (sources, the bundle the SessionStart hook actually execs, and the
+  # board-dist the daemon serves), board/ sources, and .claude-plugin/ — not
+  # just the hook-side paths (BUG-001: a daemon or board change with a rebuilt
+  # artifact used to pass every gate with the version untouched, leaving
+  # existing installs on the old cached payload under the same version). Any
   # change to that closure must ride a release — signalled by a version bump
-  # in the same diff — never slip in on an ordinary commit.
+  # in the same diff — never slip in on an ordinary commit. The closure
+  # definition lives in ONE checked-in verifier so CI and local runs agree.
   hook-integrity:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -127,7 +158,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
-      - name: Fail if hook execution paths changed without a version bump
+      - name: Fail if the plugin payload changed without a version bump
         run: |
           set -e
           if [ "${{ github.event_name }}" = "pull_request" ]; then
@@ -141,17 +172,13 @@ jobs:
             exit 0
           fi
           git fetch --no-tags origin "$BASE" || true
-          WATCHED="hooks/hooks.json scripts/fleet-hook.mjs scripts/fleet-sessionstart.mjs scripts/fleet-watch.mjs scripts/fleetd/config.mjs scripts/fleetd/takeover.mjs scripts/fleetd/env-scrub.mjs"
-          CHANGED=$(git diff --name-only "$BASE" HEAD -- $WATCHED || true)
-          if [ -z "$CHANGED" ]; then
-            echo "✓ hook execution closure untouched"
-            exit 0
-          fi
-          echo "hook execution closure changed:"
-          echo "$CHANGED"
-          VERSION_CHANGED=$(git diff --name-only "$BASE" HEAD -- package.json .claude-plugin/plugin.json .claude-plugin/marketplace.json board/package.json || true)
-          if [ -z "$VERSION_CHANGED" ]; then
-            echo "::error::hook scripts (or their fleetd/ import closure) changed but no version manifest did — code that runs at every user's SessionStart must ride a release"
-            exit 1
-          fi
-          echo "✓ hook closure changed alongside a version bump (release-bound)"
+          # BUG-001: the watched closure must cover the COMPLETE behavior-bearing
+          # payload (daemon sources + bundle, board-dist, ...) — one checked-in
+          # verifier so CI and local runs agree.
+          node scripts/check-plugin-payload.mjs "$BASE"
+          # The old predicate inferred a bump from a changed manifest PATHNAME —
+          # editing package.json's description at an unchanged version passed,
+          # even though Claude Code's plugin cache key (the version value) never
+          # moved. The checker resolves the plugin version at base and head and
+          # requires a real semantic increase plus manifest/lock-root agreement.
+          node scripts/check-release-gate.mjs "$BASE" HEAD

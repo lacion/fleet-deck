@@ -1,11 +1,11 @@
 // ingest.mjs — agents-cli ingest (F1): the merge step for the secondary
 // session source. Threaded ctx state: q, assignCallsign, updateSession, tick,
-// onMutate. deriveRepo/branchOf resolve repo identity; pidAlive/colFromAgentState
+// onMutate. deriveRepo/branchOf resolve repo identity; pidOwnedBy/colFromAgentState
 // are pure helpers.
 
 import { deriveRepo, branchOf } from './repo-identity.mjs';
 import { ticketFromBranch } from './tickets.mjs';
-import { pidAlive, colFromAgentState } from './helpers.mjs';
+import { pidOwnedBy, colFromAgentState } from './helpers.mjs';
 
 export function createIngest(ctx) {
   const { q, assignCallsign, updateSession, tick, onMutate, touchRepo } = ctx;
@@ -32,21 +32,26 @@ export function createIngest(ctx) {
   //      registry keeps them for hours after completion (observed: two
   //      "blocked" background agents from that morning's work rendered as
   //      phantom WORKING cards). They never belong on the board.
-  //   2. An interactive entry must have a LIVE pid (kill(pid, 0)) — the
-  //      registry can outlive the process.
+  //   2. An interactive entry must own its pid: live AND with a process
+  //      start matching the record's startedAt (kill(pid, 0) alone proves
+  //      only that SOME process holds the pid — the registry outlives the
+  //      process, and the OS can hand a dead Claude's pid to an unrelated
+  //      process whose mere existence would then create/revive a phantom
+  //      routable card. Unverifiable ownership counts as absent).
   //   3. Absence tombstones agents-cli cards ONLY: a card this poller
   //      created, that hooks never claimed, and that the (filtered) poll no
   //      longer reports, is marked offline — the poller is the only
   //      lifecycle those cards have. Hook-sourced cards are untouched;
   //      SessionEnd remains their only tombstone.
-  // (pidAlive + colFromAgentState are pure helpers now — see helpers.mjs.)
+  // (pidOwnedBy + colFromAgentState are pure helpers now — see helpers.mjs.)
   function ingestAgentsPoll(records) {
     if (!Array.isArray(records)) return;
-    // Trust rules 1+2: interactive entries with a live pid are the only
-    // records that count — for creation, update AND the absence sweep below.
+    // Trust rules 1+2: interactive entries with VERIFIED pid ownership are
+    // the only records that count — for creation, update AND the absence
+    // sweep below (so a reused pid also tombstones the stale card).
     const live = records.filter(rec =>
       rec && typeof rec === 'object' && rec.sessionId
-      && rec.kind === 'interactive' && pidAlive(rec.pid));
+      && rec.kind === 'interactive' && pidOwnedBy(rec.pid, rec.startedAt));
 
     for (const rec of live) {
       const sid = rec.sessionId;
@@ -81,19 +86,29 @@ export function createIngest(ctx) {
         onMutate();
       } else if (existing.source === 'agents-cli') {
         const repoChanged = repo.is_git && repo.repo_id !== existing.repo_id;
+        // Mutable identity fields refresh outside the repoChanged gate: an
+        // in-place checkout (same worktree, another branch) leaves repo_id
+        // stable, and a gated branch would stay stale for the card's whole
+        // lifetime — agents-cli cards have no hook telemetry to correct it.
+        // cwd/worktree move when a session's working directory does (e.g. a
+        // worktree-to-worktree move inside one repo). All three reads are
+        // TTL-cached in repo-identity.mjs, so the extra probes cost at most
+        // one git round per cwd per ~20s (branch) / ~5min (identity).
+        const cwdChanged = !!cwd && cwd !== existing.cwd;
+        const worktreeChanged = !!cwd && repo.worktree !== existing.worktree;
+        // Cached (20s TTL) read — a real checkout is picked up within a few
+        // poll cycles; `fresh` is reserved for naming moments.
+        const branch = cwd ? branchOf(cwd) : existing.branch;
         updateSession(sid, {
           col: colFromAgentState(rawState, false),
           note: 'seen via agents CLI',
           last_seen: Date.now(),
           ended_at: null, // reappearance revives an absence-tombstoned card
           end_reason: null, // and clears the absence guess stamped below
-          ...(repoChanged ? {
-            cwd,
-            repo_id: repo.repo_id,
-            repo_name: repo.repo_name,
-            worktree: repo.worktree,
-            branch: branchOf(cwd),
-          } : {}),
+          ...(repoChanged || cwdChanged ? { cwd } : {}),
+          ...(repoChanged ? { repo_id: repo.repo_id, repo_name: repo.repo_name } : {}),
+          ...(repoChanged || worktreeChanged ? { worktree: repo.worktree } : {}),
+          ...(branch !== existing.branch ? { branch } : {}),
         });
         if (repoChanged) {
           touchRepo({

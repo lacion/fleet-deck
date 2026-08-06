@@ -114,9 +114,17 @@ test('newWindow: a value containing shell metacharacters stays one argv element'
   const calls = stubTmux(t);
   const { newWindow } = await import('../scripts/fleetd/spawn.mjs');
 
+  // The canary lives in this test's own scratch dir: a fixed /tmp path could
+  // exist from a prior run or another process and fail safe code. Assert it
+  // starts absent so the "nothing was executed" check is meaningful.
+  const dir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-gwcanary-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const canary = path.join(dir, 'fd-pwned');
+  assert.equal(existsSync(canary), false, 'canary must start absent');
+
   // execFile with no shell means these are literal bytes, but a future refactor
   // to a shell string would silently turn them into command substitution.
-  const hostile = 'tok"; touch /tmp/fd-pwned; echo "$(id)';
+  const hostile = `tok"; touch ${canary}; echo "$(id)`;
   await newWindow({
     port: 4711, callsign: 'heron-3', cwd: '/tmp', argv: ['claude'],
     env: { ANTHROPIC_AUTH_TOKEN: hostile },
@@ -126,5 +134,5 @@ test('newWindow: a value containing shell metacharacters stays one argv element'
   const pair = nw[nw.indexOf('-e') + 1];
   assert.equal(pair, `ANTHROPIC_AUTH_TOKEN=${hostile}`,
     'the value arrives verbatim as a single element — no shell ever sees it');
-  assert.equal(existsSync('/tmp/fd-pwned'), false, 'nothing was executed');
+  assert.equal(existsSync(canary), false, 'nothing was executed');
 });

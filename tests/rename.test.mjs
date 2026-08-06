@@ -1,13 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { chmodSync, mkdtempSync, rmSync } from 'node:fs';
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openDb } from '../scripts/fleetd/db.mjs';
 import { startDaemon } from './helpers/daemon.mjs';
 import { getJson, postHook, postJson } from './helpers/http.mjs';
+import { makeRepoWithWorktree } from './helpers/gitrepo.mjs';
+import { waitUntil } from './helpers/wait.mjs';
 
 // tests/rename.test.mjs — 0.7.1 custom names.
 //
@@ -60,6 +63,15 @@ async function startSession(daemon, cwd) {
 
 const rename = (daemon, sid, body) => postJson(`${daemon.baseUrl}/api/sessions/${sid}/name`, body);
 const command = (daemon, text) => postJson(`${daemon.baseUrl}/command`, { text });
+
+const git = (args, cwd) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+const writeSeed = (dir, content) => writeFileSync(path.join(dir, 'seed.txt'), content);
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+const tmuxOk = () => {
+  try { execFileSync('tmux', ['-V'], { stdio: 'ignore' }); return true; } catch { return false; }
+};
+const tmux = (socket, args) => execFileSync('tmux', ['-L', socket, ...args], { encoding: 'utf8' }).trim();
 
 test('renaming keeps the animal and takes the suffix, and answers in the shape Compose already renders', async (t) => {
   const { daemon, home, cwd } = await boot(t, 'fleetdeck-rename-happy');
@@ -114,23 +126,23 @@ test('bad suffixes are refused loudly — charset, leading dash, length, reserve
 
 test('a name already held by another card is refused', async (t) => {
   const { daemon, cwd } = await boot(t, 'fleetdeck-rename-collide');
-  const a = await startSession(daemon, cwd);
-  const b = await startSession(daemon, cwd);
-  // Name A explicitly, then try to give B the exact same full callsign by using
-  // A's animal — impossible via the suffix alone unless the animals match, so
-  // instead point B's rename at A's current suffix under A's animal: the clash
-  // the daemon must catch is on the FULL callsign.
+  // The animal rotation is 12 deep, so on a fresh daemon the 1st and the 13th
+  // session are guaranteed the SAME animal — create that pair deliberately so
+  // the clash below is deterministic, not a coin flip the test can skip.
+  const sessions = [];
+  for (let i = 0; i < 13; i++) sessions.push(await startSession(daemon, cwd));
+  const a = sessions[0];
+  const b = sessions[12];
+  assert.equal(b.animal, a.animal, 'sessions 1 and 13 wrap the 12-animal rotation onto the same animal');
+  // Name A explicitly, then give B the same suffix: same animal + same suffix =
+  // the same full callsign, and the daemon must refuse it unconditionally.
   await rename(daemon, a.sid, { suffix: 'hot-seat' });
   const bRenamed = await rename(daemon, b.sid, { suffix: 'hot-seat' });
-  if (a.animal === b.animal) {
-    assert.equal(bRenamed.status, 409, 'same animal + same suffix = the same card name');
-    assert.match(bRenamed.json.reason, /already taken/);
-  } else {
-    // Different animals: <animalB>-hot-seat is a genuinely different name, so it
-    // is allowed — names are the FULL callsign, not the suffix alone.
-    assert.equal(bRenamed.status, 200);
-    assert.notEqual(bRenamed.json.callsign, `${a.animal}-hot-seat`);
-  }
+  assert.equal(bRenamed.status, 409, 'same animal + same suffix = the same card name');
+  assert.match(bRenamed.json.reason, /already taken/);
+  // And B keeps its own name — the refusal must not have renamed anything.
+  const card = cardOf((await getJson(`${daemon.baseUrl}/state`)).json, b.sid);
+  assert.equal(card.callsign, b.callsign);
 });
 
 test('clearing a custom name reverts to the ticket name, or to the birth name when there is no ticket', async (t) => {
@@ -151,21 +163,58 @@ test('clearing a custom name reverts to the ticket name, or to the birth name wh
   assert.equal(res.json.callsign, `${animal}-PROJ-9`, 'the automatic name for a ticketed card is its ticket name');
 });
 
-test('a human name outranks branch auto-detection, and an explicit ticket command still wins', async (t) => {
-  const { daemon, home, cwd } = await boot(t, 'fleetdeck-rename-precedence');
+test('a human name outranks branch auto-detection: a real ticket-branch checkout must not rename or ticket it', async (t) => {
+  const { daemon, home } = await boot(t, 'fleetdeck-rename-precedence');
+  // A real checkout, not a scratch dir: the defect this guards lives in the
+  // daemon's server-side branchOf() auto path, which a plain directory can
+  // never reach (BUG-170 — the old version of this test only exercised the
+  // manual `ticket` command, which uses source='manual' and would keep passing
+  // even if branch auto-detection started overwriting custom names).
+  const repo = makeRepoWithWorktree({ repoName: 'fd-rename-precedence', branch: 'plain-work' });
+  t.after(() => repo.cleanup());
+
+  // Ticketless birth on the plain branch → hex suffix, no ticket recorded.
+  const sid = randomUUID();
+  const start = await postHook(daemon.baseUrl, 'SessionStart', { session_id: sid, cwd: repo.worktree, source: 'startup' }, { token: daemon.token });
+  const animal = start.json.callsign.split('-')[0];
+  await rename(daemon, sid, { suffix: 'my-name' });
+  const named = cardOf((await getJson(`${daemon.baseUrl}/state`)).json, sid);
+  assert.equal(named.callsign, `${animal}-my-name`);
+
+  // Switch the worktree to a ticket-bearing branch; the daemon derives the
+  // branch server-side from cwd on the NEXT hook event — exactly the path that
+  // must never overwrite an explicit human name.
+  writeSeed(repo.worktree, 'seed on plain-work\n');
+  git(['add', '.'], repo.worktree);
+  git(['commit', '-q', '-m', 'seed plain-work'], repo.worktree);
+  git(['switch', '-q', '-c', 'feature/PROJ-7-auto'], repo.worktree);
+  // The daemon's branch cache holds 'plain-work' for up to 20 s — sit it out
+  // so the event below cannot pass for the wrong reason (stale branch read).
+  await sleep(21_000);
+  await postHook(daemon.baseUrl, 'UserPromptSubmit', { session_id: sid, cwd: repo.worktree, prompt: 'back on the ticket branch' }, { token: daemon.token });
+
+  const card = cardOf((await getJson(`${daemon.baseUrl}/state`)).json, sid);
+  assert.equal(card.branch, 'feature/PROJ-7-auto', 'the daemon saw the ticket branch — the auto path was actually reachable');
+  assert.equal(card.callsign, `${animal}-my-name`, 'automation never overwrites a human name');
+  assert.equal(card.ticket ?? null, null, 'branch detection must not even RECORD a ticket over a custom name');
+  const core = withDb(home, db => db.prepare('SELECT custom_suffix, ticket_source FROM sessions WHERE session_id = ?').get(sid));
+  assert.equal(core.custom_suffix, 'my-name');
+  assert.equal(core.ticket_source ?? null, null);
+});
+
+test('an explicit ticket command still wins over a human name', async (t) => {
+  const { daemon, home, cwd } = await boot(t, 'fleetdeck-rename-manual-wins');
   const { sid, animal } = await startSession(daemon, cwd);
   await rename(daemon, sid, { suffix: 'my-name' });
 
-  // The auto path (branch detection) must not rename over a human's choice.
-  const core = withDb(home, db => db.prepare('SELECT custom_suffix, ticket_source FROM sessions WHERE session_id = ?').get(sid));
-  assert.equal(core.custom_suffix, 'my-name');
-  const auto = await command(daemon, `ticket ${animal}-my-name PROJ-1`);
+  const res = await command(daemon, `ticket ${animal}-my-name PROJ-1`);
   // The manual `ticket` command IS an explicit human act, so it may rename —
   // and it clears the custom name on its way through (the card is now
   // ticket-named, and `name … clear` reverts to exactly that).
-  assert.equal(auto.json.callsign, `${animal}-PROJ-1`);
-  const after = withDb(home, db => db.prepare('SELECT custom_suffix FROM sessions WHERE session_id = ?').get(sid));
+  assert.equal(res.json.callsign, `${animal}-PROJ-1`);
+  const after = withDb(home, db => db.prepare('SELECT custom_suffix, ticket_source FROM sessions WHERE session_id = ?').get(sid));
   assert.equal(after.custom_suffix, null, 'an explicit ticket takes the name over from an explicit name');
+  assert.equal(after.ticket_source, 'manual');
 });
 
 test('the `name` command mirrors the REST route and is never silently filed as a note', async (t) => {
@@ -192,14 +241,38 @@ test('the `name` command mirrors the REST route and is never silently filed as a
   assert.match(scoped.json.reason, /one session/);
 });
 
-test('renaming a session with a live pane keeps its pane: the frozen tmux window still drives it', async (t) => {
-  const { daemon, home, cwd } = await boot(t, 'fleetdeck-rename-pane');
-  const spawned = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd, prompt: 'work' });
+// This one drives a REAL pane: no FLEETDECK_SPAWN_CMD, so the spawn path opens
+// a genuine window on the test-isolated tmux server (startDaemon scopes
+// FLEETDECK_TMUX_SOCKET per port and stop() reaps it). A regression that
+// re-targets pane operations at the mutable callsign instead of the frozen
+// spawn window cannot hide here — the rename and the kill both resolve
+// against a pane that actually exists. (BUG-171: the previous version asserted
+// only DB/snapshot fields, so a stranded renamed pane still read green.)
+test('renaming a session with a live pane keeps its pane: the frozen tmux window still drives it', { skip: !tmuxOk() && 'tmux unavailable' }, async (t) => {
+  const home = scratch('fleetdeck-rename-pane-daemon-');
+  const cwd = scratch('fleetdeck-rename-pane-cwd-');
+  const daemon = await startDaemon({
+    home,
+    env: {
+      SHELL: '/bin/bash',
+      FLEETDECK_AGENTS_POLL_MS: '100',
+      FLEETDECK_NUDGE_MS: '60000',
+    },
+  });
+  const socket = `fleetdeck-test-${daemon.port}`;
+  t.after(async () => {
+    await daemon.stop({ keepHome: true });
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  const spawned = await postJson(`${daemon.baseUrl}/api/spawn`, { kind: 'shell', cwd });
   assert.equal(spawned.status, 200, JSON.stringify(spawned.json));
   const sid = spawned.json.session_id;
   await postHook(daemon.baseUrl, 'SessionStart', { session_id: sid, cwd, source: 'startup' }, { token: daemon.token });
   const before = cardOf((await getJson(`${daemon.baseUrl}/state`)).json, sid);
   const window = before.spawn.tmux_window;
+  assert.equal(spawned.json.tmux.window, window, 'the row names the window the daemon just created');
 
   const res = await rename(daemon, sid, { suffix: 'renamed-worker' });
   assert.equal(res.status, 200);
@@ -213,8 +286,23 @@ test('renaming a session with a live pane keeps its pane: the frozen tmux window
   assert.equal(after.callsign, res.json.callsign, 'the card took the new name');
   assert.equal(after.spawn.tmux_window, window, 'and kept the window that actually exists');
   assert.equal(after.spawn.status, 'live', 'the pane is still live and still owned');
-  const row = withDb(home, db => db.prepare('SELECT status FROM spawns WHERE tmux_window = ?').get(window));
-  assert.equal(row.status, 'live');
+
+  // The post-rename proof this test exists for: a pane operation must still
+  // reach the REAL pane. The frozen window is on the test's isolated tmux
+  // server — resolved by the recorded window name, never by the new callsign.
+  tmux(socket, ['send-keys', '-t', `fleetdeck-${daemon.port}:${window}`, 'echo still-drivable', 'Enter']);
+  const seen = await waitUntil(() => {
+    try { return tmux(socket, ['capture-pane', '-p', '-t', `fleetdeck-${daemon.port}:${window}`]); } catch { return null; }
+  }, { timeoutMs: 5000, label: 'typed line to reach the renamed pane' });
+  assert.match(seen, /still-drivable/, 'the frozen window accepted input after the rename');
+
+  // And the daemon's own post-rename pane operation — the name-verified kill —
+  // must target that same recorded window: 200 with the window actually gone
+  // from the real server (the session's default window 0 may outlive it).
+  const killed = await postJson(`${daemon.baseUrl}/api/spawn/${before.spawn.spawn_id}/kill`, { force: true });
+  assert.equal(killed.status, 200, JSON.stringify(killed.json));
+  const remaining = tmux(socket, ['list-windows', '-t', `fleetdeck-${daemon.port}`, '-F', '#W']).split('\n');
+  assert.ok(!remaining.includes(window), `kill-window removed ${window} from the real tmux server (left: ${remaining})`);
 });
 
 test('an offline session cannot be renamed — its name is on its way back to the pool', async (t) => {

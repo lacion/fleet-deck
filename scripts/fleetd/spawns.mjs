@@ -12,7 +12,7 @@ import path from 'node:path';
 import { randomUUID, randomBytes } from 'node:crypto';
 import { deriveRepo, branchOf } from './repo-identity.mjs';
 import { ticketFromBranch, animalOf } from './tickets.mjs';
-import { claudeEnvArgvPrefix, claudeTranscriptPath, SHELL_RE, NOT_RESUMABLE_END } from './helpers.mjs';
+import { claudeEnvArgvPrefix, claudeTranscriptPath, canonicalPathKey, SHELL_RE, NOT_RESUMABLE_END } from './helpers.mjs';
 import { execFileP, baseBranch } from './exec.mjs';
 import { redactDiagnosticText, scrubUrlCredentials } from './payload-capture.mjs';
 import { redactGitText } from './exec.mjs';
@@ -105,6 +105,8 @@ export function createSpawns(ctx) {
     validateBranch, resolveTarget, cloneRepo, materializeBranch, touchRepo,
     claimTarget, targetOwner, reserveCloneSlot, persistRepoTransport, persistRepoDefaultOrg,
     validateRepoDefaultOrg, resolveGateway, resolveGatewayEnv,
+    acquireWorktreePathLock,
+    claimWorktreeCustody, // remove-vs-revive serialization (revive side; derive wires it)
   } = ctx;
 
   // ------------------------------------------- unsupervised arm gate (0.16.0)
@@ -373,6 +375,13 @@ export function createSpawns(ctx) {
   // row that boot reconciliation settles).
   const revivingSessions = new Set();
 
+  // BUG-053: per-pane serialization for daemon control input into an owned
+  // TUI (the enableRemote `/rc` type+Enter). Two concurrent /rc requests for
+  // the same pane could otherwise interleave their keystrokes; a promise chain
+  // keyed by pane target queues the second behind the first. Settled entries
+  // are deleted, so the map cannot grow unboundedly.
+  const rcInputLocks = new Map();
+
   // BUG 3 (condemn hysteresis): consecutive dead-read counter per spawn, keyed
   // by spawn_id. The liveness tick requires CONDEMN_DEAD_READS consecutive dead
   // reads before it flips a LIVE spawn 'pane-dead', so a single transient dead
@@ -403,9 +412,16 @@ export function createSpawns(ctx) {
   // by the liveness tick (automatic, next poll) and revive() (human-driven,
   // immediate). The caller has already confirmed pane_dead=0 and
   // pane_current_command='claude' AND that no newer row owns the window.
+  //
+  // BUG-152: those confirmations happen BEFORE an await (paneCurrentCommand),
+  // so the row they describe can be stale — a human kill landing during the
+  // probe flips the row 'killed', and an unconditional write here would undo
+  // the kill and lift the card back onto the board on a dead window. The
+  // status write is therefore a compare-and-set limited to 'pane-dead'/'gone',
+  // and the card is only touched when that guarded write won.
   function resurrectSpawn(row) {
+    if (!q.setSpawnResurrected.run(row.spawn_id).changes) return false;
     const shell = row.kind === 'shell';
-    q.setSpawnStatus.run('live', row.spawn_id);
     // Same reason as the first-hook promotion in events.mjs: a row that is live
     // again has no failure to explain, and leaving the excerpt behind means a
     // later terminal transition re-exposes a stale clone failure on a card whose
@@ -428,6 +444,7 @@ export function createSpawns(ctx) {
     tick(`✨ ${c?.callsign ?? row.callsign} restored — its pane was live all along`);
     notifyWatchers(row.session_id);
     onMutate();
+    return true;
   }
 
   async function harvestRemote(spawn_id) {
@@ -703,7 +720,7 @@ export function createSpawns(ctx) {
       const forbidden = [
         'repo', 'branch', 'branch_mode', 'repo_host', 'repo_transport', 'repo_org',
         'prompt', 'model', 'permission_mode', 'dangerously_skip_permissions',
-        'remote_control', 'gateway', 'arm_token', 'setup_cmd',
+        'remote_control', 'gateway', 'arm_token', 'setup_cmd', 'plan_id',
       ].find(k => body?.[k] != null);
       if (forbidden || body?.worktree === true) {
         const field = forbidden || 'worktree';
@@ -752,6 +769,58 @@ export function createSpawns(ctx) {
     const armRefusal = unsupervisedGate(skipPermissions, body);
     if (armRefusal) return { status: 403, body: { ok: false, reason: armRefusal } };
 
+    // BUG-040 — atomic pre-spawn execution claim. plan_id on the body means
+    // "this spawn IS the execution of that plan" (the board's plan-execute
+    // flow; the old client-composed flow spawned first and marked afterwards,
+    // so two boards on one stale snapshot both launched before either mark
+    // could 409). The claim is a single guarded UPDATE — the plan flips
+    // proposed|approved|captured → executed here, BEFORE any clone, worktree,
+    // pane, or durable row exists — so concurrent claims serialize in SQLite
+    // and exactly one wins; the loser 409s without launching. The transition
+    // matrix mirrors plans.mjs's executed-from set exactly. The board drops
+    // its post-spawn mark when it sends plan_id, so a double-flip cannot
+    // occur; a claim release (below) covers every failure after this point,
+    // including a throw escaping launchPane.
+    let planClaim = null; // { plan_id, restoreStatus, via } while a claim is owed
+    if (body?.plan_id != null) {
+      const pid = Number(body.plan_id);
+      if (!Number.isInteger(pid) || pid < 1) {
+        return { status: 400, body: { ok: false, reason: 'plan_id must be a positive integer' } };
+      }
+      const plan = q.getPlan.get(pid);
+      if (!plan) return { status: 404, body: { ok: false, reason: 'no such plan' } };
+      const via = `spawn:${randomUUID().slice(0, 8)}`;
+      const r = q.claimPlanExecution.run(via, pid);
+      if (r.changes !== 1) {
+        return { status: 409, body: { ok: false, reason: `plan #${pid} is ${plan.status} — already executed or not executable` } };
+      }
+      planClaim = { plan_id: pid, restoreStatus: plan.status, via };
+      tick(`📚 plan #${pid} execution claimed by spawn${plan.callsign ? ` (planned by ${plan.callsign})` : ''}`);
+      // A still-parked planner hold for this plan is retired by the SAME
+      // decision that claimed it (plans.mjs's daemon half of BUG-041; the
+      // claim just moved earlier than the mark used to).
+      if (plan.question_id != null) {
+        const qq = ctx.questions?.dismiss?.(plan.question_id, { activity: true });
+        if (qq?.ok && !qq.already) {
+          tick(`📚 planner hold for plan #${pid} retired — question dismissed`);
+        }
+      }
+    }
+    const releasePlanClaim = () => {
+      if (!planClaim) return;
+      // Restore the pre-claim status ONLY if the row still carries this
+      // claim's via — a concurrent archive/mark in the failure window must
+      // not be reverted.
+      q.releasePlanExecution.run(planClaim.restoreStatus, planClaim.plan_id, planClaim.via);
+      tick(`📚 plan #${planClaim.plan_id} execution claim released (spawn failed) — back to ${planClaim.restoreStatus}`);
+      onMutate();
+      planClaim = null;
+    };
+    const wrapSpawnFailure = (fn) => async (...a) => {
+      try { return await fn(...a); }
+      catch (err) { releasePlanClaim(); throw err; }
+    };
+
     if (hasRepo) {
       if (body?.worktree === true) {
         return { status: 400, body: { ok: false, reason: 'branch_mode replaces worktree in repo mode' } };
@@ -762,14 +831,15 @@ export function createSpawns(ctx) {
         return { status: 400, body: { ok: false, reason: 'branch_mode must be worktree or in-place' } };
       }
       try { await validateBranch(body.branch); }
-      catch (err) { return { status: 400, body: { ok: false, reason: err.message || String(err) } }; }
+      catch (err) { releasePlanClaim(); return { status: 400, body: { ok: false, reason: err.message || String(err) } }; }
 
       let target;
       try { target = await resolveTarget(body); }
-      catch (err) { return { status: err.status || 400, body: { ok: false, reason: err.message || String(err) } }; }
+      catch (err) { releasePlanClaim(); return { status: err.status || 400, body: { ok: false, reason: err.message || String(err) } }; }
       const targetPath = target.mode === 'clone' ? target.dest : target.root;
       const owner = targetOwner(targetPath);
       if (owner) {
+        releasePlanClaim();
         return { status: 409, body: { ok: false, reason: `${path.resolve(targetPath)} is already being provisioned by ${owner}` } };
       }
       // Reserve a clone slot BEFORE any card/row exists, so a full pool returns a
@@ -777,7 +847,7 @@ export function createSpawns(ctx) {
       let releaseCloneSlot = () => {};
       if (target.mode === 'clone') {
         try { releaseCloneSlot = reserveCloneSlot(); }
-        catch (err) { return { status: err.status || 429, body: { ok: false, reason: err.message || String(err) } }; }
+        catch (err) { releasePlanClaim(); return { status: err.status || 429, body: { ok: false, reason: err.message || String(err) } }; }
       }
       // D2: an EXPLICIT transport on an ACCEPTED shorthand spawn becomes the
       // remembered default for the next one (and for curl users) — not a pill
@@ -824,6 +894,7 @@ export function createSpawns(ctx) {
         });
       } catch (err) {
         releaseCloneSlot();
+        releasePlanClaim();
         return {
           status: 500,
           body: { ok: false, reason: `could not create the spawn card: ${spawnFailureReason(err)}` },
@@ -842,7 +913,7 @@ export function createSpawns(ctx) {
 
       const finishMaterialization = async (materialized, source) => {
         const worktree_path = branchMode === 'worktree' ? materialized.runCwd : null;
-        if (worktree_path) q.setSpawnWorktree.run(worktree_path, spawn_id);
+        if (worktree_path) q.setSpawnWorktree.run(worktree_path, materialized.created.worktree ? 1 : 0, spawn_id);
         const repo = deriveRepo(materialized.runCwd);
         updateSession(session_id, {
           cwd: materialized.runCwd,
@@ -878,19 +949,27 @@ export function createSpawns(ctx) {
               tmux_window: null, reason: err.message || String(err),
               created: { clone: false, worktree: false },
             });
+            releasePlanClaim();
             return { status: err.status || 409, body: { ok: false, reason: err.message || String(err) } };
           }
           worktree_path = branchMode === 'worktree' ? materialized.runCwd : null;
           try {
             await finishMaterialization(materialized, 'spawn');
             paneMayExist = true;
-            return await launchPane({
+            const out = await wrapSpawnFailure(launchPane)({
               spawn_id, session_id, callsign, tmux_session, tmux_window,
               requestedCwd: target.root, runCwd: materialized.runCwd,
               cleanupRoot: target.root, worktree_path, body, skipPermissions,
               gatewayEnv: gateway.env,
               created: materialized.created,
             });
+            if (out.status >= 400) releasePlanClaim();
+            else if (planClaim) {
+              q.setPlanExecuted.run(`spawn:${spawn_id}`, planClaim.plan_id);
+              planClaim = null;
+              onMutate();
+            }
+            return out;
           } catch (err) {
             // in-place already ran `git switch`; compensation won't revert the
             // user's own checkout, so say plainly that it was left on the branch.
@@ -901,6 +980,7 @@ export function createSpawns(ctx) {
               spawn_id, session_id, callsign, cwd: target.root, worktree_path,
               tmux_window: paneMayExist ? tmux_window : null, reason, created: materialized.created,
             });
+            releasePlanClaim();
             return { status: err.status || 409, body: { ok: false, reason } };
           }
         } finally {
@@ -932,6 +1012,11 @@ export function createSpawns(ctx) {
             cleanupRoot: target.dest, worktree_path, body, skipPermissions, created,
             gatewayEnv: gateway.env,
           });
+          if (planClaim) {
+            q.setPlanExecuted.run(`spawn:${spawn_id}`, planClaim.plan_id);
+            planClaim = null;
+            onMutate();
+          }
         } catch (err) {
           const reason = branchMode === 'in-place' && created.clone
             ? `${err.message || String(err)} — ${path.basename(target.dest)} was left switched to ${body.branch}`
@@ -940,6 +1025,7 @@ export function createSpawns(ctx) {
             spawn_id, session_id, callsign, cwd: target.dest, worktree_path,
             tmux_window: paneMayExist ? tmux_window : null, reason, created,
           });
+          releasePlanClaim();
         } finally {
           releaseCloneSlot();
           releaseTarget();
@@ -961,9 +1047,11 @@ export function createSpawns(ctx) {
     let st = null;
     try { st = fs.statSync(cwd); } catch { /* missing */ }
     if (!cwd || !st?.isDirectory()) {
+      releasePlanClaim();
       return { status: 400, body: { ok: false, reason: 'cwd missing or not a directory' } };
     }
     if (body?.worktree === true && !deriveRepo(cwd).is_git) {
+      releasePlanClaim();
       return { status: 409, body: { ok: false, reason: 'cwd is not a git repository — cannot spawn into a worktree' } };
     }
 
@@ -1011,9 +1099,10 @@ export function createSpawns(ctx) {
           spawn_id, session_id, callsign, cwd, worktree_path, tmux_window: null,
           reason: `git worktree add: ${addErr}`,
         });
+        releasePlanClaim();
         return { status: 409, body: { ok: false, reason: `git worktree add failed: ${addErr}`.slice(0, 300) } };
       }
-      q.setSpawnWorktree.run(worktree_path, spawn_id);
+      q.setSpawnWorktree.run(worktree_path, 1, spawn_id); // cwd mode always creates the worktree above
       const repo = deriveRepo(worktree_path);
       updateSession(session_id, {
         cwd: worktree_path, repo_id: repo.repo_id, repo_name: repo.repo_name,
@@ -1023,11 +1112,18 @@ export function createSpawns(ctx) {
     // The deterministic-argv build + override/tmux launch + status flip is
     // shared with repo-mode spawns; it lives in launchPane() (incl. the `--`
     // end-of-options fix carried over from origin/main's audit).
-    return launchPane({
+    const out = await wrapSpawnFailure(launchPane)({
       spawn_id, session_id, callsign, tmux_session, tmux_window,
       requestedCwd: cwd, runCwd: worktree_path ?? cwd, cleanupRoot: cwd,
       worktree_path, body, skipPermissions, gatewayEnv: gateway.env,
     });
+    if (out.status >= 400) releasePlanClaim();
+    else if (planClaim) {
+      q.setPlanExecuted.run(`spawn:${spawn_id}`, planClaim.plan_id);
+      planClaim = null;
+      onMutate();
+    }
+    return out;
   }
 
   // POST /api/spawn/:id/revive — resume a terminal board-owned Claude
@@ -1104,6 +1200,39 @@ export function createSpawns(ctx) {
       return { status: 409, body: { ok: false, reason: `session ${row.session_id.slice(0, 8)} is already being revived` } };
     }
     revivingSessions.add(row.session_id);
+    // BUG-060: acquire the worktree path's canonical claim BEFORE validating
+    // the cwd/transcript and launching, and hold it through the launch. A
+    // worktree removal holds the same claim for its entire inspect → git
+    // remove → DB purge sequence, so a revive racing a removal that is already
+    // mid-flight QUEUES here behind it and, once the removal has deleted the
+    // checkout and released, proceeds only to 410 on the now-missing cwd —
+    // never launching a pane into a directory `git worktree remove` was about
+    // to delete. Acquired first, so the queueing (path-lock) path decides the
+    // race before the synchronous custody fallback below can turn a held
+    // removal into an early refusal. Standalone cores without the mutex fall
+    // back to `() => {}` and lean on the custody claim instead.
+    const releasePathLock = (row.worktree_path && acquireWorktreePathLock)
+      ? await acquireWorktreePathLock(canonicalPathKey(row.worktree_path))
+      : () => {};
+    // The other half of the remove-vs-revive race (worktrees.mjs owns the
+    // remove half): claim custody of the worktree this revive will run in.
+    // removeWorktree holds the same per-path lease from its final liveness
+    // re-check through the awaited `git worktree remove`/prune/branch/purge
+    // tail. When the path-lock mutex is wired the removal already holds it, so
+    // a racing revive blocks above and never reaches a held custody claim;
+    // this claim is the fallback that keeps standalone cores (no mutex, but
+    // derive always wires claimWorktreeCustody) honest — a revive that finds
+    // custody held is refused rather than launching into a doomed checkout.
+    // A refused revive retries cleanly; a lost worktree does not.
+    let releaseCustody = null;
+    if (row.worktree_path && claimWorktreeCustody) {
+      releaseCustody = claimWorktreeCustody(row.worktree_path, 'revive');
+      if (!releaseCustody) {
+        revivingSessions.delete(row.session_id);
+        releasePathLock();
+        return { status: 409, body: { ok: false, reason: 'this worktree is being removed — retry once the removal settles' } };
+      }
+    }
     try {
       // H-R7: validate ALL resume eligibility BEFORE touching tmux. Reviving
       // reuses the deterministic window name, and the old code killed whatever
@@ -1211,6 +1340,11 @@ export function createSpawns(ctx) {
     } finally {
       // Release the single-flight claim on EVERY exit path.
       revivingSessions.delete(row.session_id);
+      releasePathLock();
+      // Release the worktree-custody lease on every exit path too: the new
+      // spawn row is durable by now ('provisioning'/'spawning'), so
+      // worktreePathIsLive keeps any later removal honest without the lease.
+      releaseCustody?.();
     }
   }
 
@@ -1432,6 +1566,17 @@ export function createSpawns(ctx) {
     if (deferred && c.adopt_armed_until == null) {
       return { status: 200, body: { ok: true, canceled: true } };
     }
+    // A deferred call whose arm has EXPIRED must stand down too: SessionEnd
+    // validated the deadline when it scheduled the grace timer, but the move
+    // only runs AFTER the grace delay — launching now would start a process
+    // past the documented human authorization window. Clear the stale columns
+    // and say so once, BEFORE claiming single-flight or touching tmux.
+    if (deferred && c.adopt_armed_until <= Date.now()) {
+      updateSession(session_id, { adopt_armed_until: null, adopt_armed_skip: null });
+      tick(`↷ move-to-tmux canceled for ${c.callsign} — the arm deadline expired before the move fired`);
+      onMutate();
+      return { status: 200, body: { ok: true, canceled: true, expired: true } };
+    }
     // Immediate adopt requires an end that is BOTH proven and final — the
     // NOT_RESUMABLE_END allowlist in helpers.mjs owns that judgement (a NULL is
     // unproven, 'presumed' is a silence guess, and 0.7.1's 'superseded' means
@@ -1547,7 +1692,30 @@ export function createSpawns(ctx) {
 
   // POST /api/spawn/:id/rc — an explicit human board action, relayed as
   // literal TUI input. Never inject into a working/needsyou turn boundary.
-  async function enableRemote(spawn_id) {
+  //
+  // Single-flight (BUG-052): enableRemote crosses several awaits (window
+  // lookup, typeKeys, sendEnter, the harvest race) with no DB state written
+  // until the harvest lands, so two concurrent /rc requests for one spawn both
+  // passed every gate and typed/submitted `/rc` TWICE — real tmux rendered the
+  // concatenation `/rc a/rc a` — while both HTTP calls returned 200. Latch the
+  // enable per spawn like the liveness tick: the first caller runs the body,
+  // a concurrent caller shares the SAME in-flight promise and never sends a
+  // second keystroke sequence. The latch releases once submission AND harvest
+  // persistence settle; a later request then re-reads the row and answers
+  // idempotently from the stored remote_url.
+  const remoteEnables = new Map();
+  function enableRemote(spawn_id) {
+    const inFlight = remoteEnables.get(spawn_id);
+    if (inFlight) return inFlight;
+    const promise = enableRemoteOnce(spawn_id).finally(() => {
+      // Delete only if the map still points at THIS run — a caller that
+      // arrived after release starts a fresh entry and must not lose it.
+      if (remoteEnables.get(spawn_id) === promise) remoteEnables.delete(spawn_id);
+    });
+    remoteEnables.set(spawn_id, promise);
+    return promise;
+  }
+  async function enableRemoteOnce(spawn_id) {
     const row = q.getSpawn.get(spawn_id);
     if (!row) return { status: 404, body: { ok: false, reason: 'no such spawn' } };
     if (row.kind === 'shell') {
@@ -1589,21 +1757,45 @@ export function createSpawns(ctx) {
     // Use the LIVE session callsign (a manual re-ticket renames the card but not
     // the frozen spawn.callsign) so claude.ai shows today's name.
     const target = scopedPaneTarget(win);
-    const typed = await tmuxAdapter.typeKeys(target, `/rc ${fresh.callsign ?? row.callsign}`);
-    if (!typed) {
-      return { status: 500, body: { ok: false, reason: 'failed to type remote-control command into pane' } };
+    // BUG-053: the FINAL turn-state validation happens here, after every
+    // remaining pre-mutation await, and text + Enter then go to tmux as ONE
+    // send-keys argument list — a single tmux command queue the server runs
+    // back-to-back against the pane. The former split (typeKeys → recheck →
+    // sendEnter) was self-defeating: the recheck could only fire after the TUI
+    // was already mutated, so a session flipping active while typeKeys was in
+    // flight got a 409 that left `/rc <callsign>` sitting in the active input
+    // buffer, and a flip during sendEnter submitted it outright. A turn-state
+    // flip is hook-driven and lands on a LATER event-loop tick than the daemon
+    // action that caused it, so checking now and submitting as one tmux
+    // invocation never precedes a flip with unsent `/rc` text in the buffer.
+    const idleNow = s => s && ['queued', 'idle'].includes(s.col);
+    const attempt = async () => {
+      const current = q.getSession.get(row.session_id);
+      if (!idleNow(current)) {
+        return { status: 409, body: { ok: false, reason: `session is ${current?.col ?? 'missing'}, not queued or idle` } };
+      }
+      const sent = await tmuxAdapter.typeAndEnter(target, `/rc ${current.callsign ?? row.callsign}`);
+      if (!sent) {
+        return { status: 500, body: { ok: false, reason: 'failed to type remote-control command into pane' } };
+      }
+      return null; // submitted — proceed to the harvest
+    };
+    // Serialize daemon control input per pane (the recommended "same lease"):
+    // a second /rc for THIS pane waits for the first attempt's type+Enter to
+    // settle, then re-validates before it mutates — two concurrent enables can
+    // never interleave keystrokes in one input buffer. The promise chain is
+    // keyed by pane target and pruned on settle, so the map stays empty in the
+    // steady state.
+    const prior = rcInputLocks.get(target) ?? Promise.resolve();
+    const run = prior.catch(() => {}).then(attempt);
+    rcInputLocks.set(target, run);
+    let refused;
+    try {
+      refused = await run;
+    } finally {
+      if (rcInputLocks.get(target) === run) rcInputLocks.delete(target);
     }
-    // Last-mile recheck: typeKeys awaited too, so re-read turn-state once more
-    // before Enter. If the pane flipped active in that window, do NOT submit `/rc`
-    // into the human's in-flight turn — leave it typed-but-unsent (recoverable).
-    const afterType = q.getSession.get(row.session_id);
-    if (!afterType || !['queued', 'idle'].includes(afterType.col)) {
-      return { status: 409, body: { ok: false, reason: `session became ${afterType?.col ?? 'missing'} before /rc could submit` } };
-    }
-    const entered = await tmuxAdapter.sendEnter(target);
-    if (!entered) {
-      return { status: 500, body: { ok: false, reason: 'failed to type remote-control command into pane' } };
-    }
+    if (refused) return refused;
     const harvest = delayedRemoteHarvest(spawn_id);
     let timeout;
     const timed = new Promise(resolve => {
@@ -1922,7 +2114,17 @@ export function createSpawns(ctx) {
       // is the exact liveness test ownedPaneDeliverable trusts to type mail in.
       const pane = await tmuxAdapter.paneCurrentCommand(scopedPaneTarget(win));
       if (!pane || pane.dead || (row.kind !== 'shell' && pane.cmd !== 'claude')) continue;
-      resurrectSpawn(row);
+      // BUG-152: the row and owner were snapshotted BEFORE this await — a
+      // human kill (or any terminal transition / newer-row claim) landing
+      // during the probe must not be overwritten by the stale verdict.
+      // Re-read both: only resurrect a row still 'pane-dead'/'gone' (never
+      // 'killed') that still owns its window; the write itself is a
+      // compare-and-set (resurrectSpawn returns false when it lost the race).
+      const fresh = q.getSpawn.get(row.spawn_id);
+      if (!fresh || (fresh.status !== 'pane-dead' && fresh.status !== 'gone')) continue;
+      const ownerNow = q.currentWindowOwner.get(row.tmux_window);
+      if (ownerNow && ownerNow.spawn_id !== row.spawn_id) continue;
+      resurrectSpawn(fresh);
     }
     // Keep the boot-computed orphan list honest: windows that disappear
     // stop being listed (informational only — no ops are ever offered).
@@ -2006,6 +2208,29 @@ export function createSpawns(ctx) {
           recursive: true, force: true,
         });
       } catch { /* best effort */ }
+      // BUG-153: the daemon can also die AFTER the spawn's worktree was
+      // created and persisted but BEFORE its pane launched — the gap this
+      // loop settles. Without removal here that worktree (its directory, its
+      // fd/ branch, its git registration) strands on every such restart, and
+      // repeated interruptions accumulate trees that can block later branch
+      // or worktree creation. The verified-removal half of spawnCompensate —
+      // the same removal the normal failure path applies — runs ONLY for a
+      // spawn-owned tree (worktree_owned === 1: a fleet-created worktree is
+      // fresh and holds no human work). A reused tree (0) or a pre-fix row
+      // (NULL — the bit was never recorded) is left exactly as before.
+      if (row.worktree_path && row.worktree_owned === 1) {
+        try {
+          const branch = branchOf(row.worktree_path, { fresh: true });
+          const rm = await execFileP('git', ['-C', row.cwd, 'worktree', 'remove', '--force', row.worktree_path], { timeout: 30_000 });
+          if (!rm.ok) { try { fs.rmSync(row.worktree_path, { recursive: true, force: true }); } catch { /* best effort */ } }
+          await execFileP('git', ['-C', row.cwd, 'worktree', 'prune'], { timeout: 30_000 });
+          // The spawn died before its pane launched, so the fd/ branch the
+          // worktree add created holds no human work either — delete it with
+          // the tree or it strands and blocks a same-named worktree later.
+          if (branch) await execFileP('git', ['-C', row.cwd, 'branch', '-D', branch], { timeout: 30_000 });
+          tick(`🧹 removed stranded worktree ${row.worktree_path} — spawn ${row.callsign} was interrupted before launch`);
+        } catch { /* best effort — a stranded fleet worktree is surfaced by cleanup() */ }
+      }
       q.setSpawnStatus.run('gone', row.spawn_id);
       forgetSpawn(row.spawn_id);
       const c = q.getSession.get(row.session_id);
@@ -2098,15 +2323,34 @@ export function createSpawns(ctx) {
         cands.push({ row: p, at: last.at });
       }
       if (!cands.length) continue;
-      // Pair by ORDER, not by guesswork. Heirs are walked oldest-first and a
-      // predecessor can be claimed only once (succeeded_by), so giving each heir
-      // the OLDEST unclaimed clear in its window pairs interleaved lineages
-      // correctly: the first heir takes the first clear, the second heir is then
-      // left with the second. A live pane still wins when one exists, since a
-      // stranded pane is the case that actually costs something.
-      cands.sort((x, y) => x.at - y.at);
-      const paned = cands.filter(c => hasLivePane(c.row.session_id));
-      const prev = paned.length === 1 ? paned[0].row : cands[0].row;
+      // Pair only on PROOF, never on order. Event arrival order is not lineage
+      // identity: two sessions can /clear in one cwd with end order A,B while
+      // their heirs are born B′,A′ (SessionEnd is an async hook, SessionStart
+      // is not, so nothing orders one lineage's two hooks against the
+      // other's). Handing each heir the OLDEST unclaimed clear then
+      // cross-wires the lineages — A′ inherits B's callsign, pane, mail and
+      // questions, and the merge is irreversible. The live path has known this
+      // all along (findClearedPredecessor: "an ambiguous match is simply not a
+      // match"); the heal must hold the same line, so it merges only when the
+      // candidate set corroborates itself, never on (time-window, cwd) alone.
+      // Two cases are unambiguous:
+      //
+      //  - exactly ONE candidate: the only clear in this heir's window is its
+      //    parent, no pairing decision to get wrong;
+      //  - exactly ONE candidate owns a live pane: pane ownership is
+      //    independent corroboration (a stranded pane is also the case that
+      //    actually costs something).
+      //
+      // Anything else — several pane-less clears, or several paned ones —
+      // stays split. A spare card is recoverable by hand; a wrong merge is not.
+      let prev = null;
+      if (cands.length === 1) {
+        prev = cands[0].row;
+      } else {
+        const paned = cands.filter(c => hasLivePane(c.row.session_id));
+        if (paned.length === 1) prev = paned[0].row;
+      }
+      if (!prev) continue;
       if (succeedSession(prev, heir.session_id, { rename: true })) healed += 1;
     }
     if (healed) {

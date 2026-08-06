@@ -22,7 +22,9 @@ resource "coder_script" "fleetdeck" {
     set -e
     npm install -g fleetdeck
 
-    export FLEETDECK_TRUSTED_ORIGINS="https://fleetdeck--${data.coder_workspace_owner.me.name}--${data.coder_workspace.me.name}--main.${var.coder_wildcard_domain}"
+    # A named coder_app's hostname is <slug>--<workspace>--<owner> — the agent
+    # name appears only in raw-PORT app hostnames (see "The exact hostname" below).
+    export FLEETDECK_TRUSTED_ORIGINS="https://fleetdeck--${data.coder_workspace.me.name}--${data.coder_workspace_owner.me.name}.${var.coder_wildcard_domain}"
     export FLEETDECK_PROXY_AUTH="trust"
 
     fleetdeck doctor || true          # warnings must not block boot
@@ -61,19 +63,28 @@ the *only* thing standing between the fleet and any website you happen to visit 
 decoration, and it does not get to be switched off.
 
 Coder's app proxy does not rewrite `Host`. So the daemon sees the *browser-facing* host —
-`fleetdeck--luis--dev--main.coder.example.com`, not `localhost:4711` — and refuses the request. The
+`fleetdeck--dev--luis.coder.example.com`, not `localhost:4711` — and refuses the request. The
 board's static shell would load and then every single thing in it would fail.
 
 `FLEETDECK_TRUSTED_ORIGINS` is how you tell the daemon "this other origin is also me":
 
 ```sh
-FLEETDECK_TRUSTED_ORIGINS="https://fleetdeck--luis--dev--main.coder.example.com"
+FLEETDECK_TRUSTED_ORIGINS="https://fleetdeck--dev--luis.coder.example.com"
 ```
+
+**The exact hostname.** For a *named* app like the `coder_app` above (slug `fleetdeck`), Coder
+generates the subdomain as `<slug>--<workspace>--<owner>` — for owner `luis` and workspace `dev`,
+that is `fleetdeck--dev--luis.coder.example.com`. The **agent name is not in it**: Coder only
+includes the agent in *raw-port* app hostnames, which are `<port>--<agent>--<workspace>--<owner>`
+(e.g. `4711--main--dev--luis.coder.example.com`). Trusting `fleetdeck--luis--dev--main…` (agent
+included, owner first) looks plausible and matches nothing — the shell loads, then `/state`, both
+WebSockets, and every control request 403. If the board 403s anyway, copy the hostname from your
+address bar character for character.
 
 - A **scheme is required**. `https://x.example.com` does not also trust `http://x.example.com`.
 - Comma-separate several.
 - One **leading wildcard label** is allowed: `https://*.coder.example.com` matches
-  `fleetdeck--luis--dev--main.coder.example.com` but *not* `coder.example.com` itself and *not*
+  `fleetdeck--dev--luis.coder.example.com` but *not* `coder.example.com` itself and *not*
   `a.b.coder.example.com`. It is deliberately one label deep — a shared apex must not hand your fleet
   to every subdomain on it.
 - A malformed entry is a **startup refusal**, not a silent fallback. If you typo it, you find out
@@ -177,8 +188,9 @@ board up to read the warning.
 
 ## Your image needs
 
-- **Node ≥ 22.5** — the daemon stores state in `node:sqlite`, which landed in 22.5. There is no
-  polyfill and no fallback.
+- **Node ^22.13.0 || >=24.0.0** — the daemon stores state in `node:sqlite`, which shipped behind
+  a flag in 22.5 but only loads unflagged from 22.13.0 (and 24.x). Node 23 is unsupported. There
+  is no polyfill and no fallback.
 - **tmux** — every agent runs in a pane.
 - **The `claude` CLI**, and the Fleet Deck plugin installed for it.
 

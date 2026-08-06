@@ -12,7 +12,11 @@
 // so a mixed body with one bad field leaves the store untouched. Unknown keys
 // are refused BY NAME — a typo'd key must fail loud, never silently no-op, and
 // old {repos_dir}-only clients keep working because repos_dir is still a member
-// of the whitelist.
+// of the whitelist. One key breaks the replace-whole-value pattern on purpose:
+// repo_setup_patch merges its entries into the stored repo_setup map (with
+// "__delete" tombstones) at commit time, because the board's setup default is
+// saved per repository and a blind whole-object replacement lets two
+// concurrent boards each delete the other's save (BUG-147).
 //
 // The pure path gates (absolute after ~ expansion, no control chars, not the
 // filesystem root, not an existing file) are the SAME ones repos.mjs's
@@ -41,7 +45,7 @@ const FAV_DIRS_MAX = 20;
 const REPO_SETUP_MAX = 50;
 const SETUP_CMD_MAX = 2000;
 const ALLOWED_KEYS = [
-  'repos_dir', 'repo_transport', 'repo_default_org', 'browse_root', 'fav_dirs', 'repo_setup',
+  'repos_dir', 'repo_transport', 'repo_default_org', 'browse_root', 'fav_dirs', 'repo_setup', 'repo_setup_patch',
   'gateway_base_url', 'gateway_auth_style', 'gateway_token',
   'gateway_model_discovery', 'gateway_default',
   'hold_ms',
@@ -105,7 +109,7 @@ function validatePathSetting(value, label) {
 
 export function createSettings(ctx) {
   const {
-    q, onMutate, resolveReposDir, setReposDir,
+    db, q, onMutate, resolveReposDir, setReposDir,
     resolveRepoDefaultOrg, validateRepoDefaultOrg,
   } = ctx;
 
@@ -212,11 +216,18 @@ export function createSettings(ctx) {
     if (typeof value !== 'object' || Array.isArray(value)) {
       throw namedError(400, 'repo_setup must be an object mapping repo names to commands or null');
     }
-    const entries = Object.entries(value);
+    return validateRepoSetupEntries(Object.entries(value));
+  }
+
+  function validateRepoSetupEntries(entries) {
     if (entries.length > REPO_SETUP_MAX) {
       throw namedError(400, `repo_setup must contain ${REPO_SETUP_MAX} entries or fewer — got ${entries.length}`);
     }
-    const out = {};
+    // Accumulate into entries, not `out[name] = cmd` on a plain object — a
+    // legitimate repo named "__proto__" would otherwise hit the inherited
+    // prototype setter, mutate the accumulator's prototype, and serialize
+    // back to {} while the API still reports 200.
+    const out = [];
     for (const [name, cmd] of entries) {
       if (!name || CONTROL_RE.test(name)) {
         throw namedError(400, 'repo_setup keys must be non-empty repo names without control characters');
@@ -230,7 +241,34 @@ export function createSettings(ctx) {
       if (SETUP_CONTROL_RE.test(cmd)) {
         throw namedError(400, `repo_setup command for "${name}" must not contain NUL or control characters other than newline`);
       }
-      out[name] = cmd;
+      out.push([name, cmd]);
+    }
+    return Object.fromEntries(out);
+  }
+
+  // A PATCH is the save one board can make without clobbering another's: it
+  // merges into the stored map at commit time instead of replacing it, so two
+  // concurrent per-repository saves both survive (BUG-147). Validation mirrors
+  // the whole-object handler: `null` (or {}, which validates to nothing)
+  // clears, a string entry upserts, and `__delete` is the patch-only tombstone —
+  // a value validateRepoSetupEntries never emits, so no whole-object client can
+  // accidentally delete, and a NAME whose string value is the sentinel deletes
+  // by construction (the last writer leaves a tombstone, not a setup command).
+  function validateRepoSetupPatch(value) {
+    if (value == null) return null;
+    if (typeof value !== 'object' || Array.isArray(value)) {
+      throw namedError(400, 'repo_setup_patch must be an object mapping repo names to commands, "__delete" entries, or null');
+    }
+    const out = {};
+    for (const [name, cmd] of Object.entries(value)) {
+      if (cmd === '__delete') {
+        if (!name || CONTROL_RE.test(name)) {
+          throw namedError(400, 'repo_setup_patch keys must be non-empty repo names without control characters');
+        }
+        out[name] = cmd;
+        continue;
+      }
+      Object.assign(out, validateRepoSetupEntries([[name, cmd]]));
     }
     return out;
   }
@@ -431,6 +469,22 @@ export function createSettings(ctx) {
       prepare: v => validateRepoSetup(v),
       commit: prepared => q.setSetting.run('repo_setup', prepared == null ? null : JSON.stringify(prepared), Date.now()),
     },
+    repo_setup_patch: {
+      prepare: v => validateRepoSetupPatch(v),
+      commit: prepared => {
+        if (prepared == null || Object.keys(prepared).length === 0) {
+          q.setSetting.run('repo_setup', null, Date.now());
+          return;
+        }
+        const merged = resolveRepoSetup();
+        for (const [name, cmd] of Object.entries(prepared)) {
+          if (cmd === '__delete') delete merged[name];
+          else merged[name] = cmd;
+        }
+        q.setSetting.run('repo_setup',
+          Object.keys(merged).length === 0 ? null : JSON.stringify(merged), Date.now());
+      },
+    },
     hold_ms: {
       prepare: v => validateHoldMs(v),
       commit: v => q.setSetting.run('hold_ms', v ?? null, Date.now()),
@@ -477,13 +531,41 @@ export function createSettings(ctx) {
     try {
       // Validate every named key first…
       const prepared = keys.map(k => ({ k, value: HANDLERS[k].prepare(body[k]) }));
-      // …then apply them all — nothing above wrote, so a throw here is impossible
-      // to reach with a half-validated body.
-      for (const { k, value } of prepared) HANDLERS[k].commit(value);
-      onMutate();
+      // …then apply them all — nothing above wrote, so a validation throw here is
+      // impossible to reach with a half-validated body. (Derive/test contexts
+      // without a raw `db` handle keep the old autocommit path — the daemon's
+      // ctx always carries one.)
+      if (!db) {
+        for (const { k, value } of prepared) HANDLERS[k].commit(value);
+        onMutate();
+        return { status: 200, body: { ok: true, settings: resolveSettings() } };
+      }
+      // Validation alone is not atomicity, though: each commit was an
+      // independent autocommit, so a LATER write failing (SQLITE_BUSY/FULL on a
+      // later key, an onMutate() throw) used to return the error below with the
+      // EARLIER keys already durable — the caller got an error AND a
+      // half-applied body that still changed repository/browser/gateway
+      // behavior, worst case a new gateway_base_url combined with the previous
+      // gateway_token, pointing a live credential at the wrong host. A throw
+      // below is therefore a STORAGE or callback failure, not a caller mistake
+      // (5xx, not 400). One IMMEDIATE transaction around the commits + the
+      // callback closes that: any failure rolls back every write, so the
+      // returned error is the truth.
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        for (const { k, value } of prepared) HANDLERS[k].commit(value);
+        onMutate();
+        db.exec('COMMIT');
+      } catch (err) {
+        try { db.exec('ROLLBACK'); } catch { /* preserve the original error */ }
+        throw err;
+      }
       return { status: 200, body: { ok: true, settings: resolveSettings() } };
     } catch (err) {
-      return { status: err.status || 400, body: { ok: false, reason: err.message || String(err) } };
+      // A thrown 400 is a validator rejecting the caller's body; anything
+      // untagged is a storage failure the caller cannot fix by editing fields.
+      const status = err.status || 500;
+      return { status, body: { ok: false, reason: err.message || String(err) } };
     }
   }
 
@@ -505,6 +587,15 @@ export function createSettings(ctx) {
     if (value == null) return;
     try { validateRepoDefaultOrg(value); } catch { return; }
     q.setSetting.run('repo_default_org', value, Date.now());
+  }
+
+  // Daemon-side single-repo variant of repo_setup_patch — same read-merge-write,
+  // no broadcast (the caller batches its own), for the spawn path to remember a
+  // setup default without clobbering a concurrent board save (BUG-147).
+  function setRepoSetupEntry(name, cmd) {
+    let prepared;
+    try { prepared = validateRepoSetupPatch({ [name]: cmd ?? '__delete' }); } catch { return; }
+    HANDLERS.repo_setup_patch.commit(prepared);
   }
 
   // The whole settings object — GET /api/settings, the POST response, and the
@@ -530,6 +621,6 @@ export function createSettings(ctx) {
   // accidentally start serializing the credential.
   return {
     setSettings, resolveSettings, browseRootChoice, persistRepoTransport, persistRepoDefaultOrg,
-    resolveGateway, resolveGatewayEnv, resolveHoldMsRaw,
+    resolveGateway, resolveGatewayEnv, resolveHoldMsRaw, setRepoSetupEntry,
   };
 }

@@ -27,9 +27,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFile, spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { MIN_TMUX_VERSION, parseTmuxVersion, tmuxVersionSupported } from './tmux-version.mjs';
+import { createRequire } from 'node:module';
 
 const execFileP = promisify(execFile);
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -42,12 +43,67 @@ const SOURCE = path.join(ROOT, 'scripts', 'fleetd', 'fleetd.mjs');
 const FLEETD = fs.existsSync(BUNDLE) ? BUNDLE : SOURCE;
 
 const HOME = process.env.FLEETDECK_HOME || path.join(os.homedir() || '/tmp', '.fleetdeck');
-const PORT = Number(process.env.FLEETDECK_PORT || 4711);
+// Byte-identical to scripts/fleetd/config.mjs resolvePort (that module is not
+// importable from the published CLI — see the header comment there): reject
+// port 0 and every other non-1..65535 value so the CLI never targets a
+// daemon identity nothing can actually reach. An explicit ambient
+// FLEETDECK_PORT still wins; when it is unset we fall back to the port frozen
+// into the installed service.env (BUG-075), and only then to the default.
+// NOTE: resolveCliPort is only CALLED after serviceEnvPort/ENV_FILE below are
+// initialized — moving the call above their const declarations would hit the
+// temporal dead zone.
+function resolveCliPort() {
+  const raw = process.env.FLEETDECK_PORT;
+  if (raw === undefined || raw === '') return serviceEnvPort() ?? 4711;
+  const port = Number(raw);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    process.stderr.write(`fleetdeck: invalid FLEETDECK_PORT ${JSON.stringify(raw)} — expected an integer port in 1..65535 (port 0 is not supported)\n`);
+    process.exit(2);
+  }
+  return port;
+}
 const SERVICE_NAME = 'fleetdeck';
 
 const ENV_FILE = path.join(HOME, 'service.env');
+
+// The installed service.env is the frozen config BOTH supervisors serve from (see
+// the ENV-FILE SAFETY CONTRACT below). A `status` / `service start|stop` run from
+// a shell where FLEETDECK_PORT is unset (or only partially re-exported) would
+// otherwise health-check the WRONG port — reporting a healthy custom-port service
+// down, and letting stop signal a different responder entirely. So when the
+// ambient env does not name a port, honor the port captured at install time.
+// An explicit ambient FLEETDECK_PORT still wins: the env file's own contract
+// tells you to re-run `service install` after changing config, and you may
+// legitimately point the CLI at a plugin-spawned (non-service) daemon.
+//
+// Both readers of this file (a POSIX `.`-source and systemd's EnvironmentFile)
+// strip one level of matching outer quotes, so a single-quoted value parses to
+// its inner text here too. Anything we cannot interpret safely (a junk port, a
+// value still carrying quote characters) is IGNORED — health checks fall back to
+// the default port rather than fetching an attacker-chosen one from a
+// hand-edited file.
+function parseServiceEnvPort(text) {
+  if (typeof text !== 'string') return null;
+  for (const line of text.split('\n')) {
+    const m = /^FLEETDECK_PORT=(.*)$/.exec(line);
+    if (!m) continue;
+    let v = m[1].trim();
+    if (v.length >= 2 && v.startsWith("'") && v.endsWith("'")) v = v.slice(1, -1);
+    const n = Number(v);
+    if (v !== '' && Number.isInteger(n) && n > 0 && n <= 65535) return n;
+  }
+  return null;
+}
+
+function serviceEnvPort() {
+  try { return parseServiceEnvPort(fs.readFileSync(ENV_FILE, 'utf8')); }
+  catch { return null; } // not installed yet — the default port applies
+}
+
+const PORT = resolveCliPort();
 const SUPERVISE_SH = path.join(HOME, 'supervise.sh');
 const SUPERVISOR_PID = path.join(HOME, 'supervisor.pid');
+const FLEETD_PID = path.join(HOME, 'fleetd.pid');
 const LOG_FILE = path.join(HOME, 'fleetd.log');
 const UNIT_FILE = path.join(
   process.env.XDG_CONFIG_HOME || path.join(os.homedir() || '/tmp', '.config'),
@@ -69,7 +125,10 @@ const err = (s) => process.stderr.write(`${s}\n`);
 // fleetd already has a tested graceful shutdown and we must not shadow it.
 async function serve() {
   process.env.FLEETDECK_MANAGED = '1';
-  await import(`file://${FLEETD}`);
+  // pathToFileURL, not string concat: a legal install path containing `#`, `?`,
+  // a raw `%`, or spaces must still resolve — `file://${path}` truncates at the
+  // fragment/query delimiters and throws URIError on a raw percent sequence.
+  await import(pathToFileURL(FLEETD).href);
 }
 
 // ------------------------------------------------------------------ health
@@ -120,6 +179,20 @@ async function status(args = []) {
 
 // ------------------------------------------------------------------ doctor
 
+// The supported Node range, kept in lockstep with package.json `engines`.
+// node:sqlite shipped behind --experimental-sqlite in 22.5 and only loads
+// WITHOUT the flag from 22.13.0 (and 24.x), so the floor is 22.13 — an older
+// Node in the 22 line satisfies `>=22.5` yet fails module linking with
+// ERR_UNKNOWN_BUILTIN_MODULE before fleetd opens its listener.
+const MIN_NODE_RANGE = '^22.13.0 || >=24.0.0';
+function nodeVersionSupported(version) {
+  const [major, minor] = String(version).split('.').map(Number);
+  if (Number.isNaN(major) || Number.isNaN(minor)) return false;
+  if (major === 22) return minor >= 13;
+  if (major === 23) return false;
+  return major >= 24;
+}
+
 async function onPath(cmd) {
   try { await execFileP('sh', ['-c', `command -v ${cmd}`], { timeout: 5000 }); return true; }
   catch { return false; }
@@ -133,9 +206,8 @@ async function doctor() {
   const problems = [];
   const warnings = [];
 
-  const [major, minor] = process.versions.node.split('.').map(Number);
-  if (major < 22 || (major === 22 && minor < 5)) {
-    problems.push(`Node ${process.versions.node} is too old — fleetd needs >= 22.5 for node:sqlite (no polyfill exists)`);
+  if (!nodeVersionSupported(process.versions.node)) {
+    problems.push(`Node ${process.versions.node} is too old — fleetd needs ${MIN_NODE_RANGE} for node:sqlite (no polyfill exists)`);
   }
 
   if (!await onPath('tmux')) {
@@ -260,9 +332,83 @@ function writeEnvFile() {
     lines.push(ENV_VALUE_BARE_SAFE.test(v) ? `${k}=${v}` : `${k}='${v}'`);
   }
   fs.mkdirSync(HOME, { recursive: true });
-  // 0600: FLEETDECK_TOKEN may legitimately live here.
+  // 0600: FLEETDECK_TOKEN may legitimately live here. The mode option protects
+  // only a NEWLY CREATED file — Node ignores it when the file already exists,
+  // so a pre-existing permissive service.env would survive a reinstall. chmod
+  // after every write to repair an existing inode, and fail the install when
+  // the owner-only contract cannot be established.
   fs.writeFileSync(ENV_FILE, `${lines.join('\n')}\n`, { encoding: 'utf8', mode: 0o600 });
+  fs.chmodSync(ENV_FILE, 0o600);
   return lines.length;
+}
+
+// systemd-UNIT PATH SAFETY. The two path-bearing directives below interpolate
+// REAL paths (the node binary, this script, FLEETDECK_HOME/service.env) that the
+// user does not control the shape of — Node under `nvm/v24 linux/node`, a
+// FLEETDECK_HOME with a space, a project dir named `100%`. Written bare, systemd
+// would word-split a spaced path into extra argv, treat `"`/`'` as quoting
+// syntax, and expand `%` as a specifier (`%i`, `%h`, ...) — so a valid install
+// produced a unit that fails to start or reads the wrong env file.
+//
+// Escaping follows systemd.syntax(7):
+//  - `%` → `%%` FIRST, in every directive. Specifier expansion runs before
+//    tokenization, so it must be neutralized before any quoting.
+//  - ExecStart: EVERY argv token is double-quoted (quoteExecArg, BUG-078;
+//    unitArg retains BUG-077's conditional bare form for its exported
+//    contract). Inside the quotes `%` is already doubled and `'` is
+//    backslash-escaped — the two escapes systemd resolves there. What quoting
+//    cannot carry is REFUSED with a clear install-time error: control
+//    characters (they break the line format) and `"`.
+//  - EnvironmentFile: takes ONE path (no tokenization), so instead of quoting
+//    we REFUSE paths the unquoted grammar cannot carry: whitespace, quotes, or
+//    a backslash get a clear install-time error naming the path. Anything else
+//    (spaces excluded — refused) is literal to end-of-line.
+const UNIT_VALUE_UNSAFE = /[\s"'\\]/;
+const EXEC_ARG_UNQUOTABLE = /[\u0000-\u001f"]/;
+
+function unitEscape(s) {
+  return s.replace(/%/g, '%%');
+}
+
+// BUG-078's ExecStart quoting: EVERY token is double-quoted (BUG-077 kept a
+// bare fast path; it was dropped because systemd's ExecStart grammar makes a
+// bare token with an embedded quote unsafe, while a quoted token stays exactly
+// one argv element whatever it contains). Inside the quotes `%` is doubled and
+// `'` backslash-escaped — the escapes systemd resolves there. What quoting
+// cannot carry — control characters (they break the line format) and `"` —
+// is refused with a clear install-time error.
+function quoteExecArg(p) {
+  if (EXEC_ARG_UNQUOTABLE.test(p)) {
+    throw new Error(
+      `cannot write ${UNIT_FILE}: the path ${JSON.stringify(p)} contains a control character `
+      + 'or double quote, which cannot be represented in a systemd ExecStart line. '
+      + 'Install Node and fleetdeck at a path without those characters.',
+    );
+  }
+  return `"${p.replaceAll('%', '%%').replaceAll("'", "\\'")}"`;
+}
+
+// BUG-077's ExecStart helper, kept as the exported contract: a bare-safe token
+// (after %-escaping, which runs before the bare/quoted decision because
+// specifier expansion precedes tokenization) passes through byte-identical to
+// older installs; anything else is quoted, with `"` and `\` escaped inside.
+// NOTE: the generated unit itself uses quoteExecArg (always-quote, refuse `"`)
+// — the adversarially verified BUG-078 emission; unitArg remains for callers
+// that need the older conditional form.
+function unitArg(s) {
+  const escaped = unitEscape(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  return ENV_VALUE_BARE_SAFE.test(s) ? escaped : `"${escaped}"`;
+}
+
+function unitEnvFilePath(p) {
+  if (UNIT_VALUE_UNSAFE.test(p)) {
+    throw new Error(
+      `FLEETDECK_HOME resolves to ${p}, which the systemd EnvironmentFile directive cannot `
+      + `carry (whitespace, quotes, and backslashes are not quotable there). Point FLEETDECK_HOME `
+      + `at a path without those characters and re-run \`fleetdeck service install\`.`,
+    );
+  }
+  return unitEscape(p);
 }
 
 const UNIT = () => `[Unit]
@@ -271,8 +417,8 @@ After=network.target
 
 [Service]
 Type=simple
-EnvironmentFile=-${ENV_FILE}
-ExecStart=${process.execPath} ${path.join(HERE, 'fleetdeck.mjs')} serve
+EnvironmentFile=-${unitEnvFilePath(ENV_FILE)}
+ExecStart=${quoteExecArg(process.execPath)} ${quoteExecArg(path.join(HERE, 'fleetdeck.mjs'))} serve
 Restart=always
 RestartSec=2
 # exit 3 is "another daemon already owns the port" — restarting is a hot loop.
@@ -282,6 +428,15 @@ RestartPreventExitStatus=3
 WantedBy=default.target
 `;
 
+// POSIX single-argument quoting for every path the generated shell wrapper
+// embeds. Inside single quotes NOTHING expands — no $VAR, no $(), no backticks
+// — so a literal FLEETDECK_HOME or install path containing shell metacharacters
+// stays literal when supervise.sh runs. Double quotes would keep $(), backticks,
+// and $VAR live (BUG-079: a path like `$(printf injected)` was EXECUTED while
+// the wrapper resolved it). An embedded single quote uses the standard
+// '...'\''...' idiom: end quote, escaped quote, reopen.
+const shQuote = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
+
 // The no-systemd supervisor. Deliberately a shell script rather than a Node
 // parent: one less long-lived process, and it survives this CLI exiting, which
 // a coder_script REQUIRES (a script that does not exit leaves the workspace
@@ -289,7 +444,7 @@ WantedBy=default.target
 const SUPERVISE = () => `#!/bin/sh
 # GENERATED by \`fleetdeck service install\` — do not edit; re-run install instead.
 set -u
-[ -f "${ENV_FILE}" ] && { set -a; . "${ENV_FILE}"; set +a; }
+[ -f ${shQuote(ENV_FILE)} ] && { set -a; . ${shQuote(ENV_FILE)}; set +a; }
 
 child=''
 term() { [ -n "$child" ] && kill -TERM "$child" 2>/dev/null; exit 0; }
@@ -297,7 +452,7 @@ trap term TERM INT
 
 delay=1
 while :; do
-  "${process.execPath}" "${path.join(HERE, 'fleetdeck.mjs')}" serve &
+  ${shQuote(process.execPath)} ${shQuote(path.join(HERE, 'fleetdeck.mjs'))} serve &
   child=$!
   wait "$child"
   code=$?
@@ -372,17 +527,83 @@ function supervisorAlive() {
   } catch { return 0; }
 }
 
+// STOP-TARGET IDENTITY CONTRACT. The no-systemd stop path used to SIGTERM
+// whatever pid ANY health-compatible responder on our port returned — a fake
+// local server, or another installation's daemon answering on a recycled port,
+// could aim our SIGTERM at an arbitrary same-user process. So, exactly like the
+// hook's takeover gate (takeover.mjs `verifyDaemonPid`), a health pid is only
+// signalled when EVERY one of these holds:
+//   - the responder claims to be a MANAGED daemon (h.managed) — `service stop`
+//     owns the supervised install only; a plugin-spawned daemon is not ours to kill;
+//   - the pid matches the one recorded in OUR HOME's fleetd.pid (the HOME
+//     ownership lock), and any port recorded there matches our selected PORT;
+//   - the live process still carries a fleetd /proc shape (livePidLooksLikeFleetd).
+// Any disagreement → false, and the caller reports the foreign responder and
+// leaves it untouched rather than signalling a process it cannot identify.
+//
+// takeover.mjs is loaded LAZILY here, never as a top-level import (BUG-074
+// composition): the published CLI and the serve regression must boot from a
+// minimal packed runtime that ships only bin/ + the daemon bundle — no source
+// scripts/fleetd/ tree — so an eager import would be an ERR_MODULE_NOT_FOUND
+// before `serve` ever runs. require(esm) (Node >= 22.13, our engine floor) loads
+// it SYNCHRONOUSLY so this stays a sync predicate for its callers and tests;
+// healthIsOurManagedDaemon, being async, dynamic-imports the same module.
+const requireHere = createRequire(import.meta.url);
+let takeoverPidHelpers = null;
+function loadTakeoverPidHelpers() {
+  if (!takeoverPidHelpers) {
+    takeoverPidHelpers = requireHere(path.join(ROOT, 'scripts', 'fleetd', 'takeover.mjs'));
+  }
+  return takeoverPidHelpers;
+}
+
+function healthPidIsOurDaemon(h) {
+  if (!h || h.managed !== true) return false;
+  const pid = Number(h.pid);
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  const { pidRecord, livePidLooksLikeFleetd } = loadTakeoverPidHelpers();
+  let record = null;
+  try {
+    record = pidRecord(fs.readFileSync(FLEETD_PID, 'utf8'));
+  } catch {
+    // No/unreadable pidfile: cannot prove ownership → do not kill.
+    return false;
+  }
+  if (record?.pid !== pid) return false;
+  // The pidfile predates port recording (or another daemon in the chain wrote
+  // it before the port was frozen in): a missing recorded port cannot
+  // DISPROVE ownership, so only a recorded port that disagrees with the
+  // selected PORT vetoes the kill.
+  if (record.port !== null && record.port !== PORT) return false;
+  return livePidLooksLikeFleetd(pid);
+}
+
 // "Started" must mean "answering", not "spawned". systemctl returns as soon as
 // the process exists, which is a good ~100ms before fleetd has opened SQLite and
 // bound the port — long enough that a template's next step (or an impatient
 // human running `fleetdeck status`) sees a dead board and concludes it failed.
-async function waitForHealth({ tries = 20, everyMs = 250 } = {}) {
+async function waitForHealth({ tries = 20, everyMs = 250, expect } = {}) {
   for (let i = 0; i < tries; i += 1) {
     await new Promise(r => setTimeout(r, everyMs));
     const h = await health({ timeout: everyMs });
-    if (h) return h;
+    if (h && (!expect || expect(h))) return h;
   }
   return null;
+}
+
+// A health answer proves SOMETHING is listening on :PORT, not that it is the
+// managed service we just spawned. `service start` must accept only OUR daemon:
+// managed (started via `serve`, which sets FLEETDECK_MANAGED=1) AND positively
+// identified as the fleetd that claimed OUR FLEETDECK_HOME — its /health pid
+// must match the HOME/fleetd.pid ownership record and still carry a fleetd
+// /proc shape (the same verifyDaemonPid gate the hook's takeover path uses).
+// Without this, an unmanaged/foreign responder that already owns the port makes
+// `service start` print success for a service that does not exist: our wrapper
+// exits 3 after losing the port election while waitForHealth saw the squatter.
+async function healthIsOurManagedDaemon(h) {
+  if (!h?.managed) return false;
+  const { verifyDaemonPid } = await import(`file://${path.join(ROOT, 'scripts', 'fleetd', 'takeover.mjs')}`);
+  return verifyDaemonPid(h.pid, HOME);
 }
 
 async function serviceStart() {
@@ -400,9 +621,22 @@ async function serviceStart() {
     err('✗ not installed — run `fleetdeck service install` first');
     return 1;
   }
-  if (supervisorAlive()) {
-    out('✓ already running');
-    return 0;
+  const sup = supervisorAlive();
+  if (sup) {
+    // A live wrapper is not a live BOARD: the supervisor sleeps in exponential
+    // backoff between respawns, so during a fleetd crash-loop kill(0) alone
+    // would report "already running" while nothing answers on the port —
+    // indefinitely. "Started" means "answering", same contract as the branch
+    // below: require a MANAGED health response (an unmanaged daemon on the
+    // port is a plugin-spawned squatter the wrapper is not supervising).
+    const h = await waitForHealth();
+    if (h?.managed) {
+      out('✓ already running');
+      return 0;
+    }
+    err(`✗ supervisor alive (pid ${sup}) but no managed daemon answering on :${PORT} — see ${LOG_FILE}`);
+    err('  the wrapper may be backing off between respawns; check the log, or `fleetdeck service stop` then start');
+    return 1;
   }
   // MUST return immediately: a coder_script that does not exit leaves the
   // workspace stuck "starting".
@@ -415,8 +649,20 @@ async function serviceStart() {
   fs.closeSync(log);
   fs.writeFileSync(SUPERVISOR_PID, String(child.pid), { encoding: 'utf8', mode: 0o600 });
 
-  if (!await waitForHealth()) {
-    err(`✗ supervisor started (pid ${child.pid}) but no daemon answered on :${PORT} within 5s — see ${LOG_FILE}`);
+  const h = await waitForHealth({ expect: healthIsOurManagedDaemon });
+  if (!h) {
+    err(`✗ supervisor started (pid ${child.pid}) but no MANAGED daemon for this FLEETDECK_HOME answered on :${PORT} within 5s — see ${LOG_FILE}`);
+    if (await health({ timeout: 500 })) {
+      err('  something else already owns the port — `fleetdeck status` shows what is answering');
+    }
+    return 1;
+  }
+  // The daemon answering is ours, but the SUPERVISOR may already be gone (it
+  // exits 3 right after a lost port election, or could crash immediately).
+  // Reporting "up (supervisor pid N)" for a dead N would promise an always-on
+  // service nothing is supervising — fail instead of printing a corpse.
+  if (!supervisorAlive()) {
+    err(`✗ daemon up on :${PORT} but supervisor pid ${child.pid} already exited — no always-on service — see ${LOG_FILE}`);
     return 1;
   }
   out(`✓ fleetdeck up on http://127.0.0.1:${PORT} (supervisor pid ${child.pid})`);
@@ -438,14 +684,19 @@ async function serviceStop() {
   try { fs.unlinkSync(SUPERVISOR_PID); } catch { /* best effort */ }
 
   const h = await health({ timeout: 500 });
-  if (h?.pid) {
+  const ours = h?.pid ? healthPidIsOurDaemon(h) : false;
+  if (ours) {
     try { process.kill(h.pid, 'SIGTERM'); } catch { /* already gone */ }
     for (let i = 0; i < 12; i += 1) {
       await new Promise(r => setTimeout(r, 250));
       if (!await health({ timeout: 250 })) break;
     }
+  } else if (h?.pid) {
+    // A responder answered /health but failed the identity gate — a foreign
+    // daemon or a fake server squatting on our port. Do NOT signal it.
+    err(`⚠ a daemon is answering on :${PORT} (pid ${h.pid}) but it is not this home's managed fleetd — leaving it untouched`);
   }
-  out(sup || h ? '✓ stopped' : 'ℹ nothing was running');
+  out(sup || ours ? '✓ stopped' : 'ℹ nothing was running');
   return 0;
 }
 
@@ -482,6 +733,17 @@ async function token(args) {
     const { randomBytes } = await import('node:crypto');
     fs.mkdirSync(HOME, { recursive: true });
     fs.writeFileSync(file, randomBytes(32).toString('hex'), { encoding: 'utf8', mode: 0o600 });
+    // The mode option above applies only when the write CREATES the file — an
+    // existing token keeps its inode's permissions, so a pre-existing 0644
+    // token would stay world-readable through rotation. chmod on every rotate
+    // and refuse to report success when the owner-only contract cannot be
+    // established — the new secret must not stay exposed.
+    try {
+      fs.chmodSync(file, 0o600);
+    } catch (e) {
+      err(`✗ token rotated at ${file} but could not be locked to 0600 (${e?.message || e}) — fix its permissions before it is used`);
+      return 1;
+    }
     out('✓ token rotated — restart the daemon for it to take effect');
   }
   try {
@@ -544,4 +806,4 @@ if (IS_ENTRYPOINT) await main(process.argv.slice(2));
 // exported for tests only — the env-file validation, supervisor identity check,
 // and file generators are contracts. Nothing here runs on import (see
 // IS_ENTRYPOINT above), so importing is side-effect-free.
-export { writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor, serviceInstall, UNIT, SUPERVISE, doctor };
+export { writeEnvFile, ENV_VALUE_BARE_SAFE, ENV_VALUE_UNQUOTABLE, parseServiceEnvPort, serviceEnvPort, shQuote, supervisorAlive, supervisorLooksLikeOurs, argvIsOurSupervisor, healthPidIsOurDaemon, healthIsOurManagedDaemon, serviceInstall, serviceStart, UNIT, SUPERVISE, unitEscape, unitArg, quoteExecArg, unitEnvFilePath, doctor, MIN_NODE_RANGE, nodeVersionSupported, token };

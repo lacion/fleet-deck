@@ -36,7 +36,18 @@ export function tailLines(transcriptPath, { maxBytes = 262_144 } = {}) {
   // practice, but if a file shrinks between them, Buffer.alloc's unread tail
   // is NUL padding — never let those zeroes corrupt the newest JSONL record.
   let chunk = buf.subarray(0, nread).toString('utf8');
-  if (start > 0) chunk = chunk.slice(chunk.indexOf('\n') + 1); // drop the partial first line
+  // WHY: drop the first row ONLY when the read began mid-line. When the window
+  // starts exactly on a row boundary (byte start-1 is '\n') the first row is
+  // complete — discarding it anyway can hide the newest assistant model
+  // (BUG-194).
+  let firstRowIsPartial = start > 0;
+  if (firstRowIsPartial) {
+    const prev = Buffer.alloc(1);
+    const pfd = fs.openSync(transcriptPath, 'r');
+    try { fs.readSync(pfd, prev, 0, 1, start - 1); } finally { fs.closeSync(pfd); }
+    firstRowIsPartial = prev[0] !== 0x0a; // '\n'
+  }
+  if (firstRowIsPartial) chunk = chunk.slice(chunk.indexOf('\n') + 1); // drop the partial first line
 
   const lines = chunk.split('\n');
   const it = (function* () {
@@ -109,12 +120,29 @@ export function lastAssistantText(transcriptPath, { maxBytes = 2_000_000 } = {})
 //     from EOF. Most hook events therefore read 16 KB rather than 256 KB.
 function scanForModel(transcriptPath, maxBytes, minOffset) {
   const it = tailLines(transcriptPath, { maxBytes });
+  let newest = true;
   for (const { line, offset } of it) {
     // Cheap reject before JSON.parse: a tool_result line can be hundreds of KB
     // and parsing it just to discard it is the whole cost of this function.
-    if (!line.includes('"assistant"') || !line.includes('"model"')) continue;
+    // WHY: the newest row must still be parsed unconditionally so a partial
+    // append cannot resurrect an older turn's model (the same contract
+    // lastAssistantText enforces for text); only older rows get the cheap
+    // pre-parse reject.
+    const maybeAssistant = line.includes('"assistant"') && line.includes('"model"');
+    if (!newest && !maybeAssistant) continue;
     let entry;
-    try { entry = JSON.parse(line); } catch { continue; }
+    try { entry = JSON.parse(line); } catch {
+      // The newest non-empty line may still be in the middle of an append.
+      // Falling through to an older assistant turn reports a STALE model —
+      // and derive.mjs would cache it until the next size change — so "not
+      // stable yet" is represented as no result. Corruption deeper in history
+      // stays best-effort-skippable.
+      if (newest) return { model: null, found: false, truncated: false };
+      newest = false;
+      continue;
+    }
+    newest = false;
+    if (!maybeAssistant) continue;
     if (entry?.type !== 'assistant' || entry.isSidechain === true) continue; // a subagent is not the main thread
     const model = entry.message?.model;
     if (typeof model !== 'string' || !model.trim()) continue;

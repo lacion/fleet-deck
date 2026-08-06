@@ -121,7 +121,9 @@ test('model tracking reads only the 16 KB first tier when the newest assistant i
   } finally {
     fs.readSync = originalReadSync;
   }
-  assert.deepEqual(readSizes, [16_384], 'the common case must not start with a 256 KB tail read');
+  // The second read is the single boundary-check byte (BUG-194): is the row
+  // at the window's edge complete? The point stands — no 256 KB first tier.
+  assert.deepEqual(readSizes, [16_384, 1], 'the common case must not start with a 256 KB tail read');
 });
 
 test('agents polling is single-flight and backs off the CLI while liveness stays responsive', async (t) => {

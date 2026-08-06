@@ -57,15 +57,14 @@ jobs:
       # The tag is the release. If it disagrees with package.json, one of the two
       # is a lie — and a mislabelled version on npm cannot be taken back. (We have
       # already shipped one: npm 0.7.1 does not match git v0.7.1.)
-      - name: Fail if the tag and package.json disagree
-        run: |
-          tag="${GITHUB_REF_NAME#v}"
-          pkg=$(node -p "require('./package.json').version")
-          echo "tag=$tag  package.json=$pkg"
-          if [ "$tag" != "$pkg" ]; then
-            echo "::error::tag $GITHUB_REF_NAME does not match package.json version $pkg"
-            exit 1
-          fi
+      # The tag check alone is not enough: package.json can be bumped while the
+      # plugin manifests, board/package.json, and the lockfile roots stay behind
+      # (ci.yml's version job never runs on tags, and npm ci accepts a stale lock
+      # root), and then npm, the marketplace cache, and board metadata all
+      # disagree about what this release is. Verify the whole contract against
+      # the tag before anything irreversible.
+      - name: Fail if the tag and every version manifest disagree
+        run: node scripts/check-release-version.mjs "$GITHUB_REF_NAME"
 
       # A tag can point at ANY commit — including one that never survived review
       # on main (a branch prepared weeks earlier carrying this version string).
@@ -96,6 +95,13 @@ jobs:
           npm --prefix board ci --ignore-scripts
           npm --prefix board run build
           git diff --exit-code scripts/fleetd/board-dist
+          # git diff ignores UNTRACKED rebuild output (a fresh hashed chunk or
+          # lazy stylesheet the tag forgot to stage) — gate on porcelain too.
+          if [ -n "$(git status --porcelain --untracked-files=all -- scripts/fleetd/board-dist)" ]; then
+            echo "::error::board build produced untracked files — stage the rebuilt board-dist"
+            git status --porcelain --untracked-files=all -- scripts/fleetd/board-dist
+            exit 1
+          fi
 
       # No --provenance (automatic), no NODE_AUTH_TOKEN (OIDC).
       - run: npm publish --access public

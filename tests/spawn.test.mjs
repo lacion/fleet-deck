@@ -59,7 +59,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startDaemon, randomPort } from './helpers/daemon.mjs';
 import { postHook, postJson, getJson } from './helpers/http.mjs';
-import { waitUntil as waitUntilBase, waitForSpecRecords } from './helpers/wait.mjs';
+import { waitUntil as waitUntilBase, waitForSpecRecords, makeSpecRecordFile } from './helpers/wait.mjs';
 import { makeRepoWithWorktree, makePlainDir } from './helpers/gitrepo.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -152,7 +152,7 @@ function spawnCmdEnv({ recordFile, postUrl, staleMs } = {}) {
 // ---------------------------------------------------------------------------
 
 test('capability: FLEETDECK_SPAWN_CMD reports available:true reason:test-override on /health and /state', async (t) => {
-  const rec = path.join(scratchDir(), 'specs.jsonl');
+  const rec = makeSpecRecordFile(t);
   const daemon = await startDaemon({ env: spawnCmdEnv({ recordFile: rec }) });
   t.after(async () => { await daemon.stop(); });
 
@@ -199,7 +199,7 @@ test('spawn happy path: POST /api/spawn pre-creates the card immediately (source
   // POSTs a SessionStart back, so this session's card can only ever be in
   // its pre-created state -- proving bullet 1 of the v1.2 spawn flow without
   // racing our own assertions against the fixture's async POST.
-  const rec = path.join(scratchDir(), 'specs.jsonl');
+  const rec = makeSpecRecordFile(t);
   const cwd = scratchDir();
   const daemon = await startDaemon({ env: spawnCmdEnv({ recordFile: rec }) });
   t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
@@ -225,7 +225,7 @@ test('spawn happy path: POST /api/spawn pre-creates the card immediately (source
 test("spawn happy path: the fixture's SessionStart flips source to hooks and the spawns row to live, and the card gains a spawn{} descriptor", async (t) => {
   const port = randomPort();
   const baseUrl = `http://127.0.0.1:${port}`;
-  const rec = path.join(scratchDir(), 'specs.jsonl');
+  const rec = makeSpecRecordFile(t);
   const cwd = scratchDir();
   const daemon = await startDaemon({ port, env: spawnCmdEnv({ recordFile: rec, postUrl: baseUrl }) });
   t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
@@ -252,7 +252,7 @@ test("spawn happy path: the fixture's SessionStart flips source to hooks and the
 test('argv construction: prompt/model/permission-mode survive intact through the FLEETDECK_SPAWN_CMD override, including a shell-metachar-hostile prompt', async (t) => {
   const port = randomPort();
   const baseUrl = `http://127.0.0.1:${port}`;
-  const rec = path.join(scratchDir(), 'specs.jsonl');
+  const rec = makeSpecRecordFile(t);
   const cwd = scratchDir();
   const daemon = await startDaemon({ port, env: spawnCmdEnv({ recordFile: rec, postUrl: baseUrl }) });
   t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
@@ -370,7 +370,7 @@ test('option-injection: a prompt of "--dangerously-skip-permissions" rides after
   // skip_permissions:false, AND the flag-looking prompt is fenced behind `--`.
   const port = randomPort();
   const baseUrl = `http://127.0.0.1:${port}`;
-  const rec = path.join(scratchDir(), 'specs.jsonl');
+  const rec = makeSpecRecordFile(t);
   const cwd = scratchDir();
   const daemon = await startDaemon({ port, env: spawnCmdEnv({ recordFile: rec, postUrl: baseUrl }) });
   t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
@@ -416,7 +416,7 @@ test('option-injection: a prompt of "--dangerously-skip-permissions" rides after
 // ---------------------------------------------------------------------------
 
 test('fail-loud: missing cwd -> 4xx with a reason', async (t) => {
-  const rec = path.join(scratchDir(), 'specs.jsonl');
+  const rec = makeSpecRecordFile(t);
   const daemon = await startDaemon({ env: spawnCmdEnv({ recordFile: rec }) });
   t.after(async () => { await daemon.stop(); });
 
@@ -433,7 +433,7 @@ test('no fleet cap: the 8th concurrent spawn is as welcome as the 1st', async (t
   // default, so this test fails loudly if a cap ever creeps back in.
   const port = randomPort();
   const baseUrl = `http://127.0.0.1:${port}`;
-  const rec = path.join(scratchDir(), 'specs.jsonl');
+  const rec = makeSpecRecordFile(t);
   const daemon = await startDaemon({ port, env: spawnCmdEnv({ recordFile: rec, postUrl: baseUrl }) });
   const dirs = Array.from({ length: 8 }, () => scratchDir());
   t.after(async () => { await daemon.stop(); for (const d of dirs) rmSync(d, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
@@ -456,7 +456,7 @@ test('no fleet cap: the 8th concurrent spawn is as welcome as the 1st', async (t
 });
 
 test('fail-loud: worktree:true on a non-git cwd -> 409', async (t) => {
-  const rec = path.join(scratchDir(), 'specs.jsonl');
+  const rec = makeSpecRecordFile(t);
   const daemon = await startDaemon({ env: spawnCmdEnv({ recordFile: rec }) });
   const plain = makePlainDir();
   t.after(async () => { await daemon.stop(); plain.cleanup(); });
@@ -473,7 +473,7 @@ test('fail-loud: worktree:true on a non-git cwd -> 409', async (t) => {
 test('worktree path: worktree:true creates a sibling --fd-<callsign> checkout on branch fd/<callsign>, and the card collapses to the main tree\'s repo_id', async (t) => {
   const port = randomPort();
   const baseUrl = `http://127.0.0.1:${port}`;
-  const rec = path.join(scratchDir(), 'specs.jsonl');
+  const rec = makeSpecRecordFile(t);
   const repo = makeRepoWithWorktree({ repoName: 'fleetdeck-spawn-worktree-test' });
   const daemon = await startDaemon({ port, env: spawnCmdEnv({ recordFile: rec, postUrl: baseUrl }) });
   t.after(async () => { await daemon.stop(); repo.cleanup(); });
@@ -518,7 +518,7 @@ test('fan-out: 4 agents spawned into ONE repo each get their own worktree and br
   // the daemon can actually deliver N isolated checkouts from one cwd.
   const port = randomPort();
   const baseUrl = `http://127.0.0.1:${port}`;
-  const rec = path.join(scratchDir(), 'specs.jsonl');
+  const rec = makeSpecRecordFile(t);
   const repo = makeRepoWithWorktree({ repoName: 'fleetdeck-fanout-test' });
   const daemon = await startDaemon({ port, env: spawnCmdEnv({ recordFile: rec, postUrl: baseUrl }) });
   t.after(async () => { await daemon.stop(); repo.cleanup(); });
@@ -563,7 +563,7 @@ test('fan-out: 4 agents spawned into ONE repo each get their own worktree and br
 // ---------------------------------------------------------------------------
 
 test('kill: unknown spawn id -> 404', async (t) => {
-  const rec = path.join(scratchDir(), 'specs.jsonl');
+  const rec = makeSpecRecordFile(t);
   const daemon = await startDaemon({ env: spawnCmdEnv({ recordFile: rec }) });
   t.after(async () => { await daemon.stop(); });
 
@@ -574,7 +574,7 @@ test('kill: unknown spawn id -> 404', async (t) => {
 test('kill: a live (non-offline) card is refused without force -> 409', async (t) => {
   const port = randomPort();
   const baseUrl = `http://127.0.0.1:${port}`;
-  const rec = path.join(scratchDir(), 'specs.jsonl');
+  const rec = makeSpecRecordFile(t);
   const cwd = scratchDir();
   const daemon = await startDaemon({ port, env: spawnCmdEnv({ recordFile: rec, postUrl: baseUrl }) });
   t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
@@ -599,7 +599,7 @@ test("kill: tmux lookup failure is 500 and keeps the offline spawn tracked", asy
   // running. Kill must fail closed and leave the row active for a later retry.
   const port = randomPort();
   const baseUrl = `http://127.0.0.1:${port}`;
-  const rec = path.join(scratchDir(), 'specs.jsonl');
+  const rec = makeSpecRecordFile(t);
   const cwd = scratchDir();
   const daemon = await startDaemon({ port, env: spawnCmdEnv({ recordFile: rec, postUrl: baseUrl }) });
   t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
@@ -693,7 +693,7 @@ test('reconciliation: a spawn row whose window was never actually created in rea
   const cwd = scratchDir();
   const port = randomPort();
   const baseUrl = `http://127.0.0.1:${port}`;
-  const rec = path.join(scratchDir(), 'specs.jsonl');
+  const rec = makeSpecRecordFile(t);
   t.after(() => { rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   const first = await startDaemon({ port, home, env: spawnCmdEnv({ recordFile: rec, postUrl: baseUrl }) });
@@ -739,6 +739,84 @@ test('reconciliation: a spawn row whose window was never actually created in rea
   }
 });
 
+test('restart reconciliation removes a spawn-owned worktree left by a spawn interrupted before launch (BUG-153)', async (t) => {
+  // The daemon can die AFTER a worktree spawn created and persisted its
+  // worktree but BEFORE the pane launch — the 'provisioning' gap. Boot
+  // reconciliation settles that row 'gone'; before the fix it left the
+  // worktree's directory, fd/<callsign> branch and git registration behind
+  // on every such restart. Simulating the death without killing the daemon
+  // mid-launch: spawn with worktree:true against the fixture backend, wait
+  // for the pane to register (by then the worktree is created AND the
+  // ownership bit persisted), rewind the row to 'provisioning' (the state a
+  // crash in that gap would have left it in), stop keeping the DB, and boot
+  // a fresh daemon on the same FLEETDECK_HOME with no fleet windows in tmux.
+  const home = scratchDir('fleetdeck-spawn-home-');
+  const port = randomPort();
+  const baseUrl = `http://127.0.0.1:${port}`;
+  // BUG-213: use the cleaned helper so the spec-record dir (not just the file)
+  // is removed on teardown — a bare scratchDir() here leaked its owning dir.
+  const rec = makeSpecRecordFile(t);
+  const repo = makeRepoWithWorktree({ repoName: 'fleetdeck-bug153-worktree' });
+  t.after(() => { rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); repo.cleanup(); });
+
+  const first = await startDaemon({ port, home, env: spawnCmdEnv({ recordFile: rec, postUrl: baseUrl }) });
+  let sid; let spawnId; let callsign;
+  try {
+    const spawnRes = await postJson(`${first.baseUrl}/api/spawn`, { cwd: repo.root, worktree: true });
+    assert.equal(spawnRes.status, 200, `worktree spawn should 200 (got ${spawnRes.status}: ${JSON.stringify(spawnRes.json)})`);
+    ({ session_id: sid, spawn_id: spawnId, callsign } = spawnRes.json);
+    await waitUntil(async () => {
+      const state = (await getJson(`${first.baseUrl}/state`)).json;
+      return findSession(state, sid)?.spawn?.status === 'live' ? true : null;
+    }, { label: 'spawn reaches status live before the simulated crash' });
+  } finally {
+    await first.stop({ keepHome: true });
+  }
+
+  const worktreePath = path.join(path.dirname(repo.root), `${path.basename(repo.root)}--fd-${callsign}`);
+  assert.ok(existsSync(worktreePath), `sanity: the worktree ${worktreePath} exists before the simulated crash`);
+  const branchGone = () => !execFileSync('git', ['-C', repo.root, 'branch', '--list', `fd/${callsign}`], { encoding: 'utf8' }).trim();
+
+  // Rewind the row into the exact shape a crash between worktree persistence
+  // and pane launch would have left: 'provisioning', worktree_path set.
+  const { DatabaseSync } = await import('node:sqlite');
+  const db = new DatabaseSync(path.join(home, 'fleetd.db'));
+  try {
+    db.prepare("UPDATE spawns SET status = 'provisioning' WHERE spawn_id = ?").run(spawnId);
+  } finally {
+    db.close();
+  }
+
+  // An inert non-fleet session on the test socket makes the boot listing
+  // reachable and the empty fleet list authoritative (never UNKNOWN).
+  const tmuxSocket = `fleetdeck-test-${port}`;
+  try {
+    execFileSync('tmux', ['-L', tmuxSocket, '-f', '/dev/null', 'new-session', '-d', '-s', `reconcile-reachable-${port}`, 'sleep 3600']);
+  } catch {
+    t.skip('tmux server unavailable for authoritative-empty reconciliation');
+    return;
+  }
+  t.after(() => {
+    try { execFileSync('tmux', ['-L', tmuxSocket, 'kill-server'], { stdio: 'ignore' }); } catch { /* second.stop may already remove it */ }
+  });
+
+  const second = await startDaemon({ port, home });
+  t.after(async () => { await second.stop({ keepHome: false }); });
+
+  const card = await waitUntil(async () => {
+    const state = (await getJson(`${second.baseUrl}/state`)).json;
+    const c = findSession(state, sid);
+    return c && c.col === 'offline' ? c : null;
+  }, { label: 'restart reconciliation settles the interrupted spawn\'s card offline', timeoutMs: 12000 });
+  assert.equal(card.col, 'offline');
+
+  await waitUntil(() => !existsSync(worktreePath) || null,
+    { label: `stranded worktree ${worktreePath} is removed at boot`, timeoutMs: 12000 });
+  const listing = execFileSync('git', ['-C', repo.root, 'worktree', 'list', '--porcelain'], { encoding: 'utf8' });
+  assert.ok(!listing.includes(worktreePath), `git worktree list must no longer register ${worktreePath} (listing: ${listing})`);
+  assert.ok(branchGone(), `the stranded fd/${callsign} branch must be deleted with its worktree`);
+});
+
 // ---------------------------------------------------------------------------
 // 10. Ticket-first spawn naming (0.6.0)
 //
@@ -753,7 +831,7 @@ test('reconciliation: a spawn row whose window was never actually created in rea
 test('ticket spawn: a spawn from a ticket-branch cwd is ticket-first (callsign, worktree dir, fd/ branch); its own SessionStart does not re-rename', async (t) => {
   const port = randomPort();
   const baseUrl = `http://127.0.0.1:${port}`;
-  const rec = path.join(scratchDir(), 'specs.jsonl');
+  const rec = makeSpecRecordFile(t);
   const repo = makeRepoWithWorktree({ repoName: 'fd-spawn-ticket', branch: 'feature/PROJ-123-work' });
   const daemon = await startDaemon({ port, env: spawnCmdEnv({ recordFile: rec, postUrl: baseUrl }) });
   t.after(async () => { await daemon.stop(); repo.cleanup(); });
@@ -797,7 +875,7 @@ test('ticket spawn: a spawn from a ticket-branch cwd is ticket-first (callsign, 
 test('ticket spawn leftover-artifact: a pre-existing ticket-first worktree dir forces a deduped -<sid4> workname', async (t) => {
   const port = randomPort();
   const baseUrl = `http://127.0.0.1:${port}`;
-  const rec = path.join(scratchDir(), 'specs.jsonl');
+  const rec = makeSpecRecordFile(t);
   const repo = makeRepoWithWorktree({ repoName: 'fd-spawn-ticket-dedup', branch: 'feature/PROJ-123-work' });
   const daemon = await startDaemon({ port, env: spawnCmdEnv({ recordFile: rec, postUrl: baseUrl }) });
   t.after(async () => { await daemon.stop(); repo.cleanup(); });
@@ -839,7 +917,7 @@ test('ticket spawn leftover-artifact: a pre-existing ticket-first worktree dir f
 test('ticketless spawn keeps the plain --fd-<callsign> worktree format (no ticket in the path)', async (t) => {
   const port = randomPort();
   const baseUrl = `http://127.0.0.1:${port}`;
-  const rec = path.join(scratchDir(), 'specs.jsonl');
+  const rec = makeSpecRecordFile(t);
   // A repo whose worktree branch carries NO Jira key.
   const repo = makeRepoWithWorktree({ repoName: 'fd-spawn-noticket', branch: 'feature/no-key-here' });
   const daemon = await startDaemon({ port, env: spawnCmdEnv({ recordFile: rec, postUrl: baseUrl }) });

@@ -1,7 +1,7 @@
 // db.mjs — SQLite store for fleetd (node:sqlite DatabaseSync, WAL mode).
 // All timestamps are ms epoch integers.
 
-import { chmodSync } from 'node:fs';
+import { chmodSync, statSync } from 'node:fs';
 
 // Suppress ONLY the warning raised while node:sqlite itself is imported. WHY:
 // removing `warning` listeners here clobbers handlers installed by launchers,
@@ -51,7 +51,9 @@ CREATE TABLE IF NOT EXISTS sessions (
   archived_at       INTEGER,
   ticket            TEXT,               -- current Jira key (raven-PROJ-123's PROJ-123) or NULL
   ticket_source     TEXT,               -- 'branch' | 'manual'; NULL = never set (auto path still open)
-  prev_callsign     TEXT,               -- birth callsign, write-once on the FIRST rename (stale-ref anchor for mail)
+  prev_callsign     TEXT,               -- birth callsign, write-once on the FIRST rename (stale-ref anchor for mail);
+                                        -- the anchor never moves, even when a rename gives the slot a new owner
+                                        -- (a ticket-clear revert writes the lineage's birth name, not the dropped one)
   -- 0.7.0 Move-to-tmux (adopt): three additive columns, all NULL for pre-0.7.0
   -- rows (never armed, never proven-ended). adopt_armed_until stores the arm
   -- DEADLINE (ms epoch) so a consumer just checks it against now() in JS --
@@ -69,7 +71,15 @@ CREATE TABLE IF NOT EXISTS sessions (
   -- 0.7.1 custom names: the human-chosen suffix of <animal>-<suffix>. Presence
   -- means "a human named this card", which is what blocks branch auto-detection
   -- from renaming over it.
-  custom_suffix     TEXT
+  custom_suffix     TEXT,
+  -- Run generation (BUG-025): SessionEnd is an ASYNC hook while SessionStart is
+  -- synchronous, so a claude --resume (a NEW process reusing the SAME session
+  -- id) can register before the previous process's SessionEnd lands — and the
+  -- late end would then tombstone the live resumed card. The hook shims mint one
+  -- fleet_run nonce per PROCESS and attach it to every event they send; the
+  -- active run is persisted here at SessionStart and a SessionEnd applies only
+  -- when its nonce matches. NULL on rows whose hooks predate the shims.
+  run_id            TEXT
 );
 CREATE TABLE IF NOT EXISTS file_touches (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -89,7 +99,15 @@ CREATE TABLE IF NOT EXISTS mail (
   text         TEXT,
   at           INTEGER,
   delivered_at INTEGER,
-  expired_at   INTEGER
+  expired_at   INTEGER,
+  -- BUG-034: an in-flight delivery LEASE. Set (with delivered_at still NULL)
+  -- when a claim path hands the text to a consumer whose acknowledgement has
+  -- not yet landed (/api/watch response, owned-pane paste, board /mail GET);
+  -- finalized (delivered_at set) only on explicit ack or a completed side
+  -- effect. Stamped as the lease DEADLINE — a daemon that exits mid-flight
+  -- leaves rows whose deadline simply passes, so a restarted daemon claims
+  -- them again.
+  claimed_at   INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_mail_to ON mail(to_session, delivered_at);
 CREATE TABLE IF NOT EXISTS events (
@@ -141,6 +159,8 @@ CREATE TABLE IF NOT EXISTS spawns (
   tmux_window   TEXT,               -- fd<port>-<callsign> (scoped, kill-verified)
   cwd           TEXT,               -- requested cwd (the form value)
   worktree_path TEXT,               -- effective cwd when worktree:true, else NULL
+  worktree_owned INTEGER,           -- 1: this spawn CREATED the worktree (boot cleanup may remove it);
+                                    -- 0: the worktree pre-existed and was only reused; NULL: unknown (pre-fix row)
   requested_at  INTEGER,
   status        TEXT DEFAULT 'spawning',  -- spawning | stalled | live | pane-dead | killed | gone
   skip_permissions INTEGER DEFAULT 0,    -- v1.3 unsupervised spawn (either bypass form)
@@ -198,6 +218,21 @@ CREATE TABLE IF NOT EXISTS plans (
 );
 CREATE INDEX IF NOT EXISTS idx_plans_status ON plans(status);
 CREATE INDEX IF NOT EXISTS idx_plans_question ON plans(question_id);
+-- Alias table (BUG-107): every callsign a card has ever worn, in the order it
+-- wore it. prev_callsign is ONE slot — a ticket-clear revert used to overwrite
+-- the birth-name anchor with the dropped ticketed name, and the next rename
+-- then permanently forgot the SessionStart callsign. Every rename INSERT OR
+-- IGNOREs the outgoing name here (idempotent), and mail/assign/command target
+-- resolution falls back to this set after current names and the anchor, so a
+-- supported ticket/name/clear sequence can never orphan a name a peer or an
+-- automation is still using.
+CREATE TABLE IF NOT EXISTS session_aliases (
+  session_id TEXT,
+  callsign   TEXT,
+  at         INTEGER,                   -- when this card stopped wearing the name
+  PRIMARY KEY (session_id, callsign)
+);
+CREATE INDEX IF NOT EXISTS idx_aliases_callsign ON session_aliases(callsign);
 `;
 
 // Additive schema migration: DBs created before the agents-cli ingest
@@ -273,9 +308,21 @@ function migrate(db) {
   if (!cols.includes('custom_suffix')) {
     db.exec('ALTER TABLE sessions ADD COLUMN custom_suffix TEXT');
   }
+  // Run generation (BUG-025). NULL backfill is truthful — pre-existing rows
+  // registered before the hook shims minted fleet_run nonces, and a NULL here
+  // makes any tagged SessionEnd conservatively skip the tombstone (the dead
+  // card then converges via retention instead of killing a resumed process).
+  if (!cols.includes('run_id')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN run_id TEXT');
+  }
   const mailCols = db.prepare('PRAGMA table_info(mail)').all().map(r => r.name);
   if (!mailCols.includes('expired_at')) {
     db.exec('ALTER TABLE mail ADD COLUMN expired_at INTEGER');
+  }
+  // BUG-034 lease column. NULL backfill is truthful for every pre-existing
+  // row: nothing was ever claimed under a lease before this shipped.
+  if (!mailCols.includes('claimed_at')) {
+    db.exec('ALTER TABLE mail ADD COLUMN claimed_at INTEGER');
   }
   const spawnCols = db.prepare('PRAGMA table_info(spawns)').all().map(r => r.name);
   if (spawnCols.length && !spawnCols.includes('skip_permissions')) {
@@ -317,9 +364,23 @@ function migrate(db) {
   if (spawnCols.length && !spawnCols.includes('fail_detail')) {
     db.exec('ALTER TABLE spawns ADD COLUMN fail_detail TEXT');
   }
+  // BUG-153: the ownership bit behind boot reconciliation's worktree removal.
+  // NULL is the truthful backfill — pre-fix rows never recorded whether their
+  // worktree was created or reused, so boot cleanup must leave those trees
+  // alone (exactly the pre-fix behaviour) rather than guess.
+  if (spawnCols.length && !spawnCols.includes('worktree_owned')) {
+    db.exec('ALTER TABLE spawns ADD COLUMN worktree_owned INTEGER');
+  }
+  // BUG-107 alias-table backfill for pre-existing rows: the current callsign
+  // and the write-once prev_callsign anchor are the two names a row provably
+  // still answers to. INSERT OR IGNORE makes re-runs free.
+  db.exec(`INSERT OR IGNORE INTO session_aliases (session_id, callsign, at)
+    SELECT session_id, callsign, NULL FROM sessions WHERE callsign IS NOT NULL`);
+  db.exec(`INSERT OR IGNORE INTO session_aliases (session_id, callsign, at)
+    SELECT session_id, prev_callsign, NULL FROM sessions WHERE prev_callsign IS NOT NULL`);
 }
 
-export function openDb(file) {
+export function openDb(file, fsImpl = { chmodSync, statSync }) {
   const db = new DatabaseSync(file);
   db.exec(DDL);
   migrate(db);
@@ -339,11 +400,46 @@ export function openDb(file) {
   // unrelated ./:memory: file if one happened to exist in cwd. Each chmod is also
   // wrapped because the WAL/SHM sidecars are created lazily on first write (and
   // recreated after a checkpoint), so they may be absent right now — ENOENT there
-  // must not become a spurious throw.
+  // must not become a spurious throw. The MAIN file is different: SQLite has
+  // already opened it by now, so it exists, and an unverifiable owner-only mode
+  // there means the declared confidentiality boundary silently degraded (shared
+  // HOME not owned by the daemon UID, permissive pre-created DB, a filesystem
+  // that refuses chmod) while other local users keep read access. Refuse rather
+  // than serve state the contract says is private. (`fsImpl` exists so tests
+  // can simulate a chmod refusal — a real EPERM needs a foreign-owned file,
+  // which an unprivileged test cannot construct.)
   if (file !== ':memory:') {
-    try { chmodSync(file, 0o600); } catch { /* non-file DB / not yet on disk */ }
-    try { chmodSync(`${file}-wal`, 0o600); } catch { /* WAL created lazily; dir mode covers the gap */ }
-    try { chmodSync(`${file}-shm`, 0o600); } catch { /* SHM created lazily; dir mode covers the gap */ }
+    try {
+      fsImpl.chmodSync(file, 0o600);
+      const mode = fsImpl.statSync(file).mode & 0o777;
+      if (mode & 0o077) {
+        throw Object.assign(new Error(`mode still ${mode.toString(8)} after chmod 0600`), { code: 'EMODE' });
+      }
+    } catch (err) {
+      db.close();
+      throw new Error(
+        `fleetd.db owner-only confidentiality could not be established (${err?.code || err?.message || 'unknown error'}); refusing to start with the state database readable by other users`,
+        { cause: err },
+      );
+    }
+    for (const sidecar of [`${file}-wal`, `${file}-shm`]) {
+      // Lazily absent sidecars are expected — ENOENT only. Any OTHER failure
+      // (EPERM on a shared HOME, a mode the stat proves is still permissive)
+      // breaks the same contract on a file that already exists, so refuse too.
+      try {
+        fsImpl.chmodSync(sidecar, 0o600);
+        if (fsImpl.statSync(sidecar).mode & 0o077) {
+          throw Object.assign(new Error('mode still permissive after chmod 0600'), { code: 'EMODE' });
+        }
+      } catch (err) {
+        if (err?.code === 'ENOENT') continue;
+        db.close();
+        throw new Error(
+          `fleetd.db sidecar owner-only confidentiality could not be established (${err?.code || err?.message || 'unknown error'}); refusing to start with the state database readable by other users`,
+          { cause: err },
+        );
+      }
+    }
   }
   return db;
 }

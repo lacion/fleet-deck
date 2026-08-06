@@ -5,6 +5,7 @@
 
 import { parseCommand, validateNameSuffix } from './helpers.mjs';
 import { normalizeTicket } from './tickets.mjs';
+import { MAIL_MAX_LEN } from './mail.mjs';
 
 export function createCommands(ctx) {
   const {
@@ -17,10 +18,12 @@ export function createCommands(ctx) {
   // later branch switch must not re-ticket a session a human deliberately
   // cleared. Revert to the birth callsign when one was recorded AND is still
   // free; if it was reissued to a newer session, keep the current name rather
-  // than collide. On revert the DROPPED ticketed name moves into prev_callsign
-  // (never nulled): peers' briefs and the ticker still reference it, so it must
-  // stay mail-routable — the row holds the same two-name set as before the
-  // clear (columns merely swap), so no other session's uniqueness changes.
+  // than collide. BUG-107: on revert the birth name moves back into CALLSIGN
+  // and prev_callsign becomes NULL — it is the write-once stale-ref ANCHOR,
+  // never a scratch slot. Keeping the dropped ticketed name there (the old
+  // "columns merely swap" behaviour) meant the very next rename re-anchored on
+  // that intermediate alias and permanently forgot the SessionStart callsign.
+  // The dropped name stays routable via the alias table instead.
   function clearTicket(sid) {
     const c = q.getSession.get(sid);
     if (!c || c.ended_at != null) return { ok: false, reason: 'no live session for that target' };
@@ -28,7 +31,8 @@ export function createCommands(ctx) {
     let result = { ok: true, renamed: false, callsign: c.callsign, ticket: null };
     if (c.prev_callsign && !q.callsignTaken.get(c.prev_callsign, c.prev_callsign, sid)) {
       upd.callsign = c.prev_callsign;
-      upd.prev_callsign = c.callsign;
+      upd.prev_callsign = null;
+      q.rememberAlias.run(sid, c.callsign, Date.now());
       tick(`🎫 ${c.callsign} reverted to ${c.prev_callsign} (ticket cleared)`);
       result = { ok: true, renamed: true, callsign: c.prev_callsign, ticket: null, previous: c.callsign };
     } else {
@@ -40,15 +44,19 @@ export function createCommands(ctx) {
 
   // Resolve a manual `ticket` target to exactly one live (non-ended,
   // non-archived) session by session_id | current callsign | birth callsign
-  // (prev_callsign — the stale name a human may still be typing). Returns
-  // { sid } on a unique hit, or { error } (0 → none, >1 → ambiguous).
+  // (prev_callsign — the stale name a human may still be typing), then by the
+  // full alias history (BUG-107: a name the card wore and dropped at any
+  // point). Returns { sid } on a unique hit, or { error } (0 → none, >1 →
+  // ambiguous).
   function resolveTicketTarget(target) {
     const matches = q.visibleSessions.all().filter(s =>
       s.ended_at == null
       && (s.session_id === target || s.callsign === target || s.prev_callsign === target));
-    if (matches.length === 0) return { error: `no live session matching "${target}"` };
     if (matches.length > 1) return { error: `"${target}" is ambiguous — use the session id` };
-    return { sid: matches[0].session_id };
+    const found = matches.length ? matches : q.aliasesMatch.all(target, target).filter(s => s.ended_at == null);
+    if (found.length === 0) return { error: `no live session matching "${target}"` };
+    if (found.length > 1) return { error: `"${target}" is ambiguous — use the session id` };
+    return { sid: found[0].session_id };
   }
 
   // ------------------------------------------------------------- commands
@@ -57,6 +65,26 @@ export function createCommands(ctx) {
     const logCommand = extra =>
       q.insertCommand.run(Date.now(), String(text ?? ''), JSON.stringify(extra ? { ...parsed, ...extra } : parsed));
     let delivered = 0;
+    if (parsed.cmd === 'broadcast' || parsed.cmd === 'assign_auto' || parsed.cmd === 'assign') {
+      // BUG-021: the mail() clamp reports {truncated, original_length}, but the
+      // command path used to ignore that receipt — /command returned ok:true
+      // while agents received a body with its tail silently cut (acceptance
+      // criteria, safety constraints, diagnostics lost). Validate the FULLY
+      // FRAMED body (assignments prepend [FLEETDECK ASSIGNMENT], which itself
+      // counts against the cap) against MAIL_MAX_LEN BEFORE inserting any
+      // recipient row, and reject the command atomically: nothing is stored,
+      // nothing half-delivered, and the operator is told to shorten or split
+      // instead of believing a partial instruction landed intact.
+      const frame = parsed.cmd === 'broadcast' ? '' : '[FLEETDECK ASSIGNMENT] ';
+      const framed = `${frame}${parsed.text}`;
+      if (framed.length > MAIL_MAX_LEN) {
+        const reason = `message too long (${framed.length} > ${MAIL_MAX_LEN} code units) — shorten it or split it into multiple commands`;
+        logCommand({ rejected: true, reason });
+        tick(`⚠ command rejected: ${reason}`);
+        onMutate();
+        return { ok: false, reason, max_length: MAIL_MAX_LEN, original_length: framed.length };
+      }
+    }
     if (parsed.cmd === 'broadcast') {
       const targets = resolveTargets('all');
       targets.forEach(sid => mail(sid, 'orchestrator', parsed.text));
@@ -87,6 +115,17 @@ export function createCommands(ctx) {
       return { ok: true, assigned_to };
     } else if (parsed.cmd === 'assign') {
       const targets = resolveTargets(parsed.target);
+      // Singular targeting must never fan out: a duplicated callsign resolves
+      // to two sessions, and silently assigning BOTH means two agents
+      // independently execute a task meant for one (duplicate compute,
+      // conflicting edits). Fan-out stays reserved for the explicit `all` and
+      // `repo:*` scopes; a multi-hit direct target is refused loudly, like
+      // `ticket`'s resolver above.
+      if (parsed.target !== 'all' && !/^repo:/.test(parsed.target) && targets.length > 1) {
+        logCommand({ refused: 'ambiguous' });
+        onMutate();
+        return { ok: false, reason: `"${parsed.target}" matches ${targets.length} sessions — use the session id` };
+      }
       // Same frame as auto-routing (v1.1): every routed task carries
       // [FLEETDECK ASSIGNMENT] so the wake path / doctrine skill can treat
       // assignments uniformly regardless of how they were targeted.

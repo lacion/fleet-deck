@@ -17,7 +17,7 @@ export async function resolve(specifier, context, nextResolve) {
   if (specifier === './http.mjs' && context.parentURL?.endsWith('/scripts/fleetd/fleetd.mjs')) {
     return { url: HTTP_URL, shortCircuit: true };
   }
-  if (specifier === 'node:os' && context.parentURL?.endsWith('/scripts/fleetd/fleetd.mjs')) {
+  if (specifier === 'node:os' && (context.parentURL?.endsWith('/scripts/fleetd/fleetd.mjs') || context.parentURL?.endsWith('/scripts/fleetd/mdns.mjs'))) {
     return { url: OS_URL, shortCircuit: true };
   }
   return nextResolve(specifier, context);
@@ -34,20 +34,40 @@ export async function load(url, context, nextLoad) {
       const recordFile = process.env.FLEETDECK_MDNS_RECORD;
       const delay = Number(process.env.FLEETDECK_MDNS_SEND_DELAY_MS || 150);
       function record(value) {
+        if (!recordFile) return;
         appendFileSync(recordFile, JSON.stringify({ ...value, at: Date.now() }) + '\\n');
       }
 
+      let nextId = 0;
       class MockSocket {
+        constructor() { this.id = nextId++; }
         on() { return this; }
-        setMulticastTTL() {}
+        // FLEETDECK_MDNS_FAIL_TTL=unicast|multicast simulates a platform that
+        // refuses the corresponding setsockopt, so tests can drive the
+        // responder's TTL degradation path.
+        setTTL(value) {
+          record({ type: 'setTTL', value });
+          if (process.env.FLEETDECK_MDNS_FAIL_TTL === 'unicast') throw new Error('mock: IP_TTL refused');
+        }
+        setMulticastTTL(value) {
+          record({ type: 'setMulticastTTL', value });
+          if (process.env.FLEETDECK_MDNS_FAIL_TTL === 'multicast') throw new Error('mock: IP_MULTICAST_TTL refused');
+        }
         setMulticastLoopback() {}
-        addMembership() {}
+        setMulticastInterface(address) { record({ type: 'setiface', id: this.id, address }); }
+        // BUG-122 regression seam: FLEETDECK_MDNS_JOIN_FAILS=1 models a network
+        // with no multicast route — every membership join fails and the
+        // responder must terminally disable itself after bind.
+        addMembership(_group, address) {
+          record({ type: 'join', id: this.id, address: address || null });
+          if (process.env.FLEETDECK_MDNS_JOIN_FAILS) throw new Error('no multicast route');
+        }
         bind(_options, callback) { setImmediate(callback); return this; }
-        send(packet, _port, _address, callback = () => {}) {
+        send(packet, _port, address, callback = () => {}) {
           const wire = Buffer.from(packet).toString('base64');
-          record({ type: 'send', wire });
+          record({ type: 'send', id: this.id, wire, address });
           const timer = setTimeout(() => {
-            record({ type: 'callback', wire });
+            record({ type: 'callback', id: this.id, wire });
             callback();
           }, delay);
           timer.unref?.();
@@ -90,7 +110,15 @@ export async function load(url, context, nextLoad) {
             server.keepalive = setInterval(() => {}, 60_000);
             setImmediate(callback);
           };
-          return { server };
+          // refreshLan mirrors the real createHttp's return contract: fleetd's
+          // LAN watcher calls it when the mocked interfaces change. Recording
+          // the calls lets a test assert the share-panel state followed a roam.
+          const lanRefreshes = [];
+          function refreshLan(nextLan) {
+            lanRefreshes.push(nextLan);
+            if (consoleRecord) appendFileSync(consoleRecord, 'refreshLan ' + JSON.stringify(nextLan) + '\\n');
+          }
+          return { server, refreshLan };
         }
       `,
     };
@@ -101,9 +129,30 @@ export async function load(url, context, nextLoad) {
       shortCircuit: true,
       source: `
         import realOs from 'node:os';
+        import { readFileSync } from 'node:fs';
+        // Two interface seams compose: FLEETDECK_TEST_NET_FILE models a DHCP
+        // "roam" (fleetd's LAN watcher polls os.networkInterfaces(), and a file
+        // can be rewritten mid-run while env vars cannot), while
+        // FLEETDECK_TEST_NETIFS statically pins a multihomed interface set at
+        // spawn. NET_FILE wins when present; absent both seams the set is
+        // network A — exactly what the pre-existing suites relied on.
+        const NET_A = [{ family: 'IPv4', internal: false, address: '192.0.2.77' }];
+        const seamFile = process.env.FLEETDECK_TEST_NET_FILE;
+        const staticNetifs = process.env.FLEETDECK_TEST_NETIFS ? JSON.parse(process.env.FLEETDECK_TEST_NETIFS) : null;
+        const ifaces = () => {
+          if (seamFile) {
+            try {
+              const parsed = JSON.parse(readFileSync(seamFile, 'utf8'));
+              if (Array.isArray(parsed) && parsed.length) return { ethernet: parsed };
+            } catch { /* mid-write or absent: keep advertising network A */ }
+            return { ethernet: NET_A };
+          }
+          if (staticNetifs) return staticNetifs;
+          return { ethernet: NET_A };
+        };
         export default {
           ...realOs,
-          networkInterfaces: () => ({ ethernet: [{ family: 'IPv4', internal: false, address: '192.0.2.77' }] }),
+          networkInterfaces: () => ifaces(),
         };
       `,
     };

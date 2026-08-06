@@ -6,10 +6,15 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'nod
 import os, { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createRepos, parseRepoInput, quickBranchCheck, repoDefaultOrgChoice, repoDefaultOrgProblem } from '../scripts/fleetd/repos.mjs';
-import { detectCoderWorkspaceRoot } from '../scripts/fleetd/config.mjs';
+import { detectCoderWorkspaceRoot, resolveHome } from '../scripts/fleetd/config.mjs';
+import { openDb } from '../scripts/fleetd/db.mjs';
+import { createCore } from '../scripts/fleetd/derive.mjs';
+import { createStatements } from '../scripts/fleetd/statements.mjs';
 import { startDaemon, randomPort } from './helpers/daemon.mjs';
 import { getJson, postHook, postJson } from './helpers/http.mjs';
 import { makeRemoteRepo } from './helpers/gitrepo.mjs';
+import { WebSocket } from 'ws';
+import { waitUntil } from './helpers/wait.mjs';
 
 test('parseRepoInput accepts supported forms and rejects argv/scheme hazards', () => {
   assert.deepEqual(parseRepoInput('org/repo'), {
@@ -169,6 +174,46 @@ test('detectCoderWorkspaceRoot needs both a Coder signal and the probe directory
   }
 });
 
+test('resolveHome always returns one absolute path, independent of the process cwd', () => {
+  const previousHome = process.env.FLEETDECK_HOME;
+  try {
+    // A RELATIVE FLEETDECK_HOME used to pass through verbatim, so the daemon and
+    // each hook — started from different cwds — resolved different state trees
+    // and the hook's token never matched the daemon's. Anchored to the user's
+    // home (the documented base), every process converges on one dir.
+    process.env.FLEETDECK_HOME = 'state';
+    const anchored = resolveHome();
+    assert.equal(path.isAbsolute(anchored), true);
+    assert.equal(anchored, path.join(os.homedir(), 'state'));
+    // Same answer from ANY working directory — the regression itself.
+    const other = mkdtempSync(path.join(tmpdir(), 'fleetdeck-home-cwd-'));
+    try {
+      process.chdir(other);
+      assert.equal(resolveHome(), anchored);
+    } finally {
+      process.chdir(path.dirname(other));
+      rmSync(other, { recursive: true, force: true });
+    }
+    // Unset → the ~/.fleetdeck default.
+    delete process.env.FLEETDECK_HOME;
+    assert.equal(resolveHome(), path.join(os.homedir() || '/tmp', '.fleetdeck'));
+    // An absolute value is honored, but dot segments are normalized away so
+    // '/x/../y' and '/y' name ONE state dir, not two.
+    const absolute = mkdtempSync(path.join(tmpdir(), 'fleetdeck-home-'));
+    try {
+      process.env.FLEETDECK_HOME = absolute;
+      assert.equal(resolveHome(), absolute);
+      process.env.FLEETDECK_HOME = path.join(absolute, 'sub', '..');
+      assert.equal(resolveHome(), absolute);
+    } finally {
+      rmSync(absolute, { recursive: true, force: true });
+    }
+  } finally {
+    if (previousHome == null) delete process.env.FLEETDECK_HOME;
+    else process.env.FLEETDECK_HOME = previousHome;
+  }
+});
+
 test('resolveReposDir default is ~/projects off Coder (detection needs both signal and /workspace)', () => {
   const saved = {};
   for (const k of ['FLEETDECK_REPOS_DIR', 'CODER', 'CODER_WORKSPACE_NAME', 'CODER_AGENT_URL']) {
@@ -301,6 +346,30 @@ test('resolveTarget reuses a checkout whose unported ssh:// origin matches the g
   assert.equal(target.root, dest);
 });
 
+test('resolveTarget folds ONLY the hostname — same-host paths differing in case never match', async t => {
+  const reposDir = withReposDir(t);
+  // DNS is case-insensitive; a repository PATH is not — on a case-sensitive
+  // forge Org/repo and org/repo are different repositories, so reusing this
+  // checkout for the lowercase spawn would run the agent in the wrong tree.
+  checkoutWithOrigin(reposDir, 'repo', 'https://example.com/Org/repo.git');
+  const { resolveTarget } = createRepos(fakeReposCtx({ repo_transport: 'https' }));
+  await assert.rejects(
+    () => resolveTarget({ repo: 'https://example.com/org/repo.git' }),
+    err => err.status === 409 && /exists and is not/.test(err.message),
+  );
+});
+
+test('resolveTarget matches origins that differ ONLY in scheme/hostname case', async t => {
+  const reposDir = withReposDir(t);
+  // Hostname case IS noise (DNS is case-insensitive) and so is the scheme — a
+  // checkout cloned via an uppercase-spelled origin is still the same repo.
+  const dest = checkoutWithOrigin(reposDir, 'repo', 'HTTPS://EXAMPLE.COM/org/repo.git');
+  const { resolveTarget } = createRepos(fakeReposCtx({ repo_transport: 'https' }));
+  const target = await resolveTarget({ repo: 'https://example.com/org/repo.git' });
+  assert.equal(target.mode, 'local');
+  assert.equal(target.root, dest);
+});
+
 test('resolveTarget still refuses a same-named checkout with a different origin', async t => {
   const reposDir = withReposDir(t);
   checkoutWithOrigin(reposDir, 'repo', 'git@gitlab.com:other/repo.git');
@@ -321,6 +390,54 @@ test('a ported ssh origin stays outside normalization (conservative fallback)', 
     () => resolveTarget({ repo: 'org/repo', repo_host: 'gitlab' }),
     err => err.status === 409 && /exists and is not/.test(err.message),
   );
+});
+
+test('a generic ssh server does not conflate repositories across usernames', async t => {
+  const reposDir = withReposDir(t);
+  // alice@ and bob@ can be entirely different accounts on one generic host —
+  // conflating them would "prove" this checkout is alice's repo and reuse it.
+  checkoutWithOrigin(reposDir, 'repo', 'bob@git.example.test:org/repo.git');
+  const { resolveTarget } = createRepos(fakeReposCtx());
+  await assert.rejects(
+    () => resolveTarget({ repo: 'alice@git.example.test:org/repo.git' }),
+    err => err.status === 409 && /exists and is not/.test(err.message),
+  );
+});
+
+test('a generic https server does not conflate case-distinct repository paths', async t => {
+  const reposDir = withReposDir(t);
+  // Only a recognized forge guarantees case-insensitive paths; on a generic
+  // host Org/repo and org/repo can be two different repositories.
+  checkoutWithOrigin(reposDir, 'repo', 'https://git.example.test/Org/repo.git');
+  const { resolveTarget } = createRepos(fakeReposCtx());
+  await assert.rejects(
+    () => resolveTarget({ repo: 'https://git.example.test/org/repo.git' }),
+    err => err.status === 409 && /exists and is not/.test(err.message),
+  );
+});
+
+test('a generic host still matches across transports and host case, username kept', async t => {
+  const reposDir = withReposDir(t);
+  // The sound part of generic-host normalization: DNS is case-insensitive and
+  // an scp spelling of an ssh URL is the same door — only the username and the
+  // path's case are identity.
+  const dest = checkoutWithOrigin(reposDir, 'repo', 'ssh://alice@GIT.example.test/Org/repo.git');
+  const { resolveTarget } = createRepos(fakeReposCtx());
+  const target = await resolveTarget({ repo: 'alice@git.example.test:Org/repo.git' });
+  assert.equal(target.mode, 'local');
+  assert.equal(target.root, dest);
+});
+
+test('a recognized forge still unifies case and userinfo across transports', async t => {
+  const reposDir = withReposDir(t);
+  // github.com/gitlab.com are case-insensitive in owner+repo and front every
+  // transport with one account-agnostic ssh user, so all these spellings ARE
+  // one repository and the checkout is reused.
+  const dest = checkoutWithOrigin(reposDir, 'repo', 'ssh://git@github.com/Org/Repo.git');
+  const { resolveTarget } = createRepos(fakeReposCtx());
+  const target = await resolveTarget({ repo: 'org/repo', repo_host: 'github', repo_transport: 'https' });
+  assert.equal(target.mode, 'local');
+  assert.equal(target.root, dest);
 });
 
 test('quickBranchCheck mirrors the board gates', () => {
@@ -345,6 +462,67 @@ test('hook catalog writes and /state carries repo_catalog plus settings', async 
   assert.equal(row.repo_name, path.basename(root));
   assert.ok(state.settings?.repos_dir?.resolved);
   assert.ok(['override', 'env', 'default'].includes(state.settings.repos_dir.source));
+});
+
+test('repo_catalog never ships origin credentials over /state or the /ws snapshot', async t => {
+  // BUG-048: touchRepo's backfill persists `git remote get-url origin`
+  // VERBATIM, and snapshot.mjs used to emit it unchanged — so an origin like
+  // `https://user:PAT@host/org/repo.git` (or a `?access_token=` query) reached
+  // every board payload and the spawn-form DOM. The raw value must stay
+  // server-side; the snapshot goes through the same userinfo/secret-param
+  // scrub every other board-facing git string gets.
+  const remote = makeRemoteRepo();
+  const root = remote.clone('credentialed-catalog-checkout');
+  const PAT = 'glpat-credtest-AaBbCcDdEeFf0123';
+  const credentialed = `https://oauth2:${PAT}@gitlab.example.com/org/repo.git?access_token=${PAT}`;
+  execFileSync('git', ['remote', 'set-url', 'origin', credentialed], { cwd: root });
+  const daemon = await startDaemon();
+  t.after(async () => { await daemon.stop(); remote.cleanup(); });
+
+  await postHook(daemon.baseUrl, 'SessionStart', {
+    session_id: randomUUID(), cwd: root, hook_event_name: 'SessionStart', source: 'startup',
+  }, { token: daemon });
+
+  // The origin backfill is fire-and-forget behind a 60 s/repo touch throttle,
+  // so poll /state until the catalog row carries an origin at all.
+  let row = null;
+  await waitUntil(async () => {
+    const state = (await getJson(`${daemon.baseUrl}/state`)).json;
+    row = state.repo_catalog.find(repo => repo.root === root);
+    return row?.origin_url != null;
+  }, { label: 'origin backfill into repo_catalog', timeoutMs: 5000, intervalMs: 100 });
+
+  // HTTP /state: no userinfo, no token, no secret query value — but the host
+  // and path survive (the spawn form completes against this value).
+  assert.ok(!row.origin_url.includes(PAT), `origin_url leaked the token: ${row.origin_url}`);
+  assert.ok(!row.origin_url.includes('oauth2'), `origin_url leaked the username: ${row.origin_url}`);
+  assert.ok(row.origin_url.includes('access_token=[redacted]'), `query value must be redacted, not the name: ${row.origin_url}`);
+  assert.ok(row.origin_url.includes('gitlab.example.com/org/repo.git'), `origin_url lost its legible form: ${row.origin_url}`);
+
+  // The same facts over the /ws snapshot frame (identical payload — the
+  // broadcast spreads core.snapshot() verbatim).
+  const ws = new WebSocket(daemon.baseUrl.replace(/^http/, 'ws') + '/ws');
+  t.after(() => ws.close());
+  const frames = [];
+  ws.on('message', raw => { try { frames.push(JSON.parse(raw.toString('utf8'))); } catch { /* junk */ } });
+  await waitUntil(() => frames.find(f => f.type === 'snapshot'), { label: 'initial connect snapshot', timeoutMs: 5000, intervalMs: 20 });
+  const frameRow = frames.find(f => f.type === 'snapshot').repo_catalog.find(repo => repo.root === root);
+  assert.ok(frameRow, 'ws snapshot carries the catalog row');
+  assert.equal(frameRow.origin_url, row.origin_url, 'ws frame must ship the same scrubbed origin as /state');
+
+  // And the scrub leaves a credential-free origin byte-for-byte alone.
+  const clean = makeRemoteRepo();
+  const cleanRoot = clean.clone('clean-catalog-checkout');
+  t.after(() => clean.cleanup());
+  await postHook(daemon.baseUrl, 'SessionStart', {
+    session_id: randomUUID(), cwd: cleanRoot, hook_event_name: 'SessionStart', source: 'startup',
+  }, { token: daemon });
+  await waitUntil(async () => {
+    const state = (await getJson(`${daemon.baseUrl}/state`)).json;
+    return state.repo_catalog.find(repo => repo.root === cleanRoot)?.origin_url != null;
+  }, { label: 'clean origin backfill into repo_catalog', timeoutMs: 5000, intervalMs: 100 });
+  const cleanRow = (await getJson(`${daemon.baseUrl}/state`)).json.repo_catalog.find(repo => repo.root === cleanRoot);
+  assert.equal(cleanRow.origin_url, clean.origin, 'a credential-free origin passes through untouched');
 });
 
 test('POST /api/settings persists across restart and null clears the override', async t => {
@@ -533,4 +711,151 @@ test('POST /api/settings applies a mixed subset and never half-writes on a bad f
   const after = await getJson(`${daemon.baseUrl}/api/settings`);
   assert.equal(after.json.settings.repos_dir.value, reposDir, 'a rejected body must not have rewritten repos_dir');
   assert.equal(after.json.settings.repo_transport.value, 'https');
+});
+
+// ---------------------------------------------------------------------------
+// BUG-044 — the four UNDISTILLED stderr paths in materializeBranch (status,
+// switch, worktree list, worktree add) used to scrub only URL userinfo. A
+// repository hook or git extension printing a STANDALONE forge token
+// (`remote: helper rejected token ghp_…`) had no covering layer: the token
+// rode the throw into the HTTP body, card note, ticker, event log and state
+// snapshot verbatim. They now go through redactGitText, the same hardening
+// pass clone/fetch get via gitFailureText. Real git answers every call except
+// the one under test; a PATH shim fails that one with token-shaped stderr.
+// ---------------------------------------------------------------------------
+
+// Captured at module load, BEFORE any test installs the PATH shim — resolving
+// it lazily (as the TOCTOU shim's realGitPath does, inside the test) would find
+// our own shim, and `exec "$FD_REAL_GIT" "$@"` would recurse forever.
+const REAL_GIT = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+
+// A `git` that passes everything through to real git, except the first call
+// whose joined argv contains FD_SHIM_MATCH: that one prints FD_SHIM_ERR to
+// stderr and exits 1 — a hook/extension relaying a bare credential, which
+// shape-only redaction must catch where URL scrubbing could not.
+function writeStderrGitShim(t) {
+  const dir = mkdtempSync(path.join(tmpdir(), 'fd-gitshim-stderr-'));
+  const shim = path.join(dir, 'git');
+  writeFileSync(shim,
+    '#!/usr/bin/env bash\n'
+    + 'if [ -n "$FD_SHIM_MATCH" ] && [[ " $* " == *"$FD_SHIM_MATCH"* ]]; then\n'
+    + '  printf \'%s\\n\' "$FD_SHIM_ERR" >&2\n'
+    + '  exit 1\n'
+    + 'fi\n'
+    + 'exec "$FD_REAL_GIT" "$@"\n',
+    { mode: 0o755 });
+  t.after(() => rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+  return dir;
+}
+
+// Install the shim on PATH only AFTER the fixture repo exists: the helper's
+// own init/clone/push calls run through `git` too, and must reach real git.
+function shimEnv(t, { match, stderr }) {
+  const shimDir = writeStderrGitShim(t);
+  const previous = {
+    PATH: process.env.PATH,
+    FD_REAL_GIT: process.env.FD_REAL_GIT,
+    FD_SHIM_MATCH: process.env.FD_SHIM_MATCH,
+    FD_SHIM_ERR: process.env.FD_SHIM_ERR,
+  };
+  process.env.PATH = `${shimDir}:${process.env.PATH}`;
+  process.env.FD_REAL_GIT = REAL_GIT;
+  process.env.FD_SHIM_MATCH = match;
+  process.env.FD_SHIM_ERR = stderr;
+  t.after(() => {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+}
+
+// The shape SECRET_VALUE_RES does not carry — only exec.mjs' git-local shape
+// list masks it, so a bare-scrubUrlCredentials site leaks it verbatim.
+const SHIM_TOKEN = `ghp_${'B'.repeat(36)}`;
+const SHIM_STDERR = `remote: helper rejected token ${SHIM_TOKEN}\nfatal: the repository hook refused the operation.`;
+
+async function assertShimmedFailureRedacts(t, { match, fallback, branch = 'fd-bug044-target', mode = 'in-place' }) {
+  const remote = makeRemoteRepo({ repoName: 'fd-bug044', branches: ['fd-bug044-target'] });
+  t.after(() => remote.cleanup());
+  const root = remote.clone('checkout');
+  shimEnv(t, { match, stderr: SHIM_STDERR });
+  const { materializeBranch } = createRepos(fakeReposCtx());
+
+  const err = await materializeBranch({ root, branch, mode })
+    .then(() => { throw new Error('materializeBranch unexpectedly succeeded'); },
+      caught => caught);
+  assert.equal(err.status, 409, `the shimmed git failure surfaces as a 409: ${err?.message}`);
+  assert.equal(err.message.includes(SHIM_TOKEN), false,
+    `a standalone forge token must not reach the HTTP body / card note verbatim: ${err.message}`);
+  assert.ok(err.message.includes('[redacted]'), `the token is masked, not dropped: ${err.message}`);
+  assert.match(err.message, /the repository hook refused the operation/,
+    'the diagnostic itself survives redaction — only the credential is masked');
+  assert.ok(!err.message.startsWith(fallback), `real stderr reached the throw (not the bare "${fallback}" fallback)`);
+}
+
+test('BUG-044: git status failure stderr is hardened by the full redaction pass, not URL-only', async t => {
+  await assertShimmedFailureRedacts(t, { match: ' status ', fallback: 'git status failed' });
+});
+
+test('BUG-044: git switch failure stderr is hardened by the full redaction pass, not URL-only', async t => {
+  await assertShimmedFailureRedacts(t, { match: ' switch ', fallback: 'git switch failed' });
+});
+
+test('BUG-044: git worktree list failure stderr is hardened by the full redaction pass, not URL-only', async t => {
+  // Match the porcelain flag, not ' list ': the site under test runs
+  // `worktree list --porcelain`, and a plain-'list' pattern would ALSO shadow
+  // the earlier `show-ref --verify` probes — which are allowed to fail (their
+  // .ok is not required), quietly skipping the call this test exists for.
+  await assertShimmedFailureRedacts(t, { match: ' --porcelain ', fallback: 'git worktree list failed' });
+});
+
+test('BUG-044: git worktree add failure stderr is hardened by the full redaction pass, not URL-only', async t => {
+  // ' add ' is safe as a needle: the only `worktree add` in the flow is the
+  // site itself (unlike ' switch '/' status ', which legitimately pass earlier
+  // too). Worktree mode, not in-place: the `git switch -c <branch> <base>`
+  // in-place path contains no ' add ' and would succeed unshimmed.
+  await assertShimmedFailureRedacts(t, { match: ' add ', fallback: 'git worktree add failed', branch: 'fd-bug044-other', mode: 'worktree' });
+});
+
+test('settings writes are atomic: a failing later write rolls back the earlier ones', async t => {
+  // BUG-148: setSettings committed each key as an independent autocommit, so a
+  // later write error (SQLITE_FULL on the second key, simulated here by a
+  // throw on the shared prepared statement) returned an error while the FIRST
+  // key's change stayed durable. The commit loop now runs inside one IMMEDIATE
+  // transaction, so the returned error is the truth: nothing changed.
+  const db = openDb(':memory:');
+  t.after(() => db.close());
+  const core = createCore(db, { port: 4713, home: '/tmp/fd-atomic-settings-home' });
+
+  const q = db.prepare("SELECT value FROM settings WHERE key = ?");
+  // createCore doesn't re-export q; settings.mjs commits through the SAME
+  // prepared statement object createStatements(db) built, so re-deriving the
+  // map here reaches the writer setSettings uses.
+  const { q: statements } = createStatements(db);
+  const originalRun = statements.setSetting.run.bind(statements.setSetting);
+  let poisoned = true;
+  statements.setSetting.run = (key, value, at) => {
+    if (poisoned && key === 'gateway_token') throw new Error('SQLITE_FULL simulated: database or disk is full');
+    return originalRun(key, value, at);
+  };
+  const rejected = core.setSettings({ repo_default_org: 'textemma', gateway_token: 'tok-1' });
+  // A storage failure is a SERVER error: BUG-047 (P1) upgraded this path from
+  // the old 400 to 5xx, and settings-transaction.test.mjs pins that. BUG-148
+  // only asserts atomic rollback (below), so accept the authoritative 5xx.
+  assert.ok(rejected.status >= 500 && rejected.status < 600, `storage failure must be 5xx, got ${rejected.status}`);
+  assert.match(rejected.body.reason, /SQLITE_FULL/);
+  assert.equal(q.get('repo_default_org'), undefined,
+    'the earlier write must be rolled back with the later failure');
+  assert.equal(q.get('gateway_token'), undefined);
+  assert.equal(core.resolveSettings().gateway.token_set, false);
+
+  // The aborted transaction must leave the statement usable: unpoison and the
+  // same multi-key body applies in full.
+  poisoned = false;
+  const ok = core.setSettings({ repo_default_org: 'textemma', gateway_token: 'tok-1' });
+  assert.equal(ok.status, 200, ok.body.reason);
+  assert.equal(q.get('repo_default_org')?.value, 'textemma');
+  assert.equal(q.get('gateway_token')?.value, 'tok-1');
+  statements.setSetting.run = originalRun;
 });

@@ -16,20 +16,22 @@
 // append), and every failure — unwritable home, full disk, giant payload — is
 // swallowed. Capture must never affect a hook response.
 //
-// Redaction rides that same single walk, in three layers: secret-looking KEYS
+// Redaction rides that same single walk, in four layers: secret-looking KEYS
 // (token/secret/password/api-key/authorization/… incl. camelCase) get a marker
 // and their value is never descended into; string VALUES matching a known
-// credential shape (Anthropic/GitHub/Slack/AWS keys, JWTs, PEM private keys,
-// Bearer tokens) are masked in place; and the daemon's own access token is
-// scrubbed verbatim from the finished line. What this canNOT catch is a secret
-// with no telltale key name and no recognizable shape sitting in arbitrary free
-// text — which is exactly why capture stays opt-in and the file stays 0600.
+// credential shape (Anthropic/GitHub/GitLab/Google/OpenAI-style/Hugging Face/
+// DigitalOcean/Slack/AWS keys, JWTs, PEM private keys, Bearer tokens) are
+// masked in place; credentialed URLs (userinfo, secret query params) are
+// scrubbed positionally via scrubUrlCredentials; and the daemon's own access
+// token is scrubbed verbatim from the finished line. What this canNOT catch
+// is a secret with no telltale key name, no recognizable shape, and no URL
+// structure sitting in arbitrary free text — which is exactly why capture
+// stays opt-in and the file stays 0600.
 //
 // Two of those layers are exported for reuse by diagnostics that DO reach the
 // board (a stalled spawn's pane excerpt, a failed clone's git stderr):
 // redactDiagnosticText (shape scrub) and scrubUrlCredentials (positional URL
-// userinfo scrub). Neither participates in the capture walk above beyond
-// redactValue; see each one's own comment for why they are separate.
+// userinfo scrub). See each one's own comment for why they stay separate.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -46,7 +48,15 @@ const REDACTED = '[redacted]';
 // 'monotonic' all survive. camelCase carries no such separator, so isSecretKey
 // first rewrites humps to '_'; that is precisely what lets 'apiKey',
 // 'authToken' and 'accessKeyId' redact while the negatives above still don't.
-const SECRET_KEY_RE = /(?:^|[_\-.])(token|secret|password|passwd|passphrase|api[_-]?key|apikey|auth(orization)?|bearer|cookie|credential|private[_-]?key|access[_-]?key|client[_-]?secret)(?:$|[_\-.])/i;
+// The trailing `s?` admits the plural/container forms real env and tool JSON
+// actually use — 'api_keys', 'tokens', 'credentials', 'client_secrets',
+// 'apiKeys', 'TOKENS' — which carry the same live credentials as their
+// singulars. The plural is not decorative: real payloads nest credentials
+// under `api_keys`, `clientSecrets`, `tokens` (a hook event's `access_tokens`
+// list), and a singular-only list recorded those verbatim. It cannot resurrect
+// a negative: 'tokenizer' would need the `s` to sit mid-word, and no stem is
+// one letter short of an innocent word.
+const SECRET_KEY_RE = /(?:^|[_\-.])(token|secret|password|passwd|passphrase|api[_-]?key|apikey|auth(orization)?|bearer|cookie|credential|private[_-]?key|access[_-]?key|client[_-]?secret)s?(?:$|[_\-.])/i;
 
 function isSecretKey(key) {
   const normalized = String(key)
@@ -57,9 +67,9 @@ function isSecretKey(key) {
 
 // SECRET_VALUE_RES are known credential SHAPES, masked wherever they appear
 // inside a recorded string. INVARIANT the byte accounting leans on: every one
-// of these matches a run strictly longer than the 10-byte REDACTED marker, so
-// masking can only shrink (never grow) an already-budgeted slice — see
-// textWithinBudget. The PEM alternative tolerates a block the byte budget cut
+// of these (and maskCompactTokens below) matches a run strictly longer than
+// the 10-byte REDACTED marker, so masking can only shrink (never grow) an
+// already-budgeted slice — see textWithinBudget. The PEM alternative tolerates a block the byte budget cut
 // off mid-key (…|$), so a half-captured private key still masks.
 //
 // ReDoS AUDIT (capture runs synchronously in the hook handler, so a pattern
@@ -71,32 +81,142 @@ function isSecretKey(key) {
 //     one forward pass or fails locally — linear, left as-is. Bounding their
 //     tails would risk under-masking a legitimately long token.
 //   - AKIA is fixed-width — trivially linear.
-//   - JWT had THREE unbounded runs joined by literal dots; on a string like
-//     ('eyJ'.repeat(N) + '.' + 'a'.repeat(M)) the first run scans to the lone
-//     dot at every one of the N 'eyJ' start positions → O(n^2), a measured
-//     ~2s stall at 64KB. Bounding each segment to {10,4096} (real JWT segments
-//     are far shorter) makes per-start work constant → linear, and a normal JWT
-//     still matches.
+//   - JWT is no longer a regex at all: see maskCompactTokens below. A regex had
+//     exactly two ways to be wrong, and both shipped at some point — unbounded
+//     runs were O(n^2) on adversarial text, and bounding them to {10,4096}
+//     FAILED CLOSED the wrong way: a real JWT with a segment over the bound (a
+//     large x5c certificate chain in the protected header) matched NOTHING and
+//     crossed the redaction boundary verbatim. The scanner is a single forward
+//     pass with no upper bound, so neither failure mode can recur.
 //   - PEM was measured safe (lazy `[\s\S]*?`, anchored, `…|$` still tolerates a
 //     truncated block). The two `[A-Z ]*` key-type labels are defensively
 //     bounded to {0,40} — every real label ("RSA", "OPENSSH", "ENCRYPTED", …)
 //     fits, and match semantics (incl. the truncated-block `…|$` fallback) are
 //     unchanged.
+// The `(?<![A-Za-z0-9_-])` left boundary on the 2026-08 additions is not
+// decoration — it is the same guard exec.mjs's GIT_EXTRA_SECRET_RES documents:
+// without it the generic `sk-` rule fires INSIDE ordinary words and
+// `disk-quota-exceeded-for-user` becomes `di[redacted]`. Keep any future
+// short-prefix shape behind the same lookbehind.
 const SECRET_VALUE_RES = [
   /sk-ant-[A-Za-z0-9_-]{10,}/g,
   /(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}/g,
   /github_pat_[A-Za-z0-9_]{20,}/g,
+  /(?<![A-Za-z0-9_-])gl(?:pat|rt|dt|soat|cbt|ptt|feat|agent)-[A-Za-z0-9_-]{16,}/g, // GitLab PAT / runner / deploy / OAuth / CI job families
+  /(?<![A-Za-z0-9_-])AIza[A-Za-z0-9_-]{30,}/g,                                     // Google API key
+  /(?<![A-Za-z0-9_-])sk-[A-Za-z0-9_-]{20,}/g,                                      // OpenAI-style (and, harmlessly, sk-ant-* again)
+  /(?<![A-Za-z0-9_-])hf_[A-Za-z0-9]{20,}/g,                                        // Hugging Face
+  /(?<![A-Za-z0-9_-])dop_v1_[A-Za-z0-9]{32,}/g,                                    // DigitalOcean
   /xox[baprs]-[A-Za-z0-9-]{10,}/g,
   /AKIA[A-Z0-9]{16}/g,
-  /eyJ[A-Za-z0-9_-]{10,4096}\.[A-Za-z0-9_-]{10,4096}\.[A-Za-z0-9_-]{10,4096}/g,
   /-----BEGIN [A-Z ]{0,40}PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]{0,40}PRIVATE KEY-----|$)/g,
   /Bearer\s+[A-Za-z0-9._~+/=-]{16,}/g,
+  // Forge/API prefixes the git path used to redact ONLY inside exec.mjs's
+  // redactGitText (as GIT_EXTRA_SECRET_RES) — so a bare `glpat-…` / `sk-…` /
+  // `AIza…` / `hf_…` / `dop_v1_…` relayed on a stalled spawn's pane excerpt
+  // (`remote: the provided token (glpat-…) is incorrect`) or captured in a hook
+  // payload's free-text field survived into stall_detail, the board drawer,
+  // /state, every /ws frame and the durable SpawnStalled note. They live in the
+  // SHARED list now so every consumer fails closed on the same shapes. ReDoS:
+  // each is a fixed prefix plus ONE greedy trailing run with nothing required
+  // after it (the lookbehind is zero-width and constant) — the same shape the
+  // audit above certifies linear. All match runs longer than the 10-byte
+  // `[redacted]` marker, preserving the shrink-only invariant.
+  //
+  // The `(?<![A-Za-z0-9_-])` left boundary is not decoration: without it the
+  // generic `sk-` rule fires INSIDE ordinary words, and `disk-quota-exceeded`
+  // becomes `di[redacted]` — destroying exactly the legibility these
+  // diagnostics exist to deliver. A false redaction is cheap to write and
+  // expensive to debug.
+  /(?<![A-Za-z0-9_-])gl(?:pat|rt|dt|soat|cbt|ptt|feat|agent)-[A-Za-z0-9_-]{16,}/g, // GitLab PAT / runner / deploy / OAuth / CI job families
+  /(?<![A-Za-z0-9_-])AIza[A-Za-z0-9_-]{30,}/g,                                     // Google API key
+  /(?<![A-Za-z0-9_-])sk-[A-Za-z0-9_-]{20,}/g,                                      // OpenAI-style (and, harmlessly, sk-ant-* again)
+  /(?<![A-Za-z0-9_-])hf_[A-Za-z0-9]{20,}/g,                                        // Hugging Face
+  /(?<![A-Za-z0-9_-])dop_v1_[A-Za-z0-9]{32,}/g,                                    // DigitalOcean
 ];
+
+// Compact-serialized JWTs (JOSE compact form, also used by PASETOv2) are
+// recognized by maskCompactTokens — a linear single-pass scanner, NOT an entry
+// in SECRET_VALUE_RES. It replaces what used to be a regex of three bounded
+// runs, which had BOTH failure modes a credential-shape rule can have:
+//   - UNBOUNDED runs were O(n^2) on adversarial text ('eyJ'.repeat(N) + '.' +
+//     'a'.repeat(M) rescans to the lone dot at every 'eyJ' start — a measured
+//     ~2s stall at 64KB, inside the synchronous hook handler).
+//   - BOUNDING those runs to {10,4096} fixed the stall but failed CLOSED the
+//     wrong way: a valid JWT whose header carries a large x5c certificate
+//     chain blows past 4096 characters, matched nothing, and the full
+//     credential crossed the redaction boundary into hook-payloads.jsonl and
+//     board diagnostics VERBATIM. A bounded regex does not truncate an
+//     over-long token — it simply never matches (the same lesson
+//     URL_AUTHORITY_OVERLONG_RE exists to teach).
+// The scanner has no upper bound, so no valid token can outgrow it, and it
+// advances strictly forward from every candidate start (worst case one false
+// start per 'eyJ' occurrence — each consumed in a single segment walk), so it
+// stays linear on the same adversarial inputs.
+//
+// Shape: eyJ<base64url>{10,} '.' <base64url>{10,} '.' <base64url>{10,} —
+// every real JWT header starts with the bytes `{"` (base64url `eyJ`), segments
+// are joined by exactly two separators, and the minimum lengths (identical to
+// the retired regex) keep ordinary prose from ever matching. The b64urlChars
+// bitset makes each character test O(1) with no regex engine involved; a
+// 6700-byte header segment masks in the same forward pass a 20-byte one does.
+//
+// LINEARITY: a NAIVE per-candidate walk is O(n^2) on ('eyJ'.repeat(N) + '.' +
+// 'a'.repeat(M)) — every 'eyJ' start re-walks the same run to the lone dot.
+// The skip-ahead on each failure branch is what keeps it linear: when the walk
+// from a candidate fails, every LATER start inside a run it already crossed
+// sees strictly fewer of the required separators ahead of it and fails
+// identically, so the loop resumes past the crossed run instead of re-walking
+// it (a candidate inside a run whose walk stopped at a '.' that followed a
+// too-short run CAN still match, so those branches only skip to that run's
+// start). Each run of the text is therefore walked O(1) times.
+const B64URL_CHARS = (() => {
+  const bits = new Uint8Array(128);
+  for (let c = 48; c <= 57; c++) bits[c] = 1;  // 0-9
+  for (let c = 65; c <= 90; c++) bits[c] = 1;  // A-Z
+  for (let c = 97; c <= 122; c++) bits[c] = 1; // a-z
+  bits[45] = 1; // -
+  bits[95] = 1; // _
+  return bits;
+})();
+const isB64url = (code) => code < 128 && B64URL_CHARS[code] === 1;
+
+function maskCompactTokens(text) {
+  const MIN_SEG = 10; // per segment, same floor as the retired regex
+  let out = null; // lazy: untouched input is returned identity, no copy made
+  let lastEnd = 0;
+  for (let i = 0; (i = text.indexOf('eyJ', i)) !== -1 && i + 35 <= text.length; i++) {
+    let j = i + 3;
+    const seg1Start = j;
+    while (j < text.length && isB64url(text.charCodeAt(j))) j++;
+    // Any start inside this run ends at the same j and fails the same way.
+    if (j - seg1Start < MIN_SEG || text.charCodeAt(j) !== 46 /* . */) { i = j - 1; continue; }
+    j++;
+    const seg2Start = j;
+    while (j < text.length && isB64url(text.charCodeAt(j))) j++;
+    if (j - seg2Start < MIN_SEG) {
+      // Run ends at a '.' but is short: a start inside it can still match, so
+      // only skip the runs proven dead (through seg2's start).
+      i = seg2Start - 1; continue;
+    }
+    if (text.charCodeAt(j) !== 46 /* . */) { i = j - 1; continue; } // no separator → dead through j
+    j++;
+    const seg3Start = j;
+    while (j < text.length && isB64url(text.charCodeAt(j))) j++;
+    if (j - seg3Start < MIN_SEG) { i = seg3Start - 1; continue; }
+    // Confirmed token at [i, j). Consume it so the loop never re-scans inside
+    // an already-masked region.
+    out = (out ?? '') + text.slice(lastEnd, i) + REDACTED;
+    lastEnd = j;
+    i = j - 1; // the for-loop's i++ moves past the token
+  }
+  return out === null ? text : out + text.slice(lastEnd);
+}
 
 function redactValue(text) {
   let out = text;
   for (const re of SECRET_VALUE_RES) out = out.replace(re, REDACTED);
-  return out;
+  return maskCompactTokens(out);
 }
 
 // Reuse the same known-credential shape scrubber for other bounded diagnostics
@@ -219,10 +339,11 @@ const BARE_USERINFO_RE = /(^|[\s'"<([])([^\s:/@'"<>]{1,256}:[^\s/@'"<>]{1,512})@
 const URL_PARAM_RE = /([?&#][A-Za-z0-9_.-]{1,128}=)([^&\s'"<>]+)/g;
 const SECRET_PARAM_NAME_RE = /token|key|secret|password|passwd|passphrase|auth|credential|sig(?:nature)?|session/i;
 
-// Deliberately NOT folded into redactDiagnosticText / SECRET_VALUE_RES: hook
-// payload capture (the on-disk hook-payloads.jsonl format) must stay bit-for-bit
-// unchanged, so this change owns no blast radius there. Callers that display git
-// output compose the two explicitly.
+// Deliberately NOT folded into redactDiagnosticText / SECRET_VALUE_RES: that
+// shape scrubber's contract is value-shapes only, and callers that display git
+// output compose the two explicitly. Hook payload capture composes them too —
+// textWithinBudget below applies scrubUrlCredentials on top of redactValue so a
+// credentialed URL in a hook string field cannot reach disk intact.
 //
 // IDEMPOTENT (all five layers): a second pass rewrites `[redacted]@` and
 // `=[redacted]` to themselves, which is what lets callers scrub defensively at
@@ -258,9 +379,11 @@ function boundedPayload(value, maxBytes) {
     const truncated = out.length < String(value).length;
     // VALUE REDACTION rides here, AFTER the slice: a giant secret is bounded
     // first (never fully materialized) and only then masked. Because every
-    // SECRET_VALUE_RES match is longer than the marker it becomes, this can only
-    // shrink `out`; `remaining` was already charged for the pre-mask bytes, so
-    // we never emit more than was accounted for and the budget stays sound.
+    // SECRET_VALUE_RES match is longer than the marker it becomes, shape
+    // masking can only shrink `out`. scrubUrlCredentials can grow it slightly
+    // (a short userinfo becomes the 10-byte marker), but the growth is bounded
+    // per occurrence and the finished line's exact size is still checked
+    // against the file cap before append, so the budget stays sound.
     // KNOWN RESIDUAL (accepted): masking runs on the post-slice string, so a
     // real credential that straddles the exact byte-budget boundary is cut to a
     // sub-min-length prefix its shape regex no longer recognizes, and that
@@ -268,7 +391,7 @@ function boundedPayload(value, maxBytes) {
     // re-materialize the multi-MB secret the budget exists to avoid. This is a
     // narrow leak of a partial token onto an opt-in, 0600 file; documented so
     // the next reader knows it is known and why it is tolerated.
-    out = redactValue(out);
+    out = scrubUrlCredentials(redactValue(out));
     return truncated ? `${out}${marker}` : out;
   }
 

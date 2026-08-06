@@ -6,7 +6,7 @@
 
 [![CI](https://github.com/lacion/fleet-deck/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/lacion/fleet-deck/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Node ≥ 22.5](https://img.shields.io/badge/node-%E2%89%A5%2022.5-brightgreen.svg)](https://nodejs.org)
+[![Node ≥ 22.13](https://img.shields.io/badge/node-%E2%89%A5%2022.13-brightgreen.svg)](https://nodejs.org)
 
 **One board for every Claude Code session on your machine.**
 
@@ -43,9 +43,9 @@ claude plugin install fleetdeck@fleetdeck
 
 Your next `claude` — any terminal, any repo, no wrapper — brings the fleet up and appears on the board. Type `/fleet` in any session for a live summary.
 
-> A marketplace install tracks the repo's **default branch**, not a pinned release: every push to `main` runs at your next SessionStart. The pipeline is gated (CODEOWNERS, hook-integrity CI, human-approved npm publishes), but if you want releases only, use the npm channel — `npm i -g fleetdeck` for [standalone mode](#standalone-mode) — or pin your marketplace clone to a tag.
+> **How updates actually reach you.** Claude Code installs a marketplace plugin by copying it into a versioned local cache, and that cached copy is what runs at every SessionStart — not the repo. Auto-update is off by default for third-party marketplaces, and even with it on, Claude Code only recognizes an update when the plugin's **version changes** in the manifest. Fleet Deck bumps `version` in `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json` for every distributable change for exactly this reason. To pull a new version, run `claude plugin marketplace update fleetdeck` and `claude plugin update fleetdeck@fleetdeck` (or manage it from `/plugin`), then start a new session. A push to `main` without a version bump never reaches an installed copy. If you want releases only, use the npm channel — `npm i -g fleetdeck` for [standalone mode](#standalone-mode) — or pin your marketplace clone to a tag.
 
-**Requirements.** Node 22.5+. Nothing to `npm install`: the daemon ships as one bundled file and keeps state in Node's built-in `node:sqlite`. Add **tmux 3.4+** to spawn workers or open their panes in the browser — Fleet Deck relies on 3.4's no-start probe to avoid attaching to a replacement server. Everything else works without tmux. Linux, WSL2 and macOS; Windows-native is untested.
+**Requirements.** Node 22.13+ (or 24+; Node 23 is unsupported). Nothing to `npm install`: the daemon ships as one bundled file and keeps state in Node's built-in `node:sqlite` — it loads unflagged only from 22.13.0, so 22.5–22.12 cannot boot it. Add **tmux 3.4+** to spawn workers or open their panes in the browser — Fleet Deck relies on 3.4's no-start probe to avoid attaching to a replacement server. Everything else works without tmux. Linux, WSL2 and macOS; Windows-native is untested.
 
 <details>
 <summary>Working on Fleet Deck itself, or running from a fork</summary>
@@ -57,6 +57,11 @@ claude plugin install fleetdeck@fleetdeck
 ```
 
 After changing anything under `scripts/`, run `npm run bundle` — the daemon runs the bundle, not the source. After changing the board, run `npm run build` in `board/`. Then restart the daemon, or bump the version and let the upgrade takeover do it.
+
+Two traps, both caused by the versioned plugin cache described above:
+
+- **A rebuilt clone is not a reinstall.** If you installed from this clone as a marketplace, Claude Code runs the cached copy from install time, not your working tree. After rebuilding, run `claude plugin marketplace update fleetdeck` and `claude plugin update fleetdeck@fleetdeck` — and bump the `version` in both manifests first, or the update is a no-op and you will validate the stale cache.
+- **To run the working tree directly**, skip the cache entirely: `claude --plugin-dir /path/to/fleet-deck`. That session's hooks come from your checkout, so what you test is what you just built.
 </details>
 
 ## Quick start
@@ -221,7 +226,7 @@ Fleet Deck is a Claude Code plugin whose daemon is booted lazily by a `SessionSt
 
 ```bash
 npm install -g fleetdeck
-fleetdeck doctor            # Node 22.5+? tmux? claude? the plugin?
+fleetdeck doctor            # Node 22.13+? tmux? claude? the plugin?
 fleetdeck service install   # a systemd user unit, or a supervised wrapper without systemd
 fleetdeck service start
 ```
@@ -251,7 +256,16 @@ A managed daemon is never evicted by a plugin hook. Normally the newest installe
 - **Unsupervised means unsupervised.** `--dangerously-skip-permissions` workers never produce permission cards. The checkbox is red and asks twice. Pair it with a fresh worktree.
 - **The permission relay is interactive-only.** Headless `claude -p` sessions deny permission-needing tools without consulting hooks — CLI behavior, not ours. Spawned workers are interactive precisely so their prompts reach the board.
 - **Version pin: Claude Code CLI 2.1.206+ (tested through 2.1.207).** Fleet Deck relies on a few undocumented behaviors; a guard test fails loudly if a CLI update drops them, and contract tests replay recorded hook payloads so schema drift is caught in CI.
-- **Ports.** `FLEETDECK_PORT` / `FLEETDECK_HOME`. Hooks default to 4711, so a truly separate fleet also needs the port swapped in a copy of `hooks/hooks.json`. On multi-user machines give each OS user their own port.
+- **Ports.** `FLEETDECK_PORT` / `FLEETDECK_HOME`. Hooks default to 4711, but the shims resolve the port and home from the environment at invocation time — `hooks/hooks.json` contains no port to edit, so there is nothing to copy or swap. A truly separate fleet instead needs **every** Claude Code process it owns to inherit the same `FLEETDECK_PORT` and `FLEETDECK_HOME` as its daemon:
+
+  ```sh
+  export FLEETDECK_PORT=4712 FLEETDECK_HOME=~/.fleetdeck-alt
+  fleetdeck serve &        # or `fleetdeck service install` + `start`, which
+                           # snapshots both variables into service.env
+  claude                   # hooks from this session now report to :4712
+  ```
+
+  On multi-user machines give each OS user their own port.
 
 ### tmux isolation and the one-port rule
 
@@ -260,15 +274,20 @@ A managed daemon is never evicted by a plugin hook. Normally the newest installe
 
 ### LAN mode
 
-By default fleetd listens on `127.0.0.1`. Set **`FLEETDECK_BIND=0.0.0.0`** and it binds every interface, printing a ready-to-paste URL per address:
+By default fleetd listens on `127.0.0.1`. Set **`FLEETDECK_BIND=0.0.0.0`** and it binds every interface, printing one LAN line per address:
 
 ```
 fleetd up on http://0.0.0.0:4711 (pid 12345, …)
-fleetd LAN http://192.168.8.223:4711/?t=2a62f3c9…
-fleetd LAN http://fleetdeck.local:4711/?t=2a62f3c9…   (mDNS — needs a resolver on the peer)
+fleetd LAN http://192.168.8.223:4711/?t=<hidden> (credential available in share panel)
+fleetd LAN http://fleetdeck.local:4711/?t=<hidden> (mDNS; credential available in share panel)
 ```
 
-Open one on the other machine; the key is consumed at boot and scrubbed out of the address bar. The header's **⇄ Share** panel shows the same links with a QR code.
+Note the `?t=<hidden>`: fleetd's stdout usually lands in `fleetd.log` (often `0644`), so the log deliberately redacts the key rather than becoming a second token store. To get a complete, ready-to-paste URL:
+
+- open the header's **⇄ Share** panel on the board — it shows the full links with a QR code; or
+- run **`fleetdeck token`** to print the bearer, or **`fleetdeck status --show-token`** for the full link.
+
+Paste the key onto the printed LAN URL as `?t=<token>`; the key is consumed at boot and scrubbed out of the address bar.
 
 <p align="center">
   <img src="docs/assets/share-lan.gif" alt="The board's Share panel: a QR code and the LAN URLs, each carrying the key." width="100%">
@@ -276,11 +295,11 @@ Open one on the other machine; the key is consumed at boot and scrubbed out of t
 
 **The `?t=` is a password.** This API can spawn agents with `--dangerously-skip-permissions` and type keystrokes into their terminals: unauthenticated, it is remote code execution for anyone on the network. LAN mode therefore *requires* a token — there is no insecure switch, and fleetd refuses to start rather than open an unauthenticated listener.
 
-- **Loopback needs no token for ordinary routes** — browsing the board, watching sessions, hook traffic from the fleet's own shims. Since 0.16.0 the daemon mints a token every boot and the **powerful** routes demand it even locally: typing into terminals (`/ws/term`), `POST /mail`, `gateway_*` settings writes, and unsupervised spawns. Hooks authenticate automatically, and the daemon prints the credentialed local link at startup. On a shared box, other local users sit inside the loopback trust zone; `FLEETDECK_REQUIRE_TOKEN=on` closes every route behind the token — though it cannot protect you from processes running as *your* user, which can read the token file. See SECURITY.md.
+- **Loopback needs no token for ordinary routes** — browsing the board, watching sessions, hook traffic from the fleet's own shims. Since 0.16.0 the daemon always has a token — generated when absent, persisted to `$FLEETDECK_HOME/token`, and reused on later boots — and the **powerful** routes demand it even locally: typing into terminals (`/ws/term`), `POST /mail`, `gateway_*` settings writes, and unsupervised spawns. Hooks authenticate automatically, and the daemon prints the credentialed local link at startup. On a shared box, other local users sit inside the loopback trust zone; `FLEETDECK_REQUIRE_TOKEN=on` closes every route behind the token — though it cannot protect you from processes running as *your* user, which can read the token file. See SECURITY.md.
 - **Everything else must present the token**, as `Authorization: Bearer <token>` or `?t=<token>`. Wrong or missing → 401.
 - **The static shell is public; fleet data is not.** The HTML and JS bundle contain no sessions, callsigns or key — only an empty board that knows how to ask for one. A browser cannot put a key on the `<script>` tag inside the page it is already loading, so gating the shell would serve a blank board rather than hide it. The printed link carries the key in the query string for the same reason: no `Authorization` header exists on a first navigation.
 - **A bearer token, not a cookie.** Cookies ride along automatically, so any page you visit could make your browser POST to your board. A bearer token cannot be forged that way.
-- The token is generated into `FLEETDECK_HOME/token` (mode `0600`), or set **`FLEETDECK_TOKEN`** yourself (16+ chars). Rotate by deleting the file and restarting.
+- The token is generated into `FLEETDECK_HOME/token` (mode `0600`) when the file is absent, then persisted and reused across restarts — a plain restart does **not** rotate it. Or set **`FLEETDECK_TOKEN`** yourself (16+ chars). To rotate an exposed token, run `fleetdeck token --rotate` and restart the daemon, or delete the file and restart.
 - On untrusted networks use **Tailscale** or an SSH tunnel instead.
 
 ### Discovery (mDNS)
@@ -308,7 +327,7 @@ When the window lapses, the hook fails open `{}` and the agent's own terminal pr
 | `FLEETDECK_PORT` | `4711` | Daemon port. The hook shims honor it — read the one-port rule above before changing it. |
 | `FLEETDECK_HOME` | `~/.fleetdeck` | State directory: SQLite db, LAN token, watcher pid files. |
 | `FLEETDECK_BIND` | `127.0.0.1` | Bind address. `0.0.0.0` is LAN mode, which makes a token mandatory. |
-| `FLEETDECK_TOKEN` | generated into `$FLEETDECK_HOME/token` | Bearer token, 16+ characters. Generated on every boot since 0.16.0, because hooks, `/ws/term`, `/mail`, gateway writes and unsupervised spawns all present it. |
+| `FLEETDECK_TOKEN` | generated into `$FLEETDECK_HOME/token` | Bearer token, 16+ characters. Since 0.16.0 a token always exists — generated when absent, then persisted and reused — because hooks, `/ws/term`, `/mail`, gateway writes and unsupervised spawns all present it. Rotate with `fleetdeck token --rotate` plus a daemon restart. |
 | `FLEETDECK_REPOS_DIR` | `~/projects` (`/workspace` on Coder) | Where repo-mode spawns clone repositories that aren't local yet. The dialog's destination field can override and persist a different root. |
 | `FLEETDECK_BROWSE_ROOT` | home (`/workspace` on Coder) | Root of the ⌸ Files explorer and the spawn form's folder picker. The `browse_root` setting wins over this; always resolved server-side. |
 | `FLEETDECK_TRUSTED_ORIGINS` | unset | Comma-separated origins allowed to reach the daemon behind a reverse proxy — `https://board.example.com`, or one leading wildcard label (`https://*.coder.example.com`). Scheme required. Without it, a proxied board loads and then 403s. |
@@ -355,7 +374,7 @@ npm run build:board                  # rebuild the React board into board-dist/
 
 `npm test` runs serially (`--test-concurrency=1`) by necessity, not preference: every test boots a real daemon that binds a real port and drives a real tmux server. Run them in parallel and they contend for both, producing one or two failures a run — a different one each time, each passing in isolation.
 
-The `demo/` scripts are live acceptance gates that start *real* Claude sessions and therefore cost money: `run-smoke.sh` (two sessions colliding on purpose), `run-accept-phase3.sh` (a permission and a trailing question answered from the board), `run-accept-spawn.sh` (spawn → assign → board-approved permission → kill), `run-accept-plan.sh` (plan → capture → unsupervised execution). Run them deliberately.
+The `demo/` scripts are live acceptance gates that start *real* Claude sessions and therefore cost money: `run-smoke.sh` (two sessions colliding on purpose), `run-accept-phase3.sh` (a permission and a trailing question answered from the board), `run-accept-spawn.sh` (spawn → assign → board-approved permission → kill), `run-accept-plan.sh` (plan → capture → unsupervised execution). Run them deliberately. `run-accept-phase3.sh` supervises its `claude -p` runs with GNU `timeout`, Homebrew coreutils' `gtimeout` on macOS, or a Node fallback when neither exists; `run-smoke.sh` requires GNU `timeout` and `setsid` (Linux/WSL2) and aborts up front without them.
 
 ## Credits
 

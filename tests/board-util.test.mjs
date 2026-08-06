@@ -13,7 +13,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -22,9 +22,11 @@ import {
   TERMWIN_EDGE,
   TERMWIN_MIN,
   clampWinRect,
+  copyText,
   imageFromClipboard,
   isTermCopyChord,
   isTermPasteChord,
+  pasteTextSafe,
   unwrapTmuxPassthrough,
   termChordHints,
   batchTotal,
@@ -518,6 +520,43 @@ test('the SHIPPED board-dist actually contains the copy chord', () => {
     'the shipped board bundle predates the pane copy fix — rerun npm run build:board');
 });
 
+test('the SHIPPED board-dist asset graph covers every referenced non-JS asset too', () => {
+  // The graph walk above follows only .js specifiers, but Vite also hands the
+  // runtime a lazy CSS dependency map (__vite__mapDeps) and index.html links
+  // the entry stylesheet. A lazy stylesheet that is rebuilt but never staged
+  // passes both that walk and a `git diff` gate (the rebuild is UNTRACKED),
+  // and the board then ships a terminal whose lazy import 404s. Walk every
+  // referenced asset — JS, CSS, font, image — and reject stale extras on disk
+  // that nothing references.
+  const assetsDir = path.join(HERE, '..', 'scripts', 'fleetd', 'board-dist', 'assets');
+  const html = readFileSync(path.join(assetsDir, '..', 'index.html'), 'utf8');
+  const ASSET = /\.(?:js|css|woff2?|ttf|otf|png|jpe?g|gif|svg|webp|ico)$/;
+  const queue = [...html.matchAll(/(?:src|href)="\.\/assets\/([^"]+)"/g)].map(m => m[1]);
+  assert.ok(queue.length, 'index.html references no assets at all');
+  const seen = new Set();
+  while (queue.length) {
+    const name = queue.shift();
+    if (seen.has(name)) continue;
+    seen.add(name);
+    const file = path.join(assetsDir, name);
+    assert.ok(existsSync(file),
+      `board-dist references assets/${name}, which is not on disk — the rebuilt asset was never staged`);
+    if (!/\.(?:js|css|html)$/.test(name)) continue;
+    const src = readFileSync(file, 'utf8');
+    // Quoted relative specifiers cover both lazy JS (import("./chunk.js")) and
+    // Vite's dependency map entries ("./TermPane-<hash>.css").
+    for (const m of src.matchAll(/["'`]\.\/([\w.-]+)["'`]/g)) {
+      if (ASSET.test(m[1])) queue.push(m[1]);
+    }
+  }
+  assert.ok([...seen].some(n => n.endsWith('.css')),
+    'the graph walk found no stylesheet — the lazy CSS dependency map went unchecked');
+  for (const extra of readdirSync(assetsDir)) {
+    assert.ok(seen.has(extra),
+      `board-dist/assets/${extra} is on disk but nothing references it — a stale build leftover`);
+  }
+});
+
 // --- 0.19.3: a copy that cannot lie, and a gesture that teaches itself -------
 //
 // 0.19.2 shipped the copy chord and the user still could not paste: the pane
@@ -564,10 +603,14 @@ test('TermPane teaches the failed gesture and never nags over a working one', ()
 test('a pane refused at the upgrade says so instead of "connection closed"', () => {
   const src = readFileSync(path.join(HERE, '..', 'board', 'src', 'components', 'TermPane.jsx'), 'utf8');
   assert.match(src, /st\.seen/, 'TermPane no longer tracks whether any frame arrived');
-  assert.match(src, /hasToken\(\)\s*\?/,
-    'the close path must distinguish "no board key" from "the daemon refused me"');
-  assert.match(src, /this board has no key/,
-    'a keyless board must name the actual problem — /ws/term is the only gated loopback route');
+  // The key-vs-refusal distinction moved into termDiag.js (BUG-186): TermPane
+  // keys the diagnosis off the daemon's /health capability, not hasToken()
+  // alone, so the trust modes no longer get the false missing-key sentence.
+  assert.match(src, /refusedUpgradeText\(hasToken\(\), health\?\.auth\?\.term_token\)/,
+    'the close path must distinguish "no board key" from "the daemon refused me" via the daemon capability');
+  const diag = readFileSync(path.join(HERE, '..', 'board', 'src', 'termDiag.js'), 'utf8');
+  assert.match(diag, /this board has no key/,
+    'a keyless board under a gating daemon must name the actual problem — /ws/term is the only gated loopback route');
 });
 
 test('the daemon makes an upgrade impossible to miss and assets free to cache', () => {
@@ -590,6 +633,43 @@ test('a copy that cannot be proven leaves evidence behind', () => {
   // someone who just pressed Ctrl+C.
   assert.match(src, /perm\?\.state !== 'granted'/,
     'the clipboard read-back must be skipped unless the permission is ALREADY granted');
+});
+
+test('a granted read-back that PROVES a mismatch must veto the writeText fallback', async () => {
+  // BUG-069: writeText() resolving means the write was ACCEPTED, not that the
+  // clipboard changed — Chrome can drop it afterwards. When clipboard-read is
+  // already granted, the read-back settles the question, and a proven mismatch
+  // must report failure so TermPane keeps the selection instead of flashing
+  // "✓ copied" over a stale clipboard. Drive copyText for real with a stubbed
+  // DOM/navigator: no execCommand, a writeText that resolves, a readText that
+  // returns something else.
+  // Node ≥21 defines a global `navigator` getter — plain assignment throws, so
+  // stub with defineProperty (configurable) and restore the originals after.
+  const real = {
+    navigator: Object.getOwnPropertyDescriptor(globalThis, 'navigator'),
+    document: Object.getOwnPropertyDescriptor(globalThis, 'document'),
+    window: Object.getOwnPropertyDescriptor(globalThis, 'window'),
+  };
+  const stub = (name, value) => Object.defineProperty(globalThis, name, { value, configurable: true, writable: true });
+  stub('navigator', {
+    permissions: { query: async () => ({ state: 'granted' }) },
+    clipboard: {
+      writeText: async () => {}, // accepted — but never lands
+      readText: async () => 'something pasted from another app an hour earlier',
+    },
+  });
+  stub('document', undefined); // no execCommand — the async fallback runs
+  stub('window', undefined);
+  try {
+    assert.equal(await copyText('the text that was meant to be copied'), false,
+      'a read-back mismatch must NOT be reported as copied');
+    assert.match(globalThis.__fdCopy.verified, /^NO —/,
+      'the trace must record the proven mismatch');
+  } finally {
+    for (const [k, d] of Object.entries(real)) {
+      if (d) Object.defineProperty(globalThis, k, d); else delete globalThis[k];
+    }
+  }
 });
 
 // --- tmux passthrough: the agent's own clipboard write ----------------------
@@ -631,11 +711,121 @@ test('a wrapper split across two frames is not lost', () => {
   }
 });
 
+test('a FORBIDDEN wrapper split across frames stays dropped at every split point', () => {
+  // BUG-086: after consuming a complete wrapper the parser returned the residual
+  // buffer verbatim, so a frame ending on the next wrapper's leading ESC emitted
+  // that ESC. xterm keeps its escape-parser state across writes, so the next
+  // frame's raw `Ptmux;...` bytes reassembled the wrapper the filter had dropped
+  // — forbidden passthrough became a question of where a socket frame ended.
+  // The producer controls write timing; the filter must not care.
+  const evil = wrap(`${E}]0;retitled${String.fromCharCode(7)}`);
+  const whole = `a${wrap(OSC52)}b${evil}c`;
+  for (let cut = 0; cut <= whole.length; cut++) {
+    const first = unwrapTmuxPassthrough(whole.slice(0, cut));
+    const second = unwrapTmuxPassthrough(whole.slice(cut), first.carry);
+    assert.equal(first.out + second.out, `a${OSC52}bc`, `split at ${cut} leaked wrapper bytes`);
+    assert.equal(second.carry, '', `split at ${cut} left a dangling carry`);
+  }
+});
+
+test('filtering is partition-invariant over three frames at every split pair', () => {
+  const evil = wrap(`${E}]8;;https://evil.example${String.fromCharCode(7)}`);
+  const whole = `p${wrap(OSC52)}q${evil}r`;
+  const expected = `p${OSC52}qr`;
+  const unsplit = unwrapTmuxPassthrough(whole);
+  assert.deepEqual(unsplit, { out: expected, carry: '' }, 'the unsplit baseline itself is wrong');
+  for (let i = 0; i <= whole.length; i++) {
+    for (let j = i; j <= whole.length; j++) {
+      const a = unwrapTmuxPassthrough(whole.slice(0, i));
+      const b = unwrapTmuxPassthrough(whole.slice(i, j), a.carry);
+      const c = unwrapTmuxPassthrough(whole.slice(j), b.carry);
+      assert.equal(a.out + b.out + c.out, expected, `splits at ${i},${j} changed the output`);
+      assert.equal(c.carry, '', `splits at ${i},${j} left a dangling carry`);
+    }
+  }
+});
+
 test('ordinary pane output is passed through untouched', () => {
   const plain = `${E}[1mbold${E}[0m rows and \r\n newlines`;
   assert.deepEqual(unwrapTmuxPassthrough(plain), { out: plain, carry: '' });
   // A lone ESC at a frame boundary must not be mistaken for a wrapper opening.
   assert.deepEqual(unwrapTmuxPassthrough('tail'), { out: 'tail', carry: '' });
+});
+
+// --- the OSC 52 provider answers to the pane's focus -------------------------
+//
+// BUG-084: the clipboard provider was module-scoped and write-capable on EVERY
+// mounted tile, so output in an unfocused (watch-only) grid tile could silently
+// replace the operator's clipboard — with attacker-chosen text if any agent,
+// file or fetched page in the stream emitted OSC 52. These exercise the
+// provider's exact shape, pulled out of TermPane.jsx so the pattern stays
+// pinned to the source (the negative cases below FAIL against the old
+// module-scoped provider, which wrote unconditionally and had no gate to stub).
+
+function extractClipboardProvider(src) {
+  // From OSC52_MAX (the provider's cap constant, defined just above it) so the
+  // slice is self-contained.
+  const start = src.indexOf('const OSC52_MAX = ');
+  const end = src.indexOf('function cssVar(', start);
+  assert.ok(start > 0 && end > start, 'TermPane.jsx no longer defines OSC52_MAX/clipboardProvider before cssVar');
+  // copyText is the one free identifier the factory closes over — inject a spy.
+  const spy = 'const copyText = globalThis.__copySpy;';
+  return new Function(`${spy}\n${src.slice(start, end)}\nreturn clipboardProvider;`)();
+}
+
+function loadProvider() {
+  const src = readFileSync(path.join(HERE, '..', 'board', 'src', 'components', 'TermPane.jsx'), 'utf8');
+  return { src, provider: extractClipboardProvider(src) };
+}
+
+test('OSC 52 writes are honoured on the live pane and refused on a watch-only one', async () => {
+  const calls = [];
+  globalThis.__copySpy = async (d) => { calls.push(d); return true; };
+  const { src, provider } = loadProvider();
+
+  // A factory handed the pane's own term, and loaded with it: the provider
+  // must read the LIVE stdin flag, not a `live` prop frozen at mount (focus
+  // flips are applied in place — the effect holding this provider never
+  // re-runs, so a captured prop would go stale the moment focus moved).
+  assert.match(src, /clipboardProvider\s*=\s*\(term\)\s*=>/,
+    'the provider must take the pane term — a module-scoped one cannot see focus');
+  assert.match(src, /new ClipboardAddon\(undefined, clipboardProvider\(term\)\)/,
+    'the addon must be loaded with THIS pane\'s term');
+
+  const term = { options: { disableStdin: true } }; // a watch-only tile
+  const p = provider(term);
+  await p.writeText('c', 'rm -rf ~ && ');
+  assert.deepEqual(calls, [], 'a watch-only pane\'s OSC 52 must never reach the clipboard');
+
+  // Focus moves TO the tile (the in-place effect clears disableStdin) and the
+  // SAME provider now honours the write — a provider snapshotting `live` at
+  // mount could never do this.
+  term.options.disableStdin = false;
+  await p.writeText('c', 'the human\'s own copy');
+  assert.deepEqual(calls, ["the human's own copy"], 'the live pane\'s OSC 52 must reach the clipboard');
+
+  // ...and away again (an ended pane sets disableStdin too — covered by the
+  // same flag).
+  term.options.disableStdin = true;
+  await p.writeText('c', 'one more from a dead pane');
+  assert.deepEqual(calls, ["the human's own copy"], 'a pane that ended must stop writing the clipboard');
+});
+
+test('OSC 52 reads stay one-way and writes are size-capped', async () => {
+  const calls = [];
+  globalThis.__copySpy = async (d) => { calls.push(d); return true; };
+  const { src, provider } = loadProvider();
+
+  const p = provider({ options: { disableStdin: false } });
+  assert.equal(await p.readText(), '',
+    'OSC 52\'s read form must answer nothing — honouring it exfiltrates the clipboard into stdin');
+
+  assert.match(src, /data\.length > OSC52_MAX/, 'the provider lost its size cap');
+  const big = 'x'.repeat(64 * 1024 + 1);
+  await p.writeText('c', big);
+  assert.deepEqual(calls, [], 'an oversized OSC 52 payload must be refused');
+  await p.writeText('c', 'x'.repeat(64 * 1024));
+  assert.equal(calls.length, 1, 'a payload at the cap is still a legitimate copy');
 });
 
 // --- pasting INTO a pane -----------------------------------------------------
@@ -683,10 +873,105 @@ test('the headless image paste survives the Ctrl+V change', () => {
   const src = readFileSync(path.join(HERE, '..', 'board', 'src', 'components', 'TermPane.jsx'), 'utf8');
   assert.match(src, /screenEl\.addEventListener\('paste', onPaste, true\)/,
     'the image-paste listener must stay in the CAPTURE phase — xterm handles paste on the textarea below it');
-  assert.match(src, /if \(!item\) return;/,
-    'a text paste must fall through to xterm untouched');
+  assert.match(src, /if \(!item\) \{/,
+    'a text paste must enter the text branch and fall through to xterm when safe');
   assert.match(src, /sendIn\(res\.json\.path \+ ' '\)/,
     'the uploaded image must reach the pane as a PATH — the agent cannot read a clipboard');
   assert.ok(src.includes('press Enter to send'),
     'a paste must never submit on its own: keystrokes into a live agent are irreversible');
+});
+
+// --- BUG-085: a granted read-back that disagrees is a FAILED copy -----------
+//
+// copyText used to run verifyClipboard() purely for the trace: it wrote a
+// `verified: NO` line and returned true anyway, so TermPane cleared the only
+// visible selection and flashed "copied" over a clipboard that still held the
+// PREVIOUS text — the exact silent lie the whole trace exists to prevent.
+// These drive the real function with DOM mocks (no jsdom: the file needs only
+// `document`, `navigator` and a copy event) and pin the tri-state: an observed
+// mismatch fails the copy on BOTH write paths, an uncheckable clipboard keeps
+// the accepted write standing, and a match verifies it.
+
+function withCopyDom({ readBack, permState = 'granted', execRan = true, fireCopy = true }, fn) {
+  const realDoc = globalThis.document;
+  const realNav = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  const dispatched = [];
+  const listeners = [];
+  const ta = {
+    value: '',
+    style: {},
+    setAttribute() {},
+    select() {},
+    remove() {},
+  };
+  globalThis.document = {
+    activeElement: { focus() {} },
+    body: { appendChild() {} },
+    createElement: () => ta,
+    addEventListener: (type, cb) => listeners.push(cb),
+    removeEventListener: () => {},
+    execCommand: (cmd) => {
+      for (const cb of listeners) {
+        if (fireCopy) cb({ clipboardData: { setData(t, v) { ta.value = v; } }, preventDefault() {} });
+      }
+      return execRan;
+    },
+    hasFocus: () => true,
+  };
+  const nav = {
+    permissions: { query: async () => ({ state: permState }) },
+    clipboard: {
+      writeText: async () => { dispatched.push('writeText'); },
+      readText: async () => readBack,
+    },
+  };
+  Object.defineProperty(globalThis, 'navigator', { value: nav, configurable: true });
+  const restore = () => {
+    globalThis.document = realDoc;
+    Object.defineProperty(globalThis, 'navigator', realNav);
+    delete globalThis.__fdCopy;
+  };
+  return Promise.resolve()
+    .then(() => fn({ dispatched }))
+    .finally(restore);
+}
+
+test('copyText reports failure when the granted read-back disagrees (event path)', async () => {
+  await withCopyDom({ readBack: 'the PREVIOUS clipboard value' }, async () => {
+    const ok = await copyText('what I selected');
+    assert.equal(ok, false,
+      'an observed clipboard mismatch must fail the copy — TermPane clears the selection on true');
+    assert.match(globalThis.__fdCopy.verified, /^NO/);
+    assert.match(globalThis.__fdCopy.result, /^refused/,
+      'the trace must not call a mismatched copy "reported as copied"');
+  });
+});
+
+test('copyText reports failure when the granted read-back disagrees (writeText path)', async () => {
+  await withCopyDom({ readBack: 'stale text', execRan: false }, async ({ dispatched }) => {
+    const ok = await copyText('what I selected');
+    assert.deepEqual(dispatched, ['writeText'], 'the execCommand miss must fall through to writeText');
+    assert.equal(ok, false, 'a resolved writeText over a stale clipboard is still a failed copy');
+    assert.match(globalThis.__fdCopy.verified, /^NO/);
+    assert.match(globalThis.__fdCopy.result, /^refused/);
+  });
+});
+
+test('copyText verifies a copy the read-back confirms', async () => {
+  await withCopyDom({ readBack: 'what I selected' }, async () => {
+    const ok = await copyText('what I selected');
+    assert.equal(ok, true);
+    assert.match(globalThis.__fdCopy.verified, /^YES/);
+    assert.equal(globalThis.__fdCopy.result, 'verified as copied');
+  });
+});
+
+test('copyText keeps an accepted-but-uncheckable copy standing (permission not granted)', async () => {
+  await withCopyDom({ readBack: 'irrelevant — never read', permState: 'prompt' }, async () => {
+    const ok = await copyText('what I selected');
+    assert.equal(ok, true,
+      'an unchecked read-back must not fail a copy the browser accepted');
+    assert.match(globalThis.__fdCopy.verified, /^not checked/);
+    assert.equal(globalThis.__fdCopy.result, 'reported as copied (unverified)');
+  });
 });

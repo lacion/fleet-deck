@@ -6,6 +6,7 @@
 // spawn module. spawnRowRevivable is a pure helper.
 
 import { spawnRowRevivable, sessionAdoptableNow } from './helpers.mjs';
+import { scrubUrlCredentials } from './payload-capture.mjs';
 
 export function createSnapshot(ctx) {
   const {
@@ -23,8 +24,13 @@ export function createSnapshot(ctx) {
     // unbounded table nor ship an unbounded file list per card on every frame.
     // R2-7: filesBySession is ordered newest-touch-first, so taking the first
     // SNAPSHOT_FILES_PER_SESSION keeps each card's MOST RECENT files.
+    // BUG-149: the per-session cap is now enforced in SQL too (ROW_NUMBER
+    // partition in statements.mjs, same SNAPSHOT_FILES_PER_SESSION passed as
+    // the second arg) — a session with a six-figure distinct-touch ledger no
+    // longer ships every grouped row across the boundary just to drop them
+    // here. The JS check stays as a harmless backstop.
     const filesBySid = new Map();
-    for (const row of q.filesBySession.all(now - RETAIN_LEDGER_MS)) {
+    for (const row of q.filesBySession.all(now - RETAIN_LEDGER_MS, SNAPSHOT_FILES_PER_SESSION)) {
       let list = filesBySid.get(row.session_id);
       if (!list) { list = []; filesBySid.set(row.session_id, list); }
       if (list.length < SNAPSHOT_FILES_PER_SESSION) list.push(row.abs_path);
@@ -39,11 +45,17 @@ export function createSnapshot(ctx) {
     // v1.2: per-card spawn ownership (spawn object when a spawns row owns the
     // session) and the stale badge (working/verifying with no events for
     // FLEETDECK_STALE_MS — derived from lastSeen, zero new machinery).
-    const spawnBySid = new Map();
-    for (const r of q.allSpawns.all()) spawnBySid.set(r.session_id, r);
-    const pendingBySid = new Map(q.pendingCounts.all().map(r => [r.to_session, r]));
-    const callsignById = new Map(q.allSessions.all().map(s => [s.session_id, s.callsign]));
     const visible = q.visibleSessions.all();
+    // BUG-150: every frame used to rebuild spawnBySid from ALL spawn history
+    // (revive lineages accumulate forever) and callsignById from ALL sessions
+    // ever seen, although spawnBySid is only read for the visible cards and
+    // callsignById only for the ≤20 bounded conflict rows. Both scans grew
+    // with daemon lifetime while projecting a small visible fleet; the two
+    // statements below are scoped to exactly the rows this frame consumes.
+    const spawnBySid = new Map();
+    for (const r of q.spawnByVisibleSession.all()) spawnBySid.set(r.session_id, r);
+    const pendingBySid = new Map(q.pendingCounts.all(Date.now()).map(r => [r.to_session, r]));
+    const callsignById = new Map(q.conflictCallsigns.all().map(s => [s.session_id, s.callsign]));
     // M-P2: the owned-pane and watcher facts feed mail_meta.route below; compute
     // each ONCE per session here rather than re-running getSession +
     // spawnBySession inside the route derivation.
@@ -199,7 +211,15 @@ export function createSnapshot(ctx) {
         repo_id: repo.repo_id,
         repo_name: repo.repo_name,
         root: repo.root,
-        origin_url: repo.origin_url ?? null,
+        // The persisted origin comes verbatim from `git remote get-url origin`
+        // (repos.mjs touchRepo backfill) and can carry credentials —
+        // `https://user:PAT@host/org/repo.git`, `?access_token=…`. The spawn-row
+        // snapshot withholds its origin outright for exactly this reason (see
+        // the fail_detail gate note above); the catalog needs the URL itself for
+        // spawn-form completion, so it goes out through the same positional
+        // userinfo + secret-query-param scrub every other board-facing git
+        // string gets (payload-capture.mjs). The raw value stays server-side.
+        origin_url: repo.origin_url == null ? null : scrubUrlCredentials(repo.origin_url),
         default_branch: repo.default_branch ?? null,
         last_used_at: repo.last_used_at,
       })),
@@ -256,12 +276,17 @@ export function createSnapshot(ctx) {
         plan_md: p.plan_md,
         created_at: p.created_at,
         status: p.status,
+        via: p.executed_via, // optional {via} recorded by POST /api/plans/:id/mark
       })),
     };
   }
 
+  // Health semantics (BUG-193): the CURRENT fleet — the cards /state can
+  // show. Dismissed and retention-archived rows are history, not fleet, so an
+  // unscoped COUNT(*) left /health.fleet and `fleetdeck status` permanently
+  // overstating the fleet by every card ever archived.
   function fleetSize() {
-    return q.countSessions.get().n;
+    return q.countVisibleSessions.get().n;
   }
 
   // Live-terminal target resolver (CONTRACT): the HTTP/WS layer gets a row

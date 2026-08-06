@@ -37,7 +37,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startDaemon, randomPort } from './helpers/daemon.mjs';
 import { postJson, getJson } from './helpers/http.mjs';
-import { waitForSpecRecords } from './helpers/wait.mjs';
+import { waitForSpecRecords, makeSpecRecordFile } from './helpers/wait.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SPAWN_CMD_FIXTURE = path.join(HERE, 'helpers/spawn-cmd-fixture.mjs');
@@ -93,7 +93,7 @@ async function armUnsupervised(daemon) {
 test('unsupervised spawn: dangerously_skip_permissions:true adds --dangerously-skip-permissions to argv and sets spawn.skip_permissions true', async (t) => {
   const port = randomPort();
   const baseUrl = `http://127.0.0.1:${port}`;
-  const rec = path.join(scratchDir(), 'specs.jsonl');
+  const rec = makeSpecRecordFile(t);
   const cwd = scratchDir();
   const daemon = await startDaemon({ port, env: spawnCmdEnv({ recordFile: rec, postUrl: baseUrl }) });
   t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
@@ -116,7 +116,7 @@ test('unsupervised spawn: dangerously_skip_permissions:true adds --dangerously-s
 test("unsupervised spawn: permission_mode 'bypassPermissions' adds --permission-mode bypassPermissions (two argv elements) and also sets spawn.skip_permissions true", async (t) => {
   const port = randomPort();
   const baseUrl = `http://127.0.0.1:${port}`;
-  const rec = path.join(scratchDir(), 'specs.jsonl');
+  const rec = makeSpecRecordFile(t);
   const cwd = scratchDir();
   const daemon = await startDaemon({ port, env: spawnCmdEnv({ recordFile: rec, postUrl: baseUrl }) });
   t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
@@ -142,7 +142,7 @@ test("unsupervised spawn: permission_mode 'bypassPermissions' adds --permission-
 test('unsupervised spawn: neither dangerously_skip_permissions nor permission_mode bypassPermissions requested -> skip_permissions false, no --dangerously-skip-permissions in argv', async (t) => {
   const port = randomPort();
   const baseUrl = `http://127.0.0.1:${port}`;
-  const rec = path.join(scratchDir(), 'specs.jsonl');
+  const rec = makeSpecRecordFile(t);
   const cwd = scratchDir();
   const daemon = await startDaemon({ port, env: spawnCmdEnv({ recordFile: rec, postUrl: baseUrl }) });
   t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
@@ -166,7 +166,7 @@ test('unsupervised spawn: neither dangerously_skip_permissions nor permission_mo
 test('unsupervised spawn: both dangerously_skip_permissions:true AND permission_mode bypassPermissions together (contract-legal) produce both argv effects', async (t) => {
   const port = randomPort();
   const baseUrl = `http://127.0.0.1:${port}`;
-  const rec = path.join(scratchDir(), 'specs.jsonl');
+  const rec = makeSpecRecordFile(t);
   const cwd = scratchDir();
   const daemon = await startDaemon({ port, env: spawnCmdEnv({ recordFile: rec, postUrl: baseUrl }) });
   t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });

@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync, chmodSync, readFileSync, mkdirSync 
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { openDb } from '../scripts/fleetd/db.mjs';
+import { createStatements } from '../scripts/fleetd/statements.mjs';
 import { claudeTranscriptPath, createCore } from '../scripts/fleetd/derive.mjs';
 import { capturePane, exactWindowTarget, pasteText, sendEnter, typeKeys } from '../scripts/fleetd/spawn.mjs';
 import { stallDiagnosticExcerpt } from '../scripts/fleetd/spawns.mjs';
@@ -78,6 +79,44 @@ function memoryCore(t, { env = {}, tmux = fakeTmux(), home = '/daemon-home' } = 
   return { db, core, ...tmux, home };
 }
 
+test('BUG-150: snapshot spawns/callsigns come only from visible sessions + bounded conflicts', t => {
+  const { db, core } = memoryCore(t);
+  const now = Date.now();
+  db.prepare('INSERT INTO sessions (session_id, callsign, col, note, events, started_at, last_seen, blocked_this_turn, archived_at) VALUES (?, ?, ?, ?, 0, ?, ?, 0, ?)')
+    .run('live-1', 'wren-live', 'working', 'registered', now, now, null);
+  db.prepare('INSERT INTO sessions (session_id, callsign, col, note, events, started_at, last_seen, blocked_this_turn, archived_at) VALUES (?, ?, ?, ?, 0, ?, ?, 0, ?)')
+    .run('arch-1', 'comet-old', 'offline', 'ended', now - 1000, now - 1000, now - 500);
+  db.prepare('INSERT INTO sessions (session_id, callsign, col, note, events, started_at, last_seen, blocked_this_turn, archived_at) VALUES (?, ?, ?, ?, 0, ?, ?, 0, ?)')
+    .run('arch-2', 'ibis-old', 'offline', 'ended', now - 2000, now - 2000, now - 500);
+  // Spawn history: a live lineage (old dead row + newest live row) and a
+  // large dead history attached to an ARCHIVED session — the rows BUG-150
+  // stopped materializing on every frame.
+  db.prepare("INSERT INTO spawns (spawn_id, session_id, callsign, tmux_window, cwd, requested_at, status) VALUES ('sp-old', 'live-1', 'wren-live', 'fd4711-wren-live', '/x', ?, 'gone')")
+    .run(now - 5000);
+  db.prepare("INSERT INTO spawns (spawn_id, session_id, callsign, tmux_window, cwd, requested_at, status) VALUES ('sp-new', 'live-1', 'wren-live', 'fd4711-wren-live', '/x', ?, 'live')")
+    .run(now - 1000);
+  for (let i = 0; i < 100; i++) {
+    db.prepare("INSERT INTO spawns (spawn_id, session_id, callsign, tmux_window, cwd, requested_at, status) VALUES (?, 'arch-1', 'comet-old', ?, '/y', ?, 'gone')")
+      .run(`sp-arch-${i}`, `fd4711-comet-${i}`, now - 10000 + i);
+  }
+  // A bounded conflict naming an archived session: its callsign must still
+  // resolve even though that session never appears on the board.
+  db.prepare('INSERT INTO conflicts (at, repo_id, rel_path, severity, sessions_json) VALUES (?, ?, ?, ?, ?)')
+    .run(now, 'r1', 'src/x.mjs', 'warn', JSON.stringify(['arch-1', 'arch-2']));
+  // Pre-fix these reads returned EVERY spawn/session row; the fix scopes
+  // spawns to visible sessions and callsigns to conflict-referenced ones.
+  const { q } = createStatements(db);
+  assert.equal(q.spawnByVisibleSession.all().length, 2);
+  assert.deepEqual(q.conflictCallsigns.all().map(r => r.session_id).sort(), ['arch-1', 'arch-2']);
+  const snap = core.snapshot();
+  const card = snap.sessions.find(s => s.session_id === 'live-1');
+  // Newest lineage row still wins the card.
+  assert.equal(card.spawn.spawn_id, 'sp-new');
+  assert.equal(snap.sessions.some(s => s.session_id === 'arch-1'), false);
+  const conflict = snap.conflicts.find(c => c.rel_path === 'src/x.mjs');
+  assert.deepEqual(conflict.callsigns, ['comet-old', 'ibis-old']);
+});
+
 test('stall diagnostic excerpt is line/byte bounded and redacts shape + exact secrets', () => {
   const exact = 'corporate-token-with-no-known-shape';
   const screen = Array.from({ length: 30 }, (_, i) => `line-${i} ${'🚀'.repeat(200)}`).join('\n')
@@ -105,6 +144,46 @@ test('stall diagnostic excerpt also scrubs URL userinfo, which no shape rule can
   assert.equal(out.includes('glpat-AbCdEf1234567890'), false, 'the PAT must not survive the pane excerpt');
   assert.equal(out.includes('luis:'), false, 'nor the userinfo it sat in');
   assert.ok(out.includes('https://[redacted]@gitlab.com/o/r.git'), out);
+});
+
+test('stall diagnostic excerpt masks bare forge/API tokens, not just URL userinfo', () => {
+  // BUG-038: a repo-mode spawn stalls while the pane still shows the forge's own
+  // rejection — `remote: the provided token (glpat-…) is incorrect`. These shapes
+  // used to be redacted only on the git path (exec.mjs redactGitText); this
+  // excerpt applied redactDiagnosticText + scrubUrlCredentials, which saw none of
+  // them, so the PAT rode stall_detail into the drawer, /state, every /ws frame
+  // and the durable SpawnStalled note. The shapes are in the shared list now.
+  const out = stallDiagnosticExcerpt([
+    '$ git fetch origin',
+    'remote: the provided token (glpat-AbCdEf1234567890) is incorrect',
+    `remote: key AIza${'K'.repeat(35)} is not authorized`,
+    `remote: sk-${'p'.repeat(32)} revoked`,
+    `remote: hf_${'h'.repeat(30)} expired`,
+    `remote: dop_v1_${'d'.repeat(40)} deleted`,
+    'fatal: authentication failed',
+  ].join('\n'));
+  for (const leak of ['glpat-', 'AIza', 'sk-p', 'hf_', 'dop_v1_']) {
+    assert.equal(out.includes(leak), false, `${leak} must not survive the pane excerpt: ${out}`);
+  }
+  assert.match(out, /fatal: authentication failed/, 'the verdict line stays legible');
+});
+
+test('stall diagnostic excerpt masks BARE forge shapes, not just URL userinfo', () => {
+  // A stalled pane can show the token bare — a pasted `export`, a CI echo — with
+  // no URL around it. Until SECRET_VALUE_RES carried the forge shapes, only the
+  // git-local list (exec.mjs GIT_EXTRA_SECRET_RES) masked them, and a bare glpat
+  // on a stalled pane reached stall_detail verbatim while CI stayed green: the
+  // stall tests only ever fed the excerpt URL userinfo and sk-ant.
+  const out = stallDiagnosticExcerpt([
+    '$ export GITLAB_TOKEN=glpat-AbCdEf1234567890',
+    `remote: key AIza${'K'.repeat(35)} is not authorized`,
+    `remote: sk-${'p'.repeat(32)} revoked`,
+    'stall reason follows',
+  ].join('\n'));
+  for (const leak of ['glpat-AbCdEf1234567890', 'AIza' + 'K'.repeat(10), 'sk-' + 'p'.repeat(10)]) {
+    assert.equal(out.includes(leak), false, `${leak} must not survive the pane excerpt`);
+  }
+  assert.match(out, /stall reason follows/, 'the legible tail still survives');
 });
 
 test('spawn argv is deterministic and registration watchdog stalls once, then a late hook revives it', async (t) => {
@@ -270,6 +349,35 @@ test('owned-pane mail honors watcher priority and unclaims all rows when paste f
   assert.deepEqual(state.calls, [['pasteText', '@1', '[FLEETDECK MAIL from ops] retry me']]);
 });
 
+test('owned-pane mail: failed Enter after successful paste does NOT requeue (BUG-033)', async (t) => {
+  const { db, core, state } = memoryCore(t);
+  const cwd = mkdtempSync(path.join(tmpdir(), 'fd-mail-enter-'));
+  t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+  const spawn = await core.spawn({ cwd });
+  const sid = spawn.body.session_id;
+  core.hookSessionStart({ session_id: sid, cwd, source: 'startup' });
+
+  state.enterOk = false;
+  const posted = await core.postMail({ to: sid, from: 'ops', text: 'paste ok, enter fails' });
+  assert.equal(posted.targets[0].route, 'pane');
+  assert.equal(await core.tryOwnedPaneDelivery(sid), false, 'Enter failure still reports non-delivery');
+  assert.deepEqual(state.calls, [
+    ['pasteText', '@1', '[FLEETDECK MAIL from ops] paste ok, enter fails'],
+    ['sendEnter', '@1'],
+  ]);
+  // The text is already in the composer: requeueing would re-paste and submit
+  // it a second time. The rows must stay delivered.
+  const row = db.prepare('SELECT delivered_at FROM mail ORDER BY id LIMIT 1').get();
+  assert.ok(row.delivered_at, 'rows pasted into the pane must NOT be requeued when Enter fails');
+  assert.equal(core.snapshot().mail_meta[sid].queued, 0, 'no pending mail remains to re-paste');
+
+  // A later delivery pass must not touch the pane again — nothing is pending.
+  state.calls.length = 0;
+  state.enterOk = true;
+  assert.equal(await core.tryOwnedPaneDelivery(sid), false, 'no pending mail: nothing to paste');
+  assert.deepEqual(state.calls, [], 'the already-pasted text is never re-pasted');
+});
+
 test('tmux input/capture helpers use isolated-socket argv without shell interpolation', async (t) => {
   const dir = mkdtempSync(path.join(tmpdir(), 'fd-tmux-argv-'));
   const record = path.join(dir, 'argv.jsonl');
@@ -348,6 +456,27 @@ test('retention presumes dead, archives, expires mail, hides archived rows, and 
   assert.equal(revived.col, 'working');
 });
 
+test('BUG-144: a short ledger horizon never prunes touches the conflict radar still considers', async (t) => {
+  // An accepted ledger horizon (envInt floor: 1 minute) far shorter than the
+  // fixed 30-minute conflict window — the audit's reproduction shape.
+  const { db, core } = memoryCore(t, { env: { FLEETDECK_RETAIN_LEDGER_MS: 60_000 } });
+  const now = Date.now();
+  // A touch five minutes old — inside the fixed 30-minute conflict window the
+  // radar promises to consider, but far outside the one-minute ledger
+  // horizon — plus a 90-second-old command (outside that same horizon).
+  db.prepare(`INSERT INTO file_touches (repo_id, rel_path, abs_path, session_id, worktree, at)
+    VALUES ('repo', 'a.js', '/repo/a.js', 's1', NULL, ?)`).run(now - 5 * 60_000);
+  db.prepare(`INSERT INTO commands (at, text, parsed_json) VALUES (?, '/rc x', NULL)`).run(now - 90_000);
+
+  await core.retentionSweep();
+
+  // The touch survives: touch pruning is floored at CONFLICT_WINDOW_MS, so a
+  // rival editing a.js five minutes later still gets the conflict warning.
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM file_touches').get().n, 1);
+  // The other ledgers still age on the configured (short) horizon.
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM commands').get().n, 0);
+});
+
 test('cleanup archives offline rows, expires mail, kills eligible dead panes, and only lists worktrees', async (t) => {
   const tmux = fakeTmux();
   const { db, core, state } = memoryCore(t, { tmux });
@@ -380,4 +509,45 @@ test('cleanup archives offline rows, expires mail, kills eligible dead panes, an
   assert.ok(out.feed_cleared >= 0, 'Clear wipes the feed too');
   assert.deepEqual(state.killed, ['fd4711-off-1']);
   assert.equal(core.snapshot().sessions.some(s => s.session_id === 'offline'), false);
+});
+
+test('cleanup does not kill a same-name replacement pane a revive stood up mid-kill (BUG-046)', async (t) => {
+  // Bulk Clear verified a terminal row owned the dead window, then awaited the
+  // name-based kill. A revive landing inside that await inserts a NEW live row
+  // for the same deterministic name and stands a fresh live pane up on it.
+  // Cleanup's kill-time expectation (window generation + current owner + no
+  // unseen spawn rows) must turn the kill into a stale no-op.
+  const tmux = fakeTmux();
+  const { db, core, state } = memoryCore(t, { tmux });
+  const now = Date.now();
+  db.prepare(`INSERT INTO sessions
+    (session_id, callsign, col, note, events, started_at, last_seen, ended_at, source)
+    VALUES ('offline-race', 'off-race-1', 'offline', 'ended', 0, ?, ?, ?, 'hooks')`).run(now, now, now);
+  db.prepare(`INSERT INTO spawns
+    (spawn_id, session_id, callsign, tmux_session, tmux_window, requested_at, status)
+    VALUES ('sp-race-old', 'offline-race', 'off-race-1', 'fleetdeck-4711', 'fd4711-off-race-1', ?, 'pane-dead')`).run(now);
+  state.windows.push({
+    session: 'fleetdeck-4711', window: 'fd4711-off-race-1', window_id: '@8', pane_dead: true, pane_cmd: 'claude',
+  });
+  tmux.adapter.killWindowVerified = async (name, opts) => {
+    // The revive lands during the kill's own awaits, after the pre-checks passed.
+    db.prepare(`INSERT INTO spawns
+      (spawn_id, session_id, callsign, tmux_session, tmux_window, requested_at, status)
+      VALUES ('sp-race-new', 'offline-race', 'off-race-1', 'fleetdeck-4711', 'fd4711-off-race-1', ?, 'live')`).run(now + 1);
+    state.windows = [{ session: 'fleetdeck-4711', window: name, window_id: '@88', pane_dead: false, pane_cmd: 'claude' }];
+    if (opts?.expectWindowId !== undefined) {
+      const win = state.windows.find(w => w.window === name);
+      if (!win || win.window_id !== opts.expectWindowId || (opts.expect && !opts.expect())) {
+        return { ok: false, stale: true, error: 'stale window owner' };
+      }
+    }
+    state.killed.push(name);
+    return { ok: true, window_id: '@88' };
+  };
+
+  const out = await core.cleanup();
+  assert.equal(out.windows_killed, 0, 'the replacement pane is NOT killed');
+  assert.deepEqual(state.killed, [], 'the name-based kill never fired');
+  assert.equal(db.prepare("SELECT status FROM spawns WHERE spawn_id = 'sp-race-new'").get().status, 'live',
+    'the revived spawn row is untouched');
 });

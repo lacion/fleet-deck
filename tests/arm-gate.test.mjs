@@ -85,7 +85,9 @@ test('an armed unsupervised spawn works; the token is single-use', async (t) => 
 
   // A fresh arm works again — and via the permission_mode route too.
   const token2 = await arm(daemon);
-  const third = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd: scratchDir(), permission_mode: 'bypassPermissions', arm_token: token2 });
+  const cwd2 = scratchDir();
+  t.after(() => rmSync(cwd2, { recursive: true, force: true }));
+  const third = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd: cwd2, permission_mode: 'bypassPermissions', arm_token: token2 });
   assert.equal(third.status, 200, 'second armed spawn (permission_mode route) succeeds');
 });
 
