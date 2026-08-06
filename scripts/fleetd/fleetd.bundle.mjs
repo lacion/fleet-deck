@@ -6471,6 +6471,26 @@ function createStatements(db2) {
     presumeDeadSessions: db2.prepare(`SELECT * FROM sessions
       WHERE source = 'hooks' AND ended_at IS NULL
         AND col IN ('queued', 'idle', 'needsyou') AND last_seen < ?`),
+    // 'working' and 'verifying' are deliberately absent above: a card mid-turn
+    // is legitimately silent (one long tool call emits no hooks), so the
+    // ordinary silence horizon must not condemn it. But "not on the ordinary
+    // horizon" had become "no horizon at all" — a hook session that dies
+    // WITHOUT a SessionEnd while in either column (kill -9, OOM, a crashed
+    // terminal, a laptop that slept forever) kept ended_at NULL for the rest of
+    // the daemon's life. Nothing retires it: the silence sweep skips it by
+    // column, and dismissSession refuses anything that is not offline, so the
+    // card cannot be cleared from the board by ANY route the UI or API offers.
+    // It even renders with the stale badge (snapshot.mjs) — visibly wrong,
+    // permanently unfixable. No container and no restart required.
+    //
+    // So these columns get a LONGER leash, not an exemption. The rows selected
+    // here flow through the same tmux adjudication as every other candidate: a
+    // genuinely working spawned agent is proven alive and refreshes its clock,
+    // and only a pane-less or tmux-confirmed-dead row is presumed ended (a
+    // reversible, 'presumed' tombstone a late hook undoes).
+    presumeDeadWorkingSessions: db2.prepare(`SELECT * FROM sessions
+      WHERE source = 'hooks' AND ended_at IS NULL
+        AND col IN ('working', 'verifying') AND last_seen < ?`),
     archiveCandidates: db2.prepare(`SELECT * FROM sessions
       WHERE col = 'offline' AND archived_at IS NULL
         AND COALESCE(ended_at, last_seen) < ?
@@ -6723,6 +6743,7 @@ function claudeEnvArgvPrefix(port, home, { keep = [] } = {}) {
     "FLEETDECK_SETUP_REGISTER_MS",
     "FLEETDECK_PANE_MAIL_GRACE_MS",
     "FLEETDECK_PRESUME_DEAD_MS",
+    "FLEETDECK_PRESUME_DEAD_WORKING_MS",
     "FLEETDECK_RETAIN_OFFLINE_MS",
     "FLEETDECK_RC_HARVEST_MS",
     "FLEETDECK_ADOPT_ARM_MS",
@@ -12062,6 +12083,7 @@ function createRetention(ctx) {
     adoptSession,
     scopedPaneTarget,
     PRESUME_DEAD_MS,
+    PRESUME_DEAD_WORKING_MS,
     RETAIN_OFFLINE_MS,
     RETAIN_LEDGER_MS
   } = ctx;
@@ -12082,7 +12104,11 @@ function createRetention(ctx) {
     let changed = false;
     const spawned = [];
     const overrideMode = !!tmuxAdapter.spawnOverrideCmd();
-    for (const s of q.presumeDeadSessions.all(now - PRESUME_DEAD_MS)) {
+    const candidates = [
+      ...q.presumeDeadSessions.all(now - PRESUME_DEAD_MS),
+      ...q.presumeDeadWorkingSessions.all(now - PRESUME_DEAD_WORKING_MS)
+    ];
+    for (const s of candidates) {
       const sp = q.activeSpawnBySession.get(s.session_id);
       if (sp && !overrideMode) {
         spawned.push({ s, sp });
@@ -12397,6 +12423,7 @@ function createCore(db2, {
   const PANE_MAIL_GRACE_MS = envInt("FLEETDECK_PANE_MAIL_GRACE_MS", 1500, { min: 0 });
   const MAIL_CLAIM_LEASE_MS = envInt("FLEETDECK_MAIL_CLAIM_LEASE_MS", 3e4, { min: 1 });
   const PRESUME_DEAD_MS = envInt("FLEETDECK_PRESUME_DEAD_MS", 108e5, { min: 1 });
+  const PRESUME_DEAD_WORKING_MS = envInt("FLEETDECK_PRESUME_DEAD_WORKING_MS", PRESUME_DEAD_MS * 3, { min: 1 });
   const RETAIN_OFFLINE_MS = envInt("FLEETDECK_RETAIN_OFFLINE_MS", 864e5, { min: 1 });
   const RC_HARVEST_MS = envInt("FLEETDECK_RC_HARVEST_MS", 2500, { min: 0 });
   const ADOPT_ARM_MS = envInt("FLEETDECK_ADOPT_ARM_MS", 18e5, { min: 1 });
@@ -12722,6 +12749,7 @@ function createCore(db2, {
     // BUG-128 test-only
     MAIL_CLAIM_LEASE_MS,
     PRESUME_DEAD_MS,
+    PRESUME_DEAD_WORKING_MS,
     RETAIN_OFFLINE_MS,
     RC_HARVEST_MS,
     RETAIN_LEDGER_MS,

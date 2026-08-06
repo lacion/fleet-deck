@@ -420,6 +420,26 @@ export function createStatements(db) {
     presumeDeadSessions: db.prepare(`SELECT * FROM sessions
       WHERE source = 'hooks' AND ended_at IS NULL
         AND col IN ('queued', 'idle', 'needsyou') AND last_seen < ?`),
+    // 'working' and 'verifying' are deliberately absent above: a card mid-turn
+    // is legitimately silent (one long tool call emits no hooks), so the
+    // ordinary silence horizon must not condemn it. But "not on the ordinary
+    // horizon" had become "no horizon at all" — a hook session that dies
+    // WITHOUT a SessionEnd while in either column (kill -9, OOM, a crashed
+    // terminal, a laptop that slept forever) kept ended_at NULL for the rest of
+    // the daemon's life. Nothing retires it: the silence sweep skips it by
+    // column, and dismissSession refuses anything that is not offline, so the
+    // card cannot be cleared from the board by ANY route the UI or API offers.
+    // It even renders with the stale badge (snapshot.mjs) — visibly wrong,
+    // permanently unfixable. No container and no restart required.
+    //
+    // So these columns get a LONGER leash, not an exemption. The rows selected
+    // here flow through the same tmux adjudication as every other candidate: a
+    // genuinely working spawned agent is proven alive and refreshes its clock,
+    // and only a pane-less or tmux-confirmed-dead row is presumed ended (a
+    // reversible, 'presumed' tombstone a late hook undoes).
+    presumeDeadWorkingSessions: db.prepare(`SELECT * FROM sessions
+      WHERE source = 'hooks' AND ended_at IS NULL
+        AND col IN ('working', 'verifying') AND last_seen < ?`),
     archiveCandidates: db.prepare(`SELECT * FROM sessions
       WHERE col = 'offline' AND archived_at IS NULL
         AND COALESCE(ended_at, last_seen) < ?

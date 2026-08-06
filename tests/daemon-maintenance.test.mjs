@@ -209,6 +209,7 @@ test('spawn argv is deterministic and registration watchdog stalls once, then a 
     'FLEETDECK_WATCH_POLL_MS', 'FLEETDECK_SPAWN_REGISTER_MS',
     'FLEETDECK_SETUP_REGISTER_MS',
     'FLEETDECK_PANE_MAIL_GRACE_MS', 'FLEETDECK_PRESUME_DEAD_MS',
+    'FLEETDECK_PRESUME_DEAD_WORKING_MS',
     'FLEETDECK_RETAIN_OFFLINE_MS',
     'FLEETDECK_RC_HARVEST_MS',
     'FLEETDECK_ADOPT_ARM_MS', 'FLEETDECK_ADOPT_DELAY_MS',
@@ -550,4 +551,79 @@ test('cleanup does not kill a same-name replacement pane a revive stood up mid-k
   assert.deepEqual(state.killed, [], 'the name-based kill never fired');
   assert.equal(db.prepare("SELECT status FROM spawns WHERE spawn_id = 'sp-race-new'").get().status, 'live',
     'the revived spawn row is untouched');
+});
+
+// ---------------------------------------------------------------------------
+// MID-TURN SILENCE HORIZON.
+//
+// 'working' and 'verifying' are excluded from the ordinary silence sweep on
+// purpose: a card in the middle of one long tool call is legitimately quiet,
+// and condemning it on the clock would offline a live agent. But "off the
+// ordinary horizon" had become "off every horizon" — a hook session that dies
+// mid-turn WITHOUT a SessionEnd (kill -9, OOM, a crashed terminal) kept
+// ended_at NULL forever. Nothing could retire it and dismissSession refuses
+// anything not offline, so the card was unclearable by any route the board
+// offers — permanently, with no container and no restart involved.
+//
+// The fix gives those columns a LONGER leash, not an exemption, and routes
+// them through the same evidence-based adjudication as everything else.
+// ---------------------------------------------------------------------------
+
+test('a hook-only card that dies mid-turn is eventually retired, and only then dismissable', async (t) => {
+  const { db, core } = memoryCore(t, { env: { FLEETDECK_PRESUME_DEAD_WORKING_MS: 60_000 } });
+  const now = Date.now();
+  db.prepare(`INSERT INTO sessions
+    (session_id, callsign, col, note, events, started_at, last_seen, ended_at, source)
+    VALUES ('mid-turn', 'mid-1', 'working', 'running a long tool call', 1, ?, ?, NULL, 'hooks')`)
+    .run(now - 600_000, now - 600_000); // silent for 10 min, horizon is 1 min
+
+  // Before retirement the card cannot be cleared — this is the reported state.
+  const early = await core.dismissSession('mid-turn');
+  assert.equal(early.status, 409, 'sanity: a live-column card is not dismissable');
+
+  await core.retentionSweep(now);
+
+  const row = db.prepare("SELECT * FROM sessions WHERE session_id = 'mid-turn'").get();
+  assert.equal(row.col, 'offline', 'a pane-less card silent past the mid-turn horizon must be presumed ended');
+  assert.ok(row.ended_at, 'ended_at must be stamped');
+  assert.equal(row.end_reason, 'presumed', 'the end is a GUESS — a late hook must be able to undo it');
+
+  const dismissed = await core.dismissSession('mid-turn');
+  assert.equal(dismissed.status, 200, `the retired card must now be dismissable; got ${JSON.stringify(dismissed)}`);
+});
+
+test('a mid-turn card inside its horizon is left alone (a long tool call is not death)', async (t) => {
+  const { db, core } = memoryCore(t, { env: { FLEETDECK_PRESUME_DEAD_WORKING_MS: 3_600_000 } });
+  const now = Date.now();
+  // Silent for 20 min: far past the ORDINARY 3 h? no — and well inside the
+  // mid-turn horizon either way. The point is that the ordinary horizon must
+  // not be what governs this column.
+  db.prepare(`INSERT INTO sessions
+    (session_id, callsign, col, note, events, started_at, last_seen, ended_at, source)
+    VALUES ('busy', 'busy-1', 'working', 'thinking', 1, ?, ?, NULL, 'hooks')`)
+    .run(now - 1_200_000, now - 1_200_000);
+
+  await core.retentionSweep(now);
+
+  const row = db.prepare("SELECT * FROM sessions WHERE session_id = 'busy'").get();
+  assert.equal(row.col, 'working', 'a card inside the mid-turn horizon must keep working');
+  assert.equal(row.ended_at, null, 'and must not be tombstoned');
+});
+
+test('a late hook resurrects a mid-turn card that was presumed ended', async (t) => {
+  const { db, core } = memoryCore(t, { env: { FLEETDECK_PRESUME_DEAD_WORKING_MS: 60_000 } });
+  const now = Date.now();
+  db.prepare(`INSERT INTO sessions
+    (session_id, callsign, col, note, events, started_at, last_seen, ended_at, source)
+    VALUES ('slow', 'slow-1', 'verifying', 'checking', 1, ?, ?, NULL, 'hooks')`)
+    .run(now - 600_000, now - 600_000);
+
+  await core.retentionSweep(now);
+  assert.equal(db.prepare("SELECT col FROM sessions WHERE session_id = 'slow'").get().col, 'offline');
+
+  // It was alive after all — the guess must be reversible.
+  core.applyEvent({ session_id: 'slow', hook_event_name: 'UserPromptSubmit', prompt: 'still here' });
+  const row = db.prepare("SELECT * FROM sessions WHERE session_id = 'slow'").get();
+  assert.equal(row.ended_at, null, 'a late hook must clear the presumed end');
+  assert.equal(row.col, 'working', 'and lift the card back out of offline');
 });

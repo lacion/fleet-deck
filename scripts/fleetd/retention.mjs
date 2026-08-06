@@ -15,7 +15,7 @@ export function createRetention(ctx) {
   const {
     q, updateSession, tick, onMutate, tombstoneCard, forgetSpawn,
     tmuxAdapter, port, questions, adoptSession, scopedPaneTarget,
-    PRESUME_DEAD_MS, RETAIN_OFFLINE_MS, RETAIN_LEDGER_MS,
+    PRESUME_DEAD_MS, PRESUME_DEAD_WORKING_MS, RETAIN_OFFLINE_MS, RETAIN_LEDGER_MS,
   } = ctx;
 
   // Silence → presumed-ended tombstone. Pane-less hook sessions have no window
@@ -64,7 +64,16 @@ export function createRetention(ctx) {
     // presume it dead. (The whole daemon is in override mode or none is, so
     // this is one check, not a per-row flag.)
     const overrideMode = !!tmuxAdapter.spawnOverrideCmd();
-    for (const s of q.presumeDeadSessions.all(now - PRESUME_DEAD_MS)) {
+    // Mid-turn columns ride the same machinery on a longer horizon — see
+    // presumeDeadWorkingSessions for why they need one at all (without it a
+    // hook session that dies mid-turn is unclearable forever). Concatenated
+    // rather than branched so every candidate gets identical treatment: spawn
+    // rows are adjudicated by tmux, pane-less rows by silence.
+    const candidates = [
+      ...q.presumeDeadSessions.all(now - PRESUME_DEAD_MS),
+      ...q.presumeDeadWorkingSessions.all(now - PRESUME_DEAD_WORKING_MS),
+    ];
+    for (const s of candidates) {
       const sp = q.activeSpawnBySession.get(s.session_id); // live-eligible spawn row?
       if (sp && !overrideMode) { spawned.push({ s, sp }); continue; } // tmux-backed pane → ask tmux below
       // Pane-less: a hook-only session (no spawn row) OR an override process
