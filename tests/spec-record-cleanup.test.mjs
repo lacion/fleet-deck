@@ -44,7 +44,7 @@ test('BUG-213: spawn suites leave no spec-record scratch directories behind', { 
   const { NODE_TEST_CONTEXT: _drop, ...parentEnv } = process.env;
 
   for (const suite of SUITES) {
-    const result = spawnSync(process.execPath, ['--test', '--test-concurrency=1', path.join(HERE, suite)], {
+    const result = spawnSync(process.execPath, ['--test', '--test-concurrency=1', '--test-reporter=tap', path.join(HERE, suite)], {
       encoding: 'utf8',
       timeout: 240_000,
       env: { ...parentEnv, TMPDIR: sandbox },

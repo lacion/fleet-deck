@@ -26,7 +26,7 @@ test('the failed-clone test cleans up its missing-origin scratch parent (BUG-212
   try {
     out = execFileSync(
       process.execPath,
-      ['--test', '--test-name-pattern', 'clone failure tombstones', path.join(HERE, 'spawn-repo.test.mjs')],
+      ['--test', '--test-reporter=tap', '--test-name-pattern', 'clone failure tombstones', path.join(HERE, 'spawn-repo.test.mjs')],
       { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env },
     );
   } catch (err) {

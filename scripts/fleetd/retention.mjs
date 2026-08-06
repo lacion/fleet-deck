@@ -228,6 +228,11 @@ export function createRetention(ctx) {
     const namedDead = [...byName.values()].filter(sp =>
       sp.tmux_window && ['killed', 'pane-dead', 'gone'].includes(sp.status));
     let windows_killed = 0;
+    // BUG-046: windows a revive reclaimed with a fresh live pane during the kill
+    // phase below. Their new live spawn row must survive the archived-spawn
+    // sweep even though its session is about to be archived — pane liveness
+    // trumps archival.
+    const reclaimed = new Set();
     if (namedDead.length) {
       const wins = await tmuxAdapter.listScopedWindows(port);
       if (wins === null) {
@@ -257,7 +262,7 @@ export function createRetention(ctx) {
         // BUG-046: {ok:false, stale:true} means the kill's re-check caught a
         // revive reclaiming this window name mid-kill — the pane there now is
         // live work, not the corpse we verified. Leave it; never an error.
-        else if (out.stale) { /* revive reclaimed the name — no-op */ }
+        else if (out.stale) { reclaimed.add(win.window); /* revive reclaimed the name — no-op */ }
         // A kill that comes back {ok:false} without proof of absence leaves the
         // window standing on the fleet's tmux session, holding its reusable
         // name — never report success.
@@ -277,7 +282,18 @@ export function createRetention(ctx) {
     for (const sid of archiving) {
       questions_expired += Number(questions.expireAllForSession(sid, { includeFreeform: true }));
     }
-    q.goneArchivedSpawns.run();
+    // Sweep the archived sessions' non-terminal spawns to 'gone' — but spare any
+    // whose window a revive reclaimed with a live pane during the kill phase
+    // (BUG-046): that is live work, not the archived corpse. With no reclaim
+    // (the common case) the bulk sweep runs unchanged.
+    if (reclaimed.size) {
+      for (const sp of q.sweepableArchivedSpawns.all()) {
+        if (sp.tmux_window && reclaimed.has(sp.tmux_window)) continue;
+        q.setSpawnStatus.run('gone', sp.spawn_id);
+      }
+    } else {
+      q.goneArchivedSpawns.run();
+    }
     // CLEAR MEANS CLEAR. Archiving the cards was never enough: the conflict
     // banner kept shouting about files two dead sessions once touched, the rail
     // kept a wall of answered questions, and the feed kept narrating a fleet

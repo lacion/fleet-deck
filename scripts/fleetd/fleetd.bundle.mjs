@@ -6509,11 +6509,25 @@ function createStatements(db2) {
     goneSessionSpawns: db2.prepare(`UPDATE spawns SET status = 'gone'
       WHERE status NOT IN ('killed', 'pane-dead', 'gone', 'stalled')
         AND session_id = ?`),
-    // BUG-046: 'live' is excluded too — a revive that stood a fresh live pane up
-    // on a reused window name mid-Clear inserts a new live spawn row; that is
-    // live work, not the archived session's corpse, and must survive the sweep.
+    // The archived-session spawn sweep. 'live' is deliberately NOT excluded: a
+    // STALE live row of a long-archived session (a spawn that never got
+    // reconciled to a terminal status) is exactly what this backstop must sweep
+    // to 'gone' — see the retention-sweep regression test. BUG-046 is a
+    // DIFFERENT hazard on a DIFFERENT path: a revive that stands a fresh live
+    // pane up on a reused window name mid-Clear. That protection cannot live in
+    // this status-only query (it can't see which window holds a live pane), so
+    // cleanup() runs the pane-aware variant below instead — it skips any window
+    // a revive reclaimed during the kill phase. Everywhere else (the boot /
+    // periodic retentionSweep) uses this bulk sweep unchanged.
     goneArchivedSpawns: db2.prepare(`UPDATE spawns SET status = 'gone'
-      WHERE status NOT IN ('killed', 'pane-dead', 'gone', 'stalled', 'live')
+      WHERE status NOT IN ('killed', 'pane-dead', 'gone', 'stalled')
+        AND session_id IN (SELECT session_id FROM sessions WHERE archived_at IS NOT NULL)`),
+    // cleanup()'s pane-aware sweep: the same rows goneArchivedSpawns would
+    // update, enumerated so the caller can spare any whose window a revive just
+    // reclaimed with a live pane (BUG-046). tmux_window rides along for that
+    // exclusion check.
+    sweepableArchivedSpawns: db2.prepare(`SELECT spawn_id, tmux_window FROM spawns
+      WHERE status NOT IN ('killed', 'pane-dead', 'gone', 'stalled')
         AND session_id IN (SELECT session_id FROM sessions WHERE archived_at IS NOT NULL)`),
     orphanWorktrees: db2.prepare(`SELECT DISTINCT spawns.worktree_path FROM spawns
       JOIN sessions ON sessions.session_id = spawns.session_id
@@ -12158,6 +12172,7 @@ function createRetention(ctx) {
     const byName = new Map(q.allSpawns.all().map((r) => [r.tmux_window, r]));
     const namedDead = [...byName.values()].filter((sp) => sp.tmux_window && ["killed", "pane-dead", "gone"].includes(sp.status));
     let windows_killed = 0;
+    const reclaimed = /* @__PURE__ */ new Set();
     if (namedDead.length) {
       const wins = await tmuxAdapter.listScopedWindows(port);
       if (wins === null) {
@@ -12176,6 +12191,7 @@ function createRetention(ctx) {
         });
         if (out.ok || out.gone) windows_killed++;
         else if (out.stale) {
+          reclaimed.add(win.window);
         } else window_errors.push(`${win.window}: ${out.error || "kill failed"}`);
       }
       if (window_errors.length) {
@@ -12191,7 +12207,14 @@ function createRetention(ctx) {
     for (const sid of archiving) {
       questions_expired += Number(questions.expireAllForSession(sid, { includeFreeform: true }));
     }
-    q.goneArchivedSpawns.run();
+    if (reclaimed.size) {
+      for (const sp of q.sweepableArchivedSpawns.all()) {
+        if (sp.tmux_window && reclaimed.has(sp.tmux_window)) continue;
+        q.setSpawnStatus.run("gone", sp.spawn_id);
+      }
+    } else {
+      q.goneArchivedSpawns.run();
+    }
     const alive = new Set(q.aliveSessionIds.all().map((r) => r.session_id));
     let conflicts_cleared = 0;
     for (const row of q.allConflicts.all()) {

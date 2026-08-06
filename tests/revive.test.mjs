@@ -273,13 +273,20 @@ test('revive harness cleans caller-owned scratch dirs even when the daemon never
   const cwd = scratch('fleetdeck-revive-nostart-cwd-');
   await t.test('a revive test whose daemon rejects on boot', async (st) => {
     const holder = guardScratchDirs(st, [daemonHome, userHome, cwd]);
+    // Force a DETERMINISTIC boot failure by pointing the daemon at a script that
+    // does not exist: node exits immediately with MODULE_NOT_FOUND, so the boot
+    // fails the same way on a fast CI runner and a slow laptop alike. (A tight
+    // healthTimeoutMs raced the boot — on a fast runner the real daemon became
+    // healthy inside the window and startDaemon resolved, so the expected
+    // rejection never came.) The failure surfaces as "exited … before becoming
+    // healthy"; all this test asserts is that a failed boot leaves no daemon
+    // handle and the harness still cleans the caller-owned scratch dirs.
     await assert.rejects(
-      startDaemon({ home: daemonHome, env: { HOME: userHome }, healthTimeoutMs: 200 }),
-      // On a fast/restricted runner fleetd can exit before the 200 ms health
-      // probe even fires (e.g. a LAN/mDNS bind that fails fast), so the boot
-      // failure surfaces as either "never became healthy" (probe timeout) or
-      // "exited … before becoming healthy" (early crash) — both are the
-      // daemon failing to start, which is all this test asserts.
+      startDaemon({
+        home: daemonHome,
+        env: { HOME: userHome },
+        scriptPath: path.join(daemonHome, 'no-such-fleetd.mjs'),
+      }),
       /never became healthy|before becoming healthy/,
     );
     assert.equal(holder.daemon, null, 'no daemon handle exists to stop after a failed boot');
