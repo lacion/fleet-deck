@@ -61,48 +61,50 @@ test('a foreign listener that wins the port is never sent plan-gate mutations', 
   fs.copyFileSync(SCRIPT, path.join(repo, 'demo', 'run-accept-plan.sh'));
   fs.writeFileSync(path.join(repo, 'demo', 'project', '.seed', 'util.js'), 'module.exports = {};\n');
 
-  // The scratch "fleetd": claims its pidfile, then waits for a test-created
-  // go signal before binding so the test can deterministically slip a foreign
-  // listener onto the port first — the exact BUG-013 race. (A fixed setTimeout
-  // here races the node test runner's own event-loop stalls; the go file makes
-  // the ordering explicit.)
+  // The scratch "fleetd": claims its pidfile (in FLEETDECK_HOME, where the
+  // script's readiness gate cross-checks it), then waits for a test-created go
+  // signal before binding so the test can deterministically slip a foreign
+  // listener onto the port first — the exact BUG-013 race. Everything the TEST
+  // must read back (ready marker, bind error, go signal) lives in the fixture
+  // repo root, NOT in FLEETDECK_HOME: the script mktemps its own scratch home
+  // (BUG-097) and rm -rf's it on exit, so a marker written there is gone before
+  // the assertions run. The go signal is an existence POLL, not fs.watchFile —
+  // watchFile fires once on registration for a missing file, and a go written
+  // before registration would be swallowed by that initial event.
   fs.writeFileSync(path.join(repo, 'scripts', 'fleetd', 'fleetd.mjs'), `
     import fs from 'node:fs';
     import http from 'node:http';
+    import path from 'node:path';
+    import { fileURLToPath } from 'node:url';
     const home = process.env.FLEETDECK_HOME;
     const port = Number(process.env.FLEETDECK_PORT);
+    const markers = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
     fs.writeFileSync(home + '/fleetd.pid', JSON.stringify({ pid: process.pid, port }));
-    fs.writeFileSync(home + '/child-ready.txt', String(process.pid));
+    fs.writeFileSync(path.join(markers, 'child-ready.txt'), String(process.pid));
     const go = () => {
       const server = http.createServer((req, res) => res.end('{}'));
       server.on('error', (err) => {
-        fs.writeFileSync(home + '/child-bind-error.txt', String(err?.code || err));
+        fs.writeFileSync(path.join(markers, 'child-bind-error.txt'), String(err?.code || err));
         process.exit(3);
       });
       server.listen(port, '127.0.0.1');
     };
-    // watchFile fires once on registration for a missing file; only the
-    // first change after that initial event is the test's go signal.
-    let armed = false;
-    fs.watchFile(home + '/go', { interval: 25 }, () => {
-      if (!armed) { armed = true; return; }
-      fs.unwatchFile(home + '/go');
-      go();
-    });
+    const poll = setInterval(() => {
+      if (fs.existsSync(path.join(markers, 'go'))) { clearInterval(poll); go(); }
+    }, 25);
   `);
 
-  // The script hardcodes FLEETDECK_PORT (the environment cannot override
-  // it), so the fixture copy's port line is patched to a free port below;
-  // the whole run — BASE, the scratch daemon env, the pid cross-check —
-  // follows that one assignment.
-
-  const scratch = path.join(repo, '.fleetdeck-test');
-  // Patch only the port line: FLEETDECK_PORT feeds BASE, the scratch daemon's
-  // env, and the pid cross-check, so the whole run follows it.
+  // BUG-097 made the script ALLOCATE its own verified-free port at runtime
+  // (FLEETDECK_PORT="$(node -e ...)"), so the environment cannot steer it —
+  // and patching the top-of-file FLEETDECK_PORT="" init is a silent no-op: the
+  // allocation overwrites it and the foreign listener below would sit on a
+  // port the run never touches (the staged race would simply not happen).
+  // Patch the ALLOCATION line itself to the test's pre-drawn free port; BASE,
+  // the scratch daemon env, and the pid cross-check all follow it.
   const scriptCopy = path.join(repo, 'demo', 'run-accept-plan.sh');
   const original = fs.readFileSync(scriptCopy, 'utf8');
-  const portLine = original.match(/^FLEETDECK_PORT=.+$/m);
-  assert.ok(portLine, 'acceptance script must set FLEETDECK_PORT');
+  const portLine = original.match(/^FLEETDECK_PORT="\$\(node -e .+$/m);
+  assert.ok(portLine, 'acceptance script must allocate FLEETDECK_PORT via its node probe');
   const port = await new Promise((resolve, reject) => {
     const probe = http.createServer();
     probe.once('error', reject);
@@ -111,16 +113,9 @@ test('a foreign listener that wins the port is never sent plan-gate mutations', 
       probe.close(() => resolve(p));
     });
   });
-  // BUG-097 made the shipped script mktemp its SCRATCH_HOME (unique per run);
-  // this test needs a KNOWN home to poll the stub's child-ready.txt, so pin the
-  // script COPY's SCRATCH_HOME to `scratch`. The shipped script is unchanged
-  // (its mktemp behavior is covered by demo-accept-isolation).
-  let patched = original.replace(portLine[0], `FLEETDECK_PORT=${port}`);
-  patched = patched.replace(
-    /SCRATCH_HOME="\$\(mktemp -d "\$\{TMPDIR:-\/tmp\}\/fleetdeck-plan\.XXXXXX"\)"/,
-    `mkdir -p ${JSON.stringify(scratch)}; SCRATCH_HOME=${JSON.stringify(scratch)}`,
-  );
-  assert.ok(patched.includes(`SCRATCH_HOME=${JSON.stringify(scratch)}`), 'must pin the script copy SCRATCH_HOME');
+  // The script's own mktemp'd SCRATCH_HOME runs verbatim — the stub reports
+  // through the repo-root markers above, so this test needs no known home.
+  const patched = original.replace(portLine[0], `FLEETDECK_PORT=${port}`);
   fs.writeFileSync(scriptCopy, patched);
 
   const child = spawn('bash', [scriptCopy], {
@@ -143,7 +138,7 @@ test('a foreign listener that wins the port is never sent plan-gate mutations', 
   // exclusively, exactly like a surviving production fleetd would. The
   // EADDRINUSE case below means the stub beat us to the bind — that cannot
   // happen with the go-signal held, so a bind failure here is a real defect.
-  const childReady = path.join(scratch, 'child-ready.txt');
+  const childReady = path.join(repo, 'child-ready.txt');
   await new Promise((resolve, reject) => {
     const deadline = Date.now() + 10000;
     const tick = () => {
@@ -180,12 +175,12 @@ test('a foreign listener that wins the port is never sent plan-gate mutations', 
 
   // The foreign daemon now owns the port: release the scratch child so it
   // loses the bind and exits 3 (EADDRINUSE), exactly as fleetd would.
-  fs.writeFileSync(path.join(scratch, 'go'), 'go');
+  fs.writeFileSync(path.join(repo, 'go'), 'go');
 
   const exitCode = await new Promise((resolve) => child.on('close', resolve));
 
   // The race really happened: the scratch child lost the bind and exited.
-  assert.match(fs.readFileSync(path.join(scratch, 'child-bind-error.txt'), 'utf8'), /EADDRINUSE/);
+  assert.match(fs.readFileSync(path.join(repo, 'child-bind-error.txt'), 'utf8'), /EADDRINUSE/);
 
   // The gate must abort on its dead child instead of adopting the foreign
   // daemon, and the foreign daemon must see ZERO mutating calls.
