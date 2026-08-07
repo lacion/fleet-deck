@@ -222,7 +222,10 @@ test('spawn argv is deterministic and registration watchdog stalls once, then a 
     'CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY',
     'FLEETDECK_SETUP_CMD',
   ];
-  const prefix = ['env', ...scrub.flatMap(v => ['-u', v]), `FLEETDECK_PORT=${port}`, `FLEETDECK_HOME=${home}`];
+  // 'CLAUDE_CODE_DISABLE_AGENT_VIEW=1' pins Claude Code's agent view off for
+  // every fleet-owned pane (see claudeEnvArgvPrefix); it rides before the
+  // FLEETDECK identity pair, which stays the immediate lead-in to the command.
+  const prefix = ['env', ...scrub.flatMap(v => ['-u', v]), 'CLAUDE_CODE_DISABLE_AGENT_VIEW=1', `FLEETDECK_PORT=${port}`, `FLEETDECK_HOME=${home}`];
   assert.deepEqual(state.argv.slice(0, prefix.length), prefix);
   assert.deepEqual(state.argv.slice(prefix.length), [
     'claude', '--session-id', out.body.session_id,
