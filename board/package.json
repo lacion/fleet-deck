@@ -1,7 +1,7 @@
 {
   "name": "fleetdeck-board",
   "private": true,
-  "version": "0.22.1",
+  "version": "0.22.2",
   "license": "MIT",
   "type": "module",
   "scripts": {
@@ -17,7 +17,7 @@
     "react-dom": "^19.2.8"
   },
   "devDependencies": {
-    "@vitejs/plugin-react": "^6.0.4",
-    "vite": "^8.1.5"
+    "@vitejs/plugin-react": "^6.0.5",
+    "vite": "^8.2.1"
   }
 }
