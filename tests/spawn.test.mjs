@@ -321,6 +321,9 @@ test('argv construction: prompt/model/permission-mode survive intact through the
   ];
   const expectedPrefix = [
     'env', ...scrub.flatMap(name => ['-u', name]),
+    // Every fleet-owned pane pins Claude Code's redundant agent view OFF so a
+    // human cannot arrow into it from a spawned pane and start nested agents.
+    'CLAUDE_CODE_DISABLE_AGENT_VIEW=1',
     `FLEETDECK_PORT=${daemon.port}`, `FLEETDECK_HOME=${daemon.home}`,
   ];
   assert.deepEqual(argv.slice(0, expectedPrefix.length), expectedPrefix,

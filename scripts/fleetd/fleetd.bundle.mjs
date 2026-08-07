@@ -6771,6 +6771,16 @@ function claudeEnvArgvPrefix(port, home, { keep = [] } = {}) {
   return [
     "env",
     ...scrub.flatMap((name) => ["-u", name]),
+    // Fleet Deck already owns the fleet board, so Claude Code's own background
+    // agent view is redundant in a fleet pane — and worse, from a spawned pane a
+    // human can arrow left into it and start launching nested agents that
+    // scribble over the real board. Pin it OFF for every fleet-owned pane.
+    // Merely SETTING the variable disables the view (any value works per the
+    // Claude Code docs); it is a fixed UI setting, not a secret, so — unlike the
+    // gateway credential kept out of argv — it is safe as a plain assignment
+    // here. Placed BEFORE the FLEETDECK identity pair so PORT/HOME remain the
+    // immediate lead-in to the command, the ordering the adapter/tests pin.
+    "CLAUDE_CODE_DISABLE_AGENT_VIEW=1",
     `FLEETDECK_PORT=${port}`,
     `FLEETDECK_HOME=${home}`
   ];

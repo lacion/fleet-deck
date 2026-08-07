@@ -5,6 +5,23 @@ All notable changes to Fleet Deck are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.22.4] - 2026-08-07
+
+A spawned pane exposed Claude Code's own agent view, a second fleet the board
+did not manage.
+
+### Fixed
+
+- **Claude Code's agent view is now off in every fleet pane.** From a spawned
+  session you could press the left arrow into Claude Code's built-in agent
+  view and start new agents there — a parallel, redundant fleet Fleet Deck does
+  not track, whose spawns scribbled over the real board. Fleet Deck already
+  owns fleet orchestration, so every pane it spawns or revives now launches
+  with `CLAUDE_CODE_DISABLE_AGENT_VIEW=1`, pinned in the one deterministic
+  environment wrapper (`claudeEnvArgvPrefix`) that every Claude pane shares, so
+  fresh spawns, resumes, and adopts all get it. The value is a fixed UI setting,
+  not a secret, so it rides in the launch argv rather than through tmux `-e`.
+
 ## [0.22.3] - 2026-08-07
 
 The board could not tell one CLI run from another, so it discarded every
