@@ -22,6 +22,10 @@ import {
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
+  // Fixtures below emit canned tmux listings; they build them from the SHIPPED
+  // separator so a change to it can never silently decouple fake tmux from the
+  // parser under test.
+  FIELD_SEP,
   ensureSession,
   exactWindowTarget,
   fleetServerAbsent,
@@ -141,8 +145,8 @@ case " $* " in
     value=''
     [ -f "$FLEETDECK_FAKE_TMUX_GENERATION" ] && value=$(cat "$FLEETDECK_FAKE_TMUX_GENERATION")
     case " $* " in
-      *" ; "*) printf '__fleetdeck_tmux_generation__=%s\t%s\n' "$value" "$FLEETDECK_FAKE_TMUX_PID" ;;
-      *) printf '%s\t%s\n' "$value" "$FLEETDECK_FAKE_TMUX_PID" ;;
+      *" ; "*) printf '__fleetdeck_tmux_generation__=%s${FIELD_SEP}%s\n' "$value" "$FLEETDECK_FAKE_TMUX_PID" ;;
+      *) printf '%s${FIELD_SEP}%s\n' "$value" "$FLEETDECK_FAKE_TMUX_PID" ;;
     esac
     exit 0
     ;;
@@ -741,9 +745,9 @@ case " $* " in
         count=0
         if [ -f "$FLEETDECK_FAKE_TMUX_STATE" ]; then count=$(cat "$FLEETDECK_FAKE_TMUX_STATE"); fi
         if [ "$count" -eq 0 ]; then
-          printf '%s\\t%s\\t%s\\n' "$FLEETDECK_FAKE_FLEET_SESSION" "$FLEETDECK_FAKE_WINDOW" '@1'
+          printf '%s${FIELD_SEP}%s${FIELD_SEP}%s\\n' "$FLEETDECK_FAKE_FLEET_SESSION" "$FLEETDECK_FAKE_WINDOW" '@1'
         fi
-        printf '%s\\t%s\\t%s\\n' "$FLEETDECK_FAKE_DECOY_SESSION" "$FLEETDECK_FAKE_WINDOW" '@2'
+        printf '%s${FIELD_SEP}%s${FIELD_SEP}%s\\n' "$FLEETDECK_FAKE_DECOY_SESSION" "$FLEETDECK_FAKE_WINDOW" '@2'
         printf '%s\\n' "$((count + 1))" > "$FLEETDECK_FAKE_TMUX_STATE"
         exit 0
         ;;
@@ -875,7 +879,7 @@ case " $* " in
     count=0
     if [ -f "$FLEETDECK_FAKE_TMUX_STATE" ]; then count=$(cat "$FLEETDECK_FAKE_TMUX_STATE"); fi
     if [ "$count" -eq 0 ]; then
-      printf '%s\\t%s\\t%s\\n' "$FLEETDECK_FAKE_FLEET_SESSION" "$FLEETDECK_FAKE_WINDOW" '@1'
+      printf '%s${FIELD_SEP}%s${FIELD_SEP}%s\\n' "$FLEETDECK_FAKE_FLEET_SESSION" "$FLEETDECK_FAKE_WINDOW" '@1'
       printf '1\\n' > "$FLEETDECK_FAKE_TMUX_STATE"
       exit 0
     fi
@@ -1062,8 +1066,8 @@ test('a renamed, repurposed window id is never killed by a stale @id', async (t)
   writeFileSync(path.join(dir, 'tmux'), `#!/bin/sh
 case " $* " in
   *" list-panes "*)
-    printf '%s\\t%s\\t%s\\n' '${fleetSession}' '${window}' '@0'
-    printf '%s\\t%s\\t%s\\n' '${fleetSession}' '${repurposed}' '@1'
+    printf '%s${FIELD_SEP}%s${FIELD_SEP}%s\\n' '${fleetSession}' '${window}' '@0'
+    printf '%s${FIELD_SEP}%s${FIELD_SEP}%s\\n' '${fleetSession}' '${repurposed}' '@1'
     exit 0
     ;;
   *" kill-window "*)
@@ -1077,7 +1081,7 @@ case " $* " in
       *) printf 'KILLED-UNKNOWN\\n' >> "$FLEETDECK_FAKE_KILLS" ;;
     esac
     # Post-kill recheck, when reached: the name is gone, the repurposed @0 lives.
-    printf '%s\\t%s\\t%s\\n' '${fleetSession}' '${repurposed}' '@0'
+    printf '%s${FIELD_SEP}%s${FIELD_SEP}%s\\n' '${fleetSession}' '${repurposed}' '@0'
     exit 0
     ;;
 esac

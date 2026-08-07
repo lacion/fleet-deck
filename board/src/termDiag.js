@@ -49,3 +49,36 @@ export function refusedUpgradeText(heldKey, daemonGates) {
   }
   return NEUTRAL;
 }
+
+/** Give up after this many consecutive failed reconnects. */
+export const MAX_RECONNECT = 5;
+
+/**
+ * What should a terminal viewer do when its socket closes?
+ *
+ * A pane that has ENDED is final — the agent is gone and the frozen screen is
+ * the record. But a pane whose transport merely dropped is NOT: the daemon
+ * restarts on every upgrade (version takeover), a laptop sleeps, a tailnet
+ * re-routes. Before this, any such blip latched the pane dead — `end()` set
+ * disableStdin and the socket effect only re-runs on a spawn change, so the
+ * terminal kept rendering its last screen while silently refusing every
+ * keystroke, with a one-line strip as the only clue. Reconnecting is the
+ * honest response, and it is safe: if the agent really did end, the fresh
+ * viewer is told so and settles on the exit path instead.
+ *
+ * Split out as a pure function so the policy is testable without a DOM.
+ *
+ * @param sawFrames  did this socket ever deliver a frame? false ⇒ the upgrade
+ *                   itself was refused (auth/proxy) — retrying cannot fix that,
+ *                   so diagnose instead of hammering the daemon.
+ * @param attempts   consecutive reconnects already tried for this pane.
+ * @returns {{action:'retry',delayMs:number}|{action:'give-up'}|{action:'diagnose'}}
+ */
+export function reconnectPlan(sawFrames, attempts = 0, max = MAX_RECONNECT) {
+  if (!sawFrames) return { action: 'diagnose' };
+  if (!(attempts < max)) return { action: 'give-up' };
+  // Exponential backoff, capped: a daemon restart is back in ~1s, but a fleet
+  // of open tiles must not become a reconnect storm against a daemon that is
+  // still coming up.
+  return { action: 'retry', delayMs: Math.min(500 * 2 ** attempts, 5000) };
+}

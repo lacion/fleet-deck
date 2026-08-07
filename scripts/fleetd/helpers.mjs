@@ -117,6 +117,7 @@ export function claudeEnvArgvPrefix(port, home, { keep = [] } = {}) {
     'FLEETDECK_WATCH_POLL_MS', 'FLEETDECK_SPAWN_REGISTER_MS',
     'FLEETDECK_SETUP_REGISTER_MS',
     'FLEETDECK_PANE_MAIL_GRACE_MS', 'FLEETDECK_PRESUME_DEAD_MS',
+    'FLEETDECK_PRESUME_DEAD_WORKING_MS',
     'FLEETDECK_RETAIN_OFFLINE_MS', 'FLEETDECK_RC_HARVEST_MS',
     'FLEETDECK_ADOPT_ARM_MS', 'FLEETDECK_ADOPT_DELAY_MS',
     // Test seams that must NEVER ride a pane's env into the next SessionStart:

@@ -49,6 +49,7 @@ const CALLSIGNS = ['falcon', 'otter', 'raven', 'lynx', 'orca', 'wren', 'viper', 
 //   FLEETDECK_SETUP_REGISTER_MS      — setup-spawn registration deadline (10 m)
 //   FLEETDECK_PANE_MAIL_GRACE_MS     — watcher-first mail grace (1.5 s)
 //   FLEETDECK_PRESUME_DEAD_MS        — silent hook-session timeout (3 h)
+//   FLEETDECK_PRESUME_DEAD_WORKING_MS — same, for mid-turn columns (9 h)
 //   FLEETDECK_RETAIN_OFFLINE_MS      — offline retention window (24 h)
 //   FLEETDECK_REPOS_DIR              — default root for managed repository clones
 //   FLEETDECK_CLONE_TIMEOUT_MS        — git clone timeout (default 600 000 = 10 min)
@@ -93,6 +94,13 @@ export function createCore(db, {
   // simply lets the deadline pass and the next daemon re-claims.
   const MAIL_CLAIM_LEASE_MS = envInt('FLEETDECK_MAIL_CLAIM_LEASE_MS', 30_000, { min: 1 });
   const PRESUME_DEAD_MS = envInt('FLEETDECK_PRESUME_DEAD_MS', 10_800_000, { min: 1 });
+  // Mid-turn silence horizon: 3x the ordinary one (9 h). A card in 'working' or
+  // 'verifying' may be legitimately quiet through one very long tool call, so
+  // this must stay well clear of real work — but without SOME horizon a session
+  // that dies mid-turn without a SessionEnd is unclearable forever (see
+  // presumeDeadWorkingSessions). Retirement is still evidence-based: a spawned
+  // row is adjudicated by tmux, never by the clock alone.
+  const PRESUME_DEAD_WORKING_MS = envInt('FLEETDECK_PRESUME_DEAD_WORKING_MS', PRESUME_DEAD_MS * 3, { min: 1 });
   const RETAIN_OFFLINE_MS = envInt('FLEETDECK_RETAIN_OFFLINE_MS', 86_400_000, { min: 1 });
   const RC_HARVEST_MS = envInt('FLEETDECK_RC_HARVEST_MS', 2_500, { min: 0 });
   // 0.7.0 Move-to-tmux (adopt) knobs:
@@ -737,7 +745,7 @@ export function createCore(db, {
     STALE_MS, NUDGE_MS, SPAWN_REGISTER_MS, SETUP_REGISTER_MS, PANE_MAIL_GRACE_MS,
     MAIL_PENDING_MAX, MAIL_PENDING_MAX_BYTES, MAIL_PANE_BATCH, MAIL_PANE_BATCH_BYTES, // BUG-128 test-only
     MAIL_CLAIM_LEASE_MS,
-    PRESUME_DEAD_MS, RETAIN_OFFLINE_MS, RC_HARVEST_MS, RETAIN_LEDGER_MS,
+    PRESUME_DEAD_MS, PRESUME_DEAD_WORKING_MS, RETAIN_OFFLINE_MS, RC_HARVEST_MS, RETAIN_LEDGER_MS,
     ADOPT_ARM_MS, ADOPT_DELAY_MS, // 0.7.0 Move-to-tmux (spawns arms, events fires)
     SNAPSHOT_FILES_PER_SESSION,
     q, updateSession, onMutate, tmuxAdapter, questions, settleTerminalPlans,

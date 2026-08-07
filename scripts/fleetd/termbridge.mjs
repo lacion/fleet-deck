@@ -270,7 +270,6 @@ export function createTermBridge({ port, resolveSpawn, log = () => {} } = {}) {
     c.deadTimer = setInterval(() => {
       if (c.closed || !c.panes.size) return;
       c.command("list-panes -a -F '#{pane_id} #{pane_dead}'").then((res) => {
-        log(`BUG055 ok=${res.ok} lines=${JSON.stringify(res.lines)} panes=${[...c.panes.keys()]}`);
         if (!res.ok || c.closed) return;
         const state = new Map();
         for (const line of res.lines) {
@@ -278,7 +277,6 @@ export function createTermBridge({ port, resolveSpawn, log = () => {} } = {}) {
           if (m) state.set(m[1], m[2]);
         }
         for (const [paneId, stream] of [...c.panes]) {
-          log(`BUG055 pane=${paneId} state=${state.get(paneId)} subs=${stream.subs.size}`);
           if (state.get(paneId) !== '1') continue;
           for (const v of [...stream.subs]) v.finish('terminal pane closed');
         }

@@ -5,7 +5,7 @@ import { ClipboardAddon } from '@xterm/addon-clipboard';
 import '@xterm/xterm/css/xterm.css';
 import { hasToken, wsUrl } from '../token.js';
 import { pasteImage, fetchHealth } from '../api.js';
-import { refusedUpgradeText } from '../termDiag.js';
+import { MAX_RECONNECT, reconnectPlan, refusedUpgradeText } from '../termDiag.js';
 import { copyText, imageFromClipboard, isMacUA, isTermCopyChord, isTermPasteChord, pasteTextSafe, termChordHints, unwrapTmuxPassthrough } from '../util.js';
 
 // One live terminal onto one board-owned pane — the screen and the socket, with
@@ -158,10 +158,19 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
   // mirror `note` into a ref for the socket effect's "already ended?" check.
   // Kept in an effect (not assigned during render) so render stays pure.
   const noteRef = useRef(null);
+  // Reconnect state. `attempt` is a socket-effect dependency: bumping it tears
+  // the dead socket down and stands a fresh viewer up, which is the same path a
+  // close-and-reopen takes — just without making the human do it. The count
+  // lives in a ref so it survives the re-run and resets only on a real pane
+  // change (a new spawn deserves a fresh budget).
+  const [attempt, setAttempt] = useState(0);
+  const retriesRef = useRef(0);
+  useEffect(() => { retriesRef.current = 0; }, [spawnId]);
 
   useEffect(() => { noteRef.current = note; onNote?.(note); }, [note]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
+    let retryTimer = 0; // pending reconnect (cleared on unmount / pane change)
     const term = new Terminal({
       cursorBlink: live,
       disableStdin: !live,
@@ -219,6 +228,10 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
     ws.onmessage = (e) => {
       let f;
       try { f = JSON.parse(e.data); } catch { return; /* malformed frame */ }
+      // A frame proves the viewer is healthy again: retire the reconnect budget
+      // and clear the "reconnecting…" strip, or the note would keep the pane
+      // latched read-only via the focus effect's `dead` check.
+      if (!st.seen && retriesRef.current) { retriesRef.current = 0; setNote(null); }
       st.seen = true;
       if (f.t === 'init') {
         // the server's size is truth for the screen it sends — resize BEFORE
@@ -262,7 +275,18 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
     // key-based inference is the safe fallback.
     ws.onclose = () => {
       if (st.done) return;
-      if (st.seen) return end('close', 'connection closed');
+      const plan = reconnectPlan(st.seen, retriesRef.current);
+      if (plan.action === 'retry') {
+        // A transport blip, not an ending: heal it. The pane stays on screen
+        // holding its last frame (nothing is cleared) and says so, then a fresh
+        // viewer re-seeds from capture-pane. If the agent actually ended, that
+        // viewer gets the exit frame and settles properly.
+        retriesRef.current += 1;
+        setNote({ kind: 'close', text: `connection lost — reconnecting (${retriesRef.current}/${MAX_RECONNECT})…` });
+        retryTimer = setTimeout(() => setAttempt(a => a + 1), plan.delayMs);
+        return;
+      }
+      if (plan.action === 'give-up') return end('close', 'connection closed — reconnect gave up (reopen the terminal to retry)');
       fetchHealth().then((health) => {
         if (st.done) return; // a retry/unmount already ended this pane
         end('err', refusedUpgradeText(hasToken(), health?.auth?.term_token));
@@ -488,6 +512,7 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
       screenEl.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
       clearTimeout(pasteTimer.current);
+      clearTimeout(retryTimer);
       cancelAnimationFrame(raf);
       dataSub.dispose();
       resizeSub.dispose();
@@ -496,8 +521,9 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
     };
     // `live` is deliberately NOT a dependency: focusing a tile must not tear the
     // socket down and re-seed the screen. It is applied to the live Terminal by
-    // the effect below instead.
-  }, [spawnId]); // eslint-disable-line react-hooks/exhaustive-deps
+    // the effect below instead. `attempt` IS one: bumping it is how a dropped
+    // transport rebuilds its viewer (see ws.onclose).
+  }, [spawnId, attempt]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Focus changes flip stdin on the existing terminal, in place.
   useEffect(() => {

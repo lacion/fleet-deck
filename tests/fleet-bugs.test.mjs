@@ -901,6 +901,68 @@ test('BUG-025: an untagged SessionEnd keeps the historical unconditional tombsto
   assert.ok(cardOf(core, sid).endedAt);
 });
 
+// BB2-1 REGRESSION PIN (observed live on 0.22.0). BUG-025's nonce guard trusted
+// the nonce ALONE. When the mismatched end is the session's REAL end — the
+// predecessor recorded its run_id and no `--resume` ever came — refusing the
+// tombstone left a dead agent parked in 'queued' with ended_at NULL. That state
+// is not merely cosmetic: dismissSession refuses anything that is not offline,
+// so the card could be neither dismissed nor revived, and retention's silence
+// sweep would not reach it for hours. The card's own spawn row is the daemon's
+// independent witness: terminal spawn ⇒ no live run to protect ⇒ the end must
+// tombstone despite the nonce mismatch.
+test('BB2-1: a mismatched-nonce SessionEnd still tombstones when the spawn is proven terminal (no live run to protect)', async (t) => {
+  const { core, db } = memoryCore(t);
+  const cwd = mkdtempSync(path.join(tmpdir(), 'fd-stale-terminal-'));
+  t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+
+  const spawn = await core.spawn({ cwd });
+  const sid = spawn.body.session_id;
+  core.hookSessionStart({ session_id: sid, cwd, source: 'startup', fleet_run: 'run-A' });
+
+  // The pane is killed — exactly what the board's kill button does. THIS is the
+  // counter-evidence: there is no resumed process left to shield.
+  db.prepare("UPDATE spawns SET status = 'killed' WHERE session_id = ?").run(sid);
+
+  // A SessionEnd arrives whose nonce does not match the recorded run. Under the
+  // pure-nonce guard this was discarded and the card stranded.
+  core.hookSessionEnd({ session_id: sid, cwd, reason: 'other', fleet_run: 'run-STALE' });
+
+  const card = cardOf(core, sid);
+  assert.equal(card.col, 'offline', 'a dead agent must tombstone, not sit in queued forever');
+  assert.ok(card.endedAt, 'ended_at must be stamped so the card is dismissable');
+  assert.doesNotMatch(card.note ?? '', /ignored/,
+    'the end must not be filed as a stale no-op when the spawn is already terminal');
+
+  // The whole point, and the half that actually bit: the card can now be
+  // CLEARED. Before the fix this returned 409 "session is queued, not offline"
+  // — the stranded card was unremovable through every route the board offers.
+  const dismissed = await core.dismissSession(sid);
+  assert.equal(dismissed.status, 200,
+    `a tombstoned card must be dismissable; got ${JSON.stringify(dismissed)}`);
+  assert.equal(dismissed.body.ok, true);
+});
+
+test('BB2-1: the BUG-025 protection still holds when the spawn is LIVE (a real resume race)', async (t) => {
+  const { core } = memoryCore(t);
+  const cwd = mkdtempSync(path.join(tmpdir(), 'fd-stale-live-'));
+  t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+
+  const spawn = await core.spawn({ cwd });
+  const sid = spawn.body.session_id;
+  core.hookSessionStart({ session_id: sid, cwd, source: 'startup', fleet_run: 'run-A' });
+  core.hookSessionStart({ session_id: sid, cwd, source: 'resume', fleet_run: 'run-B' });
+  assert.equal(cardOf(core, sid).spawn.status, 'live', 'sanity: the resumed run owns a live pane');
+
+  // The predecessor's delayed end lands. The spawn is LIVE, so the guard must
+  // still refuse it — the new witness must not weaken BUG-025.
+  core.hookSessionEnd({ session_id: sid, cwd, reason: 'other', fleet_run: 'run-A' });
+
+  const card = cardOf(core, sid);
+  assert.notEqual(card.col, 'offline', 'a live resumed run must NOT be tombstoned by a stale end');
+  assert.equal(card.endedAt, null, 'a live resumed run must NOT get ended_at');
+  assert.equal(card.spawn.status, 'live', 'a live resumed run must keep its pane');
+});
+
 test('BUG-025: a tagged SessionEnd against a row with no recorded run tombstones (reconciled with max-turns abort)', async (t) => {
   const { core } = memoryCore(t);
   const cwd = mkdtempSync(path.join(tmpdir(), 'fd-norun-'));
