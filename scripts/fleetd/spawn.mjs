@@ -61,7 +61,10 @@ const TMUX_TIMEOUT_MS = 5_000;
 // name — and "~" carries no meaning in tmux format syntax. A literal unit
 // separator is NOT usable: tmux escapes it as "\\037". The strict field,
 // session, and id validation below still rejects malformed or shifted records.
-const FIELD_SEP = '~';
+// Exported so fake-tmux fixtures build their canned listings from the SAME
+// constant the parser reads. Hard-coding the separator in a fixture silently
+// decouples it from the daemon the moment this changes.
+export const FIELD_SEP = '~';
 
 // Run one tmux command (argv), retaining failure details for probes whose
 // callers must distinguish authoritative absence from UNKNOWN.

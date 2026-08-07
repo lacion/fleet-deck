@@ -4944,6 +4944,7 @@ function lastAssistantModel(transcriptPath, { minOffset = 0 } = {}) {
 // scripts/fleetd/spawn.mjs
 var spawn_exports = {};
 __export(spawn_exports, {
+  FIELD_SEP: () => FIELD_SEP,
   capturePane: () => capturePane,
   ensureSession: () => ensureSession,
   exactWindowTarget: () => exactWindowTarget,

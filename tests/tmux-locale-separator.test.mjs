@@ -24,20 +24,17 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+// The separator the daemon actually ships — imported, never duplicated, so
+// these tests follow a future change instead of pinning a stale character.
+import { FIELD_SEP } from '../scripts/fleetd/spawn.mjs';
 
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const SPAWN_SRC = path.join(HERE, '..', 'scripts', 'fleetd', 'spawn.mjs');
-
-// The separator the daemon actually ships, read from source — not duplicated.
 function shippedSeparator() {
-  const src = readFileSync(SPAWN_SRC, 'utf8');
-  const m = src.match(/^const FIELD_SEP = '(.*)';$/m);
-  assert.ok(m, 'spawn.mjs must declare FIELD_SEP');
-  return JSON.parse(`"${m[1]}"`);
+  assert.equal(typeof FIELD_SEP, 'string');
+  assert.ok(FIELD_SEP.length > 0, 'spawn.mjs must export a non-empty FIELD_SEP');
+  return FIELD_SEP;
 }
 
 function tmuxOk() {
