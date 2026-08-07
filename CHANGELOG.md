@@ -5,6 +5,20 @@ All notable changes to Fleet Deck are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.22.2] - 2026-08-07
+
+Dependency maintenance only — no behaviour change.
+
+### Changed
+
+- **`ws` 8.21.1 → 8.21.2** (runtime). Upstream carries only CI and test
+  changes, and the rebuilt daemon bundle is byte-identical, so nothing the
+  daemon executes actually moved — the bump rides a release because the
+  lockfile is part of the release-bound payload closure.
+- **`vite` 8.1.5 → 8.2.1** and **`@vitejs/plugin-react` 6.0.4 → 6.0.5**
+  (board build toolchain, dev-only). The board bundle is rebuilt and its
+  content hashes change accordingly; the board's behaviour does not.
+
 ## [0.22.1] - 2026-08-06
 
 ### Fixed
