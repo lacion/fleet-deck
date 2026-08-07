@@ -3712,10 +3712,10 @@ var require_websocket_server = __commonJS({
 });
 
 // scripts/fleetd/fleetd.mjs
-import fs16 from "node:fs";
+import fs17 from "node:fs";
 import crypto2 from "node:crypto";
 import os9 from "node:os";
-import path17 from "node:path";
+import path18 from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // scripts/fleetd/db.mjs
@@ -4070,8 +4070,8 @@ function openDb(file, fsImpl = { chmodSync, statSync }) {
 }
 
 // scripts/fleetd/derive.mjs
-import fs13 from "node:fs";
-import path14 from "node:path";
+import fs14 from "node:fs";
+import path15 from "node:path";
 
 // scripts/fleetd/repo-identity.mjs
 import { execFileSync } from "node:child_process";
@@ -12069,7 +12069,44 @@ function createSnapshot(ctx) {
 }
 
 // scripts/fleetd/retention.mjs
+import fs13 from "node:fs";
+
+// scripts/fleetd/run-nonce.mjs
 import fs12 from "node:fs";
+import path14 from "node:path";
+var isPid = (v) => Number.isInteger(v) && v > 0;
+function pruneRunNonces(home, { minAgeMs = 36e5, now = Date.now() } = {}) {
+  if (!home) return 0;
+  let removed = 0;
+  let names;
+  try {
+    names = fs12.readdirSync(home);
+  } catch {
+    return 0;
+  }
+  for (const name of names) {
+    const m = /^run-(\d+)$/.exec(name);
+    if (!m) continue;
+    const pid = Number(m[1]);
+    if (!isPid(pid)) continue;
+    const file = path14.join(home, name);
+    try {
+      if (now - fs12.statSync(file).mtimeMs < minAgeMs) continue;
+      try {
+        process.kill(pid, 0);
+        continue;
+      } catch (err) {
+        if (err?.code !== "ESRCH") continue;
+      }
+      fs12.unlinkSync(file);
+      removed += 1;
+    } catch {
+    }
+  }
+  return removed;
+}
+
+// scripts/fleetd/retention.mjs
 function createRetention(ctx) {
   const {
     q,
@@ -12080,6 +12117,7 @@ function createRetention(ctx) {
     forgetSpawn,
     tmuxAdapter,
     port,
+    home,
     questions,
     adoptSession,
     scopedPaneTarget,
@@ -12187,6 +12225,7 @@ function createRetention(ctx) {
     if (q.goneArchivedSpawns.run().changes) changed = true;
     const touchCutoff = now - Math.max(RETAIN_LEDGER_MS, CONFLICT_WINDOW_MS);
     if (q.pruneTouches.run(touchCutoff).changes) changed = true;
+    pruneRunNonces(home, { now });
     const ledgerCutoff = now - RETAIN_LEDGER_MS;
     if (q.pruneCommands.run(ledgerCutoff).changes) changed = true;
     if (q.pruneConflicts.run(ledgerCutoff).changes) changed = true;
@@ -12262,7 +12301,7 @@ function createRetention(ctx) {
     const feed_cleared = Number(q.clearTicker.run().changes);
     const orphan_worktrees = q.orphanWorktrees.all().map((r) => r.worktree_path).filter((p) => {
       try {
-        return fs12.existsSync(p);
+        return fs13.existsSync(p);
       } catch {
         return false;
       }
@@ -12507,7 +12546,7 @@ function createCore(db2, {
   function stampTranscriptFloor(sid, transcriptPath) {
     let floor = 0;
     try {
-      if (transcriptPath) floor = fs13.statSync(transcriptPath).size;
+      if (transcriptPath) floor = fs14.statSync(transcriptPath).size;
     } catch {
     }
     modelMemo.set(sid, { floor, size: -1, model: null });
@@ -12516,7 +12555,7 @@ function createCore(db2, {
     const memo = modelMemo.get(sid) ?? { floor: 0, size: -1, model: null };
     let size;
     try {
-      size = fs13.statSync(transcriptPath).size;
+      size = fs14.statSync(transcriptPath).size;
     } catch {
       return null;
     }
@@ -12824,9 +12863,9 @@ function createCore(db2, {
   const custodyLeases = /* @__PURE__ */ new Map();
   const canonicalWorktreePath = (p) => {
     try {
-      return fs13.realpathSync(p);
+      return fs14.realpathSync(p);
     } catch {
-      return path14.resolve(p);
+      return path15.resolve(p);
     }
   };
   ctx.claimWorktreeCustody = (p, owner) => {
@@ -13000,8 +13039,8 @@ function createCore(db2, {
 import http from "node:http";
 import { timingSafeEqual } from "node:crypto";
 import os8 from "node:os";
-import fs14 from "node:fs";
-import path15 from "node:path";
+import fs15 from "node:fs";
+import path16 from "node:path";
 import { fileURLToPath } from "node:url";
 
 // node_modules/ws/wrapper.mjs
@@ -13496,7 +13535,7 @@ function isLoopbackAddress(address) {
   const value = String(address || "").trim().toLowerCase();
   return value === "localhost" || value === "::1" || /^127(?:\.[0-9]{1,3}){3}$/.test(value) || /^::ffff:127(?:\.[0-9]{1,3}){3}$/.test(value);
 }
-var BOARD_DIST = path15.join(path15.dirname(fileURLToPath(import.meta.url)), "board-dist");
+var BOARD_DIST = path16.join(path16.dirname(fileURLToPath(import.meta.url)), "board-dist");
 var MIME = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -13520,15 +13559,15 @@ function serveBoardAsset(res, pathname, notFound) {
     return notFound();
   }
   const rel = decoded === "/" ? "index.html" : decoded.replace(/^\/+/, "");
-  const abs = path15.resolve(BOARD_DIST, rel);
-  if (abs !== BOARD_DIST && !abs.startsWith(BOARD_DIST + path15.sep)) return notFound();
+  const abs = path16.resolve(BOARD_DIST, rel);
+  if (abs !== BOARD_DIST && !abs.startsWith(BOARD_DIST + path16.sep)) return notFound();
   let data;
   try {
-    data = fs14.readFileSync(abs);
+    data = fs15.readFileSync(abs);
   } catch {
     return notFound();
   }
-  const ext = path15.extname(abs).toLowerCase();
+  const ext = path16.extname(abs).toLowerCase();
   const headers = {
     "content-type": MIME[ext] || "application/octet-stream",
     "content-length": data.length,
@@ -15226,8 +15265,8 @@ function createMdns({ port, name = "fleetdeck", instance = "Fleet Deck", address
 }
 
 // scripts/fleetd/takeover.mjs
-import fs15 from "node:fs";
-import path16 from "node:path";
+import fs16 from "node:fs";
+import path17 from "node:path";
 function pidRecord(text) {
   try {
     const parsed = JSON.parse(String(text));
@@ -15250,8 +15289,8 @@ function pidIsLive(pid) {
 function livePidLooksLikeFleetd(pid) {
   if (process.platform !== "linux") return true;
   try {
-    const executable = path16.basename(fs15.readlinkSync(`/proc/${pid}/exe`)).replace(/ \(deleted\)$/, "");
-    const argv = fs15.readFileSync(`/proc/${pid}/cmdline`).toString("utf8").split("\0").filter(Boolean);
+    const executable = path17.basename(fs16.readlinkSync(`/proc/${pid}/exe`)).replace(/ \(deleted\)$/, "");
+    const argv = fs16.readFileSync(`/proc/${pid}/cmdline`).toString("utf8").split("\0").filter(Boolean);
     const nodeLike = /^(?:node|nodejs|fleetd)$/i.test(executable);
     const fleetdScript = argv.some((arg) => /(?:^|[/\\])fleetd(?:\.bundle)?\.mjs$/.test(arg));
     return nodeLike && fleetdScript;
@@ -15319,7 +15358,7 @@ function verifyDaemonPid(pid, home) {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   let record = null;
   try {
-    record = pidRecord(fs15.readFileSync(path16.join(home, "fleetd.pid"), "utf8"));
+    record = pidRecord(fs16.readFileSync(path17.join(home, "fleetd.pid"), "utf8"));
   } catch {
     return false;
   }
@@ -15344,13 +15383,13 @@ async function terminateDaemon(pid, { timeoutMs = 2e3, sleep = defaultSleep } = 
 }
 
 // scripts/fleetd/fleetd.mjs
-var __dirname = path17.dirname(fileURLToPath2(import.meta.url));
+var __dirname = path18.dirname(fileURLToPath2(import.meta.url));
 var PORT;
 try {
   PORT = resolvePort();
 } catch (err) {
   try {
-    fs16.writeSync(2, `fleetd refused to start: ${err.message}
+    fs17.writeSync(2, `fleetd refused to start: ${err.message}
 `);
   } catch {
   }
@@ -15358,7 +15397,7 @@ try {
 }
 if (!Number.isInteger(PORT) || PORT < 0 || PORT > 65535) {
   try {
-    fs16.writeSync(2, `fleetd refused to start: FLEETDECK_PORT must be an integer between 0 and 65535 (got '${process.env.FLEETDECK_PORT}')
+    fs17.writeSync(2, `fleetd refused to start: FLEETDECK_PORT must be an integer between 0 and 65535 (got '${process.env.FLEETDECK_PORT}')
 `);
   } catch {
   }
@@ -15378,22 +15417,22 @@ function startupFatal(reason) {
   } catch {
   }
   try {
-    fs16.writeSync(2, `fleetd refused to start: ${reason}
+    fs17.writeSync(2, `fleetd refused to start: ${reason}
 `);
   } catch {
   }
   process.exit(1);
 }
 try {
-  fs16.mkdirSync(HOME, { recursive: true });
+  fs17.mkdirSync(HOME, { recursive: true });
 } catch (err) {
   startupFatal(`cannot create FLEETDECK_HOME (${err?.code || err?.message || "unknown error"})`);
 }
 try {
-  fs16.chmodSync(HOME, 448);
+  fs17.chmodSync(HOME, 448);
 } catch {
 }
-var PID_FILE = path17.join(HOME, "fleetd.pid");
+var PID_FILE = path18.join(HOME, "fleetd.pid");
 var ownsPidFile = false;
 var version = "0.0.0";
 var versionOverride = process.env.FLEETDECK_VERSION_OVERRIDE?.trim();
@@ -15401,15 +15440,15 @@ if (versionOverride) {
   version = versionOverride;
 } else {
   try {
-    version = JSON.parse(fs16.readFileSync(path17.resolve(__dirname, "../../package.json"), "utf8")).version || version;
+    version = JSON.parse(fs17.readFileSync(path18.resolve(__dirname, "../../package.json"), "utf8")).version || version;
   } catch {
   }
 }
 function removeOwnedPidFile() {
   if (!ownsPidFile) return;
   try {
-    const record = pidRecord(fs16.readFileSync(PID_FILE, "utf8"));
-    if (record?.pid === process.pid) fs16.unlinkSync(PID_FILE);
+    const record = pidRecord(fs17.readFileSync(PID_FILE, "utf8"));
+    if (record?.pid === process.pid) fs17.unlinkSync(PID_FILE);
   } catch {
   }
   ownsPidFile = false;
@@ -15435,7 +15474,7 @@ async function supersedeIfNewer(record) {
 async function claimHome() {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      fs16.writeFileSync(PID_FILE, JSON.stringify({ pid: process.pid, port: PORT }), {
+      fs17.writeFileSync(PID_FILE, JSON.stringify({ pid: process.pid, port: PORT }), {
         encoding: "utf8",
         mode: 384,
         flag: "wx"
@@ -15450,7 +15489,7 @@ async function claimHome() {
     let recordText = null;
     let record = null;
     try {
-      recordText = fs16.readFileSync(PID_FILE, "utf8");
+      recordText = fs17.readFileSync(PID_FILE, "utf8");
       record = pidRecord(recordText);
     } catch (err) {
       if (err?.code === "ENOENT") continue;
@@ -15462,13 +15501,13 @@ async function claimHome() {
       startupFatal(`FLEETDECK_HOME is already used by live fleetd pid ${record.pid} on ${port}; use a separate FLEETDECK_HOME for another daemon (if that PID was recycled, remove stale pidfile ${PID_FILE})`);
     }
     try {
-      if (fs16.readFileSync(PID_FILE, "utf8") !== recordText) continue;
+      if (fs17.readFileSync(PID_FILE, "utf8") !== recordText) continue;
     } catch (err) {
       if (err?.code === "ENOENT") continue;
       startupFatal(`cannot re-read stale FLEETDECK_HOME pidfile (${err?.code || err?.message || "unknown error"})`);
     }
     try {
-      fs16.unlinkSync(PID_FILE);
+      fs17.unlinkSync(PID_FILE);
     } catch (err) {
       if (err?.code !== "ENOENT") startupFatal(`cannot clear stale FLEETDECK_HOME pidfile (${err?.code || err?.message || "unknown error"})`);
     }
@@ -15502,7 +15541,7 @@ if (TRUST_LOOPBACK && LAN_MODE) {
   startupFatal("FLEETDECK_TRUST_LOOPBACK=on requires a loopback FLEETDECK_BIND");
 }
 var TOKEN_REQUIRED = LAN_MODE || REQUIRE_TOKEN || TRUSTED_ORIGINS.length > 0 && PROXY_AUTH === "token";
-var TOKEN_FILE = path17.join(HOME, "token");
+var TOKEN_FILE = path18.join(HOME, "token");
 var TOKEN;
 if (Object.hasOwn(process.env, "FLEETDECK_TOKEN")) {
   TOKEN = String(process.env.FLEETDECK_TOKEN).trim();
@@ -15512,7 +15551,7 @@ if (Object.hasOwn(process.env, "FLEETDECK_TOKEN")) {
   }
 } else {
   try {
-    const persisted = fs16.readFileSync(TOKEN_FILE, "utf8").trim();
+    const persisted = fs17.readFileSync(TOKEN_FILE, "utf8").trim();
     if (persisted.length >= 16) TOKEN = persisted;
     else if (TOKEN_REQUIRED) startupFatal("FLEETDECK_HOME/token must contain at least 16 characters");
   } catch (err) {
@@ -15528,7 +15567,7 @@ if (!TOKEN) {
     startupFatal(`cannot generate access token (${err?.code || err?.message || "unknown error"})`);
   }
   try {
-    fs16.writeFileSync(TOKEN_FILE, TOKEN, { encoding: "utf8", mode: 384, flag: "wx" });
+    fs17.writeFileSync(TOKEN_FILE, TOKEN, { encoding: "utf8", mode: 384, flag: "wx" });
   } catch (err) {
     if (TOKEN_REQUIRED) {
       startupFatal(`cannot persist FLEETDECK_HOME/token (${err?.code || err?.message || "unknown error"})`);
@@ -15539,7 +15578,7 @@ if (!TOKEN) {
 if (TOKEN) {
   let onDisk = null;
   try {
-    onDisk = fs16.readFileSync(TOKEN_FILE, "utf8");
+    onDisk = fs17.readFileSync(TOKEN_FILE, "utf8");
   } catch (err) {
     if (err?.code !== "ENOENT") {
       startupFatal(`cannot read FLEETDECK_HOME/token (${err?.code || err?.message || "unknown error"})`);
@@ -15547,7 +15586,7 @@ if (TOKEN) {
   }
   if (onDisk === null || onDisk.trim() !== TOKEN) {
     try {
-      fs16.writeFileSync(TOKEN_FILE, TOKEN, { encoding: "utf8", mode: 384 });
+      fs17.writeFileSync(TOKEN_FILE, TOKEN, { encoding: "utf8", mode: 384 });
     } catch (err) {
       if (TOKEN_REQUIRED) {
         startupFatal(`cannot persist FLEETDECK_HOME/token (${err?.code || err?.message || "unknown error"})`);
@@ -15557,7 +15596,7 @@ if (TOKEN) {
   }
   if (onDisk !== null) {
     try {
-      fs16.chmodSync(TOKEN_FILE, 384);
+      fs17.chmodSync(TOKEN_FILE, 384);
     } catch (err) {
       const why = err?.code || err?.message || "unknown error";
       if (TOKEN_REQUIRED) {
@@ -15575,7 +15614,7 @@ function mdnsInstanceName() {
     return "Fleet Deck";
   }
 }
-var DB_FILE = path17.join(HOME, "fleetd.db");
+var DB_FILE = path18.join(HOME, "fleetd.db");
 var db = openDb(DB_FILE);
 var core = createCore(db, { port: PORT, version });
 var settleReconciliation;

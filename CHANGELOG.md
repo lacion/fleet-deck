@@ -5,6 +5,39 @@ All notable changes to Fleet Deck are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.22.3] - 2026-08-07
+
+The board could not tell one CLI run from another, so it discarded every
+session's exit.
+
+### Fixed
+
+- **Exiting the CLI did nothing: no tombstone, and move-to-tmux never fired.**
+  The run nonce that lets the daemon tell a delayed `SessionEnd` (from a dead
+  process) apart from a live `claude --resume` was keyed on the hook shim's
+  parent pid. Claude Code runs each hook through a fresh intermediate shell, so
+  that key changed on *every hook*: `SessionStart` recorded nonce A, the
+  `SessionEnd` that followed minted B, and B ≠ A made every tagged end look
+  like it came from a previous run. Measured on one real session before the
+  fix: **510 nonce files, 510 distinct values, none matching the card's run.**
+
+  Two visible consequences. A hook-only session never tombstoned when you
+  exited — its card stayed live until the silence sweep hours later. And an
+  armed **move to tmux** could never happen: the arm is consumed further down
+  the very function the guard returns from, so the card stayed armed and
+  nothing moved, with no error anywhere.
+
+  The nonce is now keyed on the CLI process itself (`CLAUDE_PID`, with a
+  `/proc` ancestor walk and then the old ppid as fallbacks), so every hook of
+  one run agrees and a `--resume` still gets a fresh nonce — which is what the
+  original guard needs to keep working. Both shims now share one module rather
+  than each carrying their own copy of the logic.
+- **Nonce files are now collected.** Nothing ever removed them; a long-lived
+  home accumulated one per session forever (and, before this fix, one per
+  hook). The retention sweep now drops a file only when its pid is provably
+  dead and the file has aged, so a live CLI never loses the nonce its next hook
+  will read.
+
 ## [0.22.2] - 2026-08-07
 
 Dependency maintenance only — no behaviour change.

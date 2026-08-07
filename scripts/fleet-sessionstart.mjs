@@ -22,9 +22,9 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { CLAUDE_ENV_MARKERS, GATEWAY_ENV_VARS, SPAWN_ENV_VARS } from './fleetd/env-scrub.mjs';
+import { runNonce } from './fleetd/run-nonce.mjs';
 // Version-takeover contract, imported as SOURCE from the sibling fleetd/ dir
 // (same unbundled pattern as env-scrub.mjs above) so this hook can evict a
 // strictly-older daemon and let the newest installed build own the port.
@@ -281,15 +281,12 @@ try {
   // payload untagged (the daemon's historical behavior) — never break the
   // session.
   try {
+    // Keyed on the CLI process (CLAUDE_PID), not this shim's parent — see
+    // run-nonce.mjs. A ppid key gave every hook its own nonce, so the run this
+    // registers could never be matched by the SessionEnd that followed.
     if (payload.fleet_run == null) {
-      const runFile = path.join(HOME, `run-${process.ppid}`);
-      let run = null;
-      try { run = fs.readFileSync(runFile, 'utf8').trim() || null; } catch { /* first hook of this process */ }
-      if (!run) {
-        run = randomUUID();
-        fs.writeFileSync(runFile, run, { mode: 0o600 });
-      }
-      payload.fleet_run = run;
+      const run = runNonce(HOME);
+      if (run) payload.fleet_run = run;
     }
   } catch { /* untagged registration still registers */ }
   const serverUp = await ensureServer();
