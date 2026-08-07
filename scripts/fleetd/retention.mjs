@@ -10,11 +10,12 @@
 import fs from 'node:fs';
 import { SHELL_RE, NOT_RESUMABLE_END } from './helpers.mjs';
 import { CONFLICT_WINDOW_MS } from './ledger.mjs';
+import { pruneRunNonces } from './run-nonce.mjs';
 
 export function createRetention(ctx) {
   const {
     q, updateSession, tick, onMutate, tombstoneCard, forgetSpawn,
-    tmuxAdapter, port, questions, adoptSession, scopedPaneTarget,
+    tmuxAdapter, port, home, questions, adoptSession, scopedPaneTarget,
     PRESUME_DEAD_MS, PRESUME_DEAD_WORKING_MS, RETAIN_OFFLINE_MS, RETAIN_LEDGER_MS,
   } = ctx;
 
@@ -200,6 +201,12 @@ export function createRetention(ctx) {
     // consider (BUG-144). Commands/conflicts/mail keep the configured horizon.
     const touchCutoff = now - Math.max(RETAIN_LEDGER_MS, CONFLICT_WINDOW_MS);
     if (q.pruneTouches.run(touchCutoff).changes) changed = true;
+    // Hook run-nonce files (one per CLI process, HOME/run-<pid>) are the only
+    // state here nothing ever collected: one per session for the life of the
+    // HOME. Removed only when the pid is provably dead and the file has aged,
+    // so a live CLI never loses the nonce its next hook will read. (Before the
+    // keying fix these accumulated per HOOK — 510 in one observed session.)
+    pruneRunNonces(home, { now });
     const ledgerCutoff = now - RETAIN_LEDGER_MS;
     if (q.pruneCommands.run(ledgerCutoff).changes) changed = true;
     if (q.pruneConflicts.run(ledgerCutoff).changes) changed = true;

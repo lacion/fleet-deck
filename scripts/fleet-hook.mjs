@@ -24,38 +24,22 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
 import { resolveHome, resolvePort, resolveBase } from './fleetd/config.mjs';
+import { runNonce } from './fleetd/run-nonce.mjs';
 
 const EVENT = process.argv[2];
 const HOME = resolveHome();
 const BASE = resolveBase(resolvePort());
 
-// Run generation (BUG-025): ONE nonce per CLI process, minted by whichever
-// shim runs first (the SessionStart hook, or this one when a mid-session event
-// is the process's first) and shared via a dotfile in FLEETDECK_HOME —
-// hooks spawn a fresh shim process per event, so the file is the handoff.
-// SessionStart persists it as the card's active run; the daemon then refuses
-// to tombstone on a SessionEnd from any OTHER (older, delayed-async) run of
-// the same session id. Mint-and-attach only when the payload carries none —
-// never overwrite a nonce a newer daemon-side flow already set. Any failure
-// leaves the event untagged, which the daemon treats as the historical
-// unconditional-tombstone path (fail open, never break the session).
-let RUN = null;
-try {
-  const runFile = path.join(HOME, `run-${process.ppid}`);
-  try {
-    RUN = fs.readFileSync(runFile, 'utf8').trim() || null;
-  } catch {
-    RUN = randomUUID();
-    // 0600 like the rest of HOME's state (token, log, db). A stale file from a
-    // crashed CLI could be re-read by an unrelated later process only if the
-    // pid was recycled AND the event carries the same session_id — worst case
-    // that session's own SessionEnd is then skipped, failing safe toward a
-    // live card the retention sweep later settles.
-    fs.writeFileSync(runFile, RUN, { mode: 0o600 });
-  }
-} catch { RUN = null; }
+// Run generation (BUG-025): ONE nonce per CLI PROCESS, shared by every hook
+// that process fires, so the daemon can tell a delayed SessionEnd from a dead
+// run apart from the live one. Keyed on the CLI itself (CLAUDE_PID) — NOT on
+// this shim's parent, which is a fresh shell per hook and therefore minted a
+// new nonce every single time, making every tagged SessionEnd look stale.
+// Mint-and-attach only when the payload carries none; any failure leaves the
+// event untagged, which the daemon treats as the historical
+// unconditional-tombstone path. See run-nonce.mjs for the measured failure.
+const RUN = runNonce(HOME);
 
 function withRun(raw) {
   if (!RUN) return raw;
