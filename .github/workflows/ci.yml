@@ -63,14 +63,25 @@ jobs:
         with:
           bun-version: 1.3.14
       - run: bun install --frozen-lockfile --ignore-scripts
-      # Node 22's test runner corrupts its parent<->child IPC under CI load
-      # ("Unable to deserialize cloned data" — nodejs/node#64061; fixed by
-      # #64706, which current Node 24 ships but whose 22.x backport is
-      # unreleased as of 2026-08). The filewise runner executes each test file
-      # in-process (no runner IPC) with the same per-file process isolation.
-      # REVERT to plain `bun run test` here when a 22.x release carries the fix.
+      # The engine floor (22.13.0) CANNOT strip the `.ts` the daemon source now
+      # imports (contracts/): native type-stripping only landed in 22.18. What
+      # ships to the floor is the BUNDLE (esbuild has already inlined the
+      # contracts as plain JS), so the floor is gated against that artifact —
+      # the thing that actually runs there — not the un-strippable source. The
+      # committed bundle's freshness is enforced by the `bundle` job below, so
+      # this lane trusts it. The Node 24 lane keeps gating the TS SOURCE (24
+      # strips natively), which is where a source-only regression surfaces.
+      #
+      # Still the filewise runner (both lanes): Node 22's test runner corrupts
+      # its parent<->child IPC under CI load ("Unable to deserialize cloned
+      # data" — nodejs/node#64061; fixed by #64706, which current Node 24 ships
+      # but whose 22.x backport is unreleased as of 2026-08). The filewise
+      # runner executes each test file in-process (no runner IPC) with the same
+      # per-file process isolation. REVERT the 24 lane to plain `bun run test`
+      # only when a 22.x release carries the IPC fix AND the floor no longer
+      # needs the bundle (it always will while the source is TS).
       - if: matrix.node-version != '24'
-        run: bun run test:filewise
+        run: bun run test:bundle:filewise
         env:
           FLEETDECK_TEST_WAIT_SCALE: 3
       - if: matrix.node-version == '24'
