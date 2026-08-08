@@ -23,7 +23,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { DatabaseSync } from 'node:sqlite';
+import { openDatabase } from '../scripts/fleetd/sqlite.mjs';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -449,7 +449,7 @@ test('migration: a pre-0.6.0 fleetd.db gains the ticket columns; old rows read t
   // the daemon's migrate() must ALTER-ADD the three new columns onto THIS
   // pre-existing table — that is the behavior under test.
   const dbFile = path.join(home, 'fleetd.db');
-  const seed = new DatabaseSync(dbFile);
+  const seed = openDatabase(dbFile);
   seed.exec(`
     CREATE TABLE sessions (
       session_id        TEXT PRIMARY KEY,

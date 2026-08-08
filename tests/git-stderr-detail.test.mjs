@@ -19,7 +19,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import { openDatabase } from '../scripts/fleetd/sqlite.mjs';
 import { distillGitStderr, gitStderrDetail, redactGitText } from '../scripts/fleetd/exec.mjs';
 import { scrubUrlCredentials } from '../scripts/fleetd/payload-capture.mjs';
 import { openDb } from '../scripts/fleetd/db.mjs';
@@ -394,7 +394,7 @@ test('a legacy spawns table gains fail_detail additively, backfilled NULL', (t) 
   const dir = mkdtempSync(path.join(tmpdir(), 'fd-faildetail-db-'));
   const file = path.join(dir, 'fleet.db');
   t.after(() => rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
-  const legacy = new DatabaseSync(file);
+  const legacy = openDatabase(file);
   legacy.exec(`CREATE TABLE spawns (
     spawn_id TEXT PRIMARY KEY, session_id TEXT, callsign TEXT,
     tmux_session TEXT, tmux_window TEXT, cwd TEXT, worktree_path TEXT,

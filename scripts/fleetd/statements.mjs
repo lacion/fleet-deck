@@ -7,8 +7,8 @@
 // re-derivation for the same handle returns the SAME map — same prepared
 // statement objects — so test seams (and any second factory) that resolve the
 // map from a handle reach the exact statements the core commits through,
-// rather than compiling a detached second set. DatabaseSync identity keys the
-// cache; the map itself is the WeakMap value, so it dies with the handle.
+// rather than compiling a detached second set. The SQLite handle's identity keys
+// the cache; the map itself is the WeakMap value, so it dies with the handle.
 const statementsByDb = new WeakMap();
 
 export function createStatements(db) {

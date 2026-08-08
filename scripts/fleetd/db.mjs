@@ -1,29 +1,10 @@
-// db.mjs — SQLite store for fleetd (node:sqlite DatabaseSync, WAL mode).
-// All timestamps are ms epoch integers.
+// db.mjs — SQLite store for fleetd (WAL mode). All timestamps are ms epoch
+// integers. The SQLite handle comes from ./sqlite.mjs, the one guarded seam that
+// picks node:sqlite or bun:sqlite by runtime (the ExperimentalWarning suppression
+// the Node driver needs now lives there); everything below is driver-agnostic.
 
 import { chmodSync, statSync } from 'node:fs';
-
-// Suppress ONLY the warning raised while node:sqlite itself is imported. WHY:
-// removing `warning` listeners here clobbers handlers installed by launchers,
-// test runners and observability tooling, while installing our own formatter
-// also loses Node's normal warning detail. Intercepting the one emission at its
-// source leaves every pre-existing listener and every unrelated warning alone.
-const emitWarning = process.emitWarning;
-process.emitWarning = function fleetdSqliteWarningFilter(warning, type, ...args) {
-  const name = warning instanceof Error
-    ? warning.name
-    : (typeof type === 'string' ? type : type?.type);
-  const message = warning instanceof Error ? warning.message : String(warning);
-  if (name === 'ExperimentalWarning' && /^SQLite is an experimental feature\b/i.test(message)) return;
-  return emitWarning.call(this, warning, type, ...args);
-};
-
-let DatabaseSync;
-try {
-  ({ DatabaseSync } = await import('node:sqlite'));
-} finally {
-  process.emitWarning = emitWarning;
-}
+import { openDatabase } from './sqlite.mjs';
 
 const DDL = `
 PRAGMA busy_timeout = 5000;
@@ -381,13 +362,13 @@ function migrate(db) {
 }
 
 export function openDb(file, fsImpl = { chmodSync, statSync }) {
-  const db = new DatabaseSync(file);
+  const db = openDatabase(file);
   db.exec(DDL);
   migrate(db);
   // STATE CONFIDENTIALITY CONTRACT: this DB holds session cwds, callsigns, mail,
   // commands, plan text and raw permission/question payloads — owner-only, like
-  // the token and fleetd.log the July audit already hardened to 0600. node:sqlite
-  // exposes no creation mode, so SQLite makes fleetd.db (and, on first write, its
+  // the token and fleetd.log the July audit already hardened to 0600. Neither
+  // SQLite driver exposes a creation mode, so SQLite makes fleetd.db (and, on first write, its
   // -wal/-shm sidecars) under the ambient umask — 0644, i.e. world-readable,
   // under the common 022. chmod after open pins the main file to 0600; the WAL/SHM
   // chmods are best-effort because those files are created lazily on first write
