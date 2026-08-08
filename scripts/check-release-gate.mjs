@@ -14,10 +14,10 @@
 // and requires
 //   1. the resolved plugin version to increase semantically (semver
 //      major/minor/patch compare — never inferred from a changed filename), and
-//   2. every release manifest AND both lock roots at HEAD to equal that new
-//      version (package.json, .claude-plugin/plugin.json,
-//      .claude-plugin/marketplace.json, board/package.json, and the root
-//      "version" fields of package-lock.json and board/package-lock.json).
+//   2. every release manifest at HEAD to equal that new version (package.json,
+//      .claude-plugin/plugin.json, .claude-plugin/marketplace.json, and
+//      board/package.json). bun.lock has no root version field, so consistency
+//      with the manifests is enforced by `bun install --frozen-lockfile`.
 //
 // Usage: node scripts/check-release-gate.mjs <base-ref> [head-ref]
 // Exit 0 when the closure is untouched or every requirement holds; exit 1
@@ -36,17 +36,13 @@ const WATCHED = [
   'scripts/fleetd/env-scrub.mjs',
 ];
 
-// Version-bearing manifests and lock roots that must all equal the bumped
-// plugin version at HEAD. The resolved plugin version (plugin.json wins over
-// marketplace.json — it is Claude Code's cache key) is compared separately.
+// Version-bearing manifests that must all equal the bumped plugin version at
+// HEAD. The resolved plugin version (plugin.json wins over marketplace.json —
+// it is Claude Code's cache key) is compared separately.
 const HEAD_MANIFESTS = [
   ['package.json', (j) => j.version],
   ['.claude-plugin/marketplace.json', (j) => j.plugins?.[0]?.version],
   ['board/package.json', (j) => j.version],
-  ['package-lock.json', (j) => j.version],
-  ['package-lock.json packages[""]', (j) => j.packages?.['']?.version],
-  ['board/package-lock.json', (j) => j.version],
-  ['board/package-lock.json packages[""]', (j) => j.packages?.['']?.version],
 ];
 
 function git(args) {
@@ -123,7 +119,7 @@ export function checkReleaseGate({ base, head = 'HEAD' }) {
 
   return {
     ok: true,
-    lines: [...lines, `✓ hook closure changed alongside a version bump (${baseVersion} -> ${headVersion}); all manifests and lock roots agree`],
+    lines: [...lines, `✓ hook closure changed alongside a version bump (${baseVersion} -> ${headVersion}); all manifests agree`],
   };
 }
 

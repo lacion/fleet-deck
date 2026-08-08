@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 // The release-version contract, machine-checked.
 //
-// Seven places carry the same version string, and a release is only honest if
-// they all agree: package.json, .claude-plugin/plugin.json,
-// .claude-plugin/marketplace.json, board/package.json, and the root entry of
-// both lockfiles. npm ci does NOT enforce this — it happily installs with
-// package.json at 0.21.0 and a stale lock root of 0.20.0 — so nothing in
-// install, test, or build will catch the drift. This script is the single
-// verifier: publish.yml runs it against the tag before anything irreversible,
-// and tests/release-version.test.mjs exercises it directly.
+// Four human-authored manifests carry the same version string, and a release is
+// only honest if they all agree: package.json, .claude-plugin/plugin.json,
+// .claude-plugin/marketplace.json, and board/package.json. bun.lock has no root
+// "version" field (and is not JSON), so it can't drift the way an npm lock root
+// could — `bun install --frozen-lockfile` keeps the lockfiles consistent with
+// the manifests instead. This script is the single verifier of those four
+// version strings: publish.yml runs it against the tag before anything
+// irreversible, and tests/release-version.test.mjs exercises it directly.
 //
 // Usage: node scripts/check-release-version.mjs [tag] [root]
 //   tag  — the git tag being published (e.g. "v0.21.1"); when given it must
@@ -29,18 +29,12 @@ const [tag, root = repoRoot] = process.argv.slice(2);
 const readJson = (rel) => JSON.parse(readFileSync(path.join(root, rel), 'utf8'));
 
 const pkg = readJson('package.json').version;
-const lock = readJson('package-lock.json');
-const boardLock = readJson('board/package-lock.json');
 
 const versions = [
   ['package.json', pkg],
   ['.claude-plugin/plugin.json', readJson('.claude-plugin/plugin.json').version],
   ['.claude-plugin/marketplace.json', readJson('.claude-plugin/marketplace.json').plugins[0].version],
   ['board/package.json', readJson('board/package.json').version],
-  ['package-lock.json (root)', lock.version],
-  ['package-lock.json packages[""]', lock.packages?.['']?.version],
-  ['board/package-lock.json (root)', boardLock.version],
-  ['board/package-lock.json packages[""]', boardLock.packages?.['']?.version],
 ];
 if (tag) versions.unshift([`tag ${tag}`, tag.replace(/^v/, '')]);
 

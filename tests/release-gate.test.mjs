@@ -6,7 +6,7 @@
 // even though Claude Code's plugin cache key (the version value) never moved.
 // scripts/check-release-gate.mjs is the fix: it resolves the plugin version at
 // base and head, requires a semantic increase, and requires every release
-// manifest and lock root at head to equal the new value.
+// manifest at head to equal the new value.
 //
 // These tests build scratch git repos and run the real checker script against
 // them — no mocks of the version comparison.
@@ -30,8 +30,6 @@ const manifest = (version, extra = '') =>
 const pluginJson = (version) => `{"name":"fleetdeck","version":"${version}"}\n`;
 const marketplaceJson = (version) =>
   `{"name":"fleetdeck","plugins":[{"name":"fleetdeck","source":"./","version":"${version}"}]}\n`;
-const lockJson = (version) =>
-  `{"name":"fleetdeck","version":"${version}","lockfileVersion":3,"packages":{"":{"name":"fleetdeck","version":"${version}"}}}\n`;
 
 // A scratch repo at `version` with the full release-manifest set and one
 // watched hook file, committed on the default branch.
@@ -47,11 +45,9 @@ function makeReleaseRepo(t, version) {
   mkdirSync(path.join(root, 'board'), { recursive: true });
   mkdirSync(path.join(root, 'scripts'), { recursive: true });
   writeFileSync(path.join(root, 'package.json'), manifest(version));
-  writeFileSync(path.join(root, 'package-lock.json'), lockJson(version));
   writeFileSync(path.join(root, '.claude-plugin/plugin.json'), pluginJson(version));
   writeFileSync(path.join(root, '.claude-plugin/marketplace.json'), marketplaceJson(version));
   writeFileSync(path.join(root, 'board/package.json'), manifest(version));
-  writeFileSync(path.join(root, 'board/package-lock.json'), lockJson(version));
   writeFileSync(path.join(root, 'scripts/fleet-hook.mjs'), '// hook v1\n');
   git(['add', '.'], root);
   git(['commit', '-q', '-m', `release ${version}`], root);
@@ -65,11 +61,9 @@ function commitAll(root, message) {
 
 function bumpAllManifests(root, version) {
   writeFileSync(path.join(root, 'package.json'), manifest(version));
-  writeFileSync(path.join(root, 'package-lock.json'), lockJson(version));
   writeFileSync(path.join(root, '.claude-plugin/plugin.json'), pluginJson(version));
   writeFileSync(path.join(root, '.claude-plugin/marketplace.json'), marketplaceJson(version));
   writeFileSync(path.join(root, 'board/package.json'), manifest(version));
-  writeFileSync(path.join(root, 'board/package-lock.json'), lockJson(version));
 }
 
 function runGate(root, base, head = 'HEAD') {
@@ -124,22 +118,21 @@ test('BUG-002: hook change + bump where a sibling manifest disagrees is rejected
   assert.match(res.output, /version drift at HEAD.*board\/package\.json says 0\.20\.0/);
 });
 
-test('BUG-002: hook change + bump where a lock root is stale is rejected', (t) => {
+test('BUG-002: hook change + bump where the marketplace manifest is stale is rejected', (t) => {
   const root = makeReleaseRepo(t, '0.20.0');
   const base = git(['rev-parse', 'HEAD'], root);
 
   writeFileSync(path.join(root, 'scripts/fleet-hook.mjs'), '// hook v2 — behavior changed\n');
   bumpAllManifests(root, '0.21.0');
-  // package-lock.json packages[""] root left at the old version.
-  writeFileSync(
-    path.join(root, 'package-lock.json'),
-    '{"name":"fleetdeck","version":"0.21.0","lockfileVersion":3,"packages":{"":{"name":"fleetdeck","version":"0.20.0"}}}\n'
-  );
-  commitAll(root, 'bump but leave the lock root stale');
+  // plugin.json (the cache key) moved to 0.21.0 but marketplace.json stayed
+  // behind — first-time installs would resolve 0.21.0 while the marketplace
+  // entry advertised 0.20.0.
+  writeFileSync(path.join(root, '.claude-plugin/marketplace.json'), marketplaceJson('0.20.0'));
+  commitAll(root, 'bump but leave the marketplace entry stale');
 
   const res = runGate(root, base);
   assert.equal(res.status, 1, `expected rejection, got exit 0:\n${res.output}`);
-  assert.match(res.output, /version drift at HEAD.*packages\[""\] says 0\.20\.0/);
+  assert.match(res.output, /version drift at HEAD.*marketplace\.json says 0\.20\.0/);
 });
 
 test('BUG-002: untouched hook closure passes without any version bump', (t) => {
