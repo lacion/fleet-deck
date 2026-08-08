@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "compilerOptions": {
+    // Environment — Node + Bun, ESM. `nodenext` matches how the daemon actually
+    // resolves modules, and keeps esbuild / Node type-stripping / Bun in agreement.
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "types": ["node", "bun"],
+
+    // No emit — execution is by Node type-stripping, Bun, or the esbuild bundle.
+    // Explicit `.ts` import extensions (required by Node's stripper) are allowed.
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "resolveJsonModule": true,
+
+    // Coexistence knob: legacy .mjs are parsed but NOT type-checked. Each module
+    // opts into checking when it converts to .ts (F1b — convert per pillar).
+    "allowJs": true,
+    "checkJs": false,
+
+    // Maximally strict — the whole point of the migration.
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitOverride": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "forceConsistentCasingInFileNames": true,
+
+    // Third-party .d.ts (incl. @types/node × @types/bun overlap) are not our problem.
+    "skipLibCheck": true
+  },
+  "include": ["scripts/**/*", "bin/**/*", "tests/**/*"],
+  "exclude": [
+    "node_modules",
+    "board",
+    "scripts/fleetd/fleetd.bundle.mjs",
+    "scripts/fleetd/board-dist"
+  ]
+}

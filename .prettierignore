@@ -1,0 +1,17 @@
+# Generated / vendored — never reformat.
+node_modules/
+board/node_modules/
+scripts/fleetd/fleetd.bundle.mjs
+scripts/fleetd/board-dist/
+board/dist/
+
+# Lockfiles.
+bun.lock
+board/bun.lock
+package-lock.json
+board/package-lock.json
+
+# Local data.
+*.db
+*.db-wal
+*.db-shm
