@@ -61,11 +61,13 @@ function livePidLooksLikeFleetd(pid) {
     // `/proc/<pid>/comm` is the main thread name, not a stable executable
     // identity: Node 24 names it `MainThread` instead of `node`. Resolve the
     // executable symlink so upgrades cannot make a live fleetd look recycled.
+    // The dual node:sqlite⇔bun:sqlite seam means a fleetd may legitimately run
+    // under bun (basename `bun`) as well as node — accept either runtime.
     const executable = path.basename(fs.readlinkSync(`/proc/${pid}/exe`)).replace(/ \(deleted\)$/, '');
     const argv = fs.readFileSync(`/proc/${pid}/cmdline`).toString('utf8').split('\0').filter(Boolean);
-    const nodeLike = /^(?:node|nodejs|fleetd)$/i.test(executable);
+    const runtimeLike = /^(?:node|nodejs|bun|fleetd)$/i.test(executable);
     const fleetdScript = argv.some(arg => /(?:^|[/\\])fleetd(?:\.bundle)?\.mjs$/.test(arg));
-    return nodeLike && fleetdScript;
+    return runtimeLike && fleetdScript;
   } catch (err) {
     // WHY ENOENT is decisive: the PID died after kill(0), so it no longer owns
     // HOME. Permission and transient I/O failures are not decisive; retaining
