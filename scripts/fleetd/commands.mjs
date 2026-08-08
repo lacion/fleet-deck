@@ -4,7 +4,7 @@
 // resolveTargets, tick, onMutate, applyTicket, applyCustomName.
 
 import { parseCommand, validateNameSuffix } from './helpers.mjs';
-import { normalizeTicket } from './tickets.mjs';
+import { normalizeTicket } from './tickets.ts';
 import { MAIL_MAX_LEN } from './mail.mjs';
 
 export function createCommands(ctx) {

@@ -4,7 +4,7 @@
 // are pure helpers.
 
 import { deriveRepo, branchOf } from './repo-identity.mjs';
-import { ticketFromBranch } from './tickets.mjs';
+import { ticketFromBranch } from './tickets.ts';
 import { pidOwnedBy, colFromAgentState } from './helpers.mjs';
 
 export function createIngest(ctx) {

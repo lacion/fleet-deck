@@ -9,7 +9,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { branchOf } from './repo-identity.mjs';
-import { ticketFromBranch, animalOf } from './tickets.mjs';
+import { ticketFromBranch, animalOf } from './tickets.ts';
 import { createQuestions, resolveHoldMs } from './questions.mjs';
 import { lastAssistantModel } from './transcript.mjs';
 import * as defaultTmuxAdapter from './spawn.mjs';

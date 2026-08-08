@@ -4246,21 +4246,24 @@ function ledgerKey(absPath, session) {
   return { repo_id: "", rel_path: absPath, worktree: null };
 }
 
-// scripts/fleetd/tickets.mjs
+// scripts/fleetd/tickets.ts
 var KEY_CORE = "([A-Z][A-Z0-9]{1,9})-([1-9][0-9]*)";
 var TICKET_RE = new RegExp(`(?<![A-Za-z0-9])${KEY_CORE}(?![A-Za-z0-9])`);
 var TICKET_EXACT_RE = new RegExp(`^${KEY_CORE}$`);
 function ticketFromBranch(branch) {
   if (typeof branch !== "string" || !branch) return null;
   const m = TICKET_RE.exec(branch);
-  return m ? `${m[1]}-${m[2]}` : null;
+  if (!m) return null;
+  const [, proj, num] = m;
+  return proj !== void 0 && num !== void 0 ? `${proj}-${num}` : null;
 }
 function normalizeTicket(raw) {
-  const s = String(raw ?? "").trim().toUpperCase();
+  const s = (raw ?? "").trim().toUpperCase();
   return TICKET_EXACT_RE.test(s) ? s : null;
 }
 function animalOf(callsign) {
-  return String(callsign).split("-")[0];
+  const [animal = ""] = callsign.split("-");
+  return animal;
 }
 
 // scripts/fleetd/questions.mjs

@@ -11,7 +11,7 @@
 import path from 'node:path';
 import os from 'node:os';
 import { deriveRepo, branchOf } from './repo-identity.mjs';
-import { ticketFromBranch } from './tickets.mjs';
+import { ticketFromBranch } from './tickets.ts';
 import { lastAssistantText } from './transcript.mjs';
 import { detectTrailingQuestion } from './questions.mjs';
 import { mungeClaudeProjectCwd } from './helpers.mjs';

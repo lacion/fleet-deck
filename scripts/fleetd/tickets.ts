@@ -1,4 +1,4 @@
-// tickets.mjs — pure Jira-key extraction (no deps, no per-core state). Two
+// tickets.ts — pure Jira-key extraction (no deps, no per-core state). Two
 // consumers: branch auto-detect (ticketFromBranch, permissive — pull the key
 // out of a longer branch name) and the manual `ticket` command (normalizeTicket,
 // strict — the whole argument must BE a key). Both agree on the same key grammar
@@ -24,18 +24,23 @@ const TICKET_EXACT_RE = new RegExp(`^${KEY_CORE}$`);
 // `feature/PROJ-123-checkout` → `PROJ-123`; `fd/raven-PROJ-123` → `PROJ-123`;
 // `audit-cleanup` / `viper-c7a7` → null. Only ever fed the SERVER-derived branch
 // (branchOf), never the client-supplied git_branch fallback.
-export function ticketFromBranch(branch) {
+export function ticketFromBranch(branch: string | null): string | null {
   if (typeof branch !== 'string' || !branch) return null;
   const m = TICKET_RE.exec(branch);
-  return m ? `${m[1]}-${m[2]}` : null;
+  if (!m) return null;
+  // A successful match guarantees both capture groups; the guard proves that to
+  // the checker (noUncheckedIndexedAccess types RegExpExecArray indices as
+  // string|undefined, which the template expression would otherwise reject).
+  const [, proj, num] = m;
+  return proj !== undefined && num !== undefined ? `${proj}-${num}` : null;
 }
 
 // Manual command: the whole argument must be a single key (after trim +
 // uppercase). `proj-55` → `PROJ-55`; `PROJ-007` → null (leading zero); anything
 // with surrounding text → null. Returns the canonical uppercase key or null so
 // the command handler can reject a malformed key loudly.
-export function normalizeTicket(raw) {
-  const s = String(raw ?? '').trim().toUpperCase();
+export function normalizeTicket(raw: string | undefined): string | null {
+  const s = (raw ?? '').trim().toUpperCase();
   return TICKET_EXACT_RE.test(s) ? s : null;
 }
 
@@ -44,6 +49,11 @@ export function normalizeTicket(raw) {
 // hyphen (the suffix itself may contain hyphens: `otter-PROJ-123`). Every
 // consumer that needs the animal back out of a callsign goes through here so
 // the format has a single owner.
-export function animalOf(callsign) {
-  return String(callsign).split('-')[0];
+export function animalOf(callsign: string): string {
+  // `split('-')` on a non-empty separator always yields ≥1 element, so [0] is
+  // never actually undefined — but `noUncheckedIndexedAccess` can't see that.
+  // The `= ''` default satisfies the type; runtime behavior is unchanged
+  // (a real element, even the empty string, always wins over the default).
+  const [animal = ''] = callsign.split('-');
+  return animal;
 }

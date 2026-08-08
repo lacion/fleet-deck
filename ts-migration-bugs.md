@@ -22,7 +22,53 @@ Format:
 
 ---
 
+## Migration ordering constraints (sequencing gotchas the plan didn't foresee — not strict-typing bugs)
+
+### env-scrub / run-nonce / config / takeover — hook-coupled leaves can't convert before the hooks are bundled
+- **What:** `docs/v1/ts-migration.md` (Phase 2) names `env-scrub` as the **first** conversion —
+  "47 lines, a security boundary, the perfect proof-of-recipe." But these four daemon leaves are
+  imported *directly* by the **unbundled** plugin hooks (`scripts/fleet-sessionstart.mjs`,
+  `scripts/fleet-hook.mjs`, `scripts/fleet-watch.mjs`), which `hooks/hooks.json` runs as raw `.mjs`
+  via `node "${CLAUDE_PLUGIN_ROOT}/scripts/fleet-*.mjs"` on the *user's* Node — package `engines`
+  floor `^22.13.0`.
+- **Why it's real:** Node 22.13–22.17 cannot strip TS types. A raw `.mjs` hook importing
+  `./fleetd/env-scrub.ts` would **throw on load** on those versions instead of failing open — a hard
+  regression for anyone on the engine floor. The plan's "coexistence is free" proof only covers the
+  daemon's two run-paths (the esbuild bundle + Node ≥22.18 source stripping); it did not account for
+  the plugin hooks, which are a *third*, engine-floor-pinned, raw-source run-path.
+- **Coupled set (complete, measured):** `env-scrub`, `run-nonce`, `config`, `takeover` — all leaves
+  (0 local imports). `bin/fleetdeck.mjs` / `bin/tmux-version.mjs` import nothing from `fleetd/` (they
+  spawn the committed bundle as a child), so `bin/` does **not** extend the set.
+- **Resolution:** convert these four **together with** bundling the plugin hooks (task #10). Once the
+  hooks ship as committed plain-JS artifacts that inline their imports, no raw-`.mjs` consumer of
+  daemon source remains and the four convert cleanly. Phase 2's recipe-proof therefore starts on the
+  smallest **daemon-only** leaf (`tickets`, 49 loc, fan-in 5) instead of `env-scrub`.
+
+---
+
 <!-- entries appended below as modules convert -->
+
+### tickets.ts — `unknown` params + `noUncheckedIndexedAccess` on regex/`split` results   [NOISE]
+- **What:** type-aware ESLint (not `tsc`) raised three on the first daemon-only leaf:
+  `restrict-template-expressions` at `:30` (``\`${m[1]}-${m[2]}\``` — `RegExpExecArray`
+  indices are `string | undefined` under `noUncheckedIndexedAccess`, so the template
+  "may stringify undefined"), and `no-base-to-string` at `:38`/`:59` (`String(raw)` /
+  `String(callsign)` where the arg was typed `unknown`, which could be an object →
+  `"[object Object]"`).
+- **Why it's real / why it's noise:** NOISE — no runtime defect. `tsc` alone stayed
+  green; only the maximal type-aware lint rules fire. The `unknown` params were *my*
+  over-loose first-pass signatures, not the original JS contract: every call site feeds
+  a known-narrow value (`ticketFromBranch` ← `branchOf()` → `string | null`;
+  `normalizeTicket` ← a parsed CLI arg → `string | undefined`; `animalOf` ← a
+  `callsign` string). The regex-index warning is pure `noUncheckedIndexedAccess`
+  pessimism — a successful `exec` on a two-group pattern always populates `m[1]`/`m[2]`.
+- **Fix:** tightened the signatures to the call-site-honest types (`string | null`,
+  `string | undefined`, `string`) so the `String()` coercions drop away, and replaced
+  the bare template with an explicit destructure + `undefined` guard
+  (`const [, proj, num] = m; return proj !== undefined && num !== undefined ? … : null`).
+  The `: null` branch is unreachable-but-honest. **No runtime behavior moved** — same
+  keys extracted, same `null`s returned; 7/7 `tickets.test.mjs` green vs both source and
+  bundle.
 
 ### board/useFleetState.ts — board consumed `any` across the daemon-trust boundary   [UNSOUND]
 - **What:** type-aware ESLint (`@typescript-eslint/no-unsafe-*`, `no-unnecessary-condition`,
