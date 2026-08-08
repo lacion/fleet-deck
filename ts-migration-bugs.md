@@ -48,6 +48,24 @@ Format:
 
 <!-- entries appended below as modules convert -->
 
+### ledger.ts — tighter `LedgerKey` exposed dead `?? ''` / `?? null` fallbacks   [NOISE]
+- **What:** once `ledgerKey` returned the honest `LedgerKey` (`repo_id: string`,
+  `worktree: string | null`) from the just-converted repo-identity, `ledger`'s three
+  `key.repo_id ?? ''` and two `key.worktree ?? null` / `t.worktree ?? null` guards became
+  provably dead — `@typescript-eslint/no-unnecessary-condition` would have flagged each
+  `??`/`||` whose left side can no longer be nullish.
+- **Why it's real / why it's noise:** NOISE — a downstream ripple of the repo-identity
+  discriminated-union entry, not a defect. `repo_id` is always a string (`''` outside git,
+  never null), so `?? ''` never fired; `x ?? null` on a `string | null` is identity. The
+  DB-row worktree the code normalized with `?? null` is `string | null` from node/bun
+  sqlite (never `undefined`), so the normalization was dead too.
+- **Fix:** dropped the fallbacks (`key.repo_id`, `key.worktree`, `t.worktree === key.worktree`)
+  and `editorCard.cwd || '/'` → `?? '/'`. Typed the threaded ctx (`LedgerCtx`) and the
+  DB-row shapes (`TouchRow`, `SessionStateRow`) as **provisional** structural interfaces —
+  they name exactly what the still-JS statements layer must provide and will be replaced by
+  its real exports when it converts. **No runtime behavior moved** — conflict.test.mjs 2/2
+  green vs both source and bundle.
+
 ### repo-identity.ts — `||`→`??` on nullable git results + `Map` iterator typing   [NOISE]
 - **What:** type-aware ESLint raised `prefer-nullish-coalescing` twice — on
   `git([...]) || ''` (the porcelain `worktree list`) and on

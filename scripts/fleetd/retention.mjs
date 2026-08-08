@@ -9,7 +9,7 @@
 
 import fs from 'node:fs';
 import { SHELL_RE, NOT_RESUMABLE_END } from './helpers.mjs';
-import { CONFLICT_WINDOW_MS } from './ledger.mjs';
+import { CONFLICT_WINDOW_MS } from './ledger.ts';
 import { pruneRunNonces } from './run-nonce.mjs';
 
 export function createRetention(ctx) {

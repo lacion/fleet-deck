@@ -9339,7 +9339,7 @@ function createMail(ctx) {
   };
 }
 
-// scripts/fleetd/ledger.mjs
+// scripts/fleetd/ledger.ts
 import path11 from "node:path";
 var CONFLICT_WINDOW_MS = 30 * 60 * 1e3;
 function createLedger(ctx) {
@@ -9347,24 +9347,36 @@ function createLedger(ctx) {
   function recordFile(sid, absFile, editorCard) {
     if (!absFile) return null;
     const now = Date.now();
-    const abs = path11.isAbsolute(absFile) ? absFile : path11.resolve(editorCard.cwd || "/", absFile);
+    const abs = path11.isAbsolute(absFile) ? absFile : path11.resolve(editorCard.cwd ?? "/", absFile);
     const key = ledgerKey(abs, editorCard);
-    const touches = q.recentTouches.all(key.repo_id ?? "", key.rel_path, now - CONFLICT_WINDOW_MS);
+    const touches = q.recentTouches.all(key.repo_id, key.rel_path, now - CONFLICT_WINDOW_MS);
     const rivalTouches = touches.filter((t) => {
       if (t.session_id === sid) return false;
       const row = q.getSession.get(t.session_id);
       return !!row && row.archived_at == null;
     });
     const rivals = [...new Set(rivalTouches.map((t) => t.session_id))];
-    q.insertTouch.run(key.repo_id ?? "", key.rel_path, abs, sid, key.worktree ?? null, now);
+    q.insertTouch.run(key.repo_id, key.rel_path, abs, sid, key.worktree, now);
     if (!rivals.length) return null;
-    const sameTree = rivalTouches.some((t) => (t.worktree ?? null) === (key.worktree ?? null));
+    const sameTree = rivalTouches.some((t) => t.worktree === key.worktree);
     const severity = sameTree ? "warning" : "info";
     const rivalNames = rivals.map((r) => card(r).callsign).join(", ");
-    q.insertConflict.run(now, key.repo_id ?? "", key.rel_path, severity, JSON.stringify([sid, ...rivals]));
-    tick(`\u26A0 conflict: ${editorCard.callsign} and ${rivalNames} both touching ${path11.basename(key.rel_path)}`);
+    q.insertConflict.run(
+      now,
+      key.repo_id,
+      key.rel_path,
+      severity,
+      JSON.stringify([sid, ...rivals])
+    );
+    tick(
+      `\u26A0 conflict: ${editorCard.callsign} and ${rivalNames} both touching ${path11.basename(key.rel_path)}`
+    );
     for (const r of rivals) {
-      mail(r, "fleetdeck", severity === "warning" ? `Heads up: ${editorCard.callsign} is also editing ${key.rel_path}. Coordinate before you overwrite each other.` : `Heads up: ${editorCard.callsign} is editing ${key.rel_path} in another worktree of this repo \u2014 a future merge conflict announcing itself early.`);
+      mail(
+        r,
+        "fleetdeck",
+        severity === "warning" ? `Heads up: ${editorCard.callsign} is also editing ${key.rel_path}. Coordinate before you overwrite each other.` : `Heads up: ${editorCard.callsign} is editing ${key.rel_path} in another worktree of this repo \u2014 a future merge conflict announcing itself early.`
+      );
     }
     return { file: key.rel_path, abs, rivals: rivalNames, severity };
   }
