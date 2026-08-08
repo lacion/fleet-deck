@@ -99,6 +99,15 @@ export function spawnRaw({
   // after), so this delete must not come later than the spread.
   const ambient = { ...process.env };
   delete ambient.FLEETDECK_MANAGED;
+  // Same hazard, LAN edition: a dev shell configured for phone/Tailscale access
+  // exports FLEETDECK_BIND=0.0.0.0 (+ FLEETDECK_TRUSTED_ORIGINS). Inherited by a
+  // test daemon, a non-loopback BIND makes the loopback-trust daemons refuse to
+  // start ("FLEETDECK_TRUST_LOOPBACK=on requires a loopback FLEETDECK_BIND") and
+  // skews the hook-auth/loopback-gates origin checks — false local failures CI
+  // never sees (its shell sets neither). Tests that exercise binding/origins
+  // pass their own via `env` (spread after), so they win over this scrub.
+  delete ambient.FLEETDECK_BIND;
+  delete ambient.FLEETDECK_TRUSTED_ORIGINS;
   const childEnv = {
     ...ambient,
     FLEETDECK_PORT: String(port),
