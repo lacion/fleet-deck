@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { branchOf, deriveRepo } from '../scripts/fleetd/repo-identity.ts';
-import { lastAssistantModel, lastAssistantText } from '../scripts/fleetd/transcript.mjs';
+import { lastAssistantModel, lastAssistantText } from '../scripts/fleetd/transcript.ts';
 
 function scratch(t, prefix) {
   const dir = mkdtempSync(path.join(tmpdir(), prefix));

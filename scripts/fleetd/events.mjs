@@ -12,7 +12,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { deriveRepo, branchOf } from './repo-identity.ts';
 import { ticketFromBranch } from './tickets.ts';
-import { lastAssistantText } from './transcript.mjs';
+import { lastAssistantText } from './transcript.ts';
 import { detectTrailingQuestion } from './questions.mjs';
 import { mungeClaudeProjectCwd } from './helpers.mjs';
 

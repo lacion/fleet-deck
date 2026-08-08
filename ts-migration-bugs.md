@@ -48,6 +48,35 @@ Format:
 
 <!-- entries appended below as modules convert -->
 
+### transcript.ts — `.truncated` on a generator + JSONL-boundary `unknown`   [NOISE]
+- **What:** three things surfaced on the transcript reader, all from typing a module whose
+  whole job is parsing an *untrusted*, possibly-mid-append JSONL file. (1) `tailLines`
+  returns a generator with an extra `.truncated` boolean glued on
+  (``it.truncated = start > 0``) — a plain assignment to a property TS's `Generator<T>`
+  type doesn't declare, so it doesn't type-check. (2) Every field off `JSON.parse(line)`
+  (`entry.type`, `entry.message.content`, `.model`, and each content block's `type`/`text`)
+  is untyped; the original JS reached straight through with optional chaining
+  (`entry?.message?.content`, `b.type === 'text'`). (3) `lines[i]` inside the reverse walk
+  is `string | undefined` under `noUncheckedIndexedAccess`, even though `i` is a valid index.
+- **Why it's real / why it's noise:** NOISE on all three — `tsc` and the type-aware lint both
+  stayed green after annotation, and no runtime behavior moved. The transcript is the one
+  place the daemon reads a file another process is actively appending to, so the fields
+  genuinely *are* `unknown` at the boundary; typing them as such and narrowing with
+  `typeof`/optional-chaining just makes the defensiveness the JS already had explicit.
+- **Fix:** (1) `const it: TailIterator = Object.assign(gen, { truncated: start > 0 })` — the
+  built-in `Object.assign` overload returns the intersection `Generator<TailLine, void,
+  unknown> & { truncated: boolean }` (aliased `TailIterator`), attaching the flag with **no**
+  unsafe cast. (2) Declared structural boundary types (`TranscriptEntry`, `ContentBlock`)
+  with **`unknown`** fields and asserted the parse once (`JSON.parse(line) as TranscriptEntry
+  | null`); every downstream access narrows (`typeof content === 'string'`,
+  `Array.isArray(content)`, `b?.type === 'text' && typeof b.text === 'string'`). The
+  array-of-blocks `.filter(...).map(...).join()` became an explicit `for` loop pushing to a
+  `string[]` — behavior-identical, but each block narrows cleanly. (3) `const raw = lines[i];
+  if (raw === undefined) continue;` — an in-bounds guard the runtime never hits, satisfying
+  `noUncheckedIndexedAccess`. **No runtime behavior moved** — 18/18 pure tests
+  (`transcript-reader` + `audit-cleanup`) green, and 25/25 daemon-spawn tests
+  (`model-tracking` + `needs-you`) green vs **both** source and bundle.
+
 ### plans.ts — integer ids in templates + untrusted-body `unknown` narrowing   [NOISE]
 - **What:** two things surfaced on the first daemon leaf that templates primary-key
   **numbers**. (1) `@typescript-eslint/restrict-template-expressions` (from

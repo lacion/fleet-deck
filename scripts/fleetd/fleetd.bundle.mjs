@@ -4884,7 +4884,7 @@ function clipQuestion(s) {
   return t.length <= 300 ? t : t.slice(0, 297) + "\u2026";
 }
 
-// scripts/fleetd/transcript.mjs
+// scripts/fleetd/transcript.ts
 import fs2 from "node:fs";
 function tailLines(transcriptPath, { maxBytes = 262144 } = {}) {
   const stat = fs2.statSync(transcriptPath);
@@ -4911,17 +4911,19 @@ function tailLines(transcriptPath, { maxBytes = 262144 } = {}) {
   }
   if (firstRowIsPartial) chunk = chunk.slice(chunk.indexOf("\n") + 1);
   const lines = chunk.split("\n");
-  const it = (function* () {
+  const gen = (function* () {
     let end = stat.size;
     for (let i = lines.length - 1; i >= 0; i--) {
-      const bytes = Buffer.byteLength(lines[i], "utf8");
+      const raw = lines[i];
+      if (raw === void 0) continue;
+      const bytes = Buffer.byteLength(raw, "utf8");
       const offset = end - bytes;
       end = offset - 1;
-      const line = lines[i].trim();
+      const line = raw.trim();
       if (line) yield { line, offset };
     }
   })();
-  it.truncated = start > 0;
+  const it = Object.assign(gen, { truncated: start > 0 });
   return it;
 }
 function lastAssistantText(transcriptPath, { maxBytes = 2e6 } = {}) {
@@ -4942,7 +4944,16 @@ function lastAssistantText(transcriptPath, { maxBytes = 2e6 } = {}) {
       if (!maybeAssistant) continue;
       if (entry?.type !== "assistant" || entry.isSidechain === true) continue;
       const content = entry.message?.content;
-      const text = Array.isArray(content) ? content.filter((b) => b?.type === "text" && typeof b.text === "string").map((b) => b.text).join("\n").trim() : typeof content === "string" ? content.trim() : "";
+      let text = "";
+      if (typeof content === "string") {
+        text = content.trim();
+      } else if (Array.isArray(content)) {
+        const parts = [];
+        for (const b of content) {
+          if (b?.type === "text" && typeof b.text === "string") parts.push(b.text);
+        }
+        text = parts.join("\n").trim();
+      }
       if (text) return text;
     }
   } catch {

@@ -11,7 +11,7 @@ import path from 'node:path';
 import { branchOf } from './repo-identity.ts';
 import { ticketFromBranch, animalOf } from './tickets.ts';
 import { createQuestions, resolveHoldMs } from './questions.mjs';
-import { lastAssistantModel } from './transcript.mjs';
+import { lastAssistantModel } from './transcript.ts';
 import * as defaultTmuxAdapter from './spawn.mjs';
 import { createStatements } from './statements.mjs';
 import { createWorktrees } from './worktrees.mjs';

@@ -24,7 +24,7 @@ import assert from 'node:assert/strict';
 import { appendFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { lastAssistantModel, lastAssistantText, tailLines } from '../scripts/fleetd/transcript.mjs';
+import { lastAssistantModel, lastAssistantText, tailLines } from '../scripts/fleetd/transcript.ts';
 import {
   appendTranscriptLines,
   assistantLine,
