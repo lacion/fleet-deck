@@ -20,6 +20,11 @@ import { validateNameSuffix } from './helpers.mjs';
 import { spawnFailureReason } from './spawns.mjs';
 import { WebSocketServer } from 'ws';
 import { createTermBridge } from './termbridge.mjs';
+// F1a HOSTILE-boundary validators, imported from the shared wire contracts by
+// explicit `.ts` specifier (the TS source of truth). Node >=22.18 strips the
+// types on load; the esbuild bundle inlines them as plain JS, which is what the
+// engine floor (22.13) runs. See docs/v1/ts-migration.md.
+import { validateHookEvent, validateSpawnRequest } from '../../contracts/index.ts';
 
 const MAX_BODY = 1e6;
 // /api/paste-image only: a screenshot is megabytes, and base64-in-JSON (kept —
@@ -1002,8 +1007,11 @@ export function createHttp(core, {
               // malformed payload into one shared phantom card that each
               // subsequent ID-less event then mutates. Fail open like every
               // hook path — 200 {} with no dispatch — so a broken payload
-              // no-ops instead of corrupting the board.
-              if (typeof ev?.session_id !== 'string' || !ev.session_id) {
+              // no-ops instead of corrupting the board. This guard is now the
+              // shared runtime validator (contracts/hooks.ts); its predicate
+              // (non-object body, or a missing/blank session_id) is identical
+              // to the hand check it replaces, so no dispatch outcome moves.
+              if (!validateHookEvent(ev).ok) {
                 return json(res, 200, {});
               }
               return json(res, 200, handler(ev) ?? {});
@@ -1094,6 +1102,17 @@ export function createHttp(core, {
               return json(res, 200, { ok: true, arm_token: core.armUnsupervised() });
             }
             if (url.pathname === '/api/spawn') {
+              // F1a structural gate: reject a body that isn't even a JSON
+              // object before it reaches derive — the one shape spawns.mjs
+              // cannot parse. Every real spawn request is an object (and a
+              // tokenless one 401s upstream), so this moves no existing
+              // outcome; it just hands a non-object a clean 400 instead of a
+              // derive-internal throw. Deep field validation (kind XOR, enums,
+              // plan_id positivity) stays in derive.spawn until Phase 5 folds
+              // it into a single typed pass against SpawnRequest.
+              if (!validateSpawnRequest(ev).ok) {
+                return json(res, 400, { ok: false, reason: 'spawn body must be a JSON object' });
+              }
               // v1.2 board spawn (CONTRACT). Control API like the questions
               // answer path: real status codes, fail-loud — never a silent
               // no-op. The whole flow (validate → card → worktree → tmux →

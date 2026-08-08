@@ -7,6 +7,10 @@
 
 import { spawnRowRevivable, sessionAdoptableNow } from './helpers.mjs';
 import { scrubUrlCredentials } from './payload-capture.mjs';
+// F1a: the /state + /ws envelope carries the wire schema version so a board on
+// an older build can detect skew. Imported from the shared TS contract (the
+// bundle inlines it; the engine floor runs the bundle). See ts-migration.md.
+import { WIRE_SCHEMA_VERSION } from '../../contracts/index.ts';
 
 export function createSnapshot(ctx) {
   const {
@@ -200,6 +204,7 @@ export function createSnapshot(ctx) {
     // and the two must never disagree within a single snapshot.
     const settings = resolveSettings();
     return {
+      schema_version: WIRE_SCHEMA_VERSION, // F1a wire-version stamp (contracts/state.ts)
       up_ms: now - t0,          // spike name, preserved
       uptime_ms: now - t0,      // contract addition
       // Which build is serving the board — pairs with /health's version so an

@@ -59,5 +59,11 @@ export default defineConfig({
       // matches /ws AND /ws/term — both upgrades need the Origin rewrite too.
       '/ws': { target: FLEETD_WS, ws: true, changeOrigin: true, configure: rewriteOrigin },
     },
+    // The board is its own package (board/), but it imports the shared wire
+    // contracts from the repo root (../contracts). Vite's dev server refuses to
+    // serve files above the project root by default, so widen the allow-list to
+    // the repo root. The production `vite build` (Rollup) already follows the
+    // import across the boundary without this — it only matters for `npm run dev`.
+    fs: { allow: ['..'] },
   },
 });

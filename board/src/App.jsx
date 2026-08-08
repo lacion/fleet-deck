@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { useFleetState } from './useFleetState.js';
+import { useFleetState } from './useFleetState.ts';
 import { useSpawnActions } from './useSpawnActions.js';
 import { useConflictRipples } from './hooks/useConflictRipples.js';
 import { useFeedbackStrip } from './hooks/useFeedbackStrip.js';

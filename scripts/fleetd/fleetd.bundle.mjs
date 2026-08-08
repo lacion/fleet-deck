@@ -10219,10 +10219,10 @@ function createSpawns(ctx) {
     if (hasRepo && hasCwd) {
       return { status: 400, body: { ok: false, reason: "provide either cwd or repo, not both" } };
     }
-    const PERMISSION_MODES = /* @__PURE__ */ new Set(["default", "acceptedits", "plan", "bypasspermissions"]);
+    const PERMISSION_MODES2 = /* @__PURE__ */ new Set(["default", "acceptedits", "plan", "bypasspermissions"]);
     if (body?.permission_mode != null) {
       const lower = String(body.permission_mode).toLowerCase();
-      if (!PERMISSION_MODES.has(lower)) {
+      if (!PERMISSION_MODES2.has(lower)) {
         return { status: 400, body: { ok: false, reason: `unknown permission_mode '${body.permission_mode}'` } };
       }
       if (lower === "bypasspermissions" && body.permission_mode !== "bypassPermissions") {
@@ -11858,6 +11858,42 @@ function createEvents(ctx) {
   };
 }
 
+// contracts/version.ts
+var WIRE_SCHEMA_VERSION = 1;
+
+// contracts/validate.ts
+function ok(value) {
+  return { ok: true, value };
+}
+function fail(error) {
+  return { ok: false, error };
+}
+function isRecord(v) {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+function isNonEmptyString(v) {
+  return typeof v === "string" && v.length > 0;
+}
+
+// contracts/hooks.ts
+function validateHookEvent(input) {
+  if (!isRecord(input)) {
+    return fail("hook body must be a JSON object");
+  }
+  if (!isNonEmptyString(input["session_id"])) {
+    return fail("hook body requires a non-empty string session_id");
+  }
+  return ok(input);
+}
+
+// contracts/spawn.ts
+function validateSpawnRequest(input) {
+  if (!isRecord(input)) {
+    return fail("spawn body must be a JSON object");
+  }
+  return ok(input);
+}
+
 // scripts/fleetd/snapshot.mjs
 function createSnapshot(ctx) {
   const {
@@ -12019,6 +12055,8 @@ function createSnapshot(ctx) {
     }
     const settings = resolveSettings();
     return {
+      schema_version: WIRE_SCHEMA_VERSION,
+      // F1a wire-version stamp (contracts/state.ts)
       up_ms: now - t0,
       // spike name, preserved
       uptime_ms: now - t0,
@@ -14106,7 +14144,7 @@ function createHttp(core2, {
                 core2.applyEvent({ hook_event_name: name, ...ev });
                 return json(res, 200, {});
               }
-              if (typeof ev?.session_id !== "string" || !ev.session_id) {
+              if (!validateHookEvent(ev).ok) {
                 return json(res, 200, {});
               }
               return json(res, 200, handler(ev) ?? {});
@@ -14159,6 +14197,9 @@ function createHttp(core2, {
               return json(res, 200, { ok: true, arm_token: core2.armUnsupervised() });
             }
             if (url.pathname === "/api/spawn") {
+              if (!validateSpawnRequest(ev).ok) {
+                return json(res, 400, { ok: false, reason: "spawn body must be a JSON object" });
+              }
               logExec(
                 url.pathname,
                 req,

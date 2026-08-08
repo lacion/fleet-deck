@@ -37,7 +37,7 @@
     // Third-party .d.ts (incl. @types/node × @types/bun overlap) are not our problem.
     "skipLibCheck": true
   },
-  "include": ["scripts/**/*", "bin/**/*", "tests/**/*"],
+  "include": ["contracts/**/*", "scripts/**/*", "bin/**/*", "tests/**/*"],
   "exclude": [
     "node_modules",
     "board",
