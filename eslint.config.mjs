@@ -41,6 +41,13 @@ export default tseslint.config(
     rules: {
       // The TS compiler owns undefined-symbol detection (incl. the `Bun` global).
       'no-undef': 'off',
+      // strictTypeChecked bans EVERY non-string operand in a template literal,
+      // integers included. The daemon templates primary-key ids constantly
+      // (`plan #${p.plan_id}`, `question #${qid}`) — a number stringifies
+      // losslessly with no `[object Object]`/`"null"` hazard, which is exactly
+      // what the rest of this rule guards against. Re-allow numbers only; any /
+      // boolean / nullish / never / regexp stay banned (their defaults).
+      '@typescript-eslint/restrict-template-expressions': ['error', { allowNumber: true }],
     },
   },
 
@@ -58,6 +65,8 @@ export default tseslint.config(
     },
     rules: {
       'no-undef': 'off',
+      // Same rationale as the daemon block: integer ids in templates are safe.
+      '@typescript-eslint/restrict-template-expressions': ['error', { allowNumber: true }],
     },
   },
 

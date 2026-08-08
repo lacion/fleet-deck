@@ -9635,7 +9635,7 @@ function createCommands(ctx) {
   return { command };
 }
 
-// scripts/fleetd/plans.mjs
+// scripts/fleetd/plans.ts
 function createPlans(ctx) {
   const { q, tick, onMutate, mail, resolveTargets } = ctx;
   const EXECUTABLE_FROM = /* @__PURE__ */ new Set(["proposed", "approved", "captured"]);
@@ -9646,16 +9646,19 @@ function createPlans(ctx) {
     if (target !== "executed" && target !== "archived") {
       return { status: 400, body: { ok: false, err: 'status must be "executed" or "archived"' } };
     }
-    if (body?.via != null && typeof body.via !== "string") {
+    const rawVia = body?.via;
+    if (rawVia != null && typeof rawVia !== "string") {
       return { status: 400, body: { ok: false, err: "via must be a string" } };
     }
     if (target === "executed") {
       if (!EXECUTABLE_FROM.has(p.status)) {
         return { status: 409, body: { ok: false, err: `cannot mark a ${p.status} plan executed` } };
       }
-      const via = body?.via?.trim() ? body.via.trim().slice(0, 200) : null;
+      const via = typeof rawVia === "string" && rawVia.trim() ? rawVia.trim().slice(0, 200) : null;
       q.setPlanExecuted.run(via, p.plan_id);
-      tick(`\u{1F4DA} plan #${p.plan_id} (${p.callsign ?? p.session_id}) marked executed${via ? ` via ${via}` : ""}`);
+      tick(
+        `\u{1F4DA} plan #${p.plan_id} (${p.callsign ?? p.session_id}) marked executed${via ? ` via ${via}` : ""}`
+      );
       if (p.question_id != null) {
         const qq = ctx.questions?.dismiss?.(p.question_id, { activity: true });
         if (qq?.ok && !qq.already) {
@@ -9676,26 +9679,38 @@ function createPlans(ctx) {
     const p = q.getPlan.get(Number(plan_id));
     if (!p) return { status: 404, body: { ok: false, err: "no such plan" } };
     const to = typeof body?.to === "string" ? body.to.trim() : "";
-    if (!to) return { status: 400, body: { ok: false, err: "to must be a session id or callsign" } };
-    if (body?.instructions != null && typeof body.instructions !== "string") {
+    if (!to)
+      return { status: 400, body: { ok: false, err: "to must be a session id or callsign" } };
+    const rawInstr = body?.instructions;
+    if (rawInstr != null && typeof rawInstr !== "string") {
       return { status: 400, body: { ok: false, err: "instructions must be a string" } };
     }
     if (!EXECUTABLE_FROM.has(p.status)) {
       return { status: 409, body: { ok: false, err: `cannot assign a ${p.status} plan` } };
     }
     const target = resolveTargets(to).map((sid) => q.getSession.get(sid)).find((s) => s && s.ended_at == null);
-    if (!target) return { status: 404, body: { ok: false, err: `no live session matching "${to}"` } };
+    if (!target)
+      return { status: 404, body: { ok: false, err: `no live session matching "${to}"` } };
     const marked = planMark(p.plan_id, { status: "executed", via: `assign:${target.session_id}` });
     if (!marked.body.ok) return marked;
-    const instr = body?.instructions?.trim();
-    const text = `[FLEETDECK ASSIGNMENT] Execute this approved plan exactly. Custom instructions: ${instr || ""}
+    const instr = typeof rawInstr === "string" ? rawInstr.trim() : "";
+    const text = `[FLEETDECK ASSIGNMENT] Execute this approved plan exactly. Custom instructions: ${instr}
 
 ---
 ${p.plan_md ?? ""}`;
     mail(target.session_id, "orchestrator", text);
     tick(`\u{1F4DA} plan #${p.plan_id} assigned to ${target.callsign ?? target.session_id}`);
     onMutate();
-    return { status: 200, body: { ok: true, plan_id: p.plan_id, status: "executed", session_id: target.session_id, callsign: target.callsign ?? null } };
+    return {
+      status: 200,
+      body: {
+        ok: true,
+        plan_id: p.plan_id,
+        status: "executed",
+        session_id: target.session_id,
+        callsign: target.callsign ?? null
+      }
+    };
   }
   return { planMark, assignPlan };
 }

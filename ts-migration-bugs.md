@@ -48,6 +48,37 @@ Format:
 
 <!-- entries appended below as modules convert -->
 
+### plans.ts — integer ids in templates + untrusted-body `unknown` narrowing   [NOISE]
+- **What:** two things surfaced on the first daemon leaf that templates primary-key
+  **numbers**. (1) `@typescript-eslint/restrict-template-expressions` (from
+  `strictTypeChecked`, which pins `allowNumber: false`) flagged all four
+  ``\`📚 plan #${p.plan_id} …\``` / ``\`…#${p.plan_id}…\``` sites — a `number` operand in a
+  template. (2) The two request bodies (`{status, via}`, `{to, instructions}`) arrive off
+  the wire, so their fields are `unknown`; `body?.via?.trim()` / `body?.instructions?.trim()`
+  don't type-check until the value is narrowed to a string.
+- **Why it's real / why it's noise:** NOISE on both counts — `tsc` stayed green; only the
+  maximal type-aware lint fired, and no runtime behavior is at risk. An integer primary key
+  stringifies losslessly (`123` → `"123"`) with none of the `[object Object]` / `"null"` /
+  `"true"` hazards `restrict-template-expressions` exists to catch, and the daemon templates
+  ids **everywhere** (24+ `#${…id}` sites across the still-JS modules, growing as they
+  convert). The body-field narrowing is just the honest cost of typing untrusted JSON as
+  `unknown` — the original JS already did the exact same `typeof`/`!= null` runtime guards.
+- **Fix:** (1) a **deliberate, fleet-wide config decision** — re-allow **only numbers** in
+  templates: `'@typescript-eslint/restrict-template-expressions': ['error', { allowNumber:
+  true }]` in both type-aware blocks of `eslint.config.mjs` (daemon + board), commented in
+  place. Every other operand (`any` / `boolean` / `nullish` / `never` / `regexp`) stays
+  banned at its strict default — this narrows exactly the one operand that is provably safe,
+  rather than sprinkling `String(id)` across the whole codebase. It is a lint-ergonomics
+  choice, **not** a `tsc`-strictness loosening (the compiler always accepted `${number}`).
+  (2) Hoisted each body field to a typed local before use
+  (`const rawVia: unknown = body?.via; if (rawVia != null && typeof rawVia !== 'string')
+  return 400; const via = typeof rawVia === 'string' && rawVia.trim() ? … : null`) — a
+  `typeof` guard TS follows, behavior-identical to the original optional-chain. Also typed
+  the HTTP result as a discriminated `{ ok:false, err } | { ok:true, … }` union so
+  `assignPlan` re-uses `planMark` and short-circuits on `!marked.body.ok` without an
+  index-signature access. **No runtime behavior moved** — 32/32 plan tests
+  (`plans` + `accept-plan-*`) green vs both source and bundle.
+
 ### ledger.ts — tighter `LedgerKey` exposed dead `?? ''` / `?? null` fallbacks   [NOISE]
 - **What:** once `ledgerKey` returned the honest `LedgerKey` (`repo_id: string`,
   `worktree: string | null`) from the just-converted repo-identity, `ledger`'s three

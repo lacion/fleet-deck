@@ -23,7 +23,7 @@ import { createMail, MAIL_MAX_LEN } from './mail.mjs';
 import { createLedger } from './ledger.ts';
 import { createIngest } from './ingest.mjs';
 import { createCommands } from './commands.mjs';
-import { createPlans } from './plans.mjs';
+import { createPlans } from './plans.ts';
 import { createSpawns } from './spawns.mjs';
 import { createEvents } from './events.mjs';
 import { createSnapshot } from './snapshot.mjs';
