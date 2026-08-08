@@ -3,7 +3,7 @@
 // onMutate. deriveRepo/branchOf resolve repo identity; pidOwnedBy/colFromAgentState
 // are pure helpers.
 
-import { deriveRepo, branchOf } from './repo-identity.mjs';
+import { deriveRepo, branchOf } from './repo-identity.ts';
 import { ticketFromBranch } from './tickets.ts';
 import { pidOwnedBy, colFromAgentState } from './helpers.mjs';
 

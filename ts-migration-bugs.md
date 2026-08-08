@@ -48,6 +48,29 @@ Format:
 
 <!-- entries appended below as modules convert -->
 
+### repo-identity.ts — `||`→`??` on nullable git results + `Map` iterator typing   [NOISE]
+- **What:** type-aware ESLint raised `prefer-nullish-coalescing` twice — on
+  `git([...]) || ''` (the porcelain `worktree list`) and on
+  `canon(listedMain || toplevel || cwd)` (main-tree fallback chain) — both where the
+  left operand is nullable (`string | null` / `string | undefined`). `tsc` also required
+  a guard where `cacheSet` evicts the LRU entry: `cache.keys().next().value` is typed
+  `string | undefined` (`IteratorResult`), which `Map.delete(key: string)` rejects.
+- **Why it's real / why it's noise:** NOISE — no behavior change. The `||` operands can
+  never be the empty string in practice (`git()` normalizes empty output to `null`;
+  `Array.find` yields `string | undefined`; a real path is never `''`), so `??` selects
+  the identical branch. The eviction guard is dead at runtime — the `while (size > MAX)`
+  condition proves a key exists — but the checker can't see that a non-empty Map yields a
+  defined first key. Note the sibling `path.basename(mainTree).replace(/\.git$/, '') ||
+  path.basename(mainTree)` was correctly **not** flagged and kept as `||`: its left
+  operand is a pure `string` and the `''` fallback there is intentional.
+- **Fix:** swapped the two nullable `||`→`??`; added `const oldest = …; if (oldest ===
+  undefined) break;` before the evicting `delete`. Also gave the two public result shapes
+  honest types: `RepoIdentity` is a **discriminated union** on `is_git`, so
+  `is_git: true` guarantees non-null `repo_id`/`worktree`/… and `ledgerKey`'s git branches
+  narrow without a cast; `LedgerKey.repo_id` is `string` (`''` outside git, never null).
+  **No runtime behavior moved** — 8/8 repo-identity + 7/7 audit-cleanup green; bundle
+  re-parses.
+
 ### tickets.ts — `unknown` params + `noUncheckedIndexedAccess` on regex/`split` results   [NOISE]
 - **What:** type-aware ESLint (not `tsc`) raised three on the first daemon-only leaf:
   `restrict-template-expressions` at `:30` (``\`${m[1]}-${m[2]}\``` — `RegExpExecArray`

@@ -1,4 +1,4 @@
-// repo-identity.mjs — derive {repo_id, repo_name, worktree, branch} from a cwd.
+// repo-identity.ts — derive {repo_id, repo_name, worktree, branch} from a cwd.
 //
 // Repo identity rule:
 //   repo_id  = canonicalized `git rev-parse --git-common-dir` (collapses all
@@ -17,8 +17,48 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const identityCache = new Map(); // cwd -> {value, expiresAt}; insertion order is LRU order
-const branchCache = new Map();   // cwd -> {value, expiresAt}; insertion order is LRU order
+// A git repository identity. `is_git: true` guarantees every field is a real
+// path (discriminated union), so callers that gate on `.is_git` narrow the
+// nullable fields away without a cast.
+export interface RepoIdentityGit {
+  repo_id: string;
+  repo_name: string;
+  worktree: string;
+  main_tree: string;
+  is_git: true;
+}
+export interface RepoIdentityNonGit {
+  repo_id: string | null;
+  repo_name: string | null;
+  worktree: string | null;
+  main_tree: string | null;
+  is_git: false;
+}
+export type RepoIdentity = RepoIdentityGit | RepoIdentityNonGit;
+
+// Conflict-radar key for an edited file. `repo_id` is '' (never null) for the
+// outside-git fallback; `worktree` is null there and a real tree otherwise.
+export interface LedgerKey {
+  repo_id: string;
+  rel_path: string;
+  worktree: string | null;
+}
+
+// The subset of a session/card row that ledgerKey reads. A real card row is
+// wider; only these three fields matter here.
+export interface SessionRef {
+  cwd?: string | null;
+  worktree?: string | null;
+  repo_id?: string | null;
+}
+
+interface CacheEntry<V> {
+  value: V;
+  expiresAt: number;
+}
+
+const identityCache = new Map<string, CacheEntry<RepoIdentity>>(); // cwd -> {value, expiresAt}; insertion order is LRU order
+const branchCache = new Map<string, CacheEntry<string | null>>(); // cwd -> {value, expiresAt}; insertion order is LRU order
 const CACHE_MAX = 512;
 const IDENTITY_TTL_MS = 5 * 60_000;
 // A directory can become a repository in place (`git init`). Keeping that
@@ -27,7 +67,11 @@ const IDENTITY_TTL_MS = 5 * 60_000;
 const NEGATIVE_TTL_MS = 2_000;
 const BRANCH_TTL_MS = 20_000;
 
-function cacheGet(cache, key, now = Date.now()) {
+function cacheGet<V>(
+  cache: Map<string, CacheEntry<V>>,
+  key: string,
+  now = Date.now(),
+): V | undefined {
   const hit = cache.get(key);
   if (!hit) return undefined;
   if (hit.expiresAt <= now) {
@@ -41,17 +85,33 @@ function cacheGet(cache, key, now = Date.now()) {
   return hit.value;
 }
 
-function cacheSet(cache, key, value, ttlMs, now = Date.now()) {
+function cacheSet<V>(
+  cache: Map<string, CacheEntry<V>>,
+  key: string,
+  value: V,
+  ttlMs: number,
+  now = Date.now(),
+): void {
   cache.delete(key);
   cache.set(key, { value, expiresAt: now + ttlMs });
-  while (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value);
+  while (cache.size > CACHE_MAX) {
+    // The loop condition guarantees a key exists; the guard only satisfies the
+    // `IteratorResult.value` (string | undefined) type.
+    const oldest = cache.keys().next().value;
+    if (oldest === undefined) break;
+    cache.delete(oldest);
+  }
 }
 
-function isDirectory(cwd) {
-  try { return fs.statSync(cwd).isDirectory(); } catch { return false; }
+function isDirectory(cwd: string): boolean {
+  try {
+    return fs.statSync(cwd).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
-function git(args, cwd) {
+function git(args: string[], cwd: string): string | null {
   // These calls intentionally remain synchronous for now: derive.mjs consumes
   // deriveRepo()/branchOf() inline while constructing SQL updates. Moving git
   // off the daemon event loop is worthwhile, but requires making that caller
@@ -59,7 +119,10 @@ function git(args, cwd) {
   // return contract would instead write Promises into session state.
   try {
     const raw = execFileSync('git', args, {
-      cwd, timeout: 1500, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
+      cwd,
+      timeout: 1500,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
     });
     // Strip only the single record-terminating newline (LF, or CRLF under
     // core.autocrlf) — never trim(): path-valued output (--show-toplevel,
@@ -72,23 +135,32 @@ function git(args, cwd) {
   }
 }
 
-function canon(p) {
-  try { return fs.realpathSync(p); } catch { return path.resolve(p); }
+function canon(p: string): string {
+  try {
+    return fs.realpathSync(p);
+  } catch {
+    return path.resolve(p);
+  }
 }
 
 // A path from `worktree list --porcelain` is a usable checkout only if it is a
 // working tree. A bare repo (or a --separate-git-dir metadata directory) has
 // the shape of a git dir — HEAD + objects/ + refs/ — and no checked-out files.
-function isBareGitDir(absPath) {
+function isBareGitDir(absPath: string): boolean {
   try {
-    return fs.existsSync(path.join(absPath, 'HEAD'))
-      && fs.statSync(path.join(absPath, 'objects')).isDirectory()
-      && fs.statSync(path.join(absPath, 'refs')).isDirectory();
-  } catch { return false; }
+    return (
+      fs.existsSync(path.join(absPath, 'HEAD')) &&
+      fs.statSync(path.join(absPath, 'objects')).isDirectory() &&
+      fs.statSync(path.join(absPath, 'refs')).isDirectory()
+    );
+  } catch {
+    return false;
+  }
 }
 
-export function deriveRepo(cwd) {
-  if (!cwd) return { repo_id: null, repo_name: null, worktree: null, main_tree: null, is_git: false };
+export function deriveRepo(cwd: string | null | undefined): RepoIdentity {
+  if (!cwd)
+    return { repo_id: null, repo_name: null, worktree: null, main_tree: null, is_git: false };
   // Validate before consulting the cache too: a formerly valid directory may
   // have been removed, and git's 1.5 s timeout is wasted work for files/missing
   // paths. Invalid paths are not cached so a later mkdir is noticed at once.
@@ -99,7 +171,7 @@ export function deriveRepo(cwd) {
   const hit = cacheGet(identityCache, cwd);
   if (hit !== undefined) return hit;
 
-  let out;
+  let out: RepoIdentity;
   const common = git(['rev-parse', '--git-common-dir'], cwd);
   if (common) {
     // --git-common-dir may be relative (usually ".git"); resolve against cwd,
@@ -113,16 +185,20 @@ export function deriveRepo(cwd) {
     // metadata directory itself (git resolves the main worktree through the
     // config's core.worktree, not its directory name), so taking the first
     // record blindly would catalog the .git metadata dir as the main checkout.
-    const listedTrees = path.basename(commonAbs) === '.git'
-      ? []
-      : (git(['worktree', 'list', '--porcelain'], cwd) || '')
-          .split('\n')
-          .filter(line => line.startsWith('worktree '))
-          .map(line => line.slice(9));
-    const listedMain = listedTrees.find(p => path.basename(canon(p)) !== '.git' && !isBareGitDir(canon(p)));
-    const mainTree = path.basename(commonAbs) === '.git'
-      ? path.dirname(commonAbs)
-      : canon(listedMain || toplevel || cwd);
+    const listedTrees =
+      path.basename(commonAbs) === '.git'
+        ? []
+        : (git(['worktree', 'list', '--porcelain'], cwd) ?? '')
+            .split('\n')
+            .filter((line) => line.startsWith('worktree '))
+            .map((line) => line.slice(9));
+    const listedMain = listedTrees.find(
+      (p) => path.basename(canon(p)) !== '.git' && !isBareGitDir(canon(p)),
+    );
+    const mainTree =
+      path.basename(commonAbs) === '.git'
+        ? path.dirname(commonAbs)
+        : canon(listedMain ?? toplevel ?? cwd);
     out = {
       repo_id: commonAbs,
       repo_name: path.basename(mainTree).replace(/\.git$/, '') || path.basename(mainTree),
@@ -145,7 +221,10 @@ export function deriveRepo(cwd) {
 // await, and the ticket key is read off this branch in that same tick (the
 // synchrony invariant). The 20s TTL is fine for the display column and the
 // later rename trigger, which tolerate lag.
-export function branchOf(cwd, { fresh = false } = {}) {
+export function branchOf(
+  cwd: string | null | undefined,
+  { fresh = false }: { fresh?: boolean } = {},
+): string | null {
   if (!cwd || !isDirectory(cwd)) return null;
   const now = Date.now();
   if (!fresh) {
@@ -165,11 +244,15 @@ export function branchOf(cwd, { fresh = false } = {}) {
 // may not exist yet (a Write creating it), so resolve the nearest existing
 // ancestor and re-append the unresolved suffix; on any failure the lexical
 // path stands — missing an alias is preferable to breaking keying.
-function canonFile(p) {
+function canonFile(p: string): string {
   let target = path.resolve(p);
-  const suffix = [];
+  const suffix: string[] = [];
   for (let i = 0; i < 64; i++) {
-    try { return path.join(fs.realpathSync(target), ...suffix.reverse()); } catch { /* keep walking */ }
+    try {
+      return path.join(fs.realpathSync(target), ...suffix.reverse());
+    } catch {
+      /* keep walking */
+    }
     const parent = path.dirname(target);
     if (parent === target) return path.resolve(p);
     suffix.push(path.basename(target));
@@ -186,11 +269,11 @@ function canonFile(p) {
 // inside the tree unless the relative path escapes upward. Only the `..`
 // segment itself escapes — a legitimate root file whose name merely starts
 // with two dots (`..config`, `...hidden`) is still inside the tree.
-function insideTree(rel) {
+function insideTree(rel: string): boolean {
   return rel !== '' && rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel);
 }
 
-export function ledgerKey(absPath, session) {
+export function ledgerKey(absPath: string, session?: SessionRef | null): LedgerKey {
   absPath = canonFile(absPath);
   // Fast path: file inside the session's own git worktree (cache hit, no
   // subprocess). Only valid when that worktree really is git — a non-git

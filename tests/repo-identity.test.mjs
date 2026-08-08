@@ -18,7 +18,7 @@ import { startDaemon } from './helpers/daemon.mjs';
 import { postHook, getJson } from './helpers/http.mjs';
 import { loadFixture } from './helpers/fixtures.mjs';
 import { makeRepoWithWorktree, makePlainDir, makeSeparateGitDirRepo } from './helpers/gitrepo.mjs';
-import { deriveRepo, branchOf, ledgerKey } from '../scripts/fleetd/repo-identity.mjs';
+import { deriveRepo, branchOf, ledgerKey } from '../scripts/fleetd/repo-identity.ts';
 
 function findSession(state, sid) {
   return state.sessions.find(s => s.session_id === sid);

@@ -4108,7 +4108,7 @@ function openDb(file, fsImpl = { chmodSync, statSync }) {
 import fs14 from "node:fs";
 import path15 from "node:path";
 
-// scripts/fleetd/repo-identity.mjs
+// scripts/fleetd/repo-identity.ts
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -4132,7 +4132,11 @@ function cacheGet(cache, key, now = Date.now()) {
 function cacheSet(cache, key, value, ttlMs, now = Date.now()) {
   cache.delete(key);
   cache.set(key, { value, expiresAt: now + ttlMs });
-  while (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value);
+  while (cache.size > CACHE_MAX) {
+    const oldest = cache.keys().next().value;
+    if (oldest === void 0) break;
+    cache.delete(oldest);
+  }
 }
 function isDirectory(cwd) {
   try {
@@ -4170,7 +4174,8 @@ function isBareGitDir(absPath) {
   }
 }
 function deriveRepo(cwd) {
-  if (!cwd) return { repo_id: null, repo_name: null, worktree: null, main_tree: null, is_git: false };
+  if (!cwd)
+    return { repo_id: null, repo_name: null, worktree: null, main_tree: null, is_git: false };
   if (!isDirectory(cwd)) {
     const c = canon(cwd);
     return { repo_id: c, repo_name: path.basename(c), worktree: c, main_tree: c, is_git: false };
@@ -4182,9 +4187,11 @@ function deriveRepo(cwd) {
   if (common) {
     const commonAbs = canon(path.isAbsolute(common) ? common : path.resolve(cwd, common));
     const toplevel = git(["rev-parse", "--show-toplevel"], cwd);
-    const listedTrees = path.basename(commonAbs) === ".git" ? [] : (git(["worktree", "list", "--porcelain"], cwd) || "").split("\n").filter((line) => line.startsWith("worktree ")).map((line) => line.slice(9));
-    const listedMain = listedTrees.find((p) => path.basename(canon(p)) !== ".git" && !isBareGitDir(canon(p)));
-    const mainTree = path.basename(commonAbs) === ".git" ? path.dirname(commonAbs) : canon(listedMain || toplevel || cwd);
+    const listedTrees = path.basename(commonAbs) === ".git" ? [] : (git(["worktree", "list", "--porcelain"], cwd) ?? "").split("\n").filter((line) => line.startsWith("worktree ")).map((line) => line.slice(9));
+    const listedMain = listedTrees.find(
+      (p) => path.basename(canon(p)) !== ".git" && !isBareGitDir(canon(p))
+    );
+    const mainTree = path.basename(commonAbs) === ".git" ? path.dirname(commonAbs) : canon(listedMain ?? toplevel ?? cwd);
     out = {
       repo_id: commonAbs,
       repo_name: path.basename(mainTree).replace(/\.git$/, "") || path.basename(mainTree),

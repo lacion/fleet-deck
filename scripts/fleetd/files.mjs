@@ -12,7 +12,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { deriveRepo } from './repo-identity.mjs';
+import { deriveRepo } from './repo-identity.ts';
 
 function envInt(name, fallback, { min = 1 } = {}) {
   const n = Number(process.env[name]);

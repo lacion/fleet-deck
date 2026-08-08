@@ -5,7 +5,7 @@
 // mail, tick.
 
 import path from 'node:path';
-import { ledgerKey } from './repo-identity.mjs';
+import { ledgerKey } from './repo-identity.ts';
 
 export const CONFLICT_WINDOW_MS = 30 * 60 * 1000;
 

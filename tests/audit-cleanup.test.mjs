@@ -11,7 +11,7 @@ import fs, { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } fro
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import { branchOf, deriveRepo } from '../scripts/fleetd/repo-identity.mjs';
+import { branchOf, deriveRepo } from '../scripts/fleetd/repo-identity.ts';
 import { lastAssistantModel, lastAssistantText } from '../scripts/fleetd/transcript.mjs';
 
 function scratch(t, prefix) {
