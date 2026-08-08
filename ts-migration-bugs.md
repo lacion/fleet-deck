@@ -48,6 +48,39 @@ Format:
 
 <!-- entries appended below as modules convert -->
 
+### paste.ts — `??` would be WRONG here + `unknown`-catch errno + `process.env` index   [NOISE]
+- **What:** four surfaced on the pasted-image ingest leaf. (1) `prefer-nullish-coalescing`
+  flagged ``process.env.FLEETDECK_HOME || path.join(…)`` and — after a first rewrite to a
+  ``configured ? configured : …`` ternary — flagged *that* too (the rule's
+  `ignoreTernaryTests: false` default rewrites `a ? a : b` → `a ?? b`). (2) `errnoCode`:
+  the `mkdir` catch does `err?.code !== 'EEXIST'`, but a strict `catch` binding is
+  `unknown`, so `.code` doesn't type-check. (3) `tsc` TS4111
+  (`noPropertyAccessFromIndexSignature`): `process.env.FLEETDECK_HOME` must be
+  `process.env['FLEETDECK_HOME']`. (4) `process.getuid` is `(() => number) | undefined`
+  off-Windows, so `st.uid !== process.getuid()` needs the accessor narrowed first.
+- **Why it's real / why it's noise:** NOISE on all four — no runtime behavior moved — but
+  **(1) is the instructive inverse of the repo-identity entry.** There, `||`→`??` was safe
+  because the left operand could never be `''`. Here it is the OPPOSITE: an empty
+  `FLEETDECK_HOME` (env var set to `""`) MUST fall through to the default, or the paste dir
+  resolves to `/pastes`. `''` is falsy → `||` (and only `||`) selects the default; `??`
+  would keep `""`. So the autofix the rule offers is a **latent bug**, and the correct move
+  is NOT to take it. The others are the usual boundary/env ergonomics of maximal-strict.
+- **Fix:** (1) wrote the fallthrough as an explicit compound-boolean ternary the rule cannot
+  pattern-match as nullish-equivalent — ``configured != null && configured !== '' ?
+  configured : path.join(…)`` — behavior-identical to the original `||` (undefined→default,
+  `''`→default, non-empty→configured), with **no** `.trim()` added (whitespace handling
+  unchanged; the daemon already feeds an already-trimmed HOME via config.mjs). Commented in
+  place so a future reader doesn't "simplify" it to `??`. (2) a small local
+  `errnoCode(e: unknown): string | undefined` that narrows via `e instanceof Error` and
+  reads `(e as NodeJS.ErrnoException).code` — no `any`; kept local until a shared fs-errno
+  need is proven across leaves. (3) bracket access `process.env['FLEETDECK_HOME']`.
+  (4) captured `const getuid = process.getuid;` before the `typeof getuid === 'function'`
+  guard so TS narrows the call. Also gave the module honest types (`ImageExt`, the
+  `{status, body}` `PasteResult` discriminated union, `PasteEntry`) and switched the GIF
+  sniff's `.match(re)` truthiness to `re.test(s)` (boolean, identical result). **No runtime
+  behavior moved** — 19/19 paste-image tests green vs source; bundle re-parses (no
+  daemon-spawn paste test exists — the suite exercises pasteImage by direct import).
+
 ### transcript.ts — `.truncated` on a generator + JSONL-boundary `unknown`   [NOISE]
 - **What:** three things surfaced on the transcript reader, all from typing a module whose
   whole job is parsing an *untrusted*, possibly-mid-append JSONL file. (1) `tailLines`

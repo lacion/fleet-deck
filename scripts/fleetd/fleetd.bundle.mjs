@@ -8895,24 +8895,30 @@ function createFiles(ctx) {
   };
 }
 
-// scripts/fleetd/paste.mjs
+// scripts/fleetd/paste.ts
 import fs10 from "node:fs";
 import os6 from "node:os";
 import path10 from "node:path";
 import crypto from "node:crypto";
+function errnoCode(e) {
+  return e instanceof Error && typeof e.code === "string" ? e.code : void 0;
+}
 var MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 var PRUNE_AFTER_MS = 24 * 60 * 60 * 1e3;
 var MAX_KEPT_PASTES = 50;
 var ACCEPT = "png, jpeg, gif, webp";
 function pasteDir() {
-  const home = process.env.FLEETDECK_HOME || path10.join(os6.homedir() || os6.tmpdir(), ".fleetdeck");
+  const configured = process.env["FLEETDECK_HOME"];
+  const home = configured != null && configured !== "" ? configured : path10.join(os6.homedir() || os6.tmpdir(), ".fleetdeck");
   return path10.join(home, "pastes");
 }
 function sniffImage(buf) {
-  if (buf.length >= 8 && buf[0] === 137 && buf[1] === 80 && buf[2] === 78 && buf[3] === 71 && buf[4] === 13 && buf[5] === 10 && buf[6] === 26 && buf[7] === 10) return "png";
+  if (buf.length >= 8 && buf[0] === 137 && buf[1] === 80 && buf[2] === 78 && buf[3] === 71 && buf[4] === 13 && buf[5] === 10 && buf[6] === 26 && buf[7] === 10)
+    return "png";
   if (buf.length >= 3 && buf[0] === 255 && buf[1] === 216 && buf[2] === 255) return "jpg";
-  if (buf.length >= 6 && buf.toString("latin1", 0, 6).match(/^GIF8[79]a$/)) return "gif";
-  if (buf.length >= 12 && buf.toString("latin1", 0, 4) === "RIFF" && buf.toString("latin1", 8, 12) === "WEBP") return "webp";
+  if (buf.length >= 6 && /^GIF8[79]a$/.test(buf.toString("latin1", 0, 6))) return "gif";
+  if (buf.length >= 12 && buf.toString("latin1", 0, 4) === "RIFF" && buf.toString("latin1", 8, 12) === "WEBP")
+    return "webp";
   return null;
 }
 function looksBase64(s) {
@@ -8928,13 +8934,14 @@ function ensurePasteDir() {
   try {
     fs10.mkdirSync(dir, { mode: 448 });
   } catch (err) {
-    if (err?.code !== "EEXIST") throw err;
+    if (errnoCode(err) !== "EEXIST") throw err;
   }
   const st = fs10.lstatSync(dir);
   if (st.isSymbolicLink() || !st.isDirectory()) {
     throw new Error(`${dir} is not a real directory; refusing to write pastes there`);
   }
-  if (typeof process.getuid === "function" && st.uid !== process.getuid()) {
+  const getuid = process.getuid;
+  if (typeof getuid === "function" && st.uid !== getuid()) {
     throw new Error(`${dir} is not owned by this user; refusing to write pastes there`);
   }
   return dir;
@@ -8978,7 +8985,7 @@ function pruneOldPastes(dir, now = Date.now(), protect = null) {
   }
 }
 function pasteImage(ev) {
-  const raw = typeof ev?.data === "string" ? ev.data : "";
+  const raw = ev != null && typeof ev.data === "string" ? ev.data : "";
   let b64 = raw;
   if (raw.startsWith("data:")) {
     const comma = raw.indexOf(",");
@@ -8993,7 +9000,8 @@ function pasteImage(ev) {
     return { status: 413, body: { ok: false, reason: `image exceeds ${MAX_IMAGE_BYTES} bytes` } };
   }
   const ext = sniffImage(buf);
-  if (!ext) return { status: 400, body: { ok: false, reason: `not a supported image (${ACCEPT})` } };
+  if (!ext)
+    return { status: 400, body: { ok: false, reason: `not a supported image (${ACCEPT})` } };
   let dir;
   try {
     dir = ensurePasteDir();

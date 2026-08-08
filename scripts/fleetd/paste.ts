@@ -26,6 +26,41 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 
+// The image formats this ingest accepts — exactly Claude Code's image inputs.
+// sniffImage returns one of these (from the bytes) or null.
+type ImageExt = 'png' | 'jpg' | 'gif' | 'webp';
+
+// The untrusted POST body. `data` is `unknown` because it arrives off the wire;
+// pasteImage narrows it before use (the JS read `ev?.data` defensively too).
+interface PasteEvent {
+  data?: unknown;
+}
+
+// The {status, body} envelope — the same shape core.spawn returns. The
+// discriminant `ok` keeps the error/success bodies apart without index access.
+interface PasteErrBody {
+  ok: false;
+  reason: string;
+}
+interface PasteOkBody {
+  ok: true;
+  path: string;
+  bytes: number;
+}
+interface PasteResult {
+  status: number;
+  body: PasteErrBody | PasteOkBody;
+}
+
+// Node's fs throws Error objects carrying an optional string `code` (EEXIST,
+// ENOENT, …). A `catch` binding is `unknown` under strict, so narrow to read
+// `code` without an `any`.
+function errnoCode(e: unknown): string | undefined {
+  return e instanceof Error && typeof (e as NodeJS.ErrnoException).code === 'string'
+    ? (e as NodeJS.ErrnoException).code
+    : undefined;
+}
+
 // Decoded-bytes cap. Distinct from the HTTP body cap (which sees base64, ~33%
 // larger): this one is the contract on the IMAGE, that one is transport armor.
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
@@ -46,8 +81,17 @@ const ACCEPT = 'png, jpeg, gif, webp';
 
 // FLEETDECK_HOME, resolved the same way fleetd.mjs does, at CALL time — tests
 // (and any embedder) point each daemon at its own HOME via the env var.
-function pasteDir() {
-  const home = process.env.FLEETDECK_HOME || path.join(os.homedir() || os.tmpdir(), '.fleetdeck');
+function pasteDir(): string {
+  // FLEETDECK_HOME falls through to the default when UNSET *or empty* — an
+  // empty env var must never resolve the paste dir to `/pastes`. That
+  // empty-string fallthrough is exactly what `||` does and `??` does NOT, so
+  // this stays a truthiness test (a ternary, to satisfy prefer-nullish-
+  // coalescing), never `??`. os.homedir()'s `|| os.tmpdir()` is the same story.
+  const configured = process.env['FLEETDECK_HOME'];
+  const home =
+    configured != null && configured !== ''
+      ? configured
+      : path.join(os.homedir() || os.tmpdir(), '.fleetdeck');
   return path.join(home, 'pastes');
 }
 
@@ -56,12 +100,27 @@ function pasteDir() {
 // the bytes, and bytes we do not recognize are refused outright. The accepted
 // set is exactly what Claude Code accepts as image input. This gates INGEST; it
 // is not a full decode — Claude does the real validation when it reads the file.
-function sniffImage(buf) {
-  if (buf.length >= 8 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47
-      && buf[4] === 0x0d && buf[5] === 0x0a && buf[6] === 0x1a && buf[7] === 0x0a) return 'png';
+function sniffImage(buf: Buffer): ImageExt | null {
+  if (
+    buf.length >= 8 &&
+    buf[0] === 0x89 &&
+    buf[1] === 0x50 &&
+    buf[2] === 0x4e &&
+    buf[3] === 0x47 &&
+    buf[4] === 0x0d &&
+    buf[5] === 0x0a &&
+    buf[6] === 0x1a &&
+    buf[7] === 0x0a
+  )
+    return 'png';
   if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'jpg';
-  if (buf.length >= 6 && buf.toString('latin1', 0, 6).match(/^GIF8[79]a$/)) return 'gif';
-  if (buf.length >= 12 && buf.toString('latin1', 0, 4) === 'RIFF' && buf.toString('latin1', 8, 12) === 'WEBP') return 'webp';
+  if (buf.length >= 6 && /^GIF8[79]a$/.test(buf.toString('latin1', 0, 6))) return 'gif';
+  if (
+    buf.length >= 12 &&
+    buf.toString('latin1', 0, 4) === 'RIFF' &&
+    buf.toString('latin1', 8, 12) === 'WEBP'
+  )
+    return 'webp';
   return null;
 }
 
@@ -70,7 +129,7 @@ function sniffImage(buf) {
 // invalid characters — so without this check the "not base64" refusal is dead
 // code and a malformed body decodes to whatever survived, then fails the sniff
 // with a confusing error. Reject up front instead.
-function looksBase64(s) {
+function looksBase64(s: string): boolean {
   const t = s.replace(/\s+/g, '');
   return t.length > 0 && t.length % 4 === 0 && /^[A-Za-z0-9+/]*={0,2}$/.test(t);
 }
@@ -78,22 +137,35 @@ function looksBase64(s) {
 // Ensure the paste dir exists and is a real directory THIS user owns. Created
 // non-recursively so a pre-existing symlink is not silently followed (mkdir on
 // an existing path returns EEXIST for a symlink too); then lstat-verified.
-function ensurePasteDir() {
+function ensurePasteDir(): string {
   const dir = pasteDir();
-  try { fs.mkdirSync(path.dirname(dir), { recursive: true }); } catch { /* HOME may already exist */ }
+  try {
+    fs.mkdirSync(path.dirname(dir), { recursive: true });
+  } catch {
+    /* HOME may already exist */
+  }
   try {
     fs.mkdirSync(dir, { mode: 0o700 });
   } catch (err) {
-    if (err?.code !== 'EEXIST') throw err;
+    if (errnoCode(err) !== 'EEXIST') throw err;
   }
   const st = fs.lstatSync(dir);
   if (st.isSymbolicLink() || !st.isDirectory()) {
     throw new Error(`${dir} is not a real directory; refusing to write pastes there`);
   }
-  if (typeof process.getuid === 'function' && st.uid !== process.getuid()) {
+  // Capture the accessor before the typeof guard so TS narrows the call site
+  // (process.getuid is `(() => number) | undefined` off-Windows).
+  const getuid = process.getuid;
+  if (typeof getuid === 'function' && st.uid !== getuid()) {
     throw new Error(`${dir} is not owned by this user; refusing to write pastes there`);
   }
   return dir;
+}
+
+// One surviving regular file the count-prune weighs: its path and mtime.
+interface PasteEntry {
+  p: string;
+  mtime: number;
 }
 
 // Age-then-count prune. Best-effort, errors swallowed: a prune must never fail a
@@ -105,18 +177,34 @@ function ensurePasteDir() {
 // otherwise sort the fresh current-time paste as "oldest" and unlink the very
 // file we are about to return. Reserving one slot for it keeps the on-disk total
 // at MAX_KEPT_PASTES (no off-by-one) while guaranteeing the fresh paste survives.
-function pruneOldPastes(dir, now = Date.now(), protect = null) {
-  let names;
-  try { names = fs.readdirSync(dir); } catch { return; }
-  const regular = [];
+function pruneOldPastes(
+  dir: string,
+  now: number = Date.now(),
+  protect: string | null = null,
+): void {
+  let names: string[];
+  try {
+    names = fs.readdirSync(dir);
+  } catch {
+    return;
+  }
+  const regular: PasteEntry[] = [];
   for (const name of names) {
     const p = path.join(dir, name);
     if (protect && p === protect) continue; // the just-written paste is untouchable
-    let st;
-    try { st = fs.lstatSync(p); } catch { continue; }
+    let st: fs.Stats;
+    try {
+      st = fs.lstatSync(p);
+    } catch {
+      continue;
+    }
     if (!st.isFile()) continue; // skip symlinks, dirs, sockets — never chase them
     if (now - st.mtimeMs > PRUNE_AFTER_MS) {
-      try { fs.unlinkSync(p); } catch { /* raced with another prune */ }
+      try {
+        fs.unlinkSync(p);
+      } catch {
+        /* raced with another prune */
+      }
     } else {
       regular.push({ p, mtime: st.mtimeMs });
     }
@@ -125,7 +213,11 @@ function pruneOldPastes(dir, now = Date.now(), protect = null) {
   if (regular.length > budget) {
     regular.sort((a, b) => a.mtime - b.mtime); // oldest first
     for (const { p } of regular.slice(0, regular.length - budget)) {
-      try { fs.unlinkSync(p); } catch { /* raced */ }
+      try {
+        fs.unlinkSync(p);
+      } catch {
+        /* raced */
+      }
     }
   }
 }
@@ -136,8 +228,8 @@ function pruneOldPastes(dir, now = Date.now(), protect = null) {
  * browsers produce the latter from FileReader.readAsDataURL, and stripping the
  * prefix here keeps the board dumb).
  */
-export function pasteImage(ev) {
-  const raw = typeof ev?.data === 'string' ? ev.data : '';
+export function pasteImage(ev: PasteEvent | null | undefined): PasteResult {
+  const raw = ev != null && typeof ev.data === 'string' ? ev.data : '';
   // A data: URL only counts if it actually carries the base64 delimiter; a
   // 'data:' with no ',' is malformed, not "the whole string is base64".
   let b64 = raw;
@@ -156,10 +248,13 @@ export function pasteImage(ev) {
   }
 
   const ext = sniffImage(buf);
-  if (!ext) return { status: 400, body: { ok: false, reason: `not a supported image (${ACCEPT})` } };
+  if (!ext)
+    return { status: 400, body: { ok: false, reason: `not a supported image (${ACCEPT})` } };
 
-  let dir;
-  try { dir = ensurePasteDir(); } catch (err) {
+  let dir: string;
+  try {
+    dir = ensurePasteDir();
+  } catch (err) {
     console.error('fleetd paste: cannot prepare paste dir:', err);
     return { status: 500, body: { ok: false, reason: 'cannot prepare paste dir' } };
   }
@@ -177,7 +272,11 @@ export function pasteImage(ev) {
     fs.writeFileSync(tmp, buf, { mode: 0o600, flag: 'wx' });
     fs.renameSync(tmp, file);
   } catch (err) {
-    try { fs.unlinkSync(tmp); } catch { /* nothing landed */ }
+    try {
+      fs.unlinkSync(tmp);
+    } catch {
+      /* nothing landed */
+    }
     console.error('fleetd paste: write failed:', err);
     return { status: 500, body: { ok: false, reason: 'write failed' } };
   }

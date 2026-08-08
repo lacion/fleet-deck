@@ -180,7 +180,7 @@ test('paste-image: ingest contract', async (t) => {
 // The security regression this release fixes, pinned directly against the
 // module: a symlinked paste dir must be refused, never followed.
 test('paste-image: a symlinked paste dir is refused (no /tmp symlink-follow)', async () => {
-  const { pasteImage, pasteDir } = await import('../scripts/fleetd/paste.mjs');
+  const { pasteImage, pasteDir } = await import('../scripts/fleetd/paste.ts');
   const { mkdtempSync, mkdirSync, symlinkSync, rmSync, existsSync } = await import('node:fs');
   const os2 = await import('node:os');
   const scratch = mkdtempSync(path.join(os2.tmpdir(), 'fd-paste-sym-'));
@@ -206,7 +206,7 @@ test('paste-image: a symlinked paste dir is refused (no /tmp symlink-follow)', a
 });
 
 test('paste-image: sniff table is a pinned contract', async () => {
-  const { sniffImage } = await import('../scripts/fleetd/paste.mjs');
+  const { sniffImage } = await import('../scripts/fleetd/paste.ts');
   assert.equal(sniffImage(PNG), 'png');
   assert.equal(sniffImage(JPG), 'jpg');
   assert.equal(sniffImage(GIF), 'gif');
@@ -220,7 +220,7 @@ test('paste-image: sniff table is a pinned contract', async () => {
 // the prune off-by-one slipped through. Driven module-direct (no daemon) via
 // FLEETDECK_HOME + pasteDir(), same harness as the symlink test above.
 test('paste-image: an over-cap dir is pruned to exactly MAX_KEPT_PASTES, newest kept', async () => {
-  const { pasteImage, pasteDir, MAX_KEPT_PASTES } = await import('../scripts/fleetd/paste.mjs');
+  const { pasteImage, pasteDir, MAX_KEPT_PASTES } = await import('../scripts/fleetd/paste.ts');
   const os2 = await import('node:os');
   const scratch = fs.mkdtempSync(path.join(os2.tmpdir(), 'fd-paste-cap-'));
   const fakeHome = path.join(scratch, 'home');
@@ -265,7 +265,7 @@ test('paste-image: an over-cap dir is pruned to exactly MAX_KEPT_PASTES, newest 
 // 51. Assert the invariant holds after EVERY paste, and that the cap is
 // actually reached (so a never-filled dir cannot pass this vacuously).
 test('paste-image: repeated pastes never leave more than MAX_KEPT_PASTES on disk', async () => {
-  const { pasteImage, pasteDir, MAX_KEPT_PASTES } = await import('../scripts/fleetd/paste.mjs');
+  const { pasteImage, pasteDir, MAX_KEPT_PASTES } = await import('../scripts/fleetd/paste.ts');
   const os2 = await import('node:os');
   const scratch = fs.mkdtempSync(path.join(os2.tmpdir(), 'fd-paste-flood-'));
   const fakeHome = path.join(scratch, 'home');

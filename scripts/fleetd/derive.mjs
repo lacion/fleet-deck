@@ -18,7 +18,7 @@ import { createWorktrees } from './worktrees.mjs';
 import { createRepos } from './repos.mjs';
 import { createSettings } from './settings.mjs';
 import { createFiles } from './files.mjs';
-import { pasteImage } from './paste.mjs';
+import { pasteImage } from './paste.ts';
 import { createMail, MAIL_MAX_LEN } from './mail.mjs';
 import { createLedger } from './ledger.ts';
 import { createIngest } from './ingest.mjs';
