@@ -8,7 +8,7 @@ import fs, {
 import { networkInterfaces, tmpdir } from 'node:os';
 import path from 'node:path';
 import { openDb } from '../scripts/fleetd/db.ts';
-import { createFiles, LIST_MAX } from '../scripts/fleetd/files.mjs';
+import { createFiles, LIST_MAX } from '../scripts/fleetd/files.ts';
 import { startDaemon } from './helpers/daemon.mjs';
 import { makePlainDir, makeRepoWithWorktree } from './helpers/gitrepo.mjs';
 import { getJson, postJson } from './helpers/http.mjs';

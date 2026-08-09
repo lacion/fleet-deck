@@ -8693,7 +8693,7 @@ function createSettings(ctx) {
   };
 }
 
-// scripts/fleetd/files.mjs
+// scripts/fleetd/files.ts
 import fs9 from "node:fs";
 import os5 from "node:os";
 import path9 from "node:path";
@@ -8715,6 +8715,8 @@ var WALK_FILE_BYTES = 1024 * 1024;
 var PER_FILE_HITS = 5;
 var searchesInFlight = 0;
 var PathError = class extends Error {
+  status;
+  reason;
   constructor(status, reason) {
     super(reason);
     this.status = status;
@@ -8732,21 +8734,23 @@ function validateRelPath(relPath) {
   if (segments.includes(".git")) throw new PathError(404, "not found");
   if (segments.some((s) => CREDENTIAL_SEGMENTS.has(s))) throw new PathError(404, "not found");
   const dockerAt = segments.indexOf(".docker");
-  if (dockerAt !== -1 && segments[dockerAt + 1] === "config.json") throw new PathError(404, "not found");
+  if (dockerAt !== -1 && segments[dockerAt + 1] === "config.json")
+    throw new PathError(404, "not found");
+  return relPath;
 }
 var CREDENTIAL_SEGMENTS = /* @__PURE__ */ new Set([".ssh", ".aws", ".gnupg", ".netrc", ".kube"]);
 function deniedName(name) {
-  return CREDENTIAL_SEGMENTS.has(String(name).toLowerCase());
+  return CREDENTIAL_SEGMENTS.has(name.toLowerCase());
 }
 function deniedRelPath(rel) {
-  const segs = String(rel).toLowerCase().split(/[\\/]/);
+  const segs = rel.toLowerCase().split(/[\\/]/);
   if (segs.some((s) => CREDENTIAL_SEGMENTS.has(s))) return true;
   const dockerAt = segs.indexOf(".docker");
   return dockerAt !== -1 && segs[dockerAt + 1] === "config.json";
 }
 function safeJoin(realRoot, relPath) {
-  validateRelPath(relPath);
-  const abs = path9.resolve(realRoot, relPath || ".");
+  const rel = validateRelPath(relPath);
+  const abs = path9.resolve(realRoot, rel || ".");
   if (!within(realRoot, abs)) throw new PathError(400, "invalid path");
   return abs;
 }
@@ -8784,7 +8788,9 @@ function realpathInside(realRoot, target) {
   if (!within(realRoot, real)) throw new PathError(404, "not found");
   if (fleetHomeReal === void 0) {
     try {
-      fleetHomeReal = fs9.realpathSync(process.env.FLEETDECK_HOME || path9.join(os5.homedir() || "/tmp", ".fleetdeck"));
+      fleetHomeReal = fs9.realpathSync(
+        process.env["FLEETDECK_HOME"] ?? path9.join(os5.homedir() || "/tmp", ".fleetdeck")
+      );
     } catch {
       fleetHomeReal = null;
     }
@@ -8817,13 +8823,18 @@ function resolveBrowseRoot(ctx) {
     if (!resolved || !fs9.statSync(resolved).isDirectory()) throw new Error("missing");
     root = fs9.realpathSync(resolved);
   } catch {
-    return { error: { status: 410, body: { ok: false, reason: browseRootGoneReason(source, resolved) } } };
+    return {
+      error: { status: 410, body: { ok: false, reason: browseRootGoneReason(source, resolved) } }
+    };
   }
   if (path9.dirname(root) === root) {
     return {
       error: {
         status: 410,
-        body: { ok: false, reason: `${browseRootSourceName(source)} must not be the filesystem root` }
+        body: {
+          ok: false,
+          reason: `${browseRootSourceName(source)} must not be the filesystem root`
+        }
       }
     };
   }
@@ -8844,21 +8855,16 @@ function browseRootSourceName(source) {
 function browseRootGoneReason(source, resolved) {
   switch (source) {
     case "override":
-      return `browse_root setting points to a directory that no longer exists: ${resolved}`;
+      return `browse_root setting points to a directory that no longer exists: ${String(resolved)}`;
     case "env":
-      return `FLEETDECK_BROWSE_ROOT points to a directory that no longer exists: ${resolved}`;
+      return `FLEETDECK_BROWSE_ROOT points to a directory that no longer exists: ${String(resolved)}`;
     case "detected":
-      return `the detected Coder workspace root no longer exists: ${resolved}`;
+      return `the detected Coder workspace root no longer exists: ${String(resolved)}`;
     default:
       return "home directory is unavailable";
   }
 }
-function runBounded(cmd, args, {
-  cwd,
-  timeoutMs,
-  maxBytes,
-  input = null
-} = {}) {
+function runBounded(cmd, args, { cwd, timeoutMs, maxBytes, input = null }) {
   return new Promise((resolve) => {
     let child;
     try {
@@ -8868,7 +8874,13 @@ function runBounded(cmd, args, {
         stdio: [input == null ? "ignore" : "pipe", "pipe", "pipe"]
       });
     } catch (error) {
-      resolve({ code: null, stdout: Buffer.alloc(0), stderr: String(error?.message || error), truncated: false, timedOut: false });
+      resolve({
+        code: null,
+        stdout: Buffer.alloc(0),
+        stderr: error instanceof Error ? error.message : String(error),
+        truncated: false,
+        timedOut: false
+      });
       return;
     }
     const stdout = [];
@@ -8890,8 +8902,12 @@ function runBounded(cmd, args, {
         }
       }
     };
-    child.stdout.on("data", (chunk) => take(stdout, chunk));
-    child.stderr.on("data", (chunk) => take(stderr, chunk));
+    child.stdout?.on("data", (chunk) => {
+      take(stdout, chunk);
+    });
+    child.stderr?.on("data", (chunk) => {
+      take(stderr, chunk);
+    });
     child.on("error", (error) => {
       spawnError = error;
     });
@@ -8903,7 +8919,7 @@ function runBounded(cmd, args, {
       } catch {
       }
     }, timeoutMs);
-    timer.unref?.();
+    timer.unref();
     child.on("close", (code) => {
       if (settled) return;
       settled = true;
@@ -8917,9 +8933,9 @@ function runBounded(cmd, args, {
       });
     });
     if (input != null) {
-      child.stdin.on("error", () => {
+      child.stdin?.on("error", () => {
       });
-      child.stdin.end(input);
+      child.stdin?.end(input);
     }
   });
 }
@@ -8964,25 +8980,30 @@ function parseGitGrep(raw, hitCap) {
     if (!record) continue;
     const match = /^(.*?):([0-9]+):(.*)$/.exec(record);
     if (!match) continue;
-    const count = perFile.get(match[1]) || 0;
+    const [, file = "", lineStr = "", text = ""] = match;
+    const count = perFile.get(file) ?? 0;
     if (count >= PER_FILE_HITS) continue;
-    perFile.set(match[1], count + 1);
+    perFile.set(file, count + 1);
     if (hits.length >= hitCap) {
       overflow = true;
       break;
     }
-    hits.push({ path: match[1], line: Number(match[2]), text: clipText(match[3]) });
+    hits.push({ path: file, line: Number(lineStr), text: clipText(text) });
   }
   return { hits, overflow };
 }
 async function gitSearch(root, q, mode, deadline) {
   const remaining = () => Math.max(1, deadline - Date.now());
   if (mode === "name") {
-    const out2 = await runBounded("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], {
-      cwd: root,
-      timeoutMs: remaining(),
-      maxBytes: SEARCH_OUTPUT_MAX
-    });
+    const out2 = await runBounded(
+      "git",
+      ["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+      {
+        cwd: root,
+        timeoutMs: remaining(),
+        maxBytes: SEARCH_OUTPUT_MAX
+      }
+    );
     const needle = q.toLocaleLowerCase();
     const matches = out2.stdout.toString("utf8").split("\0").filter(Boolean).filter((name) => name.toLocaleLowerCase().includes(needle)).filter((name) => !deniedRelPath(name));
     return {
@@ -9026,10 +9047,10 @@ async function walkSearch(root, q, mode, deadline) {
   while (stack.length && !stop) {
     if (Date.now() >= deadline) {
       truncated = true;
-      stop = true;
       break;
     }
     const current = stack.pop();
+    if (!current) break;
     let names;
     try {
       names = fs9.readdirSync(current.dir).sort((a, b) => a.localeCompare(b));
@@ -9038,6 +9059,7 @@ async function walkSearch(root, q, mode, deadline) {
     }
     for (let i = names.length - 1; i >= 0; i -= 1) {
       const name = names[i];
+      if (name === void 0) continue;
       if (name.toLowerCase() === ".git") continue;
       if (deniedName(name)) continue;
       if (deniedRelPath(entryPath(current.rel, name))) continue;
@@ -9086,8 +9108,9 @@ async function walkSearch(root, q, mode, deadline) {
         let perFile = 0;
         const lines = opened.buf.toString("utf8").split("\n");
         for (let line = 0; line < lines.length && perFile < PER_FILE_HITS; line += 1) {
-          if (!lines[line].toLocaleLowerCase().includes(needle)) continue;
-          hits.push({ path: rel, line: line + 1, text: clipText(lines[line].replace(/\r$/, "")) });
+          const lineText = lines[line];
+          if (!lineText?.toLocaleLowerCase().includes(needle)) continue;
+          hits.push({ path: rel, line: line + 1, text: clipText(lineText.replace(/\r$/, "")) });
           perFile += 1;
           if (hits.length >= SEARCH_HITS) {
             truncated = true;
@@ -9107,9 +9130,9 @@ async function walkSearch(root, q, mode, deadline) {
 }
 function createFiles(ctx) {
   async function listAt(resolve, relPath) {
-    let abs;
+    let rel;
     try {
-      validateRelPath(relPath);
+      rel = validateRelPath(relPath);
     } catch (err) {
       return failure(err);
     }
@@ -9117,7 +9140,7 @@ function createFiles(ctx) {
     if (resolved.error) return resolved.error;
     const { root, git: git2 } = resolved;
     try {
-      abs = safeJoin(root, relPath);
+      const abs = safeJoin(root, rel);
       const real = realpathInside(root, abs);
       const own = fs9.lstatSync(abs);
       if (!own.isDirectory() || own.isSymbolicLink()) throw new PathError(404, "not found");
@@ -9135,7 +9158,13 @@ function createFiles(ctx) {
         } catch {
           continue;
         }
-        entries.push({ name, type: fileType(st), size: st.size, mtime: st.mtimeMs, ignored: false });
+        entries.push({
+          name,
+          type: fileType(st),
+          size: st.size,
+          mtime: st.mtimeMs,
+          ignored: false
+        });
       }
       entries.sort((a, b) => {
         const ad = a.type === "dir" ? 0 : 1;
@@ -9144,18 +9173,21 @@ function createFiles(ctx) {
       });
       entries.splice(LIST_MAX);
       if (git2) {
-        const rels = entries.map((entry) => entryPath(relPath, entry.name));
+        const rels = entries.map((entry) => entryPath(rel, entry.name));
         const ignored = await ignoredPaths(root, rels, SEARCH_TIMEOUT_MS);
-        for (let i = 0; i < entries.length; i += 1) entries[i].ignored = ignored.has(rels[i]);
+        entries.forEach((entry, i) => {
+          entry.ignored = ignored.has(rels[i] ?? "");
+        });
       }
-      return { status: 200, body: { ok: true, path: relPath, git: git2, entries, truncated } };
+      return { status: 200, body: { ok: true, path: rel, git: git2, entries, truncated } };
     } catch (err) {
       return failure(err);
     }
   }
   async function readAt(resolve, relPath) {
+    let rel;
     try {
-      validateRelPath(relPath);
+      rel = validateRelPath(relPath);
     } catch (err) {
       return failure(err);
     }
@@ -9163,7 +9195,7 @@ function createFiles(ctx) {
     if (resolved.error) return resolved.error;
     const { root } = resolved;
     try {
-      const abs = safeJoin(root, relPath);
+      const abs = safeJoin(root, rel);
       if (abs === root) return { status: 404, body: { ok: false, reason: "is a directory" } };
       const realParent = realpathInside(root, path9.dirname(abs));
       if (path9.basename(abs).toLowerCase() === "config.json" && realParent.toLowerCase().split(path9.sep).includes(".docker")) {
@@ -9183,7 +9215,7 @@ function createFiles(ctx) {
       const truncated = opened.st.size > READ_MAX;
       const body = {
         ok: true,
-        path: relPath,
+        path: rel,
         size: opened.st.size,
         mtime: opened.st.mtimeMs,
         binary,

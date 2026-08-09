@@ -933,3 +933,65 @@ Format:
   and derive's own body comments — are prose) and the test import (`tests/worktrees.test.mjs`) repointed to
   `.ts`. 44/44 green vs source across worktrees, worktree-chmod-symlink, revive, takeover. Daemon bundle
   rebuilds with the `worktrees.ts` banner (625.8kb) and passes `node --check`.
+
+### scripts/fleetd/files.mjs → files.ts  [NOISE + one behavior-faithful contract refinement]
+
+Security-critical, read-only working-tree browser (fs/list, fs/read, fs/search for a session plus the
+global browse root). The conversion is byte-faithful — no widening of what the endpoints expose — and all
+the credential-denylist / `.git` / `fleetHomeReal` / realpath-containment walls and their verbatim
+comments are preserved. Strict mode surfaced one genuine typing decision and a handful of noise.
+
+- **`validateRelPath` void → returning the validated string (behavior-faithful refinement, NOT a behavior
+  change).** In the `.mjs`, `validateRelPath(relPath)` was an assertion-style throw-or-return-void, and
+  `listAt`/`readAt` did `try { validateRelPath(relPath); } catch { return failure } … safeJoin(root, relPath)`
+  reusing the raw (now-validated) `relPath`. TS assertion narrowing does **not** survive a
+  `try { assertFn(x) } catch { return }` boundary — after the catch, `relPath` is still `unknown`, so every
+  downstream `entryPath(relPath, …)` / `path: relPath` use fails `noImplicitAny`/type errors. Fix: give the
+  validator a return value (`validateRelPath(relPath: unknown): string`) and bind it
+  (`let rel: string; try { rel = validateRelPath(relPath); } catch (err) { return failure(err); }`); the
+  rest of the scope then uses the definitely-`string` `rel`. Runtime is identical (the returned string IS
+  the input `relPath` that already passed every check) and the two throwing call sites — `safeJoin` and the
+  `listAt`/`readAt` heads — are unchanged in what they reject.
+- **`noUncheckedIndexedAccess` on the git-grep regex groups.** `parseGitGrep` did `match[1]`/`match[2]`/
+  `match[3]` (each `string | undefined` on a `RegExpExecArray`). Rewrote as
+  `const [, file = '', lineStr = '', text = ''] = match;` — a successful `/^(.*?):([0-9]+):(.*)$/` match
+  guarantees all three groups, so the destructuring defaults are unreachable. `perFile.get(file) || 0`
+  became `?? 0` (`prefer-nullish-coalescing`; a count is never `0`-as-falsy-sentinel here anyway).
+- **`noUncheckedIndexedAccess` in the walk loop.** `names[i]` (`string | undefined`) guarded with
+  `if (name === undefined) continue;`; `stack.pop()` (`T | undefined`) guarded with `if (!current) break;`;
+  the content-scan `lines[line]` captured as `const lineText = lines[line]; if (lineText === undefined) …`
+  before the two `.toLocaleLowerCase()`/`.replace()` uses. All guards are on branches the runtime never
+  reaches (bounded `for` indices, non-empty stack), so behavior is unchanged.
+- **`ignored.has(rels[i])` → `ignored.has(rels[i] ?? '')`.** `rels[i]` is `string | undefined` under
+  `noUncheckedIndexedAccess`; `.has` wants `string`. `rels` is `entries.map(…)` so it is 1:1 with `entries`
+  and the index is always in-range — the `?? ''` is unreachable. Also rewrote the index `for` as
+  `entries.forEach((entry, i) => …)` to bind `entry` without a second `entries[i]` index read.
+- **`no-unnecessary-type-conversion` — dropped two `String(...)`.** `deniedName(name: string)` and
+  `deniedRelPath(rel: string)` had `String(name)`/`String(rel)` (defensive in the untyped `.mjs`); with the
+  params now typed `string` the wrappers are provably no-ops. Removed. Same output.
+- **`process.env.FLEETDECK_HOME` → `process.env['FLEETDECK_HOME']` + `??`.** `noPropertyAccessFromIndexSignature`
+  forces bracket access on `process.env`; the `|| path.join(…)` fallback became `??`
+  (`prefer-nullish-coalescing`; `FLEETDECK_HOME` set-to-empty-string is not a case we distinguish from
+  unset, and both fall through to the default — faithful).
+- **`no-useless-assignment` — dropped one `stop = true`.** `walkSearch`'s top-of-`while` deadline check did
+  `truncated = true; stop = true; break;`, but that `break` exits the `while` directly and `stop` is only
+  read by the `while` condition, so the assignment was dead. Removed it (added a comment) — the **inner-loop**
+  `stop = true; break;` sites are kept, because they exit only the `for` and rely on the `while` re-check.
+- **`require-await` on `readAt` — SUPPRESSED on purpose (runtime contract).** `readAt` does only synchronous
+  fs work, so eslint wants `async` dropped — but `http.mjs` dispatches all three fs operations uniformly as
+  `operation.then(...).catch(...)` (http.mjs:842), so a non-Promise return would crash on `.then`. Kept the
+  function `async` (identical to the `.mjs`) with a one-line
+  `// eslint-disable-next-line @typescript-eslint/require-await` and a comment explaining the caller
+  contract. This is the one place the lint rule and the real behavior disagree; behavior wins.
+- **Typedefs added (no runtime effect):** `FilesCtx` (threads `q: Statements['q']` + `browseRootChoice`),
+  `FsResult`, a discriminated `RootResolution` (`{ error } | { root, git }`) + `RootResolver` thunk,
+  `SearchMode`/`SearchHit`, `RunOptions`/`RunResult`, `OpenedFile` (a `notFile` | `buf` union), and a
+  `DirEntry` for the listing rows. `runBounded`'s `spawn` catch narrowed to
+  `error instanceof Error ? error.message : String(error)`; the stream handlers typed `(chunk: Buffer)` and
+  `child.stdout?/stderr?/stdin?` optional-chained (they are `| null` on the `ChildProcess` type); dropped
+  the now-unnecessary `timer.unref?.()` `?.` (`unref` is always present on a `Timeout`).
+- **Verify:** `eslint files.ts` clean (0). tsc `--noEmit` clean project-wide (0). Both importers repointed
+  (`derive.mjs` `./files.mjs` → `./files.ts`; `tests/session-fs.test.mjs` `../scripts/fleetd/files.mjs` →
+  `.ts`). 16/16 green in `session-fs.test.mjs` (session + home/browse-root fs, credential denylist,
+  BUG-114/115/116, LAN token walls). Daemon bundle rebuilds with the `files.ts` banner (626.2kb, no stale
+  `files.mjs` banner) and passes `node --check`.

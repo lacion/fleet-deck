@@ -17,7 +17,7 @@ import { createStatements } from './statements.ts';
 import { createWorktrees } from './worktrees.ts';
 import { createRepos } from './repos.mjs';
 import { createSettings } from './settings.mjs';
-import { createFiles } from './files.mjs';
+import { createFiles } from './files.ts';
 import { pasteImage } from './paste.ts';
 import { createMail, MAIL_MAX_LEN } from './mail.ts';
 import { createLedger } from './ledger.ts';

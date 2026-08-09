@@ -11,10 +11,73 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { deriveRepo } from './repo-identity.ts';
+import type { Statements } from './statements.ts';
 
-function envInt(name, fallback, { min = 1 } = {}) {
+// settings.mjs owns the browse-root precedence and returns a superset
+// ({ value, source, resolved }); files only consumes source + resolved.
+type BrowseRootSource = 'override' | 'env' | 'detected' | 'default';
+interface BrowseRootChoice {
+  source: BrowseRootSource;
+  resolved: string | null;
+}
+
+// Same threading idiom as commands.ts / worktrees.ts — the prepared statements
+// bag (Statements['q']), not the whole Statements object.
+interface FilesCtx {
+  q: Statements['q'];
+  browseRootChoice: () => BrowseRootChoice;
+}
+
+// Every endpoint answers with an HTTP status and a JSON body; bodies vary by
+// operation, so the body stays an open record.
+interface FsResult {
+  status: number;
+  body: Record<string, unknown>;
+}
+
+// A resolver thunk returns either a typed error response or a rooted tree; the
+// two arms are mutually exclusive so `if (resolved.error)` narrows cleanly.
+type RootResolution =
+  { error: FsResult; root?: never; git?: never } | { error?: never; root: string; git: boolean };
+type RootResolver = () => RootResolution;
+
+type SearchMode = 'name' | 'content';
+// A name-mode hit is just a path; a content-mode hit adds the matched line.
+interface SearchHit {
+  path: string;
+  line?: number;
+  text?: string;
+}
+
+interface RunOptions {
+  cwd?: string;
+  timeoutMs: number;
+  maxBytes: number;
+  input?: Buffer | null;
+}
+interface RunResult {
+  code: number | null;
+  stdout: Buffer;
+  stderr: string;
+  truncated: boolean;
+  timedOut: boolean;
+}
+
+// readOpenFile yields the stat plus either a not-a-file marker or the read bytes.
+type OpenedFile =
+  { st: fs.Stats; notFile: true; buf?: undefined } | { st: fs.Stats; notFile?: false; buf: Buffer };
+
+interface DirEntry {
+  name: string;
+  type: ReturnType<typeof fileType>;
+  size: number;
+  mtime: number;
+  ignored: boolean;
+}
+
+function envInt(name: string, fallback: number, { min = 1 }: { min?: number } = {}): number {
   const n = Number(process.env[name]);
   return Number.isInteger(n) && n >= min ? n : fallback;
 }
@@ -34,20 +97,29 @@ const PER_FILE_HITS = 5;
 let searchesInFlight = 0;
 
 class PathError extends Error {
-  constructor(status, reason) {
+  status: number;
+  reason: string;
+  constructor(status: number, reason: string) {
     super(reason);
     this.status = status;
     this.reason = reason;
   }
 }
 
-function within(root, candidate) {
+function within(root: string, candidate: string): boolean {
   return candidate === root || candidate.startsWith(root + path.sep);
 }
 
-function validateRelPath(relPath) {
-  if (typeof relPath !== 'string' || relPath.length > 4096 || relPath.includes('\0')
-      || path.isAbsolute(relPath) || relPath.split(/[\\/]/).includes('..')) {
+// Validates a caller-supplied relative path and returns it narrowed to a
+// string, so typed call sites bind the validated value without re-checking.
+function validateRelPath(relPath: unknown): string {
+  if (
+    typeof relPath !== 'string' ||
+    relPath.length > 4096 ||
+    relPath.includes('\0') ||
+    path.isAbsolute(relPath) ||
+    relPath.split(/[\\/]/).includes('..')
+  ) {
     throw new PathError(400, 'invalid path');
   }
   // `.git` is refused HERE, once, so list/read/search all agree: the tree view
@@ -67,9 +139,11 @@ function validateRelPath(relPath) {
   // fold case.
   const segments = relPath.toLowerCase().split(/[\\/]/);
   if (segments.includes('.git')) throw new PathError(404, 'not found');
-  if (segments.some(s => CREDENTIAL_SEGMENTS.has(s))) throw new PathError(404, 'not found');
+  if (segments.some((s) => CREDENTIAL_SEGMENTS.has(s))) throw new PathError(404, 'not found');
   const dockerAt = segments.indexOf('.docker');
-  if (dockerAt !== -1 && segments[dockerAt + 1] === 'config.json') throw new PathError(404, 'not found');
+  if (dockerAt !== -1 && segments[dockerAt + 1] === 'config.json')
+    throw new PathError(404, 'not found');
+  return relPath;
 }
 
 const CREDENTIAL_SEGMENTS = new Set(['.ssh', '.aws', '.gnupg', '.netrc', '.kube']);
@@ -77,42 +151,42 @@ const CREDENTIAL_SEGMENTS = new Set(['.ssh', '.aws', '.gnupg', '.netrc', '.kube'
 // 0.16.0: is this entry NAME itself a denied credential path? Used by the
 // listing filter and the search walker, which never build a relPath through
 // validateRelPath for each entry.
-function deniedName(name) {
-  return CREDENTIAL_SEGMENTS.has(String(name).toLowerCase());
+function deniedName(name: string): boolean {
+  return CREDENTIAL_SEGMENTS.has(name.toLowerCase());
 }
 
 // 0.16.0: the same rule applied to a RELATIVE path (search hits from either
 // backend): any denied segment, or .docker/config.json specifically.
-function deniedRelPath(rel) {
-  const segs = String(rel).toLowerCase().split(/[\\/]/);
-  if (segs.some(s => CREDENTIAL_SEGMENTS.has(s))) return true;
+function deniedRelPath(rel: string): boolean {
+  const segs = rel.toLowerCase().split(/[\\/]/);
+  if (segs.some((s) => CREDENTIAL_SEGMENTS.has(s))) return true;
   const dockerAt = segs.indexOf('.docker');
   return dockerAt !== -1 && segs[dockerAt + 1] === 'config.json';
 }
 
 // Pure lexical containment. Callers perform the realpath checks appropriate to
 // their operation (the target for list, and the parent before a file open).
-export function safeJoin(realRoot, relPath) {
-  validateRelPath(relPath);
-  const abs = path.resolve(realRoot, relPath || '.');
+export function safeJoin(realRoot: string, relPath: unknown): string {
+  const rel = validateRelPath(relPath);
+  const abs = path.resolve(realRoot, rel || '.');
   if (!within(realRoot, abs)) throw new PathError(400, 'invalid path');
   return abs;
 }
 
-export function isBinary(buf) {
+export function isBinary(buf: Buffer): boolean {
   const end = Math.min(buf.length, BINARY_SNIFF_BYTES);
   for (let i = 0; i < end; i += 1) if (buf[i] === 0) return true;
   return false;
 }
 
-export function fileType(st) {
+export function fileType(st: fs.Stats): 'symlink' | 'dir' | 'file' | 'other' {
   if (st.isSymbolicLink()) return 'symlink';
   if (st.isDirectory()) return 'dir';
   if (st.isFile()) return 'file';
   return 'other';
 }
 
-export function clipText(text, max = 400) {
+export function clipText(text: string, max = 400): string {
   if (text.length <= max) return text;
   let clipped = text.slice(0, max);
   const last = clipped.charCodeAt(clipped.length - 1);
@@ -120,24 +194,33 @@ export function clipText(text, max = 400) {
   return clipped;
 }
 
-function failure(err, fallback = 'not found') {
+function failure(err: unknown, fallback = 'not found'): FsResult {
   if (err instanceof PathError) {
     return { status: err.status, body: { ok: false, reason: err.reason } };
   }
   return { status: 404, body: { ok: false, reason: fallback } };
 }
 
-function realpathInside(realRoot, target) {
-  let real;
-  try { real = fs.realpathSync(target); } catch { throw new PathError(404, 'not found'); }
+function realpathInside(realRoot: string, target: string): string {
+  let real: string;
+  try {
+    real = fs.realpathSync(target);
+  } catch {
+    throw new PathError(404, 'not found');
+  }
   if (!within(realRoot, real)) throw new PathError(404, 'not found');
   // 0.16.0: the daemon's own state dir (token, db, captures) must never be
   // readable through the explorer — a symlink inside a browse root pointing
   // into it, or a HOME-rooted path naming it directly, resolves here either
   // way. Resolved once per process; FLEETDECK_HOME does not move mid-flight.
   if (fleetHomeReal === undefined) {
-    try { fleetHomeReal = fs.realpathSync(process.env.FLEETDECK_HOME || path.join(os.homedir() || '/tmp', '.fleetdeck')); }
-    catch { fleetHomeReal = null; }
+    try {
+      fleetHomeReal = fs.realpathSync(
+        process.env['FLEETDECK_HOME'] ?? path.join(os.homedir() || '/tmp', '.fleetdeck'),
+      );
+    } catch {
+      fleetHomeReal = null;
+    }
   }
   if (fleetHomeReal && within(fleetHomeReal, real)) throw new PathError(404, 'not found');
   // 0.16.0 (adversarial review): the lexical validateRelPath gate only sees
@@ -147,16 +230,18 @@ function realpathInside(realRoot, target) {
   // denylist, so credential dirs are refused no matter which name points at
   // them.
   const realSegs = real.toLowerCase().split(path.sep);
-  if (realSegs.some(s => CREDENTIAL_SEGMENTS.has(s))
-    || (realSegs.includes('.docker') && realSegs[realSegs.length - 1] === 'config.json')) {
+  if (
+    realSegs.some((s) => CREDENTIAL_SEGMENTS.has(s)) ||
+    (realSegs.includes('.docker') && realSegs[realSegs.length - 1] === 'config.json')
+  ) {
     throw new PathError(404, 'not found');
   }
   return real;
 }
 
-let fleetHomeReal;
+let fleetHomeReal: string | null | undefined;
 
-function resolveRoot(ctx, sid) {
+function resolveRoot(ctx: FilesCtx, sid: string): RootResolution {
   const session = ctx.q.getSession.get(sid);
   if (!session) return { error: { status: 404, body: { ok: false, reason: 'unknown session' } } };
   const spawnRow = ctx.q.spawnBySession.get(sid);
@@ -179,14 +264,16 @@ function resolveRoot(ctx, sid) {
 // Fail-loud: a configured root that has vanished returns 410 NAMING its source —
 // never a silent fall-through to home (which would leak a different tree than
 // the operator pinned).
-function resolveBrowseRoot(ctx) {
+function resolveBrowseRoot(ctx: FilesCtx): RootResolution {
   const { source, resolved } = ctx.browseRootChoice();
-  let root;
+  let root: string;
   try {
     if (!resolved || !fs.statSync(resolved).isDirectory()) throw new Error('missing');
     root = fs.realpathSync(resolved);
   } catch {
-    return { error: { status: 410, body: { ok: false, reason: browseRootGoneReason(source, resolved) } } };
+    return {
+      error: { status: 410, body: { ok: false, reason: browseRootGoneReason(source, resolved) } },
+    };
   }
   // The settings validator already bans a CONFIGURED root of / (lexically and
   // by realpath), but the env path is unvalidated — FLEETDECK_BROWSE_ROOT=/
@@ -197,38 +284,51 @@ function resolveBrowseRoot(ctx) {
     return {
       error: {
         status: 410,
-        body: { ok: false, reason: `${browseRootSourceName(source)} must not be the filesystem root` },
+        body: {
+          ok: false,
+          reason: `${browseRootSourceName(source)} must not be the filesystem root`,
+        },
       },
     };
   }
   return { root, git: deriveRepo(root).is_git };
 }
 
-function browseRootSourceName(source) {
+function browseRootSourceName(source: BrowseRootSource): string {
   switch (source) {
-    case 'override': return 'the browse_root setting';
-    case 'env': return 'FLEETDECK_BROWSE_ROOT';
-    case 'detected': return 'the detected Coder workspace root';
-    default: return 'the home directory';
+    case 'override':
+      return 'the browse_root setting';
+    case 'env':
+      return 'FLEETDECK_BROWSE_ROOT';
+    case 'detected':
+      return 'the detected Coder workspace root';
+    default:
+      return 'the home directory';
   }
 }
 
-function browseRootGoneReason(source, resolved) {
+function browseRootGoneReason(source: BrowseRootSource, resolved: string | null): string {
   switch (source) {
-    case 'override': return `browse_root setting points to a directory that no longer exists: ${resolved}`;
-    case 'env': return `FLEETDECK_BROWSE_ROOT points to a directory that no longer exists: ${resolved}`;
-    case 'detected': return `the detected Coder workspace root no longer exists: ${resolved}`;
-    default: return 'home directory is unavailable';
+    case 'override':
+      return `browse_root setting points to a directory that no longer exists: ${String(resolved)}`;
+    case 'env':
+      return `FLEETDECK_BROWSE_ROOT points to a directory that no longer exists: ${String(resolved)}`;
+    case 'detected':
+      return `the detected Coder workspace root no longer exists: ${String(resolved)}`;
+    default:
+      return 'home directory is unavailable';
   }
 }
 
 // Spawn with no shell, retaining partial stdout when a child reaches its byte
 // or time cap. stderr shares the cap so a failing command cannot bypass it.
-export function runBounded(cmd, args, {
-  cwd, timeoutMs, maxBytes, input = null,
-} = {}) {
-  return new Promise(resolve => {
-    let child;
+export function runBounded(
+  cmd: string,
+  args: readonly string[],
+  { cwd, timeoutMs, maxBytes, input = null }: RunOptions,
+): Promise<RunResult> {
+  return new Promise((resolve) => {
+    let child: ChildProcess;
     try {
       child = spawn(cmd, args, {
         cwd,
@@ -236,73 +336,104 @@ export function runBounded(cmd, args, {
         stdio: [input == null ? 'ignore' : 'pipe', 'pipe', 'pipe'],
       });
     } catch (error) {
-      resolve({ code: null, stdout: Buffer.alloc(0), stderr: String(error?.message || error), truncated: false, timedOut: false });
+      resolve({
+        code: null,
+        stdout: Buffer.alloc(0),
+        stderr: error instanceof Error ? error.message : String(error),
+        truncated: false,
+        timedOut: false,
+      });
       return;
     }
 
-    const stdout = [];
-    const stderr = [];
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
     let bytes = 0;
     let truncated = false;
     let timedOut = false;
     let settled = false;
-    let spawnError = null;
+    let spawnError: Error | null = null;
 
-    const take = (chunks, chunk) => {
+    const take = (chunks: Buffer[], chunk: Buffer): void => {
       const remaining = Math.max(0, maxBytes - bytes);
       if (remaining) chunks.push(chunk.subarray(0, remaining));
       bytes += chunk.length;
       if (bytes > maxBytes && !truncated) {
         truncated = true;
-        try { child.kill('SIGKILL'); } catch { /* already gone */ }
+        try {
+          child.kill('SIGKILL');
+        } catch {
+          /* already gone */
+        }
       }
     };
-    child.stdout.on('data', chunk => take(stdout, chunk));
-    child.stderr.on('data', chunk => take(stderr, chunk));
-    child.on('error', error => { spawnError = error; });
+    child.stdout?.on('data', (chunk: Buffer) => {
+      take(stdout, chunk);
+    });
+    child.stderr?.on('data', (chunk: Buffer) => {
+      take(stderr, chunk);
+    });
+    child.on('error', (error: Error) => {
+      spawnError = error;
+    });
 
     const timer = setTimeout(() => {
       timedOut = true;
       truncated = true;
-      try { child.kill('SIGKILL'); } catch { /* already gone */ }
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        /* already gone */
+      }
     }, timeoutMs);
-    timer.unref?.();
+    timer.unref();
 
-    child.on('close', code => {
+    child.on('close', (code: number | null) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       resolve({
         code,
         stdout: Buffer.concat(stdout),
-        stderr: spawnError ? String(spawnError.message || spawnError) : Buffer.concat(stderr).toString('utf8'),
+        stderr: spawnError
+          ? String(spawnError.message || spawnError)
+          : Buffer.concat(stderr).toString('utf8'),
         truncated,
         timedOut,
       });
     });
 
     if (input != null) {
-      child.stdin.on('error', () => { /* early child exit */ });
-      child.stdin.end(input);
+      child.stdin?.on('error', () => {
+        /* early child exit */
+      });
+      child.stdin?.end(input);
     }
   });
 }
 
-function entryPath(relDir, name) {
+function entryPath(relDir: string, name: string): string {
   return relDir ? path.posix.join(relDir.split(path.sep).join('/'), name) : name;
 }
 
-async function ignoredPaths(root, paths, timeoutMs) {
+async function ignoredPaths(
+  root: string,
+  paths: string[],
+  timeoutMs: number,
+): Promise<Set<string>> {
   if (!paths.length) return new Set();
   const input = Buffer.from(`${paths.join('\0')}\0`);
   const out = await runBounded('git', ['check-ignore', '-z', '--stdin'], {
-    cwd: root, timeoutMs, maxBytes: SEARCH_OUTPUT_MAX, input,
+    cwd: root,
+    timeoutMs,
+    maxBytes: SEARCH_OUTPUT_MAX,
+    input,
   });
   return new Set(out.stdout.toString('utf8').split('\0').filter(Boolean));
 }
 
-function readOpenFile(abs, maxBytes) {
-  let fd;
+function readOpenFile(abs: string, maxBytes: number): OpenedFile {
+  let fd: number | undefined;
   try {
     fd = fs.openSync(abs, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
     const st = fs.fstatSync(fd);
@@ -321,38 +452,58 @@ function readOpenFile(abs, maxBytes) {
   }
 }
 
-function parseGitGrep(raw, hitCap) {
-  const hits = [];
-  const perFile = new Map();
+function parseGitGrep(raw: Buffer, hitCap: number): { hits: SearchHit[]; overflow: boolean } {
+  const hits: SearchHit[] = [];
+  const perFile = new Map<string, number>();
   let overflow = false;
   for (const record of raw.toString('utf8').split('\n')) {
     if (!record) continue;
     const match = /^(.*?):([0-9]+):(.*)$/.exec(record);
     if (!match) continue;
-    const count = perFile.get(match[1]) || 0;
+    // A successful match guarantees the three groups; the destructuring
+    // defaults are unreachable and only satisfy noUncheckedIndexedAccess.
+    const [, file = '', lineStr = '', text = ''] = match;
+    const count = perFile.get(file) ?? 0;
     if (count >= PER_FILE_HITS) continue;
-    perFile.set(match[1], count + 1);
-    if (hits.length >= hitCap) { overflow = true; break; }
-    hits.push({ path: match[1], line: Number(match[2]), text: clipText(match[3]) });
+    perFile.set(file, count + 1);
+    if (hits.length >= hitCap) {
+      overflow = true;
+      break;
+    }
+    hits.push({ path: file, line: Number(lineStr), text: clipText(text) });
   }
   return { hits, overflow };
 }
 
-async function gitSearch(root, q, mode, deadline) {
+async function gitSearch(
+  root: string,
+  q: string,
+  mode: SearchMode,
+  deadline: number,
+): Promise<{ hits: SearchHit[]; truncated: boolean }> {
   const remaining = () => Math.max(1, deadline - Date.now());
   if (mode === 'name') {
-    const out = await runBounded('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], {
-      cwd: root, timeoutMs: remaining(), maxBytes: SEARCH_OUTPUT_MAX,
-    });
+    const out = await runBounded(
+      'git',
+      ['ls-files', '-z', '--cached', '--others', '--exclude-standard'],
+      {
+        cwd: root,
+        timeoutMs: remaining(),
+        maxBytes: SEARCH_OUTPUT_MAX,
+      },
+    );
     const needle = q.toLocaleLowerCase();
     // 0.16.0: the denylist gates fs/read on the same paths, so a TRACKED
     // credential file (an accidentally committed .ssh/deploy_key,
     // .aws/credentials) must not ride the git backend around it.
-    const matches = out.stdout.toString('utf8').split('\0').filter(Boolean)
-      .filter(name => name.toLocaleLowerCase().includes(needle))
-      .filter(name => !deniedRelPath(name));
+    const matches = out.stdout
+      .toString('utf8')
+      .split('\0')
+      .filter(Boolean)
+      .filter((name) => name.toLocaleLowerCase().includes(needle))
+      .filter((name) => !deniedRelPath(name));
     return {
-      hits: matches.slice(0, SEARCH_HITS).map(file => ({ path: file })),
+      hits: matches.slice(0, SEARCH_HITS).map((file) => ({ path: file })),
       truncated: out.truncated || out.code !== 0 || matches.length > SEARCH_HITS,
     };
   }
@@ -362,16 +513,23 @@ async function gitSearch(root, q, mode, deadline) {
   // then drop every record — a confident hits:[] with truncated:false.
   const baseArgs = ['grep', '-I', '-n', '-i', '-F', '--no-color', '--untracked'];
   let out = await runBounded('git', [...baseArgs, '--max-count=5', '-e', q, '--'], {
-    cwd: root, timeoutMs: remaining(), maxBytes: SEARCH_OUTPUT_MAX,
+    cwd: root,
+    timeoutMs: remaining(),
+    maxBytes: SEARCH_OUTPUT_MAX,
   });
-  const optionError = out.code !== 0 && out.code !== 1 && /max-count|unknown option|unrecognized option/i.test(out.stderr);
+  const optionError =
+    out.code !== 0 &&
+    out.code !== 1 &&
+    /max-count|unknown option|unrecognized option/i.test(out.stderr);
   if (optionError && Date.now() < deadline) {
     out = await runBounded('git', [...baseArgs, '-e', q, '--'], {
-      cwd: root, timeoutMs: remaining(), maxBytes: SEARCH_OUTPUT_MAX,
+      cwd: root,
+      timeoutMs: remaining(),
+      maxBytes: SEARCH_OUTPUT_MAX,
     });
   }
   const parsed = parseGitGrep(out.stdout, SEARCH_HITS);
-  parsed.hits = parsed.hits.filter(h => !deniedRelPath(h.path));
+  parsed.hits = parsed.hits.filter((h) => !deniedRelPath(h.path));
   return {
     hits: parsed.hits,
     truncated: out.truncated || (out.code !== 0 && out.code !== 1) || parsed.overflow,
@@ -386,10 +544,18 @@ async function gitSearch(root, q, mode, deadline) {
 // hand the event loop back every WALK_YIELD_EVERY entries; the cost is a few
 // setImmediate hops, the win is a daemon that still breathes mid-search.
 const WALK_YIELD_EVERY = 512;
-const yieldToLoop = () => new Promise(resolve => { setImmediate(resolve); });
+const yieldToLoop = () =>
+  new Promise<void>((resolve) => {
+    setImmediate(resolve);
+  });
 
-async function walkSearch(root, q, mode, deadline) {
-  const hits = [];
+async function walkSearch(
+  root: string,
+  q: string,
+  mode: SearchMode,
+  deadline: number,
+): Promise<{ hits: SearchHit[]; truncated: boolean }> {
+  const hits: SearchHit[] = [];
   const needle = q.toLocaleLowerCase();
   const stack = [{ dir: root, rel: '', depth: 0 }];
   let visited = 0;
@@ -398,12 +564,24 @@ async function walkSearch(root, q, mode, deadline) {
   let stop = false;
 
   while (stack.length && !stop) {
-    if (Date.now() >= deadline) { truncated = true; stop = true; break; }
+    // No `stop = true` here: this break exits the while loop directly, and
+    // `stop` is only read by the while condition — the inner-loop breaks below
+    // DO set it, because they exit only the for loop and rely on the re-check.
+    if (Date.now() >= deadline) {
+      truncated = true;
+      break;
+    }
     const current = stack.pop();
-    let names;
-    try { names = fs.readdirSync(current.dir).sort((a, b) => a.localeCompare(b)); } catch { continue; }
+    if (!current) break;
+    let names: string[];
+    try {
+      names = fs.readdirSync(current.dir).sort((a, b) => a.localeCompare(b));
+    } catch {
+      continue;
+    }
     for (let i = names.length - 1; i >= 0; i -= 1) {
       const name = names[i];
+      if (name === undefined) continue;
       if (name.toLowerCase() === '.git') continue;
       // 0.16.0: the search walker never runs validateRelPath per entry, so the
       // credential denylist must filter HERE — otherwise fs/search?mode=content
@@ -426,8 +604,12 @@ async function walkSearch(root, q, mode, deadline) {
       // (.docker/config.json) must gate here too, or walk search reads files
       // fs/read refuses — the git backend already filters via deniedRelPath.
       if (deniedRelPath(rel)) continue;
-      let st;
-      try { st = fs.lstatSync(abs); } catch { continue; }
+      let st: fs.Stats;
+      try {
+        st = fs.lstatSync(abs);
+      } catch {
+        continue;
+      }
       if (st.isSymbolicLink()) continue;
       if (st.isDirectory()) {
         if (current.depth < WALK_DEPTH_MAX) stack.push({ dir: abs, rel, depth: current.depth + 1 });
@@ -445,15 +627,23 @@ async function walkSearch(root, q, mode, deadline) {
           break;
         }
         scannedFiles += 1;
-        if (st.size > WALK_FILE_BYTES) { truncated = true; continue; }
-        let opened;
-        try { opened = readOpenFile(abs, WALK_FILE_BYTES); } catch { continue; }
+        if (st.size > WALK_FILE_BYTES) {
+          truncated = true;
+          continue;
+        }
+        let opened: OpenedFile;
+        try {
+          opened = readOpenFile(abs, WALK_FILE_BYTES);
+        } catch {
+          continue;
+        }
         if (opened.notFile || isBinary(opened.buf)) continue;
         let perFile = 0;
         const lines = opened.buf.toString('utf8').split('\n');
         for (let line = 0; line < lines.length && perFile < PER_FILE_HITS; line += 1) {
-          if (!lines[line].toLocaleLowerCase().includes(needle)) continue;
-          hits.push({ path: rel, line: line + 1, text: clipText(lines[line].replace(/\r$/, '')) });
+          const lineText = lines[line];
+          if (!lineText?.toLocaleLowerCase().includes(needle)) continue;
+          hits.push({ path: rel, line: line + 1, text: clipText(lineText.replace(/\r$/, '')) });
           perFile += 1;
           if (hits.length >= SEARCH_HITS) {
             truncated = true;
@@ -472,22 +662,28 @@ async function walkSearch(root, q, mode, deadline) {
   return { hits: hits.slice(0, SEARCH_HITS), truncated };
 }
 
-export function createFiles(ctx) {
+export function createFiles(ctx: FilesCtx) {
   // Each operation takes a resolver thunk so the SAME containment/caps logic
   // serves both a per-session root (resolveRoot) and the global browse root
   // (resolveBrowseRoot). The browser never supplies a root either way.
-  async function listAt(resolve, relPath) {
-    let abs;
-    try { validateRelPath(relPath); } catch (err) { return failure(err); }
+  async function listAt(resolve: RootResolver, relPath: unknown): Promise<FsResult> {
+    let rel: string;
+    try {
+      rel = validateRelPath(relPath);
+    } catch (err) {
+      return failure(err);
+    }
     const resolved = resolve();
     if (resolved.error) return resolved.error;
     const { root, git } = resolved;
     try {
-      abs = safeJoin(root, relPath);
+      const abs = safeJoin(root, rel);
       const real = realpathInside(root, abs);
       const own = fs.lstatSync(abs);
       if (!own.isDirectory() || own.isSymbolicLink()) throw new PathError(404, 'not found');
-      const names = fs.readdirSync(real).filter(name => name.toLowerCase() !== '.git' && !deniedName(name));
+      const names = fs
+        .readdirSync(real)
+        .filter((name) => name.toLowerCase() !== '.git' && !deniedName(name));
       const truncated = names.length > LIST_MAX;
       // 0.21.x (BUG-114): LIST_MAX must bound the WORK, not just the response —
       // an lstat per name on a huge directory (node_modules dump, mail spool)
@@ -497,14 +693,24 @@ export function createFiles(ctx) {
       // surviving entries could fill the page. Anything past the window cannot
       // make the cut, so its stat was wasted work.
       const candidates = names.slice().sort((a, b) => a.localeCompare(b));
-      const entries = [];
+      const entries: DirEntry[] = [];
       let scanned = 0;
       for (const name of candidates) {
         if (entries.length >= LIST_MAX || scanned >= LIST_MAX + entries.length) break;
         scanned += 1;
-        let st;
-        try { st = fs.lstatSync(path.join(real, name)); } catch { continue; }
-        entries.push({ name, type: fileType(st), size: st.size, mtime: st.mtimeMs, ignored: false });
+        let st: fs.Stats;
+        try {
+          st = fs.lstatSync(path.join(real, name));
+        } catch {
+          continue;
+        }
+        entries.push({
+          name,
+          type: fileType(st),
+          size: st.size,
+          mtime: st.mtimeMs,
+          ignored: false,
+        });
       }
       entries.sort((a, b) => {
         const ad = a.type === 'dir' ? 0 : 1;
@@ -517,23 +723,36 @@ export function createFiles(ctx) {
       // ignore metadata for every returned entry: the annotation must not
       // vanish exactly when the listing is large.
       if (git) {
-        const rels = entries.map(entry => entryPath(relPath, entry.name));
+        const rels = entries.map((entry) => entryPath(rel, entry.name));
         const ignored = await ignoredPaths(root, rels, SEARCH_TIMEOUT_MS);
-        for (let i = 0; i < entries.length; i += 1) entries[i].ignored = ignored.has(rels[i]);
+        entries.forEach((entry, i) => {
+          entry.ignored = ignored.has(rels[i] ?? '');
+        });
       }
-      return { status: 200, body: { ok: true, path: relPath, git, entries, truncated } };
+      return { status: 200, body: { ok: true, path: rel, git, entries, truncated } };
     } catch (err) {
       return failure(err);
     }
   }
 
-  async function readAt(resolve, relPath) {
-    try { validateRelPath(relPath); } catch (err) { return failure(err); }
+  // readAt does only synchronous fs work, but the three fs operations MUST
+  // share one Promise-returning contract: http.mjs dispatches them uniformly as
+  // `operation.then(...).catch(...)`, so a bare object here would crash on
+  // `.then`. Keep it async and suppress require-await rather than break the
+  // caller.
+  // eslint-disable-next-line @typescript-eslint/require-await
+  async function readAt(resolve: RootResolver, relPath: unknown): Promise<FsResult> {
+    let rel: string;
+    try {
+      rel = validateRelPath(relPath);
+    } catch (err) {
+      return failure(err);
+    }
     const resolved = resolve();
     if (resolved.error) return resolved.error;
     const { root } = resolved;
     try {
-      const abs = safeJoin(root, relPath);
+      const abs = safeJoin(root, rel);
       if (abs === root) return { status: 404, body: { ok: false, reason: 'is a directory' } };
       const realParent = realpathInside(root, path.dirname(abs));
       // 0.16.0 (second review): the realpath segment check inside
@@ -541,20 +760,39 @@ export function createFiles(ctx) {
       // .docker/config.json rule can never fire here — a symlink parent
       // (dl -> ~/.docker) would serve the registry credentials. Re-check with
       // the filename the parent check never sees.
-      if (path.basename(abs).toLowerCase() === 'config.json'
-        && realParent.toLowerCase().split(path.sep).includes('.docker')) {
+      if (
+        path.basename(abs).toLowerCase() === 'config.json' &&
+        realParent.toLowerCase().split(path.sep).includes('.docker')
+      ) {
         throw new PathError(404, 'not found');
       }
-      let lst;
-      try { lst = fs.lstatSync(abs); } catch { throw new PathError(404, 'not found'); }
+      let lst: fs.Stats;
+      try {
+        lst = fs.lstatSync(abs);
+      } catch {
+        throw new PathError(404, 'not found');
+      }
       if (lst.isDirectory()) return { status: 404, body: { ok: false, reason: 'is a directory' } };
       if (!lst.isFile() || lst.isSymbolicLink()) throw new PathError(404, 'not found');
       const opened = readOpenFile(abs, READ_MAX);
       if (opened.notFile) throw new PathError(404, 'not found');
       const binary = isBinary(opened.buf);
       const truncated = opened.st.size > READ_MAX;
-      const body = {
-        ok: true, path: relPath, size: opened.st.size, mtime: opened.st.mtimeMs, binary, truncated,
+      const body: {
+        ok: true;
+        path: string;
+        size: number;
+        mtime: number;
+        binary: boolean;
+        truncated: boolean;
+        content?: string;
+      } = {
+        ok: true,
+        path: rel,
+        size: opened.st.size,
+        mtime: opened.st.mtimeMs,
+        binary,
+        truncated,
       };
       if (!binary) {
         let content = opened.buf.subarray(0, Math.min(opened.buf.length, READ_MAX));
@@ -570,7 +808,11 @@ export function createFiles(ctx) {
     }
   }
 
-  async function searchAt(resolve, q, { mode } = {}) {
+  async function searchAt(
+    resolve: RootResolver,
+    q: unknown,
+    { mode }: { mode?: string } = {},
+  ): Promise<FsResult> {
     if (typeof q !== 'string' || q.length < 2 || q.length > 256) {
       return { status: 400, body: { ok: false, reason: 'query must be 2–256 characters' } };
     }
@@ -592,8 +834,13 @@ export function createFiles(ctx) {
       return {
         status: 200,
         body: {
-          ok: true, mode, q, backend: resolved.git ? 'git' : 'walk',
-          hits: result.hits, truncated: result.truncated, elapsed_ms: Date.now() - started,
+          ok: true,
+          mode,
+          q,
+          backend: resolved.git ? 'git' : 'walk',
+          hits: result.hits,
+          truncated: result.truncated,
+          elapsed_ms: Date.now() - started,
         },
       };
     } finally {
@@ -603,19 +850,28 @@ export function createFiles(ctx) {
 
   // Per-session entry points (root resolved from the session id) and the global
   // browse-root explorer share one implementation via the resolver thunk.
-  const sessionRoot = sid => () => resolveRoot(ctx, sid);
-  const homeRoot = () => resolveBrowseRoot(ctx);
+  const sessionRoot =
+    (sid: string): RootResolver =>
+    () =>
+      resolveRoot(ctx, sid);
+  const homeRoot: RootResolver = () => resolveBrowseRoot(ctx);
   return {
-    fsList: (sid, p) => listAt(sessionRoot(sid), p),
-    fsRead: (sid, p) => readAt(sessionRoot(sid), p),
-    fsSearch: (sid, q, opts) => searchAt(sessionRoot(sid), q, opts),
-    fsListHome: p => listAt(homeRoot, p),
-    fsReadHome: p => readAt(homeRoot, p),
-    fsSearchHome: (q, opts) => searchAt(homeRoot, q, opts),
+    fsList: (sid: string, p: unknown) => listAt(sessionRoot(sid), p),
+    fsRead: (sid: string, p: unknown) => readAt(sessionRoot(sid), p),
+    fsSearch: (sid: string, q: unknown, opts?: { mode?: string }) =>
+      searchAt(sessionRoot(sid), q, opts),
+    fsListHome: (p: unknown) => listAt(homeRoot, p),
+    fsReadHome: (p: unknown) => readAt(homeRoot, p),
+    fsSearchHome: (q: unknown, opts?: { mode?: string }) => searchAt(homeRoot, q, opts),
   };
 }
 
 export {
-  validateRelPath, parseGitGrep, within,
-  LIST_MAX, READ_MAX, SEARCH_HITS, SEARCH_TIMEOUT_MS,
+  validateRelPath,
+  parseGitGrep,
+  within,
+  LIST_MAX,
+  READ_MAX,
+  SEARCH_HITS,
+  SEARCH_TIMEOUT_MS,
 };
