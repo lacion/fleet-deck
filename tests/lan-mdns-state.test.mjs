@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { createHttp } from '../scripts/fleetd/http.mjs';
+import { createHttp } from '../scripts/fleetd/http.ts';
 import { openDb } from '../scripts/fleetd/db.ts';
 import { createCore } from '../scripts/fleetd/derive.ts';
 import { randomPort } from './helpers/daemon.mjs';

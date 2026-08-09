@@ -14,7 +14,7 @@ export async function resolve(specifier, context, nextResolve) {
   if (specifier === 'node:dgram' && context.parentURL?.endsWith('/scripts/fleetd/mdns.ts')) {
     return { url: MOCK_URL, shortCircuit: true };
   }
-  if (specifier === './http.mjs' && context.parentURL?.endsWith('/scripts/fleetd/fleetd.mjs')) {
+  if (specifier === './http.ts' && context.parentURL?.endsWith('/scripts/fleetd/fleetd.mjs')) {
     return { url: HTTP_URL, shortCircuit: true };
   }
   if (specifier === 'node:os' && (context.parentURL?.endsWith('/scripts/fleetd/fleetd.mjs') || context.parentURL?.endsWith('/scripts/fleetd/mdns.ts'))) {

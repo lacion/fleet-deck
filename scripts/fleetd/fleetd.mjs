@@ -16,7 +16,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openDb } from './db.ts';
 import { createCore } from './derive.ts';
-import { createHttp, isLoopbackAddress, parseTrustedOrigins } from './http.mjs';
+import { createHttp, isLoopbackAddress, parseTrustedOrigins } from './http.ts';
 import { startAgentsPoll } from './agents-poll.ts';
 import { createPayloadCapture } from './payload-capture.ts';
 import { createMdns, hostLabel } from './mdns.ts';

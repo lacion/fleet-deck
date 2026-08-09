@@ -18,8 +18,13 @@ import { fileURLToPath } from 'node:url';
 // orchestrator command so the REST route and the text command can never drift.
 import { validateNameSuffix } from './helpers.ts';
 import { spawnFailureReason } from './spawns.ts';
-import { WebSocketServer } from 'ws';
+import { WebSocketServer, type WebSocket } from 'ws';
 import { createTermBridge } from './termbridge.ts';
+// Type-only: `core` is typed as the exact object createCore returns (no runtime
+// import, no cycle — derive.ts does not import http). ReturnType<typeof …> gives
+// every method's precise signature for free, so the whole `core.*` surface below
+// typechecks against derive without a hand-maintained interface.
+import type { createCore } from './derive.ts';
 // F1a HOSTILE-boundary validators, imported from the shared wire contracts by
 // explicit `.ts` specifier (the TS source of truth). Node >=22.18 strips the
 // types on load; the esbuild bundle inlines them as plain JS, which is what the
@@ -43,8 +48,8 @@ const MAX_PASTE_BODY = 14e6;
 // the cap for tests (e.g. -1 forces the eviction path deterministically, since
 // bufferedAmount is never negative); unset in production, the 1 MiB default stands.
 const MAX_WS_BUFFER = (() => {
-  const n = Number(process.env.FLEETDECK_WS_BUFFER_MAX);
-  return Number.isFinite(n) ? n : (1 << 20); // 1 MiB
+  const n = Number(process.env['FLEETDECK_WS_BUFFER_MAX']);
+  return Number.isFinite(n) ? n : 1 << 20; // 1 MiB
 })();
 // H-R3 keepalive cadence: ping every peer and terminate any that missed the
 // previous pong. This also RETIRES the old "broadcast a full snapshot every
@@ -60,18 +65,79 @@ const BROADCAST_COALESCE_MS = 60;
 // never a megabyte; a viewer sitting on this many un-drained output bytes has
 // stopped reading and is evicted rather than buffered into oblivion.
 const MAX_TERM_FRAME_BYTES = 1 << 20; // 1 MiB
-const MAX_TERM_WS_BUFFER = 4 << 20;   // 4 MiB
+const MAX_TERM_WS_BUFFER = 4 << 20; // 4 MiB
+
+// A parsed entry of FLEETDECK_TRUSTED_ORIGINS (see parseTrustedOrigins).
+interface TrustedOrigin {
+  scheme: string;
+  wildcard: boolean;
+  host: string;
+  port: string; // '' means the scheme default (80/443)
+}
+
+// The LAN share source handed in by the daemon (a plain object or a thunk that
+// re-resolves it per snapshot). All fields optional — currentLan() reads them
+// defensively so a half-populated source still renders "local only".
+interface LanSource {
+  enabled?: boolean;
+  urls?: string[];
+  mdns?: string | null;
+}
+
+// createHttp options — the daemon's exact wiring surface.
+interface CreateHttpOptions {
+  port: number;
+  version?: string;
+  capture?: (name: string, ev: unknown) => void;
+  token?: string;
+  lan?: LanSource | (() => LanSource) | null;
+  trustedOrigins?: TrustedOrigin[];
+  proxyAuth?: string;
+  managed?: boolean;
+  requireToken?: boolean;
+  trustLoopback?: boolean;
+  startup?: { reconciliationStatus?: () => unknown } | null;
+}
+
+// A parsed JSON POST body is any value — object, array, scalar, or null. asRecord
+// gives a typed view for the handful of fields http reads defensively WITHOUT
+// asserting object-ness: a non-object body (null / array / scalar) reads every
+// field as `undefined`, exactly matching the `body?.field` optional chains and
+// `{ ...body }` spreads this replaces. The real narrowing still happens through
+// the validate*() gates and typeof checks below; this only keeps the reads honest.
+function asRecord(v: unknown): Record<string, unknown> {
+  return v !== null && typeof v === 'object' ? (v as Record<string, unknown>) : {};
+}
+
+// CONTROL-API SEAM: the board-spawn lifecycle methods (spawn / revive /
+// spawnKill / enableRemote) are declared loosely on derive's hand-written ctx
+// surface as (...args) => unknown — only adoptSession is spelled out there,
+// because events.ts / retention.ts constrain its exact shape. http is the first
+// typed consumer that needs their runtime result, so it re-asserts the
+// {status, body} control-result contract these all resolve to at this seam.
+// See ts-migration-bugs (NOISE): the assertion re-states the runtime shape,
+// it does not change it.
+type ControlResult = Promise<{ status: number; body?: unknown }>;
+
+// KEEPALIVE SEAM: `ws` from the `ws` package carries no liveness bit; the
+// heartbeat below stamps `isAlive` on each socket and reaps any that missed the
+// previous pong. Widening the socket with this optional field is the honest way
+// to type that stamp — the runtime shape is unchanged (NOISE, see
+// ts-migration-bugs).
+type LiveSocket = WebSocket & { isAlive?: boolean };
 
 // LOOPBACK CONTRACT: local hooks and board traffic remain zero-config even
 // when fleetd is in LAN mode. Node reports IPv4 peers either directly or as
 // IPv4-mapped IPv6, so all three explicit forms must remain exempt. Bind-time
 // classification also accepts localhost and the complete 127/8 block.
-export function isLoopbackAddress(address) {
-  const value = String(address || '').trim().toLowerCase();
-  return value === 'localhost'
-    || value === '::1'
-    || /^127(?:\.[0-9]{1,3}){3}$/.test(value)
-    || /^::ffff:127(?:\.[0-9]{1,3}){3}$/.test(value);
+export function isLoopbackAddress(address: unknown) {
+  const value = (typeof address === 'string' ? address : '').trim().toLowerCase();
+  return (
+    value === 'localhost' ||
+    value === '::1' ||
+    /^127(?:\.[0-9]{1,3}){3}$/.test(value) ||
+    /^::ffff:127(?:\.[0-9]{1,3}){3}$/.test(value)
+  );
 }
 
 // ------------------------------------------------------------ board static
@@ -81,7 +147,7 @@ export function isLoopbackAddress(address) {
 // (fleetd.mjs) and the bundle run (fleetd.bundle.mjs) find the same dist.
 const BOARD_DIST = path.join(path.dirname(fileURLToPath(import.meta.url)), 'board-dist');
 
-const MIME = {
+const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
   '.mjs': 'text/javascript; charset=utf-8',
@@ -103,24 +169,37 @@ const MIME = {
 // React sets inline style ATTRIBUTES (hence 'unsafe-inline' in style-src only —
 // there are no inline <script>s, so script-src stays 'self'). connect-src covers
 // the /state|/health|/api fetches and both WebSockets, same-origin under a proxy.
-const CSP_SHELL = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self'; img-src 'self' data: blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
+const CSP_SHELL =
+  "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self'; img-src 'self' data: blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
 
 // Serve one file from board-dist. Traversal-safe: the decoded request path is
 // resolved against BOARD_DIST and must stay strictly inside it (any '..' —
 // raw or percent-encoded — normalizes outside and 404s).
-function serveBoardAsset(res, pathname, notFound) {
+function serveBoardAsset(
+  res: http.ServerResponse,
+  pathname: string,
+  notFound: () => http.ServerResponse,
+): http.ServerResponse {
   let decoded;
-  try { decoded = decodeURIComponent(pathname); } catch { return notFound(); }
+  try {
+    decoded = decodeURIComponent(pathname);
+  } catch {
+    return notFound();
+  }
   const rel = decoded === '/' ? 'index.html' : decoded.replace(/^\/+/, '');
   const abs = path.resolve(BOARD_DIST, rel);
   if (abs !== BOARD_DIST && !abs.startsWith(BOARD_DIST + path.sep)) return notFound();
   let data;
-  try { data = fs.readFileSync(abs); } catch { return notFound(); }
+  try {
+    data = fs.readFileSync(abs);
+  } catch {
+    return notFound();
+  }
   const ext = path.extname(abs).toLowerCase();
   // nosniff on EVERY asset (kills MIME-confusion on the hashed JS/CSS); CSP only
   // on the HTML document — subresources inherit the document's policy.
-  const headers = {
-    'content-type': MIME[ext] || 'application/octet-stream',
+  const headers: http.OutgoingHttpHeaders = {
+    'content-type': MIME[ext] ?? 'application/octet-stream',
     'content-length': data.length,
     'x-content-type-options': 'nosniff',
     // The board boots from a ?t=<token> URL; no subresource (notably the
@@ -156,9 +235,9 @@ function serveBoardAsset(res, pathname, notFound) {
 // example.com` but NOT `coder.example.com` itself and NOT `a.b.coder.example.com`.
 // A wildcard is deliberately single-label: `*.example.com` must not hand the
 // fleet to every subdomain of a shared apex.
-export function parseTrustedOrigins(spec) {
-  const out = [];
-  for (const raw of String(spec || '').split(',')) {
+export function parseTrustedOrigins(spec: unknown): TrustedOrigin[] {
+  const out: TrustedOrigin[] = [];
+  for (const raw of (typeof spec === 'string' ? spec : '').split(',')) {
     const entry = raw.trim();
     if (!entry) continue;
     // The wildcard label is not a legal URL host, so swap in a placeholder to
@@ -166,7 +245,11 @@ export function parseTrustedOrigins(spec) {
     const wild = /^([a-z][a-z0-9+.-]*:\/\/)\*\./i.exec(entry);
     const probe = wild ? entry.replace('://*.', '://wildcard-placeholder.') : entry;
     let u;
-    try { u = new URL(probe); } catch { throw new Error(`not a valid origin: ${entry}`); }
+    try {
+      u = new URL(probe);
+    } catch {
+      throw new Error(`not a valid origin: ${entry}`);
+    }
     if (u.protocol !== 'http:' && u.protocol !== 'https:') {
       throw new Error(`origin must be http:// or https://: ${entry}`);
     }
@@ -188,7 +271,7 @@ export function parseTrustedOrigins(spec) {
 
 // Does `host`/`port` match this entry? Scheme is checked separately, because a
 // Host header carries no scheme and an Origin does.
-function trustedHostMatch(entry, host, port) {
+function trustedHostMatch(entry: TrustedOrigin, host: string, port: string) {
   if (entry.port !== port) return false;
   if (!entry.wildcard) return entry.host === host;
   if (!host.endsWith(entry.host)) return false;
@@ -196,12 +279,30 @@ function trustedHostMatch(entry, host, port) {
   return label.length > 0 && !label.includes('.'); // exactly one label, non-empty
 }
 
-export function createHttp(core, {
-  port, version = '0.0.0', capture = () => {}, token, lan = null,
-  trustedOrigins = [], proxyAuth = 'token', managed = false, requireToken = false,
-  trustLoopback = false,
-  startup = null,
-}) {
+export function createHttp(
+  core: ReturnType<typeof createCore>,
+  {
+    port,
+    version = '0.0.0',
+    capture = () => {
+      /* no-op unless the daemon wires telemetry */
+    },
+    token,
+    lan = null,
+    trustedOrigins = [],
+    proxyAuth = 'token',
+    managed = false,
+    requireToken = false,
+    trustLoopback = false,
+    startup = null,
+  }: CreateHttpOptions,
+) {
+  // The parsed hook/POST body flows into many typed core.* methods; each cast
+  // pulls that method's own param type via Parameters<> rather than re-declaring
+  // it here (single source of truth in derive.ts). See asRecord() above for the
+  // defensive-read view. `core` never reads `this`, so destructured references
+  // are fine.
+  type HookBody = Parameters<typeof core.applyEvent>[0];
   // CAPABILITY: may a tokenless caller upgrade /ws/term? The board reads this
   // off /health to diagnose a pre-frame terminal close (see board/src/
   // termDiag.js): a refusal under a mode that WAIVES the key is a transport
@@ -238,7 +339,10 @@ export function createHttp(core, {
     return { ...core.snapshot(), lan: currentLan(), legacy_upgrade: legacyBanner() };
   }
 
-  function json(res, code, obj) {
+  // Returns the response object (Express-style) so `return json(...)` in a
+  // void-returning request handler is a real value, not a confusing void
+  // expression. Every caller ignores the return — behaviour is unchanged.
+  function json(res: http.ServerResponse, code: number, obj: unknown): http.ServerResponse {
     const body = JSON.stringify(obj);
     // nosniff on every JSON response too: the one central place that emits our
     // API + hook bodies, so no route can forget it (matches serveBoardAsset).
@@ -247,14 +351,14 @@ export function createHttp(core, {
       'content-length': Buffer.byteLength(body),
       'x-content-type-options': 'nosniff',
     });
-    res.end(body);
+    return res.end(body);
   }
 
   // AUTH CONTRACT: every non-loopback HTTP route and WebSocket upgrade shares
   // this exact gate. Presented secrets are compared only after byte lengths
   // match, because timingSafeEqual throws for unequal buffers. Never include a
   // rejected credential in logs or response bodies.
-  function tokenMatches(candidate) {
+  function tokenMatches(candidate: unknown) {
     if (typeof token !== 'string' || typeof candidate !== 'string') return false;
     const expected = Buffer.from(token);
     const presented = Buffer.from(candidate);
@@ -280,7 +384,7 @@ export function createHttp(core, {
   // enough). But a hostile local process can DELIBERATELY forge the trusted
   // external Host/Origin, so hook authentication must never key off those
   // headers — see the unconditional /hook/* guard immediately below.
-  function authorized(req, url) {
+  function authorized(req: http.IncomingMessage, url: URL) {
     // /hook/* is authenticated UNCONDITIONALLY: no loopback or proxy-trust path
     // may waive it. Every hook arrives through a command shim
     // (scripts/fleet-hook.mjs / fleet-sessionstart.mjs / fleet-watch.mjs) that
@@ -295,7 +399,7 @@ export function createHttp(core, {
     // holds under every mode: token proxy, trust proxy, plain loopback, LAN,
     // REQUIRE_TOKEN, and TRUST_LOOPBACK alike.
     const isHook = url.pathname.startsWith('/hook/');
-    if (isLoopbackAddress(req.socket?.remoteAddress) && !isHook) {
+    if (isLoopbackAddress(req.socket.remoteAddress) && !isHook) {
       // Use arrivedViaTrustedProxy, NOT viaTrustedProxy: the latter keys off
       // Origin alone and so waived the token for a proxied request that carried
       // no Origin — the no-Origin bypass fixed here.
@@ -329,12 +433,13 @@ export function createHttp(core, {
         // power routes too (the single-user opt-out); it does NOT touch hooks,
         // which stay gated at the top regardless.
         if (url.pathname === '/health' || isPublicShell(req.method, url.pathname)) return true;
-        if (!requireToken
-          && (trustLoopback || !tokenGatedRoute(req.method, url.pathname))) return true;
+        if (!requireToken && (trustLoopback || !tokenGatedRoute(req.method, url.pathname)))
+          return true;
       }
     }
     const authorization = req.headers.authorization;
-    const bearer = typeof authorization === 'string' ? /^Bearer (.+)$/.exec(authorization)?.[1] : undefined;
+    const bearer =
+      typeof authorization === 'string' ? /^Bearer (.+)$/.exec(authorization)?.[1] : undefined;
     return tokenMatches(bearer) || tokenMatches(url.searchParams.get('t'));
   }
 
@@ -346,7 +451,7 @@ export function createHttp(core, {
   // the gate names. Two gated powers need the parsed body and live at their
   // handlers instead: gateway_* settings writes (POST /api/settings) and
   // unsupervised spawn bodies (POST /api/spawn, adopt) — see those routes.
-  function tokenGatedRoute(method, pathname) {
+  function tokenGatedRoute(method: string | undefined, pathname: string) {
     if (pathname === '/ws/term') return true;
     if (method !== 'POST') return false;
     return pathname === '/mail' || pathname === '/api/spawn/arm-unsupervised';
@@ -376,7 +481,7 @@ export function createHttp(core, {
   // simply re-learns both from the next hooks each session emits.
   const legacySessions = new Set();
   const upgradedSessions = new Set();
-  function noteLegacySession(sid) {
+  function noteLegacySession(sid: unknown) {
     if (typeof sid !== 'string' || !sid || sid === 'unknown') return;
     if (upgradedSessions.has(sid)) return;
     if (legacySessions.has(sid)) return;
@@ -386,7 +491,7 @@ export function createHttp(core, {
     // one ourselves or a live board never sees the restart banner appear.
     scheduleBroadcast();
   }
-  function noteUpgradedSession(sid) {
+  function noteUpgradedSession(sid: unknown) {
     if (typeof sid !== 'string' || !sid || sid === 'unknown') return;
     if (upgradedSessions.has(sid)) return;
     upgradedSessions.add(sid);
@@ -399,16 +504,20 @@ export function createHttp(core, {
   function legacyBanner() {
     return { sessions: [...legacySessions], upgraded: upgradedSessions.size };
   }
-  const LEGACY_WHISPER = '[FLEETDECK] This session is running pre-0.16.0 hooks and is no longer reaching the fleet daemon (hook calls now require a token). Tell the human: please RESTART this Claude session — after the restart it reconnects to the board automatically.';
-  const LEGACY_BLOCK_REASON = '[FLEETDECK] This session is running pre-0.16.0 hooks and cannot reach the fleet daemon. Stop and tell the human NOW: restart this Claude session (exit and relaunch in the same directory). Do not continue the current task until the human acknowledges — the session is running without fleet oversight.';
-  function legacyHookResponse(res, ev, name) {
-    const sid = typeof ev?.session_id === 'string' ? ev.session_id : null;
+  const LEGACY_WHISPER =
+    '[FLEETDECK] This session is running pre-0.16.0 hooks and is no longer reaching the fleet daemon (hook calls now require a token). Tell the human: please RESTART this Claude session — after the restart it reconnects to the board automatically.';
+  const LEGACY_BLOCK_REASON =
+    '[FLEETDECK] This session is running pre-0.16.0 hooks and cannot reach the fleet daemon. Stop and tell the human NOW: restart this Claude session (exit and relaunch in the same directory). Do not continue the current task until the human acknowledges — the session is running without fleet oversight.';
+  function legacyHookResponse(res: http.ServerResponse, ev: unknown, name: string) {
+    const sidRaw = asRecord(ev)['session_id'];
+    const sid = typeof sidRaw === 'string' ? sidRaw : null;
     noteLegacySession(sid);
     if (name === 'Stop' && sid && !legacyWhisperedSessions.has(sid)) {
       legacyWhisperedSessions.add(sid);
-      return json(res, 200, { decision: 'block', reason: LEGACY_BLOCK_REASON });
+      json(res, 200, { decision: 'block', reason: LEGACY_BLOCK_REASON });
+      return;
     }
-    return json(res, 200, {
+    json(res, 200, {
       hookSpecificOutput: { hookEventName: name, additionalContext: LEGACY_WHISPER },
     });
   }
@@ -429,25 +538,35 @@ export function createHttp(core, {
   // changes DO move the LAN address under a long-lived daemon, and a snapshot
   // taken at startup would otherwise reject the board's own new address as a
   // DNS-rebinding attempt for the daemon's whole lifetime (BUG-118/129).
-  const lanHosts = new Set();
-  const osGetAddresses = typeof os.getAddresses === 'function'
-    ? () => os.getAddresses()
-    : () => Object.values(os.networkInterfaces()).flat();
+  const lanHosts = new Set<string>();
+  // os.getAddresses is a non-standard method: it is absent from @types/node and
+  // from Node itself, so this probe is always false on the supported runtimes and
+  // we fall through to networkInterfaces() (see ts-migration-bugs). Kept as a
+  // defensive branch for a host runtime that might provide it; the optional-typed
+  // view keeps the probe honest without asserting the method exists.
+  const nativeGetAddresses = (os as typeof os & { getAddresses?: () => { address?: string }[] })
+    .getAddresses;
+  const osGetAddresses: () => ({ address?: string } | undefined)[] =
+    typeof nativeGetAddresses === 'function'
+      ? () => nativeGetAddresses()
+      : () => Object.values(os.networkInterfaces()).flat();
   // The advertised .local name is a STANDING member of the allowlist, not
   // interface data: the per-request refresh clears and rebuilds the address set,
   // so it must re-add this name every time or the very first checked request via
   // the mDNS URL would evict it and 403 as a DNS-rebinding attempt. `lan` may be
   // a thunk (BUG-122/051), so resolve it once here to seed the standing name.
-  let mdnsHost = null;
+  let mdnsHost: string | null = null;
   try {
     const lanSeed = typeof lan === 'function' ? lan() : lan;
     if (lanSeed?.mdns) mdnsHost = new URL(lanSeed.mdns).hostname.toLowerCase();
-  } catch { /* malformed mDNS URL — skip it; the IP URLs still work */ }
+  } catch {
+    /* malformed mDNS URL — skip it; the IP URLs still work */
+  }
   function refreshLanHosts() {
     try {
       lanHosts.clear();
       for (const entry of osGetAddresses()) {
-        if (entry?.address) lanHosts.add(String(entry.address).toLowerCase());
+        if (entry?.address) lanHosts.add(entry.address.toLowerCase());
       }
       // Re-resolve the advertised .local name from the LIVE lan source each
       // refresh, and keep it sticky once seen. The share URL is rendered from
@@ -460,15 +579,19 @@ export function createHttp(core, {
       try {
         const live = typeof lan === 'function' ? lan() : lan;
         if (live?.mdns) mdnsHost = new URL(live.mdns).hostname.toLowerCase();
-      } catch { /* malformed/absent live mDNS URL — keep the last known name */ }
+      } catch {
+        /* malformed/absent live mDNS URL — keep the last known name */
+      }
       if (mdnsHost) lanHosts.add(mdnsHost);
-    } catch { /* restricted sandbox: loopback stays allowed regardless */ }
+    } catch {
+      /* restricted sandbox: loopback stays allowed regardless */
+    }
   }
   refreshLanHosts();
 
   // WHATWG URL keeps the brackets on an IPv6 hostname ([::1]); strip them so the
   // value matches what isLoopbackAddress / the lanHosts set hold.
-  const normHost = h => String(h || '').toLowerCase().replace(/^\[/, '').replace(/\]$/, '');
+  const normHost = (h: string) => h.toLowerCase().replace(/^\[/, '').replace(/\]$/, '');
   // A parsed URL is ours when its hostname is loopback / an own LAN address /
   // the .local name AND its EFFECTIVE port is our port. WHATWG URL normalizes
   // an explicit default port away (new URL('http://x:80').port === ''), so an
@@ -477,11 +600,11 @@ export function createHttp(core, {
   // http://127.0.0.1 (a page served by any other local service on :80) read
   // as same-origin with a daemon on a non-default port, and the whole CSRF
   // wall below fell open. (BUG-030)
-  function effectivePort(u) {
+  function effectivePort(u: URL) {
     if (u.port) return u.port;
     return u.protocol === 'https:' ? '443' : '80'; // Host-only parses under http://
   }
-  function hostAllowed(u) {
+  function hostAllowed(u: URL) {
     refreshLanHosts();
     const host = normHost(u.hostname);
     return (isLoopbackAddress(host) || lanHosts.has(host)) && effectivePort(u) === daemonPort;
@@ -495,24 +618,29 @@ export function createHttp(core, {
   // demands it. That asymmetry is deliberate, not an oversight: the Host wall
   // exists to stop DNS rebinding, which a scheme cannot help with, while the
   // Origin wall is the CSRF wall, where http-vs-https is a real distinction.
-  function authorityTrusted(u) {
+  function authorityTrusted(u: URL) {
     const host = normHost(u.hostname);
-    return trustedOrigins.some(e => trustedHostMatch(e, host, u.port));
+    return trustedOrigins.some((e) => trustedHostMatch(e, host, u.port));
   }
-  function originTrusted(u) {
+  function originTrusted(u: URL) {
     const host = normHost(u.hostname);
     const scheme = u.protocol.slice(0, -1);
-    return trustedOrigins.some(e => e.scheme === scheme && trustedHostMatch(e, host, u.port));
+    return trustedOrigins.some((e) => e.scheme === scheme && trustedHostMatch(e, host, u.port));
   }
   // Host header check — the DNS-rebinding wall. A browser always sends Host, so a
   // domain that re-resolves to this box arrives as Host: evil.example and is
   // refused. A missing Host is a non-browser caller and is left alone. A proxied
   // request arrives with the PROXY's Host, which only passes once an operator has
   // named it in FLEETDECK_TRUSTED_ORIGINS.
-  function hostHeaderOk(req) {
+  function hostHeaderOk(req: http.IncomingMessage) {
     const host = req.headers.host;
     if (typeof host !== 'string' || !host) return true;
-    let u; try { u = new URL('http://' + host); } catch { return false; }
+    let u;
+    try {
+      u = new URL('http://' + host);
+    } catch {
+      return false;
+    }
     return hostAllowed(u) || authorityTrusted(u);
   }
   // Sec-Fetch-Site + Origin verdict for a STATE-CHANGING request. Returns null
@@ -520,12 +648,17 @@ export function createHttp(core, {
   // authoritative for the cross-site call; an Origin, when present, must resolve
   // to one of our own hosts; no Origin at all is a non-browser CLI hook and is
   // allowed. The reason drives our control flow only — it is never echoed back.
-  function crossSiteReason(req) {
+  function crossSiteReason(req: http.IncomingMessage) {
     const site = req.headers['sec-fetch-site'];
     if (site === 'cross-site' || site === 'cross-origin') return 'cross-site';
     const origin = req.headers.origin;
     if (typeof origin === 'string' && origin) {
-      let u; try { u = new URL(origin); } catch { return 'bad-origin'; } // 'null', junk
+      let u;
+      try {
+        u = new URL(origin);
+      } catch {
+        return 'bad-origin';
+      } // 'null', junk
       if (!hostAllowed(u) && !originTrusted(u)) return 'cross-origin';
     }
     return null;
@@ -534,10 +667,15 @@ export function createHttp(core, {
   // Is this a browser arriving through a reverse proxy — i.e. an Origin that is
   // trusted but is NOT one of our own hosts? Such a request has already cleared
   // the walls above; this only decides whether it must ALSO carry the token.
-  function viaTrustedProxy(req) {
+  function viaTrustedProxy(req: http.IncomingMessage) {
     const origin = req.headers.origin;
     if (typeof origin !== 'string' || !origin) return false; // a CLI hook
-    let u; try { u = new URL(origin); } catch { return false; }
+    let u;
+    try {
+      u = new URL(origin);
+    } catch {
+      return false;
+    }
     return !hostAllowed(u) && originTrusted(u);
   }
   // C1/H-S3 NO-ORIGIN PROXY HOLE. viaTrustedProxy keys off Origin alone — but a
@@ -558,14 +696,20 @@ export function createHttp(core, {
   // RESIDUAL (out of scope): a proxy that REWRITES Host to loopback still reads
   // as local. Coder and the documented proxies preserve req.Host (see ~line 116),
   // so this does not arise in the supported deployments.
-  function arrivedViaTrustedProxy(req) {
+  function arrivedViaTrustedProxy(req: http.IncomingMessage) {
     if (viaTrustedProxy(req)) return true;
     const host = req.headers.host;
     if (typeof host !== 'string' || !host) return false; // a CLI hook may omit Host
-    let u; try { u = new URL('http://' + host); } catch { return false; }
+    let u;
+    try {
+      u = new URL('http://' + host);
+    } catch {
+      return false;
+    }
     return authorityTrusted(u) && !hostAllowed(u);
   }
-  const isJsonContentType = v => typeof v === 'string' && /^application\/json\b/i.test(v.trim());
+  const isJsonContentType = (v: unknown) =>
+    typeof v === 'string' && /^application\/json\b/i.test(v.trim());
 
   // PROVENANCE LOG (exec-class control routes). spawn/kill/revive/adopt/rc each
   // start a process or move a live pane, so one audit line records WHERE the
@@ -574,9 +718,11 @@ export function createHttp(core, {
   // caller. Deliberately NEVER the token, headers or body — provenance, not
   // payload. Matches the daemon's `fleetd …:` stderr dialect so it lands in
   // fleetd.log alongside the other operational lines.
-  function logExec(route, req, extra = '') {
-    const from = req.socket?.remoteAddress || 'unknown';
-    console.error(`fleetd exec ${route} from ${from} proxied=${arrivedViaTrustedProxy(req)}${extra}`);
+  function logExec(route: string, req: http.IncomingMessage, extra = '') {
+    const from = req.socket.remoteAddress ?? 'unknown';
+    console.error(
+      `fleetd exec ${route} from ${from} proxied=${arrivedViaTrustedProxy(req)}${extra}`,
+    );
   }
 
   // PermissionRequest / Elicitation / AskUserQuestion are handled OUT of this
@@ -586,33 +732,40 @@ export function createHttp(core, {
   // unknown-name hook, telemetry-only Notification/FileChanged, and the
   // AskUserQuestion→PermissionRequest pairing all stay visible), but they are
   // never DISPATCHED to a hook handler — the dispatch gate below refuses them.
-  const hookHandlers = {
+  const hookHandlers: Record<string, (ev: HookBody) => unknown> = {
     // 0.16.0: the hook that may have just performed the version takeover gets
     // the upgrade lines appended — the human who started THAT session hears
     // about every other session still needing a restart (see fleet-sessionstart).
-    SessionStart: ev => {
+    SessionStart: (ev) => {
       const out = core.hookSessionStart(ev);
-      if (ev?.fleet_takeover && out && typeof out === 'object') {
-        out.upgrade_lines = core.takeoverBriefLines(ev.fleet_takeover, legacyBanner());
+      // fleet_takeover is a real SessionStart field set by the fleet-sessionstart
+      // shim, but it is absent from the HookEvent interface in events.ts (see
+      // ts-migration-bugs) — read it defensively off the wire body.
+      const takeover = asRecord(ev)['fleet_takeover'];
+      if (takeover && typeof out === 'object') {
+        (out as Record<string, unknown>)['upgrade_lines'] = core.takeoverBriefLines(
+          takeover as Parameters<typeof core.takeoverBriefLines>[0],
+          legacyBanner(),
+        );
       }
       return out;
     },
-    UserPromptSubmit: ev => core.hookUserPromptSubmit(ev),
-    PostToolUse: ev => core.hookPostToolUse(ev),
-    PreToolUse: ev => core.hookPostToolUse(ev), // same derivation branch as the spike
+    UserPromptSubmit: (ev) => core.hookUserPromptSubmit(ev),
+    PostToolUse: (ev) => core.hookPostToolUse(ev),
+    PreToolUse: (ev) => core.hookPostToolUse(ev), // same derivation branch as the spike
     // BUG-102: a FAILED tool call is still a completed tool call — route it
     // through the same correlated expiry so its permission hold retires now
     // instead of after the full hold window. hookPostToolUse keeps the event's
     // own name (PostToolUseFailure) in applyEvent and any whisper.
-    PostToolUseFailure: ev => core.hookPostToolUse(ev),
-    Stop: ev => core.hookStop(ev),
-    SessionEnd: ev => core.hookSessionEnd(ev),
-    Notification: ev => (core.applyEvent({ ...ev, hook_event_name: 'Notification' }), {}),
-    FileChanged: ev => (core.applyEvent({ ...ev, hook_event_name: 'FileChanged' }), {}),
+    PostToolUseFailure: (ev) => core.hookPostToolUse(ev),
+    Stop: (ev) => core.hookStop(ev),
+    SessionEnd: (ev) => core.hookSessionEnd(ev),
+    Notification: (ev) => (core.applyEvent({ ...ev, hook_event_name: 'Notification' }), {}),
+    FileChanged: (ev) => (core.applyEvent({ ...ev, hook_event_name: 'FileChanged' }), {}),
     // BUG-104: the shim emits this event's watchPaths itself (fleet-hook.mjs);
     // the daemon side is pure telemetry — one note so a `cd` is visible in the
     // session's event log.
-    CwdChanged: ev => (core.applyEvent({ ...ev, hook_event_name: 'CwdChanged' }), {}),
+    CwdChanged: (ev) => (core.applyEvent({ ...ev, hook_event_name: 'CwdChanged' }), {}),
   };
 
   // F3a/F3b/F3c hold-open relay: create the durable question row, then park
@@ -620,13 +773,34 @@ export function createHttp(core, {
   // (respond {} — normal flow resumes in the terminal), or the client
   // disconnects. questions.mjs owns the arbitration; this only wires the
   // socket to it. Fail open like every hook path: intake errors still 200 {}.
-  function holdHook(res, ev, name) {
-    let row = null;
-    try { row = core.hookHoldQuestion(ev, name); } catch (err) { console.error('fleetd hold intake error:', err); }
-    if (!row) return json(res, 200, {});
-    core.questions.attachHold(row, obj => json(res, 200, obj));
+  function holdHook(res: http.ServerResponse, ev: unknown, name: string) {
+    let row: ReturnType<typeof core.hookHoldQuestion> | null = null;
+    try {
+      row = core.hookHoldQuestion(ev as Parameters<typeof core.hookHoldQuestion>[0], name);
+    } catch (err) {
+      console.error('fleetd hold intake error:', err);
+    }
+    if (!row) {
+      json(res, 200, {});
+      return;
+    }
+    const held = row;
+    // seam cast: events.ts deliberately narrows questions.create to { id: number }
+    // in its ctx contract, so hookHoldQuestion is typed { id: number } | null; the
+    // runtime row is a full QuestionRow, which is what attachHold/socketClosed read
+    // (row.session_id, row.id). Cast at this seam rather than perturb the contract.
+    core.questions.attachHold(
+      held as Parameters<typeof core.questions.attachHold>[0],
+      (obj: unknown) => {
+        json(res, 200, obj);
+      },
+    );
     res.on('close', () => {
-      try { core.questions.socketClosed(row.id); } catch { /* hold hygiene only */ }
+      try {
+        core.questions.socketClosed(held.id);
+      } catch {
+        /* hold hygiene only */
+      }
     });
     // response intentionally left open
   }
@@ -686,11 +860,17 @@ export function createHttp(core, {
   //   request's claim attempt fails the generation check and it lapses to
   //   idle (the mail stays queued for the current generation to claim). No
   //   `wg` (a hand-rolled poll, an older watcher) claims exactly as before.
-  function watchHook(req, res, url) {
-    const sid = url.searchParams.get('session') || '';
+  function watchHook(_req: http.IncomingMessage, res: http.ServerResponse, url: URL) {
+    const sid = url.searchParams.get('session') ?? '';
     const holdRaw = Number(url.searchParams.get('hold_ms'));
     const holdMs = Number.isFinite(holdRaw) ? Math.max(0, Math.min(holdRaw, 25_000)) : 25_000;
-    const wg = url.searchParams.get('wg') || null;
+    // Empty `wg=` MUST collapse to null, not stay '': claimMail treats a
+    // non-null gen as a generation to verify (`gen !== null && !isWatchGen`),
+    // so '' would fail the check and refuse to claim, while null claims freely.
+    // `?? null` would keep '' and silently break mail delivery — keep the
+    // truthiness fold as an explicit ternary (see ts-migration-bugs).
+    const wgParam = url.searchParams.get('wg');
+    const wg = wgParam === '' ? null : wgParam;
     if (wg) core.registerWatchGen(sid, wg); // newest wins; before any claim attempt
 
     const attempt = () => {
@@ -702,25 +882,40 @@ export function createHttp(core, {
     };
 
     const immediate = attempt();
-    if (immediate) return json(res, 200, immediate);
+    if (immediate) {
+      json(res, 200, immediate);
+      return;
+    }
 
     let settled = false;
-    let unregister = () => {};
-    const finish = obj => {
+    let unregister = () => {
+      /* no-op until addWatchWaiter below returns the real unregister */
+    };
+    const finish = (obj: unknown) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       unregister();
-      try { json(res, 200, obj); } catch { /* socket gone */ }
+      try {
+        json(res, 200, obj);
+      } catch {
+        /* socket gone */
+      }
     };
-    const timer = setTimeout(() => finish({ status: 'idle', ...core.watchInfo(sid) }), holdMs);
-    timer.unref?.();
+    const timer = setTimeout(() => {
+      finish({ status: 'idle', ...core.watchInfo(sid) });
+    }, holdMs);
+    timer.unref();
     unregister = core.addWatchWaiter(sid, () => {
       if (settled || res.writableEnded || res.destroyed) return;
       const out = attempt();
       if (out) finish(out);
     });
-    res.on('close', () => { settled = true; clearTimeout(timer); unregister(); });
+    res.on('close', () => {
+      settled = true;
+      clearTimeout(timer);
+      unregister();
+    });
     // response intentionally left open
   }
 
@@ -748,13 +943,16 @@ export function createHttp(core, {
   // forged that way. See tests/lan-auth.test.mjs — the browser-reachability of
   // the shell is pinned there precisely so this never regresses into a blank
   // page again.
-  const isPublicShell = (method, pathname) => method === 'GET'
-    && (pathname === '/' || pathname === '/index.html' || pathname === '/favicon.ico'
-      || pathname.startsWith('/assets/'));
+  const isPublicShell = (method: string | undefined, pathname: string) =>
+    method === 'GET' &&
+    (pathname === '/' ||
+      pathname === '/index.html' ||
+      pathname === '/favicon.ico' ||
+      pathname.startsWith('/assets/'));
 
   const server = http.createServer((req, res) => {
     try {
-      const url = new URL(req.url, `http://127.0.0.1:${port}`);
+      const url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`);
       const shell = isPublicShell(req.method, url.pathname);
       // Hook paths are NOT refused here: a tokenless hook is answered (and
       // refused) by legacyHookResponse AFTER its body is parsed — the upgrade
@@ -762,7 +960,8 @@ export function createHttp(core, {
       // never sends an error page. Everything else 401s as usual.
       const isHookPath = url.pathname.startsWith('/hook/');
       if (!shell && !isHookPath && !authorized(req, url)) {
-        return json(res, 401, { ok: false, reason: 'unauthorized' });
+        json(res, 401, { ok: false, reason: 'unauthorized' });
+        return;
       }
       const hookAuthed = isHookPath ? authorized(req, url) : true;
       // DNS-REBINDING DEFENSE (C1/H-S3): a page pointed at a domain that
@@ -772,7 +971,9 @@ export function createHttp(core, {
       // hook keeps its fail-open dialect so an odd proxy can never wedge a
       // real session; a genuine loopback hook sends a loopback Host and is fine.
       if (!shell && !hostHeaderOk(req)) {
-        return url.pathname.startsWith('/hook/') ? json(res, 200, {}) : json(res, 403, { ok: false, reason: 'forbidden' });
+        if (url.pathname.startsWith('/hook/')) json(res, 200, {});
+        else json(res, 403, { ok: false, reason: 'forbidden' });
+        return;
       }
       if (req.method === 'GET') {
         // CSRF WALL for MUTATING GETs (C1/R1-1). Method is not the boundary —
@@ -787,16 +988,22 @@ export function createHttp(core, {
         // mutate and stay open; /state's data exposure is already walled by the
         // Host allowlist (hostHeaderOk above), the DNS-rebinding defense.
         if ((url.pathname === '/mail' || url.pathname === '/api/watch') && crossSiteReason(req)) {
-          return json(res, 403, { ok: false, reason: 'forbidden' });
+          json(res, 403, { ok: false, reason: 'forbidden' });
+          return;
         }
         if (url.pathname === '/health') {
           // v1.2: spawn capability rides /health so the launcher/board can
           // hide all spawn UI when unavailable.
           // `managed` rides /health because that is the one thing the SessionStart
           // hook already fetches before it decides whether to evict us.
-          return json(res, 200, {
-            ok: true, fleet: core.fleetSize(), pid: process.pid, version, managed,
-            spawn: core.spawnCapability(), auth: termAuth,
+          json(res, 200, {
+            ok: true,
+            fleet: core.fleetSize(),
+            pid: process.pid,
+            version,
+            managed,
+            spawn: core.spawnCapability(),
+            auth: termAuth,
             // Boot-reconciliation readiness (BUG-066). Both heals are kicked
             // fire-and-forget from the listen callback, so /health answering 200
             // is NOT proof they have run — and the asynchronous half
@@ -811,37 +1018,50 @@ export function createHttp(core, {
             // loop alive. auth: termAuth is BUG-186 (the /ws/term capability).
             startup: startup?.reconciliationStatus?.() ?? null,
           });
+          return;
         }
-        if (url.pathname === '/state') return json(res, 200, snapshotWithLan());
+        if (url.pathname === '/state') {
+          json(res, 200, snapshotWithLan());
+          return;
+        }
         if (url.pathname === '/api/settings') {
-          return json(res, 200, { ok: true, settings: core.resolveSettings() });
+          json(res, 200, { ok: true, settings: core.resolveSettings() });
+          return;
         }
         if (url.pathname === '/api/worktrees') {
           // Inspector failures are represented per row as verdict:unknown;
           // one broken repository must never turn this fleet-wide view into a
           // 500 or hide the other worktrees from the human.
-          core.worktrees()
-            .then(out => json(res, 200, out))
-            .catch(err => {
+          core
+            .worktrees()
+            .then((out) => {
+              json(res, 200, out);
+            })
+            .catch((err: unknown) => {
               console.error('fleetd worktree inspector error:', err);
               json(res, 200, { ok: true, worktrees: [] });
             });
           return;
         }
-        const sessionFsMatch = /^\/api\/sessions\/([^/]+)\/fs\/(list|read|search)$/.exec(url.pathname);
+        const sessionFsMatch = /^\/api\/sessions\/([^/]+)\/fs\/(list|read|search)$/.exec(
+          url.pathname,
+        );
         if (sessionFsMatch) {
-          const sid = decodeURIComponent(sessionFsMatch[1]);
+          const sid = decodeURIComponent(sessionFsMatch[1] ?? '');
           const action = sessionFsMatch[2];
-          const operation = action === 'list'
-            ? core.fsList(sid, url.searchParams.get('path') ?? '')
-            : action === 'read'
-              ? core.fsRead(sid, url.searchParams.get('path') ?? '')
-              : core.fsSearch(sid, url.searchParams.get('q') ?? '', {
-                mode: url.searchParams.get('mode') ?? 'content',
-              });
+          const operation =
+            action === 'list'
+              ? core.fsList(sid, url.searchParams.get('path') ?? '')
+              : action === 'read'
+                ? core.fsRead(sid, url.searchParams.get('path') ?? '')
+                : core.fsSearch(sid, url.searchParams.get('q') ?? '', {
+                    mode: url.searchParams.get('mode') ?? 'content',
+                  });
           operation
-            .then(({ status, body }) => json(res, status, body))
-            .catch(err => {
+            .then(({ status, body }) => {
+              json(res, status, body);
+            })
+            .catch((err: unknown) => {
               console.error('fleetd session filesystem error:', err);
               json(res, 500, { ok: false, reason: 'internal' });
             });
@@ -850,23 +1070,26 @@ export function createHttp(core, {
         const homeFsMatch = /^\/api\/fs\/(list|read|search)$/.exec(url.pathname);
         if (homeFsMatch) {
           const action = homeFsMatch[1];
-          const operation = action === 'list'
-            ? core.fsListHome(url.searchParams.get('path') ?? '')
-            : action === 'read'
-              ? core.fsReadHome(url.searchParams.get('path') ?? '')
-              : core.fsSearchHome(url.searchParams.get('q') ?? '', {
-                mode: url.searchParams.get('mode') ?? 'content',
-              });
+          const operation =
+            action === 'list'
+              ? core.fsListHome(url.searchParams.get('path') ?? '')
+              : action === 'read'
+                ? core.fsReadHome(url.searchParams.get('path') ?? '')
+                : core.fsSearchHome(url.searchParams.get('q') ?? '', {
+                    mode: url.searchParams.get('mode') ?? 'content',
+                  });
           operation
-            .then(({ status, body }) => json(res, status, body))
-            .catch(err => {
+            .then(({ status, body }) => {
+              json(res, status, body);
+            })
+            .catch((err: unknown) => {
               console.error('fleetd home filesystem error:', err);
               json(res, 500, { ok: false, reason: 'internal' });
             });
           return;
         }
         if (url.pathname === '/mail') {
-          const sid = url.searchParams.get('session') || '';
+          const sid = url.searchParams.get('session') ?? '';
           // BUG-034: the poll ACKNOWLEDGES the mail it already holds. Rows it
           // names are finalized (their leases were live when it drained them);
           // acking anything else is a guarded no-op (a final response never
@@ -879,9 +1102,13 @@ export function createHttp(core, {
           // retention sweep releases the lease and the mail is re-delivered.
           const box = core.drainMail(sid, { lease: true });
           if (box.length) broadcast();
-          return json(res, 200, { mail: box, ack_mail_ids: box.map(m => m.id) });
+          json(res, 200, { mail: box, ack_mail_ids: box.map((m) => m.id) });
+          return;
         }
-        if (url.pathname === '/api/watch') return watchHook(req, res, url); // F3d-2 long-poll
+        if (url.pathname === '/api/watch') {
+          watchHook(req, res, url);
+          return;
+        } // F3d-2 long-poll
         if (url.pathname === '/favicon.ico') {
           // BUG-123: the shell's favicon is a data: SVG (see CSP_SHELL), so
           // board-dist ships no favicon.ico — but browsers auto-fetch this path
@@ -890,7 +1117,8 @@ export function createHttp(core, {
           // through serveBoardAsset's notFound). 204 + no-store: no icon today,
           // and no stale negative cache the day one ships.
           res.writeHead(204, { 'cache-control': 'no-store' });
-          return res.end();
+          res.end();
+          return;
         }
         if (shell) {
           // built React board (Phase 5) from board-dist — every path the auth
@@ -899,9 +1127,11 @@ export function createHttp(core, {
           // asks for /index.html explicitly gets the same document as /
           // (BUG-124/192). /favicon.ico is handled above; any other missing
           // file still 404s via the notFound callback.
-          return serveBoardAsset(res, url.pathname, () => json(res, 404, { err: 'nope' }));
+          serveBoardAsset(res, url.pathname, () => json(res, 404, { err: 'nope' }));
+          return;
         }
-        return json(res, 404, { err: 'nope' });
+        json(res, 404, { err: 'nope' });
+        return;
       }
 
       if (req.method === 'POST') {
@@ -912,21 +1142,24 @@ export function createHttp(core, {
         // another site is turned away. A refused hook still answers in the
         // fail-open dialect so it can never break a session.
         if (crossSiteReason(req)) {
-          return isHook ? json(res, 200, {}) : json(res, 403, { ok: false, reason: 'forbidden' });
+          if (isHook) json(res, 200, {});
+          else json(res, 403, { ok: false, reason: 'forbidden' });
+          return;
         }
         // CONTENT-TYPE WALL (C1): control POSTs must declare JSON — which also
         // forces a CORS preflight for any cross-origin attempt, a second wall in
         // front of /api/spawn et al. Hooks are EXEMPT per the hook contract: a
         // hook with an odd/absent content-type is still processed (fail open).
         if (!isHook && !isJsonContentType(req.headers['content-type'])) {
-          return json(res, 415, { ok: false, reason: 'expected application/json' });
+          json(res, 415, { ok: false, reason: 'expected application/json' });
+          return;
         }
         // M-B3: collect raw Buffers, cap by BYTES, decode ONCE. `body += d`
         // stringified each TCP chunk independently — a multibyte glyph straddling
         // a chunk boundary decoded to U+FFFD — and `body.length` counted UTF-16
         // units, not bytes. Concatenating the bytes and decoding the whole once
         // is byte-exact.
-        const chunks = [];
+        const chunks: Buffer[] = [];
         let size = 0;
         let tooLarge = false;
         const bodyCap = url.pathname === '/api/paste-image' ? MAX_PASTE_BODY : MAX_BODY;
@@ -948,39 +1181,52 @@ export function createHttp(core, {
         // but this avoids buffering megabytes only to reject them.
         const declared = Number(req.headers['content-length']);
         if (Number.isFinite(declared) && declared > bodyCap) {
-          return refuseOversize();
+          refuseOversize();
+          return;
         }
-        req.on('data', d => {
+        req.on('data', (d: Buffer) => {
           if (tooLarge) return;
           size += d.length; // d is a Buffer — byte length, not char count
           if (size > bodyCap) {
             tooLarge = true;
             // 413 on control paths; hooks keep the fail-open 200 {}. Stop
             // accumulating either way so the body can't grow without bound.
-            return refuseOversize();
+            refuseOversize();
+            return;
           }
           chunks.push(d);
         });
         req.on('end', () => {
           if (tooLarge) return;
           const body = Buffer.concat(chunks).toString('utf8');
-          let ev = {};
-          try { ev = JSON.parse(body || '{}'); } catch {
+          let ev: unknown;
+          try {
+            ev = JSON.parse(body || '{}');
+          } catch {
             // hooks fail open: a bad body on a hook path is still 200 {}
-            return isHook ? json(res, 200, {}) : json(res, 400, { err: 'bad json' });
+            if (isHook) json(res, 200, {});
+            else json(res, 400, { err: 'bad json' });
+            return;
           }
           try {
             const hook = /^\/hook\/([A-Za-z]+)$/.exec(url.pathname);
             if (hook) {
-              const name = hook[1];
+              const name = hook[1] ?? '';
               // 0.16.0 upgrade path: a tokenless hook is REFUSED here — nothing
               // below may ingest, hold, or derive from it — and answered with
               // the restart whisper (see legacyHookResponse).
-              if (!hookAuthed) return legacyHookResponse(res, ev, name);
-              noteUpgradedSession(ev?.session_id);
+              if (!hookAuthed) {
+                legacyHookResponse(res, ev, name);
+                return;
+              }
+              noteUpgradedSession(asRecord(ev)['session_id']);
               // payload capture (validation aid): first 3 raw payloads per
               // hook event name, best-effort, never affects the response
-              try { capture(name, ev); } catch { /* best-effort */ }
+              try {
+                capture(name, ev);
+              } catch {
+                /* best-effort */
+              }
               // F3c CRITICAL (validated live on CLI 2.1.206):
               // AskUserQuestion rides the permission machinery — after the
               // /hook/AskUserQuestion hold resolves {}, the CLI fires
@@ -988,18 +1234,28 @@ export function createHttp(core, {
               // one: an unanswered question would chain two full hold
               // windows (~50 s each) before the terminal user ever sees the
               // chooser. Ingest telemetry, answer {} immediately.
-              if (name === 'PermissionRequest' && ev?.tool_name === 'AskUserQuestion') {
-                core.applyEvent({ ...ev, hook_event_name: 'PermissionRequest' });
-                return json(res, 200, {});
+              if (name === 'PermissionRequest' && asRecord(ev)['tool_name'] === 'AskUserQuestion') {
+                core.applyEvent({
+                  ...asRecord(ev),
+                  hook_event_name: 'PermissionRequest',
+                });
+                json(res, 200, {});
+                return;
               }
-              if (name === 'PermissionRequest' || name === 'Elicitation' || name === 'AskUserQuestion') {
-                return holdHook(res, ev, name); // Phase 3/4 hold-open relay
+              if (
+                name === 'PermissionRequest' ||
+                name === 'Elicitation' ||
+                name === 'AskUserQuestion'
+              ) {
+                holdHook(res, ev, name);
+                return; // Phase 3/4 hold-open relay
               }
               const handler = hookHandlers[name];
               if (!handler) {
                 // unknown hook event: ingest telemetry anyway, respond no-op
-                core.applyEvent({ hook_event_name: name, ...ev });
-                return json(res, 200, {});
+                core.applyEvent({ hook_event_name: name, ...asRecord(ev) });
+                json(res, 200, {});
+                return;
               }
               // A hook payload without a usable session_id must never reach
               // the state machine: the events.mjs sid fallback would key the
@@ -1012,25 +1268,31 @@ export function createHttp(core, {
               // (non-object body, or a missing/blank session_id) is identical
               // to the hand check it replaces, so no dispatch outcome moves.
               if (!validateHookEvent(ev).ok) {
-                return json(res, 200, {});
+                json(res, 200, {});
+                return;
               }
-              return json(res, 200, handler(ev) ?? {});
+              json(res, 200, handler(ev as HookBody) ?? {});
+              return;
             }
             // BUG-034: explicit acknowledgement for a leased /api/watch claim.
             // The watcher POSTs {mail_id} once it HOLDS the claimed body (a
             // claim whose response never arrived never acks, so the lease
             // lapses and the mail is re-delivered instead of lost).
             if (url.pathname === '/mail/ack') {
-              const out = core.ackMail([ev.mail_id]);
-              return json(res, 200, { ok: true, ...out });
+              const out = core.ackMail([(ev as { mail_id?: unknown }).mail_id]);
+              json(res, 200, { ok: true, ...out });
+              return;
             }
             if (url.pathname === '/mail') {
-              core.postMail(ev)
+              core
+                .postMail(ev as Parameters<typeof core.postMail>[0])
                 // 0.16.0: postMail returns {status, body} on a refusal and the
                 // historical bare delivery object on success (in-process
                 // callers consume the bare shape — the adapter lives HERE).
-                .then(out => json(res, out.status ?? 200, out.body ?? out))
-                .catch(err => {
+                .then((out) => {
+                  json(res, out.status ?? 200, out.body ?? out);
+                })
+                .catch((err: unknown) => {
                   console.error('fleetd mail error:', err);
                   json(res, 500, { ok: false, err: 'internal' });
                 });
@@ -1040,9 +1302,12 @@ export function createHttp(core, {
               // BUG-145: an incomplete Clear (tmux unreachable / a dead window
               // that would not die) comes back {ok:false, reason} with NOTHING
               // touched — speak a real code so the board can fail loud.
-              core.cleanup()
-                .then(out => json(res, out.ok === false ? 409 : 200, out))
-                .catch(err => {
+              core
+                .cleanup()
+                .then((out) => {
+                  json(res, !out.ok ? 409 : 200, out);
+                })
+                .catch((err: unknown) => {
                   console.error('fleetd cleanup error:', err);
                   json(res, 500, { ok: false, err: 'internal' });
                 });
@@ -1051,9 +1316,12 @@ export function createHttp(core, {
             if (url.pathname === '/api/worktrees/remove') {
               // Security and data-loss gates live together in derive: only a
               // spawn-owned path reaches git, and force is an exact boolean.
-              core.removeWorktree(ev)
-                .then(out => json(res, out.status, out.body))
-                .catch(err => {
+              core
+                .removeWorktree(ev as Parameters<typeof core.removeWorktree>[0])
+                .then((out) => {
+                  json(res, out.status, out.body);
+                })
+                .catch((err: unknown) => {
                   console.error('fleetd worktree removal error:', err);
                   json(res, 500, { ok: false, reason: 'internal' });
                 });
@@ -1068,21 +1336,37 @@ export function createHttp(core, {
               // loopback caller can forge Host/Origin to look proxied, so we must
               // not waive this gate on arrivedViaTrustedProxy(). Proxy token mode,
               // proxy trust mode, and LAN never inherit the waiver here.
-              if (Object.keys(ev || {}).some(k => k.toLowerCase().startsWith('gateway_'))) {
+              if (Object.keys(asRecord(ev)).some((k) => k.toLowerCase().startsWith('gateway_'))) {
                 const authorization = req.headers.authorization;
-                const bearer = typeof authorization === 'string' ? /^Bearer (.+)$/.exec(authorization)?.[1] : undefined;
-                const bearerWaived = trustLoopback
-                  && !arrivedViaTrustedProxy(req)
-                  && isLoopbackAddress(req.socket?.remoteAddress);
-                if (!bearerWaived && !tokenMatches(bearer) && !tokenMatches(url.searchParams.get('t'))) {
-                  return json(res, 401, { ok: false, reason: 'gateway settings require the bearer token' });
+                const bearer =
+                  typeof authorization === 'string'
+                    ? /^Bearer (.+)$/.exec(authorization)?.[1]
+                    : undefined;
+                const bearerWaived =
+                  trustLoopback &&
+                  !arrivedViaTrustedProxy(req) &&
+                  isLoopbackAddress(req.socket.remoteAddress);
+                if (
+                  !bearerWaived &&
+                  !tokenMatches(bearer) &&
+                  !tokenMatches(url.searchParams.get('t'))
+                ) {
+                  json(res, 401, {
+                    ok: false,
+                    reason: 'gateway settings require the bearer token',
+                  });
+                  return;
                 }
                 logExec(url.pathname, req, ' gateway=true');
               }
               const out = core.setSettings(ev);
-              return json(res, out.status, out.body);
+              json(res, out.status, out.body);
+              return;
             }
-            if (url.pathname === '/command') return json(res, 200, core.command(ev.text));
+            if (url.pathname === '/command') {
+              json(res, 200, core.command((ev as { text?: unknown }).text));
+              return;
+            }
             if (url.pathname === '/api/paste-image') {
               // v1.7 pasted image → file (paste.mjs). Same wall stack as every
               // control POST (auth → Host → CSRF → json content-type → body
@@ -1090,8 +1374,9 @@ export function createHttp(core, {
               // returned path is TYPED into the pane by the BOARD, not by us —
               // injection must ride TermPane's sendIn gate so the grid's
               // one-tile-types discipline also governs pastes.
-              const out = core.pasteImage(ev);
-              return json(res, out.status, out.body);
+              const out = core.pasteImage(ev as Parameters<typeof core.pasteImage>[0]);
+              json(res, out.status, out.body);
+              return;
             }
             if (url.pathname === '/api/spawn/arm-unsupervised') {
               // 0.16.0: mint the one-time capability an unsupervised spawn body
@@ -1099,7 +1384,8 @@ export function createHttp(core, {
               // this route existing means the caller already proved it holds
               // the bearer — the API-side half of the board's red two-step.
               logExec(url.pathname, req);
-              return json(res, 200, { ok: true, arm_token: core.armUnsupervised() });
+              json(res, 200, { ok: true, arm_token: core.armUnsupervised() });
+              return;
             }
             if (url.pathname === '/api/spawn') {
               // F1a structural gate: reject a body that isn't even a JSON
@@ -1111,7 +1397,8 @@ export function createHttp(core, {
               // plan_id positivity) stays in derive.spawn until Phase 5 folds
               // it into a single typed pass against SpawnRequest.
               if (!validateSpawnRequest(ev).ok) {
-                return json(res, 400, { ok: false, reason: 'spawn body must be a JSON object' });
+                json(res, 400, { ok: false, reason: 'spawn body must be a JSON object' });
+                return;
               }
               // v1.2 board spawn (CONTRACT). Control API like the questions
               // answer path: real status codes, fail-loud — never a silent
@@ -1121,13 +1408,31 @@ export function createHttp(core, {
               // "bypassPermissions" (validated/applied in derive.spawn too).
               // BUG-040: plan_id on the body claims that plan's execution
               // atomically BEFORE launch (see derive.spawn).
-              logExec(url.pathname, req,
-                (ev?.dangerously_skip_permissions === true || (typeof ev?.permission_mode === 'string' && ev.permission_mode.toLowerCase() === 'bypasspermissions'))
-                  ? ` unsupervised=true${ev?.plan_id != null ? ` plan=${ev.plan_id}` : ''}`
-                  : ` unsupervised=false${ev?.plan_id != null ? ` plan=${ev.plan_id}` : ''}`);
-              core.spawn(ev)
-                .then(out => json(res, out.status, out.body))
-                .catch(err => {
+              const spawnEv = asRecord(ev);
+              const spawnPmode = spawnEv['permission_mode'];
+              const spawnUnsupervised =
+                spawnEv['dangerously_skip_permissions'] === true ||
+                (typeof spawnPmode === 'string' &&
+                  spawnPmode.toLowerCase() === 'bypasspermissions');
+              const spawnPlanId = spawnEv['plan_id'];
+              // plan_id is contractually a scalar row id; this is a cosmetic log
+              // suffix only (core.spawn still receives the raw ev). Guard to a
+              // stringifiable primitive so a malformed object body can't stringify
+              // to '[object Object]' here (see ts-migration-bugs).
+              const spawnPlanSuffix =
+                typeof spawnPlanId === 'string' || typeof spawnPlanId === 'number'
+                  ? ` plan=${spawnPlanId}`
+                  : '';
+              logExec(
+                url.pathname,
+                req,
+                `${spawnUnsupervised ? ' unsupervised=true' : ' unsupervised=false'}${spawnPlanSuffix}`,
+              );
+              (core.spawn(ev) as ControlResult)
+                .then((out) => {
+                  json(res, out.status, out.body);
+                })
+                .catch((err: unknown) => {
                   console.error('fleetd spawn error:', err);
                   // UX 2.3 option 4 — a spawn that escapes derive with a THROW
                   // (not a classified {status, body}) used to answer bare
@@ -1147,9 +1452,11 @@ export function createHttp(core, {
               // v1.2 name-verified kill: 404 unknown id, 409 card not offline
               // without force:true, 410 window already gone.
               logExec(url.pathname, req);
-              core.spawnKill(killMatch[1], ev?.force === true)
-                .then(out => json(res, out.status, out.body))
-                .catch(err => {
+              (core.spawnKill(killMatch[1] ?? '', asRecord(ev)['force'] === true) as ControlResult)
+                .then((out) => {
+                  json(res, out.status, out.body);
+                })
+                .catch((err: unknown) => {
                   console.error('fleetd spawn kill error:', err);
                   json(res, 500, { ok: false, reason: 'internal' });
                 });
@@ -1162,9 +1469,11 @@ export function createHttp(core, {
               // collision/cap check and returns the control-API status. The
               // body may override remote_control (default: inherit).
               logExec(url.pathname, req);
-              core.revive(reviveMatch[1], ev ?? {})
-                .then(out => json(res, out.status, out.body))
-                .catch(err => {
+              (core.revive(reviveMatch[1] ?? '', ev ?? {}) as ControlResult)
+                .then((out) => {
+                  json(res, out.status, out.body);
+                })
+                .catch((err: unknown) => {
                   console.error('fleetd spawn revive error:', err);
                   json(res, 500, { ok: false, reason: 'internal' });
                 });
@@ -1179,12 +1488,33 @@ export function createHttp(core, {
               // dangerously_skip_permissions:bool or {disarm:true}. Every guard
               // (404/400/409/410) lives in derive; the CSRF/Host walls above
               // apply automatically like every other control POST.
-              logExec(url.pathname, req,
-                (ev?.dangerously_skip_permissions === true || (typeof ev?.permission_mode === 'string' && ev.permission_mode.toLowerCase() === 'bypasspermissions'))
-                  ? ' unsupervised=true' : ' unsupervised=false');
-              core.adoptSession(adoptMatch[1], ev ?? {})
-                .then(out => json(res, out.status, out.body))
-                .catch(err => {
+              const adoptEv = asRecord(ev);
+              const adoptPmode = adoptEv['permission_mode'];
+              const adoptUnsupervised =
+                adoptEv['dangerously_skip_permissions'] === true ||
+                (typeof adoptPmode === 'string' &&
+                  adoptPmode.toLowerCase() === 'bypasspermissions');
+              logExec(
+                url.pathname,
+                req,
+                adoptUnsupervised ? ' unsupervised=true' : ' unsupervised=false',
+              );
+              // adoptSession's ctx surface (derive.ts) is spelled out narrowly for
+              // events/retention (opts pinned to {dangerously_skip_permissions}, meta
+              // required, result defensively | null | undefined). The real runtime
+              // signature is (session_id, body: SpawnBody = {}, {deferred} = {}) and
+              // always resolves a concrete {status, body}; re-assert it at this seam.
+              (
+                core.adoptSession as (
+                  sid: string,
+                  body?: unknown,
+                  meta?: { deferred?: boolean },
+                ) => ControlResult
+              )(adoptMatch[1] ?? '', ev ?? {})
+                .then((out) => {
+                  json(res, out.status, out.body);
+                })
+                .catch((err: unknown) => {
                   console.error('fleetd adopt error:', err);
                   json(res, 500, { ok: false, reason: 'internal' });
                 });
@@ -1198,17 +1528,29 @@ export function createHttp(core, {
               // the card has a ticket, else the birth <animal>-<sid4>). Same
               // core write as the `name` orchestrator command, so both surfaces
               // enforce one set of rules.
-              const body = ev ?? {};
-              const clearing = body.clear === true;
-              if (!clearing && typeof body.suffix !== 'string') {
-                return json(res, 400, { ok: false, reason: 'suffix must be a string (or pass {clear:true})' });
+              const body = asRecord(ev);
+              const clearing = body['clear'] === true;
+              if (!clearing && typeof body['suffix'] !== 'string') {
+                json(res, 400, {
+                  ok: false,
+                  reason: 'suffix must be a string (or pass {clear:true})',
+                });
+                return;
               }
               if (!clearing) {
-                const bad = validateNameSuffix(body.suffix);
-                if (bad) return json(res, 400, { ok: false, reason: bad });
+                // suffix is a string here — the typeof guard above 400s otherwise.
+                const bad = validateNameSuffix(body['suffix'] as string);
+                if (bad) {
+                  json(res, 400, { ok: false, reason: bad });
+                  return;
+                }
               }
-              const out = core.applyCustomName(nameMatch[1], clearing ? null : body.suffix);
-              return json(res, out.ok ? 200 : 409, out);
+              const out = core.applyCustomName(
+                nameMatch[1] ?? '',
+                clearing ? null : (body['suffix'] as string),
+              );
+              json(res, out.ok ? 200 : 409, out);
+              return;
             }
             const sessionDismissMatch = /^\/api\/sessions\/([^/]+)\/dismiss$/.exec(url.pathname);
             if (sessionDismissMatch) {
@@ -1218,9 +1560,12 @@ export function createHttp(core, {
               // offline / 409 already dismissed / 409 stalled spawn) lives in
               // derive; the CSRF/Host walls above apply like any control POST.
               logExec(url.pathname, req);
-              core.dismissSession(sessionDismissMatch[1])
-                .then(out => json(res, out.status, out.body))
-                .catch(err => {
+              core
+                .dismissSession(sessionDismissMatch[1] ?? '')
+                .then((out) => {
+                  json(res, out.status, out.body);
+                })
+                .catch((err: unknown) => {
                   console.error('fleetd dismiss error:', err);
                   json(res, 500, { ok: false, reason: 'internal' });
                 });
@@ -1229,12 +1574,17 @@ export function createHttp(core, {
             // BUG-145 retry path: a dismiss whose window-kill phase failed
             // returns retry:true; this POST re-attempts ONLY the dead-window
             // kills for that already-archived card (idempotent).
-            const dismissRetryMatch = /^\/api\/sessions\/([^/]+)\/dismiss\/retry$/.exec(url.pathname);
+            const dismissRetryMatch = /^\/api\/sessions\/([^/]+)\/dismiss\/retry$/.exec(
+              url.pathname,
+            );
             if (dismissRetryMatch) {
               logExec(url.pathname, req);
-              core.dismissRetry(dismissRetryMatch[1])
-                .then(out => json(res, out.status, out.body))
-                .catch(err => {
+              core
+                .dismissRetry(dismissRetryMatch[1] ?? '')
+                .then((out) => {
+                  json(res, out.status, out.body);
+                })
+                .catch((err: unknown) => {
                   console.error('fleetd dismiss-retry error:', err);
                   json(res, 500, { ok: false, reason: 'internal' });
                 });
@@ -1245,9 +1595,11 @@ export function createHttp(core, {
               // Explicit human board action: derive enforces the idle/live
               // pane boundary, types /rc literally, and waits for harvesting.
               logExec(url.pathname, req);
-              core.enableRemote(rcMatch[1])
-                .then(out => json(res, out.status, out.body))
-                .catch(err => {
+              (core.enableRemote(rcMatch[1] ?? '') as ControlResult)
+                .then((out) => {
+                  json(res, out.status, out.body);
+                })
+                .catch((err: unknown) => {
                   console.error('fleetd remote-control error:', err);
                   json(res, 500, { ok: false, reason: 'internal' });
                 });
@@ -1259,23 +1611,32 @@ export function createHttp(core, {
               // v1.3: for an ExitPlanMode plan question the body may also be
               // {behavior:"capture"} (board-only pseudo-behavior) — the
               // branching lives in questions.mjs answer().
-              const out = core.questions.answer(Number(answerMatch[1]), ev);
-              return json(res, out.status, out.body);
+              const out = core.questions.answer(
+                Number(answerMatch[1] ?? ''),
+                ev as Parameters<typeof core.questions.answer>[1],
+              );
+              json(res, out.status, out.body);
+              return;
             }
             const dismissMatch = /^\/api\/questions\/(\d+)\/dismiss$/.exec(url.pathname);
             if (dismissMatch) {
               // "I already handled this in the terminal." Retires the card and
               // tells the session NOTHING — unlike answer(), which mails it.
               const out = core.questions.dismiss(Number(dismissMatch[1]));
-              return json(res, out.ok ? 200 : 404, out);
+              json(res, out.ok ? 200 : 404, out);
+              return;
             }
             const planMatch = /^\/api\/plans\/(\d+)\/mark$/.exec(url.pathname);
             if (planMatch) {
               // v1.3 plan library mark (CONTRACT): {status:"executed"|"archived",
               // via?} — 404 unknown id, 409 bad transition. Matrix documented
               // at core.planMark (derive.mjs).
-              const out = core.planMark(Number(planMatch[1]), ev);
-              return json(res, out.status, out.body);
+              const out = core.planMark(
+                Number(planMatch[1] ?? ''),
+                ev as Parameters<typeof core.planMark>[1],
+              );
+              json(res, out.status, out.body);
+              return;
             }
             const assignMatch = /^\/api\/plans\/(\d+)\/assign$/.exec(url.pathname);
             if (assignMatch) {
@@ -1284,15 +1645,24 @@ export function createHttp(core, {
               // frame, which POST /mail 422s, so the daemon composes it here
               // through its internal mail() and marks the plan executed in the
               // same request. 404 unknown plan/target, 409 non-executable plan.
-              const out = core.assignPlan(Number(assignMatch[1]), ev);
-              return json(res, out.status, out.body);
+              const out = core.assignPlan(
+                Number(assignMatch[1] ?? ''),
+                ev as Parameters<typeof core.assignPlan>[1],
+              );
+              json(res, out.status, out.body);
+              return;
             }
-            return json(res, 404, { err: 'nope' });
+            json(res, 404, { err: 'nope' });
+            return;
           } catch (err) {
             console.error('fleetd handler error:', err);
             // fail open on hook paths; visible error elsewhere
-            if (url.pathname.startsWith('/hook/')) return json(res, 200, {});
-            return json(res, 500, { err: 'internal' });
+            if (url.pathname.startsWith('/hook/')) {
+              json(res, 200, {});
+              return;
+            }
+            json(res, 500, { err: 'internal' });
+            return;
           }
         });
         return;
@@ -1301,7 +1671,11 @@ export function createHttp(core, {
       json(res, 404, { err: 'nope' });
     } catch (err) {
       console.error('fleetd request error:', err);
-      try { json(res, String(req.url || '').startsWith('/hook/') ? 200 : 500, {}); } catch { /* socket gone */ }
+      try {
+        json(res, (req.url ?? '').startsWith('/hook/') ? 200 : 500, {});
+      } catch {
+        /* socket gone */
+      }
     }
   });
 
@@ -1310,31 +1684,45 @@ export function createHttp(core, {
   const termWss = new WebSocketServer({ noServer: true });
   const termbridge = createTermBridge({
     port,
-    resolveSpawn: spawnId => core.terminalSpawn(spawnId),
-    log: message => console.error(`fleetd ${message}`),
+    resolveSpawn: (spawnId) => core.terminalSpawn(spawnId),
+    log: (message) => {
+      console.error(`fleetd ${message}`);
+    },
   });
   // ws re-emits http server errors (e.g. EADDRINUSE) on the wss; without a
   // listener that throws and masks the election exit-3 path in fleetd.mjs.
-  wss.on('error', () => { /* the http server's 'error' listener owns this */ });
-  termWss.on('error', () => { /* the http server's 'error' listener owns this */ });
+  wss.on('error', () => {
+    /* the http server's 'error' listener owns this */
+  });
+  termWss.on('error', () => {
+    /* the http server's 'error' listener owns this */
+  });
 
   // Explicit upgrade routing keeps the snapshot socket's long-standing /ws
   // contract separate from /ws/term. Terminal query values are never tmux
   // targets: only the opaque spawn id reaches the core resolver.
   server.on('upgrade', (req, socket, head) => {
     let url;
-    try { url = new URL(req.url || '/', 'http://127.0.0.1'); } catch { socket.destroy(); return; }
+    try {
+      url = new URL(req.url ?? '/', 'http://127.0.0.1');
+    } catch {
+      socket.destroy();
+      return;
+    }
     // WS AUTH + CSRF CONTRACT: reject before either noServer WebSocketServer
     // sees the socket. A WebSocket is NOT subject to the same-origin READ
     // barrier, so a cross-site page could otherwise read the whole snapshot or
     // drive a live pane. Destroying the socket — no HTTP upgrade response —
     // guarantees nothing is observable through an unauthenticated OR
     // cross-origin connection; the Host check closes DNS rebinding (C1).
-    if (!authorized(req, url) || !hostHeaderOk(req) || crossSiteReason(req)) { socket.destroy(); return; }
+    if (!authorized(req, url) || !hostHeaderOk(req) || crossSiteReason(req)) {
+      socket.destroy();
+      return;
+    }
     if (url.pathname === '/ws') {
-      wss.handleUpgrade(req, socket, head, ws => wss.emit('connection', ws, req));
+      wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
     } else if (url.pathname === '/ws/term') {
-      termWss.handleUpgrade(req, socket, head, ws => termWss.emit('connection', ws, req));
+      termWss.handleUpgrade(req, socket, head, (ws) => termWss.emit('connection', ws, req));
     } else {
       socket.destroy();
     }
@@ -1343,7 +1731,7 @@ export function createHttp(core, {
   // per short window, so N updateSession() calls inside one hook collapse to a
   // single snapshot rebuild+stringify+send instead of N.
   let dirty = false;
-  let flushTimer = null;
+  let flushTimer: ReturnType<typeof setTimeout> | null = null;
   // Waiters parked until the coalesced flush has actually fired. Boot
   // reconciliation settles its heals, then must ALSO let the flush those heals
   // scheduled drain before reporting 'settled' — otherwise a /ws client that
@@ -1351,10 +1739,10 @@ export function createHttp(core, {
   // startup broadcast (BUG-066). whenBroadcastIdle() resolves with no pending
   // flush: immediately when none is scheduled, otherwise when the current one
   // runs.
-  let idleWaiters = [];
+  let idleWaiters: (() => void)[] = [];
   function whenBroadcastIdle() {
     if (!flushTimer) return Promise.resolve();
-    return new Promise(resolve => idleWaiters.push(resolve));
+    return new Promise<void>((resolve) => idleWaiters.push(resolve));
   }
   // H-S1: the broadcast/connect snapshot deliberately uses core.snapshot() and
   // NOT snapshotWithLan() — the token-bearing lan.urls/lan.mdns must never ride
@@ -1382,7 +1770,14 @@ export function createHttp(core, {
       // a reconnect, and the connect handler seeds the fresh socket with a full
       // snapshot — correctness over a silent partial board. 'close' unwinds the
       // socket exactly as the keepalive's reap would.
-      if (c.bufferedAmount > MAX_WS_BUFFER) { try { c.terminate(); } catch { /* already gone */ } continue; }
+      if (c.bufferedAmount > MAX_WS_BUFFER) {
+        try {
+          c.terminate();
+        } catch {
+          /* already gone */
+        }
+        continue;
+      }
       c.send(msg);
     }
   }
@@ -1397,82 +1792,145 @@ export function createHttp(core, {
       idleWaiters = [];
       for (const resolve of waiters) resolve();
     }, BROADCAST_COALESCE_MS);
-    flushTimer.unref?.();
+    flushTimer.unref();
   }
-  wss.on('connection', ws => {
+  wss.on('connection', (ws: LiveSocket) => {
     ws.isAlive = true;
-    ws.on('pong', () => { ws.isAlive = true; });
-    try { ws.send(JSON.stringify(wsSnapshot())); } catch { /* client gone */ }
+    ws.on('pong', () => {
+      ws.isAlive = true;
+    });
+    try {
+      ws.send(JSON.stringify(wsSnapshot()));
+    } catch {
+      /* client gone */
+    }
   });
 
-  termWss.on('connection', async (ws, req) => {
-    let handle = null;
-    let socketClosed = false;
-    ws.isAlive = true;
-    ws.on('pong', () => { ws.isAlive = true; });
-    // H-R3/M-P6 backpressure: a viewer that has stopped draining is EVICTED (a
-    // 1009 close), not fed. Silently dropping pane bytes would desync its screen;
-    // closing the socket unwinds its tmux subscription (the 'close' handler runs
-    // handle.close()) so a slow viewer can never buffer a pane's whole output
-    // into a dead socket.
-    const send = frame => {
-      if (ws.readyState !== 1) return;
-      if (ws.bufferedAmount > MAX_TERM_WS_BUFFER) {
-        try { ws.close(1009, 'terminal viewer too far behind'); } catch { /* already gone */ }
-        return;
-      }
-      ws.send(JSON.stringify(frame));
-    };
-    ws.on('close', () => {
-      socketClosed = true;
-      handle?.close();
-    });
-    ws.on('message', raw => {
-      if (!handle) return;
-      // M-R4: a terminal frame is a keystroke or a modest paste — never a
-      // megabyte. Refuse an oversized frame outright (1009) rather than expand it
-      // to hex and queue it; termbridge.input() enforces the queued-byte bound.
-      if (raw.length > MAX_TERM_FRAME_BYTES) { try { ws.close(1009, 'input frame too large'); } catch { /* already gone */ } return; }
-      let frame;
-      try { frame = JSON.parse(raw.toString('utf8')); } catch { return; }
-      if (!frame || typeof frame !== 'object') return;
-      if (frame.t === 'in' && typeof frame.data === 'string') handle.input(frame.data);
-      else if (frame.t === 'resize') handle.resize(frame.cols, frame.rows);
-    });
-
-    try {
-      const url = new URL(req.url || '/', 'http://127.0.0.1');
-      const spawn_id = url.searchParams.get('spawn');
-      const cols = Number(url.searchParams.get('cols'));
-      const rows = Number(url.searchParams.get('rows'));
-      if (!spawn_id) throw new Error('missing spawn id');
-      // M-R5 abort path: if the socket closes mid-open (before `handle` exists),
-      // openViewer() checks isAborted() between its awaits and bails, so the
-      // half-opened viewer is removed instead of lingering counted forever.
-      handle = await termbridge.openViewer({
-        spawn_id, cols, rows, send,
-        isAborted: () => socketClosed,
-        onClose(reason) {
-          send({ t: 'exit', reason });
-          try { ws.close(); } catch { /* already gone */ }
-        },
+  termWss.on('connection', (ws: LiveSocket, req: http.IncomingMessage) => {
+    // Async work (awaits termbridge.openViewer) runs inside a void-ed IIFE so the
+    // EventEmitter listener returns void, not a floating promise. The IIFE body is
+    // fully try/caught below and never rejects (NOISE, see ts-migration-bugs).
+    void (async () => {
+      let handle: Awaited<ReturnType<typeof termbridge.openViewer>> | null = null;
+      // Abort latch as a holder object, not a bare `let`: the close handler flips
+      // it during the openViewer await (the M-R5 race), and reading it through a
+      // property after that await keeps it a runtime boolean. A bare `let` would
+      // be narrowed back to the literal `false` by CFA, hiding the race guard
+      // below behind an "always falsy" lint (see ts-migration-bugs).
+      const abort = { closed: false };
+      ws.isAlive = true;
+      ws.on('pong', () => {
+        ws.isAlive = true;
       });
-      if (socketClosed) handle.close();
-    } catch (err) {
-      if (err?.gone) {
-        // The row said live but its pane was already gone (agent ended, tick
-        // hasn't reconciled). Report it as an exit ("the agent has ended"), not
-        // a scary "viewer refused", and kick a liveness reconcile so the stale
-        // row flips promptly instead of waiting for the ≤10s tick. We do NOT
-        // condemn the row here: window-absence is UNKNOWN by house doctrine —
-        // the tick owns condemnation with its condemnStreak hysteresis.
-        send({ t: 'exit', reason: err.reason });
-        core.spawnLivenessTick?.().catch(() => { /* fire-and-forget reconcile */ });
-      } else {
-        send({ t: 'err', reason: err?.reason || err?.message || 'terminal unavailable' });
+      // H-R3/M-P6 backpressure: a viewer that has stopped draining is EVICTED (a
+      // 1009 close), not fed. Silently dropping pane bytes would desync its screen;
+      // closing the socket unwinds its tmux subscription (the 'close' handler runs
+      // handle.close()) so a slow viewer can never buffer a pane's whole output
+      // into a dead socket.
+      const send = (frame: unknown) => {
+        if (ws.readyState !== 1) return;
+        if (ws.bufferedAmount > MAX_TERM_WS_BUFFER) {
+          try {
+            ws.close(1009, 'terminal viewer too far behind');
+          } catch {
+            /* already gone */
+          }
+          return;
+        }
+        ws.send(JSON.stringify(frame));
+      };
+      ws.on('close', () => {
+        abort.closed = true;
+        handle?.close();
+      });
+      ws.on('message', (raw) => {
+        if (!handle) return;
+        // ws hands the listener a RawData union (Buffer | ArrayBuffer | Buffer[]);
+        // this daemon runs the server in its default (non-binary, unfragmented)
+        // mode, so a text frame always arrives as a single Buffer. Re-assert that
+        // so the byte-exact `.length`/`.toString('utf8')` below keep their meaning
+        // (NOISE, see ts-migration-bugs).
+        const buf = raw as Buffer;
+        // M-R4: a terminal frame is a keystroke or a modest paste — never a
+        // megabyte. Refuse an oversized frame outright (1009) rather than expand it
+        // to hex and queue it; termbridge.input() enforces the queued-byte bound.
+        if (buf.length > MAX_TERM_FRAME_BYTES) {
+          try {
+            ws.close(1009, 'input frame too large');
+          } catch {
+            /* already gone */
+          }
+          return;
+        }
+        let frame: unknown;
+        try {
+          frame = JSON.parse(buf.toString('utf8'));
+        } catch {
+          return;
+        }
+        if (!frame || typeof frame !== 'object') return;
+        const fr = frame as Record<string, unknown>;
+        if (fr['t'] === 'in' && typeof fr['data'] === 'string') handle.input(fr['data']);
+        else if (fr['t'] === 'resize') handle.resize(fr['cols'] as number, fr['rows'] as number);
+      });
+
+      try {
+        const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+        const spawn_id = url.searchParams.get('spawn');
+        const cols = Number(url.searchParams.get('cols'));
+        const rows = Number(url.searchParams.get('rows'));
+        if (!spawn_id) throw new Error('missing spawn id');
+        // M-R5 abort path: if the socket closes mid-open (before `handle` exists),
+        // openViewer() checks isAborted() between its awaits and bails, so the
+        // half-opened viewer is removed instead of lingering counted forever.
+        handle = await termbridge.openViewer({
+          spawn_id,
+          cols,
+          rows,
+          send,
+          isAborted: () => abort.closed,
+          onClose(reason) {
+            send({ t: 'exit', reason });
+            try {
+              ws.close();
+            } catch {
+              /* already gone */
+            }
+          },
+        });
+        if (abort.closed) handle.close();
+      } catch (err) {
+        const e = err as { gone?: unknown; reason?: unknown; message?: unknown } | null;
+        if (e?.gone) {
+          // The row said live but its pane was already gone (agent ended, tick
+          // hasn't reconciled). Report it as an exit ("the agent has ended"), not
+          // a scary "viewer refused", and kick a liveness reconcile so the stale
+          // row flips promptly instead of waiting for the ≤10s tick. We do NOT
+          // condemn the row here: window-absence is UNKNOWN by house doctrine —
+          // the tick owns condemnation with its condemnStreak hysteresis.
+          send({ t: 'exit', reason: e.reason });
+          // Same ctx seam as the control methods: spawnLivenessTick is declared
+          // (...args) => unknown on derive's surface but resolves a promise; assert
+          // that to reach .catch (NOISE, see ts-migration-bugs).
+          (core.spawnLivenessTick() as Promise<unknown> | undefined)?.catch(() => {
+            /* fire-and-forget reconcile */
+          });
+        } else {
+          // e.reason / e.message are unknown off a thrown value; normalize to
+          // strings and keep the truthiness-OR "first non-empty" fallback — a `??`
+          // would surface an empty '' reason and suppress the default message
+          // (see ts-migration-bugs).
+          const failReason = typeof e?.reason === 'string' ? e.reason : '';
+          const failMessage = typeof e?.message === 'string' ? e.message : '';
+          send({ t: 'err', reason: failReason || failMessage || 'terminal unavailable' });
+        }
+        try {
+          ws.close();
+        } catch {
+          /* already gone */
+        }
       }
-      try { ws.close(); } catch { /* already gone */ }
-    }
+    })();
   });
   // H-R3 + M-P1: a real keepalive replaces the "full snapshot every 5 s"
   // heartbeat. Ping every peer on both servers; terminate any that missed the
@@ -1482,9 +1940,17 @@ export function createHttp(core, {
   const keepalive = setInterval(() => {
     for (const server of [wss, termWss]) {
       for (const ws of server.clients) {
-        if (ws.isAlive === false) { ws.terminate(); continue; }
-        ws.isAlive = false;
-        try { ws.ping(); } catch { /* reaped next round */ }
+        const w = ws as LiveSocket;
+        if (w.isAlive === false) {
+          w.terminate();
+          continue;
+        }
+        w.isAlive = false;
+        try {
+          w.ping();
+        } catch {
+          /* reaped next round */
+        }
       }
     }
   }, WS_PING_MS);
@@ -1503,7 +1969,7 @@ export function createHttp(core, {
   return {
     server,
     whenBroadcastIdle,
-    refreshLan(nextLan) {
+    refreshLan(nextLan: LanSource | (() => LanSource) | null) {
       refreshLanHosts();
       lan = nextLan;
     },

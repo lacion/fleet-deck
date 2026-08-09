@@ -614,7 +614,7 @@ test('a pane refused at the upgrade says so instead of "connection closed"', () 
 });
 
 test('the daemon makes an upgrade impossible to miss and assets free to cache', () => {
-  const src = readFileSync(path.join(HERE, '..', 'scripts', 'fleetd', 'http.mjs'), 'utf8');
+  const src = readFileSync(path.join(HERE, '..', 'scripts', 'fleetd', 'http.ts'), 'utf8');
   assert.match(src, /'cache-control': ext === '\.html' \? 'no-store' : 'public, max-age=31536000, immutable'/,
     'board assets lost their cache contract — a browser may serve a stale shell after an upgrade');
 });

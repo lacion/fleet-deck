@@ -101,7 +101,7 @@ import path from 'node:path';
 import { writeFileSync } from 'node:fs';
 import { openDb } from ${JSON.stringify(path.join(FLEETD_DIR, 'db.ts'))};
 import { createCore } from ${JSON.stringify(path.join(FLEETD_DIR, 'derive.ts'))};
-import { createHttp } from ${JSON.stringify(path.join(FLEETD_DIR, 'http.mjs'))};
+import { createHttp } from ${JSON.stringify(path.join(FLEETD_DIR, 'http.ts'))};
 
 const PORT = Number(process.env.FLEETDECK_PORT);
 const HOME = process.env.FLEETDECK_HOME;
