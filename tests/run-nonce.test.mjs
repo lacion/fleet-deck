@@ -20,7 +20,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readdirSync, rmSync, writeFileSync, utimesSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { pruneRunNonces, runFileFor, runKey, runNonce } from '../scripts/fleetd/run-nonce.mjs';
+import { pruneRunNonces, runFileFor, runKey, runNonce } from '../scripts/fleetd/run-nonce.ts';
 
 function home(t) {
   const dir = mkdtempSync(path.join(tmpdir(), 'fd-runnonce-'));

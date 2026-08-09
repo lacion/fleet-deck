@@ -559,3 +559,29 @@ Format:
   `os.homedir() || '/tmp'` stays `||` — `homedir()` is non-null `string`, so prefer-nullish-coalescing
   never fires. Nine importers (three hook scripts, check-release-gate, repos, settings, fleetd, two
   tests) repointed to `./config.ts`. 39/39 (`port-validation` + `repos`) green vs source and bundle.
+
+### scripts/fleetd/run-nonce.ts — env read, unknown-catch, pid predicate, dead initializers   [NOISE]
+- **What:** four strict frictions, all mechanical: (1) `Number(env.CLAUDE_PID)` tripped TS4111
+  (`noPropertyAccessFromIndexSignature`); (2) the prune loop's `catch (err) { if (err?.code !== 'ESRCH') … }`
+  reads `.code` off an `unknown` binding (`useUnknownInCatchVariables`); (3) `isPid = v => …` was
+  implicit-`any` under `noImplicitAny`, and — since `runKey` calls it on `walked: number | null` — a plain
+  `boolean` return would not narrow `walked` to `number` for the `{ key: walked }` return; (4) eslint
+  `no-useless-assignment` flagged `let comm = ''` / `let stat = ''` because both are overwritten in the
+  `try` and the `catch` returns, so the `''` seed is never read.
+- **Why it's noise:** no control flow or values changed; the nonce keying, /proc walk, mint-on-first-use,
+  and prune-when-provably-dead logic are byte-for-byte the original. Strict only wants the env indexed, the
+  caught error narrowed, the predicate typed, and two dead seeds dropped.
+- **Fix:** (1) bracket access `env['CLAUDE_PID']`. (2) added the same local `errnoCode(e: unknown)` helper
+  paste.ts/db.ts already use (`e instanceof Error && typeof (e as NodeJS.ErrnoException).code === 'string'`);
+  the guard is now `errnoCode(err) !== 'ESRCH'` — identical semantics (a non-Error throw yields `undefined`,
+  which is `!== 'ESRCH'`, so the file is kept, exactly as `err?.code` did). (3) typed `isPid` as a predicate
+  `(v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v > 0` so `walked` narrows at
+  the call site; the extra `typeof` is a runtime no-op for the numbers every caller passes. (4) declared
+  `let comm: string` / `let stat: string` without the seed — TS proves definite assignment because the only
+  path past each `catch` is the `try` succeeding. Params/returns annotated (`RunKey` interface for the
+  `runKey` shape, `home: string`, `env: NodeJS.ProcessEnv`, `ppid: number`, prune options bag
+  `{ minAgeMs?: number; now?: number }`). Four importers (fleet-sessionstart, fleet-hook, retention, the
+  test) repointed to `./run-nonce.ts`. 6/6 (`run-nonce`) green vs source; hook scripts (5/5 across
+  `hook-stubs` + `hook-missing-session-id`) still import it fine under type-stripping; the daemon bundle
+  (prune reaches it via `retention` → `derive`) rebuilds with the `run-nonce.ts` banner and passes
+  `node --check`.

@@ -1,4 +1,4 @@
-// run-nonce.mjs — ONE run nonce per CLI PROCESS, shared by every hook that
+// run-nonce.ts — ONE run nonce per CLI PROCESS, shared by every hook that
 // process fires.
 //
 // WHY THIS EXISTS. SessionEnd is an async hook while SessionStart is
@@ -43,20 +43,43 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 
-const isPid = v => Number.isInteger(v) && v > 0;
+// A `catch` binding is `unknown` under strict; process.kill throws Error
+// objects carrying an optional string `code` (ESRCH when the pid is gone, EPERM
+// when something we may not signal holds it). Narrow to read it without an `any`.
+function errnoCode(e: unknown): string | undefined {
+  return e instanceof Error && typeof (e as NodeJS.ErrnoException).code === 'string'
+    ? (e as NodeJS.ErrnoException).code
+    : undefined;
+}
+
+// Type predicate so `walked` (number | null) narrows to number at the call
+// sites. `typeof v === 'number'` is redundant at runtime with Number.isInteger
+// for the numbers every caller passes, but it lets the predicate accept unknown.
+const isPid = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v > 0;
 
 /** The nearest ancestor that is the Claude CLI, read from /proc (Linux only). */
-function claudeAncestor(startPid) {
+function claudeAncestor(startPid: number): number | null {
   let pid = startPid;
   for (let hops = 0; hops < 12 && isPid(pid) && pid > 1; hops += 1) {
-    let comm = '';
-    try { comm = fs.readFileSync(`/proc/${pid}/comm`, 'utf8').trim(); } catch { return null; }
+    let comm: string;
+    try {
+      comm = fs.readFileSync(`/proc/${pid}/comm`, 'utf8').trim();
+    } catch {
+      return null;
+    }
     if (comm === 'claude') return pid;
     // stat field 4 is ppid; the comm field (2) may contain spaces or parens, so
     // parse from the LAST ')' rather than splitting the whole line.
-    let stat = '';
-    try { stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8'); } catch { return null; }
-    const tail = stat.slice(stat.lastIndexOf(')') + 1).trim().split(/\s+/);
+    let stat: string;
+    try {
+      stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
+    } catch {
+      return null;
+    }
+    const tail = stat
+      .slice(stat.lastIndexOf(')') + 1)
+      .trim()
+      .split(/\s+/);
     const parent = Number(tail[1]);
     if (!isPid(parent)) return null;
     pid = parent;
@@ -64,12 +87,16 @@ function claudeAncestor(startPid) {
   return null;
 }
 
+interface RunKey {
+  key: number;
+  source: 'CLAUDE_PID' | 'proc-ancestor' | 'ppid';
+}
+
 /**
  * The identity the nonce file is keyed on. Exported for tests and diagnostics.
- * @returns {{key:number, source:'CLAUDE_PID'|'proc-ancestor'|'ppid'}}
  */
-export function runKey(env = process.env, ppid = process.ppid) {
-  const declared = Number(env.CLAUDE_PID);
+export function runKey(env: NodeJS.ProcessEnv = process.env, ppid: number = process.ppid): RunKey {
+  const declared = Number(env['CLAUDE_PID']);
   if (isPid(declared)) return { key: declared, source: 'CLAUDE_PID' };
   const walked = process.platform === 'linux' ? claudeAncestor(ppid) : null;
   if (isPid(walked)) return { key: walked, source: 'proc-ancestor' };
@@ -77,21 +104,27 @@ export function runKey(env = process.env, ppid = process.ppid) {
 }
 
 /** Path of the nonce file for a given key — one per CLI process. */
-export const runFileFor = (home, key) => path.join(home, `run-${key}`);
+export const runFileFor = (home: string, key: number): string => path.join(home, `run-${key}`);
 
 /**
  * Read this CLI process's nonce, minting and persisting it on first use.
  * Returns null when HOME is unusable — the caller then leaves the event
  * untagged rather than failing.
  */
-export function runNonce(home, env = process.env, ppid = process.ppid) {
+export function runNonce(
+  home: string,
+  env: NodeJS.ProcessEnv = process.env,
+  ppid: number = process.ppid,
+): string | null {
   if (!home) return null;
   try {
     const file = runFileFor(home, runKey(env, ppid).key);
     try {
       const existing = fs.readFileSync(file, 'utf8').trim();
       if (existing) return existing;
-    } catch { /* first hook of this CLI process */ }
+    } catch {
+      /* first hook of this CLI process */
+    }
     const minted = randomUUID();
     // 0600 like the rest of HOME's state (token, log, db).
     fs.writeFileSync(file, minted, { mode: 0o600 });
@@ -108,13 +141,20 @@ export function runNonce(home, env = process.env, ppid = process.ppid) {
  * only removed when its pid is provably dead AND it is older than `minAgeMs`,
  * so a live CLI's nonce is never pulled out from under it and a just-minted
  * file cannot lose a race with the process that is about to use it.
- * @returns {number} how many were removed
+ * Returns how many were removed.
  */
-export function pruneRunNonces(home, { minAgeMs = 3_600_000, now = Date.now() } = {}) {
+export function pruneRunNonces(
+  home: string,
+  { minAgeMs = 3_600_000, now = Date.now() }: { minAgeMs?: number; now?: number } = {},
+): number {
   if (!home) return 0;
   let removed = 0;
-  let names;
-  try { names = fs.readdirSync(home); } catch { return 0; }
+  let names: string[];
+  try {
+    names = fs.readdirSync(home);
+  } catch {
+    return 0;
+  }
   for (const name of names) {
     const m = /^run-(\d+)$/.exec(name);
     if (!m) continue;
@@ -124,10 +164,17 @@ export function pruneRunNonces(home, { minAgeMs = 3_600_000, now = Date.now() } 
     try {
       if (now - fs.statSync(file).mtimeMs < minAgeMs) continue;
       // Alive (or not ours to judge — EPERM means SOMETHING holds the pid): keep.
-      try { process.kill(pid, 0); continue; } catch (err) { if (err?.code !== 'ESRCH') continue; }
+      try {
+        process.kill(pid, 0);
+        continue;
+      } catch (err) {
+        if (errnoCode(err) !== 'ESRCH') continue;
+      }
       fs.unlinkSync(file);
       removed += 1;
-    } catch { /* raced with another prune, or unreadable — leave it */ }
+    } catch {
+      /* raced with another prune, or unreadable — leave it */
+    }
   }
   return removed;
 }

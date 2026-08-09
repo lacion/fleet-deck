@@ -12380,10 +12380,13 @@ function createSnapshot(ctx) {
 // scripts/fleetd/retention.mjs
 import fs13 from "node:fs";
 
-// scripts/fleetd/run-nonce.mjs
+// scripts/fleetd/run-nonce.ts
 import fs12 from "node:fs";
 import path14 from "node:path";
-var isPid = (v) => Number.isInteger(v) && v > 0;
+function errnoCode2(e) {
+  return e instanceof Error && typeof e.code === "string" ? e.code : void 0;
+}
+var isPid = (v) => typeof v === "number" && Number.isInteger(v) && v > 0;
 function pruneRunNonces(home, { minAgeMs = 36e5, now = Date.now() } = {}) {
   if (!home) return 0;
   let removed = 0;
@@ -12405,7 +12408,7 @@ function pruneRunNonces(home, { minAgeMs = 36e5, now = Date.now() } = {}) {
         process.kill(pid, 0);
         continue;
       } catch (err) {
-        if (err?.code !== "ESRCH") continue;
+        if (errnoCode2(err) !== "ESRCH") continue;
       }
       fs12.unlinkSync(file);
       removed += 1;
