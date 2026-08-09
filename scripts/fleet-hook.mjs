@@ -24,7 +24,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { resolveHome, resolvePort, resolveBase } from './fleetd/config.mjs';
+import { resolveHome, resolvePort, resolveBase } from './fleetd/config.ts';
 import { runNonce } from './fleetd/run-nonce.mjs';
 
 const EVENT = process.argv[2];

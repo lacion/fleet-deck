@@ -24,7 +24,7 @@ import { createMdns, hostLabel } from './mdns.mjs';
 // contract), so the daemon's own claimHome lock and the SessionStart hook's
 // evict-a-stale-daemon path share one implementation and can never drift.
 import { pidRecord, pidIsLive, livePidLooksLikeFleetd, shouldTakeOver, verifyDaemonPid, terminateDaemon } from './takeover.mjs';
-import { resolveHome, resolvePort } from './config.mjs';
+import { resolveHome, resolvePort } from './config.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // The port is the daemon's identity (pidfile, hooks, board URLs), so an

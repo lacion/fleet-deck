@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileP, baseBranch, distillGitStderr, gitStderrDetail, redactGitText } from './exec.ts';
-import { detectCoderWorkspaceRoot } from './config.mjs';
+import { detectCoderWorkspaceRoot } from './config.ts';
 
 const CONTROL_RE = /[\x00-\x1f\x7f]/;
 const SPACE_OR_CONTROL_RE = /[\s\x00-\x1f\x7f]/;

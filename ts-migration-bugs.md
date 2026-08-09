@@ -546,3 +546,16 @@ Format:
   null guard; eslint agrees it's meaningful). **No runtime behavior moved** — 21/21 across `agents-ingest`
   + `audit-cleanup` + `exec-timeout` green vs both source and the regenerated bundle; the test's
   cache-busting dynamic `import('…/agents-poll.ts?audit=…')` resolves under Node type-stripping unchanged.
+
+### scripts/fleetd/config.ts — env reads and two untyped params   [NOISE]
+- **What:** the three `process.env.FLEETDECK_*` / `env.CODER*` reads tripped TS4111
+  (`noPropertyAccessFromIndexSignature`), and `detectCoderWorkspaceRoot`'s destructured options bag
+  plus its inner `present = v => …` helper were implicit-`any` under `noImplicitAny`.
+- **Why it's noise:** pure resolver module, no logic touched; strict only wants env accessed by
+  index and the two params annotated.
+- **Fix:** bracket access on every env read; typed the options bag as
+  `{ env?: NodeJS.ProcessEnv; probeDir?: string }` (matching the runtime defaults) and `present` as
+  `(v: unknown): boolean`. Return types made explicit (`string` / `number` / `string | null`). The
+  `os.homedir() || '/tmp'` stays `||` — `homedir()` is non-null `string`, so prefer-nullish-coalescing
+  never fires. Nine importers (three hook scripts, check-release-gate, repos, settings, fleetd, two
+  tests) repointed to `./config.ts`. 39/39 (`port-validation` + `repos`) green vs source and bundle.

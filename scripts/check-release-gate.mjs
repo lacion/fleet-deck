@@ -31,7 +31,7 @@ const WATCHED = [
   'scripts/fleet-hook.mjs',
   'scripts/fleet-sessionstart.mjs',
   'scripts/fleet-watch.mjs',
-  'scripts/fleetd/config.mjs',
+  'scripts/fleetd/config.ts',
   'scripts/fleetd/takeover.mjs',
   'scripts/fleetd/env-scrub.mjs',
 ];

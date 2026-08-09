@@ -6,7 +6,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'nod
 import os, { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createRepos, parseRepoInput, quickBranchCheck, repoDefaultOrgChoice, repoDefaultOrgProblem } from '../scripts/fleetd/repos.mjs';
-import { detectCoderWorkspaceRoot, resolveHome } from '../scripts/fleetd/config.mjs';
+import { detectCoderWorkspaceRoot, resolveHome } from '../scripts/fleetd/config.ts';
 import { openDb } from '../scripts/fleetd/db.ts';
 import { createCore } from '../scripts/fleetd/derive.mjs';
 import { createStatements } from '../scripts/fleetd/statements.ts';

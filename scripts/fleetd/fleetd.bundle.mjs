@@ -7489,29 +7489,34 @@ import fs7 from "node:fs";
 import os3 from "node:os";
 import path7 from "node:path";
 
-// scripts/fleetd/config.mjs
+// scripts/fleetd/config.ts
 import fs6 from "node:fs";
 import os2 from "node:os";
 import path6 from "node:path";
 function resolveHome() {
   const fallbackBase = os2.homedir() || "/tmp";
-  const configured = process.env.FLEETDECK_HOME?.trim();
+  const configured = process.env["FLEETDECK_HOME"]?.trim();
   if (!configured) return path6.join(fallbackBase, ".fleetdeck");
   if (!path6.isAbsolute(configured)) return path6.resolve(fallbackBase, configured);
   return path6.normalize(configured);
 }
 function resolvePort() {
-  const raw = process.env.FLEETDECK_PORT;
+  const raw = process.env["FLEETDECK_PORT"];
   if (raw === void 0 || raw === "") return 4711;
   const port = Number(raw);
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    throw new Error(`invalid FLEETDECK_PORT ${JSON.stringify(raw)} \u2014 expected an integer port in 1..65535 (port 0 is not supported)`);
+    throw new Error(
+      `invalid FLEETDECK_PORT ${JSON.stringify(raw)} \u2014 expected an integer port in 1..65535 (port 0 is not supported)`
+    );
   }
   return port;
 }
-function detectCoderWorkspaceRoot({ env = process.env, probeDir = "/workspace" } = {}) {
+function detectCoderWorkspaceRoot({
+  env = process.env,
+  probeDir = "/workspace"
+} = {}) {
   const present = (v) => typeof v === "string" && v !== "";
-  const onCoder = present(env.CODER) || present(env.CODER_WORKSPACE_NAME) || present(env.CODER_AGENT_URL);
+  const onCoder = present(env["CODER"]) || present(env["CODER_WORKSPACE_NAME"]) || present(env["CODER_AGENT_URL"]);
   if (!onCoder) return null;
   try {
     if (fs6.statSync(probeDir).isDirectory()) return probeDir;
