@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createHttp } from '../scripts/fleetd/http.mjs';
 import { openDb } from '../scripts/fleetd/db.ts';
-import { createCore } from '../scripts/fleetd/derive.mjs';
+import { createCore } from '../scripts/fleetd/derive.ts';
 import { randomPort } from './helpers/daemon.mjs';
 
 const MDNS_URL = 'http://fleetdeck.local:4711/?t=sekret';

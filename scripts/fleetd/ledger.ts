@@ -71,7 +71,11 @@ export function createLedger(ctx: LedgerCtx) {
   function recordFile(
     sid: string,
     absFile: string | null | undefined,
-    editorCard: CardRow,
+    // Widened from CardRow: events threads the raw session row here, whose
+    // callsign is nullable — CardRow assumed a non-null display name (logged in
+    // ts-migration-bugs.md). ledgerKey consumes only the SessionRef identity;
+    // callsign is display-only and coalesced to `sid` below.
+    editorCard: SessionRef & { callsign: string | null },
   ): Conflict | null {
     if (!absFile) return null;
     const now = Date.now();
@@ -106,15 +110,15 @@ export function createLedger(ctx: LedgerCtx) {
       JSON.stringify([sid, ...rivals]),
     );
     tick(
-      `⚠ conflict: ${editorCard.callsign} and ${rivalNames} both touching ${path.basename(key.rel_path)}`,
+      `⚠ conflict: ${editorCard.callsign ?? sid} and ${rivalNames} both touching ${path.basename(key.rel_path)}`,
     );
     for (const r of rivals) {
       mail(
         r,
         'fleetdeck',
         severity === 'warning'
-          ? `Heads up: ${editorCard.callsign} is also editing ${key.rel_path}. Coordinate before you overwrite each other.`
-          : `Heads up: ${editorCard.callsign} is editing ${key.rel_path} in another worktree of this repo — a future merge conflict announcing itself early.`,
+          ? `Heads up: ${editorCard.callsign ?? sid} is also editing ${key.rel_path}. Coordinate before you overwrite each other.`
+          : `Heads up: ${editorCard.callsign ?? sid} is editing ${key.rel_path} in another worktree of this repo — a future merge conflict announcing itself early.`,
       );
     }
     return { file: key.rel_path, abs, rivals: rivalNames, severity };

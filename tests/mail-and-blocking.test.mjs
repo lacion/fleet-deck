@@ -17,7 +17,7 @@ import { postHook, postJson, getJson } from './helpers/http.mjs';
 import { loadFixture } from './helpers/fixtures.mjs';
 import { makeRepoWithWorktree } from './helpers/gitrepo.mjs';
 import { openDb } from '../scripts/fleetd/db.ts';
-import { createCore } from '../scripts/fleetd/derive.mjs';
+import { createCore } from '../scripts/fleetd/derive.ts';
 
 function findSession(state, sid) {
   return state.sessions.find(s => s.session_id === sid);

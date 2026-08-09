@@ -25,7 +25,7 @@ import { postHook, postJson, getJson, rawRequest } from './helpers/http.mjs';
 import { loadFixture } from './helpers/fixtures.mjs';
 import { waitUntil } from './helpers/wait.mjs';
 import { openDb } from '../scripts/fleetd/db.ts';
-import { createCore } from '../scripts/fleetd/derive.mjs';
+import { createCore } from '../scripts/fleetd/derive.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SHIM = path.join(HERE, '..', 'scripts', 'fleet-hook.mjs');
@@ -100,7 +100,7 @@ test('forged UserPromptSubmit can no longer drain a mailbox or expire holds', as
 import path from 'node:path';
 import { writeFileSync } from 'node:fs';
 import { openDb } from ${JSON.stringify(path.join(FLEETD_DIR, 'db.ts'))};
-import { createCore } from ${JSON.stringify(path.join(FLEETD_DIR, 'derive.mjs'))};
+import { createCore } from ${JSON.stringify(path.join(FLEETD_DIR, 'derive.ts'))};
 import { createHttp } from ${JSON.stringify(path.join(FLEETD_DIR, 'http.mjs'))};
 
 const PORT = Number(process.env.FLEETDECK_PORT);

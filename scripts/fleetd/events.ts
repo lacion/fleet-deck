@@ -55,12 +55,15 @@ interface HookEvent {
 
 // The file-ledger conflict handle threaded recordFile → whisperText. events
 // only forwards it, so a structural mirror of ledger's (un-exported) Conflict
-// keeps this module decoupled from ledger internals.
+// keeps this module decoupled from ledger internals. severity mirrors ledger's
+// exact 'warning' | 'info' union (not a loose string): whisperText's param is
+// contravariant, so a wider string here makes ledger's whisperText un-passable
+// as this ctx method (logged in ts-migration-bugs.md).
 interface Conflict {
   file: string;
   abs: string;
   rivals: string;
-  severity: string;
+  severity: 'warning' | 'info';
 }
 
 interface ApplyResult {

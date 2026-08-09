@@ -392,7 +392,7 @@ export function createQuestions(
   function create(
     kind: string,
     sessionId: string | null | undefined,
-    payload?: QuestionPayload | null,
+    payload?: unknown,
   ): QuestionRow {
     const now = Date.now();
     // The window resolves per creation when a resolver is wired: the hold_ms
@@ -411,7 +411,11 @@ export function createQuestions(
     // parked socket to fail open and nothing about it expires on a timer (its
     // own grace chain is daemon ephemera, keyed off the source row). Stamping
     // one would make the board countdown promise a fail-open that never comes.
-    const isRearm = payload?.rearmed === true;
+    const isRearm =
+      typeof payload === 'object' &&
+      payload !== null &&
+      'rearmed' in payload &&
+      payload.rearmed === true;
     const expiresAt = HOLD_KINDS.has(kind) && !isRearm ? now + windowMs : null; // freeform: no hold window
     const info = q.insert.run(
       sessionId ?? 'unknown',

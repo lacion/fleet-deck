@@ -26,7 +26,10 @@ interface PlanRow {
   plan_id: number;
   session_id: string;
   callsign: string | null;
-  status: PlanStatus;
+  // Free string from the (still-JS) statements layer; PlanStatus (above)
+  // documents the domain and gate-checks EXECUTABLE_FROM's literals, but the
+  // column itself is not narrowed here — statements.mjs owns the raw value.
+  status: string;
   question_id: number | null;
   plan_md: string | null;
 }
@@ -112,7 +115,11 @@ export function createPlans(ctx: PlansCtx) {
   // planRetired/settleTerminalPlans, UX 2.2). 404 unknown.
   // Execution/assignment rides the daemon-side assignPlan below (BUG-039);
   // this endpoint only records the verdict.
-  const EXECUTABLE_FROM = new Set<string>(['proposed', 'approved', 'captured']);
+  const EXECUTABLE_FROM = new Set<string>([
+    'proposed',
+    'approved',
+    'captured',
+  ] satisfies PlanStatus[]);
   function planMark(plan_id: string | number, body: PlanMarkBody | null | undefined): PlanResult {
     const p = q.getPlan.get(Number(plan_id));
     if (!p) return { status: 404, body: { ok: false, err: 'no such plan' } };

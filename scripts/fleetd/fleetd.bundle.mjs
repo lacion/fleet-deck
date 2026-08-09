@@ -4130,7 +4130,7 @@ function openDb(file, fsImpl = { chmodSync, statSync }) {
   return db2;
 }
 
-// scripts/fleetd/derive.mjs
+// scripts/fleetd/derive.ts
 import fs14 from "node:fs";
 import path15 from "node:path";
 
@@ -4410,7 +4410,7 @@ function createQuestions(db2, {
         windowMs = holdMs;
       }
     }
-    const isRearm = payload?.rearmed === true;
+    const isRearm = typeof payload === "object" && payload !== null && "rearmed" in payload && payload.rearmed === true;
     const expiresAt = HOLD_KINDS.has(kind) && !isRearm ? now + windowMs : null;
     const info = q.insert.run(
       sessionId ?? "unknown",
@@ -8161,7 +8161,7 @@ function createRepos(ctx) {
     if (value == null) return null;
     const problem = repoDefaultOrgProblem(value);
     if (problem) throw namedError(400, problem);
-    return value;
+    return typeof value === "string" ? value : null;
   }
   function setReposDir(value) {
     if (value === null) {
@@ -10171,13 +10171,13 @@ function createLedger(ctx) {
       JSON.stringify([sid, ...rivals])
     );
     tick(
-      `\u26A0 conflict: ${editorCard.callsign} and ${rivalNames} both touching ${path11.basename(key.rel_path)}`
+      `\u26A0 conflict: ${editorCard.callsign ?? sid} and ${rivalNames} both touching ${path11.basename(key.rel_path)}`
     );
     for (const r of rivals) {
       mail(
         r,
         "fleetdeck",
-        severity === "warning" ? `Heads up: ${editorCard.callsign} is also editing ${key.rel_path}. Coordinate before you overwrite each other.` : `Heads up: ${editorCard.callsign} is editing ${key.rel_path} in another worktree of this repo \u2014 a future merge conflict announcing itself early.`
+        severity === "warning" ? `Heads up: ${editorCard.callsign ?? sid} is also editing ${key.rel_path}. Coordinate before you overwrite each other.` : `Heads up: ${editorCard.callsign ?? sid} is editing ${key.rel_path} in another worktree of this repo \u2014 a future merge conflict announcing itself early.`
       );
     }
     return { file: key.rel_path, abs, rivals: rivalNames, severity };
@@ -10471,7 +10471,11 @@ function createCommands(ctx) {
 // scripts/fleetd/plans.ts
 function createPlans(ctx) {
   const { q, tick, onMutate, mail, resolveTargets } = ctx;
-  const EXECUTABLE_FROM = /* @__PURE__ */ new Set(["proposed", "approved", "captured"]);
+  const EXECUTABLE_FROM = /* @__PURE__ */ new Set([
+    "proposed",
+    "approved",
+    "captured"
+  ]);
   function planMark(plan_id, body) {
     const p = q.getPlan.get(Number(plan_id));
     if (!p) return { status: 404, body: { ok: false, err: "no such plan" } };
@@ -13163,7 +13167,7 @@ function createRetention(ctx) {
   async function retentionSweep(now = Date.now()) {
     let changed = false;
     const spawned = [];
-    const overrideMode = !!tmuxAdapter.spawnOverrideCmd();
+    const overrideMode = !!tmuxAdapter.spawnOverrideCmd?.();
     const candidates = [
       ...q.presumeDeadSessions.all(now - PRESUME_DEAD_MS),
       ...q.presumeDeadWorkingSessions.all(now - PRESUME_DEAD_WORKING_MS)
@@ -13511,11 +13515,24 @@ function createRetention(ctx) {
   return { retentionSweep, cleanup, dismissSession, dismissRetry };
 }
 
-// scripts/fleetd/derive.mjs
-var CALLSIGNS = ["falcon", "otter", "raven", "lynx", "orca", "wren", "viper", "heron", "badger", "comet", "ember", "drift"];
+// scripts/fleetd/derive.ts
+var CALLSIGNS = [
+  "falcon",
+  "otter",
+  "raven",
+  "lynx",
+  "orca",
+  "wren",
+  "viper",
+  "heron",
+  "badger",
+  "comet",
+  "ember",
+  "drift"
+];
 function createCore(db2, {
   port = 4711,
-  home = process.env.FLEETDECK_HOME || "",
+  home = process.env["FLEETDECK_HOME"] ?? "",
   // The default defers: q doesn't exist until createStatements runs below, so
   // the hold_ms settings row is threaded in after (see the questions wiring).
   holdMs = null,
@@ -13534,7 +13551,9 @@ function createCore(db2, {
   const t0 = Date.now();
   let onMutateImpl = () => {
   };
-  const onMutate = () => onMutateImpl();
+  const onMutate = () => {
+    onMutateImpl();
+  };
   const STALE_MS = envInt("FLEETDECK_STALE_MS", 6e5, { min: 1 });
   const NUDGE_MS = envInt("FLEETDECK_NUDGE_MS", 8e3, { min: 1 });
   const SPAWN_REGISTER_MS = envInt("FLEETDECK_SPAWN_REGISTER_MS", 9e4, { min: 1 });
@@ -13542,7 +13561,9 @@ function createCore(db2, {
   const PANE_MAIL_GRACE_MS = envInt("FLEETDECK_PANE_MAIL_GRACE_MS", 1500, { min: 0 });
   const MAIL_CLAIM_LEASE_MS = envInt("FLEETDECK_MAIL_CLAIM_LEASE_MS", 3e4, { min: 1 });
   const PRESUME_DEAD_MS = envInt("FLEETDECK_PRESUME_DEAD_MS", 108e5, { min: 1 });
-  const PRESUME_DEAD_WORKING_MS = envInt("FLEETDECK_PRESUME_DEAD_WORKING_MS", PRESUME_DEAD_MS * 3, { min: 1 });
+  const PRESUME_DEAD_WORKING_MS = envInt("FLEETDECK_PRESUME_DEAD_WORKING_MS", PRESUME_DEAD_MS * 3, {
+    min: 1
+  });
   const RETAIN_OFFLINE_MS = envInt("FLEETDECK_RETAIN_OFFLINE_MS", 864e5, { min: 1 });
   const RC_HARVEST_MS = envInt("FLEETDECK_RC_HARVEST_MS", 2500, { min: 0 });
   const ADOPT_ARM_MS = envInt("FLEETDECK_ADOPT_ARM_MS", 18e5, { min: 1 });
@@ -13590,7 +13611,7 @@ function createCore(db2, {
     // live (settings.mjs's resolveHoldMsRaw, threaded through ctx below — the
     // arrow defers the lookup until the first hold, by which time createSettings
     // has run).
-    resolveHoldWindow: () => resolveHoldMs(process.env, () => ctx.resolveHoldMsRaw?.() ?? null),
+    resolveHoldWindow: () => resolveHoldMs(process.env, () => ctx.resolveHoldMsRaw() ?? null),
     // UX 2.1 re-arm: how long after a hold expiry with NO session activity the
     // question re-raises as a mail-delivered card (0 disables — some existing
     // test suites would otherwise meet an unexpected second card).
@@ -13600,9 +13621,13 @@ function createCore(db2, {
     // the mailbox clamp (reject-before-settle instead of silent truncation).
     // Threaded from mail.ts so the two can never drift apart.
     mailMaxLen: MAIL_MAX_LEN,
-    tick: (msg) => tick(msg),
+    tick: (msg) => {
+      tick(msg);
+    },
     callsignOf: (sid) => q.getSession.get(sid)?.callsign ?? null,
-    onChange: () => onMutate(),
+    onChange: () => {
+      onMutate();
+    },
     // v1.3 plan library: the plans table lives here; questions.mjs only needs
     // the link (plan_id for /state) and the answer-path status flips. The
     // flip is guarded to 'proposed' — the answer paths describe the freshly
@@ -13611,7 +13636,7 @@ function createCore(db2, {
     planIdFor: (questionId) => q.planByQuestion.get(questionId)?.plan_id ?? null,
     planAnswered: (questionId, behavior) => {
       const p = q.planByQuestion.get(questionId);
-      if (!p || p.status !== "proposed") return;
+      if (p?.status !== "proposed") return;
       const status = behavior === "allow" ? "approved" : behavior === "capture" ? "captured" : "rejected";
       q.setPlanStatus.run(status, p.plan_id);
       tick(`\u{1F4DA} plan #${p.plan_id} (${p.callsign ?? p.session_id}) ${status}`);
@@ -13619,7 +13644,9 @@ function createCore(db2, {
     // UX 2.2: the retirement seam — every unanswered retirement of a
     // plan-linked question flows through planRetired (defined above; same-tick
     // settle only when the retire itself was session activity).
-    onRetired: (row, opts) => planRetired(row, opts)
+    onRetired: (row, opts) => {
+      planRetired(row, opts);
+    }
   });
   const modelMemo = /* @__PURE__ */ new Map();
   function stampTranscriptFloor(sid, transcriptPath) {
@@ -13643,15 +13670,20 @@ function createCore(db2, {
     modelMemo.set(sid, { ...memo, size, model: model ?? memo.model });
     return model;
   }
+  function callsignAt(index) {
+    const animal = CALLSIGNS[index % CALLSIGNS.length];
+    if (animal === void 0) throw new Error("fleetd: callsign rotation index out of range");
+    return animal;
+  }
   function assignCallsign(sid, ticket = null) {
-    const start = q.countSessions.get().n % CALLSIGNS.length;
+    const start = (q.countSessions.get()?.n ?? 0) % CALLSIGNS.length;
     if (ticket) {
       for (let i = 0; i < CALLSIGNS.length; i++) {
-        const cand = CALLSIGNS[(start + i) % CALLSIGNS.length] + "-" + ticket;
+        const cand = callsignAt(start + i) + "-" + ticket;
         if (!q.callsignTaken.get(cand, cand, sid)) return cand;
       }
     }
-    return CALLSIGNS[start] + "-" + String(sid).slice(0, 4);
+    return callsignAt(start) + "-" + sid.slice(0, 4);
   }
   function card(sid, cwd = null) {
     let c = q.getSession.get(sid);
@@ -13665,10 +13697,15 @@ function createCore(db2, {
       c = q.getSession.get(sid);
       tick(`${callsign} joined the fleet`);
     }
+    if (!c) throw new Error("fleetd: session row vanished immediately after insert");
     return c;
   }
-  function renameCallsign(sid, c, next, { tickMsg, extra = {} }) {
+  function renameCallsign(sid, c, next, {
+    tickMsg,
+    extra = {}
+  }) {
     const previous = c.callsign;
+    if (previous == null) return { ok: false, reason: "target session has no callsign to rename" };
     q.rememberAlias.run(sid, previous, Date.now());
     updateSession(sid, {
       callsign: next,
@@ -13686,7 +13723,8 @@ function createCore(db2, {
   }
   function applyTicket(sid, ticket, source) {
     const c = q.getSession.get(sid);
-    if (!c || c.ended_at != null) return { ok: false, reason: "no live session for that target" };
+    if (!c || c.ended_at != null || c.callsign == null)
+      return { ok: false, reason: "no live session for that target" };
     if (source === "branch" && (c.ticket != null || c.ticket_source != null)) {
       return { ok: false, reason: "ticket already set \u2014 auto-detect fires once" };
     }
@@ -13714,7 +13752,8 @@ function createCore(db2, {
   }
   function applyCustomName(sid, suffix) {
     const c = q.getSession.get(sid);
-    if (!c || c.ended_at != null) return { ok: false, reason: "no live session for that target" };
+    if (!c || c.ended_at != null || c.callsign == null)
+      return { ok: false, reason: "no live session for that target" };
     const animal = animalOf(c.callsign);
     if (suffix == null && c.custom_suffix == null) {
       return { ok: true, renamed: false, callsign: c.callsign };
@@ -13744,11 +13783,15 @@ function createCore(db2, {
     if (!cwd) return null;
     const candidates = q.clearedPredecessors.all(cwd, now - CLEAR_SUCCESSION_MS, sid);
     if (!candidates.length) return null;
-    if (candidates.length === 1) return candidates[0];
     const [first, second] = candidates;
-    if (first.cleared_at - second.cleared_at > CLEAR_AMBIGUITY_MS) return first;
+    if (first === void 0) return null;
+    if (candidates.length === 1) return first;
+    if (second !== void 0 && first.cleared_at != null && second.cleared_at != null && first.cleared_at - second.cleared_at > CLEAR_AMBIGUITY_MS) {
+      return first;
+    }
     const paned = candidates.filter((c) => hasLivePane(c.session_id));
-    return paned.length === 1 ? paned[0] : null;
+    const [onlyPaned] = paned;
+    return paned.length === 1 && onlyPaned !== void 0 ? onlyPaned : null;
   }
   function succeedForwardFromClear(prevSid, cwd, { settled = false } = {}) {
     const prev = q.getSession.get(prevSid);
@@ -13758,12 +13801,12 @@ function createCore(db2, {
     const cands = [];
     for (const b of born) {
       if (b.session_id === prevSid) continue;
-      const heir = q.getSession.get(b.session_id);
-      if (!heir || heir.archived_at != null || heir.ended_at != null) continue;
-      if (heir.cwd !== cwd || heir.succeeded_by != null) continue;
-      if (q.successorClaimed.get(heir.session_id)) continue;
-      if (q.spawnBySession.get(heir.session_id)) continue;
-      cands.push(heir);
+      const heir2 = q.getSession.get(b.session_id);
+      if (!heir2 || heir2.archived_at != null || heir2.ended_at != null) continue;
+      if (heir2.cwd !== cwd || heir2.succeeded_by != null) continue;
+      if (q.successorClaimed.get(heir2.session_id)) continue;
+      if (q.spawnBySession.get(heir2.session_id)) continue;
+      cands.push(heir2);
     }
     if (cands.length !== 1) return null;
     const rivals = q.clearedPredecessors.all(cwd, now - CLEAR_SUCCESSION_MS, prevSid);
@@ -13777,10 +13820,13 @@ function createCore(db2, {
       }, CLEAR_SETTLE_MS).unref();
       return null;
     }
-    return succeedSession(prev, cands[0].session_id, { rename: true });
+    const [heir] = cands;
+    if (heir === void 0) return null;
+    return succeedSession(prev, heir.session_id, { rename: true });
   }
   function succeedSession(prev, sid, { rename: rename2 = false } = {}) {
     const now = Date.now();
+    if (prev.callsign == null) return null;
     const callsign = prev.callsign;
     db2.exec("BEGIN IMMEDIATE");
     try {
@@ -13835,7 +13881,7 @@ function createCore(db2, {
     }
     modelMemo.delete(prev.session_id);
     notifyWatchers(prev.session_id);
-    tick(`\u{1F9F9} ${callsign} cleared its context \u2014 same card, new session id (${String(sid).slice(0, 8)})`);
+    tick(`\u{1F9F9} ${callsign} cleared its context \u2014 same card, new session id (${sid.slice(0, 8)})`);
     onMutate();
     return callsign;
   }
@@ -13844,7 +13890,13 @@ function createCore(db2, {
     q.trimTicker.run();
   }
   function logEvent(sid, hookEvent, toolName, note) {
-    q.insertEvent.run(sid, hookEvent ?? null, toolName ?? null, note ?? null, Date.now());
+    q.insertEvent.run(
+      sid,
+      hookEvent,
+      toolName ?? null,
+      note ?? null,
+      Date.now()
+    );
   }
   const acquireWorktreePathLock = createKeyedMutex();
   const ctx = {
@@ -13908,19 +13960,22 @@ function createCore(db2, {
     mail,
     drainMail,
     ackMail,
-    resolveTargets,
     notifyWatchers,
     addWatchWaiter,
-    hasWatchWaiter,
-    ownedPaneRow,
-    ownedPaneDeliverable,
     tryOwnedPaneDelivery,
     claimMail,
     watchInfo,
     postMail,
     registerWatchGen
   } = ctx;
-  function tombstoneCard(sid, { note, at = Date.now(), tickMsg = null, notify = true, forgetModel = false, mutate = false }) {
+  function tombstoneCard(sid, {
+    note,
+    at = Date.now(),
+    tickMsg = null,
+    notify = true,
+    forgetModel = false,
+    mutate = false
+  }) {
     updateSession(sid, { col: "offline", ended_at: at, note });
     if (forgetModel) modelMemo.delete(sid);
     if (tickMsg) tick(tickMsg);
@@ -13932,7 +13987,6 @@ function createCore(db2, {
   Object.assign(ctx, createSettings(ctx));
   const { resolveReposDir, setSettings, resolveSettings, setRepoSetupEntry } = ctx;
   Object.assign(ctx, createLedger(ctx));
-  const { recordFile, whisperText } = ctx;
   Object.assign(ctx, createIngest(ctx));
   const { ingestAgentsPoll } = ctx;
   Object.assign(ctx, createCommands(ctx));
@@ -13974,9 +14028,6 @@ function createCore(db2, {
     spawnLivenessTick,
     reconcileSpawns,
     reconcileClearForks,
-    scheduleRegistrationRemoteHarvest,
-    forgetSpawn,
-    spawnState,
     armUnsupervised
   } = ctx;
   Object.assign(ctx, createEvents(ctx));
@@ -13994,15 +14045,20 @@ function createCore(db2, {
   const { snapshot, fleetSize, terminalSpawn } = ctx;
   Object.assign(ctx, createRetention(ctx));
   const { retentionSweep, cleanup, dismissSession, dismissRetry } = ctx;
-  const bootRetention = retentionSweep().catch((err) => console.error("fleetd retention sweep error:", err));
-  setInterval(() => {
-    try {
-      q.pruneEvents.run(Date.now() - 24 * 3600 * 1e3);
-    } catch {
-    }
-    retentionSweep().catch(() => {
-    });
-  }, 10 * 60 * 1e3).unref();
+  const bootRetention = retentionSweep().catch((err) => {
+    console.error("fleetd retention sweep error:", err);
+  });
+  setInterval(
+    () => {
+      try {
+        q.pruneEvents.run(Date.now() - 24 * 3600 * 1e3);
+      } catch {
+      }
+      retentionSweep().catch(() => {
+      });
+    },
+    10 * 60 * 1e3
+  ).unref();
   return {
     applyEvent,
     hookSessionStart,

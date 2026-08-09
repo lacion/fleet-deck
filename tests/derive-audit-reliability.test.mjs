@@ -32,7 +32,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { openDb } from '../scripts/fleetd/db.ts';
 import { createStatements } from '../scripts/fleetd/statements.ts';
-import { claudeTranscriptPath, createCore } from '../scripts/fleetd/derive.mjs';
+import { claudeTranscriptPath, createCore } from '../scripts/fleetd/derive.ts';
 
 const HOUR = 3_600_000;
 

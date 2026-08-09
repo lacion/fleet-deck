@@ -8,7 +8,7 @@ import path from 'node:path';
 import { createRepos, parseRepoInput, quickBranchCheck, repoDefaultOrgChoice, repoDefaultOrgProblem } from '../scripts/fleetd/repos.ts';
 import { detectCoderWorkspaceRoot, resolveHome } from '../scripts/fleetd/config.ts';
 import { openDb } from '../scripts/fleetd/db.ts';
-import { createCore } from '../scripts/fleetd/derive.mjs';
+import { createCore } from '../scripts/fleetd/derive.ts';
 import { createStatements } from '../scripts/fleetd/statements.ts';
 import { startDaemon, randomPort } from './helpers/daemon.mjs';
 import { getJson, postHook, postJson } from './helpers/http.mjs';

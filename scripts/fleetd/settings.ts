@@ -218,7 +218,11 @@ export function createSettings(ctx: SettingsCtx) {
   // and fails LOUD (410 naming this source) if a CONFIGURED root has vanished —
   // it must never silently fall through to home. Pure: resolves a path, never
   // stats it here (files.mjs owns the realpath + existence wall).
-  function browseRootChoice() {
+  function browseRootChoice(): {
+    value: string | null;
+    source: 'override' | 'env' | 'detected' | 'default';
+    resolved: string | null;
+  } {
     const setting = readSetting('browse_root');
     if (setting != null) {
       return { value: setting, source: 'override', resolved: path.resolve(expandHome(setting)) };

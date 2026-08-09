@@ -1,4 +1,4 @@
-// derive.mjs — fleetd core: the spike's applyEvent state derivation ported
+// derive.ts — fleetd core: the spike's applyEvent state derivation ported
 // onto SQLite, plus file ledger / conflicts (F4), mail (F2), the SessionStart
 // brief (F1) and the /state snapshot.
 //
@@ -13,7 +13,8 @@ import { ticketFromBranch, animalOf } from './tickets.ts';
 import { createQuestions, resolveHoldMs } from './questions.ts';
 import { lastAssistantModel } from './transcript.ts';
 import * as defaultTmuxAdapter from './spawn.ts';
-import { createStatements } from './statements.ts';
+import { createStatements, type Statements, type SessionRow } from './statements.ts';
+import type { SqlValue, SqliteHandle } from './sqlite.ts';
 import { createWorktrees } from './worktrees.ts';
 import { createRepos } from './repos.ts';
 import { createSettings } from './settings.ts';
@@ -33,10 +34,210 @@ import { createKeyedMutex, envInt } from './helpers.ts';
 // Public re-exports: these helpers moved to helpers.mjs, but tests and other
 // scripts import them from derive.mjs — keep them importable from here.
 export {
-  mungeClaudeProjectCwd, claudeTranscriptPath, claudeEnvArgvPrefix, spawnRowRevivable,
+  mungeClaudeProjectCwd,
+  claudeTranscriptPath,
+  claudeEnvArgvPrefix,
+  spawnRowRevivable,
 } from './helpers.ts';
 
-const CALLSIGNS = ['falcon', 'otter', 'raven', 'lynx', 'orca', 'wren', 'viper', 'heron', 'badger', 'comet', 'ember', 'drift'];
+// ---------------------------------------------------------------- ctx typing
+// The shared closure state threaded into every extracted module-factory. The
+// literal is assembled below and cast `as unknown as CoreCtx`, so the literal
+// fields themselves are not individually checked — only the CONSUMERS
+// (createX(ctx)) are, and CoreCtx must be a superset of every FooCtx those
+// factories declare. BaseCtx therefore carries ONLY the locally-produced /
+// primitive fields (never anything a factory returns), so the intersection
+// with the factory ReturnTypes below has no colliding keys.
+
+// modelMemo values (sid → last transcript read). Kept as a local Map with full
+// typing here; BaseCtx exposes it to consumers as Map<string, unknown> (events
+// only needs identity), which the `as unknown as CoreCtx` cast bridges.
+interface ModelMemo {
+  floor: number;
+  size: number;
+  model: string | null;
+}
+
+// The tmux adapter surface derive itself calls — a structural slice of the
+// spawn.ts module (the production default) that is also satisfied by the
+// narrower test adapters. Derived from the module's own exports so it can never
+// drift from what spawn.ts ships.
+type SpawnModule = typeof import('./spawn.ts');
+type ScopedWindow = NonNullable<Awaited<ReturnType<SpawnModule['listScopedWindows']>>>[number];
+interface TmuxAdapter {
+  // Optional: the production spawn.ts ships it, but the narrower test adapters
+  // legitimately omit it — the daemon treats "absent" as "no override wired".
+  spawnOverrideCmd?: SpawnModule['spawnOverrideCmd'];
+  exactWindowTarget?: SpawnModule['exactWindowTarget'];
+  listScopedWindows: SpawnModule['listScopedWindows'];
+  paneCurrentCommand: SpawnModule['paneCurrentCommand'];
+  pasteText: SpawnModule['pasteText'];
+  sendEnter: SpawnModule['sendEnter'];
+  killWindowVerified: SpawnModule['killWindowVerified'];
+}
+
+// The offline-tombstone options. This is deliberately a SUPERTYPE of
+// retention.ts's own TombstoneOpts (more fields optional), so CoreCtx's
+// tombstoneCard stays contravariantly assignable to that consumer.
+interface TombstoneOpts {
+  note: string;
+  at?: number;
+  tickMsg?: string | null;
+  notify?: boolean;
+  forgetModel?: boolean;
+  mutate?: boolean;
+}
+
+// The rename-path result. commands.ts consumes it as RenameResult
+// (= Record<string, unknown>) and events.ts as { ok: boolean }. The explicit
+// `[key: string]: unknown` index signature is what makes it assignable to
+// Record<string, unknown>: an interface has no implicit one, and a type alias
+// (which would get one) is forbidden here by the linter's
+// consistent-type-definitions rule (logged in ts-migration-bugs.md).
+interface RenameOutcome {
+  ok: boolean;
+  renamed?: boolean;
+  callsign?: string | null;
+  ticket?: string | null;
+  previous?: string;
+  reason?: string;
+  [key: string]: unknown;
+}
+
+// createSpawns lives in spawns.mjs (untyped → `any`), so its surface is
+// hand-declared: the 10 names derive destructures plus the 3 (spawnState,
+// forgetSpawn, scheduleRegistrationRemoteHarvest) that only downstream typed
+// factories (snapshot/events/retention) read off ctx. adoptSession is spelled
+// out because events.ts and retention.ts both constrain its exact shape.
+interface SpawnsSurface {
+  spawn: (...args: unknown[]) => unknown;
+  revive: (...args: unknown[]) => unknown;
+  adoptSession: (
+    sid: string,
+    opts: { dangerously_skip_permissions: boolean },
+    meta: { deferred: boolean },
+  ) => Promise<{ status: number; body?: { reason?: string } } | null | undefined>;
+  enableRemote: (...args: unknown[]) => unknown;
+  spawnKill: (...args: unknown[]) => unknown;
+  spawnCapability: () => unknown;
+  spawnLivenessTick: (...args: unknown[]) => unknown;
+  reconcileSpawns: (...args: unknown[]) => unknown;
+  reconcileClearForks: (...args: unknown[]) => unknown;
+  scheduleRegistrationRemoteHarvest: (spawnId: string) => void;
+  forgetSpawn: (spawnId: string) => void;
+  spawnState: { orphans: unknown };
+  armUnsupervised: (...args: unknown[]) => unknown;
+}
+
+// Locally-produced closure state (statements, the session writer, tick /
+// logEvent / card, model tracking, the scoped-window resolver, env knobs, the
+// tmux adapter, the questions relay). Everything here is minted in createCore
+// itself; nothing is a factory return, so this never collides with the factory
+// ReturnTypes CoreCtx intersects below.
+interface BaseCtx {
+  db: SqliteHandle;
+  port: number;
+  home: string;
+  holdMs: number | null;
+  t0: number;
+  version: string;
+  STALE_MS: number;
+  NUDGE_MS: number;
+  SPAWN_REGISTER_MS: number;
+  SETUP_REGISTER_MS: number;
+  PANE_MAIL_GRACE_MS: number;
+  MAIL_PENDING_MAX?: number;
+  MAIL_PENDING_MAX_BYTES?: number;
+  MAIL_PANE_BATCH?: number;
+  MAIL_PANE_BATCH_BYTES?: number;
+  MAIL_CLAIM_LEASE_MS: number;
+  PRESUME_DEAD_MS: number;
+  PRESUME_DEAD_WORKING_MS: number;
+  RETAIN_OFFLINE_MS: number;
+  RC_HARVEST_MS: number;
+  RETAIN_LEDGER_MS: number;
+  ADOPT_ARM_MS: number;
+  ADOPT_DELAY_MS: number;
+  SNAPSHOT_FILES_PER_SESSION: number;
+  CLEAR_SUCCESSION_MS: number;
+  q: Statements['q'];
+  updateSession: Statements['updateSession'];
+  onMutate: () => void;
+  tmuxAdapter: TmuxAdapter;
+  questions: ReturnType<typeof createQuestions>;
+  settleTerminalPlans: (sid: string) => void;
+  findScopedWindow: (name: string | null) => Promise<ScopedWindow | null | undefined>;
+  scopedPaneTarget: (win: { window: string; window_id: string }) => string;
+  tick: (msg: string) => void;
+  logEvent: (sid: string, hookEvent: string, toolName?: unknown, note?: unknown) => void;
+  card: (sid: string, cwd?: string | null) => SessionRow & { callsign: string };
+  assignCallsign: (sid: string, ticket?: string | null) => string;
+  applyTicket: (sid: string, ticket: string, source: string) => RenameOutcome;
+  applyCustomName: (sid: string, suffix: string | null) => RenameOutcome;
+  modelMemo: Map<string, unknown>;
+  stampTranscriptFloor: (sid: string, transcriptPath?: string | null) => void;
+  readTranscriptModel: (sid: string, transcriptPath: string) => string | null;
+  hasLivePane: (sid: string) => boolean;
+  findClearedPredecessor: (
+    sid: string,
+    cwd: string | null | undefined,
+    now: number,
+  ) => SessionRow | null;
+  succeedSession: (prev: SessionRow, sid: string, opts?: { rename?: boolean }) => string | null;
+  succeedForwardFromClear: (
+    prevSid: string,
+    cwd: string | null | undefined,
+    opts?: { settled?: boolean },
+  ) => string | null;
+  acquireWorktreePathLock: ReturnType<typeof createKeyedMutex>;
+  tombstoneCard: (sid: string, opts: TombstoneOpts) => void;
+  claimWorktreeCustody: (p: string, owner: string) => (() => void) | null;
+}
+
+// The full ctx every factory sees: the locals plus the untyped spawns surface
+// plus each typed factory's own ReturnType (createSpawns is excluded — it is
+// `any`). Order-independent; keys are disjoint by construction.
+type CoreCtx = BaseCtx &
+  SpawnsSurface &
+  ReturnType<typeof createMail> &
+  ReturnType<typeof createRepos> &
+  ReturnType<typeof createSettings> &
+  ReturnType<typeof createLedger> &
+  ReturnType<typeof createIngest> &
+  ReturnType<typeof createCommands> &
+  ReturnType<typeof createPlans> &
+  ReturnType<typeof createWorktrees> &
+  ReturnType<typeof createFiles> &
+  ReturnType<typeof createEvents> &
+  ReturnType<typeof createSnapshot> &
+  ReturnType<typeof createRetention>;
+
+interface CreateCoreOptions {
+  port?: number;
+  home?: string;
+  holdMs?: number | null;
+  tmuxAdapter?: TmuxAdapter;
+  version?: string;
+  MAIL_PENDING_MAX?: number;
+  MAIL_PENDING_MAX_BYTES?: number;
+  MAIL_PANE_BATCH?: number;
+  MAIL_PANE_BATCH_BYTES?: number;
+}
+
+const CALLSIGNS = [
+  'falcon',
+  'otter',
+  'raven',
+  'lynx',
+  'orca',
+  'wren',
+  'viper',
+  'heron',
+  'badger',
+  'comet',
+  'ember',
+  'drift',
+];
 // CONFLICT_WINDOW_MS lives in ledger.mjs now.
 // MAIL_MAX_LEN + clampMail (the surrogate-safe bound) live in mail.ts now.
 // EDIT_TOOLS + TEST_RUNNER_RE live in events.ts now.
@@ -60,28 +261,38 @@ const CALLSIGNS = ['falcon', 'otter', 'raven', 'lynx', 'orca', 'wren', 'viper', 
 // spawnRowRevivable / claudeEnvArgvPrefix now live in helpers.mjs (re-exported
 // above).
 
-export function createCore(db, {
-  port = 4711,
-  home = process.env.FLEETDECK_HOME || '',
-  // The default defers: q doesn't exist until createStatements runs below, so
-  // the hold_ms settings row is threaded in after (see the questions wiring).
-  holdMs = null,
-  tmuxAdapter = defaultTmuxAdapter,
-  // Daemon version, threaded from fleetd.mjs's package.json read so the
-  // snapshot can tell the board which build is serving it (upgrade-takeover
-  // observability). '0.0.0' mirrors /health's standalone-install fallback.
-  version = '0.0.0',
-  // BUG-128: test-only overrides for the mail pending budget and pane batch
-  // bounds (mail.ts defaults to its own constants when these are undefined).
-  MAIL_PENDING_MAX, MAIL_PENDING_MAX_BYTES, MAIL_PANE_BATCH, MAIL_PANE_BATCH_BYTES,
-} = {}) {
+export function createCore(
+  db: SqliteHandle,
+  {
+    port = 4711,
+    home = process.env['FLEETDECK_HOME'] ?? '',
+    // The default defers: q doesn't exist until createStatements runs below, so
+    // the hold_ms settings row is threaded in after (see the questions wiring).
+    holdMs = null,
+    tmuxAdapter = defaultTmuxAdapter,
+    // Daemon version, threaded from fleetd.mjs's package.json read so the
+    // snapshot can tell the board which build is serving it (upgrade-takeover
+    // observability). '0.0.0' mirrors /health's standalone-install fallback.
+    version = '0.0.0',
+    // BUG-128: test-only overrides for the mail pending budget and pane batch
+    // bounds (mail.ts defaults to its own constants when these are undefined).
+    MAIL_PENDING_MAX,
+    MAIL_PENDING_MAX_BYTES,
+    MAIL_PANE_BATCH,
+    MAIL_PANE_BATCH_BYTES,
+  }: CreateCoreOptions = {},
+) {
   const t0 = Date.now();
   // onMutate is reassignable through the setter on the returned surface; the
   // extracted modules capture the STABLE wrapper (ctx.onMutate below), which
   // always calls the current impl — so a late setter reassignment still reaches
   // every module. In-scope callers keep calling onMutate() unchanged.
-  let onMutateImpl = () => {};
-  const onMutate = () => onMutateImpl();
+  let onMutateImpl: () => void = () => {
+    /* no-op until the returned surface's setOnMutate installs the real impl */
+  };
+  const onMutate = () => {
+    onMutateImpl();
+  };
   const STALE_MS = envInt('FLEETDECK_STALE_MS', 600_000, { min: 1 });
   const NUDGE_MS = envInt('FLEETDECK_NUDGE_MS', 8_000, { min: 1 });
   const SPAWN_REGISTER_MS = envInt('FLEETDECK_SPAWN_REGISTER_MS', 90_000, { min: 1 });
@@ -100,7 +311,9 @@ export function createCore(db, {
   // that dies mid-turn without a SessionEnd is unclearable forever (see
   // presumeDeadWorkingSessions). Retirement is still evidence-based: a spawned
   // row is adjudicated by tmux, never by the clock alone.
-  const PRESUME_DEAD_WORKING_MS = envInt('FLEETDECK_PRESUME_DEAD_WORKING_MS', PRESUME_DEAD_MS * 3, { min: 1 });
+  const PRESUME_DEAD_WORKING_MS = envInt('FLEETDECK_PRESUME_DEAD_WORKING_MS', PRESUME_DEAD_MS * 3, {
+    min: 1,
+  });
   const RETAIN_OFFLINE_MS = envInt('FLEETDECK_RETAIN_OFFLINE_MS', 86_400_000, { min: 1 });
   const RC_HARVEST_MS = envInt('FLEETDECK_RC_HARVEST_MS', 2_500, { min: 0 });
   // 0.7.0 Move-to-tmux (adopt) knobs:
@@ -154,19 +367,19 @@ export function createCore(db, {
   // window reuse and /rc enablement all asked the same question — collapse the
   // five copies of (await listScopedWindows(port)).find(w => w.window === X)
   // here so "which window is this" is asked exactly one way.
-  async function findScopedWindow(name) {
+  async function findScopedWindow(name: string | null): Promise<ScopedWindow | null | undefined> {
     const wins = await tmuxAdapter.listScopedWindows(port);
     // The test override launches no tmux pane by contract, so a missing test
     // server is authoritative absence. Production lookups remain fail-closed.
     if (wins === null && tmuxAdapter.spawnOverrideCmd?.()) return undefined;
-    return wins === null ? null : wins.find(w => w.window === name);
+    return wins === null ? null : wins.find((w) => w.window === name);
   }
 
   // Production pane operations bind to the exact fleet session + exact window
   // name found above, not the reusable @window_id. Injected test adapters from
   // before this hardening have no exactWindowTarget helper and retain their
   // stable-id contract through the fallback.
-  function scopedPaneTarget(win) {
+  function scopedPaneTarget(win: { window: string; window_id: string }): string {
     return tmuxAdapter.exactWindowTarget
       ? tmuxAdapter.exactWindowTarget(port, win.window)
       : win.window_id;
@@ -211,7 +424,10 @@ export function createCore(db, {
   // post-loop callback pass runs — the status guard alone cannot tell it
   // from a genuinely retired prompt. The parked socket can: nobody has
   // decided a question whose chooser never rendered.
-  function planRetired(row, { activity = false } = {}) {
+  function planRetired(
+    row: { id: number } | undefined,
+    { activity = false }: { activity?: boolean } = {},
+  ) {
     if (!row || !activity) return;
     const p = q.planByQuestion.get(row.id);
     if (!p || questions.isHeld(row.id)) return;
@@ -221,7 +437,7 @@ export function createCore(db, {
     }
   }
 
-  function settleTerminalPlans(sid) {
+  function settleTerminalPlans(sid: string) {
     let changed = false;
     for (const p of q.pendingTerminalPlans.all(sid)) {
       if (p.question_id != null && questions.isHeld(p.question_id)) continue;
@@ -245,7 +461,7 @@ export function createCore(db, {
     // live (settings.mjs's resolveHoldMsRaw, threaded through ctx below — the
     // arrow defers the lookup until the first hold, by which time createSettings
     // has run).
-    resolveHoldWindow: () => resolveHoldMs(process.env, () => ctx.resolveHoldMsRaw?.() ?? null),
+    resolveHoldWindow: () => resolveHoldMs(process.env, () => ctx.resolveHoldMsRaw() ?? null),
     // UX 2.1 re-arm: how long after a hold expiry with NO session activity the
     // question re-raises as a mail-delivered card (0 disables — some existing
     // test suites would otherwise meet an unexpected second card).
@@ -255,28 +471,33 @@ export function createCore(db, {
     // the mailbox clamp (reject-before-settle instead of silent truncation).
     // Threaded from mail.ts so the two can never drift apart.
     mailMaxLen: MAIL_MAX_LEN,
-    tick: msg => tick(msg),
-    callsignOf: sid => q.getSession.get(sid)?.callsign ?? null,
-    onChange: () => onMutate(),
+    tick: (msg) => {
+      tick(msg);
+    },
+    callsignOf: (sid) => q.getSession.get(sid)?.callsign ?? null,
+    onChange: () => {
+      onMutate();
+    },
     // v1.3 plan library: the plans table lives here; questions.mjs only needs
     // the link (plan_id for /state) and the answer-path status flips. The
     // flip is guarded to 'proposed' — the answer paths describe the freshly
     // captured plan, and a plan the human already archived/marked from the
     // library keeps that verdict.
-    planIdFor: questionId => q.planByQuestion.get(questionId)?.plan_id ?? null,
+    planIdFor: (questionId) => q.planByQuestion.get(questionId)?.plan_id ?? null,
     planAnswered: (questionId, behavior) => {
       const p = q.planByQuestion.get(questionId);
-      if (!p || p.status !== 'proposed') return;
-      const status = behavior === 'allow' ? 'approved'
-        : behavior === 'capture' ? 'captured'
-        : 'rejected';
+      if (p?.status !== 'proposed') return;
+      const status =
+        behavior === 'allow' ? 'approved' : behavior === 'capture' ? 'captured' : 'rejected';
       q.setPlanStatus.run(status, p.plan_id);
       tick(`📚 plan #${p.plan_id} (${p.callsign ?? p.session_id}) ${status}`);
     },
     // UX 2.2: the retirement seam — every unanswered retirement of a
     // plan-linked question flows through planRetired (defined above; same-tick
     // settle only when the retire itself was session activity).
-    onRetired: (row, opts) => planRetired(row, opts),
+    onRetired: (row, opts) => {
+      planRetired(row, opts);
+    },
   });
 
   // ------------------------------------------------------------- model tracking
@@ -294,18 +515,26 @@ export function createCore(db, {
   //           is the truth, which is exactly right after a restart.
   //   size  — the file size at our last read. Transcripts only grow, so an
   //           unchanged size means there is nothing new to see: skip the read.
-  const modelMemo = new Map(); // sid -> { floor, size, model }
+  const modelMemo = new Map<string, ModelMemo>(); // sid -> { floor, size, model }
 
-  function stampTranscriptFloor(sid, transcriptPath) {
+  function stampTranscriptFloor(sid: string, transcriptPath?: string | null) {
     let floor = 0;
-    try { if (transcriptPath) floor = fs.statSync(transcriptPath).size; } catch { /* not written yet → 0 */ }
+    try {
+      if (transcriptPath) floor = fs.statSync(transcriptPath).size;
+    } catch {
+      /* not written yet → 0 */
+    }
     modelMemo.set(sid, { floor, size: -1, model: null });
   }
 
-  function readTranscriptModel(sid, transcriptPath) {
+  function readTranscriptModel(sid: string, transcriptPath: string): string | null {
     const memo = modelMemo.get(sid) ?? { floor: 0, size: -1, model: null };
-    let size;
-    try { size = fs.statSync(transcriptPath).size; } catch { return null; }
+    let size: number;
+    try {
+      size = fs.statSync(transcriptPath).size;
+    } catch {
+      return null;
+    }
     if (size === memo.size) return memo.model;
     const model = lastAssistantModel(transcriptPath, { minOffset: memo.floor });
     modelMemo.set(sid, { ...memo, size, model: model ?? memo.model });
@@ -320,15 +549,24 @@ export function createCore(db, {
   // un-archived row holds. All 12 held → the ticket is saturated → fall back to
   // today's hex format (a stable, unique name; recorded once so detection never
   // retries). Without a ticket → today's behaviour, byte-for-byte.
-  function assignCallsign(sid, ticket = null) {
-    const start = q.countSessions.get().n % CALLSIGNS.length;
+  // Read one animal from the fixed rotation by a possibly-oversized index. The
+  // modulo keeps it in range for the non-empty CALLSIGNS constant; the guard is
+  // only here to satisfy noUncheckedIndexedAccess without a non-null assertion.
+  function callsignAt(index: number): string {
+    const animal = CALLSIGNS[index % CALLSIGNS.length];
+    if (animal === undefined) throw new Error('fleetd: callsign rotation index out of range');
+    return animal;
+  }
+
+  function assignCallsign(sid: string, ticket: string | null = null): string {
+    const start = (q.countSessions.get()?.n ?? 0) % CALLSIGNS.length;
     if (ticket) {
       for (let i = 0; i < CALLSIGNS.length; i++) {
-        const cand = CALLSIGNS[(start + i) % CALLSIGNS.length] + '-' + ticket;
+        const cand = callsignAt(start + i) + '-' + ticket;
         if (!q.callsignTaken.get(cand, cand, sid)) return cand;
       }
     }
-    return CALLSIGNS[start] + '-' + String(sid).slice(0, 4);
+    return callsignAt(start) + '-' + sid.slice(0, 4);
   }
 
   // `cwd` is passed ONLY by the birth callers that know it (the applyEvent
@@ -339,7 +577,7 @@ export function createCore(db, {
   // ticketFromBranch → assignCallsign → insert chain has NO await in it: the
   // naming synchrony invariant (see plan) requires choose-name + insert to land
   // in one tick, which is why fresh branchOf stays execFileSync.
-  function card(sid, cwd = null) {
+  function card(sid: string, cwd: string | null = null): SessionRow & { callsign: string } {
     let c = q.getSession.get(sid);
     if (!c) {
       const ticket = ticketFromBranch(cwd ? branchOf(cwd, { fresh: true }) : null);
@@ -355,7 +593,11 @@ export function createCore(db, {
       c = q.getSession.get(sid);
       tick(`${callsign} joined the fleet`);
     }
-    return c;
+    // Same-tick read of the row we just inserted (or one that already existed);
+    // a miss is impossible in practice but honest to assert, since every caller
+    // uses the returned card's callsign.
+    if (!c) throw new Error('fleetd: session row vanished immediately after insert');
+    return c as SessionRow & { callsign: string };
   }
 
   // applyTicket — the ONE rename path, shared by branch auto-detect (events.ts)
@@ -376,8 +618,22 @@ export function createCore(db, {
   // crash window where the row names a window tmux no longer has — and
   // reconcileSpawns would then condemn a live pane to 'gone'. The row stays
   // authoritative; the window name is an internal handle, not a label.
-  function renameCallsign(sid, c, next, { tickMsg, extra = {} }) {
+  function renameCallsign(
+    sid: string,
+    c: SessionRow,
+    next: string,
+    {
+      tickMsg,
+      extra = {},
+    }: { tickMsg: (previous: string, name: string) => string; extra?: Record<string, SqlValue> },
+  ): RenameOutcome {
+    // Callers guard `c.callsign != null`, but that narrows the PROPERTY, not the
+    // object: a non-union SessionRow is NOT re-typed to `& { callsign: string }`
+    // by a null check (logged in ts-migration-bugs.md). So accept a plain
+    // SessionRow and re-prove callsign here — the early return is dead for the
+    // live callers, which all guard it upstream.
     const previous = c.callsign;
+    if (previous == null) return { ok: false, reason: 'target session has no callsign to rename' };
     // BUG-107: prev_callsign has ONE slot and must stay the birth anchor, so
     // every DROPPED name is also recorded in the alias table — that is the set
     // target resolution falls back to after the anchor.
@@ -400,9 +656,12 @@ export function createCore(db, {
     return { ok: true, renamed: true, callsign: next, previous };
   }
 
-  function applyTicket(sid, ticket, source) {
+  function applyTicket(sid: string, ticket: string, source: string): RenameOutcome {
     const c = q.getSession.get(sid);
-    if (!c || c.ended_at != null) return { ok: false, reason: 'no live session for that target' };
+    // callsign == null can't happen for a live row (birth names every card), but
+    // proving it here narrows c for the whole rename path — no bang needed.
+    if (!c || c.ended_at != null || c.callsign == null)
+      return { ok: false, reason: 'no live session for that target' };
     // Auto-rename fires AT MOST ONCE: a branch detection is refused the moment
     // a ticket/source already exists (a later branch switch changes nothing, and
     // a manual ticket_source permanently blocks the auto path). Manual may fire
@@ -422,7 +681,9 @@ export function createCore(db, {
     // <sameAnimal>-<ticket>; only when that exact name is already held by
     // another row do we rotation-scan for a free animal.
     const preferred = `${animalOf(c.callsign)}-${ticket}`;
-    const next = q.callsignTaken.get(preferred, preferred, sid) ? assignCallsign(sid, ticket) : preferred;
+    const next = q.callsignTaken.get(preferred, preferred, sid)
+      ? assignCallsign(sid, ticket)
+      : preferred;
     // assignCallsign returns the hex fallback only when all 12 animals for this
     // ticket are taken. Saturation: keep the current name, but still record
     // ticket + source so the auto path never retries (manual is the recovery).
@@ -455,9 +716,10 @@ export function createCore(db, {
   // part that should say what the session is doing. `suffix: null` reverts to
   // the automatic name — the ticket name if the card has a ticket, else the
   // birth <animal>-<sid4>.
-  function applyCustomName(sid, suffix) {
+  function applyCustomName(sid: string, suffix: string | null): RenameOutcome {
     const c = q.getSession.get(sid);
-    if (!c || c.ended_at != null) return { ok: false, reason: 'no live session for that target' };
+    if (!c || c.ended_at != null || c.callsign == null)
+      return { ok: false, reason: 'no live session for that target' };
     const animal = animalOf(c.callsign);
     // Clearing a name that was never set is a NO-OP, and it has to be: the
     // "automatic" name cannot be recomputed from the session id after a /clear
@@ -475,9 +737,9 @@ export function createCore(db, {
     // invent one.
     const revertTo = c.ticket
       ? `${animal}-${c.ticket}`
-      : (c.prev_callsign && !q.callsignTaken.get(c.prev_callsign, c.prev_callsign, sid)
+      : c.prev_callsign && !q.callsignTaken.get(c.prev_callsign, c.prev_callsign, sid)
         ? c.prev_callsign
-        : c.callsign);
+        : c.callsign;
     const next = suffix == null ? revertTo : `${animal}-${suffix}`;
     if (next === c.callsign) {
       // Name unchanged (renaming to what it already is, or clearing a card that
@@ -493,9 +755,10 @@ export function createCore(db, {
       return { ok: false, reason: `${next} is already taken by another session` };
     }
     return renameCallsign(sid, c, next, {
-      tickMsg: (previous, name) => (suffix == null
-        ? `✎ ${previous} is now ${name} (custom name cleared)`
-        : `✎ ${previous} is now ${name}`),
+      tickMsg: (previous, name) =>
+        suffix == null
+          ? `✎ ${previous} is now ${name} (custom name cleared)`
+          : `✎ ${previous} is now ${name}`,
       extra: { custom_suffix: suffix ?? null },
     });
   }
@@ -523,27 +786,45 @@ export function createCore(db, {
   // findClearedPredecessor is the whole inference. It is deliberately narrow —
   // a wrong merge is worse than a duplicate card, so an ambiguous match is
   // simply not a match.
-  const hasLivePane = sid => {
+  const hasLivePane = (sid: string): boolean => {
     const sp = q.spawnBySession.get(sid);
     return !!sp && ['provisioning', 'spawning', 'stalled', 'live'].includes(sp.status);
   };
 
-  function findClearedPredecessor(sid, cwd, now) {
+  function findClearedPredecessor(
+    sid: string,
+    cwd: string | null | undefined,
+    now: number,
+  ): SessionRow | null {
     if (!cwd) return null;
     // Ordered newest-clear-first.
     const candidates = q.clearedPredecessors.all(cwd, now - CLEAR_SUCCESSION_MS, sid);
     if (!candidates.length) return null;
-    if (candidates.length === 1) return candidates[0];
+    // Array destructuring IS subject to noUncheckedIndexedAccess (it does NOT
+    // escape the check — logged in ts-migration-bugs.md), so each binding is
+    // `SessionRow | undefined`. The length guards prove presence at runtime; the
+    // `=== undefined` checks below only re-prove it to the compiler and are dead.
+    const [first, second] = candidates;
+    if (first === undefined) return null;
+    if (candidates.length === 1) return first;
     // Several sessions in this cwd cleared inside the window. The heir is born
     // MILLISECONDS after its own /clear, so the freshest clear is its parent —
-    // unless two clears are so close together that "freshest" is meaningless.
-    const [first, second] = candidates;
-    if (first.cleared_at - second.cleared_at > CLEAR_AMBIGUITY_MS) return first;
+    // unless two clears are so close together that "freshest" is meaningless. A
+    // null cleared_at leaves the gap indeterminate, so it falls through to panes.
+    if (
+      second !== undefined &&
+      first.cleared_at != null &&
+      second.cleared_at != null &&
+      first.cleared_at - second.cleared_at > CLEAR_AMBIGUITY_MS
+    ) {
+      return first;
+    }
     // Near-simultaneous. Prefer the one holding a live pane (a stranded pane is
     // the expensive case, and the pane corroborates the link); otherwise refuse
     // to guess — an unhealed split is recoverable, a wrong merge is not.
-    const paned = candidates.filter(c => hasLivePane(c.session_id));
-    return paned.length === 1 ? paned[0] : null;
+    const paned = candidates.filter((c) => hasLivePane(c.session_id));
+    const [onlyPaned] = paned;
+    return paned.length === 1 && onlyPaned !== undefined ? onlyPaned : null;
   }
 
   // The other direction. SessionEnd is an ASYNC hook (hooks.json) while
@@ -555,19 +836,23 @@ export function createCore(db, {
   // `settled` marks the deferred re-check (see the settlement interval below):
   // the first pass only SCHEDULES the claim, the second pass — after every
   // in-flight hook has had its round-trip — is the one allowed to commit it.
-  function succeedForwardFromClear(prevSid, cwd, { settled = false } = {}) {
+  function succeedForwardFromClear(
+    prevSid: string,
+    cwd: string | null | undefined,
+    { settled = false }: { settled?: boolean } = {},
+  ): string | null {
     const prev = q.getSession.get(prevSid);
     if (!prev || prev.succeeded_by != null || !cwd) return null;
     const now = Date.now();
     const born = q.clearBornSessionsSince.all(now - CLEAR_SUCCESSION_MS, now + 1_000);
-    const cands = [];
+    const cands: SessionRow[] = [];
     for (const b of born) {
       if (b.session_id === prevSid) continue;
       const heir = q.getSession.get(b.session_id);
       if (!heir || heir.archived_at != null || heir.ended_at != null) continue;
       if (heir.cwd !== cwd || heir.succeeded_by != null) continue;
       if (q.successorClaimed.get(heir.session_id)) continue; // already continues someone
-      if (q.spawnBySession.get(heir.session_id)) continue;   // owns a pane → not a stranded heir
+      if (q.spawnBySession.get(heir.session_id)) continue; // owns a pane → not a stranded heir
       cands.push(heir);
     }
     // 0 candidates is the NORMAL case (the heir simply has not started yet — the
@@ -613,95 +898,115 @@ export function createCore(db, {
     // path below, so the settlement only runs when the knob is nonzero.
     if (!settled && CLEAR_SETTLE_MS > 0) {
       setTimeout(() => {
-        try { succeedForwardFromClear(prevSid, cwd, { settled: true }); } catch { /* the boot heal remains the backstop */ }
+        try {
+          succeedForwardFromClear(prevSid, cwd, { settled: true });
+        } catch {
+          /* the boot heal remains the backstop */
+        }
       }, CLEAR_SETTLE_MS).unref();
       return null;
     }
-    return succeedSession(prev, cands[0].session_id, { rename: true });
+    const [heir] = cands;
+    // cands.length === 1 was checked above; this guard only re-proves presence
+    // to the compiler (array destructuring is subject to noUncheckedIndexedAccess).
+    if (heir === undefined) return null;
+    return succeedSession(prev, heir.session_id, { rename: true });
   }
 
   // Move everything that binds a card to its work from the predecessor to the
   // heir. Synchronous: the caller runs it before the successor's first event is
   // derived, so the card the rest of applyEvent sees is already the continued one.
-  function succeedSession(prev, sid, { rename = false } = {}) {
+  function succeedSession(
+    prev: SessionRow,
+    sid: string,
+    { rename = false }: { rename?: boolean } = {},
+  ): string | null {
     const now = Date.now();
+    // A live predecessor always carries a callsign (birth names every card); if
+    // one somehow lacks it there is no identity to graft onto the heir, so refuse
+    // the succession rather than continue a card under a null name.
+    if (prev.callsign == null) return null;
     const callsign = prev.callsign;
     // One transaction: a half-done succession is the one outcome worse than the
     // bug — the predecessor archived (its card gone from the board) with no heir
     // wearing its identity would delete a live session from the fleet's view.
     db.exec('BEGIN IMMEDIATE');
     try {
-    // Retire the predecessor FIRST: archiving frees its callsign (callsignTaken
-    // scopes on archived_at IS NULL), which is what lets the heir take the name.
-    // 'superseded' is a PROVEN end (the CLI told us it cleared) but must never be
-    // adopt- or revive-eligible: the pane it used to own now belongs to the heir,
-    // and its transcript is a closed chapter (see sessionAdoptableNow). The arm
-    // is cleared here and re-hung on the heir below — an arm left on a ghost
-    // would be found by retention's orphaned-arm sweep and fired at the
-    // abandoned transcript.
-    updateSession(prev.session_id, {
-      col: 'offline',
-      ended_at: now,
-      end_reason: 'superseded',
-      succeeded_by: sid,
-      archived_at: now,
-      cleared_at: null,
-      note: `context cleared → continued as ${callsign}`,
-      adopt_armed_until: null,
-      adopt_armed_skip: null,
-    });
-    if (rename) {
-      // Heal mode: the heir already exists under its own auto-assigned name (a
-      // stranded card the board has been showing alongside the real one). Rename
-      // it onto the lineage's callsign.
-      //
-      // Its throwaway name is deliberately NOT kept as the mail anchor. That
-      // name only ever existed BECAUSE of the bug, while the lineage's own name
-      // is the one in every peer's roster brief, in the ticker, and on the tmux
-      // window. prev_callsign has exactly one slot (write-once), so spending it
-      // on the artifact would leave the real name routable by nobody the next
-      // time the card is renamed. Inherit the lineage's anchor instead.
-      const heir = q.getSession.get(sid);
-      if (heir && heir.callsign !== callsign) {
-        updateSession(sid, { callsign });
+      // Retire the predecessor FIRST: archiving frees its callsign (callsignTaken
+      // scopes on archived_at IS NULL), which is what lets the heir take the name.
+      // 'superseded' is a PROVEN end (the CLI told us it cleared) but must never be
+      // adopt- or revive-eligible: the pane it used to own now belongs to the heir,
+      // and its transcript is a closed chapter (see sessionAdoptableNow). The arm
+      // is cleared here and re-hung on the heir below — an arm left on a ghost
+      // would be found by retention's orphaned-arm sweep and fired at the
+      // abandoned transcript.
+      updateSession(prev.session_id, {
+        col: 'offline',
+        ended_at: now,
+        end_reason: 'superseded',
+        succeeded_by: sid,
+        archived_at: now,
+        cleared_at: null,
+        note: `context cleared → continued as ${callsign}`,
+        adopt_armed_until: null,
+        adopt_armed_skip: null,
+      });
+      if (rename) {
+        // Heal mode: the heir already exists under its own auto-assigned name (a
+        // stranded card the board has been showing alongside the real one). Rename
+        // it onto the lineage's callsign.
+        //
+        // Its throwaway name is deliberately NOT kept as the mail anchor. That
+        // name only ever existed BECAUSE of the bug, while the lineage's own name
+        // is the one in every peer's roster brief, in the ticker, and on the tmux
+        // window. prev_callsign has exactly one slot (write-once), so spending it
+        // on the artifact would leave the real name routable by nobody the next
+        // time the card is renamed. Inherit the lineage's anchor instead.
+        const heir = q.getSession.get(sid);
+        if (heir && heir.callsign !== callsign) {
+          updateSession(sid, { callsign });
+        }
+        updateSession(sid, {
+          prev_callsign: prev.prev_callsign ?? (prev.callsign === callsign ? null : prev.callsign),
+          ticket: prev.ticket ?? null,
+          ticket_source: prev.ticket_source ?? null,
+          custom_suffix: prev.custom_suffix ?? null,
+          adopt_armed_until: prev.adopt_armed_until ?? null,
+          adopt_armed_skip: prev.adopt_armed_skip ?? null,
+        });
+      } else {
+        // Birth mode: insert the heir already wearing the inherited identity, so
+        // card() finds an existing row and never mints a fresh animal (or ticks
+        // "joined the fleet" for what is, to the human, the same session).
+        q.insertSession.run(sid, callsign, now, now);
+        updateSession(sid, {
+          ticket: prev.ticket ?? null,
+          ticket_source: prev.ticket_source ?? null,
+          prev_callsign: prev.prev_callsign ?? (prev.callsign === callsign ? null : prev.callsign),
+          custom_suffix: prev.custom_suffix ?? null,
+          adopt_armed_until: prev.adopt_armed_until ?? null,
+          adopt_armed_skip: prev.adopt_armed_skip ?? null,
+        });
       }
-      updateSession(sid, {
-        prev_callsign: prev.prev_callsign ?? (prev.callsign === callsign ? null : prev.callsign),
-        ticket: prev.ticket ?? null,
-        ticket_source: prev.ticket_source ?? null,
-        custom_suffix: prev.custom_suffix ?? null,
-        adopt_armed_until: prev.adopt_armed_until ?? null,
-        adopt_armed_skip: prev.adopt_armed_skip ?? null,
-      });
-    } else {
-      // Birth mode: insert the heir already wearing the inherited identity, so
-      // card() finds an existing row and never mints a fresh animal (or ticks
-      // "joined the fleet" for what is, to the human, the same session).
-      q.insertSession.run(sid, callsign, now, now);
-      updateSession(sid, {
-        ticket: prev.ticket ?? null,
-        ticket_source: prev.ticket_source ?? null,
-        prev_callsign: prev.prev_callsign ?? (prev.callsign === callsign ? null : prev.callsign),
-        custom_suffix: prev.custom_suffix ?? null,
-        adopt_armed_until: prev.adopt_armed_until ?? null,
-        adopt_armed_skip: prev.adopt_armed_skip ?? null,
-      });
-    }
-    // The pane, the undelivered mail, the human's surviving question queue and
-    // the file ledger all follow the card. Terminal spawn history stays with the
-    // id that lived it. The ledger move is NOT bookkeeping: the conflict radar
-    // treats any other still-existing session row as a rival, so touches left on
-    // the archived predecessor would have the heir colliding with its own past.
-    q.reassignActiveSpawns.run(sid, prev.session_id);
-    q.reassignPendingMail.run(sid, prev.session_id);
-    q.reassignPendingQuestions.run(sid, prev.session_id);
-    q.reassignTouches.run(sid, prev.session_id);
-    // BUG-107: the lineage's whole name history follows the card too, so mail
-    // to any name the lineage ever wore reaches the heir.
-    q.reassignAliases.run(sid, prev.session_id);
+      // The pane, the undelivered mail, the human's surviving question queue and
+      // the file ledger all follow the card. Terminal spawn history stays with the
+      // id that lived it. The ledger move is NOT bookkeeping: the conflict radar
+      // treats any other still-existing session row as a rival, so touches left on
+      // the archived predecessor would have the heir colliding with its own past.
+      q.reassignActiveSpawns.run(sid, prev.session_id);
+      q.reassignPendingMail.run(sid, prev.session_id);
+      q.reassignPendingQuestions.run(sid, prev.session_id);
+      q.reassignTouches.run(sid, prev.session_id);
+      // BUG-107: the lineage's whole name history follows the card too, so mail
+      // to any name the lineage ever wore reaches the heir.
+      q.reassignAliases.run(sid, prev.session_id);
       db.exec('COMMIT');
     } catch (err) {
-      try { db.exec('ROLLBACK'); } catch { /* the transaction is already gone */ }
+      try {
+        db.exec('ROLLBACK');
+      } catch {
+        /* the transaction is already gone */
+      }
       console.error('fleetd /clear succession error:', err);
       return null;
     }
@@ -709,18 +1014,24 @@ export function createCore(db, {
     // Wake the retired id's /api/watch long-poll so its watcher sees
     // session_alive:false and exits now instead of hanging to its timeout.
     notifyWatchers(prev.session_id);
-    tick(`🧹 ${callsign} cleared its context — same card, new session id (${String(sid).slice(0, 8)})`);
+    tick(`🧹 ${callsign} cleared its context — same card, new session id (${sid.slice(0, 8)})`);
     onMutate();
     return callsign;
   }
 
-  function tick(msg) {
+  function tick(msg: string) {
     q.insertTicker.run(Date.now(), msg);
     q.trimTicker.run();
   }
 
-  function logEvent(sid, hookEvent, toolName, note) {
-    q.insertEvent.run(sid, hookEvent ?? null, toolName ?? null, note ?? null, Date.now());
+  function logEvent(sid: string, hookEvent: string, toolName?: unknown, note?: unknown) {
+    q.insertEvent.run(
+      sid,
+      hookEvent,
+      (toolName ?? null) as SqlValue,
+      (note ?? null) as SqlValue,
+      Date.now(),
+    );
   }
 
   // ------------------------------------------------------------------- ctx
@@ -741,30 +1052,71 @@ export function createCore(db, {
   const ctx = {
     // holdMs resolves WITH the settings fallback at the questions wiring above
     // (q didn't exist at parameter-default time); ctx carries that same value.
-    db, port, home, holdMs: holdMs ?? resolveHoldMs(process.env, () => q.getSetting.get('hold_ms')?.value ?? null), t0, version,
-    STALE_MS, NUDGE_MS, SPAWN_REGISTER_MS, SETUP_REGISTER_MS, PANE_MAIL_GRACE_MS,
-    MAIL_PENDING_MAX, MAIL_PENDING_MAX_BYTES, MAIL_PANE_BATCH, MAIL_PANE_BATCH_BYTES, // BUG-128 test-only
+    db,
+    port,
+    home,
+    holdMs: holdMs ?? resolveHoldMs(process.env, () => q.getSetting.get('hold_ms')?.value ?? null),
+    t0,
+    version,
+    STALE_MS,
+    NUDGE_MS,
+    SPAWN_REGISTER_MS,
+    SETUP_REGISTER_MS,
+    PANE_MAIL_GRACE_MS,
+    MAIL_PENDING_MAX,
+    MAIL_PENDING_MAX_BYTES,
+    MAIL_PANE_BATCH,
+    MAIL_PANE_BATCH_BYTES, // BUG-128 test-only
     MAIL_CLAIM_LEASE_MS,
-    PRESUME_DEAD_MS, PRESUME_DEAD_WORKING_MS, RETAIN_OFFLINE_MS, RC_HARVEST_MS, RETAIN_LEDGER_MS,
-    ADOPT_ARM_MS, ADOPT_DELAY_MS, // 0.7.0 Move-to-tmux (spawns arms, events fires)
+    PRESUME_DEAD_MS,
+    PRESUME_DEAD_WORKING_MS,
+    RETAIN_OFFLINE_MS,
+    RC_HARVEST_MS,
+    RETAIN_LEDGER_MS,
+    ADOPT_ARM_MS,
+    ADOPT_DELAY_MS, // 0.7.0 Move-to-tmux (spawns arms, events fires)
     SNAPSHOT_FILES_PER_SESSION,
-    q, updateSession, onMutate, tmuxAdapter, questions, settleTerminalPlans,
-    findScopedWindow, scopedPaneTarget, tick, logEvent, card, assignCallsign, applyTicket,
-    modelMemo, stampTranscriptFloor, readTranscriptModel,
+    q,
+    updateSession,
+    onMutate,
+    tmuxAdapter,
+    questions,
+    settleTerminalPlans,
+    findScopedWindow,
+    scopedPaneTarget,
+    tick,
+    logEvent,
+    card,
+    assignCallsign,
+    applyTicket,
+    modelMemo,
+    stampTranscriptFloor,
+    readTranscriptModel,
     // 0.7.1: naming + /clear succession, shared with events.ts (the hook-time
     // interception), commands.mjs / http.mjs (the `name` surfaces), and
     // spawns.mjs (the boot heal for pairs stranded before this shipped).
-    CLEAR_SUCCESSION_MS, applyCustomName, hasLivePane,
-    findClearedPredecessor, succeedSession, succeedForwardFromClear,
+    CLEAR_SUCCESSION_MS,
+    applyCustomName,
+    hasLivePane,
+    findClearedPredecessor,
+    succeedSession,
+    succeedForwardFromClear,
     acquireWorktreePathLock,
-  };
+  } as unknown as CoreCtx;
 
   // Mail + /api/watch waiter registry + owned-pane delivery → mail.ts.
   Object.assign(ctx, createMail(ctx));
   const {
-    mail, drainMail, ackMail, resolveTargets, notifyWatchers, addWatchWaiter,
-    hasWatchWaiter, ownedPaneRow, ownedPaneDeliverable, tryOwnedPaneDelivery,
-    claimMail, watchInfo, postMail, registerWatchGen,
+    mail,
+    drainMail,
+    ackMail,
+    notifyWatchers,
+    addWatchWaiter,
+    tryOwnedPaneDelivery,
+    claimMail,
+    watchInfo,
+    postMail,
+    registerWatchGen,
   } = ctx;
 
   // D8: the offline-tombstone write, in one place. Every terminal transition
@@ -774,7 +1126,17 @@ export function createCore(db, {
   // prior effects — `at` (Date.now() vs the sweep's `now`), whether to drop the
   // model memo, the feed line, the watcher wake, and onMutate (several callers
   // batch it, or place it outside a liveness guard, so it stays theirs).
-  function tombstoneCard(sid, { note, at = Date.now(), tickMsg = null, notify = true, forgetModel = false, mutate = false }) {
+  function tombstoneCard(
+    sid: string,
+    {
+      note,
+      at = Date.now(),
+      tickMsg = null,
+      notify = true,
+      forgetModel = false,
+      mutate = false,
+    }: TombstoneOpts,
+  ) {
     updateSession(sid, { col: 'offline', ended_at: at, note });
     if (forgetModel) modelMemo.delete(sid);
     if (tickMsg) tick(tickMsg);
@@ -797,7 +1159,6 @@ export function createCore(db, {
 
   // File-touch ledger + conflict radar → ledger.mjs.
   Object.assign(ctx, createLedger(ctx));
-  const { recordFile, whisperText } = ctx;
 
   // agents-cli ingest (F1) → ingest.mjs.
   Object.assign(ctx, createIngest(ctx));
@@ -829,16 +1190,25 @@ export function createCore(db, {
   // held through git removal + optional branch delete + row purge (remove) and
   // through window reconciliation + the synchronous provisional-row insert
   // (revive), makes exactly one of them win.
-  const custodyLeases = new Map(); // canonical worktree path -> lease owner
-  const canonicalWorktreePath = p => {
-    try { return fs.realpathSync(p); } catch { return path.resolve(p); }
+  const custodyLeases = new Map<string, string>(); // canonical worktree path -> lease owner
+  const canonicalWorktreePath = (p: string): string => {
+    try {
+      return fs.realpathSync(p);
+    } catch {
+      return path.resolve(p);
+    }
   };
   ctx.claimWorktreeCustody = (p, owner) => {
     const canonical = canonicalWorktreePath(p);
     if (custodyLeases.has(canonical)) return null;
     custodyLeases.set(canonical, owner);
     let released = false;
-    return () => { if (!released) { released = true; custodyLeases.delete(canonical); } };
+    return () => {
+      if (!released) {
+        released = true;
+        custodyLeases.delete(canonical);
+      }
+    };
   };
   Object.assign(ctx, createWorktrees(ctx));
   const { worktrees, removeWorktree } = ctx;
@@ -850,16 +1220,29 @@ export function createCore(db, {
   // v1.2/v1.3 board-spawned session lifecycle → spawns.mjs.
   Object.assign(ctx, createSpawns(ctx));
   const {
-    spawn, revive, adoptSession, enableRemote, spawnKill, spawnCapability,
-    spawnLivenessTick, reconcileSpawns, reconcileClearForks,
-    scheduleRegistrationRemoteHarvest, forgetSpawn, spawnState, armUnsupervised,
+    spawn,
+    revive,
+    adoptSession,
+    enableRemote,
+    spawnKill,
+    spawnCapability,
+    spawnLivenessTick,
+    reconcileSpawns,
+    reconcileClearForks,
+    armUnsupervised,
   } = ctx;
 
   // Hook state machine (applyEvent + hook endpoints + brief + plan capture) → events.ts.
   Object.assign(ctx, createEvents(ctx));
   const {
-    applyEvent, hookSessionStart, hookUserPromptSubmit, hookPostToolUse,
-    hookStop, hookSessionEnd, hookHoldQuestion, takeoverBriefLines,
+    applyEvent,
+    hookSessionStart,
+    hookUserPromptSubmit,
+    hookPostToolUse,
+    hookStop,
+    hookSessionEnd,
+    hookHoldQuestion,
+    takeoverBriefLines,
   } = ctx;
 
   // /state snapshot + fleetSize + live-terminal resolver → snapshot.mjs.
@@ -876,11 +1259,22 @@ export function createCore(db, {
   // its already-resolved promise, so the boot sweep's DB effects still land
   // synchronously for the common case. .catch() contains any tmux-probe
   // rejection so a fire-and-forget sweep can never become an unhandled reject.
-  const bootRetention = retentionSweep().catch(err => console.error('fleetd retention sweep error:', err));
-  setInterval(() => {
-    try { q.pruneEvents.run(Date.now() - 24 * 3600 * 1000); } catch { /* hygiene only */ }
-    retentionSweep().catch(() => { /* hygiene only */ });
-  }, 10 * 60 * 1000).unref();
+  const bootRetention = retentionSweep().catch((err: unknown) => {
+    console.error('fleetd retention sweep error:', err);
+  });
+  setInterval(
+    () => {
+      try {
+        q.pruneEvents.run(Date.now() - 24 * 3600 * 1000);
+      } catch {
+        /* hygiene only */
+      }
+      retentionSweep().catch(() => {
+        /* hygiene only */
+      });
+    },
+    10 * 60 * 1000,
+  ).unref();
 
   return {
     applyEvent,
@@ -892,14 +1286,14 @@ export function createCore(db, {
     hookHoldQuestion,
     takeoverBriefLines, // 0.16.0 upgrade banner lines for the takeover SessionStart brief
     questions, // F3 relay surface: attachHold / socketClosed / answer / …
-    addWatchWaiter,  // F3d-2 watch surface (GET /api/watch v2)
+    addWatchWaiter, // F3d-2 watch surface (GET /api/watch v2)
     // hasWatchWaiter is used only INTERNALLY (mail routing + snapshot); no
     // http.mjs/fleetd.mjs caller consumes it, so it is not re-exported here.
-    claimMail,       // "
-    watchInfo,       // "
+    claimMail, // "
+    watchInfo, // "
     registerWatchGen, // " (BUG-105: newest-wins watcher generation for the atomic claim)
     drainMail,
-    ackMail,           // POST /mail/ack — BUG-034 lease finalization
+    ackMail, // POST /mail/ack — BUG-034 lease finalization
     // BUG-128: the raw internal insert is on the surface so in-memory tests
     // can queue a burst without the postMail routing/probe ceremony (commands
     // .mjs and question relays already reach it through ctx).
@@ -910,48 +1304,50 @@ export function createCore(db, {
     snapshot,
     fleetSize,
     terminalSpawn,
-    pasteImage,        // POST /api/paste-image → {status, body} (stateless; paste.mjs)
+    pasteImage, // POST /api/paste-image → {status, body} (stateless; paste.mjs)
     ingestAgentsPoll,
     // v1.2 dynamic fleet
-    spawn,             // POST /api/spawn flow → {status, body}
-    revive,            // POST /api/spawn/:id/revive → {status, body}
-    adoptSession,      // POST /api/sessions/:session_id/adopt → {status, body}
-    enableRemote,      // POST /api/spawn/:id/rc → {status, body}
-    spawnKill,         // POST /api/spawn/:id/kill → {status, body}
-    spawnCapability,   // /health + /state `spawn` object
-    armUnsupervised,   // POST /api/spawn/arm-unsupervised → one-time arm token
+    spawn, // POST /api/spawn flow → {status, body}
+    revive, // POST /api/spawn/:id/revive → {status, body}
+    adoptSession, // POST /api/sessions/:session_id/adopt → {status, body}
+    enableRemote, // POST /api/spawn/:id/rc → {status, body}
+    spawnKill, // POST /api/spawn/:id/kill → {status, body}
+    spawnCapability, // /health + /state `spawn` object
+    armUnsupervised, // POST /api/spawn/arm-unsupervised → one-time arm token
     spawnLivenessTick, // owned-pane liveness, rides the agents-poll cadence
-    reconcileSpawns,   // fleetd boot: rows ↔ tmux windows
+    reconcileSpawns, // fleetd boot: rows ↔ tmux windows
     reconcileClearForks, // fleetd boot: heal cards split by a /clear before 0.7.1
     // retentionSweep also runs internally (boot + the 10m interval above). It
     // is re-exported so tests can drive the tmux-verified presume-dead path
     // (BUG 2) deterministically; production callers keep using the interval.
     retentionSweep,
-    bootRetention,     // the boot sweep's settle promise — fleetd folds it into boot readiness
+    bootRetention, // the boot sweep's settle promise — fleetd folds it into boot readiness
     cleanup,
-    dismissSession,     // POST /api/sessions/:id/dismiss — per-card cleanup → {status, body}
-    dismissRetry,       // POST /api/sessions/:id/dismiss/retry — re-attempt the window kills of a partial dismiss (BUG-145)
-    worktrees,          // GET /api/worktrees — bounded live git inspection
-    removeWorktree,     // POST /api/worktrees/remove — allow-listed destruction
-    resolveReposDir,    // repos-root resolver (still consumed via resolveSettings)
-    resolveSettings,    // GET /api/settings + POST response + /state snapshot
-    setSettings,        // POST /api/settings (whitelisted; settings.mjs)
-    setRepoSetupEntry,  // daemon-side per-repo setup-default writer (BUG-147)
-    fsList,             // GET /api/sessions/:id/fs/list → {status, body}
-    fsRead,             // GET /api/sessions/:id/fs/read → {status, body}
-    fsSearch,           // GET /api/sessions/:id/fs/search → {status, body}
-    fsListHome,         // GET /api/fs/list → {status, body} (home-rooted)
-    fsReadHome,         // GET /api/fs/read → {status, body}
-    fsSearchHome,       // GET /api/fs/search → {status, body}
+    dismissSession, // POST /api/sessions/:id/dismiss — per-card cleanup → {status, body}
+    dismissRetry, // POST /api/sessions/:id/dismiss/retry — re-attempt the window kills of a partial dismiss (BUG-145)
+    worktrees, // GET /api/worktrees — bounded live git inspection
+    removeWorktree, // POST /api/worktrees/remove — allow-listed destruction
+    resolveReposDir, // repos-root resolver (still consumed via resolveSettings)
+    resolveSettings, // GET /api/settings + POST response + /state snapshot
+    setSettings, // POST /api/settings (whitelisted; settings.mjs)
+    setRepoSetupEntry, // daemon-side per-repo setup-default writer (BUG-147)
+    fsList, // GET /api/sessions/:id/fs/list → {status, body}
+    fsRead, // GET /api/sessions/:id/fs/read → {status, body}
+    fsSearch, // GET /api/sessions/:id/fs/search → {status, body}
+    fsListHome, // GET /api/fs/list → {status, body} (home-rooted)
+    fsReadHome, // GET /api/fs/read → {status, body}
+    fsSearchHome, // GET /api/fs/search → {status, body}
     // v1.3 plan library
-    planMark,          // POST /api/plans/:id/mark → {status, body}
-    assignPlan,        // POST /api/plans/:id/assign → {status, body} (BUG-039)
+    planMark, // POST /api/plans/:id/mark → {status, body}
+    assignPlan, // POST /api/plans/:id/assign → {status, body} (BUG-039)
     // 0.7.1 custom names: POST /api/sessions/:id/name and the `name` command
     // both land here (one rename write, one set of rules).
     applyCustomName,
     // Exposed for fleetd.mjs's boot banner (upgrade takeover: "vX replaced
     // vY" must reach the board feed, not just fleetd.log).
     tick,
-    set onMutate(fn) { onMutateImpl = fn; },
+    set onMutate(fn: () => void) {
+      onMutateImpl = fn;
+    },
   };
 }

@@ -611,11 +611,14 @@ export function createRepos(ctx: ReposCtx) {
     });
   }
 
-  function validateRepoDefaultOrg(value: string | null): string | null {
+  function validateRepoDefaultOrg(value: unknown): string | null {
     if (value == null) return null;
     const problem = repoDefaultOrgProblem(value);
     if (problem) throw namedError(400, problem);
-    return value;
+    // repoDefaultOrgProblem rejects every non-string, so reaching here proves
+    // value is a validated org string; the tail is a defensive narrowing that
+    // also carries the string type back out without a bang.
+    return typeof value === 'string' ? value : null;
   }
 
   function setReposDir(value: unknown): { value: string; source: string; resolved: string } {

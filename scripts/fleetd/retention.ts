@@ -46,7 +46,9 @@ interface KillOpts {
   expect?: () => boolean;
 }
 interface TmuxAdapter {
-  spawnOverrideCmd: () => string | null;
+  // Optional to match derive.ts's TmuxAdapter: the production spawn.ts ships it,
+  // the narrower test adapters omit it, and "absent" means "no override wired".
+  spawnOverrideCmd?: () => string | null;
   listScopedWindows: (port: number) => Promise<TmuxWindow[] | null>;
   paneCurrentCommand: (target: string) => Promise<PaneCommand | null>;
   killWindowVerified: (name: string, opts?: KillOpts) => Promise<KillResult>;
@@ -161,7 +163,7 @@ export function createRetention(ctx: RetentionCtx) {
     // signal it exposes: treat it as pane-less and let the silence heuristic
     // presume it dead. (The whole daemon is in override mode or none is, so
     // this is one check, not a per-row flag.)
-    const overrideMode = !!tmuxAdapter.spawnOverrideCmd();
+    const overrideMode = !!tmuxAdapter.spawnOverrideCmd?.();
     // Mid-turn columns ride the same machinery on a longer horizon — see
     // presumeDeadWorkingSessions for why they need one at all (without it a
     // hook session that dies mid-turn is unclearable forever). Concatenated

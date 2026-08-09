@@ -17,7 +17,7 @@ import type { Statements, SpawnRow } from './statements.ts';
 // (→ home_dir) and otherwise ships the object verbatim, so the index tail keeps
 // this honest that settings.mjs returns more fields than this leaf models.
 interface ResolvedSettings {
-  browse_root: { resolved: string };
+  browse_root: { resolved: string | null };
   [k: string]: unknown;
 }
 

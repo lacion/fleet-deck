@@ -1442,3 +1442,78 @@ its pinned test caught.
   gateway-newwindow, pane-paste-sanitize, tmux-locale-separator, daemon-maintenance, derive-audit-reliability;
   **# fail 0** (the coercion regression was red on the first run and green after the `unknown` + `String()` fix).
   Daemon bundle rebuilds with the `// scripts/fleetd/spawn.ts` source in the banner (633.7kb), passes `node --check`.
+
+### scripts/fleetd/derive.mjs → derive.ts  [NOISE + 6 genuine cross-module strict-typing findings + 3 corrected assumptions]
+
+The core: `applyEvent` (the faithful port of the spike's state-derivation switch) plus `createCore`, which assembles
+the one giant closure state and threads it — cast `as unknown as CoreCtx` — into every extracted module-factory
+(`createEvents`, `createLedger`, `createRetention`, `createSettings`, `createQuestions`, `createRepos`, …). All
+doctrine preserved verbatim: the callsign/animal assignment, the 0.2.0→0.7.1 `/clear`-succession heirs
+(`findClearedPredecessor` / `succeedForwardFromClear`), the offline-tombstone + model-memo bookkeeping, and the
+`CoreCtx`-must-be-a-superset-of-every-`FooCtx` doctrine. The `as unknown as CoreCtx` cast is deliberate: the literal
+fields are not individually checked, only the CONSUMERS (`createX(ctx)`) are — so `BaseCtx` carries only the
+locally-produced / primitive fields and the intersection with the factory `ReturnType`s has no colliding keys. Because
+those consumers ARE checked, wiring derive's ctx to them surfaced six genuine cross-module type mismatches — the
+interesting half of this entry; the rest is the usual `|| → ??` residue.
+
+- **Array destructuring IS subject to `noUncheckedIndexedAccess` — it does NOT escape the check (corrected a wrong
+  prior assumption).** `const [first, second] = candidates` yields `first, second: SessionRow | undefined`, exactly as
+  `candidates[0]` would. The runtime length guards (`if (!candidates.length) return null`, `if (candidates.length ===
+  1) …`) prove presence, but the compiler can't connect a `.length` test to a destructured binding, so each read
+  errored possibly-undefined. Added explicit `if (first === undefined) return null` (and `second !== undefined &&` in
+  the ambiguity compare) in `findClearedPredecessor`, and `const [heir] = cands; if (heir === undefined) return null`
+  after the `cands.length !== 1` guard in `succeedForwardFromClear`. These `=== undefined` checks are DEAD for the live
+  callers (the length guards already guarantee presence) — they only re-prove it to tsc. NOISE, but the corrected
+  mental model matters: nothing about `const [a] = arr` is exempt from the index-access check.
+- **Property-narrowing does NOT lift to the object (a `!= null` check on `c.callsign` does not re-type `c`).** The
+  `/clear`-rename callers guard `if (c.callsign == null) return …` upstream, which narrows the *property-access
+  expression* `c.callsign` to `string` for later READS (so `animalOf(c.callsign)` and `${c.callsign}` templates are
+  clean), but it does NOT re-type the non-union `SessionRow` object `c` to `SessionRow & { callsign: string }`. So the
+  first draft — `renameCallsign(c: SessionRow & { callsign: string })` — could not be called with a plain `c`. Fixed by
+  giving `renameCallsign` a plain `SessionRow` param and re-proving callsign INSIDE it (`const previous = c.callsign;
+  if (previous == null) return { ok: false, reason: … }`). The early return is dead for the live callers (all guard it
+  upstream); it re-earns the `string` the compiler forgot at the call boundary. NOISE / faithful port.
+- **An `interface` has no implicit index signature → not assignable to `Record<string, unknown>`; and the linter forbids
+  the `type`-alias that would fix it.** `RenameOutcome` is consumed by commands.ts as `RenameResult` (=
+  `Record<string, unknown>`) and by events.ts as `{ ok: boolean }`. As an `interface` it is NOT assignable to
+  `Record<string, unknown>` (interfaces get no implicit string index signature; a `type X = {…}` alias WOULD, verified
+  in an isolated repro). But switching to a `type` alias is auto-reverted on save by the linter's
+  `consistent-type-definitions: 'interface'` rule (pulled in by `stylistic-type-checked`). Resolved by keeping the
+  `interface` and adding an explicit `[key: string]: unknown` index signature. Tradeoff (documented at the type): an
+  explicit index signature relaxes excess-property checking on construction — acceptable here, the outcome object is
+  built in one place. NOISE (compiler/linter tension, no runtime move).
+- **Cross-module callsign nullability — ledger.ts `recordFile` assumed a non-null callsign that events threads
+  nullable.**  `createEvents(ctx)` calls `recordFile(sid, file, c)` with the raw session row `c`, whose `callsign` is
+  `string | null`, but ledger's `recordFile` typed its `editorCard` as `CardRow` (`extends SessionRef { callsign:
+  string }`) — a claim the wire never made. Widened the param to `SessionRef & { callsign: string | null }` (ledgerKey
+  consumes only the `SessionRef` identity; callsign is display-only), and coalesced its three display templates to
+  `${editorCard.callsign ?? sid}`. `CardRow` itself is unchanged (still the `card:(id)=>CardRow` provider's return).
+  UNSOUND → tightened: the `.mjs` would have rendered a literal `null` callsign into a conflict whisper/mail for a
+  not-yet-named session; the `?? sid` fallback is the honest display.
+- **Cross-module `Conflict.severity` union — events.ts mirrored ledger's exact `'warning' | 'info'` as a loose
+  `string`, which broke a contravariant param.** events.ts declares its own structural `Conflict` (to stay decoupled
+  from ledger's un-exported handle) and had `severity: string`. But the ctx also exposes ledger's `whisperText(conflict:
+  Conflict)`, whose param is contravariant: a WIDER `severity` on events' `Conflict` makes ledger's `whisperText`
+  un-assignable to events' `whisperText` ctx method. Narrowed events' `Conflict.severity` to `'warning' | 'info'` to
+  match ledger's `Severity` exactly. NOISE (structural-mirror drift; the union was always the real contract).
+- **Duplicate `TmuxAdapter` types (derive vs retention) diverged on `spawnOverrideCmd` optionality.** derive derives
+  its `TmuxAdapter.spawnOverrideCmd` as OPTIONAL (production spawn.ts ships it; the narrower test adapters omit it),
+  while retention.ts had declared its own `TmuxAdapter.spawnOverrideCmd` as REQUIRED — so `CoreCtx` (optional) was not
+  assignable to `RetentionCtx` (required). Aligned retention's to optional and switched its one call site to
+  `tmuxAdapter.spawnOverrideCmd?.()`. NOISE (two independent structural mirrors of one runtime shape must agree on
+  optionality/nullability/unions or the intersection fails).
+- **NOISE — the mechanical residue.** Mass `prefer-nullish-coalescing` `|| → ??` across the ctx plumbing;
+  `restrict-template-expressions` `?? sid` coalesces on nullable-callsign display templates; `noUncheckedIndexedAccess`
+  guards on the destructures above; index-signature `process.env['…']` env reads; `errMessage(err: unknown)` for the
+  `useUnknownInCatchVariables` catch clauses. Typedefs added (no runtime effect): `CoreCtx` / `BaseCtx`, `ModelMemo`,
+  the `SpawnModule = typeof import('./spawn.ts')`-derived `TmuxAdapter` / `ScopedWindow`, and `RenameOutcome`.
+- **Verify:** `eslint` clean (0) and control-byte scan 0 across all touched files (derive.ts, ledger.ts, events.ts,
+  retention.ts + the five carried from the prior window: repos, plans, settings, snapshot, questions). `tsc --noEmit`
+  clean project-wide (0). All 16 real importers repointed `./derive.mjs → ./derive.ts` — the entry `fleetd.mjs`, the
+  dynamic `import()` in network-refresh, the `path.join(FLEETD_DIR, 'derive.ts')` spawned-harness string in
+  hook-auth:103, and 13 static test imports (prose mentions of "derive.mjs's …" in comments left as-is, per the
+  events/spawn precedent). `scripts/fleetd/derive.mjs` git-rm'd — no functional consumer of the `.mjs` remains. Daemon
+  bundle rebuilds with the `// scripts/fleetd/derive.ts` banner (634.6kb), passes `node --check`. 230/230 green across
+  the 15 derive-exercising suites (derive-audit-reliability, dismiss, fleet-bugs, mail-and-blocking,
+  mail-delivery-lease, repos, adopt, worktrees, revive, spawn-setup, shell-spawn, lan-mdns-state, hook-auth,
+  daemon-maintenance, network-refresh); **# fail 0**.

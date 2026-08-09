@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openDb } from '../scripts/fleetd/db.ts';
-import { createCore } from '../scripts/fleetd/derive.mjs';
+import { createCore } from '../scripts/fleetd/derive.ts';
 import { startDaemon } from './helpers/daemon.mjs';
 import { getJson, postJson } from './helpers/http.mjs';
 import { waitForSpecRecords, waitUntil } from './helpers/wait.mjs';

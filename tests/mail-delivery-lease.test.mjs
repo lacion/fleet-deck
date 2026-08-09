@@ -22,7 +22,7 @@ import { startDaemon } from './helpers/daemon.mjs';
 import { postHook, postJson, getJson } from './helpers/http.mjs';
 import { loadFixture } from './helpers/fixtures.mjs';
 import { openDb } from '../scripts/fleetd/db.ts';
-import { createCore } from '../scripts/fleetd/derive.mjs';
+import { createCore } from '../scripts/fleetd/derive.ts';
 
 // The scratch daemon's fleetd.db — openDb's CREATE TABLE IF NOT EXISTS DDL is
 // idempotent, so a second handle on the live file is safe for read assertions.
