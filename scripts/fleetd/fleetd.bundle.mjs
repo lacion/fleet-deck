@@ -7672,7 +7672,7 @@ function createWorktrees(ctx) {
   return { worktrees, removeWorktree };
 }
 
-// scripts/fleetd/repos.mjs
+// scripts/fleetd/repos.ts
 import fs7 from "node:fs";
 import os3 from "node:os";
 import path7 from "node:path";
@@ -7713,48 +7713,70 @@ function detectCoderWorkspaceRoot({
   return null;
 }
 
-// scripts/fleetd/repos.mjs
+// scripts/fleetd/repos.ts
 var CONTROL_RE = /[\x00-\x1f\x7f]/;
 var SPACE_OR_CONTROL_RE = /[\s\x00-\x1f\x7f]/;
 var FORGE_SLUG_SEGMENT_RE = /^[A-Za-z0-9._-]+$/;
 var CODER_DEFAULT_ORG = "textemma";
+var RepoError = class extends Error {
+  status;
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+  }
+};
 function namedError(status, message) {
-  const err = new Error(message);
-  err.status = status;
-  return err;
+  return new RepoError(status, message);
+}
+function errStatus(err) {
+  if (typeof err === "object" && err !== null && "status" in err) {
+    const status = err.status;
+    return typeof status === "number" ? status : void 0;
+  }
+  return void 0;
+}
+function errMessage(err) {
+  return err instanceof Error && err.message ? err.message : String(err);
 }
 var ORIGIN_USERINFO_RE = /^[a-z][a-z0-9+.-]{0,32}:\/\/([^/?#\s]{0,512})@/i;
 var ORIGIN_PARAM_VALUE_RE = /[?&#][^=&\s]{1,128}=([^&\s]{1,512})/g;
 function originSecrets(origin_url) {
-  const origin = String(origin_url ?? "");
+  const origin = origin_url ?? "";
   const userinfo = ORIGIN_USERINFO_RE.exec(origin)?.[1] ?? "";
   const parts = userinfo ? [userinfo, ...userinfo.split(":")] : [];
-  for (const match of origin.matchAll(ORIGIN_PARAM_VALUE_RE)) parts.push(match[1]);
+  for (const match of origin.matchAll(ORIGIN_PARAM_VALUE_RE)) parts.push(match[1] ?? "");
   return [...new Set(parts.filter((part) => part.length >= 8))];
 }
 function gitFailureText(err, origin_url = null) {
   const secrets = originSecrets(origin_url);
-  const hardened = redactGitText(String(err ?? ""), secrets);
+  const hardened = redactGitText(err, secrets);
   return { note: distillGitStderr(hardened), detail: gitStderrDetail(hardened, { secrets }) };
 }
 function repoNameOf(value) {
-  const clean = String(value).replace(/[\\/]+$/, "");
+  const clean = value.replace(/[\\/]+$/, "");
   return path7.basename(clean).replace(/\.git$/i, "");
 }
 function unsafeDashSegment(value) {
-  return String(value).split(/[/:@]/).some((segment) => segment.startsWith("-"));
+  return value.split(/[/:@]/).some((segment) => segment.startsWith("-"));
 }
-function repoDefaultOrgChoice({ setting = null, env = null, coder = false } = {}) {
+function repoDefaultOrgChoice({
+  setting = null,
+  env = null,
+  coder = false
+} = {}) {
   if (setting) return { value: setting, source: "override" };
   if (env) return { value: env, source: "env" };
   if (coder) return { value: CODER_DEFAULT_ORG, source: "coder" };
   return { value: null, source: "default" };
 }
 function repoDefaultOrgProblem(value) {
-  if (typeof value !== "string" || !value) return "default org must be a non-empty owner or group path";
+  if (typeof value !== "string" || !value)
+    return "default org must be a non-empty owner or group path";
   if (value.length > 200) return "default org must be 200 characters or fewer";
-  if (SPACE_OR_CONTROL_RE.test(value)) return "default org must not contain whitespace or control characters";
-  if (value.startsWith("-") || unsafeDashSegment(value)) return "default org must not contain a segment beginning with -";
+  if (SPACE_OR_CONTROL_RE.test(value))
+    return "default org must not contain whitespace or control characters";
+  if (value.startsWith("-") || unsafeDashSegment(value))
+    return "default org must not contain a segment beginning with -";
   const parts = value.split("/");
   if (!parts.every(Boolean) || parts.some((p) => p === "." || p === "..")) {
     return "default org must be an owner or clean group/subgroup path";
@@ -7772,8 +7794,10 @@ function parseRepoInput(input, repoHost = "github", repoTransport = "https") {
     return { error: `repo_transport must be ssh or https \u2014 got "${repoTransport}"` };
   }
   if (typeof input !== "string" || !input) return { error: "repo must be a non-empty string" };
-  if (SPACE_OR_CONTROL_RE.test(input)) return { error: "repo must not contain whitespace or control characters" };
-  if (input.startsWith("-") || unsafeDashSegment(input)) return { error: "repo must not contain a path or argument segment beginning with -" };
+  if (SPACE_OR_CONTROL_RE.test(input))
+    return { error: "repo must not contain whitespace or control characters" };
+  if (input.startsWith("-") || unsafeDashSegment(input))
+    return { error: "repo must not contain a path or argument segment beginning with -" };
   if (/^https:\/\//i.test(input)) {
     let url;
     try {
@@ -7803,7 +7827,8 @@ function parseRepoInput(input, repoHost = "github", repoTransport = "https") {
   }
   const scheme = /^([A-Za-z][A-Za-z0-9+.-]*):/.exec(input)?.[1]?.toLowerCase();
   if (scheme) {
-    if (scheme === "http") return { error: "plain http repository URLs are refused \u2014 use https or ssh" };
+    if (scheme === "http")
+      return { error: "plain http repository URLs are refused \u2014 use https or ssh" };
     return { error: `repository URL scheme "${scheme}" is refused \u2014 use https or ssh` };
   }
   if (path7.isAbsolute(input)) {
@@ -7814,10 +7839,12 @@ function parseRepoInput(input, repoHost = "github", repoTransport = "https") {
   const parts = input.split("/");
   const cleanSegments = parts.every(Boolean) && !parts.some((part) => part === "." || part === "..");
   if (cleanSegments && parts.length >= 2 && !parts.every((part) => FORGE_SLUG_SEGMENT_RE.test(part))) {
-    return { error: "shorthand path segments may contain only letters, numbers, dots, underscores, and hyphens" };
+    return {
+      error: "shorthand path segments may contain only letters, numbers, dots, underscores, and hyphens"
+    };
   }
   if (cleanSegments && parts.length >= 2) {
-    const repo_name = repoNameOf(parts[parts.length - 1]);
+    const repo_name = repoNameOf(parts[parts.length - 1] ?? "");
     if (!repo_name) return { error: "shorthand must end in a repository name" };
     if (repoHost === "gitlab") {
       const slug = input.replace(/\.git$/i, "");
@@ -7846,7 +7873,8 @@ function quickBranchCheck(branch) {
   if (typeof branch !== "string" || !branch) return "branch must be a non-empty string";
   if (branch.length > 200) return "branch must be 200 characters or fewer";
   if (branch.startsWith("-")) return "branch must not begin with -";
-  if (SPACE_OR_CONTROL_RE.test(branch)) return "branch must not contain whitespace or control characters";
+  if (SPACE_OR_CONTROL_RE.test(branch))
+    return "branch must not contain whitespace or control characters";
   if (branch.includes("..")) return "branch must not contain ..";
   if (branch.includes("@{")) return "branch must not contain @{";
   if (branch.endsWith(".lock")) return "branch must not end with .lock";
@@ -7860,22 +7888,26 @@ function expandHome(value) {
 }
 var FORGE_HOSTS = /* @__PURE__ */ new Set(["github.com", "gitlab.com"]);
 function normalizeRemoteOrigin(value) {
-  const input = String(value);
-  let user = null;
+  const input = value;
+  let user;
   let host;
   let rest;
   const url = /^(?:https|ssh):\/\/(?:([^/?#@]*)@)?([^/?#]+)(\/[^?#]*)$/i.exec(input);
   if (url) {
     user = url[1] || null;
-    host = url[2];
-    if (!host || host.includes(":")) return null;
-    rest = url[3];
+    const h = url[2];
+    if (h === void 0 || h.includes(":")) return null;
+    host = h;
+    rest = url[3] ?? "";
   } else {
     if (input.includes("://")) return null;
     const scp = /^(?:([^/@:]+)@)?([^/:@]+):(.+)$/.exec(input);
     if (!scp) return null;
-    [, user, host, rest] = scp;
-    user = user || null;
+    user = scp[1] || null;
+    const h = scp[2];
+    if (h === void 0) return null;
+    host = h;
+    rest = scp[3] ?? "";
   }
   const cleaned = rest.replace(/^\/+/, "").replace(/[\\/]+$/, "").replace(/\.git$/i, "");
   if (!cleaned) return null;
@@ -7883,10 +7915,10 @@ function normalizeRemoteOrigin(value) {
   return `//${host.toLowerCase()}/${user == null ? "" : `${user}@`}${cleaned}`;
 }
 function foldOriginCaseInsensitivePrefix(origin) {
-  const scp = /^[^/@:]+@/.exec(origin);
-  if (scp) return scp[0].toLowerCase() + origin.slice(scp[0].length);
-  const scheme = /^[A-Za-z][A-Za-z0-9+.-]{0,32}:/.exec(origin);
-  if (scheme) return scheme[0].toLowerCase() + origin.slice(scheme[0].length);
+  const scp = /^[^/@:]+@/.exec(origin)?.[0];
+  if (scp !== void 0) return scp.toLowerCase() + origin.slice(scp.length);
+  const scheme = /^[A-Za-z][A-Za-z0-9+.-]{0,32}:/.exec(origin)?.[0];
+  if (scheme !== void 0) return scheme.toLowerCase() + origin.slice(scheme.length);
   return origin;
 }
 function comparableOrigin(value) {
@@ -7898,7 +7930,7 @@ function comparableOrigin(value) {
       return path7.resolve(value);
     }
   }
-  return normalizeRemoteOrigin(value) ?? foldOriginCaseInsensitivePrefix(String(value).replace(/[\\/]+$/, "").replace(/\.git$/i, ""));
+  return normalizeRemoteOrigin(value) ?? foldOriginCaseInsensitivePrefix(value.replace(/[\\/]+$/, "").replace(/\.git$/i, ""));
 }
 function exists(pathname) {
   try {
@@ -7916,18 +7948,22 @@ function isDirectory2(pathname) {
 }
 async function gitRepoKind(root) {
   if (!isDirectory2(root)) return null;
-  const probe2 = await execFileP("git", ["-C", root, "rev-parse", "--is-bare-repository"], { timeout: 5e3 });
+  const probe2 = await execFileP("git", ["-C", root, "rev-parse", "--is-bare-repository"], {
+    timeout: 5e3
+  });
   if (!probe2.ok) return null;
   return probe2.out.trim() === "true" ? "bare" : "worktree";
 }
 async function originOf(root) {
-  const result = await execFileP("git", ["-C", root, "remote", "get-url", "origin"], { timeout: 5e3 });
+  const result = await execFileP("git", ["-C", root, "remote", "get-url", "origin"], {
+    timeout: 5e3
+  });
   return result.ok ? result.out.trim() || null : null;
 }
 function parseWorktrees(porcelain) {
   const rows = [];
   let row = null;
-  for (const line of String(porcelain || "").split("\n")) {
+  for (const line of porcelain.split("\n")) {
     if (line.startsWith("worktree ")) {
       if (row) rows.push(row);
       row = { path: line.slice(9), branch: null };
@@ -7942,20 +7978,23 @@ function parseWorktrees(porcelain) {
   return rows;
 }
 function dirtyNames(porcelain) {
-  return String(porcelain || "").split("\n").filter(Boolean).map((line) => line.slice(3).trim()).filter(Boolean);
+  return porcelain.split("\n").filter(Boolean).map((line) => line.slice(3).trim()).filter(Boolean);
 }
 function createRepos(ctx) {
   const { q } = ctx;
   const touchedAt = /* @__PURE__ */ new Map();
   const provisioningTargets = /* @__PURE__ */ new Map();
   const cloneCap = (() => {
-    const n = Number(process.env.FLEETDECK_CLONE_CONCURRENCY);
+    const n = Number(process.env["FLEETDECK_CLONE_CONCURRENCY"]);
     return Number.isInteger(n) && n > 0 ? n : 3;
   })();
   let clonesInFlight = 0;
   function reserveCloneSlot() {
     if (clonesInFlight >= cloneCap) {
-      throw namedError(429, `too many repositories are cloning right now (${clonesInFlight}/${cloneCap}) \u2014 retry in a moment`);
+      throw namedError(
+        429,
+        `too many repositories are cloning right now (${clonesInFlight}/${cloneCap}) \u2014 retry in a moment`
+      );
     }
     clonesInFlight += 1;
     let released = false;
@@ -7971,13 +8010,15 @@ function createRepos(ctx) {
     try {
       q.setSpawnFailDetail.run(detail, spawn_id);
     } catch (err) {
-      console.error(`fleetd could not record fail_detail for ${spawn_id}: ${err?.message || err}`);
+      console.error(`fleetd could not record fail_detail for ${spawn_id}: ${errMessage(err)}`);
     }
   }
   async function validateBranch(branch) {
     const quick = quickBranchCheck(branch);
     if (quick) throw namedError(400, quick);
-    const result = await execFileP("git", ["check-ref-format", "--branch", branch], { timeout: 5e3 });
+    const result = await execFileP("git", ["check-ref-format", "--branch", branch], {
+      timeout: 5e3
+    });
     if (!result.ok) throw namedError(400, result.err || "branch is not a valid git branch name");
     return branch;
   }
@@ -7986,9 +8027,9 @@ function createRepos(ctx) {
     if (override != null) {
       return { value: override, source: "override", resolved: path7.resolve(expandHome(override)) };
     }
-    if (process.env.FLEETDECK_REPOS_DIR) {
-      const value2 = process.env.FLEETDECK_REPOS_DIR;
-      return { value: value2, source: "env", resolved: path7.resolve(expandHome(value2)) };
+    const envDir = process.env["FLEETDECK_REPOS_DIR"];
+    if (envDir) {
+      return { value: envDir, source: "env", resolved: path7.resolve(expandHome(envDir)) };
     }
     const value = detectCoderWorkspaceRoot() ?? path7.join(os3.homedir(), "projects");
     return { value, source: "default", resolved: value };
@@ -7999,7 +8040,7 @@ function createRepos(ctx) {
   function resolveRepoDefaultOrg() {
     return repoDefaultOrgChoice({
       setting: q.getSetting.get("repo_default_org")?.value ?? null,
-      env: process.env.FLEETDECK_DEFAULT_ORG ?? null,
+      env: process.env["FLEETDECK_DEFAULT_ORG"] ?? null,
       coder: !!detectCoderWorkspaceRoot()
     });
   }
@@ -8014,63 +8055,109 @@ function createRepos(ctx) {
       q.setSetting.run("repos_dir", null, Date.now());
       return resolveReposDir();
     }
-    if (typeof value !== "string" || !value) throw namedError(400, "repos_dir must be an absolute path or null");
-    if (CONTROL_RE.test(value)) throw namedError(400, "repos_dir must not contain NUL or control characters");
+    if (typeof value !== "string" || !value)
+      throw namedError(400, "repos_dir must be an absolute path or null");
+    if (CONTROL_RE.test(value))
+      throw namedError(400, "repos_dir must not contain NUL or control characters");
     const expanded = expandHome(value);
-    if (!path7.isAbsolute(expanded)) throw namedError(400, "repos_dir must be an absolute path (or begin with ~/)");
+    if (!path7.isAbsolute(expanded))
+      throw namedError(400, "repos_dir must be an absolute path (or begin with ~/)");
     const resolved = path7.resolve(expanded);
-    if (path7.dirname(resolved) === resolved) throw namedError(400, "repos_dir must not be the filesystem root");
+    if (path7.dirname(resolved) === resolved)
+      throw namedError(400, "repos_dir must not be the filesystem root");
     try {
       if (fs7.existsSync(resolved)) {
-        if (!fs7.statSync(resolved).isDirectory()) throw namedError(400, "repos_dir points to an existing file");
+        if (!fs7.statSync(resolved).isDirectory())
+          throw namedError(400, "repos_dir points to an existing file");
       }
     } catch (err) {
-      if (err?.status) throw err;
-      throw namedError(400, `cannot inspect repos_dir: ${err.message || err}`);
+      if (errStatus(err) !== void 0) throw err;
+      throw namedError(400, `cannot inspect repos_dir: ${errMessage(err)}`);
     }
     q.setSetting.run("repos_dir", value, Date.now());
     return resolveReposDir();
   }
-  function touchRepo({ repo_id, repo_name, root, origin_url = null, default_branch = null, source }) {
+  function touchRepo({
+    repo_id,
+    repo_name,
+    root,
+    origin_url = null,
+    default_branch = null,
+    source
+  }) {
     if (!repo_id || !repo_name || !root) return;
     const now = Date.now();
     if (now - (touchedAt.get(repo_id) ?? 0) < 6e4) return;
     touchedAt.set(repo_id, now);
-    q.upsertRepo.run(repo_id, repo_name, root, origin_url, default_branch, now, now, source ?? null);
+    q.upsertRepo.run(
+      repo_id,
+      repo_name,
+      root,
+      origin_url,
+      default_branch,
+      now,
+      now,
+      source ?? null
+    );
     if (!origin_url) {
-      Promise.resolve().then(() => originOf(root)).then((found) => {
-        if (found) q.setRepoOrigin.run(found, repo_id);
-      }).catch((err) => console.error("fleetd repo origin backfill error:", err));
+      const rootDir = root;
+      const repoId = repo_id;
+      Promise.resolve().then(() => originOf(rootDir)).then((found) => {
+        if (found) q.setRepoOrigin.run(found, repoId);
+      }).catch((err) => {
+        console.error("fleetd repo origin backfill error:", err);
+      });
     }
   }
   async function resolveTarget(body) {
-    const transport = body?.repo_transport ?? resolveRepoTransport();
-    const host = body?.repo_host ?? void 0;
-    let parsed = parseRepoInput(body?.repo, host, transport);
-    if (parsed.error) throw namedError(400, parsed.error);
-    if (body?.repo_org != null && parsed.kind !== "name") {
+    const transport = body.repo_transport ?? resolveRepoTransport();
+    const host = body.repo_host ?? void 0;
+    let parsed = parseRepoInput(body.repo, host, transport);
+    if ("error" in parsed) throw namedError(400, parsed.error);
+    if (body.repo_org != null && parsed.kind !== "name") {
       throw namedError(400, "repo_org applies only to a bare repo name");
     }
     let origin_url = parsed.origin_url;
-    let catalogRows = q.repoByName.all(parsed.repo_name);
+    const catalogRows = q.repoByName.all(parsed.repo_name);
     let dest;
     if (parsed.kind === "name") {
-      const roots = [...new Set(catalogRows.map((row) => row.root).filter(Boolean))];
-      if (roots.length > 1) throw namedError(409, `more than one known repo named "${parsed.repo_name}": ${roots.join(", ")}`);
-      if (roots.length === 1) {
-        const row = catalogRows.find((item) => item.root === roots[0]);
-        dest = roots[0];
+      const roots = [
+        ...new Set(
+          catalogRows.map((row) => row.root).filter((root) => Boolean(root))
+        )
+      ];
+      if (roots.length > 1)
+        throw namedError(
+          409,
+          `more than one known repo named "${parsed.repo_name}": ${roots.join(", ")}`
+        );
+      const soleRoot = roots[0];
+      if (soleRoot !== void 0) {
+        const row = catalogRows.find((item) => item.root === soleRoot);
+        dest = soleRoot;
         origin_url = row?.origin_url ?? null;
       } else {
-        const org = body?.repo_org != null ? { value: validateRepoDefaultOrg(body.repo_org), source: "request" } : resolveRepoDefaultOrg();
+        const org = body.repo_org != null ? { value: validateRepoDefaultOrg(body.repo_org), source: "request" } : resolveRepoDefaultOrg();
         if (!org.value) {
-          throw namedError(404, `no known repo named "${parsed.repo_name}" \u2014 paste owner/repo, a URL, or set a default org`);
+          throw namedError(
+            404,
+            `no known repo named "${parsed.repo_name}" \u2014 paste owner/repo, a URL, or set a default org`
+          );
         }
         const orgProblem = repoDefaultOrgProblem(org.value);
-        if (orgProblem) throw namedError(400, `configured ${org.source} default org is invalid \u2014 ${orgProblem}`);
+        if (orgProblem)
+          throw namedError(400, `configured ${org.source} default org is invalid \u2014 ${orgProblem}`);
         const promotedHost = host ?? (org.value.includes("/") ? "gitlab" : void 0);
-        const expanded = parseRepoInput(`${org.value}/${parsed.repo_name}`, promotedHost, transport);
-        if (expanded.error) throw namedError(400, `default org "${org.value}" cannot resolve this repo \u2014 ${expanded.error}`);
+        const expanded = parseRepoInput(
+          `${org.value}/${parsed.repo_name}`,
+          promotedHost,
+          transport
+        );
+        if ("error" in expanded)
+          throw namedError(
+            400,
+            `default org "${org.value}" cannot resolve this repo \u2014 ${expanded.error}`
+          );
         parsed = expanded;
         origin_url = parsed.origin_url;
         dest = path7.join(resolveReposDir().resolved, parsed.repo_name);
@@ -8083,9 +8170,17 @@ function createRepos(ctx) {
     if (parsed.kind === "path") {
       const kind = await gitRepoKind(dest);
       if (kind === "worktree") {
-        return { mode: "local", root: dest, dest, origin_url: await originOf(dest), repo_name: parsed.repo_name, kind: parsed.kind };
+        return {
+          mode: "local",
+          root: dest,
+          dest,
+          origin_url: await originOf(dest),
+          repo_name: parsed.repo_name,
+          kind: parsed.kind
+        };
       }
-      if (exists(dest) && kind !== "bare") throw namedError(409, `${dest} exists and is not ${body.repo}`);
+      if (exists(dest) && kind !== "bare")
+        throw namedError(409, `${dest} exists and is not ${body.repo}`);
       origin_url = dest;
       dest = path7.join(resolveReposDir().resolved, parsed.repo_name);
     }
@@ -8099,7 +8194,8 @@ function createRepos(ctx) {
       if (!exists(candidate)) continue;
       const kind = await gitRepoKind(candidate);
       if (kind !== "worktree") {
-        if (candidate === dest) throw namedError(409, `${candidate} exists and is not ${body.repo}`);
+        if (candidate === dest)
+          throw namedError(409, `${candidate} exists and is not ${body.repo}`);
         continue;
       }
       const knownOrigin = await originOf(candidate);
@@ -8110,21 +8206,32 @@ function createRepos(ctx) {
           continue;
         }
       }
-      return { mode: "local", root: candidate, dest: candidate, origin_url: origin_url ?? knownOrigin, repo_name: parsed.repo_name, kind: parsed.kind };
+      return {
+        mode: "local",
+        root: candidate,
+        dest: candidate,
+        origin_url: origin_url ?? knownOrigin,
+        repo_name: parsed.repo_name,
+        kind: parsed.kind
+      };
     }
     if (!origin_url) throw namedError(404, `no usable checkout is known for "${parsed.repo_name}"`);
     return { mode: "clone", origin_url, dest, repo_name: parsed.repo_name, kind: parsed.kind };
   }
-  async function cloneRepo({ origin_url, dest, spawn_id }) {
+  async function cloneRepo({
+    origin_url,
+    dest,
+    spawn_id
+  }) {
     if (typeof origin_url !== "string" || !origin_url || SPACE_OR_CONTROL_RE.test(origin_url) || origin_url.startsWith("-") || unsafeDashSegment(origin_url)) {
       throw namedError(409, "refusing to clone an unsafe origin URL");
     }
     const reposDir = resolveReposDir().resolved;
     fs7.mkdirSync(reposDir, { recursive: true });
-    const temp = `${dest}.fd-cloning-${String(spawn_id).slice(0, 8)}`;
+    const temp = `${dest}.fd-cloning-${spawn_id.slice(0, 8)}`;
     try {
       fs7.rmSync(temp, { recursive: true, force: true });
-      const configuredTimeout = Number(process.env.FLEETDECK_CLONE_TIMEOUT_MS);
+      const configuredTimeout = Number(process.env["FLEETDECK_CLONE_TIMEOUT_MS"]);
       const timeout = Number.isFinite(configuredTimeout) && configuredTimeout > 0 ? configuredTimeout : 6e5;
       const result = await execFileP("git", ["clone", "--", origin_url, temp], {
         timeout,
@@ -8144,56 +8251,101 @@ ${result.err}`);
         fs7.rmSync(temp, { recursive: true, force: true });
       } catch {
       }
-      throw err?.status ? err : namedError(409, err.message || String(err));
+      throw errStatus(err) !== void 0 ? err : namedError(409, errMessage(err));
     }
   }
-  async function materializeBranch({ root, branch, mode, spawn_id = "", sid = spawn_id, clone = false }) {
-    const localBefore = await execFileP("git", ["-C", root, "show-ref", "--verify", "--quiet", `refs/heads/${branch}`], { timeout: 5e3 });
+  async function materializeBranch({
+    root,
+    branch,
+    mode,
+    spawn_id = "",
+    sid = spawn_id,
+    clone = false
+  }) {
+    const localBefore = await execFileP(
+      "git",
+      ["-C", root, "show-ref", "--verify", "--quiet", `refs/heads/${branch}`],
+      { timeout: 5e3 }
+    );
     const fetched = await execFileP("git", ["-C", root, "fetch", "origin", "--prune"], {
       timeout: 12e4,
       env: { GIT_TERMINAL_PROMPT: "0" }
     });
-    const local = localBefore.ok ? localBefore : await execFileP("git", ["-C", root, "show-ref", "--verify", "--quiet", `refs/heads/${branch}`], { timeout: 5e3 });
-    const remote = await execFileP("git", ["-C", root, "show-ref", "--verify", "--quiet", `refs/remotes/origin/${branch}`], { timeout: 5e3 });
+    const local = localBefore.ok ? localBefore : await execFileP(
+      "git",
+      ["-C", root, "show-ref", "--verify", "--quiet", `refs/heads/${branch}`],
+      { timeout: 5e3 }
+    );
+    const remote = await execFileP(
+      "git",
+      ["-C", root, "show-ref", "--verify", "--quiet", `refs/remotes/origin/${branch}`],
+      { timeout: 5e3 }
+    );
     const base = await baseBranch(root);
+    const requireBaseRef = () => {
+      if (!base)
+        throw namedError(409, `branch ${branch} cannot be created \u2014 no base branch is available`);
+      return base.ref;
+    };
     if (!local.ok && !remote.ok && !base) {
       if (fetched.ok) {
-        throw namedError(409, `branch ${branch} does not exist and no base branch is available to create it from`);
+        throw namedError(
+          409,
+          `branch ${branch} does not exist and no base branch is available to create it from`
+        );
       }
-      const originUrl = await execFileP("git", ["-C", root, "remote", "get-url", "origin"], { timeout: 5e3 });
-      const { note, detail } = gitFailureText(fetched.err, originUrl.ok ? originUrl.out.trim() : null);
+      const originUrl = await execFileP("git", ["-C", root, "remote", "get-url", "origin"], {
+        timeout: 5e3
+      });
+      const { note, detail } = gitFailureText(
+        fetched.err,
+        originUrl.ok ? originUrl.out.trim() : null
+      );
       recordFailDetail(spawn_id, detail);
-      throw namedError(409, `branch ${branch} not found locally and fetch failed: ${note || "git fetch failed"}`);
+      throw namedError(
+        409,
+        `branch ${branch} not found locally and fetch failed: ${note || "git fetch failed"}`
+      );
     }
     if (mode === "in-place") {
-      const status = await execFileP("git", ["-C", root, "status", "--porcelain"], { timeout: 3e4 });
+      const status = await execFileP("git", ["-C", root, "status", "--porcelain"], {
+        timeout: 3e4
+      });
       if (!status.ok) throw namedError(409, redactGitText(status.err) || "git status failed");
       const dirty = dirtyNames(status.out);
       if (dirty.length) {
         const shown = dirty.slice(0, 3).join(", ");
-        throw namedError(409, `checkout is dirty (${dirty.length} files: ${shown}${dirty.length > 3 ? "\u2026" : ""}) \u2014 use worktree mode or commit`);
+        throw namedError(
+          409,
+          `checkout is dirty (${dirty.length} files: ${shown}${dirty.length > 3 ? "\u2026" : ""}) \u2014 use worktree mode or commit`
+        );
       }
-      const args = local.ok ? ["-C", root, "switch", branch] : remote.ok ? ["-C", root, "switch", "--track", `origin/${branch}`] : ["-C", root, "switch", "-c", branch, base.ref];
+      const args = local.ok ? ["-C", root, "switch", branch] : remote.ok ? ["-C", root, "switch", "--track", `origin/${branch}`] : ["-C", root, "switch", "-c", branch, requireBaseRef()];
       const switched = await execFileP("git", args, { timeout: 3e4 });
       if (!switched.ok) throw namedError(409, redactGitText(switched.err) || "git switch failed");
-      return { runCwd: root, created: { clone: !!clone, worktree: false }, reused: false };
+      return { runCwd: root, created: { clone, worktree: false }, reused: false };
     }
-    const listed = await execFileP("git", ["-C", root, "worktree", "list", "--porcelain"], { timeout: 1e4 });
+    const listed = await execFileP("git", ["-C", root, "worktree", "list", "--porcelain"], {
+      timeout: 1e4
+    });
     if (!listed.ok) throw namedError(409, redactGitText(listed.err) || "git worktree list failed");
     const existing = parseWorktrees(listed.out).find((row) => row.branch === branch);
-    if (existing) return { runCwd: existing.path, created: { clone: !!clone, worktree: false }, reused: true };
+    if (existing)
+      return { runCwd: existing.path, created: { clone, worktree: false }, reused: true };
     const safeBranch = branch.replaceAll("/", "-");
     const basePath = path7.join(path7.dirname(root), `${path7.basename(root)}--fd-${safeBranch}`);
-    const dedupPath = `${basePath}-${String(sid).slice(0, 4) || "repo"}`;
+    const dedupPath = `${basePath}-${sid.slice(0, 4) || "repo"}`;
     const candidates = exists(basePath) ? [dedupPath] : [basePath, dedupPath];
     let last = null;
     for (const candidate of candidates) {
       const existedBefore = exists(candidate);
-      const args = local.ok ? ["-C", root, "worktree", "add", candidate, branch] : remote.ok ? ["-C", root, "worktree", "add", "--track", "-b", branch, candidate, `origin/${branch}`] : ["-C", root, "worktree", "add", "-b", branch, candidate, base.ref];
+      const args = local.ok ? ["-C", root, "worktree", "add", candidate, branch] : remote.ok ? ["-C", root, "worktree", "add", "--track", "-b", branch, candidate, `origin/${branch}`] : ["-C", root, "worktree", "add", "-b", branch, candidate, requireBaseRef()];
       last = await execFileP("git", args, { timeout: 3e4 });
-      if (last.ok) return { runCwd: candidate, created: { clone: !!clone, worktree: true }, reused: false };
+      if (last.ok) return { runCwd: candidate, created: { clone, worktree: true }, reused: false };
       if (!existedBefore && exists(candidate)) {
-        await execFileP("git", ["-C", root, "worktree", "remove", "--force", candidate], { timeout: 3e4 });
+        await execFileP("git", ["-C", root, "worktree", "remove", "--force", candidate], {
+          timeout: 3e4
+        });
         try {
           fs7.rmSync(candidate, { recursive: true, force: true });
         } catch {
@@ -8201,7 +8353,13 @@ ${result.err}`);
         await execFileP("git", ["-C", root, "worktree", "prune"], { timeout: 3e4 });
       }
     }
-    throw namedError(409, redactGitText(last?.err) || "git worktree add failed");
+    throw namedError(
+      409,
+      // `last`, when non-null after the loop, is already narrowed to the
+      // failure variant (a success returns inside the loop), so `!last.ok`
+      // would be a provably-true redundant check.
+      redactGitText(last ? last.err : null) || "git worktree add failed"
+    );
   }
   function canonicalTarget(dest) {
     try {
@@ -8271,14 +8429,14 @@ var SettingError = class extends Error {
 function namedError2(status, message) {
   return new SettingError(status, message);
 }
-function errStatus(err) {
+function errStatus2(err) {
   if (typeof err === "object" && err !== null && "status" in err) {
     const status = err.status;
     if (typeof status === "number") return status;
   }
   return void 0;
 }
-function errMessage(err) {
+function errMessage2(err) {
   return err instanceof Error && err.message ? err.message : String(err);
 }
 function expandHome2(value) {
@@ -8302,15 +8460,15 @@ function validatePathSetting(value, label2) {
       throw namedError2(400, `${label2} points to an existing file`);
     }
   } catch (err) {
-    if (errStatus(err)) throw err;
-    throw namedError2(400, `cannot inspect ${label2}: ${errMessage(err)}`);
+    if (errStatus2(err)) throw err;
+    throw namedError2(400, `cannot inspect ${label2}: ${errMessage2(err)}`);
   }
   try {
     const canonical2 = fs8.realpathSync(resolved);
     if (path8.dirname(canonical2) === canonical2)
       throw namedError2(400, `${label2} must not be the filesystem root`);
   } catch (err) {
-    if (errStatus(err)) throw err;
+    if (errStatus2(err)) throw err;
   }
   return resolved;
 }
@@ -8724,8 +8882,8 @@ function createSettings(ctx) {
       }
       return { status: 200, body: { ok: true, settings: resolveSettings() } };
     } catch (err) {
-      const status = errStatus(err) ?? 500;
-      return { status, body: { ok: false, reason: errMessage(err) } };
+      const status = errStatus2(err) ?? 500;
+      return { status, body: { ok: false, reason: errMessage2(err) } };
     }
   }
   function persistRepoTransport(value) {

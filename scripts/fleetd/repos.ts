@@ -1,4 +1,4 @@
-// repos.mjs — durable repository catalog/settings plus clone and branch
+// repos.ts — durable repository catalog/settings plus clone and branch
 // materialization for repo-mode board spawns. Every git subprocess is an argv
 // array through execFileP; no repository input is ever interpolated into a
 // shell command.
@@ -7,9 +7,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileP, baseBranch, distillGitStderr, gitStderrDetail, redactGitText } from './exec.ts';
+import type { ExecResult } from './exec.ts';
 import { detectCoderWorkspaceRoot } from './config.ts';
+import type { Statements } from './statements.ts';
 
+// eslint-disable-next-line no-control-regex -- refusing NUL/C0/DEL in a repos_dir path is the entire purpose of this gate
 const CONTROL_RE = /[\x00-\x1f\x7f]/;
+// eslint-disable-next-line no-control-regex -- same gate plus whitespace, for repo/branch/origin argv safety
 const SPACE_OR_CONTROL_RE = /[\s\x00-\x1f\x7f]/;
 const FORGE_SLUG_SEGMENT_RE = /^[A-Za-z0-9._-]+$/;
 // User-requested Coder seed: company workspaces type a bare repo name far more
@@ -17,10 +21,33 @@ const FORGE_SLUG_SEGMENT_RE = /^[A-Za-z0-9._-]+$/;
 // this Coder-only seed → no default. Non-Coder installs never inherit it.
 const CODER_DEFAULT_ORG = 'textemma';
 
-function namedError(status, message) {
-  const err = new Error(message);
-  err.status = status;
-  return err;
+// A git failure carries an HTTP status the daemon relays verbatim. The old
+// namedError stamped `.status` onto a plain Error, which strict TS rejects
+// (Error has no `status`); a tiny subclass carries it as a typed field instead.
+// errStatus/errMessage read an unknown catch value back the way settings.ts
+// does — the exact-same helpers, so the two surfaces stay behaviourally paired.
+class RepoError extends Error {
+  readonly status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+function namedError(status: number, message: string): RepoError {
+  return new RepoError(status, message);
+}
+
+function errStatus(err: unknown): number | undefined {
+  if (typeof err === 'object' && err !== null && 'status' in err) {
+    const status = err.status;
+    return typeof status === 'number' ? status : undefined;
+  }
+  return undefined;
+}
+
+function errMessage(err: unknown): string {
+  return err instanceof Error && err.message ? err.message : String(err);
 }
 
 // Anchored userinfo probe for a clone origin (not the free-text scrubber — that
@@ -61,25 +88,28 @@ const ORIGIN_PARAM_VALUE_RE = /[?&#][^=&\s]{1,128}=([^&\s]{1,512})/g;
 // needle would shred unrelated text (`git clone`, `.git/`) into `[redacted]` and
 // destroy the remedy's legibility. ACCEPTED RESIDUAL: a sub-8-character password
 // is therefore covered only in URL form, by the positional scrub.
-function originSecrets(origin_url) {
-  const origin = String(origin_url ?? '');
+function originSecrets(origin_url: string | null | undefined): string[] {
+  const origin = origin_url ?? '';
   const userinfo = ORIGIN_USERINFO_RE.exec(origin)?.[1] ?? '';
   const parts = userinfo ? [userinfo, ...userinfo.split(':')] : [];
-  for (const match of origin.matchAll(ORIGIN_PARAM_VALUE_RE)) parts.push(match[1]);
-  return [...new Set(parts.filter(part => part.length >= 8))];
+  for (const match of origin.matchAll(ORIGIN_PARAM_VALUE_RE)) parts.push(match[1] ?? '');
+  return [...new Set(parts.filter((part) => part.length >= 8))];
 }
 
-function gitFailureText(err, origin_url = null) {
+function gitFailureText(
+  err: string,
+  origin_url: string | null = null,
+): { note: string; detail: string | null } {
   const secrets = originSecrets(origin_url);
-  const hardened = redactGitText(String(err ?? ''), secrets);
+  const hardened = redactGitText(err, secrets);
   // Re-passing `secrets` is deliberate and harmless: gitStderrDetail runs the
   // same idempotent pass over its input, and a caller that ever hands it raw
   // stderr directly still gets the needles applied.
   return { note: distillGitStderr(hardened), detail: gitStderrDetail(hardened, { secrets }) };
 }
 
-function repoNameOf(value) {
-  const clean = String(value).replace(/[\\/]+$/, '');
+function repoNameOf(value: string): string {
+  const clean = value.replace(/[\\/]+$/, '');
   return path.basename(clean).replace(/\.git$/i, '');
 }
 
@@ -88,36 +118,61 @@ function repoNameOf(value) {
 // userinfo: `git@-oProxyCommand=reboot:x` would otherwise sail past — git's
 // `--` protects git's OWN argv but still hands `-oProxyCommand=…` to ssh as the
 // hostname (CVE-2017-1000117-class). The `@` split closes that.
-function unsafeDashSegment(value) {
-  return String(value).split(/[/:@]/).some(segment => segment.startsWith('-'));
+function unsafeDashSegment(value: string): boolean {
+  return value.split(/[/:@]/).some((segment) => segment.startsWith('-'));
 }
+
+type RepoKind = 'url' | 'path' | 'shorthand' | 'name';
+interface RepoParsed {
+  kind: RepoKind;
+  origin_url: string | null;
+  repo_name: string;
+}
+interface RepoParseError {
+  error: string;
+}
+type RepoParseResult = RepoParseError | RepoParsed;
 
 // A default forge namespace: `owner` on GitHub, `group/subgroup` on GitLab.
 // Return a reason (pure, testable) rather than throwing — the settings surface
 // and the spawn resolver use the same gate and choose their own HTTP wording.
-export function repoDefaultOrgChoice({ setting = null, env = null, coder = false } = {}) {
+export function repoDefaultOrgChoice({
+  setting = null,
+  env = null,
+  coder = false,
+}: { setting?: string | null; env?: string | null; coder?: boolean } = {}): {
+  value: string | null;
+  source: string;
+} {
   if (setting) return { value: setting, source: 'override' };
   if (env) return { value: env, source: 'env' };
   if (coder) return { value: CODER_DEFAULT_ORG, source: 'coder' };
   return { value: null, source: 'default' };
 }
 
-export function repoDefaultOrgProblem(value) {
-  if (typeof value !== 'string' || !value) return 'default org must be a non-empty owner or group path';
+export function repoDefaultOrgProblem(value: unknown): string | null {
+  if (typeof value !== 'string' || !value)
+    return 'default org must be a non-empty owner or group path';
   if (value.length > 200) return 'default org must be 200 characters or fewer';
-  if (SPACE_OR_CONTROL_RE.test(value)) return 'default org must not contain whitespace or control characters';
-  if (value.startsWith('-') || unsafeDashSegment(value)) return 'default org must not contain a segment beginning with -';
+  if (SPACE_OR_CONTROL_RE.test(value))
+    return 'default org must not contain whitespace or control characters';
+  if (value.startsWith('-') || unsafeDashSegment(value))
+    return 'default org must not contain a segment beginning with -';
   const parts = value.split('/');
-  if (!parts.every(Boolean) || parts.some(p => p === '.' || p === '..')) {
+  if (!parts.every(Boolean) || parts.some((p) => p === '.' || p === '..')) {
     return 'default org must be an owner or clean group/subgroup path';
   }
-  if (!parts.every(part => FORGE_SLUG_SEGMENT_RE.test(part))) {
+  if (!parts.every((part) => FORGE_SLUG_SEGMENT_RE.test(part))) {
     return 'default org segments may contain only letters, numbers, dots, underscores, and hyphens';
   }
   return null;
 }
 
-export function parseRepoInput(input, repoHost = 'github', repoTransport = 'https') {
+export function parseRepoInput(
+  input: unknown,
+  repoHost = 'github',
+  repoTransport = 'https',
+): RepoParseResult {
   // repo_host steers ONLY the org/repo shorthand below — it composes the forge
   // origin, so a typo'd host must fail loud rather than silently fall back to
   // github and clone the wrong forge. Every other kind (URL/ssh/scp/absolute
@@ -135,19 +190,29 @@ export function parseRepoInput(input, repoHost = 'github', repoTransport = 'http
     return { error: `repo_transport must be ssh or https — got "${repoTransport}"` };
   }
   if (typeof input !== 'string' || !input) return { error: 'repo must be a non-empty string' };
-  if (SPACE_OR_CONTROL_RE.test(input)) return { error: 'repo must not contain whitespace or control characters' };
-  if (input.startsWith('-') || unsafeDashSegment(input)) return { error: 'repo must not contain a path or argument segment beginning with -' };
+  if (SPACE_OR_CONTROL_RE.test(input))
+    return { error: 'repo must not contain whitespace or control characters' };
+  if (input.startsWith('-') || unsafeDashSegment(input))
+    return { error: 'repo must not contain a path or argument segment beginning with -' };
 
   if (/^https:\/\//i.test(input)) {
     let url;
-    try { url = new URL(input); } catch { return { error: 'repo is not a valid HTTPS URL' }; }
+    try {
+      url = new URL(input);
+    } catch {
+      return { error: 'repo is not a valid HTTPS URL' };
+    }
     const repo_name = repoNameOf(url.pathname);
     if (!repo_name) return { error: 'repository URL must name a repository' };
     return { kind: 'url', origin_url: input, repo_name };
   }
   if (/^ssh:\/\//i.test(input)) {
     let url;
-    try { url = new URL(input); } catch { return { error: 'repo is not a valid SSH URL' }; }
+    try {
+      url = new URL(input);
+    } catch {
+      return { error: 'repo is not a valid SSH URL' };
+    }
     const repo_name = repoNameOf(url.pathname);
     if (!repo_name) return { error: 'repository URL must name a repository' };
     return { kind: 'url', origin_url: input, repo_name };
@@ -159,7 +224,8 @@ export function parseRepoInput(input, repoHost = 'github', repoTransport = 'http
   }
   const scheme = /^([A-Za-z][A-Za-z0-9+.-]*):/.exec(input)?.[1]?.toLowerCase();
   if (scheme) {
-    if (scheme === 'http') return { error: 'plain http repository URLs are refused — use https or ssh' };
+    if (scheme === 'http')
+      return { error: 'plain http repository URLs are refused — use https or ssh' };
     return { error: `repository URL scheme "${scheme}" is refused — use https or ssh` };
   }
   if (path.isAbsolute(input)) {
@@ -172,9 +238,17 @@ export function parseRepoInput(input, repoHost = 'github', repoTransport = 'http
   // repo name is the LAST one. Either way the input's trailing `.git` is stripped
   // before we re-append our own — the long-standing github behaviour, kept here.
   const parts = input.split('/');
-  const cleanSegments = parts.every(Boolean) && !parts.some(part => part === '.' || part === '..');
-  if (cleanSegments && parts.length >= 2 && !parts.every(part => FORGE_SLUG_SEGMENT_RE.test(part))) {
-    return { error: 'shorthand path segments may contain only letters, numbers, dots, underscores, and hyphens' };
+  const cleanSegments =
+    parts.every(Boolean) && !parts.some((part) => part === '.' || part === '..');
+  if (
+    cleanSegments &&
+    parts.length >= 2 &&
+    !parts.every((part) => FORGE_SLUG_SEGMENT_RE.test(part))
+  ) {
+    return {
+      error:
+        'shorthand path segments may contain only letters, numbers, dots, underscores, and hyphens',
+    };
   }
   if (cleanSegments && parts.length >= 2) {
     // repoNameOf strips a trailing '.git', so a final segment of exactly
@@ -182,7 +256,7 @@ export function parseRepoInput(input, repoHost = 'github', repoTransport = 'http
     // resolveTarget would path.join(reposDir, '') and the clone dest would
     // collapse onto the repos root itself. Refuse a nameless shorthand here,
     // exactly as the URL branches refuse a nameless pathname.
-    const repo_name = repoNameOf(parts[parts.length - 1]);
+    const repo_name = repoNameOf(parts[parts.length - 1] ?? '');
     if (!repo_name) return { error: 'shorthand must end in a repository name' };
     // Injection-safe by construction: the host is a constant, and `slug` is the
     // already-gated input (SPACE_OR_CONTROL_RE + unsafeDashSegment above) with
@@ -194,7 +268,8 @@ export function parseRepoInput(input, repoHost = 'github', repoTransport = 'http
       const slug = input.replace(/\.git$/i, '');
       return {
         kind: 'shorthand',
-        origin_url: repoTransport === 'ssh' ? `git@gitlab.com:${slug}.git` : `https://gitlab.com/${slug}.git`,
+        origin_url:
+          repoTransport === 'ssh' ? `git@gitlab.com:${slug}.git` : `https://gitlab.com/${slug}.git`,
         repo_name,
       };
     }
@@ -202,7 +277,8 @@ export function parseRepoInput(input, repoHost = 'github', repoTransport = 'http
       const slug = input.replace(/\.git$/i, '');
       return {
         kind: 'shorthand',
-        origin_url: repoTransport === 'ssh' ? `git@github.com:${slug}.git` : `https://github.com/${slug}.git`,
+        origin_url:
+          repoTransport === 'ssh' ? `git@github.com:${slug}.git` : `https://github.com/${slug}.git`,
         repo_name,
       };
     }
@@ -217,11 +293,12 @@ export function parseRepoInput(input, repoHost = 'github', repoTransport = 'http
   return { kind: 'name', origin_url: null, repo_name: repoNameOf(input) };
 }
 
-export function quickBranchCheck(branch) {
+export function quickBranchCheck(branch: unknown): string | null {
   if (typeof branch !== 'string' || !branch) return 'branch must be a non-empty string';
   if (branch.length > 200) return 'branch must be 200 characters or fewer';
   if (branch.startsWith('-')) return 'branch must not begin with -';
-  if (SPACE_OR_CONTROL_RE.test(branch)) return 'branch must not contain whitespace or control characters';
+  if (SPACE_OR_CONTROL_RE.test(branch))
+    return 'branch must not contain whitespace or control characters';
   if (branch.includes('..')) return 'branch must not contain ..';
   if (branch.includes('@{')) return 'branch must not contain @{';
   if (branch.endsWith('.lock')) return 'branch must not end with .lock';
@@ -229,7 +306,7 @@ export function quickBranchCheck(branch) {
   return null;
 }
 
-function expandHome(value) {
+function expandHome(value: string): string {
   if (value === '~') return os.homedir();
   if (value.startsWith('~/')) return path.join(os.homedir(), value.slice(2));
   return value;
@@ -274,25 +351,36 @@ function expandHome(value) {
 //    posix-absolute so it takes the realpath branch, never the fallback.
 const FORGE_HOSTS = new Set(['github.com', 'gitlab.com']);
 
-function normalizeRemoteOrigin(value) {
-  const input = String(value);
-  let user = null;
-  let host;
-  let rest;
+function normalizeRemoteOrigin(value: string): string | null {
+  const input = value;
+  // No initializer: both the url and scp branches assign `user` before it is
+  // read, so a `= null` seed would be dead (no-useless-assignment).
+  let user: string | null;
+  let host: string;
+  let rest: string;
   const url = /^(?:https|ssh):\/\/(?:([^/?#@]*)@)?([^/?#]+)(\/[^?#]*)$/i.exec(input);
   if (url) {
+    // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
     user = url[1] || null;
-    host = url[2];
-    if (!host || host.includes(':')) return null; // ported (or hostless) — fall back
-    rest = url[3];
+    const h = url[2];
+    if (h === undefined || h.includes(':')) return null; // ported (or hostless) — fall back
+    host = h;
+    rest = url[3] ?? '';
   } else {
     if (input.includes('://')) return null; // some other scheme — fall back
     const scp = /^(?:([^/@:]+)@)?([^/:@]+):(.+)$/.exec(input);
     if (!scp) return null;
-    [, user, host, rest] = scp;
-    user = user || null;
+    // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
+    user = scp[1] || null;
+    const h = scp[2];
+    if (h === undefined) return null;
+    host = h;
+    rest = scp[3] ?? '';
   }
-  const cleaned = rest.replace(/^\/+/, '').replace(/[\\/]+$/, '').replace(/\.git$/i, '');
+  const cleaned = rest
+    .replace(/^\/+/, '')
+    .replace(/[\\/]+$/, '')
+    .replace(/\.git$/i, '');
   if (!cleaned) return null;
   if (FORGE_HOSTS.has(host.toLowerCase())) return `//${host}/${cleaned}`.toLowerCase();
   return `//${host.toLowerCase()}/${user == null ? '' : `${user}@`}${cleaned}`;
@@ -303,47 +391,71 @@ function normalizeRemoteOrigin(value) {
 // may be case-folded — a scheme is case-insensitive by RFC 3986, and the
 // scp-prefix lowercases the hostname with it. The remainder is a repository
 // path (or an opaque non-URL string), whose case can distinguish repositories.
-function foldOriginCaseInsensitivePrefix(origin) {
-  const scp = /^[^/@:]+@/.exec(origin);
-  if (scp) return scp[0].toLowerCase() + origin.slice(scp[0].length);
-  const scheme = /^[A-Za-z][A-Za-z0-9+.-]{0,32}:/.exec(origin);
-  if (scheme) return scheme[0].toLowerCase() + origin.slice(scheme[0].length);
+function foldOriginCaseInsensitivePrefix(origin: string): string {
+  const scp = /^[^/@:]+@/.exec(origin)?.[0];
+  if (scp !== undefined) return scp.toLowerCase() + origin.slice(scp.length);
+  const scheme = /^[A-Za-z][A-Za-z0-9+.-]{0,32}:/.exec(origin)?.[0];
+  if (scheme !== undefined) return scheme.toLowerCase() + origin.slice(scheme.length);
   return origin;
 }
 
-function comparableOrigin(value) {
+function comparableOrigin(value: string | null | undefined): string | null {
   if (!value) return null;
   if (path.isAbsolute(value)) {
-    try { return fs.realpathSync(value); } catch { return path.resolve(value); }
+    try {
+      return fs.realpathSync(value);
+    } catch {
+      return path.resolve(value);
+    }
   }
-  return normalizeRemoteOrigin(value)
-    ?? foldOriginCaseInsensitivePrefix(String(value).replace(/[\\/]+$/, '').replace(/\.git$/i, ''));
+  return (
+    normalizeRemoteOrigin(value) ??
+    foldOriginCaseInsensitivePrefix(value.replace(/[\\/]+$/, '').replace(/\.git$/i, ''))
+  );
 }
 
-function exists(pathname) {
-  try { return fs.existsSync(pathname); } catch { return false; }
+function exists(pathname: string): boolean {
+  try {
+    return fs.existsSync(pathname);
+  } catch {
+    return false;
+  }
 }
 
-function isDirectory(pathname) {
-  try { return fs.statSync(pathname).isDirectory(); } catch { return false; }
+function isDirectory(pathname: string): boolean {
+  try {
+    return fs.statSync(pathname).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
-async function gitRepoKind(root) {
+async function gitRepoKind(root: string): Promise<'bare' | 'worktree' | null> {
   if (!isDirectory(root)) return null;
-  const probe = await execFileP('git', ['-C', root, 'rev-parse', '--is-bare-repository'], { timeout: 5_000 });
+  const probe = await execFileP('git', ['-C', root, 'rev-parse', '--is-bare-repository'], {
+    timeout: 5_000,
+  });
   if (!probe.ok) return null;
   return probe.out.trim() === 'true' ? 'bare' : 'worktree';
 }
 
-async function originOf(root) {
-  const result = await execFileP('git', ['-C', root, 'remote', 'get-url', 'origin'], { timeout: 5_000 });
+async function originOf(root: string): Promise<string | null> {
+  const result = await execFileP('git', ['-C', root, 'remote', 'get-url', 'origin'], {
+    timeout: 5_000,
+  });
+
   return result.ok ? result.out.trim() || null : null;
 }
 
-function parseWorktrees(porcelain) {
-  const rows = [];
-  let row = null;
-  for (const line of String(porcelain || '').split('\n')) {
+interface WorktreeEntry {
+  path: string;
+  branch: string | null;
+}
+
+function parseWorktrees(porcelain: string): WorktreeEntry[] {
+  const rows: WorktreeEntry[] = [];
+  let row: WorktreeEntry | null = null;
+  for (const line of porcelain.split('\n')) {
     if (line.startsWith('worktree ')) {
       if (row) rows.push(row);
       row = { path: line.slice(9), branch: null };
@@ -358,14 +470,49 @@ function parseWorktrees(porcelain) {
   return rows;
 }
 
-function dirtyNames(porcelain) {
-  return String(porcelain || '').split('\n').filter(Boolean).map(line => line.slice(3).trim()).filter(Boolean);
+function dirtyNames(porcelain: string): string[] {
+  return porcelain
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => line.slice(3).trim())
+    .filter(Boolean);
 }
 
-export function createRepos(ctx) {
+interface ReposCtx {
+  q: Statements['q'];
+}
+
+type ResolvedTarget =
+  | {
+      mode: 'local';
+      root: string;
+      dest: string;
+      origin_url: string | null;
+      repo_name: string;
+      kind: RepoKind;
+    }
+  | { mode: 'clone'; origin_url: string; dest: string; repo_name: string; kind: RepoKind };
+
+interface ResolveTargetBody {
+  repo: string;
+  repo_host?: string | null;
+  repo_transport?: string | null;
+  repo_org?: string | null;
+}
+
+interface TouchRepoArgs {
+  repo_id?: string | null;
+  repo_name?: string | null;
+  root?: string | null;
+  origin_url?: string | null;
+  default_branch?: string | null;
+  source?: string | null;
+}
+
+export function createRepos(ctx: ReposCtx) {
   const { q } = ctx;
-  const touchedAt = new Map();
-  const provisioningTargets = new Map();
+  const touchedAt = new Map<string, number>();
+  const provisioningTargets = new Map<string, string>();
 
   // A clone is an unbounded, minutes-long subprocess that writes to disk;
   // single-flight only dedupes the SAME destination, so without a ceiling a
@@ -374,17 +521,25 @@ export function createRepos(ctx) {
   // uncapped. Reservation is synchronous (no await between check and bump) so
   // two racing requests can't both slip past a full pool.
   const cloneCap = (() => {
-    const n = Number(process.env.FLEETDECK_CLONE_CONCURRENCY);
+    const n = Number(process.env['FLEETDECK_CLONE_CONCURRENCY']);
     return Number.isInteger(n) && n > 0 ? n : 3;
   })();
   let clonesInFlight = 0;
-  function reserveCloneSlot() {
+  function reserveCloneSlot(): () => void {
     if (clonesInFlight >= cloneCap) {
-      throw namedError(429, `too many repositories are cloning right now (${clonesInFlight}/${cloneCap}) — retry in a moment`);
+      throw namedError(
+        429,
+        `too many repositories are cloning right now (${clonesInFlight}/${cloneCap}) — retry in a moment`,
+      );
     }
     clonesInFlight += 1;
     let released = false;
-    return () => { if (!released) { released = true; clonesInFlight -= 1; } };
+    return () => {
+      if (!released) {
+        released = true;
+        clonesInFlight -= 1;
+      }
+    };
   }
 
   // Persist a failed git step's redacted excerpt on the spawn row that asked for
@@ -400,28 +555,34 @@ export function createRepos(ctx) {
   // verdict with a SQLite message. That is precisely the regression this whole
   // change exists to prevent, in the one code path it owns: a failed attempt to
   // RECORD a diagnostic must never DISPLACE the diagnostic.
-  function recordFailDetail(spawn_id, detail) {
+  function recordFailDetail(spawn_id: string, detail: string | null): void {
     if (!spawn_id) return;
-    try { q.setSpawnFailDetail.run(detail, spawn_id); }
-    catch (err) { console.error(`fleetd could not record fail_detail for ${spawn_id}: ${err?.message || err}`); }
+    try {
+      q.setSpawnFailDetail.run(detail, spawn_id);
+    } catch (err) {
+      console.error(`fleetd could not record fail_detail for ${spawn_id}: ${errMessage(err)}`);
+    }
   }
 
-  async function validateBranch(branch) {
+  async function validateBranch(branch: string): Promise<string> {
     const quick = quickBranchCheck(branch);
     if (quick) throw namedError(400, quick);
-    const result = await execFileP('git', ['check-ref-format', '--branch', branch], { timeout: 5_000 });
+    const result = await execFileP('git', ['check-ref-format', '--branch', branch], {
+      timeout: 5_000,
+    });
+
     if (!result.ok) throw namedError(400, result.err || 'branch is not a valid git branch name');
     return branch;
   }
 
-  function resolveReposDir() {
+  function resolveReposDir(): { value: string; source: string; resolved: string } {
     const override = q.getSetting.get('repos_dir')?.value;
     if (override != null) {
       return { value: override, source: 'override', resolved: path.resolve(expandHome(override)) };
     }
-    if (process.env.FLEETDECK_REPOS_DIR) {
-      const value = process.env.FLEETDECK_REPOS_DIR;
-      return { value, source: 'env', resolved: path.resolve(expandHome(value)) };
+    const envDir = process.env['FLEETDECK_REPOS_DIR'];
+    if (envDir) {
+      return { value: envDir, source: 'env', resolved: path.resolve(expandHome(envDir)) };
     }
     // Default: `/workspace` DIRECTLY on a Coder box (its persisted disk — not a
     // subfolder, per the locked decision), else ~/projects everywhere else.
@@ -433,7 +594,7 @@ export function createRepos(ctx) {
   // the default here — the SETTING owns it — while parseRepoInput's own param
   // default stays https. spawns.mjs never re-reads this: it relies on
   // resolveTarget, which passes an explicit transport to parseRepoInput below.
-  function resolveRepoTransport() {
+  function resolveRepoTransport(): string {
     return q.getSetting.get('repo_transport')?.value ?? 'ssh';
   }
 
@@ -442,109 +603,161 @@ export function createRepos(ctx) {
   // into `org/earm-module` and clone. Precedence mirrors the other settings:
   // a persisted human choice wins, then an environment/template choice, then
   // the Coder-only company seed requested by the user. No default elsewhere.
-  function resolveRepoDefaultOrg() {
+  function resolveRepoDefaultOrg(): { value: string | null; source: string } {
     return repoDefaultOrgChoice({
       setting: q.getSetting.get('repo_default_org')?.value ?? null,
-      env: process.env.FLEETDECK_DEFAULT_ORG ?? null,
+      env: process.env['FLEETDECK_DEFAULT_ORG'] ?? null,
       coder: !!detectCoderWorkspaceRoot(),
     });
   }
 
-  function validateRepoDefaultOrg(value) {
+  function validateRepoDefaultOrg(value: string | null): string | null {
     if (value == null) return null;
     const problem = repoDefaultOrgProblem(value);
     if (problem) throw namedError(400, problem);
     return value;
   }
 
-  function setReposDir(value) {
+  function setReposDir(value: unknown): { value: string; source: string; resolved: string } {
     if (value === null) {
       q.setSetting.run('repos_dir', null, Date.now());
       return resolveReposDir();
     }
-    if (typeof value !== 'string' || !value) throw namedError(400, 'repos_dir must be an absolute path or null');
-    if (CONTROL_RE.test(value)) throw namedError(400, 'repos_dir must not contain NUL or control characters');
+    if (typeof value !== 'string' || !value)
+      throw namedError(400, 'repos_dir must be an absolute path or null');
+    if (CONTROL_RE.test(value))
+      throw namedError(400, 'repos_dir must not contain NUL or control characters');
     // The value ITSELF (post ~ expansion) must be absolute, checked BEFORE
     // path.resolve — resolve() absolutizes ANY relative string against the
     // daemon's cwd, so the old isAbsolute(resolved) check was a tautology and
     // "." would have persisted as a cwd-dependent repos root.
     const expanded = expandHome(value);
-    if (!path.isAbsolute(expanded)) throw namedError(400, 'repos_dir must be an absolute path (or begin with ~/)');
+    if (!path.isAbsolute(expanded))
+      throw namedError(400, 'repos_dir must be an absolute path (or begin with ~/)');
     const resolved = path.resolve(expanded);
-    if (path.dirname(resolved) === resolved) throw namedError(400, 'repos_dir must not be the filesystem root');
+    if (path.dirname(resolved) === resolved)
+      throw namedError(400, 'repos_dir must not be the filesystem root');
     try {
       if (fs.existsSync(resolved)) {
         // Follow symlinks and require a real directory: clones land under this
         // path and persist, so a file (or a symlink to one) is refused up front
         // rather than surfacing as a confusing clone failure later.
-        if (!fs.statSync(resolved).isDirectory()) throw namedError(400, 'repos_dir points to an existing file');
+        if (!fs.statSync(resolved).isDirectory())
+          throw namedError(400, 'repos_dir points to an existing file');
       }
     } catch (err) {
-      if (err?.status) throw err;
-      throw namedError(400, `cannot inspect repos_dir: ${err.message || err}`);
+      if (errStatus(err) !== undefined) throw err;
+      throw namedError(400, `cannot inspect repos_dir: ${errMessage(err)}`);
     }
     q.setSetting.run('repos_dir', value, Date.now());
     return resolveReposDir();
   }
 
-  function touchRepo({ repo_id, repo_name, root, origin_url = null, default_branch = null, source }) {
+  function touchRepo({
+    repo_id,
+    repo_name,
+    root,
+    origin_url = null,
+    default_branch = null,
+    source,
+  }: TouchRepoArgs): void {
     if (!repo_id || !repo_name || !root) return;
     const now = Date.now();
     if (now - (touchedAt.get(repo_id) ?? 0) < 60_000) return;
     touchedAt.set(repo_id, now);
-    q.upsertRepo.run(repo_id, repo_name, root, origin_url, default_branch, now, now, source ?? null);
+    q.upsertRepo.run(
+      repo_id,
+      repo_name,
+      root,
+      origin_url,
+      default_branch,
+      now,
+      now,
+      source ?? null,
+    );
     if (!origin_url) {
+      // Capture the narrowed strings before the closure: a destructured
+      // parameter is not re-narrowed inside a later callback, so read them into
+      // locals the Promise chain can rely on.
+      const rootDir = root;
+      const repoId = repo_id;
       Promise.resolve()
-        .then(() => originOf(root))
-        .then(found => { if (found) q.setRepoOrigin.run(found, repo_id); })
-        .catch(err => console.error('fleetd repo origin backfill error:', err));
+        .then(() => originOf(rootDir))
+        .then((found) => {
+          if (found) q.setRepoOrigin.run(found, repoId);
+        })
+        .catch((err: unknown) => {
+          console.error('fleetd repo origin backfill error:', err);
+        });
     }
   }
 
-  async function resolveTarget(body) {
+  async function resolveTarget(body: ResolveTargetBody): Promise<ResolvedTarget> {
     // `?? undefined` lets the parseRepoInput default ('github') apply when the
     // caller omits repo_host or sends an explicit null — spawns.mjs has already
     // rejected any other non-string/unknown value by the time we get here.
     // Transport resolves in ONE place: the explicit body field wins, else the
     // persisted setting (default ssh). We pass a concrete transport, never
     // parseRepoInput's https default — the setting owns the ssh default.
-    const transport = body?.repo_transport ?? resolveRepoTransport();
-    const host = body?.repo_host ?? undefined;
-    let parsed = parseRepoInput(body?.repo, host, transport);
-    if (parsed.error) throw namedError(400, parsed.error);
-    if (body?.repo_org != null && parsed.kind !== 'name') {
+    const transport = body.repo_transport ?? resolveRepoTransport();
+    const host = body.repo_host ?? undefined;
+    let parsed = parseRepoInput(body.repo, host, transport);
+    if ('error' in parsed) throw namedError(400, parsed.error);
+    if (body.repo_org != null && parsed.kind !== 'name') {
       throw namedError(400, 'repo_org applies only to a bare repo name');
     }
     let origin_url = parsed.origin_url;
-    let catalogRows = q.repoByName.all(parsed.repo_name);
-    let dest;
+    const catalogRows = q.repoByName.all(parsed.repo_name);
+    let dest: string;
 
     if (parsed.kind === 'name') {
-      const roots = [...new Set(catalogRows.map(row => row.root).filter(Boolean))];
-      if (roots.length > 1) throw namedError(409, `more than one known repo named "${parsed.repo_name}": ${roots.join(', ')}`);
-      if (roots.length === 1) {
-        const row = catalogRows.find(item => item.root === roots[0]);
-        dest = roots[0];
+      const roots = [
+        ...new Set(
+          catalogRows.map((row) => row.root).filter((root): root is string => Boolean(root)),
+        ),
+      ];
+      if (roots.length > 1)
+        throw namedError(
+          409,
+          `more than one known repo named "${parsed.repo_name}": ${roots.join(', ')}`,
+        );
+      const soleRoot = roots[0];
+      if (soleRoot !== undefined) {
+        const row = catalogRows.find((item) => item.root === soleRoot);
+        dest = soleRoot;
         origin_url = row?.origin_url ?? null;
       } else {
         // No local/catalog hit: a configured default namespace promotes the bare
         // name to real forge shorthand. Run the composed value through the SAME
         // parseRepoInput safety/host/transport path as explicit org/repo input —
         // never hand-compose a git URL here.
-        const org = body?.repo_org != null
-          ? { value: validateRepoDefaultOrg(body.repo_org), source: 'request' }
-          : resolveRepoDefaultOrg();
+        const org =
+          body.repo_org != null
+            ? { value: validateRepoDefaultOrg(body.repo_org), source: 'request' }
+            : resolveRepoDefaultOrg();
         if (!org.value) {
-          throw namedError(404, `no known repo named "${parsed.repo_name}" — paste owner/repo, a URL, or set a default org`);
+          throw namedError(
+            404,
+            `no known repo named "${parsed.repo_name}" — paste owner/repo, a URL, or set a default org`,
+          );
         }
         const orgProblem = repoDefaultOrgProblem(org.value);
-        if (orgProblem) throw namedError(400, `configured ${org.source} default org is invalid — ${orgProblem}`);
+        if (orgProblem)
+          throw namedError(400, `configured ${org.source} default org is invalid — ${orgProblem}`);
         // A multi-segment namespace is a GitLab group/subgroup by definition.
         // Infer that forge only when the caller omitted repo_host; an explicit
         // github choice still fails loud instead of silently changing hosts.
         const promotedHost = host ?? (org.value.includes('/') ? 'gitlab' : undefined);
-        const expanded = parseRepoInput(`${org.value}/${parsed.repo_name}`, promotedHost, transport);
-        if (expanded.error) throw namedError(400, `default org "${org.value}" cannot resolve this repo — ${expanded.error}`);
+        const expanded = parseRepoInput(
+          `${org.value}/${parsed.repo_name}`,
+          promotedHost,
+          transport,
+        );
+        if ('error' in expanded)
+          throw namedError(
+            400,
+            `default org "${org.value}" cannot resolve this repo — ${expanded.error}`,
+          );
         parsed = expanded;
         origin_url = parsed.origin_url;
         dest = path.join(resolveReposDir().resolved, parsed.repo_name);
@@ -558,9 +771,17 @@ export function createRepos(ctx) {
     if (parsed.kind === 'path') {
       const kind = await gitRepoKind(dest);
       if (kind === 'worktree') {
-        return { mode: 'local', root: dest, dest, origin_url: await originOf(dest), repo_name: parsed.repo_name, kind: parsed.kind };
+        return {
+          mode: 'local',
+          root: dest,
+          dest,
+          origin_url: await originOf(dest),
+          repo_name: parsed.repo_name,
+          kind: parsed.kind,
+        };
       }
-      if (exists(dest) && kind !== 'bare') throw namedError(409, `${dest} exists and is not ${body.repo}`);
+      if (exists(dest) && kind !== 'bare')
+        throw namedError(409, `${dest} exists and is not ${body.repo}`);
       origin_url = dest;
       dest = path.join(resolveReposDir().resolved, parsed.repo_name);
     }
@@ -575,7 +796,8 @@ export function createRepos(ctx) {
       if (!exists(candidate)) continue;
       const kind = await gitRepoKind(candidate);
       if (kind !== 'worktree') {
-        if (candidate === dest) throw namedError(409, `${candidate} exists and is not ${body.repo}`);
+        if (candidate === dest)
+          throw namedError(409, `${candidate} exists and is not ${body.repo}`);
         continue;
       }
       const knownOrigin = await originOf(candidate);
@@ -590,37 +812,56 @@ export function createRepos(ctx) {
       // spellings of one host+path are one repo, so an ssh-cloned checkout
       // proves an https-shorthand request — different host or path never match.
       if (origin_url) {
-        const matches = knownOrigin && comparableOrigin(origin_url) === comparableOrigin(knownOrigin);
+        const matches =
+          knownOrigin && comparableOrigin(origin_url) === comparableOrigin(knownOrigin);
         if (!matches) {
           if (candidate === dest) throw namedError(409, `${dest} exists and is not ${body.repo}`);
           continue;
         }
       }
-      return { mode: 'local', root: candidate, dest: candidate, origin_url: origin_url ?? knownOrigin, repo_name: parsed.repo_name, kind: parsed.kind };
+      return {
+        mode: 'local',
+        root: candidate,
+        dest: candidate,
+        origin_url: origin_url ?? knownOrigin,
+        repo_name: parsed.repo_name,
+        kind: parsed.kind,
+      };
     }
 
     if (!origin_url) throw namedError(404, `no usable checkout is known for "${parsed.repo_name}"`);
     return { mode: 'clone', origin_url, dest, repo_name: parsed.repo_name, kind: parsed.kind };
   }
 
-  async function cloneRepo({ origin_url, dest, spawn_id }) {
+  async function cloneRepo({
+    origin_url,
+    dest,
+    spawn_id,
+  }: {
+    origin_url: unknown;
+    dest: string;
+    spawn_id: string;
+  }): Promise<string> {
     // Defence in depth: an origin reached via the catalog (a bare-name spawn, or
     // a `git remote get-url` backfill) never passed through parseRepoInput, so
     // re-apply the argv-safety gate here before it becomes a clone argument.
-    if (typeof origin_url !== 'string' || !origin_url
-        || SPACE_OR_CONTROL_RE.test(origin_url)
-        || origin_url.startsWith('-') || unsafeDashSegment(origin_url)) {
+    if (
+      typeof origin_url !== 'string' ||
+      !origin_url ||
+      SPACE_OR_CONTROL_RE.test(origin_url) ||
+      origin_url.startsWith('-') ||
+      unsafeDashSegment(origin_url)
+    ) {
       throw namedError(409, 'refusing to clone an unsafe origin URL');
     }
     const reposDir = resolveReposDir().resolved;
     fs.mkdirSync(reposDir, { recursive: true });
-    const temp = `${dest}.fd-cloning-${String(spawn_id).slice(0, 8)}`;
+    const temp = `${dest}.fd-cloning-${spawn_id.slice(0, 8)}`;
     try {
       fs.rmSync(temp, { recursive: true, force: true });
-      const configuredTimeout = Number(process.env.FLEETDECK_CLONE_TIMEOUT_MS);
-      const timeout = Number.isFinite(configuredTimeout) && configuredTimeout > 0
-        ? configuredTimeout
-        : 600_000;
+      const configuredTimeout = Number(process.env['FLEETDECK_CLONE_TIMEOUT_MS']);
+      const timeout =
+        Number.isFinite(configuredTimeout) && configuredTimeout > 0 ? configuredTimeout : 600_000;
       const result = await execFileP('git', ['clone', '--', origin_url, temp], {
         timeout,
         env: { GIT_TERMINAL_PROMPT: '0' },
@@ -632,7 +873,7 @@ export function createRepos(ctx) {
         // This log line keeps the RAW stderr and the RAW (possibly credentialed)
         // origin_url on purpose — fleetd.log is 0600 and is the documented place
         // where credentialed URLs are allowed to land. Nothing below it, in THIS
-        // file, is raw — scope that claim to repos.mjs and do not read it as a
+        // file, is raw — scope that claim to repos.ts and do not read it as a
         // repo-wide invariant: spawns.mjs still returns the raw origin_url in its
         // 202 spawn response (an accepted residual, since that value came from the
         // caller in the same request).
@@ -646,18 +887,41 @@ export function createRepos(ctx) {
         // here: compensation flips it to 'gone' but never deletes it, so the
         // snapshot can offer it on the tombstone.
         recordFailDetail(spawn_id, detail);
+
         throw namedError(409, note || 'git clone failed');
       }
       fs.renameSync(temp, dest);
       return dest;
     } catch (err) {
-      try { fs.rmSync(temp, { recursive: true, force: true }); } catch { /* best effort */ }
-      throw err?.status ? err : namedError(409, err.message || String(err));
+      try {
+        fs.rmSync(temp, { recursive: true, force: true });
+      } catch {
+        /* best effort */
+      }
+      throw errStatus(err) !== undefined ? err : namedError(409, errMessage(err));
     }
   }
 
-  async function materializeBranch({ root, branch, mode, spawn_id = '', sid = spawn_id, clone = false }) {
-    const localBefore = await execFileP('git', ['-C', root, 'show-ref', '--verify', '--quiet', `refs/heads/${branch}`], { timeout: 5_000 });
+  async function materializeBranch({
+    root,
+    branch,
+    mode,
+    spawn_id = '',
+    sid = spawn_id,
+    clone = false,
+  }: {
+    root: string;
+    branch: string;
+    mode?: string;
+    spawn_id?: string;
+    sid?: string;
+    clone?: boolean;
+  }): Promise<{ runCwd: string; created: { clone: boolean; worktree: boolean }; reused: boolean }> {
+    const localBefore = await execFileP(
+      'git',
+      ['-C', root, 'show-ref', '--verify', '--quiet', `refs/heads/${branch}`],
+      { timeout: 5_000 },
+    );
     // Best-effort: a fetch failure is fine as long as the branch (or a base to
     // cut it from) already resolves locally — an origin-less local repo can
     // still create a new branch from its own main.
@@ -665,13 +929,35 @@ export function createRepos(ctx) {
       timeout: 120_000,
       env: { GIT_TERMINAL_PROMPT: '0' },
     });
-    const local = localBefore.ok ? localBefore
-      : await execFileP('git', ['-C', root, 'show-ref', '--verify', '--quiet', `refs/heads/${branch}`], { timeout: 5_000 });
-    const remote = await execFileP('git', ['-C', root, 'show-ref', '--verify', '--quiet', `refs/remotes/origin/${branch}`], { timeout: 5_000 });
+    const local = localBefore.ok
+      ? localBefore
+      : await execFileP(
+          'git',
+          ['-C', root, 'show-ref', '--verify', '--quiet', `refs/heads/${branch}`],
+          { timeout: 5_000 },
+        );
+    const remote = await execFileP(
+      'git',
+      ['-C', root, 'show-ref', '--verify', '--quiet', `refs/remotes/origin/${branch}`],
+      { timeout: 5_000 },
+    );
     const base = await baseBranch(root);
+    // `base` is proven non-null on the create paths only by the compound guard
+    // below (which throws when local, remote AND base are all absent). TS cannot
+    // carry that fact to the `switch -c`/`worktree add -b` argv literals, so this
+    // closure over the `const base` re-asserts it at each use — the throw is
+    // unreachable at runtime once the guard has run.
+    const requireBaseRef = (): string => {
+      if (!base)
+        throw namedError(409, `branch ${branch} cannot be created — no base branch is available`);
+      return base.ref;
+    };
     if (!local.ok && !remote.ok && !base) {
       if (fetched.ok) {
-        throw namedError(409, `branch ${branch} does not exist and no base branch is available to create it from`);
+        throw namedError(
+          409,
+          `branch ${branch} does not exist and no base branch is available to create it from`,
+        );
       }
       // This branch was STRICTLY WORSE than the clone bug being fixed here: the
       // fetch is not one of this file's console.error sites, so its stderr was
@@ -687,14 +973,25 @@ export function createRepos(ctx) {
       // fetch stderr had no covering layer at all. argv only, no shell, local
       // config read (no network), failure path only, and `.ok` is not required —
       // a missing origin simply yields no needles.
-      const originUrl = await execFileP('git', ['-C', root, 'remote', 'get-url', 'origin'], { timeout: 5_000 });
-      const { note, detail } = gitFailureText(fetched.err, originUrl.ok ? originUrl.out.trim() : null);
+      const originUrl = await execFileP('git', ['-C', root, 'remote', 'get-url', 'origin'], {
+        timeout: 5_000,
+      });
+      const { note, detail } = gitFailureText(
+        fetched.err,
+        originUrl.ok ? originUrl.out.trim() : null,
+      );
       recordFailDetail(spawn_id, detail);
-      throw namedError(409, `branch ${branch} not found locally and fetch failed: ${note || 'git fetch failed'}`);
+
+      throw namedError(
+        409,
+        `branch ${branch} not found locally and fetch failed: ${note || 'git fetch failed'}`,
+      );
     }
 
     if (mode === 'in-place') {
-      const status = await execFileP('git', ['-C', root, 'status', '--porcelain'], { timeout: 30_000 });
+      const status = await execFileP('git', ['-C', root, 'status', '--porcelain'], {
+        timeout: 30_000,
+      });
       // This and the three like it in the rest of this function (switch,
       // worktree list, worktree add) put UNDISTILLED git stderr straight into a
       // card note and an HTTP body. A credential control applied to the clone
@@ -714,55 +1011,84 @@ export function createRepos(ctx) {
       // state snapshot verbatim. Clone/fetch go through gitFailureText, which
       // hardens with the same pass; these sites stay undistilled, so they call
       // it directly instead of paying gitFailureText's distill+detail pair.
+
       if (!status.ok) throw namedError(409, redactGitText(status.err) || 'git status failed');
       const dirty = dirtyNames(status.out);
       if (dirty.length) {
         const shown = dirty.slice(0, 3).join(', ');
-        throw namedError(409, `checkout is dirty (${dirty.length} files: ${shown}${dirty.length > 3 ? '…' : ''}) — use worktree mode or commit`);
+        throw namedError(
+          409,
+          `checkout is dirty (${dirty.length} files: ${shown}${dirty.length > 3 ? '…' : ''}) — use worktree mode or commit`,
+        );
       }
-      const args = local.ok ? ['-C', root, 'switch', branch]
-        : remote.ok ? ['-C', root, 'switch', '--track', `origin/${branch}`]
-          : ['-C', root, 'switch', '-c', branch, base.ref];
+      const args = local.ok
+        ? ['-C', root, 'switch', branch]
+        : remote.ok
+          ? ['-C', root, 'switch', '--track', `origin/${branch}`]
+          : ['-C', root, 'switch', '-c', branch, requireBaseRef()];
       const switched = await execFileP('git', args, { timeout: 30_000 });
+
       if (!switched.ok) throw namedError(409, redactGitText(switched.err) || 'git switch failed');
-      return { runCwd: root, created: { clone: !!clone, worktree: false }, reused: false };
+      return { runCwd: root, created: { clone, worktree: false }, reused: false };
     }
 
-    const listed = await execFileP('git', ['-C', root, 'worktree', 'list', '--porcelain'], { timeout: 10_000 });
+    const listed = await execFileP('git', ['-C', root, 'worktree', 'list', '--porcelain'], {
+      timeout: 10_000,
+    });
+
     if (!listed.ok) throw namedError(409, redactGitText(listed.err) || 'git worktree list failed');
-    const existing = parseWorktrees(listed.out).find(row => row.branch === branch);
-    if (existing) return { runCwd: existing.path, created: { clone: !!clone, worktree: false }, reused: true };
+    const existing = parseWorktrees(listed.out).find((row) => row.branch === branch);
+    if (existing)
+      return { runCwd: existing.path, created: { clone, worktree: false }, reused: true };
 
     const safeBranch = branch.replaceAll('/', '-');
     const basePath = path.join(path.dirname(root), `${path.basename(root)}--fd-${safeBranch}`);
-    const dedupPath = `${basePath}-${String(sid).slice(0, 4) || 'repo'}`;
+
+    const dedupPath = `${basePath}-${sid.slice(0, 4) || 'repo'}`;
     const candidates = exists(basePath) ? [dedupPath] : [basePath, dedupPath];
-    let last = null;
+    let last: ExecResult | null = null;
     for (const candidate of candidates) {
       const existedBefore = exists(candidate);
       const args = local.ok
         ? ['-C', root, 'worktree', 'add', candidate, branch]
         : remote.ok
           ? ['-C', root, 'worktree', 'add', '--track', '-b', branch, candidate, `origin/${branch}`]
-          : ['-C', root, 'worktree', 'add', '-b', branch, candidate, base.ref];
+          : ['-C', root, 'worktree', 'add', '-b', branch, candidate, requireBaseRef()];
       last = await execFileP('git', args, { timeout: 30_000 });
-      if (last.ok) return { runCwd: candidate, created: { clone: !!clone, worktree: true }, reused: false };
+      if (last.ok) return { runCwd: candidate, created: { clone, worktree: true }, reused: false };
       // A failed worktree add can leave a directory/admin record behind. Only
       // unwind it when this attempt observed the path absent beforehand.
       if (!existedBefore && exists(candidate)) {
-        await execFileP('git', ['-C', root, 'worktree', 'remove', '--force', candidate], { timeout: 30_000 });
-        try { fs.rmSync(candidate, { recursive: true, force: true }); } catch { /* best effort */ }
+        await execFileP('git', ['-C', root, 'worktree', 'remove', '--force', candidate], {
+          timeout: 30_000,
+        });
+        try {
+          fs.rmSync(candidate, { recursive: true, force: true });
+        } catch {
+          /* best effort */
+        }
         await execFileP('git', ['-C', root, 'worktree', 'prune'], { timeout: 30_000 });
       }
     }
-    throw namedError(409, redactGitText(last?.err) || 'git worktree add failed');
+
+    throw namedError(
+      409,
+      // `last`, when non-null after the loop, is already narrowed to the
+      // failure variant (a success returns inside the loop), so `!last.ok`
+      // would be a provably-true redundant check.
+      redactGitText(last ? last.err : null) || 'git worktree add failed',
+    );
   }
 
-  function canonicalTarget(dest) {
-    try { return fs.realpathSync(dest); } catch { return path.resolve(dest); }
+  function canonicalTarget(dest: string): string {
+    try {
+      return fs.realpathSync(dest);
+    } catch {
+      return path.resolve(dest);
+    }
   }
 
-  function claimTarget(dest, callsign) {
+  function claimTarget(dest: string, callsign: string): () => void {
     const canonical = canonicalTarget(dest);
     const owner = provisioningTargets.get(canonical);
     if (owner) throw namedError(409, `${canonical} is already being provisioned by ${owner}`);
@@ -770,14 +1096,22 @@ export function createRepos(ctx) {
     return () => provisioningTargets.delete(canonical);
   }
 
-  function targetOwner(dest) {
+  function targetOwner(dest: string): string | null {
     return provisioningTargets.get(canonicalTarget(dest)) ?? null;
   }
 
   return {
-    validateBranch, resolveReposDir, setReposDir, touchRepo,
-    resolveRepoDefaultOrg, validateRepoDefaultOrg,
-    resolveTarget, cloneRepo, materializeBranch, claimTarget, targetOwner,
+    validateBranch,
+    resolveReposDir,
+    setReposDir,
+    touchRepo,
+    resolveRepoDefaultOrg,
+    validateRepoDefaultOrg,
+    resolveTarget,
+    cloneRepo,
+    materializeBranch,
+    claimTarget,
+    targetOwner,
     reserveCloneSlot,
   };
 }

@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import os, { tmpdir } from 'node:os';
 import path from 'node:path';
-import { createRepos, parseRepoInput, quickBranchCheck, repoDefaultOrgChoice, repoDefaultOrgProblem } from '../scripts/fleetd/repos.mjs';
+import { createRepos, parseRepoInput, quickBranchCheck, repoDefaultOrgChoice, repoDefaultOrgProblem } from '../scripts/fleetd/repos.ts';
 import { detectCoderWorkspaceRoot, resolveHome } from '../scripts/fleetd/config.ts';
 import { openDb } from '../scripts/fleetd/db.ts';
 import { createCore } from '../scripts/fleetd/derive.mjs';

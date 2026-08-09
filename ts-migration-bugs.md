@@ -1127,3 +1127,77 @@ correction to how `@types/node` types a `spawn`'d child — worth recording beca
   24/24 green across `termbridge-parser` + `termbridge-capture-race` (BUG-056 same-chunk replay) +
   `terminal-ws` (live WS lifecycle). Daemon bundle rebuilds with the `termbridge.ts` banner (628.7kb) and
   passes `node --check`.
+
+### scripts/fleetd/repos.mjs → repos.ts  [NOISE + 2 genuine lint findings only surfaced once linted]
+
+Durable repo catalog/settings + clone/branch materialization for repo-mode spawns. All credential-scrubbing
+doctrine preserved verbatim (originSecrets ≥8-char needle filter + accepted sub-8 residual; gitFailureText's
+"ONE hardening pass, BOTH outputs"; recordFailDetail's "must never DISPLACE the diagnostic"; cloneRepo's
+0600-fleetd.log residual note + argv-safety re-gate; normalizeRemoteOrigin's "three doors into ONE repository"
+forge-unification + generic-host conservatism; the CVE-2017-1000117-class `@`-split; materializeBranch's
+redactGitText-vs-scrubUrlCredentials rationale). Every finding below is strict-typing/lint noise except two
+lint rules that only fire now the file is type-linted (it was eslint-ignored as `.mjs`).
+
+- **`no-control-regex` (2x) — control-char class regexes need an explicit disable.** `CONTROL_RE`
+  (`/[\x00-\x1f\x7f]/`) and `SPACE_OR_CONTROL_RE` (`/[\s\x00-\x1f\x7f]/`) match C0/DEL **on purpose** — that IS
+  the argv/path-safety gate. As `.mjs` they were never linted; under the TS ruleset each takes a
+  `// eslint-disable-next-line no-control-regex -- …purpose of this gate` line, the exact house pattern already
+  in `settings.ts:44-46`, `exec.ts:260`, `mail.ts:109-147`.
+- **`no-useless-assignment` — dropped a dead `= null` seed in `normalizeRemoteOrigin`.** `let user: string |
+  null = null;` then BOTH the url and scp branches assign `user` before it is read at the final return, so the
+  `= null` initializer's value is never observed. Changed to an uninitialized `let user: string | null;` (TS
+  definite-assignment is satisfied — every path to the read assigns it — matching the sibling `let host:
+  string; let rest: string;` already there). Pure lint; runtime identical.
+- **`no-unnecessary-condition` — `!last.ok` was provably redundant after the worktree-add loop.** In
+  `materializeBranch`'s final throw, `redactGitText(last && !last.ok ? last.err : null)` — TS narrows `last`
+  (`ExecResult | null`) to the **failure variant** `{ ok: false } | null` on loop exit, because a successful
+  attempt `return`s from inside the loop, so `!last.ok` is always true when `last` is non-null. Simplified to
+  `last ? last.err : null` (`last` stays genuinely nullable — the loop body can run zero times if `candidates`
+  is empty, so the outer check is NOT redundant). Behaviourally identical; the `|| 'git worktree add failed'`
+  falsy-coalescing default is preserved with its disable comment.
+- **Error plumbing: `RepoError extends Error` replaces `namedError`'s Error-with-`.status` stamp.** The old
+  `const e = new Error(msg); e.status = status` is a strict-TS type error (`Property 'status' does not exist on
+  type 'Error'`). A 4-line subclass carries `readonly status: number` as a typed field; `namedError(status,
+  message)` is unchanged at every call site. `errStatus(err: unknown): number | undefined` /
+  `errMessage(err: unknown): string` read a `useUnknownInCatchVariables` catch value back — the same helper pair
+  used in `settings.ts`, so the two surfaces stay behaviourally paired ("already has a status → it's ours,
+  rethrow" and `err.message || String(err)`).
+- **Dead-defensive `String()` / `|| ''` removals (typed-string inputs).** `String(err ?? '')` in
+  gitFailureText, `String(value)` in repoNameOf / unsafeDashSegment, `String(porcelain || '')` in parseWorktrees
+  / dirtyNames, `String(spawn_id)` in cloneRepo, `String(sid)` in materializeBranch, `String(origin_url ?? '')`
+  → `origin_url ?? ''` in originSecrets — every one had a parameter already typed `string`, so both the
+  conversion and the `|| ''`/`?? ''` null-guard were `no-unnecessary-type-conversion` / dead code. (No
+  `String(buffer)` existed here to keep — unlike termbridge.)
+- **`!!clone` → `clone` (3x, `no-unnecessary-type-conversion`).** `materializeBranch`'s `created: { clone: !!clone }`
+  — `clone` is a typed `boolean` (defaulted `clone = false`), so the double-negation is a no-op.
+- **`noUncheckedIndexedAccess` on regex captures & array indices.** `ORIGIN_USERINFO_RE.exec(origin)?.[1] ?? ''`;
+  `match[1] ?? ''` in the `matchAll` loop; `parts[parts.length - 1] ?? ''` fed to repoNameOf; `url[1]/url[3]`,
+  `scp[1]/scp[3]` captured into locals and `?? ''`-defaulted (with `h = url[2]; if (h === undefined) return
+  null` narrowing the host); `roots[0]` captured as `const soleRoot` and `!== undefined`-narrowed; the
+  case-fold `.exec(origin)?.[0]` guarded with `!== undefined`.
+- **`noPropertyAccessFromIndexSignature` → bracket env reads.** `process.env['FLEETDECK_REPOS_DIR' /
+  '_CLONE_CONCURRENCY' / '_CLONE_TIMEOUT_MS' / '_DEFAULT_ORG']`.
+- **Kept `||` falsy-coalescing (with per-line disables), NOT `??`.** `user = url[1] || null` / `scp[1] || null`
+  (an empty userinfo capture must fall to null, not be kept as `''`); `result.out.trim() || null` in originOf;
+  `result.err || 'default'` messages (empty stderr → default); `sid.slice(0,4) || 'repo'`; the four
+  `redactGitText(x.err) || 'git … failed'` note defaults. Each is deliberate `''`→default coalescing that `??`
+  would silently change.
+- **`requireBaseRef` closure — a non-null invariant TS cannot carry to the argv literals.** The compound guard
+  `if (!local.ok && !remote.ok && !base) throw` proves `base` non-null on the branch-create paths, but TS does
+  not propagate that to the `['…','switch','-c',branch, base.ref]` / `['…','worktree','add','-b',branch,
+  candidate, base.ref]` literals three statements later. A `const requireBaseRef = () => { if (!base) throw …;
+  return base.ref; }` closure over the `const base` re-asserts it at each use (the throw is unreachable at
+  runtime once the guard has run). Same shape used elsewhere for post-guard invariants TS can't see.
+- **Typedefs added (no runtime effect):** discriminated `RepoParseResult = RepoParseError | RepoParsed`
+  (callers narrow via `'error' in parsed`) and `ResolvedTarget = {mode:'local'…} | {mode:'clone'…}`; interfaces
+  `RepoParsed`/`ReposCtx`/`ResolveTargetBody`/`TouchRepoArgs`/`WorktreeEntry`; `type RepoKind`. `ReposCtx { q:
+  Statements['q'] }` — `Statements = ReturnType<typeof build>` and `build()` returns `{ q, FIELDS,
+  updateSession }`, so `Statements['q']` is the prepared-statements bag; `createRepos(ctx)` receives the full
+  derive.mjs ctx, which structurally satisfies `{ q }`. `ExecResult` imported for `let last: ExecResult | null`.
+  `resolveTarget`'s `body.repo_host ?? undefined` maps an explicit null to undefined so parseRepoInput's
+  `'github'` default applies; `validateRepoDefaultOrg(value: string | null)` needs no cast (its only caller
+  passes a `!= null`-narrowed string).
+- **Verify:** `eslint repos.ts` clean (0). `tsc --noEmit` clean project-wide (0). 2 importers repointed
+  (`derive.mjs:18`, `tests/repos.test.mjs:8` → `./repos.ts` / `../scripts/fleetd/repos.ts`). 36/36 green in
+  `tests/repos.test.mjs` (incl. BUG-044 full-redaction-pass on worktree-add stderr). Daemon bundle rebuilds with
+  the `// scripts/fleetd/repos.ts` banner (630.5kb) and passes `node --check`.
