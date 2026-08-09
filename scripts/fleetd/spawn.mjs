@@ -27,7 +27,7 @@
 // 'test-override'.
 
 import { execFileSync, spawn as spawnChild } from 'node:child_process';
-import { execFileP } from './exec.mjs';
+import { execFileP } from './exec.ts';
 import { randomUUID } from 'node:crypto';
 import { constants as fsConstants } from 'node:fs';
 import { link, open, rename, unlink } from 'node:fs/promises';

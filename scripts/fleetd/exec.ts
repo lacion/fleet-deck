@@ -1,4 +1,4 @@
-// exec.mjs — the daemon's shared async subprocess primitive.
+// exec.ts — the daemon's shared async subprocess primitive.
 //
 // `execFileP` runs a command by ARGV (never a shell string, so `;`/`$()`/quotes
 // in an argument arrive as literal bytes) and resolves a result object instead of
@@ -22,17 +22,28 @@ import { execFile } from 'node:child_process';
 // security guarantee, and a richer diagnostic is never worth probing git for.
 import { redactDiagnosticText, scrubUrlCredentials } from './payload-capture.ts';
 
+// The one shape every async execFile caller funnels through. `code` carries
+// git's exit code (a number) on a normal failure, the string 'ETIMEDOUT' on our
+// own deadline, or is null/absent when a synchronous throw beats the child
+// spawning — so it is a `string | number | null | undefined` union that consumers
+// read both ways (`code === 'ETIMEDOUT'` and `code !== 1`).
+export type ExecResult =
+  { ok: true; out: string } | { ok: false; code?: string | number | null | undefined; err: string };
+
 // Grace between the timeout's SIGTERM and the SIGKILL escalation below.
 // 1s is enough for tmux/git/agents-cli to exit cleanly on TERM, and bounds the
 // worst-case overshoot of any advertised deadline to timeout + 1s.
 const KILL_GRACE_MS = 1_000;
 
-export function execFileP(cmd, args, { timeout = 30_000, env } = {}) {
-  return new Promise((resolve) => {
+export function execFileP(
+  cmd: string,
+  args: readonly string[],
+  { timeout = 30_000, env }: { timeout?: number; env?: NodeJS.ProcessEnv } = {},
+): Promise<ExecResult> {
+  return new Promise<ExecResult>((resolve) => {
     try {
-      let child;
       let done = false;
-      let killTimer = null;
+      let killTimer: NodeJS.Timeout | null = null;
       // Settle EXACTLY once, on whatever happens first — exit, error, or our
       // own wall-clock deadline. execFile's `timeout` only SIGTERMs the child;
       // the CALLBACK still waits for the pipes to close, so a child that
@@ -41,12 +52,50 @@ export function execFileP(cmd, args, { timeout = 30_000, env } = {}) {
       // pending forever, silently wedging agents-poll's whole scheduling loop.
       // The deadline timer therefore OWNS settlement: it kills the child, kills
       // the attempt, and resolves regardless of what the child does later.
-      const settle = (fn) => {
+      const settle = (fn: () => ExecResult) => {
         if (done) return;
         done = true;
         if (killTimer) clearTimeout(killTimer);
         resolve(fn());
       };
+      const child = execFile(
+        cmd,
+        args,
+        {
+          // utf8 is execFile's runtime default; pinning it makes the callback's
+          // stdout/stderr resolve to `string` (the buffer overload would otherwise
+          // widen them to `string | Buffer`) with no change in behaviour.
+          encoding: 'utf8',
+          // 0 disables execFile's own SIGTERM-only timeout: the deadline below is
+          // strictly stronger (same TERM, then KILL, then settle), and a second
+          // timer race inside execFile would change the shape of the callback
+          // error without changing settlement.
+          timeout: 0,
+          windowsHide: true,
+          // When an env is supplied it is MERGED over the daemon's own (never
+          // replacing it), so PATH and the rest survive while a caller adds e.g.
+          // GIT_TERMINAL_PROMPT=0 to make an unauthenticated clone fail fast
+          // instead of hanging on a credential prompt.
+          ...(env ? { env: { ...process.env, ...env } } : {}),
+        },
+        (err, stdout, stderr) => {
+          clearTimeout(deadline);
+          // stderr first, then the exception's own message; err.name is the
+          // empty-message last resort — for an Error whose message is '' (the
+          // only way we reach it) Error.prototype.toString() returns exactly the
+          // name, so this drops no information the bare String(err) would have
+          // carried while staying a plain string the linter accepts.
+          if (err) {
+            settle(() => ({
+              ok: false,
+              code: err.code,
+              err: (stderr || err.message || err.name).trim(),
+            }));
+            return;
+          }
+          settle(() => ({ ok: true, out: stdout }));
+        },
+      );
       const deadline = setTimeout(() => {
         // Settle FIRST: settle() clears any armed killTimer, and only this
         // timeout path can leave a child alive needing a KILL (every other
@@ -54,8 +103,12 @@ export function execFileP(cmd, args, { timeout = 30_000, env } = {}) {
         // exited), so the escalation below is armed AFTER settlement on
         // purpose.
         settle(() => ({ ok: false, code: 'ETIMEDOUT', err: `timed out after ${timeout}ms` }));
-        if (child && !child.killed) {
-          try { child.kill('SIGTERM'); } catch { /* already gone */ }
+        if (!child.killed) {
+          try {
+            child.kill('SIGTERM');
+          } catch {
+            /* already gone */
+          }
           // Escalate: a process may survive SIGTERM indefinitely (and on
           // platforms where kill() is only advisory, so may SIGKILL — the
           // resolve above is what actually bounds the attempt). child.killed
@@ -63,35 +116,33 @@ export function execFileP(cmd, args, { timeout = 30_000, env } = {}) {
           // with signal 0 instead.
           killTimer = setTimeout(() => {
             let alive = true;
-            try { process.kill(child.pid, 0); } catch { alive = false; }
-            if (alive) { try { child.kill('SIGKILL'); } catch { /* already gone */ } }
+            // child.pid is `number | undefined` (undefined only if the spawn
+            // never got a pid); signal 0 to a missing pid can test nothing, so
+            // treat that as already dead — the same outcome the original relied
+            // on the kill() throw producing.
+            try {
+              if (child.pid == null) alive = false;
+              else process.kill(child.pid, 0);
+            } catch {
+              alive = false;
+            }
+            if (alive) {
+              try {
+                child.kill('SIGKILL');
+              } catch {
+                /* already gone */
+              }
+            }
           }, KILL_GRACE_MS);
-          killTimer.unref?.();
+          killTimer.unref();
         }
       }, timeout);
       // The deadline (and the escalation grace below) exist only to bound THIS
       // attempt; they must not keep the daemon's event loop alive when they are
       // the only handles left.
-      deadline.unref?.();
-      child = execFile(cmd, args, {
-        // 0 disables execFile's own SIGTERM-only timeout: the deadline above is
-        // strictly stronger (same TERM, then KILL, then settle), and a second
-        // timer race inside execFile would change the shape of the callback
-        // error without changing settlement.
-        timeout: 0,
-        windowsHide: true,
-        // When an env is supplied it is MERGED over the daemon's own (never
-        // replacing it), so PATH and the rest survive while a caller adds e.g.
-        // GIT_TERMINAL_PROMPT=0 to make an unauthenticated clone fail fast
-        // instead of hanging on a credential prompt.
-        ...(env ? { env: { ...process.env, ...env } } : {}),
-      }, (err, stdout, stderr) => {
-        clearTimeout(deadline);
-        if (err) return settle(() => ({ ok: false, code: err.code, err: String(stderr || err.message || err).trim() }));
-        settle(() => ({ ok: true, out: stdout }));
-      });
+      deadline.unref();
     } catch (err) {
-      resolve({ ok: false, err: String(err.message || err) });
+      resolve({ ok: false, err: err instanceof Error ? err.message || String(err) : String(err) });
     }
   });
 }
@@ -109,10 +160,10 @@ export function execFileP(cmd, args, { timeout = 30_000, env } = {}) {
 // into — is one glance away instead of hours: on a Coder workspace this note
 // read only "fatal: Could not read from remote repository." while the two lines
 // git printed directly above it, discarded here, were the entire fix.
-export function distillGitStderr(text) {
-  const lines = String(text ?? '').split('\n');
-  let verdict = null;
-  let lastNonEmpty = null;
+export function distillGitStderr(text: string | null | undefined): string {
+  const lines = (text ?? '').split('\n');
+  let verdict: string | null = null;
+  let lastNonEmpty: string | null = null;
   for (const line of lines) {
     if (line.trim() !== '') lastNonEmpty = line;
     if (/^\s*(fatal|error):/i.test(line)) verdict = line;
@@ -145,7 +196,10 @@ const GIT_DETAIL_MAX = 2000;
 // halves of this file can never drift apart again. Every step is idempotent, so
 // composing this with gitStderrDetail — which runs it again over its own
 // input — is safe by design.
-export function redactGitText(text, secrets = []) {
+export function redactGitText(
+  text: string | null | undefined,
+  secrets: readonly unknown[] = [],
+): string {
   let out = redactDiagnosticText(scrubUrlCredentials(text));
   for (const secret of secrets) {
     if (typeof secret === 'string' && secret) out = out.split(secret).join('[redacted]');
@@ -189,7 +243,10 @@ export function redactGitText(text, secrets = []) {
 // repos.mjs): it is what catches a corporate password or a PAT that matches no
 // known shape and appears BARE, e.g. in `remote: HTTP Basic: Access denied for
 // user '…'`.
-export function gitStderrDetail(text, { secrets = [] } = {}) {
+export function gitStderrDetail(
+  text: unknown,
+  { secrets = [] }: { secrets?: readonly unknown[] } = {},
+): string | null {
   if (typeof text !== 'string' || !text) return null;
   // The class is C0 + DEL + C1 + the two Unicode line separators, and it
   // deliberately does NOT include TAB. C1 (U+0080-U+009F, U+009B being CSI) and
@@ -200,9 +257,11 @@ export function gitStderrDetail(text, { secrets = [] } = {}) {
   // the board renders the result in a <pre>, where the indentation is meaningful
   // and a literal tab is correct.
   const redacted = redactGitText(
-    String(text).replace(/\r/g, '').replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f\u2028\u2029]/g, ''),
-    secrets);
-  const lines = redacted.split('\n').map(line => line.replace(/\s+$/g, ''));
+    // eslint-disable-next-line no-control-regex -- stripping C0/DEL/C1 controls is the entire purpose of this pass
+    text.replace(/\r/g, '').replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f\u2028\u2029]/g, ''),
+    secrets,
+  );
+  const lines = redacted.split('\n').map((line) => line.replace(/\s+$/g, ''));
   while (lines.length && !lines[0]) lines.shift();
   while (lines.length && !lines[lines.length - 1]) lines.pop();
   if (!lines.length) return null;
@@ -215,7 +274,10 @@ export function gitStderrDetail(text, { secrets = [] } = {}) {
   // (U+FFFD), then correct any replacement expansion.
   const bytes = Buffer.from(tail);
   if (bytes.length > GIT_DETAIL_MAX) {
-    tail = bytes.subarray(bytes.length - GIT_DETAIL_MAX).toString('utf8').replace(/^�+/, '');
+    tail = bytes
+      .subarray(bytes.length - GIT_DETAIL_MAX)
+      .toString('utf8')
+      .replace(/^�+/, '');
     while (Buffer.byteLength(tail) > GIT_DETAIL_MAX) tail = tail.slice(1);
   }
   return tail || null;
@@ -233,23 +295,40 @@ export function gitStderrDetail(text, { secrets = [] } = {}) {
 // as the last resort for a main worktree in detached HEAD. Shared by the
 // worktree inspector and repo-mode spawns so the base is computed exactly one
 // way.
-export async function baseBranch(worktree) {
-  const head = await execFileP('git', ['-C', worktree, 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], { timeout: 5_000 });
+export async function baseBranch(
+  worktree: string,
+): Promise<{ ref: string; local: boolean } | null> {
+  const head = await execFileP(
+    'git',
+    ['-C', worktree, 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD'],
+    { timeout: 5_000 },
+  );
   if (head.ok && head.out.trim()) return { ref: head.out.trim(), local: false };
   for (const name of ['main', 'master']) {
-    const remote = await execFileP('git', ['-C', worktree, 'show-ref', '--verify', '--quiet', `refs/remotes/origin/${name}`], { timeout: 5_000 });
+    const remote = await execFileP(
+      'git',
+      ['-C', worktree, 'show-ref', '--verify', '--quiet', `refs/remotes/origin/${name}`],
+      { timeout: 5_000 },
+    );
     if (remote.ok) return { ref: `origin/${name}`, local: false };
   }
-  const trees = await execFileP('git', ['-C', worktree, 'worktree', 'list', '--porcelain'], { timeout: 5_000 });
+  const trees = await execFileP('git', ['-C', worktree, 'worktree', 'list', '--porcelain'], {
+    timeout: 5_000,
+  });
   if (trees.ok) {
     // Entries are blank-line-separated; the main worktree is always first.
     // A bare or detached main worktree has no `branch` line and falls through.
-    const first = trees.out.split('\n\n', 1)[0];
+    const first = trees.out.split('\n\n', 1)[0] ?? '';
     const branch = /^branch refs\/heads\/(.+)$/m.exec(first);
-    if (branch && branch[1].trim()) return { ref: branch[1].trim(), local: true };
+    const name = branch?.[1];
+    if (name?.trim()) return { ref: name.trim(), local: true };
   }
   for (const name of ['main', 'master']) {
-    const local = await execFileP('git', ['-C', worktree, 'show-ref', '--verify', '--quiet', `refs/heads/${name}`], { timeout: 5_000 });
+    const local = await execFileP(
+      'git',
+      ['-C', worktree, 'show-ref', '--verify', '--quiet', `refs/heads/${name}`],
+      { timeout: 5_000 },
+    );
     if (local.ok) return { ref: name, local: true };
   }
   return null;

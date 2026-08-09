@@ -48,6 +48,60 @@ Format:
 
 <!-- entries appended below as modules convert -->
 
+### exec.ts — a `let`→`const` reorder, an overload-pinning `encoding`, and the `String(err)` catch-22 again   [NOISE]
+- **What:** the git/subprocess helper — `execFileP` (timeout + SIGTERM→SIGKILL escalation) plus the
+  four stderr scrubbers (`distillGitStderr`, `redactGitText`, `gitStderrDetail`, `baseBranch`). `tsc`
+  + type-aware `eslint` clean, **zero runtime move**. Five strict-typing notes; (3) is the one that
+  changed a source line for a type reason, so it's the interesting one.
+- **Why it's real / why it's noise:** NOISE on all five — no behavior at risk:
+  (1) **`ExecResult.code` had to admit `null`.** The result union's failure arm is
+  `{ ok: false; code?: string | number | null | undefined; err: string }`. `code` comes straight off
+  Node's `ExecFileException.code`, which is `string | number | null | undefined` — so the annotation
+  has to carry `null` even though no consumer branches on it being null. Consumers read `code` as
+  **both** a string (`'ETIMEDOUT'`) and a number (`worktrees.mjs:216` does `merged.code !== 1`), which
+  is why the union keeps both — the wire contract this helper has always emitted, now written down.
+  (2) **`execFile`'s callback params were `string | Buffer` until I pinned the overload.** Without an
+  explicit `encoding`, `execFile(cmd, args, opts, cb)` resolves to the `Buffer` overload, so `stdout`
+  /`stderr` in the callback are `string | Buffer` and every `.trim()`/string use fails. Adding
+  `encoding: 'utf8'` to the options object selects the string-callback overload → `stdout`/`stderr`
+  are `string`. **Runtime-identical**: `'utf8'` is already `execFile`'s default encoding, so this
+  pins the type of a value that was always a UTF-8 string at runtime; it adds nothing to the call.
+  (3) **A `let child` prefer-const false-positive, fixed by reordering rather than suppressing.** The
+  timeout handler (`deadline`) must reference `child` (to `child.kill(...)`), and the child's exit
+  callback must reference `deadline` (to `clearTimeout(deadline)`) — a mutual reference. The JS
+  declared `let child;` first, assigned it after building `deadline`, so the linter saw a
+  single-assignment `let` and demanded `const`. Rather than a `// eslint-disable prefer-const`, I
+  **reordered** to `const child = execFile(…, cb)` *before* `const deadline = setTimeout(…)`: `cb`
+  forward-references `deadline`, which is legal because it's a closure invoked off-tick (never during
+  `execFile`'s synchronous return) **and `no-use-before-define` is deliberately off** in the config.
+  This let me drop the forward-declared `let`, the `child &&` null-guards (a `const` from `execFile`
+  is non-nullable), and the `target` capture (a `const` doesn't widen inside nested closures). Also
+  `.unref?.()` → `.unref()` (no-unnecessary-condition: `unref` always exists on `NodeJS.Timeout`).
+  (4) **`String(err)` in the error-callback fallback hit the same no-base-to-string ⇄
+  no-unnecessary-type-assertion catch-22 payload-capture logged.** The fallback message is
+  `(stderr || err.message || <x>).trim()`. `err` is `ExecFileException`; `no-base-to-string` rejects
+  `String(err)` (it doesn't see `ExecFileException` as `Error`-derived → "may stringify to
+  `[object Object]`"), but writing `String(err as Error)` gets auto-stripped by the formatter's
+  `eslint --fix` as `no-unnecessary-type-assertion` (`ExecFileException` **is** assignable to `Error`),
+  reverting to `String(err)` and re-firing the first rule. Broke the loop with `err.name` (a plain
+  `string`) — **behavior-identical**, because this branch is reached only when both `stderr` and
+  `err.message` are empty, and `Error.prototype.toString()` returns exactly `name` when `message === ''`.
+  (5) **`noUncheckedIndexedAccess` on the scrubbers' split/regex reads.** `str.split('\n\n', 1)[0]`
+  and a successful `RegExpExecArray[1]` are both `T | undefined`; fixed with `?? ''` on the split and a
+  captured-and-guarded `const name = m?.[1]; if (name?.trim()) …` in `baseBranch`. Same string
+  extracted, `null` returned on the (unreachable-but-honest) miss.
+- **Tooling hazard (not a typing bug — logged so the next converter doesn't lose an hour):** the
+  Write/Edit tools turn the escape sequence `\u2028\u2029` inside the C0/C1-stripping regex in
+  `gitStderrDetail` into **literal** U+2028/U+2029 bytes on write (confirmed via `cat -A` →
+  `M-bM-^@M-(M-bM-^@M-)`). After any Write/Edit that touches that line, restore it with
+  `perl -CSD -i -pe 's/\x{2028}\x{2029}/\\u2028\\u2029/g' scripts/fleetd/exec.ts`. (The lone literal
+  U+FFFD `�` in `.replace(/^�+/, '')` is intentionally literal in the original and stays as-is.) The
+  `no-control-regex` disable must sit **immediately** above the regex line, or `eslint --fix` strips
+  it as unused.
+- **Fix:** annotations + the reorder only; runtime behavior identical (37/37 `exec-timeout` +
+  `base-branch` + `git-stderr-detail` green vs source **and** vs the regenerated bundle; whole-project
+  `tsc --noEmit` clean, `eslint` clean).
+
 ### payload-capture.ts — a recursive `Json` projection type, and a dead defensive `String()` the honest contract exposed   [NOISE]
 - **What:** the 503-line redaction leaf — secret-*key* / secret-*value* / credentialed-*URL* scrubbing
   (`isSecretKey`, `SECRET_VALUE_RES`, `maskCompactTokens`, the five `scrubUrlCredentials` layers) plus

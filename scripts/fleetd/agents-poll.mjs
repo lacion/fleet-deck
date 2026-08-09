@@ -19,7 +19,7 @@
 //     script and point the var at that. A 'false' or blank value disables the
 //     CLI half of the poll entirely.
 
-import { execFileP } from './exec.mjs';
+import { execFileP } from './exec.ts';
 import { pidOwnedBy } from './helpers.mjs';
 
 // FLEETDECK_AGENTS_POLL_MS: test hook to shrink the cadence (floor 100 ms);

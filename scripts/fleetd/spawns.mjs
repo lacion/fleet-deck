@@ -13,9 +13,9 @@ import { randomUUID, randomBytes } from 'node:crypto';
 import { deriveRepo, branchOf } from './repo-identity.ts';
 import { ticketFromBranch, animalOf } from './tickets.ts';
 import { claudeEnvArgvPrefix, claudeTranscriptPath, canonicalPathKey, SHELL_RE, NOT_RESUMABLE_END } from './helpers.mjs';
-import { execFileP, baseBranch } from './exec.mjs';
+import { execFileP, baseBranch } from './exec.ts';
 import { redactDiagnosticText, scrubUrlCredentials } from './payload-capture.ts';
-import { redactGitText } from './exec.mjs';
+import { redactGitText } from './exec.ts';
 
 export const SETUP_WRAPPER = [
   'cmd=$FLEETDECK_SETUP_CMD; unset FLEETDECK_SETUP_CMD',

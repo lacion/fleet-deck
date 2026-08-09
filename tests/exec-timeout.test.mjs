@@ -12,7 +12,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileP } from '../scripts/fleetd/exec.mjs';
+import { execFileP } from '../scripts/fleetd/exec.ts';
 
 test('execFileP settles on a child that ignores SIGTERM', async () => {
   // A TERM-immune child is BUG-026's exact daemon scenario: the old

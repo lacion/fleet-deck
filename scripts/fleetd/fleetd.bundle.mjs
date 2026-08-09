@@ -5050,7 +5050,7 @@ __export(spawn_exports, {
 });
 import { execFileSync as execFileSync2, spawn as spawnChild } from "node:child_process";
 
-// scripts/fleetd/exec.mjs
+// scripts/fleetd/exec.ts
 import { execFile } from "node:child_process";
 
 // scripts/fleetd/payload-capture.ts
@@ -5286,12 +5286,11 @@ function createPayloadCapture(homeDir, {
   };
 }
 
-// scripts/fleetd/exec.mjs
+// scripts/fleetd/exec.ts
 var KILL_GRACE_MS = 1e3;
 function execFileP(cmd, args, { timeout = 3e4, env } = {}) {
   return new Promise((resolve) => {
     try {
-      let child;
       let done = false;
       let killTimer = null;
       const settle = (fn) => {
@@ -5300,9 +5299,42 @@ function execFileP(cmd, args, { timeout = 3e4, env } = {}) {
         if (killTimer) clearTimeout(killTimer);
         resolve(fn());
       };
+      const child = execFile(
+        cmd,
+        args,
+        {
+          // utf8 is execFile's runtime default; pinning it makes the callback's
+          // stdout/stderr resolve to `string` (the buffer overload would otherwise
+          // widen them to `string | Buffer`) with no change in behaviour.
+          encoding: "utf8",
+          // 0 disables execFile's own SIGTERM-only timeout: the deadline below is
+          // strictly stronger (same TERM, then KILL, then settle), and a second
+          // timer race inside execFile would change the shape of the callback
+          // error without changing settlement.
+          timeout: 0,
+          windowsHide: true,
+          // When an env is supplied it is MERGED over the daemon's own (never
+          // replacing it), so PATH and the rest survive while a caller adds e.g.
+          // GIT_TERMINAL_PROMPT=0 to make an unauthenticated clone fail fast
+          // instead of hanging on a credential prompt.
+          ...env ? { env: { ...process.env, ...env } } : {}
+        },
+        (err, stdout, stderr) => {
+          clearTimeout(deadline);
+          if (err) {
+            settle(() => ({
+              ok: false,
+              code: err.code,
+              err: (stderr || err.message || err.name).trim()
+            }));
+            return;
+          }
+          settle(() => ({ ok: true, out: stdout }));
+        }
+      );
       const deadline = setTimeout(() => {
         settle(() => ({ ok: false, code: "ETIMEDOUT", err: `timed out after ${timeout}ms` }));
-        if (child && !child.killed) {
+        if (!child.killed) {
           try {
             child.kill("SIGTERM");
           } catch {
@@ -5310,7 +5342,8 @@ function execFileP(cmd, args, { timeout = 3e4, env } = {}) {
           killTimer = setTimeout(() => {
             let alive = true;
             try {
-              process.kill(child.pid, 0);
+              if (child.pid == null) alive = false;
+              else process.kill(child.pid, 0);
             } catch {
               alive = false;
             }
@@ -5321,34 +5354,17 @@ function execFileP(cmd, args, { timeout = 3e4, env } = {}) {
               }
             }
           }, KILL_GRACE_MS);
-          killTimer.unref?.();
+          killTimer.unref();
         }
       }, timeout);
-      deadline.unref?.();
-      child = execFile(cmd, args, {
-        // 0 disables execFile's own SIGTERM-only timeout: the deadline above is
-        // strictly stronger (same TERM, then KILL, then settle), and a second
-        // timer race inside execFile would change the shape of the callback
-        // error without changing settlement.
-        timeout: 0,
-        windowsHide: true,
-        // When an env is supplied it is MERGED over the daemon's own (never
-        // replacing it), so PATH and the rest survive while a caller adds e.g.
-        // GIT_TERMINAL_PROMPT=0 to make an unauthenticated clone fail fast
-        // instead of hanging on a credential prompt.
-        ...env ? { env: { ...process.env, ...env } } : {}
-      }, (err, stdout, stderr) => {
-        clearTimeout(deadline);
-        if (err) return settle(() => ({ ok: false, code: err.code, err: String(stderr || err.message || err).trim() }));
-        settle(() => ({ ok: true, out: stdout }));
-      });
+      deadline.unref();
     } catch (err) {
-      resolve({ ok: false, err: String(err.message || err) });
+      resolve({ ok: false, err: err instanceof Error ? err.message || String(err) : String(err) });
     }
   });
 }
 function distillGitStderr(text) {
-  const lines = String(text ?? "").split("\n");
+  const lines = (text ?? "").split("\n");
   let verdict = null;
   let lastNonEmpty = null;
   for (const line of lines) {
@@ -5370,7 +5386,8 @@ function redactGitText(text, secrets = []) {
 function gitStderrDetail(text, { secrets = [] } = {}) {
   if (typeof text !== "string" || !text) return null;
   const redacted = redactGitText(
-    String(text).replace(/\r/g, "").replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f\u2028\u2029]/g, ""),
+    // eslint-disable-next-line no-control-regex -- stripping C0/DEL/C1 controls is the entire purpose of this pass
+    text.replace(/\r/g, "").replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f\u2028\u2029]/g, ""),
     secrets
   );
   const lines = redacted.split("\n").map((line) => line.replace(/\s+$/g, ""));
@@ -5386,20 +5403,35 @@ function gitStderrDetail(text, { secrets = [] } = {}) {
   return tail || null;
 }
 async function baseBranch(worktree) {
-  const head = await execFileP("git", ["-C", worktree, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"], { timeout: 5e3 });
+  const head = await execFileP(
+    "git",
+    ["-C", worktree, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+    { timeout: 5e3 }
+  );
   if (head.ok && head.out.trim()) return { ref: head.out.trim(), local: false };
   for (const name of ["main", "master"]) {
-    const remote = await execFileP("git", ["-C", worktree, "show-ref", "--verify", "--quiet", `refs/remotes/origin/${name}`], { timeout: 5e3 });
+    const remote = await execFileP(
+      "git",
+      ["-C", worktree, "show-ref", "--verify", "--quiet", `refs/remotes/origin/${name}`],
+      { timeout: 5e3 }
+    );
     if (remote.ok) return { ref: `origin/${name}`, local: false };
   }
-  const trees = await execFileP("git", ["-C", worktree, "worktree", "list", "--porcelain"], { timeout: 5e3 });
+  const trees = await execFileP("git", ["-C", worktree, "worktree", "list", "--porcelain"], {
+    timeout: 5e3
+  });
   if (trees.ok) {
-    const first = trees.out.split("\n\n", 1)[0];
+    const first = trees.out.split("\n\n", 1)[0] ?? "";
     const branch = /^branch refs\/heads\/(.+)$/m.exec(first);
-    if (branch && branch[1].trim()) return { ref: branch[1].trim(), local: true };
+    const name = branch?.[1];
+    if (name?.trim()) return { ref: name.trim(), local: true };
   }
   for (const name of ["main", "master"]) {
-    const local = await execFileP("git", ["-C", worktree, "show-ref", "--verify", "--quiet", `refs/heads/${name}`], { timeout: 5e3 });
+    const local = await execFileP(
+      "git",
+      ["-C", worktree, "show-ref", "--verify", "--quiet", `refs/heads/${name}`],
+      { timeout: 5e3 }
+    );
     if (local.ok) return { ref: name, local: true };
   }
   return null;

@@ -20,7 +20,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { openDatabase } from '../scripts/fleetd/sqlite.ts';
-import { distillGitStderr, gitStderrDetail, redactGitText } from '../scripts/fleetd/exec.mjs';
+import { distillGitStderr, gitStderrDetail, redactGitText } from '../scripts/fleetd/exec.ts';
 import { scrubUrlCredentials } from '../scripts/fleetd/payload-capture.ts';
 import { openDb } from '../scripts/fleetd/db.ts';
 
