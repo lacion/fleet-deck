@@ -9565,12 +9565,17 @@ function createLedger(ctx) {
   return { recordFile, whisperText };
 }
 
-// scripts/fleetd/ingest.mjs
+// scripts/fleetd/ingest.ts
 function createIngest(ctx) {
   const { q, assignCallsign, updateSession, tick, onMutate, touchRepo } = ctx;
   function ingestAgentsPoll(records) {
     if (!Array.isArray(records)) return;
-    const live = records.filter((rec) => rec && typeof rec === "object" && rec.sessionId && rec.kind === "interactive" && pidOwnedBy(rec.pid, rec.startedAt));
+    const isFleetRecord = (rec) => {
+      if (typeof rec !== "object" || rec === null) return false;
+      const r = rec;
+      return typeof r.sessionId === "string" && r.sessionId.length > 0 && r.kind === "interactive" && typeof r.pid === "number" && pidOwnedBy(r.pid, typeof r.startedAt === "number" ? r.startedAt : NaN);
+    };
+    const live = records.filter(isFleetRecord);
     for (const rec of live) {
       const sid = rec.sessionId;
       const rawState = rec.state ?? rec.status;
@@ -9613,7 +9618,7 @@ function createIngest(ctx) {
         const cwdChanged = !!cwd && cwd !== existing.cwd;
         const worktreeChanged = !!cwd && repo.worktree !== existing.worktree;
         const branch = cwd ? branchOf(cwd) : existing.branch;
-        updateSession(sid, {
+        const patch = {
           col: colFromAgentState(rawState, false),
           note: "seen via agents CLI",
           last_seen: Date.now(),
@@ -9625,7 +9630,8 @@ function createIngest(ctx) {
           ...repoChanged ? { repo_id: repo.repo_id, repo_name: repo.repo_name } : {},
           ...repoChanged || worktreeChanged ? { worktree: repo.worktree } : {},
           ...branch !== existing.branch ? { branch } : {}
-        });
+        };
+        updateSession(sid, patch);
         if (repoChanged) {
           touchRepo({
             repo_id: repo.repo_id,

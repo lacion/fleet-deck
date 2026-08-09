@@ -1,13 +1,48 @@
-// ingest.mjs — agents-cli ingest (F1): the merge step for the secondary
+// ingest.ts — agents-cli ingest (F1): the merge step for the secondary
 // session source. Threaded ctx state: q, assignCallsign, updateSession, tick,
 // onMutate. deriveRepo/branchOf resolve repo identity; pidOwnedBy/colFromAgentState
 // are pure helpers.
 
-import { deriveRepo, branchOf } from './repo-identity.ts';
+import { deriveRepo, branchOf, type RepoIdentity } from './repo-identity.ts';
 import { ticketFromBranch } from './tickets.ts';
 import { pidOwnedBy, colFromAgentState } from './helpers.ts';
+import type { Statements } from './statements.ts';
+import type { SqlValue } from './sqlite.ts';
 
-export function createIngest(ctx) {
+// One `claude agents --json` record we act on. The registry emits more fields;
+// only these are read here. sessionId/kind/pid/startedAt gate a record into the
+// fleet (trust rules below); the rest feed the card it produces.
+interface AgentRecord {
+  sessionId: string;
+  kind: string;
+  pid: number;
+  startedAt: number;
+  state?: string | null;
+  status?: string | null;
+  cwd?: string | null;
+  name?: string | null;
+}
+
+// The slice of the per-core ctx this factory threads. q/updateSession are the
+// real statements surface; assignCallsign/tick/onMutate/touchRepo are wrappers
+// derive.mjs owns. Structural on purpose — the giant ctx satisfies it.
+interface IngestCtx {
+  q: Statements['q'];
+  updateSession: Statements['updateSession'];
+  assignCallsign: (sessionId: string, ticket?: string | null) => string;
+  tick: (msg: string) => void;
+  onMutate: () => void;
+  touchRepo: (row: {
+    repo_id: string | null;
+    repo_name: string | null;
+    root: string | null;
+    source: string;
+  }) => void;
+}
+
+export function createIngest(ctx: IngestCtx): {
+  ingestAgentsPoll: (records: unknown) => void;
+} {
   const { q, assignCallsign, updateSession, tick, onMutate, touchRepo } = ctx;
 
   // ------------------------------------------- agents-cli ingest (F1)
@@ -44,21 +79,33 @@ export function createIngest(ctx) {
   //      lifecycle those cards have. Hook-sourced cards are untouched;
   //      SessionEnd remains their only tombstone.
   // (pidOwnedBy + colFromAgentState are pure helpers now — see helpers.mjs.)
-  function ingestAgentsPoll(records) {
+  function ingestAgentsPoll(records: unknown): void {
     if (!Array.isArray(records)) return;
     // Trust rules 1+2: interactive entries with VERIFIED pid ownership are
     // the only records that count — for creation, update AND the absence
     // sweep below (so a reused pid also tombstones the stale card).
-    const live = records.filter(rec =>
-      rec && typeof rec === 'object' && rec.sessionId
-      && rec.kind === 'interactive' && pidOwnedBy(rec.pid, rec.startedAt));
+    const isFleetRecord = (rec: unknown): rec is AgentRecord => {
+      if (typeof rec !== 'object' || rec === null) return false;
+      const r = rec as Partial<AgentRecord>;
+      return (
+        typeof r.sessionId === 'string' &&
+        r.sessionId.length > 0 &&
+        r.kind === 'interactive' &&
+        typeof r.pid === 'number' &&
+        pidOwnedBy(r.pid, typeof r.startedAt === 'number' ? r.startedAt : NaN)
+      );
+    };
+    const live = records.filter(isFleetRecord);
 
     for (const rec of live) {
       const sid = rec.sessionId;
       const rawState = rec.state ?? rec.status;
       const existing = q.getSession.get(sid);
+      // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- intentional: an empty-string cwd is not a path, so `||` folds '' to null alongside null/undefined (`??` would keep '')
       const cwd = rec.cwd || null;
-      const repo = cwd ? deriveRepo(cwd) : { repo_id: null, repo_name: null, worktree: null, main_tree: null, is_git: false };
+      const repo: RepoIdentity = cwd
+        ? deriveRepo(cwd)
+        : { repo_id: null, repo_name: null, worktree: null, main_tree: null, is_git: false };
       if (!existing) {
         // Naming moment (same rules as a hook birth): fresh branch (bypass the
         // 20s cache) so the ticket key matches the checkout the agent is on now;
@@ -69,9 +116,18 @@ export function createIngest(ctx) {
         const now = Date.now();
         const startedAt = Number.isFinite(rec.startedAt) ? rec.startedAt : now;
         q.insertAgentSession.run(
-          sid, callsign, cwd, repo.repo_id ?? null, repo.repo_name ?? null,
-          branch ?? null, repo.worktree ?? null, colFromAgentState(rawState, true),
-          'seen via agents CLI', rec.name ?? null, startedAt, now,
+          sid,
+          callsign,
+          cwd,
+          repo.repo_id ?? null,
+          repo.repo_name ?? null,
+          branch ?? null,
+          repo.worktree ?? null,
+          colFromAgentState(rawState, true),
+          'seen via agents CLI',
+          rec.name ?? null,
+          startedAt,
+          now,
         );
         if (repo.is_git) {
           touchRepo({
@@ -99,7 +155,7 @@ export function createIngest(ctx) {
         // Cached (20s TTL) read — a real checkout is picked up within a few
         // poll cycles; `fresh` is reserved for naming moments.
         const branch = cwd ? branchOf(cwd) : existing.branch;
-        updateSession(sid, {
+        const patch: Record<string, SqlValue> = {
           col: colFromAgentState(rawState, false),
           note: 'seen via agents CLI',
           last_seen: Date.now(),
@@ -109,7 +165,8 @@ export function createIngest(ctx) {
           ...(repoChanged ? { repo_id: repo.repo_id, repo_name: repo.repo_name } : {}),
           ...(repoChanged || worktreeChanged ? { worktree: repo.worktree } : {}),
           ...(branch !== existing.branch ? { branch } : {}),
-        });
+        };
+        updateSession(sid, patch);
         if (repoChanged) {
           touchRepo({
             repo_id: repo.repo_id,
@@ -125,7 +182,7 @@ export function createIngest(ctx) {
     }
 
     // Trust rule 3: absence sweep, agents-cli cards only.
-    const liveSids = new Set(live.map(r => r.sessionId));
+    const liveSids = new Set(live.map((r) => r.sessionId));
     for (const s of q.allSessions.all()) {
       if (s.source !== 'agents-cli' || s.ended_at != null) continue;
       if (liveSids.has(s.session_id)) continue;

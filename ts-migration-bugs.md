@@ -488,3 +488,32 @@ Format:
   dropped `||` are equivalent for the required, always-present values). The two casts are marked
   to be removed in Phase 8 once `api.js` converts and `fetchState()` returns the typed wire
   contract, which will let the browser narrow instead of assert.
+
+### scripts/fleetd/ingest.ts — typed the `unknown` poll payload with a real predicate; kept one intentional `||`   [NOISE]
+- **What:** `ingestAgentsPoll(records)` receives whatever `JSON.parse` produced (typed `unknown`),
+  and the inline `.filter(rec => rec && typeof rec === 'object' && rec.sessionId && …)` reads
+  `rec.sessionId/kind/pid/startedAt` off an `unknown` element — every access errors under strict.
+  Separately, `@typescript-eslint/prefer-nullish-coalescing` flagged `const cwd = rec.cwd || null`
+  because `rec.cwd` is now typed `string | null | undefined` (the earlier `|| null` survivors in
+  `exec.ts`/`repo-identity.ts` have non-null `string` operands, so the rule never fired there).
+- **Why it's noise:** no latent bug — the merge logic was already defensive; strict typing only
+  demands the `unknown` be *narrowed* before use, and the `||` is a deliberate falsy-fold. The one
+  place semantics could drift is pid ownership: the old filter passed `rec.startedAt` straight into
+  `pidOwnedBy(pid, startedAt)`. Folding a non-number `startedAt` to `NaN` is behavior-identical
+  because `Math.abs(startMs - x)` is already `NaN` for any non-number `x` (→ tolerance check false),
+  and the existing `Number.isFinite(rec.startedAt)` guard three lines down already treats even a
+  numeric *string* as non-finite — so the module already assumed `startedAt` is a real number.
+- **Fix:** (1) introduced structural types local to the module — `AgentRecord` (the read fields of a
+  `claude agents --json` record) and `IngestCtx` (the six ctx members this factory threads), reusing
+  `Statements['q']`/`Statements['updateSession']`/`RepoIdentity`/`SqlValue` from already-converted
+  modules rather than redeclaring them (contracts/ carries only wire shapes, not the internal ctx).
+  (2) Replaced the inline filter with a `rec is AgentRecord` type-guard (`isFleetRecord`) that checks
+  `typeof rec === 'object' && rec !== null`, a non-empty string `sessionId`, `kind === 'interactive'`,
+  a numeric `pid`, and `pidOwnedBy(pid, typeof startedAt === 'number' ? startedAt : NaN)` — so `live`
+  is a real `AgentRecord[]`. (3) Hoisted the `updateSession` patch object to a typed
+  `const patch: Record<string, SqlValue>` so the conditional-spread build is checked against the
+  writer's parameter type. (4) Kept `rec.cwd || null` verbatim behind an
+  `eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing` with a rationale — an
+  empty-string cwd is not a path, so `||` (not `??`) correctly folds `''` to `null`. **No runtime
+  behavior moved** — 35/35 across `agents-ingest` + `audit-cleanup` + `adopt` green vs both source
+  and the regenerated bundle.
