@@ -13,7 +13,7 @@ import { ticketFromBranch, animalOf } from './tickets.ts';
 import { createQuestions, resolveHoldMs } from './questions.mjs';
 import { lastAssistantModel } from './transcript.ts';
 import * as defaultTmuxAdapter from './spawn.mjs';
-import { createStatements } from './statements.mjs';
+import { createStatements } from './statements.ts';
 import { createWorktrees } from './worktrees.mjs';
 import { createRepos } from './repos.mjs';
 import { createSettings } from './settings.mjs';

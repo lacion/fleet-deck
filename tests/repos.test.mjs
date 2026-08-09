@@ -9,7 +9,7 @@ import { createRepos, parseRepoInput, quickBranchCheck, repoDefaultOrgChoice, re
 import { detectCoderWorkspaceRoot, resolveHome } from '../scripts/fleetd/config.mjs';
 import { openDb } from '../scripts/fleetd/db.ts';
 import { createCore } from '../scripts/fleetd/derive.mjs';
-import { createStatements } from '../scripts/fleetd/statements.mjs';
+import { createStatements } from '../scripts/fleetd/statements.ts';
 import { startDaemon, randomPort } from './helpers/daemon.mjs';
 import { getJson, postHook, postJson } from './helpers/http.mjs';
 import { makeRemoteRepo } from './helpers/gitrepo.mjs';

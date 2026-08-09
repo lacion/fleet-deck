@@ -6144,11 +6144,8 @@ function launchOverride(cmd, spec, onError = () => {
   }
 }
 
-// scripts/fleetd/statements.mjs
-var statementsByDb = /* @__PURE__ */ new WeakMap();
-function createStatements(db2) {
-  const cached = statementsByDb.get(db2);
-  if (cached) return cached;
+// scripts/fleetd/statements.ts
+function build(db2) {
   const q = {
     getSession: db2.prepare("SELECT * FROM sessions WHERE session_id = ?"),
     // 0.6.0 ticket callsigns: is a candidate name already held by ANOTHER row?
@@ -6159,7 +6156,9 @@ function createStatements(db2) {
     // prev_callsign count as "held" (a birth name kept as a stale-ref anchor is
     // still a live mail target). The session's own row is excluded so a rename
     // that keeps the animal never collides with itself.
-    callsignTaken: db2.prepare("SELECT 1 FROM sessions WHERE (callsign = ? OR prev_callsign = ?) AND archived_at IS NULL AND session_id != ? LIMIT 1"),
+    callsignTaken: db2.prepare(
+      "SELECT 1 FROM sessions WHERE (callsign = ? OR prev_callsign = ?) AND archived_at IS NULL AND session_id != ? LIMIT 1"
+    ),
     allSessions: db2.prepare("SELECT * FROM sessions ORDER BY started_at"),
     // BUG-150: the snapshot's conflict-callsign lookup. The unbounded
     // allSessions scan above fed a map whose ONLY consumer is
@@ -6188,7 +6187,9 @@ function createStatements(db2) {
          WHERE c.id IN (SELECT id FROM conflicts ORDER BY id DESC LIMIT 20)
            AND NOT json_valid(c.sessions_json)
       )`),
-    visibleSessions: db2.prepare("SELECT * FROM sessions WHERE archived_at IS NULL ORDER BY started_at"),
+    visibleSessions: db2.prepare(
+      "SELECT * FROM sessions WHERE archived_at IS NULL ORDER BY started_at"
+    ),
     countSessions: db2.prepare("SELECT COUNT(*) AS n FROM sessions"),
     // BUG-193: /health.fleet (and `fleetdeck status`'s "sessions") is the size
     // of the CURRENT fleet — the cards /state can show. An unscoped COUNT(*)
@@ -6198,7 +6199,9 @@ function createStatements(db2) {
     // separate statement because derive.mjs's assignCallsign deliberately
     // rotates from the ALL-rows count (a monotonic seed independent of
     // archival).
-    countVisibleSessions: db2.prepare("SELECT COUNT(*) AS n FROM sessions WHERE archived_at IS NULL"),
+    countVisibleSessions: db2.prepare(
+      "SELECT COUNT(*) AS n FROM sessions WHERE archived_at IS NULL"
+    ),
     insertSession: db2.prepare(`INSERT INTO sessions
       (session_id, callsign, col, note, events, started_at, last_seen, blocked_this_turn)
       VALUES (?, ?, 'queued', 'registered', 0, ?, ?, 0)`),
@@ -6245,7 +6248,9 @@ function createStatements(db2) {
     // is INSERT OR IGNORE (every rename re-records the outgoing name; a revert
     // to a previously worn name must not bump its `at`), and the heir of a
     // /clear succession inherits the lineage's whole history.
-    rememberAlias: db2.prepare("INSERT OR IGNORE INTO session_aliases (session_id, callsign, at) VALUES (?, ?, ?)"),
+    rememberAlias: db2.prepare(
+      "INSERT OR IGNORE INTO session_aliases (session_id, callsign, at) VALUES (?, ?, ?)"
+    ),
     reassignAliases: db2.prepare("UPDATE session_aliases SET session_id = ? WHERE session_id = ?"),
     // Live sessions wearing ? as their name-in-history (current, anchor or any
     // dropped name). Used as the LAST fallback by target resolvers — after
@@ -6273,9 +6278,15 @@ function createStatements(db2) {
     // exactly ONE lineage. Without this, the boot heal could hand the same heir
     // to two different predecessors — merging two unrelated conversations onto
     // one card, which is strictly worse than the split it set out to fix.
-    successorClaimed: db2.prepare("SELECT session_id FROM sessions WHERE succeeded_by = ? LIMIT 1"),
-    insertTouch: db2.prepare("INSERT INTO file_touches (repo_id, rel_path, abs_path, session_id, worktree, at) VALUES (?, ?, ?, ?, ?, ?)"),
-    recentTouches: db2.prepare("SELECT * FROM file_touches WHERE repo_id = ? AND rel_path = ? AND at > ? ORDER BY at"),
+    successorClaimed: db2.prepare(
+      "SELECT session_id FROM sessions WHERE succeeded_by = ? LIMIT 1"
+    ),
+    insertTouch: db2.prepare(
+      "INSERT INTO file_touches (repo_id, rel_path, abs_path, session_id, worktree, at) VALUES (?, ?, ?, ?, ?, ?)"
+    ),
+    recentTouches: db2.prepare(
+      "SELECT * FROM file_touches WHERE repo_id = ? AND rel_path = ? AND at > ? ORDER BY at"
+    ),
     // M-G1: windowed by time. The snapshot GROUP-BY used to scan the WHOLE
     // (never-pruned-for-live-sessions) file_touches table on every frame; it
     // now only aggregates touches newer than the ledger window (retentionSweep
@@ -6294,7 +6305,9 @@ function createStatements(db2) {
         ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY MAX(at) DESC) AS rn
       FROM file_touches WHERE at > ? GROUP BY session_id, abs_path
     ) WHERE rn <= ? ORDER BY recent DESC`),
-    insertMail: db2.prepare("INSERT INTO mail (to_session, from_id, text, at, delivered_at) VALUES (?, ?, ?, ?, NULL)"),
+    insertMail: db2.prepare(
+      "INSERT INTO mail (to_session, from_id, text, at, delivered_at) VALUES (?, ?, ?, ?, NULL)"
+    ),
     // BUG-034: "claimable" = never delivered, never expired, and not under a
     // live in-flight lease. A row whose lease deadline passed (consumer or
     // daemon died mid-delivery) is claimable again — that is the whole point
@@ -6360,29 +6373,49 @@ function createStatements(db2) {
     // ackMail finalizes ONLY a row still under lease (the WHERE guard makes a
     // late or double ack a no-op instead of resurrecting a row that already
     // moved on); releaseClaim/expireStalledClaims hand the row back.
-    claimMail: db2.prepare("UPDATE mail SET claimed_at = ? WHERE id = ? AND delivered_at IS NULL AND claimed_at IS NULL"),
-    ackMail: db2.prepare("UPDATE mail SET delivered_at = ?, claimed_at = NULL WHERE id = ? AND delivered_at IS NULL AND claimed_at IS NOT NULL"),
-    releaseClaim: db2.prepare("UPDATE mail SET claimed_at = NULL WHERE id = ? AND delivered_at IS NULL"),
+    claimMail: db2.prepare(
+      "UPDATE mail SET claimed_at = ? WHERE id = ? AND delivered_at IS NULL AND claimed_at IS NULL"
+    ),
+    ackMail: db2.prepare(
+      "UPDATE mail SET delivered_at = ?, claimed_at = NULL WHERE id = ? AND delivered_at IS NULL AND claimed_at IS NOT NULL"
+    ),
+    releaseClaim: db2.prepare(
+      "UPDATE mail SET claimed_at = NULL WHERE id = ? AND delivered_at IS NULL"
+    ),
     // Retention is the sweeper that outlives consumer processes: any claim
     // whose deadline passed never got its ack, so the mail goes back to the
     // claimable pool for the next watcher / turn boundary / pane delivery.
-    expireStalledClaims: db2.prepare("UPDATE mail SET claimed_at = NULL WHERE delivered_at IS NULL AND claimed_at IS NOT NULL AND claimed_at <= ?"),
-    insertEvent: db2.prepare("INSERT INTO events (session_id, hook_event, tool_name, note, at) VALUES (?, ?, ?, ?, ?)"),
-    sparkline: db2.prepare("SELECT session_id, (at / 60000) AS minute, COUNT(*) AS n FROM events WHERE at > ? GROUP BY session_id, minute"),
+    expireStalledClaims: db2.prepare(
+      "UPDATE mail SET claimed_at = NULL WHERE delivered_at IS NULL AND claimed_at IS NOT NULL AND claimed_at <= ?"
+    ),
+    insertEvent: db2.prepare(
+      "INSERT INTO events (session_id, hook_event, tool_name, note, at) VALUES (?, ?, ?, ?, ?)"
+    ),
+    sparkline: db2.prepare(
+      "SELECT session_id, (at / 60000) AS minute, COUNT(*) AS n FROM events WHERE at > ? GROUP BY session_id, minute"
+    ),
     insertTicker: db2.prepare("INSERT INTO ticker (at, msg) VALUES (?, ?)"),
-    recentTicker: db2.prepare("SELECT at, msg FROM ticker ORDER BY id DESC LIMIT 40"),
+    recentTicker: db2.prepare(
+      "SELECT at, msg FROM ticker ORDER BY id DESC LIMIT 40"
+    ),
     trimTicker: db2.prepare("DELETE FROM ticker WHERE id <= (SELECT MAX(id) FROM ticker) - 500"),
-    insertConflict: db2.prepare("INSERT INTO conflicts (at, repo_id, rel_path, severity, sessions_json) VALUES (?, ?, ?, ?, ?)"),
+    insertConflict: db2.prepare(
+      "INSERT INTO conflicts (at, repo_id, rel_path, severity, sessions_json) VALUES (?, ?, ?, ?, ?)"
+    ),
     recentConflicts: db2.prepare("SELECT * FROM conflicts ORDER BY id DESC LIMIT 20"),
     // Manual cleanup (CONTRACT): "Clear" means the board shows only what is
     // still alive. A conflict between two dead sessions, a feed narrating
     // yesterday, and a file ledger full of ghosts are all noise the human
     // explicitly asked to be rid of — the radar re-raises a real conflict the
     // moment two live sessions touch the same file again.
-    allConflicts: db2.prepare("SELECT id, sessions_json FROM conflicts"),
+    allConflicts: db2.prepare(
+      "SELECT id, sessions_json FROM conflicts"
+    ),
     deleteConflict: db2.prepare("DELETE FROM conflicts WHERE id = ?"),
     clearTicker: db2.prepare("DELETE FROM ticker"),
-    aliveSessionIds: db2.prepare("SELECT session_id FROM sessions WHERE ended_at IS NULL AND archived_at IS NULL"),
+    aliveSessionIds: db2.prepare(
+      "SELECT session_id FROM sessions WHERE ended_at IS NULL AND archived_at IS NULL"
+    ),
     deleteDeadTouches: db2.prepare(`DELETE FROM file_touches WHERE session_id IN (
       SELECT session_id FROM sessions WHERE ended_at IS NOT NULL OR archived_at IS NOT NULL)`),
     // Per-card dismiss (Item 3): drop just this card's file ledger so the
@@ -6400,7 +6433,9 @@ function createStatements(db2) {
     pruneTouches: db2.prepare("DELETE FROM file_touches WHERE at < ?"),
     pruneCommands: db2.prepare("DELETE FROM commands WHERE at < ?"),
     pruneConflicts: db2.prepare("DELETE FROM conflicts WHERE at < ?"),
-    pruneSettledMail: db2.prepare("DELETE FROM mail WHERE at < ? AND (delivered_at IS NOT NULL OR expired_at IS NOT NULL)"),
+    pruneSettledMail: db2.prepare(
+      "DELETE FROM mail WHERE at < ? AND (delivered_at IS NOT NULL OR expired_at IS NOT NULL)"
+    ),
     getSetting: db2.prepare("SELECT value FROM settings WHERE key = ?"),
     setSetting: db2.prepare(`INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`),
@@ -6413,8 +6448,12 @@ function createStatements(db2) {
         origin_url = COALESCE(repos.origin_url, excluded.origin_url),
         default_branch = COALESCE(repos.default_branch, excluded.default_branch),
         last_used_at = excluded.last_used_at`),
-    setRepoOrigin: db2.prepare("UPDATE repos SET origin_url = ? WHERE repo_id = ? AND origin_url IS NULL"),
-    repoByName: db2.prepare("SELECT * FROM repos WHERE repo_name = ? COLLATE NOCASE ORDER BY last_used_at DESC"),
+    setRepoOrigin: db2.prepare(
+      "UPDATE repos SET origin_url = ? WHERE repo_id = ? AND origin_url IS NULL"
+    ),
+    repoByName: db2.prepare(
+      "SELECT * FROM repos WHERE repo_name = ? COLLATE NOCASE ORDER BY last_used_at DESC"
+    ),
     catalogRepos: db2.prepare("SELECT * FROM repos ORDER BY last_used_at DESC LIMIT 30"),
     // v1.2 board-spawned sessions. "Active" = status spawning|stalled|live — the
     // rows that get liveness-checked, and the number the board shows as "N live".
@@ -6433,8 +6472,12 @@ function createStatements(db2) {
     // spawn learns whether materializeBranch created the tree or reused a
     // pre-existing one. Boot reconciliation reads it to decide whether the
     // verified removal path applies to an interrupted spawn's worktree.
-    setSpawnWorktree: db2.prepare("UPDATE spawns SET worktree_path = ?, worktree_owned = ? WHERE spawn_id = ?"),
-    staleProvisioningSpawns: db2.prepare("SELECT * FROM spawns WHERE status = 'provisioning'"),
+    setSpawnWorktree: db2.prepare(
+      "UPDATE spawns SET worktree_path = ?, worktree_owned = ? WHERE spawn_id = ?"
+    ),
+    staleProvisioningSpawns: db2.prepare(
+      "SELECT * FROM spawns WHERE status = 'provisioning'"
+    ),
     // H-R5 / R2-5: the newest spawn row still laying claim to a tmux window (a
     // revive reuses the dead row's window name, so a lineage can have several
     // rows naming one window). 'killed'/'gone' rows have RELEASED the window.
@@ -6449,7 +6492,9 @@ function createStatements(db2) {
       WHERE tmux_window = ? AND status IN ('provisioning', 'spawning', 'stalled', 'live', 'pane-dead')
       ORDER BY requested_at DESC, rowid DESC LIMIT 1`),
     getSpawn: db2.prepare("SELECT * FROM spawns WHERE spawn_id = ?"),
-    spawnBySession: db2.prepare("SELECT * FROM spawns WHERE session_id = ? ORDER BY requested_at DESC, rowid DESC LIMIT 1"),
+    spawnBySession: db2.prepare(
+      "SELECT * FROM spawns WHERE session_id = ? ORDER BY requested_at DESC, rowid DESC LIMIT 1"
+    ),
     // Per-card dismiss (Item 3): every spawn row of one lineage (a revive reuses
     // the window name across rows), so dismiss can find its dead remain-on-exit
     // windows to kill. Its precondition consults the existing activeSpawnBySession
@@ -6467,7 +6512,9 @@ function createStatements(db2) {
     spawnByVisibleSession: db2.prepare(`SELECT * FROM spawns
       WHERE session_id IN (SELECT session_id FROM sessions WHERE archived_at IS NULL)
       ORDER BY requested_at, rowid`),
-    activeSpawns: db2.prepare("SELECT * FROM spawns WHERE status IN ('spawning', 'stalled', 'live')"),
+    activeSpawns: db2.prepare(
+      "SELECT * FROM spawns WHERE status IN ('spawning', 'stalled', 'live')"
+    ),
     // BUG 3: 'pane-dead' and 'gone' were a ONE-WAY DOOR — activeSpawns never
     // re-checked them, so a spawn wrongly condemned (BUG 1 /clear, BUG 2
     // silence, or a transient tmux misread) stayed dead on the board forever
@@ -6475,7 +6522,9 @@ function createStatements(db2) {
     // these against tmux and RESURRECTS any whose window is a live claude.
     // 'killed' is deliberately absent: a human kill is a decision, not a
     // mistake, and must stay killed.
-    resurrectableSpawns: db2.prepare("SELECT * FROM spawns WHERE status IN ('pane-dead', 'gone')"),
+    resurrectableSpawns: db2.prepare(
+      "SELECT * FROM spawns WHERE status IN ('pane-dead', 'gone')"
+    ),
     // An INTERRUPTED resume leaves the CARD presenting as in-flight forever.
     // launchResume inserts its provisional spawn row BEFORE it flips the card to
     // col='queued' + note='reviving…', so a card in that presentation with NO
@@ -6497,15 +6546,21 @@ function createStatements(db2) {
         AND session_id NOT IN (
           SELECT session_id FROM spawns
            WHERE status IN ('provisioning', 'spawning', 'stalled', 'live'))`),
-    activeSpawnBySession: db2.prepare("SELECT * FROM spawns WHERE session_id = ? AND status IN ('spawning', 'stalled', 'live') ORDER BY requested_at DESC, rowid DESC LIMIT 1"),
+    activeSpawnBySession: db2.prepare(
+      "SELECT * FROM spawns WHERE session_id = ? AND status IN ('spawning', 'stalled', 'live') ORDER BY requested_at DESC, rowid DESC LIMIT 1"
+    ),
     // HIGH (revive single-flight): activeSpawnBySession deliberately EXCLUDES
     // 'provisioning' (a provisional row is not yet a live-eligible spawn). But
     // revive()'s duplicate-guard must ALSO see a provisioning row: a revive
     // inserts its durable row 'provisioning' before the pane is up, and a
     // second revive arriving while the first is still bringing that pane up
     // must be refused, not allowed to launch a second pane for the one session.
-    provisioningSpawnBySession: db2.prepare("SELECT * FROM spawns WHERE session_id = ? AND status = 'provisioning' ORDER BY requested_at DESC, rowid DESC LIMIT 1"),
-    countActiveSpawns: db2.prepare("SELECT COUNT(*) AS n FROM spawns WHERE status IN ('spawning', 'stalled', 'live')"),
+    provisioningSpawnBySession: db2.prepare(
+      "SELECT * FROM spawns WHERE session_id = ? AND status = 'provisioning' ORDER BY requested_at DESC, rowid DESC LIMIT 1"
+    ),
+    countActiveSpawns: db2.prepare(
+      "SELECT COUNT(*) AS n FROM spawns WHERE status IN ('spawning', 'stalled', 'live')"
+    ),
     setSpawnStatus: db2.prepare("UPDATE spawns SET status = ? WHERE spawn_id = ?"),
     // BUG-152: resurrection is a compare-and-set. The liveness tick snapshots a
     // 'pane-dead'/'gone' row and the window owner BEFORE awaiting
@@ -6514,8 +6569,12 @@ function createStatements(db2) {
     // The write only wins while the row is still 'pane-dead'/'gone' — a 'killed'
     // row (a human decision) makes it change zero rows, and the card is left
     // alone. Same pattern as setSpawnStalled below.
-    setSpawnResurrected: db2.prepare("UPDATE spawns SET status = 'live' WHERE spawn_id = ? AND status IN ('pane-dead', 'gone')"),
-    setSpawnStalled: db2.prepare("UPDATE spawns SET status = 'stalled', stall_detail = ? WHERE spawn_id = ? AND status = 'spawning'"),
+    setSpawnResurrected: db2.prepare(
+      "UPDATE spawns SET status = 'live' WHERE spawn_id = ? AND status IN ('pane-dead', 'gone')"
+    ),
+    setSpawnStalled: db2.prepare(
+      "UPDATE spawns SET status = 'stalled', stall_detail = ? WHERE spawn_id = ? AND status = 'spawning'"
+    ),
     // Records a failed clone/fetch's redacted git-stderr excerpt (repos.mjs).
     // NO compare-and-set predicate, deliberately: copying setSpawnStalled's
     // `AND status = 'spawning'` above would match ZERO rows here, because a
@@ -6527,7 +6586,9 @@ function createStatements(db2) {
     // provisional row still exists, and compensation only flips status to
     // 'gone' (it never DELETEs the row), so the value survives to the snapshot.
     setSpawnFailDetail: db2.prepare("UPDATE spawns SET fail_detail = ? WHERE spawn_id = ?"),
-    setSpawnRemote: db2.prepare("UPDATE spawns SET remote_control = 1, remote_url = ? WHERE spawn_id = ?"),
+    setSpawnRemote: db2.prepare(
+      "UPDATE spawns SET remote_control = 1, remote_url = ? WHERE spawn_id = ?"
+    ),
     // WORKTREE OWNERSHIP CONTRACT: this is the allow-list behind the removal
     // API. A path is removable only when it appears here; no path supplied by
     // a browser is ever promoted into a git argv before this lookup succeeds.
@@ -6550,7 +6611,9 @@ function createStatements(db2) {
       WHERE spawns.status IN ('provisioning', 'spawning', 'live')
       ORDER BY spawns.requested_at DESC, spawns.rowid DESC`),
     deleteWorktreeSpawns: db2.prepare("DELETE FROM spawns WHERE worktree_path = ?"),
-    deleteEndedSession: db2.prepare("DELETE FROM sessions WHERE session_id = ? AND ended_at IS NOT NULL"),
+    deleteEndedSession: db2.prepare(
+      "DELETE FROM sessions WHERE session_id = ? AND ended_at IS NOT NULL"
+    ),
     presumeDeadSessions: db2.prepare(`SELECT * FROM sessions
       WHERE source = 'hooks' AND ended_at IS NULL
         AND col IN ('queued', 'idle', 'needsyou') AND last_seen < ?`),
@@ -6579,7 +6642,9 @@ function createStatements(db2) {
         AND COALESCE(ended_at, last_seen) < ?
         AND NOT EXISTS (SELECT 1 FROM spawns
           WHERE spawns.session_id = sessions.session_id AND spawns.status = 'stalled')`),
-    setArchived: db2.prepare("UPDATE sessions SET archived_at = ? WHERE session_id = ? AND archived_at IS NULL"),
+    setArchived: db2.prepare(
+      "UPDATE sessions SET archived_at = ? WHERE session_id = ? AND archived_at IS NULL"
+    ),
     archiveAllOffline: db2.prepare(`UPDATE sessions SET archived_at = ?
       WHERE col = 'offline' AND archived_at IS NULL
         AND NOT EXISTS (SELECT 1 FROM spawns
@@ -6652,7 +6717,9 @@ function createStatements(db2) {
       (session_id, callsign, repo_id, repo_name, question_id, plan_md, created_at, status)
       VALUES (?, ?, ?, ?, ?, ?, ?, 'proposed')`),
     getPlan: db2.prepare("SELECT * FROM plans WHERE plan_id = ?"),
-    planByQuestion: db2.prepare("SELECT * FROM plans WHERE question_id = ? ORDER BY plan_id DESC LIMIT 1"),
+    planByQuestion: db2.prepare(
+      "SELECT * FROM plans WHERE question_id = ? ORDER BY plan_id DESC LIMIT 1"
+    ),
     // In-terminal plan settlement (plan lifecycle contract, UX 2.2):
     // settleTerminalPlan is the status flip, guarded to 'proposed' so a plan
     // the board already answered/marked/archived keeps its verdict;
@@ -6668,7 +6735,9 @@ function createStatements(db2) {
     plansForState: db2.prepare(`SELECT * FROM plans WHERE status != 'archived'
       ORDER BY created_at DESC, plan_id DESC LIMIT 20`),
     setPlanStatus: db2.prepare("UPDATE plans SET status = ? WHERE plan_id = ?"),
-    setPlanExecuted: db2.prepare("UPDATE plans SET status = 'executed', executed_via = ? WHERE plan_id = ?"),
+    setPlanExecuted: db2.prepare(
+      "UPDATE plans SET status = 'executed', executed_via = ? WHERE plan_id = ?"
+    ),
     // BUG-040 — atomic pre-spawn execution claim: one guarded UPDATE flips an
     // executable plan to 'executed' BEFORE the spawn launches anything, so
     // concurrent claims serialize in SQLite and exactly one wins (changes===1).
@@ -6724,12 +6793,20 @@ function createStatements(db2) {
     const shape = keys.join(",");
     let stmt = updateStmts.get(shape);
     if (!stmt) {
-      stmt = db2.prepare(`UPDATE sessions SET ${keys.map((k) => `${k} = ?`).join(", ")} WHERE session_id = ?`);
+      stmt = db2.prepare(
+        `UPDATE sessions SET ${keys.map((k) => `${k} = ?`).join(", ")} WHERE session_id = ?`
+      );
       updateStmts.set(shape, stmt);
     }
     stmt.run(...keys.map((k) => upd[k] ?? null), sid);
   }
-  const statements = { q, FIELDS, updateSession };
+  return { q, FIELDS, updateSession };
+}
+var statementsByDb = /* @__PURE__ */ new WeakMap();
+function createStatements(db2) {
+  const cached = statementsByDb.get(db2);
+  if (cached) return cached;
+  const statements = build(db2);
   statementsByDb.set(db2, statements);
   return statements;
 }

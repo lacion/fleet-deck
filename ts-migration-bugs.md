@@ -48,6 +48,50 @@ Format:
 
 <!-- entries appended below as modules convert -->
 
+### statements.ts — the row-shape vocabulary finally minted; a circular `ReturnType` the WeakMap forced   [NOISE]
+- **What:** the ~90-statement prepared-query map + the cached-UPDATE `updateSession` writer.
+  This is the module `ledger.ts` and `plans.ts` each left a comment pointing at ("replaced by
+  the real statements-layer export when that converts") — so the conversion's real work was
+  minting the store's **row types** (`SessionRow`, `MailRow`, `SpawnRow`, `RepoRow`, `PlanRow`,
+  `ConflictRow`, `TouchRow` + local projections) and wiring each `SELECT` to one via
+  `db.prepare<R>(sql)`. Two things genuinely resisted a naive typing; neither is a runtime defect.
+- **Why it's real / why it's noise:** NOISE — `tsc` + type-aware lint clean, zero runtime move.
+  But two structural notes worth recording:
+  (1) **The memoizing WeakMap makes `createStatements`'s return type circular.** The cache is
+  `WeakMap<SqliteHandle, Statements>` and `Statements` is "whatever `createStatements` returns" —
+  but `createStatements`'s body *reads* that WeakMap, so inferring its return type from its own
+  body is circular and `tsc` refuses (`… implicitly has return type 'any' because it does not
+  have a return type annotation and is referenced directly or indirectly in one of its return
+  expressions`). Because `noPropertyAccessFromIndexSignature` etc. are off for `.mjs`, the still-JS
+  `derive.mjs` consumer is unaffected either way — but the fix keeps the TS honest for the future
+  `derive.ts`.
+  (2) **`SqliteStatement<SqlRow>` is not assignable to `SqliteStatement<SpecificRow>`** (a bare
+  `SqlRow` index signature has none of the named props), so a single `const q: QMap = { … }`
+  annotation with plain `db.prepare('sql')` entries would *fail* to type — the row shape has to be
+  driven **per statement** by `db.prepare<Row>('sql')`, letting inference build the map's type from
+  the individual generics rather than a hand-written map interface.
+- **Fix:** (1) extracted a `build(db)` helper that compiles `q`/`FIELDS`/`updateSession` with **no**
+  reference to the cache, derived `export type Statements = ReturnType<typeof build>` from it, and
+  left `createStatements` as a thin memoizing wrapper — the return type now flows from `build`,
+  which is self-contained, so no circularity. (2) annotated each `SELECT` with `db.prepare<R>(…)`
+  (`INSERT`/`UPDATE`/`DELETE` stay the default `SqlRow` — they're only ever `.run()`); every domain
+  comment (BUG-034 lease, BUG-107 aliases, BUG-149/150/128, H-R5/R6, /clear succession, plan
+  library) preserved verbatim. Row nullability is **write-path-faithful**, matching the ledger.ts /
+  plans.ts stand-ins it supersedes: PKs, AUTOINCREMENT ids, always-stamped timestamps, and
+  `DEFAULT`-carrying columns are non-null; a column legitimately absent on some row (`repo_id` on a
+  hook-born session, `executed_via` on an unexecuted plan, `delivered_at` on undelivered mail) is
+  `| null`. `updateSession(sid: string, upd: Record<string, SqlValue>): void`,
+  `updateStmts = new Map<string, SqliteStatement>()`, `FIELD_SET = new Set<string>(FIELDS)`. The
+  exported row types are **purely additive** — nothing internal reads a row (the module only
+  compiles statements + does index access `upd[k]`), so the `<R>` only shapes what future TS
+  consumers infer, never what this file checks. **No runtime behavior moved** — tsc + eslint clean;
+  51/51 (settings-transaction + derive-audit-reliability + daemon-maintenance) and 56/56 (repos +
+  worktrees) green vs source, and 51/51 green vs the regenerated bundle.
+- **Follow-up (not this commit):** `ledger.ts` / `plans.ts` still carry their *provisional*
+  stand-in row interfaces. Now that the real exports exist, a later change can import
+  `TouchRow`/`SessionRow`/`PlanRow`/`PlanStatus` from here and delete the stand-ins — kept separate
+  to keep this commit a clean mechanical conversion.
+
 ### db.ts — the store's schema layer; three strict knobs, no defect   [NOISE]
 - **What:** `openDb()` (DDL + `migrate()` + the 0600 confidentiality chmod) built on
   `sqlite.ts`'s `openDatabase()`. A clean conversion — nothing latent surfaced — but three
