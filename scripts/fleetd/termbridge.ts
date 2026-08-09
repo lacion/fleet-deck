@@ -1,4 +1,4 @@
-// termbridge.mjs — live access to daemon-owned tmux panes.
+// termbridge.ts — live access to daemon-owned tmux panes.
 //
 // CONTRACT: the daemon keeps ONE tmux CONTROL MODE client for the whole fleet,
 // shared by every viewer, and demultiplexes `%output` to subscribers by pane id.
@@ -28,10 +28,41 @@
 // their own shape. It also retires the old viewer cap, which existed to bound
 // the per-viewer process count that no longer exists.
 
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
 import { exactWindowTarget, sessionName } from './spawn.mjs';
 import { envInt } from './helpers.ts';
+import type { SpawnRow } from './statements.ts';
+
+// ---- tmux CONTROL MODE parse events (discriminated union) ----
+interface ResponseEvent {
+  type: 'response';
+  key: string;
+  time: string;
+  number: string;
+  ok: boolean;
+  lines: string[];
+}
+interface OutputEvent {
+  type: 'output';
+  pane: string;
+  data: Buffer;
+}
+interface ExitEvent {
+  type: 'exit';
+  reason: string;
+}
+interface WindowCloseEvent {
+  type: 'window-close';
+  window: string;
+}
+interface SessionChangedEvent {
+  type: 'session-changed';
+  session: string;
+  name: string;
+}
+type ControlEvent =
+  ResponseEvent | OutputEvent | ExitEvent | WindowCloseEvent | SessionChangedEvent;
 
 const ACTIVE_STATUSES = new Set(['spawning', 'stalled', 'live']);
 const INPUT_CHUNK_BYTES = 1024;
@@ -55,7 +86,9 @@ const MAX_INPUT_QUEUE_BYTES = envInt('FLEETDECK_TERM_INPUT_MAX_BYTES', 256 * 102
 // bound before init ships is resynced (finished): holding it unbounded grew
 // daemon memory per open viewer and the flushPending burst that finally
 // shipped it could trip MAX_TERM_WS_BUFFER and disconnect the viewer anyway.
-const MAX_PENDING_OUTPUT_BYTES = envInt('FLEETDECK_TERM_PENDING_MAX_BYTES', MAX_INPUT_QUEUE_BYTES, { min: 1024 });
+const MAX_PENDING_OUTPUT_BYTES = envInt('FLEETDECK_TERM_PENDING_MAX_BYTES', MAX_INPUT_QUEUE_BYTES, {
+  min: 1024,
+});
 
 // Cursor home + erase screen: a fresh viewer must never inherit stale cells.
 const CLEAR_SCREEN = '\u001b[H\u001b[2J';
@@ -71,10 +104,11 @@ const REPAINT_MS = envInt('FLEETDECK_TERM_REPAINT_MS', 80);
 // silently discarding keystrokes. pane_dead is the only honest tell.
 const PANE_DEAD_POLL_MS = envInt('FLEETDECK_TERM_DEAD_POLL_MS', 5_000, { min: 100 });
 
-function dimensions(cols, rows) {
+function dimensions(cols: unknown, rows: unknown): { cols: number; rows: number } | null {
   const c = Number(cols);
   const r = Number(rows);
-  if (!Number.isInteger(c) || !Number.isInteger(r) || c < 1 || r < 1 || c > 1000 || r > 1000) return null;
+  if (!Number.isInteger(c) || !Number.isInteger(r) || c < 1 || r < 1 || c > 1000 || r > 1000)
+    return null;
   return { cols: c, rows: r };
 }
 
@@ -85,9 +119,9 @@ function dimensions(cols, rows) {
  * every char maps straight back to the byte it came from. Anything else would
  * re-encode bytes we do not own: the control stream is a byte pipe, and the
  * UTF-8 sitting inside it is the PANE's business, reassembled downstream. */
-export function unescapeControlData(value) {
-  const text = String(value);
-  const bytes = [];
+export function unescapeControlData(value: string): Buffer {
+  const text = value;
+  const bytes: number[] = [];
   for (let i = 0; i < text.length;) {
     if (text[i] === '\\' && /^[0-7]{3}$/.test(text.slice(i + 1, i + 4))) {
       bytes.push(Number.parseInt(text.slice(i + 1, i + 4), 8));
@@ -105,6 +139,10 @@ export function unescapeControlData(value) {
  * only on an %end/%error with the matching timestamp and command number;
  * unknown notifications are ignored for forward compatibility. */
 export class ControlModeParser {
+  decoder: StringDecoder;
+  pending: string;
+  block: { time: string; number: string; lines: string[] } | null;
+
   constructor() {
     // LATIN-1, deliberately: the control stream is a BYTE protocol, and tmux
     // splits a pane's output at arbitrary byte boundaries across %output
@@ -119,9 +157,9 @@ export class ControlModeParser {
     this.block = null;
   }
 
-  feed(chunk) {
-    this.pending += Buffer.isBuffer(chunk) ? this.decoder.write(chunk) : String(chunk);
-    const events = [];
+  feed(chunk: Buffer | string): ControlEvent[] {
+    this.pending += Buffer.isBuffer(chunk) ? this.decoder.write(chunk) : chunk;
+    const events: ControlEvent[] = [];
     for (;;) {
       const nl = this.pending.indexOf('\n');
       if (nl < 0) break;
@@ -133,12 +171,23 @@ export class ControlModeParser {
     return events;
   }
 
-  #line(line, events) {
+  #line(line: string, events: ControlEvent[]) {
     const boundary = /^%(begin|end|error)\s+(\S+)\s+(\S+)(?:\s+.*)?$/.exec(line);
     if (this.block) {
-      if (boundary && boundary[1] !== 'begin' && boundary[2] === this.block.time && boundary[3] === this.block.number) {
-        events.push({ type: 'response', key: `${this.block.time}:${this.block.number}`, time: this.block.time,
-          number: this.block.number, ok: boundary[1] === 'end', lines: this.block.lines });
+      if (
+        boundary &&
+        boundary[1] !== 'begin' &&
+        boundary[2] === this.block.time &&
+        boundary[3] === this.block.number
+      ) {
+        events.push({
+          type: 'response',
+          key: `${this.block.time}:${this.block.number}`,
+          time: this.block.time,
+          number: this.block.number,
+          ok: boundary[1] === 'end',
+          lines: this.block.lines,
+        });
         this.block = null;
       } else {
         this.block.lines.push(line);
@@ -146,33 +195,41 @@ export class ControlModeParser {
       return;
     }
     if (boundary?.[1] === 'begin') {
-      this.block = { time: boundary[2], number: boundary[3], lines: [] };
+      this.block = { time: boundary[2] ?? '', number: boundary[3] ?? '', lines: [] };
       return;
     }
     const output = /^%output\s+(%\S+)\s?(.*)$/.exec(line);
     if (output) {
-      events.push({ type: 'output', pane: output[1], data: unescapeControlData(output[2]) });
+      events.push({
+        type: 'output',
+        pane: output[1] ?? '',
+        data: unescapeControlData(output[2] ?? ''),
+      });
       return;
     }
     const exit = /^%exit(?:\s+(.*))?$/.exec(line);
     if (exit) {
+      // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- an empty ("%exit ") reason must fall back too, not just an absent one
       events.push({ type: 'exit', reason: exit[1] || 'tmux control client exited' });
       return;
     }
     const closed = /^%window-close\s+(\S+)/.exec(line);
     if (closed) {
-      events.push({ type: 'window-close', window: closed[1] });
+      events.push({ type: 'window-close', window: closed[1] ?? '' });
       return;
     }
     const session = /^%session-changed\s+(\S+)(?:\s+(.*))?$/.exec(line);
-    if (session) events.push({ type: 'session-changed', session: session[1], name: session[2] || '' });
+    if (session)
+      events.push({ type: 'session-changed', session: session[1] ?? '', name: session[2] ?? '' });
   }
 }
 
 // Not exported: only thrown/caught inside this file. http.mjs duck-types the
 // failure via `err?.reason`, so no importer needs the class itself.
 class TermBridgeError extends Error {
-  constructor(reason, { gone = false } = {}) {
+  readonly reason: string;
+  readonly gone: boolean;
+  constructor(reason: string, { gone = false }: { gone?: boolean } = {}) {
     super(reason);
     this.reason = reason;
     // gone: the row still says live but its window/pane is already absent (a
@@ -184,18 +241,100 @@ class TermBridgeError extends Error {
   }
 }
 
+// ---- shared-client and viewer shapes ----
+interface Waiter {
+  resolve: (value: ResponseEvent) => void;
+  reject: (err: Error) => void;
+}
+interface PaneStream {
+  decoder: StringDecoder;
+  subs: Set<Viewer>;
+}
+interface Client {
+  child: ChildProcess | null;
+  parser: ControlModeParser;
+  waiters: Waiter[];
+  panes: Map<string, PaneStream>;
+  manualSizing: Set<string>;
+  closed: boolean;
+  ready: Promise<void>;
+  readyResolve: () => void;
+  readyReject: (err: Error) => void;
+  command: (line: string) => Promise<ResponseEvent>;
+  deadTimer: ReturnType<typeof setInterval>;
+}
+interface Viewer {
+  pane: string | null;
+  window: string;
+  established: boolean;
+  initialized: boolean;
+  finished: boolean;
+  pending: string[];
+  pendingBytes: number;
+  queuedInput: number;
+  inputChain: Promise<void>;
+  emit(data: string): void;
+  flushPending(): void;
+  finish(reason: string, notify?: boolean): void;
+}
+type TermFrame =
+  { t: 'out'; data: string } | { t: 'init'; cols: number; rows: number; screen: string };
+type TermSend = (frame: TermFrame) => void;
+interface OpenViewerOptions {
+  spawn_id: string;
+  cols: number;
+  rows: number;
+  send: TermSend;
+  onClose?: (reason: string) => void;
+  isAborted?: () => boolean;
+}
+interface ViewerHandle {
+  input(dataString: string): void;
+  resize(nextCols: number, nextRows: number): void;
+  close(): void;
+}
+interface TermBridgeOptions {
+  port: number;
+  resolveSpawn: (spawnId: string) => SpawnRow | null | Promise<SpawnRow | null>;
+  log?: (message: string) => void;
+}
+
 /** Factory lifetime equals the daemon lifetime. The shared control client is
  * lazy: it attaches when the first viewer opens and detaches when the last one
  * leaves, so a fleet nobody is watching holds no tmux client at all. */
-export function createTermBridge({ port, resolveSpawn, log = () => {} } = {}) {
+export function createTermBridge({
+  port,
+  resolveSpawn,
+  log = () => {
+    /* silent by default */
+  },
+}: TermBridgeOptions) {
   const session = sessionName(port);
-  const viewers = new Set();
-  let client = null;
+  const viewers = new Set<Viewer>();
+  let client: Client | null = null;
 
   // ---------------------------------------------------------------- the client
 
-  function createClient() {
-    const c = {
+  function createClient(): Client {
+    let readyResolve: () => void = () => {
+      /* replaced by the executor below */
+    };
+    let readyReject: (err: Error) => void = () => {
+      /* replaced by the executor below */
+    };
+    const ready = new Promise<void>((resolve, reject) => {
+      readyResolve = () => {
+        resolve();
+      };
+      readyReject = (err) => {
+        reject(err);
+      };
+    });
+    ready.catch(() => {
+      /* the attach race below reports this */
+    });
+
+    const c: Client = {
       child: null,
       parser: new ControlModeParser(),
       waiters: [],
@@ -205,39 +344,74 @@ export function createTermBridge({ port, resolveSpawn, log = () => {} } = {}) {
       panes: new Map(),
       manualSizing: new Set(), // windows we have switched to manual sizing
       closed: false,
-      ready: null,
-      readyResolve: null,
-      readyReject: null,
+      ready,
+      readyResolve,
+      readyReject,
+      command: (line: string): Promise<ResponseEvent> =>
+        new Promise<ResponseEvent>((resolve, reject) => {
+          if (c.closed || !c.child?.stdin?.writable) {
+            reject(new Error('control client is closed'));
+            return;
+          }
+          // M-R5: EVERY command gets a deadline, not just the initial attach. A
+          // wedged list-panes/capture used to hang the awaiting viewer forever —
+          // counted in `viewers`, pinning the shared client. On timeout we tear the
+          // WHOLE client down rather than quietly drop this one waiter: responses are
+          // matched to commands purely by FIFO order, so a reply that arrives late
+          // would resolve some OTHER command's promise. teardown() rejects every
+          // outstanding waiter and each viewer re-opens against a fresh client.
+          const timer = setTimeout(() => {
+            teardown('terminal control command timed out');
+          }, COMMAND_TIMEOUT_MS);
+          timer.unref();
+          const waiter: Waiter = {
+            resolve: (v) => {
+              clearTimeout(timer);
+              resolve(v);
+            },
+            reject: (e) => {
+              clearTimeout(timer);
+              reject(e);
+            },
+          };
+          c.waiters.push(waiter);
+          c.child.stdin.write(line + '\n', (err) => {
+            if (!err) return;
+            const i = c.waiters.indexOf(waiter);
+            if (i >= 0) c.waiters.splice(i, 1);
+            waiter.reject(err);
+          });
+        }),
+      // BUG-055: periodic #{pane_dead} re-read for every subscribed pane. This is
+      // the ONLY signal that fires when a remain-on-exit pane's process exits —
+      // %window-close never comes, list-panes still lists, send-keys still
+      // answers ok. A dead pane is the agent ENDING (spawns.mjs's liveness tick
+      // condemns on the same flag), so viewers get the same 'terminal pane
+      // closed' exit as a genuinely vanished pane. A failed/ambiguous read is
+      // not proof of death, matching the window-close probe above.
+      deadTimer: setInterval(() => {
+        if (c.closed || !c.panes.size) return;
+        c.command("list-panes -a -F '#{pane_id} #{pane_dead}'")
+          .then((res) => {
+            if (!res.ok || c.closed) return;
+            const state = new Map<string, string>();
+            for (const line of res.lines) {
+              const m = /^(%\d+)\s+([01])$/.exec(line.trim());
+              if (m) state.set(m[1] ?? '', m[2] ?? '');
+            }
+            for (const [paneId, stream] of [...c.panes]) {
+              if (state.get(paneId) !== '1') continue;
+              for (const v of [...stream.subs]) v.finish('terminal pane closed');
+            }
+          })
+          .catch(() => {
+            /* a failed probe is not proof a pane died */
+          });
+      }, PANE_DEAD_POLL_MS),
     };
-    c.ready = new Promise((resolve, reject) => { c.readyResolve = resolve; c.readyReject = reject; });
-    c.ready.catch(() => { /* the attach race below reports this */ });
+    c.deadTimer.unref();
 
-    c.command = (line) => new Promise((resolve, reject) => {
-      if (c.closed || !c.child?.stdin?.writable) return reject(new Error('control client is closed'));
-      // M-R5: EVERY command gets a deadline, not just the initial attach. A
-      // wedged list-panes/capture used to hang the awaiting viewer forever —
-      // counted in `viewers`, pinning the shared client. On timeout we tear the
-      // WHOLE client down rather than quietly drop this one waiter: responses are
-      // matched to commands purely by FIFO order, so a reply that arrives late
-      // would resolve some OTHER command's promise. teardown() rejects every
-      // outstanding waiter and each viewer re-opens against a fresh client.
-      let timer = null;
-      const waiter = {
-        resolve: (v) => { clearTimeout(timer); resolve(v); },
-        reject: (e) => { clearTimeout(timer); reject(e); },
-      };
-      timer = setTimeout(() => teardown('terminal control command timed out'), COMMAND_TIMEOUT_MS);
-      timer.unref?.();
-      c.waiters.push(waiter);
-      c.child.stdin.write(line + '\n', (err) => {
-        if (!err) return;
-        const i = c.waiters.indexOf(waiter);
-        if (i >= 0) c.waiters.splice(i, 1);
-        waiter.reject(err);
-      });
-    });
-
-    const onEvent = (ev) => {
+    const onEvent = (ev: ControlEvent) => {
       if (ev.type === 'response') {
         c.waiters.shift()?.resolve(ev);
       } else if (ev.type === 'session-changed') {
@@ -249,47 +423,35 @@ export function createTermBridge({ port, resolveSpawn, log = () => {} } = {}) {
         // panes actually died rather than assuming this close was ours. One
         // list-panes answers for every viewer at once.
         if (!c.panes.size) return;
-        c.command("list-panes -a -F '#{pane_id}'").then((res) => {
-          if (!res.ok) return scheduleCloseRecheck();
-          const alive = new Set(res.lines.map((s) => s.trim()));
-          for (const [paneId, stream] of [...c.panes]) {
-            if (alive.has(paneId)) continue;
-            for (const v of [...stream.subs]) v.finish('terminal pane closed');
-          }
-        }).catch(() => scheduleCloseRecheck());
+        c.command("list-panes -a -F '#{pane_id}'")
+          .then((res) => {
+            if (!res.ok) {
+              scheduleCloseRecheck();
+              return;
+            }
+            const alive = new Set(res.lines.map((s) => s.trim()));
+            for (const [paneId, stream] of [...c.panes]) {
+              if (alive.has(paneId)) continue;
+              for (const v of [...stream.subs]) v.finish('terminal pane closed');
+            }
+          })
+          .catch(() => {
+            scheduleCloseRecheck();
+          });
       }
     };
 
-    // BUG-055: periodic #{pane_dead} re-read for every subscribed pane. This is
-    // the ONLY signal that fires when a remain-on-exit pane's process exits —
-    // %window-close never comes, list-panes still lists, send-keys still
-    // answers ok. A dead pane is the agent ENDING (spawns.mjs's liveness tick
-    // condemns on the same flag), so viewers get the same 'terminal pane
-    // closed' exit as a genuinely vanished pane. A failed/ambiguous read is
-    // not proof of death, matching the window-close probe above.
-    c.deadTimer = setInterval(() => {
-      if (c.closed || !c.panes.size) return;
-      c.command("list-panes -a -F '#{pane_id} #{pane_dead}'").then((res) => {
-        if (!res.ok || c.closed) return;
-        const state = new Map();
-        for (const line of res.lines) {
-          const m = /^(%\d+)\s+([01])$/.exec(line.trim());
-          if (m) state.set(m[1], m[2]);
-        }
-        for (const [paneId, stream] of [...c.panes]) {
-          if (state.get(paneId) !== '1') continue;
-          for (const v of [...stream.subs]) v.finish('terminal pane closed');
-        }
-      }).catch(() => { /* a failed probe is not proof a pane died */ });
-    }, PANE_DEAD_POLL_MS);
-    c.deadTimer.unref?.();
-
-    const override = process.env.FLEETDECK_TERM_CMD?.trim();
-    const socket = process.env.FLEETDECK_TMUX_SOCKET?.trim();
+    const override = process.env['FLEETDECK_TERM_CMD']?.trim();
+    const socket = process.env['FLEETDECK_TMUX_SOCKET']?.trim();
     const argv = socket
       ? ['-L', socket, '-C', 'attach-session', '-t', '=' + session]
       : ['-C', 'attach-session', '-t', '=' + session];
-    c.child = spawn(override || 'tmux', override ? [] : argv, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+    // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- an empty FLEETDECK_TERM_CMD means "unset", so fall back to the real tmux
+    const child = spawn(override || 'tmux', override ? [] : argv, {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
+    c.child = child;
     // M-P6: batch %output per pane across ONE feed() chunk. tmux flushes a TUI
     // redraw as a burst of %output lines; emitting one ws frame per line meant
     // dozens of ws.send calls (× every viewer) for a single keystroke's repaint.
@@ -297,8 +459,8 @@ export function createTermBridge({ port, resolveSpawn, log = () => {} } = {}) {
     // bonus, hands the pane decoder the whole burst so it splits fewer multibyte
     // glyphs. A non-output event flushes the pending batch first, so a pane's
     // bytes can never overtake its own exit/close.
-    c.child.stdout.on('data', (chunk) => {
-      const batched = new Map(); // pane id -> Buffer[]
+    child.stdout.on('data', (chunk: Buffer) => {
+      const batched = new Map<string, Buffer[]>(); // pane id -> Buffer[]
       const flush = () => {
         for (const [pane, parts] of batched) {
           const stream = c.panes.get(pane);
@@ -312,7 +474,7 @@ export function createTermBridge({ port, resolveSpawn, log = () => {} } = {}) {
         if (ev.type === 'output') {
           if (!c.panes.has(ev.pane)) continue; // a pane nobody is watching — the point of demuxing
           let parts = batched.get(ev.pane);
-          if (!parts) batched.set(ev.pane, parts = []);
+          if (!parts) batched.set(ev.pane, (parts = []));
           parts.push(ev.data);
         } else {
           flush();
@@ -321,14 +483,20 @@ export function createTermBridge({ port, resolveSpawn, log = () => {} } = {}) {
       }
       flush();
     });
-    c.child.stderr.on('data', (chunk) => log(`terminal control stderr: ${String(chunk).trim()}`));
-    c.child.on('error', (err) => teardown(`terminal control client failed: ${err.message}`));
-    c.child.on('exit', () => { if (!c.closed) teardown('terminal control client exited'); });
+    child.stderr.on('data', (chunk: Buffer) => {
+      log(`terminal control stderr: ${String(chunk).trim()}`);
+    });
+    child.on('error', (err) => {
+      teardown(`terminal control client failed: ${err.message}`);
+    });
+    child.on('exit', () => {
+      if (!c.closed) teardown('terminal control client exited');
+    });
     return c;
   }
 
   /** Kill the shared client and take every viewer down with it. */
-  function teardown(reason) {
+  function teardown(reason: string) {
     const c = client;
     if (!c || c.closed) return;
     c.closed = true;
@@ -337,8 +505,12 @@ export function createTermBridge({ port, resolveSpawn, log = () => {} } = {}) {
     c.readyReject(new Error(reason));
     for (const waiter of c.waiters.splice(0)) waiter.reject(new Error(reason));
     for (const v of [...viewers]) v.finish(reason);
-    if (c.child && c.child.exitCode === null && !c.child.killed) {
-      try { c.child.kill('SIGTERM'); } catch { /* already gone */ }
+    if (c.child?.exitCode === null && !c.child.killed) {
+      try {
+        c.child.kill('SIGTERM');
+      } catch {
+        /* already gone */
+      }
     }
   }
 
@@ -354,28 +526,34 @@ export function createTermBridge({ port, resolveSpawn, log = () => {} } = {}) {
     if (!c || c.closed || !c.panes.size) return;
     const timer = setTimeout(() => {
       if (client !== c || c.closed || !c.panes.size) return;
-      c.command("list-panes -a -F '#{pane_id}'").then((res) => {
-        if (!res.ok) return;
-        const alive = new Set(res.lines.map((s) => s.trim()));
-        for (const [paneId, stream] of [...c.panes]) {
-          if (alive.has(paneId)) continue;
-          for (const v of [...stream.subs]) v.finish('terminal pane closed');
-        }
-      }).catch(() => { /* a failed probe is not proof a pane died */ });
+      c.command("list-panes -a -F '#{pane_id}'")
+        .then((res) => {
+          if (!res.ok) return;
+          const alive = new Set(res.lines.map((s) => s.trim()));
+          for (const [paneId, stream] of [...c.panes]) {
+            if (alive.has(paneId)) continue;
+            for (const v of [...stream.subs]) v.finish('terminal pane closed');
+          }
+        })
+        .catch(() => {
+          /* a failed probe is not proof a pane died */
+        });
     }, CLOSE_RECHECK_MS);
-    timer.unref?.();
+    timer.unref();
   }
 
   /** Attach (once) and wait for tmux to confirm. Concurrent openers share it. */
-  async function ensureClient() {
-    if (!client) client = createClient();
+  async function ensureClient(): Promise<Client> {
+    client ??= createClient();
     const c = client;
-    let timer;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       await Promise.race([
         c.ready,
-        new Promise((_, reject) => {
-          timer = setTimeout(() => reject(new Error('terminal control attach timed out')), ATTACH_TIMEOUT_MS);
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => {
+            reject(new Error('terminal control attach timed out'));
+          }, ATTACH_TIMEOUT_MS);
         }),
       ]);
     } finally {
@@ -406,10 +584,17 @@ export function createTermBridge({ port, resolveSpawn, log = () => {} } = {}) {
   // refresh — otherwise the caller believes the window reached the requested
   // geometry when only the client did (BUG-159: the open-time jiggle would
   // then capture a short window and ship an init claiming the full rows).
-  async function sizeWindow(c, window, cols, rows) {
+  async function sizeWindow(
+    c: Client,
+    window: string,
+    cols: number,
+    rows: number,
+  ): Promise<ResponseEvent> {
     const target = exactWindowTarget(port, window);
     if (!c.manualSizing.has(window)) {
-      const opt = await c.command(`set-option -w -t ${target} window-size manual`).catch(() => ({ ok: false }));
+      const opt = await c
+        .command(`set-option -w -t ${target} window-size manual`)
+        .catch(() => ({ ok: false }));
       if (opt.ok) c.manualSizing.add(window);
     }
     if (c.manualSizing.has(window)) {
@@ -422,7 +607,7 @@ export function createTermBridge({ port, resolveSpawn, log = () => {} } = {}) {
 
   // ---------------------------------------------------------------- viewers
 
-  function subscribe(c, pane, viewer) {
+  function subscribe(c: Client, pane: string, viewer: Viewer) {
     let stream = c.panes.get(pane);
     if (!stream) {
       stream = { decoder: new StringDecoder('utf8'), subs: new Set() };
@@ -431,38 +616,51 @@ export function createTermBridge({ port, resolveSpawn, log = () => {} } = {}) {
     stream.subs.add(viewer);
   }
 
-  function unsubscribe(c, pane, viewer) {
+  function unsubscribe(c: Client | null, pane: string, viewer: Viewer) {
     const stream = c?.panes.get(pane);
-    if (!stream) return;
+    if (!c || !stream) return;
     stream.subs.delete(viewer);
     if (!stream.subs.size) c.panes.delete(pane);
   }
 
-  async function openViewer({ spawn_id, cols, rows, send, onClose = () => {}, isAborted = () => false }) {
-    if (process.env.FLEETDECK_TERM?.trim().toLowerCase() === 'off') throw new TermBridgeError('live terminal disabled');
+  async function openViewer({
+    spawn_id,
+    cols,
+    rows,
+    send,
+    onClose = () => {
+      /* no-op by default */
+    },
+    isAborted = () => false,
+  }: OpenViewerOptions): Promise<ViewerHandle> {
+    if (process.env['FLEETDECK_TERM']?.trim().toLowerCase() === 'off')
+      throw new TermBridgeError('live terminal disabled');
     const size = dimensions(cols, rows);
     if (!size) throw new TermBridgeError('invalid terminal dimensions');
     // M-R5: the WS can close mid-open, before a handle exists to close(). Bail
     // between awaits so the half-opened viewer is torn down, not left counted.
-    const abortIfClosed = () => { if (isAborted()) throw new Error('terminal viewer closed during open'); };
+    const abortIfClosed = () => {
+      if (isAborted()) throw new Error('terminal viewer closed during open');
+    };
 
-    const row = await resolveSpawn?.(spawn_id);
+    const row = await resolveSpawn(spawn_id);
     if (!row) throw new TermBridgeError('no such spawn');
     if (!ACTIVE_STATUSES.has(row.status)) throw new TermBridgeError('spawn is not live');
-    if (row.tmux_session !== session || !String(row.tmux_window || '').startsWith(`fd${port}-`)) {
+    const windowName = row.tmux_window;
+    if (row.tmux_session !== session || !windowName?.startsWith(`fd${port}-`)) {
       throw new TermBridgeError('spawn is outside this fleet');
     }
 
-    const viewer = {
+    const viewer: Viewer = {
       pane: null,
-      window: row.tmux_window,
+      window: windowName,
       established: false,
       initialized: false,
       finished: false,
-      pending: [],                  // R1-4: %output that arrived after we
-                                    // subscribed but before the init frame shipped
-      pendingBytes: 0,              // byte bound on the above (BUG-158)
-      queuedInput: 0,               // M-R4: pending input bytes not yet sent
+      pending: [], // R1-4: %output that arrived after we
+      // subscribed but before the init frame shipped
+      pendingBytes: 0, // byte bound on the above (BUG-158)
+      queuedInput: 0, // M-R4: pending input bytes not yet sent
       inputChain: Promise.resolve(), // M-R4: serializes this viewer's send-keys
       emit(data) {
         if (this.finished) return;
@@ -489,7 +687,11 @@ export function createTermBridge({ port, resolveSpawn, log = () => {} } = {}) {
           this.pending.push(data);
           return;
         }
-        try { send({ t: 'out', data }); } catch { this.finish('terminal socket closed', false); }
+        try {
+          send({ t: 'out', data });
+        } catch {
+          this.finish('terminal socket closed', false);
+        }
       },
       // R1-4: replay the gap buffer AFTER the init frame, in arrival order. The
       // captured seed holds only what existed at capture time and this buffer
@@ -500,7 +702,11 @@ export function createTermBridge({ port, resolveSpawn, log = () => {} } = {}) {
         this.pendingBytes = 0;
         for (const data of buffered) {
           if (this.finished) return;
-          try { send({ t: 'out', data }); } catch { this.finish('terminal socket closed', false); }
+          try {
+            send({ t: 'out', data });
+          } catch {
+            this.finish('terminal socket closed', false);
+          }
         }
       },
       finish(reason, notify = true) {
@@ -509,7 +715,11 @@ export function createTermBridge({ port, resolveSpawn, log = () => {} } = {}) {
         viewers.delete(this);
         if (this.pane) unsubscribe(client, this.pane, this);
         if (notify && this.established) {
-          try { onClose(reason); } catch { /* socket reporting only */ }
+          try {
+            onClose(reason);
+          } catch {
+            /* socket reporting only */
+          }
         }
         // Nobody left watching: hand the tmux client back rather than holding a
         // control attach open over an unwatched fleet.
@@ -523,14 +733,18 @@ export function createTermBridge({ port, resolveSpawn, log = () => {} } = {}) {
       abortIfClosed();
 
       // Lowest pane index speaks for a split window, matching listScopedWindows.
-      const panes = await c.command(`list-panes -t ${exactWindowTarget(port, row.tmux_window)} -F '#{pane_id}'`);
+      const panes = await c.command(
+        `list-panes -t ${exactWindowTarget(port, windowName)} -F '#{pane_id}'`,
+      );
       // The row passed the ACTIVE_STATUSES gate above, so tmux failing to list a
       // pane — or listing none — means the window is already gone: the agent
       // ended between the liveness tick and this open. That is not a viewer
       // fault, so surface it as `gone` (http.mjs → 'exit', not 'err').
-      if (!panes.ok) throw new TermBridgeError('terminal pane is gone — the agent has ended', { gone: true });
+      if (!panes.ok)
+        throw new TermBridgeError('terminal pane is gone — the agent has ended', { gone: true });
       const pane = panes.lines.map((s) => s.trim()).find((s) => /^%\d+$/.test(s));
-      if (!pane) throw new TermBridgeError('terminal pane is gone — the agent has ended', { gone: true });
+      if (!pane)
+        throw new TermBridgeError('terminal pane is gone — the agent has ended', { gone: true });
       viewer.pane = pane;
 
       // Make the app repaint FIRST, then photograph the result.
@@ -554,16 +768,20 @@ export function createTermBridge({ port, resolveSpawn, log = () => {} } = {}) {
       // would lay the shorter seed into the wrong geometry. tmux 3.7b keeps
       // the prior geometry on a failed resize-window, so recover by restoring
       // the requested size — and if even that fails, abort before capture.
-      if (!(await sizeWindow(c, row.tmux_window, size.cols, size.rows)).ok) throw new Error('terminal resize failed');
-      if (!(await sizeWindow(c, row.tmux_window, size.cols, Math.max(1, size.rows - 1))).ok) {
-        await sizeWindow(c, row.tmux_window, size.cols, size.rows);
+      if (!(await sizeWindow(c, windowName, size.cols, size.rows)).ok)
+        throw new Error('terminal resize failed');
+      if (!(await sizeWindow(c, windowName, size.cols, Math.max(1, size.rows - 1))).ok) {
+        await sizeWindow(c, windowName, size.cols, size.rows);
         throw new Error('terminal resize failed');
       }
-      if (!(await sizeWindow(c, row.tmux_window, size.cols, size.rows)).ok) {
-        await sizeWindow(c, row.tmux_window, size.cols, size.rows);
+      if (!(await sizeWindow(c, windowName, size.cols, size.rows)).ok) {
+        await sizeWindow(c, windowName, size.cols, size.rows);
         throw new Error('terminal resize failed');
       }
-      await new Promise((r) => { const t = setTimeout(r, REPAINT_MS); t.unref?.(); });
+      await new Promise<void>((r) => {
+        const t = setTimeout(r, REPAINT_MS);
+        t.unref();
+      });
       abortIfClosed();
 
       // R1-4/BUG-056: subscribe BEFORE the seed is even requested — not after the
@@ -592,7 +810,7 @@ export function createTermBridge({ port, resolveSpawn, log = () => {} } = {}) {
 
       const cursor = await c.command(`display-message -p -t ${pane} '#{cursor_x} #{cursor_y}'`);
       if (!cursor.ok) throw new Error('terminal cursor lookup failed');
-      const match = /^(\d+)\s+(\d+)$/.exec(cursor.lines.at(-1)?.trim() || '');
+      const match = /^(\d+)\s+(\d+)$/.exec(cursor.lines.at(-1)?.trim() ?? '');
       if (!match) throw new Error('terminal cursor lookup returned invalid data');
 
       viewer.established = true;
@@ -600,19 +818,27 @@ export function createTermBridge({ port, resolveSpawn, log = () => {} } = {}) {
       // "down and back to column 0" — joining a captured screen with \n walks
       // every line one column further right than the last. That staircase is
       // what "the format is all wonky" looked like.
-      send({ t: 'init', cols: size.cols, rows: size.rows,
+      send({
+        t: 'init',
+        cols: size.cols,
+        rows: size.rows,
         // The parser speaks latin1 (byte-exact); the pane speaks UTF-8. Rebuild
         // the bytes and decode them as one piece so multi-byte glyphs survive.
-        screen: CLEAR_SCREEN + Buffer.from(captured.lines.join('\r\n'), 'latin1').toString('utf8') + `\u001b[${Number(match[2]) + 1};${Number(match[1]) + 1}H` });
+        screen:
+          CLEAR_SCREEN +
+          Buffer.from(captured.lines.join('\r\n'), 'latin1').toString('utf8') +
+          `\u001b[${Number(match[2]) + 1};${Number(match[1]) + 1}H`,
+      });
       viewer.initialized = true;
       // R1-4: replay whatever arrived during the cursor lookup / init build.
       viewer.flushPending();
     } catch (err) {
-      viewer.finish(err?.message || 'terminal open failed', false);
+      const detail = err instanceof Error && err.message ? err.message : 'terminal open failed';
+      viewer.finish(detail, false);
       // Preserve a TermBridgeError verbatim (notably its `gone` flag) rather
       // than re-wrapping it into a plain, flagless TermBridgeError.
       if (err instanceof TermBridgeError) throw err;
-      throw new TermBridgeError(err?.message || 'terminal open failed');
+      throw new TermBridgeError(detail);
     }
 
     return {
@@ -620,6 +846,8 @@ export function createTermBridge({ port, resolveSpawn, log = () => {} } = {}) {
         if (viewer.finished || typeof dataString !== 'string' || !dataString) return;
         const c = client;
         if (!c) return;
+        const pane = viewer.pane;
+        if (!pane) return;
         const bytes = Buffer.from(dataString, 'utf8');
         // M-R4: bound and SERIALIZE input. Firing one send-keys promise per 1 KB
         // the instant bytes arrived let a multi-megabyte paste stack thousands of
@@ -637,9 +865,13 @@ export function createTermBridge({ port, resolveSpawn, log = () => {} } = {}) {
             for (let offset = 0; offset < bytes.length; offset += INPUT_CHUNK_BYTES) {
               if (viewer.finished || client !== c) return;
               const hex = [...bytes.subarray(offset, offset + INPUT_CHUNK_BYTES)]
-                .map((b) => b.toString(16).padStart(2, '0')).join(' ');
-              const res = await c.command(`send-keys -t ${viewer.pane} -H ${hex}`);
-              if (!res.ok) { viewer.finish('terminal pane closed'); return; }
+                .map((b) => b.toString(16).padStart(2, '0'))
+                .join(' ');
+              const res = await c.command(`send-keys -t ${pane} -H ${hex}`);
+              if (!res.ok) {
+                viewer.finish('terminal pane closed');
+                return;
+              }
             }
           } catch {
             viewer.finish('terminal pane closed');
@@ -656,8 +888,12 @@ export function createTermBridge({ port, resolveSpawn, log = () => {} } = {}) {
         // there is one pane and it has one shape. In the grid the tiles are
         // distinct agents, so in practice each window has exactly one author.
         sizeWindow(c, viewer.window, next.cols, next.rows)
-          .then((res) => { if (!res.ok) viewer.finish('terminal resize failed'); })
-          .catch(() => viewer.finish('terminal resize failed'));
+          .then((res) => {
+            if (!res.ok) viewer.finish('terminal resize failed');
+          })
+          .catch(() => {
+            viewer.finish('terminal resize failed');
+          });
       },
       close() {
         viewer.finish('terminal viewer closed', false);

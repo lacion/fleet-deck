@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { StringDecoder } from 'node:string_decoder';
-import { ControlModeParser, unescapeControlData } from '../scripts/fleetd/termbridge.mjs';
+import { ControlModeParser, unescapeControlData } from '../scripts/fleetd/termbridge.ts';
 
 test('control parser incrementally matches response blocks across awkward chunks', () => {
   const parser = new ControlModeParser();

@@ -13816,7 +13816,7 @@ var import_subprotocol = __toESM(require_subprotocol(), 1);
 var import_websocket = __toESM(require_websocket(), 1);
 var import_websocket_server = __toESM(require_websocket_server(), 1);
 
-// scripts/fleetd/termbridge.mjs
+// scripts/fleetd/termbridge.ts
 import { spawn as spawn2 } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 var ACTIVE_STATUSES = /* @__PURE__ */ new Set(["spawning", "stalled", "live"]);
@@ -13825,18 +13825,21 @@ var ATTACH_TIMEOUT_MS = 5e3;
 var COMMAND_TIMEOUT_MS = envInt("FLEETDECK_TERM_CMD_TIMEOUT_MS", 1e4, { min: 100 });
 var CLOSE_RECHECK_MS = envInt("FLEETDECK_TERM_CLOSE_RECHECK_MS", 1e3, { min: 50 });
 var MAX_INPUT_QUEUE_BYTES = envInt("FLEETDECK_TERM_INPUT_MAX_BYTES", 256 * 1024, { min: 1024 });
-var MAX_PENDING_OUTPUT_BYTES = envInt("FLEETDECK_TERM_PENDING_MAX_BYTES", MAX_INPUT_QUEUE_BYTES, { min: 1024 });
+var MAX_PENDING_OUTPUT_BYTES = envInt("FLEETDECK_TERM_PENDING_MAX_BYTES", MAX_INPUT_QUEUE_BYTES, {
+  min: 1024
+});
 var CLEAR_SCREEN = "\x1B[H\x1B[2J";
 var REPAINT_MS = envInt("FLEETDECK_TERM_REPAINT_MS", 80);
 var PANE_DEAD_POLL_MS = envInt("FLEETDECK_TERM_DEAD_POLL_MS", 5e3, { min: 100 });
 function dimensions(cols, rows) {
   const c = Number(cols);
   const r = Number(rows);
-  if (!Number.isInteger(c) || !Number.isInteger(r) || c < 1 || r < 1 || c > 1e3 || r > 1e3) return null;
+  if (!Number.isInteger(c) || !Number.isInteger(r) || c < 1 || r < 1 || c > 1e3 || r > 1e3)
+    return null;
   return { cols: c, rows: r };
 }
 function unescapeControlData(value) {
-  const text = String(value);
+  const text = value;
   const bytes = [];
   for (let i = 0; i < text.length; ) {
     if (text[i] === "\\" && /^[0-7]{3}$/.test(text.slice(i + 1, i + 4))) {
@@ -13850,13 +13853,16 @@ function unescapeControlData(value) {
   return Buffer.from(bytes);
 }
 var ControlModeParser = class {
+  decoder;
+  pending;
+  block;
   constructor() {
     this.decoder = new StringDecoder("latin1");
     this.pending = "";
     this.block = null;
   }
   feed(chunk) {
-    this.pending += Buffer.isBuffer(chunk) ? this.decoder.write(chunk) : String(chunk);
+    this.pending += Buffer.isBuffer(chunk) ? this.decoder.write(chunk) : chunk;
     const events = [];
     for (; ; ) {
       const nl = this.pending.indexOf("\n");
@@ -13887,12 +13893,16 @@ var ControlModeParser = class {
       return;
     }
     if (boundary?.[1] === "begin") {
-      this.block = { time: boundary[2], number: boundary[3], lines: [] };
+      this.block = { time: boundary[2] ?? "", number: boundary[3] ?? "", lines: [] };
       return;
     }
     const output = /^%output\s+(%\S+)\s?(.*)$/.exec(line);
     if (output) {
-      events.push({ type: "output", pane: output[1], data: unescapeControlData(output[2]) });
+      events.push({
+        type: "output",
+        pane: output[1] ?? "",
+        data: unescapeControlData(output[2] ?? "")
+      });
       return;
     }
     const exit = /^%exit(?:\s+(.*))?$/.exec(line);
@@ -13902,26 +13912,47 @@ var ControlModeParser = class {
     }
     const closed = /^%window-close\s+(\S+)/.exec(line);
     if (closed) {
-      events.push({ type: "window-close", window: closed[1] });
+      events.push({ type: "window-close", window: closed[1] ?? "" });
       return;
     }
     const session = /^%session-changed\s+(\S+)(?:\s+(.*))?$/.exec(line);
-    if (session) events.push({ type: "session-changed", session: session[1], name: session[2] || "" });
+    if (session)
+      events.push({ type: "session-changed", session: session[1] ?? "", name: session[2] ?? "" });
   }
 };
 var TermBridgeError = class extends Error {
+  reason;
+  gone;
   constructor(reason, { gone = false } = {}) {
     super(reason);
     this.reason = reason;
     this.gone = gone;
   }
 };
-function createTermBridge({ port, resolveSpawn, log = () => {
-} } = {}) {
+function createTermBridge({
+  port,
+  resolveSpawn,
+  log = () => {
+  }
+}) {
   const session = sessionName(port);
   const viewers = /* @__PURE__ */ new Set();
   let client = null;
   function createClient() {
+    let readyResolve = () => {
+    };
+    let readyReject = () => {
+    };
+    const ready = new Promise((resolve, reject) => {
+      readyResolve = () => {
+        resolve();
+      };
+      readyReject = (err) => {
+        reject(err);
+      };
+    });
+    ready.catch(() => {
+    });
     const c = {
       child: null,
       parser: new ControlModeParser(),
@@ -13933,39 +13964,61 @@ function createTermBridge({ port, resolveSpawn, log = () => {
       manualSizing: /* @__PURE__ */ new Set(),
       // windows we have switched to manual sizing
       closed: false,
-      ready: null,
-      readyResolve: null,
-      readyReject: null
-    };
-    c.ready = new Promise((resolve, reject) => {
-      c.readyResolve = resolve;
-      c.readyReject = reject;
-    });
-    c.ready.catch(() => {
-    });
-    c.command = (line) => new Promise((resolve, reject) => {
-      if (c.closed || !c.child?.stdin?.writable) return reject(new Error("control client is closed"));
-      let timer = null;
-      const waiter = {
-        resolve: (v) => {
-          clearTimeout(timer);
-          resolve(v);
-        },
-        reject: (e) => {
-          clearTimeout(timer);
-          reject(e);
+      ready,
+      readyResolve,
+      readyReject,
+      command: (line) => new Promise((resolve, reject) => {
+        if (c.closed || !c.child?.stdin?.writable) {
+          reject(new Error("control client is closed"));
+          return;
         }
-      };
-      timer = setTimeout(() => teardown("terminal control command timed out"), COMMAND_TIMEOUT_MS);
-      timer.unref?.();
-      c.waiters.push(waiter);
-      c.child.stdin.write(line + "\n", (err) => {
-        if (!err) return;
-        const i = c.waiters.indexOf(waiter);
-        if (i >= 0) c.waiters.splice(i, 1);
-        waiter.reject(err);
-      });
-    });
+        const timer = setTimeout(() => {
+          teardown("terminal control command timed out");
+        }, COMMAND_TIMEOUT_MS);
+        timer.unref();
+        const waiter = {
+          resolve: (v) => {
+            clearTimeout(timer);
+            resolve(v);
+          },
+          reject: (e) => {
+            clearTimeout(timer);
+            reject(e);
+          }
+        };
+        c.waiters.push(waiter);
+        c.child.stdin.write(line + "\n", (err) => {
+          if (!err) return;
+          const i = c.waiters.indexOf(waiter);
+          if (i >= 0) c.waiters.splice(i, 1);
+          waiter.reject(err);
+        });
+      }),
+      // BUG-055: periodic #{pane_dead} re-read for every subscribed pane. This is
+      // the ONLY signal that fires when a remain-on-exit pane's process exits —
+      // %window-close never comes, list-panes still lists, send-keys still
+      // answers ok. A dead pane is the agent ENDING (spawns.mjs's liveness tick
+      // condemns on the same flag), so viewers get the same 'terminal pane
+      // closed' exit as a genuinely vanished pane. A failed/ambiguous read is
+      // not proof of death, matching the window-close probe above.
+      deadTimer: setInterval(() => {
+        if (c.closed || !c.panes.size) return;
+        c.command("list-panes -a -F '#{pane_id} #{pane_dead}'").then((res) => {
+          if (!res.ok || c.closed) return;
+          const state = /* @__PURE__ */ new Map();
+          for (const line of res.lines) {
+            const m = /^(%\d+)\s+([01])$/.exec(line.trim());
+            if (m) state.set(m[1] ?? "", m[2] ?? "");
+          }
+          for (const [paneId, stream] of [...c.panes]) {
+            if (state.get(paneId) !== "1") continue;
+            for (const v of [...stream.subs]) v.finish("terminal pane closed");
+          }
+        }).catch(() => {
+        });
+      }, PANE_DEAD_POLL_MS)
+    };
+    c.deadTimer.unref();
     const onEvent = (ev) => {
       if (ev.type === "response") {
         c.waiters.shift()?.resolve(ev);
@@ -13976,37 +14029,29 @@ function createTermBridge({ port, resolveSpawn, log = () => {
       } else if (ev.type === "window-close") {
         if (!c.panes.size) return;
         c.command("list-panes -a -F '#{pane_id}'").then((res) => {
-          if (!res.ok) return scheduleCloseRecheck();
+          if (!res.ok) {
+            scheduleCloseRecheck();
+            return;
+          }
           const alive = new Set(res.lines.map((s) => s.trim()));
           for (const [paneId, stream] of [...c.panes]) {
             if (alive.has(paneId)) continue;
             for (const v of [...stream.subs]) v.finish("terminal pane closed");
           }
-        }).catch(() => scheduleCloseRecheck());
+        }).catch(() => {
+          scheduleCloseRecheck();
+        });
       }
     };
-    c.deadTimer = setInterval(() => {
-      if (c.closed || !c.panes.size) return;
-      c.command("list-panes -a -F '#{pane_id} #{pane_dead}'").then((res) => {
-        if (!res.ok || c.closed) return;
-        const state = /* @__PURE__ */ new Map();
-        for (const line of res.lines) {
-          const m = /^(%\d+)\s+([01])$/.exec(line.trim());
-          if (m) state.set(m[1], m[2]);
-        }
-        for (const [paneId, stream] of [...c.panes]) {
-          if (state.get(paneId) !== "1") continue;
-          for (const v of [...stream.subs]) v.finish("terminal pane closed");
-        }
-      }).catch(() => {
-      });
-    }, PANE_DEAD_POLL_MS);
-    c.deadTimer.unref?.();
-    const override = process.env.FLEETDECK_TERM_CMD?.trim();
-    const socket = process.env.FLEETDECK_TMUX_SOCKET?.trim();
+    const override = process.env["FLEETDECK_TERM_CMD"]?.trim();
+    const socket = process.env["FLEETDECK_TMUX_SOCKET"]?.trim();
     const argv = socket ? ["-L", socket, "-C", "attach-session", "-t", "=" + session] : ["-C", "attach-session", "-t", "=" + session];
-    c.child = spawn2(override || "tmux", override ? [] : argv, { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
-    c.child.stdout.on("data", (chunk) => {
+    const child = spawn2(override || "tmux", override ? [] : argv, {
+      stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true
+    });
+    c.child = child;
+    child.stdout.on("data", (chunk) => {
       const batched = /* @__PURE__ */ new Map();
       const flush = () => {
         for (const [pane, parts] of batched) {
@@ -14030,9 +14075,13 @@ function createTermBridge({ port, resolveSpawn, log = () => {
       }
       flush();
     });
-    c.child.stderr.on("data", (chunk) => log(`terminal control stderr: ${String(chunk).trim()}`));
-    c.child.on("error", (err) => teardown(`terminal control client failed: ${err.message}`));
-    c.child.on("exit", () => {
+    child.stderr.on("data", (chunk) => {
+      log(`terminal control stderr: ${String(chunk).trim()}`);
+    });
+    child.on("error", (err) => {
+      teardown(`terminal control client failed: ${err.message}`);
+    });
+    child.on("exit", () => {
       if (!c.closed) teardown("terminal control client exited");
     });
     return c;
@@ -14046,7 +14095,7 @@ function createTermBridge({ port, resolveSpawn, log = () => {
     c.readyReject(new Error(reason));
     for (const waiter of c.waiters.splice(0)) waiter.reject(new Error(reason));
     for (const v of [...viewers]) v.finish(reason);
-    if (c.child && c.child.exitCode === null && !c.child.killed) {
+    if (c.child?.exitCode === null && !c.child.killed) {
       try {
         c.child.kill("SIGTERM");
       } catch {
@@ -14068,17 +14117,19 @@ function createTermBridge({ port, resolveSpawn, log = () => {
       }).catch(() => {
       });
     }, CLOSE_RECHECK_MS);
-    timer.unref?.();
+    timer.unref();
   }
   async function ensureClient() {
-    if (!client) client = createClient();
+    client ??= createClient();
     const c = client;
     let timer;
     try {
       await Promise.race([
         c.ready,
         new Promise((_, reject) => {
-          timer = setTimeout(() => reject(new Error("terminal control attach timed out")), ATTACH_TIMEOUT_MS);
+          timer = setTimeout(() => {
+            reject(new Error("terminal control attach timed out"));
+          }, ATTACH_TIMEOUT_MS);
         })
       ]);
     } finally {
@@ -14110,27 +14161,36 @@ function createTermBridge({ port, resolveSpawn, log = () => {
   }
   function unsubscribe(c, pane, viewer) {
     const stream = c?.panes.get(pane);
-    if (!stream) return;
+    if (!c || !stream) return;
     stream.subs.delete(viewer);
     if (!stream.subs.size) c.panes.delete(pane);
   }
-  async function openViewer({ spawn_id, cols, rows, send, onClose = () => {
-  }, isAborted = () => false }) {
-    if (process.env.FLEETDECK_TERM?.trim().toLowerCase() === "off") throw new TermBridgeError("live terminal disabled");
+  async function openViewer({
+    spawn_id,
+    cols,
+    rows,
+    send,
+    onClose = () => {
+    },
+    isAborted = () => false
+  }) {
+    if (process.env["FLEETDECK_TERM"]?.trim().toLowerCase() === "off")
+      throw new TermBridgeError("live terminal disabled");
     const size = dimensions(cols, rows);
     if (!size) throw new TermBridgeError("invalid terminal dimensions");
     const abortIfClosed = () => {
       if (isAborted()) throw new Error("terminal viewer closed during open");
     };
-    const row = await resolveSpawn?.(spawn_id);
+    const row = await resolveSpawn(spawn_id);
     if (!row) throw new TermBridgeError("no such spawn");
     if (!ACTIVE_STATUSES.has(row.status)) throw new TermBridgeError("spawn is not live");
-    if (row.tmux_session !== session || !String(row.tmux_window || "").startsWith(`fd${port}-`)) {
+    const windowName2 = row.tmux_window;
+    if (row.tmux_session !== session || !windowName2?.startsWith(`fd${port}-`)) {
       throw new TermBridgeError("spawn is outside this fleet");
     }
     const viewer = {
       pane: null,
-      window: row.tmux_window,
+      window: windowName2,
       established: false,
       initialized: false,
       finished: false,
@@ -14196,23 +14256,28 @@ function createTermBridge({ port, resolveSpawn, log = () => {
     try {
       const c = await ensureClient();
       abortIfClosed();
-      const panes = await c.command(`list-panes -t ${exactWindowTarget(port, row.tmux_window)} -F '#{pane_id}'`);
-      if (!panes.ok) throw new TermBridgeError("terminal pane is gone \u2014 the agent has ended", { gone: true });
+      const panes = await c.command(
+        `list-panes -t ${exactWindowTarget(port, windowName2)} -F '#{pane_id}'`
+      );
+      if (!panes.ok)
+        throw new TermBridgeError("terminal pane is gone \u2014 the agent has ended", { gone: true });
       const pane = panes.lines.map((s) => s.trim()).find((s) => /^%\d+$/.test(s));
-      if (!pane) throw new TermBridgeError("terminal pane is gone \u2014 the agent has ended", { gone: true });
+      if (!pane)
+        throw new TermBridgeError("terminal pane is gone \u2014 the agent has ended", { gone: true });
       viewer.pane = pane;
-      if (!(await sizeWindow(c, row.tmux_window, size.cols, size.rows)).ok) throw new Error("terminal resize failed");
-      if (!(await sizeWindow(c, row.tmux_window, size.cols, Math.max(1, size.rows - 1))).ok) {
-        await sizeWindow(c, row.tmux_window, size.cols, size.rows);
+      if (!(await sizeWindow(c, windowName2, size.cols, size.rows)).ok)
+        throw new Error("terminal resize failed");
+      if (!(await sizeWindow(c, windowName2, size.cols, Math.max(1, size.rows - 1))).ok) {
+        await sizeWindow(c, windowName2, size.cols, size.rows);
         throw new Error("terminal resize failed");
       }
-      if (!(await sizeWindow(c, row.tmux_window, size.cols, size.rows)).ok) {
-        await sizeWindow(c, row.tmux_window, size.cols, size.rows);
+      if (!(await sizeWindow(c, windowName2, size.cols, size.rows)).ok) {
+        await sizeWindow(c, windowName2, size.cols, size.rows);
         throw new Error("terminal resize failed");
       }
       await new Promise((r) => {
         const t = setTimeout(r, REPAINT_MS);
-        t.unref?.();
+        t.unref();
       });
       abortIfClosed();
       subscribe(c, pane, viewer);
@@ -14220,7 +14285,7 @@ function createTermBridge({ port, resolveSpawn, log = () => {
       if (!captured.ok) throw new Error("terminal pane capture failed");
       const cursor = await c.command(`display-message -p -t ${pane} '#{cursor_x} #{cursor_y}'`);
       if (!cursor.ok) throw new Error("terminal cursor lookup failed");
-      const match = /^(\d+)\s+(\d+)$/.exec(cursor.lines.at(-1)?.trim() || "");
+      const match = /^(\d+)\s+(\d+)$/.exec(cursor.lines.at(-1)?.trim() ?? "");
       if (!match) throw new Error("terminal cursor lookup returned invalid data");
       viewer.established = true;
       send({
@@ -14234,15 +14299,18 @@ function createTermBridge({ port, resolveSpawn, log = () => {
       viewer.initialized = true;
       viewer.flushPending();
     } catch (err) {
-      viewer.finish(err?.message || "terminal open failed", false);
+      const detail = err instanceof Error && err.message ? err.message : "terminal open failed";
+      viewer.finish(detail, false);
       if (err instanceof TermBridgeError) throw err;
-      throw new TermBridgeError(err?.message || "terminal open failed");
+      throw new TermBridgeError(detail);
     }
     return {
       input(dataString) {
         if (viewer.finished || typeof dataString !== "string" || !dataString) return;
         const c = client;
         if (!c) return;
+        const pane = viewer.pane;
+        if (!pane) return;
         const bytes = Buffer.from(dataString, "utf8");
         if (viewer.queuedInput + bytes.length > MAX_INPUT_QUEUE_BYTES) {
           viewer.finish("terminal input overflow");
@@ -14254,7 +14322,7 @@ function createTermBridge({ port, resolveSpawn, log = () => {
             for (let offset = 0; offset < bytes.length; offset += INPUT_CHUNK_BYTES) {
               if (viewer.finished || client !== c) return;
               const hex = [...bytes.subarray(offset, offset + INPUT_CHUNK_BYTES)].map((b) => b.toString(16).padStart(2, "0")).join(" ");
-              const res = await c.command(`send-keys -t ${viewer.pane} -H ${hex}`);
+              const res = await c.command(`send-keys -t ${pane} -H ${hex}`);
               if (!res.ok) {
                 viewer.finish("terminal pane closed");
                 return;
@@ -14273,7 +14341,9 @@ function createTermBridge({ port, resolveSpawn, log = () => {
         if (viewer.finished || !next || !c) return;
         sizeWindow(c, viewer.window, next.cols, next.rows).then((res) => {
           if (!res.ok) viewer.finish("terminal resize failed");
-        }).catch(() => viewer.finish("terminal resize failed"));
+        }).catch(() => {
+          viewer.finish("terminal resize failed");
+        });
       },
       close() {
         viewer.finish("terminal viewer closed", false);

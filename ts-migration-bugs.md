@@ -1067,3 +1067,63 @@ endpoint exposes — and every masking / BUG-147 / BUG-047 / path-gate comment i
   rollback) + `smoke-settings.test.mjs`; 40/40 green in `derive-audit-reliability` + `agents-ingest` (derive
   integration through the repointed import). Daemon bundle rebuilds with the `settings.ts` banner (627.5kb, no
   stale `settings.mjs` banner) and passes `node --check`.
+
+### scripts/fleetd/termbridge.mjs → termbridge.ts  [NOISE + one corrected @types/node model]
+
+The tmux control-mode bridge: one shared control client per port, byte-exact `%output` demux, viewer
+lifecycle. All doctrine comments (CONTRACT, WHY ONE CLIENT, keystroke doctrine, M-R4/R5/P6, R1-4, H-R3,
+LATIN-1, CRLF, BUG-055/056/158/159) preserved verbatim. Every finding is strict-typing noise except one
+correction to how `@types/node` types a `spawn`'d child — worth recording because it inverted an assumption.
+
+- **CORRECTED: `spawn` with a `stdio` TUPLE returns NON-NULL streams.** I expected `child.stdout`/`.stderr`/
+  `.stdin` to be `Stream | null` and reached for `?.`. eslint's `no-unnecessary-condition` flagged all of them.
+  Root cause: `spawn(cmd, args, { stdio: ['pipe','pipe','pipe'], windowsHide: true })` — the 3-tuple literal
+  selects `@types/node`'s `SpawnOptionsWithStdioTuple` overload, which returns
+  `ChildProcessByStdio<Writable, Readable, Readable>` with the three streams typed **non-null**. So the local
+  `const child = spawn(...)` uses `child.stdout.on(...)` / `child.stderr.on(...)` with NO `?.`. The nullability
+  lives only on the `Client.child` FIELD (typed `ChildProcess | null` because it starts null and is set later):
+  the teardown kill-guard is `if (c.child?.exitCode === null && !c.child.killed)`, and the write path narrows
+  through the R-guard `if (c.closed || !c.child?.stdin?.writable) { reject; return; }` so `c.child.stdin.write`
+  is cast-free after it. Behavior identical — this only removed dead `?.` the runtime never exercised.
+- **`.unref()` is always present — dropped `?.` (2x).** `setTimeout`/`setInterval` return
+  `ReturnType<typeof setTimeout>` = `NodeJS.Timeout`, whose `.unref()` is non-optional under `@types/node`.
+  `timer.unref?.()` → `timer.unref()` (close-recheck timer) and `t.unref?.()` → `t.unref()` (repaint delay),
+  plus `c.deadTimer.unref()`. `no-unnecessary-condition` again — the guards were defensive against a
+  browser-`setTimeout` shape that never applies in the daemon.
+- **`no-empty-function` — comment bodies for noop arrows (3x).** `log = () => { /* silent by default */ }`,
+  `onClose = () => { /* no-op by default */ }`, and the `readyResolve`/`readyReject` `let` initializers
+  (`() => { /* replaced by the executor below */ }`). Matches the house pattern already in the file
+  (`ready.catch(() => { /* ... */ })`). A param-less arrow stays assignable to the typed callback signatures.
+- **`no-unnecessary-type-conversion` — dropped `String()` (2x).** In `unescapeControlData(value: string)` and
+  `ControlModeParser.feed(chunk: … )` the inputs are already `string` on the text path, so `String(value)` /
+  `String(chunk)` were redundant. (`String(chunk)` in the stderr log KEPT — there `chunk` is a `Buffer`, so it
+  is a real conversion, not a no-op.)
+- **`??=` for lazy-init (`prefer-nullish-coalescing`).** `ensureClient`'s `if (!client) client = createClient()`
+  → `client ??= createClient()`. Same once-only attach.
+- **`prefer-optional-chain`.** teardown's `if (c.child && c.child.exitCode === null …)` →
+  `if (c.child?.exitCode === null …)`.
+- **`||` KEPT (2x) with a one-line disable.** `exit[1] || 'tmux control client exited'` and
+  `override || 'tmux'` are deliberately falsy-coalescing (an empty capture / empty env override must fall
+  through to the default), so each carries `// eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing`
+  rather than a semantics-changing `??`.
+- **`noUncheckedIndexedAccess` on regex captures → `?? ''`.** The control-line parser's `match[1]`/`match[2]`
+  are `string | undefined`; each is coalesced to `''` (block time/number) or fed through `Number(match[n])` for
+  the cursor-position init. `cursor.lines.at(-1)?.trim() ?? ''` for the last-line probe.
+- **`noPropertyAccessFromIndexSignature` → bracket env reads.** `process.env['FLEETDECK_TERM_CMD']`,
+  `process.env['FLEETDECK_TERM']`.
+- **`useUnknownInCatchVariables`.** `openViewer`'s terminal-open catch narrows
+  `const detail = err instanceof Error && err.message ? err.message : 'terminal open failed';`.
+- **Escape-sequence hazard (tooling, not TS).** The ESC bytes in `CLEAR_SCREEN` and the cursor-home init
+  string were silently rewritten to literal ESC (0x1b) by the Write tool; caught with `grep … | cat -v` (showed
+  `^[`) and restored to the `` source form with perl. No behavior change, but the committed source now
+  reads as an escape, not a raw control byte.
+- **Typedefs added (no runtime effect):** `ControlEvent` discriminated union
+  (`Response|Output|Exit|WindowClose|SessionChanged`), and the `Waiter`/`PaneStream`/`Client`/`Viewer`/
+  `TermFrame`/`TermSend`/`OpenViewerOptions`/`ViewerHandle`/`TermBridgeOptions` interfaces. `SpawnRow` imported
+  from `statements.ts` for the `resolveSpawn` result (`status`/`tmux_session`/`tmux_window`). `command` (arrow)
+  and `deadTimer` (`setInterval`) live in the `const c: Client = {…}` literal via closures referencing `c`.
+- **Verify:** `eslint termbridge.ts` clean (0). tsc `--noEmit` clean project-wide (0). 3 importers repointed
+  (`http.mjs:22`, `termbridge-parser.test.mjs:4`, `termbridge-capture-race.test.mjs:6` → `./termbridge.ts`).
+  24/24 green across `termbridge-parser` + `termbridge-capture-race` (BUG-056 same-chunk replay) +
+  `terminal-ws` (live WS lifecycle). Daemon bundle rebuilds with the `termbridge.ts` banner (628.7kb) and
+  passes `node --check`.

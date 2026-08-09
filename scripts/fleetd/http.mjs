@@ -19,7 +19,7 @@ import { fileURLToPath } from 'node:url';
 import { validateNameSuffix } from './helpers.ts';
 import { spawnFailureReason } from './spawns.mjs';
 import { WebSocketServer } from 'ws';
-import { createTermBridge } from './termbridge.mjs';
+import { createTermBridge } from './termbridge.ts';
 // F1a HOSTILE-boundary validators, imported from the shared wire contracts by
 // explicit `.ts` specifier (the TS source of truth). Node >=22.18 strips the
 // types on load; the esbuild bundle inlines them as plain JS, which is what the

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { chmodSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createTermBridge } from '../scripts/fleetd/termbridge.mjs';
+import { createTermBridge } from '../scripts/fleetd/termbridge.ts';
 
 // BUG-056: tmux flushes `%end …\n%output %N <bytes>\n` for a capture-pane in
 // ONE stdout write. The bridge's stdout handler resolves the capture waiter and
