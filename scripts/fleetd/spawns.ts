@@ -89,12 +89,15 @@ interface SpawnsTmuxAdapter {
 
 // The consumer view of the threaded closure state. derive assembles the literal
 // and casts it `as unknown as CoreCtx`, so the ONLY assignability check is
-// CoreCtx <: SpawnsCtx: every field here is typed to how spawns USES it, at or
-// wider than what CoreCtx provides. Function fields use METHOD syntax so their
-// parameters stay bivariant — the wider real signatures in CoreCtx (e.g.
-// resolveTarget's required `repo`) remain assignable while spawns may call them
-// with its own looser argument shapes. Returns stay exact via the module type
-// queries above.
+// CoreCtx <: SpawnsCtx. Function fields use ARROW-PROPERTY syntax (not method
+// shorthand) so createSpawns can destructure them without tripping unbound-method
+// — but that means their parameters are checked CONTRAVARIANTLY under
+// strictFunctionTypes, NOT bivariantly. So a field that mirrors a repos.ts/
+// settings.ts provider is pinned to the provider signature via `ProviderSurface['X']`
+// (params AND return) rather than being left loose; a looser `unknown` param would
+// make the real narrower provider NON-assignable. The hand-typed closure fields
+// (tick, logEvent, …, wired by derive, none reading `this`) stay typed to how
+// spawns uses them, at or wider than what CoreCtx provides.
 interface SpawnsCtx {
   q: Statements['q'];
   updateSession: Statements['updateSession'];
@@ -126,13 +129,25 @@ interface SpawnsCtx {
   // contract is optional. derive's real CoreCtx wires both unconditionally.
   claimWorktreeCustody?: (p: string, owner: string) => (() => void) | null;
   acquireWorktreePathLock?: (key: string) => Promise<() => void>;
-  validateBranch: (branch: unknown) => ReturnType<ReposSurface['validateBranch']>;
-  resolveTarget: (body: unknown) => ReturnType<ReposSurface['resolveTarget']>;
-  cloneRepo: (opts: unknown) => ReturnType<ReposSurface['cloneRepo']>;
-  materializeBranch: (opts: unknown) => ReturnType<ReposSurface['materializeBranch']>;
-  touchRepo: (opts: unknown) => ReturnType<ReposSurface['touchRepo']>;
-  claimTarget: (p: unknown, owner: unknown) => ReturnType<ReposSurface['claimTarget']>;
-  targetOwner: (p: unknown) => ReturnType<ReposSurface['targetOwner']>;
+  // These mirror repos.ts providers 1:1, pinned to the provider signature via
+  // `ReposSurface['X']` — params AND return, not just the return. Under
+  // strictFunctionTypes these arrow-PROPERTY fields (arrow, not method-shorthand,
+  // so destructuring them in createSpawns doesn't trip unbound-method) check their
+  // params CONTRAVARIANTLY, so the earlier `(x: unknown) => ReturnType<…>` shape
+  // REJECTED the real narrower providers (resolveTarget's `ResolveTargetBody`,
+  // validateBranch's `string`, …). That looser shape only ever passed because a
+  // stale `./spawns.mjs` import upstream left createSpawns typed `any`; once the
+  // import resolved to `./spawns.ts`, CoreCtx <: SpawnsCtx started being checked and
+  // the mismatch surfaced. Pinning to the provider makes the two exact; the call
+  // sites below already pass matching shapes (strings, object literals, and a
+  // repo-guarded body). See ts-migration-bugs.md.
+  validateBranch: ReposSurface['validateBranch'];
+  resolveTarget: ReposSurface['resolveTarget'];
+  cloneRepo: ReposSurface['cloneRepo'];
+  materializeBranch: ReposSurface['materializeBranch'];
+  touchRepo: ReposSurface['touchRepo'];
+  claimTarget: ReposSurface['claimTarget'];
+  targetOwner: ReposSurface['targetOwner'];
   reserveCloneSlot: () => ReturnType<ReposSurface['reserveCloneSlot']>;
   persistRepoTransport: (v: unknown) => ReturnType<SettingsSurface['persistRepoTransport']>;
   persistRepoDefaultOrg: (v: unknown) => ReturnType<SettingsSurface['persistRepoDefaultOrg']>;
@@ -1313,6 +1328,11 @@ export function createSpawns(ctx: SpawnsCtx) {
       }
       if (!body.branch)
         return { status: 400, body: { ok: false, reason: 'branch is required in repo mode' } };
+      // Captured here (narrowed to string by the guard above) so the async
+      // provisioning closure below can pass it to materializeBranch: inside that
+      // closure `body.branch`'s narrowing is lost — property narrowing does not
+      // survive a nested-function boundary — but this const keeps its string type.
+      const branch = body.branch;
       const branchMode = body.branch_mode ?? 'worktree';
       if (!['worktree', 'in-place'].includes(branchMode)) {
         return {
@@ -1327,9 +1347,26 @@ export function createSpawns(ctx: SpawnsCtx) {
         return { status: 400, body: { ok: false, reason: errMessage(err) } };
       }
 
+      // `hasRepo` guaranteed body.repo above, but the `await validateBranch` reset
+      // the property-narrowing; re-assert it here. Under exactOptionalPropertyTypes an
+      // *optional* body.repo is not assignable to resolveTarget's *required* repo even
+      // once its value is narrowed (optional-vs-required is structural), so build its
+      // ResolveTargetBody explicitly — the four fields resolveTarget reads — with
+      // `?? null` mapping absent overrides to null (its declared `string | null`),
+      // matching the untyped pre-migration behavior.
+      if (body.repo == null) {
+        releasePlanClaim();
+        return { status: 400, body: { ok: false, reason: 'repo is required in repo mode' } };
+      }
+
       let target: Awaited<ReturnType<ReposSurface['resolveTarget']>>;
       try {
-        target = await resolveTarget(body);
+        target = await resolveTarget({
+          repo: body.repo,
+          repo_host: body.repo_host ?? null,
+          repo_transport: body.repo_transport ?? null,
+          repo_org: body.repo_org ?? null,
+        });
       } catch (err) {
         releasePlanClaim();
         return {
@@ -1569,7 +1606,7 @@ export function createSpawns(ctx: SpawnsCtx) {
             onMutate();
             const materialized = await materializeBranch({
               root: target.dest,
-              branch: body.branch,
+              branch,
               mode: branchMode,
               spawn_id,
               sid: session_id,

@@ -1969,7 +1969,11 @@ export function createHttp(
   return {
     server,
     whenBroadcastIdle,
-    refreshLan(nextLan: LanSource | (() => LanSource) | null) {
+    // Arrow-PROPERTY (not method shorthand) so the daemon entry can destructure it
+    // without tripping @typescript-eslint/unbound-method: the body closes over
+    // refreshLanHosts/lan and never touches `this`, so an arrow is behaviorally
+    // identical while typing the field as a property rather than a method.
+    refreshLan: (nextLan: LanSource | (() => LanSource) | null) => {
       refreshLanHosts();
       lan = nextLan;
     },

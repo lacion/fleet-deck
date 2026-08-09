@@ -25,7 +25,7 @@ import { createLedger } from './ledger.ts';
 import { createIngest } from './ingest.ts';
 import { createCommands } from './commands.ts';
 import { createPlans } from './plans.ts';
-import { createSpawns } from './spawns.mjs';
+import { createSpawns } from './spawns.ts';
 import { createEvents } from './events.ts';
 import { createSnapshot } from './snapshot.ts';
 import { createRetention } from './retention.ts';
@@ -74,6 +74,24 @@ interface TmuxAdapter {
   pasteText: SpawnModule['pasteText'];
   sendEnter: SpawnModule['sendEnter'];
   killWindowVerified: SpawnModule['killWindowVerified'];
+  // Widened to the full slice createSpawns(ctx) consumes: this SAME object is
+  // threaded into spawns.ts as its SpawnsTmuxAdapter, so TmuxAdapter must cover
+  // every method spawns calls or the ctx is not assignable. Optionality mirrors
+  // the call sites — hasTmux/capturePane are used unconditionally (required);
+  // tmuxCapability/fleetServerAbsent are only ever `?.`-probed (optional).
+  // Production wires the whole spawn.ts module, so defaultTmuxAdapter satisfies
+  // all of these; narrower test adapters ride the untyped CoreOpts seam.
+  hasTmux: SpawnModule['hasTmux'];
+  capturePane: SpawnModule['capturePane'];
+  sendBringupEnter: SpawnModule['sendBringupEnter'];
+  launchOverride: SpawnModule['launchOverride'];
+  ensureSession: SpawnModule['ensureSession'];
+  newWindow: SpawnModule['newWindow'];
+  sessionName: SpawnModule['sessionName'];
+  windowName: SpawnModule['windowName'];
+  typeAndEnter: SpawnModule['typeAndEnter'];
+  tmuxCapability?: SpawnModule['tmuxCapability'];
+  fleetServerAbsent?: SpawnModule['fleetServerAbsent'];
 }
 
 // The offline-tombstone options. This is deliberately a SUPERTYPE of
@@ -120,7 +138,12 @@ interface SpawnsSurface {
   enableRemote: (...args: unknown[]) => unknown;
   spawnKill: (...args: unknown[]) => unknown;
   spawnCapability: () => unknown;
-  spawnLivenessTick: (...args: unknown[]) => unknown;
+  // Real signature (spawns.ts): returns the in-flight liveness Promise. Typed
+  // precisely (not `(...args) => unknown`) so it satisfies agents-poll's
+  // `spawnLivenessTick?: () => void | Promise<void>` — an `unknown` return is
+  // NOT assignable to that union (the void-return-ignored rule needs a bare
+  // `void` target).
+  spawnLivenessTick: () => void | Promise<void>;
   reconcileSpawns: (...args: unknown[]) => unknown;
   reconcileClearForks: (...args: unknown[]) => unknown;
   scheduleRegistrationRemoteHarvest: (spawnId: string) => void;
