@@ -30,7 +30,7 @@
 
 import { spawn, type ChildProcess } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
-import { exactWindowTarget, sessionName } from './spawn.mjs';
+import { exactWindowTarget, sessionName } from './spawn.ts';
 import { envInt } from './helpers.ts';
 import type { SpawnRow } from './statements.ts';
 

@@ -12,7 +12,7 @@ import { branchOf } from './repo-identity.ts';
 import { ticketFromBranch, animalOf } from './tickets.ts';
 import { createQuestions, resolveHoldMs } from './questions.ts';
 import { lastAssistantModel } from './transcript.ts';
-import * as defaultTmuxAdapter from './spawn.mjs';
+import * as defaultTmuxAdapter from './spawn.ts';
 import { createStatements } from './statements.ts';
 import { createWorktrees } from './worktrees.ts';
 import { createRepos } from './repos.ts';

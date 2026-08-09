@@ -1361,3 +1361,84 @@ plus three that carried real signal.
   it is driven through derive). 133/133 green across the events-exercising suites — hook-auth +
   hook-missing-session-id + plans + derive-audit-reliability (67) and mail-and-blocking + dismiss + fleet-bugs (66);
   **# fail 0**. Daemon bundle rebuilds with the `// scripts/fleetd/events.ts` banner (632.4kb), passes `node --check`.
+
+### scripts/fleetd/spawn.mjs → spawn.ts  [1 typing REGRESSION a pinned test caught + preserve-caught-error ×5 + NOISE + Write-hazards]
+
+The v1.2 tmux adapter — 1082 lines, the single most security-load-bearing module in the daemon. Every doctrine
+comment is preserved verbatim: the `FIELD_SEP` C-locale contract (a TAB separator collapses under a C/POSIX-locale
+tmux server, so the shipped separator must survive the `display-message` round-trip — the bug tmux-locale-separator
+pins), the generation **death-certificate** reasoning (BUG-046 / BUG-053 — an owner-only generation file records
+`{generation, serverPid}` so a normally-exited owner is retired and a survivor is never usurped), the `newWindow` `-e`
+security block (the gateway credential travels through tmux's OWN environment, so it never enters the pane's argv and
+never shows in `ps` for the multi-hour life of the pane — the exact claim gateway-newwindow asserts on), the
+`sanitizePaneText` bracketed-paste breakout defense, and the `killWindowVerified` invariant that a scoped-window kill
+must NEVER fall back to a bare `kill-server` (the fleet shares the default tmux socket). The file was `eslint`-ignored
+as `.mjs`; type-linting it for the first time surfaced the usual `|| → ??` noise plus five real `preserve-caught-error`
+findings — and the strict `string` annotation on `sanitizePaneText` introduced a genuine runtime regression that only
+its pinned test caught.
+
+- **THE REGRESSION: narrowing `sanitizePaneText(text)` to `: string` silently dropped the documented `String()`
+  coercion.** The `.mjs` took an untyped `text` and opened with `String(text).replace(/\r\n?/g, '\n')`. The contract
+  (pane-paste-sanitize.test.mjs) explicitly pins `sanitizePaneText(12345) === '12345'` and
+  `sanitizePaneText(null) === 'null'` — mail bodies reach this chokepoint with no static type guarantee. Typing the
+  parameter `string` and writing `text.replace(...)` compiled clean, type-checked clean, and **threw
+  `text.replace is not a function`** on the coerced-input test at runtime. Restored the contract honestly: the
+  parameter is now `unknown` (it genuinely accepts anything), and the body re-opens with `String(text)`. This is the
+  migration's cautionary shape in miniature — a `: string` annotation is a *claim the runtime never made*; when the
+  real contract is "coerce whatever comes in," `unknown` + an explicit `String()` is the faithful port, and here only
+  the test stood between the silent narrowing and a crash on the first non-string mail body. `no-base-to-string` does
+  NOT fire on `String(unknown)`, so no disable was needed.
+- **`preserve-caught-error` ×5 — every re-thrown generation error now carries `{ cause: err }`.** The five
+  generation-file operations (read / persist / replace / record-retired / retire) each wrap a failing fs or
+  `JSON.parse` call and re-`throw new Error(<human message>)`; as an eslint-ignored `.mjs` the dropped cause chain
+  never surfaced. Linted as `.ts`, `preserve-caught-error` flagged all five (`cannot read persisted tmux generation`,
+  `cannot persist tmux generation`, `cannot replace persisted tmux generation`, `cannot record retired tmux
+  generation`, `cannot retire persisted tmux generation`). Fixed by appending `, { cause: err }` to each `Error` — the
+  diagnostic text is byte-identical and the originating errno / parse error is now preserved for the daemon's log.
+- **Two latent-NPE guards — `replacePersistedGeneration` / `persistGeneration` can return `null`.** Both are typed
+  `Promise<PersistedGeneration | null>`, so `noUncheckedIndexedAccess`-style discipline surfaced that
+  `expected = await replacePersistedGeneration(...)` (and the identical `persistGeneration` call) could hand a `null`
+  into the `expected.serverPid` reads below. Added `if (expected === null) return { enabled: true, expected: null,
+  verified: false };` after each — a faithful "could not claim, stay unverified" fall-through that matches the
+  surrounding generation-lock protocol rather than crashing.
+- **`readPersistedGeneration` restructured to guard-then-cast around `JSON.parse`.** `JSON.parse` returns `any`; under
+  strict typing that `any` would silently poison every downstream field read. Rewrote as `let record: unknown = null;
+  try { record = JSON.parse(value); } catch { /* strict error re-thrown below */ }`, then null / `typeof` / `Array`
+  guards, then `const rec = record as { generation?: unknown; serverPid?: unknown }`, then the existing shape
+  validation (`keys.length !== 2 || keys[0] !== 'generation' || …`). Same accept/reject decisions as the `.mjs`, but
+  the malformed-file path is now type-visible instead of riding an `any`.
+- **Write-tool control-byte hazard — `\xHH` / `\x1b` / `\x00` only, never `\uXXXX`.** The regexes and format strings in
+  this file carry real control bytes (the bracketed-paste markers, the C0/C1 strip, the FIELD_SEP round-trips). Written
+  through the Write tool, a `\uXXXX` escape DECODES at the JSON layer into a raw control byte in the file on disk,
+  whereas `\xHH` and `\n`/`\t`/`\r` stay literal source. Every control escape here is the `\xHH` / `\x1b` / `\x00`
+  form; the whole file scans clean (`LC_ALL=C grep -aPc '[\x00-\x08\x0b-\x1f\x7f]'` → 0), as does the regenerated
+  bundle.
+- **`no-control-regex` inline disables (3), each with a doctrine reason.** `sanitizePaneText` keeps two — on the
+  bracketed-paste-marker delete (`/\x1b\[20[01]~/g`) and on the load-bearing C0/C1/DEL strip
+  (`/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g`) — and `killWindowVerified`'s scope regex (`/^fd(\d+)-[^\x00-\x1f\x7f]+$/`) keeps
+  one. eslint DOES recognize the `\xHH` escape form, so these disables stay "used"; stripping the control matches is the
+  entire point of each pattern, which the reason comments state.
+- **NOISE — the mechanical residue of narrowing.** Mass `prefer-nullish-coalescing` `|| → ??` across the option and
+  result plumbing; `restrict-template-expressions` `String()` wraps only on the genuinely-nullable branch
+  (`${String(state.expected.serverPid)}` where `serverPid` is `number | null`, left bare for the always-`number`
+  `${port}` / `${process.pid}`); `require-await` dropped the unused `async` from `sendBringupEnter` (now
+  `export function sendBringupEnter(target): Promise<boolean> { return sendEnter(target); }`); `no-unnecessary-condition`
+  dropped a dead `typeof name` guard TS already proves; `noUncheckedIndexedAccess` added the `scopePort = scope[1]; if
+  (scopePort === undefined) …` and `hit = matches[0]; if (hit === undefined) …` guards on regex-group / array index
+  reads; a `certHome` null-guard; and `RD_NOFOLLOW` was hoisted to a module const with an inline
+  `no-unnecessary-condition` disable on `(fsConstants.O_NOFOLLOW ?? 0)` (the fallback is real — `O_NOFOLLOW` can be
+  undefined on some platforms even though the `@types/node` model types it non-optional).
+- **Typedefs added (no runtime effect):** `Port = number | string`; the `TmuxResult` / `GenResult` result unions
+  (`{ ok: true; out }` vs `{ ok: false; code?; error }`, with `GenResult` widening it with the generation fields);
+  `ServerGeneration`, `PersistedGeneration`, `GenerationRecord`, `PrepareState`, `TmuxCapability` / `ProbeState`,
+  `ScopedWindow`, `KillResult`, `NewWindowSpec`; the module-level `generationLocks: Map<string, Promise<PrepareState>>`;
+  and `errMessage` / `errDetail` / `errCode` helpers over `unknown` catch bindings (`errDetail` reads
+  `(err as NodeJS.ErrnoException).code` then `.message`).
+- **Verify:** `eslint spawn.ts` clean (0). `tsc --noEmit` clean project-wide (0). Control-byte scan 0 on both source
+  and bundle. All 7 real importers repointed `./spawn.mjs → ./spawn.ts` — `scripts/fleetd/termbridge.ts`,
+  `scripts/fleetd/derive.mjs`, and the five tests gateway-newwindow / tmux-adapter / pane-paste-sanitize /
+  tmux-locale-separator / daemon-maintenance (prose mentions of "spawn.mjs" in comments and assertion messages left
+  as-is, per the events precedent). 85/85 green across the six spawn-exercising suites — tmux-adapter,
+  gateway-newwindow, pane-paste-sanitize, tmux-locale-separator, daemon-maintenance, derive-audit-reliability;
+  **# fail 0** (the coercion regression was red on the first run and green after the `unknown` + `String()` fix).
+  Daemon bundle rebuilds with the `// scripts/fleetd/spawn.ts` source in the banner (633.7kb), passes `node --check`.

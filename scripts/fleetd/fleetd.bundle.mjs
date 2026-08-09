@@ -5122,7 +5122,7 @@ function lastAssistantModel(transcriptPath, { minOffset = 0 } = {}) {
   return null;
 }
 
-// scripts/fleetd/spawn.mjs
+// scripts/fleetd/spawn.ts
 var spawn_exports = {};
 __export(spawn_exports, {
   FIELD_SEP: () => FIELD_SEP,
@@ -5536,7 +5536,7 @@ async function baseBranch(worktree) {
   return null;
 }
 
-// scripts/fleetd/spawn.mjs
+// scripts/fleetd/spawn.ts
 import { randomUUID } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
 import { link, open, rename, unlink } from "node:fs/promises";
@@ -5569,21 +5569,31 @@ function tmuxVersionCapability(output) {
   return { available: true, version: parsed.version };
 }
 
-// scripts/fleetd/spawn.mjs
+// scripts/fleetd/spawn.ts
+function errMessage(err) {
+  return err instanceof Error && err.message ? err.message : String(err);
+}
+function errDetail(err) {
+  if (err instanceof Error) {
+    const e = err;
+    if (e.code) return e.code;
+    if (e.message) return e.message;
+  }
+  return String(err);
+}
+function errCode2(err) {
+  return err instanceof Error ? err.code : void 0;
+}
 var TMUX_TIMEOUT_MS = 5e3;
 var FIELD_SEP = "~";
 async function tmuxResult(args, { noStart = false } = {}) {
   try {
-    const socket = process.env.FLEETDECK_TMUX_SOCKET?.trim();
-    const argv = [
-      ...socket ? ["-L", socket] : [],
-      ...noStart ? ["-N"] : [],
-      ...args
-    ];
+    const socket = process.env["FLEETDECK_TMUX_SOCKET"]?.trim();
+    const argv = [...socket ? ["-L", socket] : [], ...noStart ? ["-N"] : [], ...args];
     const r = await execFileP("tmux", argv, { timeout: TMUX_TIMEOUT_MS });
-    return r.ok ? { ok: true, out: r.out ?? "" } : { ok: false, code: r.code, error: r.err ?? "" };
+    return r.ok ? { ok: true, out: r.out } : { ok: false, code: r.code, error: r.err };
   } catch (err) {
-    return { ok: false, error: String(err?.message || err || "") };
+    return { ok: false, error: errMessage(err) };
   }
 }
 async function tmux(args) {
@@ -5594,6 +5604,7 @@ var GENERATION_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3
 var GENERATION_HEADER = "__fleetdeck_tmux_generation__=";
 var GENERATION_MISMATCH = "__fleetdeck_tmux_generation_mismatch__";
 var generationLocks = /* @__PURE__ */ new Map();
+var RD_NOFOLLOW = fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0);
 function generationPort(port) {
   const value = String(port);
   if (!/^\d+$/.test(value)) throw new Error("invalid fleet port for tmux generation identity");
@@ -5603,17 +5614,17 @@ var generationOption = (port) => `@fleetdeck_generation_${generationPort(port)}`
 var generationFile = (home, port) => path3.join(home, `tmux-generation-${generationPort(port)}`);
 var retiredGenerationFile = (home, port) => `${generationFile(home, port)}.retired`;
 function generationHome() {
-  const home = process.env.FLEETDECK_HOME?.trim();
+  const home = process.env["FLEETDECK_HOME"]?.trim();
   return home || null;
 }
 async function readPersistedGeneration(home, port) {
   const file = generationFile(home, port);
   let handle;
   try {
-    handle = await open(file, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+    handle = await open(file, RD_NOFOLLOW);
   } catch (err) {
-    if (err?.code === "ENOENT") return null;
-    throw new Error(`cannot read persisted tmux generation (${err?.code || err?.message || err})`);
+    if (errCode2(err) === "ENOENT") return null;
+    throw new Error(`cannot read persisted tmux generation (${errDetail(err)})`, { cause: err });
   }
   try {
     const stat = await handle.stat();
@@ -5624,16 +5635,22 @@ async function readPersistedGeneration(home, port) {
     if (GENERATION_UUID_RE.test(value)) {
       return { generation: value.toLowerCase(), serverPid: null, legacy: true };
     }
-    let record;
+    let record = null;
     try {
       record = JSON.parse(value);
     } catch {
     }
-    const keys = record && typeof record === "object" && !Array.isArray(record) ? Object.keys(record).sort() : [];
-    if (keys.length !== 2 || keys[0] !== "generation" || keys[1] !== "serverPid" || !GENERATION_UUID_RE.test(record.generation) || !Number.isSafeInteger(record.serverPid) || record.serverPid <= 1) {
+    if (record === null || typeof record !== "object" || Array.isArray(record)) {
       throw new Error("persisted tmux generation is malformed");
     }
-    return { generation: record.generation.toLowerCase(), serverPid: record.serverPid, legacy: false };
+    const keys = Object.keys(record).sort();
+    const rec = record;
+    const gen = rec.generation;
+    const pid = rec.serverPid;
+    if (keys.length !== 2 || keys[0] !== "generation" || keys[1] !== "serverPid" || typeof gen !== "string" || !GENERATION_UUID_RE.test(gen) || typeof pid !== "number" || !Number.isSafeInteger(pid) || pid <= 1) {
+      throw new Error("persisted tmux generation is malformed");
+    }
+    return { generation: gen.toLowerCase(), serverPid: pid, legacy: false };
   } finally {
     await handle.close();
   }
@@ -5641,11 +5658,14 @@ async function readPersistedGeneration(home, port) {
 async function persistGeneration(home, port, record) {
   const file = generationFile(home, port);
   const temp = path3.join(home, `.${path3.basename(file)}.${process.pid}.${randomUUID()}.tmp`);
-  let handle;
+  let handle = null;
   try {
     handle = await open(temp, "wx", 384);
-    await handle.writeFile(`${JSON.stringify({ generation: record.generation, serverPid: record.serverPid })}
-`, "utf8");
+    await handle.writeFile(
+      `${JSON.stringify({ generation: record.generation, serverPid: record.serverPid })}
+`,
+      "utf8"
+    );
     await handle.chmod(384);
     await handle.sync();
     await handle.close();
@@ -5653,10 +5673,10 @@ async function persistGeneration(home, port, record) {
     try {
       await link(temp, file);
     } catch (err) {
-      if (err?.code !== "EEXIST") throw err;
+      if (errCode2(err) !== "EEXIST") throw err;
     }
   } catch (err) {
-    throw new Error(`cannot persist tmux generation (${err?.code || err?.message || err})`);
+    throw new Error(`cannot persist tmux generation (${errDetail(err)})`, { cause: err });
   } finally {
     try {
       await handle?.close();
@@ -5665,7 +5685,7 @@ async function persistGeneration(home, port, record) {
     try {
       await unlink(temp);
     } catch (err) {
-      if (err?.code !== "ENOENT") {
+      if (errCode2(err) !== "ENOENT") {
       }
     }
   }
@@ -5674,18 +5694,21 @@ async function persistGeneration(home, port, record) {
 async function replacePersistedGeneration(home, port, record) {
   const file = generationFile(home, port);
   const temp = path3.join(home, `.${path3.basename(file)}.${process.pid}.${randomUUID()}.tmp`);
-  let handle;
+  let handle = null;
   try {
     handle = await open(temp, "wx", 384);
-    await handle.writeFile(`${JSON.stringify({ generation: record.generation, serverPid: record.serverPid })}
-`, "utf8");
+    await handle.writeFile(
+      `${JSON.stringify({ generation: record.generation, serverPid: record.serverPid })}
+`,
+      "utf8"
+    );
     await handle.chmod(384);
     await handle.sync();
     await handle.close();
     handle = null;
     await rename(temp, file);
   } catch (err) {
-    throw new Error(`cannot replace persisted tmux generation (${err?.code || err?.message || err})`);
+    throw new Error(`cannot replace persisted tmux generation (${errDetail(err)})`, { cause: err });
   } finally {
     try {
       await handle?.close();
@@ -5694,7 +5717,7 @@ async function replacePersistedGeneration(home, port, record) {
     try {
       await unlink(temp);
     } catch (err) {
-      if (err?.code !== "ENOENT") {
+      if (errCode2(err) !== "ENOENT") {
       }
     }
   }
@@ -5702,15 +5725,14 @@ async function replacePersistedGeneration(home, port, record) {
 }
 var SERVER_ABSENT_RE = /(?:^|\n)(?:no server running on |error connecting to .*\(No such file or directory\))/i;
 async function readServerGeneration(port) {
-  const result = await tmuxResult([
-    "display-message",
-    "-p",
-    `#{${generationOption(port)}}${FIELD_SEP}#{pid}`
-  ], { noStart: true });
+  const result = await tmuxResult(
+    ["display-message", "-p", `#{${generationOption(port)}}${FIELD_SEP}#{pid}`],
+    { noStart: true }
+  );
   if (!result.ok) {
     return {
       reachable: false,
-      absent: SERVER_ABSENT_RE.test(String(result.error ?? "")),
+      absent: SERVER_ABSENT_RE.test(result.error),
       generation: null,
       serverPid: null
     };
@@ -5721,39 +5743,42 @@ async function readServerGeneration(port) {
   return {
     reachable: true,
     absent: false,
-    generation: GENERATION_UUID_RE.test(generation) ? generation.toLowerCase() : null,
+    generation: generation !== void 0 && GENERATION_UUID_RE.test(generation) ? generation.toLowerCase() : null,
     serverPid: extra.length === 0 && Number.isSafeInteger(serverPid) && serverPid > 1 ? serverPid : null
   };
 }
 function pidState(pid) {
-  if (!Number.isSafeInteger(pid) || pid <= 1) return "unknown";
+  if (pid === null || !Number.isSafeInteger(pid) || pid <= 1) return "unknown";
   try {
     process.kill(pid, 0);
     return "alive";
   } catch (err) {
-    if (err?.code === "ESRCH") return "dead";
+    if (errCode2(err) === "ESRCH") return "dead";
     return "unknown";
   }
 }
-var sameRecord = (left, right) => !!left && !!right && left.generation === right.generation && left.serverPid === right.serverPid;
+var sameRecord = (left, right) => left !== null && right !== null && left.generation === right.generation && left.serverPid === right.serverPid;
 async function recordRetiredGeneration(home, port, expected) {
   const file = retiredGenerationFile(home, port);
   const temp = path3.join(home, `.${path3.basename(file)}.${process.pid}.${randomUUID()}.tmp`);
-  let handle;
+  let handle = null;
   try {
     handle = await open(temp, "wx", 384);
-    await handle.writeFile(`${JSON.stringify({
-      retiredGeneration: expected.generation,
-      retiredServerPid: expected.serverPid
-    })}
-`, "utf8");
+    await handle.writeFile(
+      `${JSON.stringify({
+        retiredGeneration: expected.generation,
+        retiredServerPid: expected.serverPid
+      })}
+`,
+      "utf8"
+    );
     await handle.chmod(384);
     await handle.sync();
     await handle.close();
     handle = null;
     await rename(temp, file);
   } catch (err) {
-    throw new Error(`cannot record retired tmux generation (${err?.code || err?.message || err})`);
+    throw new Error(`cannot record retired tmux generation (${errDetail(err)})`, { cause: err });
   } finally {
     try {
       await handle?.close();
@@ -5762,7 +5787,7 @@ async function recordRetiredGeneration(home, port, expected) {
     try {
       await unlink(temp);
     } catch (err) {
-      if (err?.code !== "ENOENT") {
+      if (errCode2(err) !== "ENOENT") {
       }
     }
   }
@@ -5770,7 +5795,7 @@ async function recordRetiredGeneration(home, port, expected) {
 async function hasRetiredGeneration(home, port) {
   let handle;
   try {
-    handle = await open(retiredGenerationFile(home, port), fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+    handle = await open(retiredGenerationFile(home, port), RD_NOFOLLOW);
   } catch {
     return false;
   }
@@ -5789,7 +5814,7 @@ async function clearRetiredGeneration(home, port) {
   try {
     await unlink(retiredGenerationFile(home, port));
   } catch (err) {
-    if (err?.code !== "ENOENT") {
+    if (errCode2(err) !== "ENOENT") {
     }
   }
 }
@@ -5802,8 +5827,8 @@ async function retireDeadGeneration(home, port, expected) {
     await unlink(generationFile(home, port));
     return true;
   } catch (err) {
-    if (err?.code === "ENOENT") return false;
-    throw new Error(`cannot retire persisted tmux generation (${err?.code || err?.message || err})`);
+    if (errCode2(err) === "ENOENT") return false;
+    throw new Error(`cannot retire persisted tmux generation (${errDetail(err)})`, { cause: err });
   }
 }
 async function prepareServerGenerationUnlocked(home, port) {
@@ -5814,9 +5839,10 @@ async function prepareServerGenerationUnlocked(home, port) {
       if (expected.serverPid === null) {
         if (server2.serverPid === null) return { enabled: true, expected, verified: false };
         expected = await replacePersistedGeneration(home, port, {
-          generation: server2.generation,
+          generation: expected.generation,
           serverPid: server2.serverPid
         });
+        if (expected === null) return { enabled: true, expected: null, verified: false };
         server2 = await readServerGeneration(port);
       }
       return {
@@ -5826,7 +5852,13 @@ async function prepareServerGenerationUnlocked(home, port) {
       };
     }
     if (expected.serverPid !== null && await retireDeadGeneration(home, port, expected)) {
-      return { enabled: true, expected: null, verified: false, oldGenerationLost: true, authoritativeEmpty: true };
+      return {
+        enabled: true,
+        expected: null,
+        verified: false,
+        oldGenerationLost: true,
+        authoritativeEmpty: true
+      };
     }
     return { enabled: true, expected, verified: false };
   }
@@ -5837,11 +5869,19 @@ async function prepareServerGenerationUnlocked(home, port) {
     return { enabled: true, expected: null, verified: false };
   }
   if (await hasRetiredGeneration(home, port)) {
-    return { enabled: true, expected: null, verified: false, blockedByCertificate: true, authoritativeEmpty: true };
+    return {
+      enabled: true,
+      expected: null,
+      verified: false,
+      blockedByCertificate: true,
+      authoritativeEmpty: true
+    };
   }
   if (server2.generation === null) {
     const candidate = randomUUID();
-    const set = await tmuxResult(["set-option", "-g", generationOption(port), candidate], { noStart: true });
+    const set = await tmuxResult(["set-option", "-g", generationOption(port), candidate], {
+      noStart: true
+    });
     if (!set.ok) return { enabled: true, expected: null, verified: false };
     server2 = await readServerGeneration(port);
     if (!server2.reachable || server2.generation === null) {
@@ -5853,6 +5893,7 @@ async function prepareServerGenerationUnlocked(home, port) {
     generation: server2.generation,
     serverPid: server2.serverPid
   });
+  if (expected === null) return { enabled: true, expected: null, verified: false };
   await clearRetiredGeneration(home, port);
   server2 = await readServerGeneration(port);
   return {
@@ -5880,23 +5921,26 @@ async function generationVerifiedResult(port, args) {
   try {
     state = await prepareServerGeneration(port);
   } catch (err) {
-    return { ok: false, generationError: String(err?.message || err) };
+    return { ok: false, generationError: errMessage(err) };
   }
   if (!state.enabled) return tmuxResult(args);
-  if (state.authoritativeEmpty) return { ok: true, out: "", authoritativeEmpty: true };
+  if (state.authoritativeEmpty === true) return { ok: true, out: "", authoritativeEmpty: true };
   if (!state.verified || state.expected === null) {
     return { ok: false, generationError: "tmux server generation unavailable or changed" };
   }
-  const result = await tmuxResult([
-    "display-message",
-    "-p",
-    `${GENERATION_HEADER}#{${generationOption(port)}}${FIELD_SEP}#{pid}`,
-    ";",
-    ...args
-  ], { noStart: true });
+  const result = await tmuxResult(
+    [
+      "display-message",
+      "-p",
+      `${GENERATION_HEADER}#{${generationOption(port)}}${FIELD_SEP}#{pid}`,
+      ";",
+      ...args
+    ],
+    { noStart: true }
+  );
   if (!result.ok) return result;
   const newline = result.out.indexOf("\n");
-  if (newline === -1 || result.out.slice(0, newline) !== `${GENERATION_HEADER}${state.expected.generation}${FIELD_SEP}${state.expected.serverPid}`) {
+  if (newline === -1 || result.out.slice(0, newline) !== `${GENERATION_HEADER}${state.expected.generation}${FIELD_SEP}${String(state.expected.serverPid)}`) {
     return { ok: false, generationError: "tmux server generation unavailable or changed" };
   }
   return { ok: true, out: result.out.slice(newline + 1), generation: state.expected.generation };
@@ -5904,7 +5948,7 @@ async function generationVerifiedResult(port, args) {
 async function fleetServerAbsent(port) {
   try {
     const state = await prepareServerGeneration(port);
-    return state.enabled === true && (state.authoritativeEmpty === true || state.oldGenerationLost === true);
+    return state.enabled && (state.authoritativeEmpty === true || state.oldGenerationLost === true);
   } catch {
     return false;
   }
@@ -5917,7 +5961,10 @@ function hasTmux() {
 function tmuxCapability() {
   const now = Date.now();
   if (now - probe.at < PROBE_TTL_MS) return { ...probe };
-  let next = { available: false, reason: `tmux ${MIN_TMUX_VERSION}+ not found on PATH` };
+  let next = {
+    available: false,
+    reason: `tmux ${MIN_TMUX_VERSION}+ not found on PATH`
+  };
   try {
     const output = execFileSync2("tmux", ["-V"], {
       timeout: 1500,
@@ -5931,8 +5978,8 @@ function tmuxCapability() {
   return { ...probe };
 }
 function spawnOverrideCmd() {
-  const v = process.env.FLEETDECK_SPAWN_CMD;
-  return v && v.trim() ? v : null;
+  const v = process.env["FLEETDECK_SPAWN_CMD"];
+  return v?.trim() ? v : null;
 }
 var sessionName = (port) => `fleetdeck-${port}`;
 var windowName = (port, callsign) => `fd${port}-${callsign}`;
@@ -5946,8 +5993,8 @@ function exactWindowTarget(port, window) {
   return `=${sessionName(normalizedPort)}:=${value}`;
 }
 function exactTargetPort(target) {
-  const match = /^=fleetdeck-(\d+):=fd(\d+)-[A-Za-z0-9-]+$/.exec(String(target));
-  return match && match[1] === match[2] ? match[1] : null;
+  const match = /^=fleetdeck-(\d+):=fd(\d+)-[A-Za-z0-9-]+$/.exec(target);
+  return match?.[1] !== void 0 && match[1] === match[2] ? match[1] : null;
 }
 var sessionConfirmed = (result) => result.ok && !result.authoritativeEmpty;
 async function ensureSession(port) {
@@ -5960,7 +6007,7 @@ async function ensureSession(port) {
     throw new Error(`tmux could not create session ${name}`);
   }
   if (state.expected === null) {
-    if (state.blockedByCertificate) {
+    if (state.blockedByCertificate === true) {
       const interloper = await readServerGeneration(port);
       if (interloper.reachable && interloper.serverPid !== null) {
         if (pidState(interloper.serverPid) === "alive") {
@@ -5988,7 +6035,8 @@ async function ensureSession(port) {
     if (created2.ok) {
       let claimed = await prepareServerGeneration(port);
       if (!claimed.verified && claimed.blockedByCertificate === true) {
-        await clearRetiredGeneration(generationHome(), port);
+        const certHome = generationHome();
+        if (certHome !== null) await clearRetiredGeneration(certHome, port);
         claimed = await prepareServerGeneration(port);
       }
       if (claimed.verified) {
@@ -6006,13 +6054,16 @@ async function ensureSession(port) {
   if (!refreshed.verified || refreshed.expected === null) {
     throw new Error(`tmux server generation unavailable or changed for ${name}`);
   }
-  const created = await tmuxResult([
-    "if-shell",
-    "-F",
-    `#{&&:#{==:#{${generationOption(port)}},${refreshed.expected.generation}},#{==:#{pid},${refreshed.expected.serverPid}}}`,
-    `new-session -d -s ${name}`,
-    `display-message -p ${GENERATION_MISMATCH}`
-  ], { noStart: true });
+  const created = await tmuxResult(
+    [
+      "if-shell",
+      "-F",
+      `#{&&:#{==:#{${generationOption(port)}},${refreshed.expected.generation}},#{==:#{pid},${String(refreshed.expected.serverPid)}}}`,
+      `new-session -d -s ${name}`,
+      `display-message -p ${GENERATION_MISMATCH}`
+    ],
+    { noStart: true }
+  );
   if (created.ok && created.out === "") {
     const confirmed = await generationVerifiedResult(port, ["has-session", "-t", "=" + name]);
     if (sessionConfirmed(confirmed)) return name;
@@ -6021,7 +6072,13 @@ async function ensureSession(port) {
   if (sessionConfirmed(raced)) return name;
   throw new Error(`tmux could not create session ${name}`);
 }
-async function newWindow({ port, callsign, cwd, argv, env = null }) {
+async function newWindow({
+  port,
+  callsign,
+  cwd,
+  argv,
+  env = null
+}) {
   const session = sessionName(port);
   const window = windowName(port, callsign);
   const generation = await prepareServerGeneration(port);
@@ -6068,7 +6125,9 @@ async function newWindow({ port, callsign, cwd, argv, env = null }) {
   ]);
   if (!occupancy.ok) {
     await rollback();
-    throw new Error(generation.enabled ? `tmux new-window generation postcondition failed for ${window}` : `tmux new-window occupancy check failed for ${window}`);
+    throw new Error(
+      generation.enabled ? `tmux new-window generation postcondition failed for ${window}` : `tmux new-window occupancy check failed for ${window}`
+    );
   }
   const names = occupancy.out.endsWith("\n") ? occupancy.out.slice(0, -1) : occupancy.out;
   if (names.split("\n").some((name) => name === window)) {
@@ -6098,7 +6157,13 @@ async function newWindow({ port, callsign, cwd, argv, env = null }) {
   return { session, window, window_id };
 }
 async function paneCurrentCommand(target) {
-  const args = ["display-message", "-p", "-t", target, `#{pane_dead}${FIELD_SEP}#{pane_current_command}`];
+  const args = [
+    "display-message",
+    "-p",
+    "-t",
+    target,
+    `#{pane_dead}${FIELD_SEP}#{pane_current_command}`
+  ];
   const port = exactTargetPort(target);
   const result = port === null ? await tmuxResult(args) : await generationVerifiedResult(port, args);
   if (!result.ok) return null;
@@ -6115,7 +6180,13 @@ async function listScopedWindows(port) {
     "-f",
     `#{==:#{session_name},${expectedSession}}`,
     "-F",
-    ["#{session_name}", "#{window_name}", "#{window_id}", "#{pane_dead}", "#{pane_current_command}"].join(FIELD_SEP)
+    [
+      "#{session_name}",
+      "#{window_name}",
+      "#{window_id}",
+      "#{pane_dead}",
+      "#{pane_current_command}"
+    ].join(FIELD_SEP)
   ]);
   if (!listed.ok) return null;
   if (listed.out === "") return [];
@@ -6127,29 +6198,48 @@ async function listScopedWindows(port) {
   const wins = [];
   for (const line of output.split("\n")) {
     const [session, window, window_id, dead, ...cmd] = line.split(FIELD_SEP);
-    if (!session || !window || !/^@\d+$/.test(window_id ?? "") || dead !== "0" && dead !== "1" || cmd.length === 0) return null;
-    if (session !== expectedSession || !window?.startsWith(prefix)) continue;
+    if (!session || !window || window_id === void 0 || !/^@\d+$/.test(window_id) || dead !== "0" && dead !== "1" || cmd.length === 0)
+      return null;
+    if (session !== expectedSession || !window.startsWith(prefix)) continue;
     if (seen.has(window_id)) continue;
     if (seenNames.has(window)) return null;
     seen.add(window_id);
     seenNames.add(window);
-    wins.push({ session, window, window_id, pane_dead: dead === "1", pane_cmd: cmd.join(FIELD_SEP) });
+    wins.push({
+      session,
+      window,
+      window_id,
+      pane_dead: dead === "1",
+      pane_cmd: cmd.join(FIELD_SEP)
+    });
   }
   return wins;
 }
 async function killWindowVerified(name, opts) {
-  const scope = typeof name === "string" ? /^fd(\d+)-[^\u0000-\u001f\u007f]+$/.exec(name) : null;
+  const scope = /^fd(\d+)-[^\x00-\x1f\x7f]+$/.exec(name);
   if (!scope) return { ok: false, error: "invalid scoped tmux window name" };
   if (/[=;:.]/.test(name)) return { ok: false, error: "invalid scoped tmux window name" };
-  const expectedSession = sessionName(scope[1]);
+  const scopePort = scope[1];
+  if (scopePort === void 0) return { ok: false, error: "invalid scoped tmux window name" };
+  const expectedSession = sessionName(scopePort);
   const format = ["#{session_name}", "#{window_name}", "#{window_id}"].join(FIELD_SEP);
-  const listArgs = ["list-panes", "-a", "-f", `#{==:#{session_name},${expectedSession}}`, "-F", format];
+  const listArgs = [
+    "list-panes",
+    "-a",
+    "-f",
+    `#{==:#{session_name},${expectedSession}}`,
+    "-F",
+    format
+  ];
   const parse = (output) => {
     if (output === "") return [];
     const body = output.endsWith("\n") ? output.slice(0, -1) : output;
     if (body === "") return null;
     const rows2 = body.split("\n").map((line) => line.split(FIELD_SEP));
-    if (rows2.some((fields) => fields.length !== 3 || !fields[0] || !fields[1] || !/^@\d+$/.test(fields[2]))) return null;
+    if (rows2.some(
+      (fields) => fields.length !== 3 || !fields[0] || !fields[1] || !/^@\d+$/.test(fields[2] ?? "")
+    ))
+      return null;
     return rows2;
   };
   const exactMatches = (rows2) => {
@@ -6159,53 +6249,61 @@ async function killWindowVerified(name, opts) {
     }
     return [...byWindowId.values()];
   };
-  const listed = await generationVerifiedResult(scope[1], listArgs);
-  if (!listed.ok) return { ok: false, error: listed.generationError || "tmux window lookup failed" };
+  const listed = await generationVerifiedResult(scopePort, listArgs);
+  if (!listed.ok)
+    return { ok: false, error: listed.generationError ?? "tmux window lookup failed" };
   const rows = parse(listed.out);
   if (rows === null) return { ok: false, error: "malformed tmux window listing" };
   const matches = exactMatches(rows);
   if (matches.length > 1) return { ok: false, error: "ambiguous scoped tmux window name" };
-  if (matches.length === 0) return { ok: false, gone: true };
   const hit = matches[0];
+  if (hit === void 0) return { ok: false, gone: true };
   if (opts?.expectWindowId !== void 0 && hit[2] !== opts.expectWindowId) {
     return { ok: false, stale: true, error: "window id changed \u2014 the scoped name was recycled" };
   }
-  if (opts?.expect && !opts.expect()) return { ok: false, stale: true, error: "stale window owner" };
+  if (opts?.expect && !opts.expect())
+    return { ok: false, stale: true, error: "stale window owner" };
   const killTarget = `=${expectedSession}:=${name}`;
   let killGeneration;
   try {
-    killGeneration = await prepareServerGeneration(scope[1]);
+    killGeneration = await prepareServerGeneration(scopePort);
   } catch (err) {
-    return { ok: false, error: `tmux server generation verification failed: ${err?.message || err}` };
+    return { ok: false, error: `tmux server generation verification failed: ${errMessage(err)}` };
   }
-  if (opts?.expect && !opts.expect()) return { ok: false, stale: true, error: "stale window owner" };
+  if (opts?.expect && !opts.expect())
+    return { ok: false, stale: true, error: "stale window owner" };
   let killed;
   if (!killGeneration.enabled) {
     killed = await tmuxResult(["kill-window", "-t", killTarget]);
   } else if (!killGeneration.verified || killGeneration.expected === null) {
     return { ok: false, error: "tmux server generation unavailable or changed" };
   } else {
-    killed = await tmuxResult([
-      "if-shell",
-      "-F",
-      `#{&&:#{==:#{${generationOption(scope[1])}},${killGeneration.expected.generation}},#{==:#{pid},${killGeneration.expected.serverPid}}}`,
-      `kill-window -t ${killTarget}`,
-      `display-message -p ${GENERATION_MISMATCH}`
-    ], { noStart: true });
+    killed = await tmuxResult(
+      [
+        "if-shell",
+        "-F",
+        `#{&&:#{==:#{${generationOption(scopePort)}},${killGeneration.expected.generation}},#{==:#{pid},${String(killGeneration.expected.serverPid)}}}`,
+        `kill-window -t ${killTarget}`,
+        `display-message -p ${GENERATION_MISMATCH}`
+      ],
+      { noStart: true }
+    );
     if (killed.ok && killed.out.trim() === GENERATION_MISMATCH) {
       return { ok: false, error: "tmux server generation unavailable or changed" };
     }
   }
   if (killed.ok) return { ok: true, window_id: hit[2] };
-  const rechecked = await generationVerifiedResult(scope[1], listArgs);
-  if (!rechecked.ok) return {
-    ok: false,
-    error: rechecked.generationError || "tmux window recheck failed after kill error"
-  };
+  const rechecked = await generationVerifiedResult(scopePort, listArgs);
+  if (!rechecked.ok)
+    return {
+      ok: false,
+      error: rechecked.generationError ?? "tmux window recheck failed after kill error"
+    };
   const again = parse(rechecked.out);
   if (again === null) return { ok: false, error: "malformed tmux window recheck after kill error" };
   const remaining = exactMatches(again);
-  if (remaining.length > 1) return { ok: false, error: "ambiguous scoped tmux window name after kill error" };
+  if (remaining.length > 1)
+    return { ok: false, error: "ambiguous scoped tmux window name after kill error" };
   if (remaining.length === 0) return { ok: false, gone: true };
   return { ok: false, error: "tmux kill-window failed" };
 }
@@ -6214,9 +6312,9 @@ function sanitizePaneText(text) {
   let prev;
   do {
     prev = out;
-    out = out.replace(/\u001b\[20[01]~/g, "");
+    out = out.replace(/\x1b\[20[01]~/g, "");
   } while (out !== prev);
-  return out.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, "");
+  return out.replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "");
 }
 async function pasteText(target, text) {
   const safe = sanitizePaneText(text);
@@ -6239,20 +6337,35 @@ async function sendEnter(target) {
   }
   if (!state.enabled) return await tmux(["send-keys", "-t", target, "Enter"]) !== null;
   if (!state.verified || state.expected === null) return false;
-  const result = await tmuxResult([
-    "if-shell",
-    "-F",
-    `#{&&:#{==:#{${generationOption(port)}},${state.expected.generation}},#{==:#{pid},${state.expected.serverPid}}}`,
-    `send-keys -t ${target} Enter`,
-    `display-message -p ${GENERATION_MISMATCH}`
-  ], { noStart: true });
+  const result = await tmuxResult(
+    [
+      "if-shell",
+      "-F",
+      `#{&&:#{==:#{${generationOption(port)}},${state.expected.generation}},#{==:#{pid},${String(state.expected.serverPid)}}}`,
+      `send-keys -t ${target} Enter`,
+      `display-message -p ${GENERATION_MISMATCH}`
+    ],
+    { noStart: true }
+  );
   return result.ok && result.out.trim() !== GENERATION_MISMATCH;
 }
 async function typeKeys(target, text) {
-  return await tmux(["send-keys", "-t", target, "-l", "--", String(text)]) !== null;
+  return await tmux(["send-keys", "-t", target, "-l", "--", text]) !== null;
 }
 async function typeAndEnter(target, text) {
-  return await tmux(["send-keys", "-t", target, "-l", "--", String(text), ";", "send-keys", "-t", target, "Enter"]) !== null;
+  return await tmux([
+    "send-keys",
+    "-t",
+    target,
+    "-l",
+    "--",
+    text,
+    ";",
+    "send-keys",
+    "-t",
+    target,
+    "Enter"
+  ]) !== null;
 }
 async function capturePane(target) {
   const args = ["capture-pane", "-p", "-t", target];
@@ -6261,7 +6374,7 @@ async function capturePane(target) {
   const result = await generationVerifiedResult(port, args);
   return result.ok ? result.out : null;
 }
-async function sendBringupEnter(target) {
+function sendBringupEnter(target) {
   return sendEnter(target);
 }
 function launchOverride(cmd, spec, onError = () => {
@@ -7735,7 +7848,7 @@ function errStatus(err) {
   }
   return void 0;
 }
-function errMessage(err) {
+function errMessage2(err) {
   return err instanceof Error && err.message ? err.message : String(err);
 }
 var ORIGIN_USERINFO_RE = /^[a-z][a-z0-9+.-]{0,32}:\/\/([^/?#\s]{0,512})@/i;
@@ -8010,7 +8123,7 @@ function createRepos(ctx) {
     try {
       q.setSpawnFailDetail.run(detail, spawn_id);
     } catch (err) {
-      console.error(`fleetd could not record fail_detail for ${spawn_id}: ${errMessage(err)}`);
+      console.error(`fleetd could not record fail_detail for ${spawn_id}: ${errMessage2(err)}`);
     }
   }
   async function validateBranch(branch) {
@@ -8072,7 +8185,7 @@ function createRepos(ctx) {
       }
     } catch (err) {
       if (errStatus(err) !== void 0) throw err;
-      throw namedError(400, `cannot inspect repos_dir: ${errMessage(err)}`);
+      throw namedError(400, `cannot inspect repos_dir: ${errMessage2(err)}`);
     }
     q.setSetting.run("repos_dir", value, Date.now());
     return resolveReposDir();
@@ -8251,7 +8364,7 @@ ${result.err}`);
         fs7.rmSync(temp, { recursive: true, force: true });
       } catch {
       }
-      throw errStatus(err) !== void 0 ? err : namedError(409, errMessage(err));
+      throw errStatus(err) !== void 0 ? err : namedError(409, errMessage2(err));
     }
   }
   async function materializeBranch({
@@ -8436,7 +8549,7 @@ function errStatus2(err) {
   }
   return void 0;
 }
-function errMessage2(err) {
+function errMessage3(err) {
   return err instanceof Error && err.message ? err.message : String(err);
 }
 function expandHome2(value) {
@@ -8461,7 +8574,7 @@ function validatePathSetting(value, label2) {
     }
   } catch (err) {
     if (errStatus2(err)) throw err;
-    throw namedError2(400, `cannot inspect ${label2}: ${errMessage2(err)}`);
+    throw namedError2(400, `cannot inspect ${label2}: ${errMessage3(err)}`);
   }
   try {
     const canonical2 = fs8.realpathSync(resolved);
@@ -8883,7 +8996,7 @@ function createSettings(ctx) {
       return { status: 200, body: { ok: true, settings: resolveSettings() } };
     } catch (err) {
       const status = errStatus2(err) ?? 500;
-      return { status, body: { ok: false, reason: errMessage2(err) } };
+      return { status, body: { ok: false, reason: errMessage3(err) } };
     }
   }
   function persistRepoTransport(value) {
@@ -12161,7 +12274,7 @@ ${detail}` : note);
 // scripts/fleetd/events.ts
 import path13 from "node:path";
 import os7 from "node:os";
-function errMessage3(err) {
+function errMessage4(err) {
   return err instanceof Error && err.message ? err.message : String(err);
 }
 var EDIT_TOOLS = ["Edit", "Write", "MultiEdit", "NotebookEdit"];
@@ -12633,7 +12746,7 @@ function createEvents(ctx) {
         }).catch((err) => {
           const c = q.getSession.get(sid);
           tick(
-            `\u2717 move-to-tmux failed for ${c?.callsign ?? sid}: ${errMessage3(err)}`.slice(0, 100)
+            `\u2717 move-to-tmux failed for ${c?.callsign ?? sid}: ${errMessage4(err)}`.slice(0, 100)
           );
         });
       }, ADOPT_DELAY_MS);
@@ -13779,7 +13892,7 @@ function createCore(db2, {
     modelMemo,
     stampTranscriptFloor,
     readTranscriptModel,
-    // 0.7.1: naming + /clear succession, shared with events.mjs (the hook-time
+    // 0.7.1: naming + /clear succession, shared with events.ts (the hook-time
     // interception), commands.mjs / http.mjs (the `name` surfaces), and
     // spawns.mjs (the boot heal for pairs stranded before this shipped).
     CLEAR_SUCCESSION_MS,
@@ -15560,7 +15673,7 @@ var LEGACY_TTL = 10;
 var SERVICE_TYPES = ["_fleetdeck._tcp.local", "_http._tcp.local"];
 var META_QUERY = "_services._dns-sd._udp.local";
 var ANNOUNCE_DELAYS_MS = [0, 1e3, 2e3];
-function errMessage4(err) {
+function errMessage5(err) {
   return err instanceof Error && err.message ? err.message : String(err);
 }
 function encodeName(name) {
@@ -16068,7 +16181,7 @@ function createMdns({
         callback?.();
       });
     } catch (err) {
-      note(`mdns send failed: ${errMessage4(err)}`);
+      note(`mdns send failed: ${errMessage5(err)}`);
       callback?.();
     }
   }
@@ -16121,7 +16234,7 @@ function createMdns({
           send(encodeMessage({ id: 0, flags: FLAGS_RESPONSE, answers }), MDNS_PORT, MDNS_ADDR);
       }
     } catch (err) {
-      note(`mdns announce failed: ${errMessage4(err)}`);
+      note(`mdns announce failed: ${errMessage5(err)}`);
     }
   }
   function withdrawAndDie(reason) {
@@ -16215,7 +16328,7 @@ function createMdns({
         );
       }
     } catch (err) {
-      note(`mdns query handling error: ${errMessage4(err)}`);
+      note(`mdns query handling error: ${errMessage5(err)}`);
     }
   }
   function onBound() {
@@ -16374,7 +16487,7 @@ function createMdns({
       note(`mdns addresses updated (${ad.addresses.join(", ")})`);
       return true;
     } catch (err) {
-      note(`mdns address update failed: ${errMessage4(err)}`);
+      note(`mdns address update failed: ${errMessage5(err)}`);
       return false;
     }
   }

@@ -64,7 +64,7 @@ function newWindowArgv(calls) {
 
 test('newWindow: gateway env travels as tmux -e pairs, never in the pane command', async (t) => {
   const calls = stubTmux(t);
-  const { newWindow } = await import('../scripts/fleetd/spawn.mjs');
+  const { newWindow } = await import('../scripts/fleetd/spawn.ts');
 
   const argv = ['env', '-u', 'CLAUDECODE', 'FLEETDECK_PORT=4711', 'claude', '--session-id', 'sid'];
   await newWindow({
@@ -101,7 +101,7 @@ test('newWindow: gateway env travels as tmux -e pairs, never in the pane command
 
 test('newWindow: no env argument means no -e flags at all', async (t) => {
   const calls = stubTmux(t);
-  const { newWindow } = await import('../scripts/fleetd/spawn.mjs');
+  const { newWindow } = await import('../scripts/fleetd/spawn.ts');
 
   await newWindow({ port: 4711, callsign: 'heron-2', cwd: '/tmp', argv: ['claude'] });
 
@@ -112,7 +112,7 @@ test('newWindow: no env argument means no -e flags at all', async (t) => {
 
 test('newWindow: a value containing shell metacharacters stays one argv element', async (t) => {
   const calls = stubTmux(t);
-  const { newWindow } = await import('../scripts/fleetd/spawn.mjs');
+  const { newWindow } = await import('../scripts/fleetd/spawn.ts');
 
   // The canary lives in this test's own scratch dir: a fixed /tmp path could
   // exist from a prior run or another process and fail safe code. Assert it

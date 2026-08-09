@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { sanitizePaneText } from '../scripts/fleetd/spawn.mjs';
+import { sanitizePaneText } from '../scripts/fleetd/spawn.ts';
 
 // BRACKETED-PASTE BREAKOUT (CONTRACT): pasteText delivers mail with `-p`, so
 // tmux wraps the buffer in ESC[200~ … ESC[201~. Verbatim mail content carrying

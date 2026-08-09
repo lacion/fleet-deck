@@ -6,7 +6,7 @@ import path from 'node:path';
 import { openDb } from '../scripts/fleetd/db.ts';
 import { createStatements } from '../scripts/fleetd/statements.ts';
 import { claudeTranscriptPath, createCore } from '../scripts/fleetd/derive.mjs';
-import { capturePane, exactWindowTarget, pasteText, sendEnter, typeKeys } from '../scripts/fleetd/spawn.mjs';
+import { capturePane, exactWindowTarget, pasteText, sendEnter, typeKeys } from '../scripts/fleetd/spawn.ts';
 import { stallDiagnosticExcerpt } from '../scripts/fleetd/spawns.mjs';
 
 function setEnv(t, values) {

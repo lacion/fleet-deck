@@ -29,7 +29,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 // The separator the daemon actually ships — imported, never duplicated, so
 // these tests follow a future change instead of pinning a stale character.
-import { FIELD_SEP } from '../scripts/fleetd/spawn.mjs';
+import { FIELD_SEP } from '../scripts/fleetd/spawn.ts';
 
 function shippedSeparator() {
   assert.equal(typeof FIELD_SEP, 'string');

@@ -35,7 +35,7 @@ import {
   paneCurrentCommand,
   sendEnter,
   sessionName,
-} from '../scripts/fleetd/spawn.mjs';
+} from '../scripts/fleetd/spawn.ts';
 import { waitUntil } from './helpers/wait.mjs';
 
 function tmuxOk() {
