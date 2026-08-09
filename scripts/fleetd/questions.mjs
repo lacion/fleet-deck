@@ -167,7 +167,7 @@ function toolCallKey(toolName, toolInput) {
 export function createQuestions(db, {
   holdMs = DEFAULT_HOLD_MS,
   mail = () => {},
-  // The mailbox's own clamp (mail.mjs MAIL_MAX_LEN). Framed answers that exceed
+  // The mailbox's own clamp (mail.ts MAIL_MAX_LEN). Framed answers that exceed
   // it are REJECTED before settlement — see answerMailGuard below. Injectable
   // for tests; must mirror the real mailbox clamp in production (derive.mjs).
   mailMaxLen = 4000,

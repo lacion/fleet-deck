@@ -361,7 +361,7 @@ function build(db: SqliteHandle) {
     // BUDGET/occupancy check, NOT a claim: a claimed-but-unacked row still
     // occupies the mailbox until it is acked or its lease lapses, so the budget
     // MUST count it (composing BUG-034 with BUG-128 without letting the lease
-    // filter shrink the backpressure count — one arg, matching mail.mjs's call).
+    // filter shrink the backpressure count — one arg, matching mail.ts's call).
     pendingMailPage: db.prepare<MailRow>(`SELECT * FROM mail
       WHERE to_session = ? AND delivered_at IS NULL AND expired_at IS NULL
         AND (claimed_at IS NULL OR claimed_at <= ?)

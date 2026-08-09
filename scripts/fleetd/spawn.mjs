@@ -957,7 +957,7 @@ export async function killWindowVerified(name, opts) {
 
 /** Neutralize the BRACKETED-PASTE BREAKOUT before any owned-pane paste
  * (CONTRACT). pasteText delivers with `-p`, which wraps the buffer in tmux's
- * bracketed-paste markers ESC[200~ … ESC[201~. Mail delivery (mail.mjs) pipes
+ * bracketed-paste markers ESC[200~ … ESC[201~. Mail delivery (mail.ts) pipes
  * VERBATIM message content through pasteText, so content carrying a literal END
  * marker `\x1b[201~` would close the bracket EARLY inside the receiving Claude
  * TUI — everything after it is then processed as LIVE keystrokes, which the

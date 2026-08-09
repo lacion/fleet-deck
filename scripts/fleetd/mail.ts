@@ -1,10 +1,13 @@
-// mail.mjs — the mailbox (bounded, surrogate-safe), the /api/watch waiter
+// mail.ts — the mailbox (bounded, surrogate-safe), the /api/watch waiter
 // registry, and owned-pane delivery. One module owns "how does a message reach
 // a session": wake a live long-poll, type into a daemon-owned Claude pane, or
 // queue it for a turn boundary / future --resume. Threaded ctx state: q, tick,
 // logEvent, onMutate, the questions relay (watchInfo counts freeform), the tmux
 // adapter + findScopedWindow (owned-pane probe), db (the atomic claim), and the
 // PANE_MAIL_GRACE_MS knob.
+
+import type { Statements, MailRow } from './statements.ts';
+import type { SqliteHandle } from './sqlite.ts';
 
 // BUG 4: mail is pasted VERBATIM into a tmux paste-buffer, so it must stay
 // bounded — but the old 500-char clamp silently truncated real messages (it
@@ -28,7 +31,7 @@ export const MAIL_MAX_LEN = 4000;
 // `original_length` stays raw.length and truncation is still `raw.length >
 // MAIL_MAX_LEN` — only the STORED body loses the half-character (so a clamped
 // astral message stores MAIL_MAX_LEN-1 units, never a broken surrogate).
-function clampMail(raw) {
+function clampMail(raw: string): string {
   if (raw.length <= MAIL_MAX_LEN) return raw;
   return dropOrphanSurrogate(raw.slice(0, MAIL_MAX_LEN));
 }
@@ -37,9 +40,22 @@ function clampMail(raw) {
 // high surrogate at the cut — its low half was the very unit we dropped, so it
 // is guaranteed orphaned. Shear it so no clamp ever stores or pastes a broken
 // astral half-character. Both the text clamp and the `from` clamp go through it.
-function dropOrphanSurrogate(cut) {
+function dropOrphanSurrogate(cut: string): string {
   const last = cut.charCodeAt(cut.length - 1);
-  return (last >= 0xd800 && last <= 0xdbff) ? cut.slice(0, -1) : cut;
+  return last >= 0xd800 && last <= 0xdbff ? cut.slice(0, -1) : cut;
+}
+
+// A mail body arrives as `unknown` at the external POST boundary (postMail); the
+// three body consumers — the reserved-frame probe, the clamp, and the truncation
+// report — coerce it identically here. Faithful to the .mjs `String(text ?? '')`:
+// null/undefined -> '', a string passes through, any other value takes its
+// default stringification (an object becomes '[object Object]'). Centralized so
+// the probe and the stored/reported body never disagree on what the text is.
+function asText(value: unknown): string {
+  if (value == null) return '';
+  if (typeof value === 'string') return value;
+  // eslint-disable-next-line @typescript-eslint/no-base-to-string -- intentional String() coercion of untrusted input, matching the pre-migration .mjs behavior
+  return String(value);
 }
 
 // BUG 12: the `from`/`from_id` is embedded VERBATIM into the owned-pane paste
@@ -51,7 +67,7 @@ function dropOrphanSurrogate(cut) {
 // `text` no length is reported back: an over-long sender is malformed input,
 // not a message body whose truncated tail we owe the caller.
 const MAIL_FROM_MAX_LEN = 200;
-function clampFrom(from) {
+function clampFrom(from: string | null): string | null {
   if (typeof from !== 'string' || from.length <= MAIL_FROM_MAX_LEN) return from;
   return dropOrphanSurrogate(from.slice(0, MAIL_FROM_MAX_LEN));
 }
@@ -94,14 +110,14 @@ const RESERVED_SENDERS = new Set(['orchestrator', 'fleetdeck', 'fleetdeck-answer
 const RESERVED_FRAME_RE = /^[\s\x00-\x1f\x7f-\x9f]*\[FLEETDECK[ \]]/i;
 // BUG-032: Unicode format characters (general category Cf — zero-width spaces
 // and joiners, and EVERY bidi control: U+061C, U+200E/F, U+202A-E, U+2066-9)
-// are visually ignorable in a receiving pane, so "human​" renders as the
-// reserved `human` and "​[FLEETDECK ANSWER]" renders as a real authority
+// are visually ignorable in a receiving pane, so "human\u200b" renders as the
+// reserved `human` and "\u200b[FLEETDECK ANSWER]" renders as a real authority
 // frame while the exact-sender and leading-frame checks looked the other way.
 // Reject Cf in sender names outright, and strip Cf from the text BEFORE the
 // reserved-frame check so a zero-width character can't smuggle a frame past
-// at any offset — leading ("​[FLEETDECK ANSWER]") or interior
-// ("[FLEETDECK​ ANSWER]") alike.
-const stripFormatChars = (s) => s.replace(/\p{Cf}/gu, '');
+// at any offset — leading ("\u200b[FLEETDECK ANSWER]") or interior
+// ("[FLEETDECK\u200b ANSWER]") alike.
+const stripFormatChars = (s: string): string => s.replace(/\p{Cf}/gu, '');
 // BUG-036/BUG-063: delivery preserves linefeeds (watcher output is verbatim
 // and sanitizePaneText keeps \n), so a frame at the start of ANY logical line
 // — not just byte zero — renders as a genuine authority frame. Canonicalize
@@ -109,11 +125,11 @@ const stripFormatChars = (s) => s.replace(/\p{Cf}/gu, '');
 // unicode line/paragraph separators U+2028/U+2029 (BUG-063's multiline anchor
 // caught these; a CRLF-only split silently dropped them) — to LF, then test
 // the start of every line (on the Cf-stripped text, per BUG-032 above).
-function hasReservedFrame(text) {
-  return stripFormatChars(String(text))
+function hasReservedFrame(text: unknown): boolean {
+  return stripFormatChars(asText(text))
     .replace(/\r\n?|[\u2028\u2029]/g, '\n')
     .split('\n')
-    .some(line => RESERVED_FRAME_RE.test(line));
+    .some((line) => RESERVED_FRAME_RE.test(line));
 }
 // The pane envelope is a single line (`[FLEETDECK MAIL from <from>] <text>`):
 // a newline in `from` lets the text forge a line-two frame, and `from` is
@@ -124,15 +140,88 @@ function hasReservedFrame(text) {
 // are therefore as forbidden as controls. Control chars are already stripped
 // from pane-bound text by sanitizePaneText, but `from` rides inside the same
 // paste — refuse them at the door instead.
-// eslint-disable-next-line no-control-regex
+
 // BUG-032 adds \p{Cf} (format chars can smuggle a reserved sender name);
 // BUG-035 adds [ and ] (brackets become envelope syntax in the pane paste).
+// eslint-disable-next-line no-control-regex
 const FROM_UNSAFE_RE = /[\r\n\x00-\x1f\x7f-\x9f\p{Cf}[\]]/u;
 
-export function createMail(ctx) {
+// A nudge callback registered by an /api/watch long-poll. Fires on ANY mail
+// insert and on SessionEnd; carries no payload (the poll re-checks itself).
+type WatchWaiter = () => void;
+
+// The scoped tmux window derive.mjs's findScopedWindow resolves, and the pane
+// command spawn.mjs's adapter reports — typed structurally to exactly what this
+// module reads. Their owning modules are still .mjs (unchecked), so ctx is the
+// contract boundary.
+interface TmuxWindow {
+  window: string;
+  window_id: string;
+  pane_dead: boolean;
+}
+interface PaneCommand {
+  dead: boolean;
+  cmd: string;
+}
+interface TmuxAdapter {
+  paneCurrentCommand(target: string): Promise<PaneCommand | null>;
+  pasteText(target: string, text: string): Promise<boolean>;
+  sendEnter(target: string): Promise<boolean>;
+}
+// The questions relay surface watchInfo reads — only the pending freeform count.
+interface MailQuestions {
+  pendingOf(sid: string): { kind: string }[];
+}
+
+// The daemon assembles its module ctx with Object.assign (no shared Ctx type);
+// this is exactly the slice mail() closes over. Budget knobs are test-only
+// overrides (createCore threads them from opts) — production leaves them unset
+// and the module constants above rule.
+interface MailCtx {
+  db: SqliteHandle;
+  // The prepared-statement bundle only — createStatements returns
+  // { q, FIELDS, updateSession } and the daemon threads the nested `q` onto ctx
+  // (derive.mjs: `const { q } = createStatements(db)`), so this is Statements['q'],
+  // not the whole Statements object.
+  q: Statements['q'];
+  tick: (msg: string) => void;
+  logEvent: (sid: string, type: string, detail: unknown, msg: string) => void;
+  onMutate: () => void;
+  questions: MailQuestions;
+  tmuxAdapter: TmuxAdapter;
+  findScopedWindow: (name: string | null) => Promise<TmuxWindow | null | undefined>;
+  scopedPaneTarget: (win: TmuxWindow) => string;
+  PANE_MAIL_GRACE_MS: number;
+  MAIL_CLAIM_LEASE_MS: number;
+  MAIL_PENDING_MAX?: number;
+  MAIL_PENDING_MAX_BYTES?: number;
+  MAIL_PANE_BATCH?: number;
+  MAIL_PANE_BATCH_BYTES?: number;
+}
+
+// mail() returns EITHER a refusal (BUG-128 backpressure) OR a delivery receipt
+// (BUG 4 truncation report) — never both, but a single all-optional shape lets
+// callers read `.refused` uniformly without discriminating the union.
+interface MailResult {
+  refused?: boolean;
+  reason?: string;
+  truncated?: boolean;
+  original_length?: number;
+}
+
+export function createMail(ctx: MailCtx) {
   const {
-    db, q, tick, logEvent, onMutate, questions, tmuxAdapter,
-    findScopedWindow, scopedPaneTarget, PANE_MAIL_GRACE_MS, MAIL_CLAIM_LEASE_MS,
+    db,
+    q,
+    tick,
+    logEvent,
+    onMutate,
+    questions,
+    tmuxAdapter,
+    findScopedWindow,
+    scopedPaneTarget,
+    PANE_MAIL_GRACE_MS,
+    MAIL_CLAIM_LEASE_MS,
     // BUG-128: test-only budget overrides (createCore passes these through
     // from its opts); production never sets them, so the constants rule.
     MAIL_PENDING_MAX: PENDING_MAX = MAIL_PENDING_MAX,
@@ -165,13 +254,15 @@ export function createMail(ctx) {
   // mail, orchestrator routing, question relays — is bounded identically.
   // BUG-128: returns {refused, reason} instead when the pending budget below
   // would be exceeded — the row is never inserted.
-  function mail(toSession, from, text) {
-    const raw = String(text ?? '');
+  function mail(toSession: string, from: string | null, text: unknown): MailResult {
+    const raw = asText(text);
     // BUG-128: backpressure. Price the would-be insert against the pending
     // budget BEFORE writing — stats only, never a full mailbox scan. The sum
     // uses the CLAMPED length, i.e. what would actually be stored.
     const stored = clampMail(raw);
-    const stats = q.pendingMailStats.get(toSession);
+    // COUNT(*)/COALESCE always returns exactly one row; the ?? satisfies
+    // .get()'s `| undefined` and its branch is unreachable.
+    const stats = q.pendingMailStats.get(toSession) ?? { n: 0, bytes: 0 };
     if (stats.n >= PENDING_MAX || stats.bytes + stored.length > PENDING_MAX_BYTES) {
       return { refused: true, reason: 'mailbox full' };
     }
@@ -196,19 +287,21 @@ export function createMail(ctx) {
   // BUG-128: session_id -> the session's one pending grace timer. mail()
   // coalesces every insert onto a single probe, and tryOwnedPaneDelivery
   // re-arms it when a bounded batch left rows pending.
-  const paneMailTimers = new Map();
-  function armPaneMailTimer(sid) {
+  const paneMailTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  function armPaneMailTimer(sid: string): void {
     if (paneMailTimers.has(sid)) return;
     const timer = setTimeout(() => {
       paneMailTimers.delete(sid);
-      tryOwnedPaneDelivery(sid).catch(() => { /* fail-open; mail stays pending */ });
+      tryOwnedPaneDelivery(sid).catch(() => {
+        /* fail-open; mail stays pending */
+      });
     }, PANE_MAIL_GRACE_MS);
-    timer.unref?.();
+    timer.unref();
     paneMailTimers.set(sid, timer);
   }
   // Re-arm after a batch claim: a probe is presumably RUNNING (this is called
   // from inside it), so drop the stale handle and schedule the next round.
-  function rearmPaneMailTimer(sid) {
+  function rearmPaneMailTimer(sid: string): void {
     paneMailTimers.delete(sid);
     armPaneMailTimer(sid);
   }
@@ -222,7 +315,7 @@ export function createMail(ctx) {
   //     ack_mail_ids once it holds the body; an unacked poll re-delivers when
   //     the lease lapses instead of losing the mail to a mid-response close.
   // `id` now rides every drained item so ack surfaces can name the rows.
-  function drainMail(sid, { lease = false } = {}) {
+  function drainMail(sid: string, { lease = false }: { lease?: boolean } = {}) {
     const now = Date.now();
     const box = q.pendingMail.all(sid, now);
     if (lease) {
@@ -231,32 +324,36 @@ export function createMail(ctx) {
     } else {
       for (const m of box) q.markDelivered.run(now, m.id);
     }
-    return box.map(m => ({ id: m.id, from: m.from_id, text: m.text, at: m.at }));
+    return box.map((m) => ({ id: m.id, from: m.from_id, text: m.text, at: m.at }));
   }
 
   // Explicit acknowledgement for leased mail (watch claim, board /mail GET).
   // The statements guard on delivered_at IS NULL, so a late or double ack
   // settles silently instead of touching a row that already moved on.
-  function ackMail(ids) {
+  function ackMail(ids: unknown) {
     if (!Array.isArray(ids)) return { acked: 0 };
     const now = Date.now();
     let acked = 0;
-    for (const id of ids) if (Number.isSafeInteger(id)) acked += Number(q.ackMail.run(now, id).changes);
+    for (const id of ids) {
+      if (typeof id === 'number' && Number.isSafeInteger(id)) {
+        acked += Number(q.ackMail.run(now, id).changes);
+      }
+    }
     return { acked };
   }
 
   // resolve a /mail "to" target to session ids
-  function resolveTargets(to) {
+  function resolveTargets(to: string): string[] {
     const all = q.visibleSessions.all();
-    const active = all.filter(s => s.ended_at == null);
-    const fanout = active.filter(s => s.source !== 'shell');
-    if (to === 'all') return fanout.map(s => s.session_id);
-    const m = /^repo:(.+)$/.exec(String(to ?? ''));
+    const active = all.filter((s) => s.ended_at == null);
+    const fanout = active.filter((s) => s.source !== 'shell');
+    if (to === 'all') return fanout.map((s) => s.session_id);
+    const m = /^repo:(.+)$/.exec(to);
     if (m) {
       const key = m[1];
       return fanout
-        .filter(s => s.repo_id === key || s.repo_name === key)
-        .map(s => s.session_id);
+        .filter((s) => s.repo_id === key || s.repo_name === key)
+        .map((s) => s.session_id);
     }
     // Direct match: session_id or CURRENT callsign wins. Only when nothing
     // matches there do we fall back to prev_callsign — the birth name a rename
@@ -272,25 +369,26 @@ export function createMail(ctx) {
     // shell pane — typed mail into a shell EXECUTES. An assign naming a shell
     // therefore resolves to nothing ("no such session"), and postMail turns the
     // same miss into its loud 409 below.
-    const routable = all.filter(s => s.source !== 'shell');
-    const direct = routable.filter(s => s.session_id === to || s.callsign === to);
-    if (direct.length) return direct.map(s => s.session_id);
-    const anchored = routable.filter(s => s.prev_callsign === to);
-    if (anchored.length) return anchored.map(s => s.session_id);
+    const routable = all.filter((s) => s.source !== 'shell');
+    const direct = routable.filter((s) => s.session_id === to || s.callsign === to);
+    if (direct.length) return direct.map((s) => s.session_id);
+    const anchored = routable.filter((s) => s.prev_callsign === to);
+    if (anchored.length) return anchored.map((s) => s.session_id);
     // BUG-107: last fallback — the alias history. A name dropped by ANY
     // supported rename sequence (ticket → re-ticket → clear → re-ticket) still
     // routes to the card that wore it. Same priority discipline as the anchor
     // fallback: reached only when no current name or anchor claims the name,
     // so a reissued name binds to its present holder and never forks.
-    return q.aliasesMatch.all(to, to)
-      .filter(s => s.source !== 'shell')
-      .map(s => s.session_id);
+    return q.aliasesMatch
+      .all(to, to)
+      .filter((s) => s.source !== 'shell')
+      .map((s) => s.session_id);
   }
 
   // ---------------------------------------- F3d-2 /api/watch core surface
   // Consumed by http.mjs GET /api/watch (which documents the full response
   // contract) on behalf of scripts/fleet-watch.mjs, the asyncRewake watcher.
-  const watchWaiters = new Map(); // session_id -> Set<fn>
+  const watchWaiters = new Map<string, Set<WatchWaiter>>(); // session_id -> Set<fn>
 
   // BUG-105: per-session watcher generation. fleet-watch.mjs (single-flight,
   // NEWEST WINS) mints a random token per watcher and sends it as `wg` on
@@ -303,19 +401,23 @@ export function createMail(ctx) {
   // ownership before acting on any response, so a claim that slipped through
   // an old server's pre-generation code is never acted on (exit 0, not 2).
   // Read-only surfaces (watchInfo, hasWatchWaiter) stay untokened.
-  const watchGens = new Map(); // session_id -> current generation token
-  function registerWatchGen(sid, token) {
+  const watchGens = new Map<string, string>(); // session_id -> current generation token
+  function registerWatchGen(sid: string, token: unknown): boolean {
     if (typeof token !== 'string' || !token) return false;
     if (watchGens.get(sid) !== token) watchGens.set(sid, token);
     return true;
   }
-  function isWatchGen(sid, token) {
+  function isWatchGen(sid: string, token: unknown): boolean {
     return typeof token === 'string' && token !== '' && watchGens.get(sid) === token;
   }
 
-  function notifyWatchers(sid) {
+  function notifyWatchers(sid: string): void {
     for (const fn of [...(watchWaiters.get(sid) ?? [])]) {
-      try { fn(); } catch { /* a dead waiter must not break the notifier */ }
+      try {
+        fn();
+      } catch {
+        /* a dead waiter must not break the notifier */
+      }
     }
   }
 
@@ -323,22 +425,30 @@ export function createMail(ctx) {
   // unregister function. Callbacks fire on ANY mail insert (v1.1 mail-wake)
   // and SessionEnd; they carry NO payload — the poll re-runs its own
   // undelivered check.
-  function addWatchWaiter(sid, fn) {
-    if (!watchWaiters.has(sid)) watchWaiters.set(sid, new Set());
-    watchWaiters.get(sid).add(fn);
+  function addWatchWaiter(sid: string, fn: WatchWaiter): () => void {
+    let set = watchWaiters.get(sid);
+    if (!set) {
+      set = new Set();
+      watchWaiters.set(sid, set);
+    }
+    set.add(fn);
     return () => {
-      const set = watchWaiters.get(sid);
-      if (set) { set.delete(fn); if (!set.size) watchWaiters.delete(sid); }
+      const s = watchWaiters.get(sid);
+      if (s) {
+        s.delete(fn);
+        if (!s.size) watchWaiters.delete(sid);
+      }
     };
   }
 
-  function hasWatchWaiter(sid) {
+  function hasWatchWaiter(sid: string): boolean {
     return (watchWaiters.get(sid)?.size ?? 0) > 0;
   }
 
-  function ownedPaneRow(sid) {
+  function ownedPaneRow(sid: string) {
     const c = q.getSession.get(sid);
-    if (!c || c.source === 'shell' || c.ended_at != null || !['queued', 'idle'].includes(c.col)) return null;
+    if (!c || c.source === 'shell' || c.ended_at != null || !['queued', 'idle'].includes(c.col))
+      return null;
     const sp = q.spawnBySession.get(sid);
     if (!sp || !['spawning', 'stalled', 'live'].includes(sp.status)) return null;
     return { c, sp };
@@ -347,7 +457,10 @@ export function createMail(ctx) {
   // Cheap mode is used only by snapshots and is explicitly approximate: a
   // qualifying spawn row implies a potentially deliverable owned pane, but
   // /state never forks tmux merely to render mail metadata.
-  async function ownedPaneDeliverable(sid, { probe = true } = {}) {
+  async function ownedPaneDeliverable(
+    sid: string,
+    { probe = true }: { probe?: boolean } = {},
+  ): Promise<boolean> {
     const pair = ownedPaneRow(sid);
     if (!pair) return false;
     if (!probe) return true;
@@ -369,15 +482,19 @@ export function createMail(ctx) {
   // delivery round. Rows are oldest-first, so a batch boundary can only ever
   // leave a TAIL pending, never starve an old row. The +1 page row lets the
   // caller tell "empty after this" from "more waiting" without a count query.
-  function claimAllMail(sid) {
+  function claimAllMail(sid: string): { batch: MailRow[]; remaining: boolean } {
     db.exec('BEGIN IMMEDIATE');
     try {
       const now = Date.now();
       const page = q.pendingMailPage.all(sid, now, PANE_BATCH + 1);
-      const batch = [];
+      const batch: MailRow[] = [];
       let bytes = 0;
       for (const m of page) {
-        if (batch.length >= PANE_BATCH || (batch.length && bytes + m.text.length > PANE_BATCH_BYTES)) break;
+        if (
+          batch.length >= PANE_BATCH ||
+          (batch.length && bytes + m.text.length > PANE_BATCH_BYTES)
+        )
+          break;
         batch.push(m);
         bytes += m.text.length;
       }
@@ -386,16 +503,20 @@ export function createMail(ctx) {
       db.exec('COMMIT');
       return { batch, remaining: page.length > batch.length };
     } catch (err) {
-      try { db.exec('ROLLBACK'); } catch { /* preserve original error */ }
+      try {
+        db.exec('ROLLBACK');
+      } catch {
+        /* preserve original error */
+      }
       throw err;
     }
   }
 
-  async function tryOwnedPaneDelivery(sid) {
-    const pair = ownedPaneRow(sid);                         // session + spawn
-    if (!pair || hasWatchWaiter(sid)) return false;         // watcher priority
+  async function tryOwnedPaneDelivery(sid: string): Promise<boolean> {
+    const pair = ownedPaneRow(sid); // session + spawn
+    if (!pair || hasWatchWaiter(sid)) return false; // watcher priority
     const win = await findScopedWindow(pair.sp.tmux_window); // live scoped pane
-    if (win === null) return false;                         // UNKNOWN: leave mail queued
+    if (win === null) return false; // UNKNOWN: leave mail queued
     if (!win || win.pane_dead) return false;
     const target = scopedPaneTarget(win);
     const pane = await tmuxAdapter.paneCurrentCommand(target);
@@ -418,9 +539,10 @@ export function createMail(ctx) {
     // exactly one grace timer so the rest follows in later rounds (and a burst
     // still coalesces to one probe per batch instead of one per row).
     if (remaining) rearmPaneMailTimer(sid);
-    const text = box.map(m => `[FLEETDECK MAIL from ${m.from_id}] ${m.text}`).join('\n');
+    const text = box.map((m) => `[FLEETDECK MAIL from ${m.from_id}] ${m.text}`).join('\n');
     const pasted = await tmuxAdapter.pasteText(target, text);
-    if (!pasted) {                       // paste failed → redeliver at a later turn
+    if (!pasted) {
+      // paste failed → redeliver at a later turn
       for (const m of box) q.releaseClaim.run(m.id);
       onMutate();
       return false;
@@ -450,8 +572,12 @@ export function createMail(ctx) {
     if (!entered) {
       const now = Date.now();
       for (const m of box) q.ackMail.run(now, m.id); // pasted = side effect landed; never re-paste
-      logEvent(sid, 'MailPaneEnterFailed', null,
-        `pasted ${box.length} mail into ${pair.sp.tmux_window} but Enter failed — left un-entered, NOT requeued (text already in pane)`);
+      logEvent(
+        sid,
+        'MailPaneEnterFailed',
+        null,
+        `pasted ${box.length} mail into ${pair.sp.tmux_window ?? '?'} but Enter failed — left un-entered, NOT requeued (text already in pane)`,
+      );
       onMutate();
       return false;
     }
@@ -461,8 +587,15 @@ export function createMail(ctx) {
       const now = Date.now();
       for (const m of box) q.ackMail.run(now, m.id);
     }
-    tick(`✉ delivered ${box.length} mail to ${pair.c.callsign} (typed into pane)`);
-    logEvent(sid, 'MailPaneDelivery', null, `typed ${box.length} mail into ${pair.sp.tmux_window}`);
+    tick(
+      `✉ delivered ${box.length} mail to ${pair.c.callsign ?? pair.c.session_id} (typed into pane)`,
+    );
+    logEvent(
+      sid,
+      'MailPaneDelivery',
+      null,
+      `typed ${box.length} mail into ${pair.sp.tmux_window ?? '?'}`,
+    );
     onMutate();
     return true;
   }
@@ -484,7 +617,7 @@ export function createMail(ctx) {
   // BUG-105: when a generation token is supplied it must still be the current
   // generation at claim time (registerWatchGen runs first, synchronously, in
   // the same tick); a superseded watcher's in-flight poll claims nothing.
-  function claimMail(sid, gen = null) {
+  function claimMail(sid: string, gen: string | null = null) {
     if (gen !== null && !isWatchGen(sid, gen)) return null;
     const now = Date.now();
     const m = q.nextMail.get(sid, now);
@@ -494,7 +627,7 @@ export function createMail(ctx) {
     return { mail_id: m.id, at: m.at, from: m.from_id, text: m.text };
   }
 
-  function watchInfo(sid) {
+  function watchInfo(sid: string) {
     const c = q.getSession.get(sid);
     return {
       session_alive: !!c && c.ended_at == null,
@@ -504,11 +637,11 @@ export function createMail(ctx) {
       // permission/elicitation/choice answers ride their held hook response
       // and never become mail (a choice whose hold expired belongs to the
       // native terminal chooser permanently; a late board answer 409s).
-      pending: questions.pendingOf(sid).filter(r => r.kind === 'freeform').length,
+      pending: questions.pendingOf(sid).filter((r) => r.kind === 'freeform').length,
     };
   }
 
-  async function postMail({ to, from, text }) {
+  async function postMail({ to, from, text }: { to: string; from?: unknown; text?: unknown }) {
     // BUG-037: resolve the FINAL sender FIRST. The old flow validated the raw
     // input and defaulted LATER (`from || 'human'`), so an omitted/empty/zero/
     // false `from` sailed past the reserved check and was then stored — row and
@@ -520,17 +653,33 @@ export function createMail(ctx) {
     if (typeof sender !== 'string' || sender.length === 0) {
       return { status: 422, body: { ok: false, reason: 'sender name must be a non-empty string' } };
     }
-    // BUG-032: compare the Cf-stripped sender, so "human​" (zero-width space)
+    // BUG-032: compare the Cf-stripped sender, so "human\u200b" (zero-width space)
     // can't stand in for a reserved name. Cf characters are themselves refused
     // by FROM_UNSAFE_RE below; this catches the ones that would have mattered.
     if (RESERVED_SENDERS.has(stripFormatChars(sender).toLowerCase())) {
-      return { status: 422, body: { ok: false, reason: `sender name '${from}' is reserved for the daemon` } };
+      return {
+        status: 422,
+        body: { ok: false, reason: `sender name '${sender}' is reserved for the daemon` },
+      };
     }
     if (FROM_UNSAFE_RE.test(sender)) {
-      return { status: 422, body: { ok: false, reason: 'sender name may not contain control characters, newlines, or [ ] delimiters' } };
+      return {
+        status: 422,
+        body: {
+          ok: false,
+          reason: 'sender name may not contain control characters, newlines, or [ ] delimiters',
+        },
+      };
     }
     if (hasReservedFrame(text ?? '')) {
-      return { status: 422, body: { ok: false, reason: 'mail text may not open any line with a [FLEETDECK ...] frame — those are reserved for the daemon' } };
+      return {
+        status: 422,
+        body: {
+          ok: false,
+          reason:
+            'mail text may not open any line with a [FLEETDECK ...] frame — those are reserved for the daemon',
+        },
+      };
     }
     // A direct send whose name belongs to a shell card is refused LOUDLY (mail
     // typed into a shell executes). Same current-name-wins priority as
@@ -541,17 +690,20 @@ export function createMail(ctx) {
     // name resolves to is a shell; resolveTargets below independently refuses
     // to route to shells, so this is the human-facing message, not the wall.
     const everyone = q.visibleSessions.all();
-    const currentMatch = everyone.filter(s => s.session_id === to || s.callsign === to);
-    const anchoredMatch = currentMatch.length ? currentMatch : everyone.filter(s => s.prev_callsign === to);
+    const currentMatch = everyone.filter((s) => s.session_id === to || s.callsign === to);
+    const anchoredMatch = currentMatch.length
+      ? currentMatch
+      : everyone.filter((s) => s.prev_callsign === to);
     // Mirror resolveTargets' last fallback (BUG-107): an alias-history name
     // held only by shells is still a loud refusal, not a silent drop.
     const namedByTo = anchoredMatch.length ? anchoredMatch : q.aliasesMatch.all(to, to);
-    if (namedByTo.length && namedByTo.every(s => s.source === 'shell')) {
+    if (namedByTo.length && namedByTo.every((s) => s.source === 'shell')) {
+      const shellName = namedByTo[0]?.callsign ?? namedByTo[0]?.session_id ?? 'session';
       return {
         status: 409,
         body: {
           ok: false,
-          reason: `${namedByTo[0].callsign} is a shell pane — mail would be typed into a shell`,
+          reason: `${shellName} is a shell pane — mail would be typed into a shell`,
         },
       };
     }
@@ -560,17 +712,19 @@ export function createMail(ctx) {
     // live waiter wakes instantly ('watcher'), a verified owned Claude pane
     // gets typed into ('pane'); otherwise the mail is honestly queued for a
     // later turn ('turn-boundary') or a future --resume ('offline-queued').
-    const routes = await Promise.all(targets.map(async sid => {
-      if (hasWatchWaiter(sid)) return 'watcher';
-      if (await ownedPaneDeliverable(sid)) return 'pane';
-      return q.getSession.get(sid)?.ended_at != null ? 'offline-queued' : 'turn-boundary';
-    }));
+    const routes = await Promise.all(
+      targets.map(async (sid) => {
+        if (hasWatchWaiter(sid)) return 'watcher';
+        if (await ownedPaneDeliverable(sid)) return 'pane';
+        return q.getSession.get(sid)?.ended_at != null ? 'offline-queued' : 'turn-boundary';
+      }),
+    );
     // BUG-128: the per-mailbox pending budget can refuse an insert. That
     // refusal is loud, never silent: if EVERY fanout target refused, the send
     // 429s so the caller knows nothing landed; a partial fanout reports the
     // refused targets with route 'refused'.
-    const outcomes = targets.map(sid => mail(sid, sender, text));
-    const refusedAll = targets.length > 0 && outcomes.every(o => o.refused);
+    const outcomes = targets.map((sid) => mail(sid, sender, text));
+    const refusedAll = targets.length > 0 && outcomes.every((o) => o.refused);
     if (refusedAll) {
       return {
         status: 429,
@@ -589,24 +743,39 @@ export function createMail(ctx) {
     // body (this also stays honest when there are zero targets). http.mjs's
     // /mail handler passes this object through verbatim (json(res, 200, out)),
     // so the flag surfaces without any change there — see coordination note.
-    const raw = String(text ?? '');
+    const raw = asText(text);
     const truncated = raw.length > MAIL_MAX_LEN;
     return {
       ok: true,
-      delivered: outcomes.filter(o => !o.refused).length,
-      targets: targets.map((sid, i) => ({
-        session_id: sid,
-        callsign: q.getSession.get(sid)?.callsign ?? null,
-        route: outcomes[i].refused ? 'refused' : routes[i],
-      })),
-      ...(truncated ? { truncated: true, original_length: raw.length, max_length: MAIL_MAX_LEN } : {}),
+      delivered: outcomes.filter((o) => !o.refused).length,
+      targets: targets.map((sid, i) => {
+        const outcome = outcomes[i];
+        return {
+          session_id: sid,
+          callsign: q.getSession.get(sid)?.callsign ?? null,
+          route: outcome?.refused ? 'refused' : (routes[i] ?? 'turn-boundary'),
+        };
+      }),
+      ...(truncated
+        ? { truncated: true, original_length: raw.length, max_length: MAIL_MAX_LEN }
+        : {}),
     };
   }
 
   return {
-    mail, drainMail, ackMail, resolveTargets,
-    notifyWatchers, addWatchWaiter, hasWatchWaiter,
-    ownedPaneRow, ownedPaneDeliverable, tryOwnedPaneDelivery,
-    claimMail, watchInfo, postMail, registerWatchGen,
+    mail,
+    drainMail,
+    ackMail,
+    resolveTargets,
+    notifyWatchers,
+    addWatchWaiter,
+    hasWatchWaiter,
+    ownedPaneRow,
+    ownedPaneDeliverable,
+    tryOwnedPaneDelivery,
+    claimMail,
+    watchInfo,
+    postMail,
+    registerWatchGen,
   };
 }

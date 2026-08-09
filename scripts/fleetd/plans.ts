@@ -162,7 +162,7 @@ export function createPlans(ctx: PlansCtx) {
   // POST /api/plans/:id/assign {to, instructions?} — BUG-039. The board's
   // Assign control used to COMPOSE the [FLEETDECK ASSIGNMENT] frame client-side
   // and post it through POST /mail — where postMail 422s every reserved frame
-  // (mail.mjs RESERVED_FRAME_RE, 0.16.0), so Assign never queued a message and
+  // (mail.ts RESERVED_FRAME_RE, 0.16.0), so Assign never queued a message and
   // the plan was never marked executed. Only the daemon's internal mail() may
   // wear that frame, so the assignment is composed HERE: validate the plan and
   // target, insert the authorized frame through mail(), then record the

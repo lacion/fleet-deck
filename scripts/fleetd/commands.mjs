@@ -5,7 +5,7 @@
 
 import { parseCommand, validateNameSuffix } from './helpers.ts';
 import { normalizeTicket } from './tickets.ts';
-import { MAIL_MAX_LEN } from './mail.mjs';
+import { MAIL_MAX_LEN } from './mail.ts';
 
 export function createCommands(ctx) {
   const {

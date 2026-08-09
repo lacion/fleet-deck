@@ -19,7 +19,7 @@ import { createRepos } from './repos.mjs';
 import { createSettings } from './settings.mjs';
 import { createFiles } from './files.mjs';
 import { pasteImage } from './paste.ts';
-import { createMail, MAIL_MAX_LEN } from './mail.mjs';
+import { createMail, MAIL_MAX_LEN } from './mail.ts';
 import { createLedger } from './ledger.ts';
 import { createIngest } from './ingest.ts';
 import { createCommands } from './commands.mjs';
@@ -38,7 +38,7 @@ export {
 
 const CALLSIGNS = ['falcon', 'otter', 'raven', 'lynx', 'orca', 'wren', 'viper', 'heron', 'badger', 'comet', 'ember', 'drift'];
 // CONFLICT_WINDOW_MS lives in ledger.mjs now.
-// MAIL_MAX_LEN + clampMail (the surrogate-safe bound) live in mail.mjs now.
+// MAIL_MAX_LEN + clampMail (the surrogate-safe bound) live in mail.ts now.
 // EDIT_TOOLS + TEST_RUNNER_RE live in events.mjs now.
 
 // v1.2 env knobs (resolved once per core; tests spawn fresh daemons):
@@ -72,7 +72,7 @@ export function createCore(db, {
   // observability). '0.0.0' mirrors /health's standalone-install fallback.
   version = '0.0.0',
   // BUG-128: test-only overrides for the mail pending budget and pane batch
-  // bounds (mail.mjs defaults to its own constants when these are undefined).
+  // bounds (mail.ts defaults to its own constants when these are undefined).
   MAIL_PENDING_MAX, MAIL_PENDING_MAX_BYTES, MAIL_PANE_BATCH, MAIL_PANE_BATCH_BYTES,
 } = {}) {
   const t0 = Date.now();
@@ -253,7 +253,7 @@ export function createCore(db, {
     mail: (sid, from, text) => ctx.mail(sid, from, text),
     // BUG-137: the questions relay rejects framed answers that would exceed
     // the mailbox clamp (reject-before-settle instead of silent truncation).
-    // Threaded from mail.mjs so the two can never drift apart.
+    // Threaded from mail.ts so the two can never drift apart.
     mailMaxLen: MAIL_MAX_LEN,
     tick: msg => tick(msg),
     callsignOf: sid => q.getSession.get(sid)?.callsign ?? null,
@@ -759,7 +759,7 @@ export function createCore(db, {
     acquireWorktreePathLock,
   };
 
-  // Mail + /api/watch waiter registry + owned-pane delivery → mail.mjs.
+  // Mail + /api/watch waiter registry + owned-pane delivery → mail.ts.
   Object.assign(ctx, createMail(ctx));
   const {
     mail, drainMail, ackMail, resolveTargets, notifyWatchers, addWatchWaiter,

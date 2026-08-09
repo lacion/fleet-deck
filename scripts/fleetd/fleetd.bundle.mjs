@@ -4337,7 +4337,7 @@ function createQuestions(db2, {
   holdMs = DEFAULT_HOLD_MS,
   mail = () => {
   },
-  // The mailbox's own clamp (mail.mjs MAIL_MAX_LEN). Framed answers that exceed
+  // The mailbox's own clamp (mail.ts MAIL_MAX_LEN). Framed answers that exceed
   // it are REJECTED before settlement — see answerMailGuard below. Injectable
   // for tests; must mirror the real mailbox clamp in production (derive.mjs).
   mailMaxLen = 4e3,
@@ -6365,7 +6365,7 @@ function build(db2) {
     // BUDGET/occupancy check, NOT a claim: a claimed-but-unacked row still
     // occupies the mailbox until it is acked or its lease lapses, so the budget
     // MUST count it (composing BUG-034 with BUG-128 without letting the lease
-    // filter shrink the backpressure count — one arg, matching mail.mjs's call).
+    // filter shrink the backpressure count — one arg, matching mail.ts's call).
     pendingMailPage: db2.prepare(`SELECT * FROM mail
       WHERE to_session = ? AND delivered_at IS NULL AND expired_at IS NULL
         AND (claimed_at IS NULL OR claimed_at <= ?)
@@ -9191,7 +9191,7 @@ function pasteImage(ev) {
   return { status: 201, body: { ok: true, path: file, bytes: buf.length } };
 }
 
-// scripts/fleetd/mail.mjs
+// scripts/fleetd/mail.ts
 var MAIL_MAX_LEN = 4e3;
 function clampMail(raw) {
   if (raw.length <= MAIL_MAX_LEN) return raw;
@@ -9200,6 +9200,11 @@ function clampMail(raw) {
 function dropOrphanSurrogate(cut) {
   const last = cut.charCodeAt(cut.length - 1);
   return last >= 55296 && last <= 56319 ? cut.slice(0, -1) : cut;
+}
+function asText(value) {
+  if (value == null) return "";
+  if (typeof value === "string") return value;
+  return String(value);
 }
 var MAIL_FROM_MAX_LEN = 200;
 function clampFrom(from) {
@@ -9214,7 +9219,7 @@ var RESERVED_SENDERS = /* @__PURE__ */ new Set(["orchestrator", "fleetdeck", "fl
 var RESERVED_FRAME_RE = /^[\s\x00-\x1f\x7f-\x9f]*\[FLEETDECK[ \]]/i;
 var stripFormatChars = (s) => s.replace(/\p{Cf}/gu, "");
 function hasReservedFrame(text) {
-  return stripFormatChars(String(text)).replace(/\r\n?|[\u2028\u2029]/g, "\n").split("\n").some((line) => RESERVED_FRAME_RE.test(line));
+  return stripFormatChars(asText(text)).replace(/\r\n?|[\u2028\u2029]/g, "\n").split("\n").some((line) => RESERVED_FRAME_RE.test(line));
 }
 var FROM_UNSAFE_RE = /[\r\n\x00-\x1f\x7f-\x9f\p{Cf}[\]]/u;
 function createMail(ctx) {
@@ -9238,9 +9243,9 @@ function createMail(ctx) {
     MAIL_PANE_BATCH_BYTES: PANE_BATCH_BYTES = MAIL_PANE_BATCH_BYTES
   } = ctx;
   function mail(toSession, from, text) {
-    const raw = String(text ?? "");
+    const raw = asText(text);
     const stored = clampMail(raw);
-    const stats = q.pendingMailStats.get(toSession);
+    const stats = q.pendingMailStats.get(toSession) ?? { n: 0, bytes: 0 };
     if (stats.n >= PENDING_MAX || stats.bytes + stored.length > PENDING_MAX_BYTES) {
       return { refused: true, reason: "mailbox full" };
     }
@@ -9257,7 +9262,7 @@ function createMail(ctx) {
       tryOwnedPaneDelivery(sid).catch(() => {
       });
     }, PANE_MAIL_GRACE_MS);
-    timer.unref?.();
+    timer.unref();
     paneMailTimers.set(sid, timer);
   }
   function rearmPaneMailTimer(sid) {
@@ -9279,7 +9284,11 @@ function createMail(ctx) {
     if (!Array.isArray(ids)) return { acked: 0 };
     const now = Date.now();
     let acked = 0;
-    for (const id of ids) if (Number.isSafeInteger(id)) acked += Number(q.ackMail.run(now, id).changes);
+    for (const id of ids) {
+      if (typeof id === "number" && Number.isSafeInteger(id)) {
+        acked += Number(q.ackMail.run(now, id).changes);
+      }
+    }
     return { acked };
   }
   function resolveTargets(to) {
@@ -9287,7 +9296,7 @@ function createMail(ctx) {
     const active = all.filter((s) => s.ended_at == null);
     const fanout = active.filter((s) => s.source !== "shell");
     if (to === "all") return fanout.map((s) => s.session_id);
-    const m = /^repo:(.+)$/.exec(String(to ?? ""));
+    const m = /^repo:(.+)$/.exec(to);
     if (m) {
       const key = m[1];
       return fanout.filter((s) => s.repo_id === key || s.repo_name === key).map((s) => s.session_id);
@@ -9318,13 +9327,17 @@ function createMail(ctx) {
     }
   }
   function addWatchWaiter(sid, fn) {
-    if (!watchWaiters.has(sid)) watchWaiters.set(sid, /* @__PURE__ */ new Set());
-    watchWaiters.get(sid).add(fn);
+    let set = watchWaiters.get(sid);
+    if (!set) {
+      set = /* @__PURE__ */ new Set();
+      watchWaiters.set(sid, set);
+    }
+    set.add(fn);
     return () => {
-      const set = watchWaiters.get(sid);
-      if (set) {
-        set.delete(fn);
-        if (!set.size) watchWaiters.delete(sid);
+      const s = watchWaiters.get(sid);
+      if (s) {
+        s.delete(fn);
+        if (!s.size) watchWaiters.delete(sid);
       }
     };
   }
@@ -9333,7 +9346,8 @@ function createMail(ctx) {
   }
   function ownedPaneRow(sid) {
     const c = q.getSession.get(sid);
-    if (!c || c.source === "shell" || c.ended_at != null || !["queued", "idle"].includes(c.col)) return null;
+    if (!c || c.source === "shell" || c.ended_at != null || !["queued", "idle"].includes(c.col))
+      return null;
     const sp = q.spawnBySession.get(sid);
     if (!sp || !["spawning", "stalled", "live"].includes(sp.status)) return null;
     return { c, sp };
@@ -9356,7 +9370,8 @@ function createMail(ctx) {
       const batch = [];
       let bytes = 0;
       for (const m of page) {
-        if (batch.length >= PANE_BATCH || batch.length && bytes + m.text.length > PANE_BATCH_BYTES) break;
+        if (batch.length >= PANE_BATCH || batch.length && bytes + m.text.length > PANE_BATCH_BYTES)
+          break;
         batch.push(m);
         bytes += m.text.length;
       }
@@ -9407,7 +9422,7 @@ function createMail(ctx) {
         sid,
         "MailPaneEnterFailed",
         null,
-        `pasted ${box.length} mail into ${pair.sp.tmux_window} but Enter failed \u2014 left un-entered, NOT requeued (text already in pane)`
+        `pasted ${box.length} mail into ${pair.sp.tmux_window ?? "?"} but Enter failed \u2014 left un-entered, NOT requeued (text already in pane)`
       );
       onMutate();
       return false;
@@ -9416,8 +9431,15 @@ function createMail(ctx) {
       const now = Date.now();
       for (const m of box) q.ackMail.run(now, m.id);
     }
-    tick(`\u2709 delivered ${box.length} mail to ${pair.c.callsign} (typed into pane)`);
-    logEvent(sid, "MailPaneDelivery", null, `typed ${box.length} mail into ${pair.sp.tmux_window}`);
+    tick(
+      `\u2709 delivered ${box.length} mail to ${pair.c.callsign ?? pair.c.session_id} (typed into pane)`
+    );
+    logEvent(
+      sid,
+      "MailPaneDelivery",
+      null,
+      `typed ${box.length} mail into ${pair.sp.tmux_window ?? "?"}`
+    );
     onMutate();
     return true;
   }
@@ -9449,33 +9471,51 @@ function createMail(ctx) {
       return { status: 422, body: { ok: false, reason: "sender name must be a non-empty string" } };
     }
     if (RESERVED_SENDERS.has(stripFormatChars(sender).toLowerCase())) {
-      return { status: 422, body: { ok: false, reason: `sender name '${from}' is reserved for the daemon` } };
+      return {
+        status: 422,
+        body: { ok: false, reason: `sender name '${sender}' is reserved for the daemon` }
+      };
     }
     if (FROM_UNSAFE_RE.test(sender)) {
-      return { status: 422, body: { ok: false, reason: "sender name may not contain control characters, newlines, or [ ] delimiters" } };
+      return {
+        status: 422,
+        body: {
+          ok: false,
+          reason: "sender name may not contain control characters, newlines, or [ ] delimiters"
+        }
+      };
     }
     if (hasReservedFrame(text ?? "")) {
-      return { status: 422, body: { ok: false, reason: "mail text may not open any line with a [FLEETDECK ...] frame \u2014 those are reserved for the daemon" } };
+      return {
+        status: 422,
+        body: {
+          ok: false,
+          reason: "mail text may not open any line with a [FLEETDECK ...] frame \u2014 those are reserved for the daemon"
+        }
+      };
     }
     const everyone = q.visibleSessions.all();
     const currentMatch = everyone.filter((s) => s.session_id === to || s.callsign === to);
     const anchoredMatch = currentMatch.length ? currentMatch : everyone.filter((s) => s.prev_callsign === to);
     const namedByTo = anchoredMatch.length ? anchoredMatch : q.aliasesMatch.all(to, to);
     if (namedByTo.length && namedByTo.every((s) => s.source === "shell")) {
+      const shellName = namedByTo[0]?.callsign ?? namedByTo[0]?.session_id ?? "session";
       return {
         status: 409,
         body: {
           ok: false,
-          reason: `${namedByTo[0].callsign} is a shell pane \u2014 mail would be typed into a shell`
+          reason: `${shellName} is a shell pane \u2014 mail would be typed into a shell`
         }
       };
     }
     const targets = resolveTargets(to);
-    const routes = await Promise.all(targets.map(async (sid) => {
-      if (hasWatchWaiter(sid)) return "watcher";
-      if (await ownedPaneDeliverable(sid)) return "pane";
-      return q.getSession.get(sid)?.ended_at != null ? "offline-queued" : "turn-boundary";
-    }));
+    const routes = await Promise.all(
+      targets.map(async (sid) => {
+        if (hasWatchWaiter(sid)) return "watcher";
+        if (await ownedPaneDeliverable(sid)) return "pane";
+        return q.getSession.get(sid)?.ended_at != null ? "offline-queued" : "turn-boundary";
+      })
+    );
     const outcomes = targets.map((sid) => mail(sid, sender, text));
     const refusedAll = targets.length > 0 && outcomes.every((o) => o.refused);
     if (refusedAll) {
@@ -9491,16 +9531,19 @@ function createMail(ctx) {
     }
     tick(`\u2709 mail from ${sender} \u2192 ${to}`);
     onMutate();
-    const raw = String(text ?? "");
+    const raw = asText(text);
     const truncated = raw.length > MAIL_MAX_LEN;
     return {
       ok: true,
       delivered: outcomes.filter((o) => !o.refused).length,
-      targets: targets.map((sid, i) => ({
-        session_id: sid,
-        callsign: q.getSession.get(sid)?.callsign ?? null,
-        route: outcomes[i].refused ? "refused" : routes[i]
-      })),
+      targets: targets.map((sid, i) => {
+        const outcome = outcomes[i];
+        return {
+          session_id: sid,
+          callsign: q.getSession.get(sid)?.callsign ?? null,
+          route: outcome?.refused ? "refused" : routes[i] ?? "turn-boundary"
+        };
+      }),
       ...truncated ? { truncated: true, original_length: raw.length, max_length: MAIL_MAX_LEN } : {}
     };
   }
@@ -12758,7 +12801,7 @@ function createCore(db2, {
   // observability). '0.0.0' mirrors /health's standalone-install fallback.
   version: version2 = "0.0.0",
   // BUG-128: test-only overrides for the mail pending budget and pane batch
-  // bounds (mail.mjs defaults to its own constants when these are undefined).
+  // bounds (mail.ts defaults to its own constants when these are undefined).
   MAIL_PENDING_MAX: MAIL_PENDING_MAX2,
   MAIL_PENDING_MAX_BYTES: MAIL_PENDING_MAX_BYTES2,
   MAIL_PANE_BATCH: MAIL_PANE_BATCH2,
@@ -12831,7 +12874,7 @@ function createCore(db2, {
     mail: (sid, from, text) => ctx.mail(sid, from, text),
     // BUG-137: the questions relay rejects framed answers that would exceed
     // the mailbox clamp (reject-before-settle instead of silent truncation).
-    // Threaded from mail.mjs so the two can never drift apart.
+    // Threaded from mail.ts so the two can never drift apart.
     mailMaxLen: MAIL_MAX_LEN,
     tick: (msg) => tick(msg),
     callsignOf: (sid) => q.getSession.get(sid)?.callsign ?? null,

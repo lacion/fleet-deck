@@ -617,3 +617,46 @@ Format:
   (fleetd, fleet-sessionstart, check-release-gate's `WATCHED` closure list, the test) repointed to
   `./takeover.ts`. 15/15 (`takeover`) green vs source; the daemon bundle rebuilds with the `takeover.ts`
   banner and passes `node --check`.
+
+### scripts/fleetd/mail.ts — ctx.q is Statements['q'] not Statements, unknown mail body, unicode-in-comments   [NOISE]
+- **What:** the dominant friction (≈180 of ~190 lint errors, all one root cause): I first typed
+  `MailCtx.q: Statements`, but `Statements = ReturnType<typeof build>` is the whole
+  `{ q, FIELDS, updateSession }` bundle — the daemon threads only the nested prepared-statement map onto
+  ctx (`derive.mjs: const { q } = createStatements(db)`). So `q.pendingMailStats` etc. resolved to
+  `error`-typed non-existent members and every `.get()/.all()/.run()/.map()` cascaded into
+  `no-unsafe-*` + `restrict-plus-operands`. The rest were mechanical: (1) the external POST body reaches
+  `mail()`/`postMail()`/`hasReservedFrame()` as `unknown`, and the pre-migration `String(text ?? '')` trips
+  `no-base-to-string` (an object would stringify to `[object Object]`); (2) `ackMail(ids)` took `unknown`;
+  (3) `pendingMailStats.get()` is `{n,bytes} | undefined` under strict; (4) `noUncheckedIndexedAccess`
+  makes `outcomes[i]` / `routes[i]` / `namedByTo[0]` a `T | undefined`; (5) `timer.unref?.()` tripped
+  `no-unnecessary-condition` (`NodeJS.Timeout.unref` is non-optional); (6) three comments embedded a literal
+  U+200B (ZWSP) to illustrate the BUG-032 attack and the line-terminator regex carried literal
+  U+2028/U+2029 bytes — `no-irregular-whitespace` flags the ZWSPs; (7) a misplaced
+  `// eslint-disable-next-line no-control-regex` sat two comment lines above `FROM_UNSAFE_RE` (out of range),
+  so `no-control-regex` fired on the regex while the directive read as unused; (8) `array-type` wanted
+  `{ kind: string }[]` over `Array<{ kind: string }>`.
+- **Why it's noise:** the mailbox bounds (BUG-4/6/12/128), the sender/frame reservation (0.16.0 + BUG-032/
+  035/036/063), the expiring-lease claim (BUG-034), owned-pane delivery, and the fanout/route reporting are
+  byte-for-byte the original. Strict only wanted the ctx statement bundle named correctly, the untrusted
+  body narrowed, the caught/aggregate/index values proven, one dead optional-chain dropped, and the
+  attack-illustrating unicode written as escapes.
+- **Fix:** (1) `q: Statements['q']` — the single change that cleared the cascade; the COUNT satisfier
+  `q.pendingMailStats.get(toSession) ?? { n: 0, bytes: 0 }` then typechecks as `{n,bytes}` (aggregate always
+  returns one row, so the branch is dead). (2) new `asText(value: unknown): string` helper — `value == null`
+  → `''`, a `string` passes through, else a scoped `// eslint-disable-next-line no-base-to-string` guards a
+  faithful `String(value)`; the reserved-frame probe, the clamp, and the truncation report all route
+  through it so they never disagree on the body. (3) `ackMail`: `if (!Array.isArray(ids)) return {acked:0}`
+  then per-id `typeof id === 'number' && Number.isSafeInteger(id)` before `q.ackMail.run`. (4) captured
+  `const outcome = outcomes[i]` / `routes[i] ?? 'turn-boundary'` / `namedByTo[0]?.callsign ??
+  namedByTo[0]?.session_id ?? 'session'`. (5) `timer.unref()`. (6) restored `\u2028\u2029` escapes in the
+  line-terminator regex and rewrote the three ZWSP comments to spell `\u200b` (behavior identical — the
+  regexes match `\p{Cf}`, never a literal ZWSP). (7) moved the `no-control-regex` disable to directly above
+  `FROM_UNSAFE_RE`. (8) `{ kind: string }[]`. Also tightened `resolveTargets(to: string)` (dropped a
+  redundant `String(to ?? '')` — `RegExp.exec` ToString-coerces its arg anyway) and closed the pane-envelope
+  template nullish holes (`${pair.sp.tmux_window ?? '?'}`, `${pair.c.callsign ?? pair.c.session_id}`), and
+  fixed a reserved-sender message that interpolated `${from}` instead of the resolved `${sender}`. `db` typed
+  `SqliteHandle`; structural `TmuxWindow`/`PaneCommand`/`TmuxAdapter`/`MailQuestions`/`MailCtx`/`MailResult`
+  interfaces describe the ctx slice (owning modules are still `.mjs`, so ctx is the contract boundary). Two
+  importers (`commands.mjs`, `derive.mjs`) repointed to `./mail.ts`. 25/25 (mail-and-blocking,
+  mail-delivery-lease, mail-frames, smoke-mail-gate) green vs source; the daemon bundle rebuilds with the
+  `mail.ts` banner and passes `node --check`.
