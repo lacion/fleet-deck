@@ -1,4 +1,4 @@
-// env-scrub.mjs — the single source of truth for the Claude/agent session
+// env-scrub.ts — the single source of truth for the Claude/agent session
 // markers that must be stripped from a child process's environment before it
 // boots a fresh, unrelated Claude (or a tmux server that would bake them into
 // its global env). Two callers share this list:
@@ -10,10 +10,19 @@
 // tuning knobs) on top; only the markers common to both live here so they can
 // never drift out of sync again.
 export const CLAUDE_ENV_MARKERS = [
-  'CLAUDECODE', 'CLAUDE_CODE_SESSION_ID', 'CLAUDE_CODE_CHILD_SESSION',
-  'CLAUDE_CODE_BRIDGE_SESSION_ID', 'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_CODE_EXECPATH',
-  'CLAUDE_ENV_FILE', 'CLAUDE_PROJECT_DIR', 'CLAUDE_PLUGIN_ROOT', 'CLAUDE_PLUGIN_DATA',
-  'CLAUDE_EFFORT', 'AI_AGENT', 'CODEX_COMPANION_TRANSCRIPT_PATH',
+  'CLAUDECODE',
+  'CLAUDE_CODE_SESSION_ID',
+  'CLAUDE_CODE_CHILD_SESSION',
+  'CLAUDE_CODE_BRIDGE_SESSION_ID',
+  'CLAUDE_CODE_ENTRYPOINT',
+  'CLAUDE_CODE_EXECPATH',
+  'CLAUDE_ENV_FILE',
+  'CLAUDE_PROJECT_DIR',
+  'CLAUDE_PLUGIN_ROOT',
+  'CLAUDE_PLUGIN_DATA',
+  'CLAUDE_EFFORT',
+  'AI_AGENT',
+  'CODEX_COMPANION_TRANSCRIPT_PATH',
   'CODEX_COMPANION_SESSION_ID',
 ];
 
@@ -37,7 +46,9 @@ export const CLAUDE_ENV_MARKERS = [
 // ANTHROPIC_API_KEY as `x-api-key` — so a stale one of either kind is a live
 // credential leaking into a pane that did not ask for it.
 export const GATEWAY_ENV_VARS = [
-  'ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY',
+  'ANTHROPIC_BASE_URL',
+  'ANTHROPIC_AUTH_TOKEN',
+  'ANTHROPIC_API_KEY',
   'CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY',
 ];
 

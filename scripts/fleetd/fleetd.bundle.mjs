@@ -6860,7 +6860,7 @@ import path4 from "node:path";
 import fs4 from "node:fs";
 import os from "node:os";
 
-// scripts/fleetd/env-scrub.mjs
+// scripts/fleetd/env-scrub.ts
 var CLAUDE_ENV_MARKERS = [
   "CLAUDECODE",
   "CLAUDE_CODE_SESSION_ID",

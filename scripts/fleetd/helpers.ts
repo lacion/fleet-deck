@@ -6,7 +6,7 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
-import { CLAUDE_ENV_MARKERS, GATEWAY_ENV_VARS, SPAWN_ENV_VARS } from './env-scrub.mjs';
+import { CLAUDE_ENV_MARKERS, GATEWAY_ENV_VARS, SPAWN_ENV_VARS } from './env-scrub.ts';
 
 // v1.2 env knobs are resolved once per core via this reader; see the knob doc
 // in derive.mjs where each threshold is bound.

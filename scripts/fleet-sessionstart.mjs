@@ -23,7 +23,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CLAUDE_ENV_MARKERS, GATEWAY_ENV_VARS, SPAWN_ENV_VARS } from './fleetd/env-scrub.mjs';
+import { CLAUDE_ENV_MARKERS, GATEWAY_ENV_VARS, SPAWN_ENV_VARS } from './fleetd/env-scrub.ts';
 import { runNonce } from './fleetd/run-nonce.mjs';
 // Version-takeover contract, imported as SOURCE from the sibling fleetd/ dir
 // (same unbundled pattern as env-scrub.mjs above) so this hook can evict a
