@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, appendFil
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { decodeMessage } from '../scripts/fleetd/mdns.mjs';
+import { decodeMessage } from '../scripts/fleetd/mdns.ts';
 import { randomPort, spawnRaw } from './helpers/daemon.mjs';
 import { waitUntil as waitUntilBase } from './helpers/wait.mjs';
 

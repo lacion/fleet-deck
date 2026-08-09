@@ -11,13 +11,13 @@ const HTTP_URL = 'fleetdeck-test:fleetd-http';
 const OS_URL = 'fleetdeck-test:fleetd-os';
 
 export async function resolve(specifier, context, nextResolve) {
-  if (specifier === 'node:dgram' && context.parentURL?.endsWith('/scripts/fleetd/mdns.mjs')) {
+  if (specifier === 'node:dgram' && context.parentURL?.endsWith('/scripts/fleetd/mdns.ts')) {
     return { url: MOCK_URL, shortCircuit: true };
   }
   if (specifier === './http.mjs' && context.parentURL?.endsWith('/scripts/fleetd/fleetd.mjs')) {
     return { url: HTTP_URL, shortCircuit: true };
   }
-  if (specifier === 'node:os' && (context.parentURL?.endsWith('/scripts/fleetd/fleetd.mjs') || context.parentURL?.endsWith('/scripts/fleetd/mdns.mjs'))) {
+  if (specifier === 'node:os' && (context.parentURL?.endsWith('/scripts/fleetd/fleetd.mjs') || context.parentURL?.endsWith('/scripts/fleetd/mdns.ts'))) {
     return { url: OS_URL, shortCircuit: true };
   }
   return nextResolve(specifier, context);

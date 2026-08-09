@@ -1201,3 +1201,102 @@ lint rules that only fire now the file is type-linted (it was eslint-ignored as 
   (`derive.mjs:18`, `tests/repos.test.mjs:8` → `./repos.ts` / `../scripts/fleetd/repos.ts`). 36/36 green in
   `tests/repos.test.mjs` (incl. BUG-044 full-redaction-pass on worktree-add stderr). Daemon bundle rebuilds with
   the `// scripts/fleetd/repos.ts` banner (630.5kb) and passes `node --check`.
+
+### scripts/fleetd/mdns.mjs → mdns.ts  [NOISE + 2 genuine lint findings + 1 Write-hazard caught]
+
+A dependency-free mDNS (RFC 6762) + DNS-SD (RFC 6763) responder: a hand-rolled DNS wire codec over one udp4
+socket. All doctrine preserved verbatim — the "mDNS is a CONVENIENCE, never a dependency" degrade-safely contract
+(every failure logged once, module goes no-op, daemon untouched); the RFC choices block (§12 additionals, §10.2
+cache-flush only on records we own, §6.7 legacy unicast, §8.3 optimistic-announce with reactive §9 conflict
+handling); the per-interface scoped egress rationale (BUG-130/131 — a link advertises only its own A record). Two
+lint rules fire only now the file is type-linted (it was eslint-ignored as `.mjs`), plus the escape-byte Write
+hazard the migration has hit before.
+
+- **Escape/control-byte Write hazard — caught via `cat -v`, fixed with a raw perl edit.** `label()`'s two regex
+  literals — the DNS-label safety class `/[. -]/g` (strips dot/C0/DEL) and the truncated-multibyte
+  strip `/�+$/` — were authored with `\uXXXX` escapes, but the JSON tool-arg layer DECODED those escapes into
+  RAW control bytes (0x00, 0x1f, 0x7f) and the raw U+FFFD glyph inside the written file. Semantically identical to
+  the original (the char class is still dot + C0 range + DEL; the strip is still U+FFFD), so behaviour and tests
+  were unaffected — but raw control bytes in source are fragile (editors/diffs/terminals mangle them), which is
+  exactly why the original used escapes. Restored the escape form via `perl -i -pe` (raw Bash edits skip the
+  formatter, and hex-match the bytes without typing them). Verified `cat -v` clean and `grep -aP` finds no raw
+  C0/DEL/FFFD bytes remaining in either the source OR the regenerated bundle.
+- **`no-control-regex` — `label()`'s control-char class needs an explicit disable.** `/[. -]/g`
+  matches C0/DEL **on purpose** — that IS the gate that keeps control bytes off the DNS wire. As `.mjs` it was
+  never linted; under the TS ruleset it takes a `// eslint-disable-next-line no-control-regex -- …purpose` line,
+  the house pattern already in `settings.ts:44-46`, `exec.ts:260`, `mail.ts`, `repos.ts`. ESLint detects the
+  escape form too, so the disable stays "used". (The sibling `/�+$/` strip needs NO disable — U+FFFD is a
+  printable replacement glyph, not a control char.)
+- **`no-unnecessary-condition` (3x) — Set-based dedup one-liners were provably always-truthy.** `records.filter(r
+  => !seen.has(keyOf(r)) && seen.add(keyOf(r)))` (once in buildAnnouncement, twice in buildResponse) used
+  `Set.add()` returning the Set (always truthy) as the "keep" signal. TS proves the `&&` RHS is always truthy →
+  the short-circuit is dead code. Converted each to an explicit-predicate block (`const k = keyOf(r); if
+  (seen.has(k)) return false; seen.add(k); return true;`). Behaviourally identical, and the dedup key is now
+  computed ONCE per record instead of up to three times.
+- **`prefer-nullish-coalescing` — `ttlFor`'s `override === undefined ? DEFAULT_TTL[type] : override` IS `??`.**
+  `override` is `number | undefined`; the ternary is exactly `override ?? DEFAULT_TTL[type]`. Simplified. This is
+  also MORE correct than a `||` would have been: 0 is a legal TTL (a goodbye), and `??` preserves it where `||`
+  would swallow it back to the default.
+- **`setTTL?.` is load-bearing — `no-unnecessary-condition` disabled INLINE (survives prettier reflow).**
+  `@types/node` types `dgram.Socket.setTTL(ttl: number): number` as NON-OPTIONAL, so on the narrowed `sock:
+  Socket` TS proves `sock.setTTL?.` can never short-circuit → "unnecessary optional chain". But the injected test
+  socket (`inject.dgram`'s MockSocket) OMITS setTTL, and the `?.` lets it degrade instead of throwing — the seam
+  the mdns-dgram-loader tests drive. Kept with a disable. First attempt used `// eslint-disable-next-line`, but
+  prettier split the one-liner `try { sock.setTTL?.(255); } catch {…}` across lines, which detached the directive
+  from its target (it then pointed at `try {`) and `--report-unused-disable-directives` deleted it as unused.
+  Fixed by moving to an inline `// eslint-disable-line` on the `sock.setTTL?.(255);` statement itself, which
+  survives the reflow.
+- **`noUnusedParameters` — `ptrRecord`'s leading `ad` param, kept for builder symmetry, prefixed `_ad`.** A PTR
+  names the service type, not the host, so ptrRecord never reads `ad` — but the sibling builders
+  aRecords/srvRecord/txtRecord all take `ad` first and both call sites pass it positionally. eslint's
+  `no-unused-vars` default (`args:'after-used'`) does NOT flag a leading unused param (which is why eslint passed),
+  but tsc's `noUnusedParameters` flags ANY unused param regardless of position unless `_`-prefixed. Renamed to
+  `_ad` to keep the symmetric call shape.
+- **`sendRaw` callback signature simplified under strict typing.** The original forwarded the send error to its
+  optional callback (`callback?.(err)`); every caller (settled/done) is a zero-arg `() => void` that ignores it,
+  and in the catch path `err` is `unknown` (uncatchable-typed, not assignable to any error param). Narrowed the
+  callback to `() => void` and call `callback?.()` — the per-packet error is still logged via note(); only the
+  dead err-forwarding to a callback nobody reads was dropped.
+- **Dead-defensive removals (typed inputs).** `String(value ?? '')` → `(value ?? '')` in label();
+  `encodeTxt`'s `... || {}` guard dropped (param typed `string[] | Record<string,string>`); `normalize`'s
+  `...(options.txt || {})` → `...(options.txt ?? {})`. `addressInterfaces` dropped the legacy `|| entry.family
+  === 4` numeric branch — `os.NetworkInterfaceInfo.family` is typed `'IPv4' | 'IPv6'` (a string union), so the
+  numeric compare was statically dead; kept `entry.family === 'IPv4'`. (KEPT `String(options.port)` — port is
+  `number | string | undefined`, a real conversion — and the two `String(type)` fallbacks — type is number.)
+- **Kept `||` falsy-coalescing (per-line disables), NOT `??`.** `normalize`'s `options.host || …` / `options.instance
+  || 'Fleet Deck'` / `Number(options.port) || 0` (empty string / NaN / 0 must fall through); label()'s `text ||
+  fallback` and `bytes.toString() || fallback` (an empty label must fall back); `encodeMessage`'s `q.class ||
+  CLASS_IN` (class 0 = unspecified → IN); `encodeRecord`'s `Number(record.ttl) || 0` (NaN guard); the
+  `TYPE_NAME[type] || String(type)` fallbacks. Each is deliberate `''`/NaN/0→default coalescing that `??` would
+  silently change.
+- **`noUncheckedIndexedAccess` on buffer/array indices throughout the codec.** `decodeName`: `const len =
+  buf[pos]; if (len === undefined) throw new RangeError(…)` (replacing the old bounds-check-then-index), and the
+  compression pointer's `const next = buf[pos + 1]; if (next === undefined) throw…`. `decodeRecords`' TXT loop:
+  `const len = buf[p] ?? 0`. `parseQuestions`/`decodeRecords`/`decodeMessage` use `let decoded: { name: string;
+  offset: number }` for the try/catch-assign of `decodeName`. All `readUIntBE`/`toString` calls stay range-guarded
+  before use.
+- **`useUnknownInCatchVariables` — `errMessage(err: unknown): string` module helper.** `err instanceof Error &&
+  err.message ? err.message : String(err)` — used in sendRaw/announce/onMessage/update catch clauses (the same
+  helper shape as settings.ts/repos.ts). `die()` inlines the `err instanceof Error && err.message` check to build
+  its `: <detail>` suffix.
+- **Closure-mutated `socket: Socket | null` → capture-after-guard.** `socket` is reassigned across the responder's
+  life (start/die/stop), so TS narrowing evaporates after any intervening call. Every consumer captures `const
+  sock = socket; if (!sock) return;` before use (sendRaw/sendMulticastAll/onBound/withdrawAndDie/update/stop),
+  matching the pattern used for other closure-mutated lets in the migration. `alive()` returns `started && !dead
+  && socket !== null`.
+- **Typedefs added (no runtime effect):** wire-model interfaces (SrvData/DnsRecord/Question/OutQuestion/DnsHeader/
+  DecodedMessage/EncodeMessageInput/AdService/Advertisement) and the responder surface
+  (MdnsOptions/CreateMdnsOptions/MdnsResponder); `RecordData` union covers every rdata shape the codec
+  emits/parses. `TYPE` stays a plain object literal (no index signature) so `.A`/`.ANY` dot-access is legal under
+  noPropertyAccessFromIndexSignature; `TYPE_NAME: Record<number,string>` is built via `Object.fromEntries(Object.
+  entries(TYPE).map(([k,v]): [number,string] => [v,k]))` with the tuple return annotated to defeat array-vs-tuple
+  inference; `typeNumber` reads `(TYPE as Record<string, number|undefined>)[type.toUpperCase()]` and throws on
+  undefined. `import type { RemoteInfo, Socket }` alongside the default `dgram` import.
+- **Verify:** `eslint mdns.ts` clean (0). `tsc --noEmit` clean project-wide (0). 4 importers repointed
+  (`scripts/fleetd/fleetd.mjs:22` → `./mdns.ts`; `tests/mdns.test.mjs:36` and `tests/fleetd-audit-regressions.test.mjs:7`
+  → `../scripts/fleetd/mdns.ts`; loader `tests/helpers/mdns-dgram-loader.mjs:14` & `:20` `.mjs → .ts`;
+  `tests/lan-mdns-state.test.mjs` does NOT import mdns → untouched). 53/55 green across mdns.test.mjs +
+  fleetd-audit-regressions.test.mjs + lan-mdns-state.test.mjs — the 2 SKIP are the tests' OWN WSL2
+  multicast-loopback guards ("cannot observe probes on this host"), identical to the `.mjs` run; **# fail 0**.
+  Daemon bundle rebuilds with the `// scripts/fleetd/mdns.ts` banner (631.9kb), passes `node --check`, and carries
+  no raw control/FFFD bytes.

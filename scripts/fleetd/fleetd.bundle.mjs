@@ -15496,12 +15496,14 @@ function startAgentsPoll(core2) {
   };
 }
 
-// scripts/fleetd/mdns.mjs
+// scripts/fleetd/mdns.ts
 import dgram from "node:dgram";
 var MDNS_ADDR = "224.0.0.251";
 var MDNS_PORT = 5353;
 var TYPE = { A: 1, PTR: 12, TXT: 16, AAAA: 28, SRV: 33, ANY: 255 };
-var TYPE_NAME = Object.fromEntries(Object.entries(TYPE).map(([k, v]) => [v, k]));
+var TYPE_NAME = Object.fromEntries(
+  Object.entries(TYPE).map(([k, v]) => [v, k])
+);
 var CLASS_IN = 1;
 var CLASS_ANY = 255;
 var FLUSH_BIT = 32768;
@@ -15513,8 +15515,11 @@ var LEGACY_TTL = 10;
 var SERVICE_TYPES = ["_fleetdeck._tcp.local", "_http._tcp.local"];
 var META_QUERY = "_services._dns-sd._udp.local";
 var ANNOUNCE_DELAYS_MS = [0, 1e3, 2e3];
+function errMessage3(err) {
+  return err instanceof Error && err.message ? err.message : String(err);
+}
 function encodeName(name) {
-  const labels = String(name).replace(/\.$/, "").split(".").filter(Boolean);
+  const labels = name.replace(/\.$/, "").split(".").filter(Boolean);
   const parts = [];
   for (const label2 of labels) {
     const bytes = Buffer.from(label2, "utf8");
@@ -15531,16 +15536,17 @@ function decodeName(buf, offset = 0) {
   let jumped = false;
   let hops = 0;
   for (; ; ) {
-    if (pos >= buf.length) throw new RangeError("mdns: name runs past end of packet");
     const len = buf[pos];
+    if (len === void 0) throw new RangeError("mdns: name runs past end of packet");
     if (len === 0) {
       pos += 1;
       if (!jumped) end = pos;
       break;
     }
     if ((len & 192) === 192) {
-      if (pos + 1 >= buf.length) throw new RangeError("mdns: truncated compression pointer");
-      const target = (len & 63) << 8 | buf[pos + 1];
+      const next = buf[pos + 1];
+      if (next === void 0) throw new RangeError("mdns: truncated compression pointer");
+      const target = (len & 63) << 8 | next;
       if (!jumped) {
         end = pos + 2;
         jumped = true;
@@ -15560,19 +15566,19 @@ function decodeName(buf, offset = 0) {
 }
 function typeNumber(type) {
   if (typeof type === "number") return type;
-  const n = TYPE[String(type).toUpperCase()];
-  if (!n) throw new TypeError(`mdns: unknown record type ${type}`);
+  const n = TYPE[type.toUpperCase()];
+  if (n === void 0) throw new TypeError(`mdns: unknown record type ${type}`);
   return n;
 }
 function encodeIPv4(address) {
-  const octets = String(address).split(".").map(Number);
+  const octets = address.split(".").map(Number);
   if (octets.length !== 4 || octets.some((o) => !Number.isInteger(o) || o < 0 || o > 255)) {
     throw new TypeError(`mdns: not an IPv4 address: ${address}`);
   }
   return Buffer.from(octets);
 }
 function encodeTxt(data) {
-  const strings = Array.isArray(data) ? data.map(String) : Object.entries(data || {}).map(([k, v]) => `${k}=${v}`);
+  const strings = Array.isArray(data) ? data : Object.entries(data).map(([k, v]) => `${k}=${v}`);
   if (!strings.length) return Buffer.from([0]);
   const parts = [];
   for (const s of strings) {
@@ -15590,11 +15596,12 @@ function encodeRdata(type, data) {
     case TYPE.TXT:
       return encodeTxt(data);
     case TYPE.SRV: {
+      const srv = data;
       const head = Buffer.alloc(6);
-      head.writeUInt16BE(data.priority ?? 0, 0);
-      head.writeUInt16BE(data.weight ?? 0, 2);
-      head.writeUInt16BE(data.port ?? 0, 4);
-      return Buffer.concat([head, encodeName(data.target)]);
+      head.writeUInt16BE(srv.priority, 0);
+      head.writeUInt16BE(srv.weight, 2);
+      head.writeUInt16BE(srv.port, 4);
+      return Buffer.concat([head, encodeName(srv.target)]);
     }
     default:
       throw new TypeError(`mdns: cannot encode rdata for type ${type}`);
@@ -15613,7 +15620,7 @@ function encodeRecord(record) {
   return Buffer.concat([name, head, rdlength, rdata]);
 }
 function parseHeader(buf) {
-  if (!Buffer.isBuffer(buf) || buf.length < 12) return null;
+  if (buf.length < 12) return null;
   return {
     id: buf.readUInt16BE(0),
     flags: buf.readUInt16BE(2),
@@ -15643,6 +15650,7 @@ function parseQuestions(buf) {
     questions.push({
       name: decoded.name,
       type,
+      // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- an empty type name (never emitted) would still want the numeric fallback
       typeName: TYPE_NAME[type] || String(type),
       class: qclass & ~QU_BIT,
       unicast: (qclass & QU_BIT) !== 0
@@ -15650,7 +15658,14 @@ function parseQuestions(buf) {
   }
   return questions;
 }
-function encodeMessage({ id = 0, flags = FLAGS_RESPONSE, questions = [], answers = [], authorities = [], additionals = [] } = {}) {
+function encodeMessage({
+  id = 0,
+  flags = FLAGS_RESPONSE,
+  questions = [],
+  answers = [],
+  authorities = [],
+  additionals = []
+} = {}) {
   const header = Buffer.alloc(12);
   header.writeUInt16BE(id & 65535, 0);
   header.writeUInt16BE(flags & 65535, 2);
@@ -15665,7 +15680,8 @@ function encodeMessage({ id = 0, flags = FLAGS_RESPONSE, questions = [], answers
     tail.writeUInt16BE((q.class || CLASS_IN) | (q.unicast ? QU_BIT : 0), 2);
     parts.push(encodeName(q.name), tail);
   }
-  for (const record of [...answers, ...authorities, ...additionals]) parts.push(encodeRecord(record));
+  for (const record of [...answers, ...authorities, ...additionals])
+    parts.push(encodeRecord(record));
   return Buffer.concat(parts);
 }
 function decodeRecords(buf, offset, count) {
@@ -15706,7 +15722,7 @@ function decodeRecords(buf, offset, count) {
         case TYPE.TXT: {
           const strings = [];
           for (let p = pos; p < pos + rdlength; ) {
-            const len = buf[p];
+            const len = buf[p] ?? 0;
             strings.push(buf.toString("utf8", p + 1, p + 1 + len));
             p += 1 + len;
           }
@@ -15722,6 +15738,7 @@ function decodeRecords(buf, offset, count) {
     records.push({
       name: decoded.name,
       type,
+      // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- an empty type name (never emitted) would still want the numeric fallback
       typeName: TYPE_NAME[type] || String(type),
       class: rclass & ~FLUSH_BIT,
       flush: (rclass & FLUSH_BIT) !== 0,
@@ -15760,11 +15777,11 @@ function decodeMessage(buf) {
 }
 var IPV4 = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
 function isIPv4(address) {
-  if (!IPV4.test(String(address))) return false;
-  return String(address).split(".").every((o) => Number(o) <= 255);
+  if (!IPV4.test(address)) return false;
+  return address.split(".").every((o) => Number(o) <= 255);
 }
 function label(value, fallback) {
-  const text = String(value ?? "").replace(/[.\u0000-\u001f\u007f]/g, "-").trim();
+  const text = (value ?? "").replace(/[.\u0000-\u001f\u007f]/g, "-").trim();
   const bytes = Buffer.from(text || fallback, "utf8").subarray(0, 63);
   return bytes.toString("utf8").replace(/\ufffd+$/, "") || fallback;
 }
@@ -15776,12 +15793,12 @@ function normalize(options = {}) {
   const instance = label(options.instance || "Fleet Deck", "Fleet Deck");
   const port = Number(options.port) || 0;
   const addresses = (Array.isArray(options.addresses) ? options.addresses : []).filter(isIPv4);
-  const txt = { path: "/", board: "fleetdeck", ...options.txt || {} };
+  const txt = { path: "/", board: "fleetdeck", ...options.txt ?? {} };
   const services = SERVICE_TYPES.map((type) => ({ type, name: `${instance}.${type}` }));
   return { host, instance, port, addresses, txt, services };
 }
 function ttlFor(type, override) {
-  return override === void 0 ? DEFAULT_TTL[type] : override;
+  return override ?? DEFAULT_TTL[type];
 }
 function aRecords(ad, ttl, flush) {
   return ad.addresses.map((address) => ({
@@ -15792,8 +15809,14 @@ function aRecords(ad, ttl, flush) {
     data: address
   }));
 }
-function ptrRecord(ad, service, ttl) {
-  return { name: service.type, type: "PTR", ttl: ttlFor("PTR", ttl), flush: false, data: service.name };
+function ptrRecord(_ad, service, ttl) {
+  return {
+    name: service.type,
+    type: "PTR",
+    ttl: ttlFor("PTR", ttl),
+    flush: false,
+    data: service.name
+  };
 }
 function srvRecord(ad, service, ttl, flush) {
   return {
@@ -15817,29 +15840,35 @@ function metaRecords(ad, ttl) {
   }));
 }
 function keyOf(record) {
-  return `${String(record.name).toLowerCase()}|${typeNumber(record.type)}|${JSON.stringify(record.data)}`;
+  return `${record.name.toLowerCase()}|${typeNumber(record.type)}|${JSON.stringify(record.data)}`;
 }
 function buildAnnouncement(options = {}, { ttl } = {}) {
   const ad = normalize(options);
   const flush = ttl !== 0;
-  const records = [
-    ...aRecords(ad, ttl, flush),
-    ...metaRecords(ad, ttl)
-  ];
+  const records = [...aRecords(ad, ttl, flush), ...metaRecords(ad, ttl)];
   for (const service of ad.services) {
-    records.push(ptrRecord(ad, service, ttl), srvRecord(ad, service, ttl, flush), txtRecord(ad, service, ttl, flush));
+    records.push(
+      ptrRecord(ad, service, ttl),
+      srvRecord(ad, service, ttl, flush),
+      txtRecord(ad, service, ttl, flush)
+    );
   }
   const seen = /* @__PURE__ */ new Set();
-  return records.filter((r) => !seen.has(keyOf(r)) && seen.add(keyOf(r)));
+  return records.filter((r) => {
+    const k = keyOf(r);
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
 }
 function buildResponse(questions, options = {}, { ttl, flush = true } = {}) {
   const ad = normalize(options);
   const answers = [];
   const additionals = [];
   const wants = (q, type) => q.type === TYPE.ANY || q.type === TYPE[type];
-  for (const q of Array.isArray(questions) ? questions : []) {
+  for (const q of questions) {
     if (q.class && q.class !== CLASS_IN && q.class !== CLASS_ANY) continue;
-    const qname = String(q.name || "").replace(/\.$/, "").toLowerCase();
+    const qname = q.name.replace(/\.$/, "").toLowerCase();
     if (qname === ad.host.toLowerCase() && wants(q, "A")) {
       answers.push(...aRecords(ad, ttl, flush));
     }
@@ -15865,18 +15894,35 @@ function buildResponse(questions, options = {}, { ttl, flush = true } = {}) {
     }
   }
   const answerKeys = /* @__PURE__ */ new Set();
-  const dedupedAnswers = answers.filter((r) => !answerKeys.has(keyOf(r)) && answerKeys.add(keyOf(r)));
+  const dedupedAnswers = answers.filter((r) => {
+    const k = keyOf(r);
+    if (answerKeys.has(k)) return false;
+    answerKeys.add(k);
+    return true;
+  });
   const extraKeys = /* @__PURE__ */ new Set();
-  const dedupedAdditionals = additionals.filter((r) => !answerKeys.has(keyOf(r)) && !extraKeys.has(keyOf(r)) && extraKeys.add(keyOf(r)));
+  const dedupedAdditionals = additionals.filter((r) => {
+    const k = keyOf(r);
+    if (answerKeys.has(k) || extraKeys.has(k)) return false;
+    extraKeys.add(k);
+    return true;
+  });
   return { answers: dedupedAnswers, additionals: dedupedAdditionals };
 }
 function buildProbeQuestions(options = {}) {
   const ad = normalize(options);
   const questions = [
     { name: ad.host, type: TYPE.A, class: CLASS_IN, unicast: true },
-    ...ad.services.map((service) => ({ name: service.name, type: TYPE.SRV, class: CLASS_IN, unicast: true }))
+    ...ad.services.map((service) => ({
+      name: service.name,
+      type: TYPE.SRV,
+      class: CLASS_IN,
+      unicast: true
+    }))
   ];
-  const authorities = buildAnnouncement(options, { ttl: 0 }).filter((record) => record.type === "A" || record.type === "SRV");
+  const authorities = buildAnnouncement(options, { ttl: 0 }).filter(
+    (record) => record.type === "A" || record.type === "SRV"
+  );
   return { questions, authorities };
 }
 function uniqueConflict(msg, options = {}, { phase } = {}) {
@@ -15886,16 +15932,20 @@ function uniqueConflict(msg, options = {}, { phase } = {}) {
   const own = /* @__PURE__ */ new Map();
   for (const record of buildAnnouncement(options)) {
     if (record.type === "A" || record.type === "SRV") {
-      const k = `${String(record.name).toLowerCase()}|${typeNumber(record.type)}`;
-      if (!own.has(k)) own.set(k, /* @__PURE__ */ new Set());
-      own.get(k).add(keyOf(record));
+      const k = `${record.name.toLowerCase()}|${typeNumber(record.type)}`;
+      let set = own.get(k);
+      if (!set) {
+        set = /* @__PURE__ */ new Set();
+        own.set(k, set);
+      }
+      set.add(keyOf(record));
     }
   }
   const decoded = decodeMessage(msg);
   if (!decoded) return false;
   for (const record of [...decoded.answers, ...decoded.additionals]) {
     if (record.ttl === 0) continue;
-    const keys = own.get(`${String(record.name).toLowerCase()}|${record.type}`);
+    const keys = own.get(`${record.name.toLowerCase()}|${record.type}`);
     if (keys && !keys.has(keyOf(record))) return true;
   }
   if (phase === "probing") {
@@ -15906,7 +15956,7 @@ function uniqueConflict(msg, options = {}, { phase } = {}) {
     const theyWin = !equalSet && decoded.authorities.length > 0 && (decoded.authorities.length > ours.length || decoded.authorities.length === ours.length && [...theirsKeys].sort().join("") > [...oursKeys].sort().join(""));
     if (theyWin) {
       for (const q of decoded.questions) {
-        const name = String(q.name || "").replace(/\.$/, "").toLowerCase();
+        const name = q.name.replace(/\.$/, "").toLowerCase();
         const names = q.type === TYPE.A || q.type === TYPE.ANY ? hosts : services;
         if (names.has(name)) return true;
       }
@@ -15914,10 +15964,19 @@ function uniqueConflict(msg, options = {}, { phase } = {}) {
   }
   return false;
 }
-function createMdns({ port, name = "fleetdeck", instance = "Fleet Deck", addresses = [], txt, log = () => {
-}, onDown = null, inject } = {}) {
+function createMdns({
+  port,
+  name = "fleetdeck",
+  instance = "Fleet Deck",
+  addresses = [],
+  txt,
+  log = () => {
+  },
+  onDown = null,
+  inject
+} = {}) {
   const options = { port, name, instance, addresses, txt };
-  const dgramImpl = inject?.dgram || dgram;
+  const dgramImpl = inject?.dgram ?? dgram;
   let ad = normalize(options);
   const note = (message) => {
     try {
@@ -15932,10 +15991,13 @@ function createMdns({ port, name = "fleetdeck", instance = "Fleet Deck", address
   let stopped = false;
   let joinedIfaces = [];
   const timers = /* @__PURE__ */ new Set();
+  let claimed = false;
+  let socket = null;
   function die(reason, err) {
     if (dead) return;
     dead = true;
-    note(`mdns disabled (${reason})${err && err.message ? `: ${err.message}` : ""} \u2014 the board still works over its IP`);
+    const detail = err instanceof Error && err.message ? `: ${err.message}` : "";
+    note(`mdns disabled (${reason})${detail} \u2014 the board still works over its IP`);
     for (const t of timers) clearTimeout(t);
     timers.clear();
     const doomed = socket;
@@ -15953,14 +16015,16 @@ function createMdns({ port, name = "fleetdeck", instance = "Fleet Deck", address
   }
   function sendRaw(packet, targetPort, targetAddress, callback) {
     if (!socket || dead) return;
+    const sock = socket;
     try {
-      socket.send(packet, targetPort, targetAddress, (err) => {
-        if (err && err.code !== "ENETUNREACH" && err.code !== "EHOSTUNREACH") note(`mdns send failed: ${err.message}`);
-        callback?.(err);
+      sock.send(packet, targetPort, targetAddress, (err) => {
+        if (err && err.code !== "ENETUNREACH" && err.code !== "EHOSTUNREACH")
+          note(`mdns send failed: ${err.message}`);
+        callback?.();
       });
     } catch (err) {
-      note(`mdns send failed: ${err.message}`);
-      callback?.(err);
+      note(`mdns send failed: ${errMessage3(err)}`);
+      callback?.();
     }
   }
   function send(packet, targetPort, targetAddress) {
@@ -15971,6 +16035,7 @@ function createMdns({ port, name = "fleetdeck", instance = "Fleet Deck", address
       done?.();
       return;
     }
+    const sock = socket;
     let pending = joinedIfaces.length;
     const settled = () => {
       pending -= 1;
@@ -15978,7 +16043,7 @@ function createMdns({ port, name = "fleetdeck", instance = "Fleet Deck", address
     };
     for (const iface of joinedIfaces) {
       try {
-        socket.setMulticastInterface(iface);
+        sock.setMulticastInterface(iface);
       } catch {
       }
       const packet = buildFor(iface);
@@ -15987,16 +16052,18 @@ function createMdns({ port, name = "fleetdeck", instance = "Fleet Deck", address
     }
   }
   function announcementFor(address, ttl) {
-    const answers = buildAnnouncement({ ...options, addresses: [address] }, ttl === void 0 ? {} : { ttl });
+    const answers = buildAnnouncement(
+      { ...options, addresses: [address] },
+      ttl === void 0 ? {} : { ttl }
+    );
     return answers.length ? encodeMessage({ id: 0, flags: FLAGS_RESPONSE, answers }) : null;
   }
-  let claimed = false;
   function schedule(fn, delay) {
     const timer = setTimeout(() => {
       timers.delete(timer);
       fn();
     }, delay);
-    timer.unref?.();
+    timer.unref();
     timers.add(timer);
   }
   function announce(ttl) {
@@ -16005,10 +16072,11 @@ function createMdns({ port, name = "fleetdeck", instance = "Fleet Deck", address
         sendMulticastAll((iface) => announcementFor(iface, ttl));
       } else {
         const answers = buildAnnouncement(options, ttl === void 0 ? {} : { ttl });
-        if (answers.length) send(encodeMessage({ id: 0, flags: FLAGS_RESPONSE, answers }), MDNS_PORT, MDNS_ADDR);
+        if (answers.length)
+          send(encodeMessage({ id: 0, flags: FLAGS_RESPONSE, answers }), MDNS_PORT, MDNS_ADDR);
       }
     } catch (err) {
-      note(`mdns announce failed: ${err.message}`);
+      note(`mdns announce failed: ${errMessage3(err)}`);
     }
   }
   function withdrawAndDie(reason) {
@@ -16021,18 +16089,30 @@ function createMdns({ port, name = "fleetdeck", instance = "Fleet Deck", address
     };
     try {
       const guard = setTimeout(finish, 250);
-      guard.unref?.();
+      guard.unref();
       if (joinedIfaces.length) {
-        sendMulticastAll((iface) => announcementFor(iface, 0), () => {
-          clearTimeout(guard);
-          finish();
-        });
-      } else {
+        sendMulticastAll(
+          (iface) => announcementFor(iface, 0),
+          () => {
+            clearTimeout(guard);
+            finish();
+          }
+        );
+      } else if (socket) {
+        const sock = socket;
         const answers = buildAnnouncement(options, { ttl: 0 });
-        socket.send(encodeMessage({ id: 0, flags: FLAGS_RESPONSE, answers }), MDNS_PORT, MDNS_ADDR, () => {
-          clearTimeout(guard);
-          finish();
-        });
+        sock.send(
+          encodeMessage({ id: 0, flags: FLAGS_RESPONSE, answers }),
+          MDNS_PORT,
+          MDNS_ADDR,
+          () => {
+            clearTimeout(guard);
+            finish();
+          }
+        );
+      } else {
+        clearTimeout(guard);
+        finish();
       }
     } catch {
       finish();
@@ -16056,53 +16136,72 @@ function createMdns({ port, name = "fleetdeck", instance = "Fleet Deck", address
       const full = legacy ? buildResponse(questions, options, { ttl: LEGACY_TTL, flush: false }) : buildResponse(questions, options);
       if (!full.answers.length) return;
       if (legacy || questions.some((q) => q.unicast)) {
-        send(encodeMessage({
-          id: legacy ? header.id : 0,
-          flags: FLAGS_RESPONSE,
-          questions: legacy ? questions : [],
-          // legacy resolvers match on the echoed question
-          answers: full.answers,
-          additionals: full.additionals
-        }), rinfo.port, rinfo.address);
+        send(
+          encodeMessage({
+            id: legacy ? header.id : 0,
+            flags: FLAGS_RESPONSE,
+            questions: legacy ? questions : [],
+            // legacy resolvers match on the echoed question
+            answers: full.answers,
+            additionals: full.additionals
+          }),
+          rinfo.port,
+          rinfo.address
+        );
       } else if (joinedIfaces.length) {
         sendMulticastAll((iface) => {
-          const { answers, additionals } = buildResponse(questions, { ...options, addresses: [iface] });
+          const { answers, additionals } = buildResponse(questions, {
+            ...options,
+            addresses: [iface]
+          });
           return answers.length ? encodeMessage({ id: 0, flags: FLAGS_RESPONSE, questions: [], answers, additionals }) : null;
         });
       } else {
-        send(encodeMessage({ id: 0, flags: FLAGS_RESPONSE, questions: [], answers: full.answers, additionals: full.additionals }), MDNS_PORT, MDNS_ADDR);
+        send(
+          encodeMessage({
+            id: 0,
+            flags: FLAGS_RESPONSE,
+            questions: [],
+            answers: full.answers,
+            additionals: full.additionals
+          }),
+          MDNS_PORT,
+          MDNS_ADDR
+        );
       }
     } catch (err) {
-      note(`mdns query handling error: ${err.message}`);
+      note(`mdns query handling error: ${errMessage3(err)}`);
     }
   }
   function onBound() {
+    const sock = socket;
+    if (!sock) return;
     try {
-      socket.setTTL?.(255);
+      sock.setTTL?.(255);
     } catch (err) {
       die("cannot set unicast TTL 255", err);
       return;
     }
     try {
-      socket.setMulticastTTL(255);
+      sock.setMulticastTTL(255);
     } catch (err) {
       die("cannot set multicast TTL 255", err);
       return;
     }
     try {
-      socket.setMulticastLoopback(true);
+      sock.setMulticastLoopback(true);
     } catch {
     }
     joinedIfaces = [];
     let joins = 0;
     try {
-      socket.addMembership(MDNS_ADDR);
+      sock.addMembership(MDNS_ADDR);
       joins += 1;
     } catch {
     }
     for (const address of ad.addresses) {
       try {
-        socket.addMembership(MDNS_ADDR, address);
+        sock.addMembership(MDNS_ADDR, address);
         joinedIfaces.push(address);
         joins += 1;
       } catch {
@@ -16113,10 +16212,14 @@ function createMdns({ port, name = "fleetdeck", instance = "Fleet Deck", address
       return;
     }
     claimed = true;
-    for (const delay of ANNOUNCE_DELAYS_MS) schedule(() => announce(), delay);
-    note(`mdns responding for ${ad.host}:${ad.port}${ad.addresses.length ? ` (${ad.addresses.join(", ")})` : " (no LAN address to advertise)"}`);
+    for (const delay of ANNOUNCE_DELAYS_MS)
+      schedule(() => {
+        announce();
+      }, delay);
+    note(
+      `mdns responding for ${ad.host}:${ad.port}${ad.addresses.length ? ` (${ad.addresses.join(", ")})` : " (no LAN address to advertise)"}`
+    );
   }
-  let socket = null;
   function start() {
     if (started || stopped) return;
     started = true;
@@ -16138,16 +16241,23 @@ function createMdns({ port, name = "fleetdeck", instance = "Fleet Deck", address
       dormant = true;
       return;
     }
+    let sock;
     try {
-      socket = dgramImpl.createSocket({ type: "udp4", reuseAddr: true });
+      sock = dgramImpl.createSocket({ type: "udp4", reuseAddr: true });
     } catch (err) {
       die("socket create failed", err);
       return;
     }
-    socket.on("error", (err) => die(err.code === "EADDRINUSE" ? "port 5353 already owned by another responder" : err.code || "socket error", err));
-    socket.on("message", onMessage);
+    socket = sock;
+    sock.on("error", (err) => {
+      die(
+        err.code === "EADDRINUSE" ? "port 5353 already owned by another responder" : err.code ?? "socket error",
+        err
+      );
+    });
+    sock.on("message", onMessage);
     try {
-      socket.bind({ port: MDNS_PORT }, () => {
+      sock.bind({ port: MDNS_PORT }, () => {
         try {
           onBound();
         } catch (err) {
@@ -16172,10 +16282,12 @@ function createMdns({ port, name = "fleetdeck", instance = "Fleet Deck", address
         return !dead;
       }
       if (!started || !socket) return false;
+      const sock = socket;
       if (!addresses2.length) {
         return false;
       }
-      if (addresses2.length === ad.addresses.length && addresses2.every((a) => ad.addresses.includes(a))) return false;
+      if (addresses2.length === ad.addresses.length && addresses2.every((a) => ad.addresses.includes(a)))
+        return false;
       const removed = ad.addresses.filter((a) => !addresses2.includes(a));
       const added = addresses2.filter((a) => !ad.addresses.includes(a));
       options.addresses = addresses2;
@@ -16188,7 +16300,7 @@ function createMdns({ port, name = "fleetdeck", instance = "Fleet Deck", address
         });
         if (joinedIfaces.includes(address)) {
           try {
-            socket.setMulticastInterface(address);
+            sock.setMulticastInterface(address);
           } catch {
           }
           sendRaw(goodbye, MDNS_PORT, MDNS_ADDR);
@@ -16198,23 +16310,26 @@ function createMdns({ port, name = "fleetdeck", instance = "Fleet Deck", address
       }
       for (const address of removed) {
         try {
-          socket.dropMembership(MDNS_ADDR, address);
+          sock.dropMembership(MDNS_ADDR, address);
         } catch {
         }
       }
       joinedIfaces = joinedIfaces.filter((a) => !removed.includes(a));
       for (const address of added) {
         try {
-          socket.addMembership(MDNS_ADDR, address);
+          sock.addMembership(MDNS_ADDR, address);
           if (!joinedIfaces.includes(address)) joinedIfaces.push(address);
         } catch {
         }
       }
-      for (const delay of ANNOUNCE_DELAYS_MS) schedule(() => announce(), delay);
+      for (const delay of ANNOUNCE_DELAYS_MS)
+        schedule(() => {
+          announce();
+        }, delay);
       note(`mdns addresses updated (${ad.addresses.join(", ")})`);
       return true;
     } catch (err) {
-      note(`mdns address update failed: ${err.message}`);
+      note(`mdns address update failed: ${errMessage3(err)}`);
       return false;
     }
   }
@@ -16244,7 +16359,7 @@ function createMdns({ port, name = "fleetdeck", instance = "Fleet Deck", address
       };
       try {
         const guard = setTimeout(finish, 250);
-        guard.unref?.();
+        guard.unref();
         const done = () => {
           clearTimeout(guard);
           finish();
@@ -16252,8 +16367,16 @@ function createMdns({ port, name = "fleetdeck", instance = "Fleet Deck", address
         if (joinedIfaces.length) {
           sendMulticastAll((iface) => announcementFor(iface, 0), done);
         } else {
+          const sock = socket;
           const answers = buildAnnouncement(options, { ttl: 0 });
-          socket.send(encodeMessage({ id: 0, flags: FLAGS_RESPONSE, answers }), MDNS_PORT, MDNS_ADDR, done);
+          if (sock)
+            sock.send(
+              encodeMessage({ id: 0, flags: FLAGS_RESPONSE, answers }),
+              MDNS_PORT,
+              MDNS_ADDR,
+              done
+            );
+          else done();
         }
       } catch {
         finish();

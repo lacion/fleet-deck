@@ -1,4 +1,4 @@
-// mdns.mjs — a dependency-free mDNS (RFC 6762) + DNS-SD (RFC 6763) responder.
+// mdns.ts — a dependency-free mDNS (RFC 6762) + DNS-SD (RFC 6763) responder.
 //
 // CONTRACT: in LAN mode the board must be reachable as `http://fleetdeck.local:<port>`
 // and must show up in service browsers, WITHOUT anyone typing an IP and WITHOUT
@@ -65,20 +65,23 @@
 // decodeMessage) so the wire format is unit-testable without touching a network.
 
 import dgram from 'node:dgram';
+import type { RemoteInfo, Socket } from 'node:dgram';
 import os from 'node:os';
 
 export const MDNS_ADDR = '224.0.0.251';
 export const MDNS_PORT = 5353;
 
 export const TYPE = { A: 1, PTR: 12, TXT: 16, AAAA: 28, SRV: 33, ANY: 255 };
-const TYPE_NAME = Object.fromEntries(Object.entries(TYPE).map(([k, v]) => [v, k]));
+const TYPE_NAME: Record<number, string> = Object.fromEntries(
+  Object.entries(TYPE).map(([k, v]): [number, string] => [v, k]),
+);
 
 const CLASS_IN = 1;
-const CLASS_ANY = 255;    // a QCLASS of 255 ("any class") also matches IN
+const CLASS_ANY = 255; // a QCLASS of 255 ("any class") also matches IN
 const FLUSH_BIT = 0x8000; // top bit of an ANSWER's class: cache-flush
-const QU_BIT = 0x8000;    // top bit of a QUESTION's class: unicast reply wanted
-const QR_BIT = 0x8000;           // top bit of the header flags: this is a response
-const FLAGS_RESPONSE = 0x8400;   // QR + AA — an mDNS responder is always authoritative
+const QU_BIT = 0x8000; // top bit of a QUESTION's class: unicast reply wanted
+const QR_BIT = 0x8000; // top bit of the header flags: this is a response
+const FLAGS_RESPONSE = 0x8400; // QR + AA — an mDNS responder is always authoritative
 
 // RFC 6762 §10: 120s for records that name a host, 4500s for everything else.
 const DEFAULT_TTL = { A: 120, SRV: 120, PTR: 4500, TXT: 4500 };
@@ -89,12 +92,121 @@ export const META_QUERY = '_services._dns-sd._udp.local';
 
 const ANNOUNCE_DELAYS_MS = [0, 1000, 2000]; // RFC 6762 §8.3: 2-3 announcements, ~1s apart
 
+// ------------------------------------------------------------------- data model
+
+interface SrvData {
+  priority: number;
+  weight: number;
+  port: number;
+  target: string;
+}
+type RecordData = string | string[] | Record<string, string> | SrvData | Buffer;
+
+interface DnsRecord {
+  name: string;
+  type: string | number;
+  typeName?: string;
+  class?: number;
+  flush?: boolean;
+  ttl?: number;
+  data: RecordData;
+}
+
+interface Question {
+  name: string;
+  type: number;
+  typeName: string;
+  class: number;
+  unicast: boolean;
+}
+
+interface OutQuestion {
+  name: string;
+  type?: number;
+  class?: number;
+  unicast?: boolean;
+}
+
+interface DnsHeader {
+  id: number;
+  flags: number;
+  qdcount: number;
+  ancount: number;
+  nscount: number;
+  arcount: number;
+}
+
+interface DecodedMessage {
+  id: number;
+  flags: number;
+  isResponse: boolean;
+  questions: Question[];
+  answers: DnsRecord[];
+  authorities: DnsRecord[];
+  additionals: DnsRecord[];
+}
+
+interface EncodeMessageInput {
+  id?: number;
+  flags?: number;
+  questions?: OutQuestion[];
+  answers?: DnsRecord[];
+  authorities?: DnsRecord[];
+  additionals?: DnsRecord[];
+}
+
+interface AdService {
+  type: string;
+  name: string;
+}
+
+interface Advertisement {
+  host: string;
+  instance: string;
+  port: number;
+  addresses: string[];
+  txt: Record<string, string>;
+  services: AdService[];
+}
+
+interface MdnsOptions {
+  host?: string;
+  name?: string;
+  instance?: string;
+  port?: number | string | undefined;
+  addresses?: string[];
+  txt?: Record<string, string> | undefined;
+}
+
+interface CreateMdnsOptions {
+  port?: number;
+  name?: string;
+  instance?: string;
+  addresses?: string[];
+  txt?: Record<string, string> | undefined;
+  log?: (message: string) => void;
+  onDown?: ((reason: string) => void) | null;
+  inject?: { dgram?: typeof dgram } | undefined;
+}
+
+interface MdnsResponder {
+  start: () => void;
+  stop: () => Promise<void>;
+  update: (nextAddresses?: string[] | { addresses?: string[] }) => boolean;
+  alive: () => boolean;
+}
+
+/** Read a `useUnknownInCatchVariables` catch value back as a message string. */
+function errMessage(err: unknown): string {
+  return err instanceof Error && err.message ? err.message : String(err);
+}
+
 // ------------------------------------------------------------------ wire codec
 
 /** A dotted name -> length-prefixed labels + a root NUL. */
-export function encodeName(name) {
-  const labels = String(name).replace(/\.$/, '').split('.').filter(Boolean);
-  const parts = [];
+export function encodeName(name: string): Buffer {
+  const labels = name.replace(/\.$/, '').split('.').filter(Boolean);
+  const parts: Buffer[] = [];
   for (const label of labels) {
     const bytes = Buffer.from(label, 'utf8');
     // 63 is the hard DNS label limit; normalize() guarantees we never get here
@@ -109,16 +221,16 @@ export function encodeName(name) {
 /** Read a name at `offset`, following compression pointers (RFC 1035 §4.1.4).
  * Returns the name and the offset of the first byte AFTER the name as it was
  * written here — i.e. after the 2-byte pointer, not after the target it names. */
-export function decodeName(buf, offset = 0) {
-  const labels = [];
+export function decodeName(buf: Buffer, offset = 0): { name: string; offset: number } {
+  const labels: string[] = [];
   let pos = offset;
   let end = offset;
   let jumped = false;
   let hops = 0;
 
   for (;;) {
-    if (pos >= buf.length) throw new RangeError('mdns: name runs past end of packet');
     const len = buf[pos];
+    if (len === undefined) throw new RangeError('mdns: name runs past end of packet');
 
     if (len === 0) {
       pos += 1;
@@ -127,9 +239,13 @@ export function decodeName(buf, offset = 0) {
     }
 
     if ((len & 0xc0) === 0xc0) {
-      if (pos + 1 >= buf.length) throw new RangeError('mdns: truncated compression pointer');
-      const target = ((len & 0x3f) << 8) | buf[pos + 1];
-      if (!jumped) { end = pos + 2; jumped = true; }
+      const next = buf[pos + 1];
+      if (next === undefined) throw new RangeError('mdns: truncated compression pointer');
+      const target = ((len & 0x3f) << 8) | next;
+      if (!jumped) {
+        end = pos + 2;
+        jumped = true;
+      }
       // A pointer chain is attacker-controlled; cap it rather than spin forever.
       if (++hops > 64) throw new RangeError('mdns: compression pointer loop');
       pos = target;
@@ -147,28 +263,26 @@ export function decodeName(buf, offset = 0) {
   return { name: labels.join('.'), offset: end };
 }
 
-function typeNumber(type) {
+function typeNumber(type: string | number): number {
   if (typeof type === 'number') return type;
-  const n = TYPE[String(type).toUpperCase()];
-  if (!n) throw new TypeError(`mdns: unknown record type ${type}`);
+  const n = (TYPE as Record<string, number | undefined>)[type.toUpperCase()];
+  if (n === undefined) throw new TypeError(`mdns: unknown record type ${type}`);
   return n;
 }
 
-function encodeIPv4(address) {
-  const octets = String(address).split('.').map(Number);
-  if (octets.length !== 4 || octets.some(o => !Number.isInteger(o) || o < 0 || o > 255)) {
+function encodeIPv4(address: string): Buffer {
+  const octets = address.split('.').map(Number);
+  if (octets.length !== 4 || octets.some((o) => !Number.isInteger(o) || o < 0 || o > 255)) {
     throw new TypeError(`mdns: not an IPv4 address: ${address}`);
   }
   return Buffer.from(octets);
 }
 
-function encodeTxt(data) {
-  const strings = Array.isArray(data)
-    ? data.map(String)
-    : Object.entries(data || {}).map(([k, v]) => `${k}=${v}`);
+function encodeTxt(data: string[] | Record<string, string>): Buffer {
+  const strings = Array.isArray(data) ? data : Object.entries(data).map(([k, v]) => `${k}=${v}`);
   // An empty TXT is illegal: RFC 6763 §6.1 requires a single zero-length string.
   if (!strings.length) return Buffer.from([0]);
-  const parts = [];
+  const parts: Buffer[] = [];
   for (const s of strings) {
     const bytes = Buffer.from(s, 'utf8').subarray(0, 255);
     parts.push(Buffer.from([bytes.length]), bytes);
@@ -176,24 +290,29 @@ function encodeTxt(data) {
   return Buffer.concat(parts);
 }
 
-function encodeRdata(type, data) {
+function encodeRdata(type: number, data: RecordData): Buffer {
   switch (type) {
-    case TYPE.A: return encodeIPv4(data);
-    case TYPE.PTR: return encodeName(data);
-    case TYPE.TXT: return encodeTxt(data);
+    case TYPE.A:
+      return encodeIPv4(data as string);
+    case TYPE.PTR:
+      return encodeName(data as string);
+    case TYPE.TXT:
+      return encodeTxt(data as string[] | Record<string, string>);
     case TYPE.SRV: {
+      const srv = data as SrvData;
       const head = Buffer.alloc(6);
-      head.writeUInt16BE(data.priority ?? 0, 0);
-      head.writeUInt16BE(data.weight ?? 0, 2);
-      head.writeUInt16BE(data.port ?? 0, 4);
-      return Buffer.concat([head, encodeName(data.target)]);
+      head.writeUInt16BE(srv.priority, 0);
+      head.writeUInt16BE(srv.weight, 2);
+      head.writeUInt16BE(srv.port, 4);
+      return Buffer.concat([head, encodeName(srv.target)]);
     }
-    default: throw new TypeError(`mdns: cannot encode rdata for type ${type}`);
+    default:
+      throw new TypeError(`mdns: cannot encode rdata for type ${type}`);
   }
 }
 
 /** One resource record -> wire bytes. `flush` sets the cache-flush class bit. */
-export function encodeRecord(record) {
+export function encodeRecord(record: DnsRecord): Buffer {
   const type = typeNumber(record.type);
   const name = encodeName(record.name);
   const rdata = encodeRdata(type, record.data);
@@ -201,6 +320,7 @@ export function encodeRecord(record) {
   const head = Buffer.alloc(8);
   head.writeUInt16BE(type, 0);
   head.writeUInt16BE(CLASS_IN | (record.flush ? FLUSH_BIT : 0), 2);
+
   head.writeUInt32BE(Math.max(0, Number(record.ttl) || 0), 4);
 
   const rdlength = Buffer.alloc(2);
@@ -209,8 +329,8 @@ export function encodeRecord(record) {
   return Buffer.concat([name, head, rdlength, rdata]);
 }
 
-function parseHeader(buf) {
-  if (!Buffer.isBuffer(buf) || buf.length < 12) return null;
+function parseHeader(buf: Buffer): DnsHeader | null {
+  if (buf.length < 12) return null;
   return {
     id: buf.readUInt16BE(0),
     flags: buf.readUInt16BE(2),
@@ -223,15 +343,19 @@ function parseHeader(buf) {
 
 /** Questions out of a query packet. Truncated/garbage tails stop the parse and
  * return what was understood — a stranger's malformed packet is not our problem. */
-export function parseQuestions(buf) {
+export function parseQuestions(buf: Buffer): Question[] {
   const header = parseHeader(buf);
   if (!header) return [];
 
-  const questions = [];
+  const questions: Question[] = [];
   let offset = 12;
   for (let i = 0; i < header.qdcount; i += 1) {
-    let decoded;
-    try { decoded = decodeName(buf, offset); } catch { break; }
+    let decoded: { name: string; offset: number };
+    try {
+      decoded = decodeName(buf, offset);
+    } catch {
+      break;
+    }
     offset = decoded.offset;
     if (offset + 4 > buf.length) break;
     const type = buf.readUInt16BE(offset);
@@ -240,6 +364,7 @@ export function parseQuestions(buf) {
     questions.push({
       name: decoded.name,
       type,
+      // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- an empty type name (never emitted) would still want the numeric fallback
       typeName: TYPE_NAME[type] || String(type),
       class: qclass & ~QU_BIT,
       unicast: (qclass & QU_BIT) !== 0,
@@ -248,7 +373,14 @@ export function parseQuestions(buf) {
   return questions;
 }
 
-export function encodeMessage({ id = 0, flags = FLAGS_RESPONSE, questions = [], answers = [], authorities = [], additionals = [] } = {}) {
+export function encodeMessage({
+  id = 0,
+  flags = FLAGS_RESPONSE,
+  questions = [],
+  answers = [],
+  authorities = [],
+  additionals = [],
+}: EncodeMessageInput = {}): Buffer {
   const header = Buffer.alloc(12);
   header.writeUInt16BE(id & 0xffff, 0);
   header.writeUInt16BE(flags & 0xffff, 2);
@@ -257,23 +389,33 @@ export function encodeMessage({ id = 0, flags = FLAGS_RESPONSE, questions = [], 
   header.writeUInt16BE(authorities.length, 8);
   header.writeUInt16BE(additionals.length, 10);
 
-  const parts = [header];
+  const parts: Buffer[] = [header];
   for (const q of questions) {
     const tail = Buffer.alloc(4);
     tail.writeUInt16BE(typeNumber(q.type ?? TYPE.ANY), 0);
+    // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- a class of 0 means "unspecified" and must default to IN
     tail.writeUInt16BE((q.class || CLASS_IN) | (q.unicast ? QU_BIT : 0), 2);
     parts.push(encodeName(q.name), tail);
   }
-  for (const record of [...answers, ...authorities, ...additionals]) parts.push(encodeRecord(record));
+  for (const record of [...answers, ...authorities, ...additionals])
+    parts.push(encodeRecord(record));
   return Buffer.concat(parts);
 }
 
-function decodeRecords(buf, offset, count) {
-  const records = [];
+function decodeRecords(
+  buf: Buffer,
+  offset: number,
+  count: number,
+): { records: DnsRecord[]; offset: number } {
+  const records: DnsRecord[] = [];
   let pos = offset;
   for (let i = 0; i < count; i += 1) {
-    let decoded;
-    try { decoded = decodeName(buf, pos); } catch { break; }
+    let decoded: { name: string; offset: number };
+    try {
+      decoded = decodeName(buf, pos);
+    } catch {
+      break;
+    }
     pos = decoded.offset;
     if (pos + 10 > buf.length) break;
     const type = buf.readUInt16BE(pos);
@@ -283,34 +425,44 @@ function decodeRecords(buf, offset, count) {
     pos += 10;
     if (pos + rdlength > buf.length) break;
 
-    let data;
+    let data: RecordData;
     try {
       switch (type) {
-        case TYPE.A: data = Array.from(buf.subarray(pos, pos + 4)).join('.'); break;
-        case TYPE.PTR: data = decodeName(buf, pos).name; break;
-        case TYPE.SRV: data = {
-          priority: buf.readUInt16BE(pos),
-          weight: buf.readUInt16BE(pos + 2),
-          port: buf.readUInt16BE(pos + 4),
-          target: decodeName(buf, pos + 6).name,
-        }; break;
+        case TYPE.A:
+          data = Array.from(buf.subarray(pos, pos + 4)).join('.');
+          break;
+        case TYPE.PTR:
+          data = decodeName(buf, pos).name;
+          break;
+        case TYPE.SRV:
+          data = {
+            priority: buf.readUInt16BE(pos),
+            weight: buf.readUInt16BE(pos + 2),
+            port: buf.readUInt16BE(pos + 4),
+            target: decodeName(buf, pos + 6).name,
+          };
+          break;
         case TYPE.TXT: {
-          const strings = [];
+          const strings: string[] = [];
           for (let p = pos; p < pos + rdlength;) {
-            const len = buf[p];
+            const len = buf[p] ?? 0;
             strings.push(buf.toString('utf8', p + 1, p + 1 + len));
             p += 1 + len;
           }
           data = strings;
           break;
         }
-        default: data = Buffer.from(buf.subarray(pos, pos + rdlength));
+        default:
+          data = Buffer.from(buf.subarray(pos, pos + rdlength));
       }
-    } catch { data = Buffer.from(buf.subarray(pos, pos + rdlength)); }
+    } catch {
+      data = Buffer.from(buf.subarray(pos, pos + rdlength));
+    }
 
     records.push({
       name: decoded.name,
       type,
+      // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- an empty type name (never emitted) would still want the numeric fallback
       typeName: TYPE_NAME[type] || String(type),
       class: rclass & ~FLUSH_BIT,
       flush: (rclass & FLUSH_BIT) !== 0,
@@ -324,7 +476,7 @@ function decodeRecords(buf, offset, count) {
 
 /** Full packet -> {id, flags, questions, answers, additionals}. Used by tests and
  * by anyone who wants to read what we put on the wire; the responder never needs it. */
-export function decodeMessage(buf) {
+export function decodeMessage(buf: Buffer): DecodedMessage | null {
   const header = parseHeader(buf);
   if (!header) return null;
   const questions = parseQuestions(buf);
@@ -334,7 +486,9 @@ export function decodeMessage(buf) {
     try {
       const decoded = decodeName(buf, offset);
       offset = decoded.offset + 4;
-    } catch { break; }
+    } catch {
+      break;
+    }
   }
 
   const answers = decodeRecords(buf, offset, header.ancount);
@@ -355,9 +509,9 @@ export function decodeMessage(buf) {
 // ------------------------------------------------------- the advertisement
 
 const IPV4 = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
-function isIPv4(address) {
-  if (!IPV4.test(String(address))) return false;
-  return String(address).split('.').every(o => Number(o) <= 255);
+function isIPv4(address: string): boolean {
+  if (!IPV4.test(address)) return false;
+  return address.split('.').every((o) => Number(o) <= 255);
 }
 
 /** A DNS label cannot contain a dot or exceed 63 bytes. Instance names are human
@@ -365,9 +519,12 @@ function isIPv4(address) {
  * name, RFC 6763 §4.1.1); a dot becomes a dash rather than silently splitting one
  * label into two, and control bytes are never put on the wire. Truncation is
  * byte-wise, so drop a half-eaten multibyte tail. */
-function label(value, fallback) {
-  const text = String(value ?? '').replace(/[.\u0000-\u001f\u007f]/g, '-').trim();
+function label(value: string | undefined, fallback: string): string {
+  // eslint-disable-next-line no-control-regex -- stripping C0/DEL out of a DNS label is the point
+  const text = (value ?? '').replace(/[.\u0000-\u001f\u007f]/g, '-').trim();
+
   const bytes = Buffer.from(text || fallback, 'utf8').subarray(0, 63);
+
   return bytes.toString('utf8').replace(/\ufffd+$/, '') || fallback;
 }
 
@@ -377,7 +534,7 @@ function label(value, fallback) {
  * 63 bytes, so a caller that interpolates the raw configured value would
  * publish a name that never resolves and advertise a name its own HTTP layer
  * refuses. Pure; always the exact label normalize() would advertise. */
-export function hostLabel(value, fallback = 'fleetdeck') {
+export function hostLabel(value: string | undefined, fallback = 'fleetdeck'): string {
   return label(value, fallback);
 }
 
@@ -387,94 +544,140 @@ export function hostLabel(value, fallback = 'fleetdeck') {
  * `.name`. The live advertisement is stored normalized and handed back to
  * buildAnnouncement/buildResponse, so without this a custom FLEETDECK_MDNS_NAME
  * would probe/advertise its canonical label but ANSWER as fleetdeck.local. */
-export function normalize(options = {}) {
+export function normalize(options: MdnsOptions = {}): Advertisement {
+  // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- an empty host must be re-derived from the name, not kept as ''
   const host = options.host || `${hostLabel(options.name, 'fleetdeck')}.local`;
+  // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- an empty instance must fall back to the default label
   const instance = label(options.instance || 'Fleet Deck', 'Fleet Deck');
+
   const port = Number(options.port) || 0;
   const addresses = (Array.isArray(options.addresses) ? options.addresses : []).filter(isIPv4);
-  const txt = { path: '/', board: 'fleetdeck', ...(options.txt || {}) };
-  const services = SERVICE_TYPES.map(type => ({ type, name: `${instance}.${type}` }));
+  const txt: Record<string, string> = { path: '/', board: 'fleetdeck', ...(options.txt ?? {}) };
+  const services = SERVICE_TYPES.map((type) => ({ type, name: `${instance}.${type}` }));
   return { host, instance, port, addresses, txt, services };
 }
 
-function ttlFor(type, override) {
-  return override === undefined ? DEFAULT_TTL[type] : override;
+function ttlFor(type: keyof typeof DEFAULT_TTL, override?: number): number {
+  return override ?? DEFAULT_TTL[type];
 }
 
 /** Every non-internal IPv4 mapped to the interface name that owns it. Pure apart
  * from the OS call; never throws — a responder that cannot read its interfaces
  * simply has nothing to say. */
-export function addressInterfaces() {
-  const map = new Map();
+export function addressInterfaces(): Map<string, string> {
+  const map = new Map<string, string>();
   try {
     for (const [name, entries] of Object.entries(os.networkInterfaces())) {
-      for (const entry of entries || []) {
-        if ((entry.family === 'IPv4' || entry.family === 4) && !entry.internal && isIPv4(entry.address)) {
+      for (const entry of entries ?? []) {
+        if (entry.family === 'IPv4' && !entry.internal && isIPv4(entry.address)) {
           map.set(entry.address, name);
         }
       }
     }
-  } catch { /* interfaces change under us; the fallback link below covers it */ }
+  } catch {
+    /* interfaces change under us; the fallback link below covers it */
+  }
   return map;
 }
 
-function aRecords(ad, ttl, flush) {
-  return ad.addresses.map(address => ({
-    name: ad.host, type: 'A', ttl: ttlFor('A', ttl), flush, data: address,
+function aRecords(ad: Advertisement, ttl: number | undefined, flush: boolean): DnsRecord[] {
+  return ad.addresses.map((address) => ({
+    name: ad.host,
+    type: 'A',
+    ttl: ttlFor('A', ttl),
+    flush,
+    data: address,
   }));
 }
-function ptrRecord(ad, service, ttl) {
+function ptrRecord(_ad: Advertisement, service: AdService, ttl: number | undefined): DnsRecord {
   // PTR is a SHARED record set (other hosts answer the same question) — never flush.
-  return { name: service.type, type: 'PTR', ttl: ttlFor('PTR', ttl), flush: false, data: service.name };
-}
-function srvRecord(ad, service, ttl, flush) {
   return {
-    name: service.name, type: 'SRV', ttl: ttlFor('SRV', ttl), flush,
+    name: service.type,
+    type: 'PTR',
+    ttl: ttlFor('PTR', ttl),
+    flush: false,
+    data: service.name,
+  };
+}
+function srvRecord(
+  ad: Advertisement,
+  service: AdService,
+  ttl: number | undefined,
+  flush: boolean,
+): DnsRecord {
+  return {
+    name: service.name,
+    type: 'SRV',
+    ttl: ttlFor('SRV', ttl),
+    flush,
     data: { priority: 0, weight: 0, port: ad.port, target: ad.host },
   };
 }
-function txtRecord(ad, service, ttl, flush) {
+function txtRecord(
+  ad: Advertisement,
+  service: AdService,
+  ttl: number | undefined,
+  flush: boolean,
+): DnsRecord {
   return { name: service.name, type: 'TXT', ttl: ttlFor('TXT', ttl), flush, data: ad.txt };
 }
-function metaRecords(ad, ttl) {
-  return ad.services.map(service => ({
-    name: META_QUERY, type: 'PTR', ttl: ttlFor('PTR', ttl), flush: false, data: service.type,
+function metaRecords(ad: Advertisement, ttl: number | undefined): DnsRecord[] {
+  return ad.services.map((service) => ({
+    name: META_QUERY,
+    type: 'PTR',
+    ttl: ttlFor('PTR', ttl),
+    flush: false,
+    data: service.type,
   }));
 }
 
-function keyOf(record) {
-  return `${String(record.name).toLowerCase()}|${typeNumber(record.type)}|${JSON.stringify(record.data)}`;
+function keyOf(record: DnsRecord): string {
+  return `${record.name.toLowerCase()}|${typeNumber(record.type)}|${JSON.stringify(record.data)}`;
 }
 
 /** Everything we own, in one Answer section: what an unsolicited announcement
  * carries (RFC 6762 §8.3) and — with `ttl: 0` — what a goodbye carries (§10.1). */
-export function buildAnnouncement(options = {}, { ttl } = {}) {
+export function buildAnnouncement(
+  options: MdnsOptions = {},
+  { ttl }: { ttl?: number } = {},
+): DnsRecord[] {
   const ad = normalize(options);
   const flush = ttl !== 0; // a goodbye must not also claim uniqueness
-  const records = [
-    ...aRecords(ad, ttl, flush),
-    ...metaRecords(ad, ttl),
-  ];
+  const records: DnsRecord[] = [...aRecords(ad, ttl, flush), ...metaRecords(ad, ttl)];
   for (const service of ad.services) {
-    records.push(ptrRecord(ad, service, ttl), srvRecord(ad, service, ttl, flush), txtRecord(ad, service, ttl, flush));
+    records.push(
+      ptrRecord(ad, service, ttl),
+      srvRecord(ad, service, ttl, flush),
+      txtRecord(ad, service, ttl, flush),
+    );
   }
-  const seen = new Set();
-  return records.filter(r => !seen.has(keyOf(r)) && seen.add(keyOf(r)));
+  const seen = new Set<string>();
+  return records.filter((r) => {
+    const k = keyOf(r);
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
 }
 
 /** Questions -> the records we owe them. Names match case-insensitively (RFC 6762
  * §16). Anything we do not own — a neighbour's hostname, AAAA, a service type that
  * is not ours — produces no answer at all, and no answer means we stay silent. */
-export function buildResponse(questions, options = {}, { ttl, flush = true } = {}) {
+export function buildResponse(
+  questions: Question[],
+  options: MdnsOptions = {},
+  { ttl, flush = true }: { ttl?: number; flush?: boolean } = {},
+): { answers: DnsRecord[]; additionals: DnsRecord[] } {
   const ad = normalize(options);
-  const answers = [];
-  const additionals = [];
+  const answers: DnsRecord[] = [];
+  const additionals: DnsRecord[] = [];
 
-  const wants = (q, type) => q.type === TYPE.ANY || q.type === TYPE[type];
+  const wants = (q: Question, type: 'A' | 'PTR' | 'SRV' | 'TXT'): boolean =>
+    q.type === TYPE.ANY || q.type === TYPE[type];
 
-  for (const q of Array.isArray(questions) ? questions : []) {
+  for (const q of questions) {
     if (q.class && q.class !== CLASS_IN && q.class !== CLASS_ANY) continue; // not our class
-    const qname = String(q.name || '').replace(/\.$/, '').toLowerCase();
+    const qname = q.name.replace(/\.$/, '').toLowerCase();
 
     if (qname === ad.host.toLowerCase() && wants(q, 'A')) {
       answers.push(...aRecords(ad, ttl, flush));
@@ -505,25 +708,43 @@ export function buildResponse(questions, options = {}, { ttl, flush = true } = {
     }
   }
 
-  const answerKeys = new Set();
-  const dedupedAnswers = answers.filter(r => !answerKeys.has(keyOf(r)) && answerKeys.add(keyOf(r)));
-  const extraKeys = new Set();
-  const dedupedAdditionals = additionals.filter(r =>
-    !answerKeys.has(keyOf(r)) && !extraKeys.has(keyOf(r)) && extraKeys.add(keyOf(r)));
+  const answerKeys = new Set<string>();
+  const dedupedAnswers = answers.filter((r) => {
+    const k = keyOf(r);
+    if (answerKeys.has(k)) return false;
+    answerKeys.add(k);
+    return true;
+  });
+  const extraKeys = new Set<string>();
+  const dedupedAdditionals = additionals.filter((r) => {
+    const k = keyOf(r);
+    if (answerKeys.has(k) || extraKeys.has(k)) return false;
+    extraKeys.add(k);
+    return true;
+  });
 
   return { answers: dedupedAnswers, additionals: dedupedAdditionals };
 }
 
 /** The probe query: QU questions (§8.1 — answers should come unicast) naming each
  * of our unique names, with the records we would publish as tie-break authorities. */
-export function buildProbeQuestions(options = {}) {
+export function buildProbeQuestions(options: MdnsOptions = {}): {
+  questions: OutQuestion[];
+  authorities: DnsRecord[];
+} {
   const ad = normalize(options);
-  const questions = [
+  const questions: OutQuestion[] = [
     { name: ad.host, type: TYPE.A, class: CLASS_IN, unicast: true },
-    ...ad.services.map(service => ({ name: service.name, type: TYPE.SRV, class: CLASS_IN, unicast: true })),
+    ...ad.services.map((service) => ({
+      name: service.name,
+      type: TYPE.SRV,
+      class: CLASS_IN,
+      unicast: true,
+    })),
   ];
-  const authorities = buildAnnouncement(options, { ttl: 0 })
-    .filter(record => record.type === 'A' || record.type === 'SRV');
+  const authorities = buildAnnouncement(options, { ttl: 0 }).filter(
+    (record) => record.type === 'A' || record.type === 'SRV',
+  );
   return { questions, authorities };
 }
 
@@ -532,19 +753,27 @@ export function buildProbeQuestions(options = {}) {
  * sorts AFTER ours — means we lost the claim (§8.1 tie-break: later data probes
  * again next try; earlier data loses immediately). Once announced, any response
  * record on a name we own whose rdata differs from ours is a conflict (§9). */
-export function uniqueConflict(msg, options = {}, { phase } = {}) {
+export function uniqueConflict(
+  msg: Buffer,
+  options: MdnsOptions = {},
+  { phase }: { phase?: 'probing' | 'announced' } = {},
+): boolean {
   const ad = normalize(options);
   const hosts = new Set([ad.host.toLowerCase()]);
-  const services = new Set(ad.services.map(service => service.name.toLowerCase()));
+  const services = new Set(ad.services.map((service) => service.name.toLowerCase()));
   // A name|type can back MULTIPLE rdata (one A per LAN address). Keep the whole
   // SET we legitimately own, so a per-interface scoped echo carrying only one of
   // our addresses is recognized as ours, not mistaken for a rival (§9).
-  const own = new Map();
+  const own = new Map<string, Set<string>>();
   for (const record of buildAnnouncement(options)) {
     if (record.type === 'A' || record.type === 'SRV') {
-      const k = `${String(record.name).toLowerCase()}|${typeNumber(record.type)}`;
-      if (!own.has(k)) own.set(k, new Set());
-      own.get(k).add(keyOf(record));
+      const k = `${record.name.toLowerCase()}|${typeNumber(record.type)}`;
+      let set = own.get(k);
+      if (!set) {
+        set = new Set();
+        own.set(k, set);
+      }
+      set.add(keyOf(record));
     }
   }
 
@@ -555,7 +784,7 @@ export function uniqueConflict(msg, options = {}, { phase } = {}) {
   // records carry the NUMERIC type; the keyOf data payloads encode identically.
   for (const record of [...decoded.answers, ...decoded.additionals]) {
     if (record.ttl === 0) continue; // a goodbye WITHDRAWS a name (incl. our own re-announce goodbye after update()); it never CLAIMS it (§9)
-    const keys = own.get(`${String(record.name).toLowerCase()}|${record.type}`);
+    const keys = own.get(`${record.name.toLowerCase()}|${record.type}`);
     if (keys && !keys.has(keyOf(record))) return true;
   }
 
@@ -568,15 +797,17 @@ export function uniqueConflict(msg, options = {}, { phase } = {}) {
     const ours = buildProbeQuestions(options).authorities;
     const oursKeys = new Set(ours.map(keyOf));
     const theirsKeys = new Set(decoded.authorities.map(keyOf));
-    const equalSet = theirsKeys.size === oursKeys.size && [...theirsKeys].every(k => oursKeys.has(k));
-    const theyWin = !equalSet && decoded.authorities.length > 0 && (
-      decoded.authorities.length > ours.length ||
-      (decoded.authorities.length === ours.length &&
-        [...theirsKeys].sort().join('') > [...oursKeys].sort().join(''))
-    );
+    const equalSet =
+      theirsKeys.size === oursKeys.size && [...theirsKeys].every((k) => oursKeys.has(k));
+    const theyWin =
+      !equalSet &&
+      decoded.authorities.length > 0 &&
+      (decoded.authorities.length > ours.length ||
+        (decoded.authorities.length === ours.length &&
+          [...theirsKeys].sort().join('') > [...oursKeys].sort().join('')));
     if (theyWin) {
       for (const q of decoded.questions) {
-        const name = String(q.name || '').replace(/\.$/, '').toLowerCase();
+        const name = q.name.replace(/\.$/, '').toLowerCase();
         const names = q.type === TYPE.A || q.type === TYPE.ANY ? hosts : services;
         if (names.has(name)) return true;
       }
@@ -588,37 +819,41 @@ export function uniqueConflict(msg, options = {}, { phase } = {}) {
 // ------------------------------------------------------------- the responder
 
 /**
- * @param {object} opts
- * @param {number} opts.port        the board's HTTP port (advertised in SRV)
- * @param {string} [opts.name]      host label; 'fleetdeck' -> fleetdeck.local
- * @param {string} [opts.instance]  human service instance name
- * @param {string[]} [opts.addresses] LAN IPv4s to advertise (non-internal only)
- * @param {object} [opts.txt]       extra TXT keys, merged over {path, board}
- * @param {function} [opts.log]
-/**
- * @param {object} opts
- * @param {number} opts.port        the board's HTTP port (advertised in SRV)
- * @param {string} [opts.name]      host label; 'fleetdeck' -> fleetdeck.local
- * @param {string} [opts.instance]  human service instance name
- * @param {string[]} [opts.addresses] LAN IPv4s to advertise (non-internal only)
- * @param {object} [opts.txt]       extra TXT keys, merged over {path, board}
- * @param {function} [opts.log]
- * @param {function} [opts.onDown]  called with a reason string the moment the
- *                                  responder terminally disables itself (bind,
- *                                  membership or socket failure) — never on a
- *                                  clean stop(). Lets the publisher retract a
- *                                  URL that would no longer resolve.
- * @param {object} [opts.inject]  test seam: { dgram } replaces node:dgram, so a
- *   multi-interface host can be simulated without touching a network
- * @returns {{start: function, stop: function, update: function, alive: function}}
- *          start/stop are idempotent and never throw; update() re-bases the
+ * Create an mDNS responder for the board.
+ *
+ * @param opts
+ * @param opts.port        the board's HTTP port (advertised in SRV)
+ * @param opts.name        host label; 'fleetdeck' -> fleetdeck.local
+ * @param opts.instance    human service instance name
+ * @param opts.addresses   LAN IPv4s to advertise (non-internal only)
+ * @param opts.txt         extra TXT keys, merged over {path, board}
+ * @param opts.log         line sink for the module's one-per-failure diagnostics
+ * @param opts.onDown      called with a reason string the moment the responder
+ *                         terminally disables itself (bind, membership or socket
+ *                         failure) — never on a clean stop(). Lets the publisher
+ *                         retract a URL that would no longer resolve.
+ * @param opts.inject      test seam: { dgram } replaces node:dgram, so a
+ *                         multi-interface host can be simulated without touching
+ *                         a network.
+ * @returns start/stop are idempotent and never throw; update() re-bases the
  *          advertisement on a fresh LAN address set (goodbye for withdrawn
  *          records, membership re-join, re-announce); alive() reports whether
- *          the responder is bound and answering
+ *          the responder is bound and answering.
  */
-export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', addresses = [], txt, log = () => {}, onDown = null, inject } = {}) {
-  const options = { port, name, instance, addresses, txt };
-  const dgramImpl = inject?.dgram || dgram;
+export function createMdns({
+  port,
+  name = 'fleetdeck',
+  instance = 'Fleet Deck',
+  addresses = [],
+  txt,
+  log = () => {
+    /* silent by default */
+  },
+  onDown = null,
+  inject,
+}: CreateMdnsOptions = {}): MdnsResponder {
+  const options: MdnsOptions = { port, name, instance, addresses, txt };
+  const dgramImpl = inject?.dgram ?? dgram;
   // The LIVE advertisement. Identity (host/instance/port/txt) is fixed for the
   // responder's life, but the address set is a property of the NETWORK, and the
   // network moves: Wi-Fi roaming, DHCP renewal, a VPN coming up. update() swaps
@@ -626,11 +861,17 @@ export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', 
   // speaks for the new addresses.
   let ad = normalize(options);
 
-  const note = (message) => { try { log(message); } catch { /* a broken logger must not kill mDNS */ } };
+  const note = (message: string): void => {
+    try {
+      log(message);
+    } catch {
+      /* a broken logger must not kill mDNS */
+    }
+  };
 
   let started = false;
-  let stopping = null;
-  let dead = false;    // a REAL failure (socket/bind/multicast) — terminal, one-way
+  let stopping: Promise<void> | null = null;
+  let dead = false; // a REAL failure (socket/bind/multicast) — terminal, one-way
   let dormant = false; // merely addressless — update() may revive us
   let stopped = false; // stop() was called — nothing may resurrect the responder
   // Interface addresses that successfully joined the group. Multicast egress
@@ -638,43 +879,63 @@ export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', 
   // are repeated once per joined interface (setMulticastInterface) — otherwise
   // a dual-homed host is discoverable on the default LAN and invisible on the
   // others, despite advertising their addresses.
-  let joinedIfaces = [];
-  const timers = new Set();
+  let joinedIfaces: string[] = [];
+  const timers = new Set<NodeJS.Timeout>();
+  let claimed = false; // the names are ours and we are answering for them
+  let socket: Socket | null = null;
 
   // One-way door: every fatal failure lands here, says why once, and leaves the
   // daemon alone.
-  function die(reason, err) {
+  function die(reason: string, err?: unknown): void {
     if (dead) return;
     dead = true;
-    note(`mdns disabled (${reason})${err && err.message ? `: ${err.message}` : ''} — the board still works over its IP`);
+    const detail = err instanceof Error && err.message ? `: ${err.message}` : '';
+    note(`mdns disabled (${reason})${detail} — the board still works over its IP`);
     for (const t of timers) clearTimeout(t);
     timers.clear();
     const doomed = socket;
     socket = null;
-    try { doomed?.close(); } catch { /* already closed */ }
+    try {
+      doomed?.close();
+    } catch {
+      /* already closed */
+    }
     // The daemon publishes the .local URL when start() returns, but bind and
     // membership failures only surface HERE, one event-loop turn later. Report
     // the terminal disable so the publisher can retract the URL instead of
     // advertising a name that will never resolve.
-    if (onDown) { try { onDown(reason); } catch { /* a broken listener must not kill mDNS */ } }
-  }
-
-  function sendRaw(packet, targetPort, targetAddress, callback) {
-    if (!socket || dead) return;
-    try {
-      socket.send(packet, targetPort, targetAddress, (err) => {
-        // A send error is per-packet, not fatal: the LAN may just have no route
-        // right now. Log at most once by routing repeat failures through die().
-        if (err && err.code !== 'ENETUNREACH' && err.code !== 'EHOSTUNREACH') note(`mdns send failed: ${err.message}`);
-        callback?.(err);
-      });
-    } catch (err) {
-      note(`mdns send failed: ${err.message}`);
-      callback?.(err);
+    if (onDown) {
+      try {
+        onDown(reason);
+      } catch {
+        /* a broken listener must not kill mDNS */
+      }
     }
   }
 
-  function send(packet, targetPort, targetAddress) {
+  function sendRaw(
+    packet: Buffer,
+    targetPort: number,
+    targetAddress: string,
+    callback?: () => void,
+  ): void {
+    if (!socket || dead) return;
+    const sock = socket;
+    try {
+      sock.send(packet, targetPort, targetAddress, (err: NodeJS.ErrnoException | null) => {
+        // A send error is per-packet, not fatal: the LAN may just have no route
+        // right now. Log at most once by routing repeat failures through die().
+        if (err && err.code !== 'ENETUNREACH' && err.code !== 'EHOSTUNREACH')
+          note(`mdns send failed: ${err.message}`);
+        callback?.();
+      });
+    } catch (err) {
+      note(`mdns send failed: ${errMessage(err)}`);
+      callback?.();
+    }
+  }
+
+  function send(packet: Buffer, targetPort: number, targetAddress: string): void {
     sendRaw(packet, targetPort, targetAddress);
   }
 
@@ -686,12 +947,23 @@ export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', 
   // errors are tolerated — one wedged interface must not hold the goodbye path
   // open). joinedIfaces empty means no per-interface joins; callers fall back to
   // a single plain send() themselves.
-  function sendMulticastAll(buildFor, done) {
-    if (!socket || dead || !joinedIfaces.length) { done?.(); return; }
+  function sendMulticastAll(buildFor: (iface: string) => Buffer | null, done?: () => void): void {
+    if (!socket || dead || !joinedIfaces.length) {
+      done?.();
+      return;
+    }
+    const sock = socket;
     let pending = joinedIfaces.length;
-    const settled = () => { pending -= 1; if (pending <= 0) done?.(); };
+    const settled = (): void => {
+      pending -= 1;
+      if (pending <= 0) done?.();
+    };
     for (const iface of joinedIfaces) {
-      try { socket.setMulticastInterface(iface); } catch { /* keep the last working egress */ }
+      try {
+        sock.setMulticastInterface(iface);
+      } catch {
+        /* keep the last working egress */
+      }
       const packet = buildFor(iface);
       if (packet) sendRaw(packet, MDNS_PORT, MDNS_ADDR, settled);
       else settled();
@@ -700,54 +972,84 @@ export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', 
 
   // The advertisement (or, ttl:0, the goodbye) scoped to ONE interface's
   // address — the A record valid on that link plus the shared service records.
-  function announcementFor(address, ttl) {
-    const answers = buildAnnouncement({ ...options, addresses: [address] }, ttl === undefined ? {} : { ttl });
+  function announcementFor(address: string, ttl?: number): Buffer | null {
+    const answers = buildAnnouncement(
+      { ...options, addresses: [address] },
+      ttl === undefined ? {} : { ttl },
+    );
     return answers.length ? encodeMessage({ id: 0, flags: FLAGS_RESPONSE, answers }) : null;
   }
 
-  let claimed = false;  // the names are ours and we are answering for them
-
-  function schedule(fn, delay) {
-    const timer = setTimeout(() => { timers.delete(timer); fn(); }, delay);
-    timer.unref?.(); // mDNS must never hold the daemon's event loop open
+  function schedule(fn: () => void, delay: number): void {
+    const timer = setTimeout(() => {
+      timers.delete(timer);
+      fn();
+    }, delay);
+    timer.unref(); // mDNS must never hold the daemon's event loop open
     timers.add(timer);
   }
 
-  function announce(ttl) {
+  function announce(ttl?: number): void {
     try {
       if (joinedIfaces.length) {
-        sendMulticastAll(iface => announcementFor(iface, ttl));
+        sendMulticastAll((iface) => announcementFor(iface, ttl));
       } else {
         const answers = buildAnnouncement(options, ttl === undefined ? {} : { ttl });
-        if (answers.length) send(encodeMessage({ id: 0, flags: FLAGS_RESPONSE, answers }), MDNS_PORT, MDNS_ADDR);
+        if (answers.length)
+          send(encodeMessage({ id: 0, flags: FLAGS_RESPONSE, answers }), MDNS_PORT, MDNS_ADDR);
       }
     } catch (err) {
-      note(`mdns announce failed: ${err.message}`);
+      note(`mdns announce failed: ${errMessage(err)}`);
     }
   }
 
   /** Post-claim conflict: withdraw our records (TTL 0, §10.1) THEN stand down.
    * The send must land before die() runs — die() closes the socket, and a
    * closed socket flushes nothing. */
-  function withdrawAndDie(reason) {
+  function withdrawAndDie(reason: string): void {
     let down = false;
-    const finish = () => { if (!down) { down = true; die(reason); } };
+    const finish = (): void => {
+      if (!down) {
+        down = true;
+        die(reason);
+      }
+    };
     try {
       const guard = setTimeout(finish, 250);
-      guard.unref?.();
+      guard.unref();
       if (joinedIfaces.length) {
         // The withdrawal must reach every LAN we advertised on, not just the
         // default route — each link withdraws its own address; settle all egress
         // sends, then die exactly once.
-        sendMulticastAll(iface => announcementFor(iface, 0), () => { clearTimeout(guard); finish(); });
-      } else {
+        sendMulticastAll(
+          (iface) => announcementFor(iface, 0),
+          () => {
+            clearTimeout(guard);
+            finish();
+          },
+        );
+      } else if (socket) {
+        const sock = socket;
         const answers = buildAnnouncement(options, { ttl: 0 });
-        socket.send(encodeMessage({ id: 0, flags: FLAGS_RESPONSE, answers }), MDNS_PORT, MDNS_ADDR, () => { clearTimeout(guard); finish(); });
+        sock.send(
+          encodeMessage({ id: 0, flags: FLAGS_RESPONSE, answers }),
+          MDNS_PORT,
+          MDNS_ADDR,
+          () => {
+            clearTimeout(guard);
+            finish();
+          },
+        );
+      } else {
+        clearTimeout(guard);
+        finish();
       }
-    } catch { finish(); }
+    } catch {
+      finish();
+    }
   }
 
-  function onMessage(msg, rinfo) {
+  function onMessage(msg: Buffer, rinfo: RemoteInfo): void {
     try {
       const header = parseHeader(msg);
       if (!header) return;
@@ -759,7 +1061,13 @@ export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', 
       // response stands us down. Our own loopback echoes — including the
       // per-interface scoped ones and TTL-0 goodbyes — match our own set (or are
       // skipped as withdrawals) and pass.
-      if (socket && rinfo.port === MDNS_PORT && !stopping && claimed && (header.flags & QR_BIT) !== 0) {
+      if (
+        socket &&
+        rinfo.port === MDNS_PORT &&
+        !stopping &&
+        claimed &&
+        (header.flags & QR_BIT) !== 0
+      ) {
         if (uniqueConflict(msg, options, { phase: 'announced' })) {
           withdrawAndDie(`name conflict for ${ad.host} — another device owns this name`);
           return;
@@ -782,41 +1090,77 @@ export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', 
         : buildResponse(questions, options);
       if (!full.answers.length) return; // not ours — stay silent
 
-      if (legacy || questions.some(q => q.unicast)) {
+      if (legacy || questions.some((q) => q.unicast)) {
         // Unicast (QU / legacy): one reply straight to the querier; the routing
         // table, not multicast steering, chooses the egress, so it is not pinned
         // to any interface and carries the full advertisement.
-        send(encodeMessage({
-          id: legacy ? header.id : 0,
-          flags: FLAGS_RESPONSE,
-          questions: legacy ? questions : [], // legacy resolvers match on the echoed question
-          answers: full.answers,
-          additionals: full.additionals,
-        }), rinfo.port, rinfo.address);
+        send(
+          encodeMessage({
+            id: legacy ? header.id : 0,
+            flags: FLAGS_RESPONSE,
+            questions: legacy ? questions : [], // legacy resolvers match on the echoed question
+            answers: full.answers,
+            additionals: full.additionals,
+          }),
+          rinfo.port,
+          rinfo.address,
+        );
       } else if (joinedIfaces.length) {
         // Multicast: answer on EVERY joined interface, each scoped to its own
         // address so a peer never caches a cross-interface A record (BUG-131).
-        sendMulticastAll(iface => {
-          const { answers, additionals } = buildResponse(questions, { ...options, addresses: [iface] });
-          return answers.length ? encodeMessage({ id: 0, flags: FLAGS_RESPONSE, questions: [], answers, additionals }) : null;
+        sendMulticastAll((iface) => {
+          const { answers, additionals } = buildResponse(questions, {
+            ...options,
+            addresses: [iface],
+          });
+          return answers.length
+            ? encodeMessage({ id: 0, flags: FLAGS_RESPONSE, questions: [], answers, additionals })
+            : null;
         });
       } else {
-        send(encodeMessage({ id: 0, flags: FLAGS_RESPONSE, questions: [], answers: full.answers, additionals: full.additionals }), MDNS_PORT, MDNS_ADDR);
+        send(
+          encodeMessage({
+            id: 0,
+            flags: FLAGS_RESPONSE,
+            questions: [],
+            answers: full.answers,
+            additionals: full.additionals,
+          }),
+          MDNS_PORT,
+          MDNS_ADDR,
+        );
       }
     } catch (err) {
-      note(`mdns query handling error: ${err.message}`); // a stranger's junk packet
+      note(`mdns query handling error: ${errMessage(err)}`); // a stranger's junk packet
     }
   }
 
-  function onBound() {
+  function onBound(): void {
+    const sock = socket;
+    if (!sock) return;
     // RFC 6762 §11: EVERY mDNS packet — multicast or unicast — must leave with
     // IP TTL 255, because receivers are entitled to verify it as proof the
     // source is on-link. setMulticastTTL covers only the multicast replies;
     // QU and legacy answers go by unicast and would otherwise carry the
     // platform default (commonly 64), so a strict peer discards them.
-    try { socket.setTTL?.(255); } catch (err) { die('cannot set unicast TTL 255', err); return; }
-    try { socket.setMulticastTTL(255); } catch (err) { die('cannot set multicast TTL 255', err); return; }
-    try { socket.setMulticastLoopback(true); } catch { /* not fatal */ }
+
+    try {
+      sock.setTTL?.(255); // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- an injected test socket (inject.dgram) may omit setTTL; the optional call lets it degrade instead of throwing
+    } catch (err) {
+      die('cannot set unicast TTL 255', err);
+      return;
+    }
+    try {
+      sock.setMulticastTTL(255);
+    } catch (err) {
+      die('cannot set multicast TTL 255', err);
+      return;
+    }
+    try {
+      sock.setMulticastLoopback(true);
+    } catch {
+      /* not fatal */
+    }
 
     // Join on the default interface, then per-address so a multi-homed host (and
     // WSL2's mirrored stack) actually receives on the LAN interface. Per-interface
@@ -826,11 +1170,25 @@ export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', 
     // follows only the kernel's default route and secondary LANs never see us.
     joinedIfaces = [];
     let joins = 0;
-    try { socket.addMembership(MDNS_ADDR); joins += 1; } catch { /* no default multicast route */ }
-    for (const address of ad.addresses) {
-      try { socket.addMembership(MDNS_ADDR, address); joinedIfaces.push(address); joins += 1; } catch { /* already joined via this iface, or it has no multicast */ }
+    try {
+      sock.addMembership(MDNS_ADDR);
+      joins += 1;
+    } catch {
+      /* no default multicast route */
     }
-    if (joins === 0) { die('no multicast membership'); return; }
+    for (const address of ad.addresses) {
+      try {
+        sock.addMembership(MDNS_ADDR, address);
+        joinedIfaces.push(address);
+        joins += 1;
+      } catch {
+        /* already joined via this iface, or it has no multicast */
+      }
+    }
+    if (joins === 0) {
+      die('no multicast membership');
+      return;
+    }
 
     // Each joined interface speaks the moment it can: an unsolicited announcement
     // (RFC 6762 §8.3), repeated on the ANNOUNCE_DELAYS_MS cadence, scoped per
@@ -838,17 +1196,23 @@ export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', 
     // probe window, but conflict handling stays reactive — a response on our name
     // whose rdata is none of ours stands us down (§9, onMessage above).
     claimed = true;
-    for (const delay of ANNOUNCE_DELAYS_MS) schedule(() => announce(), delay);
-    note(`mdns responding for ${ad.host}:${ad.port}${ad.addresses.length ? ` (${ad.addresses.join(', ')})` : ' (no LAN address to advertise)'}`);
+    for (const delay of ANNOUNCE_DELAYS_MS)
+      schedule(() => {
+        announce();
+      }, delay);
+    note(
+      `mdns responding for ${ad.host}:${ad.port}${ad.addresses.length ? ` (${ad.addresses.join(', ')})` : ' (no LAN address to advertise)'}`,
+    );
   }
 
-  let socket = null;
-
-  function start() {
+  function start(): void {
     if (started || stopped) return;
     started = true;
 
-    if (!ad.port) { die('no port to advertise'); return; }
+    if (!ad.port) {
+      die('no port to advertise');
+      return;
+    }
     if (!ad.addresses.length) {
       // Nothing to put in an A record; SRV would point at a name that resolves to
       // nothing. Degrade for NOW — but the network may only be down at boot
@@ -858,26 +1222,47 @@ export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', 
       // start() calls on an addressless responder stay as quiet as before.
       if (!dormant) {
         note('mdns disabled (no non-internal IPv4 address) — the board still works over its IP');
-        if (onDown) { try { onDown('no non-internal IPv4 address'); } catch { /* a broken listener must not kill mDNS */ } }
+        if (onDown) {
+          try {
+            onDown('no non-internal IPv4 address');
+          } catch {
+            /* a broken listener must not kill mDNS */
+          }
+        }
       }
       started = false;
       dormant = true;
       return;
     }
 
+    let sock: Socket;
     try {
-      socket = dgramImpl.createSocket({ type: 'udp4', reuseAddr: true });
+      sock = dgramImpl.createSocket({ type: 'udp4', reuseAddr: true });
     } catch (err) {
       die('socket create failed', err);
       return;
     }
+    socket = sock;
 
     // EADDRINUSE here means a real responder (avahi, Bonjour) already owns 5353 —
     // which is FINE: it will answer for the host anyway. We simply stand down.
-    socket.on('error', err => die(err.code === 'EADDRINUSE' ? 'port 5353 already owned by another responder' : (err.code || 'socket error'), err));
-    socket.on('message', onMessage);
+    sock.on('error', (err: NodeJS.ErrnoException) => {
+      die(
+        err.code === 'EADDRINUSE'
+          ? 'port 5353 already owned by another responder'
+          : (err.code ?? 'socket error'),
+        err,
+      );
+    });
+    sock.on('message', onMessage);
     try {
-      socket.bind({ port: MDNS_PORT }, () => { try { onBound(); } catch (err) { die('bind setup failed', err); } });
+      sock.bind({ port: MDNS_PORT }, () => {
+        try {
+          onBound();
+        } catch (err) {
+          die('bind setup failed', err);
+        }
+      });
     } catch (err) {
       die('bind failed', err);
     }
@@ -894,7 +1279,7 @@ export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', 
    * when the set is unchanged. Never throws: discovery must not be able to
    * take the daemon down mid-roam any more than at startup.
    */
-  function update(nextAddresses) {
+  function update(nextAddresses?: string[] | { addresses?: string[] }): boolean {
     if (dead || stopped || stopping) return false;
     try {
       const raw = Array.isArray(nextAddresses) ? nextAddresses : nextAddresses?.addresses;
@@ -912,16 +1297,21 @@ export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', 
         return !dead;
       }
       if (!started || !socket) return false;
+      const sock = socket;
       if (!addresses.length) {
         // Never advertise a host with no A records (the same rule start()
         // enforces). Keep the last set: every address may be momentarily gone
         // mid-roam, and the next poll brings a real set.
         return false;
       }
-      if (addresses.length === ad.addresses.length && addresses.every(a => ad.addresses.includes(a))) return false;
+      if (
+        addresses.length === ad.addresses.length &&
+        addresses.every((a) => ad.addresses.includes(a))
+      )
+        return false;
 
-      const removed = ad.addresses.filter(a => !addresses.includes(a));
-      const added = addresses.filter(a => !ad.addresses.includes(a));
+      const removed = ad.addresses.filter((a) => !addresses.includes(a));
+      const added = addresses.filter((a) => !ad.addresses.includes(a));
       options.addresses = addresses;
       ad = normalize(options);
       // Withdraw each retired address with a TTL-0 A goodbye (§10.1 — flush off,
@@ -929,31 +1319,45 @@ export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', 
       // of that address's own interface, BEFORE dropping its membership.
       for (const address of removed) {
         const goodbye = encodeMessage({
-          id: 0, flags: FLAGS_RESPONSE,
+          id: 0,
+          flags: FLAGS_RESPONSE,
           answers: [{ name: ad.host, type: 'A', ttl: 0, flush: false, data: address }],
         });
         if (joinedIfaces.includes(address)) {
-          try { socket.setMulticastInterface(address); } catch { /* keep the last working egress */ }
+          try {
+            sock.setMulticastInterface(address);
+          } catch {
+            /* keep the last working egress */
+          }
           sendRaw(goodbye, MDNS_PORT, MDNS_ADDR);
         } else {
           send(goodbye, MDNS_PORT, MDNS_ADDR);
         }
       }
       for (const address of removed) {
-        try { socket.dropMembership(MDNS_ADDR, address); } catch { /* not joined via this iface, or no dropMembership */ }
+        try {
+          sock.dropMembership(MDNS_ADDR, address);
+        } catch {
+          /* not joined via this iface, or no dropMembership */
+        }
       }
-      joinedIfaces = joinedIfaces.filter(a => !removed.includes(a));
+      joinedIfaces = joinedIfaces.filter((a) => !removed.includes(a));
       for (const address of added) {
         try {
-          socket.addMembership(MDNS_ADDR, address);
+          sock.addMembership(MDNS_ADDR, address);
           if (!joinedIfaces.includes(address)) joinedIfaces.push(address);
-        } catch { /* already joined, or no multicast here */ }
+        } catch {
+          /* already joined, or no multicast here */
+        }
       }
-      for (const delay of ANNOUNCE_DELAYS_MS) schedule(() => announce(), delay);
+      for (const delay of ANNOUNCE_DELAYS_MS)
+        schedule(() => {
+          announce();
+        }, delay);
       note(`mdns addresses updated (${ad.addresses.join(', ')})`);
       return true;
     } catch (err) {
-      note(`mdns address update failed: ${err.message}`);
+      note(`mdns address update failed: ${errMessage(err)}`);
       return false;
     }
   }
@@ -961,7 +1365,7 @@ export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', 
   /** Goodbye (TTL 0, RFC 6762 §10.1) on every joined interface, then close.
    * Returns a promise that always resolves — a shutdown path must not be able
    * to reject. */
-  function stop() {
+  function stop(): Promise<void> {
     if (stopping) return stopping;
 
     // Never started, already degraded, or already closed: there is nothing to say
@@ -979,27 +1383,42 @@ export function createMdns({ port, name = 'fleetdeck', instance = 'Fleet Deck', 
     for (const t of timers) clearTimeout(t);
     timers.clear();
 
-    stopping = new Promise((resolve) => {
-      const finish = () => {
+    stopping = new Promise<void>((resolve) => {
+      const finish = (): void => {
         const doomed = socket;
         socket = null;
         dead = true;
         stopped = true;
-        try { doomed?.close(resolve); } catch { resolve(); }
+        try {
+          doomed?.close(resolve);
+        } catch {
+          resolve();
+        }
       };
       try {
         // Close on the send callback(s), but never wait forever on a wedged socket.
         const guard = setTimeout(finish, 250);
-        guard.unref?.();
-        const done = () => { clearTimeout(guard); finish(); };
+        guard.unref();
+        const done = (): void => {
+          clearTimeout(guard);
+          finish();
+        };
         // The goodbye must reach every LAN we advertised on, not just the default
         // route — each link withdraws its own address (a stale record on a
         // secondary interface is exactly what the goodbye exists to retract).
         if (joinedIfaces.length) {
-          sendMulticastAll(iface => announcementFor(iface, 0), done);
+          sendMulticastAll((iface) => announcementFor(iface, 0), done);
         } else {
+          const sock = socket;
           const answers = buildAnnouncement(options, { ttl: 0 });
-          socket.send(encodeMessage({ id: 0, flags: FLAGS_RESPONSE, answers }), MDNS_PORT, MDNS_ADDR, done);
+          if (sock)
+            sock.send(
+              encodeMessage({ id: 0, flags: FLAGS_RESPONSE, answers }),
+              MDNS_PORT,
+              MDNS_ADDR,
+              done,
+            );
+          else done();
         }
       } catch {
         finish();

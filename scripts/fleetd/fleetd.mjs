@@ -19,7 +19,7 @@ import { createCore } from './derive.mjs';
 import { createHttp, isLoopbackAddress, parseTrustedOrigins } from './http.mjs';
 import { startAgentsPoll } from './agents-poll.ts';
 import { createPayloadCapture } from './payload-capture.ts';
-import { createMdns, hostLabel } from './mdns.mjs';
+import { createMdns, hostLabel } from './mdns.ts';
 // HOME-ownership pid helpers now live in takeover.mjs (the version-takeover
 // contract), so the daemon's own claimHome lock and the SessionStart hook's
 // evict-a-stale-daemon path share one implementation and can never drift.

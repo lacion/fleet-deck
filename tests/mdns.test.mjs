@@ -33,7 +33,7 @@ import {
   MDNS_ADDR,
   MDNS_PORT,
   TYPE,
-} from '../scripts/fleetd/mdns.mjs';
+} from '../scripts/fleetd/mdns.ts';
 import { scaleMs } from './helpers/wait.mjs';
 
 const AD = { port: 4711, addresses: ['192.0.2.7'] }; // RFC 5737 TEST-NET-1: never routable
