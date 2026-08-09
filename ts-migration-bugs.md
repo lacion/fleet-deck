@@ -1300,3 +1300,64 @@ hazard the migration has hit before.
   multicast-loopback guards ("cannot observe probes on this host"), identical to the `.mjs` run; **# fail 0**.
   Daemon bundle rebuilds with the `// scripts/fleetd/mdns.ts` banner (631.9kb), passes `node --check`, and carries
   no raw control/FFFD bytes.
+
+### scripts/fleetd/events.mjs → events.ts  [NOISE + 3 genuine lint findings]
+
+The hook state machine: `applyEvent` (the faithful port of the spike's derivation switch) plus the eight hook
+endpoints that wrap it — SessionStart brief, UserPromptSubmit, Pre/PostToolUse whisper, Stop mail-block, SessionEnd
+tombstone, and the F3a/b/c hold-open intake with v1.3 plan capture. All doctrine preserved verbatim
+(BUG-024/025/034/102/104/112/122/166/204, the M-B1/B2/B5/B6/G2 correlation invariants, the F1/F3a–e/F4 needs-you
+machinery, the 0.2.0→0.7.1 /clear-succession comments, and the SECURITY-CRITICAL composeBrief comment forbidding the
+gateway token from ever entering a session brief — briefs land in shared transcripts). The file was `eslint`-ignored
+as `.mjs`; type-linting it for the first time surfaced ~40 findings, almost all the mechanical `|| → ??` conversion,
+plus three that carried real signal.
+
+- **The `|| '' / || null` payload-fallback discipline is now type-visible (mass `prefer-nullish-coalescing`).** The
+  module reads a deliberately loose `HookEvent` (every field optional — http.mjs authenticates the request, not its
+  shape), so `ev.source || 'startup'`, `ev.tool_name || 'tool'`, `ev.message || …`, `ev.session_id || ''`,
+  `ev.reason || 'end'`, `input.file_path || input.notebook_path`, `serverBranch || ev.git_branch || null`, etc. were
+  everywhere. Converted freely to `??`: these are `string | undefined` payload fields and an empty string is never a
+  real hook input (the CLI omits absent keys), so `??` is behaviour-identical for every value that actually arrives
+  while being the safer operator.
+- **Kept `||` (one inline disable) at the single site where `??` would change behaviour — the AskUserQuestion
+  headline.** `const first = (Array.isArray(qs) && qs[0]?.question) || 'structured question'` — the `&&` evaluates to
+  the literal `false` when the payload carries no questions array, and `??` does NOT coalesce `false`, so it would
+  leak `false` into the note. The `||` is load-bearing; disabled inline with a `-- reason`. (Line 466's
+  `path.basename(ev.cwd ?? '') || 'cwd changed'` needed NO disable: `path.basename` returns a non-nullable `string`,
+  so `prefer-nullish-coalescing` never fires on its `||` — eslint --fix auto-deleted the disable I first added there
+  as unused, a useful confirmation of the "only nullable LHS is flagged" rule.)
+- **`no-useless-assignment` — the M-B6 plan-capture transaction's three `let x = null` seeds were dead code.** `row`
+  / `planRowId` / `callsign` are each assigned unconditionally inside the `BEGIN IMMEDIATE` try before any read, and
+  the catch always `ROLLBACK`s and `return null`s — so the `= null` seeds (and their `| null` unions) were never read
+  on any reachable path. Dropped all three to bare `let row: { id: number }` / `let planRowId: number` /
+  `let callsign: string`. TS's definite-assignment analysis proves the later reads are safe: when a try's catch
+  cannot fall through (this one returns), the post-try state equals the try's end state, where all three are
+  assigned.
+- **`no-base-to-string` — `String(ev.tool_input?.plan ?? '')` stringified an `unknown`.** `ToolInput.plan` is typed
+  `unknown` (ExitPlanMode's plan is opaque on the wire), and `String()` on `unknown` is exactly what the rule guards
+  — a non-string would stringify to the useless `[object Object]`. Rewrote to a
+  `const rawPlan = ev.tool_input?.plan; const planMd = typeof rawPlan === 'string' ? rawPlan : ''` guard. The real
+  string path is unchanged; the dropped `String(… ?? '')` else-branch only ever produced `''` for the inputs that
+  occur (undefined/absent plan), never the `[object Object]` a non-string plan ExitPlanMode never sends.
+- **`no-unnecessary-type-conversion` / `no-unnecessary-condition` / `prefer-optional-chain` — mechanical tidy-ups
+  from narrowing.** Dropped redundant `String()` on already-`string` values: `String(input.command)` (narrowed by the
+  `&& input.command` guard), `String(first)`, and `String(ev.transcript_path)` (narrowed by the `&&` in the
+  succession guard) — but KEPT `String(ev.cwd)` in the ClearSuccessionRefused log, where cwd is `string | undefined`
+  and String() is a real conversion that preserves the diagnostic's `cwd undefined` rendering. The model-extraction
+  expression's `typeof m === 'object' && m ? …` shed its dead `&& m` (the payload type `string | { display_name?;
+  id? }` has no null, so the object branch is always truthy) — rewritten as an `if/else if` that also folds its inner
+  `display_name || id` to `??`. The clear-succession placeholder guard `existing && existing.events === 0 && …`
+  collapsed to `existing?.events === 0 && …` (TS narrows `existing` non-null through the rest of the `&&` chain after
+  the `=== 0` compare).
+- **Typedefs added (no runtime effect):** `ToolInput` / `HookEvent` (the on-the-wire payload, every field optional by
+  design), `Conflict` (a structural mirror of ledger's un-exported handle, keeping events decoupled), `ApplyResult`,
+  and `EventsCtx` — the consumer's view of the core ctx typed from usage (derive.mjs is still JS/unchecked), with `q`
+  as `Statements['q']` and the questions relay's payload params left `unknown` (events passes both a `HookEvent` and a
+  `{ text }` freeform shape, persisted opaquely). `errMessage(err: unknown): string` for the
+  `useUnknownInCatchVariables` catch clauses; the `FLEETDECK_TEST_FAIL_PLAN_INSERT` seam reads via bracket access
+  (`process.env['…']`, TS4111).
+- **Verify:** `eslint events.ts` clean (0). `tsc --noEmit` clean project-wide (0). Sole importer
+  `scripts/fleetd/derive.mjs:28` repointed `./events.mjs → ./events.ts` (events has no test that imports it directly;
+  it is driven through derive). 133/133 green across the events-exercising suites — hook-auth +
+  hook-missing-session-id + plans + derive-audit-reliability (67) and mail-and-blocking + dismiss + fleet-bugs (66);
+  **# fail 0**. Daemon bundle rebuilds with the `// scripts/fleetd/events.ts` banner (632.4kb), passes `node --check`.

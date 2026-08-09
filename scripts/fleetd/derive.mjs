@@ -25,7 +25,7 @@ import { createIngest } from './ingest.ts';
 import { createCommands } from './commands.ts';
 import { createPlans } from './plans.ts';
 import { createSpawns } from './spawns.mjs';
-import { createEvents } from './events.mjs';
+import { createEvents } from './events.ts';
 import { createSnapshot } from './snapshot.ts';
 import { createRetention } from './retention.ts';
 import { createKeyedMutex, envInt } from './helpers.ts';
@@ -39,7 +39,7 @@ export {
 const CALLSIGNS = ['falcon', 'otter', 'raven', 'lynx', 'orca', 'wren', 'viper', 'heron', 'badger', 'comet', 'ember', 'drift'];
 // CONFLICT_WINDOW_MS lives in ledger.mjs now.
 // MAIL_MAX_LEN + clampMail (the surrogate-safe bound) live in mail.ts now.
-// EDIT_TOOLS + TEST_RUNNER_RE live in events.mjs now.
+// EDIT_TOOLS + TEST_RUNNER_RE live in events.ts now.
 
 // v1.2 env knobs (resolved once per core; tests spawn fresh daemons):
 //   FLEETDECK_STALE_MS    — stale badge threshold for working/verifying cards
@@ -178,7 +178,7 @@ export function createCore(db, {
   const { q, updateSession } = createStatements(db);
 
   // In-terminal plan settlement (UX 2.2, CONTRACT "B. Plan library"): plan
-  // capture is unconditional (events.mjs hookHoldQuestion), but the
+  // capture is unconditional (events.ts hookHoldQuestion), but the
   // proposed → approved/captured/rejected flip only exists on the BOARD-answer
   // path (planAnswered below). Approve the plan in the TERMINAL instead and
   // the question row retires by turn boundary or hold timer while the plan
@@ -358,7 +358,7 @@ export function createCore(db, {
     return c;
   }
 
-  // applyTicket — the ONE rename path, shared by branch auto-detect (events.mjs)
+  // applyTicket — the ONE rename path, shared by branch auto-detect (events.ts)
   // and the manual `ticket` command (commands.mjs). Returns
   // { ok:true, renamed, callsign, ticket, previous? } (previous only on a real
   // rename) or { ok:false, reason }. Runs fully synchronously (no await), so it
@@ -751,7 +751,7 @@ export function createCore(db, {
     q, updateSession, onMutate, tmuxAdapter, questions, settleTerminalPlans,
     findScopedWindow, scopedPaneTarget, tick, logEvent, card, assignCallsign, applyTicket,
     modelMemo, stampTranscriptFloor, readTranscriptModel,
-    // 0.7.1: naming + /clear succession, shared with events.mjs (the hook-time
+    // 0.7.1: naming + /clear succession, shared with events.ts (the hook-time
     // interception), commands.mjs / http.mjs (the `name` surfaces), and
     // spawns.mjs (the boot heal for pairs stranded before this shipped).
     CLEAR_SUCCESSION_MS, applyCustomName, hasLivePane,
@@ -855,7 +855,7 @@ export function createCore(db, {
     scheduleRegistrationRemoteHarvest, forgetSpawn, spawnState, armUnsupervised,
   } = ctx;
 
-  // Hook state machine (applyEvent + hook endpoints + brief + plan capture) → events.mjs.
+  // Hook state machine (applyEvent + hook endpoints + brief + plan capture) → events.ts.
   Object.assign(ctx, createEvents(ctx));
   const {
     applyEvent, hookSessionStart, hookUserPromptSubmit, hookPostToolUse,

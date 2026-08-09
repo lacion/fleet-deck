@@ -12158,13 +12158,16 @@ ${detail}` : note);
   };
 }
 
-// scripts/fleetd/events.mjs
+// scripts/fleetd/events.ts
 import path13 from "node:path";
 import os7 from "node:os";
+function errMessage3(err) {
+  return err instanceof Error && err.message ? err.message : String(err);
+}
 var EDIT_TOOLS = ["Edit", "Write", "MultiEdit", "NotebookEdit"];
 var TEST_RUNNER_RE = /\b(pytest|jest|vitest|go test|cargo test|npm (run )?test)\b/;
 function expectedTranscriptDir(cwd, homeDir = os7.homedir()) {
-  return path13.join(homeDir, ".claude", "projects", mungeClaudeProjectCwd(cwd));
+  return path13.join(homeDir, ".claude", "projects", mungeClaudeProjectCwd(cwd ?? ""));
 }
 function createEvents(ctx) {
   const {
@@ -12209,7 +12212,7 @@ function createEvents(ctx) {
     settleTerminalPlans
   } = ctx;
   function applyEvent(ev) {
-    const sid = typeof ev?.session_id === "string" && ev.session_id ? ev.session_id : null;
+    const sid = typeof ev.session_id === "string" && ev.session_id ? ev.session_id : null;
     if (!sid) return { card: null, conflict: null };
     let c = card(sid, ev.cwd);
     const endSpawn = ev.hook_event_name === "SessionEnd" ? q.spawnBySession.get(sid) : null;
@@ -12243,11 +12246,14 @@ function createEvents(ctx) {
       upd.repo_name = repo.repo_name;
       upd.worktree = repo.worktree;
       serverBranch = branchOf(ev.cwd);
-      const branch = serverBranch || ev.git_branch || null;
+      const branch = serverBranch ?? ev.git_branch ?? null;
       if (branch) upd.branch = branch;
       if (repo.is_git && repo.repo_id !== c.repo_id) changedRepo = repo;
     }
-    const payloadModel = ev.model?.display_name || ev.model?.id || (typeof ev.model === "string" && ev.model ? ev.model : null);
+    const m = ev.model;
+    let payloadModel = null;
+    if (typeof m === "object") payloadModel = m.display_name ?? m.id ?? null;
+    else if (typeof m === "string" && m) payloadModel = m;
     if (ev.hook_event_name === "SessionStart") {
       stampTranscriptFloor(sid, ev.transcript_path);
       if (payloadModel) upd.model = payloadModel;
@@ -12276,19 +12282,19 @@ function createEvents(ctx) {
       if (tk) {
         tk = ticketFromBranch(branchOf(ev.cwd, { fresh: true }));
       }
-      if (tk && applyTicket(sid, tk, "branch").ok) c = q.getSession.get(sid);
+      if (tk && applyTicket(sid, tk, "branch").ok) c = q.getSession.get(sid) ?? c;
     }
     let conflict = null;
     const set = {};
     switch (ev.hook_event_name) {
       case "SessionStart":
         set.col = "queued";
-        set.note = `session ${ev.source || "startup"}`;
+        set.note = `session ${ev.source ?? "startup"}`;
         break;
       case "UserPromptSubmit":
         set.col = "working";
-        set.task = c.task || (ev.prompt || "").slice(0, 80);
-        set.note = "prompt: " + (ev.prompt || "").slice(0, 60);
+        set.task = c.task || (ev.prompt ?? "").slice(0, 80);
+        set.note = "prompt: " + (ev.prompt ?? "").slice(0, 60);
         set.notification_type = null;
         tick(`${c.callsign} got a prompt`);
         break;
@@ -12298,13 +12304,13 @@ function createEvents(ctx) {
         set.col = c.col === "needsyou" ? "working" : c.col === "queued" ? "working" : c.col;
         set.notification_type = null;
         set.last_tool = ev.tool_name ?? null;
-        const input = ev.tool_input || {};
-        const file = input.file_path || input.notebook_path;
-        if (EDIT_TOOLS.includes(ev.tool_name) && file) {
+        const input = ev.tool_input ?? {};
+        const file = input.file_path ?? input.notebook_path;
+        if (EDIT_TOOLS.includes(ev.tool_name ?? "") && file) {
           conflict = recordFile(sid, file, c);
           set.note = `editing ${path13.basename(file)}`;
         } else if (ev.tool_name === "Bash" && input.command) {
-          const cmd = String(input.command);
+          const cmd = input.command;
           if (TEST_RUNNER_RE.test(cmd)) {
             set.col = "verifying";
             set.note = "running tests";
@@ -12312,12 +12318,12 @@ function createEvents(ctx) {
             set.note = "sh: " + cmd.slice(0, 50);
           }
         } else {
-          set.note = ev.tool_name;
+          set.note = ev.tool_name ?? null;
         }
         break;
       }
       case "FileChanged": {
-        const file = ev.file_path || ev.tool_input?.file_path || ev.path || null;
+        const file = ev.file_path ?? ev.tool_input?.file_path ?? ev.path ?? null;
         if (file) {
           conflict = recordFile(sid, file, c);
           set.note = `changed ${path13.basename(file)}`;
@@ -12325,16 +12331,23 @@ function createEvents(ctx) {
         break;
       }
       case "CwdChanged":
-        set.note = `cwd \u2192 ${path13.basename(ev.cwd || "") || "cwd changed"}`;
+        set.note = `cwd \u2192 ${path13.basename(ev.cwd ?? "") || "cwd changed"}`;
         break;
       case "Notification": {
         const ntype = ev.notification_type ?? null;
-        const RESOLVED_TYPES = ["auth_success", "elicitation_complete", "elicitation_response", "agent_completed"];
+        const RESOLVED_TYPES = [
+          "auth_success",
+          "elicitation_complete",
+          "elicitation_response",
+          "agent_completed"
+        ];
         set.notification_type = ntype;
-        set.note = (ev.message || ntype || "needs attention").slice(0, 80);
-        if (!RESOLVED_TYPES.includes(ntype)) {
+        set.note = (ev.message ?? ntype ?? "needs attention").slice(0, 80);
+        if (!RESOLVED_TYPES.includes(ntype ?? "")) {
           set.col = "needsyou";
-          tick(`\u{1F590} ${c.callsign} needs you${ntype ? ` (${ntype})` : ""}: ${(ev.message || "").slice(0, 50)}`);
+          tick(
+            `\u{1F590} ${c.callsign} needs you${ntype ? ` (${ntype})` : ""}: ${(ev.message ?? "").slice(0, 50)}`
+          );
         }
         break;
       }
@@ -12344,20 +12357,21 @@ function createEvents(ctx) {
           set.note = "question open in the terminal";
           tick(`\u{1F590} ${c.callsign} has a question open in the terminal`);
         } else {
-          set.note = `permission: ${ev.tool_name || "tool"}`;
-          tick(`\u{1F590} ${c.callsign} awaits permission: ${ev.tool_name || "tool"}`);
+          set.note = `permission: ${ev.tool_name ?? "tool"}`;
+          tick(`\u{1F590} ${c.callsign} awaits permission: ${ev.tool_name ?? "tool"}`);
         }
         break;
       case "AskUserQuestion": {
-        const first = Array.isArray(ev.tool_input?.questions) && ev.tool_input.questions[0]?.question || "structured question";
+        const qs = ev.tool_input?.questions;
+        const first = Array.isArray(qs) && qs[0]?.question || "structured question";
         set.col = "needsyou";
         set.note = ("choice: " + first).slice(0, 80);
-        tick(`\u{1F590} ${c.callsign} asks: ${String(first).slice(0, 50)}`);
+        tick(`\u{1F590} ${c.callsign} asks: ${first.slice(0, 50)}`);
         break;
       }
       case "Elicitation":
         set.col = "needsyou";
-        set.note = `elicitation: ${ev.message || ev.matcher || "MCP input requested"}`.slice(0, 80);
+        set.note = `elicitation: ${ev.message ?? ev.matcher ?? "MCP input requested"}`.slice(0, 80);
         tick(`\u{1F590} ${c.callsign} awaits input (elicitation)`);
         break;
       case "Stop":
@@ -12376,33 +12390,33 @@ function createEvents(ctx) {
         } else {
           set.col = "offline";
           set.ended_at = Date.now();
-          set.end_reason = ev.reason || "end";
+          set.end_reason = ev.reason ?? "end";
           set.note = "session ended" + (ev.reason ? ` (${ev.reason})` : "");
           tick(`${c.callsign} left the fleet`);
         }
         break;
       default:
-        set.note = ev.hook_event_name;
+        set.note = ev.hook_event_name ?? null;
     }
     updateSession(sid, set);
     c = { ...c, ...set };
-    logEvent(sid, ev.hook_event_name, ev.tool_name, c.note);
+    logEvent(sid, ev.hook_event_name ?? "", ev.tool_name, c.note);
     onMutate();
     return { card: c, conflict, staleRunEnd };
   }
   function hookSessionStart(ev) {
-    const sid = ev.session_id || "";
+    const sid = ev.session_id ?? "";
     if (ev.source === "clear" || ev.source === "compact") {
       const existing = q.getSession.get(sid);
-      const placeholder = existing && existing.events === 0 && existing.succeeded_by == null && !q.successorClaimed.get(sid) && !q.spawnBySession.get(sid);
+      const placeholder = existing?.events === 0 && existing.succeeded_by == null && !q.successorClaimed.get(sid) && !q.spawnBySession.get(sid);
       if (!existing || placeholder) {
         const prev = findClearedPredecessor(sid, ev.cwd, Date.now());
-        if (prev && ev.transcript_path && path13.dirname(String(ev.transcript_path)) !== expectedTranscriptDir(ev.cwd)) {
+        if (prev && ev.transcript_path && path13.dirname(ev.transcript_path) !== expectedTranscriptDir(ev.cwd)) {
           logEvent(
             sid,
             "ClearSuccessionRefused",
             null,
-            `transcript ${String(ev.transcript_path).slice(0, 160)} does not match cwd ${String(ev.cwd).slice(0, 160)}`
+            `transcript ${ev.transcript_path.slice(0, 160)} does not match cwd ${String(ev.cwd).slice(0, 160)}`
           );
         } else if (prev) {
           succeedSession(prev, sid, { rename: !!existing });
@@ -12410,14 +12424,20 @@ function createEvents(ctx) {
       }
     }
     const { card: c } = applyEvent({ ...ev, hook_event_name: "SessionStart" });
+    if (!c) return { ok: false };
     return { ok: true, callsign: c.callsign, brief: composeBrief(c) };
   }
   function takeoverBriefLines(replacedVersion, legacy) {
-    const lines = [`[FLEETDECK] The fleet daemon was just upgraded (replacing v${replacedVersion}).`];
-    const n = legacy?.sessions?.length ?? 0;
+    const lines = [
+      `[FLEETDECK] The fleet daemon was just upgraded (replacing v${replacedVersion}).`
+    ];
+    const sessions = legacy?.sessions ?? [];
+    const n = sessions.length;
     if (n > 0) {
-      const names = legacy.sessions.slice(0, 8).map((s) => String(s).slice(0, 8)).join(", ");
-      lines.push(`[FLEETDECK] ${n} session(s) are still running pre-0.16.0 hooks (${names}${n > 8 ? ", \u2026" : ""}) \u2014 they are dark on the board until restarted. Tell the human: restart those sessions when convenient; the board tracks which are left.`);
+      const names = sessions.slice(0, 8).map((s) => String(s).slice(0, 8)).join(", ");
+      lines.push(
+        `[FLEETDECK] ${n} session(s) are still running pre-0.16.0 hooks (${names}${n > 8 ? ", \u2026" : ""}) \u2014 they are dark on the board until restarted. Tell the human: restart those sessions when convenient; the board tracks which are left.`
+      );
     }
     return lines;
   }
@@ -12434,16 +12454,22 @@ function createEvents(ctx) {
       // credentialed URL only into fleetd.log, which nobody reads.
       `[FLEETDECK] You are on the fleet board as "${c.callsign}"${c.ticket ? ` (ticket ${c.ticket})` : ""} \u2014 live at http://127.0.0.1:${port} (board key, if asked: \`fleetdeck token\` or ${home ? path13.join(home, "token") : "$FLEETDECK_HOME/token"})`,
       sameRepo.length ? `Other active sessions${repoLabel} (${sameRepo.length}):` : `No other sessions active${repoLabel} right now.`,
-      ...sameRepo.map((s) => `  - ${s.callsign} [${s.col}] ${s.note}${s.branch ? " \u2014 " + s.branch : ""}${s.worktree && s.worktree !== c.worktree ? " @ " + s.worktree : ""}`)
+      ...sameRepo.map(
+        (s) => `  - ${s.callsign} [${s.col}] ${s.note}${s.branch ? " \u2014 " + s.branch : ""}${s.worktree && s.worktree !== c.worktree ? " @ " + s.worktree : ""}`
+      )
     ];
     if (elsewhere.length) {
-      lines.push(`${elsewhere.length} more session${elsewhere.length === 1 ? "" : "s"} across ${otherRepos} other repo${otherRepos === 1 ? "" : "s"}.`);
+      lines.push(
+        `${elsewhere.length} more session${elsewhere.length === 1 ? "" : "s"} across ${otherRepos} other repo${otherRepos === 1 ? "" : "s"}.`
+      );
     }
-    lines.push("Fleetdeck will warn you in-context if you touch files another session is editing. Take those warnings seriously: coordinate, don\u2019t clobber.");
+    lines.push(
+      "Fleetdeck will warn you in-context if you touch files another session is editing. Take those warnings seriously: coordinate, don\u2019t clobber."
+    );
     return lines.join("\n");
   }
   function hookUserPromptSubmit(ev) {
-    const sid = ev.session_id || "";
+    const sid = ev.session_id ?? "";
     applyEvent({ ...ev, hook_event_name: "UserPromptSubmit" });
     q.setBlocked.run(0, sid);
     ctx.questions.expireOnActivity(sid);
@@ -12459,10 +12485,13 @@ function createEvents(ctx) {
     };
   }
   function hookPostToolUse(ev) {
-    const eventName = ev.hook_event_name || "PostToolUse";
+    const eventName = ev.hook_event_name ?? "PostToolUse";
     const { conflict } = applyEvent({ ...ev, hook_event_name: eventName });
-    questions.expireOnActivity(ev.session_id || "", { toolName: ev.tool_name, toolInput: ev.tool_input });
-    settleTerminalPlans(ev.session_id || "");
+    questions.expireOnActivity(ev.session_id ?? "", {
+      toolName: ev.tool_name,
+      toolInput: ev.tool_input
+    });
+    settleTerminalPlans(ev.session_id ?? "");
     if (!conflict) return {};
     return {
       hookSpecificOutput: {
@@ -12472,13 +12501,18 @@ function createEvents(ctx) {
     };
   }
   function hookStop(ev) {
-    const sid = ev.session_id || "";
+    const sid = ev.session_id ?? "";
     const c = card(sid);
     if (!c.blocked_this_turn) {
       const box = drainMail(sid);
       if (box.length) {
         q.setBlocked.run(1, sid);
-        updateSession(sid, { last_seen: Date.now(), events: c.events + 1, col: "working", note: "processing fleet mail" });
+        updateSession(sid, {
+          last_seen: Date.now(),
+          events: c.events + 1,
+          col: "working",
+          note: "processing fleet mail"
+        });
         logEvent(sid, "Stop", null, "mail delivered via block");
         tick(`\u2709 ${c.callsign} got fleet mail at the turn boundary`);
         onMutate();
@@ -12496,7 +12530,7 @@ function createEvents(ctx) {
     return {};
   }
   function detectFreeform(ev) {
-    const sid = ev.session_id || "";
+    const sid = ev.session_id ?? "";
     try {
       const fromPayload = typeof ev.last_assistant_message === "string" && ev.last_assistant_message.trim() ? ev.last_assistant_message : null;
       const text = fromPayload ?? (ev.transcript_path ? lastAssistantText(ev.transcript_path) : null);
@@ -12505,7 +12539,7 @@ function createEvents(ctx) {
       const dup = questions.pendingOf(sid).some((r) => {
         if (r.kind !== "freeform") return false;
         try {
-          return JSON.parse(r.payload_json || "{}").text === question;
+          return JSON.parse(r.payload_json ?? "{}").text === question;
         } catch {
           return false;
         }
@@ -12522,27 +12556,28 @@ function createEvents(ctx) {
   }
   function hookHoldQuestion(ev, eventName) {
     const kind = eventName === "Elicitation" ? "elicitation" : eventName === "AskUserQuestion" ? "choice" : "permission";
-    const sid = ev.session_id || "";
-    const isPlan = eventName === "PermissionRequest" && ev?.tool_name === "ExitPlanMode";
+    const sid = ev.session_id ?? "";
+    const isPlan = eventName === "PermissionRequest" && ev.tool_name === "ExitPlanMode";
     if (!isPlan) {
       applyEvent({ ...ev, hook_event_name: eventName });
       const row2 = questions.create(kind, sid, ev);
       onMutate();
       return row2;
     }
-    let row = null;
-    let planRowId = null;
-    let callsign = null;
+    let row;
+    let planRowId;
+    let callsign;
     db2.exec("BEGIN IMMEDIATE");
     try {
       card(sid, ev.cwd);
       row = questions.create(kind, sid, ev);
-      if (process.env.FLEETDECK_TEST_FAIL_PLAN_INSERT) {
+      if (process.env["FLEETDECK_TEST_FAIL_PLAN_INSERT"]) {
         throw new Error("injected plan-insert failure (FLEETDECK_TEST_FAIL_PLAN_INSERT)");
       }
       const c = q.getSession.get(sid);
       callsign = c?.callsign ?? sid;
-      const planMd = typeof ev.tool_input?.plan === "string" ? ev.tool_input.plan : String(ev.tool_input?.plan ?? "");
+      const rawPlan = ev.tool_input?.plan;
+      const planMd = typeof rawPlan === "string" ? rawPlan : "";
       const info = q.insertPlan.run(
         sid,
         c?.callsign ?? null,
@@ -12559,7 +12594,10 @@ function createEvents(ctx) {
         db2.exec("ROLLBACK");
       } catch {
       }
-      console.error("fleetd plan capture error (question + plan rolled back, hook fails open):", err);
+      console.error(
+        "fleetd plan capture error (question + plan rolled back, hook fails open):",
+        err
+      );
       onMutate();
       return null;
     }
@@ -12569,7 +12607,7 @@ function createEvents(ctx) {
     return row;
   }
   function hookSessionEnd(ev) {
-    const sid = ev.session_id || "";
+    const sid = ev.session_id ?? "";
     const { staleRunEnd } = applyEvent({ ...ev, hook_event_name: "SessionEnd" });
     if (staleRunEnd) return {};
     questions.expireAllForSession(sid);
@@ -12579,20 +12617,27 @@ function createEvents(ctx) {
       return {};
     }
     const armed = q.getSession.get(sid);
-    if (armed && armed.adopt_armed_until != null && armed.adopt_armed_until > Date.now()) {
+    if (armed?.adopt_armed_until != null && armed.adopt_armed_until > Date.now()) {
       const skip = !!armed.adopt_armed_skip;
       const timer = setTimeout(() => {
         adoptSession(sid, { dangerously_skip_permissions: skip }, { deferred: true }).then((out) => {
           if (!out || out.status >= 400 && out.status !== 409) {
             const c = q.getSession.get(sid);
-            tick(`\u2717 move-to-tmux failed for ${c?.callsign ?? sid}: ${out?.body?.reason ?? "unknown"}`.slice(0, 100));
+            tick(
+              `\u2717 move-to-tmux failed for ${c?.callsign ?? sid}: ${out?.body?.reason ?? "unknown"}`.slice(
+                0,
+                100
+              )
+            );
           }
         }).catch((err) => {
           const c = q.getSession.get(sid);
-          tick(`\u2717 move-to-tmux failed for ${c?.callsign ?? sid}: ${String(err?.message || err)}`.slice(0, 100));
+          tick(
+            `\u2717 move-to-tmux failed for ${c?.callsign ?? sid}: ${errMessage3(err)}`.slice(0, 100)
+          );
         });
       }, ADOPT_DELAY_MS);
-      timer.unref?.();
+      timer.unref();
     }
     modelMemo.delete(sid);
     const sp = q.spawnBySession.get(sid);
@@ -15515,7 +15560,7 @@ var LEGACY_TTL = 10;
 var SERVICE_TYPES = ["_fleetdeck._tcp.local", "_http._tcp.local"];
 var META_QUERY = "_services._dns-sd._udp.local";
 var ANNOUNCE_DELAYS_MS = [0, 1e3, 2e3];
-function errMessage3(err) {
+function errMessage4(err) {
   return err instanceof Error && err.message ? err.message : String(err);
 }
 function encodeName(name) {
@@ -16023,7 +16068,7 @@ function createMdns({
         callback?.();
       });
     } catch (err) {
-      note(`mdns send failed: ${errMessage3(err)}`);
+      note(`mdns send failed: ${errMessage4(err)}`);
       callback?.();
     }
   }
@@ -16076,7 +16121,7 @@ function createMdns({
           send(encodeMessage({ id: 0, flags: FLAGS_RESPONSE, answers }), MDNS_PORT, MDNS_ADDR);
       }
     } catch (err) {
-      note(`mdns announce failed: ${errMessage3(err)}`);
+      note(`mdns announce failed: ${errMessage4(err)}`);
     }
   }
   function withdrawAndDie(reason) {
@@ -16170,7 +16215,7 @@ function createMdns({
         );
       }
     } catch (err) {
-      note(`mdns query handling error: ${errMessage3(err)}`);
+      note(`mdns query handling error: ${errMessage4(err)}`);
     }
   }
   function onBound() {
@@ -16329,7 +16374,7 @@ function createMdns({
       note(`mdns addresses updated (${ad.addresses.join(", ")})`);
       return true;
     } catch (err) {
-      note(`mdns address update failed: ${errMessage3(err)}`);
+      note(`mdns address update failed: ${errMessage4(err)}`);
       return false;
     }
   }

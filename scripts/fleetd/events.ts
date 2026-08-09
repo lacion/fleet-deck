@@ -11,10 +11,127 @@
 import path from 'node:path';
 import os from 'node:os';
 import { deriveRepo, branchOf } from './repo-identity.ts';
+import type { RepoIdentityGit } from './repo-identity.ts';
 import { ticketFromBranch } from './tickets.ts';
 import { lastAssistantText } from './transcript.ts';
 import { detectTrailingQuestion } from './questions.ts';
 import { mungeClaudeProjectCwd } from './helpers.ts';
+import type { Statements, SessionRow } from './statements.ts';
+import type { SqliteHandle } from './sqlite.ts';
+
+// The Claude Code hook payload as it arrives on the wire. Every field is
+// optional: http.mjs authenticates the REQUEST, not its SHAPE, so applyEvent
+// and the endpoints read defensively throughout (the `|| ''` / `?? null`
+// fallbacks below are that discipline made type-visible). `model` carries a
+// bare id string in practice; the object form is the defensive future-CLI
+// shape the spike anticipated.
+interface ToolInput {
+  file_path?: string;
+  notebook_path?: string;
+  command?: string;
+  plan?: unknown;
+  questions?: ({ question?: string } | null)[];
+}
+interface HookEvent {
+  session_id?: string;
+  cwd?: string;
+  hook_event_name?: string;
+  source?: string;
+  reason?: string;
+  transcript_path?: string;
+  git_branch?: string;
+  fleet_run?: string | null;
+  model?: string | { display_name?: string; id?: string };
+  tool_name?: string;
+  tool_input?: ToolInput;
+  prompt?: string;
+  notification_type?: string | null;
+  message?: string;
+  matcher?: string;
+  file_path?: string;
+  path?: string;
+  last_assistant_message?: string;
+}
+
+// The file-ledger conflict handle threaded recordFile → whisperText. events
+// only forwards it, so a structural mirror of ledger's (un-exported) Conflict
+// keeps this module decoupled from ledger internals.
+interface Conflict {
+  file: string;
+  abs: string;
+  rivals: string;
+  severity: string;
+}
+
+interface ApplyResult {
+  card: SessionRow | null;
+  conflict: Conflict | null;
+  staleRunEnd?: boolean;
+}
+
+// The CONSUMER's view of the core ctx: exactly the surface this state machine
+// touches, typed from usage rather than re-deriving derive.mjs's object (derive
+// is still JS/unchecked). `q` is the shared prepared-statement bundle
+// (Statements['q']), same idiom as snapshot.ts / mail.ts / commands.ts. Payload
+// params on the questions relay stay `unknown` — events passes both a HookEvent
+// (holds) and a `{ text }` shape (freeform), and the relay persists them opaquely.
+interface EventsCtx {
+  q: Statements['q'];
+  db: SqliteHandle;
+  card: (sid: string, cwd?: string | null) => SessionRow;
+  updateSession: (sid: string, patch: Partial<SessionRow>) => void;
+  tick: (msg: string) => void;
+  logEvent: (sid: string, event: string, tool?: string | null, note?: string | null) => void;
+  onMutate: () => void;
+  port: number;
+  home: string | null;
+  questions: {
+    create: (kind: string, sid: string, payload: unknown) => { id: number };
+    expireOnActivity: (
+      sid: string,
+      correlate?: { toolName?: unknown; toolInput?: unknown },
+    ) => void;
+    expireAllForSession: (sid: string) => void;
+    pendingOf: (sid: string) => { kind: string; payload_json: string | null }[];
+  };
+  scheduleRegistrationRemoteHarvest: (spawnId: string) => void;
+  stampTranscriptFloor: (sid: string, transcriptPath?: string | null) => void;
+  readTranscriptModel: (sid: string, transcriptPath: string) => string | null;
+  recordFile: (sid: string, file: string | null | undefined, card: SessionRow) => Conflict | null;
+  whisperText: (conflict: Conflict) => string;
+  drainMail: (sid: string) => { id: number; from: string; text: string; at: number }[];
+  notifyWatchers: (sid: string) => void;
+  modelMemo: Map<string, unknown>;
+  forgetSpawn: (spawnId: string) => void;
+  applyTicket: (sid: string, ticket: string, source: string) => { ok: boolean };
+  adoptSession: (
+    sid: string,
+    opts: { dangerously_skip_permissions: boolean },
+    meta: { deferred: boolean },
+  ) => Promise<{ status: number; body?: { reason?: string } } | null | undefined>;
+  ADOPT_DELAY_MS: number;
+  findClearedPredecessor: (
+    sid: string,
+    cwd: string | null | undefined,
+    now: number,
+  ) => SessionRow | null;
+  succeedSession: (prev: SessionRow, sid: string, opts: { rename: boolean }) => void;
+  succeedForwardFromClear: (sid: string, cwd: string | null | undefined) => void;
+  touchRepo: (info: {
+    repo_id: string;
+    repo_name: string | null;
+    root: string;
+    source: string;
+  }) => void;
+  settleTerminalPlans: (sid: string) => void;
+}
+
+// useUnknownInCatchVariables: the plan-capture and deferred-adopt catch clauses
+// receive `unknown`; this is the same helper shape as settings.ts / repos.ts /
+// mdns.ts. Preserves the original `err.message || err` intent.
+function errMessage(err: unknown): string {
+  return err instanceof Error && err.message ? err.message : String(err);
+}
 
 const EDIT_TOOLS = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'];
 const TEST_RUNNER_RE = /\b(pytest|jest|vitest|go test|cargo test|npm (run )?test)\b/; // spike regex, verbatim
@@ -22,8 +139,11 @@ const TEST_RUNNER_RE = /\b(pytest|jest|vitest|go test|cargo test|npm (run )?test
 // 0.16.0 succession corroboration: the directory a session working in `cwd`
 // writes its transcripts to (~/.claude/projects/<munged-cwd>/). The heir of a
 // /clear shares the predecessor's cwd, so its transcript_path MUST live here.
-function expectedTranscriptDir(cwd, homeDir = os.homedir()) {
-  return path.join(homeDir, '.claude', 'projects', mungeClaudeProjectCwd(cwd));
+function expectedTranscriptDir(
+  cwd: string | null | undefined,
+  homeDir: string = os.homedir(),
+): string {
+  return path.join(homeDir, '.claude', 'projects', mungeClaudeProjectCwd(cwd ?? ''));
 }
 
 // Test seam (BUG-166): hook-auth.test.mjs's sabotage daemon wraps the whole
@@ -32,20 +152,39 @@ function expectedTranscriptDir(cwd, homeDir = os.homedir()) {
 // layer and the swap see), not on the raw ctx derive.mjs built — otherwise
 // the handlers close over the raw ctx and a ctx.questions swap is invisible
 // to them. derive.mjs calls createEvents with its ctx explicitly.
-export function createEvents(ctx) {
+export function createEvents(ctx: EventsCtx) {
   const {
-    q, db, card, updateSession, tick, logEvent, onMutate, port, home, questions,
-    scheduleRegistrationRemoteHarvest, stampTranscriptFloor, readTranscriptModel,
-    recordFile, whisperText, drainMail, notifyWatchers, modelMemo, forgetSpawn,
+    q,
+    db,
+    card,
+    updateSession,
+    tick,
+    logEvent,
+    onMutate,
+    port,
+    home,
+    questions,
+    scheduleRegistrationRemoteHarvest,
+    stampTranscriptFloor,
+    readTranscriptModel,
+    recordFile,
+    whisperText,
+    drainMail,
+    notifyWatchers,
+    modelMemo,
+    forgetSpawn,
     applyTicket,
     // 0.7.0 Move-to-tmux (adopt): the armed auto-adopt trigger in hookSessionEnd
     // fires adoptSession after ADOPT_DELAY_MS. createSpawns(ctx) runs before
     // createEvents(ctx) in derive.mjs, so ctx.adoptSession is already bound here.
-    adoptSession, ADOPT_DELAY_MS,
+    adoptSession,
+    ADOPT_DELAY_MS,
     // 0.7.1 /clear succession: recognise the heir a /clear just minted, before
     // card() can deal it a fresh identity — and, when the hooks arrive out of
     // order, recognise an heir that is already waiting.
-    findClearedPredecessor, succeedSession, succeedForwardFromClear,
+    findClearedPredecessor,
+    succeedSession,
+    succeedForwardFromClear,
     touchRepo,
     // UX 2.2: the activity gate for in-terminal plan decisions. Fires at the
     // two ACTIVITY hook endpoints (UserPromptSubmit = turn boundary,
@@ -58,7 +197,7 @@ export function createEvents(ctx) {
 
   // ---------------------------------------------- hook event -> card state
   // Faithful port of the spike's applyEvent switch.
-  function applyEvent(ev) {
+  function applyEvent(ev: HookEvent): ApplyResult {
     // No usable session id → no state at all. The old `|| 'unknown'` fallback
     // keyed a real card on the literal string 'unknown', so every malformed
     // hook payload collapsed into one shared phantom card that each subsequent
@@ -66,7 +205,7 @@ export function createEvents(ctx) {
     // refuses to DISPATCH such payloads; this guard is the same rule for the
     // telemetry-only paths that call applyEvent directly. Fail open: the hook
     // response is unaffected, the board simply never sees the event.
-    const sid = typeof ev?.session_id === 'string' && ev.session_id ? ev.session_id : null;
+    const sid = typeof ev.session_id === 'string' && ev.session_id ? ev.session_id : null;
     if (!sid) return { card: null, conflict: null };
     let c = card(sid, ev.cwd);
     // Run generation (BUG-025): SessionEnd is an ASYNC hook while SessionStart
@@ -112,11 +251,14 @@ export function createEvents(ctx) {
     // (it can arm an auto-adopt and duplicate a billed session), so those stay
     // for retention's silence sweep as before.
     const endSpawn = ev.hook_event_name === 'SessionEnd' ? q.spawnBySession.get(sid) : null;
-    const spawnProvenTerminal = !!endSpawn
-      && ['killed', 'gone', 'pane-dead'].includes(endSpawn.status);
-    const staleRunEnd = ev.hook_event_name === 'SessionEnd'
-      && ev.fleet_run != null && c.run_id != null && c.run_id !== ev.fleet_run
-      && !spawnProvenTerminal;
+    const spawnProvenTerminal =
+      !!endSpawn && ['killed', 'gone', 'pane-dead'].includes(endSpawn.status);
+    const staleRunEnd =
+      ev.hook_event_name === 'SessionEnd' &&
+      ev.fleet_run != null &&
+      c.run_id != null &&
+      c.run_id !== ev.fleet_run &&
+      !spawnProvenTerminal;
     // Heuristic tombstones are reversible: a late hook proves the process was
     // alive (or resumed) when retention only GUESSED it dead. Clear both
     // timestamps so an archived presumed-dead card becomes visible again
@@ -191,9 +333,9 @@ export function createEvents(ctx) {
       tick(`🛰 ${c.callsign} pane is live (first hook event)`);
       if (sp.remote_control) scheduleRegistrationRemoteHarvest(sp.spawn_id);
     }
-    const upd = { last_seen: Date.now(), events: c.events + 1 };
-    let serverBranch = null; // the SERVER-derived branch — the ONLY value ticket detection is allowed to trust
-    let changedRepo = null;
+    const upd: Partial<SessionRow> = { last_seen: Date.now(), events: c.events + 1 };
+    let serverBranch: string | null = null; // the SERVER-derived branch — the ONLY value ticket detection is allowed to trust
+    let changedRepo: RepoIdentityGit | null = null;
     if (ev.cwd) {
       upd.cwd = ev.cwd;
       const repo = deriveRepo(ev.cwd);
@@ -201,7 +343,7 @@ export function createEvents(ctx) {
       upd.repo_name = repo.repo_name;
       upd.worktree = repo.worktree;
       serverBranch = branchOf(ev.cwd);
-      const branch = serverBranch || ev.git_branch || null; // display column; payload value only as fallback
+      const branch = serverBranch ?? ev.git_branch ?? null; // display column; payload value only as fallback
       if (branch) upd.branch = branch;
       if (repo.is_git && repo.repo_id !== c.repo_id) changedRepo = repo;
     }
@@ -211,8 +353,10 @@ export function createEvents(ctx) {
     // transcript when an old session is resumed under a different --model. Every
     // OTHER event has to go to the transcript, because that is the only place a
     // mid-session /model switch is written down.
-    const payloadModel = ev.model?.display_name || ev.model?.id
-      || (typeof ev.model === 'string' && ev.model ? ev.model : null);
+    const m = ev.model;
+    let payloadModel: string | null = null;
+    if (typeof m === 'object') payloadModel = m.display_name ?? m.id ?? null;
+    else if (typeof m === 'string' && m) payloadModel = m;
     if (ev.hook_event_name === 'SessionStart') {
       stampTranscriptFloor(sid, ev.transcript_path);
       if (payloadModel) upd.model = payloadModel;
@@ -265,36 +409,37 @@ export function createEvents(ctx) {
         // still inside applyEvent's no-await block.
         tk = ticketFromBranch(branchOf(ev.cwd, { fresh: true }));
       }
-      if (tk && applyTicket(sid, tk, 'branch').ok) c = q.getSession.get(sid);
+      if (tk && applyTicket(sid, tk, 'branch').ok) c = q.getSession.get(sid) ?? c;
     }
 
-    let conflict = null;
-    const set = {};
+    let conflict: Conflict | null = null;
+    const set: Partial<SessionRow> = {};
     switch (ev.hook_event_name) {
       case 'SessionStart':
         set.col = 'queued';
-        set.note = `session ${ev.source || 'startup'}`;
+        set.note = `session ${ev.source ?? 'startup'}`;
         break;
       case 'UserPromptSubmit':
         set.col = 'working';
-        set.task = c.task || (ev.prompt || '').slice(0, 80);
-        set.note = 'prompt: ' + (ev.prompt || '').slice(0, 60);
+        set.task = c.task || (ev.prompt ?? '').slice(0, 80); // eslint-disable-line @typescript-eslint/prefer-nullish-coalescing -- empty task headline must refresh from the new prompt
+        set.note = 'prompt: ' + (ev.prompt ?? '').slice(0, 60);
         set.notification_type = null; // activity clears the needs-you reason (F3e)
         tick(`${c.callsign} got a prompt`);
         break;
       case 'PreToolUse':
       case 'PostToolUse':
-      case 'PostToolUseFailure': { // BUG-102: a failed tool call finished too — same card activity
-        set.col = c.col === 'needsyou' ? 'working' : (c.col === 'queued' ? 'working' : c.col);
+      case 'PostToolUseFailure': {
+        // BUG-102: a failed tool call finished too — same card activity
+        set.col = c.col === 'needsyou' ? 'working' : c.col === 'queued' ? 'working' : c.col;
         set.notification_type = null; // activity clears the needs-you reason (F3e)
         set.last_tool = ev.tool_name ?? null;
-        const input = ev.tool_input || {};
-        const file = input.file_path || input.notebook_path;
-        if (EDIT_TOOLS.includes(ev.tool_name) && file) {
+        const input: ToolInput = ev.tool_input ?? {};
+        const file = input.file_path ?? input.notebook_path;
+        if (EDIT_TOOLS.includes(ev.tool_name ?? '') && file) {
           conflict = recordFile(sid, file, c);
           set.note = `editing ${path.basename(file)}`;
         } else if (ev.tool_name === 'Bash' && input.command) {
-          const cmd = String(input.command);
+          const cmd = input.command;
           if (TEST_RUNNER_RE.test(cmd)) {
             set.col = 'verifying';
             set.note = 'running tests';
@@ -302,13 +447,13 @@ export function createEvents(ctx) {
             set.note = 'sh: ' + cmd.slice(0, 50);
           }
         } else {
-          set.note = ev.tool_name;
+          set.note = ev.tool_name ?? null;
         }
         break;
       }
       case 'FileChanged': {
         // Bash-side edits net (F4): feed the ledger, do not move the column.
-        const file = ev.file_path || ev.tool_input?.file_path || ev.path || null;
+        const file = ev.file_path ?? ev.tool_input?.file_path ?? ev.path ?? null;
         if (file) {
           conflict = recordFile(sid, file, c);
           set.note = `changed ${path.basename(file)}`;
@@ -318,7 +463,7 @@ export function createEvents(ctx) {
       case 'CwdChanged':
         // BUG-104: telemetry only — the watch-list refresh for the new cwd is
         // emitted by the hook shim (fleet-hook.mjs), not by this response.
-        set.note = `cwd → ${path.basename(ev.cwd || '') || 'cwd changed'}`;
+        set.note = `cwd → ${path.basename(ev.cwd ?? '') || 'cwd changed'}`;
         break;
       case 'Notification': {
         // F3e safety net: the board must always SHOW a stuck session, with
@@ -329,12 +474,19 @@ export function createEvents(ctx) {
         // requests for attention — those update the note but don't move the
         // column. Unknown/absent types keep the Phase 1 behavior (needsyou).
         const ntype = ev.notification_type ?? null;
-        const RESOLVED_TYPES = ['auth_success', 'elicitation_complete', 'elicitation_response', 'agent_completed'];
+        const RESOLVED_TYPES = [
+          'auth_success',
+          'elicitation_complete',
+          'elicitation_response',
+          'agent_completed',
+        ];
         set.notification_type = ntype;
-        set.note = (ev.message || ntype || 'needs attention').slice(0, 80);
-        if (!RESOLVED_TYPES.includes(ntype)) {
+        set.note = (ev.message ?? ntype ?? 'needs attention').slice(0, 80);
+        if (!RESOLVED_TYPES.includes(ntype ?? '')) {
           set.col = 'needsyou';
-          tick(`🖐 ${c.callsign} needs you${ntype ? ` (${ntype})` : ''}: ${(ev.message || '').slice(0, 50)}`);
+          tick(
+            `🖐 ${c.callsign} needs you${ntype ? ` (${ntype})` : ''}: ${(ev.message ?? '').slice(0, 50)}`,
+          );
         }
         break;
       }
@@ -351,8 +503,8 @@ export function createEvents(ctx) {
           set.note = 'question open in the terminal';
           tick(`🖐 ${c.callsign} has a question open in the terminal`);
         } else {
-          set.note = `permission: ${ev.tool_name || 'tool'}`;
-          tick(`🖐 ${c.callsign} awaits permission: ${ev.tool_name || 'tool'}`);
+          set.note = `permission: ${ev.tool_name ?? 'tool'}`;
+          tick(`🖐 ${c.callsign} awaits permission: ${ev.tool_name ?? 'tool'}`);
         }
         break;
       case 'AskUserQuestion': {
@@ -360,17 +512,18 @@ export function createEvents(ctx) {
         // PreToolUse, held by hookHoldQuestion). The terminal chooser renders
         // only AFTER the held hook responds, so during the hold the board is
         // the only place it can be answered.
-        const first = (Array.isArray(ev.tool_input?.questions) && ev.tool_input.questions[0]?.question)
-          || 'structured question';
+        const qs = ev.tool_input?.questions;
+        // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- the && yields literal `false` when qs is not an array; ?? would not fold that to the default
+        const first = (Array.isArray(qs) && qs[0]?.question) || 'structured question';
         set.col = 'needsyou';
         set.note = ('choice: ' + first).slice(0, 80);
-        tick(`🖐 ${c.callsign} asks: ${String(first).slice(0, 50)}`);
+        tick(`🖐 ${c.callsign} asks: ${first.slice(0, 50)}`);
         break;
       }
       case 'Elicitation':
         // F3b: an MCP server is waiting on form input.
         set.col = 'needsyou';
-        set.note = `elicitation: ${ev.message || ev.matcher || 'MCP input requested'}`.slice(0, 80);
+        set.note = `elicitation: ${ev.message ?? ev.matcher ?? 'MCP input requested'}`.slice(0, 80);
         tick(`🖐 ${c.callsign} awaits input (elicitation)`);
         break;
       case 'Stop':
@@ -414,17 +567,17 @@ export function createEvents(ctx) {
           // silence guess ('presumed', set in retention.mjs) — resuming a still-
           // live CLI would be a duplicate billed session. Default 'end' when the
           // CLI sent no reason so the column is never NULL after a proven end.
-          set.end_reason = ev.reason || 'end';
+          set.end_reason = ev.reason ?? 'end';
           set.note = 'session ended' + (ev.reason ? ` (${ev.reason})` : '');
           tick(`${c.callsign} left the fleet`);
         }
         break;
       default:
-        set.note = ev.hook_event_name;
+        set.note = ev.hook_event_name ?? null;
     }
     updateSession(sid, set);
     c = { ...c, ...set };
-    logEvent(sid, ev.hook_event_name, ev.tool_name, c.note);
+    logEvent(sid, ev.hook_event_name ?? '', ev.tool_name, c.note);
     onMutate();
     return { card: c, conflict, staleRunEnd };
   }
@@ -435,7 +588,7 @@ export function createEvents(ctx) {
   // applyEvent guards the telemetry-only callers the same way. No sid
   // fallback here: a missing id must no-op, never mint the shared phantom
   // 'unknown' card the old `|| 'unknown'` collapse created.
-  function hookSessionStart(ev) {
+  function hookSessionStart(ev: HookEvent) {
     // 0.7.1 /clear succession, intercepted HERE because applyEvent → card()
     // births a card on first touch: by the time applyEvent runs, an unrecognised
     // heir would already have been dealt a fresh animal, a fresh hex suffix and
@@ -444,7 +597,7 @@ export function createEvents(ctx) {
     // arriving with source='clear' (or 'compact', handled defensively — if that
     // one keeps its id, this branch simply never fires), look for the session in
     // this cwd that just cleared, and continue IT instead of starting a stranger.
-    const sid = ev.session_id || '';
+    const sid = ev.session_id ?? '';
     if (ev.source === 'clear' || ev.source === 'compact') {
       const existing = q.getSession.get(sid);
       // Usually the heir is brand-new. But the agents-cli poller can beat its
@@ -452,11 +605,11 @@ export function createEvents(ctx) {
       // find it too — so "no card yet" is not the test. The test is "this card
       // has done NOTHING yet and continues nobody": a placeholder, which we
       // adopt into the lineage (rename mode) instead of leaving it stranded.
-      const placeholder = existing
-        && existing.events === 0
-        && existing.succeeded_by == null
-        && !q.successorClaimed.get(sid)
-        && !q.spawnBySession.get(sid);
+      const placeholder =
+        existing?.events === 0 &&
+        existing.succeeded_by == null &&
+        !q.successorClaimed.get(sid) &&
+        !q.spawnBySession.get(sid);
       if (!existing || placeholder) {
         const prev = findClearedPredecessor(sid, ev.cwd, Date.now());
         // 0.16.0 corroboration: hooks now arrive authenticated through the
@@ -466,16 +619,28 @@ export function createEvents(ctx) {
         // predecessor's identity, pane, mail and questions. An absent
         // transcript_path falls back to the historical (cwd, time) inference —
         // reconcileClearForks' boot heal depends on payloads that lack it.
-        if (prev && ev.transcript_path
-          && path.dirname(String(ev.transcript_path)) !== expectedTranscriptDir(ev.cwd)) {
-          logEvent(sid, 'ClearSuccessionRefused', null,
-            `transcript ${String(ev.transcript_path).slice(0, 160)} does not match cwd ${String(ev.cwd).slice(0, 160)}`);
+        if (
+          prev &&
+          ev.transcript_path &&
+          path.dirname(ev.transcript_path) !== expectedTranscriptDir(ev.cwd)
+        ) {
+          logEvent(
+            sid,
+            'ClearSuccessionRefused',
+            null,
+            `transcript ${ev.transcript_path.slice(0, 160)} does not match cwd ${String(ev.cwd).slice(0, 160)}`,
+          );
         } else if (prev) {
           succeedSession(prev, sid, { rename: !!existing });
         }
       }
     }
     const { card: c } = applyEvent({ ...ev, hook_event_name: 'SessionStart' });
+    // Defensive: applyEvent returns a null card only for an empty session_id,
+    // which the authenticated http boundary already refuses to dispatch. The
+    // old code dereferenced c unconditionally (an implicit throw on that dead
+    // path); the guard makes the same impossibility explicit and type-safe.
+    if (!c) return { ok: false };
     return { ok: true, callsign: c.callsign, brief: composeBrief(c) };
   }
 
@@ -484,22 +649,34 @@ export function createEvents(ctx) {
   // restarts too. Counts come from http.mjs's legacy-tracking sets, but
   // derive owns the brief, so the daemon hands a probe through createCore's
   // options (see fleetd.mjs).
-  function takeoverBriefLines(replacedVersion, legacy) {
-    const lines = [`[FLEETDECK] The fleet daemon was just upgraded (replacing v${replacedVersion}).`];
-    const n = legacy?.sessions?.length ?? 0;
+  function takeoverBriefLines(
+    replacedVersion: string,
+    legacy: { sessions?: unknown[] } | null | undefined,
+  ): string[] {
+    const lines = [
+      `[FLEETDECK] The fleet daemon was just upgraded (replacing v${replacedVersion}).`,
+    ];
+    const sessions = legacy?.sessions ?? [];
+    const n = sessions.length;
     if (n > 0) {
-      const names = legacy.sessions.slice(0, 8).map(s => String(s).slice(0, 8)).join(', ');
-      lines.push(`[FLEETDECK] ${n} session(s) are still running pre-0.16.0 hooks (${names}${n > 8 ? ', …' : ''}) — they are dark on the board until restarted. Tell the human: restart those sessions when convenient; the board tracks which are left.`);
+      const names = sessions
+        .slice(0, 8)
+        .map((s) => String(s).slice(0, 8))
+        .join(', ');
+      lines.push(
+        `[FLEETDECK] ${n} session(s) are still running pre-0.16.0 hooks (${names}${n > 8 ? ', …' : ''}) — they are dark on the board until restarted. Tell the human: restart those sessions when convenient; the board tracks which are left.`,
+      );
     }
     return lines;
   }
 
-  function composeBrief(c) {
-    const others = q.allSessions.all()
-      .filter(s => s.session_id !== c.session_id && s.ended_at == null);
-    const sameRepo = others.filter(s => (s.repo_id ?? null) === (c.repo_id ?? null));
-    const elsewhere = others.filter(s => (s.repo_id ?? null) !== (c.repo_id ?? null));
-    const otherRepos = new Set(elsewhere.map(s => s.repo_id ?? '(none)')).size;
+  function composeBrief(c: SessionRow): string {
+    const others = q.allSessions
+      .all()
+      .filter((s) => s.session_id !== c.session_id && s.ended_at == null);
+    const sameRepo = others.filter((s) => (s.repo_id ?? null) === (c.repo_id ?? null));
+    const elsewhere = others.filter((s) => (s.repo_id ?? null) !== (c.repo_id ?? null));
+    const otherRepos = new Set(elsewhere.map((s) => s.repo_id ?? '(none)')).size;
     const repoLabel = c.repo_name ? ` in ${c.repo_name}` : '';
     const lines = [
       // The token itself must never enter a session brief: briefs land in every
@@ -510,18 +687,24 @@ export function createEvents(ctx) {
       sameRepo.length
         ? `Other active sessions${repoLabel} (${sameRepo.length}):`
         : `No other sessions active${repoLabel} right now.`,
-      ...sameRepo.map(s =>
-        `  - ${s.callsign} [${s.col}] ${s.note}${s.branch ? ' — ' + s.branch : ''}${s.worktree && s.worktree !== c.worktree ? ' @ ' + s.worktree : ''}`),
+      ...sameRepo.map(
+        (s) =>
+          `  - ${s.callsign} [${s.col}] ${s.note}${s.branch ? ' — ' + s.branch : ''}${s.worktree && s.worktree !== c.worktree ? ' @ ' + s.worktree : ''}`,
+      ),
     ];
     if (elsewhere.length) {
-      lines.push(`${elsewhere.length} more session${elsewhere.length === 1 ? '' : 's'} across ${otherRepos} other repo${otherRepos === 1 ? '' : 's'}.`);
+      lines.push(
+        `${elsewhere.length} more session${elsewhere.length === 1 ? '' : 's'} across ${otherRepos} other repo${otherRepos === 1 ? '' : 's'}.`,
+      );
     }
-    lines.push('Fleetdeck will warn you in-context if you touch files another session is editing. Take those warnings seriously: coordinate, don’t clobber.');
+    lines.push(
+      'Fleetdeck will warn you in-context if you touch files another session is editing. Take those warnings seriously: coordinate, don’t clobber.',
+    );
     return lines.join('\n');
   }
 
-  function hookUserPromptSubmit(ev) {
-    const sid = ev.session_id || '';
+  function hookUserPromptSubmit(ev: HookEvent) {
+    const sid = ev.session_id ?? '';
     applyEvent({ ...ev, hook_event_name: 'UserPromptSubmit' });
     q.setBlocked.run(0, sid); // new turn started — clear the one-block-per-turn flag
     // F3e auto-resolution: activity settles this session's pending
@@ -545,7 +728,8 @@ export function createEvents(ctx) {
     return {
       hookSpecificOutput: {
         hookEventName: 'UserPromptSubmit',
-        additionalContext: '[FLEETDECK]\n' + box.map(m => `✉ from ${m.from}: ${m.text}`).join('\n'),
+        additionalContext:
+          '[FLEETDECK]\n' + box.map((m) => `✉ from ${m.from}: ${m.text}`).join('\n'),
       },
     };
   }
@@ -559,8 +743,8 @@ export function createEvents(ctx) {
   // whisper (M-B2). The event's own hook_event_name is authoritative (Claude
   // sends it in every hook payload); fall back to 'PostToolUse' only when a
   // client omitted it.
-  function hookPostToolUse(ev) {
-    const eventName = ev.hook_event_name || 'PostToolUse';
+  function hookPostToolUse(ev: HookEvent) {
+    const eventName = ev.hook_event_name ?? 'PostToolUse';
     const { conflict } = applyEvent({ ...ev, hook_event_name: eventName });
     // F3e auto-resolution, correlated (M-B1): a single completed tool call must
     // settle ONLY its own permission hold, never a sibling parallel hold still
@@ -569,10 +753,13 @@ export function createEvents(ctx) {
     // (tool_name, tool_input). A hold for a DIFFERENT tool call, and every
     // freeform row, is left untouched; the turn-boundary UserPromptSubmit path
     // (hookUserPromptSubmit above) stays session-wide.
-    questions.expireOnActivity(ev.session_id || '', { toolName: ev.tool_name, toolInput: ev.tool_input });
+    questions.expireOnActivity(ev.session_id ?? '', {
+      toolName: ev.tool_name,
+      toolInput: ev.tool_input,
+    });
     // UX 2.2 activity gate, same reasoning as the turn-boundary path above:
     // a completed tool call settles any earlier-retired plan questions too.
-    settleTerminalPlans(ev.session_id || '');
+    settleTerminalPlans(ev.session_id ?? '');
     if (!conflict) return {};
     return {
       hookSpecificOutput: {
@@ -586,19 +773,24 @@ export function createEvents(ctx) {
   // turn per session, enforced server-side via blocked_this_turn. The flag
   // clears on the next UserPromptSubmit or the next Stop that passes with no
   // mail. NEVER reads stop_hook_active. Stop is never a tombstone.
-  function hookStop(ev) {
-    const sid = ev.session_id || '';
+  function hookStop(ev: HookEvent) {
+    const sid = ev.session_id ?? '';
     const c = card(sid);
     if (!c.blocked_this_turn) {
       const box = drainMail(sid);
       if (box.length) {
         q.setBlocked.run(1, sid);
         // telemetry for the blocked stop (card stays in-turn; no idle transition)
-        updateSession(sid, { last_seen: Date.now(), events: c.events + 1, col: 'working', note: 'processing fleet mail' });
+        updateSession(sid, {
+          last_seen: Date.now(),
+          events: c.events + 1,
+          col: 'working',
+          note: 'processing fleet mail',
+        });
         logEvent(sid, 'Stop', null, 'mail delivered via block');
         tick(`✉ ${c.callsign} got fleet mail at the turn boundary`);
         onMutate();
-        const msgs = box.map(m => `from ${m.from}: ${m.text}`).join(' | ');
+        const msgs = box.map((m) => `from ${m.from}: ${m.text}`).join(' | ');
         return {
           decision: 'block',
           reason: `[FLEETDECK MAIL] ${msgs} — Act on this if it affects your work (briefly), then finish your turn. Do not start unrelated work.`,
@@ -622,19 +814,26 @@ export function createEvents(ctx) {
   // Input preference: payload.last_assistant_message when the CLI sends one
   // (docs §6 say 2.1.206 does NOT — hook-payloads.jsonl capture pins the
   // truth), else the transcript tail at payload.transcript_path.
-  function detectFreeform(ev) {
-    const sid = ev.session_id || '';
+  function detectFreeform(ev: HookEvent) {
+    const sid = ev.session_id ?? '';
     try {
-      const fromPayload = typeof ev.last_assistant_message === 'string' && ev.last_assistant_message.trim()
-        ? ev.last_assistant_message : null;
-      const text = fromPayload ?? (ev.transcript_path ? lastAssistantText(ev.transcript_path) : null);
+      const fromPayload =
+        typeof ev.last_assistant_message === 'string' && ev.last_assistant_message.trim()
+          ? ev.last_assistant_message
+          : null;
+      const text =
+        fromPayload ?? (ev.transcript_path ? lastAssistantText(ev.transcript_path) : null);
       const question = detectTrailingQuestion(text);
       if (!question) return;
       // one pending card per distinct question text per session (a re-Stop
       // with the same trailing question must not spam the queue)
-      const dup = questions.pendingOf(sid).some(r => {
+      const dup = questions.pendingOf(sid).some((r) => {
         if (r.kind !== 'freeform') return false;
-        try { return JSON.parse(r.payload_json || '{}').text === question; } catch { return false; }
+        try {
+          return (JSON.parse(r.payload_json ?? '{}') as { text?: string }).text === question;
+        } catch {
+          return false;
+        }
       });
       if (dup) return;
       questions.create('freeform', sid, { text: question });
@@ -643,7 +842,9 @@ export function createEvents(ctx) {
       logEvent(sid, 'Stop', null, 'trailing question → needsyou');
       tick(`❓ ${c.callsign} asked: ${question.slice(0, 60)}`);
       onMutate();
-    } catch { /* detection is best-effort — never disturb the Stop response */ }
+    } catch {
+      /* detection is best-effort — never disturb the Stop response */
+    }
   }
 
   // ----------------------------------------- F3a/F3b/F3c hold-open intake
@@ -658,12 +859,15 @@ export function createEvents(ctx) {
   // unconditional and survives whatever happens to the planner/hold; the
   // question then holds NORMALLY (unlike the AskUserQuestion instant-{}
   // guard in http.mjs, which stays untouched).
-  function hookHoldQuestion(ev, eventName) {
-    const kind = eventName === 'Elicitation' ? 'elicitation'
-      : eventName === 'AskUserQuestion' ? 'choice'
-      : 'permission';
-    const sid = ev.session_id || '';
-    const isPlan = eventName === 'PermissionRequest' && ev?.tool_name === 'ExitPlanMode';
+  function hookHoldQuestion(ev: HookEvent, eventName: string): { id: number } | null {
+    const kind =
+      eventName === 'Elicitation'
+        ? 'elicitation'
+        : eventName === 'AskUserQuestion'
+          ? 'choice'
+          : 'permission';
+    const sid = ev.session_id ?? '';
+    const isPlan = eventName === 'PermissionRequest' && ev.tool_name === 'ExitPlanMode';
     if (!isPlan) {
       applyEvent({ ...ev, hook_event_name: eventName });
       const row = questions.create(kind, sid, ev);
@@ -689,9 +893,9 @@ export function createEvents(ctx) {
     // COMMIT and applyEvent the card shows its prior column; the question row
     // exists but no hold is parked yet (http.mjs parks on the returned row),
     // so nothing can resolve it before the telemetry lands.
-    let row = null;
-    let planRowId = null;
-    let callsign = null;
+    let row: { id: number };
+    let planRowId: number;
+    let callsign: string;
     db.exec('BEGIN IMMEDIATE');
     try {
       card(sid, ev.cwd); // plan intake needs the card's callsign/repo — create it without telemetry
@@ -702,7 +906,7 @@ export function createEvents(ctx) {
       // rows (otherwise it would need a real crash/SQLITE error mid-tick).
       // Announced at boot by fleetd.mjs's seam banner like the other test
       // seams; in production the var is unset and this is dead code.
-      if (process.env.FLEETDECK_TEST_FAIL_PLAN_INSERT) {
+      if (process.env['FLEETDECK_TEST_FAIL_PLAN_INSERT']) {
         throw new Error('injected plan-insert failure (FLEETDECK_TEST_FAIL_PLAN_INSERT)');
       }
       // The card was ensured above (card() inside this transaction); applyEvent
@@ -710,16 +914,29 @@ export function createEvents(ctx) {
       // no stale needs-you card behind.
       const c = q.getSession.get(sid);
       callsign = c?.callsign ?? sid;
-      const planMd = typeof ev.tool_input?.plan === 'string'
-        ? ev.tool_input.plan
-        : String(ev.tool_input?.plan ?? '');
-      const info = q.insertPlan.run(sid, c?.callsign ?? null, c?.repo_id ?? null,
-        c?.repo_name ?? null, row.id, planMd, Date.now());
+      const rawPlan = ev.tool_input?.plan;
+      const planMd = typeof rawPlan === 'string' ? rawPlan : '';
+      const info = q.insertPlan.run(
+        sid,
+        c?.callsign ?? null,
+        c?.repo_id ?? null,
+        c?.repo_name ?? null,
+        row.id,
+        planMd,
+        Date.now(),
+      );
       planRowId = Number(info.lastInsertRowid);
       db.exec('COMMIT');
     } catch (err) {
-      try { db.exec('ROLLBACK'); } catch { /* keep the original error */ }
-      console.error('fleetd plan capture error (question + plan rolled back, hook fails open):', err);
+      try {
+        db.exec('ROLLBACK');
+      } catch {
+        /* keep the original error */
+      }
+      console.error(
+        'fleetd plan capture error (question + plan rolled back, hook fails open):',
+        err,
+      );
       onMutate();
       return null;
     }
@@ -734,8 +951,8 @@ export function createEvents(ctx) {
 
   // SessionEnd: THE tombstone — pending hold-kind questions die with it;
   // freeform questions outlive the session (answer deliverable on --resume).
-  function hookSessionEnd(ev) {
-    const sid = ev.session_id || '';
+  function hookSessionEnd(ev: HookEvent) {
+    const sid = ev.session_id ?? '';
     const { staleRunEnd } = applyEvent({ ...ev, hook_event_name: 'SessionEnd' });
     // BUG-025: the end came from a previous process of this session id (a
     // delayed async hook racing a --resume). The tombstone itself was already
@@ -774,7 +991,7 @@ export function createEvents(ctx) {
     // 750 ms, 0 in tests) that lets the CLI flush the final transcript lines
     // the resume will read.
     const armed = q.getSession.get(sid);
-    if (armed && armed.adopt_armed_until != null && armed.adopt_armed_until > Date.now()) {
+    if (armed?.adopt_armed_until != null && armed.adopt_armed_until > Date.now()) {
       // The arm is NOT cleared here: it is durable intent, consumed by
       // adoptSession itself inside its single-flight claim. That buys three
       // things the old clear-first scheme lost: a disarm click landing inside
@@ -786,7 +1003,7 @@ export function createEvents(ctx) {
       const skip = !!armed.adopt_armed_skip;
       const timer = setTimeout(() => {
         adoptSession(sid, { dangerously_skip_permissions: skip }, { deferred: true })
-          .then(out => {
+          .then((out) => {
             // One loud ticker line on REAL failures only. 409s are benign
             // races — a manual adopt-now click (or a revive) beat the timer and
             // the move actually happened; shouting "failed" over a success was
@@ -794,15 +1011,22 @@ export function createEvents(ctx) {
             // ticked (or deliberately stayed silent) inside adoptSession.
             if (!out || (out.status >= 400 && out.status !== 409)) {
               const c = q.getSession.get(sid);
-              tick(`✗ move-to-tmux failed for ${c?.callsign ?? sid}: ${(out?.body?.reason ?? 'unknown')}`.slice(0, 100));
+              tick(
+                `✗ move-to-tmux failed for ${c?.callsign ?? sid}: ${out?.body?.reason ?? 'unknown'}`.slice(
+                  0,
+                  100,
+                ),
+              );
             }
           })
-          .catch(err => {
+          .catch((err: unknown) => {
             const c = q.getSession.get(sid);
-            tick(`✗ move-to-tmux failed for ${c?.callsign ?? sid}: ${String(err?.message || err)}`.slice(0, 100));
+            tick(
+              `✗ move-to-tmux failed for ${c?.callsign ?? sid}: ${errMessage(err)}`.slice(0, 100),
+            );
           });
       }, ADOPT_DELAY_MS);
-      timer.unref?.(); // never keep the daemon alive for a deferred adopt
+      timer.unref(); // never keep the daemon alive for a deferred adopt
     }
     modelMemo.delete(sid); // a revive re-stamps the floor at its SessionStart
     // v1.2: SessionEnd on a spawned session does NOT kill its pane — the
@@ -823,7 +1047,13 @@ export function createEvents(ctx) {
   }
 
   return {
-    applyEvent, hookSessionStart, hookUserPromptSubmit, hookPostToolUse,
-    hookStop, hookSessionEnd, hookHoldQuestion, takeoverBriefLines,
+    applyEvent,
+    hookSessionStart,
+    hookUserPromptSubmit,
+    hookPostToolUse,
+    hookStop,
+    hookSessionEnd,
+    hookHoldQuestion,
+    takeoverBriefLines,
   };
 }
