@@ -1,4 +1,4 @@
-// commands.mjs — the POST /command surface (broadcast / assign / assign auto /
+// commands.ts — the POST /command surface (broadcast / assign / assign auto /
 // ticket / name / note). parseCommand is a pure helper; the deterministic
 // auto-routing policy lives in q.autoCandidate. Threaded ctx state: q, mail,
 // resolveTargets, tick, onMutate, applyTicket, applyCustomName.
@@ -6,10 +6,51 @@
 import { parseCommand, validateNameSuffix } from './helpers.ts';
 import { normalizeTicket } from './tickets.ts';
 import { MAIL_MAX_LEN } from './mail.ts';
+import type { Statements } from './statements.ts';
+import type { SqlValue } from './sqlite.ts';
 
-export function createCommands(ctx) {
+// Defensive coercion of the raw command text for the audit log, faithful to the
+// pre-migration `String(text ?? '')`: null/undefined → '', string passthrough,
+// anything else takes its default stringification. Module-local (same idiom as
+// mail.ts) — not exported.
+function asText(value: unknown): string {
+  if (value == null) return '';
+  if (typeof value === 'string') return value;
+  // eslint-disable-next-line @typescript-eslint/no-base-to-string -- intentional String() coercion of untrusted input, matching the .mjs behavior
+  return String(value);
+}
+
+// The rename receipt returned by clearTicket / applyTicket / applyCustomName.
+// commands.ts only ever SPREADS it into the /command response and never reads a
+// field back, so Record<string, unknown> is the honest boundary — the callbacks
+// live in derive.mjs (not yet converted), and a narrower shape would be fiction.
+type RenameResult = Record<string, unknown>;
+
+// resolveTicketTarget's discriminated result: a unique live session, or a reason.
+type TicketTarget = { sid: string } | { error: string };
+
+interface CommandsCtx {
+  // The prepared-statement bundle only (the daemon threads q onto ctx), same
+  // idiom as mail.ts / questions.ts — Statements['q'], not the whole Statements.
+  q: Statements['q'];
+  mail: (sid: string, from: string, text: string) => unknown;
+  resolveTargets: (target: string) => string[];
+  tick: (msg: string) => void;
+  onMutate: () => void;
+  applyTicket: (sid: string, key: string, source: string) => RenameResult;
+  updateSession: Statements['updateSession'];
+  applyCustomName: (sid: string, suffix: string | null) => RenameResult; // 0.7.1 `name <target> <suffix|clear>`
+}
+
+export function createCommands(ctx: CommandsCtx) {
   const {
-    q, mail, resolveTargets, tick, onMutate, applyTicket, updateSession,
+    q,
+    mail,
+    resolveTargets,
+    tick,
+    onMutate,
+    applyTicket,
+    updateSession,
     applyCustomName, // 0.7.1 `name <target> <suffix|clear>`
   } = ctx;
 
@@ -24,17 +65,23 @@ export function createCommands(ctx) {
   // "columns merely swap" behaviour) meant the very next rename re-anchored on
   // that intermediate alias and permanently forgot the SessionStart callsign.
   // The dropped name stays routable via the alias table instead.
-  function clearTicket(sid) {
+  function clearTicket(sid: string): RenameResult {
     const c = q.getSession.get(sid);
     if (!c || c.ended_at != null) return { ok: false, reason: 'no live session for that target' };
-    const upd = { ticket: null, ticket_source: 'manual' };
-    let result = { ok: true, renamed: false, callsign: c.callsign, ticket: null };
+    const upd: Record<string, SqlValue> = { ticket: null, ticket_source: 'manual' };
+    let result: RenameResult = { ok: true, renamed: false, callsign: c.callsign, ticket: null };
     if (c.prev_callsign && !q.callsignTaken.get(c.prev_callsign, c.prev_callsign, sid)) {
-      upd.callsign = c.prev_callsign;
-      upd.prev_callsign = null;
+      upd['callsign'] = c.prev_callsign;
+      upd['prev_callsign'] = null;
       q.rememberAlias.run(sid, c.callsign, Date.now());
       tick(`🎫 ${c.callsign} reverted to ${c.prev_callsign} (ticket cleared)`);
-      result = { ok: true, renamed: true, callsign: c.prev_callsign, ticket: null, previous: c.callsign };
+      result = {
+        ok: true,
+        renamed: true,
+        callsign: c.prev_callsign,
+        ticket: null,
+        previous: c.callsign,
+      };
     } else {
       tick(`🎫 ${c.callsign} ticket cleared`);
     }
@@ -48,22 +95,34 @@ export function createCommands(ctx) {
   // full alias history (BUG-107: a name the card wore and dropped at any
   // point). Returns { sid } on a unique hit, or { error } (0 → none, >1 →
   // ambiguous).
-  function resolveTicketTarget(target) {
-    const matches = q.visibleSessions.all().filter(s =>
-      s.ended_at == null
-      && (s.session_id === target || s.callsign === target || s.prev_callsign === target));
+  function resolveTicketTarget(target: string): TicketTarget {
+    const matches = q.visibleSessions
+      .all()
+      .filter(
+        (s) =>
+          s.ended_at == null &&
+          (s.session_id === target || s.callsign === target || s.prev_callsign === target),
+      );
     if (matches.length > 1) return { error: `"${target}" is ambiguous — use the session id` };
-    const found = matches.length ? matches : q.aliasesMatch.all(target, target).filter(s => s.ended_at == null);
+    const found = matches.length
+      ? matches
+      : q.aliasesMatch.all(target, target).filter((s) => s.ended_at == null);
     if (found.length === 0) return { error: `no live session matching "${target}"` };
     if (found.length > 1) return { error: `"${target}" is ambiguous — use the session id` };
-    return { sid: found[0].session_id };
+    const only = found[0];
+    if (!only) return { error: `no live session matching "${target}"` };
+    return { sid: only.session_id };
   }
 
   // ------------------------------------------------------------- commands
-  function command(text) {
+  function command(text: unknown) {
     const parsed = parseCommand(text);
-    const logCommand = extra =>
-      q.insertCommand.run(Date.now(), String(text ?? ''), JSON.stringify(extra ? { ...parsed, ...extra } : parsed));
+    const logCommand = (extra?: Record<string, unknown>) =>
+      q.insertCommand.run(
+        Date.now(),
+        asText(text),
+        JSON.stringify(extra ? { ...parsed, ...extra } : parsed),
+      );
     let delivered = 0;
     if (parsed.cmd === 'broadcast' || parsed.cmd === 'assign_auto' || parsed.cmd === 'assign') {
       // BUG-021: the mail() clamp reports {truncated, original_length}, but the
@@ -87,7 +146,7 @@ export function createCommands(ctx) {
     }
     if (parsed.cmd === 'broadcast') {
       const targets = resolveTargets('all');
-      targets.forEach(sid => mail(sid, 'orchestrator', parsed.text));
+      targets.forEach((sid) => mail(sid, 'orchestrator', parsed.text));
       delivered = targets.length;
       tick(`📣 orchestrator broadcast → ${delivered} session(s)`);
     } else if (parsed.cmd === 'assign_auto') {
@@ -96,7 +155,7 @@ export function createCommands(ctx) {
       // zero model calls, one SQL round. The same repo key feeds all three
       // placeholders (NULL = unscoped, else matched against repo_id OR
       // repo_name).
-      const repo = parsed.repo ?? null;
+      const repo = parsed.repo;
       const winner = q.autoCandidate.get(repo, repo, repo);
       if (!winner) {
         logCommand({ unrouted: true });
@@ -121,15 +180,18 @@ export function createCommands(ctx) {
       // conflicting edits). Fan-out stays reserved for the explicit `all` and
       // `repo:*` scopes; a multi-hit direct target is refused loudly, like
       // `ticket`'s resolver above.
-      if (parsed.target !== 'all' && !/^repo:/.test(parsed.target) && targets.length > 1) {
+      if (parsed.target !== 'all' && !parsed.target.startsWith('repo:') && targets.length > 1) {
         logCommand({ refused: 'ambiguous' });
         onMutate();
-        return { ok: false, reason: `"${parsed.target}" matches ${targets.length} sessions — use the session id` };
+        return {
+          ok: false,
+          reason: `"${parsed.target}" matches ${targets.length} sessions — use the session id`,
+        };
       }
       // Same frame as auto-routing (v1.1): every routed task carries
       // [FLEETDECK ASSIGNMENT] so the wake path / doctrine skill can treat
       // assignments uniformly regardless of how they were targeted.
-      targets.forEach(sid => mail(sid, 'orchestrator', `[FLEETDECK ASSIGNMENT] ${parsed.text}`));
+      targets.forEach((sid) => mail(sid, 'orchestrator', `[FLEETDECK ASSIGNMENT] ${parsed.text}`));
       delivered = targets.length;
       tick(`📌 orchestrator assign → ${parsed.target}${delivered ? '' : ' (no such session)'}`);
     } else if (parsed.cmd === 'ticket') {
@@ -137,17 +199,25 @@ export function createCommands(ctx) {
       // or {session_id, ...applyTicketResult} — it must NEVER fall through to
       // the note handler (a malformed rename is an error to show, not a note to
       // file). A bare/malformed command arrives already carrying parsed.error.
-      if (parsed.error) { logCommand(); onMutate(); return { ok: false, reason: parsed.error }; }
+      if ('error' in parsed) {
+        logCommand();
+        onMutate();
+        return { ok: false, reason: parsed.error };
+      }
       // Per-session only: `all` / `repo:*` are broadcast scopes, meaningless for
       // a rename.
-      if (parsed.target === 'all' || /^repo:/.test(parsed.target)) {
+      if (parsed.target === 'all' || parsed.target.startsWith('repo:')) {
         logCommand();
         onMutate();
         return { ok: false, reason: 'ticket targets one session — not all/repo:*' };
       }
       const resolved = resolveTicketTarget(parsed.target);
-      if (resolved.error) { logCommand(); onMutate(); return { ok: false, reason: resolved.error }; }
-      let result;
+      if ('error' in resolved) {
+        logCommand();
+        onMutate();
+        return { ok: false, reason: resolved.error };
+      }
+      let result: RenameResult;
       if (/^clear$/i.test(parsed.ticket)) {
         result = clearTicket(resolved.sid);
       } else {
@@ -158,7 +228,10 @@ export function createCommands(ctx) {
         if (!key) {
           logCommand();
           onMutate();
-          return { ok: false, reason: `invalid ticket key "${parsed.ticket}" — expected e.g. PROJ-123 or clear` };
+          return {
+            ok: false,
+            reason: `invalid ticket key "${parsed.ticket}" — expected e.g. PROJ-123 or clear`,
+          };
         }
         result = applyTicket(resolved.sid, key, 'manual');
       }
@@ -170,18 +243,30 @@ export function createCommands(ctx) {
       // exit is {ok:false, reason} or {session_id, ...renameResult}, and a
       // malformed rename is NEVER filed as a note. The human owns the suffix;
       // the animal is not theirs to choose, so it is not in the grammar.
-      if (parsed.error) { logCommand(); onMutate(); return { ok: false, reason: parsed.error }; }
-      if (parsed.target === 'all' || /^repo:/.test(parsed.target)) {
+      if ('error' in parsed) {
+        logCommand();
+        onMutate();
+        return { ok: false, reason: parsed.error };
+      }
+      if (parsed.target === 'all' || parsed.target.startsWith('repo:')) {
         logCommand();
         onMutate();
         return { ok: false, reason: 'name targets one session — not all/repo:*' };
       }
       const resolved = resolveTicketTarget(parsed.target);
-      if (resolved.error) { logCommand(); onMutate(); return { ok: false, reason: resolved.error }; }
+      if ('error' in resolved) {
+        logCommand();
+        onMutate();
+        return { ok: false, reason: resolved.error };
+      }
       const clearing = /^clear$/i.test(parsed.suffix);
       if (!clearing) {
         const bad = validateNameSuffix(parsed.suffix);
-        if (bad) { logCommand(); onMutate(); return { ok: false, reason: bad }; }
+        if (bad) {
+          logCommand();
+          onMutate();
+          return { ok: false, reason: bad };
+        }
       }
       const result = applyCustomName(resolved.sid, clearing ? null : parsed.suffix);
       logCommand({ result });

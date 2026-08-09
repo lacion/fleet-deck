@@ -92,7 +92,11 @@ export interface SpawnRow {
   requested_branch: string | null;
   branch_mode: string | null;
   gateway: number;
-  kind: string;
+  // DDL is `kind TEXT DEFAULT 'claude'` (nullable — the DEFAULT applies only
+  // when the column is omitted, and both insertSpawn/insertProvisionalSpawn
+  // bind it positionally), so a row can hold NULL. Consumers keep their
+  // `?? 'claude'` / `=== 'shell'` fallbacks against that. See ts-migration-bugs.
+  kind: string | null;
   setup_cmd: string | null;
   stall_detail: string | null;
   fail_detail: string | null;

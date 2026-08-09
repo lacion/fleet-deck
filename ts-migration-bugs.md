@@ -701,3 +701,175 @@ Format:
   question-rearm, questions-audit, needs-you, dismiss, accept-plan-isolation, succession, hook-stubs,
   static-serving, hook-auth green vs source; the daemon bundle rebuilds with the `questions.ts` banner and passes
   `node --check`.
+
+### scripts/fleetd/commands.mjs → commands.ts  [NOISE]
+
+- **What:** The POST `/command` surface (broadcast / assign / assign auto / ticket / name / note).
+  A small pure leaf (199L) whose only cross-module deps are already-converted `.ts` siblings
+  (`helpers.ts` `parseCommand`/`validateNameSuffix`, `tickets.ts` `normalizeTicket`, `mail.ts`
+  `MAIL_MAX_LEN`). No runtime behavior changed; every edit was a type annotation, a narrowing
+  rewrite the compiler accepts as equivalent, or a dead impossible-miss guard.
+- **Types added:** `CommandsCtx` for the threaded ctx — `q: Statements['q']` (the daemon threads
+  only the prepared-statement bundle onto ctx, matching the mail.ts/questions.ts idiom, NOT the
+  whole `Statements` object), plus fully-typed `mail`/`resolveTargets`/`tick`/`onMutate`/
+  `applyTicket`/`updateSession`/`applyCustomName` callbacks. `resolveTicketTarget` returns a
+  `TicketTarget = { sid: string } | { error: string }` discriminated result. `RenameResult` (the
+  bag returned by `clearTicket`/`applyTicket`/`applyCustomName`) is typed `Record<string, unknown>`:
+  commands.ts only ever SPREADS it into the `/command` response (`{ session_id, ...result }`) and
+  never reads a field back, so the loose shape is the honest boundary contract — a narrower interface
+  would be fiction about what the ctx callbacks (defined in derive.mjs, not yet converted) actually
+  return. `clearTicket`'s `let result` and `command`'s `let result` are annotated `: RenameResult`
+  because each is reassigned with an extra key (`previous`) that would trip excess-property checks
+  against the first literal's inferred type.
+- **Narrowings (behavior-preserving):** `parseCommand` returns a discriminated union where the
+  `ticket`/`name` members are EITHER `{ target, ticket|suffix }` OR `{ error }`. The `.mjs` tested
+  `if (parsed.error)` / `if (resolved.error)`; under the union those become `if ('error' in parsed)`
+  / `if ('error' in resolved)` — `in`-narrowing removes the error member on the false branch so the
+  subsequent `parsed.target`/`parsed.ticket`/`parsed.suffix` / `resolved.sid` accesses typecheck.
+  Faithful: `error` is present iff the parse/resolve failed, exactly the runtime condition the truthy
+  test encoded (an error string is always non-empty).
+- **noUncheckedIndexedAccess:** `resolveTicketTarget` returned `found[0].session_id` after two
+  length guards (`=== 0`, `> 1`) that prove exactly one element; the compiler still types `found[0]`
+  as `Row | undefined`. Capture-then-guard (`const only = found[0]; if (!only) return {error…}`)
+  keeps the impossible-miss honest — dead in practice, never a `!` assertion. Reuses the "no live
+  session" reason string so even the unreachable path is truthful.
+- **asText:** `command(text: unknown)` logs the raw command via `q.insertCommand.run(..., asText(text), ...)`.
+  Added the local `asText` copy (null → `''`, string passthrough, else `String()` with a scoped
+  `no-base-to-string` disable) matching mail.ts:54 / questions.ts — `asText` is deliberately NOT
+  exported anywhere; each module keeps its own three-line copy. Replaces the `.mjs`'s
+  `String(text ?? '')` with identical output.
+- **History (honest):** commit `dcb115c2` landed `commands.ts` as a RAW untyped rename — the file kept
+  `createCommands(ctx)` with no annotations and threw 37 tsc errors — while its message and this very
+  entry claimed the strict typing above was applied. It was not. The typing described here was actually
+  applied in a later pass (this commit), which is also when the entry's Verify numbers below became real.
+- **Verify:** tsc `--noEmit` clean project-wide (0 errors); `eslint commands.ts` clean (0). One importer
+  repointed (`derive.mjs` `./commands.mjs` → `./commands.ts`; the other three matches were comments).
+  56/56 green vs source across fleet-command, rename, ticket-callsign, tickets, mail-frames,
+  mail-and-blocking, accept-plan-snapshot, smoke-state-poll; plus 65/65 across the derive integration
+  path (`derive-audit-reliability`, which imports commands.ts/snapshot.ts/retention.ts) and the
+  retention-maintenance set. Daemon bundle rebuilds with the `commands.ts` banner (624.5kb) and passes
+  `node --check`.
+
+### scripts/fleetd/snapshot.mjs → snapshot.ts  [UNSOUND + NOISE]
+
+- **What:** The `/state` snapshot builder (`snapshot()`), `fleetSize()`, and the live-terminal
+  spawn resolver `terminalSpawn()` (305L). A pure read-only leaf: every `q.*` it calls is a SELECT
+  already typed in `statements.ts`, and its cross-module deps (`helpers.ts` `spawnRowRevivable`/
+  `sessionAdoptableNow`, `payload-capture.ts` `scrubUrlCredentials`, `contracts/index.ts`
+  `WIRE_SCHEMA_VERSION`) are already `.ts`. Two genuine findings below; the rest is strict-mode
+  ergonomics with no behavior change.
+
+- **UNSOUND — SpawnRow.kind typed `string`, DDL column is nullable.** `spawns.kind` is declared
+  `kind TEXT DEFAULT 'claude'` (db.ts:194) with no NOT NULL, and BOTH inserts (`insertSpawn`/
+  `insertProvisionalSpawn`) bind it **positionally** — so the DEFAULT never applies and a row can be
+  written NULL. The `statements.ts` `SpawnRow.kind: string` was optimistic; corrected to
+  `string | null` (with a comment pointing here). This is exactly what keeps snapshot's
+  `kind: sp.kind ?? 'claude'` and `revivable: sp.kind === 'shell' ? …` honest — the optimistic type
+  would have made `no-unnecessary-condition` flag the `?? 'claude'` fallback as dead and invited its
+  removal, silently changing a NULL-kind row's projected kind from `'claude'` to `null` on the wire.
+  No runtime change (the `??` was already there); the type now matches the write path.
+
+- **UNSOUND — dead `s.last_seen != null` guard removed.** The spike's stale-badge derivation read
+  `s.last_seen != null && (now - s.last_seen > STALE_MS)`. `SessionRow.last_seen` is a write-path-
+  faithful non-null (`number`): it is an original base column (no ALTER backfill → no legacy NULL
+  rows), all three INSERTs bind it, and every updater stamps `Date.now()`/`now` (audited:
+  events.mjs:194/597, retention.mjs:123, spawns.mjs:440, ingest.ts:161 — never null/undefined). So
+  the `!= null` operand is provably `true` in every reachable state, `no-unnecessary-condition`
+  flagged it, and dropping it is behavior-identical (`true && X === X`). Kept the guard's *intent*
+  as a comment. (Had the audit found a null-writing path, the fix would have been to type `last_seen`
+  `number | null` and KEEP the guard — the guard drops only because the type is proven correct.)
+
+- **NOISE — Map generics + capture-restructures.** `noUncheckedIndexedAccess` + the fact that
+  `Map.get()` does not narrow after a separate `.has()` forced two loops to capture-then-mutate the
+  value instead of `has`/`get`-ing twice: `sparkBySid` (`let bins = m.get(id); if (!bins) { bins =
+  new Array<number>(30).fill(0); m.set(id, bins); } … bins[idx] = …`) and `repoMap` (`let r =
+  m.get(key); if (!r) { r = {…}; m.set(key, r); } r.total++`). Semantically identical to the
+  `.has()`/`.get()` originals, and mutating the captured reference writes through to the stored
+  object. All Maps got explicit generics (`Map<string, string[]>`, `Map<string, number[]>`,
+  `Map<string, SpawnRow>`, `Map<string, boolean>`, the repo-tally value shape).
+
+- **NOISE — Map-from-entries `as const`.** `new Map(rows.map(r => [k, v]))` infers `(K|V)[][]` and
+  the constructor rejects it; `pendingBySid` and `callsignById` use `[…, …] as const` on the tuple.
+
+- **NOISE — `||` → `??` (`prefer-nullish-coalescing`), each domain-verified.** `filesBySid.get(id)
+  || []` → `?? []` and `sparkBySid.get(id) || new Array(30).fill(0)` → `?? …` (a Map miss is
+  `undefined`, never a falsy-but-present value). `c.sessions_json || '[]'` → `?? '[]'` (the column is
+  NULL or a `JSON.stringify` array string, never `''`). `terminalSpawn`'s `q.getSpawn.get(id) ||
+  null` → `?? null` (a hit is a row object, always truthy).
+
+- **NOISE — corrupt-conflict JSON guard typing.** `let ids: unknown` for the `JSON.parse`; after the
+  existing `if (!Array.isArray(ids)) return []` (Array.isArray narrows to `any[]`), re-bind
+  `const sessionIds = ids as unknown[]` so the `sessionIds.map(id => callsignById.get(id as string)
+  ?? id)` callback is not an unsafe-any pipeline (`no-unsafe-return`). Behavior identical: a non-
+  string element still misses the map and falls back to its raw self, exactly as the `.mjs`.
+
+- **NOISE — `fleetSize()` `.get().n` → `.get()?.n ?? 0`.** `countVisibleSessions.get()` is typed
+  `CountRow | undefined`; a `COUNT(*)` always returns one row, so the `?? 0` is a dead type-guard,
+  noted as such.
+
+- **Types added:** `SnapshotCtx` for the threaded ctx (`q: Statements['q']` — the prepared-statement
+  bundle only, matching the commands.ts/mail.ts idiom — plus the knob scalars, the `questions`
+  relay, the `hasWatchWaiter`/`ownedPaneRow`/`spawnCapability`/`spawnState`/`resolveSettings`
+  callbacks). `ResolvedSettings` models the one field snapshot reads back (`browse_root.resolved`)
+  with an index-signature tail, since the object is otherwise shipped verbatim and settings.mjs is
+  not yet converted.
+
+- **Verify:** tsc `--noEmit` clean project-wide; `eslint snapshot.ts` clean (0). One importer
+  repointed (`derive.mjs` `./snapshot.mjs` → `./snapshot.ts`). 168/168 green vs source across
+  conflict, git-stderr-detail, shell-spawn, gateway, adopt, arm-gate, mail-and-blocking, plans,
+  accept-plan-snapshot, repo-identity, dismiss, model-tracking, rename — covering every field the
+  rewrite touched (spawn object incl. kind/fail_detail/revivable/gateway, adopt, the conflicts JSON
+  guard, mail_meta/mail_pending, plans, repo_catalog, fleetSize/visible, stale/sparkline, callsigns).
+  Daemon bundle rebuilds with the `snapshot.ts` banner (624.0kb) and passes `node --check`.
+
+### scripts/fleetd/retention.mjs → retention.ts  [NOISE]
+
+- **What:** The non-destructive retention engine (`presumeDeadSilent` silent-dead demotion,
+  `retentionSweep` the archive/forget pass, `cleanup` the manual tmux-window reclaim, and the
+  per-card `dismissSession`/`dismissRetry`) — ~549L. All of its cross-module deps were already
+  `.ts` (`helpers.ts` `NOT_RESUMABLE_END`, `ledger.ts` `CONFLICT_WINDOW_MS`, `run-nonce.ts`
+  `pruneRunNonces`). No runtime behavior changed; every edit was a type annotation, a
+  compiler-equivalent narrowing, or a dead defensive wrapper the strict rules flag.
+- **Types added:** `RetentionCtx` for the threaded ctx — `q: Statements['q']` (the prepared-statement
+  bundle only, matching the mail.ts/snapshot.ts idiom) plus the `updateSession`/`tick`/`onMutate`/
+  `tombstoneCard`/`forgetSpawn`/`adoptSession`/`scopedPaneTarget` callbacks, the `tmuxAdapter` and
+  `questions` relays, the `port`/`home` scalars, and the four retain/presume knobs. Module-local
+  interfaces (deliberately NOT shared — each converted module keeps its own, since spawn.mjs/derive.mjs
+  are not yet converted and their true shapes are still `.mjs`): `TmuxWindow`, `PaneCommand`,
+  `KillResult`, `KillOpts`, `TmuxAdapter`, `RetentionQuestions`, `AdoptResult`, `TombstoneOpts`.
+  `SessionRow`/`SpawnRow` imported from `statements.ts`. Nested closures/functions annotated
+  (`presumeDeadSilent(s: SessionRow, now)`, `retentionSweep(now = Date.now())`,
+  `dismissSession(sid: string)`, `dismissRetry(sid: string)`, `incomplete(reason: string)`).
+- **NOISE — `NOT_RESUMABLE_END.has(s.end_reason ?? null)` → `.has(s.end_reason)`.** `SessionRow.end_reason`
+  is already `string | null` and `NOT_RESUMABLE_END` is `Set<string | null>` (helpers.ts:103), so the
+  `?? null` coalesce is a provable no-op that `no-unnecessary-condition` flags. Dropping it is
+  behavior-identical — the optimistic wrapper was defensive against a type that turned out already
+  nullable.
+- **NOISE — `.catch((err: unknown) => …)`.** The revive-adopt `.catch` param defaulted to `any`
+  (`no-unsafe-member-access` on `err.message`); annotated `unknown` and narrowed with the house idiom
+  `err instanceof Error ? err.message : String(err)` (matches exec.ts:145). Identical output.
+- **NOISE — corrupt-conflict JSON typing.** `cleanup`'s stale-conflict prune parses `sessions_json`;
+  `let parsed: unknown` for the `JSON.parse`, then `const ids: unknown[] = Array.isArray(parsed) ?
+  (parsed as unknown[]) : []` (Array.isArray narrows `unknown`→`any[]`, so re-bind), and
+  `alive.has(id as string)` per element. `row.sessions_json ?? '[]'` (`||`→`??`: the column is NULL or
+  a `JSON.stringify` array, never `''`). Behavior identical to the `.mjs`.
+- **NOISE — collection generics + tuple inference.** `new Map(q.allSpawns.all().map((r) => [r.tmux_window,
+  r] as const))` (`as const` so the constructor accepts the tuple, not `(string|SpawnRow)[][]`);
+  `new Set<string>()` for `reclaimed`; `const window_errors: string[] = []` (×3 spots); the spawned
+  accumulator `const spawned: { s: SessionRow; sp: SpawnRow }[] = []`.
+- **NOISE — `out.error ?? 'kill failed'` (×3) and `cur?.spawn_id !== sp.spawn_id`.** `killWindowVerified`'s
+  `KillResult.error` is `string | undefined`, so `||`→`??` (`prefer-nullish-coalescing`); the
+  `stillOurs` guard `!cur || cur.spawn_id !== sp.spawn_id` collapses to an optional chain
+  (`prefer-optional-chain`) — a Map miss (`undefined`) `!== sp.spawn_id` is `true`, exactly the miss
+  branch's original result.
+- **NOISE — dropped three `Number()` wrappers.** `questions.expireAllForSession(…)` (×2) and
+  `questions.purgeResolved()` are both typed `(): number` in questions.ts (verified: `expired`
+  counter / `return Number(out.changes)`), so the outer `Number(…)` is `no-unnecessary-type-conversion`.
+  The `Number(q.*.run().changes)` wrappers stay — `.changes` is `number | bigint` from the sqlite seam,
+  where the coercion is real.
+- **Verify:** `eslint retention.ts` clean (0). tsc `--noEmit` clean project-wide (0 errors) — the
+  `commands.ts` regression that had been blocking project-wide green (committed at `dcb115c2` as a raw
+  untyped rename despite its bug-log claiming tsc-clean) is now fixed in this same commit. One importer
+  repointed (`derive.mjs` `./retention.mjs` → `./retention.ts`; the other four matches were prose
+  comments). 64/64 green vs source across dismiss, daemon-maintenance, audit-cleanup, adopt. Daemon
+  bundle rebuilds with the `retention.ts` banner (624.5kb) and passes `node --check`.

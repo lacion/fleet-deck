@@ -9811,7 +9811,12 @@ function createIngest(ctx) {
   return { ingestAgentsPoll };
 }
 
-// scripts/fleetd/commands.mjs
+// scripts/fleetd/commands.ts
+function asText3(value) {
+  if (value == null) return "";
+  if (typeof value === "string") return value;
+  return String(value);
+}
 function createCommands(ctx) {
   const {
     q,
@@ -9830,11 +9835,17 @@ function createCommands(ctx) {
     const upd = { ticket: null, ticket_source: "manual" };
     let result = { ok: true, renamed: false, callsign: c.callsign, ticket: null };
     if (c.prev_callsign && !q.callsignTaken.get(c.prev_callsign, c.prev_callsign, sid)) {
-      upd.callsign = c.prev_callsign;
-      upd.prev_callsign = null;
+      upd["callsign"] = c.prev_callsign;
+      upd["prev_callsign"] = null;
       q.rememberAlias.run(sid, c.callsign, Date.now());
       tick(`\u{1F3AB} ${c.callsign} reverted to ${c.prev_callsign} (ticket cleared)`);
-      result = { ok: true, renamed: true, callsign: c.prev_callsign, ticket: null, previous: c.callsign };
+      result = {
+        ok: true,
+        renamed: true,
+        callsign: c.prev_callsign,
+        ticket: null,
+        previous: c.callsign
+      };
     } else {
       tick(`\u{1F3AB} ${c.callsign} ticket cleared`);
     }
@@ -9842,16 +9853,24 @@ function createCommands(ctx) {
     return result;
   }
   function resolveTicketTarget(target) {
-    const matches = q.visibleSessions.all().filter((s) => s.ended_at == null && (s.session_id === target || s.callsign === target || s.prev_callsign === target));
+    const matches = q.visibleSessions.all().filter(
+      (s) => s.ended_at == null && (s.session_id === target || s.callsign === target || s.prev_callsign === target)
+    );
     if (matches.length > 1) return { error: `"${target}" is ambiguous \u2014 use the session id` };
     const found = matches.length ? matches : q.aliasesMatch.all(target, target).filter((s) => s.ended_at == null);
     if (found.length === 0) return { error: `no live session matching "${target}"` };
     if (found.length > 1) return { error: `"${target}" is ambiguous \u2014 use the session id` };
-    return { sid: found[0].session_id };
+    const only = found[0];
+    if (!only) return { error: `no live session matching "${target}"` };
+    return { sid: only.session_id };
   }
   function command(text) {
     const parsed = parseCommand(text);
-    const logCommand = (extra) => q.insertCommand.run(Date.now(), String(text ?? ""), JSON.stringify(extra ? { ...parsed, ...extra } : parsed));
+    const logCommand = (extra) => q.insertCommand.run(
+      Date.now(),
+      asText3(text),
+      JSON.stringify(extra ? { ...parsed, ...extra } : parsed)
+    );
     let delivered = 0;
     if (parsed.cmd === "broadcast" || parsed.cmd === "assign_auto" || parsed.cmd === "assign") {
       const frame = parsed.cmd === "broadcast" ? "" : "[FLEETDECK ASSIGNMENT] ";
@@ -9870,7 +9889,7 @@ function createCommands(ctx) {
       delivered = targets.length;
       tick(`\u{1F4E3} orchestrator broadcast \u2192 ${delivered} session(s)`);
     } else if (parsed.cmd === "assign_auto") {
-      const repo = parsed.repo ?? null;
+      const repo = parsed.repo;
       const winner = q.autoCandidate.get(repo, repo, repo);
       if (!winner) {
         logCommand({ unrouted: true });
@@ -9886,27 +9905,30 @@ function createCommands(ctx) {
       return { ok: true, assigned_to };
     } else if (parsed.cmd === "assign") {
       const targets = resolveTargets(parsed.target);
-      if (parsed.target !== "all" && !/^repo:/.test(parsed.target) && targets.length > 1) {
+      if (parsed.target !== "all" && !parsed.target.startsWith("repo:") && targets.length > 1) {
         logCommand({ refused: "ambiguous" });
         onMutate();
-        return { ok: false, reason: `"${parsed.target}" matches ${targets.length} sessions \u2014 use the session id` };
+        return {
+          ok: false,
+          reason: `"${parsed.target}" matches ${targets.length} sessions \u2014 use the session id`
+        };
       }
       targets.forEach((sid) => mail(sid, "orchestrator", `[FLEETDECK ASSIGNMENT] ${parsed.text}`));
       delivered = targets.length;
       tick(`\u{1F4CC} orchestrator assign \u2192 ${parsed.target}${delivered ? "" : " (no such session)"}`);
     } else if (parsed.cmd === "ticket") {
-      if (parsed.error) {
+      if ("error" in parsed) {
         logCommand();
         onMutate();
         return { ok: false, reason: parsed.error };
       }
-      if (parsed.target === "all" || /^repo:/.test(parsed.target)) {
+      if (parsed.target === "all" || parsed.target.startsWith("repo:")) {
         logCommand();
         onMutate();
         return { ok: false, reason: "ticket targets one session \u2014 not all/repo:*" };
       }
       const resolved = resolveTicketTarget(parsed.target);
-      if (resolved.error) {
+      if ("error" in resolved) {
         logCommand();
         onMutate();
         return { ok: false, reason: resolved.error };
@@ -9919,7 +9941,10 @@ function createCommands(ctx) {
         if (!key) {
           logCommand();
           onMutate();
-          return { ok: false, reason: `invalid ticket key "${parsed.ticket}" \u2014 expected e.g. PROJ-123 or clear` };
+          return {
+            ok: false,
+            reason: `invalid ticket key "${parsed.ticket}" \u2014 expected e.g. PROJ-123 or clear`
+          };
         }
         result = applyTicket(resolved.sid, key, "manual");
       }
@@ -9927,18 +9952,18 @@ function createCommands(ctx) {
       onMutate();
       return { session_id: resolved.sid, ...result };
     } else if (parsed.cmd === "name") {
-      if (parsed.error) {
+      if ("error" in parsed) {
         logCommand();
         onMutate();
         return { ok: false, reason: parsed.error };
       }
-      if (parsed.target === "all" || /^repo:/.test(parsed.target)) {
+      if (parsed.target === "all" || parsed.target.startsWith("repo:")) {
         logCommand();
         onMutate();
         return { ok: false, reason: "name targets one session \u2014 not all/repo:*" };
       }
       const resolved = resolveTicketTarget(parsed.target);
-      if (resolved.error) {
+      if ("error" in resolved) {
         logCommand();
         onMutate();
         return { ok: false, reason: resolved.error };
@@ -12262,7 +12287,7 @@ function validateSpawnRequest(input) {
   return ok(input);
 }
 
-// scripts/fleetd/snapshot.mjs
+// scripts/fleetd/snapshot.ts
 function createSnapshot(ctx) {
   const {
     q,
@@ -12292,15 +12317,23 @@ function createSnapshot(ctx) {
     const sparkBySid = /* @__PURE__ */ new Map();
     const nowMin = Math.floor(now / 6e4);
     for (const row of q.sparkline.all(now - 30 * 6e4)) {
-      if (!sparkBySid.has(row.session_id)) sparkBySid.set(row.session_id, new Array(30).fill(0));
+      let bins = sparkBySid.get(row.session_id);
+      if (!bins) {
+        bins = new Array(30).fill(0);
+        sparkBySid.set(row.session_id, bins);
+      }
       const idx = 29 - (nowMin - row.minute);
-      if (idx >= 0 && idx < 30) sparkBySid.get(row.session_id)[idx] = row.n;
+      if (idx >= 0 && idx < 30) bins[idx] = row.n;
     }
     const visible = q.visibleSessions.all();
     const spawnBySid = /* @__PURE__ */ new Map();
     for (const r of q.spawnByVisibleSession.all()) spawnBySid.set(r.session_id, r);
-    const pendingBySid = new Map(q.pendingCounts.all(Date.now()).map((r) => [r.to_session, r]));
-    const callsignById = new Map(q.conflictCallsigns.all().map((s) => [s.session_id, s.callsign]));
+    const pendingBySid = new Map(
+      q.pendingCounts.all(Date.now()).map((r) => [r.to_session, r])
+    );
+    const callsignById = new Map(
+      q.conflictCallsigns.all().map((s) => [s.session_id, s.callsign])
+    );
     const waiterBySid = /* @__PURE__ */ new Map();
     const ownedPaneBySid = /* @__PURE__ */ new Map();
     for (const s of visible) {
@@ -12330,7 +12363,7 @@ function createSnapshot(ctx) {
         col: s.col,
         note: s.note,
         task: s.task,
-        files: filesBySid.get(s.session_id) || [],
+        files: filesBySid.get(s.session_id) ?? [],
         lastTool: s.last_tool,
         events: s.events,
         startedAt: s.started_at,
@@ -12347,8 +12380,12 @@ function createSnapshot(ctx) {
         // ({queued, oldest_at, route}) and is the single per-session source of
         // truth. The top-level mail_pending map (a simple {sid: count}) is KEPT: it
         // is the documented /state count field orchestrators read (commands/fleet.md).
-        sparkline: sparkBySid.get(s.session_id) || new Array(30).fill(0),
-        stale: (s.col === "working" || s.col === "verifying") && s.last_seen != null && now - s.last_seen > STALE_MS,
+        sparkline: sparkBySid.get(s.session_id) ?? new Array(30).fill(0),
+        // last_seen is a write-path-faithful non-null (base column, all INSERTs
+        // bind it, every updater stamps Date.now()), so the spike's defensive
+        // `s.last_seen != null` guard is provably-true dead code — dropped, since
+        // `true && X === X` keeps this behaviour-identical. See ts-migration-bugs.
+        stale: (s.col === "working" || s.col === "verifying") && now - s.last_seen > STALE_MS,
         ...sp ? {
           spawn: {
             spawn_id: sp.spawn_id,
@@ -12403,8 +12440,11 @@ function createSnapshot(ctx) {
     const repoMap = /* @__PURE__ */ new Map();
     for (const s of sessions) {
       const key = s.repo_id ?? "(none)";
-      if (!repoMap.has(key)) repoMap.set(key, { repo_id: s.repo_id, repo_name: s.repo_name, active: 0, total: 0 });
-      const r = repoMap.get(key);
+      let r = repoMap.get(key);
+      if (!r) {
+        r = { repo_id: s.repo_id, repo_name: s.repo_name, active: 0, total: 0 };
+        repoMap.set(key, r);
+      }
       r.total++;
       if (!s.endedAt) r.active++;
       if (s.repo_name) r.repo_name = s.repo_name;
@@ -12468,21 +12508,26 @@ function createSnapshot(ctx) {
       conflicts: q.recentConflicts.all().flatMap((c) => {
         let ids;
         try {
-          ids = JSON.parse(c.sessions_json || "[]");
+          ids = JSON.parse(c.sessions_json ?? "[]");
         } catch {
           return [];
         }
         if (!Array.isArray(ids)) return [];
-        return [{
-          at: c.at,
-          repo_id: c.repo_id,
-          rel_path: c.rel_path,
-          file: c.rel_path,
-          // spike board reads .file
-          severity: c.severity,
-          sessions: ids,
-          callsigns: ids.map((id) => callsignById.get(id) ?? id)
-        }];
+        const sessionIds = ids;
+        return [
+          {
+            at: c.at,
+            repo_id: c.repo_id,
+            rel_path: c.rel_path,
+            file: c.rel_path,
+            // spike board reads .file
+            severity: c.severity,
+            sessions: sessionIds,
+            // Elements are session-id strings; a non-string element simply misses
+            // the callsign map and falls back to its raw self, as in the .mjs.
+            callsigns: sessionIds.map((id) => callsignById.get(id) ?? id)
+          }
+        ];
       }),
       mail_pending: mailPending,
       mail_meta: mailMeta,
@@ -12511,15 +12556,15 @@ function createSnapshot(ctx) {
     };
   }
   function fleetSize() {
-    return q.countVisibleSessions.get().n;
+    return q.countVisibleSessions.get()?.n ?? 0;
   }
   function terminalSpawn(spawnId) {
-    return q.getSpawn.get(spawnId) || null;
+    return q.getSpawn.get(spawnId) ?? null;
   }
   return { snapshot, fleetSize, terminalSpawn };
 }
 
-// scripts/fleetd/retention.mjs
+// scripts/fleetd/retention.ts
 import fs13 from "node:fs";
 
 // scripts/fleetd/run-nonce.ts
@@ -12560,7 +12605,7 @@ function pruneRunNonces(home, { minAgeMs = 36e5, now = Date.now() } = {}) {
   return removed;
 }
 
-// scripts/fleetd/retention.mjs
+// scripts/fleetd/retention.ts
 function createRetention(ctx) {
   const {
     q,
@@ -12620,7 +12665,7 @@ function createRetention(ctx) {
         for (const { s, sp } of spawned) {
           const stillOurs = () => {
             const cur = q.activeSpawnBySession.get(s.session_id);
-            if (!cur || cur.spawn_id !== sp.spawn_id) return false;
+            if (cur?.spawn_id !== sp.spawn_id) return false;
             const owner = q.currentWindowOwner.get(sp.tmux_window);
             return !owner || owner.spawn_id === sp.spawn_id;
           };
@@ -12662,12 +12707,30 @@ function createRetention(ctx) {
         changed = true;
         continue;
       }
-      if (s.ended_at != null && !NOT_RESUMABLE_END.has(s.end_reason ?? null)) {
-        Promise.resolve(adoptSession(s.session_id, { dangerously_skip_permissions: !!s.adopt_armed_skip }, { deferred: true })).then((out) => {
+      if (s.ended_at != null && !NOT_RESUMABLE_END.has(s.end_reason)) {
+        Promise.resolve(
+          adoptSession(
+            s.session_id,
+            { dangerously_skip_permissions: !!s.adopt_armed_skip },
+            { deferred: true }
+          )
+        ).then((out) => {
           if (!out || out.status >= 400 && out.status !== 409) {
-            tick(`\u2717 move-to-tmux failed for ${s.callsign}: ${out?.body?.reason ?? "unknown"}`.slice(0, 100));
+            tick(
+              `\u2717 move-to-tmux failed for ${s.callsign}: ${out?.body?.reason ?? "unknown"}`.slice(
+                0,
+                100
+              )
+            );
           }
-        }).catch((err) => tick(`\u2717 move-to-tmux failed for ${s.callsign}: ${String(err?.message || err)}`.slice(0, 100)));
+        }).catch((err) => {
+          tick(
+            `\u2717 move-to-tmux failed for ${s.callsign}: ${err instanceof Error ? err.message : String(err)}`.slice(
+              0,
+              100
+            )
+          );
+        });
         changed = true;
       }
     }
@@ -12692,13 +12755,18 @@ function createRetention(ctx) {
     const now = Date.now();
     const archiving = q.archiveCandidates.all(now + 1).map((r) => r.session_id);
     const byName = new Map(q.allSpawns.all().map((r) => [r.tmux_window, r]));
-    const namedDead = [...byName.values()].filter((sp) => sp.tmux_window && ["killed", "pane-dead", "gone"].includes(sp.status));
+    const namedDead = [...byName.values()].filter(
+      (sp) => sp.tmux_window && ["killed", "pane-dead", "gone"].includes(sp.status)
+    );
     let windows_killed = 0;
     const reclaimed = /* @__PURE__ */ new Set();
     if (namedDead.length) {
       const wins = await tmuxAdapter.listScopedWindows(port);
       if (wins === null) {
-        return { ok: false, reason: "tmux window listing unavailable \u2014 nothing was cleared; retry Clear" };
+        return {
+          ok: false,
+          reason: "tmux window listing unavailable \u2014 nothing was cleared; retry Clear"
+        };
       }
       const window_errors = [];
       for (const win of wins) {
@@ -12714,7 +12782,7 @@ function createRetention(ctx) {
         if (out.ok || out.gone) windows_killed++;
         else if (out.stale) {
           reclaimed.add(win.window);
-        } else window_errors.push(`${win.window}: ${out.error || "kill failed"}`);
+        } else window_errors.push(`${win.window}: ${out.error ?? "kill failed"}`);
       }
       if (window_errors.length) {
         return {
@@ -12727,7 +12795,7 @@ function createRetention(ctx) {
     const mail_expired = Number(q.expireArchivedMail.run(now).changes);
     let questions_expired = 0;
     for (const sid of archiving) {
-      questions_expired += Number(questions.expireAllForSession(sid, { includeFreeform: true }));
+      questions_expired += questions.expireAllForSession(sid, { includeFreeform: true });
     }
     if (reclaimed.size) {
       for (const sp of q.sweepableArchivedSpawns.all()) {
@@ -12740,17 +12808,18 @@ function createRetention(ctx) {
     const alive = new Set(q.aliveSessionIds.all().map((r) => r.session_id));
     let conflicts_cleared = 0;
     for (const row of q.allConflicts.all()) {
-      let ids = [];
+      let parsed;
       try {
-        ids = JSON.parse(row.sessions_json || "[]");
+        parsed = JSON.parse(row.sessions_json ?? "[]");
       } catch {
+        parsed = [];
       }
-      if (!Array.isArray(ids)) ids = [];
+      const ids = Array.isArray(parsed) ? parsed : [];
       if (ids.length && ids.every((id) => alive.has(id))) continue;
       conflicts_cleared += Number(q.deleteConflict.run(row.id).changes);
     }
     q.deleteDeadTouches.run();
-    const questions_purged = Number(questions.purgeResolved());
+    const questions_purged = questions.purgeResolved();
     q.deleteArchivedMail.run();
     const feed_cleared = Number(q.clearTicker.run().changes);
     const orphan_worktrees = q.orphanWorktrees.all().map((r) => r.worktree_path).filter((p) => {
@@ -12760,7 +12829,9 @@ function createRetention(ctx) {
         return false;
       }
     });
-    tick(`\u232B cleared \u2014 ${archived} card(s), ${conflicts_cleared} conflict(s), ${questions_purged} answered question(s), the feed`);
+    tick(
+      `\u232B cleared \u2014 ${archived} card(s), ${conflicts_cleared} conflict(s), ${questions_purged} answered question(s), the feed`
+    );
     onMutate();
     return {
       ok: true,
@@ -12778,8 +12849,10 @@ function createRetention(ctx) {
     const now = Date.now();
     const s = q.getSession.get(sid);
     if (!s) return { status: 404, body: { ok: false, reason: "no such session" } };
-    if (s.col !== "offline") return { status: 409, body: { ok: false, reason: `session is ${s.col}, not offline` } };
-    if (s.archived_at != null) return { status: 409, body: { ok: false, reason: "already dismissed" } };
+    if (s.col !== "offline")
+      return { status: 409, body: { ok: false, reason: `session is ${s.col}, not offline` } };
+    if (s.archived_at != null)
+      return { status: 409, body: { ok: false, reason: "already dismissed" } };
     const active = q.activeSpawnBySession.get(sid);
     if (active) {
       const reason = active.status === "stalled" ? "session has a stalled spawn \u2014 resolve it first" : `session still owns a ${active.status} spawn \u2014 kill it before dismissing`;
@@ -12789,11 +12862,13 @@ function createRetention(ctx) {
       return { status: 409, body: { ok: false, reason: "already dismissed" } };
     }
     const mail_expired = Number(q.expireMailForSession.run(now, sid).changes);
-    const questions_expired = Number(questions.expireAllForSession(sid, { includeFreeform: true }));
+    const questions_expired = questions.expireAllForSession(sid, { includeFreeform: true });
     q.goneSessionSpawns.run(sid);
     q.deleteTouchesForSession.run(sid);
     const alive = () => q.getSession.get(sid)?.archived_at == null;
-    const myWindows = new Set(q.spawnsForSession.all(sid).map((r) => r.tmux_window).filter(Boolean));
+    const myWindows = new Set(
+      q.spawnsForSession.all(sid).map((r) => r.tmux_window).filter(Boolean)
+    );
     let windows_killed = 0;
     let resurrected = false;
     const window_errors = [];
@@ -12815,7 +12890,9 @@ function createRetention(ctx) {
       if (alive()) {
         resurrected = true;
       } else if (wins === null) {
-        return incomplete("tmux window listing unavailable \u2014 card archived, dead window(s) not killed; dismiss again to retry");
+        return incomplete(
+          "tmux window listing unavailable \u2014 card archived, dead window(s) not killed; dismiss again to retry"
+        );
       } else {
         for (const win of wins) {
           if (!myWindows.has(win.window) || !win.pane_dead) continue;
@@ -12825,44 +12902,65 @@ function createRetention(ctx) {
             expectWindowId: win.window_id,
             expect: () => {
               const owner2 = q.currentWindowOwner.get(win.window);
-              if (owner2 && (owner2.session_id !== sid || owner2.status !== "pane-dead")) return false;
+              if (owner2 && (owner2.session_id !== sid || owner2.status !== "pane-dead"))
+                return false;
               return !alive();
             }
           });
           if (out.ok || out.gone) windows_killed++;
           else if (out.stale) {
-          } else window_errors.push(`${win.window}: ${out.error || "kill failed"}`);
+          } else window_errors.push(`${win.window}: ${out.error ?? "kill failed"}`);
           if (alive()) {
             resurrected = true;
             break;
           }
         }
         if (window_errors.length) {
-          return incomplete(`${window_errors.length} window(s) could not be killed \u2014 ${window_errors.join("; ").slice(0, 200)} \u2014 card archived; dismiss again to retry`);
+          return incomplete(
+            `${window_errors.length} window(s) could not be killed \u2014 ${window_errors.join("; ").slice(0, 200)} \u2014 card archived; dismiss again to retry`
+          );
         }
       }
     }
-    tick(`\u232B dismissed ${s.callsign} \u2014 card, ${mail_expired} mail, ${questions_expired} question(s)${windows_killed ? `, ${windows_killed} window(s)` : ""}`);
+    tick(
+      `\u232B dismissed ${s.callsign} \u2014 card, ${mail_expired} mail, ${questions_expired} question(s)${windows_killed ? `, ${windows_killed} window(s)` : ""}`
+    );
     onMutate();
     return {
       status: 200,
       // `resurrected` is surfaced only when it happened — a hook re-floated the
       // card mid-dismiss, so the DB story already landed but the pane was left
       // alone. The normal path omits it (the route's key set stays stable).
-      body: { ok: true, archived: 1, mail_expired, questions_expired, windows_killed, ...resurrected ? { resurrected: true } : {} }
+      body: {
+        ok: true,
+        archived: 1,
+        mail_expired,
+        questions_expired,
+        windows_killed,
+        ...resurrected ? { resurrected: true } : {}
+      }
     };
   }
   async function dismissRetry(sid) {
     const s = q.getSession.get(sid);
     if (!s) return { status: 404, body: { ok: false, reason: "no such session" } };
-    if (s.archived_at == null) return { status: 409, body: { ok: false, reason: "session is not dismissed \u2014 nothing to retry" } };
-    const myWindows = new Set(q.spawnsForSession.all(sid).map((r) => r.tmux_window).filter(Boolean));
+    if (s.archived_at == null)
+      return {
+        status: 409,
+        body: { ok: false, reason: "session is not dismissed \u2014 nothing to retry" }
+      };
+    const myWindows = new Set(
+      q.spawnsForSession.all(sid).map((r) => r.tmux_window).filter(Boolean)
+    );
     if (!myWindows.size) {
       return { status: 200, body: { ok: true, windows_killed: 0 } };
     }
     const wins = await tmuxAdapter.listScopedWindows(port);
     if (wins === null) {
-      return { status: 409, body: { ok: false, retry: true, reason: "tmux window listing unavailable \u2014 retry again" } };
+      return {
+        status: 409,
+        body: { ok: false, retry: true, reason: "tmux window listing unavailable \u2014 retry again" }
+      };
     }
     let windows_killed = 0;
     const window_errors = [];
@@ -12873,12 +12971,17 @@ function createRetention(ctx) {
       const out = await tmuxAdapter.killWindowVerified(win.window);
       if (out.ok || out.gone) windows_killed++;
       else if (out.stale) {
-      } else window_errors.push(`${win.window}: ${out.error || "kill failed"}`);
+      } else window_errors.push(`${win.window}: ${out.error ?? "kill failed"}`);
     }
     if (window_errors.length) {
       return {
         status: 409,
-        body: { ok: false, retry: true, windows_killed, reason: `${window_errors.length} window(s) could not be killed \u2014 ${window_errors.join("; ").slice(0, 200)} \u2014 retry again` }
+        body: {
+          ok: false,
+          retry: true,
+          windows_killed,
+          reason: `${window_errors.length} window(s) could not be killed \u2014 ${window_errors.join("; ").slice(0, 200)} \u2014 retry again`
+        }
       };
     }
     return { status: 200, body: { ok: true, windows_killed } };

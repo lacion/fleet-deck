@@ -22,12 +22,12 @@ import { pasteImage } from './paste.ts';
 import { createMail, MAIL_MAX_LEN } from './mail.ts';
 import { createLedger } from './ledger.ts';
 import { createIngest } from './ingest.ts';
-import { createCommands } from './commands.mjs';
+import { createCommands } from './commands.ts';
 import { createPlans } from './plans.ts';
 import { createSpawns } from './spawns.mjs';
 import { createEvents } from './events.mjs';
-import { createSnapshot } from './snapshot.mjs';
-import { createRetention } from './retention.mjs';
+import { createSnapshot } from './snapshot.ts';
+import { createRetention } from './retention.ts';
 import { createKeyedMutex, envInt } from './helpers.ts';
 
 // Public re-exports: these helpers moved to helpers.mjs, but tests and other

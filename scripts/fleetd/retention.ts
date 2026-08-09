@@ -1,4 +1,4 @@
-// retention.mjs — the non-destructive retention sweep (silence presume-dead,
+// retention.ts — the non-destructive retention sweep (silence presume-dead,
 // tmux-adjudicated spawned silence, offline archival, ledger aging) and the
 // manual cleanup() ("Clear means clear"). The boot invocation + the 10-minute
 // interval live in the composition root. Threaded ctx state: q, updateSession,
@@ -11,20 +11,117 @@ import fs from 'node:fs';
 import { SHELL_RE, NOT_RESUMABLE_END } from './helpers.ts';
 import { CONFLICT_WINDOW_MS } from './ledger.ts';
 import { pruneRunNonces } from './run-nonce.ts';
+import type { Statements, SessionRow, SpawnRow } from './statements.ts';
 
-export function createRetention(ctx) {
+// ── ctx contract ─────────────────────────────────────────────────────────────
+// The owning modules of these callbacks/adapters are still .mjs (unchecked), so
+// this interface IS the boundary that types the sweep. The tmux slice below is
+// the subset retention drives (its own local shape — mail.ts names a different
+// subset the same way).
+
+// A scoped window row from listScopedWindows; pane_cmd rides along so silence
+// adjudication can read the current command off a live pane.
+interface TmuxWindow {
+  session: string;
+  window: string;
+  window_id: string;
+  pane_dead: boolean;
+  pane_cmd: string;
+}
+interface PaneCommand {
+  dead: boolean;
+  cmd: string;
+}
+// killWindowVerified's verdict: {ok} killed, {gone} verified absent (counts as
+// cleared), {stale} a revive reclaimed the name mid-kill (a no-op), else {error}.
+interface KillResult {
+  ok: boolean;
+  window_id?: string;
+  gone?: boolean;
+  stale?: boolean;
+  error?: string;
+}
+interface KillOpts {
+  expectWindowId?: string;
+  expect?: () => boolean;
+}
+interface TmuxAdapter {
+  spawnOverrideCmd: () => string | null;
+  listScopedWindows: (port: number) => Promise<TmuxWindow[] | null>;
+  paneCurrentCommand: (target: string) => Promise<PaneCommand | null>;
+  killWindowVerified: (name: string, opts?: KillOpts) => Promise<KillResult>;
+}
+// The questions relay slice retention drives: expire a dead session's holds and
+// purge resolved cards on Clear. Both return the count they retired.
+interface RetentionQuestions {
+  expireAllForSession: (sid: string, opts?: { includeFreeform?: boolean }) => number;
+  purgeResolved: () => number;
+}
+// adoptSession speaks the control-API {status, body} shape; the armed-adopt net
+// reads only the status and the failure reason.
+interface AdoptResult {
+  status: number;
+  body?: { reason?: string };
+}
+// The shared offline-tombstone write (derive.mjs owns it) — drops the model memo
+// and wakes watchers.
+interface TombstoneOpts {
+  note: string;
+  at: number;
+  tickMsg: string;
+  forgetModel?: boolean;
+}
+
+interface RetentionCtx {
+  q: Statements['q'];
+  updateSession: Statements['updateSession'];
+  tick: (msg: string) => void;
+  onMutate: () => void;
+  tombstoneCard: (sid: string, opts: TombstoneOpts) => void;
+  forgetSpawn: (spawnId: string) => void;
+  tmuxAdapter: TmuxAdapter;
+  port: number;
+  home: string;
+  questions: RetentionQuestions;
+  adoptSession: (
+    sid: string,
+    body: { dangerously_skip_permissions: boolean },
+    opts: { deferred: boolean },
+  ) => Promise<AdoptResult | null | undefined>;
+  scopedPaneTarget: (win: TmuxWindow) => string;
+  PRESUME_DEAD_MS: number;
+  PRESUME_DEAD_WORKING_MS: number;
+  RETAIN_OFFLINE_MS: number;
+  RETAIN_LEDGER_MS: number;
+}
+
+export function createRetention(ctx: RetentionCtx) {
   const {
-    q, updateSession, tick, onMutate, tombstoneCard, forgetSpawn,
-    tmuxAdapter, port, home, questions, adoptSession, scopedPaneTarget,
-    PRESUME_DEAD_MS, PRESUME_DEAD_WORKING_MS, RETAIN_OFFLINE_MS, RETAIN_LEDGER_MS,
+    q,
+    updateSession,
+    tick,
+    onMutate,
+    tombstoneCard,
+    forgetSpawn,
+    tmuxAdapter,
+    port,
+    home,
+    questions,
+    adoptSession,
+    scopedPaneTarget,
+    PRESUME_DEAD_MS,
+    PRESUME_DEAD_WORKING_MS,
+    RETAIN_OFFLINE_MS,
+    RETAIN_LEDGER_MS,
   } = ctx;
 
   // Silence → presumed-ended tombstone. Pane-less hook sessions have no window
   // to consult, so their silence IS the only signal (unchanged behavior).
-  function presumeDeadSilent(s, now) {
+  function presumeDeadSilent(s: SessionRow, now: number) {
     const hours = Math.max(0, (now - s.last_seen) / 3_600_000);
     const label = Number.isInteger(hours) ? String(hours) : hours.toFixed(1).replace(/\.0$/, '');
-    tombstoneCard(s.session_id, { // D8
+    tombstoneCard(s.session_id, {
+      // D8
       note: `presumed ended (silent ${label}h)`,
       at: now,
       tickMsg: `⌛ ${s.callsign} presumed ended after ${label}h silent`,
@@ -52,9 +149,9 @@ export function createRetention(ctx) {
   // The function is async, but stays fully SYNCHRONOUS whenever there is no
   // spawned candidate (the common case, and every boot path the tests assert):
   // the tmux probe is only awaited when `spawned.length` is non-zero.
-  async function retentionSweep(now = Date.now()) {
+  async function retentionSweep(now: number = Date.now()) {
     let changed = false;
-    const spawned = [];
+    const spawned: { s: SessionRow; sp: SpawnRow }[] = [];
     // BUG 7: a FLEETDECK_SPAWN_CMD override launches a detached process, NOT a
     // tmux window, so its spawn row names a window tmux never has. BUG 2's tmux
     // adjudication would then read that window as ABSENT → UNKNOWN → never
@@ -76,7 +173,10 @@ export function createRetention(ctx) {
     ];
     for (const s of candidates) {
       const sp = q.activeSpawnBySession.get(s.session_id); // live-eligible spawn row?
-      if (sp && !overrideMode) { spawned.push({ s, sp }); continue; } // tmux-backed pane → ask tmux below
+      if (sp && !overrideMode) {
+        spawned.push({ s, sp });
+        continue;
+      } // tmux-backed pane → ask tmux below
       // Pane-less: a hook-only session (no spawn row) OR an override process
       // (a spawn row, but no tmux window to adjudicate). Silence is the signal.
       presumeDeadSilent(s, now);
@@ -84,7 +184,10 @@ export function createRetention(ctx) {
       // condemn it 'pane-dead' (never left stale 'live', so countActiveSpawns
       // stops counting it) which ALSO makes it revivable, exactly the recovery
       // path a crashed override agent needs.
-      if (sp) { q.setSpawnStatus.run('pane-dead', sp.spawn_id); forgetSpawn(sp.spawn_id); }
+      if (sp) {
+        q.setSpawnStatus.run('pane-dead', sp.spawn_id);
+        forgetSpawn(sp.spawn_id);
+      }
       changed = true;
     }
     if (spawned.length) {
@@ -101,19 +204,20 @@ export function createRetention(ctx) {
           // window's current owner (both re-checked after every tmux await).
           const stillOurs = () => {
             const cur = q.activeSpawnBySession.get(s.session_id);
-            if (!cur || cur.spawn_id !== sp.spawn_id) return false;
+            if (cur?.spawn_id !== sp.spawn_id) return false;
             const owner = q.currentWindowOwner.get(sp.tmux_window);
             return !owner || owner.spawn_id === sp.spawn_id;
           };
           if (!stillOurs()) continue;
-          const win = wins.find(w => w.window === sp.tmux_window);
+          const win = wins.find((w) => w.window === sp.tmux_window);
           // Alive: window present, pane not dead, and paneCurrentCommand confirms
           // claude (pane_cmd can read stale on remain-on-exit panes). The agent
           // is simply quiet — refresh last_seen so the clock restarts and leave
           // the card live. This is the "3.1h alive spawn got goned" fix.
           let alive = false;
           const shell = sp.kind === 'shell';
-          const setupPhase = !!sp.setup_cmd && (sp.status === 'spawning' || sp.status === 'stalled');
+          const setupPhase =
+            !!sp.setup_cmd && (sp.status === 'spawning' || sp.status === 'stalled');
           if (win && !win.pane_dead) {
             const pane = await tmuxAdapter.paneCurrentCommand(scopedPaneTarget(win));
             alive = !!pane && !pane.dead && (shell || setupPhase || pane.cmd === 'claude');
@@ -133,7 +237,8 @@ export function createRetention(ctx) {
             if (!stillOurs()) continue; // a revive interleaved the tmux awaits
             q.setSpawnStatus.run('pane-dead', sp.spawn_id);
             forgetSpawn(sp.spawn_id);
-            tombstoneCard(s.session_id, { // D8
+            tombstoneCard(s.session_id, {
+              // D8
               note: setupPhase
                 ? 'pane exited during setup/bring-up — open the terminal for the error'
                 : `pane confirmed dead — resume with claude --resume ${s.session_id}`,
@@ -169,17 +274,35 @@ export function createRetention(ctx) {
       // The same allowlist the board's chip and adoptSession use — one owner for
       // "may this end be resumed?", so a third hand-rolled copy can't drift
       // (0.7.1's 'superseded' would have slipped straight through the old test).
-      if (s.ended_at != null && !NOT_RESUMABLE_END.has(s.end_reason ?? null)) {
+      if (s.ended_at != null && !NOT_RESUMABLE_END.has(s.end_reason)) {
         // Fire-and-forget: a tmux stall must never wedge the sweep. Same
         // failure surface as the SessionEnd trigger — loud only for real
         // failures, never for benign 409 races.
-        Promise.resolve(adoptSession(s.session_id, { dangerously_skip_permissions: !!s.adopt_armed_skip }, { deferred: true }))
-          .then(out => {
+        Promise.resolve(
+          adoptSession(
+            s.session_id,
+            { dangerously_skip_permissions: !!s.adopt_armed_skip },
+            { deferred: true },
+          ),
+        )
+          .then((out) => {
             if (!out || (out.status >= 400 && out.status !== 409)) {
-              tick(`✗ move-to-tmux failed for ${s.callsign}: ${(out?.body?.reason ?? 'unknown')}`.slice(0, 100));
+              tick(
+                `✗ move-to-tmux failed for ${s.callsign}: ${out?.body?.reason ?? 'unknown'}`.slice(
+                  0,
+                  100,
+                ),
+              );
             }
           })
-          .catch(err => tick(`✗ move-to-tmux failed for ${s.callsign}: ${String(err?.message || err)}`.slice(0, 100)));
+          .catch((err: unknown) => {
+            tick(
+              `✗ move-to-tmux failed for ${s.callsign}: ${err instanceof Error ? err.message : String(err)}`.slice(
+                0,
+                100,
+              ),
+            );
+          });
         changed = true;
       }
     }
@@ -227,7 +350,7 @@ export function createRetention(ctx) {
   async function cleanup() {
     const now = Date.now();
     // Capture the about-to-be-archived sids before the UPDATE claims them.
-    const archiving = q.archiveCandidates.all(now + 1).map(r => r.session_id);
+    const archiving = q.archiveCandidates.all(now + 1).map((r) => r.session_id);
 
     // --- window-kill phase FIRST (BUG-145): the only awaits, before a single
     // byte of the DB story changes. Only windows a TERMINAL spawn row names
@@ -240,21 +363,25 @@ export function createRetention(ctx) {
     // full retry. (With NOTHING named, an unreachable tmux cannot hide one of
     // this fleet's windows — no spawn row anywhere points at one — so the
     // Clear is honestly complete without the probe.)
-    const byName = new Map(q.allSpawns.all().map(r => [r.tmux_window, r]));
-    const namedDead = [...byName.values()].filter(sp =>
-      sp.tmux_window && ['killed', 'pane-dead', 'gone'].includes(sp.status));
+    const byName = new Map(q.allSpawns.all().map((r) => [r.tmux_window, r] as const));
+    const namedDead = [...byName.values()].filter(
+      (sp) => sp.tmux_window && ['killed', 'pane-dead', 'gone'].includes(sp.status),
+    );
     let windows_killed = 0;
     // BUG-046: windows a revive reclaimed with a fresh live pane during the kill
     // phase below. Their new live spawn row must survive the archived-spawn
     // sweep even though its session is about to be archived — pane liveness
     // trumps archival.
-    const reclaimed = new Set();
+    const reclaimed = new Set<string>();
     if (namedDead.length) {
       const wins = await tmuxAdapter.listScopedWindows(port);
       if (wins === null) {
-        return { ok: false, reason: 'tmux window listing unavailable — nothing was cleared; retry Clear' };
+        return {
+          ok: false,
+          reason: 'tmux window listing unavailable — nothing was cleared; retry Clear',
+        };
       }
-      const window_errors = [];
+      const window_errors: string[] = [];
       for (const win of wins) {
         const sp = byName.get(win.window);
         if (!win.pane_dead || !sp || !['killed', 'pane-dead', 'gone'].includes(sp.status)) continue;
@@ -270,7 +397,10 @@ export function createRetention(ctx) {
             const owner2 = q.currentWindowOwner.get(win.window);
             // currentWindowOwner excludes gone/killed; a live-eligible owner
             // (or one for a different session) means a revive reclaimed the name.
-            return !(owner2 && (owner2.session_id !== sp.session_id || owner2.status !== 'pane-dead'));
+            return !(
+              owner2 &&
+              (owner2.session_id !== sp.session_id || owner2.status !== 'pane-dead')
+            );
           },
         });
         // {ok:false, gone:true} is fresh proof of absence — that counts as cleared.
@@ -278,11 +408,13 @@ export function createRetention(ctx) {
         // BUG-046: {ok:false, stale:true} means the kill's re-check caught a
         // revive reclaiming this window name mid-kill — the pane there now is
         // live work, not the corpse we verified. Leave it; never an error.
-        else if (out.stale) { reclaimed.add(win.window); /* revive reclaimed the name — no-op */ }
+        else if (out.stale) {
+          reclaimed.add(win.window); /* revive reclaimed the name — no-op */
+        }
         // A kill that comes back {ok:false} without proof of absence leaves the
         // window standing on the fleet's tmux session, holding its reusable
         // name — never report success.
-        else window_errors.push(`${win.window}: ${out.error || 'kill failed'}`);
+        else window_errors.push(`${win.window}: ${out.error ?? 'kill failed'}`);
       }
       if (window_errors.length) {
         return {
@@ -296,7 +428,7 @@ export function createRetention(ctx) {
     const mail_expired = Number(q.expireArchivedMail.run(now).changes);
     let questions_expired = 0;
     for (const sid of archiving) {
-      questions_expired += Number(questions.expireAllForSession(sid, { includeFreeform: true }));
+      questions_expired += questions.expireAllForSession(sid, { includeFreeform: true });
     }
     // Sweep the archived sessions' non-terminal spawns to 'gone' — but spare any
     // whose window a revive reclaimed with a live pane during the kill phase
@@ -314,17 +446,22 @@ export function createRetention(ctx) {
     // banner kept shouting about files two dead sessions once touched, the rail
     // kept a wall of answered questions, and the feed kept narrating a fleet
     // that no longer exists. What survives a Clear is what is still ALIVE.
-    const alive = new Set(q.aliveSessionIds.all().map(r => r.session_id));
+    const alive = new Set(q.aliveSessionIds.all().map((r) => r.session_id));
 
     // A conflict is only news while every session in it can still act on it.
     let conflicts_cleared = 0;
     for (const row of q.allConflicts.all()) {
-      let ids = [];
-      try { ids = JSON.parse(row.sessions_json || '[]'); } catch { /* corrupt row → drop it */ }
-      // R2-6: wrong-shape JSON ('null', '{}', a string) parses but would make
-      // `ids.length`/`ids.every` throw (e.g. null.length) — treat it as corrupt.
-      if (!Array.isArray(ids)) ids = [];
-      if (ids.length && ids.every(id => alive.has(id))) continue; // still a live argument
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(row.sessions_json ?? '[]');
+      } catch {
+        parsed = []; /* corrupt row → drop it */
+      }
+      // R2-6: wrong-shape JSON ('null', '{}', a string) parses but a non-array
+      // can never be a live argument. Array.isArray narrows unknown → any[], so
+      // re-bind to unknown[] and assert each id a string against the alive set.
+      const ids: unknown[] = Array.isArray(parsed) ? (parsed as unknown[]) : [];
+      if (ids.length && ids.every((id) => alive.has(id as string))) continue; // still a live argument
       conflicts_cleared += Number(q.deleteConflict.run(row.id).changes);
     }
     // The ledger the radar reads: dead sessions' touches would keep raising
@@ -332,18 +469,27 @@ export function createRetention(ctx) {
     q.deleteDeadTouches.run();
     // Answered/expired/dismissed cards leave the rail entirely (pending ones
     // are the human's actual queue and are never touched here).
-    const questions_purged = Number(questions.purgeResolved());
+    const questions_purged = questions.purgeResolved();
     q.deleteArchivedMail.run();
     // The feed is a live narration, not an archive — SQLite keeps the events.
     const feed_cleared = Number(q.clearTicker.run().changes);
 
     // Only worktrees still on disk are the human's chore — rows whose paths
     // were already removed by hand are silence, not a nag.
-    const orphan_worktrees = q.orphanWorktrees.all()
-      .map(r => r.worktree_path)
-      .filter(p => { try { return fs.existsSync(p); } catch { return false; } });
+    const orphan_worktrees = q.orphanWorktrees
+      .all()
+      .map((r) => r.worktree_path)
+      .filter((p) => {
+        try {
+          return fs.existsSync(p);
+        } catch {
+          return false;
+        }
+      });
     // One line of feed survives the wipe: the wipe itself.
-    tick(`⌫ cleared — ${archived} card(s), ${conflicts_cleared} conflict(s), ${questions_purged} answered question(s), the feed`);
+    tick(
+      `⌫ cleared — ${archived} card(s), ${conflicts_cleared} conflict(s), ${questions_purged} answered question(s), the feed`,
+    );
     onMutate();
     return {
       ok: true,
@@ -365,14 +511,16 @@ export function createRetention(ctx) {
   // archive, expire the card's mail + questions, gone its non-terminal spawn
   // rows, kill a dead remain-on-exit window — just scoped by session_id, and
   // returns a control-API {status, body} so the route can speak real codes.
-  async function dismissSession(sid) {
+  async function dismissSession(sid: string) {
     const now = Date.now();
     const s = q.getSession.get(sid);
     if (!s) return { status: 404, body: { ok: false, reason: 'no such session' } };
     // A card is dismissible only once it is offline (a live/working card is the
     // human's to keep) and not already dismissed.
-    if (s.col !== 'offline') return { status: 409, body: { ok: false, reason: `session is ${s.col}, not offline` } };
-    if (s.archived_at != null) return { status: 409, body: { ok: false, reason: 'already dismissed' } };
+    if (s.col !== 'offline')
+      return { status: 409, body: { ok: false, reason: `session is ${s.col}, not offline` } };
+    if (s.archived_at != null)
+      return { status: 409, body: { ok: false, reason: 'already dismissed' } };
     // Refuse while the session still owns a live-eligible spawn row (R4-review):
     //   • 'stalled'          — a fail-loud human problem bulk cleanup also refuses
     //                          to sweep (archiveCandidates excludes it).
@@ -387,9 +535,10 @@ export function createRetention(ctx) {
     // that situation from a still-active row.)
     const active = q.activeSpawnBySession.get(sid);
     if (active) {
-      const reason = active.status === 'stalled'
-        ? 'session has a stalled spawn — resolve it first'
-        : `session still owns a ${active.status} spawn — kill it before dismissing`;
+      const reason =
+        active.status === 'stalled'
+          ? 'session has a stalled spawn — resolve it first'
+          : `session still owns a ${active.status} spawn — kill it before dismissing`;
       return { status: 409, body: { ok: false, reason } };
     }
 
@@ -402,7 +551,7 @@ export function createRetention(ctx) {
       return { status: 409, body: { ok: false, reason: 'already dismissed' } };
     }
     const mail_expired = Number(q.expireMailForSession.run(now, sid).changes);
-    const questions_expired = Number(questions.expireAllForSession(sid, { includeFreeform: true }));
+    const questions_expired = questions.expireAllForSession(sid, { includeFreeform: true });
     // Any residual non-terminal spawn row (only a rare pre-pane 'provisioning'
     // survives the active-guard above) goes 'gone' so it stops counting active.
     q.goneSessionSpawns.run(sid);
@@ -417,7 +566,12 @@ export function createRetention(ctx) {
     // window is then a live session's again and NOT ours to kill, so re-read the
     // session after every await and bail the instant it is un-archived.
     const alive = () => q.getSession.get(sid)?.archived_at == null;
-    const myWindows = new Set(q.spawnsForSession.all(sid).map(r => r.tmux_window).filter(Boolean));
+    const myWindows = new Set(
+      q.spawnsForSession
+        .all(sid)
+        .map((r) => r.tmux_window)
+        .filter(Boolean),
+    );
     let windows_killed = 0;
     let resurrected = false;
     // BUG-145: the archive must NOT be reported as a plain success when the
@@ -427,12 +581,18 @@ export function createRetention(ctx) {
     // explicit incomplete result: ok:false, a reason naming every failed
     // window, and retry:true (the idempotent call below re-attempts the kill
     // for an already-archived card).
-    const window_errors = [];
-    const incomplete = (reason) => ({
+    const window_errors: string[] = [];
+    const incomplete = (reason: string) => ({
       status: 409,
       body: {
-        ok: false, archived: 1, mail_expired, questions_expired, windows_killed,
-        retry: true, reason, ...(resurrected ? { resurrected: true } : {}),
+        ok: false,
+        archived: 1,
+        mail_expired,
+        questions_expired,
+        windows_killed,
+        retry: true,
+        reason,
+        ...(resurrected ? { resurrected: true } : {}),
       },
     });
     if (myWindows.size) {
@@ -441,7 +601,9 @@ export function createRetention(ctx) {
         resurrected = true;
       } else if (wins === null) {
         // UNKNOWN listing — none of this card's windows can even be inspected.
-        return incomplete('tmux window listing unavailable — card archived, dead window(s) not killed; dismiss again to retry');
+        return incomplete(
+          'tmux window listing unavailable — card archived, dead window(s) not killed; dismiss again to retry',
+        );
       } else {
         for (const win of wins) {
           if (!myWindows.has(win.window) || !win.pane_dead) continue;
@@ -466,7 +628,8 @@ export function createRetention(ctx) {
             expectWindowId: win.window_id,
             expect: () => {
               const owner2 = q.currentWindowOwner.get(win.window);
-              if (owner2 && (owner2.session_id !== sid || owner2.status !== 'pane-dead')) return false;
+              if (owner2 && (owner2.session_id !== sid || owner2.status !== 'pane-dead'))
+                return false;
               return !alive();
             },
           });
@@ -484,24 +647,39 @@ export function createRetention(ctx) {
           // then chase a name that rightly belongs to the replacement. Composes
           // with BUG-145: only a genuine {ok:false} (no gone, no stale) is a
           // failure that keeps the retry path open.
-          else if (out.stale) { /* revive reclaimed the name mid-kill — leave it */ }
-          else window_errors.push(`${win.window}: ${out.error || 'kill failed'}`);
-          if (alive()) { resurrected = true; break; }
+          else if (out.stale) {
+            /* revive reclaimed the name mid-kill — leave it */
+          } else window_errors.push(`${win.window}: ${out.error ?? 'kill failed'}`);
+          if (alive()) {
+            resurrected = true;
+            break;
+          }
         }
         if (window_errors.length) {
-          return incomplete(`${window_errors.length} window(s) could not be killed — ${window_errors.join('; ').slice(0, 200)} — card archived; dismiss again to retry`);
+          return incomplete(
+            `${window_errors.length} window(s) could not be killed — ${window_errors.join('; ').slice(0, 200)} — card archived; dismiss again to retry`,
+          );
         }
       }
     }
 
-    tick(`⌫ dismissed ${s.callsign} — card, ${mail_expired} mail, ${questions_expired} question(s)${windows_killed ? `, ${windows_killed} window(s)` : ''}`);
+    tick(
+      `⌫ dismissed ${s.callsign} — card, ${mail_expired} mail, ${questions_expired} question(s)${windows_killed ? `, ${windows_killed} window(s)` : ''}`,
+    );
     onMutate();
     return {
       status: 200,
       // `resurrected` is surfaced only when it happened — a hook re-floated the
       // card mid-dismiss, so the DB story already landed but the pane was left
       // alone. The normal path omits it (the route's key set stays stable).
-      body: { ok: true, archived: 1, mail_expired, questions_expired, windows_killed, ...(resurrected ? { resurrected: true } : {}) },
+      body: {
+        ok: true,
+        archived: 1,
+        mail_expired,
+        questions_expired,
+        windows_killed,
+        ...(resurrected ? { resurrected: true } : {}),
+      },
     };
   }
 
@@ -511,20 +689,32 @@ export function createRetention(ctx) {
   // card's dead remain-on-exit windows, with the same ownership re-checks.
   // 200 when every eligible pane is now killed or freshly verified absent,
   // 409 with retry:true again while any kill is still unverifiable.
-  async function dismissRetry(sid) {
+  async function dismissRetry(sid: string) {
     const s = q.getSession.get(sid);
     if (!s) return { status: 404, body: { ok: false, reason: 'no such session' } };
-    if (s.archived_at == null) return { status: 409, body: { ok: false, reason: 'session is not dismissed — nothing to retry' } };
-    const myWindows = new Set(q.spawnsForSession.all(sid).map(r => r.tmux_window).filter(Boolean));
+    if (s.archived_at == null)
+      return {
+        status: 409,
+        body: { ok: false, reason: 'session is not dismissed — nothing to retry' },
+      };
+    const myWindows = new Set(
+      q.spawnsForSession
+        .all(sid)
+        .map((r) => r.tmux_window)
+        .filter(Boolean),
+    );
     if (!myWindows.size) {
       return { status: 200, body: { ok: true, windows_killed: 0 } };
     }
     const wins = await tmuxAdapter.listScopedWindows(port);
     if (wins === null) {
-      return { status: 409, body: { ok: false, retry: true, reason: 'tmux window listing unavailable — retry again' } };
+      return {
+        status: 409,
+        body: { ok: false, retry: true, reason: 'tmux window listing unavailable — retry again' },
+      };
     }
     let windows_killed = 0;
-    const window_errors = [];
+    const window_errors: string[] = [];
     for (const win of wins) {
       if (!myWindows.has(win.window) || !win.pane_dead) continue;
       const owner = q.currentWindowOwner.get(win.window);
@@ -533,13 +723,19 @@ export function createRetention(ctx) {
       if (out.ok || out.gone) windows_killed++;
       // BUG-046: a stale verdict (a revive reclaimed the name) is a no-op here
       // too, never a retry-worthy failure.
-      else if (out.stale) { /* revive reclaimed the name — leave it */ }
-      else window_errors.push(`${win.window}: ${out.error || 'kill failed'}`);
+      else if (out.stale) {
+        /* revive reclaimed the name — leave it */
+      } else window_errors.push(`${win.window}: ${out.error ?? 'kill failed'}`);
     }
     if (window_errors.length) {
       return {
         status: 409,
-        body: { ok: false, retry: true, windows_killed, reason: `${window_errors.length} window(s) could not be killed — ${window_errors.join('; ').slice(0, 200)} — retry again` },
+        body: {
+          ok: false,
+          retry: true,
+          windows_killed,
+          reason: `${window_errors.length} window(s) could not be killed — ${window_errors.join('; ').slice(0, 200)} — retry again`,
+        },
       };
     }
     return { status: 200, body: { ok: true, windows_killed } };
