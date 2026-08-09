@@ -8236,7 +8236,7 @@ ${result.err}`);
   };
 }
 
-// scripts/fleetd/settings.mjs
+// scripts/fleetd/settings.ts
 import fs8 from "node:fs";
 import os4 from "node:os";
 import path8 from "node:path";
@@ -8261,10 +8261,25 @@ var ALLOWED_KEYS = [
   "hold_ms"
 ];
 var GATEWAY_TOKEN_MAX = 4096;
+var SettingError = class extends Error {
+  status;
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+  }
+};
 function namedError2(status, message) {
-  const err = new Error(message);
-  err.status = status;
-  return err;
+  return new SettingError(status, message);
+}
+function errStatus(err) {
+  if (typeof err === "object" && err !== null && "status" in err) {
+    const status = err.status;
+    if (typeof status === "number") return status;
+  }
+  return void 0;
+}
+function errMessage(err) {
+  return err instanceof Error && err.message ? err.message : String(err);
 }
 function expandHome2(value) {
   if (value === "~") return os4.homedir();
@@ -8272,28 +8287,34 @@ function expandHome2(value) {
   return value;
 }
 function validatePathSetting(value, label2) {
-  if (typeof value !== "string" || !value) throw namedError2(400, `${label2} must be an absolute path or null`);
-  if (CONTROL_RE2.test(value)) throw namedError2(400, `${label2} must not contain NUL or control characters`);
+  if (typeof value !== "string" || !value)
+    throw namedError2(400, `${label2} must be an absolute path or null`);
+  if (CONTROL_RE2.test(value))
+    throw namedError2(400, `${label2} must not contain NUL or control characters`);
   const expanded = expandHome2(value);
-  if (!path8.isAbsolute(expanded)) throw namedError2(400, `${label2} must be an absolute path (or begin with ~/)`);
+  if (!path8.isAbsolute(expanded))
+    throw namedError2(400, `${label2} must be an absolute path (or begin with ~/)`);
   const resolved = path8.resolve(expanded);
-  if (path8.dirname(resolved) === resolved) throw namedError2(400, `${label2} must not be the filesystem root`);
+  if (path8.dirname(resolved) === resolved)
+    throw namedError2(400, `${label2} must not be the filesystem root`);
   try {
     if (fs8.existsSync(resolved) && !fs8.statSync(resolved).isDirectory()) {
       throw namedError2(400, `${label2} points to an existing file`);
     }
   } catch (err) {
-    if (err?.status) throw err;
-    throw namedError2(400, `cannot inspect ${label2}: ${err.message || err}`);
+    if (errStatus(err)) throw err;
+    throw namedError2(400, `cannot inspect ${label2}: ${errMessage(err)}`);
   }
   try {
     const canonical2 = fs8.realpathSync(resolved);
-    if (path8.dirname(canonical2) === canonical2) throw namedError2(400, `${label2} must not be the filesystem root`);
+    if (path8.dirname(canonical2) === canonical2)
+      throw namedError2(400, `${label2} must not be the filesystem root`);
   } catch (err) {
-    if (err?.status) throw err;
+    if (errStatus(err)) throw err;
   }
   return resolved;
 }
+var defineHandler = (handler) => handler;
 function createSettings(ctx) {
   const {
     db: db2,
@@ -8317,7 +8338,7 @@ function createSettings(ctx) {
     if (setting != null) {
       return { value: setting, source: "override", resolved: path8.resolve(expandHome2(setting)) };
     }
-    const env = process.env.FLEETDECK_BROWSE_ROOT;
+    const env = process.env["FLEETDECK_BROWSE_ROOT"];
     if (env) {
       return { value: env, source: "env", resolved: path8.resolve(expandHome2(env)) };
     }
@@ -8329,7 +8350,6 @@ function createSettings(ctx) {
     try {
       home = os4.homedir();
     } catch {
-      home = null;
     }
     return { value: home, source: "default", resolved: home };
   }
@@ -8347,28 +8367,35 @@ function createSettings(ctx) {
   }
   function validateFavDirs(value) {
     if (value == null) return null;
-    if (!Array.isArray(value)) throw namedError2(400, "fav_dirs must be an array of absolute directory paths or null");
+    if (!Array.isArray(value))
+      throw namedError2(400, "fav_dirs must be an array of absolute directory paths or null");
     if (value.length === 0) return null;
     const seen = /* @__PURE__ */ new Set();
     const out = [];
     for (const entry of value) {
-      if (typeof entry !== "string" || !entry) throw namedError2(400, "each fav_dir must be a non-empty string");
-      if (CONTROL_RE2.test(entry)) throw namedError2(400, "a fav_dir must not contain NUL or control characters");
+      if (typeof entry !== "string" || !entry)
+        throw namedError2(400, "each fav_dir must be a non-empty string");
+      if (CONTROL_RE2.test(entry))
+        throw namedError2(400, "a fav_dir must not contain NUL or control characters");
       const expanded = expandHome2(entry);
-      if (!path8.isAbsolute(expanded)) throw namedError2(400, "a fav_dir must be an absolute path (or begin with ~/)");
+      if (!path8.isAbsolute(expanded))
+        throw namedError2(400, "a fav_dir must be an absolute path (or begin with ~/)");
       const resolved = path8.resolve(expanded);
       let isDir = false;
       try {
         isDir = fs8.statSync(resolved).isDirectory();
       } catch {
-        isDir = false;
       }
       if (!isDir) throw namedError2(400, `a fav_dir is not an existing directory \u2014 ${resolved}`);
       if (seen.has(resolved)) continue;
       seen.add(resolved);
       out.push(resolved);
     }
-    if (out.length > FAV_DIRS_MAX) throw namedError2(400, `fav_dirs must list ${FAV_DIRS_MAX} directories or fewer \u2014 got ${out.length}`);
+    if (out.length > FAV_DIRS_MAX)
+      throw namedError2(
+        400,
+        `fav_dirs must list ${FAV_DIRS_MAX} directories or fewer \u2014 got ${out.length}`
+      );
     return out;
   }
   function resolveRepoSetup() {
@@ -8377,7 +8404,11 @@ function createSettings(ctx) {
     try {
       const parsed = JSON.parse(raw);
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-      return Object.fromEntries(Object.entries(parsed).filter(([name, cmd]) => typeof name === "string" && typeof cmd === "string"));
+      return Object.fromEntries(
+        Object.entries(parsed).filter(
+          (e) => typeof e[0] === "string" && typeof e[1] === "string"
+        )
+      );
     } catch {
       console.error("fleetd settings: repo_setup is corrupt JSON \u2014 serving {}");
       return {};
@@ -8392,21 +8423,33 @@ function createSettings(ctx) {
   }
   function validateRepoSetupEntries(entries) {
     if (entries.length > REPO_SETUP_MAX) {
-      throw namedError2(400, `repo_setup must contain ${REPO_SETUP_MAX} entries or fewer \u2014 got ${entries.length}`);
+      throw namedError2(
+        400,
+        `repo_setup must contain ${REPO_SETUP_MAX} entries or fewer \u2014 got ${entries.length}`
+      );
     }
     const out = [];
     for (const [name, cmd] of entries) {
       if (!name || CONTROL_RE2.test(name)) {
-        throw namedError2(400, "repo_setup keys must be non-empty repo names without control characters");
+        throw namedError2(
+          400,
+          "repo_setup keys must be non-empty repo names without control characters"
+        );
       }
       if (typeof cmd !== "string") {
         throw namedError2(400, `repo_setup command for "${name}" must be a string`);
       }
       if (cmd.length > SETUP_CMD_MAX) {
-        throw namedError2(400, `repo_setup command for "${name}" must be ${SETUP_CMD_MAX} characters or fewer \u2014 got ${cmd.length}`);
+        throw namedError2(
+          400,
+          `repo_setup command for "${name}" must be ${SETUP_CMD_MAX} characters or fewer \u2014 got ${cmd.length}`
+        );
       }
       if (SETUP_CONTROL_RE.test(cmd)) {
-        throw namedError2(400, `repo_setup command for "${name}" must not contain NUL or control characters other than newline`);
+        throw namedError2(
+          400,
+          `repo_setup command for "${name}" must not contain NUL or control characters other than newline`
+        );
       }
       out.push([name, cmd]);
     }
@@ -8415,13 +8458,19 @@ function createSettings(ctx) {
   function validateRepoSetupPatch(value) {
     if (value == null) return null;
     if (typeof value !== "object" || Array.isArray(value)) {
-      throw namedError2(400, 'repo_setup_patch must be an object mapping repo names to commands, "__delete" entries, or null');
+      throw namedError2(
+        400,
+        'repo_setup_patch must be an object mapping repo names to commands, "__delete" entries, or null'
+      );
     }
     const out = {};
     for (const [name, cmd] of Object.entries(value)) {
       if (cmd === "__delete") {
         if (!name || CONTROL_RE2.test(name)) {
-          throw namedError2(400, "repo_setup_patch keys must be non-empty repo names without control characters");
+          throw namedError2(
+            400,
+            "repo_setup_patch keys must be non-empty repo names without control characters"
+          );
         }
         out[name] = cmd;
         continue;
@@ -8441,7 +8490,7 @@ function createSettings(ctx) {
     return readSetting("hold_ms");
   }
   function resolveHoldMsSetting() {
-    const env = process.env.FLEETDECK_HOLD_MS;
+    const env = process.env["FLEETDECK_HOLD_MS"];
     if (Number.isFinite(Number(env)) && Number(env) > 0) {
       return { value: resolveHoldMs(), source: "env" };
     }
@@ -8450,8 +8499,10 @@ function createSettings(ctx) {
     return { value: resolveHoldMs({}), source: "default" };
   }
   function validateGatewayBaseUrl(value) {
-    if (typeof value !== "string" || !value) throw namedError2(400, "gateway_base_url must be a URL or null");
-    if (CONTROL_RE2.test(value)) throw namedError2(400, "gateway_base_url must not contain NUL or control characters");
+    if (typeof value !== "string" || !value)
+      throw namedError2(400, "gateway_base_url must be a URL or null");
+    if (CONTROL_RE2.test(value))
+      throw namedError2(400, "gateway_base_url must not contain NUL or control characters");
     let url;
     try {
       url = new URL(value);
@@ -8462,19 +8513,30 @@ function createSettings(ctx) {
       throw namedError2(400, `gateway_base_url must be http:// or https:// \u2014 got ${url.protocol}//`);
     }
     if (url.username || url.password) {
-      throw namedError2(400, "gateway_base_url must not embed credentials (user:password@) \u2014 put the credential in gateway_token, which is never served back to a client");
+      throw namedError2(
+        400,
+        "gateway_base_url must not embed credentials (user:password@) \u2014 put the credential in gateway_token, which is never served back to a client"
+      );
     }
     if (url.search) {
-      throw namedError2(400, "gateway_base_url must not carry a query string \u2014 it would be broadcast to every board; put a credential in gateway_token instead");
+      throw namedError2(
+        400,
+        "gateway_base_url must not carry a query string \u2014 it would be broadcast to every board; put a credential in gateway_token instead"
+      );
     }
     if (url.hash) throw namedError2(400, "gateway_base_url must not carry a fragment");
     return url.href.replace(/\/+$/, "");
   }
   function validateGatewayToken(value) {
-    if (typeof value !== "string" || !value) throw namedError2(400, "gateway_token must be a non-empty string or null");
-    if (CONTROL_RE2.test(value)) throw namedError2(400, "gateway_token must not contain NUL or control characters");
+    if (typeof value !== "string" || !value)
+      throw namedError2(400, "gateway_token must be a non-empty string or null");
+    if (CONTROL_RE2.test(value))
+      throw namedError2(400, "gateway_token must not contain NUL or control characters");
     if (value.length > GATEWAY_TOKEN_MAX) {
-      throw namedError2(400, `gateway_token must be ${GATEWAY_TOKEN_MAX} characters or fewer \u2014 got ${value.length}`);
+      throw namedError2(
+        400,
+        `gateway_token must be ${GATEWAY_TOKEN_MAX} characters or fewer \u2014 got ${value.length}`
+      );
     }
     return value;
   }
@@ -8514,12 +8576,12 @@ function createSettings(ctx) {
     const env = { ANTHROPIC_BASE_URL: base_url };
     env[auth_style === "api-key" ? "ANTHROPIC_API_KEY" : "ANTHROPIC_AUTH_TOKEN"] = token;
     if (readGatewayBool("gateway_model_discovery", true)) {
-      env.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY = "1";
+      env["CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"] = "1";
     }
     return env;
   }
   const HANDLERS = {
-    repos_dir: {
+    repos_dir: defineHandler({
       // repos.mjs stays the SINGLE writer for the repos root; we pre-validate
       // with the shared gates so a bad repos_dir cannot slip past a valid
       // sibling key and half-apply a body.
@@ -8527,9 +8589,11 @@ function createSettings(ctx) {
         if (v != null) validatePathSetting(v, "repos_dir");
         return v;
       },
-      commit: (v) => setReposDir(v)
-    },
-    repo_transport: {
+      commit: (v) => {
+        setReposDir(v);
+      }
+    }),
+    repo_transport: defineHandler({
       prepare: (v) => {
         if (v != null && v !== "ssh" && v !== "https") {
           throw namedError2(400, `repo_transport must be ssh or https \u2014 got ${JSON.stringify(v)}`);
@@ -8537,28 +8601,36 @@ function createSettings(ctx) {
         return v;
       },
       commit: (v) => q.setSetting.run("repo_transport", v ?? null, Date.now())
-    },
-    repo_default_org: {
+    }),
+    repo_default_org: defineHandler({
       prepare: (v) => validateRepoDefaultOrg(v),
       commit: (v) => q.setSetting.run("repo_default_org", v ?? null, Date.now())
-    },
-    browse_root: {
+    }),
+    browse_root: defineHandler({
       prepare: (v) => {
         if (v != null) validatePathSetting(v, "browse_root");
         return v;
       },
       commit: (v) => q.setSetting.run("browse_root", v ?? null, Date.now())
-    },
-    fav_dirs: {
+    }),
+    fav_dirs: defineHandler({
       prepare: (v) => validateFavDirs(v),
       // → normalized array | null
-      commit: (prepared) => q.setSetting.run("fav_dirs", prepared == null ? null : JSON.stringify(prepared), Date.now())
-    },
-    repo_setup: {
+      commit: (prepared) => q.setSetting.run(
+        "fav_dirs",
+        prepared == null ? null : JSON.stringify(prepared),
+        Date.now()
+      )
+    }),
+    repo_setup: defineHandler({
       prepare: (v) => validateRepoSetup(v),
-      commit: (prepared) => q.setSetting.run("repo_setup", prepared == null ? null : JSON.stringify(prepared), Date.now())
-    },
-    repo_setup_patch: {
+      commit: (prepared) => q.setSetting.run(
+        "repo_setup",
+        prepared == null ? null : JSON.stringify(prepared),
+        Date.now()
+      )
+    }),
+    repo_setup_patch: defineHandler({
       prepare: (v) => validateRepoSetupPatch(v),
       commit: (prepared) => {
         if (prepared == null || Object.keys(prepared).length === 0) {
@@ -8576,59 +8648,71 @@ function createSettings(ctx) {
           Date.now()
         );
       }
-    },
-    hold_ms: {
+    }),
+    hold_ms: defineHandler({
       prepare: (v) => validateHoldMs(v),
       commit: (v) => q.setSetting.run("hold_ms", v ?? null, Date.now())
-    },
-    gateway_base_url: {
+    }),
+    gateway_base_url: defineHandler({
       prepare: (v) => v == null ? null : validateGatewayBaseUrl(v),
       commit: (v) => q.setSetting.run("gateway_base_url", v ?? null, Date.now())
-    },
-    gateway_auth_style: {
+    }),
+    gateway_auth_style: defineHandler({
       prepare: (v) => {
         if (v != null && v !== "bearer" && v !== "api-key") {
-          throw namedError2(400, `gateway_auth_style must be bearer or api-key \u2014 got ${JSON.stringify(v)}`);
+          throw namedError2(
+            400,
+            `gateway_auth_style must be bearer or api-key \u2014 got ${JSON.stringify(v)}`
+          );
         }
         return v;
       },
       commit: (v) => q.setSetting.run("gateway_auth_style", v ?? null, Date.now())
-    },
-    gateway_token: {
+    }),
+    gateway_token: defineHandler({
       prepare: (v) => v == null ? null : validateGatewayToken(v),
       commit: (v) => q.setSetting.run("gateway_token", v ?? null, Date.now())
-    },
-    gateway_model_discovery: {
+    }),
+    gateway_model_discovery: defineHandler({
       prepare: (v) => v == null ? null : validateGatewayBool(v, "gateway_model_discovery"),
       commit: (v) => q.setSetting.run("gateway_model_discovery", v ?? null, Date.now())
-    },
-    gateway_default: {
+    }),
+    gateway_default: defineHandler({
       prepare: (v) => v == null ? null : validateGatewayBool(v, "gateway_default"),
       commit: (v) => q.setSetting.run("gateway_default", v ?? null, Date.now())
-    }
+    })
   };
+  const handlerFor = (key) => HANDLERS[key];
   function setSettings(body) {
     if (!body || typeof body !== "object" || Array.isArray(body)) {
       return { status: 400, body: { ok: false, reason: "settings body must be a JSON object" } };
     }
-    const keys = Object.keys(body);
+    const record = body;
+    const keys = Object.keys(record);
     const unknown = keys.find((k) => !ALLOWED_KEYS.includes(k));
     if (unknown) {
       return {
         status: 400,
-        body: { ok: false, reason: `unknown setting "${unknown}" \u2014 allowed: ${ALLOWED_KEYS.join(", ")}` }
+        body: {
+          ok: false,
+          reason: `unknown setting "${unknown}" \u2014 allowed: ${ALLOWED_KEYS.join(", ")}`
+        }
       };
     }
     try {
-      const prepared = keys.map((k) => ({ k, value: HANDLERS[k].prepare(body[k]) }));
+      const prepared = keys.map((k) => {
+        const handler = handlerFor(k);
+        if (!handler) throw namedError2(400, `unknown setting "${k}"`);
+        return { handler, value: handler.prepare(record[k]) };
+      });
       if (!db2) {
-        for (const { k, value } of prepared) HANDLERS[k].commit(value);
+        for (const { handler, value } of prepared) handler.commit(value);
         onMutate();
         return { status: 200, body: { ok: true, settings: resolveSettings() } };
       }
       db2.exec("BEGIN IMMEDIATE");
       try {
-        for (const { k, value } of prepared) HANDLERS[k].commit(value);
+        for (const { handler, value } of prepared) handler.commit(value);
         onMutate();
         db2.exec("COMMIT");
       } catch (err) {
@@ -8640,8 +8724,8 @@ function createSettings(ctx) {
       }
       return { status: 200, body: { ok: true, settings: resolveSettings() } };
     } catch (err) {
-      const status = err.status || 500;
-      return { status, body: { ok: false, reason: err.message || String(err) } };
+      const status = errStatus(err) ?? 500;
+      return { status, body: { ok: false, reason: errMessage(err) } };
     }
   }
   function persistRepoTransport(value) {
@@ -8650,12 +8734,13 @@ function createSettings(ctx) {
   }
   function persistRepoDefaultOrg(value) {
     if (value == null) return;
+    let org;
     try {
-      validateRepoDefaultOrg(value);
+      org = validateRepoDefaultOrg(value);
     } catch {
       return;
     }
-    q.setSetting.run("repo_default_org", value, Date.now());
+    q.setSetting.run("repo_default_org", org, Date.now());
   }
   function setRepoSetupEntry(name, cmd) {
     let prepared;

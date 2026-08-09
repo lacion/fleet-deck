@@ -995,3 +995,75 @@ comments are preserved. Strict mode surfaced one genuine typing decision and a h
   `.ts`). 16/16 green in `session-fs.test.mjs` (session + home/browse-root fs, credential denylist,
   BUG-114/115/116, LAN token walls). Daemon bundle rebuilds with the `files.ts` banner (626.2kb, no stale
   `files.mjs` banner) and passes `node --check`.
+
+### scripts/fleetd/settings.mjs → settings.ts  [NOISE + one cross-module type widening]
+
+The whitelisted durable-settings surface (repos_dir/transport/default_org, browse_root, fav_dirs,
+repo_setup(+patch), hold_ms, and the credential-bearing gateway_* profile). SECURITY-CRITICAL: `gateway_token`
+is a live credential with exactly one reader (`resolveGatewayEnv`, the spawn path); `resolveSettings`/
+`resolveGateway` serve only `token_set: true`. The conversion is behavior-faithful — no widening of what any
+endpoint exposes — and every masking / BUG-147 / BUG-047 / path-gate comment is preserved verbatim.
+
+- **`namedError(status, message)` → a `SettingError extends Error { readonly status: number }` class.** The
+  `.mjs` did `const e = new Error(msg); e.status = status; return e;` — under strict, a plain `Error` has no
+  `.status` property to assign, and every `catch` reads it back off an `unknown`. A one-field subclass carries
+  the tag with a real type. `namedError` is kept as a thin constructor wrapper so the ~30 throw sites are
+  untouched. Same runtime shape (an `Error` with a numeric `.status`).
+- **`errStatus(err: unknown)` / `errMessage(err: unknown)` helpers for `useUnknownInCatchVariables`.** Every
+  `catch (err)` now sees `err: unknown`. Two spots read the status tag: the two `if (err?.status) throw err;`
+  re-throws inside `validatePathSetting` (→ `if (errStatus(err)) throw err;`) and `setSettings`' outer
+  `const status = err.status || 500` (→ `errStatus(err) ?? 500`); the message read `err.message || String(err)`
+  → `errMessage(err)`. Behavior identical — a tagged 400 stays a 400, an untagged storage failure stays 500.
+- **The `HANDLERS` correlated-union dispatch (the one real type-design problem).** `setSettings` indexes
+  `HANDLERS[k]` by a runtime string `k` and calls `.prepare(body[k])` then `.commit(prepared)`. A naive object
+  literal makes each entry a *different* `{prepare,commit}` type, so the union at the index site collapses
+  `prepare`'s param to `never` and `commit`'s to the intersection — uncallable. Resolved with a
+  `SettingHandler<T>` interface declared in **method syntax** (`prepare(value): T; commit(prepared: T): void`),
+  which opts each handler into parameter *bivariance*, so a concrete `SettingHandler<string[]>` upcasts to
+  `SettingHandler<unknown>` at the dynamic-dispatch site. An identity helper `defineHandler<T>` fixes each T
+  from its literal (the bodies keep precise types); `handlerFor(k): SettingHandler<unknown> | undefined` is the
+  one widening cast (`HANDLERS as Record<string, SettingHandler<unknown>>`), justified because `setSettings`
+  already proved `k` is whitelisted. This keeps every credential-carrying `commit` body cast-free.
+- **~5 pass-through `prepare` casts `return v as string | null`.** The transport/default_org/gateway_bool
+  handlers validate-for-throw (`if (v != null && v !== 'ssh' …) throw`) then persist the raw value. After the
+  throw, `v` is still typed `unknown`, so the return needs an explicit `as string | null`. Each cast is
+  immediately preceded by the validator that makes it sound — no new trust, the `.mjs` did the same narrowing
+  implicitly.
+- **Type-predicate filters on the guarded parses.** `fav_dirs`: `.filter((v): v is string => typeof v === 'string')`.
+  `repo_setup`: `.filter((e): e is [string, string] => typeof e[0] === 'string' && typeof e[1] === 'string')`
+  over `Object.entries`. These make the resolvers return `string[]` / `Record<string,string>` instead of
+  `unknown[]` — same defensive drop-the-junk behavior the `.mjs` had, now with a type to show for it.
+- **`process.env.X` → `process.env['X']`** (`noPropertyAccessFromIndexSignature`) at the two env reads
+  (`FLEETDECK_BROWSE_ROOT`, `FLEETDECK_HOLD_MS`), and the gateway env map is a `Record<string, string>` written
+  by bracket key (`env[auth_style === 'api-key' ? 'ANTHROPIC_API_KEY' : 'ANTHROPIC_AUTH_TOKEN'] = token`,
+  `env['CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY'] = '1'`). `resolveGatewayEnv` is typed
+  `Record<string, string> | null` — the `null` (not-fully-configured) branch is unchanged.
+- **`no-control-regex` (2×) suppressed on purpose.** `CONTROL_RE` / `SETUP_CONTROL_RE` embed C0/DEL ranges —
+  refusing those bytes in path & credential values is the entire point of the gate. Same
+  `// eslint-disable-next-line no-control-regex` pattern already used in `mail.ts` / `exec.ts`.
+- **`no-dynamic-delete` suppressed once.** `delete merged[name]` on the `__delete` tombstone path of
+  `repo_setup_patch` — the dynamic key is the whole mechanism of the BUG-147 read-merge-write; disabled with a
+  one-line justification rather than rewritten (a filter-rebuild would change nothing but obscure the intent).
+- **`no-useless-assignment` (2×) — dropped redundant catch reassignments.** `browseRootChoice`'s
+  `let home = null; try { home = os.homedir() } catch { home = null }` and `validateFavDirs`'
+  `let isDir = false; … catch { isDir = false }` each re-assigned the initializer in the catch, so the linter
+  saw the initial value as dead. Emptied the catch bodies (kept the initializer, which is now genuinely the
+  throw-path value) — behavior identical.
+- **CROSS-MODULE: widened `questions.ts` `resolveHoldMs`'s `fallback` param.** `settings.ts`'
+  `resolveHoldMsRaw` reads the `hold_ms` k/v **row**, which comes back `string | null`, and passes it as the
+  fallback thunk. `questions.ts` had typed that param `(() => number | null | undefined) | null`, but the
+  function's own body already `Number(fallback?.())`-coerces it — so the string return was always fine at
+  runtime; only the type was too narrow. Widened to `(() => number | string | null | undefined) | null` with a
+  comment naming `resolveHoldMsRaw` as the real caller. This is the one genuine strict-typing find of the
+  file: a pre-existing type that under-described a value the function already handled. `derive.mjs`'s existing
+  `() => ctx.resolveHoldMsRaw?.() ?? null` caller is unaffected (still fits the wider signature).
+- **Typedefs added (no runtime effect):** `SettingChoice` (`{ value: string | null; source: string }`),
+  `SettingsCtx` (the `db: SqliteHandle | null` + `q: Statements['q']` + repos-provider dependency surface
+  derive.mjs hands in), and the `SettingHandler<T>` interface above. `setSettings(body: unknown)` narrows via
+  `const record = body as Record<string, unknown>` after the object/array guards.
+- **Verify:** `eslint settings.ts questions.ts` clean (0). tsc `--noEmit` clean project-wide (0). Both
+  importers repointed (`derive.mjs:19` `./settings.mjs` → `./settings.ts`; `settings-transaction.test.mjs:22`
+  `../scripts/fleetd/settings.mjs` → `.ts`). 6/6 green across `settings-transaction.test.mjs` (BUG-047 atomic
+  rollback) + `smoke-settings.test.mjs`; 40/40 green in `derive-audit-reliability` + `agents-ingest` (derive
+  integration through the repointed import). Daemon bundle rebuilds with the `settings.ts` banner (627.5kb, no
+  stale `settings.mjs` banner) and passes `node --check`.

@@ -1,4 +1,4 @@
-// settings.mjs — the daemon's durable, whitelisted settings surface. One place
+// settings.ts — the daemon's durable, whitelisted settings surface. One place
 // that turns a POST /api/settings body into validated writes and serves the
 // resolved settings object to GET /api/settings, the POST response, and the
 // /state snapshot.
@@ -38,16 +38,29 @@ import os from 'node:os';
 import path from 'node:path';
 import { detectCoderWorkspaceRoot } from './config.ts';
 import { resolveHoldMs } from './questions.ts';
+import type { Statements } from './statements.ts';
+import type { SqliteHandle } from './sqlite.ts';
 
+// eslint-disable-next-line no-control-regex -- refusing NUL/C0/DEL in path & credential values is the entire purpose of this gate
 const CONTROL_RE = /[\x00-\x1f\x7f]/;
+// eslint-disable-next-line no-control-regex -- same gate for setup commands, but newline (\x0a) is allowed through on purpose
 const SETUP_CONTROL_RE = /[\x00-\x09\x0b-\x1f\x7f]/;
 const FAV_DIRS_MAX = 20;
 const REPO_SETUP_MAX = 50;
 const SETUP_CMD_MAX = 2000;
 const ALLOWED_KEYS = [
-  'repos_dir', 'repo_transport', 'repo_default_org', 'browse_root', 'fav_dirs', 'repo_setup', 'repo_setup_patch',
-  'gateway_base_url', 'gateway_auth_style', 'gateway_token',
-  'gateway_model_discovery', 'gateway_default',
+  'repos_dir',
+  'repo_transport',
+  'repo_default_org',
+  'browse_root',
+  'fav_dirs',
+  'repo_setup',
+  'repo_setup_patch',
+  'gateway_base_url',
+  'gateway_auth_style',
+  'gateway_token',
+  'gateway_model_discovery',
+  'gateway_default',
   'hold_ms',
 ];
 // A gateway credential is long-lived and grants API spend, so the ceiling is
@@ -55,13 +68,57 @@ const ALLOWED_KEYS = [
 // `token_set` computation and every spawn's tmux argv.
 const GATEWAY_TOKEN_MAX = 4096;
 
-function namedError(status, message) {
-  const err = new Error(message);
-  err.status = status;
-  return err;
+// The resolved-choice shape the repos catalog hands us (repos.mjs) and the one
+// this module's own resolvers return: a value plus where it came from.
+interface SettingChoice {
+  value: string | null;
+  source: string;
 }
 
-function expandHome(value) {
+// The dependency surface createSettings is handed by derive.mjs. The repos
+// providers (resolve/set/validate) come from the repos catalog, which this
+// settings layer rides on top of; `db` is the raw handle for the atomic commit
+// path (absent in the derive/test autocommit contexts — see setSettings).
+interface SettingsCtx {
+  db: SqliteHandle | null;
+  q: Statements['q'];
+  onMutate: () => void;
+  resolveReposDir: () => SettingChoice;
+  setReposDir: (value: string | null) => void;
+  resolveRepoDefaultOrg: () => SettingChoice;
+  validateRepoDefaultOrg: (value: unknown) => string | null;
+}
+
+// A 400/5xx-tagged error: the status rides the thrown Error so setSettings can
+// tell a validator's "your body is wrong" (400) from a storage failure (5xx).
+class SettingError extends Error {
+  readonly status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+function namedError(status: number, message: string): SettingError {
+  return new SettingError(status, message);
+}
+
+// useUnknownInCatchVariables makes a caught error `unknown`; these two read the
+// status tag and message off it without assuming a shape (a thrown non-Error is
+// still possible from deep in a driver).
+function errStatus(err: unknown): number | undefined {
+  if (typeof err === 'object' && err !== null && 'status' in err) {
+    const status = (err as { status?: unknown }).status;
+    if (typeof status === 'number') return status;
+  }
+  return undefined;
+}
+
+function errMessage(err: unknown): string {
+  return err instanceof Error && err.message ? err.message : String(err);
+}
+
+function expandHome(value: string): string {
   if (value === '~') return os.homedir();
   if (value.startsWith('~/')) return path.join(os.homedir(), value.slice(2));
   return value;
@@ -71,17 +128,21 @@ function expandHome(value) {
 // browse_root and (defensively) repos_dir validate identically. Returns the
 // resolved absolute path or throws a 400 naming `label`; null is the caller's
 // to interpret (clear) and never reaches here.
-function validatePathSetting(value, label) {
-  if (typeof value !== 'string' || !value) throw namedError(400, `${label} must be an absolute path or null`);
-  if (CONTROL_RE.test(value)) throw namedError(400, `${label} must not contain NUL or control characters`);
+function validatePathSetting(value: unknown, label: string): string {
+  if (typeof value !== 'string' || !value)
+    throw namedError(400, `${label} must be an absolute path or null`);
+  if (CONTROL_RE.test(value))
+    throw namedError(400, `${label} must not contain NUL or control characters`);
   // The value ITSELF (post ~ expansion) must be absolute, checked BEFORE
   // path.resolve — resolve() absolutizes ANY relative string against the
   // daemon's cwd, so isAbsolute(resolved) was a tautology and "." would have
   // validated and persisted as a cwd-dependent root.
   const expanded = expandHome(value);
-  if (!path.isAbsolute(expanded)) throw namedError(400, `${label} must be an absolute path (or begin with ~/)`);
+  if (!path.isAbsolute(expanded))
+    throw namedError(400, `${label} must be an absolute path (or begin with ~/)`);
   const resolved = path.resolve(expanded);
-  if (path.dirname(resolved) === resolved) throw namedError(400, `${label} must not be the filesystem root`);
+  if (path.dirname(resolved) === resolved)
+    throw namedError(400, `${label} must not be the filesystem root`);
   try {
     // Follow symlinks and refuse an existing non-directory up front, so a file
     // (or a symlink to one) fails here rather than as a confusing browse/clone
@@ -90,8 +151,8 @@ function validatePathSetting(value, label) {
       throw namedError(400, `${label} points to an existing file`);
     }
   } catch (err) {
-    if (err?.status) throw err;
-    throw namedError(400, `cannot inspect ${label}: ${err.message || err}`);
+    if (errStatus(err)) throw err;
+    throw namedError(400, `cannot inspect ${label}: ${errMessage(err)}`);
   }
   // The root ban above is lexical only — an alias like /proc/self/root passes
   // it and realpaths to /. Refuse when the CANONICAL path is the filesystem
@@ -99,21 +160,43 @@ function validatePathSetting(value, label) {
   // lexical ban already covered the literal spelling.
   try {
     const canonical = fs.realpathSync(resolved);
-    if (path.dirname(canonical) === canonical) throw namedError(400, `${label} must not be the filesystem root`);
+    if (path.dirname(canonical) === canonical)
+      throw namedError(400, `${label} must not be the filesystem root`);
   } catch (err) {
-    if (err?.status) throw err;
+    if (errStatus(err)) throw err;
     /* ENOENT and friends — nothing further to prove about a missing path */
   }
   return resolved;
 }
 
-export function createSettings(ctx) {
+// prepare() VALIDATES a key's incoming value (pure — may throw a 400, never
+// writes) and returns the shape commit() will persist; commit(prepared) does
+// the WRITE. T threads prepare's output into commit's input so the two stay in
+// lockstep per key. The method-syntax declaration is deliberate: it lets a
+// concrete SettingHandler<string[]> widen to SettingHandler<unknown> at the
+// dynamic dispatch site (setSettings) via method-parameter bivariance — the
+// per-key bodies below keep their precise types.
+interface SettingHandler<T> {
+  prepare(value: unknown): T;
+  commit(prepared: T): void;
+}
+
+// Identity helper: fixes each handler's T from its literal so the bodies see a
+// concrete prepared type, without an outer annotation forcing them to `unknown`.
+const defineHandler = <T>(handler: SettingHandler<T>): SettingHandler<T> => handler;
+
+export function createSettings(ctx: SettingsCtx) {
   const {
-    db, q, onMutate, resolveReposDir, setReposDir,
-    resolveRepoDefaultOrg, validateRepoDefaultOrg,
+    db,
+    q,
+    onMutate,
+    resolveReposDir,
+    setReposDir,
+    resolveRepoDefaultOrg,
+    validateRepoDefaultOrg,
   } = ctx;
 
-  function readSetting(key) {
+  function readSetting(key: string): string | null {
     return q.getSetting.get(key)?.value ?? null;
   }
 
@@ -140,7 +223,7 @@ export function createSettings(ctx) {
     if (setting != null) {
       return { value: setting, source: 'override', resolved: path.resolve(expandHome(setting)) };
     }
-    const env = process.env.FLEETDECK_BROWSE_ROOT;
+    const env = process.env['FLEETDECK_BROWSE_ROOT'];
     if (env) {
       return { value: env, source: 'env', resolved: path.resolve(expandHome(env)) };
     }
@@ -148,8 +231,12 @@ export function createSettings(ctx) {
     if (detected) {
       return { value: detected, source: 'detected', resolved: detected };
     }
-    let home = null;
-    try { home = os.homedir(); } catch { home = null; }
+    let home: string | null = null;
+    try {
+      home = os.homedir();
+    } catch {
+      /* home stays null — no resolvable default root */
+    }
     return { value: home, source: 'default', resolved: home };
   }
 
@@ -159,87 +246,116 @@ export function createSettings(ctx) {
   // favourite that isn't a directory is a broken chip; the READ path only
   // guards the JSON parse, so a corrupt row degrades to [] and never 500s the
   // snapshot (the guarded-parse precedent from snapshot.mjs's conflicts).
-  function resolveFavDirs() {
+  function resolveFavDirs(): string[] {
     const raw = readSetting('fav_dirs');
     if (raw == null) return [];
-    let parsed;
-    try { parsed = JSON.parse(raw); } catch {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
       console.error('fleetd settings: fav_dirs is corrupt JSON — serving []');
       return [];
     }
-    return Array.isArray(parsed) ? parsed.filter(v => typeof v === 'string') : [];
+    return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === 'string') : [];
   }
 
-  function validateFavDirs(value) {
-    if (value == null) return null;                 // clear
-    if (!Array.isArray(value)) throw namedError(400, 'fav_dirs must be an array of absolute directory paths or null');
-    if (value.length === 0) return null;            // [] clears
-    const seen = new Set();
-    const out = [];
+  function validateFavDirs(value: unknown): string[] | null {
+    if (value == null) return null; // clear
+    if (!Array.isArray(value))
+      throw namedError(400, 'fav_dirs must be an array of absolute directory paths or null');
+    if (value.length === 0) return null; // [] clears
+    const seen = new Set<string>();
+    const out: string[] = [];
     for (const entry of value) {
-      if (typeof entry !== 'string' || !entry) throw namedError(400, 'each fav_dir must be a non-empty string');
-      if (CONTROL_RE.test(entry)) throw namedError(400, 'a fav_dir must not contain NUL or control characters');
+      if (typeof entry !== 'string' || !entry)
+        throw namedError(400, 'each fav_dir must be a non-empty string');
+      if (CONTROL_RE.test(entry))
+        throw namedError(400, 'a fav_dir must not contain NUL or control characters');
       // Absolute BEFORE resolve, like validatePathSetting: resolve() would
       // absolutize "." against the daemon's cwd and let it through.
       const expanded = expandHome(entry);
-      if (!path.isAbsolute(expanded)) throw namedError(400, 'a fav_dir must be an absolute path (or begin with ~/)');
+      if (!path.isAbsolute(expanded))
+        throw namedError(400, 'a fav_dir must be an absolute path (or begin with ~/)');
       const resolved = path.resolve(expanded);
       let isDir = false;
-      try { isDir = fs.statSync(resolved).isDirectory(); } catch { isDir = false; }
+      try {
+        isDir = fs.statSync(resolved).isDirectory();
+      } catch {
+        /* isDir stays false — missing path or stat failure is "not a dir" */
+      }
       if (!isDir) throw namedError(400, `a fav_dir is not an existing directory — ${resolved}`);
-      if (seen.has(resolved)) continue;             // dedupe on the resolved path
+      if (seen.has(resolved)) continue; // dedupe on the resolved path
       seen.add(resolved);
       out.push(resolved);
     }
-    if (out.length > FAV_DIRS_MAX) throw namedError(400, `fav_dirs must list ${FAV_DIRS_MAX} directories or fewer — got ${out.length}`);
+    if (out.length > FAV_DIRS_MAX)
+      throw namedError(
+        400,
+        `fav_dirs must list ${FAV_DIRS_MAX} directories or fewer — got ${out.length}`,
+      );
     return out;
   }
 
   // Repo-name → visible POSIX-sh setup command. This is only a board prefill;
   // the daemon never applies it implicitly to a spawn.
-  function resolveRepoSetup() {
+  function resolveRepoSetup(): Record<string, string> {
     const raw = readSetting('repo_setup');
     if (raw == null) return {};
     try {
-      const parsed = JSON.parse(raw);
+      const parsed: unknown = JSON.parse(raw);
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
-      return Object.fromEntries(Object.entries(parsed)
-        .filter(([name, cmd]) => typeof name === 'string' && typeof cmd === 'string'));
+      return Object.fromEntries(
+        Object.entries(parsed as Record<string, unknown>).filter(
+          (e): e is [string, string] => typeof e[0] === 'string' && typeof e[1] === 'string',
+        ),
+      );
     } catch {
       console.error('fleetd settings: repo_setup is corrupt JSON — serving {}');
       return {};
     }
   }
 
-  function validateRepoSetup(value) {
+  function validateRepoSetup(value: unknown): Record<string, string> | null {
     if (value == null) return null;
     if (typeof value !== 'object' || Array.isArray(value)) {
       throw namedError(400, 'repo_setup must be an object mapping repo names to commands or null');
     }
-    return validateRepoSetupEntries(Object.entries(value));
+    return validateRepoSetupEntries(Object.entries(value as Record<string, unknown>));
   }
 
-  function validateRepoSetupEntries(entries) {
+  function validateRepoSetupEntries(entries: [string, unknown][]): Record<string, string> {
     if (entries.length > REPO_SETUP_MAX) {
-      throw namedError(400, `repo_setup must contain ${REPO_SETUP_MAX} entries or fewer — got ${entries.length}`);
+      throw namedError(
+        400,
+        `repo_setup must contain ${REPO_SETUP_MAX} entries or fewer — got ${entries.length}`,
+      );
     }
     // Accumulate into entries, not `out[name] = cmd` on a plain object — a
     // legitimate repo named "__proto__" would otherwise hit the inherited
     // prototype setter, mutate the accumulator's prototype, and serialize
     // back to {} while the API still reports 200.
-    const out = [];
+    const out: [string, string][] = [];
     for (const [name, cmd] of entries) {
       if (!name || CONTROL_RE.test(name)) {
-        throw namedError(400, 'repo_setup keys must be non-empty repo names without control characters');
+        throw namedError(
+          400,
+          'repo_setup keys must be non-empty repo names without control characters',
+        );
       }
       if (typeof cmd !== 'string') {
         throw namedError(400, `repo_setup command for "${name}" must be a string`);
       }
       if (cmd.length > SETUP_CMD_MAX) {
-        throw namedError(400, `repo_setup command for "${name}" must be ${SETUP_CMD_MAX} characters or fewer — got ${cmd.length}`);
+        throw namedError(
+          400,
+          `repo_setup command for "${name}" must be ${SETUP_CMD_MAX} characters or fewer — got ${cmd.length}`,
+        );
       }
       if (SETUP_CONTROL_RE.test(cmd)) {
-        throw namedError(400, `repo_setup command for "${name}" must not contain NUL or control characters other than newline`);
+        throw namedError(
+          400,
+          `repo_setup command for "${name}" must not contain NUL or control characters other than newline`,
+        );
       }
       out.push([name, cmd]);
     }
@@ -254,16 +370,22 @@ export function createSettings(ctx) {
   // a value validateRepoSetupEntries never emits, so no whole-object client can
   // accidentally delete, and a NAME whose string value is the sentinel deletes
   // by construction (the last writer leaves a tombstone, not a setup command).
-  function validateRepoSetupPatch(value) {
+  function validateRepoSetupPatch(value: unknown): Record<string, string> | null {
     if (value == null) return null;
     if (typeof value !== 'object' || Array.isArray(value)) {
-      throw namedError(400, 'repo_setup_patch must be an object mapping repo names to commands, "__delete" entries, or null');
+      throw namedError(
+        400,
+        'repo_setup_patch must be an object mapping repo names to commands, "__delete" entries, or null',
+      );
     }
-    const out = {};
-    for (const [name, cmd] of Object.entries(value)) {
+    const out: Record<string, string> = {};
+    for (const [name, cmd] of Object.entries(value as Record<string, unknown>)) {
       if (cmd === '__delete') {
         if (!name || CONTROL_RE.test(name)) {
-          throw namedError(400, 'repo_setup_patch keys must be non-empty repo names without control characters');
+          throw namedError(
+            400,
+            'repo_setup_patch keys must be non-empty repo names without control characters',
+          );
         }
         out[name] = cmd;
         continue;
@@ -283,7 +405,7 @@ export function createSettings(ctx) {
   // FLEETDECK_HOLD_MS always behaved. The env var stays the override, and
   // resolveHoldMs (questions.mjs) owns the clamp ([250, 650_000], under the
   // shim watchdog; the lockstep invariant lives at the definition).
-  function validateHoldMs(value) {
+  function validateHoldMs(value: unknown): string | null {
     if (value == null) return null;
     if (typeof value !== 'number' || !Number.isFinite(value)) {
       throw namedError(400, 'hold_ms must be a number of milliseconds or null');
@@ -291,12 +413,12 @@ export function createSettings(ctx) {
     return String(Math.trunc(value)); // clamping happens at resolve time
   }
 
-  function resolveHoldMsRaw() {
+  function resolveHoldMsRaw(): string | null {
     return readSetting('hold_ms');
   }
 
   function resolveHoldMsSetting() {
-    const env = process.env.FLEETDECK_HOLD_MS;
+    const env = process.env['FLEETDECK_HOLD_MS'];
     if (Number.isFinite(Number(env)) && Number(env) > 0) {
       return { value: resolveHoldMs(), source: 'env' };
     }
@@ -336,22 +458,34 @@ export function createSettings(ctx) {
   // a field for credentials and this is not it; refusing at the door keeps the
   // one masked value (gateway_token) the only secret in the profile, which is
   // the property the whole settings split rests on.
-  function validateGatewayBaseUrl(value) {
-    if (typeof value !== 'string' || !value) throw namedError(400, 'gateway_base_url must be a URL or null');
-    if (CONTROL_RE.test(value)) throw namedError(400, 'gateway_base_url must not contain NUL or control characters');
-    let url;
+  function validateGatewayBaseUrl(value: unknown): string {
+    if (typeof value !== 'string' || !value)
+      throw namedError(400, 'gateway_base_url must be a URL or null');
+    if (CONTROL_RE.test(value))
+      throw namedError(400, 'gateway_base_url must not contain NUL or control characters');
+    let url: URL;
     // Deliberately does NOT echo `value`: a human who pastes a credential into
     // the wrong field must not have it reflected back in an error string that
     // may be logged or rendered.
-    try { url = new URL(value); } catch { throw namedError(400, 'gateway_base_url is not a valid URL'); }
+    try {
+      url = new URL(value);
+    } catch {
+      throw namedError(400, 'gateway_base_url is not a valid URL');
+    }
     if (url.protocol !== 'http:' && url.protocol !== 'https:') {
       throw namedError(400, `gateway_base_url must be http:// or https:// — got ${url.protocol}//`);
     }
     if (url.username || url.password) {
-      throw namedError(400, 'gateway_base_url must not embed credentials (user:password@) — put the credential in gateway_token, which is never served back to a client');
+      throw namedError(
+        400,
+        'gateway_base_url must not embed credentials (user:password@) — put the credential in gateway_token, which is never served back to a client',
+      );
     }
     if (url.search) {
-      throw namedError(400, 'gateway_base_url must not carry a query string — it would be broadcast to every board; put a credential in gateway_token instead');
+      throw namedError(
+        400,
+        'gateway_base_url must not carry a query string — it would be broadcast to every board; put a credential in gateway_token instead',
+      );
     }
     if (url.hash) throw namedError(400, 'gateway_base_url must not carry a fragment');
     // Trailing slashes are cosmetic to the client but make the /state view and
@@ -359,25 +493,30 @@ export function createSettings(ctx) {
     return url.href.replace(/\/+$/, '');
   }
 
-  function validateGatewayToken(value) {
-    if (typeof value !== 'string' || !value) throw namedError(400, 'gateway_token must be a non-empty string or null');
+  function validateGatewayToken(value: unknown): string {
+    if (typeof value !== 'string' || !value)
+      throw namedError(400, 'gateway_token must be a non-empty string or null');
     // Control characters would be smuggled into an HTTP header value; a
     // credential never legitimately contains them.
-    if (CONTROL_RE.test(value)) throw namedError(400, 'gateway_token must not contain NUL or control characters');
+    if (CONTROL_RE.test(value))
+      throw namedError(400, 'gateway_token must not contain NUL or control characters');
     if (value.length > GATEWAY_TOKEN_MAX) {
-      throw namedError(400, `gateway_token must be ${GATEWAY_TOKEN_MAX} characters or fewer — got ${value.length}`);
+      throw namedError(
+        400,
+        `gateway_token must be ${GATEWAY_TOKEN_MAX} characters or fewer — got ${value.length}`,
+      );
     }
     return value;
   }
 
   // Booleans persist as '1'/'0' so a cleared row and an explicit false stay
   // distinguishable from a never-set one at the SQL layer.
-  function validateGatewayBool(value, label) {
+  function validateGatewayBool(value: unknown, label: string): string {
     if (typeof value !== 'boolean') throw namedError(400, `${label} must be a boolean or null`);
     return value ? '1' : '0';
   }
 
-  function readGatewayBool(key, fallback) {
+  function readGatewayBool(key: string, fallback: boolean): boolean {
     const raw = readSetting(key);
     if (raw == null) return fallback;
     return raw === '1';
@@ -418,15 +557,15 @@ export function createSettings(ctx) {
   // reaches the gateway in a header it does not read and fails 401; 'bearer' is
   // the default because it is what Anthropic's own gateway guidance recommends
   // when the operator didn't say, and what CLIProxyAPI's `api-keys` list wants.
-  function resolveGatewayEnv() {
+  function resolveGatewayEnv(): Record<string, string> | null {
     const base_url = readSetting('gateway_base_url');
     const token = readSetting('gateway_token');
     if (!base_url || !token) return null;
     const auth_style = readSetting('gateway_auth_style') === 'api-key' ? 'api-key' : 'bearer';
-    const env = { ANTHROPIC_BASE_URL: base_url };
+    const env: Record<string, string> = { ANTHROPIC_BASE_URL: base_url };
     env[auth_style === 'api-key' ? 'ANTHROPIC_API_KEY' : 'ANTHROPIC_AUTH_TOKEN'] = token;
     if (readGatewayBool('gateway_model_discovery', true)) {
-      env.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY = '1';
+      env['CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY'] = '1';
     }
     return env;
   }
@@ -437,106 +576,147 @@ export function createSettings(ctx) {
   // key everywhere (a null-valued row reads back as the default, exactly like
   // setReposDir's clear).
   const HANDLERS = {
-    repos_dir: {
+    repos_dir: defineHandler<string | null>({
       // repos.mjs stays the SINGLE writer for the repos root; we pre-validate
       // with the shared gates so a bad repos_dir cannot slip past a valid
       // sibling key and half-apply a body.
-      prepare: v => { if (v != null) validatePathSetting(v, 'repos_dir'); return v; },
-      commit: v => setReposDir(v),
-    },
-    repo_transport: {
-      prepare: v => {
+      prepare: (v) => {
+        if (v != null) validatePathSetting(v, 'repos_dir');
+        return v as string | null; // validated (or null) above; persist the raw value, not the resolved one
+      },
+      commit: (v) => {
+        setReposDir(v);
+      },
+    }),
+    repo_transport: defineHandler<string | null>({
+      prepare: (v) => {
         if (v != null && v !== 'ssh' && v !== 'https') {
           throw namedError(400, `repo_transport must be ssh or https — got ${JSON.stringify(v)}`);
         }
-        return v;
+        return v as string | null;
       },
-      commit: v => q.setSetting.run('repo_transport', v ?? null, Date.now()),
-    },
-    repo_default_org: {
-      prepare: v => validateRepoDefaultOrg(v),
-      commit: v => q.setSetting.run('repo_default_org', v ?? null, Date.now()),
-    },
-    browse_root: {
-      prepare: v => { if (v != null) validatePathSetting(v, 'browse_root'); return v; },
-      commit: v => q.setSetting.run('browse_root', v ?? null, Date.now()),
-    },
-    fav_dirs: {
-      prepare: v => validateFavDirs(v),             // → normalized array | null
-      commit: prepared => q.setSetting.run('fav_dirs', prepared == null ? null : JSON.stringify(prepared), Date.now()),
-    },
-    repo_setup: {
-      prepare: v => validateRepoSetup(v),
-      commit: prepared => q.setSetting.run('repo_setup', prepared == null ? null : JSON.stringify(prepared), Date.now()),
-    },
-    repo_setup_patch: {
-      prepare: v => validateRepoSetupPatch(v),
-      commit: prepared => {
+      commit: (v) => q.setSetting.run('repo_transport', v ?? null, Date.now()),
+    }),
+    repo_default_org: defineHandler<string | null>({
+      prepare: (v) => validateRepoDefaultOrg(v),
+      commit: (v) => q.setSetting.run('repo_default_org', v ?? null, Date.now()),
+    }),
+    browse_root: defineHandler<string | null>({
+      prepare: (v) => {
+        if (v != null) validatePathSetting(v, 'browse_root');
+        return v as string | null;
+      },
+      commit: (v) => q.setSetting.run('browse_root', v ?? null, Date.now()),
+    }),
+    fav_dirs: defineHandler<string[] | null>({
+      prepare: (v) => validateFavDirs(v), // → normalized array | null
+      commit: (prepared) =>
+        q.setSetting.run(
+          'fav_dirs',
+          prepared == null ? null : JSON.stringify(prepared),
+          Date.now(),
+        ),
+    }),
+    repo_setup: defineHandler<Record<string, string> | null>({
+      prepare: (v) => validateRepoSetup(v),
+      commit: (prepared) =>
+        q.setSetting.run(
+          'repo_setup',
+          prepared == null ? null : JSON.stringify(prepared),
+          Date.now(),
+        ),
+    }),
+    repo_setup_patch: defineHandler<Record<string, string> | null>({
+      prepare: (v) => validateRepoSetupPatch(v),
+      commit: (prepared) => {
         if (prepared == null || Object.keys(prepared).length === 0) {
           q.setSetting.run('repo_setup', null, Date.now());
           return;
         }
         const merged = resolveRepoSetup();
         for (const [name, cmd] of Object.entries(prepared)) {
+          // eslint-disable-next-line @typescript-eslint/no-dynamic-delete -- a "__delete" tombstone removes exactly the keyed repo from the merged map; that dynamic key is the whole point of the patch
           if (cmd === '__delete') delete merged[name];
           else merged[name] = cmd;
         }
-        q.setSetting.run('repo_setup',
-          Object.keys(merged).length === 0 ? null : JSON.stringify(merged), Date.now());
+        q.setSetting.run(
+          'repo_setup',
+          Object.keys(merged).length === 0 ? null : JSON.stringify(merged),
+          Date.now(),
+        );
       },
-    },
-    hold_ms: {
-      prepare: v => validateHoldMs(v),
-      commit: v => q.setSetting.run('hold_ms', v ?? null, Date.now()),
-    },
-    gateway_base_url: {
-      prepare: v => (v == null ? null : validateGatewayBaseUrl(v)),
-      commit: v => q.setSetting.run('gateway_base_url', v ?? null, Date.now()),
-    },
-    gateway_auth_style: {
-      prepare: v => {
+    }),
+    hold_ms: defineHandler<string | null>({
+      prepare: (v) => validateHoldMs(v),
+      commit: (v) => q.setSetting.run('hold_ms', v ?? null, Date.now()),
+    }),
+    gateway_base_url: defineHandler<string | null>({
+      prepare: (v) => (v == null ? null : validateGatewayBaseUrl(v)),
+      commit: (v) => q.setSetting.run('gateway_base_url', v ?? null, Date.now()),
+    }),
+    gateway_auth_style: defineHandler<string | null>({
+      prepare: (v) => {
         if (v != null && v !== 'bearer' && v !== 'api-key') {
-          throw namedError(400, `gateway_auth_style must be bearer or api-key — got ${JSON.stringify(v)}`);
+          throw namedError(
+            400,
+            `gateway_auth_style must be bearer or api-key — got ${JSON.stringify(v)}`,
+          );
         }
-        return v;
+        return v as string | null;
       },
-      commit: v => q.setSetting.run('gateway_auth_style', v ?? null, Date.now()),
-    },
-    gateway_token: {
-      prepare: v => (v == null ? null : validateGatewayToken(v)),
-      commit: v => q.setSetting.run('gateway_token', v ?? null, Date.now()),
-    },
-    gateway_model_discovery: {
-      prepare: v => (v == null ? null : validateGatewayBool(v, 'gateway_model_discovery')),
-      commit: v => q.setSetting.run('gateway_model_discovery', v ?? null, Date.now()),
-    },
-    gateway_default: {
-      prepare: v => (v == null ? null : validateGatewayBool(v, 'gateway_default')),
-      commit: v => q.setSetting.run('gateway_default', v ?? null, Date.now()),
-    },
+      commit: (v) => q.setSetting.run('gateway_auth_style', v ?? null, Date.now()),
+    }),
+    gateway_token: defineHandler<string | null>({
+      prepare: (v) => (v == null ? null : validateGatewayToken(v)),
+      commit: (v) => q.setSetting.run('gateway_token', v ?? null, Date.now()),
+    }),
+    gateway_model_discovery: defineHandler<string | null>({
+      prepare: (v) => (v == null ? null : validateGatewayBool(v, 'gateway_model_discovery')),
+      commit: (v) => q.setSetting.run('gateway_model_discovery', v ?? null, Date.now()),
+    }),
+    gateway_default: defineHandler<string | null>({
+      prepare: (v) => (v == null ? null : validateGatewayBool(v, 'gateway_default')),
+      commit: (v) => q.setSetting.run('gateway_default', v ?? null, Date.now()),
+    }),
   };
 
-  function setSettings(body) {
+  // Dispatch view of HANDLERS: indexing by a runtime string needs the widened
+  // shape (method-parameter bivariance makes each SettingHandler<T> a
+  // SettingHandler<unknown> here). noUncheckedIndexedAccess adds `| undefined`,
+  // so callers guard — though setSettings' whitelist check already proved the
+  // key is present.
+  const handlerFor = (key: string): SettingHandler<unknown> | undefined =>
+    (HANDLERS as Record<string, SettingHandler<unknown>>)[key];
+
+  function setSettings(body: unknown): { status: number; body: Record<string, unknown> } {
     if (!body || typeof body !== 'object' || Array.isArray(body)) {
       return { status: 400, body: { ok: false, reason: 'settings body must be a JSON object' } };
     }
-    const keys = Object.keys(body);
-    const unknown = keys.find(k => !ALLOWED_KEYS.includes(k));
+    const record = body as Record<string, unknown>;
+    const keys = Object.keys(record);
+    const unknown = keys.find((k) => !ALLOWED_KEYS.includes(k));
     if (unknown) {
       return {
         status: 400,
-        body: { ok: false, reason: `unknown setting "${unknown}" — allowed: ${ALLOWED_KEYS.join(', ')}` },
+        body: {
+          ok: false,
+          reason: `unknown setting "${unknown}" — allowed: ${ALLOWED_KEYS.join(', ')}`,
+        },
       };
     }
     try {
       // Validate every named key first…
-      const prepared = keys.map(k => ({ k, value: HANDLERS[k].prepare(body[k]) }));
+      const prepared = keys.map((k) => {
+        const handler = handlerFor(k);
+        if (!handler) throw namedError(400, `unknown setting "${k}"`); // unreachable: whitelisted above
+        return { handler, value: handler.prepare(record[k]) };
+      });
       // …then apply them all — nothing above wrote, so a validation throw here is
       // impossible to reach with a half-validated body. (Derive/test contexts
       // without a raw `db` handle keep the old autocommit path — the daemon's
       // ctx always carries one.)
       if (!db) {
-        for (const { k, value } of prepared) HANDLERS[k].commit(value);
+        for (const { handler, value } of prepared) handler.commit(value);
         onMutate();
         return { status: 200, body: { ok: true, settings: resolveSettings() } };
       }
@@ -553,19 +733,23 @@ export function createSettings(ctx) {
       // returned error is the truth.
       db.exec('BEGIN IMMEDIATE');
       try {
-        for (const { k, value } of prepared) HANDLERS[k].commit(value);
+        for (const { handler, value } of prepared) handler.commit(value);
         onMutate();
         db.exec('COMMIT');
       } catch (err) {
-        try { db.exec('ROLLBACK'); } catch { /* preserve the original error */ }
+        try {
+          db.exec('ROLLBACK');
+        } catch {
+          /* preserve the original error */
+        }
         throw err;
       }
       return { status: 200, body: { ok: true, settings: resolveSettings() } };
     } catch (err) {
       // A thrown 400 is a validator rejecting the caller's body; anything
       // untagged is a storage failure the caller cannot fix by editing fields.
-      const status = err.status || 500;
-      return { status, body: { ok: false, reason: err.message || String(err) } };
+      const status = errStatus(err) ?? 500;
+      return { status, body: { ok: false, reason: errMessage(err) } };
     }
   }
 
@@ -574,7 +758,7 @@ export function createSettings(ctx) {
   // pill clicks (those are exploratory). The value is pre-validated by spawns'
   // 400 gate; re-checked here as defence in depth so a bad value can never
   // reach the row. No onMutate — the caller batches its own broadcast.
-  function persistRepoTransport(value) {
+  function persistRepoTransport(value: unknown): void {
     if (value !== 'ssh' && value !== 'https') return;
     q.setSetting.run('repo_transport', value, Date.now());
   }
@@ -583,18 +767,27 @@ export function createSettings(ctx) {
   // repo_org explicitly with a bare repo so that spawn is deterministic even if
   // an onBlur settings save is still in flight. Once accepted, that explicit
   // choice becomes the durable default for the next bare name.
-  function persistRepoDefaultOrg(value) {
+  function persistRepoDefaultOrg(value: unknown): void {
     if (value == null) return;
-    try { validateRepoDefaultOrg(value); } catch { return; }
-    q.setSetting.run('repo_default_org', value, Date.now());
+    let org: string | null;
+    try {
+      org = validateRepoDefaultOrg(value);
+    } catch {
+      return;
+    }
+    q.setSetting.run('repo_default_org', org, Date.now());
   }
 
   // Daemon-side single-repo variant of repo_setup_patch — same read-merge-write,
   // no broadcast (the caller batches its own), for the spawn path to remember a
   // setup default without clobbering a concurrent board save (BUG-147).
-  function setRepoSetupEntry(name, cmd) {
-    let prepared;
-    try { prepared = validateRepoSetupPatch({ [name]: cmd ?? '__delete' }); } catch { return; }
+  function setRepoSetupEntry(name: string, cmd: string | null | undefined): void {
+    let prepared: Record<string, string> | null;
+    try {
+      prepared = validateRepoSetupPatch({ [name]: cmd ?? '__delete' });
+    } catch {
+      return;
+    }
     HANDLERS.repo_setup_patch.commit(prepared);
   }
 
@@ -620,7 +813,14 @@ export function createSettings(ctx) {
   // export is the structural reason a future edit to the settings view cannot
   // accidentally start serializing the credential.
   return {
-    setSettings, resolveSettings, browseRootChoice, persistRepoTransport, persistRepoDefaultOrg,
-    resolveGateway, resolveGatewayEnv, resolveHoldMsRaw, setRepoSetupEntry,
+    setSettings,
+    resolveSettings,
+    browseRootChoice,
+    persistRepoTransport,
+    persistRepoDefaultOrg,
+    resolveGateway,
+    resolveGatewayEnv,
+    resolveHoldMsRaw,
+    setRepoSetupEntry,
   };
 }

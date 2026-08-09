@@ -219,7 +219,11 @@ function asText(value: unknown): string {
 // `fallback` so questions.ts never has to know about the settings table.
 export function resolveHoldMs(
   env: NodeJS.ProcessEnv | null = process.env,
-  fallback: (() => number | null | undefined) | null = null,
+  // The fallback reads a SETTING row, which comes back as a string (the hold_ms
+  // k/v value) or null — the `Number(fallback?.())` below coerces it, so the
+  // param type admits string as well as the pre-typed number. settings.ts's
+  // resolveHoldMsRaw (a string-returning reader) is the real caller.
+  fallback: (() => number | string | null | undefined) | null = null,
 ): number {
   const raw = Number(env?.['FLEETDECK_HOLD_MS']);
   if (Number.isFinite(raw) && raw > 0) {

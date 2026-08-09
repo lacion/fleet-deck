@@ -19,7 +19,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { openDb } from '../scripts/fleetd/db.ts';
 import { createStatements } from '../scripts/fleetd/statements.ts';
-import { createSettings } from '../scripts/fleetd/settings.mjs';
+import { createSettings } from '../scripts/fleetd/settings.ts';
 
 /** A createSettings wired to a real in-memory DB, with hooks to make a
  * chosen settings key's write fail and to observe mutation broadcasts. */
