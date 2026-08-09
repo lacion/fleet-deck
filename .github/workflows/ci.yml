@@ -171,6 +171,9 @@ jobs:
       - run: bun run bundle:bin
       - name: Fail if committed bin artifact is stale
         run: git diff --exit-code bin/fleetdeck.mjs
+      - run: bun run bundle:hooks
+      - name: Fail if committed hook artifacts are stale
+        run: git diff --exit-code scripts/fleet-hook.mjs scripts/fleet-sessionstart.mjs scripts/fleet-watch.mjs
       # filewise for the same reason as the Node 22 test lane above
       # (nodejs/node#64061) — the bundle suite runs under Node 22.
       - run: bun run test:bundle:filewise
