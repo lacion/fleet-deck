@@ -14724,29 +14724,35 @@ function createHttp(core2, {
   };
 }
 
-// scripts/fleetd/agents-poll.mjs
-var POLL_INTERVAL_MS = Math.max(100, Number(process.env.FLEETDECK_AGENTS_POLL_MS) || 1e4);
+// scripts/fleetd/agents-poll.ts
+var POLL_INTERVAL_MS = Math.max(100, Number(process.env["FLEETDECK_AGENTS_POLL_MS"]) || 1e4);
 var IDLE_POLL_INTERVAL_MS = Math.max(
   POLL_INTERVAL_MS,
-  Number(process.env.FLEETDECK_AGENTS_IDLE_POLL_MS) || (process.env.FLEETDECK_AGENTS_POLL_MS ? POLL_INTERVAL_MS : 6e4)
+  Number(process.env["FLEETDECK_AGENTS_IDLE_POLL_MS"]) || (process.env["FLEETDECK_AGENTS_POLL_MS"] ? POLL_INTERVAL_MS : 6e4)
 );
 var FIRST_RUN_DELAY_MS = Math.min(1e3, POLL_INTERVAL_MS);
 var EXEC_TIMEOUT_MS = 5e3;
 var DEFAULT_ARGV = ["claude", "agents", "--json"];
 function resolveArgv() {
-  const override = process.env.FLEETDECK_AGENTS_CMD;
+  const override = process.env["FLEETDECK_AGENTS_CMD"];
   if (override === void 0) return DEFAULT_ARGV;
   const trimmed = override.trim();
   if (trimmed === "" || trimmed === "false") return null;
   return trimmed.split(/\s+/);
 }
 async function runOnce(argv) {
-  const res = await execFileP(argv[0], argv.slice(1), { timeout: EXEC_TIMEOUT_MS });
+  const cmd = argv[0];
+  if (cmd === void 0) return null;
+  const res = await execFileP(cmd, argv.slice(1), { timeout: EXEC_TIMEOUT_MS });
   return res.ok ? res.out : null;
 }
 function hasLiveInteractive(records) {
   if (!Array.isArray(records)) return false;
-  return records.some((rec) => !!rec && rec.kind === "interactive" && pidOwnedBy(rec.pid, rec.startedAt));
+  return records.some((rec) => {
+    if (typeof rec !== "object" || rec === null) return false;
+    const r = rec;
+    return r.kind === "interactive" && typeof r.pid === "number" && pidOwnedBy(r.pid, typeof r.startedAt === "number" ? r.startedAt : NaN);
+  });
 }
 function startAgentsPoll(core2) {
   const argv = resolveArgv();
@@ -14791,14 +14797,14 @@ function startAgentsPoll(core2) {
     }
   }
   function schedule(delayMs) {
-    timer = setTimeout(tick, delayMs);
+    timer = setTimeout(() => void tick(), delayMs);
     timer.unref();
   }
   schedule(FIRST_RUN_DELAY_MS);
   return {
     stop() {
       stopped = true;
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
     }
   };
 }

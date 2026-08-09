@@ -517,3 +517,32 @@ Format:
   empty-string cwd is not a path, so `||` (not `??`) correctly folds `''` to `null`. **No runtime
   behavior moved** — 35/35 across `agents-ingest` + `audit-cleanup` + `adopt` green vs both source
   and the regenerated bundle.
+
+### scripts/fleetd/agents-poll.ts — index-signature env reads, a redundant guard TS already narrowed, and two async/closure lint false-positives   [NOISE]
+- **What:** four unrelated strict/lint complaints, none a latent bug. (1) `tsc` TS4111 ×4 on
+  `process.env.FLEETDECK_AGENTS_POLL_MS` / `_IDLE_POLL_MS` / `_CMD` — `NodeJS.ProcessEnv` is an index
+  signature, and `noPropertyAccessFromIndexSignature` forbids dot access on it. (2) `no-unnecessary-condition`
+  "types have no overlap" on the `argv !== null` I had added to the poll guard. (3) `no-misused-promises`
+  on `setTimeout(tick, …)` — `tick` is `async` (returns a floated `Promise`), and `setTimeout` wants a
+  `() => void`. (4) `no-unnecessary-condition` "always truthy" on `if (!stopped)` in the reschedule step.
+- **Why it's noise:** (1) is a syntax rule, not a type hole. (2) is TS being *more* precise than I was —
+  `const agentsEnabled = argv !== null` is a const aliased condition, so inside `if (agentsEnabled && …)`
+  TS already narrows `argv` to `string[]`; my extra `argv !== null` compared a non-null type to `null`
+  (hence "no overlap"), and it was pure redundancy. (3) the floated promise was always intentional
+  fire-and-forget (the original `.mjs` passed the async `tick` straight to `setTimeout`); `tick` never
+  rejects — every await is wrapped and the finally reschedules — so nothing changed but the linter wants
+  the discard made explicit. (4) is a genuine TS **unsoundness**, not dead code: the entry guard
+  `if (stopped || running) return` narrows `stopped` to `false`, and TS *carries that narrowing across the
+  two `await`s* down into the `finally`; but `stop()` can flip `stopped` during an in-flight await, so the
+  reschedule guard is live at runtime — dropping it would make a stopped poller reschedule itself forever.
+- **Fix:** (1) bracket access `process.env['FLEETDECK_AGENTS_POLL_MS']` etc. on all four reads. (2) deleted
+  the redundant `&& argv !== null`; the guard is now `if (agentsEnabled && Date.now() >= nextAgentsPollAt)`
+  and `argv` stays narrowed to `string[]` for `runOnce(argv)` via the aliased-const. (3) wrapped the
+  callback as `setTimeout(() => void tick(), delayMs)` — explicit void discard, identical scheduling. (4)
+  kept `if (!stopped) schedule(POLL_INTERVAL_MS)` behind an
+  `eslint-disable-next-line @typescript-eslint/no-unnecessary-condition` with a rationale pointing at the
+  await-carried-narrowing unsoundness (same idiom as ingest.ts's intentional-`||` disable). Timer stays
+  `ReturnType<typeof setTimeout> | null`, so `stop()` keeps `if (timer) clearTimeout(timer)` (tsc needs the
+  null guard; eslint agrees it's meaningful). **No runtime behavior moved** — 21/21 across `agents-ingest`
+  + `audit-cleanup` + `exec-timeout` green vs both source and the regenerated bundle; the test's
+  cache-busting dynamic `import('…/agents-poll.ts?audit=…')` resolves under Node type-stripping unchanged.
