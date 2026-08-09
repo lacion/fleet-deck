@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { openDb } from '../scripts/fleetd/db.ts';
 import * as fleetdHelpers from '../scripts/fleetd/helpers.ts';
 import { createStatements } from '../scripts/fleetd/statements.ts';
-import { createWorktrees } from '../scripts/fleetd/worktrees.mjs';
+import { createWorktrees } from '../scripts/fleetd/worktrees.ts';
 import { claudeTranscriptPath } from '../scripts/fleetd/derive.mjs';
 
 // The BUG-060 fix introduces createKeyedMutex; the pre-fix tree does not have

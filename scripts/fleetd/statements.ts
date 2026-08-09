@@ -168,7 +168,7 @@ interface SessionCallsignRow {
 // autoCandidate carries the correlated undelivered-mail count alongside s.*.
 type AutoCandidateRow = SessionRow & { undelivered: number };
 // worktreeSpawns / liveWorktreeClaims join the owning session's ended_at.
-type WorktreeSpawnRow = SpawnRow & { session_ended_at: number | null };
+export type WorktreeSpawnRow = SpawnRow & { session_ended_at: number | null };
 
 // build(db) compiles the whole map for ONE handle. It is factored out of
 // createStatements so `Statements` can be inferred from it (ReturnType) without

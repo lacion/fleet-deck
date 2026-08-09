@@ -14,7 +14,7 @@ import { createQuestions, resolveHoldMs } from './questions.ts';
 import { lastAssistantModel } from './transcript.ts';
 import * as defaultTmuxAdapter from './spawn.mjs';
 import { createStatements } from './statements.ts';
-import { createWorktrees } from './worktrees.mjs';
+import { createWorktrees } from './worktrees.ts';
 import { createRepos } from './repos.mjs';
 import { createSettings } from './settings.mjs';
 import { createFiles } from './files.mjs';

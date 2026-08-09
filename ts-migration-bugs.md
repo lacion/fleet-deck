@@ -873,3 +873,63 @@ Format:
   repointed (`derive.mjs` `./retention.mjs` → `./retention.ts`; the other four matches were prose
   comments). 64/64 green vs source across dismiss, daemon-maintenance, audit-cleanup, adopt. Daemon
   bundle rebuilds with the `retention.ts` banner (624.5kb) and passes `node --check`.
+
+### scripts/fleetd/worktrees.mjs → worktrees.ts  [NOISE + one corrected assumption]
+
+- **What:** The worktree-custody module (~559L) behind `GET /api/worktrees` (the bounded real-git-state
+  inspector) and `POST /api/worktrees/remove` (allow-listed destruction with the BUG-059 ownership proof,
+  BUG-060 per-path claim, and the CAS-against-inspected-tip branch delete). No runtime behavior changed;
+  every edit is a type annotation, a compiler-equivalent narrowing, or a dead defensive branch the strict
+  rules force. Cross-module deps were already `.ts` (`helpers.ts`, `exec.ts`, `payload-capture.ts`,
+  `statements.ts`, `sqlite.ts`).
+- **Types added:** `WorktreeItem` (the inspection record — note `base_is_local?: boolean` is optional, not
+  nullable: it is written only on the no-remote fallback path), `WorktreeLastCommit`, `RefreshResult`
+  (`{ok:true} | {ok:false; err}`), `RemoveBody` (all-`unknown` fields — untrusted JSON), `RemoveResult`
+  (`{status; body: Record<string, unknown>}`), and `WorktreesCtx` — `q: Statements['q']` plus the
+  optional `db?: SqliteHandle`/`acquireWorktreePathLock?`/`claimWorktreeCustody?` and the `tick`/`onMutate`
+  callbacks (the same ctx idiom as mail/snapshot/retention). `WorktreeSpawnRow` exported from
+  `statements.ts` (was module-private) and imported here for `worktreeRows`/`inspectWorktree`/`claimsPath`.
+- **CORRECTED ASSUMPTION — `noUncheckedIndexedAccess` DOES add `undefined` to array *destructuring*.**
+  Earlier migration notes claimed tuple/array destructuring was exempt (that `const [a, b] = someStringArray`
+  binds plain `string`). It is not: `const [sha, subject, at] = log.out.trimEnd().split('\0')` binds each as
+  `string | undefined`, and assigning `sha`/`subject` into the `string` fields of `WorktreeLastCommit` was a
+  real `tsc` error (TS2322 ×2). Fixed with destructuring defaults on the two string bindings —
+  `const [sha = '', subject = '', at] = …` — which is behavior-faithful (the `%h%x00%s%x00%ct` format
+  guarantees three NUL-separated fields, so the defaults are unreachable) and leaves `at` untouched
+  (`Number(at)` accepts `string | undefined`, so the timestamp coercion is byte-identical to the `.mjs`).
+- **Nullable `worktree_path` / `cwd` from the row type.** `WorktreeSpawnRow.worktree_path` and `.cwd` are
+  `string | null` even though `worktreeSpawns`' SQL filters `worktree_path IS NOT NULL`. `inspectWorktree`
+  captures `const worktreePath = row.worktree_path` then early-returns the "gone" shell on
+  `worktreePath == null || !exists` (narrows to `string` for the ~10 downstream `-C` argv uses — matches
+  runtime, where `existsSync(null)` throws → caught → gone). `removeWorktree` threads
+  `const worktreePath = body.path` after the `typeof body?.path !== 'string'` guard (provably equal to
+  `row.worktree_path`, since rows are filtered on that equality). For `row.cwd`, a `row.cwd == null` guard
+  returning `409 'main repository unavailable'` was added before the `git -C row.cwd rev-parse`: verified
+  behavior-faithful by reading `exec.ts` — `execFileP` CATCHES the synchronous invalid-argv throw
+  (exec.ts:144-146) and resolves `{ok:false}`, so the `.mjs`'s null-cwd path already produced the identical
+  409/reason. In practice `cwd` is never null for a worktree spawn.
+- **NOISE — dropped three `?? null` in `worktreeShell`.** `callsign`/`session_id`/`status` are copied
+  straight from `WorktreeSpawnRow` into fields of the same nullable type (`callsign: string | null`,
+  `session_id: string`, `spawn_status: string | null`), so the coalesces were `no-unnecessary-condition`.
+  Identical output.
+- **NOISE — `blocked[0].owner` → captured.** `noUncheckedIndexedAccess` makes `blocked[0]` possibly
+  `undefined` even after a truthy `blocked.length` (length does not narrow the element), so
+  `const firstBlocked = blocked[0]; if (firstBlocked) { … firstBlocked.owner … }` replaces `if (blocked.length)`.
+  Same branch, same body.
+- **NOISE — two `unknown`-catch errno guards.** `rmSync`'s catch used `err.code || err.message`; under
+  `useUnknownInCatchVariables` this becomes
+  `err instanceof Error ? ((err as NodeJS.ErrnoException).code ?? err.message) : String(err)` (`??` not `||`
+  — errno codes are never `''`, so faithful). The purge-rollback catch's `err.message` similarly narrowed to
+  `err instanceof Error ? err.message : String(err)`.
+- **NOISE — `${branch}` in the tick string.** At the `tick(…)` call `branch` is `string | null`; guarded the
+  interpolation as `branch_deleted && branch ? ` and branch ${branch}` : ''` so `branch` narrows to `string`
+  inside the template. `branch_deleted` is only ever set true when `branch` was truthy, so this is
+  behavior-identical (and sidesteps `restrict-template-expressions` on a nullish interpolation).
+- **NOISE — empty-arrow fallback keeps a comment.** `releasePath = acquireWorktreePathLock ? … : () => {}`
+  would trip `no-empty-function`; wrote the no-op as `() => {/* no path lock wired (direct-drive tests) */}`
+  (the rule ignores a body containing a comment). Same no-op.
+- **Verify:** `eslint worktrees.ts` clean (0). tsc `--noEmit` clean project-wide (0). One importer repointed
+  (`derive.mjs` `./worktrees.mjs` → `./worktrees.ts`; the three other matches — in `repos.mjs`, `spawns.mjs`,
+  and derive's own body comments — are prose) and the test import (`tests/worktrees.test.mjs`) repointed to
+  `.ts`. 44/44 green vs source across worktrees, worktree-chmod-symlink, revive, takeover. Daemon bundle
+  rebuilds with the `worktrees.ts` banner (625.8kb) and passes `node --check`.

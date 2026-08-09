@@ -6950,7 +6950,7 @@ function createStatements(db2) {
   return statements;
 }
 
-// scripts/fleetd/worktrees.mjs
+// scripts/fleetd/worktrees.ts
 import fs5 from "node:fs";
 import path5 from "node:path";
 
@@ -7282,7 +7282,7 @@ function validateNameSuffix(suffix) {
 }
 var SHELL_RE = /^(sh|bash|zsh|zsh-.*)$/;
 
-// scripts/fleetd/worktrees.mjs
+// scripts/fleetd/worktrees.ts
 function canonical(p) {
   try {
     return fs5.realpathSync(p);
@@ -7291,7 +7291,9 @@ function canonical(p) {
   }
 }
 async function gitCommonDir(dir) {
-  const result = await execFileP("git", ["-C", dir, "rev-parse", "--git-common-dir"], { timeout: 5e3 });
+  const result = await execFileP("git", ["-C", dir, "rev-parse", "--git-common-dir"], {
+    timeout: 5e3
+  });
   if (!result.ok) return null;
   const raw = result.out.trim();
   if (!raw) return null;
@@ -7305,7 +7307,9 @@ async function repoOwnsWorktree(repo, worktreePath, worktreeExists) {
     ]);
     return repoCommon != null && worktreeCommon != null && repoCommon === worktreeCommon;
   }
-  const list = await execFileP("git", ["-C", repo, "worktree", "list", "--porcelain"], { timeout: 5e3 });
+  const list = await execFileP("git", ["-C", repo, "worktree", "list", "--porcelain"], {
+    timeout: 5e3
+  });
   if (!list.ok) return false;
   const target = canonical(worktreePath);
   return list.out.split("\n").some((line) => line.startsWith("worktree ") && canonical(line.slice(9).trim()) === target);
@@ -7324,10 +7328,10 @@ function createWorktrees(ctx) {
     return {
       path: row.worktree_path,
       exists: exists2,
-      callsign: row.callsign ?? null,
-      session_id: row.session_id ?? null,
+      callsign: row.callsign,
+      session_id: row.session_id,
       session_alive: row.session_ended_at == null && q.getSession.get(row.session_id) != null,
-      spawn_status: row.status ?? null,
+      spawn_status: row.status,
       branch: null,
       dirty: null,
       dirty_files: [],
@@ -7357,19 +7361,28 @@ function createWorktrees(ctx) {
     return { ok: true };
   }
   async function inspectWorktree(row) {
+    const worktreePath = row.worktree_path;
     let exists2 = false;
-    try {
-      exists2 = fs5.existsSync(row.worktree_path);
-    } catch {
+    if (worktreePath != null) {
+      try {
+        exists2 = fs5.existsSync(worktreePath);
+      } catch {
+      }
     }
     const item = worktreeShell(row, exists2);
-    if (!exists2) return item;
+    if (worktreePath == null || !exists2) return item;
     const [branch, status, upstream, log, base] = await Promise.all([
-      execFileP("git", ["-C", row.worktree_path, "rev-parse", "--abbrev-ref", "HEAD"], { timeout: 5e3 }),
-      execFileP("git", ["-C", row.worktree_path, "status", "--porcelain"], { timeout: 5e3 }),
-      execFileP("git", ["-C", row.worktree_path, "rev-parse", "--abbrev-ref", "@{u}"], { timeout: 5e3 }),
-      execFileP("git", ["-C", row.worktree_path, "log", "-1", "--format=%h%x00%s%x00%ct"], { timeout: 5e3 }),
-      baseBranch(row.worktree_path)
+      execFileP("git", ["-C", worktreePath, "rev-parse", "--abbrev-ref", "HEAD"], {
+        timeout: 5e3
+      }),
+      execFileP("git", ["-C", worktreePath, "status", "--porcelain"], { timeout: 5e3 }),
+      execFileP("git", ["-C", worktreePath, "rev-parse", "--abbrev-ref", "@{u}"], {
+        timeout: 5e3
+      }),
+      execFileP("git", ["-C", worktreePath, "log", "-1", "--format=%h%x00%s%x00%ct"], {
+        timeout: 5e3
+      }),
+      baseBranch(worktreePath)
     ]);
     if (!branch.ok || !status.ok || !base) {
       item.note = !branch.ok ? "git no longer recognises this directory as a worktree \u2014 a previous removal was interrupted. Whatever is inside cannot be checked from here; removal will report exactly what blocks it." : "git could not read this worktree.";
@@ -7383,18 +7396,20 @@ function createWorktrees(ctx) {
     item.base_is_local = base.local;
     item.upstream = upstream.ok ? upstream.out.trim() || null : null;
     if (log.ok && log.out.trim()) {
-      const [sha, subject, at] = log.out.trimEnd().split("\0");
+      const [sha = "", subject = "", at] = log.out.trimEnd().split("\0");
       item.last_commit = { sha, subject, at: Number(at) };
     }
     if (!base.local) {
-      const refreshed = await refreshRemoteKnowledge(row.worktree_path);
+      const refreshed = await refreshRemoteKnowledge(worktreePath);
       if (!refreshed.ok) {
         item.note = "could not refresh the remote before judging this worktree \u2014 its remote knowledge may be stale, so nothing here can be certified as safe. Check the remote and refresh again.";
         return item;
       }
     }
     const [ahead, unpushed, merged] = await Promise.all([
-      execFileP("git", ["-C", row.worktree_path, "rev-list", "--count", `${base.ref}..HEAD`], { timeout: 5e3 }),
+      execFileP("git", ["-C", worktreePath, "rev-list", "--count", `${base.ref}..HEAD`], {
+        timeout: 5e3
+      }),
       // THE question, and the only one that decides whether deleting this
       // destroys anything: are these commits on ANY remote-tracking ref? Not
       // "ahead of my upstream", not "ahead of my local main" — both of those
@@ -7402,8 +7417,12 @@ function createWorktrees(ctx) {
       // --remotes` asks git for commits that exist on no remote we know of.
       // The refs were just fetched and pruned above, so "we know of" is as of
       // THIS inspection, not the last time somebody happened to fetch.
-      execFileP("git", ["-C", row.worktree_path, "rev-list", "--count", "HEAD", "--not", "--remotes"], { timeout: 5e3 }),
-      execFileP("git", ["-C", row.worktree_path, "merge-base", "--is-ancestor", "HEAD", base.ref], { timeout: 5e3 })
+      execFileP("git", ["-C", worktreePath, "rev-list", "--count", "HEAD", "--not", "--remotes"], {
+        timeout: 5e3
+      }),
+      execFileP("git", ["-C", worktreePath, "merge-base", "--is-ancestor", "HEAD", base.ref], {
+        timeout: 5e3
+      })
     ]);
     if (!ahead.ok || !unpushed.ok || !merged.ok && merged.code !== 1) return item;
     item.ahead = Number(ahead.out.trim());
@@ -7425,25 +7444,33 @@ function createWorktrees(ctx) {
   }
   function worktreePathIsLive(worktreePath) {
     const target = path5.resolve(worktreePath);
-    return q.worktreeSpawns.all().some((candidate) => candidate.worktree_path === worktreePath && (LAUNCHING_OR_LIVE.has(candidate.status) || candidate.session_ended_at == null && q.getSession.get(candidate.session_id) != null)) || q.liveWorktreeClaims.all().some((candidate) => claimsPath(candidate, target));
+    return q.worktreeSpawns.all().some(
+      (candidate) => candidate.worktree_path === worktreePath && (LAUNCHING_OR_LIVE.has(candidate.status) || candidate.session_ended_at == null && q.getSession.get(candidate.session_id) != null)
+    ) || q.liveWorktreeClaims.all().some((candidate) => claimsPath(candidate, target));
   }
   async function branchTipOid(repo, branch) {
-    const tip = await execFileP("git", ["-C", repo, "rev-parse", "--verify", `refs/heads/${branch}`], { timeout: 5e3 });
+    const tip = await execFileP(
+      "git",
+      ["-C", repo, "rev-parse", "--verify", `refs/heads/${branch}`],
+      { timeout: 5e3 }
+    );
     return tip.ok ? tip.out.trim() : null;
   }
   async function removeWorktree(body = {}) {
     if (typeof body?.path !== "string") {
       return { status: 400, body: { ok: false, reason: "not a fleet worktree" } };
     }
-    const releasePath = acquireWorktreePathLock ? await acquireWorktreePathLock(canonicalPathKey(body.path)) : () => {
+    const worktreePath = body.path;
+    const releasePath = acquireWorktreePathLock ? await acquireWorktreePathLock(canonicalPathKey(worktreePath)) : () => {
     };
     try {
-      const rows = q.worktreeSpawns.all().filter((row2) => row2.worktree_path === body.path);
+      const rows = q.worktreeSpawns.all().filter((row2) => row2.worktree_path === worktreePath);
       const row = rows[0];
       if (!row) return { status: 400, body: { ok: false, reason: "not a fleet worktree" } };
-      if (worktreePathIsLive(body.path)) return { status: 409, body: { ok: false, reason: "session is still alive" } };
+      if (worktreePathIsLive(worktreePath))
+        return { status: 409, body: { ok: false, reason: "session is still alive" } };
       const state = await inspectWorktree(row);
-      const inspected_tip = state.exists && state.branch ? await branchTipOid(row.worktree_path, state.branch) : null;
+      const inspected_tip = state.exists && state.branch ? await branchTipOid(worktreePath, state.branch) : null;
       if ((state.verdict === "has-work" || state.verdict === "unknown") && body.force !== true) {
         return {
           status: 409,
@@ -7456,10 +7483,15 @@ function createWorktrees(ctx) {
           }
         };
       }
-      const repoResult = await execFileP("git", ["-C", row.cwd, "rev-parse", "--show-toplevel"], { timeout: 5e3 });
-      if (!repoResult.ok) return { status: 409, body: { ok: false, reason: "main repository unavailable" } };
+      if (row.cwd == null)
+        return { status: 409, body: { ok: false, reason: "main repository unavailable" } };
+      const repoResult = await execFileP("git", ["-C", row.cwd, "rev-parse", "--show-toplevel"], {
+        timeout: 5e3
+      });
+      if (!repoResult.ok)
+        return { status: 409, body: { ok: false, reason: "main repository unavailable" } };
       const repo = repoResult.out.trim();
-      if (!await repoOwnsWorktree(repo, row.worktree_path, state.exists)) {
+      if (!await repoOwnsWorktree(repo, worktreePath, state.exists)) {
         return {
           status: 409,
           body: {
@@ -7469,36 +7501,41 @@ function createWorktrees(ctx) {
           }
         };
       }
-      if (worktreePathIsLive(row.worktree_path)) {
+      if (worktreePathIsLive(worktreePath)) {
         return { status: 409, body: { ok: false, reason: "session became live during removal" } };
       }
-      const releaseCustody = claimWorktreeCustody?.(row.worktree_path, "remove");
+      const releaseCustody = claimWorktreeCustody?.(worktreePath, "remove");
       if (!releaseCustody && claimWorktreeCustody) {
         return { status: 409, body: { ok: false, reason: "session became live during removal" } };
       }
       try {
         if (state.exists) {
-          chmodWritableWhereOwned(row.worktree_path);
+          chmodWritableWhereOwned(worktreePath);
           const args = ["-C", repo, "worktree", "remove"];
           if (body.force === true) args.push("--force");
-          args.push(row.worktree_path);
+          args.push(worktreePath);
           const removed = await execFileP("git", args, { timeout: 3e4 });
           if (!removed.ok) {
-            const blocked = blockedPaths(row.worktree_path);
-            if (blocked.length) {
+            const blocked = blockedPaths(worktreePath);
+            const firstBlocked = blocked[0];
+            if (firstBlocked) {
               return {
                 status: 409,
                 body: {
                   ok: false,
                   reason: `blocked by ${blocked.length} path(s) this daemon may not delete \u2014 owned by ${[...new Set(blocked.map((b) => b.owner))].join(", ")}. Fleet Deck runs as you and never escalates to root.`,
                   blocked_paths: blocked.map((b) => b.path),
-                  blocked_owner: blocked[0].owner,
+                  blocked_owner: firstBlocked.owner,
                   fix_command: `sudo rm -rf ${blocked.map((b) => shellQuote(b.path)).join(" ")} && git -C ${shellQuote(repo)} worktree prune`
                 }
               };
             }
             if (body.force !== true) {
-              const porcelain = await execFileP("git", ["-C", row.worktree_path, "status", "--porcelain"], { timeout: 5e3 });
+              const porcelain = await execFileP(
+                "git",
+                ["-C", worktreePath, "status", "--porcelain"],
+                { timeout: 5e3 }
+              );
               if (porcelain.ok && porcelain.out.trim() !== "") {
                 return {
                   status: 409,
@@ -7512,22 +7549,52 @@ function createWorktrees(ctx) {
               }
             }
             try {
-              fs5.rmSync(row.worktree_path, { recursive: true, force: true });
+              fs5.rmSync(worktreePath, { recursive: true, force: true });
             } catch (err) {
-              return { status: 409, body: { ok: false, reason: `could not remove worktree: ${err.code || err.message}` } };
+              const detail = err instanceof Error ? err.code ?? err.message : String(err);
+              return {
+                status: 409,
+                body: { ok: false, reason: `could not remove worktree: ${detail}` }
+              };
             }
-            const pruned = await execFileP("git", ["-C", repo, "worktree", "prune"], { timeout: 3e4 });
-            if (!pruned.ok) return { status: 409, body: { ok: false, reason: `git worktree prune failed: ${scrubUrlCredentials(pruned.err)}`.slice(0, 300) } };
+            const pruned = await execFileP("git", ["-C", repo, "worktree", "prune"], {
+              timeout: 3e4
+            });
+            if (!pruned.ok)
+              return {
+                status: 409,
+                body: {
+                  ok: false,
+                  reason: `git worktree prune failed: ${scrubUrlCredentials(pruned.err)}`.slice(
+                    0,
+                    300
+                  )
+                }
+              };
           }
         } else {
-          const pruned = await execFileP("git", ["-C", repo, "worktree", "prune"], { timeout: 3e4 });
-          if (!pruned.ok) return { status: 409, body: { ok: false, reason: `git worktree prune failed: ${scrubUrlCredentials(pruned.err)}`.slice(0, 300) } };
+          const pruned = await execFileP("git", ["-C", repo, "worktree", "prune"], {
+            timeout: 3e4
+          });
+          if (!pruned.ok)
+            return {
+              status: 409,
+              body: {
+                ok: false,
+                reason: `git worktree prune failed: ${scrubUrlCredentials(pruned.err)}`.slice(
+                  0,
+                  300
+                )
+              }
+            };
         }
         let branch_deleted = false;
         const branch = state.branch ?? q.getSession.get(row.session_id)?.branch ?? null;
         if (body.delete_branch === true && branch) {
           if (inspected_tip == null) {
-            const deleted = await execFileP("git", ["-C", repo, "branch", "-D", branch], { timeout: 3e4 });
+            const deleted = await execFileP("git", ["-C", repo, "branch", "-D", branch], {
+              timeout: 3e4
+            });
             branch_deleted = deleted.ok;
           } else if (await branchTipOid(repo, branch) === inspected_tip) {
             const deleted = await execFileP(
@@ -7538,11 +7605,23 @@ function createWorktrees(ctx) {
             branch_deleted = deleted.ok;
           }
         }
-        if (worktreePathIsLive(row.worktree_path)) {
+        if (worktreePathIsLive(worktreePath)) {
           onMutate();
-          return { status: 200, body: { ok: true, removed: true, branch_deleted, rows_purged: 0, spawn_became_live: true, path: row.worktree_path } };
+          return {
+            status: 200,
+            body: {
+              ok: true,
+              removed: true,
+              branch_deleted,
+              rows_purged: 0,
+              spawn_became_live: true,
+              path: worktreePath
+            }
+          };
         }
-        const sessionIds = [...new Set(rows.map((candidate) => candidate.session_id).filter(Boolean))];
+        const sessionIds = [
+          ...new Set(rows.map((candidate) => candidate.session_id).filter(Boolean))
+        ];
         const now = Date.now();
         let spawnsPurged = 0;
         let sessionsPurged = 0;
@@ -7551,8 +7630,9 @@ function createWorktrees(ctx) {
             q.expireMailForSession.run(now, sessionId);
             q.expireQuestionsForSession.run(sessionId);
           }
-          spawnsPurged = Number(q.deleteWorktreeSpawns.run(row.worktree_path).changes);
-          for (const sessionId of sessionIds) sessionsPurged += Number(q.deleteEndedSession.run(sessionId).changes);
+          spawnsPurged = Number(q.deleteWorktreeSpawns.run(worktreePath).changes);
+          for (const sessionId of sessionIds)
+            sessionsPurged += Number(q.deleteEndedSession.run(sessionId).changes);
         };
         if (db2) {
           db2.exec("BEGIN IMMEDIATE");
@@ -7564,15 +7644,24 @@ function createWorktrees(ctx) {
               db2.exec("ROLLBACK");
             } catch {
             }
-            return { status: 500, body: { ok: false, reason: `could not purge worktree rows: ${err.message}` } };
+            const detail = err instanceof Error ? err.message : String(err);
+            return {
+              status: 500,
+              body: { ok: false, reason: `could not purge worktree rows: ${detail}` }
+            };
           }
         } else {
           purgeRows();
         }
         const rows_purged = spawnsPurged + sessionsPurged;
-        tick(`\u232B removed worktree ${row.worktree_path}${branch_deleted ? ` and branch ${branch}` : ""}`);
+        tick(
+          `\u232B removed worktree ${worktreePath}${branch_deleted && branch ? ` and branch ${branch}` : ""}`
+        );
         onMutate();
-        return { status: 200, body: { ok: true, removed: true, branch_deleted, rows_purged, path: row.worktree_path } };
+        return {
+          status: 200,
+          body: { ok: true, removed: true, branch_deleted, rows_purged, path: worktreePath }
+        };
       } finally {
         releaseCustody?.();
       }
