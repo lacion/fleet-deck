@@ -33,7 +33,7 @@ import { constants as fsConstants } from 'node:fs';
 import { link, open, rename, unlink } from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
 import path from 'node:path';
-import { MIN_TMUX_VERSION, tmuxVersionCapability } from '../../bin/tmux-version.mjs';
+import { MIN_TMUX_VERSION, tmuxVersionCapability } from '../../bin/tmux-version.ts';
 
 type Port = number | string;
 type TmuxResult =

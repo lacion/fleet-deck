@@ -54,8 +54,8 @@ const {
   MIN_NODE_RANGE, nodeVersionSupported,
   unitEscape, unitArg, unitEnvFilePath, quoteExecArg,
   healthIsOurManagedDaemon, healthPidIsOurDaemon,
-} = await import(new URL('../bin/fleetdeck.mjs', import.meta.url));
-const { parseTmuxVersion, tmuxVersionCapability, tmuxVersionSupported } = await import(new URL('../bin/tmux-version.mjs', import.meta.url));
+} = await import(new URL('../bin/fleetdeck.ts', import.meta.url));
+const { parseTmuxVersion, tmuxVersionCapability, tmuxVersionSupported } = await import(new URL('../bin/tmux-version.ts', import.meta.url));
 
 after(() => { try { fs.rmSync(TMP, { recursive: true, force: true }); } catch { /* best effort */ } });
 

@@ -26,16 +26,16 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'fleetdeck-serve-paths-'));
 
 after(() => { try { fs.rmSync(TMP, { recursive: true, force: true }); } catch { /* best effort */ } });
 
-// Lay out the shape `serve` resolves against: bin/fleetdeck.mjs (plus its
-// tmux-version.mjs import) and scripts/fleetd/fleetd.bundle.mjs, which takes
-// precedence over the source fallback exactly as in a packed install.
+// Lay out the shape `serve` resolves against: the built, self-contained
+// bin/fleetdeck.mjs artifact (esbuild has inlined tmux-version into it, so no
+// sibling source file is needed) and scripts/fleetd/fleetd.bundle.mjs, which
+// takes precedence over the source fallback exactly as in a packed install.
 function packFakeRuntime(prefix) {
   const bin = path.join(prefix, 'bin');
   const fleetdDir = path.join(prefix, 'scripts', 'fleetd');
   fs.mkdirSync(bin, { recursive: true });
   fs.mkdirSync(fleetdDir, { recursive: true });
   fs.copyFileSync(path.join(REPO, 'bin', 'fleetdeck.mjs'), path.join(bin, 'fleetdeck.mjs'));
-  fs.copyFileSync(path.join(REPO, 'bin', 'tmux-version.mjs'), path.join(bin, 'tmux-version.mjs'));
   fs.writeFileSync(path.join(fleetdDir, 'fleetd.bundle.mjs'), `process.stdout.write('FLEETD_LOADED\\\\n');\n`);
   return path.join(bin, 'fleetdeck.mjs');
 }
