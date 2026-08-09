@@ -1115,7 +1115,7 @@ correction to how `@types/node` types a `spawn`'d child — worth recording beca
   `const detail = err instanceof Error && err.message ? err.message : 'terminal open failed';`.
 - **Escape-sequence hazard (tooling, not TS).** The ESC bytes in `CLEAR_SCREEN` and the cursor-home init
   string were silently rewritten to literal ESC (0x1b) by the Write tool; caught with `grep … | cat -v` (showed
-  `^[`) and restored to the `` source form with perl. No behavior change, but the committed source now
+  `^[`) and restored to the `^[` source form with perl. No behavior change, but the committed source now
   reads as an escape, not a raw control byte.
 - **Typedefs added (no runtime effect):** `ControlEvent` discriminated union
   (`Response|Output|Exit|WindowClose|SessionChanged`), and the `Waiter`/`PaneStream`/`Client`/`Viewer`/
@@ -1213,7 +1213,7 @@ lint rules fire only now the file is type-linted (it was eslint-ignored as `.mjs
 hazard the migration has hit before.
 
 - **Escape/control-byte Write hazard — caught via `cat -v`, fixed with a raw perl edit.** `label()`'s two regex
-  literals — the DNS-label safety class `/[. -]/g` (strips dot/C0/DEL) and the truncated-multibyte
+  literals — the DNS-label safety class `/[.\x00-\x1f\x7f]/g` (strips dot/C0/DEL) and the truncated-multibyte
   strip `/�+$/` — were authored with `\uXXXX` escapes, but the JSON tool-arg layer DECODED those escapes into
   RAW control bytes (0x00, 0x1f, 0x7f) and the raw U+FFFD glyph inside the written file. Semantically identical to
   the original (the char class is still dot + C0 range + DEL; the strip is still U+FFFD), so behaviour and tests
@@ -1221,7 +1221,7 @@ hazard the migration has hit before.
   exactly why the original used escapes. Restored the escape form via `perl -i -pe` (raw Bash edits skip the
   formatter, and hex-match the bytes without typing them). Verified `cat -v` clean and `grep -aP` finds no raw
   C0/DEL/FFFD bytes remaining in either the source OR the regenerated bundle.
-- **`no-control-regex` — `label()`'s control-char class needs an explicit disable.** `/[. -]/g`
+- **`no-control-regex` — `label()`'s control-char class needs an explicit disable.** `/[.\x00-\x1f\x7f]/g`
   matches C0/DEL **on purpose** — that IS the gate that keeps control bytes off the DNS wire. As `.mjs` it was
   never linted; under the TS ruleset it takes a `// eslint-disable-next-line no-control-regex -- …purpose` line,
   the house pattern already in `settings.ts:44-46`, `exec.ts:260`, `mail.ts`, `repos.ts`. ESLint detects the
