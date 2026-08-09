@@ -3721,7 +3721,7 @@ import { fileURLToPath as fileURLToPath2 } from "node:url";
 // scripts/fleetd/db.mjs
 import { chmodSync, statSync } from "node:fs";
 
-// scripts/fleetd/sqlite.mjs
+// scripts/fleetd/sqlite.ts
 var makeHandle;
 if (process.versions.bun) {
   const { Database } = await import("bun:sqlite");
@@ -3730,9 +3730,15 @@ if (process.versions.bun) {
   const emitWarning = process.emitWarning;
   process.emitWarning = function fleetdSqliteWarningFilter(warning, type, ...args) {
     const name = warning instanceof Error ? warning.name : typeof type === "string" ? type : type?.type;
-    const message = warning instanceof Error ? warning.message : String(warning);
-    if (name === "ExperimentalWarning" && /^SQLite is an experimental feature\b/i.test(message)) return;
-    return emitWarning.call(this, warning, type, ...args);
+    const message = warning instanceof Error ? warning.message : warning;
+    if (name === "ExperimentalWarning" && /^SQLite is an experimental feature\b/i.test(message))
+      return;
+    emitWarning.call(
+      this,
+      warning,
+      type,
+      ...args
+    );
   };
   let DatabaseSync;
   try {
@@ -3753,7 +3759,7 @@ function wrap(handle) {
         run: (...params) => stmt.run(...params),
         get: (...params) => {
           const row = stmt.get(...params);
-          return row == null ? void 0 : row;
+          return row ?? void 0;
         },
         all: (...params) => stmt.all(...params)
       };

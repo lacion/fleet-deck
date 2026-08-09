@@ -783,7 +783,7 @@ test('restart reconciliation removes a spawn-owned worktree left by a spawn inte
 
   // Rewind the row into the exact shape a crash between worktree persistence
   // and pane launch would have left: 'provisioning', worktree_path set.
-  const { openDatabase } = await import('../scripts/fleetd/sqlite.mjs');
+  const { openDatabase } = await import('../scripts/fleetd/sqlite.ts');
   const db = openDatabase(path.join(home, 'fleetd.db'));
   try {
     db.prepare("UPDATE spawns SET status = 'provisioning' WHERE spawn_id = ?").run(spawnId);

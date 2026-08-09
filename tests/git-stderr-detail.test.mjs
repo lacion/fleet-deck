@@ -19,7 +19,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { openDatabase } from '../scripts/fleetd/sqlite.mjs';
+import { openDatabase } from '../scripts/fleetd/sqlite.ts';
 import { distillGitStderr, gitStderrDetail, redactGitText } from '../scripts/fleetd/exec.mjs';
 import { scrubUrlCredentials } from '../scripts/fleetd/payload-capture.mjs';
 import { openDb } from '../scripts/fleetd/db.mjs';

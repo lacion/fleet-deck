@@ -48,6 +48,39 @@ Format:
 
 <!-- entries appended below as modules convert -->
 
+### sqlite.ts — the store's foundational types + a monkey-patch the linter can't see is safe   [NOISE]
+- **What:** the runtime-agnostic driver seam. This is where the whole store's type
+  vocabulary is minted — `SqlValue` (a cell), `SqlRow = Record<string, SqlValue>`,
+  `SqlRunResult` (`{ changes, lastInsertRowid }` both `number | bigint`), the
+  caller-generic `SqliteStatement<R = SqlRow>`, and the wrapped `SqliteHandle` whose
+  `prepare<R>()` lets downstream layers assert a row shape at the query, not the driver.
+  Three lint findings surfaced, all ergonomic:
+  (1) `@typescript-eslint/unbound-method` on `const emitWarning = process.emitWarning`.
+  (2) `no-unnecessary-type-conversion` on `String(warning)` in the `warning instanceof Error ? … : String(warning)`
+  fallback. (3) `prefer-nullish-coalescing` on the `.get()` normalizer
+  `row == null ? undefined : row`.
+- **Why it's noise (not a bug):**
+  (1) The capture is the *point* — node:sqlite emits its lone `ExperimentalWarning` at
+  import, so the seam swaps `process.emitWarning` for a filter and must restore the
+  **exact original method object** in `finally`. A bound copy (`.bind(process)`, the rule's
+  usual escape) would silently change the global's identity and defeat any later re-patch
+  or identity check; the filter always forwards with the receiver preserved (`.call`), so
+  the "unbound `this`" the rule fears cannot happen. Suppressed with a `-- reason`.
+  (2) In the `else` branch `warning` is already narrowed to `string`; the `String()` the JS
+  carried defensively is provably a no-op. (3) `row == null ? undefined : row` **is**
+  `row ?? undefined` — both pin bun's `null` miss to Node's `undefined`, identically.
+- **Fix:** justified one-line `eslint-disable` on the capture; `String(warning)` → `warning`;
+  ternary → `row ?? undefined`. No runtime behavior moved.
+- **Bonus (seam validated, not a finding):** I wrote a structural `DriverHandle`/`DriverStatement`
+  (rows read back as `unknown`, not either driver's row type) and cast both driver
+  constructions to it. `eslint --fix` then **stripped both `as unknown as DriverHandle`
+  casts as unnecessary** — i.e. Node's `DatabaseSync` *and* bun's `Database` already satisfy
+  `DriverHandle` structurally, so the seam type is honest with zero coercion. It also
+  rewrote my `process.versions['bun']` → `.bun`: `bun-types` (pulled in by tsconfig
+  `types: ["node", "bun"]`) augments `NodeJS.ProcessVersions` with a real `bun: string`
+  key, so dot access is correct and `noPropertyAccessFromIndexSignature` is satisfied
+  without the bracket form the other leaves needed for `process.env[…]`.
+
 ### paste.ts — `??` would be WRONG here + `unknown`-catch errno + `process.env` index   [NOISE]
 - **What:** four surfaced on the pasted-image ingest leaf. (1) `prefer-nullish-coalescing`
   flagged ``process.env.FLEETDECK_HOME || path.join(…)`` and — after a first rewrite to a

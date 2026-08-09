@@ -1,10 +1,10 @@
 // db.mjs — SQLite store for fleetd (WAL mode). All timestamps are ms epoch
-// integers. The SQLite handle comes from ./sqlite.mjs, the one guarded seam that
+// integers. The SQLite handle comes from ./sqlite.ts, the one guarded seam that
 // picks node:sqlite or bun:sqlite by runtime (the ExperimentalWarning suppression
 // the Node driver needs now lives there); everything below is driver-agnostic.
 
 import { chmodSync, statSync } from 'node:fs';
-import { openDatabase } from './sqlite.mjs';
+import { openDatabase } from './sqlite.ts';
 
 const DDL = `
 PRAGMA busy_timeout = 5000;
