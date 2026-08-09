@@ -15,7 +15,7 @@ import { execFileP, baseBranch } from './exec.mjs';
 // stderr reaches a note or a response unscrubbed. Uniformity is the point: a
 // control applied to some git call sites and not others is read by the next
 // reader as an intentional posture rather than the gap it actually is.
-import { scrubUrlCredentials } from './payload-capture.mjs';
+import { scrubUrlCredentials } from './payload-capture.ts';
 
 // Pure path canonicalization (same rule as repo-identity.mjs canon()).
 function canonical(p) {

@@ -6,7 +6,7 @@
 // spawn module. spawnRowRevivable is a pure helper.
 
 import { spawnRowRevivable, sessionAdoptableNow } from './helpers.mjs';
-import { scrubUrlCredentials } from './payload-capture.mjs';
+import { scrubUrlCredentials } from './payload-capture.ts';
 // F1a: the /state + /ws envelope carries the wire schema version so a board on
 // an older build can detect skew. Imported from the shared TS contract (the
 // bundle inlines it; the engine floor runs the bundle). See ts-migration.md.

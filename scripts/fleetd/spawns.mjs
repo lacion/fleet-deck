@@ -14,7 +14,7 @@ import { deriveRepo, branchOf } from './repo-identity.ts';
 import { ticketFromBranch, animalOf } from './tickets.ts';
 import { claudeEnvArgvPrefix, claudeTranscriptPath, canonicalPathKey, SHELL_RE, NOT_RESUMABLE_END } from './helpers.mjs';
 import { execFileP, baseBranch } from './exec.mjs';
-import { redactDiagnosticText, scrubUrlCredentials } from './payload-capture.mjs';
+import { redactDiagnosticText, scrubUrlCredentials } from './payload-capture.ts';
 import { redactGitText } from './exec.mjs';
 
 export const SETUP_WRAPPER = [

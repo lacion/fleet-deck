@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { createPayloadCapture, redactDiagnosticText, scrubUrlCredentials } from '../scripts/fleetd/payload-capture.mjs';
+import { createPayloadCapture, redactDiagnosticText, scrubUrlCredentials } from '../scripts/fleetd/payload-capture.ts';
 
 function scratchHome(t) {
   const dir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-redact-'));

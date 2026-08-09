@@ -48,6 +48,45 @@ Format:
 
 <!-- entries appended below as modules convert -->
 
+### payload-capture.ts — a recursive `Json` projection type, and a dead defensive `String()` the honest contract exposed   [NOISE]
+- **What:** the 503-line redaction leaf — secret-*key* / secret-*value* / credentialed-*URL* scrubbing
+  (`isSecretKey`, `SECRET_VALUE_RES`, `maskCompactTokens`, the five `scrubUrlCredentials` layers) plus
+  the byte-budgeted, opt-in hook-payload capture (`boundedPayload`/`createPayloadCapture`). `tsc` +
+  type-aware `eslint` clean, **zero runtime move**. Three strict-typing notes worth recording.
+- **Why it's real / why it's noise:** NOISE — but note (2) is a genuine contract narrowing that the
+  checker + type-aware lint *forced into the open*, so it's the interesting one:
+  (1) **The bounded projection walker needs a recursive `Json` return type + two runtime-guard casts.**
+  `boundedPayload`/`visit` walk an `unknown` payload and emit a JSON-serializable value, so the return
+  type is `type Json = string | number | boolean | null | Json[] | { [k: string]: Json }`. Inside
+  `visit`, `noUncheckedIndexedAccess` + the `unknown` boundary can't carry element/value types through
+  the `Array.isArray` / `typeof === 'object'` guards, so the two branches take `current as unknown[]`
+  and `current as Record<string, unknown>` respectively. Pure ergonomics of maximal-strict on a
+  deliberately-dynamic walker.
+  (2) **`String(text ?? '')` in the two exported scrubbers was dead defense — a two-step lint cascade
+  proved it.** `redactDiagnosticText` / `scrubUrlCredentials` took an untyped param and coerced with
+  `String(text ?? '')`. With an `unknown` param, `text ?? ''` has type `{} | string`, and
+  `@typescript-eslint/no-base-to-string` flags it ("an object stringifies to `[object Object]`");
+  narrowing to the honest contract `string | null | undefined` makes `text ?? ''` a plain `string`, at
+  which point `@typescript-eslint/no-unnecessary-type-conversion` flags the `String()` as a no-op.
+  Both diagnostics are correct: for the real contract the `String()` was JS-era belt-and-suspenders.
+  Dropped it → `redactValue(text ?? '')` and `(text ?? '').replace(...)`.
+  - **VERIFIED behavior-identical across the live call domain, not just the happy path.** The *only*
+    inputs whose behavior `String()` changed are non-string, non-nullish values — it coerced them;
+    without it the downstream `.replace` would throw. Every real caller passes a `string`: the git exec
+    helper builds `.err` via `String(...)` in all three branches (`exec.mjs:56/90/94`), `snapshot.mjs`
+    guards `origin_url == null` before calling, and the `spawns`/`worktrees`/`exec` sites pass
+    `.join('\n')` or already-scrubbed stderr strings. Nullish is still absorbed by `?? ''`. So the
+    coercion was dead for the entire reachable domain; there is no throw regression. Going forward a TS
+    caller that passes a non-string is a **compile error** — the migration surfacing an unclean contract
+    instead of silently coercing it.
+  (3) **`NOOP = () => {}` tripped `no-empty-function`.** Added the rule's sanctioned escape — a comment
+    body (`/* capture disabled: swallow every call */`). This is the no-op returned by
+    `createPayloadCapture` when `FLEETDECK_CAPTURE_PAYLOADS` isn't `on`.
+- **Minor, folded in (no separate note):** `process.env['FLEETDECK_CAPTURE_PAYLOADS']` uses bracket
+  access (`noPropertyAccessFromIndexSignature`); `PayloadCaptureOptions.secrets: readonly unknown[]`
+  keeps the pre-existing defensive `secrets.filter((s): s is string => typeof s === 'string' && s.length > 0)`
+  live rather than dead, since the element type is genuinely `unknown` at the boundary.
+
 ### statements.ts — the row-shape vocabulary finally minted; a circular `ReturnType` the WeakMap forced   [NOISE]
 - **What:** the ~90-statement prepared-query map + the cached-UPDATE `updateSession` writer.
   This is the module `ledger.ts` and `plans.ts` each left a comment pointing at ("replaced by

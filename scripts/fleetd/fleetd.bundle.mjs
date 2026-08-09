@@ -5053,7 +5053,7 @@ import { execFileSync as execFileSync2, spawn as spawnChild } from "node:child_p
 // scripts/fleetd/exec.mjs
 import { execFile } from "node:child_process";
 
-// scripts/fleetd/payload-capture.mjs
+// scripts/fleetd/payload-capture.ts
 import fs3 from "node:fs";
 import path2 from "node:path";
 var MAX_FILE_BYTES = 1e6;
@@ -5064,7 +5064,7 @@ var NOOP = () => {
 var REDACTED = "[redacted]";
 var SECRET_KEY_RE = /(?:^|[_\-.])(token|secret|password|passwd|passphrase|api[_-]?key|apikey|auth(orization)?|bearer|cookie|credential|private[_-]?key|access[_-]?key|client[_-]?secret)s?(?:$|[_\-.])/i;
 function isSecretKey(key) {
-  const normalized = String(key).replace(/([a-z0-9])([A-Z])/g, "$1_$2").replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2");
+  const normalized = key.replace(/([a-z0-9])([A-Z])/g, "$1_$2").replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2");
   return SECRET_KEY_RE.test(normalized);
 }
 var SECRET_VALUE_RES = [
@@ -5165,7 +5165,7 @@ function redactValue(text) {
   return maskCompactTokens(out);
 }
 function redactDiagnosticText(text) {
-  return redactValue(String(text ?? ""));
+  return redactValue(text ?? "");
 }
 var URL_USERINFO_RE = /([a-z][a-z0-9+.-]{0,32}:\/\/)([^/?#\s]{0,512}@)/gi;
 var URL_USERINFO_SPACED_RE = /([a-z][a-z0-9+.-]{0,32}:\/\/)([^/?#\s]{0,256}:[^/?#\r\n]{0,4096}@)/gi;
@@ -5174,7 +5174,10 @@ var BARE_USERINFO_RE = /(^|[\s'"<([])([^\s:/@'"<>]{1,256}:[^\s/@'"<>]{1,512})@/g
 var URL_PARAM_RE = /([?&#][A-Za-z0-9_.-]{1,128}=)([^&\s'"<>]+)/g;
 var SECRET_PARAM_NAME_RE = /token|key|secret|password|passwd|passphrase|auth|credential|sig(?:nature)?|session/i;
 function scrubUrlCredentials(text) {
-  return String(text ?? "").replace(URL_USERINFO_RE, `$1${REDACTED}@`).replace(URL_USERINFO_SPACED_RE, `$1${REDACTED}@`).replace(URL_AUTHORITY_OVERLONG_RE, `$1${REDACTED}`).replace(BARE_USERINFO_RE, `$1${REDACTED}@`).replace(URL_PARAM_RE, (whole, name, value) => SECRET_PARAM_NAME_RE.test(name) ? `${name}${REDACTED}` : whole);
+  return (text ?? "").replace(URL_USERINFO_RE, `$1${REDACTED}@`).replace(URL_USERINFO_SPACED_RE, `$1${REDACTED}@`).replace(URL_AUTHORITY_OVERLONG_RE, `$1${REDACTED}`).replace(BARE_USERINFO_RE, `$1${REDACTED}@`).replace(
+    URL_PARAM_RE,
+    (whole, name) => SECRET_PARAM_NAME_RE.test(name) ? `${name}${REDACTED}` : whole
+  );
 }
 function boundedPayload(value, maxBytes) {
   let remaining = Math.max(0, maxBytes);
@@ -5183,7 +5186,8 @@ function boundedPayload(value, maxBytes) {
   function textWithinBudget(value2) {
     if (remaining <= 0) return marker;
     let out = String(value2).slice(0, remaining);
-    while (out && Buffer.byteLength(out) > remaining) out = out.slice(0, Math.floor(out.length * 0.75));
+    while (out && Buffer.byteLength(out) > remaining)
+      out = out.slice(0, Math.floor(out.length * 0.75));
     remaining -= Buffer.byteLength(out);
     const truncated = out.length < String(value2).length;
     out = scrubUrlCredentials(redactValue(out));
@@ -5192,28 +5196,31 @@ function boundedPayload(value, maxBytes) {
   function visit(current, depth = 0) {
     if (remaining <= 0) return marker;
     remaining -= 8;
-    if (current === null || typeof current === "boolean" || typeof current === "number") return current;
+    if (current === null || typeof current === "boolean" || typeof current === "number")
+      return current;
     if (typeof current === "string") return textWithinBudget(current);
     if (typeof current === "bigint") return textWithinBudget(current);
-    if (typeof current !== "object") return textWithinBudget(String(current));
+    if (typeof current !== "object") return textWithinBudget(current);
     if (depth >= 12) return "[max-depth]";
     if (seen.has(current)) return "[circular]";
     seen.add(current);
     if (Array.isArray(current)) {
+      const arr = current;
       const out2 = [];
-      for (let i = 0; i < current.length && remaining > 0; i++) out2.push(visit(current[i], depth + 1));
-      if (out2.length < current.length) out2.push(marker);
+      for (let i = 0; i < arr.length && remaining > 0; i++) out2.push(visit(arr[i], depth + 1));
+      if (out2.length < arr.length) out2.push(marker);
       return out2;
     }
+    const obj = current;
     const out = {};
-    for (const key in current) {
-      if (!Object.hasOwn(current, key) || remaining <= 0) continue;
+    for (const key in obj) {
+      if (!Object.hasOwn(obj, key) || remaining <= 0) continue;
       remaining -= Math.min(remaining, Buffer.byteLength(key) + 4);
       if (isSecretKey(key)) {
         out[key] = REDACTED;
         continue;
       }
-      out[key] = visit(current[key], depth + 1);
+      out[key] = visit(obj[key], depth + 1);
     }
     return out;
   }
@@ -5224,7 +5231,7 @@ function createPayloadCapture(homeDir, {
   maxPayloadBytes = MAX_PAYLOAD_BYTES,
   perEvent = PER_EVENT,
   secrets = [],
-  enabled = process.env.FLEETDECK_CAPTURE_PAYLOADS?.trim().toLowerCase() === "on"
+  enabled = process.env["FLEETDECK_CAPTURE_PAYLOADS"]?.trim().toLowerCase() === "on"
 } = {}) {
   if (!enabled) return NOOP;
   const exactSecrets = secrets.filter((s) => typeof s === "string" && s.length > 0);
@@ -5239,7 +5246,8 @@ function createPayloadCapture(homeDir, {
       if (!line.trim()) continue;
       try {
         const rec = JSON.parse(line);
-        if (rec?.event) counts.set(rec.event, (counts.get(rec.event) || 0) + 1);
+        const event = rec && typeof rec === "object" ? rec.event : void 0;
+        if (typeof event === "string" && event) counts.set(event, (counts.get(event) ?? 0) + 1);
       } catch {
       }
     }
@@ -5247,7 +5255,7 @@ function createPayloadCapture(homeDir, {
   }
   return function capture(event, payload) {
     try {
-      if (!event || (counts.get(event) || 0) >= perEvent) return;
+      if (!event || (counts.get(event) ?? 0) >= perEvent) return;
       let size = 0;
       try {
         size = fs3.statSync(file).size;
@@ -5272,7 +5280,7 @@ function createPayloadCapture(homeDir, {
         fs3.chmodSync(file, 384);
       } catch {
       }
-      counts.set(event, (counts.get(event) || 0) + 1);
+      counts.set(event, (counts.get(event) ?? 0) + 1);
     } catch {
     }
   };

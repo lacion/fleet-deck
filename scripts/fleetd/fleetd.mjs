@@ -18,7 +18,7 @@ import { openDb } from './db.ts';
 import { createCore } from './derive.mjs';
 import { createHttp, isLoopbackAddress, parseTrustedOrigins } from './http.mjs';
 import { startAgentsPoll } from './agents-poll.mjs';
-import { createPayloadCapture } from './payload-capture.mjs';
+import { createPayloadCapture } from './payload-capture.ts';
 import { createMdns, hostLabel } from './mdns.mjs';
 // HOME-ownership pid helpers now live in takeover.mjs (the version-takeover
 // contract), so the daemon's own claimHome lock and the SessionStart hook's

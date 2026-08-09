@@ -20,7 +20,7 @@ import { execFile } from 'node:child_process';
 // node:fs/node:path, so this stays acyclic). NOTHING added below runs a
 // subprocess, let alone a shell: the no-shell boundary declared above is a
 // security guarantee, and a richer diagnostic is never worth probing git for.
-import { redactDiagnosticText, scrubUrlCredentials } from './payload-capture.mjs';
+import { redactDiagnosticText, scrubUrlCredentials } from './payload-capture.ts';
 
 // Grace between the timeout's SIGTERM and the SIGKILL escalation below.
 // 1s is enough for tmux/git/agents-cli to exit cleanly on TERM, and bounds the
