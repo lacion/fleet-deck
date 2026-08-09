@@ -10552,10 +10552,20 @@ ${p.plan_md ?? ""}`;
   return { planMark, assignPlan };
 }
 
-// scripts/fleetd/spawns.mjs
+// scripts/fleetd/spawns.ts
 import fs11 from "node:fs";
 import path12 from "node:path";
 import { randomUUID as randomUUID2, randomBytes } from "node:crypto";
+function errStatus3(err) {
+  if (typeof err === "object" && err !== null && "status" in err) {
+    const status = err.status;
+    return typeof status === "number" ? status : void 0;
+  }
+  return void 0;
+}
+function errMessage4(err) {
+  return err instanceof Error && err.message ? err.message : String(err);
+}
 var SETUP_WRAPPER = [
   "cmd=$FLEETDECK_SETUP_CMD; unset FLEETDECK_SETUP_CMD",
   `printf '\u25B6 fleetdeck setup: %s\\n' "$cmd"`,
@@ -10569,7 +10579,8 @@ var STALL_DETAIL_MAX = 2e3;
 var STALL_DETAIL_LINES = 18;
 var SPAWN_REASON_MAX = 300;
 function spawnFailureReason(err, fallback = "internal error") {
-  const raw = String(err?.message ?? err ?? "").trim();
+  const source = err?.message ?? err ?? "";
+  const raw = String(source).trim();
   if (!raw) return fallback;
   const oneLine = redactGitText(raw.replace(/\r/g, "")).replace(/\n+/g, " ").trim();
   return oneLine.length > SPAWN_REASON_MAX ? oneLine.slice(0, SPAWN_REASON_MAX) : oneLine;
@@ -10650,11 +10661,11 @@ function createSpawns(ctx) {
     if (typeof token !== "string" || !armTokens.has(token)) return false;
     const exp = armTokens.get(token);
     armTokens.delete(token);
-    return exp > Date.now();
+    return (exp ?? 0) > Date.now();
   }
   function unsupervisedGate(skipPermissions, body) {
     if (!skipPermissions) return null;
-    if (consumeArm(body?.arm_token)) return null;
+    if (consumeArm(body.arm_token)) return null;
     return "unsupervised spawns require a fresh arm token from POST /api/spawn/arm-unsupervised \u2014 the API half of the board's two-step confirmation";
   }
   function gatewayDecision(wanted, source = "request") {
@@ -10673,11 +10684,11 @@ function createSpawns(ctx) {
     return "remote control is unavailable on a gateway-routed session \u2014 Claude Code disables it whenever ANTHROPIC_BASE_URL points at a non-Anthropic host. Spawn with gateway:false to use remote control, or remote_control:false to use the gateway.";
   }
   function spawnCapability() {
-    const base = { active: q.countActiveSpawns.get().n };
-    if (String(process.env.FLEETDECK_SPAWN ?? "").toLowerCase() === "off") {
+    const base = { active: q.countActiveSpawns.get()?.n ?? 0 };
+    if ((process.env["FLEETDECK_SPAWN"] ?? "").toLowerCase() === "off") {
       return { available: false, reason: "disabled (FLEETDECK_SPAWN=off)", ...base };
     }
-    if (tmuxAdapter.spawnOverrideCmd()) {
+    if (tmuxAdapter.spawnOverrideCmd?.()) {
       return { available: true, reason: "test-override", ...base };
     }
     if (!tmuxAdapter.hasTmux()) {
@@ -10710,19 +10721,21 @@ function createSpawns(ctx) {
       repo.worktree ?? null,
       col,
       note,
-      prompt ? String(prompt).slice(0, 80) : null,
+      prompt ? prompt.slice(0, 80) : null,
       now,
       now,
       source
     );
     if (ticket) updateSession(sid, { ticket, ticket_source: "branch" });
-    return q.getSession.get(sid);
+    const created = q.getSession.get(sid);
+    if (!created) throw new Error("spawned session vanished immediately after insert");
+    return created;
   }
   function spawnFailed(sid, callsign, reason) {
-    logEvent(sid, "SpawnFailed", null, String(reason).slice(0, 2e3));
+    logEvent(sid, "SpawnFailed", null, reason.slice(0, 2e3));
     tombstoneCard(sid, {
       note: `spawn failed: ${reason}`.slice(0, 200),
-      tickMsg: `\u2717 spawn failed for ${callsign}: ${String(reason).slice(0, 120)}`,
+      tickMsg: `\u2717 spawn failed for ${callsign}: ${reason.slice(0, 120)}`,
       forgetModel: true,
       mutate: true
     });
@@ -10730,11 +10743,11 @@ function createSpawns(ctx) {
   const TRUST_DIALOG_RE = /do you trust the files in this folder|trust this folder|trust the files|trust this workspace|quick safety check|new mcp server|mcp server.{0,40}(approve|allow|trust)|use this and all future mcp servers/i;
   const nudged = /* @__PURE__ */ new Set();
   function scheduleNudge(spawn_id, window, callsign) {
-    const t = setTimeout(async () => {
+    const nudge = async () => {
       try {
         if (nudged.has(spawn_id)) return;
         const row = q.getSpawn.get(spawn_id);
-        if (!row || row.status !== "spawning") return;
+        if (row?.status !== "spawning") return;
         const win = await findScopedWindow(window);
         if (win === null) return;
         if (!win || win.pane_dead) return;
@@ -10747,7 +10760,9 @@ function createSpawns(ctx) {
         }
         if (typeof screen !== "string" || screen.trim() === "") {
           logEvent(row.session_id, "SpawnNudge", null, "pane unreadable \u2014 bring-up Enter held");
-          updateSession(row.session_id, { note: "no bring-up keystroke sent \u2014 pane unreadable; check the terminal" });
+          updateSession(row.session_id, {
+            note: "no bring-up keystroke sent \u2014 pane unreadable; check the terminal"
+          });
           tick(`\u{1F512} ${callsign} needs a look \u2014 no bring-up keystroke sent`);
           onMutate();
           return;
@@ -10755,7 +10770,9 @@ function createSpawns(ctx) {
         const squashed = screen.replace(/\s+/g, " ");
         if (TRUST_DIALOG_RE.test(squashed)) {
           logEvent(row.session_id, "SpawnNudge", null, "trust/MCP dialog held for human approval");
-          updateSession(row.session_id, { note: "waiting on the folder-trust dialog \u2014 approve it in the terminal" });
+          updateSession(row.session_id, {
+            note: "waiting on the folder-trust dialog \u2014 approve it in the terminal"
+          });
           tick(`\u{1F512} ${callsign} waits on a trust dialog \u2014 approve it in the terminal`);
           onMutate();
           return;
@@ -10766,8 +10783,9 @@ function createSpawns(ctx) {
         onMutate();
       } catch {
       }
-    }, NUDGE_MS);
-    t.unref?.();
+    };
+    const t = setTimeout(() => void nudge(), NUDGE_MS);
+    t.unref();
   }
   const RC_URL_RE = /https:\/\/claude\.ai\/\S+/;
   const registrationRemoteHarvests = /* @__PURE__ */ new Map();
@@ -10808,17 +10826,19 @@ function createSpawns(ctx) {
     const row = q.getSpawn.get(spawn_id);
     if (!row) return { url: null };
     const win = await findScopedWindow(row.tmux_window);
-    if (!win || win === null || win.pane_dead) return { url: null };
+    if (!win || win.pane_dead) return { url: null };
     let text = null;
     try {
       text = await tmuxAdapter.capturePane(scopedPaneTarget(win));
     } catch {
     }
-    const url = typeof text === "string" ? text.match(RC_URL_RE)?.[0]?.replace(/[)\]}"'`.,;:]+$/, "") ?? null : null;
+    const url = typeof text === "string" ? RC_URL_RE.exec(text)?.[0]?.replace(/[)\]}"'`.,;:]+$/, "") ?? null : null;
     try {
       q.setSpawnRemote.run(url, spawn_id);
       const c = q.getSession.get(row.session_id);
-      tick(`\u{1F4F1} ${c?.callsign ?? row.callsign} remote control enabled${url ? "" : " (URL not found)"}`);
+      tick(
+        `\u{1F4F1} ${c?.callsign ?? row.callsign} remote control enabled${url ? "" : " (URL not found)"}`
+      );
       onMutate();
     } catch (err) {
       console.error("fleetd remote harvest persist error:", err);
@@ -10831,8 +10851,13 @@ function createSpawns(ctx) {
     }
     let timer;
     const promise = new Promise((resolve) => {
-      timer = setTimeout(() => harvestRemote(spawn_id).then(resolve, () => resolve({ url: null })), RC_HARVEST_MS);
-      timer.unref?.();
+      timer = setTimeout(
+        () => void harvestRemote(spawn_id).then(resolve, () => {
+          resolve({ url: null });
+        }),
+        RC_HARVEST_MS
+      );
+      timer.unref();
     });
     return promise;
   }
@@ -10857,10 +10882,10 @@ function createSpawns(ctx) {
       try {
         killed = await tmuxAdapter.killWindowVerified(tmux_window);
       } catch (err) {
-        killed = { ok: false, error: String(err?.message || err) };
+        killed = { ok: false, error: errMessage4(err) };
       }
-      if (!killed?.ok && !killed?.gone) {
-        const cleanupError = killed?.error || "tmux pane cleanup could not be verified";
+      if (!killed.ok && !killed.gone) {
+        const cleanupError = killed.error ?? "tmux pane cleanup could not be verified";
         q.setSpawnStatus.run("stalled", spawn_id);
         spawnFailed(session_id, callsign, `${reason}; cleanup unresolved: ${cleanupError}`);
         return { resolved: false, error: cleanupError };
@@ -10868,7 +10893,11 @@ function createSpawns(ctx) {
     }
     if (worktree_path && created.worktree) {
       try {
-        const rm = await execFileP("git", ["-C", cwd, "worktree", "remove", "--force", worktree_path], { timeout: 3e4 });
+        const rm = await execFileP(
+          "git",
+          ["-C", cwd, "worktree", "remove", "--force", worktree_path],
+          { timeout: 3e4 }
+        );
         if (!rm.ok) {
           try {
             fs11.rmSync(worktree_path, { recursive: true, force: true });
@@ -10905,20 +10934,21 @@ function createSpawns(ctx) {
     gatewayEnv = null,
     created = { clone: false, worktree: !!worktree_path }
   }) {
-    const kind = body?.kind ?? "claude";
-    const setupCmd = body?.setup_cmd ?? null;
+    const kind = body.kind ?? "claude";
+    const setupCmd = body.setup_cmd ?? null;
     const launchEnv = {
-      ...gatewayEnv || {},
+      ...gatewayEnv ?? {},
       ...setupCmd ? { FLEETDECK_SETUP_CMD: setupCmd } : {}
     };
     const launchEnvOrNull = Object.keys(launchEnv).length ? launchEnv : null;
     const claudeArgv = ["claude", "--session-id", session_id];
-    if (body?.model) claudeArgv.push("--model", body.model);
-    if (body?.permission_mode) claudeArgv.push("--permission-mode", body.permission_mode);
-    if (body?.dangerously_skip_permissions === true) claudeArgv.push("--dangerously-skip-permissions");
-    if (body?.remote_control === true) claudeArgv.push("--remote-control", callsign);
-    if (body?.prompt) claudeArgv.push("--", body.prompt);
-    const shellBin = (process.env.SHELL || "").trim() || (fs11.existsSync("/bin/bash") ? "bash" : "sh");
+    if (body.model) claudeArgv.push("--model", body.model);
+    if (body.permission_mode) claudeArgv.push("--permission-mode", body.permission_mode);
+    if (body.dangerously_skip_permissions === true)
+      claudeArgv.push("--dangerously-skip-permissions");
+    if (body.remote_control === true) claudeArgv.push("--remote-control", callsign);
+    if (body.prompt) claudeArgv.push("--", body.prompt);
+    const shellBin = (process.env["SHELL"] ?? "").trim() || (fs11.existsSync("/bin/bash") ? "bash" : "sh");
     const argv = kind === "shell" ? [...claudeEnvArgvPrefix(port, home), shellBin] : setupCmd ? [
       ...claudeEnvArgvPrefix(port, home, { keep: Object.keys(launchEnv) }),
       "sh",
@@ -10927,7 +10957,9 @@ function createSpawns(ctx) {
       "fleetdeck-setup",
       ...claudeArgv
     ] : [
-      ...claudeEnvArgvPrefix(port, home, { keep: gatewayEnv ? Object.keys(gatewayEnv) : [] }),
+      ...claudeEnvArgvPrefix(port, home, {
+        keep: gatewayEnv ? Object.keys(gatewayEnv) : []
+      }),
       ...claudeArgv
     ];
     const compensate = (reason) => spawnCompensate({
@@ -10940,7 +10972,7 @@ function createSpawns(ctx) {
       reason,
       created
     });
-    const override = tmuxAdapter.spawnOverrideCmd();
+    const override = tmuxAdapter.spawnOverrideCmd?.();
     if (override) {
       const spec = {
         spawn_id,
@@ -10949,15 +10981,15 @@ function createSpawns(ctx) {
         port,
         cwd: runCwd,
         requested_cwd: requestedCwd,
-        prompt: body?.prompt ?? null,
-        model: body?.model ?? null,
-        permission_mode: body?.permission_mode ?? null,
+        prompt: body.prompt ?? null,
+        model: body.model ?? null,
+        permission_mode: body.permission_mode ?? null,
         worktree_path,
         kind,
         setup_cmd: setupCmd,
-        dangerously_skip_permissions: body?.dangerously_skip_permissions === true,
+        dangerously_skip_permissions: body.dangerously_skip_permissions === true,
         skip_permissions: skipPermissions,
-        remote_control: body?.remote_control === true,
+        remote_control: body.remote_control === true,
         gateway: !!gatewayEnv,
         // The fixture receives the gateway environment VERBATIM, credential
         // included, because the only way to prove the routing actually reaches a
@@ -10972,26 +11004,44 @@ function createSpawns(ctx) {
         tmux: { session: tmux_session, window: tmux_window },
         argv
       };
-      tmuxAdapter.launchOverride(override, spec, (err) => compensate(`spawn override: ${err.message || err}`).catch(() => {
-      }));
+      tmuxAdapter.launchOverride(
+        override,
+        spec,
+        (err) => void compensate(`spawn override: ${errMessage4(err)}`).catch(() => {
+        })
+      );
     } else {
       try {
         await tmuxAdapter.ensureSession(port);
         await tmuxAdapter.newWindow({ port, callsign, cwd: runCwd, argv, env: launchEnvOrNull });
       } catch (err) {
-        const cleanup = await compensate(String(err.message || err));
-        const unresolved = cleanup?.resolved === false ? `; cleanup unresolved: ${cleanup.error}` : "";
-        return { status: 500, body: { ok: false, reason: `tmux spawn failed: ${err.message || err}${unresolved}` } };
+        const cleanup = await compensate(errMessage4(err));
+        const unresolved = !cleanup.resolved ? `; cleanup unresolved: ${cleanup.error}` : "";
+        return {
+          status: 500,
+          body: { ok: false, reason: `tmux spawn failed: ${errMessage4(err)}${unresolved}` }
+        };
       }
     }
     q.setSpawnStatus.run(kind === "shell" ? "live" : "spawning", spawn_id);
-    updateSession(session_id, kind === "shell" ? { col: "idle", note: "shell" } : { note: "spawning\u2026" });
-    tick(`${kind === "shell" ? "\u2328" : "\u{1F680}"} spawned ${callsign} \u2014 tmux window ${tmux_window}${skipPermissions ? " (unsupervised)" : ""}${gatewayEnv ? " (gateway)" : ""}`);
+    updateSession(
+      session_id,
+      kind === "shell" ? { col: "idle", note: "shell" } : { note: "spawning\u2026" }
+    );
+    tick(
+      `${kind === "shell" ? "\u2328" : "\u{1F680}"} spawned ${callsign} \u2014 tmux window ${tmux_window}${skipPermissions ? " (unsupervised)" : ""}${gatewayEnv ? " (gateway)" : ""}`
+    );
     if (kind !== "shell") scheduleNudge(spawn_id, tmux_window, callsign);
     onMutate();
     return {
       status: 200,
-      body: { ok: true, spawn_id, session_id, callsign, tmux: { session: tmux_session, window: tmux_window } }
+      body: {
+        ok: true,
+        spawn_id,
+        session_id,
+        callsign,
+        tmux: { session: tmux_session, window: tmux_window }
+      }
     };
   }
   async function spawn3(body) {
@@ -10999,63 +11049,93 @@ function createSpawns(ctx) {
     if (!cap.available) {
       return { status: 400, body: { ok: false, reason: `spawning unavailable: ${cap.reason}` } };
     }
-    const kind = body?.kind ?? "claude";
+    const kind = body.kind ?? "claude";
     if (kind !== "claude" && kind !== "shell") {
       return { status: 400, body: { ok: false, reason: "kind must be 'claude' or 'shell'" } };
     }
-    for (const k of ["cwd", "repo", "branch", "branch_mode", "prompt", "model", "permission_mode", "repo_host", "repo_transport", "repo_org"]) {
-      if (body?.[k] != null && typeof body[k] !== "string") {
+    for (const k of [
+      "cwd",
+      "repo",
+      "branch",
+      "branch_mode",
+      "prompt",
+      "model",
+      "permission_mode",
+      "repo_host",
+      "repo_transport",
+      "repo_org"
+    ]) {
+      if (body[k] != null && typeof body[k] !== "string") {
         return { status: 400, body: { ok: false, reason: `${k} must be a string` } };
       }
     }
-    if (body?.repo_host != null) {
+    if (body.repo_host != null) {
       if (body.repo_host !== "github" && body.repo_host !== "gitlab") {
         return { status: 400, body: { ok: false, reason: "repo_host must be github or gitlab" } };
       }
-      if (body?.repo == null) {
+      if (body.repo == null) {
         return { status: 400, body: { ok: false, reason: "repo_host requires repo" } };
       }
     }
-    if (body?.repo_transport != null) {
+    if (body.repo_transport != null) {
       if (body.repo_transport !== "ssh" && body.repo_transport !== "https") {
         return { status: 400, body: { ok: false, reason: "repo_transport must be ssh or https" } };
       }
-      if (body?.repo == null) {
+      if (body.repo == null) {
         return { status: 400, body: { ok: false, reason: "repo_transport requires repo" } };
       }
     }
-    if (body?.repo_org != null) {
-      if (body?.repo == null) return { status: 400, body: { ok: false, reason: "repo_org requires repo" } };
+    if (body.repo_org != null) {
+      if (body.repo == null)
+        return { status: 400, body: { ok: false, reason: "repo_org requires repo" } };
       try {
         validateRepoDefaultOrg(body.repo_org);
       } catch (err) {
-        return { status: err.status || 400, body: { ok: false, reason: err.message || String(err) } };
+        return {
+          status: errStatus3(err) ?? 400,
+          body: { ok: false, reason: errMessage4(err) }
+        };
       }
     }
-    if (body?.worktree != null && typeof body.worktree !== "boolean") {
+    if (body.worktree != null && typeof body.worktree !== "boolean") {
       return { status: 400, body: { ok: false, reason: "worktree must be a boolean" } };
     }
-    if (body?.dangerously_skip_permissions != null && typeof body.dangerously_skip_permissions !== "boolean") {
-      return { status: 400, body: { ok: false, reason: "dangerously_skip_permissions must be a boolean" } };
+    if (body.dangerously_skip_permissions != null && typeof body.dangerously_skip_permissions !== "boolean") {
+      return {
+        status: 400,
+        body: { ok: false, reason: "dangerously_skip_permissions must be a boolean" }
+      };
     }
-    if (body?.remote_control != null && typeof body.remote_control !== "boolean") {
+    if (body.remote_control != null && typeof body.remote_control !== "boolean") {
       return { status: 400, body: { ok: false, reason: "remote_control must be a boolean" } };
     }
-    if (body?.gateway != null && typeof body.gateway !== "boolean") {
+    if (body.gateway != null && typeof body.gateway !== "boolean") {
       return { status: 400, body: { ok: false, reason: "gateway must be a boolean" } };
     }
-    if (body?.arm_token != null && typeof body.arm_token !== "string") {
+    if (body.arm_token != null && typeof body.arm_token !== "string") {
       return { status: 400, body: { ok: false, reason: "arm_token must be a string" } };
     }
-    if (body?.setup_cmd != null) {
+    if (body.setup_cmd != null) {
       if (typeof body.setup_cmd !== "string") {
         return { status: 400, body: { ok: false, reason: "setup_cmd must be a string" } };
       }
       if (body.setup_cmd.length > SETUP_CMD_MAX2) {
-        return { status: 400, body: { ok: false, reason: `setup_cmd must be ${SETUP_CMD_MAX2} characters or fewer \u2014 got ${body.setup_cmd.length}` } };
+        return {
+          status: 400,
+          body: {
+            ok: false,
+            reason: `setup_cmd must be ${SETUP_CMD_MAX2} characters or fewer \u2014 got ${body.setup_cmd.length}`
+          }
+        };
       }
       if (SETUP_CONTROL_RE2.test(body.setup_cmd)) {
-        return { status: 400, body: { ok: false, reason: "setup_cmd must not contain NUL or control characters other than newline" } };
+        return {
+          status: 400,
+          body: {
+            ok: false,
+            reason: "setup_cmd must not contain NUL or control characters other than newline"
+          }
+        };
       }
     }
     if (kind === "shell") {
@@ -11075,39 +11155,45 @@ function createSpawns(ctx) {
         "arm_token",
         "setup_cmd",
         "plan_id"
-      ].find((k) => body?.[k] != null);
-      if (forbidden || body?.worktree === true) {
-        const field = forbidden || "worktree";
+      ].find((k) => body[k] != null);
+      if (forbidden || body.worktree === true) {
+        const field = forbidden ?? "worktree";
         return {
           status: 400,
-          body: { ok: false, reason: `shell sessions are cwd-only; ${field} is a Claude-only field` }
+          body: {
+            ok: false,
+            reason: `shell sessions are cwd-only; ${field} is a Claude-only field`
+          }
         };
       }
     }
-    const gateway = kind === "shell" ? { use: false, env: null } : gatewayDecision(body?.gateway);
+    const gateway = kind === "shell" ? { use: false, env: null } : gatewayDecision(body.gateway);
     if (gateway.error) return { status: 400, body: { ok: false, reason: gateway.error } };
-    const rcConflict = gatewayRemoteConflict(gateway.use, body?.remote_control === true);
+    const rcConflict = gatewayRemoteConflict(gateway.use, body.remote_control === true);
     if (rcConflict) return { status: 400, body: { ok: false, reason: rcConflict } };
-    const hasRepo = body?.repo != null;
-    const hasCwd = body?.cwd != null;
+    const hasRepo = body.repo != null;
+    const hasCwd = body.cwd != null;
     if (hasRepo && hasCwd) {
       return { status: 400, body: { ok: false, reason: "provide either cwd or repo, not both" } };
     }
     const PERMISSION_MODES2 = /* @__PURE__ */ new Set(["default", "acceptedits", "plan", "bypasspermissions"]);
-    if (body?.permission_mode != null) {
-      const lower = String(body.permission_mode).toLowerCase();
+    if (body.permission_mode != null) {
+      const lower = body.permission_mode.toLowerCase();
       if (!PERMISSION_MODES2.has(lower)) {
-        return { status: 400, body: { ok: false, reason: `unknown permission_mode '${body.permission_mode}'` } };
+        return {
+          status: 400,
+          body: { ok: false, reason: `unknown permission_mode '${body.permission_mode}'` }
+        };
       }
       if (lower === "bypasspermissions" && body.permission_mode !== "bypassPermissions") {
         body = { ...body, permission_mode: "bypassPermissions" };
       }
     }
-    const skipPermissions = body?.dangerously_skip_permissions === true || typeof body?.permission_mode === "string" && body.permission_mode.toLowerCase() === "bypasspermissions";
+    const skipPermissions = body.dangerously_skip_permissions === true || typeof body.permission_mode === "string" && body.permission_mode.toLowerCase() === "bypasspermissions";
     const armRefusal = unsupervisedGate(skipPermissions, body);
     if (armRefusal) return { status: 403, body: { ok: false, reason: armRefusal } };
     let planClaim = null;
-    if (body?.plan_id != null) {
+    if (body.plan_id != null) {
       const pid = Number(body.plan_id);
       if (!Number.isInteger(pid) || pid < 1) {
         return { status: 400, body: { ok: false, reason: "plan_id must be a positive integer" } };
@@ -11117,10 +11203,18 @@ function createSpawns(ctx) {
       const via = `spawn:${randomUUID2().slice(0, 8)}`;
       const r = q.claimPlanExecution.run(via, pid);
       if (r.changes !== 1) {
-        return { status: 409, body: { ok: false, reason: `plan #${pid} is ${plan.status} \u2014 already executed or not executable` } };
+        return {
+          status: 409,
+          body: {
+            ok: false,
+            reason: `plan #${pid} is ${plan.status} \u2014 already executed or not executable`
+          }
+        };
       }
       planClaim = { plan_id: pid, restoreStatus: plan.status, via };
-      tick(`\u{1F4DA} plan #${pid} execution claimed by spawn${plan.callsign ? ` (planned by ${plan.callsign})` : ""}`);
+      tick(
+        `\u{1F4DA} plan #${pid} execution claimed by spawn${plan.callsign ? ` (planned by ${plan.callsign})` : ""}`
+      );
       if (plan.question_id != null) {
         const qq = ctx.questions?.dismiss?.(plan.question_id, { activity: true });
         if (qq?.ok && !qq.already) {
@@ -11131,7 +11225,9 @@ function createSpawns(ctx) {
     const releasePlanClaim = () => {
       if (!planClaim) return;
       q.releasePlanExecution.run(planClaim.restoreStatus, planClaim.plan_id, planClaim.via);
-      tick(`\u{1F4DA} plan #${planClaim.plan_id} execution claim released (spawn failed) \u2014 back to ${planClaim.restoreStatus}`);
+      tick(
+        `\u{1F4DA} plan #${planClaim.plan_id} execution claim released (spawn failed) \u2014 back to ${planClaim.restoreStatus}`
+      );
       onMutate();
       planClaim = null;
     };
@@ -11144,32 +11240,48 @@ function createSpawns(ctx) {
       }
     };
     if (hasRepo) {
-      if (body?.worktree === true) {
-        return { status: 400, body: { ok: false, reason: "branch_mode replaces worktree in repo mode" } };
+      if (body.worktree === true) {
+        return {
+          status: 400,
+          body: { ok: false, reason: "branch_mode replaces worktree in repo mode" }
+        };
       }
-      if (!body.branch) return { status: 400, body: { ok: false, reason: "branch is required in repo mode" } };
+      if (!body.branch)
+        return { status: 400, body: { ok: false, reason: "branch is required in repo mode" } };
       const branchMode = body.branch_mode ?? "worktree";
       if (!["worktree", "in-place"].includes(branchMode)) {
-        return { status: 400, body: { ok: false, reason: "branch_mode must be worktree or in-place" } };
+        return {
+          status: 400,
+          body: { ok: false, reason: "branch_mode must be worktree or in-place" }
+        };
       }
       try {
         await validateBranch(body.branch);
       } catch (err) {
         releasePlanClaim();
-        return { status: 400, body: { ok: false, reason: err.message || String(err) } };
+        return { status: 400, body: { ok: false, reason: errMessage4(err) } };
       }
       let target;
       try {
         target = await resolveTarget(body);
       } catch (err) {
         releasePlanClaim();
-        return { status: err.status || 400, body: { ok: false, reason: err.message || String(err) } };
+        return {
+          status: errStatus3(err) ?? 400,
+          body: { ok: false, reason: errMessage4(err) }
+        };
       }
       const targetPath = target.mode === "clone" ? target.dest : target.root;
       const owner = targetOwner(targetPath);
       if (owner) {
         releasePlanClaim();
-        return { status: 409, body: { ok: false, reason: `${path12.resolve(targetPath)} is already being provisioned by ${owner}` } };
+        return {
+          status: 409,
+          body: {
+            ok: false,
+            reason: `${path12.resolve(targetPath)} is already being provisioned by ${owner}`
+          }
+        };
       }
       let releaseCloneSlot = () => {
       };
@@ -11178,7 +11290,10 @@ function createSpawns(ctx) {
           releaseCloneSlot = reserveCloneSlot();
         } catch (err) {
           releasePlanClaim();
-          return { status: err.status || 429, body: { ok: false, reason: err.message || String(err) } };
+          return {
+            status: errStatus3(err) ?? 429,
+            body: { ok: false, reason: errMessage4(err) }
+          };
         }
       }
       let settingChanged = false;
@@ -11196,7 +11311,7 @@ function createSpawns(ctx) {
       const initialNote = target.mode === "clone" ? `cloning ${target.repo_name}\u2026` : `preparing ${body.branch}\u2026`;
       let c2;
       try {
-        c2 = createSpawnedCard(session_id2, targetPath, body?.prompt, {
+        c2 = createSpawnedCard(session_id2, targetPath, body.prompt, {
           repo_name: target.repo_name,
           branch: body.branch,
           note: initialNote
@@ -11206,10 +11321,14 @@ function createSpawns(ctx) {
         releasePlanClaim();
         return {
           status: 500,
-          body: { ok: false, reason: `could not create the spawn card: ${spawnFailureReason(err)}` }
+          body: {
+            ok: false,
+            reason: `could not create the spawn card: ${spawnFailureReason(err)}`
+          }
         };
       }
       const callsign2 = c2.callsign;
+      if (callsign2 == null) throw new Error("spawned card is missing its callsign");
       const releaseTarget = claimTarget(targetPath, callsign2);
       const tmux_session2 = tmuxAdapter.sessionName(port);
       const tmux_window2 = tmuxAdapter.windowName(port, callsign2);
@@ -11223,24 +11342,28 @@ function createSpawns(ctx) {
         null,
         Date.now(),
         skipPermissions ? 1 : 0,
-        body?.remote_control === true ? 1 : 0,
+        body.remote_control === true ? 1 : 0,
         target.origin_url ?? null,
         body.branch,
         branchMode,
         gateway.use ? 1 : 0,
         kind,
-        body?.setup_cmd || null
+        body.setup_cmd ?? null
       );
       const finishMaterialization = async (materialized, source) => {
         const worktree_path2 = branchMode === "worktree" ? materialized.runCwd : null;
-        if (worktree_path2) q.setSpawnWorktree.run(worktree_path2, materialized.created.worktree ? 1 : 0, spawn_id2);
+        if (worktree_path2)
+          q.setSpawnWorktree.run(worktree_path2, materialized.created.worktree ? 1 : 0, spawn_id2);
         const repo = deriveRepo(materialized.runCwd);
         updateSession(session_id2, {
           cwd: materialized.runCwd,
           repo_id: repo.repo_id,
           repo_name: repo.repo_name,
           worktree: repo.worktree,
-          branch: branchOf(materialized.runCwd, { fresh: true }) ?? body.branch
+          // updateSession coerces every value through `?? null` at bind time, so
+          // an absent body.branch (undefined) already becomes NULL there — spell
+          // it here to satisfy SqlValue without changing what SQLite stores.
+          branch: branchOf(materialized.runCwd, { fresh: true }) ?? body.branch ?? null
         });
         const defaultRef = await baseBranch(target.mode === "clone" ? target.dest : target.root);
         touchRepo({
@@ -11248,7 +11371,7 @@ function createSpawns(ctx) {
           repo_name: repo.repo_name,
           root: repo.main_tree,
           origin_url: target.origin_url ?? null,
-          default_branch: defaultRef?.ref?.replace(/^origin\//, "") ?? null,
+          default_branch: defaultRef?.ref.replace(/^origin\//, "") ?? null,
           source
         });
         return worktree_path2;
@@ -11274,11 +11397,14 @@ function createSpawns(ctx) {
               cwd: target.root,
               worktree_path: null,
               tmux_window: null,
-              reason: err.message || String(err),
+              reason: errMessage4(err),
               created: { clone: false, worktree: false }
             });
             releasePlanClaim();
-            return { status: err.status || 409, body: { ok: false, reason: err.message || String(err) } };
+            return {
+              status: errStatus3(err) ?? 409,
+              body: { ok: false, reason: errMessage4(err) }
+            };
           }
           worktree_path2 = branchMode === "worktree" ? materialized.runCwd : null;
           try {
@@ -11307,7 +11433,7 @@ function createSpawns(ctx) {
             }
             return out2;
           } catch (err) {
-            const reason = branchMode === "in-place" ? `${err.message || String(err)} \u2014 ${path12.basename(target.root)} was left switched to ${body.branch}` : err.message || String(err);
+            const reason = branchMode === "in-place" ? `${errMessage4(err)} \u2014 ${path12.basename(target.root)} was left switched to ${body.branch}` : errMessage4(err);
             await spawnCompensate({
               spawn_id: spawn_id2,
               session_id: session_id2,
@@ -11319,7 +11445,7 @@ function createSpawns(ctx) {
               created: materialized.created
             });
             releasePlanClaim();
-            return { status: err.status || 409, body: { ok: false, reason } };
+            return { status: errStatus3(err) ?? 409, body: { ok: false, reason } };
           }
         } finally {
           releaseTarget();
@@ -11367,7 +11493,7 @@ function createSpawns(ctx) {
             onMutate();
           }
         } catch (err) {
-          const reason = branchMode === "in-place" && created.clone ? `${err.message || String(err)} \u2014 ${path12.basename(target.dest)} was left switched to ${body.branch}` : err.message || String(err);
+          const reason = branchMode === "in-place" && created.clone ? `${errMessage4(err)} \u2014 ${path12.basename(target.dest)} was left switched to ${body.branch}` : errMessage4(err);
           await spawnCompensate({
             spawn_id: spawn_id2,
             session_id: session_id2,
@@ -11383,7 +11509,9 @@ function createSpawns(ctx) {
           releaseCloneSlot();
           releaseTarget();
         }
-      }).catch((err) => console.error("fleetd detached repo provisioning error:", err));
+      }).catch((err) => {
+        console.error("fleetd detached repo provisioning error:", err);
+      });
       return {
         status: 202,
         body: {
@@ -11397,7 +11525,7 @@ function createSpawns(ctx) {
         }
       };
     }
-    const cwd = body?.cwd || "";
+    const cwd = body.cwd ?? "";
     let st = null;
     try {
       st = fs11.statSync(cwd);
@@ -11407,9 +11535,12 @@ function createSpawns(ctx) {
       releasePlanClaim();
       return { status: 400, body: { ok: false, reason: "cwd missing or not a directory" } };
     }
-    if (body?.worktree === true && !deriveRepo(cwd).is_git) {
+    if (body.worktree === true && !deriveRepo(cwd).is_git) {
       releasePlanClaim();
-      return { status: 409, body: { ok: false, reason: "cwd is not a git repository \u2014 cannot spawn into a worktree" } };
+      return {
+        status: 409,
+        body: { ok: false, reason: "cwd is not a git repository \u2014 cannot spawn into a worktree" }
+      };
     }
     const session_id = randomUUID2();
     const spawn_id = randomUUID2();
@@ -11418,8 +11549,9 @@ function createSpawns(ctx) {
       source: "shell",
       col: "idle",
       note: "shell"
-    }) : createSpawnedCard(session_id, cwd, body?.prompt);
+    }) : createSpawnedCard(session_id, cwd, body.prompt);
     const callsign = c.callsign;
+    if (callsign == null) throw new Error("spawned card is missing its callsign");
     const tmux_session = tmuxAdapter.sessionName(port);
     const tmux_window = tmuxAdapter.windowName(port, callsign);
     q.insertProvisionalSpawn.run(
@@ -11432,26 +11564,34 @@ function createSpawns(ctx) {
       null,
       Date.now(),
       skipPermissions ? 1 : 0,
-      body?.remote_control === true ? 1 : 0,
+      body.remote_control === true ? 1 : 0,
       null,
       null,
       null,
       gateway.use ? 1 : 0,
       kind,
-      body?.setup_cmd || null
+      body.setup_cmd ?? null
     );
     let worktree_path = null;
-    if (body?.worktree === true) {
-      const ticketNamed = c.ticket && String(callsign).endsWith(`-${c.ticket}`);
+    if (body.worktree === true) {
+      const ticketNamed = c.ticket && callsign.endsWith(`-${c.ticket}`);
       const baseName = ticketNamed ? `${c.ticket}-${animalOf(callsign)}` : callsign;
       const pathFor = (name) => path12.join(path12.dirname(cwd), `${path12.basename(cwd)}--fd-${name}`);
       const dedup = `${baseName}-${session_id.slice(0, 4)}`;
       const names = fs11.existsSync(pathFor(baseName)) ? [dedup] : [baseName, dedup];
-      let candidate;
-      let result;
+      let candidate = "";
+      let result = { ok: false, err: "" };
       for (const workname of names) {
         candidate = pathFor(workname);
-        result = await execFileP("git", ["-C", cwd, "worktree", "add", "-b", `fd/${workname}`, candidate]);
+        result = await execFileP("git", [
+          "-C",
+          cwd,
+          "worktree",
+          "add",
+          "-b",
+          `fd/${workname}`,
+          candidate
+        ]);
         if (result.ok) break;
       }
       worktree_path = candidate;
@@ -11467,7 +11607,10 @@ function createSpawns(ctx) {
           reason: `git worktree add: ${addErr}`
         });
         releasePlanClaim();
-        return { status: 409, body: { ok: false, reason: `git worktree add failed: ${addErr}`.slice(0, 300) } };
+        return {
+          status: 409,
+          body: { ok: false, reason: `git worktree add failed: ${addErr}`.slice(0, 300) }
+        };
       }
       q.setSpawnWorktree.run(worktree_path, 1, spawn_id);
       const repo = deriveRepo(worktree_path);
@@ -11505,38 +11648,51 @@ function createSpawns(ctx) {
     const row = q.getSpawn.get(spawn_id);
     if (!row) return { status: 404, body: { ok: false, reason: "no such spawn" } };
     if (row.kind === "shell") {
-      return { status: 410, body: { ok: false, reason: "shell sessions have no conversation to resume" } };
+      return {
+        status: 410,
+        body: { ok: false, reason: "shell sessions have no conversation to resume" }
+      };
     }
     if (!["pane-dead", "killed", "gone"].includes(row.status)) {
       return { status: 409, body: { ok: false, reason: `spawn is ${row.status}, not revivable` } };
     }
-    if (body?.remote_control != null && typeof body.remote_control !== "boolean") {
+    if (row.tmux_window == null) throw new Error("revivable spawn is missing its tmux window");
+    if (body.remote_control != null && typeof body.remote_control !== "boolean") {
       return { status: 400, body: { ok: false, reason: "remote_control must be a boolean" } };
     }
-    if (body?.gateway != null && typeof body.gateway !== "boolean") {
+    if (body.gateway != null && typeof body.gateway !== "boolean") {
       return { status: 400, body: { ok: false, reason: "gateway must be a boolean" } };
     }
-    if (body?.arm_token != null && typeof body.arm_token !== "string") {
+    if (body.arm_token != null && typeof body.arm_token !== "string") {
       return { status: 400, body: { ok: false, reason: "arm_token must be a string" } };
     }
     if (row.skip_permissions) {
       const reviveArmRefusal = unsupervisedGate(true, body);
       if (reviveArmRefusal) return { status: 403, body: { ok: false, reason: reviveArmRefusal } };
     }
-    const remoteWanted = body?.remote_control ?? !!row.remote_control;
+    const remoteWanted = body.remote_control ?? !!row.remote_control;
     const gateway = gatewayDecision(
-      body?.gateway ?? !!row.gateway,
-      body?.gateway == null ? "inherited" : "request"
+      body.gateway ?? !!row.gateway,
+      body.gateway == null ? "inherited" : "request"
     );
     if (gateway.error) return { status: 400, body: { ok: false, reason: gateway.error } };
     const rcConflict = gatewayRemoteConflict(gateway.use, remoteWanted);
     if (rcConflict) return { status: 400, body: { ok: false, reason: rcConflict } };
-    const active = q.activeSpawnBySession.get(row.session_id) || q.provisioningSpawnBySession.get(row.session_id);
+    const active = q.activeSpawnBySession.get(row.session_id) ?? q.provisioningSpawnBySession.get(row.session_id);
     if (active) {
-      return { status: 409, body: { ok: false, reason: `session already has active spawn ${active.spawn_id}` } };
+      return {
+        status: 409,
+        body: { ok: false, reason: `session already has active spawn ${active.spawn_id}` }
+      };
     }
     if (revivingSessions.has(row.session_id)) {
-      return { status: 409, body: { ok: false, reason: `session ${row.session_id.slice(0, 8)} is already being revived` } };
+      return {
+        status: 409,
+        body: {
+          ok: false,
+          reason: `session ${row.session_id.slice(0, 8)} is already being revived`
+        }
+      };
     }
     revivingSessions.add(row.session_id);
     const releasePathLock = row.worktree_path && acquireWorktreePathLock ? await acquireWorktreePathLock(canonicalPathKey(row.worktree_path)) : () => {
@@ -11547,14 +11703,20 @@ function createSpawns(ctx) {
       if (!releaseCustody) {
         revivingSessions.delete(row.session_id);
         releasePathLock();
-        return { status: 409, body: { ok: false, reason: "this worktree is being removed \u2014 retry once the removal settles" } };
+        return {
+          status: 409,
+          body: {
+            ok: false,
+            reason: "this worktree is being removed \u2014 retry once the removal settles"
+          }
+        };
       }
     }
     try {
       const runCwd = row.worktree_path ?? row.cwd;
       let st = null;
       try {
-        st = fs11.statSync(runCwd);
+        if (runCwd) st = fs11.statSync(runCwd);
       } catch {
       }
       if (!runCwd || !st?.isDirectory()) {
@@ -11565,17 +11727,33 @@ function createSpawns(ctx) {
       }
       const existing = await findScopedWindow(row.tmux_window);
       if (existing === null) {
-        return { status: 503, body: { ok: false, reason: "tmux window lookup failed; revive held to avoid a duplicate session" } };
+        return {
+          status: 503,
+          body: {
+            ok: false,
+            reason: "tmux window lookup failed; revive held to avoid a duplicate session"
+          }
+        };
       }
       if (existing && !existing.pane_dead && existing.pane_cmd === "claude") {
         if (row.status !== "pane-dead" && row.status !== "gone") {
-          return { status: 409, body: { ok: false, reason: `spawn ${spawn_id} was killed \u2014 its window hosts a live claude, but a killed spawn is never resurrected by adoption` } };
+          return {
+            status: 409,
+            body: {
+              ok: false,
+              reason: `spawn ${spawn_id} was killed \u2014 its window hosts a live claude, but a killed spawn is never resurrected by adoption`
+            }
+          };
         }
         const owner = q.currentWindowOwner.get(row.tmux_window);
         if (owner && owner.spawn_id !== row.spawn_id) {
           return {
             status: 409,
-            body: { ok: false, reason: `window ${row.tmux_window} is owned by spawn ${owner.spawn_id} \u2014 revive that one`, current_spawn_id: owner.spawn_id }
+            body: {
+              ok: false,
+              reason: `window ${row.tmux_window} is owned by spawn ${owner.spawn_id} \u2014 revive that one`,
+              current_spawn_id: owner.spawn_id
+            }
           };
         }
         resurrectSpawn(row);
@@ -11592,12 +11770,21 @@ function createSpawns(ctx) {
         };
       }
       if (existing && !existing.pane_dead && !SHELL_RE.test(existing.pane_cmd)) {
-        return { status: 409, body: { ok: false, reason: `window ${row.tmux_window} hosts a live '${existing.pane_cmd}' pane \u2014 not a dead remnant; refusing to kill it` } };
+        return {
+          status: 409,
+          body: {
+            ok: false,
+            reason: `window ${row.tmux_window} hosts a live '${existing.pane_cmd}' pane \u2014 not a dead remnant; refusing to kill it`
+          }
+        };
       }
       if (existing) {
         const killed = await tmuxAdapter.killWindowVerified(row.tmux_window);
         if (!killed.ok && !killed.gone) {
-          return { status: 500, body: { ok: false, reason: killed.error || "tmux kill-window failed" } };
+          return {
+            status: 500,
+            body: { ok: false, reason: killed.error ?? "tmux kill-window failed" }
+          };
         }
       }
       return await launchResume({
@@ -11639,6 +11826,9 @@ function createSpawns(ctx) {
     bodyExtra = {},
     gatewayEnv = null
   }) {
+    if (callsign == null || tmux_window == null) {
+      throw new Error("launchResume requires a callsign and a scoped window name");
+    }
     const new_spawn_id = randomUUID2();
     const argv = [
       ...claudeEnvArgvPrefix(port, home, { keep: gatewayEnv ? Object.keys(gatewayEnv) : [] }),
@@ -11653,7 +11843,11 @@ function createSpawns(ctx) {
     if (preLaunchOwner && preLaunchOwner.spawn_id !== excludeSpawnId && ["provisioning", "spawning", "stalled", "live"].includes(preLaunchOwner.status)) {
       return {
         status: 409,
-        body: { ok: false, reason: `window ${tmux_window} is now owned by active spawn ${preLaunchOwner.spawn_id}`, current_spawn_id: preLaunchOwner.spawn_id }
+        body: {
+          ok: false,
+          reason: `window ${tmux_window} is now owned by active spawn ${preLaunchOwner.spawn_id}`,
+          current_spawn_id: preLaunchOwner.spawn_id
+        }
       };
     }
     q.insertProvisionalSpawn.run(
@@ -11663,7 +11857,7 @@ function createSpawns(ctx) {
       tmux_session,
       tmux_window,
       requested_cwd,
-      worktree_path,
+      worktree_path ?? null,
       Date.now(),
       skip_permissions ? 1 : 0,
       remoteWanted ? 1 : 0,
@@ -11684,36 +11878,40 @@ function createSpawns(ctx) {
       reason,
       created: { clone: false, worktree: false }
     });
-    const override = tmuxAdapter.spawnOverrideCmd();
+    const override = tmuxAdapter.spawnOverrideCmd?.();
     if (override) {
-      tmuxAdapter.launchOverride(override, {
-        spawn_id: new_spawn_id,
-        ...overrideExtra,
-        session_id,
-        callsign,
-        port,
-        cwd: runCwd,
-        requested_cwd,
-        prompt: null,
-        model: null,
-        permission_mode: null,
-        worktree_path,
-        dangerously_skip_permissions: !!skip_permissions,
-        skip_permissions: !!skip_permissions,
-        remote_control: remoteWanted,
-        gateway: !!gatewayEnv,
-        gateway_env: gatewayEnv,
-        // test seam only — see launchPane's spec
-        tmux: { session: tmux_session, window: tmux_window },
-        argv
-      }, (err) => compensateResume(`spawn override: ${err.message || err}`).catch(() => {
-      }));
+      tmuxAdapter.launchOverride(
+        override,
+        {
+          spawn_id: new_spawn_id,
+          ...overrideExtra,
+          session_id,
+          callsign,
+          port,
+          cwd: runCwd,
+          requested_cwd,
+          prompt: null,
+          model: null,
+          permission_mode: null,
+          worktree_path,
+          dangerously_skip_permissions: skip_permissions,
+          skip_permissions,
+          remote_control: remoteWanted,
+          gateway: !!gatewayEnv,
+          gateway_env: gatewayEnv,
+          // test seam only — see launchPane's spec
+          tmux: { session: tmux_session, window: tmux_window },
+          argv
+        },
+        (err) => void compensateResume(`spawn override: ${errMessage4(err)}`).catch(() => {
+        })
+      );
     } else {
       try {
         await tmuxAdapter.ensureSession(port);
         await tmuxAdapter.newWindow({ port, callsign, cwd: runCwd, argv, env: gatewayEnv });
       } catch (err) {
-        const reason = `${failReason}: ${err.message || err}`;
+        const reason = `${failReason}: ${errMessage4(err)}`;
         const cleanup = await compensateResume(reason);
         return {
           status: 500,
@@ -11744,19 +11942,23 @@ function createSpawns(ctx) {
   async function adoptSession(session_id, body = {}, { deferred = false } = {}) {
     const c = q.getSession.get(session_id);
     if (!c) return { status: 404, body: { ok: false, reason: "no such session" } };
-    if (body?.dangerously_skip_permissions != null && typeof body.dangerously_skip_permissions !== "boolean") {
-      return { status: 400, body: { ok: false, reason: "dangerously_skip_permissions must be a boolean" } };
+    if (c.callsign == null) throw new Error("adoptable session is missing its callsign");
+    if (body.dangerously_skip_permissions != null && typeof body.dangerously_skip_permissions !== "boolean") {
+      return {
+        status: 400,
+        body: { ok: false, reason: "dangerously_skip_permissions must be a boolean" }
+      };
     }
-    if (body?.disarm != null && typeof body.disarm !== "boolean") {
+    if (body.disarm != null && typeof body.disarm !== "boolean") {
       return { status: 400, body: { ok: false, reason: "disarm must be a boolean" } };
     }
-    if (body?.arm_token != null && typeof body.arm_token !== "string") {
+    if (body.arm_token != null && typeof body.arm_token !== "string") {
       return { status: 400, body: { ok: false, reason: "arm_token must be a string" } };
     }
-    const skip = body?.dangerously_skip_permissions === true;
+    const skip = body.dangerously_skip_permissions === true;
     const adoptArmRefusal = deferred ? null : unsupervisedGate(skip, body);
     if (adoptArmRefusal) return { status: 403, body: { ok: false, reason: adoptArmRefusal } };
-    if (body?.disarm === true) {
+    if (body.disarm === true) {
       updateSession(session_id, { adopt_armed_until: null, adopt_armed_skip: null });
       tick(`\u21E5 ${c.callsign} move-to-tmux disarmed`);
       onMutate();
@@ -11764,7 +11966,13 @@ function createSpawns(ctx) {
     }
     const lineage = q.spawnBySession.get(session_id);
     if (lineage) {
-      return { status: 409, body: { ok: false, reason: `session is board-owned (spawn ${lineage.spawn_id}, ${lineage.status}) \u2014 revive owns its pane story` } };
+      return {
+        status: 409,
+        body: {
+          ok: false,
+          reason: `session is board-owned (spawn ${lineage.spawn_id}, ${lineage.status}) \u2014 revive owns its pane story`
+        }
+      };
     }
     if (c.ended_at == null) {
       if (deferred) {
@@ -11775,16 +11983,20 @@ function createSpawns(ctx) {
       }
       const expires_at = Date.now() + ADOPT_ARM_MS;
       updateSession(session_id, { adopt_armed_until: expires_at, adopt_armed_skip: skip ? 1 : 0 });
-      tick(`\u29D7 ${c.callsign} armed for move-to-tmux \u2014 exit the CLI to move it${skip ? " (unsupervised)" : ""}`);
+      tick(
+        `\u29D7 ${c.callsign} armed for move-to-tmux \u2014 exit the CLI to move it${skip ? " (unsupervised)" : ""}`
+      );
       onMutate();
       return { status: 200, body: { ok: true, armed: true, expires_at } };
     }
     if (deferred && c.adopt_armed_until == null) {
       return { status: 200, body: { ok: true, canceled: true } };
     }
-    if (deferred && c.adopt_armed_until <= Date.now()) {
+    if (deferred && c.adopt_armed_until != null && c.adopt_armed_until <= Date.now()) {
       updateSession(session_id, { adopt_armed_until: null, adopt_armed_skip: null });
-      tick(`\u21B7 move-to-tmux canceled for ${c.callsign} \u2014 the arm deadline expired before the move fired`);
+      tick(
+        `\u21B7 move-to-tmux canceled for ${c.callsign} \u2014 the arm deadline expired before the move fired`
+      );
       onMutate();
       return { status: 200, body: { ok: true, canceled: true, expired: true } };
     }
@@ -11798,7 +12010,13 @@ function createSpawns(ctx) {
       };
     }
     if (revivingSessions.has(session_id)) {
-      return { status: 409, body: { ok: false, reason: `session ${session_id.slice(0, 8)} is already being moved/revived` } };
+      return {
+        status: 409,
+        body: {
+          ok: false,
+          reason: `session ${session_id.slice(0, 8)} is already being moved/revived`
+        }
+      };
     }
     revivingSessions.add(session_id);
     try {
@@ -11808,7 +12026,7 @@ function createSpawns(ctx) {
       const runCwd = c.cwd;
       let st = null;
       try {
-        st = fs11.statSync(runCwd);
+        if (runCwd) st = fs11.statSync(runCwd);
       } catch {
       }
       if (!runCwd || !st?.isDirectory()) {
@@ -11820,18 +12038,36 @@ function createSpawns(ctx) {
       const tmux_window = tmuxAdapter.windowName(port, c.callsign);
       const existing = await findScopedWindow(tmux_window);
       if (existing === null) {
-        return { status: 503, body: { ok: false, reason: "tmux window lookup failed; adopt held to avoid a duplicate session" } };
+        return {
+          status: 503,
+          body: {
+            ok: false,
+            reason: "tmux window lookup failed; adopt held to avoid a duplicate session"
+          }
+        };
       }
       if (existing && !existing.pane_dead && existing.pane_cmd === "claude") {
-        return { status: 409, body: { ok: false, reason: `window ${tmux_window} already hosts a live claude pane` } };
+        return {
+          status: 409,
+          body: { ok: false, reason: `window ${tmux_window} already hosts a live claude pane` }
+        };
       }
       if (existing && !existing.pane_dead && !SHELL_RE.test(existing.pane_cmd)) {
-        return { status: 409, body: { ok: false, reason: `window ${tmux_window} hosts a live '${existing.pane_cmd}' pane \u2014 not a dead remnant; refusing to kill it` } };
+        return {
+          status: 409,
+          body: {
+            ok: false,
+            reason: `window ${tmux_window} hosts a live '${existing.pane_cmd}' pane \u2014 not a dead remnant; refusing to kill it`
+          }
+        };
       }
       if (existing) {
         const killed = await tmuxAdapter.killWindowVerified(tmux_window);
         if (!killed.ok && !killed.gone) {
-          return { status: 500, body: { ok: false, reason: killed.error || "tmux kill-window failed" } };
+          return {
+            status: 500,
+            body: { ok: false, reason: killed.error ?? "tmux kill-window failed" }
+          };
         }
       }
       const adoptGateway = gatewayDecision(null);
@@ -11870,21 +12106,33 @@ function createSpawns(ctx) {
     const row = q.getSpawn.get(spawn_id);
     if (!row) return { status: 404, body: { ok: false, reason: "no such spawn" } };
     if (row.kind === "shell") {
-      return { status: 409, body: { ok: false, reason: "remote control is unavailable for shell sessions" } };
+      return {
+        status: 409,
+        body: { ok: false, reason: "remote control is unavailable for shell sessions" }
+      };
     }
     if (row.status !== "live") {
       return { status: 409, body: { ok: false, reason: `spawn is ${row.status}, not live` } };
     }
     if (row.remote_control && row.remote_url) {
-      return { status: 200, body: { ok: true, enabled: true, url: row.remote_url, pending: false } };
+      return {
+        status: 200,
+        body: { ok: true, enabled: true, url: row.remote_url, pending: false }
+      };
     }
     const session = q.getSession.get(row.session_id);
     if (!session || !["queued", "idle"].includes(session.col)) {
-      return { status: 409, body: { ok: false, reason: `session is ${session?.col ?? "missing"}, not queued or idle` } };
+      return {
+        status: 409,
+        body: { ok: false, reason: `session is ${session?.col ?? "missing"}, not queued or idle` }
+      };
     }
     const win = await findScopedWindow(row.tmux_window);
     if (win === null) {
-      return { status: 503, body: { ok: false, reason: "tmux window lookup failed; remote control was not sent" } };
+      return {
+        status: 503,
+        body: { ok: false, reason: "tmux window lookup failed; remote control was not sent" }
+      };
     }
     if (!win || win.pane_dead || win.pane_cmd !== "claude") {
       const observed = !win ? "missing" : win.pane_dead ? "dead" : `running ${win.pane_cmd || "unknown"}`;
@@ -11892,18 +12140,33 @@ function createSpawns(ctx) {
     }
     const fresh = q.getSession.get(row.session_id);
     if (!fresh || !["queued", "idle"].includes(fresh.col)) {
-      return { status: 409, body: { ok: false, reason: `session is ${fresh?.col ?? "missing"}, not queued or idle` } };
+      return {
+        status: 409,
+        body: { ok: false, reason: `session is ${fresh?.col ?? "missing"}, not queued or idle` }
+      };
     }
     const target = scopedPaneTarget(win);
     const idleNow = (s) => s && ["queued", "idle"].includes(s.col);
     const attempt = async () => {
       const current = q.getSession.get(row.session_id);
       if (!idleNow(current)) {
-        return { status: 409, body: { ok: false, reason: `session is ${current?.col ?? "missing"}, not queued or idle` } };
+        return {
+          status: 409,
+          body: {
+            ok: false,
+            reason: `session is ${current?.col ?? "missing"}, not queued or idle`
+          }
+        };
       }
-      const sent = await tmuxAdapter.typeAndEnter(target, `/rc ${current.callsign ?? row.callsign}`);
+      const sent = await tmuxAdapter.typeAndEnter(
+        target,
+        `/rc ${current?.callsign ?? row.callsign}`
+      );
       if (!sent) {
-        return { status: 500, body: { ok: false, reason: "failed to type remote-control command into pane" } };
+        return {
+          status: 500,
+          body: { ok: false, reason: "failed to type remote-control command into pane" }
+        };
       }
       return null;
     };
@@ -11921,19 +12184,25 @@ function createSpawns(ctx) {
     const harvest = delayedRemoteHarvest(spawn_id);
     let timeout;
     const timed = new Promise((resolve) => {
-      timeout = setTimeout(() => resolve({ pending: true, url: null }), 6e3);
-      timeout.unref?.();
+      timeout = setTimeout(() => {
+        resolve({ pending: true, url: null });
+      }, 6e3);
+      timeout.unref();
     });
     const result = await Promise.race([
       harvest.then(({ url }) => ({ pending: false, url })),
       timed
     ]);
     clearTimeout(timeout);
-    return { status: 200, body: { ok: true, enabled: true, url: result.url, pending: result.pending } };
+    return {
+      status: 200,
+      body: { ok: true, enabled: true, url: result.url, pending: result.pending }
+    };
   }
   async function spawnKill(spawn_id, force) {
     const row = q.getSpawn.get(spawn_id);
     if (!row) return { status: 404, body: { ok: false, reason: "no such spawn" } };
+    if (row.tmux_window == null) throw new Error("spawn is missing its tmux window");
     const owner = q.currentWindowOwner.get(row.tmux_window);
     if (owner && owner.spawn_id !== spawn_id) {
       return {
@@ -11949,11 +12218,14 @@ function createSpawns(ctx) {
     if (row.kind !== "shell" && c && c.col !== "offline" && force !== true) {
       return {
         status: 409,
-        body: { ok: false, reason: `session ${c.callsign} is ${c.col}, not offline \u2014 pass force:true to kill anyway` }
+        body: {
+          ok: false,
+          reason: `session ${c.callsign} is ${c.col}, not offline \u2014 pass force:true to kill anyway`
+        }
       };
     }
     const res = await tmuxAdapter.killWindowVerified(row.tmux_window);
-    if (res.gone) {
+    if (!res.ok && res.gone) {
       if (["spawning", "stalled", "live", "pane-dead"].includes(row.status)) {
         q.setSpawnStatus.run("gone", spawn_id);
         forgetSpawn(spawn_id);
@@ -11964,7 +12236,8 @@ function createSpawns(ctx) {
       }
       return { status: 410, body: { ok: false, reason: "window already gone" } };
     }
-    if (!res.ok) return { status: 500, body: { ok: false, reason: res.error || "tmux kill-window failed" } };
+    if (!res.ok)
+      return { status: 500, body: { ok: false, reason: res.error ?? "tmux kill-window failed" } };
     q.setSpawnStatus.run("killed", spawn_id);
     forgetSpawn(spawn_id);
     if (c && c.ended_at == null) {
@@ -11978,7 +12251,7 @@ function createSpawns(ctx) {
   const TMUX_UNREACHABLE_READS = 3;
   const tmuxWatchdog = { unreachableStreak: 0, announcedUnreachable: false };
   function noteTmuxUnreachable() {
-    if (tmuxAdapter.spawnOverrideCmd?.() || tmuxAdapter.hasTmux?.() === false) return;
+    if (tmuxAdapter.spawnOverrideCmd?.() || !tmuxAdapter.hasTmux()) return;
     tmuxWatchdog.unreachableStreak += 1;
     if (tmuxWatchdog.announcedUnreachable) return;
     if (tmuxWatchdog.unreachableStreak < TMUX_UNREACHABLE_READS) return;
@@ -11986,7 +12259,9 @@ function createSpawns(ctx) {
     tick("\u26A0 tmux is not answering \u2014 holding every card as-is until it does");
   }
   async function mournFleetServer(rows) {
-    tick(`\u{1F480} the tmux server died \u2014 ${rows.length} spawn(s) went with it; \u27F2 revive brings them back`);
+    tick(
+      `\u{1F480} the tmux server died \u2014 ${rows.length} spawn(s) went with it; \u27F2 revive brings them back`
+    );
     for (const row of rows) {
       q.setSpawnStatus.run("gone", row.spawn_id);
       forgetSpawn(row.spawn_id);
@@ -12003,7 +12278,7 @@ function createSpawns(ctx) {
       await tmuxAdapter.ensureSession(port);
       tick("\u27F2 tmux server restarted \u2014 the fleet is ready to revive");
     } catch (err) {
-      tick(`\u26A0 could not restart the tmux server (${String(err?.message || err).slice(0, 80)})`);
+      tick(`\u26A0 could not restart the tmux server (${errMessage4(err).slice(0, 80)})`);
     }
   }
   let livenessInFlight = null;
@@ -12049,13 +12324,15 @@ function createSpawns(ctx) {
         deadSignal = false;
       } else {
         const pane = await tmuxAdapter.paneCurrentCommand(scopedPaneTarget(win));
-        if (pane && !pane.dead && pane.cmd === "claude") deadSignal = false;
+        if (pane && !pane.dead && pane.cmd === "claude")
+          deadSignal = false;
         else if (pane?.dead) {
           deadSignal = true;
           immediateDead = setupPhase;
         } else if (setupPhase && pane) {
           deadSignal = false;
-        } else if (pane && SHELL_RE.test(pane.cmd)) deadSignal = true;
+        } else if (pane && SHELL_RE.test(pane.cmd))
+          deadSignal = true;
         else deadSignal = null;
       }
       if (deadSignal === false) {
@@ -12071,20 +12348,25 @@ function createSpawns(ctx) {
               if (token) exactSecrets.push(token);
             } catch {
             }
-            const gateway = resolveGatewayEnv?.() || {};
+            const gateway = resolveGatewayEnv() ?? {};
             for (const [name, value] of Object.entries(gateway)) {
-              if (/(TOKEN|KEY|SECRET|PASSWORD)/i.test(name) && value) exactSecrets.push(String(value));
+              if (/(TOKEN|KEY|SECRET|PASSWORD)/i.test(name) && value) exactSecrets.push(value);
             }
-            detail = stallDiagnosticExcerpt(
-              await tmuxAdapter.capturePane?.(scopedPaneTarget(win)),
-              { secrets: exactSecrets }
-            );
+            detail = stallDiagnosticExcerpt(await tmuxAdapter.capturePane(scopedPaneTarget(win)), {
+              secrets: exactSecrets
+            });
           } catch {
           }
           if (!q.setSpawnStalled.run(detail, row.spawn_id).changes) continue;
-          updateSession(row.session_id, { col: "needsyou", notification_type: "spawn_stalled", note });
+          updateSession(row.session_id, {
+            col: "needsyou",
+            notification_type: "spawn_stalled",
+            note
+          });
           const c2 = q.getSession.get(row.session_id);
-          tick(`\u26A0 ${c2?.callsign ?? row.callsign} pane is up but never phoned home${detail ? " \u2014 diagnostics captured" : ""}`);
+          tick(
+            `\u26A0 ${c2?.callsign ?? row.callsign} pane is up but never phoned home${detail ? " \u2014 diagnostics captured" : ""}`
+          );
           logEvent(row.session_id, "SpawnStalled", null, detail ? `${note}
 ${detail}` : note);
           onMutate();
@@ -12142,14 +12424,16 @@ ${detail}` : note);
     const wins = await tmuxAdapter.listScopedWindows(port);
     if (wins === null) {
       const count = active.length + staleProvisioning.length;
-      tick(`\u26A0 tmux window lookup failed at restart \u2014 leaving ${count} spawn row(s) as-is (unknown, not gone)`);
+      tick(
+        `\u26A0 tmux window lookup failed at restart \u2014 leaving ${count} spawn row(s) as-is (unknown, not gone)`
+      );
       healInterruptedRevives();
       onMutate();
       return;
     }
     const names = new Set(wins.map((w) => w.window));
     for (const row of active) {
-      if (names.has(row.tmux_window)) continue;
+      if (names.has(String(row.tmux_window))) continue;
       q.setSpawnStatus.run("gone", row.spawn_id);
       forgetSpawn(row.spawn_id);
       const c = q.getSession.get(row.session_id);
@@ -12165,7 +12449,7 @@ ${detail}` : note);
     }
     for (const row of staleProvisioning) {
       try {
-        fs11.rmSync(`${row.cwd}.fd-cloning-${String(row.spawn_id).slice(0, 8)}`, {
+        fs11.rmSync(`${row.cwd}.fd-cloning-${row.spawn_id.slice(0, 8)}`, {
           recursive: true,
           force: true
         });
@@ -12174,16 +12458,25 @@ ${detail}` : note);
       if (row.worktree_path && row.worktree_owned === 1) {
         try {
           const branch = branchOf(row.worktree_path, { fresh: true });
-          const rm = await execFileP("git", ["-C", row.cwd, "worktree", "remove", "--force", row.worktree_path], { timeout: 3e4 });
+          const rm = await execFileP(
+            "git",
+            ["-C", String(row.cwd), "worktree", "remove", "--force", row.worktree_path],
+            { timeout: 3e4 }
+          );
           if (!rm.ok) {
             try {
               fs11.rmSync(row.worktree_path, { recursive: true, force: true });
             } catch {
             }
           }
-          await execFileP("git", ["-C", row.cwd, "worktree", "prune"], { timeout: 3e4 });
-          if (branch) await execFileP("git", ["-C", row.cwd, "branch", "-D", branch], { timeout: 3e4 });
-          tick(`\u{1F9F9} removed stranded worktree ${row.worktree_path} \u2014 spawn ${row.callsign} was interrupted before launch`);
+          await execFileP("git", ["-C", String(row.cwd), "worktree", "prune"], { timeout: 3e4 });
+          if (branch)
+            await execFileP("git", ["-C", String(row.cwd), "branch", "-D", branch], {
+              timeout: 3e4
+            });
+          tick(
+            `\u{1F9F9} removed stranded worktree ${row.worktree_path} \u2014 spawn ${row.callsign} was interrupted before launch`
+          );
         } catch {
         }
       }
@@ -12203,7 +12496,9 @@ ${detail}` : note);
     const owned = new Set(q.allSpawns.all().map((r) => r.tmux_window));
     spawnState.orphans = wins.filter((w) => !owned.has(w.window)).map((w) => ({ window: w.window }));
     if (spawnState.orphans.length) {
-      tick(`\u26A0 ${spawnState.orphans.length} unadopted fleetdeck window(s) in tmux (fd${port}-* with no spawn row)`);
+      tick(
+        `\u26A0 ${spawnState.orphans.length} unadopted fleetdeck window(s) in tmux (fd${port}-* with no spawn row)`
+      );
       onMutate();
     }
     healInterruptedRevives();
@@ -12236,18 +12531,18 @@ ${detail}` : note);
         if (p.ended_at != null || p.succeeded_by != null) continue;
         if (p.cwd !== heir.cwd) continue;
         const last = q.lastEventOf.get(p.session_id);
-        if (!last || last.hook_event !== "SessionEnd") continue;
-        if (!String(last.note ?? "").startsWith("context cleared")) continue;
+        if (last?.hook_event !== "SessionEnd") continue;
+        if (!(last.note ?? "").startsWith("context cleared")) continue;
         if (last.at < b.at - CLEAR_SUCCESSION_MS || last.at > b.at + 2e3) continue;
         cands.push({ row: p, at: last.at });
       }
       if (!cands.length) continue;
       let prev = null;
       if (cands.length === 1) {
-        prev = cands[0].row;
+        prev = cands[0]?.row ?? null;
       } else {
         const paned = cands.filter((c) => hasLivePane(c.row.session_id));
-        if (paned.length === 1) prev = paned[0].row;
+        if (paned.length === 1) prev = paned[0]?.row ?? null;
       }
       if (!prev) continue;
       if (succeedSession(prev, heir.session_id, { rename: true })) healed += 1;
@@ -12278,7 +12573,7 @@ ${detail}` : note);
 // scripts/fleetd/events.ts
 import path13 from "node:path";
 import os7 from "node:os";
-function errMessage4(err) {
+function errMessage5(err) {
   return err instanceof Error && err.message ? err.message : String(err);
 }
 var EDIT_TOOLS = ["Edit", "Write", "MultiEdit", "NotebookEdit"];
@@ -12750,7 +13045,7 @@ function createEvents(ctx) {
         }).catch((err) => {
           const c = q.getSession.get(sid);
           tick(
-            `\u2717 move-to-tmux failed for ${c?.callsign ?? sid}: ${errMessage4(err)}`.slice(0, 100)
+            `\u2717 move-to-tmux failed for ${c?.callsign ?? sid}: ${errMessage5(err)}`.slice(0, 100)
           );
         });
       }, ADOPT_DELAY_MS);
@@ -15729,7 +16024,7 @@ var LEGACY_TTL = 10;
 var SERVICE_TYPES = ["_fleetdeck._tcp.local", "_http._tcp.local"];
 var META_QUERY = "_services._dns-sd._udp.local";
 var ANNOUNCE_DELAYS_MS = [0, 1e3, 2e3];
-function errMessage5(err) {
+function errMessage6(err) {
   return err instanceof Error && err.message ? err.message : String(err);
 }
 function encodeName(name) {
@@ -16237,7 +16532,7 @@ function createMdns({
         callback?.();
       });
     } catch (err) {
-      note(`mdns send failed: ${errMessage5(err)}`);
+      note(`mdns send failed: ${errMessage6(err)}`);
       callback?.();
     }
   }
@@ -16290,7 +16585,7 @@ function createMdns({
           send(encodeMessage({ id: 0, flags: FLAGS_RESPONSE, answers }), MDNS_PORT, MDNS_ADDR);
       }
     } catch (err) {
-      note(`mdns announce failed: ${errMessage5(err)}`);
+      note(`mdns announce failed: ${errMessage6(err)}`);
     }
   }
   function withdrawAndDie(reason) {
@@ -16384,7 +16679,7 @@ function createMdns({
         );
       }
     } catch (err) {
-      note(`mdns query handling error: ${errMessage5(err)}`);
+      note(`mdns query handling error: ${errMessage6(err)}`);
     }
   }
   function onBound() {
@@ -16543,7 +16838,7 @@ function createMdns({
       note(`mdns addresses updated (${ad.addresses.join(", ")})`);
       return true;
     } catch (err) {
-      note(`mdns address update failed: ${errMessage5(err)}`);
+      note(`mdns address update failed: ${errMessage6(err)}`);
       return false;
     }
   }

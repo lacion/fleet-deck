@@ -429,7 +429,7 @@ test('a legacy spawns table gains fail_detail additively, backfilled NULL', (t) 
 // ---------------------------------------------------------------------------
 
 test('spawnFailureReason: one bounded line, hardened by the same pass', async () => {
-  const { spawnFailureReason } = await import('../scripts/fleetd/spawns.mjs');
+  const { spawnFailureReason } = await import('../scripts/fleetd/spawns.ts');
 
   // The plain case: an Error's message, not its stack. `internal` is gone —
   // the reason names what actually broke.

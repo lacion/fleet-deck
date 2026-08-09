@@ -7,7 +7,7 @@ import { openDb } from '../scripts/fleetd/db.ts';
 import { createStatements } from '../scripts/fleetd/statements.ts';
 import { claudeTranscriptPath, createCore } from '../scripts/fleetd/derive.ts';
 import { capturePane, exactWindowTarget, pasteText, sendEnter, typeKeys } from '../scripts/fleetd/spawn.ts';
-import { stallDiagnosticExcerpt } from '../scripts/fleetd/spawns.mjs';
+import { stallDiagnosticExcerpt } from '../scripts/fleetd/spawns.ts';
 
 function setEnv(t, values) {
   const before = new Map(Object.keys(values).map(k => [k, process.env[k]]));

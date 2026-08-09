@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 // 0.7.1: one validator for the custom-name suffix, shared with the `name`
 // orchestrator command so the REST route and the text command can never drift.
 import { validateNameSuffix } from './helpers.ts';
-import { spawnFailureReason } from './spawns.mjs';
+import { spawnFailureReason } from './spawns.ts';
 import { WebSocketServer } from 'ws';
 import { createTermBridge } from './termbridge.ts';
 // F1a HOSTILE-boundary validators, imported from the shared wire contracts by
