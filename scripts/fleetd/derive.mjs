@@ -28,13 +28,13 @@ import { createSpawns } from './spawns.mjs';
 import { createEvents } from './events.mjs';
 import { createSnapshot } from './snapshot.mjs';
 import { createRetention } from './retention.mjs';
-import { createKeyedMutex, envInt } from './helpers.mjs';
+import { createKeyedMutex, envInt } from './helpers.ts';
 
 // Public re-exports: these helpers moved to helpers.mjs, but tests and other
 // scripts import them from derive.mjs — keep them importable from here.
 export {
   mungeClaudeProjectCwd, claudeTranscriptPath, claudeEnvArgvPrefix, spawnRowRevivable,
-} from './helpers.mjs';
+} from './helpers.ts';
 
 const CALLSIGNS = ['falcon', 'otter', 'raven', 'lynx', 'orca', 'wren', 'viper', 'heron', 'badger', 'comet', 'ember', 'drift'];
 // CONFLICT_WINDOW_MS lives in ledger.mjs now.

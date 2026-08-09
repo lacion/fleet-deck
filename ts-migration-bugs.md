@@ -48,6 +48,62 @@ Format:
 
 <!-- entries appended below as modules convert -->
 
+### helpers.ts — type-guards to carry narrowing, one dead-defense drop, one load-bearing coercion kept   [NOISE]
+- **What:** the pure, closure-free leaf shared across the core (`spawnRowRevivable`,
+  `sessionAdoptableNow`, `claudeEnvArgvPrefix`, `createKeyedMutex`, `mapLimit`,
+  `chmodWritableWhereOwned`/`blockedPaths`, `parseCommand`, …). `tsc` + type-aware `eslint` clean,
+  **zero runtime move**. Eight strict-typing notes; the coercion audit (5) is the one that touched
+  behavior-adjacent source, so it's the interesting one.
+- **Why it's real / why it's noise:** NOISE on all eight — nothing at runtime moved:
+  (1) **Optional-chain truthiness doesn't narrow the object.** `spawnRowRevivable` reads
+  `const runCwd = row?.worktree_path ?? row?.cwd` then `!!runCwd && ['pane-dead',…].includes(row.status)`.
+  `runCwd` being truthy proves `row` is non-null *at runtime*, but the compiler can't infer that back
+  through the `?.`, so `row.status`/`row.session_id` error as possibly-undefined. Added an explicit
+  `&& row != null` into the boolean chain (short-circuits identically; runtime-identical since a truthy
+  `runCwd` already guaranteed it).
+  (2) **`cwdIsDirectory(p): p is string` made a type-guard so its one caller narrows.** `sessionAdoptableNow`
+  does `const cwd = session.cwd` (`string | null | undefined`) then `cwdIsDirectory(cwd) && …existsSync(claudeTranscriptPath(cwd, …))`.
+  Typing the probe `boolean` would leave `cwd` un-narrowed at the `claudeTranscriptPath(cwd, …)` call; the
+  `p is string` predicate (body unchanged — `if (!p) return false;` then `statSync`) carries the narrowing
+  through the `&&`. Same for the truthiness already inside it.
+  (3) **Two dead `String()` defenses dropped.** `shellQuote(s)` had `String(s).replace(…)` and
+  `colFromAgentState(raw,…)` had `String(raw ?? '')`. Every caller passes a string (or `raw` is already
+  typed `string | null | undefined`), so the coercion was defending against a shape the types now forbid —
+  dropped to `s.replace(…)` / `(raw ?? '').toLowerCase()`. No runtime path changed: a real string is its
+  own `String()`.
+  (4) **One `String()` coercion KEPT, with a justified `no-base-to-string` disable.** `parseCommand(text)`
+  takes `text: unknown` (it's `core.command(ev.text)` — a raw HTTP-body field), and the very first line is
+  `String(text ?? '').trim()`. Unlike (3) this is load-bearing: the degenerate `object → "[object Object]"`
+  path is intentional garbage-in handling for an untrusted wire value. `strictTypeChecked`'s
+  `no-base-to-string` flags it, so it carries an inline `// eslint-disable-next-line …no-base-to-string`
+  with a **follow-up to delete it once `http.ts` validates the body to `string`** — at which point `text`
+  narrows to `string` and the coercion becomes dead like (3). Logged so the follow-up isn't lost.
+  (5) **`ParsedCommand` is now a discriminated union; regex-capture reads get `?? ''`.** Writing the return
+  type as a union on `cmd` (with separate success/`error` arms for `ticket`/`name`) means every branch's
+  object shape is checked. Under `noUncheckedIndexedAccess`, `m[1]`/`m[2]` off a `RegExpExecArray` are
+  `string | undefined` even though the groups are non-optional in these patterns and always match when the
+  regex does — defaulted with `?? ''` (unreachable at runtime; the group is always present when `exec`
+  returns non-null). `colFromAgentState`'s return is likewise pinned to the four-column literal union.
+  (6) **`mapLimit` needs an index guard for `items[i]`.** `out[i] = await fn(items[i])` — `items[i]` is
+  `T | undefined` under `noUncheckedIndexedAccess`. Captured `const item = items[i]; if (item === undefined) continue;`
+  before the call (unreachable for the dense arrays this runs over — a hole would be skipped, not mapped —
+  same honest-but-unreachable guard as `transcript.ts`).
+  (7) **`process.getuid` property-narrowed by capture; `blockedPaths` cache read get-first.** `getuid` is
+  optional on `process` (absent on Windows), so `typeof process.getuid === 'function'` doesn't narrow the
+  later call — captured `const getuid = process.getuid` first, then `typeof getuid === 'function' ? getuid() : null`
+  (the paste.ts precedent). And `Map.get` returns `V | undefined`, so the owner-name cache rewrote
+  `if (owners.has(uid)) return owners.get(uid)` to a get-first `const cached = owners.get(st.uid); if (cached !== undefined) return cached;`
+  (behavior-identical — a cached name is never `undefined`).
+  (8) **`no-useless-assignment` on `let entries = []` before a `try`/`catch`-that-returns.** Both walkers
+  had `let entries: fs.Dirent[] = []; try { entries = readdirSync(…) } catch { return }`. The ESLint core
+  rule flags the `[]` initializer as never-read (the only way past the `try`/`catch` is the successful
+  assignment, since the catch `return`s). Dropped to `let entries: fs.Dirent[];` — TS definite-assignment
+  analysis accepts it precisely *because* the catch always returns. Runtime-identical.
+- **Fix:** type-guards + a `row != null` chain link + `?? ''` capture-guards carry narrowing the compiler
+  can't infer through `?.`/index access; two dead coercions dropped; one untrusted-wire coercion kept
+  behind a disable with a delete-when-`http.ts`-validates follow-up. No test changed; 43/43 direct-importer
+  + 92/92 daemon-consumer green vs source, and the same green vs the regenerated bundle.
+
 ### exec.ts — a `let`→`const` reorder, an overload-pinning `encoding`, and the `String(err)` catch-22 again   [NOISE]
 - **What:** the git/subprocess helper — `execFileP` (timeout + SIGTERM→SIGKILL escalation) plus the
   four stderr scrubbers (`distillGitStderr`, `redactGitText`, `gitStderrDetail`, `baseBranch`). `tsc`

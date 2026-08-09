@@ -8,7 +8,7 @@
 // SHELL_RE is a pure helper.
 
 import fs from 'node:fs';
-import { SHELL_RE, NOT_RESUMABLE_END } from './helpers.mjs';
+import { SHELL_RE, NOT_RESUMABLE_END } from './helpers.ts';
 import { CONFLICT_WINDOW_MS } from './ledger.ts';
 import { pruneRunNonces } from './run-nonce.mjs';
 

@@ -5,7 +5,7 @@
 
 import { deriveRepo, branchOf } from './repo-identity.ts';
 import { ticketFromBranch } from './tickets.ts';
-import { pidOwnedBy, colFromAgentState } from './helpers.mjs';
+import { pidOwnedBy, colFromAgentState } from './helpers.ts';
 
 export function createIngest(ctx) {
   const { q, assignCallsign, updateSession, tick, onMutate, touchRepo } = ctx;

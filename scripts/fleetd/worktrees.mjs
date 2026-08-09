@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   mapLimit, chmodWritableWhereOwned, blockedPaths, shellQuote, canonicalPathKey,
-} from './helpers.mjs';
+} from './helpers.ts';
 import { execFileP, baseBranch } from './exec.ts';
 // A local `git worktree prune` should never print a credential — but its stderr
 // goes straight into an HTTP body below, and repos.mjs now asserts that no git

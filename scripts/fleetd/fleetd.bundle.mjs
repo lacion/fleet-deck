@@ -6855,7 +6855,7 @@ function createStatements(db2) {
 import fs5 from "node:fs";
 import path5 from "node:path";
 
-// scripts/fleetd/helpers.mjs
+// scripts/fleetd/helpers.ts
 import path4 from "node:path";
 import fs4 from "node:fs";
 import os from "node:os";
@@ -6885,20 +6885,28 @@ var GATEWAY_ENV_VARS = [
 ];
 var SPAWN_ENV_VARS = ["FLEETDECK_SETUP_CMD"];
 
-// scripts/fleetd/helpers.mjs
+// scripts/fleetd/helpers.ts
 function envInt(name, fallback, { min = 0 } = {}) {
   const n = Number(process.env[name]);
   return Number.isFinite(n) && n >= min ? Math.floor(n) : fallback;
 }
 function mungeClaudeProjectCwd(cwd) {
-  return path4.resolve(cwd).replace(/[\/.]/g, "-");
+  return path4.resolve(cwd).replace(/[/.]/g, "-");
 }
 function claudeTranscriptPath(cwd, sessionId, homeDir = os.homedir()) {
-  return path4.join(homeDir, ".claude", "projects", mungeClaudeProjectCwd(cwd), `${sessionId}.jsonl`);
+  return path4.join(
+    homeDir,
+    ".claude",
+    "projects",
+    mungeClaudeProjectCwd(cwd),
+    `${sessionId}.jsonl`
+  );
 }
 function spawnRowRevivable(row) {
   const runCwd = row?.worktree_path ?? row?.cwd;
-  return !!runCwd && ["pane-dead", "killed", "gone"].includes(row.status) && fs4.existsSync(runCwd) && fs4.existsSync(claudeTranscriptPath(runCwd, row.session_id));
+  return !!runCwd && // runCwd truthy already implies row is non-null at runtime; the compiler
+  // can't infer that through the optional-chain, so state it for `.status`.
+  row != null && ["pane-dead", "killed", "gone"].includes(row.status) && fs4.existsSync(runCwd) && fs4.existsSync(claudeTranscriptPath(runCwd, row.session_id));
 }
 function cwdIsDirectory(p) {
   if (!p) return false;
@@ -6993,7 +7001,10 @@ function createKeyedMutex() {
     const mine = new Promise((resolve) => {
       releaseNow = resolve;
     });
-    tails.set(key, tail.then(() => mine));
+    tails.set(
+      key,
+      tail.then(() => mine)
+    );
     await tail;
     let released = false;
     return () => {
@@ -7018,17 +7029,20 @@ async function mapLimit(items, limit, fn) {
     for (; ; ) {
       const i = next++;
       if (i >= items.length) return;
-      out[i] = await fn(items[i]);
+      const item = items[i];
+      if (item === void 0) continue;
+      out[i] = await fn(item);
     }
   }
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
   return out;
 }
 function chmodWritableWhereOwned(root) {
-  const uid = typeof process.getuid === "function" ? process.getuid() : null;
+  const getuid = process.getuid;
+  const uid = typeof getuid === "function" ? getuid() : null;
   const walk = (dir, depth = 0) => {
     if (depth > 12) return;
-    let entries = [];
+    let entries;
     try {
       entries = fs4.readdirSync(dir, { withFileTypes: true });
     } catch {
@@ -7057,11 +7071,13 @@ function chmodWritableWhereOwned(root) {
   }
 }
 function blockedPaths(root, limit = 8) {
-  const uid = typeof process.getuid === "function" ? process.getuid() : null;
+  const getuid = process.getuid;
+  const uid = typeof getuid === "function" ? getuid() : null;
   const owners = /* @__PURE__ */ new Map();
   const out = [];
   const ownerOf = (st) => {
-    if (owners.has(st.uid)) return owners.get(st.uid);
+    const cached = owners.get(st.uid);
+    if (cached !== void 0) return cached;
     let name = `uid ${st.uid}`;
     try {
       name = st.uid === 0 ? "root" : os.userInfo().uid === st.uid ? os.userInfo().username : name;
@@ -7072,7 +7088,7 @@ function blockedPaths(root, limit = 8) {
   };
   const walk = (dir, depth = 0) => {
     if (out.length >= limit || depth > 12) return;
-    let entries = [];
+    let entries;
     try {
       entries = fs4.readdirSync(dir, { withFileTypes: true });
     } catch {
@@ -7100,7 +7116,7 @@ function blockedPaths(root, limit = 8) {
   }
   return out;
 }
-var shellQuote = (s) => /^[A-Za-z0-9_@%+=:,./-]+$/.test(s) ? s : `'${String(s).replace(/'/g, `'\\''`)}'`;
+var shellQuote = (s) => /^[A-Za-z0-9_@%+=:,./-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`;
 function processStartMs(pid) {
   if (!Number.isFinite(pid) || pid <= 0) return null;
   try {
@@ -7122,7 +7138,7 @@ function pidOwnedBy(pid, startedAt) {
   return Math.abs(startMs - startedAt) <= PID_START_TOLERANCE_MS;
 }
 function colFromAgentState(raw, isNew) {
-  const s = String(raw ?? "").toLowerCase();
+  const s = (raw ?? "").toLowerCase();
   if (s === "busy" || s === "running") return "working";
   if (s === "blocked" || s === "waiting") return "needsyou";
   if (s === "idle") return "idle";
@@ -7131,23 +7147,23 @@ function colFromAgentState(raw, isNew) {
 function parseCommand(text) {
   const t = String(text ?? "").trim();
   let m;
-  if (m = /^broadcast\s+(.+)$/is.exec(t)) return { cmd: "broadcast", text: m[1].trim() };
+  if (m = /^broadcast\s+(.+)$/is.exec(t)) return { cmd: "broadcast", text: (m[1] ?? "").trim() };
   if (m = /^assign\s+(\S+)\s+(.+)$/is.exec(t)) {
-    const target = m[1];
+    const target = m[1] ?? "";
     if (target === "auto" || target.startsWith("auto:")) {
       const repo = target.length > "auto:".length ? target.slice("auto:".length) : null;
-      return { cmd: "assign_auto", repo, text: m[2].trim() };
+      return { cmd: "assign_auto", repo, text: (m[2] ?? "").trim() };
     }
-    return { cmd: "assign", target, text: m[2].trim() };
+    return { cmd: "assign", target, text: (m[2] ?? "").trim() };
   }
   if (m = /^ticket\s+(\S+)\s+(\S+)\s*$/i.exec(t)) {
-    return { cmd: "ticket", target: m[1], ticket: m[2] };
+    return { cmd: "ticket", target: m[1] ?? "", ticket: m[2] ?? "" };
   }
   if (/^ticket\b/i.test(t)) {
     return { cmd: "ticket", error: "usage: ticket <callsign-or-session-id> <PROJ-123|clear>" };
   }
   if (m = /^name\s+(\S+)\s+(\S+)\s*$/i.exec(t)) {
-    return { cmd: "name", target: m[1], suffix: m[2] };
+    return { cmd: "name", target: m[1] ?? "", suffix: m[2] ?? "" };
   }
   if (/^name\b/i.test(t)) {
     return { cmd: "name", error: "usage: name <callsign-or-session-id> <new-suffix|clear>" };

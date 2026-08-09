@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { chmodWritableWhereOwned } from '../scripts/fleetd/helpers.mjs';
+import { chmodWritableWhereOwned } from '../scripts/fleetd/helpers.ts';
 
 function scratch(t, prefix = 'fleetdeck-chmod-symlink-') {
   const dir = mkdtempSync(path.join(tmpdir(), prefix));

@@ -12,7 +12,7 @@ import path from 'node:path';
 import { randomUUID, randomBytes } from 'node:crypto';
 import { deriveRepo, branchOf } from './repo-identity.ts';
 import { ticketFromBranch, animalOf } from './tickets.ts';
-import { claudeEnvArgvPrefix, claudeTranscriptPath, canonicalPathKey, SHELL_RE, NOT_RESUMABLE_END } from './helpers.mjs';
+import { claudeEnvArgvPrefix, claudeTranscriptPath, canonicalPathKey, SHELL_RE, NOT_RESUMABLE_END } from './helpers.ts';
 import { execFileP, baseBranch } from './exec.ts';
 import { redactDiagnosticText, scrubUrlCredentials } from './payload-capture.ts';
 import { redactGitText } from './exec.ts';

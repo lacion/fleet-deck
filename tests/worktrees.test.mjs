@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openDb } from '../scripts/fleetd/db.ts';
-import * as fleetdHelpers from '../scripts/fleetd/helpers.mjs';
+import * as fleetdHelpers from '../scripts/fleetd/helpers.ts';
 import { createStatements } from '../scripts/fleetd/statements.ts';
 import { createWorktrees } from '../scripts/fleetd/worktrees.mjs';
 import { claudeTranscriptPath } from '../scripts/fleetd/derive.mjs';

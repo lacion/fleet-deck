@@ -3,7 +3,7 @@
 // auto-routing policy lives in q.autoCandidate. Threaded ctx state: q, mail,
 // resolveTargets, tick, onMutate, applyTicket, applyCustomName.
 
-import { parseCommand, validateNameSuffix } from './helpers.mjs';
+import { parseCommand, validateNameSuffix } from './helpers.ts';
 import { normalizeTicket } from './tickets.ts';
 import { MAIL_MAX_LEN } from './mail.mjs';
 

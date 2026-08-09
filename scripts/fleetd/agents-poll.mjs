@@ -20,7 +20,7 @@
 //     CLI half of the poll entirely.
 
 import { execFileP } from './exec.ts';
-import { pidOwnedBy } from './helpers.mjs';
+import { pidOwnedBy } from './helpers.ts';
 
 // FLEETDECK_AGENTS_POLL_MS: test hook to shrink the cadence (floor 100 ms);
 // production default ~10 s.

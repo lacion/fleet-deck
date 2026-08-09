@@ -5,7 +5,7 @@
 // facts (hasWatchWaiter/ownedPaneRow), spawnCapability + spawnState from the
 // spawn module. spawnRowRevivable is a pure helper.
 
-import { spawnRowRevivable, sessionAdoptableNow } from './helpers.mjs';
+import { spawnRowRevivable, sessionAdoptableNow } from './helpers.ts';
 import { scrubUrlCredentials } from './payload-capture.ts';
 // F1a: the /state + /ws envelope carries the wire schema version so a board on
 // an older build can detect skew. Imported from the shared TS contract (the

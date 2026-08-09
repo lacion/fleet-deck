@@ -14,7 +14,7 @@ import { deriveRepo, branchOf } from './repo-identity.ts';
 import { ticketFromBranch } from './tickets.ts';
 import { lastAssistantText } from './transcript.ts';
 import { detectTrailingQuestion } from './questions.mjs';
-import { mungeClaudeProjectCwd } from './helpers.mjs';
+import { mungeClaudeProjectCwd } from './helpers.ts';
 
 const EDIT_TOOLS = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'];
 const TEST_RUNNER_RE = /\b(pytest|jest|vitest|go test|cargo test|npm (run )?test)\b/; // spike regex, verbatim

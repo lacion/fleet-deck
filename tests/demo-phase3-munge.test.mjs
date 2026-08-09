@@ -19,6 +19,6 @@ test('phase-3 transcript lookup uses the production mungeClaudeProjectCwd helper
 });
 
 test('the production helper converts both slashes and dots (the defect trigger)', async () => {
-  const { mungeClaudeProjectCwd } = await import(new URL('../scripts/fleetd/helpers.mjs', import.meta.url));
+  const { mungeClaudeProjectCwd } = await import(new URL('../scripts/fleetd/helpers.ts', import.meta.url));
   assert.equal(mungeClaudeProjectCwd('/tmp/fleet.deck/proj'), '-tmp-fleet-deck-proj');
 });

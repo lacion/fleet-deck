@@ -1,4 +1,4 @@
-// helpers.mjs — pure, closure-free helpers shared across the fleetd core
+// helpers.ts — pure, closure-free helpers shared across the fleetd core
 // modules. Nothing here reads `db`, the prepared statements, or any per-core
 // state: every value comes in through arguments, so these functions are safe
 // to import anywhere (and to unit-test in isolation).
@@ -10,7 +10,7 @@ import { CLAUDE_ENV_MARKERS, GATEWAY_ENV_VARS, SPAWN_ENV_VARS } from './env-scru
 
 // v1.2 env knobs are resolved once per core via this reader; see the knob doc
 // in derive.mjs where each threshold is bound.
-export function envInt(name, fallback, { min = 0 } = {}) {
+export function envInt(name: string, fallback: number, { min = 0 }: { min?: number } = {}): number {
   const n = Number(process.env[name]);
   return Number.isFinite(n) && n >= min ? Math.floor(n) : fallback;
 }
@@ -18,20 +18,44 @@ export function envInt(name, fallback, { min = 0 } = {}) {
 // Claude stores one project directory per absolute cwd by replacing every
 // slash and dot with a dash. Keep this pure and exported: revive eligibility,
 // the launch guard, and unit tests must all agree on the exact on-disk name.
-export function mungeClaudeProjectCwd(cwd) {
-  return path.resolve(cwd).replace(/[\/.]/g, '-');
+export function mungeClaudeProjectCwd(cwd: string): string {
+  return path.resolve(cwd).replace(/[/.]/g, '-');
 }
 
-export function claudeTranscriptPath(cwd, sessionId, homeDir = os.homedir()) {
-  return path.join(homeDir, '.claude', 'projects', mungeClaudeProjectCwd(cwd), `${sessionId}.jsonl`);
+export function claudeTranscriptPath(
+  cwd: string,
+  sessionId: string,
+  homeDir: string = os.homedir(),
+): string {
+  return path.join(
+    homeDir,
+    '.claude',
+    'projects',
+    mungeClaudeProjectCwd(cwd),
+    `${sessionId}.jsonl`,
+  );
 }
 
-export function spawnRowRevivable(row) {
+// The subset of a spawns row spawnRowRevivable reads. Structural, not the full
+// SpawnRow — this leaf never touches the store, so it names only its own inputs.
+interface RevivableSpawnRow {
+  worktree_path?: string | null;
+  cwd?: string | null;
+  status: string;
+  session_id: string;
+}
+
+export function spawnRowRevivable(row: RevivableSpawnRow | null | undefined): boolean {
   const runCwd = row?.worktree_path ?? row?.cwd;
-  return !!runCwd
-    && ['pane-dead', 'killed', 'gone'].includes(row.status)
-    && fs.existsSync(runCwd)
-    && fs.existsSync(claudeTranscriptPath(runCwd, row.session_id));
+  return (
+    !!runCwd &&
+    // runCwd truthy already implies row is non-null at runtime; the compiler
+    // can't infer that through the optional-chain, so state it for `.status`.
+    row != null &&
+    ['pane-dead', 'killed', 'gone'].includes(row.status) &&
+    fs.existsSync(runCwd) &&
+    fs.existsSync(claudeTranscriptPath(runCwd, row.session_id))
+  );
 }
 
 // 0.7.0 Move-to-tmux: the "adopt NOW" predicate (snapshot `adopt.eligible ===
@@ -56,9 +80,13 @@ export function spawnRowRevivable(row) {
 // Two fs probes — same uncached cost contract as spawnRowRevivable; the
 // snapshot runs it ONLY for offline cards (a live card takes the no-fs 'arm'
 // path), so a frame never fs-probes the whole fleet.
-function cwdIsDirectory(p) {
+function cwdIsDirectory(p: string | null | undefined): p is string {
   if (!p) return false;
-  try { return fs.statSync(p).isDirectory(); } catch { return false; }
+  try {
+    return fs.statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 // Ends that must never be resumed, and why each one is not a green light:
@@ -72,16 +100,27 @@ function cwdIsDirectory(p) {
 // Resuming any of these mints a second billed session against a conversation
 // that is either still live or already moved on. One owner, so the snapshot
 // predicate below and adoptSession's own guard can never drift apart.
-export const NOT_RESUMABLE_END = new Set([null, 'presumed', 'superseded']);
+export const NOT_RESUMABLE_END = new Set<string | null>([null, 'presumed', 'superseded']);
 
-export function sessionAdoptableNow(session, hasSpawnRow) {
+// The subset of a sessions row sessionAdoptableNow reads — structural, mirrors
+// spawnRowRevivable: this leaf names only the columns it inspects.
+interface AdoptableSession {
+  ended_at?: number | string | null;
+  end_reason?: string | null;
+  cwd?: string | null;
+  session_id: string;
+}
+
+export function sessionAdoptableNow(
+  session: AdoptableSession | null | undefined,
+  hasSpawnRow: boolean,
+): boolean {
   if (!session) return false;
-  if (session.ended_at == null) return false;  // still live → arm, not now
+  if (session.ended_at == null) return false; // still live → arm, not now
   if (NOT_RESUMABLE_END.has(session.end_reason ?? null)) return false;
-  if (hasSpawnRow) return false;               // board-owned lineage → revive owns it
+  if (hasSpawnRow) return false; // board-owned lineage → revive owns it
   const cwd = session.cwd;
-  return cwdIsDirectory(cwd)
-    && fs.existsSync(claudeTranscriptPath(cwd, session.session_id));
+  return cwdIsDirectory(cwd) && fs.existsSync(claudeTranscriptPath(cwd, session.session_id));
 }
 
 // CONTRACT: fresh spawn and revive share one environment wrapper. This is
@@ -100,7 +139,11 @@ export function sessionAdoptableNow(session, hasSpawnRow) {
 // names keeps the guarantee intact for every variable the launch did NOT set —
 // an ambient ANTHROPIC_API_KEY is still scrubbed from a spawn that only supplies
 // ANTHROPIC_AUTH_TOKEN. Default `[]` ⇒ byte-identical to the pre-0.15.0 prefix.
-export function claudeEnvArgvPrefix(port, home, { keep = [] } = {}) {
+export function claudeEnvArgvPrefix(
+  port: number,
+  home: string,
+  { keep = [] }: { keep?: readonly string[] } = {},
+): string[] {
   const keepSet = new Set(keep);
   const scrub = [
     ...CLAUDE_ENV_MARKERS,
@@ -109,23 +152,35 @@ export function claudeEnvArgvPrefix(port, home, { keep = [] } = {}) {
     // control client). A leaked one riding a pane's env into the next
     // SessionStart would make a fresh daemon exec the fixture instead of the
     // real thing — the same scar class as the test seams below, so scrub both.
-    'FLEETDECK_AGENTS_CMD', 'FLEETDECK_SPAWN_CMD', 'FLEETDECK_TERM_CMD',
-    'TMUX', 'TMUX_PANE', 'FLEETDECK_TMUX_SOCKET',
-    'FLEETDECK_AGENTS_POLL_MS', 'FLEETDECK_HOLD_MS', 'FLEETDECK_STALE_MS',
+    'FLEETDECK_AGENTS_CMD',
+    'FLEETDECK_SPAWN_CMD',
+    'FLEETDECK_TERM_CMD',
+    'TMUX',
+    'TMUX_PANE',
+    'FLEETDECK_TMUX_SOCKET',
+    'FLEETDECK_AGENTS_POLL_MS',
+    'FLEETDECK_HOLD_MS',
+    'FLEETDECK_STALE_MS',
     'FLEETDECK_REARM_GRACE_MS',
-    'FLEETDECK_NUDGE_MS', 'FLEETDECK_WATCH_MAX_MS',
-    'FLEETDECK_WATCH_POLL_MS', 'FLEETDECK_SPAWN_REGISTER_MS',
+    'FLEETDECK_NUDGE_MS',
+    'FLEETDECK_WATCH_MAX_MS',
+    'FLEETDECK_WATCH_POLL_MS',
+    'FLEETDECK_SPAWN_REGISTER_MS',
     'FLEETDECK_SETUP_REGISTER_MS',
-    'FLEETDECK_PANE_MAIL_GRACE_MS', 'FLEETDECK_PRESUME_DEAD_MS',
+    'FLEETDECK_PANE_MAIL_GRACE_MS',
+    'FLEETDECK_PRESUME_DEAD_MS',
     'FLEETDECK_PRESUME_DEAD_WORKING_MS',
-    'FLEETDECK_RETAIN_OFFLINE_MS', 'FLEETDECK_RC_HARVEST_MS',
-    'FLEETDECK_ADOPT_ARM_MS', 'FLEETDECK_ADOPT_DELAY_MS',
+    'FLEETDECK_RETAIN_OFFLINE_MS',
+    'FLEETDECK_RC_HARVEST_MS',
+    'FLEETDECK_ADOPT_ARM_MS',
+    'FLEETDECK_ADOPT_DELAY_MS',
     // Test seams that must NEVER ride a pane's env into the next SessionStart:
     // a leaked FLEETDECK_TEST_DAEMON_SCRIPT would make every future daemon
     // (re)spawn launch an arbitrary script, and a leaked VERSION_OVERRIDE
     // permanently skews the upgrade-takeover comparison (the 2026-07-11 tmux
     // env-poisoning scar, new tenants).
-    'FLEETDECK_TEST_DAEMON_SCRIPT', 'FLEETDECK_VERSION_OVERRIDE',
+    'FLEETDECK_TEST_DAEMON_SCRIPT',
+    'FLEETDECK_VERSION_OVERRIDE',
     // The daemon's bearer. When the operator pins FLEETDECK_TOKEN in the env it
     // would otherwise ride tmux's global env into every pane — a live
     // credential handed to every agent (0.16.0). Agents that legitimately call
@@ -137,9 +192,10 @@ export function claudeEnvArgvPrefix(port, home, { keep = [] } = {}) {
     ...GATEWAY_ENV_VARS,
     // Visible pre-Claude setup is likewise owned by one explicit spawn.
     ...SPAWN_ENV_VARS,
-  ].filter(name => !keepSet.has(name));
+  ].filter((name) => !keepSet.has(name));
   return [
-    'env', ...scrub.flatMap(name => ['-u', name]),
+    'env',
+    ...scrub.flatMap((name) => ['-u', name]),
     // Fleet Deck already owns the fleet board, so Claude Code's own background
     // agent view is redundant in a fleet pane — and worse, from a spawned pane a
     // human can arrow left into it and start launching nested agents that
@@ -150,7 +206,8 @@ export function claudeEnvArgvPrefix(port, home, { keep = [] } = {}) {
     // here. Placed BEFORE the FLEETDECK identity pair so PORT/HOME remain the
     // immediate lead-in to the command, the ordering the adapter/tests pin.
     'CLAUDE_CODE_DISABLE_AGENT_VIEW=1',
-    `FLEETDECK_PORT=${port}`, `FLEETDECK_HOME=${home}`,
+    `FLEETDECK_PORT=${port}`,
+    `FLEETDECK_HOME=${home}`,
   ];
 }
 
@@ -165,13 +222,20 @@ export function claudeEnvArgvPrefix(port, home, { keep = [] } = {}) {
 // about to delete (the BUG-060 post-final-check race). The returned release
 // MUST be invoked (idempotently — it releases at most once) on every exit
 // path; callers use try/finally.
-export function createKeyedMutex() {
-  const tails = new Map(); // canonical key -> promise chain tail
-  return async function acquire(key) {
+export function createKeyedMutex(): (key: string) => Promise<() => void> {
+  const tails = new Map<string, Promise<void>>(); // canonical key -> promise chain tail
+  return async function acquire(key: string): Promise<() => void> {
     const tail = tails.get(key) ?? Promise.resolve();
-    let releaseNow = () => {};
-    const mine = new Promise(resolve => { releaseNow = resolve; });
-    tails.set(key, tail.then(() => mine));
+    let releaseNow: () => void = () => {
+      /* replaced synchronously by the Promise executor below */
+    };
+    const mine = new Promise<void>((resolve) => {
+      releaseNow = resolve;
+    });
+    tails.set(
+      key,
+      tail.then(() => mine),
+    );
     await tail;
     let released = false;
     return () => {
@@ -187,21 +251,34 @@ export function createKeyedMutex() {
 // path.resolve otherwise (symlinked spellings of the same directory must
 // contend; a missing path still needs a stable key). Pure, mirrors
 // repos.mjs's canonicalTarget.
-export function canonicalPathKey(p) {
-  try { return fs.realpathSync(p); } catch { return path.resolve(p); }
+export function canonicalPathKey(p: string): string {
+  try {
+    return fs.realpathSync(p);
+  } catch {
+    return path.resolve(p);
+  }
 }
 
 // Bounded-concurrency map: run `fn` over `items` with at most `limit` in
 // flight, preserving input order in the result. Used by worktree inspection
 // (four probes at a time) but generic.
-export async function mapLimit(items, limit, fn) {
-  const out = new Array(items.length);
+export async function mapLimit<T, R>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const out = new Array<R>(items.length);
   let next = 0;
-  async function worker() {
+  async function worker(): Promise<void> {
     for (;;) {
       const i = next++;
       if (i >= items.length) return;
-      out[i] = await fn(items[i]);
+      // `items[i]` is in-bounds here, but noUncheckedIndexedAccess types it
+      // `T | undefined`; the guard is unreachable for the dense arrays this
+      // ever runs over. (No behavior move: a hole would be skipped, not mapped.)
+      const item = items[i];
+      if (item === undefined) continue;
+      out[i] = await fn(item);
     }
   }
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
@@ -213,51 +290,82 @@ export async function mapLimit(items, limit, fn) {
 // someone else. Never chmods what it does not own, never recurses outside the
 // worktree. Only ever called inside a path the daemon itself created (the
 // caller has already proved that against the spawns table).
-export function chmodWritableWhereOwned(root) {
-  const uid = typeof process.getuid === 'function' ? process.getuid() : null;
-  const walk = (dir, depth = 0) => {
+export function chmodWritableWhereOwned(root: string): void {
+  const getuid = process.getuid;
+  const uid = typeof getuid === 'function' ? getuid() : null;
+  const walk = (dir: string, depth = 0): void => {
     if (depth > 12) return; // a worktree is not a filesystem crawl
-    let entries = [];
-    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
     for (const entry of entries) {
       const full = path.join(dir, entry.name);
-      let st;
-      try { st = fs.lstatSync(full); } catch { continue; }
+      let st: fs.Stats;
+      try {
+        st = fs.lstatSync(full);
+      } catch {
+        continue;
+      }
       if (uid != null && st.uid !== uid) continue; // not ours — leave it alone
       // chmodSync follows links — a symlink we own can point OUTSIDE the
       // worktree, so it must be skipped before any chmod, not merely excluded
       // from recursion below.
       if (entry.isSymbolicLink()) continue;
-      try { fs.chmodSync(full, st.mode | 0o200); } catch { /* best effort */ }
+      try {
+        fs.chmodSync(full, st.mode | 0o200);
+      } catch {
+        /* best effort */
+      }
       if (entry.isDirectory()) walk(full, depth + 1);
     }
   };
-  try { walk(root); } catch { /* best effort: the retry will tell the truth */ }
+  try {
+    walk(root);
+  } catch {
+    /* best effort: the retry will tell the truth */
+  }
 }
 
 // What actually stands in the way, named. A path we cannot unlink is one whose
 // PARENT we cannot write to (that is what unlink(2) checks) — reporting the
 // child alone would send the human chasing the wrong file.
-export function blockedPaths(root, limit = 8) {
-  const uid = typeof process.getuid === 'function' ? process.getuid() : null;
-  const owners = new Map();
-  const out = [];
-  const ownerOf = st => {
-    if (owners.has(st.uid)) return owners.get(st.uid);
+export function blockedPaths(root: string, limit = 8): { path: string; owner: string }[] {
+  const getuid = process.getuid;
+  const uid = typeof getuid === 'function' ? getuid() : null;
+  const owners = new Map<number, string>();
+  const out: { path: string; owner: string }[] = [];
+  const ownerOf = (st: fs.Stats): string => {
+    const cached = owners.get(st.uid);
+    if (cached !== undefined) return cached;
     let name = `uid ${st.uid}`;
-    try { name = st.uid === 0 ? 'root' : (os.userInfo().uid === st.uid ? os.userInfo().username : name); } catch { /* keep uid */ }
+    try {
+      name = st.uid === 0 ? 'root' : os.userInfo().uid === st.uid ? os.userInfo().username : name;
+    } catch {
+      /* keep uid */
+    }
     owners.set(st.uid, name);
     return name;
   };
-  const walk = (dir, depth = 0) => {
+  const walk = (dir: string, depth = 0): void => {
     if (out.length >= limit || depth > 12) return;
-    let entries = [];
-    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
     for (const entry of entries) {
       if (out.length >= limit) return;
       const full = path.join(dir, entry.name);
-      let st;
-      try { st = fs.lstatSync(full); } catch { continue; }
+      let st: fs.Stats;
+      try {
+        st = fs.lstatSync(full);
+      } catch {
+        continue;
+      }
       if (uid != null && st.uid !== uid) {
         out.push({ path: full, owner: ownerOf(st) });
         continue; // do not descend into someone else's tree
@@ -265,16 +373,26 @@ export function blockedPaths(root, limit = 8) {
       if (entry.isDirectory() && !entry.isSymbolicLink()) walk(full, depth + 1);
     }
   };
-  try { walk(root); } catch { /* nothing to add */ }
+  try {
+    walk(root);
+  } catch {
+    /* nothing to add */
+  }
   return out;
 }
 
-export const shellQuote = s => (/^[A-Za-z0-9_@%+=:,./-]+$/.test(s) ? s : `'${String(s).replace(/'/g, `'\\''`)}'`);
+export const shellQuote = (s: string): string =>
+  /^[A-Za-z0-9_@%+=:,./-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`;
 
 // A live pid check — the agents-cli registry can outlive the process.
-export function pidAlive(pid) {
+export function pidAlive(pid: number): boolean {
   if (!Number.isFinite(pid) || pid <= 0) return false;
-  try { process.kill(pid, 0); return true; } catch { return false; }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // Process start time in ms since the epoch, or null when unverifiable. A bare
@@ -302,7 +420,7 @@ export function pidAlive(pid) {
 // On any platform without /proc (or any read/parse failure) this returns
 // null and callers MUST treat ownership as unverifiable — never silently
 // fall back to the pid-existence check that caused the bug.
-export function processStartMs(pid) {
+export function processStartMs(pid: number): number | null {
   if (!Number.isFinite(pid) || pid <= 0) return null;
   try {
     const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
@@ -327,15 +445,18 @@ export function processStartMs(pid) {
 // in its active cadence.
 export const PID_START_TOLERANCE_MS = 15_000;
 
-export function pidOwnedBy(pid, startedAt) {
+export function pidOwnedBy(pid: number, startedAt: number): boolean {
   if (!Number.isFinite(startedAt) || startedAt <= 0) return false;
   const startMs = processStartMs(pid);
   if (startMs == null) return false;
   return Math.abs(startMs - startedAt) <= PID_START_TOLERANCE_MS;
 }
 
-export function colFromAgentState(raw, isNew) {
-  const s = String(raw ?? '').toLowerCase();
+// The four board columns colFromAgentState can assign a card.
+type AgentColumn = 'working' | 'needsyou' | 'idle' | 'queued';
+
+export function colFromAgentState(raw: string | null | undefined, isNew: boolean): AgentColumn {
+  const s = (raw ?? '').toLowerCase();
   if (s === 'busy' || s === 'running') return 'working';
   // 'waiting' is undocumented (the official hooks docs only list
   // busy/blocked state examples) but observed live on interactive sessions
@@ -350,12 +471,30 @@ export function colFromAgentState(raw, isNew) {
   return isNew ? 'queued' : 'idle';
 }
 
-export function parseCommand(text) {
+// The parsed shape of an operator command line — a discriminated union on
+// `cmd`. `ticket`/`name` each have a success arm and an `error` arm (a
+// malformed callsign command must surface a usage line, never a silent note).
+type ParsedCommand =
+  | { cmd: 'broadcast'; text: string }
+  | { cmd: 'assign_auto'; repo: string | null; text: string }
+  | { cmd: 'assign'; target: string; text: string }
+  | { cmd: 'ticket'; target: string; ticket: string }
+  | { cmd: 'ticket'; error: string }
+  | { cmd: 'name'; target: string; suffix: string }
+  | { cmd: 'name'; error: string }
+  | { cmd: 'note'; text: string };
+
+export function parseCommand(text: unknown): ParsedCommand {
+  // `text` is a raw HTTP-body field (core.command(ev.text)); coerce defensively
+  // exactly as command() does. The degenerate object → "[object Object]" path is
+  // intentional garbage-in handling, so no-base-to-string is deliberately off
+  // here — drop this and take `text: string` once http validates the body.
+  // eslint-disable-next-line @typescript-eslint/no-base-to-string -- untrusted wire value, coercion is intentional
   const t = String(text ?? '').trim();
-  let m;
-  if ((m = /^broadcast\s+(.+)$/is.exec(t))) return { cmd: 'broadcast', text: m[1].trim() };
+  let m: RegExpExecArray | null;
+  if ((m = /^broadcast\s+(.+)$/is.exec(t))) return { cmd: 'broadcast', text: (m[1] ?? '').trim() };
   if ((m = /^assign\s+(\S+)\s+(.+)$/is.exec(t))) {
-    const target = m[1];
+    const target = m[1] ?? '';
     // v1.1 auto-routing: `assign auto <text>` / `assign auto:<repo> <text>`.
     // Repo names can contain dots and dashes (and repo_ids are absolute
     // paths), so split the target on the FIRST colon only — everything
@@ -363,9 +502,9 @@ export function parseCommand(text) {
     // unscoped auto.
     if (target === 'auto' || target.startsWith('auto:')) {
       const repo = target.length > 'auto:'.length ? target.slice('auto:'.length) : null;
-      return { cmd: 'assign_auto', repo, text: m[2].trim() };
+      return { cmd: 'assign_auto', repo, text: (m[2] ?? '').trim() };
     }
-    return { cmd: 'assign', target, text: m[2].trim() };
+    return { cmd: 'assign', target, text: (m[2] ?? '').trim() };
   }
   // 0.6.0 ticket callsigns: `ticket <target> <PROJ-123|clear>`. Exactly two
   // tokens (the value is anchored last), so `ticket foo BAR extra` does NOT
@@ -374,7 +513,7 @@ export function parseCommand(text) {
   // the command handler surfaces loudly (an operator who fat-fingers a key
   // deserves a usage line, not a note that looks like it worked).
   if ((m = /^ticket\s+(\S+)\s+(\S+)\s*$/i.exec(t))) {
-    return { cmd: 'ticket', target: m[1], ticket: m[2] };
+    return { cmd: 'ticket', target: m[1] ?? '', ticket: m[2] ?? '' };
   }
   if (/^ticket\b/i.test(t)) {
     return { cmd: 'ticket', error: 'usage: ticket <callsign-or-session-id> <PROJ-123|clear>' };
@@ -383,7 +522,7 @@ export function parseCommand(text) {
   // never-silently-a-note rule as `ticket` above — the human renames a card by
   // its ID part, the animal is never theirs to choose.
   if ((m = /^name\s+(\S+)\s+(\S+)\s*$/i.exec(t))) {
-    return { cmd: 'name', target: m[1], suffix: m[2] };
+    return { cmd: 'name', target: m[1] ?? '', suffix: m[2] ?? '' };
   }
   if (/^name\b/i.test(t)) {
     return { cmd: 'name', error: 'usage: name <callsign-or-session-id> <new-suffix|clear>' };
@@ -402,7 +541,7 @@ const NAME_SUFFIX_RE = /^[A-Za-z0-9][A-Za-z0-9-]{0,23}$/;
 // so a card named `all` could never be messaged directly.
 const RESERVED_NAMES = new Set(['all', 'everyone', 'clear']);
 
-export function validateNameSuffix(suffix) {
+export function validateNameSuffix(suffix: string): string | null {
   if (!NAME_SUFFIX_RE.test(suffix)) {
     return 'a name is letters, digits and dashes only (start with a letter or digit, max 24)';
   }

@@ -31,7 +31,7 @@
 import { spawn } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
 import { exactWindowTarget, sessionName } from './spawn.mjs';
-import { envInt } from './helpers.mjs';
+import { envInt } from './helpers.ts';
 
 const ACTIVE_STATUSES = new Set(['spawning', 'stalled', 'live']);
 const INPUT_CHUNK_BYTES = 1024;
