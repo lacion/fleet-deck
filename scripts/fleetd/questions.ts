@@ -1,4 +1,4 @@
-// questions.mjs — F3 needs-you relay: durable question rows + hold-open
+// questions.ts — F3 needs-you relay: durable question rows + hold-open
 // management (F3a PermissionRequest, F3b Elicitation, F3c AskUserQuestion) +
 // free-text question detection at Stop (F3d). NO model calls anywhere:
 // detection is regex, relay is plumbing.
@@ -79,18 +79,100 @@
 // any activity event from that session) expires it, because nobody can
 // deliver its answer any more. The hook side times out non-blockingly.
 
+import type { SqliteHandle } from './sqlite.ts';
+
+// The durable `questions` row (db.ts schema). create() always writes
+// session_id/kind/status/created_at non-null, so they are typed non-nullable;
+// the remaining columns are the ones the schema deliberately leaves NULL
+// (freeform has no hold deadline; a pending row has no answer yet).
+interface QuestionRow {
+  id: number;
+  session_id: string;
+  kind: string;
+  payload_json: string | null;
+  status: string;
+  answer_json: string | null;
+  created_at: number;
+  expires_at: number | null;
+  answered_at: number | null;
+}
+
+// An AskUserQuestion choice option / question, as parsed back out of a stored
+// hold payload. Every field is optional and array elements are nullable: the
+// payload is untrusted parsed JSON (a malformed or stale client is exactly what
+// validChoiceAnswers guards against), so the runtime shape checks below stay
+// honest rather than trusting the type.
+interface ChoiceOption {
+  label?: string;
+}
+interface ChoiceQuestion {
+  question?: string;
+  header?: string;
+  options?: (ChoiceOption | null)[];
+  multiSelect?: boolean;
+}
+
+// The parsed payload_json of a question row. Only the fields this module reads
+// are named; the raw hook payload carries more (tool_use_id, etc.) that a spread
+// preserves at runtime and structural typing ignores. All optional — a freeform
+// row carries only {text}, a re-armed row adds rearmed/chain_root, a hold row
+// carries the hook's tool_name/tool_input.
+interface QuestionPayload {
+  rearmed?: boolean;
+  chain_root?: number;
+  rearm_pending?: boolean;
+  tool_name?: string;
+  tool_input?: { questions?: (ChoiceQuestion | null)[] };
+  text?: string;
+}
+
+// The parsed POST /answer body. Fields arrive off the wire, so each is optional
+// and validated at the point of use; `content`/`answers` stay `unknown` because
+// their shape is kind-specific and checked there.
+interface AnswerBody {
+  behavior?: string;
+  action?: string;
+  content?: unknown;
+  text?: string;
+  answers?: unknown;
+}
+
+// The daemon-authorized mail sender threaded in by derive.mjs.
+type MailFn = (to: string, from: string, body: string) => void;
+
+// The createQuestions options bag. Every field is optional with a default; the
+// callbacks are the daemon-core seams (mail, plan wiring, board nudges) the
+// factory closes over. Documented inline at the destructure below.
+interface QuestionsOptions {
+  holdMs?: number;
+  mail?: MailFn;
+  mailMaxLen?: number;
+  tick?: (message: string) => void;
+  callsignOf?: (sessionId: string) => string | null;
+  onChange?: () => void;
+  planIdFor?: (questionId: number) => number | null;
+  planAnswered?: (questionId: number, behavior: string) => void;
+  // A wired resolver may return a bad value in JS; the nullable return keeps the
+  // `?? holdMs` fallback in create() honest (and non-redundant).
+  resolveHoldWindow?: (() => number | null | undefined) | null;
+  onRetired?: (row: QuestionRow | undefined, opts?: { activity?: boolean }) => void;
+  rearmGraceMs?: number;
+  rearmMax?: number;
+}
+
 // v1.3 plan library (CONTRACT "B. Plan library"): the mail sent to the
 // planner when the board answers its ExitPlanMode question with
 // {behavior:"capture"}. Text pinned VERBATIM by the contract. Delivery is the
 // ordinary mail pipeline (turn boundary, or the v1.1 mail-wake for an idle
 // planner) — mail() nudges watchers on insert.
-const PLAN_CAPTURE_MAIL = '[FLEETDECK] Your plan was captured to the fleet plan library — do not execute it. Wrap up your turn.';
+const PLAN_CAPTURE_MAIL =
+  '[FLEETDECK] Your plan was captured to the fleet plan library — do not execute it. Wrap up your turn.';
 
 const DEFAULT_HOLD_MS = 600_000; // 10 min — an operator running a fleet answers on their own clock
 const MAX_HOLDS_PER_SESSION = 4;
 const SWEEP_MS = 5_000;
 const RESOLVED_IN_STATE = 8; // "last few resolved" in GET /state
-const HOLD_KINDS = new Set(['permission', 'elicitation', 'choice']);
+const HOLD_KINDS = new Set<string>(['permission', 'elicitation', 'choice']);
 // UX 2.1 re-arm: when a hold expires with no answer, the agent is still parked
 // on its NATIVE terminal prompt — the board card went dead, but the question
 // hasn't gone anywhere. After a short still-parked grace (no activity from the
@@ -112,6 +194,18 @@ const COMPLETED_KEY_TTL_MS = 60_000;
 // the daemon gets out of the way permanently — any activity ALSO stops it.
 const MAX_REARMS = 2;
 
+// A mail body / question snippet may arrive as `unknown` off the wire or out of
+// untrusted parsed JSON. Faithful to the .mjs `String(x ?? '')`: null/undefined
+// -> '', a string passes through, any other value takes its default
+// stringification. Centralizes the one place a base-to-string coercion is
+// intentional so the strict linter's guard stays scoped to it.
+function asText(value: unknown): string {
+  if (value == null) return '';
+  if (typeof value === 'string') return value;
+  // eslint-disable-next-line @typescript-eslint/no-base-to-string -- intentional String() coercion of untrusted input, matching the pre-migration .mjs behavior
+  return String(value);
+}
+
 // FLEETDECK_HOLD_MS → the hold_ms SETTING (settings.mjs) → the 600 s default.
 // THE LOCKSTEP INVARIANT: the daemon's hold window must stay under the shim
 // watchdog (scripts/fleet-hook.mjs WATCHDOG_MS, 660 s for hold events), which
@@ -122,9 +216,12 @@ const MAX_REARMS = 2;
 // watchdog answers {} and the terminal prompt owns the decision; the re-arm
 // card is the recovery path. The env var is the OVERRIDE (an operator's
 // deliberate choice may sit above the setting); the setting row arrives via
-// `fallback` so questions.mjs never has to know about the settings table.
-export function resolveHoldMs(env = process.env, fallback = null) {
-  const raw = Number(env?.FLEETDECK_HOLD_MS);
+// `fallback` so questions.ts never has to know about the settings table.
+export function resolveHoldMs(
+  env: NodeJS.ProcessEnv | null = process.env,
+  fallback: (() => number | null | undefined) | null = null,
+): number {
+  const raw = Number(env?.['FLEETDECK_HOLD_MS']);
   if (Number.isFinite(raw) && raw > 0) {
     // 650 s ceiling keeps the resolved window under the 660 s shim watchdog —
     // the lockstep invariant above, enforced at the door.
@@ -135,18 +232,29 @@ export function resolveHoldMs(env = process.env, fallback = null) {
   return DEFAULT_HOLD_MS;
 }
 
-function safeParse(json) {
-  try { return JSON.parse(json ?? 'null'); } catch { return null; }
+// eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters -- the generic centralizes the JSON.parse cast in one place so each call site reads `safeParse<Shape>(json)` instead of a bare `as`; it is a single-use param by design
+function safeParse<T = unknown>(json: string | null | undefined): T | null {
+  try {
+    return JSON.parse(json ?? 'null') as T;
+  } catch {
+    return null;
+  }
 }
 
 // Stable, order-independent JSON: the same value always yields the same string
 // regardless of key insertion order, so two tool_inputs that are deeply equal
 // compare equal even if a round-trip through SQLite reordered their keys.
-function stableStringify(v) {
+function stableStringify(v: unknown): string {
   if (v === null || typeof v !== 'object') return JSON.stringify(v ?? null);
   if (Array.isArray(v)) return '[' + v.map(stableStringify).join(',') + ']';
-  return '{' + Object.keys(v).sort()
-    .map(k => JSON.stringify(k) + ':' + stableStringify(v[k])).join(',') + '}';
+  return (
+    '{' +
+    Object.keys(v)
+      .sort()
+      .map((k) => JSON.stringify(k) + ':' + stableStringify((v as Record<string, unknown>)[k]))
+      .join(',') +
+    '}'
+  );
 }
 
 // The identity a held PermissionRequest and its completing PostToolUse actually
@@ -156,62 +264,100 @@ function stableStringify(v) {
 // permission check and the tool's own PostToolUse. Two parallel calls of the
 // same tool with different input get different keys, so completing one never
 // retires the other's hold.
-function toolCallKey(toolName, toolInput) {
+function toolCallKey(toolName: unknown, toolInput: unknown): string {
   // '\x00' (NUL) separator: it cannot appear in a tool name or in JSON output,
   // so the name/input boundary is unambiguous. Written as an ESCAPE, not a raw
   // NUL byte — a literal NUL makes the whole source read as binary, so grep and
   // audits silently skip the file. The runtime value is byte-identical (U+0000).
-  return String(toolName) + '\x00' + stableStringify(toolInput ?? null);
+  return asText(toolName) + '\x00' + stableStringify(toolInput ?? null);
 }
 
-export function createQuestions(db, {
-  holdMs = DEFAULT_HOLD_MS,
-  mail = () => {},
-  // The mailbox's own clamp (mail.ts MAIL_MAX_LEN). Framed answers that exceed
-  // it are REJECTED before settlement — see answerMailGuard below. Injectable
-  // for tests; must mirror the real mailbox clamp in production (derive.mjs).
-  mailMaxLen = 4000,
-  tick = () => {},
-  callsignOf = () => null,
-  onChange = () => {},
-  // v1.3 plan library wiring (derive.mjs owns the plans table; capture-on-
-  // intake happens there, synchronously with the question row insert):
-  //   planIdFor(questionId)            → plan_id | null (null = not a plan question)
-  //   planAnswered(questionId, behavior) → flips the linked plan proposed →
-  //       approved ('allow') | captured ('capture') | rejected ('deny')
-  planIdFor = () => null,
-  planAnswered = () => {},
-  // UX 2.1: live per-creation hold-window resolution. When set, create() calls
-  // it for EVERY new hold-kind row, so a hold_ms settings write steers new
-  // holds immediately instead of waiting out a daemon boot. Falls back to the
-  // boot-resolved holdMs when unset (tests, bare createQuestions callers).
-  resolveHoldWindow = null,
-  // Plan-linked retirement seam: fired with the freshly-expired row by EVERY
-  // path that retires a pending question WITHOUT a board answer. No-op for
-  // non-plan questions (derive.mjs's planRetired finds no linked plan row and
-  // returns). Deliberately fired AFTER the row is expired, outside any
-  // transaction — a callback throw must never un-retire the question.
-  onRetired = () => {},
-  // UX 2.1 re-arm knobs. rearmGraceMs is injectable for tests; 0 (or negative)
-  // DISABLES the whole re-arm machinery — an expiry then behaves exactly as it
-  // did before 2.1.
-  rearmGraceMs = REARM_GRACE_MS,
-  rearmMax = MAX_REARMS,
-} = {}) {
+// Timer handle + the two in-memory hold/re-arm entry shapes the factory closes
+// over. A re-arm entry's timer is null once the grace window fired and the
+// entry survives only as a successor link.
+type Timer = ReturnType<typeof setTimeout>;
+type RespondFn = (response: unknown) => void;
+interface HoldEntry {
+  session_id: string;
+  respond: RespondFn;
+  timer: Timer;
+}
+interface RearmEntry {
+  timer: Timer | null;
+  chainRoot: number;
+  armedAt?: number;
+  successor?: number;
+}
+
+export function createQuestions(
+  db: SqliteHandle,
+  {
+    holdMs = DEFAULT_HOLD_MS,
+    mail = () => {
+      /* no-op default */
+    },
+    // The mailbox's own clamp (mail.ts MAIL_MAX_LEN). Framed answers that exceed
+    // it are REJECTED before settlement — see answerMailGuard below. Injectable
+    // for tests; must mirror the real mailbox clamp in production (derive.mjs).
+    mailMaxLen = 4000,
+    tick = () => {
+      /* no-op default */
+    },
+    callsignOf = () => null,
+    onChange = () => {
+      /* no-op default */
+    },
+    // v1.3 plan library wiring (derive.mjs owns the plans table; capture-on-
+    // intake happens there, synchronously with the question row insert):
+    //   planIdFor(questionId)            → plan_id | null (null = not a plan question)
+    //   planAnswered(questionId, behavior) → flips the linked plan proposed →
+    //       approved ('allow') | captured ('capture') | rejected ('deny')
+    planIdFor = () => null,
+    planAnswered = () => {
+      /* no-op default */
+    },
+    // UX 2.1: live per-creation hold-window resolution. When set, create() calls
+    // it for EVERY new hold-kind row, so a hold_ms settings write steers new
+    // holds immediately instead of waiting out a daemon boot. Falls back to the
+    // boot-resolved holdMs when unset (tests, bare createQuestions callers).
+    resolveHoldWindow = null,
+    // Plan-linked retirement seam: fired with the freshly-expired row by EVERY
+    // path that retires a pending question WITHOUT a board answer. No-op for
+    // non-plan questions (derive.mjs's planRetired finds no linked plan row and
+    // returns). Deliberately fired AFTER the row is expired, outside any
+    // transaction — a callback throw must never un-retire the question.
+    onRetired = () => {
+      /* no-op default */
+    },
+    // UX 2.1 re-arm knobs. rearmGraceMs is injectable for tests; 0 (or negative)
+    // DISABLES the whole re-arm machinery — an expiry then behaves exactly as it
+    // did before 2.1.
+    rearmGraceMs = REARM_GRACE_MS,
+    rearmMax = MAX_REARMS,
+  }: QuestionsOptions = {},
+) {
   const q = {
-    insert: db.prepare(`INSERT INTO questions (session_id, kind, payload_json, status, created_at, expires_at)
+    insert:
+      db.prepare(`INSERT INTO questions (session_id, kind, payload_json, status, created_at, expires_at)
       VALUES (?, ?, ?, 'pending', ?, ?)`),
-    get: db.prepare('SELECT * FROM questions WHERE id = ?'),
-    markAnswered: db.prepare(`UPDATE questions SET status = 'answered', answer_json = ?, answered_at = ?
+    get: db.prepare<QuestionRow>('SELECT * FROM questions WHERE id = ?'),
+    markAnswered:
+      db.prepare(`UPDATE questions SET status = 'answered', answer_json = ?, answered_at = ?
       WHERE id = ? AND status = 'pending'`),
-    markExpired: db.prepare(`UPDATE questions SET status = 'expired' WHERE id = ? AND status = 'pending'`),
-    pending: db.prepare(`SELECT * FROM questions WHERE status = 'pending' ORDER BY id`),
-    pendingBySession: db.prepare(`SELECT * FROM questions WHERE status = 'pending' AND session_id = ? ORDER BY id`),
-    resolved: db.prepare(`SELECT * FROM questions WHERE status != 'pending'
+    markExpired: db.prepare(
+      `UPDATE questions SET status = 'expired' WHERE id = ? AND status = 'pending'`,
+    ),
+    pending: db.prepare<QuestionRow>(
+      `SELECT * FROM questions WHERE status = 'pending' ORDER BY id`,
+    ),
+    pendingBySession: db.prepare<QuestionRow>(
+      `SELECT * FROM questions WHERE status = 'pending' AND session_id = ? ORDER BY id`,
+    ),
+    resolved: db.prepare<QuestionRow>(`SELECT * FROM questions WHERE status != 'pending'
       ORDER BY COALESCE(answered_at, expires_at, created_at) DESC, id DESC LIMIT ${RESOLVED_IN_STATE}`),
   };
 
-  const holds = new Map(); // question id -> { session_id, respond, timer }
+  const holds = new Map<number, HoldEntry>(); // question id -> { session_id, respond, timer }
   // UX 2.1 re-arm ephemera (in-memory only — the same "a dead socket can never
   // be re-parked" reasoning that keeps holds in-memory; a daemon restart simply
   // forfeits any pending grace window, which fails safe to the pre-2.1 state):
@@ -221,9 +367,9 @@ export function createQuestions(db, {
   //                 answering the successor cancels the chain through either id
   //   rearmMeta   — re-armed successor row id -> { sourceId } (the back-link)
   //   rearmChains — chain root id -> re-arm count so far (the MAX_REARMS cap)
-  const rearmById = new Map();
-  const rearmMeta = new Map();
-  const rearmChains = new Map();
+  const rearmById = new Map<number, RearmEntry>();
+  const rearmMeta = new Map<number, { sourceId: number }>();
+  const rearmChains = new Map<number, number>();
   // BUG-138: completed-correlation ledger (in-memory — the same daemon-lifetime
   // ephemera class as `holds`; a daemon restart abandons every held socket
   // anyway, so the hook side can no longer complete through us). Identity:
@@ -236,10 +382,14 @@ export function createQuestions(db, {
   // (each answer absorbs exactly one completion), so a twin's hold survives its
   // sibling's completion. Answered-in-terminal completions are unaffected: they
   // left no ledger entry and retire a matching pending hold exactly as before.
-  const completedKeys = new Map();
+  const completedKeys = new Map<string, Map<string, number>>();
 
   // -------------------------------------------------------------- creation
-  function create(kind, sessionId, payload) {
+  function create(
+    kind: string,
+    sessionId: string | null | undefined,
+    payload?: QuestionPayload | null,
+  ): QuestionRow {
     const now = Date.now();
     // The window resolves per creation when a resolver is wired: the hold_ms
     // settings row can change between daemon boots (settings.mjs), and a hold
@@ -247,7 +397,11 @@ export function createQuestions(db, {
     // a throwing one degrades to the boot window rather than failing a hook.
     let windowMs = holdMs;
     if (HOLD_KINDS.has(kind) && resolveHoldWindow) {
-      try { windowMs = resolveHoldWindow() ?? holdMs; } catch { windowMs = holdMs; }
+      try {
+        windowMs = resolveHoldWindow() ?? holdMs;
+      } catch {
+        windowMs = holdMs;
+      }
     }
     // A RE-ARMED row gets NO expiry deadline: it is not a hold — there is no
     // parked socket to fail open and nothing about it expires on a timer (its
@@ -255,8 +409,19 @@ export function createQuestions(db, {
     // one would make the board countdown promise a fail-open that never comes.
     const isRearm = payload?.rearmed === true;
     const expiresAt = HOLD_KINDS.has(kind) && !isRearm ? now + windowMs : null; // freeform: no hold window
-    const info = q.insert.run(sessionId ?? 'unknown', kind, JSON.stringify(payload ?? {}), now, expiresAt);
-    return q.get.get(Number(info.lastInsertRowid));
+    const info = q.insert.run(
+      sessionId ?? 'unknown',
+      kind,
+      JSON.stringify(payload ?? {}),
+      now,
+      expiresAt,
+    );
+    const row = q.get.get(Number(info.lastInsertRowid));
+    // Impossible in practice — a same-tick read of the row we just inserted —
+    // but honest: the caller (fireRearm, derive.mjs) uses the returned id, so a
+    // vanished row must throw here rather than surface as `undefined.id`.
+    if (!row) throw new Error('fleetd: question row vanished immediately after insert');
+    return row;
   }
 
   // ----------------------------------------------------------------- holds
@@ -264,33 +429,45 @@ export function createQuestions(db, {
   // Called synchronously in the same tick as create() (no timer can
   // interleave), so a pending hold-kind row without a holds entry is always
   // an orphan (restart/disconnect), never a race.
-  function attachHold(row, respond) {
+  function attachHold(row: QuestionRow, respond: RespondFn) {
     // Held responses must not leak sockets: cap concurrent holds per session
     // at MAX_HOLDS_PER_SESSION; the OLDEST is failed open ({}) to make room.
     const mine = [...holds.keys()]
-      .filter(id => holds.get(id).session_id === row.session_id)
+      .filter((id) => holds.get(id)?.session_id === row.session_id)
       .sort((a, b) => a - b);
-    if (mine.length >= MAX_HOLDS_PER_SESSION) settleExpired(mine[0]);
+    if (mine.length >= MAX_HOLDS_PER_SESSION) {
+      const oldest = mine[0];
+      if (oldest !== undefined) settleExpired(oldest);
+    }
 
     // WHY the timer owns a second fail-open path: settleExpired deliberately
     // releases the HTTP response before touching SQLite, but persistence can
     // still throw (SQLITE_BUSY/IOERR), and an exception escaping a timer kills
     // the daemon. The catch repeats release/respond defensively in case a
     // future edit adds a throwing operation before settleExpired's release.
-    const timer = setTimeout(() => {
-      try {
-        settleExpired(row.id);
-      } catch (err) {
-        const h = releaseHold(row.id);
-        if (h) { try { h.respond({}); } catch { /* socket already gone */ } }
-        console.error(`fleetd question #${row.id} expiry persistence error:`, err);
-      }
-    }, Math.max(0, row.expires_at - Date.now()));
-    timer.unref?.();
+    const timer = setTimeout(
+      () => {
+        try {
+          settleExpired(row.id);
+        } catch (err) {
+          const h = releaseHold(row.id);
+          if (h) {
+            try {
+              h.respond({});
+            } catch {
+              /* socket already gone */
+            }
+          }
+          console.error(`fleetd question #${row.id} expiry persistence error:`, err);
+        }
+      },
+      Math.max(0, (row.expires_at ?? Date.now()) - Date.now()),
+    );
+    timer.unref();
     holds.set(row.id, { session_id: row.session_id, respond, timer });
   }
 
-  function releaseHold(id) {
+  function releaseHold(id: number): HoldEntry | null {
     const h = holds.get(id);
     if (!h) return null;
     clearTimeout(h.timer);
@@ -302,29 +479,32 @@ export function createQuestions(db, {
   // noteCompleted / consumeCompleted implement the completedKeys ledger above.
   // TTL'd entries: the timer deletes ONLY this entry (verified by identity), so
   // answers and expirations interleaving on one key can never double-count.
-  function noteCompleted(sessionId, key) {
+  function noteCompleted(sessionId: string, key: string) {
     let byKey = completedKeys.get(sessionId);
-    if (!byKey) completedKeys.set(sessionId, (byKey = new Map()));
+    if (!byKey) completedKeys.set(sessionId, (byKey = new Map<string, number>()));
     byKey.set(key, (byKey.get(key) ?? 0) + 1);
     const entry = byKey;
     const timer = setTimeout(() => {
       if (completedKeys.get(sessionId) !== entry) return; // session ledger already dropped
       const n = entry.get(key);
       if (n == null) return;
-      if (n <= 1) entry.delete(key); else entry.set(key, n - 1);
+      if (n <= 1) entry.delete(key);
+      else entry.set(key, n - 1);
       if (entry.size === 0) completedKeys.delete(sessionId);
     }, COMPLETED_KEY_TTL_MS);
-    timer.unref?.();
+    timer.unref();
   }
 
   // A correlated PostToolUse landed: if a board answer on this exact key is
   // still awaiting ITS completion, consume it (one answer absorbs one
   // completion) and tell expireOnActivity to leave the pending twins alone.
-  function consumeCompleted(sessionId, key) {
+  function consumeCompleted(sessionId: string, key: string): boolean {
     const byKey = completedKeys.get(sessionId);
-    const n = byKey?.get(key);
+    if (!byKey) return false;
+    const n = byKey.get(key);
     if (!n) return false;
-    if (n <= 1) byKey.delete(key); else byKey.set(key, n - 1);
+    if (n <= 1) byKey.delete(key);
+    else byKey.set(key, n - 1);
     if (byKey.size === 0) completedKeys.delete(sessionId);
     return true;
   }
@@ -332,9 +512,15 @@ export function createQuestions(db, {
   // Path (b): hold window lapsed (timer) or evicted by the per-session cap —
   // answer the held request with {} so the normal flow resumes in the
   // terminal, and mark the row expired.
-  function settleExpired(id) {
+  function settleExpired(id: number) {
     const h = releaseHold(id);
-    if (h) { try { h.respond({}); } catch { /* socket already gone */ } }
+    if (h) {
+      try {
+        h.respond({});
+      } catch {
+        /* socket already gone */
+      }
+    }
     if (q.markExpired.run(id).changes) {
       tick(`⌛ question #${id} expired unanswered — decide in the terminal`);
       onChange();
@@ -368,10 +554,10 @@ export function createQuestions(db, {
   // count against MAX_HOLDS_PER_SESSION — that cap exists to bound leaked
   // sockets, and there is no socket here. Chains are capped separately at
   // MAX_REARMS so a session nobody answers can't refill the rail forever.
-  function scheduleRearm(row) {
-    if (!(rearmGraceMs > 0)) return false;     // disabled (tests, future kill-switch)
+  function scheduleRearm(row: QuestionRow | undefined): boolean {
+    if (!(rearmGraceMs > 0)) return false; // disabled (tests, future kill-switch)
     if (!row || !HOLD_KINDS.has(row.kind)) return false; // freeform never expires on a timer
-    const chainRoot = safeParse(row.payload_json)?.chain_root ?? row.id;
+    const chainRoot = safeParse<QuestionPayload>(row.payload_json)?.chain_root ?? row.id;
     const chain = rearmChains.get(chainRoot) ?? 0;
     if (chain >= rearmMax) return false;
     // rearm_pending marks the just-expired row as re-arm-supervised. It does
@@ -380,12 +566,21 @@ export function createQuestions(db, {
     // window), and listForState extends expires_at to the grace deadline so
     // the board reads hold+grace as one continuous window instead of a
     // "expired" lie followed by a surprise card.
-    db.prepare(`UPDATE questions SET payload_json = ? WHERE id = ? AND status = 'expired'`)
-      .run(JSON.stringify({ ...(safeParse(row.payload_json) ?? {}), rearm_pending: true }), row.id);
+    db.prepare(`UPDATE questions SET payload_json = ? WHERE id = ? AND status = 'expired'`).run(
+      JSON.stringify({
+        ...(safeParse<QuestionPayload>(row.payload_json) ?? {}),
+        rearm_pending: true,
+      }),
+      row.id,
+    );
     const timer = setTimeout(() => {
-      try { fireRearm(row.id, chainRoot); } catch { /* a re-arm is recovery, never a crash */ }
+      try {
+        fireRearm(row.id, chainRoot);
+      } catch {
+        /* a re-arm is recovery, never a crash */
+      }
     }, rearmGraceMs);
-    timer.unref?.();
+    timer.unref();
     rearmById.set(row.id, { timer, chainRoot, armedAt: Date.now() });
     return true;
   }
@@ -395,12 +590,16 @@ export function createQuestions(db, {
   // row appearing for the session inside the window (a new question raised by
   // a session that demonstrably moved on) suppresses the re-arm — don't pile
   // a recovery card on a session that is clearly talking again.
-  function fireRearm(sourceId, chainRoot) {
+  function fireRearm(sourceId: number, chainRoot: number) {
     if (!rearmById.delete(sourceId)) return; // cancelled while the timer was queued
     const row = q.get.get(sourceId);
-    if (!row || row.status !== 'expired') return;
+    if (row?.status !== 'expired') return;
     if (q.pendingBySession.all(row.session_id).length > 0) return;
-    const payload = { ...(safeParse(row.payload_json) ?? {}), rearmed: true, chain_root: chainRoot };
+    const payload = {
+      ...(safeParse<QuestionPayload>(row.payload_json) ?? {}),
+      rearmed: true,
+      chain_root: chainRoot,
+    };
     delete payload.rearm_pending;
     const fresh = create(row.kind, row.session_id, payload);
     rearmChains.set(chainRoot, (rearmChains.get(chainRoot) ?? 0) + 1);
@@ -409,7 +608,9 @@ export function createQuestions(db, {
     // closes there.
     rearmMeta.set(fresh.id, { sourceId });
     rearmById.set(row.id, { timer: null, chainRoot, successor: fresh.id });
-    tick(`🔁 question #${fresh.id} re-armed (was #${row.id}) — answering sends it as a message at the next turn boundary`);
+    tick(
+      `🔁 question #${fresh.id} re-armed (was #${row.id}) — answering sends it as a message at the next turn boundary`,
+    );
     onChange();
   }
 
@@ -418,22 +619,26 @@ export function createQuestions(db, {
   // remaining budget. Called from the sweep; expires the row (its card has had
   // its time on the rail), arms the NEXT grace window, and keeps the chain's
   // bookkeeping pointing at the row the timer hangs off.
-  function recycleRearm(id) {
+  function recycleRearm(id: number): boolean {
     const meta = rearmMeta.get(id);
     rearmMeta.delete(id);
     if (!meta) return false;
     const row = q.get.get(id);
-    if (!row || row.status !== 'pending') return false;
-    if (q.markExpired.run(id).changes === 0) return false;
-    const chainRoot = safeParse(row.payload_json)?.chain_root ?? id;
+    if (row?.status !== 'pending') return false;
+    if (Number(q.markExpired.run(id).changes) === 0) return false;
+    const chainRoot = safeParse<QuestionPayload>(row.payload_json)?.chain_root ?? id;
     // The chain cap check lives in scheduleRearm's caller shape — inline here:
     // past the cap the row simply stays expired and the chain closes.
     if ((rearmChains.get(chainRoot) ?? 0) >= rearmMax) return true;
-    if (meta.sourceId != null) rearmById.delete(meta.sourceId);
+    rearmById.delete(meta.sourceId);
     const timer = setTimeout(() => {
-      try { fireRearm(id, chainRoot); } catch { /* a re-arm is recovery, never a crash */ }
+      try {
+        fireRearm(id, chainRoot);
+      } catch {
+        /* a re-arm is recovery, never a crash */
+      }
     }, rearmGraceMs);
-    timer.unref?.();
+    timer.unref();
     rearmById.set(id, { timer, chainRoot });
     return true;
   }
@@ -443,10 +648,11 @@ export function createQuestions(db, {
   // represents. Failing to cancel any one of them resurrects a dead question.
   // `id` may be a grace-window row's id (timer armed) or a re-armed
   // successor's id — the maps are cross-linked so either one finds both.
-  function cancelRearm(id) {
-    const m = rearmById.get(id) ?? rearmById.get(rearmMeta.get(id)?.sourceId);
+  function cancelRearm(id: number) {
+    const src = rearmMeta.get(id)?.sourceId;
+    const m = rearmById.get(id) ?? (src !== undefined ? rearmById.get(src) : undefined);
     if (m?.timer) clearTimeout(m.timer);
-    if (m) rearmById.delete(rearmMeta.get(id)?.sourceId ?? id);
+    if (m) rearmById.delete(src ?? id);
     if (m?.successor != null) rearmMeta.delete(m.successor);
     rearmMeta.delete(id);
   }
@@ -456,16 +662,16 @@ export function createQuestions(db, {
   // armed grace timers and expire any pending re-armed rows — whatever was
   // parked got answered (or abandoned) in the terminal, and the card must not
   // outlive the question it represents.
-  function disarmRearmsForSession(sessionId) {
+  function disarmRearmsForSession(sessionId: string): boolean {
     for (const [id, m] of [...rearmById]) {
       if (m.timer) clearTimeout(m.timer);
       rearmById.delete(id);
       if (m.successor != null) rearmMeta.delete(m.successor);
     }
-    const retired = [];
+    const retired: number[] = [];
     for (const r of q.pendingBySession.all(sessionId)) {
       if (!HOLD_KINDS.has(r.kind)) continue; // freeform follows its own rules
-      if (safeParse(r.payload_json)?.rearmed !== true) continue;
+      if (safeParse<QuestionPayload>(r.payload_json)?.rearmed !== true) continue;
       if (q.markExpired.run(r.id).changes) retired.push(r.id);
     }
     // Same ordering rule as expireOnActivity: the batch retires before any
@@ -477,7 +683,7 @@ export function createQuestions(db, {
 
   // Path (c): the hook client disconnected before we responded. 'close' also
   // fires after a NORMAL completion, so only act while the hold still exists.
-  function socketClosed(id) {
+  function socketClosed(id: number) {
     if (!holds.has(id)) return;
     releaseHold(id);
     if (q.markExpired.run(id).changes) {
@@ -498,7 +704,7 @@ export function createQuestions(db, {
   // layer passes our status through verbatim).
   const ANSWER_TOO_LONG_ERR =
     'answer too long — the mail pipeline would truncate it. Shorten it (or dismiss and answer in the terminal); the question is still pending.';
-  function answerMailGuard(frame) {
+  function answerMailGuard(frame: string) {
     if (frame.length <= mailMaxLen) return null;
     return { status: 413, body: { ok: false, err: ANSWER_TOO_LONG_ERR } };
   }
@@ -517,12 +723,13 @@ export function createQuestions(db, {
   // guard first: a framed answer that would exceed the mailbox clamp 413s and
   // the row stays pending — the mailbox never stores a truncated answer.
   // Returns { status, body } for the HTTP layer.
-  function answer(id, body) {
+  function answer(id: string | number, body: AnswerBody | null | undefined) {
     const row = q.get.get(Number(id));
     if (!row) return { status: 404, body: { ok: false, err: 'no such question' } };
-    if (row.status !== 'pending') return { status: 409, body: { ok: false, err: `question already ${row.status}` } };
+    if (row.status !== 'pending')
+      return { status: 409, body: { ok: false, err: `question already ${row.status}` } };
     const now = Date.now();
-    const who = callsignOf(row.session_id) || row.session_id;
+    const who = callsignOf(row.session_id) ?? row.session_id;
 
     if (HOLD_KINDS.has(row.kind)) {
       // UX 2.1: a RE-ARMED row has no held socket by construction — the hook
@@ -535,23 +742,48 @@ export function createQuestions(db, {
       // This branch runs BEFORE any wire-schema validation: there is no
       // socket left to validate for, and the answer is serialized to plain
       // text either way.
-      const payload = safeParse(row.payload_json);
+      const payload = safeParse<QuestionPayload>(row.payload_json);
       if (payload?.rearmed === true) {
-        const detail0 = row.kind === 'permission' ? body?.behavior
-          : row.kind === 'choice' ? serializeChoiceAnswer(row, body)
-          : (body?.action === 'accept' || body?.action === 'decline') ? body.action : null;
-        if (detail0 && typeof detail0 === 'object' && detail0.over != null) {
-          return { status: 400, body: { ok: false, err: `answer too long — ${detail0.over} code units exceeds the 2000-unit answer limit; shorten the answer or answer at the terminal` } };
+        const detail0 =
+          row.kind === 'permission'
+            ? body?.behavior
+            : row.kind === 'choice'
+              ? serializeChoiceAnswer(row, body)
+              : body?.action === 'accept' || body?.action === 'decline'
+                ? body.action
+                : null;
+        if (detail0 && typeof detail0 === 'object') {
+          return {
+            status: 400,
+            body: {
+              ok: false,
+              err: `answer too long — ${detail0.over} code units exceeds the 2000-unit answer limit; shorten the answer or answer at the terminal`,
+            },
+          };
         }
         const detail = detail0;
         if (detail == null) {
-          return { status: 400, body: { ok: false, err: 'body must match the question kind (behavior / answers|text / action)' } };
+          return {
+            status: 400,
+            body: {
+              ok: false,
+              err: 'body must match the question kind (behavior / answers|text / action)',
+            },
+          };
         }
         if (detail === 'capture') {
-          return { status: 400, body: { ok: false, err: '"capture" needs the live hold — the window for it has closed' } };
+          return {
+            status: 400,
+            body: {
+              ok: false,
+              err: '"capture" needs the live hold — the window for it has closed',
+            },
+          };
         }
-        const questionText = String(
-          payload?.tool_input?.questions?.[0]?.question ?? payload?.text ?? '',
+        const questionText = (
+          payload.tool_input?.questions?.[0]?.question ??
+          payload.text ??
+          ''
         ).slice(0, 80);
         const frame = `[FLEETDECK ANSWER] ${row.kind} (answered after the hold expired) Q: ${questionText} — A: ${detail}`;
         // BUG-137: reject BEFORE the plan flip / row settle — an answer that
@@ -562,27 +794,40 @@ export function createQuestions(db, {
         mail(row.session_id, 'fleetdeck-answer', frame);
         cancelRearm(row.id); // idempotent — a sibling card answering first already cancelled
         q.markAnswered.run(JSON.stringify(body ?? {}), now, row.id);
-        tick(`💬 ${who}: re-armed ${row.kind} answered (${detail}) — queued for the next turn boundary`);
+        tick(
+          `💬 ${who}: re-armed ${row.kind} answered (${detail}) — queued for the next turn boundary`,
+        );
         onChange();
-        return { status: 200, body: { ok: true, delivered: false, note: 'answer queued — delivered at next turn boundary' } };
+        return {
+          status: 200,
+          body: {
+            ok: true,
+            delivered: false,
+            note: 'answer queued — delivered at next turn boundary',
+          },
+        };
       }
-      let hookResponse;
-      let detail;
-      let planBehavior = null; // v1.3: set on a plan question's allow/capture/deny
+      let hookResponse: unknown;
+      let detail: string;
+      let planBehavior: string | null = null; // v1.3: set on a plan question's allow/capture/deny
       if (row.kind === 'permission') {
         const behavior = body?.behavior;
         const planId = planIdFor(row.id); // non-null only for an ExitPlanMode plan question
         if (behavior === 'capture' && planId == null) {
-          return { status: 400, body: { ok: false, err: '"capture" is only valid for an ExitPlanMode plan question' } };
+          return {
+            status: 400,
+            body: { ok: false, err: '"capture" is only valid for an ExitPlanMode plan question' },
+          };
         }
         if (behavior !== 'allow' && behavior !== 'deny' && behavior !== 'capture') {
           return {
             status: 400,
             body: {
               ok: false,
-              err: planId != null
-                ? 'body must be {"behavior":"allow"|"capture"|"deny"}'
-                : 'body must be {"behavior":"allow"|"deny"}',
+              err:
+                planId != null
+                  ? 'body must be {"behavior":"allow"|"capture"|"deny"}'
+                  : 'body must be {"behavior":"allow"|"deny"}',
             },
           };
         }
@@ -590,16 +835,30 @@ export function createQuestions(db, {
         // 'capture' answers the held hook with a bare deny (CONTRACT v1.3) —
         // the pseudo-behavior never reaches the hook client.
         const wire = behavior === 'capture' ? 'deny' : behavior;
-        hookResponse = { hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: wire } } };
+        hookResponse = {
+          hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: wire } },
+        };
         detail = behavior;
         if (planId != null) planBehavior = behavior;
       } else if (row.kind === 'choice') {
         const serialized = serializeChoiceAnswer(row, body);
         if (serialized && typeof serialized === 'object') {
-          return { status: 400, body: { ok: false, err: `answer too long — ${serialized.over} code units exceeds the 2000-unit answer limit; shorten the answer or answer at the terminal` } };
+          return {
+            status: 400,
+            body: {
+              ok: false,
+              err: `answer too long — ${serialized.over} code units exceeds the 2000-unit answer limit; shorten the answer or answer at the terminal`,
+            },
+          };
         }
         if (!serialized) {
-          return { status: 400, body: { ok: false, err: 'body must be {"answers":{"<question text>":"<label>"}} or {"text":"..."}' } };
+          return {
+            status: 400,
+            body: {
+              ok: false,
+              err: 'body must be {"answers":{"<question text>":"<label>"}} or {"text":"..."}',
+            },
+          };
         }
         // Validated schema + wording (validated live on CLI 2.1.206, exp. 1b): a
         // PreToolUse deny with this reason frame is honored GRACEFULLY — the
@@ -617,12 +876,19 @@ export function createQuestions(db, {
       } else {
         const action = body?.action;
         if (action !== 'accept' && action !== 'decline') {
-          return { status: 400, body: { ok: false, err: 'body must be {"action":"accept","content":{...}} or {"action":"decline"}' } };
+          return {
+            status: 400,
+            body: {
+              ok: false,
+              err: 'body must be {"action":"accept","content":{...}} or {"action":"decline"}',
+            },
+          };
         }
         // UNVERIFIED schema — handoff guess, pending the Phase 3 live gate.
-        hookResponse = action === 'accept'
-          ? { action: 'accept', content: body?.content ?? {} }
-          : { action: 'decline' };
+        hookResponse =
+          action === 'accept'
+            ? { action: 'accept', content: body?.content ?? {} }
+            : { action: 'decline' };
         detail = action;
       }
       const h = releaseHold(row.id);
@@ -633,9 +899,16 @@ export function createQuestions(db, {
           onChange();
           onRetired(q.get.get(row.id));
         }
-        return { status: 409, body: { ok: false, err: 'hold expired — the terminal prompt owns this decision now' } };
+        return {
+          status: 409,
+          body: { ok: false, err: 'hold expired — the terminal prompt owns this decision now' },
+        };
       }
-      try { h.respond(hookResponse); } catch { /* socket died as we answered */ }
+      try {
+        h.respond(hookResponse);
+      } catch {
+        /* socket died as we answered */
+      }
       // BUG-138: the board settled this hold, so its row now reads 'answered'
       // and a correlated PostToolUse can no longer tell THIS call's completion
       // from an identical twin's. Record the key so the completion is consumed
@@ -658,9 +931,9 @@ export function createQuestions(db, {
     }
 
     if (row.kind === 'freeform') {
-      const text = String(body?.text ?? '').trim();
+      const text = (body?.text ?? '').trim();
       if (!text) return { status: 400, body: { ok: false, err: 'body must be {"text":"..."}' } };
-      const questionText = String(safeParse(row.payload_json)?.text ?? '').slice(0, 80);
+      const questionText = (safeParse<QuestionPayload>(row.payload_json)?.text ?? '').slice(0, 80);
       const frame = `[FLEETDECK ANSWER] Q: ${questionText} — A: ${text}`;
       // BUG-137: reject BEFORE settle — a frame mail() would clamp would
       // deliver a truncated instruction while the human loses the question.
@@ -673,7 +946,14 @@ export function createQuestions(db, {
       q.markAnswered.run(JSON.stringify({ text }), now, row.id);
       tick(`💬 answer for ${who} queued — lands at next turn boundary`);
       onChange();
-      return { status: 200, body: { ok: true, delivered: false, note: 'answer queued — delivered at next turn boundary' } };
+      return {
+        status: 200,
+        body: {
+          ok: true,
+          delivered: false,
+          note: 'answer queued — delivered at next turn boundary',
+        },
+      };
     }
 
     return { status: 400, body: { ok: false, err: `unknown question kind ${row.kind}` } };
@@ -723,15 +1003,19 @@ export function createQuestions(db, {
   // 'handled-in-terminal' in the same tick — the human visibly decided in the
   // terminal and the agent moved on. The same-turn guard lives on the plan
   // side (planRetired never touches a plan whose question is still pending).
-  function expireOnActivity(sessionId, { toolName, toolInput } = {}) {
+  function expireOnActivity(
+    sessionId: string,
+    { toolName, toolInput }: { toolName?: unknown; toolInput?: unknown } = {},
+  ): boolean {
     // A completed tool call correlates; a turn boundary (no toolName) is
     // session-wide.
-    const correlated = typeof toolName === 'string' && toolName !== '';
-    const activityKey = correlated ? toolCallKey(toolName, toolInput) : null;
-    let rows = q.pendingBySession.all(sessionId).filter(r => {
+    const activityKey =
+      typeof toolName === 'string' && toolName !== '' ? toolCallKey(toolName, toolInput) : null;
+    const correlated = activityKey !== null;
+    let rows = q.pendingBySession.all(sessionId).filter((r) => {
       if (!correlated) return true; // turn boundary → session-wide (holds + freeform)
       if (!HOLD_KINDS.has(r.kind)) return false; // freeform has no tool identity
-      const payload = safeParse(r.payload_json);
+      const payload = safeParse<QuestionPayload>(r.payload_json);
       if (payload?.rearmed === true) return false; // re-armed rows disarm via disarmRearmsForSession below
       if (payload?.tool_name == null) return false; // elicitation & co. — not a tool call
       return toolCallKey(payload.tool_name, payload.tool_input) === activityKey;
@@ -746,12 +1030,12 @@ export function createQuestions(db, {
     // never read pending during the window, so pendingBySession can't see it —
     // walk the grace map (rearmById entries with a LIVE timer) instead.
     if (correlated) {
-      const graceCancelled = [];
+      const graceCancelled: number[] = [];
       for (const [id, m] of [...rearmById]) {
         if (!m.timer) continue; // a successor link, not an armed grace window
         const row = q.get.get(id);
-        if (!row || row.session_id !== sessionId) continue;
-        const payload = safeParse(row.payload_json);
+        if (row?.session_id !== sessionId) continue;
+        const payload = safeParse<QuestionPayload>(row.payload_json);
         if (payload?.tool_name == null) continue;
         if (toolCallKey(payload.tool_name, payload.tool_input) !== activityKey) continue;
         cancelRearm(id);
@@ -770,7 +1054,7 @@ export function createQuestions(db, {
     // without this, answering hold A made A's own PostToolUse expire B, the
     // still-pending identical twin, and the second permission vanished from the
     // board while the human had never decided it.
-    if (correlated && consumeCompleted(sessionId, activityKey)) {
+    if (activityKey !== null && consumeCompleted(sessionId, activityKey)) {
       if (rearmDisarmed) onChange();
       return rearmDisarmed;
     }
@@ -784,7 +1068,8 @@ export function createQuestions(db, {
     // oldest. Different-input siblings get different keys and never collide
     // here; the turn-boundary (non-correlated) path stays session-wide.
     if (correlated && rows.length > 1) {
-      rows = [rows.find(r => holds.has(r.id)) ?? rows[0]];
+      const first = rows[0];
+      if (first) rows = [rows.find((r) => holds.has(r.id)) ?? first];
     }
     // Order matters: expire FIRST, then fire onRetired only for rows that
     // flipped. Firing inside the loop would interleave the plan-settle
@@ -793,10 +1078,16 @@ export function createQuestions(db, {
     // half-retired batch — or worse, retire NEW rows (a plan question raised
     // in this same turn IS in the pending set right now) before its own loop
     // turn. One full pass first keeps the callback's world consistent.
-    const retired = [];
+    const retired: number[] = [];
     for (const r of rows) {
       const h = releaseHold(r.id);
-      if (h) { try { h.respond({}); } catch { /* socket already gone */ } }
+      if (h) {
+        try {
+          h.respond({});
+        } catch {
+          /* socket already gone */
+        }
+      }
       if (q.markExpired.run(r.id).changes) retired.push(r.id);
     }
     for (const id of retired) onRetired(q.get.get(id), { activity: true });
@@ -807,10 +1098,10 @@ export function createQuestions(db, {
   // "Clear" on the board: answered, expired and dismissed cards leave the rail
   // for good. PENDING rows are the human's actual queue and are never touched
   // here — Clear tidies the past, it does not silence the present.
-  function purgeResolved() {
+  function purgeResolved(): number {
     const out = db.prepare("DELETE FROM questions WHERE status != 'pending'").run();
     if (out.changes) onChange();
-    return out.changes;
+    return Number(out.changes);
   }
 
   // The human already handled it elsewhere: retire the card, tell the session
@@ -822,7 +1113,7 @@ export function createQuestions(db, {
   // terminal activity, so the plan stays 'proposed' until the session next
   // moves (the activity gate — a human dismissing a card has NOT decided the
   // plan in the terminal).
-  function dismiss(id, { activity = false } = {}) {
+  function dismiss(id: number, { activity = false }: { activity?: boolean } = {}) {
     const row = q.get.get(id);
     if (!row) return { ok: false, reason: 'no such question' };
     // The human declared the card handled — cancel any re-arm timer chained to
@@ -833,8 +1124,14 @@ export function createQuestions(db, {
     cancelRearm(row.id);
     if (row.status !== 'pending') return { ok: true, already: true };
     const h = releaseHold(row.id);
-    if (h) { try { h.respond({}); } catch { /* socket already gone */ } }
-    const changed = q.markExpired.run(row.id).changes > 0;
+    if (h) {
+      try {
+        h.respond({});
+      } catch {
+        /* socket already gone */
+      }
+    }
+    const changed = Number(q.markExpired.run(row.id).changes) > 0;
     if (changed) {
       onChange();
       onRetired(q.get.get(row.id), { activity });
@@ -851,11 +1148,11 @@ export function createQuestions(db, {
   // a freeform row. Instead the sweep RECYCLES an aged re-armed row — a card
   // that sat unanswered long enough to fall out of the recent-resolved window
   // gets its chain's next grace window (recycleRearm), up to the cap.
-  function expireOrphans() {
+  function expireOrphans(): boolean {
     let changed = false;
     for (const r of q.pending.all()) {
       if (!HOLD_KINDS.has(r.kind) || holds.has(r.id)) continue;
-      if (safeParse(r.payload_json)?.rearmed === true) {
+      if (safeParse<QuestionPayload>(r.payload_json)?.rearmed === true) {
         if (Date.now() - r.created_at >= rearmGraceMs && recycleRearm(r.id)) changed = true;
         continue;
       }
@@ -878,13 +1175,22 @@ export function createQuestions(db, {
   // includeFreeform is the one sanctioned exception: manual cleanup archiving
   // a card is the human declaring "done with these" — its freeform items go too.
   // Returns the number of questions expired (truthy iff anything changed).
-  function expireAllForSession(sessionId, { includeFreeform = false } = {}) {
+  function expireAllForSession(
+    sessionId: string,
+    { includeFreeform = false }: { includeFreeform?: boolean } = {},
+  ): number {
     let expired = 0;
-    const retired = [];
+    const retired: number[] = [];
     for (const r of q.pendingBySession.all(sessionId)) {
       if (!includeFreeform && !HOLD_KINDS.has(r.kind)) continue;
       const h = releaseHold(r.id);
-      if (h) { try { h.respond({}); } catch { /* gone */ } }
+      if (h) {
+        try {
+          h.respond({});
+        } catch {
+          /* gone */
+        }
+      }
       cancelRearm(r.id); // a dead session re-arms nothing
       if (q.markExpired.run(r.id).changes) {
         expired++;
@@ -909,7 +1215,7 @@ export function createQuestions(db, {
     return expired;
   }
 
-  function pendingOf(sessionId) {
+  function pendingOf(sessionId: string): QuestionRow[] {
     return q.pendingBySession.all(sessionId);
   }
 
@@ -919,7 +1225,7 @@ export function createQuestions(db, {
   // non-pending when the retirement callbacks run (hookHoldQuestion inserts
   // before the HTTP layer parks the socket), so the status column alone
   // cannot distinguish "retired prompt" from "chooser never rendered".
-  function isHeld(id) {
+  function isHeld(id: number): boolean {
     return holds.has(id);
   }
 
@@ -931,7 +1237,7 @@ export function createQuestions(db, {
   // the board can render it as a PLAN card and offer Approve / Capture &
   // release / Deny.
   function listForState() {
-    return [...q.pending.all(), ...q.resolved.all()].map(r => {
+    return [...q.pending.all(), ...q.resolved.all()].map((r) => {
       const plan_id = planIdFor(r.id);
       // UX 2.1: a row inside its re-arm grace window reads expired in the DB
       // (settleExpired retired it — the hook failed open and that fact must
@@ -942,7 +1248,7 @@ export function createQuestions(db, {
       // with a fresh card. Keyed on the rearm_pending payload flag — a STALE
       // in-memory grace entry must never graft a fake deadline onto an
       // ordinary expired row (dismiss/activity/Sweep retire without arming).
-      const payload = safeParse(r.payload_json);
+      const payload = safeParse<QuestionPayload>(r.payload_json);
       const grace = payload?.rearm_pending === true ? rearmById.get(r.id)?.armedAt : undefined;
       return {
         id: r.id,
@@ -963,7 +1269,11 @@ export function createQuestions(db, {
 
   // Orphan sweep (restart hygiene). Live holds settle via their own timers.
   const sweep = setInterval(() => {
-    try { expireOrphans(); } catch { /* hygiene only */ }
+    try {
+      expireOrphans();
+    } catch {
+      /* hygiene only */
+    }
   }, SWEEP_MS);
   sweep.unref();
 
@@ -1019,43 +1329,51 @@ export function createQuestions(db, {
 // ever split. Any text a multi-question chooser legitimately produces is
 // far under the cap; it guards against pathological bodies only.
 const ANSWER_MAX = 2000;
-function serializeChoiceAnswer(row, body) {
+function serializeChoiceAnswer(
+  row: QuestionRow,
+  body: AnswerBody | null | undefined,
+): string | { over: number } | null {
   if (typeof body?.text === 'string' && body.text.trim()) {
     const t = body.text.trim();
     return t.length <= ANSWER_MAX ? t : { over: t.length };
   }
   const answers = body?.answers;
   if (!answers || typeof answers !== 'object' || Array.isArray(answers)) return null;
-  const entries = Object.entries(answers);
+  const entries = Object.entries(answers as Record<string, unknown>);
   if (!entries.length) return null;
-  const qs = safeParse(row?.payload_json)?.tool_input?.questions;
+  const qs = safeParse<QuestionPayload>(row.payload_json)?.tool_input?.questions;
   if (Array.isArray(qs) && !validChoiceAnswers(qs, entries)) return null;
-  const fmt = v => (Array.isArray(v) ? v.join(', ') : v).trim();
+  const fmt = (v: unknown): string =>
+    (Array.isArray(v) ? v.map(asText).join(', ') : asText(v)).trim();
   if (entries.some(([, v]) => fmt(v) === '')) return null;
   if (entries.length === 1) {
-    const t = fmt(entries[0][1]);
+    const t = fmt(entries[0]?.[1]);
     return t.length <= ANSWER_MAX ? t : { over: t.length };
   }
-  const headerOf = qText => (Array.isArray(qs) ? qs.find(x => x?.question === qText)?.header : null);
-  const t = entries.map(([qText, v]) => `${headerOf(qText) || qText}: ${fmt(v)}`).join('; ');
+  const headerOf = (qText: string): string | undefined =>
+    Array.isArray(qs) ? qs.find((x) => x?.question === qText)?.header : undefined;
+  const t = entries.map(([qText, v]) => `${headerOf(qText) ?? qText}: ${fmt(v)}`).join('; ');
   return t.length <= ANSWER_MAX ? t : { over: t.length };
 }
 
 // A label is valid only as one of the question's option labels.
-function validChoiceLabel(question, label) {
+function validChoiceLabel(question: ChoiceQuestion, label: string): boolean {
   if (!label) return false;
-  return (Array.isArray(question?.options) ? question.options : []).some(o => o?.label === label);
+  return (Array.isArray(question.options) ? question.options : []).some((o) => o?.label === label);
 }
 
-function validChoiceAnswers(questions, entries) {
+function validChoiceAnswers(
+  questions: (ChoiceQuestion | null)[],
+  entries: [string, unknown][],
+): boolean {
   return entries.every(([qText, v]) => {
-    const question = questions.find(x => x?.question === qText);
+    const question = questions.find((x) => x?.question === qText);
     if (!question) return false; // key must be a held question's text
     if (typeof v === 'string') return validChoiceLabel(question, v.trim());
     if (Array.isArray(v)) {
       // an array of labels only for a multiSelect question, all non-empty strings
       if (question.multiSelect !== true || !v.length) return false;
-      return v.every(x => typeof x === 'string' && validChoiceLabel(question, x.trim()));
+      return v.every((x) => typeof x === 'string' && validChoiceLabel(question, x.trim()));
     }
     return false; // never String()-coerce objects/numbers into the reason
   });
@@ -1065,7 +1383,8 @@ function validChoiceAnswers(questions, entries) {
 // F3d detection helpers (pure functions; exported for tests)
 // --------------------------------------------------------------------------
 
-const CHOICE_RE = /\b(should I|do you want|would you like|which|prefer|option [AB1-9]|let me know)\b/i;
+const CHOICE_RE =
+  /\b(should I|do you want|would you like|which|prefer|option [AB1-9]|let me know)\b/i;
 
 // Regex heuristic, NO model call. A trailing question is:
 //   (1) the last non-empty line of the final paragraph ends with '?'
@@ -1073,13 +1392,16 @@ const CHOICE_RE = /\b(should I|do you want|would you like|which|prefer|option [A
 //   (2) the final paragraph matches a choice pattern (CHOICE_RE) AND
 //       contains a '?' anywhere.
 // Returns the question snippet, or null.
-export function detectTrailingQuestion(text) {
-  const trimmed = String(text ?? '').trim();
+export function detectTrailingQuestion(text: unknown): string | null {
+  const trimmed = asText(text).trim();
   if (!trimmed) return null;
   const paras = trimmed.split(/\n[ \t]*\n/);
-  const lastPara = (paras[paras.length - 1] || '').trim();
-  const lines = lastPara.split('\n').map(l => l.trim()).filter(Boolean);
-  const lastLine = lines[lines.length - 1] || '';
+  const lastPara = (paras[paras.length - 1] ?? '').trim();
+  const lines = lastPara
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const lastLine = lines[lines.length - 1] ?? '';
   const TRAILING_Q = /\?[\s"'*_)\]`.]*$/;
 
   if (TRAILING_Q.test(lastLine)) return clipQuestion(lastLine);
@@ -1089,18 +1411,21 @@ export function detectTrailingQuestion(text) {
   return null;
 }
 
-function sentenceWithLastQuestionMark(para) {
+function sentenceWithLastQuestionMark(para: string): string {
   const idx = para.lastIndexOf('?');
   if (idx === -1) return para;
   let start = 0;
   for (let i = idx - 1; i >= 0; i--) {
     const ch = para[i];
-    if (ch === '.' || ch === '!' || ch === '?' || ch === '\n') { start = i + 1; break; }
+    if (ch === '.' || ch === '!' || ch === '?' || ch === '\n') {
+      start = i + 1;
+      break;
+    }
   }
   return para.slice(start, idx + 1).trim();
 }
 
-function clipQuestion(s) {
-  const t = String(s).trim();
+function clipQuestion(s: string): string {
+  const t = s.trim();
   return t.length <= 300 ? t : t.slice(0, 297) + '…';
 }

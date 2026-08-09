@@ -660,3 +660,44 @@ Format:
   importers (`commands.mjs`, `derive.mjs`) repointed to `./mail.ts`. 25/25 (mail-and-blocking,
   mail-delivery-lease, mail-frames, smoke-mail-gate) green vs source; the daemon bundle rebuilds with the
   `mail.ts` banner and passes `node --check`.
+
+### scripts/fleetd/questions.ts — the needs-you/hold/re-arm engine; index-signature env read, dead defensive guards, `||`→`??`   [NOISE]
+- **Where:** `questions.mjs` (1100+ lines — the largest leaf), the arbitrator behind the needs-you rail:
+  the socket hold, the answer pipeline, and the re-arm grace chain that heals an unanswered card into a
+  successor. Zero behavioral defects surfaced; every strict finding was mechanical.
+- **Why it's noise:** the hold clamp (`resolveHoldMs`, default 600 s / ceiling 650 s), the chain cap
+  (`rearmMax`), the BUG-137 2000-unit answer guard, the plan-answered flip, the grace-window activity
+  cancellation, and the socket-close settle are byte-for-byte the original. Strict only wanted the
+  `ProcessEnv` read bracketed, the untrusted persisted payload/answer bodies named, a handful of guards
+  TS had already proven redundant dropped, and four domain-equivalent `||` swapped for `??`.
+- **Fix (typing):** structural interfaces for the store row and the untrusted JSON —
+  `QuestionRow` mirrors the `questions` table in `db.ts` (source of truth); `QuestionPayload` /
+  `AnswerBody` / `ChoiceQuestion` carry every field optional-or-nullable so the runtime guards that
+  already existed still do the narrowing. `db: SqliteHandle`; `db.prepare<QuestionRow>(...)` types the
+  get/pending/resolved statements. Timers are `ReturnType<typeof setTimeout>`; the callback bag
+  (`mail`/`tick`/`onChange`/`planAnswered`/`onRetired`/`callsignOf`/`planIdFor`/`resolveHoldWindow`) is a
+  fully-typed `QuestionsOptions`. `create()` throws on the impossible re-read miss (the row was just
+  inserted) so its return is non-nullable for every caller.
+- **Fix (lint, all behavior-preserving):** (1) **TS4111 / noPropertyAccessFromIndexSignature** —
+  `env.FLEETDECK_HOLD_MS` → `env['FLEETDECK_HOLD_MS']` (`ProcessEnv` is an index signature). (2)
+  **no-unnecessary-type-parameters** on `safeParse<T = unknown>` — kept with a scoped inline-disable: the
+  single-use generic centralizes the `JSON.parse` cast so each call site reads `safeParse<Shape>(json)`
+  instead of a bare `as`; a deliberate ergonomic param, not a disguised cast. (3) **no-empty-function** ×5
+  — the default no-op callbacks (`() => {}`) gained a `/* no-op default */` body. (4) **prefer-optional-chain**
+  ×3 — `if (!row || row.status !== 'expired')` → `if (row?.status !== 'expired')` (fireRearm, recycleRearm,
+  and the grace-map walk in the activity-correlation path). (5) **no-unnecessary-condition** ×3 — dropped
+  dead `?.` the linter proved redundant: in the re-armed branch `body.action` is reached only inside
+  `body?.action === 'accept' || body?.action === 'decline'` (so `body` is non-null there), and
+  `payload.tool_input?.…` / `payload.text` are reached only after `payload?.rearmed === true` guards
+  `payload` non-null. (6) **prefer-nullish-coalescing** ×4 `||`→`??`, each verified domain-equivalent —
+  `callsignOf(...) ?? session_id` (a callsign is never the empty string), the AskUserQuestion `header ?? qText`
+  (a present header is required non-empty), and the two `detectTrailingQuestion` paragraph/line fallbacks that
+  target `''` (so `||` and `??` pick the same branch). `Number(stmt.run(...).changes)` wraps only the three
+  relational `=== 0` / `> 0` sites (bigint-safe); bare truthy `if (...changes)` contexts left unwrapped.
+- **Verify:** three importers repointed to `./questions.ts` (`settings.mjs`, `events.mjs`, `derive.mjs`), plus
+  two direct-import tests (`question-rearm`, `questions-audit`). Fixed a stale `db.mjs` reference in
+  `hook-auth.test.mjs`'s generated fleetd wrapper — a leftover from the `db.ts` conversion that only failed once
+  a `.ts`-importing daemon child was actually spawned (Node 22.22 strips types in the child too). 103/103 across
+  question-rearm, questions-audit, needs-you, dismiss, accept-plan-isolation, succession, hook-stubs,
+  static-serving, hook-auth green vs source; the daemon bundle rebuilds with the `questions.ts` banner and passes
+  `node --check`.

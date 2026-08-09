@@ -4299,7 +4299,7 @@ function animalOf(callsign) {
   return animal;
 }
 
-// scripts/fleetd/questions.mjs
+// scripts/fleetd/questions.ts
 var PLAN_CAPTURE_MAIL = "[FLEETDECK] Your plan was captured to the fleet plan library \u2014 do not execute it. Wrap up your turn.";
 var DEFAULT_HOLD_MS = 6e5;
 var MAX_HOLDS_PER_SESSION = 4;
@@ -4309,8 +4309,13 @@ var HOLD_KINDS = /* @__PURE__ */ new Set(["permission", "elicitation", "choice"]
 var REARM_GRACE_MS = 3e3;
 var COMPLETED_KEY_TTL_MS = 6e4;
 var MAX_REARMS = 2;
+function asText(value) {
+  if (value == null) return "";
+  if (typeof value === "string") return value;
+  return String(value);
+}
 function resolveHoldMs(env = process.env, fallback = null) {
-  const raw = Number(env?.FLEETDECK_HOLD_MS);
+  const raw = Number(env?.["FLEETDECK_HOLD_MS"]);
   if (Number.isFinite(raw) && raw > 0) {
     return Math.max(250, Math.min(raw, 65e4));
   }
@@ -4331,7 +4336,7 @@ function stableStringify(v) {
   return "{" + Object.keys(v).sort().map((k) => JSON.stringify(k) + ":" + stableStringify(v[k])).join(",") + "}";
 }
 function toolCallKey(toolName, toolInput) {
-  return String(toolName) + "\0" + stableStringify(toolInput ?? null);
+  return asText(toolName) + "\0" + stableStringify(toolInput ?? null);
 }
 function createQuestions(db2, {
   holdMs = DEFAULT_HOLD_MS,
@@ -4378,9 +4383,15 @@ function createQuestions(db2, {
     get: db2.prepare("SELECT * FROM questions WHERE id = ?"),
     markAnswered: db2.prepare(`UPDATE questions SET status = 'answered', answer_json = ?, answered_at = ?
       WHERE id = ? AND status = 'pending'`),
-    markExpired: db2.prepare(`UPDATE questions SET status = 'expired' WHERE id = ? AND status = 'pending'`),
-    pending: db2.prepare(`SELECT * FROM questions WHERE status = 'pending' ORDER BY id`),
-    pendingBySession: db2.prepare(`SELECT * FROM questions WHERE status = 'pending' AND session_id = ? ORDER BY id`),
+    markExpired: db2.prepare(
+      `UPDATE questions SET status = 'expired' WHERE id = ? AND status = 'pending'`
+    ),
+    pending: db2.prepare(
+      `SELECT * FROM questions WHERE status = 'pending' ORDER BY id`
+    ),
+    pendingBySession: db2.prepare(
+      `SELECT * FROM questions WHERE status = 'pending' AND session_id = ? ORDER BY id`
+    ),
     resolved: db2.prepare(`SELECT * FROM questions WHERE status != 'pending'
       ORDER BY COALESCE(answered_at, expires_at, created_at) DESC, id DESC LIMIT ${RESOLVED_IN_STATE}`)
   };
@@ -4401,27 +4412,41 @@ function createQuestions(db2, {
     }
     const isRearm = payload?.rearmed === true;
     const expiresAt = HOLD_KINDS.has(kind) && !isRearm ? now + windowMs : null;
-    const info = q.insert.run(sessionId ?? "unknown", kind, JSON.stringify(payload ?? {}), now, expiresAt);
-    return q.get.get(Number(info.lastInsertRowid));
+    const info = q.insert.run(
+      sessionId ?? "unknown",
+      kind,
+      JSON.stringify(payload ?? {}),
+      now,
+      expiresAt
+    );
+    const row = q.get.get(Number(info.lastInsertRowid));
+    if (!row) throw new Error("fleetd: question row vanished immediately after insert");
+    return row;
   }
   function attachHold(row, respond) {
-    const mine = [...holds.keys()].filter((id) => holds.get(id).session_id === row.session_id).sort((a, b) => a - b);
-    if (mine.length >= MAX_HOLDS_PER_SESSION) settleExpired(mine[0]);
-    const timer = setTimeout(() => {
-      try {
-        settleExpired(row.id);
-      } catch (err) {
-        const h = releaseHold(row.id);
-        if (h) {
-          try {
-            h.respond({});
-          } catch {
+    const mine = [...holds.keys()].filter((id) => holds.get(id)?.session_id === row.session_id).sort((a, b) => a - b);
+    if (mine.length >= MAX_HOLDS_PER_SESSION) {
+      const oldest = mine[0];
+      if (oldest !== void 0) settleExpired(oldest);
+    }
+    const timer = setTimeout(
+      () => {
+        try {
+          settleExpired(row.id);
+        } catch (err) {
+          const h = releaseHold(row.id);
+          if (h) {
+            try {
+              h.respond({});
+            } catch {
+            }
           }
+          console.error(`fleetd question #${row.id} expiry persistence error:`, err);
         }
-        console.error(`fleetd question #${row.id} expiry persistence error:`, err);
-      }
-    }, Math.max(0, row.expires_at - Date.now()));
-    timer.unref?.();
+      },
+      Math.max(0, (row.expires_at ?? Date.now()) - Date.now())
+    );
+    timer.unref();
     holds.set(row.id, { session_id: row.session_id, respond, timer });
   }
   function releaseHold(id) {
@@ -4444,11 +4469,12 @@ function createQuestions(db2, {
       else entry.set(key, n - 1);
       if (entry.size === 0) completedKeys.delete(sessionId);
     }, COMPLETED_KEY_TTL_MS);
-    timer.unref?.();
+    timer.unref();
   }
   function consumeCompleted(sessionId, key) {
     const byKey = completedKeys.get(sessionId);
-    const n = byKey?.get(key);
+    if (!byKey) return false;
+    const n = byKey.get(key);
     if (!n) return false;
     if (n <= 1) byKey.delete(key);
     else byKey.set(key, n - 1);
@@ -4476,29 +4502,41 @@ function createQuestions(db2, {
     const chainRoot = safeParse(row.payload_json)?.chain_root ?? row.id;
     const chain = rearmChains.get(chainRoot) ?? 0;
     if (chain >= rearmMax) return false;
-    db2.prepare(`UPDATE questions SET payload_json = ? WHERE id = ? AND status = 'expired'`).run(JSON.stringify({ ...safeParse(row.payload_json) ?? {}, rearm_pending: true }), row.id);
+    db2.prepare(`UPDATE questions SET payload_json = ? WHERE id = ? AND status = 'expired'`).run(
+      JSON.stringify({
+        ...safeParse(row.payload_json) ?? {},
+        rearm_pending: true
+      }),
+      row.id
+    );
     const timer = setTimeout(() => {
       try {
         fireRearm(row.id, chainRoot);
       } catch {
       }
     }, rearmGraceMs);
-    timer.unref?.();
+    timer.unref();
     rearmById.set(row.id, { timer, chainRoot, armedAt: Date.now() });
     return true;
   }
   function fireRearm(sourceId, chainRoot) {
     if (!rearmById.delete(sourceId)) return;
     const row = q.get.get(sourceId);
-    if (!row || row.status !== "expired") return;
+    if (row?.status !== "expired") return;
     if (q.pendingBySession.all(row.session_id).length > 0) return;
-    const payload = { ...safeParse(row.payload_json) ?? {}, rearmed: true, chain_root: chainRoot };
+    const payload = {
+      ...safeParse(row.payload_json) ?? {},
+      rearmed: true,
+      chain_root: chainRoot
+    };
     delete payload.rearm_pending;
     const fresh = create(row.kind, row.session_id, payload);
     rearmChains.set(chainRoot, (rearmChains.get(chainRoot) ?? 0) + 1);
     rearmMeta.set(fresh.id, { sourceId });
     rearmById.set(row.id, { timer: null, chainRoot, successor: fresh.id });
-    tick(`\u{1F501} question #${fresh.id} re-armed (was #${row.id}) \u2014 answering sends it as a message at the next turn boundary`);
+    tick(
+      `\u{1F501} question #${fresh.id} re-armed (was #${row.id}) \u2014 answering sends it as a message at the next turn boundary`
+    );
     onChange();
   }
   function recycleRearm(id) {
@@ -4506,25 +4544,26 @@ function createQuestions(db2, {
     rearmMeta.delete(id);
     if (!meta) return false;
     const row = q.get.get(id);
-    if (!row || row.status !== "pending") return false;
-    if (q.markExpired.run(id).changes === 0) return false;
+    if (row?.status !== "pending") return false;
+    if (Number(q.markExpired.run(id).changes) === 0) return false;
     const chainRoot = safeParse(row.payload_json)?.chain_root ?? id;
     if ((rearmChains.get(chainRoot) ?? 0) >= rearmMax) return true;
-    if (meta.sourceId != null) rearmById.delete(meta.sourceId);
+    rearmById.delete(meta.sourceId);
     const timer = setTimeout(() => {
       try {
         fireRearm(id, chainRoot);
       } catch {
       }
     }, rearmGraceMs);
-    timer.unref?.();
+    timer.unref();
     rearmById.set(id, { timer, chainRoot });
     return true;
   }
   function cancelRearm(id) {
-    const m = rearmById.get(id) ?? rearmById.get(rearmMeta.get(id)?.sourceId);
+    const src = rearmMeta.get(id)?.sourceId;
+    const m = rearmById.get(id) ?? (src !== void 0 ? rearmById.get(src) : void 0);
     if (m?.timer) clearTimeout(m.timer);
-    if (m) rearmById.delete(rearmMeta.get(id)?.sourceId ?? id);
+    if (m) rearmById.delete(src ?? id);
     if (m?.successor != null) rearmMeta.delete(m.successor);
     rearmMeta.delete(id);
   }
@@ -4559,26 +4598,43 @@ function createQuestions(db2, {
   function answer(id, body) {
     const row = q.get.get(Number(id));
     if (!row) return { status: 404, body: { ok: false, err: "no such question" } };
-    if (row.status !== "pending") return { status: 409, body: { ok: false, err: `question already ${row.status}` } };
+    if (row.status !== "pending")
+      return { status: 409, body: { ok: false, err: `question already ${row.status}` } };
     const now = Date.now();
-    const who = callsignOf(row.session_id) || row.session_id;
+    const who = callsignOf(row.session_id) ?? row.session_id;
     if (HOLD_KINDS.has(row.kind)) {
       const payload = safeParse(row.payload_json);
       if (payload?.rearmed === true) {
         const detail0 = row.kind === "permission" ? body?.behavior : row.kind === "choice" ? serializeChoiceAnswer(row, body) : body?.action === "accept" || body?.action === "decline" ? body.action : null;
-        if (detail0 && typeof detail0 === "object" && detail0.over != null) {
-          return { status: 400, body: { ok: false, err: `answer too long \u2014 ${detail0.over} code units exceeds the 2000-unit answer limit; shorten the answer or answer at the terminal` } };
+        if (detail0 && typeof detail0 === "object") {
+          return {
+            status: 400,
+            body: {
+              ok: false,
+              err: `answer too long \u2014 ${detail0.over} code units exceeds the 2000-unit answer limit; shorten the answer or answer at the terminal`
+            }
+          };
         }
         const detail2 = detail0;
         if (detail2 == null) {
-          return { status: 400, body: { ok: false, err: "body must match the question kind (behavior / answers|text / action)" } };
+          return {
+            status: 400,
+            body: {
+              ok: false,
+              err: "body must match the question kind (behavior / answers|text / action)"
+            }
+          };
         }
         if (detail2 === "capture") {
-          return { status: 400, body: { ok: false, err: '"capture" needs the live hold \u2014 the window for it has closed' } };
+          return {
+            status: 400,
+            body: {
+              ok: false,
+              err: '"capture" needs the live hold \u2014 the window for it has closed'
+            }
+          };
         }
-        const questionText = String(
-          payload?.tool_input?.questions?.[0]?.question ?? payload?.text ?? ""
-        ).slice(0, 80);
+        const questionText = (payload.tool_input?.questions?.[0]?.question ?? payload.text ?? "").slice(0, 80);
         const frame = `[FLEETDECK ANSWER] ${row.kind} (answered after the hold expired) Q: ${questionText} \u2014 A: ${detail2}`;
         const rejected = answerMailGuard(frame);
         if (rejected) return rejected;
@@ -4586,9 +4642,18 @@ function createQuestions(db2, {
         mail(row.session_id, "fleetdeck-answer", frame);
         cancelRearm(row.id);
         q.markAnswered.run(JSON.stringify(body ?? {}), now, row.id);
-        tick(`\u{1F4AC} ${who}: re-armed ${row.kind} answered (${detail2}) \u2014 queued for the next turn boundary`);
+        tick(
+          `\u{1F4AC} ${who}: re-armed ${row.kind} answered (${detail2}) \u2014 queued for the next turn boundary`
+        );
         onChange();
-        return { status: 200, body: { ok: true, delivered: false, note: "answer queued \u2014 delivered at next turn boundary" } };
+        return {
+          status: 200,
+          body: {
+            ok: true,
+            delivered: false,
+            note: "answer queued \u2014 delivered at next turn boundary"
+          }
+        };
       }
       let hookResponse;
       let detail;
@@ -4597,7 +4662,10 @@ function createQuestions(db2, {
         const behavior = body?.behavior;
         const planId = planIdFor(row.id);
         if (behavior === "capture" && planId == null) {
-          return { status: 400, body: { ok: false, err: '"capture" is only valid for an ExitPlanMode plan question' } };
+          return {
+            status: 400,
+            body: { ok: false, err: '"capture" is only valid for an ExitPlanMode plan question' }
+          };
         }
         if (behavior !== "allow" && behavior !== "deny" && behavior !== "capture") {
           return {
@@ -4609,16 +4677,30 @@ function createQuestions(db2, {
           };
         }
         const wire = behavior === "capture" ? "deny" : behavior;
-        hookResponse = { hookSpecificOutput: { hookEventName: "PermissionRequest", decision: { behavior: wire } } };
+        hookResponse = {
+          hookSpecificOutput: { hookEventName: "PermissionRequest", decision: { behavior: wire } }
+        };
         detail = behavior;
         if (planId != null) planBehavior = behavior;
       } else if (row.kind === "choice") {
         const serialized = serializeChoiceAnswer(row, body);
         if (serialized && typeof serialized === "object") {
-          return { status: 400, body: { ok: false, err: `answer too long \u2014 ${serialized.over} code units exceeds the 2000-unit answer limit; shorten the answer or answer at the terminal` } };
+          return {
+            status: 400,
+            body: {
+              ok: false,
+              err: `answer too long \u2014 ${serialized.over} code units exceeds the 2000-unit answer limit; shorten the answer or answer at the terminal`
+            }
+          };
         }
         if (!serialized) {
-          return { status: 400, body: { ok: false, err: 'body must be {"answers":{"<question text>":"<label>"}} or {"text":"..."}' } };
+          return {
+            status: 400,
+            body: {
+              ok: false,
+              err: 'body must be {"answers":{"<question text>":"<label>"}} or {"text":"..."}'
+            }
+          };
         }
         hookResponse = {
           hookSpecificOutput: {
@@ -4631,7 +4713,13 @@ function createQuestions(db2, {
       } else {
         const action = body?.action;
         if (action !== "accept" && action !== "decline") {
-          return { status: 400, body: { ok: false, err: 'body must be {"action":"accept","content":{...}} or {"action":"decline"}' } };
+          return {
+            status: 400,
+            body: {
+              ok: false,
+              err: 'body must be {"action":"accept","content":{...}} or {"action":"decline"}'
+            }
+          };
         }
         hookResponse = action === "accept" ? { action: "accept", content: body?.content ?? {} } : { action: "decline" };
         detail = action;
@@ -4642,7 +4730,10 @@ function createQuestions(db2, {
           onChange();
           onRetired(q.get.get(row.id));
         }
-        return { status: 409, body: { ok: false, err: "hold expired \u2014 the terminal prompt owns this decision now" } };
+        return {
+          status: 409,
+          body: { ok: false, err: "hold expired \u2014 the terminal prompt owns this decision now" }
+        };
       }
       try {
         h.respond(hookResponse);
@@ -4661,9 +4752,9 @@ function createQuestions(db2, {
       return { status: 200, body: { ok: true, delivered: true } };
     }
     if (row.kind === "freeform") {
-      const text = String(body?.text ?? "").trim();
+      const text = (body?.text ?? "").trim();
       if (!text) return { status: 400, body: { ok: false, err: 'body must be {"text":"..."}' } };
-      const questionText = String(safeParse(row.payload_json)?.text ?? "").slice(0, 80);
+      const questionText = (safeParse(row.payload_json)?.text ?? "").slice(0, 80);
       const frame = `[FLEETDECK ANSWER] Q: ${questionText} \u2014 A: ${text}`;
       const rejected = answerMailGuard(frame);
       if (rejected) return rejected;
@@ -4671,13 +4762,20 @@ function createQuestions(db2, {
       q.markAnswered.run(JSON.stringify({ text }), now, row.id);
       tick(`\u{1F4AC} answer for ${who} queued \u2014 lands at next turn boundary`);
       onChange();
-      return { status: 200, body: { ok: true, delivered: false, note: "answer queued \u2014 delivered at next turn boundary" } };
+      return {
+        status: 200,
+        body: {
+          ok: true,
+          delivered: false,
+          note: "answer queued \u2014 delivered at next turn boundary"
+        }
+      };
     }
     return { status: 400, body: { ok: false, err: `unknown question kind ${row.kind}` } };
   }
   function expireOnActivity(sessionId, { toolName, toolInput } = {}) {
-    const correlated = typeof toolName === "string" && toolName !== "";
-    const activityKey = correlated ? toolCallKey(toolName, toolInput) : null;
+    const activityKey = typeof toolName === "string" && toolName !== "" ? toolCallKey(toolName, toolInput) : null;
+    const correlated = activityKey !== null;
     let rows = q.pendingBySession.all(sessionId).filter((r) => {
       if (!correlated) return true;
       if (!HOLD_KINDS.has(r.kind)) return false;
@@ -4691,7 +4789,7 @@ function createQuestions(db2, {
       for (const [id, m] of [...rearmById]) {
         if (!m.timer) continue;
         const row = q.get.get(id);
-        if (!row || row.session_id !== sessionId) continue;
+        if (row?.session_id !== sessionId) continue;
         const payload = safeParse(row.payload_json);
         if (payload?.tool_name == null) continue;
         if (toolCallKey(payload.tool_name, payload.tool_input) !== activityKey) continue;
@@ -4701,12 +4799,13 @@ function createQuestions(db2, {
       for (const id of graceCancelled) onRetired(q.get.get(id), { activity: true });
     }
     const rearmDisarmed = disarmRearmsForSession(sessionId);
-    if (correlated && consumeCompleted(sessionId, activityKey)) {
+    if (activityKey !== null && consumeCompleted(sessionId, activityKey)) {
       if (rearmDisarmed) onChange();
       return rearmDisarmed;
     }
     if (correlated && rows.length > 1) {
-      rows = [rows.find((r) => holds.has(r.id)) ?? rows[0]];
+      const first = rows[0];
+      if (first) rows = [rows.find((r) => holds.has(r.id)) ?? first];
     }
     const retired = [];
     for (const r of rows) {
@@ -4726,7 +4825,7 @@ function createQuestions(db2, {
   function purgeResolved() {
     const out = db2.prepare("DELETE FROM questions WHERE status != 'pending'").run();
     if (out.changes) onChange();
-    return out.changes;
+    return Number(out.changes);
   }
   function dismiss(id, { activity = false } = {}) {
     const row = q.get.get(id);
@@ -4740,7 +4839,7 @@ function createQuestions(db2, {
       } catch {
       }
     }
-    const changed = q.markExpired.run(row.id).changes > 0;
+    const changed = Number(q.markExpired.run(row.id).changes) > 0;
     if (changed) {
       onChange();
       onRetired(q.get.get(row.id), { activity });
@@ -4849,21 +4948,21 @@ function serializeChoiceAnswer(row, body) {
   if (!answers || typeof answers !== "object" || Array.isArray(answers)) return null;
   const entries = Object.entries(answers);
   if (!entries.length) return null;
-  const qs = safeParse(row?.payload_json)?.tool_input?.questions;
+  const qs = safeParse(row.payload_json)?.tool_input?.questions;
   if (Array.isArray(qs) && !validChoiceAnswers(qs, entries)) return null;
-  const fmt = (v) => (Array.isArray(v) ? v.join(", ") : v).trim();
+  const fmt = (v) => (Array.isArray(v) ? v.map(asText).join(", ") : asText(v)).trim();
   if (entries.some(([, v]) => fmt(v) === "")) return null;
   if (entries.length === 1) {
-    const t2 = fmt(entries[0][1]);
+    const t2 = fmt(entries[0]?.[1]);
     return t2.length <= ANSWER_MAX ? t2 : { over: t2.length };
   }
-  const headerOf = (qText) => Array.isArray(qs) ? qs.find((x) => x?.question === qText)?.header : null;
-  const t = entries.map(([qText, v]) => `${headerOf(qText) || qText}: ${fmt(v)}`).join("; ");
+  const headerOf = (qText) => Array.isArray(qs) ? qs.find((x) => x?.question === qText)?.header : void 0;
+  const t = entries.map(([qText, v]) => `${headerOf(qText) ?? qText}: ${fmt(v)}`).join("; ");
   return t.length <= ANSWER_MAX ? t : { over: t.length };
 }
 function validChoiceLabel(question, label2) {
   if (!label2) return false;
-  return (Array.isArray(question?.options) ? question.options : []).some((o) => o?.label === label2);
+  return (Array.isArray(question.options) ? question.options : []).some((o) => o?.label === label2);
 }
 function validChoiceAnswers(questions, entries) {
   return entries.every(([qText, v]) => {
@@ -4879,12 +4978,12 @@ function validChoiceAnswers(questions, entries) {
 }
 var CHOICE_RE = /\b(should I|do you want|would you like|which|prefer|option [AB1-9]|let me know)\b/i;
 function detectTrailingQuestion(text) {
-  const trimmed = String(text ?? "").trim();
+  const trimmed = asText(text).trim();
   if (!trimmed) return null;
   const paras = trimmed.split(/\n[ \t]*\n/);
-  const lastPara = (paras[paras.length - 1] || "").trim();
+  const lastPara = (paras[paras.length - 1] ?? "").trim();
   const lines = lastPara.split("\n").map((l) => l.trim()).filter(Boolean);
-  const lastLine = lines[lines.length - 1] || "";
+  const lastLine = lines[lines.length - 1] ?? "";
   const TRAILING_Q = /\?[\s"'*_)\]`.]*$/;
   if (TRAILING_Q.test(lastLine)) return clipQuestion(lastLine);
   if (lastPara.includes("?") && CHOICE_RE.test(lastPara)) {
@@ -4906,7 +5005,7 @@ function sentenceWithLastQuestionMark(para) {
   return para.slice(start, idx + 1).trim();
 }
 function clipQuestion(s) {
-  const t = String(s).trim();
+  const t = s.trim();
   return t.length <= 300 ? t : t.slice(0, 297) + "\u2026";
 }
 
@@ -9201,7 +9300,7 @@ function dropOrphanSurrogate(cut) {
   const last = cut.charCodeAt(cut.length - 1);
   return last >= 55296 && last <= 56319 ? cut.slice(0, -1) : cut;
 }
-function asText(value) {
+function asText2(value) {
   if (value == null) return "";
   if (typeof value === "string") return value;
   return String(value);
@@ -9219,7 +9318,7 @@ var RESERVED_SENDERS = /* @__PURE__ */ new Set(["orchestrator", "fleetdeck", "fl
 var RESERVED_FRAME_RE = /^[\s\x00-\x1f\x7f-\x9f]*\[FLEETDECK[ \]]/i;
 var stripFormatChars = (s) => s.replace(/\p{Cf}/gu, "");
 function hasReservedFrame(text) {
-  return stripFormatChars(asText(text)).replace(/\r\n?|[\u2028\u2029]/g, "\n").split("\n").some((line) => RESERVED_FRAME_RE.test(line));
+  return stripFormatChars(asText2(text)).replace(/\r\n?|[\u2028\u2029]/g, "\n").split("\n").some((line) => RESERVED_FRAME_RE.test(line));
 }
 var FROM_UNSAFE_RE = /[\r\n\x00-\x1f\x7f-\x9f\p{Cf}[\]]/u;
 function createMail(ctx) {
@@ -9243,7 +9342,7 @@ function createMail(ctx) {
     MAIL_PANE_BATCH_BYTES: PANE_BATCH_BYTES = MAIL_PANE_BATCH_BYTES
   } = ctx;
   function mail(toSession, from, text) {
-    const raw = asText(text);
+    const raw = asText2(text);
     const stored = clampMail(raw);
     const stats = q.pendingMailStats.get(toSession) ?? { n: 0, bytes: 0 };
     if (stats.n >= PENDING_MAX || stats.bytes + stored.length > PENDING_MAX_BYTES) {
@@ -9531,7 +9630,7 @@ function createMail(ctx) {
     }
     tick(`\u2709 mail from ${sender} \u2192 ${to}`);
     onMutate();
-    const raw = asText(text);
+    const raw = asText2(text);
     const truncated = raw.length > MAIL_MAX_LEN;
     return {
       ok: true,

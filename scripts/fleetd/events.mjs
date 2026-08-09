@@ -13,7 +13,7 @@ import os from 'node:os';
 import { deriveRepo, branchOf } from './repo-identity.ts';
 import { ticketFromBranch } from './tickets.ts';
 import { lastAssistantText } from './transcript.ts';
-import { detectTrailingQuestion } from './questions.mjs';
+import { detectTrailingQuestion } from './questions.ts';
 import { mungeClaudeProjectCwd } from './helpers.ts';
 
 const EDIT_TOOLS = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'];

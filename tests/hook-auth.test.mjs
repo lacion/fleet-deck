@@ -99,7 +99,7 @@ test('forged UserPromptSubmit can no longer drain a mailbox or expire holds', as
   writeFileSync(wrapper, `
 import path from 'node:path';
 import { writeFileSync } from 'node:fs';
-import { openDb } from ${JSON.stringify(path.join(FLEETD_DIR, 'db.mjs'))};
+import { openDb } from ${JSON.stringify(path.join(FLEETD_DIR, 'db.ts'))};
 import { createCore } from ${JSON.stringify(path.join(FLEETD_DIR, 'derive.mjs'))};
 import { createHttp } from ${JSON.stringify(path.join(FLEETD_DIR, 'http.mjs'))};
 

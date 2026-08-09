@@ -14,7 +14,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { openDb } from '../scripts/fleetd/db.ts';
-import { createQuestions } from '../scripts/fleetd/questions.mjs';
+import { createQuestions } from '../scripts/fleetd/questions.ts';
 
 const FIX = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures');
 

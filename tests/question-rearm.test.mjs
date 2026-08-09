@@ -30,7 +30,7 @@ import { postHook, postJson, getJson } from './helpers/http.mjs';
 import { loadFixture } from './helpers/fixtures.mjs';
 import { makeTranscriptDir, writeTranscript } from './helpers/transcript.mjs';
 import { waitUntil } from './helpers/wait.mjs';
-import { resolveHoldMs } from '../scripts/fleetd/questions.mjs';
+import { resolveHoldMs } from '../scripts/fleetd/questions.ts';
 
 function scratchCwd() {
   return mkdtempSync(path.join(tmpdir(), 'fleetdeck-cwd-'));
