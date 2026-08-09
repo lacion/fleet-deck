@@ -147,7 +147,7 @@ test('revive of an unsupervised lineage requires a fresh arm', async (t) => {
 
   // Take the row terminal directly (a fixture spawn has no tmux window to
   // kill — kill would 410 'window already gone').
-  const { openDb } = await import('../scripts/fleetd/db.mjs');
+  const { openDb } = await import('../scripts/fleetd/db.ts');
   const db = openDb(path.join(daemon.home, 'fleetd.db'));
   db.prepare("UPDATE spawns SET status = 'gone' WHERE spawn_id = ?").run(spawnId);
   db.close();

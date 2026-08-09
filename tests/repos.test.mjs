@@ -7,7 +7,7 @@ import os, { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createRepos, parseRepoInput, quickBranchCheck, repoDefaultOrgChoice, repoDefaultOrgProblem } from '../scripts/fleetd/repos.mjs';
 import { detectCoderWorkspaceRoot, resolveHome } from '../scripts/fleetd/config.mjs';
-import { openDb } from '../scripts/fleetd/db.mjs';
+import { openDb } from '../scripts/fleetd/db.ts';
 import { createCore } from '../scripts/fleetd/derive.mjs';
 import { createStatements } from '../scripts/fleetd/statements.mjs';
 import { startDaemon, randomPort } from './helpers/daemon.mjs';

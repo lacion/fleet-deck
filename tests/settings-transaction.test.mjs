@@ -17,7 +17,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { openDb } from '../scripts/fleetd/db.mjs';
+import { openDb } from '../scripts/fleetd/db.ts';
 import { createStatements } from '../scripts/fleetd/statements.mjs';
 import { createSettings } from '../scripts/fleetd/settings.mjs';
 

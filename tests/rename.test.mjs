@@ -6,7 +6,7 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { openDb } from '../scripts/fleetd/db.mjs';
+import { openDb } from '../scripts/fleetd/db.ts';
 import { startDaemon } from './helpers/daemon.mjs';
 import { getJson, postHook, postJson } from './helpers/http.mjs';
 import { makeRepoWithWorktree } from './helpers/gitrepo.mjs';

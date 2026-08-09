@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { openDb } from '../scripts/fleetd/db.mjs';
+import { openDb } from '../scripts/fleetd/db.ts';
 import { createQuestions } from '../scripts/fleetd/questions.mjs';
 
 const FIX = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures');

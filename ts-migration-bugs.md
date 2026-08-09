@@ -48,6 +48,42 @@ Format:
 
 <!-- entries appended below as modules convert -->
 
+### db.ts — the store's schema layer; three strict knobs, no defect   [NOISE]
+- **What:** `openDb()` (DDL + `migrate()` + the 0600 confidentiality chmod) built on
+  `sqlite.ts`'s `openDatabase()`. A clean conversion — nothing latent surfaced — but three
+  maximal-strict knobs each demanded a deliberate shape rather than a cast:
+  (1) `noPropertyAccessFromIndexSignature` on the three `PRAGMA table_info(<t>)` reads:
+  `.all().map(r => r.name)` fails because a default `SqlRow` is a pure index signature, so
+  `r.name` is illegal dot access. (2) `useUnknownInCatchVariables` on both confidentiality
+  `catch (err)` blocks: the old `err?.code`/`err?.message` don't compile on `unknown`.
+  (3) the `openDb(file, fsImpl = { chmodSync, statSync })` seam — what *type* is `fsImpl`?
+- **Why it's noise (not a bug):** every one is an ergonomics choice with zero runtime move.
+  (1) Asserted the real row shape at each query — `db.prepare<{ name: string }>('PRAGMA
+  table_info(sessions)')` (via a local `PragmaColumnInfo`) — so `.map(r => r.name)` stays on
+  dot access and yields `string[]`. The SQL guarantees the `name` column; the assertion
+  belongs with the query (exactly the contract `SqliteStatement<R>` was minted for). The
+  full pragma row is `cid/name/type/notnull/dflt_value/pk`; nothing here reads the rest.
+  (2) Added two tiny narrowing helpers — `errCode(err): string | undefined` (drives the
+  ENOENT skip on a lazily-absent WAL/SHM sidecar) and `describeErr(err): string` (reproduces
+  `err?.code || err?.message || 'unknown error'` for the refusal message). Faithful to the JS,
+  now type-safe: a caught value is `unknown` and Node's errno `code` isn't on `Error`.
+  (3) Typed `fsImpl` as a **minimal structural** `DbFsImpl` (`chmodSync(path, mode)`,
+  `statSync(path): { mode }`) — *not* `typeof import('node:fs')`. The real fs functions
+  satisfy it structurally, AND the tests' chmod-refusal doubles (whose `statSync` returns only
+  `{ mode }`) will still satisfy it once tests convert (#11); `Pick<typeof fs, …>` would reject
+  those doubles because a mock's `{ mode }` isn't a full `Stats`.
+- **Fix:** annotations + two helper fns only; runtime behavior identical (bundle grew 618.2→618.6kb
+  from the two helpers surviving as real functions). Verified: tsc + eslint clean; db-perms 4/4 and
+  daemon-maintenance 17/17 green vs source **and** vs the regenerated bundle.
+- **Aside (not a migration bug — pre-existing, logged so it isn't re-misdiagnosed):**
+  `agents-ingest.test.mjs` flakes hard on this WSL box (2–6 of 10 subtests fail with
+  `daemon at 127.0.0.1:<port> never became healthy: timeout` from `tests/helpers/daemon.mjs`,
+  10s `healthTimeoutMs`, ~10 daemons spawned in quick succession). Proven **not** the migration's
+  doing: with my db.ts change stashed and the committed `db.mjs` restored, the same file failed
+  **6/10** on the same quiet machine — worse than my 2/10. Root cause is the daemon-boot health
+  budget under rapid multi-spawn on WSL, present on `main`. The deterministic db.ts tests
+  (db-perms, daemon-maintenance) pass every run; use those as the db.ts signal, not agents-ingest.
+
 ### sqlite.ts — the store's foundational types + a monkey-patch the linter can't see is safe   [NOISE]
 - **What:** the runtime-agnostic driver seam. This is where the whole store's type
   vocabulary is minted — `SqlValue` (a cell), `SqlRow = Record<string, SqlValue>`,

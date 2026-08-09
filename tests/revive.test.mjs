@@ -5,7 +5,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { openDb } from '../scripts/fleetd/db.mjs';
+import { openDb } from '../scripts/fleetd/db.ts';
 import { claudeTranscriptPath, mungeClaudeProjectCwd } from '../scripts/fleetd/derive.mjs';
 import { guardScratchDirs, startDaemon } from './helpers/daemon.mjs';
 import { getJson, postHook, postJson } from './helpers/http.mjs';

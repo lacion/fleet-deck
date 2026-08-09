@@ -39,7 +39,7 @@ import { randomPort, startDaemon } from './helpers/daemon.mjs';
 import { postJson, getJson, postHook, rawRequest } from './helpers/http.mjs';
 import { waitForSpecRecords } from './helpers/wait.mjs';
 import { claudeTranscriptPath } from '../scripts/fleetd/helpers.mjs';
-import { openDb } from '../scripts/fleetd/db.mjs';
+import { openDb } from '../scripts/fleetd/db.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SPAWN_CMD_FIXTURE = path.join(HERE, 'helpers/spawn-cmd-fixture.mjs');

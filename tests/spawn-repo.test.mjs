@@ -17,7 +17,7 @@ import { waitUntil } from './helpers/wait.mjs';
 // in THIS module is the scaled shared helper — the exported binding and every
 // call site below resolve to the same function object.
 export const __waitUntilForScaleCheck = waitUntil;
-import { openDb } from '../scripts/fleetd/db.mjs';
+import { openDb } from '../scripts/fleetd/db.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SPAWN_CMD_FIXTURE = path.join(HERE, 'helpers/spawn-cmd-fixture.mjs');

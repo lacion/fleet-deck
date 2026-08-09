@@ -22,7 +22,7 @@ import path from 'node:path';
 import { openDatabase } from '../scripts/fleetd/sqlite.ts';
 import { distillGitStderr, gitStderrDetail, redactGitText } from '../scripts/fleetd/exec.mjs';
 import { scrubUrlCredentials } from '../scripts/fleetd/payload-capture.mjs';
-import { openDb } from '../scripts/fleetd/db.mjs';
+import { openDb } from '../scripts/fleetd/db.ts';
 
 // The incident, verbatim in shape: narration, remedy, verdict.
 const CODER_CLONE_STDERR = [

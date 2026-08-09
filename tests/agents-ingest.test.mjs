@@ -32,7 +32,7 @@ import { fileURLToPath } from 'node:url';
 import { startDaemon } from './helpers/daemon.mjs';
 import { postHook, getJson } from './helpers/http.mjs';
 import { waitUntil as waitUntilBase } from './helpers/wait.mjs';
-import { openDb } from '../scripts/fleetd/db.mjs';
+import { openDb } from '../scripts/fleetd/db.ts';
 import { loadFixture } from './helpers/fixtures.mjs';
 import { makeRepoWithWorktree } from './helpers/gitrepo.mjs';
 

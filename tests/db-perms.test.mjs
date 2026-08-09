@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { chmodSync, existsSync, mkdtempSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { openDb } from '../scripts/fleetd/db.mjs';
+import { openDb } from '../scripts/fleetd/db.ts';
 
 function scratch(t, prefix = 'fleetdeck-dbperms-') {
   const dir = mkdtempSync(path.join(tmpdir(), prefix));

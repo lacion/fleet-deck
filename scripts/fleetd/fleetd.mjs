@@ -14,7 +14,7 @@ import crypto from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { openDb } from './db.mjs';
+import { openDb } from './db.ts';
 import { createCore } from './derive.mjs';
 import { createHttp, isLoopbackAddress, parseTrustedOrigins } from './http.mjs';
 import { startAgentsPoll } from './agents-poll.mjs';

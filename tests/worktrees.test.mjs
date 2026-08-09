@@ -5,7 +5,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } 
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { openDb } from '../scripts/fleetd/db.mjs';
+import { openDb } from '../scripts/fleetd/db.ts';
 import * as fleetdHelpers from '../scripts/fleetd/helpers.mjs';
 import { createStatements } from '../scripts/fleetd/statements.mjs';
 import { createWorktrees } from '../scripts/fleetd/worktrees.mjs';

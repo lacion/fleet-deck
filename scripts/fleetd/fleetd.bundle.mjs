@@ -3718,7 +3718,7 @@ import os9 from "node:os";
 import path18 from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
-// scripts/fleetd/db.mjs
+// scripts/fleetd/db.ts
 import { chmodSync, statSync } from "node:fs";
 
 // scripts/fleetd/sqlite.ts
@@ -3773,7 +3773,23 @@ function openDatabase(file) {
   return makeHandle(file);
 }
 
-// scripts/fleetd/db.mjs
+// scripts/fleetd/db.ts
+function errCode(err) {
+  if (typeof err === "object" && err !== null) {
+    const code = err["code"];
+    if (typeof code === "string") return code;
+  }
+  return void 0;
+}
+function describeErr(err) {
+  const code = errCode(err);
+  if (code) return code;
+  if (typeof err === "object" && err !== null) {
+    const message = err["message"];
+    if (typeof message === "string" && message) return message;
+  }
+  return "unknown error";
+}
 var DDL = `
 PRAGMA busy_timeout = 5000;
 PRAGMA journal_mode = WAL;
@@ -4082,12 +4098,14 @@ function openDb(file, fsImpl = { chmodSync, statSync }) {
       fsImpl.chmodSync(file, 384);
       const mode = fsImpl.statSync(file).mode & 511;
       if (mode & 63) {
-        throw Object.assign(new Error(`mode still ${mode.toString(8)} after chmod 0600`), { code: "EMODE" });
+        throw Object.assign(new Error(`mode still ${mode.toString(8)} after chmod 0600`), {
+          code: "EMODE"
+        });
       }
     } catch (err) {
       db2.close();
       throw new Error(
-        `fleetd.db owner-only confidentiality could not be established (${err?.code || err?.message || "unknown error"}); refusing to start with the state database readable by other users`,
+        `fleetd.db owner-only confidentiality could not be established (${describeErr(err)}); refusing to start with the state database readable by other users`,
         { cause: err }
       );
     }
@@ -4095,13 +4113,15 @@ function openDb(file, fsImpl = { chmodSync, statSync }) {
       try {
         fsImpl.chmodSync(sidecar, 384);
         if (fsImpl.statSync(sidecar).mode & 63) {
-          throw Object.assign(new Error("mode still permissive after chmod 0600"), { code: "EMODE" });
+          throw Object.assign(new Error("mode still permissive after chmod 0600"), {
+            code: "EMODE"
+          });
         }
       } catch (err) {
-        if (err?.code === "ENOENT") continue;
+        if (errCode(err) === "ENOENT") continue;
         db2.close();
         throw new Error(
-          `fleetd.db sidecar owner-only confidentiality could not be established (${err?.code || err?.message || "unknown error"}); refusing to start with the state database readable by other users`,
+          `fleetd.db sidecar owner-only confidentiality could not be established (${describeErr(err)}); refusing to start with the state database readable by other users`,
           { cause: err }
         );
       }

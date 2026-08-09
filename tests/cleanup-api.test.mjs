@@ -6,7 +6,7 @@ import path from 'node:path';
 import { startDaemon } from './helpers/daemon.mjs';
 import { postHook, postJson, getJson } from './helpers/http.mjs';
 import { waitUntil } from './helpers/wait.mjs';
-import { openDb } from '../scripts/fleetd/db.mjs';
+import { openDb } from '../scripts/fleetd/db.ts';
 
 test('POST /api/cleanup archives offline sessions and expires their queued mail', async (t) => {
   const daemon = await startDaemon();

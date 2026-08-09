@@ -1,10 +1,50 @@
-// db.mjs — SQLite store for fleetd (WAL mode). All timestamps are ms epoch
+// db.ts — SQLite store for fleetd (WAL mode). All timestamps are ms epoch
 // integers. The SQLite handle comes from ./sqlite.ts, the one guarded seam that
 // picks node:sqlite or bun:sqlite by runtime (the ExperimentalWarning suppression
 // the Node driver needs now lives there); everything below is driver-agnostic.
 
 import { chmodSync, statSync } from 'node:fs';
-import { openDatabase } from './sqlite.ts';
+import { openDatabase, type SqliteHandle } from './sqlite.ts';
+
+// The one row shape this module reads back: `PRAGMA table_info(<t>)` yields a row
+// per column, and migrate() only ever touches the `name` cell to decide whether an
+// additive ALTER still needs to run. Asserting just this field at each prepare()
+// keeps the map callback on dot access (the full pragma row is cid/name/type/
+// notnull/dflt_value/pk, but nothing here needs the rest).
+interface PragmaColumnInfo {
+  name: string;
+}
+
+// The slice of node:fs that openDb() needs to pin fleetd.db to 0600. A minimal
+// structural shape rather than `typeof import('node:fs')` on purpose: the tests
+// pass a stand-in whose statSync returns only `{ mode }`, and that stand-in must
+// satisfy this type too (the real fs functions do, structurally).
+interface DbFsImpl {
+  chmodSync(path: string, mode: number): void;
+  statSync(path: string): { mode: number };
+}
+
+// A caught value is `unknown`; Node's errno errors carry a string `code` the base
+// Error type does not declare. errCode() reads it off safely (the ENOENT skip on
+// a lazily-absent sidecar depends on it), and describeErr() reproduces the old JS
+// `err?.code || err?.message || 'unknown error'` for the confidentiality-refusal
+// message.
+function errCode(err: unknown): string | undefined {
+  if (typeof err === 'object' && err !== null) {
+    const code = (err as Record<string, unknown>)['code'];
+    if (typeof code === 'string') return code;
+  }
+  return undefined;
+}
+function describeErr(err: unknown): string {
+  const code = errCode(err);
+  if (code) return code;
+  if (typeof err === 'object' && err !== null) {
+    const message = (err as Record<string, unknown>)['message'];
+    if (typeof message === 'string' && message) return message;
+  }
+  return 'unknown error';
+}
 
 const DDL = `
 PRAGMA busy_timeout = 5000;
@@ -236,8 +276,11 @@ CREATE INDEX IF NOT EXISTS idx_aliases_callsign ON session_aliases(callsign);
 // born remote and no URL was persisted, so 0/NULL are truthful backfills.
 // Retention is additive too: archived/expired timestamps preserve all rows
 // for forensics while removing them from live board/delivery queries.
-function migrate(db) {
-  const cols = db.prepare('PRAGMA table_info(sessions)').all().map(r => r.name);
+function migrate(db: SqliteHandle): void {
+  const cols = db
+    .prepare<PragmaColumnInfo>('PRAGMA table_info(sessions)')
+    .all()
+    .map((r) => r.name);
   if (!cols.includes('source')) {
     db.exec("ALTER TABLE sessions ADD COLUMN source TEXT DEFAULT 'hooks'");
   }
@@ -296,7 +339,10 @@ function migrate(db) {
   if (!cols.includes('run_id')) {
     db.exec('ALTER TABLE sessions ADD COLUMN run_id TEXT');
   }
-  const mailCols = db.prepare('PRAGMA table_info(mail)').all().map(r => r.name);
+  const mailCols = db
+    .prepare<PragmaColumnInfo>('PRAGMA table_info(mail)')
+    .all()
+    .map((r) => r.name);
   if (!mailCols.includes('expired_at')) {
     db.exec('ALTER TABLE mail ADD COLUMN expired_at INTEGER');
   }
@@ -305,7 +351,10 @@ function migrate(db) {
   if (!mailCols.includes('claimed_at')) {
     db.exec('ALTER TABLE mail ADD COLUMN claimed_at INTEGER');
   }
-  const spawnCols = db.prepare('PRAGMA table_info(spawns)').all().map(r => r.name);
+  const spawnCols = db
+    .prepare<PragmaColumnInfo>('PRAGMA table_info(spawns)')
+    .all()
+    .map((r) => r.name);
   if (spawnCols.length && !spawnCols.includes('skip_permissions')) {
     db.exec('ALTER TABLE spawns ADD COLUMN skip_permissions INTEGER DEFAULT 0');
   }
@@ -361,7 +410,7 @@ function migrate(db) {
     SELECT session_id, prev_callsign, NULL FROM sessions WHERE prev_callsign IS NOT NULL`);
 }
 
-export function openDb(file, fsImpl = { chmodSync, statSync }) {
+export function openDb(file: string, fsImpl: DbFsImpl = { chmodSync, statSync }): SqliteHandle {
   const db = openDatabase(file);
   db.exec(DDL);
   migrate(db);
@@ -394,12 +443,14 @@ export function openDb(file, fsImpl = { chmodSync, statSync }) {
       fsImpl.chmodSync(file, 0o600);
       const mode = fsImpl.statSync(file).mode & 0o777;
       if (mode & 0o077) {
-        throw Object.assign(new Error(`mode still ${mode.toString(8)} after chmod 0600`), { code: 'EMODE' });
+        throw Object.assign(new Error(`mode still ${mode.toString(8)} after chmod 0600`), {
+          code: 'EMODE',
+        });
       }
     } catch (err) {
       db.close();
       throw new Error(
-        `fleetd.db owner-only confidentiality could not be established (${err?.code || err?.message || 'unknown error'}); refusing to start with the state database readable by other users`,
+        `fleetd.db owner-only confidentiality could not be established (${describeErr(err)}); refusing to start with the state database readable by other users`,
         { cause: err },
       );
     }
@@ -410,13 +461,15 @@ export function openDb(file, fsImpl = { chmodSync, statSync }) {
       try {
         fsImpl.chmodSync(sidecar, 0o600);
         if (fsImpl.statSync(sidecar).mode & 0o077) {
-          throw Object.assign(new Error('mode still permissive after chmod 0600'), { code: 'EMODE' });
+          throw Object.assign(new Error('mode still permissive after chmod 0600'), {
+            code: 'EMODE',
+          });
         }
       } catch (err) {
-        if (err?.code === 'ENOENT') continue;
+        if (errCode(err) === 'ENOENT') continue;
         db.close();
         throw new Error(
-          `fleetd.db sidecar owner-only confidentiality could not be established (${err?.code || err?.message || 'unknown error'}); refusing to start with the state database readable by other users`,
+          `fleetd.db sidecar owner-only confidentiality could not be established (${describeErr(err)}); refusing to start with the state database readable by other users`,
           { cause: err },
         );
       }
