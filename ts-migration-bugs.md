@@ -585,3 +585,35 @@ Format:
   `hook-stubs` + `hook-missing-session-id`) still import it fine under type-stripping; the daemon bundle
   (prune reaches it via `retention` → `derive`) rebuilds with the `run-nonce.ts` banner and passes
   `node --check`.
+
+### scripts/fleetd/takeover.ts — JSON.parse→unknown, three unknown-catch errno guards, semver index guards   [NOISE]
+- **What:** four strict frictions, all mechanical: (1) `pidRecord` did `JSON.parse(String(text))` and
+  read `parsed?.pid` / `parsed.port` off the result — `JSON.parse` is typed `any`, so `strictTypeChecked`'s
+  `no-unsafe-*` rules fire on every member access; (2) three `catch (err) { … err?.code … }` sites
+  (`pidIsLive` ESRCH, `livePidLooksLikeFleetd` ENOENT, `terminateDaemon` ESRCH) read `.code` off an
+  `unknown` binding under `useUnknownInCatchVariables`; (3) `noUncheckedIndexedAccess` makes every
+  `a.core[i]` / `a.pre[i]` in `compareSemver` (and `split('+', 1)[0]` in `parseSemver`) a `T | undefined`;
+  (4) after typing `text: string`, eslint `no-unnecessary-type-conversion` flagged the now-redundant
+  `String(text)` wrappers, and `no-useless-assignment` flagged `let record = null` in `verifyDaemonPid`
+  (the only path past the catch is the try succeeding, so the `null` seed is dead).
+- **Why it's noise:** the pidfile parse, /proc identity shape, full SemVer precedence (incl. prerelease
+  ordering), takeover/verify predicates, and graceful-terminate poll are byte-for-byte the original. Strict
+  only wants the parse narrowed, the caught errors narrowed, the array indices proven in-bounds, and the
+  two dead expressions dropped.
+- **Fix:** (1) `const parsed: unknown = JSON.parse(text)` then narrow with
+  `typeof parsed === 'object' && parsed !== null` + a `{ pid?: unknown; port?: unknown }` cast + per-field
+  `typeof … === 'number'` guards; result shaped by a new `interface PidRecord { pid: number; port: number | null }`.
+  (2) added the same local `errnoCode(e: unknown)` helper paste.ts/db.ts/run-nonce.ts use; the guards are
+  now `errnoCode(err) !== 'ESRCH'` / `!== 'ENOENT'` / `=== 'ESRCH'` — identical semantics (a non-Error
+  throw yields `undefined`, which satisfies the same branches `err?.code` did). (3) new
+  `interface Semver { core: number[]; pre: (number | string)[] }`; `parseSemver` uses `?? ''` on the
+  build-metadata split (a no-op: splitting a non-empty string always yields ≥1 element); `compareSemver`
+  captures `const ai = a.core[i]` / `const x = a.pre[i]` and `break`s on `undefined` (unreachable — both
+  cores are length-3), and captures `const xNum = typeof x === 'number'` so aliased-const narrowing lets
+  the `x > y` numeric compare typecheck. (4) dropped the redundant `String(...)` wrappers (param is now
+  `string`; all four callers pass `readFileSync(…, 'utf8')`) and declared `let record: PidRecord | null`
+  without the seed. Public predicates (`parseSemver`, `compareSemver`, `shouldTakeOver`, `verifyDaemonPid`,
+  `replacementMatches`) take `unknown` where they parse/validate untrusted version strings. Four references
+  (fleetd, fleet-sessionstart, check-release-gate's `WATCHED` closure list, the test) repointed to
+  `./takeover.ts`. 15/15 (`takeover`) green vs source; the daemon bundle rebuilds with the `takeover.ts`
+  banner and passes `node --check`.

@@ -28,7 +28,7 @@ import { runNonce } from './fleetd/run-nonce.ts';
 // Version-takeover contract, imported as SOURCE from the sibling fleetd/ dir
 // (same unbundled pattern as env-scrub.mjs above) so this hook can evict a
 // strictly-older daemon and let the newest installed build own the port.
-import { shouldTakeOver, verifyDaemonPid, terminateDaemon, replacementMatches } from './fleetd/takeover.mjs';
+import { shouldTakeOver, verifyDaemonPid, terminateDaemon, replacementMatches } from './fleetd/takeover.ts';
 import { resolveHome, resolvePort, resolveBase } from './fleetd/config.ts';
 
 const PORT = resolvePort();

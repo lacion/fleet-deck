@@ -36,7 +36,7 @@ import { loadFixture } from './helpers/fixtures.mjs';
 import { waitUntil, scaleMs } from './helpers/wait.mjs';
 import {
   parseSemver, compareSemver, shouldTakeOver, verifyDaemonPid, pidRecord, replacementMatches,
-} from '../scripts/fleetd/takeover.mjs';
+} from '../scripts/fleetd/takeover.ts';
 
 const HOOK_SCRIPT = path.join(REPO_ROOT, 'scripts/fleet-sessionstart.mjs');
 const FLEETD_SOURCE = path.join(REPO_ROOT, 'scripts/fleetd/fleetd.mjs');

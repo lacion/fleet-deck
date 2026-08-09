@@ -32,7 +32,7 @@ const WATCHED = [
   'scripts/fleet-sessionstart.mjs',
   'scripts/fleet-watch.mjs',
   'scripts/fleetd/config.ts',
-  'scripts/fleetd/takeover.mjs',
+  'scripts/fleetd/takeover.ts',
   'scripts/fleetd/env-scrub.ts',
 ];
 

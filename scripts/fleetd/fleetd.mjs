@@ -23,7 +23,7 @@ import { createMdns, hostLabel } from './mdns.mjs';
 // HOME-ownership pid helpers now live in takeover.mjs (the version-takeover
 // contract), so the daemon's own claimHome lock and the SessionStart hook's
 // evict-a-stale-daemon path share one implementation and can never drift.
-import { pidRecord, pidIsLive, livePidLooksLikeFleetd, shouldTakeOver, verifyDaemonPid, terminateDaemon } from './takeover.mjs';
+import { pidRecord, pidIsLive, livePidLooksLikeFleetd, shouldTakeOver, verifyDaemonPid, terminateDaemon } from './takeover.ts';
 import { resolveHome, resolvePort } from './config.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));

@@ -1,4 +1,4 @@
-// takeover.mjs — version-takeover contract, shared by the daemon and the
+// takeover.ts — version-takeover contract, shared by the daemon and the
 // SessionStart hook.
 //
 // The rule: the NEWEST installed plugin version must always end up owning the
@@ -31,31 +31,58 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+// A `catch` binding is `unknown` under strict; the process/fs calls below throw
+// Error objects carrying an optional string `code` (ESRCH, EPERM, ENOENT).
+// Narrow to read it without an `any`.
+function errnoCode(e: unknown): string | undefined {
+  return e instanceof Error && typeof (e as NodeJS.ErrnoException).code === 'string'
+    ? (e as NodeJS.ErrnoException).code
+    : undefined;
+}
+
+// The HOME ownership lock record: the daemon's pid and (post-0.15) the port it
+// bound. `port` is null for a pre-port pidfile that held a bare PID.
+interface PidRecord {
+  pid: number;
+  port: number | null;
+}
+
 // ---------------------------------------------------------------- pid helpers
 // Moved VERBATIM from fleetd.mjs (claimHome/removeOwnedPidFile still consume
 // them, now via import) so the hook's takeover path and the daemon's own HOME
 // ownership lock share one implementation and can never drift apart.
 
-function pidRecord(text) {
+function pidRecord(text: string): PidRecord | null {
   try {
-    const parsed = JSON.parse(String(text));
-    if (Number.isInteger(parsed?.pid) && parsed.pid > 0) {
-      return { pid: parsed.pid, port: Number.isInteger(parsed.port) ? parsed.port : null };
+    const parsed: unknown = JSON.parse(text);
+    if (typeof parsed === 'object' && parsed !== null) {
+      const rec = parsed as { pid?: unknown; port?: unknown };
+      if (typeof rec.pid === 'number' && Number.isInteger(rec.pid) && rec.pid > 0) {
+        return {
+          pid: rec.pid,
+          port: typeof rec.port === 'number' && Number.isInteger(rec.port) ? rec.port : null,
+        };
+      }
     }
-  } catch { /* pre-port fleetd.pid was a plain PID; accept it below */ }
-  const pid = Number(String(text).trim());
+  } catch {
+    /* pre-port fleetd.pid was a plain PID; accept it below */
+  }
+  const pid = Number(text.trim());
   return Number.isInteger(pid) && pid > 0 ? { pid, port: null } : null;
 }
 
-function pidIsLive(pid) {
-  try { process.kill(pid, 0); return true; } catch (err) {
+function pidIsLive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
     // EPERM means the process exists but belongs to another user. Treat that as
     // live: opening its database would be unsafe even though we cannot signal it.
-    return err?.code !== 'ESRCH';
+    return errnoCode(err) !== 'ESRCH';
   }
 }
 
-function livePidLooksLikeFleetd(pid) {
+function livePidLooksLikeFleetd(pid: number): boolean {
   if (process.platform !== 'linux') return true;
   try {
     // `/proc/<pid>/comm` is the main thread name, not a stable executable
@@ -63,16 +90,22 @@ function livePidLooksLikeFleetd(pid) {
     // executable symlink so upgrades cannot make a live fleetd look recycled.
     // The dual node:sqlite⇔bun:sqlite seam means a fleetd may legitimately run
     // under bun (basename `bun`) as well as node — accept either runtime.
-    const executable = path.basename(fs.readlinkSync(`/proc/${pid}/exe`)).replace(/ \(deleted\)$/, '');
-    const argv = fs.readFileSync(`/proc/${pid}/cmdline`).toString('utf8').split('\0').filter(Boolean);
+    const executable = path
+      .basename(fs.readlinkSync(`/proc/${pid}/exe`))
+      .replace(/ \(deleted\)$/, '');
+    const argv = fs
+      .readFileSync(`/proc/${pid}/cmdline`)
+      .toString('utf8')
+      .split('\0')
+      .filter(Boolean);
     const runtimeLike = /^(?:node|nodejs|bun|fleetd)$/i.test(executable);
-    const fleetdScript = argv.some(arg => /(?:^|[/\\])fleetd(?:\.bundle)?\.mjs$/.test(arg));
+    const fleetdScript = argv.some((arg) => /(?:^|[/\\])fleetd(?:\.bundle)?\.mjs$/.test(arg));
     return runtimeLike && fleetdScript;
   } catch (err) {
     // WHY ENOENT is decisive: the PID died after kill(0), so it no longer owns
     // HOME. Permission and transient I/O failures are not decisive; retaining
     // the lock is safer than opening a live daemon's SQLite database twice.
-    return err?.code !== 'ENOENT';
+    return errnoCode(err) !== 'ENOENT';
   }
 }
 
@@ -87,23 +120,33 @@ export { pidRecord, pidIsLive, livePidLooksLikeFleetd };
 // empty `pre` for a final release — or null when it cannot establish an
 // order. null on either side means "no takeover".
 
-export function parseSemver(input) {
+// A parsed SemVer: core is [major, minor, patch]; pre holds the prerelease
+// identifiers (numeric ones as numbers, alphanumeric as strings), empty for a
+// final release.
+interface Semver {
+  core: number[];
+  pre: (number | string)[];
+}
+
+export function parseSemver(input: unknown): Semver | null {
   if (typeof input !== 'string') return null;
   // Strip a leading `v`, split off any build metadata (never ordered), then
   // split off the prerelease. Require exactly three all-digit core segments
   // and well-formed (non-empty) prerelease identifiers. Anything else (empty,
   // `latest`, `1.x`, `1.0.0-`) is null.
-  const noBuild = input.trim().replace(/^v/i, '').split('+', 1)[0];
+  // `?? ''` satisfies noUncheckedIndexedAccess ([0] is string|undefined); split
+  // on a non-empty string always yields at least one element, so it never fires.
+  const noBuild = input.trim().replace(/^v/i, '').split('+', 1)[0] ?? '';
   const dash = noBuild.indexOf('-');
   const coreText = dash === -1 ? noBuild : noBuild.slice(0, dash);
   const parts = coreText.split('.');
   if (parts.length !== 3) return null;
-  const core = [];
+  const core: number[] = [];
   for (const p of parts) {
     if (!/^\d+$/.test(p)) return null;
     core.push(Number(p));
   }
-  const pre = [];
+  const pre: (number | string)[] = [];
   if (dash !== -1) {
     const preText = noBuild.slice(dash + 1);
     if (preText === '') return null;
@@ -115,8 +158,8 @@ export function parseSemver(input) {
   return { core, pre };
 }
 
-function isZeroVersion(nums) {
-  return nums.every(n => n === 0);
+function isZeroVersion(nums: number[]): boolean {
+  return nums.every((n) => n === 0);
 }
 
 // -1 / 0 / 1 full SemVer precedence of two parseSemver results. Core compares
@@ -125,10 +168,15 @@ function isZeroVersion(nums) {
 // compare numerically when both numeric, numeric always sorts below
 // alphanumeric, and a shorter identifier list is lower when all shared
 // identifiers are equal (rc.1 < rc.2 < rc.10 < rc.1.1 < final).
-export function compareSemver(a, b) {
+export function compareSemver(a: Semver, b: Semver): number {
   for (let i = 0; i < a.core.length; i += 1) {
-    if (a.core[i] > b.core[i]) return 1;
-    if (a.core[i] < b.core[i]) return -1;
+    // Both arrays are length-3 (parseSemver enforces it), so the indices are in
+    // bounds; the guard satisfies noUncheckedIndexedAccess and never fires.
+    const ai = a.core[i];
+    const bi = b.core[i];
+    if (ai === undefined || bi === undefined) break;
+    if (ai > bi) return 1;
+    if (ai < bi) return -1;
   }
   if (a.pre.length === 0 && b.pre.length === 0) return 0;
   if (a.pre.length === 0) return 1;
@@ -137,7 +185,10 @@ export function compareSemver(a, b) {
   for (let i = 0; i < len; i += 1) {
     const x = a.pre[i];
     const y = b.pre[i];
+    if (x === undefined || y === undefined) break;
     if (x === y) continue;
+    // Capturing the typeof into a const lets TS narrow x/y to number inside the
+    // `xNum && yNum` branch (aliased-const narrowing), so the `>` is well-typed.
     const xNum = typeof x === 'number';
     const yNum = typeof y === 'number';
     if (xNum && yNum) return x > y ? 1 : -1;
@@ -151,7 +202,7 @@ export function compareSemver(a, b) {
 
 // The single takeover predicate: is `ownVersion` a strictly-newer, non-sentinel
 // build that should evict a daemon reporting `daemonVersion`?
-export function shouldTakeOver(ownVersion, daemonVersion) {
+export function shouldTakeOver(ownVersion: unknown, daemonVersion: unknown): boolean {
   const own = parseSemver(ownVersion);
   const other = parseSemver(daemonVersion);
   // Both sides must parse: an unknown version on either end means we cannot
@@ -173,9 +224,11 @@ export function shouldTakeOver(ownVersion, daemonVersion) {
 // ownership lock) AND the live process must still carry a fleetd /proc shape.
 // Any mismatch → false, and the caller fails open onto the running daemon
 // rather than signalling a process it cannot positively identify.
-export function verifyDaemonPid(pid, home) {
+export function verifyDaemonPid(pid: number, home: string): boolean {
   if (!Number.isInteger(pid) || pid <= 0) return false;
-  let record = null;
+  // No `= null` seed: the only path past the catch is the try succeeding, so TS
+  // proves definite assignment and the seed would be a dead write.
+  let record: PidRecord | null;
   try {
     record = pidRecord(fs.readFileSync(path.join(home, 'fleetd.pid'), 'utf8'));
   } catch {
@@ -204,12 +257,17 @@ export function verifyDaemonPid(pid, home) {
 // identity check is deliberately string equality — not "at least as new":
 // exact match is the whole contract and cannot settle on a WRONG build even if
 // the env is somehow shared across users.
-export function replacementMatches(ownVersion, healthVersion) {
-  return typeof ownVersion === 'string' && typeof healthVersion === 'string'
-    && ownVersion.length > 0 && ownVersion === healthVersion;
+export function replacementMatches(ownVersion: unknown, healthVersion: unknown): boolean {
+  return (
+    typeof ownVersion === 'string' &&
+    typeof healthVersion === 'string' &&
+    ownVersion.length > 0 &&
+    ownVersion === healthVersion
+  );
 }
 
-const defaultSleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+const defaultSleep = (ms: number): Promise<void> =>
+  new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 // SIGTERM the daemon and resolve to whether it actually DIED within timeoutMs.
 // Graceful only — SIGTERM invokes the daemon's tested shutdown; we then poll
@@ -219,12 +277,18 @@ const defaultSleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 //   false — still alive after the timeout, or not ours to signal (EPERM): the
 //           caller must fail open and leave the running daemon in place.
 // `sleep` is injectable so unit tests can drive the poll without real waits.
-export async function terminateDaemon(pid, { timeoutMs = 2000, sleep = defaultSleep } = {}) {
+export async function terminateDaemon(
+  pid: number,
+  {
+    timeoutMs = 2000,
+    sleep = defaultSleep,
+  }: { timeoutMs?: number; sleep?: (ms: number) => Promise<void> } = {},
+): Promise<boolean> {
   try {
     process.kill(pid, 'SIGTERM');
   } catch (err) {
     // ESRCH: already gone — that IS a successful handoff (port/pidfile free).
-    if (err?.code === 'ESRCH') return true;
+    if (errnoCode(err) === 'ESRCH') return true;
     // EPERM or anything else: not our process to end. Report not-dead so the
     // caller fails open instead of assuming a clean takeover.
     return false;

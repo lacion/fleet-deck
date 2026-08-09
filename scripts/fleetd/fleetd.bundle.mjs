@@ -15585,18 +15585,27 @@ function createMdns({ port, name = "fleetdeck", instance = "Fleet Deck", address
   return { start, stop, update, alive: () => started && !dead && socket !== null };
 }
 
-// scripts/fleetd/takeover.mjs
+// scripts/fleetd/takeover.ts
 import fs16 from "node:fs";
 import path17 from "node:path";
+function errnoCode3(e) {
+  return e instanceof Error && typeof e.code === "string" ? e.code : void 0;
+}
 function pidRecord(text) {
   try {
-    const parsed = JSON.parse(String(text));
-    if (Number.isInteger(parsed?.pid) && parsed.pid > 0) {
-      return { pid: parsed.pid, port: Number.isInteger(parsed.port) ? parsed.port : null };
+    const parsed = JSON.parse(text);
+    if (typeof parsed === "object" && parsed !== null) {
+      const rec = parsed;
+      if (typeof rec.pid === "number" && Number.isInteger(rec.pid) && rec.pid > 0) {
+        return {
+          pid: rec.pid,
+          port: typeof rec.port === "number" && Number.isInteger(rec.port) ? rec.port : null
+        };
+      }
     }
   } catch {
   }
-  const pid = Number(String(text).trim());
+  const pid = Number(text.trim());
   return Number.isInteger(pid) && pid > 0 ? { pid, port: null } : null;
 }
 function pidIsLive(pid) {
@@ -15604,7 +15613,7 @@ function pidIsLive(pid) {
     process.kill(pid, 0);
     return true;
   } catch (err) {
-    return err?.code !== "ESRCH";
+    return errnoCode3(err) !== "ESRCH";
   }
 }
 function livePidLooksLikeFleetd(pid) {
@@ -15616,12 +15625,12 @@ function livePidLooksLikeFleetd(pid) {
     const fleetdScript = argv.some((arg) => /(?:^|[/\\])fleetd(?:\.bundle)?\.mjs$/.test(arg));
     return runtimeLike && fleetdScript;
   } catch (err) {
-    return err?.code !== "ENOENT";
+    return errnoCode3(err) !== "ENOENT";
   }
 }
 function parseSemver(input) {
   if (typeof input !== "string") return null;
-  const noBuild = input.trim().replace(/^v/i, "").split("+", 1)[0];
+  const noBuild = input.trim().replace(/^v/i, "").split("+", 1)[0] ?? "";
   const dash = noBuild.indexOf("-");
   const coreText = dash === -1 ? noBuild : noBuild.slice(0, dash);
   const parts = coreText.split(".");
@@ -15647,8 +15656,11 @@ function isZeroVersion(nums) {
 }
 function compareSemver(a, b) {
   for (let i = 0; i < a.core.length; i += 1) {
-    if (a.core[i] > b.core[i]) return 1;
-    if (a.core[i] < b.core[i]) return -1;
+    const ai = a.core[i];
+    const bi = b.core[i];
+    if (ai === void 0 || bi === void 0) break;
+    if (ai > bi) return 1;
+    if (ai < bi) return -1;
   }
   if (a.pre.length === 0 && b.pre.length === 0) return 0;
   if (a.pre.length === 0) return 1;
@@ -15657,6 +15669,7 @@ function compareSemver(a, b) {
   for (let i = 0; i < len; i += 1) {
     const x = a.pre[i];
     const y = b.pre[i];
+    if (x === void 0 || y === void 0) break;
     if (x === y) continue;
     const xNum = typeof x === "number";
     const yNum = typeof y === "number";
@@ -15677,7 +15690,7 @@ function shouldTakeOver(ownVersion, daemonVersion) {
 }
 function verifyDaemonPid(pid, home) {
   if (!Number.isInteger(pid) || pid <= 0) return false;
-  let record = null;
+  let record;
   try {
     record = pidRecord(fs16.readFileSync(path17.join(home, "fleetd.pid"), "utf8"));
   } catch {
@@ -15687,11 +15700,14 @@ function verifyDaemonPid(pid, home) {
   return livePidLooksLikeFleetd(pid);
 }
 var defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-async function terminateDaemon(pid, { timeoutMs = 2e3, sleep = defaultSleep } = {}) {
+async function terminateDaemon(pid, {
+  timeoutMs = 2e3,
+  sleep = defaultSleep
+} = {}) {
   try {
     process.kill(pid, "SIGTERM");
   } catch (err) {
-    if (err?.code === "ESRCH") return true;
+    if (errnoCode3(err) === "ESRCH") return true;
     return false;
   }
   const stepMs = 100;
