@@ -1,4 +1,4 @@
-// tests/settings-transaction.test.mjs
+// tests/settings-transaction.test.ts
 //
 // BUG-047 — one settings POST must be ONE transaction.
 //
@@ -20,13 +20,14 @@ import assert from 'node:assert/strict';
 import { openDb } from '../scripts/fleetd/db.ts';
 import { createStatements } from '../scripts/fleetd/statements.ts';
 import { createSettings } from '../scripts/fleetd/settings.ts';
+import type { SqlValue } from '../scripts/fleetd/sqlite.ts';
 
 /** A createSettings wired to a real in-memory DB, with hooks to make a
  * chosen settings key's write fail and to observe mutation broadcasts. */
-function settingsHarness({ failOnKey = null } = {}) {
+function settingsHarness({ failOnKey = null }: { failOnKey?: string | null } = {}) {
   const db = openDb(':memory:');
   const { q } = createStatements(db);
-  const calls = [];
+  const calls: SqlValue[] = [];
   const realRun = q.setSetting.run.bind(q.setSetting);
   q.setSetting = {
     ...q.setSetting,
@@ -38,14 +39,17 @@ function settingsHarness({ failOnKey = null } = {}) {
   };
   let mutations = 0;
   const settings = createSettings({
-    db, q,
-    onMutate: () => { mutations += 1; },
+    db,
+    q,
+    onMutate: () => {
+      mutations += 1;
+    },
     resolveReposDir: () => ({ value: '/tmp', source: 'default' }),
-    setReposDir: value => q.setSetting.run('repos_dir', value ?? null, Date.now()),
+    setReposDir: (value) => q.setSetting.run('repos_dir', value ?? null, Date.now()),
     resolveRepoDefaultOrg: () => ({ value: null, source: 'default' }),
-    validateRepoDefaultOrg: v => v,
+    validateRepoDefaultOrg: (v) => v as string | null,
   });
-  const read = key => q.getSetting.get(key)?.value ?? null;
+  const read = (key: string) => q.getSetting.get(key)?.value ?? null;
   return { db, settings, calls, read, mutations: () => mutations };
 }
 
@@ -56,16 +60,27 @@ test('settings transaction: a storage failure mid-body rolls back EVERY key and 
       gateway_base_url: 'https://gw.example.com',
       gateway_token: 'super-secret',
     });
-    assert.ok(out.status >= 500 && out.status < 600,
-      `a storage failure is not the caller's mistake — expected 5xx, got ${out.status}`);
-    assert.equal(out.body.ok, false);
-    assert.deepEqual(calls, ['gateway_base_url', 'gateway_token'],
-      'sanity: both commits were attempted before the failure');
-    assert.equal(read('gateway_base_url'), null,
-      'the earlier key must roll back too — nothing in a failed request may persist');
+    assert.ok(
+      out.status >= 500 && out.status < 600,
+      `a storage failure is not the caller's mistake — expected 5xx, got ${out.status}`,
+    );
+    assert.equal(out.body['ok'], false);
+    assert.deepEqual(
+      calls,
+      ['gateway_base_url', 'gateway_token'],
+      'sanity: both commits were attempted before the failure',
+    );
+    assert.equal(
+      read('gateway_base_url'),
+      null,
+      'the earlier key must roll back too — nothing in a failed request may persist',
+    );
     assert.equal(read('gateway_token'), null);
-    assert.equal(mutations(), 0,
-      'onMutate must not broadcast a /state frame for a request that committed nothing');
+    assert.equal(
+      mutations(),
+      0,
+      'onMutate must not broadcast a /state frame for a request that committed nothing',
+    );
   } finally {
     db.close();
   }
@@ -78,18 +93,27 @@ test('settings transaction: a rollback leaves the previously stored credential i
   // must be EXACTLY what it was before the rejected request.
   const { db, settings, read } = settingsHarness({ failOnKey: 'gateway_token' });
   try {
-    db.prepare('INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)')
-      .run('gateway_base_url', 'https://gw-old.example.com', Date.now());
-    db.prepare('INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)')
-      .run('gateway_token', 'old-secret', Date.now());
+    db.prepare('INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)').run(
+      'gateway_base_url',
+      'https://gw-old.example.com',
+      Date.now(),
+    );
+    db.prepare('INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)').run(
+      'gateway_token',
+      'old-secret',
+      Date.now(),
+    );
 
     const out = settings.setSettings({
       gateway_base_url: 'https://attacker.example.com',
       gateway_token: 'new-secret',
     });
     assert.ok(out.status >= 500, `expected 5xx, got ${out.status}`);
-    assert.equal(read('gateway_base_url'), 'https://gw-old.example.com',
-      'a rejected request must not move the host the stored credential talks to');
+    assert.equal(
+      read('gateway_base_url'),
+      'https://gw-old.example.com',
+      'a rejected request must not move the host the stored credential talks to',
+    );
     assert.equal(read('gateway_token'), 'old-secret');
   } finally {
     db.close();
@@ -104,11 +128,11 @@ test('settings transaction: a clean multi-key body still commits atomically and 
       gateway_token: 'super-secret',
       gateway_auth_style: 'api-key',
     });
-    assert.equal(out.status, 200, out.body.reason);
+    assert.equal(out.status, 200, out.body['reason'] as string | undefined);
     assert.equal(read('gateway_base_url'), 'https://gw.example.com');
     assert.equal(read('gateway_token'), 'super-secret');
     assert.equal(read('gateway_auth_style'), 'api-key');
-    assert.equal(out.body.settings.gateway.ready, true);
+    assert.equal((out.body['settings'] as { gateway: { ready: boolean } }).gateway.ready, true);
     assert.equal(mutations(), 1);
   } finally {
     db.close();
