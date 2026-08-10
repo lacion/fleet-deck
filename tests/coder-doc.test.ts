@@ -1,4 +1,4 @@
-// tests/coder-doc.test.mjs
+// tests/coder-doc.test.ts
 //
 // Documentation contract for docs/CODER.md (BUG-019).
 //
@@ -21,19 +21,26 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+interface CoderAppHostnames {
+  named_app: { hostname: string; origin: string };
+  port_app: { hostname: string };
+  never_trusted: string[];
+}
+
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DOC = readFileSync(path.resolve(HERE, '../docs/CODER.md'), 'utf8');
 const CONTRACT = JSON.parse(
   readFileSync(path.resolve(HERE, 'fixtures/coder-app-hostnames.json'), 'utf8'),
-);
+) as CoderAppHostnames;
 
 // Hostnames the doc presents as something to trust: values assigned to
 // FLEETDECK_TRUSTED_ORIGINS (HCL template and sh example). Mentions elsewhere
 // in prose — e.g. the "what NOT to trust" warning — are not extracted.
-function trustedHostnames(doc) {
-  const hosts = new Set();
+function trustedHostnames(doc: string): string[] {
+  const hosts = new Set<string>();
   for (const m of doc.matchAll(/FLEETDECK_TRUSTED_ORIGINS="https:\/\/(fleetdeck--[^"]+)"/g)) {
-    hosts.add(m[1]);
+    const host = m[1];
+    if (host !== undefined) hosts.add(host);
   }
   return [...hosts];
 }
@@ -51,13 +58,15 @@ test('CODER.md template builds the named-app hostname Coder actually generates',
 test('every trusted fleetdeck-- hostname in CODER.md is the named-app form', () => {
   const hosts = trustedHostnames(DOC);
   assert.ok(hosts.length >= 2, 'expected the HCL template and the sh example');
-  const hcl = hosts.find(h => h.includes('${'));
-  const concrete = hosts.filter(h => !h.includes('${'));
+  const hcl = hosts.find((h) => h.includes('${'));
+  const concrete = hosts.filter((h) => !h.includes('${'));
   // The HCL template: workspace THEN owner, no agent.
   assert.equal(
     hcl,
-    '${data.coder_workspace.me.name}--${data.coder_workspace_owner.me.name}.${var.coder_wildcard_domain}'
-      .replace(/^/, 'fleetdeck--'),
+    '${data.coder_workspace.me.name}--${data.coder_workspace_owner.me.name}.${var.coder_wildcard_domain}'.replace(
+      /^/,
+      'fleetdeck--',
+    ),
   );
   // Every concrete example equals the fixture's named-app origin host.
   for (const host of concrete) {
@@ -72,12 +81,20 @@ test('every trusted fleetdeck-- hostname in CODER.md is the named-app form', () 
 test('no trusted hostname in CODER.md carries the agent component', () => {
   // Skip the HCL template (its `${…}` placeholders are covered by the
   // template-ordering test); check the concrete examples.
-  for (const host of trustedHostnames(DOC).filter(h => !h.includes('${'))) {
+  for (const host of trustedHostnames(DOC).filter((h) => !h.includes('${'))) {
     for (const never of CONTRACT.never_trusted) {
-      assert.notEqual(host, never, `${host} includes the agent name — Coder only does that for raw-port apps`);
+      assert.notEqual(
+        host,
+        never,
+        `${host} includes the agent name — Coder only does that for raw-port apps`,
+      );
     }
     // Three `--`-separated components: slug--workspace--owner.
-    assert.equal(host.split('.')[0].split('--').length, 3, `${host} must be <slug>--<workspace>--<owner>`);
+    assert.equal(
+      host.split('.')[0]?.split('--').length,
+      3,
+      `${host} must be <slug>--<workspace>--<owner>`,
+    );
   }
 });
 

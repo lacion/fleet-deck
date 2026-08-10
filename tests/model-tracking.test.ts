@@ -1,4 +1,4 @@
-// tests/model-tracking.test.mjs
+// tests/model-tracking.test.ts
 //
 // The model on a card must be the model that is RUNNING, not the one the
 // session launched with.
@@ -26,14 +26,14 @@
 //   7. No model anywhere -> null, never the string "undefined"
 //        -> "a session with no model anywhere reports null"
 
-import test from 'node:test';
+import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import { startDaemon } from './helpers/daemon.ts';
+import { startDaemon, type DaemonHandle } from './helpers/daemon.ts';
 import { getJson, postHook } from './helpers/http.ts';
 import { loadFixture } from './helpers/fixtures.ts';
 import {
@@ -44,27 +44,28 @@ import {
   userLine,
   writeTranscriptLines,
 } from './helpers/transcript.ts';
+import type { StateResponse, TickerEntry } from '../contracts/state.ts';
 
 const FABLE = 'claude-fable-5';
 const OPUS = 'claude-opus-4-8';
 const HAIKU = 'claude-haiku-4-5';
 
-function findSession(state, sid) {
-  return state.sessions.find(s => s.session_id === sid);
+function findSession(state: StateResponse, sid: string) {
+  return state.sessions.find((s) => s.session_id === sid);
 }
 
-async function modelOf(daemon, sid) {
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json;
+async function modelOf(daemon: DaemonHandle, sid: string) {
+  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
   return findSession(state, sid)?.model;
 }
 
-async function tickerOf(daemon) {
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json;
-  return (state.ticker ?? []).map(t => t.msg);
+async function tickerOf(daemon: DaemonHandle) {
+  const state = (await getJson(`${daemon.baseUrl}/state`)).json as { ticker?: TickerEntry[] };
+  return (state.ticker ?? []).map((t) => t.msg);
 }
 
 /** A daemon + a scratch cwd + a transcript dir, all cleaned up after the test. */
-async function harness(t) {
+async function harness(t: TestContext) {
   const daemon = await startDaemon();
   const cwd = mkdtempSync(path.join(tmpdir(), 'fleetdeck-model-cwd-'));
   const tdir = makeTranscriptDir();
@@ -78,8 +79,12 @@ async function harness(t) {
 
 test('SessionStart payload sets the launch model', async (t) => {
   const { daemon, cwd, sid } = await harness(t);
-  await postHook(daemon.baseUrl, 'SessionStart',
-    loadFixture('session-start', { session_id: sid, cwd }, { model: FABLE }), { token: daemon });
+  await postHook(
+    daemon.baseUrl,
+    'SessionStart',
+    loadFixture('session-start', { session_id: sid, cwd }, { model: FABLE }),
+    { token: daemon },
+  );
   assert.equal(await modelOf(daemon, sid), FABLE);
 });
 
@@ -87,8 +92,16 @@ test('legacy object-shaped payload model is still accepted', async (t) => {
   const { daemon, cwd, sid } = await harness(t);
   // Today the CLI sends a bare id string; the statusline shape is {id, display_name}.
   // Accepting it costs nothing and means a future CLI can hand us a pretty name.
-  await postHook(daemon.baseUrl, 'SessionStart',
-    loadFixture('session-start', { session_id: sid, cwd }, { model: { id: OPUS, display_name: 'Opus 4.8' } }), { token: daemon });
+  await postHook(
+    daemon.baseUrl,
+    'SessionStart',
+    loadFixture(
+      'session-start',
+      { session_id: sid, cwd },
+      { model: { id: OPUS, display_name: 'Opus 4.8' } },
+    ),
+    { token: daemon },
+  );
   assert.equal(await modelOf(daemon, sid), 'Opus 4.8');
 });
 
@@ -98,18 +111,29 @@ test('a mid-session /model switch is picked up from the transcript at Stop', asy
 
   // Launches on fable — this is all the hook payloads will ever tell us.
   const transcript = writeTranscriptLines(tdir, sid, [userLine(), assistantLine({ model: FABLE })]);
-  await postHook(daemon.baseUrl, 'SessionStart',
-    loadFixture('session-start', tokens, { model: FABLE, transcript_path: transcript }), { token: daemon });
+  await postHook(
+    daemon.baseUrl,
+    'SessionStart',
+    loadFixture('session-start', tokens, { model: FABLE, transcript_path: transcript }),
+    { token: daemon },
+  );
   assert.equal(await modelOf(daemon, sid), FABLE);
 
   // The human types /model opus. No hook fires. The next turn runs on opus and
   // the transcript records it.
   appendTranscriptLines(transcript, [userLine(), assistantLine({ model: OPUS })]);
-  await postHook(daemon.baseUrl, 'Stop', loadFixture('stop', tokens, { transcript_path: transcript }), { token: daemon });
+  await postHook(
+    daemon.baseUrl,
+    'Stop',
+    loadFixture('stop', tokens, { transcript_path: transcript }),
+    { token: daemon },
+  );
 
   assert.equal(await modelOf(daemon, sid), OPUS, 'the card must follow the running model');
-  assert.ok((await tickerOf(daemon)).some(m => m.includes('switched model') && m.includes(OPUS)),
-    'a switch is a real event and belongs in the feed');
+  assert.ok(
+    (await tickerOf(daemon)).some((m) => m.includes('switched model') && m.includes(OPUS)),
+    'a switch is a real event and belongs in the feed',
+  );
 });
 
 test('the switch shows up at the first PostToolUse, without waiting for Stop', async (t) => {
@@ -117,15 +141,23 @@ test('the switch shows up at the first PostToolUse, without waiting for Stop', a
   const tokens = { session_id: sid, cwd };
 
   const transcript = writeTranscriptLines(tdir, sid, [userLine(), assistantLine({ model: FABLE })]);
-  await postHook(daemon.baseUrl, 'SessionStart',
-    loadFixture('session-start', tokens, { model: FABLE, transcript_path: transcript }), { token: daemon });
+  await postHook(
+    daemon.baseUrl,
+    'SessionStart',
+    loadFixture('session-start', tokens, { model: FABLE, transcript_path: transcript }),
+    { token: daemon },
+  );
 
   // Mid-turn: the assistant entry carrying the tool_use is written BEFORE the
   // tool runs, and it carries the model — so the badge can be right seconds
   // into the new turn rather than at the end of it.
   appendTranscriptLines(transcript, [userLine(), toolUseLine({ model: OPUS })]);
-  await postHook(daemon.baseUrl, 'PostToolUse',
-    loadFixture('post-tool-use-bash', tokens, { transcript_path: transcript }), { token: daemon });
+  await postHook(
+    daemon.baseUrl,
+    'PostToolUse',
+    loadFixture('post-tool-use-bash', tokens, { transcript_path: transcript }),
+    { token: daemon },
+  );
 
   assert.equal(await modelOf(daemon, sid), OPUS);
 });
@@ -135,8 +167,12 @@ test("a subagent's model never hijacks the card", async (t) => {
   const tokens = { session_id: sid, cwd };
 
   const transcript = writeTranscriptLines(tdir, sid, [userLine(), assistantLine({ model: OPUS })]);
-  await postHook(daemon.baseUrl, 'SessionStart',
-    loadFixture('session-start', tokens, { model: OPUS, transcript_path: transcript }), { token: daemon });
+  await postHook(
+    daemon.baseUrl,
+    'SessionStart',
+    loadFixture('session-start', tokens, { model: OPUS, transcript_path: transcript }),
+    { token: daemon },
+  );
 
   // A Task subagent runs haiku. Its turns land after the main thread's, but the
   // card tracks the session, not its subagents.
@@ -144,7 +180,12 @@ test("a subagent's model never hijacks the card", async (t) => {
     assistantLine({ model: HAIKU, isSidechain: true }),
     assistantLine({ model: HAIKU, isSidechain: true }),
   ]);
-  await postHook(daemon.baseUrl, 'Stop', loadFixture('stop', tokens, { transcript_path: transcript }), { token: daemon });
+  await postHook(
+    daemon.baseUrl,
+    'Stop',
+    loadFixture('stop', tokens, { transcript_path: transcript }),
+    { token: daemon },
+  );
 
   assert.equal(await modelOf(daemon, sid), OPUS);
 });
@@ -153,18 +194,28 @@ test('an unreadable transcript leaves the model untouched', async (t) => {
   const { daemon, cwd, tdir, sid } = await harness(t);
   const tokens = { session_id: sid, cwd };
 
-  await postHook(daemon.baseUrl, 'SessionStart',
-    loadFixture('session-start', tokens, { model: FABLE }), { token: daemon });
+  await postHook(
+    daemon.baseUrl,
+    'SessionStart',
+    loadFixture('session-start', tokens, { model: FABLE }),
+    { token: daemon },
+  );
 
   // A path that does not exist must not null the model out.
-  await postHook(daemon.baseUrl, 'Stop',
-    loadFixture('stop', tokens, { transcript_path: path.join(tdir, 'gone.jsonl') }), { token: daemon });
+  await postHook(
+    daemon.baseUrl,
+    'Stop',
+    loadFixture('stop', tokens, { transcript_path: path.join(tdir, 'gone.jsonl') }),
+    { token: daemon },
+  );
   assert.equal(await modelOf(daemon, sid), FABLE);
 
   // Neither must a corrupt one.
   const junk = path.join(tdir, 'junk.jsonl');
   writeFileSync(junk, 'not json\n{{{\n');
-  await postHook(daemon.baseUrl, 'Stop', loadFixture('stop', tokens, { transcript_path: junk }), { token: daemon });
+  await postHook(daemon.baseUrl, 'Stop', loadFixture('stop', tokens, { transcript_path: junk }), {
+    token: daemon,
+  });
   assert.equal(await modelOf(daemon, sid), FABLE);
 });
 
@@ -176,25 +227,48 @@ test('a resumed session does not fall back to the model of its previous run', as
   // reopens the SAME file. This is the trap — the newest assistant line on disk
   // is fable, but the session has just been resumed on opus.
   const transcript = writeTranscriptLines(tdir, sid, [
-    userLine(), assistantLine({ model: FABLE }),
-    userLine(), assistantLine({ model: FABLE }),
+    userLine(),
+    assistantLine({ model: FABLE }),
+    userLine(),
+    assistantLine({ model: FABLE }),
   ]);
 
-  await postHook(daemon.baseUrl, 'SessionStart',
-    loadFixture('session-start', tokens, { source: 'resume', model: OPUS, transcript_path: transcript }), { token: daemon });
+  await postHook(
+    daemon.baseUrl,
+    'SessionStart',
+    loadFixture('session-start', tokens, {
+      source: 'resume',
+      model: OPUS,
+      transcript_path: transcript,
+    }),
+    { token: daemon },
+  );
   assert.equal(await modelOf(daemon, sid), OPUS);
 
   // A prompt appends only a USER line — there is still no assistant turn from
   // this run. Without the byte floor stamped at SessionStart, the reader would
   // find the old fable line and stomp the fresh opus with it.
   appendTranscriptLines(transcript, [userLine()]);
-  await postHook(daemon.baseUrl, 'UserPromptSubmit',
-    loadFixture('user-prompt-submit', tokens, { transcript_path: transcript }), { token: daemon });
-  assert.equal(await modelOf(daemon, sid), OPUS, 'must not bounce back to the previous run\'s model');
+  await postHook(
+    daemon.baseUrl,
+    'UserPromptSubmit',
+    loadFixture('user-prompt-submit', tokens, { transcript_path: transcript }),
+    { token: daemon },
+  );
+  assert.equal(
+    await modelOf(daemon, sid),
+    OPUS,
+    "must not bounce back to the previous run's model",
+  );
 
   // The first real turn of the new run confirms opus.
   appendTranscriptLines(transcript, [assistantLine({ model: OPUS })]);
-  await postHook(daemon.baseUrl, 'Stop', loadFixture('stop', tokens, { transcript_path: transcript }), { token: daemon });
+  await postHook(
+    daemon.baseUrl,
+    'Stop',
+    loadFixture('stop', tokens, { transcript_path: transcript }),
+    { token: daemon },
+  );
   assert.equal(await modelOf(daemon, sid), OPUS);
 });
 
@@ -203,12 +277,25 @@ test('the resume floor does not freeze the model — a real switch after it stil
   const tokens = { session_id: sid, cwd };
 
   const transcript = writeTranscriptLines(tdir, sid, [userLine(), assistantLine({ model: FABLE })]);
-  await postHook(daemon.baseUrl, 'SessionStart',
-    loadFixture('session-start', tokens, { source: 'resume', model: OPUS, transcript_path: transcript }), { token: daemon });
+  await postHook(
+    daemon.baseUrl,
+    'SessionStart',
+    loadFixture('session-start', tokens, {
+      source: 'resume',
+      model: OPUS,
+      transcript_path: transcript,
+    }),
+    { token: daemon },
+  );
 
   // Resumed on opus, then switched to haiku mid-run: above the floor, so it counts.
   appendTranscriptLines(transcript, [userLine(), assistantLine({ model: HAIKU })]);
-  await postHook(daemon.baseUrl, 'Stop', loadFixture('stop', tokens, { transcript_path: transcript }), { token: daemon });
+  await postHook(
+    daemon.baseUrl,
+    'Stop',
+    loadFixture('stop', tokens, { transcript_path: transcript }),
+    { token: daemon },
+  );
   assert.equal(await modelOf(daemon, sid), HAIKU);
 });
 
@@ -221,8 +308,15 @@ test('a session with no model anywhere reports null, not the string "undefined"'
     userLine(),
     { type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'hi' }] } },
   ]);
-  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', tokens), { token: daemon });
-  await postHook(daemon.baseUrl, 'Stop', loadFixture('stop', tokens, { transcript_path: transcript }), { token: daemon });
+  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', tokens), {
+    token: daemon,
+  });
+  await postHook(
+    daemon.baseUrl,
+    'Stop',
+    loadFixture('stop', tokens, { transcript_path: transcript }),
+    { token: daemon },
+  );
 
   assert.equal(await modelOf(daemon, sid), null);
 });

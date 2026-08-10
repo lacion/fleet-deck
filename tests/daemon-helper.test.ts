@@ -32,9 +32,9 @@ async function occupyPort() {
     const port = randomPort();
     const server = net.createServer();
     server.unref(); // must never hold the test event loop open
-    const taken = await new Promise(resolve => {
-      server.once('error', () => resolve(true));
-      server.listen(port, '127.0.0.1', () => resolve(false));
+    const taken = await new Promise((resolve) => {
+      server.once('error', () => { resolve(true); });
+      server.listen(port, '127.0.0.1', () => { resolve(false); });
     });
     if (!taken) {
       return {
@@ -42,7 +42,13 @@ async function occupyPort() {
         // destroy(): server.close() waits for open connections, and the
         // failed health polls leave sockets TIME_WAIT-attached for seconds —
         // t.after would hang past the event-loop drain and cancel the test.
-        close: () => { try { server.close(); } catch { /* already closed */ } },
+        close: () => {
+          try {
+            server.close();
+          } catch {
+            /* already closed */
+          }
+        },
       };
     }
   }
@@ -51,36 +57,45 @@ async function occupyPort() {
 
 test('startDaemon removes its own scratch home when startup fails (BUG-201)', async (t) => {
   const blocker = await occupyPort();
-  t.after(() => blocker.close());
+  t.after(() => { blocker.close(); });
 
-  const before = new Set(readdirSync(tmpdir()).filter(n => n.startsWith('fleetdeck-test-')));
+  const before = new Set(readdirSync(tmpdir()).filter((n) => n.startsWith('fleetdeck-test-')));
   await assert.rejects(
     startDaemon({ port: blocker.port, scriptPath: CRASH_STUB, healthTimeoutMs: 1500 }),
     /(never became|before becoming) healthy/,
   );
-  const leaked = readdirSync(tmpdir()).filter(n => n.startsWith('fleetdeck-test-') && !before.has(n));
+  const leaked = readdirSync(tmpdir()).filter(
+    (n) => n.startsWith('fleetdeck-test-') && !before.has(n),
+  );
   assert.deepEqual(leaked, [], `failed startup leaked scratch home(s): ${leaked.join(', ')}`);
 });
 
 test('startDaemon preserves a caller-owned home when startup fails', async (t) => {
   const blocker = await occupyPort();
-  t.after(() => blocker.close());
+  t.after(() => { blocker.close(); });
   const home = mkdtempSync(path.join(tmpdir(), 'fleetdeck-home-owned-'));
-  t.after(() => { rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+  t.after(() => {
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
 
   await assert.rejects(
     startDaemon({ port: blocker.port, home, scriptPath: CRASH_STUB, healthTimeoutMs: 1500 }),
     /(never became|before becoming) healthy/,
   );
   assert.ok(existsSync(home), 'caller-owned home must survive a failed startup');
-  assert.ok(existsSync(path.join(home, 'crashed.marker')), 'post-mortem evidence must be left in place');
+  assert.ok(
+    existsSync(path.join(home, 'crashed.marker')),
+    'post-mortem evidence must be left in place',
+  );
 });
 
 test('startDaemon still cleans up its scratch home on successful startup via stop()', async (t) => {
   // Guards against the BUG-201 fix regressing the happy path: the default
   // home must still be returned and removed by stop().
   const daemon = await startDaemon({ port: randomPort() });
-  t.after(async () => { await daemon.stop(); });
+  t.after(async () => {
+    await daemon.stop();
+  });
   assert.ok(existsSync(daemon.home), 'scratch home should exist while the daemon runs');
   await daemon.stop();
   assert.ok(!existsSync(daemon.home), 'stop() should still remove the scratch home');
@@ -88,10 +103,16 @@ test('startDaemon still cleans up its scratch home on successful startup via sto
 
 test('startDaemon failure error still includes daemon output', async (t) => {
   const blocker = await occupyPort();
-  t.after(() => blocker.close());
+  t.after(() => { blocker.close(); });
 
-  const err = await startDaemon({ port: blocker.port, scriptPath: CRASH_STUB, healthTimeoutMs: 1500 })
-    .then(() => null, e => e);
+  const err = await startDaemon({
+    port: blocker.port,
+    scriptPath: CRASH_STUB,
+    healthTimeoutMs: 1500,
+  }).then(
+    () => null,
+    (e: unknown) => e,
+  );
   assert.ok(err, 'startDaemon should reject');
-  assert.match(err.message, /crash-daemon-stub: simulated startup crash/);
+  assert.match((err as Error).message, /crash-daemon-stub: simulated startup crash/);
 });
