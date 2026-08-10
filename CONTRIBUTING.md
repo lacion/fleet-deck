@@ -28,23 +28,23 @@ npm run build:board         # → scripts/fleetd/board-dist/
   the daemon.
 - **tmux 3.4+** — needed for anything spawn-, terminal-, or pane-related, and
   the test suite drives a *real* tmux server to exercise it. 3.4 is a hard
-  floor, enforced by `bin/tmux-version.mjs`: Fleet Deck's no-start probe
+  floor, enforced by `bin/tmux-version.ts`: Fleet Deck's no-start probe
   (`-N`) was introduced there, so an older tmux is rejected as unavailable.
   Check with `tmux -V`; some distributions still package 3.2/3.3, so if yours
   does, install tmux from a newer release or build it from source. It never touches your
   tmux, though: every test daemon runs its tmux commands against an isolated
   named server (`tmux -L fleetdeck-test-<port>`, set via `FLEETDECK_TMUX_SOCKET`
-  in `tests/helpers/daemon.mjs`), and the demo scripts do the same with a
+  in `tests/helpers/daemon.ts`), and the demo scripts do the same with a
   per-run `fdaccept-<pid>` socket. Your default server is left alone.
 - **Linux, WSL2, or macOS.** Windows-native is untested.
 
 ## Running from source
 
 ```bash
-npm start                   # node scripts/fleetd/fleetd.mjs (the SOURCE, not the bundle)
+npm start                   # node scripts/fleetd/fleetd.ts (the SOURCE, not the bundle)
 ```
 
-`npm start` runs `scripts/fleetd/fleetd.mjs` directly, so it's the fast loop for
+`npm start` runs `scripts/fleetd/fleetd.ts` directly, so it's the fast loop for
 daemon work — no rebundle between edits.
 
 Don't collide with a real fleet. If you already run Fleet Deck day to day, its
@@ -108,7 +108,7 @@ gotcha. The daemon your users run is the *bundle*; the board they load is the
 
 - **Touched anything under `scripts/fleetd/`** (except the bundle file itself)?
   Run `npm run bundle` and commit `scripts/fleetd/fleetd.bundle.mjs`. The plugin
-  ships and runs the bundle, not your `.mjs` source — an un-rebundled fix simply
+  ships and runs the bundle, not your `.ts` source — an un-rebundled fix simply
   does not exist for anyone who installs Fleet Deck.
 - **Touched anything under `board/`?** Run `npm run build:board` and commit
   `scripts/fleetd/board-dist/`. That's where Vite writes the built board and
