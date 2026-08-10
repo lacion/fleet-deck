@@ -1,4 +1,4 @@
-// tests/demo-phase3-transcript.test.mjs
+// tests/demo-phase3-transcript.test.ts
 //
 // Regression for BUG-095: demo/run-accept-phase3.sh located the resumed
 // session's transcript under "$HOME/.claude/projects" unconditionally.
@@ -19,16 +19,20 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const SCRIPT = path.join(
-  path.dirname(fileURLToPath(import.meta.url)), '..', 'demo', 'run-accept-phase3.sh');
+  path.dirname(fileURLToPath(import.meta.url)),
+  '..',
+  'demo',
+  'run-accept-phase3.sh',
+);
 
 // Pull the assignment block out of the script (TRANSCRIPT_ROOT through
 // TRANSCRIPT_DIR) so the test executes the script's own lines verbatim.
-function resolveTranscriptDir(env) {
+function resolveTranscriptDir(env: Record<string, string>): string {
   const src = readFileSync(SCRIPT, 'utf8');
-  const block = src.match(/^TRANSCRIPT_ROOT=.*\nTRANSCRIPT_DIR=.*$/m);
-  assert.ok(block, 'transcript-root resolution block not found in run-accept-phase3.sh');
-  const out = execFileSync('bash', ['-c', `${block[0]}\nprintf '%s' "$TRANSCRIPT_DIR"`], {
-    env: { PATH: process.env.PATH, ...env },
+  const assignBlock = (/^TRANSCRIPT_ROOT=.*\nTRANSCRIPT_DIR=.*$/m.exec(src))?.[0];
+  assert.ok(assignBlock, 'transcript-root resolution block not found in run-accept-phase3.sh');
+  const out = execFileSync('bash', ['-c', `${assignBlock}\nprintf '%s' "$TRANSCRIPT_DIR"`], {
+    env: { PATH: process.env['PATH'], ...env },
     encoding: 'utf8',
   });
   return out;

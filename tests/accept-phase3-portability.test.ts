@@ -1,4 +1,4 @@
-// tests/accept-phase3-portability.test.mjs
+// tests/accept-phase3-portability.test.ts
 //
 // BUG-093: demo/run-accept-phase3.sh is a documented live acceptance gate and
 // the README lists macOS as a supported platform, but the script invoked GNU
@@ -26,16 +26,23 @@ test('accept-phase3: no bare GNU `timeout` invocation — supervision goes throu
     );
   }
   assert.match(script, /run_with_timeout\(\)/, 'script should define a portable timeout wrapper');
-  assert.match(script, /command -v gtimeout/, 'wrapper should accept Homebrew coreutils\' gtimeout');
+  assert.match(script, /command -v gtimeout/, "wrapper should accept Homebrew coreutils' gtimeout");
   assert.match(script, /node -e/, 'wrapper should fall back to Node process supervision');
 });
 
 test('accept-phase3: port reset prefers portable lsof over Linux-only `fuser -k`', () => {
-  assert.match(script, /command -v lsof/, 'reset should probe for lsof (ships on both Linux and macOS)');
-  const fuserLine = script.split('\n').findIndex(l => /^\s*fuser -k/.test(l));
-  const lsofLine = script.split('\n').findIndex(l => /^\s*lsof /.test(l));
+  assert.match(
+    script,
+    /command -v lsof/,
+    'reset should probe for lsof (ships on both Linux and macOS)',
+  );
+  const fuserLine = script.split('\n').findIndex((l) => /^\s*fuser -k/.test(l));
+  const lsofLine = script.split('\n').findIndex((l) => /^\s*lsof /.test(l));
   assert.ok(lsofLine !== -1, 'reset should kill by port via lsof');
-  assert.ok(fuserLine === -1 || lsofLine < fuserLine, 'fuser -k may remain only as a fallback after lsof');
+  assert.ok(
+    fuserLine === -1 || lsofLine < fuserLine,
+    'fuser -k may remain only as a fallback after lsof',
+  );
 });
 
 test('accept-phase3: script still parses (bash -n)', () => {
