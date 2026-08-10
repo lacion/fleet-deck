@@ -1,4 +1,4 @@
-// tests/plugin-payload-gate.test.mjs
+// tests/plugin-payload-gate.test.ts
 //
 // BUG-001 — the release-bound plugin gate (the hook-integrity CI job) used to
 // watch only seven hook-side paths, omitting the daemon bundle, most daemon
@@ -16,7 +16,7 @@
 // version-manifest change in the same range. These tests run that verifier
 // against scratch git repos, exactly as CI does.
 
-import test from 'node:test';
+import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
@@ -44,11 +44,27 @@ const PAYLOAD_FILES = [
 
 const VERSION_MANIFEST = 'package.json';
 
-function git(args, cwd) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+interface PayloadRepo {
+  dir: string;
+  base: string;
+  commit: (rel: string, content: string) => void;
+  cleanup: () => void;
 }
 
-function write(dir, rel, content) {
+interface GateResult {
+  status: number | null;
+  output: string;
+}
+
+function git(args: string[], cwd: string): string {
+  return execFileSync('git', args, {
+    cwd,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }).trim();
+}
+
+function write(dir: string, rel: string, content: string): void {
   const abs = path.join(dir, rel);
   mkdirSync(path.dirname(abs), { recursive: true });
   writeFileSync(abs, content);
@@ -59,7 +75,7 @@ function write(dir, rel, content) {
  * the initial state committed. Returns paths and a commit(rel, content)
  * helper; base is the commit the verifier diffs against.
  */
-function makePayloadRepo() {
+function makePayloadRepo(): PayloadRepo {
   const dir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-payload-gate-'));
   git(['init', '-q'], dir);
   git(['config', 'user.email', 'test@fleetdeck.local'], dir);
@@ -73,7 +89,7 @@ function makePayloadRepo() {
   return {
     dir,
     base,
-    commit(rel, content) {
+    commit(rel: string, content: string) {
       write(dir, rel, content);
       git(['add', rel], dir);
       git(['commit', '-q', '-m', `change ${rel}`], dir);
@@ -84,12 +100,13 @@ function makePayloadRepo() {
   };
 }
 
-function runGate(base, cwd) {
+function runGate(base: string, cwd: string): GateResult {
   try {
     const stdout = execFileSync(process.execPath, [CHECK, base], { cwd, encoding: 'utf8' });
     return { status: 0, output: stdout };
   } catch (err) {
-    return { status: err.status, output: `${err.stdout ?? ''}${err.stderr ?? ''}` };
+    const e = err as { status?: number | null; stdout?: string; stderr?: string };
+    return { status: e.status ?? null, output: `${e.stdout ?? ''}${e.stderr ?? ''}` };
   }
 }
 
@@ -109,43 +126,46 @@ for (const rel of [
   'scripts/fleet-sessionstart.mjs',
   'scripts/fleet-watch.mjs',
 ]) {
-  test(`payload change without a version bump fails the gate: ${rel}`, (t) => {
+  test(`payload change without a version bump fails the gate: ${rel}`, (t: TestContext) => {
     const repo = makePayloadRepo();
     t.after(repo.cleanup);
     repo.commit(rel, `// changed ${rel}\n`);
     const res = runGate(repo.base, repo.dir);
-    assert.equal(res.status, 1, `expected exit 1, got ${res.status}: ${res.output}`);
+    assert.equal(res.status, 1, `expected exit 1, got ${String(res.status)}: ${res.output}`);
     assert.match(res.output, /no version manifest/);
   });
 }
 
-test('version bump alone is a release, not a payload change — gate stays green', (t) => {
+test('version bump alone is a release, not a payload change — gate stays green', (t: TestContext) => {
   const repo = makePayloadRepo();
   t.after(repo.cleanup);
   repo.commit(VERSION_MANIFEST, JSON.stringify({ name: 'fleetdeck', version: '0.0.2' }, null, 2));
-  repo.commit('.claude-plugin/plugin.json', JSON.stringify({ name: 'fleetdeck', version: '0.0.2' }, null, 2));
+  repo.commit(
+    '.claude-plugin/plugin.json',
+    JSON.stringify({ name: 'fleetdeck', version: '0.0.2' }, null, 2),
+  );
   const res = runGate(repo.base, repo.dir);
-  assert.equal(res.status, 0, `expected exit 0, got ${res.status}: ${res.output}`);
+  assert.equal(res.status, 0, `expected exit 0, got ${String(res.status)}: ${res.output}`);
   // plugin.json lives inside the payload closure, so bumping it shows up as a
   // payload change — but it rides its own version bump, so the gate is green.
   assert.match(res.output, /release-bound/);
 });
 
-test('payload change WITH a version bump passes the gate', (t) => {
+test('payload change WITH a version bump passes the gate', (t: TestContext) => {
   const repo = makePayloadRepo();
   t.after(repo.cleanup);
   repo.commit('scripts/fleetd/http.mjs', '// changed http.mjs\n');
   repo.commit(VERSION_MANIFEST, JSON.stringify({ name: 'fleetdeck', version: '0.0.2' }, null, 2));
   const res = runGate(repo.base, repo.dir);
-  assert.equal(res.status, 0, `expected exit 0, got ${res.status}: ${res.output}`);
+  assert.equal(res.status, 0, `expected exit 0, got ${String(res.status)}: ${res.output}`);
   assert.match(res.output, /release-bound/);
 });
 
-test('changes outside the payload closure pass without a version bump', (t) => {
+test('changes outside the payload closure pass without a version bump', (t: TestContext) => {
   const repo = makePayloadRepo();
   t.after(repo.cleanup);
   repo.commit('docs/README.md', '# docs changed\n');
   const res = runGate(repo.base, repo.dir);
-  assert.equal(res.status, 0, `expected exit 0, got ${res.status}: ${res.output}`);
+  assert.equal(res.status, 0, `expected exit 0, got ${String(res.status)}: ${res.output}`);
   assert.match(res.output, /untouched/);
 });

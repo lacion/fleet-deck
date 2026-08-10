@@ -1,4 +1,4 @@
-// tests/accept-scripts-hook-wiring.test.mjs
+// tests/accept-scripts-hook-wiring.test.ts
 //
 // BUG-010 regression guard: the live acceptance gates must wire the current
 // checkout's AUTHENTICATED command shims, never tokenless native HTTP hooks.
@@ -49,8 +49,8 @@ for (const gate of GATES) {
     assert.ok(
       !src.includes('"type": "http"'),
       `${gate} renders a native HTTP hook; http hooks cannot attach the bearer ` +
-      'token required since 0.16.0, so the daemon refuses them and the gate ' +
-      'tests the refusal path, not the checkout',
+        'token required since 0.16.0, so the daemon refuses them and the gate ' +
+        'tests the refusal path, not the checkout',
     );
   });
 
@@ -71,15 +71,15 @@ for (const gate of GATES) {
   });
 }
 
-for (const gate of GATES.filter(g => g !== 'demo/run-smoke.sh')) {
+for (const gate of GATES.filter((g) => g !== 'demo/run-smoke.sh')) {
   const src = readFileSync(path.join(ROOT, gate), 'utf8');
 
   test(`${gate}: an installed Fleet Deck plugin cannot mask the checkout (BUG-010)`, () => {
     assert.ok(
       src.includes('"enabledPlugins": { "fleetdeck@fleetdeck": false }'),
       `${gate} must disable the installed fleetdeck plugin in the generated ` +
-      'project settings, or its duplicate hooks can exercise cached installed ' +
-      'code instead of the checkout',
+        'project settings, or its duplicate hooks can exercise cached installed ' +
+        'code instead of the checkout',
     );
   });
 }
@@ -89,6 +89,6 @@ test('run-accept-phase3.sh: source validation shadows any installed plugin with 
   assert.ok(
     src.includes('--plugin-dir "$FLEETDECK_ROOT"'),
     'the direct `claude` launches in run-accept-phase3.sh must load the checkout ' +
-    'via --plugin-dir so a same-named installed plugin is shadowed for the session',
+      'via --plugin-dir so a same-named installed plugin is shadowed for the session',
   );
 });

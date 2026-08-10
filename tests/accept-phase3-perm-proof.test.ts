@@ -1,4 +1,4 @@
-// tests/accept-phase3-perm-proof.test.mjs
+// tests/accept-phase3-perm-proof.test.ts
 //
 // BUG-011 regression: demo/run-accept-phase3.sh's permission-relay check used
 // to pass whenever the model's JSON output contained FLEET_PERMISSION_OK —
@@ -20,7 +20,17 @@ const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const HELPER = path.join(REPO, 'demo', 'perm-proof-check.sh');
 const MARKER = 'FLEET_PERMISSION_OK';
 
-function check({ rc = 0, proof = MARKER, json = '', approved = 'yes' } = {}) {
+interface CheckOptions {
+  rc?: number;
+  proof?: string | null;
+  json?: string;
+  approved?: string;
+}
+
+function check({ rc = 0, proof = MARKER, json = '', approved = 'yes' }: CheckOptions = {}): {
+  pass: boolean;
+  detail: string;
+} {
   const dir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-perm-proof-'));
   try {
     const proofFile = path.join(dir, 'fleet-perm-proof.txt');
@@ -28,13 +38,24 @@ function check({ rc = 0, proof = MARKER, json = '', approved = 'yes' } = {}) {
     if (proof != null) writeFileSync(proofFile, proof);
     writeFileSync(permJson, json);
     try {
-      const out = execFileSync('bash', ['-c',
-        `. "$1" && perm_proof_check "$2" "$3" "$4" "$5"`,
-        'bash', HELPER, String(rc), proofFile, permJson, approved,
-      ], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+      const out = execFileSync(
+        'bash',
+        [
+          '-c',
+          `. "$1" && perm_proof_check "$2" "$3" "$4" "$5"`,
+          'bash',
+          HELPER,
+          String(rc),
+          proofFile,
+          permJson,
+          approved,
+        ],
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+      );
       return { pass: true, detail: out.trim() };
     } catch (e) {
-      return { pass: false, detail: String(e.stdout ?? '').trim() };
+      const err = e as { stdout?: string };
+      return { pass: false, detail: (err.stdout ?? '').trim() };
     }
   } finally {
     rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });

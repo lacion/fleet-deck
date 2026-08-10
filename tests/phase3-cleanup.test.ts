@@ -1,4 +1,4 @@
-// tests/phase3-cleanup.test.mjs
+// tests/phase3-cleanup.test.ts
 //
 // Regression for BUG-007: demo/run-accept-phase3.sh used to leave the
 // detached scratch fleetd (elected by the sessions' SessionStart hook)
@@ -11,7 +11,7 @@
 // append a scratch-daemon simulation; `set -u` then aborts the truncated
 // script, which is exactly what drives the EXIT trap.
 
-import test from 'node:test';
+import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -22,30 +22,50 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SCRIPT = path.join(ROOT, 'demo', 'run-accept-phase3.sh');
 
-function scratch(t, prefix) {
+interface TruncatedGateResult {
+  code: number | null;
+  stdout: string;
+  stderr: string;
+  home: string;
+  port: number;
+  stubPid: number | null;
+}
+
+function scratch(t: TestContext, prefix: string): string {
   const dir = mkdtempSync(path.join(tmpdir(), prefix));
-  t.after(() => rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+  t.after(() => {
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
   return dir;
 }
 
 // Wait until fn() is truthy (or throw). Small bounded poll for server boot.
-async function waitFor(fn, { tries = 100, stepMs = 100 } = {}) {
+async function waitFor(
+  fn: () => Promise<boolean>,
+  { tries = 100, stepMs = 100 }: { tries?: number; stepMs?: number } = {},
+): Promise<boolean> {
   for (let i = 0; i < tries; i += 1) {
     const value = await fn();
     if (value) return value;
-    await new Promise(resolve => setTimeout(resolve, stepMs));
+    await new Promise<void>((resolve) => {
+      setTimeout(() => {
+        resolve();
+      }, stepMs);
+    });
   }
   throw new Error('condition not met in time');
 }
 
 // The trap-arming line must stay the FINAL trap the script installs, so the
 // truncation below reproduces the real cleanup path.
-function trapLine(source) {
+function trapLine(source: string): string {
   const lines = source.split('\n');
-  const index = lines.findIndex(line => line.trim() === 'trap cleanup EXIT');
+  const index = lines.findIndex((line) => line.trim() === 'trap cleanup EXIT');
   assert.notEqual(index, -1, 'run-accept-phase3.sh must arm `trap cleanup EXIT`');
+  const trapText = lines[index] ?? '';
   assert.equal(
-    source.slice(source.indexOf(lines[index])).indexOf('trap '), 0,
+    source.slice(source.indexOf(trapText)).indexOf('trap '),
+    0,
     'no later trap may override the cleanup trap',
   );
   return lines.slice(0, index + 1).join('\n') + '\n';
@@ -55,7 +75,10 @@ function trapLine(source) {
 // daemon in `home`. `daemonJs` is a small node program standing in for
 // fleetd: it writes the strict pid record the gate verifies and serves
 // /health on FLEETDECK_PORT.
-async function runTruncatedGate(t, { daemonJs }) {
+async function runTruncatedGate(
+  t: TestContext,
+  { daemonJs }: { daemonJs: string },
+): Promise<TruncatedGateResult> {
   const home = scratch(t, 'fleetdeck-p3-home-');
   const port = 20000 + (process.pid % 20000);
   writeFileSync(path.join(home, 'stub-daemon.mjs'), daemonJs);
@@ -65,27 +88,48 @@ async function runTruncatedGate(t, { daemonJs }) {
     /^export FLEETDECK_TMUX_SOCKET="fdaccept-\$\$"$/m,
     'export FLEETDECK_TMUX_SOCKET="fdp3test-$$"',
   );
-  writeFileSync(gate, prefix + `
+  writeFileSync(
+    gate,
+    prefix +
+      `
 # ---- simulated run body: a SessionStart hook elected our stub daemon
 node "$SCRATCH_HOME/stub-daemon.mjs" "$SCRATCH_HOME" "$FLEETDECK_PORT" p3test-stub &
 echo $! > "$SCRATCH_HOME/stub-shell.pid"
 echo "gate body done (pidfile may not exist yet — trap must cope)"
 exit 3
-`);
+`,
+  );
   const child = spawn('bash', [gate], {
-    env: { ...process.env, PATH: process.env.PATH, FLEETDECK_HOME_OVERRIDE: home, FLEETDECK_PORT: String(port) },
+    env: {
+      ...process.env,
+      PATH: process.env['PATH'],
+      FLEETDECK_HOME_OVERRIDE: home,
+      FLEETDECK_PORT: String(port),
+    },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let stdout = '';
   let stderr = '';
-  child.stdout.on('data', chunk => { stdout += chunk; });
-  child.stderr.on('data', chunk => { stderr += chunk; });
-  const code = await new Promise(resolve => child.once('exit', resolve));
+  child.stdout.on('data', (chunk: Buffer) => {
+    stdout += chunk.toString();
+  });
+  child.stderr.on('data', (chunk: Buffer) => {
+    stderr += chunk.toString();
+  });
+  const code = await new Promise<number | null>((resolve) => {
+    child.once('exit', (c) => {
+      resolve(c);
+    });
+  });
   // The gate correctly refuses to SIGKILL an unproven process; the stub is OUR
   // child (marker arg checked above), so the test reaps what the gate spared —
   // otherwise the node --test process would wait on it forever.
-  let stubPid = null;
-  try { stubPid = Number(readFileSync(path.join(home, 'stub-shell.pid'), 'utf8').trim()); } catch {}
+  let stubPid: number | null = null;
+  try {
+    stubPid = Number(readFileSync(path.join(home, 'stub-shell.pid'), 'utf8').trim());
+  } catch {
+    /* pidfile may not have been written yet */
+  }
   return { code, stdout, stderr, home, port, stubPid };
 }
 
@@ -141,34 +185,48 @@ http.createServer((req, res) => {
 process.on('SIGTERM', () => {});
 `;
 
-test('phase3 gate EXIT trap stops the detached scratch daemon it started', async (t) => {
-  const { code, home, port } = await runTruncatedGate(t, { daemonJs: COOPERATIVE_DAEMON });
+test('phase3 gate EXIT trap stops the detached scratch daemon it started', async (t: TestContext) => {
+  const { code, port } = await runTruncatedGate(t, { daemonJs: COOPERATIVE_DAEMON });
   assert.equal(code, 3, 'cleanup must preserve the gate body exit code when teardown succeeds');
   await waitFor(async () => {
     try {
       await fetch(`http://127.0.0.1:${port}/health`, { signal: AbortSignal.timeout(200) });
       return false;
-    } catch { return true; }
-  }).catch(() => assert.fail(`stub daemon still listening on :${port} after the gate exited — BUG-007 leak`));
+    } catch {
+      return true;
+    }
+  }).catch(() =>
+    assert.fail(`stub daemon still listening on :${port} after the gate exited — BUG-007 leak`),
+  );
 });
 
-test('phase3 gate fails cleanup when the scratch daemon survives SIGTERM', async (t) => {
+test('phase3 gate fails cleanup when the scratch daemon survives SIGTERM', async (t: TestContext) => {
   const { code, stderr, port, stubPid } = await runTruncatedGate(t, { daemonJs: STUBBORN_DAEMON });
   assert.equal(code, 1, 'a surviving daemon must fail the run, not exit quietly');
   assert.match(stderr, /CLEANUP FAILED: scratch daemon not verified stopped/);
   // The gate correctly refused to kill -9; the test owns the stubborn stub.
-  try { process.kill(stubPid, 'SIGKILL'); } catch { /* already gone */ }
-  try { await fetch(`http://127.0.0.1:${port}/health`, { signal: AbortSignal.timeout(250) }); assert.fail('stub should be dead after SIGKILL'); }
-  catch (err) { if (err?.code === 'ERR_ASSERTION') throw err; }
+  try {
+    if (stubPid != null) process.kill(stubPid, 'SIGKILL');
+  } catch {
+    /* already gone */
+  }
+  try {
+    await fetch(`http://127.0.0.1:${port}/health`, { signal: AbortSignal.timeout(250) });
+    assert.fail('stub should be dead after SIGKILL');
+  } catch (err) {
+    if (err != null && (err as { code?: string }).code === 'ERR_ASSERTION') throw err;
+  }
 });
 
-test('phase3 gate never signals a foreign listener on its port', async (t) => {
+test('phase3 gate never signals a foreign listener on its port', async (t: TestContext) => {
   const { code, stderr, port, stubPid } = await runTruncatedGate(t, { daemonJs: FOREIGN_LISTENER });
   assert.equal(code, 1, 'an unprovable listener must fail cleanup, not be claimed as stopped');
   assert.match(stderr, /CLEANUP FAILED/);
   // The foreign process must still be alive: no pidfile in the scratch home,
   // so the trap had no verified target and must not have signalled anything.
-  const health = await (await fetch(`http://127.0.0.1:${port}/health`, { signal: AbortSignal.timeout(250) })).json();
+  const health = (await (
+    await fetch(`http://127.0.0.1:${port}/health`, { signal: AbortSignal.timeout(250) })
+  ).json()) as { pid: number };
   assert.equal(health.pid, stubPid);
-  process.kill(stubPid, 'SIGKILL');
+  if (stubPid != null) process.kill(stubPid, 'SIGKILL');
 });
