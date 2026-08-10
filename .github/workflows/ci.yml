@@ -136,7 +136,7 @@ jobs:
         continue-on-error: true
         run: |
           pass=0; fail=0; failed=""
-          for f in $(find tests -name '*.test.mjs' | sort); do
+          for f in $(find tests \( -name '*.test.mjs' -o -name '*.test.ts' \) | sort); do
             # Per-file so a batch cannot vacuously pass, and time-boxed so one
             # wedged file cannot consume the job budget. node:test-only surface
             # (nested t.test, --experimental-loader …) fails here by design; the

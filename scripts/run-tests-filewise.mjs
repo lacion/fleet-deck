@@ -36,13 +36,17 @@ const TESTS_DIR = path.join(REPO_ROOT, 'tests');
 // file is exactly the vacuous-pass hazard this suite guards against — the
 // summary line prints the file count so a discovery regression is visible,
 // and the per-file `# tests` totals let CI logs be diffed against `npm test`.
+// Matches BOTH extensions during the TS migration: files convert .test.mjs ->
+// .test.ts one batch at a time, and a discoverer that matched only one would
+// silently drop the other half of the suite (the exact vacuous-pass hazard
+// this runner guards against). Node type-strips the .test.ts files in-process.
 const files = readdirSync(TESTS_DIR, { recursive: true })
-  .filter(name => String(name).endsWith('.test.mjs'))
+  .filter(name => /\.test\.(mjs|ts)$/.test(String(name)))
   .sort()
   .map(name => path.join('tests', String(name)));
 
 if (files.length === 0) {
-  console.error('run-tests-filewise: no tests/*.test.mjs files found');
+  console.error('run-tests-filewise: no tests/*.test.{mjs,ts} files found');
   process.exit(1);
 }
 
