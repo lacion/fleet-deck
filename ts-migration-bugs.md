@@ -3070,3 +3070,22 @@ off, and `no-unnecessary-condition` sees `kind` as genuinely optional. Only the
   `preventDefault() {}`, …) on test doubles are flagged. A shared
   `const noop = (): void => { /* stub */ };` referenced from each slot (the comment makes
   `noop` itself pass the rule) is cleaner than commenting every body. [board-util.test]
+
+### Last spawned fixture converted (.mjs → .ts) exposed a hidden `process.env` dot-access   [MIGRATION CONSEQUENCE — the file was never in the tsc graph while it was .mjs]
+
+- **What broke.** `tests/fixtures/crash-daemon-stub.mjs` — the fleetd stand-in that
+  `daemon-helper.test.ts` spawns to drive `startDaemon()`'s startup-failure path — was the last
+  hand-written `.mjs` product/test source. Converting it to `.ts` (to close out JS-source
+  deprecation) pulled it into the strict tsc graph for the first time, and it immediately failed
+  `TS4111` (`noPropertyAccessFromIndexSignature`): `process.env.FLEETDECK_HOME` is a dot-access
+  on an index signature (`process.env: Record<string, string | undefined>`), which this config
+  forbids.
+- **Why it hid.** Nothing was wrong at runtime — `node` type-strips the fixture identically and
+  `daemon-helper.test.ts` passed 4/4 both before and after. The gap was purely static: an `.mjs`
+  file is spawned but never type-checked, so the strictness the rest of the tree already honors
+  never touched it. The moment it became `.ts`, the same rule that governs every other
+  `process.env` read in the codebase applied.
+- **Fix / rule of thumb.** Bracket notation: `process.env['FLEETDECK_HOME']`. Under this config
+  EVERY `process.env.X` read must be `process.env['X']` — a spawned-fixture conversion is the
+  one place that rule can silently not have been applied yet, so it is worth a tsc pass right
+  after any `.mjs → .ts` rename of a spawned script.

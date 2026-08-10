@@ -1,4 +1,4 @@
-// tests/daemon-helper.test.mjs
+// tests/daemon-helper.test.ts
 //
 // Regression for BUG-201: when startDaemon() allocates its own scratch
 // FLEETDECK_HOME and the daemon never becomes healthy (syntax error, instant
@@ -22,7 +22,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { startDaemon, randomPort, REPO_ROOT } from './helpers/daemon.ts';
 
-const CRASH_STUB = path.join(REPO_ROOT, 'tests/fixtures/crash-daemon-stub.mjs');
+const CRASH_STUB = path.join(REPO_ROOT, 'tests/fixtures/crash-daemon-stub.ts');
 
 // Bind 127.0.0.1 on a scratch-range port and hand back { port, close } so the
 // test daemon can never win the election — and nothing else can be serving
@@ -33,8 +33,12 @@ async function occupyPort() {
     const server = net.createServer();
     server.unref(); // must never hold the test event loop open
     const taken = await new Promise((resolve) => {
-      server.once('error', () => { resolve(true); });
-      server.listen(port, '127.0.0.1', () => { resolve(false); });
+      server.once('error', () => {
+        resolve(true);
+      });
+      server.listen(port, '127.0.0.1', () => {
+        resolve(false);
+      });
     });
     if (!taken) {
       return {
@@ -57,7 +61,9 @@ async function occupyPort() {
 
 test('startDaemon removes its own scratch home when startup fails (BUG-201)', async (t) => {
   const blocker = await occupyPort();
-  t.after(() => { blocker.close(); });
+  t.after(() => {
+    blocker.close();
+  });
 
   const before = new Set(readdirSync(tmpdir()).filter((n) => n.startsWith('fleetdeck-test-')));
   await assert.rejects(
@@ -72,7 +78,9 @@ test('startDaemon removes its own scratch home when startup fails (BUG-201)', as
 
 test('startDaemon preserves a caller-owned home when startup fails', async (t) => {
   const blocker = await occupyPort();
-  t.after(() => { blocker.close(); });
+  t.after(() => {
+    blocker.close();
+  });
   const home = mkdtempSync(path.join(tmpdir(), 'fleetdeck-home-owned-'));
   t.after(() => {
     rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
@@ -103,7 +111,9 @@ test('startDaemon still cleans up its scratch home on successful startup via sto
 
 test('startDaemon failure error still includes daemon output', async (t) => {
   const blocker = await occupyPort();
-  t.after(() => { blocker.close(); });
+  t.after(() => {
+    blocker.close();
+  });
 
   const err = await startDaemon({
     port: blocker.port,
