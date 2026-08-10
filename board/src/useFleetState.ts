@@ -24,9 +24,15 @@
 // the shape is now imported, so daemon/board drift is a type error.
 
 import { useEffect, useRef, useState } from 'react';
-import { fetchState } from './api.js';
-import { useAuth, wsUrl } from './token.js';
-import type { Snapshot, SpawnCapability, Lan, SessionEntry } from '../../contracts/index.ts';
+import { fetchState } from './api.ts';
+import { useAuth, wsUrl } from './token.ts';
+import type {
+  Snapshot,
+  SpawnCapability,
+  Lan,
+  LegacyUpgrade,
+  SessionEntry,
+} from '../../contracts/index.ts';
 
 // The connection pill's three states.
 type ConnStatus = 'live' | 'reconnecting' | 'offline';
@@ -61,6 +67,10 @@ export type BoardSnapshot = Pick<Snapshot, SnapshotDefaults> &
   Partial<Pick<Snapshot, SnapshotLoaded>> & {
     spawn: SpawnCapability | null;
     lan: Lan | null;
+    // `legacy_upgrade` rides the /ws + /state frames (Header reads it) but the
+    // daemon puts it on StateResponse/WsSnapshot, NOT the base `Snapshot` — so,
+    // like spawn/lan, the board carries it as its own null-defaulted field.
+    legacy_upgrade: LegacyUpgrade | null;
   };
 
 // The mutable connection state carried across renders in a ref. `timer`/`poll`
@@ -88,6 +98,9 @@ const EMPTY: BoardSnapshot = {
   // v1.7 LAN share — {enabled, urls}. Absent on older daemons, so `null` is
   // the honest default: the panel says "loopback-only", never invents a URL.
   lan: null,
+  // No pre-upgrade sessions until a frame says otherwise (same null-default as
+  // spawn/lan above; the field is not on the base Snapshot contract).
+  legacy_upgrade: null,
   // v1.3 `plans` is deliberately ABSENT here: a daemon that doesn't send it
   // leaves snap.plans undefined and the board hides the library entirely.
 };
