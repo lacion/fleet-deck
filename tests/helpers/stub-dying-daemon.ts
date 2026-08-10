@@ -1,4 +1,4 @@
-// tests/helpers/stub-dying-daemon.mjs
+// tests/helpers/stub-dying-daemon.ts
 //
 // A fleetd-CLI-shaped stub that exits immediately with a nonzero code,
 // without ever binding FLEETDECK_PORT. Used by the BUG-164 regression test

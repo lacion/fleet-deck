@@ -40,7 +40,7 @@ import {
 
 const HOOK_SCRIPT = path.join(REPO_ROOT, 'scripts/fleet-sessionstart.mjs');
 const FLEETD_SOURCE = path.join(REPO_ROOT, 'scripts/fleetd/fleetd.ts');
-const STUB = path.join(REPO_ROOT, 'tests/helpers/stub-immortal-daemon.mjs');
+const STUB = path.join(REPO_ROOT, 'tests/helpers/stub-immortal-daemon.ts');
 const PKG_VERSION = JSON.parse(readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8')).version;
 
 function scratchDir(t) {

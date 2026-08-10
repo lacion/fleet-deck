@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// tests/helpers/stub-immortal-daemon.mjs
+// tests/helpers/stub-immortal-daemon.ts
 //
 // A minimal, SIGTERM-IMMUNE stand-in for fleetd, used by the takeover suite's
 // "fail open onto a wedged daemon" case. It is deliberately NOT the real
@@ -25,23 +25,32 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const PORT = Number(process.env.FLEETDECK_PORT || 4711);
-const HOME = process.env.FLEETDECK_HOME || '/tmp';
+const PORT = Number(process.env['FLEETDECK_PORT'] ?? 4711);
+const HOME = process.env['FLEETDECK_HOME'] ?? '/tmp';
 // Default to an OLD version so a real hook is strictly-newer and commits to the
 // takeover; a test may override via FLEETDECK_VERSION_OVERRIDE.
-const VERSION = (process.env.FLEETDECK_VERSION_OVERRIDE || '0.0.1').trim();
+const VERSION = (process.env['FLEETDECK_VERSION_OVERRIDE'] ?? '0.0.1').trim();
 
 // Never die on the graceful signal — that immortality is the whole point.
-process.on('SIGTERM', () => {});
-process.on('SIGINT', () => {});
+process.on('SIGTERM', () => {
+  /* swallow: staying alive past the graceful signal IS the fixture */
+});
+process.on('SIGINT', () => {
+  /* swallow: only SIGKILL ends this stub */
+});
 
 const server = http.createServer((req, res) => {
   if (req.url === '/health') {
     res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({
-      ok: true, pid: process.pid, version: VERSION, fleet: 0,
-      spawn: { available: false },
-    }));
+    res.end(
+      JSON.stringify({
+        ok: true,
+        pid: process.pid,
+        version: VERSION,
+        fleet: 0,
+        spawn: { available: false },
+      }),
+    );
     return;
   }
   res.writeHead(404);
@@ -57,5 +66,7 @@ server.listen(PORT, '127.0.0.1', () => {
       JSON.stringify({ pid: process.pid, port: PORT }),
       { encoding: 'utf8', mode: 0o600 },
     );
-  } catch { /* /health is the contract the test relies on */ }
+  } catch {
+    /* /health is the contract the test relies on */
+  }
 });

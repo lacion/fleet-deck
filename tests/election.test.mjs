@@ -216,7 +216,7 @@ test('startDaemon rejects when the child exits before any /health answer (BUG-16
     startDaemon({
       port,
       home,
-      scriptPath: path.join(HERE, 'helpers', 'stub-dying-daemon.mjs'),
+      scriptPath: path.join(HERE, 'helpers', 'stub-dying-daemon.ts'),
       healthTimeoutMs: 60000,
     }),
     /exited with code/,
