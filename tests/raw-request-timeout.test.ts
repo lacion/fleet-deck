@@ -1,4 +1,4 @@
-// tests/raw-request-timeout.test.mjs
+// tests/raw-request-timeout.test.ts
 //
 // BUG-162 — the raw node:http audit helpers (gateway/hook-auth/lan-auth, now
 // routed through helpers/http.ts rawRequest) carried no request or socket
@@ -9,22 +9,25 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createServer } from 'node:http';
+import { createServer, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
 
 import { rawRequest } from './helpers/http.ts';
 
-function hangingServer() {
-  return new Promise(resolve => {
+function hangingServer(): Promise<Server> {
+  return new Promise<Server>((resolve) => {
     // Accept the connection, never write a response byte.
-    const server = createServer(() => { /* hang forever */ });
-    server.listen(0, '127.0.0.1', () => resolve(server));
+    const server = createServer(() => {
+      /* hang forever */
+    });
+    server.listen(0, '127.0.0.1', () => { resolve(server); });
   });
 }
 
-test('rawRequest rejects on a hung response instead of blocking until the CI timeout', async t => {
+test('rawRequest rejects on a hung response instead of blocking until the CI timeout', async (t) => {
   const server = await hangingServer();
-  t.after(() => new Promise(r => server.close(r)));
-  const { port } = server.address();
+  t.after(() => new Promise((r) => server.close(r)));
+  const { port } = server.address() as AddressInfo;
 
   const started = Date.now();
   await assert.rejects(
@@ -34,5 +37,8 @@ test('rawRequest rejects on a hung response instead of blocking until the CI tim
   // 10s of headroom: the deadline is scaled by FLEETDECK_TEST_WAIT_SCALE, so
   // slow-lane runs legitimately take longer — but never anywhere near the
   // minutes-long outer CI timeout the old helpers fell through to.
-  assert.ok(Date.now() - started < 10_000, 'rejects near the authored deadline, not the CI timeout');
+  assert.ok(
+    Date.now() - started < 10_000,
+    'rejects near the authored deadline, not the CI timeout',
+  );
 });

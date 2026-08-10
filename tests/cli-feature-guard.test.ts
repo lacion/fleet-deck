@@ -1,4 +1,4 @@
-// tests/cli-feature-guard.test.mjs
+// tests/cli-feature-guard.test.ts
 //
 // Version-bump guard. Fleet Deck leans on
 // two UNDOCUMENTED Claude Code features, both validated live on 2.1.206:
@@ -18,9 +18,9 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
 
-function resolveClaudeBinary() {
+function resolveClaudeBinary(): string | null {
   const which = spawnSync('bash', ['-c', 'command -v claude'], { encoding: 'utf8' });
   const found = (which.stdout || '').trim();
   if (which.status !== 0 || !found) return null;
@@ -30,16 +30,18 @@ function resolveClaudeBinary() {
 
 test('version-bump guard: the local claude binary still ships asyncRewake and AskUserQuestion', (t) => {
   const bin = resolveClaudeBinary();
-  if (!bin) return t.skip('no `claude` binary on PATH — nothing to guard here');
+  if (!bin) { t.skip('no `claude` binary on PATH — nothing to guard here'); return; }
 
   for (const feature of ['asyncRewake', 'AskUserQuestion']) {
-    const grep = spawnSync('grep', ['-qaF', feature, bin]);
-    if (grep.status === 2 || grep.error) return t.skip(`could not grep ${bin}: ${grep.error?.message || 'grep error'}`);
+    const grep: SpawnSyncReturns<Buffer> = spawnSync('grep', ['-qaF', feature, bin]);
+    if (grep.status === 2 || grep.error)
+      { t.skip(`could not grep ${bin}: ${grep.error?.message ?? 'grep error'}`); return; }
     assert.equal(
-      grep.status, 0,
+      grep.status,
+      0,
       `'${feature}' is GONE from the claude binary at ${bin} — the CLI dropped an undocumented feature Fleet Deck relies on. ` +
-      `Re-run the live validation before trusting the ${feature === 'asyncRewake' ? 'F3d-2 rewake watcher' : 'F3c question relay'} on this CLI version; ` +
-      'turn-boundary mail delivery remains the safe fallback.',
+        `Re-run the live validation before trusting the ${feature === 'asyncRewake' ? 'F3d-2 rewake watcher' : 'F3c question relay'} on this CLI version; ` +
+        'turn-boundary mail delivery remains the safe fallback.',
     );
   }
 });
