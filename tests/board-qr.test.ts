@@ -18,11 +18,30 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { qrPath } from '../board/src/qr.js';
+import { qrPath } from '../board/src/qr.ts';
+
+interface QrResult {
+  d: string;
+  side: number;
+}
+
+// noUncheckedIndexedAccess types every arr[i] as `T | undefined`; the indices in
+// this file are provably in range (fixed QR geometry and codeword counts), so
+// `req` turns a defined-by-construction lookup into a hard error if that ever
+// stops holding — with no scattered non-null assertions.
+function req<T>(v: T | undefined): T {
+  if (v === undefined) throw new Error('out-of-range QR matrix access');
+  return v;
+}
+
+// 2D boolean-matrix read (rows are equal length by construction).
+function cell(grid: boolean[][], y: number, x: number): boolean {
+  return req(req(grid[y])[x]);
+}
 
 // The 7x7 finder pattern that sits at three corners of every QR symbol
 // (ISO/IEC 18004). This is the stable structural invariant we assert on.
-const FINDER = [
+const FINDER: number[][] = [
   [1, 1, 1, 1, 1, 1, 1],
   [1, 0, 0, 0, 0, 0, 1],
   [1, 0, 1, 1, 1, 0, 1],
@@ -34,18 +53,23 @@ const FINDER = [
 
 // Reconstruct the boolean module grid from the SVG path. Using quiet = 0 makes
 // the path coordinates equal to raw module coordinates.
-function toGrid(text, quiet = 0) {
+function toGrid(
+  text: string | null | undefined,
+  quiet = 0,
+): { grid: boolean[][]; size: number; darkCount: number; res: QrResult } | null {
   const res = qrPath(text, quiet);
   if (!res) return null;
   const size = res.side - 2 * quiet;
-  const grid = Array.from({ length: size }, () => new Array(size).fill(false));
+  const grid: boolean[][] = Array.from({ length: size }, () =>
+    new Array<boolean>(size).fill(false),
+  );
   const re = /M(\d+) (\d+)h1v1h-1z/g;
-  let m;
+  let m: RegExpExecArray | null;
   let count = 0;
   while ((m = re.exec(res.d)) !== null) {
     const x = Number(m[1]) - quiet;
     const y = Number(m[2]) - quiet;
-    grid[y][x] = true;
+    req(grid[y])[x] = true;
     count += 1;
   }
   // sanity: the path is nothing but these subpaths — no stray drawing commands
@@ -53,17 +77,17 @@ function toGrid(text, quiet = 0) {
   return { grid, size, darkCount: count, res };
 }
 
-function finderMatches(grid, x0, y0) {
+function finderMatches(grid: boolean[][], x0: number, y0: number): boolean {
   for (let dy = 0; dy < 7; dy++) {
     for (let dx = 0; dx < 7; dx++) {
-      if (Boolean(grid[y0 + dy][x0 + dx]) !== Boolean(FINDER[dy][dx])) return false;
+      if (cell(grid, y0 + dy, x0 + dx) !== Boolean(req(FINDER[dy])[dx])) return false;
     }
   }
   return true;
 }
 
 // A valid QR dimension is 4*version + 17 (version 1..16 -> 21..81).
-function isValidQrSize(size) {
+function isValidQrSize(size: number): boolean {
   return size >= 21 && size <= 81 && (size - 17) % 4 === 0;
 }
 
@@ -82,6 +106,7 @@ test('a known short ASCII string encodes to a well-formed square matrix', () => 
 
 test('finder patterns are present at all three corners', () => {
   const g = toGrid('HELLO');
+  assert.ok(g, 'HELLO must be encodable');
   const s = g.size;
   assert.ok(finderMatches(g.grid, 0, 0), 'top-left finder');
   assert.ok(finderMatches(g.grid, s - 7, 0), 'top-right finder');
@@ -90,6 +115,7 @@ test('finder patterns are present at all three corners', () => {
 
 test('the symbol carries data beyond the three finders (not an empty frame)', () => {
   const g = toGrid('HELLO');
+  assert.ok(g, 'HELLO must be encodable');
   // three finders alone are 3 * 24 = 72 dark modules; a real symbol has far
   // more once timing, format and data modules are painted.
   assert.ok(g.darkCount > 72, `expected data modules, got ${g.darkCount} dark`);
@@ -102,7 +128,10 @@ test('same input yields identical output (deterministic mask selection)', () => 
   const b = qrPath('HELLO');
   assert.deepEqual(a, b);
   // and independently reconstructed grids agree
-  assert.deepEqual(toGrid('board-token-42').grid, toGrid('board-token-42').grid);
+  const g1 = toGrid('board-token-42');
+  const g2 = toGrid('board-token-42');
+  assert.ok(g1 && g2, 'board-token-42 must be encodable');
+  assert.deepEqual(g1.grid, g2.grid);
 });
 
 // ---------------------------------------------------- realistic LAN token URL
@@ -125,9 +154,13 @@ test('a realistic token URL encodes without throwing and stays well-formed', () 
 test('the quiet zone widens the SVG viewBox but not the module grid', () => {
   const bare = qrPath('HELLO', 0);
   const quilted = qrPath('HELLO'); // default quiet = 4
+  assert.ok(bare && quilted, 'HELLO must be encodable');
   assert.equal(quilted.side, bare.side + 8, 'default 4-module quiet zone on each side');
   // reconstructing with the matching quiet offset yields the same modules
-  assert.deepEqual(toGrid('HELLO', 0).grid, toGrid('HELLO', 4).grid);
+  const g0 = toGrid('HELLO', 0);
+  const g4 = toGrid('HELLO', 4);
+  assert.ok(g0 && g4, 'HELLO must be encodable');
+  assert.deepEqual(g0.grid, g4.grid);
 });
 
 // ---------------------------------------------------------------- edge inputs
@@ -169,17 +202,18 @@ const GF_LOG = new Uint8Array(256);
     x <<= 1;
     if (x & 0x100) x ^= 0x11d;
   }
-  for (let i = 255; i < 512; i++) GF_EXP[i] = GF_EXP[i - 255];
+  for (let i = 255; i < 512; i++) GF_EXP[i] = req(GF_EXP[i - 255]);
 }
-const gfMul = (a, b) => (a === 0 || b === 0 ? 0 : GF_EXP[GF_LOG[a] + GF_LOG[b]]);
+const gfMul = (a: number, b: number): number =>
+  a === 0 || b === 0 ? 0 : req(GF_EXP[req(GF_LOG[a]) + req(GF_LOG[b])]);
 
-function rsGenerator(degree) {
-  let g = [1];
+function rsGenerator(degree: number): number[] {
+  let g: number[] = [1];
   for (let i = 0; i < degree; i++) {
-    const next = new Array(g.length + 1).fill(0);
+    const next: number[] = new Array<number>(g.length + 1).fill(0);
     for (let j = 0; j < g.length; j++) {
-      next[j] ^= gfMul(g[j], 1);
-      next[j + 1] ^= gfMul(g[j], GF_EXP[i]);
+      next[j] = (next[j] ?? 0) ^ gfMul(req(g[j]), 1);
+      next[j + 1] = (next[j + 1] ?? 0) ^ gfMul(req(g[j]), req(GF_EXP[i]));
     }
     g = next;
   }
@@ -187,24 +221,24 @@ function rsGenerator(degree) {
 }
 
 // Systematic RS check: dividing data+ecc by the generator must leave 0.
-function rsCheck(codewords, eccLen) {
+function rsCheck(codewords: number[], eccLen: number): boolean {
   const g = rsGenerator(eccLen);
   const buf = Uint8Array.from(codewords);
   for (let i = 0; i < codewords.length - eccLen; i++) {
-    const factor = buf[i];
+    const factor = req(buf[i]);
     if (factor === 0) continue;
-    for (let j = 0; j < g.length; j++) buf[i + j] ^= gfMul(g[j], factor);
+    for (let j = 0; j < g.length; j++) buf[i + j] = req(buf[i + j]) ^ gfMul(req(g[j]), factor);
   }
   for (let i = codewords.length - eccLen; i < codewords.length; i++) {
-    if (buf[i] !== 0) return false;
+    if (req(buf[i]) !== 0) return false;
   }
   return true;
 }
 
-const MASK_FN = [
+const MASK_FN: ((x: number, y: number) => boolean)[] = [
   (x, y) => (x + y) % 2 === 0,
-  (x, y) => y % 2 === 0,
-  (x, y) => x % 3 === 0,
+  (_x, y) => y % 2 === 0,
+  (x) => x % 3 === 0,
   (x, y) => (x + y) % 3 === 0,
   (x, y) => (Math.floor(x / 3) + Math.floor(y / 2)) % 2 === 0,
   (x, y) => ((x * y) % 2) + ((x * y) % 3) === 0,
@@ -214,8 +248,8 @@ const MASK_FN = [
 
 // All 32 valid (BCH-encoded, XOR 0x5412) format words, generated from the
 // BCH(15,5) construction — NOT by copying the encoder's routine.
-const FORMAT_WORDS = (() => {
-  const words = new Map();
+const FORMAT_WORDS: Map<number, number> = (() => {
+  const words = new Map<number, number>();
   for (let data = 0; data < 32; data++) {
     let rem = data;
     for (let i = 0; i < 10; i++) rem = (rem << 1) ^ ((rem >>> 9) * 0x537);
@@ -230,39 +264,52 @@ const FORMAT_WORDS = (() => {
 // same modules least-significant-bit first; normalise by trying both bit
 // orders and keeping the one that yields a valid BCH word — a corrupt format
 // area fails in BOTH orders.
-function readFormat(grid) {
+function readFormat(grid: boolean[][]): { ec: number; mask: number } {
   let lsbFirst = 0;
-  const take = (x, y, i) => { if (grid[y][x]) lsbFirst |= 1 << i; };
+  const take = (x: number, y: number, i: number): void => {
+    if (cell(grid, y, x)) lsbFirst |= 1 << i;
+  };
   for (let i = 0; i <= 5; i++) take(8, i, i);
   take(8, 7, 6);
   take(8, 8, 7);
   take(7, 8, 8);
   for (let i = 9; i < 15; i++) take(14 - i, 8, i);
-  const rev15 = (v) => {
+  const rev15 = (v: number): number => {
     let r = 0;
     for (let i = 0; i < 15; i++) if ((v >>> i) & 1) r |= 1 << (14 - i);
     return r;
   };
   const candidates = [lsbFirst, rev15(lsbFirst)];
   for (const word of candidates) {
-    if (FORMAT_WORDS.has(word)) {
-      const data = FORMAT_WORDS.get(word);
+    const data = FORMAT_WORDS.get(word);
+    if (data !== undefined) {
       return { ec: data >> 3, mask: data & 0b111 };
     }
   }
-  throw new Error(`format bits ${lsbFirst.toString(16)} are not a valid BCH word (either bit order)`);
+  throw new Error(
+    `format bits ${lsbFirst.toString(16)} are not a valid BCH word (either bit order)`,
+  );
 }
 
 // Function modules per ISO/IEC 18004 §6.3 (functional patterns + format/version
 // areas). Derived from the spec layout, independent of the encoder's table use.
-function functionModules(version) {
+function functionModules(version: number): boolean[][] {
   const size = version * 4 + 17;
-  const fn = Array.from({ length: size }, () => new Array(size).fill(false));
-  const mark = (x, y) => { if (x >= 0 && y >= 0 && x < size && y < size) fn[y][x] = true; };
+  const fn: boolean[][] = Array.from({ length: size }, () => new Array<boolean>(size).fill(false));
+  const mark = (x: number, y: number): void => {
+    if (x >= 0 && y >= 0 && x < size && y < size) req(fn[y])[x] = true;
+  };
   // timing patterns
-  for (let i = 0; i < size; i++) { mark(6, i); mark(i, 6); }
+  for (let i = 0; i < size; i++) {
+    mark(6, i);
+    mark(i, 6);
+  }
   // finders + separators
-  for (const [cx, cy] of [[3, 3], [size - 4, 3], [3, size - 4]]) {
+  for (const [cx, cy] of [
+    [3, 3],
+    [size - 4, 3],
+    [3, size - 4],
+  ] as [number, number][]) {
     for (let dy = -4; dy <= 4; dy++) for (let dx = -4; dx <= 4; dx++) mark(cx + dx, cy + dy);
   }
   // alignment patterns (centre coordinates per annex E construction)
@@ -273,17 +320,21 @@ function functionModules(version) {
     for (let p = size - 7; pos.length < n; p -= step) pos.splice(1, 0, p);
     for (let i = 0; i < pos.length; i++) {
       for (let j = 0; j < pos.length; j++) {
-        const corner = (i === 0 && j === 0)
-          || (i === 0 && j === pos.length - 1)
-          || (i === pos.length - 1 && j === 0);
+        const corner =
+          (i === 0 && j === 0) ||
+          (i === 0 && j === pos.length - 1) ||
+          (i === pos.length - 1 && j === 0);
         if (corner) continue;
-        for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) mark(pos[i] + dx, pos[j] + dy);
+        for (let dy = -2; dy <= 2; dy++)
+          for (let dx = -2; dx <= 2; dx++) mark(req(pos[i]) + dx, req(pos[j]) + dy);
       }
     }
   }
   // format info areas
   for (let i = 0; i <= 5; i++) mark(8, i);
-  mark(8, 7); mark(8, 8); mark(7, 8);
+  mark(8, 7);
+  mark(8, 8);
+  mark(7, 8);
   for (let i = 9; i < 15; i++) mark(14 - i, 8);
   for (let i = 0; i < 8; i++) mark(size - 1 - i, 8);
   for (let i = 8; i < 15; i++) mark(8, size - 15 + i);
@@ -300,7 +351,11 @@ function functionModules(version) {
 
 // EC level M block structure, from the ISO/IEC 18004 capacity tables — the one
 // table a byte-mode level-M decoder cannot avoid. Indexed by version (1-based).
-const RS_BLOCKS_M = [
+interface RsBlockSpec {
+  ecc: number;
+  blocks: [number, number][];
+}
+const RS_BLOCKS_M: (RsBlockSpec | null)[] = [
   null,
   { ecc: 10, blocks: [[1, 16]] }, // v1
   { ecc: 16, blocks: [[1, 26]] }, // v2
@@ -309,19 +364,73 @@ const RS_BLOCKS_M = [
   { ecc: 24, blocks: [[2, 43]] }, // v5
   { ecc: 16, blocks: [[4, 27]] }, // v6
   { ecc: 18, blocks: [[4, 31]] }, // v7
-  { ecc: 22, blocks: [[2, 38], [2, 39]] }, // v8
-  { ecc: 22, blocks: [[3, 36], [2, 37]] }, // v9
-  { ecc: 26, blocks: [[4, 43], [1, 44]] }, // v10
-  { ecc: 30, blocks: [[1, 50], [4, 51]] }, // v11
-  { ecc: 22, blocks: [[6, 36], [2, 37]] }, // v12
-  { ecc: 22, blocks: [[8, 37], [1, 38]] }, // v13
-  { ecc: 24, blocks: [[4, 40], [5, 41]] }, // v14
-  { ecc: 24, blocks: [[5, 41], [5, 42]] }, // v15
-  { ecc: 28, blocks: [[7, 45], [3, 46]] }, // v16
+  {
+    ecc: 22,
+    blocks: [
+      [2, 38],
+      [2, 39],
+    ],
+  }, // v8
+  {
+    ecc: 22,
+    blocks: [
+      [3, 36],
+      [2, 37],
+    ],
+  }, // v9
+  {
+    ecc: 26,
+    blocks: [
+      [4, 43],
+      [1, 44],
+    ],
+  }, // v10
+  {
+    ecc: 30,
+    blocks: [
+      [1, 50],
+      [4, 51],
+    ],
+  }, // v11
+  {
+    ecc: 22,
+    blocks: [
+      [6, 36],
+      [2, 37],
+    ],
+  }, // v12
+  {
+    ecc: 22,
+    blocks: [
+      [8, 37],
+      [1, 38],
+    ],
+  }, // v13
+  {
+    ecc: 24,
+    blocks: [
+      [4, 40],
+      [5, 41],
+    ],
+  }, // v14
+  {
+    ecc: 24,
+    blocks: [
+      [5, 41],
+      [5, 42],
+    ],
+  }, // v15
+  {
+    ecc: 28,
+    blocks: [
+      [7, 45],
+      [3, 46],
+    ],
+  }, // v16
 ];
 
 /** Decode a boolean module grid (byte mode, EC level M) back to its bytes. */
-function decode(grid) {
+function decode(grid: boolean[][]): { bytes: Uint8Array; version: number; mask: number } {
   const size = grid.length;
   const version = (size - 17) / 4;
   const { mask } = readFormat(grid);
@@ -331,26 +440,26 @@ function decode(grid) {
   // remainder bits (ISO/IEC 18004 §8.7.3) which MUST be 0 and are not part of
   // the codeword stream — e.g. version 3 carries 7 of them.
   let free = 0;
-  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) if (!fn[y][x]) free++;
+  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) if (!cell(fn, y, x)) free++;
   const rawCodewords = Math.floor(free / 8);
 
   // zigzag walk, right to left in column pairs, skipping the timing column
-  const bits = [];
-  const unmask = MASK_FN[mask];
+  const bits: number[] = [];
+  const unmask = req(MASK_FN[mask]);
   for (let right = size - 1; right >= 1; right -= 2) {
     if (right === 6) right = 5;
     for (let vert = 0; vert < size; vert++) {
       for (let j = 0; j < 2; j++) {
         const x = right - j;
         const y = ((right + 1) & 2) === 0 ? size - 1 - vert : vert;
-        if (!fn[y][x]) bits.push((grid[y][x] !== unmask(x, y)) ? 1 : 0);
+        if (!cell(fn, y, x)) bits.push(cell(grid, y, x) !== unmask(x, y) ? 1 : 0);
       }
     }
   }
-  const all = [];
+  const all: number[] = [];
   for (let i = 0; i < rawCodewords * 8; i += 8) {
     let b = 0;
-    for (let j = 0; j < 8; j++) b = (b << 1) | bits[i + j];
+    for (let j = 0; j < 8; j++) b = (b << 1) | (bits[i + j] ?? 0);
     all.push(b);
   }
   assert.ok(
@@ -359,36 +468,43 @@ function decode(grid) {
   );
 
   // de-interleave into RS blocks and check each block's error correction
-  const { ecc, blocks } = RS_BLOCKS_M[version];
-  const lens = blocks.flatMap(([count, len]) => new Array(count).fill(len));
-  const dataBlocks = lens.map(() => []);
-  const eccBlocks = lens.map(() => []);
+  const rs = RS_BLOCKS_M[version];
+  if (!rs) throw new Error(`no RS block table for version ${version}`);
+  const { ecc, blocks } = rs;
+  const lens = blocks.flatMap(([count, len]) => new Array<number>(count).fill(len));
+  const dataBlocks: number[][] = lens.map(() => []);
+  const eccBlocks: number[][] = lens.map(() => []);
   let k = 0;
   for (let i = 0; i < Math.max(...lens); i++) {
-    for (let j = 0; j < lens.length; j++) if (i < lens[j]) dataBlocks[j].push(all[k++]);
+    for (let j = 0; j < lens.length; j++)
+      if (i < req(lens[j])) req(dataBlocks[j]).push(req(all[k++]));
   }
   for (let i = 0; i < ecc; i++) {
-    for (let j = 0; j < lens.length; j++) eccBlocks[j].push(all[k++]);
+    for (let j = 0; j < lens.length; j++) req(eccBlocks[j]).push(req(all[k++]));
   }
-  const data = [];
+  const data: number[] = [];
   for (let j = 0; j < lens.length; j++) {
-    const block = dataBlocks[j].concat(eccBlocks[j]);
+    const block = req(dataBlocks[j]).concat(req(eccBlocks[j]));
     assert.ok(rsCheck(block, ecc), `RS block ${j} of a v${version} symbol must check out`);
-    data.push(...dataBlocks[j]);
+    data.push(...req(dataBlocks[j]));
   }
   assert.equal(k, all.length, 'de-interleave consumed every codeword');
 
   // bit stream: 0100 (byte mode) · length · payload · terminator
-  const stream = [];
+  const stream: number[] = [];
   for (const b of data) for (let i = 7; i >= 0; i--) stream.push((b >>> i) & 1);
-  const take = (n) => { let v = 0; for (let i = 0; i < n; i++) v = (v << 1) | stream.shift(); return v; };
+  const take = (n: number): number => {
+    let v = 0;
+    for (let i = 0; i < n; i++) v = (v << 1) | (stream.shift() ?? 0);
+    return v;
+  };
   assert.equal(take(4), 0b0100, 'the stream must open with the byte-mode indicator');
   const len = take(version < 10 ? 8 : 16);
   const bytes = Uint8Array.from({ length: len }, () => take(8));
   return { bytes, version, mask };
 }
 
-function roundTrip(text) {
+function roundTrip(text: string): string {
   const g = toGrid(text, 0);
   assert.ok(g, `${JSON.stringify(text)} must be encodable`);
   const { bytes } = decode(g.grid); // decode() asserts remainder bits are 0
@@ -404,7 +520,7 @@ test('round trip: the matrix decodes back to the exact input bytes', () => {
     'http://[fd00::1]:4711/?t=' + 'deadbeef'.repeat(8), // 76 bytes: multi-block (v5)
   ];
   for (const text of cases) {
-    assert.equal(roundTrip(text), String(text ?? ''), `round trip of ${JSON.stringify(text)}`);
+    assert.equal(roundTrip(text), text, `round trip of ${JSON.stringify(text)}`);
   }
 });
 
@@ -420,33 +536,41 @@ test('round trip: the matrix decodes back to the exact input bytes', () => {
 // exactly, the pad region as a multiset, and the RS parity as a function of
 // the whole data region computed by the decoder's own GF(256).)
 const HELLO_DATA_CW_V1 = [
-  0x40, 0x54, 0x84, 0x54, 0xc4, 0xc4, 0xf0, // mode · len · 'HELLO' · terminator
+  0x40,
+  0x54,
+  0x84,
+  0x54,
+  0xc4,
+  0xc4,
+  0xf0, // mode · len · 'HELLO' · terminator
   // the remaining 9 codewords are pad bytes: four 0xec, four 0x11, and one
   // extra 0xec OR 0x00 depending on where the encoder stops the terminator
 ];
 
 test('HELLO matches the independent reference symbol (segno, byte mode, level M, v1)', () => {
   const g = toGrid('HELLO', 0);
+  assert.ok(g, 'HELLO must be encodable');
   assert.equal(g.size, 21, 'reference is a version-1 symbol');
   const { mask } = readFormat(g.grid); // valid format bits are part of the pin
   const fn = functionModules(1);
-  const unmask = MASK_FN[mask];
+  const unmask = req(MASK_FN[mask]);
   // zigzag walk, same as decode() but keeping the raw stream
-  const bits = [];
+  const bits: number[] = [];
   for (let right = 20; right >= 1; right -= 2) {
     if (right === 6) right = 5;
     for (let vert = 0; vert < 21; vert++) {
       for (let j = 0; j < 2; j++) {
         const x = right - j;
         const y = ((right + 1) & 2) === 0 ? 20 - vert : vert;
-        if (!fn[y][x]) bits.push((g.grid[y][x] !== unmask(x, y)) ? 1 : 0);
+        if (!cell(fn, y, x)) bits.push(cell(g.grid, y, x) !== unmask(x, y) ? 1 : 0);
       }
     }
   }
-  const codewords = [];
-  for (let i = 0; i < 26 * 8; i += 8) { // v1 has 7 trailing remainder bits
+  const codewords: number[] = [];
+  for (let i = 0; i < 26 * 8; i += 8) {
+    // v1 has 7 trailing remainder bits
     let b = 0;
-    for (let j = 0; j < 8; j++) b = (b << 1) | bits[i + j];
+    for (let j = 0; j < 8; j++) b = (b << 1) | (bits[i + j] ?? 0);
     codewords.push(b);
   }
   const data = codewords.slice(0, 16);
@@ -458,10 +582,12 @@ test('HELLO matches the independent reference symbol (segno, byte mode, level M,
   const pads = data.slice(7);
   assert.equal(pads.length, 9);
   assert.ok(
-    pads.every((b) => b === 0xec || b === 0x11 || b === 0x00)
-      && pads.filter((b) => b === 0x00).length <= 1
-      && Math.abs(pads.filter((b) => b === 0xec).length - pads.filter((b) => b === 0x11).length) <= 1,
-    `pad region must be EC 11 alternation (±1 zero terminator codeword), got ${pads.map((b) => b.toString(16))}`,
+    pads.every((b) => b === 0xec || b === 0x11 || b === 0x00) &&
+      pads.filter((b) => b === 0x00).length <= 1 &&
+      Math.abs(pads.filter((b) => b === 0xec).length - pads.filter((b) => b === 0x11).length) <= 1,
+    `pad region must be EC 11 alternation (±1 zero terminator codeword), got ${pads
+      .map((b) => b.toString(16))
+      .join(',')}`,
   );
   // and the RS parity over the data region is exactly the segno reference's:
   // recompute it with the decoder's independent GF(256) and compare against
@@ -472,20 +598,24 @@ test('HELLO matches the independent reference symbol (segno, byte mode, level M,
   // the two layouts share. This is the known-good reference digest.
   const segnoData = HELLO_DATA_CW_V1.concat([0x00, 0xec, 0x11, 0xec, 0x11, 0xec, 0x11, 0xec, 0x11]);
   const segnoParity = [0x2b, 0x74, 0x38, 0x45, 0x78, 0xc2, 0xb1, 0x06, 0x71, 0x6a];
-  assert.deepEqual(rsParity(segnoData, 10), segnoParity, 'decoder RS must reproduce the reference implementation');
+  assert.deepEqual(
+    rsParity(segnoData, 10),
+    segnoParity,
+    'decoder RS must reproduce the reference implementation',
+  );
   // ours differs only in pad placement, so its parity is different but must
   // still be a valid RS parity for ITS data region (checked above).
 });
 
 // RS parity (remainder) of `data` with `eccLen` parity codewords, using the
 // decoder-side GF tables — independent of the encoder's eccOf().
-function rsParity(data, eccLen) {
+function rsParity(data: number[], eccLen: number): number[] {
   const g = rsGenerator(eccLen);
-  const buf = Uint8Array.from(data.concat(new Array(eccLen).fill(0)));
+  const buf = Uint8Array.from(data.concat(new Array<number>(eccLen).fill(0)));
   for (let i = 0; i < data.length; i++) {
-    const factor = buf[i];
+    const factor = req(buf[i]);
     if (factor === 0) continue;
-    for (let j = 0; j < g.length; j++) buf[i + j] ^= gfMul(g[j], factor);
+    for (let j = 0; j < g.length; j++) buf[i + j] = req(buf[i + j]) ^ gfMul(req(g[j]), factor);
   }
   return Array.from(buf.slice(data.length));
 }

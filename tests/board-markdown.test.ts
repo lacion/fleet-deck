@@ -16,7 +16,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { renderMarkdown, planTitle } from '../board/src/markdown.js';
+import { renderMarkdown, planTitle } from '../board/src/markdown.ts';
 
 // The five characters the renderer must neutralise, and their escapes.
 const ESCAPES = {
@@ -39,7 +39,7 @@ test('a <script> payload is escaped, never emitted raw', () => {
 
 test('every dangerous char is escaped in plain paragraph text', () => {
   const out = renderMarkdown(`amp & lt < gt > quot " apos '`);
-  for (const [raw, esc] of Object.entries(ESCAPES)) {
+  for (const esc of Object.values(ESCAPES)) {
     assert.ok(out.includes(esc), `expected ${esc} in output`);
   }
   // and no bare < / > / " / ' leaked as structural characters beyond the
@@ -78,7 +78,7 @@ test('escaping happens INSIDE bold/strong', () => {
 test('escaping happens INSIDE headings', () => {
   const out = renderMarkdown('# <h1>title & "quoted"');
   // exactly one real <h1> wrapper — the injected one is escaped, not doubled
-  assert.equal((out.match(/<h1>/g) || []).length, 1, 'only the renderer\'s own <h1> tag');
+  assert.equal((out.match(/<h1>/g) ?? []).length, 1, "only the renderer's own <h1> tag");
   assert.ok(out.includes('&lt;h1&gt;'), 'the injected <h1> is escaped');
   assert.ok(out.includes('&amp;'));
   assert.ok(out.includes('&quot;quoted&quot;'));
@@ -90,7 +90,7 @@ test('escaping is applied BEFORE tag-wrapping: a payload cannot break out of its
   const out = renderMarkdown('**</strong><script>evil</script>**');
   // the ONLY </strong> is the renderer's matching close tag; the injected one
   // must be escaped
-  assert.equal((out.match(/<\/strong>/g) || []).length, 1);
+  assert.equal((out.match(/<\/strong>/g) ?? []).length, 1);
   assert.ok(out.includes('&lt;/strong&gt;'), 'the injected close tag is escaped');
   assert.ok(!out.includes('<script>'), 'no live script escapes the strong span');
   assert.ok(out.includes('&lt;script&gt;evil&lt;/script&gt;'));
@@ -118,7 +118,7 @@ test('raw HTML anchors / images / autolinks are escaped to inert text, never liv
   // brackets, so an attribute substring like `href=` may survive as inert TEXT
   // (its `<` is escaped, so nothing renders as a tag). The invariant that
   // matters is: no LIVE tag survives.
-  const cases = [
+  const cases: [string, string][] = [
     ['<https://evil.example>', '&lt;https://evil.example&gt;'],
     ['<a href="javascript:alert(1)">x</a>', '&lt;a href=&quot;javascript:alert(1)&quot;&gt;'],
     ['<img src=x onerror=alert(1)>', '&lt;img src=x onerror=alert(1)&gt;'],
