@@ -48,6 +48,33 @@ Format:
 
 <!-- entries appended below as modules convert -->
 
+### spawn-setup.test.ts / retention.ts — BUG-TMUXNULL: a `null as unknown as CoreTmuxAdapter` cast defeated createCore's tmux default; boot retentionSweep dereferenced null   [BUG]
+- **What:** the full serialized suite stayed green (124/124) but `tests/spawn-setup.test.ts`'s
+  `setRepoSetupEntry` case emitted a swallowed stderr line:
+  `fleetd retention sweep error: TypeError: Cannot read properties of null (reading 'spawnOverrideCmd')`
+  at `retention.ts:166:40` (`!!tmuxAdapter.spawnOverrideCmd?.()`), via
+  `createCore` → boot `retentionSweep()` (`derive.ts:1285`). The `?.()` guards the *method call*,
+  not the *adapter access* — so the throw was `tmuxAdapter` itself being **null**, not `spawnOverrideCmd`.
+- **Why it's real (and why strict typing surfaced it):** `createCore`'s option is
+  `tmuxAdapter?: TmuxAdapter` with a real default `= defaultTmuxAdapter` (`derive.ts:242,295`); the
+  ctx type `RetentionCtx.tmuxAdapter` is honestly **non-nullable** (`retention.ts:84`). The test set
+  `tmuxAdapter: null as unknown as CoreTmuxAdapter` — and `CoreTmuxAdapter` is defined as
+  `NonNullable<...['tmuxAdapter']>` (spawn-setup.test.ts:17), so the cast forced `null` onto an
+  explicitly non-null type. A JS default only fills `undefined`, never `null`, so the deliberate
+  `null` *defeated* `defaultTmuxAdapter`, and boot retention read `.spawnOverrideCmd` off null. The
+  `as unknown as` double-cast is exactly the escape hatch strict typing is meant to eliminate: it
+  was the only one of the suite's `as unknown as CoreTmuxAdapter` uses that passed `null` rather than
+  a structural fake, and it papered over a genuine null-deref. Production never hits it — `fleetd.ts:531`
+  *omits* the option and gets the default — which is why the throw only ever appeared under this test's
+  cast, and only as a swallowed boot-sweep log (fire-and-forget `.catch` at `derive.ts:1285`).
+- **Fix:** test-side, honest — **deleted the `tmuxAdapter` line** so `createCore` falls back to
+  `defaultTmuxAdapter` (the `setRepoSetupEntry` case exercises only `repo_setup`, never tmux; the
+  empty `:memory:` db yields no sweep candidates, so the default is a pure no-op at boot). No source
+  change: hardening `retention.ts` to `tmuxAdapter?.…` would defend a state the type forbids — the
+  anti-strict-typing move. Removing the one cast that lied restores type/runtime agreement.
+  Verified: `node tests/spawn-setup.test.ts` (scrubbed env) → 9/9 pass, zero `retention sweep error`
+  lines. Runtime behavior unchanged for every non-test path.
+
 ### helpers.ts — type-guards to carry narrowing, one dead-defense drop, one load-bearing coercion kept   [NOISE]
 - **What:** the pure, closure-free leaf shared across the core (`spawnRowRevivable`,
   `sessionAdoptableNow`, `claudeEnvArgvPrefix`, `createKeyedMutex`, `mapLimit`,

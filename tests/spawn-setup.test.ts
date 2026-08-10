@@ -425,7 +425,11 @@ test('setRepoSetupEntry writes one repo without a broadcast and drops junk', (t)
   const core = createCore(db, {
     port: 4712,
     home: '/tmp/fd-setup-entry-home',
-    tmuxAdapter: null as unknown as CoreTmuxAdapter,
+    // No tmuxAdapter: this test exercises only repo_setup, so let createCore fall
+    // back to defaultTmuxAdapter. Passing `null as unknown as CoreTmuxAdapter`
+    // (a cast past a NonNullable type) used to defeat that default — the boot
+    // retentionSweep then read `.spawnOverrideCmd` off null and threw, swallowed
+    // by derive.ts's fire-and-forget .catch. See ts-migration-bugs.md BUG-TMUXNULL.
   });
   const repoSetup = (): Record<string, string> => core.resolveSettings().repo_setup;
 
