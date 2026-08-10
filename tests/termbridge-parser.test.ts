@@ -5,23 +5,50 @@ import { ControlModeParser, unescapeControlData } from '../scripts/fleetd/termbr
 
 test('control parser incrementally matches response blocks across awkward chunks', () => {
   const parser = new ControlModeParser();
-  const transcript = '%begin 171 9 0\nfirst\n%end 171 8 0\nsecond\n%end 171 9 0\n%begin 172 10 0\nbad target\n%error 172 10 0\n';
-  const chunks = [transcript.slice(0, 2), transcript.slice(2, 19), transcript.slice(19, 37), transcript.slice(37, 63), transcript.slice(63)];
-  const events = chunks.flatMap(chunk => parser.feed(chunk));
+  const transcript =
+    '%begin 171 9 0\nfirst\n%end 171 8 0\nsecond\n%end 171 9 0\n%begin 172 10 0\nbad target\n%error 172 10 0\n';
+  const chunks = [
+    transcript.slice(0, 2),
+    transcript.slice(2, 19),
+    transcript.slice(19, 37),
+    transcript.slice(37, 63),
+    transcript.slice(63),
+  ];
+  const events = chunks.flatMap((chunk) => parser.feed(chunk));
   assert.deepEqual(events, [
-    { type: 'response', key: '171:9', time: '171', number: '9', ok: true, lines: ['first', '%end 171 8 0', 'second'] },
-    { type: 'response', key: '172:10', time: '172', number: '10', ok: false, lines: ['bad target'] },
+    {
+      type: 'response',
+      key: '171:9',
+      time: '171',
+      number: '9',
+      ok: true,
+      lines: ['first', '%end 171 8 0', 'second'],
+    },
+    {
+      type: 'response',
+      key: '172:10',
+      time: '172',
+      number: '10',
+      ok: false,
+      lines: ['bad target'],
+    },
   ]);
 });
 
 test('control parser unescapes output bytes, filters nothing, and ignores unknown notifications', () => {
   // Fed as a Buffer, exactly as the control client's stdout arrives: the
   // parser is a BYTE pipe and must return the pane's bytes untouched.
-  const events = new ControlModeParser().feed(Buffer.from('%layout-change @1 abc\n%output %7 A\\033B\\134C café\n%window-close @4\n%session-changed $0 fleetdeck-4711\n%exit session gone\n', 'utf8'));
+  const events = new ControlModeParser().feed(
+    Buffer.from(
+      '%layout-change @1 abc\n%output %7 A\\033B\\134C café\n%window-close @4\n%session-changed $0 fleetdeck-4711\n%exit session gone\n',
+      'utf8',
+    ),
+  );
   assert.equal(events.length, 4);
-  assert.equal(events[0].type, 'output');
-  assert.equal(events[0].pane, '%7');
-  assert.deepEqual(events[0].data, Buffer.from('A\u001bB\\C café', 'utf8'));
+  const output = events[0];
+  assert.ok(output?.type === 'output', 'the first event is a decoded %output');
+  assert.equal(output.pane, '%7');
+  assert.deepEqual(output.data, Buffer.from('A\u001bB\\C café', 'utf8'));
   assert.deepEqual(events[1], { type: 'window-close', window: '@4' });
   assert.deepEqual(events[2], { type: 'session-changed', session: '$0', name: 'fleetdeck-4711' });
   assert.deepEqual(events[3], { type: 'exit', reason: 'session gone' });
@@ -33,6 +60,7 @@ test('control parser preserves a multibyte UTF-8 character split across Buffer c
   const split = wire.indexOf(Buffer.from('☃')) + 1;
   assert.deepEqual(parser.feed(wire.subarray(0, split)), []);
   const [event] = parser.feed(wire.subarray(split));
+  assert.ok(event?.type === 'output', 'the reassembled event is a %output');
   assert.equal(event.data.toString('utf8'), 'snowman ☃');
 });
 
@@ -51,16 +79,27 @@ test('a glyph split across two %output notifications survives intact', () => {
   const glyph = Buffer.from('─', 'utf8');
   assert.equal(glyph.length, 3, 'sanity: the box rule really is multi-byte');
   const wire = Buffer.concat([
-    Buffer.from('%output %1 ', 'latin1'), glyph.subarray(0, 2), Buffer.from('\n', 'latin1'),
-    Buffer.from('%output %1 ', 'latin1'), glyph.subarray(2), Buffer.from('\n', 'latin1'),
+    Buffer.from('%output %1 ', 'latin1'),
+    glyph.subarray(0, 2),
+    Buffer.from('\n', 'latin1'),
+    Buffer.from('%output %1 ', 'latin1'),
+    glyph.subarray(2),
+    Buffer.from('\n', 'latin1'),
   ]);
   const events = new ControlModeParser().feed(wire);
   assert.equal(events.length, 2);
-  assert.deepEqual(Buffer.concat(events.map(e => e.data)), glyph,
-    'the parser must not re-encode, drop or mangle the split bytes');
+  const outBytes = events.map((e) => {
+    assert.ok('data' in e, 'each %output event carries raw bytes');
+    return e.data;
+  });
+  assert.deepEqual(
+    Buffer.concat(outBytes),
+    glyph,
+    'the parser must not re-encode, drop or mangle the split bytes',
+  );
 
   const decoder = new StringDecoder('utf8');
-  const text = events.map(e => decoder.write(e.data)).join('') + decoder.end();
+  const text = outBytes.map((d) => decoder.write(d)).join('') + decoder.end();
   assert.equal(text, '─', 'a viewer-side decoder reassembles the character');
   assert.ok(!text.includes('\ufffd'), 'no replacement character may reach the browser');
 });

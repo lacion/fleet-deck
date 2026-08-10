@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { chmodSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createTermBridge } from '../scripts/fleetd/termbridge.ts';
+import { createTermBridge, type TermFrame } from '../scripts/fleetd/termbridge.ts';
+import type { SpawnRow } from '../scripts/fleetd/statements.ts';
 
 // BUG-056: tmux flushes `%end …\n%output %N <bytes>\n` for a capture-pane in
 // ONE stdout write. The bridge's stdout handler resolves the capture waiter and
@@ -16,34 +17,49 @@ import { createTermBridge } from '../scripts/fleetd/termbridge.ts';
 // reproducing that single-write flush exactly.
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.join(HERE, 'helpers/term-capture-race-fixture.ts');
-try { chmodSync(FIXTURE, 0o755); } catch { /* best effort */ }
+try {
+  chmodSync(FIXTURE, 0o755);
+} catch {
+  /* best effort */
+}
 
-test('BUG-056: %output flushed in the capture-pane chunk is replayed after the init, not dropped', async t => {
-  const PREV_TERM_CMD = process.env.FLEETDECK_TERM_CMD;
-  process.env.FLEETDECK_TERM_CMD = FIXTURE;
+test('BUG-056: %output flushed in the capture-pane chunk is replayed after the init, not dropped', async (t) => {
+  const PREV_TERM_CMD = process.env['FLEETDECK_TERM_CMD'];
+  process.env['FLEETDECK_TERM_CMD'] = FIXTURE;
   t.after(() => {
-    if (PREV_TERM_CMD === undefined) delete process.env.FLEETDECK_TERM_CMD;
-    else process.env.FLEETDECK_TERM_CMD = PREV_TERM_CMD;
+    if (PREV_TERM_CMD === undefined) delete process.env['FLEETDECK_TERM_CMD'];
+    else process.env['FLEETDECK_TERM_CMD'] = PREV_TERM_CMD;
   });
 
   const bridge = createTermBridge({
     port: 21999,
-    resolveSpawn: async () => ({ status: 'live', tmux_session: 'fleetdeck-21999', tmux_window: 'fd21999-viper' }),
+    // openViewer reads only status/tmux_session/tmux_window off the row; the
+    // fixture supplies exactly those, so widen the partial to the full SpawnRow.
+    resolveSpawn: () =>
+      ({
+        status: 'live',
+        tmux_session: 'fleetdeck-21999',
+        tmux_window: 'fd21999-viper',
+      }) as unknown as SpawnRow,
   });
-  const frames = [];
+  const frames: TermFrame[] = [];
   const handle = await bridge.openViewer({
     spawn_id: 'sp_test',
     cols: 80,
     rows: 24,
-    send: (frame) => frames.push(frame),
+    send: (frame) => {
+      frames.push(frame);
+    },
   });
-  t.after(() => handle.close());
+  t.after(() => {
+    handle.close();
+  });
 
-  const init = frames.find(f => f.t === 'init');
-  assert.ok(init, 'the init frame must ship');
+  const init = frames.find((f) => f.t === 'init');
+  assert.ok(init?.t === 'init', 'the init frame must ship');
   assert.ok(init.screen.includes('seed %1'), 'the captured seed is in the init frame');
   assert.deepEqual(
-    frames.filter(f => f.t === 'out').map(f => f.data),
+    frames.filter((f): f is Extract<TermFrame, { t: 'out' }> => f.t === 'out').map((f) => f.data),
     ['after-capture'],
     'same-chunk post-capture %output must be buffered at subscribe time and replayed after the init frame',
   );
