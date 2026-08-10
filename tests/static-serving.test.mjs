@@ -18,7 +18,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { startDaemon, REPO_ROOT } from './helpers/daemon.ts';
 import { getJson, postHook } from './helpers/http.ts';
-import { loadFixture } from './helpers/fixtures.mjs';
+import { loadFixture } from './helpers/fixtures.ts';
 
 const BOARD_DIST = path.join(REPO_ROOT, 'scripts/fleetd/board-dist');
 

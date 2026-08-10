@@ -32,7 +32,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { startDaemon, randomPort, waitForHealth, REPO_ROOT } from './helpers/daemon.ts';
 import { getJson, postHook } from './helpers/http.ts';
-import { loadFixture } from './helpers/fixtures.mjs';
+import { loadFixture } from './helpers/fixtures.ts';
 import { waitUntil, scaleMs } from './helpers/wait.ts';
 import {
   parseSemver, compareSemver, shouldTakeOver, verifyDaemonPid, pidRecord, replacementMatches,

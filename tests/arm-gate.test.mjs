@@ -185,7 +185,7 @@ test('adopt with dangerously_skip_permissions:true also requires the arm', async
   // Register + genuinely end a session so adopt has a real target row.
   const { randomUUID } = await import('node:crypto');
   const { postHook } = await import('./helpers/http.ts');
-  const { loadFixture } = await import('./helpers/fixtures.mjs');
+  const { loadFixture } = await import('./helpers/fixtures.ts');
   const sid = randomUUID();
   const cwd = scratchDir();
   t.after(() => rmSync(cwd, { recursive: true, force: true }));

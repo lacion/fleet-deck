@@ -20,7 +20,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { startDaemon } from './helpers/daemon.ts';
 import { postHook, getJson } from './helpers/http.ts';
-import { loadFixture } from './helpers/fixtures.mjs';
+import { loadFixture } from './helpers/fixtures.ts';
 
 function findSession(state, sid) {
   return state.sessions.find(s => s.session_id === sid);

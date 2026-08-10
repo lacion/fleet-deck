@@ -29,7 +29,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { startDaemon } from './helpers/daemon.ts';
 import { postHook, postJson, getJson } from './helpers/http.ts';
-import { loadFixture } from './helpers/fixtures.mjs';
+import { loadFixture } from './helpers/fixtures.ts';
 import { makeRepoWithWorktree } from './helpers/gitrepo.mjs';
 
 // The 12-word rotation (pinned). Rotation start = countSessions % 12.

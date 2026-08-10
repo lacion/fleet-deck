@@ -43,8 +43,8 @@ import path from 'node:path';
 import http from 'node:http';
 import { startDaemon, REPO_ROOT } from './helpers/daemon.ts';
 import { postHook, postJson, getJson } from './helpers/http.ts';
-import { loadFixture } from './helpers/fixtures.mjs';
-import { makeTranscriptDir, writeTranscript } from './helpers/transcript.mjs';
+import { loadFixture } from './helpers/fixtures.ts';
+import { makeTranscriptDir, writeTranscript } from './helpers/transcript.ts';
 import { waitUntil, scaleMs } from './helpers/wait.ts';
 
 const WATCH_SCRIPT = path.join(REPO_ROOT, 'scripts/fleet-watch.mjs');

@@ -27,8 +27,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { startDaemon } from './helpers/daemon.ts';
 import { postHook, postJson, getJson } from './helpers/http.ts';
-import { loadFixture } from './helpers/fixtures.mjs';
-import { makeTranscriptDir, writeTranscript } from './helpers/transcript.mjs';
+import { loadFixture } from './helpers/fixtures.ts';
+import { makeTranscriptDir, writeTranscript } from './helpers/transcript.ts';
 import { waitUntil } from './helpers/wait.ts';
 import { resolveHoldMs } from '../scripts/fleetd/questions.ts';
 

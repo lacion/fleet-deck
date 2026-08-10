@@ -32,7 +32,7 @@ import {
   toolUseLine,
   userLine,
   writeTranscriptLines,
-} from './helpers/transcript.mjs';
+} from './helpers/transcript.ts';
 
 const FABLE = 'claude-fable-5';
 const OPUS = 'claude-opus-4-8';

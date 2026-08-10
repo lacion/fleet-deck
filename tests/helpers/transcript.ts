@@ -1,4 +1,4 @@
-// tests/helpers/transcript.mjs — synthetic Claude Code transcript JSONL
+// tests/helpers/transcript.ts — synthetic Claude Code transcript JSONL
 // fixtures for F3d (free-text question detection at Stop).
 //
 // The Stop hook payload does NOT carry `last_assistant_message` per the
@@ -18,9 +18,19 @@ import { appendFileSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
+/** A single transcript JSONL entry — freeform on purpose (tests serialize it
+ *  verbatim to exercise fleetd's tail parser). */
+export type TranscriptEntry = Record<string, unknown>;
+
 /** Fresh scratch dir to hold synthetic transcript files for one test. */
-export function makeTranscriptDir() {
+export function makeTranscriptDir(): string {
   return mkdtempSync(path.join(tmpdir(), 'fleetdeck-transcript-'));
+}
+
+export interface WriteTranscriptOptions {
+  sessionId: string;
+  assistantText: string;
+  userText?: string;
 }
 
 /**
@@ -28,9 +38,16 @@ export function makeTranscriptDir() {
  * assistant message with `assistantText`. Returns the absolute file path,
  * suitable for a Stop payload's `transcript_path`.
  */
-export function writeTranscript(dir, { sessionId, assistantText, userText = 'Please help me pick an approach.' }) {
-  const now = () => new Date().toISOString();
-  const lines = [
+export function writeTranscript(
+  dir: string,
+  {
+    sessionId,
+    assistantText,
+    userText = 'Please help me pick an approach.',
+  }: WriteTranscriptOptions,
+): string {
+  const now = (): string => new Date().toISOString();
+  const lines: TranscriptEntry[] = [
     { type: 'user', sessionId, message: { role: 'user', content: userText }, timestamp: now() },
     {
       type: 'assistant',
@@ -40,7 +57,7 @@ export function writeTranscript(dir, { sessionId, assistantText, userText = 'Ple
     },
   ];
   const file = path.join(dir, `${sessionId}.jsonl`);
-  writeFileSync(file, lines.map(l => JSON.stringify(l)).join('\n') + '\n');
+  writeFileSync(file, lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
   return file;
 }
 
@@ -52,8 +69,18 @@ export function writeTranscript(dir, { sessionId, assistantText, userText = 'Ple
 // entry has any text at all (mid-tool-loop it does not, but it still carries
 // the model — which is exactly what makes it the earliest switch signal).
 
+export interface AssistantLineOptions {
+  model: string;
+  text?: string;
+  isSidechain?: boolean;
+}
+
 /** An assistant turn produced by `model`. `isSidechain` marks a subagent's turn. */
-export function assistantLine({ model, text = 'ok', isSidechain = false }) {
+export function assistantLine({
+  model,
+  text = 'ok',
+  isSidechain = false,
+}: AssistantLineOptions): TranscriptEntry {
   return {
     type: 'assistant',
     isSidechain,
@@ -62,8 +89,13 @@ export function assistantLine({ model, text = 'ok', isSidechain = false }) {
   };
 }
 
+export interface ToolUseLineOptions {
+  model: string;
+  name?: string;
+}
+
 /** An assistant turn mid-tool-loop: carries a model but NO text block. */
-export function toolUseLine({ model, name = 'Bash' }) {
+export function toolUseLine({ model, name = 'Bash' }: ToolUseLineOptions): TranscriptEntry {
   return {
     type: 'assistant',
     isSidechain: false,
@@ -76,8 +108,13 @@ export function toolUseLine({ model, name = 'Bash' }) {
   };
 }
 
+export interface UserLineOptions {
+  text?: string;
+  bulk?: number;
+}
+
 /** A user turn. `bulk` pads the line, to push earlier lines far from EOF. */
-export function userLine({ text = 'go on', bulk = 0 } = {}) {
+export function userLine({ text = 'go on', bulk = 0 }: UserLineOptions = {}): TranscriptEntry {
   return {
     type: 'user',
     message: { role: 'user', content: text + (bulk ? ' ' + 'x'.repeat(bulk) : '') },
@@ -86,14 +123,18 @@ export function userLine({ text = 'go on', bulk = 0 } = {}) {
 }
 
 /** Write `entries` as a transcript JSONL under `dir`. Returns the path. */
-export function writeTranscriptLines(dir, sessionId, entries) {
+export function writeTranscriptLines(
+  dir: string,
+  sessionId: string,
+  entries: TranscriptEntry[],
+): string {
   const file = path.join(dir, `${sessionId}.jsonl`);
-  writeFileSync(file, entries.map(e => JSON.stringify(e)).join('\n') + '\n');
+  writeFileSync(file, entries.map((e) => JSON.stringify(e)).join('\n') + '\n');
   return file;
 }
 
 /** Append more turns to an existing transcript, as a live session would. */
-export function appendTranscriptLines(file, entries) {
-  appendFileSync(file, entries.map(e => JSON.stringify(e)).join('\n') + '\n');
+export function appendTranscriptLines(file: string, entries: TranscriptEntry[]): string {
+  appendFileSync(file, entries.map((e) => JSON.stringify(e)).join('\n') + '\n');
   return file;
 }

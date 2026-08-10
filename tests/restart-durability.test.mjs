@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { startDaemon, randomPort } from './helpers/daemon.ts';
 import { postHook, getJson } from './helpers/http.ts';
-import { loadFixture } from './helpers/fixtures.mjs';
+import { loadFixture } from './helpers/fixtures.ts';
 
 test('restart durability: same FLEETDECK_HOME after kill+restart still has the sessions', async (t) => {
   const home = mkdtempSync(path.join(tmpdir(), 'fleetdeck-home-'));

@@ -73,7 +73,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { startDaemon, randomPort } from './helpers/daemon.ts';
 import { postHook, postJson, getJson } from './helpers/http.ts';
-import { loadFixture } from './helpers/fixtures.mjs';
+import { loadFixture } from './helpers/fixtures.ts';
 import { waitUntil, waitForSpecRecords } from './helpers/wait.ts';
 import { fileURLToPath } from 'node:url';
 

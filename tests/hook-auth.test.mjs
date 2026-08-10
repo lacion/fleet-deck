@@ -22,7 +22,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { startDaemon } from './helpers/daemon.ts';
 import { postHook, postJson, getJson, rawRequest } from './helpers/http.ts';
-import { loadFixture } from './helpers/fixtures.mjs';
+import { loadFixture } from './helpers/fixtures.ts';
 import { waitUntil } from './helpers/wait.ts';
 import { openDb } from '../scripts/fleetd/db.ts';
 import { createCore } from '../scripts/fleetd/derive.ts';

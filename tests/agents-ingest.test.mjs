@@ -33,7 +33,7 @@ import { startDaemon } from './helpers/daemon.ts';
 import { postHook, getJson } from './helpers/http.ts';
 import { waitUntil as waitUntilBase } from './helpers/wait.ts';
 import { openDb } from '../scripts/fleetd/db.ts';
-import { loadFixture } from './helpers/fixtures.mjs';
+import { loadFixture } from './helpers/fixtures.ts';
 import { makeRepoWithWorktree } from './helpers/gitrepo.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));

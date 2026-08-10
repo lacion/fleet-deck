@@ -23,7 +23,7 @@ import { randomUUID } from 'node:crypto';
 import { WebSocket } from 'ws';
 import { startDaemon } from './helpers/daemon.ts';
 import { postHook } from './helpers/http.ts';
-import { loadFixture } from './helpers/fixtures.mjs';
+import { loadFixture } from './helpers/fixtures.ts';
 
 // A single raw HTTP request with fully controlled headers and (optionally) a
 // body written in explicit parts, so a multibyte char can be split across the

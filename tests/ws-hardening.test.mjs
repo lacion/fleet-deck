@@ -14,7 +14,7 @@ import { randomUUID } from 'node:crypto';
 import { WebSocket } from 'ws';
 import { randomPort, spawnRaw, startDaemon } from './helpers/daemon.ts';
 import { postHook } from './helpers/http.ts';
-import { loadFixture } from './helpers/fixtures.mjs';
+import { loadFixture } from './helpers/fixtures.ts';
 import { waitUntil as waitUntilBase, waitForResponse, nonInternalIpv4s } from './helpers/wait.ts';
 import { openDb } from '../scripts/fleetd/db.ts';
 

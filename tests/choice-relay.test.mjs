@@ -25,7 +25,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { startDaemon } from './helpers/daemon.ts';
 import { postHook, postJson, getJson } from './helpers/http.ts';
-import { loadFixture } from './helpers/fixtures.mjs';
+import { loadFixture } from './helpers/fixtures.ts';
 import { waitUntil, scaleMs } from './helpers/wait.ts';
 
 const FIXTURE_QUESTION = 'Should this project use bcrypt or argon2 for password hashing?';

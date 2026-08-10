@@ -21,7 +21,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { startDaemon, REPO_ROOT } from './helpers/daemon.ts';
 import { postHook, getJson } from './helpers/http.ts';
-import { loadFixture } from './helpers/fixtures.mjs';
+import { loadFixture } from './helpers/fixtures.ts';
 
 const HOOKS_JSON = path.join(REPO_ROOT, 'hooks', 'hooks.json');
 const SHIM = path.join(REPO_ROOT, 'scripts', 'fleet-hook.mjs');

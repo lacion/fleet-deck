@@ -35,7 +35,7 @@ import path from 'node:path';
 
 import { startDaemon } from './helpers/daemon.ts';
 import { getJson, postHook } from './helpers/http.ts';
-import { loadFixture } from './helpers/fixtures.mjs';
+import { loadFixture } from './helpers/fixtures.ts';
 import {
   appendTranscriptLines,
   assistantLine,
@@ -43,7 +43,7 @@ import {
   toolUseLine,
   userLine,
   writeTranscriptLines,
-} from './helpers/transcript.mjs';
+} from './helpers/transcript.ts';
 
 const FABLE = 'claude-fable-5';
 const OPUS = 'claude-opus-4-8';

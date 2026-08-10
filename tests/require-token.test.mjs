@@ -23,7 +23,7 @@ import { randomUUID } from 'node:crypto';
 import { WebSocket } from 'ws';
 import { randomPort, spawnRaw, startDaemon } from './helpers/daemon.ts';
 import { waitForResponse, scaleMs } from './helpers/wait.ts';
-import { loadFixture } from './helpers/fixtures.mjs';
+import { loadFixture } from './helpers/fixtures.ts';
 
 // >= 16 characters after trimming, or the daemon refuses to start.
 const TOKEN = 'require-token-suite-0123456789abcdef';
