@@ -1,7 +1,7 @@
-// tests/audit-hardening.test.mjs — regression coverage for the audit's
+// tests/audit-hardening.test.ts — regression coverage for the audit's
 // local diagnostic/launcher resource and permission boundaries.
 
-import test from 'node:test';
+import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
@@ -25,15 +25,39 @@ const REPO_ROOT = path.resolve(HERE, '..');
 const WATCH = path.join(REPO_ROOT, 'scripts/fleet-watch.mjs');
 const SESSIONSTART = path.join(REPO_ROOT, 'scripts/fleet-sessionstart.mjs');
 
-function scratch(t, prefix = 'fleetdeck-audit-') {
+interface ExitResult {
+  code: number | null;
+  signal: NodeJS.Signals | null;
+}
+interface CapturePayload {
+  prompt?: string;
+  contents?: string;
+  index?: number;
+}
+interface CaptureRecord {
+  payload: CapturePayload;
+}
+interface WatchObservation {
+  paused?: boolean;
+  removed: string[];
+}
+
+// process._getActiveHandles is an undocumented internal, absent from @types/node.
+function activeHandleCount(): number {
+  return (process as unknown as { _getActiveHandles: () => unknown[] })._getActiveHandles().length;
+}
+
+function scratch(t: TestContext, prefix = 'fleetdeck-audit-'): string {
   const dir = mkdtempSync(path.join(tmpdir(), prefix));
-  t.after(() => rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+  t.after(() => {
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
   return dir;
 }
 
-function exitOf(child, timeoutMs = 6000) {
-  return new Promise((resolve, reject) => {
-    const onExit = (code, signal) => {
+function exitOf(child: EventEmitter, timeoutMs = 6000): Promise<ExitResult> {
+  return new Promise<ExitResult>((resolve, reject) => {
+    const onExit = (code: number | null, signal: NodeJS.Signals | null): void => {
       clearTimeout(timer);
       resolve({ code, signal });
     };
@@ -46,7 +70,7 @@ function exitOf(child, timeoutMs = 6000) {
 }
 
 test('exitOf clears its timeout when the child exits first and drops the listener when the timeout wins', async () => {
-  const handlesBefore = process._getActiveHandles().length;
+  const handlesBefore = activeHandleCount();
 
   // Exit path: a settled child must not leave its timeout timer referenced.
   const fast = new EventEmitter();
@@ -54,7 +78,7 @@ test('exitOf clears its timeout when the child exits first and drops the listene
   fast.emit('exit', 0, null);
   assert.deepEqual(await fastWait, { code: 0, signal: null });
   assert.ok(
-    process._getActiveHandles().length <= handlesBefore,
+    activeHandleCount() <= handlesBefore,
     'a prompt child exit must not leave the timeout timer referenced',
   );
 
@@ -67,19 +91,22 @@ test('exitOf clears its timeout when the child exits first and drops the listene
 test('payload capture is off by default and enabled only by the explicit on flag', (t) => {
   const home = scratch(t);
   const file = path.join(home, 'hook-payloads.jsonl');
-  const previous = process.env.FLEETDECK_CAPTURE_PAYLOADS;
+  const previous = process.env['FLEETDECK_CAPTURE_PAYLOADS'];
   t.after(() => {
-    if (previous === undefined) delete process.env.FLEETDECK_CAPTURE_PAYLOADS;
-    else process.env.FLEETDECK_CAPTURE_PAYLOADS = previous;
+    if (previous === undefined) delete process.env['FLEETDECK_CAPTURE_PAYLOADS'];
+    else process.env['FLEETDECK_CAPTURE_PAYLOADS'] = previous;
   });
 
-  delete process.env.FLEETDECK_CAPTURE_PAYLOADS;
+  delete process.env['FLEETDECK_CAPTURE_PAYLOADS'];
   createPayloadCapture(home)('Stop', { prompt: 'must not persist' });
   assert.equal(existsSync(file), false, 'default capture must not even create the file');
 
-  process.env.FLEETDECK_CAPTURE_PAYLOADS = 'on';
+  process.env['FLEETDECK_CAPTURE_PAYLOADS'] = 'on';
   createPayloadCapture(home)('Stop', { prompt: 'diagnostic' });
-  assert.equal(JSON.parse(readFileSync(file, 'utf8')).payload.prompt, 'diagnostic');
+  assert.equal(
+    (JSON.parse(readFileSync(file, 'utf8')) as CaptureRecord).payload.prompt,
+    'diagnostic',
+  );
   assert.equal(statSync(file).mode & 0o777, 0o600, 'new capture files are owner-only');
 });
 
@@ -95,15 +122,22 @@ test('payload capture repairs/creates mode 0600, bounds huge values, and keeps f
   assert.equal(statSync(file).mode & 0o777, 0o600);
   const lines = readFileSync(file, 'utf8').trim().split('\n');
   assert.equal(lines.length, 3, 'only the first three records for an event are retained');
-  assert.ok(Buffer.byteLength(lines[0]) < 2_000, 'the giant value was projected before line serialization');
-  assert.match(JSON.parse(lines[0]).payload.contents, /\[truncated\]$/);
+  const [first] = lines;
+  assert.ok(first !== undefined, 'the first retained record must exist');
+  assert.ok(
+    Buffer.byteLength(first) < 2_000,
+    'the giant value was projected before line serialization',
+  );
+  assert.match((JSON.parse(first) as CaptureRecord).payload.contents ?? '', /\[truncated\]$/);
 });
 
 test('fleet-watch stops at its stdin byte ceiling and removes every stream listener', async (t) => {
   const home = scratch(t);
   const marker = path.join(home, 'stdin-cleanup.json');
   const preload = path.join(home, 'observe-stdin.cjs');
-  writeFileSync(preload, `
+  writeFileSync(
+    preload,
+    `
     const fs = require('node:fs');
     const input = process.stdin;
     const removed = [];
@@ -114,7 +148,8 @@ test('fleet-watch stops at its stdin byte ceiling and removes every stream liste
       fs.writeFileSync(${JSON.stringify(marker)}, JSON.stringify(removed));
       return pause();
     };
-  `);
+  `,
+  );
 
   const child = spawn(process.execPath, [WATCH], {
     env: {
@@ -125,20 +160,26 @@ test('fleet-watch stops at its stdin byte ceiling and removes every stream liste
     },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
-  child.stdin.on('error', () => {}); // expected EPIPE when the capped reader exits
-  child.stdin.write(`{"session_id":"sid","padding":"${'x'.repeat(70_000)}`);
+  const stdin = child.stdin;
+  assert.ok(stdin, 'child stdin must be piped');
+  stdin.on('error', () => {
+    /* expected EPIPE when the capped reader exits */
+  });
+  stdin.write(`{"session_id":"sid","padding":"${'x'.repeat(70_000)}`);
 
   const result = await exitOf(child, 2500);
   assert.deepEqual(result, { code: 0, signal: null });
-  assert.deepEqual(readFileSync(marker, 'utf8') && JSON.parse(readFileSync(marker, 'utf8')).sort(),
-    ['data', 'end', 'error']);
+  const raw = readFileSync(marker, 'utf8');
+  assert.deepEqual(raw && (JSON.parse(raw) as string[]).sort(), ['data', 'end', 'error']);
 });
 
 test('fleet-watch timeout uses the same listener cleanup and pauses stdin', async (t) => {
   const home = scratch(t);
   const marker = path.join(home, 'stdin-timeout-cleanup.json');
   const preload = path.join(home, 'observe-timeout.cjs');
-  writeFileSync(preload, `
+  writeFileSync(
+    preload,
+    `
     const fs = require('node:fs');
     const input = process.stdin;
     const removed = [];
@@ -155,7 +196,8 @@ test('fleet-watch timeout uses the same listener cleanup and pauses stdin', asyn
       fs.writeFileSync(${JSON.stringify(marker)}, JSON.stringify({ removed, paused: true }));
       return pause();
     };
-  `);
+  `,
+  );
 
   const child = spawn(process.execPath, [WATCH], {
     env: {
@@ -167,11 +209,15 @@ test('fleet-watch timeout uses the same listener cleanup and pauses stdin', asyn
     },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
-  child.stdin.on('error', () => {});
-  child.stdin.write('{"session_id":"timeout-sid"}'); // deliberately no EOF
+  const stdin = child.stdin;
+  assert.ok(stdin, 'child stdin must be piped');
+  stdin.on('error', () => {
+    /* sandbox may EPIPE the child pipe immediately */
+  });
+  stdin.write('{"session_id":"timeout-sid"}'); // deliberately no EOF
 
   assert.deepEqual(await exitOf(child, 8000), { code: 0, signal: null });
-  const observed = JSON.parse(readFileSync(marker, 'utf8'));
+  const observed = JSON.parse(readFileSync(marker, 'utf8')) as WatchObservation;
   assert.equal(observed.paused, true);
   assert.deepEqual(observed.removed.sort(), ['data', 'end', 'error']);
 });
@@ -194,7 +240,9 @@ test('SessionStart launcher repairs fleetd.log to 0600', async (t) => {
     },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
-  child.stdin.end(JSON.stringify({ session_id: `audit-${port}`, cwd: home }));
+  const stdin = child.stdin;
+  assert.ok(stdin, 'child stdin must be piped');
+  stdin.end(JSON.stringify({ session_id: `audit-${port}`, cwd: home }));
   assert.deepEqual(await exitOf(child), { code: 0, signal: null });
   assert.equal(statSync(log).mode & 0o777, 0o600);
 
@@ -204,16 +252,24 @@ test('SessionStart launcher repairs fleetd.log to 0600', async (t) => {
     try {
       const rawPid = readFileSync(pidFile, 'utf8').trim();
       let pid = Number(rawPid); // legacy pidfile
-      try { pid = JSON.parse(rawPid).pid; } catch { /* legacy format */ }
+      try {
+        pid = (JSON.parse(rawPid) as { pid: number }).pid;
+      } catch {
+        /* legacy format */
+      }
       process.kill(pid, 'SIGTERM');
-    } catch { /* already gone */ }
+    } catch {
+      /* already gone */
+    }
   }
 });
 
 test('SessionStart silently absorbs an asynchronous spawn error', async (t) => {
   const home = scratch(t);
   const preload = path.join(home, 'fail-spawn.cjs');
-  writeFileSync(preload, `
+  writeFileSync(
+    preload,
+    `
     const childProcess = require('node:child_process');
     const { EventEmitter } = require('node:events');
     childProcess.spawn = () => {
@@ -223,7 +279,8 @@ test('SessionStart silently absorbs an asynchronous spawn error', async (t) => {
       return child;
     };
     require('node:module').syncBuiltinESMExports();
-  `);
+  `,
+  );
 
   const child = spawn(process.execPath, [SESSIONSTART], {
     env: {
@@ -235,8 +292,14 @@ test('SessionStart silently absorbs an asynchronous spawn error', async (t) => {
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   let stderr = '';
-  child.stderr.on('data', chunk => { stderr += chunk; });
-  child.stdin.end('{}');
+  const childStderr = child.stderr;
+  assert.ok(childStderr, 'child stderr must be piped');
+  childStderr.on('data', (chunk: Buffer) => {
+    stderr += chunk.toString();
+  });
+  const stdin = child.stdin;
+  assert.ok(stdin, 'child stdin must be piped');
+  stdin.end('{}');
 
   assert.deepEqual(await exitOf(child), { code: 0, signal: null });
   assert.equal(stderr, '', 'the command hook keeps its silent-failure contract');

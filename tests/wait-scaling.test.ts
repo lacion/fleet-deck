@@ -29,45 +29,68 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const TARGET = path.join(HERE, 'spawn-repo.test.mjs');
 const PROBE = path.join(HERE, 'helpers/wait-scaling-probe.ts');
 
+interface ProbeVerdict {
+  exported?: string;
+  ok?: boolean;
+}
+
 test('every waitUntil in spawn-repo.test.mjs is the scaled shared helper (BUG-176)', async () => {
   // Every authored waitUntil must route through the ONE exported binding; a
   // second, file-local definition would add occurrences beyond that count.
   // (The import line contributes 1, the test-only export re-declaration 2,
   // and each call site 1 — the exact split is pinned by the count.)
-  const occurrences = (readFileSync(TARGET, 'utf8').match(/\bwaitUntil\b/g) || []).length;
-  const callSites = (readFileSync(TARGET, 'utf8').match(/[^.\w]waitUntil\(/g) || []).length;
-  assert.equal(occurrences, callSites + 3,
-    `expected ${callSites} call sites + import + export declaration (2); got ${occurrences} occurrences — a file-local waitUntil may have crept back in`);
+  const source = readFileSync(TARGET, 'utf8');
+  const occurrences = (source.match(/\bwaitUntil\b/g) ?? []).length;
+  const callSites = (source.match(/[^.\w]waitUntil\(/g) ?? []).length;
+  assert.equal(
+    occurrences,
+    callSites + 3,
+    `expected ${callSites} call sites + import + export declaration (2); got ${occurrences} occurrences — a file-local waitUntil may have crept back in`,
+  );
 
   // Scrub NODE_TEST_CONTEXT from the child's environment: node REFUSES to run
   // `node --test` recursively inside a test worker ("node:test run() is being
   // called recursively ... skipping running files") and silently exits 0 with
   // empty stdout. The probe must be a real, fresh test run.
-  const probeEnv = {
+  const probeEnv: NodeJS.ProcessEnv = {
     ...process.env,
     FLEETDECK_TEST_WAIT_SCALE: '2',
     FLEETDECK_PROBE_TARGET: TARGET,
   };
-  delete probeEnv.NODE_TEST_CONTEXT;
-  let stdout, code = 0;
+  delete probeEnv['NODE_TEST_CONTEXT'];
+  let stdout: string;
+  let code: number | undefined = 0;
   try {
-    ({ stdout } = await execFileP(process.execPath, ['--test', PROBE], {
+    const done = await execFileP(process.execPath, ['--test', PROBE], {
       cwd: HERE,
       env: probeEnv,
       maxBuffer: 4 * 1024 * 1024,
       timeout: 60_000,
       killSignal: 'SIGKILL',
-    }));
+    });
+    stdout = done.stdout;
   } catch (err) {
-    code = err.code;
-    stdout = err.stdout ?? '';
+    const failure = err as { code?: number; stdout?: string | Buffer };
+    code = failure.code;
+    stdout = failure.stdout?.toString() ?? '';
   }
   // The probe runs UNDER `node --test`, whose TAP reporter comments the child
   // module's stdout (`# PROBE {...}`) — match with or without the prefix.
-  const verdict = stdout.match(/^#?\s*PROBE (.+)$/m)?.[1];
-  assert.ok(verdict, `probe subprocess emitted no verdict (exit ${code}): ${stdout.trim().split('\n').pop()}`);
-  const { exported, ok } = JSON.parse(verdict);
-  assert.equal(exported, 'function', 'spawn-repo.test.mjs must export its waitUntil binding for the scale check');
-  assert.equal(ok, true, 'the waitUntil used by spawn-repo.test.mjs is NOT the scaled shared helper');
+  const verdict = /^#?\s*PROBE (.+)$/m.exec(stdout)?.[1];
+  assert.ok(
+    verdict,
+    `probe subprocess emitted no verdict (exit ${String(code)}): ${String(stdout.trim().split('\n').pop())}`,
+  );
+  const { exported, ok } = JSON.parse(verdict) as ProbeVerdict;
+  assert.equal(
+    exported,
+    'function',
+    'spawn-repo.test.mjs must export its waitUntil binding for the scale check',
+  );
+  assert.equal(
+    ok,
+    true,
+    'the waitUntil used by spawn-repo.test.mjs is NOT the scaled shared helper',
+  );
   assert.equal(code, 0);
 });

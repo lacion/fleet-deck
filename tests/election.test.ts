@@ -1,4 +1,4 @@
-// tests/election.test.mjs
+// tests/election.test.ts
 //
 // Daemon election rules. Two distinct collisions:
 //   1. Cross-HOME, same port: plain "first bind wins" — the loser exits 3 on
@@ -18,6 +18,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startDaemon, spawnRaw, randomPort, waitForHealth } from './helpers/daemon.ts';
 
+interface HealthBody {
+  pid?: number;
+  version?: string;
+}
+
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 test('a second daemon on the same port loses the election and exits with code 3', async (t) => {
@@ -30,13 +35,21 @@ test('a second daemon on the same port loses the election and exits with code 3'
   });
 
   const winner = await startDaemon({ port, home: homeA });
-  t.after(async () => { await winner.stop(); });
+  t.after(async () => {
+    await winner.stop();
+  });
 
   const loser = spawnRaw({ port, home: homeB });
-  t.after(async () => { await loser.kill(); });
+  t.after(async () => {
+    await loser.kill();
+  });
 
   const code = await loser.waitForExit(10000);
-  assert.equal(code, 3, `loser should exit 3 on EADDRINUSE, got ${code}. stderr: ${loser.stderr}`);
+  assert.equal(
+    code,
+    3,
+    `loser should exit 3 on EADDRINUSE, got ${String(code)}. stderr: ${loser.stderr}`,
+  );
 
   // The winner should be completely unaffected.
   const health = await fetch(`${winner.baseUrl}/health`);
@@ -52,15 +65,31 @@ test('a second daemon on the same port loses the election and exits with code 3'
 test('a malformed FLEETDECK_PORT refuses to start before claiming HOME (no stale pidfile)', async (t) => {
   for (const bad of ['banana', '4711.5', '-1', '70000']) {
     const home = mkdtempSync(path.join(tmpdir(), 'fleetdeck-badport-'));
-    t.after(() => { rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+    t.after(() => {
+      rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    });
 
-    const refused = spawnRaw({ port: bad, home });
-    t.after(async () => { await refused.kill(); });
+    const refused = spawnRaw({ port: bad as unknown as number, home });
+    t.after(async () => {
+      await refused.kill();
+    });
 
     const code = await refused.waitForExit(10000);
-    assert.equal(code, 1, `FLEETDECK_PORT='${bad}' should exit 1, got ${code}. stderr: ${refused.stderr}`);
-    assert.match(refused.stderr, /FLEETDECK_PORT/, `stderr should name the offending variable. stderr: ${refused.stderr}`);
-    assert.equal(existsSync(path.join(home, 'fleetd.pid')), false, `FLEETDECK_PORT='${bad}' must not leave a pidfile behind`);
+    assert.equal(
+      code,
+      1,
+      `FLEETDECK_PORT='${bad}' should exit 1, got ${String(code)}. stderr: ${refused.stderr}`,
+    );
+    assert.match(
+      refused.stderr,
+      /FLEETDECK_PORT/,
+      `stderr should name the offending variable. stderr: ${refused.stderr}`,
+    );
+    assert.equal(
+      existsSync(path.join(home, 'fleetd.pid')),
+      false,
+      `FLEETDECK_PORT='${bad}' must not leave a pidfile behind`,
+    );
   }
 });
 
@@ -76,7 +105,9 @@ test('a malformed FLEETDECK_PORT refuses to start before claiming HOME (no stale
 test('a strictly newer same-HOME daemon supersedes the older incumbent instead of dying at claimHome', async (t) => {
   const port = randomPort();
   const home = mkdtempSync(path.join(tmpdir(), 'fleetdeck-reelect-home-'));
-  t.after(() => rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+  t.after(() => {
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
 
   // The incumbent reports 0.0.1; the challenger reports 99.0.0 (both via the
   // test-only override, so the ordering does not depend on package.json).
@@ -84,48 +115,82 @@ test('a strictly newer same-HOME daemon supersedes the older incumbent instead o
   const incumbentPid = incumbent.proc.pid;
 
   const challenger = spawnRaw({ port, home, env: { FLEETDECK_VERSION_OVERRIDE: '99.0.0' } });
-  t.after(async () => { await challenger.kill(); });
+  t.after(async () => {
+    await challenger.kill();
+  });
 
   // The incumbent is gracefully superseded (exit 0 via SIGTERM shutdown, not
   // a hard kill), and the challenger takes over the SAME port + home.
-  await new Promise((resolve) => {
-    if (incumbent.proc.exitCode !== null) return resolve();
-    incumbent.proc.once('exit', resolve);
-    setTimeout(resolve, 10000);
+  await new Promise<void>((resolve) => {
+    if (incumbent.proc.exitCode !== null) {
+      resolve();
+      return;
+    }
+    incumbent.proc.once('exit', () => {
+      resolve();
+    });
+    setTimeout(() => {
+      resolve();
+    }, 10000);
   });
-  assert.equal(incumbent.proc.exitCode, 0,
-    `the older incumbent must exit 0 via its graceful shutdown (got ${incumbent.proc.exitCode}; challenger stderr: ${challenger.stderr})`);
+  assert.equal(
+    incumbent.proc.exitCode,
+    0,
+    `the older incumbent must exit 0 via its graceful shutdown (got ${String(incumbent.proc.exitCode)}; challenger stderr: ${challenger.stderr})`,
+  );
 
   const health = await waitForHealth(`http://127.0.0.1:${port}`, 8000);
-  assert.equal(health.version, '99.0.0', 'the strictly newer challenger owns the port');
+  assert.equal(health['version'], '99.0.0', 'the strictly newer challenger owns the port');
   assert.notEqual(health.pid, incumbentPid, 'the survivor is the challenger, not the incumbent');
-  assert.equal(challenger.proc.exitCode, null, 'the challenger must still be running (claimHome did not refuse it)');
+  assert.equal(
+    challenger.proc.exitCode,
+    null,
+    'the challenger must still be running (claimHome did not refuse it)',
+  );
 });
 
 test('an older or equal same-HOME challenger is refused and leaves the incumbent serving', async (t) => {
   const port = randomPort();
   const home = mkdtempSync(path.join(tmpdir(), 'fleetdeck-reelect-older-home-'));
-  t.after(() => rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+  t.after(() => {
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
 
-  const incumbent = await startDaemon({ port, home, env: { FLEETDECK_VERSION_OVERRIDE: '99.0.0' } });
-  t.after(async () => { await incumbent.stop(); });
+  const incumbent = await startDaemon({
+    port,
+    home,
+    env: { FLEETDECK_VERSION_OVERRIDE: '99.0.0' },
+  });
+  t.after(async () => {
+    await incumbent.stop();
+  });
   const before = incumbent.proc.pid;
 
   // OLDER challenger: must never evict — and never boot. claimHome refuses
   // with exit 1 (startupFatal), as it always has for a live same-HOME lock.
   const older = spawnRaw({ port, home, env: { FLEETDECK_VERSION_OVERRIDE: '0.0.1' } });
-  t.after(async () => { await older.kill(); });
-  assert.equal(await older.waitForExit(10000), 1,
-    `an older challenger must be refused at claimHome (stderr: ${older.stderr})`);
+  t.after(async () => {
+    await older.kill();
+  });
+  assert.equal(
+    await older.waitForExit(10000),
+    1,
+    `an older challenger must be refused at claimHome (stderr: ${older.stderr})`,
+  );
   assert.match(older.stderr, /already used by live fleetd pid/);
 
   // EQUAL challenger: equal never evicts (the takeover contract's own rule).
   const equal = spawnRaw({ port, home, env: { FLEETDECK_VERSION_OVERRIDE: '99.0.0' } });
-  t.after(async () => { await equal.kill(); });
-  assert.equal(await equal.waitForExit(10000), 1,
-    `an equal-version challenger must be refused at claimHome (stderr: ${equal.stderr})`);
+  t.after(async () => {
+    await equal.kill();
+  });
+  assert.equal(
+    await equal.waitForExit(10000),
+    1,
+    `an equal-version challenger must be refused at claimHome (stderr: ${equal.stderr})`,
+  );
 
-  const health = await (await fetch(`http://127.0.0.1:${port}/health`)).json();
+  const health = (await (await fetch(`http://127.0.0.1:${port}/health`)).json()) as HealthBody;
   assert.equal(health.pid, before, 'the incumbent is untouched by older/equal challengers');
   assert.equal(health.version, '99.0.0');
 });
@@ -133,25 +198,39 @@ test('an older or equal same-HOME challenger is refused and leaves the incumbent
 test('a newer challenger never supersedes a MANAGED incumbent (the service owns HOME+port)', async (t) => {
   const port = randomPort();
   const home = mkdtempSync(path.join(tmpdir(), 'fleetdeck-reelect-managed-home-'));
-  t.after(() => rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+  t.after(() => {
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
 
   // A managed daemon pinned OLDER — exactly the build the takeover contract
   // exists to evict, except a supervisor owns it and will restart whatever is
   // killed: evicting it restarts the very race FLEETDECK_MANAGED prevents.
   const svc = await startDaemon({
-    port, home,
+    port,
+    home,
     env: { FLEETDECK_VERSION_OVERRIDE: '0.0.1', FLEETDECK_MANAGED: '1' },
   });
-  t.after(async () => { await svc.stop(); });
+  t.after(async () => {
+    await svc.stop();
+  });
   const svcPid = svc.proc.pid;
 
   const challenger = spawnRaw({ port, home, env: { FLEETDECK_VERSION_OVERRIDE: '99.0.0' } });
-  t.after(async () => { await challenger.kill(); });
-  assert.equal(await challenger.waitForExit(10000), 1,
-    `a challenger against a managed incumbent must be refused (stderr: ${challenger.stderr})`);
+  t.after(async () => {
+    await challenger.kill();
+  });
+  assert.equal(
+    await challenger.waitForExit(10000),
+    1,
+    `a challenger against a managed incumbent must be refused (stderr: ${challenger.stderr})`,
+  );
 
-  const health = await (await fetch(`http://127.0.0.1:${port}/health`)).json();
-  assert.equal(health.pid, svcPid, 'the managed incumbent must be the SAME process — never superseded');
+  const health = (await (await fetch(`http://127.0.0.1:${port}/health`)).json()) as HealthBody;
+  assert.equal(
+    health.pid,
+    svcPid,
+    'the managed incumbent must be the SAME process — never superseded',
+  );
   assert.equal(health.version, '0.0.1');
   assert.equal(svc.proc.exitCode, null, 'the managed daemon was never signalled');
 });
@@ -159,21 +238,34 @@ test('a newer challenger never supersedes a MANAGED incumbent (the service owns 
 test('a MANAGED challenger never fights for HOME, even against an older unmanaged incumbent', async (t) => {
   const port = randomPort();
   const home = mkdtempSync(path.join(tmpdir(), 'fleetdeck-reelect-managed-challenger-home-'));
-  t.after(() => rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+  t.after(() => {
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
 
   const incumbent = await startDaemon({ port, home, env: { FLEETDECK_VERSION_OVERRIDE: '0.0.1' } });
-  t.after(async () => { await incumbent.stop(); });
+  t.after(async () => {
+    await incumbent.stop();
+  });
   const incumbentPid = incumbent.proc.pid;
 
   // The managed build is strictly NEWER — but it is supervised, so boot-time
   // eviction would put it in the hook/supervisor race. It must be refused and
   // let the supervisor's own restart cadence converge instead.
-  const managed = spawnRaw({ port, home, env: { FLEETDECK_VERSION_OVERRIDE: '99.0.0', FLEETDECK_MANAGED: '1' } });
-  t.after(async () => { await managed.kill(); });
-  assert.equal(await managed.waitForExit(10000), 1,
-    `a managed challenger must be refused rather than fight for HOME (stderr: ${managed.stderr})`);
+  const managed = spawnRaw({
+    port,
+    home,
+    env: { FLEETDECK_VERSION_OVERRIDE: '99.0.0', FLEETDECK_MANAGED: '1' },
+  });
+  t.after(async () => {
+    await managed.kill();
+  });
+  assert.equal(
+    await managed.waitForExit(10000),
+    1,
+    `a managed challenger must be refused rather than fight for HOME (stderr: ${managed.stderr})`,
+  );
 
-  const health = await (await fetch(`http://127.0.0.1:${port}/health`)).json();
+  const health = (await (await fetch(`http://127.0.0.1:${port}/health`)).json()) as HealthBody;
   assert.equal(health.pid, incumbentPid, 'the unmanaged incumbent keeps serving');
   assert.equal(incumbent.proc.exitCode, null, 'the incumbent was never signalled');
 });
@@ -188,7 +280,9 @@ test('startDaemon refuses a /health answered by a different pid (BUG-164)', asyn
   });
 
   const winner = await startDaemon({ port, home: homeA });
-  t.after(async () => { await winner.stop(); });
+  t.after(async () => {
+    await winner.stop();
+  });
 
   // The loser's child exits 3 after losing the bind while /health keeps
   // answering with the winner's pid. startDaemon must reject — it must never
@@ -197,7 +291,7 @@ test('startDaemon refuses a /health answered by a different pid (BUG-164)', asyn
   await assert.rejects(
     startDaemon({ port, home: homeB, healthTimeoutMs: 3000 }),
     /pid/i,
-    'a /health body naming another pid must not be accepted as proof of readiness'
+    'a /health body naming another pid must not be accepted as proof of readiness',
   );
 });
 
@@ -221,5 +315,8 @@ test('startDaemon rejects when the child exits before any /health answer (BUG-16
     }),
     /exited with code/,
   );
-  assert.ok(Date.now() - start < 30000, 'should fail fast on child exit, not poll until the health timeout');
+  assert.ok(
+    Date.now() - start < 30000,
+    'should fail fast on child exit, not poll until the health timeout',
+  );
 });
