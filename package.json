@@ -44,6 +44,7 @@
     "build:board": "cd board && bun install && bun run build",
     "smoke": "bash demo/run-smoke.sh",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p board/tsconfig.json",
+    "typecheck:board-tests": "tsc --noEmit -p tsconfig.board-tests.json",
     "lint": "eslint \"**/*.ts\" \"**/*.tsx\" \"**/*.mts\" \"**/*.cts\" --no-error-on-unmatched-pattern",
     "lint:fix": "eslint \"**/*.ts\" \"**/*.tsx\" \"**/*.mts\" \"**/*.cts\" --fix --no-error-on-unmatched-pattern",
     "format": "prettier --write --no-error-on-unmatched-pattern \"**/*.{ts,tsx,mts,cts}\"",

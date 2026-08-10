@@ -42,6 +42,13 @@
     "node_modules",
     "board",
     "scripts/fleetd/fleetd.bundle.mjs",
-    "scripts/fleetd/board-dist"
+    "scripts/fleetd/board-dist",
+    // These three tests statically import board/src/*.ts (browser modules that
+    // reference DOM globals). This program is the DOM-less daemon — pulling those
+    // imports in here would surface DOM errors that aren't the daemon's. They are
+    // type-checked under tsconfig.board-tests.json (root + DOM lib) instead.
+    "tests/board-util.test.ts",
+    "tests/board-termdiag.test.ts",
+    "tests/board-markdown.test.ts"
   ]
 }
