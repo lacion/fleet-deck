@@ -1,4 +1,4 @@
-// tests/run-nonce.test.mjs
+// tests/run-nonce.test.ts
 //
 // THE RUN NONCE MUST IDENTIFY THE CLI PROCESS, NOT THE HOOK INVOCATION.
 //
@@ -15,16 +15,18 @@
 // Consequences: hook-only sessions never tombstoned on exit, an armed
 // move-to-tmux could never fire, and HOME grew a file per hook.
 
-import test from 'node:test';
+import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readdirSync, rmSync, writeFileSync, utimesSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pruneRunNonces, runFileFor, runKey, runNonce } from '../scripts/fleetd/run-nonce.ts';
 
-function home(t) {
+function home(t: TestContext) {
   const dir = mkdtempSync(path.join(tmpdir(), 'fd-runnonce-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+  t.after(() => {
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
   return dir;
 }
 
@@ -39,18 +41,24 @@ test('every hook of ONE CLI process gets the SAME nonce, whatever its parent she
   assert.ok(a, 'a nonce must be minted');
   assert.equal(a, b, 'a second hook of the same CLI must reuse the nonce');
   assert.equal(b, c, 'and a third');
-  const files = readdirSync(dir).filter(f => f.startsWith('run-'));
-  assert.deepEqual(files, [`run-4242`],
-    `exactly ONE nonce file per CLI process; got ${JSON.stringify(files)}`);
+  const files = readdirSync(dir).filter((f) => f.startsWith('run-'));
+  assert.deepEqual(
+    files,
+    [`run-4242`],
+    `exactly ONE nonce file per CLI process; got ${JSON.stringify(files)}`,
+  );
 });
 
 test('a --resume (new CLI process, same session id) gets a NEW nonce — the guard still works', (t) => {
   const dir = home(t);
   const first = runNonce(dir, { CLAUDE_PID: '4242' }, 1001);
   const resumed = runNonce(dir, { CLAUDE_PID: '9999' }, 1001);
-  assert.notEqual(resumed, first,
-    'a different CLI process must not inherit the previous run nonce, or a delayed '
-    + 'SessionEnd from the dead process would tombstone the live resumed one');
+  assert.notEqual(
+    resumed,
+    first,
+    'a different CLI process must not inherit the previous run nonce, or a delayed ' +
+      'SessionEnd from the dead process would tombstone the live resumed one',
+  );
 });
 
 test('CLAUDE_PID is preferred; ppid is only the last-resort fallback', () => {

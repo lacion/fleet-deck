@@ -1,19 +1,21 @@
-// tests/db-perms.test.mjs — regression coverage for BUG #6 (world-readable
+// tests/db-perms.test.ts — regression coverage for BUG #6 (world-readable
 // state). The July audit hardened the token file and fleetd.log to 0600 but
 // missed the SQLite store, which holds session cwds, callsigns, mail, commands,
 // plan text and raw permission/question payloads. openDb must pin fleetd.db —
 // and its WAL/SHM sidecars — owner-only. Pure: opens a DB directly, no daemon.
 
-import test from 'node:test';
+import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { chmodSync, existsSync, mkdtempSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { openDb } from '../scripts/fleetd/db.ts';
 
-function scratch(t, prefix = 'fleetdeck-dbperms-') {
+function scratch(t: TestContext, prefix = 'fleetdeck-dbperms-') {
   const dir = mkdtempSync(path.join(tmpdir(), prefix));
-  t.after(() => rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+  t.after(() => {
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
   return dir;
 }
 
@@ -27,7 +29,13 @@ test('openDb pins fleetd.db and its WAL/SHM sidecars to owner-only (0600)', (t) 
   const home = scratch(t);
   const dbFile = path.join(home, 'fleetd.db');
   const db = openDb(dbFile);
-  t.after(() => { try { db.close(); } catch { /* already closed */ } });
+  t.after(() => {
+    try {
+      db.close();
+    } catch {
+      /* already closed */
+    }
+  });
 
   // Force real WAL activity so the -wal/-shm sidecars exist while we stat them
   // (they are created lazily on first write, and a checkpoint at close can
@@ -47,14 +55,24 @@ test('openDb pins fleetd.db and its WAL/SHM sidecars to owner-only (0600)', (t) 
   // group/other bits) on whichever are present.
   for (const sidecar of [`${dbFile}-wal`, `${dbFile}-shm`]) {
     if (!existsSync(sidecar)) continue;
-    assert.equal(statSync(sidecar).mode & 0o077, 0, `${path.basename(sidecar)} must not be group/other-accessible`);
+    assert.equal(
+      statSync(sidecar).mode & 0o077,
+      0,
+      `${path.basename(sidecar)} must not be group/other-accessible`,
+    );
   }
 });
 
 test('openDb(":memory:") does not throw trying to chmod a pathless DB', (t) => {
   // Existing suites open in-memory DBs; the pathless chmod must be swallowed.
   const db = openDb(':memory:');
-  t.after(() => { try { db.close(); } catch { /* already closed */ } });
+  t.after(() => {
+    try {
+      db.close();
+    } catch {
+      /* already closed */
+    }
+  });
   assert.ok(db, 'in-memory DB opens without a filesystem chmod throwing');
 });
 
@@ -72,7 +90,13 @@ test('openDb refuses to hand back a DB whose owner-only mode cannot be establish
   // Case 1: chmod throws (EPERM on a shared HOME / chmod-refusing filesystem).
   const eperm = Object.assign(new Error('operation not permitted'), { code: 'EPERM' });
   assert.throws(
-    () => openDb(dbFile, { chmodSync: () => { throw eperm; }, statSync }),
+    () =>
+      openDb(dbFile, {
+        chmodSync: () => {
+          throw eperm;
+        },
+        statSync,
+      }),
     /owner-only confidentiality could not be established/,
     'a chmod refusal on the main DB file must abort startup, not silently serve a permissive DB',
   );
@@ -80,10 +104,13 @@ test('openDb refuses to hand back a DB whose owner-only mode cannot be establish
   // Case 2: chmod "succeeds" but the mode never tightens (filesystem without
   // real mode bits) — the post-chmod stat verification must catch it.
   assert.throws(
-    () => openDb(dbFile, {
-      chmodSync: () => {},
-      statSync: (p) => Object.assign(statSync(p), { mode: 0o100644 }),
-    }),
+    () =>
+      openDb(dbFile, {
+        chmodSync: () => {
+          /* chmod "succeeds" but the mode never tightens (a mode-bit-less FS) */
+        },
+        statSync: (p) => Object.assign(statSync(p), { mode: 0o100644 }),
+      }),
     /owner-only confidentiality could not be established/,
     'a post-chmod stat that still shows group/other access must abort startup',
   );
@@ -91,22 +118,30 @@ test('openDb refuses to hand back a DB whose owner-only mode cannot be establish
   // Case 3: the refusal must not fire for a lazily ABSENT WAL sidecar (ENOENT
   // is expected at open time), only for a sidecar that exists but cannot be
   // pinned owner-only.
-  const enoentOnWal = (p, m) => {
-    if (p.endsWith('-wal')) throw Object.assign(new Error('no such file or directory'), { code: 'ENOENT' });
-    return chmodSync(p, m);
+  const enoentOnWal = (p: string, m: number) => {
+    if (p.endsWith('-wal'))
+      throw Object.assign(new Error('no such file or directory'), { code: 'ENOENT' });
+    chmodSync(p, m);
   };
   const db = openDb(dbFile, { chmodSync: enoentOnWal, statSync });
-  t.after(() => { try { db.close(); } catch { /* already closed */ } });
+  t.after(() => {
+    try {
+      db.close();
+    } catch {
+      /* already closed */
+    }
+  });
   assert.ok(db, 'a lazily absent WAL sidecar (ENOENT) must not trip the refusal');
 
   assert.throws(
-    () => openDb(dbFile, {
-      chmodSync: (p, m) => {
-        if (p.endsWith('-shm')) throw eperm;
-        return chmodSync(p, m);
-      },
-      statSync,
-    }),
+    () =>
+      openDb(dbFile, {
+        chmodSync: (p, m) => {
+          if (p.endsWith('-shm')) throw eperm;
+          chmodSync(p, m);
+        },
+        statSync,
+      }),
     /sidecar owner-only confidentiality could not be established/,
     'an existing sidecar whose chmod fails must also abort startup',
   );
@@ -125,9 +160,15 @@ test('openDb still opens a pre-existing DB and tolerates lazily absent sidecars'
   first.close();
 
   const db = openDb(dbFile);
-  t.after(() => { try { db.close(); } catch { /* already closed */ } });
+  t.after(() => {
+    try {
+      db.close();
+    } catch {
+      /* already closed */
+    }
+  });
   assert.equal(
-    db.prepare('SELECT cwd FROM sessions WHERE session_id = ?').get('preexisting')?.cwd,
+    db.prepare('SELECT cwd FROM sessions WHERE session_id = ?').get('preexisting')?.['cwd'],
     '/x',
     'a re-opened owner-only DB with absent sidecars must still work',
   );

@@ -1,4 +1,4 @@
-// tests/release-gate.test.mjs — BUG-002 regression coverage.
+// tests/release-gate.test.ts — BUG-002 regression coverage.
 //
 // The hook-integrity CI gate used to treat any version-bearing PATHNAME change
 // as a version bump: edit package.json's description, leave all four manifests
@@ -11,7 +11,7 @@
 // These tests build scratch git repos and run the real checker script against
 // them — no mocks of the version comparison.
 
-import test from 'node:test';
+import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
@@ -21,21 +21,27 @@ import { fileURLToPath } from 'node:url';
 
 const CHECKER = fileURLToPath(new URL('../scripts/check-release-gate.mjs', import.meta.url));
 
-function git(args, cwd) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+function git(args: string[], cwd: string) {
+  return execFileSync('git', args, {
+    cwd,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }).trim();
 }
 
-const manifest = (version, extra = '') =>
+const manifest = (version: string, extra = '') =>
   `{"name":"fleetdeck","version":"${version}"${extra}}\n`;
-const pluginJson = (version) => `{"name":"fleetdeck","version":"${version}"}\n`;
-const marketplaceJson = (version) =>
+const pluginJson = (version: string) => `{"name":"fleetdeck","version":"${version}"}\n`;
+const marketplaceJson = (version: string) =>
   `{"name":"fleetdeck","plugins":[{"name":"fleetdeck","source":"./","version":"${version}"}]}\n`;
 
 // A scratch repo at `version` with the full release-manifest set and one
 // watched hook file, committed on the default branch.
-function makeReleaseRepo(t, version) {
+function makeReleaseRepo(t: TestContext, version: string) {
   const root = mkdtempSync(path.join(tmpdir(), 'fleetdeck-gate-'));
-  t.after(() => rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+  t.after(() => {
+    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
 
   git(['init', '-q'], root);
   git(['config', 'user.email', 'test@fleetdeck.local'], root);
@@ -54,24 +60,35 @@ function makeReleaseRepo(t, version) {
   return root;
 }
 
-function commitAll(root, message) {
+function commitAll(root: string, message: string) {
   git(['add', '.'], root);
   git(['commit', '-q', '-m', message], root);
 }
 
-function bumpAllManifests(root, version) {
+function bumpAllManifests(root: string, version: string) {
   writeFileSync(path.join(root, 'package.json'), manifest(version));
   writeFileSync(path.join(root, '.claude-plugin/plugin.json'), pluginJson(version));
   writeFileSync(path.join(root, '.claude-plugin/marketplace.json'), marketplaceJson(version));
   writeFileSync(path.join(root, 'board/package.json'), manifest(version));
 }
 
-function runGate(root, base, head = 'HEAD') {
+interface SpawnFailure {
+  status: number;
+  stdout?: string;
+  stderr?: string;
+}
+
+function runGate(root: string, base: string, head = 'HEAD') {
   try {
-    const stdout = execFileSync('node', [CHECKER, base, head], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    const stdout = execFileSync('node', [CHECKER, base, head], {
+      cwd: root,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
     return { status: 0, output: stdout };
   } catch (err) {
-    return { status: err.status, output: `${err.stdout ?? ''}${err.stderr ?? ''}` };
+    const e = err as SpawnFailure;
+    return { status: e.status, output: `${e.stdout ?? ''}${e.stderr ?? ''}` };
   }
 }
 

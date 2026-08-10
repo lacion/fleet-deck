@@ -1,4 +1,4 @@
-// tests/release-version.test.mjs
+// tests/release-version.test.ts
 //
 // BUG-003 — the publish workflow used to compare the tag only with
 // package.json, so a release could ship with package.json bumped while
@@ -8,7 +8,7 @@
 // these tests pin the contract it enforces: the tag and all four manifests must
 // agree exactly.
 
-import test from 'node:test';
+import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
@@ -20,12 +20,16 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 const script = path.join(repoRoot, 'scripts', 'check-release-version.mjs');
 
 // A minimal repo-shaped fixture: every file the verifier reads, nothing else.
-function makeFixture(t, { version } = {}) {
+function makeFixture(t: TestContext, { version }: { version?: string } = {}) {
   const root = mkdtempSync(path.join(tmpdir(), 'fleetdeck-release-version-'));
-  t.after(() => rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+  t.after(() => {
+    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
   mkdirSync(path.join(root, '.claude-plugin'), { recursive: true });
   mkdirSync(path.join(root, 'board'), { recursive: true });
-  const write = (rel, data) => writeFileSync(path.join(root, rel), JSON.stringify(data, null, 2) + '\n');
+  const write = (rel: string, data: unknown) => {
+    writeFileSync(path.join(root, rel), JSON.stringify(data, null, 2) + '\n');
+  };
   write('package.json', { name: 'fleetdeck', version });
   write('.claude-plugin/plugin.json', { name: 'fleetdeck', version });
   write('.claude-plugin/marketplace.json', { plugins: [{ name: 'fleetdeck', version }] });
@@ -33,7 +37,7 @@ function makeFixture(t, { version } = {}) {
   return root;
 }
 
-function run(...args) {
+function run(...args: string[]) {
   return spawnSync(process.execPath, [script, ...args], { encoding: 'utf8' });
 }
 
@@ -60,8 +64,12 @@ test('a tag that disagrees with the manifests fails', (t) => {
 test('a stale marketplace manifest fails', (t) => {
   const root = makeFixture(t, { version: '0.21.0' });
   const marketplacePath = path.join(root, '.claude-plugin', 'marketplace.json');
-  const marketplace = JSON.parse(readFileSync(marketplacePath, 'utf8'));
-  marketplace.plugins[0].version = '0.20.0';
+  const marketplace = JSON.parse(readFileSync(marketplacePath, 'utf8')) as {
+    plugins: { version: string }[];
+  };
+  const entry = marketplace.plugins[0];
+  assert.ok(entry, 'fixture marketplace has a plugin entry');
+  entry.version = '0.20.0';
   writeFileSync(marketplacePath, JSON.stringify(marketplace, null, 2) + '\n');
   const result = run('v0.21.0', root);
   assert.equal(result.status, 1, 'a stale marketplace.json must fail the verifier');
@@ -71,7 +79,7 @@ test('a stale marketplace manifest fails', (t) => {
 test('a stale board manifest fails', (t) => {
   const root = makeFixture(t, { version: '0.21.0' });
   const boardPath = path.join(root, 'board', 'package.json');
-  const board = JSON.parse(readFileSync(boardPath, 'utf8'));
+  const board = JSON.parse(readFileSync(boardPath, 'utf8')) as { version: string };
   board.version = '0.20.0';
   writeFileSync(boardPath, JSON.stringify(board, null, 2) + '\n');
   const result = run('v0.21.0', root);
@@ -82,7 +90,7 @@ test('a stale board manifest fails', (t) => {
 test('a stale plugin manifest fails', (t) => {
   const root = makeFixture(t, { version: '0.21.0' });
   const pluginPath = path.join(root, '.claude-plugin', 'plugin.json');
-  const plugin = JSON.parse(readFileSync(pluginPath, 'utf8'));
+  const plugin = JSON.parse(readFileSync(pluginPath, 'utf8')) as { version: string };
   plugin.version = '0.20.0';
   writeFileSync(pluginPath, JSON.stringify(plugin, null, 2) + '\n');
   const result = run('v0.21.0', root);
