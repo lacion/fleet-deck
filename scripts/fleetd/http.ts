@@ -26,9 +26,9 @@ import { createTermBridge } from './termbridge.ts';
 // typechecks against derive without a hand-maintained interface.
 import type { createCore } from './derive.ts';
 // F1a HOSTILE-boundary validators, imported from the shared wire contracts by
-// explicit `.ts` specifier (the TS source of truth). Node >=22.18 strips the
-// types on load; the esbuild bundle inlines them as plain JS, which is what the
-// engine floor (22.13) runs. See docs/v1/ts-migration.md.
+// explicit `.ts` specifier (the TS source of truth). Node >=22.18 (the engine
+// floor) strips the types on load; the esbuild bundle inlines them as plain JS,
+// which is what ships to end users. See docs/v1/ts-migration.md.
 import { validateHookEvent, validateSpawnRequest } from '../../contracts/index.ts';
 
 const MAX_BODY = 1e6;

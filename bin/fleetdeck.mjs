@@ -146,12 +146,12 @@ async function status(args = []) {
   }
   return 0;
 }
-var MIN_NODE_RANGE = "^22.13.0 || >=24.0.0";
+var MIN_NODE_RANGE = "^22.18.0 || >=24.0.0";
 function nodeVersionSupported(version2) {
   const isNan = (n) => n !== void 0 && Number.isNaN(n);
   const [major, minor] = String(version2).split(".").map(Number);
   if (isNan(major) || isNan(minor)) return false;
-  if (major === 22) return minor !== void 0 && minor >= 13;
+  if (major === 22) return minor !== void 0 && minor >= 18;
   if (major === 23) return false;
   return major !== void 0 && major >= 24;
 }
@@ -168,7 +168,7 @@ async function doctor() {
   const warnings = [];
   if (!nodeVersionSupported(process.versions.node)) {
     problems.push(
-      `Node ${process.versions.node} is too old \u2014 fleetd needs ${MIN_NODE_RANGE} for node:sqlite (no polyfill exists)`
+      `Node ${process.versions.node} is too old \u2014 fleetd needs ${MIN_NODE_RANGE} (Node 23 unsupported)`
     );
   }
   if (!await onPath("tmux")) {

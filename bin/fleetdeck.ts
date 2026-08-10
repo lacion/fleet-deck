@@ -235,11 +235,13 @@ async function status(args: string[] = []): Promise<number> {
 // ------------------------------------------------------------------ doctor
 
 // The supported Node range, kept in lockstep with package.json `engines`.
-// node:sqlite shipped behind --experimental-sqlite in 22.5 and only loads
-// WITHOUT the flag from 22.13.0 (and 24.x), so the floor is 22.13 — an older
-// Node in the 22 line satisfies `>=22.5` yet fails module linking with
-// ERR_UNKNOWN_BUILTIN_MODULE before fleetd opens its listener.
-const MIN_NODE_RANGE = '^22.13.0 || >=24.0.0';
+// node:sqlite loads WITHOUT --experimental-sqlite from 22.13.0 (and 24.x), so
+// the daemon's storage works from 22.13 — but the supported floor is 22.18, the
+// first release that runs the project's TypeScript sources with native type-
+// stripping and no flag. Aligning the floor there gives source and shipped
+// bundle a single Node floor; 22.13–22.17 (node:sqlite present, no unflagged
+// strip) and the odd 23 line are out of the supported range.
+const MIN_NODE_RANGE = '^22.18.0 || >=24.0.0';
 function nodeVersionSupported(version: unknown): boolean {
   // Number.isNaN(undefined) is false, so a bare-major version ('24', no dot)
   // must fall through to the >= 24 check exactly as it did untyped; mimic that
@@ -247,7 +249,7 @@ function nodeVersionSupported(version: unknown): boolean {
   const isNan = (n: number | undefined): boolean => n !== undefined && Number.isNaN(n);
   const [major, minor] = String(version).split('.').map(Number);
   if (isNan(major) || isNan(minor)) return false;
-  if (major === 22) return minor !== undefined && minor >= 13;
+  if (major === 22) return minor !== undefined && minor >= 18;
   if (major === 23) return false;
   return major !== undefined && major >= 24;
 }
@@ -271,7 +273,7 @@ async function doctor(): Promise<number> {
 
   if (!nodeVersionSupported(process.versions.node)) {
     problems.push(
-      `Node ${process.versions.node} is too old — fleetd needs ${MIN_NODE_RANGE} for node:sqlite (no polyfill exists)`,
+      `Node ${process.versions.node} is too old — fleetd needs ${MIN_NODE_RANGE} (Node 23 unsupported)`,
     );
   }
 
@@ -645,8 +647,9 @@ function supervisorAlive(): number {
 // before `serve` ever runs. require(esm) loads it SYNCHRONOUSLY so this stays a
 // sync predicate for its callers and tests; healthIsOurManagedDaemon, being
 // async, dynamic-imports the same module. NOTE: require()/import() of a .ts
-// source needs the source-run floor (Node >= 22.18 / >= 24), a step above the
-// 22.13 runtime floor — the shipped artifact runs from the plain-JS bundle, and
+// source needs native type-stripping (Node >= 22.18 / >= 24) — the same range
+// as the supported floor now, so this path never asks for a newer Node than the
+// CLI already requires. The shipped artifact runs from the plain-JS bundle, and
 // this source path is only reached on a full checkout (a bundle-only install
 // never ships scripts/fleetd/, so this require throws there exactly as it did
 // when it was takeover.mjs — a pre-existing, unshipped path).

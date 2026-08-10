@@ -78,15 +78,18 @@ test('tmux version parser enforces 3.4+ and rejects unknown output', () => {
   assert.match(tmuxVersionCapability('unknown').reason, /version is unknown/);
 });
 
-// BUG-020: node:sqlite loads WITHOUT --experimental-sqlite only from 22.13.0
-// (and 24.x), so the declared floor must exclude 22.5–22.12 — those versions
-// satisfy the old >=22.5 engine range yet die with ERR_UNKNOWN_BUILTIN_MODULE
-// before fleetd opens its listener.
-test('node engine floor rejects 22.5–22.12 and Node 23, accepts 22.13+ and 24+', () => {
-  assert.equal(nodeVersionSupported('22.5.1'), false, '22.5 was the old floor but cannot load node:sqlite unflagged');
-  assert.equal(nodeVersionSupported('22.12.0'), false, 'last flagged 22.x is still too old');
-  assert.equal(nodeVersionSupported('22.13.0'), true, 'first unflagged 22.x');
-  assert.equal(nodeVersionSupported('22.18.0'), true);
+// BUG-020 + TS-migration floor raise: node:sqlite loads unflagged from 22.13.0,
+// but the supported floor is 22.18 — the first release that runs the project's
+// TypeScript sources with native type-stripping and no flag (the daemon source
+// and the test suite both import `.ts` directly). So the floor now excludes not
+// just 22.5–22.12 (no unflagged node:sqlite) but also 22.13–22.17 (node:sqlite
+// present, no unflagged strip); source and shipped bundle share one Node floor.
+test('node engine floor rejects <22.18 and Node 23, accepts 22.18+ and 24+', () => {
+  assert.equal(nodeVersionSupported('22.5.1'), false, '22.5 cannot load node:sqlite unflagged');
+  assert.equal(nodeVersionSupported('22.12.0'), false, 'last flagged node:sqlite 22.x');
+  assert.equal(nodeVersionSupported('22.13.0'), false, 'node:sqlite works here but there is no unflagged type-strip');
+  assert.equal(nodeVersionSupported('22.17.1'), false, 'last 22.x before unflagged type-stripping');
+  assert.equal(nodeVersionSupported('22.18.0'), true, 'first 22.x with unflagged native type-stripping — the floor');
   assert.equal(nodeVersionSupported('23.0.0'), false, 'the odd 23 line is unsupported');
   assert.equal(nodeVersionSupported('24.0.0'), true);
   assert.equal(nodeVersionSupported('25.1.0'), true);
@@ -97,7 +100,7 @@ test('node engine floor rejects 22.5–22.12 and Node 23, accepts 22.13+ and 24+
 test('node engine floor matches the declared package.json engines range', () => {
   const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
   assert.equal(pkg.engines.node, MIN_NODE_RANGE, 'doctor text and engines must not drift apart');
-  assert.equal(MIN_NODE_RANGE, '^22.13.0 || >=24.0.0');
+  assert.equal(MIN_NODE_RANGE, '^22.18.0 || >=24.0.0');
 });
 
 // Save/clear every FLEETDECK_* var (so a stray one in the ambient environment

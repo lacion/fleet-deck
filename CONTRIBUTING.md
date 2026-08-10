@@ -20,9 +20,10 @@ npm run build:board         # → scripts/fleetd/board-dist/
 
 ## Prerequisites
 
-- **Node ^22.13.0 || >=24.0.0** — a hard floor, not a suggestion. The daemon keeps
-  its state in Node's built-in `node:sqlite`, which shipped behind a flag in 22.5
-  and only loads WITHOUT `--experimental-sqlite` from 22.13.0 (and 24.x). Node 23
+- **Node ^22.18.0 || >=24.0.0** — a hard floor, not a suggestion. The daemon keeps
+  its state in Node's built-in `node:sqlite` (unflagged from 22.13), but the floor
+  is 22.18: the first release that runs the TypeScript sources with native type-
+  stripping and no flag, so source and shipped bundle share one Node floor. Node 23
   is unsupported. There is no polyfill and no fallback; an older Node won't boot
   the daemon.
 - **tmux 3.4+** — needed for anything spawn-, terminal-, or pane-related, and
@@ -146,7 +147,7 @@ restart the daemon before the plugin sees it.
 - **Artifacts regenerated and committed.** Bundle for `scripts/fleetd/` changes,
   `board-dist/` for `board/` changes.
 - **No new runtime dependencies without prior discussion.** `ws` is the *only*
-  runtime dependency, and the README promises users "Node 22.13+ and that's the
+  runtime dependency, and the README promises users "Node 22.18+ and that's the
   whole list." Adding to that list breaks a promise; open an issue first.
 - **No model calls in the daemon core.** This is a hard design constraint, not a
   code-style note. The core is deterministic — telemetry, routing, conflict
