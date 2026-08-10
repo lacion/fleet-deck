@@ -19,18 +19,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { MAX_RECONNECT, reconnectPlan, refusedUpgradeText } from '../board/src/termDiag.js';
+import { MAX_RECONNECT, reconnectPlan, refusedUpgradeText } from '../board/src/termDiag.ts';
 
 test('a held key still blames the key (it may be stale)', () => {
   for (const gates of [true, false, null, undefined]) {
     const text = refusedUpgradeText(true, gates);
-    assert.match(text, /key may be stale/, `held key, gates=${gates}`);
+    assert.match(text, /key may be stale/, `held key, gates=${String(gates)}`);
   }
 });
 
 test('no key + a gating daemon keeps the 0.16.0 missing-key wording', () => {
   const text = refusedUpgradeText(false, true);
-  assert.match(text, /no key/, 'the gated loopback case is the one the original wording exists for');
+  assert.match(
+    text,
+    /no key/,
+    'the gated loopback case is the one the original wording exists for',
+  );
   assert.match(text, /fleetdeck token/);
 });
 
@@ -50,7 +54,7 @@ test('an unknown capability falls back to the historical key-based inference', (
   // cannot know the mode, and the gated default is the safe assumption.
   for (const gates of [null, undefined]) {
     const text = refusedUpgradeText(false, gates);
-    assert.match(text, /no key/, `gates=${gates} must degrade to the pre-fix inference`);
+    assert.match(text, /no key/, `gates=${String(gates)} must degrade to the pre-fix inference`);
   }
 });
 
@@ -74,7 +78,7 @@ test('a transient close (frames were seen) retries with backoff', () => {
 test('backoff is capped so a wall of tiles cannot storm a daemon still booting', () => {
   for (let n = 0; n < MAX_RECONNECT; n++) {
     const plan = reconnectPlan(true, n);
-    assert.equal(plan.action, 'retry');
+    assert.ok(plan.action === 'retry', `attempt ${n} must retry`);
     assert.ok(plan.delayMs <= 5000, `attempt ${n} must stay capped, got ${plan.delayMs}`);
   }
 });

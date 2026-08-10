@@ -18,26 +18,47 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { installStaleChunkGuard } from '../board/src/staleChunks.js';
+import { installStaleChunkGuard } from '../board/src/staleChunks.ts';
+
+// The event shape the guard actually reads (its own PreloadErrorEvent type is
+// not exported); preventDefault is optional to match a bare dispatched event.
+interface PreloadEvt {
+  preventDefault?: () => void;
+}
+type Listener = (event: PreloadEvt) => void;
 
 // Minimal window double: event registry, reload spy, and a sessionStorage
-// polyfill backed by a Map.
-function makeWindow() {
-  const listeners = new Map();
-  const storage = new Map();
-  const win = {
+// polyfill backed by a Map. Structurally a superset of the guard's
+// StaleChunkWindow, plus the `reloads` spy and `dispatch` the tests drive.
+interface TestWindow {
+  reloads: number;
+  addEventListener: (type: string, fn: Listener) => void;
+  removeEventListener: (type: string, fn: Listener) => void;
+  dispatch: (type: string, event?: PreloadEvt) => void;
+  location: { reload: () => void };
+  sessionStorage: {
+    getItem: (key: string) => string | null;
+    setItem: (key: string, value: string) => void;
+  };
+}
+
+function makeWindow(): TestWindow {
+  const listeners = new Map<string, Listener[]>();
+  const storage = new Map<string, string>();
+  const win: TestWindow = {
     reloads: 0,
     addEventListener(type, fn) {
-      if (!listeners.has(type)) listeners.set(type, []);
-      listeners.get(type).push(fn);
+      const arr = listeners.get(type) ?? [];
+      arr.push(fn);
+      listeners.set(type, arr);
     },
     removeEventListener(type, fn) {
-      const arr = listeners.get(type) || [];
+      const arr = listeners.get(type) ?? [];
       const i = arr.indexOf(fn);
       if (i >= 0) arr.splice(i, 1);
     },
     dispatch(type, event = {}) {
-      for (const fn of listeners.get(type) || []) fn(event);
+      for (const fn of listeners.get(type) ?? []) fn(event);
     },
     location: {
       reload() {
@@ -45,8 +66,10 @@ function makeWindow() {
       },
     },
     sessionStorage: {
-      getItem: (k) => (storage.has(k) ? storage.get(k) : null),
-      setItem: (k, v) => storage.set(k, String(v)),
+      getItem: (k) => storage.get(k) ?? null,
+      setItem: (k, v) => {
+        storage.set(k, v);
+      },
     },
   };
   return win;
@@ -55,7 +78,11 @@ function makeWindow() {
 function preloadErrorEvent() {
   let prevented = false;
   return {
-    event: { preventDefault: () => { prevented = true; } },
+    event: {
+      preventDefault: () => {
+        prevented = true;
+      },
+    },
     prevented: () => prevented,
   };
 }
@@ -115,8 +142,12 @@ test('unrelated errors are ignored; teardown removes the listener', () => {
 test('works when sessionStorage throws (private mode)', () => {
   const win = makeWindow();
   win.sessionStorage = {
-    getItem() { throw new Error('denied'); },
-    setItem() { throw new Error('denied'); },
+    getItem() {
+      throw new Error('denied');
+    },
+    setItem() {
+      throw new Error('denied');
+    },
   };
   installStaleChunkGuard(win);
   win.dispatch('vite:preloadError', preloadErrorEvent().event);
