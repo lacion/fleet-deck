@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// tests/helpers/spawn-cmd-fixture.mjs
+// tests/helpers/spawn-cmd-fixture.ts
 //
 // Stand-in for the real tmux spawn backend, used as the FLEETDECK_SPAWN_CMD
 // test override (v1.2 — dynamic fleet, "Test override" behavior):
@@ -42,14 +42,16 @@ import path from 'node:path';
 
 const raw = process.argv[2] ?? '';
 
-function findByKeys(value, keys, seen = new Set()) {
+function findByKeys(value: unknown, keys: string[], seen = new Set<unknown>()): string | null {
   if (value == null || typeof value !== 'object') return null;
   if (seen.has(value)) return null;
   seen.add(value);
+  const obj = value as Record<string, unknown>;
   for (const k of keys) {
-    if (typeof value[k] === 'string' && value[k]) return value[k];
+    const v = obj[k];
+    if (typeof v === 'string' && v) return v;
   }
-  for (const v of Object.values(value)) {
+  for (const v of Object.values(obj)) {
     if (v && typeof v === 'object') {
       const found = findByKeys(v, keys, seen);
       if (found) return found;
@@ -58,45 +60,55 @@ function findByKeys(value, keys, seen = new Set()) {
   return null;
 }
 
-function findSessionId(spec) {
+function findSessionId(spec: unknown): string | null {
   return findByKeys(spec, ['session_id', 'sessionId', 'uuid', 'session']);
 }
 
-function findCwd(spec) {
+function findCwd(spec: unknown): string | null {
   return findByKeys(spec, ['cwd', 'worktree_path', 'worktreePath']);
 }
 
-async function main() {
-  let parsed = null;
-  let parseError = null;
+async function main(): Promise<void> {
+  let parsed: unknown = null;
+  let parseError: string | null = null;
   try {
     parsed = JSON.parse(raw);
   } catch (err) {
-    parseError = String(err?.message || err);
+    parseError = err instanceof Error ? err.message : String(err);
   }
 
-  const recordFile = process.env.FLEETDECK_TEST_SPAWN_RECORD;
+  const recordFile = process.env['FLEETDECK_TEST_SPAWN_RECORD'];
   if (recordFile) {
     try {
-      appendFileSync(recordFile, JSON.stringify({ raw, parsed, parseError, receivedAt: Date.now() }) + '\n');
-    } catch { /* best-effort recording only */ }
+      appendFileSync(
+        recordFile,
+        JSON.stringify({ raw, parsed, parseError, receivedAt: Date.now() }) + '\n',
+      );
+    } catch {
+      /* best-effort recording only */
+    }
   }
 
-  const postUrl = process.env.FLEETDECK_TEST_SPAWN_POST_URL;
+  const postUrl = process.env['FLEETDECK_TEST_SPAWN_POST_URL'];
   if (postUrl && parsed) {
     const sid = findSessionId(parsed);
-    const cwd = findCwd(parsed) || process.cwd();
+    const cwd = findCwd(parsed) ?? process.cwd();
     if (sid) {
       try {
         // 0.16.0: /hook/* requires the bearer. The daemon hands the fixture its
         // FLEETDECK_HOME via the spawn spec's env wrapper, but the fixture only
         // needs the token FILE — FLEETDECK_HOME itself arrives in our env
         // through the daemon's pane env (claudeEnvArgvPrefix exports it).
-        const headers = { 'content-type': 'application/json' };
+        const headers: Record<string, string> = { 'content-type': 'application/json' };
         try {
-          const token = readFileSync(path.join(process.env.FLEETDECK_HOME || '', 'token'), 'utf8').trim();
-          if (token) headers.authorization = `Bearer ${token}`;
-        } catch { /* tokenless: the 401 fail-open applies, test times out with a useful error */ }
+          const token = readFileSync(
+            path.join(process.env['FLEETDECK_HOME'] ?? '', 'token'),
+            'utf8',
+          ).trim();
+          if (token) headers['authorization'] = `Bearer ${token}`;
+        } catch {
+          /* tokenless: the 401 fail-open applies, test times out with a useful error */
+        }
         await fetch(`${postUrl}/hook/SessionStart`, {
           method: 'POST',
           headers,
@@ -108,9 +120,11 @@ async function main() {
           }),
           signal: AbortSignal.timeout(5000),
         });
-      } catch { /* best-effort -- the waiting test will time out and report it */ }
+      } catch {
+        /* best-effort -- the waiting test will time out and report it */
+      }
     }
   }
 }
 
-main().finally(() => process.exit(0));
+void main().finally(() => process.exit(0));

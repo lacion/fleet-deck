@@ -4,7 +4,7 @@
 // Spawn = explicit human click; the daemon owns the pane; all tmux command
 // construction is argv arrays, never a shell string containing user text.
 // This file never launches a real billed `claude` session. Spawn tests use
-// FLEETDECK_SPAWN_CMD (tests/helpers/spawn-cmd-fixture.mjs) to inspect argv;
+// FLEETDECK_SPAWN_CMD (tests/helpers/spawn-cmd-fixture.ts) to inspect argv;
 // the reconciliation test alone starts an inert tmux `sleep` pane so an empty
 // fleet listing is authoritative rather than an unreachable-socket UNKNOWN.
 //
@@ -63,7 +63,7 @@ import { waitUntil as waitUntilBase, waitForSpecRecords, makeSpecRecordFile } fr
 import { makeRepoWithWorktree, makePlainDir } from './helpers/gitrepo.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const SPAWN_CMD_FIXTURE = path.join(HERE, 'helpers/spawn-cmd-fixture.mjs');
+const SPAWN_CMD_FIXTURE = path.join(HERE, 'helpers/spawn-cmd-fixture.ts');
 // Defensive re-assert of the executable bit: git does not always preserve
 // it across checkouts/CI runners, and the contract's "argv [cmd, ...]"
 // wording requires this file to be directly executable (see the fixture's

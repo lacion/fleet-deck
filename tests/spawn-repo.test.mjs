@@ -20,7 +20,7 @@ export const __waitUntilForScaleCheck = waitUntil;
 import { openDb } from '../scripts/fleetd/db.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const SPAWN_CMD_FIXTURE = path.join(HERE, 'helpers/spawn-cmd-fixture.mjs');
+const SPAWN_CMD_FIXTURE = path.join(HERE, 'helpers/spawn-cmd-fixture.ts');
 try { chmodSync(SPAWN_CMD_FIXTURE, 0o755); } catch { /* best effort */ }
 
 function scratch(prefix = 'fleetdeck-spawn-repo-') {

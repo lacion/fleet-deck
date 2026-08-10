@@ -10,7 +10,7 @@ import { postJson, getJson } from './helpers/http.ts';
 import { waitUntil as waitUntilBase } from './helpers/wait.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const SPAWN_FIXTURE = path.join(HERE, 'helpers/spawn-cmd-fixture.mjs');
+const SPAWN_FIXTURE = path.join(HERE, 'helpers/spawn-cmd-fixture.ts');
 const TERM_FIXTURE = path.join(HERE, 'helpers/term-cmd-fixture.mjs');
 try { chmodSync(SPAWN_FIXTURE, 0o755); chmodSync(TERM_FIXTURE, 0o755); } catch { /* best effort */ }
 

@@ -65,7 +65,7 @@ test('nudge holds on a trust dialog: no Enter, board says waiting', { skip: !tmu
   // 750ms leaves the setup room while still testing the timer, not the clock.
   const daemon = await startDaemon({
     env: {
-      FLEETDECK_SPAWN_CMD: path.resolve('tests/helpers/spawn-cmd-fixture.mjs'),
+      FLEETDECK_SPAWN_CMD: path.resolve('tests/helpers/spawn-cmd-fixture.ts'),
       FLEETDECK_TEST_SPAWN_RECORD: recordFile,
       FLEETDECK_NUDGE_MS: '750',
     },
@@ -117,7 +117,7 @@ test('nudge presses Enter on an ordinary bring-up screen', { skip: !tmuxOk() && 
   const recordFile = path.join(recordDir, 'spawns.jsonl');
   const daemon = await startDaemon({
     env: {
-      FLEETDECK_SPAWN_CMD: path.resolve('tests/helpers/spawn-cmd-fixture.mjs'),
+      FLEETDECK_SPAWN_CMD: path.resolve('tests/helpers/spawn-cmd-fixture.ts'),
       FLEETDECK_TEST_SPAWN_RECORD: recordFile,
       FLEETDECK_NUDGE_MS: '750',
     },

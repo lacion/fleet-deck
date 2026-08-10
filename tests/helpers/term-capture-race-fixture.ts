@@ -11,7 +11,7 @@ import readline from 'node:readline';
 
 let number = 0;
 
-function response(lines = [], ok = true, extra = '') {
+function response(lines: string[] = [], ok = true, extra = ''): void {
   const n = ++number;
   process.stdout.write(`%begin 100 ${n} 0\n`);
   for (const line of lines) process.stdout.write(line + '\n');
@@ -23,9 +23,10 @@ function response(lines = [], ok = true, extra = '') {
 
 const input = readline.createInterface({ input: process.stdin });
 process.stdin.resume();
-input.on('line', (line) => {
+input.on('line', (line: string) => {
   if (line.startsWith('list-panes -t ')) response(['%1']);
-  else if (line.startsWith('capture-pane ')) response(['seed %1'], true, '%output %1 after-capture\n');
+  else if (line.startsWith('capture-pane '))
+    response(['seed %1'], true, '%output %1 after-capture\n');
   else if (line.includes("'#{cursor_x} #{cursor_y}'")) response(['2 3']);
   else response([]);
 });

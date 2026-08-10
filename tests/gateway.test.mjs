@@ -42,7 +42,7 @@ import { claudeTranscriptPath } from '../scripts/fleetd/helpers.ts';
 import { openDb } from '../scripts/fleetd/db.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const SPAWN_CMD_FIXTURE = path.join(HERE, 'helpers/spawn-cmd-fixture.mjs');
+const SPAWN_CMD_FIXTURE = path.join(HERE, 'helpers/spawn-cmd-fixture.ts');
 try { chmodSync(SPAWN_CMD_FIXTURE, 0o755); } catch { /* best-effort, as in spawn.test.mjs */ }
 
 const BASE_URL = 'http://127.0.0.1:8317';

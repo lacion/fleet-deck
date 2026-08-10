@@ -82,7 +82,7 @@ const EXIT_PLAN_FIXTURE = 'exit-plan-mode';
 // BUG-040 tests spawn through the FLEETDECK_SPAWN_CMD test seam (see
 // tests/spawn.test.mjs) so no real billed `claude` ever launches.
 const SPAWN_CMD_FIXTURE = path.join(
-  path.dirname(fileURLToPath(import.meta.url)), 'helpers/spawn-cmd-fixture.mjs');
+  path.dirname(fileURLToPath(import.meta.url)), 'helpers/spawn-cmd-fixture.ts');
 try { chmodSync(SPAWN_CMD_FIXTURE, 0o755); } catch { /* best-effort */ }
 
 function scratchCwd() {

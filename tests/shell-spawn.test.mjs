@@ -12,7 +12,7 @@ import { getJson, postJson } from './helpers/http.ts';
 import { waitForSpecRecords, waitUntil } from './helpers/wait.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const FIXTURE = path.join(HERE, 'helpers/spawn-cmd-fixture.mjs');
+const FIXTURE = path.join(HERE, 'helpers/spawn-cmd-fixture.ts');
 try { chmodSync(FIXTURE, 0o755); } catch { /* best effort */ }
 
 const scratch = prefix => mkdtempSync(path.join(tmpdir(), prefix));

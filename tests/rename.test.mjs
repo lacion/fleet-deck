@@ -27,7 +27,7 @@ import { waitUntil } from './helpers/wait.ts';
 // part of the contract, not politeness.
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const SPAWN_CMD_FIXTURE = path.join(HERE, 'helpers/spawn-cmd-fixture.mjs');
+const SPAWN_CMD_FIXTURE = path.join(HERE, 'helpers/spawn-cmd-fixture.ts');
 try { chmodSync(SPAWN_CMD_FIXTURE, 0o755); } catch { /* best effort */ }
 
 function scratch(prefix) {

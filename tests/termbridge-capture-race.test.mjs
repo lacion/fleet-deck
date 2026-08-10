@@ -11,11 +11,11 @@ import { createTermBridge } from '../scripts/fleetd/termbridge.ts';
 // continuation is a microtask, so it always runs AFTER the current stack. A
 // viewer that subscribed only once its `await capture-pane` returned was
 // therefore guaranteed to miss every same-chunk post-capture byte: the pane was
-// not yet in c.panes, so the demux dropped it. helpers/term-capture-race-fixture.mjs
+// not yet in c.panes, so the demux dropped it. helpers/term-capture-race-fixture.ts
 // appends `%output %1 after-capture` to the capture-pane response block,
 // reproducing that single-write flush exactly.
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const FIXTURE = path.join(HERE, 'helpers/term-capture-race-fixture.mjs');
+const FIXTURE = path.join(HERE, 'helpers/term-capture-race-fixture.ts');
 try { chmodSync(FIXTURE, 0o755); } catch { /* best effort */ }
 
 test('BUG-056: %output flushed in the capture-pane chunk is replayed after the init, not dropped', async t => {

@@ -4,7 +4,7 @@
 // Additive to tests/spawn.test.mjs (v1.2 dynamic
 // fleet) — kept in its own file so it can land/iterate independently of the
 // v1.2 suite. Same harness as tests/spawn.test.mjs: every test uses the
-// FLEETDECK_SPAWN_CMD test override (tests/helpers/spawn-cmd-fixture.mjs)
+// FLEETDECK_SPAWN_CMD test override (tests/helpers/spawn-cmd-fixture.ts)
 // instead of real tmux, so we can inspect the full env-wrapped claude argv the daemon
 // would have executed.
 //
@@ -40,7 +40,7 @@ import { postJson, getJson } from './helpers/http.ts';
 import { waitForSpecRecords, makeSpecRecordFile } from './helpers/wait.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const SPAWN_CMD_FIXTURE = path.join(HERE, 'helpers/spawn-cmd-fixture.mjs');
+const SPAWN_CMD_FIXTURE = path.join(HERE, 'helpers/spawn-cmd-fixture.ts');
 try { chmodSync(SPAWN_CMD_FIXTURE, 0o755); } catch { /* best-effort, see tests/spawn.test.mjs */ }
 
 function scratchDir(prefix = 'fleetdeck-spawn-unsup-') {

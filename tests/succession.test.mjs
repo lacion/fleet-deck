@@ -29,7 +29,7 @@ import { scaleMs, waitUntil } from './helpers/wait.ts';
 // here too, and by tests/fleet-bugs.test.mjs + tests/adopt.test.mjs unchanged.
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const SPAWN_CMD_FIXTURE = path.join(HERE, 'helpers/spawn-cmd-fixture.mjs');
+const SPAWN_CMD_FIXTURE = path.join(HERE, 'helpers/spawn-cmd-fixture.ts');
 try { chmodSync(SPAWN_CMD_FIXTURE, 0o755); } catch { /* best effort */ }
 
 function scratch(prefix) {
