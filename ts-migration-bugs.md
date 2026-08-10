@@ -1517,3 +1517,1529 @@ interesting half of this entry; the rest is the usual `|| → ??` residue.
   the 15 derive-exercising suites (derive-audit-reliability, dismiss, fleet-bugs, mail-and-blocking,
   mail-delivery-lease, repos, adopt, worktrees, revive, spawn-setup, shell-spawn, lan-mdns-state, hook-auth,
   daemon-maintenance, network-refresh); **# fail 0**.
+
+
+---
+
+## Consolidated per-area staging logs (folded in 2026-08-10)
+
+During the parallel `.mjs`→`.ts` conversion, strict-typing consequences were
+accumulated in per-area staging files to avoid concurrent-append races. The
+conversion phase has landed, so each is folded in verbatim below and its
+standalone file removed. (The board pillar is separate; its log remains in
+`ts-migration-bugs.board.md`.)
+
+
+---
+
+### ⇩ merged from `ts-migration-bugs.bin.md`
+
+<!-- STAGING for bin/ (fleetdeck.ts + tmux-version.ts) — merge into ts-migration-bugs.md
+     (newest-first, right below the "entries appended below" marker) once the concurrent
+     board subagent has finished its own append. Kept separate only to avoid a
+     concurrent-append race on the shared log. -->
+
+### bin/fleetdeck.ts + bin/tmux-version.ts — the install/serve/service CLI (~1010 loc): one PRE-EXISTING latent bug surfaced-and-preserved, otherwise all NOISE, every security invariant intact   [LATENT BUG — preserved]
+
+- **What:** the security-critical CLI (env-file + systemd-unit writing, supervisor/stop
+  identity gates, token rotation, tmux-version probe). Converted `bin/fleetdeck.mjs` →
+  `bin/fleetdeck.ts` and `bin/tmux-version.mjs` → `bin/tmux-version.ts`, then bundled the CLI
+  back to a committed self-contained `bin/fleetdeck.mjs` artifact (`bun run bundle:bin`, new
+  CI drift gate). `tsc` (root maximal-strict) + type-aware `eslint` driven to **0**,
+  control-bytes 0, **zero intended runtime move**. Every security surface preserved verbatim:
+  env-value BARE-SAFE/UNQUOTABLE quoting (read by both POSIX `.`-source and systemd
+  `EnvironmentFile`), 0600 chmod-on-write, `%`→`%%`-first systemd escaping, always-quote
+  ExecStart args refusing control/`"`, EnvironmentFile-path refusal of whitespace/quotes/
+  backslash, POSIX single-quote `shQuote` (BUG-079 no-expansion), the SUPERVISOR-IDENTITY
+  (`argvIsOurSupervisor` via /proc cmdline) and STOP-TARGET-IDENTITY
+  (`healthIsOurManagedDaemon`/`healthPidIsOurDaemon` → managed + FLEETD_PID ownership + port
+  match + `verifyDaemonPid`) contracts, 0600 token rotation, lazy (never top-level) takeover
+  import, `resolveCliPort` 1..65535 clamp, and ExecStart/SUPERVISE `path.join(HERE,
+  'fleetdeck.mjs')` (the artifact must keep that basename).
+
+- **THE LATENT BUG — supervised `service start` accepts a foreign responder (surfaced by strict
+  typing, deliberately NOT fixed):**
+  - **Where:** `serviceStart()` non-systemd branch, `bin/fleetdeck.ts:775`:
+    `const h = await waitForHealth({ expect: healthIsOurManagedDaemon });`
+  - **The defect:** `healthIsOurManagedDaemon` is `async` (`:714`, returns `Promise<boolean>` —
+    it must be, it `await import()`s takeover's `verifyDaemonPid`). `waitForHealth`'s loop tests
+    the predicate **un-awaited**: `if (h && (!expect || expect(h))) return h;` (`:700`). A
+    Promise is *always* truthy, so `expect(h)` is satisfied for **any** non-null health answer —
+    the managed-identity gate is effectively a no-op inside the wait loop.
+  - **Consequence:** on the supervised (no-systemd) path, if an **unmanaged/foreign** daemon
+    already owns `:PORT`, `waitForHealth` returns that squatter's health on the first probe,
+    `if (!h)` (`:776`) is false, and `service start` reports the board as up — precisely the
+    failure mode the `healthIsOurManagedDaemon` gate was written to prevent (see the contract
+    comment at `:705–713`). The takeover port-election still runs and the wrapper still exits 3
+    on a lost election, so this mis-reports *success* rather than corrupting state; the
+    user-facing lie is "✓ up" instead of the intended "✗ no MANAGED daemon for this
+    FLEETDECK_HOME" + squatter diagnostic.
+  - **Pre-existing, not migration-introduced:** the pre-migration `.mjs` had an untyped `expect`
+    param and called an `async` predicate the same un-awaited way — identical runtime. The
+    conversion reproduces it byte-for-byte.
+  - **Why strict typing is the hero here:** typing the param as it *reads* —
+    `expect?: (h: Health) => boolean` — makes `tsc` reject `:775` immediately
+    (`Promise<boolean>` is not assignable to `boolean`, i.e. "you're passing an async function
+    to a sync-boolean slot"). That is the exact class of bug maximal-strict is meant to catch.
+  - **Why I did NOT fix it in this commit:** the `/goal` is a faithful `.mjs`→`.ts` conversion
+    with **no silent behavior move**; awaiting the predicate (`if (h && (!expect || await
+    expect(h)))`) would change the supervised-start success/refusal outcome for a real
+    squatter — a behavior change that must land as its own reviewed fix, not smuggled inside a
+    type migration. I therefore typed the param `expect?: (h: Health) => unknown` (`:695`),
+    which is honest about the current call (an async predicate's return is treated as an opaque
+    truthy token) and keeps `tsc` green without masking the finding. **This log IS the
+    hand-off:** the follow-up fix is to make `waitForHealth` await the predicate and type it
+    `(h: Health) => boolean | Promise<boolean>`.
+
+- **Why the rest is noise:**
+  1. **TS4111 ×6 — `process.env.X` bracket access.** `noPropertyAccessFromIndexSignature` requires
+     `process.env['FLEETDECK_HOME']` etc. Pure syntax; no behavior. (FLEETDECK_HOME, FLEETDECK_PORT,
+     FLEETDECK_MANAGED, XDG_CONFIG_HOME, FLEETDECK_PROXY_AUTH, FLEETDECK_TRUSTED_ORIGINS.)
+  2. **`prefer-nullish-coalescing` on load-bearing `||`.** Three sites intentionally fall an
+     **empty string** back to a default (`FLEETDECK_HOME || default`, `XDG_CONFIG_HOME || default`,
+     `spawn.reason || 'unknown'`) — `??` would *keep* `''`, changing behavior. Kept `||` with a
+     scoped `// eslint-disable-next-line … -- <empty-string reason>`, the sibling idiom
+     (ingest/mdns/events/settings/mail/commands). NB: a `x ? x : y` ternary trips the same rule,
+     so the disable — not a rewrite — is the correct move.
+  3. **`no-control-regex` ×2 — the whole point of the gate.** `ENV_VALUE_UNQUOTABLE`
+     (`/[\u0000-\u001f\u0027\u005c]/`) and `EXEC_ARG_UNQUOTABLE` (`/[\u0000-\u001f"]/`) exist to
+     *refuse* NUL/C0 controls in env values and ExecStart args. Scoped disable-with-reason.
+     (Editor note: these lines carry literal control-range escapes; the disables were inserted via
+     `sed` anchored on the const names because the Edit layer decodes `\uXXXX` before matching.)
+  4. **`no-base-to-string` — `String(output ?? '')` in `parseTmuxVersion`** (`tmux-version.ts:15`):
+     intentional coercion of untrusted `tmux -V` output, matching the `.mjs`. Scoped disable.
+  5. **`no-unnecessary-type-conversion` — `Number(h.pid)` kept** (`:665`). `h` is an unchecked
+     cast of wire `/health` JSON; `Number()` coerces a stringy pid *before* the integer guard —
+     load-bearing for the kill-target identity check. Kept with a disable. (Contrast: dropped a
+     provably-redundant `String(s)` in `shQuote`, whose param is a typed `string` path, never wire.)
+  6. **Trivia:** `takeoverPidHelpers ??=` memo, one optional-chain (`record?.pid`), removed a
+     useless `= null` init, and a comment inside the detached-supervisor `child.once('error', …)`
+     empty handler (failures surface via the health probe) — all sibling idioms, no runtime move.
+
+- **Fix:** all in place. Isolated `tsc` clean on `bin/fleetdeck.ts`, `bin/tmux-version.ts`,
+  `scripts/fleetd/spawn.ts`; `eslint` exit 0; control-bytes 0. Importer repointed:
+  `scripts/fleetd/spawn.ts:36` → value-imports `{ MIN_TMUX_VERSION, tmuxVersionCapability }` from
+  `../../bin/tmux-version.ts`; `tests/cli.test.mjs:57–58` → `../bin/fleetdeck.ts` +
+  `../bin/tmux-version.ts` (in-process source lane), its `:611` subprocess still runs the built
+  `.mjs` artifact; `tests/cli-serve-paths.test.mjs` packs only the self-contained `bin/fleetdeck.mjs`
+  (tmux-version inlined, no sibling copy). Suites green: `cli.test.mjs` + `cli-serve-paths.test.mjs`
+  → 48 pass / 0 fail. Daemon rebundle from `.ts` for the `spawn.ts` value-import rides task #6.
+
+
+---
+
+### ⇩ merged from `ts-migration-bugs.fleetd.md`
+
+<!-- STAGING for scripts/fleetd/fleetd.ts (the daemon entry) and the two call-site
+     tightenings its stricter graph surfaced in spawns.ts / http.ts — merge into
+     ts-migration-bugs.md (newest-first, right below the "entries appended below"
+     marker) once the concurrent board subagent has finished its own append. Kept
+     separate only to avoid a concurrent-append race on the shared log. The
+     INITIAL-conversion findings for spawns.ts / http.ts live in
+     ts-migration-bugs.spawns.md / ts-migration-bugs.http.md; the entries below are
+     the ENTRY-WIRING ripple — what pinning SpawnsCtx's function fields and
+     destructuring createHttp's return forced at the call sites. -->
+
+### fleetd.ts — the daemon entry (~920 loc): NO runtime bug; the entry graph's strictness surfaced ONE real EOPT bug in spawns.ts (two call sites) + one destructure-safety idiom in http.ts; the entry itself is all faithful noise with every security contract preserved   [1 BUG (spawns) / rest NOISE]
+
+- **What:** the last `.mjs` on the daemon graph — `fleetd.ts` is the process entry Claude
+  Code's `start` script and the production bundle both root at. Converted `.mjs` → `.ts` under
+  root maximal-strict; `start` repointed to `fleetd.ts` (node ≥22.18 type-strips it — probed
+  `v22.22.2`, boots to `/health` 200 `"startup":"settled"`), `bundle` repointed input
+  `fleetd.mjs`→`fleetd.ts` + banner `Source: *.mjs`→`*.ts`. `fleetd.mjs` is intentionally NOT
+  deleted this commit — it still imports the same `.ts` siblings and stays the tested source
+  entry until the test-conversion phase repoints the launchers/tests; keeping it green means
+  every intermediate HEAD boots either way.
+
+- **Faithfulness proven by an ISOLATED bundle diff, not a source diff.** A naive `fleetd.mjs`
+  vs `fleetd.ts` source diff is meaningless (486 "changed" lines that are all added type
+  annotations). Instead: esbuild-bundle BOTH entries against the identical current `.ts`
+  sibling graph (`bundle(fleetd.mjs)` vs `bundle(fleetd.ts)`) and diff the OUTPUTS — that
+  cancels the siblings and isolates the entry conversion to ~40 hunks, every one of which is:
+  1. **`process.env.X` → `process.env["X"]`** (`noPropertyAccessFromIndexSignature`; `ProcessEnv`
+     is an index signature). Pure syntax, ~20 sites.
+  2. **`(process.env.X || "default").trim() || "default"` → `(process.env["X"] ?? "").trim() ||
+     "default"`** on BIND / PROXY_AUTH / REQUIRE_TOKEN / TRUST_LOOPBACK / MDNS_NAME. Proven
+     behavior-identical across unset / "" / "  " / set: the outer `.trim() || fallback` already
+     collapses empty-and-whitespace to the fallback, so swapping the inner `|| "default"` for
+     `?? ""` never changes the result. `?? ""` is the EOPT/`prefer-nullish-coalescing` form.
+  3. **`err?.code || err?.message || "unknown error"` → `errText(err)`** and **`err?.code` →
+     `errCode3(err)`**, two extracted helpers over `err instanceof Error`. Faithful: every
+     thrown value on these fs/startup paths is a Node `Error` carrying a string `.code`, so
+     `errText` returns code→message→"unknown error" exactly as the `||` chain did; for a
+     non-Error both old and new yield "unknown error" / `undefined`. The helpers also kill ~10
+     copies of the same untyped idiom.
+  4. **`.version || version` → `.version ?? version`** on the `package.json` version read. Differs
+     only for a falsy-but-non-nullish version (`""` / `0`) — impossible for a real semver field;
+     `??` is strictly MORE correct (a literal `0.0.0` wouldn't wrongly fall back). Lint-driven.
+  5. **`process.on("SIGINT", shutdown)` → `process.on("SIGINT", () => { void shutdown(); })`**
+     (and the same for SIGTERM + `void core.reconcileSpawns().catch(...)`). Wraps the async
+     handler so its promise is explicitly voided (`no-floating-promises` / `no-misused-promises`);
+     the signal handler always ignored the return, so the `void`/arrow is documentation, not
+     a move.
+  6. **Trivia, all faithful:** `let settleReconciliation;` → `= null` + `resolve` wrapped as
+     `() => { resolve(); }` and called `settleReconciliation?.()` (types it `(() => void) | null`,
+     the optional-call guards the never-taken pre-assignment read); `for (const e of entries ||
+     [])` → `?? []` (entries is `NetworkInterfaceInfo[] | undefined` — never falsy-non-null);
+     `timer.unref?.()` → `timer.unref()` (Node `Timeout` always has `unref`; the `?.` guarded a
+     browser-number timer that never occurs here); a `var AUTH_TOKEN = TOKEN` alias captured
+     right after the mint/persist block so the share-URL / capture-secret closures hold a stable
+     `const` snapshot of the final minted token (TOKEN is a `let` reassigned only DURING the
+     mint, before this line — same value, faithful).
+
+- **THE ONE SECURITY-CRITICAL HUNK — verified faithful against the source, not the lossy bundle:
+  BUG-156 takeover arbitration (`supersedeIfNewer`).** The `.mjs` guarded a null `/health`
+  incumbent with chained optionals; the `.ts` adds an early `if (!incumbent) return false;`:
+  - `.mjs`: `if (incumbent?.managed) return false;` / `if (!shouldTakeOver(version,
+    incumbent?.version)) return false;` / `if (incumbent?.pid !== record.pid) return false;`
+  - `.ts`: `if (!incumbent) return false;` then non-optional `incumbent.managed` /
+    `shouldTakeOver(version, incumbent.version)` / `incumbent.pid`.
+  - **Why faithful:** when `incumbent` is null the `.mjs` skips the `managed` check
+    (`null?.managed` falsy) and reaches `shouldTakeOver(version, undefined)`, which returns
+    `false` (its contract: `if (!own || !other) return false` — an unparseable version on either
+    end never evicts on a guess), so `!false` → `return false` — the EXACT outcome the `.ts`
+    early guard produces two lines sooner. The skipped `managed` check and `shouldTakeOver` call
+    have no side effects, so there is no observable difference. Confirmed at runtime:
+    `takeover.test.mjs` 17/17 in the bundle lane, INCLUDING "a MANAGED daemon is never evicted"
+    and "an UNMANAGED daemon of the same age is still evicted". The sibling
+    `record.port === null || !Number.isInteger(record.port)` is likewise runtime-identical
+    (`Number.isInteger(null)` is already false); the `=== null` only narrows `number | null`.
+  - Every other daemon security contract is preserved verbatim: pidfile HOME lock (`wx`),
+    token mint/persist + 0600 chmod-on-open, EADDRINUSE→exit-3 election, `startupFatal` cleanup,
+    boot-reconciliation readiness (`settleReconciliation`), LAN/mDNS lifecycle, MANAGED no-evict.
+
+- **THE REAL BUG the entry wiring surfaced — spawns.ts, TWO call sites, EOPT + closure narrowing
+  loss [BUG]:** pinning `SpawnsCtx`'s function fields to `ReposSurface['X']`
+  (validateBranch / resolveTarget / cloneRepo / materializeBranch / touchRepo / claimTarget /
+  targetOwner) so derive.ts's `Object.assign(ctx, createSpawns(ctx))` type-checks
+  `CoreCtx <: SpawnsCtx` under strictFunctionTypes exposed two call-site gaps the pre-migration
+  `any` hid:
+  1. **`resolveTarget(body)` — structural optional-vs-required under exactOptionalPropertyTypes.**
+     `SpawnBody.repo?: string` (optional) is NOT assignable to `ResolveTargetBody.repo: string`
+     (required) even after the value-narrowing `if (body.repo == null) return` guard —
+     optional-vs-required is STRUCTURAL, narrowing the VALUE never flips the PROPERTY. The `.mjs`
+     passed the whole `body` (a superset) and relied on `resolveTarget` ignoring the extra
+     fields — fine at runtime, formally unsound. **Fix:** build the ResolveTargetBody explicitly
+     from the four fields the callee reads — `{ repo: body.repo, repo_host: body.repo_host ??
+     null, repo_transport: body.repo_transport ?? null, repo_org: body.repo_org ?? null }` —
+     with `?? null` mapping an absent override to the field's declared `string | null` (null /
+     undefined / absent all mean "no override"; the untyped call only ever passed `undefined`
+     because it was `any`). Zero runtime move, now type-correct.
+  2. **`materializeBranch({ branch })` — control-flow narrowing lost across a closure boundary.**
+     The `if (!body.branch) return` guard narrows `body.branch` to `string`, but that narrowing
+     is LOST inside the nested `Promise.resolve().then(async () => { … })` provisioning closure
+     (property narrowing does not survive a nested-function boundary; the callee then wants
+     `string`, got `string | undefined`). **Fix:** capture `const branch = body.branch` in the
+     enclosing scope right after the guard — a `const` keeps its `string` type into the closure —
+     and pass `branch,` (shorthand). Faithful; the same value either way.
+
+- **The destructure-safety idiom the entry forced in http.ts [NOISE]:** the daemon entry does
+  `const { refreshLan } = createHttp(...)`. `createHttp` returned `refreshLan` as METHOD
+  SHORTHAND (`refreshLan(x) {}`), which types the field as a METHOD and trips
+  `@typescript-eslint/unbound-method` on the destructure. **Fix:** arrow-property
+  (`refreshLan: (x) => { … }`) — behaviorally identical (the body closes over
+  `refreshLanHosts` / `lan`, never `this`) but types the field as a PROPERTY, destructure-safe.
+  Matches the codebase's established pattern (SpawnsCtx already uses arrow-property for every
+  destructured function field). Only method-shorthand trips the rule; `whenBroadcastIdle`
+  (a `function` decl referenced by name) and value fields (`server`) do not.
+
+- **Fix:** all in place. `tsc -p tsconfig.json` — 0 errors in `scripts/fleetd/**` (only the 14
+  known board errors, another session's, remain). `eslint` on fleetd.ts / spawns.ts / http.ts /
+  derive.ts — exit 0. Bundle rebuilt from `fleetd.ts`: banner `Source: *.ts`, shebang line 1,
+  control-bytes 0, and the isolated entry diff is faithful hunk-for-hunk. Runtime: `node
+  fleetd.ts` boots (type-strip) to `/health` 200; bundle-lane `takeover` + `smoke-project-
+  isolation` 17/17; `spawn-repo` + `base-branch` 32/32 in BOTH the source lane (fleetd.mjs →
+  spawns.ts) and the bundle lane (fleetd.ts).
+
+### THE CUTOVER — `fleetd.mjs` DELETED, every launcher/test/demo repointed `.mjs`→`.ts`; a stale module specifier hiding in a shell heredoc was the one thing static tooling could not catch   [1 BUG (latent stale importer) / rest MECHANICAL]
+
+- **What:** the deferral recorded above (`fleetd.mjs` intentionally kept as the tested source
+  entry) is now resolved. `scripts/fleetd/fleetd.mjs` is DELETED; `fleetd.ts` is the sole source
+  of truth. Repointed every runtime reference: `bin/fleetdeck.ts`/`.mjs` `SOURCE`, the
+  SessionStart hook `scripts/fleet-sessionstart.ts`/`.mjs` fallback, `tests/helpers/daemon.mjs`
+  `FLEETD_PATH`, and the demo/acceptance launchers. Rebuilt the three artifacts that embed daemon
+  source (`fleetd.bundle.mjs`, `fleet-sessionstart.mjs`) or point at it (`bin/fleetdeck.mjs`).
+  Production still runs `fleetd.bundle.mjs`; the `fleetd.ts` source path is the full-checkout
+  fallback needing Node ≥22.18 type-strip.
+
+- **THE BUG — a `.mjs`→`.ts` rename that static tooling structurally could not catch [BUG]:**
+  `demo/lib/kill-verified-daemon.sh:42` did `await import(path.join(repoRoot,
+  'scripts/fleetd/takeover.mjs'))`. `takeover.mjs` was renamed to `takeover.ts` back in
+  `0e606973`, so this importer has been dangling ever since — the import throws
+  `ERR_MODULE_NOT_FOUND`, the wrapping `verdict=$(node …) || verdict="none"` swallows the non-zero
+  exit, and the helper falls through the `*)` case returning 0 WITHOUT signalling. Net effect: the
+  identity-bound daemon stop silently degraded to a no-op — it neither killed a verified daemon
+  (BUG-008 test 3) nor refused an unverified live pid (tests 1/2). Surfaced as 3 red
+  `accept-reset` subtests the moment the cutover gate ran them.
+  - **Why every static gate missed it:** the specifier is a string literal inside a bash heredoc
+    (`node --input-type=module - <<'EOF' … EOF`) in a `.sh` file. It is not an `import` statement,
+    not in any `.ts`/`.js`, and not in the module graph — so tsc, eslint, `verbatimModuleSyntax`,
+    and import-resolution are all blind to it. **Lesson for the rest of the migration:** a
+    `.mjs`→`.ts` rename is caught automatically ONLY for real import statements in typed source;
+    module specifiers embedded in strings (shell heredocs, `node -e`, non-TS config) are invisible
+    to the type checker and MUST be swept by hand + a spawning test.
+  - **Fix:** repoint line 42 to `takeover.ts` (Node ≥22.18 type-strips the dynamic `.ts` import;
+    the imported `pidRecord`/`verifyDaemonPid` already carry the BUG-156 widened `.ts` identity
+    matcher) and correct the stale line-12 comment. `node --test tests/accept-reset.test.mjs` →
+    4/4 green; a verified `fleetd.ts` daemon is SIGTERMed, a recycled plain-PID and a non-fleetd
+    live pid are both refused (code 1, process left alive).
+
+- **The rest is MECHANICAL, all faithful:** every other repoint is a bare path/string swap
+  (`fleetd.mjs`→`fleetd.ts` as an import source, a launcher argv, or a bundle input). The one
+  security-sensitive matcher — takeover's `/proc`-shape `fleetdScript` regex — was widened to
+  accept `fleetd.ts` alongside `fleetd.bundle.mjs`/`fleetd.mjs` in an earlier commit and is
+  embedded byte-identically in both the daemon bundle and the SessionStart hook (re-verified: the
+  widened alternation is present in both, no `.mjs`-only matcher survives on the daemon graph).
+
+
+---
+
+### ⇩ merged from `ts-migration-bugs.floor.md`
+
+<!-- STAGING for the Node engine-floor raise (22.13 -> 22.18) that the TS migration
+     forced. Merge into ts-migration-bugs.md (newest-first) once the concurrent board
+     subagent has finished its own append; kept separate only to avoid a concurrent-
+     append race on the shared 140k log. This is a PREREQUISITE for the test-conversion
+     phase (task #11): the suite cannot run on the old floor at all (see below). -->
+
+### Engine floor raised 22.13.0 -> 22.18.0 — the TS migration's one published-contract change   [MIGRATION CONSEQUENCE, not a code bug — but it is the thing that unblocks the whole test phase]
+
+- **What forced it.** Running the project's TypeScript sources directly requires Node's
+  native, unflagged type-stripping, which first shipped in **22.18.0**. The daemon `start`
+  script already points at `fleetd.ts`, and — the binding discovery — the EXISTING
+  `tests/cli.test.mjs` already does `await import('../bin/fleetdeck.ts')` and
+  `'../bin/tmux-version.ts'`. So the test suite in its CURRENT `.test.mjs` form ALREADY
+  needs >=22.18: on the old CI floor lane (pinned `22.13.0`) `cli.test.mjs` would throw on
+  the `.ts` import before asserting anything. The floor raise is not merely future-proofing
+  for the `.test.ts` rename — it repairs the branch's present state.
+
+- **Why not keep the floor at 22.13 for consumers?** Considered and rejected by the
+  maintainer (informed choice). The shipped artifact is the plain-JS esbuild BUNDLE, which
+  genuinely runs on 22.13 (node:sqlite loads unflagged from 22.13.0), so a "declared 22.18,
+  tolerated 22.13" split was technically possible — but the codebase deliberately locks
+  `doctor`/guard == `package.json engines` (a `cli.test.mjs` invariant: "doctor text and
+  engines must not drift apart"). A split would fight that invariant for a range (22.13–22.17)
+  that, by Aug 2026, essentially no one runs — especially Claude Code users. Raising the
+  single floor is simpler and keeps CI structurally unchanged.
+
+- **CONSEQUENCE to flag: the runtime guard now hard-blocks 22.13–22.17.**
+  `bin/fleetdeck.ts` `nodeVersionSupported` gates whether the CLI boots (`major===22 ->
+  minor>=18`). Because the shipped bundle is plain JS, those versions would *technically*
+  still run fleetd — but they are now out of the supported/declared/enforced range, and the
+  guard refuses them with a clear message rather than silently supporting an untested range.
+  This is the honest reading of "drop declared support for 22.13–22.17." If a future need to
+  tolerate-but-not-support that range arises, decouple the guard from `engines` (and relax
+  the `cli.test.mjs` drift assertion) — but that is a deliberate reversal, not the default.
+
+- **Files changed (all mine; no comet surface touched):**
+  - `package.json` — `engines.node` `^22.13.0 || >=24.0.0` -> `^22.18.0 || >=24.0.0`.
+  - `bin/fleetdeck.ts` — `MIN_NODE_RANGE` + the `minor>=13`->`minor>=18` check + the doctor
+    message (dropped the misleading "for node:sqlite" clause — node:sqlite is NOT the binding
+    constraint at 22.18) + the rationale comments + the source-require floor note (source-run
+    floor and supported floor are now equal, so that path never needs a newer Node than the
+    CLI already requires).
+  - `bin/fleetdeck.mjs` — rebuilt from the edited `.ts` via esbuild (`bundle:bin` args,
+    byte-for-byte the shipped artifact); floor now reads `>= 18`.
+  - `tests/cli.test.mjs` — the floor test rewritten: `22.13.0`/`22.17.1` now expected FALSE,
+    `22.18.0` the first TRUE; the `MIN_NODE_RANGE` equality assertion bumped. 43/43 green
+    locally on v22.22.2.
+  - `.github/workflows/ci.yml` — matrix `['22.13.0','24']` -> `['22.18.0','24']`; the pin
+    rationale rewritten (22.18 = first unflagged type-strip); the "floor CANNOT strip .ts"
+    comment block rewritten (22.18 CAN strip — the floor lane still runs the BUNDLE because
+    that is what SHIPS, not because the floor can't strip source).
+  - `scripts/fleetd/http.ts` — a one-line comment (`engine floor (22.13)` -> `(the engine
+    floor)`), accuracy only.
+  - `README.md` — badge `>=22.13`->`>=22.18`, requirements line, `doctor` comment.
+  - `CONTRIBUTING.md` — the floor bullet + the "README promises Node 22.13+" line.
+
+- **DEFERRED (coordination):** `docs/CODER.md` still says `^22.13.0 || >=24.0.0` (line ~191).
+  It is a SHIPPED doc (in `package.json files`) and currently clean, but it lives under
+  `docs/**`, the boundary the concurrent comet-55e1 session is actively editing. Left for the
+  final docs pass (task #9) / once comet's docs work settles, to avoid a clobber. Same for
+  `docs/v1/ts-migration.md` and `docs/v1/phase6-ci-publish-bun.md` (comet's untracked v1 docs
+  that mention 22.13 in migration-planning context).
+
+- **Verification:** `tsc -p tsconfig.json` clean for `bin/**`; `eslint` clean on
+  `bin/fleetdeck.ts`; `bin/fleetdeck.mjs` rebuilt and floor-checked; `cli.test.mjs` 43/43 on
+  node v22.22.2. This lands as its own green checkpoint BEFORE any `.test.mjs -> .test.ts`
+  rename.
+
+
+---
+
+### ⇩ merged from `ts-migration-bugs.hooks.md`
+
+<!-- STAGING for scripts/fleet-*.ts (the three plugin hook shims) — merge into
+     ts-migration-bugs.md (newest-first, right below the "entries appended below"
+     marker) once the concurrent board subagent has finished its own append. Kept
+     separate only to avoid a concurrent-append race on the shared log. -->
+
+### scripts/fleet-hook.ts + scripts/fleet-sessionstart.ts + scripts/fleet-watch.ts — the three plugin hook shims (~550 loc): NO real bug, one instructive TS flow-analysis limitation surfaced-and-worked-around, otherwise all NOISE, every security invariant intact   [ALL NOISE / TS-LIMITATION]
+
+- **What:** the three command-hook shims Claude Code runs — `fleet-hook.ts` (authenticated
+  shim for every hook event except SessionStart + the Stop rewake leg), `fleet-sessionstart.ts`
+  (the ONE election+spawn+takeover+brief hook), `fleet-watch.ts` (the F3d-2 asyncRewake Stop
+  watcher). Converted all three `.mjs` → `.ts` under root maximal-strict, then added a
+  `bundle:hooks` esbuild step producing self-contained committed `.mjs` artifacts (inlining the
+  four `scripts/fleetd/` deps — config.ts, run-nonce.ts, env-scrub.ts, takeover.ts — which
+  import only node builtins, so the bundles carry zero bare imports). New CI drift gate
+  (`bun run bundle:hooks` + `git diff --exit-code` on the three artifacts). `tsc` (root
+  maximal-strict) + type-aware `eslint` (`--report-unused-disable-directives`) driven to **0**,
+  control-bytes 0 on both sources and artifacts, **zero intended runtime move**.
+
+- **Every security surface preserved verbatim:** the LOCKSTEP hold-window invariant
+  (`HOLD_EVENTS` → 660 s watchdog under hooks.json's 720 s), the re-armable SessionStart
+  watchdog (3.8 s → 8 s on takeover, always < hooks.json's 15 s ceiling), run-nonce tagging
+  (BUG-025, keyed on CLAUDE_PID), the takeover identity gates (`shouldTakeOver` +
+  `verifyDaemonPid` + managed-daemon no-evict + `replacementMatches` re-arbitration with the
+  round≥1 anti-flap cap), the `bootEnv` scrub list (Claude/agent markers + gateway + spawn +
+  the test seams that must never ride a tmux server's global env — the 2026-07-11 ghost-daemon
+  scar), the 0600 chmod-on-open of `fleetd.log`, the detached-spawn `child.once('error', …)` +
+  `unref()` + fd release in `finally`, the single-flight NEWEST-WINS pid ownership + BUG-105
+  `wg` generation token + BUG-034 `/mail/ack` lease + 64 KB/1 MB stdin ceilings + listener
+  cleanup in fleet-watch, and the silent-exit-0 failure contract in all three. Artifacts keep
+  their `fleet-*.mjs` basenames, so **hooks.json needs no repoint** (verified: it still names
+  `fleet-hook.mjs` / `fleet-sessionstart.mjs` / `fleet-watch.mjs`), and `spawn` stays an
+  external named `node:child_process` import in the sessionstart artifact (the audit spawn-error
+  test's `syncBuiltinESMExports()` depends on that).
+
+- **THE INSTRUCTIVE FINDING — TS narrows a closure-mutated module `let` to its initializer
+  (`fleet-sessionstart.ts`, worked around, NOT a runtime bug):**
+  - **Where:** `let replacedVersion = null` / `let managedVersionDrift = null` at module scope,
+    assigned ONLY inside `ensureServer()` (`replacedVersion = health.version` on a committed
+    takeover; `managedVersionDrift = health.version` on a managed-daemon drift), then READ at
+    top level after `await ensureServer()` (`if (replacedVersion) payload.fleet_takeover = …`;
+    `if (managedVersionDrift) { … v${managedVersionDrift} … }`).
+  - **The symptom:** with a plain `let x: string | null = null`, TS flow analysis narrows every
+    top-level read to the literal `null` — it cannot see the assignment across the
+    `ensureServer` closure boundary (a call does not reset a local's narrowing, and the
+    "assigned-in-nested-function ⇒ widen to declared type" heuristic only fires for reads
+    *inside* a nested function, not for reads in the declaration's own scope). So
+    `no-unnecessary-condition` reports the real takeover guards as **"always falsy"**, and the
+    `if`-body narrows `managedVersionDrift` to **`never`**, which `restrict-template-expressions`
+    then rejects inside the drift-warning template. `tsc` itself stayed green — `null`-in-a-
+    condition and `never`-in-a-template are lint findings, not type errors — so this is exactly
+    the class of latent mis-modeling maximal-strict + type-aware lint is meant to expose.
+  - **Why it is NOT a bug:** the runtime is correct — `ensureServer()` really does set both
+    before the reads; only the *type checker's* model was wrong. Confirmed empirically in a
+    throwaway scratch: `let x: string|null = null` reproduces the always-falsy/never errors;
+    `let x = null as string | null` does not.
+  - **Fix (faithful, zero runtime move):** widen the initializer with `null as string | null`
+    so the read-site type stays `string | null` (guard necessary, `if`-body narrows to
+    `string`), with a comment naming the cross-closure assignment as the reason. Chosen over a
+    blanket `no-unnecessary-condition` disable because the cast *documents the shared-state
+    reality* and keeps the guard genuinely type-checked, and over restructuring
+    `ensureServer` to return the values because `replacedVersion` is consumed mid-function by
+    `bootEnv()` (it must be module state, not a return value).
+
+- **Why the rest is noise:**
+  1. **`no-dynamic-delete` — `delete env[k]` in `bootEnv`** (sessionstart). The scrub loop
+     deletes a *dynamic* key list; `delete` (not `env[k] = undefined`) is load-bearing — it
+     guarantees the key is ABSENT from the child's env rather than passed as an empty string.
+     Scoped disable-with-reason.
+  2. **TS4111 ×2 — index-signature dot access.** `noPropertyAccessFromIndexSignature` requires
+     `process.env['FLEETDECK_TEST_DAEMON_SCRIPT']` and `env['FLEETDECK_REPLACED']` (ProcessEnv is
+     an index signature). Pure syntax; no behavior.
+  3. **`prefer-nullish-coalescing` on load-bearing `||` ×2** (sessionstart). `FLEETDECK_TEST_DAEMON_SCRIPT || bundle`
+     (an empty/unset test seam must fall back to the bundle, not be kept as `''`) and
+     `payload.hook_event_name || 'SessionStart'` (a missing OR empty event name must default) —
+     `??` would keep `''`, a behavior change. Kept `||` with scoped disables, both confirmed
+     load-bearing via `--report-unused-disable-directives`. (fleet-hook.ts carries the same
+     idiom on `withRun(raw) || '{}'`.)
+  4. **exactOptionalPropertyTypes forbids `headers: undefined` / `body: undefined`.** In
+     sessionstart's `api()` the request body is spread in only when present
+     (`...(body ? { body: JSON.stringify(body) } : {})`) and `headers` is always an object
+     (empty ≡ no headers on the wire); fleet-watch/​fleet-hook use the sibling shared-object
+     (`authHeaders`) / typed-object patterns. No explicit-undefined property anywhere.
+  5. **Wire-JSON typed as trusted shapes, cast to keep `?.` guards necessary.** `api<T>()`
+     returns `(await res.json()) as T` with `T` = `Health` / `Registration` / null; the daemon
+     has minted these fields at every boot, so a mismatch reproduces the pre-migration untyped
+     behavior rather than a new failure mode (same idiom as bin/fleetdeck.ts's `as Health`).
+     `Registration.upgrade_lines`/`.brief` stay `unknown` and are re-validated at the read site
+     (`Array.isArray`, `typeof brief === 'string'`) — the daemon-garbage defense the `.mjs`
+     already had. In **fleet-watch.ts** the same rule bit the other way: casting `res.json()` to
+     a *non-null* `WatchResponse` let TS prove `out` never-null and turned the runtime null-body
+     guards into `no-unnecessary-condition` errors → fixed by casting to `WatchResponse | null`.
+  6. **`restrict-template-expressions` bans `null`/`any` in templates.** `String(ownVersion())`
+     (ownVersion is `string | null`) and `${String(line)}` (an `any` upgrade line off the
+     Array.isArray narrowing) coerce explicitly; both are clean under `no-base-to-string`
+     (neither is an object type). `String()` of the wire values matches the `.mjs`.
+  7. **Trivia:** fleet-watch dropped a dead `let out = null` init (`no-useless-assignment`) and a
+     single-assignment `let timer` → `const timer` (`prefer-const`); the sessionstart poll uses
+     `await new Promise<void>((r) => { setTimeout(r, 250); })` (braced executor); `child.once('error', …)`
+     carries a comment inside the empty handler (`no-empty-function`) — all sibling idioms, no
+     runtime move.
+
+- **Fix:** all in place. Isolated `tsc` clean on the three sources; `eslint
+  --report-unused-disable-directives` exit 0 (every disable load-bearing); control-bytes 0 on
+  sources AND the regenerated artifacts; artifacts self-contained (node-builtin imports only),
+  shebang line 1 + banner line 2 preserved. `bundle:hooks` npm script + CI drift gate added.
+  Hook-affected suites green: `accept-scripts-hook-wiring` + `audit-hardening` + `hook-auth` +
+  `filechanged-watch` (33/0), `watch-rewake` + `max-turns-abort` (19/0), `takeover` +
+  `smoke-project-isolation` (17/0), `plugin-payload-gate` + `release-gate` (20/0) → **89 pass /
+  0 fail** against the freshly-bundled `.mjs` artifacts.
+
+
+---
+
+### ⇩ merged from `ts-migration-bugs.http.md`
+
+<!-- STAGING for http.ts — merge into ts-migration-bugs.md (newest-first, right below the
+     "entries appended below" marker) once the concurrent board subagent has finished its own
+     append. Kept separate only to avoid a concurrent-append race on the shared log. -->
+
+### http.ts — the HTTP + WebSocket surface (~1960 loc): all NOISE, one LOAD-BEARING near-miss avoided, every security invariant intact   [NOISE]
+- **What:** the daemon's whole request surface — the `authorized()` gate, the CSRF wall
+  (`crossSiteReason`), DNS-rebinding `hostHeaderOk`, the PROXY_AUTH trust semantics, gateway-bearer
+  waivers, `serveBoardAsset` traversal safety, both WS upgrades (`/ws` state feed, `/ws/term`
+  terminal bridge) with their backpressure/keepalive caps, and the hook fail-open contract.
+  `tsc` (root maximal-strict) + type-aware `eslint` driven to **0**, control-bytes 0,
+  **zero runtime move**. Every finding was maximal-strict ergonomics or a lint idiom already
+  established by sibling `spawns.ts`/`derive.ts`/`settings.ts`. The security-critical surfaces were
+  preserved verbatim: the unconditional `/hook/*` auth leading the loopback block; timing-safe
+  `tokenMatches` only after a length match; the CSRF wall on state-changing POSTs, both WS upgrades
+  and the two mutating GETs (`/mail`, `/api/watch`); `hostHeaderOk` rebinding defense; the
+  no-Origin proxy-hole fix (`arrivedViaTrustedProxy` checks Host, not just Origin); the gateway
+  bearer gate keyed off `isLoopbackAddress(req.socket.remoteAddress)`; `serveBoardAsset` staying
+  strictly inside `BOARD_DIST`; CSP_SHELL on HTML only; the WS eviction caps
+  (`MAX_WS_BUFFER`/`MAX_TERM_WS_BUFFER`/`MAX_TERM_FRAME_BYTES`); `spawnFailureReason` redaction on
+  the `/api/spawn` catch; and hooks always failing open with `200 {}`.
+
+- **The one that mattered — a LOAD-BEARING `|| null` that `??` would have silently broken (near-miss, NOT shipped):**
+  `prefer-nullish-coalescing` flagged the `/api/watch` watch-generation read
+  `const wg = url.searchParams.get('wg') || null`. A naive `?? null` autofix looks identical but is
+  **not**: `searchParams.get()` returns `'' | string | null`, and the empty string is reachable
+  (`?wg=`). Downstream, `claimMail(sid, gen)` (mail.ts:620) refuses to claim when `gen !== null &&
+  !isWatchGen(sid, gen)` — so `''` is a *present-but-invalid* generation that **blocks mail
+  delivery**, whereas `null` means "no generation, claim freely." `|| null` folds `''`→`null`
+  (deliver); `?? null` would keep `''` (refuse) — a real mail-delivery regression on any client that
+  sends `?wg=`. Preserved the behavior without a disable and without the rule's suggested
+  behavior-changing shape: `const wgParam = url.searchParams.get('wg'); const wg = wgParam === ''
+  ? null : wgParam;`. (Note: the rule *also* flags the ternary `x ? x : y` form and offers the same
+  unsound `x ?? y` autofix — do not take it.) Verified against mail.ts:620 before editing.
+  watch-rewake (18/18), mail-and-blocking (9/9), mail-delivery-lease (5/5), mail-frames (9/9) green.
+
+- **Why the rest is noise (the interesting ones):**
+  1. **CFA over-narrowed a callback-mutated `let` to `false`, tripping `no-unnecessary-condition`
+     "always falsy".** The `/ws/term` bridge kept `let socketClosed = false`, set it in a
+     `ws.on('close')` closure, and re-read it after an `await` (the R5 abort check). TS narrowed the
+     bare `let` to the literal `false` at the read and declared the guard dead. The honest fix is a
+     **holder object** — `const abort = { closed: false }`, mutate `abort.closed = true` in the close
+     handler, read `abort.closed` after the await — because a property read across an `await` re-widens
+     to the declared `boolean` (a function boundary defeats the literal narrowing). No disable, no
+     behavior move; `isAborted: () => abort.closed` still fires and a late-arriving handle still closes.
+  2. **`no-misused-promises` on an async WS `connection` listener.** `termWss.on('connection', async
+     (ws, req) => {…})` handed a promise-returning listener to an EventEmitter. The body is fully
+     try/caught and never rejects, so the sanctioned fix (same as spawns.ts's `setTimeout(async)`
+     nudge) is a sync listener wrapping the body in `void (async () => { … })();`. The file was
+     briefly unbalanced between the open and close edits — PostToolUse prettier skips a
+     syntactically-broken file and reindented once the closing edit balanced it.
+  3. **`req.socket.remoteAddress` optional-chain was flagged unnecessary.** `@types/node` types
+     `IncomingMessage.socket` as a non-nullable `Socket`, so `req.socket?.remoteAddress` trips
+     `no-unnecessary-condition`. Dropped the `?.` at all three sites (the loopback gate, the LAN
+     log `from`, and the `bearerWaived` chain) — the gateway bearer gate still keys off
+     `isLoopbackAddress(req.socket.remoteAddress)` exactly as before.
+  4. **`e?.reason || e?.message` on a WS error is first-non-empty, NOT nullish.** The `/ws/term`
+     error branch surfaces the closer reason, then the message, then a default. `??` would keep an
+     empty-string `reason`. Preserved with string-normalization:
+     `const failReason = typeof e?.reason === 'string' ? e.reason : ''; const failMessage = …;
+     send({ t: 'err', reason: failReason || failMessage || 'terminal unavailable' });` — the
+     remaining `||` chain is now over provably-string operands where empty-means-fall-through is the
+     intended semantics. terminal-ws (18/18) green.
+  5. **`no-base-to-string` on `unknown` spawn-plan id.** The spawn-accept log builds a ` plan=${…}`
+     suffix from a value typed `unknown`. Guarded to a stringifiable primitive rather than coerce a
+     possible object: `const spawnPlanSuffix = typeof spawnPlanId === 'string' || typeof spawnPlanId
+     === 'number' ? \` plan=${spawnPlanId}\` : '';`.
+  6. **`String(x)` on an already-`string` and `String(x || '')` folds.** Removed the redundant
+     `String()` wrappers and simplified empty-string folds that are identical either way
+     (`url.searchParams.get('session') ?? ''` for the `/mail` and watch `sid` keys, `req.url ?? ''`
+     in `.startsWith('/hook/')` and `new URL(req.url ?? '/', …)` contexts) to the established `??`
+     idiom — all behavior-identical because the consumer only ever does string ops.
+  7. **Assorted maximal-strict ergonomics (pure NOISE, no behavior):** `use-unknown-in-catch-
+     callback-variable` → `.catch((err: unknown) => …)` on the worktree-inspector / session-fs /
+     home-fs detach paths; `no-unused-expressions` ternary-as-statement → `if (…) json(…); else
+     json(…);` at the hook-vs-403 forks (`hostHeaderOk`, `crossSiteReason`, request-error catch);
+     `no-empty-function` → explanatory-comment bodies on the initial no-op `unregister` and
+     best-effort `.catch()`s; `timer.unref()` / `flushTimer.unref()` retained; the fire-and-forget
+     `spawnLivenessTick()` cast to `Promise<unknown> | undefined` before `?.catch()` (the ctx seam
+     types it loosely — NOISE, the tick is reconcile-only and its rejection is intentionally
+     swallowed).
+
+- **Seam notes (NOISE, no fix needed, flagged for the derive/ctx typing pass):** the `ControlResult`
+  envelope, `LiveSocket.isAlive`, and the `{ raw: Buffer }` WS-frame assumption are all typed
+  loosely at the `CoreCtx`/ws boundary; http.ts consumes them defensively and unchanged. No latent
+  bug — recording only so the eventual ctx-contract tightening knows these three are the remaining
+  loose edges the HTTP surface leans on.
+
+- **Fix:** all in place; no runtime behavior moved. Rename staged `http.mjs -> http.ts`; importers
+  repointed to `.ts` (`scripts/fleetd/fleetd.mjs:19`, `tests/lan-mdns-state.test.mjs:15`,
+  `tests/network-refresh.test.mjs:24`, the generated wrapper in `tests/hook-auth.test.mjs:104`, the
+  source-text read in `tests/board-util.test.mjs:617`, and the ESM loader specifier in
+  `tests/helpers/mdns-dgram-loader.mjs:17`). Affected suites green on the source lane:
+  lan-mdns-state 2/2, network-refresh 3/3, fleetd-audit-regressions 10/10 (loader repoint),
+  hook-auth 11/11 (generated import), csrf-guard 42/42, loopback-gates 14/14, require-token 7/7,
+  lan-auth 9/9, ws-hardening 5/5, static-serving 9/9, gateway 19/19, mail-and-blocking 9/9,
+  mail-delivery-lease 5/5, mail-frames 9/9, takeover 15/15, terminal-ws 18/18, question-rearm 8/8,
+  watch-rewake 18/18. (board-util / board-termdiag can only run once the concurrent board
+  conversion lands — they top-level-import board sources that are mid-rename to `.ts`; the http.ts
+  cache-control invariant they assert is present at http.ts:217 and both files are self-consistent
+  at this commit's tree.)
+
+- **Bundle deliberately NOT regenerated in this commit:** `bun run bundle` inlines *every* daemon
+  source — including `scripts/fleetd/derive.ts`, which is the concurrent board session's uncommitted
+  WIP — into `fleetd.bundle.mjs`. Rebundling now would bake that WIP into a committed artifact.
+  Because http.ts is behavior-identical to the old http.mjs (zero runtime move), the shipped bundle
+  stays behaviorally correct; the regeneration rides the fleetd.mjs-entry conversion once the board
+  WIP has landed.
+
+
+---
+
+### ⇩ merged from `ts-migration-bugs.spawns.md`
+
+<!-- STAGING for spawns.ts — merge into ts-migration-bugs.md (newest-first, right below the
+     "entries appended below" marker) once the concurrent board subagent has finished its own
+     append. Kept separate only to avoid a concurrent-append race on the shared log. -->
+
+### spawns.ts — the board-spawn lifecycle giant (~3270 loc): all NOISE, no latent bug, security invariants intact   [NOISE]
+- **What:** the largest daemon module (spawn / revive / harvest / kill / setup-wrapper). `tsc`
+  (root maximal-strict) + type-aware `eslint` driven to **0**, control-bytes 0, **zero runtime move**.
+  Every finding was ergonomics of maximal-strict on dynamic JS or a lint idiom already established by
+  sibling `derive.ts`/`settings.ts`. The security-critical surfaces were preserved verbatim:
+  `spawnFailureReason` still routes through `redactGitText`; `stallDiagnosticExcerpt` keeps its
+  scrub/redact + 2 KB bound with `exactSecrets`; the arm gate, gateway/remote-control mutual
+  exclusion, `SETUP_CONTROL_RE` shell-injection guard, and prompt-as-last-argv all unchanged.
+
+- **Why it's noise (the interesting ones):**
+  1. **`SpawnsCtx` method-shorthand members tripped `unbound-method` when destructured.** `createSpawns`
+     destructures the ctx (`const { tick, logEvent, onMutate, … } = ctx`); with method-shorthand
+     interface members (`tick(msg): void`) the rule fires on the free reference. Every member is a
+     plain closure wired by derive's `CoreCtx` and none reads `this`, so the honest structural fix is
+     arrow-property syntax (`tick: (msg: string) => void`) — exactly what the sibling `CoreCtx` already
+     uses (derive.ts:183/189). Converted the interface; no disable, no runtime move.
+  2. **`no-base-to-string`: `?? ''` widened `unknown` → `{}`.** `spawnFailureReason` builds
+     `String((err as {message?: unknown} | null)?.message ?? err ?? '')`. The `?? ''` widened the
+     operand to `{} | string`, tripping `no-base-to-string` — even though the sibling `errMessage`
+     does `String(err)` on bare `unknown` cleanly. Fix: annotate the coalesced value `: unknown` so
+     `String()` stays the sanctioned coercion. Behavior-identical.
+  3. **`setup_cmd` insert paths disagreed on `|| null` vs `?? null`.** `prefer-nullish-coalescing`
+     surfaced that the primary path (`const setupCmd = body.setup_cmd ?? null`, :928) used `??` while
+     two other insert paths (:1447, :1695) used `|| null`. The only divergence is when a client POSTs
+     `setup_cmd: ""`: `||` stores `null`, `??` stores `""`. Confirmed **every** consumer keys off
+     truthiness — env injection `setupCmd ? {FLEETDECK_SETUP_CMD…} : {}` (:931), `!!row.setup_cmd`
+     (:2886), `row.setup_cmd ? … : …` (:2911) — so `""` and `null` are functionally identical
+     downstream. Harmonized all three to `?? null`. No behavior move; the setup command is still
+     inert when empty.
+  4. **HTTP-status fallbacks `errStatus(err) || N` → `?? N`.** `errStatus` returns `number | undefined`
+     and never a real `0`, so the operators are behavior-identical here; switched to `??` to match the
+     established `errStatus(err) ?? 500` idiom in settings.ts:755. Same for object/`undefined`
+     fallbacks (`gatewayEnv ?? {}`, `activeSpawnBySession.get() ?? provisioning…`) and empty-string
+     folds that are identical either way (`process.env['SHELL'] ?? ''`, `body.cwd ?? ''`,
+     `forbidden ?? 'worktree'`, kill-result `error ?? '…'` — `KillResult.error` is only ever unset or
+     a non-empty diagnostic).
+  5. **`no-misused-promises`: `setTimeout(async () => {…})`.** The stall-nudge scheduled an async
+     callback (a floating promise). Extracted the async body verbatim into `const nudge = async () => {…}`
+     and scheduled `setTimeout(() => void nudge(), NUDGE_MS)` — the timer callback now returns `void`;
+     the body (fully try/caught, never rejects) is untouched. Detach callbacks in the repo-provision
+     path got the same `void`-operator treatment; empty best-effort `.catch(() => {…})` bodies got an
+     explanatory comment (sibling idiom, derive.ts:1290).
+  6. **`use-unknown-in-catch-callback-variable` / `prefer-optional-chain`.** `.catch((err: unknown) => …)`
+     annotation; `!row || row.status !== 'spawning'` → `row?.status !== 'spawning'` (and the twin
+     `SessionEnd` guard) — the narrowing still flows because `=== 'literal'` proves non-null.
+
+- **Fix:** all in place; no runtime behavior moved. Importers repointed to `.ts`
+  (`http.mjs:20`, `tests/daemon-maintenance.test.mjs:10`, `tests/git-stderr-detail.test.mjs:432`).
+  Affected suites green (see commit).
+
+
+---
+
+### ⇩ merged from `ts-migration-bugs.tests.F.md`
+
+# TS migration — strict-typing consequences (tests group F)
+
+Group F files: revive, shell-spawn, spawn-unsupervised, spawn-setup,
+watch-rewake, needs-you. Newest-first. Each entry: the strict flag / lint rule,
+the shape it bit, the fix, and whether behavior shifted.
+
+## `assert.equal` (node:assert/strict) back-narrows an optional-chain base
+
+`node:assert/strict`'s `equal` is `strictEqual`, typed `asserts actual is T`.
+So `assert.equal(card.spawn?.kind, 'shell')` narrows `card.spawn` itself to
+non-nullish (its `.kind` can only be `'shell'` if `spawn` is defined). The very
+next line `assert.equal(card.spawn?.status, 'live')` then trips
+`no-unnecessary-condition` ("unnecessary optional chain on a non-nullish
+value"). Fix: drop the now-redundant `?.` on the FOLLOWING access only
+(`card.spawn.status`). Behavior-identical — line N must pass (proving `spawn`
+defined) before line N+1 executes. (shell-spawn.test.ts:224)
+
+Corollary: `assert.notEqual` / `assert.deepEqual` do NOT carry `asserts`, so
+they do not narrow. After `assert.notEqual(x, 'TIMEOUT')`, `x` keeps its full
+union → cast (`(x as JsonResponse).json`). (needs-you.test.ts cap test)
+
+## `require-await` on an await-free node:test callback → drop `async`
+
+A `test('...', async (t) => { ...sync only... })` with no `await` trips
+`require-await`. Fix: drop `async`. node:test accepts a sync `(t) => void`
+callback; a thrown assertion fails the test identically to a rejected promise.
+Do NOT reach for `Promise.resolve()` padding here — there is no async contract
+to honor on a test body. (spawn-setup.test.ts:420)
+
+## `noPropertyAccessFromIndexSignature` → bracket a property off an index sig
+
+`core.snapshot().settings.repo_setup` — `repo_setup` comes from an index
+signature on `settings`, so it must be `settings['repo_setup']`. Named optional
+props (e.g. `env.FLEETDECK_SETUP_CMD`) are unaffected; only index-signature
+members need brackets. Behavior-identical. (spawn-setup.test.ts:176)
+
+## `JsonResponse.json` is `unknown` → one named facet per read
+
+Every `res.json.<x>` needs a cast to a locally-declared facet interface naming
+exactly the fields the assertions read (RegisterAck, PermissionHoldResponse,
+UpsResponse, StopBlockResponse, QuestionPayload, DismissAck, MailListResponse).
+Convention: cast `as Facet | null` when a null-guarding `?.` must stay legal
+(`(reg.json as RegisterAck | null)?.callsign`); cast `as Facet` for a direct
+read (`(res.json as DismissAck).ok`). `(await getJson(...)).json` casts
+`as StateResponse` from contracts. (needs-you.test.ts)
+
+## `noUncheckedIndexedAccess` → guard the first element even after a length check
+
+`qs[0]`, `firstFourPending[0]`, `promises[0]` are all `T | undefined`. A prior
+`assert.equal(qs.length, 1)` does NOT narrow the index access, so add
+`const q = qs[0]; assert.ok(q);` (or `const oldestId = arr[0]?.id;
+assert.ok(oldestId)`). These added asserts are guaranteed-pass given the
+preceding length/emptiness assertion → behavior-preserving. (needs-you.test.ts)
+
+## `no-unnecessary-condition` / `prefer-nullish-coalescing` on dead fallbacks
+
+- `state.questions || []` and `(state.questions || []).find(...)` — `questions`
+  is a REQUIRED `QuestionEntry[]`, so `|| []` is dead → drop it.
+- `.json.mail || []` where `mail: unknown[] | undefined` — `prefer-nullish-
+  coalescing` wants `?? []`; arrays are always truthy so `||`/`??` are identical
+  here. (needs-you.test.ts)
+
+## `no-unnecessary-condition` on redundant null/undefined guards — NEAR-EQUIV
+
+`assert.ok(q.id !== undefined && q.id !== null, ...)` where `q.id: string`
+(always defined) → both comparisons are constant-true, flagged. Replaced with
+`assert.ok(q.id, ...)`. FLAG: near-equivalence — the original also passed for
+`''`; `assert.ok('')` is falsy, so the new form rejects an empty-string id. IDs
+are non-empty in practice, so no live behavior change. (needs-you.test.ts x2)
+
+## `restrict-template-expressions` bans null/undefined in `${...}`
+
+`${deliveryChannel}` (`string | null`) → `${String(deliveryChannel)}`;
+`` `Bearer ${daemon.token}` `` (`string | null`) → `${String(daemon.token)}`.
+`String(null) === 'null'` reproduces the original runtime string exactly.
+`String()` of a genuinely nullable value is NOT double-flagged by
+`no-unnecessary-type-conversion` (the arg is not already a string). numbers in
+templates are allowed (config: `allowNumber: true`), so `${expectedCount}` etc.
+stay bare. (needs-you.test.ts)
+
+## `no-unnecessary-type-conversion` → drop `String()` around a string
+
+`String(x.id) === String(q.id)` where both `id: string` → flagged; dropped to
+`x.id === q.id`. Behavior-identical under the string-typed id contract.
+(needs-you.test.ts, several `.find` predicates)
+
+## `no-confusing-void-expression` → brace single-expression void arrows
+
+`setTimeout(() => resolve('TIMEOUT'), 1500)` → `setTimeout(() => {
+resolve('TIMEOUT'); }, 1500)` (resolve returns void). Same for a Promise
+executor returning the setTimeout handle: brace the executor body too.
+(needs-you.test.ts cap test)
+
+## `no-unsafe-return` → brace an arrow that returns `any`
+
+`assert.doesNotThrow(() => JSON.parse(text), ...)` — `JSON.parse` returns `any`,
+so the arrow returns `any` → flagged. Braced to discard:
+`() => { JSON.parse(text); }`. `doesNotThrow` only observes throw/no-throw, so
+identical. (needs-you.test.ts malformed-body test)
+
+## `loadFixture` tokens arg has no `token` key → excess-property error
+
+`FixtureTokens` is `{ session_id?; session?; cwd? }`. A stray
+`loadFixture(name, { token: daemon, session_id, cwd }, ...)` is an
+excess-property error. Removed `token: daemon` at 4 call sites; behavior-
+identical (the fixture token substituter only reads session_id/session/cwd; the
+handle was already ignored). (needs-you.test.ts)
+
+## Local helper `findSession` re-typed to assert-internally (sibling of findCard)
+
+`function findSession(state: StateResponse, sid): SessionEntry` now asserts the
+row is present and returns it, so call sites reach `.col`/`.lastTool` directly
+(the raw `.find()` is `SessionEntry | undefined`). Consequence: the Notification
+test's `assert.ok(card, 'session card should exist')` is now logically
+redundant (card is non-null). KEPT — `no-unnecessary-condition` inspects
+conditional positions, not `assert.ok(...)` call args, so it does not fire; kept
+for faithfulness to the original. (needs-you.test.ts)
+
+## `questionsFor` optional `kind` param — keep `!kind`
+
+`function questionsFor(state, sid, kind?: string)` — `!kind` stays meaningful
+(`kind` may be undefined) and is NOT flagged: `strict-boolean-expressions` is
+off, and `no-unnecessary-condition` sees `kind` as genuinely optional. Only the
+`state.questions || []` fallback inside it was dropped. (needs-you.test.ts)
+
+
+---
+
+### ⇩ merged from `ts-migration-bugs.tests.G.md`
+
+<!-- STAGING for the test-conversion phase (task #11), "Group G" batch:
+     tests/{plans,worktrees,derive-audit-reliability}.test.mjs -> *.test.ts under the full
+     strict + strictTypeChecked + stylisticTypeChecked gate. MY files alone (kept separate
+     from ts-migration-bugs.tests.md to avoid a concurrent-append race). Merge newest-first
+     into ts-migration-bugs.md when the phase lands. Entries are strict-typing CONSEQUENCES
+     of the conversion, terse, newest-first. -->
+
+### `no-unnecessary-condition` vs `noUncheckedIndexedAccess`: a genuine two-rule standoff, resolved by narrowing once   [MIGRATION CONSEQUENCE — derive-audit-reliability]
+
+- **The standoff.** For a value that is legitimately `T | undefined` — either an indexed read
+  under `noUncheckedIndexedAccess` (`snap.conflicts[0]`) or a `.get()` result
+  (`afterCleanup`, `adopted`) — tsc DEMANDS `?.` on every access, but
+  `@typescript-eslint/no-unnecessary-condition` flags the `?.` on the SECOND (and later)
+  consecutive access to that same stable reference as "unnecessary optional chain on a
+  non-nullish value". The FIRST access in the run is never flagged; only the repeats are.
+  So `foo?.a` passes and the next line's `foo?.b` errors — you cannot satisfy both rules by
+  toggling the one `?.`.
+- **Why removing `?.` is wrong.** Dropping the flagged `?.` to appease eslint immediately
+  reintroduces the tsc error it was there to silence (`Object is possibly 'undefined'`).
+  Round-trip trap: the two gates disagree about the exact same token.
+- **Fix (the choke-point narrow).** Bind the value to a `const`, `assert.ok(it, '…')` once,
+  then use plain `.a`/`.b` everywhere after. The assert narrows `T | undefined` -> `T` for the
+  whole tail, so tsc is happy (no possibly-undefined) AND eslint is happy (no `?.` at all).
+  Behaviour-faithful: the `.mjs` accessed the fields unconditionally too, so an assert that the
+  row/element exists is exactly the implicit precondition the original relied on.
+    - `snap.conflicts[0]?.rel_path` + `…?.sessions`  ->  `const survivor = snap.conflicts[0]; assert.ok(survivor, …); survivor.rel_path; survivor.sessions` (x2: M-B4, R2-6).
+    - `afterCleanup?.status` + `…?.archived_at`  ->  `assert.ok(afterCleanup, …)` then `.status`/`.archived_at`.
+    - `adopted?.status` + `adopted?.body?.reason`  ->  `assert.ok(adopted, …)` then `.status` / `.body?.reason` (`.body` stays optional -> its `?.` is real and unflagged).
+
+### `@typescript-eslint/prefer-includes` autofix rewrites `/str/.test(x)` -> `x.includes(str)`, which then trips `prefer-optional-chain`   [MIGRATION CONSEQUENCE — derive-audit-reliability]
+
+- Ticker assertions filtered/some'd on `/tmux server died/.test(x.msg)` etc. `x.msg` is
+  `string | null`. Under the PostToolUse format hook (`prettier --write` then `eslint --fix`),
+  `prefer-includes` (in `strictTypeChecked`) AUTOFIXES the plain-substring `.test()` into
+  `.includes()` — so `.includes` is the terminal, stable form, not a style choice.
+- But `x.msg.includes(…)` on a nullable string needs a null guard, and the obvious
+  `x.msg != null && x.msg.includes(…)` is itself flagged by `prefer-optional-chain`. Terminal
+  form that survives both the autofixer and the linter: **`x.msg?.includes(…)`**. The predicate
+  return becomes `boolean | undefined`, which `.some`/`.filter` treat identically to `false`
+  for a nullish msg — same elements selected as the original `.test()` (all the anchors are
+  plain substrings, no regex metacharacters), so assertion semantics are unchanged.
+
+### `adoptSession` is hand-declared 3-arg on the core surface but the `.mjs` called it with one   [MIGRATION CONSEQUENCE — derive-audit-reliability]
+
+- `derive.ts`'s `SpawnsSurface` types `adoptSession(sid, opts, meta)` with all three required,
+  whereas the impl (`spawns.ts`) defaults `body = {}` and `{ deferred = false } = {}`, so the
+  `.mjs` `core.adoptSession('adopt-unknown')` type-errored as "Expected 3 arguments, but got 1".
+- Faithful call: `adoptSession('adopt-unknown', { dangerously_skip_permissions: false }, { deferred: false })`.
+  These reproduce the runtime defaults exactly — `dangerously_skip_permissions === true` is the
+  only arm trigger (`skip=false` takes the same unarmed path as `body={}`), and `deferred:false`
+  matches the defaulted meta — so the UNKNOWN-lookup 503 path is identical to the 1-arg call.
+
+### `revived.body.spawn_id` is optional on `ReviveResult` -> narrow before use as SQL param and as a row source   [MIGRATION CONSEQUENCE — derive-audit-reliability]
+
+- `const newId = revived.body.spawn_id` is `string | undefined`. It is then passed to
+  `prepare<StatusRow>(…).get(newId)` (arg must be `SqlValue`, so `undefined` is rejected) and its
+  result field is read. Fix: `assert.ok(newId, 'a 200 revive minted a fresh spawn_id')` right
+  after the 200 assertion (narrows the param to `string`), and read the row as
+  `.get(newId)?.status` (the `.get()` result is `StatusRow | undefined`). The `.mjs` assumed
+  both — a 200 revive always carries a `spawn_id`, and the row always exists — so the asserts
+  just make the precondition explicit. (x2: H-R5, R2-5.)
+
+### Smaller strict-typing consequences worth the pattern (Group G)
+
+- **`noPropertyAccessFromIndexSignature` (TS4111) on `process.env`.** `process.env.PATH` ->
+  `process.env['PATH']`; and because `restrict-template-expressions` allows only string/number
+  in a template, the interpolation is `${process.env['PATH'] ?? ''}` (derive) /
+  `${String(process.env['PATH'])}` (worktrees) — `env[k]` is `string | undefined`. Same TS4111
+  applies to every dot-access on the `SqlRow` index signature.
+- **`prepare<Row>` generic is mandatory for dot-accessed rows.** The sqlite seam defaults
+  `prepare<R = SqlRow>` and `SqlRow = Record<string, SqlValue>` is an index signature, so
+  `.get().status` is a TS4111 dot-access-on-index-signature error. Every row shape gets an
+  explicit interface and `prepare<StatusRow>(…)` / `prepare<ColRow>(…)` etc. (~41 sites in
+  derive alone). Side benefit: the row field types are then real (`status: string`,
+  `archived_at: number | null`) instead of `SqlValue`.
+- **Fake tmux adapter -> core adapter via the documented double-cast.** The test's
+  `FakeTmuxAdapter` is a deliberately narrow stand-in; bridging it to the core's
+  `CoreTmuxAdapter` param uses `tmux.adapter as unknown as CoreTmuxAdapter` (4 sites) — the
+  permitted `as unknown as X` sibling idiom, not a suppression. No `: any`/`as any`/`@ts-*`/
+  `eslint-disable`/`!` anywhere in the three files.
+
+
+---
+
+### ⇩ merged from `ts-migration-bugs.tests.H.md`
+
+<!-- STAGING for the test-conversion phase (task #11, wave-2 group H): tests/*.test.mjs ->
+     *.test.ts under the full strict + strictTypeChecked + stylisticTypeChecked gate. Merge into
+     ts-migration-bugs.md (newest-first) once the phase lands; kept separate to avoid a
+     concurrent-append race on the shared log. Group H = fleet-bugs, tmux-adapter, mdns.
+     Entries are migration CONSEQUENCES of strict typing (authoring friction with a general
+     rule), newest-first. -->
+
+### tsc and eslint DISAGREE on a repeated `arr[0]?.x`: tsc needs the `?.`, eslint calls it unnecessary — the fix is a captured, `assert.ok`-narrowed const   [MIGRATION CONSEQUENCE — the sharpest gate tension in the whole file; mdns]
+
+- **What breaks.** Under `noUncheckedIndexedAccess`, `msg.answers[0]` is `DnsRecord | undefined`, so
+  the FIRST `msg.answers[0]?.data` needs its optional chain (tsc: object is possibly undefined).
+  But the moment you touch the same element-access reference a SECOND time in the same flow
+  (`msg.answers[0]?.flush`, then `?.class`, …), TS flow-analysis has refined that reference to
+  non-nullish, so `@typescript-eslint/no-unnecessary-condition` fires on every repeat with
+  "Unnecessary optional chain on a non-nullish value" — while tsc still demands the `?.` on the
+  first one. You cannot satisfy both by adding or by removing `?.`: the first occurrence wants it,
+  the rest forbid it. Observed exactly: line N (`?.data`) clean, N+1/N+2 (`?.flush`/`?.class`)
+  flagged; same shape on `answers[0]`, `txt.answers[0]`, `sends[0]`.
+- **Why both tools agree on the types yet disagree on the verdict.** eslint here runs type-aware
+  via `parserOptions.projectService`, so it reads the SAME tsconfig (`noUncheckedIndexedAccess`
+  on). The divergence isn't a config mismatch — it's that tsc reports *possibly-undefined access*
+  (a type error) and only on the first read, whereas no-unnecessary-condition reports *provably
+  non-null optional chain* (a lint smell) on the flow-refined repeats. Same type facts, opposite
+  direction of complaint.
+- **Fix (the one form that satisfies both).** Capture the element once, narrow it, then use the
+  narrowed local for every field: `const rec = msg.answers[0]; assert.ok(rec); rec.data; rec.flush;`.
+  A fresh `const` gets the *declared* `T | undefined` type (flow-refinement doesn't carry into a
+  new binding), so `assert.ok(rec)` is a meaningful condition to BOTH tools (not flagged), and all
+  subsequent `rec.x` reads carry zero `?.`. This is the same idiom already used for `srv0/txt0/a0`
+  in the same file — proof it lints clean. Rule of thumb: **two or more field reads off one
+  `arr[i]` → capture-and-`assert.ok`, never a chain of `arr[i]?.a` / `arr[i]?.b`.** (A single read
+  can keep the lone `?.` — it's the first-and-only, so neither tool objects.)
+
+### `String(x)` on a value that is ALREADY `string` is a lint error, not a harmless belt-and-braces   [MIGRATION CONSEQUENCE — recurs at every typed callback param; mdns]
+
+- **What breaks.** Defensive `logs.push(String(m))` / `downs.push(String(reason))` in `log`/`onDown`
+  callbacks. Because the source types those callbacks (`log?: (message: string) => void`,
+  `onDown?: (reason: string) => void`), `m`/`reason` are already `string`, so
+  `@typescript-eslint/no-unnecessary-type-conversion` flags "Passing a string to String() does not
+  change the type or value of the string" — 15 sites here.
+- **Fix.** Drop the wrapper: `logs.push(m)`. Keep `String(x)` ONLY where the operand is genuinely
+  not-yet-a-string: `String(err)` where `err: unknown` (in the `errText` helper) is fine, and
+  `${String(r.typeName)}` / `${String(r.ttl)}` on `string | undefined` / `number | undefined` is
+  fine (the union is not pure `string`, and `restrict-template-expressions` needs the coercion for
+  the `undefined` arm). The rule is precise: it fires on pure-`string` arguments only.
+- **Watch the indentation when batch-fixing.** An `old_string` that includes the leading whitespace
+  (`        downs.push(String(reason));`, 8-space, inside a `for`) will NOT match the 6-space
+  sibling elsewhere in the file — a `replace_all` silently leaves the odd-indent occurrence behind,
+  and it resurfaces on the next lint pass. Match on the bare statement or fix per-site.
+
+### `String(recordData)` in a failure diagnostic trips `no-base-to-string`; use `JSON.stringify`   [MIGRATION CONSEQUENCE — diagnostic-only, behaviour-preserving; mdns]
+
+- **What breaks.** A debug template `` `${String(r.data)}` `` where `r.data` is the codec's
+  `RecordData` union (`string | string[] | Record<string,string> | SrvData | Buffer`).
+  `@typescript-eslint/no-base-to-string`: "'r.data' may use Object's default stringification
+  ('[object Object]') when stringified" — correct, the object arms would render `[object Object]`.
+- **Fix.** `` `${JSON.stringify(r.data)}` ``. `JSON.stringify` returns `string` (clean for
+  `restrict-template-expressions`), is defined for every union arm, and yields a STRICTLY more
+  useful diagnostic than the `.mjs`'s implicit `[object Object]`. It appears only inside an
+  `assert.ok(x, <msg>)` failure string, so pass/fail behaviour is identical — a diagnostic-quality
+  change, not a semantic one.
+
+### Consuming an unexported source shape: derive it from the function signatures, don't re-declare it   [MIGRATION CONSEQUENCE — mdns]
+
+- **What breaks.** `scripts/fleetd/mdns.ts` keeps `DnsRecord` / `DecodedMessage` / `Question`
+  file-local (unexported). The converted test needs those exact types to annotate its collections
+  and helpers, but must NOT force new `export`s on the source (a source edit that has to ship in the
+  same commit — see the termbridge entry) when a pure derive suffices.
+- **Fix.** Reconstruct from the exported functions' own signatures, so the test's types are, by
+  construction, exactly what the codec produces/consumes:
+  `type DnsRecord = ReturnType<typeof buildAnnouncement>[number];`
+  `type DecodedMessage = NonNullable<ReturnType<typeof decodeMessage>>;`
+  `type Question = ReturnType<typeof parseQuestions>[number];`. Same idiom already in
+  `tests/fleetd-audit-regressions.test.ts`. Only reconstruct a shape by hand (`interface SrvData`)
+  when it is a nested rdata arm no exported signature surfaces directly. **Zero source changes,
+  zero bundle impact.**
+
+### A `decodeMessage(): T | null` seam wants a one-line asserting helper, not `?.` everywhere   [MIGRATION CONSEQUENCE — mdns]
+
+- **What breaks.** The codec's `decodeMessage(buf): DecodedMessage | null` is called ~40× and every
+  call site then reads `.answers` / `.questions`. Propagating the `| null` through each site
+  (`decodeMessage(x)?.answers`) is noise and re-triggers the repeated-`?.` tension above.
+- **Fix.** A local `const decode = (buf): DecodedMessage => { const m = decodeMessage(buf);
+  assert.ok(m, 'expected a decodable DNS message'); return m; };`. `assert.ok` is `asserts value`,
+  so the helper returns the non-null type and every call site is clean. Same move for the tri-state
+  socket helpers: `bindShared(): Promise<Socket | null>` stays honest, and each caller does
+  `assert.ok(asker, '...')` (one call site — the PTR-browse test — GAINED an `assert.ok(asker)` the
+  `.mjs` lacked; behaviour-preserving, since the original would have thrown on the null deref one
+  line later anyway).
+
+### `no-confusing-void-expression` bans BOTH `return t.skip(x)` and the bare void arrow `() => sock.start()`   [MIGRATION CONSEQUENCE — recurs across every skip and every void-returning stub; mdns]
+
+- **What breaks.** Two idioms the `.mjs` used freely: (1) `if (!port) return t.skip('reason');` —
+  `t.skip()` returns `void`, so `return t.skip(...)` is "Returning a void expression from an arrow
+  function"; (2) `assert.doesNotThrow(() => mdns.start())` where `start()` returns `void` — the
+  arrow-shorthand "confusingly returns a void".
+- **Fix.** (1) split to a statement + bare `return`: `{ t.skip('reason'); return; }`. (2) give the
+  arrow a block body: `() => { mdns.start(); }`. Do NOT block-body a NON-void arrow — `() =>
+  mdns.update(x)` returns `boolean`, and `t.after(() => mdns.stop())` / `() => close(sock)` return
+  `Promise<void>`; those keep the shorthand (they're not void expressions). The tell is the callee's
+  return type, not the syntax.
+
+### `noPropertyAccessFromIndexSignature`: dot access on a `Record<string,string>` is a tsc error, bracket is the fix (and eslint's `dot-notation` allows it)   [MIGRATION CONSEQUENCE — mdns]
+
+- **What breaks.** `(rec.data as Record<string, string>).path` → tsc TS4111 "Property 'path' comes
+  from an index signature, so it must be accessed with ['path']".
+- **Fix.** `(rec.data as Record<string, string>)['path']`. `@typescript-eslint/dot-notation`
+  (stylistic) does NOT then demand dot-notation back: it detects `noPropertyAccessFromIndexSignature`
+  and permits bracket access for index-signature members. Same interplay already relied on by
+  `tmux-adapter.test.ts`'s `process.env['X']`.
+
+### Injecting a fake `node:dgram`: cast `as unknown as typeof dgram`, and DON'T name the local `dgram`   [MIGRATION CONSEQUENCE — mdns]
+
+- **What breaks.** The socket-egress tests inject a hand-rolled fake socket via `createMdns({ inject:
+  { dgram } })`. A partial fake is not structurally assignable to the full `typeof import('node:dgram')`,
+  and naming the fake `const dgram = ...` shadows the real import so the very `typeof dgram` cast that
+  types it resolves to the fake.
+- **Fix.** Build the fake object, then `{ createSocket: () => socket } as unknown as typeof dgram`
+  (two-step cast — the only sanctioned escape hatch, no `any`), and bind it to a non-colliding local
+  (`fakeDgram`). Empty stub method bodies must carry a comment (`setMulticastTTL() { /* no-op */ }`)
+  or `@typescript-eslint/no-empty-function` fires. When the `.mjs` fake used `this.iface`, convert to
+  a closure `let iface: string | undefined` — avoids typing `this` on an object literal, single
+  socket so behaviour is identical.
+
+### Smaller strict-typing consequences worth the pattern (group H)   [MIGRATION CONSEQUENCE]
+
+- **`as const` only where a widened literal breaks a shorthand.** `for (const phase of ['probing',
+  'announced'] as const)` so `{ phase }` types as the `'probing' | 'announced'` union the source
+  wants. A DIRECT literal (`uniqueConflict(msg, opts, { phase: 'probing' })`) needs NO `as const` —
+  contextual typing already narrows the argument. Only the loop-variable case needs it.
+- **`(r.ttl ?? 0) > 0` for a relational compare on an optional number.** `r.ttl` is `number |
+  undefined`; a bare `r.ttl > 0` is a tsc error and `??` is required by `prefer-nullish-coalescing`
+  (over `||`). Equality is fine as-is: `r.ttl === 0` / `r.flush === false` need no guard.
+- **A `const` arrow used before its line → make it a `function`.** `close` was `const close = (s)
+  => …` defined mid-file but referenced by tests above it. Deferred (inside test callbacks) usage
+  does not trip TS2448 at runtime, but converting to `function close(s: Socket): Promise<void>`
+  hoists it alongside its siblings `bindShared`/`collect`/`foreignResponderOn5353`, removes any
+  ordering doubt, and is behaviourally identical.
+- **Unused-but-required param → `_`-prefix, and know which linter honours it.** `waitFor(predicate,
+  label, timeoutMs)` never reads `label`, but callers pass it positionally so it can't be dropped.
+  `_label` silences tsc `noUnusedParameters` (tsc exempts leading `_`). eslint's `no-unused-vars`
+  is `after-used` and does NOT honour `_`, but a middle param before a USED trailing one
+  (`timeoutMs`) is exempt regardless — so `_label` clears both. (Contrast a `_`-prefixed TRAILING
+  param, which eslint still flags — drop it instead.)
+- **`restrict-template-expressions` (allowNumber): `${q.name}/${q.type}/class ${q.class}` is fine.**
+  string + number only. Anything else needs `String(...)` (see the String() entries above) — but
+  only when the operand isn't already a string/number.
+
+---
+
+### Carried from group H's earlier files (tmux-adapter.test.ts) — recorded here so the phase merge has them   [MIGRATION CONSEQUENCE]
+
+- **`no-unnecessary-type-parameters` on a return-only generic.** A helper `readJson<T>(path):
+  T` whose type parameter appears only in the return position is flagged (the generic is a
+  disguised `as`, giving false safety). Fix: split into concrete-typed readers (one per call-site
+  shape) rather than one lying generic.
+- **`assert.ok(!x.ok)` narrows a discriminated result.** For a `KillResult = { ok: true; … } | {
+  ok: false; error: string }`, `assert.ok(!x.ok)` narrows `x` to the error arm so `x.error` is
+  reachable without a cast — `assert.ok`/`node:assert/strict` propagate discriminant narrowing.
+- **`process.env['X']` (bracket) + `Reflect.deleteProperty(process.env, 'X')`.** `process.env` is
+  an index signature: dot access is TS4111 (bracket required), and `delete process.env.X`
+  (computed/dynamic-ish restore loops) trips `no-dynamic-delete` → use `Reflect.deleteProperty`. A
+  STATIC `delete obj.optProp` on a declared-optional property is still fine.
+- **`process.getuid?.() ?? 0`.** `process.getuid` is optional (undefined on Windows in the typings);
+  call it optionally and coalesce, rather than asserting it exists.
+- **`waitUntil(fn)` generic-callback rewrite.** A polling helper whose callback returned an untyped
+  value needed its predicate typed `() => boolean` (or `() => T | undefined` with a narrowing
+  return) so the awaited result isn't `any` — mirrors mdns's `collect().waitFor` inline typing.
+- **Shell-command template byte-identity.** Where a test asserts on an exact spawned command string,
+  the conversion must keep the template BYTE-for-byte (no `String()` insertions, no reflow of the
+  literal) — the assertion is the contract; a formatter-reflowed or coercion-padded template is a
+  silent behaviour change. (General cousin of the board-cluster "anchor on stable payload text"
+  lesson.)
+
+
+---
+
+### ⇩ merged from `ts-migration-bugs.tests.I.md`
+
+<!-- STAGING for the test-conversion phase, GROUP I (tests/spawn.test.ts, spawn-repo.test.ts,
+     succession.test.ts, takeover.test.ts): *.test.mjs -> *.test.ts under the full strict +
+     strictTypeChecked + stylisticTypeChecked gate. My file alone (no shared append) — merge into
+     ts-migration-bugs.md (newest-first) once the phase lands. Entries are migration CONSEQUENCES
+     of strict typing; none are product bugs. Newest first. -->
+
+### `assert.equal(typeof X, 'string')` does NOT narrow `X` — use `assert.ok(typeof X === 'string')`   [spawn.test / spawn-repo.test — MIGRATION CONSEQUENCE, latent tsc error caught in review]
+
+- **What breaks.** The `.mjs` idiom `assert.equal(typeof x, 'string'); … x.length …` (spawn's
+  `reason`, spawn-repo's `fail_detail`) relied on a runtime typeof check with no compile-time
+  narrowing. `node:assert/strict`'s `equal` carries `asserts actual is T`, but `actual` is the
+  FIRST argument — the `typeof x` EXPRESSION — so it narrows *that expression* to `'string'`, NOT
+  `x` itself. Downstream `x.length` / `assert.match(x, …)` / `Buffer.byteLength(x)` / `x.split(…)`
+  therefore still see `x`'s declared type: `string | undefined` (spawn `reason`, TS18048) or
+  `string | null` (spawn-repo `fail_detail`, TS2345 ×2 + TS18047).
+- **Fix (behaviour-identical).** Replace with `assert.ok(typeof x === 'string', msg)`. `assert.ok`
+  carries `asserts value`, and `typeof x === 'string'` IS a typeof type-guard, so it narrows `x` to
+  `string` for every read below. Pass/fail is identical to `assert.equal(typeof x, 'string')` —
+  both throw iff `typeof x !== 'string'` — and the human message is preserved (promoted to the
+  primary `AssertionError` message). This is exactly the F-cluster `assert.equal` vs `assert.ok`
+  narrowing distinction, applied to a `typeof` operand.
+- **Note.** These two sites (spawn.test.ts `fail-loud: missing cwd` `reason`; spawn-repo.test.ts
+  failed-clone `fail_detail`) were the ONLY group-I tsc errors not attributable to the board-DOM
+  blocker. They slipped past the initial conversion AND past eslint (which does not fail on raw TS
+  type errors, only lint rules), and were caught by whole-program `tsc -p tsconfig.json --noEmit`
+  during the orchestrator's independent review. A stale comment asserting that the `typeof`-assert
+  narrowed was corrected in the same edit.
+
+### `killDaemonAt`: a nullable `pid` used both as "the pid" AND as a "confirmed-dead" flag collides with `verifyDaemonPid(pid: number)`   [takeover.test — MIGRATION CONSEQUENCE, behaviour-preserving restructure]
+
+- **What breaks.** The `.mjs` cleanup keeps `let pid = null`, calls `verifyDaemonPid(pid, home)`
+  with a possibly-null pid, then after SIGTERM re-uses the SAME variable as a liveness flag
+  (`process.kill(pid, 0)` in a loop; on ESRCH `pid = null; break;`), and finally gates the SIGKILL
+  on `if (pid != null)`. Under strict types this is two separate type errors: `verifyDaemonPid`'s
+  signature is `(pid: number, ...)` (rejects null), and `process.kill(pid, ...)` needs a non-null
+  number.
+- **Fix (equivalent, verified against the source).** (1) Guard the verifier calls as
+  `pid == null || !verifyDaemonPid(pid, home)` — identical branch outcome, because
+  `verifyDaemonPid` opens with `if (!Number.isInteger(pid) || pid <= 0) return false;`, so
+  `verifyDaemonPid(null)` was already returning false without throwing (its own unit test proves it
+  for `0`/`-1`); the `||` just never *passes* null now. (2) After the two guards, `const targetPid =
+  pid` (TS narrows `pid` to `number` there) and signal `targetPid` everywhere. (3) Replace the
+  overloaded nullable-pid "dead" flag with a dedicated `let alive = true` (`alive = false; break;`
+  on ESRCH, `if (alive)` gates the SIGKILL). Same three observable behaviours: SIGTERM, ≤20×100ms
+  liveness poll, conditional SIGKILL — the boolean just stops multiplexing "is it dead" onto the
+  pid slot.
+
+### `Semver` is not exported, but a converted test must hand `compareSemver` two NON-null operands   [takeover.test — MIGRATION CONSEQUENCE]
+
+- **What breaks.** `compareSemver(parseSemver(a), parseSemver(b))` fed `Semver | null` into a
+  `(a: Semver, b: Semver)` signature (4 direct call sites + a prerelease-chain loop). `parseSemver`
+  returns `Semver | null`; `Semver` is deliberately file-local to takeover.ts (not exported).
+- **Fix.** One module-local helper `function mustParse(input: string):
+  NonNullable<ReturnType<typeof parseSemver>>` that `assert.ok`s the parse then returns it.
+  `NonNullable<ReturnType<typeof parseSemver>>` recovers the exact `Semver` type WITHOUT forcing a
+  source export, and is structurally the parameter type `compareSemver` wants. Behaviour-preserving:
+  every input at these sites is a valid semver, so the assert never fires — it is a fail-loud guard
+  on the null path the `.mjs` would have passed straight through (and `compareSemver` would have
+  thrown on anyway).
+
+### `child.std{out,err,in}` are nullable + the `'data'` chunk is untyped   [takeover.test — MIGRATION CONSEQUENCE]
+
+- **What breaks.** `child.stdout.on('data', d => { stdout += d; })` — `stdout`/`stderr`/`stdin` are
+  `Readable|Writable | null`; and the `'data'` listener param `d` is untyped (`any` via the
+  `EventEmitter` overload), so `stdout += d` trips `no-unsafe-*` and `restrict-plus-operands`.
+- **Fix.** Destructure + `assert.ok` the three streams once (fail-loud, matching the `.mjs`'s
+  throw-on-null), then `childStdout.on('data', (d: Buffer) => { stdout += d.toString(); })`. Typing
+  `d: Buffer` kills the unsafe-any; `d.toString()` is exactly the implicit `Buffer`→string coercion
+  the `+=` did before. Side-effect order (attach stdout listener, attach stderr listener, write
+  stdin, end stdin) is preserved — the up-front asserts have no side effects.
+
+### `.unref?.()` on a `setTimeout` handle is a provably-unnecessary optional call   [takeover.test — MIGRATION CONSEQUENCE]
+
+- The `.mjs` wrote `setTimeout(...).unref?.()` defensively. Under `@types/node`, `setTimeout`
+  returns `NodeJS.Timeout`, which always has `unref()`, so `no-unnecessary-condition` flags the
+  `?.`. Dropped to `.unref()`. Runtime-identical in node (the optional guard only ever mattered in a
+  non-node runtime this test never runs in).
+
+### `number | undefined` pids need capture-then-assert before arithmetic / `writeFileSync` / `process.kill` / `verifyDaemonPid`   [takeover.test — MIGRATION CONSEQUENCE]
+
+- `ChildProcess.pid` (and the `/health` `pid`) is `number | undefined`. Sites doing `sleeper.pid +
+  100000`, `writeFileSync(... { pid: sleeper.pid })`, `process.kill(stub.pid, 0)`, or
+  `verifyDaemonPid(healthPid, ...)` all fail. Pattern: right after the `waitUntil(() => x.pid !=
+  null)` / `waitForHealth` that already guarantees it, capture `const p = x.pid; assert.ok(p !==
+  undefined, ...)` and use `p`. Fail-loud guard that never fires (the wait established liveness).
+  Used `!== undefined` (not truthiness) so a pid of 0 would not be silently excluded, though a
+  spawned child never has pid 0.
+
+### `waitForHealth()`'s index-signature return forces bracket access for `version`/`managed`, but a locally-cast `/health` does not   [takeover.test — MIGRATION CONSEQUENCE]
+
+- `waitForHealth` returns `{ pid?: number; [k: string]: unknown }`, so `noPropertyAccessFromIndex-
+  Signature` requires `health['version']` / `health['managed']` (both `unknown`) while `health.pid`
+  stays dot-accessible. By contrast, the `(await getJson('/health')).json` reads are cast to a
+  local `interface HealthView { pid?: number; version?: string; managed?: boolean }` whose EXPLICIT
+  props keep dot access. So the same field is `health['version']` (bracket) off `waitForHealth` but
+  `before.version` (dot) off a `HealthView` cast — the access style tracks whether the property is
+  declared or index-signature, not the field name.
+
+### Per-site `/state` cast shape chosen to preserve each `.mjs` access verbatim (defensive `?.` vs direct `.find`)   [takeover.test — MIGRATION CONSEQUENCE]
+
+- The `.mjs` is internally inconsistent: one site is `state.sessions?.some(...)` (defensive optional
+  chain), others are `state.sessions.find(...)` (assumes present) and `(state.ticker || []).map(..)`.
+  Casting all to the authoritative `contracts/state.ts` `StateResponse` (where `sessions` is
+  required) would make the `?.` provably unnecessary → `no-unnecessary-condition` → forced to DROP
+  the guard = a behaviour change. Kept faithful by casting PER SITE to a local shape matching that
+  site's access: `{ sessions?: SessionView[] }` where the source used `?.`, `{ sessions:
+  SessionView[]; ticker?: TickerView[] }` where it used direct `.find` / `.ticker`. Also `(ticker
+  || [])` → `(ticker ?? [])` (prefer-nullish-coalescing; identical for `T[] | undefined`, since an
+  array is always truthy and non-nullish).
+
+### `Reflect.deleteProperty` for `childEnv.TMUX` (recurs from the board cluster)   [takeover.test — MIGRATION CONSEQUENCE]
+
+- `delete childEnv.TMUX` is a double bind: `NodeJS.ProcessEnv`'s index signature makes dot access a
+  `noPropertyAccessFromIndexSignature` error, and rewriting to `delete childEnv['TMUX']` trips
+  `no-dynamic-delete`. `Reflect.deleteProperty(childEnv, 'TMUX')` satisfies both and is the same
+  static-key delete. (Same resolution the board-cluster notes reached; recorded here because it
+  recurs on ProcessEnv specifically.)
+
+### `chain[i]` / `chain[i-1]` under `noUncheckedIndexedAccess` in the prerelease-precedence loop   [takeover.test — MIGRATION CONSEQUENCE]
+
+- Variable indexing a `string[]` yields `string | undefined`, which fails three ways at once here:
+  `mustParse` wants `string`, and the `${chain[i]}` message templates ban `undefined`
+  (`restrict-template-expressions`). Fix: `const curr = chain[i]; const prev = chain[i - 1];
+  assert.ok(curr !== undefined && prev !== undefined);` once at the top of the body, then use the
+  narrowed locals. Loop bounds guarantee both are in range, so the guard never fires.
+
+### succession.test — capture-then-`assert.ok` narrowing, typed `prepare<Row>()`, and two behaviour-preserving restructures   [succession.test — MIGRATION CONSEQUENCE]
+
+- **Property-narrowing reset across calls.** Every `cardOf(state, sid)`, `heir.spawn`,
+  `mail_meta[newSid]`, `visible[0]`, and DB `.get()` result is `T | undefined`; captured into a
+  `const` and `assert.ok`'d before use (property narrowing resets after any intervening call, but
+  `const` locals do not). `assert.match(note, ...)` additionally needs `note` narrowed to `string`
+  first (it is not an `asserts` and rejects `string | null`).
+- **Typed DB rows.** `prepare<RetiredRow>(sql)` etc. type each `.get()`/`.all()` without a source
+  import; `ReturnType<typeof openDb>` types the `withDb` callback's `db` param.
+- **heirA/heirB mutation restructure.** The `.mjs` did `const heir = { sid: randomUUID() }; heir.
+  callsign = (await postHook(...)).json.callsign;` (mutate-after-init). Rebuilt as
+  `const heirSid = randomUUID(); const res = await postHook(...); const heir = { sid: heirSid,
+  callsign: (res.json as HookResult).callsign };` — same final object, no exactOptionalProperty /
+  reassignment friction.
+- **Sort table typed as a tuple.** `const expectedClaims: [string, string, string][] = [...]`
+  (not inferred `string[][]`), so `.sort((x, y) => x[0].localeCompare(y[0]))` sees `x[0]: string`.
+- **Settle sleep.** `await new Promise<void>((resolve) => { setTimeout(resolve, scaleMs(900)); });`
+  (same pattern used for the poll sleeps in takeover.test).
+
+### Cross-file FLAGS carried out of group I (cannot fix here — must-not-touch siblings/helpers)
+
+- `tests/wait-scaling.test.ts:29` hardcodes `spawn-repo.test.mjs` and greps its source by line;
+  `tests/spec-record-cleanup.test.ts:27` lists `spawn.test.mjs` (+ `spawn-unsupervised.test.mjs`);
+  and a `tests/spawn-repo-scratch-cleanup.test.ts` sibling — all run targets via
+  `spawnSync/execFileP(process.execPath, ['--test', <path>])` with NO explicit type-strip flag.
+  After group I renames spawn/spawn-repo to `.ts`, the orchestrator MUST (a) repoint those hardcoded
+  `.mjs` paths, and (b) verify the child `node --test` can execute a `.ts` target (node type-strip
+  is on by default on current node, but confirm on the CI matrix's oldest lane). `succession` and
+  `takeover` have NO such external runtime references (grep found only self-headers, now deleted),
+  so deleting their `.mjs` breaks nothing.
+- `tests/helpers/daemon.ts:149` has a STALE COMMENT referencing `takeover.test.mjs`. Cosmetic;
+  left untouched (must-not-touch helper) — orchestrator may refresh it to `.ts`.
+
+
+---
+
+### ⇩ merged from `ts-migration-bugs.tests.J.md`
+
+<!-- STAGING for test-conversion GROUP J (tests/{cli,daemon-maintenance,git-stderr-detail,
+     fleetd-audit-regressions}.test.mjs -> *.test.ts) under the full strict +
+     strictTypeChecked + stylisticTypeChecked gate. My file alone — do NOT concurrent-append
+     the shared ts-migration-bugs.tests.md; merge this in (newest-first) once the phase lands.
+     Entries are strict-typing CONSEQUENCES, not authoring friction. Two of these four files
+     (git-stderr-detail, fleetd-audit-regressions) are security/audit surface — every
+     redaction/leak/keep/token BYTE and every assertion verdict was diffed against HEAD and
+     proven identical; the notes below record only where a strict rule FORCED a shape change and
+     why that change preserves the verdict. -->
+
+### A `string | null` DB column forces a narrowing assert before `assert.match`, and the narrowing IS the old throw   [MIGRATION CONSEQUENCE — security file, verdict-preserving]
+
+- **What breaks.** `git-stderr-detail.test.ts` reads `fail_detail` back out of the daemon's
+  SQLite by name. As `.mjs` the row was untyped, so `assert.match(detail, /…/)` compiled. Typing
+  the row (`interface FailDetailRow { fail_detail: string | null }`, and the read `.get<FailDetailRow>()`)
+  makes `detail: string | null`; `assert.match` demands a `string`, so tsc rejects it.
+- **Fix + equivalence.** Insert `assert.ok(detail !== null)` (and one `assert.ok(out !== null)`)
+  immediately before each `.match`. This is verdict-identical to the `.mjs`: on the real path
+  `detail` is always the recorded string, so the assert is a no-op and the same `.match` runs;
+  on the impossible null path the `.mjs` threw `ERR_INVALID_ARG_TYPE` from `assert.match(null,…)`
+  and the `.ts` throws `AssertionError` from `assert.ok(false)` — both FAIL the test, neither
+  passes. The narrowing only relocates the failure a line earlier and changes its error class.
+- **Same pattern, `.find()` edition.** `fleetd-audit-regressions.test.ts` derefs `send`,
+  `packet`, `aRecord`, `goodbye`, `firstGoodbye` — each a `T | undefined` from `.find()` /
+  `decodeMessage(): Decoded | null` / an index. The `.mjs` derefed them bare; the `.ts` adds
+  `assert.ok(send, '…')` etc. before each use. Same equivalence: the reachable path never trips
+  the assert (a preceding `assert.equal(goodbyeSends.length, 1)` even guarantees the index), and
+  the unreachable path fails either way (TypeError vs AssertionError).
+
+### `packet?.answers.length > 0` is exactly `packet !== null && packet.answers.length > 0` — the explicit form is the type-narrowing one   [MIGRATION CONSEQUENCE]
+
+- `strict`+`noUncheckedIndexedAccess` on `decodeMessage(): Decoded | null` means the optional
+  chain `packet?.answers.length > 0` still leaves `packet` as `Decoded | null` in the following
+  `&&` clauses, so `packet.answers.every(…)` errors. Rewrote to `packet !== null &&
+  packet.answers.length > 0 && packet.answers.every(…)`. Value-identical: when `packet` is null
+  the `.mjs` computed `undefined > 0` (→ `false`) and the `.ts` computes `false` directly; when
+  non-null both evaluate the same three conjuncts. The `!== null` guard is what actually narrows
+  the union for the `.every` call the optional chain could not.
+
+### `.filter(Boolean)` doesn't narrow `(Decoded|null)[]` → hand-write the type-guard predicate   [MIGRATION CONSEQUENCE]
+
+- `records.map(decodeMessage).filter(Boolean)` stayed `(Decoded | null)[]` under TS (Boolean is
+  not a narrowing guard), so downstream `.some`/`.answers` errored. Replaced with
+  `.filter((packet): packet is DecodedMdnsMessage => packet !== null)`. Runtime-identical for
+  this element type: `decodeMessage` only ever yields an object or `null`, and both `Boolean(x)`
+  and `x !== null` drop exactly the nulls (no `0`/`''`/`NaN` in the array to diverge on). The
+  predicate merely adds the static narrowing. (`DecodedMdnsMessage = NonNullable<ReturnType<typeof
+  decodeMessage>>` recovers the non-exported decoder shape without forcing a source export.)
+
+### `prefer-nullish-coalescing` rewrites `|| fallback` to `?? fallback`, and each site was proven non-divergent   [MIGRATION CONSEQUENCE — audit file]
+
+- `strictTypeChecked` flags `a || b`. Converted three: `${env['NODE_OPTIONS'] ?? ''}`,
+  `(map.get(a) ?? 0) + 1`, `(r.ttl ?? 0) > 0`. `||` and `??` differ only when the left operand is
+  falsy-but-not-nullish (`''`/`0`/`false`). Each here is safe BECAUSE:
+  - NODE_OPTIONS: the only divergent input is `''`, and `'' || '' === '' ?? '' === ''` — the
+    fallback IS `''`, so the branch collapses.
+  - the Map counter: divergent input is `0`, and `0 || 0 === 0 ?? 0 === 0`; it is then `+1`'d the
+    same, and the map is write-once-then-increment so it never even stores `0`.
+  - `r.ttl`: divergent input `0` gives `0 > 0` either way, and undefined gives `0 > 0`(??) vs
+    `undefined > 0`(||) — both `false`.
+  When the fallback and the falsy value coincide, `||`→`??` is a no-op; that is the only reason it
+  was allowed to land in a byte-for-behavior file.
+
+### `.map(JSON.parse)` → `.map((line): T => JSON.parse(line) as T)` is behavior-identical (the index arg was never a reviver)   [MIGRATION CONSEQUENCE]
+
+- `strictTypeChecked` (`no-unsafe-*`) rejects the point-free `.map(JSON.parse)` because it returns
+  `any`. The explicit arrow types the row (`MdnsLogItem`). Equivalence rests on a JS detail:
+  `.map` calls `JSON.parse(value, index, array)`, and `JSON.parse`'s 2nd parameter is `reviver`,
+  which is honoured only if it's a **function** — the numeric `index` is ignored. So point-free
+  and explicit forms parse identically. (Same rewrite recurs at every JSONL read in the audit file.)
+
+### `RegExp.test(x)` on a union member needs a `typeof … === 'string'` guard; the guard is always-true under the preceding discriminant   [MIGRATION CONSEQUENCE — audit file, verdict-preserving]
+
+- `answer.data` is a union across mDNS record types; `no-base-to-string`/the string-arg
+  requirement made `/…/.test(answer.data)` error. Added `typeof answer.data === 'string' &&`
+  ahead of it. Verdict-preserving because the clause is already gated by `answer.typeName === 'PTR'`,
+  and PTR `data` is always the target-name string — so the `typeof` is always true on the
+  reachable path. On a hypothetical non-string `data` the `.mjs` would `String()`-coerce inside
+  `.test` and the exact `^Fleet Deck [0-9a-f]{6}\._fleetdeck\._tcp\.local$` anchor would still
+  not match, and the `.ts` short-circuits to `false` — same result. Same class:
+  `detail.match(/\[redacted\]/g)?.length` gained a `?.` (`String.match` is `… | null`);
+  match-count is always 5 on the real path, and the never-taken no-match path fails either way
+  (`null.length` TypeError vs `assert.equal(undefined, 5)` AssertionError).
+
+### Deliberately-malformed inputs: derive the param type and funnel junk through `unknown`, never `any`   [MIGRATION CONSEQUENCE]
+
+- `cli.test.ts` feeds `healthPidIsOurDaemon` / `healthIsOurManagedDaemon` partial/junk bodies
+  (`{}`, `{ pid: 'not-a-number', managed: true }`, `{ managed: 0, … }`) to prove they reject them.
+  `Health` is file-local (not exported) in `bin/fleetdeck.ts`, so I recovered the exact param type
+  with `type HealthArg = Parameters<typeof healthPidIsOurDaemon>[0]` and a boundary caster
+  `const asHealth = (h: unknown): HealthArg => h as HealthArg`. Each junk literal goes through
+  `asHealth({…})` — the runtime object is passed verbatim (the cast erases), so the guards still
+  see the same malformed input; bare `null` args were left untouched. Companion:
+  `tmuxVersionCapability('unknown').reason` needed `Extract<ReturnType<typeof tmuxVersionCapability>,
+  { available: false }>` to reach `.reason` on the `available:false` arm of the discriminated
+  union — a pure type assertion, zero runtime change.
+
+### `noUncheckedIndexedAccess` tuple loops: annotate the table `as [string, string][]` (recurs)   [MIGRATION CONSEQUENCE]
+
+- `for (const [a, b] of [ [x, y], … ])` over an inline literal infers `string[][]`, so `a`/`b`
+  come out `string | undefined`. Annotating the literal `] as [string, string][])` (cli.test:
+  two agents-cmd tables; git-stderr-detail: the redaction `inputs` table, also hoisted to a typed
+  `const inputs: unknown[]` / `const cases: {stderr;leak;secrets:string[]}[]`) makes the
+  destructured elements `string` again. Type-only; the table CONTENTS (every secret/leak/keep byte)
+  were diffed against HEAD and are identical.
+
+### `no-confusing-void-expression`: `return t.skip(msg)` → `{ t.skip(msg); return; }` (recurs, all four files)   [MIGRATION CONSEQUENCE]
+
+- `TestContext.skip()` returns `void`; `return t.skip(...)` returns a void expression, which the
+  rule (at default) flags. Split into a statement + bare `return`. Semantically identical — skip
+  the subtest, then stop — since node:test ignores a `TestFn`'s return value. Where the callback
+  used `t`, its type comes from `import test, { type TestContext } from 'node:test'` and an
+  explicit `(t: TestContext)`; where `t` was unused (cli.test serviceInstall) the param was
+  dropped (`async () =>`), which stays assignable to node:test's `TestFn`.
+
+### `noPropertyAccessFromIndexSignature` + `no-dynamic-delete` + `unbound-method`: env/kill/stdout mechanics   [MIGRATION CONSEQUENCE]
+
+- **`process.env.X` → `process.env['X']`** everywhere (dot access on an index signature is
+  banned); value-identical. Bracket access with a *variable* key was already fine.
+- **`delete process.env[k]` / computed deletes → `Reflect.deleteProperty(process.env, k)`**
+  (`no-dynamic-delete`); identical delete semantics.
+- **`const write = process.stdout.write` → `.bind(process.stdout)`** (`unbound-method`) for the
+  `token --rotate` stdout capture; the method is only ever called as `process.stdout.write(...)`,
+  so binding its receiver changes nothing, and the bound value reassigns back cleanly in `finally`.
+- **`process.kill(x.pid, …)` → `if (x.pid !== undefined) process.kill(x.pid, …)`** inside the
+  existing `try { … } catch { /* already gone */ }` cleanups: `ChildProcess.pid` is `number |
+  undefined`; on a spawned child it is always set, and the catch already swallowed a dead-pid
+  throw, so guarding the undefined case (which cannot occur here) is verdict-neutral.
+
+### Boundary casts that carry NO runtime effect (type-only)   [MIGRATION CONSEQUENCE]
+
+- `(srv.address() as net.AddressInfo).port` (address() is `AddressInfo | string | null`; a bound
+  TCP server is always `AddressInfo`); `new Promise<number>`; `JSON.parse(readFileSync(pkg)) as {
+  engines: { node: string } }`; `.get<PragmaColumnInfo>()` / `.all<…>()` DB generics;
+  `.find(…)`-result narrowed via `assert.ok(execLine !== undefined, …)` before `.match`. All
+  erase at emit.
+
+### Two `.mjs` COMMENT-reference decisions (the rule: don't repoint prose)   [PROCESS NOTE — one revert made]
+
+- The task says comment/prose references to `.mjs` are NOT repointed (only imports are). The
+  daemon-maintenance / fleetd-audit files correctly LEFT their cross-references
+  (`spawn.test.mjs`, `fleet-bugs.test.mjs`, `mdns.test.mjs`, `scripts/fleetd/*.mjs`,
+  `payload-redaction.test.mjs`) as `.mjs`, and cli.test left `agents-poll.mjs` / `fleetdeck.mjs` /
+  the `'fleetdeck.mjs'` path const and the `fleetd.mjs` argv fixture as `.mjs`.
+- A stray repoint in `git-stderr-detail.test.ts` — a comment citing `tests/payload-redaction.test.mjs`
+  — was reverted back to `.mjs` for rule-compliance and consistency with the identical reference
+  in daemon-maintenance (even though payload-redaction is in fact now `.ts`; the rule says leave
+  comment refs alone regardless).
+- KEPT (flagged, not a cross-reference): each file's own first-line self-identity banner was
+  updated to its real new name (`// tests/cli.test.ts`, `// tests/git-stderr-detail.test.ts`) —
+  a banner naming a now-deleted `.mjs` file would be wrong; this matches the convention already in
+  the landed `cli.test.ts`. Import specifiers to `../bin/fleetdeck.ts` / `../bin/tmux-version.ts`
+  use string-literal dynamic-import (not `new URL(...)`) so tsc resolves the module types; the
+  CLI-path const stays `fleetdeck.mjs` because `bin/fleetdeck.mjs` is the real entry the source
+  (`UNIT()`/`SUPERVISE()`) still emits.
+
+### String quote-restyle by the biome PostToolUse hook is value-identical (proven, not assumed)   [MIGRATION CONSEQUENCE — security file]
+
+- The formatter renormalizes single-quoted-with-escapes to double-quoted where that drops
+  backslashes: `'…the \'"\'"\' idiom'` → `"…the '\"'\"' idiom"` (cli.test shQuote message) and
+  `'Cloning into \'x\'…'` → `"Cloning into 'x'…"` (git-stderr-detail error input). Decoded both
+  literals with node and confirmed byte-identical runtime values (and the shQuote EXPECTED value
+  `` `'/it'\''s/a path'` `` is untouched). Called out here because in a redaction test a silently
+  altered string literal would be a real security regression — it was verified, not trusted.
+
+### Dead import dropped: `appendFileSync`   [MIGRATION CONSEQUENCE]
+
+- `fleetd-audit-regressions.test.mjs` imported `appendFileSync` from `node:fs` but never called it
+  (0 body references, confirmed against HEAD). `noUnusedLocals` flags it; removed from the import.
+  Behavior-neutral.
+
+
+---
+
+### ⇩ merged from `ts-migration-bugs.tests.md`
+
+<!-- STAGING for the test-conversion phase (task #11): tests/*.test.mjs -> *.test.ts under
+     the full strict + strictTypeChecked + stylisticTypeChecked gate. Merge into
+     ts-migration-bugs.md (newest-first) once the phase lands; kept separate only to avoid a
+     concurrent-append race on the shared 140k log. Entries are migration CONSEQUENCES of
+     strict typing, plus a couple of genuine "the test read/eval'd JS and the source is TS
+     now" breakages that are real bugs, not authoring friction. -->
+
+### A converted test that consumes real source objects forces the source to export its types — and the export must land in the SAME commit   [MIGRATION CONSEQUENCE + a split-commit gap that broke HEAD tsc]
+
+- **What breaks.** `tests/termbridge-capture-race.test.ts` drives the real
+  `createTermBridge` and collects the frames it emits. As `.mjs` it just pushed
+  frames into an untyped `const frames = []`. Strict `.ts` wants the element type,
+  so the test now imports the frame union — `import { createTermBridge, type TermFrame }
+  from '../scripts/fleetd/termbridge.ts'` — to type `frames: TermFrame[]` and an
+  `Extract<TermFrame, { t: 'out' }>` narrowing. But `TermFrame` was a *file-local*
+  `type` in termbridge.ts, so the import failed tsc (TS2459/2305: imports a
+  non-exported member). Fix: `type TermFrame =` → `export type TermFrame =`.
+- **Why it's a real bug, not just friction.** The export edit is a SOURCE change,
+  and it got split from the test: an earlier batch committed the converted test but
+  left the one-line `export` uncommitted in the working tree. HEAD therefore had a
+  test importing a non-exported type — a red tsc gate hiding in a "green tests" run
+  (node --test type-strips and never sees it). Rule: when a conversion adds
+  `export` to a source symbol, that source hunk belongs in the SAME commit as the
+  test that needs it, or the intervening HEAD is broken. Caught here by diffing the
+  stray `M scripts/fleetd/termbridge.ts` against its consumer before committing.
+- **Bundle impact: none.** `export type` emits zero runtime code (esbuild strips
+  it), so the committed `fleetd.bundle.mjs` is byte-identical — no rebundle despite
+  the `scripts/fleetd/` touch. Verified the bundle contains no `TermFrame` token.
+  (Generalizes: exporting a *type* from daemon source never dirties the bundle;
+  exporting a *value/function* for a test to import would, and would need
+  `npm run bundle`.)
+
+### board-util.test drags DOM-typed `board/src/util.ts` into the DOM-less root program → 14 tsc errors   [FINAL-GATE BLOCKER — straddles board ownership, coordinate with comet before fixing]
+
+- **What breaks.** The full-repo gate `tsc -p tsconfig.json --noEmit` reports exactly
+  **14 errors, all in `board/src/util.ts`** (`Cannot find name 'Element' /
+  'HTMLTextAreaElement' / 'ClipboardEvent' / 'Clipboard' / 'Permissions' /
+  'PermissionDescriptor' / 'window' / 'document'`, and `Property 'clipboard' does not
+  exist on type 'Navigator'`). They are NOT any test's authoring fault and NOT a
+  board bug: `util.ts` is the board's clipboard/OSC-52 helper and legitimately uses
+  DOM globals.
+- **Why it lands in the ROOT program.** Root `tsconfig.json` is Node/Bun-only
+  (`lib: ["ES2023"]`, no DOM) and `exclude`s `board`. But `tests/board-util.test.ts`
+  *statically* imports symbols from `../board/src/util.ts` (lines 21–39). tsc follows an
+  import into an excluded file — `exclude` only bars a file from being a *root*, not
+  from being pulled in transitively — so `util.ts` gets type-checked under the DOM-less
+  root lib and its DOM globals are undefined. `board/tsconfig.json` (comet-owned) DOES
+  carry `lib: ["ES2023","DOM","DOM.Iterable"]`, so `util.ts` checks clean *there*; it
+  just never checks the tests. The board-cluster tests fall in the gap between the two
+  configs.
+- **Scope is narrow.** Only `util.ts` and only `board-util.test.ts` are involved. The
+  other four board-cluster tests import DOM-free board modules
+  (`markdown.ts`/`qr.ts`/`staleChunks.ts`/`termDiag.ts`) and check clean under the root
+  lib. So the per-test conversion gate is unaffected — anchor tsc on the specific test
+  filename and these 14 `board/src/**` lines are provably not yours.
+- **Recommended fix (deliberate, coordinated — NOT done here).** Add a dedicated
+  DOM-aware program for the board-cluster tests: a new `tsconfig.board-tests.json`
+  (extends root, overrides `lib` to add `DOM`/`DOM.Iterable`, drops `board` from
+  `exclude`, `include: ["tests/board-*.test.ts"]`) and add `tests/board-*.test.ts` to the
+  root `exclude`. Final gate then runs both `tsc -p tsconfig.json` and
+  `tsc -p tsconfig.board-tests.json`. Caveat to verify when doing it: that program mixes
+  Node test files (need `types:["node","bun"]`) with DOM board source, so watch for the
+  `setTimeout`/`fetch`/`Blob` node×DOM global overlap; `skipLibCheck` covers the .d.ts
+  side but user-code assignments could still collide. All three touch points
+  (root tsconfig, the new config, `tests/board-*.test.ts`) are in the test/migration lane,
+  but the *boundary* is board-adjacent, so flag comet before landing it.
+
+### board-util.test: a source-slice `new Function()` eval broke because the sliced source became TypeScript   [GENUINE MIGRATION BUG — the test's oracle stopped parsing]
+
+- **What broke.** `tests/board-util.test.ts` (was `.mjs`) pins the OSC 52 clipboard provider
+  by reading `board/src/components/TermPane.tsx`, slicing out the `clipboardProvider` factory
+  by source markers, and `new Function(...)`-eval'ing that slice so the assertions run against
+  the SHIPPED code, not a re-implementation. Once TermPane converted to `.tsx`, the slice is
+  now TypeScript — `const clipboardProvider = (term: Terminal): IClipboardProvider => ({ ... })`
+  — and `new Function()` parses its body as plain JS, so it threw `SyntaxError: Unexpected
+  token ':'` on the `: Terminal` / `: IClipboardProvider` annotations. The test that guarded
+  the provider silently could not even construct it.
+
+- **Fix.** Strip the annotations before the eval with Node's own type-stripper:
+  `import { stripTypeScriptTypes } from 'node:module'` then
+  `const body = stripTypeScriptTypes(src.slice(start, end))` before `new Function(...)`.
+  `stripTypeScriptTypes` default mode ('strip') handles type ANNOTATIONS (which is all the
+  slice contains — no enums/namespaces/param-properties), so it degrades the TS slice to the
+  exact JS the old `.mjs` test used to slice directly. This is the same mechanism Node uses to
+  run the `.ts` sources at all, applied at the granularity of a source substring.
+
+- **Why this generalizes.** ANY test that reads product source as text and re-evaluates a
+  fragment of it (rather than importing it) now has to strip types first, because the fragment
+  is TS. Importing the symbol would avoid this, but here the point of the test is to eval the
+  exact shipped bytes with a spy injected for its one free identifier (`copyText`), which an
+  import cannot do. So `stripTypeScriptTypes` is the right seam, not a workaround.
+
+- **eslint tension it creates.** `strictTypeChecked` flags the legitimate eval with
+  `@typescript-eslint/no-implied-eval` AND `@typescript-eslint/no-unsafe-call` (the
+  `new Function()` result is a `Function`-typed value). Both are correct in general and wrong
+  here: the "input" is a file on disk in this repo, and the eval IS the test. Resolved with a
+  single scoped `// eslint-disable-next-line @typescript-eslint/no-implied-eval,
+  @typescript-eslint/no-unsafe-call` carrying a justification comment — the only disable
+  directive in the file. (Contrary to an earlier guess, `no-implied-eval` DOES cover
+  `new Function` under this config; it is not limited to string `setTimeout`/`setInterval`.)
+
+### Reflow-caused vacuous assertion: a biome-reformatted anchor made a security assert pass on nothing   [MIGRATION CONSEQUENCE — the PostToolUse formatter moved the string the test grepped for]
+
+- **What broke.** `board-util.test.ts` asserts a REFUSED copy keeps the selection by locating
+  the error branch via `src.indexOf("flash('err', 'the clipboard refused")`. After TermPane
+  converted and the PostToolUse biome hook reflowed it, the `flash('err', ...)` call wraps
+  across lines, so that exact substring no longer exists — `indexOf` returned -1, the "no
+  `clearSelection` within the next 200 chars" check ran over an empty slice, and the assertion
+  passed VACUOUSLY (green while guarding nothing).
+- **Fix / rule of thumb.** Anchor source-grep assertions on the STABLE payload text
+  (`'the clipboard refused'`), never on call-site punctuation (`flash('err', '...`) that a
+  formatter is free to rewrap. Every readFileSync-anchor in the file was re-reconciled against
+  the converted source for the same reason (casts the migration added: `clip?.writeText`,
+  `(active as {...})?.focus`, `(globalThis as {...}).__fdCopy`, `ok: ran && proof.fired`,
+  `(term as TermModesView).modes`, `(health as TermHealth|null)?.auth`,
+  `clipboardProvider = (term: Terminal): IClipboardProvider =>`).
+
+### Awaitless `async` stubs vs `@typescript-eslint/require-await`   [MIGRATION CONSEQUENCE — recurring across converted tests]
+
+- Test DOM/clipboard doubles were written `async () => granted` / `async () => {}` for shape
+  parity with the browser APIs they stand in for. `strictTypeChecked`'s `require-await` flags
+  every `async` function with no `await`. Rewrite each as an explicit
+  `() => Promise.resolve(...)` (e.g. `permissions.query`, `clipboard.writeText/readText`, the
+  `__copySpy`): same return type (`Promise<T>`), no lint violation. This recurs anywhere a
+  converted test stubs a promise-returning API without awaiting inside the stub.
+
+### Smaller strict-typing consequences worth the pattern (board cluster)
+
+- **`noUncheckedIndexedAccess` on regex captures / `queue.shift()` / `arr[0]`.** `m[1]` is
+  `string | undefined`; `queue.shift()` is `T | undefined`; `one[0].msg` needs `one[0]?.msg`.
+  Fixes: `m[1] ?? ''`, an `if (name === undefined) continue;` guard after `shift()`, and `?.`.
+  Note the tuple exception: annotating a table as `[string, string][]` (not letting it infer
+  `string[][]`) makes destructured `[a, b]` come out `string`, not `string | undefined` — so
+  `const PRETTY: [string | null | undefined, string][]` and
+  `const expectations: [string, string][]` were the minimal fix for the loops over them.
+- **Inferred-union member access.** `helpText.ts`'s `ORCH_COMMANDS` is an un-annotated array
+  whose entries infer to a union of `{syntax;does;chip}` and `{syntax;does}`; `x.chip` errors
+  on the chip-less members. Narrow with `'chip' in c ? c.chip : undefined` + an
+  `if (chip === undefined) continue;`.
+- **`no-dynamic-delete`.** A restore loop doing `delete globalThis[k]` (computed key) is
+  flagged; use `Reflect.deleteProperty(globalThis, k)`. A STATIC `delete obj.__fdCopy` is fine
+  provided the property is optional in its type.
+- **`no-unused-vars` is `after-used`, and does NOT honour a `_` prefix in this config.** A
+  `_`-prefixed param BEFORE the last used one is silently fine (that's why `(_x, y) => ...`
+  passes), but a `_`-prefixed TRAILING param (`(x, _y) => x % 3`) is still flagged. tsc's
+  `noUnusedParameters` exempts `_` names; eslint here does not. For a mask function that only
+  needs its first arg, drop the trailing param entirely — `(x) => x % 3 === 0` stays assignable
+  to `(x: number, y: number) => boolean` (fewer params is assignable). [board-qr.test]
+- **`@typescript-eslint/no-empty-function` on DOM stubs.** Empty method bodies (`focus() {}`,
+  `preventDefault() {}`, …) on test doubles are flagged. A shared
+  `const noop = (): void => { /* stub */ };` referenced from each slot (the comment makes
+  `noop` itself pass the rule) is cleaner than commenting every body. [board-util.test]
