@@ -277,7 +277,7 @@ interface Viewer {
   flushPending(): void;
   finish(reason: string, notify?: boolean): void;
 }
-type TermFrame =
+export type TermFrame =
   { t: 'out'; data: string } | { t: 'init'; cols: number; rows: number; screen: string };
 type TermSend = (frame: TermFrame) => void;
 interface OpenViewerOptions {
