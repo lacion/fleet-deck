@@ -1,4 +1,4 @@
-// tests/smoke-verifier.test.mjs
+// tests/smoke-verifier.test.ts
 //
 // BUG-191 — the demo/run-smoke.sh conflict check used to flatten every
 // conflict rel_path and test the unanchored substrings /util\.js/ and
@@ -9,7 +9,7 @@
 // participants. This test runs the extracted verifier body from the script
 // against synthetic final-state.json files, proving the fail-before behavior.
 
-import test from 'node:test';
+import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
@@ -23,7 +23,32 @@ const SMOKE_SCRIPT = path.join(REPO_ROOT, 'demo', 'run-smoke.sh');
 const SID_A = 'session-a-uuid';
 const SID_B = 'session-b-uuid';
 
-function extractVerifierBody() {
+interface Conflict {
+  rel_path: string;
+  sessions: string[];
+  severity: string;
+}
+
+interface Session {
+  session_id: string;
+  callsign: string;
+  col: string;
+  endedAt: number;
+}
+
+interface SmokeState {
+  sessions: Session[];
+  ticker: { msg: string }[];
+  conflicts: Conflict[];
+}
+
+interface ExecFailure {
+  status?: number;
+  stdout?: string;
+  stderr?: string;
+}
+
+function extractVerifierBody(): string {
   const source = readFileSync(SMOKE_SCRIPT, 'utf8');
   const start = source.indexOf('node --input-type=module -e "');
   assert.notEqual(start, -1, 'run-smoke.sh embeds a node verifier block');
@@ -35,11 +60,17 @@ function extractVerifierBody() {
 
 // Rebuild the verifier exactly the way bash does: the body is a double-quoted
 // string, so bash expands $DEMO_LOGS/$SA/$SB/$RC_A/$RC_B inside it.
-function materializeVerifier(dir, state) {
+function materializeVerifier(dir: string, state: SmokeState): string {
   mkdirSync(dir, { recursive: true });
   writeFileSync(path.join(dir, 'final-state.json'), JSON.stringify(state));
-  writeFileSync(path.join(dir, 'worker-a.json'), JSON.stringify({ is_error: false, subtype: 'success' }));
-  writeFileSync(path.join(dir, 'worker-b.json'), JSON.stringify({ is_error: false, subtype: 'success' }));
+  writeFileSync(
+    path.join(dir, 'worker-a.json'),
+    JSON.stringify({ is_error: false, subtype: 'success' }),
+  );
+  writeFileSync(
+    path.join(dir, 'worker-b.json'),
+    JSON.stringify({ is_error: false, subtype: 'success' }),
+  );
   const body = extractVerifierBody()
     .replaceAll('$DEMO_LOGS', dir)
     .replaceAll('$SA', SID_A)
@@ -51,11 +82,11 @@ function materializeVerifier(dir, state) {
   return scriptPath;
 }
 
-function baseSession(id, callsign) {
+function baseSession(id: string, callsign: string): Session {
   return { session_id: id, callsign, col: 'offline', endedAt: Date.now() };
 }
 
-function baseState(conflicts) {
+function baseState(conflicts: Conflict[]): SmokeState {
   return {
     sessions: [baseSession(SID_A, 'alpha-aa'), baseSession(SID_B, 'bravo-bb')],
     ticker: [
@@ -66,17 +97,20 @@ function baseState(conflicts) {
   };
 }
 
-function runVerifier(t, state) {
+function runVerifier(t: TestContext, state: SmokeState): { code: number; out: string } {
   const dir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-smokeverify-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  t.after(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
   const scriptPath = materializeVerifier(dir, state);
-  let out = '';
+  let out: string;
   let code = 0;
   try {
     out = execFileSync(process.execPath, [scriptPath], { encoding: 'utf8' });
   } catch (err) {
-    code = err.status ?? 1;
-    out = (err.stdout || '') + (err.stderr || '');
+    const e = err as ExecFailure;
+    code = e.status ?? 1;
+    out = (e.stdout ?? '') + (e.stderr ?? '');
   }
   return { code, out };
 }

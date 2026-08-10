@@ -1,4 +1,4 @@
-// tests/demo-perm-proof-cleanup.test.mjs
+// tests/demo-perm-proof-cleanup.test.ts
 //
 // BUG-091 regression: demo/run-accept-phase3.sh used to delete the permission
 // proof only before the run, leaving the generated fleet-perm-proof.txt in the
@@ -10,7 +10,7 @@
 // cleanup_perm_proof function body from the script and exercises it in bash
 // against a scratch PROJECT_DIR — the same source the demo runs.
 
-import test from 'node:test';
+import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import fs, { mkdtempSync, rmSync } from 'node:fs';
@@ -21,9 +21,14 @@ import { fileURLToPath } from 'node:url';
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SCRIPT = path.join(REPO_ROOT, 'demo', 'run-accept-phase3.sh');
 
+interface CleanupState {
+  proof: string | null;
+  pre: string | null;
+}
+
 // Extract cleanup_perm_proof() { ... } from the demo script (balanced braces,
 // no nested functions in that body) so the test runs the real shipped code.
-function extractCleanup() {
+function extractCleanup(): string {
   const src = fs.readFileSync(SCRIPT, 'utf8');
   const start = src.indexOf('cleanup_perm_proof() {');
   assert.notEqual(start, -1, 'run-accept-phase3.sh defines cleanup_perm_proof');
@@ -40,9 +45,14 @@ function extractCleanup() {
 
 // Run the extracted function with a prepared proof/snapshot layout and report
 // the resulting file states back as JSON.
-function runCleanup(t, { proof, snapshot } = {}) {
+function runCleanup(
+  t: TestContext,
+  { proof, snapshot }: { proof?: string; snapshot?: string } = {},
+): CleanupState {
   const dir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-perm-proof-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  t.after(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
   const project = path.join(dir, 'project');
   const logs = path.join(dir, 'demo-logs');
   fs.mkdirSync(project);
@@ -68,7 +78,9 @@ console.log(JSON.stringify(out));
 ' "$PERM_PROOF" "$PERM_PROOF_PRE"
 `;
   const out = execFileSync('bash', ['-c', bash, 'bash', proofPath, prePath], { encoding: 'utf8' });
-  return JSON.parse(out.trim().split('\n').pop());
+  const lastLine = out.trim().split('\n').pop();
+  if (lastLine === undefined) throw new Error('cleanup_perm_proof produced no output');
+  return JSON.parse(lastLine) as CleanupState;
 }
 
 test('exit cleanup removes a generated proof with the expected content', (t) => {
@@ -100,6 +112,10 @@ test('exit cleanup is a no-op when nothing was generated', (t) => {
 
 test('the demo script registers cleanup_perm_proof in the EXIT trap', () => {
   const src = fs.readFileSync(SCRIPT, 'utf8');
-  assert.match(src, /cleanup\(\) \{[\s\S]*?cleanup_perm_proof[\s\S]*?\}/, 'EXIT cleanup calls cleanup_perm_proof');
+  assert.match(
+    src,
+    /cleanup\(\) \{[\s\S]*?cleanup_perm_proof[\s\S]*?\}/,
+    'EXIT cleanup calls cleanup_perm_proof',
+  );
   assert.match(src, /trap cleanup EXIT/, 'the EXIT trap runs the combined cleanup');
 });
