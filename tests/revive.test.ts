@@ -1,7 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,51 +17,108 @@ import { openDb } from '../scripts/fleetd/db.ts';
 import { claudeTranscriptPath, mungeClaudeProjectCwd } from '../scripts/fleetd/derive.ts';
 import { guardScratchDirs, startDaemon } from './helpers/daemon.ts';
 import { getJson, postHook, postJson } from './helpers/http.ts';
+import type { SqliteHandle } from '../scripts/fleetd/sqlite.ts';
+import type { SessionEntry, StateResponse } from '../contracts/state.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SPAWN_CMD_FIXTURE = path.join(HERE, 'helpers/spawn-cmd-fixture.ts');
-try { chmodSync(SPAWN_CMD_FIXTURE, 0o755); } catch { /* best effort */ }
+try {
+  chmodSync(SPAWN_CMD_FIXTURE, 0o755);
+} catch {
+  /* best effort */
+}
+
+// The arm-unsupervised ack echoes a single-use token.
+interface ArmAck {
+  arm_token: string;
+}
+// POST /api/spawn ack — only the fields these tests read are pinned.
+interface SpawnAck {
+  spawn_id: string;
+  session_id: string;
+  callsign: string;
+  tmux: { session: string; window: string };
+}
+// A successful revive ack.
+interface ReviveSuccess {
+  ok: boolean;
+  session_id: string;
+  callsign: string;
+  spawn_id: string;
+}
+// A revive refusal body — carries the human-readable reason the tests match on.
+interface ReviveRefusal {
+  reason: string;
+}
+// One recorded launch spec: the fixture records the daemon-computed override
+// under `.parsed`; the tests read its argv and (on revive) revive_of.
+interface SpawnSpec {
+  argv: string[];
+  revive_of?: string;
+}
+// Row shapes asserted by the SQL text of each query below.
+interface SpawnStatusRow {
+  spawn_id: string;
+  status: string;
+  skip_permissions: number;
+}
+interface ArchivedRow {
+  archived_at: number | null;
+}
 
 function scratch(prefix = 'fleetdeck-revive-') {
   return mkdtempSync(path.join(tmpdir(), prefix));
 }
 
-function withDb(home, fn) {
+function withDb<T>(home: string, fn: (db: SqliteHandle) => T): T {
   const db = openDb(path.join(home, 'fleetd.db'));
-  try { return fn(db); } finally { db.close(); }
+  try {
+    return fn(db);
+  } finally {
+    db.close();
+  }
 }
 
-function writeTranscript(userHome, cwd, sid) {
+function writeTranscript(userHome: string, cwd: string, sid: string) {
   const file = claudeTranscriptPath(cwd, sid, userHome);
   mkdirSync(path.dirname(file), { recursive: true });
   writeFileSync(file, '{"type":"summary"}\n');
   return file;
 }
 
-function records(file) {
+function records(file: string): SpawnSpec[] {
   if (!existsSync(file)) return [];
-  return readFileSync(file, 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line).parsed);
+  return readFileSync(file, 'utf8')
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => (JSON.parse(line) as { parsed: SpawnSpec }).parsed);
 }
 
-async function waitForRecords(file, count) {
+async function waitForRecords(file: string, count: number): Promise<SpawnSpec[]> {
   const deadline = Date.now() + 5000;
   while (Date.now() < deadline) {
     const out = records(file);
     if (out.length >= count) return out;
-    await new Promise(resolve => setTimeout(resolve, 50));
+    await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error(`fixture did not record ${count} launches`);
 }
 
-function findCard(state, sid) {
-  return state.sessions.find(s => s.session_id === sid);
+function findCard(state: StateResponse, sid: string): SessionEntry {
+  const card = state.sessions.find((s) => s.session_id === sid);
+  assert.ok(card);
+  return card;
 }
 
 test('Claude transcript cwd munging replaces every slash and dot with a dash', () => {
-  assert.equal(mungeClaudeProjectCwd('/home/me/code/fleet.deck/.worktree'),
-    '-home-me-code-fleet-deck--worktree');
-  assert.equal(claudeTranscriptPath('/home/me/code/fleet.deck', 'session-1', '/users/me'),
-    path.join('/users/me', '.claude/projects/-home-me-code-fleet-deck/session-1.jsonl'));
+  assert.equal(
+    mungeClaudeProjectCwd('/home/me/code/fleet.deck/.worktree'),
+    '-home-me-code-fleet-deck--worktree',
+  );
+  assert.equal(
+    claudeTranscriptPath('/home/me/code/fleet.deck', 'session-1', '/users/me'),
+    path.join('/users/me', '.claude/projects/-home-me-code-fleet-deck/session-1.jsonl'),
+  );
 });
 
 test('revive resumes the same session into a new spawn row and its resume hook makes the card live', async (t) => {
@@ -62,41 +127,58 @@ test('revive resumes the same session into a new spawn row and its resume hook m
   const cwd = scratch('fleetdeck-revive-cwd-');
   const record = path.join(userHome, 'spawn.jsonl');
   const holder = guardScratchDirs(t, [daemonHome, userHome, cwd]);
-  const daemon = holder.daemon = await startDaemon({
+  const daemon = (holder.daemon = await startDaemon({
     home: daemonHome,
     env: {
       HOME: userHome,
       FLEETDECK_SPAWN_CMD: SPAWN_CMD_FIXTURE,
       FLEETDECK_TEST_SPAWN_RECORD: record,
     },
-  });
+  }));
 
   // 0.16.0: an unsupervised spawn body must echo a fresh single-use arm token.
-  const arm = (await postJson(`${daemon.baseUrl}/api/spawn/arm-unsupervised`, {}, { token: daemon.token })).json.arm_token;
+  const arm = (
+    (await postJson(`${daemon.baseUrl}/api/spawn/arm-unsupervised`, {}, { token: daemon.token }))
+      .json as ArmAck
+  ).arm_token;
   const spawned = await postJson(`${daemon.baseUrl}/api/spawn`, {
-    cwd, dangerously_skip_permissions: true, arm_token: arm,
+    cwd,
+    dangerously_skip_permissions: true,
+    arm_token: arm,
   });
   assert.equal(spawned.status, 200);
-  const { spawn_id: oldId, session_id: sid, callsign } = spawned.json;
-  await postHook(daemon.baseUrl, 'SessionStart', { session_id: sid, cwd, source: 'startup' }, { token: daemon });
+  const { spawn_id: oldId, session_id: sid, callsign } = spawned.json as SpawnAck;
+  await postHook(
+    daemon.baseUrl,
+    'SessionStart',
+    { session_id: sid, cwd, source: 'startup' },
+    { token: daemon },
+  );
   writeTranscript(userHome, cwd, sid);
-  withDb(daemonHome, db => {
+  withDb(daemonHome, (db) => {
     db.prepare("UPDATE spawns SET status = 'gone' WHERE spawn_id = ?").run(oldId);
-    db.prepare("UPDATE sessions SET col = 'offline', note = 'spawned pane window gone', ended_at = ?, archived_at = ? WHERE session_id = ?")
-      .run(Date.now(), Date.now(), sid);
+    db.prepare(
+      "UPDATE sessions SET col = 'offline', note = 'spawned pane window gone', ended_at = ?, archived_at = ? WHERE session_id = ?",
+    ).run(Date.now(), Date.now(), sid);
   });
 
   // 0.16.0: a revive of an unsupervised lineage passes the same arm gate.
-  const arm2 = (await postJson(`${daemon.baseUrl}/api/spawn/arm-unsupervised`, {}, { token: daemon.token })).json.arm_token;
-  const revived = await postJson(`${daemon.baseUrl}/api/spawn/${oldId}/revive`, { arm_token: arm2 });
+  const arm2 = (
+    (await postJson(`${daemon.baseUrl}/api/spawn/arm-unsupervised`, {}, { token: daemon.token }))
+      .json as ArmAck
+  ).arm_token;
+  const revived = await postJson(`${daemon.baseUrl}/api/spawn/${oldId}/revive`, {
+    arm_token: arm2,
+  });
   assert.equal(revived.status, 200, JSON.stringify(revived.json));
-  assert.equal(revived.json.ok, true);
-  assert.equal(revived.json.session_id, sid);
-  assert.equal(revived.json.callsign, callsign);
-  assert.notEqual(revived.json.spawn_id, oldId);
+  const reviveBody = revived.json as ReviveSuccess;
+  assert.equal(reviveBody.ok, true);
+  assert.equal(reviveBody.session_id, sid);
+  assert.equal(reviveBody.callsign, callsign);
+  assert.notEqual(reviveBody.spawn_id, oldId);
 
   const launchRecords = await waitForRecords(record, 2);
-  const spec = launchRecords.find(item => item.revive_of === oldId);
+  const spec = launchRecords.find((item) => item.revive_of === oldId);
   assert.ok(spec, 'override spec identifies the terminal row being revived');
   const claude = spec.argv.indexOf('claude');
   assert.ok(claude > 0, 'revive keeps the env-wrapper prefix');
@@ -105,20 +187,37 @@ test('revive resumes the same session into a new spawn row and its resume hook m
   assert.equal(spec.argv.includes('--session-id'), false);
   assert.equal(spec.argv.includes('--dangerously-skip-permissions'), true);
 
-  const rows = withDb(daemonHome, db => db.prepare('SELECT * FROM spawns WHERE session_id = ? ORDER BY requested_at').all(sid));
+  const rows = withDb(daemonHome, (db) =>
+    db
+      .prepare<SpawnStatusRow>('SELECT * FROM spawns WHERE session_id = ? ORDER BY requested_at')
+      .all(sid),
+  );
   assert.equal(rows.length, 2);
-  assert.equal(rows.find(row => row.spawn_id === oldId).status, 'gone');
-  assert.equal(rows.find(row => row.spawn_id === revived.json.spawn_id).status, 'spawning');
-  assert.equal(rows.find(row => row.spawn_id === revived.json.spawn_id).skip_permissions, 1);
-  let card = findCard((await getJson(`${daemon.baseUrl}/state`)).json, sid);
+  assert.equal(rows.find((row) => row.spawn_id === oldId)?.status, 'gone');
+  assert.equal(rows.find((row) => row.spawn_id === reviveBody.spawn_id)?.status, 'spawning');
+  assert.equal(rows.find((row) => row.spawn_id === reviveBody.spawn_id)?.skip_permissions, 1);
+  let card = findCard((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse, sid);
   assert.equal(card.col, 'queued');
   assert.equal(card.note, 'reviving…');
   assert.ok(card.endedAt, 'revive leaves ended_at for the first hook');
-  assert.equal(withDb(daemonHome, db => db.prepare('SELECT archived_at FROM sessions WHERE session_id = ?').get(sid).archived_at), null);
+  assert.equal(
+    withDb(
+      daemonHome,
+      (db) =>
+        db.prepare<ArchivedRow>('SELECT archived_at FROM sessions WHERE session_id = ?').get(sid)
+          ?.archived_at,
+    ),
+    null,
+  );
 
-  await postHook(daemon.baseUrl, 'SessionStart', { session_id: sid, cwd, source: 'resume' }, { token: daemon });
-  card = findCard((await getJson(`${daemon.baseUrl}/state`)).json, sid);
-  assert.equal(card.spawn.status, 'live');
+  await postHook(
+    daemon.baseUrl,
+    'SessionStart',
+    { session_id: sid, cwd, source: 'resume' },
+    { token: daemon },
+  );
+  card = findCard((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse, sid);
+  assert.equal(card.spawn?.status, 'live');
   assert.equal(card.endedAt, null);
   assert.equal(card.col, 'queued');
   assert.equal(card.note, 'session resume');
@@ -130,57 +229,73 @@ test('revive refusals cover unknown/live/missing cwd/missing transcript/active s
   const cwd = scratch('fleetdeck-revive-refuse-cwd-');
   const record = path.join(userHome, 'spawn.jsonl');
   const holder = guardScratchDirs(t, [daemonHome, userHome, cwd]);
-  const daemon = holder.daemon = await startDaemon({
+  const daemon = (holder.daemon = await startDaemon({
     home: daemonHome,
     env: {
       HOME: userHome,
       FLEETDECK_SPAWN_CMD: SPAWN_CMD_FIXTURE,
       FLEETDECK_TEST_SPAWN_RECORD: record,
     },
-  });
+  }));
 
   let res = await postJson(`${daemon.baseUrl}/api/spawn/${randomUUID()}/revive`, {});
   assert.equal(res.status, 404);
   const spawned = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd });
   assert.equal(spawned.status, 200);
-  const { spawn_id: oldId, session_id: sid, callsign } = spawned.json;
+  const { spawn_id: oldId, session_id: sid, callsign, tmux } = spawned.json as SpawnAck;
 
-  withDb(daemonHome, db => db.prepare("UPDATE spawns SET status = 'live' WHERE spawn_id = ?").run(oldId));
+  withDb(daemonHome, (db) =>
+    db.prepare("UPDATE spawns SET status = 'live' WHERE spawn_id = ?").run(oldId),
+  );
   res = await postJson(`${daemon.baseUrl}/api/spawn/${oldId}/revive`, {});
   assert.equal(res.status, 409, 'a live row is not revivable');
-  withDb(daemonHome, db => db.prepare("UPDATE spawns SET status = 'gone', worktree_path = ? WHERE spawn_id = ?")
-    .run(path.join(cwd, 'deleted-worktree'), oldId));
+  withDb(daemonHome, (db) =>
+    db
+      .prepare("UPDATE spawns SET status = 'gone', worktree_path = ? WHERE spawn_id = ?")
+      .run(path.join(cwd, 'deleted-worktree'), oldId),
+  );
   res = await postJson(`${daemon.baseUrl}/api/spawn/${oldId}/revive`, {});
   assert.equal(res.status, 410);
-  assert.match(res.json.reason, /cwd/);
+  assert.match((res.json as ReviveRefusal).reason, /cwd/);
 
-  withDb(daemonHome, db => db.prepare('UPDATE spawns SET worktree_path = NULL WHERE spawn_id = ?').run(oldId));
+  withDb(daemonHome, (db) =>
+    db.prepare('UPDATE spawns SET worktree_path = NULL WHERE spawn_id = ?').run(oldId),
+  );
   res = await postJson(`${daemon.baseUrl}/api/spawn/${oldId}/revive`, {});
   assert.equal(res.status, 410);
-  assert.match(res.json.reason, /transcript/);
+  assert.match((res.json as ReviveRefusal).reason, /transcript/);
   writeTranscript(userHome, cwd, sid);
 
   const sibling = randomUUID();
-  withDb(daemonHome, db => db.prepare(`INSERT INTO spawns
+  withDb(daemonHome, (db) =>
+    db
+      .prepare(
+        `INSERT INTO spawns
     (spawn_id, session_id, callsign, tmux_session, tmux_window, cwd, requested_at, status)
-    VALUES (?, ?, ?, ?, ?, ?, ?, 'live')`).run(sibling, sid, callsign,
-    spawned.json.tmux.session, spawned.json.tmux.window, cwd, Date.now() + 1));
+    VALUES (?, ?, ?, ?, ?, ?, ?, 'live')`,
+      )
+      .run(sibling, sid, callsign, tmux.session, tmux.window, cwd, Date.now() + 1),
+  );
   res = await postJson(`${daemon.baseUrl}/api/spawn/${oldId}/revive`, {});
   assert.equal(res.status, 409);
-  assert.match(res.json.reason, /active spawn/);
-  withDb(daemonHome, db => db.prepare("UPDATE spawns SET status = 'gone' WHERE spawn_id = ?").run(sibling));
+  assert.match((res.json as ReviveRefusal).reason, /active spawn/);
+  withDb(daemonHome, (db) =>
+    db.prepare("UPDATE spawns SET status = 'gone' WHERE spawn_id = ?").run(sibling),
+  );
 
   // ...and with every refusal cleared, a revive goes through EVEN THOUGH other
   // agents are already live. Revive used to count against FLEETDECK_MAX_SPAWNED
   // and would 409 here; there is no cap any more, so a busy fleet is not a
   // reason to refuse to bring a session back.
   const otherCwd = scratch('fleetdeck-revive-busy-cwd-');
-  t.after(() => rmSync(otherCwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+  t.after(() => {
+    rmSync(otherCwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
   const other = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd: otherCwd });
   assert.equal(other.status, 200);
   res = await postJson(`${daemon.baseUrl}/api/spawn/${oldId}/revive`, {});
   assert.equal(res.status, 200, 'a live fleet must not block a revive — the cap is gone');
-  assert.equal(res.json?.ok, true);
+  assert.equal((res.json as ReviveSuccess | null)?.ok, true);
 });
 
 test('snapshot spawn.revivable follows terminal status, cwd, and transcript existence', async (t) => {
@@ -188,30 +303,38 @@ test('snapshot spawn.revivable follows terminal status, cwd, and transcript exis
   const userHome = scratch('fleetdeck-revive-state-user-');
   const cwd = scratch('fleetdeck-revive-state-cwd-');
   const holder = guardScratchDirs(t, [daemonHome, userHome, cwd]);
-  const daemon = holder.daemon = await startDaemon({
+  const daemon = (holder.daemon = await startDaemon({
     home: daemonHome,
     env: { HOME: userHome, FLEETDECK_SPAWN_CMD: SPAWN_CMD_FIXTURE },
-  });
+  }));
   const spawned = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd });
-  const { spawn_id: spawnId, session_id: sid } = spawned.json;
-  let card = findCard((await getJson(`${daemon.baseUrl}/state`)).json, sid);
-  assert.equal(card.spawn.revivable, false, 'active status is never revivable');
-  withDb(daemonHome, db => db.prepare("UPDATE spawns SET status = 'gone' WHERE spawn_id = ?").run(spawnId));
-  card = findCard((await getJson(`${daemon.baseUrl}/state`)).json, sid);
-  assert.equal(card.spawn.revivable, false, 'missing transcript keeps the flag false');
+  const { spawn_id: spawnId, session_id: sid } = spawned.json as SpawnAck;
+  let card = findCard((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse, sid);
+  assert.equal(card.spawn?.revivable, false, 'active status is never revivable');
+  withDb(daemonHome, (db) =>
+    db.prepare("UPDATE spawns SET status = 'gone' WHERE spawn_id = ?").run(spawnId),
+  );
+  card = findCard((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse, sid);
+  assert.equal(card.spawn?.revivable, false, 'missing transcript keeps the flag false');
   const transcript = writeTranscript(userHome, cwd, sid);
-  card = findCard((await getJson(`${daemon.baseUrl}/state`)).json, sid);
-  assert.equal(card.spawn.revivable, true);
+  card = findCard((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse, sid);
+  assert.equal(card.spawn?.revivable, true);
   const absentWorktree = path.join(cwd, 'removed-worktree');
-  withDb(daemonHome, db => db.prepare('UPDATE spawns SET worktree_path = ? WHERE spawn_id = ?').run(absentWorktree, spawnId));
-  card = findCard((await getJson(`${daemon.baseUrl}/state`)).json, sid);
-  assert.equal(card.spawn.revivable, false, 'missing effective cwd flips the flag false');
-  withDb(daemonHome, db => db.prepare('UPDATE spawns SET worktree_path = NULL WHERE spawn_id = ?').run(spawnId));
-  card = findCard((await getJson(`${daemon.baseUrl}/state`)).json, sid);
-  assert.equal(card.spawn.revivable, true, 'restoring the effective cwd flips the flag true');
+  withDb(daemonHome, (db) =>
+    db
+      .prepare('UPDATE spawns SET worktree_path = ? WHERE spawn_id = ?')
+      .run(absentWorktree, spawnId),
+  );
+  card = findCard((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse, sid);
+  assert.equal(card.spawn?.revivable, false, 'missing effective cwd flips the flag false');
+  withDb(daemonHome, (db) =>
+    db.prepare('UPDATE spawns SET worktree_path = NULL WHERE spawn_id = ?').run(spawnId),
+  );
+  card = findCard((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse, sid);
+  assert.equal(card.spawn?.revivable, true, 'restoring the effective cwd flips the flag true');
   rmSync(transcript);
-  card = findCard((await getJson(`${daemon.baseUrl}/state`)).json, sid);
-  assert.equal(card.spawn.revivable, false);
+  card = findCard((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse, sid);
+  assert.equal(card.spawn?.revivable, false);
 });
 
 test('a resume stranded mid-flight is released on the next boot, not stuck at reviving…', async (t) => {
@@ -225,15 +348,25 @@ test('a resume stranded mid-flight is released on the next boot, not stuck at re
     FLEETDECK_TEST_SPAWN_RECORD: record,
   };
   const live = guardScratchDirs(t, [daemonHome, userHome, cwd]);
-  live.daemon = await startDaemon({ home: daemonHome, env });
+  let daemon = (live.daemon = await startDaemon({ home: daemonHome, env }));
 
-  const arm = (await postJson(`${live.daemon.baseUrl}/api/spawn/arm-unsupervised`, {}, { token: live.daemon.token })).json.arm_token;
-  const spawned = await postJson(`${live.daemon.baseUrl}/api/spawn`, {
-    cwd, dangerously_skip_permissions: true, arm_token: arm,
+  const arm = (
+    (await postJson(`${daemon.baseUrl}/api/spawn/arm-unsupervised`, {}, { token: daemon.token }))
+      .json as ArmAck
+  ).arm_token;
+  const spawned = await postJson(`${daemon.baseUrl}/api/spawn`, {
+    cwd,
+    dangerously_skip_permissions: true,
+    arm_token: arm,
   });
   assert.equal(spawned.status, 200);
-  const { spawn_id: spawnId, session_id: sid } = spawned.json;
-  await postHook(live.daemon.baseUrl, 'SessionStart', { session_id: sid, cwd, source: 'startup' }, { token: live.daemon });
+  const { spawn_id: spawnId, session_id: sid } = spawned.json as SpawnAck;
+  await postHook(
+    daemon.baseUrl,
+    'SessionStart',
+    { session_id: sid, cwd, source: 'startup' },
+    { token: daemon },
+  );
   writeTranscript(userHome, cwd, sid);
 
   // The exact state the 2026-07-24 incident left behind: `claude` was missing
@@ -242,28 +375,29 @@ test('a resume stranded mid-flight is released on the next boot, not stuck at re
   // reconciler could not fix it (it skips a session that already has ended_at —
   // every resume target does), so the board offered no way to try again and the
   // only recovery was editing the database by hand.
-  withDb(daemonHome, db => {
+  withDb(daemonHome, (db) => {
     db.prepare("UPDATE spawns SET status = 'killed' WHERE spawn_id = ?").run(spawnId);
-    db.prepare("UPDATE sessions SET col = 'queued', note = 'reviving…', ended_at = ? WHERE session_id = ?")
-      .run(Date.now(), sid);
+    db.prepare(
+      "UPDATE sessions SET col = 'queued', note = 'reviving…', ended_at = ? WHERE session_id = ?",
+    ).run(Date.now(), sid);
   });
-  let card = findCard((await getJson(`${live.daemon.baseUrl}/state`)).json, sid);
+  let card = findCard((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse, sid);
   assert.equal(card.col, 'queued', 'precondition: the card presents as an in-flight resume');
   assert.equal(card.note, 'reviving…');
 
-  await live.daemon.stop({ keepHome: true });
-  live.daemon = await startDaemon({ home: daemonHome, env });
+  await daemon.stop({ keepHome: true });
+  daemon = live.daemon = await startDaemon({ home: daemonHome, env });
 
   // Boot reconciliation is fire-and-forget, so poll rather than assume a tick.
   const deadline = Date.now() + 5000;
   for (;;) {
-    card = findCard((await getJson(`${live.daemon.baseUrl}/state`)).json, sid);
+    card = findCard((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse, sid);
     if (card.col === 'offline' || Date.now() > deadline) break;
-    await new Promise(resolve => setTimeout(resolve, 50));
+    await new Promise((resolve) => setTimeout(resolve, 50));
   }
   assert.equal(card.col, 'offline', 'the stranded card is released instead of reviving… forever');
-  assert.match(card.note, /revive was interrupted/);
-  assert.equal(card.spawn.revivable, true, 'and the board can offer revive again');
+  assert.match(card.note ?? '', /revive was interrupted/);
+  assert.equal(card.spawn?.revivable, true, 'and the board can offer revive again');
   assert.ok(card.endedAt, 'releasing the card does not resurrect the ended session');
 });
 
