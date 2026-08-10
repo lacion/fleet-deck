@@ -1,4 +1,4 @@
-// tests/gateway-newwindow.test.mjs
+// tests/gateway-newwindow.test.ts
 //
 // The tmux adapter's `-e` construction, tested directly.
 //
@@ -20,7 +20,7 @@
 // than mocking the module, which keeps the real argv-array construction — the
 // part that matters — under test.
 
-import test from 'node:test';
+import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, readFileSync, chmodSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -29,37 +29,48 @@ import path from 'node:path';
 const TOKEN = 'zzUNIQUE-credential-9871';
 
 /** A fake `tmux` first on PATH that appends each invocation's argv as JSONL. */
-function stubTmux(t) {
+function stubTmux(t: TestContext) {
   // A dev shell running under fleetdeck exports FLEETDECK_HOME, which would
   // switch the in-process adapter into generation-verified mode against this
   // stub. These tests assert argv construction only — use the legacy seam.
-  const previousHome = process.env.FLEETDECK_HOME;
-  delete process.env.FLEETDECK_HOME;
+  const previousHome = process.env['FLEETDECK_HOME'];
+  delete process.env['FLEETDECK_HOME'];
   t.after(() => {
-    if (previousHome == null) delete process.env.FLEETDECK_HOME;
-    else process.env.FLEETDECK_HOME = previousHome;
+    if (previousHome == null) delete process.env['FLEETDECK_HOME'];
+    else process.env['FLEETDECK_HOME'] = previousHome;
   });
   const dir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-gwtmux-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  t.after(() => { rmSync(dir, { recursive: true, force: true }); });
   const log = path.join(dir, 'argv.jsonl');
   const bin = path.join(dir, 'tmux');
-  writeFileSync(bin, [
-    '#!/usr/bin/env node',
-    `require('node:fs').appendFileSync(${JSON.stringify(log)}, JSON.stringify(process.argv.slice(2)) + '\\n');`,
-    // new-window -P -F '#{window_id}' expects a window id on stdout.
-    "if (process.argv.includes('new-window')) process.stdout.write('@7\\n');",
-    'process.exit(0);',
-  ].join('\n'));
+  writeFileSync(
+    bin,
+    [
+      '#!/usr/bin/env node',
+      `require('node:fs').appendFileSync(${JSON.stringify(log)}, JSON.stringify(process.argv.slice(2)) + '\\n');`,
+      // new-window -P -F '#{window_id}' expects a window id on stdout.
+      "if (process.argv.includes('new-window')) process.stdout.write('@7\\n');",
+      'process.exit(0);',
+    ].join('\n'),
+  );
   chmodSync(bin, 0o755);
-  const previous = process.env.PATH;
-  process.env.PATH = `${dir}${path.delimiter}${previous}`;
-  t.after(() => { process.env.PATH = previous; });
-  return () => (existsSync(log) ? readFileSync(log, 'utf8').split('\n').filter(Boolean).map(JSON.parse) : []);
+  const previous = process.env['PATH'];
+  process.env['PATH'] = `${dir}${path.delimiter}${previous}`;
+  t.after(() => {
+    process.env['PATH'] = previous;
+  });
+  return (): string[][] =>
+    existsSync(log)
+      ? readFileSync(log, 'utf8')
+          .split('\n')
+          .filter(Boolean)
+          .map((line) => JSON.parse(line) as string[])
+      : [];
 }
 
 /** The argv of the first `new-window` invocation. */
-function newWindowArgv(calls) {
-  return calls.find(a => a.includes('new-window'));
+function newWindowArgv(calls: string[][]) {
+  return calls.find((a) => a.includes('new-window'));
 }
 
 test('newWindow: gateway env travels as tmux -e pairs, never in the pane command', async (t) => {
@@ -68,7 +79,10 @@ test('newWindow: gateway env travels as tmux -e pairs, never in the pane command
 
   const argv = ['env', '-u', 'CLAUDECODE', 'FLEETDECK_PORT=4711', 'claude', '--session-id', 'sid'];
   await newWindow({
-    port: 4711, callsign: 'heron-1', cwd: '/tmp', argv,
+    port: 4711,
+    callsign: 'heron-1',
+    cwd: '/tmp',
+    argv,
     env: { ANTHROPIC_BASE_URL: 'http://127.0.0.1:8317', ANTHROPIC_AUTH_TOKEN: TOKEN },
   });
 
@@ -78,11 +92,12 @@ test('newWindow: gateway env travels as tmux -e pairs, never in the pane command
   // The credential rides -e …
   const eIdx = nw.indexOf('-e');
   assert.ok(eIdx >= 0, 'gateway env must be delivered with -e');
-  const ePairs = nw.filter((a, i) => nw[i - 1] === '-e');
-  assert.deepEqual(ePairs.sort(), [
-    `ANTHROPIC_AUTH_TOKEN=${TOKEN}`,
-    'ANTHROPIC_BASE_URL=http://127.0.0.1:8317',
-  ], 'each variable is one -e NAME=value pair');
+  const ePairs = nw.filter((_a, i) => nw[i - 1] === '-e');
+  assert.deepEqual(
+    ePairs.sort(),
+    [`ANTHROPIC_AUTH_TOKEN=${TOKEN}`, 'ANTHROPIC_BASE_URL=http://127.0.0.1:8317'],
+    'each variable is one -e NAME=value pair',
+  );
 
   // … and NOT the pane's command. THIS is the assertion the security claim
   // rests on: everything after `--` is what the pane actually execs, and it is
@@ -91,8 +106,11 @@ test('newWindow: gateway env travels as tmux -e pairs, never in the pane command
   assert.ok(dashDash >= 0, 'the pane command must still be terminated by --');
   const paneCommand = nw.slice(dashDash + 1);
   assert.deepEqual(paneCommand, argv, 'the pane command is the caller argv, unchanged');
-  assert.equal(paneCommand.some(a => a.includes(TOKEN)), false,
-    'the credential must never appear in the pane command');
+  assert.equal(
+    paneCommand.some((a) => a.includes(TOKEN)),
+    false,
+    'the credential must never appear in the pane command',
+  );
 
   // Every -e pair must sit BEFORE the -- terminator, or tmux would read it as
   // part of the command rather than as an option.
@@ -106,8 +124,12 @@ test('newWindow: no env argument means no -e flags at all', async (t) => {
   await newWindow({ port: 4711, callsign: 'heron-2', cwd: '/tmp', argv: ['claude'] });
 
   const nw = newWindowArgv(calls());
-  assert.equal(nw.includes('-e'), false,
-    'a non-gateway spawn must produce a byte-identical command to the pre-0.15.0 adapter');
+  assert.ok(nw, 'tmux new-window must have been invoked');
+  assert.equal(
+    nw.includes('-e'),
+    false,
+    'a non-gateway spawn must produce a byte-identical command to the pre-0.15.0 adapter',
+  );
 });
 
 test('newWindow: a value containing shell metacharacters stays one argv element', async (t) => {
@@ -118,7 +140,7 @@ test('newWindow: a value containing shell metacharacters stays one argv element'
   // exist from a prior run or another process and fail safe code. Assert it
   // starts absent so the "nothing was executed" check is meaningful.
   const dir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-gwcanary-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  t.after(() => { rmSync(dir, { recursive: true, force: true }); });
   const canary = path.join(dir, 'fd-pwned');
   assert.equal(existsSync(canary), false, 'canary must start absent');
 
@@ -126,13 +148,20 @@ test('newWindow: a value containing shell metacharacters stays one argv element'
   // to a shell string would silently turn them into command substitution.
   const hostile = `tok"; touch ${canary}; echo "$(id)`;
   await newWindow({
-    port: 4711, callsign: 'heron-3', cwd: '/tmp', argv: ['claude'],
+    port: 4711,
+    callsign: 'heron-3',
+    cwd: '/tmp',
+    argv: ['claude'],
     env: { ANTHROPIC_AUTH_TOKEN: hostile },
   });
 
   const nw = newWindowArgv(calls());
+  assert.ok(nw, 'tmux new-window must have been invoked');
   const pair = nw[nw.indexOf('-e') + 1];
-  assert.equal(pair, `ANTHROPIC_AUTH_TOKEN=${hostile}`,
-    'the value arrives verbatim as a single element — no shell ever sees it');
+  assert.equal(
+    pair,
+    `ANTHROPIC_AUTH_TOKEN=${hostile}`,
+    'the value arrives verbatim as a single element — no shell ever sees it',
+  );
   assert.equal(existsSync(canary), false, 'nothing was executed');
 });
