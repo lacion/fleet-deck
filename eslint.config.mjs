@@ -48,6 +48,27 @@ export default tseslint.config(
       // what the rest of this rule guards against. Re-allow numbers only; any /
       // boolean / nullish / never / regexp stay banned (their defaults).
       '@typescript-eslint/restrict-template-expressions': ['error', { allowNumber: true }],
+      // node:test's test()/after()/etc. are registration calls the runner tracks
+      // itself — a bare, unawaited `test(...)` at module top level is the idiom,
+      // not a bug. Allowlist the node:test entry points as known-safe so the rule
+      // stops flagging them, while STILL catching a genuinely-forgotten await
+      // (e.g. a bare `fetch(...)`) inside a test body. Narrower and safer than
+      // disabling the rule for tests or prefixing 1000+ call sites with `void`.
+      '@typescript-eslint/no-floating-promises': [
+        'error',
+        {
+          allowForKnownSafeCalls: [
+            { from: 'package', name: 'test', package: 'node:test' },
+            { from: 'package', name: 'it', package: 'node:test' },
+            { from: 'package', name: 'describe', package: 'node:test' },
+            { from: 'package', name: 'suite', package: 'node:test' },
+            { from: 'package', name: 'before', package: 'node:test' },
+            { from: 'package', name: 'after', package: 'node:test' },
+            { from: 'package', name: 'beforeEach', package: 'node:test' },
+            { from: 'package', name: 'afterEach', package: 'node:test' },
+          ],
+        },
+      ],
     },
   },
 
