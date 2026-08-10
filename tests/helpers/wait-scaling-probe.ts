@@ -1,7 +1,7 @@
 // Subprocess probe for tests/wait-scaling.test.mjs (BUG-176). NOT a test file
 // (no .test.mjs suffix — the runner must never pick it up directly).
 //
-// Invoked as: node --test helpers/wait-scaling-probe.mjs, with the target test
+// Invoked as: node --test helpers/wait-scaling-probe.ts, with the target test
 // file in FLEETDECK_PROBE_TARGET (node's test runner consumes positional args
 // as test globs, so the target rides an env var).
 //
@@ -17,12 +17,16 @@
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-const target = process.env.FLEETDECK_PROBE_TARGET;
+const target = process.env['FLEETDECK_PROBE_TARGET'];
+if (!target) throw new Error('FLEETDECK_PROBE_TARGET is required');
 const here = path.dirname(new URL(import.meta.url).pathname);
 
-const mod = await import(pathToFileURL(target).href);
-const { waitUntil: shared } = await import(pathToFileURL(path.join(here, 'wait.ts')).href);
-const exported = mod.__waitUntilForScaleCheck;
+const mod = (await import(pathToFileURL(target).href)) as Record<string, unknown>;
+const waitMod = (await import(pathToFileURL(path.join(here, 'wait.ts')).href)) as {
+  waitUntil: unknown;
+};
+const shared = waitMod.waitUntil;
+const exported = mod['__waitUntilForScaleCheck'];
 const ok = exported === shared;
 process.stdout.write(`PROBE ${JSON.stringify({ exported: typeof exported, ok })}\n`);
 process.exit(ok ? 0 : 1);

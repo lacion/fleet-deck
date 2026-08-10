@@ -16,7 +16,7 @@
 import { register } from 'node:module';
 import { pathToFileURL } from 'node:url';
 
-register(new URL('./helpers/os-facade-loader.mjs', import.meta.url));
+register(new URL('./helpers/os-facade-loader.ts', import.meta.url));
 
 const { __setInterfaces } = await import('node:os');
 const { openDb } = await import('../scripts/fleetd/db.ts');

@@ -4,7 +4,7 @@
 // WAIT_SCALE=3) its clone-launch / tombstone waits kept the authored 12s
 // budget instead of the intended 36s and produced false failures.
 //
-// The behavioural assertion runs helpers/wait-scaling-probe.mjs in a
+// The behavioural assertion runs helpers/wait-scaling-probe.ts in a
 // SUBPROCESS with the scale knob set (WAIT_SCALE is read once, at module
 // load): the probe imports the target module and asserts BY IDENTITY that the
 // target's waitUntil is the scaled shared helper from tests/helpers/wait.ts.
@@ -27,7 +27,7 @@ import path from 'node:path';
 const execFileP = promisify(execFile);
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const TARGET = path.join(HERE, 'spawn-repo.test.mjs');
-const PROBE = path.join(HERE, 'helpers/wait-scaling-probe.mjs');
+const PROBE = path.join(HERE, 'helpers/wait-scaling-probe.ts');
 
 test('every waitUntil in spawn-repo.test.mjs is the scaled shared helper (BUG-176)', async () => {
   // Every authored waitUntil must route through the ONE exported binding; a

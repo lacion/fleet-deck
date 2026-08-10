@@ -9,7 +9,7 @@ import { randomPort, spawnRaw } from './helpers/daemon.ts';
 import { waitUntil as waitUntilBase } from './helpers/wait.ts';
 
 // Three tests below drive fleetd startup through an ESM --experimental-loader
-// (helpers/mdns-dgram-loader.mjs) that mocks node:dgram / ./http.mjs / node:os by
+// (helpers/mdns-dgram-loader.ts) that mocks node:dgram / ./http.ts / node:os by
 // matching the SOURCE module paths (scripts/fleetd/*.mjs). The single-file bundle
 // inlines those modules, so the loader intercepts nothing and the mocked
 // console-record / mDNS announcement never appears — the tests would hang. They are
@@ -31,7 +31,7 @@ function freshHome(prefix) {
 }
 
 function loaderOptions(extra = {}) {
-  const loader = path.resolve('tests/helpers/mdns-dgram-loader.mjs');
+  const loader = path.resolve('tests/helpers/mdns-dgram-loader.ts');
   return {
     NODE_OPTIONS: `${process.env.NODE_OPTIONS || ''} --no-warnings --experimental-loader=${pathToFileURL(loader).href}`.trim(),
     ...extra,

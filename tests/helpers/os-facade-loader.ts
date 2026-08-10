@@ -8,8 +8,15 @@
 // changed under the daemon" condition BUG-129 fixes. Everything else is the
 // real builtin, lazily delegated so the facade's own evaluation never touches
 // the builtin binding before it exists.
+//
+// Registered in-process via module.register(new URL('./os-facade-loader.ts',
+// ...)); node type-strips this .ts by extension. FACADE_SOURCE below is a
+// plain-JS ES module string synthesized at load time — opaque to tsc/eslint,
+// kept byte-identical.
 
-const SELF = new URL('./os-facade-loader.mjs', import.meta.url).href;
+import type { LoadHook } from 'node:module';
+
+const SELF = new URL('./os-facade-loader.ts', import.meta.url).href;
 
 const FACADE_SOURCE = [
   "import { createRequire } from 'node:module';",
@@ -18,7 +25,7 @@ const FACADE_SOURCE = [
   'export function __setInterfaces(entries) { interfaces = entries; }',
   'export default new Proxy(realOs, {',
   '  get(target, prop) {',
-  '    if (prop === \'networkInterfaces\') return () => ({ test: interfaces });',
+  "    if (prop === 'networkInterfaces') return () => ({ test: interfaces });",
   '    const value = target[prop];',
   "    return typeof value === 'function' ? value.bind(target) : value;",
   '  },',
@@ -35,7 +42,7 @@ const FACADE_SOURCE = [
   '});',
 ].join('\n');
 
-export async function load(url, context, nextLoad) {
+export const load: LoadHook = async (url, context, nextLoad) => {
   if (url !== 'node:os') return nextLoad(url, context);
   return { format: 'module', shortCircuit: true, source: FACADE_SOURCE };
-}
+};

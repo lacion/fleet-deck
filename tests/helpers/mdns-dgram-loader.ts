@@ -5,25 +5,36 @@
 // reject every TCP bind. Replacing dgram, fleetd's HTTP factory and fleetd's OS
 // interface view lets child-process lifecycle tests run without weakening the
 // production modules or making the regressions environment-shaped.
+//
+// Loaded via `--experimental-loader=<fileURL>` in the daemon child's
+// NODE_OPTIONS; node type-strips this .ts by extension before running it as the
+// hooks module. The embedded `source` strings below are plain-JS ES modules
+// synthesized at load time — opaque to tsc/eslint, kept byte-identical.
+
+import type { LoadHook, ResolveHook } from 'node:module';
 
 const MOCK_URL = 'fleetdeck-test:mdns-dgram';
 const HTTP_URL = 'fleetdeck-test:fleetd-http';
 const OS_URL = 'fleetdeck-test:fleetd-os';
 
-export async function resolve(specifier, context, nextResolve) {
+export const resolve: ResolveHook = async (specifier, context, nextResolve) => {
   if (specifier === 'node:dgram' && context.parentURL?.endsWith('/scripts/fleetd/mdns.ts')) {
     return { url: MOCK_URL, shortCircuit: true };
   }
   if (specifier === './http.ts' && context.parentURL?.endsWith('/scripts/fleetd/fleetd.ts')) {
     return { url: HTTP_URL, shortCircuit: true };
   }
-  if (specifier === 'node:os' && (context.parentURL?.endsWith('/scripts/fleetd/fleetd.ts') || context.parentURL?.endsWith('/scripts/fleetd/mdns.ts'))) {
+  if (
+    specifier === 'node:os' &&
+    (context.parentURL?.endsWith('/scripts/fleetd/fleetd.ts') ||
+      context.parentURL?.endsWith('/scripts/fleetd/mdns.ts'))
+  ) {
     return { url: OS_URL, shortCircuit: true };
   }
   return nextResolve(specifier, context);
-}
+};
 
-export async function load(url, context, nextLoad) {
+export const load: LoadHook = async (url, context, nextLoad) => {
   if (url === MOCK_URL) {
     return {
       format: 'module',
@@ -158,4 +169,4 @@ export async function load(url, context, nextLoad) {
     };
   }
   return nextLoad(url, context);
-}
+};
