@@ -71,10 +71,10 @@ import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync, existsSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { startDaemon, randomPort } from './helpers/daemon.mjs';
-import { postHook, postJson, getJson } from './helpers/http.mjs';
+import { startDaemon, randomPort } from './helpers/daemon.ts';
+import { postHook, postJson, getJson } from './helpers/http.ts';
 import { loadFixture } from './helpers/fixtures.mjs';
-import { waitUntil, waitForSpecRecords } from './helpers/wait.mjs';
+import { waitUntil, waitForSpecRecords } from './helpers/wait.ts';
 import { fileURLToPath } from 'node:url';
 
 const EXIT_PLAN_FIXTURE = 'exit-plan-mode';

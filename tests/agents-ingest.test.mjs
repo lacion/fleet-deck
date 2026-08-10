@@ -29,9 +29,9 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { startDaemon } from './helpers/daemon.mjs';
-import { postHook, getJson } from './helpers/http.mjs';
-import { waitUntil as waitUntilBase } from './helpers/wait.mjs';
+import { startDaemon } from './helpers/daemon.ts';
+import { postHook, getJson } from './helpers/http.ts';
+import { waitUntil as waitUntilBase } from './helpers/wait.ts';
 import { openDb } from '../scripts/fleetd/db.ts';
 import { loadFixture } from './helpers/fixtures.mjs';
 import { makeRepoWithWorktree } from './helpers/gitrepo.mjs';
@@ -84,7 +84,7 @@ function writeFixture(file, records) {
   writeFileSync(file, JSON.stringify(records));
 }
 
-// Scaled poller (helpers/wait.mjs) carrying this file's authored 8000ms /
+// Scaled poller (helpers/wait.ts) carrying this file's authored 8000ms /
 // 150ms-interval defaults; call sites keep their opts unchanged.
 const waitUntil = (fn, opts = {}) => waitUntilBase(fn, { timeoutMs: 8000, intervalMs: 150, ...opts });
 

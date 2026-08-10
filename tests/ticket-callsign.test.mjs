@@ -27,8 +27,8 @@ import { openDatabase } from '../scripts/fleetd/sqlite.ts';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { startDaemon } from './helpers/daemon.mjs';
-import { postHook, postJson, getJson } from './helpers/http.mjs';
+import { startDaemon } from './helpers/daemon.ts';
+import { postHook, postJson, getJson } from './helpers/http.ts';
 import { loadFixture } from './helpers/fixtures.mjs';
 import { makeRepoWithWorktree } from './helpers/gitrepo.mjs';
 

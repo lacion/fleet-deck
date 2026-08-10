@@ -20,9 +20,9 @@ import { spawnSync, execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { startDaemon } from './helpers/daemon.mjs';
-import { postJson, getJson } from './helpers/http.mjs';
-import { waitUntil } from './helpers/wait.mjs';
+import { startDaemon } from './helpers/daemon.ts';
+import { postJson, getJson } from './helpers/http.ts';
+import { waitUntil } from './helpers/wait.ts';
 
 function tmuxOk() {
   try { execFileSync('tmux', ['-V'], { stdio: 'ignore' }); return true; } catch { return false; }

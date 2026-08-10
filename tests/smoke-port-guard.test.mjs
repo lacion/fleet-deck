@@ -21,7 +21,7 @@ import { fileURLToPath } from 'node:url';
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
-import { scaleMs } from './helpers/wait.mjs';
+import { scaleMs } from './helpers/wait.ts';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const RUN_SMOKE = path.join(REPO_ROOT, 'demo', 'run-smoke.sh');

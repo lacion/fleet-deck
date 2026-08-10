@@ -6,9 +6,9 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openDb } from '../scripts/fleetd/db.ts';
-import { startDaemon } from './helpers/daemon.mjs';
-import { getJson, postHook, postJson } from './helpers/http.mjs';
-import { scaleMs, waitUntil } from './helpers/wait.mjs';
+import { startDaemon } from './helpers/daemon.ts';
+import { getJson, postHook, postJson } from './helpers/http.ts';
+import { scaleMs, waitUntil } from './helpers/wait.ts';
 
 // tests/succession.test.mjs — 0.7.1 /clear session succession.
 //

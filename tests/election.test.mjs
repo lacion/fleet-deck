@@ -16,7 +16,7 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { startDaemon, spawnRaw, randomPort, waitForHealth } from './helpers/daemon.mjs';
+import { startDaemon, spawnRaw, randomPort, waitForHealth } from './helpers/daemon.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 

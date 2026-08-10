@@ -7,8 +7,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openDb } from '../scripts/fleetd/db.ts';
 import { claudeTranscriptPath, mungeClaudeProjectCwd } from '../scripts/fleetd/derive.ts';
-import { guardScratchDirs, startDaemon } from './helpers/daemon.mjs';
-import { getJson, postHook, postJson } from './helpers/http.mjs';
+import { guardScratchDirs, startDaemon } from './helpers/daemon.ts';
+import { getJson, postHook, postJson } from './helpers/http.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SPAWN_CMD_FIXTURE = path.join(HERE, 'helpers/spawn-cmd-fixture.mjs');

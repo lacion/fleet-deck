@@ -7,9 +7,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openDb } from '../scripts/fleetd/db.ts';
 import { createCore } from '../scripts/fleetd/derive.ts';
-import { startDaemon } from './helpers/daemon.mjs';
-import { getJson, postJson } from './helpers/http.mjs';
-import { waitForSpecRecords, waitUntil } from './helpers/wait.mjs';
+import { startDaemon } from './helpers/daemon.ts';
+import { getJson, postJson } from './helpers/http.ts';
+import { waitForSpecRecords, waitUntil } from './helpers/wait.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.join(HERE, 'helpers/spawn-cmd-fixture.mjs');

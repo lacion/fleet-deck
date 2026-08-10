@@ -19,9 +19,9 @@ import { claudeTranscriptPath } from '../scripts/fleetd/derive.ts';
 // which preserves those tests' single-removal semantics exactly.
 const createKeyedMutex = fleetdHelpers.createKeyedMutex ?? (() => { throw new Error('createKeyedMutex missing'); });
 const freshMutexCtx = () => (fleetdHelpers.createKeyedMutex ? { acquireWorktreePathLock: fleetdHelpers.createKeyedMutex() } : {});
-import { startDaemon } from './helpers/daemon.mjs';
+import { startDaemon } from './helpers/daemon.ts';
 import { makeRepoWithWorktree, makePlainDir, makeRemoteRepo } from './helpers/gitrepo.mjs';
-import { getJson, postJson } from './helpers/http.mjs';
+import { getJson, postJson } from './helpers/http.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SPAWN_CMD_FIXTURE = path.join(HERE, 'helpers/spawn-cmd-fixture.mjs');

@@ -34,7 +34,7 @@ import {
   MDNS_PORT,
   TYPE,
 } from '../scripts/fleetd/mdns.ts';
-import { scaleMs } from './helpers/wait.mjs';
+import { scaleMs } from './helpers/wait.ts';
 
 const AD = { port: 4711, addresses: ['192.0.2.7'] }; // RFC 5737 TEST-NET-1: never routable
 const HOST = 'fleetdeck.local';

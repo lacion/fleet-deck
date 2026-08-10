@@ -6,12 +6,12 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { startDaemon, randomPort } from './helpers/daemon.mjs';
-import { getJson, postHook, postJson } from './helpers/http.mjs';
+import { startDaemon, randomPort } from './helpers/daemon.ts';
+import { getJson, postHook, postJson } from './helpers/http.ts';
 import { makeRemoteRepo } from './helpers/gitrepo.mjs';
 // All waits route through the shared, WAIT_SCALE-aware helper so the macOS
 // advisory lane (issue #2, WAIT_SCALE=3) gets its headroom.
-import { waitUntil } from './helpers/wait.mjs';
+import { waitUntil } from './helpers/wait.ts';
 // Test-only export (leading underscore, never imported): lets the BUG-176
 // regression in wait-scaling.test.mjs prove by identity that every waitUntil
 // in THIS module is the scaled shared helper — the exported binding and every

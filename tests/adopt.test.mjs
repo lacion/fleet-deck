@@ -7,8 +7,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openDb } from '../scripts/fleetd/db.ts';
 import { claudeTranscriptPath } from '../scripts/fleetd/derive.ts';
-import { startDaemon } from './helpers/daemon.mjs';
-import { getJson, postHook, postJson } from './helpers/http.mjs';
+import { startDaemon } from './helpers/daemon.ts';
+import { getJson, postHook, postJson } from './helpers/http.ts';
 
 // tests/adopt.test.mjs — the daemon side of "Move to tmux". Adopt resumes a
 // session the board did NOT spawn into a board-owned `claude --resume` pane,

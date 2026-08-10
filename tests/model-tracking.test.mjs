@@ -33,8 +33,8 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import { startDaemon } from './helpers/daemon.mjs';
-import { getJson, postHook } from './helpers/http.mjs';
+import { startDaemon } from './helpers/daemon.ts';
+import { getJson, postHook } from './helpers/http.ts';
 import { loadFixture } from './helpers/fixtures.mjs';
 import {
   appendTranscriptLines,

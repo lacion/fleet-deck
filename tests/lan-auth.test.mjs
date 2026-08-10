@@ -5,9 +5,9 @@ import { tmpdir } from 'node:os';
 import { createServer } from 'node:http';
 import path from 'node:path';
 import { WebSocket } from 'ws';
-import { randomPort, spawnRaw, startDaemon } from './helpers/daemon.mjs';
-import { rawRequest } from './helpers/http.mjs';
-import { waitForResponse, nonInternalIpv4s, scaleMs } from './helpers/wait.mjs';
+import { randomPort, spawnRaw, startDaemon } from './helpers/daemon.ts';
+import { rawRequest } from './helpers/http.ts';
+import { waitForResponse, nonInternalIpv4s, scaleMs } from './helpers/wait.ts';
 
 const LAN_TOKEN = 'fleetdeck-lan-test-token-0123456789';
 

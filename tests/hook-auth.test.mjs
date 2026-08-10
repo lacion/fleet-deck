@@ -20,10 +20,10 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { startDaemon } from './helpers/daemon.mjs';
-import { postHook, postJson, getJson, rawRequest } from './helpers/http.mjs';
+import { startDaemon } from './helpers/daemon.ts';
+import { postHook, postJson, getJson, rawRequest } from './helpers/http.ts';
 import { loadFixture } from './helpers/fixtures.mjs';
-import { waitUntil } from './helpers/wait.mjs';
+import { waitUntil } from './helpers/wait.ts';
 import { openDb } from '../scripts/fleetd/db.ts';
 import { createCore } from '../scripts/fleetd/derive.ts';
 

@@ -13,9 +13,9 @@ import { mkdtempSync, rmSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { startDaemon } from './helpers/daemon.mjs';
-import { postJson, getJson } from './helpers/http.mjs';
-import { waitForSpecRecords } from './helpers/wait.mjs';
+import { startDaemon } from './helpers/daemon.ts';
+import { postJson, getJson } from './helpers/http.ts';
+import { waitForSpecRecords } from './helpers/wait.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SPAWN_CMD_FIXTURE = path.join(HERE, 'helpers/spawn-cmd-fixture.mjs');
@@ -112,7 +112,7 @@ test('a cased permission_mode variant cannot sneak past the gate', async (t) => 
   const armToken = await arm(daemon);
   const ok = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd, permission_mode: 'BypassPermissions', arm_token: armToken });
   assert.equal(ok.status, 200, JSON.stringify(ok.json));
-  const { waitForSpecRecords } = await import('./helpers/wait.mjs');
+  const { waitForSpecRecords } = await import('./helpers/wait.ts');
   const records = await waitForSpecRecords(recordFile, 1);
   const argv = records[0].parsed?.argv ?? [];
   const idx = argv.indexOf('--permission-mode');
@@ -184,7 +184,7 @@ test('adopt with dangerously_skip_permissions:true also requires the arm', async
 
   // Register + genuinely end a session so adopt has a real target row.
   const { randomUUID } = await import('node:crypto');
-  const { postHook } = await import('./helpers/http.mjs');
+  const { postHook } = await import('./helpers/http.ts');
   const { loadFixture } = await import('./helpers/fixtures.mjs');
   const sid = randomUUID();
   const cwd = scratchDir();

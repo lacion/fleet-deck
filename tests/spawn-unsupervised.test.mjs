@@ -35,9 +35,9 @@ import { mkdtempSync, rmSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { startDaemon, randomPort } from './helpers/daemon.mjs';
-import { postJson, getJson } from './helpers/http.mjs';
-import { waitForSpecRecords, makeSpecRecordFile } from './helpers/wait.mjs';
+import { startDaemon, randomPort } from './helpers/daemon.ts';
+import { postJson, getJson } from './helpers/http.ts';
+import { waitForSpecRecords, makeSpecRecordFile } from './helpers/wait.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SPAWN_CMD_FIXTURE = path.join(HERE, 'helpers/spawn-cmd-fixture.mjs');

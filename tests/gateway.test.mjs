@@ -35,9 +35,9 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { randomPort, startDaemon } from './helpers/daemon.mjs';
-import { postJson, getJson, postHook, rawRequest } from './helpers/http.mjs';
-import { waitForSpecRecords } from './helpers/wait.mjs';
+import { randomPort, startDaemon } from './helpers/daemon.ts';
+import { postJson, getJson, postHook, rawRequest } from './helpers/http.ts';
+import { waitForSpecRecords } from './helpers/wait.ts';
 import { claudeTranscriptPath } from '../scripts/fleetd/helpers.ts';
 import { openDb } from '../scripts/fleetd/db.ts';
 

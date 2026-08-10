@@ -41,11 +41,11 @@ import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
-import { startDaemon, REPO_ROOT } from './helpers/daemon.mjs';
-import { postHook, postJson, getJson } from './helpers/http.mjs';
+import { startDaemon, REPO_ROOT } from './helpers/daemon.ts';
+import { postHook, postJson, getJson } from './helpers/http.ts';
 import { loadFixture } from './helpers/fixtures.mjs';
 import { makeTranscriptDir, writeTranscript } from './helpers/transcript.mjs';
-import { waitUntil, scaleMs } from './helpers/wait.mjs';
+import { waitUntil, scaleMs } from './helpers/wait.ts';
 
 const WATCH_SCRIPT = path.join(REPO_ROOT, 'scripts/fleet-watch.mjs');
 

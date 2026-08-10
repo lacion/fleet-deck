@@ -7,7 +7,7 @@
 // The behavioural assertion runs helpers/wait-scaling-probe.mjs in a
 // SUBPROCESS with the scale knob set (WAIT_SCALE is read once, at module
 // load): the probe imports the target module and asserts BY IDENTITY that the
-// target's waitUntil is the scaled shared helper from tests/helpers/wait.mjs.
+// target's waitUntil is the scaled shared helper from tests/helpers/wait.ts.
 // A raw source scan pins the count of waitUntil occurrences in the target so a
 // re-introduced file-local shadow (which would add occurrences) fails here.
 //

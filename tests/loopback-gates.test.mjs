@@ -14,8 +14,8 @@ import { readFileSync, existsSync, mkdtempSync, rmSync, statSync, writeFileSync,
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import WebSocket from 'ws';
-import { randomPort, spawnRaw, startDaemon } from './helpers/daemon.mjs';
-import { postJson, getJson } from './helpers/http.mjs';
+import { randomPort, spawnRaw, startDaemon } from './helpers/daemon.ts';
+import { postJson, getJson } from './helpers/http.ts';
 
 function scratchHome() {
   return mkdtempSync(path.join(tmpdir(), 'fleetdeck-loopback-gates-'));

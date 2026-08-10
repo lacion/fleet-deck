@@ -15,7 +15,7 @@
 //      a per-test random port + fresh FLEETDECK_HOME. Every daemon/stub the
 //      suite creates is reaped in t.after — this file must NEVER touch port
 //      4711 or the real ~/.fleetdeck (see the daemon-leak scar in
-//      tests/helpers/daemon.mjs).
+//      tests/helpers/daemon.ts).
 //
 // Determinism note: the hook's OWN version is read from the repo package.json
 // (PKG_VERSION below). The DAEMON's version is pinned per-test via
@@ -30,10 +30,10 @@ import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { startDaemon, randomPort, waitForHealth, REPO_ROOT } from './helpers/daemon.mjs';
-import { getJson, postHook } from './helpers/http.mjs';
+import { startDaemon, randomPort, waitForHealth, REPO_ROOT } from './helpers/daemon.ts';
+import { getJson, postHook } from './helpers/http.ts';
 import { loadFixture } from './helpers/fixtures.mjs';
-import { waitUntil, scaleMs } from './helpers/wait.mjs';
+import { waitUntil, scaleMs } from './helpers/wait.ts';
 import {
   parseSemver, compareSemver, shouldTakeOver, verifyDaemonPid, pidRecord, replacementMatches,
 } from '../scripts/fleetd/takeover.ts';

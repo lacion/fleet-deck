@@ -22,9 +22,9 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
-import { startDaemon } from './helpers/daemon.mjs';
-import { postJson } from './helpers/http.mjs';
-import { scaleMs } from './helpers/wait.mjs';
+import { startDaemon } from './helpers/daemon.ts';
+import { postJson } from './helpers/http.ts';
+import { scaleMs } from './helpers/wait.ts';
 
 // The daemon writes under ITS FLEETDECK_HOME (startDaemon gives each a fresh
 // tmpdir home), NOT a shared /tmp path — that move is the fix for the /tmp

@@ -10,8 +10,8 @@ import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { startDaemon, randomPort } from './helpers/daemon.mjs';
-import { postHook, getJson } from './helpers/http.mjs';
+import { startDaemon, randomPort } from './helpers/daemon.ts';
+import { postHook, getJson } from './helpers/http.ts';
 import { loadFixture } from './helpers/fixtures.mjs';
 
 test('restart durability: same FLEETDECK_HOME after kill+restart still has the sessions', async (t) => {

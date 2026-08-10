@@ -57,9 +57,9 @@ import { mkdtempSync, mkdirSync, rmSync, readFileSync, existsSync, chmodSync } f
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { startDaemon, randomPort } from './helpers/daemon.mjs';
-import { postHook, postJson, getJson } from './helpers/http.mjs';
-import { waitUntil as waitUntilBase, waitForSpecRecords, makeSpecRecordFile } from './helpers/wait.mjs';
+import { startDaemon, randomPort } from './helpers/daemon.ts';
+import { postHook, postJson, getJson } from './helpers/http.ts';
+import { waitUntil as waitUntilBase, waitForSpecRecords, makeSpecRecordFile } from './helpers/wait.ts';
 import { makeRepoWithWorktree, makePlainDir } from './helpers/gitrepo.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -76,7 +76,7 @@ function scratchDir(prefix = 'fleetdeck-spawn-') {
   return mkdtempSync(path.join(tmpdir(), prefix));
 }
 
-// Scaled poller (helpers/wait.mjs) carrying this file's authored 8000ms default
+// Scaled poller (helpers/wait.ts) carrying this file's authored 8000ms default
 // budget; call sites keep their { label, timeoutMs? } opts unchanged.
 const waitUntil = (fn, opts = {}) => waitUntilBase(fn, { timeoutMs: 8000, ...opts });
 

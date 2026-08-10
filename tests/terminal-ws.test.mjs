@@ -5,9 +5,9 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocket } from 'ws';
-import { startDaemon } from './helpers/daemon.mjs';
-import { postJson, getJson } from './helpers/http.mjs';
-import { waitUntil as waitUntilBase } from './helpers/wait.mjs';
+import { startDaemon } from './helpers/daemon.ts';
+import { postJson, getJson } from './helpers/http.ts';
+import { waitUntil as waitUntilBase } from './helpers/wait.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SPAWN_FIXTURE = path.join(HERE, 'helpers/spawn-cmd-fixture.mjs');

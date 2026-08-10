@@ -1,7 +1,7 @@
 // tests/raw-request-timeout.test.mjs
 //
 // BUG-162 — the raw node:http audit helpers (gateway/hook-auth/lan-auth, now
-// routed through helpers/http.mjs rawRequest) carried no request or socket
+// routed through helpers/http.ts rawRequest) carried no request or socket
 // deadline: a route that accepts the connection but never finishes the
 // response would hang the whole test process until the outer CI timeout,
 // turning a small route hang into a long opaque stall. rawRequest must
@@ -11,7 +11,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 
-import { rawRequest } from './helpers/http.mjs';
+import { rawRequest } from './helpers/http.ts';
 
 function hangingServer() {
   return new Promise(resolve => {

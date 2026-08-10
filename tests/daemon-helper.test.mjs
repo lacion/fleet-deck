@@ -20,7 +20,7 @@ import net from 'node:net';
 import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { startDaemon, randomPort, REPO_ROOT } from './helpers/daemon.mjs';
+import { startDaemon, randomPort, REPO_ROOT } from './helpers/daemon.ts';
 
 const CRASH_STUB = path.join(REPO_ROOT, 'tests/fixtures/crash-daemon-stub.mjs');
 

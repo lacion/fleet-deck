@@ -23,8 +23,8 @@ import { spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { startDaemon, randomPort, REPO_ROOT } from './helpers/daemon.mjs';
-import { waitUntil } from './helpers/wait.mjs';
+import { startDaemon, randomPort, REPO_ROOT } from './helpers/daemon.ts';
+import { waitUntil } from './helpers/wait.ts';
 
 const HELPER = path.join(REPO_ROOT, 'demo/lib/kill-verified-daemon.sh');
 

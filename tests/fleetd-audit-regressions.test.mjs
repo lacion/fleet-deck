@@ -5,8 +5,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { decodeMessage } from '../scripts/fleetd/mdns.ts';
-import { randomPort, spawnRaw } from './helpers/daemon.mjs';
-import { waitUntil as waitUntilBase } from './helpers/wait.mjs';
+import { randomPort, spawnRaw } from './helpers/daemon.ts';
+import { waitUntil as waitUntilBase } from './helpers/wait.ts';
 
 // Three tests below drive fleetd startup through an ESM --experimental-loader
 // (helpers/mdns-dgram-loader.mjs) that mocks node:dgram / ./http.mjs / node:os by

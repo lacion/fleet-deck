@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
-import { startDaemon } from './helpers/daemon.mjs';
-import { postHook, postJson, getJson } from './helpers/http.mjs';
-import { waitUntil } from './helpers/wait.mjs';
+import { startDaemon } from './helpers/daemon.ts';
+import { postHook, postJson, getJson } from './helpers/http.ts';
+import { waitUntil } from './helpers/wait.ts';
 import { openDb } from '../scripts/fleetd/db.ts';
 
 test('POST /api/cleanup archives offline sessions and expires their queued mail', async (t) => {

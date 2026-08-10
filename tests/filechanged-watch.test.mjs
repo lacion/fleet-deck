@@ -22,8 +22,8 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { startDaemon } from './helpers/daemon.mjs';
-import { getJson } from './helpers/http.mjs';
+import { startDaemon } from './helpers/daemon.ts';
+import { getJson } from './helpers/http.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(HERE, '..');

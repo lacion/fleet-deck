@@ -10,11 +10,11 @@ import { detectCoderWorkspaceRoot, resolveHome } from '../scripts/fleetd/config.
 import { openDb } from '../scripts/fleetd/db.ts';
 import { createCore } from '../scripts/fleetd/derive.ts';
 import { createStatements } from '../scripts/fleetd/statements.ts';
-import { startDaemon, randomPort } from './helpers/daemon.mjs';
-import { getJson, postHook, postJson } from './helpers/http.mjs';
+import { startDaemon, randomPort } from './helpers/daemon.ts';
+import { getJson, postHook, postJson } from './helpers/http.ts';
 import { makeRemoteRepo } from './helpers/gitrepo.mjs';
 import { WebSocket } from 'ws';
-import { waitUntil } from './helpers/wait.mjs';
+import { waitUntil } from './helpers/wait.ts';
 
 test('parseRepoInput accepts supported forms and rejects argv/scheme hazards', () => {
   assert.deepEqual(parseRepoInput('org/repo'), {

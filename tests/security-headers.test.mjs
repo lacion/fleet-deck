@@ -15,7 +15,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { startDaemon } from './helpers/daemon.mjs';
+import { startDaemon } from './helpers/daemon.ts';
 
 // 0.16.0: connect-src drops the bare ws:/wss: wildcards — every board
 // WebSocket is same-origin, which 'self' already covers, so the wildcards only

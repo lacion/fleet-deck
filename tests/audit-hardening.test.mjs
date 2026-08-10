@@ -18,7 +18,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createPayloadCapture } from '../scripts/fleetd/payload-capture.ts';
-import { randomPort } from './helpers/daemon.mjs';
+import { randomPort } from './helpers/daemon.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(HERE, '..');

@@ -12,10 +12,10 @@ import { createServer } from 'node:http';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { WebSocket } from 'ws';
-import { randomPort, spawnRaw, startDaemon } from './helpers/daemon.mjs';
-import { postHook } from './helpers/http.mjs';
+import { randomPort, spawnRaw, startDaemon } from './helpers/daemon.ts';
+import { postHook } from './helpers/http.ts';
 import { loadFixture } from './helpers/fixtures.mjs';
-import { waitUntil as waitUntilBase, waitForResponse, nonInternalIpv4s } from './helpers/wait.mjs';
+import { waitUntil as waitUntilBase, waitForResponse, nonInternalIpv4s } from './helpers/wait.ts';
 import { openDb } from '../scripts/fleetd/db.ts';
 
 const LAN_TOKEN = 'fleetdeck-ws-hardening-token-0123456789';

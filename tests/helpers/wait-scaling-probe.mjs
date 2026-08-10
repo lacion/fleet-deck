@@ -8,7 +8,7 @@
 // Imports the target test module (registering its tests), then — as the last
 // statement of the module, with no further awaits, so the runner has not yet
 // STARTED any test body — asserts by identity that the target's exported
-// waitUntil IS the shared scaled helper from tests/helpers/wait.mjs, with
+// waitUntil IS the shared scaled helper from tests/helpers/wait.ts, with
 // FLEETDECK_TEST_WAIT_SCALE active in this process. Verdict is one JSON line
 // on stdout (under `node --test`, child-process stderr is folded into the TAP
 // comment stream, so stdout is the reliable channel) and process.exit is
@@ -21,7 +21,7 @@ const target = process.env.FLEETDECK_PROBE_TARGET;
 const here = path.dirname(new URL(import.meta.url).pathname);
 
 const mod = await import(pathToFileURL(target).href);
-const { waitUntil: shared } = await import(pathToFileURL(path.join(here, 'wait.mjs')).href);
+const { waitUntil: shared } = await import(pathToFileURL(path.join(here, 'wait.ts')).href);
 const exported = mod.__waitUntilForScaleCheck;
 const ok = exported === shared;
 process.stdout.write(`PROBE ${JSON.stringify({ exported: typeof exported, ok })}\n`);

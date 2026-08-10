@@ -6,7 +6,7 @@
 // directory was lost the moment it was created, so teardown could never
 // remove it and every successful run left its record dirs in the OS temp
 // tree. The fix routes record-file creation through
-// tests/helpers/wait.mjs's makeSpecRecordFile(t), which registers the owning
+// tests/helpers/wait.ts's makeSpecRecordFile(t), which registers the owning
 // directory's removal on t.after.
 //
 // Proof: run both spawn suites as child `node --test` processes with TMPDIR

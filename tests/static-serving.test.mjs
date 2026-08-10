@@ -16,8 +16,8 @@ import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { startDaemon, REPO_ROOT } from './helpers/daemon.mjs';
-import { getJson, postHook } from './helpers/http.mjs';
+import { startDaemon, REPO_ROOT } from './helpers/daemon.ts';
+import { getJson, postHook } from './helpers/http.ts';
 import { loadFixture } from './helpers/fixtures.mjs';
 
 const BOARD_DIST = path.join(REPO_ROOT, 'scripts/fleetd/board-dist');

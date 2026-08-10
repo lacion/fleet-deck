@@ -12,7 +12,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { resolvePort } from '../scripts/fleetd/config.ts';
-import { spawnRaw, randomPort } from './helpers/daemon.mjs';
+import { spawnRaw, randomPort } from './helpers/daemon.ts';
 
 function withPort(value, fn) {
   const saved = process.env.FLEETDECK_PORT;

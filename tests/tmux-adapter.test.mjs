@@ -36,7 +36,7 @@ import {
   sendEnter,
   sessionName,
 } from '../scripts/fleetd/spawn.ts';
-import { waitUntil } from './helpers/wait.mjs';
+import { waitUntil } from './helpers/wait.ts';
 
 function tmuxOk() {
   const socket = `fleetdeck-adapter-probe-${process.pid}-${randomBytes(4).toString('hex')}`;

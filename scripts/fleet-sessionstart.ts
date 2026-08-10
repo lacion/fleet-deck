@@ -43,7 +43,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 // no node_modules); fall back to source for dev checkouts mid-iteration.
 const FLEETD_BUNDLE = path.join(HERE, 'fleetd', 'fleetd.bundle.mjs');
 // FLEETDECK_TEST_DAEMON_SCRIPT is a test-only seam (mirrors the same env in
-// tests/helpers/daemon.mjs): it pins the launcher to a specific daemon build so
+// tests/helpers/daemon.ts): it pins the launcher to a specific daemon build so
 // the takeover suite can boot the daemon FROM SOURCE while the committed bundle
 // is deliberately left stale mid-iteration. Unset in production, which always
 // prefers the bundle and falls back to source.

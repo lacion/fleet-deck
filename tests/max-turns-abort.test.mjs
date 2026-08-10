@@ -19,8 +19,8 @@ import { spawn } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { startDaemon, REPO_ROOT } from './helpers/daemon.mjs';
-import { postHook, getJson } from './helpers/http.mjs';
+import { startDaemon, REPO_ROOT } from './helpers/daemon.ts';
+import { postHook, getJson } from './helpers/http.ts';
 import { loadFixture } from './helpers/fixtures.mjs';
 
 const HOOKS_JSON = path.join(REPO_ROOT, 'hooks', 'hooks.json');

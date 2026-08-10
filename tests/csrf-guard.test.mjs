@@ -21,8 +21,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { WebSocket } from 'ws';
-import { startDaemon } from './helpers/daemon.mjs';
-import { postHook } from './helpers/http.mjs';
+import { startDaemon } from './helpers/daemon.ts';
+import { postHook } from './helpers/http.ts';
 import { loadFixture } from './helpers/fixtures.mjs';
 
 // A single raw HTTP request with fully controlled headers and (optionally) a
