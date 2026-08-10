@@ -1,4 +1,4 @@
-// tests/smoke-isolation.test.mjs
+// tests/smoke-isolation.test.ts
 //
 // BUG-098: the smoke's `claude -p` workers must not inherit ambient
 // machine-local configuration. Without a pinned model/effort and a restricted
@@ -21,15 +21,18 @@ const smoke = readFileSync(path.join(REPO_ROOT, 'demo', 'run-smoke.sh'), 'utf8')
 // Each launch spans several backslash-continued lines; join each launch from
 // its `claude -p` line through the redirect line so flags on continuation
 // lines are asserted against too.
-const workerLines = [];
+const workerLines: string[] = [];
 {
   const lines = smoke.split('\n');
   for (let i = 0; i < lines.length; i += 1) {
-    if (!lines[i].includes('claude -p ') || !lines[i].includes('setsid')) continue;
-    const launch = [lines[i]];
-    while (launch.at(-1).endsWith('\\') && i + 1 < lines.length) {
+    const line = lines[i];
+    if (line === undefined || !line.includes('claude -p ') || !line.includes('setsid')) continue;
+    const launch = [line];
+    while (launch.at(-1)?.endsWith('\\') && i + 1 < lines.length) {
       i += 1;
-      launch.push(lines[i]);
+      const next = lines[i];
+      if (next === undefined) break;
+      launch.push(next);
     }
     workerLines.push(launch.join('\n'));
   }
@@ -41,20 +44,35 @@ test('run-smoke.sh launches exactly two claude -p workers (test asserts against 
 
 test('every smoke worker pins the model, the effort, and the settings sources', () => {
   for (const line of workerLines) {
-    assert.match(line, /--model "\$SMOKE_MODEL"/,
-      'worker must pin --model from the smoke-owned SMOKE_MODEL, not the ambient default');
-    assert.match(line, /--effort "\$SMOKE_EFFORT"/,
-      'worker must pin --effort from the smoke-owned SMOKE_EFFORT, not the ambient default');
-    assert.match(line, /--setting-sources user,project/,
-      'worker must exclude the local settings source (settings.local.json) so machine-local hooks never join the run');
+    assert.match(
+      line,
+      /--model "\$SMOKE_MODEL"/,
+      'worker must pin --model from the smoke-owned SMOKE_MODEL, not the ambient default',
+    );
+    assert.match(
+      line,
+      /--effort "\$SMOKE_EFFORT"/,
+      'worker must pin --effort from the smoke-owned SMOKE_EFFORT, not the ambient default',
+    );
+    assert.match(
+      line,
+      /--setting-sources user,project/,
+      'worker must exclude the local settings source (settings.local.json) so machine-local hooks never join the run',
+    );
   }
 });
 
 test('run-smoke.sh defines smoke-owned model/effort defaults that ambient config cannot re-target', () => {
   // Follows the FLEETDECK_SMOKE_PORT pattern: a smoke-specific override name,
   // never a generic one an ambient environment might already export.
-  assert.match(smoke, /SMOKE_MODEL="\$\{FLEETDECK_SMOKE_MODEL:-[^}]+\}"/,
-    'SMOKE_MODEL must default inline and accept only the smoke-specific override');
-  assert.match(smoke, /SMOKE_EFFORT="\$\{FLEETDECK_SMOKE_EFFORT:-[^}]+\}"/,
-    'SMOKE_EFFORT must default inline and accept only the smoke-specific override');
+  assert.match(
+    smoke,
+    /SMOKE_MODEL="\$\{FLEETDECK_SMOKE_MODEL:-[^}]+\}"/,
+    'SMOKE_MODEL must default inline and accept only the smoke-specific override',
+  );
+  assert.match(
+    smoke,
+    /SMOKE_EFFORT="\$\{FLEETDECK_SMOKE_EFFORT:-[^}]+\}"/,
+    'SMOKE_EFFORT must default inline and accept only the smoke-specific override',
+  );
 });

@@ -1,4 +1,4 @@
-// tests/smoke-timeouts.test.mjs — BUG-100 regression: every control-plane
+// tests/smoke-timeouts.test.ts — BUG-100 regression: every control-plane
 // request in demo/run-smoke.sh must be bounded. The authenticated /mail POST
 // and the final /state GET previously used bare `curl -fsS`, so a daemon that
 // accepts the TCP connection but stalls the response wedged the live smoke
@@ -19,13 +19,16 @@ test('demo/run-smoke.sh bounds every control-plane curl with connect and total t
   const lines = src.split('\n');
 
   // Reassemble each curl invocation (they use backslash continuations).
-  const invocations = [];
+  const invocations: string[] = [];
   for (let i = 0; i < lines.length; i += 1) {
-    if (!/\bcurl\b/.test(lines[i])) continue;
-    let cmd = lines[i];
+    const line = lines[i];
+    if (line === undefined || !/\bcurl\b/.test(line)) continue;
+    let cmd = line;
     while (cmd.endsWith('\\') && i + 1 < lines.length) {
       i += 1;
-      cmd += '\n' + lines[i];
+      const next = lines[i];
+      if (next === undefined) break;
+      cmd += '\n' + next;
     }
     invocations.push(cmd);
   }
@@ -41,11 +44,15 @@ test('demo/run-smoke.sh bounds every control-plane curl with connect and total t
 
   // The two calls the audit flagged specifically: the /mail POST and the
   // final /state GET must have BOTH a connect and a total timeout.
-  const mail = invocations.find(c => c.includes('/mail'));
-  const state = invocations.find(c => c.includes('/state'));
+  const mail = invocations.find((c) => c.includes('/mail'));
+  const state = invocations.find((c) => c.includes('/state'));
   assert.ok(mail, 'found the /mail POST');
   assert.ok(state, 'found the final /state GET');
-  for (const [label, cmd] of [['/mail POST', mail], ['/state GET', state]]) {
+  const bounded: [string, string][] = [
+    ['/mail POST', mail],
+    ['/state GET', state],
+  ];
+  for (const [label, cmd] of bounded) {
     assert.match(cmd, /--connect-timeout\s+\d+/, `${label} must bound connect time`);
     assert.match(cmd, /--max-time\s+\d+/, `${label} must bound total time`);
   }
@@ -58,6 +65,10 @@ test('demo/run-smoke.sh folds the final /state GET into a bounded tombstone poll
   // A retry loop must wrap the capture so async SessionEnd tombstoning is
   // awaited instead of racing, and the loop must be bounded (seq N).
   const before = src.slice(Math.max(0, stateIdx - 600), stateIdx);
-  assert.match(before, /for\s+\w+\s+in\s+\$\(seq\s+1\s+\d+\)/, 'bounded retry loop wraps the /state capture');
+  assert.match(
+    before,
+    /for\s+\w+\s+in\s+\$\(seq\s+1\s+\d+\)/,
+    'bounded retry loop wraps the /state capture',
+  );
   assert.match(before, /tombstone/i, 'the poll waits for tombstones');
 });

@@ -1,4 +1,4 @@
-// tests/smoke-mail-gate.test.mjs
+// tests/smoke-mail-gate.test.ts
 //
 // BUG-099: demo/run-smoke.sh used to send the `to:"all"` fanout mail on
 // wall-clock sleeps (launch A, sleep 15, launch B, sleep 14, POST /mail).
@@ -47,12 +47,20 @@ test('smoke script gates B launch and the mail POST on both sessions being prove
   // ...and BOTH exact session ids must be proven active before the to:"all"
   // fanout, so neither worker can be omitted by resolveTargets.
   const beforeMail = smoke.slice(0, mailPost);
-  assert.match(beforeMail, /wait_for_fleet "\$SA" "\$SB"/, 'mail is gated on both sessions being active');
+  assert.match(
+    beforeMail,
+    /wait_for_fleet "\$SA" "\$SB"/,
+    'mail is gated on both sessions being active',
+  );
 
   // The gate itself must read the daemon's live /state and require every
   // listed sid to be present AND not ended (the same liveness rule
   // resolveTargets applies to the fanout).
   assert.match(smoke, /\/state/, 'gate polls the daemon /state');
   assert.match(smoke, /filter\(s => !s\.endedAt\)/, 'gate requires the sessions to not have ended');
-  assert.match(smoke, /sids\.every\(sid => live\.has\(sid\)\)/, 'gate requires every listed session id to be live');
+  assert.match(
+    smoke,
+    /sids\.every\(sid => live\.has\(sid\)\)/,
+    'gate requires every listed session id to be live',
+  );
 });

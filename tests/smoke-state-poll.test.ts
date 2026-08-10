@@ -1,4 +1,4 @@
-// tests/smoke-state-poll.test.mjs
+// tests/smoke-state-poll.test.ts
 //
 // BUG-101 — demo/run-smoke.sh must not snapshot /state immediately after the
 // workers exit. The smoke's rendered SessionEnd hook is async ("async": true),
@@ -19,15 +19,12 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const SCRIPT = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  '../demo/run-smoke.sh',
-);
+const SCRIPT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../demo/run-smoke.sh');
 const src = readFileSync(SCRIPT, 'utf8');
 
 // Slice the capture region: after the second worker wait, before verify.
 const waitB = src.indexOf('wait "$PB"');
-const verify = src.indexOf('final-state.json', waitB) === -1 ? -1 : src.indexOf('# ---', waitB);
+const verify = !src.includes('final-state.json', waitB) ? -1 : src.indexOf('# ---', waitB);
 assert.notEqual(waitB, -1, 'smoke script must wait for worker B');
 assert.notEqual(verify, -1, 'smoke script must have a verify section after the waits');
 const capture = src.slice(waitB, verify);
@@ -45,10 +42,6 @@ test('final-state capture is a bounded poll, not a one-shot fetch (BUG-101)', ()
 test('poll gate requires both sessions tombstoned offline with endedAt (BUG-101)', () => {
   assert.match(capture, /col\s*={2,3}\s*["']offline["']/, 'gate must require col offline');
   assert.match(capture, /endedAt/, 'gate must require endedAt');
-  assert.match(
-    capture,
-    /\$SA/,
-    'gate must check session A explicitly',
-  );
+  assert.match(capture, /\$SA/, 'gate must check session A explicitly');
   assert.match(capture, /\$SB/, 'gate must check session B explicitly');
 });

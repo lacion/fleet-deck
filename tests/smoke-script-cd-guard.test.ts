@@ -1,4 +1,4 @@
-// tests/smoke-script-cd-guard.test.mjs
+// tests/smoke-script-cd-guard.test.ts
 //
 // BUG-017 regression: demo/run-smoke.sh enabled nounset but not errexit, so a
 // failed `cd "$PROJECT_DIR"` (fixture deleted or non-enterable between setup
@@ -48,7 +48,11 @@ test('run-smoke.sh aborts on a failed cd instead of launching unrestricted worke
       /^(\s*)cd "\$PROJECT_DIR"/m,
       '$1chmod 000 "$PROJECT_DIR"\n$1cd "$PROJECT_DIR"',
     );
-    assert.match(src, /chmod 000 "\$PROJECT_DIR"/, 'could not locate the cd "$PROJECT_DIR" line in run-smoke.sh');
+    assert.match(
+      src,
+      /chmod 000 "\$PROJECT_DIR"/,
+      'could not locate the cd "$PROJECT_DIR" line in run-smoke.sh',
+    );
     // Skip everything from the first paid worker launch to the end of the
     // script; emit a marker (relative path — lands wherever the script's cwd
     // is) exactly where the unrestricted workers would have launched.
@@ -60,18 +64,32 @@ test('run-smoke.sh aborts on a failed cd instead of launching unrestricted worke
     writeFileSync(scrubbed, src);
 
     const env = {
-      PATH: process.env.PATH,
+      PATH: process.env['PATH'],
       HOME: scrubHome,
       FLEETDECK_SMOKE_PORT: '28999',
     };
-    const run = spawnSync('bash', [scrubbed], { cwd: callerCwd, env, encoding: 'utf8', timeout: 30000 });
+    const run = spawnSync('bash', [scrubbed], {
+      cwd: callerCwd,
+      env,
+      encoding: 'utf8',
+      timeout: 30000,
+    });
 
-    assert.notEqual(run.status, 0,
-      `script must abort when the project fixture cannot be entered (status=${run.status})\nstdout:\n${run.stdout}\nstderr:\n${run.stderr}`);
-    assert.match(run.stdout + run.stderr, /could not enter project fixture/,
-      'script should report the failed cd into the project fixture');
-    assert.equal(existsSync(join(callerCwd, 'smoke-launched.txt')), false,
-      'the worker launch site was reached in the caller directory — a failed cd does not stop the smoke');
+    assert.notEqual(
+      run.status,
+      0,
+      `script must abort when the project fixture cannot be entered (status=${run.status})\nstdout:\n${run.stdout}\nstderr:\n${run.stderr}`,
+    );
+    assert.match(
+      run.stdout + run.stderr,
+      /could not enter project fixture/,
+      'script should report the failed cd into the project fixture',
+    );
+    assert.equal(
+      existsSync(join(callerCwd, 'smoke-launched.txt')),
+      false,
+      'the worker launch site was reached in the caller directory — a failed cd does not stop the smoke',
+    );
   } finally {
     // The scrubbed script chmods the fixture to 000; restore perms so the
     // tmp tree can be removed.
