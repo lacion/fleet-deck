@@ -5,6 +5,66 @@
      strict typing, plus a couple of genuine "the test read/eval'd JS and the source is TS
      now" breakages that are real bugs, not authoring friction. -->
 
+### A converted test that consumes real source objects forces the source to export its types — and the export must land in the SAME commit   [MIGRATION CONSEQUENCE + a split-commit gap that broke HEAD tsc]
+
+- **What breaks.** `tests/termbridge-capture-race.test.ts` drives the real
+  `createTermBridge` and collects the frames it emits. As `.mjs` it just pushed
+  frames into an untyped `const frames = []`. Strict `.ts` wants the element type,
+  so the test now imports the frame union — `import { createTermBridge, type TermFrame }
+  from '../scripts/fleetd/termbridge.ts'` — to type `frames: TermFrame[]` and an
+  `Extract<TermFrame, { t: 'out' }>` narrowing. But `TermFrame` was a *file-local*
+  `type` in termbridge.ts, so the import failed tsc (TS2459/2305: imports a
+  non-exported member). Fix: `type TermFrame =` → `export type TermFrame =`.
+- **Why it's a real bug, not just friction.** The export edit is a SOURCE change,
+  and it got split from the test: an earlier batch committed the converted test but
+  left the one-line `export` uncommitted in the working tree. HEAD therefore had a
+  test importing a non-exported type — a red tsc gate hiding in a "green tests" run
+  (node --test type-strips and never sees it). Rule: when a conversion adds
+  `export` to a source symbol, that source hunk belongs in the SAME commit as the
+  test that needs it, or the intervening HEAD is broken. Caught here by diffing the
+  stray `M scripts/fleetd/termbridge.ts` against its consumer before committing.
+- **Bundle impact: none.** `export type` emits zero runtime code (esbuild strips
+  it), so the committed `fleetd.bundle.mjs` is byte-identical — no rebundle despite
+  the `scripts/fleetd/` touch. Verified the bundle contains no `TermFrame` token.
+  (Generalizes: exporting a *type* from daemon source never dirties the bundle;
+  exporting a *value/function* for a test to import would, and would need
+  `npm run bundle`.)
+
+### board-util.test drags DOM-typed `board/src/util.ts` into the DOM-less root program → 14 tsc errors   [FINAL-GATE BLOCKER — straddles board ownership, coordinate with comet before fixing]
+
+- **What breaks.** The full-repo gate `tsc -p tsconfig.json --noEmit` reports exactly
+  **14 errors, all in `board/src/util.ts`** (`Cannot find name 'Element' /
+  'HTMLTextAreaElement' / 'ClipboardEvent' / 'Clipboard' / 'Permissions' /
+  'PermissionDescriptor' / 'window' / 'document'`, and `Property 'clipboard' does not
+  exist on type 'Navigator'`). They are NOT any test's authoring fault and NOT a
+  board bug: `util.ts` is the board's clipboard/OSC-52 helper and legitimately uses
+  DOM globals.
+- **Why it lands in the ROOT program.** Root `tsconfig.json` is Node/Bun-only
+  (`lib: ["ES2023"]`, no DOM) and `exclude`s `board`. But `tests/board-util.test.ts`
+  *statically* imports symbols from `../board/src/util.ts` (lines 21–39). tsc follows an
+  import into an excluded file — `exclude` only bars a file from being a *root*, not
+  from being pulled in transitively — so `util.ts` gets type-checked under the DOM-less
+  root lib and its DOM globals are undefined. `board/tsconfig.json` (comet-owned) DOES
+  carry `lib: ["ES2023","DOM","DOM.Iterable"]`, so `util.ts` checks clean *there*; it
+  just never checks the tests. The board-cluster tests fall in the gap between the two
+  configs.
+- **Scope is narrow.** Only `util.ts` and only `board-util.test.ts` are involved. The
+  other four board-cluster tests import DOM-free board modules
+  (`markdown.ts`/`qr.ts`/`staleChunks.ts`/`termDiag.ts`) and check clean under the root
+  lib. So the per-test conversion gate is unaffected — anchor tsc on the specific test
+  filename and these 14 `board/src/**` lines are provably not yours.
+- **Recommended fix (deliberate, coordinated — NOT done here).** Add a dedicated
+  DOM-aware program for the board-cluster tests: a new `tsconfig.board-tests.json`
+  (extends root, overrides `lib` to add `DOM`/`DOM.Iterable`, drops `board` from
+  `exclude`, `include: ["tests/board-*.test.ts"]`) and add `tests/board-*.test.ts` to the
+  root `exclude`. Final gate then runs both `tsc -p tsconfig.json` and
+  `tsc -p tsconfig.board-tests.json`. Caveat to verify when doing it: that program mixes
+  Node test files (need `types:["node","bun"]`) with DOM board source, so watch for the
+  `setTimeout`/`fetch`/`Blob` node×DOM global overlap; `skipLibCheck` covers the .d.ts
+  side but user-code assignments could still collide. All three touch points
+  (root tsconfig, the new config, `tests/board-*.test.ts`) are in the test/migration lane,
+  but the *boundary* is board-adjacent, so flag comet before landing it.
+
 ### board-util.test: a source-slice `new Function()` eval broke because the sliced source became TypeScript   [GENUINE MIGRATION BUG — the test's oracle stopped parsing]
 
 - **What broke.** `tests/board-util.test.ts` (was `.mjs`) pins the OSC 52 clipboard provider
