@@ -12,7 +12,7 @@
 // The contract's own wording — "argv [FLEETDECK_SPAWN_CMD, JSON.stringify(spec)]"
 // — describes a literal argv array, i.e. the daemon is expected to exec this
 // file DIRECTLY (spawn(cmd, [json]), no shell), unlike the FLEETDECK_AGENTS_CMD
-// convention (tests/helpers/agents-cmd-fixture.mjs) which is a shell command
+// convention (tests/helpers/agents-cmd-fixture.ts) which is a shell command
 // STRING run via exec(). That means this file must carry a shebang and be
 // chmod +x (done once, at repo-write time — see tests/spawn.test.mjs, which
 // verifies executability defensively rather than assuming it stays set), and

@@ -60,7 +60,7 @@ import { fileURLToPath } from 'node:url';
 import { startDaemon, randomPort } from './helpers/daemon.ts';
 import { postHook, postJson, getJson } from './helpers/http.ts';
 import { waitUntil as waitUntilBase, waitForSpecRecords, makeSpecRecordFile } from './helpers/wait.ts';
-import { makeRepoWithWorktree, makePlainDir } from './helpers/gitrepo.mjs';
+import { makeRepoWithWorktree, makePlainDir } from './helpers/gitrepo.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SPAWN_CMD_FIXTURE = path.join(HERE, 'helpers/spawn-cmd-fixture.mjs');

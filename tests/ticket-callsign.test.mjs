@@ -30,7 +30,7 @@ import path from 'node:path';
 import { startDaemon } from './helpers/daemon.ts';
 import { postHook, postJson, getJson } from './helpers/http.ts';
 import { loadFixture } from './helpers/fixtures.ts';
-import { makeRepoWithWorktree } from './helpers/gitrepo.mjs';
+import { makeRepoWithWorktree } from './helpers/gitrepo.ts';
 
 // The 12-word rotation (pinned). Rotation start = countSessions % 12.
 const ANIMALS = ['falcon', 'otter', 'raven', 'lynx', 'orca', 'wren', 'viper', 'heron', 'badger', 'comet', 'ember', 'drift'];

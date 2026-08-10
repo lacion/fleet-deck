@@ -8,7 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startDaemon, randomPort } from './helpers/daemon.ts';
 import { getJson, postHook, postJson } from './helpers/http.ts';
-import { makeRemoteRepo } from './helpers/gitrepo.mjs';
+import { makeRemoteRepo } from './helpers/gitrepo.ts';
 // All waits route through the shared, WAIT_SCALE-aware helper so the macOS
 // advisory lane (issue #2, WAIT_SCALE=3) gets its headroom.
 import { waitUntil } from './helpers/wait.ts';

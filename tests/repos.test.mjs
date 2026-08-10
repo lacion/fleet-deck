@@ -12,7 +12,7 @@ import { createCore } from '../scripts/fleetd/derive.ts';
 import { createStatements } from '../scripts/fleetd/statements.ts';
 import { startDaemon, randomPort } from './helpers/daemon.ts';
 import { getJson, postHook, postJson } from './helpers/http.ts';
-import { makeRemoteRepo } from './helpers/gitrepo.mjs';
+import { makeRemoteRepo } from './helpers/gitrepo.ts';
 import { WebSocket } from 'ws';
 import { waitUntil } from './helpers/wait.ts';
 

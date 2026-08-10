@@ -17,7 +17,7 @@ import path from 'node:path';
 import { startDaemon } from './helpers/daemon.ts';
 import { postHook, getJson } from './helpers/http.ts';
 import { loadFixture } from './helpers/fixtures.ts';
-import { makeRepoWithWorktree, makePlainDir, makeSeparateGitDirRepo } from './helpers/gitrepo.mjs';
+import { makeRepoWithWorktree, makePlainDir, makeSeparateGitDirRepo } from './helpers/gitrepo.ts';
 import { deriveRepo, branchOf, ledgerKey } from '../scripts/fleetd/repo-identity.ts';
 
 function findSession(state, sid) {

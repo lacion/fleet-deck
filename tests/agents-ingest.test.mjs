@@ -3,7 +3,7 @@
 // Phase 2 daemon feature (handoff F1): `claude agents --json` as a secondary
 // session source that catches sessions that predate plugin install — no
 // hook ever fired for them. scripts/fleetd/agents-poll.mjs polls the CLI
-// (or FLEETDECK_AGENTS_CMD override, see tests/helpers/agents-cmd-fixture.mjs)
+// (or FLEETDECK_AGENTS_CMD override, see tests/helpers/agents-cmd-fixture.ts)
 // and merges results via derive.mjs's ingestAgentsPoll().
 //
 // Precedence rule under test throughout: hook-derived state ALWAYS wins.
@@ -34,10 +34,10 @@ import { postHook, getJson } from './helpers/http.ts';
 import { waitUntil as waitUntilBase } from './helpers/wait.ts';
 import { openDb } from '../scripts/fleetd/db.ts';
 import { loadFixture } from './helpers/fixtures.ts';
-import { makeRepoWithWorktree } from './helpers/gitrepo.mjs';
+import { makeRepoWithWorktree } from './helpers/gitrepo.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const AGENTS_CMD_FIXTURE = path.join(HERE, 'helpers/agents-cmd-fixture.mjs');
+const AGENTS_CMD_FIXTURE = path.join(HERE, 'helpers/agents-cmd-fixture.ts');
 
 // A pid that is definitely alive on this machine: our own test process.
 const LIVE_PID = process.pid;

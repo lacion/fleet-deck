@@ -7,7 +7,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { makeRepoWithWorktree } from './gitrepo.mjs';
+import { makeRepoWithWorktree } from './gitrepo.ts';
 
 test('makeRepoWithWorktree removes its base dir when construction fails (missing git)', (t) => {
   const tmp = tmpdir();

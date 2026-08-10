@@ -20,7 +20,7 @@ import { claudeTranscriptPath } from '../scripts/fleetd/derive.ts';
 const createKeyedMutex = fleetdHelpers.createKeyedMutex ?? (() => { throw new Error('createKeyedMutex missing'); });
 const freshMutexCtx = () => (fleetdHelpers.createKeyedMutex ? { acquireWorktreePathLock: fleetdHelpers.createKeyedMutex() } : {});
 import { startDaemon } from './helpers/daemon.ts';
-import { makeRepoWithWorktree, makePlainDir, makeRemoteRepo } from './helpers/gitrepo.mjs';
+import { makeRepoWithWorktree, makePlainDir, makeRemoteRepo } from './helpers/gitrepo.ts';
 import { getJson, postJson } from './helpers/http.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));

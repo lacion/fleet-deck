@@ -10,7 +10,7 @@ import path from 'node:path';
 import { openDb } from '../scripts/fleetd/db.ts';
 import { createFiles, LIST_MAX } from '../scripts/fleetd/files.ts';
 import { startDaemon } from './helpers/daemon.ts';
-import { makePlainDir, makeRepoWithWorktree } from './helpers/gitrepo.mjs';
+import { makePlainDir, makeRepoWithWorktree } from './helpers/gitrepo.ts';
 import { getJson, postJson } from './helpers/http.ts';
 
 function withDb(home, fn) {

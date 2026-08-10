@@ -1,4 +1,4 @@
-// tests/helpers/gitrepo.mjs — scratch git repos + worktrees for repo-identity tests.
+// tests/helpers/gitrepo.ts — scratch git repos + worktrees for repo-identity tests.
 //
 // Repo identity rule (F1): repo_id = `git rev-parse --git-common-dir` (canonicalized),
 // which collapses worktrees; repo_name = basename of the main tree. These
@@ -11,8 +11,26 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync } from 'nod
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-function git(args, cwd) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+function git(args: string[], cwd: string): string {
+  return execFileSync('git', args, {
+    cwd,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }).trim();
+}
+
+export interface RepoWithWorktreeOptions {
+  repoName?: string;
+  branch?: string;
+}
+
+export interface RepoWithWorktree {
+  root: string;
+  worktree: string;
+  repoName: string;
+  branch: string;
+  gitCommonDir: string;
+  cleanup(): void;
 }
 
 /**
@@ -35,7 +53,10 @@ function git(args, cwd) {
  *  - gitCommonDir: realpath of `git rev-parse --git-common-dir` from root
  *  - cleanup(): removes both worktrees and the containing tmp dir
  */
-export function makeRepoWithWorktree({ repoName = 'fleetdeck-repo-test', branch = 'wt-branch' } = {}) {
+export function makeRepoWithWorktree({
+  repoName = 'fleetdeck-repo-test',
+  branch = 'wt-branch',
+}: RepoWithWorktreeOptions = {}): RepoWithWorktree {
   const base = mkdtempSync(path.join(tmpdir(), 'fleetdeck-git-'));
   try {
     return build(base, repoName, branch);
@@ -48,7 +69,7 @@ export function makeRepoWithWorktree({ repoName = 'fleetdeck-repo-test', branch 
     throw err;
   }
 
-  function build(base, repoName, branch) {
+  function build(base: string, repoName: string, branch: string): RepoWithWorktree {
     const root = path.join(base, repoName);
     mkdirSync(root, { recursive: true });
 
@@ -71,7 +92,7 @@ export function makeRepoWithWorktree({ repoName = 'fleetdeck-repo-test', branch 
     // whatever directory the test runner itself was launched from.
     const gitCommonDirRaw = git(['rev-parse', '--git-common-dir'], root);
     const gitCommonDir = realpathSync(
-      path.isAbsolute(gitCommonDirRaw) ? gitCommonDirRaw : path.resolve(root, gitCommonDirRaw)
+      path.isAbsolute(gitCommonDirRaw) ? gitCommonDirRaw : path.resolve(root, gitCommonDirRaw),
     );
 
     return {
@@ -81,20 +102,42 @@ export function makeRepoWithWorktree({ repoName = 'fleetdeck-repo-test', branch 
       branch,
       gitCommonDir,
       cleanup() {
-        try { git(['worktree', 'remove', '--force', worktree], root); } catch { /* ignore */ }
+        try {
+          git(['worktree', 'remove', '--force', worktree], root);
+        } catch {
+          /* ignore */
+        }
         rmSync(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
       },
     };
   }
 }
 
+export interface PlainDir {
+  dir: string;
+  cleanup(): void;
+}
+
 /** Create a plain (non-git) scratch directory for the "falls back to cwd" case. */
-export function makePlainDir() {
+export function makePlainDir(): PlainDir {
   const dir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-plain-'));
   return {
     dir: realpathSync(dir),
-    cleanup() { rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); },
+    cleanup() {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    },
   };
+}
+
+export interface SeparateGitDirRepoOptions {
+  repoName?: string;
+}
+
+export interface SeparateGitDirRepo {
+  checkout: string;
+  gitDir: string;
+  repoName: string;
+  cleanup(): void;
 }
 
 /**
@@ -110,7 +153,9 @@ export function makePlainDir() {
  *  - repoName: basename of the checkout
  *  - cleanup(): removes the containing tmp dir
  */
-export function makeSeparateGitDirRepo({ repoName = 'fleetdeck-sepgit-test' } = {}) {
+export function makeSeparateGitDirRepo({
+  repoName = 'fleetdeck-sepgit-test',
+}: SeparateGitDirRepoOptions = {}): SeparateGitDirRepo {
   const base = mkdtempSync(path.join(tmpdir(), 'fleetdeck-sepgit-'));
   const gitDir = path.join(base, 'state', `${repoName}.git`);
   const checkout = path.join(base, 'work', repoName);
@@ -132,12 +177,29 @@ export function makeSeparateGitDirRepo({ repoName = 'fleetdeck-sepgit-test' } = 
   };
 }
 
+export interface RemoteRepoOptions {
+  repoName?: string;
+  branches?: string[];
+}
+
+export interface RemoteRepo {
+  base: string;
+  origin: string;
+  repoName: string;
+  seed: string;
+  clone(name?: string): string;
+  cleanup(): void;
+}
+
 /**
  * Create a networkless bare origin with a seeded main branch and optional
  * pushed branches. Call clone(name) for independent working copies whose
  * non-default branches exist only as origin/* refs.
  */
-export function makeRemoteRepo({ repoName = 'fleetdeck-remote-test', branches = [] } = {}) {
+export function makeRemoteRepo({
+  repoName = 'fleetdeck-remote-test',
+  branches = [],
+}: RemoteRepoOptions = {}): RemoteRepo {
   const base = mkdtempSync(path.join(tmpdir(), 'fleetdeck-remote-'));
   const origin = path.join(base, `${repoName}.git`);
   const seed = path.join(base, 'seed');

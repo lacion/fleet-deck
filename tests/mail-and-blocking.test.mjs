@@ -15,7 +15,7 @@ import path from 'node:path';
 import { startDaemon } from './helpers/daemon.ts';
 import { postHook, postJson, getJson } from './helpers/http.ts';
 import { loadFixture } from './helpers/fixtures.ts';
-import { makeRepoWithWorktree } from './helpers/gitrepo.mjs';
+import { makeRepoWithWorktree } from './helpers/gitrepo.ts';
 import { openDb } from '../scripts/fleetd/db.ts';
 import { createCore } from '../scripts/fleetd/derive.ts';
 
