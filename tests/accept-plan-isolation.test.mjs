@@ -71,7 +71,7 @@ test('a foreign listener that wins the port is never sent plan-gate mutations', 
   // the assertions run. The go signal is an existence POLL, not fs.watchFile —
   // watchFile fires once on registration for a missing file, and a go written
   // before registration would be swallowed by that initial event.
-  fs.writeFileSync(path.join(repo, 'scripts', 'fleetd', 'fleetd.mjs'), `
+  fs.writeFileSync(path.join(repo, 'scripts', 'fleetd', 'fleetd.bundle.mjs'), `
     import fs from 'node:fs';
     import http from 'node:http';
     import path from 'node:path';

@@ -19,7 +19,7 @@
 //
 // Determinism note: the hook's OWN version is read from the repo package.json
 // (PKG_VERSION below). The DAEMON's version is pinned per-test via
-// FLEETDECK_VERSION_OVERRIDE (a test-only env honoured by fleetd.mjs and the
+// FLEETDECK_VERSION_OVERRIDE (a test-only env honoured by the daemon (fleetd.ts) and the
 // stub), so "older"/"newer"/"equal" are set explicitly rather than depending on
 // the package.json value.
 
@@ -39,7 +39,7 @@ import {
 } from '../scripts/fleetd/takeover.ts';
 
 const HOOK_SCRIPT = path.join(REPO_ROOT, 'scripts/fleet-sessionstart.mjs');
-const FLEETD_SOURCE = path.join(REPO_ROOT, 'scripts/fleetd/fleetd.mjs');
+const FLEETD_SOURCE = path.join(REPO_ROOT, 'scripts/fleetd/fleetd.ts');
 const STUB = path.join(REPO_ROOT, 'tests/helpers/stub-immortal-daemon.mjs');
 const PKG_VERSION = JSON.parse(readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8')).version;
 
@@ -51,7 +51,7 @@ function scratchDir(t) {
 
 // Spawn the REAL SessionStart hook the way Claude Code does: a SessionStart
 // payload on stdin, scratch-daemon env. FLEETDECK_TEST_DAEMON_SCRIPT pins the
-// launcher to fleetd.mjs SOURCE (the committed bundle is deliberately stale
+// launcher to fleetd.ts SOURCE (the committed bundle is deliberately stale
 // mid-iteration); FLEETDECK_TMUX_SOCKET isolates any tmux server the spawned
 // daemon might create; FLEETDECK_AGENTS_CMD=false keeps the poller off.
 function runHook({ port, home, env = {}, payload }) {

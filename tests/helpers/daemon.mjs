@@ -1,11 +1,11 @@
 // tests/helpers/daemon.mjs
 //
-// Spawns scripts/fleetd/fleetd.mjs on a per-test random port with a fresh
+// Spawns scripts/fleetd/fleetd.ts on a per-test random port with a fresh
 // FLEETDECK_HOME under the OS tmpdir, waits for /health, and tears down
 // (kill + rm) when the test is done.
 //
 // Written against the daemon's contract, not against the daemon implementation —
-// scripts/fleetd/fleetd.mjs may not exist yet when this file is loaded. Tests
+// scripts/fleetd/fleetd.ts may not exist yet when this file is loaded. Tests
 // that spawn it will simply fail/skip until the sibling daemon lands; that is
 // expected and not a bug in this harness.
 
@@ -18,7 +18,7 @@ import { scaleMs } from './wait.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = path.resolve(HERE, '../..');
-export const FLEETD_PATH = path.join(REPO_ROOT, 'scripts/fleetd/fleetd.mjs');
+export const FLEETD_PATH = path.join(REPO_ROOT, 'scripts/fleetd/fleetd.ts');
 
 // Testing contract: scratch port range 21600-21999. Deliberately BELOW the
 // kernel's ephemeral range (WSL2 default 44620-48715 — check
@@ -185,7 +185,7 @@ export async function startDaemon({
   port = randomPort(),
   home,
   // FLEETDECK_TEST_DAEMON_SCRIPT lets this repo's own dry-check point the
-  // whole suite at a local reference stub while scripts/fleetd/fleetd.mjs is
+  // whole suite at a local reference stub while scripts/fleetd/fleetd.ts is
   // still being built, without editing any test file or touching scripts/.
   // Unset in normal use, so production runs always spawn the real daemon.
   scriptPath = process.env.FLEETDECK_TEST_DAEMON_SCRIPT || FLEETD_PATH,

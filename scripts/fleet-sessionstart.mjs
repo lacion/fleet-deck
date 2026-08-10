@@ -122,7 +122,9 @@ function livePidLooksLikeFleetd(pid) {
     const executable = path2.basename(fs2.readlinkSync(`/proc/${pid}/exe`)).replace(/ \(deleted\)$/, "");
     const argv = fs2.readFileSync(`/proc/${pid}/cmdline`).toString("utf8").split("\0").filter(Boolean);
     const runtimeLike = /^(?:node|nodejs|bun|fleetd)$/i.test(executable);
-    const fleetdScript = argv.some((arg) => /(?:^|[/\\])fleetd(?:\.bundle)?\.mjs$/.test(arg));
+    const fleetdScript = argv.some(
+      (arg) => /(?:^|[/\\])fleetd(?:\.bundle)?\.(?:mjs|ts)$/.test(arg)
+    );
     return runtimeLike && fleetdScript;
   } catch (err) {
     return errnoCode(err) !== "ENOENT";
@@ -254,7 +256,7 @@ var HERE = path4.dirname(fileURLToPath(import.meta.url));
 var FLEETD_BUNDLE = path4.join(HERE, "fleetd", "fleetd.bundle.mjs");
 var FLEETD = (
   // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- an empty/unset test seam must fall back to the bundle, not be preserved as ''
-  process.env["FLEETDECK_TEST_DAEMON_SCRIPT"] || (fs3.existsSync(FLEETD_BUNDLE) ? FLEETD_BUNDLE : path4.join(HERE, "fleetd", "fleetd.mjs"))
+  process.env["FLEETDECK_TEST_DAEMON_SCRIPT"] || (fs3.existsSync(FLEETD_BUNDLE) ? FLEETD_BUNDLE : path4.join(HERE, "fleetd", "fleetd.ts"))
 );
 var HOME = resolveHome();
 function readToken() {

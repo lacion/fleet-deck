@@ -69,7 +69,7 @@ function errnoCode(e: unknown): string | undefined {
 // Same resolution order as the SessionStart hook: the committed bundle is the
 // production artifact; source is the dev-checkout fallback.
 const BUNDLE = path.join(ROOT, 'scripts', 'fleetd', 'fleetd.bundle.mjs');
-const SOURCE = path.join(ROOT, 'scripts', 'fleetd', 'fleetd.mjs');
+const SOURCE = path.join(ROOT, 'scripts', 'fleetd', 'fleetd.ts');
 const FLEETD = fs.existsSync(BUNDLE) ? BUNDLE : SOURCE;
 
 // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- an empty FLEETDECK_HOME must fall back to the default, not be kept as ''

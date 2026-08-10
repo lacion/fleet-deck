@@ -2,7 +2,7 @@
 // SessionStart hook.
 //
 // The rule: the NEWEST installed plugin version must always end up owning the
-// daemon on port 4711. The election in fleetd.mjs is "first port-bind wins,
+// daemon on port 4711. The election in the daemon (fleetd.ts) is "first port-bind wins,
 // losers exit 3" — it has no notion of version, so after a plugin upgrade the
 // OLD daemon keeps the port forever and new-version hooks silently use its old
 // code. This module is how a newer hook evicts an older daemon: it SIGTERMs the
@@ -48,7 +48,7 @@ interface PidRecord {
 }
 
 // ---------------------------------------------------------------- pid helpers
-// Moved VERBATIM from fleetd.mjs (claimHome/removeOwnedPidFile still consume
+// Moved VERBATIM out of the daemon entry (claimHome/removeOwnedPidFile still consume
 // them, now via import) so the hook's takeover path and the daemon's own HOME
 // ownership lock share one implementation and can never drift apart.
 
@@ -99,7 +99,14 @@ function livePidLooksLikeFleetd(pid: number): boolean {
       .split('\0')
       .filter(Boolean);
     const runtimeLike = /^(?:node|nodejs|bun|fleetd)$/i.test(executable);
-    const fleetdScript = argv.some((arg) => /(?:^|[/\\])fleetd(?:\.bundle)?\.mjs$/.test(arg));
+    // Match every name the daemon boots under: the production bundle
+    // (fleetd.bundle.mjs), the TypeScript source on a full checkout (fleetd.ts,
+    // run via Node type-stripping since the 22.18 floor), and the legacy
+    // fleetd.mjs (kept so a pre-cutover process and the test stubs that
+    // impersonate a fleetd by that argv still verify).
+    const fleetdScript = argv.some((arg) =>
+      /(?:^|[/\\])fleetd(?:\.bundle)?\.(?:mjs|ts)$/.test(arg),
+    );
     return runtimeLike && fleetdScript;
   } catch (err) {
     // WHY ENOENT is decisive: the PID died after kill(0), so it no longer owns

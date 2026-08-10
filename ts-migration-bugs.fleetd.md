@@ -118,3 +118,43 @@
   fleetd.ts` boots (type-strip) to `/health` 200; bundle-lane `takeover` + `smoke-project-
   isolation` 17/17; `spawn-repo` + `base-branch` 32/32 in BOTH the source lane (fleetd.mjs →
   spawns.ts) and the bundle lane (fleetd.ts).
+
+### THE CUTOVER — `fleetd.mjs` DELETED, every launcher/test/demo repointed `.mjs`→`.ts`; a stale module specifier hiding in a shell heredoc was the one thing static tooling could not catch   [1 BUG (latent stale importer) / rest MECHANICAL]
+
+- **What:** the deferral recorded above (`fleetd.mjs` intentionally kept as the tested source
+  entry) is now resolved. `scripts/fleetd/fleetd.mjs` is DELETED; `fleetd.ts` is the sole source
+  of truth. Repointed every runtime reference: `bin/fleetdeck.ts`/`.mjs` `SOURCE`, the
+  SessionStart hook `scripts/fleet-sessionstart.ts`/`.mjs` fallback, `tests/helpers/daemon.mjs`
+  `FLEETD_PATH`, and the demo/acceptance launchers. Rebuilt the three artifacts that embed daemon
+  source (`fleetd.bundle.mjs`, `fleet-sessionstart.mjs`) or point at it (`bin/fleetdeck.mjs`).
+  Production still runs `fleetd.bundle.mjs`; the `fleetd.ts` source path is the full-checkout
+  fallback needing Node ≥22.18 type-strip.
+
+- **THE BUG — a `.mjs`→`.ts` rename that static tooling structurally could not catch [BUG]:**
+  `demo/lib/kill-verified-daemon.sh:42` did `await import(path.join(repoRoot,
+  'scripts/fleetd/takeover.mjs'))`. `takeover.mjs` was renamed to `takeover.ts` back in
+  `0e606973`, so this importer has been dangling ever since — the import throws
+  `ERR_MODULE_NOT_FOUND`, the wrapping `verdict=$(node …) || verdict="none"` swallows the non-zero
+  exit, and the helper falls through the `*)` case returning 0 WITHOUT signalling. Net effect: the
+  identity-bound daemon stop silently degraded to a no-op — it neither killed a verified daemon
+  (BUG-008 test 3) nor refused an unverified live pid (tests 1/2). Surfaced as 3 red
+  `accept-reset` subtests the moment the cutover gate ran them.
+  - **Why every static gate missed it:** the specifier is a string literal inside a bash heredoc
+    (`node --input-type=module - <<'EOF' … EOF`) in a `.sh` file. It is not an `import` statement,
+    not in any `.ts`/`.js`, and not in the module graph — so tsc, eslint, `verbatimModuleSyntax`,
+    and import-resolution are all blind to it. **Lesson for the rest of the migration:** a
+    `.mjs`→`.ts` rename is caught automatically ONLY for real import statements in typed source;
+    module specifiers embedded in strings (shell heredocs, `node -e`, non-TS config) are invisible
+    to the type checker and MUST be swept by hand + a spawning test.
+  - **Fix:** repoint line 42 to `takeover.ts` (Node ≥22.18 type-strips the dynamic `.ts` import;
+    the imported `pidRecord`/`verifyDaemonPid` already carry the BUG-156 widened `.ts` identity
+    matcher) and correct the stale line-12 comment. `node --test tests/accept-reset.test.mjs` →
+    4/4 green; a verified `fleetd.ts` daemon is SIGTERMed, a recycled plain-PID and a non-fleetd
+    live pid are both refused (code 1, process left alive).
+
+- **The rest is MECHANICAL, all faithful:** every other repoint is a bare path/string swap
+  (`fleetd.mjs`→`fleetd.ts` as an import source, a launcher argv, or a bundle input). The one
+  security-sensitive matcher — takeover's `/proc`-shape `fleetdScript` regex — was widened to
+  accept `fleetd.ts` alongside `fleetd.bundle.mjs`/`fleetd.mjs` in an earlier commit and is
+  embedded byte-identically in both the daemon bundle and the SessionStart hook (re-verified: the
+  widened alternation is present in both, no `.mjs`-only matcher survives on the daemon graph).

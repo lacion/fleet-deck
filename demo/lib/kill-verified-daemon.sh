@@ -9,7 +9,7 @@
 # `kill "$(cat <home>/fleetd.pid)"` on whatever bytes the pidfile held. A
 # legacy plain-PID pidfile that survives a crash/reboot can name a PID the OS
 # has since recycled for an unrelated process, and the acceptance gate would
-# SIGTERM that stranger mid-work. Production never does this: takeover.mjs
+# SIGTERM that stranger mid-work. Production never does this: takeover.ts
 # signals a daemon only after the pidfile PID matches AND the live process
 # still carries a fleetd /proc shape (verifyDaemonPid). This helper applies
 # that same gate to the demo reset, and additionally cross-checks the pidfile
@@ -39,7 +39,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
 const [repoRoot, pidfile] = process.argv.slice(2);
-const takeover = await import(path.join(repoRoot, 'scripts/fleetd/takeover.mjs'));
+const takeover = await import(path.join(repoRoot, 'scripts/fleetd/takeover.ts'));
 
 let text = '';
 try { text = readFileSync(pidfile, 'utf8'); } catch { console.log('none'); process.exit(0); }

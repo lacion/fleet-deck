@@ -14,10 +14,10 @@ export async function resolve(specifier, context, nextResolve) {
   if (specifier === 'node:dgram' && context.parentURL?.endsWith('/scripts/fleetd/mdns.ts')) {
     return { url: MOCK_URL, shortCircuit: true };
   }
-  if (specifier === './http.ts' && context.parentURL?.endsWith('/scripts/fleetd/fleetd.mjs')) {
+  if (specifier === './http.ts' && context.parentURL?.endsWith('/scripts/fleetd/fleetd.ts')) {
     return { url: HTTP_URL, shortCircuit: true };
   }
-  if (specifier === 'node:os' && (context.parentURL?.endsWith('/scripts/fleetd/fleetd.mjs') || context.parentURL?.endsWith('/scripts/fleetd/mdns.ts'))) {
+  if (specifier === 'node:os' && (context.parentURL?.endsWith('/scripts/fleetd/fleetd.ts') || context.parentURL?.endsWith('/scripts/fleetd/mdns.ts'))) {
     return { url: OS_URL, shortCircuit: true };
   }
   return nextResolve(specifier, context);

@@ -50,7 +50,7 @@ const FLEETD_BUNDLE = path.join(HERE, 'fleetd', 'fleetd.bundle.mjs');
 const FLEETD =
   // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- an empty/unset test seam must fall back to the bundle, not be preserved as ''
   process.env['FLEETDECK_TEST_DAEMON_SCRIPT'] ||
-  (fs.existsSync(FLEETD_BUNDLE) ? FLEETD_BUNDLE : path.join(HERE, 'fleetd', 'fleetd.mjs'));
+  (fs.existsSync(FLEETD_BUNDLE) ? FLEETD_BUNDLE : path.join(HERE, 'fleetd', 'fleetd.ts'));
 const HOME = resolveHome();
 
 // Shapes of the daemon's wire JSON. Trusted like every other /health consumer

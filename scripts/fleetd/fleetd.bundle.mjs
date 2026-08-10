@@ -17104,7 +17104,9 @@ function livePidLooksLikeFleetd(pid) {
     const executable = path17.basename(fs16.readlinkSync(`/proc/${pid}/exe`)).replace(/ \(deleted\)$/, "");
     const argv = fs16.readFileSync(`/proc/${pid}/cmdline`).toString("utf8").split("\0").filter(Boolean);
     const runtimeLike = /^(?:node|nodejs|bun|fleetd)$/i.test(executable);
-    const fleetdScript = argv.some((arg) => /(?:^|[/\\])fleetd(?:\.bundle)?\.mjs$/.test(arg));
+    const fleetdScript = argv.some(
+      (arg) => /(?:^|[/\\])fleetd(?:\.bundle)?\.(?:mjs|ts)$/.test(arg)
+    );
     return runtimeLike && fleetdScript;
   } catch (err) {
     return errnoCode3(err) !== "ENOENT";

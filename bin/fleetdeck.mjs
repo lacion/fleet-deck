@@ -35,7 +35,7 @@ function errnoCode(e) {
   return e instanceof Error && typeof e.code === "string" ? e.code : void 0;
 }
 var BUNDLE = path.join(ROOT, "scripts", "fleetd", "fleetd.bundle.mjs");
-var SOURCE = path.join(ROOT, "scripts", "fleetd", "fleetd.mjs");
+var SOURCE = path.join(ROOT, "scripts", "fleetd", "fleetd.ts");
 var FLEETD = fs.existsSync(BUNDLE) ? BUNDLE : SOURCE;
 var HOME = process.env["FLEETDECK_HOME"] || path.join(os.homedir() || "/tmp", ".fleetdeck");
 function resolveCliPort() {

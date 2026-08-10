@@ -474,7 +474,7 @@ if [ -n "$TMUX_READY" ]; then
   env -u FLEETDECK_SPAWN_CMD "${CLAUDE_ENV_SCRUB[@]}" \
     FLEETDECK_HOME="$SCRATCH_HOME" FLEETDECK_PORT="$FLEETDECK_PORT" \
     FLEETDECK_TMUX_SOCKET="$FLEETDECK_TMUX_SOCKET" \
-    node "$FLEETDECK_ROOT/scripts/fleetd/fleetd.mjs" > "$DAEMON_LOG" 2>&1 &
+    node "$FLEETDECK_ROOT/scripts/fleetd/fleetd.bundle.mjs" > "$DAEMON_LOG" 2>&1 &
   DAEMON_PID=$!
   for _ in $(seq 1 40); do
     # Readiness must name THIS run's child, not merely any qualifying /state:

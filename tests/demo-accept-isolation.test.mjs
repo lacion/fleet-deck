@@ -23,7 +23,7 @@ import { fileURLToPath } from 'node:url';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(HERE, '..');
 const DEMO = path.join(REPO_ROOT, 'demo');
-const FLEETD = path.join(REPO_ROOT, 'scripts/fleetd/fleetd.mjs');
+const FLEETD = path.join(REPO_ROOT, 'scripts/fleetd/fleetd.ts');
 
 const bash = (script) =>
   execFileSync('bash', ['-c', script], { encoding: 'utf8', cwd: DEMO }).trim();
