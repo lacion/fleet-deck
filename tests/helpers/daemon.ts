@@ -255,6 +255,32 @@ export interface StartDaemonOptions {
 }
 
 /**
+ * Thrown when the scratch port we drew is already held by another daemon:
+ * either a live foreign responder answers /health with a different PID, or our
+ * own child loses the bind and exits 3 (EADDRINUSE). When the port was
+ * AUTO-drawn, this is a disposable-environment hazard startDaemon recovers from
+ * by redrawing; a caller-pinned port surfaces it as a hard failure.
+ */
+class PortCollisionError extends Error {}
+
+/**
+ * Classify an early daemon exit. fleetd exits 3 specifically on EADDRINUSE
+ * (scripts/fleetd/fleetd.ts: "port bind lost the election") — the drawn port
+ * was already held, a retryable collision. Any other code is a genuine crash.
+ */
+function exitError(raw: RawDaemon, code: number | null): Error {
+  const pid = raw.proc.pid ?? '(none)';
+  if (code === 3) {
+    return new PortCollisionError(
+      `daemon (pid ${pid}) exited with code 3 (port bind lost the election) before becoming healthy`,
+    );
+  }
+  return new Error(
+    `daemon (pid ${pid}) exited with code ${code ?? '(none)'} before becoming healthy`,
+  );
+}
+
+/**
  * Spawn fleetd and wait for it to become healthy. Returns a handle with
  * baseUrl plus a stop() that kills the process and (by default) removes the
  * scratch FLEETDECK_HOME.
@@ -267,9 +293,18 @@ export interface StartDaemonOptions {
  *    this)
  *  - env: extra env vars merged in
  *  - healthTimeoutMs: how long to wait for /health before giving up
+ *
+ * Port-collision recovery: when the port is AUTO-drawn (no explicit `port`), a
+ * leaked or foreign daemon squatting the port we happened to draw — the
+ * recurring "port belongs to another daemon" collision on the shared
+ * 21600-21999 scratch range, where one leaked daemon gives every later file a
+ * ~1/400-per-draw chance of colliding — is redrawn and retried rather than
+ * failing the test on a pure environment hazard. A caller-PINNED port is tried
+ * exactly once: restart-in-place and election-race tests depend on the port
+ * they chose, so silently moving would defeat the invariant they assert.
  */
 export async function startDaemon({
-  port = randomPort(),
+  port,
   home,
   // FLEETDECK_TEST_DAEMON_SCRIPT lets this repo's own dry-check point the
   // whole suite at a local reference stub while scripts/fleetd/fleetd.ts is
@@ -286,99 +321,115 @@ export async function startDaemon({
   // startup or not.
   const ownsHome = home === undefined;
   const homeDir = home ?? freshHome();
-  const raw = spawnRaw({ port, home: homeDir, scriptPath, env });
-  const baseUrl = `http://127.0.0.1:${port}`;
-  // Any 2xx /health on the port is NOT proof our child came up: two test
-  // processes can draw the same scratch port, and the election loser exits 3
-  // while the winner keeps answering. Require the health body to name our
-  // child's PID, and race the poll against the child exiting, so a dead
-  // child is never handed back as a live handle onto another run's daemon.
-  let healthSettled = false;
-  const childExited = new Promise<never>((_resolve, reject) => {
-    if (raw.proc.exitCode !== null) {
-      reject(
-        new Error(
-          `daemon (pid ${raw.proc.pid ?? '(none)'}) exited with code ${raw.proc.exitCode} before becoming healthy`,
-        ),
-      );
-      return;
-    }
-    raw.proc.once('exit', (code) => {
-      if (!healthSettled)
-        reject(
-          new Error(
-            `daemon (pid ${raw.proc.pid ?? '(none)'}) exited with code ${code ?? '(none)'} before becoming healthy`,
-          ),
-        );
-    });
-  });
-  try {
-    const health = await Promise.race([waitForHealth(baseUrl, healthTimeoutMs), childExited]);
-    if (health.pid !== raw.proc.pid) {
-      throw new Error(
-        `/health on ${baseUrl} answered for pid ${health.pid ?? '(none)'}, not our child's pid ${raw.proc.pid ?? '(none)'} — the port belongs to another daemon`,
-      );
-    }
-  } catch (err) {
-    healthSettled = true;
-    await raw.kill();
-    // Startup failed, so no handle — and with it stop() — ever reaches the
-    // caller, and nothing else will ever clean up the scratch home. Remove it
-    // here or it leaks one fleetdeck-test-* directory (database, token, log,
-    // pid state) per failed start. Caller-owned homes survive untouched for
-    // the caller's own teardown and post-mortem inspection.
-    if (ownsHome) {
-      rmSync(homeDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
-    }
-    const detail = raw.stderr || raw.stdout || '(no output captured)';
-    const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`${message}\n--- daemon output ---\n${detail}`, { cause: err });
-  }
-  healthSettled = true;
-  // 0.16.0: the daemon always mints/persists a token, and /hook/*, POST /mail,
-  // /ws/term and gateway_* writes now require it. Surface it on the handle so
-  // tests can act as the authenticated caller (postHook, postJson {token}).
-  let token: string | null = null;
-  try {
-    token = readFileSync(path.join(homeDir, 'token'), 'utf8').trim() || null;
-  } catch {
-    /* persist failure — gated routes will 401, as the daemon warned */
-  }
-  return {
-    port,
-    home: homeDir,
-    baseUrl,
-    token,
-    proc: raw.proc,
-    get stdout() {
-      return raw.stdout;
-    },
-    get stderr() {
-      return raw.stderr;
-    },
-    async stop({ keepHome = false }: { keepHome?: boolean } = {}) {
-      await raw.kill();
-      // tmux servers outlive the daemon that started them: any test whose
-      // daemon touched the real tmux path left a live
-      // `tmux -L fleetdeck-test-<port>` server behind forever — observed
-      // 2026-07-14: 89 leaked servers from the previous day's suite runs,
-      // four still hosting live claude panes that haunted the production
-      // board as ghost cards. Guarded to test-owned sockets so a test that
-      // points FLEETDECK_TMUX_SOCKET at a shared server can never have that
-      // server killed from here.
-      if (raw.tmuxSocket?.startsWith('fleetdeck-test-')) {
-        try {
-          spawnSync('tmux', ['-L', raw.tmuxSocket, 'kill-server'], {
-            stdio: 'ignore',
-            timeout: 3000,
-          });
-        } catch {
-          /* best-effort: no server on the socket is the common case */
-        }
+  const autoPort = port === undefined;
+  const maxAttempts = autoPort ? 8 : 1;
+  let lastCollision: unknown = null;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const thisPort = port ?? randomPort();
+    const raw = spawnRaw({ port: thisPort, home: homeDir, scriptPath, env });
+    const baseUrl = `http://127.0.0.1:${thisPort}`;
+    // Any 2xx /health on the port is NOT proof our child came up: two test
+    // processes can draw the same scratch port, and the election loser exits 3
+    // while the winner keeps answering. Require the health body to name our
+    // child's PID, and race the poll against the child exiting, so a dead
+    // child is never handed back as a live handle onto another run's daemon.
+    let healthSettled = false;
+    const childExited = new Promise<never>((_resolve, reject) => {
+      if (raw.proc.exitCode !== null) {
+        reject(exitError(raw, raw.proc.exitCode));
+        return;
       }
-      if (!keepHome) {
+      raw.proc.once('exit', (code) => {
+        if (!healthSettled) reject(exitError(raw, code));
+      });
+    });
+    try {
+      const health = await Promise.race([waitForHealth(baseUrl, healthTimeoutMs), childExited]);
+      if (health.pid !== raw.proc.pid) {
+        throw new PortCollisionError(
+          `/health on ${baseUrl} answered for pid ${health.pid ?? '(none)'}, not our child's pid ${raw.proc.pid ?? '(none)'} — the port belongs to another daemon`,
+        );
+      }
+    } catch (err) {
+      healthSettled = true;
+      await raw.kill();
+      // A collided AUTO-drawn port is not a failure — redraw and try again
+      // (leaving the foreign daemon untouched: it is not ours to reap). Only
+      // when retries are exhausted, the error is a real crash, or the port was
+      // caller-pinned does the start fail hard.
+      if (autoPort && err instanceof PortCollisionError && attempt < maxAttempts - 1) {
+        lastCollision = err;
+        continue;
+      }
+      // Startup failed, so no handle — and with it stop() — ever reaches the
+      // caller, and nothing else will ever clean up the scratch home. Remove it
+      // here or it leaks one fleetdeck-test-* directory (database, token, log,
+      // pid state) per failed start. Caller-owned homes survive untouched for
+      // the caller's own teardown and post-mortem inspection.
+      if (ownsHome) {
         rmSync(homeDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
       }
-    },
-  };
+      const detail = raw.stderr || raw.stdout || '(no output captured)';
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(`${message}\n--- daemon output ---\n${detail}`, { cause: err });
+    }
+    healthSettled = true;
+    // 0.16.0: the daemon always mints/persists a token, and /hook/*, POST /mail,
+    // /ws/term and gateway_* writes now require it. Surface it on the handle so
+    // tests can act as the authenticated caller (postHook, postJson {token}).
+    let token: string | null = null;
+    try {
+      token = readFileSync(path.join(homeDir, 'token'), 'utf8').trim() || null;
+    } catch {
+      /* persist failure — gated routes will 401, as the daemon warned */
+    }
+    return {
+      port: thisPort,
+      home: homeDir,
+      baseUrl,
+      token,
+      proc: raw.proc,
+      get stdout() {
+        return raw.stdout;
+      },
+      get stderr() {
+        return raw.stderr;
+      },
+      async stop({ keepHome = false }: { keepHome?: boolean } = {}) {
+        await raw.kill();
+        // tmux servers outlive the daemon that started them: any test whose
+        // daemon touched the real tmux path left a live
+        // `tmux -L fleetdeck-test-<port>` server behind forever — observed
+        // 2026-07-14: 89 leaked servers from the previous day's suite runs,
+        // four still hosting live claude panes that haunted the production
+        // board as ghost cards. Guarded to test-owned sockets so a test that
+        // points FLEETDECK_TMUX_SOCKET at a shared server can never have that
+        // server killed from here.
+        if (raw.tmuxSocket?.startsWith('fleetdeck-test-')) {
+          try {
+            spawnSync('tmux', ['-L', raw.tmuxSocket, 'kill-server'], {
+              stdio: 'ignore',
+              timeout: 3000,
+            });
+          } catch {
+            /* best-effort: no server on the socket is the common case */
+          }
+        }
+        if (!keepHome) {
+          rmSync(homeDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+        }
+      },
+    };
+  }
+
+  // Unreachable in practice: the loop returns a handle or throws inside. Kept
+  // so every path is typed as returning DaemonHandle, and as a clear last word
+  // if every auto-port attempt collided.
+  if (ownsHome) {
+    rmSync(homeDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  }
+  throw new Error(
+    `daemon never started: all ${maxAttempts} auto-port attempts hit a squatted scratch port — ${lastCollision instanceof Error ? lastCollision.message : String(lastCollision)}`,
+  );
 }
