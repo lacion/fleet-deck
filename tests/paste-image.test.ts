@@ -1,4 +1,4 @@
-// tests/paste-image.test.mjs
+// tests/paste-image.test.ts
 //
 // POST /api/paste-image — the server half of "Ctrl+V a screenshot into the
 // board terminal" (paste.mjs). Pins the ingest contract:
@@ -22,34 +22,70 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
-import { startDaemon } from './helpers/daemon.ts';
+import { startDaemon, type DaemonHandle } from './helpers/daemon.ts';
 import { postJson } from './helpers/http.ts';
 import { scaleMs } from './helpers/wait.ts';
+
+// The parsed JSON body the /api/paste-image route returns; `postJson` hands back
+// `unknown`, so narrow to this local shape before reading the fields the
+// contract pins.
+interface PasteResponseJson {
+  ok: boolean;
+  path: string;
+}
+
+// The success half of pasteImage()'s {status, body} envelope — carried only so
+// the module-direct tests can read `body.path` off the discriminated union
+// without an `any`. Pure type query: erased at emit, no runtime import.
+type PasteModule = typeof import('../scripts/fleetd/paste.ts');
+type PasteOkBody = Extract<ReturnType<PasteModule['pasteImage']>['body'], { ok: true }>;
 
 // The daemon writes under ITS FLEETDECK_HOME (startDaemon gives each a fresh
 // tmpdir home), NOT a shared /tmp path — that move is the fix for the /tmp
 // symlink-follow, so the test asserts the location relative to the daemon home.
-const pasteDirOf = (d) => path.join(d.home, 'pastes');
+const pasteDirOf = (d: DaemonHandle): string => path.join(d.home, 'pastes');
 
-const b64 = (buf) => Buffer.from(buf).toString('base64');
+const b64 = (buf: Buffer): string => Buffer.from(buf).toString('base64');
 
 // Smallest buffers that satisfy the sniff. Padding past the header keeps them
 // honest about "bytes after the magic don't matter to ingest".
-const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(64)]);
+const PNG = Buffer.concat([
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+  Buffer.alloc(64),
+]);
 const JPG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(64)]);
 const GIF = Buffer.concat([Buffer.from('GIF89a', 'latin1'), Buffer.alloc(64)]);
-const WEBP = Buffer.concat([Buffer.from('RIFF', 'latin1'), Buffer.alloc(4), Buffer.from('WEBP', 'latin1'), Buffer.alloc(64)]);
+const WEBP = Buffer.concat([
+  Buffer.from('RIFF', 'latin1'),
+  Buffer.alloc(4),
+  Buffer.from('WEBP', 'latin1'),
+  Buffer.alloc(64),
+]);
+
+interface RawPostResponse {
+  status: number | undefined;
+  body: string;
+}
 
 // fetch() refuses to set Origin, so the cross-site browser is simulated with a
 // raw request — same technique as csrf-guard.test.mjs.
-function rawPost(port, reqPath, headers, body) {
+function rawPost(
+  port: number,
+  reqPath: string,
+  headers: http.OutgoingHttpHeaders,
+  body: string | Buffer,
+): Promise<RawPostResponse> {
   return new Promise((resolve, reject) => {
     const req = http.request(
       { host: '127.0.0.1', port, path: reqPath, method: 'POST', headers },
       (res) => {
         let out = '';
-        res.on('data', (d) => { out += d; });
-        res.on('end', () => resolve({ status: res.statusCode, body: out }));
+        res.on('data', (d: Buffer) => {
+          out += d.toString();
+        });
+        res.on('end', () => {
+          resolve({ status: res.statusCode, body: out });
+        });
       },
     );
     req.setTimeout(scaleMs(5000), () => req.destroy(new Error('raw request timed out')));
@@ -65,15 +101,22 @@ test('paste-image: ingest contract', async (t) => {
   const PASTE_DIR = pasteDirOf(d);
 
   await t.test('png/jpg/gif/webp are accepted and the extension comes from the sniff', async () => {
-    for (const [buf, ext] of [[PNG, 'png'], [JPG, 'jpg'], [GIF, 'gif'], [WEBP, 'webp']]) {
+    const cases: [Buffer, string][] = [
+      [PNG, 'png'],
+      [JPG, 'jpg'],
+      [GIF, 'gif'],
+      [WEBP, 'webp'],
+    ];
+    for (const [buf, ext] of cases) {
       const res = await postJson(url, { data: b64(buf) });
+      const body = res.json as PasteResponseJson;
       assert.equal(res.status, 201, `${ext}: ${JSON.stringify(res.json)}`);
-      assert.equal(res.json.ok, true);
-      assert.ok(res.json.path.endsWith(`.${ext}`), `${res.json.path} should end .${ext}`);
-      assert.ok(res.json.path.startsWith(PASTE_DIR), `${res.json.path} must live under ${PASTE_DIR}`);
-      assert.ok(fs.existsSync(res.json.path), 'file must exist');
-      assert.equal(fs.statSync(res.json.path).mode & 0o777, 0o600, 'owner-only perms');
-      assert.ok(!fs.existsSync(`${res.json.path}.tmp`), 'no staging file left behind');
+      assert.equal(body.ok, true);
+      assert.ok(body.path.endsWith(`.${ext}`), `${body.path} should end .${ext}`);
+      assert.ok(body.path.startsWith(PASTE_DIR), `${body.path} must live under ${PASTE_DIR}`);
+      assert.ok(fs.existsSync(body.path), 'file must exist');
+      assert.equal(fs.statSync(body.path).mode & 0o777, 0o600, 'owner-only perms');
+      assert.ok(!fs.existsSync(`${body.path}.tmp`), 'no staging file left behind');
     }
   });
 
@@ -87,28 +130,34 @@ test('paste-image: ingest contract', async (t) => {
   });
 
   await t.test('a burst of pastes never collides (unique 128-bit names)', async () => {
-    const results = await Promise.all(Array.from({ length: 40 }, () => postJson(url, { data: b64(PNG) })));
-    const paths = new Set();
-    for (const r of results) { assert.equal(r.status, 201); paths.add(r.json.path); }
+    const results = await Promise.all(
+      Array.from({ length: 40 }, () => postJson(url, { data: b64(PNG) })),
+    );
+    const paths = new Set<string>();
+    for (const r of results) {
+      assert.equal(r.status, 201);
+      paths.add((r.json as PasteResponseJson).path);
+    }
     assert.equal(paths.size, results.length, 'every paste got a distinct path — no clobber');
   });
 
   await t.test('a data: URL prefix is stripped, not rejected', async () => {
     const res = await postJson(url, { data: `data:image/png;base64,${b64(PNG)}` });
     assert.equal(res.status, 201);
-    assert.ok(res.json.path.endsWith('.png'));
+    assert.ok((res.json as PasteResponseJson).path.endsWith('.png'));
   });
 
   await t.test('bytes that are not a supported image are refused', async () => {
     for (const junk of [b64(Buffer.from('hello, i am not an image')), b64(Buffer.alloc(32))]) {
       const res = await postJson(url, { data: junk });
       assert.equal(res.status, 400);
-      assert.equal(res.json.ok, false);
+      assert.equal((res.json as PasteResponseJson).ok, false);
     }
   });
 
   await t.test('malformed base64 is refused up front, not decoded to junk', async () => {
-    for (const bad of ['!!!not base64!!!', 'iV!BO@Rw==', 'abc']) { // last: not a multiple of 4
+    for (const bad of ['!!!not base64!!!', 'iV!BO@Rw==', 'abc']) {
+      // last: not a multiple of 4
       const res = await postJson(url, { data: bad });
       assert.equal(res.status, 400, `"${bad}" should 400`);
     }
@@ -126,18 +175,25 @@ test('paste-image: ingest contract', async (t) => {
     }
   });
 
-  await t.test('the per-route transport raise works: a 2 MB image (over global MAX_BODY) lands', async () => {
-    const big = Buffer.concat([PNG, Buffer.alloc(2 * 1024 * 1024)]);
-    const res = await postJson(url, { data: b64(big) }, { timeout: scaleMs(15000) });
-    assert.equal(res.status, 201, JSON.stringify(res.json));
-    assert.equal(fs.statSync(res.json.path).size, big.length, 'decoded bytes written verbatim');
-  });
+  await t.test(
+    'the per-route transport raise works: a 2 MB image (over global MAX_BODY) lands',
+    async () => {
+      const big = Buffer.concat([PNG, Buffer.alloc(2 * 1024 * 1024)]);
+      const res = await postJson(url, { data: b64(big) }, { timeout: scaleMs(15000) });
+      assert.equal(res.status, 201, JSON.stringify(res.json));
+      assert.equal(
+        fs.statSync((res.json as PasteResponseJson).path).size,
+        big.length,
+        'decoded bytes written verbatim',
+      );
+    },
+  );
 
   await t.test('decoded image over 10 MB is 413 even though transport allows it', async () => {
     const over = Buffer.concat([PNG, Buffer.alloc(10 * 1024 * 1024)]);
     const res = await postJson(url, { data: b64(over) }, { timeout: scaleMs(15000) });
     assert.equal(res.status, 413);
-    assert.equal(res.json.ok, false);
+    assert.equal((res.json as PasteResponseJson).ok, false);
   });
 
   await t.test('other POST paths keep the small global body cap', async () => {
@@ -148,19 +204,29 @@ test('paste-image: ingest contract', async (t) => {
 
   await t.test('cross-site Origin is refused before a byte of image is processed', async () => {
     const body = JSON.stringify({ data: b64(PNG) });
-    const res = await rawPost(d.port, '/api/paste-image', {
-      'content-type': 'application/json',
-      'content-length': Buffer.byteLength(body),
-      origin: 'https://evil.example.com',
-    }, body);
+    const res = await rawPost(
+      d.port,
+      '/api/paste-image',
+      {
+        'content-type': 'application/json',
+        'content-length': Buffer.byteLength(body),
+        origin: 'https://evil.example.com',
+      },
+      body,
+    );
     assert.equal(res.status, 403);
   });
 
   await t.test('non-JSON content-type is refused (the preflight-forcing wall)', async () => {
-    const res = await rawPost(d.port, '/api/paste-image', {
-      'content-type': 'application/octet-stream',
-      'content-length': PNG.length,
-    }, PNG);
+    const res = await rawPost(
+      d.port,
+      '/api/paste-image',
+      {
+        'content-type': 'application/octet-stream',
+        'content-length': PNG.length,
+      },
+      PNG,
+    );
     assert.equal(res.status, 415);
   });
 
@@ -188,8 +254,8 @@ test('paste-image: a symlinked paste dir is refused (no /tmp symlink-follow)', a
   const victim = path.join(scratch, 'victim');
   mkdirSync(fakeHome, { recursive: true });
   mkdirSync(victim, { recursive: true });
-  const prevHome = process.env.FLEETDECK_HOME;
-  process.env.FLEETDECK_HOME = fakeHome;
+  const prevHome = process.env['FLEETDECK_HOME'];
+  process.env['FLEETDECK_HOME'] = fakeHome;
   try {
     // plant a symlink where the paste dir would be created
     symlinkSync(victim, pasteDir());
@@ -200,7 +266,8 @@ test('paste-image: a symlinked paste dir is refused (no /tmp symlink-follow)', a
     const { readdirSync } = await import('node:fs');
     assert.deepEqual(readdirSync(victim), [], 'must not write into the symlink target');
   } finally {
-    if (prevHome === undefined) delete process.env.FLEETDECK_HOME; else process.env.FLEETDECK_HOME = prevHome;
+    if (prevHome === undefined) delete process.env['FLEETDECK_HOME'];
+    else process.env['FLEETDECK_HOME'] = prevHome;
     rmSync(scratch, { recursive: true, force: true });
   }
 });
@@ -225,8 +292,8 @@ test('paste-image: an over-cap dir is pruned to exactly MAX_KEPT_PASTES, newest 
   const scratch = fs.mkdtempSync(path.join(os2.tmpdir(), 'fd-paste-cap-'));
   const fakeHome = path.join(scratch, 'home');
   fs.mkdirSync(fakeHome, { recursive: true });
-  const prevHome = process.env.FLEETDECK_HOME;
-  process.env.FLEETDECK_HOME = fakeHome;
+  const prevHome = process.env['FLEETDECK_HOME'];
+  process.env['FLEETDECK_HOME'] = fakeHome;
   try {
     const dir = pasteDir();
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -234,7 +301,7 @@ test('paste-image: an over-cap dir is pruned to exactly MAX_KEPT_PASTES, newest 
     // strictly ascending mtimes, so "newest" is unambiguous and it is the
     // COUNT-prune, not the age-prune, that must do the trimming.
     const base = Date.now();
-    const seeded = [];
+    const seeded: string[] = [];
     for (let i = 0; i < MAX_KEPT_PASTES + 5; i++) {
       const name = `paste-seed-${String(i).padStart(2, '0')}.png`;
       const p = path.join(dir, name);
@@ -250,12 +317,20 @@ test('paste-image: an over-cap dir is pruned to exactly MAX_KEPT_PASTES, newest 
 
     const after = fs.readdirSync(dir);
     // 55 seeds + 1 fresh = 56 → prune the 6 oldest → exactly 50 remain.
-    assert.equal(after.length, MAX_KEPT_PASTES, `exactly ${MAX_KEPT_PASTES} pastes must remain, got ${after.length}`);
-    assert.ok(after.includes(path.basename(res.body.path)), 'the just-written paste (newest mtime) is retained');
-    assert.ok(after.includes(seeded[seeded.length - 1]), 'the newest seed survives');
-    assert.ok(!after.includes(seeded[0]), 'the oldest seed is pruned');
+    assert.equal(
+      after.length,
+      MAX_KEPT_PASTES,
+      `exactly ${MAX_KEPT_PASTES} pastes must remain, got ${after.length}`,
+    );
+    assert.ok(
+      after.includes(path.basename((res.body as PasteOkBody).path)),
+      'the just-written paste (newest mtime) is retained',
+    );
+    assert.ok(after.includes(seeded[seeded.length - 1] ?? ''), 'the newest seed survives');
+    assert.ok(!after.includes(seeded[0] ?? ''), 'the oldest seed is pruned');
   } finally {
-    if (prevHome === undefined) delete process.env.FLEETDECK_HOME; else process.env.FLEETDECK_HOME = prevHome;
+    if (prevHome === undefined) delete process.env['FLEETDECK_HOME'];
+    else process.env['FLEETDECK_HOME'] = prevHome;
     fs.rmSync(scratch, { recursive: true, force: true });
   }
 });
@@ -270,8 +345,8 @@ test('paste-image: repeated pastes never leave more than MAX_KEPT_PASTES on disk
   const scratch = fs.mkdtempSync(path.join(os2.tmpdir(), 'fd-paste-flood-'));
   const fakeHome = path.join(scratch, 'home');
   fs.mkdirSync(fakeHome, { recursive: true });
-  const prevHome = process.env.FLEETDECK_HOME;
-  process.env.FLEETDECK_HOME = fakeHome;
+  const prevHome = process.env['FLEETDECK_HOME'];
+  process.env['FLEETDECK_HOME'] = fakeHome;
   try {
     const dir = pasteDir(); // pasteImage creates it; count what the cap governs
     let maxSeen = 0;
@@ -280,11 +355,19 @@ test('paste-image: repeated pastes never leave more than MAX_KEPT_PASTES on disk
       assert.equal(res.status, 201, JSON.stringify(res.body));
       const n = fs.readdirSync(dir).length;
       maxSeen = Math.max(maxSeen, n);
-      assert.ok(n <= MAX_KEPT_PASTES, `after paste #${i + 1}, ${n} files on disk exceeds the cap ${MAX_KEPT_PASTES}`);
+      assert.ok(
+        n <= MAX_KEPT_PASTES,
+        `after paste #${i + 1}, ${n} files on disk exceeds the cap ${MAX_KEPT_PASTES}`,
+      );
     }
-    assert.equal(maxSeen, MAX_KEPT_PASTES, `the cap must actually be reached; saw a max of ${maxSeen}`);
+    assert.equal(
+      maxSeen,
+      MAX_KEPT_PASTES,
+      `the cap must actually be reached; saw a max of ${maxSeen}`,
+    );
   } finally {
-    if (prevHome === undefined) delete process.env.FLEETDECK_HOME; else process.env.FLEETDECK_HOME = prevHome;
+    if (prevHome === undefined) delete process.env['FLEETDECK_HOME'];
+    else process.env['FLEETDECK_HOME'] = prevHome;
     fs.rmSync(scratch, { recursive: true, force: true });
   }
 });

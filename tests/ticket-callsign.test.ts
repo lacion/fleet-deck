@@ -1,4 +1,4 @@
-// tests/ticket-callsign.test.mjs
+// tests/ticket-callsign.test.ts
 //
 // 0.6.0 Jira-ticket callsigns (daemon-level, in the style of
 // session-lifecycle.test.mjs): a session's hex suffix is replaced by its Jira
@@ -27,35 +27,94 @@ import { openDatabase } from '../scripts/fleetd/sqlite.ts';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { startDaemon } from './helpers/daemon.ts';
-import { postHook, postJson, getJson } from './helpers/http.ts';
+import { startDaemon, type DaemonHandle } from './helpers/daemon.ts';
+import { postHook, postJson, getJson, type JsonResponse } from './helpers/http.ts';
 import { loadFixture } from './helpers/fixtures.ts';
 import { makeRepoWithWorktree } from './helpers/gitrepo.ts';
 
 // The 12-word rotation (pinned). Rotation start = countSessions % 12.
-const ANIMALS = ['falcon', 'otter', 'raven', 'lynx', 'orca', 'wren', 'viper', 'heron', 'badger', 'comet', 'ember', 'drift'];
+const ANIMALS = [
+  'falcon',
+  'otter',
+  'raven',
+  'lynx',
+  'orca',
+  'wren',
+  'viper',
+  'heron',
+  'badger',
+  'comet',
+  'ember',
+  'drift',
+];
 const ANIMAL_ALT = ANIMALS.join('|');
 const HEX_SUFFIX_RE = /^[a-z]+-[0-9a-f]{4}$/; // ticketless / hex-fallback callsign
 
-function findSession(state, sid) {
-  return state.sessions.find(s => s.session_id === sid);
+// ── Response / snapshot shapes this suite reads (the daemon carries more) ──────
+interface SessionCard {
+  session_id: string;
+  callsign: string;
+  ticket?: string | null;
+  ticket_source?: string | null;
+  prev_callsign?: string | null;
+  col?: string;
+  endedAt?: number | null;
 }
-function animalOf(callsign) {
-  return String(callsign).split('-')[0]; // animal = text before the FIRST hyphen
+interface TickerLine {
+  msg: string;
 }
-async function getState(daemon) {
-  return (await getJson(`${daemon.baseUrl}/state`)).json;
+interface StateResponse {
+  sessions: SessionCard[];
+  ticker: TickerLine[];
 }
-async function getCard(daemon, sid) {
-  return findSession(await getState(daemon), sid);
+interface SessionStartBody {
+  callsign: string;
+  brief: string;
 }
-function sessionStart(daemon, sid, cwd) {
-  return postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), { token: daemon.token });
+interface CommandBody {
+  ok?: boolean;
+  renamed?: boolean;
+  ticket?: string;
+  session_id?: string;
+  callsign?: string;
+  previous?: string;
+  reason?: string;
+  delivered?: number;
 }
-function command(daemon, text) {
+interface MailTarget {
+  session_id: string;
+}
+interface MailBody {
+  delivered?: number;
+  targets?: MailTarget[];
+}
+
+function findSession(state: StateResponse, sid: string): SessionCard | undefined {
+  return state.sessions.find((s) => s.session_id === sid);
+}
+function animalOf(callsign: string): string | undefined {
+  return callsign.split('-')[0]; // animal = text before the FIRST hyphen
+}
+async function getState(daemon: DaemonHandle): Promise<StateResponse> {
+  return (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+}
+async function getCard(daemon: DaemonHandle, sid: string): Promise<SessionCard> {
+  const card = findSession(await getState(daemon), sid);
+  assert(card, `no /state card for session ${sid}`);
+  return card;
+}
+function sessionStart(daemon: DaemonHandle, sid: string, cwd: string): Promise<JsonResponse> {
+  return postHook(
+    daemon.baseUrl,
+    'SessionStart',
+    loadFixture('session-start', { session_id: sid, cwd }),
+    { token: daemon.token },
+  );
+}
+function command(daemon: DaemonHandle, text: string): Promise<JsonResponse> {
   return postJson(`${daemon.baseUrl}/command`, { text });
 }
-function plainDir() {
+function plainDir(): string {
   return mkdtempSync(path.join(tmpdir(), 'fleetdeck-ticket-cwd-'));
 }
 
@@ -64,18 +123,31 @@ function plainDir() {
 // ---------------------------------------------------------------------------
 
 test('birth on a ticket branch → animal-first ticketed callsign, brief announces the ticket, one join tick, no rename', async (t) => {
-  const repo = makeRepoWithWorktree({ repoName: 'fd-ticket-birth', branch: 'feature/PROJ-123-checkout' });
+  const repo = makeRepoWithWorktree({
+    repoName: 'fd-ticket-birth',
+    branch: 'feature/PROJ-123-checkout',
+  });
   const daemon = await startDaemon();
-  t.after(async () => { await daemon.stop(); repo.cleanup(); });
+  t.after(async () => {
+    await daemon.stop();
+    repo.cleanup();
+  });
 
   const sid = randomUUID();
   const start = await sessionStart(daemon, sid, repo.worktree);
   assert.equal(start.status, 200, 'SessionStart should 200');
-  const callsign = start.json.callsign;
-  assert.match(callsign, new RegExp(`^(${ANIMAL_ALT})-PROJ-123$`),
-    `birth callsign should be <animal>-PROJ-123 (got ${callsign})`);
-  assert.match(start.json.brief, /as "[^"]+" \(ticket PROJ-123\)/,
-    'the SessionStart brief should announce the ticket after the callsign');
+  const startBody = start.json as SessionStartBody;
+  const callsign = startBody.callsign;
+  assert.match(
+    callsign,
+    new RegExp(`^(${ANIMAL_ALT})-PROJ-123$`),
+    `birth callsign should be <animal>-PROJ-123 (got ${callsign})`,
+  );
+  assert.match(
+    startBody.brief,
+    /as "[^"]+" \(ticket PROJ-123\)/,
+    'the SessionStart brief should announce the ticket after the callsign',
+  );
 
   const card = await getCard(daemon, sid);
   assert.equal(card.ticket, 'PROJ-123', 'the card records the detected ticket');
@@ -83,22 +155,32 @@ test('birth on a ticket branch → animal-first ticketed callsign, brief announc
   assert.equal(card.prev_callsign ?? null, null, 'birth naming is not a rename — no prev_callsign');
 
   const state = await getState(daemon);
-  const joined = state.ticker.filter(tk => tk.msg === `${callsign} joined the fleet`);
+  const joined = state.ticker.filter((tk) => tk.msg === `${callsign} joined the fleet`);
   assert.equal(joined.length, 1, 'exactly one "joined the fleet" tick at birth');
 });
 
 test('13 sessions on one ticket → 12 distinct animals, then a hex fallback that still records the ticket; all callsigns unique', async (t) => {
-  const repo = makeRepoWithWorktree({ repoName: 'fd-ticket-cascade', branch: 'feature/PROJ-42-fleet' });
+  const repo = makeRepoWithWorktree({
+    repoName: 'fd-ticket-cascade',
+    branch: 'feature/PROJ-42-fleet',
+  });
   const daemon = await startDaemon();
-  t.after(async () => { await daemon.stop(); repo.cleanup(); });
+  t.after(async () => {
+    await daemon.stop();
+    repo.cleanup();
+  });
 
-  const callsigns = [];
+  const callsigns: string[] = [];
   for (let i = 0; i < 13; i++) {
     const sid = randomUUID();
     const start = await sessionStart(daemon, sid, repo.worktree);
     assert.equal(start.status, 200, `SessionStart #${i + 1} should 200`);
     const card = await getCard(daemon, sid);
-    assert.equal(card.ticket, 'PROJ-42', `session #${i + 1} records the ticket (even the hex-fallback 13th)`);
+    assert.equal(
+      card.ticket,
+      'PROJ-42',
+      `session #${i + 1} records the ticket (even the hex-fallback 13th)`,
+    );
     callsigns.push(card.callsign);
   }
 
@@ -106,13 +188,26 @@ test('13 sessions on one ticket → 12 distinct animals, then a hex fallback tha
 
   const first12 = callsigns.slice(0, 12);
   for (const cs of first12) {
-    assert.match(cs, new RegExp(`^(${ANIMAL_ALT})-PROJ-42$`), `${cs} should be a distinct animal on PROJ-42`);
+    assert.match(
+      cs,
+      new RegExp(`^(${ANIMAL_ALT})-PROJ-42$`),
+      `${cs} should be a distinct animal on PROJ-42`,
+    );
   }
-  assert.equal(new Set(first12.map(animalOf)).size, 12, 'the first 12 sessions take 12 distinct animals');
+  assert.equal(
+    new Set(first12.map(animalOf)).size,
+    12,
+    'the first 12 sessions take 12 distinct animals',
+  );
 
   const thirteenth = callsigns[12];
-  assert.match(thirteenth, HEX_SUFFIX_RE, `the 13th session should hex-fallback once all 12 animals are taken (got ${thirteenth})`);
-  assert.ok(!/-PROJ-42$/.test(thirteenth), 'the hex fallback is NOT ticket-suffixed');
+  assert(thirteenth);
+  assert.match(
+    thirteenth,
+    HEX_SUFFIX_RE,
+    `the 13th session should hex-fallback once all 12 animals are taken (got ${thirteenth})`,
+  );
+  assert.ok(!thirteenth.endsWith("-PROJ-42"), 'the hex fallback is NOT ticket-suffixed');
 });
 
 // ---------------------------------------------------------------------------
@@ -122,7 +217,10 @@ test('13 sessions on one ticket → 12 distinct animals, then a hex fallback tha
 test('rename-once: a ticketless session renamed by a ticket-branch event; a later different-ticket branch changes nothing', async (t) => {
   const plain = plainDir();
   const repo77 = makeRepoWithWorktree({ repoName: 'fd-rename-77', branch: 'feature/PROJ-77-fix' });
-  const repoEng = makeRepoWithWorktree({ repoName: 'fd-rename-eng', branch: 'feature/ENG-1-later' });
+  const repoEng = makeRepoWithWorktree({
+    repoName: 'fd-rename-eng',
+    branch: 'feature/ENG-1-later',
+  });
   const daemon = await startDaemon();
   t.after(async () => {
     await daemon.stop();
@@ -134,33 +232,63 @@ test('rename-once: a ticketless session renamed by a ticket-branch event; a late
   const sid = randomUUID();
   // Ticketless birth (plain, non-git dir) → hex suffix, no ticket.
   const start = await sessionStart(daemon, sid, plain);
-  const birthCallsign = start.json.callsign;
+  const birthCallsign = (start.json as SessionStartBody).callsign;
   assert.match(birthCallsign, HEX_SUFFIX_RE, 'a ticketless birth uses the hex suffix');
   let card = await getCard(daemon, sid);
   assert.equal(card.ticket ?? null, null);
   assert.equal(card.prev_callsign ?? null, null);
 
   // An event whose server-derived branch carries a key → renamed ONCE.
-  await postHook(daemon.baseUrl, 'UserPromptSubmit',
-    loadFixture('user-prompt-submit', { session_id: sid, cwd: repo77.worktree }, { prompt: 'work the fix' }), { token: daemon.token });
+  await postHook(
+    daemon.baseUrl,
+    'UserPromptSubmit',
+    loadFixture(
+      'user-prompt-submit',
+      { session_id: sid, cwd: repo77.worktree },
+      { prompt: 'work the fix' },
+    ),
+    { token: daemon.token },
+  );
   card = await getCard(daemon, sid);
   assert.equal(card.ticket, 'PROJ-77', 'the ticket-branch event detects and pins the ticket');
   assert.equal(card.ticket_source, 'branch');
   const renamed = card.callsign;
   assert.match(renamed, new RegExp(`^(${ANIMAL_ALT})-PROJ-77$`));
-  assert.equal(animalOf(renamed), animalOf(birthCallsign), 'the rename keeps the birth animal when free');
-  assert.equal(card.prev_callsign, birthCallsign, 'prev_callsign becomes the birth callsign on the first rename');
+  assert.equal(
+    animalOf(renamed),
+    animalOf(birthCallsign),
+    'the rename keeps the birth animal when free',
+  );
+  assert.equal(
+    card.prev_callsign,
+    birthCallsign,
+    'prev_callsign becomes the birth callsign on the first rename',
+  );
 
   const afterRename = await getState(daemon);
-  assert.ok(afterRename.ticker.some(tk => tk.msg.includes(birthCallsign) && tk.msg.includes(renamed)),
-    'a single ticker line names BOTH the old and the new callsign');
+  assert.ok(
+    afterRename.ticker.some((tk) => tk.msg.includes(birthCallsign) && tk.msg.includes(renamed)),
+    'a single ticker line names BOTH the old and the new callsign',
+  );
 
   // A later event from a DIFFERENT ticket branch must NOT rename again.
-  await postHook(daemon.baseUrl, 'PostToolUse',
-    loadFixture('post-tool-use-bash', { session_id: sid, cwd: repoEng.worktree }), { token: daemon.token });
+  await postHook(
+    daemon.baseUrl,
+    'PostToolUse',
+    loadFixture('post-tool-use-bash', { session_id: sid, cwd: repoEng.worktree }),
+    { token: daemon.token },
+  );
   card = await getCard(daemon, sid);
-  assert.equal(card.ticket, 'PROJ-77', 'auto-rename fires at most once — the ticket does not change');
-  assert.equal(card.callsign, renamed, 'the callsign does not change on a later different-ticket branch');
+  assert.equal(
+    card.ticket,
+    'PROJ-77',
+    'auto-rename fires at most once — the ticket does not change',
+  );
+  assert.equal(
+    card.callsign,
+    renamed,
+    'the callsign does not change on a later different-ticket branch',
+  );
   assert.equal(card.prev_callsign, birthCallsign, 'prev_callsign stays the birth name');
 });
 
@@ -172,23 +300,29 @@ test('manual ticket: override renames, blocks later auto-detect, re-override kee
   const plain = plainDir();
   const repo99 = makeRepoWithWorktree({ repoName: 'fd-manual-99', branch: 'feature/PROJ-99-auto' });
   const daemon = await startDaemon();
-  t.after(async () => { await daemon.stop(); rmSync(plain, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); repo99.cleanup(); });
+  t.after(async () => {
+    await daemon.stop();
+    rmSync(plain, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    repo99.cleanup();
+  });
 
   const sid = randomUUID();
   const start = await sessionStart(daemon, sid, plain);
-  const birthCallsign = start.json.callsign;
+  const birthCallsign = (start.json as SessionStartBody).callsign;
   assert.match(birthCallsign, HEX_SUFFIX_RE);
 
   // 1) Manual override.
   let res = await command(daemon, `ticket ${birthCallsign} PROJ-55`);
   assert.equal(res.status, 200);
-  assert.equal(res.json.ok, true, `ticket override should succeed (got ${JSON.stringify(res.json)})`);
-  assert.equal(res.json.renamed, true);
-  assert.equal(res.json.ticket, 'PROJ-55');
-  assert.equal(res.json.session_id, sid);
-  assert.match(res.json.callsign, new RegExp(`^(${ANIMAL_ALT})-PROJ-55$`));
-  assert.equal(res.json.previous, birthCallsign, 'the response reports the previous callsign');
-  const manualCallsign = res.json.callsign;
+  let body = res.json as CommandBody;
+  assert.equal(body.ok, true, `ticket override should succeed (got ${JSON.stringify(res.json)})`);
+  assert.equal(body.renamed, true);
+  assert.equal(body.ticket, 'PROJ-55');
+  assert.equal(body.session_id, sid);
+  assert(body.callsign);
+  assert.match(body.callsign, new RegExp(`^(${ANIMAL_ALT})-PROJ-55$`));
+  assert.equal(body.previous, birthCallsign, 'the response reports the previous callsign');
+  const manualCallsign = body.callsign;
 
   let card = await getCard(daemon, sid);
   assert.equal(card.callsign, manualCallsign);
@@ -197,22 +331,35 @@ test('manual ticket: override renames, blocks later auto-detect, re-override kee
   assert.equal(card.prev_callsign, birthCallsign);
 
   // 2) A later ticket-branch event must NOT override the manual pin.
-  await postHook(daemon.baseUrl, 'UserPromptSubmit',
-    loadFixture('user-prompt-submit', { session_id: sid, cwd: repo99.worktree }, { prompt: 'context switch' }), { token: daemon.token });
+  await postHook(
+    daemon.baseUrl,
+    'UserPromptSubmit',
+    loadFixture(
+      'user-prompt-submit',
+      { session_id: sid, cwd: repo99.worktree },
+      { prompt: 'context switch' },
+    ),
+    { token: daemon.token },
+  );
   card = await getCard(daemon, sid);
   assert.equal(card.ticket, 'PROJ-55', 'ticket_source=manual permanently blocks auto-detect');
   assert.equal(card.callsign, manualCallsign);
 
   // 3) Second manual re-renames; prev_callsign stays the birth name (write-once).
   res = await command(daemon, `ticket ${sid} ENG-9`);
-  assert.equal(res.json.ok, true, 'manual re-ticket should succeed');
-  assert.equal(res.json.renamed, true);
-  assert.equal(res.json.ticket, 'ENG-9');
-  assert.match(res.json.callsign, new RegExp(`^(${ANIMAL_ALT})-ENG-9$`));
-  const engCallsign = res.json.callsign;
+  body = res.json as CommandBody;
+  assert.equal(body.ok, true, 'manual re-ticket should succeed');
+  assert.equal(body.renamed, true);
+  assert.equal(body.ticket, 'ENG-9');
+  assert(body.callsign);
+  assert.match(body.callsign, new RegExp(`^(${ANIMAL_ALT})-ENG-9$`));
   card = await getCard(daemon, sid);
   assert.equal(card.ticket, 'ENG-9');
-  assert.equal(card.prev_callsign, birthCallsign, 'prev_callsign is write-once — still the birth name after re-ticket');
+  assert.equal(
+    card.prev_callsign,
+    birthCallsign,
+    'prev_callsign is write-once — still the birth name after re-ticket',
+  );
 
   // 4) Clear reverts to the birth name and pins the auto path OFF. prev_callsign
   // is the write-once birth-name ANCHOR (BUG-107): wearing the birth name again
@@ -220,46 +367,69 @@ test('manual ticket: override renames, blocks later auto-detect, re-override kee
   // table instead of squatting in the anchor slot (where the next rename would
   // re-anchor on it and forget the birth name for good).
   res = await command(daemon, `ticket ${sid} clear`);
-  assert.equal(res.json.ok, true, 'ticket clear should succeed');
+  body = res.json as CommandBody;
+  assert.equal(body.ok, true, 'ticket clear should succeed');
   card = await getCard(daemon, sid);
   assert.equal(card.callsign, birthCallsign, 'clear reverts the callsign to the birth name');
   assert.equal(card.ticket ?? null, null, 'clear drops the ticket');
-  assert.equal(card.ticket_source, 'manual', 'clear pins ticket_source=manual so auto-detect stays off');
-  assert.equal(card.prev_callsign ?? null, null, 'back on the birth name → no anchor; the dropped name lives in the alias table');
+  assert.equal(
+    card.ticket_source,
+    'manual',
+    'clear pins ticket_source=manual so auto-detect stays off',
+  );
+  assert.equal(
+    card.prev_callsign ?? null,
+    null,
+    'back on the birth name → no anchor; the dropped name lives in the alias table',
+  );
 
   // 5) Auto-detect stays off after a clear.
-  await postHook(daemon.baseUrl, 'PostToolUse',
-    loadFixture('post-tool-use-bash', { session_id: sid, cwd: repo99.worktree }), { token: daemon.token });
+  await postHook(
+    daemon.baseUrl,
+    'PostToolUse',
+    loadFixture('post-tool-use-bash', { session_id: sid, cwd: repo99.worktree }),
+    { token: daemon.token },
+  );
   card = await getCard(daemon, sid);
-  assert.equal(card.ticket ?? null, null, 'a ticket-branch event after clear must not re-ticket (manual pin holds)');
+  assert.equal(
+    card.ticket ?? null,
+    null,
+    'a ticket-branch event after clear must not re-ticket (manual pin holds)',
+  );
   assert.equal(card.callsign, birthCallsign);
 });
 
 test('manual ticket: an invalid key or an unknown target is refused loudly and never becomes a note', async (t) => {
   const plain = plainDir();
   const daemon = await startDaemon();
-  t.after(async () => { await daemon.stop(); rmSync(plain, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+  t.after(async () => {
+    await daemon.stop();
+    rmSync(plain, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
 
   const sid = randomUUID();
   const start = await sessionStart(daemon, sid, plain);
-  const birthCallsign = start.json.callsign;
+  const birthCallsign = (start.json as SessionStartBody).callsign;
 
   // Invalid key shapes.
   for (const bad of ['notakey', 'PROJ-007', 'proj', 'PROJ-0']) {
     const res = await command(daemon, `ticket ${birthCallsign} ${bad}`);
     assert.equal(res.status, 200);
-    assert.equal(res.json.ok, false, `"${bad}" is not a valid key — must be refused`);
-    assert.equal(typeof res.json.reason, 'string', 'a refusal carries a string reason');
+    const body = res.json as CommandBody;
+    assert.equal(body.ok, false, `"${bad}" is not a valid key — must be refused`);
+    assert.equal(typeof body.reason, 'string', 'a refusal carries a string reason');
   }
 
   // Unknown target.
   let res = await command(daemon, `ticket ghost-9999 PROJ-1`);
-  assert.equal(res.json.ok, false, 'an unknown target is refused');
-  assert.equal(typeof res.json.reason, 'string');
+  let body = res.json as CommandBody;
+  assert.equal(body.ok, false, 'an unknown target is refused');
+  assert.equal(typeof body.reason, 'string');
 
   // Bare / malformed ticket command (missing arguments).
   res = await command(daemon, `ticket`);
-  assert.equal(res.json.ok, false, 'a bare ticket command is refused, not silently accepted');
+  body = res.json as CommandBody;
+  assert.equal(body.ok, false, 'a bare ticket command is refused, not silently accepted');
 
   // Nothing renamed the real session or set a ticket…
   const card = await getCard(daemon, sid);
@@ -268,14 +438,19 @@ test('manual ticket: an invalid key or an unknown target is refused loudly and n
 
   // …and none of it fell through to the orchestrator-note path.
   const state = await getState(daemon);
-  assert.ok(!state.ticker.some(tk => /orchestrator note/i.test(tk.msg)),
-    'a malformed/failed ticket command must NEVER become a note');
+  assert.ok(
+    !state.ticker.some((tk) => /orchestrator note/i.test(tk.msg)),
+    'a malformed/failed ticket command must NEVER become a note',
+  );
 });
 
 test('manual ticket: an ambiguous target (a callsign shared by two live sessions) is refused; the session id disambiguates', async (t) => {
   const plain = plainDir();
   const daemon = await startDaemon();
-  t.after(async () => { await daemon.stop(); rmSync(plain, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+  t.after(async () => {
+    await daemon.stop();
+    rmSync(plain, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
 
   // Ticketless births use the hex suffix and — unlike ticketed births — do not
   // consult the taken-check (current behavior, preserved by the plan). Two
@@ -291,19 +466,29 @@ test('manual ticket: an ambiguous target (a callsign shared by two live sessions
   const sidM = 'dead' + randomUUID().slice(4);
   const startM = await sessionStart(daemon, sidM, plain);
 
-  assert.equal(startA.json.callsign, startM.json.callsign,
-    'precondition: two live ticketless sessions share a callsign (rotation collision)');
-  const shared = startA.json.callsign;
+  const callsignA = (startA.json as SessionStartBody).callsign;
+  const callsignM = (startM.json as SessionStartBody).callsign;
+  assert.equal(
+    callsignA,
+    callsignM,
+    'precondition: two live ticketless sessions share a callsign (rotation collision)',
+  );
+  const shared = callsignA;
 
   const res = await command(daemon, `ticket ${shared} PROJ-1`);
-  assert.equal(res.json.ok, false, 'a target matching two live sessions is ambiguous');
-  assert.match(String(res.json.reason ?? ''), /ambig|session id/i,
-    'the reason should point the human at the session id');
+  const body = res.json as CommandBody;
+  assert.equal(body.ok, false, 'a target matching two live sessions is ambiguous');
+  assert.match(
+    body.reason ?? '',
+    /ambig|session id/i,
+    'the reason should point the human at the session id',
+  );
 
   // The session id resolves to exactly one row — unambiguous.
   const byId = await command(daemon, `ticket ${sidA} PROJ-1`);
-  assert.equal(byId.json.ok, true, 'the session id disambiguates the ambiguous callsign');
-  assert.equal(byId.json.session_id, sidA);
+  const byIdBody = byId.json as CommandBody;
+  assert.equal(byIdBody.ok, true, 'the session id disambiguates the ambiguous callsign');
+  assert.equal(byIdBody.session_id, sidA);
 });
 
 // ---------------------------------------------------------------------------
@@ -313,83 +498,143 @@ test('manual ticket: an ambiguous target (a callsign shared by two live sessions
 test('mail and assign to the birth name after a rename still deliver to the renamed session', async (t) => {
   const plain = plainDir();
   const daemon = await startDaemon();
-  t.after(async () => { await daemon.stop(); rmSync(plain, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+  t.after(async () => {
+    await daemon.stop();
+    rmSync(plain, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
 
   const sid = randomUUID();
   const start = await sessionStart(daemon, sid, plain);
-  const birthCallsign = start.json.callsign;
+  const birthCallsign = (start.json as SessionStartBody).callsign;
 
   const renameRes = await command(daemon, `ticket ${sid} PROJ-1`);
-  assert.equal(renameRes.json.ok, true);
-  const newCallsign = renameRes.json.callsign;
+  const renameBody = renameRes.json as CommandBody;
+  assert.equal(renameBody.ok, true);
+  const newCallsign = renameBody.callsign;
   assert.notEqual(newCallsign, birthCallsign);
 
   // Mail to the BIRTH (now prev_callsign) name still routes to the session.
-  let mailRes = await postJson(`${daemon.baseUrl}/mail`, { to: birthCallsign, from: 'operator', text: 'to the old name' }, { token: daemon.token });
+  let mailRes = await postJson(
+    `${daemon.baseUrl}/mail`,
+    { to: birthCallsign, from: 'operator', text: 'to the old name' },
+    { token: daemon.token },
+  );
   assert.equal(mailRes.status, 200);
-  assert.equal(mailRes.json.delivered, 1, 'mail to the birth name still finds the renamed session');
-  assert.equal(mailRes.json.targets[0].session_id, sid);
+  let mailBody = mailRes.json as MailBody;
+  assert.equal(mailBody.delivered, 1, 'mail to the birth name still finds the renamed session');
+  let target = mailBody.targets?.[0];
+  assert(target);
+  assert.equal(target.session_id, sid);
 
   // Mail to the NEW name is unaffected.
-  mailRes = await postJson(`${daemon.baseUrl}/mail`, { to: newCallsign, from: 'operator', text: 'to the new name' }, { token: daemon.token });
-  assert.equal(mailRes.json.delivered, 1, 'mail to the current name delivers');
-  assert.equal(mailRes.json.targets[0].session_id, sid);
+  mailRes = await postJson(
+    `${daemon.baseUrl}/mail`,
+    { to: newCallsign, from: 'operator', text: 'to the new name' },
+    { token: daemon.token },
+  );
+  mailBody = mailRes.json as MailBody;
+  assert.equal(mailBody.delivered, 1, 'mail to the current name delivers');
+  target = mailBody.targets?.[0];
+  assert(target);
+  assert.equal(target.session_id, sid);
 
   // Assign (POST /command) to the birth name delivers too.
   const assignRes = await command(daemon, `assign ${birthCallsign} audit the mailbox`);
-  assert.equal(assignRes.json.ok, true);
-  assert.equal(assignRes.json.delivered, 1, 'assign to the birth name reaches the renamed session');
+  const assignBody = assignRes.json as CommandBody;
+  assert.equal(assignBody.ok, true);
+  assert.equal(assignBody.delivered, 1, 'assign to the birth name reaches the renamed session');
 });
 
 test('BUG-107: re-ticket → clear → re-ticket never forgets the birth callsign — mail, assign and ticket commands to it still deliver', async (t) => {
   const plain = plainDir();
   const daemon = await startDaemon();
-  t.after(async () => { await daemon.stop(); rmSync(plain, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+  t.after(async () => {
+    await daemon.stop();
+    rmSync(plain, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
 
   const sid = randomUUID();
   const start = await sessionStart(daemon, sid, plain);
-  const birthCallsign = start.json.callsign; // e.g. falcon-928e — the SessionStart name in every peer's brief
+  const birthCallsign = (start.json as SessionStartBody).callsign; // e.g. falcon-928e — the SessionStart name in every peer's brief
 
   // The exact sequence from the finding: ticket, re-ticket, clear, re-ticket.
   let res = await command(daemon, `ticket ${birthCallsign} PROJ-1`);
-  assert.equal(res.json.ok, true);
-  const projCallsign = res.json.callsign;
+  let body = res.json as CommandBody;
+  assert.equal(body.ok, true);
+  assert(body.callsign);
+  const projCallsign = body.callsign;
   res = await command(daemon, `ticket ${sid} ENG-2`);
-  assert.equal(res.json.ok, true);
-  const engCallsign = res.json.callsign;
+  body = res.json as CommandBody;
+  assert.equal(body.ok, true);
+  assert(body.callsign);
+  const engCallsign = body.callsign;
   res = await command(daemon, `ticket ${sid} clear`);
-  assert.equal(res.json.ok, true);
+  body = res.json as CommandBody;
+  assert.equal(body.ok, true);
   res = await command(daemon, `ticket ${sid} OPS-3`);
-  assert.equal(res.json.ok, true);
-  const opsCallsign = res.json.callsign;
+  body = res.json as CommandBody;
+  assert.equal(body.ok, true);
+  assert(body.callsign);
+  const opsCallsign = body.callsign;
 
   let card = await getCard(daemon, sid);
   assert.equal(card.callsign, opsCallsign);
-  assert.equal(card.prev_callsign, birthCallsign,
-    'the anchor is write-once across the WHOLE sequence — the clear must not re-anchor on the dropped name');
+  assert.equal(
+    card.prev_callsign,
+    birthCallsign,
+    'the anchor is write-once across the WHOLE sequence — the clear must not re-anchor on the dropped name',
+  );
 
   // Mail to the birth name still finds the session.
-  let mailRes = await postJson(`${daemon.baseUrl}/mail`, { to: birthCallsign, from: 'operator', text: 'to the birth name' }, { token: daemon.token });
+  let mailRes = await postJson(
+    `${daemon.baseUrl}/mail`,
+    { to: birthCallsign, from: 'operator', text: 'to the birth name' },
+    { token: daemon.token },
+  );
   assert.equal(mailRes.status, 200);
-  assert.equal(mailRes.json.delivered, 1, 'mail to the birth callsign delivers after clear + re-ticket');
-  assert.equal(mailRes.json.targets[0].session_id, sid);
+  let mailBody = mailRes.json as MailBody;
+  assert.equal(
+    mailBody.delivered,
+    1,
+    'mail to the birth callsign delivers after clear + re-ticket',
+  );
+  let target = mailBody.targets?.[0];
+  assert(target);
+  assert.equal(target.session_id, sid);
 
   // Assign to the birth name delivers too.
   const assignRes = await command(daemon, `assign ${birthCallsign} check the mailbox`);
-  assert.equal(assignRes.json.ok, true);
-  assert.equal(assignRes.json.delivered, 1, 'assign to the birth callsign delivers after clear + re-ticket');
+  const assignBody = assignRes.json as CommandBody;
+  assert.equal(assignBody.ok, true);
+  assert.equal(
+    assignBody.delivered,
+    1,
+    'assign to the birth callsign delivers after clear + re-ticket',
+  );
 
   // Every INTERMEDIATE name the card wore and dropped stays routable as well.
   for (const dropped of [projCallsign, engCallsign]) {
-    mailRes = await postJson(`${daemon.baseUrl}/mail`, { to: dropped, from: 'operator', text: 'to a dropped name' }, { token: daemon.token });
-    assert.equal(mailRes.json.delivered, 1, `mail to the dropped name ${dropped} still delivers`);
-    assert.equal(mailRes.json.targets[0].session_id, sid);
+    mailRes = await postJson(
+      `${daemon.baseUrl}/mail`,
+      { to: dropped, from: 'operator', text: 'to a dropped name' },
+      { token: daemon.token },
+    );
+    mailBody = mailRes.json as MailBody;
+    assert.equal(mailBody.delivered, 1, `mail to the dropped name ${dropped} still delivers`);
+    target = mailBody.targets?.[0];
+    assert(target);
+    assert.equal(target.session_id, sid);
   }
 
   // And the ticket command still resolves the card by its birth name.
   const retarget = await command(daemon, `ticket ${birthCallsign} QA-4`);
-  assert.equal(retarget.json.ok, true, 'the ticket command resolves the birth name after the sequence');
-  assert.equal(retarget.json.session_id, sid);
+  const retargetBody = retarget.json as CommandBody;
+  assert.equal(
+    retargetBody.ok,
+    true,
+    'the ticket command resolves the birth name after the sequence',
+  );
+  assert.equal(retargetBody.session_id, sid);
   card = await getCard(daemon, sid);
   assert.equal(card.ticket, 'QA-4');
   assert.equal(card.prev_callsign, birthCallsign, 'still the birth anchor after one more rename');
@@ -403,16 +648,25 @@ test('tombstone holds its animal: an ended-but-unarchived ticketed session block
   const repo = makeRepoWithWorktree({ repoName: 'fd-tombstone', branch: 'feature/PROJ-42-hold' });
   const plain = plainDir();
   const daemon = await startDaemon();
-  t.after(async () => { await daemon.stop(); repo.cleanup(); rmSync(plain, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+  t.after(async () => {
+    await daemon.stop();
+    repo.cleanup();
+    rmSync(plain, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
 
   // A: the first session (count 0 → falcon) on PROJ-42.
   const sidA = randomUUID();
   const startA = await sessionStart(daemon, sidA, repo.worktree);
-  const callsignA = startA.json.callsign;
+  const callsignA = (startA.json as SessionStartBody).callsign;
   assert.match(callsignA, /^falcon-PROJ-42$/, 'the first session takes falcon on PROJ-42');
 
   // End A: offline, but NOT archived (retention is 24h) → it still holds its name.
-  await postHook(daemon.baseUrl, 'SessionEnd', loadFixture('session-end', { session_id: sidA, cwd: repo.worktree }), { token: daemon.token });
+  await postHook(
+    daemon.baseUrl,
+    'SessionEnd',
+    loadFixture('session-end', { session_id: sidA, cwd: repo.worktree }),
+    { token: daemon.token },
+  );
   const cardA = await getCard(daemon, sidA);
   assert.equal(cardA.col, 'offline', 'A is offline after SessionEnd');
   assert.ok(cardA.endedAt, 'A has an endedAt (tombstone), but is not archived');
@@ -428,13 +682,21 @@ test('tombstone holds its animal: an ended-but-unarchived ticketed session block
   // holds falcon-PROJ-42, so B must take the next free animal instead.
   const sidB = randomUUID();
   const startB = await sessionStart(daemon, sidB, repo.worktree);
-  const callsignB = startB.json.callsign;
+  const callsignB = (startB.json as SessionStartBody).callsign;
   const cardB = await getCard(daemon, sidB);
 
   assert.equal(cardB.ticket, 'PROJ-42');
-  assert.notEqual(callsignB, callsignA, 'B must not reuse the tombstone\'s exact callsign');
-  assert.notEqual(animalOf(callsignB), 'falcon', 'B skips the animal the dead-but-unarchived session still holds');
-  assert.match(callsignB, new RegExp(`^(${ANIMAL_ALT})-PROJ-42$`), 'B is still ticketed on PROJ-42');
+  assert.notEqual(callsignB, callsignA, "B must not reuse the tombstone's exact callsign");
+  assert.notEqual(
+    animalOf(callsignB),
+    'falcon',
+    'B skips the animal the dead-but-unarchived session still holds',
+  );
+  assert.match(
+    callsignB,
+    new RegExp(`^(${ANIMAL_ALT})-PROJ-42$`),
+    'B is still ticketed on PROJ-42',
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -484,7 +746,10 @@ test('migration: a pre-0.6.0 fleetd.db gains the ticket columns; old rows read t
   seed.close();
 
   const daemon = await startDaemon({ home });
-  t.after(async () => { await daemon.stop(); rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+  t.after(async () => {
+    await daemon.stop();
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
 
   // The old rows survive the migration and read ticket:null.
   const state = await getState(daemon);
@@ -492,7 +757,11 @@ test('migration: a pre-0.6.0 fleetd.db gains the ticket columns; old rows read t
   const c2 = findSession(state, sid2);
   assert.ok(c1 && c2, 'both seeded 0.5.0 rows survive the migration and appear in /state');
   assert.equal(c1.callsign, 'falcon-old1');
-  assert.equal(c1.ticket ?? null, null, 'a migrated 0.5.0 row has a null ticket (truthful backfill)');
+  assert.equal(
+    c1.ticket ?? null,
+    null,
+    'a migrated 0.5.0 row has a null ticket (truthful backfill)',
+  );
   assert.equal(c1.ticket_source ?? null, null);
   assert.equal(c1.prev_callsign ?? null, null);
 
@@ -500,14 +769,20 @@ test('migration: a pre-0.6.0 fleetd.db gains the ticket columns; old rows read t
   // actually added (a no-column migration would make updateSession throw).
   const res = await command(daemon, `ticket ${sid1} PROJ-7`);
   assert.equal(res.status, 200);
-  assert.equal(res.json.ok, true, 'the ticket command succeeds on a migrated 0.5.0 row');
-  assert.equal(res.json.ticket, 'PROJ-7');
+  const body = res.json as CommandBody;
+  assert.equal(body.ok, true, 'the ticket command succeeds on a migrated 0.5.0 row');
+  assert.equal(body.ticket, 'PROJ-7');
 
   const after = findSession(await getState(daemon), sid1);
+  assert(after);
   assert.equal(after.ticket, 'PROJ-7');
   assert.equal(after.ticket_source, 'manual');
   assert.match(after.callsign, /^falcon-PROJ-7$/, 'the migrated row keeps its animal on rename');
-  assert.equal(after.prev_callsign, 'falcon-old1', 'the birth name is captured as prev_callsign on the first rename');
+  assert.equal(
+    after.prev_callsign,
+    'falcon-old1',
+    'the birth name is captured as prev_callsign on the first rename',
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -517,16 +792,20 @@ test('migration: a pre-0.6.0 fleetd.db gains the ticket columns; old rows read t
 test('updateSession round-trips ticket/ticket_source/prev_callsign across later events (FIELDS whitelist regression)', async (t) => {
   const plain = plainDir();
   const daemon = await startDaemon();
-  t.after(async () => { await daemon.stop(); rmSync(plain, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+  t.after(async () => {
+    await daemon.stop();
+    rmSync(plain, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
 
   const sid = randomUUID();
   const start = await sessionStart(daemon, sid, plain);
-  const birthCallsign = start.json.callsign;
+  const birthCallsign = (start.json as SessionStartBody).callsign;
 
   // Set a ticket via the command — this writes all three new columns at once.
   const res = await command(daemon, `ticket ${sid} PROJ-3`);
-  assert.equal(res.json.ok, true);
-  const ticketedCallsign = res.json.callsign;
+  const body = res.json as CommandBody;
+  assert.equal(body.ok, true);
+  const ticketedCallsign = body.callsign;
 
   let card = await getCard(daemon, sid);
   assert.equal(card.ticket, 'PROJ-3');
@@ -536,15 +815,29 @@ test('updateSession round-trips ticket/ticket_source/prev_callsign across later 
   // Drive several more hook events; each runs updateSession one-to-three times
   // on OTHER columns (last_seen/events/col/note/…). A column silently dropped
   // from the FIELDS whitelist would vanish here.
-  await postHook(daemon.baseUrl, 'UserPromptSubmit',
-    loadFixture('user-prompt-submit', { session_id: sid, cwd: plain }, { prompt: 'keep going' }), { token: daemon.token });
-  await postHook(daemon.baseUrl, 'PostToolUse',
-    loadFixture('post-tool-use-edit', { session_id: sid, cwd: plain }), { token: daemon.token });
-  await postHook(daemon.baseUrl, 'Stop', loadFixture('stop', { session_id: sid, cwd: plain }), { token: daemon.token });
+  await postHook(
+    daemon.baseUrl,
+    'UserPromptSubmit',
+    loadFixture('user-prompt-submit', { session_id: sid, cwd: plain }, { prompt: 'keep going' }),
+    { token: daemon.token },
+  );
+  await postHook(
+    daemon.baseUrl,
+    'PostToolUse',
+    loadFixture('post-tool-use-edit', { session_id: sid, cwd: plain }),
+    { token: daemon.token },
+  );
+  await postHook(daemon.baseUrl, 'Stop', loadFixture('stop', { session_id: sid, cwd: plain }), {
+    token: daemon.token,
+  });
 
   card = await getCard(daemon, sid);
   assert.equal(card.ticket, 'PROJ-3', 'ticket persists across subsequent events');
   assert.equal(card.ticket_source, 'manual', 'ticket_source persists');
   assert.equal(card.prev_callsign, birthCallsign, 'prev_callsign persists');
-  assert.equal(card.callsign, ticketedCallsign, 'the renamed callsign persists across subsequent events');
+  assert.equal(
+    card.callsign,
+    ticketedCallsign,
+    'the renamed callsign persists across subsequent events',
+  );
 });
