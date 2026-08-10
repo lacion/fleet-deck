@@ -1,4 +1,4 @@
-// tests/cli-serve-paths.test.mjs
+// tests/cli-serve-paths.test.ts
 //
 // Regression for BUG-074: `fleetdeck serve` used to build the daemon's module
 // specifier by string-concatenating `file://${FLEETD}`. Under a legal install
@@ -24,40 +24,54 @@ import { fileURLToPath } from 'node:url';
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'fleetdeck-serve-paths-'));
 
-after(() => { try { fs.rmSync(TMP, { recursive: true, force: true }); } catch { /* best effort */ } });
+after(() => {
+  try {
+    fs.rmSync(TMP, { recursive: true, force: true });
+  } catch {
+    /* best effort */
+  }
+});
 
 // Lay out the shape `serve` resolves against: the built, self-contained
 // bin/fleetdeck.mjs artifact (esbuild has inlined tmux-version into it, so no
 // sibling source file is needed) and scripts/fleetd/fleetd.bundle.mjs, which
 // takes precedence over the source fallback exactly as in a packed install.
-function packFakeRuntime(prefix) {
+function packFakeRuntime(prefix: string) {
   const bin = path.join(prefix, 'bin');
   const fleetdDir = path.join(prefix, 'scripts', 'fleetd');
   fs.mkdirSync(bin, { recursive: true });
   fs.mkdirSync(fleetdDir, { recursive: true });
   fs.copyFileSync(path.join(REPO, 'bin', 'fleetdeck.mjs'), path.join(bin, 'fleetdeck.mjs'));
-  fs.writeFileSync(path.join(fleetdDir, 'fleetd.bundle.mjs'), `process.stdout.write('FLEETD_LOADED\\\\n');\n`);
+  fs.writeFileSync(
+    path.join(fleetdDir, 'fleetd.bundle.mjs'),
+    `process.stdout.write('FLEETD_LOADED\\\\n');\n`,
+  );
   return path.join(bin, 'fleetdeck.mjs');
 }
 
-function serveLoads(prefix) {
+function serveLoads(prefix: string) {
   const cli = packFakeRuntime(prefix);
   const res = spawnSync(process.execPath, [cli, 'serve'], { encoding: 'utf8', timeout: 15000 });
   assert.equal(res.error, undefined, `child must not fail to spawn: ${res.error}`);
-  assert.equal(res.status, 0, `serve must exit cleanly under ${JSON.stringify(prefix)}\nstderr: ${res.stderr}`);
+  assert.equal(
+    res.status,
+    0,
+    `serve must exit cleanly under ${JSON.stringify(prefix)}\nstderr: ${res.stderr}`,
+  );
   assert.ok(res.stdout.includes('FLEETD_LOADED'), 'the daemon bundle was actually imported');
 }
 
 // Each legal-but-hostile prefix is exercised on its own so a failure names the
 // character class that broke. `%zz` is a raw percent followed by a non-hex
 // sequence — decodeURIComponent throws URIError on it.
-for (const [label, dirname] of [
+const cases: [string, string][] = [
   ['a fragment delimiter (#)', 'install#fragment'],
   ['a query delimiter (?)', 'install?query'],
   ['a raw percent sequence (%)', 'install%zz'],
   ['spaces', 'install dir with spaces'],
   ['all of them at once', 'fleet deck #1?x=%zz'],
-]) {
+];
+for (const [label, dirname] of cases) {
   test(`serve: loads the daemon from an install path containing ${label}`, () => {
     serveLoads(path.join(TMP, dirname));
   });

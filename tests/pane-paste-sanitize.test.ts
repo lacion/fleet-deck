@@ -47,10 +47,19 @@ test('other C0 control bytes are stripped but tab and newline are kept', () => {
 test('C1 controls (incl. the 8-bit CSI U+009B) are stripped', () => {
   const CSI = String.fromCharCode(0x9b); // C1 CSI — the single-byte form of ESC[
   const out = sanitizePaneText('hi' + CSI + '201~/exit');
-  assert.ok(![...out].some((ch) => ch.codePointAt(0) >= 0x80 && ch.codePointAt(0) <= 0x9f), 'no C1 control survives');
+  assert.ok(
+    !Array.from(out).some((ch) => {
+      const cp = ch.codePointAt(0);
+      return cp !== undefined && cp >= 0x80 && cp <= 0x9f;
+    }),
+    'no C1 control survives',
+  );
   assert.equal(out, 'hi201~/exit', 'the 8-bit CSI is removed; legible text is kept');
   // The whole C1 band (0x80–0x9f) goes; text above U+00FF is untouched.
-  assert.equal(sanitizePaneText('a' + String.fromCharCode(0x80) + String.fromCharCode(0x9f) + 'b'), 'ab');
+  assert.equal(
+    sanitizePaneText('a' + String.fromCharCode(0x80) + String.fromCharCode(0x9f) + 'b'),
+    'ab',
+  );
   assert.equal(sanitizePaneText('café 世界 🚀'), 'café 世界 🚀');
 });
 
