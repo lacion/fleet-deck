@@ -1,14 +1,14 @@
-// tests/takeover.test.mjs
+// tests/takeover.test.ts
 //
 // Version takeover: the NEWEST installed plugin version must always end up
 // owning the daemon on port 4711. The SessionStart hook detects a stale-version
 // daemon via /health, SIGTERMs it (the daemon's tested graceful shutdown),
 // waits for its death, and spawns its own newer build onto the freed port. The
-// contract lives in scripts/fleetd/takeover.mjs and is wired into
+// contract lives in scripts/fleetd/takeover.ts and is wired into
 // scripts/fleet-sessionstart.mjs (ensureServer).
 //
 // Two layers of coverage:
-//   1. Pure units against takeover.mjs — the semver rule and the
+//   1. Pure units against takeover.ts — the semver rule and the
 //      verify-before-kill gate (no processes).
 //   2. Integration cases spawning the REAL hook script as a child process
 //      (modelled on tests/watch-rewake.test.mjs's fleet-watch spawns), each on
@@ -24,29 +24,80 @@
 // the package.json value.
 
 import test from 'node:test';
+import type { TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
+import type { ChildProcess } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { startDaemon, randomPort, waitForHealth, REPO_ROOT } from './helpers/daemon.ts';
+import { REPO_ROOT, randomPort, startDaemon, waitForHealth } from './helpers/daemon.ts';
 import { getJson, postHook } from './helpers/http.ts';
 import { loadFixture } from './helpers/fixtures.ts';
-import { waitUntil, scaleMs } from './helpers/wait.ts';
+import { scaleMs, waitUntil } from './helpers/wait.ts';
 import {
-  parseSemver, compareSemver, shouldTakeOver, verifyDaemonPid, pidRecord, replacementMatches,
+  compareSemver,
+  parseSemver,
+  pidRecord,
+  replacementMatches,
+  shouldTakeOver,
+  verifyDaemonPid,
 } from '../scripts/fleetd/takeover.ts';
 
 const HOOK_SCRIPT = path.join(REPO_ROOT, 'scripts/fleet-sessionstart.mjs');
 const FLEETD_SOURCE = path.join(REPO_ROOT, 'scripts/fleetd/fleetd.ts');
 const STUB = path.join(REPO_ROOT, 'tests/helpers/stub-immortal-daemon.ts');
-const PKG_VERSION = JSON.parse(readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8')).version;
+const PKG_VERSION = (
+  JSON.parse(readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8')) as { version: string }
+).version;
 
-function scratchDir(t) {
+// Daemon JSON responses arrive as `unknown`; these name the exact shapes each
+// use-site reads before casting.
+interface SessionView {
+  session_id: string;
+}
+interface TickerView {
+  msg: string;
+}
+interface StateView {
+  sessions: SessionView[];
+  ticker?: TickerView[];
+}
+interface HealthView {
+  pid?: number;
+  version?: string;
+  managed?: boolean;
+}
+
+// `Semver` is intentionally not exported by takeover.ts, so recover the exact
+// non-null return type of parseSemver rather than re-declaring it. compareSemver
+// requires two non-null operands, so a parse that returns null must fail loudly
+// here instead of being handed on as a type error.
+function mustParse(input: string): NonNullable<ReturnType<typeof parseSemver>> {
+  const parsed = parseSemver(input);
+  assert.ok(parsed, `parseSemver(${input}) must parse`);
+  return parsed;
+}
+
+function scratchDir(t: TestContext): string {
   const d = mkdtempSync(path.join(tmpdir(), 'fleetdeck-cwd-'));
-  t.after(() => rmSync(d, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+  t.after(() => { rmSync(d, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
   return d;
+}
+
+interface RunHookOptions {
+  port: number;
+  home: string;
+  env?: Record<string, string>;
+  payload?: unknown;
+}
+
+interface HookRun {
+  child: ChildProcess;
+  readonly stdout: string;
+  readonly stderr: string;
+  exitWithin(ms: number, label: string): Promise<number | null>;
 }
 
 // Spawn the REAL SessionStart hook the way Claude Code does: a SessionStart
@@ -54,8 +105,8 @@ function scratchDir(t) {
 // launcher to fleetd.ts SOURCE (the committed bundle is deliberately stale
 // mid-iteration); FLEETDECK_TMUX_SOCKET isolates any tmux server the spawned
 // daemon might create; FLEETDECK_AGENTS_CMD=false keeps the poller off.
-function runHook({ port, home, env = {}, payload }) {
-  const childEnv = {
+function runHook({ port, home, env = {}, payload }: RunHookOptions): HookRun {
+  const childEnv: NodeJS.ProcessEnv = {
     ...process.env,
     FLEETDECK_PORT: String(port),
     FLEETDECK_HOME: home,
@@ -65,26 +116,50 @@ function runHook({ port, home, env = {}, payload }) {
     ...env,
   };
   // A hook run from inside the suite (itself a Claude session / tmux) must not
-  // leak the outer tmux server into the daemon it launches.
-  delete childEnv.TMUX;
-  delete childEnv.TMUX_PANE;
-  const child = spawn(process.execPath, [HOOK_SCRIPT], { env: childEnv, stdio: ['pipe', 'pipe', 'pipe'] });
+  // leak the outer tmux server into the daemon it launches. (Reflect.delete
+  // because ProcessEnv's index signature forbids dot access and a bracket
+  // delete trips no-dynamic-delete.)
+  Reflect.deleteProperty(childEnv, 'TMUX');
+  Reflect.deleteProperty(childEnv, 'TMUX_PANE');
+  const child = spawn(process.execPath, [HOOK_SCRIPT], {
+    env: childEnv,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
   let stdout = '';
   let stderr = '';
-  child.stdout.on('data', d => { stdout += d; });
-  child.stderr.on('data', d => { stderr += d; });
-  child.stdin.write(JSON.stringify(payload ?? { hook_event_name: 'SessionStart' }));
-  child.stdin.end();
-  const exited = new Promise(resolve => child.once('exit', code => resolve(code)));
+  const { stdout: childStdout, stderr: childStderr, stdin: childStdin } = child;
+  assert.ok(childStdout, 'hook child must expose stdout');
+  assert.ok(childStderr, 'hook child must expose stderr');
+  assert.ok(childStdin, 'hook child must expose stdin');
+  childStdout.on('data', (d: Buffer) => {
+    stdout += d.toString();
+  });
+  childStderr.on('data', (d: Buffer) => {
+    stderr += d.toString();
+  });
+  childStdin.write(JSON.stringify(payload ?? { hook_event_name: 'SessionStart' }));
+  childStdin.end();
+  const exited = new Promise<number | null>((resolve) => {
+    child.once('exit', (code) => {
+      resolve(code);
+    });
+  });
   return {
     child,
-    get stdout() { return stdout; },
-    get stderr() { return stderr; },
-    exitWithin(ms, label) {
+    get stdout() {
+      return stdout;
+    },
+    get stderr() {
+      return stderr;
+    },
+    exitWithin(ms: number, label: string): Promise<number | null> {
       return Promise.race([
         exited,
-        new Promise((_, reject) => setTimeout(
-          () => reject(new Error(`hook did not exit within ${ms}ms (${label})`)), scaleMs(ms)).unref?.()),
+        new Promise<never>((_, reject) => {
+          setTimeout(() => {
+            reject(new Error(`hook did not exit within ${ms}ms (${label})`));
+          }, scaleMs(ms)).unref();
+        }),
       ]);
     },
   };
@@ -100,26 +175,60 @@ function runHook({ port, home, env = {}, payload }) {
 // verifyDaemonPid(pid, home) before it is signalled, and the port-derived tmux
 // socket is only reaped once ownership is proven. Failing the gate leaks (a
 // tmpdir + an idle daemon on a scratch port), never kills a foreign process.
-async function killDaemonAt(port, home) {
-  let pid = null;
-  try { pid = (await getJson(`http://127.0.0.1:${port}/health`, { timeout: 500 })).json?.pid ?? null; }
-  catch { /* fall through to the pidfile */ }
-  if (!verifyDaemonPid(pid, home)) {
+async function killDaemonAt(port: number, home: string): Promise<void> {
+  let pid: number | null = null;
+  try {
+    const health = (await getJson(`http://127.0.0.1:${port}/health`, { timeout: 500 })).json as {
+      pid?: number;
+    } | null;
+    pid = health?.pid ?? null;
+  } catch {
+    /* fall through to the pidfile */
+  }
+  if (pid == null || !verifyDaemonPid(pid, home)) {
     // The /health answerer is not provably this HOME's daemon — or /health is
     // down. Either way the only pid we may trust is this HOME's OWN pidfile,
     // and only if the verifier (pidfile match + fleetd /proc shape) accepts it.
-    try { pid = pidRecord(readFileSync(path.join(home, 'fleetd.pid'), 'utf8'))?.pid ?? null; }
-    catch { pid = null; }
-    if (!verifyDaemonPid(pid, home)) return; // not ours — do NOT signal, do NOT reap the tmux socket
+    try {
+      pid = pidRecord(readFileSync(path.join(home, 'fleetd.pid'), 'utf8'))?.pid ?? null;
+    } catch {
+      pid = null;
+    }
+    if (pid == null || !verifyDaemonPid(pid, home)) return; // not ours — do NOT signal, do NOT reap the tmux socket
   }
-  try { process.kill(pid, 'SIGTERM'); } catch { /* already gone */ }
+  const targetPid = pid; // proven to belong to THIS home
+  try {
+    process.kill(targetPid, 'SIGTERM');
+  } catch {
+    /* already gone */
+  }
+  let alive = true;
   for (let i = 0; i < 20; i++) {
-    await new Promise(r => setTimeout(r, 100));
-    try { process.kill(pid, 0); } catch { pid = null; break; }
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 100);
+    });
+    try {
+      process.kill(targetPid, 0);
+    } catch {
+      alive = false;
+      break;
+    }
   }
-  if (pid != null) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } }
-  try { spawnSync('tmux', ['-L', `fleetdeck-test-${port}`, 'kill-server'], { stdio: 'ignore', timeout: 3000 }); }
-  catch { /* the common case is no server on the socket */ }
+  if (alive) {
+    try {
+      process.kill(targetPid, 'SIGKILL');
+    } catch {
+      /* gone */
+    }
+  }
+  try {
+    spawnSync('tmux', ['-L', `fleetdeck-test-${port}`, 'kill-server'], {
+      stdio: 'ignore',
+      timeout: 3000,
+    });
+  } catch {
+    /* the common case is no server on the socket */
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -143,10 +252,10 @@ test('semver: parse, numeric compare, and the strictly-newer + 0.0.0/unparseable
   assert.equal(parseSemver(undefined), null);
 
   // compareSemver is numeric, never lexicographic (0.6.10 > 0.6.2).
-  assert.equal(compareSemver(parseSemver('0.6.10'), parseSemver('0.6.2')), 1);
-  assert.equal(compareSemver(parseSemver('0.6.2'), parseSemver('0.6.10')), -1);
-  assert.equal(compareSemver(parseSemver('1.0.0'), parseSemver('0.9.9')), 1);
-  assert.equal(compareSemver(parseSemver('0.6.0'), parseSemver('0.6.0')), 0);
+  assert.equal(compareSemver(mustParse('0.6.10'), mustParse('0.6.2')), 1);
+  assert.equal(compareSemver(mustParse('0.6.2'), mustParse('0.6.10')), -1);
+  assert.equal(compareSemver(mustParse('1.0.0'), mustParse('0.9.9')), 1);
+  assert.equal(compareSemver(mustParse('0.6.0'), mustParse('0.6.0')), 0);
 
   // shouldTakeOver: strictly newer, both parse, neither is the 0.0.0 sentinel.
   assert.equal(shouldTakeOver('0.7.0', '0.6.0'), true);
@@ -155,7 +264,11 @@ test('semver: parse, numeric compare, and the strictly-newer + 0.0.0/unparseable
   assert.equal(shouldTakeOver('0.6.0', '0.7.0'), false, 'older never evicts');
   assert.equal(shouldTakeOver('0.6.0', '0.6.0'), false, 'equal never evicts');
   // 0.0.0 loop guard — either side.
-  assert.equal(shouldTakeOver('0.7.0', '0.0.0'), false, 'a 0.0.0 daemon is never evicted (respawn loop guard)');
+  assert.equal(
+    shouldTakeOver('0.7.0', '0.0.0'),
+    false,
+    'a 0.0.0 daemon is never evicted (respawn loop guard)',
+  );
   assert.equal(shouldTakeOver('0.0.1', '0.0.0'), false);
   assert.equal(shouldTakeOver('0.0.0', '0.0.0'), false);
   // Unparseable on either side.
@@ -166,78 +279,132 @@ test('semver: parse, numeric compare, and the strictly-newer + 0.0.0/unparseable
 
 test('semver: prerelease precedence — RC-to-RC and RC-to-final upgrades take over', () => {
   // The semver.org §11 chain on a shared core: every step is strictly newer.
-  const chain = ['1.0.0-alpha', '1.0.0-alpha.1', '1.0.0-alpha.beta', '1.0.0-beta',
-    '1.0.0-beta.2', '1.0.0-beta.11', '1.0.0-rc.1', '1.0.0'];
+  const chain = [
+    '1.0.0-alpha',
+    '1.0.0-alpha.1',
+    '1.0.0-alpha.beta',
+    '1.0.0-beta',
+    '1.0.0-beta.2',
+    '1.0.0-beta.11',
+    '1.0.0-rc.1',
+    '1.0.0',
+  ];
   for (let i = 1; i < chain.length; i += 1) {
-    assert.equal(compareSemver(parseSemver(chain[i]), parseSemver(chain[i - 1])), 1,
-      `${chain[i]} must sort above ${chain[i - 1]}`);
-    assert.equal(shouldTakeOver(chain[i], chain[i - 1]), true,
-      `${chain[i]} must take over ${chain[i - 1]}`);
-    assert.equal(shouldTakeOver(chain[i - 1], chain[i]), false,
-      `${chain[i - 1]} must never take over ${chain[i]}`);
+    const curr = chain[i];
+    const prev = chain[i - 1];
+    assert.ok(curr !== undefined && prev !== undefined);
+    assert.equal(
+      compareSemver(mustParse(curr), mustParse(prev)),
+      1,
+      `${curr} must sort above ${prev}`,
+    );
+    assert.equal(shouldTakeOver(curr, prev), true, `${curr} must take over ${prev}`);
+    assert.equal(shouldTakeOver(prev, curr), false, `${prev} must never take over ${curr}`);
   }
 
   // The reported upgrade paths, on the core the audit named.
   assert.equal(shouldTakeOver('0.20.0-rc.2', '0.20.0-rc.1'), true, 'RC2 must evict RC1');
   assert.equal(shouldTakeOver('0.20.0', '0.20.0-rc.2'), true, 'final must evict the RC');
-  assert.equal(shouldTakeOver('0.20.0-rc.1', '0.20.0-rc.2'), false, 'an older RC never evicts a newer one');
+  assert.equal(
+    shouldTakeOver('0.20.0-rc.1', '0.20.0-rc.2'),
+    false,
+    'an older RC never evicts a newer one',
+  );
   assert.equal(shouldTakeOver('0.20.0-rc.1', '0.20.0'), false, 'an RC never evicts its final');
-  assert.equal(shouldTakeOver('0.20.0-rc.1', '0.20.0-rc.1'), false, 'an identical version never evicts');
-  assert.equal(shouldTakeOver('0.20.0-rc.1', '0.20.0-rc.01'), false,
-    'numeric identifier equality is by VALUE, so a respawn loop is impossible');
+  assert.equal(
+    shouldTakeOver('0.20.0-rc.1', '0.20.0-rc.1'),
+    false,
+    'an identical version never evicts',
+  );
+  assert.equal(
+    shouldTakeOver('0.20.0-rc.1', '0.20.0-rc.01'),
+    false,
+    'numeric identifier equality is by VALUE, so a respawn loop is impossible',
+  );
   // Build metadata is ignored for ordering — equal versions never evict.
   assert.equal(shouldTakeOver('0.20.0-rc.1+build.2', '0.20.0-rc.1+build.1'), false);
-  assert.equal(shouldTakeOver('0.20.0+build.2', '0.20.0-rc.1'), true,
-    'build metadata does not hide the final-over-RC precedence');
+  assert.equal(
+    shouldTakeOver('0.20.0+build.2', '0.20.0-rc.1'),
+    true,
+    'build metadata does not hide the final-over-RC precedence',
+  );
   // A newer core still dominates any prerelease of an older core.
   assert.equal(shouldTakeOver('0.21.0-rc.1', '0.20.0'), true);
   assert.equal(shouldTakeOver('0.20.0', '0.21.0-rc.1'), false);
 });
 
-test('replacementMatches: the post-spawn version gate accepts only the hook\'s exact build', () => {
+test("replacementMatches: the post-spawn version gate accepts only the hook's exact build", () => {
   // Exact equality is the whole contract: a competing candidate's daemon that
   // won the port race must NEVER be accepted as the result of our upgrade,
   // whether it is OLDER (the BUG-156 case) or NEWER (a wrong build is a wrong
   // build — the incumbent's own boot-time re-election resolves that direction).
   assert.equal(replacementMatches('0.20.2', '0.20.2'), true);
-  assert.equal(replacementMatches('0.20.2', '0.20.1'), false, 'an older race winner is not our replacement');
-  assert.equal(replacementMatches('0.20.1', '0.20.2'), false, 'a newer race winner is not ours either (exact match)');
+  assert.equal(
+    replacementMatches('0.20.2', '0.20.1'),
+    false,
+    'an older race winner is not our replacement',
+  );
+  assert.equal(
+    replacementMatches('0.20.1', '0.20.2'),
+    false,
+    'a newer race winner is not ours either (exact match)',
+  );
   // Fail-closed shape guards: /health is attacker-influenceable JSON and the
   // hook must never accept a replacement it cannot positively version-match.
   assert.equal(replacementMatches('0.20.2', undefined), false);
   assert.equal(replacementMatches('0.20.2', null), false);
   assert.equal(replacementMatches(null, '0.20.2'), false);
   assert.equal(replacementMatches(undefined, undefined), false);
-  assert.equal(replacementMatches('', ''), false, 'empty strings never match — an unreadable package.json cannot claim a replacement');
+  assert.equal(
+    replacementMatches('', ''),
+    false,
+    'empty strings never match — an unreadable package.json cannot claim a replacement',
+  );
   assert.equal(replacementMatches('0.20.2', '0.20.20'), false, 'string equality, never a prefix');
   assert.equal(replacementMatches(2, 2), false, 'non-strings never match');
 });
 
 test('verifyDaemonPid refuses a non-fleetd-shaped live pid, a pidfile mismatch, and a missing pidfile', async (t) => {
   const home = mkdtempSync(path.join(tmpdir(), 'fleetdeck-verify-'));
-  t.after(() => rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+  t.after(() => { rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   // A live but non-fleetd node process: its /proc cmdline carries no
   // fleetd*.mjs arg, so livePidLooksLikeFleetd (Linux) must reject it even
   // though we hand it a perfectly matching pidfile.
-  const sleeper = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1e9)'], { stdio: 'ignore' });
-  t.after(() => { try { sleeper.kill('SIGKILL'); } catch { /* gone */ } });
+  const sleeper = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1e9)'], {
+    stdio: 'ignore',
+  });
+  t.after(() => {
+    try {
+      sleeper.kill('SIGKILL');
+    } catch {
+      /* gone */
+    }
+  });
   await waitUntil(() => sleeper.pid != null, { label: 'sleeper pid' });
-  writeFileSync(path.join(home, 'fleetd.pid'), JSON.stringify({ pid: sleeper.pid, port: 40000 }));
+  const sleeperPid = sleeper.pid;
+  assert.ok(sleeperPid !== undefined, 'the sleeper process reports a pid');
+  writeFileSync(path.join(home, 'fleetd.pid'), JSON.stringify({ pid: sleeperPid, port: 40000 }));
 
   if (process.platform === 'linux') {
-    assert.equal(verifyDaemonPid(sleeper.pid, home), false,
-      'a live but non-fleetd-shaped pid must be refused even when the pidfile matches');
+    assert.equal(
+      verifyDaemonPid(sleeperPid, home),
+      false,
+      'a live but non-fleetd-shaped pid must be refused even when the pidfile matches',
+    );
   }
 
   // Pidfile pid mismatch is refused on every platform (checked before /proc).
-  writeFileSync(path.join(home, 'fleetd.pid'), JSON.stringify({ pid: sleeper.pid + 100000, port: 40000 }));
-  assert.equal(verifyDaemonPid(sleeper.pid, home), false, 'a pidfile pid mismatch must be refused');
+  writeFileSync(
+    path.join(home, 'fleetd.pid'),
+    JSON.stringify({ pid: sleeperPid + 100000, port: 40000 }),
+  );
+  assert.equal(verifyDaemonPid(sleeperPid, home), false, 'a pidfile pid mismatch must be refused');
 
   // A missing pidfile is refused.
   const emptyHome = mkdtempSync(path.join(tmpdir(), 'fleetdeck-verify-empty-'));
-  t.after(() => rmSync(emptyHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
-  assert.equal(verifyDaemonPid(sleeper.pid, emptyHome), false, 'a missing pidfile must be refused');
+  t.after(() => { rmSync(emptyHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+  assert.equal(verifyDaemonPid(sleeperPid, emptyHome), false, 'a missing pidfile must be refused');
 
   // A bad pid argument is refused.
   assert.equal(verifyDaemonPid(0, home), false);
@@ -246,11 +413,16 @@ test('verifyDaemonPid refuses a non-fleetd-shaped live pid, a pidfile mismatch, 
 
 test('verifyDaemonPid accepts a genuine running daemon (pidfile match + fleetd /proc shape)', async (t) => {
   const daemon = await startDaemon();
-  t.after(async () => { await daemon.stop(); });
-  const health = (await getJson(`${daemon.baseUrl}/health`)).json;
-  assert.ok(health?.pid, 'health should report a pid');
-  assert.equal(verifyDaemonPid(health.pid, daemon.home), true,
-    'a real fleetd must verify (its pidfile matches and its /proc shape is node fleetd.mjs)');
+  t.after(async () => {
+    await daemon.stop();
+  });
+  const healthPid = ((await getJson(`${daemon.baseUrl}/health`)).json as HealthView).pid;
+  assert.ok(healthPid, 'health should report a pid');
+  assert.equal(
+    verifyDaemonPid(healthPid, daemon.home),
+    true,
+    'a real fleetd must verify (its pidfile matches and its /proc shape is node fleetd.mjs)',
+  );
 });
 
 test('killDaemonAt never terminates a daemon owned by another HOME that answers on the same port (BUG-179)', async (t) => {
@@ -274,26 +446,53 @@ test('killDaemonAt never terminates a daemon owned by another HOME that answers 
     env: { ...process.env, FLEETDECK_PORT: String(port), FLEETDECK_HOME: foreignHome },
     stdio: ['ignore', 'ignore', 'ignore'],
   });
-  t.after(() => { try { stub.kill('SIGKILL'); } catch { /* gone */ } });
+  t.after(() => {
+    try {
+      stub.kill('SIGKILL');
+    } catch {
+      /* gone */
+    }
+  });
   await waitForHealth(`http://127.0.0.1:${port}`, 8000);
+  const stubPid = stub.pid;
+  assert.ok(stubPid !== undefined, 'the stub process reports a pid');
 
   // Liveness probe, not stub.exitCode: a child that dies from a signal keeps
   // exitCode === null forever (only signalCode is set), so exitCode cannot
   // distinguish "killed by cleanup" from "never signalled".
-  const stubAlive = () => { try { process.kill(stub.pid, 0); return true; } catch { return false; } };
+  const stubAlive = (): boolean => {
+    try {
+      process.kill(stubPid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
 
   // Case 1: OUR home has no pidfile at all. /health answers with the foreign
   // pid — it must not be signalled. The wait outlasts the unfixed cleanup's
   // SIGTERM + 2s poll + SIGKILL backstop path.
   await killDaemonAt(port, home);
-  await new Promise(r => setTimeout(r, scaleMs(2600)));
-  assert.equal(stubAlive(), true, 'a foreign daemon with no pidfile in OUR home must survive cleanup');
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, scaleMs(2600));
+  });
+  assert.equal(
+    stubAlive(),
+    true,
+    'a foreign daemon with no pidfile in OUR home must survive cleanup',
+  );
 
   // Case 2: OUR home pidfile points at a DIFFERENT pid. Still foreign.
-  writeFileSync(path.join(home, 'fleetd.pid'), JSON.stringify({ pid: stub.pid + 100000, port }));
+  writeFileSync(path.join(home, 'fleetd.pid'), JSON.stringify({ pid: stubPid + 100000, port }));
   await killDaemonAt(port, home);
-  await new Promise(r => setTimeout(r, scaleMs(2600)));
-  assert.equal(stubAlive(), true, 'a pidfile mismatch must refuse the kill even when /health answers');
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, scaleMs(2600));
+  });
+  assert.equal(
+    stubAlive(),
+    true,
+    'a pidfile mismatch must refuse the kill even when /health answers',
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -311,16 +510,24 @@ test('a cold-boot SessionStart hook rereads the minted token and registers the f
   });
 
   const hook = runHook({
-    port, home,
+    port,
+    home,
     payload: loadFixture('session-start', { session_id: sid, cwd }),
   });
-  assert.equal(await hook.exitWithin(10000, 'cold-boot SessionStart'), 0,
-    `the hook must fail open with exit 0 (stderr: ${hook.stderr})`);
+  assert.equal(
+    await hook.exitWithin(10000, 'cold-boot SessionStart'),
+    0,
+    `the hook must fail open with exit 0 (stderr: ${hook.stderr})`,
+  );
   await waitForHealth(`http://127.0.0.1:${port}`, 8000);
 
-  const state = (await getJson(`http://127.0.0.1:${port}/state`)).json;
-  assert.ok(state.sessions?.some(session => session.session_id === sid),
-    'the birth SessionStart must authenticate after cold boot and create the first card');
+  const state = (await getJson(`http://127.0.0.1:${port}/state`)).json as {
+    sessions?: SessionView[];
+  };
+  assert.ok(
+    state.sessions?.some((session) => session.session_id === sid),
+    'the birth SessionStart must authenticate after cold boot and create the first card',
+  );
 });
 
 test('a newer hook replaces an older daemon: old exits 0, new owns the same port+HOME, a pre-seeded session survives, ticker says "replaced"', async (t) => {
@@ -334,72 +541,111 @@ test('a newer hook replaces an older daemon: old exits 0, new owns the same port
 
   // OLD daemon from SOURCE, pinned to 0.0.1 (strictly older than PKG_VERSION).
   const old = await startDaemon({ port, home, env: { FLEETDECK_VERSION_OVERRIDE: '0.0.1' } });
-  const oldPid = (await getJson(`${old.baseUrl}/health`)).json.pid;
+  const oldPid = ((await getJson(`${old.baseUrl}/health`)).json as HealthView).pid;
 
   // Pre-seed a session so we can prove state survives the SQLite handoff.
   const seededSid = randomUUID();
-  await postHook(old.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: seededSid, cwd }), { token: old });
+  await postHook(
+    old.baseUrl,
+    'SessionStart',
+    loadFixture('session-start', { session_id: seededSid, cwd }),
+    { token: old },
+  );
   assert.ok(
-    (await getJson(`${old.baseUrl}/state`)).json.sessions.find(s => s.session_id === seededSid),
-    'sanity: the seed session is present before the takeover');
+    ((await getJson(`${old.baseUrl}/state`)).json as StateView).sessions.find(
+      (s) => s.session_id === seededSid,
+    ),
+    'sanity: the seed session is present before the takeover',
+  );
 
   // Run the real hook. own = PKG_VERSION > 0.0.1 → commit to the takeover.
-  const hook = runHook({ port, home, payload: loadFixture('session-start', { session_id: randomUUID(), cwd }) });
+  const hook = runHook({
+    port,
+    home,
+    payload: loadFixture('session-start', { session_id: randomUUID(), cwd }),
+  });
   const code = await hook.exitWithin(14000, 'newer-hook takeover');
   assert.equal(code, 0, `the hook must always exit 0 (stderr: ${hook.stderr})`);
 
   // The displaced daemon exits 0 (graceful shutdown, not the hard-exit watchdog).
   await waitUntil(() => old.proc.exitCode !== null, { timeoutMs: 5000, label: 'old daemon exit' });
-  assert.equal(old.proc.exitCode, 0, 'the displaced daemon must exit 0 via its graceful SIGTERM shutdown');
+  assert.equal(
+    old.proc.exitCode,
+    0,
+    'the displaced daemon must exit 0 via its graceful SIGTERM shutdown',
+  );
 
   // The replacement is healthy on the SAME port, reports the NEWER version, is
   // a DIFFERENT process.
   const health = await waitForHealth(`http://127.0.0.1:${port}`, 8000);
-  assert.equal(health.version, PKG_VERSION, 'the replacement reports the newer (package.json) version');
+  assert.equal(
+    health['version'],
+    PKG_VERSION,
+    'the replacement reports the newer (package.json) version',
+  );
   assert.notEqual(health.pid, oldPid, 'the replacement is a different process');
 
   // State survived the handoff (same FLEETDECK_HOME, SQLite/WAL).
-  const state = (await getJson(`http://127.0.0.1:${port}/state`)).json;
-  assert.ok(state.sessions.find(s => s.session_id === seededSid),
-    'the pre-seeded session survived the version takeover');
+  const state = (await getJson(`http://127.0.0.1:${port}/state`)).json as StateView;
+  assert.ok(
+    state.sessions.find((s) => s.session_id === seededSid),
+    'the pre-seeded session survived the version takeover',
+  );
 
   // The board ticker announces the takeover.
-  const ticker = (state.ticker || []).map(r => r.msg).join('\n');
-  assert.match(ticker, /replaced/, `the ticker must carry the "replaced" handoff line (got: ${ticker.slice(0, 200)})`);
-  assert.match(ticker, new RegExp(`v${PKG_VERSION.replace(/\./g, '\\.')} replaced v0\\.0\\.1`),
-    'the ticker line names both the new and the displaced version');
+  const ticker = (state.ticker ?? []).map((r) => r.msg).join('\n');
+  assert.match(
+    ticker,
+    /replaced/,
+    `the ticker must carry the "replaced" handoff line (got: ${ticker.slice(0, 200)})`,
+  );
+  assert.match(
+    ticker,
+    new RegExp(`v${PKG_VERSION.replace(/\./g, '\\.')} replaced v0\\.0\\.1`),
+    'the ticker line names both the new and the displaced version',
+  );
 });
 
 test('equal versions: the hook keeps using the running daemon — no takeover (same /health pid)', async (t) => {
   const daemon = await startDaemon(); // no override → reports PKG_VERSION
-  t.after(async () => { await daemon.stop(); });
-  const before = (await getJson(`${daemon.baseUrl}/health`)).json;
-  assert.equal(before.version, PKG_VERSION, 'sanity: an un-overridden daemon reports the package.json version');
+  t.after(async () => {
+    await daemon.stop();
+  });
+  const before = (await getJson(`${daemon.baseUrl}/health`)).json as HealthView;
+  assert.equal(
+    before.version,
+    PKG_VERSION,
+    'sanity: an un-overridden daemon reports the package.json version',
+  );
 
   const hook = runHook({
-    port: daemon.port, home: daemon.home,
+    port: daemon.port,
+    home: daemon.home,
     payload: loadFixture('session-start', { session_id: randomUUID(), cwd: scratchDir(t) }),
   });
   assert.equal(await hook.exitWithin(10000, 'equal-version hook'), 0);
 
-  const after = (await getJson(`${daemon.baseUrl}/health`)).json;
+  const after = (await getJson(`${daemon.baseUrl}/health`)).json as HealthView;
   assert.equal(after.pid, before.pid, 'an equal-version daemon must NOT be replaced (same pid)');
   assert.equal(after.version, PKG_VERSION);
 });
 
 test('an older hook never downgrades a newer daemon (daemon pinned to 99.0.0)', async (t) => {
   const daemon = await startDaemon({ env: { FLEETDECK_VERSION_OVERRIDE: '99.0.0' } });
-  t.after(async () => { await daemon.stop(); });
-  const before = (await getJson(`${daemon.baseUrl}/health`)).json;
+  t.after(async () => {
+    await daemon.stop();
+  });
+  const before = (await getJson(`${daemon.baseUrl}/health`)).json as HealthView;
   assert.equal(before.version, '99.0.0');
 
   const hook = runHook({
-    port: daemon.port, home: daemon.home,
+    port: daemon.port,
+    home: daemon.home,
     payload: loadFixture('session-start', { session_id: randomUUID(), cwd: scratchDir(t) }),
   });
   assert.equal(await hook.exitWithin(10000, 'older hook'), 0);
 
-  const after = (await getJson(`${daemon.baseUrl}/health`)).json;
+  const after = (await getJson(`${daemon.baseUrl}/health`)).json as HealthView;
   assert.equal(after.pid, before.pid, 'a newer daemon must never be downgraded by an older hook');
   assert.equal(after.version, '99.0.0', 'the newer daemon keeps serving unchanged');
 });
@@ -407,30 +653,49 @@ test('an older hook never downgrades a newer daemon (daemon pinned to 99.0.0)', 
 test('a SIGTERM-immune stale daemon: the hook fails open and the stub keeps serving (no SIGKILL escalation)', async (t) => {
   const port = randomPort();
   const home = mkdtempSync(path.join(tmpdir(), 'fleetdeck-immortal-home-'));
-  t.after(() => rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+  t.after(() => { rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 
   // The disguise argv 'fleetd.mjs' makes livePidLooksLikeFleetd (and thus
   // verifyDaemonPid) accept the stub, so the hook genuinely reaches the SIGTERM
   // — which the stub ignores.
   const stub = spawn(process.execPath, [STUB, 'fleetd.mjs'], {
-    env: { ...process.env, FLEETDECK_PORT: String(port), FLEETDECK_HOME: home, FLEETDECK_VERSION_OVERRIDE: '0.0.1' },
+    env: {
+      ...process.env,
+      FLEETDECK_PORT: String(port),
+      FLEETDECK_HOME: home,
+      FLEETDECK_VERSION_OVERRIDE: '0.0.1',
+    },
     stdio: ['ignore', 'ignore', 'ignore'],
   });
-  t.after(() => { try { stub.kill('SIGKILL'); } catch { /* gone */ } });
+  t.after(() => {
+    try {
+      stub.kill('SIGKILL');
+    } catch {
+      /* gone */
+    }
+  });
   await waitForHealth(`http://127.0.0.1:${port}`, 8000);
-  const stubPid = (await getJson(`http://127.0.0.1:${port}/health`)).json.pid;
+  const stubPid = ((await getJson(`http://127.0.0.1:${port}/health`)).json as HealthView).pid;
   assert.equal(stubPid, stub.pid, 'sanity: the stub reports its own pid');
 
   const hook = runHook({
-    port, home,
+    port,
+    home,
     payload: loadFixture('session-start', { session_id: randomUUID(), cwd: scratchDir(t) }),
   });
   // terminateDaemon's default 2s wait-for-death runs before the hook fails open.
-  assert.equal(await hook.exitWithin(12000, 'immortal-daemon fail-open'), 0,
-    'the hook must still exit 0 after failing to evict a wedged daemon');
+  assert.equal(
+    await hook.exitWithin(12000, 'immortal-daemon fail-open'),
+    0,
+    'the hook must still exit 0 after failing to evict a wedged daemon',
+  );
 
-  assert.equal(stub.exitCode, null, 'the immortal stub must survive the SIGTERM (no SIGKILL escalation)');
-  const after = (await getJson(`http://127.0.0.1:${port}/health`)).json;
+  assert.equal(
+    stub.exitCode,
+    null,
+    'the immortal stub must survive the SIGTERM (no SIGKILL escalation)',
+  );
+  const after = (await getJson(`http://127.0.0.1:${port}/health`)).json as HealthView;
   assert.equal(after.pid, stubPid, 'the stale stub keeps serving; nothing replaced it (fail open)');
 });
 
@@ -444,13 +709,21 @@ test('stretch: two racing newer hooks converge on exactly one replacement daemon
   });
 
   const old = await startDaemon({ port, home, env: { FLEETDECK_VERSION_OVERRIDE: '0.0.1' } });
-  const oldPid = (await getJson(`${old.baseUrl}/health`)).json.pid;
+  const oldPid = ((await getJson(`${old.baseUrl}/health`)).json as HealthView).pid;
 
   // Two hooks fire simultaneously. Both SIGTERM the old daemon (the second gets
   // ESRCH), both spawn a replacement; the port-bind election (loser exits 3)
   // resolves it to exactly one survivor.
-  const h1 = runHook({ port, home, payload: loadFixture('session-start', { session_id: randomUUID(), cwd }) });
-  const h2 = runHook({ port, home, payload: loadFixture('session-start', { session_id: randomUUID(), cwd }) });
+  const h1 = runHook({
+    port,
+    home,
+    payload: loadFixture('session-start', { session_id: randomUUID(), cwd }),
+  });
+  const h2 = runHook({
+    port,
+    home,
+    payload: loadFixture('session-start', { session_id: randomUUID(), cwd }),
+  });
   const [c1, c2] = await Promise.all([
     h1.exitWithin(14000, 'race hook #1'),
     h2.exitWithin(14000, 'race hook #2'),
@@ -463,12 +736,12 @@ test('stretch: two racing newer hooks converge on exactly one replacement daemon
   // Exactly one healthy, stable daemon owns the port, on the new version.
   const health = await waitForHealth(`http://127.0.0.1:${port}`, 8000);
   assert.notEqual(health.pid, oldPid, 'the survivor is a replacement, not the old daemon');
-  assert.equal(health.version, PKG_VERSION);
+  assert.equal(health['version'], PKG_VERSION);
   const again = await waitForHealth(`http://127.0.0.1:${port}`, 3000);
   assert.equal(again.pid, health.pid, 'the port is owned by a single, stable daemon (no flapping)');
 });
 
-test('a takeover hook does not accept a competing candidate\'s older build that won the port race (BUG-156)', async (t) => {
+test("a takeover hook does not accept a competing candidate's older build that won the port race (BUG-156)", async (t) => {
   // BUG-156: two newer hooks (0.20.1 and 0.20.2) concurrently evict 0.20.0.
   // Both observe the old pid die, both spawn, and "first bind wins" resolves
   // the race — with no notion of version. Before the fix the hook accepted ANY
@@ -495,24 +768,42 @@ test('a takeover hook does not accept a competing candidate\'s older build that 
   // The competing candidate's daemon: version 0.0.2 — strictly OLDER than the
   // hook's PKG_VERSION, strictly NEWER than the 0.0.1 both candidates evicted
   // (already gone in this staging).
-  const competitor = await startDaemon({ port, home, env: { FLEETDECK_VERSION_OVERRIDE: '0.0.2' } });
-  const competitorPid = (await getJson(`${competitor.baseUrl}/health`)).json.pid;
+  const competitor = await startDaemon({
+    port,
+    home,
+    env: { FLEETDECK_VERSION_OVERRIDE: '0.0.2' },
+  });
+  const competitorPid = ((await getJson(`${competitor.baseUrl}/health`)).json as HealthView).pid;
 
   // A hook whose own spawn will lose the bind to the competitor: the
   // version-check path is what turns "healthy but not mine" into
   // re-arbitration. OLD code would return true on the competitor's bare
   // /health and the test's final assertions would fail (0.0.2 still serving).
-  const hook = runHook({ port, home, payload: loadFixture('session-start', { session_id: randomUUID(), cwd }) });
+  const hook = runHook({
+    port,
+    home,
+    payload: loadFixture('session-start', { session_id: randomUUID(), cwd }),
+  });
   const code = await hook.exitWithin(14000, 'BUG-156 re-arbitrating hook');
   assert.equal(code, 0, `the hook must exit 0 (stderr: ${hook.stderr})`);
 
   // The competitor's older build was evicted and the hook's own newer build
   // owns the port — the upgrade settles on the NEWEST installed code.
-  await waitUntil(() => competitor.proc.exitCode !== null, { timeoutMs: 5000, label: 'competitor daemon exit' });
-  assert.equal(competitor.proc.exitCode, 0, 'the evicted competitor exits 0 via its graceful SIGTERM shutdown');
+  await waitUntil(() => competitor.proc.exitCode !== null, {
+    timeoutMs: 5000,
+    label: 'competitor daemon exit',
+  });
+  assert.equal(
+    competitor.proc.exitCode,
+    0,
+    'the evicted competitor exits 0 via its graceful SIGTERM shutdown',
+  );
   const health = await waitForHealth(`http://127.0.0.1:${port}`, 8000);
-  assert.equal(health.version, PKG_VERSION,
-    'the hook must not accept the competing candidate\'s older build — the newest build must own the port');
+  assert.equal(
+    health['version'],
+    PKG_VERSION,
+    "the hook must not accept the competing candidate's older build — the newest build must own the port",
+  );
   assert.notEqual(health.pid, competitorPid, 'the survivor is a replacement, not the competitor');
   const again = await waitForHealth(`http://127.0.0.1:${port}`, 3000);
   assert.equal(again.pid, health.pid, 'a single, stable daemon owns the port (no eviction flap)');
@@ -539,31 +830,51 @@ test('a MANAGED daemon is never evicted, even by a strictly newer hook', async (
   // A managed daemon pinned OLDER than us — precisely the case the takeover
   // contract exists to evict. FLEETDECK_MANAGED=1 is what `fleetdeck serve` sets.
   const svc = await startDaemon({
-    port, home,
+    port,
+    home,
     env: { FLEETDECK_VERSION_OVERRIDE: '0.0.1', FLEETDECK_MANAGED: '1' },
   });
-  const before = (await getJson(`${svc.baseUrl}/health`)).json;
-  assert.equal(before.managed, true, 'sanity: `fleetdeck serve` marks the daemon managed on /health');
+  const before = (await getJson(`${svc.baseUrl}/health`)).json as HealthView;
+  assert.equal(
+    before.managed,
+    true,
+    'sanity: `fleetdeck serve` marks the daemon managed on /health',
+  );
   assert.equal(before.version, '0.0.1', 'sanity: it is strictly older than this package');
 
-  const hook = runHook({ port, home, payload: loadFixture('session-start', { session_id: randomUUID(), cwd }) });
+  const hook = runHook({
+    port,
+    home,
+    payload: loadFixture('session-start', { session_id: randomUUID(), cwd }),
+  });
   assert.equal(
-    await hook.exitWithin(14000, 'managed-daemon hook'), 0,
+    await hook.exitWithin(14000, 'managed-daemon hook'),
+    0,
     `the hook must still exit 0 (stderr: ${hook.stderr})`,
   );
 
   // The service is untouched: same process, same version, still managed.
   assert.equal(svc.proc.exitCode, null, 'the managed daemon must NOT have been terminated');
-  const after = (await getJson(`http://127.0.0.1:${port}/health`)).json;
-  assert.equal(after.pid, before.pid, 'the managed daemon must be the SAME process — no takeover, no respawn');
+  const after = (await getJson(`http://127.0.0.1:${port}/health`)).json as HealthView;
+  assert.equal(
+    after.pid,
+    before.pid,
+    'the managed daemon must be the SAME process — no takeover, no respawn',
+  );
   assert.equal(after.version, '0.0.1', 'the older managed daemon still owns the port');
 
   // ...and the drift is REPORTED, not silently swallowed. Discovering that a fix
   // you installed is not the code that is running should not cost an afternoon.
-  assert.match(hook.stdout, /managed service running v0\.0\.1/,
-    `the SessionStart brief must name the running service version (got: ${hook.stdout.slice(0, 300)})`);
-  assert.match(hook.stdout, new RegExp(`plugin is v${PKG_VERSION.replace(/\./g, '\\.')}`),
-    'the SessionStart brief must name the plugin version it could not install');
+  assert.match(
+    hook.stdout,
+    /managed service running v0\.0\.1/,
+    `the SessionStart brief must name the running service version (got: ${hook.stdout.slice(0, 300)})`,
+  );
+  assert.match(
+    hook.stdout,
+    new RegExp(`plugin is v${PKG_VERSION.replace(/\./g, '\\.')}`),
+    'the SessionStart brief must name the plugin version it could not install',
+  );
 });
 
 test('an UNMANAGED daemon of the same age is still evicted (the guard is the flag, not the version)', async (t) => {
@@ -578,13 +889,17 @@ test('an UNMANAGED daemon of the same age is still evicted (the guard is the fla
   // Identical to the test above in every respect EXCEPT FLEETDECK_MANAGED. If
   // this one did not evict, the test above would prove nothing.
   const old = await startDaemon({ port, home, env: { FLEETDECK_VERSION_OVERRIDE: '0.0.1' } });
-  const oldPid = (await getJson(`${old.baseUrl}/health`)).json.pid;
+  const oldPid = ((await getJson(`${old.baseUrl}/health`)).json as HealthView).pid;
 
-  const hook = runHook({ port, home, payload: loadFixture('session-start', { session_id: randomUUID(), cwd }) });
+  const hook = runHook({
+    port,
+    home,
+    payload: loadFixture('session-start', { session_id: randomUUID(), cwd }),
+  });
   assert.equal(await hook.exitWithin(14000, 'unmanaged-daemon hook'), 0);
 
   const health = await waitForHealth(`http://127.0.0.1:${port}`, 8000);
   assert.notEqual(health.pid, oldPid, 'an unmanaged older daemon must still be replaced');
-  assert.equal(health.version, PKG_VERSION);
-  assert.equal(health.managed, false, 'the hook-spawned replacement is not a managed service');
+  assert.equal(health['version'], PKG_VERSION);
+  assert.equal(health['managed'], false, 'the hook-spawned replacement is not a managed service');
 });

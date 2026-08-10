@@ -24,7 +24,7 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 // These are runtime `node --test` targets resolved on disk, not TS imports.
-const SUITES = ['spawn.test.mjs', 'spawn-unsupervised.test.mjs'];
+const SUITES = ['spawn.test.ts', 'spawn-unsupervised.test.ts'];
 
 function* walk(dir: string): Generator<string> {
   for (const entry of readdirSync(dir)) {

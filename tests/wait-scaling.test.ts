@@ -1,4 +1,4 @@
-// Regression for BUG-176: tests/spawn-repo.test.mjs carried a FILE-LOCAL,
+// Regression for BUG-176: tests/spawn-repo.test.ts carried a FILE-LOCAL,
 // UNSCALED waitUntil (raw `Date.now() + timeoutMs`) that ignored
 // FLEETDECK_TEST_WAIT_SCALE — so on the slow macOS advisory lane (issue #2,
 // WAIT_SCALE=3) its clone-launch / tombstone waits kept the authored 12s
@@ -26,7 +26,7 @@ import path from 'node:path';
 
 const execFileP = promisify(execFile);
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const TARGET = path.join(HERE, 'spawn-repo.test.mjs');
+const TARGET = path.join(HERE, 'spawn-repo.test.ts');
 const PROBE = path.join(HERE, 'helpers/wait-scaling-probe.ts');
 
 interface ProbeVerdict {
@@ -34,7 +34,7 @@ interface ProbeVerdict {
   ok?: boolean;
 }
 
-test('every waitUntil in spawn-repo.test.mjs is the scaled shared helper (BUG-176)', async () => {
+test('every waitUntil in spawn-repo.test.ts is the scaled shared helper (BUG-176)', async () => {
   // Every authored waitUntil must route through the ONE exported binding; a
   // second, file-local definition would add occurrences beyond that count.
   // (The import line contributes 1, the test-only export re-declaration 2,
@@ -85,12 +85,12 @@ test('every waitUntil in spawn-repo.test.mjs is the scaled shared helper (BUG-17
   assert.equal(
     exported,
     'function',
-    'spawn-repo.test.mjs must export its waitUntil binding for the scale check',
+    'spawn-repo.test.ts must export its waitUntil binding for the scale check',
   );
   assert.equal(
     ok,
     true,
-    'the waitUntil used by spawn-repo.test.mjs is NOT the scaled shared helper',
+    'the waitUntil used by spawn-repo.test.ts is NOT the scaled shared helper',
   );
   assert.equal(code, 0);
 });

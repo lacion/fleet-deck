@@ -1,4 +1,4 @@
-// Regression for BUG-212: the failed-clone case in tests/spawn-repo.test.mjs
+// Regression for BUG-212: the failed-clone case in tests/spawn-repo.test.ts
 // creates its missing origin under a scratch parent named
 // `fleetdeck-missing-origin-*`. Without teardown owning that parent, every run
 // of the focused test left one directory behind in tmpdir. Running the single
@@ -19,7 +19,9 @@ test(
   { timeout: 180_000 },
   (t) => {
     const tmpRoot = mkdtempSync(path.join(tmpdir(), 'fd-bug212-'));
-    t.after(() => { rmSync(tmpRoot, { recursive: true, force: true }); });
+    t.after(() => {
+      rmSync(tmpRoot, { recursive: true, force: true });
+    });
     // The outer `node --test` sets NODE_TEST_CONTEXT=child-v8; if the inner child
     // inherits it, it runs in child-runner mode, executes nothing, and exits 0 —
     // a vacuous pass. Strip it so the inner run is a real one. Object-spreading
@@ -36,7 +38,7 @@ test(
           '--test-reporter=tap',
           '--test-name-pattern',
           'clone failure tombstones',
-          path.join(HERE, 'spawn-repo.test.mjs'),
+          path.join(HERE, 'spawn-repo.test.ts'),
         ],
         { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env },
       );
