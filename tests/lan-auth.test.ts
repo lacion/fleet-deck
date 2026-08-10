@@ -1,11 +1,12 @@
-import test from 'node:test';
+import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { createServer } from 'node:http';
+import { createServer, type OutgoingHttpHeaders } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import path from 'node:path';
-import { WebSocket } from 'ws';
-import { randomPort, spawnRaw, startDaemon } from './helpers/daemon.ts';
+import { WebSocket, type RawData } from 'ws';
+import { randomPort, spawnRaw, startDaemon, type RawDaemon } from './helpers/daemon.ts';
 import { rawRequest } from './helpers/http.ts';
 import { waitForResponse, nonInternalIpv4s, scaleMs } from './helpers/wait.ts';
 
@@ -17,29 +18,56 @@ const LAN_TOKEN = 'fleetdeck-lan-test-token-0123456789';
 // and still unroutable from here, which looks exactly like a hung test.
 // Returns null when no LAN address works (CI, a locked-down sandbox) and the
 // LAN tests must skip rather than fail.
-async function reachableIpv4() {
+async function reachableIpv4(): Promise<string | null> {
   for (const address of nonInternalIpv4s()) {
-    const probe = createServer((_req, res) => res.end('ok'));
+    const probe = createServer((_req, res) => {
+      res.end('ok');
+    });
     try {
-      await new Promise((resolve, reject) => {
+      await new Promise<void>((resolve, reject) => {
         probe.once('error', reject);
-        probe.listen(0, address, resolve);
+        probe.listen(0, address, () => {
+          resolve();
+        });
       });
-      const url = `http://${address}:${probe.address().port}/`;
+      const info = probe.address() as AddressInfo;
+      const url = `http://${address}:${info.port}/`;
       const res = await fetch(url, { signal: AbortSignal.timeout(750) });
       if (res.ok) return address;
-    } catch { /* unroutable from here — try the next */ } finally {
-      await new Promise(resolve => probe.close(resolve));
+    } catch {
+      /* unroutable from here — try the next */
+    } finally {
+      await new Promise<void>((resolve) => {
+        probe.close(() => {
+          resolve();
+        });
+      });
     }
   }
   return null;
 }
 
-function scratchHome() {
+function scratchHome(): string {
   return mkdtempSync(path.join(tmpdir(), 'fleetdeck-lan-auth-'));
 }
 
-async function startLan(t, address, { token = LAN_TOKEN, home = scratchHome() } = {}) {
+interface StartLanOptions {
+  token?: string | null;
+  home?: string;
+}
+
+interface LanDaemon {
+  raw: RawDaemon;
+  home: string;
+  port: number;
+  baseUrl: string;
+}
+
+function startLan(
+  t: TestContext,
+  address: string,
+  { token = LAN_TOKEN, home = scratchHome() }: StartLanOptions = {},
+): LanDaemon {
   const port = randomPort();
   const raw = spawnRaw({
     port,
@@ -56,23 +84,30 @@ async function startLan(t, address, { token = LAN_TOKEN, home = scratchHome() } 
   return { raw, home, port, baseUrl: `http://${address}:${port}` };
 }
 
-function snapshot(url) {
+function snapshot(url: string): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(url);
     const timer = setTimeout(() => {
       ws.terminate();
       reject(new Error('timed out waiting for snapshot'));
     }, scaleMs(5000));
-    ws.once('message', raw => {
+    ws.once('message', (raw: RawData) => {
       clearTimeout(timer);
-      try { resolve(JSON.parse(raw.toString('utf8'))); } catch (err) { reject(err); }
+      try {
+        resolve(JSON.parse((raw as Buffer).toString('utf8')));
+      } catch (err) {
+        reject(err instanceof Error ? err : new Error(String(err)));
+      }
       ws.close();
     });
-    ws.once('error', err => { clearTimeout(timer); reject(err); });
+    ws.once('error', (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
   });
 }
 
-function refused(url) {
+function refused(url: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(url);
     const timer = setTimeout(() => {
@@ -84,8 +119,14 @@ function refused(url) {
       ws.terminate();
       reject(new Error('unauthenticated WebSocket unexpectedly opened'));
     });
-    ws.once('error', () => { clearTimeout(timer); resolve(); });
-    ws.once('close', () => { clearTimeout(timer); resolve(); });
+    ws.once('error', () => {
+      clearTimeout(timer);
+      resolve();
+    });
+    ws.once('close', () => {
+      clearTimeout(timer);
+      resolve();
+    });
   });
 }
 
@@ -102,19 +143,32 @@ function refused(url) {
 // loopback; it is expressed as an explicit Host header because the shared
 // helper connects over loopback. Resolves { status, body } and never rejects
 // on a non-2xx.
-function rawGet(port, pathname, headers = {}, host = '127.0.0.1') {
-  const withHost = host === '127.0.0.1' ? headers : { ...headers, Host: headers.Host ?? `${host}:${port}` };
-  return rawRequest({ port, path: pathname, method: 'GET', headers: withHost, host })
-    .then(({ status, text }) => ({ status, body: text }));
+interface RawGetResult {
+  status: number | undefined;
+  body: string;
 }
 
-test('default bind preserves unauthenticated loopback health and hook traffic', async t => {
+function rawGet(
+  port: number,
+  pathname: string,
+  headers: OutgoingHttpHeaders = {},
+  host = '127.0.0.1',
+): Promise<RawGetResult> {
+  const withHost =
+    host === '127.0.0.1' ? headers : { ...headers, Host: headers['Host'] ?? `${host}:${port}` };
+  return rawRequest({ port, path: pathname, method: 'GET', headers: withHost, host }).then(
+    ({ status, text }) => ({ status, body: text }),
+  );
+}
+
+test('default bind preserves unauthenticated loopback health and hook traffic', async (t: TestContext) => {
   const daemon = await startDaemon();
   t.after(() => daemon.stop());
 
   const health = await fetch(`${daemon.baseUrl}/health`);
   assert.equal(health.status, 200);
-  assert.equal((await health.json()).ok, true);
+  const healthBody = (await health.json()) as { ok?: unknown };
+  assert.equal(healthBody.ok, true);
 
   // LOCAL-HOOK REGRESSION CONTRACT: hooks reach the daemon through the command
   // shims, which read $FLEETDECK_HOME/token and attach it — so hook traffic
@@ -122,21 +176,27 @@ test('default bind preserves unauthenticated loopback health and hook traffic', 
   // response. 0.16.0: the bearer comes from the daemon's own token file.
   const hook = await fetch(`${daemon.baseUrl}/hook/UnknownHook`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${daemon.token}` },
+    headers: {
+      'content-type': 'application/json',
+      authorization: `Bearer ${String(daemon.token)}`,
+    },
     body: '{}',
   });
   assert.equal(hook.status, 200);
 });
 
-test('a LAN peer can actually LOAD the board: shell public, every byte of data gated', async t => {
+test('a LAN peer can actually LOAD the board: shell public, every byte of data gated', async (t: TestContext) => {
   // REGRESSION PIN. Gating the static shell looks stricter and is in fact a
   // blank page: a browser cannot put a token on the <script> tag inside the
   // page it is loading, so `/?t=<token>` would serve HTML whose own module
   // 401s. Loopback bypasses the gate, so this failure is invisible locally and
   // only bites the remote peer the feature exists for. It has broken once.
   const address = await reachableIpv4();
-  if (!address) return t.skip('host has no non-internal IPv4 interface');
-  const daemon = await startLan(t, address);
+  if (!address) {
+    t.skip('host has no non-internal IPv4 interface');
+    return;
+  }
+  const daemon = startLan(t, address);
   await waitForResponse(`${daemon.baseUrl}/health?t=${encodeURIComponent(LAN_TOKEN)}`);
 
   // 1. the shell loads with the token in the URL, exactly as the printed link
@@ -153,10 +213,18 @@ test('a LAN peer can actually LOAD the board: shell public, every byte of data g
   const asset = /src="([^"]+\.js)"/.exec(html)?.[1];
   assert.ok(asset, `the shell must reference a hashed module (got: ${html.slice(0, 200)})`);
   const script = await fetch(new URL(asset, `${daemon.baseUrl}/`));
-  assert.equal(script.status, 200, "the board's own script must load without a token, or the page is blank");
+  assert.equal(
+    script.status,
+    200,
+    "the board's own script must load without a token, or the page is blank",
+  );
 
   // 3. the shell is a shell: no fleet data rides along with it
-  assert.doesNotMatch(html, /callsign|session_id|"sessions"/i, 'the public shell must carry no fleet data');
+  assert.doesNotMatch(
+    html,
+    /callsign|session_id|"sessions"/i,
+    'the public shell must carry no fleet data',
+  );
 
   // 4. and everything that matters is still shut
   for (const path of ['/state', '/health', '/api/watch?session=x']) {
@@ -171,10 +239,13 @@ test('a LAN peer can actually LOAD the board: shell public, every byte of data g
   assert.equal(spawn.status, 401, 'spawning must never be reachable without the token');
 });
 
-test('LAN HTTP requires the query or bearer token for a non-loopback peer', async t => {
+test('LAN HTTP requires the query or bearer token for a non-loopback peer', async (t: TestContext) => {
   const address = await reachableIpv4();
-  if (!address) return t.skip('host has no non-internal IPv4 interface');
-  const daemon = await startLan(t, address);
+  if (!address) {
+    t.skip('host has no non-internal IPv4 interface');
+    return;
+  }
+  const daemon = startLan(t, address);
   await waitForResponse(`${daemon.baseUrl}/health?t=${encodeURIComponent(LAN_TOKEN)}`);
 
   // A connection to our own interface retains that interface as the peer
@@ -196,7 +267,7 @@ test('LAN HTTP requires the query or bearer token for a non-loopback peer', asyn
   assert.equal(wrong.status, 401);
 });
 
-test('a dotted FLEETDECK_MDNS_NAME is canonicalized once: share URL, log line and Host wall all agree', async t => {
+test('a dotted FLEETDECK_MDNS_NAME is canonicalized once: share URL, log line and Host wall all agree', async (t: TestContext) => {
   // BUG-119 REGRESSION PIN. The mDNS responder rewrites dots and truncates to a
   // 63-byte DNS label before advertising. If fleetd interpolates the RAW
   // configured name into the share URL / startup log, it publishes a name that
@@ -205,13 +276,20 @@ test('a dotted FLEETDECK_MDNS_NAME is canonicalized once: share URL, log line an
   // label ("deck.office" is configured, "deck-office.local" is advertised,
   // published AND authorized).
   const address = await reachableIpv4();
-  if (!address) return t.skip('host has no non-internal IPv4 interface');
+  if (!address) {
+    t.skip('host has no non-internal IPv4 interface');
+    return;
+  }
   const port = randomPort();
   const home = scratchHome();
   const raw = spawnRaw({
     port,
     home,
-    env: { FLEETDECK_BIND: address, FLEETDECK_TOKEN: LAN_TOKEN, FLEETDECK_MDNS_NAME: 'deck.office' },
+    env: {
+      FLEETDECK_BIND: address,
+      FLEETDECK_TOKEN: LAN_TOKEN,
+      FLEETDECK_MDNS_NAME: 'deck.office',
+    },
   });
   t.after(async () => {
     await raw.kill();
@@ -224,27 +302,40 @@ test('a dotted FLEETDECK_MDNS_NAME is canonicalized once: share URL, log line an
   // responder puts on the wire — never the raw dotted config value.
   const deadline = Date.now() + scaleMs(5000);
   while (!raw.stdout.includes('.local:') && Date.now() < deadline) {
-    await new Promise(resolve => setTimeout(resolve, 25));
+    await new Promise((resolve) => setTimeout(resolve, 25));
   }
-  assert.match(raw.stdout, /deck-office\.local/, `startup log must announce the canonical label; stdout: ${raw.stdout}`);
-  assert.doesNotMatch(raw.stdout, /deck\.office\.local/, 'the raw dotted value must never be published');
+  assert.match(
+    raw.stdout,
+    /deck-office\.local/,
+    `startup log must announce the canonical label; stdout: ${raw.stdout}`,
+  );
+  assert.doesNotMatch(
+    raw.stdout,
+    /deck\.office\.local/,
+    'the raw dotted value must never be published',
+  );
 
   // The share panel URL is the same canonical host.
   const state = await fetch(`http://${address}:${port}/state${tokenParam}`);
   assert.equal(state.status, 200);
-  const { lan } = await state.json();
-  assert.equal(new URL(lan.mdns).hostname, 'deck-office.local');
+  const stateBody = (await state.json()) as { lan: { mdns: string } };
+  assert.equal(new URL(stateBody.lan.mdns).hostname, 'deck-office.local');
 
   // And the DNS-rebinding wall authorizes that exact hostname — the name a
   // peer that discovered the service over mDNS would actually send.
-  const discovered = await rawGet(port, '/state', {
-    Host: `deck-office.local:${port}`,
-    authorization: `Bearer ${LAN_TOKEN}`,
-  }, address);
+  const discovered = await rawGet(
+    port,
+    '/state',
+    {
+      Host: `deck-office.local:${port}`,
+      authorization: `Bearer ${LAN_TOKEN}`,
+    },
+    address,
+  );
   assert.equal(discovered.status, 200, 'the advertised .local name must be in the Host allowlist');
 });
 
-test('proxy token mode: a loopback request bearing a trusted proxy Host but no Origin and no token is rejected', async t => {
+test('proxy token mode: a loopback request bearing a trusted proxy Host but no Origin and no token is rejected', async (t: TestContext) => {
   // NO-ORIGIN PROXY-HOLE REGRESSION (C1/H-S3). A reverse proxy connects to the
   // daemon over loopback. viaTrustedProxy keyed off the Origin header alone, so a
   // request that reached the public proxy carrying the proxy's trusted Host, NO
@@ -267,19 +358,34 @@ test('proxy token mode: a loopback request bearing a trusted proxy Host but no O
   // THE FIX: proxied, no Origin, no token → must fall through to the token check
   // and 401, NOT be waved through as a local hook. Before the fix this was 200.
   const attack = await rawGet(daemon.port, '/state', { Host: PROXY_HOST });
-  assert.equal(attack.status, 401, 'a proxied no-Origin no-token request must be rejected, not treated as a local hook');
+  assert.equal(
+    attack.status,
+    401,
+    'a proxied no-Origin no-token request must be rejected, not treated as a local hook',
+  );
 
   // A genuine local CLI hook — our own loopback Host, no Origin, no token — is
   // untouched: hostAllowed ⇒ not via the proxy ⇒ the loopback exemption stands.
   const localHook = await rawGet(daemon.port, '/state', { Host: `127.0.0.1:${daemon.port}` });
-  assert.equal(localHook.status, 200, 'a local loopback request must remain authorized with no token');
+  assert.equal(
+    localHook.status,
+    200,
+    'a local loopback request must remain authorized with no token',
+  );
 
   // The same proxied request, now carrying the bearer token, is authorized.
-  const withToken = await rawGet(daemon.port, '/state', { Host: PROXY_HOST, authorization: `Bearer ${LAN_TOKEN}` });
-  assert.equal(withToken.status, 200, 'a proxied request that presents the token must be authorized');
+  const withToken = await rawGet(daemon.port, '/state', {
+    Host: PROXY_HOST,
+    authorization: `Bearer ${LAN_TOKEN}`,
+  });
+  assert.equal(
+    withToken.status,
+    200,
+    'a proxied request that presents the token must be authorized',
+  );
 });
 
-test('token-required mode: /index.html stays public and serves the shell', async t => {
+test('token-required mode: /index.html stays public and serves the shell', async (t: TestContext) => {
   // PROXY_AUTH=token removes the loopback exemption for every route except
   // /health and the public shell. /index.html is classified as public shell,
   // so it must not only pass the token gate but actually SERVE the board
@@ -301,7 +407,11 @@ test('token-required mode: /index.html stays public and serves the shell', async
   // Through the trusted proxy, no token: the shell is public by contract.
   const proxied = await rawGet(daemon.port, '/index.html', { Host: PROXY_HOST });
   assert.equal(proxied.status, 200, 'the public shell must not require the token');
-  assert.match(proxied.body, /<div id="root">/, 'the response must be the HTML shell, not the JSON 404');
+  assert.match(
+    proxied.body,
+    /<div id="root">/,
+    'the response must be the HTML shell, not the JSON 404',
+  );
   assert.equal(proxied.body, expected, '/index.html must serve the same shell as /');
 
   // Same verdict on plain loopback: the shell exemption precedes the token.
@@ -314,19 +424,24 @@ test('token-required mode: /index.html stays public and serves the shell', async
   assert.equal(gated.status, 401, 'token-required mode must still gate fleet data');
 });
 
-test('LAN snapshot WebSocket rejects no token and accepts the query token', async t => {
+test('LAN snapshot WebSocket rejects no token and accepts the query token', async (t: TestContext) => {
   const address = await reachableIpv4();
-  if (!address) return t.skip('host has no non-internal IPv4 interface');
-  const daemon = await startLan(t, address);
+  if (!address) {
+    t.skip('host has no non-internal IPv4 interface');
+    return;
+  }
+  const daemon = startLan(t, address);
   await waitForResponse(`${daemon.baseUrl}/health?t=${encodeURIComponent(LAN_TOKEN)}`);
   const wsBase = daemon.baseUrl.replace(/^http:/, 'ws:');
 
   await refused(`${wsBase}/ws`);
-  const frame = await snapshot(`${wsBase}/ws?t=${encodeURIComponent(LAN_TOKEN)}`);
+  const frame = (await snapshot(`${wsBase}/ws?t=${encodeURIComponent(LAN_TOKEN)}`)) as {
+    type: unknown;
+  };
   assert.equal(frame.type, 'snapshot');
 });
 
-test('FLEETDECK_TOKEN shorter than 16 trimmed characters refuses startup', async t => {
+test('FLEETDECK_TOKEN shorter than 16 trimmed characters refuses startup', async (t: TestContext) => {
   const home = scratchHome();
   const raw = spawnRaw({
     port: randomPort(),
@@ -344,7 +459,7 @@ test('FLEETDECK_TOKEN shorter than 16 trimmed characters refuses startup', async
   assert.doesNotMatch(raw.stderr, /too-short/);
 });
 
-test('LAN mode generates and persists an owner-only token', async t => {
+test('LAN mode generates and persists an owner-only token', async (t: TestContext) => {
   const home = scratchHome();
   const raw = spawnRaw({
     port: randomPort(),
@@ -359,7 +474,7 @@ test('LAN mode generates and persists an owner-only token', async t => {
 
   const deadline = Date.now() + scaleMs(5000);
   while (!existsSync(tokenFile) && Date.now() < deadline) {
-    await new Promise(resolve => setTimeout(resolve, 25));
+    await new Promise((resolve) => setTimeout(resolve, 25));
   }
   assert.equal(existsSync(tokenFile), true, `token was not created; stderr: ${raw.stderr}`);
   assert.equal(statSync(tokenFile).mode & 0o777, 0o600);
