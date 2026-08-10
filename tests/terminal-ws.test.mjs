@@ -11,7 +11,7 @@ import { waitUntil as waitUntilBase } from './helpers/wait.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SPAWN_FIXTURE = path.join(HERE, 'helpers/spawn-cmd-fixture.ts');
-const TERM_FIXTURE = path.join(HERE, 'helpers/term-cmd-fixture.mjs');
+const TERM_FIXTURE = path.join(HERE, 'helpers/term-cmd-fixture.ts');
 try { chmodSync(SPAWN_FIXTURE, 0o755); chmodSync(TERM_FIXTURE, 0o755); } catch { /* best effort */ }
 
 // Built, never written literally: an ESC in a source string is an invisible
@@ -410,7 +410,7 @@ for (const step of ['mid', 'restore']) {
   });
 }
 // BUG-165: the fixture's bare-success default branch used to hide every
-// lifecycle edge — these fault knobs (see term-cmd-fixture.mjs) open them.
+// lifecycle edge — these fault knobs (see term-cmd-fixture.ts) open them.
 
 test('live terminal WS: failed resize refuses the open (FAIL_RESIZE fault)', async t => {
   const dir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-term-resize-fail-'));

@@ -9,11 +9,16 @@
 // (%1, %2, …, in first-seen order), and each pane streams output tagged with its
 // own id. A test can therefore prove that two viewers on two windows see two
 // different streams through a single fixture process.
+//
+// FLEETDECK_TERM_CMD is spawned DIRECTLY by the bridge (spawn(override, []),
+// no shell), so this file carries a shebang and must stay chmod +x (git mode
+// 100755) — the OS reads the shebang to launch it under node, which type-strips
+// the .ts by extension.
 
 import { appendFileSync } from 'node:fs';
 import readline from 'node:readline';
 
-const record = process.env.FLEETDECK_TEST_TERM_RECORD;
+const record = process.env['FLEETDECK_TEST_TERM_RECORD'];
 let number = 0;
 
 // Fault injection (Item 6): make the viewer's per-window pane lookup report a
@@ -25,8 +30,8 @@ let number = 0;
 // Only the per-window `list-panes -t` lookup is affected; the `list-panes -a`
 // window-close probe still answers truthfully (unless PROBE_FAILS below says
 // otherwise) so viewer teardown is unaffected.
-const noPaneKnob = process.env.FLEETDECK_TEST_TERM_NO_PANE;
-function noPaneModeFor(window) {
+const noPaneKnob = process.env['FLEETDECK_TEST_TERM_NO_PANE'];
+function noPaneModeFor(window: string): 'empty' | 'error' | null {
   if (!noPaneKnob) return null;
   if (noPaneKnob === 'empty') return 'empty';
   if (noPaneKnob === 'error' || noPaneKnob === '*') return 'error';
@@ -74,31 +79,36 @@ function noPaneModeFor(window) {
 //                                     (FLEETDECK_TEST_TERM_CLOSE_WINDOW, emitted
 //                                     once the first pane streams) condemns it.
 // <cmd> on a knob's value scopes the fault to commands starting with that word.
-const hangKnob = process.env.FLEETDECK_TEST_TERM_HANG_MS;
-function hangFor(cmd) {
+const hangKnob = process.env['FLEETDECK_TEST_TERM_HANG_MS'];
+function hangFor(cmd: string): number {
   if (!hangKnob) return 0;
-  const [prefix, ms] = hangKnob.split(':');
-  if (ms !== undefined) return cmd.startsWith(prefix) ? (Number(ms) || 0) : 0;
+  const [prefix = '', ms] = hangKnob.split(':');
+  if (ms !== undefined) return cmd.startsWith(prefix) ? Number(ms) || 0 : 0;
   return Number(prefix) || 0;
 }
-const failResizeKnob = process.env.FLEETDECK_TEST_TERM_FAIL_RESIZE;
-const deadPaneKnob = process.env.FLEETDECK_TEST_TERM_DEAD_PANE;
-const closeWindowKnob = process.env.FLEETDECK_TEST_TERM_CLOSE_WINDOW;
+const failResizeKnob = process.env['FLEETDECK_TEST_TERM_FAIL_RESIZE'];
+const deadPaneKnob = process.env['FLEETDECK_TEST_TERM_DEAD_PANE'];
+const closeWindowKnob = process.env['FLEETDECK_TEST_TERM_CLOSE_WINDOW'];
 let closeWindowSent = false;
-function knobHits(knob, cmd) {
+function knobHits(knob: string | undefined, cmd: string): boolean {
   if (!knob) return false;
   return knob === '1' || knob === '*' || cmd.startsWith(knob);
 }
 
 // window name -> pane id, assigned on first sight and stable thereafter
-const panes = new Map();
-const streamed = new Set();
+const panes = new Map<string, string>();
+const streamed = new Set<string>();
 // Fault injection (BUG-157): make the window-close probe (`list-panes -a`)
 // FAIL so the bridge's failed-probe path is exercised. Without the recheck an
 // idle viewer whose pane just died would never finish; with it the probe is
 // retried after a settle delay and the second, healthy answer condemns the
 // dead pane.
-const probeFails = new Set((process.env.FLEETDECK_TEST_TERM_PROBE_FAILS || '0').split(',').map(Number).filter(Number.isInteger));
+const probeFails = new Set(
+  (process.env['FLEETDECK_TEST_TERM_PROBE_FAILS'] ?? '0')
+    .split(',')
+    .map(Number)
+    .filter(Number.isInteger),
+);
 let probeCalls = 0;
 
 // Fault injection (BUG-158): make a pane FLOOD %output while the bridge is
@@ -106,24 +116,28 @@ let probeCalls = 0;
 // capture-pane — the response is withheld until the flood lands). Value:
 //   '<n>'            → n bytes of flood, aimed at the FIRST pane seen
 //   '<n>@<window>'   → n bytes, aimed only at that window's pane
-const preInitFloodKnob = process.env.FLEETDECK_TEST_TERM_PREINIT_FLOOD;
-const flood = (() => {
-  const m = /^(\d+)(?:@(.+))?$/.exec(preInitFloodKnob || '');
-  return m ? { bytes: Number(m[1]), window: m[2] || null } : null;
+const preInitFloodKnob = process.env['FLEETDECK_TEST_TERM_PREINIT_FLOOD'];
+const flood = ((): { bytes: number; window: string | null } | null => {
+  const m = /^(\d+)(?:@(.+))?$/.exec(preInitFloodKnob ?? '');
+  return m ? { bytes: Number(m[1]), window: m[2] ?? null } : null;
 })();
-const flooded = new Set();
+const flooded = new Set<string>();
 
 // window name -> ordered rows of each resize-window seen (jiggle detection)
-const resizeSeqs = new Map();
+const resizeSeqs = new Map<string, number[]>();
 
-function note(value) {
+function note(value: Record<string, unknown>): void {
   if (!record) return;
-  try { appendFileSync(record, JSON.stringify({ pid: process.pid, ...value }) + '\n'); } catch { /* fixture reporting only */ }
+  try {
+    appendFileSync(record, JSON.stringify({ pid: process.pid, ...value }) + '\n');
+  } catch {
+    /* fixture reporting only */
+  }
 }
 
-function response(lines = [], ok = true, cmd = '') {
+function response(lines: string[] = [], ok = true, cmd = ''): void {
   const n = ++number;
-  const write = () => {
+  const write = (): void => {
     process.stdout.write(`%begin 100 ${n} 0\n`);
     for (const line of lines) process.stdout.write(line + '\n');
     process.stdout.write(`%${ok ? 'end' : 'error'} 100 ${n} 0\n`);
@@ -142,31 +156,35 @@ function response(lines = [], ok = true, cmd = '') {
  * connecting at once — is NOT the order the test opened its tiles in. So record
  * the mapping: a test that wants to know which pane a window got must read it
  * here rather than assume it. */
-function paneForListPanes(line) {
+function paneForListPanes(line: string): string {
   const target = /-t\s+=\S*?:(\S+)/.exec(line);
   const window = target?.[1]?.replace(/^=/, '') ?? 'default';
-  if (!panes.has(window)) {
-    panes.set(window, `%${panes.size + 1}`);
-    note({ type: 'pane', window, pane: panes.get(window) });
+  let pane = panes.get(window);
+  if (pane === undefined) {
+    pane = `%${panes.size + 1}`;
+    panes.set(window, pane);
+    note({ type: 'pane', window, pane });
   }
-  return panes.get(window);
+  return pane;
 }
 
 /** The pane a `-t %N`-style command is aimed at. */
-function paneForTarget(line) {
+function paneForTarget(line: string): string | null {
   return /-t\s+(%\d+)/.exec(line)?.[1] ?? null;
 }
 
 const input = readline.createInterface({ input: process.stdin });
 process.stdin.resume();
-input.on('line', line => {
+input.on('line', (line: string) => {
   note({ type: 'line', line });
   if (line.startsWith('list-panes -t ')) {
     const target = /-t\s+=\S*?:(\S+)/.exec(line);
     const window = target?.[1]?.replace(/^=/, '') ?? 'default';
     const mode = noPaneModeFor(window);
-    if (mode === 'error') response([], false, line);     // window gone: list-panes fails
-    else if (mode === 'empty') response([], true, line); // window gone: no pane id comes back
+    if (mode === 'error')
+      response([], false, line); // window gone: list-panes fails
+    else if (mode === 'empty')
+      response([], true, line); // window gone: no pane id comes back
     else response([paneForListPanes(line)], true, line);
   } else if (line.startsWith('list-panes -a')) {
     // window-close probe + BUG-055 pane_dead poll: '%N [dead]' per pane. The
@@ -184,10 +202,16 @@ input.on('line', line => {
     if (probeFails.has(probeCalls)) {
       response([], false, line); // the probe itself fails: not proof a pane died
     } else {
-      const withFlags = /pane_dead/.test(line);
-      const isDead = (w) => deadPaneKnob === '*' || (deadPaneKnob != null && deadPaneKnob !== '' && w.includes(deadPaneKnob));
+      const withFlags = line.includes('pane_dead');
+      const isDead = (w: string): boolean =>
+        deadPaneKnob === '*' ||
+        (deadPaneKnob != null && deadPaneKnob !== '' && w.includes(deadPaneKnob));
       if (withFlags) {
-        response([...panes.entries()].map(([w, p]) => `${p} ${isDead(w) ? 1 : 0}`), true, line);
+        response(
+          [...panes.entries()].map(([w, p]) => `${p} ${isDead(w) ? 1 : 0}`),
+          true,
+          line,
+        );
       } else {
         // window-close probe: every pane still alive — unless DEAD_PANE says
         // the pane died, in which case the probe must answer truthfully (none
@@ -216,16 +240,23 @@ input.on('line', line => {
       const seq = resizeSeqs.get(window) ?? [];
       seq.push(rows);
       resizeSeqs.set(window, seq);
-      if (failResizeKnob === 'mid') fail = seq.length === 2 && rows === seq[0] - 1;
-      else if (failResizeKnob === 'restore') fail = seq.length === 3 && rows === seq[0];
+      const first = seq[0];
+      if (failResizeKnob === 'mid')
+        fail = seq.length === 2 && first !== undefined && rows === first - 1;
+      else if (failResizeKnob === 'restore')
+        fail = seq.length === 3 && first !== undefined && rows === first;
     }
     response([], !fail, line);
   } else if (line.startsWith('capture-pane ')) {
-    const pane = paneForTarget(line) || '%1';
-    response([`seed ${pane} [31mred[0m`], true, line);
+    const pane = paneForTarget(line) ?? '%1';
+    response([`seed ${pane} \x1b[31mred\x1b[0m`], true, line);
   } else if (line.includes("'#{cursor_x} #{cursor_y}'")) {
-    const pane = paneForTarget(line) || '%1';
-    if (flood && !flooded.has(pane) && (!flood.window || [...panes].find(([, p]) => p === pane)?.[0] === flood.window)) {
+    const pane = paneForTarget(line) ?? '%1';
+    if (
+      flood &&
+      !flooded.has(pane) &&
+      (!flood.window || [...panes].find(([, p]) => p === pane)?.[0] === flood.window)
+    ) {
       // Withhold the cursor reply and emit the flood FIRST: the bridge is
       // subscribed by now, so these bytes land in viewer.pending while init is
       // still being built — exactly the pre-init gap BUG-158 bounds.
@@ -240,7 +271,10 @@ input.on('line', line => {
     // prove each viewer received ITS stream and not its neighbour's.
     if (!streamed.has(pane)) {
       streamed.add(pane);
-      setTimeout(() => process.stdout.write(`%output ${pane} live ${pane}\\033[32m!\\033[0m\n`), 25);
+      setTimeout(
+        () => process.stdout.write(`%output ${pane} live ${pane}\\033[32m!\\033[0m\n`),
+        25,
+      );
     }
     // Once a pane is established, optionally report its window closing. Real
     // tmux sends %window-close when a window dies; the bridge answers with a
