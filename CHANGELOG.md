@@ -5,6 +5,28 @@ All notable changes to Fleet Deck are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.22.5] - 2026-08-11
+
+Large repositories could freeze before Claude Code reached the prompt.
+
+### Fixed
+
+- **Fleet Deck no longer recursively watches the entire session directory.**
+  BUG-104 registered the session `cwd` through `watchPaths` so external edits
+  could feed the conflict ledger, but Claude Code recursively traverses that
+  directory before startup completes. In repositories with large `.git` object
+  stores or `node_modules` trees, registration could produce a sustained
+  `FileChanged` storm and wedge the session indefinitely. `SessionStart`,
+  `CwdChanged`, and `FileChanged` no longer emit dynamic watch paths, and the
+  `FileChanged` hook is disabled entirely because exact matcher paths can also
+  name large directories. The daemon also acknowledges cached pre-upgrade
+  `FileChanged` requests without ingesting them, so an old hook cannot keep
+  churning session state and the conflict ledger. Normal `PostToolUse` tracking
+  remains; broad external-change telemetry is deliberately sacrificed because
+  a running session is more important than optional conflict attribution.
+  Existing Claude Code processes that loaded the old watcher must be restarted;
+  `/clear` does not remove a dynamic watch already installed in that process.
+
 ## [0.22.4] - 2026-08-07
 
 A spawned pane exposed Claude Code's own agent view, a second fleet the board

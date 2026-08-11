@@ -57,7 +57,7 @@ test('smoke settings.json preserves the hook table (events, matchers, timeouts)'
   assert.deepEqual(Object.keys(settings.hooks), [
     'SessionStart', 'UserPromptSubmit', 'PostToolUse', 'PreToolUse',
     'PermissionRequest', 'Elicitation', 'Notification', 'Stop',
-    'SessionEnd', 'FileChanged',
+    'SessionEnd',
   ]);
   assert.equal(settings.hooks.PostToolUse[0].matcher, 'Edit|Write|MultiEdit|NotebookEdit|Bash');
   assert.equal(settings.hooks.PreToolUse[0].matcher, 'AskUserQuestion');
