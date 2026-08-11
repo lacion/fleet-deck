@@ -316,8 +316,7 @@ export function createEvents(ctx) {
         break;
       }
       case 'CwdChanged':
-        // BUG-104: telemetry only — the watch-list refresh for the new cwd is
-        // emitted by the hook shim (fleet-hook.mjs), not by this response.
+        // Telemetry only — FileChanged watching is deliberately disabled.
         set.note = `cwd → ${path.basename(ev.cwd || '') || 'cwd changed'}`;
         break;
       case 'Notification': {

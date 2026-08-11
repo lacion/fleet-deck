@@ -13851,10 +13851,10 @@ function createHttp(core2, {
     Stop: (ev) => core2.hookStop(ev),
     SessionEnd: (ev) => core2.hookSessionEnd(ev),
     Notification: (ev) => (core2.applyEvent({ ...ev, hook_event_name: "Notification" }), {}),
-    FileChanged: (ev) => (core2.applyEvent({ ...ev, hook_event_name: "FileChanged" }), {}),
-    // BUG-104: the shim emits this event's watchPaths itself (fleet-hook.mjs);
-    // the daemon side is pure telemetry — one note so a `cd` is visible in the
-    // session's event log.
+    // Older cached plugin hooks can keep emitting FileChanged after an upgrade.
+    // Acknowledge them without touching session state or the conflict ledger.
+    FileChanged: () => ({}),
+    // CwdChanged remains pure telemetry for the session event log.
     CwdChanged: (ev) => (core2.applyEvent({ ...ev, hook_event_name: "CwdChanged" }), {})
   };
   function holdHook(res, ev, name) {
