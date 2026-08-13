@@ -50,7 +50,9 @@ const FLEETD_BUNDLE = path.join(HERE, '..', 'src', 'daemon', 'fleetd.bundle.mjs'
 const FLEETD =
   // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- an empty/unset test seam must fall back to the bundle, not be preserved as ''
   process.env['FLEETDECK_TEST_DAEMON_SCRIPT'] ||
-  (fs.existsSync(FLEETD_BUNDLE) ? FLEETD_BUNDLE : path.join(HERE, '..', 'src', 'daemon', 'fleetd.ts'));
+  (fs.existsSync(FLEETD_BUNDLE)
+    ? FLEETD_BUNDLE
+    : path.join(HERE, '..', 'src', 'daemon', 'fleetd.ts'));
 const HOME = resolveHome();
 
 // Shapes of the daemon's wire JSON. Trusted like every other /health consumer
@@ -168,6 +170,7 @@ function bootEnv(): NodeJS.ProcessEnv {
     FLEETDECK_PORT: String(PORT),
     FLEETDECK_HOME: HOME,
   };
+  // eslint-disable-next-line @typescript-eslint/no-dynamic-delete -- scrubbing a dynamic key list; delete (not `= undefined`) guarantees the key is ABSENT from the child's env, not passed as an empty string
   for (const k of [
     ...CLAUDE_ENV_MARKERS,
     'TMUX',
@@ -194,7 +197,6 @@ function bootEnv(): NodeJS.ProcessEnv {
     // supervises, immune to takeover forever.
     'FLEETDECK_MANAGED',
   ])
-    // eslint-disable-next-line @typescript-eslint/no-dynamic-delete -- scrubbing a dynamic key list; delete (not `= undefined`) guarantees the key is ABSENT from the child's env, not passed as an empty string
     delete env[k];
   // Upgrade takeover: ONLY the spawn that just evicted an older daemon carries
   // the displaced version, so the replacement logs the handoff and emits the

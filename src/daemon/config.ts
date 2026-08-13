@@ -66,7 +66,10 @@ export function resolveBase(port: number = resolvePort()): string {
 export function detectCoderWorkspaceRoot({
   env = process.env,
   probeDir = '/workspace',
-}: { env?: NodeJS.ProcessEnv; probeDir?: string } = {}): string | null {
+}: {
+  env?: NodeJS.ProcessEnv;
+  probeDir?: string;
+} = {}): string | null {
   const present = (v: unknown): boolean => typeof v === 'string' && v !== '';
   const onCoder =
     present(env['CODER']) ||

@@ -94,10 +94,14 @@ function snapshot(url: string): Promise<{ type?: string }> {
       ws.close();
     });
     ws.on('error', (err) => {
-      finish(() => { reject(err instanceof Error ? err : new Error(String(err))); });
+      finish(() => {
+        reject(err instanceof Error ? err : new Error(String(err)));
+      });
     });
     ws.on('close', () => {
-      finish(() => { reject(new Error('socket closed before a snapshot frame')); });
+      finish(() => {
+        reject(new Error('socket closed before a snapshot frame'));
+      });
     });
   });
 }
@@ -123,13 +127,19 @@ function refused(url: string): Promise<void> {
     };
     ws.on('open', () => {
       ws.terminate();
-      finish(() => { reject(new Error('unauthenticated WebSocket unexpectedly opened')); });
+      finish(() => {
+        reject(new Error('unauthenticated WebSocket unexpectedly opened'));
+      });
     });
     ws.on('error', () => {
-      finish(() => { resolve(); });
+      finish(() => {
+        resolve();
+      });
     });
     ws.on('close', () => {
-      finish(() => { resolve(); });
+      finish(() => {
+        resolve();
+      });
     });
   });
 }

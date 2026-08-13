@@ -29,7 +29,7 @@ const SCRIPT = path.join(
 // TRANSCRIPT_DIR) so the test executes the script's own lines verbatim.
 function resolveTranscriptDir(env: Record<string, string>): string {
   const src = readFileSync(SCRIPT, 'utf8');
-  const assignBlock = (/^TRANSCRIPT_ROOT=.*\nTRANSCRIPT_DIR=.*$/m.exec(src))?.[0];
+  const assignBlock = /^TRANSCRIPT_ROOT=.*\nTRANSCRIPT_DIR=.*$/m.exec(src)?.[0];
   assert.ok(assignBlock, 'transcript-root resolution block not found in run-accept-phase3.sh');
   const out = execFileSync('bash', ['-c', `${assignBlock}\nprintf '%s' "$TRANSCRIPT_DIR"`], {
     env: { PATH: process.env['PATH'], ...env },

@@ -159,7 +159,9 @@ test('the per-request allowlist refresh never evicts the advertised .local name'
   // refresh clears and rebuilds the address set per request, so it must re-add
   // the name every time — otherwise the first checked request via the mDNS URL
   // 403s as a DNS-rebinding attempt (regression caught during BUG-129 verify).
-  t.after(() => { __setInterfaces(null); }); // the seam is shared under `bun test`
+  t.after(() => {
+    __setInterfaces(null);
+  }); // the seam is shared under `bun test`
   __setInterfaces(LOOPBACK_ONLY);
   const { port } = await startBoard(t, {
     lan: { enabled: true, urls: [], mdns: `http://fleetdeck.local:9/?t=x` },

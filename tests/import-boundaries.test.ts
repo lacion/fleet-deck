@@ -152,7 +152,11 @@ function scan(files: string[], predicate: (f: string, s: string) => boolean): st
 
 test('boundary: src/daemon never imports board/**', () => {
   const violations = scan(walkSources(DAEMON), daemonImportsBoard);
-  assert.deepEqual(violations, [], `the daemon must not depend on the UI:\n${violations.join('\n')}`);
+  assert.deepEqual(
+    violations,
+    [],
+    `the daemon must not depend on the UI:\n${violations.join('\n')}`,
+  );
 });
 
 test('boundary: board/src never imports src/daemon/** or a daemon-only dep', () => {

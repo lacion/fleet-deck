@@ -90,8 +90,9 @@ const {
   healthIsOurManagedDaemon,
   healthPidIsOurDaemon,
 } = await import('../bin/fleetdeck.ts');
-const { parseTmuxVersion, tmuxVersionCapability, tmuxVersionSupported } =
-  await import('../bin/tmux-version.ts');
+const { parseTmuxVersion, tmuxVersionCapability, tmuxVersionSupported } = await import(
+  '../bin/tmux-version.ts'
+);
 
 // `Health` is a file-local interface in bin/fleetdeck.ts (not exported), and the
 // health guards below are deliberately fed malformed/partial responder bodies to
@@ -152,7 +153,11 @@ test('bun engine floor matches the declared package.json engines range', () => {
   const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as {
     engines: { bun: string };
   };
-  assert.equal(pkg.engines.bun, `>=${MIN_BUN_VERSION}`, 'doctor text and engines must not drift apart');
+  assert.equal(
+    pkg.engines.bun,
+    `>=${MIN_BUN_VERSION}`,
+    'doctor text and engines must not drift apart',
+  );
   assert.equal(MIN_BUN_VERSION, '1.3.14');
 });
 

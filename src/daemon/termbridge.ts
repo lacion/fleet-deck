@@ -62,7 +62,11 @@ interface SessionChangedEvent {
   name: string;
 }
 type ControlEvent =
-  ResponseEvent | OutputEvent | ExitEvent | WindowCloseEvent | SessionChangedEvent;
+  | ResponseEvent
+  | OutputEvent
+  | ExitEvent
+  | WindowCloseEvent
+  | SessionChangedEvent;
 
 const ACTIVE_STATUSES = new Set(['spawning', 'stalled', 'live']);
 const INPUT_CHUNK_BYTES = 1024;
@@ -122,7 +126,7 @@ function dimensions(cols: unknown, rows: unknown): { cols: number; rows: number 
 export function unescapeControlData(value: string): Buffer {
   const text = value;
   const bytes: number[] = [];
-  for (let i = 0; i < text.length;) {
+  for (let i = 0; i < text.length; ) {
     if (text[i] === '\\' && /^[0-7]{3}$/.test(text.slice(i + 1, i + 4))) {
       bytes.push(Number.parseInt(text.slice(i + 1, i + 4), 8));
       i += 4;
@@ -278,7 +282,8 @@ interface Viewer {
   finish(reason: string, notify?: boolean): void;
 }
 export type TermFrame =
-  { t: 'out'; data: string } | { t: 'init'; cols: number; rows: number; screen: string };
+  | { t: 'out'; data: string }
+  | { t: 'init'; cols: number; rows: number; screen: string };
 type TermSend = (frame: TermFrame) => void;
 interface OpenViewerOptions {
   spawn_id: string;

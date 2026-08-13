@@ -143,194 +143,192 @@ test('BUG-097: demo acceptance gates allocate unique per-run resources', () => {
   );
 });
 
-test(
-  'BUG-097: two concurrent plan-gate daemons never touch each other',
-  { timeout: 60000 },
-  async (t) => {
-    if (process.platform !== 'linux') {
-      t.skip('the plan gate only spawns its daemon on tmux-capable Linux hosts');
-      return;
-    }
-    let tmuxOk = true;
-    try {
-      execFileSync('tmux', ['-V'], { stdio: 'ignore' });
-    } catch {
-      tmuxOk = false;
-    }
-    if (!tmuxOk) {
-      t.skip('no tmux on PATH — the plan gate would stop before spawning a daemon');
-      return;
-    }
+test('BUG-097: two concurrent plan-gate daemons never touch each other', {
+  timeout: 60000,
+}, async (t) => {
+  if (process.platform !== 'linux') {
+    t.skip('the plan gate only spawns its daemon on tmux-capable Linux hosts');
+    return;
+  }
+  let tmuxOk = true;
+  try {
+    execFileSync('tmux', ['-V'], { stdio: 'ignore' });
+  } catch {
+    tmuxOk = false;
+  }
+  if (!tmuxOk) {
+    t.skip('no tmux on PATH — the plan gate would stop before spawning a daemon');
+    return;
+  }
 
-    // Static guard first: the shipped gate must still carry the unique-resource
-    // discipline this functional run depends on.
-    execFileSync('bash', ['-c', PROVENANCE_GUARD], { cwd: DEMO, stdio: 'pipe' });
+  // Static guard first: the shipped gate must still carry the unique-resource
+  // discipline this functional run depends on.
+  execFileSync('bash', ['-c', PROVENANCE_GUARD], { cwd: DEMO, stdio: 'pipe' });
 
-    const runs: Run[] = [];
-    const cleanup = () => {
-      for (const run of runs.splice(0)) {
-        try {
-          run.daemon.kill('SIGTERM');
-        } catch {
-          /* already gone */
-        }
-        try {
-          execFileSync('tmux', ['-L', run.socket, 'kill-server'], { stdio: 'ignore' });
-        } catch {
-          /* no server */
-        }
-        for (const dir of [run.scratch, run.project, run.cloneProj, run.root]) {
-          if (dir) rmSync(dir, { recursive: true, force: true });
-        }
-      }
-    };
-
-    // Sourced setup lines need CLONE_PROJ + CLONE_SETUP in the bash env.
-    const exportLine = (k: string, v: string): string => `export ${k}=${JSON.stringify(v)}`;
-
-    const startRun = async (label: string): Promise<Run> => {
-      const root = mkdtempSync(path.join(tmpdir(), `fleetdeck-bug097-${label}-`));
-      const cloneProj = path.join(root, 'seed-project');
-      const setupFile = path.join(root, 'setup.sh');
-      execFileSync('cp', ['-R', path.join(DEMO, 'project'), cloneProj]);
-      const snippet = bash(
-        `${exportLine('CLONE_PROJ', cloneProj)}; ${exportLine('CLONE_SETUP', setupFile)}; ${SETUP_SNIPPET}`,
-      );
-      assert.ok(snippet === '', `setup extraction printed unexpectedly: ${snippet}`);
-      const setup = readFileSync(setupFile, 'utf8');
-      assert.match(setup, /mktemp -d/, 'extracted setup must contain the mktemp allocations');
-
-      const socket = `fdbug097-${label}-${process.pid}`;
-      const marker = path.join(root, 'run-paths.txt');
-      const rawTerm = process.env['TERM'];
-      const env = {
-        PATH: process.env['PATH'],
-        HOME: process.env['HOME'],
-        TMPDIR: process.env['TMPDIR'],
-        FLEETDECK_TMUX_SOCKET: socket,
-        TERM: rawTerm === undefined || rawTerm === '' ? 'xterm' : rawTerm,
-      };
-      // Test-side bookkeeping only: after sourcing the gate's own setup lines,
-      // record where they landed so the test can find this run's mktemp paths.
-      const shell = spawn(
-        'bash',
-        [
-          '-c',
-          `${exportLine('CLONE_PROJ', cloneProj)}; source "$CLONE_SETUP"; ` +
-            `printf '%s\\n' "$SCRATCH_HOME" "$PROJECT_DIR" "$FLEETDECK_PORT" > ${JSON.stringify(marker)}; ` +
-            `exec env -u FLEETDECK_SPAWN_CMD FLEETDECK_HOME="$SCRATCH_HOME" FLEETDECK_PORT="$FLEETDECK_PORT" FLEETDECK_TMUX_SOCKET="$FLEETDECK_TMUX_SOCKET" ${JSON.stringify(process.execPath)} ${JSON.stringify(FLEETD)}`,
-        ],
-        {
-          env: { ...env, CLONE_SETUP: setupFile },
-          stdio: ['ignore', 'ignore', 'pipe'],
-        },
-      );
-      const run: Run = {
-        label,
-        socket,
-        daemon: shell,
-        setupFile,
-        marker,
-        scratch: '',
-        project: '',
-        cloneProj,
-        root,
-        port: 0,
-        state: null,
-        stderr: '',
-      };
-      shell.stderr.on('data', (chunk: Buffer) => {
-        run.stderr += chunk.toString();
-      });
-      runs.push(run);
-
-      // The sourced setup ran inside the shell: recover its mktemp paths from
-      // the marker file, then wait for the daemon to report spawn.available.
-      const deadline = Date.now() + 20000;
-      while (Date.now() < deadline) {
-        if (shell.exitCode !== null) break;
-        if (!run.port && existsSync(marker)) {
-          const [scratch, project, port] = readFileSync(marker, 'utf8').trim().split('\n');
-          if (scratch && project && port) {
-            run.scratch = scratch;
-            run.project = project;
-            run.port = Number(port);
-          }
-        }
-        if (run.port) {
-          try {
-            const res = await fetch(`http://127.0.0.1:${run.port}/state`, {
-              signal: AbortSignal.timeout(500),
-            });
-            const state = (await res.json()) as StateResponse | null;
-            if (state?.spawn?.available === true) {
-              run.state = state;
-              return run;
-            }
-          } catch {
-            /* not ready yet */
-          }
-        }
-        await new Promise<void>((resolve) => setTimeout(resolve, 200));
-      }
-      throw new Error(
-        `run ${label}: daemon never became ready (exit ${String(shell.exitCode)})${run.stderr ? ` -- stderr: ${run.stderr.trim()}` : ''}`,
-      );
-    };
-
-    try {
-      const [runA, runB] = await Promise.all([startRun('a'), startRun('b')]);
-
-      // Unique resources: distinct ports, homes, fixture copies, tmux sockets.
-      assert.notEqual(runA.port, runB.port, 'both runs bound the same port');
-      assert.notEqual(runA.scratch, runB.scratch, 'both runs share a daemon home');
-      assert.notEqual(runA.project, runB.project, 'both runs share a fixture copy');
-      assert.ok(
-        !runA.scratch.includes('.fleetdeck-test') && !runB.scratch.includes('.fleetdeck-test'),
-      );
-      for (const run of [runA, runB]) {
-        assert.ok(
-          existsSync(path.join(run.project, '.seed/util.js')),
-          `${run.label}: fixture copy missing seeds`,
-        );
-        assert.ok(
-          existsSync(path.join(run.project, '.claude')),
-          `${run.label}: fixture copy missing .claude dir`,
-        );
-        assert.ok(
-          run.state?.spawn?.available === true,
-          `${run.label}: daemon did not report spawn.available`,
-        );
-      }
-
-      // Simulate run A's gate finishing and cleaning up: kill its daemon and
-      // its scoped tmux server exactly as cleanup_resources does (|| true:
-      // the server may already be gone with the daemon).
-      runA.daemon.kill('SIGTERM');
+  const runs: Run[] = [];
+  const cleanup = () => {
+    for (const run of runs.splice(0)) {
       try {
-        execFileSync('tmux', ['-L', runA.socket, 'kill-server'], { stdio: 'ignore' });
+        run.daemon.kill('SIGTERM');
       } catch {
         /* already gone */
       }
-      await new Promise<void>((resolve) => setTimeout(resolve, 500));
-
-      // Run B must be untouched: daemon still answering with spawn available.
-      const res = await fetch(`http://127.0.0.1:${runB.port}/state`, {
-        signal: AbortSignal.timeout(1000),
-      });
-      const stateB = (await res.json()) as StateResponse;
-      assert.equal(
-        stateB.spawn?.available,
-        true,
-        'run B daemon died or lost spawn capability when run A cleaned up',
-      );
-      assert.equal(runB.daemon.exitCode, null, 'run B daemon process exited when run A cleaned up');
-      assert.ok(
-        existsSync(path.join(runB.scratch, 'fleetd.pid')),
-        'run B scratch home was removed by run A',
-      );
-    } finally {
-      cleanup();
+      try {
+        execFileSync('tmux', ['-L', run.socket, 'kill-server'], { stdio: 'ignore' });
+      } catch {
+        /* no server */
+      }
+      for (const dir of [run.scratch, run.project, run.cloneProj, run.root]) {
+        if (dir) rmSync(dir, { recursive: true, force: true });
+      }
     }
-  },
-);
+  };
+
+  // Sourced setup lines need CLONE_PROJ + CLONE_SETUP in the bash env.
+  const exportLine = (k: string, v: string): string => `export ${k}=${JSON.stringify(v)}`;
+
+  const startRun = async (label: string): Promise<Run> => {
+    const root = mkdtempSync(path.join(tmpdir(), `fleetdeck-bug097-${label}-`));
+    const cloneProj = path.join(root, 'seed-project');
+    const setupFile = path.join(root, 'setup.sh');
+    execFileSync('cp', ['-R', path.join(DEMO, 'project'), cloneProj]);
+    const snippet = bash(
+      `${exportLine('CLONE_PROJ', cloneProj)}; ${exportLine('CLONE_SETUP', setupFile)}; ${SETUP_SNIPPET}`,
+    );
+    assert.ok(snippet === '', `setup extraction printed unexpectedly: ${snippet}`);
+    const setup = readFileSync(setupFile, 'utf8');
+    assert.match(setup, /mktemp -d/, 'extracted setup must contain the mktemp allocations');
+
+    const socket = `fdbug097-${label}-${process.pid}`;
+    const marker = path.join(root, 'run-paths.txt');
+    const rawTerm = process.env['TERM'];
+    const env = {
+      PATH: process.env['PATH'],
+      HOME: process.env['HOME'],
+      TMPDIR: process.env['TMPDIR'],
+      FLEETDECK_TMUX_SOCKET: socket,
+      TERM: rawTerm === undefined || rawTerm === '' ? 'xterm' : rawTerm,
+    };
+    // Test-side bookkeeping only: after sourcing the gate's own setup lines,
+    // record where they landed so the test can find this run's mktemp paths.
+    const shell = spawn(
+      'bash',
+      [
+        '-c',
+        `${exportLine('CLONE_PROJ', cloneProj)}; source "$CLONE_SETUP"; ` +
+          `printf '%s\\n' "$SCRATCH_HOME" "$PROJECT_DIR" "$FLEETDECK_PORT" > ${JSON.stringify(marker)}; ` +
+          `exec env -u FLEETDECK_SPAWN_CMD FLEETDECK_HOME="$SCRATCH_HOME" FLEETDECK_PORT="$FLEETDECK_PORT" FLEETDECK_TMUX_SOCKET="$FLEETDECK_TMUX_SOCKET" ${JSON.stringify(process.execPath)} ${JSON.stringify(FLEETD)}`,
+      ],
+      {
+        env: { ...env, CLONE_SETUP: setupFile },
+        stdio: ['ignore', 'ignore', 'pipe'],
+      },
+    );
+    const run: Run = {
+      label,
+      socket,
+      daemon: shell,
+      setupFile,
+      marker,
+      scratch: '',
+      project: '',
+      cloneProj,
+      root,
+      port: 0,
+      state: null,
+      stderr: '',
+    };
+    shell.stderr.on('data', (chunk: Buffer) => {
+      run.stderr += chunk.toString();
+    });
+    runs.push(run);
+
+    // The sourced setup ran inside the shell: recover its mktemp paths from
+    // the marker file, then wait for the daemon to report spawn.available.
+    const deadline = Date.now() + 20000;
+    while (Date.now() < deadline) {
+      if (shell.exitCode !== null) break;
+      if (!run.port && existsSync(marker)) {
+        const [scratch, project, port] = readFileSync(marker, 'utf8').trim().split('\n');
+        if (scratch && project && port) {
+          run.scratch = scratch;
+          run.project = project;
+          run.port = Number(port);
+        }
+      }
+      if (run.port) {
+        try {
+          const res = await fetch(`http://127.0.0.1:${run.port}/state`, {
+            signal: AbortSignal.timeout(500),
+          });
+          const state = (await res.json()) as StateResponse | null;
+          if (state?.spawn?.available === true) {
+            run.state = state;
+            return run;
+          }
+        } catch {
+          /* not ready yet */
+        }
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, 200));
+    }
+    throw new Error(
+      `run ${label}: daemon never became ready (exit ${String(shell.exitCode)})${run.stderr ? ` -- stderr: ${run.stderr.trim()}` : ''}`,
+    );
+  };
+
+  try {
+    const [runA, runB] = await Promise.all([startRun('a'), startRun('b')]);
+
+    // Unique resources: distinct ports, homes, fixture copies, tmux sockets.
+    assert.notEqual(runA.port, runB.port, 'both runs bound the same port');
+    assert.notEqual(runA.scratch, runB.scratch, 'both runs share a daemon home');
+    assert.notEqual(runA.project, runB.project, 'both runs share a fixture copy');
+    assert.ok(
+      !runA.scratch.includes('.fleetdeck-test') && !runB.scratch.includes('.fleetdeck-test'),
+    );
+    for (const run of [runA, runB]) {
+      assert.ok(
+        existsSync(path.join(run.project, '.seed/util.js')),
+        `${run.label}: fixture copy missing seeds`,
+      );
+      assert.ok(
+        existsSync(path.join(run.project, '.claude')),
+        `${run.label}: fixture copy missing .claude dir`,
+      );
+      assert.ok(
+        run.state?.spawn?.available === true,
+        `${run.label}: daemon did not report spawn.available`,
+      );
+    }
+
+    // Simulate run A's gate finishing and cleaning up: kill its daemon and
+    // its scoped tmux server exactly as cleanup_resources does (|| true:
+    // the server may already be gone with the daemon).
+    runA.daemon.kill('SIGTERM');
+    try {
+      execFileSync('tmux', ['-L', runA.socket, 'kill-server'], { stdio: 'ignore' });
+    } catch {
+      /* already gone */
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, 500));
+
+    // Run B must be untouched: daemon still answering with spawn available.
+    const res = await fetch(`http://127.0.0.1:${runB.port}/state`, {
+      signal: AbortSignal.timeout(1000),
+    });
+    const stateB = (await res.json()) as StateResponse;
+    assert.equal(
+      stateB.spawn?.available,
+      true,
+      'run B daemon died or lost spawn capability when run A cleaned up',
+    );
+    assert.equal(runB.daemon.exitCode, null, 'run B daemon process exited when run A cleaned up');
+    assert.ok(
+      existsSync(path.join(runB.scratch, 'fleetd.pid')),
+      'run B scratch home was removed by run A',
+    );
+  } finally {
+    cleanup();
+  }
+});

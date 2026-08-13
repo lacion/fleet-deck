@@ -91,7 +91,11 @@ function serveBoots(prefix: string) {
 function serveCannotBootUnderQueryPrefix(prefix: string) {
   const cli = packFakeRuntime(prefix);
   const res = spawnSync(cli, ['serve'], { encoding: 'utf8', timeout: 15000 });
-  assert.equal(res.error, undefined, `Bun still launches; only entrypoint resolution fails: ${res.error}`);
+  assert.equal(
+    res.error,
+    undefined,
+    `Bun still launches; only entrypoint resolution fails: ${res.error}`,
+  );
   assert.notEqual(
     res.status,
     0,

@@ -366,101 +366,99 @@ test('the `name` command mirrors the REST route and is never silently filed as a
 // spawn window cannot hide here — the rename and the kill both resolve
 // against a pane that actually exists. (BUG-171: the previous version asserted
 // only DB/snapshot fields, so a stranded renamed pane still read green.)
-test(
-  'renaming a session with a live pane keeps its pane: the frozen tmux window still drives it',
-  { skip: !tmuxOk() && 'tmux unavailable' },
-  async (t) => {
-    const home = scratch('fleetdeck-rename-pane-daemon-');
-    const cwd = scratch('fleetdeck-rename-pane-cwd-');
-    const daemon = await startDaemon({
-      home,
-      env: {
-        SHELL: '/bin/bash',
-        FLEETDECK_AGENTS_POLL_MS: '100',
-        FLEETDECK_NUDGE_MS: '60000',
-      },
-    });
-    const socket = `fleetdeck-test-${daemon.port}`;
-    t.after(async () => {
-      await daemon.stop({ keepHome: true });
-      rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
-      rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
-    });
+test('renaming a session with a live pane keeps its pane: the frozen tmux window still drives it', {
+  skip: !tmuxOk() && 'tmux unavailable',
+}, async (t) => {
+  const home = scratch('fleetdeck-rename-pane-daemon-');
+  const cwd = scratch('fleetdeck-rename-pane-cwd-');
+  const daemon = await startDaemon({
+    home,
+    env: {
+      SHELL: '/bin/bash',
+      FLEETDECK_AGENTS_POLL_MS: '100',
+      FLEETDECK_NUDGE_MS: '60000',
+    },
+  });
+  const socket = `fleetdeck-test-${daemon.port}`;
+  t.after(async () => {
+    await daemon.stop({ keepHome: true });
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
 
-    const spawned = await postJson(`${daemon.baseUrl}/api/spawn`, { kind: 'shell', cwd });
-    assert.equal(spawned.status, 200, JSON.stringify(spawned.json));
-    const sid = (spawned.json as SpawnAck).session_id;
-    await postHook(
-      daemon.baseUrl,
-      'SessionStart',
-      { session_id: sid, cwd, source: 'startup' },
-      { token: daemon.token },
-    );
-    const before = cardOf((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse, sid);
-    assert.ok(before?.spawn?.tmux_window, 'the spawned session should own a pane window');
-    const window = before.spawn.tmux_window;
-    assert.equal(
-      (spawned.json as SpawnAck).tmux.window,
-      window,
-      'the row names the window the daemon just created',
-    );
+  const spawned = await postJson(`${daemon.baseUrl}/api/spawn`, { kind: 'shell', cwd });
+  assert.equal(spawned.status, 200, JSON.stringify(spawned.json));
+  const sid = (spawned.json as SpawnAck).session_id;
+  await postHook(
+    daemon.baseUrl,
+    'SessionStart',
+    { session_id: sid, cwd, source: 'startup' },
+    { token: daemon.token },
+  );
+  const before = cardOf((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse, sid);
+  assert.ok(before?.spawn?.tmux_window, 'the spawned session should own a pane window');
+  const window = before.spawn.tmux_window;
+  assert.equal(
+    (spawned.json as SpawnAck).tmux.window,
+    window,
+    'the row names the window the daemon just created',
+  );
 
-    const res = await rename(daemon, sid, { suffix: 'renamed-worker' });
-    assert.equal(res.status, 200);
+  const res = await rename(daemon, sid, { suffix: 'renamed-worker' });
+  assert.equal(res.status, 200);
 
-    // The tmux window is an internal handle, deliberately NOT renamed: every pane
-    // operation (mail-to-pane, kill, revive, liveness, the terminal bridge) reads
-    // spawns.tmux_window, so the pane keeps working. Renaming the window instead
-    // would risk a row that names a window tmux no longer has — which the boot
-    // reconcile would read as a dead pane and condemn.
-    const after = cardOf((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse, sid);
-    assert.ok(after?.spawn, 'the renamed session should still own its pane');
-    assert.equal(after.callsign, (res.json as RenameAck).callsign, 'the card took the new name');
-    assert.equal(after.spawn.tmux_window, window, 'and kept the window that actually exists');
-    assert.equal(after.spawn.status, 'live', 'the pane is still live and still owned');
+  // The tmux window is an internal handle, deliberately NOT renamed: every pane
+  // operation (mail-to-pane, kill, revive, liveness, the terminal bridge) reads
+  // spawns.tmux_window, so the pane keeps working. Renaming the window instead
+  // would risk a row that names a window tmux no longer has — which the boot
+  // reconcile would read as a dead pane and condemn.
+  const after = cardOf((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse, sid);
+  assert.ok(after?.spawn, 'the renamed session should still own its pane');
+  assert.equal(after.callsign, (res.json as RenameAck).callsign, 'the card took the new name');
+  assert.equal(after.spawn.tmux_window, window, 'and kept the window that actually exists');
+  assert.equal(after.spawn.status, 'live', 'the pane is still live and still owned');
 
-    // The post-rename proof this test exists for: a pane operation must still
-    // reach the REAL pane. The frozen window is on the test's isolated tmux
-    // server — resolved by the recorded window name, never by the new callsign.
-    tmux(socket, [
-      'send-keys',
-      '-t',
-      `fleetdeck-${daemon.port}:${window}`,
-      'echo still-drivable',
-      'Enter',
-    ]);
-    const seen = await waitUntil(
-      () => {
-        try {
-          return tmux(socket, ['capture-pane', '-p', '-t', `fleetdeck-${daemon.port}:${window}`]);
-        } catch {
-          return null;
-        }
-      },
-      { timeoutMs: 5000, label: 'typed line to reach the renamed pane' },
-    );
-    assert.match(seen, /still-drivable/, 'the frozen window accepted input after the rename');
+  // The post-rename proof this test exists for: a pane operation must still
+  // reach the REAL pane. The frozen window is on the test's isolated tmux
+  // server — resolved by the recorded window name, never by the new callsign.
+  tmux(socket, [
+    'send-keys',
+    '-t',
+    `fleetdeck-${daemon.port}:${window}`,
+    'echo still-drivable',
+    'Enter',
+  ]);
+  const seen = await waitUntil(
+    () => {
+      try {
+        return tmux(socket, ['capture-pane', '-p', '-t', `fleetdeck-${daemon.port}:${window}`]);
+      } catch {
+        return null;
+      }
+    },
+    { timeoutMs: 5000, label: 'typed line to reach the renamed pane' },
+  );
+  assert.match(seen, /still-drivable/, 'the frozen window accepted input after the rename');
 
-    // And the daemon's own post-rename pane operation — the name-verified kill —
-    // must target that same recorded window: 200 with the window actually gone
-    // from the real server (the session's default window 0 may outlive it).
-    const killed = await postJson(`${daemon.baseUrl}/api/spawn/${before.spawn.spawn_id}/kill`, {
-      force: true,
-    });
-    assert.equal(killed.status, 200, JSON.stringify(killed.json));
-    const remaining = tmux(socket, [
-      'list-windows',
-      '-t',
-      `fleetdeck-${daemon.port}`,
-      '-F',
-      '#W',
-    ]).split('\n');
-    assert.ok(
-      !remaining.includes(window),
-      `kill-window removed ${window} from the real tmux server (left: ${String(remaining)})`,
-    );
-  },
-);
+  // And the daemon's own post-rename pane operation — the name-verified kill —
+  // must target that same recorded window: 200 with the window actually gone
+  // from the real server (the session's default window 0 may outlive it).
+  const killed = await postJson(`${daemon.baseUrl}/api/spawn/${before.spawn.spawn_id}/kill`, {
+    force: true,
+  });
+  assert.equal(killed.status, 200, JSON.stringify(killed.json));
+  const remaining = tmux(socket, [
+    'list-windows',
+    '-t',
+    `fleetdeck-${daemon.port}`,
+    '-F',
+    '#W',
+  ]).split('\n');
+  assert.ok(
+    !remaining.includes(window),
+    `kill-window removed ${window} from the real tmux server (left: ${String(remaining)})`,
+  );
+});
 
 test('an offline session cannot be renamed — its name is on its way back to the pool', async (t) => {
   const { daemon, cwd } = await boot(t, 'fleetdeck-rename-offline');

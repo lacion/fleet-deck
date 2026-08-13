@@ -20,7 +20,9 @@ function hangingServer(): Promise<Server> {
     const server = createServer(() => {
       /* hang forever */
     });
-    server.listen(0, '127.0.0.1', () => { resolve(server); });
+    server.listen(0, '127.0.0.1', () => {
+      resolve(server);
+    });
   });
 }
 

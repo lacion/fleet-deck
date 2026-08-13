@@ -54,7 +54,13 @@ type SnapshotDefaults =
 // first frame, and `plans` stays undefined against a daemon too old to send it
 // (< v1.3) — which is exactly how the board decides to hide the plan library.
 type SnapshotLoaded =
-  'schema_version' | 'uptime_ms' | 'version' | 'repo_catalog' | 'settings' | 'home_dir' | 'plans';
+  | 'schema_version'
+  | 'uptime_ms'
+  | 'version'
+  | 'repo_catalog'
+  | 'settings'
+  | 'home_dir'
+  | 'plans';
 
 // The board projection of the daemon `Snapshot`. Two honest relaxations over the
 // wire contract, both for version-skew tolerance:

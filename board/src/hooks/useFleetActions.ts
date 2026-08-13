@@ -43,7 +43,8 @@ interface ReviveAllResult {
   fails: string[];
 }
 type EnableResult =
-  { ok: true; url: string | null; pending: boolean } | { ok: false; reason: string };
+  | { ok: true; url: string | null; pending: boolean }
+  | { ok: false; reason: string };
 type AdoptResult = { ok: true; adopted: boolean; armed: boolean } | { ok: false; reason: string };
 type ShellResult = { ok: true; callsign: string | null } | { ok: false; reason: string };
 

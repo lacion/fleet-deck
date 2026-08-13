@@ -444,7 +444,7 @@ function decodeRecords(
           break;
         case TYPE.TXT: {
           const strings: string[] = [];
-          for (let p = pos; p < pos + rdlength;) {
+          for (let p = pos; p < pos + rdlength; ) {
             const len = buf[p] ?? 0;
             strings.push(buf.toString('utf8', p + 1, p + 1 + len));
             p += 1 + len;

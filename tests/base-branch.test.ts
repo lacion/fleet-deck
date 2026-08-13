@@ -44,7 +44,9 @@ function makeLocalRepo(defaultBranch: string) {
 
 test('no-remote repo with a custom default branch (trunk) resolves the base from the main worktree', async (t) => {
   const repo = makeLocalRepo('trunk');
-  t.after(() => { repo.cleanup(); });
+  t.after(() => {
+    repo.cleanup();
+  });
 
   const base = await baseBranch(repo.dir);
   assert.deepEqual(
@@ -56,7 +58,9 @@ test('no-remote repo with a custom default branch (trunk) resolves the base from
 
 test('agent worktree on a feature branch still resolves the trunk base', async (t) => {
   const repo = makeLocalRepo('trunk');
-  t.after(() => { repo.cleanup(); });
+  t.after(() => {
+    repo.cleanup();
+  });
   const wt = path.join(repo.dir, '..', `${path.basename(repo.dir)}-wt`);
   git(['worktree', 'add', '-q', '-b', 'feature', wt], repo.dir);
   t.after(() => {
@@ -78,14 +82,18 @@ test('agent worktree on a feature branch still resolves the trunk base', async (
 test('conventional local fallbacks still hold: main, then master', async (t) => {
   for (const name of ['main', 'master']) {
     const repo = makeLocalRepo(name);
-    t.after(() => { repo.cleanup(); });
+    t.after(() => {
+      repo.cleanup();
+    });
     assert.deepEqual(await baseBranch(repo.dir), { ref: name, local: true });
   }
 });
 
 test('a main worktree in detached HEAD falls back to conventional local branches', async (t) => {
   const repo = makeLocalRepo('trunk');
-  t.after(() => { repo.cleanup(); });
+  t.after(() => {
+    repo.cleanup();
+  });
   // Detach the main worktree so `git worktree list` shows no branch for it,
   // then give the repo a conventional branch to land on.
   git(['checkout', '-q', '--detach'], repo.dir);

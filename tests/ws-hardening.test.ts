@@ -117,7 +117,9 @@ test('M-P1: a burst of mutations coalesces into far fewer broadcasts', async (t:
   assert.equal(started.status, 200, 'the SessionStart hook must be accepted');
 
   const { ws, frames } = connect(daemon.baseUrl.replace(/^http/, 'ws') + '/ws');
-  t.after(() => { ws.close(); });
+  t.after(() => {
+    ws.close();
+  });
   const first = (await waitUntil(
     () => frames.find((f) => f.type === 'snapshot'),
     'initial connect snapshot',
@@ -206,7 +208,9 @@ test('R1-2: a /ws client past the buffer cap is TERMINATED on broadcast, not sil
   await waitForSettled(daemon.baseUrl);
 
   const { ws, frames } = connect(daemon.baseUrl.replace(/^http/, 'ws') + '/ws');
-  t.after(() => { ws.close(); });
+  t.after(() => {
+    ws.close();
+  });
   let closed = false;
   ws.on('close', () => {
     closed = true;
@@ -230,7 +234,9 @@ test('R1-2: a /ws client past the buffer cap is TERMINATED on broadcast, not sil
   // snapshot on connect, so it recovers the mutation it would otherwise never
   // have learned about. (The connect handler does not cap, so this frame lands.)
   const again = connect(daemon.baseUrl.replace(/^http/, 'ws') + '/ws');
-  t.after(() => { again.ws.close(); });
+  t.after(() => {
+    again.ws.close();
+  });
   const fresh = await waitUntil(
     () =>
       again.frames.find(
@@ -290,7 +296,9 @@ test('BUG-066: /health "settled" closes the startup mutation window — an over-
   // startup flush left to terminate this client.
   await waitForSettled(daemon.baseUrl, 'boot reconciliation settled after restart');
   const { ws, frames } = connect(daemon.baseUrl.replace(/^http/, 'ws') + '/ws');
-  t.after(() => { ws.close(); });
+  t.after(() => {
+    ws.close();
+  });
   let closed = false;
   ws.on('close', () => {
     closed = true;
@@ -384,7 +392,9 @@ test('H-S1: the /ws snapshot carries no token; /state (authorized) still does', 
   const { ws, frames } = connect(
     `${baseUrl.replace(/^http/, 'ws')}/ws?t=${encodeURIComponent(LAN_TOKEN)}`,
   );
-  t.after(() => { ws.close(); });
+  t.after(() => {
+    ws.close();
+  });
   const frame = await waitUntil(
     () => frames.find((f) => f.type === 'snapshot'),
     'LAN /ws snapshot',
@@ -440,7 +450,9 @@ test('BUG-031: /ws frames carry legacy_upgrade and a tokenless hook pushes one l
   // drops legacy_upgrade the restart banner is wiped the moment the socket
   // opens and (the board stops /state polling) never comes back.
   const { ws, frames } = connect(daemon.baseUrl.replace(/^http/, 'ws') + '/ws');
-  t.after(() => { ws.close(); });
+  t.after(() => {
+    ws.close();
+  });
   const first = await waitUntil(
     () => frames.find((f) => f.type === 'snapshot'),
     'connect snapshot',

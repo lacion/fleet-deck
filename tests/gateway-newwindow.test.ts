@@ -40,7 +40,9 @@ function stubTmux(t: TestContext) {
     else process.env['FLEETDECK_HOME'] = previousHome;
   });
   const dir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-gwtmux-'));
-  t.after(() => { rmSync(dir, { recursive: true, force: true }); });
+  t.after(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
   const log = path.join(dir, 'argv.jsonl');
   const bin = path.join(dir, 'tmux');
   writeFileSync(
@@ -140,7 +142,9 @@ test('newWindow: a value containing shell metacharacters stays one argv element'
   // exist from a prior run or another process and fail safe code. Assert it
   // starts absent so the "nothing was executed" check is meaningful.
   const dir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-gwcanary-'));
-  t.after(() => { rmSync(dir, { recursive: true, force: true }); });
+  t.after(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
   const canary = path.join(dir, 'fd-pwned');
   assert.equal(existsSync(canary), false, 'canary must start absent');
 

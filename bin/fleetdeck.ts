@@ -245,7 +245,9 @@ async function status(args: string[] = []): Promise<number> {
 // (a missing minor or patch) is conservatively rejected rather than assumed.
 const MIN_BUN_VERSION = '1.3.14';
 function bunVersionSupported(version: unknown): boolean {
-  const parts = String(version).split('.').map((n) => Number.parseInt(n, 10));
+  const parts = String(version)
+    .split('.')
+    .map((n) => Number.parseInt(n, 10));
   const major = parts[0];
   const minor = parts[1];
   const patch = parts[2];

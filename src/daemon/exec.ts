@@ -28,7 +28,8 @@ import { redactDiagnosticText, scrubUrlCredentials } from './payload-capture.ts'
 // spawning — so it is a `string | number | null | undefined` union that consumers
 // read both ways (`code === 'ETIMEDOUT'` and `code !== 1`).
 export type ExecResult =
-  { ok: true; out: string } | { ok: false; code?: string | number | null | undefined; err: string };
+  | { ok: true; out: string }
+  | { ok: false; code?: string | number | null | undefined; err: string };
 
 // Grace between the timeout's SIGTERM and the SIGKILL escalation below.
 // 1s is enough for tmux/git/agents-cli to exit cleanly on TERM, and bounds the

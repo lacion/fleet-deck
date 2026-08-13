@@ -41,10 +41,18 @@ export function useFeedbackStrip() {
   const showNote = useCallback((note: FeedbackNote, ms: number) => {
     clearTimeout(clearTimer.current ?? undefined);
     setClearNote(note);
-    if (ms) clearTimer.current = setTimeout(() => { setClearNote(null); }, ms);
+    if (ms)
+      clearTimer.current = setTimeout(() => {
+        setClearNote(null);
+      }, ms);
   }, []);
 
-  useEffect(() => () => { clearTimeout(clearTimer.current ?? undefined); }, []);
+  useEffect(
+    () => () => {
+      clearTimeout(clearTimer.current ?? undefined);
+    },
+    [],
+  );
 
   // 2.3 option 2 — the spawn-failure banner. Any card that TRANSITIONS to
   // offline wearing a "spawn failed:" note lands here: tombstones from THIS
@@ -92,11 +100,12 @@ export function useFeedbackStrip() {
     [],
   );
 
-  const dismissSpawnFail = useCallback(() => { setSpawnFail(null); }, []);
-  const toggleSpawnFailDetail = useCallback(
-    () => { setSpawnFail((f) => (f ? { ...f, open: !f.open } : f)); },
-    [],
-  );
+  const dismissSpawnFail = useCallback(() => {
+    setSpawnFail(null);
+  }, []);
+  const toggleSpawnFailDetail = useCallback(() => {
+    setSpawnFail((f) => (f ? { ...f, open: !f.open } : f));
+  }, []);
 
   return {
     clearNote,

@@ -30,12 +30,17 @@ function resolveClaudeBinary(): string | null {
 
 test('version-bump guard: the local claude binary still ships asyncRewake and AskUserQuestion', (t) => {
   const bin = resolveClaudeBinary();
-  if (!bin) { t.skip('no `claude` binary on PATH — nothing to guard here'); return; }
+  if (!bin) {
+    t.skip('no `claude` binary on PATH — nothing to guard here');
+    return;
+  }
 
   for (const feature of ['asyncRewake', 'AskUserQuestion']) {
     const grep: SpawnSyncReturns<Buffer> = spawnSync('grep', ['-qaF', feature, bin]);
-    if (grep.status === 2 || grep.error)
-      { t.skip(`could not grep ${bin}: ${grep.error?.message ?? 'grep error'}`); return; }
+    if (grep.status === 2 || grep.error) {
+      t.skip(`could not grep ${bin}: ${grep.error?.message ?? 'grep error'}`);
+      return;
+    }
     assert.equal(
       grep.status,
       0,

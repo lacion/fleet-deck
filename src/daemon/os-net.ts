@@ -50,8 +50,7 @@ function envInterfaces(): Interfaces | null {
   if (seamFile) {
     try {
       const parsed = JSON.parse(readFileSync(seamFile, 'utf8')) as unknown;
-      if (Array.isArray(parsed) && parsed.length > 0)
-        return { ethernet: parsed };
+      if (Array.isArray(parsed) && parsed.length > 0) return { ethernet: parsed };
     } catch {
       /* mid-write or absent: keep advertising network A below */
     }

@@ -51,22 +51,28 @@ export function rawRequest({
       res.on('data', (chunk: Buffer) => {
         text += chunk.toString();
       });
-      res.on('end', () => { finish(() => { resolve({ status: res.statusCode, text }); }); });
+      res.on('end', () => {
+        finish(() => {
+          resolve({ status: res.statusCode, text });
+        });
+      });
     });
     // node:http's `req.setTimeout(ms, cb)` fires a socket-inactivity callback
     // under Node, but Bun's node:http compat does not surface it — a hung route
     // then blocks to the outer CI timeout, the exact stall BUG-162 fixed. An
     // explicit deadline timer that destroys the request AND rejects behaves
     // identically on both runtimes.
-    timer = setTimeout(
-      () =>
-        { finish(() => {
-          req.destroy();
-          reject(new Error(`raw ${method} ${path} timed out`));
-        }); },
-      scaleMs(timeout),
-    );
-    req.on('error', (e) => { finish(() => { reject(e); }); });
+    timer = setTimeout(() => {
+      finish(() => {
+        req.destroy();
+        reject(new Error(`raw ${method} ${path} timed out`));
+      });
+    }, scaleMs(timeout));
+    req.on('error', (e) => {
+      finish(() => {
+        reject(e);
+      });
+    });
     req.end(body);
   });
 }

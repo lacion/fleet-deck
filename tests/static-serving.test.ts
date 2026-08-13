@@ -197,7 +197,9 @@ test('static serving: board, assets, traversal, API regression', async (t: TestC
   await t.test('regression: /state and hook endpoints still behave', async () => {
     const sid = randomUUID();
     const cwd = mkdtempSync(path.join(tmpdir(), 'fleetdeck-static-cwd-'));
-    t.after(() => { rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+    t.after(() => {
+      rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    });
 
     const hook = await postHook(
       daemon.baseUrl,

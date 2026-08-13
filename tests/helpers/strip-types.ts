@@ -17,7 +17,9 @@ import * as nodeModule from 'node:module';
 
 type Stripper = (code: string) => string;
 
-type BunTranspilerCtor = new (options: { loader: string }) => { transformSync(code: string): string };
+type BunTranspilerCtor = new (options: {
+  loader: string;
+}) => { transformSync(code: string): string };
 
 /** Erase TypeScript annotations from a source fragment, on Node or Bun. */
 export function stripTypes(src: string): string {

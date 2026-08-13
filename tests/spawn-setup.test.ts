@@ -443,82 +443,78 @@ test('setRepoSetupEntry writes one repo without a broadcast and drops junk', (t)
   assert.deepEqual(repoSetup(), { other: 'echo hi' });
 });
 
-test(
-  'real tmux setup failure stays visible, condemns immediately, and never starts Claude',
-  { skip: !tmuxOk() && 'tmux unavailable' },
-  async (t) => {
-    const cwd = scratch('fd-setup-fail-');
-    const daemon = await startDaemon({
-      env: {
-        FLEETDECK_AGENTS_POLL_MS: '100',
-        FLEETDECK_NUDGE_MS: '60000',
-        FLEETDECK_SETUP_REGISTER_MS: '1000',
-      },
-    });
-    const socket = `fleetdeck-test-${daemon.port}`;
-    t.after(async () => {
-      await daemon.stop();
-      rmSync(cwd, { recursive: true, force: true });
-    });
+test('real tmux setup failure stays visible, condemns immediately, and never starts Claude', {
+  skip: !tmuxOk() && 'tmux unavailable',
+}, async (t) => {
+  const cwd = scratch('fd-setup-fail-');
+  const daemon = await startDaemon({
+    env: {
+      FLEETDECK_AGENTS_POLL_MS: '100',
+      FLEETDECK_NUDGE_MS: '60000',
+      FLEETDECK_SETUP_REGISTER_MS: '1000',
+    },
+  });
+  const socket = `fleetdeck-test-${daemon.port}`;
+  t.after(async () => {
+    await daemon.stop();
+    rmSync(cwd, { recursive: true, force: true });
+  });
 
-    const spawned = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd, setup_cmd: 'exit 7' });
-    assert.equal(spawned.status, 200);
-    const ack = spawned.json as SpawnHttpAck;
-    const card = await waitUntil(
-      async (): Promise<SessionEntry | null> => {
-        const s = ((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse).sessions.find(
-          (row) => row.session_id === ack.session_id,
-        );
-        return s?.spawn?.status === 'pane-dead' ? s : null;
-      },
-      { timeoutMs: 5000, label: 'setup failure condemnation' },
-    );
-    assert.equal(card.note, 'pane exited during setup/bring-up — open the terminal for the error');
+  const spawned = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd, setup_cmd: 'exit 7' });
+  assert.equal(spawned.status, 200);
+  const ack = spawned.json as SpawnHttpAck;
+  const card = await waitUntil(
+    async (): Promise<SessionEntry | null> => {
+      const s = ((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse).sessions.find(
+        (row) => row.session_id === ack.session_id,
+      );
+      return s?.spawn?.status === 'pane-dead' ? s : null;
+    },
+    { timeoutMs: 5000, label: 'setup failure condemnation' },
+  );
+  assert.equal(card.note, 'pane exited during setup/bring-up — open the terminal for the error');
 
-    const target = `=${ack.tmux.session}:=${ack.tmux.window}`;
-    // -S - : include scrollback. tmux moves earlier lines (the ▶ banner) into
-    // history on the detached pane by the time it dies; the visible screen keeps
-    // the ✗ failure line, which is the human-facing guarantee — the banner is
-    // asserted from history.
-    const screen = tmux(socket, ['capture-pane', '-p', '-S', '-', '-t', target]);
-    assert.match(screen, /fleetdeck setup: exit 7/);
-    assert.match(screen, /setup failed \(exit 7\) — claude not started/);
-    assert.doesNotMatch(screen, /claude: .*not found/);
-  },
-);
+  const target = `=${ack.tmux.session}:=${ack.tmux.window}`;
+  // -S - : include scrollback. tmux moves earlier lines (the ▶ banner) into
+  // history on the detached pane by the time it dies; the visible screen keeps
+  // the ✗ failure line, which is the human-facing guarantee — the banner is
+  // asserted from history.
+  const screen = tmux(socket, ['capture-pane', '-p', '-S', '-', '-t', target]);
+  assert.match(screen, /fleetdeck setup: exit 7/);
+  assert.match(screen, /setup failed \(exit 7\) — claude not started/);
+  assert.doesNotMatch(screen, /claude: .*not found/);
+});
 
-test(
-  'real tmux long-running setup is not condemned while sh/setup binary runs',
-  { skip: !tmuxOk() && 'tmux unavailable' },
-  async (t) => {
-    const cwd = scratch('fd-setup-sleep-');
-    const daemon = await startDaemon({
-      env: {
-        FLEETDECK_AGENTS_POLL_MS: '100',
-        FLEETDECK_NUDGE_MS: '60000',
-        FLEETDECK_SETUP_REGISTER_MS: '250',
-      },
-    });
-    t.after(async () => {
-      await daemon.stop();
-      rmSync(cwd, { recursive: true, force: true });
-    });
+test('real tmux long-running setup is not condemned while sh/setup binary runs', {
+  skip: !tmuxOk() && 'tmux unavailable',
+}, async (t) => {
+  const cwd = scratch('fd-setup-sleep-');
+  const daemon = await startDaemon({
+    env: {
+      FLEETDECK_AGENTS_POLL_MS: '100',
+      FLEETDECK_NUDGE_MS: '60000',
+      FLEETDECK_SETUP_REGISTER_MS: '250',
+    },
+  });
+  t.after(async () => {
+    await daemon.stop();
+    rmSync(cwd, { recursive: true, force: true });
+  });
 
-    const spawned = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd, setup_cmd: 'sleep 30' });
-    assert.equal(spawned.status, 200);
-    const ack = spawned.json as SpawnHttpAck;
-    // Require the liveness poller to actually run and classify the still-running
-    // setup: a row observed still in its initial 'spawning' state proves nothing
-    // about the scheduler (BUG-178).
-    const card = await waitUntil(
-      async (): Promise<SessionEntry | null> => {
-        const s = ((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse).sessions.find(
-          (row) => row.session_id === ack.session_id,
-        );
-        return s?.spawn?.status === 'stalled' ? s : null;
-      },
-      { timeoutMs: 5000, label: 'long-running setup stall classification' },
-    );
-    assert.match(card.note ?? '', /setup may still be running/);
-  },
-);
+  const spawned = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd, setup_cmd: 'sleep 30' });
+  assert.equal(spawned.status, 200);
+  const ack = spawned.json as SpawnHttpAck;
+  // Require the liveness poller to actually run and classify the still-running
+  // setup: a row observed still in its initial 'spawning' state proves nothing
+  // about the scheduler (BUG-178).
+  const card = await waitUntil(
+    async (): Promise<SessionEntry | null> => {
+      const s = ((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse).sessions.find(
+        (row) => row.session_id === ack.session_id,
+      );
+      return s?.spawn?.status === 'stalled' ? s : null;
+    },
+    { timeoutMs: 5000, label: 'long-running setup stall classification' },
+  );
+  assert.match(card.note ?? '', /setup may still be running/);
+});

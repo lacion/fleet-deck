@@ -238,7 +238,8 @@ export interface Settings {
 // currentLan()); the `/ws` frame omits it, which is why the board defaults it
 // to null and preserves the prior value across WS pushes.
 export type Lan =
-  { enabled: true; urls: string[]; mdns: string | null } | { enabled: false; urls: string[] };
+  | { enabled: true; urls: string[]; mdns: string | null }
+  | { enabled: false; urls: string[] };
 
 // Pre-0.16.0 hook sessions the daemon has seen (bare session ids) and how many
 // have upgraded. NOT secret — rides even the tokenless /ws frame.

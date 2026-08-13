@@ -144,7 +144,9 @@ export default function Header({
               ? `Watch the ${watchable.length} selected agent${watchable.length === 1 ? '' : 's'}`
               : `Watch all ${termableSessions.length} live agent${termableSessions.length === 1 ? '' : 's'}`
           }
-          onClick={() => { onOpenGrid(watchable); }}
+          onClick={() => {
+            onOpenGrid(watchable);
+          }}
         >
           ▦ Terminals
           <span className="fd-spawncount">{watchable.length || termableSessions.length}</span>

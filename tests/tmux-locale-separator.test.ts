@@ -80,64 +80,58 @@ function serverUnder(
 
 const C_LOCALE = { LC_ALL: 'C', LANG: 'C', LC_CTYPE: 'C' };
 
-test(
-  'REGRESSION: the shipped tmux field separator survives a C-locale server',
-  { skip: !tmuxOk() && 'tmux unavailable' },
-  (t) => {
-    const sep = shippedSeparator();
-    const { ask } = serverUnder(t, C_LOCALE);
+test('REGRESSION: the shipped tmux field separator survives a C-locale server', {
+  skip: !tmuxOk() && 'tmux unavailable',
+}, (t) => {
+  const sep = shippedSeparator();
+  const { ask } = serverUnder(t, C_LOCALE);
 
-    const round = ask(`A${sep}B`);
-    assert.equal(
-      round,
-      `A${sep}B`,
-      `the field separator ${JSON.stringify(sep)} must survive display-message under a C-locale tmux server; ` +
-        `got ${JSON.stringify(round)}. A separator tmux rewrites here makes every spawn fail on any C-locale host.`,
-    );
-  },
-);
+  const round = ask(`A${sep}B`);
+  assert.equal(
+    round,
+    `A${sep}B`,
+    `the field separator ${JSON.stringify(sep)} must survive display-message under a C-locale tmux server; ` +
+      `got ${JSON.stringify(round)}. A separator tmux rewrites here makes every spawn fail on any C-locale host.`,
+  );
+});
 
-test(
-  'REGRESSION: a two-field generation-shaped read parses under a C-locale server',
-  { skip: !tmuxOk() && 'tmux unavailable' },
-  (t) => {
-    const sep = shippedSeparator();
-    const { socket, ask } = serverUnder(t, C_LOCALE);
-    const uuid = '792042d8-0d4d-4eb5-85d7-6c5372f63585';
-    execFileSync('tmux', ['-L', socket, 'set', '-g', '@fleetdeck_generation_4711', uuid], {
-      stdio: 'ignore',
-      env: { ...process.env, ...C_LOCALE },
-    });
+test('REGRESSION: a two-field generation-shaped read parses under a C-locale server', {
+  skip: !tmuxOk() && 'tmux unavailable',
+}, (t) => {
+  const sep = shippedSeparator();
+  const { socket, ask } = serverUnder(t, C_LOCALE);
+  const uuid = '792042d8-0d4d-4eb5-85d7-6c5372f63585';
+  execFileSync('tmux', ['-L', socket, 'set', '-g', '@fleetdeck_generation_4711', uuid], {
+    stdio: 'ignore',
+    env: { ...process.env, ...C_LOCALE },
+  });
 
-    // The exact shape readServerGeneration() sends, and the exact parse it does.
-    const value = ask(`#{@fleetdeck_generation_4711}${sep}#{pid}`);
-    const [generation, pidText, ...extra] = value.split(sep);
-    assert.equal(extra.length, 0, `expected exactly two fields, got ${JSON.stringify(value)}`);
-    assert.equal(generation, uuid, 'the generation UUID must come back whole and matchable');
-    assert.ok(
-      Number.isInteger(Number(pidText)) && Number(pidText) > 0,
-      `the server pid must parse; got ${JSON.stringify(pidText)} from ${JSON.stringify(value)}`,
-    );
-  },
-);
+  // The exact shape readServerGeneration() sends, and the exact parse it does.
+  const value = ask(`#{@fleetdeck_generation_4711}${sep}#{pid}`);
+  const [generation, pidText, ...extra] = value.split(sep);
+  assert.equal(extra.length, 0, `expected exactly two fields, got ${JSON.stringify(value)}`);
+  assert.equal(generation, uuid, 'the generation UUID must come back whole and matchable');
+  assert.ok(
+    Number.isInteger(Number(pidText)) && Number(pidText) > 0,
+    `the server pid must parse; got ${JSON.stringify(pidText)} from ${JSON.stringify(value)}`,
+  );
+});
 
-test(
-  'CONTROL: a literal TAB really is rewritten by a C-locale server (the bug this pins)',
-  { skip: !tmuxOk() && 'tmux unavailable' },
-  (t) => {
-    const { ask } = serverUnder(t, C_LOCALE);
-    const round = ask('A\tB');
-    // If a future tmux stops sanitizing TAB this control goes stale rather than
-    // wrong — the guarantee we depend on is the assertion above, not this one.
-    assert.notEqual(
-      round,
-      'A\tB',
-      'control: a C-locale tmux server is expected to rewrite a literal TAB — if this now survives, ' +
-        'tmux behaviour changed and the separator rationale in spawn.mjs should be revisited',
-    );
-    assert.equal(round, 'A_B', `expected the documented "_" rewrite, got ${JSON.stringify(round)}`);
-  },
-);
+test('CONTROL: a literal TAB really is rewritten by a C-locale server (the bug this pins)', {
+  skip: !tmuxOk() && 'tmux unavailable',
+}, (t) => {
+  const { ask } = serverUnder(t, C_LOCALE);
+  const round = ask('A\tB');
+  // If a future tmux stops sanitizing TAB this control goes stale rather than
+  // wrong — the guarantee we depend on is the assertion above, not this one.
+  assert.notEqual(
+    round,
+    'A\tB',
+    'control: a C-locale tmux server is expected to rewrite a literal TAB — if this now survives, ' +
+      'tmux behaviour changed and the separator rationale in spawn.mjs should be revisited',
+  );
+  assert.equal(round, 'A_B', `expected the documented "_" rewrite, got ${JSON.stringify(round)}`);
+});
 
 test('the separator cannot collide with the values it delimits', () => {
   const sep = shippedSeparator();

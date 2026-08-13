@@ -82,7 +82,9 @@ function mustParse(input: string): NonNullable<ReturnType<typeof parseSemver>> {
 
 function scratchDir(t: TestContext): string {
   const d = mkdtempSync(path.join(tmpdir(), 'fleetdeck-cwd-'));
-  t.after(() => { rmSync(d, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+  t.after(() => {
+    rmSync(d, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
   return d;
 }
 
@@ -366,7 +368,9 @@ test("replacementMatches: the post-spawn version gate accepts only the hook's ex
 
 test('verifyDaemonPid refuses a non-fleetd-shaped live pid, a pidfile mismatch, and a missing pidfile', async (t) => {
   const home = mkdtempSync(path.join(tmpdir(), 'fleetdeck-verify-'));
-  t.after(() => { rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+  t.after(() => {
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
 
   // A live but non-fleetd node process: its /proc cmdline carries no
   // fleetd*.mjs arg, so livePidLooksLikeFleetd (Linux) must reject it even
@@ -403,7 +407,9 @@ test('verifyDaemonPid refuses a non-fleetd-shaped live pid, a pidfile mismatch, 
 
   // A missing pidfile is refused.
   const emptyHome = mkdtempSync(path.join(tmpdir(), 'fleetdeck-verify-empty-'));
-  t.after(() => { rmSync(emptyHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+  t.after(() => {
+    rmSync(emptyHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
   assert.equal(verifyDaemonPid(sleeperPid, emptyHome), false, 'a missing pidfile must be refused');
 
   // A bad pid argument is refused.
@@ -653,7 +659,9 @@ test('an older hook never downgrades a newer daemon (daemon pinned to 99.0.0)', 
 test('a SIGTERM-immune stale daemon: the hook fails open and the stub keeps serving (no SIGKILL escalation)', async (t) => {
   const port = randomPort();
   const home = mkdtempSync(path.join(tmpdir(), 'fleetdeck-immortal-home-'));
-  t.after(() => { rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+  t.after(() => {
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
 
   // The disguise argv 'fleetd.mjs' makes livePidLooksLikeFleetd (and thus
   // verifyDaemonPid) accept the stub, so the hook genuinely reaches the SIGTERM

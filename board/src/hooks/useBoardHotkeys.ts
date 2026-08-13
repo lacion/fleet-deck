@@ -252,7 +252,9 @@ export function useBoardHotkeys({
       }
     };
     window.addEventListener('keydown', onKey);
-    return () => { window.removeEventListener('keydown', onKey); };
+    return () => {
+      window.removeEventListener('keydown', onKey);
+    };
     // Setters (useState) and the gridOpen/killOpen/armOpen/renameOpen refs are
     // referentially stable, so this effect still only re-subscribes when the rail
     // selection changes (and when the file viewer opens/closes — fsOpen is a

@@ -86,7 +86,8 @@ interface ScopedWindow {
   pane_cmd: string;
 }
 type KillResult =
-  { ok: true; window_id: string } | { ok: false; gone?: boolean; stale?: boolean; error?: string };
+  | { ok: true; window_id: string }
+  | { ok: false; gone?: boolean; stale?: boolean; error?: string };
 interface NewWindowSpec {
   port: Port;
   callsign: string;

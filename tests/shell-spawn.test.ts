@@ -313,51 +313,47 @@ test('shell kill needs no force; liveness accepts any running command; retention
   assert.equal(killed.body.status, 'killed');
 });
 
-test(
-  'real tmux keeps a healthy bash shell and condemns it after exit',
-  {
-    skip: !tmuxOk() && 'tmux unavailable',
-  },
-  async (t) => {
-    const cwd = scratch('fd-shell-real-');
-    const daemon = await startDaemon({
-      env: {
-        SHELL: '/bin/bash',
-        FLEETDECK_AGENTS_POLL_MS: '100',
-        FLEETDECK_NUDGE_MS: '60000',
-      },
-    });
-    const socket = `fleetdeck-test-${daemon.port}`;
-    t.after(async () => {
-      await daemon.stop();
-      rmSync(cwd, { recursive: true, force: true });
-    });
+test('real tmux keeps a healthy bash shell and condemns it after exit', {
+  skip: !tmuxOk() && 'tmux unavailable',
+}, async (t) => {
+  const cwd = scratch('fd-shell-real-');
+  const daemon = await startDaemon({
+    env: {
+      SHELL: '/bin/bash',
+      FLEETDECK_AGENTS_POLL_MS: '100',
+      FLEETDECK_NUDGE_MS: '60000',
+    },
+  });
+  const socket = `fleetdeck-test-${daemon.port}`;
+  t.after(async () => {
+    await daemon.stop();
+    rmSync(cwd, { recursive: true, force: true });
+  });
 
-    const spawned = await postJson(`${daemon.baseUrl}/api/spawn`, { kind: 'shell', cwd });
-    assert.equal(spawned.status, 200);
-    const spawnedBody = spawned.json as SpawnHttpAck;
-    await new Promise((resolve) => setTimeout(resolve, 450));
-    let card = ((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse).sessions.find(
-      (s) => s.session_id === spawnedBody.session_id,
-    );
-    assert.ok(card);
-    assert.equal(card.spawn?.status, 'live', 'a bare bash shell is healthy for kind=shell');
+  const spawned = await postJson(`${daemon.baseUrl}/api/spawn`, { kind: 'shell', cwd });
+  assert.equal(spawned.status, 200);
+  const spawnedBody = spawned.json as SpawnHttpAck;
+  await new Promise((resolve) => setTimeout(resolve, 450));
+  let card = ((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse).sessions.find(
+    (s) => s.session_id === spawnedBody.session_id,
+  );
+  assert.ok(card);
+  assert.equal(card.spawn?.status, 'live', 'a bare bash shell is healthy for kind=shell');
 
-    const target = `=${spawnedBody.tmux.session}:=${spawnedBody.tmux.window}`;
-    tmux(socket, ['send-keys', '-t', target, 'exit', 'Enter']);
-    card = await waitUntil(
-      async () => {
-        const s = ((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse).sessions.find(
-          (row) => row.session_id === spawnedBody.session_id,
-        );
-        return s?.spawn?.status === 'pane-dead' ? s : null;
-      },
-      { timeoutMs: 5000, label: 'shell pane condemnation after exit' },
-    );
-    assert.equal(card.col, 'offline');
-    assert.match(card.note ?? '', /shell pane exited/);
-  },
-);
+  const target = `=${spawnedBody.tmux.session}:=${spawnedBody.tmux.window}`;
+  tmux(socket, ['send-keys', '-t', target, 'exit', 'Enter']);
+  card = await waitUntil(
+    async () => {
+      const s = ((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse).sessions.find(
+        (row) => row.session_id === spawnedBody.session_id,
+      );
+      return s?.spawn?.status === 'pane-dead' ? s : null;
+    },
+    { timeoutMs: 5000, label: 'shell pane condemnation after exit' },
+  );
+  assert.equal(card.col, 'offline');
+  assert.match(card.note ?? '', /shell pane exited/);
+});
 
 // --- adversarial-review MAJOR-2: the ORCHESTRATOR path must not route into a
 // shell. /mail's walls (fan-out exclusion + direct 409) do not cover /command:

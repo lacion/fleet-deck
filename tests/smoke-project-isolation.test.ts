@@ -259,31 +259,25 @@ function assertFixturePreserved(projectDir: string, label: string): void {
 // .claude/settings.json from the checkout at exactly this point; the fixed
 // script's trap only reaps the run-unique scratch home. A stub `node` exits
 // the script right after the workers are spawned so no daemon is needed.
-test(
-  'run-smoke.sh aborting after the workers leaves the fixture untouched',
-  { timeout: 60_000 },
-  (t) => {
-    const smokePort = '28971';
-    const { sandbox, demoDir, projectDir, binDir } = makeSandbox(t, smokePort);
-    // Two UUIDs for SA/SB, then force the "no token minted" abort. Keeping the
-    // default node (the health-server shim) would leave a daemon running, which
-    // is out of scope for this fixture-preservation test.
-    writeFileSync(
-      path.join(binDir, 'node'),
-      '#!/bin/bash\necho 00000000-0000-4000-8000-000000000000\nexit 0\n',
-    );
-    chmodSync(path.join(binDir, 'node'), 0o755);
-    const result = runSmoke(sandbox, demoDir, binDir, smokePort);
-    assert.notEqual(result.status, 0, 'post-worker abort run must fail');
-    assert.match(result.stdout + result.stderr, /smoke daemon did not mint its bearer token/);
-    assert.match(
-      result.stdout,
-      /T\+15 session B launched/,
-      'run must have reached the worker phase',
-    );
-    assertFixturePreserved(projectDir, 'post-worker abort run');
-  },
-);
+test('run-smoke.sh aborting after the workers leaves the fixture untouched', {
+  timeout: 60_000,
+}, (t) => {
+  const smokePort = '28971';
+  const { sandbox, demoDir, projectDir, binDir } = makeSandbox(t, smokePort);
+  // Two UUIDs for SA/SB, then force the "no token minted" abort. Keeping the
+  // default node (the health-server shim) would leave a daemon running, which
+  // is out of scope for this fixture-preservation test.
+  writeFileSync(
+    path.join(binDir, 'node'),
+    '#!/bin/bash\necho 00000000-0000-4000-8000-000000000000\nexit 0\n',
+  );
+  chmodSync(path.join(binDir, 'node'), 0o755);
+  const result = runSmoke(sandbox, demoDir, binDir, smokePort);
+  assert.notEqual(result.status, 0, 'post-worker abort run must fail');
+  assert.match(result.stdout + result.stderr, /smoke daemon did not mint its bearer token/);
+  assert.match(result.stdout, /T\+15 session B launched/, 'run must have reached the worker phase');
+  assertFixturePreserved(projectDir, 'post-worker abort run');
+});
 
 // The historical trap was armed before the dependency preflight, so even an
 // immediate abort reset/deleted the fixture. The abort path must be equally
@@ -292,18 +286,16 @@ test(
 // no daemon, and the same fixture-preservation assertion runs against the
 // trap. (The preflight itself is unreachable without regressing the sandbox:
 // PATH must keep /usr/bin for dirname/mktemp/mkdir, which provides timeout.)
-test(
-  'run-smoke.sh aborting with dead workers leaves the fixture untouched',
-  { timeout: 30_000 },
-  (t) => {
-    const smokePort = '28972';
-    const { sandbox, demoDir, projectDir, binDir } = makeSandbox(t, smokePort);
-    rmSync(path.join(binDir, 'timeout')); // replace the /usr/bin/timeout symlink
-    writeFileSync(path.join(binDir, 'timeout'), '#!/bin/bash\nexit 127\n');
-    chmodSync(path.join(binDir, 'timeout'), 0o755);
-    const result = runSmoke(sandbox, demoDir, binDir, smokePort);
-    assert.notEqual(result.status, 0, 'abort run must fail');
-    assert.match(result.stdout + result.stderr, /smoke daemon did not mint its bearer token/);
-    assertFixturePreserved(projectDir, 'dead-worker abort run');
-  },
-);
+test('run-smoke.sh aborting with dead workers leaves the fixture untouched', {
+  timeout: 30_000,
+}, (t) => {
+  const smokePort = '28972';
+  const { sandbox, demoDir, projectDir, binDir } = makeSandbox(t, smokePort);
+  rmSync(path.join(binDir, 'timeout')); // replace the /usr/bin/timeout symlink
+  writeFileSync(path.join(binDir, 'timeout'), '#!/bin/bash\nexit 127\n');
+  chmodSync(path.join(binDir, 'timeout'), 0o755);
+  const result = runSmoke(sandbox, demoDir, binDir, smokePort);
+  assert.notEqual(result.status, 0, 'abort run must fail');
+  assert.match(result.stdout + result.stderr, /smoke daemon did not mint its bearer token/);
+  assertFixturePreserved(projectDir, 'dead-worker abort run');
+});

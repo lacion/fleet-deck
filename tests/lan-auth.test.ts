@@ -131,22 +131,28 @@ function refused(url: string): Promise<void> {
       clearTimeout(timer);
       fn();
     };
-    const timer = setTimeout(
-      () =>
-        { done(() => {
-          ws.terminate();
-          reject(new Error('unauthenticated WebSocket was not closed'));
-        }); },
-      scaleMs(5000),
-    );
-    ws.once('open', () =>
-      { done(() => {
+    const timer = setTimeout(() => {
+      done(() => {
+        ws.terminate();
+        reject(new Error('unauthenticated WebSocket was not closed'));
+      });
+    }, scaleMs(5000));
+    ws.once('open', () => {
+      done(() => {
         ws.terminate();
         reject(new Error('unauthenticated WebSocket unexpectedly opened'));
-      }); },
-    );
-    ws.on('error', () => { done(() => { resolve(); }); });
-    ws.once('close', () => { done(() => { resolve(); }); });
+      });
+    });
+    ws.on('error', () => {
+      done(() => {
+        resolve();
+      });
+    });
+    ws.once('close', () => {
+      done(() => {
+        resolve();
+      });
+    });
   });
 }
 

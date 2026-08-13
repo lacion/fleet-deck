@@ -8,7 +8,8 @@ export interface TmuxVersion {
   version: string;
 }
 export type TmuxCapability =
-  { available: true; version: string } | { available: false; version?: string; reason: string };
+  | { available: true; version: string }
+  | { available: false; version?: string; reason: string };
 
 export function parseTmuxVersion(output: unknown): TmuxVersion | null {
   // eslint-disable-next-line @typescript-eslint/no-base-to-string -- intentional String() coercion of untrusted command output, matching the pre-migration .mjs behavior

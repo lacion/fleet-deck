@@ -140,7 +140,11 @@ export function repoDefaultOrgChoice({
   setting = null,
   env = null,
   coder = false,
-}: { setting?: string | null; env?: string | null; coder?: boolean } = {}): {
+}: {
+  setting?: string | null;
+  env?: string | null;
+  coder?: boolean;
+} = {}): {
   value: string | null;
   source: string;
 } {

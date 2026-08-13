@@ -320,7 +320,9 @@ test('BUG-034: an ack for an unknown or already-settled row is a safe no-op', as
 test('BUG-034: in-process lease lifecycle — claim, double-claim guard, sweep release, ack', async (t) => {
   const db = openDb(':memory:');
   const core = createCore(db, { port: 21601, home: '/fd-lease-home' });
-  t.after(() => { db.close(); });
+  t.after(() => {
+    db.close();
+  });
 
   const sid = 'lease-sid';
   core.hookSessionStart({ session_id: sid, cwd: '/tmp/fd-lease', source: 'startup' });

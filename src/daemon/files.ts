@@ -40,7 +40,8 @@ interface FsResult {
 // A resolver thunk returns either a typed error response or a rooted tree; the
 // two arms are mutually exclusive so `if (resolved.error)` narrows cleanly.
 type RootResolution =
-  { error: FsResult; root?: never; git?: never } | { error?: never; root: string; git: boolean };
+  | { error: FsResult; root?: never; git?: never }
+  | { error?: never; root: string; git: boolean };
 type RootResolver = () => RootResolution;
 
 type SearchMode = 'name' | 'content';
@@ -67,7 +68,8 @@ interface RunResult {
 
 // readOpenFile yields the stat plus either a not-a-file marker or the read bytes.
 type OpenedFile =
-  { st: fs.Stats; notFile: true; buf?: undefined } | { st: fs.Stats; notFile?: false; buf: Buffer };
+  | { st: fs.Stats; notFile: true; buf?: undefined }
+  | { st: fs.Stats; notFile?: false; buf: Buffer };
 
 interface DirEntry {
   name: string;

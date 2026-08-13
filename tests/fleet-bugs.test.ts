@@ -259,7 +259,9 @@ function cardOf(core: Core, sid: string): SnapshotSession {
 test('BUG 1: SessionEnd(reason="clear") keeps the pane and the card LIVE', async (t) => {
   const { core, db } = memoryCore(t);
   const cwd = mkdtempSync(path.join(tmpdir(), 'fd-clear-'));
-  t.after(() => { rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+  t.after(() => {
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
 
   const spawn = await (core.spawn({ cwd }) as Promise<SpawnResult>);
   const sid = spawn.body.session_id;
@@ -289,7 +291,9 @@ test('BUG 1: SessionEnd(reason="clear") keeps the pane and the card LIVE', async
 test('BUG 1 control: a real SessionEnd (reason="other") still ends the session and pane', async (t) => {
   const { core } = memoryCore(t);
   const cwd = mkdtempSync(path.join(tmpdir(), 'fd-end-'));
-  t.after(() => { rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+  t.after(() => {
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
 
   const spawn = await (core.spawn({ cwd }) as Promise<SpawnResult>);
   const sid = spawn.body.session_id;
@@ -513,7 +517,9 @@ async function condemnedSpawnWithLivePane(t: TestContext, status: string) {
   const ctx = memoryCore(t, { tmux });
   const { core, db } = ctx;
   const cwd = mkdtempSync(path.join(tmpdir(), 'fd-res-'));
-  t.after(() => { rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+  t.after(() => {
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
   const spawn = await (core.spawn({ cwd }) as Promise<SpawnResult>);
   const sid = spawn.body.session_id;
   const spawnId = spawn.body.spawn_id;
@@ -606,7 +612,9 @@ test('BUG-152: a kill landing DURING the resurrection probe is never undone by t
   const ctx = memoryCore(t, { tmux });
   const { core, db } = ctx;
   const cwd = mkdtempSync(path.join(tmpdir(), 'fd-race-'));
-  t.after(() => { rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+  t.after(() => {
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
 
   const spawn = await (core.spawn({ cwd }) as Promise<SpawnResult>);
   const sid = spawn.body.session_id;
@@ -700,7 +708,9 @@ test('BUG 3: revive() ADOPTS a gone spawn whose window is a live claude (no 409,
 test('BUG 4: oversize mail is bounded and postMail reports truncated + original_length', async (t) => {
   const { db, core } = memoryCore(t);
   const cwd = mkdtempSync(path.join(tmpdir(), 'fd-mail-big-'));
-  t.after(() => { rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+  t.after(() => {
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
   const spawn = await (core.spawn({ cwd }) as Promise<SpawnResult>);
   const sid = spawn.body.session_id;
   core.hookSessionStart({ session_id: sid, cwd, source: 'startup' });
@@ -739,7 +749,9 @@ test('BUG 4: oversize mail is bounded and postMail reports truncated + original_
 test('BUG 4: a normal-sized message is delivered whole with no truncated flag', async (t) => {
   const { db, core } = memoryCore(t);
   const cwd = mkdtempSync(path.join(tmpdir(), 'fd-mail-ok-'));
-  t.after(() => { rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+  t.after(() => {
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
   const spawn = await (core.spawn({ cwd }) as Promise<SpawnResult>);
   const sid = spawn.body.session_id;
   core.hookSessionStart({ session_id: sid, cwd, source: 'startup' });
@@ -772,7 +784,9 @@ test('BUG 4: a normal-sized message is delivered whole with no truncated flag', 
 test('BUG-021: an oversize broadcast is rejected atomically — no mail rows, no silent ok', async (t) => {
   const { db, core } = memoryCore(t);
   const cwd = mkdtempSync(path.join(tmpdir(), 'fd-cmd-big-'));
-  t.after(() => { rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+  t.after(() => {
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
   const spawn = await (core.spawn({ cwd }) as Promise<SpawnResult>);
   const sid = spawn.body.session_id;
   core.hookSessionStart({ session_id: sid, cwd, source: 'startup' });
@@ -797,7 +811,9 @@ test('BUG-021: an oversize broadcast is rejected atomically — no mail rows, no
 test('BUG-021: an oversize direct assign is rejected atomically', async (t) => {
   const { db, core } = memoryCore(t);
   const cwd = mkdtempSync(path.join(tmpdir(), 'fd-cmd-assign-big-'));
-  t.after(() => { rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+  t.after(() => {
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
   const spawn = await (core.spawn({ cwd }) as Promise<SpawnResult>);
   const sid = spawn.body.session_id;
   core.hookSessionStart({ session_id: sid, cwd, source: 'startup' });
@@ -820,7 +836,9 @@ test('BUG-021: an oversize direct assign is rejected atomically', async (t) => {
 test('BUG-021: assign auto is framed BEFORE the cap check — a body that fits unframed but overflows once framed is rejected', async (t) => {
   const { db, core } = memoryCore(t);
   const cwd = mkdtempSync(path.join(tmpdir(), 'fd-cmd-auto-frame-'));
-  t.after(() => { rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+  t.after(() => {
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
   const spawn = await (core.spawn({ cwd }) as Promise<SpawnResult>);
   const sid = spawn.body.session_id;
   core.hookSessionStart({ session_id: sid, cwd, source: 'startup' });
@@ -840,7 +858,9 @@ test('BUG-021: assign auto is framed BEFORE the cap check — a body that fits u
 test('BUG-021: a normal-size assign still delivers whole (no rejection fields)', async (t) => {
   const { db, core } = memoryCore(t);
   const cwd = mkdtempSync(path.join(tmpdir(), 'fd-cmd-ok-'));
-  t.after(() => { rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+  t.after(() => {
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
   const spawn = await (core.spawn({ cwd }) as Promise<SpawnResult>);
   const sid = spawn.body.session_id;
   core.hookSessionStart({ session_id: sid, cwd, source: 'startup' });
@@ -1056,7 +1076,9 @@ test('Fix 2 [MED]: revive never resurrects a KILLED row by adoption even when it
 test('Fix 3 [MED]: a single transient dead read does NOT condemn-then-flap a steadily-live claude', async (t) => {
   const { core, db, state } = memoryCore(t);
   const cwd = mkdtempSync(path.join(tmpdir(), 'fd-hyst-'));
-  t.after(() => { rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+  t.after(() => {
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
   const spawn = await (core.spawn({ cwd }) as Promise<SpawnResult>);
   const sid = spawn.body.session_id;
   const spawnId = spawn.body.spawn_id;
@@ -1093,7 +1115,9 @@ test('Fix 3 [MED]: a single transient dead read does NOT condemn-then-flap a ste
 test('Fix 3 [MED]: a genuinely dead pane is still condemned — on the second consecutive dead read', async (t) => {
   const { core, db, state } = memoryCore(t);
   const cwd = mkdtempSync(path.join(tmpdir(), 'fd-hyst2-'));
-  t.after(() => { rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+  t.after(() => {
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
   const spawn = await (core.spawn({ cwd }) as Promise<SpawnResult>);
   const sid = spawn.body.session_id;
   const spawnId = spawn.body.spawn_id;
@@ -1124,7 +1148,9 @@ test('Fix 3 [MED]: condemn and resurrect share ONE probe — a split pane (lowes
   tmux.adapter.paneCurrentCommand = () => Promise.resolve({ dead: false, cmd: 'claude' });
   const { core, db, state } = memoryCore(t, { tmux });
   const cwd = mkdtempSync(path.join(tmpdir(), 'fd-split-'));
-  t.after(() => { rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+  t.after(() => {
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
   const spawn = await (core.spawn({ cwd }) as Promise<SpawnResult>);
   const sid = spawn.body.session_id;
   const spawnId = spawn.body.spawn_id;
@@ -1148,7 +1174,9 @@ test('Fix 3 [MED]: paneCurrentCommand UNKNOWN never advances death hysteresis', 
   tmux.adapter.paneCurrentCommand = () => Promise.resolve(null);
   const { core, db, state } = memoryCore(t, { tmux });
   const cwd = mkdtempSync(path.join(tmpdir(), 'fd-pane-unknown-'));
-  t.after(() => { rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+  t.after(() => {
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
   const spawn = await (core.spawn({ cwd }) as Promise<SpawnResult>);
   const sid = spawn.body.session_id;
   core.hookSessionStart({ session_id: sid, cwd, source: 'startup' });
@@ -1179,7 +1207,9 @@ test('Fix 3 [MED]: paneCurrentCommand UNKNOWN never advances death hysteresis', 
 test('Fix 4 [LOW]: resurrection clears a stale needs-you reason and refreshes last_seen', async (t) => {
   const { core, db } = memoryCore(t);
   const cwd = mkdtempSync(path.join(tmpdir(), 'fd-res-fields-'));
-  t.after(() => { rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+  t.after(() => {
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
   const spawn = await (core.spawn({ cwd }) as Promise<SpawnResult>);
   const sid = spawn.body.session_id;
   const spawnId = spawn.body.spawn_id;
@@ -1220,7 +1250,9 @@ test('Fix 4 [LOW]: resurrection clears a stale needs-you reason and refreshes la
 test('Fix 6 [LOW]: mail truncation never splits a surrogate pair (no lone high surrogate stored)', async (t) => {
   const { db, core } = memoryCore(t);
   const cwd = mkdtempSync(path.join(tmpdir(), 'fd-astral-'));
-  t.after(() => { rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+  t.after(() => {
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
   const spawn = await (core.spawn({ cwd }) as Promise<SpawnResult>);
   const sid = spawn.body.session_id;
   core.hookSessionStart({ session_id: sid, cwd, source: 'startup' });
@@ -1266,7 +1298,9 @@ test('Fix 6 [LOW]: mail truncation never splits a surrogate pair (no lone high s
 test('Fix 6 [LOW]: an astral character fully within the limit is preserved intact', async (t) => {
   const { db, core } = memoryCore(t);
   const cwd = mkdtempSync(path.join(tmpdir(), 'fd-astral2-'));
-  t.after(() => { rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+  t.after(() => {
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
   const spawn = await (core.spawn({ cwd }) as Promise<SpawnResult>);
   const sid = spawn.body.session_id;
   core.hookSessionStart({ session_id: sid, cwd, source: 'startup' });
@@ -1356,7 +1390,9 @@ test('Fix 7 [LOW]: a silent override-process spawn (no tmux window) is presumed 
 test('BUG-025: a delayed SessionEnd from a previous run must NOT tombstone a live resumed session', async (t) => {
   const { core, db } = memoryCore(t);
   const cwd = mkdtempSync(path.join(tmpdir(), 'fd-resume-'));
-  t.after(() => { rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+  t.after(() => {
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
 
   const spawn = await (core.spawn({ cwd }) as Promise<SpawnResult>);
   const sid = spawn.body.session_id;
@@ -1419,7 +1455,9 @@ test('BUG-025: a delayed SessionEnd from a previous run must NOT tombstone a liv
 test('BUG-025: an untagged SessionEnd keeps the historical unconditional tombstone', (t) => {
   const { core } = memoryCore(t);
   const cwd = mkdtempSync(path.join(tmpdir(), 'fd-untagged-'));
-  t.after(() => { rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+  t.after(() => {
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
 
   const sid = 'untagged-end';
   core.hookSessionStart({ session_id: sid, cwd, source: 'startup', fleet_run: 'run-A' });
@@ -1442,7 +1480,9 @@ test('BUG-025: an untagged SessionEnd keeps the historical unconditional tombsto
 test('BB2-1: a mismatched-nonce SessionEnd still tombstones when the spawn is proven terminal (no live run to protect)', async (t) => {
   const { core, db } = memoryCore(t);
   const cwd = mkdtempSync(path.join(tmpdir(), 'fd-stale-terminal-'));
-  t.after(() => { rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+  t.after(() => {
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
 
   const spawn = await (core.spawn({ cwd }) as Promise<SpawnResult>);
   const sid = spawn.body.session_id;
@@ -1480,7 +1520,9 @@ test('BB2-1: a mismatched-nonce SessionEnd still tombstones when the spawn is pr
 test('BB2-1: the BUG-025 protection still holds when the spawn is LIVE (a real resume race)', async (t) => {
   const { core } = memoryCore(t);
   const cwd = mkdtempSync(path.join(tmpdir(), 'fd-stale-live-'));
-  t.after(() => { rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+  t.after(() => {
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
 
   const spawn = await (core.spawn({ cwd }) as Promise<SpawnResult>);
   const sid = spawn.body.session_id;
@@ -1501,7 +1543,9 @@ test('BB2-1: the BUG-025 protection still holds when the spawn is LIVE (a real r
 test('BUG-025: a tagged SessionEnd against a row with no recorded run tombstones (reconciled with max-turns abort)', (t) => {
   const { core } = memoryCore(t);
   const cwd = mkdtempSync(path.join(tmpdir(), 'fd-norun-'));
-  t.after(() => { rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+  t.after(() => {
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
 
   const sid = 'no-run-row';
   // A row registered before the shims minted nonces (run_id stays NULL).

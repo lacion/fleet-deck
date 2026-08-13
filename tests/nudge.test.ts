@@ -81,163 +81,159 @@ const TRUST_SCREEN = [
   '   2. No, exit',
 ].join('\n');
 
-test(
-  'nudge holds on a trust dialog: no Enter, board says waiting',
-  { skip: !tmuxOk() && 'tmux not available' },
-  async (t) => {
-    const recordDir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-nudge-rec-'));
-    const recordFile = path.join(recordDir, 'spawns.jsonl');
-    // The nudge timer starts at spawn; the test then has to stand up a tmux
-    // server, a session, a window and echo the dialog into it. On slow lanes
-    // (CI's tmux 3.4 on ubuntu, vs 3.7b locally) that setup can outlast a tiny
-    // NUDGE_MS — the timer would fire at an empty/nonexistent pane and hold for
-    // the wrong reason ('pane unreadable') before the dialog is even there.
-    // 750ms leaves the setup room while still testing the timer, not the clock.
-    const daemon = await startDaemon({
-      env: {
-        FLEETDECK_SPAWN_CMD: path.resolve('tests/helpers/spawn-cmd-fixture.ts'),
-        FLEETDECK_TEST_SPAWN_RECORD: recordFile,
-        FLEETDECK_NUDGE_MS: '750',
-      },
-    });
-    t.after(async () => {
-      await daemon.stop();
-      rmSync(recordDir, { recursive: true, force: true, maxRetries: 5 });
-    });
+test('nudge holds on a trust dialog: no Enter, board says waiting', {
+  skip: !tmuxOk() && 'tmux not available',
+}, async (t) => {
+  const recordDir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-nudge-rec-'));
+  const recordFile = path.join(recordDir, 'spawns.jsonl');
+  // The nudge timer starts at spawn; the test then has to stand up a tmux
+  // server, a session, a window and echo the dialog into it. On slow lanes
+  // (CI's tmux 3.4 on ubuntu, vs 3.7b locally) that setup can outlast a tiny
+  // NUDGE_MS — the timer would fire at an empty/nonexistent pane and hold for
+  // the wrong reason ('pane unreadable') before the dialog is even there.
+  // 750ms leaves the setup room while still testing the timer, not the clock.
+  const daemon = await startDaemon({
+    env: {
+      FLEETDECK_SPAWN_CMD: path.resolve('tests/helpers/spawn-cmd-fixture.ts'),
+      FLEETDECK_TEST_SPAWN_RECORD: recordFile,
+      FLEETDECK_NUDGE_MS: '750',
+    },
+  });
+  t.after(async () => {
+    await daemon.stop();
+    rmSync(recordDir, { recursive: true, force: true, maxRetries: 5 });
+  });
 
-    const cwd = mkdtempSync(path.join(tmpdir(), 'fleetdeck-nudge-cwd-'));
-    t.after(() => {
-      rmSync(cwd, { recursive: true, force: true, maxRetries: 5 });
-    });
+  const cwd = mkdtempSync(path.join(tmpdir(), 'fleetdeck-nudge-cwd-'));
+  t.after(() => {
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5 });
+  });
 
-    const res = await postJson(`${daemon.baseUrl}/api/spawn`, {
-      cwd,
-      prompt: 'hold the trust dialog',
-    });
-    assert.equal(res.status, 200, JSON.stringify(res.json));
-    const {
-      tmux: { session, window },
-    } = res.json as SpawnResponse;
+  const res = await postJson(`${daemon.baseUrl}/api/spawn`, {
+    cwd,
+    prompt: 'hold the trust dialog',
+  });
+  assert.equal(res.status, 200, JSON.stringify(res.json));
+  const {
+    tmux: { session, window },
+  } = res.json as SpawnResponse;
 
-    // Build the pane the daemon believes it launched: scoped session, scoped
-    // window name. The pane process must SURVIVE the nudge window — `cat` would
-    // exit on EOF after echoing and the daemon would see pane_dead, so use a
-    // shell that prints the dialog and then sleeps forever.
-    const socket = `fleetdeck-test-${daemon.port}`;
-    try {
-      tmux(socket, ['kill-server']);
-    } catch {
-      /* no prior server */
-    }
-    try {
-      tmux(socket, ['new-session', '-d', '-s', session, '-x', '200', '-y', '50']);
-    } catch (e) {
-      const err = e as TmuxSpawnError;
-      throw new Error(
-        `tmux new-session failed on ${socket}: ${err.message} (stderr: ${err.stderr?.toString?.() ?? 'n/a'})`,
-        { cause: e },
-      );
-    }
-    tmux(socket, [
-      'new-window',
-      '-d',
-      '-t',
-      session,
-      '-n',
-      window,
-      'sh',
-      '-c',
-      `printf '%s\n' '${TRUST_SCREEN.replace(/'/g, `'\\''`)}'; sleep 3600`,
-    ]);
-    const target = `${session}:${window}`;
-
-    // The nudge fires after NUDGE_MS. Assert: the card note says waiting, and
-    // NO Enter was pressed (the trust screen's cursor line is unchanged — an
-    // Enter on `cat` would echo a newline but, more tellingly, the daemon logs
-    // the nudge decision in the ticker).
-    await waitUntil(
-      async () => {
-        const state = (await getJson(`${daemon.baseUrl}/state`)).json as NudgeState;
-        const card = state.sessions.find(
-          (s) => s.session_id === (res.json as SpawnResponse).session_id,
-        );
-        return card?.note?.includes('trust');
-      },
-      { timeoutMs: 8000, label: 'card note to report waiting on the trust dialog' },
-    );
-
-    const state = (await getJson(`${daemon.baseUrl}/state`)).json as NudgeState;
-    const tickText = (state.ticker ?? []).map((x) => x.msg ?? x.text ?? '').join('\n');
-    assert.match(tickText, /waits on a trust dialog/, 'ticker reports the held trust dialog');
-    assert.doesNotMatch(tickText, /nudged .* through bring-up/, 'no bring-up Enter was sent');
-
-    // Hard proof at the pane: capture-pane shows the SAME dialog (an Enter
-    // would have added a trailing echoed blank line / moved the cursor).
-    const pane = tmux(socket, ['capture-pane', '-p', '-t', target]);
-    assert.match(pane, /Do you trust the files in this folder\?/, 'trust dialog still on screen');
-  },
-);
-
-test(
-  'nudge presses Enter on an ordinary bring-up screen',
-  { skip: !tmuxOk() && 'tmux not available' },
-  async (t) => {
-    const recordDir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-nudge-rec2-'));
-    const recordFile = path.join(recordDir, 'spawns.jsonl');
-    const daemon = await startDaemon({
-      env: {
-        FLEETDECK_SPAWN_CMD: path.resolve('tests/helpers/spawn-cmd-fixture.ts'),
-        FLEETDECK_TEST_SPAWN_RECORD: recordFile,
-        FLEETDECK_NUDGE_MS: '750',
-      },
-    });
-    t.after(async () => {
-      await daemon.stop();
-      rmSync(recordDir, { recursive: true, force: true, maxRetries: 5 });
-    });
-
-    const cwd = mkdtempSync(path.join(tmpdir(), 'fleetdeck-nudge-cwd2-'));
-    t.after(() => {
-      rmSync(cwd, { recursive: true, force: true, maxRetries: 5 });
-    });
-
-    const res = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd, prompt: 'ordinary bring-up' });
-    assert.equal(res.status, 200, JSON.stringify(res.json));
-    const {
-      tmux: { session, window },
-    } = res.json as SpawnResponse;
-
-    const socket = `fleetdeck-test-${daemon.port}`;
-    try {
-      tmux(socket, ['kill-server']);
-    } catch {
-      /* no prior server */
-    }
+  // Build the pane the daemon believes it launched: scoped session, scoped
+  // window name. The pane process must SURVIVE the nudge window — `cat` would
+  // exit on EOF after echoing and the daemon would see pane_dead, so use a
+  // shell that prints the dialog and then sleeps forever.
+  const socket = `fleetdeck-test-${daemon.port}`;
+  try {
+    tmux(socket, ['kill-server']);
+  } catch {
+    /* no prior server */
+  }
+  try {
     tmux(socket, ['new-session', '-d', '-s', session, '-x', '200', '-y', '50']);
-    tmux(socket, [
-      'new-window',
-      '-d',
-      '-t',
-      session,
-      '-n',
-      window,
-      'sh',
-      '-c',
-      "printf '%s\\n' 'some ordinary prompt text'; sleep 3600",
-    ]);
-    const target = `${session}:${window}`;
-
-    await waitUntil(
-      async () => {
-        const state = (await getJson(`${daemon.baseUrl}/state`)).json as NudgeState;
-        const tickText = (state.ticker ?? []).map((x) => x.msg ?? x.text ?? '').join('\n');
-        return /nudged .* through bring-up/.test(tickText);
-      },
-      { timeoutMs: 8000, label: 'ticker to report the bring-up Enter' },
+  } catch (e) {
+    const err = e as TmuxSpawnError;
+    throw new Error(
+      `tmux new-session failed on ${socket}: ${err.message} (stderr: ${err.stderr?.toString?.() ?? 'n/a'})`,
+      { cause: e },
     );
+  }
+  tmux(socket, [
+    'new-window',
+    '-d',
+    '-t',
+    session,
+    '-n',
+    window,
+    'sh',
+    '-c',
+    `printf '%s\n' '${TRUST_SCREEN.replace(/'/g, `'\\''`)}'; sleep 3600`,
+  ]);
+  const target = `${session}:${window}`;
 
-    // The Enter reached `cat`: it echoed a newline — cursor moved past the text.
-    const pane = tmux(socket, ['capture-pane', '-p', '-t', target]);
-    assert.match(pane, /some ordinary prompt text/, 'pane content intact');
-  },
-);
+  // The nudge fires after NUDGE_MS. Assert: the card note says waiting, and
+  // NO Enter was pressed (the trust screen's cursor line is unchanged — an
+  // Enter on `cat` would echo a newline but, more tellingly, the daemon logs
+  // the nudge decision in the ticker).
+  await waitUntil(
+    async () => {
+      const state = (await getJson(`${daemon.baseUrl}/state`)).json as NudgeState;
+      const card = state.sessions.find(
+        (s) => s.session_id === (res.json as SpawnResponse).session_id,
+      );
+      return card?.note?.includes('trust');
+    },
+    { timeoutMs: 8000, label: 'card note to report waiting on the trust dialog' },
+  );
+
+  const state = (await getJson(`${daemon.baseUrl}/state`)).json as NudgeState;
+  const tickText = (state.ticker ?? []).map((x) => x.msg ?? x.text ?? '').join('\n');
+  assert.match(tickText, /waits on a trust dialog/, 'ticker reports the held trust dialog');
+  assert.doesNotMatch(tickText, /nudged .* through bring-up/, 'no bring-up Enter was sent');
+
+  // Hard proof at the pane: capture-pane shows the SAME dialog (an Enter
+  // would have added a trailing echoed blank line / moved the cursor).
+  const pane = tmux(socket, ['capture-pane', '-p', '-t', target]);
+  assert.match(pane, /Do you trust the files in this folder\?/, 'trust dialog still on screen');
+});
+
+test('nudge presses Enter on an ordinary bring-up screen', {
+  skip: !tmuxOk() && 'tmux not available',
+}, async (t) => {
+  const recordDir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-nudge-rec2-'));
+  const recordFile = path.join(recordDir, 'spawns.jsonl');
+  const daemon = await startDaemon({
+    env: {
+      FLEETDECK_SPAWN_CMD: path.resolve('tests/helpers/spawn-cmd-fixture.ts'),
+      FLEETDECK_TEST_SPAWN_RECORD: recordFile,
+      FLEETDECK_NUDGE_MS: '750',
+    },
+  });
+  t.after(async () => {
+    await daemon.stop();
+    rmSync(recordDir, { recursive: true, force: true, maxRetries: 5 });
+  });
+
+  const cwd = mkdtempSync(path.join(tmpdir(), 'fleetdeck-nudge-cwd2-'));
+  t.after(() => {
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5 });
+  });
+
+  const res = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd, prompt: 'ordinary bring-up' });
+  assert.equal(res.status, 200, JSON.stringify(res.json));
+  const {
+    tmux: { session, window },
+  } = res.json as SpawnResponse;
+
+  const socket = `fleetdeck-test-${daemon.port}`;
+  try {
+    tmux(socket, ['kill-server']);
+  } catch {
+    /* no prior server */
+  }
+  tmux(socket, ['new-session', '-d', '-s', session, '-x', '200', '-y', '50']);
+  tmux(socket, [
+    'new-window',
+    '-d',
+    '-t',
+    session,
+    '-n',
+    window,
+    'sh',
+    '-c',
+    "printf '%s\\n' 'some ordinary prompt text'; sleep 3600",
+  ]);
+  const target = `${session}:${window}`;
+
+  await waitUntil(
+    async () => {
+      const state = (await getJson(`${daemon.baseUrl}/state`)).json as NudgeState;
+      const tickText = (state.ticker ?? []).map((x) => x.msg ?? x.text ?? '').join('\n');
+      return /nudged .* through bring-up/.test(tickText);
+    },
+    { timeoutMs: 8000, label: 'ticker to report the bring-up Enter' },
+  );
+
+  // The Enter reached `cat`: it echoed a newline — cursor moved past the text.
+  const pane = tmux(socket, ['capture-pane', '-p', '-t', target]);
+  assert.match(pane, /some ordinary prompt text/, 'pane content intact');
+});

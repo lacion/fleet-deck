@@ -35,47 +35,45 @@ function* walk(dir: string): Generator<string> {
   }
 }
 
-test(
-  'BUG-213: spawn suites leave no spec-record scratch directories behind',
-  { timeout: 300_000 },
-  (t) => {
-    const sandbox = mkdtempSync(path.join(tmpdir(), 'fleetdeck-spec-cleanup-'));
-    t.after(() => {
-      rmSync(sandbox, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+test('BUG-213: spawn suites leave no spec-record scratch directories behind', {
+  timeout: 300_000,
+}, (t) => {
+  const sandbox = mkdtempSync(path.join(tmpdir(), 'fleetdeck-spec-cleanup-'));
+  t.after(() => {
+    rmSync(sandbox, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  // NODE_TEST_CONTEXT is set by the outer `node --test` runner and inherited
+  // by every child; a nested `node --test` that sees it refuses to run any
+  // files ("run() is being called recursively"), silently exiting 0 with zero
+  // tests. Strip it so the suite processes are real, independent runs.
+  const parentEnv: NodeJS.ProcessEnv = { ...process.env };
+  Reflect.deleteProperty(parentEnv, 'NODE_TEST_CONTEXT');
+
+  for (const suite of SUITES) {
+    const argv = childRunArgv({ file: path.join(HERE, suite), serial: true });
+    const result = spawnSync(process.execPath, argv, {
+      encoding: 'utf8',
+      timeout: 240_000,
+      env: { ...parentEnv, TMPDIR: sandbox },
     });
-
-    // NODE_TEST_CONTEXT is set by the outer `node --test` runner and inherited
-    // by every child; a nested `node --test` that sees it refuses to run any
-    // files ("run() is being called recursively"), silently exiting 0 with zero
-    // tests. Strip it so the suite processes are real, independent runs.
-    const parentEnv: NodeJS.ProcessEnv = { ...process.env };
-    Reflect.deleteProperty(parentEnv, 'NODE_TEST_CONTEXT');
-
-    for (const suite of SUITES) {
-      const argv = childRunArgv({ file: path.join(HERE, suite), serial: true });
-      const result = spawnSync(process.execPath, argv, {
-        encoding: 'utf8',
-        timeout: 240_000,
-        env: { ...parentEnv, TMPDIR: sandbox },
-      });
-      // node prints `# pass N` on stdout, bun ` N pass` on stderr — parse combined.
-      const out = `${result.stdout ?? ''}${result.stderr ?? ''}`;
-      assert.equal(
-        result.status,
-        0,
-        `${suite} must pass inside the TMPDIR sandbox (status ${String(result.status)})\n${out}`,
-      );
-      assert.ok(
-        childPassCount(out) > 0,
-        `${suite} must actually RUN its tests inside the sandbox (a silent all-skip would make this regression test vacuous); summary:\n${out.slice(-600)}`,
-      );
-    }
-
-    const leftovers = [...walk(sandbox)].filter((p) => p !== sandbox);
-    assert.deepEqual(
-      leftovers,
-      [],
-      `no spec-record scratch dirs/files may survive a successful spawn-suite run; found: ${leftovers.join(', ')}`,
+    // node prints `# pass N` on stdout, bun ` N pass` on stderr — parse combined.
+    const out = `${result.stdout ?? ''}${result.stderr ?? ''}`;
+    assert.equal(
+      result.status,
+      0,
+      `${suite} must pass inside the TMPDIR sandbox (status ${String(result.status)})\n${out}`,
     );
-  },
-);
+    assert.ok(
+      childPassCount(out) > 0,
+      `${suite} must actually RUN its tests inside the sandbox (a silent all-skip would make this regression test vacuous); summary:\n${out.slice(-600)}`,
+    );
+  }
+
+  const leftovers = [...walk(sandbox)].filter((p) => p !== sandbox);
+  assert.deepEqual(
+    leftovers,
+    [],
+    `no spec-record scratch dirs/files may survive a successful spawn-suite run; found: ${leftovers.join(', ')}`,
+  );
+});

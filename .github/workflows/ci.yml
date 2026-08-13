@@ -19,12 +19,13 @@ permissions:
 # not a second runtime lane.)
 
 jobs:
-  # Toolchain gate: strict TypeScript + Biome (lint). Fast, no daemon, no tmux —
-  # the first signal a PR gets. Runtime-agnostic (tsc/biome), so it runs under bun
-  # alone. Both root and board deps are installed: `tsc -p board` needs board's
-  # types (@types/react …). NOTE: `bun run lint` is `biome lint` only — the full
-  # `biome ci` format+lint gate lands with the mechanical format sweep (Step 1
-  # commit B); wiring it before the sweep would fail CI on pending format diffs.
+  # Toolchain gate: strict TypeScript + Biome (format check + lint, via `biome
+  # ci`). Fast, no daemon, no tmux — the first signal a PR gets. Runtime-agnostic
+  # (tsc/biome), so it runs under bun alone. Both root and board deps are
+  # installed: `tsc -p board` needs board's types (@types/react …). `bun run ci`
+  # is `biome ci` — the combined format+lint gate; the mechanical format sweep
+  # (Step 1 commit B) brought the whole tree into conformance, so the format
+  # check that this now enforces passes on a clean HEAD and blocks future drift.
   toolchain:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -36,7 +37,7 @@ jobs:
       - run: bun install --frozen-lockfile --ignore-scripts
       - run: cd board && bun install --frozen-lockfile --ignore-scripts
       - run: bun run typecheck
-      - run: bun run lint
+      - run: bun run ci
 
   # AUTHORITATIVE test lane — the whole suite under Bun (bun:sqlite channel).
   # Fleet Deck is Bun-primary single-runtime: the daemon, the plugin fail-open

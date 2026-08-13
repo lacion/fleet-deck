@@ -130,79 +130,75 @@ function holdSilentListener(
   });
 }
 
-test(
-  'BUG-188: smoke aborts on a bound non-HTTP listener that an HTTP health probe would miss',
-  { timeout: scaleMs(120_000) },
-  async (t) => {
-    const port = await freePort();
-    const abortMarker = `ABORT: something is already listening on isolated port :${port}.`;
-    // Record how many bytes the script had sent the listener at the moment the
-    // guard's ABORT line first appeared in its output.
-    let bytesAtAbort: number | null = null;
-    let received = Buffer.alloc(0);
-    const release = await holdSilentListener(port, (chunk) => {
-      received = Buffer.concat([received, chunk]);
-    });
-    const claudeBin = claudeStubBin();
-    t.after(async () => {
-      await release();
-      rmSync(claudeBin, { recursive: true, force: true });
-    });
+test('BUG-188: smoke aborts on a bound non-HTTP listener that an HTTP health probe would miss', {
+  timeout: scaleMs(120_000),
+}, async (t) => {
+  const port = await freePort();
+  const abortMarker = `ABORT: something is already listening on isolated port :${port}.`;
+  // Record how many bytes the script had sent the listener at the moment the
+  // guard's ABORT line first appeared in its output.
+  let bytesAtAbort: number | null = null;
+  let received = Buffer.alloc(0);
+  const release = await holdSilentListener(port, (chunk) => {
+    received = Buffer.concat([received, chunk]);
+  });
+  const claudeBin = claudeStubBin();
+  t.after(async () => {
+    await release();
+    rmSync(claudeBin, { recursive: true, force: true });
+  });
 
-    const { code, output } = await collectOutput(runSmoke(port, claudeBin), scaleMs(120_000), {
-      onOutput: (text) => {
-        if (bytesAtAbort === null && text.includes(abortMarker)) bytesAtAbort = received.length;
-      },
-    });
+  const { code, output } = await collectOutput(runSmoke(port, claudeBin), scaleMs(120_000), {
+    onOutput: (text) => {
+      if (bytesAtAbort === null && text.includes(abortMarker)) bytesAtAbort = received.length;
+    },
+  });
 
-    assert.equal(code, 1, `smoke must abort on the occupied port; output:\n${output}`);
-    assert.match(output, new RegExp(abortMarker.replace(/[.]/g, '\\$&')));
+  assert.equal(code, 1, `smoke must abort on the occupied port; output:\n${output}`);
+  assert.match(output, new RegExp(abortMarker.replace(/[.]/g, '\\$&')));
 
-    // The guard must never KILL the unknown listener: it is still serving.
-    await new Promise<void>((resolve, reject) => {
-      const socket = net.connect(port, '127.0.0.1');
-      socket.once('connect', () => socket.end(resolve));
-      socket.once('error', reject);
-    });
+  // The guard must never KILL the unknown listener: it is still serving.
+  await new Promise<void>((resolve, reject) => {
+    const socket = net.connect(port, '127.0.0.1');
+    socket.once('connect', () => socket.end(resolve));
+    socket.once('error', reject);
+  });
 
-    // And the guard itself must not have spoken HTTP to the listener: the abort
-    // happened BEFORE any bytes were sent. (Bytes may still arrive AFTER the
-    // abort — the EXIT trap's stop_smoke_daemon health poll is pre-existing
-    // behavior, unchanged by this fix, and harmless.)
-    assert.equal(
-      bytesAtAbort,
-      0,
-      'guard must probe occupancy without sending any bytes to the unknown listener',
-    );
-  },
-);
+  // And the guard itself must not have spoken HTTP to the listener: the abort
+  // happened BEFORE any bytes were sent. (Bytes may still arrive AFTER the
+  // abort — the EXIT trap's stop_smoke_daemon health poll is pre-existing
+  // behavior, unchanged by this fix, and harmless.)
+  assert.equal(
+    bytesAtAbort,
+    0,
+    'guard must probe occupancy without sending any bytes to the unknown listener',
+  );
+});
 
-test(
-  'BUG-188: smoke port guard passes a genuinely free port (no false positive)',
-  { timeout: scaleMs(120_000) },
-  async (t) => {
-    const port = await freePort();
-    const claudeBin = claudeStubBin();
-    t.after(() => {
-      rmSync(claudeBin, { recursive: true, force: true });
-    });
+test('BUG-188: smoke port guard passes a genuinely free port (no false positive)', {
+  timeout: scaleMs(120_000),
+}, async (t) => {
+  const port = await freePort();
+  const claudeBin = claudeStubBin();
+  t.after(() => {
+    rmSync(claudeBin, { recursive: true, force: true });
+  });
 
-    const { code, output } = await collectOutput(runSmoke(port, claudeBin), scaleMs(120_000));
+  const { code, output } = await collectOutput(runSmoke(port, claudeBin), scaleMs(120_000));
 
-    // The guard must NOT abort: the script gets past it and launches the
-    // (stubbed) workers. It then exits nonzero on the never-minted daemon
-    // token — the claude stub starts no SessionStart daemon — which is the
-    // expected outcome for this harness, not a guard false positive.
-    assert.equal(
-      code,
-      1,
-      `smoke should fail later on the missing daemon, not the guard; output:\n${output}`,
-    );
-    assert.doesNotMatch(output, /ABORT: something is already listening on isolated port/);
-    assert.match(
-      output,
-      /T\+0 session A launched/,
-      `guard must let a free port through; output:\n${output}`,
-    );
-  },
-);
+  // The guard must NOT abort: the script gets past it and launches the
+  // (stubbed) workers. It then exits nonzero on the never-minted daemon
+  // token — the claude stub starts no SessionStart daemon — which is the
+  // expected outcome for this harness, not a guard false positive.
+  assert.equal(
+    code,
+    1,
+    `smoke should fail later on the missing daemon, not the guard; output:\n${output}`,
+  );
+  assert.doesNotMatch(output, /ABORT: something is already listening on isolated port/);
+  assert.match(
+    output,
+    /T\+0 session A launched/,
+    `guard must let a free port through; output:\n${output}`,
+  );
+});

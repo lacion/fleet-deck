@@ -92,8 +92,12 @@ export default function TermWindow({
   const [pulsing, setPulsing] = useState(true);
   useEffect(() => {
     if (!pulsing) return undefined;
-    const t = setTimeout(() => { setPulsing(false); }, 1000);
-    return () => { clearTimeout(t); };
+    const t = setTimeout(() => {
+      setPulsing(false);
+    }, 1000);
+    return () => {
+      clearTimeout(t);
+    };
   }, [pulsing]);
   const dialogRef = useRef<HTMLDivElement | null>(null);
   // M-A2 (terminal variant) — restore focus to the opener on close, but NO Tab
@@ -169,7 +173,9 @@ export default function TermWindow({
             );
       liveRect.current = next;
       cancelAnimationFrame(raf.current);
-      raf.current = requestAnimationFrame(() => { applyStyle(next); });
+      raf.current = requestAnimationFrame(() => {
+        applyStyle(next);
+      });
     };
     const up = () => {
       el.removeEventListener('pointermove', move);
@@ -234,8 +240,12 @@ export default function TermWindow({
       aria-label={`Live terminal ${callsign || spawnId}`}
       ref={dialogRef}
       style={maximized ? undefined : { left: rect.x, top: rect.y, width: rect.w, height: rect.h }}
-      onKeyDown={(e) => { e.stopPropagation(); }}
-      onFocus={() => { setFocused(true); }}
+      onKeyDown={(e) => {
+        e.stopPropagation();
+      }}
+      onFocus={() => {
+        setFocused(true);
+      }}
       onBlur={(e) => {
         if (!e.currentTarget.contains(e.relatedTarget)) setFocused(false);
       }}

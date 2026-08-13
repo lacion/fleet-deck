@@ -205,7 +205,11 @@ function spawnCmdEnv({
   recordFile,
   postUrl,
   staleMs,
-}: { recordFile?: string; postUrl?: string; staleMs?: number } = {}): Record<string, string> {
+}: {
+  recordFile?: string;
+  postUrl?: string;
+  staleMs?: number;
+} = {}): Record<string, string> {
   const env: Record<string, string> = {
     FLEETDECK_SPAWN_CMD: SPAWN_CMD_FIXTURE,
     FLEETDECK_TEST_SPAWN_RECORD: recordFile ?? '',

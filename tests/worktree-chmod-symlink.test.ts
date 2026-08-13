@@ -31,48 +31,44 @@ function scratch(t: TestContext, prefix = 'fleetdeck-chmod-symlink-') {
 
 const MODE_BITS_MEANINGFUL = process.platform !== 'win32';
 
-test(
-  'symlink to external target: target mode untouched by cleanup chmod',
-  { skip: !MODE_BITS_MEANINGFUL },
-  (t) => {
-    const dir = scratch(t);
-    const worktree = path.join(dir, 'worktree');
-    const outside = path.join(dir, 'outside');
-    mkdirSync(worktree);
-    mkdirSync(outside);
+test('symlink to external target: target mode untouched by cleanup chmod', {
+  skip: !MODE_BITS_MEANINGFUL,
+}, (t) => {
+  const dir = scratch(t);
+  const worktree = path.join(dir, 'worktree');
+  const outside = path.join(dir, 'outside');
+  mkdirSync(worktree);
+  mkdirSync(outside);
 
-    const secret = path.join(outside, 'id_rsa');
-    writeFileSync(secret, 'not-a-real-key');
-    chmodSync(secret, 0o600);
-    assert.equal(statSync(secret).mode & 0o777, 0o600, 'target starts owner-only');
+  const secret = path.join(outside, 'id_rsa');
+  writeFileSync(secret, 'not-a-real-key');
+  chmodSync(secret, 0o600);
+  assert.equal(statSync(secret).mode & 0o777, 0o600, 'target starts owner-only');
 
-    // A same-uid symlink inside the managed tree pointing outside it — the
-    // lstat ownership check passes, so only the symlink guard can save the target.
-    symlinkSync(secret, path.join(worktree, 'innocent.txt'));
+  // A same-uid symlink inside the managed tree pointing outside it — the
+  // lstat ownership check passes, so only the symlink guard can save the target.
+  symlinkSync(secret, path.join(worktree, 'innocent.txt'));
 
-    chmodWritableWhereOwned(worktree);
+  chmodWritableWhereOwned(worktree);
 
-    assert.equal(
-      statSync(secret).mode & 0o777,
-      0o600,
-      'external symlink target must keep its original mode — chmodSync must not follow the link',
-    );
-  },
-);
+  assert.equal(
+    statSync(secret).mode & 0o777,
+    0o600,
+    'external symlink target must keep its original mode — chmodSync must not follow the link',
+  );
+});
 
-test(
-  'real files inside the tree are still made owner-writable',
-  { skip: !MODE_BITS_MEANINGFUL },
-  (t) => {
-    const dir = scratch(t);
-    const worktree = path.join(dir, 'worktree');
-    mkdirSync(worktree);
-    const ro = path.join(worktree, 'artifact');
-    writeFileSync(ro, 'build output');
-    chmodSync(ro, 0o400); // read-only build artifact — our mess to clear
+test('real files inside the tree are still made owner-writable', {
+  skip: !MODE_BITS_MEANINGFUL,
+}, (t) => {
+  const dir = scratch(t);
+  const worktree = path.join(dir, 'worktree');
+  mkdirSync(worktree);
+  const ro = path.join(worktree, 'artifact');
+  writeFileSync(ro, 'build output');
+  chmodSync(ro, 0o400); // read-only build artifact — our mess to clear
 
-    chmodWritableWhereOwned(worktree);
+  chmodWritableWhereOwned(worktree);
 
-    assert.ok(statSync(ro).mode & 0o200, 'owned real file regains owner-write');
-  },
-);
+  assert.ok(statSync(ro).mode & 0o200, 'owned real file regains owner-write');
+});

@@ -365,78 +365,74 @@ exit 1
   }
 });
 
-test(
-  'first run creates and claims a tmux server with an owner-only generation file',
-  { skip: !tmuxOk() && 'tmux server unavailable' },
-  async (t) => {
-    const port = 24_000 + randomInt(500);
-    const env = isolatedTmuxEnv();
-    let serverPid: number | null = null;
-    t.after(async () => {
-      await stopPid(serverPid);
-      restoreEnv(env.previous);
-      rmSync(env.home, { recursive: true, force: true });
-    });
+test('first run creates and claims a tmux server with an owner-only generation file', {
+  skip: !tmuxOk() && 'tmux server unavailable',
+}, async (t) => {
+  const port = 24_000 + randomInt(500);
+  const env = isolatedTmuxEnv();
+  let serverPid: number | null = null;
+  t.after(async () => {
+    await stopPid(serverPid);
+    restoreEnv(env.previous);
+    rmSync(env.home, { recursive: true, force: true });
+  });
 
-    assert.equal(await ensureSession(port), sessionName(port));
-    serverPid = Number(tmux(env.socket, ['display-message', '-p', '#{pid}']));
-    assert.ok(pidAlive(serverPid), 'created tmux server is live');
+  assert.equal(await ensureSession(port), sessionName(port));
+  serverPid = Number(tmux(env.socket, ['display-message', '-p', '#{pid}']));
+  assert.ok(pidAlive(serverPid), 'created tmux server is live');
 
-    const file = path.join(env.home, `tmux-generation-${port}`);
-    const record = readGeneration(file);
-    assert.match(record.generation, /^[0-9a-f-]{36}$/);
-    assert.equal(record.serverPid, serverPid);
-    assert.deepEqual(Object.keys(record).sort(), ['generation', 'serverPid']);
-    assert.equal(statSync(file).mode & 0o777, 0o600, 'generation file is owner-only');
-    assert.equal(
-      tmux(env.socket, ['show-options', '-gqv', `@fleetdeck_generation_${port}`]),
-      record.generation,
-      'persisted and server-side generations match',
-    );
-  },
-);
+  const file = path.join(env.home, `tmux-generation-${port}`);
+  const record = readGeneration(file);
+  assert.match(record.generation, /^[0-9a-f-]{36}$/);
+  assert.equal(record.serverPid, serverPid);
+  assert.deepEqual(Object.keys(record).sort(), ['generation', 'serverPid']);
+  assert.equal(statSync(file).mode & 0o777, 0o600, 'generation file is owner-only');
+  assert.equal(
+    tmux(env.socket, ['show-options', '-gqv', `@fleetdeck_generation_${port}`]),
+    record.generation,
+    'persisted and server-side generations match',
+  );
+});
 
-test(
-  'ensureSession retires a normally exited tmux owner and claims a new generation',
-  { skip: !tmuxOk() && 'tmux server unavailable' },
-  async (t) => {
-    const port = 24_500 + randomInt(400);
-    const env = isolatedTmuxEnv();
-    let newPid: number | null = null;
-    t.after(async () => {
-      await stopPid(newPid);
-      restoreEnv(env.previous);
-      rmSync(env.home, { recursive: true, force: true });
-    });
+test('ensureSession retires a normally exited tmux owner and claims a new generation', {
+  skip: !tmuxOk() && 'tmux server unavailable',
+}, async (t) => {
+  const port = 24_500 + randomInt(400);
+  const env = isolatedTmuxEnv();
+  let newPid: number | null = null;
+  t.after(async () => {
+    await stopPid(newPid);
+    restoreEnv(env.previous);
+    rmSync(env.home, { recursive: true, force: true });
+  });
 
-    assert.equal(await ensureSession(port), sessionName(port));
-    const file = path.join(env.home, `tmux-generation-${port}`);
-    const first = readGeneration(file);
-    assert.ok(pidAlive(first.serverPid));
+  assert.equal(await ensureSession(port), sessionName(port));
+  const file = path.join(env.home, `tmux-generation-${port}`);
+  const first = readGeneration(file);
+  assert.ok(pidAlive(first.serverPid));
 
-    tmux(env.socket, ['kill-server']);
-    for (let i = 0; i < 50 && pidAlive(first.serverPid); i += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    }
-    assert.equal(
-      pidAlive(first.serverPid),
-      false,
-      'normal kill makes the persisted owner definitively dead',
-    );
-    assert.deepEqual(
-      await listScopedWindows(port),
-      [],
-      'a proven-dead owner makes its old fleet authoritatively empty',
-    );
+  tmux(env.socket, ['kill-server']);
+  for (let i = 0; i < 50 && pidAlive(first.serverPid); i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  assert.equal(
+    pidAlive(first.serverPid),
+    false,
+    'normal kill makes the persisted owner definitively dead',
+  );
+  assert.deepEqual(
+    await listScopedWindows(port),
+    [],
+    'a proven-dead owner makes its old fleet authoritatively empty',
+  );
 
-    assert.equal(await ensureSession(port), sessionName(port));
-    const second = readGeneration(file);
-    newPid = second.serverPid;
-    assert.notEqual(second.serverPid, first.serverPid);
-    assert.notEqual(second.generation, first.generation);
-    assert.ok(pidAlive(second.serverPid));
-  },
-);
+  assert.equal(await ensureSession(port), sessionName(port));
+  const second = readGeneration(file);
+  newPid = second.serverPid;
+  assert.notEqual(second.serverPid, first.serverPid);
+  assert.notEqual(second.generation, first.generation);
+  assert.ok(pidAlive(second.serverPid));
+});
 
 // REGRESSION (observed 2026-07-22 on a live fleet): retiring a proven-dead
 // owner used to answer authoritativeEmpty exactly ONCE — from the very call
@@ -448,83 +444,81 @@ test(
 // BEFORE ensureSession — the only code that creates a server. One dead tmux
 // server therefore wedged the whole board permanently. Lookups must stay
 // authoritatively empty for as long as the owner is gone.
-test(
-  'a dead tmux owner keeps its old fleet authoritatively empty across repeated lookups',
-  { skip: !tmuxOk() && 'tmux server unavailable' },
-  async (t) => {
-    const port = 24_900 + randomInt(400);
-    const env = isolatedTmuxEnv();
-    let newPid: number | null = null;
-    t.after(async () => {
-      await stopPid(newPid);
-      restoreEnv(env.previous);
-      rmSync(env.home, { recursive: true, force: true });
-    });
+test('a dead tmux owner keeps its old fleet authoritatively empty across repeated lookups', {
+  skip: !tmuxOk() && 'tmux server unavailable',
+}, async (t) => {
+  const port = 24_900 + randomInt(400);
+  const env = isolatedTmuxEnv();
+  let newPid: number | null = null;
+  t.after(async () => {
+    await stopPid(newPid);
+    restoreEnv(env.previous);
+    rmSync(env.home, { recursive: true, force: true });
+  });
 
-    assert.equal(await ensureSession(port), sessionName(port));
-    const file = path.join(env.home, `tmux-generation-${port}`);
-    const first = readGeneration(file);
+  assert.equal(await ensureSession(port), sessionName(port));
+  const file = path.join(env.home, `tmux-generation-${port}`);
+  const first = readGeneration(file);
 
-    tmux(env.socket, ['kill-server']);
-    for (let i = 0; i < 50 && pidAlive(first.serverPid); i += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    }
-    assert.equal(pidAlive(first.serverPid), false, 'the persisted owner is definitively dead');
+  tmux(env.socket, ['kill-server']);
+  for (let i = 0; i < 50 && pidAlive(first.serverPid); i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  assert.equal(pidAlive(first.serverPid), false, 'the persisted owner is definitively dead');
 
-    // The first call retires the dead claim; the ones after it hold no claim at
-    // all. All three answer the same, or a human clicking Revive after the
-    // liveness tick has already run gets a permanent refusal.
-    assert.deepEqual(await listScopedWindows(port), [], 'retiring lookup is authoritatively empty');
-    assert.deepEqual(
-      await listScopedWindows(port),
-      [],
-      'second lookup is still authoritatively empty',
-    );
-    assert.deepEqual(
-      await listScopedWindows(port),
-      [],
-      'third lookup is still authoritatively empty',
-    );
-    assert.equal(existsSync(file), false, 'the dead claim stays retired');
-    assert.equal(
-      existsSync(`${file}.retired`),
-      true,
-      'the death certificate outlives the claim it replaced',
-    );
-    const certificate = readCertificate(`${file}.retired`);
-    assert.equal(
-      certificate.retiredServerPid,
-      first.serverPid,
-      'the certificate names the PID it proved dead',
-    );
-    assert.equal(certificate.retiredGeneration, first.generation);
-    assert.equal(statSync(`${file}.retired`).mode & 0o777, 0o600, 'certificate is owner-only');
+  // The first call retires the dead claim; the ones after it hold no claim at
+  // all. All three answer the same, or a human clicking Revive after the
+  // liveness tick has already run gets a permanent refusal.
+  assert.deepEqual(await listScopedWindows(port), [], 'retiring lookup is authoritatively empty');
+  assert.deepEqual(
+    await listScopedWindows(port),
+    [],
+    'second lookup is still authoritatively empty',
+  );
+  assert.deepEqual(
+    await listScopedWindows(port),
+    [],
+    'third lookup is still authoritatively empty',
+  );
+  assert.equal(existsSync(file), false, 'the dead claim stays retired');
+  assert.equal(
+    existsSync(`${file}.retired`),
+    true,
+    'the death certificate outlives the claim it replaced',
+  );
+  const certificate = readCertificate(`${file}.retired`);
+  assert.equal(
+    certificate.retiredServerPid,
+    first.serverPid,
+    'the certificate names the PID it proved dead',
+  );
+  assert.equal(certificate.retiredGeneration, first.generation);
+  assert.equal(statSync(`${file}.retired`).mode & 0o777, 0o600, 'certificate is owner-only');
 
-    // killWindowVerified answers the same question for revive's remnant cleanup:
-    // with the owner gone the window is authoritatively gone, never an error.
-    const killed = await killWindowVerified(`fd${port}-heron`);
-    assert.ok(!killed.ok);
-    assert.equal(killed.gone, true, 'a window on a dead owner is gone, not UNKNOWN');
-    assert.equal(killed.error, undefined);
+  // killWindowVerified answers the same question for revive's remnant cleanup:
+  // with the owner gone the window is authoritatively gone, never an error.
+  const killed = await killWindowVerified(`fd${port}-heron`);
+  assert.ok(!killed.ok);
+  assert.equal(killed.gone, true, 'a window on a dead owner is gone, not UNKNOWN');
+  assert.equal(killed.error, undefined);
 
-    // And the fleet must still be able to come back up afterwards.
-    assert.equal(await ensureSession(port), sessionName(port));
-    const second = readGeneration(file);
-    newPid = second.serverPid;
-    assert.notEqual(second.serverPid, first.serverPid);
-    assert.ok(pidAlive(second.serverPid));
-    assert.equal(
-      existsSync(`${file}.retired`),
-      false,
-      'a live claim supersedes the certificate — the old proof must not outlive this server',
-    );
-    assert.deepEqual(
-      await listScopedWindows(port),
-      [],
-      'the reclaimed server answers from its own identity',
-    );
-  },
-);
+  // And the fleet must still be able to come back up afterwards.
+  assert.equal(await ensureSession(port), sessionName(port));
+  const second = readGeneration(file);
+  newPid = second.serverPid;
+  assert.notEqual(second.serverPid, first.serverPid);
+  assert.ok(pidAlive(second.serverPid));
+  assert.equal(
+    existsSync(`${file}.retired`),
+    false,
+    'a live claim supersedes the certificate — the old proof must not outlive this server',
+  );
+  assert.deepEqual(
+    await listScopedWindows(port),
+    [],
+    'the reclaimed server answers from its own identity',
+  );
+});
 
 // REGRESSION (BUG-049): when the claimed server died and an UNRELATED server
 // bound the same socket label before the next probe, the retiring call used to
@@ -535,119 +529,113 @@ test(
 // Revive answered 409 "not revivable". The retiring call must report the old
 // generation's loss, and must never claim the replacement; the death signal
 // must survive long enough for settlement.
-test(
-  'retiring a dead owner never adopts a replacement and keeps the fleet-death signal',
-  { skip: !tmuxOk() && 'tmux server unavailable' },
-  async (t) => {
-    const port = 25_300 + randomInt(400);
-    const env = isolatedTmuxEnv();
-    const replacementSession = `orphan-${port}`;
-    let replacementPid: number | null = null;
-    t.after(async () => {
-      await stopPid(replacementPid);
-      restoreEnv(env.previous);
-      rmSync(env.home, { recursive: true, force: true });
-    });
+test('retiring a dead owner never adopts a replacement and keeps the fleet-death signal', {
+  skip: !tmuxOk() && 'tmux server unavailable',
+}, async (t) => {
+  const port = 25_300 + randomInt(400);
+  const env = isolatedTmuxEnv();
+  const replacementSession = `orphan-${port}`;
+  let replacementPid: number | null = null;
+  t.after(async () => {
+    await stopPid(replacementPid);
+    restoreEnv(env.previous);
+    rmSync(env.home, { recursive: true, force: true });
+  });
 
-    assert.equal(await ensureSession(port), sessionName(port));
-    const file = path.join(env.home, `tmux-generation-${port}`);
-    const first = readGeneration(file);
+  assert.equal(await ensureSession(port), sessionName(port));
+  const file = path.join(env.home, `tmux-generation-${port}`);
+  const first = readGeneration(file);
 
-    tmux(env.socket, ['kill-server']);
-    for (let i = 0; i < 50 && pidAlive(first.serverPid); i += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    }
-    assert.equal(pidAlive(first.serverPid), false, 'the persisted owner is definitively dead');
+  tmux(env.socket, ['kill-server']);
+  for (let i = 0; i < 50 && pidAlive(first.serverPid); i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  assert.equal(pidAlive(first.serverPid), false, 'the persisted owner is definitively dead');
 
-    // Someone starts an unrelated server on the same label before the next probe.
-    tmux(env.socket, [
-      '-f',
-      '/dev/null',
-      'new-session',
-      '-d',
-      '-s',
-      replacementSession,
-      'sleep 3600',
-    ]);
-    replacementPid = Number(tmux(env.socket, ['display-message', '-p', '#{pid}']));
-    assert.notEqual(
-      replacementPid,
-      first.serverPid,
-      'same label now reaches a different tmux server',
-    );
+  // Someone starts an unrelated server on the same label before the next probe.
+  tmux(env.socket, [
+    '-f',
+    '/dev/null',
+    'new-session',
+    '-d',
+    '-s',
+    replacementSession,
+    'sleep 3600',
+  ]);
+  replacementPid = Number(tmux(env.socket, ['display-message', '-p', '#{pid}']));
+  assert.notEqual(
+    replacementPid,
+    first.serverPid,
+    'same label now reaches a different tmux server',
+  );
 
-    // The call that retires the dead owner proves the whole old generation lost.
-    // A replacement answering the socket must not mute that signal: nothing on
-    // the new server can resurrect panes that died with the old one.
-    assert.equal(
-      await fleetServerAbsent(port),
-      true,
-      'the retiring call reports the old generation lost',
-    );
+  // The call that retires the dead owner proves the whole old generation lost.
+  // A replacement answering the socket must not mute that signal: nothing on
+  // the new server can resurrect panes that died with the old one.
+  assert.equal(
+    await fleetServerAbsent(port),
+    true,
+    'the retiring call reports the old generation lost',
+  );
 
-    // And the retirement must not have adopted the replacement: no new claim may
-    // be written and the death certificate must survive, or the fleet-death
-    // signal is gone for every caller after this one.
-    assert.equal(
-      existsSync(file),
-      false,
-      'the replacement server is never claimed by the retiring call',
-    );
-    assert.equal(
-      existsSync(`${file}.retired`),
-      true,
-      'the death certificate survives the reachable replacement',
-    );
-    const certificate = readCertificate(`${file}.retired`);
-    assert.equal(
-      certificate.retiredGeneration,
-      first.generation,
-      'the certificate still names the lost generation',
-    );
+  // And the retirement must not have adopted the replacement: no new claim may
+  // be written and the death certificate must survive, or the fleet-death
+  // signal is gone for every caller after this one.
+  assert.equal(
+    existsSync(file),
+    false,
+    'the replacement server is never claimed by the retiring call',
+  );
+  assert.equal(
+    existsSync(`${file}.retired`),
+    true,
+    'the death certificate survives the reachable replacement',
+  );
+  const certificate = readCertificate(`${file}.retired`);
+  assert.equal(
+    certificate.retiredGeneration,
+    first.generation,
+    'the certificate still names the lost generation',
+  );
 
-    // Later calls must not quietly adopt it either: while the death certificate
-    // covers this label, a reachable server on it is an interloper — the label
-    // was just vacated by a server we proved dead — so readers still answer the
-    // old fleet's emptiness (its panes are provably gone with it) and no claim
-    // or mutation ever lands on the replacement.
-    assert.deepEqual(
-      await listScopedWindows(port),
-      [],
-      'the interloper never reads as the old fleet — the old fleet stays authoritatively empty',
-    );
-    assert.equal(
-      await fleetServerAbsent(port),
-      true,
-      'the fleet-death signal survives the reachable replacement',
-    );
-    assert.equal(existsSync(file), false, 'no later call claims the replacement either');
-    assert.equal(
-      existsSync(`${file}.retired`),
-      true,
-      'the death certificate still covers the label',
-    );
-    assert.ok(pidAlive(replacementPid), 'read paths never kill the interloper');
+  // Later calls must not quietly adopt it either: while the death certificate
+  // covers this label, a reachable server on it is an interloper — the label
+  // was just vacated by a server we proved dead — so readers still answer the
+  // old fleet's emptiness (its panes are provably gone with it) and no claim
+  // or mutation ever lands on the replacement.
+  assert.deepEqual(
+    await listScopedWindows(port),
+    [],
+    'the interloper never reads as the old fleet — the old fleet stays authoritatively empty',
+  );
+  assert.equal(
+    await fleetServerAbsent(port),
+    true,
+    'the fleet-death signal survives the reachable replacement',
+  );
+  assert.equal(existsSync(file), false, 'no later call claims the replacement either');
+  assert.equal(existsSync(`${file}.retired`), true, 'the death certificate still covers the label');
+  assert.ok(pidAlive(replacementPid), 'read paths never kill the interloper');
 
-    // Recovery is ensureSession's job, and it is the one caller that may evict:
-    // it proves the interloper foreign with the certificate, stops exactly that
-    // PID, and stands up its own claimed server in its place.
-    assert.equal(await ensureSession(port), sessionName(port));
-    const second = readGeneration(file);
-    assert.notEqual(second.generation, first.generation);
-    assert.ok(pidAlive(second.serverPid), 'the recovered server is a live, claimed generation');
-    await stopPid(second.serverPid);
-    assert.equal(
-      pidAlive(replacementPid),
-      false,
-      'ensureSession stopped the foreign interloper to recover',
-    );
-    assert.equal(
-      existsSync(`${file}.retired`),
-      false,
-      'a live claim supersedes the certificate — the old proof must not outlive this server',
-    );
-  },
-);
+  // Recovery is ensureSession's job, and it is the one caller that may evict:
+  // it proves the interloper foreign with the certificate, stops exactly that
+  // PID, and stands up its own claimed server in its place.
+  assert.equal(await ensureSession(port), sessionName(port));
+  const second = readGeneration(file);
+  assert.notEqual(second.generation, first.generation);
+  assert.ok(pidAlive(second.serverPid), 'the recovered server is a live, claimed generation');
+  await stopPid(second.serverPid);
+  assert.equal(
+    pidAlive(replacementPid),
+    false,
+    'ensureSession stopped the foreign interloper to recover',
+  );
+  assert.equal(
+    existsSync(`${file}.retired`),
+    false,
+    'a live claim supersedes the certificate — the old proof must not outlive this server',
+  );
+});
 
 test('a home that never claimed a server stays UNKNOWN about an absent fleet', async (t) => {
   // The other side of the coin: absence is only ever licensed by a death
@@ -680,209 +668,195 @@ test('a home that never claimed a server stays UNKNOWN about an absent fleet', a
 // unreachable, so an empty listing is a lie and must stay UNKNOWN — this is the
 // case the whole generation identity exists to catch, and it is distinguished
 // from the retired-owner case above only by the recorded PID still being alive.
-test(
-  'an unreachable but still-live claimed server keeps lookups UNKNOWN',
-  { skip: !tmuxOk() && 'tmux server unavailable' },
-  async (t) => {
-    const port = 25_900 + randomInt(400);
-    const env = isolatedTmuxEnv();
-    const fleetWindow = `fd${port}-orca`;
-    let originalPid: number | null = null;
-    t.after(async () => {
-      await stopPid(originalPid);
-      restoreEnv(env.previous);
-      rmSync(env.home, { recursive: true, force: true });
-    });
+test('an unreachable but still-live claimed server keeps lookups UNKNOWN', {
+  skip: !tmuxOk() && 'tmux server unavailable',
+}, async (t) => {
+  const port = 25_900 + randomInt(400);
+  const env = isolatedTmuxEnv();
+  const fleetWindow = `fd${port}-orca`;
+  let originalPid: number | null = null;
+  t.after(async () => {
+    await stopPid(originalPid);
+    restoreEnv(env.previous);
+    rmSync(env.home, { recursive: true, force: true });
+  });
 
-    tmux(env.socket, [
-      '-f',
-      '/dev/null',
-      'new-session',
-      '-d',
-      '-s',
-      sessionName(port),
-      '-n',
-      fleetWindow,
-      'sleep 3600',
-    ]);
-    originalPid = Number(tmux(env.socket, ['display-message', '-p', '#{pid}']));
-    assert.equal(
-      (await listScopedWindows(port))?.[0]?.window,
-      fleetWindow,
-      'the live fleet window is claimed',
-    );
+  tmux(env.socket, [
+    '-f',
+    '/dev/null',
+    'new-session',
+    '-d',
+    '-s',
+    sessionName(port),
+    '-n',
+    fleetWindow,
+    'sleep 3600',
+  ]);
+  originalPid = Number(tmux(env.socket, ['display-message', '-p', '#{pid}']));
+  assert.equal(
+    (await listScopedWindows(port))?.[0]?.window,
+    fleetWindow,
+    'the live fleet window is claimed',
+  );
 
-    unlinkSync(env.socketPath); // server still running, now unreachable by label
-    assert.equal(
-      await listScopedWindows(port),
-      null,
-      'a live owner we cannot reach is UNKNOWN, never empty',
-    );
-    assert.equal(
-      existsSync(path.join(env.home, `tmux-generation-${port}`)),
-      true,
-      'a claim whose PID is alive is never retired',
-    );
-    const killed = await killWindowVerified(fleetWindow);
-    assert.ok(!killed.ok);
-    assert.equal(
-      killed.gone,
-      undefined,
-      'an unreachable live window is never authoritatively gone',
-    );
-    assert.match(killed.error ?? '', /generation/i);
-    assert.ok(pidAlive(originalPid), 'the original server and its panes are left alone');
-  },
-);
+  unlinkSync(env.socketPath); // server still running, now unreachable by label
+  assert.equal(
+    await listScopedWindows(port),
+    null,
+    'a live owner we cannot reach is UNKNOWN, never empty',
+  );
+  assert.equal(
+    existsSync(path.join(env.home, `tmux-generation-${port}`)),
+    true,
+    'a claim whose PID is alive is never retired',
+  );
+  const killed = await killWindowVerified(fleetWindow);
+  assert.ok(!killed.ok);
+  assert.equal(killed.gone, undefined, 'an unreachable live window is never authoritatively gone');
+  assert.match(killed.error ?? '', /generation/i);
+  assert.ok(pidAlive(originalPid), 'the original server and its panes are left alone');
+});
 
-test(
-  'an unlinked socket replacement cannot impersonate the claimed tmux server',
-  { skip: !tmuxOk() && 'tmux server unavailable' },
-  async (t) => {
-    const port = 24_500 + randomInt(500);
-    const env = isolatedTmuxEnv();
-    const fleetSession = sessionName(port);
-    const fleetWindow = `fd${port}-original`;
-    const replacementSession = `replacement-${port}`;
-    let originalPid: number | null = null;
-    let replacementPid: number | null = null;
-    t.after(async () => {
-      // The socket names only the replacement now, so clean both exact recorded
-      // server PIDs rather than relying on a label that cannot reach the original.
-      await stopPid(replacementPid);
-      await stopPid(originalPid);
-      restoreEnv(env.previous);
-      rmSync(env.home, { recursive: true, force: true });
-    });
+test('an unlinked socket replacement cannot impersonate the claimed tmux server', {
+  skip: !tmuxOk() && 'tmux server unavailable',
+}, async (t) => {
+  const port = 24_500 + randomInt(500);
+  const env = isolatedTmuxEnv();
+  const fleetSession = sessionName(port);
+  const fleetWindow = `fd${port}-original`;
+  const replacementSession = `replacement-${port}`;
+  let originalPid: number | null = null;
+  let replacementPid: number | null = null;
+  t.after(async () => {
+    // The socket names only the replacement now, so clean both exact recorded
+    // server PIDs rather than relying on a label that cannot reach the original.
+    await stopPid(replacementPid);
+    await stopPid(originalPid);
+    restoreEnv(env.previous);
+    rmSync(env.home, { recursive: true, force: true });
+  });
 
-    tmux(env.socket, [
-      '-f',
-      '/dev/null',
-      'new-session',
-      '-d',
-      '-s',
-      fleetSession,
-      '-n',
-      fleetWindow,
-      'sleep 3600',
-    ]);
-    originalPid = Number(tmux(env.socket, ['display-message', '-p', '#{pid}']));
-    const claimed = await listScopedWindows(port);
-    assert.equal(
-      claimed?.[0]?.window,
-      fleetWindow,
-      'pre-feature server and fleet window are claimed',
-    );
-    assert.ok(pidAlive(originalPid));
+  tmux(env.socket, [
+    '-f',
+    '/dev/null',
+    'new-session',
+    '-d',
+    '-s',
+    fleetSession,
+    '-n',
+    fleetWindow,
+    'sleep 3600',
+  ]);
+  originalPid = Number(tmux(env.socket, ['display-message', '-p', '#{pid}']));
+  const claimed = await listScopedWindows(port);
+  assert.equal(
+    claimed?.[0]?.window,
+    fleetWindow,
+    'pre-feature server and fleet window are claimed',
+  );
+  assert.ok(pidAlive(originalPid));
 
-    unlinkSync(env.socketPath);
-    tmux(env.socket, [
-      '-f',
-      '/dev/null',
-      'new-session',
-      '-d',
-      '-s',
-      replacementSession,
-      'sleep 3600',
-    ]);
-    replacementPid = Number(tmux(env.socket, ['display-message', '-p', '#{pid}']));
-    assert.notEqual(replacementPid, originalPid, 'same label now reaches a different tmux server');
+  unlinkSync(env.socketPath);
+  tmux(env.socket, [
+    '-f',
+    '/dev/null',
+    'new-session',
+    '-d',
+    '-s',
+    replacementSession,
+    'sleep 3600',
+  ]);
+  replacementPid = Number(tmux(env.socket, ['display-message', '-p', '#{pid}']));
+  assert.notEqual(replacementPid, originalPid, 'same label now reaches a different tmux server');
 
-    assert.equal(await listScopedWindows(port), null, 'replacement empty listing is UNKNOWN');
-    const killed = await killWindowVerified(fleetWindow);
-    assert.ok(!killed.ok);
-    assert.equal(killed.gone, undefined, 'replacement is never authoritative gone');
-    assert.match(killed.error ?? '', /generation/i);
-    await assert.rejects(
-      ensureSession(port),
-      /generation/i,
-      'ensureSession refuses the replacement',
-    );
-    assert.equal(
-      tmuxStatus(env.socket, ['has-session', '-t', `=${fleetSession}`]),
-      1,
-      'ensureSession did not create or accept the fleet session on the replacement',
-    );
-    assert.ok(pidAlive(originalPid), 'inaccessible original tmux server and panes remain alive');
-    assert.ok(
-      pidAlive(replacementPid),
-      'generation checks do not kill the replacement server either',
-    );
-  },
-);
+  assert.equal(await listScopedWindows(port), null, 'replacement empty listing is UNKNOWN');
+  const killed = await killWindowVerified(fleetWindow);
+  assert.ok(!killed.ok);
+  assert.equal(killed.gone, undefined, 'replacement is never authoritative gone');
+  assert.match(killed.error ?? '', /generation/i);
+  await assert.rejects(ensureSession(port), /generation/i, 'ensureSession refuses the replacement');
+  assert.equal(
+    tmuxStatus(env.socket, ['has-session', '-t', `=${fleetSession}`]),
+    1,
+    'ensureSession did not create or accept the fleet session on the replacement',
+  );
+  assert.ok(pidAlive(originalPid), 'inaccessible original tmux server and panes remain alive');
+  assert.ok(
+    pidAlive(replacementPid),
+    'generation checks do not kill the replacement server either',
+  );
+});
 
-test(
-  'exact fleet target blocks same-number pane mutation and new-window launch after socket replacement',
-  { skip: !tmuxOk() && 'tmux server unavailable' },
-  async (t) => {
-    const port = 25_000 + randomInt(500);
-    const env = isolatedTmuxEnv();
-    const fleetSession = sessionName(port);
-    const fleetWindow = `fd${port}-bound`;
-    const replacementSession = `replacement-${port}`;
-    const launched = path.join(env.home, 'replacement-launched');
-    let originalPid: number | null = null;
-    let replacementPid: number | null = null;
-    t.after(async () => {
-      await stopPid(replacementPid);
-      await stopPid(originalPid);
-      restoreEnv(env.previous);
-      rmSync(env.home, { recursive: true, force: true });
-    });
+test('exact fleet target blocks same-number pane mutation and new-window launch after socket replacement', {
+  skip: !tmuxOk() && 'tmux server unavailable',
+}, async (t) => {
+  const port = 25_000 + randomInt(500);
+  const env = isolatedTmuxEnv();
+  const fleetSession = sessionName(port);
+  const fleetWindow = `fd${port}-bound`;
+  const replacementSession = `replacement-${port}`;
+  const launched = path.join(env.home, 'replacement-launched');
+  let originalPid: number | null = null;
+  let replacementPid: number | null = null;
+  t.after(async () => {
+    await stopPid(replacementPid);
+    await stopPid(originalPid);
+    restoreEnv(env.previous);
+    rmSync(env.home, { recursive: true, force: true });
+  });
 
-    assert.equal(await ensureSession(port), fleetSession);
-    tmux(env.socket, ['rename-window', '-t', `=${fleetSession}:`, fleetWindow]);
-    originalPid = Number(tmux(env.socket, ['display-message', '-p', '#{pid}']));
-    const originalId = tmux(env.socket, [
-      'display-message',
-      '-p',
-      '-t',
-      `=${fleetSession}:=${fleetWindow}`,
-      '#{window_id}',
-    ]);
-    const target = exactWindowTarget(port, fleetWindow);
+  assert.equal(await ensureSession(port), fleetSession);
+  tmux(env.socket, ['rename-window', '-t', `=${fleetSession}:`, fleetWindow]);
+  originalPid = Number(tmux(env.socket, ['display-message', '-p', '#{pid}']));
+  const originalId = tmux(env.socket, [
+    'display-message',
+    '-p',
+    '-t',
+    `=${fleetSession}:=${fleetWindow}`,
+    '#{window_id}',
+  ]);
+  const target = exactWindowTarget(port, fleetWindow);
 
-    unlinkSync(env.socketPath);
-    tmux(env.socket, [
-      '-f',
-      '/dev/null',
-      'new-session',
-      '-d',
-      '-s',
-      replacementSession,
-      '-n',
-      'decoy',
-      'sleep 3600',
-    ]);
-    replacementPid = Number(tmux(env.socket, ['display-message', '-p', '#{pid}']));
-    const replacementId = tmux(env.socket, [
-      'display-message',
-      '-p',
-      '-t',
-      `=${replacementSession}:=decoy`,
-      '#{window_id}',
-    ]);
-    assert.equal(replacementId, originalId, 'replacement reused the same numeric window id');
+  unlinkSync(env.socketPath);
+  tmux(env.socket, [
+    '-f',
+    '/dev/null',
+    'new-session',
+    '-d',
+    '-s',
+    replacementSession,
+    '-n',
+    'decoy',
+    'sleep 3600',
+  ]);
+  replacementPid = Number(tmux(env.socket, ['display-message', '-p', '#{pid}']));
+  const replacementId = tmux(env.socket, [
+    'display-message',
+    '-p',
+    '-t',
+    `=${replacementSession}:=decoy`,
+    '#{window_id}',
+  ]);
+  assert.equal(replacementId, originalId, 'replacement reused the same numeric window id');
 
-    assert.equal(
-      await sendEnter(target),
-      false,
-      'exact fleet target cannot redirect Enter to same-number decoy',
-    );
-    await assert.rejects(
-      newWindow({
-        port,
-        callsign: 'never-launched',
-        cwd: env.home,
-        argv: ['sh', '-c', `touch ${launched}`],
-      }),
-      /tmux (?:new-window failed|server generation unavailable or changed)/,
-    );
-    assert.equal(tmuxStatus(env.socket, ['has-session', '-t', `=${fleetSession}`]), 1);
-    assert.equal(tmuxStatus(env.socket, ['has-session', '-t', `=${replacementSession}`]), 0);
-    assert.equal(spawnSync('test', ['-e', launched]).status, 1, 'replacement received no launch');
-  },
-);
+  assert.equal(
+    await sendEnter(target),
+    false,
+    'exact fleet target cannot redirect Enter to same-number decoy',
+  );
+  await assert.rejects(
+    newWindow({
+      port,
+      callsign: 'never-launched',
+      cwd: env.home,
+      argv: ['sh', '-c', `touch ${launched}`],
+    }),
+    /tmux (?:new-window failed|server generation unavailable or changed)/,
+  );
+  assert.equal(tmuxStatus(env.socket, ['has-session', '-t', `=${fleetSession}`]), 1);
+  assert.equal(tmuxStatus(env.socket, ['has-session', '-t', `=${replacementSession}`]), 0);
+  assert.equal(spawnSync('test', ['-e', launched]).status, 1, 'replacement received no launch');
+});
 
 test('scoped listing distinguishes failure, validated empty, and malformed success', async (t) => {
   useLegacyGenerationMode(t);
@@ -920,168 +894,154 @@ exit 1
   assert.equal(await listScopedWindows(29_999), null, 'malformed successful output is UNKNOWN');
 });
 
-test(
-  'tmux adapter parses scoped panes and kills only the exact fleet session window',
-  { skip: !tmuxOk() && 'tmux server unavailable' },
-  async (t) => {
-    useLegacyGenerationMode(t);
-    const port = 22_000 + randomInt(1_000);
-    const socket = `fleetdeck-adapter-${process.pid}-${randomBytes(4).toString('hex')}`;
-    const fleetSession = sessionName(port);
-    const decoySession = `decoy-${port}`;
-    const window = `fd${port}-adapter`;
-    const previousSocket = process.env['FLEETDECK_TMUX_SOCKET'];
-    process.env['FLEETDECK_TMUX_SOCKET'] = socket;
+test('tmux adapter parses scoped panes and kills only the exact fleet session window', {
+  skip: !tmuxOk() && 'tmux server unavailable',
+}, async (t) => {
+  useLegacyGenerationMode(t);
+  const port = 22_000 + randomInt(1_000);
+  const socket = `fleetdeck-adapter-${process.pid}-${randomBytes(4).toString('hex')}`;
+  const fleetSession = sessionName(port);
+  const decoySession = `decoy-${port}`;
+  const window = `fd${port}-adapter`;
+  const previousSocket = process.env['FLEETDECK_TMUX_SOCKET'];
+  process.env['FLEETDECK_TMUX_SOCKET'] = socket;
 
-    t.after(() => {
-      try {
-        tmux(socket, ['kill-server']);
-      } catch {
-        /* already gone */
-      }
-      if (previousSocket == null) delete process.env['FLEETDECK_TMUX_SOCKET'];
-      else process.env['FLEETDECK_TMUX_SOCKET'] = previousSocket;
-    });
+  t.after(() => {
+    try {
+      tmux(socket, ['kill-server']);
+    } catch {
+      /* already gone */
+    }
+    if (previousSocket == null) delete process.env['FLEETDECK_TMUX_SOCKET'];
+    else process.env['FLEETDECK_TMUX_SOCKET'] = previousSocket;
+  });
 
-    // Create the decoy first so an all-server scan encounters the wrong, same-name
-    // window before the daemon-owned one. Exact session corroboration must exclude it.
-    // Direct argv after `--`, exactly like production newWindow (spawn.mjs passes
-    // '--', ...argv): tmux execs sleep itself, so pane_current_command is 'sleep'
-    // immediately. The shell-string form ('sleep 3600') leaves the pane reporting
-    // its login shell (zsh, bash, …) until exec completes, which raced the
-    // pane_cmd assertions below on zsh/macOS hosts.
-    tmux(socket, [
-      '-f',
-      '/dev/null',
-      'new-session',
-      '-d',
-      '-s',
-      decoySession,
-      '-n',
+  // Create the decoy first so an all-server scan encounters the wrong, same-name
+  // window before the daemon-owned one. Exact session corroboration must exclude it.
+  // Direct argv after `--`, exactly like production newWindow (spawn.mjs passes
+  // '--', ...argv): tmux execs sleep itself, so pane_current_command is 'sleep'
+  // immediately. The shell-string form ('sleep 3600') leaves the pane reporting
+  // its login shell (zsh, bash, …) until exec completes, which raced the
+  // pane_cmd assertions below on zsh/macOS hosts.
+  tmux(socket, [
+    '-f',
+    '/dev/null',
+    'new-session',
+    '-d',
+    '-s',
+    decoySession,
+    '-n',
+    window,
+    '--',
+    'sleep',
+    '3600',
+  ]);
+  tmux(socket, ['new-session', '-d', '-s', fleetSession, '-n', window, '--', 'sleep', '3600']);
+  tmux(socket, ['split-window', '-d', '-t', `${fleetSession}:${window}`, '--', 'sleep', '3600']);
+
+  const fleetWindowId = tmux(socket, [
+    'display-message',
+    '-p',
+    '-t',
+    `${fleetSession}:${window}`,
+    '#{window_id}',
+  ]);
+  const decoyWindowId = tmux(socket, [
+    'display-message',
+    '-p',
+    '-t',
+    `${decoySession}:${window}`,
+    '#{window_id}',
+  ]);
+  assert.notEqual(fleetWindowId, decoyWindowId);
+
+  // Bounded readiness poll (not a fixed sleep): even with direct argv, tmux
+  // does not promise the pane has exec'd by the time new-session/split-window
+  // return — pane_current_command can still report the shell (zsh, bash, …) at
+  // this point. Poll until the fleet pane has execed before asserting its
+  // command, scaled like every other wait.
+  const windows = await waitUntil(
+    async () => {
+      const listed = await listScopedWindows(port);
+      return listed !== null && listed.length === 1 && listed[0]?.pane_cmd === 'sleep'
+        ? listed
+        : null;
+    },
+    {
+      timeoutMs: 5_000,
+      intervalMs: 25,
+      label: `pane of ${fleetSession}:${window} (${fleetWindowId}) to exec sleep`,
+    },
+  );
+  assert.deepEqual(windows, [
+    {
+      session: fleetSession,
       window,
-      '--',
-      'sleep',
-      '3600',
-    ]);
-    tmux(socket, ['new-session', '-d', '-s', fleetSession, '-n', window, '--', 'sleep', '3600']);
-    tmux(socket, ['split-window', '-d', '-t', `${fleetSession}:${window}`, '--', 'sleep', '3600']);
+      window_id: fleetWindowId,
+      pane_dead: false,
+      pane_cmd: 'sleep',
+    },
+  ]);
+  const pane = await waitUntil(
+    async () => {
+      const found = await paneCurrentCommand(fleetWindowId);
+      return found?.cmd === 'sleep' ? found : null;
+    },
+    { label: `paneCurrentCommand(${fleetWindowId}) reports sleep` },
+  );
+  assert.deepEqual(pane, { dead: false, cmd: 'sleep' });
 
-    const fleetWindowId = tmux(socket, [
-      'display-message',
-      '-p',
-      '-t',
-      `${fleetSession}:${window}`,
-      '#{window_id}',
-    ]);
-    const decoyWindowId = tmux(socket, [
-      'display-message',
-      '-p',
-      '-t',
-      `${decoySession}:${window}`,
-      '#{window_id}',
-    ]);
-    assert.notEqual(fleetWindowId, decoyWindowId);
+  const killed = await killWindowVerified(window);
+  assert.deepEqual(killed, { ok: true, window_id: fleetWindowId });
+  assert.equal(
+    tmuxStatus(socket, ['has-session', '-t', `=${decoySession}`]),
+    0,
+    'same-name decoy session survives',
+  );
+  assert.equal(
+    tmuxStatus(socket, ['has-session', '-t', `=${fleetSession}`]),
+    1,
+    'fleet session exits after its only window is killed',
+  );
+});
 
-    // Bounded readiness poll (not a fixed sleep): even with direct argv, tmux
-    // does not promise the pane has exec'd by the time new-session/split-window
-    // return — pane_current_command can still report the shell (zsh, bash, …) at
-    // this point. Poll until the fleet pane has execed before asserting its
-    // command, scaled like every other wait.
-    const windows = await waitUntil(
-      async () => {
-        const listed = await listScopedWindows(port);
-        return listed !== null && listed.length === 1 && listed[0]?.pane_cmd === 'sleep'
-          ? listed
-          : null;
-      },
-      {
-        timeoutMs: 5_000,
-        intervalMs: 25,
-        label: `pane of ${fleetSession}:${window} (${fleetWindowId}) to exec sleep`,
-      },
-    );
-    assert.deepEqual(windows, [
-      {
-        session: fleetSession,
-        window,
-        window_id: fleetWindowId,
-        pane_dead: false,
-        pane_cmd: 'sleep',
-      },
-    ]);
-    const pane = await waitUntil(
-      async () => {
-        const found = await paneCurrentCommand(fleetWindowId);
-        return found?.cmd === 'sleep' ? found : null;
-      },
-      { label: `paneCurrentCommand(${fleetWindowId}) reports sleep` },
-    );
-    assert.deepEqual(pane, { dead: false, cmd: 'sleep' });
+test('duplicate scoped window names are ambiguous and never selected or killed', {
+  skip: !tmuxOk() && 'tmux server unavailable',
+}, async (t) => {
+  useLegacyGenerationMode(t);
+  const port = 23_000 + randomInt(1_000);
+  const socket = `fleetdeck-adapter-duplicate-${process.pid}-${randomBytes(4).toString('hex')}`;
+  const session = sessionName(port);
+  const window = `fd${port}-duplicate`;
+  const previousSocket = process.env['FLEETDECK_TMUX_SOCKET'];
+  process.env['FLEETDECK_TMUX_SOCKET'] = socket;
+  t.after(() => {
+    try {
+      tmux(socket, ['kill-server']);
+    } catch {
+      /* already gone */
+    }
+    if (previousSocket == null) delete process.env['FLEETDECK_TMUX_SOCKET'];
+    else process.env['FLEETDECK_TMUX_SOCKET'] = previousSocket;
+  });
 
-    const killed = await killWindowVerified(window);
-    assert.deepEqual(killed, { ok: true, window_id: fleetWindowId });
-    assert.equal(
-      tmuxStatus(socket, ['has-session', '-t', `=${decoySession}`]),
-      0,
-      'same-name decoy session survives',
-    );
-    assert.equal(
-      tmuxStatus(socket, ['has-session', '-t', `=${fleetSession}`]),
-      1,
-      'fleet session exits after its only window is killed',
-    );
-  },
-);
+  tmux(socket, ['-f', '/dev/null', 'new-session', '-d', '-s', session, '-n', window, 'sleep 3600']);
+  tmux(socket, ['new-window', '-d', '-t', `${session}:`, '-n', window, 'sleep 3600']);
 
-test(
-  'duplicate scoped window names are ambiguous and never selected or killed',
-  { skip: !tmuxOk() && 'tmux server unavailable' },
-  async (t) => {
-    useLegacyGenerationMode(t);
-    const port = 23_000 + randomInt(1_000);
-    const socket = `fleetdeck-adapter-duplicate-${process.pid}-${randomBytes(4).toString('hex')}`;
-    const session = sessionName(port);
-    const window = `fd${port}-duplicate`;
-    const previousSocket = process.env['FLEETDECK_TMUX_SOCKET'];
-    process.env['FLEETDECK_TMUX_SOCKET'] = socket;
-    t.after(() => {
-      try {
-        tmux(socket, ['kill-server']);
-      } catch {
-        /* already gone */
-      }
-      if (previousSocket == null) delete process.env['FLEETDECK_TMUX_SOCKET'];
-      else process.env['FLEETDECK_TMUX_SOCKET'] = previousSocket;
-    });
-
-    tmux(socket, [
-      '-f',
-      '/dev/null',
-      'new-session',
-      '-d',
-      '-s',
-      session,
-      '-n',
-      window,
-      'sleep 3600',
-    ]);
-    tmux(socket, ['new-window', '-d', '-t', `${session}:`, '-n', window, 'sleep 3600']);
-
-    assert.equal(
-      await listScopedWindows(port),
-      null,
-      'duplicate name makes the fleet listing UNKNOWN',
-    );
-    assert.deepEqual(await killWindowVerified(window), {
-      ok: false,
-      error: 'ambiguous scoped tmux window name',
-    });
-    const names = tmux(socket, ['list-windows', '-t', `=${session}`, '-F', '#{window_name}']).split(
-      '\n',
-    );
-    assert.deepEqual(names, [window, window], 'neither duplicate was killed');
-  },
-);
+  assert.equal(
+    await listScopedWindows(port),
+    null,
+    'duplicate name makes the fleet listing UNKNOWN',
+  );
+  assert.deepEqual(await killWindowVerified(window), {
+    ok: false,
+    error: 'ambiguous scoped tmux window name',
+  });
+  const names = tmux(socket, ['list-windows', '-t', `=${session}`, '-F', '#{window_name}']).split(
+    '\n',
+  );
+  assert.deepEqual(names, [window, window], 'neither duplicate was killed');
+});
 
 test('kill failure recheck treats a vanished fleet window as gone despite a same-name decoy', async (t) => {
   useLegacyGenerationMode(t);
@@ -1150,131 +1110,113 @@ exit 1
 // happily destroys the replacement. killWindowVerified therefore accepts
 // {expectWindowId, expect} and refuses — {ok:false, stale:true} — when the
 // kill-time generation no longer matches what the caller verified.
-test(
-  'killWindowVerified refuses a recycled window name (expectWindowId mismatch)',
-  { skip: !tmuxOk() && 'tmux server unavailable' },
-  async (t) => {
-    useLegacyGenerationMode(t);
-    const port = 21_000 + randomInt(1_000);
-    const socket = `fleetdeck-adapter-recycle-${process.pid}-${randomBytes(4).toString('hex')}`;
-    const session = sessionName(port);
-    const window = `fd${port}-recycled`;
-    const previousSocket = process.env['FLEETDECK_TMUX_SOCKET'];
-    process.env['FLEETDECK_TMUX_SOCKET'] = socket;
-    t.after(() => {
-      try {
-        tmux(socket, ['kill-server']);
-      } catch {
-        /* already gone */
-      }
-      if (previousSocket == null) delete process.env['FLEETDECK_TMUX_SOCKET'];
-      else process.env['FLEETDECK_TMUX_SOCKET'] = previousSocket;
-    });
+test('killWindowVerified refuses a recycled window name (expectWindowId mismatch)', {
+  skip: !tmuxOk() && 'tmux server unavailable',
+}, async (t) => {
+  useLegacyGenerationMode(t);
+  const port = 21_000 + randomInt(1_000);
+  const socket = `fleetdeck-adapter-recycle-${process.pid}-${randomBytes(4).toString('hex')}`;
+  const session = sessionName(port);
+  const window = `fd${port}-recycled`;
+  const previousSocket = process.env['FLEETDECK_TMUX_SOCKET'];
+  process.env['FLEETDECK_TMUX_SOCKET'] = socket;
+  t.after(() => {
+    try {
+      tmux(socket, ['kill-server']);
+    } catch {
+      /* already gone */
+    }
+    if (previousSocket == null) delete process.env['FLEETDECK_TMUX_SOCKET'];
+    else process.env['FLEETDECK_TMUX_SOCKET'] = previousSocket;
+  });
 
-    // The dead remnant the caller listed (a keeper window keeps the session — and
-    // therefore the server — alive when the remnant is killed below).
-    tmux(socket, [
-      '-f',
-      '/dev/null',
-      'new-session',
-      '-d',
-      '-s',
-      session,
-      '-n',
-      'keeper',
-      'sleep 3600',
-    ]);
-    tmux(socket, ['new-window', '-d', '-t', `${session}:`, '-n', window, 'sleep 3600']);
-    const remnantId = tmux(socket, [
-      'display-message',
-      '-p',
-      '-t',
-      `=${session}:=${window}`,
-      '#{window_id}',
-    ]);
-    // The race: a revive kills the remnant and recreates the SAME name — a new
-    // window_id with a live replacement pane.
-    tmux(socket, ['kill-window', '-t', `=${session}:=${window}`]);
-    tmux(socket, ['new-window', '-d', '-t', `${session}:`, '-n', window, 'sleep 3600']);
-    const replacementId = tmux(socket, [
-      'display-message',
-      '-p',
-      '-t',
-      `=${session}:=${window}`,
-      '#{window_id}',
-    ]);
-    assert.notEqual(
-      replacementId,
-      remnantId,
-      'the recreated name is a different window generation',
-    );
+  // The dead remnant the caller listed (a keeper window keeps the session — and
+  // therefore the server — alive when the remnant is killed below).
+  tmux(socket, [
+    '-f',
+    '/dev/null',
+    'new-session',
+    '-d',
+    '-s',
+    session,
+    '-n',
+    'keeper',
+    'sleep 3600',
+  ]);
+  tmux(socket, ['new-window', '-d', '-t', `${session}:`, '-n', window, 'sleep 3600']);
+  const remnantId = tmux(socket, [
+    'display-message',
+    '-p',
+    '-t',
+    `=${session}:=${window}`,
+    '#{window_id}',
+  ]);
+  // The race: a revive kills the remnant and recreates the SAME name — a new
+  // window_id with a live replacement pane.
+  tmux(socket, ['kill-window', '-t', `=${session}:=${window}`]);
+  tmux(socket, ['new-window', '-d', '-t', `${session}:`, '-n', window, 'sleep 3600']);
+  const replacementId = tmux(socket, [
+    'display-message',
+    '-p',
+    '-t',
+    `=${session}:=${window}`,
+    '#{window_id}',
+  ]);
+  assert.notEqual(replacementId, remnantId, 'the recreated name is a different window generation');
 
-    const refused = await killWindowVerified(window, { expectWindowId: remnantId });
-    assert.ok(!refused.ok);
-    assert.equal(refused.stale, true, 'a generation swap is a stale no-op, never a kill');
-    assert.equal(
-      tmuxStatus(socket, ['has-session', '-t', `=${session}`]),
-      0,
-      'the replacement pane survived',
-    );
+  const refused = await killWindowVerified(window, { expectWindowId: remnantId });
+  assert.ok(!refused.ok);
+  assert.equal(refused.stale, true, 'a generation swap is a stale no-op, never a kill');
+  assert.equal(
+    tmuxStatus(socket, ['has-session', '-t', `=${session}`]),
+    0,
+    'the replacement pane survived',
+  );
 
-    // The up-to-date id still kills — the option refuses only STALE expectations.
-    const killed = await killWindowVerified(window, { expectWindowId: replacementId });
-    assert.deepEqual(killed, { ok: true, window_id: replacementId });
-  },
-);
+  // The up-to-date id still kills — the option refuses only STALE expectations.
+  const killed = await killWindowVerified(window, { expectWindowId: replacementId });
+  assert.deepEqual(killed, { ok: true, window_id: replacementId });
+});
 
-test(
-  'killWindowVerified treats a failing expect predicate as a stale no-op',
-  { skip: !tmuxOk() && 'tmux server unavailable' },
-  async (t) => {
-    useLegacyGenerationMode(t);
-    const port = 20_000 + randomInt(1_000);
-    const socket = `fleetdeck-adapter-expect-${process.pid}-${randomBytes(4).toString('hex')}`;
-    const session = sessionName(port);
-    const window = `fd${port}-expected`;
-    const previousSocket = process.env['FLEETDECK_TMUX_SOCKET'];
-    process.env['FLEETDECK_TMUX_SOCKET'] = socket;
-    t.after(() => {
-      try {
-        tmux(socket, ['kill-server']);
-      } catch {
-        /* already gone */
-      }
-      if (previousSocket == null) delete process.env['FLEETDECK_TMUX_SOCKET'];
-      else process.env['FLEETDECK_TMUX_SOCKET'] = previousSocket;
-    });
+test('killWindowVerified treats a failing expect predicate as a stale no-op', {
+  skip: !tmuxOk() && 'tmux server unavailable',
+}, async (t) => {
+  useLegacyGenerationMode(t);
+  const port = 20_000 + randomInt(1_000);
+  const socket = `fleetdeck-adapter-expect-${process.pid}-${randomBytes(4).toString('hex')}`;
+  const session = sessionName(port);
+  const window = `fd${port}-expected`;
+  const previousSocket = process.env['FLEETDECK_TMUX_SOCKET'];
+  process.env['FLEETDECK_TMUX_SOCKET'] = socket;
+  t.after(() => {
+    try {
+      tmux(socket, ['kill-server']);
+    } catch {
+      /* already gone */
+    }
+    if (previousSocket == null) delete process.env['FLEETDECK_TMUX_SOCKET'];
+    else process.env['FLEETDECK_TMUX_SOCKET'] = previousSocket;
+  });
 
-    tmux(socket, [
-      '-f',
-      '/dev/null',
-      'new-session',
-      '-d',
-      '-s',
-      session,
-      '-n',
-      window,
-      'sleep 3600',
-    ]);
+  tmux(socket, ['-f', '/dev/null', 'new-session', '-d', '-s', session, '-n', window, 'sleep 3600']);
 
-    let verdict = false; // the DB owner flipped live-eligible mid-kill
-    let calls = 0;
-    const refused = await killWindowVerified(window, {
-      expect: () => {
-        calls += 1;
-        return verdict;
-      },
-    });
-    assert.ok(!refused.ok);
-    assert.equal(refused.stale, true);
-    assert.ok(calls >= 1, 'the predicate was consulted');
-    assert.equal(tmuxStatus(socket, ['has-session', '-t', `=${session}`]), 0, 'nothing was killed');
+  let verdict = false; // the DB owner flipped live-eligible mid-kill
+  let calls = 0;
+  const refused = await killWindowVerified(window, {
+    expect: () => {
+      calls += 1;
+      return verdict;
+    },
+  });
+  assert.ok(!refused.ok);
+  assert.equal(refused.stale, true);
+  assert.ok(calls >= 1, 'the predicate was consulted');
+  assert.equal(tmuxStatus(socket, ['has-session', '-t', `=${session}`]), 0, 'nothing was killed');
 
-    verdict = true;
-    const killed = await killWindowVerified(window, { expect: () => verdict });
-    assert.equal(killed.ok, true, 'a passing expectation kills as before');
-  },
-);
+  verdict = true;
+  const killed = await killWindowVerified(window, { expect: () => verdict });
+  assert.equal(killed.ok, true, 'a passing expectation kills as before');
+});
 
 test('tmux outages during kill lookup and recheck stay errors, never become gone', async (t) => {
   useLegacyGenerationMode(t);
@@ -1392,67 +1334,65 @@ exit 1
 // shipped mechanism is a session-scoped after-new-window hook; this pins BOTH
 // halves: a fast-dying fleet window keeps its dead pane (the setup-failure
 // screen survives), and a foreign session on the same server stays untouched.
-test(
-  'newWindow arms remain-on-exit for the fleet session only — never server-global',
-  { skip: !tmuxOk() && 'tmux server unavailable' },
-  async (t) => {
-    useLegacyGenerationMode(t);
-    const port = 22_000 + randomInt(1_000);
-    const socket = `fleetdeck-adapter-${process.pid}-${randomBytes(4).toString('hex')}`;
-    const previousSocket = process.env['FLEETDECK_TMUX_SOCKET'];
-    process.env['FLEETDECK_TMUX_SOCKET'] = socket;
-    const userSession = `user-${port}`;
-    t.after(() => {
-      try {
-        tmux(socket, ['kill-server']);
-      } catch {
-        /* already gone */
-      }
-      if (previousSocket == null) delete process.env['FLEETDECK_TMUX_SOCKET'];
-      else process.env['FLEETDECK_TMUX_SOCKET'] = previousSocket;
-    });
+test('newWindow arms remain-on-exit for the fleet session only — never server-global', {
+  skip: !tmuxOk() && 'tmux server unavailable',
+}, async (t) => {
+  useLegacyGenerationMode(t);
+  const port = 22_000 + randomInt(1_000);
+  const socket = `fleetdeck-adapter-${process.pid}-${randomBytes(4).toString('hex')}`;
+  const previousSocket = process.env['FLEETDECK_TMUX_SOCKET'];
+  process.env['FLEETDECK_TMUX_SOCKET'] = socket;
+  const userSession = `user-${port}`;
+  t.after(() => {
+    try {
+      tmux(socket, ['kill-server']);
+    } catch {
+      /* already gone */
+    }
+    if (previousSocket == null) delete process.env['FLEETDECK_TMUX_SOCKET'];
+    else process.env['FLEETDECK_TMUX_SOCKET'] = previousSocket;
+  });
 
-    // A "user's own" session shares the server, exactly like the default socket.
-    tmux(socket, ['-f', '/dev/null', 'new-session', '-d', '-s', userSession, 'sleep 3600']);
-    await ensureSession(port);
+  // A "user's own" session shares the server, exactly like the default socket.
+  tmux(socket, ['-f', '/dev/null', 'new-session', '-d', '-s', userSession, 'sleep 3600']);
+  await ensureSession(port);
 
-    // A fleet window whose command dies immediately: the dead pane must survive
-    // (remain-on-exit armed BEFORE the command could exit — the hook closes the
-    // new-window→set-option race a plain per-window set loses).
-    const win = await newWindow({
-      port,
-      callsign: 'roe',
-      cwd: tmpdir(),
-      argv: ['sh', '-c', 'echo SETUPFAIL; exit 7'],
-    });
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    const dead = tmux(socket, ['display-message', '-p', '-t', win.window_id, '#{pane_dead}']);
-    assert.equal(dead, '1', 'fast-exit fleet pane is kept dead, not deleted');
+  // A fleet window whose command dies immediately: the dead pane must survive
+  // (remain-on-exit armed BEFORE the command could exit — the hook closes the
+  // new-window→set-option race a plain per-window set loses).
+  const win = await newWindow({
+    port,
+    callsign: 'roe',
+    cwd: tmpdir(),
+    argv: ['sh', '-c', 'echo SETUPFAIL; exit 7'],
+  });
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  const dead = tmux(socket, ['display-message', '-p', '-t', win.window_id, '#{pane_dead}']);
+  assert.equal(dead, '1', 'fast-exit fleet pane is kept dead, not deleted');
 
-    // The server-global default is untouched…
-    const globalOpt = spawnSync(
-      'tmux',
-      ['-L', socket, 'show-options', '-g', '-w', 'remain-on-exit'],
-      { encoding: 'utf8' },
-    ).stdout.trim();
-    assert.ok(
-      !/\bon$/.test(globalOpt),
-      `server-global remain-on-exit must stay off/unset — got "${globalOpt}"`,
-    );
+  // The server-global default is untouched…
+  const globalOpt = spawnSync(
+    'tmux',
+    ['-L', socket, 'show-options', '-g', '-w', 'remain-on-exit'],
+    { encoding: 'utf8' },
+  ).stdout.trim();
+  assert.ok(
+    !/\bon$/.test(globalOpt),
+    `server-global remain-on-exit must stay off/unset — got "${globalOpt}"`,
+  );
 
-    // …and a window dying in the USER's session still closes normally.
-    tmux(socket, ['new-window', '-d', '-t', `=${userSession}:`, '-n', 'udie', 'true']);
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    const userWindows = tmux(socket, [
-      'list-windows',
-      '-t',
-      `=${userSession}`,
-      '-F',
-      '#{window_name}',
-    ]);
-    assert.ok(!userWindows.includes('udie'), 'a user window must still close on exit');
-  },
-);
+  // …and a window dying in the USER's session still closes normally.
+  tmux(socket, ['new-window', '-d', '-t', `=${userSession}:`, '-n', 'udie', 'true']);
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  const userWindows = tmux(socket, [
+    'list-windows',
+    '-t',
+    `=${userSession}`,
+    '-F',
+    '#{window_name}',
+  ]);
+  assert.ok(!userWindows.includes('udie'), 'a user window must still close on exit');
+});
 
 // BUG-050 regression pin: an orphan window already holding the deterministic
 // fleet name must make newWindow REFUSE — without launching a second agent.
@@ -1462,67 +1402,65 @@ test(
 // now-ambiguous duplicate set, orphaning a live agent. The adapter must
 // launch under a unique temporary name, verify the final name is free, and
 // claim it by id; failure rolls back by that id, so no agent survives.
-test(
-  'newWindow refuses an occupied scoped name before any agent starts',
-  { skip: !tmuxOk() && 'tmux server unavailable' },
-  async (t) => {
-    useLegacyGenerationMode(t);
-    const port = 22_000 + randomInt(1_000);
-    const socket = `fleetdeck-adapter-${process.pid}-${randomBytes(4).toString('hex')}`;
-    const previousSocket = process.env['FLEETDECK_TMUX_SOCKET'];
-    process.env['FLEETDECK_TMUX_SOCKET'] = socket;
-    const session = sessionName(port);
-    const callsign = 'occupied';
-    const window = `fd${port}-${callsign}`;
-    t.after(() => {
-      try {
-        tmux(socket, ['kill-server']);
-      } catch {
-        /* already gone */
-      }
-      if (previousSocket == null) delete process.env['FLEETDECK_TMUX_SOCKET'];
-      else process.env['FLEETDECK_TMUX_SOCKET'] = previousSocket;
-    });
+test('newWindow refuses an occupied scoped name before any agent starts', {
+  skip: !tmuxOk() && 'tmux server unavailable',
+}, async (t) => {
+  useLegacyGenerationMode(t);
+  const port = 22_000 + randomInt(1_000);
+  const socket = `fleetdeck-adapter-${process.pid}-${randomBytes(4).toString('hex')}`;
+  const previousSocket = process.env['FLEETDECK_TMUX_SOCKET'];
+  process.env['FLEETDECK_TMUX_SOCKET'] = socket;
+  const session = sessionName(port);
+  const callsign = 'occupied';
+  const window = `fd${port}-${callsign}`;
+  t.after(() => {
+    try {
+      tmux(socket, ['kill-server']);
+    } catch {
+      /* already gone */
+    }
+    if (previousSocket == null) delete process.env['FLEETDECK_TMUX_SOCKET'];
+    else process.env['FLEETDECK_TMUX_SOCKET'] = previousSocket;
+  });
 
-    await ensureSession(port);
-    // An orphan (or manually created) window already owns the deterministic name.
-    tmux(socket, ['new-window', '-d', '-t', `=${session}:`, '-n', window, 'sleep 3600']);
-    const orphanId = tmux(socket, [
-      'display-message',
-      '-p',
-      '-t',
-      `=${session}:=${window}`,
-      '#{window_id}',
-    ]);
+  await ensureSession(port);
+  // An orphan (or manually created) window already owns the deterministic name.
+  tmux(socket, ['new-window', '-d', '-t', `=${session}:`, '-n', window, 'sleep 3600']);
+  const orphanId = tmux(socket, [
+    'display-message',
+    '-p',
+    '-t',
+    `=${session}:=${window}`,
+    '#{window_id}',
+  ]);
 
-    await assert.rejects(
-      newWindow({ port, callsign, cwd: tmpdir(), argv: ['sleep', '3600'] }),
-      /already exists/,
-      'a taken scoped name rejects the spawn',
-    );
-    const names = tmux(socket, ['list-windows', '-t', `=${session}`, '-F', '#{window_name}']).split(
-      '\n',
-    );
-    assert.deepEqual(
-      names.filter((n) => n === window),
-      [window],
-      'no duplicate same-name window was created',
-    );
-    assert.deepEqual(
-      names.filter((n) => n.startsWith(`${window}~`)),
-      [],
-      'the provisional window was rolled back, not left running',
-    );
-    const ids = tmux(socket, ['list-windows', '-a', '-F', '#{window_id}']).split('\n');
-    assert.ok(ids.includes(orphanId), 'the orphan window itself is untouched');
-    const panes = tmux(socket, ['list-panes', '-a', '-F', '#{pane_current_command}']).split('\n');
-    assert.equal(
-      panes.filter((c) => c === 'sleep').length,
-      1,
-      'no second agent process was launched or leaked',
-    );
-  },
-);
+  await assert.rejects(
+    newWindow({ port, callsign, cwd: tmpdir(), argv: ['sleep', '3600'] }),
+    /already exists/,
+    'a taken scoped name rejects the spawn',
+  );
+  const names = tmux(socket, ['list-windows', '-t', `=${session}`, '-F', '#{window_name}']).split(
+    '\n',
+  );
+  assert.deepEqual(
+    names.filter((n) => n === window),
+    [window],
+    'no duplicate same-name window was created',
+  );
+  assert.deepEqual(
+    names.filter((n) => n.startsWith(`${window}~`)),
+    [],
+    'the provisional window was rolled back, not left running',
+  );
+  const ids = tmux(socket, ['list-windows', '-a', '-F', '#{window_id}']).split('\n');
+  assert.ok(ids.includes(orphanId), 'the orphan window itself is untouched');
+  const panes = tmux(socket, ['list-panes', '-a', '-F', '#{pane_current_command}']).split('\n');
+  assert.equal(
+    panes.filter((c) => c === 'sleep').length,
+    1,
+    'no second agent process was launched or leaked',
+  );
+});
 
 // BUG-051 regression: the kill must be re-targeted BY EXACT NAME at the moment
 // it executes. A real concurrent rename between the lookup and the kill cannot
@@ -1598,64 +1536,62 @@ exit 1
 // A scoped window name containing ':' passes the caller's loose scoped-name
 // regex but, if pasted into `=<session>:=<name>`, parses as target syntax
 // ("kill the window named <innocent>") instead of one literal name.
-test(
-  'tmux-target-syntax characters in a scoped kill name are rejected, never parsed as targets',
-  { skip: !tmuxOk() && 'tmux server unavailable' },
-  async (t) => {
-    useLegacyGenerationMode(t);
-    const port = 27_000 + randomInt(1_000);
-    const socket = `fleetdeck-adapter-trap-${process.pid}-${randomBytes(4).toString('hex')}`;
-    const fleetSession = sessionName(port);
-    const innocent = 'innocent';
-    const previousSocket = process.env['FLEETDECK_TMUX_SOCKET'];
-    process.env['FLEETDECK_TMUX_SOCKET'] = socket;
-    t.after(() => {
-      try {
-        tmux(socket, ['kill-server']);
-      } catch {
-        /* already gone */
-      }
-      if (previousSocket == null) delete process.env['FLEETDECK_TMUX_SOCKET'];
-      else process.env['FLEETDECK_TMUX_SOCKET'] = previousSocket;
-    });
+test('tmux-target-syntax characters in a scoped kill name are rejected, never parsed as targets', {
+  skip: !tmuxOk() && 'tmux server unavailable',
+}, async (t) => {
+  useLegacyGenerationMode(t);
+  const port = 27_000 + randomInt(1_000);
+  const socket = `fleetdeck-adapter-trap-${process.pid}-${randomBytes(4).toString('hex')}`;
+  const fleetSession = sessionName(port);
+  const innocent = 'innocent';
+  const previousSocket = process.env['FLEETDECK_TMUX_SOCKET'];
+  process.env['FLEETDECK_TMUX_SOCKET'] = socket;
+  t.after(() => {
+    try {
+      tmux(socket, ['kill-server']);
+    } catch {
+      /* already gone */
+    }
+    if (previousSocket == null) delete process.env['FLEETDECK_TMUX_SOCKET'];
+    else process.env['FLEETDECK_TMUX_SOCKET'] = previousSocket;
+  });
 
-    tmux(socket, [
-      '-f',
-      '/dev/null',
-      'new-session',
-      '-d',
-      '-s',
-      fleetSession,
-      '-n',
-      innocent,
-      'sleep 3600',
-    ]);
-    tmux(socket, [
-      'new-window',
-      '-d',
-      '-t',
-      `=${fleetSession}:`,
-      '-n',
-      `fd${port}-a:${innocent}`,
-      'sleep 3600',
-    ]);
+  tmux(socket, [
+    '-f',
+    '/dev/null',
+    'new-session',
+    '-d',
+    '-s',
+    fleetSession,
+    '-n',
+    innocent,
+    'sleep 3600',
+  ]);
+  tmux(socket, [
+    'new-window',
+    '-d',
+    '-t',
+    `=${fleetSession}:`,
+    '-n',
+    `fd${port}-a:${innocent}`,
+    'sleep 3600',
+  ]);
 
-    assert.deepEqual(await killWindowVerified(`fd${port}-a:${innocent}`), {
-      ok: false,
-      error: 'invalid scoped tmux window name',
-    });
-    assert.equal(tmuxStatus(socket, ['has-session', '-t', `=${fleetSession}`]), 0);
-    const names = tmux(socket, [
-      'list-windows',
-      '-t',
-      `=${fleetSession}`,
-      '-F',
-      '#{window_name}',
-    ]).split('\n');
-    assert.deepEqual(
-      names,
-      [innocent, `fd${port}-a:${innocent}`],
-      'nothing was killed by target-syntax injection',
-    );
-  },
-);
+  assert.deepEqual(await killWindowVerified(`fd${port}-a:${innocent}`), {
+    ok: false,
+    error: 'invalid scoped tmux window name',
+  });
+  assert.equal(tmuxStatus(socket, ['has-session', '-t', `=${fleetSession}`]), 0);
+  const names = tmux(socket, [
+    'list-windows',
+    '-t',
+    `=${fleetSession}`,
+    '-F',
+    '#{window_name}',
+  ]).split('\n');
+  assert.deepEqual(
+    names,
+    [innocent, `fd${port}-a:${innocent}`],
+    'nothing was killed by target-syntax injection',
+  );
+});

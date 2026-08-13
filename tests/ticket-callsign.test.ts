@@ -207,7 +207,7 @@ test('13 sessions on one ticket → 12 distinct animals, then a hex fallback tha
     HEX_SUFFIX_RE,
     `the 13th session should hex-fallback once all 12 animals are taken (got ${thirteenth})`,
   );
-  assert.ok(!thirteenth.endsWith("-PROJ-42"), 'the hex fallback is NOT ticket-suffixed');
+  assert.ok(!thirteenth.endsWith('-PROJ-42'), 'the hex fallback is NOT ticket-suffixed');
 });
 
 // ---------------------------------------------------------------------------

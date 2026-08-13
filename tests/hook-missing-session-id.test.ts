@@ -33,7 +33,9 @@ test('authenticated hooks without a session_id fail open and never mint the shar
   const daemon = await startDaemon();
   t.after(() => daemon.stop());
   const cwd = scratchCwd();
-  t.after(() => { rmSync(cwd, { recursive: true, force: true }); });
+  t.after(() => {
+    rmSync(cwd, { recursive: true, force: true });
+  });
 
   // SessionStart with NO session_id — the shim's {}-on-parse-failure shape.
   const start = await postHook(
@@ -111,7 +113,9 @@ test('a hook WITH a session_id still registers normally after the ID-less ones w
   const daemon = await startDaemon();
   t.after(() => daemon.stop());
   const cwd = scratchCwd();
-  t.after(() => { rmSync(cwd, { recursive: true, force: true }); });
+  t.after(() => {
+    rmSync(cwd, { recursive: true, force: true });
+  });
 
   await postHook(
     daemon.baseUrl,

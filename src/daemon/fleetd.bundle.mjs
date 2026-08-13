@@ -10813,8 +10813,7 @@ function envInterfaces() {
   if (seamFile) {
     try {
       const parsed = JSON.parse(readFileSync(seamFile, "utf8"));
-      if (Array.isArray(parsed) && parsed.length > 0)
-        return { ethernet: parsed };
+      if (Array.isArray(parsed) && parsed.length > 0) return { ethernet: parsed };
     } catch {
     }
     return { ethernet: NET_A };

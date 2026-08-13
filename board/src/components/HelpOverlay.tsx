@@ -22,7 +22,9 @@ export default function HelpOverlay({ onClose }: HelpOverlayProps) {
         aria-modal="true"
         aria-label="Board help"
         ref={dialogRef}
-        onClick={(e) => { e.stopPropagation(); }}
+        onClick={(e) => {
+          e.stopPropagation();
+        }}
       >
         <div className="fd-helphead">
           <span className="lbl">FLEET DECK — WHAT EVERYTHING DOES</span>

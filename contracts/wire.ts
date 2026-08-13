@@ -52,7 +52,8 @@ export interface MailRequest {
 
 // The mail clamp reports a truncation receipt when the body exceeded the cap.
 export type MailResponse =
-  (ApiOk & { truncated?: boolean; original_length?: number }) | ApiErrReason;
+  | (ApiOk & { truncated?: boolean; original_length?: number })
+  | ApiErrReason;
 
 // ---------------------------------------------------------------------------
 // Command — POST /command (orchestrator DSL: broadcast / assign / assign_auto)
@@ -85,7 +86,8 @@ export interface PermissionAnswer {
 }
 
 export type ElicitationAnswer =
-  { action: 'accept'; content: Record<string, unknown> } | { action: 'decline' };
+  | { action: 'accept'; content: Record<string, unknown> }
+  | { action: 'decline' };
 
 export type ChoiceAnswer = { answers: Record<string, string> } | { text: string };
 
