@@ -17,7 +17,7 @@ import {
   redactDiagnosticText,
   scrubUrlCredentials,
   type PayloadCaptureOptions,
-} from '../scripts/fleetd/payload-capture.ts';
+} from '../src/daemon/payload-capture.ts';
 
 function scratchHome(t: TestContext): string {
   const dir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-redact-'));

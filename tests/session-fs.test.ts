@@ -6,9 +6,9 @@ import fs, { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from '
 import type { AddressInfo } from 'node:net';
 import { networkInterfaces, tmpdir } from 'node:os';
 import path from 'node:path';
-import { openDb } from '../scripts/fleetd/db.ts';
-import type { SqliteHandle } from '../scripts/fleetd/sqlite.ts';
-import { createFiles, LIST_MAX } from '../scripts/fleetd/files.ts';
+import { openDb } from '../src/daemon/db.ts';
+import type { SqliteHandle } from '../src/daemon/sqlite.ts';
+import { createFiles, LIST_MAX } from '../src/daemon/files.ts';
 import { startDaemon } from './helpers/daemon.ts';
 import { makePlainDir, makeRepoWithWorktree } from './helpers/gitrepo.ts';
 import { getJson, postJson } from './helpers/http.ts';

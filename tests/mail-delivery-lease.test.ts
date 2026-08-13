@@ -21,8 +21,8 @@ import path from 'node:path';
 import { startDaemon, type DaemonHandle } from './helpers/daemon.ts';
 import { postHook, postJson, getJson } from './helpers/http.ts';
 import { loadFixture } from './helpers/fixtures.ts';
-import { openDb } from '../scripts/fleetd/db.ts';
-import { createCore } from '../scripts/fleetd/derive.ts';
+import { openDb } from '../src/daemon/db.ts';
+import { createCore } from '../src/daemon/derive.ts';
 
 // The mail-row columns these assertions read. delivered_at/claimed_at are
 // nullable in the schema (a live lease has claimed_at set, delivered_at NULL);

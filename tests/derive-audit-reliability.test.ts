@@ -30,9 +30,9 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { openDb } from '../scripts/fleetd/db.ts';
-import { createStatements } from '../scripts/fleetd/statements.ts';
-import { claudeTranscriptPath, createCore } from '../scripts/fleetd/derive.ts';
+import { openDb } from '../src/daemon/db.ts';
+import { createStatements } from '../src/daemon/statements.ts';
+import { claudeTranscriptPath, createCore } from '../src/daemon/derive.ts';
 
 const HOUR = 3_600_000;
 
@@ -200,7 +200,7 @@ function setEnv(t: TestContext, values: Record<string, string | number>): void {
   });
 }
 
-// A controllable stand-in for scripts/fleetd/spawn.mjs. Defaults model a
+// A controllable stand-in for src/daemon/spawn.mjs. Defaults model a
 // reachable tmux with one live claude window created per newWindow(); override
 // any method per test. state.killed / state.windows / state.calls are the
 // observable surface.

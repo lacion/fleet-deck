@@ -19,7 +19,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { chmodWritableWhereOwned } from '../scripts/fleetd/helpers.ts';
+import { chmodWritableWhereOwned } from '../src/daemon/helpers.ts';
 
 function scratch(t: TestContext, prefix = 'fleetdeck-chmod-symlink-') {
   const dir = mkdtempSync(path.join(tmpdir(), prefix));

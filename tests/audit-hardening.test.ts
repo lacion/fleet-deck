@@ -17,7 +17,7 @@ import {
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createPayloadCapture } from '../scripts/fleetd/payload-capture.ts';
+import { createPayloadCapture } from '../src/daemon/payload-capture.ts';
 import { randomPort } from './helpers/daemon.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));

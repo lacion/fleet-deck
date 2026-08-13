@@ -1,6 +1,6 @@
 // tests/mdns.test.ts
 //
-// The mDNS/DNS-SD responder (scripts/fleetd/mdns.ts) is two things stacked:
+// The mDNS/DNS-SD responder (src/daemon/mdns.ts) is two things stacked:
 // a pure DNS wire codec, and a socket that speaks it. The codec is tested here
 // exhaustively and offline — the wire format is the part that is easy to get
 // silently, undetectably wrong, and a browser will simply not show the board
@@ -34,7 +34,7 @@ import {
   MDNS_ADDR,
   MDNS_PORT,
   TYPE,
-} from '../scripts/fleetd/mdns.ts';
+} from '../src/daemon/mdns.ts';
 import { scaleMs } from './helpers/wait.ts';
 
 // mdns.ts does not export its record/message/question shapes, so we derive them

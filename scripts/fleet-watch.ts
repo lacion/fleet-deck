@@ -73,7 +73,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { resolveHome, resolvePort, resolveBase } from './fleetd/config.ts';
+import { resolveHome, resolvePort, resolveBase } from '../src/daemon/config.ts';
 
 const PORT = resolvePort();
 const BASE = resolveBase(PORT);

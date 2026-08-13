@@ -19,10 +19,10 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { openDatabase } from '../scripts/fleetd/sqlite.ts';
-import { distillGitStderr, gitStderrDetail, redactGitText } from '../scripts/fleetd/exec.ts';
-import { scrubUrlCredentials } from '../scripts/fleetd/payload-capture.ts';
-import { openDb } from '../scripts/fleetd/db.ts';
+import { openDatabase } from '../src/daemon/sqlite.ts';
+import { distillGitStderr, gitStderrDetail, redactGitText } from '../src/daemon/exec.ts';
+import { scrubUrlCredentials } from '../src/daemon/payload-capture.ts';
+import { openDb } from '../src/daemon/db.ts';
 
 // The rows PRAGMA table_info returns that this test reads by name.
 interface PragmaColumnInfo {
@@ -556,7 +556,7 @@ test('a legacy spawns table gains fail_detail additively, backfilled NULL', (t: 
 // ---------------------------------------------------------------------------
 
 test('spawnFailureReason: one bounded line, hardened by the same pass', async () => {
-  const { spawnFailureReason } = await import('../scripts/fleetd/spawns.ts');
+  const { spawnFailureReason } = await import('../src/daemon/spawns.ts');
 
   // The plain case: an Error's message, not its stack. `internal` is gone —
   // the reason names what actually broke.

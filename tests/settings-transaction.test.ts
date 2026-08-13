@@ -17,10 +17,10 @@
 
 import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
-import { openDb } from '../scripts/fleetd/db.ts';
-import { createStatements } from '../scripts/fleetd/statements.ts';
-import { createSettings } from '../scripts/fleetd/settings.ts';
-import type { SqlValue } from '../scripts/fleetd/sqlite.ts';
+import { openDb } from '../src/daemon/db.ts';
+import { createStatements } from '../src/daemon/statements.ts';
+import { createSettings } from '../src/daemon/settings.ts';
+import type { SqlValue } from '../src/daemon/sqlite.ts';
 
 /** A createSettings wired to a real in-memory DB, with hooks to make a
  * chosen settings key's write fail and to observe mutation broadcasts. */

@@ -5,12 +5,12 @@ import { chmodSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { openDb } from '../scripts/fleetd/db.ts';
-import { createCore } from '../scripts/fleetd/derive.ts';
+import { openDb } from '../src/daemon/db.ts';
+import { createCore } from '../src/daemon/derive.ts';
 import { startDaemon } from './helpers/daemon.ts';
 import { getJson, postJson } from './helpers/http.ts';
 import { waitForSpecRecords, waitUntil } from './helpers/wait.ts';
-import type { SqliteHandle } from '../scripts/fleetd/sqlite.ts';
+import type { SqliteHandle } from '../src/daemon/sqlite.ts';
 import type { StateResponse } from '../contracts/state.ts';
 
 // The daemon's tmuxAdapter option is typed against derive.ts's unexported

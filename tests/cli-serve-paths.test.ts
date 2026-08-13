@@ -38,7 +38,7 @@ after(() => {
 // takes precedence over the source fallback exactly as in a packed install.
 function packFakeRuntime(prefix: string) {
   const bin = path.join(prefix, 'bin');
-  const fleetdDir = path.join(prefix, 'scripts', 'fleetd');
+  const fleetdDir = path.join(prefix, 'src', 'daemon');
   fs.mkdirSync(bin, { recursive: true });
   fs.mkdirSync(fleetdDir, { recursive: true });
   const cli = path.join(bin, 'fleetdeck.mjs');

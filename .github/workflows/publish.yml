@@ -102,7 +102,7 @@ jobs:
       - name: bun:sqlite adapter contract (the dual-seam gate)
         run: |
           bun -e '
-            const { openDatabase } = await import("./scripts/fleetd/sqlite.ts");
+            const { openDatabase } = await import("./src/daemon/sqlite.ts");
             const db = openDatabase(":memory:");
             db.exec("CREATE TABLE t(id INTEGER PRIMARY KEY, name TEXT)");
             const r = db.prepare("INSERT INTO t(name) VALUES (?)").run("heron");
@@ -126,14 +126,14 @@ jobs:
       - name: Fail if the committed artifacts are stale
         run: |
           bun run bundle
-          git diff --exit-code scripts/fleetd/fleetd.bundle.mjs
+          git diff --exit-code src/daemon/fleetd.bundle.mjs
           (cd board && bun install --frozen-lockfile --ignore-scripts && bun run build)
-          git diff --exit-code scripts/fleetd/board-dist
+          git diff --exit-code src/daemon/board-dist
           # git diff ignores UNTRACKED rebuild output (a fresh hashed chunk or
           # lazy stylesheet the tag forgot to stage) — gate on porcelain too.
-          if [ -n "$(git status --porcelain --untracked-files=all -- scripts/fleetd/board-dist)" ]; then
+          if [ -n "$(git status --porcelain --untracked-files=all -- src/daemon/board-dist)" ]; then
             echo "::error::board build produced untracked files — stage the rebuilt board-dist"
-            git status --porcelain --untracked-files=all -- scripts/fleetd/board-dist
+            git status --porcelain --untracked-files=all -- src/daemon/board-dist
             exit 1
           fi
 

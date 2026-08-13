@@ -5,15 +5,15 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } 
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { openDb } from '../scripts/fleetd/db.ts';
-import { createKeyedMutex } from '../scripts/fleetd/helpers.ts';
-import { createStatements, type WorktreeSpawnRow } from '../scripts/fleetd/statements.ts';
-import { createWorktrees } from '../scripts/fleetd/worktrees.ts';
-import { claudeTranscriptPath } from '../scripts/fleetd/derive.ts';
+import { openDb } from '../src/daemon/db.ts';
+import { createKeyedMutex } from '../src/daemon/helpers.ts';
+import { createStatements, type WorktreeSpawnRow } from '../src/daemon/statements.ts';
+import { createWorktrees } from '../src/daemon/worktrees.ts';
+import { claudeTranscriptPath } from '../src/daemon/derive.ts';
 import { startDaemon } from './helpers/daemon.ts';
 import { makeRepoWithWorktree, makePlainDir, makeRemoteRepo } from './helpers/gitrepo.ts';
 import { getJson, postJson, type JsonResponse } from './helpers/http.ts';
-import type { SqliteHandle, SqlValue } from '../scripts/fleetd/sqlite.ts';
+import type { SqliteHandle, SqlValue } from '../src/daemon/sqlite.ts';
 
 // Each direct-drive createWorktrees ctx below gets its own fresh keyed mutex,
 // which preserves those tests' single-removal semantics exactly. (The .mjs

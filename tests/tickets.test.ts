@@ -1,6 +1,6 @@
 // tests/tickets.test.ts
 //
-// Pure unit tests for scripts/fleetd/tickets.ts — the Jira-key grammar shared
+// Pure unit tests for src/daemon/tickets.ts — the Jira-key grammar shared
 // by branch auto-detect (ticketFromBranch, permissive) and the manual `ticket`
 // command (normalizeTicket, strict). No daemon, no I/O: this file exercises the
 // naming rules directly against the regex vectors pinned in the 0.6.0 plan's
@@ -12,7 +12,7 @@
 
 import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
-import { TICKET_RE, ticketFromBranch, normalizeTicket } from '../scripts/fleetd/tickets.ts';
+import { TICKET_RE, ticketFromBranch, normalizeTicket } from '../src/daemon/tickets.ts';
 
 // ---------------------------------------------------------------------------
 // TICKET_RE / ticketFromBranch — the plan's exact "Vectors:" list.

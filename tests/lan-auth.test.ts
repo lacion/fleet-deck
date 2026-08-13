@@ -421,7 +421,7 @@ test('token-required mode: /index.html stays public and serves the shell', async
   });
   t.after(() => daemon.stop());
 
-  const boardDist = path.join(import.meta.dirname, '..', 'scripts/fleetd/board-dist');
+  const boardDist = path.join(import.meta.dirname, '..', 'src/daemon/board-dist');
   const expected = readFileSync(path.join(boardDist, 'index.html'), 'utf8');
 
   // Through the trusted proxy, no token: the shell is public by contract.

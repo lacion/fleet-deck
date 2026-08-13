@@ -12,7 +12,7 @@
 
 import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
-import { execFileP } from '../scripts/fleetd/exec.ts';
+import { execFileP } from '../src/daemon/exec.ts';
 
 test('execFileP settles on a child that ignores SIGTERM', async () => {
   // A TERM-immune child is BUG-026's exact daemon scenario: the old

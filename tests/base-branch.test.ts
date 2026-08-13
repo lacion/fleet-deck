@@ -15,7 +15,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { baseBranch } from '../scripts/fleetd/exec.ts';
+import { baseBranch } from '../src/daemon/exec.ts';
 
 function git(args: string[], cwd: string) {
   return execFileSync('git', args, {

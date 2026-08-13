@@ -13,11 +13,11 @@ import {
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { openDb } from '../scripts/fleetd/db.ts';
-import { claudeTranscriptPath } from '../scripts/fleetd/derive.ts';
+import { openDb } from '../src/daemon/db.ts';
+import { claudeTranscriptPath } from '../src/daemon/derive.ts';
 import { startDaemon, type DaemonHandle } from './helpers/daemon.ts';
 import { getJson, postHook, postJson } from './helpers/http.ts';
-import type { SqliteHandle } from '../scripts/fleetd/sqlite.ts';
+import type { SqliteHandle } from '../src/daemon/sqlite.ts';
 import type { SessionEntry, StateResponse } from '../contracts/state.ts';
 
 // tests/adopt.test.ts — the daemon side of "Move to tmux". Adopt resumes a

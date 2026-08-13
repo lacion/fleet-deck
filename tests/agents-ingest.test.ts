@@ -2,7 +2,7 @@
 //
 // Phase 2 daemon feature (handoff F1): `claude agents --json` as a secondary
 // session source that catches sessions that predate plugin install — no
-// hook ever fired for them. scripts/fleetd/agents-poll.mjs polls the CLI
+// hook ever fired for them. src/daemon/agents-poll.mjs polls the CLI
 // (or FLEETDECK_AGENTS_CMD override, see tests/helpers/agents-cmd-fixture.ts)
 // and merges results via derive.mjs's ingestAgentsPoll().
 //
@@ -32,7 +32,7 @@ import { fileURLToPath } from 'node:url';
 import { startDaemon } from './helpers/daemon.ts';
 import { postHook, getJson } from './helpers/http.ts';
 import { waitUntil as waitUntilBase, type WaitUntilOptions } from './helpers/wait.ts';
-import { openDb } from '../scripts/fleetd/db.ts';
+import { openDb } from '../src/daemon/db.ts';
 import { loadFixture } from './helpers/fixtures.ts';
 import { makeRepoWithWorktree } from './helpers/gitrepo.ts';
 import type { SessionEntry, StateResponse } from '../contracts/state.ts';
@@ -116,7 +116,7 @@ const waitUntil = <T>(fn: () => T | Promise<T>, opts: WaitUntilOptions = {}) =>
   waitUntilBase(fn, { timeoutMs: 8000, intervalMs: 150, ...opts });
 
 // Per-process pid start (same /proc/<pid>/stat field 22 + /proc/uptime math
-// as scripts/fleetd/helpers.mjs processStartMs, reproduced here so fixtures
+// as src/daemon/helpers.mjs processStartMs, reproduced here so fixtures
 // can mint a startedAt that REALLY matches the pid they claim — a live
 // registry's startedAt is the process's actual start, not Date.now() at
 // fixture-write time, and on fleets with a stepped wall clock (WSL/VM) the

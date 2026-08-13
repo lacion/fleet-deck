@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { startDaemon, randomPort, type DaemonHandle } from './helpers/daemon.ts';
 import { getJson, postHook, postJson } from './helpers/http.ts';
 import { makeRemoteRepo, type RemoteRepo } from './helpers/gitrepo.ts';
-import { openDb } from '../scripts/fleetd/db.ts';
+import { openDb } from '../src/daemon/db.ts';
 import type { SessionEntry, StateResponse } from '../contracts/state.ts';
 // All waits route through the shared, WAIT_SCALE-aware helper so the macOS
 // advisory lane (issue #2, WAIT_SCALE=3) gets its headroom.

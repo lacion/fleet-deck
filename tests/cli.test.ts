@@ -569,7 +569,7 @@ test('serviceStart: live supervisor + dead daemon → nonzero degraded report, n
 // Detached + unref'd with piped stdio so it cannot corrupt node:test's report
 // channel; every test that spawns one kills it in a finally.
 function spawnFakeFleetd() {
-  const fleetdPath = path.resolve(import.meta.dirname, '..', 'scripts', 'fleetd', 'fleetd.ts');
+  const fleetdPath = path.resolve(import.meta.dirname, '..', 'src', 'daemon', 'fleetd.ts');
   const child = spawn(process.execPath, [fleetdPath], { detached: true, stdio: 'ignore' });
   child.unref();
   return child;

@@ -6,7 +6,7 @@ import path from 'node:path';
 import { startDaemon } from './helpers/daemon.ts';
 import { postHook, postJson, getJson } from './helpers/http.ts';
 import { waitUntil } from './helpers/wait.ts';
-import { openDb } from '../scripts/fleetd/db.ts';
+import { openDb } from '../src/daemon/db.ts';
 import type { StateResponse } from '../contracts/state.ts';
 
 interface CleanupResponse {

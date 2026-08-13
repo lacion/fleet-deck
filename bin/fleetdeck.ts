@@ -68,8 +68,8 @@ function errnoCode(e: unknown): string | undefined {
 
 // Same resolution order as the SessionStart hook: the committed bundle is the
 // production artifact; source is the dev-checkout fallback.
-const BUNDLE = path.join(ROOT, 'scripts', 'fleetd', 'fleetd.bundle.mjs');
-const SOURCE = path.join(ROOT, 'scripts', 'fleetd', 'fleetd.ts');
+const BUNDLE = path.join(ROOT, 'src', 'daemon', 'fleetd.bundle.mjs');
+const SOURCE = path.join(ROOT, 'src', 'daemon', 'fleetd.ts');
 const FLEETD = fs.existsSync(BUNDLE) ? BUNDLE : SOURCE;
 
 // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- an empty FLEETDECK_HOME must fall back to the default, not be kept as ''
@@ -669,7 +669,7 @@ const requireHere = createRequire(import.meta.url);
 let takeoverPidHelpers: TakeoverPidHelpers | null = null;
 function loadTakeoverPidHelpers(): TakeoverPidHelpers {
   takeoverPidHelpers ??= requireHere(
-    path.join(ROOT, 'scripts', 'fleetd', 'takeover.ts'),
+    path.join(ROOT, 'src', 'daemon', 'takeover.ts'),
   ) as TakeoverPidHelpers;
   return takeoverPidHelpers;
 }
@@ -729,7 +729,7 @@ async function waitForHealth({
 async function healthIsOurManagedDaemon(h: Health | null | undefined): Promise<boolean> {
   if (!h?.managed) return false;
   const { verifyDaemonPid } = (await import(
-    `file://${path.join(ROOT, 'scripts', 'fleetd', 'takeover.ts')}`
+    `file://${path.join(ROOT, 'src', 'daemon', 'takeover.ts')}`
   )) as { verifyDaemonPid: (pid: number, home: string) => boolean };
   return verifyDaemonPid(h.pid, HOME);
 }

@@ -41,12 +41,12 @@
     // Third-party .d.ts (incl. @types/node × @types/bun overlap) are not our problem.
     "skipLibCheck": true
   },
-  "include": ["contracts/**/*", "scripts/**/*", "bin/**/*", "tests/**/*"],
+  "include": ["contracts/**/*", "src/**/*", "scripts/**/*", "bin/**/*", "tests/**/*"],
   "exclude": [
     "node_modules",
     "board",
-    "scripts/fleetd/fleetd.bundle.mjs",
-    "scripts/fleetd/board-dist",
+    "src/daemon/fleetd.bundle.mjs",
+    "src/daemon/board-dist",
     // These three tests statically import board/src/*.ts (browser modules that
     // reference DOM globals). This program is the DOM-less daemon — pulling those
     // imports in here would surface DOM errors that aren't the daemon's. They are

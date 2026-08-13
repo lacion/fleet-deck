@@ -6,7 +6,7 @@
 //   3. traversal attempts (raw and percent-encoded) → 404, never file leaks
 //   4. regression: /state and a hook endpoint still behave as before
 //
-// The dist under scripts/fleetd/board-dist is COMMITTED, so these tests run
+// The dist under src/daemon/board-dist is COMMITTED, so these tests run
 // against the real files the daemon ships with.
 
 import test, { type TestContext } from './helpers/harness-test.ts';
@@ -21,7 +21,7 @@ import { getJson, postHook } from './helpers/http.ts';
 import { loadFixture } from './helpers/fixtures.ts';
 import type { StateResponse } from '../contracts/state.ts';
 
-const BOARD_DIST = path.join(REPO_ROOT, 'scripts/fleetd/board-dist');
+const BOARD_DIST = path.join(REPO_ROOT, 'src/daemon/board-dist');
 
 interface RawGetResult {
   status: number | undefined;

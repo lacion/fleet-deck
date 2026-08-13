@@ -23,8 +23,8 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CLAUDE_ENV_MARKERS, GATEWAY_ENV_VARS, SPAWN_ENV_VARS } from './fleetd/env-scrub.ts';
-import { runNonce } from './fleetd/run-nonce.ts';
+import { CLAUDE_ENV_MARKERS, GATEWAY_ENV_VARS, SPAWN_ENV_VARS } from '../src/daemon/env-scrub.ts';
+import { runNonce } from '../src/daemon/run-nonce.ts';
 // Version-takeover contract, imported as SOURCE from the sibling fleetd/ dir
 // (same unbundled pattern as env-scrub.ts above) so this hook can evict a
 // strictly-older daemon and let the newest installed build own the port.
@@ -33,15 +33,15 @@ import {
   verifyDaemonPid,
   terminateDaemon,
   replacementMatches,
-} from './fleetd/takeover.ts';
-import { resolveHome, resolvePort, resolveBase } from './fleetd/config.ts';
+} from '../src/daemon/takeover.ts';
+import { resolveHome, resolvePort, resolveBase } from '../src/daemon/config.ts';
 
 const PORT = resolvePort();
 const BASE = resolveBase(PORT);
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 // Prefer the committed bundle (self-contained — git-distributed installs have
 // no node_modules); fall back to source for dev checkouts mid-iteration.
-const FLEETD_BUNDLE = path.join(HERE, 'fleetd', 'fleetd.bundle.mjs');
+const FLEETD_BUNDLE = path.join(HERE, '..', 'src', 'daemon', 'fleetd.bundle.mjs');
 // FLEETDECK_TEST_DAEMON_SCRIPT is a test-only seam (mirrors the same env in
 // tests/helpers/daemon.ts): it pins the launcher to a specific daemon build so
 // the takeover suite can boot the daemon FROM SOURCE while the committed bundle
@@ -50,7 +50,7 @@ const FLEETD_BUNDLE = path.join(HERE, 'fleetd', 'fleetd.bundle.mjs');
 const FLEETD =
   // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- an empty/unset test seam must fall back to the bundle, not be preserved as ''
   process.env['FLEETDECK_TEST_DAEMON_SCRIPT'] ||
-  (fs.existsSync(FLEETD_BUNDLE) ? FLEETD_BUNDLE : path.join(HERE, 'fleetd', 'fleetd.ts'));
+  (fs.existsSync(FLEETD_BUNDLE) ? FLEETD_BUNDLE : path.join(HERE, '..', 'src', 'daemon', 'fleetd.ts'));
 const HOME = resolveHome();
 
 // Shapes of the daemon's wire JSON. Trusted like every other /health consumer

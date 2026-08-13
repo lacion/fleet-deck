@@ -17,7 +17,7 @@ import { randomPort, spawnRaw, startDaemon } from './helpers/daemon.ts';
 import { postHook } from './helpers/http.ts';
 import { loadFixture } from './helpers/fixtures.ts';
 import { waitUntil as waitUntilBase, waitForResponse, nonInternalIpv4s } from './helpers/wait.ts';
-import { openDb } from '../scripts/fleetd/db.ts';
+import { openDb } from '../src/daemon/db.ts';
 
 const LAN_TOKEN = 'fleetdeck-ws-hardening-token-0123456789';
 

@@ -1,8 +1,8 @@
 # Generated / vendored — never reformat.
 node_modules/
 board/node_modules/
-scripts/fleetd/fleetd.bundle.mjs
-scripts/fleetd/board-dist/
+src/daemon/fleetd.bundle.mjs
+src/daemon/board-dist/
 board/dist/
 
 # Lockfiles.

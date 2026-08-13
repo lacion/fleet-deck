@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { decodeMessage } from '../scripts/fleetd/mdns.ts';
+import { decodeMessage } from '../src/daemon/mdns.ts';
 import { randomPort, spawnRaw } from './helpers/daemon.ts';
 import { waitUntil as waitUntilBase } from './helpers/wait.ts';
 
@@ -12,7 +12,7 @@ import { waitUntil as waitUntilBase } from './helpers/wait.ts';
 // than forcing a source export.
 type DecodedMdnsMessage = NonNullable<ReturnType<typeof decodeMessage>>;
 
-// The JSONL the daemon's mocked dgram socket appends (scripts/fleetd/test-seam.ts),
+// The JSONL the daemon's mocked dgram socket appends (src/daemon/test-seam.ts),
 // one object per line. Every field but `type` is emitted only for a subset of
 // record kinds ('send'/'callback' carry `wire`; 'setTTL'/'setMulticastTTL' carry
 // `value`; 'setiface' carries `address`), so all but `type` are optional.

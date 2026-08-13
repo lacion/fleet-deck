@@ -5,8 +5,8 @@
 # require the owner's review before merge.
 
 # Committed build artifacts (unreviewable diffs by nature)
-scripts/fleetd/fleetd.bundle.mjs          @lacion
-scripts/fleetd/board-dist/                @lacion
+src/daemon/fleetd.bundle.mjs          @lacion
+src/daemon/board-dist/                @lacion
 
 # Hook execution path (runs at every user's SessionStart; marketplace installs
 # track main ungated)
@@ -14,9 +14,9 @@ hooks/                                    @lacion
 scripts/fleet-hook.mjs                    @lacion
 scripts/fleet-sessionstart.mjs            @lacion
 scripts/fleet-watch.mjs                   @lacion
-scripts/fleetd/config.mjs                 @lacion
-scripts/fleetd/takeover.mjs               @lacion
-scripts/fleetd/env-scrub.mjs              @lacion
+src/daemon/config.mjs                 @lacion
+src/daemon/takeover.mjs               @lacion
+src/daemon/env-scrub.mjs              @lacion
 
 # The release pipeline itself
 .github/workflows/                        @lacion

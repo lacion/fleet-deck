@@ -60,7 +60,7 @@ jobs:
       - name: bun:sqlite adapter contract (the dual-seam gate)
         run: |
           bun -e '
-            const { openDatabase } = await import("./scripts/fleetd/sqlite.ts");
+            const { openDatabase } = await import("./src/daemon/sqlite.ts");
             const db = openDatabase(":memory:");
             db.exec("CREATE TABLE t(id INTEGER PRIMARY KEY, name TEXT)");
             const r = db.prepare("INSERT INTO t(name) VALUES (?)").run("heron");
@@ -94,7 +94,7 @@ jobs:
       - run: bun install --frozen-lockfile --ignore-scripts
       - run: bun run bundle
       - name: Fail if committed bundle is stale
-        run: git diff --exit-code scripts/fleetd/fleetd.bundle.mjs
+        run: git diff --exit-code src/daemon/fleetd.bundle.mjs
       - run: bun run bundle:bin
       - name: Fail if committed bin artifact is stale
         run: git diff --exit-code bin/fleetdeck.mjs
@@ -121,10 +121,10 @@ jobs:
         # git diff alone ignores UNTRACKED rebuild output (a fresh hashed chunk
         # or lazy stylesheet the commit forgot to stage), so gate on porcelain.
         run: |
-          git diff --exit-code scripts/fleetd/board-dist
-          if [ -n "$(git status --porcelain --untracked-files=all -- scripts/fleetd/board-dist)" ]; then
+          git diff --exit-code src/daemon/board-dist
+          if [ -n "$(git status --porcelain --untracked-files=all -- src/daemon/board-dist)" ]; then
             echo "::error::board build produced untracked files — stage the rebuilt board-dist"
-            git status --porcelain --untracked-files=all -- scripts/fleetd/board-dist
+            git status --porcelain --untracked-files=all -- src/daemon/board-dist
             exit 1
           fi
 
@@ -181,7 +181,7 @@ jobs:
   # SessionStart with the user's full environment, and marketplace installs
   # track git main UNGATED (no npm publish, no tag). The marketplace plugin
   # cache keys on the plugin.json version, so the watched closure is the
-  # COMPLETE behavior-bearing payload — hooks, bin/, all of scripts/fleetd/
+  # COMPLETE behavior-bearing payload — hooks, bin/, all of src/daemon/
   # (sources, the bundle the SessionStart hook actually execs, and the
   # board-dist the daemon serves), board/ sources, and .claude-plugin/ — not
   # just the hook-side paths (BUG-001: a daemon or board change with a rebuilt

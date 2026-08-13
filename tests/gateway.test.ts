@@ -46,8 +46,8 @@ import { fileURLToPath } from 'node:url';
 import { randomPort, startDaemon, type DaemonHandle } from './helpers/daemon.ts';
 import { postJson, getJson, postHook, rawRequest } from './helpers/http.ts';
 import { waitForSpecRecords } from './helpers/wait.ts';
-import { claudeTranscriptPath } from '../scripts/fleetd/helpers.ts';
-import { openDb } from '../scripts/fleetd/db.ts';
+import { claudeTranscriptPath } from '../src/daemon/helpers.ts';
+import { openDb } from '../src/daemon/db.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SPAWN_CMD_FIXTURE = path.join(HERE, 'helpers/spawn-cmd-fixture.ts');

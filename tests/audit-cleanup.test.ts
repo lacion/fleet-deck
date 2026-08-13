@@ -11,8 +11,8 @@ import fs, { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } fro
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import { branchOf, deriveRepo } from '../scripts/fleetd/repo-identity.ts';
-import { lastAssistantModel, lastAssistantText } from '../scripts/fleetd/transcript.ts';
+import { branchOf, deriveRepo } from '../src/daemon/repo-identity.ts';
+import { lastAssistantModel, lastAssistantText } from '../src/daemon/transcript.ts';
 
 function scratch(t: TestContext, prefix: string): string {
   const dir = mkdtempSync(path.join(tmpdir(), prefix));
@@ -191,8 +191,8 @@ test('agents polling is single-flight and backs off the CLI while liveness stays
   // them in quotes would make the quote characters literal argv bytes → ENOENT.
   process.env['FLEETDECK_AGENTS_CMD'] = `${process.execPath} ${runner} ${log}`;
   const { startAgentsPoll } = (await import(
-    `../scripts/fleetd/agents-poll.ts?audit=${Date.now()}`
-  )) as typeof import('../scripts/fleetd/agents-poll.ts');
+    `../src/daemon/agents-poll.ts?audit=${Date.now()}`
+  )) as typeof import('../src/daemon/agents-poll.ts');
 
   let livenessTicks = 0;
   const poller = startAgentsPoll({

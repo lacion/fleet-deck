@@ -11,11 +11,11 @@ import {
   quickBranchCheck,
   repoDefaultOrgChoice,
   repoDefaultOrgProblem,
-} from '../scripts/fleetd/repos.ts';
-import { detectCoderWorkspaceRoot, resolveHome } from '../scripts/fleetd/config.ts';
-import { openDb } from '../scripts/fleetd/db.ts';
-import { createCore } from '../scripts/fleetd/derive.ts';
-import { createStatements } from '../scripts/fleetd/statements.ts';
+} from '../src/daemon/repos.ts';
+import { detectCoderWorkspaceRoot, resolveHome } from '../src/daemon/config.ts';
+import { openDb } from '../src/daemon/db.ts';
+import { createCore } from '../src/daemon/derive.ts';
+import { createStatements } from '../src/daemon/statements.ts';
 import { startDaemon, randomPort } from './helpers/daemon.ts';
 import { getJson, postHook, postJson } from './helpers/http.ts';
 import { makeRemoteRepo } from './helpers/gitrepo.ts';

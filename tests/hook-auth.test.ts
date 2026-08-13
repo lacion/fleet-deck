@@ -25,8 +25,8 @@ import { startDaemon } from './helpers/daemon.ts';
 import { postHook, postJson, getJson, rawRequest } from './helpers/http.ts';
 import { loadFixture } from './helpers/fixtures.ts';
 import { waitUntil } from './helpers/wait.ts';
-import { openDb } from '../scripts/fleetd/db.ts';
-import { createCore } from '../scripts/fleetd/derive.ts';
+import { openDb } from '../src/daemon/db.ts';
+import { createCore } from '../src/daemon/derive.ts';
 import type { StateResponse, QuestionEntry } from '../contracts/state.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -142,7 +142,7 @@ test('forged UserPromptSubmit can no longer drain a mailbox or expire holds', as
   t.after(() => {
     rmSync(wrapDir, { recursive: true, force: true });
   });
-  const FLEETD_DIR = path.join(HERE, '..', 'scripts', 'fleetd');
+  const FLEETD_DIR = path.join(HERE, '..', 'src', 'daemon');
   const wrapper = path.join(wrapDir, 'fleetd-wrapper.mjs');
   writeFileSync(
     wrapper,

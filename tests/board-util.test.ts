@@ -507,7 +507,7 @@ test('the SHIPPED board-dist actually contains the git-output feature', () => {
   // These two assertions convert that class of accident from "green CI, blank
   // board" into a test failure: every asset index.html references must exist, and
   // the referenced bundles must carry this change.
-  const distDir = path.join(HERE, '..', 'scripts', 'fleetd', 'board-dist');
+  const distDir = path.join(HERE, '..', 'src', 'daemon', 'board-dist');
   const html = readFileSync(path.join(distDir, 'index.html'), 'utf8');
   const refs = [...html.matchAll(/(?:src|href)="\.\/(assets\/[^"]+)"/g)].map((m) => m[1] ?? '');
   assert.ok(refs.length >= 2, `index.html should reference the built assets; found ${refs.length}`);
@@ -627,7 +627,7 @@ test('the SHIPPED board-dist actually contains the copy chord', () => {
   // index.html never names, so that test's entry-only scan cannot see it. Walk
   // the import graph instead: every chunk the entry reaches must be on disk (the
   // untracked-new-hash accident), and the fix must be somewhere in it.
-  const assetsDir = path.join(HERE, '..', 'scripts', 'fleetd', 'board-dist', 'assets');
+  const assetsDir = path.join(HERE, '..', 'src', 'daemon', 'board-dist', 'assets');
   const html = readFileSync(path.join(assetsDir, '..', 'index.html'), 'utf8');
   const queue = [...html.matchAll(/(?:src|href)="\.\/assets\/([^"]+\.js)"/g)].map(
     (m) => m[1] ?? '',
@@ -673,7 +673,7 @@ test('the SHIPPED board-dist asset graph covers every referenced non-JS asset to
   // and the board then ships a terminal whose lazy import 404s. Walk every
   // referenced asset — JS, CSS, font, image — and reject stale extras on disk
   // that nothing references.
-  const assetsDir = path.join(HERE, '..', 'scripts', 'fleetd', 'board-dist', 'assets');
+  const assetsDir = path.join(HERE, '..', 'src', 'daemon', 'board-dist', 'assets');
   const html = readFileSync(path.join(assetsDir, '..', 'index.html'), 'utf8');
   const ASSET = /\.(?:js|css|woff2?|ttf|otf|png|jpe?g|gif|svg|webp|ico)$/;
   const queue = [...html.matchAll(/(?:src|href)="\.\/assets\/([^"]+)"/g)].map((m) => m[1] ?? '');
@@ -801,7 +801,7 @@ test('a pane refused at the upgrade says so instead of "connection closed"', () 
 });
 
 test('the daemon makes an upgrade impossible to miss and assets free to cache', () => {
-  const src = readFileSync(path.join(HERE, '..', 'scripts', 'fleetd', 'http.ts'), 'utf8');
+  const src = readFileSync(path.join(HERE, '..', 'src', 'daemon', 'http.ts'), 'utf8');
   assert.match(
     src,
     /'cache-control': ext === '\.html' \? 'no-store' : 'public, max-age=31536000, immutable'/,

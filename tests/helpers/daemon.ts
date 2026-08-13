@@ -1,11 +1,11 @@
 // tests/helpers/daemon.ts
 //
-// Spawns scripts/fleetd/fleetd.ts on a per-test random port with a fresh
+// Spawns src/daemon/fleetd.ts on a per-test random port with a fresh
 // FLEETDECK_HOME under the OS tmpdir, waits for /health, and tears down
 // (kill + rm) when the test is done.
 //
 // Written against the daemon's contract, not against the daemon implementation —
-// scripts/fleetd/fleetd.ts may not exist yet when this file is loaded. Tests
+// src/daemon/fleetd.ts may not exist yet when this file is loaded. Tests
 // that spawn it will simply fail/skip until the sibling daemon lands; that is
 // expected and not a bug in this harness.
 
@@ -20,7 +20,7 @@ import { scaleMs } from './wait.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = path.resolve(HERE, '../..');
-export const FLEETD_PATH = path.join(REPO_ROOT, 'scripts/fleetd/fleetd.ts');
+export const FLEETD_PATH = path.join(REPO_ROOT, 'src/daemon/fleetd.ts');
 
 // Testing contract: scratch port range 21600-21999. Deliberately BELOW the
 // kernel's ephemeral range (WSL2 default 44620-48715 — check
@@ -265,7 +265,7 @@ class PortCollisionError extends Error {}
 
 /**
  * Classify an early daemon exit. fleetd exits 3 specifically on EADDRINUSE
- * (scripts/fleetd/fleetd.ts: "port bind lost the election") — the drawn port
+ * (src/daemon/fleetd.ts: "port bind lost the election") — the drawn port
  * was already held, a retryable collision. Any other code is a genuine crash.
  */
 function exitError(raw: RawDaemon, code: number | null): Error {
@@ -307,7 +307,7 @@ export async function startDaemon({
   port,
   home,
   // FLEETDECK_TEST_DAEMON_SCRIPT lets this repo's own dry-check point the
-  // whole suite at a local reference stub while scripts/fleetd/fleetd.ts is
+  // whole suite at a local reference stub while src/daemon/fleetd.ts is
   // still being built, without editing any test file or touching scripts/.
   // Unset in normal use, so production runs always spawn the real daemon.
   scriptPath = process.env['FLEETDECK_TEST_DAEMON_SCRIPT'] ?? FLEETD_PATH,

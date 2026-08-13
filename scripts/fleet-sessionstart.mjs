@@ -7,7 +7,7 @@ import fs3 from "node:fs";
 import path4 from "node:path";
 import { fileURLToPath } from "node:url";
 
-// scripts/fleetd/env-scrub.ts
+// src/daemon/env-scrub.ts
 var CLAUDE_ENV_MARKERS = [
   "CLAUDECODE",
   "CLAUDE_CODE_SESSION_ID",
@@ -32,7 +32,7 @@ var GATEWAY_ENV_VARS = [
 ];
 var SPAWN_ENV_VARS = ["FLEETDECK_SETUP_CMD"];
 
-// scripts/fleetd/run-nonce.ts
+// src/daemon/run-nonce.ts
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -85,7 +85,7 @@ function runNonce(home, env = process.env, ppid = process.ppid) {
   }
 }
 
-// scripts/fleetd/takeover.ts
+// src/daemon/takeover.ts
 import fs2 from "node:fs";
 import path2 from "node:path";
 function errnoCode(e) {
@@ -224,7 +224,7 @@ async function terminateDaemon(pid, {
   return !pidIsLive(pid);
 }
 
-// scripts/fleetd/config.ts
+// src/daemon/config.ts
 import os from "node:os";
 import path3 from "node:path";
 function resolveHome() {
@@ -253,10 +253,10 @@ function resolveBase(port = resolvePort()) {
 var PORT = resolvePort();
 var BASE = resolveBase(PORT);
 var HERE = path4.dirname(fileURLToPath(import.meta.url));
-var FLEETD_BUNDLE = path4.join(HERE, "fleetd", "fleetd.bundle.mjs");
+var FLEETD_BUNDLE = path4.join(HERE, "..", "src", "daemon", "fleetd.bundle.mjs");
 var FLEETD = (
   // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- an empty/unset test seam must fall back to the bundle, not be preserved as ''
-  process.env["FLEETDECK_TEST_DAEMON_SCRIPT"] || (fs3.existsSync(FLEETD_BUNDLE) ? FLEETD_BUNDLE : path4.join(HERE, "fleetd", "fleetd.ts"))
+  process.env["FLEETDECK_TEST_DAEMON_SCRIPT"] || (fs3.existsSync(FLEETD_BUNDLE) ? FLEETD_BUNDLE : path4.join(HERE, "..", "src", "daemon", "fleetd.ts"))
 );
 var HOME = resolveHome();
 function readToken() {

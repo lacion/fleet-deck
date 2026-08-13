@@ -30,7 +30,7 @@ import { postHook, postJson, getJson, type JsonResponse } from './helpers/http.t
 import { loadFixture } from './helpers/fixtures.ts';
 import { makeTranscriptDir, writeTranscript } from './helpers/transcript.ts';
 import { waitUntil } from './helpers/wait.ts';
-import { resolveHoldMs } from '../scripts/fleetd/questions.ts';
+import { resolveHoldMs } from '../src/daemon/questions.ts';
 
 interface QuestionPayload {
   rearmed?: boolean;

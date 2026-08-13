@@ -1,6 +1,6 @@
 // tests/transcript-reader.test.ts
 //
-// Pure tests for scripts/fleetd/transcript.mjs — no daemon, no HTTP.
+// Pure tests for src/daemon/transcript.mjs — no daemon, no HTTP.
 //
 // The transcript is the only on-disk record of which model produced a turn.
 // Claude Code sends `model` in the SessionStart hook payload and NOWHERE else,
@@ -24,7 +24,7 @@ import assert from 'node:assert/strict';
 import { appendFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { lastAssistantModel, lastAssistantText, tailLines } from '../scripts/fleetd/transcript.ts';
+import { lastAssistantModel, lastAssistantText, tailLines } from '../src/daemon/transcript.ts';
 import {
   appendTranscriptLines,
   assistantLine,

@@ -3,17 +3,17 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync, chmodSync, readFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { openDb } from '../scripts/fleetd/db.ts';
-import { createStatements } from '../scripts/fleetd/statements.ts';
-import { claudeTranscriptPath, createCore } from '../scripts/fleetd/derive.ts';
+import { openDb } from '../src/daemon/db.ts';
+import { createStatements } from '../src/daemon/statements.ts';
+import { claudeTranscriptPath, createCore } from '../src/daemon/derive.ts';
 import {
   capturePane,
   exactWindowTarget,
   pasteText,
   sendEnter,
   typeKeys,
-} from '../scripts/fleetd/spawn.ts';
-import { stallDiagnosticExcerpt } from '../scripts/fleetd/spawns.ts';
+} from '../src/daemon/spawn.ts';
+import { stallDiagnosticExcerpt } from '../src/daemon/spawns.ts';
 
 type Db = ReturnType<typeof openDb>;
 type Core = ReturnType<typeof createCore>;

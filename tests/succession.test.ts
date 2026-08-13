@@ -6,7 +6,7 @@ import { chmodSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { openDb } from '../scripts/fleetd/db.ts';
+import { openDb } from '../src/daemon/db.ts';
 import { startDaemon, type DaemonHandle } from './helpers/daemon.ts';
 import { getJson, postHook, postJson } from './helpers/http.ts';
 import { scaleMs, waitUntil } from './helpers/wait.ts';

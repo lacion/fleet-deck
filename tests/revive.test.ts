@@ -13,11 +13,11 @@ import {
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { openDb } from '../scripts/fleetd/db.ts';
-import { claudeTranscriptPath, mungeClaudeProjectCwd } from '../scripts/fleetd/derive.ts';
+import { openDb } from '../src/daemon/db.ts';
+import { claudeTranscriptPath, mungeClaudeProjectCwd } from '../src/daemon/derive.ts';
 import { guardScratchDirs, startDaemon } from './helpers/daemon.ts';
 import { getJson, postHook, postJson } from './helpers/http.ts';
-import type { SqliteHandle } from '../scripts/fleetd/sqlite.ts';
+import type { SqliteHandle } from '../src/daemon/sqlite.ts';
 import type { SessionEntry, StateResponse } from '../contracts/state.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));

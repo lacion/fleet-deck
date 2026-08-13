@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { resolvePort } from '../scripts/fleetd/config.ts';
+import { resolvePort } from '../src/daemon/config.ts';
 import { spawnRaw, randomPort } from './helpers/daemon.ts';
 
 function withPort(value: string | undefined, fn: () => void) {

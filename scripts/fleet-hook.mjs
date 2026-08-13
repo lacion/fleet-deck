@@ -5,7 +5,7 @@
 import fs2 from "node:fs";
 import path3 from "node:path";
 
-// scripts/fleetd/config.ts
+// src/daemon/config.ts
 import os from "node:os";
 import path from "node:path";
 function resolveHome() {
@@ -30,7 +30,7 @@ function resolveBase(port = resolvePort()) {
   return `http://127.0.0.1:${port}`;
 }
 
-// scripts/fleetd/run-nonce.ts
+// src/daemon/run-nonce.ts
 import fs from "node:fs";
 import path2 from "node:path";
 import { randomUUID } from "node:crypto";

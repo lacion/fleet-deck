@@ -4,14 +4,14 @@
 // watch only seven hook-side paths, omitting the daemon bundle, most daemon
 // sources, and the board — while the marketplace plugin cache keys on the
 // plugin.json version. The reproduction from the audit: change
-// scripts/fleetd/http.mjs, rebuild fleetd.bundle.mjs, keep every version
+// src/daemon/http.mjs, rebuild fleetd.bundle.mjs, keep every version
 // manifest at the same string, and every gate passed — so existing installs
 // kept the old cached payload while new installs got different behavior under
 // the same semantic version.
 //
 // The fix moved the watched closure into one checked-in verifier,
 // scripts/check-plugin-payload.mjs, which covers the complete
-// behavior-bearing payload (hooks, bin/, ALL of scripts/fleetd/ including the
+// behavior-bearing payload (hooks, bin/, ALL of src/daemon/ including the
 // bundle and board-dist, board/ sources, .claude-plugin/) and requires a
 // version-manifest change in the same range. These tests run that verifier
 // against scratch git repos, exactly as CI does.
@@ -36,10 +36,10 @@ const PAYLOAD_FILES = [
   'scripts/fleet-hook.mjs',
   'scripts/fleet-sessionstart.mjs',
   'scripts/fleet-watch.mjs',
-  'scripts/fleetd/fleetd.mjs',
-  'scripts/fleetd/http.mjs',
-  'scripts/fleetd/fleetd.bundle.mjs',
-  'scripts/fleetd/board-dist/index.html',
+  'src/daemon/fleetd.mjs',
+  'src/daemon/http.mjs',
+  'src/daemon/fleetd.bundle.mjs',
+  'src/daemon/board-dist/index.html',
 ];
 
 const VERSION_MANIFEST = 'package.json';
@@ -114,10 +114,10 @@ function runGate(base: string, cwd: string): GateResult {
 // a version bump. The hook-side paths were already watched pre-fix; the
 // daemon/board rows are the BUG-001 regression assertions.
 for (const rel of [
-  'scripts/fleetd/http.mjs',
-  'scripts/fleetd/fleetd.mjs',
-  'scripts/fleetd/fleetd.bundle.mjs',
-  'scripts/fleetd/board-dist/index.html',
+  'src/daemon/http.mjs',
+  'src/daemon/fleetd.mjs',
+  'src/daemon/fleetd.bundle.mjs',
+  'src/daemon/board-dist/index.html',
   'board/src/App.jsx',
   'board/bun.lock',
   'bin/fleetdeck.mjs',
@@ -154,7 +154,7 @@ test('version bump alone is a release, not a payload change — gate stays green
 test('payload change WITH a version bump passes the gate', (t: TestContext) => {
   const repo = makePayloadRepo();
   t.after(repo.cleanup);
-  repo.commit('scripts/fleetd/http.mjs', '// changed http.mjs\n');
+  repo.commit('src/daemon/http.mjs', '// changed http.mjs\n');
   repo.commit(VERSION_MANIFEST, JSON.stringify({ name: 'fleetdeck', version: '0.0.2' }, null, 2));
   const res = runGate(repo.base, repo.dir);
   assert.equal(res.status, 0, `expected exit 0, got ${String(res.status)}: ${res.output}`);

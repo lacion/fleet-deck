@@ -12,9 +12,9 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { createHttp } from '../scripts/fleetd/http.ts';
-import { openDb } from '../scripts/fleetd/db.ts';
-import { createCore } from '../scripts/fleetd/derive.ts';
+import { createHttp } from '../src/daemon/http.ts';
+import { openDb } from '../src/daemon/db.ts';
+import { createCore } from '../src/daemon/derive.ts';
 import { randomPort } from './helpers/daemon.ts';
 import type { StateResponse } from '../contracts/state.ts';
 

@@ -16,8 +16,8 @@ import { startDaemon } from './helpers/daemon.ts';
 import { postHook, postJson, getJson } from './helpers/http.ts';
 import { loadFixture, type FixtureTokens } from './helpers/fixtures.ts';
 import { makeRepoWithWorktree } from './helpers/gitrepo.ts';
-import { openDb } from '../scripts/fleetd/db.ts';
-import { createCore } from '../scripts/fleetd/derive.ts';
+import { openDb } from '../src/daemon/db.ts';
+import { createCore } from '../src/daemon/derive.ts';
 
 // The daemon's tmuxAdapter option is typed against derive.ts's unexported
 // `TmuxAdapter`; the fakes below are deliberately narrow (they omit methods the

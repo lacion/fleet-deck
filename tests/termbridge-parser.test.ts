@@ -1,7 +1,7 @@
 import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { StringDecoder } from 'node:string_decoder';
-import { ControlModeParser, unescapeControlData } from '../scripts/fleetd/termbridge.ts';
+import { ControlModeParser, unescapeControlData } from '../src/daemon/termbridge.ts';
 
 test('control parser incrementally matches response blocks across awkward chunks', () => {
   const parser = new ControlModeParser();

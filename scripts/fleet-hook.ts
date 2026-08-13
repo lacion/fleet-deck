@@ -24,8 +24,8 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { resolveHome, resolvePort, resolveBase } from './fleetd/config.ts';
-import { runNonce } from './fleetd/run-nonce.ts';
+import { resolveHome, resolvePort, resolveBase } from '../src/daemon/config.ts';
+import { runNonce } from '../src/daemon/run-nonce.ts';
 
 // argv[2] is the hook event name hooks.json passes; `string | undefined` only
 // under a broken invocation. Kept honest so the membership tests below guard it

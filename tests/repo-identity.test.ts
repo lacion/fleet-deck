@@ -18,7 +18,7 @@ import { startDaemon } from './helpers/daemon.ts';
 import { postHook, getJson } from './helpers/http.ts';
 import { loadFixture, type FixtureTokens } from './helpers/fixtures.ts';
 import { makeRepoWithWorktree, makePlainDir, makeSeparateGitDirRepo } from './helpers/gitrepo.ts';
-import { deriveRepo, branchOf, ledgerKey } from '../scripts/fleetd/repo-identity.ts';
+import { deriveRepo, branchOf, ledgerKey } from '../src/daemon/repo-identity.ts';
 import type { StateResponse } from '../contracts/state.ts';
 
 interface HookAck {

@@ -4,7 +4,7 @@
 // owning the daemon on port 4711. The SessionStart hook detects a stale-version
 // daemon via /health, SIGTERMs it (the daemon's tested graceful shutdown),
 // waits for its death, and spawns its own newer build onto the freed port. The
-// contract lives in scripts/fleetd/takeover.ts and is wired into
+// contract lives in src/daemon/takeover.ts and is wired into
 // scripts/fleet-sessionstart.mjs (ensureServer).
 //
 // Two layers of coverage:
@@ -43,10 +43,10 @@ import {
   replacementMatches,
   shouldTakeOver,
   verifyDaemonPid,
-} from '../scripts/fleetd/takeover.ts';
+} from '../src/daemon/takeover.ts';
 
 const HOOK_SCRIPT = path.join(REPO_ROOT, 'scripts/fleet-sessionstart.mjs');
-const FLEETD_SOURCE = path.join(REPO_ROOT, 'scripts/fleetd/fleetd.ts');
+const FLEETD_SOURCE = path.join(REPO_ROOT, 'src/daemon/fleetd.ts');
 const STUB = path.join(REPO_ROOT, 'tests/helpers/stub-immortal-daemon.ts');
 const PKG_VERSION = (
   JSON.parse(readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8')) as { version: string }

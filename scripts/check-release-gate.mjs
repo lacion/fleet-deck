@@ -31,9 +31,9 @@ const WATCHED = [
   'scripts/fleet-hook.mjs',
   'scripts/fleet-sessionstart.mjs',
   'scripts/fleet-watch.mjs',
-  'scripts/fleetd/config.ts',
-  'scripts/fleetd/takeover.ts',
-  'scripts/fleetd/env-scrub.ts',
+  'src/daemon/config.ts',
+  'src/daemon/takeover.ts',
+  'src/daemon/env-scrub.ts',
 ];
 
 // Version-bearing manifests that must all equal the bumped plugin version at

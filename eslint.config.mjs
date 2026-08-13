@@ -15,8 +15,8 @@ export default tseslint.config(
     ignores: [
       'node_modules/**',
       'board/node_modules/**',
-      'scripts/fleetd/fleetd.bundle.mjs',
-      'scripts/fleetd/board-dist/**',
+      'src/daemon/fleetd.bundle.mjs',
+      'src/daemon/board-dist/**',
       'board/dist/**',
       // Legacy JS is unlinted for now; it converts to TS per pillar (F1b).
       '**/*.mjs',
@@ -28,7 +28,7 @@ export default tseslint.config(
 
   // ── Daemon / CLI / tests — Node + Bun, type-aware ───────────────────────────
   {
-    files: ['scripts/**/*.{ts,mts,cts}', 'bin/**/*.{ts,mts,cts}', 'tests/**/*.{ts,mts,cts}'],
+    files: ['src/**/*.{ts,mts,cts}', 'scripts/**/*.{ts,mts,cts}', 'bin/**/*.{ts,mts,cts}', 'tests/**/*.{ts,mts,cts}'],
     extends: [
       js.configs.recommended,
       ...tseslint.configs.strictTypeChecked,

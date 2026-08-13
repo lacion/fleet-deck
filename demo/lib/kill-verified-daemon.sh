@@ -39,7 +39,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
 const [repoRoot, pidfile] = process.argv.slice(2);
-const takeover = await import(path.join(repoRoot, 'scripts/fleetd/takeover.ts'));
+const takeover = await import(path.join(repoRoot, 'src/daemon/takeover.ts'));
 
 let text = '';
 try { text = readFileSync(pidfile, 'utf8'); } catch { console.log('none'); process.exit(0); }

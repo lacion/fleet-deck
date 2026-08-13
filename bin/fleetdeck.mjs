@@ -34,8 +34,8 @@ var ROOT = path.resolve(HERE, "..");
 function errnoCode(e) {
   return e instanceof Error && typeof e.code === "string" ? e.code : void 0;
 }
-var BUNDLE = path.join(ROOT, "scripts", "fleetd", "fleetd.bundle.mjs");
-var SOURCE = path.join(ROOT, "scripts", "fleetd", "fleetd.ts");
+var BUNDLE = path.join(ROOT, "src", "daemon", "fleetd.bundle.mjs");
+var SOURCE = path.join(ROOT, "src", "daemon", "fleetd.ts");
 var FLEETD = fs.existsSync(BUNDLE) ? BUNDLE : SOURCE;
 var HOME = process.env["FLEETDECK_HOME"] || path.join(os.homedir() || "/tmp", ".fleetdeck");
 function resolveCliPort() {
@@ -382,7 +382,7 @@ var requireHere = createRequire(import.meta.url);
 var takeoverPidHelpers = null;
 function loadTakeoverPidHelpers() {
   takeoverPidHelpers ??= requireHere(
-    path.join(ROOT, "scripts", "fleetd", "takeover.ts")
+    path.join(ROOT, "src", "daemon", "takeover.ts")
   );
   return takeoverPidHelpers;
 }
@@ -415,7 +415,7 @@ async function waitForHealth({
 }
 async function healthIsOurManagedDaemon(h) {
   if (!h?.managed) return false;
-  const { verifyDaemonPid } = await import(`file://${path.join(ROOT, "scripts", "fleetd", "takeover.ts")}`);
+  const { verifyDaemonPid } = await import(`file://${path.join(ROOT, "src", "daemon", "takeover.ts")}`);
   return verifyDaemonPid(h.pid, HOME);
 }
 async function serviceStart() {

@@ -35,7 +35,7 @@ import {
   paneCurrentCommand,
   sendEnter,
   sessionName,
-} from '../scripts/fleetd/spawn.ts';
+} from '../src/daemon/spawn.ts';
 import { waitUntil } from './helpers/wait.ts';
 
 // The persisted generation claim and its death certificate — read back from

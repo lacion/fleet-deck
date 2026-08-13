@@ -6,12 +6,12 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { openDb } from '../scripts/fleetd/db.ts';
+import { openDb } from '../src/daemon/db.ts';
 import { startDaemon, type DaemonHandle } from './helpers/daemon.ts';
 import { getJson, postHook, postJson } from './helpers/http.ts';
 import { makeRepoWithWorktree } from './helpers/gitrepo.ts';
 import { waitUntil } from './helpers/wait.ts';
-import type { SqliteHandle } from '../scripts/fleetd/sqlite.ts';
+import type { SqliteHandle } from '../src/daemon/sqlite.ts';
 import type { StateResponse } from '../contracts/state.ts';
 
 // tests/rename.test.ts — 0.7.1 custom names.

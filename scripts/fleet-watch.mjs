@@ -6,7 +6,7 @@ import fs from "node:fs";
 import path2 from "node:path";
 import { randomUUID } from "node:crypto";
 
-// scripts/fleetd/config.ts
+// src/daemon/config.ts
 import os from "node:os";
 import path from "node:path";
 function resolveHome() {

@@ -5,7 +5,7 @@
 // explicit version is skipped as "already latest", so every byte of the
 // behavior-bearing payload that ships under that version must ride a release.
 // Before this verifier existed, the hook-integrity CI job watched only seven
-// hook-side paths — a change to scripts/fleetd/http.mjs plus a rebuilt
+// hook-side paths — a change to src/daemon/http.mjs plus a rebuilt
 // fleetd.bundle.mjs (or board source plus rebuilt board-dist) passed every
 // gate with the version untouched, and existing installs kept the old cached
 // payload while new installs got different behavior under the same semantic
@@ -25,7 +25,7 @@ import { execFileSync } from 'node:child_process';
 //  - hooks/ + the hook scripts: run on every installed machine at every
 //    SessionStart / tool call with the user's full environment.
 //  - bin/: the CLI every install shares.
-//  - scripts/fleetd/: ALL daemon sources AND the two cached artifacts built
+//  - src/daemon/: ALL daemon sources AND the two cached artifacts built
 //    from them (fleetd.bundle.mjs is what fleet-sessionstart.mjs actually
 //    execs; board-dist/ is what http.mjs serves). Watching the whole
 //    directory means a NEW daemon module cannot slip in unwatched either.
@@ -38,7 +38,7 @@ const PAYLOAD = [
   'scripts/fleet-sessionstart.mjs',
   'scripts/fleet-watch.mjs',
   'bin/',
-  'scripts/fleetd/',
+  'src/daemon/',
   'board/',
   '.claude-plugin/',
 ];

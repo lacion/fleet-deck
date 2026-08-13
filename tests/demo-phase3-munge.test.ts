@@ -15,7 +15,7 @@ test('phase-3 transcript lookup uses the production mungeClaudeProjectCwd helper
   assert.match(
     SCRIPT,
     /mungeClaudeProjectCwd/,
-    'run-accept-phase3.sh must derive the transcript dir via scripts/fleetd/helpers.mjs mungeClaudeProjectCwd',
+    'run-accept-phase3.sh must derive the transcript dir via src/daemon/helpers.mjs mungeClaudeProjectCwd',
   );
   assert.doesNotMatch(
     SCRIPT,
@@ -25,6 +25,6 @@ test('phase-3 transcript lookup uses the production mungeClaudeProjectCwd helper
 });
 
 test('the production helper converts both slashes and dots (the defect trigger)', async () => {
-  const { mungeClaudeProjectCwd } = await import('../scripts/fleetd/helpers.ts');
+  const { mungeClaudeProjectCwd } = await import('../src/daemon/helpers.ts');
   assert.equal(mungeClaudeProjectCwd('/tmp/fleet.deck/proj'), '-tmp-fleet-deck-proj');
 });

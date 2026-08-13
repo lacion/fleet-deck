@@ -77,7 +77,7 @@ test('a foreign listener that wins the port is never sent plan-gate mutations', 
     rmSync(repo, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
   fs.mkdirSync(path.join(repo, 'demo', 'project', '.seed'), { recursive: true });
-  fs.mkdirSync(path.join(repo, 'scripts', 'fleetd'), { recursive: true });
+  fs.mkdirSync(path.join(repo, 'src', 'daemon'), { recursive: true });
   fs.copyFileSync(SCRIPT, path.join(repo, 'demo', 'run-accept-plan.sh'));
   fs.writeFileSync(
     path.join(repo, 'demo', 'project', '.seed', 'util.js'),
@@ -95,7 +95,7 @@ test('a foreign listener that wins the port is never sent plan-gate mutations', 
   // watchFile fires once on registration for a missing file, and a go written
   // before registration would be swallowed by that initial event.
   fs.writeFileSync(
-    path.join(repo, 'scripts', 'fleetd', 'fleetd.bundle.mjs'),
+    path.join(repo, 'src', 'daemon', 'fleetd.bundle.mjs'),
     `
     import fs from 'node:fs';
     import http from 'node:http';

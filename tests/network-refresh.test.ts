@@ -14,10 +14,10 @@
 // the os-net.ts seam instead, and __setInterfaces() drives the list this suite
 // sees — an in-process override, no child process and no loader.
 
-import { __setInterfaces } from '../scripts/fleetd/os-net.ts';
-import { openDb } from '../scripts/fleetd/db.ts';
-import { createCore } from '../scripts/fleetd/derive.ts';
-import { createHttp } from '../scripts/fleetd/http.ts';
+import { __setInterfaces } from '../src/daemon/os-net.ts';
+import { openDb } from '../src/daemon/db.ts';
+import { createCore } from '../src/daemon/derive.ts';
+import { createHttp } from '../src/daemon/http.ts';
 
 import test, { type TestContext } from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
