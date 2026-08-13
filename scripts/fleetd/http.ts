@@ -32,9 +32,9 @@ import { createTermBridge } from './termbridge.ts';
 // typechecks against derive without a hand-maintained interface.
 import type { createCore } from './derive.ts';
 // F1a HOSTILE-boundary validators, imported from the shared wire contracts by
-// explicit `.ts` specifier (the TS source of truth). Node >=22.18 (the engine
-// floor) strips the types on load; the esbuild bundle inlines them as plain JS,
-// which is what ships to end users. See docs/v1/ts-migration.md.
+// explicit `.ts` specifier (the TS source of truth). Bun strips the types on
+// load (dev/test); the esbuild bundle inlines them as plain JS for ship, which
+// is what reaches end users. See docs/v1/ts-migration.md.
 import { validateHookEvent, validateSpawnRequest } from '../../contracts/index.ts';
 
 const MAX_BODY = 1e6;
@@ -112,9 +112,10 @@ class HttpResShim {
   private _destroyed = false;
   private _closeListeners: ResCloseListener[] = [];
   // Declared as fields + assigned in the body, NOT constructor parameter properties:
-  // the node floor loads this source under --experimental-strip-types (strip-only),
-  // which cannot lower a parameter property to an assignment. See the header note at
-  // the top of this file and HttpReqShim below.
+  // Bun (like any strip-only type loader) erases types but cannot LOWER a parameter
+  // property to a constructor assignment, so these are declared as fields + assigned
+  // in the body; `tsconfig`'s `erasableSyntaxOnly` now enforces this at typecheck.
+  // See the header note at the top of this file and HttpReqShim below.
   private readonly _request: Request;
   private readonly _server: Server<WsData>;
   constructor(request: Request, server: Server<WsData>) {

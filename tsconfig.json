@@ -33,6 +33,10 @@
     "noUnusedParameters": true,
     "noPropertyAccessFromIndexSignature": true,
     "forceConsistentCasingInFileNames": true,
+    // The sole runtime is Bun, which strips types (does not downlevel), so non-erasable
+    // TS syntax (parameter properties, enums, namespaces) must be a typecheck error. A
+    // repo-wide grep confirms none exist today, so this is a guard, not a migration.
+    "erasableSyntaxOnly": true,
 
     // Third-party .d.ts (incl. @types/node × @types/bun overlap) are not our problem.
     "skipLibCheck": true

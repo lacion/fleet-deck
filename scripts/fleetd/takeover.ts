@@ -101,7 +101,7 @@ function livePidLooksLikeFleetd(pid: number): boolean {
     const runtimeLike = /^(?:node|nodejs|bun|fleetd)$/i.test(executable);
     // Match every name the daemon boots under: the production bundle
     // (fleetd.bundle.mjs), the TypeScript source on a full checkout (fleetd.ts,
-    // run via Node type-stripping since the 22.18 floor), and the legacy
+    // run via Bun's native type-stripping), and the legacy
     // fleetd.mjs (kept so a pre-cutover process and the test stubs that
     // impersonate a fleetd by that argv still verify).
     const fleetdScript = argv.some((arg) =>

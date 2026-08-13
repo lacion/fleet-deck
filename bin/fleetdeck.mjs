@@ -146,14 +146,18 @@ async function status(args = []) {
   }
   return 0;
 }
-var MIN_NODE_RANGE = "^22.18.0 || >=24.0.0";
-function nodeVersionSupported(version2) {
-  const isNan = (n) => n !== void 0 && Number.isNaN(n);
-  const [major, minor] = String(version2).split(".").map(Number);
-  if (isNan(major) || isNan(minor)) return false;
-  if (major === 22) return minor !== void 0 && minor >= 18;
-  if (major === 23) return false;
-  return major !== void 0 && major >= 24;
+var MIN_BUN_VERSION = "1.3.14";
+function bunVersionSupported(version2) {
+  const parts = String(version2).split(".").map((n) => Number.parseInt(n, 10));
+  const major = parts[0];
+  const minor = parts[1];
+  const patch = parts[2];
+  if (major === void 0 || Number.isNaN(major)) return false;
+  if (minor === void 0 || Number.isNaN(minor)) return false;
+  if (patch === void 0 || Number.isNaN(patch)) return false;
+  if (major !== 1) return major > 1;
+  if (minor !== 3) return minor > 3;
+  return patch >= 14;
 }
 async function onPath(cmd) {
   try {
@@ -166,9 +170,17 @@ async function onPath(cmd) {
 async function doctor() {
   const problems = [];
   const warnings = [];
-  if (!nodeVersionSupported(process.versions.node)) {
+  const bunVersion = process.versions.bun;
+  if (!bunVersion) {
     problems.push(
-      `Node ${process.versions.node} is too old \u2014 fleetd needs ${MIN_NODE_RANGE} (Node 23 unsupported)`
+      `this process is not running under Bun \u2014 the fleetdeck CLI and daemon require Bun ${MIN_BUN_VERSION}+ (install from https://bun.sh)`
+    );
+  } else if (!bunVersionSupported(bunVersion)) {
+    problems.push(`Bun ${bunVersion} is too old \u2014 fleetd needs Bun ${MIN_BUN_VERSION}+`);
+  }
+  if (!await onPath("bun")) {
+    problems.push(
+      "bun is not on PATH \u2014 the CLI launches via `#!/usr/bin/env bun` and the systemd unit re-execs it, so the OS cannot start fleetd without bun on PATH"
     );
   }
   if (!await onPath("tmux")) {
@@ -633,14 +645,14 @@ if (IS_ENTRYPOINT) await main(process.argv.slice(2));
 export {
   ENV_VALUE_BARE_SAFE,
   ENV_VALUE_UNQUOTABLE,
-  MIN_NODE_RANGE,
+  MIN_BUN_VERSION,
   SUPERVISE,
   UNIT,
   argvIsOurSupervisor,
+  bunVersionSupported,
   doctor,
   healthIsOurManagedDaemon,
   healthPidIsOurDaemon,
-  nodeVersionSupported,
   parseServiceEnvPort,
   quoteExecArg,
   serviceEnvPort,

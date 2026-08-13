@@ -170,9 +170,13 @@ const err = (s: string) => process.stderr.write(`${s}\n`);
 // fleetd already has a tested graceful shutdown and we must not shadow it.
 async function serve(): Promise<void> {
   process.env['FLEETDECK_MANAGED'] = '1';
-  // pathToFileURL, not string concat: a legal install path containing `#`, `?`,
-  // a raw `%`, or spaces must still resolve — `file://${path}` truncates at the
-  // fragment/query delimiters and throws URIError on a raw percent sequence.
+  // pathToFileURL, not string concat: a legal install path containing `#`, a raw
+  // `%`, or spaces still resolves under Bun — `file://${path}` truncates at the
+  // fragment delimiter and throws URIError on a raw percent sequence. A `?` does
+  // NOT resolve, even here: Bun decodes the href and re-splits the path at the `?`
+  // at both the entrypoint resolver and this in-process `import()`, so a `?` prefix
+  // is an accepted, documented limitation of the Bun-only install (see
+  // tests/cli-serve-paths.test.ts).
   await import(pathToFileURL(FLEETD).href);
 }
 
@@ -234,24 +238,24 @@ async function status(args: string[] = []): Promise<number> {
 
 // ------------------------------------------------------------------ doctor
 
-// The supported Node range, kept in lockstep with package.json `engines`.
-// node:sqlite loads WITHOUT --experimental-sqlite from 22.13.0 (and 24.x), so
-// the daemon's storage works from 22.13 — but the supported floor is 22.18, the
-// first release that runs the project's TypeScript sources with native type-
-// stripping and no flag. Aligning the floor there gives source and shipped
-// bundle a single Node floor; 22.13–22.17 (node:sqlite present, no unflagged
-// strip) and the odd 23 line are out of the supported range.
-const MIN_NODE_RANGE = '^22.18.0 || >=24.0.0';
-function nodeVersionSupported(version: unknown): boolean {
-  // Number.isNaN(undefined) is false, so a bare-major version ('24', no dot)
-  // must fall through to the >= 24 check exactly as it did untyped; mimic that
-  // with a helper rather than an undefined-guard that would wrongly reject '24'.
-  const isNan = (n: number | undefined): boolean => n !== undefined && Number.isNaN(n);
-  const [major, minor] = String(version).split('.').map(Number);
-  if (isNan(major) || isNan(minor)) return false;
-  if (major === 22) return minor !== undefined && minor >= 18;
-  if (major === 23) return false;
-  return major !== undefined && major >= 24;
+// The supported Bun floor, kept in lockstep with package.json `engines`. 1.3.14
+// is the minimum because the daemon requires `Bun.serve` + native WebSocket +
+// `bun:sqlite` as they behave in 1.3.14 — the validated single-runtime baseline.
+// `process.versions.bun` reports a full `x.y.z`, so an incomplete version string
+// (a missing minor or patch) is conservatively rejected rather than assumed.
+const MIN_BUN_VERSION = '1.3.14';
+function bunVersionSupported(version: unknown): boolean {
+  const parts = String(version).split('.').map((n) => Number.parseInt(n, 10));
+  const major = parts[0];
+  const minor = parts[1];
+  const patch = parts[2];
+  if (major === undefined || Number.isNaN(major)) return false;
+  if (minor === undefined || Number.isNaN(minor)) return false;
+  if (patch === undefined || Number.isNaN(patch)) return false;
+  // >= 1.3.14
+  if (major !== 1) return major > 1;
+  if (minor !== 3) return minor > 3;
+  return patch >= 14;
 }
 
 async function onPath(cmd: string): Promise<boolean> {
@@ -271,9 +275,17 @@ async function doctor(): Promise<number> {
   const problems: string[] = [];
   const warnings: string[] = [];
 
-  if (!nodeVersionSupported(process.versions.node)) {
+  const bunVersion = process.versions.bun;
+  if (!bunVersion) {
     problems.push(
-      `Node ${process.versions.node} is too old — fleetd needs ${MIN_NODE_RANGE} (Node 23 unsupported)`,
+      `this process is not running under Bun — the fleetdeck CLI and daemon require Bun ${MIN_BUN_VERSION}+ (install from https://bun.sh)`,
+    );
+  } else if (!bunVersionSupported(bunVersion)) {
+    problems.push(`Bun ${bunVersion} is too old — fleetd needs Bun ${MIN_BUN_VERSION}+`);
+  }
+  if (!(await onPath('bun'))) {
+    problems.push(
+      'bun is not on PATH — the CLI launches via `#!/usr/bin/env bun` and the systemd unit re-execs it, so the OS cannot start fleetd without bun on PATH',
     );
   }
 
@@ -647,9 +659,9 @@ function supervisorAlive(): number {
 // before `serve` ever runs. require(esm) loads it SYNCHRONOUSLY so this stays a
 // sync predicate for its callers and tests; healthIsOurManagedDaemon, being
 // async, dynamic-imports the same module. NOTE: require()/import() of a .ts
-// source needs native type-stripping (Node >= 22.18 / >= 24) — the same range
-// as the supported floor now, so this path never asks for a newer Node than the
-// CLI already requires. The shipped artifact runs from the plain-JS bundle, and
+// source needs on-load type-stripping, which the sole runtime (Bun) does
+// natively, so this path never asks for anything the CLI itself doesn't already
+// run under. The shipped artifact runs from the plain-JS bundle, and
 // this source path is only reached on a full checkout (a bundle-only install
 // never ships scripts/fleetd/, so this require throws there exactly as it did
 // when it was takeover.mjs — a pre-existing, unshipped path).
@@ -1018,7 +1030,7 @@ export {
   quoteExecArg,
   unitEnvFilePath,
   doctor,
-  MIN_NODE_RANGE,
-  nodeVersionSupported,
+  MIN_BUN_VERSION,
+  bunVersionSupported,
   token,
 };

@@ -11397,9 +11397,10 @@ var HttpResShim = class {
   _destroyed = false;
   _closeListeners = [];
   // Declared as fields + assigned in the body, NOT constructor parameter properties:
-  // the node floor loads this source under --experimental-strip-types (strip-only),
-  // which cannot lower a parameter property to an assignment. See the header note at
-  // the top of this file and HttpReqShim below.
+  // Bun (like any strip-only type loader) erases types but cannot LOWER a parameter
+  // property to a constructor assignment, so these are declared as fields + assigned
+  // in the body; `tsconfig`'s `erasableSyntaxOnly` now enforces this at typecheck.
+  // See the header note at the top of this file and HttpReqShim below.
   _request;
   _server;
   constructor(request, server2) {

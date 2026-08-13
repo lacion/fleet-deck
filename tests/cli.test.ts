@@ -81,8 +81,8 @@ const {
   serviceStart,
   UNIT,
   SUPERVISE,
-  MIN_NODE_RANGE,
-  nodeVersionSupported,
+  MIN_BUN_VERSION,
+  bunVersionSupported,
   unitEscape,
   unitArg,
   unitEnvFilePath,
@@ -132,39 +132,28 @@ test('tmux version parser enforces 3.4+ and rejects unknown output', () => {
   assert.match((tmuxVersionCapability('unknown') as TmuxUnavailCap).reason, /version is unknown/);
 });
 
-// BUG-020 + TS-migration floor raise: node:sqlite loads unflagged from 22.13.0,
-// but the supported floor is 22.18 — the first release that runs the project's
-// TypeScript sources with native type-stripping and no flag (the daemon source
-// and the test suite both import `.ts` directly). So the floor now excludes not
-// just 22.5–22.12 (no unflagged node:sqlite) but also 22.13–22.17 (node:sqlite
-// present, no unflagged strip); source and shipped bundle share one Node floor.
-test('node engine floor rejects <22.18 and Node 23, accepts 22.18+ and 24+', () => {
-  assert.equal(nodeVersionSupported('22.5.1'), false, '22.5 cannot load node:sqlite unflagged');
-  assert.equal(nodeVersionSupported('22.12.0'), false, 'last flagged node:sqlite 22.x');
-  assert.equal(
-    nodeVersionSupported('22.13.0'),
-    false,
-    'node:sqlite works here but there is no unflagged type-strip',
-  );
-  assert.equal(nodeVersionSupported('22.17.1'), false, 'last 22.x before unflagged type-stripping');
-  assert.equal(
-    nodeVersionSupported('22.18.0'),
-    true,
-    'first 22.x with unflagged native type-stripping — the floor',
-  );
-  assert.equal(nodeVersionSupported('23.0.0'), false, 'the odd 23 line is unsupported');
-  assert.equal(nodeVersionSupported('24.0.0'), true);
-  assert.equal(nodeVersionSupported('25.1.0'), true);
-  assert.equal(nodeVersionSupported('21.7.3'), false);
-  assert.equal(nodeVersionSupported('not-a-version'), false);
+// Single-runtime floor: the daemon requires `Bun.serve` + native WebSocket +
+// `bun:sqlite` as they behave in Bun 1.3.14 — the validated baseline for the
+// Bun-only swap. So the floor rejects anything below 1.3.14 and accepts 1.3.14+
+// and every newer minor/major; source and shipped bundle share one Bun floor.
+test('bun engine floor rejects <1.3.14, accepts 1.3.14+ and newer majors/minors', () => {
+  assert.equal(bunVersionSupported('1.3.13'), false, 'last release before the floor');
+  assert.equal(bunVersionSupported('1.3.14'), true, 'the validated single-runtime floor');
+  assert.equal(bunVersionSupported('1.3.20'), true);
+  assert.equal(bunVersionSupported('1.4.0'), true, 'newer minor');
+  assert.equal(bunVersionSupported('2.0.0'), true, 'newer major');
+  assert.equal(bunVersionSupported('1.2.99'), false, 'older minor');
+  assert.equal(bunVersionSupported('0.8.1'), false, 'ancient bun');
+  assert.equal(bunVersionSupported('1.3'), false, 'incomplete version is rejected conservatively');
+  assert.equal(bunVersionSupported('not-a-version'), false);
 });
 
-test('node engine floor matches the declared package.json engines range', () => {
+test('bun engine floor matches the declared package.json engines range', () => {
   const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as {
-    engines: { node: string };
+    engines: { bun: string };
   };
-  assert.equal(pkg.engines.node, MIN_NODE_RANGE, 'doctor text and engines must not drift apart');
-  assert.equal(MIN_NODE_RANGE, '^22.18.0 || >=24.0.0');
+  assert.equal(pkg.engines.bun, `>=${MIN_BUN_VERSION}`, 'doctor text and engines must not drift apart');
+  assert.equal(MIN_BUN_VERSION, '1.3.14');
 });
 
 // Save/clear every FLEETDECK_* var (so a stray one in the ambient environment
