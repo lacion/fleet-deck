@@ -2,6 +2,12 @@
 
 *Part of [Fleet Deck v1.0](./README.md). This phase runs **after the TypeScript migration completes** and **before any pillar (P1–P7) starts**. It is the outcome of the 2026-08-09 "all cards on the table" review ([[bun-native-stack-decision]]) and it **supersedes [foundations](./foundations.md) F2**: where F2 says Bun is an additive, cuttable distribution win and the core stays Node, this phase makes **Bun the primary runtime**. Where F2 and this doc disagree, this doc wins — and the propagation debt that creates is listed in §8.*
 
+> **Outcomes (updated 2026-08-13 — what actually landed since this plan was written; read the numbered steps below as the original plan and this note as the correction).**
+> - **§8's one genuinely-open P0 — "does the fail-open floor stay Node, or move to Bun?" — is RESOLVED: it moved to Bun.** `beb18cea` deleted the Node floor; `engines` is now `bun >=1.3.14`; `hooks/hooks.json` execs `bun "…/scripts/fleet-*.mjs"`. There is no longer a second runtime, so §8's open question and the gate's closing clause are settled.
+> - **Step 0.5 relocation DONE** — the daemon lives at `src/daemon/`, with the import boundaries both lint- and test-enforced.
+> - **Step 1 Biome DONE** (`e1b25f5d` + `826a2f7d`) — Biome 2.5.8 replaced ESLint/Prettier/typescript-eslint; the toolchain gate is now `bun run ci` = `biome ci` (format + lint).
+> - **Step 5 landed WITHOUT Hono.** It shipped as `Bun.serve` + native WebSocket with **zero runtime deps** (`dependencies: {}`); Hono was evaluated and **not adopted**. Read every "Hono" mention below — in *What this phase is*, §8, and the one-line gate — as superseded: the gated route/middleware decomposition re-homes onto plain `Bun.serve`, and its pure-unit extraction is now pre-work for Step 7 (Effect).
+
 ---
 
 ## What this phase is

@@ -54,7 +54,7 @@ flowchart LR
   FORGE --> CORE
 ```
 
-Agents are **driven by default and observed always** (P7): the drive tier owns the session through its native protocol — the Agent SDK for Claude now, the `app-server` for Codex after — while the *same* config-resident hooks keep POSTing to intake, so the core still sees a pure canonical-event stream and every card stays honestly derived. When a driver is down or unavailable the session **falls back to the observe-only floor** (plain CLI in a pane) — the fleet never darks. The core is arithmetic, SQL, and git; it makes **zero model calls** in either role. Everything is served over **loopback**. The plugin-embedded daemon still launches under Claude Code's own Node, still **fail-open**. Same membrane — only now it can also steer, because steering a session and observing it turn out to be the very same hooks firing.
+Agents are **driven by default and observed always** (P7): the drive tier owns the session through its native protocol — the Agent SDK for Claude now, the `app-server` for Codex after — while the *same* config-resident hooks keep POSTing to intake, so the core still sees a pure canonical-event stream and every card stays honestly derived. When a driver is down or unavailable the session **falls back to the observe-only floor** (plain CLI in a pane) — the fleet never darks. The core is arithmetic, SQL, and git; it makes **zero model calls** in either role. Everything is served over **loopback**. The plugin-embedded daemon still launches from the plugin's own hooks — now on **Bun** (single-runtime), still **fail-open**. Same membrane — only now it can also steer, because steering a session and observing it turn out to be the very same hooks firing.
 
 ## 1.2 A day on the deck
 
@@ -147,8 +147,8 @@ The full delta, by subsystem. "Before" is the tree today; "After" is 1.0.
 - **Source:** 34 `.mjs` modules (18,260 loc) → **mixed `.ts`/`.mjs`**, converted file-by-file (giants may remain `.mjs` at the cut — that's fine). New `contracts/*.ts`. See [ts-migration](./ts-migration.md).
 - **Type-checking:** none (no `tsc` in repo) → **`tsc --noEmit` a required CI gate** + runtime validation of hostile boundary JSON.
 - **Bundler:** esbuild, unchanged — it already handles `.ts` by extension; the shipped `fleetd.bundle.mjs` stays plain JS.
-- **Dev/CI Node:** source runs require **Node 24 (or ≥22.18)** for native type-stripping; runtime `engines` floor unchanged because production ships the bundle.
-- **Distribution:** `npm i -g` / plugin only → **+ optional Bun `--compile` single binary + `brew`** for the standalone board (F2, **explicitly cuttable**; `bun:sqlite` behind the `db.mjs` adapter seam).
+- **Dev/CI runtime:** **Bun 1.3.14** — it strips TypeScript natively, so the daemon, CLI, and tests run the `.ts` source directly; the plugin hook floor execs its committed `fleet-*.mjs` shims under the same Bun; `engines` is now `bun >=1.3.14` (the Node floor was deleted). Production still execs the committed bundle (under Bun).
+- **Distribution:** `npm i -g` / plugin — both now the **single Bun runtime** (`bun:sqlite` behind the `sqlite.ts` seam; `dependencies: {}`). An optional Bun `--compile` single binary + `brew` rides on top as packaging, independently cuttable.
 
 ### Providers & hooks
 - **Providers:** Claude only → **Claude + Codex**, each in two roles (observe **floor** + **drive** tier). New `/codex-hook/:event` intake; Fleet Deck writes Codex telemetry hooks into `~/.codex/hooks.json` and flips `[features].codex_hooks` — **a config mutation gated behind explicit consent + an uninstall story**.
@@ -179,7 +179,7 @@ The full delta, by subsystem. "Before" is the tree today; "After" is 1.0.
 - **Chrome:** `+ Spawn` becomes a **split button** (quick spawn · from issues · review a PR); **+ ⚙ Settings modal** (Integrations / Gateway & proxies / Providers / Accounts / Access & tokens — the gateway profile **moves out of the spawn form** into it); **+ ▤ Stream** and **usage chip** header buttons, capability-gated so an old daemon shows today's board. Full inventory: [ui-spec](./ui-spec.md).
 
 ### Tests, CI & docs
-- **+ `tsc --noEmit` lane**; **+ two-runtime matrix** (node:sqlite × bun:sqlite) for F2; **+ per-provider hook-shape fixtures**, **git-fixture repos** for diff/checkpoints, a **privilege-matrix test** (worker token can't spawn), **injection fixtures**, **usage-file fixtures incl. `rate_limits:null`**. The 124-file suite (34,581 loc) **stays green throughout** ([[test-suite-is-trust]]).
+- **+ `tsc --noEmit` + `biome ci` toolchain lane**; **one authoritative Bun test lane** (`bun:sqlite`; the two-runtime matrix is retired); **+ per-provider hook-shape fixtures**, **git-fixture repos** for diff/checkpoints, a **privilege-matrix test** (worker token can't spawn), **injection fixtures**, **usage-file fixtures incl. `rate_limits:null`**. The 124-file suite (34,581 loc) **stays green throughout** ([[test-suite-is-trust]]).
 - **+ `docs/v1/`** (this set); **+ docs/internals** (glossary, route map, state-machine doc built on the canonical vocabulary).
 
 ### Explicitly *not* changing (so the delta is honest)
@@ -201,7 +201,7 @@ The full delta, by subsystem. "Before" is the tree today; "After" is 1.0.
 
 ## 2.3 What upgrading from v0.22.4 feels like
 
-- **Nothing to install.** The plugin path still launches the daemon under Claude's own Node; `node:sqlite`; no `npm install`. Brew is additive and optional.
+- **Nothing to install.** The plugin path still launches the daemon with no `npm install` (`dependencies: {}`) — now on **Bun** with `bun:sqlite`, not Node with `node:sqlite`. Brew is additive and optional.
 - **Migrations auto-run** on first boot of the new daemon, numbered and transactional under `user_version`; a partial failure rolls back rather than half-applying.
 - **Skew rules are stated:** old daemon + new board, new hooks + old daemon (the SessionStart shim already prefers a committed bundle), and a **downgrade answer** — all specified in [validation-and-gates](./validation-and-gates.md).
 - **`schema_version`** on canonical events and the served skill lets hooks/agents detect a version mismatch instead of silently misbehaving.
@@ -214,4 +214,4 @@ The manifest ships in the [README's revised sequence](./README.md#sequencing-to-
 
 ## Definition of done
 
-Fleet Deck 1.0 is cut when **every Part-2 change has landed or been explicitly cut with a stated reason**, **every Part-1 invariant still holds** (proven per pillar), and the [validation-and-gates](./validation-and-gates.md) checklist passes: per-pillar fail-open/determinism/exposure proofs demonstrated, migrations numbered/transactional, the 124-file suite green on both runtimes, performance bars met, the platform matrix stated, and the security-delta review passed. The result is the system in Part 1 — multi-provider, issue-to-PR, a real review deck, operationally aware, **drive-default (observe-floor)** — still a fail-open, loopback, deterministic-core plugin.
+Fleet Deck 1.0 is cut when **every Part-2 change has landed or been explicitly cut with a stated reason**, **every Part-1 invariant still holds** (proven per pillar), and the [validation-and-gates](./validation-and-gates.md) checklist passes: per-pillar fail-open/determinism/exposure proofs demonstrated, migrations numbered/transactional, the suite green under **Bun** (the single runtime), performance bars met, the platform matrix stated, and the security-delta review passed. The result is the system in Part 1 — multi-provider, issue-to-PR, a real review deck, operationally aware, **drive-default (observe-floor)** — still a fail-open, loopback, deterministic-core plugin.

@@ -1,5 +1,15 @@
 # TypeScript migration — the progressive, file-by-file playbook
 
+> **PARTIALLY SUPERSEDED (2026-08, single-runtime decision).** The file-by-file
+> migration mechanics below still hold, but the run-path framing is stale on three
+> counts: (1) there is no "modern Node" run-path — the daemon, CLI, and tests run
+> under **Bun** (`bun >=1.3.14`), the Node floor was deleted (`beb18cea`); (2) the
+> DB seam is `bun:sqlite`, not `node:sqlite` (retired); (3) the `test:filewise` /
+> `test:bundle:filewise` scripts and the `run-tests-filewise.mjs` runner are gone —
+> `bun test` (and `bun run test:bundle`) is the single lane. Read the `.mjs`/Node
+> references below as the migration's mid-flight state. Full rewrite tracked under
+> the §8 propagation debt.
+
 *Companion to [foundations](./foundations.md) (F1). Part of [Fleet Deck v1.0](./README.md). Foundations says **what** F1 is (contracts-first, no rewrite) and **why**; this doc is the **how** — the mechanics of moving 34 daemon modules from `.mjs` to `.ts` one file at a time, with JS and TS running side by side the whole way, and no flag-day. Grounded in the actual tree (every count and `loc`/fan-in figure below was measured, 2026-08-07 against v0.22.4).*
 
 > **The one-sentence version.** Both of the daemon's run-paths — the esbuild bundle *and* modern Node — already load `.ts` and `.mjs` interchangeably, so the only per-file chore is updating the explicit `./x.mjs` import specifier when you rename. Convert leaves first, giants last-and-only-when-a-pillar-touches-them, keep the 124-file suite green after every single rename, and let the two never-broken safety nets (the bundle-test lane and `tsc --noEmit`) catch drift.

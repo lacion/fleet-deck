@@ -6,8 +6,10 @@
 > authoritative bun `test` job (no node matrix), and `publish.yml`'s release gate
 > runs the suite under bun:sqlite after a standalone adapter-contract step. The
 > `run-tests-filewise.mjs` runner and the `test:filewise`/`test:bundle:filewise`
-> scripts are deleted. `.github/workflows/{ci,publish}.yml` are the current truth;
-> the full rewrite of this doc is tracked under the §8 propagation debt.
+> scripts are deleted. The toolchain gate is now `bun run ci` = `biome ci` (format
+> check + lint) — ESLint/Prettier/typescript-eslint were replaced by Biome 2.5.8
+> (`e1b25f5d` + `826a2f7d`). `.github/workflows/{ci,publish}.yml` are the current
+> truth; the full rewrite of this doc is tracked under the §8 propagation debt.
 
 > Status: **workflows edited, locally proven green, nothing committed.** Both
 > `.github/workflows/ci.yml` and `.github/workflows/publish.yml` now install with

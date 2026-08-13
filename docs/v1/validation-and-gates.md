@@ -17,7 +17,7 @@
 | **[P5](./p5-programmable-fleet.md)** fleet | Dead worker → **synthesized `blocked`**, coordinator never hangs | **Authz:** default-config loopback cannot reach spawn-with-`setup_cmd` without an operator token; agent spawns hit the per-hour cap |
 | **[P6](./p6-unified-views.md)** views | Stream/chat is a board page; terminal stays authoritative if it fails | **Doctrine:** no board surface is load-bearing. **Perf:** stream + WS broadcast within budget at 15 sessions |
 | **[P7](./p7-drive-and-observe.md)** drive | Runner / SDK / login down → session **falls back to the observed floor**, full card, fleet stays lit | **Determinism:** driven cards stay pure derivation — the same hooks fire under the SDK (the linchpin), so the daemon never parses a model response to render. **Exposure:** no subscription/OAuth credential in `/state`, argv, or logs; the driver child is confined to its worktree |
-| **[F1/F2](./foundations.md)** | Plugin stays Node (fail-open path untouched); F2 additive only | F1: **`tsc --noEmit` green + runtime boundary validation**. F2: **node×bun CI matrix green**, or F2 cut with a note |
+| **[F1/F2](./foundations.md)** | Fail-open hook floor runs on **Bun** (single-runtime; the Node floor was deleted), still launched by the plugin, still fail-open | F1: **`tsc --noEmit` green + runtime boundary validation**. F2: **one authoritative Bun test lane green** (`bun:sqlite`; no node×bun matrix); toolchain gate is **`biome ci`** |
 
 ---
 
@@ -47,7 +47,7 @@ The suite is the repo's **trust anchor** — [[test-suite-is-trust]]: never quar
 
 | Pillar | New test assets |
 |--------|-----------------|
-| **F1/F2** | Two-runtime CI (`node:sqlite` × `bun:sqlite`); a required **`tsc --noEmit`** lane |
+| **F1/F2** | One authoritative **Bun** test lane (`bun:sqlite`; the node×bun matrix is retired) fronted by a `bun:sqlite` adapter-contract gate; a required **`tsc --noEmit`** lane; a **`biome ci`** (format + lint) toolchain gate |
 | **P1** | **Hook-shape fixtures per provider version** (pin Codex + Claude payloads; upstream churn becomes a fixture diff, not a state-machine surprise) |
 | **P2** | **Git-fixture repos** for checkpoints/diff: base-ref stamping, revert, passing-Stop dedupe, size-guard degradation |
 | **P3** | **Injection fixtures** (hostile issue body → spawn stays supervised); forge-CLI mocks; a **no-token-in-`/state`** assertion |
@@ -70,8 +70,9 @@ The suite is the repo's **trust anchor** — [[test-suite-is-trust]]: never quar
 ## 6. Platform statement (promises the CI must back)
 
 - **Codex hooks are Windows-disabled** — a Codex card on Windows is **notify + pane-liveness only**, and must say so (P1).
-- **macOS CI is advisory-only today** ([[oss-repo-infrastructure]], issue #2) — a **brew-distributed binary (F2) implies promises the CI does not currently back**. Either strengthen the macOS lane or scope the brew claim down.
-- **Node floor** — `node:sqlite` on 22.5–22.12 can't boot the daemon ([[local-dev-018-testing]]); the standalone Bun binary is *partly a fix* for this (F2), which is another reason F2 is a distribution win, not just packaging.
+- **macOS CI is advisory-only today** ([[oss-repo-infrastructure]], issue #2 — the `test-macos` job runs `continue-on-error`). Bun is now the runtime on macOS too, so a **load-bearing** macOS lane is what backs the platform statement: drop `continue-on-error` before macOS is a promise rather than a hope.
+- **Runtime floor** — the old `node:sqlite` floor (22.5–22.12 couldn't boot the daemon, [[local-dev-018-testing]]) is **gone**: the runtime is Bun-primary and `engines` is `bun >=1.3.14`, so that entire version-floor class of boot failure is retired outright rather than worked around.
+- **CI lanes today** — the gates a PR actually runs: **toolchain** (`tsc --noEmit` + `biome ci`), the authoritative **test** lane (whole suite under Bun / `bun:sqlite`), **bundle** (rebuild + stale-artifact diff, suite against the committed bundle), **board** (build + stale-`board-dist` diff), **test-macos** (advisory), **version** (four manifests agree), and **hook-integrity** (plugin payload rode a version bump). One runtime — Bun — across every lane that installs or runs the product (**version** + **hook-integrity** are script-only one-liners on the runner's ambient node — utilities, not a second lane).
 
 ---
 
@@ -96,4 +97,4 @@ This is **step 8 of the [README sequencing](./README.md#sequencing-to-10-revised
 
 ## The gate, in one line
 
-**No v1.0 cut until:** every pillar's proofs pass; migrations are numbered + transactional under `PRAGMA user_version`; the per-pillar test assets exist and the suite is green on **both** runtimes; the perf budgets hold at 15 sessions; the platform statement matches what CI actually backs; every driven session provably **falls back to the observed floor** when its runner drops; and the security **delta** audit is clean (including the drive-control surface).
+**No v1.0 cut until:** every pillar's proofs pass; migrations are numbered + transactional under `PRAGMA user_version`; the per-pillar test assets exist and the suite is green under **Bun** (the single runtime); the perf budgets hold at 15 sessions; the platform statement matches what CI actually backs; every driven session provably **falls back to the observed floor** when its runner drops; and the security **delta** audit is clean (including the drive-control surface).

@@ -16,7 +16,7 @@ Each child doc is a **PRD + tech spec** for one slice of the release. PRD = the 
 | — | **[architecture](./architecture.md)** | The provider seam, canonical events, the strategy object, the DB/runtime seam, migrations — the backbone every pillar rides | Tech spec |
 | F | **[foundations](./foundations.md)** | F1 TypeScript (contracts-first) and F2 Bun single binary | PRD + spec |
 | F | **[ts-migration](./ts-migration.md)** | Companion to F1 — the progressive, file-by-file `.mjs`→`.ts` playbook (recipe, order, restructure) | Tech spec |
-| F | **[foundations-hardening](./foundations-hardening.md)** | The Bun-primary spine — Biome, `bun:sqlite`/Kysely, `Bun.serve`+Hono, Zod, Effect v4 — as a phase **after** the TS migration and **before** the pillars. **Supersedes F2** (Bun becomes the runtime, not an optional binary). | PRD + spec |
+| F | **[foundations-hardening](./foundations-hardening.md)** | The Bun-primary spine — Biome, `bun:sqlite`/Kysely, `Bun.serve` + native WebSocket, Zod, Effect v4 — as a phase **after** the TS migration and **before** the pillars. **Supersedes F2** (Bun becomes the runtime, not an optional binary). | PRD + spec |
 | P1 | **[p1-cc-provider](./p1-cc-provider.md)** | Claude Code as a first-class provider — the observe floor, the reference card, and the Layer-4 strategy the drive tier extends | PRD + spec |
 | P1 | **[p1-codex-provider](./p1-codex-provider.md)** | Codex as a first-class *observed* provider — the Codex floor | PRD + spec |
 | P2 | **[p2-harvest-surface](./p2-harvest-surface.md)** | Diff view, per-turn checkpoints, notes → one batched mail | PRD + spec |
@@ -86,7 +86,7 @@ A **cross-cutting tidy** rides P6: consolidate the two overlapping permission co
 
 ## Sequencing to 1.0 (revised)
 
-> **Amendment (2026-08-09):** a **[Foundations-Hardening](./foundations-hardening.md)** phase now sits **between the TS migration and step 1 below** — Bun-primary runtime, Biome, `bun:sqlite`/Kysely, `Bun.serve`+Hono, Zod, Effect v4. It **supersedes F2** (formerly step 7, "additive & cuttable"): Bun is now the runtime, proven behind a go/no-go spike, not an optional binary. The pillar order below is unchanged, but F2's old row and the F1/F2 validation proofs are now propagation debt tracked in [foundations-hardening §8](./foundations-hardening.md#8-doctrine-check--and-the-propagation-debt).
+> **Amendment (2026-08-09):** a **[Foundations-Hardening](./foundations-hardening.md)** phase now sits **between the TS migration and step 1 below** — Bun-primary runtime, Biome, `bun:sqlite`/Kysely, `Bun.serve` + native WebSocket, Zod, Effect v4. It **supersedes F2** (formerly step 7, "additive & cuttable"): Bun is now the runtime, proven behind a go/no-go spike, not an optional binary. The pillar order below is unchanged, but F2's old row and the F1/F2 validation proofs are now propagation debt tracked in [foundations-hardening §8](./foundations-hardening.md#8-doctrine-check--and-the-propagation-debt).
 
 The vision's original order (F1 → P1+P4 → P2 → …) fronted a migration with no user-visible value, gated everything on the pillar with the most *external* risk (experimental Codex hooks), and demoted T0.1 completions to fifth after `fleetdeck-future.md` ranked them **first**. The plan of record adopts the review's revised order:
 

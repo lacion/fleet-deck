@@ -2,7 +2,7 @@
 
 *Part of [Fleet Deck v1.0](./README.md). See [architecture](./architecture.md) for the contracts module and the DB seam these two foundations feed. Where the vision and review differ, the review wins.*
 
-Two questions to settle before the pillars land, because the pillars are heavier if the ground is soft. **F1** decides whether the growing multi-provider surface is held together by typed contracts or by comments and hope. **F2** decides how the standalone board ships without dragging the Node-version dance behind it. Neither is a rewrite; both are seams. Get them wrong and every pillar pays interest.
+Two questions to settle before the pillars land, because the pillars are heavier if the ground is soft. **F1** decides whether the growing multi-provider surface is held together by typed contracts or by comments and hope. **F2** decides the runtime the product ships on — resolved by going **Bun-primary, single-runtime**, which ends the Node-version dance outright. Neither is a rewrite; both are seams. Get them wrong and every pillar pays interest.
 
 ---
 
@@ -46,16 +46,18 @@ Two requirements the Codex pass landed, both non-negotiable:
 
 ---
 
-## F2 — Bun single binary + brew (additive, *alongside* Node)
+## F2 — Bun-primary runtime (single-runtime; **supersedes** the additive-alongside-Node stance)
 
-The appeal is real: `brew install fleetdeck`, one static binary, and an end to the Node-version dance — the `node:sqlite` floor already bites (22.5–22.12 can't boot the daemon; see [[local-dev-018-testing]]). But the plugin channel must stay Node.
+> **Superseded (foundations-hardening, 2026-08).** The review below scoped F2 as *additive and cuttable* — a Bun `--compile` binary for the standalone board, **beside** a Node plugin path. That is no longer the plan of record. Fleet Deck went **Bun-primary and single-runtime**: the daemon, the standalone/dev path, **and the Claude Code plugin fail-open hook floor all run on Bun** — `hooks.json` execs `bun "…/scripts/fleet-*.mjs"`, commit `beb18cea` **deleted the Node version floor**, and `package.json` `engines` is now `bun >=1.3.14`. `node:sqlite` is **retired**: the store opens through `bun:sqlite` behind the `sqlite.ts` seam, and CI runs **one authoritative Bun test lane**, not a node×bun matrix. The reasoning below still holds; read its Node-vs-Bun specifics as corrected by this note. See [foundations-hardening](./foundations-hardening.md).
 
-- **Keep Node + `node:sqlite` for the plugin-embedded daemon.** The SessionStart hook launches the daemon under the Node that Claude Code already runs — the doctrine-critical, fail-open, no-native-deps, nothing-to-install path. A per-platform Bun binary there **regresses** "it just works with the Node already here."
-- **Add a Bun binary for the *standalone board server* only** — the `npm i -g fleetdeck` / Coder / LAN-board use, precisely where a one-command `brew` install and no Node floor are a clean win. `bun build --compile` produces the binary; `bun:sqlite` replaces `node:sqlite`.
+The appeal was always real: `brew install fleetdeck`, one runtime, and an end to the Node-version dance — the `node:sqlite` floor bit hard (22.5–22.12 couldn't boot the daemon; see [[local-dev-018-testing]]). The resolution went further than the review's "keep the plugin on Node": Bun now runs **everything**, plugin path included.
+
+- **The plugin-embedded daemon and its hook floor run on Bun.** The SessionStart hook (`fleet-sessionstart`) and the per-event hooks (`fleet-hook`, `fleet-watch`) are invoked as `bun …` and bring the daemon up under Bun — still the doctrine-critical, fail-open, no-native-deps, nothing-to-install path, now with the Node-version floor **gone** rather than merely tolerated.
+- **The standalone / `npm i -g` / Coder / LAN-board path is the same Bun runtime** — no second channel to keep in step. `bun:sqlite` replaced `node:sqlite`; an optional `bun build --compile` single binary + `brew` remains a *distribution* option on top of the one runtime, not a separate compatibility lane.
 
 ### sqlite is *not* the risk
 
-The deep dive is good news: DB access is **strongly centralized** — `db.mjs`/`statements.mjs` are the only `node:sqlite` importers, and the API surface maps **~1:1** to `bun:sqlite` (no `backup()`, no UDFs, raw portable `BEGIN IMMEDIATE` strings). The adapter seam is **one import site + a class alias** (`DatabaseSync ↔ Database`). CI runs a `node:sqlite × bun:sqlite` matrix so the two channels can't drift. See [architecture](./architecture.md#runtime--db-seam-f2).
+The deep dive was good news and the seam landed clean: DB access is **strongly centralized** — one module (`sqlite.ts`, `openDatabase()`) is the only place either SQLite builtin is named (`statements.ts`/`db.ts` build on it), and the two drivers map **~1:1** (no `backup()`, no UDFs, raw portable `BEGIN IMMEDIATE` strings). The seam is **one import site + a class alias** (`DatabaseSync ↔ Database`) that now resolves to `bun:sqlite`; the historical `node:sqlite × bun:sqlite` matrix collapsed to a **single Bun lane** once the runtime unified. See [architecture](./architecture.md#runtime--db-seam-f2).
 
 ### The Bun risks the vision didn't name
 
@@ -66,15 +68,15 @@ The deep dive is good news: DB access is **strongly centralized** — `db.mjs`/`
 | **`child_process` + tmux control-mode** | long-lived control pipes under Bun are unproven for us |
 | **Embedding `board-dist` assets** | packing the built board into a `--compile` binary is its own build step |
 
-**Verdict:** Bun is an additive **distribution** win (brew, single binary), **not** a core runtime swap. Keep F2 **last and explicitly cuttable** — *"1.0 ships without brew if compat drags."* The release must **not** hostage on Bun's dgram support. It pairs naturally with F1: write once in TS, ship two ways.
+**Verdict (updated):** the review called this an additive distribution win, *not* a core runtime swap, and wanted F2 kept last and cuttable. Events overtook that — Bun **became** the core runtime (foundations-hardening), single-runtime, floor included. What the review got right survives: the real risks were never sqlite but `mdns`/dgram, the WebSocket layer, tmux control pipes, and embedding `board-dist` — so those were the go/no-go gates the Bun spike had to clear before the swap committed. The optional `brew` single binary rides on top and stays cuttable; the *runtime* no longer is.
 
 ---
 
 ## Doctrine check
 
-Both foundations are doctrine-neutral by construction. **F1** changes only the build (esbuild already strips TS; no new runtime dep, no change to "one bundled file, `node:sqlite`, no `npm install`"). **F2** is additive: the fail-open, loopback, launched-under-Claude's-Node plugin path is untouched; Bun serves only the standalone board, which is already an opt-in `npm i -g` / Coder use. Nothing here introduces a wrapper, a phone-home, or a model call.
+Both foundations are doctrine-neutral by construction. **F1** changes only the build (esbuild/Bun already strip TS; no new runtime dep — `package.json` `dependencies` is still `{}` — no change to "one bundled file, no `npm install`"). **F2** swapped the runtime, not the doctrine: the fail-open, loopback, launched-by-the-plugin path is intact — it now runs on Bun with `bun:sqlite` instead of Node with `node:sqlite`, still no-native-deps and nothing-to-install. Nothing here introduces a wrapper, a phone-home, or a model call.
 
 ## Definition of done
 
 - **F1:** F1a `contracts/` module shipped and consumed by daemon + board; `tsc --noEmit` a required, green CI lane; runtime boundary validation live on hook and spawn bodies; F1b in force (new code TS, no big-bang, tests green).
-- **F2:** either the standalone board ships as a `brew`-installable single binary with the two-runtime CI matrix green — **or** it is cleanly cut from 1.0 with a stated reason (which Bun compat gap, and the revisit condition).
+- **F2:** the runtime is **Bun-primary and single-runtime** — daemon, standalone path, and the plugin hook floor all on Bun with `bun:sqlite`, the Node floor deleted, and the single Bun test lane green. (An optional `brew` single binary rides on top and stays independently cuttable.)

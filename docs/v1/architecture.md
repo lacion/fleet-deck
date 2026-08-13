@@ -132,13 +132,15 @@ The SQLite store, callsigns/tickets, worktrees, the mail queue + transport, ques
 
 ## Runtime & DB seam (F2)
 
-Good news from the deep dive: DB access is **strongly centralized**. `db.mjs`/`statements.mjs` are the only `node:sqlite` importers (113 statements live in the `statements.mjs` map, 35 in `db.mjs`, only **28 direct uses across 7 other modules** — mostly `BEGIN/COMMIT` strings + `questions.mjs`). The API surface maps ~1:1 to `bun:sqlite` (no `backup()`, no UDFs, raw `BEGIN IMMEDIATE` strings — portable).
+The runtime is now **Bun-primary and single-runtime** — the review's "additive Bun binary beside Node" was superseded by foundations-hardening (see [foundations](./foundations.md) §F2). The daemon, the standalone/dev path, and the Claude Code plugin fail-open hook floor **all run on Bun**; the Node version floor was deleted (`beb18cea`) and `engines` is `bun >=1.3.14`.
 
-- **The seam is one import site + a class alias:** `DatabaseSync` ↔ `Database` behind a single factory in `db.mjs`.
-- **CI a 2×2 matrix:** `{node:sqlite, bun:sqlite}` × supported runtime versions.
-- **The real Bun risks are not sqlite** (see [foundations](./foundations.md) §F2): `mdns.mjs` (1,012 lines of `node:dgram` multicast — Bun's weakest node-compat corner), `ws` under Bun, tmux control-mode long-lived pipes, and embedding `board-dist` assets in a compiled binary.
+The deep dive that made the swap safe still holds: DB access is **strongly centralized**. The store opens through **one seam — `sqlite.ts`'s `openDatabase()`**, the only module that names a SQLite builtin (`statements.ts`/`db.ts` build on it — 113 statements in the `statements` map, 35 in `db`, only **28 direct uses across 7 other modules**, mostly `BEGIN/COMMIT` strings + `questions`). The two drivers agree ~1:1 (no `backup()`, no UDFs, raw portable `BEGIN IMMEDIATE` strings), so the seam is **one import site + a class alias** (`DatabaseSync` ↔ `Database`).
 
-Hooks are runtime-agnostic — they just POST HTTP — so only the *daemon* runtime is ever in question. The plugin-embedded daemon **stays on Node + `node:sqlite`** (the doctrine-critical fail-open path launched under Claude Code's own Node); Bun is *additive* for the standalone board only.
+- **`node:sqlite` is retired.** `openDatabase()` resolves to **`bun:sqlite`** under the single Bun runtime, still normalizing the one observed divergence (a missed `.get()` → `undefined`) so behavior stays stable.
+- **CI is one authoritative Bun test lane**, not a node×bun matrix — a `bun:sqlite` adapter-contract check gates the seam, then the whole suite runs under `bun test`.
+- **The real Bun risks were never sqlite** (see [foundations](./foundations.md) §F2): `mdns` (`node:dgram` multicast — Bun's weakest node-compat corner), the WebSocket layer (now `Bun.serve` native WebSocket, no `ws`), tmux control-mode long-lived pipes, and embedding `board-dist` assets — the go/no-go gates the Bun spike cleared.
+
+Hooks are runtime-agnostic — they just POST HTTP — but they too now run under Bun (`hooks.json` execs `bun …`). There is no second daemon runtime to keep in step: Bun is *the* runtime, plugin path included.
 
 ---
 
@@ -163,7 +165,7 @@ The architecture work is **not** a separate phase. It lands as:
 - **F1a** = the contracts module + canonical vocabulary (phase 1, timeboxed);
 - **P1 intake normalization + strategy extraction** = the same task, continued (phase 3) — extracts each provider's **observe floor** ([P1 — Claude Code](./p1-cc-provider.md), [P1 — Codex](./p1-codex-provider.md));
 - **the drive override (`claudeSdk` / `codexAppServer`)** = layered on that same strategy object once the floors exist — the [P7](./p7-drive-and-observe.md) work; Claude drive-default first, Codex after its hooks stabilize;
-- **DB seam** = one factory edit, deferred to **F2** (phase 7, cuttable);
+- **DB seam** = one factory edit (`sqlite.ts`'s `openDatabase()`), **landed with the Bun-primary swap** (foundations-hardening) rather than deferred to a cuttable F2;
 - **migrations** = adopted incrementally as each pillar adds schema, starting with P2's base-ref column in phase 1.
 
 See the [README sequencing](./README.md#sequencing-to-10-revised) and [validation-and-gates](./validation-and-gates.md).

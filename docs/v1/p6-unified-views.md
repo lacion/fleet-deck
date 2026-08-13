@@ -35,7 +35,7 @@ So the stream is a genuine subsystem. What it needs:
 | **Read cursors** | per-viewer "last seen" so unread counts and catch-up work | Ticker has no notion of a reader |
 | **Selective tool-action events** | a curated subset of tool actions, not the firehose | Full `PostToolUse` volume would swamp the table **and** the WS |
 
-**The WS constraint is the sharp one.** The board broadcasts a **coalesced full snapshot every 60 ms** (`http.mjs:1370-1382`). Piping a full tool-action firehose through that model would multiply both the event-table write volume and the broadcast payload. This one surface therefore needs a **delta channel or a per-channel fetch** — it must *not* ride the broadcast-everything path. Treat "the stream reuses the existing WS snapshot" as a design bug.
+**The WS constraint is the sharp one.** The board still broadcasts a **coalesced full snapshot** — and the WS layer is now **`Bun.serve` + native WebSocket** in `http.ts` (the `ws` package was dropped in the single-runtime swap). Piping a full tool-action firehose through the broadcast-everything model would multiply both the event-table write volume and the broadcast payload. This one surface therefore needs a **delta channel or a per-channel fetch** — and `Bun.serve`'s native WebSocket **pub/sub topics** (`ws.subscribe` / `server.publish`) are the native primitive to build it on. It must *not* ride the broadcast-everything path; treat "the stream reuses the existing WS snapshot" as a design bug.
 
 **What the stream renders:** turn boundaries, tool actions, needs-you prompts, and mail — each as a message, grouped into a channel per session (and per repo). And crucially, **you can post into a channel** — which is just mail to that session, so the outbound path already exists (`mail`). Read + write, in one feed. This is the view that scales to fifteen agents: skim the merged stream, drop into a channel to reply, jump to the terminal tile only when you need the raw surface.
 
@@ -85,7 +85,7 @@ So the real work is **consolidation**, not creation: fold two overlapping contro
 
 ## Risks & open questions
 
-- **WS broadcast pressure at 15 sessions.** The coalesced full-snapshot model (`http.mjs:1370-1382`) is the bottleneck; the stream must use a delta/per-channel path or it multiplies broadcast payloads. Carry a perf bar for this (see [validation-and-gates](./validation-and-gates.md)).
+- **WS broadcast pressure at 15 sessions.** The coalesced full-snapshot model (now on `Bun.serve`'s native WebSocket, `http.ts`) is the bottleneck; the stream must use a delta/per-channel path — Bun's native WS pub/sub topics are the intended mechanism — or it multiplies broadcast payloads. Carry a perf bar for this (see [validation-and-gates](./validation-and-gates.md)).
 - **Event-table write volume + retention.** Selective tool-action events keep it bounded; the retention/GC policy needs a home (alongside the existing retention module) and a size budget.
 - **Chat's in-progress-turn source.** The downscope-vs-demote decision is the open question; do not build a live tailer for 1.0.
 - **Channel identity.** Per-session vs per-repo channels are both derived from `session_id`/`repo_id` on the event; confirm the derivation covers adopted/legacy sessions.

@@ -1,5 +1,13 @@
 # Phase 3 — `bun test` lane: empirical coverage record
 
+> **SUPERSEDED (2026-08, single-runtime decision).** This doc records the `bun test`
+> lane as a *compat signal* while the Node `node --test` lane was authoritative. That
+> is inverted now: Fleet Deck is Bun-primary single-runtime — `bun test` is the sole
+> authoritative gate (`ci.yml` has one bun `test` job, no node matrix), and the
+> `run-tests-filewise.mjs` Node runner plus the `test:filewise` scripts are deleted.
+> The coverage record below stands as history. Full rewrite tracked under the §8
+> propagation debt.
+
 > Status: **recorded, honest.** The Node `node --test` lane stays the authoritative gate
 > (last verified green at end of Phase 2; no source changed since). This document records what
 > the `bun test` lane covers today and categorizes every failure by root cause, per the plan's
