@@ -1,0 +1,178 @@
+{
+  "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+  // Single lint+format tool (replaces ESLint + Prettier + typescript-eslint).
+  // Biome has no .gitignore coupling here — the include list below is the whole story.
+  "vcs": { "enabled": false, "clientKind": "git", "useIgnoreFile": false },
+
+  // ── File scope ──────────────────────────────────────────────────────────────
+  // Faithful port of the old tooling's scope: eslint `lint` + prettier `format`
+  // both targeted ONLY *.ts/*.tsx/*.mts/*.cts. Restricting the include set to
+  // those four extensions automatically keeps every GENERATED .mjs/.js artifact
+  // out of scope — src/daemon/fleetd.bundle.mjs, bin/fleetdeck.mjs,
+  // scripts/fleet-*.mjs, board/vite.config.js, demo/*.mjs — with no per-file
+  // ignore needed. The negations below drop vendored + built trees that DO carry
+  // .ts/.tsx (node_modules types, the built board bundle under src/daemon).
+  "files": {
+    "includes": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts",
+      "!**/node_modules",
+      "!src/daemon/board-dist",
+      "!board/dist",
+      "!dist"
+    ]
+  },
+
+  // ── Formatter: mirrors .prettierrc.json exactly (commit B does the sweep) ─────
+  // singleQuote:true semi:true tabWidth:2 useTabs:false printWidth:100
+  // trailingComma:"all" arrowParens:"always". jsxSingleQuote was unset in Prettier
+  // (→ double), matched by jsxQuoteStyle:"double".
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 100,
+    "lineEnding": "lf"
+  },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "single",
+      "jsxQuoteStyle": "double",
+      "semicolons": "always",
+      "trailingCommas": "all",
+      "arrowParentheses": "always",
+      "quoteProperties": "asNeeded",
+      "bracketSpacing": true,
+      "bracketSameLine": false
+    }
+  },
+
+  // ── Linter ──────────────────────────────────────────────────────────────────
+  // Sensible recommended baseline. Step 1 is a TOOL SWAP, not a lint-tightening:
+  // every rule turned OFF below is a Biome-recommended rule that flags code the
+  // old ESLint (js.recommended + typescript-eslint strict/stylistic, NO react /
+  // a11y / react-hooks plugins) accepted. Disabling preserves parity without
+  // touching source; re-tightening is a later, deliberate step.
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "recommended",
+      "a11y": {
+        // No jsx-a11y plugin existed under ESLint — the whole a11y set is new.
+        "noAutofocus": "off",
+        "noStaticElementInteractions": "off",
+        "noSvgWithoutTitle": "off",
+        "useAriaPropsSupportedByRole": "off",
+        "useKeyWithClickEvents": "off",
+        "useSemanticElements": "off"
+      },
+      "complexity": {
+        // Stylistic suggestions ESLint did not enforce.
+        "noCommaOperator": "off", // sequence exprs in existing terse code
+        // DIRECT CONFLICT with tsconfig noPropertyAccessFromIndexSignature (which
+        // REQUIRES a['b'] for index signatures); the TS compiler setting wins.
+        "useLiteralKeys": "off"
+      },
+      "correctness": {
+        // React Hooks deps — no eslint-plugin-react-hooks was configured.
+        "useExhaustiveDependencies": "off"
+      },
+      "security": {
+        // dangerouslySetInnerHTML is used deliberately (rendered markdown/QR);
+        // ESLint had no equivalent. Kept as a conscious trust-zone residual.
+        "noDangerouslySetInnerHtml": "off"
+      },
+      "style": {
+        // consistent-type-imports was OFF under typescript-eslint here.
+        "useImportType": "off",
+        // string-concat → template-literal rewrite (134 infos) — cosmetic.
+        "useTemplate": "off"
+      },
+      "suspicious": {
+        // Intentional ANSI/terminal control-char regexes (\x1b[...] etc.) — this
+        // is a tmux/terminal tool; these regexes are the point.
+        "noControlCharactersInRegex": "off",
+        // Index-as-key in small static SVG/list renders ESLint never flagged.
+        "noArrayIndexKey": "off",
+        // Parenthesized assignments in loop/cond heads (ESLint no-cond-assign
+        // defaulted to except-parens, which allowed these).
+        "noAssignInExpressions": "off",
+        // `let x;` (assigned later in try/catch) — TS/ESLint accepted these.
+        "noImplicitAnyLet": "off",
+        // Deliberate __proto__ access in a prototype-pollution defense test.
+        "noProto": "off",
+        // ${...} inside plain strings that are intentionally not templates.
+        "noTemplateCurlyInString": "off",
+        // forEach/map callbacks that intentionally return a value for side use.
+        "useIterableCallbackReturn": "off"
+      }
+    }
+  },
+
+  // No import-organizing / assist actions — out of scope for a format-parity swap.
+  "assist": { "enabled": false },
+
+  // ── Boundary rules — graduated from tests/import-boundaries.test.ts (R2) ──────
+  // Biome 2.5.8 noRestrictedImports `patterns.group` gitignore-style globs match
+  // the RESOLVED import path (verified: a relative `../../src/daemon/db.ts` from
+  // board/src matches `**/src/daemon/**` at any nesting depth), so the directional
+  // bans are fully expressible here. The R2 SUITE test remains the stronger anchor
+  // (a green-or-revert test can't be silenced per-line); this lint is the earlier
+  // signal. The floor-seam ALLOWLIST (scripts/fleet-*.ts → config/run-nonce/
+  // env-scrub/takeover) is a denylist-shaped-hole noRestrictedImports cannot
+  // express, so it stays solely in the R2 test — intentionally not encoded here.
+  "overrides": [
+    {
+      "includes": ["board/src/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": [
+                      "**/src/daemon",
+                      "**/src/daemon/**",
+                      "effect",
+                      "effect/**",
+                      "kysely",
+                      "kysely/**",
+                      "hono",
+                      "hono/**",
+                      "bun:*"
+                    ],
+                    "message": "board/src talks to the daemon over HTTP, never by import, and must never pull the daemon-only deps effect/kysely/hono/bun:* into the browser bundle. See tests/import-boundaries.test.ts."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/daemon/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["**/board", "**/board/**"],
+                    "message": "src/daemon must not depend on the UI (board/**). See tests/import-boundaries.test.ts."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

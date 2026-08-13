@@ -19,10 +19,12 @@ permissions:
 # not a second runtime lane.)
 
 jobs:
-  # Toolchain gate: strict TypeScript + ESLint. Fast, no daemon, no tmux — the
-  # first signal a PR gets. Runtime-agnostic (tsc/eslint), so it runs under bun
-  # alone. Both root and board deps are installed: `tsc -p board` and the
-  # type-aware eslint over board/src both need board's types (@types/react …).
+  # Toolchain gate: strict TypeScript + Biome (lint). Fast, no daemon, no tmux —
+  # the first signal a PR gets. Runtime-agnostic (tsc/biome), so it runs under bun
+  # alone. Both root and board deps are installed: `tsc -p board` needs board's
+  # types (@types/react …). NOTE: `bun run lint` is `biome lint` only — the full
+  # `biome ci` format+lint gate lands with the mechanical format sweep (Step 1
+  # commit B); wiring it before the sweep would fail CI on pending format diffs.
   toolchain:
     runs-on: ubuntu-latest
     timeout-minutes: 10
