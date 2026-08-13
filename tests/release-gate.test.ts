@@ -11,7 +11,7 @@
 // These tests build scratch git repos and run the real checker script against
 // them — no mocks of the version comparison.
 
-import test, { type TestContext } from 'node:test';
+import test, { type TestContext } from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';

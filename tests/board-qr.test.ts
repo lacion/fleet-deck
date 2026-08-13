@@ -15,7 +15,7 @@
 // is lost by going through qrPath. board/package.json is "type": "module", so it
 // loads under `node --test` with no bundler.
 
-import test from 'node:test';
+import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 
 import { qrPath } from '../board/src/qr.ts';

@@ -4,7 +4,7 @@
 // accepts the TCP connection but stalls the response wedged the live smoke
 // run forever (the 300 s `timeout` only wraps each Claude worker process).
 
-import test from 'node:test';
+import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';

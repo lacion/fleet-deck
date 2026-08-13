@@ -8,7 +8,7 @@
 // and plain text are untouched, and the daemon's internal privileged mail
 // (/command assignments, question answers, plan capture) still flows.
 
-import test from 'node:test';
+import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';

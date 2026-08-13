@@ -11,7 +11,7 @@
 // append a scratch-daemon simulation; `set -u` then aborts the truncated
 // script, which is exactly what drives the EXIT trap.
 
-import test, { type TestContext } from 'node:test';
+import test, { type TestContext } from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';

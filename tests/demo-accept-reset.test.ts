@@ -9,7 +9,7 @@
 // /health reply on the port reporting the same pid, and a live node+fleetd
 // process shape) and ABORT on any listener it cannot positively identify.
 
-import test, { type TestContext } from 'node:test';
+import test, { type TestContext } from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { execFile, spawn, type ExecFileOptions } from 'node:child_process';
 import fs, { mkdtempSync, rmSync } from 'node:fs';

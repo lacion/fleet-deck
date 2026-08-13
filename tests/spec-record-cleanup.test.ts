@@ -14,13 +14,14 @@
 // directory must contain NO leftover record dirs — before the fix it held
 // every one of them (17 dirs containing specs.jsonl in the audit's run).
 
-import test from 'node:test';
+import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { childRunArgv, childPassCount } from './helpers/child-runner.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 // These are runtime `node --test` targets resolved on disk, not TS imports.
@@ -51,24 +52,22 @@ test(
     Reflect.deleteProperty(parentEnv, 'NODE_TEST_CONTEXT');
 
     for (const suite of SUITES) {
-      const result = spawnSync(
-        process.execPath,
-        ['--test', '--test-concurrency=1', '--test-reporter=tap', path.join(HERE, suite)],
-        {
-          encoding: 'utf8',
-          timeout: 240_000,
-          env: { ...parentEnv, TMPDIR: sandbox },
-        },
-      );
+      const argv = childRunArgv({ file: path.join(HERE, suite), serial: true });
+      const result = spawnSync(process.execPath, argv, {
+        encoding: 'utf8',
+        timeout: 240_000,
+        env: { ...parentEnv, TMPDIR: sandbox },
+      });
+      // node prints `# pass N` on stdout, bun ` N pass` on stderr — parse combined.
+      const out = `${result.stdout ?? ''}${result.stderr ?? ''}`;
       assert.equal(
         result.status,
         0,
-        `${suite} must pass inside the TMPDIR sandbox (status ${String(result.status)})\n--- stdout ---\n${result.stdout}\n--- stderr ---\n${result.stderr}`,
+        `${suite} must pass inside the TMPDIR sandbox (status ${String(result.status)})\n${out}`,
       );
-      const passCount = (/^# pass (\d+)$/m.exec(result.stdout) ?? [])[1];
       assert.ok(
-        Number(passCount) > 0,
-        `${suite} must actually RUN its tests inside the sandbox (a silent all-skip would make this regression test vacuous); TAP summary:\n${result.stdout.slice(-600)}`,
+        childPassCount(out) > 0,
+        `${suite} must actually RUN its tests inside the sandbox (a silent all-skip would make this regression test vacuous); summary:\n${out.slice(-600)}`,
       );
     }
 

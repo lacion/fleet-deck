@@ -14,7 +14,7 @@
 // the spawned script is a stub that exits 1 on startup after leaving a marker
 // file in FLEETDECK_HOME.
 
-import test from 'node:test';
+import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import net from 'node:net';
 import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';

@@ -8,29 +8,18 @@
 // list on every checked request and hands the daemon a refreshLan() handle that
 // swaps the share URLs atomically.
 //
-// os.networkInterfaces() cannot be monkey-patched after import (Node caches
-// the builtin binding), so this suite swaps the whole `node:os` module for a
-// mutable facade via module.register() — the same pattern as the daemon-spawn
-// loader tests, without a child process.
+// os.networkInterfaces() cannot be monkey-patched after import (the builtin
+// binding is cached, and Bun ignores the node:module loader hooks the suite once
+// used to swap `node:os` wholesale). The daemon reads its interface list through
+// the os-net.ts seam instead, and __setInterfaces() drives the list this suite
+// sees — an in-process override, no child process and no loader.
 
-import { register } from 'node:module';
+import { __setInterfaces } from '../scripts/fleetd/os-net.ts';
+import { openDb } from '../scripts/fleetd/db.ts';
+import { createCore } from '../scripts/fleetd/derive.ts';
+import { createHttp } from '../scripts/fleetd/http.ts';
 
-register(new URL('./helpers/os-facade-loader.ts', import.meta.url));
-
-interface NetIface {
-  family: string;
-  internal: boolean;
-  address: string;
-}
-
-const { __setInterfaces } = (await import('node:os')) as unknown as {
-  __setInterfaces: (entries: NetIface[]) => void;
-};
-const { openDb } = await import('../scripts/fleetd/db.ts');
-const { createCore } = await import('../scripts/fleetd/derive.ts');
-const { createHttp } = await import('../scripts/fleetd/http.ts');
-
-import test, { type TestContext } from 'node:test';
+import test, { type TestContext } from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -99,6 +88,9 @@ function startBoard(t: TestContext, { lan = null }: { lan?: LanArg | null } = {}
 }
 
 test('the Host allowlist follows the interface list as the network changes', async (t) => {
+  t.after(() => {
+    __setInterfaces(null);
+  }); // the seam is shared under `bun test`
   __setInterfaces(LOOPBACK_ONLY); // booted before the LAN came up
   const { port } = await startBoard(t);
   const lanHost = { host: `192.0.2.10:${port}` };
@@ -129,6 +121,9 @@ test('the Host allowlist follows the interface list as the network changes', asy
 });
 
 test('refreshLan() swaps the share-panel URLs in one snapshot', async (t) => {
+  t.after(() => {
+    __setInterfaces(null);
+  }); // the seam is shared under `bun test`
   __setInterfaces(LOOPBACK_ONLY);
   const { port, refreshLan } = await startBoard(t, {
     lan: {
@@ -164,6 +159,7 @@ test('the per-request allowlist refresh never evicts the advertised .local name'
   // refresh clears and rebuilds the address set per request, so it must re-add
   // the name every time — otherwise the first checked request via the mDNS URL
   // 403s as a DNS-rebinding attempt (regression caught during BUG-129 verify).
+  t.after(() => { __setInterfaces(null); }); // the seam is shared under `bun test`
   __setInterfaces(LOOPBACK_ONLY);
   const { port } = await startBoard(t, {
     lan: { enabled: true, urls: [], mdns: `http://fleetdeck.local:9/?t=x` },

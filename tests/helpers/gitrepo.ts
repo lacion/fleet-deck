@@ -16,6 +16,10 @@ function git(args: string[], cwd: string): string {
     cwd,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
+    // Live env, not Bun's startup snapshot: a test that overrides PATH at
+    // runtime (e.g. PATH=/nonexistent to force git-missing) only reaches the
+    // child git when env is explicit. A no-op under Node. See exec.ts.
+    env: process.env,
   }).trim();
 }
 
@@ -160,7 +164,9 @@ export function makeSeparateGitDirRepo({
   const gitDir = path.join(base, 'state', `${repoName}.git`);
   const checkout = path.join(base, 'work', repoName);
   mkdirSync(path.dirname(gitDir), { recursive: true });
-  execFileSync('git', ['init', '-q', `--separate-git-dir=${gitDir}`, checkout]);
+  execFileSync('git', ['init', '-q', `--separate-git-dir=${gitDir}`, checkout], {
+    env: process.env, // live env (see git() above); no-op under Node
+  });
   git(['config', 'user.email', 'test@fleetdeck.local'], checkout);
   git(['config', 'user.name', 'Fleet Deck Tests'], checkout);
   writeFileSync(path.join(checkout, 'shared.js'), '// seed\nmodule.exports = {};\n');
@@ -203,7 +209,9 @@ export function makeRemoteRepo({
   const base = mkdtempSync(path.join(tmpdir(), 'fleetdeck-remote-'));
   const origin = path.join(base, `${repoName}.git`);
   const seed = path.join(base, 'seed');
-  execFileSync('git', ['init', '--bare', '-q', '-b', 'main', origin]);
+  execFileSync('git', ['init', '--bare', '-q', '-b', 'main', origin], {
+    env: process.env, // live env (see git() above); no-op under Node
+  });
   mkdirSync(seed, { recursive: true });
   git(['init', '-q', '-b', 'main'], seed);
   git(['config', 'user.email', 'test@fleetdeck.local'], seed);
@@ -231,7 +239,9 @@ export function makeRemoteRepo({
     seed: realpathSync(seed),
     clone(name = `clone-${++cloneNo}`) {
       const target = path.join(base, name);
-      execFileSync('git', ['clone', '-q', origin, target]);
+      execFileSync('git', ['clone', '-q', origin, target], {
+        env: process.env, // live env (see git() above); no-op under Node
+      });
       git(['config', 'user.email', 'test@fleetdeck.local'], target);
       git(['config', 'user.name', 'Fleet Deck Tests'], target);
       return realpathSync(target);

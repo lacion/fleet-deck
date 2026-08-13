@@ -9,7 +9,7 @@
 // The dist under scripts/fleetd/board-dist is COMMITTED, so these tests run
 // against the real files the daemon ships with.
 
-import test, { type TestContext } from 'node:test';
+import test, { type TestContext } from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { readFileSync, mkdtempSync, rmSync } from 'node:fs';

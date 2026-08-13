@@ -7,7 +7,7 @@
 // "info" for a cross-worktree collision of the same repo; a non-git cwd
 // falls back to repo_id = cwd.
 
-import test from 'node:test';
+import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';

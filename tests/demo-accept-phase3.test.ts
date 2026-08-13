@@ -14,7 +14,7 @@
 //      hangs: run against a black-hole server that accepts and never
 //      responds, the script must exit on its own before the deadline elapses.
 
-import { test } from 'node:test';
+import { test } from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createServer } from 'node:net';

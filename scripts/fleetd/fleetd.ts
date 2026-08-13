@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 // fleetd — Fleet Deck daemon (Phase 1: daemon parity).
 // One process per FLEETDECK_HOME, one port, loopback by default (explicit LAN opt-in).
 // State lives in SQLite (FLEETDECK_HOME/fleetd.db, WAL) so it survives daemon
@@ -11,7 +11,6 @@
 
 import fs from 'node:fs';
 import crypto from 'node:crypto';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openDb } from './db.ts';
@@ -20,6 +19,11 @@ import { createHttp, isLoopbackAddress, parseTrustedOrigins } from './http.ts';
 import { startAgentsPoll } from './agents-poll.ts';
 import { createPayloadCapture } from './payload-capture.ts';
 import { createMdns, hostLabel } from './mdns.ts';
+import { networkInterfaces } from './os-net.ts';
+// Runtime-agnostic test seam (foundations-hardening §16): every export is a
+// no-op unless FLEETDECK_TEST_NET_MOCK / a record-sink var is set, so this is
+// inert in production and announced at boot with the other seams below.
+import { installConsoleRecorder, mdnsDgramInject, recordRefreshLan } from './test-seam.ts';
 // HOME-ownership pid helpers now live in takeover.mjs (the version-takeover
 // contract), so the daemon's own claimHome lock and the SessionStart hook's
 // evict-a-stale-daemon path share one implementation and can never drift.
@@ -34,6 +38,11 @@ import {
 import { resolveHome, resolvePort } from './config.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// Arm the console tee before any banner line is logged (no-op unless the test
+// sink var is set), so a spawned audit-regression daemon's startup/roam output
+// reaches the parent test.
+installConsoleRecorder();
 
 // takeover.ts exports the pidRecord PARSER but not its result interface, so
 // derive the record shape from the parser's return type rather than reaching
@@ -621,7 +630,7 @@ server.on('error', (e: NodeJS.ErrnoException) => {
 function lanAddresses(): string[] {
   const addresses = new Set<string>();
   try {
-    for (const entries of Object.values(os.networkInterfaces())) {
+    for (const entries of Object.values(networkInterfaces())) {
       for (const entry of entries ?? []) {
         // @types/node types NetworkInterfaceInfo.family as the string 'IPv4' |
         // 'IPv6'; older node reported the numeric family 4, so accept both. Read
@@ -661,6 +670,9 @@ function sameAddresses(a: string[], b: string[]): boolean {
 }
 
 function startMdns(addresses: string[]): void {
+  // A spawned audit-regression daemon swaps node:dgram for a socket that never
+  // touches the network; undefined in production, so the real dgram is used.
+  const inject = mdnsDgramInject();
   mdns = createMdns({
     port: PORT,
     name: MDNS_NAME,
@@ -671,6 +683,8 @@ function startMdns(addresses: string[]): void {
     log: (msg) => {
       console.error(`fleetd mdns: ${msg}`);
     },
+    // exactOptionalPropertyTypes: add `inject` only when present — never as `undefined`.
+    ...(inject ? { inject } : {}),
   });
   mdns.start();
   // start() cannot report readiness: bind and multicast membership only
@@ -711,7 +725,11 @@ function refreshNetwork(addresses: string[]): void {
   // One builder (see lanInfoFor above) so startup and this refresh can never
   // drift on how a LAN status object is shaped.
   try {
-    refreshLan(lanInfoFor(addresses));
+    const info = lanInfoFor(addresses);
+    refreshLan(info);
+    // No-op in production; under the audit-regression seam it records the roam so
+    // the test can prove the share panel followed the interface list.
+    recordRefreshLan(info);
   } catch (err) {
     console.error('fleetd share-URL refresh error:', err);
   }
@@ -785,6 +803,10 @@ server.listen(PORT, BIND, () => {
     'FLEETDECK_TEST_DAEMON_SCRIPT',
     'FLEETDECK_VERSION_OVERRIDE',
     'FLEETDECK_TEST_FAIL_PLAN_INSERT',
+    // The runtime-agnostic network mock (test-seam.ts + os-net.ts): mocks
+    // dgram/the interface list and tees console.log to a file. Master flag first.
+    'FLEETDECK_TEST_NET_MOCK',
+    'FLEETDECK_TEST_CONSOLE_RECORD',
   ]) {
     if (process.env[seam]) console.error(`fleetd WARNING: test seam ${seam} active`);
   }

@@ -748,6 +748,10 @@ export function tmuxCapability(): TmuxCapability {
       timeout: 1_500,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
+      // Live env, not the startup snapshot (see exec.ts): under Bun a runtime
+      // TMUX_TMPDIR/PATH mutation only reaches the child when env is explicit;
+      // a no-op under Node.
+      env: process.env,
     });
     next = tmuxVersionCapability(output);
   } catch {
@@ -1427,7 +1431,12 @@ export function launchOverride(
   },
 ): void {
   try {
-    const child = spawnChild(cmd, [JSON.stringify(spec)], { stdio: 'ignore', detached: true });
+    // env: process.env — live env, not Bun's startup snapshot (see exec.ts); no-op under Node.
+    const child = spawnChild(cmd, [JSON.stringify(spec)], {
+      stdio: 'ignore',
+      detached: true,
+      env: process.env,
+    });
     child.on('error', (err) => {
       try {
         onError(err);

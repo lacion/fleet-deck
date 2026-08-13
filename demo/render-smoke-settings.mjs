@@ -21,8 +21,8 @@ if (!sessionStartScript || !fleetHookScript || !outFile) {
 // shell; the JSON layer itself is handled by JSON.stringify below.
 const shellQuote = (value) => `'${String(value).replace(/'/g, `'\\''`)}'`;
 
-const sessionStart = `node ${shellQuote(sessionStartScript)}`;
-const hook = (event) => `node ${shellQuote(fleetHookScript)} ${event}`;
+const sessionStart = `bun ${shellQuote(sessionStartScript)}`;
+const hook = (event) => `bun ${shellQuote(fleetHookScript)} ${event}`;
 
 const settings = {
   hooks: {

@@ -14,7 +14,7 @@
 //   - hooks.json's FileChanged matcher is a literal, non-empty static watch
 //     list, so the plugin never establishes an empty registration again.
 
-import test, { type TestContext } from 'node:test';
+import test, { type TestContext } from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';

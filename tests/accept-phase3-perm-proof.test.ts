@@ -8,7 +8,7 @@
 // a clean claude exit status, a successful board answer POST, and the proof
 // file on disk with exactly the bytes the prompt specified.
 
-import test from 'node:test';
+import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';

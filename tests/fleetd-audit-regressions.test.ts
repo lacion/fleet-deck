@@ -1,9 +1,8 @@
-import test, { type TestContext } from 'node:test';
+import test, { type TestContext } from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { decodeMessage } from '../scripts/fleetd/mdns.ts';
 import { randomPort, spawnRaw } from './helpers/daemon.ts';
 import { waitUntil as waitUntilBase } from './helpers/wait.ts';
@@ -13,10 +12,10 @@ import { waitUntil as waitUntilBase } from './helpers/wait.ts';
 // than forcing a source export.
 type DecodedMdnsMessage = NonNullable<ReturnType<typeof decodeMessage>>;
 
-// The JSONL records the loader's dgram/os mocks write, one object per line. Every
-// field but `type` is emitted only for a subset of record kinds ('send'/'callback'
-// carry `wire`; 'setTTL'/'setMulticastTTL' carry `value`; 'setiface' carries
-// `address`), so all but `type` are optional.
+// The JSONL the daemon's mocked dgram socket appends (scripts/fleetd/test-seam.ts),
+// one object per line. Every field but `type` is emitted only for a subset of
+// record kinds ('send'/'callback' carry `wire`; 'setTTL'/'setMulticastTTL' carry
+// `value`; 'setiface' carries `address`), so all but `type` are optional.
 interface MdnsLogItem {
   type: string;
   value?: number;
@@ -24,17 +23,17 @@ interface MdnsLogItem {
   address?: string;
 }
 
-// Three tests below drive fleetd startup through an ESM --experimental-loader
-// (helpers/mdns-dgram-loader.ts) that mocks node:dgram / ./http.ts / node:os by
-// matching the SOURCE module paths (scripts/fleetd/*.mjs). The single-file bundle
-// inlines those modules, so the loader intercepts nothing and the mocked
-// console-record / mDNS announcement never appears — the tests would hang. They are
-// therefore inherently source-only; the daemon behaviour they assert is verified
-// against the bundle separately (a real LAN startup elides the token, refuses a
-// second same-HOME daemon, and awaits the goodbye), and fully covered here in source
-// mode. Skip them when the suite runs against the bundle (npm run test:bundle).
+// The mDNS/banner tests below drive a spawned fleetd whose network stack is mocked
+// in-source (test-seam.ts + os-net.ts, armed by FLEETDECK_TEST_NET_MOCK) — the old
+// node --experimental-loader is gone (Bun ignores node ESM loader hooks). The seam
+// now compiles into the single-file bundle too, so these could in principle run
+// against it; they are kept source-only here to hold the change to the runtime swap.
+// The bundle path verifies the same daemon behaviour separately (a real LAN startup
+// elides the token, refuses a second same-HOME daemon, and awaits the goodbye), and
+// it is fully covered here in source mode. Skip when running against the bundle
+// (npm run test:bundle).
 const BUNDLE_SKIP = process.env['FLEETDECK_TEST_DAEMON_SCRIPT']
-  ? 'source-only: ESM loader mock cannot intercept the inlined bundle'
+  ? 'source-only: held to source mode while the runtime swap settles'
   : false;
 
 // Positional-signature adapter over the shared scaled poller: call sites pass
@@ -50,13 +49,12 @@ function freshHome(prefix: string): string {
   return mkdtempSync(path.join(tmpdir(), prefix));
 }
 
-function loaderOptions(extra: Record<string, string> = {}): Record<string, string> {
-  const loader = path.resolve('tests/helpers/mdns-dgram-loader.ts');
-  return {
-    NODE_OPTIONS:
-      `${process.env['NODE_OPTIONS'] ?? ''} --no-warnings --experimental-loader=${pathToFileURL(loader).href}`.trim(),
-    ...extra,
-  };
+// Arm the daemon's own in-source network mock (test-seam.ts + os-net.ts) and layer
+// on the per-test knobs each case needs (record sinks, TTL/join failure, the
+// interface set). FLEETDECK_TEST_NET_MOCK is the master flag; it runs on both Node
+// and Bun, unlike the retired `node --experimental-loader` mechanism.
+function netMockEnv(extra: Record<string, string> = {}): Record<string, string> {
+  return { FLEETDECK_TEST_NET_MOCK: '1', ...extra };
 }
 
 test(
@@ -66,11 +64,13 @@ test(
     const token = 'audit-token-must-never-reach-fleetd-log-0123456789';
     const home = freshHome('fleetdeck-token-log-');
     const consoleRecord = path.join(home, 'console.log');
-    t.after(() => { rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+    t.after(() => {
+      rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    });
     const daemon = spawnRaw({
       port: randomPort(),
       home,
-      env: loaderOptions({
+      env: netMockEnv({
         FLEETDECK_BIND: '0.0.0.0',
         FLEETDECK_TOKEN: token,
         FLEETDECK_MDNS: 'off',
@@ -104,7 +104,9 @@ test(
   { skip: BUNDLE_SKIP },
   async (t: TestContext) => {
     const home = freshHome('fleetdeck-port-scope-');
-    t.after(() => { rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+    t.after(() => {
+      rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    });
     const firstPort = randomPort();
     let secondPort = randomPort();
     while (secondPort === firstPort) secondPort = randomPort();
@@ -113,7 +115,7 @@ test(
     const first = spawnRaw({
       port: firstPort,
       home,
-      env: loaderOptions({ FLEETDECK_TEST_CONSOLE_RECORD: consoleRecord }),
+      env: netMockEnv({ FLEETDECK_TEST_CONSOLE_RECORD: consoleRecord }),
     });
     t.after(() => first.kill());
     await waitUntil(() => {
@@ -136,7 +138,7 @@ test(
       'pidfile records the HOME owner and its port',
     );
 
-    const second = spawnRaw({ port: secondPort, home, env: loaderOptions() });
+    const second = spawnRaw({ port: secondPort, home, env: netMockEnv() });
     t.after(() => second.kill());
     const code = await second.waitForExit(5000);
     assert.equal(
@@ -162,7 +164,9 @@ test(
   async (t: TestContext) => {
     const home = freshHome('fleetdeck-recycled-pid-');
     const pidFile = path.join(home, 'fleetd.pid');
-    t.after(() => { rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+    t.after(() => {
+      rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    });
 
     // The test runner PID is live and node-backed, but its cmdline is not fleetd.
     // A stale record for it models OS PID reuse without needing privileged PID
@@ -171,7 +175,7 @@ test(
     const daemon = spawnRaw({
       port: randomPort(),
       home,
-      env: loaderOptions({ FLEETDECK_TOKEN: 'too-short' }),
+      env: netMockEnv({ FLEETDECK_TOKEN: 'too-short' }),
     });
     t.after(() => daemon.kill());
 
@@ -197,11 +201,13 @@ test(
     // only appear on a tick where the responder is actually alive.
     const home = freshHome('fleetdeck-mdns-banner-');
     const consoleRecord = path.join(home, 'console.log');
-    t.after(() => { rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+    t.after(() => {
+      rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    });
     const daemon = spawnRaw({
       port: randomPort(),
       home,
-      env: loaderOptions({
+      env: netMockEnv({
         FLEETDECK_BIND: '0.0.0.0',
         FLEETDECK_TOKEN: 'mdns-banner-token-0123456789abcdef',
         FLEETDECK_MDNS_JOIN_FAILS: '1', // loader seam: every membership join fails
@@ -243,11 +249,13 @@ test(
     // healthy path — with the default mock (joins succeed) the line survives.
     const home = freshHome('fleetdeck-mdns-banner-ok-');
     const consoleRecord = path.join(home, 'console.log');
-    t.after(() => { rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+    t.after(() => {
+      rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    });
     const daemon = spawnRaw({
       port: randomPort(),
       home,
-      env: loaderOptions({
+      env: netMockEnv({
         FLEETDECK_BIND: '0.0.0.0',
         FLEETDECK_TOKEN: 'mdns-banner-token-0123456789abcdef',
         FLEETDECK_TEST_CONSOLE_RECORD: consoleRecord,
@@ -283,12 +291,14 @@ test(
     // discard them, so TTL 255 on BOTH paths is a precondition for going live.
     const home = freshHome('fleetdeck-mdns-ttl-');
     const record = path.join(home, 'mdns.jsonl');
-    t.after(() => { rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+    t.after(() => {
+      rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    });
 
     const daemon = spawnRaw({
       port: randomPort(),
       home,
-      env: loaderOptions({ FLEETDECK_BIND: '0.0.0.0', FLEETDECK_MDNS_RECORD: record }),
+      env: netMockEnv({ FLEETDECK_BIND: '0.0.0.0', FLEETDECK_MDNS_RECORD: record }),
     });
     t.after(() => daemon.kill());
 
@@ -322,13 +332,13 @@ test(
     // down with an actionable log instead of answering with a non-255 TTL.
     const failHome = freshHome('fleetdeck-mdns-ttl-fail-');
     const failRecord = path.join(failHome, 'mdns.jsonl');
-    t.after(() =>
-      { rmSync(failHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); },
-    );
+    t.after(() => {
+      rmSync(failHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    });
     const refused = spawnRaw({
       port: randomPort(),
       home: failHome,
-      env: loaderOptions({
+      env: netMockEnv({
         FLEETDECK_BIND: '0.0.0.0',
         FLEETDECK_MDNS_RECORD: failRecord,
         FLEETDECK_MDNS_FAIL_TTL: 'unicast',
@@ -364,12 +374,14 @@ test(
     const home = freshHome('fleetdeck-goodbye-');
     const record = path.join(home, 'mdns.jsonl');
     const port = randomPort();
-    t.after(() => { rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+    t.after(() => {
+      rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    });
 
     const child = spawnRaw({
       port,
       home,
-      env: loaderOptions({
+      env: netMockEnv({
         FLEETDECK_BIND: '0.0.0.0',
         FLEETDECK_TOKEN: 'goodbye-race-token-0123456789abcdef',
         FLEETDECK_MDNS_RECORD: record,
@@ -438,12 +450,14 @@ test(
     const record = path.join(home, 'mdns.jsonl');
     const consoleRecord = path.join(home, 'console.log');
     const netFile = path.join(home, 'net.json');
-    t.after(() => { rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+    t.after(() => {
+      rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    });
 
     const child = spawnRaw({
       port: randomPort(),
       home,
-      env: loaderOptions({
+      env: netMockEnv({
         FLEETDECK_BIND: '0.0.0.0',
         FLEETDECK_TOKEN: 'lan-roam-token-0123456789abcdef',
         FLEETDECK_MDNS_RECORD: record,
@@ -511,9 +525,10 @@ test(
       return (goodbye && announced) || null;
     }, 'mDNS goodbye for network A and announcement for network B');
 
-    // The roam is observable in the startup log too. (refreshLan lines recorded by
-    // the http mock carry the token BY DESIGN — the share panel's credentialed URLs
-    // are its whole point; the token-log contract only covers the console lines.)
+    // The roam is observable in the startup log too. (refreshLan lines, recorded by
+    // the daemon's recordRefreshLan seam, carry the token BY DESIGN — the share
+    // panel's credentialed URLs are its whole point; the token-log contract only
+    // covers the console lines, which are filtered out below.)
     const log = readFileSync(consoleRecord, 'utf8');
     const consoleLines = log
       .split('\n')
@@ -550,11 +565,13 @@ test(
     const home = freshHome('fleetdeck-mdns-canonical-');
     const record = path.join(home, 'mdns.jsonl');
     const consoleRecord = path.join(home, 'console.log');
-    t.after(() => { rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+    t.after(() => {
+      rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    });
     const daemon = spawnRaw({
       port: randomPort(),
       home,
-      env: loaderOptions({
+      env: netMockEnv({
         FLEETDECK_BIND: '0.0.0.0',
         FLEETDECK_TOKEN: 'mdns-canonical-token-0123456789abcdef',
         FLEETDECK_MDNS_NAME: 'team.deck',
@@ -622,7 +639,9 @@ test(
     // each announcing and withdrawing only its own address.
     const home = freshHome('fleetdeck-multihome-');
     const record = path.join(home, 'mdns.jsonl');
-    t.after(() => { rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
+    t.after(() => {
+      rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    });
 
     const netifs = {
       lan0: [{ family: 'IPv4', internal: false, address: '192.0.2.10' }],
@@ -631,7 +650,7 @@ test(
     const child = spawnRaw({
       port: randomPort(),
       home,
-      env: loaderOptions({
+      env: netMockEnv({
         FLEETDECK_BIND: '0.0.0.0',
         FLEETDECK_TOKEN: 'multihome-race-token-0123456789abcdef',
         FLEETDECK_MDNS_RECORD: record,

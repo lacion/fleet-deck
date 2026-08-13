@@ -8,7 +8,13 @@
 // (snapshot on connect and on every mutation; a ping/pong keepalive — not a
 // periodic snapshot — reaps dead peers).
 
-import http from 'node:http';
+// Type-only: the audited router body was written against node:http's (req, res)
+// objects. Bun.serve replaces node:http as the transport (single-runtime, no `ws`
+// dependency), but the ~700-line hostile-boundary router stays byte-for-byte by
+// running over the HttpReqShim/HttpResShim adapters below. Only the types survive
+// the import; no node:http server is ever constructed.
+import type * as http from 'node:http';
+import type { Server, ServerWebSocket, WebSocketHandler } from 'bun';
 import { timingSafeEqual } from 'node:crypto';
 import os from 'node:os';
 import fs from 'node:fs';
@@ -17,8 +23,8 @@ import { fileURLToPath } from 'node:url';
 // 0.7.1: one validator for the custom-name suffix, shared with the `name`
 // orchestrator command so the REST route and the text command can never drift.
 import { validateNameSuffix } from './helpers.ts';
+import { networkInterfaces } from './os-net.ts';
 import { spawnFailureReason } from './spawns.ts';
-import { WebSocketServer, type WebSocket } from 'ws';
 import { createTermBridge } from './termbridge.ts';
 // Type-only: `core` is typed as the exact object createCore returns (no runtime
 // import, no cycle — derive.ts does not import http). ReturnType<typeof …> gives
@@ -38,6 +44,17 @@ const MAX_BODY = 1e6;
 // 10 MB base64 is ~13.4 MB, plus the small JSON/data-URL envelope — 14 MB
 // carries it with headroom and nothing more. Every other POST keeps MAX_BODY.
 const MAX_PASTE_BODY = 14e6;
+// Bun.serve reuses keep-alive sockets and gives us no per-connection close, so an
+// early response that abandons the rest of the request body (the oversized-refuse
+// path, and any 4xx that replies before 'end') would leave the unread bytes in the
+// pipe and desync the NEXT request on that socket. The fetch handler therefore
+// DRAINS the body before handing Bun the response — but a client that DECLARES a
+// large body then withholds it would park that drain forever, so the wait is capped
+// here. A body that is actually present drains in ~ms (measured ~10 ms for 1.2 MB
+// over loopback); this grace is ~100x that yet well under the ~4s FIN that
+// shouldKeepAlive=false arms, so a refused-then-stalled socket still gets its 413 on
+// the wire before it closes. See bun-serve-runtime-limits and the M-B3 body cap.
+const BODY_DRAIN_GRACE_MS = 1000;
 // H-R3/R1-2 backpressure: a /ws peer this far behind (dropped wifi, a frozen
 // tab) has stopped draining. We do NOT keep buffering snapshots into its dead
 // socket — but nor do we merely SKIP the send and clear `dirty`, which stranded
@@ -66,6 +83,193 @@ const BROADCAST_COALESCE_MS = 60;
 // stopped reading and is evicted rather than buffered into oblivion.
 const MAX_TERM_FRAME_BYTES = 1 << 20; // 1 MiB
 const MAX_TERM_WS_BUFFER = 4 << 20; // 4 MiB
+
+// ---------------------------------------------------------------------------
+// node:http shims over Bun.serve
+// ---------------------------------------------------------------------------
+// The audited router body (routeRequest) and its ~dozen helpers were written
+// against node:http's (req, res) objects. Rather than rewrite ~700 lines of
+// hostile-boundary logic for a new transport, we feed them these two adapters so
+// the body stays byte-for-byte — only the transport underneath changed from
+// node:http to Bun.serve. See memory bun-serve-runtime-limits for the one Node
+// affordance Bun can't match exactly (per-socket close → ~4s FIN via timeout()).
+
+type ResCloseListener = () => void;
+type ReqDataListener = (chunk: Buffer) => void;
+type ReqEndListener = () => void;
+
+// A minimal node ServerResponse shim over a single Bun fetch Response. writeHead
+// records status+headers; end() builds the Response and resolves `done`, which the
+// fetch handler returns. Idempotent: a second writeHead/end (an error thrown after
+// a response already went out) is a no-op, matching the router's defensive
+// `try { json(res, …) } catch {}` "headers already sent" tolerance.
+class HttpResShim {
+  readonly done: Promise<Response>;
+  private _resolve!: (r: Response) => void;
+  private _status = 200;
+  private _headers: Record<string, string> = {};
+  private _ended = false;
+  private _destroyed = false;
+  private _closeListeners: ResCloseListener[] = [];
+  // Declared as fields + assigned in the body, NOT constructor parameter properties:
+  // the node floor loads this source under --experimental-strip-types (strip-only),
+  // which cannot lower a parameter property to an assignment. See the header note at
+  // the top of this file and HttpReqShim below.
+  private readonly _request: Request;
+  private readonly _server: Server<WsData>;
+  constructor(request: Request, server: Server<WsData>) {
+    this._request = request;
+    this._server = server;
+    this.done = new Promise<Response>((resolve) => {
+      this._resolve = resolve;
+    });
+    // Client-disconnect → 'close'. Held responses (hold-hook, watch long-poll) wire
+    // their cleanup here; the request signal aborts when the peer drops, never on a
+    // normal end — exactly node's res 'close'-on-disconnect semantics those callers
+    // rely on (release the question / unregister the waiter).
+    this._request.signal.addEventListener(
+      'abort',
+      () => {
+        this._destroyed = true;
+        for (const cb of this._closeListeners) {
+          try {
+            cb();
+          } catch {
+            /* listener hygiene only */
+          }
+        }
+      },
+      { once: true },
+    );
+  }
+  writeHead(status: number, headers?: http.OutgoingHttpHeaders): this {
+    if (this._ended) return this;
+    this._status = status;
+    if (headers) {
+      for (const [k, v] of Object.entries(headers)) {
+        if (v == null) continue;
+        this._headers[k] = Array.isArray(v) ? v.join(', ') : String(v);
+      }
+    }
+    return this;
+  }
+  end(body?: string | Buffer): this {
+    if (this._ended) return this;
+    this._ended = true;
+    const payload: string | Uint8Array | null =
+      body == null ? null : typeof body === 'string' ? body : new Uint8Array(body);
+    this._resolve(new Response(payload, { status: this._status, headers: this._headers }));
+    return this;
+  }
+  on(event: 'close', cb: ResCloseListener): this {
+    if (event === 'close') this._closeListeners.push(cb);
+    return this;
+  }
+  // node's "close this keep-alive socket after the response". Bun has no per-socket
+  // close, so force the shortest per-request idle timeout — a ~4s FIN (uSockets 4s
+  // granularity, see bun-serve-runtime-limits). The 413 body itself still goes out
+  // immediately; only the socket FIN is delayed. Set-only (the router only writes).
+  set shouldKeepAlive(keep: boolean) {
+    if (!keep) {
+      try {
+        this._server.timeout(this._request, 1);
+      } catch {
+        /* server torn down */
+      }
+    }
+  }
+  get writableEnded(): boolean {
+    return this._ended;
+  }
+  get destroyed(): boolean {
+    return this._destroyed;
+  }
+}
+
+// A minimal node IncomingMessage shim over a Bun Request. `url` is path+search
+// (node's req.url shape, NOT Bun's absolute request.url) so the router's
+// `new URL(req.url, base)` stays byte-identical; `headers` is the lowercased,
+// comma-joined node-style record the walls read; `socket.remoteAddress` is the
+// peer IP the loopback/trusted-proxy checks key on.
+class HttpReqShim {
+  readonly method: string;
+  readonly url: string;
+  // Typed as node's IncomingHttpHeaders (not Record<string,string>) so the audited
+  // router body keeps dot-access on the known keys it reads (req.headers.host /
+  // .origin / .authorization); arbitrary keys still take bracket access, exactly as
+  // under node:http. Object.fromEntries(headers.entries()) is a {[k]:string}, which
+  // is assignable to IncomingHttpHeaders.
+  readonly headers: http.IncomingHttpHeaders;
+  readonly socket: { remoteAddress: string | undefined };
+  private readonly _request: Request;
+  private _dataListeners: ReqDataListener[] = [];
+  private _endListeners: ReqEndListener[] = [];
+  private _destroyed = false;
+  constructor(request: Request, server: Server<WsData>) {
+    this._request = request;
+    this.method = request.method;
+    const u = new URL(request.url);
+    this.url = u.pathname + u.search;
+    this.headers = Object.fromEntries(request.headers.entries());
+    this.socket = { remoteAddress: server.requestIP(request)?.address };
+  }
+  on(event: 'data', cb: ReqDataListener): this;
+  on(event: 'end', cb: ReqEndListener): this;
+  on(event: 'data' | 'end', cb: ReqDataListener | ReqEndListener): this {
+    if (event === 'data') this._dataListeners.push(cb);
+    else this._endListeners.push(cb as ReqEndListener);
+    return this;
+  }
+  destroy(): void {
+    this._destroyed = true;
+  }
+  // Driven by the fetch handler AFTER routeRequest has synchronously registered the
+  // POST body listeners. Replays the Bun request body stream as node-style
+  // 'data'/'end' events. The fetch handler gates the response on this drain via
+  // drainThenRespond: Bun reuses keep-alive sockets, so an un-drained body — the
+  // oversized-refuse path replies without consuming the rest — would leave the NEXT
+  // request's bytes appended to the abandoned stream and desync the peer (it reads a
+  // bodyless 400, or nothing). Draining to 'end' keeps the socket in sync; a client
+  // that withholds the rest of a declared body parks the drain here, so drainThenRespond
+  // caps the wait at BODY_DRAIN_GRACE_MS and shouldKeepAlive=false's ~4s timeout FINs
+  // the connection (BUG-125). destroy() remains node's teardown primitive and
+  // short-circuits the pump if ever called.
+  async _pump(): Promise<void> {
+    if (this._destroyed) return;
+    const body = this._request.body;
+    if (!body) {
+      this._emitEnd();
+      return;
+    }
+    const reader = body.getReader();
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (this._destroyed) {
+          await reader.cancel().catch(() => {});
+          return;
+        }
+        if (value?.byteLength) {
+          const buf = Buffer.from(value); // copy: the router buffers chunks then concats
+          for (const cb of this._dataListeners) cb(buf);
+        }
+        if (this._destroyed) {
+          await reader.cancel().catch(() => {});
+          return;
+        }
+      }
+      this._emitEnd();
+    } catch {
+      // A mid-stream read error tears the request down without a spurious 'end'.
+      this._destroyed = true;
+    }
+  }
+  private _emitEnd(): void {
+    if (this._destroyed) return;
+    for (const cb of this._endListeners) cb();
+  }
+}
 
 // A parsed entry of FLEETDECK_TRUSTED_ORIGINS (see parseTrustedOrigins).
 interface TrustedOrigin {
@@ -119,12 +323,30 @@ function asRecord(v: unknown): Record<string, unknown> {
 // it does not change it.
 type ControlResult = Promise<{ status: number; body?: unknown }>;
 
-// KEEPALIVE SEAM: `ws` from the `ws` package carries no liveness bit; the
-// heartbeat below stamps `isAlive` on each socket and reaps any that missed the
-// previous pong. Widening the socket with this optional field is the honest way
-// to type that stamp — the runtime shape is unchanged (NOISE, see
-// ts-migration-bugs).
-type LiveSocket = WebSocket & { isAlive?: boolean };
+// KEEPALIVE SEAM: Bun's ServerWebSocket carries no liveness bit; the heartbeat
+// below stamps `isAlive` on each socket (via ws.data) and reaps any that missed
+// the previous pong. The two logical WS servers — snapshot (/ws) and terminal
+// (/ws/term) — are ONE Bun websocket handler dispatched on `data.kind`, so each
+// socket's per-connection state lives here on the discriminated `data` payload.
+interface SnapshotSocketData {
+  kind: 'snapshot';
+  isAlive: boolean;
+}
+// A terminal socket also carries the query it was opened with (parsed at upgrade,
+// before the socket exists), the opened viewer bridge handle, and an abort latch
+// the close handler flips mid-open (the M-R5 open/close race).
+type TermHandle = Awaited<ReturnType<ReturnType<typeof createTermBridge>['openViewer']>>;
+interface TermSocketData {
+  kind: 'term';
+  isAlive: boolean;
+  spawn_id: string;
+  cols: number;
+  rows: number;
+  abort: { closed: boolean };
+  handle: TermHandle | null;
+}
+type WsData = SnapshotSocketData | TermSocketData;
+type LiveSocket = ServerWebSocket<WsData>;
 
 // LOOPBACK CONTRACT: local hooks and board traffic remain zero-config even
 // when fleetd is in LAN mode. Node reports IPv4 peers either directly or as
@@ -176,10 +398,10 @@ const CSP_SHELL =
 // resolved against BOARD_DIST and must stay strictly inside it (any '..' —
 // raw or percent-encoded — normalizes outside and 404s).
 function serveBoardAsset(
-  res: http.ServerResponse,
+  res: HttpResShim,
   pathname: string,
-  notFound: () => http.ServerResponse,
-): http.ServerResponse {
+  notFound: () => HttpResShim,
+): HttpResShim {
   let decoded;
   try {
     decoded = decodeURIComponent(pathname);
@@ -342,7 +564,7 @@ export function createHttp(
   // Returns the response object (Express-style) so `return json(...)` in a
   // void-returning request handler is a real value, not a confusing void
   // expression. Every caller ignores the return — behaviour is unchanged.
-  function json(res: http.ServerResponse, code: number, obj: unknown): http.ServerResponse {
+  function json(res: HttpResShim, code: number, obj: unknown): HttpResShim {
     const body = JSON.stringify(obj);
     // nosniff on every JSON response too: the one central place that emits our
     // API + hook bodies, so no route can forget it (matches serveBoardAsset).
@@ -384,7 +606,7 @@ export function createHttp(
   // enough). But a hostile local process can DELIBERATELY forge the trusted
   // external Host/Origin, so hook authentication must never key off those
   // headers — see the unconditional /hook/* guard immediately below.
-  function authorized(req: http.IncomingMessage, url: URL) {
+  function authorized(req: HttpReqShim, url: URL) {
     // /hook/* is authenticated UNCONDITIONALLY: no loopback or proxy-trust path
     // may waive it. Every hook arrives through a command shim
     // (scripts/fleet-hook.mjs / fleet-sessionstart.mjs / fleet-watch.mjs) that
@@ -508,7 +730,7 @@ export function createHttp(
     '[FLEETDECK] This session is running pre-0.16.0 hooks and is no longer reaching the fleet daemon (hook calls now require a token). Tell the human: please RESTART this Claude session — after the restart it reconnects to the board automatically.';
   const LEGACY_BLOCK_REASON =
     '[FLEETDECK] This session is running pre-0.16.0 hooks and cannot reach the fleet daemon. Stop and tell the human NOW: restart this Claude session (exit and relaunch in the same directory). Do not continue the current task until the human acknowledges — the session is running without fleet oversight.';
-  function legacyHookResponse(res: http.ServerResponse, ev: unknown, name: string) {
+  function legacyHookResponse(res: HttpResShim, ev: unknown, name: string) {
     const sidRaw = asRecord(ev)['session_id'];
     const sid = typeof sidRaw === 'string' ? sidRaw : null;
     noteLegacySession(sid);
@@ -549,7 +771,7 @@ export function createHttp(
   const osGetAddresses: () => ({ address?: string } | undefined)[] =
     typeof nativeGetAddresses === 'function'
       ? () => nativeGetAddresses()
-      : () => Object.values(os.networkInterfaces()).flat();
+      : () => Object.values(networkInterfaces()).flat();
   // The advertised .local name is a STANDING member of the allowlist, not
   // interface data: the per-request refresh clears and rebuilds the address set,
   // so it must re-add this name every time or the very first checked request via
@@ -632,7 +854,7 @@ export function createHttp(
   // refused. A missing Host is a non-browser caller and is left alone. A proxied
   // request arrives with the PROXY's Host, which only passes once an operator has
   // named it in FLEETDECK_TRUSTED_ORIGINS.
-  function hostHeaderOk(req: http.IncomingMessage) {
+  function hostHeaderOk(req: HttpReqShim) {
     const host = req.headers.host;
     if (typeof host !== 'string' || !host) return true;
     let u;
@@ -648,7 +870,7 @@ export function createHttp(
   // authoritative for the cross-site call; an Origin, when present, must resolve
   // to one of our own hosts; no Origin at all is a non-browser CLI hook and is
   // allowed. The reason drives our control flow only — it is never echoed back.
-  function crossSiteReason(req: http.IncomingMessage) {
+  function crossSiteReason(req: HttpReqShim) {
     const site = req.headers['sec-fetch-site'];
     if (site === 'cross-site' || site === 'cross-origin') return 'cross-site';
     const origin = req.headers.origin;
@@ -667,7 +889,7 @@ export function createHttp(
   // Is this a browser arriving through a reverse proxy — i.e. an Origin that is
   // trusted but is NOT one of our own hosts? Such a request has already cleared
   // the walls above; this only decides whether it must ALSO carry the token.
-  function viaTrustedProxy(req: http.IncomingMessage) {
+  function viaTrustedProxy(req: HttpReqShim) {
     const origin = req.headers.origin;
     if (typeof origin !== 'string' || !origin) return false; // a CLI hook
     let u;
@@ -696,7 +918,7 @@ export function createHttp(
   // RESIDUAL (out of scope): a proxy that REWRITES Host to loopback still reads
   // as local. Coder and the documented proxies preserve req.Host (see ~line 116),
   // so this does not arise in the supported deployments.
-  function arrivedViaTrustedProxy(req: http.IncomingMessage) {
+  function arrivedViaTrustedProxy(req: HttpReqShim) {
     if (viaTrustedProxy(req)) return true;
     const host = req.headers.host;
     if (typeof host !== 'string' || !host) return false; // a CLI hook may omit Host
@@ -718,7 +940,7 @@ export function createHttp(
   // caller. Deliberately NEVER the token, headers or body — provenance, not
   // payload. Matches the daemon's `fleetd …:` stderr dialect so it lands in
   // fleetd.log alongside the other operational lines.
-  function logExec(route: string, req: http.IncomingMessage, extra = '') {
+  function logExec(route: string, req: HttpReqShim, extra = '') {
     const from = req.socket.remoteAddress ?? 'unknown';
     console.error(
       `fleetd exec ${route} from ${from} proxied=${arrivedViaTrustedProxy(req)}${extra}`,
@@ -773,7 +995,7 @@ export function createHttp(
   // (respond {} — normal flow resumes in the terminal), or the client
   // disconnects. questions.mjs owns the arbitration; this only wires the
   // socket to it. Fail open like every hook path: intake errors still 200 {}.
-  function holdHook(res: http.ServerResponse, ev: unknown, name: string) {
+  function holdHook(res: HttpResShim, ev: unknown, name: string) {
     let row: ReturnType<typeof core.hookHoldQuestion> | null = null;
     try {
       row = core.hookHoldQuestion(ev as Parameters<typeof core.hookHoldQuestion>[0], name);
@@ -860,7 +1082,7 @@ export function createHttp(
   //   request's claim attempt fails the generation check and it lapses to
   //   idle (the mail stays queued for the current generation to claim). No
   //   `wg` (a hand-rolled poll, an older watcher) claims exactly as before.
-  function watchHook(_req: http.IncomingMessage, res: http.ServerResponse, url: URL) {
+  function watchHook(_req: HttpReqShim, res: HttpResShim, url: URL) {
     const sid = url.searchParams.get('session') ?? '';
     const holdRaw = Number(url.searchParams.get('hold_ms'));
     const holdMs = Number.isFinite(holdRaw) ? Math.max(0, Math.min(holdRaw, 25_000)) : 25_000;
@@ -950,7 +1172,11 @@ export function createHttp(
       pathname === '/favicon.ico' ||
       pathname.startsWith('/assets/'));
 
-  const server = http.createServer((req, res) => {
+  // The audited router, verbatim from the node:http era. It runs synchronously
+  // over the (req, res) shims; the Bun.serve `fetch` handler below constructs the
+  // shims, invokes this, then pumps the request body into it. No top-level await —
+  // every route resolves through res.writeHead/end (which resolve res.done).
+  function routeRequest(req: HttpReqShim, res: HttpResShim): void {
     try {
       const url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`);
       const shell = isPublicShell(req.method, url.pathname);
@@ -1163,18 +1389,22 @@ export function createHttp(
         let size = 0;
         let tooLarge = false;
         const bodyCap = url.pathname === '/api/paste-image' ? MAX_PASTE_BODY : MAX_BODY;
-        // An oversized body is answered ONCE and the request torn down with it:
-        // returning here without consuming the unread body leaves a keep-alive
-        // socket half-parsed (the client may not even have finished sending),
-        // and Node will neither reuse nor free it — a client or proxy that
-        // declares a huge body would pile up lingering sockets on the control
-        // plane. shouldKeepAlive=false makes Node close the connection right
-        // after this response instead of waiting for a body that never comes.
+        // An oversized body is answered ONCE, then its remaining bytes are DRAINED
+        // (not abandoned): Bun.serve reuses keep-alive sockets, so leaving the unread
+        // body in the pipe makes the next request's bytes append to the abandoned
+        // stream and desync the peer (it reads a bodyless 400, or nothing). So we do
+        // NOT tear the request down here — the fetch handler's drainThenRespond reads
+        // the rest of this body to 'end' before handing Bun the response (the
+        // 'data'/'end' listeners discard once tooLarge). shouldKeepAlive=false arms a
+        // ~4s per-request timeout so a client that DECLARES a huge body then WITHHOLDS
+        // it gets its socket FIN'd instead of parking the drain forever (Bun has no
+        // per-socket close; see bun-serve-runtime-limits). On that stall the drain
+        // never completes, so drainThenRespond's BODY_DRAIN_GRACE_MS (< the ~4s FIN)
+        // is what puts the 413 on the wire before the socket closes.
         const refuseOversize = () => {
           res.shouldKeepAlive = false;
           if (isHook) json(res, 200, {});
           else json(res, 413, { ok: false, reason: 'payload too large' });
-          req.destroy();
         };
         // Refuse an oversized body by its declared Content-Length before reading
         // a byte — the streaming cap below still catches a lying/absent header,
@@ -1677,55 +1907,21 @@ export function createHttp(
         /* socket gone */
       }
     }
-  });
+  }
 
   // ---------------------------------------------------------------- ws
-  const wss = new WebSocketServer({ noServer: true });
-  const termWss = new WebSocketServer({ noServer: true });
+  // Bun-native WebSocket. The two logical servers — snapshot (/ws) and terminal
+  // (/ws/term) — are ONE Bun `websocket` handler dispatched on ws.data.kind; each
+  // keeps its own client Set (Bun has no wss.clients to iterate). The upgrade
+  // auth/CSRF gate lives in the fetch handler's handleUpgrade, before server.upgrade.
+  const snapshotClients = new Set<LiveSocket>();
+  const termClients = new Set<LiveSocket>();
   const termbridge = createTermBridge({
     port,
     resolveSpawn: (spawnId) => core.terminalSpawn(spawnId),
     log: (message) => {
       console.error(`fleetd ${message}`);
     },
-  });
-  // ws re-emits http server errors (e.g. EADDRINUSE) on the wss; without a
-  // listener that throws and masks the election exit-3 path in fleetd.mjs.
-  wss.on('error', () => {
-    /* the http server's 'error' listener owns this */
-  });
-  termWss.on('error', () => {
-    /* the http server's 'error' listener owns this */
-  });
-
-  // Explicit upgrade routing keeps the snapshot socket's long-standing /ws
-  // contract separate from /ws/term. Terminal query values are never tmux
-  // targets: only the opaque spawn id reaches the core resolver.
-  server.on('upgrade', (req, socket, head) => {
-    let url;
-    try {
-      url = new URL(req.url ?? '/', 'http://127.0.0.1');
-    } catch {
-      socket.destroy();
-      return;
-    }
-    // WS AUTH + CSRF CONTRACT: reject before either noServer WebSocketServer
-    // sees the socket. A WebSocket is NOT subject to the same-origin READ
-    // barrier, so a cross-site page could otherwise read the whole snapshot or
-    // drive a live pane. Destroying the socket — no HTTP upgrade response —
-    // guarantees nothing is observable through an unauthenticated OR
-    // cross-origin connection; the Host check closes DNS rebinding (C1).
-    if (!authorized(req, url) || !hostHeaderOk(req) || crossSiteReason(req)) {
-      socket.destroy();
-      return;
-    }
-    if (url.pathname === '/ws') {
-      wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
-    } else if (url.pathname === '/ws/term') {
-      termWss.handleUpgrade(req, socket, head, (ws) => termWss.emit('connection', ws, req));
-    } else {
-      socket.destroy();
-    }
   });
   // M-P1 coalescing: a mutation flips `dirty` and schedules at most one flush
   // per short window, so N updateSession() calls inside one hook collapse to a
@@ -1757,9 +1953,9 @@ export function createHttp(
   }
   function broadcast() {
     dirty = false;
-    if (!wss.clients.size) return;
+    if (!snapshotClients.size) return;
     const msg = JSON.stringify(wsSnapshot());
-    for (const c of wss.clients) {
+    for (const c of snapshotClients) {
       if (c.readyState !== 1) continue;
       // H-R3/R1-2 backpressure: a peer that stopped draining must not make us
       // buffer snapshot after snapshot into a dead socket until we run out of
@@ -1770,7 +1966,7 @@ export function createHttp(
       // a reconnect, and the connect handler seeds the fresh socket with a full
       // snapshot — correctness over a silent partial board. 'close' unwinds the
       // socket exactly as the keepalive's reap would.
-      if (c.bufferedAmount > MAX_WS_BUFFER) {
+      if (c.getBufferedAmount() > MAX_WS_BUFFER) {
         try {
           c.terminate();
         } catch {
@@ -1794,101 +1990,111 @@ export function createHttp(
     }, BROADCAST_COALESCE_MS);
     flushTimer.unref();
   }
-  wss.on('connection', (ws: LiveSocket) => {
-    ws.isAlive = true;
-    ws.on('pong', () => {
-      ws.isAlive = true;
-    });
-    try {
-      ws.send(JSON.stringify(wsSnapshot()));
-    } catch {
-      /* client gone */
-    }
-  });
-
-  termWss.on('connection', (ws: LiveSocket, req: http.IncomingMessage) => {
-    // Async work (awaits termbridge.openViewer) runs inside a void-ed IIFE so the
-    // EventEmitter listener returns void, not a floating promise. The IIFE body is
-    // fully try/caught below and never rejects (NOISE, see ts-migration-bugs).
-    void (async () => {
-      let handle: Awaited<ReturnType<typeof termbridge.openViewer>> | null = null;
-      // Abort latch as a holder object, not a bare `let`: the close handler flips
-      // it during the openViewer await (the M-R5 race), and reading it through a
-      // property after that await keeps it a runtime boolean. A bare `let` would
-      // be narrowed back to the literal `false` by CFA, hiding the race guard
-      // below behind an "always falsy" lint (see ts-migration-bugs).
-      const abort = { closed: false };
-      ws.isAlive = true;
-      ws.on('pong', () => {
-        ws.isAlive = true;
-      });
-      // H-R3/M-P6 backpressure: a viewer that has stopped draining is EVICTED (a
-      // 1009 close), not fed. Silently dropping pane bytes would desync its screen;
-      // closing the socket unwinds its tmux subscription (the 'close' handler runs
-      // handle.close()) so a slow viewer can never buffer a pane's whole output
-      // into a dead socket.
-      const send = (frame: unknown) => {
-        if (ws.readyState !== 1) return;
-        if (ws.bufferedAmount > MAX_TERM_WS_BUFFER) {
-          try {
-            ws.close(1009, 'terminal viewer too far behind');
-          } catch {
-            /* already gone */
-          }
-          return;
-        }
-        ws.send(JSON.stringify(frame));
-      };
-      ws.on('close', () => {
-        abort.closed = true;
-        handle?.close();
-      });
-      ws.on('message', (raw) => {
-        if (!handle) return;
-        // ws hands the listener a RawData union (Buffer | ArrayBuffer | Buffer[]);
-        // this daemon runs the server in its default (non-binary, unfragmented)
-        // mode, so a text frame always arrives as a single Buffer. Re-assert that
-        // so the byte-exact `.length`/`.toString('utf8')` below keep their meaning
-        // (NOISE, see ts-migration-bugs).
-        const buf = raw as Buffer;
-        // M-R4: a terminal frame is a keystroke or a modest paste — never a
-        // megabyte. Refuse an oversized frame outright (1009) rather than expand it
-        // to hex and queue it; termbridge.input() enforces the queued-byte bound.
-        if (buf.length > MAX_TERM_FRAME_BYTES) {
-          try {
-            ws.close(1009, 'input frame too large');
-          } catch {
-            /* already gone */
-          }
-          return;
-        }
-        let frame: unknown;
+  // ONE Bun websocket handler for both logical servers; open/message/close/pong
+  // dispatch on ws.data.kind. Because these handlers are registered on the shared
+  // handler object, they are LIVE the instant a socket opens — so a close arriving
+  // during openTerm's openViewer await is captured by close() (it flips
+  // data.abort.closed), preserving the node-era M-R5 open/close race guard.
+  const websocket: WebSocketHandler<WsData> = {
+    open(ws) {
+      ws.data.isAlive = true;
+      if (ws.data.kind === 'snapshot') {
+        snapshotClients.add(ws);
         try {
-          frame = JSON.parse(buf.toString('utf8'));
+          ws.send(JSON.stringify(wsSnapshot()));
         } catch {
-          return;
+          /* client gone */
         }
-        if (!frame || typeof frame !== 'object') return;
-        const fr = frame as Record<string, unknown>;
-        if (fr['t'] === 'in' && typeof fr['data'] === 'string') handle.input(fr['data']);
-        else if (fr['t'] === 'resize') handle.resize(fr['cols'] as number, fr['rows'] as number);
-      });
-
+        return;
+      }
+      termClients.add(ws);
+      openTerm(ws);
+    },
+    message(ws, message) {
+      if (ws.data.kind !== 'term') return;
+      const data = ws.data;
+      if (!data.handle) return;
+      // Bun delivers a text frame as a string and a binary frame as a Buffer; the
+      // board only ever sends JSON text. Normalize to a string and bound it by
+      // BYTES (M-R4): a terminal frame is a keystroke or a modest paste — never a
+      // megabyte. Refuse an oversized frame outright (1009) rather than expand it to
+      // hex and queue it; termbridge.input() enforces the queued-byte bound.
+      const text = typeof message === 'string' ? message : message.toString('utf8');
+      if (Buffer.byteLength(text, 'utf8') > MAX_TERM_FRAME_BYTES) {
+        try {
+          ws.close(1009, 'input frame too large');
+        } catch {
+          /* already gone */
+        }
+        return;
+      }
+      let frame: unknown;
       try {
-        const url = new URL(req.url ?? '/', 'http://127.0.0.1');
-        const spawn_id = url.searchParams.get('spawn');
-        const cols = Number(url.searchParams.get('cols'));
-        const rows = Number(url.searchParams.get('rows'));
+        frame = JSON.parse(text);
+      } catch {
+        return;
+      }
+      if (!frame || typeof frame !== 'object') return;
+      const fr = frame as Record<string, unknown>;
+      if (fr['t'] === 'in' && typeof fr['data'] === 'string') data.handle.input(fr['data']);
+      else if (fr['t'] === 'resize') data.handle.resize(fr['cols'] as number, fr['rows'] as number);
+    },
+    close(ws) {
+      if (ws.data.kind === 'snapshot') {
+        snapshotClients.delete(ws);
+        return;
+      }
+      termClients.delete(ws);
+      // Flip the abort latch and tear the viewer down. If close arrives mid-open
+      // (handle still null), openTerm's post-await guard closes the late handle.
+      ws.data.abort.closed = true;
+      ws.data.handle?.close();
+    },
+    pong(ws) {
+      ws.data.isAlive = true;
+    },
+  };
+
+  // H-R3/M-P6 backpressure: a viewer that has stopped draining is EVICTED (a 1009
+  // close), not fed. Silently dropping pane bytes would desync its screen; closing
+  // the socket unwinds its tmux subscription (close() runs handle.close()) so a slow
+  // viewer can never buffer a pane's whole output into a dead socket.
+  function sendTermFrame(ws: LiveSocket, frame: unknown): void {
+    if (ws.readyState !== 1) return;
+    if (ws.getBufferedAmount() > MAX_TERM_WS_BUFFER) {
+      try {
+        ws.close(1009, 'terminal viewer too far behind');
+      } catch {
+        /* already gone */
+      }
+      return;
+    }
+    ws.send(JSON.stringify(frame));
+  }
+
+  // Open the tmux viewer for a freshly-upgraded /ws/term socket. The spawn/cols/rows
+  // were parsed at upgrade time (before the socket existed) and stashed on ws.data.
+  function openTerm(ws: LiveSocket): void {
+    if (ws.data.kind !== 'term') return;
+    const data = ws.data;
+    // Async work (awaits termbridge.openViewer) runs inside a void-ed IIFE so the
+    // caller returns void, not a floating promise. Fully try/caught; never rejects.
+    void (async () => {
+      const send = (frame: unknown) => {
+        sendTermFrame(ws, frame);
+      };
+      try {
+        const { spawn_id, cols, rows } = data;
         if (!spawn_id) throw new Error('missing spawn id');
         // M-R5 abort path: if the socket closes mid-open (before `handle` exists),
         // openViewer() checks isAborted() between its awaits and bails, so the
         // half-opened viewer is removed instead of lingering counted forever.
-        handle = await termbridge.openViewer({
+        data.handle = await termbridge.openViewer({
           spawn_id,
           cols,
           rows,
           send,
-          isAborted: () => abort.closed,
+          isAborted: () => data.abort.closed,
           onClose(reason) {
             send({ t: 'exit', reason });
             try {
@@ -1898,7 +2104,7 @@ export function createHttp(
             }
           },
         });
-        if (abort.closed) handle.close();
+        if (data.abort.closed) data.handle.close();
       } catch (err) {
         const e = err as { gone?: unknown; reason?: unknown; message?: unknown } | null;
         if (e?.gone) {
@@ -1931,23 +2137,22 @@ export function createHttp(
         }
       }
     })();
-  });
+  }
   // H-R3 + M-P1: a real keepalive replaces the "full snapshot every 5 s"
   // heartbeat. Ping every peer on both servers; terminate any that missed the
   // previous pong. terminate() fires 'close', which unwinds a leaked /ws socket
   // and — for /ws/term — the viewer + (once the last leaves) the shared tmux
   // client, the exact leak a phone that dropped wifi used to cause.
   const keepalive = setInterval(() => {
-    for (const server of [wss, termWss]) {
-      for (const ws of server.clients) {
-        const w = ws as LiveSocket;
-        if (w.isAlive === false) {
-          w.terminate();
+    for (const clients of [snapshotClients, termClients]) {
+      for (const ws of clients) {
+        if (!ws.data.isAlive) {
+          ws.terminate();
           continue;
         }
-        w.isAlive = false;
+        ws.data.isAlive = false;
         try {
-          w.ping();
+          ws.ping();
         } catch {
           /* reaped next round */
         }
@@ -1955,6 +2160,147 @@ export function createHttp(
     }
   }, WS_PING_MS);
   keepalive.unref();
+
+  // ---- server: one Bun.serve fronting the router (routeRequest) and the ws
+  // handler. A websocket upgrade still enters through fetch(); detect it, run the
+  // SAME auth+CSRF gate the node server enforced in server.on('upgrade'), then hand
+  // the socket to Bun via srv.upgrade(). A refusal returns a bodyless 4xx Response
+  // instead of node's socket.destroy() — the client sees an HTTP error rather than
+  // a dropped connection, which the ws test clients accept.
+  function handleUpgrade(request: Request, srv: Server<WsData>, url: URL): Response | undefined {
+    const req = new HttpReqShim(request, srv);
+    // WS AUTH + CSRF CONTRACT: reject before Bun upgrades the socket. A WebSocket is
+    // NOT subject to the same-origin READ barrier, so a cross-site page could
+    // otherwise read the whole snapshot or drive a live pane; the Host check closes
+    // DNS rebinding (C1).
+    if (!authorized(req, url) || !hostHeaderOk(req) || crossSiteReason(req)) {
+      return new Response(null, { status: 401 });
+    }
+    if (url.pathname === '/ws') {
+      const data: WsData = { kind: 'snapshot', isAlive: true };
+      return srv.upgrade(request, { data }) ? undefined : new Response(null, { status: 400 });
+    }
+    if (url.pathname === '/ws/term') {
+      const data: WsData = {
+        kind: 'term',
+        isAlive: true,
+        spawn_id: url.searchParams.get('spawn') ?? '',
+        cols: Number(url.searchParams.get('cols')),
+        rows: Number(url.searchParams.get('rows')),
+        abort: { closed: false },
+        handle: null,
+      };
+      return srv.upgrade(request, { data }) ? undefined : new Response(null, { status: 400 });
+    }
+    return new Response(null, { status: 404 });
+  }
+
+  function fetchHandler(
+    request: Request,
+    srv: Server<WsData>,
+  ): Response | Promise<Response> | undefined {
+    let url: URL;
+    try {
+      url = new URL(request.url);
+    } catch {
+      return new Response(null, { status: 400 });
+    }
+    const upgrade = (request.headers.get('upgrade') ?? '').toLowerCase();
+    const connection = (request.headers.get('connection') ?? '').toLowerCase();
+    if (upgrade === 'websocket' && connection.includes('upgrade')) {
+      return handleUpgrade(request, srv, url);
+    }
+    // Feed the audited router body a node-req/res-shaped pair. routeRequest is plain
+    // sync and registers any POST body 'data'/'end' listeners synchronously; _pump()
+    // then replays the Bun body stream into them, and res.done resolves when the
+    // router calls res.end(). We hand Bun the response only after the body has drained
+    // (or the grace elapses) so a reused keep-alive socket stays in sync — see
+    // drainThenRespond.
+    const req = new HttpReqShim(request, srv);
+    const res = new HttpResShim(request, srv);
+    routeRequest(req, res);
+    return drainThenRespond(req._pump(), res);
+  }
+
+  // Hand Bun the response only after the request body has finished draining, so a
+  // reused keep-alive socket stays in sync: Bun.serve has no per-connection close, so
+  // an early response that abandons the rest of the body (oversized-refuse, or any
+  // 4xx that replies before 'end') would desync the peer's NEXT request. A body that
+  // is actually present drains in ~ms and wins this race immediately; a client that
+  // DECLARED a large body then withheld it would park the drain forever, so the wait
+  // is capped at BODY_DRAIN_GRACE_MS. On the refuse path shouldKeepAlive=false has
+  // already armed the ~4s FIN, and the grace (< that FIN) lets the 413 reach the wire
+  // before the socket closes. res.done resolves on res.end(); a held response (hook
+  // hold / watch long-poll) resolves it long after its small body drains, so the
+  // grace never gates held responses.
+  function drainThenRespond(drained: Promise<void>, res: HttpResShim): Promise<Response> {
+    return new Promise<Response>((resolve) => {
+      let settled = false;
+      const finish = (): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(res.done);
+      };
+      const timer = setTimeout(finish, BODY_DRAIN_GRACE_MS);
+      timer.unref();
+      drained.then(finish, finish);
+    });
+  }
+
+  // Thin node-http-shaped shim over Bun.serve so the daemon entry keeps its
+  // .on('error') + .listen(port,host,cb) contract. Bun.serve is constructed LAZILY
+  // in .listen(): an EADDRINUSE throw (Bun sets err.code === 'EADDRINUSE') is
+  // re-surfaced through the 'error' listener the daemon registered FIRST — the
+  // election exit-3 path — on a microtask, matching node's async 'error' emit
+  // ordering (register .on('error'), then call .listen()).
+  let bunServer: Server<WsData> | null = null;
+  // The shim only ever emits 'error', and only once — Bun.serve's sole failure mode
+  // here is a synchronous bind throw (EADDRINUSE) surfaced from listen(). So 'once'
+  // and 'on' are identical: both register an error listener that fires at most once.
+  const errorListeners: ((err: NodeJS.ErrnoException) => void)[] = [];
+  const server = {
+    on(event: string, cb: (err: NodeJS.ErrnoException) => void): void {
+      if (event === 'error') errorListeners.push(cb);
+    },
+    once(event: string, cb: (err: NodeJS.ErrnoException) => void): void {
+      if (event === 'error') errorListeners.push(cb);
+    },
+    listen(port: number, host: string, cb?: () => void): void {
+      try {
+        bunServer = Bun.serve({
+          port,
+          hostname: host,
+          // 0 = never time out an idle connection (node's default): a held hook /
+          // watch long-poll response must survive its full wait; the default 10s
+          // idleTimeout would sever it (see bun-serve-runtime-limits).
+          idleTimeout: 0,
+          maxRequestBodySize: MAX_PASTE_BODY,
+          fetch: fetchHandler,
+          websocket,
+        });
+      } catch (err) {
+        queueMicrotask(() => {
+          for (const l of errorListeners) l(err as NodeJS.ErrnoException);
+        });
+        return;
+      }
+      if (cb) cb();
+    },
+    close(cb?: () => void): void {
+      // stop(true) force-closes active connections too. node's server.close() drains
+      // idle then waits, but this daemon deliberately keeps sockets alive
+      // (idleTimeout:0, held long-polls, ws keepalive), so a graceful stop would hang
+      // teardown; tests and shutdown want a prompt close.
+      try {
+        bunServer?.stop(true);
+      } catch {
+        /* already stopped */
+      }
+      bunServer = null;
+      if (cb) cb();
+    },
+  };
   core.onMutate = scheduleBroadcast;
 
   // `server`, `whenBroadcastIdle` and `refreshLan` are used externally:

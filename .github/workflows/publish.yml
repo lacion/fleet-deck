@@ -90,8 +90,32 @@ jobs:
       # --frozen-lockfile is bun's `npm ci` (fail on any lockfile drift).
       - run: bun install --frozen-lockfile --ignore-scripts
 
-      # Node-authoritative suite (node:sqlite channel) — `bun run test` execs
-      # `node --test …` under the Node 24 selected above.
+      # Release gate — the full suite under Bun (bun:sqlite, the exact runtime
+      # that ships; `bun run test` execs `bun test`). node:sqlite is retired
+      # under the single-runtime model, so the last gate before an irreversible
+      # publish verifies the shipping channel. A standalone adapter-contract step
+      # first proves the dual DB seam's driver in isolation (open/exec/prepare/
+      # run/get/all + the missed-`.get()` -> undefined normalization), then the
+      # whole suite runs. This is belt-and-suspenders with ci.yml — the tagged
+      # commit is already an ancestor of main (gated above) — but this is the one
+      # irreversible moment, so it re-proves the shipping runtime here too.
+      - name: bun:sqlite adapter contract (the dual-seam gate)
+        run: |
+          bun -e '
+            const { openDatabase } = await import("./scripts/fleetd/sqlite.ts");
+            const db = openDatabase(":memory:");
+            db.exec("CREATE TABLE t(id INTEGER PRIMARY KEY, name TEXT)");
+            const r = db.prepare("INSERT INTO t(name) VALUES (?)").run("heron");
+            const one = db.prepare("SELECT name FROM t WHERE id = ?").get(r.lastInsertRowid);
+            const miss = db.prepare("SELECT name FROM t WHERE id = ?").get(999);
+            const all = db.prepare("SELECT id, name FROM t").all();
+            db.close();
+            const ok = one.name === "heron" && miss === undefined
+              && all.length === 1 && typeof r.lastInsertRowid === "number";
+            console.log(JSON.stringify({ got: one.name, missIsUndefined: miss === undefined, rows: all.length }));
+            if (!ok) { console.error("bun:sqlite adapter contract FAILED"); process.exit(1); }
+            console.log("bun:sqlite channel OK");
+          '
       - run: bun run test
 
       # The published tarball carries the COMMITTED bundle and board-dist, never a

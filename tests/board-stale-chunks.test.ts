@@ -15,7 +15,7 @@
 // The module takes the window object as a parameter, so it loads under
 // `node --test` with no bundler (same idiom as qr.js / util.js).
 
-import test from 'node:test';
+import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 
 import { installStaleChunkGuard } from '../board/src/staleChunks.ts';

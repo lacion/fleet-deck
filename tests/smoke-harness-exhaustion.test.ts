@@ -11,7 +11,7 @@
 //   2. the verifier classifies harness exhaustion (rc 124 or a max-turns
 //      error result) as INCONCLUSIVE and unscored rather than FAIL.
 
-import test from 'node:test';
+import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process';

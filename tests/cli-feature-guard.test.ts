@@ -16,7 +16,7 @@
 // running blind and the live validation must be redone. Skips cleanly when
 // no claude binary is installed (CI without the CLI).
 
-import test from 'node:test';
+import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
 

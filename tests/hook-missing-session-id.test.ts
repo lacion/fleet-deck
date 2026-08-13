@@ -10,7 +10,7 @@
 // events.mjs state machine so the telemetry-only applyEvent callers can't
 // mint the phantom either.
 
-import test from 'node:test';
+import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';

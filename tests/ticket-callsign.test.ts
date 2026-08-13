@@ -20,7 +20,7 @@
 // will fail until scripts/fleetd/{tickets,db,derive,events,commands,helpers,
 // mail,snapshot,statements}.mjs are all wired. That is expected.
 
-import test from 'node:test';
+import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { openDatabase } from '../scripts/fleetd/sqlite.ts';

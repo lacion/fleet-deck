@@ -15,7 +15,7 @@
 // wrapped `q.setSetting` that throws mid-body — the deterministic stand-in for
 // the storage failures above.
 
-import test from 'node:test';
+import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { openDb } from '../scripts/fleetd/db.ts';
 import { createStatements } from '../scripts/fleetd/statements.ts';

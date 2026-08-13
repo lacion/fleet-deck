@@ -20,7 +20,7 @@
 // character, so the contract survives a future separator change: whatever
 // spawn.mjs uses must round-trip under a C-locale server.
 
-import test, { type TestContext } from 'node:test';
+import test, { type TestContext } from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';

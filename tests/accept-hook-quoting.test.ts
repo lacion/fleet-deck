@@ -2,18 +2,18 @@
 //
 // BUG-092: the demo acceptance scripts generate .claude/settings.json with a
 // command hook whose script path was interpolated unquoted
-// (`"command": "node $SESSIONSTART_SCRIPT"`). In a checkout under a path with
+// (`"command": "bun $SESSIONSTART_SCRIPT"`). In a checkout under a path with
 // spaces ("/Users/me/Fleet Deck") the hook shell splits the path into
 // multiple arguments and SessionStart/Stop can never execute — every billed
 // acceptance gate fails. Fix: quote the path inside the JSON string
-// (`node \"$SESSIONSTART_SCRIPT\"`), the shape run-smoke.sh already uses.
+// (`bun \"$SESSIONSTART_SCRIPT\"`), the shape run-smoke.sh already uses.
 //
 // The test re-runs each script's actual `cat > settings.json <<EOF` heredoc
 // (extracted by line block) with a space-containing FLEETDECK_ROOT, parses
 // the generated JSON, and asserts every command hook resolves its script to
 // a real file when executed under `sh -c` with cwd elsewhere.
 
-import test, { type TestContext } from 'node:test';
+import test, { type TestContext } from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';

@@ -8,7 +8,7 @@
 // so correlation must key on the identity they DO share — (tool_name,
 // tool_input). See tests/fixtures/{permission-request,post-tool-use-*}.json.
 
-import test from 'node:test';
+import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

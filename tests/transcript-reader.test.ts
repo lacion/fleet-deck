@@ -19,7 +19,7 @@
 // Plus: the 256 KB → 2 MB retry, and that nothing here ever throws (a bad
 // transcript must never take down a hook response).
 
-import test from 'node:test';
+import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { appendFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';

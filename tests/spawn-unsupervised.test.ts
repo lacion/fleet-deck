@@ -29,7 +29,7 @@
 //   (bonus, contract-legal) both together
 //        -> "unsupervised spawn: both flags together ..."
 
-import test from 'node:test';
+import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';

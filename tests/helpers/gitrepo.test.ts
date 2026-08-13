@@ -3,7 +3,7 @@
 // remove the base dir it already allocated instead of leaking a
 // fleetdeck-git-* tree with no cleanup() handle ever handed out.
 
-import test from 'node:test';
+import test from './harness-test.ts';
 import assert from 'node:assert/strict';
 import { readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';

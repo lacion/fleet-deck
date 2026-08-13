@@ -8,7 +8,7 @@
 // process group because the smoke's stop_worker kills the launcher's own
 // group and the child is deliberately outside it.
 
-import test from 'node:test';
+import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { execFile, execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, existsSync } from 'node:fs';

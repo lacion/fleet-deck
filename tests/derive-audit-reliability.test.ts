@@ -23,7 +23,7 @@
 // in-memory SQLite db — the same harness shape as daemon-maintenance.test.mjs,
 // but self-contained (no edits to tests/helpers/*).
 
-import test, { type TestContext } from 'node:test';
+import test, { type TestContext } from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';

@@ -10,7 +10,7 @@
 // (key 2–10 chars), a hyphen, then an integer with NO leading zero, never
 // embedded in a longer alphanumeric run; leftmost match wins.
 
-import test from 'node:test';
+import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { TICKET_RE, ticketFromBranch, normalizeTicket } from '../scripts/fleetd/tickets.ts';
 

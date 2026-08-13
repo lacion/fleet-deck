@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 // fleet-sessionstart.ts — the ONLY command hook. Election + spawn + brief +
 // the dynamic FileChanged watch list (BUG-104).
 //
@@ -283,7 +283,7 @@ async function ensureServer(round = 0): Promise<boolean> {
     // hook gives a daemon another chance to write credentials into them.
     out = fs.openSync(logFile, 'a', 0o600);
     fs.chmodSync(logFile, 0o600);
-    const child = spawn(process.execPath, ['--no-warnings=ExperimentalWarning', FLEETD], {
+    const child = spawn(process.execPath, [FLEETD], {
       detached: true,
       stdio: ['ignore', out, out],
       env: bootEnv(),

@@ -15,15 +15,27 @@
 // since board/node_modules is a separate tree the root install doesn't create)
 // and pin the proxy targets for both the default and the scratch port.
 
-import { register } from 'node:module';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
-import test from 'node:test';
+import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 
-register(path.resolve('tests/helpers/vite-stub-loader.mjs'), pathToFileURL(process.cwd() + '/'));
-
-const CONFIG_URL = pathToFileURL(path.resolve('board/vite.config.js')).href;
+// board/vite.config.js imports 'vite' and '@vitejs/plugin-react' from
+// board/node_modules — a separate dependency tree the root install does not
+// create — so the module cannot simply be imported here. The proxy target
+// config is plain data, so we evaluate the shipped config SOURCE directly with
+// identity/no-op stand-ins for those two imports (defineConfig is identity,
+// react() returns a stub plugin). Evaluating the source is byte-faithful to the
+// shipped file — the same pattern board-util.test.ts uses on TermPane — and runs
+// identically on Node and Bun, needing neither ESM loader hooks (which Bun
+// ignores) nor import-cache busting (which Bun does not honour on a ?query).
+const CONFIG_SRC = readFileSync(path.resolve('board/vite.config.js'), 'utf8');
+// Drop the two bare-package import lines and turn `export default X` into a
+// return, so the ESM config body evaluates as a plain function, fresh per port.
+const CONFIG_BODY = CONFIG_SRC.replace(/^import[^\n]*\n/gm, '').replace(
+  /export default /,
+  'return ',
+);
 
 interface ViteProxyEntry {
   target: string;
@@ -32,18 +44,26 @@ interface ViteConfig {
   server: { proxy: Record<string, ViteProxyEntry> };
 }
 
-// The config reads process.env.FLEETDECK_PORT at import time, so each case
-// imports a fresh copy (cache-busting query) with the variable set — or
-// deleted — around the import.
-async function importConfigWithPort(port: string | undefined): Promise<ViteConfig> {
+type DefineConfig = (config: ViteConfig) => ViteConfig;
+type ReactStub = () => { name: string };
+
+// The config reads process.env.FLEETDECK_PORT when its body runs, so each case
+// re-evaluates a fresh copy with the variable set — or deleted — around the call.
+function importConfigWithPort(port: string | undefined): ViteConfig {
   const saved = process.env['FLEETDECK_PORT'];
   if (port === undefined) delete process.env['FLEETDECK_PORT'];
   else process.env['FLEETDECK_PORT'] = port;
   try {
-    const mod = (await import(`${CONFIG_URL}?port=${port ?? 'default'}`)) as {
-      default: ViteConfig;
-    };
-    return mod.default;
+    const defineConfig: DefineConfig = (config) => config;
+    const react: ReactStub = () => ({ name: 'react-stub' });
+    // The slice is the repo's own committed config — no user input. new Function
+    // evaluates it as a plain body; process is the real global it reads env from.
+    // eslint-disable-next-line @typescript-eslint/no-implied-eval
+    const factory = new Function('defineConfig', 'react', CONFIG_BODY) as (
+      d: DefineConfig,
+      r: ReactStub,
+    ) => ViteConfig;
+    return factory(defineConfig, react);
   } finally {
     if (saved === undefined) delete process.env['FLEETDECK_PORT'];
     else process.env['FLEETDECK_PORT'] = saved;

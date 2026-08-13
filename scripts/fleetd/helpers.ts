@@ -22,10 +22,21 @@ export function mungeClaudeProjectCwd(cwd: string): string {
   return path.resolve(cwd).replace(/[/.]/g, '-');
 }
 
+// The user's home, where ~/.claude/projects lives. Read the LIVE env first:
+// Bun's os.homedir() resolves from a user-database/environ snapshot taken at
+// process start and ignores a runtime-mutated process.env.HOME, whereas Node's
+// honors $HOME live. The in-process core tests point ~/.claude at a sandbox by
+// setting process.env.HOME after start, so the daemon must see that value. This
+// is a no-op under Node — its os.homedir() already returns $HOME when set, and
+// falls back to the passwd lookup when it is not, exactly as this does.
+export function userHomeDir(): string {
+  return process.env['HOME'] || os.homedir();
+}
+
 export function claudeTranscriptPath(
   cwd: string,
   sessionId: string,
-  homeDir: string = os.homedir(),
+  homeDir: string = userHomeDir(),
 ): string {
   return path.join(
     homeDir,

@@ -26,7 +26,7 @@
 //   7. No model anywhere -> null, never the string "undefined"
 //        -> "a session with no model anywhere reports null"
 
-import test, { type TestContext } from 'node:test';
+import test, { type TestContext } from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';

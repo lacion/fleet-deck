@@ -6,7 +6,7 @@
 // resolvePort rejects it (and every other non-port value), and the daemon
 // refuses to start before claiming FLEETDECK_HOME.
 
-import test from 'node:test';
+import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';

@@ -49,7 +49,7 @@
 // reading of the contract text. Any mismatch here is a deviation to report,
 // not a bug in this file's expectations.
 
-import test from 'node:test';
+import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';

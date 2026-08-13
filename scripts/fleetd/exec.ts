@@ -72,11 +72,15 @@ export function execFileP(
           // error without changing settlement.
           timeout: 0,
           windowsHide: true,
-          // When an env is supplied it is MERGED over the daemon's own (never
-          // replacing it), so PATH and the rest survive while a caller adds e.g.
-          // GIT_TERMINAL_PROMPT=0 to make an unauthenticated clone fail fast
-          // instead of hanging on a credential prompt.
-          ...(env ? { env: { ...process.env, ...env } } : {}),
+          // Always pass the LIVE process.env explicitly. Under Node this equals
+          // the default inheritance and is a no-op. Under Bun it is load-bearing:
+          // node:child_process's default env inheritance uses an environ
+          // SNAPSHOT taken at process start, so a runtime `process.env` mutation
+          // — a test isolating via FLEETDECK_*/TMUX_TMPDIR, or a caller setting
+          // GIT_TERMINAL_PROMPT=0 — never reaches the child unless env is passed
+          // explicitly. A supplied env is still MERGED over the daemon's own
+          // (never replacing it) so PATH and the rest survive.
+          env: env ? { ...process.env, ...env } : process.env,
         },
         (err, stdout, stderr) => {
           clearTimeout(deadline);

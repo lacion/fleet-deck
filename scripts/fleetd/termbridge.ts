@@ -450,6 +450,10 @@ export function createTermBridge({
     const child = spawn(override || 'tmux', override ? [] : argv, {
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
+      // Live env, not Bun's startup snapshot (see exec.ts): the attach reads
+      // FLEETDECK_TMUX_SOCKET/TMUX_TMPDIR above, so the child tmux must see the
+      // same runtime-mutated values; a no-op under Node.
+      env: process.env,
     });
     c.child = child;
     // M-P6: batch %output per pane across ONE feed() chunk. tmux flushes a TUI

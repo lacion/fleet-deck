@@ -4,13 +4,14 @@
 // of the focused test left one directory behind in tmpdir. Running the single
 // test file with a private TMPDIR makes the leak observable: before the fix
 // exactly one orphan survives; after the fix none do.
-import test from 'node:test';
+import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { childRunArgv, childPassCount } from './helpers/child-runner.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -29,28 +30,22 @@ test(
     // literal is annotated NodeJS.ProcessEnv to keep bracket delete/read legal.
     const env: NodeJS.ProcessEnv = { ...process.env, TMPDIR: tmpRoot };
     delete env['NODE_TEST_CONTEXT'];
-    let out: string;
-    try {
-      out = execFileSync(
-        process.execPath,
-        [
-          '--test',
-          '--test-reporter=tap',
-          '--test-name-pattern',
-          'clone failure tombstones',
-          path.join(HERE, 'spawn-repo.test.ts'),
-        ],
-        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env },
-      );
-    } catch (err) {
-      // The focused test must itself pass — otherwise this run proves nothing.
-      const e = err as { stdout?: string; stderr?: string };
-      assert.fail(`focused spawn-repo run failed:\n${e.stdout ?? ''}\n${e.stderr ?? ''}`);
-    }
-    assert.match(
-      out,
-      /^# pass 1$/m,
-      'the inner run must actually execute (and pass) the focused test',
+    const argv = childRunArgv({
+      file: path.join(HERE, 'spawn-repo.test.ts'),
+      namePattern: 'clone failure tombstones',
+    });
+    const result = spawnSync(process.execPath, argv, {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env,
+      timeout: 120_000,
+    });
+    // node prints `# pass N` on stdout, bun ` N pass` on stderr — parse combined.
+    const out = `${result.stdout ?? ''}${result.stderr ?? ''}`;
+    assert.equal(
+      childPassCount(out),
+      1,
+      `the inner run must actually execute (and pass) exactly the focused test:\n${out}`,
     );
     const orphans = readdirSync(tmpRoot).filter((name) =>
       name.startsWith('fleetdeck-missing-origin-'),

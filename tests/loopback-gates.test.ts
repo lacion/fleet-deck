@@ -8,7 +8,7 @@
 // loopback routes stay open. 0.16.1 adds an explicit plain-loopback opt-out for
 // those four powers without weakening hook authentication.
 
-import test, { type TestContext } from 'node:test';
+import test, { type TestContext } from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import {
   readFileSync,

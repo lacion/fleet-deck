@@ -15,7 +15,7 @@
 // Consequences: hook-only sessions never tombstoned on exit, an armed
 // move-to-tmux could never fire, and HOME grew a file per hook.
 
-import test, { type TestContext } from 'node:test';
+import test, { type TestContext } from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readdirSync, rmSync, writeFileSync, utimesSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';

@@ -13,7 +13,7 @@
 // blob: paste images, React inline style attributes) and a silent drift would
 // either break the board or widen the policy.
 
-import test from 'node:test';
+import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { startDaemon } from './helpers/daemon.ts';
 

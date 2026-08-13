@@ -1,4 +1,4 @@
-import test from 'node:test';
+import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { sanitizePaneText } from '../scripts/fleetd/spawn.ts';
 

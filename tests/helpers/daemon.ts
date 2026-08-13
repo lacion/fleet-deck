@@ -411,6 +411,10 @@ export async function startDaemon({
             spawnSync('tmux', ['-L', raw.tmuxSocket, 'kill-server'], {
               stdio: 'ignore',
               timeout: 3000,
+              // Live env, not Bun's startup snapshot: the socket name resolves
+              // against a runtime-mutated TMUX_TMPDIR, so kill-server must see
+              // it or it targets the wrong dir and leaks the server. See exec.ts.
+              env: process.env,
             });
           } catch {
             /* best-effort: no server on the socket is the common case */

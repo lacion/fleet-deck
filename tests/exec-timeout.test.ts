@@ -10,7 +10,7 @@
 // fires → SIGTERM → SIGKILL after a short grace → resolve exactly once with
 // { ok: false, code: 'ETIMEDOUT' }.
 
-import test from 'node:test';
+import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { execFileP } from '../scripts/fleetd/exec.ts';
 

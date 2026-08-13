@@ -7,7 +7,7 @@
 // createHttp server in-process (loopback /state needs no token) and flip the
 // thunk between requests — no multicast, no real responder, no subprocess.
 
-import test from 'node:test';
+import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -16,8 +16,12 @@ import { createHttp } from '../scripts/fleetd/http.ts';
 import { openDb } from '../scripts/fleetd/db.ts';
 import { createCore } from '../scripts/fleetd/derive.ts';
 import { randomPort } from './helpers/daemon.ts';
-import type { Server } from 'node:http';
 import type { StateResponse } from '../contracts/state.ts';
+
+// The daemon's server is the Bun.serve shim createHttp returns, not node's http
+// Server — derive its type from the daemon surface (as LanArg does below) rather
+// than restate it.
+type HttpServer = ReturnType<typeof createHttp>['server'];
 
 // createHttp's `lan` wiring accepts a static source or a per-snapshot thunk;
 // derive the exact accepted type from the daemon's own surface rather than
@@ -36,7 +40,7 @@ interface LanState {
 const MDNS_URL = 'http://fleetdeck.local:4711/?t=sekret';
 const IP_URL = 'http://192.0.2.7:4711/?t=sekret';
 
-function listen(server: Server, port: number): Promise<void> {
+function listen(server: HttpServer, port: number): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     server.once('error', reject);
     server.listen(port, '127.0.0.1', () => {

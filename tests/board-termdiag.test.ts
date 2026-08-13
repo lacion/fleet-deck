@@ -16,7 +16,7 @@
 // mirrors the real gate under every trust mode) lives in
 // tests/loopback-gates.test.mjs.
 
-import test from 'node:test';
+import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 
 import { MAX_RECONNECT, reconnectPlan, refusedUpgradeText } from '../board/src/termDiag.ts';

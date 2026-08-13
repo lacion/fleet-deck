@@ -1,4 +1,4 @@
-import test, { type TestContext } from 'node:test';
+import test, { type TestContext } from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -84,14 +84,26 @@ function startLan(
   return { raw, home, port, baseUrl: `http://${address}:${port}` };
 }
 
+// The 'error' handlers below are persistent (`.on`, not `.once`) on purpose:
+// Bun's built-in `ws` can surface a SECOND, DOM-style ErrorEvent during socket
+// teardown, after the first error already settled the promise. node:events
+// throws "Unhandled error" the instant an 'error' fires with no live listener,
+// so a `.once` handler that has already been consumed lets that late event crash
+// the test. A persistent absorber guarded by `settled` swallows it. Under Node
+// exactly one 'error' ever fires, so this is a pure no-op there.
 function snapshot(url: string): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(url);
+    let settled = false;
     const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
       ws.terminate();
       reject(new Error('timed out waiting for snapshot'));
     }, scaleMs(5000));
     ws.once('message', (raw: RawData) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
       try {
         resolve(JSON.parse((raw as Buffer).toString('utf8')));
@@ -100,7 +112,9 @@ function snapshot(url: string): Promise<unknown> {
       }
       ws.close();
     });
-    ws.once('error', (err) => {
+    ws.on('error', (err) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
       reject(err);
     });
@@ -110,23 +124,29 @@ function snapshot(url: string): Promise<unknown> {
 function refused(url: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(url);
-    const timer = setTimeout(() => {
-      ws.terminate();
-      reject(new Error('unauthenticated WebSocket was not closed'));
-    }, scaleMs(5000));
-    ws.once('open', () => {
+    let settled = false;
+    const done = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
-      ws.terminate();
-      reject(new Error('unauthenticated WebSocket unexpectedly opened'));
-    });
-    ws.once('error', () => {
-      clearTimeout(timer);
-      resolve();
-    });
-    ws.once('close', () => {
-      clearTimeout(timer);
-      resolve();
-    });
+      fn();
+    };
+    const timer = setTimeout(
+      () =>
+        { done(() => {
+          ws.terminate();
+          reject(new Error('unauthenticated WebSocket was not closed'));
+        }); },
+      scaleMs(5000),
+    );
+    ws.once('open', () =>
+      { done(() => {
+        ws.terminate();
+        reject(new Error('unauthenticated WebSocket unexpectedly opened'));
+      }); },
+    );
+    ws.on('error', () => { done(() => { resolve(); }); });
+    ws.once('close', () => { done(() => { resolve(); }); });
   });
 }
 

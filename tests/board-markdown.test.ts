@@ -13,7 +13,7 @@
 // "module", so it loads under `node --test` with no bundler — same as
 // tests/board-util.test.mjs.
 
-import test from 'node:test';
+import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 
 import { renderMarkdown, planTitle } from '../board/src/markdown.ts';

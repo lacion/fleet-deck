@@ -10,7 +10,7 @@
 // cleanup_perm_proof function body from the script and exercises it in bash
 // against a scratch PROJECT_DIR — the same source the demo runs.
 
-import test, { type TestContext } from 'node:test';
+import test, { type TestContext } from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import fs, { mkdtempSync, rmSync } from 'node:fs';

@@ -13,7 +13,7 @@
 // LAST test pins that with the flag OFF a loopback data route stays wide open
 // (today's behavior), guaranteeing this never regresses the default.
 
-import test, { type TestContext } from 'node:test';
+import test, { type TestContext } from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
@@ -60,49 +60,76 @@ async function startRT(t: TestContext, extraEnv: Record<string, string> = {}) {
 }
 
 // Resolve with the first snapshot frame from a WS that is expected to connect.
+//
+// A persistent 'error' sink (.on, not .once) and a single `settled` latch keep
+// the outcome identical under BOTH node and bun's `ws` (the daemon runs under
+// whichever process.execPath launched the suite): bun's ws can emit a SECOND
+// 'error' after the socket is torn down, and an EventEmitter 'error' with no
+// listener is fatal — a .once sink would leave that second error to crash an
+// unrelated later test. Node never emits it, so the extra sink is inert there.
 function snapshot(url: string): Promise<{ type?: string }> {
   return new Promise<{ type?: string }>((resolve, reject) => {
     const ws = new WebSocket(url);
+    let settled = false;
     const timer = setTimeout(() => {
       ws.terminate();
+      if (settled) return;
+      settled = true;
       reject(new Error('timed out waiting for snapshot'));
     }, scaleMs(5000));
-    ws.once('message', (raw) => {
+    const finish = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
-      try {
-        resolve(JSON.parse((raw as Buffer).toString('utf8')) as { type?: string });
-      } catch (err) {
-        reject(err instanceof Error ? err : new Error(String(err)));
-      }
+      fn();
+    };
+    ws.on('message', (raw) => {
+      finish(() => {
+        try {
+          resolve(JSON.parse((raw as Buffer).toString('utf8')) as { type?: string });
+        } catch (err) {
+          reject(err instanceof Error ? err : new Error(String(err)));
+        }
+      });
       ws.close();
     });
-    ws.once('error', (err) => {
-      clearTimeout(timer);
-      reject(err);
+    ws.on('error', (err) => {
+      finish(() => { reject(err instanceof Error ? err : new Error(String(err))); });
+    });
+    ws.on('close', () => {
+      finish(() => { reject(new Error('socket closed before a snapshot frame')); });
     });
   });
 }
 
 // Resolve when a WS that is expected to be refused is torn down (never opens).
+// Same persistent-'error'-sink + `settled`-latch discipline as snapshot() above:
+// the refusal path is exactly where bun's ws emits the fatal second 'error'.
 function refused(url: string): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     const ws = new WebSocket(url);
+    let settled = false;
     const timer = setTimeout(() => {
       ws.terminate();
+      if (settled) return;
+      settled = true;
       reject(new Error('unauthenticated WebSocket was not closed'));
     }, scaleMs(5000));
-    ws.once('open', () => {
+    const finish = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
+      fn();
+    };
+    ws.on('open', () => {
       ws.terminate();
-      reject(new Error('unauthenticated WebSocket unexpectedly opened'));
+      finish(() => { reject(new Error('unauthenticated WebSocket unexpectedly opened')); });
     });
-    ws.once('error', () => {
-      clearTimeout(timer);
-      resolve();
+    ws.on('error', () => {
+      finish(() => { resolve(); });
     });
-    ws.once('close', () => {
-      clearTimeout(timer);
-      resolve();
+    ws.on('close', () => {
+      finish(() => { resolve(); });
     });
   });
 }

@@ -8,7 +8,7 @@
 // script, runs it through bash with an apostrophe-laden DEMO_LOGS, and asserts
 // the verifier still parses and reports full PASS.
 
-import test from 'node:test';
+import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';

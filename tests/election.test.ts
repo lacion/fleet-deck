@@ -10,7 +10,7 @@
 //      incumbent (SIGTERM + wait-for-death); every other pairing keeps the
 //      historical claimHome refusal (exit 1, incumbent untouched).
 
-import test from 'node:test';
+import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';

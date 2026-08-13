@@ -12,7 +12,7 @@
 // mDNS is a convenience the daemon must survive losing, and the test suite
 // takes the same position.
 
-import test from 'node:test';
+import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import dgram from 'node:dgram';
 import type { RemoteInfo, Socket } from 'node:dgram';

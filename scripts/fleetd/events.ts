@@ -9,13 +9,12 @@
 // UX 2.2 activity gate for in-terminal plan decisions — see derive.mjs).
 
 import path from 'node:path';
-import os from 'node:os';
 import { deriveRepo, branchOf } from './repo-identity.ts';
 import type { RepoIdentityGit } from './repo-identity.ts';
 import { ticketFromBranch } from './tickets.ts';
 import { lastAssistantText } from './transcript.ts';
 import { detectTrailingQuestion } from './questions.ts';
-import { mungeClaudeProjectCwd } from './helpers.ts';
+import { mungeClaudeProjectCwd, userHomeDir } from './helpers.ts';
 import type { Statements, SessionRow } from './statements.ts';
 import type { SqliteHandle } from './sqlite.ts';
 
@@ -144,7 +143,7 @@ const TEST_RUNNER_RE = /\b(pytest|jest|vitest|go test|cargo test|npm (run )?test
 // /clear shares the predecessor's cwd, so its transcript_path MUST live here.
 function expectedTranscriptDir(
   cwd: string | null | undefined,
-  homeDir: string = os.homedir(),
+  homeDir: string = userHomeDir(),
 ): string {
   return path.join(homeDir, '.claude', 'projects', mungeClaudeProjectCwd(cwd ?? ''));
 }

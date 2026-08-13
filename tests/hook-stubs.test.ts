@@ -10,7 +10,7 @@
 //     caps, activity expiry) lives in tests/needs-you.test.mjs and
 //     tests/choice-relay.test.mjs.
 
-import test from 'node:test';
+import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';

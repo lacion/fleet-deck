@@ -15,7 +15,7 @@
 // concrete example must therefore use the three-component named form, which is
 // what tests/fixtures/coder-app-hostnames.json pins.
 
-import test from 'node:test';
+import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';

@@ -19,7 +19,7 @@
 // (the 600 s default is too long to pay in CI — the lockstep NUMBERS are
 // pinned in the resolveHoldMs unit test instead).
 
-import test from 'node:test';
+import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';

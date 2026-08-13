@@ -12,7 +12,7 @@
 // CLI dispatch is guarded by IS_ENTRYPOINT, which is false when the module is
 // merely imported (the entry point is the node:test runner, not fleetdeck.mjs).
 
-import test, { after } from 'node:test';
+import test, { after } from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -24,6 +24,15 @@ import { spawn } from 'node:child_process';
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'fleetdeck-cli-'));
 const HOME = path.join(TMP, 'home');
 const XDG = path.join(TMP, 'config');
+// These module-level env mutations are captured by the CLI module at import time
+// (below). Under bun's single shared test process they would otherwise outlive
+// this file and pollute every later test — the restore in the after() hook below
+// undoes them. No-op under node, which isolates each file in its own child.
+const SAVED_ENV: Record<string, string | undefined> = {
+  FLEETDECK_HOME: process.env['FLEETDECK_HOME'],
+  XDG_CONFIG_HOME: process.env['XDG_CONFIG_HOME'],
+  FLEETDECK_PORT: process.env['FLEETDECK_PORT'],
+};
 process.env['FLEETDECK_HOME'] = HOME;
 process.env['XDG_CONFIG_HOME'] = XDG;
 fs.mkdirSync(HOME, { recursive: true });
@@ -41,6 +50,15 @@ const DEAD_PORT = await new Promise<number>((resolve) => {
   });
 });
 process.env['FLEETDECK_PORT'] = String(DEAD_PORT);
+
+// Undo the three module-level env mutations once this file's tests finish, so
+// they don't leak into later files under bun's shared process (see SAVED_ENV).
+after(() => {
+  for (const [k, v] of Object.entries(SAVED_ENV)) {
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
+});
 
 const ENV_FILE = path.join(HOME, 'service.env');
 const SUPERVISE_SH = path.join(HOME, 'supervise.sh');

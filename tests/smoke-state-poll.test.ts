@@ -13,7 +13,7 @@
 // pinned by asserting the capture is a bounded tombstone poll, not a one-shot
 // fetch.
 
-import test from 'node:test';
+import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';

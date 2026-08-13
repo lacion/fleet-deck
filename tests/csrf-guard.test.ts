@@ -13,9 +13,10 @@
 // fetch() forbids setting Origin/Host from script, so a "malicious browser" is
 // simulated with a raw socket (http.request) that can send arbitrary headers.
 
-import test, { type TestContext } from 'node:test';
+import test, { type TestContext } from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import net from 'node:net';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -77,6 +78,18 @@ const JSON_CT = { 'content-type': 'application/json' };
 
 // Resolve 'open' with the first frame, or 'refused' if the socket is torn down
 // during the upgrade (the server's destroy() path).
+//
+// Two ordering details keep the outcome identical under BOTH node and bun's `ws`
+// (the daemon runs under whichever `process.execPath` launched the suite):
+//   1. Record 'open' BEFORE ws.close(). Bun's ws.close() re-entrantly emits
+//      'close' in the SAME tick, so closing first lets the 'close' handler settle
+//      'refused' ahead of this 'open'. Node emits 'close' asynchronously, so the
+//      order is immaterial there — the settled outcome is the same under both.
+//   2. A persistent 'error' sink (.on, not .once). Bun's ws can emit a SECOND
+//      'error' after a refusal is already recorded (the server destroy path), and
+//      an EventEmitter 'error' with no listener is fatal — it would crash an
+//      unrelated later test. Node never emits that second error, so it is inert.
+// A single `settled` latch keeps the first outcome authoritative for both.
 function wsAttempt(
   url: string,
   options?: { headers?: Record<string, string> },
@@ -84,31 +97,40 @@ function wsAttempt(
   return new Promise<{ outcome: 'open' | 'refused'; frame?: { type?: string } | null }>(
     (resolve, reject) => {
       const ws = new WebSocket(url, options);
+      let settled = false;
       const timer = setTimeout(() => {
         ws.terminate();
+        if (settled) return;
+        settled = true;
         reject(new Error('WS attempt hung'));
       }, 5000);
-      ws.once('message', (raw) => {
+      const finish = (result: {
+        outcome: 'open' | 'refused';
+        frame?: { type?: string } | null;
+      }) => {
+        if (settled) return;
+        settled = true;
         clearTimeout(timer);
+        resolve(result);
+      };
+      ws.on('message', (raw) => {
         let frame: { type?: string } | null = null;
         try {
           frame = JSON.parse((raw as Buffer).toString('utf8')) as { type?: string };
         } catch {
           /* server junk */
         }
+        finish({ outcome: 'open', frame });
         ws.close();
-        resolve({ outcome: 'open', frame });
       });
-      ws.once('open', () => {
+      ws.on('open', () => {
         /* wait for the first message (or a refusal) */
       });
-      ws.once('error', () => {
-        clearTimeout(timer);
-        resolve({ outcome: 'refused' });
+      ws.on('error', () => {
+        finish({ outcome: 'refused' });
       });
-      ws.once('close', () => {
-        clearTimeout(timer);
-        resolve({ outcome: 'refused' });
+      ws.on('close', () => {
+        finish({ outcome: 'refused' });
       });
     },
   );
@@ -162,9 +184,14 @@ function rawUpgrade(
       }
       done('upgraded');
     });
-    req.on('response', () => {
-      done('rejected');
-    }); // any non-101 answer
+    req.on('response', (res) => {
+      // Node fires 'upgrade' for a 101 and 'response' only for a non-101, so this
+      // handler is the "any non-101 answer" path there. Bun's http client instead
+      // surfaces a completed 101 switch AS a 'response' (statusCode 101) and never
+      // fires 'upgrade' — so treat a 101 here as 'upgraded'. Under node a 101 never
+      // reaches this branch, so the outcome is identical on both runtimes.
+      done(res.statusCode === 101 ? 'upgraded' : 'rejected');
+    });
     req.on('error', () => {
       done('rejected');
     }); // server tore the socket down
@@ -650,73 +677,82 @@ test('M-B3: POST body is byte-exact and byte-capped', async (t: TestContext) => 
       // served. The fix answers once and tears the request down; the regression
       // contract is that the connection is CLOSED after the 413 (so no client
       // can hang on it) and the daemon keeps serving fresh connections.
+      //
+      // Driven over a raw net.Socket, not http.request, because the contract is
+      // about the SOCKET closing: bun's http *client* never fires the socket
+      // 'close' event when the server tears the connection down (Node does), so
+      // an http.request probe reports a false wedge under bun even though the
+      // server closed correctly. A raw socket observes the server's FIN
+      // identically on both runtimes, and the server side is byte-for-byte the
+      // same — so this proves the one regression contract under Node and bun.
       await new Promise<void>((resolve, reject) => {
-        let responded = false;
+        let raw = '';
         let closed = false;
-        const done = () => {
-          if (responded && closed) {
-            clearTimeout(timer);
-            resolve();
-          }
-        };
+        const sock = net.connect(port, '127.0.0.1');
         const timer = setTimeout(() => {
+          sock.destroy();
           reject(
             new Error(
-              `server wedged the keep-alive connection (responded=${String(responded)}, socketClosed=${String(closed)})`,
+              `server wedged the keep-alive connection (socketClosed=${String(closed)}, bytes=${String(raw.length)})`,
             ),
           );
-        }, 2000);
+        }, 6000); // BUG-125 under Bun.serve: the 413 body is delivered in ms, but the
+        // socket FIN is floored at ~4s by uSockets' 4-second timer granularity
+        // (res.shouldKeepAlive=false → server.timeout(req,1); see
+        // memory bun-serve-runtime-limits). 2000 raced that FIN; 6000 clears it. The
+        // contract (answered, THEN closed, daemon keeps serving) is unchanged — only
+        // the accepted close latency widened from instant to a bounded ~4s.
         timer.unref();
-        const req = http.request(
-          {
-            host: '127.0.0.1',
-            port,
-            path: '/mail',
-            method: 'POST',
-            headers: {
-              'content-type': 'application/json',
-              'content-length': String(2_000_000), // over MAX_BODY, declared up front
-              authorization: `Bearer ${daemon.token ?? ''}`,
-            },
-          },
-          (res) => {
-            let body = '';
-            res.on('data', (d: Buffer) => {
-              body += d.toString();
-            });
-            res.on('end', () => {
-              try {
-                assert.equal(
-                  res.statusCode,
-                  413,
-                  `expected 413, got ${String(res.statusCode)}: ${body}`,
-                );
-                assert.equal(res.complete, true, 'the 413 response itself must be fully readable');
-              } catch (err) {
-                clearTimeout(timer);
-                reject(err instanceof Error ? err : new Error(String(err)));
-                return;
-              }
-              responded = true;
-              done();
-            });
-          },
-        );
-        req.on('error', (err) => {
-          clearTimeout(timer);
-          reject(err);
+        sock.on('connect', () => {
+          // Send only a fragment of the declared body and keep the socket open —
+          // the pre-fix server left the connection half-parsed at exactly this
+          // point. With the fix the server answers the 413 in full AND closes the
+          // socket instead of lingering on a body that never arrives.
+          sock.write(
+            'POST /mail HTTP/1.1\r\n' +
+              // Host MUST carry the port: the daemon's Host allowlist (the
+              // DNS-rebinding defence) 403s a bare `127.0.0.1`, and a 403 is a
+              // normal keep-alive response that never tears the socket down — so
+              // a portless Host would wedge here without ever reaching the 413.
+              `Host: 127.0.0.1:${port}\r\n` +
+              'Content-Type: application/json\r\n' +
+              `Authorization: Bearer ${daemon.token ?? ''}\r\n` +
+              'Content-Length: 2000000\r\n' + // over MAX_BODY, declared up front
+              '\r\n' +
+              '{"partial":',
+          );
         });
-        // Send only a fragment of the declared body and keep the socket open —
-        // the pre-fix server left the connection half-parsed at exactly this
-        // point. With the fix the server closes it: BOTH the 413 must arrive
-        // AND the socket must close promptly instead of lingering.
-        req.write('{"partial":');
-        req.on('socket', (s) =>
-          s.on('close', () => {
-            closed = true;
-            done();
-          }),
-        );
+        sock.on('data', (d: Buffer) => {
+          raw += d.toString('utf8');
+        });
+        // The verdict is decided on 'close', which always follows a FIN or reset;
+        // a bare 'error' sink just keeps an ECONNRESET from throwing unhandled.
+        sock.on('error', () => {});
+        sock.on('close', () => {
+          closed = true;
+          clearTimeout(timer);
+          try {
+            const sep = raw.indexOf('\r\n\r\n');
+            assert.notEqual(sep, -1, 'the 413 response headers must be fully readable');
+            const statusLine = raw.slice(0, raw.indexOf('\r\n'));
+            assert.match(
+              statusLine,
+              /^HTTP\/1\.1 413\b/,
+              `expected a 413 status line, got: ${statusLine}`,
+            );
+            const clMatch = /^content-length:\s*(\d+)/im.exec(raw.slice(0, sep));
+            assert.ok(clMatch?.[1], 'the 413 response must declare a Content-Length');
+            const bodyBytes = Buffer.byteLength(raw.slice(sep + 4), 'utf8');
+            assert.equal(
+              bodyBytes,
+              Number(clMatch[1]),
+              'the full 413 body must arrive before the socket closes',
+            );
+            resolve();
+          } catch (err) {
+            reject(err instanceof Error ? err : new Error(String(err)));
+          }
+        });
       });
 
       // And the daemon is unharmed: a fresh request is served immediately.

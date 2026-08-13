@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 // fleet-hook.ts — authenticated command-shim for every hook event except
 // SessionStart (fleet-sessionstart.ts) and the Stop asyncRewake leg
 // (fleet-watch.ts).
@@ -150,12 +150,14 @@ try {
   };
   if (TOKEN) headers.authorization = `Bearer ${TOKEN}`;
   const ctl = new AbortController();
-  const t = setTimeout(() => { ctl.abort(); }, WATCHDOG_MS - 400);
+  const t = setTimeout(() => {
+    ctl.abort();
+  }, WATCHDOG_MS - 400);
   try {
     const res = await fetch(`${BASE}/hook/${String(EVENT)}`, {
       method: 'POST',
       headers,
-       
+
       body: withRun(raw) || '{}',
       signal: ctl.signal,
     });

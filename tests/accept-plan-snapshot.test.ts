@@ -13,7 +13,7 @@
 // the harness can never drift from the live gate. The "legacy" assertions
 // replay the pre-fix restore to prove the test would have caught the defect.
 
-import test, { type TestContext } from 'node:test';
+import test, { type TestContext } from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import fs, { cpSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';

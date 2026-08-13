@@ -66,7 +66,7 @@
 
 import dgram from 'node:dgram';
 import type { RemoteInfo, Socket } from 'node:dgram';
-import os from 'node:os';
+import { networkInterfaces } from './os-net.ts';
 
 export const MDNS_ADDR = '224.0.0.251';
 export const MDNS_PORT = 5353;
@@ -567,7 +567,7 @@ function ttlFor(type: keyof typeof DEFAULT_TTL, override?: number): number {
 export function addressInterfaces(): Map<string, string> {
   const map = new Map<string, string>();
   try {
-    for (const [name, entries] of Object.entries(os.networkInterfaces())) {
+    for (const [name, entries] of Object.entries(networkInterfaces())) {
       for (const entry of entries ?? []) {
         if (entry.family === 'IPv4' && !entry.internal && isIPv4(entry.address)) {
           map.set(entry.address, name);

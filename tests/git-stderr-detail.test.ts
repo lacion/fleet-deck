@@ -14,7 +14,7 @@
 // of the whole string, because a redacted-looking field proves nothing if the
 // secret survives elsewhere on the line.
 
-import test, { type TestContext } from 'node:test';
+import test, { type TestContext } from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';

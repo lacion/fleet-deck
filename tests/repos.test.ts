@@ -1,4 +1,4 @@
-import test, { type TestContext } from 'node:test';
+import test, { type TestContext } from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -364,11 +364,16 @@ test('resolveHome always returns one absolute path, independent of the process c
     assert.equal(anchored, path.join(os.homedir(), 'state'));
     // Same answer from ANY working directory — the regression itself.
     const other = mkdtempSync(path.join(tmpdir(), 'fleetdeck-home-cwd-'));
+    const cwd0 = process.cwd();
     try {
       process.chdir(other);
       assert.equal(resolveHome(), anchored);
     } finally {
-      process.chdir(path.dirname(other));
+      // Restore the ACTUAL prior cwd, not path.dirname(other) (= the tmp root).
+      // Under bun's single shared test process a stray cwd=/tmp would leak into
+      // every later test file (e.g. board-vite-proxy reads board/vite.config.js
+      // cwd-relative). No-op under node, which isolates each file in its own child.
+      process.chdir(cwd0);
       rmSync(other, { recursive: true, force: true });
     }
     // Unset → the ~/.fleetdeck default.

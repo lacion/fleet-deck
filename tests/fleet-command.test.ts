@@ -11,7 +11,7 @@
 // fetch itself is stubbed — what is under test is the URL the command
 // builds). A static check asserts no hardcoded 4711 URL remains.
 
-import test, { type TestContext } from 'node:test';
+import test, { type TestContext } from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdtempSync, rmSync, chmodSync } from 'node:fs';
@@ -33,7 +33,9 @@ function inlineCommand(): string {
 // <dir>/curl-args and emits a minimal /state body. Returns the logged args.
 function runInlineWithShimmedCurl(t: TestContext, env: NodeJS.ProcessEnv): string[] {
   const dir = mkdtempSync(path.join(tmpdir(), 'fleet-cmd-'));
-  t.after(() => { rmSync(dir, { recursive: true, force: true }); });
+  t.after(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
   const argsFile = path.join(dir, 'curl-args');
   const shim = path.join(dir, 'curl');
   writeFileSync(
@@ -73,9 +75,16 @@ test('BUG-088: an invalid FLEETDECK_PORT falls back to the default port in the f
 });
 
 test('BUG-088: an unset FLEETDECK_PORT defaults to 4711 in the fetch URL', (t) => {
-  const env = { ...process.env };
-  delete env['FLEETDECK_PORT'];
-  const args = runInlineWithShimmedCurl(t, env);
+  // Control the REAL process.env: runInlineWithShimmedCurl spreads ...process.env
+  // into the child, so deleting the key only from a copy cannot unset it there.
+  // Under bun's shared process an earlier file may have left FLEETDECK_PORT set;
+  // delete it for the duration and restore after. No-op under node (never leaked).
+  const saved = process.env['FLEETDECK_PORT'];
+  delete process.env['FLEETDECK_PORT'];
+  t.after(() => {
+    if (saved !== undefined) process.env['FLEETDECK_PORT'] = saved;
+  });
+  const args = runInlineWithShimmedCurl(t, {});
   assert.equal(fetchedUrl(args), 'http://127.0.0.1:4711/state');
 });
 

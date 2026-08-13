@@ -4,7 +4,7 @@
 // plan text and raw permission/question payloads. openDb must pin fleetd.db —
 // and its WAL/SHM sidecars — owner-only. Pure: opens a DB directly, no daemon.
 
-import test, { type TestContext } from 'node:test';
+import test, { type TestContext } from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { chmodSync, existsSync, mkdtempSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';

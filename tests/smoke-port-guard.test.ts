@@ -12,7 +12,7 @@
 // `claude` on PATH; a guard that misses the collision lets the script run to
 // completion (exit 0) instead of aborting.
 
-import test from 'node:test';
+import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import net from 'node:net';
 import path from 'node:path';

@@ -16,7 +16,7 @@
 // version-manifest change in the same range. These tests run that verifier
 // against scratch git repos, exactly as CI does.
 
-import test, { type TestContext } from 'node:test';
+import test, { type TestContext } from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';

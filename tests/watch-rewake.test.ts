@@ -33,7 +33,7 @@
 //      rewake injection). Lifetime cap raised to FLEETDECK_WATCH_MAX_MS
 //      default 2h (was 30 min).
 
-import test from 'node:test';
+import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { spawn, type ChildProcess } from 'node:child_process';

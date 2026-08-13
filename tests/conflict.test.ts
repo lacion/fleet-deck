@@ -6,7 +6,7 @@
 // A session that has already ended still counts as a rival within the
 // 30-minute window ("dirty files outlive their authors").
 
-import test from 'node:test';
+import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';

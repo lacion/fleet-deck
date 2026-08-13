@@ -7,7 +7,7 @@
 // turning a small route hang into a long opaque stall. rawRequest must
 // destroy the request and reject with route diagnostics on a scaled deadline.
 
-import test from 'node:test';
+import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';

@@ -123,6 +123,9 @@ function git(args: string[], cwd: string): string | null {
       timeout: 1500,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
+      // Live env, not Bun's startup snapshot (see exec.ts): a runtime PATH/HOME
+      // mutation only reaches git when env is explicit; a no-op under Node.
+      env: process.env,
     });
     // Strip only the single record-terminating newline (LF, or CRLF under
     // core.autocrlf) — never trim(): path-valued output (--show-toplevel,

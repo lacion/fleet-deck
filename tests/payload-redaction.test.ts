@@ -7,7 +7,7 @@
 // hook-payloads.jsonl, and that a giant secret is MASKED rather than merely
 // truncated-but-leaked.
 
-import test, { type TestContext } from 'node:test';
+import test, { type TestContext } from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';

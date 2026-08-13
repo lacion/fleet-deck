@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 // fleetdeck — the standalone CLI.
 //
 // Fleet Deck has always been a Claude Code plugin whose daemon is booted, lazily

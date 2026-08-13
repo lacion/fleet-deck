@@ -11,10 +11,9 @@
 // board/src/util.js has no imports and board/package.json is "type": "module",
 // so it loads under node --test with no bundler.
 
-import test from 'node:test';
+import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { stripTypeScriptTypes } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -38,6 +37,7 @@ import {
   sessionTicker,
 } from '../board/src/util.ts';
 import { HOTKEYS, ORCH_COMMANDS } from '../board/src/helpText.ts';
+import { stripTypes } from './helpers/strip-types.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -979,7 +979,7 @@ function extractClipboardProvider(src: string): ClipProviderFactory {
   const spy = 'const copyText = globalThis.__copySpy;';
   // The slice is TypeScript now ((term: Terminal): IClipboardProvider =>), so
   // strip the annotations before new Function() parses it as plain JS.
-  const body = stripTypeScriptTypes(src.slice(start, end));
+  const body = stripTypes(src.slice(start, end));
   // Evaluating the pane's own source slice IS the test: it pins the provider's
   // behaviour to the shipped code, not a re-implementation. There is no user
   // input here — the slice comes from a file on disk in this repo.

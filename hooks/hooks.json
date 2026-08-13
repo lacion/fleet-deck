@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/fleet-sessionstart.mjs\"",
+            "command": "bun \"${CLAUDE_PLUGIN_ROOT}/scripts/fleet-sessionstart.mjs\"",
             "timeout": 15
           }
         ]
@@ -18,7 +18,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs\" UserPromptSubmit",
+            "command": "bun \"${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs\" UserPromptSubmit",
             "timeout": 3
           }
         ]
@@ -30,7 +30,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs\" PostToolUse",
+            "command": "bun \"${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs\" PostToolUse",
             "timeout": 3
           }
         ]
@@ -42,7 +42,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs\" PostToolUseFailure",
+            "command": "bun \"${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs\" PostToolUseFailure",
             "timeout": 3
           }
         ]
@@ -54,7 +54,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs\" AskUserQuestion",
+            "command": "bun \"${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs\" AskUserQuestion",
             "timeout": 720
           }
         ]
@@ -65,7 +65,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs\" PermissionRequest",
+            "command": "bun \"${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs\" PermissionRequest",
             "timeout": 720
           }
         ]
@@ -76,7 +76,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs\" Elicitation",
+            "command": "bun \"${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs\" Elicitation",
             "timeout": 720
           }
         ]
@@ -87,7 +87,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs\" Notification",
+            "command": "bun \"${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs\" Notification",
             "timeout": 3,
             "async": true
           }
@@ -99,12 +99,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs\" Stop",
+            "command": "bun \"${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs\" Stop",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/fleet-watch.mjs\"",
+            "command": "bun \"${CLAUDE_PLUGIN_ROOT}/scripts/fleet-watch.mjs\"",
             "asyncRewake": true,
             "rewakeMessage": "[FLEETDECK] Fleet board mail for you:",
             "rewakeSummary": "Fleet Deck: board mail delivered",
@@ -118,7 +118,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs\" SessionEnd",
+            "command": "bun \"${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs\" SessionEnd",
             "timeout": 3,
             "async": true
           }
@@ -131,7 +131,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs\" FileChanged",
+            "command": "bun \"${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs\" FileChanged",
             "timeout": 3,
             "async": true
           }
@@ -143,7 +143,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs\" CwdChanged",
+            "command": "bun \"${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs\" CwdChanged",
             "timeout": 3,
             "async": true
           }

@@ -65,7 +65,7 @@
 // through JSON-body -> SQLite -> /state JSON is actually exercised, not just
 // a one-line string that any naive truncation/escaping bug would pass.
 
-import test, { type TestContext } from 'node:test';
+import test, { type TestContext } from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync, existsSync, chmodSync } from 'node:fs';

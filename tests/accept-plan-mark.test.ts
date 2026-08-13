@@ -7,7 +7,7 @@
 // failed to spawn, timed out, or hit a permission card — and could corrupt a
 // real production plan's state if pointed at the wrong daemon.
 
-import test, { type TestContext } from 'node:test';
+import test, { type TestContext } from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import {
   readFileSync,

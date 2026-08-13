@@ -12,7 +12,7 @@
 // survive each other's exit (no Claude CLI is launched, so nothing is
 // billed).
 
-import test from 'node:test';
+import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -218,7 +218,7 @@ test(
           '-c',
           `${exportLine('CLONE_PROJ', cloneProj)}; source "$CLONE_SETUP"; ` +
             `printf '%s\\n' "$SCRATCH_HOME" "$PROJECT_DIR" "$FLEETDECK_PORT" > ${JSON.stringify(marker)}; ` +
-            `exec env -u FLEETDECK_SPAWN_CMD FLEETDECK_HOME="$SCRATCH_HOME" FLEETDECK_PORT="$FLEETDECK_PORT" FLEETDECK_TMUX_SOCKET="$FLEETDECK_TMUX_SOCKET" node ${JSON.stringify(FLEETD)}`,
+            `exec env -u FLEETDECK_SPAWN_CMD FLEETDECK_HOME="$SCRATCH_HOME" FLEETDECK_PORT="$FLEETDECK_PORT" FLEETDECK_TMUX_SOCKET="$FLEETDECK_TMUX_SOCKET" ${JSON.stringify(process.execPath)} ${JSON.stringify(FLEETD)}`,
         ],
         {
           env: { ...env, CLONE_SETUP: setupFile },

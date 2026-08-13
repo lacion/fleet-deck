@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 // fleet-watch.ts — F3d-2 asyncRewake watcher, v1.1 any-mail wake (EXPERIMENTAL, shipped on).
 //
 // Spawned by the plugin's Stop command hook with `asyncRewake: true`

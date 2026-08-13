@@ -12,7 +12,7 @@
 // misconfigured or deleted SessionEnd entry, or a shim that dies on exit,
 // would leave a real card live until retention presumes it dead hours later.
 
-import test from 'node:test';
+import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';

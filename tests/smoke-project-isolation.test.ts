@@ -13,7 +13,7 @@
 // or shared tmux server is involved, then assert byte-for-byte that the
 // tracked fixture survives both a full run and an abort-before-setup path.
 
-import { test, type TestContext } from 'node:test';
+import { test, type TestContext } from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createServer } from 'node:http';
@@ -53,14 +53,6 @@ function seedDaemonProofs(
     path.join(scratchHome, 'fleetd.pid'),
     JSON.stringify({ pid: process.pid, port: Number(smokePort) }),
   );
-  t.after(() => {
-    try {
-      process.kill(process.pid, 'SIGUSR1');
-    } catch {
-      /* health server already replaced us */
-    }
-  });
-
   // The daemon check calls `node -e` and fetch()es /health expecting this pid.
   // A shim named `node` re-exports itself as `fleetd.mjs` so the /proc cmdline
   // shape check passes, then execs the real node.
@@ -70,32 +62,55 @@ function seedDaemonProofs(
   chmodSync(path.join(binDir, 'node'), 0o755);
   chmodSync(path.join(binDir, 'fleetd.mjs'), 0o755);
 
-  // The first SIGUSR1 swaps this process for a tiny health server answering
-  // with the recorded pid; the smoke's SIGTERM then closes it and the process
-  // exits, satisfying the liveness poll.
+  // Post-test, this process impersonates the daemon: t.after signals itself, and
+  // the first SIGUSR1 swaps it for a tiny /health server answering with the
+  // recorded pid; the smoke's SIGTERM then closes it and the process exits,
+  // satisfying the liveness poll.
+  //
+  // This is only sound under `node --test`, which runs each test FILE in its own
+  // child process, so "signal, then eventually exit THIS process" stays contained
+  // to this file's worker. `bun test` runs every file in ONE shared process: the
+  // self-signal would swap the whole runner into a health server, and the 30s
+  // fallback `process.exit(0)` would tear the entire run down mid-flight — no
+  // summary, every later file silently lost (it masqueraded as a clean EXIT 0).
+  // Both current tests abort before the liveness poll and the smoke's stubbed
+  // `curl` never reaches this server, so the impersonation asserts nothing; it is
+  // pure post-test scaffolding. Skip it under Bun — the assertions all run either
+  // way and the Node path is byte-for-byte unchanged, exactly like the runner
+  // fork in harness-test.ts.
+  //
   // NOTE: this handler is live ESM — `require()` here threw ReferenceError,
   // and because the signal can arrive after the registering test has ended
   // (slow CI), the throw surfaced as async-activity-after-test in whichever
   // test happened to be current, failing the whole file. createServer is a
   // top-level import now.
-  process.once('SIGUSR1', () => {
-    const server = createServer((req, res) => {
-      if (req.url === '/health') {
-        res.writeHead(200, { 'content-type': 'application/json' });
-        res.end(JSON.stringify({ pid: process.pid, port: Number(smokePort) }));
-      } else {
-        res.writeHead(404);
-        res.end();
+  if (!process.versions.bun) {
+    t.after(() => {
+      try {
+        process.kill(process.pid, 'SIGUSR1');
+      } catch {
+        /* health server already replaced us */
       }
     });
-    server.listen(Number(smokePort), '127.0.0.1');
-    const close = (): void => {
-      server.close(() => process.exit(0));
-    };
-    process.once('SIGUSR1', close);
-    process.once('SIGTERM', close);
-    setTimeout(() => process.exit(0), 30_000).unref();
-  });
+    process.once('SIGUSR1', () => {
+      const server = createServer((req, res) => {
+        if (req.url === '/health') {
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ pid: process.pid, port: Number(smokePort) }));
+        } else {
+          res.writeHead(404);
+          res.end();
+        }
+      });
+      server.listen(Number(smokePort), '127.0.0.1');
+      const close = (): void => {
+        server.close(() => process.exit(0));
+      };
+      process.once('SIGUSR1', close);
+      process.once('SIGTERM', close);
+      setTimeout(() => process.exit(0), 30_000).unref();
+    });
+  }
 }
 
 interface Sandbox {

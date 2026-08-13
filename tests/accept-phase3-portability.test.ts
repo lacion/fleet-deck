@@ -7,7 +7,7 @@
 // portable fallback (gtimeout or Node process supervision) and must not rely
 // on `fuser -k` without a portable alternative.
 
-import test from 'node:test';
+import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';

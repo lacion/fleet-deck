@@ -11,7 +11,7 @@
 //          were unrecoverable and revive() deadlocked on the very-alive pane.
 //   BUG 4  mail silently truncated at 500 chars and told the sender nothing.
 
-import test, { type TestContext } from 'node:test';
+import test, { type TestContext } from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';

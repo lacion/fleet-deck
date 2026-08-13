@@ -12,7 +12,7 @@
 // Enter), and the retention sweep hands back any lease whose deadline passed
 // — so a dead consumer or a daemon restart RE-DELIVERS instead of losing.
 
-import test from 'node:test';
+import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';

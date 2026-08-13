@@ -4,7 +4,7 @@
 // through the daemon's HTTP surface: cache invalidation after git init,
 // transcript append stability/read tiers, and poller scheduling concurrency.
 
-import test, { type TestContext } from 'node:test';
+import test, { type TestContext } from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import fs, { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -165,6 +165,25 @@ test('agents polling is single-flight and backs off the CLI while liveness stays
     ].join('\n'),
   );
 
+  // These three tune the in-process poller for this test only. Save and restore
+  // them: `bun test` shares ONE process across all files, so an unrestored set
+  // leaks into a sibling test's daemon (the CMD would even point at this test's
+  // already-deleted scratch dir). `node --test` forks a child per file and never
+  // saw the leak; this restore is a no-op there and keeps both runtimes green.
+  const prevAgentsEnv = {
+    poll: process.env['FLEETDECK_AGENTS_POLL_MS'],
+    idle: process.env['FLEETDECK_AGENTS_IDLE_POLL_MS'],
+    cmd: process.env['FLEETDECK_AGENTS_CMD'],
+  };
+  t.after(() => {
+    const restore = (key: string, was: string | undefined) => {
+      if (was === undefined) delete process.env[key];
+      else process.env[key] = was;
+    };
+    restore('FLEETDECK_AGENTS_POLL_MS', prevAgentsEnv.poll);
+    restore('FLEETDECK_AGENTS_IDLE_POLL_MS', prevAgentsEnv.idle);
+    restore('FLEETDECK_AGENTS_CMD', prevAgentsEnv.cmd);
+  });
   process.env['FLEETDECK_AGENTS_POLL_MS'] = '100';
   process.env['FLEETDECK_AGENTS_IDLE_POLL_MS'] = '500';
   // FLEETDECK_AGENTS_CMD is whitespace-tokenized and run WITHOUT a shell, so

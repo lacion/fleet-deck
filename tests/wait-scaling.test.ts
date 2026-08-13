@@ -16,7 +16,7 @@
 // reliable channel; the probe exits before the runner starts executing any of
 // the target's registered test bodies, so no daemon churn can wedge it.
 
-import test from 'node:test';
+import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -58,10 +58,17 @@ test('every waitUntil in spawn-repo.test.ts is the scaled shared helper (BUG-176
     FLEETDECK_PROBE_TARGET: TARGET,
   };
   delete probeEnv['NODE_TEST_CONTEXT'];
+  // Runtime-specific launch. Under Node the probe rides `node --test` so its
+  // top-level `test()` registrations are accepted (the probe process.exit()s
+  // before the runner starts any body). Under Bun there is no equivalent
+  // `--test <file>` positional mode: the probe runs as a PLAIN script and the
+  // harness seam turns its imported test() calls into no-ops (see harness-test),
+  // so it reaches the identity check the same way.
+  const probeArgv = process.versions.bun ? [PROBE] : ['--test', PROBE];
   let stdout: string;
   let code: number | undefined = 0;
   try {
-    const done = await execFileP(process.execPath, ['--test', PROBE], {
+    const done = await execFileP(process.execPath, probeArgv, {
       cwd: HERE,
       env: probeEnv,
       maxBuffer: 4 * 1024 * 1024,

@@ -334,6 +334,8 @@ export function runBounded(
         cwd,
         windowsHide: true,
         stdio: [input == null ? 'ignore' : 'pipe', 'pipe', 'pipe'],
+        // Live env, not Bun's startup snapshot (see exec.ts); a no-op under Node.
+        env: process.env,
       });
     } catch (error) {
       resolve({

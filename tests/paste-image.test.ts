@@ -17,7 +17,7 @@
 // contract IS the sniff. Whether Claude can render the pixels is the caller's
 // concern, exercised in live verification, not here.
 
-import test from 'node:test';
+import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import fs from 'node:fs';

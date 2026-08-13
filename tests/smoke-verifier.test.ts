@@ -9,7 +9,7 @@
 // participants. This test runs the extracted verifier body from the script
 // against synthetic final-state.json files, proving the fail-before behavior.
 
-import test, { type TestContext } from 'node:test';
+import test, { type TestContext } from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync } from 'node:fs';

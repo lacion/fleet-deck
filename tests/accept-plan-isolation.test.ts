@@ -17,7 +17,7 @@
 // on EADDRINUSE, and the script must abort WITHOUT a single mutating API call
 // (/api/spawn, /api/questions, /api/plans) reaching the foreign daemon.
 
-import test, { type TestContext } from 'node:test';
+import test, { type TestContext } from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';

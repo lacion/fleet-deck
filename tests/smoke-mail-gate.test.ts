@@ -10,7 +10,7 @@
 // only once A is proven registered and live, and mail only once BOTH exact
 // session ids are. These tests pin the gate.
 
-import test from 'node:test';
+import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';

@@ -21,7 +21,7 @@
 //      (offline + "no longer reported by agents CLI"); reappearance revives.
 //      Hook-sourced cards: SessionEnd stays the only tombstone.
 
-import test from 'node:test';
+import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { spawnSync, execFileSync } from 'node:child_process';
@@ -530,7 +530,13 @@ test("an in-place checkout refreshes an agents-cli card's branch (same repo_id)"
     pid: LIVE_PID,
     cwd: repo.root,
     kind: 'interactive',
-    startedAt: Date.now(),
+    // LIVE_STARTED_AT, not Date.now(): an owned live record's startedAt must be
+    // this process's REAL start (pidOwnedBy tolerates 15s). Under `node --test`
+    // the per-file fork is seconds old so Date.now() happened to match; under
+    // `bun test`'s one shared process, this file runs minutes in, and Date.now()
+    // would miss by the whole run's age — the card would be rejected as a ghost
+    // and never ingest. Every other live card here already uses LIVE_STARTED_AT.
+    startedAt: LIVE_STARTED_AT,
     sessionId: sid,
     name: 'checkout agent',
     status: 'busy',

@@ -4,7 +4,7 @@
 // escapes a literal unit separator as "\\037", which used to make every
 // scoped window lookup return empty even though the pane existed.
 
-import test, { type TestContext } from 'node:test';
+import test, { type TestContext } from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { randomBytes, randomInt, randomUUID } from 'node:crypto';
@@ -72,12 +72,18 @@ function tmuxOk(): boolean {
   }
 }
 
+// env: process.env on both — the socket name resolves against a runtime-mutated
+// TMUX_TMPDIR, which Bun's default env inheritance (a startup snapshot) misses;
+// a no-op under Node. See exec.ts.
 function tmux(socket: string, args: readonly string[]): string {
-  return execFileSync('tmux', ['-L', socket, ...args], { encoding: 'utf8' }).trim();
+  return execFileSync('tmux', ['-L', socket, ...args], {
+    encoding: 'utf8',
+    env: process.env,
+  }).trim();
 }
 
 function tmuxStatus(socket: string, args: readonly string[]): number | null {
-  return spawnSync('tmux', ['-L', socket, ...args], { stdio: 'ignore' }).status;
+  return spawnSync('tmux', ['-L', socket, ...args], { stdio: 'ignore', env: process.env }).status;
 }
 
 function restoreEnv(previous: Map<string, string | undefined>): void {

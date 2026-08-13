@@ -36,19 +36,37 @@ export function rawRequest({
   host = '127.0.0.1',
 }: RawRequestOptions): Promise<RawResponse> {
   return new Promise((resolve, reject) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    // Settle once and always clear the deadline timer, on every exit path, so a
+    // stray timer never outlives the request or double-rejects it.
+    const finish = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      fn();
+    };
     const req = http.request({ host, port, path, method, headers }, (res) => {
       let text = '';
       res.on('data', (chunk: Buffer) => {
         text += chunk.toString();
       });
-      res.on('end', () => {
-        resolve({ status: res.statusCode, text });
-      });
+      res.on('end', () => { finish(() => { resolve({ status: res.statusCode, text }); }); });
     });
-    req.setTimeout(scaleMs(timeout), () =>
-      req.destroy(new Error(`raw ${method} ${path} timed out`)),
+    // node:http's `req.setTimeout(ms, cb)` fires a socket-inactivity callback
+    // under Node, but Bun's node:http compat does not surface it — a hung route
+    // then blocks to the outer CI timeout, the exact stall BUG-162 fixed. An
+    // explicit deadline timer that destroys the request AND rejects behaves
+    // identically on both runtimes.
+    timer = setTimeout(
+      () =>
+        { finish(() => {
+          req.destroy();
+          reject(new Error(`raw ${method} ${path} timed out`));
+        }); },
+      scaleMs(timeout),
     );
-    req.on('error', reject);
+    req.on('error', (e) => { finish(() => { reject(e); }); });
     req.end(body);
   });
 }

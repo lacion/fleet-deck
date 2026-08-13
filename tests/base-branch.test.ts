@@ -9,7 +9,7 @@
 // worktree (first entry of `git worktree list --porcelain`), which names the
 // primary branch whatever it is called.
 
-import test from 'node:test';
+import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';

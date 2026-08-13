@@ -1,7 +1,7 @@
 // tests/audit-hardening.test.ts — regression coverage for the audit's
 // local diagnostic/launcher resource and permission boundaries.
 
-import test, { type TestContext } from 'node:test';
+import test, { type TestContext } from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
@@ -143,7 +143,14 @@ test('fleet-watch stops at its stdin byte ceiling and removes every stream liste
     const removed = [];
     const remove = input.removeListener.bind(input);
     const pause = input.pause.bind(input);
-    input.removeListener = (name, fn) => { removed.push(name); return remove(name, fn); };
+    input.removeListener = (name, fn) => {
+      // Record only the named listeners fleet-watch manages. Under bun, stdin
+      // fires an internal once-listener whose onceWrapper calls removeListener
+      // with an undefined event name (node does not); filtering to strings
+      // ignores that runtime housekeeping without masking any real removal.
+      if (typeof name === 'string') removed.push(name);
+      return remove(name, fn);
+    };
     input.pause = () => {
       fs.writeFileSync(${JSON.stringify(marker)}, JSON.stringify(removed));
       return pause();
@@ -151,10 +158,13 @@ test('fleet-watch stops at its stdin byte ceiling and removes every stream liste
   `,
   );
 
-  const child = spawn(process.execPath, [WATCH], {
+  // fleet-watch is a plain .mjs bundle; inject the stdin-observing preload as a
+  // --require CLI arg, not via NODE_OPTIONS. Both node and bun honor --require on
+  // the command line (bun ignores NODE_OPTIONS=--require entirely), and both
+  // expose the same process.stdin singleton the preload patches.
+  const child = spawn(process.execPath, ['--require', preload, WATCH], {
     env: {
       ...process.env,
-      NODE_OPTIONS: `--require=${preload}`,
       FLEETDECK_HOME: home,
       FLEETDECK_PORT: String(randomPort()),
     },
@@ -191,7 +201,12 @@ test('fleet-watch timeout uses the same listener cleanup and pauses stdin', asyn
     // production five-second timer is the path under test.
     on('error', () => {});
     input.on = (name, fn) => (name === 'end' || name === 'error') ? input : on(name, fn);
-    input.removeListener = (name, fn) => { removed.push(name); return remove(name, fn); };
+    // Filter to string names: bun's stdin housekeeping calls removeListener with
+    // an undefined event name (see the byte-ceiling test for the full rationale).
+    input.removeListener = (name, fn) => {
+      if (typeof name === 'string') removed.push(name);
+      return remove(name, fn);
+    };
     input.pause = () => {
       fs.writeFileSync(${JSON.stringify(marker)}, JSON.stringify({ removed, paused: true }));
       return pause();
@@ -199,10 +214,10 @@ test('fleet-watch timeout uses the same listener cleanup and pauses stdin', asyn
   `,
   );
 
-  const child = spawn(process.execPath, [WATCH], {
+  // --require CLI arg (not NODE_OPTIONS) so the preload loads under bun too.
+  const child = spawn(process.execPath, ['--require', preload, WATCH], {
     env: {
       ...process.env,
-      NODE_OPTIONS: `--require=${preload}`,
       FLEETDECK_HOME: home,
       FLEETDECK_PORT: String(randomPort()),
       FLEETDECK_WATCH_POLL_MS: '50',
@@ -282,10 +297,13 @@ test('SessionStart silently absorbs an asynchronous spawn error', async (t) => {
   `,
   );
 
-  const child = spawn(process.execPath, [SESSIONSTART], {
+  // --require CLI arg (not NODE_OPTIONS): under bun a NODE_OPTIONS=--require
+  // preload is silently ignored, so spawn would NOT be stubbed and the launcher
+  // would spawn a real detached fleetd — leaking a daemon and defeating the
+  // test's whole point. On the command line both runtimes load the stub.
+  const child = spawn(process.execPath, ['--require', preload, SESSIONSTART], {
     env: {
       ...process.env,
-      NODE_OPTIONS: `--require=${preload}`,
       FLEETDECK_HOME: home,
       FLEETDECK_PORT: String(randomPort()),
     },

@@ -4,7 +4,7 @@
 // must survive a process restart. Kill the daemon, start a fresh process
 // against the SAME FLEETDECK_HOME, and confirm /state still has the sessions.
 
-import test from 'node:test';
+import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
