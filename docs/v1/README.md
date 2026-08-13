@@ -16,12 +16,15 @@ Each child doc is a **PRD + tech spec** for one slice of the release. PRD = the 
 | — | **[architecture](./architecture.md)** | The provider seam, canonical events, the strategy object, the DB/runtime seam, migrations — the backbone every pillar rides | Tech spec |
 | F | **[foundations](./foundations.md)** | F1 TypeScript (contracts-first) and F2 Bun single binary | PRD + spec |
 | F | **[ts-migration](./ts-migration.md)** | Companion to F1 — the progressive, file-by-file `.mjs`→`.ts` playbook (recipe, order, restructure) | Tech spec |
-| P1 | **[p1-codex-provider](./p1-codex-provider.md)** | Codex as a first-class *observed* provider | PRD + spec |
+| F | **[foundations-hardening](./foundations-hardening.md)** | The Bun-primary spine — Biome, `bun:sqlite`/Kysely, `Bun.serve`+Hono, Zod, Effect v4 — as a phase **after** the TS migration and **before** the pillars. **Supersedes F2** (Bun becomes the runtime, not an optional binary). | PRD + spec |
+| P1 | **[p1-cc-provider](./p1-cc-provider.md)** | Claude Code as a first-class provider — the observe floor, the reference card, and the Layer-4 strategy the drive tier extends | PRD + spec |
+| P1 | **[p1-codex-provider](./p1-codex-provider.md)** | Codex as a first-class *observed* provider — the Codex floor | PRD + spec |
 | P2 | **[p2-harvest-surface](./p2-harvest-surface.md)** | Diff view, per-turn checkpoints, notes → one batched mail | PRD + spec |
 | P3 | **[p3-issue-pr-spawning](./p3-issue-pr-spawning.md)** | Issue-driven fan-out, point-at-a-PR review, PR-scoped write | PRD + spec |
 | P4 | **[p4-usage-accounts](./p4-usage-accounts.md)** | Usage & rate-limit meters, multi-account pinning | PRD + spec |
 | P5 | **[p5-programmable-fleet](./p5-programmable-fleet.md)** | Waitable completions, the privilege model, the control skill | PRD + spec |
 | P6 | **[p6-unified-views](./p6-unified-views.md)** | Terminal grid, the Slack-style stream, optional chat, permission ladder | PRD + spec |
+| P7 | **[drive + observe](./p7-drive-and-observe.md)** | Driving Claude (Agent SDK) & Codex (app-server) while still observing via their hooks; observe-only demoted to the fail-open floor. Amends rule 1 & 5 | PRD + spec |
 | — | **[validation-and-gates](./validation-and-gates.md)** | Validation proofs, migration story, test strategy, perf bars, platform statement, the security gate | Program spec |
 | ★ | **[design-spec](./design-spec.md)** | The capstone — v1.0 as a finished system + the complete v0.22.4→v1.0 change manifest | Design spec |
 | ★ | **[ui-spec](./ui-spec.md)** | Companion to the capstone — every board surface, control, state, modal, and keyboard path at 1.0 | UI spec |
@@ -50,11 +53,11 @@ v1.0 graduates it into **the command deck for a multi-agent, multi-provider dev 
 
 The five rules hold; the scope they cover grows.
 
-1. **Claude-first → provider-pluggable, still by *observing*.** We add Codex by consuming *its* hooks — not by driving it through an SDK or app-server. We stay in the "observe" corner of *observe / host / mediate*. The membrane widens; it does not become a client.
+1. **Claude-first → provider-pluggable; drive by default, observe as the floor.** We *drive* agents through their native protocol — Claude via the Agent SDK, Codex via `app-server` — **and keep observing them** through their own config-resident hooks, in one session. The hooks still fire, so every card is still pure derivation and the observe thesis holds; what changes is the *default posture* — from watching the tools you run to driving them, still wearing the membrane. Observe-only isn't removed: it drops to the **fail-open floor** a session falls back to when the drive path is unavailable, and the compatibility lane for any runtime with no drive protocol. Codex reaches drive-default after Claude (its hooks stabilize later). This is a substantive change from the original "observe, never drive" rule — see **[P7 — drive + observe](./p7-drive-and-observe.md)**.
 2. **No model calls in the core — preserved.** Even "review this PR with my security skill" means the daemon *spawns an agent* that does the review. The agent is the intelligence; the daemon stays arithmetic, SQL, and git.
 3. **Read-only forge → PR-scoped write, via the user's own CLIs.** We relax the forge stance *just far enough* for the PR workflow, authenticated by the user's own `gh`/`glab`, never a hosted service, never a stored token on the board. Write is a **verb allowlist** with a per-write human confirm and an audit line — or it drops back to read-only rather than slip the release ([P3](./p3-issue-pr-spawning.md)).
 4. **Loopback / no phone-home — preserved.** The chat surface and the activity stream are served by the local board. Remote stays claude.ai-handoff + Tailscale/Coder.
-5. **Plugin, not app — preserved.** A chat view is a board page; the terminal stays the primary, authoritative surface.
+5. **Terminal-authoritative; plugin-vs-app is a post-V1 call.** The terminal stays the primary, authoritative surface — but for a *driven* session that surface is a **live Fleet-Deck-rendered pane of the driven stream** (plans, diffs, the gate inline), not a scraped vendor TUI. A chat view is still a board page. Whether the result ships as a plugin or an app is settled as the **last step after V1 lands**, not now; plugin distribution looks very much still viable (see **[P7](./p7-drive-and-observe.md)**).
 
 **Doctrine, sharpened by the review.** Two things the original vision left implicit and 1.0 must make explicit:
 
@@ -63,18 +66,19 @@ The five rules hold; the scope they cover grows.
 
 ---
 
-## The map — two foundations, six pillars
+## The map — two foundations, seven pillars
 
 | ID | Name | 1.0 commitment | Where the risk is | Cuttable? |
 |----|------|----------------|-------------------|-----------|
 | **F1** | TypeScript, contracts-first | **F1a** contracts module (timeboxed) + **F1b** standing rule: new code TS, convert modules only when a pillar touches them | No `tsc` in repo today; esbuild strips types without checking → CI must add `tsc --noEmit` + runtime boundary validation | F1a no; F1b is a rule |
 | **F2** | Bun single binary + brew | Standalone board server as a compiled binary, *additive* beside Node | Not sqlite (well centralized) — it's `mdns`/dgram, `ws`, tmux control pipes under Bun | **Yes — explicitly** |
-| **P1** | Codex as observed provider | Tier A card (turn-level + shell telemetry), spawn/kill/worktree, checkpoints, usage burn | Codex hooks are **experimental, opt-in, shell-tool-only**; needs a spike gate | Tier B/C yes |
+| **P1** | Provider layer — Claude floor + Codex floor | Claude reference card extracted behind the strategy object (no behavior change); Codex Tier A floor card (turn-level + shell telemetry), spawn/kill/worktree, checkpoints, usage burn | Codex hooks are **experimental, opt-in, shell-tool-only** → Tier C file-chips are an honest floor gap (the drive tier, P7, softens it via `turn/diff`) | Codex Tier C floor-gap yes; floors non-negotiable |
 | **P2** | Harvest surface | Base-ref recording, diff renderer, async per-turn checkpoints, notes → one batched mail | Base ref **is not recorded today** — must land first; checkpoints must run off the hook path | Core no |
 | **P3** | Issue/PR spawning | Issue → parallel agents, point-at-PR review, PR-scoped write (GitHub + GitLab) | Prompt-injection chain; forge writes are new surface | Jira/Linear cut; write→read-only if security slips |
 | **P4** | Usage & accounts | Claude usage meter; Codex burn with first-class "unknown" | Codex `rate_limits: null` upstream; account pinning needs a config-home refactor | Account **pinning** is a stretch |
 | **P5** | Programmable fleet | Waitable completions (T0.1), privilege model, daemon-served skill (T0.2) | Privilege gap is a P0 security item | Skill polish yes; privilege no |
 | **P6** | Unified views | Slack-style stream (new event subsystem), permission-ladder consolidation | Stream is a real subsystem; chat has no in-progress-turn source today | Chat → post-1.0 if needed |
+| **P7** | Drive + observe | `claudeSdk` drive-default (answerable approvals, interrupt, steer, resume, runner-in-a-pane); observe-only kept as fail-open floor; Codex drive tier staged after Claude | Amends rules 1 & 5; rests on hooks-firing-under-SDK (the linchpin); most "app"-shaped surface in 1.0 | Floor non-negotiable (fail-open); Codex drive tier stageable |
 
 A **cross-cutting tidy** rides P6: consolidate the two overlapping permission controls (the four-mode dropdown *and* the separately-armed unsupervised checkbox already both exist) into one legible **four-mode ladder** — Supervised / Auto-accept-edits / Auto / Full-access — mapped onto Claude's `--permission-mode` and Codex's approval×sandbox grid.
 
@@ -82,18 +86,20 @@ A **cross-cutting tidy** rides P6: consolidate the two overlapping permission co
 
 ## Sequencing to 1.0 (revised)
 
+> **Amendment (2026-08-09):** a **[Foundations-Hardening](./foundations-hardening.md)** phase now sits **between the TS migration and step 1 below** — Bun-primary runtime, Biome, `bun:sqlite`/Kysely, `Bun.serve`+Hono, Zod, Effect v4. It **supersedes F2** (formerly step 7, "additive & cuttable"): Bun is now the runtime, proven behind a go/no-go spike, not an optional binary. The pillar order below is unchanged, but F2's old row and the F1/F2 validation proofs are now propagation debt tracked in [foundations-hardening §8](./foundations-hardening.md#8-doctrine-check--and-the-propagation-debt).
+
 The vision's original order (F1 → P1+P4 → P2 → …) fronted a migration with no user-visible value, gated everything on the pillar with the most *external* risk (experimental Codex hooks), and demoted T0.1 completions to fifth after `fleetdeck-future.md` ranked them **first**. The plan of record adopts the review's revised order:
 
-1. **Base-ref recording** (~1 day — data starts accruing immediately) **+ F1a contracts module** (timeboxed, includes the canonical event vocabulary). *F1a and the P1 intake-normalization are the same task — sequence them as one.*
-2. **P2 harvest** (diff route → renderer → async checkpoints → batched notes) **+ P5 T0.1 completions** in parallel — both pure git/SQLite/UI, zero external risk, felt daily. **+ the P1 Codex spike** (one week, answers the Tier-B questions against a pinned Codex version) running alongside.
-3. **P1 Codex provider** (intake normalization + Claude strategy extraction + Codex Tier A), informed by the spike. **+ P4 Claude usage meter** alongside (independent of P1).
+1. **Base-ref recording** (~1 day — data starts accruing immediately) **+ F1a contracts module** (timeboxed, includes the canonical event vocabulary). *F1a and the P1 intake-normalization are the same task — sequence them as one.* **+ the [P7](./p7-drive-and-observe.md) linchpin proof** — confirm Fleet Deck's existing `http` hooks fire from an SDK-driven `query()`. The whole drive default rests on it, so it's proven first and cheaply, off the critical path.
+2. **P2 harvest** (diff route → renderer → async checkpoints → batched notes) **+ P5 T0.1 completions** in parallel — both pure git/SQLite/UI, zero external risk, felt daily.
+3. **P1 provider floors** (intake normalization + Claude strategy extraction + Codex Tier A floor) **+ P7 `claudeSdk` drive-default** layered on the Claude floor (answerable approvals, interrupt, steer, resume, runner-in-a-pane) **+ P4 Claude usage meter** alongside.
 4. **P3 issue/PR** (land `fd/git-auth` first; GitHub → GitLab; injection-hardened; PR-write allowlist) **+ P4 Codex usage**.
 5. **P5 completion**: privilege model (token classes + spawn caps) + T0.2 daemon-served skill.
-6. **P6**: stream (new event subsystem) → chat composer → permission-ladder consolidation.
+6. **P6**: stream (new event subsystem) → chat composer → permission-ladder consolidation **+ P7 `codexAppServer` drive tier** once Codex's hooks stabilize (its floor already shipped in step 3).
 7. **F2 Bun binary + brew** — explicitly cuttable ("1.0 ships without brew if compat drags").
-8. **Security-review gate** (delta audit of the new surface: forge writes, control API, multi-account env), then **cut v1.0**.
+8. **Security-review gate** (delta audit of the new surface: forge writes, control API, multi-account env, **the drive-control surface**), then **cut v1.0**.
 
-**Why the reorder matters:** it puts the highest-value, lowest-risk work (harvest, completions) first and behind nothing; it turns the highest-*external*-risk pillar (Codex) into a spike-gated decision instead of a load-bearing assumption; and it restores consistency with `fleetdeck-future.md`.
+**Why this order:** it puts the highest-value, lowest-risk work (harvest, completions) first and behind nothing; it proves the P7 linchpin cheaply and up front so the drive default rests on a confirmed fact rather than an assumption; it ships Claude's drive tier early while staging Codex's behind its stabilizing hooks (the floor carries Codex until then); and it restores consistency with `fleetdeck-future.md`.
 
 ---
 
@@ -117,7 +123,7 @@ Fleet Deck 1.0 is:
 ## Deferred to post-1.0
 
 - **Design Mode** — liked, but needs an embedded browser bridge we keep out of the core. Post-1.0 as an optional out-of-core helper reusing the screenshot-upload path.
-- **Driving agents via SDK / ACP (the "mediate" model)** — stays out. ACP is the noted enabler *if we ever change our mind*; 1.0 stays in the observe corner.
+- **Driving agents via SDK / app-server (the "mediate" model)** — **no longer deferred.** Earlier drafts said "stays out"; it is now the **default path** — drive+observe is how the fleet runs agents, with observe-only as the fail-open floor — and it is the substance of the amended rule 1 above. See **[P7 — drive + observe](./p7-drive-and-observe.md)**.
 - **Hosted relay / native mobile apps** — rejected on doctrine (loopback).
 - **Remote spawn (agent on another host)** — Coder/LAN covers the need; revisit if insufficient.
 - **Issue trackers beyond forges (Jira/Linear)** — a Jira token is a stored credential; either it rides the exact gateway-token discipline or it waits. **1.0 is GitHub + GitLab only.**

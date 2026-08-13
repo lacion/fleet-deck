@@ -16,6 +16,7 @@
 | **[P4](./p4-usage-accounts.md)** usage | File absent/lagging → **"unknown," never a guessed reset** | **Exposure:** no account credential / config-home on `/state`, argv, or logs |
 | **[P5](./p5-programmable-fleet.md)** fleet | Dead worker → **synthesized `blocked`**, coordinator never hangs | **Authz:** default-config loopback cannot reach spawn-with-`setup_cmd` without an operator token; agent spawns hit the per-hour cap |
 | **[P6](./p6-unified-views.md)** views | Stream/chat is a board page; terminal stays authoritative if it fails | **Doctrine:** no board surface is load-bearing. **Perf:** stream + WS broadcast within budget at 15 sessions |
+| **[P7](./p7-drive-and-observe.md)** drive | Runner / SDK / login down → session **falls back to the observed floor**, full card, fleet stays lit | **Determinism:** driven cards stay pure derivation — the same hooks fire under the SDK (the linchpin), so the daemon never parses a model response to render. **Exposure:** no subscription/OAuth credential in `/state`, argv, or logs; the driver child is confined to its worktree |
 | **[F1/F2](./foundations.md)** | Plugin stays Node (fail-open path untouched); F2 additive only | F1: **`tsc --noEmit` green + runtime boundary validation**. F2: **node×bun CI matrix green**, or F2 cut with a note |
 
 ---
@@ -53,6 +54,7 @@ The suite is the repo's **trust anchor** — [[test-suite-is-trust]]: never quar
 | **P4** | **Unknown-state fixtures** (`rate_limits: null`); a **rollout-tail** test that proves we never slurp |
 | **P5** | **Authz tests** (tokenless spawn-with-`setup_cmd` rejected; per-hour spawn cap); dead-worker synthesis; idempotent ack |
 | **P6** | Stream write-volume test; WS broadcast-pressure test |
+| **P7** | **Linchpin fixture** (an SDK-driven `query()` still POSTs the `http` hooks → identical canonical stream); **floor-fallback** test (kill the runner mid-turn → card degrades to the floor, no dark); a `canUseTool` approval round-trip; interrupt/steer land within the turn |
 
 ---
 
@@ -85,7 +87,8 @@ A **delta audit of the new surface only** ([[fleetdeck-security-standing]] — a
 
 - **forge writes** (P3) — verb allowlist honored, per-write confirm + audit line, **no token leak** into `/state`/argv/logs;
 - **the control API** (P5) — token classes enforced, spawn caps active, the tokenless spawn-with-`setup_cmd` finding closed;
-- **multi-account env** (P4) — config-home per session, **no credential** on `/state`/argv/logs.
+- **multi-account env** (P4) — config-home per session, **no credential** on `/state`/argv/logs;
+- **the drive-control surface** (P7) — approve / interrupt / steer / resume are **operator-gated** like the terminal route; the SDK / app-server child is confined to its session worktree and cannot be steered by a worker token; **no subscription/OAuth credential** leaks into `/state`/argv/logs.
 
 This is **step 8 of the [README sequencing](./README.md#sequencing-to-10-revised)** — the cut is gated on it.
 
@@ -93,4 +96,4 @@ This is **step 8 of the [README sequencing](./README.md#sequencing-to-10-revised
 
 ## The gate, in one line
 
-**No v1.0 cut until:** every pillar's proofs pass; migrations are numbered + transactional under `PRAGMA user_version`; the per-pillar test assets exist and the suite is green on **both** runtimes; the perf budgets hold at 15 sessions; the platform statement matches what CI actually backs; and the security **delta** audit is clean.
+**No v1.0 cut until:** every pillar's proofs pass; migrations are numbered + transactional under `PRAGMA user_version`; the per-pillar test assets exist and the suite is green on **both** runtimes; the perf budgets hold at 15 sessions; the platform statement matches what CI actually backs; every driven session provably **falls back to the observed floor** when its runner drops; and the security **delta** audit is clean (including the drive-control surface).

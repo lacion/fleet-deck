@@ -50,7 +50,7 @@ This is acceptable as a **known same-UID trust-zone residual today** ([[fleetdec
 - **Token-gate `POST /api/spawn`** — at minimum when it carries `setup_cmd` or a bypass mode — add it to the token-gated power routes.
 - **Two token classes:**
   - **worker** — `mail` / `state` / `completions`;
-  - **operator** — `spawn` / `kill` / `arm` — held by humans and by **explicitly-blessed** coordinator sessions only.
+  - **operator** — `spawn` / `kill` / `arm` — **and the [P7](./p7-drive-and-observe.md) drive controls** (approve / interrupt / steer / resume a driven session) — held by humans and by **explicitly-blessed** coordinator sessions only. A worker token can post completions and mail; it can never seize the wheel of a driven peer.
 - **Cap agent-initiated spawns.** `spawnCapability` has **no cap today** (`spawns.mjs:232-236`) — add a **per-hour quota** so a runaway or hijacked coordinator can't fork-bomb the fleet.
 
 ---

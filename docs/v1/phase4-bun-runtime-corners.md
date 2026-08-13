@@ -1,5 +1,12 @@
 # Phase 4 — bun runtime corners: live daemon validation
 
+> **PARTIALLY SUPERSEDED (2026-08, single-runtime decision).** The three corner
+> validations below still hold, but two references are stale: there is no longer a
+> "Node `node --test` lane" as the authoritative gate (node:sqlite is retired —
+> bun is the single authoritative runtime), and the seam file is
+> `scripts/fleetd/sqlite.ts`, not `sqlite.mjs`. Full rewrite tracked under the §8
+> propagation debt.
+
 > Status: **validated, all three corners pass.** The full daemon was booted under
 > **bun 1.3.14** (bun:sqlite channel) in a scoped test env and the three F2 "danger corners"
 > the plan flagged — mDNS multicast, ws upgrade, tmux control-mode — were each exercised

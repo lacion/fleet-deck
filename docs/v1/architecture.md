@@ -1,6 +1,6 @@
 # Architecture — the provider seam and the platform backbone
 
-*Part of [Fleet Deck v1.0](./README.md). This is the shared technical spine that F1, F2, P1, and P4 all ride. Read it before any pillar doc: the seam decision here is the one that makes multi-provider tractable instead of a smear.*
+*Part of [Fleet Deck v1.0](./README.md). This is the shared technical spine that F1, F2, P1, P4, and P7 all ride. Read it before any pillar doc: the seam decision here is the one that makes multi-provider — and multi-provider *drive* ([P7](./p7-drive-and-observe.md)) — tractable instead of a smear.*
 
 ## The one decision that matters: normalize at intake, not in derive
 
@@ -81,15 +81,30 @@ The event stream is only half the coupling. The other half — the piece the vis
 | Method | Claude (extract from existing code) | Codex (implement subset) |
 |--------|-------------------------------------|--------------------------|
 | `spawnArgv(opts)` | today's `claude …` argv | `codex …` argv |
-| `resumeArgv(row)` | `claude --resume` | `codex resume`? (spike, Tier B) |
+| `resumeArgv(row)` | `claude --resume` | `codex resume` |
 | `paneCommandName` | `'claude'` — fixes the hardcoded gates in `mail.mjs:358,402`, `spawns.mjs:1738` | `'codex'` |
 | `transcript{path,lastAssistantText,model}` | fixes the `~/.claude/projects/…` hardcode (`helpers.mjs:25-27`) — **and is the P4 multi-account seam** (same abstraction) | rollout JSONL reader |
 | `livenessPoll?` | `claude agents --json` (`agents-poll.mjs:38`) | pane-only |
-| `needsYouAnswer(kind)→wire` | Claude's answer wire | held-hook response? (spike, Tier B) |
+| `needsYouAnswer(kind)→wire` | Claude's needs-you wire (display on the floor) | display on the floor |
 | `nudgeGate` | trust-dialog regex (`spawns.mjs:319`) | Codex bring-up copy |
 | `usageReader` | `~/.claude` reader (P4) | rollout-tail reader (P4) |
 
-Claude's strategy is **extracted** from existing code (no behavior change). Codex's strategy **implements the Tier A/B subset** and returns `"unsupported"` everywhere else — **cards render exactly what the strategy supports, honestly**. This is the single abstraction that makes both "first-class Codex" and "multi-account config-home pinning" tractable: `transcript{path}` becoming a per-session property is the same refactor P4 needs.
+The table above is each provider's **observe-floor** strategy. Claude's is **extracted** from existing code (no behavior change); Codex's **implements the Tier A floor subset** and returns `"unsupported"` for what it can't honestly derive — **cards render exactly what the active strategy supports, honestly**. This is the single abstraction that makes both "first-class Codex" and "multi-account config-home pinning" tractable: `transcript{path}` becoming a per-session property is the same refactor P4 needs.
+
+### The drive override (Layer 4 + P7)
+
+The strategy object has a second dimension: a provider can be **driven** as well as observed ([P7](./p7-drive-and-observe.md)). Driving does not replace the strategy — it **overrides a handful of its fields** while the Layer-3 intake keeps firing unchanged, so the observed card is byte-identical and the *control* surface is added on top:
+
+| Field | Floor (observe) | Drive override |
+|-------|-----------------|----------------|
+| `spawnArgv` / `resumeArgv` | launch / `--resume` the bare CLI | launch the driver (Claude: Agent SDK `query()`; Codex: `codex app-server` child) and resume via session id / `thread/rollback` |
+| `paneCommandName` | `'claude'` / `'codex'` | the runner's pane command (runner-in-a-pane, [README rule 5](./README.md#the-doctrine-evolved)) |
+| `needsYouAnswer` | display-only | **answerable** — Claude `canUseTool`; Codex `item/{commandExecution,fileChange}/requestApproval` |
+| `transcript` | JSONL reader | SDK session id / app-server stream (partial-message tailing) |
+| `livenessPoll` | CLI poll / pane-only | the driver runtime's own liveness |
+| *(new)* `interrupt` / `steer` | n/a on the floor | Claude `Query.interrupt()` + streaming-input; Codex `turn/interrupt` + mid-turn `turn/start` |
+
+Two driven providers exist: **`claudeSdk`** (drive-default now — [P1 — Claude Code](./p1-cc-provider.md)) and **`codexAppServer`** (staged after Claude, its hooks must stabilize first — [P1 — Codex](./p1-codex-provider.md)). When a driver is down or unavailable, the strategy falls back to its floor with no field overrides — the fail-open path that keeps a broken driver from darking the fleet. See [P7](./p7-drive-and-observe.md) for the full drive design and doctrine.
 
 ### The nine Claude-coupling categories (what the strategy unwinds)
 
@@ -146,7 +161,8 @@ This is small, near-free plumbing, and 1.0 is its natural moment — every new p
 The architecture work is **not** a separate phase. It lands as:
 
 - **F1a** = the contracts module + canonical vocabulary (phase 1, timeboxed);
-- **P1 intake normalization + strategy extraction** = the same task, continued (phase 3, after the spike);
+- **P1 intake normalization + strategy extraction** = the same task, continued (phase 3) — extracts each provider's **observe floor** ([P1 — Claude Code](./p1-cc-provider.md), [P1 — Codex](./p1-codex-provider.md));
+- **the drive override (`claudeSdk` / `codexAppServer`)** = layered on that same strategy object once the floors exist — the [P7](./p7-drive-and-observe.md) work; Claude drive-default first, Codex after its hooks stabilize;
 - **DB seam** = one factory edit, deferred to **F2** (phase 7, cuttable);
 - **migrations** = adopted incrementally as each pillar adds schema, starting with P2's base-ref column in phase 1.
 

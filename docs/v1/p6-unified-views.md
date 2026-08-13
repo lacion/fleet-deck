@@ -53,7 +53,7 @@ So chat gets two honest options for 1.0 — **pick one, and keep it explicitly s
 - **(a) Downscope to a turn-level thread.** Render final assistant text *per turn* plus the outbound mail, as a threaded conversation. Fully feasible from current reads (transcript final-text + mail history). No live tailer. You lose "watch it type"; you keep a readable per-card conversation.
 - **(b) Demote chat to post-1.0.** Ship the stream (Feature 1) as the human-readable surface for 1.0 and defer chat until a live tailer is worth building.
 
-Either way, the terminal remains the **authoritative** surface and the chat view **never becomes load-bearing**. This is the one place we borrow T3 Code's "better than a terminal" instinct — deliberately as an *addition beside* the terminal, not a replacement for it. The moment chat becomes the primary way to drive an agent, we've drifted from plugin toward app.
+Either way, the terminal remains the **authoritative** surface and the chat view **never becomes load-bearing**. This is the one place we borrow T3 Code's "better than a terminal" instinct — deliberately as an *addition beside* the terminal, not a replacement for it. The terminal that stays authoritative for a *driven* session is the **runner-in-a-pane** ([P7](./p7-drive-and-observe.md)), not this chat view: the moment chat displaces that rendered pane as the primary surface, we've drifted from plugin toward app.
 
 **Recommendation:** ship (a) if the turn-level thread lands cheaply on top of the stream's event model; otherwise (b). Do not build the live tailer for 1.0.
 
@@ -79,7 +79,7 @@ So the real work is **consolidation**, not creation: fold two overlapping contro
 - **Plugin, not app — preserved.** The stream and chat are board pages. The terminal stays primary and authoritative; chat is explicitly capped as secondary so it can't become the product.
 - **Loopback / no phone-home — preserved.** Both surfaces are served by the local board over the existing WS/HTTP; no hosted relay.
 - **No model calls in the core — preserved.** The stream is structured events (arithmetic + SQL + a derived view). Chat *projects* reads we already have (transcript final-text + mail); it does not call a model to render.
-- **Observe, not mediate — preserved.** Posting into a channel is mail-to-pane; it does not drive the agent's process.
+- **The stream stays an observe/comms surface, even though the fleet now drives.** Fleet Deck *does* mediate at 1.0 — it drives sessions through their native protocol ([P7](./p7-drive-and-observe.md)) — but that happens through the runner, never by typing in a channel: posting into a stream channel is still mail-to-pane, not a drive action. The observe thesis survives because the driven session's hooks keep firing, so every stream event is still pure derivation.
 
 ---
 

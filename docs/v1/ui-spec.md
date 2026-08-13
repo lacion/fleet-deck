@@ -69,7 +69,7 @@ Basis: `SpawnForm.jsx` (1,204 lines). Fields listed in render order; unlabeled r
 | 3 | Repo shorthand + default org + host (github/gitlab) + transport (https/ssh) + 🗀 | inputs + radiogroups | **(unchanged)** | dual-forge rules as today |
 | 4 | Branch | text | **(unchanged)** | existing-or-new |
 | 5 | repos_dir + 🗀 | text | **(unchanged)** | placeholder from settings |
-| 6 | **Provider** | radiogroup `claude` / `codex` | **(new)** | default `claude`. `codex` disabled with tooltip *"enable the Codex provider in ⚙ Settings → Providers"* until consent is granted (§4.3). Selecting `codex` (a) relabels the model input with Codex model ids, (b) shows the reduced-telemetry note *"Codex cards are turn-level + shell telemetry — see what this means"* (links P1 docs), (c) maps the permission ladder onto Codex's approval×sandbox grid (§3.3), (d) hides Claude-only controls (remote control — Tier C, `/rc` is Claude-gated today) |
+| 6 | **Provider** | radiogroup `claude` / `codex` | **(new)** | default `claude`. `codex` disabled with tooltip *"enable the Codex provider in ⚙ Settings → Providers"* until consent is granted (§4.3). Selecting `codex` (a) relabels the model input with Codex model ids, (b) shows the reduced-telemetry note *"Codex cards are turn-level + shell telemetry — see what this means"* (links P1 docs), (c) maps the permission ladder onto Codex's approval×sandbox grid (§3.3), (d) hides Claude-only controls (remote control — Tier C, `/rc` is Claude-gated today). A `claude` session runs **driven by default** (`claudeSdk`; answerable approvals, interrupt, steer — [P7](./p7-drive-and-observe.md)) and falls back to the observed floor automatically when the runner or login is unavailable — this field picks the **provider**, never the posture |
 | 7 | **Account** | select (default home + configured accounts) | **(new, stretch)** | rendered only when ≥2 accounts configured (§4.4) AND the daemon advertises the `accounts` capability. Default = default home. Tooltip shows the account's tightest window ("resets in 15m"). If the pinning stretch is cut, this select never renders — the form must not show a dead control |
 | 8 | Prompt | textarea, `3x` batch prefix | **(changed)** | batch parsing stays board-side for quick spawn but POSTs the **server-side batch endpoint** when N>1 ([P3](./p3-issue-pr-spawning.md)); placeholder behavior as today. In **issue mode** (§9.1) the prompt is pre-filled with the fenced issue block and the fence is **read-only** (visually distinct, non-editable region) — the operator may add text *around* it, never edit inside it |
 | 9 | Model | text | **(unchanged)** | placeholder switches per provider |
@@ -92,7 +92,7 @@ One segmented control, four modes, one hazard flow:
 | **Auto** | `plan` → then auto (plan hint row as today) | `on-failure` × `workspace-write` | none |
 | **Full access ⚠** | `bypassPermissions` | `never` × `danger-full-access` | reveals the **arm row** — the same two-step, server-side single-use 60 s arm-token flow that exists today (review #15; the form never quietly downgrades, `SpawnForm.jsx:74-77`) |
 
-Cases: selecting away from Full-access disarms (as today, `SpawnForm.jsx:940`); **issue-mode locks the ladder to Supervised** — control disabled with the note *"spawns from issue text are always supervised"* ([P3](./p3-issue-pr-spawning.md) injection boundary); batch spawns apply one ladder mode to every arm; the Codex mapping renders the resolved pair as fine print under the control so the operator sees exactly what will be passed.
+Cases: selecting away from Full-access disarms (as today, `SpawnForm.jsx:940`); **issue-mode locks the ladder to Supervised** — control disabled with the note *"spawns from issue text are always supervised"* ([P3](./p3-issue-pr-spawning.md) injection boundary); batch spawns apply one ladder mode to every arm; the Codex mapping renders the resolved pair as fine print under the control so the operator sees exactly what will be passed. When a session is **driven** ([P7](./p7-drive-and-observe.md)) the same rung sets the runtime's live posture — Claude's SDK `permissionMode`, Codex's app-server approval policy — and each approval it would otherwise gate becomes an **answerable card** (allow · deny · steer) on the board and phone, not a pane-only prompt.
 
 ---
 
@@ -122,9 +122,9 @@ Exactly today's profile, relocated: `gateway_base_url` (URL, validated per `sett
 
 | Control | Spec |
 |---|---|
-| Claude row | always-on; shows hook bundle version + sessions observed |
+| Claude row | always-on; shows hook bundle version + sessions observed + **drive status** ([P7](./p7-drive-and-observe.md)): *SDK runner detected* / *driving N* / *floor-only* (runner or login unavailable → sessions run as the observed floor) |
 | Codex row | tri-state: **not installed** (a single `Enable Codex observation…` button → the consent dialog, §11) / **installed** (shows what was written: `~/.codex/hooks.json` + the `[features].codex_hooks` flag; an **Uninstall** button that reverts both — the uninstall story [P1](./p1-codex-provider.md) requires) / **degraded** (hooks flag off or engine unavailable → *"observing via notify + pane liveness — cards are coarser and labeled"*) |
-| Tier note | static text: what a Codex card shows (turn-level, shell telemetry) and doesn't (file chips, conflict radar) — the honesty is part of the UI |
+| Tier note | static text: what a Codex card shows (turn-level, shell telemetry) and doesn't (file chips, conflict radar) — the honesty is part of the UI. Adds: *"drive — answerable approvals, interrupt, steer — lands for Codex after Claude, once its hooks stabilize; until then Codex sessions are floor-only"* ([P7](./p7-drive-and-observe.md)) |
 
 ### 4.4 Accounts **(stretch — whole tab cut if pinning is cut)**
 
@@ -144,13 +144,25 @@ Density and theme (mirrors of the header toggles) · stream retention display (r
 
 Zones top-to-bottom (basis `SessionCard.jsx`, 427 lines today):
 
-1. **Identity row** — callsign, repo, branch, **(new)** provider badge (`◆ claude` / `◇ codex`), **(new)** `reduced` chip on Codex cards (tooltip explains Tier A telemetry), status pill (`queued → working → verifying → needs-you → idle → offline` — unchanged vocabulary).
+1. **Identity row** — callsign, repo, branch, **(new)** provider badge (`◆ claude` / `◇ codex`), **(new)** `reduced` chip on Codex cards (tooltip explains Tier A telemetry), **(new)** `driven` chip when Fleet Deck is driving the session (tooltip *"approvals are answerable here"*; absent on the observed floor — [P7](./p7-drive-and-observe.md)), status pill (`queued → working → verifying → needs-you → idle → offline` — unchanged vocabulary).
 2. **(new) Usage chip** — per-session burn vs its account's tightest window; `unknown` state renders dimmed, never fabricated.
 3. **Activity zone** — file chips + conflict ripples (Claude only; absent on Codex cards — absence is honest, not broken), sparkline, last line.
 4. **(new) Review strip** ([P2](./p2-harvest-surface.md)) — `Δ diff` button (opens the diff viewer, §7) · checkpoint tick-strip (one tick per passing-Stop turn; hover = turn n + time; click = diff-this-turn) · `↩ revert` on the newest tick — **idle-gated**: disabled while status is working/verifying with tooltip *"agent is mid-turn — revert is available when idle"*; click → revert confirm (§11). Cards with no recorded `base_ref` (adopted/legacy) show `Δ diff (inferred base)` — the [P2](./p2-harvest-surface.md) label, still functional.
-5. **Action row** — watch tick (grid selection), open terminal, mail, kill, rename — **(unchanged)**, all provider-aware via the strategy object (a Codex card's mail button follows the Tier-B spike outcome: enabled, or hidden-with-capability-absence — never rendered-but-broken).
+5. **Action row** — watch tick (grid selection), open terminal, mail, kill, rename — **(unchanged)**, all provider-aware via the strategy object (a Codex card's mail button follows its **floor capability**: enabled, or hidden-with-capability-absence — never rendered-but-broken). On a **driven** session the row also carries the drive controls (§5.1).
 
 Drawer (`Drawer.jsx`): gains the same review strip expanded (full checkpoint list), the turn-level chat thread when P6 chat ships (composer already exists, `Drawer.jsx:423-451`), and the per-card terminal open **(unchanged**, `App.jsx:458`).
+
+### 5.1 Driven-session controls **(new — [P7](./p7-drive-and-observe.md))**
+
+A session Fleet Deck is **driving** (`claudeSdk` now; `codexAppServer` when staged) grows a control strip the observed floor never shows — and every control degrades to *absent* (not broken) the instant the session falls back to the floor:
+
+- **Answerable approvals.** A `needs-you` from a driven session renders as an **actionable card** (allow · deny · always-allow-this-tool · steer) on the card, the inbox, the stream, and the phone — resolved in-protocol (Claude `canUseTool`, Codex `item/{commandExecution,fileChange}/requestApproval`), not by typing in the pane. On the floor the same prompt is display-only and points at the terminal (§6).
+- **⛔ Interrupt.** Stops the current turn without killing the session (Claude `Query.interrupt()`, Codex `turn/interrupt`) — armed only while working/verifying, disabled with *"idle — nothing to interrupt"* otherwise.
+- **Steer.** On a driven session the card/drawer composer **injects mid-turn** (streaming-input / a mid-turn `turn/start`) instead of queuing mail — labeled *"steer (lands this turn)"* to distinguish it from mail-to-pane. On the floor the composer stays mail.
+- **Inline plan / diff review.** `ExitPlanMode` and turn diffs surface as an inline approve/deny review on the card (capture-and-decide), reusing the §7 diff renderer — the plan gate becomes a board control, not a pane keystroke.
+- **Resume without the pane dance.** Revive on a driven session resumes via the SDK session id / `thread/rollback` (the strategy's drive override, [architecture](./architecture.md#the-drive-override-layer-4--p7)) — no `--resume` typed into a pane.
+
+The authoritative live surface for a driven session is the **runner-in-a-pane** (§6, path 8): Fleet Deck's own render of the driven stream, not a scraped vendor TUI. All of this is **capability-gated** (§14): a daemon without the `drive` capability renders today's floor card, never dead controls. Every drive control is **operator-token-gated** — a worker token can watch and mail, never seize the wheel ([P5](./p5-programmable-fleet.md)).
 
 ---
 
@@ -167,6 +179,7 @@ Every path to a live terminal, current and new:
 | 5 | **Stream channel → ⌨** | floating TermWindow | **(new)** | every session-channel header carries `⌨ terminal` + `→ card`; posting in the channel is mail, the terminal is one click when mail isn't enough |
 | 6 | **Needs-you (inbox/stream) → ⌨** | floating TermWindow | **(new)** | a needs-you rendered in the stream or inbox offers open-terminal beside allow/deny — the escalation path when a prompt needs eyes |
 | 7 | **Chat thread → "open terminal"** | floating TermWindow | **(new, ships with P6 chat)** | the chat surface is explicitly secondary; this link is its standing reminder that the terminal is authoritative |
+| 8 | **Driven session → runner-in-a-pane** | rendered **RunnerPane** | **(new — [P7](./p7-drive-and-observe.md))** | a driven session's authoritative surface is Fleet Deck's live render of the SDK / app-server stream (plans, diffs, the gate inline) in a pane — not a scraped vendor TUI; still tmux-generic and termable, and it **falls back to a plain observed pane** when the session drops to the floor |
 
 Transport and authz: all paths ride `/ws/term`, which **remains a token-gated power route even on loopback** (`http.mjs:336-348`) — at 1.0 it requires an **operator** token (a terminal is keystroke-injection; worker tokens don't get it). Codex panes are termable like Claude panes (tmux-generic). Grid and window behaviors (focus, dock, resize) are unchanged.
 
@@ -270,4 +283,4 @@ Deliberately minimal — the inbox answer keys (`y/n/1-9`) work identically on n
 
 ## Definition of done (UI)
 
-Every control in this doc exists with every listed state reachable and demonstrated (including degraded/empty/unauthorized); no new surface renders on a daemon that lacks its capability flag; the gateway profile is gone from the spawn form and lives in Settings; the ladder replaced the dropdown+checkbox pair; every new overlay participates in Esc/suppression; `helpText.js` matches the shipped hotkeys; and every label promised here verbatim (`reduced`, `inferred base`, `unknown`) appears in the shipped UI.
+Every control in this doc exists with every listed state reachable and demonstrated (including degraded/empty/unauthorized); no new surface renders on a daemon that lacks its capability flag; the gateway profile is gone from the spawn form and lives in Settings; the ladder replaced the dropdown+checkbox pair; every new overlay participates in Esc/suppression; `helpText.js` matches the shipped hotkeys; the driven-session control strip (§5.1 — answerable approvals, interrupt, steer, inline plan/diff, runner-in-a-pane) exists on a driven session and is **absent, not broken**, on the observed floor; and every label promised here verbatim (`reduced`, `inferred base`, `unknown`, `driven`) appears in the shipped UI.

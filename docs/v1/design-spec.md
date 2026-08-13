@@ -10,9 +10,13 @@
 
 ```mermaid
 flowchart LR
-  subgraph OBS["Observed agents — their own processes"]
-    CC["Claude Code hooks"]
-    CX["Codex hooks engine (opt-in)"]
+  subgraph AGENTS["Agents — driven by default, observed always"]
+    CC["Claude Code<br/>settings.json hooks"]
+    CX["Codex<br/>hooks engine (opt-in)"]
+  end
+  subgraph DRIVE["Drive tier (P7) — native protocol"]
+    DSDK["claudeSdk — Agent SDK query()<br/>approve · interrupt · steer · resume"]
+    DAPP["codexAppServer — app-server<br/>(after Claude)"]
   end
   subgraph INTAKE["Intake — normalize at the edge"]
     HC["POST /hook/:event"]
@@ -20,42 +24,45 @@ flowchart LR
     CANON["canonical events + schema_version<br/>(contracts/*.ts)"]
   end
   subgraph STRAT["Provider strategy objects"]
-    SC["claude"]
-    SX["codex — Tier A/B; C = unsupported"]
+    SC["claude floor · claudeSdk override"]
+    SX["codex floor · codexAppServer override"]
   end
   subgraph CORE["Deterministic core — provider-free, zero model calls"]
     DB[("SQLite: sessions · spawns(+base_ref) · mail<br/>questions · completions · event-stream · accounts")]
     GIT["git-only: worktrees · per-turn checkpoint refs · diff"]
   end
   subgraph SURF["Board surfaces — loopback"]
-    GRID["Terminal grid"]
+    GRID["Terminal grid (runner-in-a-pane)"]
     STREAM["Slack-style stream<br/>channels · cursors"]
     CARD["Cards: diff · checkpoints · revert · usage"]
-    CHAT["Chat — turn-level, optional"]
+    CHAT["Chat — live turn view when driven"]
   end
   subgraph CTRL["Control API"]
     TOK["token classes: worker · operator"]
     COMP["waitable completions"]
+    ANS["drive: approve · interrupt · steer"]
   end
   FORGE["Forge via the user's own gh/glab<br/>PR-scoped write: allowlist + confirm + audit"]
+  DRIVE -. "drives (falls open to floor)" .-> AGENTS
   CC --> HC --> CANON
   CX --> HX --> CANON
   CANON --> CORE
   STRAT --> CORE
+  CTRL --> DRIVE
   CORE --> SURF
   CTRL --> CORE
   FORGE --> CORE
 ```
 
-Everything left of the core is *observed* — Fleet Deck never owns an agent's process. The core is arithmetic, SQL, and git; it makes **zero model calls**. Everything is served over **loopback**. The plugin-embedded daemon still launches under Claude Code's own Node, still **fail-open**. That is the same membrane it is today — only wider.
+Agents are **driven by default and observed always** (P7): the drive tier owns the session through its native protocol — the Agent SDK for Claude now, the `app-server` for Codex after — while the *same* config-resident hooks keep POSTing to intake, so the core still sees a pure canonical-event stream and every card stays honestly derived. When a driver is down or unavailable the session **falls back to the observe-only floor** (plain CLI in a pane) — the fleet never darks. The core is arithmetic, SQL, and git; it makes **zero model calls** in either role. Everything is served over **loopback**. The plugin-embedded daemon still launches under Claude Code's own Node, still **fail-open**. Same membrane — only now it can also steer, because steering a session and observing it turn out to be the very same hooks firing.
 
 ## 1.2 A day on the deck
 
 The operator opens the board. The **operations strip** shows each session's burn against its tightest reset window, an 80% chip where one is close, fleet-total underneath; two windows read **"unknown"** and say so rather than guess (P4).
 
-They browse GitHub issues from the board and **fan out four workers from four issues** — one worktree each, ticket-named (`repo--fd-PROJ-123-heron`), the issue body prefilled into the prompt **fenced as untrusted** and the spawn forced **supervised**, because issue text is third-party (P3). Two workers are `claude`, two are `codex`; every card is **honestly derived** — the Codex cards are turn-level with shell telemetry, labeled *reduced*, no conflict radar (P1).
+They browse GitHub issues from the board and **fan out four workers from four issues** — one worktree each, ticket-named (`repo--fd-PROJ-123-heron`), the issue body prefilled into the prompt **fenced as untrusted** and the spawn forced **supervised**, because issue text is third-party (P3). Two workers are `claude`, two are `codex`; every card is **honestly derived**. The `claude` workers are **driven** — Fleet Deck owns their sessions through the Agent SDK, so their approvals, interrupts, and steering all work from the board or a phone — while the `codex` workers run on the **observe floor** for now (drive lands after Claude), turn-level with shell telemetry, labeled *reduced*, no conflict radar (P1, P7).
 
-They watch the **Slack-style stream** — a channel per session and per repo — turn boundaries, tool actions, needs-you prompts, and mail rendered as messages (P6). A Codex worker raises a shell-approval `needs-you`; the operator answers **in the channel** (it's just mail to that pane). Meanwhile a **coordinator session** they blessed as an *operator* drives its own sub-fleet through the control API and **blocks on waitable completions** — `curl /orchestration/check?wait` — waking only when a worker posts `done` (P5).
+They watch the **Slack-style stream** — a channel per session and per repo — turn boundaries, tool actions, needs-you prompts, and mail rendered as messages (P6). A driven `claude` worker raises a `needs-you`; the operator **answers it straight from the channel — a real answered approval over the SDK, not a paste into a pane** (P7). A `codex` worker on the floor raises a shell approval too; there the answer is display-plus-mail until Codex earns its drive tier. Meanwhile a **coordinator session** they blessed as an *operator* **drives its own sub-fleet** — answering approvals, interrupting a wrong turn, steering the next one — through the control API, and **blocks on waitable completions** — `curl /orchestration/check?wait` — waking only when a worker posts `done` (P5, P7).
 
 A worker finishes. The operator opens its card: **diff since spawn** against the recorded base ref, and **per-turn checkpoints** — they **revert one bad turn** (the agent is idle, so revert is allowed), annotate three diff lines, and send **one batched mail** back (P2). The worker revises in a single pass.
 
@@ -66,8 +73,9 @@ Account A is fifteen minutes from reset, so they **launch the next batch on acco
 ## 1.3 The seam, composed
 
 - **Intake normalization.** `/hook/:event` (Claude) and `/codex-hook/:event` (Codex) each map their vendor vocabulary onto **canonical events** (`session-start, prompt, tool-start, tool-end, needs-you, turn-end, session-end, file-changed, cwd-changed` + `provider` + `schema_version`) defined in `contracts/`. The state machine consumes canonical events only and no longer knows provider names. Detail: [architecture](./architecture.md).
-- **Provider strategy objects.** The non-event coupling (argv, resume, pane identity, transcript path, liveness, usage reader, nudge gate) lives behind one object per provider. Claude's is extracted from today's code; Codex's implements the Tier A/B subset and returns **"unsupported"** elsewhere, so cards render exactly what the provider can honestly support.
-- **The provider-free core (the membrane).** The SQLite store, callsigns/tickets, worktrees, mail queue + transport, questions, completions, checkpoints, the event-stream, and the board — none of them branch on `provider`. If one ever does, the seam has leaked.
+- **Provider strategy objects.** The non-event coupling (argv, resume, pane identity, transcript path, liveness, usage reader, nudge gate) lives behind one object per provider. Claude's is extracted from today's code; Codex's implements the Tier A **floor** subset and returns **"unsupported"** elsewhere, so cards render exactly what the provider can honestly support.
+- **The drive override (P7).** The same strategy object has a drive dimension: `claudeSdk` (now) and `codexAppServer` (after Claude) override a handful of fields — spawn/resume become the driver, `needsYouAnswer` becomes *answerable*, plus new `interrupt`/`steer` — while Layer-3 intake keeps firing unchanged. Drive is the default a session gets; a down driver falls back to the observe-only floor. Detail: [P7](./p7-drive-and-observe.md), [architecture](./architecture.md#the-drive-override-layer-4--p7).
+- **The provider-free core (the membrane).** The SQLite store, callsigns/tickets, worktrees, mail queue + transport, questions, completions, checkpoints, the event-stream, and the board — none of them branch on `provider`, and none call a model even when a session is driven. If one ever does, the seam has leaked.
 
 ## 1.4 The data model at 1.0
 
@@ -108,22 +116,22 @@ Two token classes replace one flat bearer: **worker** (mail/state/completions/us
 
 > Control-level detail — every button, field, modal, state, and keyboard path, including the changed spawn button, the new ⚙ Settings modal, and the full terminal-access matrix — lives in the **[ui-spec](./ui-spec.md)**. This section is the summary.
 
-- **Terminal grid** — shipped today; unchanged in kind.
-- **Slack-style stream** — a new structured-event subsystem: channel-per-session/repo, read cursors, selective tool events (not a firehose), post-into-channel = mail (P6).
-- **Cards** — gain the review deck: diff-since-spawn, per-turn checkpoints, "what changed this turn," idle-gated revert, line-anchored notes → one batched mail (P2); plus usage chips and per-account bars (P4).
-- **Chat** — optional, explicitly secondary: a **turn-level thread** (final assistant text per turn + outbound mail) — full in-progress rendering is deferred (no live tailer today). The terminal stays authoritative (P6).
-- **Permission ladder** — the two overlapping controls (the `default/acceptEdits/plan/bypassPermissions` dropdown *and* the separately-armed unsupervised checkbox) consolidate into **one four-mode ladder** — Supervised / Auto-accept-edits / Auto / Full-access — mapped across Claude's `--permission-mode` and Codex's approval×sandbox grid (P6).
+- **Terminal grid** — shipped today; unchanged in kind. For a **driven** session the pane is a **runner-in-a-pane** — Fleet Deck renders the live driven stream and it stays authoritative (P7, [README rule 5](./README.md#the-doctrine-evolved)).
+- **Slack-style stream** — a new structured-event subsystem: channel-per-session/repo, read cursors, selective tool events (not a firehose), post-into-channel = mail; for a driven session, posting a reply **steers the turn** rather than queuing paste-mail (P6, P7).
+- **Cards** — gain the review deck: diff-since-spawn, per-turn checkpoints, "what changed this turn," idle-gated revert, line-anchored notes → one batched mail (P2); plus usage chips and per-account bars (P4); plus, for driven sessions, **answerable approvals, interrupt, and steer** on the card itself (P7).
+- **Chat** — optional, explicitly secondary: a **turn-level thread** (final assistant text per turn + outbound mail); **full in-progress rendering rides the drive tier's partial-message stream where a session is driven** (P7's `includePartialMessages`), the deferred-live-tailer of the observe-only past. The terminal stays authoritative (P6).
+- **Permission ladder** — the two overlapping controls (the `default/acceptEdits/plan/bypassPermissions` dropdown *and* the separately-armed unsupervised checkbox) consolidate into **one four-mode ladder** — Supervised / Auto-accept-edits / Auto / Full-access — mapped across Claude's `permissionMode` (driven) / `--permission-mode` (floor) and Codex's approval×sandbox grid (P6, P7).
 - **Types** — the board consumes `contracts/` (killing the `useFleetState.js` comment-contract); `.jsx → .tsx` opportunistically (F1 / [ts-migration](./ts-migration.md)).
 
 ## 1.7 Invariants that still hold
 
-The same five, plus two the review sharpened:
+The five, with #1 amended by P7 and two the review sharpened:
 
-1. **Observe, never mediate** — Codex is added by consuming its hooks, not driving its app-server.
-2. **Zero model calls in the core** — review-a-PR spawns an agent; the daemon stays arithmetic/SQL/git.
+1. **Observe always; drive by default; fall open to observe** (amended — P7, [README rule 1](./README.md#the-doctrine-evolved)). Fleet Deck drives Claude via the Agent SDK now and Codex via the app-server after it — but the *same* config-resident hooks keep firing under drive, so the observe membrane holds and every card stays a pure derivation from canonical events. A down driver falls back to the observe-only floor; the fleet never darks. Driving is a session's process being owned, **not** the daemon calling a model.
+2. **Zero model calls in the core** — review-a-PR spawns an agent; a driven session is a spawned driver child; the daemon stays arithmetic/SQL/git either way.
 3. **Forge write is PR-scoped only** — the user's own `gh`/`glab`, verb allowlist, never a stored token, never the hosting workflow.
 4. **Loopback, no phone-home.**
-5. **Plugin, not app** — the terminal is primary; every view is a board page.
+5. **Terminal-authoritative** — the terminal (a runner-in-a-pane for driven sessions) is primary; every view is a board page. Plugin-vs-app packaging is a post-1.0 call ([README rule 5](./README.md#the-doctrine-evolved)).
 6. **(new) A privilege model, not just the human gate** — token classes + spawn caps.
 7. **(new) An injection boundary** — forge text is untrusted; issue-flow spawns default supervised.
 
@@ -143,9 +151,10 @@ The full delta, by subsystem. "Before" is the tree today; "After" is 1.0.
 - **Distribution:** `npm i -g` / plugin only → **+ optional Bun `--compile` single binary + `brew`** for the standalone board (F2, **explicitly cuttable**; `bun:sqlite` behind the `db.mjs` adapter seam).
 
 ### Providers & hooks
-- **Providers:** Claude only → **Claude + Codex**. New `/codex-hook/:event` intake; Fleet Deck writes Codex telemetry hooks into `~/.codex/hooks.json` and flips `[features].codex_hooks` — **a config mutation gated behind explicit consent + an uninstall story**.
-- **Seam:** Claude-coupling smeared across `events.mjs:273-424` + 8 other categories → **intake normalization + a provider strategy object** (architecture Layers 3–4).
-- **Codex card:** none → **reduced-but-derived** (turn-level + shell telemetry), gated on a **one-week spike** (Tier A commit / B spike / C out). [P1](./p1-codex-provider.md).
+- **Providers:** Claude only → **Claude + Codex**, each in two roles (observe **floor** + **drive** tier). New `/codex-hook/:event` intake; Fleet Deck writes Codex telemetry hooks into `~/.codex/hooks.json` and flips `[features].codex_hooks` — **a config mutation gated behind explicit consent + an uninstall story**.
+- **Seam:** Claude-coupling smeared across `events.mjs:273-424` + 8 other categories → **intake normalization + a provider strategy object** (architecture Layers 3–4), with a **drive override** dimension on the same object.
+- **Drive tier (P7):** none → **drive-default via native protocol** — `claudeSdk` (Agent SDK `query()`: answer approvals, interrupt, steer, resume) now, `codexAppServer` (app-server) after Claude — **with the same hooks still firing**, so observe survives byte-identically. Observe-only (`claude`/`codex`) becomes the automatic **fail-open floor**, not an opt-in. [P7](./p7-drive-and-observe.md).
+- **Codex card:** none → **reduced-but-derived** floor (turn-level + shell telemetry); the **drive tier** (`codexAppServer`) lands **after Claude, not on a spike** (Tier A = floor / B = drive / C = floor-gap). [P1 — Codex](./p1-codex-provider.md), [P1 — Claude Code](./p1-cc-provider.md).
 
 ### Data model & migrations
 - **+ `base_ref`/`base_oid`** on `spawns` (lands **first**, ~1 day). **+ `provider`** + turn counter on `events`. **+ `completions`**, **+ `event_stream`**, **+ `accounts`/`config_home`** tables. **+ `refs/fleetdeck/<callsign>/turn-<n>`** git checkpoint namespace.
@@ -174,7 +183,7 @@ The full delta, by subsystem. "Before" is the tree today; "After" is 1.0.
 - **+ `docs/v1/`** (this set); **+ docs/internals** (glossary, route map, state-machine doc built on the canonical vocabulary).
 
 ### Explicitly *not* changing (so the delta is honest)
-ACP/SDK "mediate" model; hosted relay / native mobile; remote spawn (Coder/LAN stays); Jira/Linear; Design Mode; LLM-written niceties (auto titles). All remain deferred — see [README](./README.md#deferred-to-post-10).
+**ACP as a *generic* mediate protocol** (P7 drives each vendor's native SDK / app-server instead, so a provider-agnostic ACP layer isn't needed); hosted relay / native mobile; remote spawn (Coder/LAN stays); Jira/Linear; Design Mode; LLM-written niceties (auto titles). All remain deferred — see [README](./README.md#deferred-to-post-10). *(The SDK/app-server "drive" model itself is **no longer deferred** — it is [P7](./p7-drive-and-observe.md).)*
 
 ## 2.2 Scope at a glance, per pillar
 
@@ -182,12 +191,13 @@ ACP/SDK "mediate" model; hosted relay / native mobile; remote spawn (Coder/LAN s
 |--------|-----------------|-----------|------------------|-------|----------|
 | **F1** | — | — | `contracts/`, `tsconfig`, tsc lane | contracts import; `.tsx` | F1a no |
 | **F2** | — | — | `db` adapter alias; Bun binary | — | **yes** |
-| **P1** | `provider`, turn counter | `/codex-hook/:event` | `providers/`, `hooks/` normalization | Codex cards | Tier B/C yes |
+| **P1** | `provider`, turn counter | `/codex-hook/:event` | `providers/`, `hooks/` normalization | Codex floor cards | Tier C = honest floor-gap |
 | **P2** | `base_ref`/`base_oid`, checkpoint refs | diff route | checkpoint writer, diff renderer | diff · checkpoints · revert · notes | core no |
 | **P3** | — | forge read/checkout/write | `fd/git-auth`, issue/PR flows | issue browser · PR review | Jira/Linear; write→read-only |
 | **P4** | `accounts`/`config_home` | usage routes | usage readers, CPA queue | usage chips · per-account bars | pinning stretch |
 | **P5** | `completions` | `/orchestration/check`, skill route | completions + waiter, token middleware | — | skill polish yes; privilege no |
 | **P6** | `event_stream` | stream/channel fetch | stream subsystem | stream · chat · ladder | chat → post-1.0 |
+| **P7** | — | drive control (approve · interrupt · steer · resume) | `drivers/` (claudeSdk · codexAppServer), runner-in-a-pane | answerable approvals · interrupt · steer · live turn | Codex tier staged; core no |
 
 ## 2.3 What upgrading from v0.22.4 feels like
 
@@ -198,10 +208,10 @@ ACP/SDK "mediate" model; hosted relay / native mobile; remote spawn (Coder/LAN s
 
 ## 2.4 The order these land in
 
-The manifest ships in the [README's revised sequence](./README.md#sequencing-to-10-revised): (1) base-ref + F1a contracts; (2) P2 harvest + P5 completions + the P1 spike, in parallel; (3) P1 provider + P4 Claude meter; (4) P3 + P4 Codex usage; (5) P5 privilege + served skill; (6) P6 stream→chat→ladder; (7) F2 (cuttable); (8) security-delta gate → **cut v1.0**.
+The manifest ships in the [README's revised sequence](./README.md#sequencing-to-10-revised): (1) base-ref + F1a contracts; (2) P2 harvest + P5 completions, in parallel; (3) P1 provider floors + P4 Claude meter + **P7 `claudeSdk` drive-default** layered on the Claude floor; (4) P3 + P4 Codex usage; (5) P5 privilege + served skill; (6) P6 stream→chat→ladder + **P7 `codexAppServer`** once Codex's hooks stabilize; (7) F2 (cuttable); (8) security-delta gate → **cut v1.0**.
 
 ---
 
 ## Definition of done
 
-Fleet Deck 1.0 is cut when **every Part-2 change has landed or been explicitly cut with a stated reason**, **every Part-1 invariant still holds** (proven per pillar), and the [validation-and-gates](./validation-and-gates.md) checklist passes: per-pillar fail-open/determinism/exposure proofs demonstrated, migrations numbered/transactional, the 124-file suite green on both runtimes, performance bars met, the platform matrix stated, and the security-delta review passed. The result is the system in Part 1 — multi-provider, issue-to-PR, a real review deck, operationally aware, agent-drivable — still a fail-open, loopback, deterministic-core plugin.
+Fleet Deck 1.0 is cut when **every Part-2 change has landed or been explicitly cut with a stated reason**, **every Part-1 invariant still holds** (proven per pillar), and the [validation-and-gates](./validation-and-gates.md) checklist passes: per-pillar fail-open/determinism/exposure proofs demonstrated, migrations numbered/transactional, the 124-file suite green on both runtimes, performance bars met, the platform matrix stated, and the security-delta review passed. The result is the system in Part 1 — multi-provider, issue-to-PR, a real review deck, operationally aware, **drive-default (observe-floor)** — still a fail-open, loopback, deterministic-core plugin.
