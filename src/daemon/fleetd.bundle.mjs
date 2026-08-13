@@ -11429,6 +11429,10 @@ function createTermBridge({
 var MAX_BODY = 1e6;
 var MAX_PASTE_BODY = 14e6;
 var BODY_DRAIN_GRACE_MS = 1e3;
+var BODY_STALL_FIN_S = (() => {
+  const n = Number(process.env["FLEETDECK_STALL_FIN_S"]);
+  return Number.isFinite(n) ? n : 120;
+})();
 var MAX_WS_BUFFER = (() => {
   const n = Number(process.env["FLEETDECK_WS_BUFFER_MAX"]);
   return Number.isFinite(n) ? n : 1 << 20;
@@ -11444,6 +11448,11 @@ var HttpResShim = class {
   _headers = {};
   _ended = false;
   _destroyed = false;
+  // A1: latched true once ANY per-request idle FIN has been armed (the ~4s
+  // refuse FIN via shouldKeepAlive, or the BODY_STALL_FIN_S stalled-drain
+  // bound). boundStalledDrain honours it so the grace-expiry never EXTENDS the
+  // shorter refuse FIN out to the 120s bound.
+  _finArmed = false;
   _closeListeners = [];
   // Declared as fields + assigned in the body, NOT constructor parameter properties:
   // Bun (like any strip-only type loader) erases types but cannot LOWER a parameter
@@ -11502,8 +11511,23 @@ var HttpResShim = class {
     if (!keep) {
       try {
         this._server.timeout(this._request, 1);
+        this._finArmed = true;
       } catch {
       }
+    }
+  }
+  // A1: the body-drain grace expired with the body still un-drained (a stalled
+  // or withheld request body). Arm a bounded per-request idle FIN so the socket
+  // idleTimeout:0 would otherwise keep immortal is reaped. Guarded by _finArmed
+  // so it never overwrites the shorter ~4s refuse FIN (the oversized-refuse path
+  // ALSO stalls its drain — its grace fires before its ~4s FIN — and extending
+  // that to 120s would defeat BUG-125's prompt close).
+  boundStalledDrain() {
+    if (this._finArmed) return;
+    this._finArmed = true;
+    try {
+      this._server.timeout(this._request, BODY_STALL_FIN_S);
+    } catch {
     }
   }
   get writableEnded() {
@@ -12654,7 +12678,10 @@ function createHttp(core2, {
         clearTimeout(timer);
         resolve(res.done);
       };
-      const timer = setTimeout(finish, BODY_DRAIN_GRACE_MS);
+      const timer = setTimeout(() => {
+        res.boundStalledDrain();
+        finish();
+      }, BODY_DRAIN_GRACE_MS);
       timer.unref();
       drained.then(finish, finish);
     });
@@ -12675,7 +12702,12 @@ function createHttp(core2, {
           hostname: host,
           // 0 = never time out an idle connection (node's default): a held hook /
           // watch long-poll response must survive its full wait; the default 10s
-          // idleTimeout would sever it (see bun-serve-runtime-limits).
+          // idleTimeout would sever it (see bun-serve-runtime-limits). Bounded
+          // idle is now enforced per-request instead: the stalled-drain FIN
+          // (HttpResShim.boundStalledDrain, armed only when the body-drain grace
+          // expires with the body un-drained) reaps a withheld-body socket, so
+          // idleTimeout:0 stays a deliberate, documented decision and held
+          // long-polls (whose bodies drain in ms) are exempt by construction.
           idleTimeout: 0,
           maxRequestBodySize: MAX_PASTE_BODY,
           fetch: fetchHandler,

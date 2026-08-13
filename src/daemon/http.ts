@@ -55,6 +55,18 @@ const MAX_PASTE_BODY = 14e6;
 // shouldKeepAlive=false arms, so a refused-then-stalled socket still gets its 413 on
 // the wire before it closes. See bun-serve-runtime-limits and the M-B3 body cap.
 const BODY_DRAIN_GRACE_MS = 1000;
+// A1: when the body-drain grace above expires with the body STILL un-drained
+// (a stalled/withheld request body), arm a per-request idle FIN so the
+// immortal socket is reaped — idleTimeout:0 otherwise lets it live forever.
+// server.timeout is an idle clock, so this value must exceed the worst
+// legitimate upload: a 14 MB /api/paste-image over a DERP-relayed Tailscale
+// link at ~1 Mbps ≈ 115s. 120s carries it with headroom, whether or not
+// uSockets resets the idle clock on inbound body chunks. FLEETDECK_STALL_FIN_S
+// overrides for tests. See boundStalledDrain and bun-serve-runtime-limits.
+const BODY_STALL_FIN_S = (() => {
+  const n = Number(process.env['FLEETDECK_STALL_FIN_S']);
+  return Number.isFinite(n) ? n : 120;
+})();
 // H-R3/R1-2 backpressure: a /ws peer this far behind (dropped wifi, a frozen
 // tab) has stopped draining. We do NOT keep buffering snapshots into its dead
 // socket — but nor do we merely SKIP the send and clear `dirty`, which stranded
@@ -110,6 +122,11 @@ class HttpResShim {
   private _headers: Record<string, string> = {};
   private _ended = false;
   private _destroyed = false;
+  // A1: latched true once ANY per-request idle FIN has been armed (the ~4s
+  // refuse FIN via shouldKeepAlive, or the BODY_STALL_FIN_S stalled-drain
+  // bound). boundStalledDrain honours it so the grace-expiry never EXTENDS the
+  // shorter refuse FIN out to the 120s bound.
+  private _finArmed = false;
   private _closeListeners: ResCloseListener[] = [];
   // Declared as fields + assigned in the body, NOT constructor parameter properties:
   // Bun (like any strip-only type loader) erases types but cannot LOWER a parameter
@@ -174,9 +191,25 @@ class HttpResShim {
     if (!keep) {
       try {
         this._server.timeout(this._request, 1);
+        this._finArmed = true;
       } catch {
         /* server torn down */
       }
+    }
+  }
+  // A1: the body-drain grace expired with the body still un-drained (a stalled
+  // or withheld request body). Arm a bounded per-request idle FIN so the socket
+  // idleTimeout:0 would otherwise keep immortal is reaped. Guarded by _finArmed
+  // so it never overwrites the shorter ~4s refuse FIN (the oversized-refuse path
+  // ALSO stalls its drain — its grace fires before its ~4s FIN — and extending
+  // that to 120s would defeat BUG-125's prompt close).
+  boundStalledDrain(): void {
+    if (this._finArmed) return; // never overwrite the ~4s refuse FIN with the 120s bound
+    this._finArmed = true;
+    try {
+      this._server.timeout(this._request, BODY_STALL_FIN_S);
+    } catch {
+      /* server torn down (stop(true)) — same benign case as shouldKeepAlive */
     }
   }
   get writableEnded(): boolean {
@@ -2243,7 +2276,10 @@ export function createHttp(
         clearTimeout(timer);
         resolve(res.done);
       };
-      const timer = setTimeout(finish, BODY_DRAIN_GRACE_MS);
+      const timer = setTimeout(() => {
+        res.boundStalledDrain();
+        finish();
+      }, BODY_DRAIN_GRACE_MS);
       timer.unref();
       drained.then(finish, finish);
     });
@@ -2274,7 +2310,12 @@ export function createHttp(
           hostname: host,
           // 0 = never time out an idle connection (node's default): a held hook /
           // watch long-poll response must survive its full wait; the default 10s
-          // idleTimeout would sever it (see bun-serve-runtime-limits).
+          // idleTimeout would sever it (see bun-serve-runtime-limits). Bounded
+          // idle is now enforced per-request instead: the stalled-drain FIN
+          // (HttpResShim.boundStalledDrain, armed only when the body-drain grace
+          // expires with the body un-drained) reaps a withheld-body socket, so
+          // idleTimeout:0 stays a deliberate, documented decision and held
+          // long-polls (whose bodies drain in ms) are exempt by construction.
           idleTimeout: 0,
           maxRequestBodySize: MAX_PASTE_BODY,
           fetch: fetchHandler,
