@@ -85,9 +85,11 @@ function describeErr(err) {
   }
   return "unknown error";
 }
-var DDL = `
+var PRAGMAS = `
 PRAGMA busy_timeout = 5000;
 PRAGMA journal_mode = WAL;
+`;
+var SCHEMA = `
 CREATE TABLE IF NOT EXISTS sessions (
   session_id        TEXT PRIMARY KEY,
   callsign          TEXT,
@@ -294,7 +296,7 @@ CREATE TABLE IF NOT EXISTS session_aliases (
 );
 CREATE INDEX IF NOT EXISTS idx_aliases_callsign ON session_aliases(callsign);
 `;
-function migrate(db2) {
+function migrateAdditiveColumns(db2) {
   const cols = db2.prepare("PRAGMA table_info(sessions)").all().map((r) => r.name);
   if (!cols.includes("source")) {
     db2.exec("ALTER TABLE sessions ADD COLUMN source TEXT DEFAULT 'hooks'");
@@ -384,9 +386,57 @@ function migrate(db2) {
   db2.exec(`INSERT OR IGNORE INTO session_aliases (session_id, callsign, at)
     SELECT session_id, prev_callsign, NULL FROM sessions WHERE prev_callsign IS NOT NULL`);
 }
+var MIGRATIONS = [
+  {
+    version: 1,
+    up(db2) {
+      db2.exec(SCHEMA);
+      migrateAdditiveColumns(db2);
+    }
+  }
+];
+var LATEST_USER_VERSION = MIGRATIONS.reduce((max, m) => Math.max(max, m.version), 0);
+function readUserVersion(db2) {
+  const row = db2.prepare("PRAGMA user_version").get();
+  return row ? Number(row.user_version) : 0;
+}
+function migrate(db2, migrations = MIGRATIONS) {
+  let current = readUserVersion(db2);
+  const ordered = [...migrations].sort((a, b) => a.version - b.version);
+  const seen = /* @__PURE__ */ new Set();
+  for (const m of ordered) {
+    if (!Number.isInteger(m.version) || m.version < 1 || m.version > 2147483647) {
+      throw new Error(`invalid migration version: ${String(m.version)}`);
+    }
+    if (seen.has(m.version)) {
+      throw new Error(`duplicate migration version: ${String(m.version)}`);
+    }
+    seen.add(m.version);
+    if (m.version <= current) continue;
+    db2.exec("BEGIN");
+    try {
+      m.up(db2);
+      db2.exec(`PRAGMA user_version = ${m.version}`);
+      db2.exec("COMMIT");
+    } catch (err) {
+      try {
+        db2.exec("ROLLBACK");
+      } catch (rollbackErr) {
+        const msg = rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr);
+        if (!/no transaction is active/i.test(msg)) {
+          throw new Error(`migration ${m.version}: up() failed and ROLLBACK failed: ${msg}`, {
+            cause: err
+          });
+        }
+      }
+      throw err;
+    }
+    current = m.version;
+  }
+}
 function openDb(file, fsImpl = { chmodSync, statSync }) {
   const db2 = openDatabase(file);
-  db2.exec(DDL);
+  db2.exec(PRAGMAS);
   migrate(db2);
   if (file !== ":memory:") {
     try {

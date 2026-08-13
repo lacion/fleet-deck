@@ -2,6 +2,13 @@
 // integers. The SQLite handle comes from ./sqlite.ts, the one guarded seam that
 // picks node:sqlite or bun:sqlite by runtime (the ExperimentalWarning suppression
 // the Node driver needs now lives there); everything below is driver-agnostic.
+//
+// The store is versioned with PRAGMA user_version: openDb() runs the numbered
+// migration ladder below, each migration wrapped in its own transaction. A fresh
+// DB and an existing (unversioned) DB both report user_version 0, so migration #1
+// must — and does — converge both to the same schema with ZERO data loss; a crash
+// partway through any migration rolls the transaction (schema AND version bump)
+// back, so a clean re-run resumes untouched. See the ladder comment for why.
 
 import { chmodSync, statSync } from 'node:fs';
 import { openDatabase, type SqliteHandle } from './sqlite.ts';
@@ -46,9 +53,21 @@ function describeErr(err: unknown): string {
   return 'unknown error';
 }
 
-const DDL = `
+// Connection-level pragmas. These configure the CONNECTION and must run at open
+// time, OUTSIDE any transaction — never inside a migration: journal_mode = WAL
+// cannot even be entered from within a transaction (SQLite would refuse it), and
+// busy_timeout is a per-connection setting, not schema state. openDb() execs
+// these before running the migration ladder.
+const PRAGMAS = `
 PRAGMA busy_timeout = 5000;
 PRAGMA journal_mode = WAL;
+`;
+
+// The full current schema — the body of migration #1. Every statement is
+// idempotent (CREATE ... IF NOT EXISTS): on a fresh DB it builds the whole store;
+// on any pre-existing DB it is a no-op, leaving migrateAdditiveColumns() below to
+// ALTER-in whatever late columns an older on-disk shape is missing.
+const SCHEMA = `
 CREATE TABLE IF NOT EXISTS sessions (
   session_id        TEXT PRIMARY KEY,
   callsign          TEXT,
@@ -276,7 +295,17 @@ CREATE INDEX IF NOT EXISTS idx_aliases_callsign ON session_aliases(callsign);
 // born remote and no URL was persisted, so 0/NULL are truthful backfills.
 // Retention is additive too: archived/expired timestamps preserve all rows
 // for forensics while removing them from live board/delivery queries.
-function migrate(db: SqliteHandle): void {
+//
+// This is the second half of migration #1 (called by its up() right after
+// SCHEMA). It is idempotent by construction — every ALTER is guarded by a
+// table_info probe and the alias backfill is INSERT OR IGNORE — which is exactly
+// why re-running migration #1 over a populated v0 DB loses no data.
+//
+// CAUTION: this helper is frozen along with migration #1. A NEW forward column
+// belongs in a v2 migration appended to the ladder, NOT as another guarded ALTER
+// here — a DB already stamped user_version=1 never re-runs #1, so a column added
+// here would silently never reach it.
+function migrateAdditiveColumns(db: SqliteHandle): void {
   const cols = db
     .prepare<PragmaColumnInfo>('PRAGMA table_info(sessions)')
     .all()
@@ -388,9 +417,10 @@ function migrate(db: SqliteHandle): void {
   // The other half of the DDL above: an existing DB never re-runs CREATE TABLE,
   // so a new column has to arrive here too. NULL is the truthful backfill — no
   // failure detail was ever captured before this shipped. The `spawnCols.length`
-  // guard is mandatory, not stylistic: PRAGMA table_info on a table that does
-  // not exist returns [], and the ALTER would throw on a DB whose spawns table
-  // the DDL is about to create.
+  // guard is now belt-and-suspenders: migration #1 runs SCHEMA before this helper,
+  // so `spawns` always exists by the time we probe — but the guard keeps the
+  // helper self-safe if it is ever driven without SCHEMA (PRAGMA table_info on a
+  // missing table returns [], and the bare ALTER would throw).
   if (spawnCols.length && !spawnCols.includes('fail_detail')) {
     db.exec('ALTER TABLE spawns ADD COLUMN fail_detail TEXT');
   }
@@ -410,9 +440,113 @@ function migrate(db: SqliteHandle): void {
     SELECT session_id, prev_callsign, NULL FROM sessions WHERE prev_callsign IS NOT NULL`);
 }
 
+// ---------------------------------------------------------------------------
+// Versioned migration ladder (PRAGMA user_version)
+//
+// Each migration runs inside its OWN transaction and stamps user_version LAST:
+//   BEGIN; up(db); PRAGMA user_version = <version>; COMMIT   (ROLLBACK on throw)
+// In SQLite both DDL (CREATE/ALTER) and `PRAGMA user_version = N` are
+// transactional, so a crash partway through up() rolls back the partial schema
+// AND leaves user_version untouched — a clean re-run re-attempts that same
+// migration from an unchanged starting point (invariant: crash → rollback →
+// clean re-run). The connection pragmas (busy_timeout, journal_mode = WAL) are
+// deliberately NOT migrations — WAL cannot be entered inside a transaction — so
+// openDb() execs PRAGMAS separately, at open time.
+//
+// THE v0 TRAP: a fresh empty DB and a populated DB written by the OLD unversioned
+// code BOTH report user_version 0 — indistinguishable by version. So migration #1
+// must be safe on both, and it is: its up() is exactly the (SCHEMA then additive
+// backfill) that openDb has always run. On a fresh DB the CREATEs build the store;
+// on an existing v0 DB every CREATE ... IF NOT EXISTS is a no-op, each ALTER is
+// guarded by a table_info probe, and the alias backfill is INSERT OR IGNORE — so
+// nothing is dropped or rewritten (zero data loss). Only after up() succeeds is
+// user_version advanced to 1, so subsequent opens skip #1 entirely.
+export interface Migration {
+  version: number;
+  up(db: SqliteHandle): void;
+}
+
+// The ordered ladder. Version 1 is the entire current schema; keep it a single
+// logical migration until a real FORWARD schema change lands, then append
+// { version: 2, up(db) { ... } } — never edit #1 (DBs already past it will not
+// re-run it). Authored ascending; migrate() re-sorts defensively regardless.
+export const MIGRATIONS: Migration[] = [
+  {
+    version: 1,
+    up(db) {
+      db.exec(SCHEMA);
+      migrateAdditiveColumns(db);
+    },
+  },
+];
+
+// The user_version a fully-migrated DB reports. Derived from the ladder so
+// callers and tests never hard-code the latest number.
+export const LATEST_USER_VERSION = MIGRATIONS.reduce((max, m) => Math.max(max, m.version), 0);
+
+// Read PRAGMA user_version as a plain number; a brand-new or old-unversioned DB
+// reports 0. (user_version is a 32-bit int, but coerce in case a driver ever
+// hands it back as a bigint.)
+export function readUserVersion(db: SqliteHandle): number {
+  const row = db.prepare<{ user_version: number | bigint }>('PRAGMA user_version').get();
+  return row ? Number(row.user_version) : 0;
+}
+
+// Bring `db` up to the latest schema version: run every migration whose version
+// exceeds the current user_version, in ascending order, each in its own
+// transaction (see the ladder comment for the crash-rollback and v0-convergence
+// guarantees). `migrations` is injectable ONLY so tests can drive the transaction
+// machinery with synthetic migrations; production always uses the default ladder.
+export function migrate(db: SqliteHandle, migrations: Migration[] = MIGRATIONS): void {
+  let current = readUserVersion(db);
+  const ordered = [...migrations].sort((a, b) => a.version - b.version);
+  const seen = new Set<number>();
+  for (const m of ordered) {
+    // Versions are code-controlled and interpolated into the PRAGMA below (which
+    // takes no bound parameter), so reject anything that is not a positive int
+    // within SQLite's signed-32-bit user_version range (a larger value would
+    // silently truncate on write).
+    if (!Number.isInteger(m.version) || m.version < 1 || m.version > 0x7fffffff) {
+      throw new Error(`invalid migration version: ${String(m.version)}`);
+    }
+    // A duplicate version silently no-ops the later migration (once current has
+    // passed it, its up() never runs) — a ladder-authoring bug, so fail loud.
+    if (seen.has(m.version)) {
+      throw new Error(`duplicate migration version: ${String(m.version)}`);
+    }
+    seen.add(m.version);
+    if (m.version <= current) continue;
+    db.exec('BEGIN');
+    try {
+      m.up(db);
+      db.exec(`PRAGMA user_version = ${m.version}`);
+      db.exec('COMMIT');
+    } catch (err) {
+      // ROLLBACK undoes the partial up() AND the (uncommitted) version bump. An
+      // engine-level error can auto-rollback the transaction first, after which an
+      // explicit ROLLBACK throws "no transaction is active" (identical message on
+      // bun:sqlite and node:sqlite) — that is the rolled-back state we want, so
+      // swallow ONLY that. Any other ROLLBACK failure means the transaction may
+      // still be open; surface it (with the up() error as cause) rather than hide it.
+      try {
+        db.exec('ROLLBACK');
+      } catch (rollbackErr) {
+        const msg = rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr);
+        if (!/no transaction is active/i.test(msg)) {
+          throw new Error(`migration ${m.version}: up() failed and ROLLBACK failed: ${msg}`, {
+            cause: err,
+          });
+        }
+      }
+      throw err;
+    }
+    current = m.version;
+  }
+}
+
 export function openDb(file: string, fsImpl: DbFsImpl = { chmodSync, statSync }): SqliteHandle {
   const db = openDatabase(file);
-  db.exec(DDL);
+  db.exec(PRAGMAS);
   migrate(db);
   // STATE CONFIDENTIALITY CONTRACT: this DB holds session cwds, callsigns, mail,
   // commands, plan text and raw permission/question payloads — owner-only, like
