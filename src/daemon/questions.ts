@@ -80,7 +80,7 @@
 // deliver its answer any more. The hook side times out non-blockingly.
 
 import type { SqliteHandle } from './sqlite.ts';
-import { asText } from './helpers.ts';
+import { asText, safeParse } from './helpers.ts';
 
 // The durable `questions` row (db.ts schema). create() always writes
 // session_id/kind/status/created_at non-null, so they are typed non-nullable;
@@ -224,15 +224,6 @@ export function resolveHoldMs(
   const stored = Number(fallback?.());
   if (Number.isFinite(stored) && stored > 0) return Math.max(250, Math.min(stored, 650_000));
   return DEFAULT_HOLD_MS;
-}
-
-// eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters -- the generic centralizes the JSON.parse cast in one place so each call site reads `safeParse<Shape>(json)` instead of a bare `as`; it is a single-use param by design
-function safeParse<T = unknown>(json: string | null | undefined): T | null {
-  try {
-    return JSON.parse(json ?? 'null') as T;
-  } catch {
-    return null;
-  }
 }
 
 // Stable, order-independent JSON: the same value always yields the same string

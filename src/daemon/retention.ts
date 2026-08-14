@@ -8,7 +8,7 @@
 // SHELL_RE is a pure helper.
 
 import fs from 'node:fs';
-import { SHELL_RE, NOT_RESUMABLE_END } from './helpers.ts';
+import { SHELL_RE, NOT_RESUMABLE_END, safeParse } from './helpers.ts';
 import { CONFLICT_WINDOW_MS } from './ledger.ts';
 import { pruneRunNonces } from './run-nonce.ts';
 import type { Statements, SessionRow, SpawnRow } from './statements.ts';
@@ -453,12 +453,9 @@ export function createRetention(ctx: RetentionCtx) {
     // A conflict is only news while every session in it can still act on it.
     let conflicts_cleared = 0;
     for (const row of q.allConflicts.all()) {
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(row.sessions_json ?? '[]');
-      } catch {
-        parsed = []; /* corrupt row → drop it */
-      }
+      // safeParse folds a null/absent sessions_json AND a corrupt one to `null`;
+      // the R2-6 guard below drops both to [] just as the old try/catch did.
+      const parsed: unknown = safeParse(row.sessions_json);
       // R2-6: wrong-shape JSON ('null', '{}', a string) parses but a non-array
       // can never be a live argument. Array.isArray narrows unknown → any[], so
       // re-bind to unknown[] and assert each id a string against the alive set.

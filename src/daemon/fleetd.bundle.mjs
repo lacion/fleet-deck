@@ -956,6 +956,13 @@ function asText(value) {
   if (typeof value === "string") return value;
   return String(value);
 }
+function safeParse(json) {
+  try {
+    return JSON.parse(json ?? "null");
+  } catch {
+    return null;
+  }
+}
 var sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 function dropOrphanSurrogate(cut) {
   const last = cut.charCodeAt(cut.length - 1);
@@ -1018,13 +1025,6 @@ function resolveHoldMs(env = process.env, fallback = null) {
   const stored = Number(fallback?.());
   if (Number.isFinite(stored) && stored > 0) return Math.max(250, Math.min(stored, 65e4));
   return DEFAULT_HOLD_MS;
-}
-function safeParse(json) {
-  try {
-    return JSON.parse(json ?? "null");
-  } catch {
-    return null;
-  }
 }
 function stableStringify(v) {
   if (v === null || typeof v !== "object") return JSON.stringify(v ?? null);
@@ -9278,11 +9278,7 @@ function createEvents(ctx) {
       if (!question) return;
       const dup = questions.pendingOf(sid).some((r) => {
         if (r.kind !== "freeform") return false;
-        try {
-          return JSON.parse(r.payload_json ?? "{}").text === question;
-        } catch {
-          return false;
-        }
+        return safeParse(r.payload_json)?.text === question;
       });
       if (dup) return;
       questions.create("freeform", sid, { text: question });
@@ -9655,12 +9651,7 @@ function createSnapshot(ctx) {
       // conflict outlives its participants, and a banner shouting a raw UUID at
       // you is worse than one that says `comet-2d9d`.
       conflicts: q.recentConflicts.all().flatMap((c) => {
-        let ids;
-        try {
-          ids = JSON.parse(c.sessions_json ?? "[]");
-        } catch {
-          return [];
-        }
+        const ids = safeParse(c.sessions_json);
         if (!Array.isArray(ids)) return [];
         const sessionIds = ids;
         return [
@@ -9954,12 +9945,7 @@ function createRetention(ctx) {
     const alive = new Set(q.aliveSessionIds.all().map((r) => r.session_id));
     let conflicts_cleared = 0;
     for (const row of q.allConflicts.all()) {
-      let parsed;
-      try {
-        parsed = JSON.parse(row.sessions_json ?? "[]");
-      } catch {
-        parsed = [];
-      }
+      const parsed = safeParse(row.sessions_json);
       const ids = Array.isArray(parsed) ? parsed : [];
       if (ids.length && ids.every((id) => alive.has(id))) continue;
       conflicts_cleared += Number(q.deleteConflict.run(row.id).changes);

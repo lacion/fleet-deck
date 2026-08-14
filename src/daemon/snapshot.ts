@@ -5,7 +5,7 @@
 // facts (hasWatchWaiter/ownedPaneRow), spawnCapability + spawnState from the
 // spawn module. spawnRowRevivable is a pure helper.
 
-import { spawnRowRevivable, sessionAdoptableNow } from './helpers.ts';
+import { spawnRowRevivable, sessionAdoptableNow, safeParse } from './helpers.ts';
 import { scrubUrlCredentials } from './payload-capture.ts';
 // F1a: the /state + /ws envelope carries the wire schema version so a board on
 // an older build can detect skew. Imported from the shared TS contract (the
@@ -313,12 +313,14 @@ export function createSnapshot(ctx: SnapshotCtx) {
         // M-B4: guarded parse (drop-on-corrupt), matching cleanup(). A single
         // corrupt sessions_json used to throw here and 500 EVERY /state and
         // every broadcast frame — poisoning the whole board off one bad row.
-        let ids: unknown;
-        try {
-          ids = JSON.parse(c.sessions_json ?? '[]');
-        } catch {
-          return [];
-        }
+        // safeParse folds corrupt/absent sessions_json to `null`; the R2-6 guard
+        // below drops it. Corrupt rows drop exactly as the old try/catch did.
+        // One deliberate, writer-unreachable delta: a SQL-NULL sessions_json —
+        // which the old `?? '[]'` turned into a valid empty array and EMITTED as
+        // a zero-session conflict row — now folds to null and is dropped. ledger
+        // .ts only ever writes a populated array, and the json_valid callsign
+        // gate already excludes such rows, so dropping is the consistent choice.
+        const ids: unknown = safeParse(c.sessions_json);
         // R2-6: valid JSON of the WRONG shape ('{}', 'null', '"s"', 42) parses
         // without throwing, but then `ids.map(...)` below throws — reopening the
         // same 500-every-frame hole the guard was meant to close. Require an

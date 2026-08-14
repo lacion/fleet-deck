@@ -14,7 +14,7 @@ import type { RepoIdentityGit } from './repo-identity.ts';
 import { ticketFromBranch } from './tickets.ts';
 import { lastAssistantText } from './transcript.ts';
 import { detectTrailingQuestion } from './questions.ts';
-import { mungeClaudeProjectCwd, userHomeDir } from './helpers.ts';
+import { mungeClaudeProjectCwd, userHomeDir, safeParse } from './helpers.ts';
 import { errMessage } from './errors.ts';
 import type { Statements, SessionRow } from './statements.ts';
 import type { SqliteHandle } from './sqlite.ts';
@@ -825,11 +825,7 @@ export function createEvents(ctx: EventsCtx) {
       // with the same trailing question must not spam the queue)
       const dup = questions.pendingOf(sid).some((r) => {
         if (r.kind !== 'freeform') return false;
-        try {
-          return (JSON.parse(r.payload_json ?? '{}') as { text?: string }).text === question;
-        } catch {
-          return false;
-        }
+        return safeParse<{ text?: string }>(r.payload_json)?.text === question;
       });
       if (dup) return;
       questions.create('freeform', sid, { text: question });

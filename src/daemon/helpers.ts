@@ -494,6 +494,20 @@ export function asText(value: unknown): string {
   return String(value);
 }
 
+// Total JSON reader for untrusted stored/wire payloads: parse or `null`, never
+// throw. `json ?? 'null'` folds a null/absent input into the same `null` a
+// corrupt string yields, so every caller guards exactly one shape. The generic
+// centralizes the parse cast — each call site reads `safeParse<Shape>(json)`
+// instead of a bare `as` — and is a single-use param by design (callers pass
+// the row's payload shape).
+export function safeParse<T = unknown>(json: string | null | undefined): T | null {
+  try {
+    return JSON.parse(json ?? 'null') as T;
+  } catch {
+    return null;
+  }
+}
+
 // A timer promise — `await sleep(ms)`. Backs the SIGTERM death-poll (takeover)
 // and the tmux server-generation drain loops (spawn); injectable call sites
 // still pass their own stub for tests.
