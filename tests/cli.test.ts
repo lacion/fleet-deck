@@ -16,6 +16,7 @@ import test, { after } from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import http from 'node:http';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -89,6 +90,7 @@ const {
   quoteExecArg,
   healthIsOurManagedDaemon,
   healthPidIsOurDaemon,
+  waitForHealth,
 } = await import('../bin/fleetdeck.ts');
 const { parseTmuxVersion, tmuxVersionCapability, tmuxVersionSupported } = await import(
   '../bin/tmux-version.ts'
@@ -971,5 +973,70 @@ test('healthIsOurManagedDaemon: an unmanaged health answer is refused (BUG-081)'
   assert.equal(
     await healthIsOurManagedDaemon(asHealth({ managed: false, pid: process.pid })),
     false,
+  );
+});
+
+// waitForHealth must AWAIT its `expect` predicate. healthIsOurManagedDaemon is
+// async, so an un-awaited call returns a Promise — always truthy — which turned
+// the managed-identity gate on the supervised `service start` path
+// (serviceStart -> waitForHealth({ expect: healthIsOurManagedDaemon })) into a
+// no-op: a foreign/unmanaged responder already owning the port was accepted as
+// "up". This proves the predicate's *resolved* value now decides acceptance.
+test('waitForHealth: awaits an async `expect` predicate — a foreign responder is refused', async (t) => {
+  // A foreign/unmanaged squatter answering /health on the port the CLI probes
+  // (PORT === DEAD_PORT, captured at import). `managed: false` is the real
+  // failure the gate exists to catch — healthIsOurManagedDaemon short-circuits
+  // to false on it without needing takeover.ts.
+  const responder = http.createServer((req, res) => {
+    if (req.url === '/health') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ version: '0.0.0-foreign', managed: false, pid: 424242 }));
+    } else {
+      res.writeHead(404);
+      res.end();
+    }
+  });
+  await new Promise<void>((resolve) => {
+    responder.listen(DEAD_PORT, '127.0.0.1', resolve);
+  });
+  t.after(
+    () =>
+      new Promise<void>((resolve) => {
+        responder.close(() => {
+          resolve();
+        });
+      }),
+  );
+
+  // Sanity: with no predicate, the responder is seen (proves the probe reaches it).
+  // everyMs doubles as health()'s AbortSignal.timeout, so keep it comfortably above
+  // a localhost round trip (50ms) — the two truthy assertions below fail if every
+  // probe times out, and 20ms was the tightest margin in the file on a busy box.
+  assert.ok(
+    await waitForHealth({ tries: 3, everyMs: 50 }),
+    'the foreign responder answers /health',
+  );
+
+  // The core regression: an async predicate resolving FALSE must NOT satisfy the
+  // wait. Pre-fix, `expect(h)` was an un-awaited (truthy) Promise and this
+  // returned the health on the first probe.
+  assert.equal(
+    await waitForHealth({ tries: 3, everyMs: 50, expect: () => Promise.resolve(false) }),
+    null,
+    'an async predicate resolving false must not be treated as truthy',
+  );
+
+  // Symmetric proof the await threads the resolved value through: TRUE accepts.
+  assert.ok(
+    await waitForHealth({ tries: 3, everyMs: 50, expect: () => Promise.resolve(true) }),
+    'an async predicate resolving true returns the health',
+  );
+
+  // End-to-end with the real gate: the exact predicate serviceStart passes now
+  // rejects the unmanaged squatter, so the wait times out to null.
+  assert.equal(
+    await waitForHealth({ tries: 3, everyMs: 50, expect: healthIsOurManagedDaemon }),
+    null,
+    'healthIsOurManagedDaemon refuses the unmanaged responder end-to-end',
   );
 });

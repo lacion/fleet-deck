@@ -409,7 +409,7 @@ async function waitForHealth({
   for (let i = 0; i < tries; i += 1) {
     await new Promise((r) => setTimeout(r, everyMs));
     const h = await health({ timeout: everyMs });
-    if (h && (!expect || expect(h))) return h;
+    if (h && (!expect || await expect(h))) return h;
   }
   return null;
 }
@@ -665,5 +665,6 @@ export {
   unitArg,
   unitEnvFilePath,
   unitEscape,
+  waitForHealth,
   writeEnvFile
 };

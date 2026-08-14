@@ -48,6 +48,33 @@ Format:
 
 <!-- entries appended below as modules convert -->
 
+### bin/fleetdeck.ts — FOLLOW-UP FIX of "THE LATENT BUG": `waitForHealth` now awaits its async `expect` predicate, restoring the managed-daemon gate on supervised `service start`   [BUG — fixed]
+- **What:** the follow-up the migration explicitly handed off (see the "bin/fleetdeck.ts + bin/tmux-version.ts"
+  entry below, THE LATENT BUG). `waitForHealth` tested its `expect` predicate **un-awaited**
+  (`bin/fleetdeck.ts:717`, `if (h && (!expect || expect(h))) return h;`), and its sole `expect`-passing
+  caller — `serviceStart()`'s supervised (no-systemd) branch, `:792`,
+  `waitForHealth({ expect: healthIsOurManagedDaemon })` — passes an **async** predicate
+  (`healthIsOurManagedDaemon` returns `Promise<boolean>` because it dynamic-imports takeover's
+  `verifyDaemonPid`). An un-awaited Promise is **always truthy**, so the managed-identity gate was a
+  no-op: any non-null `/health` answer satisfied it, and a foreign/unmanaged responder already owning
+  the port made supervised `service start` print "✓ up" for a service that does not exist. The migration
+  reproduced this byte-for-byte from the `.mjs` and deliberately deferred the fix (no behavior move inside
+  a type conversion), typing the param `(h: Health) => unknown` to stay honest without masking the finding.
+- **Why it's real:** a genuine latent defect on the supervised path — it mis-reports success for a squatter
+  and defeats the `healthIsOurManagedDaemon` gate written to prevent exactly that (contract comment at
+  `:722–730`). Now that the conversion has landed, the fix is its own reviewed change, not smuggled into a migration.
+- **Fix:** awaited the predicate and typed it as the log prescribed —
+  `expect?: (h: Health) => boolean | Promise<boolean>` and
+  `if (h && (!expect || (await expect(h)))) return h;` (`bin/fleetdeck.ts:705–725`). Behavior now: a foreign
+  responder is refused, `waitForHealth` times out to `null`, and `service start` reports the intended
+  "✗ no MANAGED daemon for this FLEETDECK_HOME" + squatter diagnostic. The two no-predicate callers
+  (`:742`, `:762`) are unaffected. Exported `waitForHealth` from the tests-only contract block and added a
+  regression test (`tests/cli.test.ts`) that stands up a real `managed:false` responder on the probed port
+  and asserts: async-`false` predicate → `null`, async-`true` → the health, and the real
+  `healthIsOurManagedDaemon` → `null`. **Proven to bite:** with the `await` removed the new test fails
+  (returns the foreign `{managed:false}` body vs. expected `null`). `bin/fleetdeck.mjs` regenerated
+  (`bun run bundle:bin`, CI drift gate). tsc + biome clean; `cli.test.ts` + `cli-serve-paths.test.ts` 50/0.
+
 ### spawn-setup.test.ts / retention.ts — BUG-TMUXNULL: a `null as unknown as CoreTmuxAdapter` cast defeated createCore's tmux default; boot retentionSweep dereferenced null   [BUG]
 - **What:** the full serialized suite stayed green (124/124) but `tests/spawn-setup.test.ts`'s
   `setRepoSetupEntry` case emitted a swallowed stderr line:

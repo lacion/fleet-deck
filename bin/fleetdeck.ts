@@ -709,12 +709,17 @@ async function waitForHealth({
 }: {
   tries?: number;
   everyMs?: number;
-  expect?: (h: Health) => unknown;
+  expect?: (h: Health) => boolean | Promise<boolean>;
 } = {}): Promise<Health | null> {
   for (let i = 0; i < tries; i += 1) {
     await new Promise((r) => setTimeout(r, everyMs));
     const h = await health({ timeout: everyMs });
-    if (h && (!expect || expect(h))) return h;
+    // AWAIT the predicate. healthIsOurManagedDaemon is async (it dynamic-imports
+    // takeover's verifyDaemonPid), and an un-awaited Promise is ALWAYS truthy —
+    // which silently turned the managed-identity gate into a no-op on the
+    // supervised `service start` path, so a foreign/unmanaged responder already
+    // owning the port was accepted as "up". Awaiting restores the gate.
+    if (h && (!expect || (await expect(h)))) return h;
   }
   return null;
 }
@@ -1023,6 +1028,7 @@ export {
   argvIsOurSupervisor,
   healthPidIsOurDaemon,
   healthIsOurManagedDaemon,
+  waitForHealth,
   serviceInstall,
   serviceStart,
   UNIT,
