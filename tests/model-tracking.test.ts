@@ -34,7 +34,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { startDaemon, type DaemonHandle } from './helpers/daemon.ts';
-import { getJson, postHook } from './helpers/http.ts';
+import { postHook } from './helpers/http.ts';
 import { getState } from './helpers/state.ts';
 import { loadFixture } from './helpers/fixtures.ts';
 import {
@@ -61,7 +61,7 @@ async function modelOf(daemon: DaemonHandle, sid: string) {
 }
 
 async function tickerOf(daemon: DaemonHandle) {
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as { ticker?: TickerEntry[] };
+  const state = await getState<{ ticker?: TickerEntry[] }>(daemon.baseUrl);
   return (state.ticker ?? []).map((t) => t.msg);
 }
 

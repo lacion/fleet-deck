@@ -297,8 +297,8 @@ test('repo_setup validates, persists, and rides settings broadcasts', async (t) 
   const saved = await postJson(`${first.baseUrl}/api/settings`, { repo_setup: value });
   assert.equal(saved.status, 200);
   assert.deepEqual((saved.json as SettingsResponse).settings.repo_setup, value);
-  const state = await getJson(`${first.baseUrl}/state`);
-  assert.deepEqual((state.json as SettingsResponse).settings.repo_setup, value);
+  const state = await getState<SettingsResponse>(first.baseUrl);
+  assert.deepEqual(state.settings.repo_setup, value);
 
   for (const body of [
     { repo_setup: [] },
@@ -344,8 +344,8 @@ test('repo_setup keeps a legitimate __proto__ repo entry through a raw JSON body
   assert.equal(Object.keys(saved.settings.repo_setup)[0], '__proto__');
   assert.equal(saved.settings.repo_setup['__proto__'], 'echo setup');
 
-  const state = await getJson(`${daemon.baseUrl}/state`);
-  assert.equal((state.json as SettingsResponse).settings.repo_setup['__proto__'], 'echo setup');
+  const state = await getState<SettingsResponse>(daemon.baseUrl);
+  assert.equal(state.settings.repo_setup['__proto__'], 'echo setup');
 
   const restored = await getJson(`${daemon.baseUrl}/api/settings`);
   assert.equal(

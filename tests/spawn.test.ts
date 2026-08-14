@@ -273,8 +273,7 @@ test('capability: FLEETDECK_SPAWN=off reports available:false on /health and /st
   assert.ok(healthSpawn, '/health should carry a spawn capability object even when disabled');
   assert.equal(healthSpawn.available, false, 'FLEETDECK_SPAWN=off must report available:false');
 
-  const state = await getJson(`${daemon.baseUrl}/state`);
-  const stateSpawn = (state.json as CapabilityCarrier | null)?.spawn;
+  const stateSpawn = (await getState<CapabilityCarrier | null>(daemon.baseUrl))?.spawn;
   assert.ok(stateSpawn);
   assert.equal(stateSpawn.available, false);
 

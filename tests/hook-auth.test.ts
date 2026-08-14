@@ -231,9 +231,7 @@ server.listen(PORT, '127.0.0.1');
   );
   const q = await waitUntil(
     async () => {
-      const state = (await getJson(`${daemon.baseUrl}/state`)).json as {
-        questions?: QuestionEntry[];
-      };
+      const state = await getState<{ questions?: QuestionEntry[] }>(daemon.baseUrl);
       return (state.questions ?? []).find(
         (x) => x.session_id === victim && x.kind === 'permission',
       );

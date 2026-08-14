@@ -28,7 +28,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { startDaemon, type DaemonHandle } from './helpers/daemon.ts';
-import { postHook, postJson, getJson, type JsonResponse } from './helpers/http.ts';
+import { postHook, postJson, type JsonResponse } from './helpers/http.ts';
+import { getState } from './helpers/state.ts';
 import { loadFixture } from './helpers/fixtures.ts';
 import { makeRepoWithWorktree } from './helpers/gitrepo.ts';
 
@@ -95,11 +96,8 @@ function findSession(state: StateResponse, sid: string): SessionCard | undefined
 function animalOf(callsign: string): string | undefined {
   return callsign.split('-')[0]; // animal = text before the FIRST hyphen
 }
-async function getState(daemon: DaemonHandle): Promise<StateResponse> {
-  return (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
-}
 async function getCard(daemon: DaemonHandle, sid: string): Promise<SessionCard> {
-  const card = findSession(await getState(daemon), sid);
+  const card = findSession(await getState<StateResponse>(daemon.baseUrl), sid);
   assert(card, `no /state card for session ${sid}`);
   return card;
 }
@@ -154,7 +152,7 @@ test('birth on a ticket branch → animal-first ticketed callsign, brief announc
   assert.equal(card.ticket_source, 'branch', 'the ticket source is the branch');
   assert.equal(card.prev_callsign ?? null, null, 'birth naming is not a rename — no prev_callsign');
 
-  const state = await getState(daemon);
+  const state = await getState<StateResponse>(daemon.baseUrl);
   const joined = state.ticker.filter((tk) => tk.msg === `${callsign} joined the fleet`);
   assert.equal(joined.length, 1, 'exactly one "joined the fleet" tick at birth');
 });
@@ -265,7 +263,7 @@ test('rename-once: a ticketless session renamed by a ticket-branch event; a late
     'prev_callsign becomes the birth callsign on the first rename',
   );
 
-  const afterRename = await getState(daemon);
+  const afterRename = await getState<StateResponse>(daemon.baseUrl);
   assert.ok(
     afterRename.ticker.some((tk) => tk.msg.includes(birthCallsign) && tk.msg.includes(renamed)),
     'a single ticker line names BOTH the old and the new callsign',
@@ -437,7 +435,7 @@ test('manual ticket: an invalid key or an unknown target is refused loudly and n
   assert.equal(card.ticket ?? null, null);
 
   // …and none of it fell through to the orchestrator-note path.
-  const state = await getState(daemon);
+  const state = await getState<StateResponse>(daemon.baseUrl);
   assert.ok(
     !state.ticker.some((tk) => /orchestrator note/i.test(tk.msg)),
     'a malformed/failed ticket command must NEVER become a note',
@@ -752,7 +750,7 @@ test('migration: a pre-0.6.0 fleetd.db gains the ticket columns; old rows read t
   });
 
   // The old rows survive the migration and read ticket:null.
-  const state = await getState(daemon);
+  const state = await getState<StateResponse>(daemon.baseUrl);
   const c1 = findSession(state, sid1);
   const c2 = findSession(state, sid2);
   assert.ok(c1 && c2, 'both seeded 0.5.0 rows survive the migration and appear in /state');
@@ -773,7 +771,7 @@ test('migration: a pre-0.6.0 fleetd.db gains the ticket columns; old rows read t
   assert.equal(body.ok, true, 'the ticket command succeeds on a migrated 0.5.0 row');
   assert.equal(body.ticket, 'PROJ-7');
 
-  const after = findSession(await getState(daemon), sid1);
+  const after = findSession(await getState<StateResponse>(daemon.baseUrl), sid1);
   assert(after);
   assert.equal(after.ticket, 'PROJ-7');
   assert.equal(after.ticket_source, 'manual');

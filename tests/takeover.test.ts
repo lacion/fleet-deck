@@ -528,9 +528,7 @@ test('a cold-boot SessionStart hook rereads the minted token and registers the f
   );
   await waitForHealth(`http://127.0.0.1:${port}`, 8000);
 
-  const state = (await getJson(`http://127.0.0.1:${port}/state`)).json as {
-    sessions?: SessionView[];
-  };
+  const state = await getState<{ sessions?: SessionView[] }>(`http://127.0.0.1:${port}`);
   assert.ok(
     state.sessions?.some((session) => session.session_id === sid),
     'the birth SessionStart must authenticate after cold boot and create the first card',
@@ -591,7 +589,7 @@ test('a newer hook replaces an older daemon: old exits 0, new owns the same port
   assert.notEqual(health.pid, oldPid, 'the replacement is a different process');
 
   // State survived the handoff (same FLEETDECK_HOME, SQLite/WAL).
-  const state = (await getJson(`http://127.0.0.1:${port}/state`)).json as StateView;
+  const state = await getState<StateView>(`http://127.0.0.1:${port}`);
   assert.ok(
     state.sessions.find((s) => s.session_id === seededSid),
     'the pre-seeded session survived the version takeover',
