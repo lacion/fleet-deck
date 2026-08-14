@@ -30,15 +30,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-
-// A `catch` binding is `unknown` under strict; the process/fs calls below throw
-// Error objects carrying an optional string `code` (ESRCH, EPERM, ENOENT).
-// Narrow to read it without an `any`.
-function errnoCode(e: unknown): string | undefined {
-  return e instanceof Error && typeof (e as NodeJS.ErrnoException).code === 'string'
-    ? (e as NodeJS.ErrnoException).code
-    : undefined;
-}
+import { errCode } from './errors.ts';
 
 // The HOME ownership lock record: the daemon's pid and (post-0.15) the port it
 // bound. `port` is null for a pre-port pidfile that held a bare PID.
@@ -78,7 +70,7 @@ function pidIsLive(pid: number): boolean {
   } catch (err) {
     // EPERM means the process exists but belongs to another user. Treat that as
     // live: opening its database would be unsafe even though we cannot signal it.
-    return errnoCode(err) !== 'ESRCH';
+    return errCode(err) !== 'ESRCH';
   }
 }
 
@@ -112,7 +104,7 @@ function livePidLooksLikeFleetd(pid: number): boolean {
     // WHY ENOENT is decisive: the PID died after kill(0), so it no longer owns
     // HOME. Permission and transient I/O failures are not decisive; retaining
     // the lock is safer than opening a live daemon's SQLite database twice.
-    return errnoCode(err) !== 'ENOENT';
+    return errCode(err) !== 'ENOENT';
   }
 }
 
@@ -295,7 +287,7 @@ export async function terminateDaemon(
     process.kill(pid, 'SIGTERM');
   } catch (err) {
     // ESRCH: already gone — that IS a successful handoff (port/pidfile free).
-    if (errnoCode(err) === 'ESRCH') return true;
+    if (errCode(err) === 'ESRCH') return true;
     // EPERM or anything else: not our process to end. Report not-dead so the
     // caller fails open instead of assuming a clean takeover.
     return false;

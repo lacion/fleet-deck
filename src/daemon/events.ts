@@ -15,6 +15,7 @@ import { ticketFromBranch } from './tickets.ts';
 import { lastAssistantText } from './transcript.ts';
 import { detectTrailingQuestion } from './questions.ts';
 import { mungeClaudeProjectCwd, userHomeDir } from './helpers.ts';
+import { errMessage } from './errors.ts';
 import type { Statements, SessionRow } from './statements.ts';
 import type { SqliteHandle } from './sqlite.ts';
 
@@ -126,13 +127,6 @@ interface EventsCtx {
     source: string;
   }) => void;
   settleTerminalPlans: (sid: string) => void;
-}
-
-// useUnknownInCatchVariables: the plan-capture and deferred-adopt catch clauses
-// receive `unknown`; this is the same helper shape as settings.ts / repos.ts /
-// mdns.ts. Preserves the original `err.message || err` intent.
-function errMessage(err: unknown): string {
-  return err instanceof Error && err.message ? err.message : String(err);
 }
 
 const EDIT_TOOLS = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'];

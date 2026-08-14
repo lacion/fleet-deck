@@ -36,6 +36,17 @@ var SPAWN_ENV_VARS = ["FLEETDECK_SETUP_CMD"];
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+
+// src/daemon/errors.ts
+function errCode(err) {
+  if (typeof err === "object" && err !== null) {
+    const code = err["code"];
+    if (typeof code === "string") return code;
+  }
+  return void 0;
+}
+
+// src/daemon/run-nonce.ts
 var isPid = (v) => typeof v === "number" && Number.isInteger(v) && v > 0;
 function claudeAncestor(startPid) {
   let pid = startPid;
@@ -88,9 +99,6 @@ function runNonce(home, env = process.env, ppid = process.ppid) {
 // src/daemon/takeover.ts
 import fs2 from "node:fs";
 import path2 from "node:path";
-function errnoCode(e) {
-  return e instanceof Error && typeof e.code === "string" ? e.code : void 0;
-}
 function pidRecord(text) {
   try {
     const parsed = JSON.parse(text);
@@ -113,7 +121,7 @@ function pidIsLive(pid) {
     process.kill(pid, 0);
     return true;
   } catch (err) {
-    return errnoCode(err) !== "ESRCH";
+    return errCode(err) !== "ESRCH";
   }
 }
 function livePidLooksLikeFleetd(pid) {
@@ -127,7 +135,7 @@ function livePidLooksLikeFleetd(pid) {
     );
     return runtimeLike && fleetdScript;
   } catch (err) {
-    return errnoCode(err) !== "ENOENT";
+    return errCode(err) !== "ENOENT";
   }
 }
 function parseSemver(input) {
@@ -212,7 +220,7 @@ async function terminateDaemon(pid, {
   try {
     process.kill(pid, "SIGTERM");
   } catch (err) {
-    if (errnoCode(err) === "ESRCH") return true;
+    if (errCode(err) === "ESRCH") return true;
     return false;
   }
   const stepMs = 100;

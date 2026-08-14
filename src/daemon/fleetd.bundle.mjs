@@ -68,7 +68,7 @@ function openDatabase(file) {
   return makeHandle(file);
 }
 
-// src/daemon/db.ts
+// src/daemon/errors.ts
 function errCode(err) {
   if (typeof err === "object" && err !== null) {
     const code = err["code"];
@@ -76,15 +76,27 @@ function errCode(err) {
   }
   return void 0;
 }
-function describeErr(err) {
+function errText(err, fallback) {
   const code = errCode(err);
   if (code) return code;
   if (typeof err === "object" && err !== null) {
     const message = err["message"];
     if (typeof message === "string" && message) return message;
   }
-  return "unknown error";
+  return fallback ?? String(err);
 }
+function errMessage(err) {
+  return err instanceof Error && err.message ? err.message : String(err);
+}
+function errStatus(err) {
+  if (typeof err === "object" && err !== null && "status" in err) {
+    const status = err.status;
+    if (typeof status === "number") return status;
+  }
+  return void 0;
+}
+
+// src/daemon/db.ts
 var PRAGMAS = `
 PRAGMA busy_timeout = 5000;
 PRAGMA journal_mode = WAL;
@@ -450,7 +462,7 @@ function openDb(file, fsImpl = { chmodSync, statSync }) {
     } catch (err) {
       db2.close();
       throw new Error(
-        `fleetd.db owner-only confidentiality could not be established (${describeErr(err)}); refusing to start with the state database readable by other users`,
+        `fleetd.db owner-only confidentiality could not be established (${errText(err, "unknown error")}); refusing to start with the state database readable by other users`,
         { cause: err }
       );
     }
@@ -466,7 +478,7 @@ function openDb(file, fsImpl = { chmodSync, statSync }) {
         if (errCode(err) === "ENOENT") continue;
         db2.close();
         throw new Error(
-          `fleetd.db sidecar owner-only confidentiality could not be established (${describeErr(err)}); refusing to start with the state database readable by other users`,
+          `fleetd.db sidecar owner-only confidentiality could not be established (${errText(err, "unknown error")}); refusing to start with the state database readable by other users`,
           { cause: err }
         );
       }
@@ -1928,20 +1940,6 @@ function tmuxVersionCapability(output) {
 }
 
 // src/daemon/spawn.ts
-function errMessage(err) {
-  return err instanceof Error && err.message ? err.message : String(err);
-}
-function errDetail(err) {
-  if (err instanceof Error) {
-    const e = err;
-    if (e.code) return e.code;
-    if (e.message) return e.message;
-  }
-  return String(err);
-}
-function errCode2(err) {
-  return err instanceof Error ? err.code : void 0;
-}
 var TMUX_TIMEOUT_MS = 5e3;
 var FIELD_SEP = "~";
 async function tmuxResult(args, { noStart = false } = {}) {
@@ -1981,8 +1979,8 @@ async function readPersistedGeneration(home, port) {
   try {
     handle = await open(file, RD_NOFOLLOW);
   } catch (err) {
-    if (errCode2(err) === "ENOENT") return null;
-    throw new Error(`cannot read persisted tmux generation (${errDetail(err)})`, { cause: err });
+    if (errCode(err) === "ENOENT") return null;
+    throw new Error(`cannot read persisted tmux generation (${errText(err)})`, { cause: err });
   }
   try {
     const stat = await handle.stat();
@@ -2031,10 +2029,10 @@ async function persistGeneration(home, port, record) {
     try {
       await link(temp, file);
     } catch (err) {
-      if (errCode2(err) !== "EEXIST") throw err;
+      if (errCode(err) !== "EEXIST") throw err;
     }
   } catch (err) {
-    throw new Error(`cannot persist tmux generation (${errDetail(err)})`, { cause: err });
+    throw new Error(`cannot persist tmux generation (${errText(err)})`, { cause: err });
   } finally {
     try {
       await handle?.close();
@@ -2043,7 +2041,7 @@ async function persistGeneration(home, port, record) {
     try {
       await unlink(temp);
     } catch (err) {
-      if (errCode2(err) !== "ENOENT") {
+      if (errCode(err) !== "ENOENT") {
       }
     }
   }
@@ -2066,7 +2064,7 @@ async function replacePersistedGeneration(home, port, record) {
     handle = null;
     await rename(temp, file);
   } catch (err) {
-    throw new Error(`cannot replace persisted tmux generation (${errDetail(err)})`, { cause: err });
+    throw new Error(`cannot replace persisted tmux generation (${errText(err)})`, { cause: err });
   } finally {
     try {
       await handle?.close();
@@ -2075,7 +2073,7 @@ async function replacePersistedGeneration(home, port, record) {
     try {
       await unlink(temp);
     } catch (err) {
-      if (errCode2(err) !== "ENOENT") {
+      if (errCode(err) !== "ENOENT") {
       }
     }
   }
@@ -2111,7 +2109,7 @@ function pidState(pid) {
     process.kill(pid, 0);
     return "alive";
   } catch (err) {
-    if (errCode2(err) === "ESRCH") return "dead";
+    if (errCode(err) === "ESRCH") return "dead";
     return "unknown";
   }
 }
@@ -2136,7 +2134,7 @@ async function recordRetiredGeneration(home, port, expected) {
     handle = null;
     await rename(temp, file);
   } catch (err) {
-    throw new Error(`cannot record retired tmux generation (${errDetail(err)})`, { cause: err });
+    throw new Error(`cannot record retired tmux generation (${errText(err)})`, { cause: err });
   } finally {
     try {
       await handle?.close();
@@ -2145,7 +2143,7 @@ async function recordRetiredGeneration(home, port, expected) {
     try {
       await unlink(temp);
     } catch (err) {
-      if (errCode2(err) !== "ENOENT") {
+      if (errCode(err) !== "ENOENT") {
       }
     }
   }
@@ -2172,7 +2170,7 @@ async function clearRetiredGeneration(home, port) {
   try {
     await unlink(retiredGenerationFile(home, port));
   } catch (err) {
-    if (errCode2(err) !== "ENOENT") {
+    if (errCode(err) !== "ENOENT") {
     }
   }
 }
@@ -2185,8 +2183,8 @@ async function retireDeadGeneration(home, port, expected) {
     await unlink(generationFile(home, port));
     return true;
   } catch (err) {
-    if (errCode2(err) === "ENOENT") return false;
-    throw new Error(`cannot retire persisted tmux generation (${errDetail(err)})`, { cause: err });
+    if (errCode(err) === "ENOENT") return false;
+    throw new Error(`cannot retire persisted tmux generation (${errText(err)})`, { cause: err });
   }
 }
 async function prepareServerGenerationUnlocked(home, port) {
@@ -4210,16 +4208,6 @@ var RepoError = class extends Error {
 function namedError(status, message) {
   return new RepoError(status, message);
 }
-function errStatus(err) {
-  if (typeof err === "object" && err !== null && "status" in err) {
-    const status = err.status;
-    return typeof status === "number" ? status : void 0;
-  }
-  return void 0;
-}
-function errMessage2(err) {
-  return err instanceof Error && err.message ? err.message : String(err);
-}
 var ORIGIN_USERINFO_RE = /^[a-z][a-z0-9+.-]{0,32}:\/\/([^/?#\s]{0,512})@/i;
 var ORIGIN_PARAM_VALUE_RE = /[?&#][^=&\s]{1,128}=([^&\s]{1,512})/g;
 function originSecrets(origin_url) {
@@ -4492,7 +4480,7 @@ function createRepos(ctx) {
     try {
       q.setSpawnFailDetail.run(detail, spawn_id);
     } catch (err) {
-      console.error(`fleetd could not record fail_detail for ${spawn_id}: ${errMessage2(err)}`);
+      console.error(`fleetd could not record fail_detail for ${spawn_id}: ${errMessage(err)}`);
     }
   }
   async function validateBranch(branch) {
@@ -4554,7 +4542,7 @@ function createRepos(ctx) {
       }
     } catch (err) {
       if (errStatus(err) !== void 0) throw err;
-      throw namedError(400, `cannot inspect repos_dir: ${errMessage2(err)}`);
+      throw namedError(400, `cannot inspect repos_dir: ${errMessage(err)}`);
     }
     q.setSetting.run("repos_dir", value, Date.now());
     return resolveReposDir();
@@ -4733,7 +4721,7 @@ ${result.err}`);
         fs7.rmSync(temp, { recursive: true, force: true });
       } catch {
       }
-      throw errStatus(err) !== void 0 ? err : namedError(409, errMessage2(err));
+      throw errStatus(err) !== void 0 ? err : namedError(409, errMessage(err));
     }
   }
   async function materializeBranch({
@@ -4911,16 +4899,6 @@ var SettingError = class extends Error {
 function namedError2(status, message) {
   return new SettingError(status, message);
 }
-function errStatus2(err) {
-  if (typeof err === "object" && err !== null && "status" in err) {
-    const status = err.status;
-    if (typeof status === "number") return status;
-  }
-  return void 0;
-}
-function errMessage3(err) {
-  return err instanceof Error && err.message ? err.message : String(err);
-}
 function expandHome2(value) {
   if (value === "~") return os4.homedir();
   if (value.startsWith("~/")) return path8.join(os4.homedir(), value.slice(2));
@@ -4942,15 +4920,15 @@ function validatePathSetting(value, label2) {
       throw namedError2(400, `${label2} points to an existing file`);
     }
   } catch (err) {
-    if (errStatus2(err)) throw err;
-    throw namedError2(400, `cannot inspect ${label2}: ${errMessage3(err)}`);
+    if (errStatus(err)) throw err;
+    throw namedError2(400, `cannot inspect ${label2}: ${errMessage(err)}`);
   }
   try {
     const canonical2 = fs8.realpathSync(resolved);
     if (path8.dirname(canonical2) === canonical2)
       throw namedError2(400, `${label2} must not be the filesystem root`);
   } catch (err) {
-    if (errStatus2(err)) throw err;
+    if (errStatus(err)) throw err;
   }
   return resolved;
 }
@@ -5364,8 +5342,8 @@ function createSettings(ctx) {
       }
       return { status: 200, body: { ok: true, settings: resolveSettings() } };
     } catch (err) {
-      const status = errStatus2(err) ?? 500;
-      return { status, body: { ok: false, reason: errMessage3(err) } };
+      const status = errStatus(err) ?? 500;
+      return { status, body: { ok: false, reason: errMessage(err) } };
     }
   }
   function persistRepoTransport(value) {
@@ -6011,9 +5989,6 @@ import fs10 from "node:fs";
 import os6 from "node:os";
 import path10 from "node:path";
 import crypto from "node:crypto";
-function errnoCode(e) {
-  return e instanceof Error && typeof e.code === "string" ? e.code : void 0;
-}
 var MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 var PRUNE_AFTER_MS = 24 * 60 * 60 * 1e3;
 var MAX_KEPT_PASTES = 50;
@@ -6045,7 +6020,7 @@ function ensurePasteDir() {
   try {
     fs10.mkdirSync(dir, { mode: 448 });
   } catch (err) {
-    if (errnoCode(err) !== "EEXIST") throw err;
+    if (errCode(err) !== "EEXIST") throw err;
   }
   const st = fs10.lstatSync(dir);
   if (st.isSymbolicLink() || !st.isDirectory()) {
@@ -6927,16 +6902,6 @@ ${p.plan_md ?? ""}`;
 import fs11 from "node:fs";
 import path12 from "node:path";
 import { randomUUID as randomUUID2, randomBytes } from "node:crypto";
-function errStatus3(err) {
-  if (typeof err === "object" && err !== null && "status" in err) {
-    const status = err.status;
-    return typeof status === "number" ? status : void 0;
-  }
-  return void 0;
-}
-function errMessage4(err) {
-  return err instanceof Error && err.message ? err.message : String(err);
-}
 var SETUP_WRAPPER = [
   "cmd=$FLEETDECK_SETUP_CMD; unset FLEETDECK_SETUP_CMD",
   `printf '\u25B6 fleetdeck setup: %s\\n' "$cmd"`,
@@ -7253,7 +7218,7 @@ function createSpawns(ctx) {
       try {
         killed = await tmuxAdapter.killWindowVerified(tmux_window);
       } catch (err) {
-        killed = { ok: false, error: errMessage4(err) };
+        killed = { ok: false, error: errMessage(err) };
       }
       if (!killed.ok && !killed.gone) {
         const cleanupError = killed.error ?? "tmux pane cleanup could not be verified";
@@ -7378,7 +7343,7 @@ function createSpawns(ctx) {
       tmuxAdapter.launchOverride(
         override2,
         spec,
-        (err) => void compensate(`spawn override: ${errMessage4(err)}`).catch(() => {
+        (err) => void compensate(`spawn override: ${errMessage(err)}`).catch(() => {
         })
       );
     } else {
@@ -7386,11 +7351,11 @@ function createSpawns(ctx) {
         await tmuxAdapter.ensureSession(port);
         await tmuxAdapter.newWindow({ port, callsign, cwd: runCwd, argv, env: launchEnvOrNull });
       } catch (err) {
-        const cleanup = await compensate(errMessage4(err));
+        const cleanup = await compensate(errMessage(err));
         const unresolved = !cleanup.resolved ? `; cleanup unresolved: ${cleanup.error}` : "";
         return {
           status: 500,
-          body: { ok: false, reason: `tmux spawn failed: ${errMessage4(err)}${unresolved}` }
+          body: { ok: false, reason: `tmux spawn failed: ${errMessage(err)}${unresolved}` }
         };
       }
     }
@@ -7463,8 +7428,8 @@ function createSpawns(ctx) {
         validateRepoDefaultOrg(body.repo_org);
       } catch (err) {
         return {
-          status: errStatus3(err) ?? 400,
-          body: { ok: false, reason: errMessage4(err) }
+          status: errStatus(err) ?? 400,
+          body: { ok: false, reason: errMessage(err) }
         };
       }
     }
@@ -7631,7 +7596,7 @@ function createSpawns(ctx) {
         await validateBranch(body.branch);
       } catch (err) {
         releasePlanClaim();
-        return { status: 400, body: { ok: false, reason: errMessage4(err) } };
+        return { status: 400, body: { ok: false, reason: errMessage(err) } };
       }
       if (body.repo == null) {
         releasePlanClaim();
@@ -7648,8 +7613,8 @@ function createSpawns(ctx) {
       } catch (err) {
         releasePlanClaim();
         return {
-          status: errStatus3(err) ?? 400,
-          body: { ok: false, reason: errMessage4(err) }
+          status: errStatus(err) ?? 400,
+          body: { ok: false, reason: errMessage(err) }
         };
       }
       const targetPath = target.mode === "clone" ? target.dest : target.root;
@@ -7672,8 +7637,8 @@ function createSpawns(ctx) {
         } catch (err) {
           releasePlanClaim();
           return {
-            status: errStatus3(err) ?? 429,
-            body: { ok: false, reason: errMessage4(err) }
+            status: errStatus(err) ?? 429,
+            body: { ok: false, reason: errMessage(err) }
           };
         }
       }
@@ -7778,13 +7743,13 @@ function createSpawns(ctx) {
               cwd: target.root,
               worktree_path: null,
               tmux_window: null,
-              reason: errMessage4(err),
+              reason: errMessage(err),
               created: { clone: false, worktree: false }
             });
             releasePlanClaim();
             return {
-              status: errStatus3(err) ?? 409,
-              body: { ok: false, reason: errMessage4(err) }
+              status: errStatus(err) ?? 409,
+              body: { ok: false, reason: errMessage(err) }
             };
           }
           worktree_path2 = branchMode === "worktree" ? materialized.runCwd : null;
@@ -7814,7 +7779,7 @@ function createSpawns(ctx) {
             }
             return out2;
           } catch (err) {
-            const reason = branchMode === "in-place" ? `${errMessage4(err)} \u2014 ${path12.basename(target.root)} was left switched to ${body.branch}` : errMessage4(err);
+            const reason = branchMode === "in-place" ? `${errMessage(err)} \u2014 ${path12.basename(target.root)} was left switched to ${body.branch}` : errMessage(err);
             await spawnCompensate({
               spawn_id: spawn_id2,
               session_id: session_id2,
@@ -7826,7 +7791,7 @@ function createSpawns(ctx) {
               created: materialized.created
             });
             releasePlanClaim();
-            return { status: errStatus3(err) ?? 409, body: { ok: false, reason } };
+            return { status: errStatus(err) ?? 409, body: { ok: false, reason } };
           }
         } finally {
           releaseTarget();
@@ -7874,7 +7839,7 @@ function createSpawns(ctx) {
             onMutate();
           }
         } catch (err) {
-          const reason = branchMode === "in-place" && created.clone ? `${errMessage4(err)} \u2014 ${path12.basename(target.dest)} was left switched to ${body.branch}` : errMessage4(err);
+          const reason = branchMode === "in-place" && created.clone ? `${errMessage(err)} \u2014 ${path12.basename(target.dest)} was left switched to ${body.branch}` : errMessage(err);
           await spawnCompensate({
             spawn_id: spawn_id2,
             session_id: session_id2,
@@ -8284,7 +8249,7 @@ function createSpawns(ctx) {
           tmux: { session: tmux_session, window: tmux_window },
           argv
         },
-        (err) => void compensateResume(`spawn override: ${errMessage4(err)}`).catch(() => {
+        (err) => void compensateResume(`spawn override: ${errMessage(err)}`).catch(() => {
         })
       );
     } else {
@@ -8292,7 +8257,7 @@ function createSpawns(ctx) {
         await tmuxAdapter.ensureSession(port);
         await tmuxAdapter.newWindow({ port, callsign, cwd: runCwd, argv, env: gatewayEnv });
       } catch (err) {
-        const reason = `${failReason}: ${errMessage4(err)}`;
+        const reason = `${failReason}: ${errMessage(err)}`;
         const cleanup = await compensateResume(reason);
         return {
           status: 500,
@@ -8659,7 +8624,7 @@ function createSpawns(ctx) {
       await tmuxAdapter.ensureSession(port);
       tick("\u27F2 tmux server restarted \u2014 the fleet is ready to revive");
     } catch (err) {
-      tick(`\u26A0 could not restart the tmux server (${errMessage4(err).slice(0, 80)})`);
+      tick(`\u26A0 could not restart the tmux server (${errMessage(err).slice(0, 80)})`);
     }
   }
   let livenessInFlight = null;
@@ -8953,9 +8918,6 @@ ${detail}` : note);
 
 // src/daemon/events.ts
 import path13 from "node:path";
-function errMessage5(err) {
-  return err instanceof Error && err.message ? err.message : String(err);
-}
 var EDIT_TOOLS = ["Edit", "Write", "MultiEdit", "NotebookEdit"];
 var TEST_RUNNER_RE = /\b(pytest|jest|vitest|go test|cargo test|npm (run )?test)\b/;
 function expectedTranscriptDir(cwd, homeDir = userHomeDir()) {
@@ -9425,7 +9387,7 @@ function createEvents(ctx) {
         }).catch((err) => {
           const c = q.getSession.get(sid);
           tick(
-            `\u2717 move-to-tmux failed for ${c?.callsign ?? sid}: ${errMessage5(err)}`.slice(0, 100)
+            `\u2717 move-to-tmux failed for ${c?.callsign ?? sid}: ${errMessage(err)}`.slice(0, 100)
           );
         });
       }, ADOPT_DELAY_MS);
@@ -9771,9 +9733,6 @@ import fs13 from "node:fs";
 // src/daemon/run-nonce.ts
 import fs12 from "node:fs";
 import path14 from "node:path";
-function errnoCode2(e) {
-  return e instanceof Error && typeof e.code === "string" ? e.code : void 0;
-}
 var isPid = (v) => typeof v === "number" && Number.isInteger(v) && v > 0;
 function pruneRunNonces(home, { minAgeMs = 36e5, now = Date.now() } = {}) {
   if (!home) return 0;
@@ -9796,7 +9755,7 @@ function pruneRunNonces(home, { minAgeMs = 36e5, now = Date.now() } = {}) {
         process.kill(pid, 0);
         continue;
       } catch (err) {
-        if (errnoCode2(err) !== "ESRCH") continue;
+        if (errCode(err) !== "ESRCH") continue;
       }
       fs12.unlinkSync(file);
       removed += 1;
@@ -12915,9 +12874,6 @@ var LEGACY_TTL = 10;
 var SERVICE_TYPES = ["_fleetdeck._tcp.local", "_http._tcp.local"];
 var META_QUERY = "_services._dns-sd._udp.local";
 var ANNOUNCE_DELAYS_MS = [0, 1e3, 2e3];
-function errMessage6(err) {
-  return err instanceof Error && err.message ? err.message : String(err);
-}
 function encodeName(name) {
   const labels = name.replace(/\.$/, "").split(".").filter(Boolean);
   const parts = [];
@@ -13423,7 +13379,7 @@ function createMdns({
         callback?.();
       });
     } catch (err) {
-      note(`mdns send failed: ${errMessage6(err)}`);
+      note(`mdns send failed: ${errMessage(err)}`);
       callback?.();
     }
   }
@@ -13476,7 +13432,7 @@ function createMdns({
           send(encodeMessage({ id: 0, flags: FLAGS_RESPONSE, answers }), MDNS_PORT, MDNS_ADDR);
       }
     } catch (err) {
-      note(`mdns announce failed: ${errMessage6(err)}`);
+      note(`mdns announce failed: ${errMessage(err)}`);
     }
   }
   function withdrawAndDie(reason) {
@@ -13570,7 +13526,7 @@ function createMdns({
         );
       }
     } catch (err) {
-      note(`mdns query handling error: ${errMessage6(err)}`);
+      note(`mdns query handling error: ${errMessage(err)}`);
     }
   }
   function onBound() {
@@ -13729,7 +13685,7 @@ function createMdns({
       note(`mdns addresses updated (${ad.addresses.join(", ")})`);
       return true;
     } catch (err) {
-      note(`mdns address update failed: ${errMessage6(err)}`);
+      note(`mdns address update failed: ${errMessage(err)}`);
       return false;
     }
   }
@@ -13881,9 +13837,6 @@ function recordRefreshLan(info) {
 // src/daemon/takeover.ts
 import fs16 from "node:fs";
 import path17 from "node:path";
-function errnoCode3(e) {
-  return e instanceof Error && typeof e.code === "string" ? e.code : void 0;
-}
 function pidRecord(text) {
   try {
     const parsed = JSON.parse(text);
@@ -13906,7 +13859,7 @@ function pidIsLive(pid) {
     process.kill(pid, 0);
     return true;
   } catch (err) {
-    return errnoCode3(err) !== "ESRCH";
+    return errCode(err) !== "ESRCH";
   }
 }
 function livePidLooksLikeFleetd(pid) {
@@ -13920,7 +13873,7 @@ function livePidLooksLikeFleetd(pid) {
     );
     return runtimeLike && fleetdScript;
   } catch (err) {
-    return errnoCode3(err) !== "ENOENT";
+    return errCode(err) !== "ENOENT";
   }
 }
 function parseSemver(input) {
@@ -14002,7 +13955,7 @@ async function terminateDaemon(pid, {
   try {
     process.kill(pid, "SIGTERM");
   } catch (err) {
-    if (errnoCode3(err) === "ESRCH") return true;
+    if (errCode(err) === "ESRCH") return true;
     return false;
   }
   const stepMs = 100;
@@ -14017,17 +13970,6 @@ async function terminateDaemon(pid, {
 // src/daemon/fleetd.ts
 var __dirname = path18.dirname(fileURLToPath2(import.meta.url));
 installConsoleRecorder();
-function errText(err) {
-  if (err instanceof Error) {
-    const e = err;
-    if (typeof e.code === "string" && e.code) return e.code;
-    if (e.message) return e.message;
-  }
-  return "unknown error";
-}
-function errCode3(err) {
-  return err instanceof Error ? err.code : void 0;
-}
 var PORT;
 try {
   PORT = resolvePort();
@@ -14076,7 +14018,7 @@ function startupFatal(reason) {
 try {
   fs17.mkdirSync(HOME, { recursive: true });
 } catch (err) {
-  startupFatal(`cannot create FLEETDECK_HOME (${errText(err)})`);
+  startupFatal(`cannot create FLEETDECK_HOME (${errText(err, "unknown error")})`);
 }
 try {
   fs17.chmodSync(HOME, 448);
@@ -14137,8 +14079,8 @@ async function claimHome() {
       ownsPidFile = true;
       return;
     } catch (err) {
-      if (errCode3(err) !== "EEXIST") {
-        startupFatal(`cannot claim FLEETDECK_HOME pidfile (${errText(err)})`);
+      if (errCode(err) !== "EEXIST") {
+        startupFatal(`cannot claim FLEETDECK_HOME pidfile (${errText(err, "unknown error")})`);
       }
     }
     let recordText = null;
@@ -14147,8 +14089,8 @@ async function claimHome() {
       recordText = fs17.readFileSync(PID_FILE, "utf8");
       record = pidRecord(recordText);
     } catch (err) {
-      if (errCode3(err) === "ENOENT") continue;
-      startupFatal(`cannot read FLEETDECK_HOME pidfile (${errText(err)})`);
+      if (errCode(err) === "ENOENT") continue;
+      startupFatal(`cannot read FLEETDECK_HOME pidfile (${errText(err, "unknown error")})`);
     }
     if (record && pidIsLive(record.pid) && (record.port === null || livePidLooksLikeFleetd(record.pid))) {
       if (await supersedeIfNewer(record)) continue;
@@ -14160,14 +14102,18 @@ async function claimHome() {
     try {
       if (fs17.readFileSync(PID_FILE, "utf8") !== recordText) continue;
     } catch (err) {
-      if (errCode3(err) === "ENOENT") continue;
-      startupFatal(`cannot re-read stale FLEETDECK_HOME pidfile (${errText(err)})`);
+      if (errCode(err) === "ENOENT") continue;
+      startupFatal(
+        `cannot re-read stale FLEETDECK_HOME pidfile (${errText(err, "unknown error")})`
+      );
     }
     try {
       fs17.unlinkSync(PID_FILE);
     } catch (err) {
-      if (errCode3(err) !== "ENOENT")
-        startupFatal(`cannot clear stale FLEETDECK_HOME pidfile (${errText(err)})`);
+      if (errCode(err) !== "ENOENT")
+        startupFatal(
+          `cannot clear stale FLEETDECK_HOME pidfile (${errText(err, "unknown error")})`
+        );
     }
   }
   startupFatal("could not claim FLEETDECK_HOME pidfile after concurrent startup attempts");
@@ -14221,8 +14167,8 @@ if (Object.hasOwn(process.env, "FLEETDECK_TOKEN")) {
     else if (TOKEN_REQUIRED)
       startupFatal("FLEETDECK_HOME/token must contain at least 16 characters");
   } catch (err) {
-    if (errCode3(err) !== "ENOENT" && TOKEN_REQUIRED) {
-      startupFatal(`cannot read FLEETDECK_HOME/token (${errText(err)})`);
+    if (errCode(err) !== "ENOENT" && TOKEN_REQUIRED) {
+      startupFatal(`cannot read FLEETDECK_HOME/token (${errText(err, "unknown error")})`);
     }
   }
 }
@@ -14230,16 +14176,16 @@ if (!TOKEN) {
   try {
     TOKEN = crypto2.randomBytes(32).toString("hex");
   } catch (err) {
-    startupFatal(`cannot generate access token (${errText(err)})`);
+    startupFatal(`cannot generate access token (${errText(err, "unknown error")})`);
   }
   try {
     fs17.writeFileSync(TOKEN_FILE, TOKEN, { encoding: "utf8", mode: 384, flag: "wx" });
   } catch (err) {
     if (TOKEN_REQUIRED) {
-      startupFatal(`cannot persist FLEETDECK_HOME/token (${errText(err)})`);
+      startupFatal(`cannot persist FLEETDECK_HOME/token (${errText(err, "unknown error")})`);
     }
     console.error(
-      `fleetd: WARNING: cannot persist FLEETDECK_HOME/token (${errText(err)}) \u2014 hook shims and the gated loopback routes will not authenticate this boot`
+      `fleetd: WARNING: cannot persist FLEETDECK_HOME/token (${errText(err, "unknown error")}) \u2014 hook shims and the gated loopback routes will not authenticate this boot`
     );
   }
 }
@@ -14248,8 +14194,8 @@ if (TOKEN) {
   try {
     onDisk = fs17.readFileSync(TOKEN_FILE, "utf8");
   } catch (err) {
-    if (errCode3(err) !== "ENOENT") {
-      startupFatal(`cannot read FLEETDECK_HOME/token (${errText(err)})`);
+    if (errCode(err) !== "ENOENT") {
+      startupFatal(`cannot read FLEETDECK_HOME/token (${errText(err, "unknown error")})`);
     }
   }
   if (onDisk?.trim() !== TOKEN) {
@@ -14257,10 +14203,10 @@ if (TOKEN) {
       fs17.writeFileSync(TOKEN_FILE, TOKEN, { encoding: "utf8", mode: 384 });
     } catch (err) {
       if (TOKEN_REQUIRED) {
-        startupFatal(`cannot persist FLEETDECK_HOME/token (${errText(err)})`);
+        startupFatal(`cannot persist FLEETDECK_HOME/token (${errText(err, "unknown error")})`);
       }
       console.error(
-        `fleetd: WARNING: cannot persist FLEETDECK_HOME/token (${errText(err)}) \u2014 hook shims and the gated loopback routes will not authenticate this boot`
+        `fleetd: WARNING: cannot persist FLEETDECK_HOME/token (${errText(err, "unknown error")}) \u2014 hook shims and the gated loopback routes will not authenticate this boot`
       );
     }
   }
@@ -14268,7 +14214,7 @@ if (TOKEN) {
     try {
       fs17.chmodSync(TOKEN_FILE, 384);
     } catch (err) {
-      const why = errText(err);
+      const why = errText(err, "unknown error");
       if (TOKEN_REQUIRED) {
         startupFatal(`cannot tighten FLEETDECK_HOME/token to owner-only 0600 (${why})`);
       }
@@ -14356,7 +14302,7 @@ function lanAddresses() {
       }
     }
   } catch (err) {
-    console.error(`fleetd could not enumerate LAN addresses (${errText(err)})`);
+    console.error(`fleetd could not enumerate LAN addresses (${errText(err, "unknown error")})`);
   }
   return [...addresses];
 }

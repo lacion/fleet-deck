@@ -36,6 +36,7 @@ import {
   terminateDaemon,
 } from './takeover.ts';
 import { resolveHome, resolvePort } from './config.ts';
+import { errText, errCode } from './errors.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -48,25 +49,6 @@ installConsoleRecorder();
 // derive the record shape from the parser's return type rather than reaching
 // for an unexported name — the same { pid, port } contract, kept in lockstep.
 type PidRecord = NonNullable<ReturnType<typeof pidRecord>>;
-
-// Node's catch bindings are `unknown` under strict mode, and the daemon logs an
-// errno code when it has one (ENOENT/EEXIST/…) and the message otherwise — the
-// exact `err?.code || err?.message || 'unknown error'` idiom the .mjs used
-// throughout, preserved here as a shared helper so the phrasing can never drift.
-function errText(err: unknown): string {
-  if (err instanceof Error) {
-    const e = err as NodeJS.ErrnoException;
-    if (typeof e.code === 'string' && e.code) return e.code;
-    if (e.message) return e.message;
-  }
-  return 'unknown error';
-}
-// The errno code alone, for the ENOENT/EEXIST control-flow branches that used
-// `err?.code === '…'`. `undefined` for a non-Error or a code-less error, so the
-// comparisons behave exactly as the untyped optional-chain reads did.
-function errCode(err: unknown): string | undefined {
-  return err instanceof Error ? (err as NodeJS.ErrnoException).code : undefined;
-}
 
 // The port is the daemon's identity (pidfile, hooks, board URLs), so an
 // invalid FLEETDECK_PORT must refuse startup BEFORE HOME is claimed. Two
@@ -160,7 +142,7 @@ function startupFatal(reason: string): never {
 try {
   fs.mkdirSync(HOME, { recursive: true });
 } catch (err) {
-  startupFatal(`cannot create FLEETDECK_HOME (${errText(err)})`);
+  startupFatal(`cannot create FLEETDECK_HOME (${errText(err, 'unknown error')})`);
 }
 // STATE DIR CONFIDENTIALITY CONTRACT: HOME holds fleetd.db (session cwds,
 // callsigns, mail, plan text, raw permission payloads), the access token and
@@ -279,7 +261,7 @@ async function claimHome(): Promise<void> {
       return;
     } catch (err) {
       if (errCode(err) !== 'EEXIST') {
-        startupFatal(`cannot claim FLEETDECK_HOME pidfile (${errText(err)})`);
+        startupFatal(`cannot claim FLEETDECK_HOME pidfile (${errText(err, 'unknown error')})`);
       }
     }
 
@@ -290,7 +272,7 @@ async function claimHome(): Promise<void> {
       record = pidRecord(recordText);
     } catch (err) {
       if (errCode(err) === 'ENOENT') continue; // the owner exited between EEXIST and read
-      startupFatal(`cannot read FLEETDECK_HOME pidfile (${errText(err)})`);
+      startupFatal(`cannot read FLEETDECK_HOME pidfile (${errText(err, 'unknown error')})`);
     }
     if (
       record &&
@@ -320,13 +302,17 @@ async function claimHome(): Promise<void> {
       if (fs.readFileSync(PID_FILE, 'utf8') !== recordText) continue;
     } catch (err) {
       if (errCode(err) === 'ENOENT') continue;
-      startupFatal(`cannot re-read stale FLEETDECK_HOME pidfile (${errText(err)})`);
+      startupFatal(
+        `cannot re-read stale FLEETDECK_HOME pidfile (${errText(err, 'unknown error')})`,
+      );
     }
     try {
       fs.unlinkSync(PID_FILE);
     } catch (err) {
       if (errCode(err) !== 'ENOENT')
-        startupFatal(`cannot clear stale FLEETDECK_HOME pidfile (${errText(err)})`);
+        startupFatal(
+          `cannot clear stale FLEETDECK_HOME pidfile (${errText(err, 'unknown error')})`,
+        );
     }
   }
   startupFatal('could not claim FLEETDECK_HOME pidfile after concurrent startup attempts');
@@ -413,7 +399,7 @@ if (Object.hasOwn(process.env, 'FLEETDECK_TOKEN')) {
       startupFatal('FLEETDECK_HOME/token must contain at least 16 characters');
   } catch (err) {
     if (errCode(err) !== 'ENOENT' && TOKEN_REQUIRED) {
-      startupFatal(`cannot read FLEETDECK_HOME/token (${errText(err)})`);
+      startupFatal(`cannot read FLEETDECK_HOME/token (${errText(err, 'unknown error')})`);
     }
   }
 }
@@ -422,7 +408,7 @@ if (!TOKEN) {
   try {
     TOKEN = crypto.randomBytes(32).toString('hex');
   } catch (err) {
-    startupFatal(`cannot generate access token (${errText(err)})`);
+    startupFatal(`cannot generate access token (${errText(err, 'unknown error')})`);
   }
   try {
     // TOKEN FILE CONTRACT: an explicitly supplied mode keeps the credential
@@ -434,10 +420,10 @@ if (!TOKEN) {
     fs.writeFileSync(TOKEN_FILE, TOKEN, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
   } catch (err) {
     if (TOKEN_REQUIRED) {
-      startupFatal(`cannot persist FLEETDECK_HOME/token (${errText(err)})`);
+      startupFatal(`cannot persist FLEETDECK_HOME/token (${errText(err, 'unknown error')})`);
     }
     console.error(
-      `fleetd: WARNING: cannot persist FLEETDECK_HOME/token (${errText(err)}) — hook shims and the gated loopback routes will not authenticate this boot`,
+      `fleetd: WARNING: cannot persist FLEETDECK_HOME/token (${errText(err, 'unknown error')}) — hook shims and the gated loopback routes will not authenticate this boot`,
     );
   }
 }
@@ -461,7 +447,7 @@ if (TOKEN) {
     onDisk = fs.readFileSync(TOKEN_FILE, 'utf8');
   } catch (err) {
     if (errCode(err) !== 'ENOENT') {
-      startupFatal(`cannot read FLEETDECK_HOME/token (${errText(err)})`);
+      startupFatal(`cannot read FLEETDECK_HOME/token (${errText(err, 'unknown error')})`);
     }
   }
   if (onDisk?.trim() !== TOKEN) {
@@ -475,10 +461,10 @@ if (TOKEN) {
       fs.writeFileSync(TOKEN_FILE, TOKEN, { encoding: 'utf8', mode: 0o600 });
     } catch (err) {
       if (TOKEN_REQUIRED) {
-        startupFatal(`cannot persist FLEETDECK_HOME/token (${errText(err)})`);
+        startupFatal(`cannot persist FLEETDECK_HOME/token (${errText(err, 'unknown error')})`);
       }
       console.error(
-        `fleetd: WARNING: cannot persist FLEETDECK_HOME/token (${errText(err)}) — hook shims and the gated loopback routes will not authenticate this boot`,
+        `fleetd: WARNING: cannot persist FLEETDECK_HOME/token (${errText(err, 'unknown error')}) — hook shims and the gated loopback routes will not authenticate this boot`,
       );
     }
   }
@@ -494,7 +480,7 @@ if (TOKEN) {
     try {
       fs.chmodSync(TOKEN_FILE, 0o600);
     } catch (err) {
-      const why = errText(err);
+      const why = errText(err, 'unknown error');
       if (TOKEN_REQUIRED) {
         startupFatal(`cannot tighten FLEETDECK_HOME/token to owner-only 0600 (${why})`);
       }
@@ -642,7 +628,7 @@ function lanAddresses(): string[] {
       }
     }
   } catch (err) {
-    console.error(`fleetd could not enumerate LAN addresses (${errText(err)})`);
+    console.error(`fleetd could not enumerate LAN addresses (${errText(err, 'unknown error')})`);
   }
   return [...addresses];
 }

@@ -25,6 +25,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { errCode } from './errors.ts';
 
 // The image formats this ingest accepts — exactly Claude Code's image inputs.
 // sniffImage returns one of these (from the bytes) or null.
@@ -50,15 +51,6 @@ interface PasteOkBody {
 interface PasteResult {
   status: number;
   body: PasteErrBody | PasteOkBody;
-}
-
-// Node's fs throws Error objects carrying an optional string `code` (EEXIST,
-// ENOENT, …). A `catch` binding is `unknown` under strict, so narrow to read
-// `code` without an `any`.
-function errnoCode(e: unknown): string | undefined {
-  return e instanceof Error && typeof (e as NodeJS.ErrnoException).code === 'string'
-    ? (e as NodeJS.ErrnoException).code
-    : undefined;
 }
 
 // Decoded-bytes cap. Distinct from the HTTP body cap (which sees base64, ~33%
@@ -147,7 +139,7 @@ function ensurePasteDir(): string {
   try {
     fs.mkdirSync(dir, { mode: 0o700 });
   } catch (err) {
-    if (errnoCode(err) !== 'EEXIST') throw err;
+    if (errCode(err) !== 'EEXIST') throw err;
   }
   const st = fs.lstatSync(dir);
   if (st.isSymbolicLink() || !st.isDirectory()) {

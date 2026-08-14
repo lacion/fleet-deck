@@ -19,6 +19,7 @@ import {
   SHELL_RE,
   NOT_RESUMABLE_END,
 } from './helpers.ts';
+import { errStatus, errMessage } from './errors.ts';
 import { execFileP, baseBranch } from './exec.ts';
 import { redactDiagnosticText, scrubUrlCredentials } from './payload-capture.ts';
 import { redactGitText } from './exec.ts';
@@ -34,23 +35,6 @@ type ReposSurface = ReturnType<typeof import('./repos.ts').createRepos>;
 type SettingsSurface = ReturnType<typeof import('./settings.ts').createSettings>;
 type ScopedWindow = NonNullable<Awaited<ReturnType<SpawnModule['listScopedWindows']>>>[number];
 type Materialized = Awaited<ReturnType<ReposSurface['materializeBranch']>>;
-
-// errStatus / errMessage — copied verbatim from repos.ts. Under
-// useUnknownInCatchVariables a catch binding is `unknown`; these reproduce the
-// pre-migration `err.status || N` and `err.message || String(err)` reads
-// EXACTLY (RepoError/SettingError carry a numeric `.status` and a message, so
-// `err.message || String(err)` ≡ errMessage(err) and `err.status || N` ≡
-// `errStatus(err) || N` for every throw that reaches these handlers).
-function errStatus(err: unknown): number | undefined {
-  if (typeof err === 'object' && err !== null && 'status' in err) {
-    const status = err.status;
-    return typeof status === 'number' ? status : undefined;
-  }
-  return undefined;
-}
-function errMessage(err: unknown): string {
-  return err instanceof Error && err.message ? err.message : String(err);
-}
 
 // The offline-tombstone options — a structural mirror of derive.ts's
 // TombstoneOpts (kept in sync as a supertype so ctx.tombstoneCard stays

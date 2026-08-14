@@ -42,15 +42,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-
-// A `catch` binding is `unknown` under strict; process.kill throws Error
-// objects carrying an optional string `code` (ESRCH when the pid is gone, EPERM
-// when something we may not signal holds it). Narrow to read it without an `any`.
-function errnoCode(e: unknown): string | undefined {
-  return e instanceof Error && typeof (e as NodeJS.ErrnoException).code === 'string'
-    ? (e as NodeJS.ErrnoException).code
-    : undefined;
-}
+import { errCode } from './errors.ts';
 
 // Type predicate so `walked` (number | null) narrows to number at the call
 // sites. `typeof v === 'number'` is redundant at runtime with Number.isInteger
@@ -168,7 +160,7 @@ export function pruneRunNonces(
         process.kill(pid, 0);
         continue;
       } catch (err) {
-        if (errnoCode(err) !== 'ESRCH') continue;
+        if (errCode(err) !== 'ESRCH') continue;
       }
       fs.unlinkSync(file);
       removed += 1;

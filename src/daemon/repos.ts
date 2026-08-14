@@ -9,6 +9,7 @@ import path from 'node:path';
 import { execFileP, baseBranch, distillGitStderr, gitStderrDetail, redactGitText } from './exec.ts';
 import type { ExecResult } from './exec.ts';
 import { detectCoderWorkspaceRoot } from './config.ts';
+import { errStatus, errMessage } from './errors.ts';
 import type { Statements } from './statements.ts';
 
 // eslint-disable-next-line no-control-regex -- refusing NUL/C0/DEL in a repos_dir path is the entire purpose of this gate
@@ -24,8 +25,6 @@ const CODER_DEFAULT_ORG = 'textemma';
 // A git failure carries an HTTP status the daemon relays verbatim. The old
 // namedError stamped `.status` onto a plain Error, which strict TS rejects
 // (Error has no `status`); a tiny subclass carries it as a typed field instead.
-// errStatus/errMessage read an unknown catch value back the way settings.ts
-// does — the exact-same helpers, so the two surfaces stay behaviourally paired.
 class RepoError extends Error {
   readonly status: number;
   constructor(status: number, message: string) {
@@ -36,18 +35,6 @@ class RepoError extends Error {
 
 function namedError(status: number, message: string): RepoError {
   return new RepoError(status, message);
-}
-
-function errStatus(err: unknown): number | undefined {
-  if (typeof err === 'object' && err !== null && 'status' in err) {
-    const status = err.status;
-    return typeof status === 'number' ? status : undefined;
-  }
-  return undefined;
-}
-
-function errMessage(err: unknown): string {
-  return err instanceof Error && err.message ? err.message : String(err);
 }
 
 // Anchored userinfo probe for a clone origin (not the free-text scrubber — that

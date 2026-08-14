@@ -12,6 +12,7 @@
 
 import { chmodSync, statSync } from 'node:fs';
 import { openDatabase, type SqliteHandle } from './sqlite.ts';
+import { errCode, errText } from './errors.ts';
 
 // The one row shape this module reads back: `PRAGMA table_info(<t>)` yields a row
 // per column, and migrate() only ever touches the `name` cell to decide whether an
@@ -29,28 +30,6 @@ interface PragmaColumnInfo {
 interface DbFsImpl {
   chmodSync(path: string, mode: number): void;
   statSync(path: string): { mode: number };
-}
-
-// A caught value is `unknown`; Node's errno errors carry a string `code` the base
-// Error type does not declare. errCode() reads it off safely (the ENOENT skip on
-// a lazily-absent sidecar depends on it), and describeErr() reproduces the old JS
-// `err?.code || err?.message || 'unknown error'` for the confidentiality-refusal
-// message.
-function errCode(err: unknown): string | undefined {
-  if (typeof err === 'object' && err !== null) {
-    const code = (err as Record<string, unknown>)['code'];
-    if (typeof code === 'string') return code;
-  }
-  return undefined;
-}
-function describeErr(err: unknown): string {
-  const code = errCode(err);
-  if (code) return code;
-  if (typeof err === 'object' && err !== null) {
-    const message = (err as Record<string, unknown>)['message'];
-    if (typeof message === 'string' && message) return message;
-  }
-  return 'unknown error';
 }
 
 // Connection-level pragmas. These configure the CONNECTION and must run at open
@@ -584,7 +563,7 @@ export function openDb(file: string, fsImpl: DbFsImpl = { chmodSync, statSync })
     } catch (err) {
       db.close();
       throw new Error(
-        `fleetd.db owner-only confidentiality could not be established (${describeErr(err)}); refusing to start with the state database readable by other users`,
+        `fleetd.db owner-only confidentiality could not be established (${errText(err, 'unknown error')}); refusing to start with the state database readable by other users`,
         { cause: err },
       );
     }
@@ -603,7 +582,7 @@ export function openDb(file: string, fsImpl: DbFsImpl = { chmodSync, statSync })
         if (errCode(err) === 'ENOENT') continue;
         db.close();
         throw new Error(
-          `fleetd.db sidecar owner-only confidentiality could not be established (${describeErr(err)}); refusing to start with the state database readable by other users`,
+          `fleetd.db sidecar owner-only confidentiality could not be established (${errText(err, 'unknown error')}); refusing to start with the state database readable by other users`,
           { cause: err },
         );
       }

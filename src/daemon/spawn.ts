@@ -28,6 +28,7 @@
 
 import { execFileSync, spawn as spawnChild } from 'node:child_process';
 import { execFileP } from './exec.ts';
+import { errCode, errMessage, errText } from './errors.ts';
 import { randomUUID } from 'node:crypto';
 import { constants as fsConstants } from 'node:fs';
 import { link, open, rename, unlink } from 'node:fs/promises';
@@ -94,21 +95,6 @@ interface NewWindowSpec {
   cwd: string;
   argv: readonly string[];
   env?: Record<string, string> | null;
-}
-
-function errMessage(err: unknown): string {
-  return err instanceof Error && err.message ? err.message : String(err);
-}
-function errDetail(err: unknown): string {
-  if (err instanceof Error) {
-    const e = err as NodeJS.ErrnoException;
-    if (e.code) return e.code;
-    if (e.message) return e.message;
-  }
-  return String(err);
-}
-function errCode(err: unknown): string | undefined {
-  return err instanceof Error ? (err as NodeJS.ErrnoException).code : undefined;
 }
 
 const TMUX_TIMEOUT_MS = 5_000;
@@ -219,7 +205,7 @@ async function readPersistedGeneration(
     handle = await open(file, RD_NOFOLLOW);
   } catch (err) {
     if (errCode(err) === 'ENOENT') return null;
-    throw new Error(`cannot read persisted tmux generation (${errDetail(err)})`, { cause: err });
+    throw new Error(`cannot read persisted tmux generation (${errText(err)})`, { cause: err });
   }
   try {
     const stat = await handle.stat();
@@ -292,7 +278,7 @@ async function persistGeneration(
       if (errCode(err) !== 'EEXIST') throw err;
     }
   } catch (err) {
-    throw new Error(`cannot persist tmux generation (${errDetail(err)})`, { cause: err });
+    throw new Error(`cannot persist tmux generation (${errText(err)})`, { cause: err });
   } finally {
     try {
       await handle?.close();
@@ -330,7 +316,7 @@ async function replacePersistedGeneration(
     handle = null;
     await rename(temp, file); // atomic old-record -> strict-record migration
   } catch (err) {
-    throw new Error(`cannot replace persisted tmux generation (${errDetail(err)})`, { cause: err });
+    throw new Error(`cannot replace persisted tmux generation (${errText(err)})`, { cause: err });
   } finally {
     try {
       await handle?.close();
@@ -437,7 +423,7 @@ async function recordRetiredGeneration(
     handle = null;
     await rename(temp, file);
   } catch (err) {
-    throw new Error(`cannot record retired tmux generation (${errDetail(err)})`, { cause: err });
+    throw new Error(`cannot record retired tmux generation (${errText(err)})`, { cause: err });
   } finally {
     try {
       await handle?.close();
@@ -503,7 +489,7 @@ async function retireDeadGeneration(
     return true;
   } catch (err) {
     if (errCode(err) === 'ENOENT') return false;
-    throw new Error(`cannot retire persisted tmux generation (${errDetail(err)})`, { cause: err });
+    throw new Error(`cannot retire persisted tmux generation (${errText(err)})`, { cause: err });
   }
 }
 

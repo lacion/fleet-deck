@@ -38,6 +38,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { detectCoderWorkspaceRoot } from './config.ts';
 import { resolveHoldMs } from './questions.ts';
+import { errStatus, errMessage } from './errors.ts';
 import type { Statements } from './statements.ts';
 import type { SqliteHandle } from './sqlite.ts';
 
@@ -101,21 +102,6 @@ class SettingError extends Error {
 
 function namedError(status: number, message: string): SettingError {
   return new SettingError(status, message);
-}
-
-// useUnknownInCatchVariables makes a caught error `unknown`; these two read the
-// status tag and message off it without assuming a shape (a thrown non-Error is
-// still possible from deep in a driver).
-function errStatus(err: unknown): number | undefined {
-  if (typeof err === 'object' && err !== null && 'status' in err) {
-    const status = (err as { status?: unknown }).status;
-    if (typeof status === 'number') return status;
-  }
-  return undefined;
-}
-
-function errMessage(err: unknown): string {
-  return err instanceof Error && err.message ? err.message : String(err);
 }
 
 function expandHome(value: string): string {

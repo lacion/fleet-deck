@@ -67,6 +67,7 @@
 import dgram from 'node:dgram';
 import type { RemoteInfo, Socket } from 'node:dgram';
 import { networkInterfaces } from './os-net.ts';
+import { errMessage } from './errors.ts';
 
 export const MDNS_ADDR = '224.0.0.251';
 export const MDNS_PORT = 5353;
@@ -194,11 +195,6 @@ interface MdnsResponder {
   stop: () => Promise<void>;
   update: (nextAddresses?: string[] | { addresses?: string[] }) => boolean;
   alive: () => boolean;
-}
-
-/** Read a `useUnknownInCatchVariables` catch value back as a message string. */
-function errMessage(err: unknown): string {
-  return err instanceof Error && err.message ? err.message : String(err);
 }
 
 // ------------------------------------------------------------------ wire codec
