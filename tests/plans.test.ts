@@ -76,6 +76,7 @@ import { startDaemon, randomPort, type DaemonHandle } from './helpers/daemon.ts'
 import { postHook, postJson, getJson, type JsonResponse } from './helpers/http.ts';
 import { loadFixture } from './helpers/fixtures.ts';
 import { waitUntil, waitForSpecRecords } from './helpers/wait.ts';
+import { scratchCwd, questionsFor, findSession } from './helpers/state.ts';
 
 // ---------------------------------------------------------------------------
 // /state shapes. The HTTP helpers return `.json` as `unknown`; each read casts
@@ -166,18 +167,6 @@ try {
   chmodSync(SPAWN_CMD_FIXTURE, 0o755);
 } catch {
   /* best-effort */
-}
-
-function scratchCwd(): string {
-  return mkdtempSync(path.join(tmpdir(), 'fleetdeck-plans-cwd-'));
-}
-
-function findSession(state: StateSnapshot, sid: string): SessionEntry | undefined {
-  return (state.sessions ?? []).find((s) => s.session_id === sid);
-}
-
-function questionsFor(state: StateSnapshot, sid: string, kind?: string): QuestionEntry[] {
-  return (state.questions ?? []).filter((q) => q.session_id === sid && (!kind || q.kind === kind));
 }
 
 function plansFor(state: StateSnapshot, sid: string): PlanEntry[] {
@@ -271,7 +260,7 @@ async function holdExitPlan(
 test('capture-before-answer: the plan row appears in /state (status proposed, plan_md byte-identical to the fixture) WHILE the ExitPlanMode question is still pending, and the question carries plan_id', async (t) => {
   const holdMs = 1500;
   const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
-  const cwd = scratchCwd();
+  const cwd = scratchCwd('fleetdeck-plans-cwd-');
   t.after(async () => {
     await daemon.stop();
     rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
@@ -351,7 +340,7 @@ test('capture rollback: a failing plan insert leaves NEITHER the question nor th
   const daemon = await startDaemon({
     env: { FLEETDECK_HOLD_MS: String(holdMs), FLEETDECK_TEST_FAIL_PLAN_INSERT: '1' },
   });
-  const cwd = scratchCwd();
+  const cwd = scratchCwd('fleetdeck-plans-cwd-');
   t.after(async () => {
     await daemon.stop();
     rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
@@ -399,7 +388,7 @@ test('capture rollback: a failing plan insert leaves NEITHER the question nor th
 test('answer path: {behavior:"allow"} approves the plan and the held response is the verified allow schema', async (t) => {
   const holdMs = 1500;
   const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
-  const cwd = scratchCwd();
+  const cwd = scratchCwd('fleetdeck-plans-cwd-');
   t.after(async () => {
     await daemon.stop();
     rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
@@ -447,7 +436,7 @@ test('answer path: {behavior:"allow"} approves the plan and the held response is
 test('answer path: {behavior:"capture"} denies the held hook bare AND mails the pinned capture notice to the planner\'s next UserPromptSubmit; plan becomes captured', async (t) => {
   const holdMs = 1500;
   const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
-  const cwd = scratchCwd();
+  const cwd = scratchCwd('fleetdeck-plans-cwd-');
   t.after(async () => {
     await daemon.stop();
     rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
@@ -519,7 +508,7 @@ test('answer path: {behavior:"capture"} denies the held hook bare AND mails the 
 test('answer path: {behavior:"deny"} plainly denies the held hook; plan becomes rejected', async (t) => {
   const holdMs = 1500;
   const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
-  const cwd = scratchCwd();
+  const cwd = scratchCwd('fleetdeck-plans-cwd-');
   t.after(async () => {
     await daemon.stop();
     rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
@@ -563,7 +552,7 @@ test('answer path: an unanswered ExitPlanMode hold expires to {} and the plan st
   // window and this test would need to wait it out).
   const holdMs = 1200;
   const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
-  const cwd = scratchCwd();
+  const cwd = scratchCwd('fleetdeck-plans-cwd-');
   t.after(async () => {
     await daemon.stop();
     rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
@@ -616,7 +605,7 @@ test('answer path: an unanswered ExitPlanMode hold expires to {} and the plan st
 
 test('regression: PermissionRequest tool_name=AskUserQuestion still answers {} in <200ms untouched by the v1.3 ExitPlanMode capture wiring', async (t) => {
   const daemon = await startDaemon();
-  const cwd = scratchCwd();
+  const cwd = scratchCwd('fleetdeck-plans-cwd-');
   t.after(async () => {
     await daemon.stop();
     rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
@@ -667,7 +656,7 @@ test('regression: PermissionRequest tool_name=AskUserQuestion still answers {} i
 test('/state plans: caps at 20 non-archived rows, newest first; archiving frees a cap slot and excludes the archived row', async (t) => {
   const holdMs = 800;
   const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
-  const cwd = scratchCwd();
+  const cwd = scratchCwd('fleetdeck-plans-cwd-');
   t.after(async () => {
     await daemon.stop();
     rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
@@ -766,7 +755,7 @@ test('/state plans: caps at 20 non-archived rows, newest first; archiving frees 
 test('mark: proposed -> executed records the optional {via} on /state, and it survives a daemon restart', async (t) => {
   const holdMs = 1000;
   const home = mkdtempSync(path.join(tmpdir(), 'fleetdeck-home-'));
-  const cwd = scratchCwd();
+  const cwd = scratchCwd('fleetdeck-plans-cwd-');
   t.after(() => {
     rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
@@ -838,7 +827,7 @@ test('mark: proposed -> executed records the optional {via} on /state, and it su
 test('mark: captured -> executed', async (t) => {
   const holdMs = 1500;
   const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
-  const cwd = scratchCwd();
+  const cwd = scratchCwd('fleetdeck-plans-cwd-');
   t.after(async () => {
     await daemon.stop();
     rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
@@ -881,7 +870,7 @@ test('mark: captured -> executed', async (t) => {
 test('mark: archived from each non-archived status (proposed, approved, captured, rejected, executed); rejected/archived -> executed both 409', async (t) => {
   const holdMs = 1200;
   const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
-  const cwd = scratchCwd();
+  const cwd = scratchCwd('fleetdeck-plans-cwd-');
   t.after(async () => {
     await daemon.stop();
     rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
@@ -1023,7 +1012,7 @@ test('mark: 404 for an unknown plan id', async (t) => {
 test('assign: mails the daemon-reserved [FLEETDECK ASSIGNMENT] frame to the target and marks the plan executed', async (t) => {
   const holdMs = 1500;
   const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
-  const cwd = scratchCwd();
+  const cwd = scratchCwd('fleetdeck-plans-cwd-');
   t.after(async () => {
     await daemon.stop();
     rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
@@ -1115,7 +1104,7 @@ test('assign: mails the daemon-reserved [FLEETDECK ASSIGNMENT] frame to the targ
 test('assign: bad requests and bad transitions are refused without sending mail', async (t) => {
   const holdMs = 1500;
   const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
-  const cwd = scratchCwd();
+  const cwd = scratchCwd('fleetdeck-plans-cwd-');
   t.after(async () => {
     await daemon.stop();
     rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
@@ -1202,7 +1191,7 @@ test('in-terminal: turn-boundary activity retires the question and settles the p
   // retire IS the activity, so no second event is needed.
   const holdMs = 1000;
   const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
-  const cwd = scratchCwd();
+  const cwd = scratchCwd('fleetdeck-plans-cwd-');
   t.after(async () => {
     await daemon.stop();
     rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
@@ -1255,7 +1244,7 @@ test('in-terminal: turn-boundary activity retires the question and settles the p
 test('in-terminal: timer expiry THEN later PostToolUse activity settles handled-in-terminal (the deferred gate)', async (t) => {
   const holdMs = 1000;
   const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
-  const cwd = scratchCwd();
+  const cwd = scratchCwd('fleetdeck-plans-cwd-');
   t.after(async () => {
     await daemon.stop();
     rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
@@ -1299,7 +1288,7 @@ test('in-terminal: timer expiry THEN later PostToolUse activity settles handled-
 test('in-terminal: timer expiry with NO subsequent activity never settles — the plan stays proposed', async (t) => {
   const holdMs = 900;
   const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
-  const cwd = scratchCwd();
+  const cwd = scratchCwd('fleetdeck-plans-cwd-');
   t.after(async () => {
     await daemon.stop();
     rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
@@ -1332,7 +1321,7 @@ test('in-terminal: timer expiry with NO subsequent activity never settles — th
 test('in-terminal: a plan question raised in the SAME turn (still pending, never parked) must NOT be flipped by the gate', async (t) => {
   const holdMs = 60_000; // long window: no hold expires on its own in this test
   const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
-  const cwd = scratchCwd();
+  const cwd = scratchCwd('fleetdeck-plans-cwd-');
   t.after(async () => {
     await daemon.stop();
     rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
@@ -1418,7 +1407,7 @@ test('in-terminal: a plan question raised in the SAME turn (still pending, never
 test('in-terminal: board answer regression — allow still flips approved and is never re-settled by later activity', async (t) => {
   const holdMs = 1500;
   const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
-  const cwd = scratchCwd();
+  const cwd = scratchCwd('fleetdeck-plans-cwd-');
   t.after(async () => {
     await daemon.stop();
     rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
@@ -1466,7 +1455,7 @@ test('in-terminal: board answer regression — allow still flips approved and is
 test('in-terminal: handled-in-terminal cannot be marked executed (409), can be archived', async (t) => {
   const holdMs = 1000;
   const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
-  const cwd = scratchCwd();
+  const cwd = scratchCwd('fleetdeck-plans-cwd-');
   t.after(async () => {
     await daemon.stop();
     rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
@@ -1531,7 +1520,7 @@ test('mark executed with the question still pending dismisses it (fails the hold
   const holdMs = 60_000; // the hold must still be parked when the mark lands
   const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
   let held: Promise<JsonResponse | null> = Promise.resolve(null); // rebound once the hold POST is in flight
-  const cwd = scratchCwd();
+  const cwd = scratchCwd('fleetdeck-plans-cwd-');
   // holdExitPlan's held POST outlives the daemon by the length of the hold
   // window; the daemon's own SIGKILL/SIGTERM then leaves that fetch hung on
   // an open-but-dead connection, outliving the daemon.stop() in t.after and
@@ -1640,9 +1629,9 @@ function planById(state: StateSnapshot, planId: number | null | undefined): Plan
 }
 
 test('BUG-040: spawn carrying plan_id claims the plan atomically BEFORE launch; a second claim 409s and launches nothing', async (t) => {
-  const recDir = scratchCwd();
+  const recDir = scratchCwd('fleetdeck-plans-cwd-');
   const rec = path.join(recDir, 'specs.jsonl');
-  const cwd = scratchCwd();
+  const cwd = scratchCwd('fleetdeck-plans-cwd-');
   const daemon = await startDaemon({
     env: {
       FLEETDECK_HOLD_MS: '1000',
@@ -1717,9 +1706,9 @@ test('BUG-040: spawn carrying plan_id claims the plan atomically BEFORE launch; 
 });
 
 test('BUG-040: a refused spawn releases the claim — plan returns to proposed and is executable again', async (t) => {
-  const recDir = scratchCwd();
+  const recDir = scratchCwd('fleetdeck-plans-cwd-');
   const rec = path.join(recDir, 'specs.jsonl');
-  const cwd = scratchCwd();
+  const cwd = scratchCwd('fleetdeck-plans-cwd-');
   const daemon = await startDaemon({
     env: {
       FLEETDECK_HOLD_MS: '1000',
@@ -1774,9 +1763,9 @@ test('BUG-040: a refused spawn releases the claim — plan returns to proposed a
 });
 
 test('BUG-040: spawn claim refusals — unknown plan 404, non-executable plan 409, shell kind cannot carry plan_id', async (t) => {
-  const recDir = scratchCwd();
+  const recDir = scratchCwd('fleetdeck-plans-cwd-');
   const rec = path.join(recDir, 'specs.jsonl');
-  const cwd = scratchCwd();
+  const cwd = scratchCwd('fleetdeck-plans-cwd-');
   const daemon = await startDaemon({
     env: {
       FLEETDECK_HOLD_MS: '1000',

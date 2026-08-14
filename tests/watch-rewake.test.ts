@@ -47,6 +47,7 @@ import { postHook, postJson, getJson } from './helpers/http.ts';
 import { loadFixture } from './helpers/fixtures.ts';
 import { makeTranscriptDir, writeTranscript } from './helpers/transcript.ts';
 import { waitUntil, scaleMs } from './helpers/wait.ts';
+import { scratchCwd } from './helpers/state.ts';
 import type { StateResponse, QuestionEntry } from '../contracts/state.ts';
 
 const WATCH_SCRIPT = path.join(REPO_ROOT, 'scripts/fleet-watch.mjs');
@@ -87,10 +88,6 @@ interface HookGroup {
 }
 interface HooksFile {
   hooks: { Stop: HookGroup[] };
-}
-
-function scratchCwd(): string {
-  return mkdtempSync(path.join(tmpdir(), 'fleetdeck-cwd-'));
 }
 
 // Register a session and park a pending FREEFORM question for it (the only

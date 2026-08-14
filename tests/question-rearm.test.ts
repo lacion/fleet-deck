@@ -22,14 +22,13 @@
 import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
+import { rmSync } from 'node:fs';
 import { startDaemon, type DaemonHandle } from './helpers/daemon.ts';
 import { postHook, postJson, getJson, type JsonResponse } from './helpers/http.ts';
 import { loadFixture } from './helpers/fixtures.ts';
 import { makeTranscriptDir, writeTranscript } from './helpers/transcript.ts';
 import { waitUntil } from './helpers/wait.ts';
+import { scratchCwd, questionsFor } from './helpers/state.ts';
 import { resolveHoldMs } from '../src/daemon/questions.ts';
 
 interface QuestionPayload {
@@ -71,14 +70,6 @@ interface SettingsBody {
   settings?: {
     hold_ms?: SettingField;
   };
-}
-
-function scratchCwd(): string {
-  return mkdtempSync(path.join(tmpdir(), 'fleetdeck-cwd-'));
-}
-
-function questionsFor(state: QuestionsState, sid: string, kind?: string): Question[] {
-  return state.questions.filter((q) => q.session_id === sid && (!kind || q.kind === kind));
 }
 
 // Park a permission hold and return the question row once it rides /state.

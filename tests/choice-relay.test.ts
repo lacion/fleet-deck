@@ -20,13 +20,12 @@
 import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
+import { rmSync } from 'node:fs';
 import { startDaemon, type DaemonHandle } from './helpers/daemon.ts';
 import { postHook, postJson, getJson } from './helpers/http.ts';
 import { loadFixture } from './helpers/fixtures.ts';
 import { waitUntil, scaleMs } from './helpers/wait.ts';
+import { scratchCwd, questionsFor } from './helpers/state.ts';
 
 const FIXTURE_QUESTION = 'Should this project use bcrypt or argon2 for password hashing?';
 
@@ -78,14 +77,6 @@ interface HookRelayResponse {
     permissionDecision?: string;
     permissionDecisionReason?: string;
   };
-}
-
-function scratchCwd(): string {
-  return mkdtempSync(path.join(tmpdir(), 'fleetdeck-cwd-'));
-}
-
-function questionsFor(state: StateResponse, sid: string, kind?: string): StateQuestion[] {
-  return state.questions.filter((q) => q.session_id === sid && (!kind || q.kind === kind));
 }
 
 async function holdChoice(

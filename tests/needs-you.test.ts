@@ -35,15 +35,14 @@
 import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
+import { rmSync } from 'node:fs';
 import { startDaemon } from './helpers/daemon.ts';
 import { postHook, postJson, getJson, type JsonResponse } from './helpers/http.ts';
 import { loadFixture } from './helpers/fixtures.ts';
 import { makeTranscriptDir, writeTranscript } from './helpers/transcript.ts';
 import { waitUntil } from './helpers/wait.ts';
-import type { StateResponse, SessionEntry, QuestionEntry } from '../contracts/state.ts';
+import { scratchCwd, questionsFor, getSession } from './helpers/state.ts';
+import type { StateResponse, QuestionEntry } from '../contracts/state.ts';
 
 // --- response-body facets: /state.json and each hook response are `unknown`
 // off the wire; these name exactly the fields each assertion reads. ----------
@@ -78,25 +77,6 @@ interface DismissAck {
 
 interface MailListResponse {
   mail?: unknown[];
-}
-
-function scratchCwd(): string {
-  return mkdtempSync(path.join(tmpdir(), 'fleetdeck-cwd-'));
-}
-
-// Sibling of findCard: assert the session is present and hand back the row so
-// callers reach `.col` directly. The `.find()` is `SessionEntry | undefined`
-// under strict typing; the assert (never-narrowing in the original because
-// `findSession` returned `undefined`) now lives here once instead of at every
-// call site.
-function findSession(state: StateResponse, sid: string): SessionEntry {
-  const s = state.sessions.find((x) => x.session_id === sid);
-  assert.ok(s, `session ${sid} should be present in /state`);
-  return s;
-}
-
-function questionsFor(state: StateResponse, sid: string, kind?: string): QuestionEntry[] {
-  return state.questions.filter((q) => q.session_id === sid && (!kind || q.kind === kind));
 }
 
 // ---------------------------------------------------------------------------
@@ -400,7 +380,7 @@ test('F3d: Stop trailing-question freeform detection creates a needsyou card, an
   assert.equal(stopRes.status, 200);
 
   const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
-  const card = findSession(state, sid);
+  const card = getSession(state, sid);
   assert.equal(
     card.col,
     'needsyou',
@@ -630,7 +610,7 @@ test('Notification ingest stores notification_type', async (t) => {
   assert.equal(res.status, 200);
 
   const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
-  const card = findSession(state, sid);
+  const card = getSession(state, sid);
   assert.ok(card, 'session card should exist');
   assert.equal(
     card.col,
@@ -683,7 +663,7 @@ test('subsequent activity (UserPromptSubmit) returns col to working and expires 
   );
 
   let state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
-  let card = findSession(state, sid);
+  let card = getSession(state, sid);
   assert.equal(card.col, 'needsyou', 'a held permission request should show needsyou on the board');
 
   const t0 = Date.now();
@@ -695,7 +675,7 @@ test('subsequent activity (UserPromptSubmit) returns col to working and expires 
   );
 
   state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
-  card = findSession(state, sid);
+  card = getSession(state, sid);
   assert.equal(
     card.col,
     'working',
@@ -757,7 +737,7 @@ test('BUG-102: a FAILED tool call (PostToolUseFailure) retires its correlated pe
 
   let state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
   assert.equal(
-    findSession(state, sid).col,
+    getSession(state, sid).col,
     'needsyou',
     'a held permission request should show needsyou on the board',
   );
@@ -791,7 +771,7 @@ test('BUG-102: a FAILED tool call (PostToolUseFailure) retires its correlated pe
     'expired',
     'PostToolUseFailure should expire its correlated pending permission question',
   );
-  const card = findSession(state, sid);
+  const card = getSession(state, sid);
   assert.equal(
     card.col,
     'working',
@@ -877,7 +857,7 @@ test('SessionEnd expires all pending permission/elicitation questions for the se
       `question ${q.id} (${q.kind}) should be expired after SessionEnd`,
     );
   }
-  const card = findSession(state, sid);
+  const card = getSession(state, sid);
   assert.equal(card.col, 'offline', 'SessionEnd is the tombstone regardless of pending questions');
 });
 
@@ -925,7 +905,7 @@ test('freeform questions SURVIVE SessionEnd and deliver on resume', async (t) =>
   );
 
   const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
-  assert.equal(findSession(state, sid).col, 'offline', 'session tombstoned');
+  assert.equal(getSession(state, sid).col, 'offline', 'session tombstoned');
   const q = questionsFor(state, sid, 'freeform')[0];
   assert.ok(q, 'freeform question still present after SessionEnd');
   assert.equal(q.status, 'pending', 'freeform question still pending after SessionEnd');
