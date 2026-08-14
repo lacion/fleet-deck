@@ -11431,7 +11431,7 @@ var MAX_PASTE_BODY = 14e6;
 var BODY_DRAIN_GRACE_MS = 1e3;
 var BODY_STALL_FIN_S = (() => {
   const n = Number(process.env["FLEETDECK_STALL_FIN_S"]);
-  return Number.isFinite(n) ? n : 120;
+  return Number.isFinite(n) && n > 0 ? n : 120;
 })();
 var MAX_WS_BUFFER = (() => {
   const n = Number(process.env["FLEETDECK_WS_BUFFER_MAX"]);
@@ -11448,11 +11448,13 @@ var HttpResShim = class {
   _headers = {};
   _ended = false;
   _destroyed = false;
-  // A1: latched true once ANY per-request idle FIN has been armed (the ~4s
-  // refuse FIN via shouldKeepAlive, or the BODY_STALL_FIN_S stalled-drain
-  // bound). boundStalledDrain honours it so the grace-expiry never EXTENDS the
-  // shorter refuse FIN out to the 120s bound.
-  _finArmed = false;
+  // A1: which per-request idle FIN (if any) is armed. 'refuse' = the ~4s FIN
+  // set by shouldKeepAlive on the oversized-refuse path; 'stall' = the
+  // BODY_STALL_FIN_S bound armed by boundStalledDrain when the body-drain grace
+  // expires un-drained. boundStalledDrain never overwrites an already-armed FIN
+  // (so grace-expiry can't EXTEND the shorter refuse FIN to 120s), and
+  // clearStalledFin retracts ONLY a 'stall' FIN when the body later drains.
+  _finKind = "none";
   _closeListeners = [];
   // Declared as fields + assigned in the body, NOT constructor parameter properties:
   // Bun (like any strip-only type loader) erases types but cannot LOWER a parameter
@@ -11511,22 +11513,38 @@ var HttpResShim = class {
     if (!keep) {
       try {
         this._server.timeout(this._request, 1);
-        this._finArmed = true;
+        this._finKind = "refuse";
       } catch {
       }
     }
   }
   // A1: the body-drain grace expired with the body still un-drained (a stalled
   // or withheld request body). Arm a bounded per-request idle FIN so the socket
-  // idleTimeout:0 would otherwise keep immortal is reaped. Guarded by _finArmed
+  // idleTimeout:0 would otherwise keep immortal is reaped. Guarded by _finKind
   // so it never overwrites the shorter ~4s refuse FIN (the oversized-refuse path
   // ALSO stalls its drain — its grace fires before its ~4s FIN — and extending
   // that to 120s would defeat BUG-125's prompt close).
   boundStalledDrain() {
-    if (this._finArmed) return;
-    this._finArmed = true;
+    if (this._finKind !== "none") return;
+    this._finKind = "stall";
     try {
       this._server.timeout(this._request, BODY_STALL_FIN_S);
+    } catch {
+    }
+  }
+  // A1 follow-up: the body finished draining AFTER the grace already armed the
+  // stalled-drain FIN — a slow-but-real upload, or a held long-poll whose body
+  // drained just past the 1s grace (a future remote hook sender, or a ≥1s
+  // event-loop stall straddling the drain). Retract the bound so the now-live
+  // request runs unbounded again, exactly as if the grace had never fired. Only
+  // ever clears a 'stall' FIN; a 'refuse' FIN is left intact so BUG-125's prompt
+  // close is never lengthened. This is what makes the held-long-poll exemption
+  // true BY CONSTRUCTION rather than merely true-for-loopback-fast-drains.
+  clearStalledFin() {
+    if (this._finKind !== "stall") return;
+    this._finKind = "none";
+    try {
+      this._server.timeout(this._request, 0);
     } catch {
     }
   }
@@ -11566,6 +11584,15 @@ var HttpReqShim = class {
   }
   destroy() {
     this._destroyed = true;
+  }
+  // Mirrors HttpResShim.destroyed. True once destroy() ran OR _pump's catch
+  // fired — a mid-stream body read error, or a 'data'/'end' listener that threw
+  // (both run inside _pump's try) — i.e. the request FAULTED rather than draining
+  // cleanly. drainThenRespond reads this to decide whether a settled drain earned
+  // its stalled-FIN retraction (clean end) or must keep the FIN so the stuck
+  // socket is still reaped (fault).
+  get destroyed() {
+    return this._destroyed;
   }
   // Driven by the fetch handler AFTER routeRequest has synchronously registered the
   // POST body listeners. Replays the Bun request body stream as node-style
@@ -12667,9 +12694,9 @@ function createHttp(core2, {
     const req = new HttpReqShim(request, srv);
     const res = new HttpResShim(request, srv);
     routeRequest(req, res);
-    return drainThenRespond(req._pump(), res);
+    return drainThenRespond(req, req._pump(), res);
   }
-  function drainThenRespond(drained, res) {
+  function drainThenRespond(req, drained, res) {
     return new Promise((resolve) => {
       let settled = false;
       const finish = () => {
@@ -12683,7 +12710,10 @@ function createHttp(core2, {
         finish();
       }, BODY_DRAIN_GRACE_MS);
       timer.unref();
-      drained.then(finish, finish);
+      drained.then(() => {
+        if (!req.destroyed) res.clearStalledFin();
+        finish();
+      }, finish);
     });
   }
   let bunServer = null;

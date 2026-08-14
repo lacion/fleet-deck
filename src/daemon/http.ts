@@ -58,14 +58,20 @@ const BODY_DRAIN_GRACE_MS = 1000;
 // A1: when the body-drain grace above expires with the body STILL un-drained
 // (a stalled/withheld request body), arm a per-request idle FIN so the
 // immortal socket is reaped — idleTimeout:0 otherwise lets it live forever.
-// server.timeout is an idle clock, so this value must exceed the worst
-// legitimate upload: a 14 MB /api/paste-image over a DERP-relayed Tailscale
-// link at ~1 Mbps ≈ 115s. 120s carries it with headroom, whether or not
-// uSockets resets the idle clock on inbound body chunks. FLEETDECK_STALL_FIN_S
-// overrides for tests. See boundStalledDrain and bun-serve-runtime-limits.
+// server.timeout is an idle clock that uSockets resets on inbound data, so a
+// legitimately flowing upload keeps pushing this bound forward and never trips
+// it — the value only has to span the gap between two chunks, not the whole
+// transfer. Even read as an ABSOLUTE deadline it still clears the worst single
+// upload end-to-end: a 14 MB /api/paste-image over a DERP-relayed Tailscale
+// link at ~1 Mbps ≈ 113s, and the FIN (armed ~1s into the request) fires ~121s
+// in. clearStalledFin retracts it the instant the body drains, so it only ever
+// bounds a body that is genuinely stuck. A 0/negative override would mean
+// "never" (server.timeout(_,0) — the opposite of a bound), so those fall back
+// to 120s. FLEETDECK_STALL_FIN_S overrides for tests. See boundStalledDrain,
+// clearStalledFin, and bun-serve-runtime-limits.
 const BODY_STALL_FIN_S = (() => {
   const n = Number(process.env['FLEETDECK_STALL_FIN_S']);
-  return Number.isFinite(n) ? n : 120;
+  return Number.isFinite(n) && n > 0 ? n : 120;
 })();
 // H-R3/R1-2 backpressure: a /ws peer this far behind (dropped wifi, a frozen
 // tab) has stopped draining. We do NOT keep buffering snapshots into its dead
@@ -122,11 +128,13 @@ class HttpResShim {
   private _headers: Record<string, string> = {};
   private _ended = false;
   private _destroyed = false;
-  // A1: latched true once ANY per-request idle FIN has been armed (the ~4s
-  // refuse FIN via shouldKeepAlive, or the BODY_STALL_FIN_S stalled-drain
-  // bound). boundStalledDrain honours it so the grace-expiry never EXTENDS the
-  // shorter refuse FIN out to the 120s bound.
-  private _finArmed = false;
+  // A1: which per-request idle FIN (if any) is armed. 'refuse' = the ~4s FIN
+  // set by shouldKeepAlive on the oversized-refuse path; 'stall' = the
+  // BODY_STALL_FIN_S bound armed by boundStalledDrain when the body-drain grace
+  // expires un-drained. boundStalledDrain never overwrites an already-armed FIN
+  // (so grace-expiry can't EXTEND the shorter refuse FIN to 120s), and
+  // clearStalledFin retracts ONLY a 'stall' FIN when the body later drains.
+  private _finKind: 'none' | 'refuse' | 'stall' = 'none';
   private _closeListeners: ResCloseListener[] = [];
   // Declared as fields + assigned in the body, NOT constructor parameter properties:
   // Bun (like any strip-only type loader) erases types but cannot LOWER a parameter
@@ -191,7 +199,7 @@ class HttpResShim {
     if (!keep) {
       try {
         this._server.timeout(this._request, 1);
-        this._finArmed = true;
+        this._finKind = 'refuse';
       } catch {
         /* server torn down */
       }
@@ -199,17 +207,34 @@ class HttpResShim {
   }
   // A1: the body-drain grace expired with the body still un-drained (a stalled
   // or withheld request body). Arm a bounded per-request idle FIN so the socket
-  // idleTimeout:0 would otherwise keep immortal is reaped. Guarded by _finArmed
+  // idleTimeout:0 would otherwise keep immortal is reaped. Guarded by _finKind
   // so it never overwrites the shorter ~4s refuse FIN (the oversized-refuse path
   // ALSO stalls its drain — its grace fires before its ~4s FIN — and extending
   // that to 120s would defeat BUG-125's prompt close).
   boundStalledDrain(): void {
-    if (this._finArmed) return; // never overwrite the ~4s refuse FIN with the 120s bound
-    this._finArmed = true;
+    if (this._finKind !== 'none') return; // never overwrite an already-armed FIN
+    this._finKind = 'stall';
     try {
       this._server.timeout(this._request, BODY_STALL_FIN_S);
     } catch {
       /* server torn down (stop(true)) — same benign case as shouldKeepAlive */
+    }
+  }
+  // A1 follow-up: the body finished draining AFTER the grace already armed the
+  // stalled-drain FIN — a slow-but-real upload, or a held long-poll whose body
+  // drained just past the 1s grace (a future remote hook sender, or a ≥1s
+  // event-loop stall straddling the drain). Retract the bound so the now-live
+  // request runs unbounded again, exactly as if the grace had never fired. Only
+  // ever clears a 'stall' FIN; a 'refuse' FIN is left intact so BUG-125's prompt
+  // close is never lengthened. This is what makes the held-long-poll exemption
+  // true BY CONSTRUCTION rather than merely true-for-loopback-fast-drains.
+  clearStalledFin(): void {
+    if (this._finKind !== 'stall') return;
+    this._finKind = 'none';
+    try {
+      this._server.timeout(this._request, 0); // back to idleTimeout:0 for this request
+    } catch {
+      /* server torn down — benign, same as boundStalledDrain */
     }
   }
   get writableEnded(): boolean {
@@ -256,6 +281,15 @@ class HttpReqShim {
   }
   destroy(): void {
     this._destroyed = true;
+  }
+  // Mirrors HttpResShim.destroyed. True once destroy() ran OR _pump's catch
+  // fired — a mid-stream body read error, or a 'data'/'end' listener that threw
+  // (both run inside _pump's try) — i.e. the request FAULTED rather than draining
+  // cleanly. drainThenRespond reads this to decide whether a settled drain earned
+  // its stalled-FIN retraction (clean end) or must keep the FIN so the stuck
+  // socket is still reaped (fault).
+  get destroyed(): boolean {
+    return this._destroyed;
   }
   // Driven by the fetch handler AFTER routeRequest has synchronously registered the
   // POST body listeners. Replays the Bun request body stream as node-style
@@ -2253,7 +2287,7 @@ export function createHttp(
     const req = new HttpReqShim(request, srv);
     const res = new HttpResShim(request, srv);
     routeRequest(req, res);
-    return drainThenRespond(req._pump(), res);
+    return drainThenRespond(req, req._pump(), res);
   }
 
   // Hand Bun the response only after the request body has finished draining, so a
@@ -2267,7 +2301,11 @@ export function createHttp(
   // before the socket closes. res.done resolves on res.end(); a held response (hook
   // hold / watch long-poll) resolves it long after its small body drains, so the
   // grace never gates held responses.
-  function drainThenRespond(drained: Promise<void>, res: HttpResShim): Promise<Response> {
+  function drainThenRespond(
+    req: HttpReqShim,
+    drained: Promise<void>,
+    res: HttpResShim,
+  ): Promise<Response> {
     return new Promise<Response>((resolve) => {
       let settled = false;
       const finish = (): void => {
@@ -2281,7 +2319,18 @@ export function createHttp(
         finish();
       }, BODY_DRAIN_GRACE_MS);
       timer.unref();
-      drained.then(finish, finish);
+      // A body that drained CLEANLY (req not destroyed) retracts any stalled-drain
+      // FIN the grace armed — clearStalledFin no-ops unless a 'stall' FIN is armed
+      // — so a slow-but-real upload, or a held long-poll whose body drained just
+      // past the 1s grace, is never severed. A body that FAULTED keeps the FIN so
+      // the stuck socket is still reaped: _pump swallows a mid-stream read error
+      // into a RESOLUTION (setting req.destroyed), not a rejection, so this guard
+      // — not the reject branch — is what separates a completed body from a
+      // faulted one. The rare true rejection (getReader throws) keeps it too.
+      drained.then(() => {
+        if (!req.destroyed) res.clearStalledFin();
+        finish();
+      }, finish);
     });
   }
 
