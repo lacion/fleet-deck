@@ -73,7 +73,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { resolveHome, resolvePort, resolveBase } from '../src/daemon/config.ts';
+import { resolveHome, resolvePort, resolveBase, readToken } from '../src/daemon/config.ts';
 
 const PORT = resolvePort();
 const BASE = resolveBase(PORT);
@@ -86,12 +86,7 @@ const HOME = resolveHome();
 // is no file and the loopback exemption carries the poll. This watcher is only
 // ever spawned by a Stop hook AFTER SessionStart booted the daemon, so the token
 // file already exists by the time we read it. Harmless in default mode.
-let TOKEN: string | null = null;
-try {
-  TOKEN = fs.readFileSync(path.join(HOME, 'token'), 'utf8').trim() || null;
-} catch {
-  /* no token file — default loopback mode */
-}
+const TOKEN: string | null = readToken(HOME);
 
 // exactOptionalPropertyTypes forbids `headers: undefined` inline, so the auth
 // header is carried in one shared object (empty when there is no token, which

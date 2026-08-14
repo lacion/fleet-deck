@@ -56,6 +56,23 @@ export function resolveBase(port: number = resolvePort()): string {
   return `http://127.0.0.1:${port}`;
 }
 
+// The persisted bearer token at <home>/token, or null when absent. Every hook and
+// watch entry point reads it identically: trim, fold empty → null, and treat a
+// missing file — a hook racing the first-ever daemon boot, or a broken install —
+// as null too. Only the READ is shared; each caller still assembles its own
+// Authorization header, because the exactOptionalPropertyTypes-safe header object
+// differs per site (some omit the header entirely when the token is null, which is
+// identical on the wire to sending none). `home` is passed in — callers already
+// hold their resolveHome() result and a relative one would fork identity (see
+// resolveHome).
+export function readToken(home: string): string | null {
+  try {
+    return fs.readFileSync(path.join(home, 'token'), 'utf8').trim() || null;
+  } catch {
+    return null;
+  }
+}
+
 // Are we on a Coder workspace whose persisted disk is `/workspace`? Coder sets
 // CODER / CODER_WORKSPACE_NAME / CODER_AGENT_URL in the agent environment; any
 // one of them (non-empty) plus an actual `/workspace` directory is the signal.

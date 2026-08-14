@@ -22,9 +22,7 @@
 // delivered FileChanged re-pins it too. The daemon response is forwarded
 // verbatim for every event, with watchPaths merged in for these two.
 
-import fs from 'node:fs';
-import path from 'node:path';
-import { resolveHome, resolvePort, resolveBase } from '../src/daemon/config.ts';
+import { resolveHome, resolvePort, resolveBase, readToken } from '../src/daemon/config.ts';
 import { runNonce } from '../src/daemon/run-nonce.ts';
 
 // argv[2] is the hook event name hooks.json passes; `string | undefined` only
@@ -85,12 +83,7 @@ const watchdog = setTimeout(() => {
 // The token the shim exists to present. Absent only in a broken/odd install —
 // the daemon has minted one at every boot since 0.16.0 — in which case we send
 // no header and the daemon's 401 (fail-open for hooks) applies.
-let TOKEN: string | null = null;
-try {
-  TOKEN = fs.readFileSync(path.join(HOME, 'token'), 'utf8').trim() || null;
-} catch {
-  /* no token file */
-}
+const TOKEN: string | null = readToken(HOME);
 
 async function readStdinRaw(): Promise<string> {
   let data = '';

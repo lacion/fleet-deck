@@ -34,7 +34,7 @@ import {
   terminateDaemon,
   replacementMatches,
 } from '../src/daemon/takeover.ts';
-import { resolveHome, resolvePort, resolveBase } from '../src/daemon/config.ts';
+import { resolveHome, resolvePort, resolveBase, readToken } from '../src/daemon/config.ts';
 
 const PORT = resolvePort();
 const BASE = resolveBase(PORT);
@@ -81,14 +81,7 @@ interface Payload {
 // Every /hook/* route requires the bearer, including plain loopback. A warm
 // hook reads the persisted token here; a cold hook reads null, boots fleetd,
 // then MUST reread after health succeeds because that boot minted the file.
-function readToken(): string | null {
-  try {
-    return fs.readFileSync(path.join(HOME, 'token'), 'utf8').trim() || null;
-  } catch {
-    return null;
-  }
-}
-let TOKEN = readToken();
+let TOKEN = readToken(HOME);
 
 // Hard deadline: whatever happens, exit 0 well inside the hook's 15s timeout.
 // The takeover path can outlast the default 3.8s budget (waiting for an old
@@ -388,7 +381,7 @@ try {
   if (serverUp) {
     // Cold boot: ensureServer() just minted HOME/token. Refresh before the first
     // authenticated registration instead of silently losing the birth event.
-    TOKEN = readToken();
+    TOKEN = readToken(HOME);
     const reg = await api<Registration>('/hook/SessionStart', {
       method: 'POST',
       body: payload,

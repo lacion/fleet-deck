@@ -3,7 +3,7 @@
 
 // scripts/fleet-sessionstart.ts
 import { spawn } from "node:child_process";
-import fs3 from "node:fs";
+import fs4 from "node:fs";
 import path4 from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -238,6 +238,7 @@ async function terminateDaemon(pid, {
 }
 
 // src/daemon/config.ts
+import fs3 from "node:fs";
 import os from "node:os";
 import path3 from "node:path";
 function resolveHome() {
@@ -261,6 +262,13 @@ function resolvePort() {
 function resolveBase(port = resolvePort()) {
   return `http://127.0.0.1:${port}`;
 }
+function readToken(home) {
+  try {
+    return fs3.readFileSync(path3.join(home, "token"), "utf8").trim() || null;
+  } catch {
+    return null;
+  }
+}
 
 // scripts/fleet-sessionstart.ts
 var PORT = resolvePort();
@@ -269,17 +277,10 @@ var HERE = path4.dirname(fileURLToPath(import.meta.url));
 var FLEETD_BUNDLE = path4.join(HERE, "..", "src", "daemon", "fleetd.bundle.mjs");
 var FLEETD = (
   // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- an empty/unset test seam must fall back to the bundle, not be preserved as ''
-  process.env["FLEETDECK_TEST_DAEMON_SCRIPT"] || (fs3.existsSync(FLEETD_BUNDLE) ? FLEETD_BUNDLE : path4.join(HERE, "..", "src", "daemon", "fleetd.ts"))
+  process.env["FLEETDECK_TEST_DAEMON_SCRIPT"] || (fs4.existsSync(FLEETD_BUNDLE) ? FLEETD_BUNDLE : path4.join(HERE, "..", "src", "daemon", "fleetd.ts"))
 );
 var HOME = resolveHome();
-function readToken() {
-  try {
-    return fs3.readFileSync(path4.join(HOME, "token"), "utf8").trim() || null;
-  } catch {
-    return null;
-  }
-}
-var TOKEN = readToken();
+var TOKEN = readToken(HOME);
 var HOOK_START = Date.now();
 var watchdog = setTimeout(() => process.exit(0), 3800);
 function rearmWatchdog(totalMs) {
@@ -363,7 +364,7 @@ function bootEnv() {
 }
 function ownVersion() {
   try {
-    const pkg = JSON.parse(fs3.readFileSync(path4.join(HERE, "..", "package.json"), "utf8"));
+    const pkg = JSON.parse(fs4.readFileSync(path4.join(HERE, "..", "package.json"), "utf8"));
     const rawV = pkg?.version;
     const v = typeof rawV === "string" ? rawV.trim() : "";
     return v || null;
@@ -387,10 +388,10 @@ async function ensureServer(round = 0) {
   }
   let out = null;
   try {
-    fs3.mkdirSync(HOME, { recursive: true });
+    fs4.mkdirSync(HOME, { recursive: true });
     const logFile = path4.join(HOME, "fleetd.log");
-    out = fs3.openSync(logFile, "a", 384);
-    fs3.chmodSync(logFile, 384);
+    out = fs4.openSync(logFile, "a", 384);
+    fs4.chmodSync(logFile, 384);
     const child = spawn(process.execPath, [FLEETD], {
       detached: true,
       stdio: ["ignore", out, out],
@@ -404,7 +405,7 @@ async function ensureServer(round = 0) {
   } finally {
     if (out !== null)
       try {
-        fs3.closeSync(out);
+        fs4.closeSync(out);
       } catch {
       }
   }
@@ -439,7 +440,7 @@ try {
   const watchPaths = [typeof payload.cwd === "string" && payload.cwd ? payload.cwd : process.cwd()];
   const context = [];
   if (serverUp) {
-    TOKEN = readToken();
+    TOKEN = readToken(HOME);
     const reg = await api("/hook/SessionStart", {
       method: "POST",
       body: payload,
