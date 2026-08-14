@@ -4,7 +4,8 @@ import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { startDaemon } from './helpers/daemon.ts';
-import { postHook, postJson, getJson } from './helpers/http.ts';
+import { postHook, postJson } from './helpers/http.ts';
+import { getState } from './helpers/state.ts';
 import { waitUntil } from './helpers/wait.ts';
 import { openDb } from '../src/daemon/db.ts';
 import type { StateResponse } from '../contracts/state.ts';
@@ -74,7 +75,7 @@ test('POST /api/cleanup archives offline sessions and expires their queued mail'
   assert.equal(body.mail_expired, 1);
   assert.equal(body.questions_expired, 0);
   assert.ok(Array.isArray(body.orphan_worktrees));
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(daemon.baseUrl);
   assert.equal(
     state.sessions.some((s) => s.session_id === sid),
     false,
@@ -109,7 +110,7 @@ test('Clear wipes everything that is not alive: conflicts, the rail, the feed', 
       { token: daemon.token },
     );
   }
-  let state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  let state = await getState<StateResponse>(daemon.baseUrl);
   assert.ok(state.conflicts.length >= 1, 'sanity: the radar raised a conflict');
   assert.ok(
     state.conflicts[0]?.callsigns.length,
@@ -140,7 +141,7 @@ test('Clear wipes everything that is not alive: conflicts, the rail, the feed', 
   const body = res.json as CleanupResponse;
   assert.ok(body.conflicts_cleared >= 1, 'a conflict between two dead sessions is not news');
 
-  state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  state = await getState<StateResponse>(daemon.baseUrl);
   assert.equal(state.conflicts.length, 0, 'the conflict banner must not outlive its sessions');
   assert.equal(
     state.questions.filter((q) => q.status !== 'pending').length,
@@ -248,7 +249,7 @@ test('BUG-145: Clear and dismiss fail loud when tmux is unreachable, with a retr
   const blockedBody = blocked.json as CleanupBlocked;
   assert.equal(blockedBody.ok, false);
   assert.match(blockedBody.reason, /listing unavailable/);
-  let state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  let state = await getState<StateResponse>(daemon.baseUrl);
   assert.ok(
     state.sessions.some((s) => s.session_id === sid),
     'nothing was archived — Clear is fully retryable',
@@ -274,7 +275,7 @@ test('BUG-145: Clear and dismiss fail loud when tmux is unreachable, with a retr
   );
   assert.equal(unknown.status, 404);
 
-  state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  state = await getState<StateResponse>(daemon.baseUrl);
   assert.equal(
     state.sessions.some((s) => s.session_id === sid),
     false,

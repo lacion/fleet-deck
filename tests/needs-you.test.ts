@@ -41,7 +41,7 @@ import { postHook, postJson, getJson, type JsonResponse } from './helpers/http.t
 import { loadFixture } from './helpers/fixtures.ts';
 import { makeTranscriptDir, writeTranscript } from './helpers/transcript.ts';
 import { waitUntil } from './helpers/wait.ts';
-import { scratchCwd, questionsFor, getSession } from './helpers/state.ts';
+import { getState, scratchCwd, questionsFor, getSession } from './helpers/state.ts';
 import type { StateResponse, QuestionEntry } from '../contracts/state.ts';
 
 // --- response-body facets: /state.json and each hook response are `unknown`
@@ -112,7 +112,7 @@ test('F3a: PermissionRequest holds open; board answer {behavior:"allow"} resolve
 
   const q = await waitUntil(
     async () => {
-      const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+      const state = await getState<StateResponse>(daemon.baseUrl);
       return questionsFor(state, sid, 'permission')[0];
     },
     { label: 'permission question to appear in /state' },
@@ -149,7 +149,7 @@ test('F3a: PermissionRequest holds open; board answer {behavior:"allow"} resolve
     'allow decision should produce the PermissionRequest response schema (verified against the official hooks docs)',
   );
 
-  const state2 = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state2 = await getState<StateResponse>(daemon.baseUrl);
   const q2 = state2.questions.find((x) => x.id === q.id);
   assert.ok(
     q2,
@@ -184,7 +184,7 @@ test('F3a: PermissionRequest board answer {behavior:"deny"} resolves the held re
 
   const q = await waitUntil(
     async () => {
-      const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+      const state = await getState<StateResponse>(daemon.baseUrl);
       return questionsFor(state, sid, 'permission')[0];
     },
     { label: 'permission question to appear in /state' },
@@ -239,7 +239,7 @@ test('F3b: Elicitation holds open; board answer {action:"accept", content} resol
 
   const q = await waitUntil(
     async () => {
-      const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+      const state = await getState<StateResponse>(daemon.baseUrl);
       return questionsFor(state, sid, 'elicitation')[0];
     },
     { label: 'elicitation question to appear in /state' },
@@ -306,7 +306,7 @@ test('hold expiry: an unanswered PermissionRequest resolves to {} within toleran
 
   const q = await waitUntil(
     async () => {
-      const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+      const state = await getState<StateResponse>(daemon.baseUrl);
       return questionsFor(state, sid, 'permission')[0];
     },
     { label: 'permission question to appear in /state' },
@@ -324,7 +324,7 @@ test('hold expiry: an unanswered PermissionRequest resolves to {} within toleran
     'timed-out hold should resolve to {} (normal permission flow resumes)',
   );
 
-  const state2 = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state2 = await getState<StateResponse>(daemon.baseUrl);
   const q2 = state2.questions.find((x) => x.id === q.id);
   assert.ok(q2, 'expired question should still be present in /state');
   assert.equal(q2.status, 'expired', 'unanswered hold should leave the question status=expired');
@@ -379,7 +379,7 @@ test('F3d: Stop trailing-question freeform detection creates a needsyou card, an
   );
   assert.equal(stopRes.status, 200);
 
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(daemon.baseUrl);
   const card = getSession(state, sid);
   assert.equal(
     card.col,
@@ -495,7 +495,7 @@ test('F3d: Stop with last_assistant_message present on the live payload detects 
   );
   assert.equal(stopRes.status, 200, 'Stop should 200 regardless of which detection path is taken');
 
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(daemon.baseUrl);
   const qs = questionsFor(state, sid, 'freeform');
   assert.equal(
     qs.length,
@@ -567,7 +567,7 @@ test('a Stop that returns a mail block does not run freeform question detection 
   );
   assert.match((stopRes.json as StopBlockResponse | null)?.reason ?? '', /\[FLEETDECK MAIL\]/);
 
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(daemon.baseUrl);
   const qs = questionsFor(state, sid, 'freeform');
   assert.equal(
     qs.length,
@@ -609,7 +609,7 @@ test('Notification ingest stores notification_type', async (t) => {
   );
   assert.equal(res.status, 200);
 
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(daemon.baseUrl);
   const card = getSession(state, sid);
   assert.ok(card, 'session card should exist');
   assert.equal(
@@ -656,13 +656,13 @@ test('subsequent activity (UserPromptSubmit) returns col to working and expires 
 
   const q = await waitUntil(
     async () => {
-      const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+      const state = await getState<StateResponse>(daemon.baseUrl);
       return questionsFor(state, sid, 'permission')[0];
     },
     { label: 'permission question registered' },
   );
 
-  let state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  let state = await getState<StateResponse>(daemon.baseUrl);
   let card = getSession(state, sid);
   assert.equal(card.col, 'needsyou', 'a held permission request should show needsyou on the board');
 
@@ -674,7 +674,7 @@ test('subsequent activity (UserPromptSubmit) returns col to working and expires 
     { token: daemon },
   );
 
-  state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  state = await getState<StateResponse>(daemon.baseUrl);
   card = getSession(state, sid);
   assert.equal(
     card.col,
@@ -729,13 +729,13 @@ test('BUG-102: a FAILED tool call (PostToolUseFailure) retires its correlated pe
 
   const q = await waitUntil(
     async () => {
-      const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+      const state = await getState<StateResponse>(daemon.baseUrl);
       return questionsFor(state, sid, 'permission')[0];
     },
     { label: 'permission question registered' },
   );
 
-  let state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  let state = await getState<StateResponse>(daemon.baseUrl);
   assert.equal(
     getSession(state, sid).col,
     'needsyou',
@@ -763,7 +763,7 @@ test('BUG-102: a FAILED tool call (PostToolUseFailure) retires its correlated pe
   );
   assert.deepEqual(heldRes.json, {}, 'the failure-retired hold should fail open with {}');
 
-  state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  state = await getState<StateResponse>(daemon.baseUrl);
   const q2 = state.questions.find((x) => x.id === q.id);
   assert.ok(q2, 'the permission question should still be present in /state');
   assert.equal(
@@ -809,7 +809,7 @@ test('SessionEnd expires all pending permission/elicitation questions for the se
   );
   await waitUntil(
     async () => {
-      const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+      const state = await getState<StateResponse>(daemon.baseUrl);
       return questionsFor(state, sid, 'permission').length === 1 || null;
     },
     { label: 'permission question registered' },
@@ -823,7 +823,7 @@ test('SessionEnd expires all pending permission/elicitation questions for the se
   );
   await waitUntil(
     async () => {
-      const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+      const state = await getState<StateResponse>(daemon.baseUrl);
       return questionsFor(state, sid, 'elicitation').length === 1 || null;
     },
     { label: 'elicitation question registered' },
@@ -847,7 +847,7 @@ test('SessionEnd expires all pending permission/elicitation questions for the se
   assert.deepEqual(resA.json, {}, 'SessionEnd-expired permission hold should resolve to {}');
   assert.deepEqual(resB.json, {}, 'SessionEnd-expired elicitation hold should resolve to {}');
 
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(daemon.baseUrl);
   const qs = questionsFor(state, sid);
   assert.ok(qs.length >= 2, 'both questions should still be present in /state');
   for (const q of qs) {
@@ -904,7 +904,7 @@ test('freeform questions SURVIVE SessionEnd and deliver on resume', async (t) =>
     { token: daemon },
   );
 
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(daemon.baseUrl);
   assert.equal(getSession(state, sid).col, 'offline', 'session tombstoned');
   const q = questionsFor(state, sid, 'freeform')[0];
   assert.ok(q, 'freeform question still present after SessionEnd');
@@ -979,7 +979,7 @@ test('concurrent holds per session are capped at 4; the 5th arrival expires the 
       const expectedCount = i + 1;
       const pending = await waitUntil(
         async () => {
-          const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+          const state = await getState<StateResponse>(daemon.baseUrl);
           const rows = questionsFor(state, sid).filter((x) => x.status === 'pending');
           return rows.length === expectedCount ? rows : null;
         },
@@ -1017,7 +1017,7 @@ test('concurrent holds per session are capped at 4; the 5th arrival expires the 
     'cap-expired hold should resolve to {}',
   );
 
-  let state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  let state = await getState<StateResponse>(daemon.baseUrl);
   const pendingNow = questionsFor(state, sid).filter((x) => x.status === 'pending');
   assert.equal(
     pendingNow.length,
@@ -1043,7 +1043,7 @@ test('concurrent holds per session are capped at 4; the 5th arrival expires the 
   }
   await Promise.all(promises.slice(1));
 
-  state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  state = await getState<StateResponse>(daemon.baseUrl);
   assert.equal(
     questionsFor(state, sid).filter((x) => x.status === 'pending').length,
     0,
@@ -1132,7 +1132,7 @@ test('F3d: a freeform card clears when the session moves on (answered in the ter
     { token: daemon.token },
   );
 
-  let state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  let state = await getState<StateResponse>(daemon.baseUrl);
   const q = questionsFor(state, sid, 'freeform')[0];
   assert.ok(q, 'sanity: the trailing question became a card');
   assert.equal(q.status, 'pending');
@@ -1145,7 +1145,7 @@ test('F3d: a freeform card clears when the session moves on (answered in the ter
     { token: daemon },
   );
 
-  state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  state = await getState<StateResponse>(daemon.baseUrl);
   const after = state.questions.find((x) => x.id === q.id);
   assert.notEqual(
     after?.status,
@@ -1193,7 +1193,7 @@ test('a stale needs-you card can be dismissed without telling the session anythi
     { token: daemon.token },
   );
 
-  let state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  let state = await getState<StateResponse>(daemon.baseUrl);
   const q = questionsFor(state, sid, 'freeform')[0];
   assert.ok(q, 'sanity: the question became a card');
 
@@ -1201,7 +1201,7 @@ test('a stale needs-you card can be dismissed without telling the session anythi
   assert.equal(res.status, 200);
   assert.equal((res.json as DismissAck).ok, true);
 
-  state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  state = await getState<StateResponse>(daemon.baseUrl);
   const after = state.questions.find((x) => x.id === q.id);
   assert.notEqual(after?.status, 'pending', 'a dismissed card is retired');
 

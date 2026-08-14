@@ -13,7 +13,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { startDaemon, type DaemonHandle } from './helpers/daemon.ts';
-import { postHook, getJson } from './helpers/http.ts';
+import { postHook } from './helpers/http.ts';
+import { getState } from './helpers/state.ts';
 import { loadFixture, type FixtureTokens } from './helpers/fixtures.ts';
 import type { StateResponse } from '../contracts/state.ts';
 
@@ -88,7 +89,7 @@ test('second session touching the same file gets a whisper naming the rival; riv
   assert.ok(hso.additionalContext.includes(callsignA), 'whisper should name the rival by callsign');
 
   // Rival (A) should have mail waiting.
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(daemon.baseUrl);
   assert.ok(state.mail_pending, '/state should expose mail_pending');
   assert.ok(
     (state.mail_pending[sidA] ?? 0) >= 1,
@@ -138,7 +139,7 @@ test('a session that already ended still counts as a rival within the window', a
     loadFixture('session-end', { session_id: sidC, cwd }),
     { token: daemon },
   );
-  let state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  let state = await getState<StateResponse>(daemon.baseUrl);
   assert.equal(
     findSession(state, sidC)?.col,
     'offline',
@@ -169,6 +170,6 @@ test('a session that already ended still counts as a rival within the window', a
     'whisper should name the ended rival by callsign',
   );
 
-  state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  state = await getState<StateResponse>(daemon.baseUrl);
   assert.ok((state.mail_pending[sidC] ?? 0) >= 1, 'the ended rival should still receive mail');
 });

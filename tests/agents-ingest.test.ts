@@ -31,6 +31,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startDaemon } from './helpers/daemon.ts';
 import { postHook, getJson } from './helpers/http.ts';
+import { getState } from './helpers/state.ts';
 import { waitUntil as waitUntilBase, type WaitUntilOptions } from './helpers/wait.ts';
 import { openDb } from '../src/daemon/db.ts';
 import { loadFixture } from './helpers/fixtures.ts';
@@ -141,7 +142,7 @@ async function waitForSession(
 ): Promise<SessionEntry> {
   return waitUntil(
     async () => {
-      const state = (await getJson(`${baseUrl}/state`)).json as StateResponse;
+      const state = await getState<StateResponse>(baseUrl);
       return findSession(state, sid);
     },
     { label: `session ${sid} in /state`, ...opts },
@@ -246,7 +247,7 @@ test('poller cards live interactive entries only: background and dead-pid entrie
 
   // the garbage never appears, even after several more poll cycles
   await new Promise((r) => setTimeout(r, 1200));
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(daemon.baseUrl);
   assert.equal(
     findSession(state, sidBackground),
     undefined,
@@ -299,7 +300,7 @@ test('a hook event for the same sessionId flips source to hooks and the poller s
     { token: daemon },
   );
   assert.equal(startRes.status, 200);
-  let state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  let state = await getState<StateResponse>(daemon.baseUrl);
   card = findSession(state, sid);
   assert.ok(card);
   assert.equal(card.source, 'hooks', 'a real hook event must flip source to hooks');
@@ -319,7 +320,7 @@ test('a hook event for the same sessionId flips source to hooks and the poller s
   ]);
   await new Promise((r) => setTimeout(r, 1200)); // several 400ms poll cycles
 
-  state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  state = await getState<StateResponse>(daemon.baseUrl);
   card = findSession(state, sid);
   assert.ok(card);
   assert.equal(card.source, 'hooks', 'source must remain hooks after further poll ticks');
@@ -329,7 +330,7 @@ test('a hook event for the same sessionId flips source to hooks and the poller s
   // (SessionEnd is its only tombstone — trust rule 3 scopes to agents-cli).
   writeFixture(fixtureFile, []);
   await new Promise((r) => setTimeout(r, 1200));
-  state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  state = await getState<StateResponse>(daemon.baseUrl);
   card = findSession(state, sid);
   assert.ok(card);
   assert.equal(card.col, 'queued', 'absence from the poll must not touch a hooks-sourced card');
@@ -373,7 +374,7 @@ test('absence tombstones agents-cli cards; reappearance revives them', async (t)
   writeFixture(fixtureFile, []);
   card = await waitUntil(
     async () => {
-      const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+      const state = await getState<StateResponse>(daemon.baseUrl);
       const c = findSession(state, sid);
       return c?.col === 'offline' ? c : null;
     },
@@ -401,7 +402,7 @@ test('absence tombstones agents-cli cards; reappearance revives them', async (t)
   writeFixture(fixtureFile, [record]);
   card = await waitUntil(
     async () => {
-      const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+      const state = await getState<StateResponse>(daemon.baseUrl);
       const c = findSession(state, sid);
       return c?.col === 'working' ? c : null;
     },
@@ -469,7 +470,7 @@ test('a reused pid (live process, stale startedAt) is not the recorded session',
   await waitForSession(daemon.baseUrl, sidStale);
   await waitForSession(daemon.baseUrl, sidLive);
   await new Promise((r) => setTimeout(r, 1200)); // several poll cycles
-  let state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  let state = await getState<StateResponse>(daemon.baseUrl);
   assert.equal(
     findSession(state, sidGhost),
     undefined,
@@ -493,7 +494,7 @@ test('a reused pid (live process, stale startedAt) is not the recorded session',
   ]);
   const staleCard = await waitUntil(
     async () => {
-      const s = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+      const s = await getState<StateResponse>(daemon.baseUrl);
       const c = findSession(s, sidStale);
       return c?.col === 'offline' ? c : null;
     },
@@ -501,7 +502,7 @@ test('a reused pid (live process, stale startedAt) is not the recorded session',
   );
   assert.equal(staleCard.note, 'no longer reported by agents CLI');
 
-  state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  state = await getState<StateResponse>(daemon.baseUrl);
   const liveCard = findSession(state, sidLive);
   assert.ok(liveCard);
   assert.equal(liveCard.col, 'working', "an owned record is unaffected by a sibling's pid reuse");
@@ -564,7 +565,7 @@ test("an in-place checkout refreshes an agents-cli card's branch (same repo_id)"
 
   const updated = await waitUntil(
     async () => {
-      const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+      const state = await getState<StateResponse>(daemon.baseUrl);
       const c = findSession(state, sid);
       return c?.branch === 'checkout-target' ? c : null;
     },
@@ -615,7 +616,7 @@ test('FLEETDECK_AGENTS_CMD=false disables the poller entirely', async (t) => {
   // Give the (disabled) poller ample time to have fired if it were enabled.
   await new Promise((r) => setTimeout(r, 2500));
 
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(daemon.baseUrl);
   assert.equal(
     state.sessions.length,
     0,

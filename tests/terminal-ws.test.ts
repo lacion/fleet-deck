@@ -6,7 +6,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocket, type RawData } from 'ws';
 import { startDaemon } from './helpers/daemon.ts';
-import { postJson, getJson } from './helpers/http.ts';
+import { postJson } from './helpers/http.ts';
+import { getState } from './helpers/state.ts';
 import { waitUntil as waitUntilBase } from './helpers/wait.ts';
 import type { StateResponse } from '../contracts/state.ts';
 
@@ -93,7 +94,7 @@ function connect(url: string) {
 
 /** The spawn's board row: its column and spawn status, or null if not shown. */
 async function spawnRow(daemon: Daemon, spawnId: string) {
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(daemon.baseUrl);
   const s = state.sessions.find((x) => x.spawn?.spawn_id === spawnId);
   return s?.spawn ? { col: s.col, status: s.spawn.status } : null;
 }

@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { startDaemon } from './helpers/daemon.ts';
 import { postHook, postJson, getJson } from './helpers/http.ts';
+import { getState } from './helpers/state.ts';
 import { loadFixture, type FixtureTokens } from './helpers/fixtures.ts';
 import { makeRepoWithWorktree } from './helpers/gitrepo.ts';
 import { openDb } from '../src/daemon/db.ts';
@@ -195,7 +196,7 @@ test('UserPromptSubmit drains pending mail as additionalContext', async (t) => {
     'delivered context should carry the mail text',
   );
 
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(daemon.baseUrl);
   assert.equal(state.mail_pending?.[sid] ?? 0, 0, 'mailbox should be drained after delivery');
 });
 
@@ -283,7 +284,7 @@ test('POST /mail targeting: session/callsign, "all", "repo:<name>"', async (t) =
     { to: callsignX, from: 'operator', text: 'to X only' },
     { token: daemon.token },
   );
-  let state: StateResponse = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  let state: StateResponse = await getState<StateResponse>(daemon.baseUrl);
   assert.equal(pendingOf(state, sidX), 1, 'callsign-targeted mail should land on X');
   assert.equal(pendingOf(state, sidY), 0, 'Y should be untouched by callsign targeting');
   assert.equal(pendingOf(state, sidZ), 0, 'Z should be untouched by callsign targeting');
@@ -294,7 +295,7 @@ test('POST /mail targeting: session/callsign, "all", "repo:<name>"', async (t) =
     { to: 'all', from: 'operator', text: 'to everyone' },
     { token: daemon.token },
   );
-  state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  state = await getState<StateResponse>(daemon.baseUrl);
   assert.equal(pendingOf(state, sidX), 2, '"all" should add one more to X');
   assert.equal(pendingOf(state, sidY), 1, '"all" should reach Y');
   assert.equal(pendingOf(state, sidZ), 1, '"all" should reach Z (different repo, still "all")');
@@ -306,7 +307,7 @@ test('POST /mail targeting: session/callsign, "all", "repo:<name>"', async (t) =
     { to: repoTarget, from: 'operator', text: 'to repo A' },
     { token: daemon.token },
   );
-  state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  state = await getState<StateResponse>(daemon.baseUrl);
   assert.equal(pendingOf(state, sidX), 3, `"${repoTarget}" should reach X`);
   assert.equal(pendingOf(state, sidY), 2, `"${repoTarget}" should reach Y`);
   assert.equal(pendingOf(state, sidZ), 1, `"${repoTarget}" must not reach Z (repo B)`);

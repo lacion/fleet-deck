@@ -20,7 +20,8 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { startDaemon, REPO_ROOT, type DaemonHandle } from './helpers/daemon.ts';
-import { postHook, getJson } from './helpers/http.ts';
+import { postHook } from './helpers/http.ts';
+import { getState } from './helpers/state.ts';
 import { loadFixture } from './helpers/fixtures.ts';
 import type { StateResponse } from '../contracts/state.ts';
 
@@ -116,7 +117,7 @@ test('SessionEnd tombstones a session even when Stop was never sent (max-turns a
     { token: daemon },
   );
 
-  let state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  let state = await getState<StateResponse>(daemon.baseUrl);
   let card = state.sessions.find((s) => s.session_id === sid);
   assert.ok(card, 'sanity: session present before SessionEnd');
   assert.notEqual(
@@ -139,7 +140,7 @@ test('SessionEnd tombstones a session even when Stop was never sent (max-turns a
     'SessionEnd should respond {} through the shim',
   );
 
-  state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  state = await getState<StateResponse>(daemon.baseUrl);
   card = state.sessions.find((s) => s.session_id === sid);
   assert.ok(card, 'session should still be present (tombstoned, not deleted)');
   assert.equal(

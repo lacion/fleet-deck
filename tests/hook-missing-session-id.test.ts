@@ -17,7 +17,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { startDaemon } from './helpers/daemon.ts';
-import { postHook, getJson } from './helpers/http.ts';
+import { postHook } from './helpers/http.ts';
+import { getState } from './helpers/state.ts';
 import { loadFixture } from './helpers/fixtures.ts';
 import type { StateResponse } from '../contracts/state.ts';
 
@@ -79,7 +80,7 @@ test('authenticated hooks without a session_id fail open and never mint the shar
   );
   assert.equal(stop.status, 200, 'ID-less Stop still fails open with 200');
 
-  let state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  let state = await getState<StateResponse>(daemon.baseUrl);
   assert.ok(
     !state.sessions.find((s) => s.session_id === 'unknown'),
     "no phantom 'unknown' card on the board",
@@ -101,7 +102,7 @@ test('authenticated hooks without a session_id fail open and never mint the shar
     { hook_event_name: 'SomethingNew', cwd },
     { token: daemon },
   );
-  state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  state = await getState<StateResponse>(daemon.baseUrl);
   assert.ok(
     !state.sessions.find((s) => s.session_id === 'unknown'),
     "telemetry-only hooks mint no 'unknown' card either",
@@ -132,7 +133,7 @@ test('a hook WITH a session_id still registers normally after the ID-less ones w
     { token: daemon },
   );
   assert.ok((res.json as HookAck | null)?.ok, 'a well-formed SessionStart still gets its brief');
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(daemon.baseUrl);
   assert.deepEqual(
     state.sessions.map((s) => s.session_id),
     [sid],

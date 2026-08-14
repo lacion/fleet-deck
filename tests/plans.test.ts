@@ -76,7 +76,7 @@ import { startDaemon, randomPort, type DaemonHandle } from './helpers/daemon.ts'
 import { postHook, postJson, getJson, type JsonResponse } from './helpers/http.ts';
 import { loadFixture } from './helpers/fixtures.ts';
 import { waitUntil, waitForSpecRecords } from './helpers/wait.ts';
-import { scratchCwd, questionsFor, findSession } from './helpers/state.ts';
+import { getState, scratchCwd, questionsFor, findSession } from './helpers/state.ts';
 
 // ---------------------------------------------------------------------------
 // /state shapes. The HTTP helpers return `.json` as `unknown`; each read casts
@@ -234,7 +234,7 @@ async function holdExitPlan(
   let snapshot: StateSnapshot | null = null;
   const q = await waitUntil(
     async () => {
-      const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot;
+      const state = await getState<StateSnapshot>(daemon.baseUrl);
       const found = questionsFor(state, sid, 'permission')
         .filter((x) => x.payload?.tool_name === 'ExitPlanMode' && x.status === 'pending')
         .sort((a, b) => b.id - a.id)[0];
@@ -372,7 +372,7 @@ test('capture rollback: a failing plan insert leaves NEITHER the question nor th
     `fail-open must resolve immediately, not after the ${holdMs}ms hold window (took ${elapsed}ms)`,
   );
 
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot;
+  const state = await getState<StateSnapshot>(daemon.baseUrl);
   assert.equal(
     questionsFor(state, sid, 'permission').length,
     0,
@@ -404,8 +404,7 @@ test('answer path: {behavior:"allow"} approves the plan and the held response is
 
   const t0 = Date.now();
   const { held, q } = await holdExitPlan(daemon, sid, cwd, holdMs);
-  const planId = plansFor((await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot, sid)[0]
-    ?.plan_id;
+  const planId = plansFor(await getState<StateSnapshot>(daemon.baseUrl), sid)[0]?.plan_id;
   assert.ok(planId !== undefined, 'sanity: plan captured before answering');
 
   const ansRes = await postJson(`${daemon.baseUrl}/api/questions/${q.id}/answer`, {
@@ -427,7 +426,7 @@ test('answer path: {behavior:"allow"} approves the plan and the held response is
     'allow on an ExitPlanMode question must still produce the PermissionRequest allow schema (verified against the official hooks docs)',
   );
 
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot;
+  const state = await getState<StateSnapshot>(daemon.baseUrl);
   const plan = (state.plans ?? []).find((p) => String(p.plan_id) === String(planId));
   assert.ok(plan, 'plan row should still be present after answering');
   assert.equal(plan.status, 'approved', '{behavior:"allow"} should move the plan to approved');
@@ -452,8 +451,7 @@ test('answer path: {behavior:"capture"} denies the held hook bare AND mails the 
 
   const t0 = Date.now();
   const { held, q } = await holdExitPlan(daemon, sid, cwd, holdMs);
-  const planId = plansFor((await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot, sid)[0]
-    ?.plan_id;
+  const planId = plansFor(await getState<StateSnapshot>(daemon.baseUrl), sid)[0]?.plan_id;
   assert.ok(planId !== undefined, 'sanity: plan captured before answering');
 
   const ansRes = await postJson(`${daemon.baseUrl}/api/questions/${q.id}/answer`, {
@@ -479,7 +477,7 @@ test('answer path: {behavior:"capture"} denies the held hook bare AND mails the 
     '{behavior:"capture"} must resolve the held hook to a BARE deny (no message field) — capture is a board-only pseudo-behavior, the planner just sees a plain deny',
   );
 
-  const state1 = (await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot;
+  const state1 = await getState<StateSnapshot>(daemon.baseUrl);
   const plan1 = (state1.plans ?? []).find((p) => String(p.plan_id) === String(planId));
   assert.ok(plan1, 'plan row should still be present after answering');
   assert.equal(plan1.status, 'captured', '{behavior:"capture"} should move the plan to captured');
@@ -523,8 +521,7 @@ test('answer path: {behavior:"deny"} plainly denies the held hook; plan becomes 
   );
 
   const { held, q } = await holdExitPlan(daemon, sid, cwd, holdMs);
-  const planId = plansFor((await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot, sid)[0]
-    ?.plan_id;
+  const planId = plansFor(await getState<StateSnapshot>(daemon.baseUrl), sid)[0]?.plan_id;
 
   const ansRes = await postJson(`${daemon.baseUrl}/api/questions/${q.id}/answer`, {
     behavior: 'deny',
@@ -540,7 +537,7 @@ test('answer path: {behavior:"deny"} plainly denies the held hook; plan becomes 
     'plain deny on an ExitPlanMode question should be the same bare-deny schema as any other permission deny',
   );
 
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot;
+  const state = await getState<StateSnapshot>(daemon.baseUrl);
   const plan = (state.plans ?? []).find((p) => String(p.plan_id) === String(planId));
   assert.ok(plan);
   assert.equal(plan.status, 'rejected', '{behavior:"deny"} should move the plan to rejected');
@@ -568,8 +565,7 @@ test('answer path: an unanswered ExitPlanMode hold expires to {} and the plan st
 
   const t0 = Date.now();
   const { held } = await holdExitPlan(daemon, sid, cwd, holdMs);
-  const planId = plansFor((await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot, sid)[0]
-    ?.plan_id;
+  const planId = plansFor(await getState<StateSnapshot>(daemon.baseUrl), sid)[0]?.plan_id;
 
   const heldRes = await held; // intentionally never answered
   const elapsed = Date.now() - t0;
@@ -589,7 +585,7 @@ test('answer path: an unanswered ExitPlanMode hold expires to {} and the plan st
   // cheap insurance) before reading the status.
   await new Promise((r) => setTimeout(r, 100));
 
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot;
+  const state = await getState<StateSnapshot>(daemon.baseUrl);
   const plan = (state.plans ?? []).find((p) => String(p.plan_id) === String(planId));
   assert.ok(plan, 'plan row should still be present after hold expiry');
   assert.equal(
@@ -636,7 +632,7 @@ test('regression: PermissionRequest tool_name=AskUserQuestion still answers {} i
   );
   assert.ok(elapsed < 200, `must answer immediately, never hold (took ${elapsed}ms)`);
 
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot;
+  const state = await getState<StateSnapshot>(daemon.baseUrl);
   assert.equal(
     questionsFor(state, sid, 'permission').length,
     0,
@@ -686,7 +682,7 @@ test('/state plans: caps at 20 non-archived rows, newest first; archiving frees 
 
   const state = await waitUntil(
     async () => {
-      const s = (await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot;
+      const s = await getState<StateSnapshot>(daemon.baseUrl);
       return Array.isArray(s.plans) && s.plans.length >= 20 ? s : null;
     },
     { label: 'at least 20 plans visible in /state', timeoutMs: 10000 },
@@ -736,7 +732,7 @@ test('/state plans: caps at 20 non-archived rows, newest first; archiving frees 
     `archiving a proposed plan should 200 (got ${markRes.status}: ${JSON.stringify(markRes.json)})`,
   );
 
-  const state2 = (await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot;
+  const state2 = await getState<StateSnapshot>(daemon.baseUrl);
   const indices2 = (state2.plans ?? []).map((p) => indexOf(p.plan_md));
   const expectedVisible2 = new Set(Array.from({ length: 20 }, (_, k) => 4 + k)); // now 4..23
   assert.deepEqual(
@@ -766,7 +762,7 @@ test('mark: proposed -> executed records the optional {via} on /state, and it su
   let planId: number | null | undefined;
   try {
     const { held } = await holdExitPlan(daemon, sid, cwd, holdMs);
-    const state0 = (await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot;
+    const state0 = await getState<StateSnapshot>(daemon.baseUrl);
     const plan0 = plansFor(state0, sid)[0];
     assert.ok(plan0, 'sanity: plan captured');
     assert.equal(plan0.status, 'proposed');
@@ -782,7 +778,7 @@ test('mark: proposed -> executed records the optional {via} on /state, and it su
       `proposed -> executed should 200 (got ${markRes.status}: ${JSON.stringify(markRes.json)})`,
     );
 
-    const state1 = (await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot;
+    const state1 = await getState<StateSnapshot>(daemon.baseUrl);
     const plan1 = (state1.plans ?? []).find((p) => String(p.plan_id) === String(planId));
     assert.ok(plan1, 'executed plan should still be listed (non-archived)');
     assert.equal(plan1.status, 'executed');
@@ -793,7 +789,7 @@ test('mark: proposed -> executed records the optional {via} on /state, and it su
     );
 
     await held; // let the still-open hold expire naturally; must not revert the mark
-    const state2 = (await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot;
+    const state2 = await getState<StateSnapshot>(daemon.baseUrl);
     const plan2 = (state2.plans ?? []).find((p) => String(p.plan_id) === String(planId));
     assert.equal(
       plan2?.status,
@@ -813,7 +809,7 @@ test('mark: proposed -> executed records the optional {via} on /state, and it su
     await revived.stop({ keepHome: true });
   });
 
-  const state3 = (await getJson(`${revived.baseUrl}/state`)).json as StateSnapshot;
+  const state3 = await getState<StateSnapshot>(revived.baseUrl);
   const plan3 = (state3.plans ?? []).find((p) => String(p.plan_id) === String(planId));
   assert.ok(plan3, 'plan should still be listed after restart');
   assert.equal(plan3.status, 'executed');
@@ -835,8 +831,7 @@ test('mark: captured -> executed', async (t) => {
 
   const sid = randomUUID();
   const { held, q } = await holdExitPlan(daemon, sid, cwd, holdMs);
-  const planId = plansFor((await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot, sid)[0]
-    ?.plan_id;
+  const planId = plansFor(await getState<StateSnapshot>(daemon.baseUrl), sid)[0]?.plan_id;
 
   const ansRes = await postJson(`${daemon.baseUrl}/api/questions/${q.id}/answer`, {
     behavior: 'capture',
@@ -844,7 +839,7 @@ test('mark: captured -> executed', async (t) => {
   assert.equal(ansRes.status, 200);
   await held;
 
-  const stateA = (await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot;
+  const stateA = await getState<StateSnapshot>(daemon.baseUrl);
   assert.equal(
     (stateA.plans ?? []).find((p) => String(p.plan_id) === String(planId))?.status,
     'captured',
@@ -860,7 +855,7 @@ test('mark: captured -> executed', async (t) => {
     `captured -> executed should 200 (got ${markRes.status}: ${JSON.stringify(markRes.json)})`,
   );
 
-  const stateB = (await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot;
+  const stateB = await getState<StateSnapshot>(daemon.baseUrl);
   assert.equal(
     (stateB.plans ?? []).find((p) => String(p.plan_id) === String(planId))?.status,
     'executed',
@@ -889,10 +884,7 @@ test('mark: archived from each non-archived status (proposed, approved, captured
   ): Promise<number | null> {
     const sid = randomUUID();
     const { held, q } = await holdExitPlan(daemon, sid, cwd, holdMs);
-    const planId = plansFor(
-      (await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot,
-      sid,
-    )[0]?.plan_id;
+    const planId = plansFor(await getState<StateSnapshot>(daemon.baseUrl), sid)[0]?.plan_id;
     assert.ok(planId !== undefined, `sanity: plan captured for target status ${status}`);
     if (status === 'proposed') {
       pendingHolds.push(held);
@@ -918,7 +910,7 @@ test('mark: archived from each non-archived status (proposed, approved, captured
 
   for (const status of ['proposed', 'approved', 'captured', 'executed'] as const) {
     const planId = await makePlanInStatus(status);
-    const before = (await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot;
+    const before = await getState<StateSnapshot>(daemon.baseUrl);
     assert.ok(
       (before.plans ?? []).some((p) => String(p.plan_id) === String(planId)),
       `plan (status ${status}) should be visible before archiving`,
@@ -933,7 +925,7 @@ test('mark: archived from each non-archived status (proposed, approved, captured
       `archiving a ${status} plan should 200 (got ${markRes.status}: ${JSON.stringify(markRes.json)})`,
     );
 
-    const after = (await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot;
+    const after = await getState<StateSnapshot>(daemon.baseUrl);
     assert.ok(
       !(after.plans ?? []).some((p) => String(p.plan_id) === String(planId)),
       `archived ${status} plan must be excluded from /state plans`,
@@ -944,7 +936,7 @@ test('mark: archived from each non-archived status (proposed, approved, captured
   // rejected -> executed bad-transition (409) BEFORE archiving it, then
   // reuse the same plan for the explicit "409 archived -> executed" case.
   const rejectedPlanId = await makePlanInStatus('rejected');
-  const before = (await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot;
+  const before = await getState<StateSnapshot>(daemon.baseUrl);
   assert.ok(
     (before.plans ?? []).some((p) => String(p.plan_id) === String(rejectedPlanId)),
     'rejected plan should be visible before archiving',
@@ -969,7 +961,7 @@ test('mark: archived from each non-archived status (proposed, approved, captured
     `rejected -> archived should 200 (got ${archiveRes.status}: ${JSON.stringify(archiveRes.json)})`,
   );
 
-  const after = (await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot;
+  const after = await getState<StateSnapshot>(daemon.baseUrl);
   assert.ok(
     !(after.plans ?? []).some((p) => String(p.plan_id) === String(rejectedPlanId)),
     'archived rejected plan must be excluded from /state plans',
@@ -1021,7 +1013,7 @@ test('assign: mails the daemon-reserved [FLEETDECK ASSIGNMENT] frame to the targ
   // Planner holds ExitPlanMode → plan captured (status proposed).
   const plannerSid = randomUUID();
   const { held, payload } = await holdExitPlan(daemon, plannerSid, cwd, holdMs);
-  const state0 = (await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot;
+  const state0 = await getState<StateSnapshot>(daemon.baseUrl);
   const plan0 = plansFor(state0, plannerSid)[0];
   assert.ok(plan0, 'sanity: plan captured');
   assert.equal(plan0.status, 'proposed');
@@ -1034,7 +1026,7 @@ test('assign: mails the daemon-reserved [FLEETDECK ASSIGNMENT] frame to the targ
     loadFixture('session-start', { session_id: targetSid, cwd }),
     { token: daemon },
   );
-  const state1 = (await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot;
+  const state1 = await getState<StateSnapshot>(daemon.baseUrl);
   const targetCard = findSession(state1, targetSid);
   assert.ok(targetCard, 'sanity: target session card exists');
 
@@ -1080,7 +1072,7 @@ test('assign: mails the daemon-reserved [FLEETDECK ASSIGNMENT] frame to the targ
   );
 
   // The plan was recorded executed atomically with the assignment.
-  const state2 = (await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot;
+  const state2 = await getState<StateSnapshot>(daemon.baseUrl);
   const plan2 = (state2.plans ?? []).find((p) => String(p.plan_id) === String(plan0.plan_id));
   assert.equal(plan2?.status, 'executed', 'assign must mark the plan executed');
   if (plan2.via !== undefined) {
@@ -1112,7 +1104,7 @@ test('assign: bad requests and bad transitions are refused without sending mail'
 
   const plannerSid = randomUUID();
   const { held, q } = await holdExitPlan(daemon, plannerSid, cwd, holdMs);
-  const state0 = (await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot;
+  const state0 = await getState<StateSnapshot>(daemon.baseUrl);
   const plan0 = plansFor(state0, plannerSid)[0];
   assert.ok(plan0, 'sanity: plan captured for the bad-request probes');
 
@@ -1205,12 +1197,11 @@ test('in-terminal: turn-boundary activity retires the question and settles the p
     { token: daemon },
   );
   const { held } = await holdExitPlan(daemon, sid, cwd, holdMs);
-  const planId = plansFor((await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot, sid)[0]
-    ?.plan_id;
+  const planId = plansFor(await getState<StateSnapshot>(daemon.baseUrl), sid)[0]?.plan_id;
   assert.ok(planId !== undefined, 'sanity: plan captured');
   await held; // hold expires to {}; the terminal prompt owns the decision now
 
-  const state0 = (await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot;
+  const state0 = await getState<StateSnapshot>(daemon.baseUrl);
   assert.equal(
     (state0.plans ?? []).find((p) => String(p.plan_id) === String(planId))?.status,
     'proposed',
@@ -1224,7 +1215,7 @@ test('in-terminal: turn-boundary activity retires the question and settles the p
     { token: daemon },
   );
 
-  const state1 = (await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot;
+  const state1 = await getState<StateSnapshot>(daemon.baseUrl);
   const plan1 = (state1.plans ?? []).find((p) => String(p.plan_id) === String(planId));
   assert.equal(
     plan1?.status,
@@ -1258,12 +1249,11 @@ test('in-terminal: timer expiry THEN later PostToolUse activity settles handled-
     { token: daemon },
   );
   const { held } = await holdExitPlan(daemon, sid, cwd, holdMs);
-  const planId = plansFor((await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot, sid)[0]
-    ?.plan_id;
+  const planId = plansFor(await getState<StateSnapshot>(daemon.baseUrl), sid)[0]?.plan_id;
   await held;
 
   assert.equal(
-    ((await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot).plans?.find(
+    (await getState<StateSnapshot>(daemon.baseUrl)).plans?.find(
       (p) => String(p.plan_id) === String(planId),
     )?.status,
     'proposed',
@@ -1277,7 +1267,7 @@ test('in-terminal: timer expiry THEN later PostToolUse activity settles handled-
     { token: daemon },
   );
 
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot;
+  const state = await getState<StateSnapshot>(daemon.baseUrl);
   assert.equal(
     (state.plans ?? []).find((p) => String(p.plan_id) === String(planId))?.status,
     'handled-in-terminal',
@@ -1302,15 +1292,14 @@ test('in-terminal: timer expiry with NO subsequent activity never settles — th
     { token: daemon },
   );
   const { held } = await holdExitPlan(daemon, sid, cwd, holdMs);
-  const planId = plansFor((await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot, sid)[0]
-    ?.plan_id;
+  const planId = plansFor(await getState<StateSnapshot>(daemon.baseUrl), sid)[0]?.plan_id;
   await held;
 
   // Sit well past the expiry with NO hook activity from the session. A
   // planner killed mid-hold looks exactly like this — marking it would be a
   // lie the library then offers Execute/Assign against.
   await new Promise((r) => setTimeout(r, 1200));
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot;
+  const state = await getState<StateSnapshot>(daemon.baseUrl);
   assert.equal(
     (state.plans ?? []).find((p) => String(p.plan_id) === String(planId))?.status,
     'proposed',
@@ -1338,8 +1327,7 @@ test('in-terminal: a plan question raised in the SAME turn (still pending, never
   // First plan: the human dismisses it on the board (retired unanswered,
   // without session activity) — armed, awaiting the activity gate.
   const first = await holdExitPlan(daemon, sid, cwd, holdMs);
-  const planId1 = plansFor((await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot, sid)[0]
-    ?.plan_id;
+  const planId1 = plansFor(await getState<StateSnapshot>(daemon.baseUrl), sid)[0]?.plan_id;
   const disRes = await postJson(`${daemon.baseUrl}/api/questions/${first.q.id}/dismiss`, {});
   assert.equal(disRes.status, 200);
   assert.deepEqual((await first.held).json, {}, 'sanity: the dismissal failed the first hold open');
@@ -1366,7 +1354,7 @@ test('in-terminal: a plan question raised in the SAME turn (still pending, never
     { token: daemon },
   );
   assert.equal(upsRes.status, 200);
-  const state1 = (await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot;
+  const state1 = await getState<StateSnapshot>(daemon.baseUrl);
   assert.equal(
     (state1.plans ?? []).find((p) => String(p.plan_id) === String(planId1))?.status,
     'handled-in-terminal',
@@ -1376,11 +1364,11 @@ test('in-terminal: a plan question raised in the SAME turn (still pending, never
   const second = await holdExitPlan(daemon, sid, cwd, holdMs, {
     tool_input: { command: 'revise the plan' },
   });
-  const plansNow = plansFor((await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot, sid);
+  const plansNow = plansFor(await getState<StateSnapshot>(daemon.baseUrl), sid);
   const planId2 = plansNow.find((p) => String(p.plan_id) !== String(planId1))?.plan_id;
   assert.ok(planId2 !== undefined, 'sanity: second plan captured');
 
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot;
+  const state = await getState<StateSnapshot>(daemon.baseUrl);
   assert.equal(
     (state.plans ?? []).find((p) => String(p.plan_id) === String(planId2))?.status,
     'proposed',
@@ -1396,7 +1384,7 @@ test('in-terminal: a plan question raised in the SAME turn (still pending, never
   });
   assert.equal(ansRes.status, 200);
   await second.held;
-  const stateEnd = (await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot;
+  const stateEnd = await getState<StateSnapshot>(daemon.baseUrl);
   assert.equal(
     (stateEnd.plans ?? []).find((p) => String(p.plan_id) === String(planId2))?.status,
     'rejected',
@@ -1421,8 +1409,7 @@ test('in-terminal: board answer regression — allow still flips approved and is
     { token: daemon },
   );
   const { held, q } = await holdExitPlan(daemon, sid, cwd, holdMs);
-  const planId = plansFor((await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot, sid)[0]
-    ?.plan_id;
+  const planId = plansFor(await getState<StateSnapshot>(daemon.baseUrl), sid)[0]?.plan_id;
 
   const ansRes = await postJson(`${daemon.baseUrl}/api/questions/${q.id}/answer`, {
     behavior: 'allow',
@@ -1430,7 +1417,7 @@ test('in-terminal: board answer regression — allow still flips approved and is
   assert.equal(ansRes.status, 200);
   await held;
   assert.equal(
-    ((await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot).plans?.find(
+    (await getState<StateSnapshot>(daemon.baseUrl)).plans?.find(
       (p) => String(p.plan_id) === String(planId),
     )?.status,
     'approved',
@@ -1444,7 +1431,7 @@ test('in-terminal: board answer regression — allow still flips approved and is
     { token: daemon },
   );
   assert.equal(
-    ((await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot).plans?.find(
+    (await getState<StateSnapshot>(daemon.baseUrl)).plans?.find(
       (p) => String(p.plan_id) === String(planId),
     )?.status,
     'approved',
@@ -1469,8 +1456,7 @@ test('in-terminal: handled-in-terminal cannot be marked executed (409), can be a
     { token: daemon },
   );
   const { held } = await holdExitPlan(daemon, sid, cwd, holdMs);
-  const planId = plansFor((await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot, sid)[0]
-    ?.plan_id;
+  const planId = plansFor(await getState<StateSnapshot>(daemon.baseUrl), sid)[0]?.plan_id;
   await held;
   await postHook(
     daemon.baseUrl,
@@ -1479,7 +1465,7 @@ test('in-terminal: handled-in-terminal cannot be marked executed (409), can be a
     { token: daemon },
   );
   assert.equal(
-    ((await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot).plans?.find(
+    (await getState<StateSnapshot>(daemon.baseUrl)).plans?.find(
       (p) => String(p.plan_id) === String(planId),
     )?.status,
     'handled-in-terminal',
@@ -1503,7 +1489,7 @@ test('in-terminal: handled-in-terminal cannot be marked executed (409), can be a
     200,
     `handled-in-terminal -> archived should 200 like every non-archived status (got ${archRes.status}: ${JSON.stringify(archRes.json)})`,
   );
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot;
+  const state = await getState<StateSnapshot>(daemon.baseUrl);
   assert.ok(
     !(state.plans ?? []).some((p) => String(p.plan_id) === String(planId)),
     'archived plan leaves /state plans',
@@ -1547,15 +1533,14 @@ test('mark executed with the question still pending dismisses it (fails the hold
   const out = await holdExitPlan(daemon, sid, cwd, holdMs);
   held = out.held;
   const { q } = out;
-  const planId = plansFor((await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot, sid)[0]
-    ?.plan_id;
+  const planId = plansFor(await getState<StateSnapshot>(daemon.baseUrl), sid)[0]?.plan_id;
 
   // RACE-SENSITIVE: the hold must STILL be parked when the mark lands. If a
   // shortened hold window or scheduler jitter lets the timer expire first,
   // the timer's own fail-open ({}) makes every assertion below pass — so this
   // check is the only thing proving the mark, not the timer, retired the row.
   const rowBefore = questionsFor(
-    (await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot,
+    await getState<StateSnapshot>(daemon.baseUrl),
     sid,
     'permission',
   ).find((x) => x.id === q.id);
@@ -1571,7 +1556,7 @@ test('mark executed with the question still pending dismisses it (fails the hold
   assert.equal(markRes.status, 200);
   // The mark must have retired the row IMMEDIATELY, not at hold expiry:
   // observe the row well inside the remaining hold window.
-  const stateNow = (await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot;
+  const stateNow = await getState<StateSnapshot>(daemon.baseUrl);
   const rowNow = questionsFor(stateNow, sid, 'permission').find((x) => x.id === q.id);
   assert.equal(
     rowNow?.status,
@@ -1617,7 +1602,7 @@ async function captureProposedPlan(
     { token: daemon },
   );
   const { held } = await holdExitPlan(daemon, sid, cwd, 1000);
-  const plan = plansFor((await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot, sid)[0];
+  const plan = plansFor(await getState<StateSnapshot>(daemon.baseUrl), sid)[0];
   assert.ok(plan, 'sanity: plan captured');
   assert.equal(plan.status, 'proposed');
   await held; // hold expires; a planner with no follow-up activity stays proposed
@@ -1659,7 +1644,7 @@ test('BUG-040: spawn carrying plan_id claims the plan atomically BEFORE launch; 
   );
   assert.equal((res.json as SpawnOkBody).ok, true);
 
-  const state1 = (await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot;
+  const state1 = await getState<StateSnapshot>(daemon.baseUrl);
   const claimed = planById(state1, plan.plan_id);
   assert.equal(
     claimed?.status,
@@ -1736,7 +1721,7 @@ test('BUG-040: a refused spawn releases the claim — plan returns to proposed a
     `a spawn with a missing cwd must still 400 (got ${bad.status}: ${JSON.stringify(bad.json)})`,
   );
 
-  const state1 = (await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot;
+  const state1 = await getState<StateSnapshot>(daemon.baseUrl);
   assert.equal(
     planById(state1, plan.plan_id)?.status,
     'proposed',
@@ -1755,7 +1740,7 @@ test('BUG-040: a refused spawn releases the claim — plan returns to proposed a
     200,
     `the retry after a released claim should succeed (got ${good.status}: ${JSON.stringify(good.json)})`,
   );
-  const state2 = (await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot;
+  const state2 = await getState<StateSnapshot>(daemon.baseUrl);
   assert.equal(planById(state2, plan.plan_id)?.status, 'executed');
 
   const specs = await waitForSpecRecords(rec, 1);
@@ -1806,8 +1791,7 @@ test('BUG-040: spawn claim refusals — unknown plan 404, non-executable plan 40
     { token: daemon },
   );
   const { held, q } = await holdExitPlan(daemon, sid, cwd, 1000);
-  const planId = plansFor((await getJson(`${daemon.baseUrl}/state`)).json as StateSnapshot, sid)[0]
-    ?.plan_id;
+  const planId = plansFor(await getState<StateSnapshot>(daemon.baseUrl), sid)[0]?.plan_id;
   const ansRes = await postJson(`${daemon.baseUrl}/api/questions/${q.id}/answer`, {
     behavior: 'deny',
   });

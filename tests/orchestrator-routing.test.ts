@@ -53,6 +53,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { startDaemon, type DaemonHandle } from './helpers/daemon.ts';
 import { postHook, postJson, getJson, type JsonResponse } from './helpers/http.ts';
+import { getState } from './helpers/state.ts';
 import { loadFixture } from './helpers/fixtures.ts';
 import { makeRepoWithWorktree } from './helpers/gitrepo.ts';
 
@@ -183,7 +184,7 @@ async function mailboxOf(daemon: DaemonHandle, sid: string): Promise<MailItem[]>
 }
 
 async function pendingCountOf(daemon: DaemonHandle, sid: string): Promise<number> {
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateBody;
+  const state = await getState<StateBody>(daemon.baseUrl);
   return state.mail_pending?.[sid] ?? 0;
 }
 
@@ -339,7 +340,7 @@ test('response shapes are exact; unrouted leaves no mail anywhere and still logs
   await makeNeedsyou(daemon, cwd);
   await makeOffline(daemon, cwd);
 
-  const before = ((await getJson(`${daemon.baseUrl}/state`)).json as StateBody).ticker.length;
+  const before = (await getState<StateBody>(daemon.baseUrl)).ticker.length;
   const res = await assignAuto(daemon, 'auto', 'nobody home');
   // v1.2 ("Unrouted CTA") adds `text` to the unrouted shape
   // so the board can prefill a "spawn a session for this" button — see
@@ -352,7 +353,7 @@ test('response shapes are exact; unrouted leaves no mail anywhere and still logs
     "no eligible candidate must produce the exact unrouted response shape (incl. v1.2's verbatim text field)",
   );
 
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateBody;
+  const state = await getState<StateBody>(daemon.baseUrl);
   const pending: Record<string, number> = state.mail_pending ?? {};
   const totalPending = Object.values(pending).reduce((acc, n) => acc + n, 0);
   assert.equal(

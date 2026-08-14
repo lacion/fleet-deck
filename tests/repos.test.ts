@@ -18,6 +18,7 @@ import { createCore } from '../src/daemon/derive.ts';
 import { createStatements } from '../src/daemon/statements.ts';
 import { startDaemon, randomPort } from './helpers/daemon.ts';
 import { getJson, postHook, postJson } from './helpers/http.ts';
+import { getState } from './helpers/state.ts';
 import { makeRemoteRepo } from './helpers/gitrepo.ts';
 import { WebSocket } from 'ws';
 import { waitUntil } from './helpers/wait.ts';
@@ -695,7 +696,7 @@ test('hook catalog writes and /state carries repo_catalog plus settings', async 
     },
     { token: daemon },
   );
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(daemon.baseUrl);
   const row = state.repo_catalog.find((repo) => repo.root === root);
   assert.ok(row);
   assert.equal(row.repo_name, path.basename(root));
@@ -738,7 +739,7 @@ test('repo_catalog never ships origin credentials over /state or the /ws snapsho
   let row: OriginCatalogRow | null | undefined = null;
   await waitUntil(
     async () => {
-      const state = (await getJson(`${daemon.baseUrl}/state`)).json as OriginCatalogState;
+      const state = await getState<OriginCatalogState>(daemon.baseUrl);
       row = state.repo_catalog.find((repo) => repo.root === root);
       return row?.origin_url != null;
     },
@@ -818,14 +819,14 @@ test('repo_catalog never ships origin credentials over /state or the /ws snapsho
   );
   await waitUntil(
     async () => {
-      const state = (await getJson(`${daemon.baseUrl}/state`)).json as OriginCatalogState;
+      const state = await getState<OriginCatalogState>(daemon.baseUrl);
       return state.repo_catalog.find((repo) => repo.root === cleanRoot)?.origin_url != null;
     },
     { label: 'clean origin backfill into repo_catalog', timeoutMs: 5000, intervalMs: 100 },
   );
-  const cleanRow = (
-    (await getJson(`${daemon.baseUrl}/state`)).json as OriginCatalogState
-  ).repo_catalog.find((repo) => repo.root === cleanRoot);
+  const cleanRow = (await getState<OriginCatalogState>(daemon.baseUrl)).repo_catalog.find(
+    (repo) => repo.root === cleanRoot,
+  );
   assert.equal(
     cleanRow?.origin_url,
     clean.origin,
@@ -926,7 +927,7 @@ test('POST /api/settings round-trips repo transport/default-org, browse_root and
     assert.deepEqual((got.json as SettingsOk).settings.fav_dirs, [favA, favB]);
     // /state carries the SAME settings object (shared board contract), plus the
     // legacy repos_dir key and home_dir label for stale boards.
-    const state = (await getJson(`${second.baseUrl}/state`)).json as StateResponse;
+    const state = await getState<StateResponse>(second.baseUrl);
     assert.equal(state.settings.repo_transport.value, 'https');
     assert.equal(state.settings.repo_default_org.value, 'textemma');
     assert.equal(state.settings.browse_root.resolved, browseDir);

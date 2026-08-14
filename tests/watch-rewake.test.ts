@@ -47,7 +47,7 @@ import { postHook, postJson, getJson } from './helpers/http.ts';
 import { loadFixture } from './helpers/fixtures.ts';
 import { makeTranscriptDir, writeTranscript } from './helpers/transcript.ts';
 import { waitUntil, scaleMs } from './helpers/wait.ts';
-import { scratchCwd } from './helpers/state.ts';
+import { getState, scratchCwd } from './helpers/state.ts';
 import type { StateResponse, QuestionEntry } from '../contracts/state.ts';
 
 const WATCH_SCRIPT = path.join(REPO_ROOT, 'scripts/fleet-watch.mjs');
@@ -118,7 +118,7 @@ async function pendingFreeform(
     { session_id: sid, hook_event_name: 'Stop', cwd, transcript_path: transcriptPath },
     { token: daemon.token },
   );
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(daemon.baseUrl);
   const q = state.questions.find(
     (x) => x.session_id === sid && x.kind === 'freeform' && x.status === 'pending',
   );
@@ -817,7 +817,7 @@ test('fleet-watch: SessionEnd tombstone makes the watcher exit 0 promptly (freef
 
   // the freeform question SURVIVES the tombstone (human queue, resume path) —
   // only the watcher stands down
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(daemon.baseUrl);
   const q = state.questions.find((x) => x.session_id === sid && x.kind === 'freeform');
   assert.equal(
     q?.status,
@@ -981,7 +981,7 @@ test('E2E: an idle session with a running fleet-watch wakes on `assign auto`, fr
   await postHook(daemon.baseUrl, 'Stop', loadFixture('stop', { session_id: sid, cwd }), {
     token: daemon,
   });
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(daemon.baseUrl);
   assert.equal(
     state.sessions.find((s) => s.session_id === sid)?.col,
     'idle',

@@ -8,7 +8,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openDb } from '../src/daemon/db.ts';
 import { startDaemon, type DaemonHandle } from './helpers/daemon.ts';
-import { getJson, postHook, postJson } from './helpers/http.ts';
+import { postHook, postJson } from './helpers/http.ts';
+import { getState } from './helpers/state.ts';
 import { makeRepoWithWorktree } from './helpers/gitrepo.ts';
 import { waitUntil } from './helpers/wait.ts';
 import type { SqliteHandle } from '../src/daemon/sqlite.ts';
@@ -137,7 +138,7 @@ test('renaming keeps the animal and takes the suffix, and answers in the shape C
   );
   assert.equal((res.json as RenameAck).previous, callsign);
 
-  const card = cardOf((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse, sid);
+  const card = cardOf(await getState<StateResponse>(daemon.baseUrl), sid);
   assert.ok(card, 'renamed session should be present in /state');
   assert.equal(card.callsign, `${animal}-docs-review`);
   // The birth name is kept as the mail anchor (write-once), so anything still
@@ -164,7 +165,7 @@ test('mail addressed to the birth name still reaches a renamed session', async (
     { token: daemon.token },
   );
   assert.equal(res.status, 200, JSON.stringify(res.json));
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(daemon.baseUrl);
   assert.equal(
     state.mail_meta[sid]?.queued,
     1,
@@ -214,7 +215,7 @@ test('a name already held by another card is refused', async (t) => {
   assert.equal(bRenamed.status, 409, 'same animal + same suffix = the same card name');
   assert.match((bRenamed.json as RenameAck).reason, /already taken/);
   // And B keeps its own name — the refusal must not have renamed anything.
-  const card = cardOf((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse, b.sid);
+  const card = cardOf(await getState<StateResponse>(daemon.baseUrl), b.sid);
   assert.ok(card, 'session B should still be present after the refused rename');
   assert.equal(card.callsign, b.callsign);
 });
@@ -263,7 +264,7 @@ test('a human name outranks branch auto-detection: a real ticket-branch checkout
   );
   const animal = (start.json as SessionStartAck).callsign.split('-')[0] ?? '';
   await rename(daemon, sid, { suffix: 'my-name' });
-  const named = cardOf((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse, sid);
+  const named = cardOf(await getState<StateResponse>(daemon.baseUrl), sid);
   assert.ok(named, 'named session should be present in /state');
   assert.equal(named.callsign, `${animal}-my-name`);
 
@@ -284,7 +285,7 @@ test('a human name outranks branch auto-detection: a real ticket-branch checkout
     { token: daemon.token },
   );
 
-  const card = cardOf((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse, sid);
+  const card = cardOf(await getState<StateResponse>(daemon.baseUrl), sid);
   assert.ok(card, 'session should be present in /state after the branch switch');
   assert.equal(
     card.branch,
@@ -395,7 +396,7 @@ test('renaming a session with a live pane keeps its pane: the frozen tmux window
     { session_id: sid, cwd, source: 'startup' },
     { token: daemon.token },
   );
-  const before = cardOf((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse, sid);
+  const before = cardOf(await getState<StateResponse>(daemon.baseUrl), sid);
   assert.ok(before?.spawn?.tmux_window, 'the spawned session should own a pane window');
   const window = before.spawn.tmux_window;
   assert.equal(
@@ -412,7 +413,7 @@ test('renaming a session with a live pane keeps its pane: the frozen tmux window
   // spawns.tmux_window, so the pane keeps working. Renaming the window instead
   // would risk a row that names a window tmux no longer has — which the boot
   // reconcile would read as a dead pane and condemn.
-  const after = cardOf((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse, sid);
+  const after = cardOf(await getState<StateResponse>(daemon.baseUrl), sid);
   assert.ok(after?.spawn, 'the renamed session should still own its pane');
   assert.equal(after.callsign, (res.json as RenameAck).callsign, 'the card took the new name');
   assert.equal(after.spawn.tmux_window, window, 'and kept the window that actually exists');

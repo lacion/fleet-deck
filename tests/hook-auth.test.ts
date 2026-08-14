@@ -23,6 +23,7 @@ import { fileURLToPath } from 'node:url';
 import type { OutgoingHttpHeaders } from 'node:http';
 import { startDaemon } from './helpers/daemon.ts';
 import { postHook, postJson, getJson, rawRequest } from './helpers/http.ts';
+import { getState } from './helpers/state.ts';
 import { loadFixture } from './helpers/fixtures.ts';
 import { waitUntil } from './helpers/wait.ts';
 import { openDb } from '../src/daemon/db.ts';
@@ -80,7 +81,7 @@ test('tokenless /hook/* is refused with the upgrade whisper; the bearer opens it
   );
 
   // Refused means REFUSED: no card was registered by the tokenless call.
-  const stateAfterBare = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const stateAfterBare = await getState<StateResponse>(daemon.baseUrl);
   assert.ok(
     !stateAfterBare.sessions.find((s) => s.session_id === sid),
     'tokenless hook changed no state',
@@ -95,7 +96,7 @@ test('tokenless /hook/* is refused with the upgrade whisper; the bearer opens it
     { token: 'x'.repeat(64) },
   );
   assert.equal(wrong.status, 200);
-  const stateAfterWrong = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const stateAfterWrong = await getState<StateResponse>(daemon.baseUrl);
   assert.ok(
     !stateAfterWrong.sessions.find((s) => s.session_id === sid),
     'wrong token changed no state either',
@@ -265,7 +266,7 @@ server.listen(PORT, '127.0.0.1');
 
   // The hold is intact too: still pending in /state, and the forged curl did
   // not resolve the open request (a spurious {} answer would settle it).
-  const stateAfterForgery = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const stateAfterForgery = await getState<StateResponse>(daemon.baseUrl);
   const qAfter = stateAfterForgery.questions.find((x) => x.id === q.id);
   assert.equal(
     qAfter?.status,
@@ -384,7 +385,7 @@ test('forged /clear succession graft is refused tokenless', async (t: TestContex
     loadFixture('session-start', { session_id: victim, cwd }),
     { token: daemon },
   );
-  const before = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const before = await getState<StateResponse>(daemon.baseUrl);
   const card = before.sessions.find((s) => s.session_id === victim);
   assert.ok(card, 'victim on the board');
 
@@ -403,7 +404,7 @@ test('forged /clear succession graft is refused tokenless', async (t: TestContex
   );
   assert.equal(start.status, 200, 'refused, in dialect');
 
-  const after = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const after = await getState<StateResponse>(daemon.baseUrl);
   const surviving = after.sessions.find((s) => s.session_id === victim);
   assert.ok(surviving, 'victim card untouched by the forged clear');
   assert.notEqual(surviving.col, 'offline', 'victim was not tombstoned');
@@ -422,7 +423,7 @@ test('the banner tracks legacy sessions and self-heals on their first authentica
   });
 
   // No legacy state before anything happens.
-  let state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  let state = await getState<StateResponse>(daemon.baseUrl);
   assert.deepEqual(state.legacy_upgrade, { sessions: [], upgraded: 0 });
 
   // Two sessions call tokenless → both listed.
@@ -436,7 +437,7 @@ test('the banner tracks legacy sessions and self-heals on their first authentica
     'UserPromptSubmit',
     loadFixture('user-prompt-submit', { session_id: other, cwd }),
   );
-  state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  state = await getState<StateResponse>(daemon.baseUrl);
   assert.deepEqual(
     new Set(state.legacy_upgrade.sessions),
     new Set([sid, other]),
@@ -451,7 +452,7 @@ test('the banner tracks legacy sessions and self-heals on their first authentica
     loadFixture('session-start', { session_id: sid, cwd }),
     { token: daemon },
   );
-  state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  state = await getState<StateResponse>(daemon.baseUrl);
   assert.deepEqual(state.legacy_upgrade.sessions, [other], 'restarted session cleared');
   assert.equal(state.legacy_upgrade.upgraded, 1, 'reconnected count moved');
 
@@ -463,7 +464,7 @@ test('the banner tracks legacy sessions and self-heals on their first authentica
     loadFixture('session-start', { session_id: fresh, cwd }),
     { token: daemon },
   );
-  state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  state = await getState<StateResponse>(daemon.baseUrl);
   assert.equal(state.legacy_upgrade.upgraded, 2);
   assert.deepEqual(state.legacy_upgrade.sessions, [other]);
 });
@@ -609,7 +610,7 @@ test('fleet-hook.mjs shim forwards the payload with the token and relays the res
   );
 
   // And the card exists — the shim's POST was accepted as authenticated.
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(daemon.baseUrl);
   assert.ok(
     state.sessions.find((s) => s.session_id === sid),
     'session registered via shim',
@@ -721,7 +722,7 @@ for (const trustLoopback of [false, true]) {
       /restart/i,
       'it took the tokenless-refusal path (the upgrade whisper), not the trust exemption',
     );
-    const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+    const state = await getState<StateResponse>(daemon.baseUrl);
     assert.ok(
       !state.sessions.find((s) => s.session_id === forgedSid),
       'forged proxy-trust hook changed no state',
@@ -741,7 +742,7 @@ for (const trustLoopback of [false, true]) {
       (authed.json as HookBody | null)?.ok,
       'an authenticated hook still works under proxy trust',
     );
-    const state2 = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+    const state2 = await getState<StateResponse>(daemon.baseUrl);
     assert.ok(
       state2.sessions.find((s) => s.session_id === authedSid),
       'the authenticated hook registered its session',

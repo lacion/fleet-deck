@@ -16,7 +16,8 @@ import { fileURLToPath } from 'node:url';
 import { openDb } from '../src/daemon/db.ts';
 import { claudeTranscriptPath } from '../src/daemon/derive.ts';
 import { startDaemon, type DaemonHandle } from './helpers/daemon.ts';
-import { getJson, postHook, postJson } from './helpers/http.ts';
+import { postHook, postJson } from './helpers/http.ts';
+import { getState } from './helpers/state.ts';
 import type { SqliteHandle } from '../src/daemon/sqlite.ts';
 import type { SessionEntry, StateResponse } from '../contracts/state.ts';
 
@@ -196,7 +197,7 @@ test('adopt moves an ended session into a board-owned pane and its resume hook m
   await endSession(daemon, sid, cwd);
 
   // Offline + hook-proven end + cwd + transcript → snapshot offers adopt NOW.
-  let card = findCard((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse, sid);
+  let card = findCard(await getState<StateResponse>(daemon.baseUrl), sid);
   assert.equal(card.col, 'offline');
   assert.equal(card.adopt.eligible, 'now');
   assert.equal(card.adopt.armed, false);
@@ -247,7 +248,7 @@ test('adopt moves an ended session into a board-owned pane and its resume hook m
 
   // The card returned to QUEUED with the move note; ended_at is LEFT for the
   // first resume hook to clear.
-  card = findCard((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse, sid);
+  card = findCard(await getState<StateResponse>(daemon.baseUrl), sid);
   assert.equal(card.col, 'queued');
   assert.equal(card.note, 'moving to tmux…');
   assert.ok(card.endedAt, 'adopt leaves ended_at for the first hook');
@@ -259,7 +260,7 @@ test('adopt moves an ended session into a board-owned pane and its resume hook m
     { session_id: sid, cwd, source: 'resume' },
     { token: daemon },
   );
-  card = findCard((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse, sid);
+  card = findCard(await getState<StateResponse>(daemon.baseUrl), sid);
   assert.ok(card.spawn);
   assert.equal(card.spawn.status, 'live');
   assert.equal(card.endedAt, null);
@@ -277,7 +278,7 @@ test('adopt on a live session arms it, snapshot shows the arm, and re-arming ref
   const { sid } = await startLiveSession(daemon, cwd);
 
   // A live hooks card offers ARM, not now.
-  let card = findCard((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse, sid);
+  let card = findCard(await getState<StateResponse>(daemon.baseUrl), sid);
   assert.equal(card.adopt.eligible, 'arm');
   assert.equal(card.adopt.armed, false);
 
@@ -297,7 +298,7 @@ test('adopt on a live session arms it, snapshot shows the arm, and re-arming ref
   assert.ok(row1);
   assert.ok(row1.adopt_armed_until > Date.now());
   assert.equal(row1.adopt_armed_skip, 0, 'safe default: no bypass stored');
-  card = findCard((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse, sid);
+  card = findCard(await getState<StateResponse>(daemon.baseUrl), sid);
   assert.equal(card.adopt.armed, true);
   assert.equal(card.adopt.armed_skip, false);
   assert.equal(card.adopt.armed_until, (armed.json as AdoptAck).expires_at);
@@ -343,7 +344,7 @@ test('disarming an armed session clears the arm columns', async (t) => {
   assert.ok(stored);
   assert.equal(stored.adopt_armed_until, null);
   assert.equal(stored.adopt_armed_skip, null);
-  const card = findCard((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse, sid);
+  const card = findCard(await getState<StateResponse>(daemon.baseUrl), sid);
   assert.equal(card.adopt.armed, false);
   assert.equal(card.adopt.eligible, 'arm', 'still a live arm candidate after disarm');
 });
@@ -433,7 +434,7 @@ test('a /clear on an armed session keeps it live and armed and spawns no pane', 
   );
   assert.ok(stored);
   assert.ok(stored.adopt_armed_until > Date.now(), 'the arm survives /clear');
-  const card = findCard((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse, sid);
+  const card = findCard(await getState<StateResponse>(daemon.baseUrl), sid);
   assert.equal(card.endedAt, null, 'the card stays live after /clear');
   assert.equal(card.adopt.armed, true);
 });
@@ -452,7 +453,7 @@ test('adopt refuses a presumed-dead session and tells you to arm it instead', as
   );
 
   // The snapshot does NOT offer adopt-now for a presumed-dead card.
-  const card = findCard((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse, sid);
+  const card = findCard(await getState<StateResponse>(daemon.baseUrl), sid);
   assert.equal(card.adopt.eligible, null);
 
   const res = await postJson(`${daemon.baseUrl}/api/sessions/${sid}/adopt`, {});
@@ -516,7 +517,7 @@ test('adopt refuses a DEAD board-owned lineage too — revive owns it, and the s
       ),
   );
 
-  const card = findCard((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse, sid);
+  const card = findCard(await getState<StateResponse>(daemon.baseUrl), sid);
   assert.ok(card.spawn);
   assert.equal(card.spawn.revivable, true, 'the dead lineage is the revive path');
   assert.equal(card.adopt.eligible, null, 'never both buttons');
@@ -539,7 +540,7 @@ test('an unstamped end (NULL end_reason, e.g. a pre-0.7.0 row) is never adopt-no
       .run(Date.now(), sid),
   );
 
-  const card = findCard((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse, sid);
+  const card = findCard(await getState<StateResponse>(daemon.baseUrl), sid);
   assert.equal(card.adopt.eligible, null);
 
   const res = await postJson(`${daemon.baseUrl}/api/sessions/${sid}/adopt`, {});
@@ -576,7 +577,7 @@ test('a deferred adopt whose session came back live CANCELS the move — it neve
   assert.ok(stored);
   assert.equal(stored.adopt_armed_until, null, 'the arm was consumed, not renewed');
   assert.equal(stored.adopt_armed_skip, null);
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(daemon.baseUrl);
   assert.equal(findCard(state, sid).adopt.armed, false);
   assert.ok(tickerHas(state, 'canceled'), 'the cancel is said once in the ticker');
 });
@@ -595,7 +596,7 @@ test('a disarm landing inside the deferred grace window genuinely cancels the mo
   await sleep(600);
 
   assert.equal(records(record).length, 0, 'the cancel won — no pane launched');
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(daemon.baseUrl);
   assert.equal(
     tickerHas(state, '✗ move-to-tmux failed'),
     false,
@@ -619,7 +620,7 @@ test('a manual adopt-now click racing the deferred timer wins silently — one p
   await sleep(600); // the deferred adopt fires into the new lineage and stands down
 
   assert.equal(records(record).length, 1, 'exactly one pane — the deferred call stood down');
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(daemon.baseUrl);
   assert.equal(
     tickerHas(state, '✗ move-to-tmux failed'),
     false,
@@ -739,7 +740,7 @@ test('a deferred adopt firing after its arm deadline EXPIRED stands down — no 
     'the expired arm was cleared, not consumed into a launch',
   );
   assert.equal(stored.adopt_armed_skip, null);
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(daemon.baseUrl);
   assert.equal(findCard(state, sid).adopt.armed, false);
   assert.ok(tickerHas(state, 'canceled'), 'the expiry cancel is said once in the ticker');
   assert.equal(

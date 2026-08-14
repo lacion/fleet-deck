@@ -13,7 +13,8 @@ import { randomUUID } from 'node:crypto';
 import { openDb } from '../src/daemon/db.ts';
 import { createCore } from '../src/daemon/derive.ts';
 import { startDaemon } from './helpers/daemon.ts';
-import { postHook, postJson, getJson } from './helpers/http.ts';
+import { postHook, postJson } from './helpers/http.ts';
+import { getState } from './helpers/state.ts';
 
 // The scratch db handle and the (unexported) tmux-adapter option type, pulled
 // off the production signatures so the test doubles below stay in step with
@@ -917,7 +918,7 @@ test('POST /api/sessions/:id/dismiss dismisses an offline card end-to-end', asyn
   assert.equal(dismissBody.archived, 1);
   assert.equal(dismissBody.mail_expired, 1);
 
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateSubset;
+  const state = await getState<StateSubset>(daemon.baseUrl);
   assert.equal(
     state.sessions.some((s) => s.session_id === sid),
     false,

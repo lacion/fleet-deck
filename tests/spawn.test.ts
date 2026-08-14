@@ -59,6 +59,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startDaemon, randomPort } from './helpers/daemon.ts';
 import { postHook, postJson, getJson } from './helpers/http.ts';
+import { getState } from './helpers/state.ts';
 import {
   waitUntil as waitUntilBase,
   waitForSpecRecords,
@@ -338,7 +339,7 @@ test('spawn happy path: POST /api/spawn pre-creates the card immediately (source
     'tmux window name should be scoped fd<port>-<callsign>',
   );
 
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(daemon.baseUrl);
   const card = findSession(state, body.session_id);
   assert.ok(card, 'the pre-created card should exist in /state immediately, before any hook event');
   assert.equal(
@@ -375,7 +376,7 @@ test("spawn happy path: the fixture's SessionStart flips source to hooks and the
 
   const card = await waitUntil(
     async () => {
-      const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+      const state = await getState<StateResponse>(daemon.baseUrl);
       const c = findSession(state, sid);
       return c?.source === 'hooks' ? c : null;
     },
@@ -747,7 +748,7 @@ test('no fleet cap: the 8th concurrent spawn is as welcome as the 1st', async (t
     const spawned = res.json as SpawnOk;
     await waitUntil(
       async () => {
-        const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+        const state = await getState<StateResponse>(daemon.baseUrl);
         return findSession(state, spawned.session_id)?.spawn?.status === 'live' || null;
       },
       { label: `spawn #${i + 1} reaches status live` },
@@ -847,7 +848,7 @@ test("worktree path: worktree:true creates a sibling --fd-<callsign> checkout on
   // The pre-created card's repo identity must collapse to the SAME repo_id
   // as the main tree (F1: git rev-parse --git-common-dir collapses
   // worktrees), regardless of exactly which cwd the card was created with.
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(daemon.baseUrl);
   const card = findSession(state, sid);
   assert.ok(card, 'the spawned card should be present in /state');
   assert.equal(
@@ -923,7 +924,7 @@ test('fan-out: 4 agents spawned into ONE repo each get their own worktree and br
 
   // ...and all four cards still collapse to the SAME repo, so the board groups
   // them as one fleet working one codebase rather than four unrelated repos.
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(daemon.baseUrl);
   for (const a of agents) {
     assert.equal(
       findSession(state, a.session_id)?.repo_id,
@@ -968,7 +969,7 @@ test('kill: a live (non-offline) card is refused without force -> 409', async (t
 
   await waitUntil(
     async () => {
-      const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+      const state = await getState<StateResponse>(daemon.baseUrl);
       return findSession(state, sid)?.spawn?.status === 'live' ? true : null;
     },
     { label: 'spawn reaches status live before attempting an unforced kill' },
@@ -1006,7 +1007,7 @@ test('kill: tmux lookup failure is 500 and keeps the offline spawn tracked', asy
 
   await waitUntil(
     async () => {
-      const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+      const state = await getState<StateResponse>(daemon.baseUrl);
       return findSession(state, sid)?.spawn?.status === 'live' ? true : null;
     },
     { label: 'spawn reaches status live' },
@@ -1020,15 +1021,13 @@ test('kill: tmux lookup failure is 500 and keeps the offline spawn tracked', asy
   );
   await waitUntil(
     async () => {
-      const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+      const state = await getState<StateResponse>(daemon.baseUrl);
       return findSession(state, sid)?.col === 'offline' ? true : null;
     },
     { label: 'card goes offline after SessionEnd' },
   );
-  const beforeKillStatus = findSession(
-    (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse,
-    sid,
-  )?.spawn?.status;
+  const beforeKillStatus = findSession(await getState<StateResponse>(daemon.baseUrl), sid)?.spawn
+    ?.status;
 
   const killRes = await postJson(`${daemon.baseUrl}/api/spawn/${spawnId}/kill`, {});
   assert.equal(killRes.status, 500, JSON.stringify(killRes.json));
@@ -1037,7 +1036,7 @@ test('kill: tmux lookup failure is 500 and keeps the offline spawn tracked', asy
     /tmux (?:window lookup failed|server generation unavailable or changed)/,
   );
 
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(daemon.baseUrl);
   const card = findSession(state, sid);
   assert.equal(
     card?.spawn?.status,
@@ -1073,7 +1072,7 @@ test('stale flag: a working card with no events for FLEETDECK_STALE_MS gets stal
     { token: daemon },
   );
 
-  let state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  let state = await getState<StateResponse>(daemon.baseUrl);
   let card = findSession(state, sid);
   assert.ok(card, 'the session should exist after its SessionStart/UserPromptSubmit');
   assert.equal(
@@ -1085,7 +1084,7 @@ test('stale flag: a working card with no events for FLEETDECK_STALE_MS gets stal
 
   await new Promise((r) => setTimeout(r, staleMs + 500)); // "after ~1s" per the task brief
 
-  state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  state = await getState<StateResponse>(daemon.baseUrl);
   card = findSession(state, sid);
   assert.ok(card, 'the session should still exist after the stale window');
   assert.equal(card.col, 'working', 'sanity: still working (no Stop/SessionEnd happened)');
@@ -1107,7 +1106,7 @@ test('stale flag: a working card with no events for FLEETDECK_STALE_MS gets stal
     },
     { token: daemon },
   );
-  state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  state = await getState<StateResponse>(daemon.baseUrl);
   card = findSession(state, sid);
   assert.ok(card, 'the session should still exist after the clearing event');
   assert.ok(!card.stale, 'a fresh event must clear the stale flag');
@@ -1167,7 +1166,7 @@ test('reconciliation: a spawn row whose window was never actually created in rea
     sid = (spawnRes.json as SpawnOk).session_id;
     await waitUntil(
       async () => {
-        const state = (await getJson(`${first.baseUrl}/state`)).json as StateResponse;
+        const state = await getState<StateResponse>(first.baseUrl);
         return findSession(state, sid)?.spawn?.status === 'live' ? true : null;
       },
       { label: 'spawn reaches status live before restart' },
@@ -1208,7 +1207,7 @@ test('reconciliation: a spawn row whose window was never actually created in rea
 
   const card = await waitUntil(
     async () => {
-      const state = (await getJson(`${second.baseUrl}/state`)).json as StateResponse;
+      const state = await getState<StateResponse>(second.baseUrl);
       const c = findSession(state, sid);
       return c?.col === 'offline' ? c : null;
     },
@@ -1278,7 +1277,7 @@ test('restart reconciliation removes a spawn-owned worktree left by a spawn inte
     ({ session_id: sid, spawn_id: spawnId, callsign } = spawnRes.json as SpawnOk);
     await waitUntil(
       async () => {
-        const state = (await getJson(`${first.baseUrl}/state`)).json as StateResponse;
+        const state = await getState<StateResponse>(first.baseUrl);
         return findSession(state, sid)?.spawn?.status === 'live' ? true : null;
       },
       { label: 'spawn reaches status live before the simulated crash' },
@@ -1344,7 +1343,7 @@ test('restart reconciliation removes a spawn-owned worktree left by a spawn inte
 
   const card = await waitUntil(
     async () => {
-      const state = (await getJson(`${second.baseUrl}/state`)).json as StateResponse;
+      const state = await getState<StateResponse>(second.baseUrl);
       const c = findSession(state, sid);
       return c?.col === 'offline' ? c : null;
     },
@@ -1449,7 +1448,7 @@ test('ticket spawn: a spawn from a ticket-branch cwd is ticket-first (callsign, 
   // self-detection agree and the rename-once guard makes it a no-op.
   const card = await waitUntil(
     async () => {
-      const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+      const state = await getState<StateResponse>(daemon.baseUrl);
       const c = findSession(state, sid);
       return c?.source === 'hooks' ? c : null;
     },

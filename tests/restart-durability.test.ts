@@ -11,7 +11,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { startDaemon, randomPort } from './helpers/daemon.ts';
-import { postHook, getJson } from './helpers/http.ts';
+import { postHook } from './helpers/http.ts';
+import { getState } from './helpers/state.ts';
 import { loadFixture } from './helpers/fixtures.ts';
 import type { StateResponse } from '../contracts/state.ts';
 
@@ -39,7 +40,7 @@ test('restart durability: same FLEETDECK_HOME after kill+restart still has the s
       loadFixture('user-prompt-submit', { session_id: sid, cwd }),
       { token: first },
     );
-    const stateBefore = (await getJson(`${first.baseUrl}/state`)).json as StateResponse;
+    const stateBefore = await getState<StateResponse>(first.baseUrl);
     const cardBefore = stateBefore.sessions.find((s) => s.session_id === sid);
     assert.ok(cardBefore, 'session should be present before restart');
     assert.equal(cardBefore.col, 'working');
@@ -53,7 +54,7 @@ test('restart durability: same FLEETDECK_HOME after kill+restart still has the s
     await second.stop({ keepHome: false });
   });
 
-  const stateAfter = (await getJson(`${second.baseUrl}/state`)).json as StateResponse;
+  const stateAfter = await getState<StateResponse>(second.baseUrl);
   const cardAfter = stateAfter.sessions.find((s) => s.session_id === sid);
   assert.ok(
     cardAfter,

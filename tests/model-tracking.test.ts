@@ -35,6 +35,7 @@ import path from 'node:path';
 
 import { startDaemon, type DaemonHandle } from './helpers/daemon.ts';
 import { getJson, postHook } from './helpers/http.ts';
+import { getState } from './helpers/state.ts';
 import { loadFixture } from './helpers/fixtures.ts';
 import {
   appendTranscriptLines,
@@ -55,7 +56,7 @@ function findSession(state: StateResponse, sid: string) {
 }
 
 async function modelOf(daemon: DaemonHandle, sid: string) {
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(daemon.baseUrl);
   return findSession(state, sid)?.model;
 }
 

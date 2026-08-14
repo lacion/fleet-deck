@@ -23,7 +23,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startDaemon } from './helpers/daemon.ts';
-import { getJson } from './helpers/http.ts';
+import { getState } from './helpers/state.ts';
 import type { StateResponse } from '../contracts/state.ts';
 
 interface HooksJson {
@@ -143,7 +143,7 @@ test('fleet-sessionstart prints the SessionStart JSON contract with watchPaths a
     'the roster brief must survive the move into additionalContext',
   );
 
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(daemon.baseUrl);
   assert.ok(
     state.sessions.some((s) => s.session_id === sid),
     'the hook must still register the session with the daemon',
@@ -189,7 +189,7 @@ test('fleet-hook re-pins watchPaths on CwdChanged and FileChanged', async (t) =>
   );
 
   // Telemetry: the daemon saw both events (the FileChanged fed the ledger).
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(daemon.baseUrl);
   const card = state.sessions.find((s) => s.session_id === sid);
   assert.ok(card, 'hook events through the shim must reach the daemon');
   assert.equal(card.note, 'changed notes.txt');

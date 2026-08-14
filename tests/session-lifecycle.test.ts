@@ -19,7 +19,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { startDaemon } from './helpers/daemon.ts';
-import { postHook, getJson } from './helpers/http.ts';
+import { postHook } from './helpers/http.ts';
+import { getState } from './helpers/state.ts';
 import { loadFixture } from './helpers/fixtures.ts';
 import type { StateResponse } from '../contracts/state.ts';
 
@@ -55,7 +56,7 @@ test('telemetry derivation walks queued -> working -> editing -> verifying -> ne
     'SessionStart response must include a callsign',
   );
 
-  let state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  let state = await getState<StateResponse>(daemon.baseUrl);
   let card = findSession(state, sid);
   assert.ok(card, 'session should appear in /state after SessionStart');
   assert.equal(card.col, 'queued', 'SessionStart should derive col=queued');
@@ -69,7 +70,7 @@ test('telemetry derivation walks queued -> working -> editing -> verifying -> ne
     loadFixture('user-prompt-submit', tokens, { prompt }),
     { token: daemon },
   );
-  state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  state = await getState<StateResponse>(daemon.baseUrl);
   card = findSession(state, sid);
   assert.ok(card, 'session should still be present in /state');
   assert.equal(card.col, 'working', 'UserPromptSubmit should derive col=working');
@@ -94,7 +95,7 @@ test('telemetry derivation walks queued -> working -> editing -> verifying -> ne
     }),
     { token: daemon },
   );
-  state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  state = await getState<StateResponse>(daemon.baseUrl);
   card = findSession(state, sid);
   assert.ok(card, 'session should still be present in /state');
   assert.ok(card.note, 'editing note should be present');
@@ -111,7 +112,7 @@ test('telemetry derivation walks queued -> working -> editing -> verifying -> ne
     }),
     { token: daemon },
   );
-  state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  state = await getState<StateResponse>(daemon.baseUrl);
   card = findSession(state, sid);
   assert.ok(card, 'session should still be present in /state');
   assert.equal(card.col, 'verifying', 'npm test should derive col=verifying');
@@ -128,7 +129,7 @@ test('telemetry derivation walks queued -> working -> editing -> verifying -> ne
     }),
     { token: daemon },
   );
-  state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  state = await getState<StateResponse>(daemon.baseUrl);
   card = findSession(state, sid);
   assert.ok(card, 'session should still be present in /state');
   assert.equal(
@@ -147,7 +148,7 @@ test('telemetry derivation walks queued -> working -> editing -> verifying -> ne
     { token: daemon },
   );
   assert.equal(pytestRes.status, 200, 'pytest hook should 200');
-  state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  state = await getState<StateResponse>(daemon.baseUrl);
   card = findSession(state, sid);
   assert.ok(card, 'session should still be present in /state');
   assert.equal(
@@ -165,7 +166,7 @@ test('telemetry derivation walks queued -> working -> editing -> verifying -> ne
     }),
     { token: daemon },
   );
-  state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  state = await getState<StateResponse>(daemon.baseUrl);
   card = findSession(state, sid);
   assert.ok(card, 'session should still be present in /state');
   assert.equal(card.col, 'needsyou', 'Notification should derive col=needsyou');
@@ -175,7 +176,7 @@ test('telemetry derivation walks queued -> working -> editing -> verifying -> ne
     token: daemon,
   });
   assert.deepEqual(stopRes.json, {}, 'Stop with no mail should return {} (no block)');
-  state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  state = await getState<StateResponse>(daemon.baseUrl);
   card = findSession(state, sid);
   assert.ok(card, 'session should still be present in /state');
   assert.equal(card.col, 'idle', 'Stop should derive col=idle');
@@ -185,7 +186,7 @@ test('telemetry derivation walks queued -> working -> editing -> verifying -> ne
     token: daemon,
   });
   assert.deepEqual(endRes.json, {}, 'SessionEnd should respond {}');
-  state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  state = await getState<StateResponse>(daemon.baseUrl);
   card = findSession(state, sid);
   assert.ok(card, 'session should still be present in /state');
   assert.equal(card.col, 'offline', 'SessionEnd should derive col=offline');

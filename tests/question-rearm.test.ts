@@ -28,7 +28,7 @@ import { postHook, postJson, getJson, type JsonResponse } from './helpers/http.t
 import { loadFixture } from './helpers/fixtures.ts';
 import { makeTranscriptDir, writeTranscript } from './helpers/transcript.ts';
 import { waitUntil } from './helpers/wait.ts';
-import { scratchCwd, questionsFor } from './helpers/state.ts';
+import { getState, scratchCwd, questionsFor } from './helpers/state.ts';
 import { resolveHoldMs } from '../src/daemon/questions.ts';
 
 interface QuestionPayload {
@@ -90,7 +90,7 @@ async function holdPermission(
   );
   const q = await waitUntil(
     async () => {
-      const state = (await getJson(`${daemon.baseUrl}/state`)).json as QuestionsState;
+      const state = await getState<QuestionsState>(daemon.baseUrl);
       return questionsFor(state, sid, 'permission').find((x) => x.status === 'pending');
     },
     { label: 'permission question to appear in /state' },
@@ -105,7 +105,7 @@ function waitForRearmed(
 ): Promise<Question> {
   return waitUntil(
     async () => {
-      const state = (await getJson(`${daemon.baseUrl}/state`)).json as QuestionsState;
+      const state = await getState<QuestionsState>(daemon.baseUrl);
       return questionsFor(state, sid).find(
         (x) => x.status === 'pending' && x.payload?.rearmed === true,
       );
@@ -160,7 +160,7 @@ test('re-arm: hold expiry with a still-parked session raises a fresh rearmed row
   assert.notEqual(succ.id, q.id, 'the re-arm is a FRESH row, not the expired one resurrected');
   assert.equal(succ.payload?.rearmed, true);
   assert.equal(succ.expires_at, null, 'a re-armed row is not a hold — no expiry deadline');
-  const orig = ((await getJson(`${daemon.baseUrl}/state`)).json as QuestionsState).questions.find(
+  const orig = (await getState<QuestionsState>(daemon.baseUrl)).questions.find(
     (x) => x.id === q.id,
   );
   assert.equal(orig?.status, 'expired', 'the original row expires when the successor is raised');
@@ -240,7 +240,7 @@ test('re-arm: activity inside the grace window cancels the re-arm (no successor)
 
   // Outwait the full grace window plus margin: no re-armed card may appear.
   await sleep(graceMs + 500);
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as QuestionsState;
+  const state = await getState<QuestionsState>(daemon.baseUrl);
   const rearmed = questionsFor(state, sid).filter((x) => x.payload?.rearmed === true);
   assert.equal(rearmed.length, 0, 'activity inside the grace window must cancel the re-arm');
   const orig = state.questions.find((x) => x.id === q.id);
@@ -277,7 +277,7 @@ test('re-arm: the chain caps at two re-arms, then the daemon gets out of the way
   const first = await waitForRearmed(daemon, sid, 'first re-arm');
   const second = await waitUntil(
     async () => {
-      const state = (await getJson(`${daemon.baseUrl}/state`)).json as QuestionsState;
+      const state = await getState<QuestionsState>(daemon.baseUrl);
       const rows = questionsFor(state, sid).filter(
         (x) => x.status === 'pending' && x.payload?.rearmed === true,
       );
@@ -290,14 +290,14 @@ test('re-arm: the chain caps at two re-arms, then the daemon gets out of the way
   // may ever appear — the daemon gets out of the way permanently.
   await waitUntil(
     async () => {
-      const state = (await getJson(`${daemon.baseUrl}/state`)).json as QuestionsState;
+      const state = await getState<QuestionsState>(daemon.baseUrl);
       const row = state.questions.find((x) => x.id === second.id);
       return row?.status === 'expired' || null;
     },
     { label: 'second re-armed card recycled', timeoutMs: 9000 },
   );
   await sleep(graceMs + 600);
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as QuestionsState;
+  const state = await getState<QuestionsState>(daemon.baseUrl);
   const rearmed = questionsFor(state, sid).filter((x) => x.payload?.rearmed === true);
   assert.equal(
     rearmed.length,
@@ -347,7 +347,7 @@ test('re-arm: freeform rows never re-arm (they have no timer to expire on)', asy
     { token: daemon.token },
   );
 
-  let state = (await getJson(`${daemon.baseUrl}/state`)).json as QuestionsState;
+  let state = await getState<QuestionsState>(daemon.baseUrl);
   const ff = questionsFor(state, sid, 'freeform')[0];
   assert.ok(ff, 'sanity: the trailing question became a freeform card');
   assert.equal(ff.status, 'pending');
@@ -355,7 +355,7 @@ test('re-arm: freeform rows never re-arm (they have no timer to expire on)', asy
   // A freeform card lingers precisely because nothing expires it on a timer.
   // Outwait several grace windows: it must stay the ONLY card, and stay pending.
   await sleep(graceMs * 3 + 500);
-  state = (await getJson(`${daemon.baseUrl}/state`)).json as QuestionsState;
+  state = await getState<QuestionsState>(daemon.baseUrl);
   const rows = questionsFor(state, sid);
   assert.equal(
     rows.filter((x) => x.status === 'pending').length,
@@ -398,7 +398,7 @@ test('re-arm: dismissing the expired original during the grace window cancels th
   assert.equal(res.status, 200);
 
   await sleep(graceMs + 500);
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as QuestionsState;
+  const state = await getState<QuestionsState>(daemon.baseUrl);
   assert.equal(
     questionsFor(state, sid).filter((x) => x.payload?.rearmed === true).length,
     0,
@@ -569,7 +569,7 @@ test('answer at TTL−1s: a board answer one second before the window lapses sti
   );
   const q = await waitUntil(
     async () => {
-      const state = (await getJson(`${daemon.baseUrl}/state`)).json as QuestionsState;
+      const state = await getState<QuestionsState>(daemon.baseUrl);
       return questionsFor(state, sid, 'permission').find((x) => x.status === 'pending');
     },
     { label: 'permission question to appear in /state' },

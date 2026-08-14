@@ -8,7 +8,8 @@ import { fileURLToPath } from 'node:url';
 import { openDb } from '../src/daemon/db.ts';
 import { createCore } from '../src/daemon/derive.ts';
 import { startDaemon } from './helpers/daemon.ts';
-import { getJson, postJson } from './helpers/http.ts';
+import { postJson } from './helpers/http.ts';
+import { getState } from './helpers/state.ts';
 import { waitForSpecRecords, waitUntil } from './helpers/wait.ts';
 import type { SqliteHandle } from '../src/daemon/sqlite.ts';
 import type { StateResponse } from '../contracts/state.ts';
@@ -214,7 +215,7 @@ test('override shell is live immediately, source shell, snapshot kind shell, and
   assert.equal(spawned.status, 200);
   const spawnedBody = spawned.json as SpawnHttpAck;
   const spec = ((await waitForSpecRecords(record, 1)).at(-1) as SpecRecord).parsed;
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(daemon.baseUrl);
   const card = state.sessions.find((s) => s.session_id === spawnedBody.session_id);
   assert.ok(card);
   assert.equal(card.source, 'shell');
@@ -334,7 +335,7 @@ test('real tmux keeps a healthy bash shell and condemns it after exit', {
   assert.equal(spawned.status, 200);
   const spawnedBody = spawned.json as SpawnHttpAck;
   await new Promise((resolve) => setTimeout(resolve, 450));
-  let card = ((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse).sessions.find(
+  let card = (await getState<StateResponse>(daemon.baseUrl)).sessions.find(
     (s) => s.session_id === spawnedBody.session_id,
   );
   assert.ok(card);
@@ -344,7 +345,7 @@ test('real tmux keeps a healthy bash shell and condemns it after exit', {
   tmux(socket, ['send-keys', '-t', target, 'exit', 'Enter']);
   card = await waitUntil(
     async () => {
-      const s = ((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse).sessions.find(
+      const s = (await getState<StateResponse>(daemon.baseUrl)).sessions.find(
         (row) => row.session_id === spawnedBody.session_id,
       );
       return s?.spawn?.status === 'pane-dead' ? s : null;

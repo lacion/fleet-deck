@@ -22,10 +22,10 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { rmSync } from 'node:fs';
 import { startDaemon, type DaemonHandle } from './helpers/daemon.ts';
-import { postHook, postJson, getJson } from './helpers/http.ts';
+import { postHook, postJson } from './helpers/http.ts';
 import { loadFixture } from './helpers/fixtures.ts';
 import { waitUntil, scaleMs } from './helpers/wait.ts';
-import { scratchCwd, questionsFor } from './helpers/state.ts';
+import { getState, scratchCwd, questionsFor } from './helpers/state.ts';
 
 const FIXTURE_QUESTION = 'Should this project use bcrypt or argon2 for password hashing?';
 
@@ -94,7 +94,7 @@ async function holdChoice(
   );
   const q = await waitUntil(
     async () => {
-      const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+      const state = await getState<StateResponse>(daemon.baseUrl);
       return questionsFor(state, sid, 'choice')[0];
     },
     { label: 'choice question to appear in /state' },
@@ -155,7 +155,7 @@ test('F3c: AskUserQuestion holds as kind=choice with parsed questions[]; {answer
   assert.ok(q.payload?.tool_use_id, 'payload should keep tool_use_id');
 
   // card telemetry: the session is waiting on the human
-  const state1 = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state1 = await getState<StateResponse>(daemon.baseUrl);
   const card = state1.sessions.find((s) => s.session_id === sid);
   assert.equal(card?.col, 'needsyou', 'a held choice question should show needsyou on the board');
 
@@ -189,7 +189,7 @@ test('F3c: AskUserQuestion holds as kind=choice with parsed questions[]; {answer
     'choice answer must produce the validated PreToolUse deny+reason schema (validated live on CLI 2.1.206) verbatim',
   );
 
-  const state2 = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state2 = await getState<StateResponse>(daemon.baseUrl);
   const q2 = state2.questions.find((x) => String(x.id) === String(q.id));
   assert.equal(q2?.status, 'answered');
 });
@@ -235,7 +235,7 @@ test('F3c: an unanswered AskUserQuestion hold expires to {} and the question bec
     'expiry must resolve to {} so the native terminal chooser renders as normal',
   );
 
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(daemon.baseUrl);
   const q2 = state.questions.find((x) => String(x.id) === String(q.id));
   assert.equal(q2?.status, 'expired');
 
@@ -300,7 +300,7 @@ test('F3c: /hook/PermissionRequest with tool_name=AskUserQuestion answers {} in 
   );
 
   // no second question row was created for it
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(daemon.baseUrl);
   assert.equal(
     questionsFor(state, sid, 'permission').length,
     0,
@@ -469,7 +469,7 @@ test('BUG-139: an answer over the 2000-unit limit is rejected with 400 and the h
   });
   assert.equal(big.status, 400, 'an oversized serialized answer must be rejected, not clipped');
   assert.match((big.json as AnswerResponse | null)?.err ?? '', /too long/);
-  let state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  let state = await getState<StateResponse>(daemon.baseUrl);
   assert.equal(
     state.questions.find((x) => String(x.id) === String(q.id))?.status,
     'pending',
@@ -481,7 +481,7 @@ test('BUG-139: an answer over the 2000-unit limit is rejected with 400 and the h
     answers: longAnswers,
   });
   assert.equal(big2.status, 400, 'an oversized answers-map serialization is rejected too');
-  state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  state = await getState<StateResponse>(daemon.baseUrl);
   assert.equal(
     state.questions.find((x) => String(x.id) === String(q.id))?.status,
     'pending',
@@ -535,7 +535,7 @@ test('BUG-140: malformed answers maps are rejected with 400 and the choice hold 
   for (const body of malformed) {
     const res = await postJson(`${daemon.baseUrl}/api/questions/${q.id}/answer`, body);
     assert.equal(res.status, 400, `malformed answers must be rejected: ${JSON.stringify(body)}`);
-    const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+    const state = await getState<StateResponse>(daemon.baseUrl);
     const qNow = state.questions.find((x) => String(x.id) === String(q.id));
     assert(qNow);
     assert.equal(qNow.status, 'pending', 'a rejected answer must not settle the question');
@@ -591,7 +591,7 @@ test('F3c: session activity (UserPromptSubmit) expires a pending choice hold wit
     `activity-triggered expiry should resolve the hold promptly (took ${elapsed}ms)`,
   );
   assert.deepEqual(heldRes.json, {}, 'activity-expired choice hold must resolve to {}');
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(daemon.baseUrl);
   assert.equal(state.questions.find((x) => String(x.id) === String(q.id))?.status, 'expired');
 });
 
@@ -625,6 +625,6 @@ test('F3c: SessionEnd expires a pending choice hold with {} — identical to the
 
   assert.ok(elapsed < holdMs, `SessionEnd should settle the hold promptly (took ${elapsed}ms)`);
   assert.deepEqual(heldRes.json, {}, 'SessionEnd-expired choice hold must resolve to {}');
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(daemon.baseUrl);
   assert.equal(state.questions.find((x) => String(x.id) === String(q.id))?.status, 'expired');
 });

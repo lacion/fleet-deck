@@ -16,7 +16,8 @@ import { fileURLToPath } from 'node:url';
 import { openDb } from '../src/daemon/db.ts';
 import { claudeTranscriptPath, mungeClaudeProjectCwd } from '../src/daemon/derive.ts';
 import { guardScratchDirs, startDaemon } from './helpers/daemon.ts';
-import { getJson, postHook, postJson } from './helpers/http.ts';
+import { postHook, postJson } from './helpers/http.ts';
+import { getState } from './helpers/state.ts';
 import type { SqliteHandle } from '../src/daemon/sqlite.ts';
 import type { SessionEntry, StateResponse } from '../contracts/state.ts';
 
@@ -196,7 +197,7 @@ test('revive resumes the same session into a new spawn row and its resume hook m
   assert.equal(rows.find((row) => row.spawn_id === oldId)?.status, 'gone');
   assert.equal(rows.find((row) => row.spawn_id === reviveBody.spawn_id)?.status, 'spawning');
   assert.equal(rows.find((row) => row.spawn_id === reviveBody.spawn_id)?.skip_permissions, 1);
-  let card = findCard((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse, sid);
+  let card = findCard(await getState<StateResponse>(daemon.baseUrl), sid);
   assert.equal(card.col, 'queued');
   assert.equal(card.note, 'reviving…');
   assert.ok(card.endedAt, 'revive leaves ended_at for the first hook');
@@ -216,7 +217,7 @@ test('revive resumes the same session into a new spawn row and its resume hook m
     { session_id: sid, cwd, source: 'resume' },
     { token: daemon },
   );
-  card = findCard((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse, sid);
+  card = findCard(await getState<StateResponse>(daemon.baseUrl), sid);
   assert.equal(card.spawn?.status, 'live');
   assert.equal(card.endedAt, null);
   assert.equal(card.col, 'queued');
@@ -309,15 +310,15 @@ test('snapshot spawn.revivable follows terminal status, cwd, and transcript exis
   }));
   const spawned = await postJson(`${daemon.baseUrl}/api/spawn`, { cwd });
   const { spawn_id: spawnId, session_id: sid } = spawned.json as SpawnAck;
-  let card = findCard((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse, sid);
+  let card = findCard(await getState<StateResponse>(daemon.baseUrl), sid);
   assert.equal(card.spawn?.revivable, false, 'active status is never revivable');
   withDb(daemonHome, (db) =>
     db.prepare("UPDATE spawns SET status = 'gone' WHERE spawn_id = ?").run(spawnId),
   );
-  card = findCard((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse, sid);
+  card = findCard(await getState<StateResponse>(daemon.baseUrl), sid);
   assert.equal(card.spawn?.revivable, false, 'missing transcript keeps the flag false');
   const transcript = writeTranscript(userHome, cwd, sid);
-  card = findCard((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse, sid);
+  card = findCard(await getState<StateResponse>(daemon.baseUrl), sid);
   assert.equal(card.spawn?.revivable, true);
   const absentWorktree = path.join(cwd, 'removed-worktree');
   withDb(daemonHome, (db) =>
@@ -325,15 +326,15 @@ test('snapshot spawn.revivable follows terminal status, cwd, and transcript exis
       .prepare('UPDATE spawns SET worktree_path = ? WHERE spawn_id = ?')
       .run(absentWorktree, spawnId),
   );
-  card = findCard((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse, sid);
+  card = findCard(await getState<StateResponse>(daemon.baseUrl), sid);
   assert.equal(card.spawn?.revivable, false, 'missing effective cwd flips the flag false');
   withDb(daemonHome, (db) =>
     db.prepare('UPDATE spawns SET worktree_path = NULL WHERE spawn_id = ?').run(spawnId),
   );
-  card = findCard((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse, sid);
+  card = findCard(await getState<StateResponse>(daemon.baseUrl), sid);
   assert.equal(card.spawn?.revivable, true, 'restoring the effective cwd flips the flag true');
   rmSync(transcript);
-  card = findCard((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse, sid);
+  card = findCard(await getState<StateResponse>(daemon.baseUrl), sid);
   assert.equal(card.spawn?.revivable, false);
 });
 
@@ -381,7 +382,7 @@ test('a resume stranded mid-flight is released on the next boot, not stuck at re
       "UPDATE sessions SET col = 'queued', note = 'reviving…', ended_at = ? WHERE session_id = ?",
     ).run(Date.now(), sid);
   });
-  let card = findCard((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse, sid);
+  let card = findCard(await getState<StateResponse>(daemon.baseUrl), sid);
   assert.equal(card.col, 'queued', 'precondition: the card presents as an in-flight resume');
   assert.equal(card.note, 'reviving…');
 
@@ -391,7 +392,7 @@ test('a resume stranded mid-flight is released on the next boot, not stuck at re
   // Boot reconciliation is fire-and-forget, so poll rather than assume a tick.
   const deadline = Date.now() + 5000;
   for (;;) {
-    card = findCard((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse, sid);
+    card = findCard(await getState<StateResponse>(daemon.baseUrl), sid);
     if (card.col === 'offline' || Date.now() > deadline) break;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }

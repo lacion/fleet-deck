@@ -9,6 +9,7 @@ import { openDb } from '../src/daemon/db.ts';
 import { createCore } from '../src/daemon/derive.ts';
 import { startDaemon } from './helpers/daemon.ts';
 import { getJson, postJson } from './helpers/http.ts';
+import { getState } from './helpers/state.ts';
 import { waitForSpecRecords, waitUntil } from './helpers/wait.ts';
 import type { StateResponse, SessionEntry } from '../contracts/state.ts';
 
@@ -278,7 +279,7 @@ test('setup wrapper is fixed, Claude argv stays positional, and setup text rides
     'the launch keeps its deliberate setup env until the fixed wrapper unsets it',
   );
 
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(daemon.baseUrl);
   const card = state.sessions.find((s) => s.session_id === ack.session_id);
   assert.ok(card, 'the spawned session should appear in /state');
   assert.equal(card.spawn?.setup_cmd, hostile);
@@ -465,7 +466,7 @@ test('real tmux setup failure stays visible, condemns immediately, and never sta
   const ack = spawned.json as SpawnHttpAck;
   const card = await waitUntil(
     async (): Promise<SessionEntry | null> => {
-      const s = ((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse).sessions.find(
+      const s = (await getState<StateResponse>(daemon.baseUrl)).sessions.find(
         (row) => row.session_id === ack.session_id,
       );
       return s?.spawn?.status === 'pane-dead' ? s : null;
@@ -509,7 +510,7 @@ test('real tmux long-running setup is not condemned while sh/setup binary runs',
   // about the scheduler (BUG-178).
   const card = await waitUntil(
     async (): Promise<SessionEntry | null> => {
-      const s = ((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse).sessions.find(
+      const s = (await getState<StateResponse>(daemon.baseUrl)).sessions.find(
         (row) => row.session_id === ack.session_id,
       );
       return s?.spawn?.status === 'stalled' ? s : null;

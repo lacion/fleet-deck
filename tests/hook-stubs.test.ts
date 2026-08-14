@@ -17,7 +17,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { startDaemon } from './helpers/daemon.ts';
-import { postHook, getJson } from './helpers/http.ts';
+import { postHook } from './helpers/http.ts';
+import { getState } from './helpers/state.ts';
 import { loadFixture } from './helpers/fixtures.ts';
 import type { StateResponse } from '../contracts/state.ts';
 
@@ -69,7 +70,7 @@ for (const [event, fixtureName, kind] of cases) {
     );
 
     // Telemetry side: the session card survives, and the question row is now expired.
-    const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+    const state = await getState<StateResponse>(daemon.baseUrl);
     const card = state.sessions.find((s) => s.session_id === sid);
     assert.ok(card, `${event} must not make the session vanish from /state`);
     const q = state.questions.find((x) => x.session_id === sid && x.kind === kind);

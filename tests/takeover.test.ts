@@ -34,6 +34,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { REPO_ROOT, randomPort, startDaemon, waitForHealth } from './helpers/daemon.ts';
 import { getJson, postHook } from './helpers/http.ts';
+import { getState } from './helpers/state.ts';
 import { loadFixture } from './helpers/fixtures.ts';
 import { scaleMs, waitUntil } from './helpers/wait.ts';
 import {
@@ -558,9 +559,7 @@ test('a newer hook replaces an older daemon: old exits 0, new owns the same port
     { token: old },
   );
   assert.ok(
-    ((await getJson(`${old.baseUrl}/state`)).json as StateView).sessions.find(
-      (s) => s.session_id === seededSid,
-    ),
+    (await getState<StateView>(old.baseUrl)).sessions.find((s) => s.session_id === seededSid),
     'sanity: the seed session is present before the takeover',
   );
 

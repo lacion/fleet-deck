@@ -8,6 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startDaemon, randomPort, type DaemonHandle } from './helpers/daemon.ts';
 import { getJson, postHook, postJson } from './helpers/http.ts';
+import { getState } from './helpers/state.ts';
 import { makeRemoteRepo, type RemoteRepo } from './helpers/gitrepo.ts';
 import { openDb } from '../src/daemon/db.ts';
 import type { SessionEntry, StateResponse } from '../contracts/state.ts';
@@ -186,7 +187,7 @@ test('repo mode in-place switches an existing branch and launches in that cwd', 
   ).parsed as ParsedSpec;
   assert.equal(spec.cwd, root);
   assert.equal(git(['branch', '--show-current'], root), 'existing');
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(daemon.baseUrl);
   const body = response.json as SpawnBody;
   const card = state.sessions.find((s) => s.session_id === body.session_id);
   assert.ok(card, 'the spawned session has a card');
@@ -313,7 +314,7 @@ test('clone failure tombstones the card and removes destination plus temp', asyn
   const dest = path.join(reposDir, 'bad');
   const card = await waitUntil(
     async () => {
-      const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+      const state = await getState<StateResponse>(daemon.baseUrl);
       const found = state.sessions.find((s) => s.session_id === body.session_id);
       return found?.col === 'offline' ? found : null;
     },
@@ -445,7 +446,7 @@ async function shimmedDaemon(
 function tombstonedCard(daemon: DaemonHandle, session_id: string): Promise<SessionEntry> {
   return waitUntil(
     async () => {
-      const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+      const state = await getState<StateResponse>(daemon.baseUrl);
       const found = state.sessions.find((s) => s.session_id === session_id);
       return found?.col === 'offline' ? found : null;
     },

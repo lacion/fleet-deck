@@ -14,7 +14,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startDaemon, type DaemonHandle } from './helpers/daemon.ts';
-import { postJson, getJson } from './helpers/http.ts';
+import { postJson } from './helpers/http.ts';
+import { getState } from './helpers/state.ts';
 import type { StateResponse } from '../contracts/state.ts';
 
 interface ArmResponse {
@@ -95,7 +96,7 @@ test('unsupervised spawn without an arm token → 403, nothing created', async (
   });
   assert.equal(forged.status, 403, 'fabricated arm token must 403');
 
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(daemon.baseUrl);
   assert.equal(state.sessions.length, 0, 'no session was created by the refused spawns');
 });
 

@@ -15,7 +15,8 @@ import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync, rmSync, realpathSyn
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { startDaemon } from './helpers/daemon.ts';
-import { postHook, getJson } from './helpers/http.ts';
+import { postHook } from './helpers/http.ts';
+import { getState } from './helpers/state.ts';
 import { loadFixture, type FixtureTokens } from './helpers/fixtures.ts';
 import { makeRepoWithWorktree, makePlainDir, makeSeparateGitDirRepo } from './helpers/gitrepo.ts';
 import { deriveRepo, branchOf, ledgerKey } from '../src/daemon/repo-identity.ts';
@@ -60,7 +61,7 @@ test('events from two worktrees of one repo collapse to one repo_id; cross-workt
     { token: daemon },
   );
 
-  let state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  let state = await getState<StateResponse>(daemon.baseUrl);
   const cardRoot = findSession(state, sidRoot);
   const cardWt = findSession(state, sidWt);
   assert.ok(cardRoot && cardWt, 'both sessions should register');
@@ -125,7 +126,7 @@ test('events from two worktrees of one repo collapse to one repo_id; cross-workt
     'editing the same rel path from another worktree should whisper',
   );
 
-  state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  state = await getState<StateResponse>(daemon.baseUrl);
   const conflict = findConflictFor(state, 'shared.js');
   assert.ok(conflict, 'conflict on shared.js should be recorded');
   assert.equal(
@@ -188,7 +189,7 @@ test('two sessions in the same worktree colliding is severity=warning', async (t
     'same-worktree collision should whisper',
   );
 
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(daemon.baseUrl);
   const conflict = findConflictFor(state, 'same-worktree.js');
   assert.ok(conflict, 'conflict on same-worktree.js should be recorded');
   assert.equal(conflict.severity, 'warning', 'same-worktree collision should be severity=warning');
@@ -330,7 +331,7 @@ test('root files named with leading dots (`..config`, `...hidden`) still key rep
     'editing ..config from another worktree should whisper',
   );
 
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(daemon.baseUrl);
   const conflict = findConflictFor(state, '..config');
   assert.ok(conflict, 'conflict on ..config should be recorded');
   assert.equal(
@@ -386,7 +387,7 @@ test('a non-git cwd falls back to repo_id = cwd', async (t) => {
     { token: daemon },
   );
 
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(daemon.baseUrl);
   const card = findSession(state, sid);
   assert.ok(card, 'session in a non-git cwd should still register');
   assert.equal(card.repo_id, plain.dir, 'non-git cwd should fall back to repo_id = cwd');
@@ -459,7 +460,7 @@ test('a --separate-git-dir repo catalogs the real checkout, not the metadata dir
     { token: daemon },
   );
 
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(daemon.baseUrl);
   const card = findSession(state, sid);
   assert.ok(card, 'session in a separate-git-dir checkout should register');
   assert.equal(card.repo_id, repo.gitDir, 'repo_id is the canonicalized --git-common-dir');

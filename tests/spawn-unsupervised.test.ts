@@ -36,7 +36,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startDaemon, randomPort, type DaemonHandle } from './helpers/daemon.ts';
-import { postJson, getJson } from './helpers/http.ts';
+import { postJson } from './helpers/http.ts';
+import { getState } from './helpers/state.ts';
 import { waitForSpecRecords, makeSpecRecordFile } from './helpers/wait.ts';
 import type { SessionEntry, StateResponse } from '../contracts/state.ts';
 
@@ -166,7 +167,7 @@ test('unsupervised spawn: dangerously_skip_permissions:true adds --dangerously-s
   );
   const sid = (res.json as SpawnResponse).session_id;
 
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(daemon.baseUrl);
   const card = findSession(state, sid);
   assert.ok(
     card?.spawn,
@@ -213,7 +214,7 @@ test("unsupervised spawn: permission_mode 'bypassPermissions' adds --permission-
   );
   const sid = (res.json as SpawnResponse).session_id;
 
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(daemon.baseUrl);
   const card = findSession(state, sid);
   assert.ok(card?.spawn, 'the spawned card should carry a spawn{} descriptor');
   assert.equal(
@@ -260,7 +261,7 @@ test('unsupervised spawn: neither dangerously_skip_permissions nor permission_mo
   );
   const sid = (res.json as SpawnResponse).session_id;
 
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(daemon.baseUrl);
   const card = findSession(state, sid);
   assert.ok(card?.spawn, 'the spawned card should carry a spawn{} descriptor');
   assert.equal(
@@ -309,7 +310,7 @@ test('unsupervised spawn: both dangerously_skip_permissions:true AND permission_
   );
   const sid = (res.json as SpawnResponse).session_id;
 
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(daemon.baseUrl);
   const card = findSession(state, sid);
   assert.equal(card?.spawn?.skip_permissions, true);
 

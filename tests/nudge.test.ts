@@ -21,7 +21,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { startDaemon } from './helpers/daemon.ts';
-import { postJson, getJson } from './helpers/http.ts';
+import { postJson } from './helpers/http.ts';
+import { getState } from './helpers/state.ts';
 import { waitUntil } from './helpers/wait.ts';
 import type { SessionEntry } from '../contracts/state.ts';
 
@@ -156,7 +157,7 @@ test('nudge holds on a trust dialog: no Enter, board says waiting', {
   // the nudge decision in the ticker).
   await waitUntil(
     async () => {
-      const state = (await getJson(`${daemon.baseUrl}/state`)).json as NudgeState;
+      const state = await getState<NudgeState>(daemon.baseUrl);
       const card = state.sessions.find(
         (s) => s.session_id === (res.json as SpawnResponse).session_id,
       );
@@ -165,7 +166,7 @@ test('nudge holds on a trust dialog: no Enter, board says waiting', {
     { timeoutMs: 8000, label: 'card note to report waiting on the trust dialog' },
   );
 
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as NudgeState;
+  const state = await getState<NudgeState>(daemon.baseUrl);
   const tickText = (state.ticker ?? []).map((x) => x.msg ?? x.text ?? '').join('\n');
   assert.match(tickText, /waits on a trust dialog/, 'ticker reports the held trust dialog');
   assert.doesNotMatch(tickText, /nudged .* through bring-up/, 'no bring-up Enter was sent');
@@ -226,7 +227,7 @@ test('nudge presses Enter on an ordinary bring-up screen', {
 
   await waitUntil(
     async () => {
-      const state = (await getJson(`${daemon.baseUrl}/state`)).json as NudgeState;
+      const state = await getState<NudgeState>(daemon.baseUrl);
       const tickText = (state.ticker ?? []).map((x) => x.msg ?? x.text ?? '').join('\n');
       return /nudged .* through bring-up/.test(tickText);
     },

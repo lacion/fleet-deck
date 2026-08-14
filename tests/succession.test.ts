@@ -8,7 +8,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openDb } from '../src/daemon/db.ts';
 import { startDaemon, type DaemonHandle } from './helpers/daemon.ts';
-import { getJson, postHook, postJson } from './helpers/http.ts';
+import { postHook, postJson } from './helpers/http.ts';
+import { getState } from './helpers/state.ts';
 import { scaleMs, waitUntil } from './helpers/wait.ts';
 import type { SessionEntry, StateResponse } from '../contracts/state.ts';
 
@@ -187,7 +188,7 @@ test('a /clear continues the SAME card under a new session id — one card, not 
   assert.notEqual(newSid, sid, 'the CLI really does mint a new id');
   assert.equal(heirCallsign, callsign, 'the heir answers to the callsign the human already knows');
 
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(daemon.baseUrl);
   const visible = cardsIn(state, cwd);
   assert.equal(visible.length, 1, 'exactly ONE card survives the /clear');
   const survivor = visible[0];
@@ -223,7 +224,7 @@ test('the pane follows the card across a /clear — the terminal button keeps dr
     { token: daemon.token },
   );
 
-  const before = cardOf((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse, sid);
+  const before = cardOf(await getState<StateResponse>(daemon.baseUrl), sid);
   assert.ok(before, 'the spawned card is present');
   const beforeSpawn = before.spawn;
   assert.ok(beforeSpawn, 'the spawned card holds a spawn row');
@@ -233,7 +234,7 @@ test('the pane follows the card across a /clear — the terminal button keeps dr
   // The agent in that pane runs /clear.
   const { newSid } = await clearInto(daemon, cwd, sid);
 
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(daemon.baseUrl);
   assert.equal(cardsIn(state, cwd).length, 1, 'the spawned worker did not split into two cards');
   const heir = cardOf(state, newSid);
   assert.ok(heir, 'the heir is present');
@@ -262,10 +263,7 @@ test('pending mail and the ticket follow the card across a /clear', async (t) =>
   const { sid, callsign } = await startSession(daemon, cwd);
   // A ticket pin (manual, so it survives independently of any branch).
   await postJson(`${daemon.baseUrl}/command`, { text: `ticket ${callsign} PROJ-42` });
-  const ticketedCard = cardOf(
-    (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse,
-    sid,
-  );
+  const ticketedCard = cardOf(await getState<StateResponse>(daemon.baseUrl), sid);
   assert.ok(ticketedCard, 'the ticketed card is present');
   const ticketed = ticketedCard.callsign;
 
@@ -277,7 +275,7 @@ test('pending mail and the ticket follow the card across a /clear', async (t) =>
   );
 
   const { newSid } = await clearInto(daemon, cwd, sid);
-  const heirState = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const heirState = await getState<StateResponse>(daemon.baseUrl);
   const heir = cardOf(heirState, newSid);
   assert.ok(heir, 'the heir is present');
   assert.equal(heir.callsign, ticketed, 'the ticket name came along');
@@ -331,7 +329,7 @@ test('a straggler hook for the retired id never resurrects it — two cards unde
     { token: daemon.token },
   );
 
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(daemon.baseUrl);
   const visible = cardsIn(state, cwd);
   assert.equal(visible.length, 1, 'the ghost stayed retired — still ONE card');
   const survivor = visible[0];
@@ -365,7 +363,7 @@ test('a /clear with NO successor still keeps the card live (the legacy same-id p
     { token: daemon.token },
   );
 
-  const card = cardOf((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse, sid);
+  const card = cardOf(await getState<StateResponse>(daemon.baseUrl), sid);
   assert.ok(card, 'the card is still on the board');
   assert.equal(card.endedAt, null, 'a /clear is still not an end');
   assert.equal(card.callsign, callsign);
@@ -405,7 +403,7 @@ test('an unrelated new session in the same cwd is not swallowed as a continuatio
     { token: daemon.token },
   );
 
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(daemon.baseUrl);
   assert.equal(cardsIn(state, cwd).length, 2, 'two real sessions, two cards');
   assert.ok(cardOf(state, sid), 'the cleared session kept its own card');
   assert.ok(cardOf(state, stranger));
@@ -438,7 +436,7 @@ test('an ambiguous double-clear in one cwd refuses to merge — a wrong merge is
     { token: daemon.token },
   );
 
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(daemon.baseUrl);
   const card = cardOf(state, heir);
   assert.ok(card, 'the heir got its own ordinary card');
   assert.notEqual(card.callsign, a.callsign);
@@ -480,7 +478,7 @@ test('the FORWARD /clear path refuses a lone orphan heir when TWO predecessors c
     { session_id: heir, cwd, source: 'clear' },
     { token: daemon.token },
   );
-  let card = cardOf((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse, heir);
+  let card = cardOf(await getState<StateResponse>(daemon.baseUrl), heir);
   assert.ok(card, 'the heir starts on its own orphan card (backward refused to guess)');
   assert.notEqual(card.callsign, a.callsign);
   assert.notEqual(card.callsign, b.callsign);
@@ -498,7 +496,7 @@ test('the FORWARD /clear path refuses a lone orphan heir when TWO predecessors c
     { token: daemon.token },
   );
 
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(daemon.baseUrl);
   assert.equal(cardsIn(state, cwd).length, 4, 'four cards stand — nobody was merged away');
   card = cardOf(state, heir);
   assert.ok(card, 'the heir kept its own card — c did not swallow it');
@@ -557,7 +555,7 @@ test('a delayed rival /clear inside the settlement window cancels the forward cl
     { session_id: heirB, cwd, source: 'clear' },
     { token: daemon.token },
   );
-  const heirBCard = cardOf((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse, heirB);
+  const heirBCard = cardOf(await getState<StateResponse>(daemon.baseUrl), heirB);
   assert.ok(heirBCard, "B's heir card is present");
   const heirCallsign = heirBCard.callsign;
 
@@ -584,7 +582,7 @@ test('a delayed rival /clear inside the settlement window cancels the forward cl
     setTimeout(resolve, scaleMs(900));
   });
 
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(daemon.baseUrl);
   const card = cardOf(state, heirB);
   assert.ok(card, 'the heir kept its own card');
   assert.equal(card.callsign, heirCallsign, 'wearing its own name, never A’s');
@@ -641,14 +639,13 @@ test('the settled forward claim still merges when no rival ever arrives', async 
 
   // Immediately after the /clear the claim is only SCHEDULED — the split is
   // still standing while the settlement window runs.
-  let state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  let state = await getState<StateResponse>(daemon.baseUrl);
   assert.equal(cardsIn(state, cwd).length, 2, 'no merge before the interval elapses');
 
   // Poll rather than sleep a fixed delay: the merge lands as soon as the
   // settlement timer fires, and the wait scales for the slow CI lanes.
   await waitUntil(
-    async () =>
-      cardsIn((await getJson(`${daemon.baseUrl}/state`)).json as StateResponse, cwd).length === 1,
+    async () => cardsIn(await getState<StateResponse>(daemon.baseUrl), cwd).length === 1,
     {
       timeoutMs: 5000,
       intervalMs: 100,
@@ -656,7 +653,7 @@ test('the settled forward claim still merges when no rival ever arrives', async 
     },
   );
 
-  state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  state = await getState<StateResponse>(daemon.baseUrl);
   assert.equal(cardsIn(state, cwd).length, 1, 'the settled claim merged — one card, as before');
   const heir = cardOf(state, heirSid);
   assert.ok(heir, 'the heir survived');
@@ -690,7 +687,7 @@ test('the boot heal repairs a pair already split by a /clear, and is idempotent'
   const { newSid } = await clearInto(daemon, cwd, sid);
 
   // The wreckage: two cards, and the pane is on the card that will never update.
-  let state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  let state = await getState<StateResponse>(daemon.baseUrl);
   assert.equal(cardsIn(state, cwd).length, 2, 'this is the bug, reproduced');
   const strandedCard = cardOf(state, sid);
   assert.ok(strandedCard, 'the stranded card is present');
@@ -708,7 +705,7 @@ test('the boot heal repairs a pair already split by a /clear, and is idempotent'
     env: { ...env, FLEETDECK_CLEAR_SUCCESSION_MS: '30000' },
   });
   t.after(() => healed.stop({ keepHome: true }));
-  state = (await getJson(`${healed.baseUrl}/state`)).json as StateResponse;
+  state = await getState<StateResponse>(healed.baseUrl);
   assert.equal(cardsIn(state, cwd).length, 1, 'one card after the heal');
   const heir = cardOf(state, newSid);
   assert.ok(heir, 'the surviving card is the live one');
@@ -745,7 +742,7 @@ test('the boot heal repairs a pair already split by a /clear, and is idempotent'
     env: { ...env, FLEETDECK_CLEAR_SUCCESSION_MS: '30000' },
   });
   t.after(() => again.stop({ keepHome: true }));
-  const after = (await getJson(`${again.baseUrl}/state`)).json as StateResponse;
+  const after = await getState<StateResponse>(again.baseUrl);
   assert.equal(cardsIn(after, cwd).length, 1, 'still one card');
   const afterHeir = cardOf(after, newSid);
   assert.ok(afterHeir, 'the healed card is still present');
@@ -779,7 +776,7 @@ test('hooks arriving out of order still land one card — the heir can beat its 
     { token: daemon.token },
   );
 
-  const state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(daemon.baseUrl);
   assert.equal(cardsIn(state, cwd).length, 1, 'out-of-order hooks must not split the card');
   const heir = cardOf(state, heirSid);
   assert.ok(heir, 'the heir survived');
@@ -810,7 +807,7 @@ test('the boot heal leaves two pane-less lineages split rather than guessing the
   const b = await startSession(daemon, cwd);
   const heirB = (await clearInto(daemon, cwd, b.sid)).newSid;
 
-  let state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  let state = await getState<StateResponse>(daemon.baseUrl);
   assert.equal(cardsIn(state, cwd).length, 4, 'four cards: the bug, doubled');
   await daemon.stop({ keepHome: true });
 
@@ -819,7 +816,7 @@ test('the boot heal leaves two pane-less lineages split rather than guessing the
     env: { ...env, FLEETDECK_CLEAR_SUCCESSION_MS: '30000' },
   });
   t.after(() => healed.stop({ keepHome: true }));
-  state = (await getJson(`${healed.baseUrl}/state`)).json as StateResponse;
+  state = await getState<StateResponse>(healed.baseUrl);
 
   assert.equal(cardsIn(state, cwd).length, 4, 'no corroboration → the split stands');
   for (const s of [a, b, { sid: heirA }, { sid: heirB }]) {
@@ -881,7 +878,7 @@ test('the boot heal pairs an interleaved clear when exactly ONE candidate owns a
     { token: daemon.token },
   );
 
-  let state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  let state = await getState<StateResponse>(daemon.baseUrl);
   assert.equal(cardsIn(state, cwd).length, 4, 'four cards: the bug, doubled');
   const aCard = cardOf(state, a.sid);
   assert.ok(aCard, 'A card is present');
@@ -896,7 +893,7 @@ test('the boot heal pairs an interleaved clear when exactly ONE candidate owns a
     env: { ...env, FLEETDECK_CLEAR_SUCCESSION_MS: '30000' },
   });
   t.after(() => healed.stop({ keepHome: true }));
-  state = (await getJson(`${healed.baseUrl}/state`)).json as StateResponse;
+  state = await getState<StateResponse>(healed.baseUrl);
 
   // A's pane breaks the tie for its heir — and once A is claimed, B is the ONLY
   // candidate left in the other heir's window, so it heals too: two cards, and
@@ -970,7 +967,7 @@ test('the boot heal refuses to pair by order when clears and heirs interleave �
   assert.notEqual(heirB.callsign, a.callsign, 'heir B′ arrived as a stranger (succession was off)');
   assert.notEqual(heirA.callsign, b.callsign);
 
-  let state = (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse;
+  let state = await getState<StateResponse>(daemon.baseUrl);
   assert.equal(cardsIn(state, cwd).length, 4, 'four cards: the split, doubled');
   await daemon.stop({ keepHome: true });
 
@@ -980,7 +977,7 @@ test('the boot heal refuses to pair by order when clears and heirs interleave �
     env: { ...env, FLEETDECK_CLEAR_SUCCESSION_MS: '30000' },
   });
   t.after(() => healed.stop({ keepHome: true }));
-  state = (await getJson(`${healed.baseUrl}/state`)).json as StateResponse;
+  state = await getState<StateResponse>(healed.baseUrl);
 
   assert.equal(cardsIn(state, cwd).length, 4, 'the split stands — no lineage was cross-wired');
   for (const s of [a, b, heirA, heirB]) {
@@ -1012,10 +1009,7 @@ test('a healed card keeps the name the fleet knows — the throwaway never becom
   });
   const { sid, callsign } = await startSession(daemon, cwd);
   const { newSid } = await clearInto(daemon, cwd, sid);
-  const strangerCard = cardOf(
-    (await getJson(`${daemon.baseUrl}/state`)).json as StateResponse,
-    newSid,
-  );
+  const strangerCard = cardOf(await getState<StateResponse>(daemon.baseUrl), newSid);
   assert.ok(strangerCard, 'the split heir card is present');
   const stranger = strangerCard.callsign;
   assert.notEqual(stranger, callsign, 'the split gave the heir a name of its own');
@@ -1026,10 +1020,7 @@ test('a healed card keeps the name the fleet knows — the throwaway never becom
     env: { ...env, FLEETDECK_CLEAR_SUCCESSION_MS: '30000' },
   });
   t.after(() => healed.stop({ keepHome: true }));
-  const healedCard = cardOf(
-    (await getJson(`${healed.baseUrl}/state`)).json as StateResponse,
-    newSid,
-  );
+  const healedCard = cardOf(await getState<StateResponse>(healed.baseUrl), newSid);
   assert.ok(healedCard, 'the healed card is present');
   assert.equal(healedCard.callsign, callsign);
 
@@ -1048,7 +1039,7 @@ test('a healed card keeps the name the fleet knows — the throwaway never becom
     { to: callsign, from: 'operator', text: 'the name everyone knows' },
     { token: healed.token },
   );
-  const healedState = (await getJson(`${healed.baseUrl}/state`)).json as StateResponse;
+  const healedState = await getState<StateResponse>(healed.baseUrl);
   const healedMeta = healedState.mail_meta[newSid];
   assert.ok(healedMeta, 'the healed card carries mail meta');
   assert.equal(healedMeta.queued, 1, 'mail to the lineage name still lands after a rename');
@@ -1070,7 +1061,7 @@ test('the boot heal is a no-op on a fleet that never forked', async (t) => {
 
   const rebooted = await startDaemon({ home, env });
   t.after(() => rebooted.stop({ keepHome: true }));
-  const state = (await getJson(`${rebooted.baseUrl}/state`)).json as StateResponse;
+  const state = await getState<StateResponse>(rebooted.baseUrl);
   const card = cardOf(state, sid);
   assert.ok(card, 'the untouched session is still here');
   assert.equal(card.callsign, callsign, 'with the name it always had');
