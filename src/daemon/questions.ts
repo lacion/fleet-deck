@@ -80,6 +80,7 @@
 // deliver its answer any more. The hook side times out non-blockingly.
 
 import type { SqliteHandle } from './sqlite.ts';
+import { asText } from './helpers.ts';
 
 // The durable `questions` row (db.ts schema). create() always writes
 // session_id/kind/status/created_at non-null, so they are typed non-nullable;
@@ -194,19 +195,8 @@ const COMPLETED_KEY_TTL_MS = 60_000;
 // the daemon gets out of the way permanently — any activity ALSO stops it.
 const MAX_REARMS = 2;
 
-// A mail body / question snippet may arrive as `unknown` off the wire or out of
-// untrusted parsed JSON. Faithful to the .mjs `String(x ?? '')`: null/undefined
-// -> '', a string passes through, any other value takes its default
-// stringification. Centralizes the one place a base-to-string coercion is
-// intentional so the strict linter's guard stays scoped to it.
-function asText(value: unknown): string {
-  if (value == null) return '';
-  if (typeof value === 'string') return value;
-  // eslint-disable-next-line @typescript-eslint/no-base-to-string -- intentional String() coercion of untrusted input, matching the pre-migration .mjs behavior
-  return String(value);
-}
-
-// FLEETDECK_HOLD_MS → the hold_ms SETTING (settings.mjs) → the 600 s default.
+// The hold window resolves off FLEETDECK_HOLD_MS → the hold_ms SETTING
+// (settings.mjs) → the 600 s default.
 // THE LOCKSTEP INVARIANT: the daemon's hold window must stay under the shim
 // watchdog (scripts/fleet-hook.mjs WATCHDOG_MS, 660 s for hold events), which
 // must stay under the hooks.json `timeout` for the three hold hooks (720 s) —

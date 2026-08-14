@@ -3,22 +3,11 @@
 // auto-routing policy lives in q.autoCandidate. Threaded ctx state: q, mail,
 // resolveTargets, tick, onMutate, applyTicket, applyCustomName.
 
-import { parseCommand, validateNameSuffix } from './helpers.ts';
+import { asText, parseCommand, validateNameSuffix } from './helpers.ts';
 import { normalizeTicket } from './tickets.ts';
 import { MAIL_MAX_LEN } from './mail.ts';
 import type { Statements } from './statements.ts';
 import type { SqlValue } from './sqlite.ts';
-
-// Defensive coercion of the raw command text for the audit log, faithful to the
-// pre-migration `String(text ?? '')`: null/undefined → '', string passthrough,
-// anything else takes its default stringification. Module-local (same idiom as
-// mail.ts) — not exported.
-function asText(value: unknown): string {
-  if (value == null) return '';
-  if (typeof value === 'string') return value;
-  // eslint-disable-next-line @typescript-eslint/no-base-to-string -- intentional String() coercion of untrusted input, matching the .mjs behavior
-  return String(value);
-}
 
 // The rename receipt returned by clearTicket / applyTicket / applyCustomName.
 // commands.ts only ever SPREADS it into the /command response and never reads a

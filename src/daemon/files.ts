@@ -13,6 +13,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { deriveRepo } from './repo-identity.ts';
+import { dropOrphanSurrogate } from './helpers.ts';
 import type { Statements } from './statements.ts';
 
 // settings.mjs owns the browse-root precedence and returns a superset
@@ -190,10 +191,9 @@ export function fileType(st: fs.Stats): 'symlink' | 'dir' | 'file' | 'other' {
 
 export function clipText(text: string, max = 400): string {
   if (text.length <= max) return text;
-  let clipped = text.slice(0, max);
-  const last = clipped.charCodeAt(clipped.length - 1);
-  if (last >= 0xd800 && last <= 0xdbff) clipped = clipped.slice(0, -1);
-  return clipped;
+  // Surrogate-safe truncation: shear a trailing orphaned high surrogate the
+  // .slice() may have left, via the shared helper (same rule as the mail clamps).
+  return dropOrphanSurrogate(text.slice(0, max));
 }
 
 function failure(err: unknown, fallback = 'not found'): FsResult {

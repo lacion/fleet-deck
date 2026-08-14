@@ -659,6 +659,347 @@ function animalOf(callsign) {
   return animal;
 }
 
+// src/daemon/helpers.ts
+import path2 from "node:path";
+import fs2 from "node:fs";
+import os from "node:os";
+
+// src/daemon/env-scrub.ts
+var CLAUDE_ENV_MARKERS = [
+  "CLAUDECODE",
+  "CLAUDE_CODE_SESSION_ID",
+  "CLAUDE_CODE_CHILD_SESSION",
+  "CLAUDE_CODE_BRIDGE_SESSION_ID",
+  "CLAUDE_CODE_ENTRYPOINT",
+  "CLAUDE_CODE_EXECPATH",
+  "CLAUDE_ENV_FILE",
+  "CLAUDE_PROJECT_DIR",
+  "CLAUDE_PLUGIN_ROOT",
+  "CLAUDE_PLUGIN_DATA",
+  "CLAUDE_EFFORT",
+  "AI_AGENT",
+  "CODEX_COMPANION_TRANSCRIPT_PATH",
+  "CODEX_COMPANION_SESSION_ID"
+];
+var GATEWAY_ENV_VARS = [
+  "ANTHROPIC_BASE_URL",
+  "ANTHROPIC_AUTH_TOKEN",
+  "ANTHROPIC_API_KEY",
+  "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"
+];
+var SPAWN_ENV_VARS = ["FLEETDECK_SETUP_CMD"];
+
+// src/daemon/helpers.ts
+function envInt(name, fallback, { min = 0 } = {}) {
+  const n = Number(process.env[name]);
+  return Number.isFinite(n) && n >= min ? Math.floor(n) : fallback;
+}
+function mungeClaudeProjectCwd(cwd) {
+  return path2.resolve(cwd).replace(/[/.]/g, "-");
+}
+function userHomeDir() {
+  return process.env["HOME"] || os.homedir();
+}
+function claudeTranscriptPath(cwd, sessionId, homeDir = userHomeDir()) {
+  return path2.join(
+    homeDir,
+    ".claude",
+    "projects",
+    mungeClaudeProjectCwd(cwd),
+    `${sessionId}.jsonl`
+  );
+}
+function spawnRowRevivable(row) {
+  const runCwd = row?.worktree_path ?? row?.cwd;
+  return !!runCwd && // runCwd truthy already implies row is non-null at runtime; the compiler
+  // can't infer that through the optional-chain, so state it for `.status`.
+  row != null && ["pane-dead", "killed", "gone"].includes(row.status) && fs2.existsSync(runCwd) && fs2.existsSync(claudeTranscriptPath(runCwd, row.session_id));
+}
+function cwdIsDirectory(p) {
+  if (!p) return false;
+  try {
+    return fs2.statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+}
+var NOT_RESUMABLE_END = /* @__PURE__ */ new Set([null, "presumed", "superseded"]);
+function sessionAdoptableNow(session, hasSpawnRow) {
+  if (!session) return false;
+  if (session.ended_at == null) return false;
+  if (NOT_RESUMABLE_END.has(session.end_reason ?? null)) return false;
+  if (hasSpawnRow) return false;
+  const cwd = session.cwd;
+  return cwdIsDirectory(cwd) && fs2.existsSync(claudeTranscriptPath(cwd, session.session_id));
+}
+function claudeEnvArgvPrefix(port, home, { keep = [] } = {}) {
+  const keepSet = new Set(keep);
+  const scrub = [
+    ...CLAUDE_ENV_MARKERS,
+    // FLEETDECK_*_CMD name fixture commands the daemon execs in place of a real
+    // subprocess (SPAWN_CMD → the `claude` pane; TERM_CMD → termbridge's tmux
+    // control client). A leaked one riding a pane's env into the next
+    // SessionStart would make a fresh daemon exec the fixture instead of the
+    // real thing — the same scar class as the test seams below, so scrub both.
+    "FLEETDECK_AGENTS_CMD",
+    "FLEETDECK_SPAWN_CMD",
+    "FLEETDECK_TERM_CMD",
+    "TMUX",
+    "TMUX_PANE",
+    "FLEETDECK_TMUX_SOCKET",
+    "FLEETDECK_AGENTS_POLL_MS",
+    "FLEETDECK_HOLD_MS",
+    "FLEETDECK_STALE_MS",
+    "FLEETDECK_REARM_GRACE_MS",
+    "FLEETDECK_NUDGE_MS",
+    "FLEETDECK_WATCH_MAX_MS",
+    "FLEETDECK_WATCH_POLL_MS",
+    "FLEETDECK_SPAWN_REGISTER_MS",
+    "FLEETDECK_SETUP_REGISTER_MS",
+    "FLEETDECK_PANE_MAIL_GRACE_MS",
+    "FLEETDECK_PRESUME_DEAD_MS",
+    "FLEETDECK_PRESUME_DEAD_WORKING_MS",
+    "FLEETDECK_RETAIN_OFFLINE_MS",
+    "FLEETDECK_RC_HARVEST_MS",
+    "FLEETDECK_ADOPT_ARM_MS",
+    "FLEETDECK_ADOPT_DELAY_MS",
+    // Test seams that must NEVER ride a pane's env into the next SessionStart:
+    // a leaked FLEETDECK_TEST_DAEMON_SCRIPT would make every future daemon
+    // (re)spawn launch an arbitrary script, and a leaked VERSION_OVERRIDE
+    // permanently skews the upgrade-takeover comparison (the 2026-07-11 tmux
+    // env-poisoning scar, new tenants).
+    "FLEETDECK_TEST_DAEMON_SCRIPT",
+    "FLEETDECK_VERSION_OVERRIDE",
+    // The daemon's bearer. When the operator pins FLEETDECK_TOKEN in the env it
+    // would otherwise ride tmux's global env into every pane — a live
+    // credential handed to every agent (0.16.0). Agents that legitimately call
+    // the API read $FLEETDECK_HOME/token instead (same file the shims use).
+    "FLEETDECK_TOKEN",
+    // LLM-gateway routing (see GATEWAY_ENV_VARS): whether a pane bills your
+    // Anthropic account or a local proxy must come from the spawn, never from
+    // whatever shell the daemon happened to boot in.
+    ...GATEWAY_ENV_VARS,
+    // Visible pre-Claude setup is likewise owned by one explicit spawn.
+    ...SPAWN_ENV_VARS
+  ].filter((name) => !keepSet.has(name));
+  return [
+    "env",
+    ...scrub.flatMap((name) => ["-u", name]),
+    // Fleet Deck already owns the fleet board, so Claude Code's own background
+    // agent view is redundant in a fleet pane — and worse, from a spawned pane a
+    // human can arrow left into it and start launching nested agents that
+    // scribble over the real board. Pin it OFF for every fleet-owned pane.
+    // Merely SETTING the variable disables the view (any value works per the
+    // Claude Code docs); it is a fixed UI setting, not a secret, so — unlike the
+    // gateway credential kept out of argv — it is safe as a plain assignment
+    // here. Placed BEFORE the FLEETDECK identity pair so PORT/HOME remain the
+    // immediate lead-in to the command, the ordering the adapter/tests pin.
+    "CLAUDE_CODE_DISABLE_AGENT_VIEW=1",
+    `FLEETDECK_PORT=${port}`,
+    `FLEETDECK_HOME=${home}`
+  ];
+}
+function createKeyedMutex() {
+  const tails = /* @__PURE__ */ new Map();
+  return async function acquire(key) {
+    const tail = tails.get(key) ?? Promise.resolve();
+    let releaseNow = () => {
+    };
+    const mine = new Promise((resolve) => {
+      releaseNow = resolve;
+    });
+    tails.set(
+      key,
+      tail.then(() => mine)
+    );
+    await tail;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      if (tails.get(key) === mine) tails.delete(key);
+      releaseNow();
+    };
+  };
+}
+function canonicalPathKey(p) {
+  try {
+    return fs2.realpathSync(p);
+  } catch {
+    return path2.resolve(p);
+  }
+}
+async function mapLimit(items, limit, fn) {
+  const out = new Array(items.length);
+  let next = 0;
+  async function worker() {
+    for (; ; ) {
+      const i = next++;
+      if (i >= items.length) return;
+      const item = items[i];
+      if (item === void 0) continue;
+      out[i] = await fn(item);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
+}
+function chmodWritableWhereOwned(root) {
+  const getuid = process.getuid;
+  const uid = typeof getuid === "function" ? getuid() : null;
+  const walk = (dir, depth = 0) => {
+    if (depth > 12) return;
+    let entries;
+    try {
+      entries = fs2.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const full = path2.join(dir, entry.name);
+      let st;
+      try {
+        st = fs2.lstatSync(full);
+      } catch {
+        continue;
+      }
+      if (uid != null && st.uid !== uid) continue;
+      if (entry.isSymbolicLink()) continue;
+      try {
+        fs2.chmodSync(full, st.mode | 128);
+      } catch {
+      }
+      if (entry.isDirectory()) walk(full, depth + 1);
+    }
+  };
+  try {
+    walk(root);
+  } catch {
+  }
+}
+function blockedPaths(root, limit = 8) {
+  const getuid = process.getuid;
+  const uid = typeof getuid === "function" ? getuid() : null;
+  const owners = /* @__PURE__ */ new Map();
+  const out = [];
+  const ownerOf = (st) => {
+    const cached = owners.get(st.uid);
+    if (cached !== void 0) return cached;
+    let name = `uid ${st.uid}`;
+    try {
+      name = st.uid === 0 ? "root" : os.userInfo().uid === st.uid ? os.userInfo().username : name;
+    } catch {
+    }
+    owners.set(st.uid, name);
+    return name;
+  };
+  const walk = (dir, depth = 0) => {
+    if (out.length >= limit || depth > 12) return;
+    let entries;
+    try {
+      entries = fs2.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (out.length >= limit) return;
+      const full = path2.join(dir, entry.name);
+      let st;
+      try {
+        st = fs2.lstatSync(full);
+      } catch {
+        continue;
+      }
+      if (uid != null && st.uid !== uid) {
+        out.push({ path: full, owner: ownerOf(st) });
+        continue;
+      }
+      if (entry.isDirectory() && !entry.isSymbolicLink()) walk(full, depth + 1);
+    }
+  };
+  try {
+    walk(root);
+  } catch {
+  }
+  return out;
+}
+var shellQuote = (s) => /^[A-Za-z0-9_@%+=:,./-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`;
+function processStartMs(pid) {
+  if (!Number.isFinite(pid) || pid <= 0) return null;
+  try {
+    const stat = fs2.readFileSync(`/proc/${pid}/stat`, "utf8");
+    const after = stat.slice(stat.lastIndexOf(")") + 2);
+    const startTicks = Number(after.split(" ")[19]);
+    const uptimeSeconds = Number(fs2.readFileSync("/proc/uptime", "utf8").split(" ")[0]);
+    if (!Number.isFinite(startTicks) || !Number.isFinite(uptimeSeconds)) return null;
+    return Date.now() - (uptimeSeconds - startTicks / 100) * 1e3;
+  } catch {
+    return null;
+  }
+}
+var PID_START_TOLERANCE_MS = 15e3;
+function pidOwnedBy(pid, startedAt) {
+  if (!Number.isFinite(startedAt) || startedAt <= 0) return false;
+  const startMs = processStartMs(pid);
+  if (startMs == null) return false;
+  return Math.abs(startMs - startedAt) <= PID_START_TOLERANCE_MS;
+}
+function colFromAgentState(raw, isNew) {
+  const s = (raw ?? "").toLowerCase();
+  if (s === "busy" || s === "running") return "working";
+  if (s === "blocked" || s === "waiting") return "needsyou";
+  if (s === "idle") return "idle";
+  return isNew ? "queued" : "idle";
+}
+function asText(value) {
+  if (value == null) return "";
+  if (typeof value === "string") return value;
+  return String(value);
+}
+var sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+function dropOrphanSurrogate(cut) {
+  const last = cut.charCodeAt(cut.length - 1);
+  return last >= 55296 && last <= 56319 ? cut.slice(0, -1) : cut;
+}
+function parseCommand(text) {
+  const t = asText(text).trim();
+  let m;
+  if (m = /^broadcast\s+(.+)$/is.exec(t)) return { cmd: "broadcast", text: (m[1] ?? "").trim() };
+  if (m = /^assign\s+(\S+)\s+(.+)$/is.exec(t)) {
+    const target = m[1] ?? "";
+    if (target === "auto" || target.startsWith("auto:")) {
+      const repo = target.length > "auto:".length ? target.slice("auto:".length) : null;
+      return { cmd: "assign_auto", repo, text: (m[2] ?? "").trim() };
+    }
+    return { cmd: "assign", target, text: (m[2] ?? "").trim() };
+  }
+  if (m = /^ticket\s+(\S+)\s+(\S+)\s*$/i.exec(t)) {
+    return { cmd: "ticket", target: m[1] ?? "", ticket: m[2] ?? "" };
+  }
+  if (/^ticket\b/i.test(t)) {
+    return { cmd: "ticket", error: "usage: ticket <callsign-or-session-id> <PROJ-123|clear>" };
+  }
+  if (m = /^name\s+(\S+)\s+(\S+)\s*$/i.exec(t)) {
+    return { cmd: "name", target: m[1] ?? "", suffix: m[2] ?? "" };
+  }
+  if (/^name\b/i.test(t)) {
+    return { cmd: "name", error: "usage: name <callsign-or-session-id> <new-suffix|clear>" };
+  }
+  return { cmd: "note", text: t };
+}
+var NAME_SUFFIX_RE = /^[A-Za-z0-9][A-Za-z0-9-]{0,23}$/;
+var RESERVED_NAMES = /* @__PURE__ */ new Set(["all", "everyone", "clear"]);
+function validateNameSuffix(suffix) {
+  if (!NAME_SUFFIX_RE.test(suffix)) {
+    return "a name is letters, digits and dashes only (start with a letter or digit, max 24)";
+  }
+  if (RESERVED_NAMES.has(suffix.toLowerCase()) || suffix.toLowerCase().startsWith("repo:")) {
+    return `"${suffix}" is reserved \u2014 mail routing needs it`;
+  }
+  return null;
+}
+var SHELL_RE = /^(sh|bash|zsh|zsh-.*)$/;
+
 // src/daemon/questions.ts
 var PLAN_CAPTURE_MAIL = "[FLEETDECK] Your plan was captured to the fleet plan library \u2014 do not execute it. Wrap up your turn.";
 var DEFAULT_HOLD_MS = 6e5;
@@ -669,11 +1010,6 @@ var HOLD_KINDS = /* @__PURE__ */ new Set(["permission", "elicitation", "choice"]
 var REARM_GRACE_MS = 3e3;
 var COMPLETED_KEY_TTL_MS = 6e4;
 var MAX_REARMS = 2;
-function asText(value) {
-  if (value == null) return "";
-  if (typeof value === "string") return value;
-  return String(value);
-}
 function resolveHoldMs(env = process.env, fallback = null) {
   const raw = Number(env?.["FLEETDECK_HOLD_MS"]);
   if (Number.isFinite(raw) && raw > 0) {
@@ -1370,27 +1706,27 @@ function clipQuestion(s) {
 }
 
 // src/daemon/transcript.ts
-import fs2 from "node:fs";
+import fs3 from "node:fs";
 function tailLines(transcriptPath, { maxBytes = 262144 } = {}) {
-  const stat = fs2.statSync(transcriptPath);
+  const stat = fs3.statSync(transcriptPath);
   const start = Math.max(0, stat.size - maxBytes);
   const buf = Buffer.alloc(stat.size - start);
-  const fd = fs2.openSync(transcriptPath, "r");
+  const fd = fs3.openSync(transcriptPath, "r");
   let nread;
   try {
-    nread = fs2.readSync(fd, buf, 0, buf.length, start);
+    nread = fs3.readSync(fd, buf, 0, buf.length, start);
   } finally {
-    fs2.closeSync(fd);
+    fs3.closeSync(fd);
   }
   let chunk = buf.subarray(0, nread).toString("utf8");
   let firstRowIsPartial = start > 0;
   if (firstRowIsPartial) {
     const prev = Buffer.alloc(1);
-    const pfd = fs2.openSync(transcriptPath, "r");
+    const pfd = fs3.openSync(transcriptPath, "r");
     try {
-      fs2.readSync(pfd, prev, 0, 1, start - 1);
+      fs3.readSync(pfd, prev, 0, 1, start - 1);
     } finally {
-      fs2.closeSync(pfd);
+      fs3.closeSync(pfd);
     }
     firstRowIsPartial = prev[0] !== 10;
   }
@@ -1513,8 +1849,8 @@ import { execFileSync as execFileSync2, spawn as spawnChild } from "node:child_p
 import { execFile } from "node:child_process";
 
 // src/daemon/payload-capture.ts
-import fs3 from "node:fs";
-import path2 from "node:path";
+import fs4 from "node:fs";
+import path3 from "node:path";
 var MAX_FILE_BYTES = 1e6;
 var MAX_PAYLOAD_BYTES = 64e3;
 var PER_EVENT = 3;
@@ -1694,14 +2030,14 @@ function createPayloadCapture(homeDir, {
 } = {}) {
   if (!enabled) return NOOP;
   const exactSecrets = secrets.filter((s) => typeof s === "string" && s.length > 0);
-  const file = path2.join(homeDir, "hook-payloads.jsonl");
+  const file = path3.join(homeDir, "hook-payloads.jsonl");
   const counts = /* @__PURE__ */ new Map();
   try {
-    fs3.chmodSync(file, 384);
+    fs4.chmodSync(file, 384);
   } catch {
   }
   try {
-    for (const line of fs3.readFileSync(file, "utf8").split("\n")) {
+    for (const line of fs4.readFileSync(file, "utf8").split("\n")) {
       if (!line.trim()) continue;
       try {
         const rec = JSON.parse(line);
@@ -1717,7 +2053,7 @@ function createPayloadCapture(homeDir, {
       if (!event || (counts.get(event) ?? 0) >= perEvent) return;
       let size = 0;
       try {
-        size = fs3.statSync(file).size;
+        size = fs4.statSync(file).size;
       } catch {
         size = 0;
       }
@@ -1734,9 +2070,9 @@ function createPayloadCapture(homeDir, {
         if (escaped && escaped !== secret) line = line.split(escaped).join(REDACTED);
       }
       if (size + Buffer.byteLength(line) > maxBytes) return;
-      fs3.appendFileSync(file, line, { encoding: "utf8", mode: 384 });
+      fs4.appendFileSync(file, line, { encoding: "utf8", mode: 384 });
       try {
-        fs3.chmodSync(file, 384);
+        fs4.chmodSync(file, 384);
       } catch {
       }
       counts.set(event, (counts.get(event) ?? 0) + 1);
@@ -1904,7 +2240,7 @@ async function baseBranch(worktree) {
 import { randomUUID } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
 import { link, open, rename, unlink } from "node:fs/promises";
-import path3 from "node:path";
+import path4 from "node:path";
 
 // bin/tmux-version.ts
 var MIN_TMUX_VERSION = "3.4";
@@ -1967,7 +2303,7 @@ function generationPort(port) {
   return value;
 }
 var generationOption = (port) => `@fleetdeck_generation_${generationPort(port)}`;
-var generationFile = (home, port) => path3.join(home, `tmux-generation-${generationPort(port)}`);
+var generationFile = (home, port) => path4.join(home, `tmux-generation-${generationPort(port)}`);
 var retiredGenerationFile = (home, port) => `${generationFile(home, port)}.retired`;
 function generationHome() {
   const home = process.env["FLEETDECK_HOME"]?.trim();
@@ -2013,7 +2349,7 @@ async function readPersistedGeneration(home, port) {
 }
 async function persistGeneration(home, port, record) {
   const file = generationFile(home, port);
-  const temp = path3.join(home, `.${path3.basename(file)}.${process.pid}.${randomUUID()}.tmp`);
+  const temp = path4.join(home, `.${path4.basename(file)}.${process.pid}.${randomUUID()}.tmp`);
   let handle = null;
   try {
     handle = await open(temp, "wx", 384);
@@ -2049,7 +2385,7 @@ async function persistGeneration(home, port, record) {
 }
 async function replacePersistedGeneration(home, port, record) {
   const file = generationFile(home, port);
-  const temp = path3.join(home, `.${path3.basename(file)}.${process.pid}.${randomUUID()}.tmp`);
+  const temp = path4.join(home, `.${path4.basename(file)}.${process.pid}.${randomUUID()}.tmp`);
   let handle = null;
   try {
     handle = await open(temp, "wx", 384);
@@ -2116,7 +2452,7 @@ function pidState(pid) {
 var sameRecord = (left, right) => left !== null && right !== null && left.generation === right.generation && left.serverPid === right.serverPid;
 async function recordRetiredGeneration(home, port, expected) {
   const file = retiredGenerationFile(home, port);
-  const temp = path3.join(home, `.${path3.basename(file)}.${process.pid}.${randomUUID()}.tmp`);
+  const temp = path4.join(home, `.${path4.basename(file)}.${process.pid}.${randomUUID()}.tmp`);
   let handle = null;
   try {
     handle = await open(temp, "wx", 384);
@@ -2376,7 +2712,7 @@ async function ensureSession(port) {
           } catch {
           }
           for (let i = 0; i < 50 && pidState(interloper.serverPid) === "alive"; i += 1) {
-            await new Promise((resolve) => setTimeout(resolve, 20));
+            await sleep(20);
           }
           if (pidState(interloper.serverPid) === "alive") {
             try {
@@ -2387,7 +2723,7 @@ async function ensureSession(port) {
         }
         for (let i = 0; i < 50; i += 1) {
           if (!(await readServerGeneration(port)).reachable) break;
-          await new Promise((resolve) => setTimeout(resolve, 20));
+          await sleep(20);
         }
       }
     }
@@ -3430,339 +3766,6 @@ function createStatements(db2) {
 // src/daemon/worktrees.ts
 import fs5 from "node:fs";
 import path5 from "node:path";
-
-// src/daemon/helpers.ts
-import path4 from "node:path";
-import fs4 from "node:fs";
-import os from "node:os";
-
-// src/daemon/env-scrub.ts
-var CLAUDE_ENV_MARKERS = [
-  "CLAUDECODE",
-  "CLAUDE_CODE_SESSION_ID",
-  "CLAUDE_CODE_CHILD_SESSION",
-  "CLAUDE_CODE_BRIDGE_SESSION_ID",
-  "CLAUDE_CODE_ENTRYPOINT",
-  "CLAUDE_CODE_EXECPATH",
-  "CLAUDE_ENV_FILE",
-  "CLAUDE_PROJECT_DIR",
-  "CLAUDE_PLUGIN_ROOT",
-  "CLAUDE_PLUGIN_DATA",
-  "CLAUDE_EFFORT",
-  "AI_AGENT",
-  "CODEX_COMPANION_TRANSCRIPT_PATH",
-  "CODEX_COMPANION_SESSION_ID"
-];
-var GATEWAY_ENV_VARS = [
-  "ANTHROPIC_BASE_URL",
-  "ANTHROPIC_AUTH_TOKEN",
-  "ANTHROPIC_API_KEY",
-  "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"
-];
-var SPAWN_ENV_VARS = ["FLEETDECK_SETUP_CMD"];
-
-// src/daemon/helpers.ts
-function envInt(name, fallback, { min = 0 } = {}) {
-  const n = Number(process.env[name]);
-  return Number.isFinite(n) && n >= min ? Math.floor(n) : fallback;
-}
-function mungeClaudeProjectCwd(cwd) {
-  return path4.resolve(cwd).replace(/[/.]/g, "-");
-}
-function userHomeDir() {
-  return process.env["HOME"] || os.homedir();
-}
-function claudeTranscriptPath(cwd, sessionId, homeDir = userHomeDir()) {
-  return path4.join(
-    homeDir,
-    ".claude",
-    "projects",
-    mungeClaudeProjectCwd(cwd),
-    `${sessionId}.jsonl`
-  );
-}
-function spawnRowRevivable(row) {
-  const runCwd = row?.worktree_path ?? row?.cwd;
-  return !!runCwd && // runCwd truthy already implies row is non-null at runtime; the compiler
-  // can't infer that through the optional-chain, so state it for `.status`.
-  row != null && ["pane-dead", "killed", "gone"].includes(row.status) && fs4.existsSync(runCwd) && fs4.existsSync(claudeTranscriptPath(runCwd, row.session_id));
-}
-function cwdIsDirectory(p) {
-  if (!p) return false;
-  try {
-    return fs4.statSync(p).isDirectory();
-  } catch {
-    return false;
-  }
-}
-var NOT_RESUMABLE_END = /* @__PURE__ */ new Set([null, "presumed", "superseded"]);
-function sessionAdoptableNow(session, hasSpawnRow) {
-  if (!session) return false;
-  if (session.ended_at == null) return false;
-  if (NOT_RESUMABLE_END.has(session.end_reason ?? null)) return false;
-  if (hasSpawnRow) return false;
-  const cwd = session.cwd;
-  return cwdIsDirectory(cwd) && fs4.existsSync(claudeTranscriptPath(cwd, session.session_id));
-}
-function claudeEnvArgvPrefix(port, home, { keep = [] } = {}) {
-  const keepSet = new Set(keep);
-  const scrub = [
-    ...CLAUDE_ENV_MARKERS,
-    // FLEETDECK_*_CMD name fixture commands the daemon execs in place of a real
-    // subprocess (SPAWN_CMD → the `claude` pane; TERM_CMD → termbridge's tmux
-    // control client). A leaked one riding a pane's env into the next
-    // SessionStart would make a fresh daemon exec the fixture instead of the
-    // real thing — the same scar class as the test seams below, so scrub both.
-    "FLEETDECK_AGENTS_CMD",
-    "FLEETDECK_SPAWN_CMD",
-    "FLEETDECK_TERM_CMD",
-    "TMUX",
-    "TMUX_PANE",
-    "FLEETDECK_TMUX_SOCKET",
-    "FLEETDECK_AGENTS_POLL_MS",
-    "FLEETDECK_HOLD_MS",
-    "FLEETDECK_STALE_MS",
-    "FLEETDECK_REARM_GRACE_MS",
-    "FLEETDECK_NUDGE_MS",
-    "FLEETDECK_WATCH_MAX_MS",
-    "FLEETDECK_WATCH_POLL_MS",
-    "FLEETDECK_SPAWN_REGISTER_MS",
-    "FLEETDECK_SETUP_REGISTER_MS",
-    "FLEETDECK_PANE_MAIL_GRACE_MS",
-    "FLEETDECK_PRESUME_DEAD_MS",
-    "FLEETDECK_PRESUME_DEAD_WORKING_MS",
-    "FLEETDECK_RETAIN_OFFLINE_MS",
-    "FLEETDECK_RC_HARVEST_MS",
-    "FLEETDECK_ADOPT_ARM_MS",
-    "FLEETDECK_ADOPT_DELAY_MS",
-    // Test seams that must NEVER ride a pane's env into the next SessionStart:
-    // a leaked FLEETDECK_TEST_DAEMON_SCRIPT would make every future daemon
-    // (re)spawn launch an arbitrary script, and a leaked VERSION_OVERRIDE
-    // permanently skews the upgrade-takeover comparison (the 2026-07-11 tmux
-    // env-poisoning scar, new tenants).
-    "FLEETDECK_TEST_DAEMON_SCRIPT",
-    "FLEETDECK_VERSION_OVERRIDE",
-    // The daemon's bearer. When the operator pins FLEETDECK_TOKEN in the env it
-    // would otherwise ride tmux's global env into every pane — a live
-    // credential handed to every agent (0.16.0). Agents that legitimately call
-    // the API read $FLEETDECK_HOME/token instead (same file the shims use).
-    "FLEETDECK_TOKEN",
-    // LLM-gateway routing (see GATEWAY_ENV_VARS): whether a pane bills your
-    // Anthropic account or a local proxy must come from the spawn, never from
-    // whatever shell the daemon happened to boot in.
-    ...GATEWAY_ENV_VARS,
-    // Visible pre-Claude setup is likewise owned by one explicit spawn.
-    ...SPAWN_ENV_VARS
-  ].filter((name) => !keepSet.has(name));
-  return [
-    "env",
-    ...scrub.flatMap((name) => ["-u", name]),
-    // Fleet Deck already owns the fleet board, so Claude Code's own background
-    // agent view is redundant in a fleet pane — and worse, from a spawned pane a
-    // human can arrow left into it and start launching nested agents that
-    // scribble over the real board. Pin it OFF for every fleet-owned pane.
-    // Merely SETTING the variable disables the view (any value works per the
-    // Claude Code docs); it is a fixed UI setting, not a secret, so — unlike the
-    // gateway credential kept out of argv — it is safe as a plain assignment
-    // here. Placed BEFORE the FLEETDECK identity pair so PORT/HOME remain the
-    // immediate lead-in to the command, the ordering the adapter/tests pin.
-    "CLAUDE_CODE_DISABLE_AGENT_VIEW=1",
-    `FLEETDECK_PORT=${port}`,
-    `FLEETDECK_HOME=${home}`
-  ];
-}
-function createKeyedMutex() {
-  const tails = /* @__PURE__ */ new Map();
-  return async function acquire(key) {
-    const tail = tails.get(key) ?? Promise.resolve();
-    let releaseNow = () => {
-    };
-    const mine = new Promise((resolve) => {
-      releaseNow = resolve;
-    });
-    tails.set(
-      key,
-      tail.then(() => mine)
-    );
-    await tail;
-    let released = false;
-    return () => {
-      if (released) return;
-      released = true;
-      if (tails.get(key) === mine) tails.delete(key);
-      releaseNow();
-    };
-  };
-}
-function canonicalPathKey(p) {
-  try {
-    return fs4.realpathSync(p);
-  } catch {
-    return path4.resolve(p);
-  }
-}
-async function mapLimit(items, limit, fn) {
-  const out = new Array(items.length);
-  let next = 0;
-  async function worker() {
-    for (; ; ) {
-      const i = next++;
-      if (i >= items.length) return;
-      const item = items[i];
-      if (item === void 0) continue;
-      out[i] = await fn(item);
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-  return out;
-}
-function chmodWritableWhereOwned(root) {
-  const getuid = process.getuid;
-  const uid = typeof getuid === "function" ? getuid() : null;
-  const walk = (dir, depth = 0) => {
-    if (depth > 12) return;
-    let entries;
-    try {
-      entries = fs4.readdirSync(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const entry of entries) {
-      const full = path4.join(dir, entry.name);
-      let st;
-      try {
-        st = fs4.lstatSync(full);
-      } catch {
-        continue;
-      }
-      if (uid != null && st.uid !== uid) continue;
-      if (entry.isSymbolicLink()) continue;
-      try {
-        fs4.chmodSync(full, st.mode | 128);
-      } catch {
-      }
-      if (entry.isDirectory()) walk(full, depth + 1);
-    }
-  };
-  try {
-    walk(root);
-  } catch {
-  }
-}
-function blockedPaths(root, limit = 8) {
-  const getuid = process.getuid;
-  const uid = typeof getuid === "function" ? getuid() : null;
-  const owners = /* @__PURE__ */ new Map();
-  const out = [];
-  const ownerOf = (st) => {
-    const cached = owners.get(st.uid);
-    if (cached !== void 0) return cached;
-    let name = `uid ${st.uid}`;
-    try {
-      name = st.uid === 0 ? "root" : os.userInfo().uid === st.uid ? os.userInfo().username : name;
-    } catch {
-    }
-    owners.set(st.uid, name);
-    return name;
-  };
-  const walk = (dir, depth = 0) => {
-    if (out.length >= limit || depth > 12) return;
-    let entries;
-    try {
-      entries = fs4.readdirSync(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const entry of entries) {
-      if (out.length >= limit) return;
-      const full = path4.join(dir, entry.name);
-      let st;
-      try {
-        st = fs4.lstatSync(full);
-      } catch {
-        continue;
-      }
-      if (uid != null && st.uid !== uid) {
-        out.push({ path: full, owner: ownerOf(st) });
-        continue;
-      }
-      if (entry.isDirectory() && !entry.isSymbolicLink()) walk(full, depth + 1);
-    }
-  };
-  try {
-    walk(root);
-  } catch {
-  }
-  return out;
-}
-var shellQuote = (s) => /^[A-Za-z0-9_@%+=:,./-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`;
-function processStartMs(pid) {
-  if (!Number.isFinite(pid) || pid <= 0) return null;
-  try {
-    const stat = fs4.readFileSync(`/proc/${pid}/stat`, "utf8");
-    const after = stat.slice(stat.lastIndexOf(")") + 2);
-    const startTicks = Number(after.split(" ")[19]);
-    const uptimeSeconds = Number(fs4.readFileSync("/proc/uptime", "utf8").split(" ")[0]);
-    if (!Number.isFinite(startTicks) || !Number.isFinite(uptimeSeconds)) return null;
-    return Date.now() - (uptimeSeconds - startTicks / 100) * 1e3;
-  } catch {
-    return null;
-  }
-}
-var PID_START_TOLERANCE_MS = 15e3;
-function pidOwnedBy(pid, startedAt) {
-  if (!Number.isFinite(startedAt) || startedAt <= 0) return false;
-  const startMs = processStartMs(pid);
-  if (startMs == null) return false;
-  return Math.abs(startMs - startedAt) <= PID_START_TOLERANCE_MS;
-}
-function colFromAgentState(raw, isNew) {
-  const s = (raw ?? "").toLowerCase();
-  if (s === "busy" || s === "running") return "working";
-  if (s === "blocked" || s === "waiting") return "needsyou";
-  if (s === "idle") return "idle";
-  return isNew ? "queued" : "idle";
-}
-function parseCommand(text) {
-  const t = String(text ?? "").trim();
-  let m;
-  if (m = /^broadcast\s+(.+)$/is.exec(t)) return { cmd: "broadcast", text: (m[1] ?? "").trim() };
-  if (m = /^assign\s+(\S+)\s+(.+)$/is.exec(t)) {
-    const target = m[1] ?? "";
-    if (target === "auto" || target.startsWith("auto:")) {
-      const repo = target.length > "auto:".length ? target.slice("auto:".length) : null;
-      return { cmd: "assign_auto", repo, text: (m[2] ?? "").trim() };
-    }
-    return { cmd: "assign", target, text: (m[2] ?? "").trim() };
-  }
-  if (m = /^ticket\s+(\S+)\s+(\S+)\s*$/i.exec(t)) {
-    return { cmd: "ticket", target: m[1] ?? "", ticket: m[2] ?? "" };
-  }
-  if (/^ticket\b/i.test(t)) {
-    return { cmd: "ticket", error: "usage: ticket <callsign-or-session-id> <PROJ-123|clear>" };
-  }
-  if (m = /^name\s+(\S+)\s+(\S+)\s*$/i.exec(t)) {
-    return { cmd: "name", target: m[1] ?? "", suffix: m[2] ?? "" };
-  }
-  if (/^name\b/i.test(t)) {
-    return { cmd: "name", error: "usage: name <callsign-or-session-id> <new-suffix|clear>" };
-  }
-  return { cmd: "note", text: t };
-}
-var NAME_SUFFIX_RE = /^[A-Za-z0-9][A-Za-z0-9-]{0,23}$/;
-var RESERVED_NAMES = /* @__PURE__ */ new Set(["all", "everyone", "clear"]);
-function validateNameSuffix(suffix) {
-  if (!NAME_SUFFIX_RE.test(suffix)) {
-    return "a name is letters, digits and dashes only (start with a letter or digit, max 24)";
-  }
-  if (RESERVED_NAMES.has(suffix.toLowerCase()) || suffix.toLowerCase().startsWith("repo:")) {
-    return `"${suffix}" is reserved \u2014 mail routing needs it`;
-  }
-  return null;
-}
-var SHELL_RE = /^(sh|bash|zsh|zsh-.*)$/;
-
-// src/daemon/worktrees.ts
 function canonical(p) {
   try {
     return fs5.realpathSync(p);
@@ -5470,10 +5473,7 @@ function fileType(st) {
 }
 function clipText(text, max = 400) {
   if (text.length <= max) return text;
-  let clipped = text.slice(0, max);
-  const last = clipped.charCodeAt(clipped.length - 1);
-  if (last >= 55296 && last <= 56319) clipped = clipped.slice(0, -1);
-  return clipped;
+  return dropOrphanSurrogate(text.slice(0, max));
 }
 function failure(err, fallback = "not found") {
   if (err instanceof PathError) {
@@ -6119,15 +6119,6 @@ function clampMail(raw) {
   if (raw.length <= MAIL_MAX_LEN) return raw;
   return dropOrphanSurrogate(raw.slice(0, MAIL_MAX_LEN));
 }
-function dropOrphanSurrogate(cut) {
-  const last = cut.charCodeAt(cut.length - 1);
-  return last >= 55296 && last <= 56319 ? cut.slice(0, -1) : cut;
-}
-function asText2(value) {
-  if (value == null) return "";
-  if (typeof value === "string") return value;
-  return String(value);
-}
 var MAIL_FROM_MAX_LEN = 200;
 function clampFrom(from) {
   if (typeof from !== "string" || from.length <= MAIL_FROM_MAX_LEN) return from;
@@ -6141,7 +6132,7 @@ var RESERVED_SENDERS = /* @__PURE__ */ new Set(["orchestrator", "fleetdeck", "fl
 var RESERVED_FRAME_RE = /^[\s\x00-\x1f\x7f-\x9f]*\[FLEETDECK[ \]]/i;
 var stripFormatChars = (s) => s.replace(/\p{Cf}/gu, "");
 function hasReservedFrame(text) {
-  return stripFormatChars(asText2(text)).replace(/\r\n?|[\u2028\u2029]/g, "\n").split("\n").some((line) => RESERVED_FRAME_RE.test(line));
+  return stripFormatChars(asText(text)).replace(/\r\n?|[\u2028\u2029]/g, "\n").split("\n").some((line) => RESERVED_FRAME_RE.test(line));
 }
 var FROM_UNSAFE_RE = /[\r\n\x00-\x1f\x7f-\x9f\p{Cf}[\]]/u;
 function createMail(ctx) {
@@ -6165,7 +6156,7 @@ function createMail(ctx) {
     MAIL_PANE_BATCH_BYTES: PANE_BATCH_BYTES = MAIL_PANE_BATCH_BYTES
   } = ctx;
   function mail(toSession, from, text) {
-    const raw = asText2(text);
+    const raw = asText(text);
     const stored = clampMail(raw);
     const stats = q.pendingMailStats.get(toSession) ?? { n: 0, bytes: 0 };
     if (stats.n >= PENDING_MAX || stats.bytes + stored.length > PENDING_MAX_BYTES) {
@@ -6453,7 +6444,7 @@ function createMail(ctx) {
     }
     tick(`\u2709 mail from ${sender} \u2192 ${to}`);
     onMutate();
-    const raw = asText2(text);
+    const raw = asText(text);
     const truncated = raw.length > MAIL_MAX_LEN;
     return {
       ok: true,
@@ -6635,11 +6626,6 @@ function createIngest(ctx) {
 }
 
 // src/daemon/commands.ts
-function asText3(value) {
-  if (value == null) return "";
-  if (typeof value === "string") return value;
-  return String(value);
-}
 function createCommands(ctx) {
   const {
     q,
@@ -6691,7 +6677,7 @@ function createCommands(ctx) {
     const parsed = parseCommand(text);
     const logCommand = (extra) => q.insertCommand.run(
       Date.now(),
-      asText3(text),
+      asText(text),
       JSON.stringify(extra ? { ...parsed, ...extra } : parsed)
     );
     let delivered = 0;
@@ -13947,10 +13933,10 @@ function verifyDaemonPid(pid, home) {
   if (record?.pid !== pid) return false;
   return livePidLooksLikeFleetd(pid);
 }
-var defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+var defaultSleep = sleep;
 async function terminateDaemon(pid, {
   timeoutMs = 2e3,
-  sleep = defaultSleep
+  sleep: sleep2 = defaultSleep
 } = {}) {
   try {
     process.kill(pid, "SIGTERM");
@@ -13961,7 +13947,7 @@ async function terminateDaemon(pid, {
   const stepMs = 100;
   const steps = Math.max(1, Math.ceil(timeoutMs / stepMs));
   for (let i = 0; i < steps; i += 1) {
-    await sleep(stepMs);
+    await sleep2(stepMs);
     if (!pidIsLive(pid)) return true;
   }
   return !pidIsLive(pid);

@@ -482,9 +482,37 @@ export function colFromAgentState(raw: string | null | undefined, isNew: boolean
   return isNew ? 'queued' : 'idle';
 }
 
+// Coerce an untrusted `unknown` (a raw HTTP-body field, a parsed-JSON tool arg,
+// a mail body) to a string the way the pre-migration .mjs did: null/undefined
+// -> '', a string passes through, anything else takes its default String()
+// coercion (an object becomes '[object Object]'). `String(x ?? '')` is the
+// exact equivalent; centralized here so the several wire boundaries that
+// stringify untrusted input can never drift on what a non-string becomes.
+export function asText(value: unknown): string {
+  if (value == null) return '';
+  if (typeof value === 'string') return value;
+  return String(value);
+}
+
+// A timer promise — `await sleep(ms)`. Backs the SIGTERM death-poll (takeover)
+// and the tmux server-generation drain loops (spawn); injectable call sites
+// still pass their own stub for tests.
+export const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
+// Shear a trailing UNPAIRED high surrogate left by a UTF-16 code-unit .slice():
+// its low half was the unit we cut, so it is guaranteed orphaned. Every
+// surrogate-safe clamp (mail body / from, file-hit snippets) ends with this so
+// no stored or pasted string is ever a broken astral half-character.
+export function dropOrphanSurrogate(cut: string): string {
+  const last = cut.charCodeAt(cut.length - 1);
+  return last >= 0xd800 && last <= 0xdbff ? cut.slice(0, -1) : cut;
+}
+
 // The parsed shape of an operator command line — a discriminated union on
 // `cmd`. `ticket`/`name` each have a success arm and an `error` arm (a
 // malformed callsign command must surface a usage line, never a silent note).
+
 type ParsedCommand =
   | { cmd: 'broadcast'; text: string }
   | { cmd: 'assign_auto'; repo: string | null; text: string }
@@ -497,11 +525,9 @@ type ParsedCommand =
 
 export function parseCommand(text: unknown): ParsedCommand {
   // `text` is a raw HTTP-body field (core.command(ev.text)); coerce defensively
-  // exactly as command() does. The degenerate object → "[object Object]" path is
-  // intentional garbage-in handling, so no-base-to-string is deliberately off
-  // here — drop this and take `text: string` once http validates the body.
-  // eslint-disable-next-line @typescript-eslint/no-base-to-string -- untrusted wire value, coercion is intentional
-  const t = String(text ?? '').trim();
+  // exactly as command() does — asText is the shared `String(x ?? '')` reader,
+  // including the intentional object → "[object Object]" garbage-in path.
+  const t = asText(text).trim();
   let m: RegExpExecArray | null;
   if ((m = /^broadcast\s+(.+)$/is.exec(t))) return { cmd: 'broadcast', text: (m[1] ?? '').trim() };
   if ((m = /^assign\s+(\S+)\s+(.+)$/is.exec(t))) {

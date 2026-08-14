@@ -8,6 +8,7 @@
 
 import type { Statements, MailRow } from './statements.ts';
 import type { SqliteHandle } from './sqlite.ts';
+import { asText, dropOrphanSurrogate } from './helpers.ts';
 
 // BUG 4: mail is pasted VERBATIM into a tmux paste-buffer, so it must stay
 // bounded — but the old 500-char clamp silently truncated real messages (it
@@ -36,27 +37,10 @@ function clampMail(raw: string): string {
   return dropOrphanSurrogate(raw.slice(0, MAIL_MAX_LEN));
 }
 
-// Shared BUG 6 tail-fix: a UTF-16 code-unit .slice() can leave a lone (unpaired)
-// high surrogate at the cut — its low half was the very unit we dropped, so it
-// is guaranteed orphaned. Shear it so no clamp ever stores or pastes a broken
-// astral half-character. Both the text clamp and the `from` clamp go through it.
-function dropOrphanSurrogate(cut: string): string {
-  const last = cut.charCodeAt(cut.length - 1);
-  return last >= 0xd800 && last <= 0xdbff ? cut.slice(0, -1) : cut;
-}
-
-// A mail body arrives as `unknown` at the external POST boundary (postMail); the
-// three body consumers — the reserved-frame probe, the clamp, and the truncation
-// report — coerce it identically here. Faithful to the .mjs `String(text ?? '')`:
-// null/undefined -> '', a string passes through, any other value takes its
-// default stringification (an object becomes '[object Object]'). Centralized so
-// the probe and the stored/reported body never disagree on what the text is.
-function asText(value: unknown): string {
-  if (value == null) return '';
-  if (typeof value === 'string') return value;
-  // eslint-disable-next-line @typescript-eslint/no-base-to-string -- intentional String() coercion of untrusted input, matching the pre-migration .mjs behavior
-  return String(value);
-}
+// Both mail clamps — clampMail (above) and clampFrom (below) — shear their tail
+// through the shared dropOrphanSurrogate (helpers.ts); asText is the shared
+// unknown→string reader the reserved-frame probe, the clamp, and the truncation
+// report all go through.
 
 // BUG 12: the `from`/`from_id` is embedded VERBATIM into the owned-pane paste
 // (`[FLEETDECK MAIL from ${from_id}] …`) and into every ticker/log line, but

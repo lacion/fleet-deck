@@ -31,6 +31,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { errCode } from './errors.ts';
+import { sleep } from './helpers.ts';
 
 // The HOME ownership lock record: the daemon's pid and (post-0.15) the port it
 // bound. `port` is null for a pre-port pidfile that held a bare PID.
@@ -265,8 +266,7 @@ export function replacementMatches(ownVersion: unknown, healthVersion: unknown):
   );
 }
 
-const defaultSleep = (ms: number): Promise<void> =>
-  new Promise<void>((resolve) => setTimeout(resolve, ms));
+const defaultSleep = sleep;
 
 // SIGTERM the daemon and resolve to whether it actually DIED within timeoutMs.
 // Graceful only — SIGTERM invokes the daemon's tested shutdown; we then poll

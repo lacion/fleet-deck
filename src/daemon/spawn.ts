@@ -29,6 +29,7 @@
 import { execFileSync, spawn as spawnChild } from 'node:child_process';
 import { execFileP } from './exec.ts';
 import { errCode, errMessage, errText } from './errors.ts';
+import { sleep } from './helpers.ts';
 import { randomUUID } from 'node:crypto';
 import { constants as fsConstants } from 'node:fs';
 import { link, open, rename, unlink } from 'node:fs/promises';
@@ -821,7 +822,7 @@ export async function ensureSession(port: Port): Promise<string> {
             /* already gone */
           }
           for (let i = 0; i < 50 && pidState(interloper.serverPid) === 'alive'; i += 1) {
-            await new Promise<void>((resolve) => setTimeout(resolve, 20));
+            await sleep(20);
           }
           if (pidState(interloper.serverPid) === 'alive') {
             try {
@@ -836,7 +837,7 @@ export async function ensureSession(port: Port): Promise<string> {
         // land on the corpse of the server it just replaced.
         for (let i = 0; i < 50; i += 1) {
           if (!(await readServerGeneration(port)).reachable) break;
-          await new Promise<void>((resolve) => setTimeout(resolve, 20));
+          await sleep(20);
         }
       }
     }

@@ -99,6 +99,11 @@ function runNonce(home, env = process.env, ppid = process.ppid) {
 // src/daemon/takeover.ts
 import fs2 from "node:fs";
 import path2 from "node:path";
+
+// src/daemon/helpers.ts
+var sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// src/daemon/takeover.ts
 function pidRecord(text) {
   try {
     const parsed = JSON.parse(text);
@@ -212,10 +217,10 @@ function verifyDaemonPid(pid, home) {
 function replacementMatches(ownVersion2, healthVersion) {
   return typeof ownVersion2 === "string" && typeof healthVersion === "string" && ownVersion2.length > 0 && ownVersion2 === healthVersion;
 }
-var defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+var defaultSleep = sleep;
 async function terminateDaemon(pid, {
   timeoutMs = 2e3,
-  sleep = defaultSleep
+  sleep: sleep2 = defaultSleep
 } = {}) {
   try {
     process.kill(pid, "SIGTERM");
@@ -226,7 +231,7 @@ async function terminateDaemon(pid, {
   const stepMs = 100;
   const steps = Math.max(1, Math.ceil(timeoutMs / stepMs));
   for (let i = 0; i < steps; i += 1) {
-    await sleep(stepMs);
+    await sleep2(stepMs);
     if (!pidIsLive(pid)) return true;
   }
   return !pidIsLive(pid);
