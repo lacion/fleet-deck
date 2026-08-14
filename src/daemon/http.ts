@@ -1062,9 +1062,12 @@ export function createHttp(
   // table (Phase 3/4 hold-open relay — the response is parked, see the hook
   // branch below).
   // Payloads WITHOUT a session_id still ingest best-effort telemetry (an
-  // unknown-name hook, telemetry-only Notification/FileChanged, and the
+  // unknown-name hook, a telemetry-only Notification, and the
   // AskUserQuestion→PermissionRequest pairing all stay visible), but they are
   // never DISPATCHED to a hook handler — the dispatch gate below refuses them.
+  // FileChanged is the exception since the v0.22.5 hotfix: its handler acks
+  // WITHOUT ingesting, so it never reaches the state machine or conflict ledger
+  // (see the hookHandlers entry below and tests/filechanged-watch.test.ts).
   const hookHandlers: Record<string, (ev: HookBody) => unknown> = {
     // 0.16.0: the hook that may have just performed the version takeover gets
     // the upgrade lines appended — the human who started THAT session hears
