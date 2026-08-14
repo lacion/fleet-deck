@@ -270,9 +270,6 @@ cat > "$PROJECT_DIR/.claude/settings.json" <<EOF
     ],
     "SessionEnd": [
       { "hooks": [{ "type": "command", "command": "bun \"$FLEET_HOOK_SCRIPT\" SessionEnd", "timeout": 3, "async": true }] }
-    ],
-    "FileChanged": [
-      { "hooks": [{ "type": "command", "command": "bun \"$FLEET_HOOK_SCRIPT\" FileChanged", "timeout": 3, "async": true }] }
     ]
   }
 }

@@ -437,7 +437,6 @@ try {
   }
   const serverUp = await ensureServer();
   if (replacedVersion) payload.fleet_takeover = replacedVersion;
-  const watchPaths = [typeof payload.cwd === "string" && payload.cwd ? payload.cwd : process.cwd()];
   const context = [];
   if (serverUp) {
     TOKEN = readToken(HOME);
@@ -460,12 +459,7 @@ try {
     const brief = reg?.brief;
     if (typeof brief === "string" && brief) context.push(brief);
   }
-  const hookSpecificOutput = {
-    hookEventName: "SessionStart",
-    watchPaths
-  };
-  if (context.length) hookSpecificOutput.additionalContext = context.join("");
-  process.stdout.write(JSON.stringify({ hookSpecificOutput }));
+  process.stdout.write(context.join(""));
 } catch {
 }
 clearTimeout(watchdog);

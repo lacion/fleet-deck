@@ -128,34 +128,8 @@ async function readStdinRaw() {
   }
   return data;
 }
-var WATCH_EVENTS = /* @__PURE__ */ new Set(["CwdChanged", "FileChanged"]);
-function watchPathsFor(raw) {
-  try {
-    const parsed = JSON.parse(raw || "{}");
-    const cwd = parsed?.cwd;
-    return typeof cwd === "string" && cwd ? [cwd] : null;
-  } catch {
-    return null;
-  }
-}
-function mergeWatchPaths(text, watchPaths) {
-  if (!watchPaths) return text;
-  try {
-    const out = JSON.parse(text || "{}");
-    const prev = out?.hookSpecificOutput ?? {};
-    out.hookSpecificOutput = {
-      ...prev,
-      hookEventName: EVENT,
-      watchPaths
-    };
-    return JSON.stringify(out);
-  } catch {
-    return text;
-  }
-}
 try {
   const raw = await readStdinRaw();
-  const watchPaths = EVENT !== void 0 && WATCH_EVENTS.has(EVENT) ? watchPathsFor(raw) : null;
   const headers = {
     "content-type": "application/json"
   };
@@ -173,7 +147,7 @@ try {
     });
     const text = await res.text();
     const body = res.ok && text ? text : "{}";
-    process.stdout.write(watchPaths ? mergeWatchPaths(body, watchPaths) : body);
+    process.stdout.write(body);
   } finally {
     clearTimeout(t);
   }

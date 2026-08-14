@@ -95,7 +95,6 @@ test('smoke settings.json preserves the hook table (events, matchers, timeouts)'
     'Notification',
     'Stop',
     'SessionEnd',
-    'FileChanged',
   ]);
   assert.equal(
     firstGroup(settings.hooks['PostToolUse'], 'PostToolUse').matcher,

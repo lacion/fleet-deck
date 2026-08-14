@@ -13,14 +13,6 @@
 // Design rule (same as fleet-sessionstart.ts): NEVER break the session. Every
 // failure path is a silent exit 0 with '{}' on stdout, and the per-event
 // watchdog guarantees we are gone before hooks.json's own timeout would fire.
-//
-// BUG-104: this shim also refreshes the dynamic FileChanged watch list.
-// SessionStart (fleet-sessionstart.ts) seeds hookSpecificOutput.watchPaths
-// with the session cwd; CwdChanged re-pins it when the working directory moves
-// (its watchPaths REPLACE the dynamic list, so an unchanged list must be
-// re-emitted or a `cd` would silently clear every registration), and each
-// delivered FileChanged re-pins it too. The daemon response is forwarded
-// verbatim for every event, with watchPaths merged in for these two.
 
 import { resolveHome, resolvePort, resolveBase, readToken } from '../src/daemon/config.ts';
 import { runNonce } from '../src/daemon/run-nonce.ts';
@@ -100,44 +92,8 @@ async function readStdinRaw(): Promise<string> {
   return data;
 }
 
-// Events that refresh the dynamic FileChanged watch list (BUG-104). CwdChanged
-// watchPaths REPLACE the dynamic list, so the shim re-pins the current cwd on
-// both events — a bare daemon '{}' would otherwise wipe it.
-const WATCH_EVENTS = new Set(['CwdChanged', 'FileChanged']);
-function watchPathsFor(raw: string): string[] | null {
-  try {
-    const parsed = JSON.parse(raw || '{}') as { cwd?: unknown } | null;
-    const cwd = parsed?.cwd;
-    return typeof cwd === 'string' && cwd ? [cwd] : null;
-  } catch {
-    return null;
-  }
-}
-// Fold watchPaths into the daemon's response (it owns every other field — the
-// daemon knows nothing about harness watch registration). Non-JSON daemon
-// output passes through untouched rather than risking a mangled contract.
-function mergeWatchPaths(text: string, watchPaths: string[] | null): string {
-  if (!watchPaths) return text;
-  try {
-    const out = JSON.parse(text || '{}') as { hookSpecificOutput?: unknown } | null;
-    const prev = (out?.hookSpecificOutput ?? {}) as Record<string, unknown>;
-    // A null/primitive daemon body throws on this assignment and falls through
-    // to the catch — exactly the pre-migration behavior (bare output passes
-    // through untouched rather than risking a mangled contract).
-    (out as { hookSpecificOutput?: unknown }).hookSpecificOutput = {
-      ...prev,
-      hookEventName: EVENT,
-      watchPaths,
-    };
-    return JSON.stringify(out);
-  } catch {
-    return text;
-  }
-}
-
 try {
   const raw = await readStdinRaw();
-  const watchPaths = EVENT !== undefined && WATCH_EVENTS.has(EVENT) ? watchPathsFor(raw) : null;
   const headers: { 'content-type': string; authorization?: string } = {
     'content-type': 'application/json',
   };
@@ -159,7 +115,7 @@ try {
     // receives additionalContext / hold decisions. A 401 carries no contract
     // body; emit the fail-open no-op instead.
     const body = res.ok && text ? text : '{}';
-    process.stdout.write(watchPaths ? mergeWatchPaths(body, watchPaths) : body);
+    process.stdout.write(body);
   } finally {
     clearTimeout(t);
   }

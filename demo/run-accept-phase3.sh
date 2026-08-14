@@ -381,9 +381,6 @@ FLEET_HOOK_SCRIPT="${FLEET_HOOK_SCRIPT:-$WATCH_SCRIPT}"; cat > "$PROJECT_DIR/.cl
     ],
     "SessionEnd": [
       { "hooks": [{ "type": "command", "command": "bun \"$FLEET_HOOK_SCRIPT\" SessionEnd", "timeout": 3, "async": true }] }
-    ],
-    "FileChanged": [
-      { "hooks": [{ "type": "command", "command": "bun \"$FLEET_HOOK_SCRIPT\" FileChanged", "timeout": 3, "async": true }] }
     ]
   }
 }

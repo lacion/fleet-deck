@@ -53,9 +53,6 @@ const settings = {
     SessionEnd: [
       { hooks: [{ type: 'command', command: hook('SessionEnd'), timeout: 3, async: true }] },
     ],
-    FileChanged: [
-      { hooks: [{ type: 'command', command: hook('FileChanged'), timeout: 3, async: true }] },
-    ],
   },
 };
 
