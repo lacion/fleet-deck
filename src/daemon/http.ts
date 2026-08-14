@@ -73,6 +73,28 @@ const BODY_STALL_FIN_S = (() => {
   const n = Number(process.env['FLEETDECK_STALL_FIN_S']);
   return Number.isFinite(n) && n > 0 ? n : 120;
 })();
+// C: the stalled-drain FIN above bounds a request WHILE it is in flight, but
+// Bun.serve's idleTimeout:0 leaves the BETWEEN-requests keep-alive-idle phase
+// (a completed request, keep-alive response, then a silent socket) immortal —
+// no request object exists there for boundStalledDrain to bound, so probing
+// idle0 keeps such a socket alive indefinitely. HttpResShim.end arms THIS
+// per-request idle FIN just as the response completes, so a client that made
+// one request then vanished (a dropped phone, a 401'd keep-alive probe) is
+// reaped instead of pinning an fd until restart. Like the stall FIN it is an
+// idle clock uSockets resets on inbound data, so a client that keeps issuing
+// requests never trips it, and the fetchHandler entry-clear drops it for the
+// next in-flight request. 120s mirrors the stall FIN. The 255s clamp on an
+// override is defensive only: 255 is the GLOBAL idleTimeout's documented u8 cap,
+// NOT proven to bound this per-request lever (probed bun 1.3.14: timeout(_,260)
+// did NOT wrap to 4s), so BODY_STALL_FIN_S feeding the same sink unclamped is
+// equally moot. A 0/negative override would mean "never" (server.timeout(_,0) —
+// the opposite of a bound) and falls back to 120s. FLEETDECK_KEEPALIVE_FIN_S
+// overrides for tests. See boundStalledDrain, HttpResShim.end, and
+// bun-serve-runtime-limits.
+const KEEPALIVE_FIN_S = (() => {
+  const n = Number(process.env['FLEETDECK_KEEPALIVE_FIN_S']);
+  return Number.isFinite(n) && n > 0 ? Math.min(n, 255) : 120;
+})();
 // H-R3/R1-2 backpressure: a /ws peer this far behind (dropped wifi, a frozen
 // tab) has stopped draining. We do NOT keep buffering snapshots into its dead
 // socket — but nor do we merely SKIP the send and clear `dirty`, which stranded
@@ -128,13 +150,16 @@ class HttpResShim {
   private _headers: Record<string, string> = {};
   private _ended = false;
   private _destroyed = false;
-  // A1: which per-request idle FIN (if any) is armed. 'refuse' = the ~4s FIN
+  // A1/C: which per-request idle FIN (if any) is armed. 'refuse' = the ~4s FIN
   // set by shouldKeepAlive on the oversized-refuse path; 'stall' = the
   // BODY_STALL_FIN_S bound armed by boundStalledDrain when the body-drain grace
-  // expires un-drained. boundStalledDrain never overwrites an already-armed FIN
-  // (so grace-expiry can't EXTEND the shorter refuse FIN to 120s), and
-  // clearStalledFin retracts ONLY a 'stall' FIN when the body later drains.
-  private _finKind: 'none' | 'refuse' | 'stall' = 'none';
+  // expires un-drained; 'keepalive' = the KEEPALIVE_FIN_S bound armed by end()
+  // as the response completes, to reap the between-requests idle socket.
+  // boundStalledDrain and end() both refuse to overwrite an already-armed FIN
+  // (so grace-expiry can't EXTEND the shorter refuse FIN to 120s, and end()
+  // can't lengthen a 'refuse'/'stall' FIN), and clearStalledFin retracts ONLY a
+  // 'stall' FIN when the body later drains.
+  private _finKind: 'none' | 'refuse' | 'stall' | 'keepalive' = 'none';
   private _closeListeners: ResCloseListener[] = [];
   // Declared as fields + assigned in the body, NOT constructor parameter properties:
   // Bun (like any strip-only type loader) erases types but cannot LOWER a parameter
@@ -182,6 +207,24 @@ class HttpResShim {
   end(body?: string | Buffer): this {
     if (this._ended) return this;
     this._ended = true;
+    // C: this response completes the request; the socket now enters the
+    // between-requests keep-alive-idle phase, which idleTimeout:0 leaves immortal
+    // (boundStalledDrain only bounds an IN-FLIGHT request body, not the gap AFTER
+    // one — see bun-serve-runtime-limits). Arm a bounded idle FIN so a client that
+    // made one request then went silent (a dropped phone, a 401'd keep-alive
+    // probe) is reaped instead of pinning an fd until restart. Guarded by _finKind
+    // so a 'refuse' (~4s) or 'stall' FIN already armed for this request is never
+    // overwritten/extended; a reused socket's NEXT request clears this and runs
+    // unbounded again via the fetchHandler entry-clear. uSockets resets this idle
+    // clock on inbound data, so a client that keeps issuing requests never trips it.
+    if (this._finKind === 'none') {
+      this._finKind = 'keepalive';
+      try {
+        this._server.timeout(this._request, KEEPALIVE_FIN_S);
+      } catch {
+        /* server torn down (stop(true)) — benign, same as boundStalledDrain */
+      }
+    }
     const payload: string | Uint8Array | null =
       body == null ? null : typeof body === 'string' ? body : new Uint8Array(body);
     this._resolve(new Response(payload, { status: this._status, headers: this._headers }));
@@ -2237,16 +2280,33 @@ export function createHttp(
   // a dropped connection, which the ws test clients accept.
   function handleUpgrade(request: Request, srv: Server<WsData>, url: URL): Response | undefined {
     const req = new HttpReqShim(request, srv);
+    // C: every refusal below bypasses HttpResShim.end(), so arm the keep-alive-idle
+    // FIN here or the socket sits in the immortal between-requests phase under
+    // idleTimeout:0. This is NOT hypothetical: probed on bun 1.3.14, an
+    // ATTEMPTED-and-failed srv.upgrade() (e.g. a bad Sec-WebSocket-Key on the
+    // loopback-exempt path) DISARMS Bun's fixed ~12s linger reaper, so that 400
+    // leaks an fd forever — the exact leak class end()'s FIN closes, reached through
+    // a different door. The 401/404 (no upgrade attempt) are still reaped at Bun's
+    // ~12s regardless, so arming them is belt-and-braces; doing it uniformly keeps
+    // one refusal path. See bun-serve-runtime-limits.
+    const refuse = (status: number): Response => {
+      try {
+        srv.timeout(request, KEEPALIVE_FIN_S);
+      } catch {
+        /* server torn down — benign */
+      }
+      return new Response(null, { status });
+    };
     // WS AUTH + CSRF CONTRACT: reject before Bun upgrades the socket. A WebSocket is
     // NOT subject to the same-origin READ barrier, so a cross-site page could
     // otherwise read the whole snapshot or drive a live pane; the Host check closes
     // DNS rebinding (C1).
     if (!authorized(req, url) || !hostHeaderOk(req) || crossSiteReason(req)) {
-      return new Response(null, { status: 401 });
+      return refuse(401);
     }
     if (url.pathname === '/ws') {
       const data: WsData = { kind: 'snapshot', isAlive: true };
-      return srv.upgrade(request, { data }) ? undefined : new Response(null, { status: 400 });
+      return srv.upgrade(request, { data }) ? undefined : refuse(400);
     }
     if (url.pathname === '/ws/term') {
       const data: WsData = {
@@ -2258,9 +2318,9 @@ export function createHttp(
         abort: { closed: false },
         handle: null,
       };
-      return srv.upgrade(request, { data }) ? undefined : new Response(null, { status: 400 });
+      return srv.upgrade(request, { data }) ? undefined : refuse(400);
     }
-    return new Response(null, { status: 404 });
+    return refuse(404);
   }
 
   function fetchHandler(
@@ -2271,6 +2331,15 @@ export function createHttp(
     try {
       url = new URL(request.url);
     } catch {
+      // C: near-dead (Bun hands fetch a valid absolute request.url), but if it ever
+      // fires this 400 bypasses HttpResShim.end() too — arm the keep-alive FIN so it
+      // cannot leak an fd, completing the invariant that every Response Bun receives
+      // is either end()-armed or FIN-armed at its bypass site.
+      try {
+        srv.timeout(request, KEEPALIVE_FIN_S);
+      } catch {
+        /* server torn down — benign */
+      }
       return new Response(null, { status: 400 });
     }
     const upgrade = (request.headers.get('upgrade') ?? '').toLowerCase();
@@ -2284,6 +2353,21 @@ export function createHttp(
     // router calls res.end(). We hand Bun the response only after the body has drained
     // (or the grace elapses) so a reused keep-alive socket stays in sync — see
     // drainThenRespond.
+    // C: clear any keep-alive-idle FIN a PRIOR request left armed on this (reused)
+    // socket, so this in-flight request runs under idleTimeout:0 like every active
+    // request — a held hook / watch long-poll re-polled on a reused socket must not
+    // inherit the previous response's KEEPALIVE_FIN_S bound. boundStalledDrain
+    // re-arms its own FIN if THIS body withholds; end() re-arms the keep-alive FIN
+    // when THIS response completes. (Assumes Bun serializes per-socket fetch
+    // dispatch — true for every real client; a hand-rolled pipelining peer whose
+    // req2 fetch ran before req1's response resolved would merely bound its own hold
+    // at KEEPALIVE_FIN_S, never sever another request.) See bun-serve-runtime-limits
+    // and HttpResShim.
+    try {
+      srv.timeout(request, 0);
+    } catch {
+      /* server torn down — benign */
+    }
     const req = new HttpReqShim(request, srv);
     const res = new HttpResShim(request, srv);
     routeRequest(req, res);
@@ -2359,12 +2443,19 @@ export function createHttp(
           hostname: host,
           // 0 = never time out an idle connection (node's default): a held hook /
           // watch long-poll response must survive its full wait; the default 10s
-          // idleTimeout would sever it (see bun-serve-runtime-limits). Bounded
-          // idle is now enforced per-request instead: the stalled-drain FIN
-          // (HttpResShim.boundStalledDrain, armed only when the body-drain grace
-          // expires with the body un-drained) reaps a withheld-body socket, so
-          // idleTimeout:0 stays a deliberate, documented decision and held
-          // long-polls (whose bodies drain in ms) are exempt by construction.
+          // idleTimeout would sever it (see bun-serve-runtime-limits). Bounded idle
+          // is enforced per-request instead, across BOTH idle phases: WHILE a
+          // request is in flight the stalled-drain FIN (HttpResShim.boundStalledDrain,
+          // armed only when the body-drain grace expires with the body un-drained)
+          // reaps a withheld-body socket; once a response completes the keep-alive
+          // FIN (HttpResShim.end, ~KEEPALIVE_FIN_S) reaps a between-requests idle
+          // socket whose client made one request then vanished. The fetchHandler
+          // entry-clear drops both for each new in-flight request, so active
+          // requests and held long-polls (bodies drain in ms) stay exempt by
+          // construction while idle sockets are always bounded. NOTE: a socket that
+          // connects but never completes its request line+headers is out of reach
+          // here (fetch never runs) — Bun reaps that pre-request phase itself at a
+          // fixed ~12s regardless of idleTimeout (bun-serve-runtime-limits).
           idleTimeout: 0,
           maxRequestBodySize: MAX_PASTE_BODY,
           fetch: fetchHandler,

@@ -11433,6 +11433,10 @@ var BODY_STALL_FIN_S = (() => {
   const n = Number(process.env["FLEETDECK_STALL_FIN_S"]);
   return Number.isFinite(n) && n > 0 ? n : 120;
 })();
+var KEEPALIVE_FIN_S = (() => {
+  const n = Number(process.env["FLEETDECK_KEEPALIVE_FIN_S"]);
+  return Number.isFinite(n) && n > 0 ? Math.min(n, 255) : 120;
+})();
 var MAX_WS_BUFFER = (() => {
   const n = Number(process.env["FLEETDECK_WS_BUFFER_MAX"]);
   return Number.isFinite(n) ? n : 1 << 20;
@@ -11448,12 +11452,15 @@ var HttpResShim = class {
   _headers = {};
   _ended = false;
   _destroyed = false;
-  // A1: which per-request idle FIN (if any) is armed. 'refuse' = the ~4s FIN
+  // A1/C: which per-request idle FIN (if any) is armed. 'refuse' = the ~4s FIN
   // set by shouldKeepAlive on the oversized-refuse path; 'stall' = the
   // BODY_STALL_FIN_S bound armed by boundStalledDrain when the body-drain grace
-  // expires un-drained. boundStalledDrain never overwrites an already-armed FIN
-  // (so grace-expiry can't EXTEND the shorter refuse FIN to 120s), and
-  // clearStalledFin retracts ONLY a 'stall' FIN when the body later drains.
+  // expires un-drained; 'keepalive' = the KEEPALIVE_FIN_S bound armed by end()
+  // as the response completes, to reap the between-requests idle socket.
+  // boundStalledDrain and end() both refuse to overwrite an already-armed FIN
+  // (so grace-expiry can't EXTEND the shorter refuse FIN to 120s, and end()
+  // can't lengthen a 'refuse'/'stall' FIN), and clearStalledFin retracts ONLY a
+  // 'stall' FIN when the body later drains.
   _finKind = "none";
   _closeListeners = [];
   // Declared as fields + assigned in the body, NOT constructor parameter properties:
@@ -11497,6 +11504,13 @@ var HttpResShim = class {
   end(body) {
     if (this._ended) return this;
     this._ended = true;
+    if (this._finKind === "none") {
+      this._finKind = "keepalive";
+      try {
+        this._server.timeout(this._request, KEEPALIVE_FIN_S);
+      } catch {
+      }
+    }
     const payload = body == null ? null : typeof body === "string" ? body : new Uint8Array(body);
     this._resolve(new Response(payload, { status: this._status, headers: this._headers }));
     return this;
@@ -12658,12 +12672,19 @@ function createHttp(core2, {
   keepalive.unref();
   function handleUpgrade(request, srv, url) {
     const req = new HttpReqShim(request, srv);
+    const refuse = (status) => {
+      try {
+        srv.timeout(request, KEEPALIVE_FIN_S);
+      } catch {
+      }
+      return new Response(null, { status });
+    };
     if (!authorized(req, url) || !hostHeaderOk(req) || crossSiteReason(req)) {
-      return new Response(null, { status: 401 });
+      return refuse(401);
     }
     if (url.pathname === "/ws") {
       const data = { kind: "snapshot", isAlive: true };
-      return srv.upgrade(request, { data }) ? void 0 : new Response(null, { status: 400 });
+      return srv.upgrade(request, { data }) ? void 0 : refuse(400);
     }
     if (url.pathname === "/ws/term") {
       const data = {
@@ -12675,21 +12696,29 @@ function createHttp(core2, {
         abort: { closed: false },
         handle: null
       };
-      return srv.upgrade(request, { data }) ? void 0 : new Response(null, { status: 400 });
+      return srv.upgrade(request, { data }) ? void 0 : refuse(400);
     }
-    return new Response(null, { status: 404 });
+    return refuse(404);
   }
   function fetchHandler(request, srv) {
     let url;
     try {
       url = new URL(request.url);
     } catch {
+      try {
+        srv.timeout(request, KEEPALIVE_FIN_S);
+      } catch {
+      }
       return new Response(null, { status: 400 });
     }
     const upgrade = (request.headers.get("upgrade") ?? "").toLowerCase();
     const connection = (request.headers.get("connection") ?? "").toLowerCase();
     if (upgrade === "websocket" && connection.includes("upgrade")) {
       return handleUpgrade(request, srv, url);
+    }
+    try {
+      srv.timeout(request, 0);
+    } catch {
     }
     const req = new HttpReqShim(request, srv);
     const res = new HttpResShim(request, srv);
@@ -12732,12 +12761,19 @@ function createHttp(core2, {
           hostname: host,
           // 0 = never time out an idle connection (node's default): a held hook /
           // watch long-poll response must survive its full wait; the default 10s
-          // idleTimeout would sever it (see bun-serve-runtime-limits). Bounded
-          // idle is now enforced per-request instead: the stalled-drain FIN
-          // (HttpResShim.boundStalledDrain, armed only when the body-drain grace
-          // expires with the body un-drained) reaps a withheld-body socket, so
-          // idleTimeout:0 stays a deliberate, documented decision and held
-          // long-polls (whose bodies drain in ms) are exempt by construction.
+          // idleTimeout would sever it (see bun-serve-runtime-limits). Bounded idle
+          // is enforced per-request instead, across BOTH idle phases: WHILE a
+          // request is in flight the stalled-drain FIN (HttpResShim.boundStalledDrain,
+          // armed only when the body-drain grace expires with the body un-drained)
+          // reaps a withheld-body socket; once a response completes the keep-alive
+          // FIN (HttpResShim.end, ~KEEPALIVE_FIN_S) reaps a between-requests idle
+          // socket whose client made one request then vanished. The fetchHandler
+          // entry-clear drops both for each new in-flight request, so active
+          // requests and held long-polls (bodies drain in ms) stay exempt by
+          // construction while idle sockets are always bounded. NOTE: a socket that
+          // connects but never completes its request line+headers is out of reach
+          // here (fetch never runs) — Bun reaps that pre-request phase itself at a
+          // fixed ~12s regardless of idleTimeout (bun-serve-runtime-limits).
           idleTimeout: 0,
           maxRequestBodySize: MAX_PASTE_BODY,
           fetch: fetchHandler,
