@@ -281,7 +281,21 @@ test('A1: a stalled request body is reaped; a completed body still responds', as
   );
 });
 
-test('A1 retraction: a body that drains PAST the grace retracts the stall-FIN (arm-then-complete)', async (t: TestContext) => {
+// The outer test timeout must SCALE with the internal scaleMs deadlines below:
+// the success verdict is `survive` (scaleMs(20000), armed ~2s in) and the
+// last-resort backstop is `fail` (scaleMs(30000)). Under the CI lanes'
+// FLEETDECK_TEST_WAIT_SCALE=3 those land at ~62s / 90s — PAST the harness's
+// fixed 60s default (harness-test.ts DEFAULT_TIMEOUT_MS) — so a CORRECT run's
+// success timer can never fire before the outer kill and the test times out,
+// deterministically, on every scale-3 lane (test / test-macos / bundle). The
+// other tests here are exempt: their scaleMs windows are failure backstops and
+// their success paths resolve on fixed real-time daemon events (~10s), well
+// under 60s. Scaling only THIS ceiling in lockstep (60s at scale 1 — unchanged;
+// 180s at scale 3) lets the verdict resolve while preserving every internal
+// margin. The regression logic lives in the socket handlers below, unaffected.
+test('A1 retraction: a body that drains PAST the grace retracts the stall-FIN (arm-then-complete)', {
+  timeout: scaleMs(60000),
+}, async (t: TestContext) => {
   // The direct regression guard for clearStalledFin, on its OWN daemon at
   // FLEETDECK_STALL_FIN_S=12 (NOT the 4 the cases above share) — see the file
   // header for why: the stall-FIN is quantized to a coarse ~4s global timer
