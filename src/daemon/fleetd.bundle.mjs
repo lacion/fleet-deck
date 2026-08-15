@@ -945,7 +945,7 @@ function pidOwnedBy(pid, startedAt) {
   return Math.abs(startMs - startedAt) <= PID_START_TOLERANCE_MS;
 }
 function colFromAgentState(raw, isNew) {
-  const s = (raw ?? "").toLowerCase();
+  const s = String(raw ?? "").toLowerCase();
   if (s === "busy" || s === "running") return "working";
   if (s === "blocked" || s === "waiting") return "needsyou";
   if (s === "idle") return "idle";
@@ -1330,7 +1330,9 @@ function createQuestions(db2, {
             }
           };
         }
-        const questionText = (payload.tool_input?.questions?.[0]?.question ?? payload.text ?? "").slice(0, 80);
+        const questionText = asText(
+          payload.tool_input?.questions?.[0]?.question ?? payload.text
+        ).slice(0, 80);
         const frame = `[FLEETDECK ANSWER] ${row.kind} (answered after the hold expired) Q: ${questionText} \u2014 A: ${detail2}`;
         const rejected = answerMailGuard(frame);
         if (rejected) return rejected;
@@ -1448,9 +1450,9 @@ function createQuestions(db2, {
       return { status: 200, body: { ok: true, delivered: true } };
     }
     if (row.kind === "freeform") {
-      const text = (body?.text ?? "").trim();
+      const text = asText(body?.text).trim();
       if (!text) return { status: 400, body: { ok: false, err: 'body must be {"text":"..."}' } };
-      const questionText = (safeParse(row.payload_json)?.text ?? "").slice(0, 80);
+      const questionText = asText(safeParse(row.payload_json)?.text).slice(0, 80);
       const frame = `[FLEETDECK ANSWER] Q: ${questionText} \u2014 A: ${text}`;
       const rejected = answerMailGuard(frame);
       if (rejected) return rejected;
@@ -5492,7 +5494,11 @@ function realpathInside(realRoot, target) {
   if (fleetHomeReal === void 0) {
     try {
       fleetHomeReal = fs9.realpathSync(
-        process.env["FLEETDECK_HOME"] ?? path9.join(os5.homedir() || "/tmp", ".fleetdeck")
+        // `||` not `??`: a set-but-empty FLEETDECK_HOME must fall back to the
+        // default home, not resolve realpathSync('') (→ throws → fleetHomeReal
+        // stays null and silently disables this token/DB denial gate). Restores
+        // pre-TS behavior and agrees with config.resolveHome().
+        process.env["FLEETDECK_HOME"] || path9.join(os5.homedir() || "/tmp", ".fleetdeck")
       );
     } catch {
       fleetHomeReal = null;
@@ -8992,7 +8998,7 @@ function createEvents(ctx) {
     }
     const m = ev.model;
     let payloadModel = null;
-    if (typeof m === "object") payloadModel = m.display_name ?? m.id ?? null;
+    if (m && typeof m === "object") payloadModel = m.display_name ?? m.id ?? null;
     else if (typeof m === "string" && m) payloadModel = m;
     if (ev.hook_event_name === "SessionStart") {
       stampTranscriptFloor(sid, ev.transcript_path);
@@ -9050,7 +9056,7 @@ function createEvents(ctx) {
           conflict = recordFile(sid, file, c);
           set.note = `editing ${path13.basename(file)}`;
         } else if (ev.tool_name === "Bash" && input.command) {
-          const cmd = input.command;
+          const cmd = String(input.command);
           if (TEST_RUNNER_RE.test(cmd)) {
             set.col = "verifying";
             set.note = "running tests";
@@ -9106,7 +9112,7 @@ function createEvents(ctx) {
         const first = Array.isArray(qs) && qs[0]?.question || "structured question";
         set.col = "needsyou";
         set.note = ("choice: " + first).slice(0, 80);
-        tick(`\u{1F590} ${c.callsign} asks: ${first.slice(0, 50)}`);
+        tick(`\u{1F590} ${c.callsign} asks: ${String(first).slice(0, 50)}`);
         break;
       }
       case "Elicitation":

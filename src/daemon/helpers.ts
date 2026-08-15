@@ -467,7 +467,7 @@ export function pidOwnedBy(pid: number, startedAt: number): boolean {
 type AgentColumn = 'working' | 'needsyou' | 'idle' | 'queued';
 
 export function colFromAgentState(raw: string | null | undefined, isNew: boolean): AgentColumn {
-  const s = (raw ?? '').toLowerCase();
+  const s = String(raw ?? '').toLowerCase();
   if (s === 'busy' || s === 'running') return 'working';
   // 'waiting' is undocumented (the official hooks docs only list
   // busy/blocked state examples) but observed live on interactive sessions

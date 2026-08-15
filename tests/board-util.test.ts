@@ -34,10 +34,12 @@ import {
   modelShort,
   parseBatchTasks,
   prettyModel,
+  questionView,
   sessionTicker,
 } from '../board/src/util.ts';
 import { HOTKEYS, ORCH_COMMANDS } from '../board/src/helpText.ts';
 import { stripTypes } from './helpers/strip-types.ts';
+import type { QuestionEntry } from '../contracts/index.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -129,6 +131,19 @@ test('modelFamily names every family, case-insensitively, and falls back to othe
   assert.equal(modelFamily('CLAUDE-OPUS-4-8'), 'opus');
   assert.equal(modelFamily('some-unknown-model'), 'other');
   assert.equal(modelFamily(null), 'other');
+});
+
+// The daemon persists the payload model RAW (events.ts stores m.display_name ??
+// m.id with no coercion — pre-TS leaned on the board as the backstop). So a
+// `model: {display_name: 42}` SessionStart reaches these formatters as a number.
+// They run in the session cards and drawer — OUTSIDE the question-rail
+// ErrorBoundary — so a throw here white-screens the WHOLE board on every reload.
+// The migration dropped the pre-TS String(model ?? ''); this pins its return.
+test('model formatters coerce a non-string model instead of throwing (backstop for the raw-persisted seam)', () => {
+  const numeric = 42 as unknown as string;
+  assert.equal(prettyModel(numeric), '42', 'prettyModel coerces before .trim()/tokenize — no throw');
+  assert.equal(modelShort(numeric), '42', 'modelShort shares parseModel — coerces too');
+  assert.equal(modelFamily(numeric), 'other', 'modelFamily coerces before .toLowerCase()/.includes()');
 });
 
 // ------------------------------------------------------------------ batch spawn
@@ -1264,4 +1279,66 @@ test('copyText keeps an accepted-but-uncheckable copy standing (permission not g
     assert.match(fdCopy().verified, /^not checked/);
     assert.equal(fdCopy().result, 'reported as copied (unverified)');
   });
+});
+
+// --- questionView: a poisoned permission payload must coerce, never throw -----
+// questionView shapes the human-attention rail straight from a server-persisted
+// question row — itself minted from an UNTRUSTED hook payload. The migration's
+// TS types promise `tool_input.command` / `old_string` / `content` are strings
+// the wire never guaranteed. The Edit/Write branches then called `.split` on the
+// value — on a number that THREW during render, React unmounted the ENTIRE board
+// to a white screen that survived every reload (the poison row is durable). Those
+// two tests are the real regression pins. The Bash branch only reads `.length`
+// (undefined on a number → falsy) and interpolates into a template that coerces,
+// so it never threw; its String() is parity insurance and the test below pins the
+// coerced OUTPUT (stable rendering), not a crash it never had.
+
+// A QuestionEntry whose payload deliberately violates the declared string types,
+// exactly as a malformed persisted row would. Cast through unknown since that is
+// the whole point: the type is a promise the DB row never kept.
+function poisonQuestion(payload: unknown): QuestionEntry {
+  return { kind: 'permission', payload } as unknown as QuestionEntry;
+}
+
+test('questionView: a non-string Bash command coerces to a stable rendering (parity, not a throw-pin)', () => {
+  const v = questionView(poisonQuestion({ tool_name: 'Bash', tool_input: { command: 12345 } }));
+  assert.equal(v.command, '$ 12345', 'the numeric command is String()-coerced before the $ prefix');
+  assert.ok(v.title.includes('12345'), 'the coerced command appears in the run title');
+});
+
+test('questionView: non-string Edit old/new strings coerce into the diff', () => {
+  const v = questionView(
+    poisonQuestion({
+      tool_name: 'Edit',
+      tool_input: { file_path: '/repo/a.ts', old_string: 12345, new_string: 67890 },
+    }),
+  );
+  assert.deepEqual(
+    v.diff,
+    [
+      { kind: 'del', text: '- 12345' },
+      { kind: 'add', text: '+ 67890' },
+    ],
+    'both numeric strings are String()-coerced before .split — no throw, no white screen',
+  );
+});
+
+test('questionView: a non-string Write content coerces into the body preview', () => {
+  const v = questionView(
+    poisonQuestion({ tool_name: 'Write', tool_input: { file_path: '/repo/c.ts', content: 999 } }),
+  );
+  assert.equal(v.command, '/repo/c.ts\n999', 'the numeric content is String()-coerced before .split');
+});
+
+// basename() is the OTHER throw site in these same Edit/Write branches: a numeric
+// file_path hit `.lastIndexOf` and threw before the title rendered. This pins the
+// basename String() restore through its real caller (SHOULD-FIX 2).
+test('questionView: a non-string Edit file_path coerces in basename, not a white screen', () => {
+  const v = questionView(
+    poisonQuestion({
+      tool_name: 'Edit',
+      tool_input: { file_path: 12345, old_string: 'a', new_string: 'b' },
+    }),
+  );
+  assert.equal(v.title, 'Edit 12345?', 'basename String()-coerces the numeric file_path — pre-fix .lastIndexOf threw');
 });

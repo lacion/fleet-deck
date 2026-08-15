@@ -769,10 +769,8 @@ export function createQuestions(
             },
           };
         }
-        const questionText = (
-          payload.tool_input?.questions?.[0]?.question ??
-          payload.text ??
-          ''
+        const questionText = asText(
+          payload.tool_input?.questions?.[0]?.question ?? payload.text,
         ).slice(0, 80);
         const frame = `[FLEETDECK ANSWER] ${row.kind} (answered after the hold expired) Q: ${questionText} — A: ${detail}`;
         // BUG-137: reject BEFORE the plan flip / row settle — an answer that
@@ -920,9 +918,9 @@ export function createQuestions(
     }
 
     if (row.kind === 'freeform') {
-      const text = (body?.text ?? '').trim();
+      const text = asText(body?.text).trim();
       if (!text) return { status: 400, body: { ok: false, err: 'body must be {"text":"..."}' } };
-      const questionText = (safeParse<QuestionPayload>(row.payload_json)?.text ?? '').slice(0, 80);
+      const questionText = asText(safeParse<QuestionPayload>(row.payload_json)?.text).slice(0, 80);
       const frame = `[FLEETDECK ANSWER] Q: ${questionText} — A: ${text}`;
       // BUG-137: reject BEFORE settle — a frame mail() would clamp would
       // deliver a truncated instruction while the human loses the question.

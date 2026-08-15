@@ -245,7 +245,9 @@ export function hhmmss(t: number): string {
 }
 
 export function basename(p: string | null | undefined): string {
-  const s = p ?? '';
+  // Untrusted at the questionView Edit/Write seam (a persisted payload's
+  // file_path can be a number); coerce before lastIndexOf/slice, as pre-TS did.
+  const s = String(p ?? '');
   const i = Math.max(s.lastIndexOf('/'), s.lastIndexOf('\\'));
   return i === -1 ? s : s.slice(i + 1);
 }
@@ -336,7 +338,12 @@ interface ParsedModel {
   raw: string;
 }
 function parseModel(model: string | null | undefined): ParsedModel | null {
-  let s = (model ?? '').trim();
+  // The daemon persists the payload model raw (events.ts stores m.display_name
+  // ?? m.id with no coercion — pre-TS relied on the board as the backstop), so
+  // a `model: {display_name: 42}` SessionStart lands here as a number. Coerce
+  // before .trim(), or prettyModel throws in the session cards — OUTSIDE the
+  // question-rail ErrorBoundary — and white-screens the whole board on reload.
+  let s = String(model ?? '').trim();
   if (!s) return null;
 
   // The long-context marker must come off BEFORE tokenizing: the build-tag
@@ -401,7 +408,8 @@ export function modelShort(model: string | null | undefined): string {
 
 // model family → CSS class carrying the --m-* token pair
 export function modelFamily(model: string | null | undefined): string {
-  const m = (model ?? '').toLowerCase();
+  // Same untrusted-model seam as parseModel: coerce before .toLowerCase().
+  const m = String(model ?? '').toLowerCase();
   return MODEL_FAMILIES.find((f) => m.includes(f)) ?? 'other';
 }
 
@@ -731,15 +739,15 @@ export function questionView(q: QuestionEntry): QuestionView {
     const tool = (p.tool_name ?? '') || 'tool';
     const input: ToolInput = p.tool_input ?? {};
     if (tool === 'Bash' && input.command) {
-      const cmd = input.command;
+      const cmd = String(input.command); // untrusted persisted payload: coerce before .length/.slice
       return {
         title: `Run \`${cmd.length > 60 ? cmd.slice(0, 57) + '…' : cmd}\`?`,
         command: '$ ' + cmd,
       };
     }
     if ((tool === 'Edit' || tool === 'MultiEdit') && input.file_path) {
-      const olds = input.old_string ?? '';
-      const news = input.new_string ?? '';
+      const olds = String(input.old_string ?? '');
+      const news = String(input.new_string ?? '');
       const lines = [
         ...olds
           .split('\n')
@@ -755,7 +763,7 @@ export function questionView(q: QuestionEntry): QuestionView {
       return { title: `Edit ${basename(input.file_path)}?`, command: input.file_path, diff: lines };
     }
     if (tool === 'Write' && input.file_path) {
-      const body = (input.content ?? '').split('\n').slice(0, 6).join('\n');
+      const body = String(input.content ?? '').split('\n').slice(0, 6).join('\n');
       return {
         title: `Write ${basename(input.file_path)}?`,
         command: `${input.file_path}\n${body}`,

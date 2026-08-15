@@ -168,6 +168,16 @@ test('empty / nullish input renders to the empty string, never throwing', () => 
   assert.equal(renderMarkdown('   \n\n  '), '');
 });
 
+// Regression pin for the coercion-drift class. tool_input.plan is agent-authored
+// and untrusted; a numeric plan reaches PlanBody in the rail and, via the
+// migration's trust-the-erased-type rewrite, hit `md.replace`/`md.split` on a
+// number and threw — a throw the ErrorBoundary would not have caught here since
+// renderMarkdown runs during render. String(md ?? '') restores the pre-TS coerce.
+test('renderMarkdown / planTitle: a non-string plan coerces to text, never throwing', () => {
+  assert.equal(renderMarkdown(42 as unknown as string), '<p>42</p>');
+  assert.equal(planTitle(42 as unknown as string), '42');
+});
+
 // ----------------------------------------------------------------- planTitle
 
 // planTitle is the other exported symbol: it extracts a card title (first

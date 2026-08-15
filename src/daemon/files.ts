@@ -218,7 +218,11 @@ function realpathInside(realRoot: string, target: string): string {
   if (fleetHomeReal === undefined) {
     try {
       fleetHomeReal = fs.realpathSync(
-        process.env['FLEETDECK_HOME'] ?? path.join(os.homedir() || '/tmp', '.fleetdeck'),
+        // `||` not `??`: a set-but-empty FLEETDECK_HOME must fall back to the
+        // default home, not resolve realpathSync('') (→ throws → fleetHomeReal
+        // stays null and silently disables this token/DB denial gate). Restores
+        // pre-TS behavior and agrees with config.resolveHome().
+        process.env['FLEETDECK_HOME'] || path.join(os.homedir() || '/tmp', '.fleetdeck'),
       );
     } catch {
       fleetHomeReal = null;

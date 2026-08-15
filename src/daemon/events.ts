@@ -351,7 +351,7 @@ export function createEvents(ctx: EventsCtx) {
     // mid-session /model switch is written down.
     const m = ev.model;
     let payloadModel: string | null = null;
-    if (typeof m === 'object') payloadModel = m.display_name ?? m.id ?? null;
+    if (m && typeof m === 'object') payloadModel = m.display_name ?? m.id ?? null;
     else if (typeof m === 'string' && m) payloadModel = m;
     if (ev.hook_event_name === 'SessionStart') {
       stampTranscriptFloor(sid, ev.transcript_path);
@@ -435,7 +435,7 @@ export function createEvents(ctx: EventsCtx) {
           conflict = recordFile(sid, file, c);
           set.note = `editing ${path.basename(file)}`;
         } else if (ev.tool_name === 'Bash' && input.command) {
-          const cmd = input.command;
+          const cmd = String(input.command); // untrusted payload: coerce before .slice (pre-TS parity)
           if (TEST_RUNNER_RE.test(cmd)) {
             set.col = 'verifying';
             set.note = 'running tests';
@@ -512,7 +512,7 @@ export function createEvents(ctx: EventsCtx) {
         const first = (Array.isArray(qs) && qs[0]?.question) || 'structured question';
         set.col = 'needsyou';
         set.note = ('choice: ' + first).slice(0, 80);
-        tick(`🖐 ${c.callsign} asks: ${first.slice(0, 50)}`);
+        tick(`🖐 ${c.callsign} asks: ${String(first).slice(0, 50)}`);
         break;
       }
       case 'Elicitation':

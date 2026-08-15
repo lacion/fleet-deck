@@ -10,6 +10,7 @@ import {
 import { renderMarkdown, planTitle } from '../markdown.ts';
 import { answerQuestion, dismissQuestion, reasonOf } from '../api.ts';
 import { registerQuestion, type QuestionHandle } from '../qbus.ts';
+import { ErrorBoundary } from './ErrorBoundary.tsx';
 import type { QuestionEntry, SessionEntry } from '../../../contracts/index.ts';
 
 // The fixed right rail: NEEDS YOU. Global (never repo-filtered — the human's
@@ -805,6 +806,61 @@ function QuestionCard({
   );
 }
 
+// Fallback for a QuestionCard whose render threw — almost always a malformed,
+// server-persisted hook payload. It degrades that one row to an honest,
+// dismissible card so the poison can be cleared (it re-throws on every reload
+// otherwise), while the rest of the rail and the board keep working.
+function PoisonCard({
+  q,
+  onDismissed,
+}: {
+  q: QuestionEntry;
+  onDismissed?: (id: string) => void;
+}) {
+  const [dismissing, setDismissing] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const doDismiss = async () => {
+    if (dismissing) return;
+    setDismissing(true);
+    setNote(null);
+    const res = await dismissQuestion(q.id);
+    if (res.ok && res.json?.ok !== false) {
+      onDismissed?.(q.id);
+      return; // unmounting — don't touch state
+    }
+    setNote(reasonOf(res, `dismiss failed (${res.status})`));
+    setDismissing(false);
+  };
+  return (
+    <div className="fd-q">
+      <div className="row1">
+        {/* This card IS the ErrorBoundary fallback — a throw here escapes the
+            boundary and white-screens the board it exists to save. Coerce every
+            field: an object callsign would otherwise be an invalid React child. */}
+        <span className="callsign">{String(q.callsign ?? '') || String(q.session_id ?? '')}</span>
+        <span className="fd-kind">BROKEN</span>
+        <span className="fd-spacer" />
+        <button
+          type="button"
+          className="fd-qdismiss"
+          aria-label="Dismiss this broken question"
+          title="this card's payload couldn't be displayed — dismiss it"
+          disabled={dismissing}
+          onClick={() => void doDismiss()}
+        >
+          ✕
+        </button>
+      </div>
+      <div className="title">This question couldn't be displayed</div>
+      <div className="status hazard">
+        ⚠ a malformed payload broke this card — the rest of the board is fine. Dismiss it to clear
+        the row.
+      </div>
+      {note && <div className="status hazard">{note}</div>}
+    </div>
+  );
+}
+
 interface InboxProps {
   questions: QuestionEntry[];
   sessions: SessionEntry[];
@@ -850,20 +906,31 @@ export default function Inbox({
           </div>
         )}
         {ordered.map((q) => (
-          <QuestionCard
+          <ErrorBoundary
             key={q.id}
-            q={q}
-            session={byId.get(q.session_id)}
-            now={now}
-            selected={q.id === selQ}
-            onSelect={() => {
-              onSelect(q.id);
-            }}
-            onDismissed={(id) => {
-              setDismissed((prev) => new Set(prev).add(id));
-            }}
-            onOpenTerm={onOpenTerm}
-          />
+            fallback={() => (
+              <PoisonCard
+                q={q}
+                onDismissed={(id) => {
+                  setDismissed((prev) => new Set(prev).add(id));
+                }}
+              />
+            )}
+          >
+            <QuestionCard
+              q={q}
+              session={byId.get(q.session_id)}
+              now={now}
+              selected={q.id === selQ}
+              onSelect={() => {
+                onSelect(q.id);
+              }}
+              onDismissed={(id) => {
+                setDismissed((prev) => new Set(prev).add(id));
+              }}
+              onOpenTerm={onOpenTerm}
+            />
+          </ErrorBoundary>
         ))}
       </div>
     </div>

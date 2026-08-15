@@ -29,7 +29,9 @@ function inline(escaped: string): string {
 }
 
 export function renderMarkdown(md: string | null | undefined): string {
-  const lines = (md ?? '').replace(/\r\n/g, '\n').split('\n');
+  // Plan text is agent-authored and untrusted; a numeric tool_input.plan reaches
+  // PlanBody in the rail. Coerce before .replace/.split (pre-TS String(md ?? '')).
+  const lines = String(md ?? '').replace(/\r\n/g, '\n').split('\n');
   const out: string[] = [];
   let i = 0;
   const isBlank = (l: string) => /^\s*$/.test(l);
@@ -91,7 +93,7 @@ export function renderMarkdown(md: string | null | undefined): string {
 // Library card title: first #/##/### heading, else first non-empty line;
 // clipped to 60 chars either way (contract v1.3).
 export function planTitle(md: string | null | undefined): string {
-  const lines = (md ?? '').split('\n');
+  const lines = String(md ?? '').split('\n');
   let title = '';
   for (const l of lines) {
     const h = /^#{1,3}\s+(.*)$/.exec(l.trim());
