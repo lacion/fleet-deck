@@ -8,42 +8,79 @@ concurrency:
 permissions:
   contents: read
 
+# Runtime model: Fleet Deck is Bun-primary and single-runtime. The daemon, the
+# standalone/dev path, AND the Claude Code plugin fail-open floor all run on Bun
+# with bun:sqlite — node:sqlite is retired (foundations-hardening §4/§8). So there
+# is ONE authoritative test lane (`test`, under bun), not a node×bun matrix. bun
+# is also the package manager everywhere. setup-bun is pinned by SHA to the exact
+# bun the migration was validated against, matching the SHA-pinning discipline of
+# checkout. (`version` and `hook-integrity` still shell out to the runner's
+# ambient node for a couple of `node -p`/script one-liners — those are utilities,
+# not a second runtime lane.)
+
 jobs:
+  # Toolchain gate: strict TypeScript + Biome (format check + lint, via `biome
+  # ci`). Fast, no daemon, no tmux — the first signal a PR gets. Runtime-agnostic
+  # (tsc/biome), so it runs under bun alone. Both root and board deps are
+  # installed: `tsc -p board` needs board's types (@types/react …). `bun run ci`
+  # is `biome ci` — the combined format+lint gate; the mechanical format sweep
+  # (Step 1 commit B) brought the whole tree into conformance, so the format
+  # check that this now enforces passes on a clean HEAD and blocks future drift.
+  toolchain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - run: cd board && bun install --frozen-lockfile --ignore-scripts
+      - run: bun run typecheck
+      - run: bun run ci
+
+  # AUTHORITATIVE test lane — the whole suite under Bun (bun:sqlite channel).
+  # Fleet Deck is Bun-primary single-runtime: the daemon, the plugin fail-open
+  # floor, and the tests all run on Bun, so this is the one blocking test gate
+  # (there is no longer a node:sqlite lane to be authoritative over). A first
+  # step proves the bun:sqlite adapter contract in isolation — the dual DB seam's
+  # driver: open/exec/prepare/run/get/all + the missed-`.get()` -> undefined
+  # normalization that keeps the seam's two historical channels byte-identical —
+  # then the full suite runs. Per [[test-suite-is-trust]] nothing is skipped or
+  # curated: `bun test` discovers and runs EVERY tests/**/*.test.ts file and
+  # fails on any load error, so a silently-dropped file cannot vacuously pass.
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        # '22.13.0' is pinned on purpose: it is the declared engine floor
-        # (node:sqlite loads unflagged from 22.13.0), and the moving '22' alias
-        # would silently stop exercising it as the 22 line advances.
-        node-version: ['22.13.0', '24']
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Install tmux
         run: sudo apt-get update && sudo apt-get install -y tmux
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          node-version: ${{ matrix.node-version }}
-          cache: npm
-      - run: npm ci --ignore-scripts
-      # Node 22's test runner corrupts its parent<->child IPC under CI load
-      # ("Unable to deserialize cloned data" — nodejs/node#64061; fixed by
-      # #64706, which current Node 24 ships but whose 22.x backport is
-      # unreleased as of 2026-08). The filewise runner executes each test file
-      # in-process (no runner IPC) with the same per-file process isolation.
-      # REVERT to plain `npm test` here when a 22.x release carries the fix.
-      - if: matrix.node-version != '24'
-        run: npm run test:filewise
-        env:
-          FLEETDECK_TEST_WAIT_SCALE: 3
-      - if: matrix.node-version == '24'
-        run: npm test
-        # Shared-runner lanes are slow and noisy in exactly the way the macOS
-        # advisory lane is — every wait routes through the WAIT_SCALE knob
-        # (tests/helpers/wait.mjs), so give the Linux lanes the same headroom
-        # instead of tuning timeouts one flake at a time.
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - name: bun:sqlite adapter contract (the dual-seam gate)
+        run: |
+          bun -e '
+            const { openDatabase } = await import("./src/daemon/sqlite.ts");
+            const db = openDatabase(":memory:");
+            db.exec("CREATE TABLE t(id INTEGER PRIMARY KEY, name TEXT)");
+            const r = db.prepare("INSERT INTO t(name) VALUES (?)").run("heron");
+            const one = db.prepare("SELECT name FROM t WHERE id = ?").get(r.lastInsertRowid);
+            const miss = db.prepare("SELECT name FROM t WHERE id = ?").get(999);
+            const all = db.prepare("SELECT id, name FROM t").all();
+            db.close();
+            const ok = one.name === "heron" && miss === undefined
+              && all.length === 1 && typeof r.lastInsertRowid === "number";
+            console.log(JSON.stringify({ got: one.name, missIsUndefined: miss === undefined, rows: all.length }));
+            if (!ok) { console.error("bun:sqlite adapter contract FAILED"); process.exit(1); }
+            console.log("bun:sqlite channel OK");
+          '
+      # Shared CI runners are slow and noisy in exactly the way the macOS lane is;
+      # every wait routes through the WAIT_SCALE knob (tests/helpers/wait.ts), so
+      # give the Linux gate the same headroom instead of tuning timeouts per flake.
+      - run: bun run test
         env:
           FLEETDECK_TEST_WAIT_SCALE: 3
 
@@ -54,17 +91,22 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Install tmux
         run: sudo apt-get update && sudo apt-get install -y tmux
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          node-version: '22'
-          cache: npm
-      - run: npm ci --ignore-scripts
-      - run: npm run bundle
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - run: bun run bundle
       - name: Fail if committed bundle is stale
-        run: git diff --exit-code scripts/fleetd/fleetd.bundle.mjs
-      # filewise for the same reason as the Node 22 test lane above
-      # (nodejs/node#64061) — this job runs on Node 22.
-      - run: npm run test:bundle:filewise
+        run: git diff --exit-code src/daemon/fleetd.bundle.mjs
+      - run: bun run bundle:bin
+      - name: Fail if committed bin artifact is stale
+        run: git diff --exit-code bin/fleetdeck.mjs
+      - run: bun run bundle:hooks
+      - name: Fail if committed hook artifacts are stale
+        run: git diff --exit-code scripts/fleet-hook.mjs scripts/fleet-sessionstart.mjs scripts/fleet-watch.mjs
+      # The committed bundle is the shipped artifact; run the full suite against
+      # it under bun (FLEETDECK_TEST_DAEMON_SCRIPT points the daemon at the bundle).
+      - run: bun run test:bundle
         env:
           FLEETDECK_TEST_WAIT_SCALE: 3
 
@@ -73,21 +115,19 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: board/package-lock.json
-      - run: npm --prefix board ci --ignore-scripts
-      - run: npm --prefix board run build
+          bun-version: 1.3.14
+      - run: cd board && bun install --frozen-lockfile --ignore-scripts
+      - run: cd board && bun run build
       - name: Fail if committed board build is stale
         # git diff alone ignores UNTRACKED rebuild output (a fresh hashed chunk
         # or lazy stylesheet the commit forgot to stage), so gate on porcelain.
         run: |
-          git diff --exit-code scripts/fleetd/board-dist
-          if [ -n "$(git status --porcelain --untracked-files=all -- scripts/fleetd/board-dist)" ]; then
+          git diff --exit-code src/daemon/board-dist
+          if [ -n "$(git status --porcelain --untracked-files=all -- src/daemon/board-dist)" ]; then
             echo "::error::board build produced untracked files — stage the rebuilt board-dist"
-            git status --porcelain --untracked-files=all -- scripts/fleetd/board-dist
+            git status --porcelain --untracked-files=all -- src/daemon/board-dist
             exit 1
           fi
 
@@ -99,14 +139,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Install tmux
         run: brew install tmux
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          node-version: '22'
-          cache: npm
-      - run: npm ci --ignore-scripts
-      # filewise for the same reason as the Node 22 test lane above
-      # (nodejs/node#64061) — this job runs on Node 22.
-      - run: npm run test:filewise
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile --ignore-scripts
+      # Advisory for now (macOS runners are slow/flaky — [[oss-repo-infrastructure]]
+      # issue #2). foundations-hardening §6 wants macOS load-bearing once the
+      # bun:sqlite per-platform binary IS the platform statement; drop
+      # continue-on-error together with that step, not one flake at a time.
+      - run: bun run test
         env:
           FLEETDECK_TEST_WAIT_SCALE: 3
 
@@ -114,7 +155,8 @@ jobs:
   # that. Standalone makes the drift user-visible: the npm version and the plugin
   # version are compared at every SessionStart, and a mismatch there is reported
   # to the user as a "restart your service" warning — so a release that forgets
-  # one manifest now produces a warning that is simply wrong.
+  # one manifest now produces a warning that is simply wrong. Script-only (node
+  # -p over manifests), so it needs no install and runs on the runner's ambient node.
   version:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -142,7 +184,7 @@ jobs:
   # SessionStart with the user's full environment, and marketplace installs
   # track git main UNGATED (no npm publish, no tag). The marketplace plugin
   # cache keys on the plugin.json version, so the watched closure is the
-  # COMPLETE behavior-bearing payload — hooks, bin/, all of scripts/fleetd/
+  # COMPLETE behavior-bearing payload — hooks, bin/, all of src/daemon/
   # (sources, the bundle the SessionStart hook actually execs, and the
   # board-dist the daemon serves), board/ sources, and .claude-plugin/ — not
   # just the hook-side paths (BUG-001: a daemon or board change with a rebuilt
@@ -151,6 +193,8 @@ jobs:
   # change to that closure must ride a release — signalled by a version bump
   # in the same diff — never slip in on an ordinary commit. The closure
   # definition lives in ONE checked-in verifier so CI and local runs agree.
+  # Script-only (execFileSync git), so it needs no install and runs on the
+  # runner's ambient node.
   hook-integrity:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -180,5 +224,5 @@ jobs:
           # editing package.json's description at an unchanged version passed,
           # even though Claude Code's plugin cache key (the version value) never
           # moved. The checker resolves the plugin version at base and head and
-          # requires a real semantic increase plus manifest/lock-root agreement.
+          # requires a real semantic increase plus manifest agreement.
           node scripts/check-release-gate.mjs "$BASE" HEAD

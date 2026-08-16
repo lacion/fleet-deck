@@ -1,0 +1,19 @@
+{
+  // The daemon test program (tsconfig.json) is deliberately DOM-less. A handful
+  // of tests exercise board/src browser modules (util, termDiag, markdown) and so
+  // need DOM globals in scope. This config reuses the exact daemon strictness bar
+  // but adds the DOM lib and includes only those tests. It goes green once the
+  // board's own .ts conversion lands (board/tsconfig.json); until then the red it
+  // reports is board source, not the daemon — which is why it is a SEPARATE gate
+  // (`bun run typecheck:board-tests`) and not part of the main `typecheck` chain.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM", "DOM.Iterable"]
+  },
+  "include": [
+    "tests/board-util.test.ts",
+    "tests/board-termdiag.test.ts",
+    "tests/board-markdown.test.ts"
+  ],
+  "exclude": ["node_modules"]
+}

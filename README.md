@@ -6,7 +6,7 @@
 
 [![CI](https://github.com/lacion/fleet-deck/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/lacion/fleet-deck/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Node ≥ 22.13](https://img.shields.io/badge/node-%E2%89%A5%2022.13-brightgreen.svg)](https://nodejs.org)
+[![Bun ≥ 1.3.14](https://img.shields.io/badge/bun-%E2%89%A5%201.3.14-brightgreen.svg)](https://bun.sh)
 
 **One board for every Claude Code session on your machine.**
 
@@ -45,7 +45,7 @@ Your next `claude` — any terminal, any repo, no wrapper — brings the fleet u
 
 > **How updates actually reach you.** Claude Code installs a marketplace plugin by copying it into a versioned local cache, and that cached copy is what runs at every SessionStart — not the repo. Auto-update is off by default for third-party marketplaces, and even with it on, Claude Code only recognizes an update when the plugin's **version changes** in the manifest. Fleet Deck bumps `version` in `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json` for every distributable change for exactly this reason. To pull a new version, run `claude plugin marketplace update fleetdeck` and `claude plugin update fleetdeck@fleetdeck` (or manage it from `/plugin`), then start a new session. A push to `main` without a version bump never reaches an installed copy. If you want releases only, use the npm channel — `npm i -g fleetdeck` for [standalone mode](#standalone-mode) — or pin your marketplace clone to a tag.
 
-**Requirements.** Node 22.13+ (or 24+; Node 23 is unsupported). Nothing to `npm install`: the daemon ships as one bundled file and keeps state in Node's built-in `node:sqlite` — it loads unflagged only from 22.13.0, so 22.5–22.12 cannot boot it. Add **tmux 3.4+** to spawn workers or open their panes in the browser — Fleet Deck relies on 3.4's no-start probe to avoid attaching to a replacement server. Everything else works without tmux. Linux, WSL2 and macOS; Windows-native is untested.
+**Requirements.** **Bun 1.3.14+** — the CLI and daemon both run under Bun. Nothing to `npm install`: the daemon ships as one bundled file and keeps state in Bun's built-in `bun:sqlite`. Add **tmux 3.4+** to spawn workers or open their panes in the browser — Fleet Deck relies on 3.4's no-start probe to avoid attaching to a replacement server. Everything else works without tmux. Linux, WSL2 and macOS; Windows-native is untested.
 
 <details>
 <summary>Working on Fleet Deck itself, or running from a fork</summary>
@@ -97,7 +97,7 @@ Before anything launches the form shows the exact list and count. **That preview
  terminal 1..n : plain `claude` + this plugin's hooks
       │  events (http hooks, fail-open)      ▲ whispers, blocks, decisions
       ▼                                      │ (hook responses)
-   fleetd — one Node daemon, loopback by default, SQLite state
+   fleetd — one Bun daemon, loopback by default, SQLite state
       ▲                                      │ WebSocket push
       └────────── the board (React) ─────────┘
 ```
@@ -226,7 +226,7 @@ Fleet Deck is a Claude Code plugin whose daemon is booted lazily by a `SessionSt
 
 ```bash
 npm install -g fleetdeck
-fleetdeck doctor            # Node 22.13+? tmux? claude? the plugin?
+fleetdeck doctor            # Bun 1.3.14+? tmux? claude? the plugin?
 fleetdeck service install   # a systemd user unit, or a supervised wrapper without systemd
 fleetdeck service start
 ```

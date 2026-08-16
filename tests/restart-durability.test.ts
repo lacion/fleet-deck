@@ -1,0 +1,64 @@
+// tests/restart-durability.test.ts
+//
+// SQLite schema rule: fleetd.db lives under FLEETDECK_HOME and
+// must survive a process restart. Kill the daemon, start a fresh process
+// against the SAME FLEETDECK_HOME, and confirm /state still has the sessions.
+
+import test from './helpers/harness-test.ts';
+import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { startDaemon, randomPort } from './helpers/daemon.ts';
+import { postHook } from './helpers/http.ts';
+import { getState } from './helpers/state.ts';
+import { loadFixture } from './helpers/fixtures.ts';
+import type { StateResponse } from '../contracts/state.ts';
+
+test('restart durability: same FLEETDECK_HOME after kill+restart still has the sessions', async (t) => {
+  const home = mkdtempSync(path.join(tmpdir(), 'fleetdeck-home-'));
+  const cwd = mkdtempSync(path.join(tmpdir(), 'fleetdeck-cwd-'));
+  t.after(() => {
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  const sid = randomUUID();
+
+  const first = await startDaemon({ port: randomPort(), home });
+  try {
+    await postHook(
+      first.baseUrl,
+      'SessionStart',
+      loadFixture('session-start', { session_id: sid, cwd }),
+      { token: first },
+    );
+    await postHook(
+      first.baseUrl,
+      'UserPromptSubmit',
+      loadFixture('user-prompt-submit', { session_id: sid, cwd }),
+      { token: first },
+    );
+    const stateBefore = await getState<StateResponse>(first.baseUrl);
+    const cardBefore = stateBefore.sessions.find((s) => s.session_id === sid);
+    assert.ok(cardBefore, 'session should be present before restart');
+    assert.equal(cardBefore.col, 'working');
+  } finally {
+    // kill, but keep the SQLite files in `home` for the next process
+    await first.stop({ keepHome: true });
+  }
+
+  const second = await startDaemon({ port: randomPort(), home });
+  t.after(async () => {
+    await second.stop({ keepHome: false });
+  });
+
+  const stateAfter = await getState<StateResponse>(second.baseUrl);
+  const cardAfter = stateAfter.sessions.find((s) => s.session_id === sid);
+  assert.ok(
+    cardAfter,
+    'session should still be present after restart against the same FLEETDECK_HOME',
+  );
+  assert.equal(cardAfter.session_id, sid);
+});

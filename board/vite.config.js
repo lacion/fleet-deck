@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react';
 
 // The locally running fleetd we proxy `npm run dev` to, in its two schemes.
 // FLEETDECK_PORT is the same variable the daemon itself reads (see
-// scripts/fleetd/ports.mjs), so one env var points both sides at the same
+// src/daemon/ports.mjs), so one env var points both sides at the same
 // scratch daemon. Default 4711 — but when you run a scratch daemon on 4712
 // to stay off your real fleet (CONTRIBUTING.md), export FLEETDECK_PORT=4712
 // for `npm run dev` too, or the dev board silently reads and mutates the
@@ -33,7 +33,7 @@ const rewriteOrigin = (proxy) => {
 const httpProxy = { target: FLEETD_HTTP, changeOrigin: true, configure: rewriteOrigin };
 
 // Builds straight into the daemon's committed static dir. fleetd serves
-// GET / and /assets/* from scripts/fleetd/board-dist at runtime (resolved
+// GET / and /assets/* from src/daemon/board-dist at runtime (resolved
 // relative to http.mjs, so both the source and bundle runs find it).
 export default defineConfig({
   plugins: [react()],
@@ -45,7 +45,7 @@ export default defineConfig({
   // at runtime in src/base.js — read that file before changing this line.
   base: './',
   build: {
-    outDir: '../scripts/fleetd/board-dist',
+    outDir: '../src/daemon/board-dist',
     emptyOutDir: true,
   },
   // `npm run dev` against a locally running fleetd (FLEETDECK_PORT, default 4711).
@@ -59,5 +59,11 @@ export default defineConfig({
       // matches /ws AND /ws/term — both upgrades need the Origin rewrite too.
       '/ws': { target: FLEETD_WS, ws: true, changeOrigin: true, configure: rewriteOrigin },
     },
+    // The board is its own package (board/), but it imports the shared wire
+    // contracts from the repo root (../contracts). Vite's dev server refuses to
+    // serve files above the project root by default, so widen the allow-list to
+    // the repo root. The production `vite build` (Rollup) already follows the
+    // import across the boundary without this — it only matters for `npm run dev`.
+    fs: { allow: ['..'] },
   },
 });

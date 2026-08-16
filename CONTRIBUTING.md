@@ -20,30 +20,31 @@ npm run build:board         # → scripts/fleetd/board-dist/
 
 ## Prerequisites
 
-- **Node ^22.13.0 || >=24.0.0** — a hard floor, not a suggestion. The daemon keeps
-  its state in Node's built-in `node:sqlite`, which shipped behind a flag in 22.5
-  and only loads WITHOUT `--experimental-sqlite` from 22.13.0 (and 24.x). Node 23
+- **Node ^22.18.0 || >=24.0.0** — a hard floor, not a suggestion. The daemon keeps
+  its state in Node's built-in `node:sqlite` (unflagged from 22.13), but the floor
+  is 22.18: the first release that runs the TypeScript sources with native type-
+  stripping and no flag, so source and shipped bundle share one Node floor. Node 23
   is unsupported. There is no polyfill and no fallback; an older Node won't boot
   the daemon.
 - **tmux 3.4+** — needed for anything spawn-, terminal-, or pane-related, and
   the test suite drives a *real* tmux server to exercise it. 3.4 is a hard
-  floor, enforced by `bin/tmux-version.mjs`: Fleet Deck's no-start probe
+  floor, enforced by `bin/tmux-version.ts`: Fleet Deck's no-start probe
   (`-N`) was introduced there, so an older tmux is rejected as unavailable.
   Check with `tmux -V`; some distributions still package 3.2/3.3, so if yours
   does, install tmux from a newer release or build it from source. It never touches your
   tmux, though: every test daemon runs its tmux commands against an isolated
   named server (`tmux -L fleetdeck-test-<port>`, set via `FLEETDECK_TMUX_SOCKET`
-  in `tests/helpers/daemon.mjs`), and the demo scripts do the same with a
+  in `tests/helpers/daemon.ts`), and the demo scripts do the same with a
   per-run `fdaccept-<pid>` socket. Your default server is left alone.
 - **Linux, WSL2, or macOS.** Windows-native is untested.
 
 ## Running from source
 
 ```bash
-npm start                   # node scripts/fleetd/fleetd.mjs (the SOURCE, not the bundle)
+npm start                   # node scripts/fleetd/fleetd.ts (the SOURCE, not the bundle)
 ```
 
-`npm start` runs `scripts/fleetd/fleetd.mjs` directly, so it's the fast loop for
+`npm start` runs `scripts/fleetd/fleetd.ts` directly, so it's the fast loop for
 daemon work — no rebundle between edits.
 
 Don't collide with a real fleet. If you already run Fleet Deck day to day, its
@@ -107,7 +108,7 @@ gotcha. The daemon your users run is the *bundle*; the board they load is the
 
 - **Touched anything under `scripts/fleetd/`** (except the bundle file itself)?
   Run `npm run bundle` and commit `scripts/fleetd/fleetd.bundle.mjs`. The plugin
-  ships and runs the bundle, not your `.mjs` source — an un-rebundled fix simply
+  ships and runs the bundle, not your `.ts` source — an un-rebundled fix simply
   does not exist for anyone who installs Fleet Deck.
 - **Touched anything under `board/`?** Run `npm run build:board` and commit
   `scripts/fleetd/board-dist/`. That's where Vite writes the built board and
@@ -146,7 +147,7 @@ restart the daemon before the plugin sees it.
 - **Artifacts regenerated and committed.** Bundle for `scripts/fleetd/` changes,
   `board-dist/` for `board/` changes.
 - **No new runtime dependencies without prior discussion.** `ws` is the *only*
-  runtime dependency, and the README promises users "Node 22.13+ and that's the
+  runtime dependency, and the README promises users "Node 22.18+ and that's the
   whole list." Adding to that list breaks a promise; open an issue first.
 - **No model calls in the daemon core.** This is a hard design constraint, not a
   code-style note. The core is deterministic — telemetry, routing, conflict

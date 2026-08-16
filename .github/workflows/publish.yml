@@ -47,6 +47,14 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
           package-manager-cache: false
 
+      # bun is the package manager (install + bundle + board build + test run
+      # below). The npm CLI is retained ONLY for `npm publish` — trusted
+      # publishing is an npm/OIDC mechanism bun cannot perform. Pinned to the bun
+      # the release was validated against, matching the SHA-pinning discipline.
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.14
+
       # Node 24 still ships an npm below the 11.5.1 floor that trusted publishing
       # requires. Without this the publish fails asking for a token.
       - name: Ensure npm supports trusted publishing
@@ -58,9 +66,9 @@ jobs:
       # is a lie — and a mislabelled version on npm cannot be taken back. (We have
       # already shipped one: npm 0.7.1 does not match git v0.7.1.)
       # The tag check alone is not enough: package.json can be bumped while the
-      # plugin manifests, board/package.json, and the lockfile roots stay behind
-      # (ci.yml's version job never runs on tags, and npm ci accepts a stale lock
-      # root), and then npm, the marketplace cache, and board metadata all
+      # plugin manifests and board/package.json stay behind (ci.yml's version job
+      # never runs on tags, and bun.lock carries no root version to cross-check
+      # against), and then npm, the marketplace cache, and board metadata all
       # disagree about what this release is. Verify the whole contract against
       # the tag before anything irreversible.
       - name: Fail if the tag and every version manifest disagree
@@ -79,9 +87,36 @@ jobs:
 
       # No lifecycle scripts: esbuild ships its binary as an optional platform
       # dep (verified 0.16.0), so nothing the install runs may execute code.
-      - run: npm ci --ignore-scripts
+      # --frozen-lockfile is bun's `npm ci` (fail on any lockfile drift).
+      - run: bun install --frozen-lockfile --ignore-scripts
 
-      - run: npm test
+      # Release gate — the full suite under Bun (bun:sqlite, the exact runtime
+      # that ships; `bun run test` execs `bun test`). node:sqlite is retired
+      # under the single-runtime model, so the last gate before an irreversible
+      # publish verifies the shipping channel. A standalone adapter-contract step
+      # first proves the dual DB seam's driver in isolation (open/exec/prepare/
+      # run/get/all + the missed-`.get()` -> undefined normalization), then the
+      # whole suite runs. This is belt-and-suspenders with ci.yml — the tagged
+      # commit is already an ancestor of main (gated above) — but this is the one
+      # irreversible moment, so it re-proves the shipping runtime here too.
+      - name: bun:sqlite adapter contract (the dual-seam gate)
+        run: |
+          bun -e '
+            const { openDatabase } = await import("./src/daemon/sqlite.ts");
+            const db = openDatabase(":memory:");
+            db.exec("CREATE TABLE t(id INTEGER PRIMARY KEY, name TEXT)");
+            const r = db.prepare("INSERT INTO t(name) VALUES (?)").run("heron");
+            const one = db.prepare("SELECT name FROM t WHERE id = ?").get(r.lastInsertRowid);
+            const miss = db.prepare("SELECT name FROM t WHERE id = ?").get(999);
+            const all = db.prepare("SELECT id, name FROM t").all();
+            db.close();
+            const ok = one.name === "heron" && miss === undefined
+              && all.length === 1 && typeof r.lastInsertRowid === "number";
+            console.log(JSON.stringify({ got: one.name, missIsUndefined: miss === undefined, rows: all.length }));
+            if (!ok) { console.error("bun:sqlite adapter contract FAILED"); process.exit(1); }
+            console.log("bun:sqlite channel OK");
+          '
+      - run: bun run test
 
       # The published tarball carries the COMMITTED bundle and board-dist, never a
       # fresh build. So prove here — at the only moment it is irreversible — that
@@ -90,16 +125,15 @@ jobs:
       # is forever.
       - name: Fail if the committed artifacts are stale
         run: |
-          npm run bundle
-          git diff --exit-code scripts/fleetd/fleetd.bundle.mjs
-          npm --prefix board ci --ignore-scripts
-          npm --prefix board run build
-          git diff --exit-code scripts/fleetd/board-dist
+          bun run bundle
+          git diff --exit-code src/daemon/fleetd.bundle.mjs
+          (cd board && bun install --frozen-lockfile --ignore-scripts && bun run build)
+          git diff --exit-code src/daemon/board-dist
           # git diff ignores UNTRACKED rebuild output (a fresh hashed chunk or
           # lazy stylesheet the tag forgot to stage) — gate on porcelain too.
-          if [ -n "$(git status --porcelain --untracked-files=all -- scripts/fleetd/board-dist)" ]; then
+          if [ -n "$(git status --porcelain --untracked-files=all -- src/daemon/board-dist)" ]; then
             echo "::error::board build produced untracked files — stage the rebuilt board-dist"
-            git status --porcelain --untracked-files=all -- scripts/fleetd/board-dist
+            git status --porcelain --untracked-files=all -- src/daemon/board-dist
             exit 1
           fi
 

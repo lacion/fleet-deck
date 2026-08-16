@@ -248,12 +248,12 @@ stop_identified_daemon() {
         if (process.platform === "linux") {
           const executable = path.basename(fs.readlinkSync(`/proc/${record.pid}/exe`)).replace(/ \(deleted\)$/, "");
           const argv = fs.readFileSync(`/proc/${record.pid}/cmdline`, "utf8").split("\0").filter(Boolean);
-          nodeLike = /^(?:node|nodejs)$/i.test(executable);
+          nodeLike = /^(?:node|nodejs|bun|fleetd)$/i.test(executable);
           fleetdScript = argv.some(value => /(?:^|[\/\\])fleetd(?:\.bundle)?\.mjs$/.test(value));
         } else {
           const executable = execFileSync("ps", ["-p", String(record.pid), "-o", "comm="], { encoding: "utf8", timeout: 1000 }).trim();
           const command = execFileSync("ps", ["-p", String(record.pid), "-o", "command="], { encoding: "utf8", timeout: 1000 });
-          nodeLike = /^(?:node|nodejs)$/i.test(path.basename(executable));
+          nodeLike = /^(?:node|nodejs|bun|fleetd)$/i.test(path.basename(executable));
           fleetdScript = /(?:^|[\/\\])fleetd(?:\.bundle)?\.mjs(?=$|\s|")/.test(command);
         }
       } catch { process.exitCode = 2; return; }
@@ -346,32 +346,32 @@ FLEET_HOOK_SCRIPT="${FLEET_HOOK_SCRIPT:-$WATCH_SCRIPT}"; cat > "$PROJECT_DIR/.cl
   "enabledPlugins": { "fleetdeck@fleetdeck": false },
   "hooks": {
     "SessionStart": [
-      { "hooks": [{ "type": "command", "command": "node \"$SESSIONSTART_SCRIPT\"", "timeout": 15 }] }
+      { "hooks": [{ "type": "command", "command": "bun \"$SESSIONSTART_SCRIPT\"", "timeout": 15 }] }
     ],
     "UserPromptSubmit": [
-      { "hooks": [{ "type": "command", "command": "node \"$FLEET_HOOK_SCRIPT\" UserPromptSubmit", "timeout": 3 }] }
+      { "hooks": [{ "type": "command", "command": "bun \"$FLEET_HOOK_SCRIPT\" UserPromptSubmit", "timeout": 3 }] }
     ],
     "PostToolUse": [
-      { "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash", "hooks": [{ "type": "command", "command": "node \"$FLEET_HOOK_SCRIPT\" PostToolUse", "timeout": 3 }] }
+      { "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash", "hooks": [{ "type": "command", "command": "bun \"$FLEET_HOOK_SCRIPT\" PostToolUse", "timeout": 3 }] }
     ],
     "PreToolUse": [
-      { "matcher": "AskUserQuestion", "hooks": [{ "type": "command", "command": "node \"$FLEET_HOOK_SCRIPT\" AskUserQuestion", "timeout": 65 }] }
+      { "matcher": "AskUserQuestion", "hooks": [{ "type": "command", "command": "bun \"$FLEET_HOOK_SCRIPT\" AskUserQuestion", "timeout": 65 }] }
     ],
     "PermissionRequest": [
-      { "hooks": [{ "type": "command", "command": "node \"$FLEET_HOOK_SCRIPT\" PermissionRequest", "timeout": 65 }] }
+      { "hooks": [{ "type": "command", "command": "bun \"$FLEET_HOOK_SCRIPT\" PermissionRequest", "timeout": 65 }] }
     ],
     "Elicitation": [
-      { "hooks": [{ "type": "command", "command": "node \"$FLEET_HOOK_SCRIPT\" Elicitation", "timeout": 65 }] }
+      { "hooks": [{ "type": "command", "command": "bun \"$FLEET_HOOK_SCRIPT\" Elicitation", "timeout": 65 }] }
     ],
     "Notification": [
-      { "hooks": [{ "type": "command", "command": "node \"$FLEET_HOOK_SCRIPT\" Notification", "timeout": 3, "async": true }] }
+      { "hooks": [{ "type": "command", "command": "bun \"$FLEET_HOOK_SCRIPT\" Notification", "timeout": 3, "async": true }] }
     ],
     "Stop": [
       { "hooks": [
-        { "type": "command", "command": "node \"$FLEET_HOOK_SCRIPT\" Stop", "timeout": 5 },
+        { "type": "command", "command": "bun \"$FLEET_HOOK_SCRIPT\" Stop", "timeout": 5 },
         {
           "type": "command",
-          "command": "node \"$WATCH_SCRIPT\"",
+          "command": "bun \"$WATCH_SCRIPT\"",
           "asyncRewake": true,
           "rewakeMessage": "[FLEETDECK] Fleet board mail for you:",
           "rewakeSummary": "Fleet Deck: board mail delivered",
@@ -380,7 +380,7 @@ FLEET_HOOK_SCRIPT="${FLEET_HOOK_SCRIPT:-$WATCH_SCRIPT}"; cat > "$PROJECT_DIR/.cl
       ] }
     ],
     "SessionEnd": [
-      { "hooks": [{ "type": "command", "command": "node \"$FLEET_HOOK_SCRIPT\" SessionEnd", "timeout": 3, "async": true }] }
+      { "hooks": [{ "type": "command", "command": "bun \"$FLEET_HOOK_SCRIPT\" SessionEnd", "timeout": 3, "async": true }] }
     ]
   }
 }
