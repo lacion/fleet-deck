@@ -141,9 +141,17 @@ test('modelFamily names every family, case-insensitively, and falls back to othe
 // The migration dropped the pre-TS String(model ?? ''); this pins its return.
 test('model formatters coerce a non-string model instead of throwing (backstop for the raw-persisted seam)', () => {
   const numeric = 42 as unknown as string;
-  assert.equal(prettyModel(numeric), '42', 'prettyModel coerces before .trim()/tokenize — no throw');
+  assert.equal(
+    prettyModel(numeric),
+    '42',
+    'prettyModel coerces before .trim()/tokenize — no throw',
+  );
   assert.equal(modelShort(numeric), '42', 'modelShort shares parseModel — coerces too');
-  assert.equal(modelFamily(numeric), 'other', 'modelFamily coerces before .toLowerCase()/.includes()');
+  assert.equal(
+    modelFamily(numeric),
+    'other',
+    'modelFamily coerces before .toLowerCase()/.includes()',
+  );
 });
 
 // ------------------------------------------------------------------ batch spawn
@@ -1327,7 +1335,11 @@ test('questionView: a non-string Write content coerces into the body preview', (
   const v = questionView(
     poisonQuestion({ tool_name: 'Write', tool_input: { file_path: '/repo/c.ts', content: 999 } }),
   );
-  assert.equal(v.command, '/repo/c.ts\n999', 'the numeric content is String()-coerced before .split');
+  assert.equal(
+    v.command,
+    '/repo/c.ts\n999',
+    'the numeric content is String()-coerced before .split',
+  );
 });
 
 // basename() is the OTHER throw site in these same Edit/Write branches: a numeric
@@ -1340,5 +1352,9 @@ test('questionView: a non-string Edit file_path coerces in basename, not a white
       tool_input: { file_path: 12345, old_string: 'a', new_string: 'b' },
     }),
   );
-  assert.equal(v.title, 'Edit 12345?', 'basename String()-coerces the numeric file_path — pre-fix .lastIndexOf threw');
+  assert.equal(
+    v.title,
+    'Edit 12345?',
+    'basename String()-coerces the numeric file_path — pre-fix .lastIndexOf threw',
+  );
 });

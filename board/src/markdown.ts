@@ -31,7 +31,9 @@ function inline(escaped: string): string {
 export function renderMarkdown(md: string | null | undefined): string {
   // Plan text is agent-authored and untrusted; a numeric tool_input.plan reaches
   // PlanBody in the rail. Coerce before .replace/.split (pre-TS String(md ?? '')).
-  const lines = String(md ?? '').replace(/\r\n/g, '\n').split('\n');
+  const lines = String(md ?? '')
+    .replace(/\r\n/g, '\n')
+    .split('\n');
   const out: string[] = [];
   let i = 0;
   const isBlank = (l: string) => /^\s*$/.test(l);

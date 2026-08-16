@@ -763,7 +763,10 @@ export function questionView(q: QuestionEntry): QuestionView {
       return { title: `Edit ${basename(input.file_path)}?`, command: input.file_path, diff: lines };
     }
     if (tool === 'Write' && input.file_path) {
-      const body = String(input.content ?? '').split('\n').slice(0, 6).join('\n');
+      const body = String(input.content ?? '')
+        .split('\n')
+        .slice(0, 6)
+        .join('\n');
       return {
         title: `Write ${basename(input.file_path)}?`,
         command: `${input.file_path}\n${body}`,

@@ -115,15 +115,28 @@ test('questions.answer: a re-armed choice with a non-string stored question fram
     rearmed: true,
     tool_input: {
       questions: [
-        { question: 999, header: 'x', multiSelect: false, options: [{ label: 'a', description: 'd' }] },
+        {
+          question: 999,
+          header: 'x',
+          multiSelect: false,
+          options: [{ label: 'a', description: 'd' }],
+        },
       ],
     },
   });
   const res = questions.answer(row.id, { text: 'ok' });
 
-  assert.equal(res.status, 200, 'a re-armed answer with a non-string question must not throw into a 500');
+  assert.equal(
+    res.status,
+    200,
+    'a re-armed answer with a non-string question must not throw into a 500',
+  );
   assert.equal(res.body.ok, true);
-  assert.equal(mails.length, 1, 'the coerced answer is framed and mailed for the next turn boundary');
+  assert.equal(
+    mails.length,
+    1,
+    'the coerced answer is framed and mailed for the next turn boundary',
+  );
   assert.equal(mails[0]?.tag, 'fleetdeck-answer');
   assert.equal(
     mails[0]?.body,
@@ -174,9 +187,14 @@ test('events: a SessionStart carrying model:null is applied, not dropped', async
 
 test('events: a PostToolUse Bash with a non-string command is coerced, not dropped', async (t) => {
   const { daemon, cwd, sid } = await eventsHarness(t);
-  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), {
-    token: daemon,
-  });
+  await postHook(
+    daemon.baseUrl,
+    'SessionStart',
+    loadFixture('session-start', { session_id: sid, cwd }),
+    {
+      token: daemon,
+    },
+  );
   // Pre-fix `input.command.slice(...)` on a number threw; the note never landed.
   const res = await postHook(
     daemon.baseUrl,
@@ -200,9 +218,14 @@ test('events: an AskUserQuestion whose question is non-string still holds as a c
     rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
-  await postHook(daemon.baseUrl, 'SessionStart', loadFixture('session-start', { session_id: sid, cwd }), {
-    token: daemon,
-  });
+  await postHook(
+    daemon.baseUrl,
+    'SessionStart',
+    loadFixture('session-start', { session_id: sid, cwd }),
+    {
+      token: daemon,
+    },
+  );
 
   // events.ts runs applyEvent (which emits the join tick) BEFORE questions.create,
   // so a tick that threw on a non-string question dropped the WHOLE choice — it
@@ -216,7 +239,12 @@ test('events: an AskUserQuestion whose question is non-string still holds as a c
       {
         tool_input: {
           questions: [
-            { question: 999, header: 'x', multiSelect: false, options: [{ label: 'a', description: 'd' }] },
+            {
+              question: 999,
+              header: 'x',
+              multiSelect: false,
+              options: [{ label: 'a', description: 'd' }],
+            },
           ],
         },
       },
@@ -231,7 +259,11 @@ test('events: an AskUserQuestion whose question is non-string still holds as a c
   assert.ok(q, 'the choice held — a thrown tick would have dropped it before questions.create');
 
   const state = await getState<StateResponse>(daemon.baseUrl);
-  assert.equal(findSession(state, sid)?.col, 'needsyou', 'the held choice moves the card to needsyou');
+  assert.equal(
+    findSession(state, sid)?.col,
+    'needsyou',
+    'the held choice moves the card to needsyou',
+  );
   assert.ok(
     state.ticker.some((tk) => tk.msg.includes('asks:')),
     'the join tick fired with the coerced question text',

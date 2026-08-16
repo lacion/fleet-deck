@@ -810,13 +810,7 @@ function QuestionCard({
 // server-persisted hook payload. It degrades that one row to an honest,
 // dismissible card so the poison can be cleared (it re-throws on every reload
 // otherwise), while the rest of the rail and the board keep working.
-function PoisonCard({
-  q,
-  onDismissed,
-}: {
-  q: QuestionEntry;
-  onDismissed?: (id: string) => void;
-}) {
+function PoisonCard({ q, onDismissed }: { q: QuestionEntry; onDismissed?: (id: string) => void }) {
   const [dismissing, setDismissing] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const doDismiss = async () => {
