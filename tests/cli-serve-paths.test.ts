@@ -136,3 +136,44 @@ for (const [label, dirname] of queryPrefixed) {
     serveCannotBootUnderQueryPrefix(path.join(TMP, dirname));
   });
 }
+
+// Wrong-RUNTIME guard (the v0.23.0 upgrade-path landmine). From 0.23.0 the daemon
+// bundle calls `Bun.serve` unconditionally, so `serve` must run under Bun. An
+// in-place upgrade (`npm i -g fleetdeck@latest`) refreshes the package but does
+// NOT rewrite an already-installed unit, so a pre-0.23.0 `ExecStart=node …serve`
+// keeps pointing Node at a now-Bun-only daemon → a raw `ReferenceError: Bun is
+// not defined` in a `Restart=always` hot loop. serve() preflights the runtime and
+// fails fast: exit 78 (EX_CONFIG), a one-line fix on stderr, and — proven by the
+// absence of FLEETD_LOADED — WITHOUT importing the daemon bundle or binding a port.
+//
+// Resolve a Node binary to exercise the guard: under `node --test` this process IS
+// Node; under `bun test` we spawn `node` off PATH (CI is Bun-only, but the GitHub
+// runner images ship a node, so the guard is still exercised there). If no Node is
+// available (a genuinely Bun-only box) the guard cannot be observed here, so the
+// test skips rather than failing on the environment.
+function resolveNode(): string | null {
+  const candidate = process.versions.bun ? 'node' : process.execPath;
+  const probe = spawnSync(candidate, ['--version'], { encoding: 'utf8', timeout: 15000 });
+  if (probe.error || probe.status !== 0 || !/^v\d+\./.test((probe.stdout ?? '').trim()))
+    return null;
+  return candidate;
+}
+
+test('serve: refuses to boot under a non-Bun runtime and never imports the daemon', (t) => {
+  const node = resolveNode();
+  if (!node) return t.skip('no node binary available to exercise the wrong-runtime guard');
+  const cli = packFakeRuntime(path.join(TMP, 'wrong-runtime-node'));
+  const res = spawnSync(node, [cli, 'serve'], { encoding: 'utf8', timeout: 15000 });
+  assert.equal(res.error, undefined, `node must launch the CLI: ${res.error}`);
+  assert.equal(
+    res.status,
+    78,
+    `serve under Node must exit 78 (EX_CONFIG), got ${res.status}\nstderr: ${res.stderr}`,
+  );
+  assert.match(res.stderr, /requires Bun/, 'the guard must name the Bun requirement');
+  assert.match(res.stderr, /service install/, 'the guard must point at the one-line fix');
+  assert.ok(
+    !res.stdout.includes('FLEETD_LOADED'),
+    'the daemon bundle must NOT be imported when the runtime is wrong',
+  );
+});

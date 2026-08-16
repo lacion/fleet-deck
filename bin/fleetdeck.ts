@@ -165,10 +165,41 @@ const err = (s: string) => process.stderr.write(`${s}\n`);
 
 // ------------------------------------------------------------------- serve
 
+// The dedicated exit code for "launched under the wrong runtime" — distinct from
+// 1 (generic failure), 2 (usage), and 3 (lost the port election). EX_CONFIG from
+// sysexits(3): the service is MIS-CONFIGURED (pointed at the wrong interpreter),
+// not crashed. Supervisors GENERATED FROM 0.23.1+ (UNIT/SUPERVISE below) treat it
+// as fail-stopped; a pre-0.23.1 unit predates that and keeps restarting, but every
+// start now logs the one-line fix and exits BEFORE binding a port or importing the
+// daemon — a readable journal line instead of a hot-looping ReferenceError stack.
+const EXIT_WRONG_RUNTIME = 78;
+
 // Run the daemon in the FOREGROUND. This is what a supervisor execs, so it must
 // not fork, must not detach, and must let the daemon's own SIGTERM handler run —
 // fleetd already has a tested graceful shutdown and we must not shadow it.
 async function serve(): Promise<void> {
+  // RUNTIME PREFLIGHT. From v0.23.0 the daemon bundle calls `Bun.serve` (+ native
+  // WebSocket) unconditionally, so under any non-Bun runtime the daemon throws a
+  // raw `ReferenceError: Bun is not defined` on its first server line. The way
+  // that actually reaches a user is an in-place upgrade: `npm i -g fleetdeck@latest`
+  // refreshes the package but does NOT rewrite an already-installed systemd unit /
+  // supervise.sh, so a pre-0.23.0 `ExecStart=node …/fleetdeck.mjs serve` now points
+  // Node at a Bun-only daemon. With `Restart=always` that ReferenceError becomes a
+  // hot crash-loop no operator can read. Fail fast and legibly with the one-line
+  // fix, and exit with a code the generated supervisors do NOT restart. (A fresh
+  // install can't hit this — `service install` runs under Bun, so it writes a bun
+  // ExecStart; the plugin hooks likewise invoke `bun …`. This guards the upgrade.)
+  const bun = process.versions.bun;
+  if (!bun || !bunVersionSupported(bun)) {
+    const under = bun ? `Bun ${bun} (older than ${MIN_BUN_VERSION})` : `Node ${process.version}`;
+    err(
+      `✗ fleetd requires Bun ${MIN_BUN_VERSION}+ but was launched under ${under}.\n` +
+        '  An older service unit is still starting fleetd under the wrong runtime.\n' +
+        '  Re-point it (with bun on PATH):  fleetdeck service install\n' +
+        `  or launch directly:              bun ${path.join(HERE, 'fleetdeck.mjs')} serve`,
+    );
+    process.exit(EXIT_WRONG_RUNTIME);
+  }
   process.env['FLEETDECK_MANAGED'] = '1';
   // pathToFileURL, not string concat: a legal install path containing `#`, a raw
   // `%`, or spaces still resolves under Bun — `file://${path}` truncates at the
@@ -529,7 +560,8 @@ ExecStart=${quoteExecArg(process.execPath)} ${quoteExecArg(path.join(HERE, 'flee
 Restart=always
 RestartSec=2
 # exit 3 is "another daemon already owns the port" — restarting is a hot loop.
-RestartPreventExitStatus=3
+# exit ${EXIT_WRONG_RUNTIME} is "launched under the wrong runtime" (Node vs Bun) — reinstall, don't restart.
+RestartPreventExitStatus=3 ${EXIT_WRONG_RUNTIME}
 
 [Install]
 WantedBy=default.target
@@ -568,6 +600,8 @@ while :; do
   [ "$code" -eq 0 ] && exit 0
   # 3 — lost the port election; another daemon owns :${PORT}. Respawning is a hot loop.
   [ "$code" -eq 3 ] && exit 3
+  # ${EXIT_WRONG_RUNTIME} — launched under the wrong runtime (Node vs Bun). Respawning cannot help; reinstall.
+  [ "$code" -eq ${EXIT_WRONG_RUNTIME} ] && exit ${EXIT_WRONG_RUNTIME}
   sleep "$delay"
   delay=$(( delay < 30 ? delay * 2 : 30 ))
 done
