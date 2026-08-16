@@ -751,6 +751,10 @@ test('serviceInstall (no-systemd path): writes 0700 supervise.sh + 0600 env, no 
     sh.includes('-eq 3 ] && exit 3'),
     'declines to respawn on exit 3 (port lost — hot loop)',
   );
+  assert.ok(
+    sh.includes('-eq 78 ] && exit 78'),
+    'declines to respawn under the wrong runtime (exit 78 — reinstall, not restart)',
+  );
 
   const env = fs.readFileSync(ENV_FILE, 'utf8');
   assert.equal(fs.statSync(ENV_FILE).mode & 0o777, 0o600);
@@ -766,7 +770,11 @@ test('UNIT(): a well-formed systemd user unit that execs `serve` and guards exit
   assert.ok(u.includes(`EnvironmentFile=-${ENV_FILE}`), 'optional env file (leading -)');
   assert.ok(u.includes('serve'), 'ExecStart runs `serve`');
   assert.match(u, /^Restart=always$/m);
-  assert.match(u, /^RestartPreventExitStatus=3$/m, 'does not hot-loop on the port-lost exit');
+  assert.match(
+    u,
+    /^RestartPreventExitStatus=3 78$/m,
+    'does not hot-loop on the port-lost exit (3) or the wrong-runtime exit (78)',
+  );
   assert.match(u, /^WantedBy=default\.target$/m);
 });
 

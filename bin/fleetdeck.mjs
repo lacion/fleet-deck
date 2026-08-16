@@ -96,7 +96,19 @@ var out = (s) => process.stdout.write(`${s}
 `);
 var err = (s) => process.stderr.write(`${s}
 `);
+var EXIT_WRONG_RUNTIME = 78;
 async function serve() {
+  const bun = process.versions.bun;
+  if (!bun || !bunVersionSupported(bun)) {
+    const under = bun ? `Bun ${bun} (older than ${MIN_BUN_VERSION})` : `Node ${process.version}`;
+    err(
+      `\u2717 fleetd requires Bun ${MIN_BUN_VERSION}+ but was launched under ${under}.
+  An older service unit is still starting fleetd under the wrong runtime.
+  Re-point it (with bun on PATH):  fleetdeck service install
+  or launch directly:              bun ${path.join(HERE, "fleetdeck.mjs")} serve`
+    );
+    process.exit(EXIT_WRONG_RUNTIME);
+  }
   process.env["FLEETDECK_MANAGED"] = "1";
   await import(pathToFileURL(FLEETD).href);
 }
@@ -307,7 +319,8 @@ ExecStart=${quoteExecArg(process.execPath)} ${quoteExecArg(path.join(HERE, "flee
 Restart=always
 RestartSec=2
 # exit 3 is "another daemon already owns the port" \u2014 restarting is a hot loop.
-RestartPreventExitStatus=3
+# exit ${EXIT_WRONG_RUNTIME} is "launched under the wrong runtime" (Node vs Bun) \u2014 reinstall, don't restart.
+RestartPreventExitStatus=3 ${EXIT_WRONG_RUNTIME}
 
 [Install]
 WantedBy=default.target
@@ -333,6 +346,8 @@ while :; do
   [ "$code" -eq 0 ] && exit 0
   # 3 \u2014 lost the port election; another daemon owns :${PORT}. Respawning is a hot loop.
   [ "$code" -eq 3 ] && exit 3
+  # ${EXIT_WRONG_RUNTIME} \u2014 launched under the wrong runtime (Node vs Bun). Respawning cannot help; reinstall.
+  [ "$code" -eq ${EXIT_WRONG_RUNTIME} ] && exit ${EXIT_WRONG_RUNTIME}
   sleep "$delay"
   delay=$(( delay < 30 ? delay * 2 : 30 ))
 done
