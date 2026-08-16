@@ -5,6 +5,36 @@ All notable changes to Fleet Deck are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.23.0] - 2026-08-16
+
+Fleet Deck's daemon and board are now TypeScript on a Bun-primary runtime. This
+is an internal rewrite: the HTTP/hook contract, the board, and every user-facing
+behaviour are unchanged.
+
+### Changed
+
+- **The whole codebase is TypeScript (strict), built and run on Bun.** The
+  daemon serves over `Bun.serve` with native WebSockets (no runtime `ws`
+  dependency — production `dependencies` is now empty), the toolchain moved to
+  Biome (replacing ESLint/Prettier) and `bun test`,
+  and schema upgrades run as transactional `user_version` migrations. No wire
+  format, hook payload, or board interaction changed: the `.mjs`/`.jsx` sources
+  were converted in place, and the shipped daemon bundle and board assets are
+  regenerated from the TypeScript sources.
+
+### Fixed
+
+- **Migration coercion drift at untrusted seams no longer drops telemetry or
+  blanks a card.** Converting the defensive JavaScript to typed TypeScript
+  erased runtime guards at the boundaries where values actually arrive
+  untyped — hook payloads, the `claude agents --json` poller, board POST bodies,
+  and agent-authored plan text. A `null` or number where a `string` was declared
+  could throw: in the daemon the fail-open swallowed it into silently dropped
+  telemetry, and on the board a render-path throw could white-screen a question
+  card. The pre-TypeScript `String(x ?? '')` coercion is restored at each seam,
+  and each question-rail card is now wrapped in an error boundary so one poisoned
+  card can no longer take down the board.
+
 ## [0.22.5] - 2026-08-11
 
 Large repositories could freeze before Claude Code reached the prompt.
