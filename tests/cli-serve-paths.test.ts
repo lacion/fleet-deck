@@ -216,3 +216,42 @@ test('serve: refuses to boot under a non-Bun runtime and never imports the daemo
     'the daemon bundle must NOT be imported when the runtime is wrong',
   );
 });
+
+// Self-contained-bundle guard (the Coder incomplete-install landmine, ROOT CAUSE).
+// bin/fleetdeck.ts loads the daemon's pid-identity helpers (pidRecord /
+// livePidLooksLikeFleetd / verifyDaemonPid) from src/daemon/takeover.ts. That
+// import MUST be STATIC so `bun run bundle:bin` esbuild-INLINES the helpers into
+// the shipped bin/fleetdeck.mjs. A published (bundle-only) install ships no src/
+// tree (see the `files` allowlist), so ANY runtime load of that source — the
+// former computed-path require()/import(), or a static import esbuild failed to
+// inline — crashed `fleetdeck service start`/`stop` (which reach the identity
+// gates) with `Cannot find module .../src/daemon/takeover.ts`. That is the cryptic
+// error the exit-66 bundle guard above did NOT cover: it fires on a bundle-COMPLETE
+// install too. This tripwire reads the committed artifact and asserts the helpers
+// are present as INLINED function bodies and that no executable line still refers
+// to the takeover source. Paired with the bin-drift CI gate (which pins the
+// committed .mjs to bin/*.ts), it guarantees the shipped CLI is self-contained.
+test('bin bundle inlines the takeover pid helpers and never loads the source at runtime', () => {
+  const src = fs.readFileSync(path.join(REPO, 'bin', 'fleetdeck.mjs'), 'utf8');
+  // esbuild marks each inlined module with a bare `// <path>` provenance comment;
+  // drop pure-comment lines so only executable code is inspected for the source ref.
+  const code = src
+    .split('\n')
+    .filter((line) => !/^\s*\/\//.test(line))
+    .join('\n');
+  assert.ok(
+    !/takeover/i.test(code),
+    'the shipped bin bundle must not reference the takeover source at runtime — the ' +
+      'pid helpers must be esbuild-inlined via a STATIC import, not loaded by computed ' +
+      'path (a bundle-only install ships no src/ tree)',
+  );
+  // Positively prove the helpers were INLINED (not merely dropped): their function
+  // bodies must appear verbatim in the artifact.
+  for (const fn of [
+    'function pidRecord',
+    'function livePidLooksLikeFleetd',
+    'function verifyDaemonPid',
+  ]) {
+    assert.ok(src.includes(fn), `expected ${fn} to be inlined into bin/fleetdeck.mjs`);
+  }
+});

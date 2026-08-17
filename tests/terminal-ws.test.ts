@@ -195,6 +195,30 @@ test('live terminal WS seeds, streams, relays hex input/resize, and kills its co
   );
 });
 
+test('bracketed-paste flag replays the mode-set into the viewer seed', async (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-term-bp-'));
+  const record = path.join(dir, 'term.jsonl');
+  // The fixture answers #{bracket_paste_flag} with 1 (as an agent pane would).
+  const daemon = await startDaemon({ env: env(record, { FLEETDECK_TEST_BRACKET_PASTE: '1' }) });
+  t.after(async () => {
+    await daemon.stop();
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+  const spawned = await createSpawn(daemon, dir);
+  const { ws, frames } = connect(termUrl(daemon, spawned.spawn_id, 90, 30));
+  t.after(() => ws.close());
+
+  const init = await waitUntil(() => frames.find(frameOf('init')), 'init frame');
+  // capture-pane restores cells, not DEC private-mode state, so the daemon reads
+  // the pane's bracketed-paste flag and replays ESC[?2004h AFTER parking the
+  // cursor (a mode-set is position-independent). A fresh viewer's xterm then comes
+  // up with bracketedPasteMode set and the board stops blocking multi-line paste.
+  assert.equal(
+    init.screen,
+    `${ESC}[H${ESC}[2Jseed %1 ${ESC}[31mred${ESC}[0m${ESC}[4;3H${ESC}[?2004h`,
+  );
+});
+
 test('grid: many viewers share ONE control client, each sized and streamed independently', async (t) => {
   const dir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-term-grid-'));
   const record = path.join(dir, 'term.jsonl');

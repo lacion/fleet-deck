@@ -10834,6 +10834,7 @@ var MAX_PENDING_OUTPUT_BYTES = envInt("FLEETDECK_TERM_PENDING_MAX_BYTES", MAX_IN
   min: 1024
 });
 var CLEAR_SCREEN = "\x1B[H\x1B[2J";
+var BRACKETED_PASTE_ON = "\x1B[?2004h";
 var REPAINT_MS = envInt("FLEETDECK_TERM_REPAINT_MS", 80);
 var PANE_DEAD_POLL_MS = envInt("FLEETDECK_TERM_DEAD_POLL_MS", 5e3, { min: 100 });
 function dimensions(cols, rows) {
@@ -11292,10 +11293,13 @@ function createTermBridge({
       subscribe(c, pane, viewer);
       const captured = await c.command(`capture-pane -p -e -t ${pane}`);
       if (!captured.ok) throw new Error("terminal pane capture failed");
-      const cursor = await c.command(`display-message -p -t ${pane} '#{cursor_x} #{cursor_y}'`);
+      const cursor = await c.command(
+        `display-message -p -t ${pane} '#{cursor_x} #{cursor_y} #{bracket_paste_flag}'`
+      );
       if (!cursor.ok) throw new Error("terminal cursor lookup failed");
-      const match = /^(\d+)\s+(\d+)$/.exec(cursor.lines.at(-1)?.trim() ?? "");
+      const match = /^(\d+)\s+(\d+)(?:\s+(\d+))?\s*$/.exec(cursor.lines.at(-1)?.trim() ?? "");
       if (!match) throw new Error("terminal cursor lookup returned invalid data");
+      const bracketedPaste = match[3] === "1";
       viewer.established = true;
       send({
         t: "init",
@@ -11303,7 +11307,12 @@ function createTermBridge({
         rows: size.rows,
         // The parser speaks latin1 (byte-exact); the pane speaks UTF-8. Rebuild
         // the bytes and decode them as one piece so multi-byte glyphs survive.
-        screen: CLEAR_SCREEN + Buffer.from(captured.lines.join("\r\n"), "latin1").toString("utf8") + `\x1B[${Number(match[2]) + 1};${Number(match[1]) + 1}H`
+        screen: CLEAR_SCREEN + Buffer.from(captured.lines.join("\r\n"), "latin1").toString("utf8") + `\x1B[${Number(match[2]) + 1};${Number(match[1]) + 1}H` + // Replay the pane's bracketed-paste (DEC 2004) mode into the seed after
+        // the cursor is parked — a mode set is position-independent. The board
+        // writes this seed through xterm right after a term.reset(), so
+        // BRACKETED_PASTE_ON restores term.modes.bracketedPasteMode and the paste
+        // gate stops blocking multi-line paste on agent panes.
+        (bracketedPaste ? BRACKETED_PASTE_ON : "")
       });
       viewer.initialized = true;
       viewer.flushPending();

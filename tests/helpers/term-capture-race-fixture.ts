@@ -27,7 +27,9 @@ input.on('line', (line: string) => {
   if (line.startsWith('list-panes -t ')) response(['%1']);
   else if (line.startsWith('capture-pane '))
     response(['seed %1'], true, '%output %1 after-capture\n');
-  else if (line.includes("'#{cursor_x} #{cursor_y}'")) response(['2 3']);
+  // No bracket_paste_flag field: the bridge's cursor regex treats a missing flag
+  // as OFF (older-tmux graceful degradation), which is fine for this race fixture.
+  else if (line.includes('#{cursor_x}')) response(['2 3']);
   else response([]);
 });
 

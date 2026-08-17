@@ -5,6 +5,40 @@ All notable changes to Fleet Deck are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.23.3] - 2026-08-17
+
+`fleetdeck service start` / `service stop` no longer crash on a fully-installed
+package. The CLI now carries its daemon-identity logic inside its own bundle.
+Multi-line paste into agent tiles works again.
+
+### Fixed
+
+- **`service start` / `service stop` crashed with `Cannot find module
+  '.../src/daemon/takeover.ts'` even on a complete install.** The two commands run
+  identity gates (is the responder on the port *our* managed daemon? is a pid safe
+  to signal?) that borrow three helpers from the daemon's `takeover.ts`. `bin/`
+  loaded that module by a **computed path at runtime**, but a published package
+  ships only `bin/` + the daemon bundle — never the TypeScript source tree — so the
+  load raised `ERR_MODULE_NOT_FOUND` and took the command down with it. This is a
+  distinct root cause from the 0.23.2 fix: 0.23.2 only guards a *missing daemon
+  bundle*; this hit installs where the bundle was present. The helpers are now
+  imported **statically**, so `bun run bundle:bin` inlines them into
+  `bin/fleetdeck.mjs` and the shipped CLI is self-contained — no runtime load of an
+  unshipped source file. (`takeover.ts` stays dependency-free, exactly as the
+  SessionStart hook bundle already requires, so the inline is clean.) Surfaced by
+  Coder workspaces, where every workspace start reinstalls the CLI from npm.
+- **Multi-line paste into an agent tile was wrongly blocked with "multi-line paste
+  blocked — this pane did not ask for bracketed paste".** A browser viewer's
+  terminal is seeded from `tmux capture-pane`, which restores the visible cells but
+  not the pane's DEC private-mode state, so a fresh viewer always came up with
+  bracketed paste **off** — and the board's paste guard then blocked multi-line
+  paste on Claude Code / codex panes that *had* enabled it. The daemon now reads the
+  pane's live bracketed-paste state from tmux's `#{bracket_paste_flag}` (in the same
+  `display-message` round-trip already used for the cursor) and replays `ESC[?2004h`
+  into the viewer's init seed when it is on, so the mode is restored on connect and
+  reconnect. Plain shells like `dash` that never enable the mode stay correctly
+  blocked; an older tmux without the format field degrades to off (no regression).
+
 ## [0.23.2] - 2026-08-17
 
 `fleetdeck serve` now fails legibly when the daemon bundle is missing, instead of
