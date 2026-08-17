@@ -159,6 +159,45 @@ function resolveNode(): string | null {
   return candidate;
 }
 
+// Install-integrity guard (the Coder post-Bun-cutover landmine). A partial or
+// interrupted `npm i -g fleetdeck` — or an in-place upgrade over a daemon still
+// running out of the global dir — can land bin/ WITHOUT the daemon bundle
+// (src/daemon/fleetd.bundle.mjs). Before the guard, serve() fell through to
+// `import('.../fleetd.ts')` and emitted a cryptic `Cannot find module` naming an
+// unshippable SOURCE path (`.../src/daemon/takeover.ts`), attributed to
+// bin/fleetdeck.mjs — baffling to an operator. serve() now checks the entrypoint
+// exists and, when it does not, names the real problem and exits 66 (EX_NOINPUT)
+// WITHOUT importing anything — proven by the absence of FLEETD_LOADED. Like the
+// wrong-runtime guard, this runs under Bun (spawn via the shebang), so the bundle
+// check is reached only after the runtime preflight passes.
+function packCliWithoutBundle(prefix: string) {
+  const bin = path.join(prefix, 'bin');
+  fs.mkdirSync(bin, { recursive: true });
+  const cli = path.join(bin, 'fleetdeck.mjs');
+  fs.copyFileSync(path.join(REPO, 'bin', 'fleetdeck.mjs'), cli);
+  fs.chmodSync(cli, 0o755); // the shebang can only launch it if it stays executable
+  // Deliberately DO NOT write src/daemon/fleetd.bundle.mjs (nor the source
+  // fallback): this is exactly the bundle-less tree a broken install leaves.
+  return cli;
+}
+
+test('serve: an install missing the daemon bundle exits 66 with a reinstall hint, importing nothing', () => {
+  const cli = packCliWithoutBundle(path.join(TMP, 'incomplete-install'));
+  const res = spawnSync(cli, ['serve'], { encoding: 'utf8', timeout: 15000 });
+  assert.equal(res.error, undefined, `child must not fail to spawn: ${res.error}`);
+  assert.equal(
+    res.status,
+    66,
+    `serve with no daemon bundle must exit 66 (EX_NOINPUT), got ${res.status}\nstderr: ${res.stderr}`,
+  );
+  assert.match(res.stderr, /install is incomplete/, 'the guard names the real problem');
+  assert.match(res.stderr, /npm install -g fleetdeck/, 'the guard points at the reinstall fix');
+  assert.ok(
+    !res.stdout.includes('FLEETD_LOADED'),
+    'nothing is imported when the daemon entrypoint is missing',
+  );
+});
+
 test('serve: refuses to boot under a non-Bun runtime and never imports the daemon', (t) => {
   const node = resolveNode();
   if (!node) return t.skip('no node binary available to exercise the wrong-runtime guard');
