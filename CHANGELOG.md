@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 `fleetdeck service start` / `service stop` no longer crash on a fully-installed
 package. The CLI now carries its daemon-identity logic inside its own bundle.
+Multi-line paste into agent tiles works again.
 
 ### Fixed
 
@@ -26,6 +27,17 @@ package. The CLI now carries its daemon-identity logic inside its own bundle.
   unshipped source file. (`takeover.ts` stays dependency-free, exactly as the
   SessionStart hook bundle already requires, so the inline is clean.) Surfaced by
   Coder workspaces, where every workspace start reinstalls the CLI from npm.
+- **Multi-line paste into an agent tile was wrongly blocked with "multi-line paste
+  blocked — this pane did not ask for bracketed paste".** A browser viewer's
+  terminal is seeded from `tmux capture-pane`, which restores the visible cells but
+  not the pane's DEC private-mode state, so a fresh viewer always came up with
+  bracketed paste **off** — and the board's paste guard then blocked multi-line
+  paste on Claude Code / codex panes that *had* enabled it. The daemon now reads the
+  pane's live bracketed-paste state from tmux's `#{bracket_paste_flag}` (in the same
+  `display-message` round-trip already used for the cursor) and replays `ESC[?2004h`
+  into the viewer's init seed when it is on, so the mode is restored on connect and
+  reconnect. Plain shells like `dash` that never enable the mode stay correctly
+  blocked; an older tmux without the format field degrades to off (no regression).
 
 ## [0.23.2] - 2026-08-17
 
