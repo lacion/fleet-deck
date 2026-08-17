@@ -30,7 +30,7 @@ import { execFile, spawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { MIN_TMUX_VERSION, parseTmuxVersion, tmuxVersionSupported } from './tmux-version.ts';
-import { createRequire } from 'node:module';
+import { livePidLooksLikeFleetd, pidRecord, verifyDaemonPid } from '../src/daemon/takeover.ts';
 
 const execFileP = promisify(execFile);
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -52,12 +52,6 @@ interface Health {
   fleet: number;
   spawn?: SpawnHealth;
 }
-// The two sync pid-identity helpers loaded lazily from scripts/fleetd/takeover.ts.
-interface TakeoverPidHelpers {
-  pidRecord: (text: string) => { pid: number; port: number | null } | null;
-  livePidLooksLikeFleetd: (pid: number) => boolean;
-}
-
 // Node throws ErrnoException objects (a `.code` string) for fs/spawn failures;
 // narrow an `unknown` catch value to that code without asserting the whole shape.
 function errnoCode(e: unknown): string | undefined {
@@ -719,34 +713,20 @@ function supervisorAlive(): number {
 // Any disagreement → false, and the caller reports the foreign responder and
 // leaves it untouched rather than signalling a process it cannot identify.
 //
-// takeover.ts is loaded LAZILY here, never as a top-level import (BUG-074
-// composition): the published CLI and the serve regression must boot from a
-// minimal packed runtime that ships only bin/ + the daemon bundle — no source
-// scripts/fleetd/ tree — so an eager import would be an ERR_MODULE_NOT_FOUND
-// before `serve` ever runs. require(esm) loads it SYNCHRONOUSLY so this stays a
-// sync predicate for its callers and tests; healthIsOurManagedDaemon, being
-// async, dynamic-imports the same module. NOTE: require()/import() of a .ts
-// source needs on-load type-stripping, which the sole runtime (Bun) does
-// natively, so this path never asks for anything the CLI itself doesn't already
-// run under. The shipped artifact runs from the plain-JS bundle, and
-// this source path is only reached on a full checkout (a bundle-only install
-// never ships scripts/fleetd/, so this require throws there exactly as it did
-// when it was takeover.mjs — a pre-existing, unshipped path).
-const requireHere = createRequire(import.meta.url);
-let takeoverPidHelpers: TakeoverPidHelpers | null = null;
-function loadTakeoverPidHelpers(): TakeoverPidHelpers {
-  takeoverPidHelpers ??= requireHere(
-    path.join(ROOT, 'src', 'daemon', 'takeover.ts'),
-  ) as TakeoverPidHelpers;
-  return takeoverPidHelpers;
-}
-
+// pidRecord / livePidLooksLikeFleetd (and verifyDaemonPid below) come from
+// takeover.ts via a STATIC top-level import, so `bun run bundle:bin` esbuild-
+// inlines them into bin/fleetdeck.mjs and the shipped CLI carries this logic
+// itself. That is mandatory, not stylistic: a published (bundle-only) install
+// ships only bin/ + the daemon bundle — no src/ tree — so the former computed-
+// path require()/import() of src/daemon/takeover.ts raised ERR_MODULE_NOT_FOUND
+// there and crashed every command that reached these gates (`service start`/
+// `stop`). takeover.ts stays dependency-free (node builtins + pure helpers), so
+// esbuild inlines it cleanly — the same way the SessionStart hook bundle does.
 function healthPidIsOurDaemon(h: Health | null | undefined): boolean {
   if (!h?.managed) return false;
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-conversion -- h is an unchecked cast of wire JSON; Number() coerces a stringy pid before the integer guard
   const pid = Number(h.pid);
   if (!Number.isInteger(pid) || pid <= 0) return false;
-  const { pidRecord, livePidLooksLikeFleetd } = loadTakeoverPidHelpers();
   let record: { pid: number; port: number | null } | null;
   try {
     record = pidRecord(fs.readFileSync(FLEETD_PID, 'utf8'));
@@ -779,7 +759,7 @@ async function waitForHealth({
   for (let i = 0; i < tries; i += 1) {
     await new Promise((r) => setTimeout(r, everyMs));
     const h = await health({ timeout: everyMs });
-    // AWAIT the predicate. healthIsOurManagedDaemon is async (it dynamic-imports
+    // AWAIT the predicate. healthIsOurManagedDaemon is async (its Promise wraps
     // takeover's verifyDaemonPid), and an un-awaited Promise is ALWAYS truthy —
     // which silently turned the managed-identity gate into a no-op on the
     // supervised `service start` path, so a foreign/unmanaged responder already
@@ -800,9 +780,6 @@ async function waitForHealth({
 // exits 3 after losing the port election while waitForHealth saw the squatter.
 async function healthIsOurManagedDaemon(h: Health | null | undefined): Promise<boolean> {
   if (!h?.managed) return false;
-  const { verifyDaemonPid } = (await import(
-    `file://${path.join(ROOT, 'src', 'daemon', 'takeover.ts')}`
-  )) as { verifyDaemonPid: (pid: number, home: string) => boolean };
   return verifyDaemonPid(h.pid, HOME);
 }
 
