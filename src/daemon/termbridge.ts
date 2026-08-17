@@ -96,6 +96,9 @@ const MAX_PENDING_OUTPUT_BYTES = envInt('FLEETDECK_TERM_PENDING_MAX_BYTES', MAX_
 
 // Cursor home + erase screen: a fresh viewer must never inherit stale cells.
 const CLEAR_SCREEN = '\u001b[H\u001b[2J';
+// DEC private mode 2004 (bracketed paste) ON. Replayed into a fresh viewer's seed
+// when the pane has the mode set; capture-pane restores cells, not mode state.
+const BRACKETED_PASTE_ON = '\u001b[?2004h';
 // Delay before the post-seed repaint jiggle — long enough that the seed has
 // rendered, short enough that the human never sees the snapshot's seams.
 const REPAINT_MS = envInt('FLEETDECK_TERM_REPAINT_MS', 80);
@@ -817,10 +820,20 @@ export function createTermBridge({
       const captured = await c.command(`capture-pane -p -e -t ${pane}`);
       if (!captured.ok) throw new Error('terminal pane capture failed');
 
-      const cursor = await c.command(`display-message -p -t ${pane} '#{cursor_x} #{cursor_y}'`);
+      // Read the cursor AND the pane's bracketed-paste (DEC 2004) state in one
+      // round-trip. capture-pane restores cells, not private-mode state, so a
+      // fresh viewer's xterm would come up with bracketed paste OFF even when the
+      // agent enabled it — and the board then blocks multi-line paste on an agent
+      // pane. tmux tracks the mode per pane and exposes it as #{bracket_paste_flag}
+      // (1/0); we replay it into the seed below. The flag field is OPTIONAL in the
+      // parse so an older tmux without the format degrades to OFF (no regression).
+      const cursor = await c.command(
+        `display-message -p -t ${pane} '#{cursor_x} #{cursor_y} #{bracket_paste_flag}'`,
+      );
       if (!cursor.ok) throw new Error('terminal cursor lookup failed');
-      const match = /^(\d+)\s+(\d+)$/.exec(cursor.lines.at(-1)?.trim() ?? '');
+      const match = /^(\d+)\s+(\d+)(?:\s+(\d+))?\s*$/.exec(cursor.lines.at(-1)?.trim() ?? '');
       if (!match) throw new Error('terminal cursor lookup returned invalid data');
+      const bracketedPaste = match[3] === '1';
 
       viewer.established = true;
       // CRLF, never bare LF: a raw terminal reads \n as "down one row", NOT
@@ -836,7 +849,13 @@ export function createTermBridge({
         screen:
           CLEAR_SCREEN +
           Buffer.from(captured.lines.join('\r\n'), 'latin1').toString('utf8') +
-          `\u001b[${Number(match[2]) + 1};${Number(match[1]) + 1}H`,
+          `\u001b[${Number(match[2]) + 1};${Number(match[1]) + 1}H` +
+          // Replay the pane's bracketed-paste (DEC 2004) mode into the seed after
+          // the cursor is parked — a mode set is position-independent. The board
+          // writes this seed through xterm right after a term.reset(), so
+          // BRACKETED_PASTE_ON restores term.modes.bracketedPasteMode and the paste
+          // gate stops blocking multi-line paste on agent panes.
+          (bracketedPaste ? BRACKETED_PASTE_ON : ''),
       });
       viewer.initialized = true;
       // R1-4: replay whatever arrived during the cursor lookup / init build.

@@ -78,6 +78,11 @@ function noPaneModeFor(window: string): 'empty' | 'error' | null {
 //                                     reports NO panes, so a %window-close probe
 //                                     (FLEETDECK_TEST_TERM_CLOSE_WINDOW, emitted
 //                                     once the first pane streams) condemns it.
+//   FLEETDECK_TEST_BRACKET_PASTE    — cursor reply carries #{bracket_paste_flag}=1
+//                                     ('1'), so the init seed replays the pane's
+//                                     bracketed-paste mode-set and the board
+//                                     unblocks multi-line paste. Default 0 (off)
+//                                     keeps the seed cursor-only.
 // <cmd> on a knob's value scopes the fault to commands starting with that word.
 const hangKnob = process.env['FLEETDECK_TEST_TERM_HANG_MS'];
 function hangFor(cmd: string): number {
@@ -89,6 +94,7 @@ function hangFor(cmd: string): number {
 const failResizeKnob = process.env['FLEETDECK_TEST_TERM_FAIL_RESIZE'];
 const deadPaneKnob = process.env['FLEETDECK_TEST_TERM_DEAD_PANE'];
 const closeWindowKnob = process.env['FLEETDECK_TEST_TERM_CLOSE_WINDOW'];
+const bracketPasteKnob = process.env['FLEETDECK_TEST_BRACKET_PASTE'];
 let closeWindowSent = false;
 function knobHits(knob: string | undefined, cmd: string): boolean {
   if (!knob) return false;
@@ -250,7 +256,7 @@ input.on('line', (line: string) => {
   } else if (line.startsWith('capture-pane ')) {
     const pane = paneForTarget(line) ?? '%1';
     response([`seed ${pane} \x1b[31mred\x1b[0m`], true, line);
-  } else if (line.includes("'#{cursor_x} #{cursor_y}'")) {
+  } else if (line.includes('#{cursor_x}')) {
     const pane = paneForTarget(line) ?? '%1';
     if (
       flood &&
@@ -266,7 +272,9 @@ input.on('line', (line: string) => {
         process.stdout.write(`%output ${pane} ${chunk.slice(0, left)}\n`);
       }
     }
-    response(['2 3'], true, line);
+    // The bridge reads #{bracket_paste_flag} in the same round-trip; a third
+    // field (1/0) drives whether the init seed replays the bracketed-paste mode.
+    response([`2 3 ${bracketPasteKnob === '1' ? '1' : '0'}`], true, line);
     // One output burst per pane, tagged with that pane's id, so a grid test can
     // prove each viewer received ITS stream and not its neighbour's.
     if (!streamed.has(pane)) {
