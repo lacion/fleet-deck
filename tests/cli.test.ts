@@ -755,6 +755,10 @@ test('serviceInstall (no-systemd path): writes 0700 supervise.sh + 0600 env, no 
     sh.includes('-eq 78 ] && exit 78'),
     'declines to respawn under the wrong runtime (exit 78 — reinstall, not restart)',
   );
+  assert.ok(
+    sh.includes('-eq 66 ] && exit 66'),
+    'declines to respawn on an incomplete install (exit 66 — daemon bundle missing, reinstall)',
+  );
 
   const env = fs.readFileSync(ENV_FILE, 'utf8');
   assert.equal(fs.statSync(ENV_FILE).mode & 0o777, 0o600);
@@ -772,8 +776,8 @@ test('UNIT(): a well-formed systemd user unit that execs `serve` and guards exit
   assert.match(u, /^Restart=always$/m);
   assert.match(
     u,
-    /^RestartPreventExitStatus=3 78$/m,
-    'does not hot-loop on the port-lost exit (3) or the wrong-runtime exit (78)',
+    /^RestartPreventExitStatus=3 78 66$/m,
+    'does not hot-loop on the port-lost (3), wrong-runtime (78), or incomplete-install (66) exits',
   );
   assert.match(u, /^WantedBy=default\.target$/m);
 });
@@ -832,6 +836,10 @@ test('SUPERVISE(): sources the env file safely and backs off, never respawning a
   assert.match(s, /set -a; \. '/, 'exports while sourcing so children inherit config');
   assert.ok(s.includes('-eq 0 ] && exit 0'), 'a clean SIGTERM shutdown is not respawned');
   assert.ok(s.includes('-eq 3 ] && exit 3'), 'a lost-port exit is not hot-looped');
+  assert.ok(
+    s.includes('-eq 66 ] && exit 66'),
+    'an incomplete-install exit (daemon bundle missing) is not hot-looped',
+  );
   assert.ok(s.includes('serve'), 'execs `fleetdeck serve`');
 });
 

@@ -174,6 +174,19 @@ const err = (s: string) => process.stderr.write(`${s}\n`);
 // daemon — a readable journal line instead of a hot-looping ReferenceError stack.
 const EXIT_WRONG_RUNTIME = 78;
 
+// The installed package is INCOMPLETE — the daemon entrypoint (the committed
+// bundle in a published install, or the source in a dev checkout) is not on
+// disk, so `serve` has nothing to import. This is what a partial or interrupted
+// `npm i -g` leaves behind: bin/ landed but src/daemon/fleetd.bundle.mjs did not
+// (an in-place upgrade over a daemon still running out of the global dir is one
+// way to get there — the exact state a Coder workspace hit after the Bun
+// cutover). Before this guard, serve() fell through to importing the unshippable
+// source and emitted a baffling `Cannot find module '.../src/daemon/takeover.ts'
+// from '.../bin/fleetdeck.mjs'`. Reinstalling is the only fix, so — like
+// EXIT_WRONG_RUNTIME — the generated supervisors must NOT restart on it.
+// EX_NOINPUT from sysexits(3): an input file was missing.
+const EXIT_INCOMPLETE_INSTALL = 66;
+
 // Run the daemon in the FOREGROUND. This is what a supervisor execs, so it must
 // not fork, must not detach, and must let the daemon's own SIGTERM handler run —
 // fleetd already has a tested graceful shutdown and we must not shadow it.
@@ -199,6 +212,21 @@ async function serve(): Promise<void> {
         `  or launch directly:              bun ${path.join(HERE, 'fleetdeck.mjs')} serve`,
     );
     process.exit(EXIT_WRONG_RUNTIME);
+  }
+  // INSTALL-INTEGRITY PREFLIGHT. The entrypoint resolved above (FLEETD) is the
+  // committed bundle in a published install; a partial `npm i -g` can leave it
+  // absent while bin/ is present. Importing a missing path throws a cryptic
+  // `Cannot find module '.../fleetd.ts'` attributed to THIS file (the importer),
+  // not to the missing daemon — so name what is actually wrong, and exit a code
+  // the generated supervisors do NOT restart (reinstalling is the only fix).
+  if (!fs.existsSync(FLEETD)) {
+    err(
+      `✗ fleetd entrypoint is missing: ${FLEETD}\n` +
+        '  This fleetdeck install is incomplete — the daemon bundle did not land\n' +
+        '  (a partial or interrupted `npm install -g`). Reinstall it:\n' +
+        '    npm install -g fleetdeck',
+    );
+    process.exit(EXIT_INCOMPLETE_INSTALL);
   }
   process.env['FLEETDECK_MANAGED'] = '1';
   // pathToFileURL, not string concat: a legal install path containing `#`, a raw
@@ -561,7 +589,8 @@ Restart=always
 RestartSec=2
 # exit 3 is "another daemon already owns the port" — restarting is a hot loop.
 # exit ${EXIT_WRONG_RUNTIME} is "launched under the wrong runtime" (Node vs Bun) — reinstall, don't restart.
-RestartPreventExitStatus=3 ${EXIT_WRONG_RUNTIME}
+# exit ${EXIT_INCOMPLETE_INSTALL} is "install incomplete, daemon bundle missing" — reinstall, don't restart.
+RestartPreventExitStatus=3 ${EXIT_WRONG_RUNTIME} ${EXIT_INCOMPLETE_INSTALL}
 
 [Install]
 WantedBy=default.target
@@ -602,6 +631,8 @@ while :; do
   [ "$code" -eq 3 ] && exit 3
   # ${EXIT_WRONG_RUNTIME} — launched under the wrong runtime (Node vs Bun). Respawning cannot help; reinstall.
   [ "$code" -eq ${EXIT_WRONG_RUNTIME} ] && exit ${EXIT_WRONG_RUNTIME}
+  # ${EXIT_INCOMPLETE_INSTALL} — install incomplete, daemon bundle missing. Respawning cannot help; reinstall.
+  [ "$code" -eq ${EXIT_INCOMPLETE_INSTALL} ] && exit ${EXIT_INCOMPLETE_INSTALL}
   sleep "$delay"
   delay=$(( delay < 30 ? delay * 2 : 30 ))
 done

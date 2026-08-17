@@ -97,6 +97,7 @@ var out = (s) => process.stdout.write(`${s}
 var err = (s) => process.stderr.write(`${s}
 `);
 var EXIT_WRONG_RUNTIME = 78;
+var EXIT_INCOMPLETE_INSTALL = 66;
 async function serve() {
   const bun = process.versions.bun;
   if (!bun || !bunVersionSupported(bun)) {
@@ -108,6 +109,15 @@ async function serve() {
   or launch directly:              bun ${path.join(HERE, "fleetdeck.mjs")} serve`
     );
     process.exit(EXIT_WRONG_RUNTIME);
+  }
+  if (!fs.existsSync(FLEETD)) {
+    err(
+      `\u2717 fleetd entrypoint is missing: ${FLEETD}
+  This fleetdeck install is incomplete \u2014 the daemon bundle did not land
+  (a partial or interrupted \`npm install -g\`). Reinstall it:
+    npm install -g fleetdeck`
+    );
+    process.exit(EXIT_INCOMPLETE_INSTALL);
   }
   process.env["FLEETDECK_MANAGED"] = "1";
   await import(pathToFileURL(FLEETD).href);
@@ -320,7 +330,8 @@ Restart=always
 RestartSec=2
 # exit 3 is "another daemon already owns the port" \u2014 restarting is a hot loop.
 # exit ${EXIT_WRONG_RUNTIME} is "launched under the wrong runtime" (Node vs Bun) \u2014 reinstall, don't restart.
-RestartPreventExitStatus=3 ${EXIT_WRONG_RUNTIME}
+# exit ${EXIT_INCOMPLETE_INSTALL} is "install incomplete, daemon bundle missing" \u2014 reinstall, don't restart.
+RestartPreventExitStatus=3 ${EXIT_WRONG_RUNTIME} ${EXIT_INCOMPLETE_INSTALL}
 
 [Install]
 WantedBy=default.target
@@ -348,6 +359,8 @@ while :; do
   [ "$code" -eq 3 ] && exit 3
   # ${EXIT_WRONG_RUNTIME} \u2014 launched under the wrong runtime (Node vs Bun). Respawning cannot help; reinstall.
   [ "$code" -eq ${EXIT_WRONG_RUNTIME} ] && exit ${EXIT_WRONG_RUNTIME}
+  # ${EXIT_INCOMPLETE_INSTALL} \u2014 install incomplete, daemon bundle missing. Respawning cannot help; reinstall.
+  [ "$code" -eq ${EXIT_INCOMPLETE_INSTALL} ] && exit ${EXIT_INCOMPLETE_INSTALL}
   sleep "$delay"
   delay=$(( delay < 30 ? delay * 2 : 30 ))
 done
