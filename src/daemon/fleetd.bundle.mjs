@@ -13917,19 +13917,20 @@ function pidIsLive(pid) {
     return errCode(err) !== "ESRCH";
   }
 }
+function fleetdProcessIdentity(executable, argv) {
+  const runtimeLike = /^(?:node|nodejs|bun(?:\.exe)?|fleetd)$/i.test(executable);
+  const fleetdScript = argv.some((arg) => /(?:^|[/\\])fleetd(?:\.bundle)?\.(?:mjs|ts)$/.test(arg));
+  const fleetdeckServe = argv.some(
+    (arg, index) => /(?:^|[/\\])fleetdeck\.(?:mjs|ts)$/.test(arg) && argv[index + 1] === "serve"
+  );
+  return runtimeLike && (fleetdScript || fleetdeckServe);
+}
 function livePidLooksLikeFleetd(pid) {
   if (process.platform !== "linux") return true;
   try {
     const executable = path17.basename(fs16.readlinkSync(`/proc/${pid}/exe`)).replace(/ \(deleted\)$/, "");
     const argv = fs16.readFileSync(`/proc/${pid}/cmdline`).toString("utf8").split("\0").filter(Boolean);
-    const runtimeLike = /^(?:node|nodejs|bun|fleetd)$/i.test(executable);
-    const fleetdScript = argv.some(
-      (arg) => /(?:^|[/\\])fleetd(?:\.bundle)?\.(?:mjs|ts)$/.test(arg)
-    );
-    const fleetdeckServe = argv.some(
-      (arg, index) => /(?:^|[/\\])fleetdeck\.(?:mjs|ts)$/.test(arg) && argv[index + 1] === "serve"
-    );
-    return runtimeLike && (fleetdScript || fleetdeckServe);
+    return fleetdProcessIdentity(executable, argv);
   } catch (err) {
     return errCode(err) !== "ENOENT";
   }

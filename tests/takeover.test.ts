@@ -39,6 +39,7 @@ import { loadFixture } from './helpers/fixtures.ts';
 import { scaleMs, waitUntil } from './helpers/wait.ts';
 import {
   compareSemver,
+  fleetdProcessIdentity,
   parseSemver,
   pidRecord,
   replacementMatches,
@@ -82,6 +83,33 @@ function mustParse(input: string): NonNullable<ReturnType<typeof parseSemver>> {
   assert.ok(parsed, `parseSemver(${input}) must parse`);
   return parsed;
 }
+
+test('fleetd process identity accepts both official Bun executable names only for serve', () => {
+  const bunExe = '/home/coder/.nvm/versions/node/v24/lib/node_modules/bun/bin/bun.exe';
+  const fleetdeckEntry =
+    '/home/coder/.fleetdeck/runtimes/0.23.5/node_modules/fleetdeck/bin/fleetdeck.mjs';
+  const serveArgv = [bunExe, fleetdeckEntry, 'serve'];
+  assert.equal(
+    fleetdProcessIdentity('bun.exe', serveArgv),
+    true,
+    "Bun's npm-distributed Linux executable must verify the managed Coder daemon",
+  );
+  assert.equal(
+    fleetdProcessIdentity('bun', [bunExe.replace(/bun\.exe$/, 'bun'), fleetdeckEntry, 'serve']),
+    true,
+    'the native Bun distribution remains accepted',
+  );
+  assert.equal(
+    fleetdProcessIdentity('bun.exe', [bunExe, fleetdeckEntry, 'status']),
+    false,
+    'accepting bun.exe must not authorize another FleetDeck CLI verb',
+  );
+  assert.equal(
+    fleetdProcessIdentity('bunx', serveArgv),
+    false,
+    'runtime names outside the exact allowlist remain rejected',
+  );
+});
 
 function scratchDir(t: TestContext): string {
   const d = mkdtempSync(path.join(tmpdir(), 'fleetdeck-cwd-'));

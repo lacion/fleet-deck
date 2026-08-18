@@ -29,7 +29,7 @@ resource "coder_script" "fleetdeck" {
       set -e
       # Pin this deliberately. For a fleet rollout, use the immutable runtime
       # pattern below instead of updating a live global install in place.
-      npm install -g fleetdeck@0.23.4
+      npm install -g fleetdeck@0.23.5
 
       # A named coder_app's hostname is <slug>--<workspace>--<owner> — the agent
       # name appears only in raw-PORT app hostnames (see "The exact hostname" below).
@@ -263,7 +263,7 @@ runtime compatibility check passes. Do not rely on an image-baked copy when the 
 `~/.claude`, because that mount hides the image layer:
 
 ```sh
-FLEETDECK_VERSION=0.23.4
+FLEETDECK_VERSION=0.23.5
 claude plugin marketplace add "lacion/fleet-deck@v$FLEETDECK_VERSION" --scope user
 claude plugin install fleetdeck@fleetdeck
 ```
