@@ -1,4 +1,4 @@
-// Regression for BUG-212: the failed-clone case in tests/spawn-repo.test.ts
+// Regression for BUG-212: the failed-access-preflight case in tests/spawn-repo.test.ts
 // creates its missing origin under a scratch parent named
 // `fleetdeck-missing-origin-*`. Without teardown owning that parent, every run
 // of the focused test left one directory behind in tmpdir. Running the single
@@ -15,7 +15,7 @@ import { childRunArgv, childPassCount } from './helpers/child-runner.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
-test('the failed-clone test cleans up its missing-origin scratch parent (BUG-212)', {
+test('the access-preflight test cleans up its missing-origin scratch parent (BUG-212)', {
   timeout: 180_000,
 }, (t) => {
   const tmpRoot = mkdtempSync(path.join(tmpdir(), 'fd-bug212-'));
@@ -31,7 +31,7 @@ test('the failed-clone test cleans up its missing-origin scratch parent (BUG-212
   delete env['NODE_TEST_CONTEXT'];
   const argv = childRunArgv({
     file: path.join(HERE, 'spawn-repo.test.ts'),
-    namePattern: 'clone failure tombstones',
+    namePattern: 'access preflight refuses an unreadable remote',
   });
   const result = spawnSync(process.execPath, argv, {
     encoding: 'utf8',

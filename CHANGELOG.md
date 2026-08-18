@@ -18,6 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   copyable Coder key, and offer HTTPS. Fleet Deck never receives or stores the
   provider token.
 
+### Changed
+
+- **Claude compatibility is now a minimum, not a bounded range.** Stable Claude
+  Code releases at or above 2.1.206 remain enabled, so a routine Claude update
+  cannot switch Fleet Deck off. Older, prerelease, and unidentifiable builds
+  still stay silently inactive; strict event-specific response validation and
+  the fail-open launcher remain the safety boundary for future releases.
+
 ### Fixed
 
 - **A failed or cancelled clone could leave a permanent “cloning…” card and

@@ -54,12 +54,13 @@ test('stable Claude version parser accepts exact CLI output and rejects ambiguou
   }
 });
 
-test('compatibility policy is inclusive at min/max and rejects outside/prerelease', () => {
+test('compatibility policy enforces a minimum without rejecting newer stable releases', () => {
   assert.equal(supportsClaudeVersion('2.1.205'), false);
   assert.equal(supportsClaudeVersion('2.1.206'), true);
   assert.equal(supportsClaudeVersion('2.1.220'), true);
   assert.equal(supportsClaudeVersion('2.1.234'), true);
-  assert.equal(supportsClaudeVersion('2.1.235'), false);
+  assert.equal(supportsClaudeVersion('2.1.235'), true);
+  assert.equal(supportsClaudeVersion('999.0.0'), true);
   assert.equal(supportsClaudeVersion('2.1.234-beta.1'), false);
 });
 
@@ -87,15 +88,15 @@ test('SessionStart verdict is atomic, owner-only, and keyed to runtime plus poli
     false,
   );
   const shifted: ClaudeCompatibilityPolicy = {
-    schema: 1,
-    claudeCode: { min: '2.1.221', max: '2.1.234' },
+    schema: 2,
+    claudeCode: { min: '2.1.221' },
   };
   assert.equal(hasActiveClaudeCompatibility(home, { env: hookEnv, policy: shifted }), false);
 });
 
-test('unsupported, corrupt, oversized, and non-owner-only verdicts are inactive', async (t) => {
+test('too-old, corrupt, oversized, and non-owner-only verdicts are inactive', async (t) => {
   const home = scratch(t);
-  const hookEnv = env('2.1.235');
+  const hookEnv = env('2.1.205');
   assert.equal(await establishClaudeCompatibility(home, { env: hookEnv }), false);
   const file = compatibilityVerdictFile(home, hookEnv);
   assert.equal(hasActiveClaudeCompatibility(home, { env: hookEnv }), false);
@@ -196,13 +197,20 @@ test('verdict lease expires and stale marker cleanup is bounded', async (t) => {
   assert.equal(pruneClaudeCompatibilityVerdicts(home, now), 1);
 });
 
-test('invalid or inverted policy can never activate a verdict', async (t) => {
+test('invalid or obsolete policy can never activate a verdict', async (t) => {
   const home = scratch(t);
   const hookEnv = env('2.1.220');
-  const inverted: ClaudeCompatibilityPolicy = {
+  const invalid: ClaudeCompatibilityPolicy = {
+    schema: 2,
+    claudeCode: { min: 'not-a-version' },
+  };
+  assert.equal(await establishClaudeCompatibility(home, { env: hookEnv, policy: invalid }), false);
+  assert.equal(hasActiveClaudeCompatibility(home, { env: hookEnv, policy: invalid }), false);
+
+  const obsolete = {
     schema: 1,
     claudeCode: { min: '2.1.234', max: '2.1.206' },
-  };
-  assert.equal(await establishClaudeCompatibility(home, { env: hookEnv, policy: inverted }), false);
-  assert.equal(hasActiveClaudeCompatibility(home, { env: hookEnv, policy: inverted }), false);
+  } as unknown as ClaudeCompatibilityPolicy;
+  assert.equal(await establishClaudeCompatibility(home, { env: hookEnv, policy: obsolete }), false);
+  assert.equal(hasActiveClaudeCompatibility(home, { env: hookEnv, policy: obsolete }), false);
 });

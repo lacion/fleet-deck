@@ -124,7 +124,7 @@ test('unsupported Claude disables all three bundled hooks silently before networ
     ...process.env,
     FLEETDECK_HOME: home,
     FLEETDECK_PORT: String(address.port),
-    FLEETDECK_TEST_CLAUDE_VERSION: '99.0.0',
+    FLEETDECK_TEST_CLAUDE_VERSION: '2.1.205',
     CLAUDE_PID: '515151',
   };
 
@@ -155,7 +155,7 @@ test('unsupported Claude disables all three bundled hooks silently before networ
   );
 });
 
-test('separate launchers derive one Claude identity and reuse the SessionStart verdict', async (t) => {
+test('a future stable Claude version stays active across separate hook launchers', async (t) => {
   const daemon = await startDaemon();
   t.after(async () => daemon.stop());
   const sid = 'launcher-identity';
@@ -163,7 +163,7 @@ test('separate launchers derive one Claude identity and reuse the SessionStart v
     ...process.env,
     FLEETDECK_HOME: daemon.home,
     FLEETDECK_PORT: String(daemon.port),
-    FLEETDECK_TEST_CLAUDE_VERSION: '2.1.234',
+    FLEETDECK_TEST_CLAUDE_VERSION: '99.0.0',
     // The launcher must overwrite, not trust, this stale/foreign marker.
     CLAUDE_PID: '999999',
   };

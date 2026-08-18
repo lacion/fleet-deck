@@ -17,10 +17,9 @@ import packageJson from '../package.json' with { type: 'json' };
 import { runKey } from '../src/daemon/run-nonce.ts';
 
 export interface ClaudeCompatibilityPolicy {
-  schema: 1;
+  schema: 2;
   claudeCode: {
     min: string;
-    max: string;
   };
 }
 
@@ -108,29 +107,22 @@ function compareVersion(a: StableVersion, b: StableVersion): number {
 
 function normalizedPolicy(policy: ClaudeCompatibilityPolicy): {
   min: StableVersion;
-  max: StableVersion;
   signature: string;
 } | null {
-  if (policy.schema !== 1) return null;
+  if (policy.schema !== 2) return null;
   const min = parseStableClaudeVersion(policy.claudeCode?.min);
-  const max = parseStableClaudeVersion(policy.claudeCode?.max);
-  if (!min || !max || compareVersion(min, max) > 0) return null;
-  return { min, max, signature: `1:${min.raw}:${max.raw}` };
+  if (!min) return null;
+  return { min, signature: `2:${min.raw}` };
 }
 
-/** Inclusive compatibility decision. Invalid policies and prereleases are inactive. */
+/** Stable releases at or above the tested floor are active. Invalid policies and prereleases are not. */
 export function supportsClaudeVersion(
   version: unknown,
   policy: ClaudeCompatibilityPolicy = POLICY,
 ): boolean {
   const parsed = parseStableClaudeVersion(version);
   const normalized = normalizedPolicy(policy);
-  return Boolean(
-    parsed &&
-      normalized &&
-      compareVersion(parsed, normalized.min) >= 0 &&
-      compareVersion(parsed, normalized.max) <= 0,
-  );
+  return Boolean(parsed && normalized && compareVersion(parsed, normalized.min) >= 0);
 }
 
 function identity(env: NodeJS.ProcessEnv, ppid: number): CompatibilityIdentity {
