@@ -17,6 +17,7 @@
 
 import { useSyncExternalStore } from 'react';
 import { wsBase } from './base.ts';
+import { storageGet, storageRemove, storageSet } from './storage.ts';
 
 // The board's live auth state, published through useAuth() (useSyncExternalStore).
 interface AuthState {
@@ -35,20 +36,9 @@ const emit = () => {
   for (const fn of subs) fn();
 };
 
-function readStored(): string | null {
-  try {
-    return localStorage.getItem(KEY) ?? null;
-  } catch {
-    return null;
-  } // private mode / blocked storage
-}
 function writeStored(t: string | null): void {
-  try {
-    if (t) localStorage.setItem(KEY, t);
-    else localStorage.removeItem(KEY);
-  } catch {
-    /* the in-memory token still carries this tab */
-  }
+  if (t) storageSet(KEY, t);
+  else storageRemove(KEY);
 }
 
 /** Boot: adopt ?t=… (then scrub it from the URL), else fall back to storage. */
@@ -73,7 +63,7 @@ export function initToken(): void {
   }
 
   if (fromUrl) writeStored(fromUrl);
-  state = { token: fromUrl ?? readStored(), unauthorized: false, attempts: 0 };
+  state = { token: fromUrl ?? storageGet(KEY), unauthorized: false, attempts: 0 };
 }
 
 // in-file only — authHeaders()/wsUrl() below are the exported surface over it.

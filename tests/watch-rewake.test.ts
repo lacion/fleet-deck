@@ -49,6 +49,7 @@ import { makeTranscriptDir, writeTranscript } from './helpers/transcript.ts';
 import { waitUntil, scaleMs } from './helpers/wait.ts';
 import { getState, scratchCwd } from './helpers/state.ts';
 import type { StateResponse, QuestionEntry } from '../contracts/state.ts';
+import { seedHookCompatibility } from './helpers/hook-compat.ts';
 
 const WATCH_SCRIPT = path.join(REPO_ROOT, 'scripts/fleet-watch.mjs');
 
@@ -80,6 +81,7 @@ interface UpsResponse {
 // hooks/hooks.json (only the Stop entry shape the last test asserts on).
 interface HookCommand {
   command?: unknown;
+  args?: unknown;
   asyncRewake?: boolean;
   timeout?: number;
 }
@@ -158,9 +160,11 @@ interface Watcher {
 // no FLEETDECK_WATCH_GRACE_MS — "nothing pending" is no longer an exit
 // reason, so there is nothing left to shrink there.
 function spawnWatcher({ port, home, sid, env = {} }: SpawnWatcherOptions): Watcher {
+  const compatibilityEnv = seedHookCompatibility(home);
   const child = spawn(process.execPath, [WATCH_SCRIPT], {
     env: {
       ...process.env,
+      ...compatibilityEnv,
       FLEETDECK_PORT: String(port),
       FLEETDECK_HOME: home,
       FLEETDECK_WATCH_POLL_MS: '400',
@@ -836,7 +840,9 @@ test('hooks.json: the asyncRewake Stop hook timeout exceeds the watcher lifetime
     readFileSync(path.join(REPO_ROOT, 'hooks/hooks.json'), 'utf8'),
   ) as HooksFile;
   const entry = hooks.hooks.Stop.flatMap((group) => group.hooks).find(
-    (h) => typeof h.command === 'string' && h.command.includes('fleet-watch.mjs'),
+    (h) =>
+      Array.isArray(h.args) &&
+      h.args.some((arg) => typeof arg === 'string' && arg.includes('fleet-watch.mjs')),
   );
   assert.ok(entry, 'hooks.json must register scripts/fleet-watch.mjs as a Stop hook');
   assert.equal(entry.asyncRewake, true, 'the watcher hook must stay asyncRewake');

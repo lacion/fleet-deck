@@ -5,8 +5,8 @@
 // tokenless hook call is no longer "a CLI that cannot authenticate" — it is
 // exactly the forgery the shims exist to stop). This suite pins the gate and
 // the two cross-session attacks it closes:
-//   - tokenless /hook/* → 401, and (fail-open contract) still never wedges a
-//     session: it answers in the hook dialect, not an error page
+//   - tokenless /hook/* → HTTP 200 canonical {}, so auth/home/token drift never
+//     wedges a session or injects infrastructure diagnostics into Claude
 //   - a forged UserPromptSubmit can no longer drain another session's mailbox
 //     into the response or expire its pending holds
 //   - a forged /clear SessionEnd+SessionStart can no longer graft succession
@@ -20,7 +20,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import type { OutgoingHttpHeaders } from 'node:http';
+import { createServer, type OutgoingHttpHeaders } from 'node:http';
 import { startDaemon } from './helpers/daemon.ts';
 import { postHook, postJson, getJson, rawRequest } from './helpers/http.ts';
 import { getState } from './helpers/state.ts';
@@ -29,6 +29,7 @@ import { waitUntil } from './helpers/wait.ts';
 import { openDb } from '../src/daemon/db.ts';
 import { createCore } from '../src/daemon/derive.ts';
 import type { StateResponse, QuestionEntry } from '../contracts/state.ts';
+import { seedHookCompatibility } from './helpers/hook-compat.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SHIM = path.join(HERE, '..', 'scripts', 'fleet-hook.mjs');
@@ -37,12 +38,7 @@ const SHIM = path.join(HERE, '..', 'scripts', 'fleet-hook.mjs');
 // assertions below read out of the (otherwise `unknown`) JSON body.
 interface HookBody {
   ok?: boolean;
-  decision?: string;
-  reason?: string;
   upgrade_lines?: string[];
-  hookSpecificOutput?: {
-    additionalContext?: string;
-  };
 }
 
 interface RawHookResult {
@@ -55,7 +51,57 @@ function scratchCwd(prefix = 'fleetdeck-hookauth-'): string {
   return mkdtempSync(path.join(tmpdir(), prefix));
 }
 
-test('tokenless /hook/* is refused with the upgrade whisper; the bearer opens it', async (t: TestContext) => {
+interface ShimRun {
+  stdout: string;
+  stderr: string;
+  code: number | null;
+  elapsedMs: number;
+}
+
+function runHookShim(options: {
+  event: string;
+  home: string;
+  port: number;
+  payload?: unknown;
+  boardSession?: string;
+  closeInput?: boolean;
+  env?: Record<string, string>;
+}): Promise<ShimRun> {
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    ...seedHookCompatibility(options.home),
+    FLEETDECK_PORT: String(options.port),
+    FLEETDECK_HOME: options.home,
+    ...options.env,
+  };
+  // Never let the test runner's ambient marker silently turn an ordinary
+  // terminal case into a board-owned one.
+  if (options.boardSession === undefined) delete env['FLEETDECK_BOARD_SESSION'];
+  else env['FLEETDECK_BOARD_SESSION'] = options.boardSession;
+
+  const started = Date.now();
+  return new Promise<ShimRun>((resolve, reject) => {
+    const child = spawn(process.execPath, [SHIM, options.event], {
+      env,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (d: Buffer) => {
+      stdout += d.toString();
+    });
+    child.stderr.on('data', (d: Buffer) => {
+      stderr += d.toString();
+    });
+    child.on('error', reject);
+    child.on('exit', (code) => {
+      resolve({ stdout, stderr, code, elapsedMs: Date.now() - started });
+    });
+    if (options.closeInput !== false) child.stdin.end(JSON.stringify(options.payload ?? {}));
+  });
+}
+
+test('missing/wrong hook authentication is a canonical silent no-op; the bearer opens it', async (t: TestContext) => {
   const daemon = await startDaemon();
   t.after(() => daemon.stop());
 
@@ -65,20 +111,17 @@ test('tokenless /hook/* is refused with the upgrade whisper; the bearer opens it
     rmSync(cwd, { recursive: true, force: true });
   });
 
-  // No token at all → refused, but answered in the hook dialect (a context
-  // whisper telling the agent to ask the human for a restart) — never a bare
-  // 401 page that would leave the old session silently dark.
+  // No token at all → refused, but answered with the event-agnostic no-op. An
+  // auth/home mismatch is an infrastructure concern for the board and doctor;
+  // it must never add context, warn, or interrupt the developer's session.
   const bare = await postHook(
     daemon.baseUrl,
     'SessionStart',
     loadFixture('session-start', { session_id: sid, cwd }),
   );
-  assert.equal(bare.status, 200, 'tokenless hook gets a dialect answer, not an error page');
-  assert.match(
-    (bare.json as HookBody | null)?.hookSpecificOutput?.additionalContext ?? '',
-    /restart/i,
-    'the whisper tells the human to restart',
-  );
+  assert.equal(bare.status, 200, 'tokenless hook gets a fail-open answer, not an error page');
+  assert.equal(bare.text, '{}', 'tokenless hook body is the canonical no-op');
+  assert.deepEqual(bare.json, {}, 'tokenless hook cannot carry Claude-visible fields');
 
   // Refused means REFUSED: no card was registered by the tokenless call.
   const stateAfterBare = await getState<StateResponse>(daemon.baseUrl);
@@ -96,6 +139,8 @@ test('tokenless /hook/* is refused with the upgrade whisper; the bearer opens it
     { token: 'x'.repeat(64) },
   );
   assert.equal(wrong.status, 200);
+  assert.equal(wrong.text, '{}', 'stale/wrong token gets the same canonical no-op');
+  assert.deepEqual(wrong.json, {}, 'wrong token cannot carry Claude-visible fields');
   const stateAfterWrong = await getState<StateResponse>(daemon.baseUrl);
   assert.ok(
     !stateAfterWrong.sessions.find((s) => s.session_id === sid),
@@ -227,7 +272,7 @@ server.listen(PORT, '127.0.0.1');
     daemon.baseUrl,
     'PermissionRequest',
     loadFixture('permission-request', { session_id: victim, cwd }),
-    { token: daemon, timeout: holdMs + 5000 },
+    { token: daemon, timeout: holdMs + 5000, boardClient: true },
   );
   const q = await waitUntil(
     async () => {
@@ -247,13 +292,9 @@ server.listen(PORT, '127.0.0.1');
     'UserPromptSubmit',
     loadFixture('user-prompt-submit', { session_id: victim, cwd }),
   );
-  assert.equal(forged.status, 200, 'tokenless forgery gets the whisper dialect');
-  assert.ok(
-    !(forged.json as HookBody | null)?.hookSpecificOutput?.additionalContext?.includes(
-      'secret instructions',
-    ),
-    'the response carries the whisper, never the mail',
-  );
+  assert.equal(forged.status, 200, 'tokenless forgery gets the fail-open dialect');
+  assert.equal(forged.text, '{}', 'the response is a canonical no-op, never mail or diagnostics');
+  assert.deepEqual(forged.json, {}, 'the forgery receives no Claude-visible fields');
 
   // The mailbox is intact: an authenticated drain still returns the mail.
   const drained = await getJson(`${daemon.baseUrl}/mail?session=${encodeURIComponent(victim)}`);
@@ -323,6 +364,13 @@ test('unauthorized UserPromptSubmit processing expires a pending hold (regressio
     rmSync(cwd, { recursive: true, force: true });
   });
   core.hookSessionStart(loadFixture('session-start', { session_id: sid, cwd }));
+  db.prepare(
+    `INSERT INTO spawns (spawn_id, session_id, callsign, requested_at, status)
+     VALUES (?, ?, ?, ?, 'live')`,
+  ).run(randomUUID(), sid, 'hookauth-1', Date.now());
+  // This direct-core regression has no HTTP/WebSocket layer to install the
+  // production board-presence probe; model its intentionally attached board.
+  core.questions.setBoardConsumerProbe(() => true);
 
   // Open a REAL hold and park a responder on it.
   const row: { id: number | null } | null = core.hookHoldQuestion(
@@ -516,7 +564,7 @@ test('a takeover registration carries the upgrade lines for the triggering sessi
   assert.equal((plain.json as HookBody | null)?.upgrade_lines ?? null, null);
 });
 
-test('a legacy session that keeps calling gets ONE blocking restart instruction, then only whispers', async (t: TestContext) => {
+test('every unauthenticated hook event remains a silent no-op, including repeated Stop calls', async (t: TestContext) => {
   const daemon = await startDaemon();
   t.after(() => daemon.stop());
 
@@ -526,52 +574,35 @@ test('a legacy session that keeps calling gets ONE blocking restart instruction,
     rmSync(cwd, { recursive: true, force: true });
   });
 
-  // Legacy session emits tokenless events. Non-Stop events: whisper only.
-  const evt = await postHook(
-    daemon.baseUrl,
+  const events = [
+    'SessionStart',
     'UserPromptSubmit',
-    loadFixture('user-prompt-submit', { session_id: sid, cwd }),
-  );
-  assert.ok(
-    (evt.json as HookBody | null)?.hookSpecificOutput?.additionalContext,
-    'whisper on ordinary events',
-  );
-
-  // First tokenless Stop from this session: the escalation — a turn-blocking
-  // restart instruction.
-  const stop1 = await postHook(
-    daemon.baseUrl,
+    'PostToolUse',
+    'PostToolUseFailure',
+    'PreToolUse',
+    'AskUserQuestion',
+    'PermissionRequest',
+    'Elicitation',
+    'Notification',
     'Stop',
-    loadFixture('stop', { session_id: sid, cwd }),
-  );
-  assert.equal(
-    (stop1.json as HookBody | null)?.decision,
-    'block',
-    'first legacy Stop blocks the turn',
-  );
-  assert.match((stop1.json as HookBody | null)?.reason ?? '', /restart/i);
-
-  // Every subsequent tokenless event, Stop included: whisper only — the block
-  // is once per session per daemon boot, never a loop.
-  const stop2 = await postHook(
-    daemon.baseUrl,
-    'Stop',
-    loadFixture('stop', { session_id: sid, cwd }),
-  );
-  assert.notEqual((stop2.json as HookBody | null)?.decision, 'block', 'no repeat block');
-  assert.ok(
-    (stop2.json as HookBody | null)?.hookSpecificOutput?.additionalContext,
-    'whisper continues',
-  );
-
-  // A DIFFERENT legacy session still gets its one block.
-  const other = randomUUID();
-  const stopOther = await postHook(
-    daemon.baseUrl,
-    'Stop',
-    loadFixture('stop', { session_id: other, cwd }),
-  );
-  assert.equal((stopOther.json as HookBody | null)?.decision, 'block', 'escalation is per-session');
+    'Stop', // a repeated lifecycle call must never escalate into a block
+    'SessionEnd',
+    'CwdChanged',
+  ];
+  for (const event of events) {
+    const response = await postHook(daemon.baseUrl, event, {
+      session_id: sid,
+      cwd,
+      hook_event_name: event,
+    });
+    assert.equal(response.status, 200, `${event} auth refusal stays fail-open`);
+    assert.equal(response.text, '{}', `${event} auth refusal must be canonical JSON`);
+    assert.deepEqual(
+      response.json,
+      {},
+      `${event} auth refusal must carry no control/context fields`,
+    );
+  }
 });
 
 test('fleet-hook.mjs shim forwards the payload with the token and relays the response', async (t: TestContext) => {
@@ -587,7 +618,12 @@ test('fleet-hook.mjs shim forwards the payload with the token and relays the res
   const payload = JSON.stringify(loadFixture('session-start', { session_id: sid, cwd }));
   const out = await new Promise<string>((resolve, reject) => {
     const child = spawn(process.execPath, [SHIM, 'SessionStart'], {
-      env: { ...process.env, FLEETDECK_PORT: String(daemon.port), FLEETDECK_HOME: daemon.home },
+      env: {
+        ...process.env,
+        ...seedHookCompatibility(daemon.home),
+        FLEETDECK_PORT: String(daemon.port),
+        FLEETDECK_HOME: daemon.home,
+      },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     let stdout = '';
@@ -600,12 +636,7 @@ test('fleet-hook.mjs shim forwards the payload with the token and relays the res
     });
     child.stdin.end(payload);
   });
-  const parsed = JSON.parse(out || '{}') as { ok?: boolean; callsign?: unknown };
-  assert.ok(parsed.ok, 'shim relayed the daemon SessionStart response');
-  assert.ok(
-    typeof parsed.callsign === 'string' && parsed.callsign,
-    'callsign came back through the shim',
-  );
+  assert.equal(out, '{}', 'SessionStart response is telemetry, not generic hook output');
 
   // And the card exists — the shim's POST was accepted as authenticated.
   const state = await getState<StateResponse>(daemon.baseUrl);
@@ -626,7 +657,12 @@ test('fleet-hook.mjs fails open ({}) when the daemon is down', async (t: TestCon
 
   const out = await new Promise<{ stdout: string; code: number | null }>((resolve, reject) => {
     const child = spawn(process.execPath, [SHIM, 'Stop'], {
-      env: { ...process.env, FLEETDECK_PORT: '21999', FLEETDECK_HOME: home },
+      env: {
+        ...process.env,
+        ...seedHookCompatibility(home),
+        FLEETDECK_PORT: '21999',
+        FLEETDECK_HOME: home,
+      },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     let stdout = '';
@@ -641,6 +677,349 @@ test('fleet-hook.mjs fails open ({}) when the daemon is down', async (t: TestCon
   });
   assert.equal(out.code, 0, 'shim exits 0 with the daemon down');
   assert.equal(out.stdout, '{}', 'shim emits the fail-open no-op');
+});
+
+test('fleet-hook.mjs turns a foreign 200 text response into valid fail-open JSON', async (t) => {
+  const responder = createServer((_req, res) => {
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end('<h1>not a Fleet Deck hook response</h1>');
+  });
+  await new Promise<void>((resolve) => responder.listen(0, '127.0.0.1', resolve));
+  const address = responder.address();
+  assert.ok(address && typeof address !== 'string');
+  t.after(() => responder.close());
+
+  const home = scratchCwd('fleetdeck-shim-foreign-');
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  writeFileSync(path.join(home, 'token'), 'x'.repeat(64), { mode: 0o600 });
+
+  const out = await new Promise<{ stdout: string; code: number | null }>((resolve, reject) => {
+    const child = spawn(process.execPath, [SHIM, 'Stop'], {
+      env: {
+        ...process.env,
+        ...seedHookCompatibility(home),
+        FLEETDECK_PORT: String(address.port),
+        FLEETDECK_HOME: home,
+      },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    child.stdout.on('data', (d: Buffer) => {
+      stdout += d.toString();
+    });
+    child.on('error', reject);
+    child.on('exit', (code) => resolve({ stdout, code }));
+    child.stdin.end('{}');
+  });
+  assert.equal(out.code, 0);
+  assert.equal(out.stdout, '{}');
+  assert.deepEqual(JSON.parse(out.stdout), {});
+});
+
+test('ordinary terminal AskUserQuestion fails open quickly when the daemon wedges', async (t) => {
+  // A listener that accepts the hook request and never answers models the most
+  // dangerous failure mode: the port is up, but the daemon handler is wedged.
+  // Without a Fleet Deck launch marker, an interactive hook must use the short
+  // watchdog rather than Claude's multi-minute board-answer window.
+  const responder = createServer(() => {
+    /* intentionally never respond */
+  });
+  await new Promise<void>((resolve) => responder.listen(0, '127.0.0.1', resolve));
+  const address = responder.address();
+  assert.ok(address && typeof address !== 'string');
+  t.after(() => {
+    responder.closeAllConnections();
+    responder.close();
+  });
+
+  const home = scratchCwd('fleetdeck-shim-wedged-');
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  writeFileSync(path.join(home, 'token'), 'x'.repeat(64), { mode: 0o600 });
+  const started = Date.now();
+  const out = await new Promise<{ stdout: string; code: number | null }>((resolve, reject) => {
+    const child = spawn(process.execPath, [SHIM, 'AskUserQuestion'], {
+      env: {
+        ...process.env,
+        ...seedHookCompatibility(home),
+        FLEETDECK_PORT: String(address.port),
+        FLEETDECK_HOME: home,
+        FLEETDECK_BOARD_SESSION: '',
+      },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    child.stdout.on('data', (d: Buffer) => {
+      stdout += d.toString();
+    });
+    child.on('error', reject);
+    child.on('exit', (code) => resolve({ stdout, code }));
+    child.stdin.end(JSON.stringify({ session_id: randomUUID(), tool_input: {} }));
+  });
+  const elapsed = Date.now() - started;
+  assert.equal(out.code, 0);
+  assert.equal(out.stdout, '{}');
+  assert.ok(elapsed < 5_000, `ordinary terminal hook took ${elapsed}ms; expected <5s`);
+});
+
+test('board-owned interactive hook fails open after consecutive health misses', async (t) => {
+  let healthAttempts = 0;
+  const responder = createServer((req) => {
+    if (req.url === '/health') healthAttempts += 1;
+    // Both the hook POST and health probes are intentionally left unanswered:
+    // the long marker watchdog alone would park this process for 660 seconds.
+  });
+  await new Promise<void>((resolve) => responder.listen(0, '127.0.0.1', resolve));
+  const address = responder.address();
+  assert.ok(address && typeof address !== 'string');
+  t.after(() => {
+    responder.closeAllConnections();
+    responder.close();
+  });
+
+  const home = scratchCwd('fleetdeck-shim-health-lease-miss-');
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  writeFileSync(path.join(home, 'token'), 'x'.repeat(64), { mode: 0o600 });
+  const sid = randomUUID();
+  const out = await runHookShim({
+    event: 'AskUserQuestion',
+    home,
+    port: address.port,
+    boardSession: sid,
+    payload: { session_id: sid, tool_input: { questions: [] } },
+    env: {
+      FLEETDECK_TEST_HOOK_HEALTH_INTERVAL_MS: '50',
+      FLEETDECK_TEST_HOOK_HEALTH_TIMEOUT_MS: '50',
+    },
+  });
+
+  assert.equal(out.code, 0);
+  assert.equal(out.stderr, '');
+  assert.equal(out.stdout, '{}');
+  assert.ok(healthAttempts >= 3, `expected three health misses, saw ${healthAttempts}`);
+  assert.ok(out.elapsedMs < 2_000, `health lease took ${out.elapsedMs}ms to fail open`);
+});
+
+test('board-owned interactive hook keeps its long answer window while health renews', async (t) => {
+  let healthAttempts = 0;
+  const answerDelayMs = 700;
+  const questions = [
+    {
+      question: 'Continue?',
+      header: 'Continue',
+      options: [{ label: 'Yes', description: 'Continue' }],
+      multiSelect: false,
+    },
+  ];
+  const routed = JSON.stringify({
+    hookSpecificOutput: {
+      hookEventName: 'PreToolUse',
+      permissionDecision: 'allow',
+      updatedInput: { questions, answers: { 'Continue?': 'Yes' } },
+    },
+  });
+  const responder = createServer((req, res) => {
+    if (req.url === '/health') {
+      healthAttempts += 1;
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{"ok":true}');
+      return;
+    }
+    setTimeout(() => {
+      if (res.destroyed) return;
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(routed);
+    }, answerDelayMs);
+  });
+  await new Promise<void>((resolve) => responder.listen(0, '127.0.0.1', resolve));
+  const address = responder.address();
+  assert.ok(address && typeof address !== 'string');
+  t.after(() => {
+    responder.closeAllConnections();
+    responder.close();
+  });
+
+  const home = scratchCwd('fleetdeck-shim-health-lease-ok-');
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  writeFileSync(path.join(home, 'token'), 'x'.repeat(64), { mode: 0o600 });
+  const sid = randomUUID();
+  const out = await runHookShim({
+    event: 'AskUserQuestion',
+    home,
+    port: address.port,
+    boardSession: sid,
+    payload: { session_id: sid, tool_input: { questions } },
+    env: {
+      FLEETDECK_TEST_HOOK_HEALTH_INTERVAL_MS: '50',
+      FLEETDECK_TEST_HOOK_HEALTH_TIMEOUT_MS: '100',
+    },
+  });
+
+  assert.equal(out.code, 0);
+  assert.equal(out.stderr, '');
+  assert.equal(out.stdout, routed);
+  assert.ok(healthAttempts >= 3, `expected repeated health renewals, saw ${healthAttempts}`);
+  assert.ok(
+    out.elapsedMs >= answerDelayMs - 100,
+    `healthy delayed answer returned unexpectedly early after ${out.elapsedMs}ms`,
+  );
+});
+
+test('interactive hook extends its hold only for the exact board-owned session id', async (t) => {
+  // All four requests reach the same deliberately slow endpoint. Only the
+  // exact marker is allowed to outlive the short watchdog and receive its
+  // response; mismatched, inherited, and legacy markers must yield `{}` first.
+  const responseDelayMs = 3_500;
+  const questions = [
+    {
+      question: 'Continue?',
+      header: 'Continue',
+      options: [{ label: 'Yes', description: 'Continue' }],
+      multiSelect: false,
+    },
+  ];
+  const routed = JSON.stringify({
+    hookSpecificOutput: {
+      hookEventName: 'PreToolUse',
+      permissionDecision: 'allow',
+      updatedInput: { questions, answers: { 'Continue?': 'Yes' } },
+    },
+  });
+  const responder = createServer((_req, res) => {
+    setTimeout(() => {
+      if (res.destroyed) return;
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(routed);
+    }, responseDelayMs);
+  });
+  await new Promise<void>((resolve) => responder.listen(0, '127.0.0.1', resolve));
+  const address = responder.address();
+  assert.ok(address && typeof address !== 'string');
+  t.after(() => {
+    responder.closeAllConnections();
+    responder.close();
+  });
+
+  const home = scratchCwd('fleetdeck-shim-marker-');
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  writeFileSync(path.join(home, 'token'), 'x'.repeat(64), { mode: 0o600 });
+
+  const exactSid = randomUUID();
+  const mismatchSid = randomUUID();
+  const nestedParentSid = randomUUID();
+  const nestedChildSid = randomUUID();
+  const legacySid = randomUUID();
+  const [exact, mismatch, nested, legacy] = await Promise.all([
+    runHookShim({
+      event: 'AskUserQuestion',
+      home,
+      port: address.port,
+      boardSession: exactSid,
+      payload: { session_id: exactSid, tool_input: { questions } },
+    }),
+    runHookShim({
+      event: 'AskUserQuestion',
+      home,
+      port: address.port,
+      boardSession: randomUUID(),
+      payload: { session_id: mismatchSid, tool_input: { questions } },
+    }),
+    runHookShim({
+      event: 'AskUserQuestion',
+      home,
+      port: address.port,
+      // A nested/manual Claude inherits the parent pane's environment, but its
+      // hook payload carries a new session id. Exact comparison is what keeps
+      // the nested terminal's native question prompt responsive.
+      boardSession: nestedParentSid,
+      payload: { session_id: nestedChildSid, tool_input: { questions } },
+    }),
+    runHookShim({
+      event: 'AskUserQuestion',
+      home,
+      port: address.port,
+      boardSession: '1',
+      payload: { session_id: legacySid, tool_input: { questions } },
+    }),
+  ]);
+
+  assert.equal(exact.code, 0);
+  assert.equal(exact.stderr, '');
+  assert.equal(exact.stdout, routed);
+  assert.ok(
+    exact.elapsedMs >= responseDelayMs - 300,
+    `exact board marker returned too early after ${exact.elapsedMs}ms`,
+  );
+
+  for (const [label, out] of [
+    ['mismatched marker', mismatch],
+    ['nested/manual inherited marker', nested],
+    ['legacy marker 1', legacy],
+  ] as const) {
+    assert.equal(out.code, 0, `${label} exit code`);
+    assert.equal(out.stderr, '', `${label} stderr`);
+    assert.equal(out.stdout, '{}', `${label} must fail open before the delayed response`);
+    assert.ok(
+      out.elapsedMs < responseDelayMs - 300,
+      `${label} waited ${out.elapsedMs}ms and appears to have used the long hold`,
+    );
+  }
+});
+
+test('watchdog flushes exactly one fail-open object when hook stdin never closes', async (t) => {
+  const home = scratchCwd('fleetdeck-shim-stdin-watchdog-');
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  writeFileSync(path.join(home, 'token'), 'x'.repeat(64), { mode: 0o600 });
+
+  const out = await runHookShim({
+    event: 'Stop',
+    home,
+    port: 21998,
+    closeInput: false,
+  });
+  assert.equal(out.code, 0);
+  assert.equal(out.stderr, '');
+  assert.equal(out.stdout, '{}', 'watchdog no-op must be fully flushed and never duplicated');
+  assert.ok(out.elapsedMs < 5_000, `stdin watchdog took ${out.elapsedMs}ms; expected <5s`);
+});
+
+test("SessionEnd telemetry exits inside Claude Code's short shutdown budget when the daemon wedges", async (t) => {
+  const responder = createServer(() => {
+    /* intentionally never respond */
+  });
+  await new Promise<void>((resolve) => responder.listen(0, '127.0.0.1', resolve));
+  const address = responder.address();
+  assert.ok(address && typeof address !== 'string');
+  t.after(() => {
+    responder.closeAllConnections();
+    responder.close();
+  });
+
+  const home = scratchCwd('fleetdeck-shim-sessionend-');
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  writeFileSync(path.join(home, 'token'), 'x'.repeat(64), { mode: 0o600 });
+  const started = Date.now();
+  const out = await new Promise<{ stdout: string; code: number | null }>((resolve, reject) => {
+    const child = spawn(process.execPath, [SHIM, 'SessionEnd'], {
+      env: {
+        ...process.env,
+        ...seedHookCompatibility(home),
+        FLEETDECK_PORT: String(address.port),
+        FLEETDECK_HOME: home,
+      },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    child.stdout.on('data', (d: Buffer) => {
+      stdout += d.toString();
+    });
+    child.on('error', reject);
+    child.on('exit', (code) => resolve({ stdout, code }));
+    child.stdin.end(JSON.stringify({ session_id: randomUUID() }));
+  });
+  const elapsed = Date.now() - started;
+  assert.equal(out.code, 0);
+  assert.equal(out.stdout, '{}');
+  assert.ok(elapsed < 2_000, `SessionEnd hook took ${elapsed}ms; expected <2s`);
 });
 
 // POST /hook/<Event> with arbitrary headers (Host/Origin), NO test-helper
@@ -701,7 +1080,7 @@ for (const trustLoopback of [false, true]) {
     });
 
     // The exact bypass: a tokenless SessionStart carrying the forged trusted
-    // headers. It must be refused in the hook dialect and register NO card —
+    // headers. It must be refused with the silent no-op and register NO card —
     // the handler is never invoked, no matter what those headers claim.
     const forgedSid = randomUUID();
     const res = await rawHookPost(
@@ -711,15 +1090,8 @@ for (const trustLoopback of [false, true]) {
       forged,
     );
     assert.equal(res.status, 200, 'answered in the hook dialect, not a proxy-authorized ok');
-    assert.ok(
-      !(res.json as HookBody | null)?.ok,
-      'the forged hook did NOT register a session (no ok brief)',
-    );
-    assert.match(
-      (res.json as HookBody | null)?.hookSpecificOutput?.additionalContext ?? '',
-      /restart/i,
-      'it took the tokenless-refusal path (the upgrade whisper), not the trust exemption',
-    );
+    assert.equal(res.text, '{}', 'forged proxy-auth hook receives the canonical no-op');
+    assert.deepEqual(res.json, {}, 'forged hook receives no Claude-visible fields');
     const state = await getState<StateResponse>(daemon.baseUrl);
     assert.ok(
       !state.sessions.find((s) => s.session_id === forgedSid),

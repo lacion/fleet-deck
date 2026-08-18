@@ -151,39 +151,21 @@ jobs:
         env:
           FLEETDECK_TEST_WAIT_SCALE: 3
 
-  # Four manifests carry the same version string, and nothing used to enforce
-  # that. Standalone makes the drift user-visible: the npm version and the plugin
-  # version are compared at every SessionStart, and a mismatch there is reported
-  # to the user as a "restart your service" warning — so a release that forgets
-  # one manifest now produces a warning that is simply wrong. Script-only (node
-  # -p over manifests), so it needs no install and runs on the runner's ambient node.
+  # Four manifests carry the same version string. Use the same checked-in
+  # verifier as the publish workflow so the manifest list and comparison rules
+  # cannot drift between branch CI and the irreversible tag job. Script-only,
+  # so it needs no install and runs on the runner's ambient Node.
   version:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Fail if the four manifests disagree on the version
-        run: |
-          pkg=$(node -p "require('./package.json').version")
-          plugin=$(node -p "require('./.claude-plugin/plugin.json').version")
-          market=$(node -p "require('./.claude-plugin/marketplace.json').plugins[0].version")
-          board=$(node -p "require('./board/package.json').version")
-          echo "package.json                    $pkg"
-          echo ".claude-plugin/plugin.json      $plugin"
-          echo ".claude-plugin/marketplace.json $market"
-          echo "board/package.json              $board"
-          for v in "$plugin" "$market" "$board"; do
-            if [ "$v" != "$pkg" ]; then
-              echo "::error::version drift — package.json says $pkg but a sibling manifest says $v"
-              exit 1
-            fi
-          done
-          echo "✓ all four agree on $pkg"
+        run: node scripts/check-release-version.mjs
 
-  # 0.16.0 — the hook scripts run on every installed machine at every
-  # SessionStart with the user's full environment, and marketplace installs
-  # track git main UNGATED (no npm publish, no tag). The marketplace plugin
-  # cache keys on the plugin.json version, so the watched closure is the
+  # The hook scripts run on every installed machine at every SessionStart with
+  # the user's full environment. Claude's marketplace cache keys on the
+  # plugin.json version, so the watched closure is the
   # COMPLETE behavior-bearing payload — hooks, bin/, all of src/daemon/
   # (sources, the bundle the SessionStart hook actually execs, and the
   # board-dist the daemon serves), board/ sources, and .claude-plugin/ — not

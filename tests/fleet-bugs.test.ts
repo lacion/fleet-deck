@@ -216,6 +216,7 @@ interface MemoryCoreOpts {
   env?: Record<string, string | number>;
   tmux?: FakeTmux;
   home?: string;
+  boardConnected?: boolean;
 }
 interface MemoryCoreCtx {
   db: Db;
@@ -228,7 +229,12 @@ interface MemoryCoreCtx {
 
 function memoryCore(
   t: TestContext,
-  { env = {}, tmux = fakeTmux(), home = '/daemon-home' }: MemoryCoreOpts = {},
+  {
+    env = {},
+    tmux = fakeTmux(),
+    home = '/daemon-home',
+    boardConnected = false,
+  }: MemoryCoreOpts = {},
 ): MemoryCoreCtx {
   setEnv(t, { FLEETDECK_NUDGE_MS: 1_000_000, FLEETDECK_PANE_MAIL_GRACE_MS: 1_000_000, ...env });
   const db = openDb(':memory:');
@@ -237,6 +243,7 @@ function memoryCore(
     home,
     tmuxAdapter: tmux.adapter as unknown as CoreTmuxAdapter,
   });
+  if (boardConnected) core.questions.setBoardConsumerProbe(() => true);
   t.after(() => {
     db.close();
   });
@@ -1388,7 +1395,7 @@ test('Fix 7 [LOW]: a silent override-process spawn (no tmux window) is presumed 
 // ---------------------------------------------------------------------------
 
 test('BUG-025: a delayed SessionEnd from a previous run must NOT tombstone a live resumed session', async (t) => {
-  const { core, db } = memoryCore(t);
+  const { core, db } = memoryCore(t, { boardConnected: true });
   const cwd = mkdtempSync(path.join(tmpdir(), 'fd-resume-'));
   t.after(() => {
     rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });

@@ -60,19 +60,7 @@ export default function TermGrid({
   // M-A2 (terminal variant) — restore focus on close; NO Tab trap / focus steal
   // (Tab and focus belong to the focused agent's xterm). R3-4 — fallbackFocusRef
   // (the header Terminals button, our own opener) keeps parity with the modal.
-  // useModal is not yet typed; its `fallbackRef = null` default mis-infers the
-  // param as `null`, so declare the contract it already implements (drop the
-  // cast when useModal.ts is converted). Type-only — the call is unchanged.
-  (
-    useModal as (
-      ref: React.RefObject<HTMLDivElement | null>,
-      options?: {
-        trap?: boolean;
-        initialFocus?: boolean;
-        fallbackRef?: React.RefObject<HTMLElement | null> | null;
-      },
-    ) => void
-  )(dialogRef, { trap: false, initialFocus: false, fallbackRef: fallbackFocusRef });
+  useModal(dialogRef, { trap: false, initialFocus: false, fallbackRef: fallbackFocusRef });
 
   const cols = COLS(tiles.length);
 

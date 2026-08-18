@@ -336,7 +336,7 @@ function WorktreeRow({ w, now, busy, err, onRemove }: WorktreeRowProps) {
       {w.note && <div className="fd-wtnote">⚠ {w.note}</div>}
 
       {err && (
-        <div className="fd-wterr">
+        <div className="fd-wterr" role="alert">
           <div>✗ {typeof err === 'string' ? err : err.reason}</div>
           {/* A worktree is a working directory: a container run inside it can
               leave paths owned by root. Fleet Deck never escalates — it names
@@ -394,6 +394,10 @@ export default function WorktreesModal({
   const [errs, setErrs] = useState<Record<string, RemoveErr>>({}); // path -> the daemon's reason, verbatim
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkNote, setBulkNote] = useState<string | null>(null);
+  // State paints the disabled controls; refs enforce the lock synchronously.
+  // Two clicks in one render frame must never launch two destructive POSTs.
+  const busyPathsRef = useRef(new Set<string>());
+  const bulkBusyRef = useRef(false);
 
   const rows = useMemo(() => {
     const list = Array.isArray(worktrees) ? [...worktrees] : [];
@@ -411,6 +415,8 @@ export default function WorktreesModal({
   }).length;
 
   const markBusy = (path: string, on: boolean) => {
+    if (on) busyPathsRef.current.add(path);
+    else busyPathsRef.current.delete(path);
     setBusyPaths((prev) => {
       const next = new Set(prev);
       if (on) next.add(path);
@@ -426,57 +432,84 @@ export default function WorktreesModal({
   };
 
   const doRemove = async (w: Worktree, opts: RemoveOpts) => {
-    if (busyPaths.has(w.path) || bulkBusy) return;
+    if (busyPathsRef.current.has(w.path) || bulkBusyRef.current) return;
     setBulkNote(null);
     clearErr(w.path);
     markBusy(w.path, true);
-    const res = await onRemove(w.path, opts);
-    markBusy(w.path, false);
-    if (res.ok) await onReload();
-    else setErrs((prev) => ({ ...prev, [w.path]: res }));
+    try {
+      const res = await onRemove(w.path, opts);
+      if (res.ok) await onReload();
+      else setErrs((prev) => ({ ...prev, [w.path]: res }));
+    } catch {
+      setErrs((prev) => ({ ...prev, [w.path]: { reason: 'daemon unreachable' } }));
+    } finally {
+      markBusy(w.path, false);
+    }
   };
 
   // Sequential, one POST at a time — the daemon is running git per row, and a
   // burst of parallel removals would race on the same repo's index/lock.
   const removeAllSafe = async () => {
-    if (bulkBusy || !safeRows.length) return;
+    if (bulkBusyRef.current || !safeRows.length) return;
+    bulkBusyRef.current = true;
     setBulkBusy(true);
     setBulkNote(null);
     let done = 0;
     const failed: string[] = [];
-    for (const w of safeRows) {
-      clearErr(w.path);
-      markBusy(w.path, true);
-      const res = await onRemove(w.path, { force: false, deleteBranch: false });
-      markBusy(w.path, false);
-      if (res.ok) done += 1;
-      else {
-        failed.push(w.path);
-        setErrs((prev) => ({ ...prev, [w.path]: res }));
+    try {
+      for (const w of safeRows) {
+        clearErr(w.path);
+        markBusy(w.path, true);
+        try {
+          const res = await onRemove(w.path, { force: false, deleteBranch: false });
+          if (res.ok) done += 1;
+          else {
+            failed.push(w.path);
+            setErrs((prev) => ({ ...prev, [w.path]: res }));
+          }
+        } catch {
+          failed.push(w.path);
+          setErrs((prev) => ({ ...prev, [w.path]: { reason: 'daemon unreachable' } }));
+        } finally {
+          markBusy(w.path, false);
+        }
       }
+      setBulkNote(
+        failed.length
+          ? `removed ${done}/${safeRows.length} — ${failed.length} refused, the reason is on the row`
+          : `removed ${done} safe worktree${done === 1 ? '' : 's'} — branches left alone`,
+      );
+      await onReload();
+    } finally {
+      bulkBusyRef.current = false;
+      setBulkBusy(false);
     }
-    setBulkBusy(false);
-    setBulkNote(
-      failed.length
-        ? `removed ${done}/${safeRows.length} — ${failed.length} refused, the reason is on the row`
-        : `removed ${done} safe worktree${done === 1 ? '' : 's'} — branches left alone`,
-    );
-    await onReload();
   };
 
   const anyBusy = bulkBusy || busyPaths.size > 0;
+  const mutationInFlight = () => bulkBusyRef.current || busyPathsRef.current.size > 0;
+  const requestClose = () => {
+    if (!mutationInFlight()) onClose();
+  };
   const n = rows.length;
   const dialogRef = useRef<HTMLDivElement | null>(null);
   useModal(dialogRef); // M-A2 — trap Tab + restore focus (it already had aria-modal)
 
   return (
-    <div className="fd-composewrap" onClick={anyBusy ? undefined : onClose}>
+    <div className="fd-composewrap" onClick={requestClose}>
       <div
         className="fd-compose fd-wtree"
         role="dialog"
         aria-modal="true"
         aria-label="Worktrees"
+        aria-busy={anyBusy}
         ref={dialogRef}
+        onKeyDown={(e) => {
+          if (mutationInFlight() && e.key === 'Escape') {
+            e.preventDefault();
+            e.stopPropagation();
+          }
+        }}
         onClick={(e) => {
           e.stopPropagation();
         }}
@@ -500,7 +533,7 @@ export default function WorktreesModal({
             className="fd-x"
             aria-label="Close"
             disabled={anyBusy}
-            onClick={onClose}
+            onClick={requestClose}
           >
             ✕
           </button>
@@ -512,7 +545,11 @@ export default function WorktreesModal({
           decide.
         </div>
 
-        {error && <div className="fd-spawnerr">✗ {error}</div>}
+        {error && (
+          <div className="fd-spawnerr" role="alert">
+            ✗ {error}
+          </div>
+        )}
 
         {n > 0 && (
           <div className="fd-wtbulk">
@@ -535,11 +572,15 @@ export default function WorktreesModal({
             </span>
           </div>
         )}
-        {bulkNote && <div className="fd-wtbulknote">{bulkNote}</div>}
+        {bulkNote && (
+          <div className="fd-wtbulknote" role="status">
+            {bulkNote}
+          </div>
+        )}
 
         <div className="fd-wtlist">
           {worktrees === null && loading && (
-            <div className="fd-wtempty">
+            <div className="fd-wtempty" role="status">
               <div className="t2">reading git…</div>
             </div>
           )}

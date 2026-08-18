@@ -331,7 +331,7 @@ test('C1: same-origin gate on POSTs, WS upgrades, Host, and Content-Type', async
         baseUrl,
         'PermissionRequest',
         loadFixture('permission-request', { session_id: victim, cwd }),
-        { token: daemon, timeout: 30_000 },
+        { token: daemon, timeout: 30_000, boardClient: true },
       );
 
       // Mail queued for the victim (a processed UserPromptSubmit would drain it).

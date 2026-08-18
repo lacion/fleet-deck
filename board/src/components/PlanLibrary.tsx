@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { human, TURN_BOUNDARY_HINT } from '../util.ts';
 import { renderMarkdown, planTitle } from '../markdown.ts';
 import { assignPlan, markPlan, reasonOf } from '../api.ts';
 import type { ApiResult } from '../api.ts';
 import type { PlanEntry, SessionEntry } from '../../../contracts/index.ts';
+import { storageGet, storageSet } from '../storage.ts';
 
 // v1.3 PLANS library — collapsible strip between the lanes and the feed
 // (contract offered rail-under-questions as the alternative; the rail is the
@@ -53,6 +54,12 @@ function PlanCard({ p, now, liveSessions, spawnAvailable, onExecute }: PlanCardP
   const [target, setTarget] = useState<string | null>(null); // session_id
   const [instr, setInstr] = useState('');
   const [busy, setBusy] = useState(false);
+  const [settled, setSettled] = useState(false);
+  const busyRef = useRef(false);
+  const setPlanBusy = (on: boolean) => {
+    busyRef.current = on;
+    setBusy(on);
+  };
   const [note, setNote] = useState<PlanNote | null>(null); // {cls, text}
 
   // M-P7 — parse the plan body once per text, not on every render/second.
@@ -69,22 +76,24 @@ function PlanCard({ p, now, liveSessions, spawnAvailable, onExecute }: PlanCardP
   const proposer = liveSessions.find((s) => s.session_id === p.session_id);
 
   const archive = async () => {
-    setBusy(true);
+    if (busyRef.current) return;
+    setPlanBusy(true);
     setNote(null);
     try {
       const res = await markPlan(String(p.plan_id), { status: 'archived' });
-      if (res.ok)
+      if (res.ok) {
+        setSettled(true);
         setNote({ cls: 'ok', text: '✓ archived — it leaves the library on the next snapshot' });
-      else setNote({ cls: 'hazard', text: markErr(res, null) });
+      } else setNote({ cls: 'hazard', text: markErr(res, null) });
     } catch {
       setNote({ cls: 'hazard', text: 'daemon unreachable' });
     }
-    setBusy(false);
+    setPlanBusy(false);
   };
 
   const assign = async () => {
-    if (!target || busy) return;
-    setBusy(true);
+    if (!target || busyRef.current) return;
+    setPlanBusy(true);
     setNote(null);
     const cs = (liveSessions.find((s) => s.session_id === target)?.callsign ?? '') || target;
     // BUG-039 — the [FLEETDECK ASSIGNMENT] frame is daemon-reserved (POST /mail
@@ -93,6 +102,7 @@ function PlanCard({ p, now, liveSessions, spawnAvailable, onExecute }: PlanCardP
     try {
       const res = await assignPlan(String(p.plan_id), { to: target, instructions: instr.trim() });
       if (res.ok) {
+        setSettled(true);
         setNote({
           cls: 'ok',
           text: `✓ assigned to ${((res.json as AssignResp | null)?.callsign ?? '') || cs} — marked executed`,
@@ -106,7 +116,7 @@ function PlanCard({ p, now, liveSessions, spawnAvailable, onExecute }: PlanCardP
     } catch {
       setNote({ cls: 'hazard', text: 'daemon unreachable' });
     }
-    setBusy(false);
+    setPlanBusy(false);
   };
 
   return (
@@ -115,8 +125,9 @@ function PlanCard({ p, now, liveSessions, spawnAvailable, onExecute }: PlanCardP
         type="button"
         className="phead"
         onClick={() => {
-          setOpen(!open);
+          setOpen((value) => !value);
         }}
+        aria-expanded={open}
         title={open ? 'collapse' : 'expand the full plan'}
       >
         <span className="tri">{open ? '▾' : '▸'}</span>
@@ -150,7 +161,7 @@ function PlanCard({ p, now, liveSessions, spawnAvailable, onExecute }: PlanCardP
             <button
               type="button"
               className="fd-planbtn exec"
-              disabled={busy}
+              disabled={busy || settled}
               title="starts a NEW session with this plan as its prompt"
               onClick={() => {
                 onExecute(p);
@@ -165,7 +176,7 @@ function PlanCard({ p, now, liveSessions, spawnAvailable, onExecute }: PlanCardP
           <button
             type="button"
             className="fd-planbtn"
-            disabled={busy}
+            disabled={busy || settled}
             onClick={() => {
               setAssigning(!assigning);
               setNote(null);
@@ -177,14 +188,18 @@ function PlanCard({ p, now, liveSessions, spawnAvailable, onExecute }: PlanCardP
         <button
           type="button"
           className="fd-planbtn arch"
-          disabled={busy}
+          disabled={busy || settled}
           onClick={() => {
             void archive();
           }}
         >
           Archive
         </button>
-        {note && <span className={`status ${note.cls}`}>{note.text}</span>}
+        {note && (
+          <span className={`status ${note.cls}`} role={note.cls === 'hazard' ? 'alert' : 'status'}>
+            {note.text}
+          </span>
+        )}
       </div>
       {assigning && (
         <div className="passign">
@@ -198,6 +213,7 @@ function PlanCard({ p, now, liveSessions, spawnAvailable, onExecute }: PlanCardP
                     key={s.session_id}
                     type="button"
                     className={`fd-target${target === s.session_id ? ' on' : ''}`}
+                    aria-pressed={target === s.session_id}
                     onClick={() => {
                       setTarget(target === s.session_id ? null : s.session_id);
                     }}
@@ -258,12 +274,12 @@ export default function PlanLibrary({
   // stored '0'/'1' is their word and we keep it. The rail stays sacred: the
   // strip still lives below the lanes and never touches needs-you.
   const [open, setOpen] = useState(() => {
-    const stored = localStorage.getItem('fd-plans-open');
+    const stored = storageGet('fd-plans-open');
     return stored === null ? plans.length > 0 : stored === '1';
   });
   const toggle = () => {
     setOpen((o) => {
-      localStorage.setItem('fd-plans-open', o ? '0' : '1');
+      storageSet('fd-plans-open', o ? '0' : '1');
       return !o;
     });
   };
@@ -273,7 +289,7 @@ export default function PlanLibrary({
   // arrive later, apply the same never-toggled default: open once, only while
   // the user still hasn't touched the toggle.
   useEffect(() => {
-    if (!open && plans.length > 0 && localStorage.getItem('fd-plans-open') === null) setOpen(true);
+    if (!open && plans.length > 0 && storageGet('fd-plans-open') === null) setOpen(true);
   }, [open, plans.length]);
 
   return (

@@ -1,7 +1,9 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import type * as React from 'react';
 import { fsListHome, saveSettings, reasonOf } from '../api.ts';
+import { joinBrowsePath, normalizeBrowseRoot, relativeBrowsePath } from '../fsPath.ts';
 import { useModal } from '../useModal.ts';
+import { basename } from '../util.ts';
 
 // v2.3 — a directory picker, opened from the spawn form so you can point at a
 // cwd / repos-root / local repo without typing an absolute path. It reuses the
@@ -41,16 +43,6 @@ interface FsListJson {
   entries?: FsEntry[];
 }
 
-function join(root: string, rel: string) {
-  if (!rel) return root;
-  return `${root.replace(/\/$/, '')}/${rel}`;
-}
-
-// The last path segment, for a compact chip / row label.
-function baseName(abs: string) {
-  return (abs.split('/').filter(Boolean).pop() ?? '') || abs;
-}
-
 interface RowsProps {
   path: string;
   dirs: Record<string, DirState>;
@@ -60,6 +52,7 @@ interface RowsProps {
   root: string;
   favSet: Set<string>;
   favFull: boolean;
+  actionsBusy: boolean;
   onToggle: (p: string) => void;
   onToggleFav: (abs: string, fav: boolean) => void;
 }
@@ -73,6 +66,7 @@ function Rows({
   root,
   favSet,
   favFull,
+  actionsBusy,
   onToggle,
   onToggleFav,
 }: RowsProps) {
@@ -105,7 +99,7 @@ function Rows({
       {dirsOnly.map((e) => {
         const p = path ? `${path}/${e.name}` : e.name;
         const isOpen = openSet.has(p);
-        const abs = join(root, p);
+        const abs = joinBrowsePath(root, p);
         const fav = favSet.has(abs);
         const capped = !fav && favFull; // 20-favorite ceiling — can still UNpin
         return (
@@ -130,7 +124,7 @@ function Rows({
               <button
                 type="button"
                 className={`fd-dpstar${fav ? ' on' : ''}`}
-                disabled={capped}
+                disabled={capped || actionsBusy}
                 aria-pressed={fav}
                 title={
                   fav
@@ -156,6 +150,7 @@ function Rows({
                 root={root}
                 favSet={favSet}
                 favFull={favFull}
+                actionsBusy={actionsBusy}
                 onToggle={onToggle}
                 onToggleFav={onToggleFav}
               />
@@ -180,12 +175,18 @@ export default function DirPicker({ root, favs = [], onPick, onClose }: DirPicke
   const [picked, setPicked] = useState(''); // '' = the browse root itself
   const [rootErr, setRootErr] = useState<string | null>(null);
   const [actionErr, setActionErr] = useState<string | null>(null); // fail-loud ☆ / set-root save error
+  const [actionsBusy, setActionsBusy] = useState(false);
+  const actionsBusyRef = useRef(false);
   const ref = useRef<HTMLDivElement | null>(null);
   // one generation per root: the [root] effect below bumps it, and any list
   // response captured under an older generation is DROPPED — an in-flight
   // fsListHome from the previous root must never write a stale tree over the
   // reset (same stale-answer doctrine as FileViewer's seq counter).
   const gen = useRef(0);
+  // Sequence each relative path independently. Collapse/re-open and favorite
+  // reveals may ask for one folder twice while other branches load in parallel;
+  // only the newest answer for that folder may publish.
+  const loadSeq = useRef(new Map<string, number>());
   useModal(ref);
 
   // The browse root resolves to an absolute path; '~' is only the pure-fallback
@@ -194,21 +195,22 @@ export default function DirPicker({ root, favs = [], onPick, onClose }: DirPicke
   // except the filesystem root, which IS its own trailing slash, so the child
   // prefix is computed once here instead of naively appending '/' (normRoot '/'
   // + '/' would be '//', which matches nothing and disables every chip).
-  const normRoot = (root || '~').replace(/\/+$/, '') || '/';
-  const rootPrefix = normRoot.endsWith('/') ? normRoot : normRoot + '/';
+  const normRoot = normalizeBrowseRoot(root);
   const isHomeRoot = !root || root === '~';
   const favSet = useMemo(() => new Set(favs), [favs]);
   const favFull = favs.length >= FAV_MAX;
   // A favorite is reachable from THIS root iff it is the root or nests under it.
   // The daemon never names a root for the browser (containment walls in
   // files.mjs stay put); an out-of-root favorite renders disabled with a hint.
-  const favEnabled = (fav: string) => fav === normRoot || fav.startsWith(rootPrefix);
+  const favEnabled = (fav: string) => relativeBrowsePath(normRoot, fav) !== null;
 
   const loadDir = async (p: string) => {
     const my = gen.current;
+    const request = (loadSeq.current.get(p) ?? 0) + 1;
+    loadSeq.current.set(p, request);
     setDirs((prev) => ({ ...prev, [p]: { ...(prev[p] ?? {}), loading: true, err: null } }));
     const res = await fsListHome(p);
-    if (my !== gen.current) return false; // answered for a root we've left
+    if (my !== gen.current || loadSeq.current.get(p) !== request) return false;
     if (res.ok && res.json?.ok) {
       if (p === '') setRootErr(null);
       const entries = (res.json as FsListJson).entries ?? [];
@@ -228,6 +230,7 @@ export default function DirPicker({ root, favs = [], onPick, onClose }: DirPicke
   // response from the old root. On first mount this simply loads '' once.
   useEffect(() => {
     gen.current += 1;
+    loadSeq.current.clear();
     setDirs({});
     setOpenSet(new Set(['']));
     setPicked('');
@@ -252,7 +255,8 @@ export default function DirPicker({ root, favs = [], onPick, onClose }: DirPicke
   // target's rel path. Only ever called on a favEnabled chip.
   const jumpToFav = async (fav: string) => {
     const my = gen.current; // the rel path is only meaningful under THIS root
-    const rel = fav === normRoot ? '' : fav.slice(rootPrefix.length);
+    const rel = relativeBrowsePath(normRoot, fav);
+    if (rel === null) return;
     const segs = rel ? rel.split('/') : [];
     const prefixes = [''];
     let cur = '';
@@ -277,44 +281,61 @@ export default function DirPicker({ root, favs = [], onPick, onClose }: DirPicke
   // whole array. No optimistic local flip: on {ok:false} the reason renders
   // inline (fail-loud), and on success the daemon's next snapshot re-supplies
   // `favs` as the source of truth.
+  const saveSetting = async (body: unknown) => {
+    if (actionsBusyRef.current) return;
+    actionsBusyRef.current = true;
+    setActionsBusy(true);
+    setActionErr(null);
+    try {
+      const res = await saveSettings(body);
+      if (!(res.ok && res.json?.ok)) setActionErr(reasonOf(res, `save failed (${res.status})`));
+    } catch {
+      setActionErr('save failed — daemon unreachable');
+    } finally {
+      actionsBusyRef.current = false;
+      setActionsBusy(false);
+    }
+  };
+
   const toggleFav = async (abs: string, isFav: boolean) => {
+    if (actionsBusyRef.current) return;
     if (!isFav && favFull) {
       setActionErr(`${FAV_MAX} favorites max`);
       return;
     }
-    setActionErr(null);
     const next = isFav ? favs.filter((f) => f !== abs) : [...favs, abs];
-    const res = await saveSettings({ fav_dirs: next });
-    if (!(res.ok && res.json?.ok)) setActionErr(reasonOf(res, `save failed (${res.status})`));
+    await saveSetting({ fav_dirs: next });
   };
 
   // "set as default root" — persist browse_root; the new root arrives back as a
   // prop and the [root] effect re-roots the tree. Same fail-loud handling.
-  const setDefaultRoot = async (abs: string) => {
-    setActionErr(null);
-    const res = await saveSettings({ browse_root: abs });
-    if (!(res.ok && res.json?.ok)) setActionErr(reasonOf(res, `save failed (${res.status})`));
-  };
+  const setDefaultRoot = (abs: string) => saveSetting({ browse_root: abs });
 
-  const absolute = join(root || '~', picked);
+  const absolute = joinBrowsePath(root, picked);
   const pickedIsFav = favSet.has(absolute);
   const pickedCapped = !pickedIsFav && favFull;
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     // own Esc so it doesn't fall through to the board hotkey and close the
-    // spawn form underneath; Enter on the tree confirms the current folder
+    // spawn form underneath. Confirmation belongs only to the explicit footer
+    // button: a dialog-wide Enter handler made Enter on Close, ☆, or a favorite
+    // unexpectedly choose the current directory as well.
     if (e.key === 'Escape') {
       e.stopPropagation();
       onClose();
-    } else if (e.key === 'Enter') {
-      e.stopPropagation();
-      e.preventDefault();
-      onPick(absolute);
     }
   };
 
   return (
-    <div className="fd-composewrap fd-dpwrap" onClick={onClose}>
+    <div
+      className="fd-composewrap fd-dpwrap"
+      onClick={(e) => {
+        // This picker is nested inside SpawnForm's backdrop. Own the event so
+        // dismissing only the picker never also closes the underlying form.
+        e.stopPropagation();
+        onClose();
+      }}
+    >
       <div
         className="fd-compose fd-dirpicker"
         role="dialog"
@@ -360,7 +381,7 @@ export default function DirPicker({ root, favs = [], onPick, onClose }: DirPicke
                       : undefined
                   }
                 >
-                  ★ {baseName(fav)}
+                  ★ {basename(fav) || fav}
                 </button>
               );
             })}
@@ -368,7 +389,9 @@ export default function DirPicker({ root, favs = [], onPick, onClose }: DirPicke
         )}
 
         {rootErr ? (
-          <div className="fd-dperr">✗ {rootErr}</div>
+          <div className="fd-dperr" role="alert">
+            ✗ {rootErr}
+          </div>
         ) : (
           <div className="fd-dptree">
             <button
@@ -391,6 +414,7 @@ export default function DirPicker({ root, favs = [], onPick, onClose }: DirPicke
               root={root || '~'}
               favSet={favSet}
               favFull={favFull}
+              actionsBusy={actionsBusy}
               onToggle={onToggle}
               onToggleFav={(abs, fav) => {
                 void toggleFav(abs, fav);
@@ -399,13 +423,17 @@ export default function DirPicker({ root, favs = [], onPick, onClose }: DirPicke
           </div>
         )}
 
-        {actionErr && <div className="fd-dpnote err">✗ {actionErr}</div>}
+        {actionErr && (
+          <div className="fd-dpnote err" role="alert">
+            ✗ {actionErr}
+          </div>
+        )}
 
         <div className="fd-dpfoot">
           <button
             type="button"
             className={`fd-dpstar foot${pickedIsFav ? ' on' : ''}`}
-            disabled={pickedCapped}
+            disabled={pickedCapped || actionsBusy}
             aria-pressed={pickedIsFav}
             title={
               pickedIsFav
@@ -423,6 +451,7 @@ export default function DirPicker({ root, favs = [], onPick, onClose }: DirPicke
           <button
             type="button"
             className="fd-ghostbtn fd-dprootbtn"
+            disabled={actionsBusy}
             title={`make ${absolute} the default browse root`}
             onClick={() => {
               void setDefaultRoot(absolute);

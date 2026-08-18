@@ -16,11 +16,13 @@
 
 import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
+import { execFileSync, spawnSync } from 'node:child_process';
 import net from 'node:net';
-import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { startDaemon, randomPort, REPO_ROOT } from './helpers/daemon.ts';
+import { cleanupOwnedTmuxSocket, ownedTmuxSocketPath } from './helpers/tmux.ts';
 
 const CRASH_STUB = path.join(REPO_ROOT, 'tests/fixtures/crash-daemon-stub.ts');
 
@@ -125,4 +127,41 @@ test('startDaemon failure error still includes daemon output', async (t) => {
   );
   assert.ok(err, 'startDaemon should reject');
   assert.match((err as Error).message, /crash-daemon-stub: simulated startup crash/);
+});
+
+test('tmux cleanup unlinks only an exact stopped FleetDeck test socket', (t) => {
+  if (spawnSync('tmux', ['-V'], { stdio: 'ignore' }).status !== 0)
+    return t.skip('tmux unavailable');
+
+  // Keep the Unix pathname short (macOS caps AF_UNIX paths near 104 bytes)
+  // and pin TMUX_TMPDIR so the assertion observes the exact inode cleaned.
+  const tmuxTmpDir = mkdtempSync(
+    path.join(process.platform === 'win32' ? tmpdir() : '/tmp', 'fd-tmux-clean-'),
+  );
+  const socket = `fleetdeck-test-${Date.now()}`;
+  const socketPath = ownedTmuxSocketPath(socket, tmuxTmpDir);
+  assert.ok(socketPath, 'the strict FleetDeck test label should resolve to one exact socket path');
+  const env: NodeJS.ProcessEnv = { ...process.env, TMUX_TMPDIR: tmuxTmpDir };
+  delete env['TMUX'];
+  delete env['TMUX_PANE'];
+  t.after(() => {
+    cleanupOwnedTmuxSocket(socket, tmuxTmpDir);
+    rmSync(tmuxTmpDir, { recursive: true, force: true });
+  });
+
+  execFileSync('tmux', ['-L', socket, '-f', '/dev/null', 'new-session', '-d', 'sleep 30'], {
+    stdio: 'ignore',
+    env,
+  });
+  assert.ok(existsSync(socketPath), 'sanity: tmux created its Unix socket');
+
+  cleanupOwnedTmuxSocket(socket, tmuxTmpDir);
+  assert.equal(existsSync(socketPath), false, 'the stopped server leaves no stale socket inode');
+
+  // A malicious/racy replacement at the same pathname must not be deleted:
+  // lstat must still prove the final entry is a Unix socket.
+  mkdirSync(path.dirname(socketPath), { recursive: true, mode: 0o700 });
+  writeFileSync(socketPath, 'not a socket');
+  assert.equal(cleanupOwnedTmuxSocket(socket, tmuxTmpDir), false);
+  assert.equal(existsSync(socketPath), true, 'a non-socket replacement fails closed');
 });

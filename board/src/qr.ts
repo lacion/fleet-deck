@@ -142,44 +142,31 @@ function terminateAndCount(color: boolean, run: number, history: Hist, size: num
   return countFinderLike(history);
 }
 
+function linePenalty(cellAt: (index: number) => boolean, size: number): number {
+  let score = 0;
+  let color = false;
+  let run = 0;
+  const history: Hist = [0, 0, 0, 0, 0, 0, 0];
+  for (let i = 0; i < size; i++) {
+    const cell = cellAt(i);
+    if (cell === color) {
+      run++;
+      if (run === 5) score += N1;
+      else if (run > 5) score++;
+    } else {
+      addHistory(run, history, size);
+      if (!color) score += countFinderLike(history) * N3;
+      color = cell;
+      run = 1;
+    }
+  }
+  return score + terminateAndCount(color, run, history, size) * N3;
+}
+
 function penalty(m: boolean[][], size: number): number {
   let score = 0;
-  for (let y = 0; y < size; y++) {
-    let color = false,
-      run = 0;
-    const hist: Hist = [0, 0, 0, 0, 0, 0, 0];
-    for (let x = 0; x < size; x++) {
-      if (m[y]?.[x] === color) {
-        run++;
-        if (run === 5) score += N1;
-        else if (run > 5) score++;
-      } else {
-        addHistory(run, hist, size);
-        if (!color) score += countFinderLike(hist) * N3;
-        color = m[y]?.[x] ?? false;
-        run = 1;
-      }
-    }
-    score += terminateAndCount(color, run, hist, size) * N3;
-  }
-  for (let x = 0; x < size; x++) {
-    let color = false,
-      run = 0;
-    const hist: Hist = [0, 0, 0, 0, 0, 0, 0];
-    for (let y = 0; y < size; y++) {
-      if (m[y]?.[x] === color) {
-        run++;
-        if (run === 5) score += N1;
-        else if (run > 5) score++;
-      } else {
-        addHistory(run, hist, size);
-        if (!color) score += countFinderLike(hist) * N3;
-        color = m[y]?.[x] ?? false;
-        run = 1;
-      }
-    }
-    score += terminateAndCount(color, run, hist, size) * N3;
-  }
+  for (let y = 0; y < size; y++) score += linePenalty((x) => m[y]?.[x] ?? false, size);
+  for (let x = 0; x < size; x++) score += linePenalty((y) => m[y]?.[x] ?? false, size);
   for (let y = 0; y < size - 1; y++) {
     for (let x = 0; x < size - 1; x++) {
       const c = m[y]?.[x];

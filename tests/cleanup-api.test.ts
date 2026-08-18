@@ -2,6 +2,8 @@ import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { startDaemon } from './helpers/daemon.ts';
 import { postHook, postJson } from './helpers/http.ts';
@@ -163,17 +165,27 @@ test('Clear wipes everything that is not alive: conflicts, the rail, the feed', 
 // BUG-145: cleanup used to treat a null tmux listing as an empty fleet and
 // dismiss ignored failed window kills, both answering unconditional success
 // while stale windows stayed hidden with no retry path. This stands a REAL
-// dead remain-on-exit window on the test daemon's scoped tmux server, then
-// kills that server mid-flight: with no claim/death-certificate for that
-// server the listing is UNKNOWN (never claimed → no `authoritativeEmpty`),
+// dead remain-on-exit window on the test daemon's scoped tmux server while the
+// daemon's tmux transport is unavailable. The listing is therefore UNKNOWN,
 // so Clear must 409 with nothing archived, and a dismiss whose kill cannot be
-// verified must answer 409 + retry:true (the /dismiss/retry route
-// re-attempts — and also fails loud while tmux is down).
+// verified must answer 409 + retry:true (the /dismiss/retry route re-attempts
+// and also fails loud while tmux is unreachable).
 test('BUG-145: Clear and dismiss fail loud when tmux is unreachable, with a retry path', async (t) => {
+  // Keep the daemon's tmux transport deterministically unavailable while the
+  // test process can still stand up and inspect a real scoped window. Killing
+  // a server is no longer equivalent to an unknown listing: if the daemon saw
+  // its generation first, the owner's dead PID is authoritative proof that all
+  // of that server's panes are gone.
+  const noTmuxPath = mkdtempSync(path.join(tmpdir(), 'fleetdeck-no-tmux-'));
+  t.after(() => {
+    rmSync(noTmuxPath, { recursive: true, force: true });
+  });
   // HOME is set so the daemon's generation verification is ENABLED — with HOME
   // unset (and no other HOME to claim), a silent socket passes as a verified
   // empty listing, which would mask exactly the UNKNOWN path this test proves.
-  const daemon = await startDaemon({ env: { HOME: process.env['HOME'] ?? '/tmp' } });
+  const daemon = await startDaemon({
+    env: { HOME: process.env['HOME'] ?? '/tmp', PATH: noTmuxPath },
+  });
   t.after(async () => {
     await daemon.stop();
   });
@@ -236,10 +248,9 @@ test('BUG-145: Clear and dismiss fail loud when tmux is unreachable, with a retr
     { label: 'a dead remain-on-exit pane stands on the scoped server' },
   );
 
-  // tmux dies: the listing becomes UNKNOWN. Clear must NOT report success —
-  // and must not have archived anything (the whole Clear is the retry).
-  execFileSync('tmux', ['-L', socket, 'kill-server'], { stdio: 'ignore' });
-
+  // The real window remains alive but tmux is unreachable to the daemon. Clear
+  // must NOT report success — and must not archive anything (the whole Clear is
+  // the retry).
   const blocked = await postJson(`${daemon.baseUrl}/api/cleanup`, {});
   assert.equal(
     blocked.status,

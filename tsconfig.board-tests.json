@@ -11,9 +11,12 @@
     "lib": ["ES2023", "DOM", "DOM.Iterable"]
   },
   "include": [
+    "board/src/vite-env.d.ts",
     "tests/board-util.test.ts",
     "tests/board-termdiag.test.ts",
-    "tests/board-markdown.test.ts"
+    "tests/board-markdown.test.ts",
+    "tests/board-ui-reliability.test.ts",
+    "tests/board-connection-generation.test.ts"
   ],
   "exclude": ["node_modules"]
 }

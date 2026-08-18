@@ -76,6 +76,11 @@ export default function Compose({
   const [note, setNote] = useState<string | null>(null); // brief confirmation after a daemon command
   const [unroutedText, setUnroutedText] = useState<string | null>(null); // v1.2: task text of an unrouted command → spawn CTA
   const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
+  const setSending = (on: boolean) => {
+    busyRef.current = on;
+    setBusy(on);
+  };
   const taRef = useRef<HTMLTextAreaElement | null>(null);
   const dialogRef = useRef<HTMLDivElement | null>(null);
   // M-A2 — trap Tab + restore focus on close; the textarea owns initial focus.
@@ -100,8 +105,8 @@ export default function Compose({
   ];
 
   const send = async () => {
-    if (!text.trim() || busy) return;
-    setBusy(true);
+    if (!text.trim() || busyRef.current) return;
+    setSending(true);
     setErr(null);
     setNote(null);
     const sent = text.trim();
@@ -151,18 +156,29 @@ export default function Compose({
     } catch {
       setErr('daemon unreachable');
     } finally {
-      setBusy(false);
+      setSending(false);
     }
   };
 
+  const requestClose = () => {
+    if (!busyRef.current) onClose();
+  };
+
   return (
-    <div className="fd-composewrap" onClick={onClose}>
+    <div className="fd-composewrap" onClick={requestClose}>
       <div
         className="fd-compose"
         role="dialog"
         aria-modal="true"
         aria-label="Compose"
+        aria-busy={busy}
         ref={dialogRef}
+        onKeyDown={(e) => {
+          if (busyRef.current && e.key === 'Escape') {
+            e.preventDefault();
+            e.stopPropagation();
+          }
+        }}
         onClick={(e) => {
           e.stopPropagation();
         }}
@@ -170,7 +186,13 @@ export default function Compose({
         <div style={{ display: 'flex', alignItems: 'center' }}>
           <span className="lbl">COMPOSE</span>
           <span className="fd-spacer" />
-          <button type="button" className="fd-x" aria-label="Close" onClick={onClose}>
+          <button
+            type="button"
+            className="fd-x"
+            aria-label="Close"
+            disabled={busy}
+            onClick={requestClose}
+          >
             ✕
           </button>
         </div>
@@ -180,6 +202,7 @@ export default function Compose({
               key={t.id}
               type="button"
               className={`fd-target${target === t.id ? ' on' : ''}`}
+              aria-pressed={target === t.id}
               onClick={() => {
                 setTarget(t.id);
                 setNote(null);
@@ -249,7 +272,7 @@ export default function Compose({
             </span>
           </div>
         )}
-        <div className="foot">
+        <div className="foot" aria-live="polite">
           {note ? (
             <span className="note" style={{ color: 'var(--ok)' }}>
               {note}
@@ -280,7 +303,7 @@ export default function Compose({
             </button>
           )}
           {err && (
-            <span className="note" style={{ color: 'var(--hazard)' }}>
+            <span className="note" style={{ color: 'var(--hazard)' }} role="alert">
               {err}
             </span>
           )}

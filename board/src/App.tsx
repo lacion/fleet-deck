@@ -27,6 +27,7 @@ import {
   fsSearchHome,
 } from './api.ts';
 import { useAuth, saveToken } from './token.ts';
+import { storageGet, storageSet } from './storage.ts';
 import Header from './components/Header.tsx';
 import BoardLanes from './components/BoardLanes.tsx';
 import Inbox from './components/Inbox.tsx';
@@ -43,6 +44,7 @@ import WorktreesModal from './components/WorktreesModal.tsx';
 import FileViewer from './components/FileViewer.tsx';
 import TokenGate from './components/TokenGate.tsx';
 import HelpOverlay from './components/HelpOverlay.tsx';
+import { ErrorBoundary } from './components/ErrorBoundary.tsx';
 import type { PlanEntry } from '../../contracts/index.ts';
 
 // v1.4 — lazy: xterm.js (~300 kB) loads only when a terminal is opened.
@@ -55,6 +57,51 @@ const TermGrid = React.lazy(() => import('./components/TermGrid.tsx'));
 // render would break the memoized board (M-P4) on every 1 s clock tick.
 const EMPTY_ARR: never[] = [];
 const EMPTY_OBJ: Record<string, never> = {};
+
+interface TerminalFallbackProps {
+  grid?: boolean;
+  error?: Error;
+  onClose: () => void;
+}
+
+// Lazy terminal chunks are intentionally kept out of the board's first paint,
+// but a slow Coder proxy must not turn a click into visible nothing. The close
+// door also keeps a stalled/failed chunk load from trapping the user in a
+// modal whose real chrome never mounted.
+function TerminalFallback({ grid = false, error, onClose }: TerminalFallbackProps) {
+  return (
+    <div
+      className={`fd-termload${grid ? ' grid' : ''}${error ? ' err' : ''}`}
+      role={error ? 'alert' : grid ? 'dialog' : 'status'}
+      aria-modal={grid ? 'true' : undefined}
+      aria-live="polite"
+      aria-label={grid ? 'Live terminals loading' : 'Live terminal loading'}
+    >
+      <span>
+        {error
+          ? 'Terminal UI failed to load. Reload the board to retry the download.'
+          : grid
+            ? 'Loading live terminals…'
+            : 'Loading live terminal…'}
+      </span>
+      {error && (
+        <button
+          type="button"
+          className="fd-ghostbtn"
+          autoFocus={grid}
+          onClick={() => {
+            window.location.reload();
+          }}
+        >
+          Reload board
+        </button>
+      )}
+      <button type="button" className="fd-ghostbtn" autoFocus={grid && !error} onClick={onClose}>
+        Close
+      </button>
+    </div>
+  );
+}
 
 // Contract types mark these fields required, but App reads them defensively
 // (a conflict row's callsigns/sessions, a fs view's optional path); local
@@ -100,8 +147,8 @@ export default function App() {
   const { snap, status, prevSessions } = useFleetState();
   const { unauthorized, attempts } = useAuth(); // v1.7 LAN token
   const [now, setNow] = useState(Date.now());
-  const [theme, setTheme] = useState(() => (localStorage.getItem('fd-theme') ?? '') || 'dark');
-  const [compact, setCompact] = useState(() => localStorage.getItem('fd-compact') === '1');
+  const [theme, setTheme] = useState(() => (storageGet('fd-theme') ?? '') || 'dark');
+  const [compact, setCompact] = useState(() => storageGet('fd-compact') === '1');
   const [repoFilter, setRepoFilter] = useState('all');
   const [selQ, setSelQ] = useState<string | null>(null);
   const [drawerSid, setDrawerSid] = useState<string | null>(null);
@@ -240,10 +287,10 @@ export default function App() {
   useEffect(() => {
     if (theme === 'light') document.documentElement.dataset['theme'] = 'light';
     else document.documentElement.removeAttribute('data-theme');
-    localStorage.setItem('fd-theme', theme);
+    storageSet('fd-theme', theme);
   }, [theme]);
   useEffect(() => {
-    localStorage.setItem('fd-compact', compact ? '1' : '0');
+    storageSet('fd-compact', compact ? '1' : '0');
   }, [compact]);
 
   // keep a valid rail selection
@@ -281,6 +328,9 @@ export default function App() {
   drawerOpenRef.current = drawerSid != null;
   const confirmOpenRef = useRef(false);
   confirmOpenRef.current = killAsk != null || armAsk != null || renameAsk != null;
+  // Keeps the first-run greeting one-shot for this tab even when browser
+  // storage is disabled and cannot persist fd-help-seen.
+  const helpGreetedRef = useRef(false);
 
   // keyboard: j/k rail nav · y/n permission · 1-9 choice · c compose · ? help ·
   // Esc close. v2.6: the floating terminal window is non-modal and absent here;
@@ -309,6 +359,7 @@ export default function App() {
     lanOpen: lanOpenRef,
     wtOpen: wtOpenRef,
     helpOpen: helpOpenRef,
+    drawerOpen: drawerOpenRef,
   });
 
   // First-run concept help (fd-help-seen): open the "?" overlay exactly once,
@@ -320,11 +371,7 @@ export default function App() {
   // next render until it gets through, then never again).
   useEffect(() => {
     if (unauthorized) return;
-    try {
-      if (localStorage.getItem('fd-help-seen')) return;
-    } catch {
-      return;
-    }
+    if (helpGreetedRef.current || storageGet('fd-help-seen')) return;
     if (
       composeOpenRef.current ||
       spawnOpenRef.current ||
@@ -336,11 +383,10 @@ export default function App() {
       confirmOpenRef.current
     )
       return;
-    try {
-      localStorage.setItem('fd-help-seen', '1');
-    } catch {
-      /* private mode: the flag won't stick, so this may greet again next load — still never stacked */
-    }
+    helpGreetedRef.current = true;
+    // Private/blocked storage simply means this greeting may appear next load;
+    // it must never prevent the board itself from rendering.
+    storageSet('fd-help-seen', '1');
     setHelpOpen(true);
   });
 
@@ -495,7 +541,7 @@ export default function App() {
 
         {/* ============ conflict strip ============ */}
         {conflictMsg && (
-          <div className="fd-confstrip">
+          <div className="fd-confstrip" role="alert">
             <span className="hd">▲ CONFLICT</span>
             <span className="msg">{conflictMsg}</span>
           </div>
@@ -503,7 +549,10 @@ export default function App() {
 
         {/* ============ feedback strip (Clear + revive + remote results) ============ */}
         {clearNote && (
-          <div className={`fd-clearstrip${clearNote.err ? ' err' : ''}`}>
+          <div
+            className={`fd-clearstrip${clearNote.err ? ' err' : ''}`}
+            role={clearNote.err ? 'alert' : 'status'}
+          >
             <span className="hd">
               {(clearNote.hd ?? '') || (clearNote.err ? '✗ CLEAR' : '✓ CLEARED')}
             </span>
@@ -912,22 +961,24 @@ export default function App() {
         {/* ====== live terminal (v2.6 — FLOATING: drag/resize/minimize; the board
               behind stays interactive. Closes via ✕ ONLY — never Esc.) ====== */}
         {term && (
-          <React.Suspense fallback={null}>
-            <TermWindow
-              key={`${term.spawnId}:${(term as { n?: number }).n ?? 0}`}
-              spawnId={term.spawnId}
-              callsign={term.callsign}
-              tmuxWindow={term.window}
-              fallbackFocusRef={termBtnRef}
-              onClose={closeTerm}
-              rect={termRect}
-              onRect={setTermRect}
-              minimized={termMin}
-              onMinimize={minimizeTerm}
-              maximized={termMax}
-              onToggleMax={toggleTermMax}
-            />
-          </React.Suspense>
+          <ErrorBoundary fallback={(err) => <TerminalFallback error={err} onClose={closeTerm} />}>
+            <React.Suspense fallback={<TerminalFallback onClose={closeTerm} />}>
+              <TermWindow
+                key={`${term.spawnId}:${(term as { n?: number }).n ?? 0}`}
+                spawnId={term.spawnId}
+                callsign={term.callsign}
+                tmuxWindow={term.window}
+                fallbackFocusRef={termBtnRef}
+                onClose={closeTerm}
+                rect={termRect}
+                onRect={setTermRect}
+                minimized={termMin}
+                onMinimize={minimizeTerm}
+                maximized={termMax}
+                onToggleMax={toggleTermMax}
+              />
+            </React.Suspense>
+          </ErrorBoundary>
         )}
         {/* the dock chip the minimized window collapses to — the socket stays up.
           autoFocus (m4): minimize blurs the hidden xterm, and a keyboard user
@@ -949,17 +1000,38 @@ export default function App() {
 
         {/* ============ the wall of screens (v1.9 — ✕ ONLY, same as above) ===== */}
         {grid && (
-          <React.Suspense fallback={null}>
-            <TermGrid
-              tiles={grid}
-              fallbackFocusRef={termBtnRef}
-              onClose={() => {
-                setGrid(null);
-              }}
-              onExpand={expandTerm}
-              onRemoveTile={closeGridTile}
-            />
-          </React.Suspense>
+          <ErrorBoundary
+            fallback={(err) => (
+              <TerminalFallback
+                grid
+                error={err}
+                onClose={() => {
+                  setGrid(null);
+                }}
+              />
+            )}
+          >
+            <React.Suspense
+              fallback={
+                <TerminalFallback
+                  grid
+                  onClose={() => {
+                    setGrid(null);
+                  }}
+                />
+              }
+            >
+              <TermGrid
+                tiles={grid}
+                fallbackFocusRef={termBtnRef}
+                onClose={() => {
+                  setGrid(null);
+                }}
+                onExpand={expandTerm}
+                onRemoveTile={closeGridTile}
+              />
+            </React.Suspense>
+          </ErrorBoundary>
         )}
       </div>
     </ClockContext.Provider>

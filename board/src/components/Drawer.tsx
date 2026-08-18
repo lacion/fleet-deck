@@ -388,6 +388,11 @@ export default function Drawer({
   const [sendErr, setSendErr] = useState<string | null>(null); // M-F5 — a swallowed send now shows
   const [nudge, setNudge] = useState<NudgeState | null>(null); // {ok} | {err}
   const [nudging, setNudging] = useState(false);
+  // State disables the controls after React commits. The refs close the smaller
+  // same-render window where two clicks/Enter presses could otherwise issue two
+  // messages before that commit lands.
+  const sendingRef = useRef(false);
+  const nudgingRef = useRef(false);
   const ref = useRef<HTMLDivElement | null>(null);
   useModal(ref); // M-A2 — focus in, Tab trapped, focus restored on close
   const fam = modelFamily(s.model);
@@ -416,36 +421,64 @@ export default function Drawer({
   // 4xx/network errors entirely).
   const send = async () => {
     const text = draft.trim();
-    if (!text || sending) return;
+    if (!text || sendingRef.current) return;
+    sendingRef.current = true;
     setSending(true);
     setSendErr(null);
-    const res = await onSendThread(text);
-    setSending(false);
-    if (res?.ok) setDraft('');
-    else setSendErr((res?.reason ?? '') || 'send failed');
+    try {
+      const res = await onSendThread(text);
+      if (res?.ok) setDraft('');
+      else setSendErr((res?.reason ?? '') || 'send failed');
+    } catch {
+      setSendErr('daemon unreachable');
+    } finally {
+      sendingRef.current = false;
+      setSending(false);
+    }
   };
 
   // M-F5 — Nudge was fire-and-forget (unhandled rejection, no feedback). Same
   // result handling as the thread send now: awaited, with an ok/err line.
   const doNudge = async () => {
-    if (nudging) return;
+    if (nudgingRef.current) return;
+    nudgingRef.current = true;
     setNudging(true);
     setNudge(null);
-    const res = await sendMail(s.session_id, 'nudge: status check-in please');
-    setNudging(false);
-    if (res.ok && res.json?.ok !== false) setNudge({ ok: 'nudge sent' });
-    else setNudge({ err: reasonOf(res, `nudge failed (${res.status})`) });
+    try {
+      const res = await sendMail(s.session_id, 'nudge: status check-in please');
+      if (res.ok && res.json?.ok !== false) setNudge({ ok: 'nudge sent' });
+      else setNudge({ err: reasonOf(res, `nudge failed (${res.status})`) });
+    } catch {
+      setNudge({ err: 'daemon unreachable' });
+    } finally {
+      nudgingRef.current = false;
+      setNudging(false);
+    }
+  };
+
+  const busy = sending || nudging;
+  const requestClose = () => {
+    // Keep an unsent draft/result surface mounted until its bounded request
+    // resolves. Closing mid-flight used to lose the only copy of a failed send.
+    if (!sendingRef.current && !nudgingRef.current) onClose();
   };
 
   return (
     <>
-      <div className="fd-scrim" onClick={onClose} />
+      <div className="fd-scrim" onClick={requestClose} />
       <div
         className="fd-drawer"
         role="dialog"
         aria-modal="true"
         aria-label={`Session ${s.callsign}`}
+        aria-busy={busy}
         ref={ref}
+        onKeyDown={(e) => {
+          if ((sendingRef.current || nudgingRef.current) && e.key === 'Escape') {
+            e.preventDefault();
+            e.stopPropagation();
+          }
+        }}
       >
         <div className="fd-drawerhead">
           <span className={`fd-pulse ${pulseClass}`} style={{ width: 9, height: 9 }} />
@@ -470,7 +503,13 @@ export default function Drawer({
           <span className={`fd-mbadge ${fam}`}>{prettyModel(s.model)}</span>
           <span className="col">{(s.col || '').toUpperCase()}</span>
           <span className="fd-spacer" />
-          <button type="button" className="fd-x" aria-label="Close" onClick={onClose}>
+          <button
+            type="button"
+            className="fd-x"
+            aria-label="Close"
+            disabled={busy}
+            onClick={requestClose}
+          >
             ✕
           </button>
         </div>
@@ -508,7 +547,7 @@ export default function Drawer({
             </div>
           </div>
           <div className="fd-drawerbtns">
-            <button type="button" className="fd-primary" onClick={onCompose}>
+            <button type="button" className="fd-primary" disabled={busy} onClick={onCompose}>
               Message
             </button>
             <button
@@ -523,6 +562,7 @@ export default function Drawer({
               type="button"
               className="fd-ghostbtn"
               style={priority ? { color: 'var(--act)' } : undefined}
+              aria-pressed={priority}
               onClick={onTogglePriority}
             >
               {priority ? '★ Priority' : '☆ Priority'}
@@ -555,8 +595,16 @@ export default function Drawer({
                 ⇥ {adopting ? 'Moving…' : 'Move to tmux'}
               </button>
             ) : null}
-            {nudge?.ok && <span className="fd-killok">✓ {nudge.ok}</span>}
-            {nudge?.err && <span className="fd-killwarn">✗ {nudge.err}</span>}
+            {nudge?.ok && (
+              <span className="fd-killok" role="status">
+                ✓ {nudge.ok}
+              </span>
+            )}
+            {nudge?.err && (
+              <span className="fd-killwarn" role="alert">
+                ✗ {nudge.err}
+              </span>
+            )}
           </div>
           {s.spawn && (
             <OwnedPane
@@ -651,6 +699,7 @@ export default function Drawer({
                   className="fd-input"
                   style={{ fontFamily: 'var(--font-ui)', fontSize: '12.5px' }}
                   placeholder={`Message ${s.callsign || 'session'}…`}
+                  aria-label={`Message ${s.callsign || 'session'}`}
                   value={draft}
                   onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
                     setDraft(e.target.value);
@@ -670,7 +719,7 @@ export default function Drawer({
                 </button>
               </div>
               {sendErr && (
-                <div className="status hazard">
+                <div className="status hazard" role="alert">
                   ✗ {sendErr} — your message is still here, try again
                 </div>
               )}

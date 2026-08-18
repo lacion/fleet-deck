@@ -19,6 +19,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createPayloadCapture } from '../src/daemon/payload-capture.ts';
 import { randomPort } from './helpers/daemon.ts';
+import { seedHookCompatibility } from './helpers/hook-compat.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(HERE, '..');
@@ -165,6 +166,7 @@ test('fleet-watch stops at its stdin byte ceiling and removes every stream liste
   const child = spawn(process.execPath, ['--require', preload, WATCH], {
     env: {
       ...process.env,
+      ...seedHookCompatibility(home),
       FLEETDECK_HOME: home,
       FLEETDECK_PORT: String(randomPort()),
     },
@@ -218,6 +220,7 @@ test('fleet-watch timeout uses the same listener cleanup and pauses stdin', asyn
   const child = spawn(process.execPath, ['--require', preload, WATCH], {
     env: {
       ...process.env,
+      ...seedHookCompatibility(home),
       FLEETDECK_HOME: home,
       FLEETDECK_PORT: String(randomPort()),
       FLEETDECK_WATCH_POLL_MS: '50',
@@ -247,6 +250,8 @@ test('SessionStart launcher repairs fleetd.log to 0600', async (t) => {
   const child = spawn(process.execPath, [SESSIONSTART], {
     env: {
       ...process.env,
+      FLEETDECK_TEST_CLAUDE_VERSION: '2.1.234',
+      CLAUDE_PID: String(process.pid),
       FLEETDECK_HOME: home,
       FLEETDECK_PORT: String(port),
       FLEETDECK_AGENTS_CMD: 'false',
@@ -304,6 +309,8 @@ test('SessionStart silently absorbs an asynchronous spawn error', async (t) => {
   const child = spawn(process.execPath, ['--require', preload, SESSIONSTART], {
     env: {
       ...process.env,
+      FLEETDECK_TEST_CLAUDE_VERSION: '2.1.234',
+      CLAUDE_PID: String(process.pid),
       FLEETDECK_HOME: home,
       FLEETDECK_PORT: String(randomPort()),
     },

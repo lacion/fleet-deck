@@ -77,6 +77,7 @@ import { postHook, postJson, getJson, type JsonResponse } from './helpers/http.t
 import { loadFixture } from './helpers/fixtures.ts';
 import { waitUntil, waitForSpecRecords } from './helpers/wait.ts';
 import { getState, scratchCwd, questionsFor, findSession } from './helpers/state.ts';
+import { registerTestSession, startRegisteredDaemon } from './helpers/session.ts';
 
 // ---------------------------------------------------------------------------
 // /state shapes. The HTTP helpers return `.json` as `unknown`; each read casts
@@ -230,6 +231,7 @@ async function holdExitPlan(
   const held = postHook(daemon.baseUrl, 'PermissionRequest', payload, {
     token: daemon,
     timeout: holdMs + 5000,
+    boardClient: true,
   });
   let snapshot: StateSnapshot | null = null;
   const q = await waitUntil(
@@ -259,20 +261,10 @@ async function holdExitPlan(
 
 test('capture-before-answer: the plan row appears in /state (status proposed, plan_md byte-identical to the fixture) WHILE the ExitPlanMode question is still pending, and the question carries plan_id', async (t) => {
   const holdMs = 1500;
-  const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
-  const cwd = scratchCwd('fleetdeck-plans-cwd-');
-  t.after(async () => {
-    await daemon.stop();
-    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  const { daemon, cwd, sid } = await startRegisteredDaemon(t, {
+    daemon: { env: { FLEETDECK_HOLD_MS: String(holdMs) } },
+    session: { cwdPrefix: 'fleetdeck-plans-cwd-' },
   });
-
-  const sid = randomUUID();
-  await postHook(
-    daemon.baseUrl,
-    'SessionStart',
-    loadFixture('session-start', { session_id: sid, cwd }),
-    { token: daemon },
-  );
 
   const { held, state, q, payload } = await holdExitPlan(daemon, sid, cwd, holdMs);
   assert.equal(q.status, 'pending', 'sanity: the question must still be pending at this point');
@@ -337,28 +329,19 @@ test('capture-before-answer: the plan row appears in /state (status proposed, pl
 // would produce — so this doesn't need a real fault to exercise the path.
 test('capture rollback: a failing plan insert leaves NEITHER the question nor the plan visible, and the hook fails open', async (t) => {
   const holdMs = 30000; // must never be waited out: fail-open answers immediately
-  const daemon = await startDaemon({
-    env: { FLEETDECK_HOLD_MS: String(holdMs), FLEETDECK_TEST_FAIL_PLAN_INSERT: '1' },
+  const { daemon, cwd, sid } = await startRegisteredDaemon(t, {
+    daemon: {
+      env: { FLEETDECK_HOLD_MS: String(holdMs), FLEETDECK_TEST_FAIL_PLAN_INSERT: '1' },
+    },
+    session: { cwdPrefix: 'fleetdeck-plans-cwd-' },
   });
-  const cwd = scratchCwd('fleetdeck-plans-cwd-');
-  t.after(async () => {
-    await daemon.stop();
-    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
-  });
-
-  const sid = randomUUID();
-  await postHook(
-    daemon.baseUrl,
-    'SessionStart',
-    loadFixture('session-start', { session_id: sid, cwd }),
-    { token: daemon },
-  );
 
   const t0 = Date.now();
   const payload = loadFixture(EXIT_PLAN_FIXTURE, { session_id: sid, cwd });
   const res = await postHook(daemon.baseUrl, 'PermissionRequest', payload, {
     token: daemon,
     timeout: 5000,
+    boardClient: true,
   });
   const elapsed = Date.now() - t0;
   assert.equal(res.status, 200, 'a failed plan capture must not 5xx the hook');
@@ -387,20 +370,10 @@ test('capture rollback: a failing plan insert leaves NEITHER the question nor th
 
 test('answer path: {behavior:"allow"} approves the plan and the held response is the verified allow schema', async (t) => {
   const holdMs = 1500;
-  const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
-  const cwd = scratchCwd('fleetdeck-plans-cwd-');
-  t.after(async () => {
-    await daemon.stop();
-    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  const { daemon, cwd, sid } = await startRegisteredDaemon(t, {
+    daemon: { env: { FLEETDECK_HOLD_MS: String(holdMs) } },
+    session: { cwdPrefix: 'fleetdeck-plans-cwd-' },
   });
-
-  const sid = randomUUID();
-  await postHook(
-    daemon.baseUrl,
-    'SessionStart',
-    loadFixture('session-start', { session_id: sid, cwd }),
-    { token: daemon },
-  );
 
   const t0 = Date.now();
   const { held, q } = await holdExitPlan(daemon, sid, cwd, holdMs);
@@ -434,20 +407,10 @@ test('answer path: {behavior:"allow"} approves the plan and the held response is
 
 test('answer path: {behavior:"capture"} denies the held hook bare AND mails the pinned capture notice to the planner\'s next UserPromptSubmit; plan becomes captured', async (t) => {
   const holdMs = 1500;
-  const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
-  const cwd = scratchCwd('fleetdeck-plans-cwd-');
-  t.after(async () => {
-    await daemon.stop();
-    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  const { daemon, cwd, sid } = await startRegisteredDaemon(t, {
+    daemon: { env: { FLEETDECK_HOLD_MS: String(holdMs) } },
+    session: { cwdPrefix: 'fleetdeck-plans-cwd-' },
   });
-
-  const sid = randomUUID();
-  await postHook(
-    daemon.baseUrl,
-    'SessionStart',
-    loadFixture('session-start', { session_id: sid, cwd }),
-    { token: daemon },
-  );
 
   const t0 = Date.now();
   const { held, q } = await holdExitPlan(daemon, sid, cwd, holdMs);
@@ -505,20 +468,10 @@ test('answer path: {behavior:"capture"} denies the held hook bare AND mails the 
 
 test('answer path: {behavior:"deny"} plainly denies the held hook; plan becomes rejected', async (t) => {
   const holdMs = 1500;
-  const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
-  const cwd = scratchCwd('fleetdeck-plans-cwd-');
-  t.after(async () => {
-    await daemon.stop();
-    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  const { daemon, cwd, sid } = await startRegisteredDaemon(t, {
+    daemon: { env: { FLEETDECK_HOLD_MS: String(holdMs) } },
+    session: { cwdPrefix: 'fleetdeck-plans-cwd-' },
   });
-
-  const sid = randomUUID();
-  await postHook(
-    daemon.baseUrl,
-    'SessionStart',
-    loadFixture('session-start', { session_id: sid, cwd }),
-    { token: daemon },
-  );
 
   const { held, q } = await holdExitPlan(daemon, sid, cwd, holdMs);
   const planId = plansFor(await getState<StateSnapshot>(daemon.baseUrl), sid)[0]?.plan_id;
@@ -548,20 +501,10 @@ test('answer path: an unanswered ExitPlanMode hold expires to {} and the plan st
   // event (a re-armed expiry would leave the row pending through the grace
   // window and this test would need to wait it out).
   const holdMs = 1200;
-  const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
-  const cwd = scratchCwd('fleetdeck-plans-cwd-');
-  t.after(async () => {
-    await daemon.stop();
-    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  const { daemon, cwd, sid } = await startRegisteredDaemon(t, {
+    daemon: { env: { FLEETDECK_HOLD_MS: String(holdMs) } },
+    session: { cwdPrefix: 'fleetdeck-plans-cwd-' },
   });
-
-  const sid = randomUUID();
-  await postHook(
-    daemon.baseUrl,
-    'SessionStart',
-    loadFixture('session-start', { session_id: sid, cwd }),
-    { token: daemon },
-  );
 
   const t0 = Date.now();
   const { held } = await holdExitPlan(daemon, sid, cwd, holdMs);
@@ -600,20 +543,9 @@ test('answer path: an unanswered ExitPlanMode hold expires to {} and the plan st
 // ---------------------------------------------------------------------------
 
 test('regression: PermissionRequest tool_name=AskUserQuestion still answers {} in <200ms untouched by the v1.3 ExitPlanMode capture wiring', async (t) => {
-  const daemon = await startDaemon();
-  const cwd = scratchCwd('fleetdeck-plans-cwd-');
-  t.after(async () => {
-    await daemon.stop();
-    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  const { daemon, cwd, sid } = await startRegisteredDaemon(t, {
+    session: { cwdPrefix: 'fleetdeck-plans-cwd-' },
   });
-
-  const sid = randomUUID();
-  await postHook(
-    daemon.baseUrl,
-    'SessionStart',
-    loadFixture('session-start', { session_id: sid, cwd }),
-    { token: daemon },
-  );
 
   const payload = loadFixture(
     'permission-request',
@@ -621,7 +553,10 @@ test('regression: PermissionRequest tool_name=AskUserQuestion still answers {} i
     { tool_name: 'AskUserQuestion' },
   );
   const t0 = Date.now();
-  const res = await postHook(daemon.baseUrl, 'PermissionRequest', payload, { token: daemon });
+  const res = await postHook(daemon.baseUrl, 'PermissionRequest', payload, {
+    token: daemon,
+    boardClient: true,
+  });
   const elapsed = Date.now() - t0;
 
   assert.equal(res.status, 200);
@@ -674,6 +609,7 @@ test('/state plans: caps at 20 non-archived rows, newest first; archiving frees 
       postHook(daemon.baseUrl, 'PermissionRequest', payload, {
         token: daemon,
         timeout: holdMs + 4000,
+        boardClient: true,
       }),
     );
     // small stagger so created_at (ms epoch) strictly increases in creation order
@@ -1182,20 +1118,10 @@ test('in-terminal: turn-boundary activity retires the question and settles the p
   // the agent's next turn (UserPromptSubmit) is the observable proof. The
   // retire IS the activity, so no second event is needed.
   const holdMs = 1000;
-  const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
-  const cwd = scratchCwd('fleetdeck-plans-cwd-');
-  t.after(async () => {
-    await daemon.stop();
-    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  const { daemon, cwd, sid } = await startRegisteredDaemon(t, {
+    daemon: { env: { FLEETDECK_HOLD_MS: String(holdMs) } },
+    session: { cwdPrefix: 'fleetdeck-plans-cwd-' },
   });
-
-  const sid = randomUUID();
-  await postHook(
-    daemon.baseUrl,
-    'SessionStart',
-    loadFixture('session-start', { session_id: sid, cwd }),
-    { token: daemon },
-  );
   const { held } = await holdExitPlan(daemon, sid, cwd, holdMs);
   const planId = plansFor(await getState<StateSnapshot>(daemon.baseUrl), sid)[0]?.plan_id;
   assert.ok(planId !== undefined, 'sanity: plan captured');
@@ -1234,20 +1160,10 @@ test('in-terminal: turn-boundary activity retires the question and settles the p
 
 test('in-terminal: timer expiry THEN later PostToolUse activity settles handled-in-terminal (the deferred gate)', async (t) => {
   const holdMs = 1000;
-  const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
-  const cwd = scratchCwd('fleetdeck-plans-cwd-');
-  t.after(async () => {
-    await daemon.stop();
-    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  const { daemon, cwd, sid } = await startRegisteredDaemon(t, {
+    daemon: { env: { FLEETDECK_HOLD_MS: String(holdMs) } },
+    session: { cwdPrefix: 'fleetdeck-plans-cwd-' },
   });
-
-  const sid = randomUUID();
-  await postHook(
-    daemon.baseUrl,
-    'SessionStart',
-    loadFixture('session-start', { session_id: sid, cwd }),
-    { token: daemon },
-  );
   const { held } = await holdExitPlan(daemon, sid, cwd, holdMs);
   const planId = plansFor(await getState<StateSnapshot>(daemon.baseUrl), sid)[0]?.plan_id;
   await held;
@@ -1277,20 +1193,10 @@ test('in-terminal: timer expiry THEN later PostToolUse activity settles handled-
 
 test('in-terminal: timer expiry with NO subsequent activity never settles — the plan stays proposed', async (t) => {
   const holdMs = 900;
-  const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
-  const cwd = scratchCwd('fleetdeck-plans-cwd-');
-  t.after(async () => {
-    await daemon.stop();
-    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  const { daemon, cwd, sid } = await startRegisteredDaemon(t, {
+    daemon: { env: { FLEETDECK_HOLD_MS: String(holdMs) } },
+    session: { cwdPrefix: 'fleetdeck-plans-cwd-' },
   });
-
-  const sid = randomUUID();
-  await postHook(
-    daemon.baseUrl,
-    'SessionStart',
-    loadFixture('session-start', { session_id: sid, cwd }),
-    { token: daemon },
-  );
   const { held } = await holdExitPlan(daemon, sid, cwd, holdMs);
   const planId = plansFor(await getState<StateSnapshot>(daemon.baseUrl), sid)[0]?.plan_id;
   await held;
@@ -1309,20 +1215,10 @@ test('in-terminal: timer expiry with NO subsequent activity never settles — th
 
 test('in-terminal: a plan question raised in the SAME turn (still pending, never parked) must NOT be flipped by the gate', async (t) => {
   const holdMs = 60_000; // long window: no hold expires on its own in this test
-  const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
-  const cwd = scratchCwd('fleetdeck-plans-cwd-');
-  t.after(async () => {
-    await daemon.stop();
-    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  const { daemon, cwd, sid } = await startRegisteredDaemon(t, {
+    daemon: { env: { FLEETDECK_HOLD_MS: String(holdMs) } },
+    session: { cwdPrefix: 'fleetdeck-plans-cwd-' },
   });
-
-  const sid = randomUUID();
-  await postHook(
-    daemon.baseUrl,
-    'SessionStart',
-    loadFixture('session-start', { session_id: sid, cwd }),
-    { token: daemon },
-  );
 
   // First plan: the human dismisses it on the board (retired unanswered,
   // without session activity) — armed, awaiting the activity gate.
@@ -1394,20 +1290,10 @@ test('in-terminal: a plan question raised in the SAME turn (still pending, never
 
 test('in-terminal: board answer regression — allow still flips approved and is never re-settled by later activity', async (t) => {
   const holdMs = 1500;
-  const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
-  const cwd = scratchCwd('fleetdeck-plans-cwd-');
-  t.after(async () => {
-    await daemon.stop();
-    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  const { daemon, cwd, sid } = await startRegisteredDaemon(t, {
+    daemon: { env: { FLEETDECK_HOLD_MS: String(holdMs) } },
+    session: { cwdPrefix: 'fleetdeck-plans-cwd-' },
   });
-
-  const sid = randomUUID();
-  await postHook(
-    daemon.baseUrl,
-    'SessionStart',
-    loadFixture('session-start', { session_id: sid, cwd }),
-    { token: daemon },
-  );
   const { held, q } = await holdExitPlan(daemon, sid, cwd, holdMs);
   const planId = plansFor(await getState<StateSnapshot>(daemon.baseUrl), sid)[0]?.plan_id;
 
@@ -1441,20 +1327,10 @@ test('in-terminal: board answer regression — allow still flips approved and is
 
 test('in-terminal: handled-in-terminal cannot be marked executed (409), can be archived', async (t) => {
   const holdMs = 1000;
-  const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
-  const cwd = scratchCwd('fleetdeck-plans-cwd-');
-  t.after(async () => {
-    await daemon.stop();
-    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  const { daemon, cwd, sid } = await startRegisteredDaemon(t, {
+    daemon: { env: { FLEETDECK_HOLD_MS: String(holdMs) } },
+    session: { cwdPrefix: 'fleetdeck-plans-cwd-' },
   });
-
-  const sid = randomUUID();
-  await postHook(
-    daemon.baseUrl,
-    'SessionStart',
-    loadFixture('session-start', { session_id: sid, cwd }),
-    { token: daemon },
-  );
   const { held } = await holdExitPlan(daemon, sid, cwd, holdMs);
   const planId = plansFor(await getState<StateSnapshot>(daemon.baseUrl), sid)[0]?.plan_id;
   await held;
@@ -1523,13 +1399,7 @@ test('mark executed with the question still pending dismisses it (fails the hold
     rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
-  const sid = randomUUID();
-  await postHook(
-    daemon.baseUrl,
-    'SessionStart',
-    loadFixture('session-start', { session_id: sid, cwd }),
-    { token: daemon },
-  );
+  const { sid } = await registerTestSession(t, daemon, { cwd });
   const out = await holdExitPlan(daemon, sid, cwd, holdMs);
   held = out.held;
   const { q } = out;
@@ -1590,17 +1460,11 @@ test('mark executed with the question still pending dismisses it (fails the hold
 // ---------------------------------------------------------------------------
 
 async function captureProposedPlan(
-  _t: TestContext,
+  t: TestContext,
   daemon: DaemonHandle,
   cwd: string,
 ): Promise<PlanEntry> {
-  const sid = randomUUID();
-  await postHook(
-    daemon.baseUrl,
-    'SessionStart',
-    loadFixture('session-start', { session_id: sid, cwd }),
-    { token: daemon },
-  );
+  const { sid } = await registerTestSession(t, daemon, { cwd });
   const { held } = await holdExitPlan(daemon, sid, cwd, 1000);
   const plan = plansFor(await getState<StateSnapshot>(daemon.baseUrl), sid)[0];
   assert.ok(plan, 'sanity: plan captured');
@@ -1783,13 +1647,7 @@ test('BUG-040: spawn claim refusals — unknown plan 404, non-executable plan 40
   );
 
   // A rejected plan is not executable: capture one, deny it, then try.
-  const sid = randomUUID();
-  await postHook(
-    daemon.baseUrl,
-    'SessionStart',
-    loadFixture('session-start', { session_id: sid, cwd }),
-    { token: daemon },
-  );
+  const { sid } = await registerTestSession(t, daemon, { cwd });
   const { held, q } = await holdExitPlan(daemon, sid, cwd, 1000);
   const planId = plansFor(await getState<StateSnapshot>(daemon.baseUrl), sid)[0]?.plan_id;
   const ansRes = await postJson(`${daemon.baseUrl}/api/questions/${q.id}/answer`, {

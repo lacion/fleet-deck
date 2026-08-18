@@ -68,8 +68,8 @@ function CountdownRing({ q, now }: CountdownRingProps) {
       ? `~${Math.ceil(secs / 60)} min until this falls back to the terminal`
       : `${secs}s until this falls back to the terminal`;
   return (
-    <span className="fd-ring" title={tip}>
-      <svg width="26" height="26" viewBox="0 0 26 26">
+    <span className="fd-ring" title={tip} aria-label={tip}>
+      <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true">
         <circle cx="13" cy="13" r="10.5" fill="none" stroke="var(--border)" strokeWidth="2.5" />
         <circle
           className="arc"
@@ -97,6 +97,43 @@ interface PermissionBodyProps {
   onAnswer: OnAnswer;
 }
 
+function AllowDenyButtons({
+  busy,
+  allowLabel,
+  answerLabel,
+  onAnswer,
+}: {
+  busy: boolean;
+  allowLabel: string;
+  answerLabel: string;
+  onAnswer: OnAnswer;
+}) {
+  return (
+    <div className="fd-btnrow">
+      <button
+        type="button"
+        className="fd-allow"
+        disabled={busy}
+        onClick={() => {
+          onAnswer({ behavior: 'allow' }, answerLabel);
+        }}
+      >
+        {allowLabel} <span className="k">y</span>
+      </button>
+      <button
+        type="button"
+        className="fd-deny"
+        disabled={busy}
+        onClick={() => {
+          onAnswer({ behavior: 'deny' }, 'deny');
+        }}
+      >
+        Deny <span className="k">n</span>
+      </button>
+    </div>
+  );
+}
+
 function PermissionBody({ view, busy, onAnswer }: PermissionBodyProps) {
   return (
     <>
@@ -115,28 +152,7 @@ function PermissionBody({ view, busy, onAnswer }: PermissionBodyProps) {
           ))}
         </div>
       )}
-      <div className="fd-btnrow">
-        <button
-          type="button"
-          className="fd-allow"
-          disabled={busy}
-          onClick={() => {
-            onAnswer({ behavior: 'allow' }, 'allow');
-          }}
-        >
-          Allow <span className="k">y</span>
-        </button>
-        <button
-          type="button"
-          className="fd-deny"
-          disabled={busy}
-          onClick={() => {
-            onAnswer({ behavior: 'deny' }, 'deny');
-          }}
-        >
-          Deny <span className="k">n</span>
-        </button>
-      </div>
+      <AllowDenyButtons busy={busy} allowLabel="Allow" answerLabel="allow" onAnswer={onAnswer} />
     </>
   );
 }
@@ -168,28 +184,12 @@ function PlanBody({ q, busy, onAnswer }: PlanBodyProps) {
           <em>plan text not included in this snapshot</em>
         </div>
       )}
-      <div className="fd-btnrow">
-        <button
-          type="button"
-          className="fd-allow"
-          disabled={busy}
-          onClick={() => {
-            onAnswer({ behavior: 'allow' }, 'approve');
-          }}
-        >
-          Approve <span className="k">y</span>
-        </button>
-        <button
-          type="button"
-          className="fd-deny"
-          disabled={busy}
-          onClick={() => {
-            onAnswer({ behavior: 'deny' }, 'deny');
-          }}
-        >
-          Deny <span className="k">n</span>
-        </button>
-      </div>
+      <AllowDenyButtons
+        busy={busy}
+        allowLabel="Approve"
+        answerLabel="approve"
+        onAnswer={onAnswer}
+      />
       <button
         type="button"
         className="fd-capture"
@@ -216,6 +216,12 @@ function ChoiceBody({ view, busy, onAnswer, bindKeys }: ChoiceBodyProps) {
   const questions = view.questions ?? [];
   const [picked, setPicked] = useState<Record<string, string | string[] | undefined>>({}); // question text -> label | [labels]
   const multi = questions.length > 1 || questions.some((x) => x.multiSelect);
+  let optionN = 0;
+  const optionOffsets = questions.map((question) => {
+    const offset = optionN;
+    optionN += question.options?.length ?? 0;
+    return offset;
+  });
 
   const pick = (question: ChoiceQ, opt: ChoiceOpt) => {
     if (!multi) {
@@ -282,6 +288,7 @@ function ChoiceBody({ view, busy, onAnswer, bindKeys }: ChoiceBodyProps) {
           )}
           <div className="fd-opts">
             {(question.options ?? []).map((opt, i) => {
+              const shortcut = (optionOffsets[qi] ?? 0) + i + 1;
               const cur = picked[question.question];
               const isPicked = Array.isArray(cur) ? cur.includes(opt.label) : cur === opt.label;
               return (
@@ -294,7 +301,7 @@ function ChoiceBody({ view, busy, onAnswer, bindKeys }: ChoiceBodyProps) {
                     pick(question, opt);
                   }}
                 >
-                  <span className="n">{i + 1}</span>
+                  <span className="n">{shortcut <= 9 ? shortcut : '·'}</span>
                   <span className="body">
                     <span className="l">{opt.label}</span>
                     {opt.description && <span className="d">{opt.description}</span>}
@@ -331,7 +338,7 @@ function FreeformBody({ offline, busy, onAnswer, bindKeys }: FreeformBodyProps) 
   const [draft, setDraft] = useState('');
   const taRef = useRef<HTMLTextAreaElement | null>(null);
   const send = () => {
-    if (draft.trim()) onAnswer({ text: draft.trim() }, 'sent');
+    if (!busy && draft.trim()) onAnswer({ text: draft.trim() }, 'sent');
   };
   // M-F6 — App's Enter-on-a-selected-freeform focuses the textarea through this
   // handle instead of a document.querySelector('textarea').
@@ -594,6 +601,44 @@ function DeadCardNav({ session, onOpenTerm }: DeadCardNavProps) {
   );
 }
 
+// Both a normal card and its ErrorBoundary fallback dismiss through the same
+// endpoint. Keep their single-flight latch and success/failure lifecycle here;
+// each surface only supplies the note shape it renders.
+function useQuestionDismiss(
+  questionId: string,
+  onDismissed: ((id: string) => void) | undefined,
+  setError: (reason: string | null) => void,
+) {
+  const [dismissing, setDismissing] = useState(false);
+  const dismissingRef = useRef(false);
+
+  const dismiss = useCallback(async () => {
+    if (dismissingRef.current) return;
+    dismissingRef.current = true;
+    setDismissing(true);
+    setError(null);
+    let removed = false;
+    try {
+      const res = await dismissQuestion(questionId);
+      if (res.ok && res.json?.ok !== false) {
+        removed = true;
+        onDismissed?.(questionId);
+        return;
+      }
+      setError(reasonOf(res, `dismiss failed (${res.status})`));
+    } catch {
+      setError('dismiss failed — daemon unreachable');
+    } finally {
+      if (!removed) {
+        dismissingRef.current = false;
+        setDismissing(false);
+      }
+    }
+  }, [questionId, onDismissed, setError]);
+
+  return { dismissing, dismiss };
+}
+
 interface QuestionCardProps {
   q: QuestionEntry;
   session: SessionEntry | undefined;
@@ -614,11 +659,16 @@ function QuestionCard({
   onOpenTerm,
 }: QuestionCardProps) {
   const [busy, setBusy] = useState(false);
+  const answeringRef = useRef(false);
+  const answeredRef = useRef(false);
+  const [answered, setAnswered] = useState(false);
   const [note, setNote] = useState<Note | null>(null); // transient result of an answer POST
   // v1.8 — dismiss: the question you already answered in the terminal. Low
   // risk (the daemon expires it and sends the session NOTHING), so no confirm
   // — just an in-flight lock and an honest failure line if the daemon says no.
-  const [dismissing, setDismissing] = useState(false);
+  const { dismissing, dismiss: doDismiss } = useQuestionDismiss(q.id, onDismissed, (reason) => {
+    setNote(reason ? { cls: 'hazard', text: reason } : null);
+  });
   const view = questionView(q);
   const payload = q.payload as QPayload | null | undefined;
   // v1.3 — ExitPlanMode permissions are PLAN cards (they also carry plan_id)
@@ -647,43 +697,42 @@ function QuestionCard({
 
   const onAnswer = useCallback(
     async (body: unknown, label: string) => {
+      if (answeringRef.current || answeredRef.current) return;
+      answeringRef.current = true;
       setBusy(true);
       setNote(null);
-      const res = await answerQuestion(q.id, body);
-      if (res.ok) {
-        setNote({
-          cls: q.kind === 'freeform' || rearmed ? 'act' : 'ok',
-          text:
-            q.kind === 'freeform' || rearmed
-              ? offline
-                ? `→ ${label} · queued — delivers on resume`
-                : `→ ${label} · queued — delivers at ${TURN_BOUNDARY_HINT}`
-              : `→ ${label} — sent to agent`,
-        });
-      } else {
-        setNote({ cls: 'hazard', text: reasonOf(res, `answer failed (${res.status})`) });
+      try {
+        const res = await answerQuestion(q.id, body);
+        if (res.ok) {
+          // Latch locally as soon as the daemon accepts. The snapshot can trail
+          // the POST by a frame; re-enabling controls in that gap can answer one
+          // held tool call twice.
+          answeredRef.current = true;
+          setAnswered(true);
+          setNote({
+            cls: q.kind === 'freeform' || rearmed ? 'act' : 'ok',
+            text:
+              q.kind === 'freeform' || rearmed
+                ? offline
+                  ? `→ ${label} · queued — delivers on resume`
+                  : `→ ${label} · queued — delivers at ${TURN_BOUNDARY_HINT}`
+                : `→ ${label} — sent to agent`,
+          });
+        } else {
+          setNote({ cls: 'hazard', text: reasonOf(res, `answer failed (${res.status})`) });
+        }
+      } catch {
+        setNote({ cls: 'hazard', text: 'answer failed — daemon unreachable' });
+      } finally {
+        answeringRef.current = false;
+        setBusy(false);
       }
-      setBusy(false);
     },
     [q.id, q.kind, offline, rearmed],
   );
 
-  const doDismiss = async () => {
-    if (dismissing) return;
-    setDismissing(true);
-    setNote(null);
-    const res = await dismissQuestion(q.id);
-    if (res.ok && res.json?.ok !== false) {
-      // gone from the rail immediately; the next snapshot agrees (expired)
-      onDismissed?.(q.id);
-      return; // unmounting — don't touch state
-    }
-    setNote({ cls: 'hazard', text: reasonOf(res, `dismiss failed (${res.status})`) });
-    setDismissing(false);
-  };
-
   const resolved = statusLine(q, session);
-  const interactive = pending && !holdLost;
+  const interactive = pending && !holdLost && !answered;
 
   // M-F6 — the imperative handle App's hotkeys reach this card by. Registered
   // per id; the body components fill in `bodyApi` (choose / focusInput) so no
@@ -719,6 +768,7 @@ function QuestionCard({
     <div
       ref={cardRef}
       className={`fd-q${selected && pending ? ' sel' : ''}${done ? ' done' : ''}`}
+      aria-label={`${(q.callsign ?? '') || q.session_id}: ${title}`}
       onClick={() => {
         if (pending) onSelect();
       }}
@@ -799,8 +849,16 @@ function QuestionCard({
           onAnswer={(body, label) => void onAnswer(body, label)}
         />
       )}
-      {note && pending && <div className={`status ${note.cls}`}>{note.text}</div>}
-      {resolved && <div className={`status ${resolved.cls}`}>{resolved.text}</div>}
+      {note && pending && (
+        <div className={`status ${note.cls}`} role={note.cls === 'hazard' ? 'alert' : 'status'}>
+          {note.text}
+        </div>
+      )}
+      {resolved && (
+        <div className={`status ${resolved.cls}`} role="status">
+          {resolved.text}
+        </div>
+      )}
       {done && <DeadCardNav q={q} session={session} onOpenTerm={onOpenTerm} />}
     </div>
   );
@@ -811,20 +869,10 @@ function QuestionCard({
 // dismissible card so the poison can be cleared (it re-throws on every reload
 // otherwise), while the rest of the rail and the board keep working.
 function PoisonCard({ q, onDismissed }: { q: QuestionEntry; onDismissed?: (id: string) => void }) {
-  const [dismissing, setDismissing] = useState(false);
   const [note, setNote] = useState<string | null>(null);
-  const doDismiss = async () => {
-    if (dismissing) return;
-    setDismissing(true);
-    setNote(null);
-    const res = await dismissQuestion(q.id);
-    if (res.ok && res.json?.ok !== false) {
-      onDismissed?.(q.id);
-      return; // unmounting — don't touch state
-    }
-    setNote(reasonOf(res, `dismiss failed (${res.status})`));
-    setDismissing(false);
-  };
+  const { dismissing, dismiss: doDismiss } = useQuestionDismiss(q.id, onDismissed, (reason) => {
+    setNote(reason);
+  });
   return (
     <div className="fd-q">
       <div className="row1">
@@ -850,7 +898,11 @@ function PoisonCard({ q, onDismissed }: { q: QuestionEntry; onDismissed?: (id: s
         ⚠ a malformed payload broke this card — the rest of the board is fine. Dismiss it to clear
         the row.
       </div>
-      {note && <div className="status hazard">{note}</div>}
+      {note && (
+        <div className="status hazard" role="alert">
+          {note}
+        </div>
+      )}
     </div>
   );
 }
@@ -893,7 +945,7 @@ export default function Inbox({
       </div>
       <div className="fd-inboxlist" id="fd-inboxlist">
         {ordered.length === 0 && (
-          <div className="fd-allclear">
+          <div className="fd-allclear" role="status">
             <div className="ring">✓</div>
             <div className="t1">ALL CLEAR</div>
             <div className="t2">No one is waiting on you.</div>

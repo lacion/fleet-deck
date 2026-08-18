@@ -2,13 +2,14 @@
 //
 // Hook table, updated for Phase 3+4 (needs-you relay):
 //   - /hook/PermissionRequest, /hook/Elicitation and (Phase 4, F3c)
-//     /hook/AskUserQuestion no longer answer {} immediately — they HOLD the
-//     response up to FLEETDECK_HOLD_MS and resolve via
+//     /hook/AskUserQuestion HOLD only while an authorized board is connected;
+//     with no board they fail open immediately. With a consumer present they
+//     hold up to FLEETDECK_HOLD_MS and resolve via
 //     POST /api/questions/:id/answer or expiry. The minimal assertion here:
-//     an unanswered hold still resolves 200 {} at ~expiry and never breaks
-//     the session. The full relay matrix (answer shapes, /state questions,
-//     caps, activity expiry) lives in tests/needs-you.test.mjs and
-//     tests/choice-relay.test.mjs.
+//     an unanswered, board-owned hold still resolves 200 {} at ~expiry and
+//     never breaks the session. The full relay matrix (including the no-board
+//     path) lives in tests/board-hold-presence.test.ts,
+//     tests/needs-you.test.ts, and tests/choice-relay.test.ts.
 
 import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
@@ -28,7 +29,7 @@ const cases: [string, string, string][] = [
   ['AskUserQuestion', 'ask-user-question', 'choice'],
 ];
 for (const [event, fixtureName, kind] of cases) {
-  test(`POST /hook/${event} holds, then resolves {} at expiry when unanswered (Phase 3)`, async (t) => {
+  test(`POST /hook/${event} holds with a board, then resolves {} at expiry when unanswered`, async (t) => {
     const holdMs = 1200;
     // Re-arm disabled (grace 0): this asserts the row reads 'expired' after the
     // unanswered hold; the 2.1 re-arm window would keep it pending that long.
@@ -54,7 +55,7 @@ for (const [event, fixtureName, kind] of cases) {
       daemon.baseUrl,
       event,
       loadFixture(fixtureName, { session_id: sid, cwd }),
-      { token: daemon, timeout: holdMs + 5000 },
+      { token: daemon, timeout: holdMs + 5000, boardClient: true },
     );
     const elapsed = Date.now() - t0;
 

@@ -218,8 +218,9 @@ test('serve: refuses to boot under a non-Bun runtime and never imports the daemo
 });
 
 // Self-contained-bundle guard (the Coder incomplete-install landmine, ROOT CAUSE).
-// bin/fleetdeck.ts loads the daemon's pid-identity helpers (pidRecord /
-// livePidLooksLikeFleetd / verifyDaemonPid) from src/daemon/takeover.ts. That
+// bin/fleetdeck.ts loads the daemon's pid-identity and graceful-handoff helpers
+// (pidRecord / pidIsLive / livePidLooksLikeFleetd / terminateDaemon) from
+// src/daemon/takeover.ts. That
 // import MUST be STATIC so `bun run bundle:bin` esbuild-INLINES the helpers into
 // the shipped bin/fleetdeck.mjs. A published (bundle-only) install ships no src/
 // tree (see the `files` allowlist), so ANY runtime load of that source — the
@@ -249,8 +250,9 @@ test('bin bundle inlines the takeover pid helpers and never loads the source at 
   // bodies must appear verbatim in the artifact.
   for (const fn of [
     'function pidRecord',
+    'function pidIsLive',
     'function livePidLooksLikeFleetd',
-    'function verifyDaemonPid',
+    'function terminateDaemon',
   ]) {
     assert.ok(src.includes(fn), `expected ${fn} to be inlined into bin/fleetdeck.mjs`);
   }

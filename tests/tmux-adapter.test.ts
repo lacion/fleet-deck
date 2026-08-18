@@ -36,6 +36,7 @@ import {
   sendEnter,
   sessionName,
 } from '../src/daemon/spawn.ts';
+import { cleanupOwnedTmuxSocket } from './helpers/tmux.ts';
 import { waitUntil } from './helpers/wait.ts';
 
 // The persisted generation claim and its death certificate — read back from
@@ -54,22 +55,29 @@ const readGeneration = (file: string): GenerationRecord =>
 const readCertificate = (file: string): RetiredCertificate =>
   JSON.parse(readFileSync(file, 'utf8')) as RetiredCertificate;
 
+let tmuxAvailable: boolean | undefined;
 function tmuxOk(): boolean {
+  if (tmuxAvailable !== undefined) return tmuxAvailable;
+  const socketRoot = mkdtempSync(
+    path.join(process.platform === 'win32' ? tmpdir() : '/tmp', 'fd-tmux-probe-'),
+  );
   const socket = `fleetdeck-adapter-probe-${process.pid}-${randomBytes(4).toString('hex')}`;
+  const env: NodeJS.ProcessEnv = { ...process.env, TMUX_TMPDIR: socketRoot };
+  delete env['TMUX'];
+  delete env['TMUX_PANE'];
   try {
     execFileSync('tmux', ['-L', socket, '-f', '/dev/null', 'new-session', '-d', 'sleep 1'], {
       stdio: 'ignore',
+      env,
     });
-    execFileSync('tmux', ['-L', socket, 'kill-server'], { stdio: 'ignore' });
-    return true;
+    tmuxAvailable = true;
   } catch {
-    try {
-      execFileSync('tmux', ['-L', socket, 'kill-server'], { stdio: 'ignore' });
-    } catch {
-      /* no server */
-    }
-    return false;
+    tmuxAvailable = false;
+  } finally {
+    cleanupOwnedTmuxSocket(socket, socketRoot);
+    rmSync(socketRoot, { recursive: true, force: true });
   }
+  return tmuxAvailable;
 }
 
 // env: process.env on both — the socket name resolves against a runtime-mutated
@@ -907,11 +915,7 @@ test('tmux adapter parses scoped panes and kills only the exact fleet session wi
   process.env['FLEETDECK_TMUX_SOCKET'] = socket;
 
   t.after(() => {
-    try {
-      tmux(socket, ['kill-server']);
-    } catch {
-      /* already gone */
-    }
+    cleanupOwnedTmuxSocket(socket, process.env['TMUX_TMPDIR']);
     if (previousSocket == null) delete process.env['FLEETDECK_TMUX_SOCKET'];
     else process.env['FLEETDECK_TMUX_SOCKET'] = previousSocket;
   });
@@ -1016,11 +1020,7 @@ test('duplicate scoped window names are ambiguous and never selected or killed',
   const previousSocket = process.env['FLEETDECK_TMUX_SOCKET'];
   process.env['FLEETDECK_TMUX_SOCKET'] = socket;
   t.after(() => {
-    try {
-      tmux(socket, ['kill-server']);
-    } catch {
-      /* already gone */
-    }
+    cleanupOwnedTmuxSocket(socket, process.env['TMUX_TMPDIR']);
     if (previousSocket == null) delete process.env['FLEETDECK_TMUX_SOCKET'];
     else process.env['FLEETDECK_TMUX_SOCKET'] = previousSocket;
   });
@@ -1121,11 +1121,7 @@ test('killWindowVerified refuses a recycled window name (expectWindowId mismatch
   const previousSocket = process.env['FLEETDECK_TMUX_SOCKET'];
   process.env['FLEETDECK_TMUX_SOCKET'] = socket;
   t.after(() => {
-    try {
-      tmux(socket, ['kill-server']);
-    } catch {
-      /* already gone */
-    }
+    cleanupOwnedTmuxSocket(socket, process.env['TMUX_TMPDIR']);
     if (previousSocket == null) delete process.env['FLEETDECK_TMUX_SOCKET'];
     else process.env['FLEETDECK_TMUX_SOCKET'] = previousSocket;
   });
@@ -1189,11 +1185,7 @@ test('killWindowVerified treats a failing expect predicate as a stale no-op', {
   const previousSocket = process.env['FLEETDECK_TMUX_SOCKET'];
   process.env['FLEETDECK_TMUX_SOCKET'] = socket;
   t.after(() => {
-    try {
-      tmux(socket, ['kill-server']);
-    } catch {
-      /* already gone */
-    }
+    cleanupOwnedTmuxSocket(socket, process.env['TMUX_TMPDIR']);
     if (previousSocket == null) delete process.env['FLEETDECK_TMUX_SOCKET'];
     else process.env['FLEETDECK_TMUX_SOCKET'] = previousSocket;
   });
@@ -1344,11 +1336,7 @@ test('newWindow arms remain-on-exit for the fleet session only — never server-
   process.env['FLEETDECK_TMUX_SOCKET'] = socket;
   const userSession = `user-${port}`;
   t.after(() => {
-    try {
-      tmux(socket, ['kill-server']);
-    } catch {
-      /* already gone */
-    }
+    cleanupOwnedTmuxSocket(socket, process.env['TMUX_TMPDIR']);
     if (previousSocket == null) delete process.env['FLEETDECK_TMUX_SOCKET'];
     else process.env['FLEETDECK_TMUX_SOCKET'] = previousSocket;
   });
@@ -1414,18 +1402,14 @@ test('newWindow refuses an occupied scoped name before any agent starts', {
   const callsign = 'occupied';
   const window = `fd${port}-${callsign}`;
   t.after(() => {
-    try {
-      tmux(socket, ['kill-server']);
-    } catch {
-      /* already gone */
-    }
+    cleanupOwnedTmuxSocket(socket, process.env['TMUX_TMPDIR']);
     if (previousSocket == null) delete process.env['FLEETDECK_TMUX_SOCKET'];
     else process.env['FLEETDECK_TMUX_SOCKET'] = previousSocket;
   });
 
   await ensureSession(port);
   // An orphan (or manually created) window already owns the deterministic name.
-  tmux(socket, ['new-window', '-d', '-t', `=${session}:`, '-n', window, 'sleep 3600']);
+  tmux(socket, ['new-window', '-d', '-t', `=${session}:`, '-n', window, '--', 'sleep', '3600']);
   const orphanId = tmux(socket, [
     'display-message',
     '-p',
@@ -1433,6 +1417,18 @@ test('newWindow refuses an occupied scoped name before any agent starts', {
     `=${session}:=${window}`,
     '#{window_id}',
   ]);
+  // tmux returns after creating the pane, not after its child has necessarily
+  // exec'd. Under a loaded bundle gate an immediate pane_current_command can
+  // still name the bootstrap shell, making the final "one sleep" assertion a
+  // race. Establish the orphan's baseline before the adapter launches and
+  // rolls back its provisional pane; this is also stronger evidence that the
+  // surviving @id still owns the original agent process.
+  await waitUntil(
+    () =>
+      tmux(socket, ['display-message', '-p', '-t', orphanId, '#{pane_current_command}']) ===
+      'sleep',
+    { intervalMs: 25, label: `orphan pane ${orphanId} to exec sleep` },
+  );
 
   await assert.rejects(
     newWindow({ port, callsign, cwd: tmpdir(), argv: ['sleep', '3600'] }),
@@ -1547,11 +1543,7 @@ test('tmux-target-syntax characters in a scoped kill name are rejected, never pa
   const previousSocket = process.env['FLEETDECK_TMUX_SOCKET'];
   process.env['FLEETDECK_TMUX_SOCKET'] = socket;
   t.after(() => {
-    try {
-      tmux(socket, ['kill-server']);
-    } catch {
-      /* already gone */
-    }
+    cleanupOwnedTmuxSocket(socket, process.env['TMUX_TMPDIR']);
     if (previousSocket == null) delete process.env['FLEETDECK_TMUX_SOCKET'];
     else process.env['FLEETDECK_TMUX_SOCKET'] = previousSocket;
   });

@@ -149,11 +149,15 @@ export function sessionAdoptableNow(
 // would silently route to Anthropic after all. Excluding EXACTLY the injected
 // names keeps the guarantee intact for every variable the launch did NOT set —
 // an ambient ANTHROPIC_API_KEY is still scrubbed from a spawn that only supplies
-// ANTHROPIC_AUTH_TOKEN. Default `[]` ⇒ byte-identical to the pre-0.15.0 prefix.
+// ANTHROPIC_AUTH_TOKEN. `boardSession` is the exact precreated Claude session id;
+// null is the shell-pane contract (scrub an ambient marker, do not replace it).
 export function claudeEnvArgvPrefix(
   port: number,
   home: string,
-  { keep = [] }: { keep?: readonly string[] } = {},
+  {
+    keep = [],
+    boardSession = null,
+  }: { keep?: readonly string[]; boardSession?: string | null } = {},
 ): string[] {
   const keepSet = new Set(keep);
   const scrub = [
@@ -185,6 +189,12 @@ export function claudeEnvArgvPrefix(
     'FLEETDECK_RC_HARVEST_MS',
     'FLEETDECK_ADOPT_ARM_MS',
     'FLEETDECK_ADOPT_DELAY_MS',
+    // The hook shim uses this launch-owned marker to decide whether an
+    // interactive event may wait for a board answer. Scrub any ambient value,
+    // then set the exact precreated session id below only for a Fleet Deck-owned
+    // Claude pane. A shell pane gets no marker; a nested/manual Claude process
+    // inheriting some other pane's marker cannot impersonate that board session.
+    'FLEETDECK_BOARD_SESSION',
     // Test seams that must NEVER ride a pane's env into the next SessionStart:
     // a leaked FLEETDECK_TEST_DAEMON_SCRIPT would make every future daemon
     // (re)spawn launch an arbitrary script, and a leaked VERSION_OVERRIDE
@@ -217,6 +227,7 @@ export function claudeEnvArgvPrefix(
     // here. Placed BEFORE the FLEETDECK identity pair so PORT/HOME remain the
     // immediate lead-in to the command, the ordering the adapter/tests pin.
     'CLAUDE_CODE_DISABLE_AGENT_VIEW=1',
+    ...(boardSession ? [`FLEETDECK_BOARD_SESSION=${boardSession}`] : []),
     `FLEETDECK_PORT=${port}`,
     `FLEETDECK_HOME=${home}`,
   ];

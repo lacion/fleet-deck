@@ -194,6 +194,12 @@ test('a foreign listener that wins the port is never sent plan-gate mutations', 
   });
 
   const requestLog = path.join(repo, 'foreign-requests.jsonl');
+  // An append-only request log is otherwise absent when the readiness gate
+  // notices its dead child before it probes the foreign listener. That valid
+  // zero-request outcome is especially easy to hit on macOS. Seed the fixture
+  // so the assertion below can distinguish zero calls without assuming that
+  // at least one harmless GET raced through first.
+  fs.writeFileSync(requestLog, '');
   const foreign = http.createServer((req, res) => {
     fs.appendFileSync(requestLog, JSON.stringify({ method: req.method, url: req.url }) + '\n');
     req.resume();

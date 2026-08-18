@@ -16,6 +16,7 @@ import { REPO_ROOT, startDaemon } from './helpers/daemon.ts';
 import { getState } from './helpers/state.ts';
 import { scaleMs } from './helpers/wait.ts';
 import type { StateResponse } from '../contracts/state.ts';
+import { seedHookCompatibility } from './helpers/hook-compat.ts';
 
 interface HooksJson {
   hooks: Record<string, unknown>;
@@ -54,8 +55,11 @@ function runHook(
   env: Record<string, string> = {},
   timeoutMs = 8000,
 ): Promise<{ code: number | null; stdout: string }> {
+  const compatibilityEnv = env['FLEETDECK_HOME']
+    ? seedHookCompatibility(env['FLEETDECK_HOME'])
+    : {};
   const child = spawn(process.execPath, event ? [script, event] : [script], {
-    env: { ...process.env, ...env },
+    env: { ...process.env, ...compatibilityEnv, ...env },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   let stdout = '';

@@ -7,8 +7,9 @@
 // "version" field (and is not JSON), so it can't drift the way an npm lock root
 // could — `bun install --frozen-lockfile` keeps the lockfiles consistent with
 // the manifests instead. This script is the single verifier of those four
-// version strings: publish.yml runs it against the tag before anything
-// irreversible, and tests/release-version.test.mjs exercises it directly.
+// version strings: ci.yml runs it on branches, publish.yml runs it against the
+// tag before anything irreversible, and tests/release-version.test.ts exercises
+// it directly.
 //
 // Usage: node scripts/check-release-version.mjs [tag] [root]
 //   tag  — the git tag being published (e.g. "v0.21.1"); when given it must
@@ -21,6 +22,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { VERSION_MANIFEST_PATHS, versionFromManifest } from './release-contract.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -28,14 +30,10 @@ const [tag, root = repoRoot] = process.argv.slice(2);
 
 const readJson = (rel) => JSON.parse(readFileSync(path.join(root, rel), 'utf8'));
 
-const pkg = readJson('package.json').version;
-
-const versions = [
-  ['package.json', pkg],
-  ['.claude-plugin/plugin.json', readJson('.claude-plugin/plugin.json').version],
-  ['.claude-plugin/marketplace.json', readJson('.claude-plugin/marketplace.json').plugins[0].version],
-  ['board/package.json', readJson('board/package.json').version],
-];
+const versions = VERSION_MANIFEST_PATHS.map((file) => [
+  file,
+  versionFromManifest(file, readJson(file)),
+]);
 if (tag) versions.unshift([`tag ${tag}`, tag.replace(/^v/, '')]);
 
 for (const [where, v] of versions) console.log(`${where.padEnd(40)} ${v}`);

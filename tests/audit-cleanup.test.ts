@@ -13,6 +13,7 @@ import path from 'node:path';
 
 import { branchOf, deriveRepo } from '../src/daemon/repo-identity.ts';
 import { lastAssistantModel, lastAssistantText } from '../src/daemon/transcript.ts';
+import { waitUntil } from './helpers/wait.ts';
 
 function scratch(t: TestContext, prefix: string): string {
   const dir = mkdtempSync(path.join(tmpdir(), prefix));
@@ -194,10 +195,13 @@ test('agents polling is single-flight and backs off the CLI while liveness stays
     `../src/daemon/agents-poll.ts?audit=${Date.now()}`
   )) as typeof import('../src/daemon/agents-poll.ts');
 
+  let completedPolls = 0;
   let livenessTicks = 0;
   const poller = startAgentsPoll({
     ingestAgentsPoll() {
-      /* no ingest under test */
+      // This callback runs only after the child has exited and its JSON parsed,
+      // so it is a stronger completion signal than observing the child's log.
+      completedPolls++;
     },
     spawnLivenessTick() {
       livenessTicks++;
@@ -207,19 +211,51 @@ test('agents polling is single-flight and backs off the CLI while liveness stays
   t.after(() => {
     poller.stop();
   });
-  await new Promise((resolve) => setTimeout(resolve, 1_250));
-  poller.stop();
-
-  const events = fs
-    .readFileSync(log, 'utf8')
-    .trim()
-    .split('\n')
-    .map((line) => {
-      const [kind, at] = line.split(' ');
-      return { kind, at: Number(at) };
+  const readEvents = () => {
+    if (!fs.existsSync(log)) return [];
+    return fs
+      .readFileSync(log, 'utf8')
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => {
+        const [kind, at] = line.split(' ');
+        return { kind, at: Number(at) };
+      });
+  };
+  // Synchronize on the behavior under test instead of a fixed wall-clock
+  // sleep. Under full-suite CPU load, 1,250 ms could expire after the expected
+  // two CLI polls but before five timer callbacks had received event-loop time.
+  let observationFailure: unknown = null;
+  try {
+    await waitUntil(() => completedPolls >= 2 && livenessTicks >= 5, {
+      timeoutMs: 5_000,
+      intervalMs: 20,
+      label: 'two completed agents polls and five liveness sweeps',
     });
+  } catch (error) {
+    observationFailure = error;
+  } finally {
+    poller.stop();
+  }
+  // stop() prevents another launch but intentionally does not kill a command
+  // already in flight. Balance start/end before scratch cleanup so even the
+  // failure path cannot strand a child that still owns the temporary log.
+  const events = await waitUntil(
+    () => {
+      const observed = readEvents();
+      const starts = observed.filter((event) => event.kind === 'start').length;
+      const ends = observed.filter((event) => event.kind === 'end').length;
+      return starts === ends ? observed : null;
+    },
+    { timeoutMs: 2_000, intervalMs: 20, label: 'agents poll children to exit' },
+  );
+  if (observationFailure !== null) throw observationFailure;
   const starts = events.filter((event) => event.kind === 'start');
+  const ends = events.filter((event) => event.kind === 'end');
   assert.equal(starts.length, 2, 'an empty fleet should run the CLI at the idle cadence');
+  assert.equal(ends.length, 2, 'both expected CLI polls must finish before teardown');
+  assert.equal(completedPolls, 2, 'exactly two valid poll results should be ingested');
   let concurrent = 0;
   let peak = 0;
   for (const event of events) {

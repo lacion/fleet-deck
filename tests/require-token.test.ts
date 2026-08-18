@@ -31,7 +31,6 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 interface HookAck {
   ok?: boolean;
-  hookSpecificOutput?: { additionalContext?: string };
 }
 
 function scratchHome() {
@@ -204,8 +203,8 @@ test('REQUIRE_TOKEN=on: loopback exemption survives only for /health and the she
   // 0.16.0 INVERSION: /hook/* no longer keeps the exemption — hooks arrive
   // through the command shims (scripts/fleet-hook.mjs et al.), which read
   // $FLEETDECK_HOME/token and attach it. A tokenless hook is refused — but in
-  // the hook DIALECT (a restart whisper, never an error page): a pre-0.16.0
-  // session must not go silently dark, and a hook can never be broken.
+  // the hook dialect (HTTP 200 canonical {}, never an error page). Missing or
+  // stale auth must not leak an infrastructure diagnostic into Claude.
   const sid = randomUUID();
   const cwd = mkdtempSync(path.join(tmpdir(), 'fleetdeck-rt-cwd-'));
   t.after(() => {
@@ -223,11 +222,7 @@ test('REQUIRE_TOKEN=on: loopback exemption survives only for /health and the she
     'a tokenless hook is refused in the hook dialect, not with an error page',
   );
   const bareJson = (await bareHook.json()) as HookAck;
-  assert.match(
-    bareJson.hookSpecificOutput?.additionalContext ?? '',
-    /restart/i,
-    'the whisper asks for a restart',
-  );
+  assert.deepEqual(bareJson, {}, 'the refusal carries no context or decision fields');
   assert.equal(bareJson.ok ?? null, null, 'the refusal is not a processed hook');
   const hook = await fetch(`${baseUrl}/hook/SessionStart`, {
     method: 'POST',

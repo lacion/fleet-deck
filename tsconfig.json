@@ -53,6 +53,7 @@
     // type-checked under tsconfig.board-tests.json (root + DOM lib) instead.
     "tests/board-util.test.ts",
     "tests/board-termdiag.test.ts",
-    "tests/board-markdown.test.ts"
+    "tests/board-markdown.test.ts",
+    "tests/board-connection-generation.test.ts"
   ]
 }

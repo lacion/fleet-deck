@@ -3,6 +3,7 @@ import { reasonOf, saveSettings } from '../api.ts';
 import { basename, copyText } from '../util.ts';
 import { renderMarkdown } from '../markdown.ts';
 import { useModal } from '../useModal.ts';
+import { joinBrowsePath, normalizeBrowseRoot, relativeBrowsePath } from '../fsPath.ts';
 
 // v2.2 — the read-only file viewer: one session's working tree, browsable and
 // searchable from the board. Read-only is the contract, not a v1 shortcut —
@@ -58,24 +59,15 @@ interface FsSearchJson {
   hits?: Hit[];
   truncated?: boolean;
 }
-interface ListResult {
+interface FsResult<T> {
   ok: boolean;
   status: number;
-  json: FsListJson | null;
+  json: T | null;
   reason: string | null;
 }
-interface ReadResult {
-  ok: boolean;
-  status: number;
-  json: FsReadJson | null;
-  reason: string | null;
-}
-interface SearchResult {
-  ok: boolean;
-  status: number;
-  json: FsSearchJson | null;
-  reason: string | null;
-}
+type ListResult = FsResult<FsListJson>;
+type ReadResult = FsResult<FsReadJson>;
+type SearchResult = FsResult<FsSearchJson>;
 // Per-directory tree state, keyed by relative path.
 interface DirState {
   entries?: FsEntry[] | null;
@@ -134,6 +126,7 @@ interface TreeDirProps {
   favActive?: boolean;
   favSet: Set<string>;
   favFull?: boolean;
+  favBusy?: boolean;
   absOf: (p: string) => string;
   onToggleFav: (abs: string | null, isFav: boolean) => void;
 }
@@ -149,6 +142,7 @@ function TreeDir({
   favActive = false,
   favSet,
   favFull = false,
+  favBusy = false,
   absOf,
   onToggleFav,
 }: TreeDirProps) {
@@ -208,7 +202,7 @@ function TreeDir({
                   <button
                     type="button"
                     className={`fd-fsstar${fav ? ' on' : ''}`}
-                    disabled={capped}
+                    disabled={capped || favBusy}
                     aria-pressed={fav}
                     title={
                       fav
@@ -239,6 +233,7 @@ function TreeDir({
                   favActive={favActive}
                   favSet={favSet}
                   favFull={favFull}
+                  favBusy={favBusy}
                   absOf={absOf}
                   onToggleFav={onToggleFav}
                 />
@@ -382,6 +377,7 @@ export default function FileViewer({
   const [results, setResults] = useState<ResultsState | null>(null); // {q, mode, backend, hits, truncated, err, busy}
   const [view, setView] = useState('welcome'); // 'welcome' | 'file' | 'results'
   const [favErr, setFavErr] = useState<string | null>(null); // fail-loud ☆ save error (favActive only)
+  const [favBusy, setFavBusy] = useState(false);
 
   // favorites: opt-in, and only ever touched when favs is an array
   const favActive = Array.isArray(favs);
@@ -389,17 +385,23 @@ export default function FileViewer({
   // root, which IS its own trailing slash, so the child prefix is computed once
   // instead of naively appending '/' ('/' + '/' would be '//', matching nothing
   // and disabling every chip)
-  const normRoot = (root || '~').replace(/\/+$/, '') || '/';
-  const rootPrefix = normRoot.endsWith('/') ? normRoot : normRoot + '/';
+  const normRoot = normalizeBrowseRoot(root);
   const favSet = useMemo(() => new Set(favActive ? favs : []), [favs, favActive]);
   const favFull = favActive && favs.length >= FAV_MAX;
   // reachable from THIS root iff it is the root or nests under it — the browser
   // never names a root; out-of-root favorites render disabled with a hint
-  const favEnabled = (fav: string) => fav === normRoot || fav.startsWith(rootPrefix);
+  const favEnabled = (fav: string) => relativeBrowsePath(normRoot, fav) !== null;
 
   const ref = useRef<HTMLDivElement | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
-  const seq = useRef(0); // one counter for every async surface — stale answers drop
+  // Reads, searches, and directory branches are independent async surfaces.
+  // Giving each its own sequence prevents a search from cancelling a file read
+  // (or vice versa), while still dropping stale answers within that surface.
+  const fileSeq = useRef(0);
+  const searchSeq = useRef(0);
+  const dirSeq = useRef(new Map<string, number>());
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const favBusyRef = useRef(false);
   useModal(ref, { initialFocus: false }); // focus is parked on the search input below
 
   useEffect(() => {
@@ -407,8 +409,11 @@ export default function FileViewer({
   }, []);
 
   const loadDir = async (p: string): Promise<boolean> => {
+    const request = (dirSeq.current.get(p) ?? 0) + 1;
+    dirSeq.current.set(p, request);
     setDirs((prev) => ({ ...prev, [p]: { ...(prev[p] ?? {}), loading: true, err: null } }));
     const res = await list(p);
+    if (dirSeq.current.get(p) !== request) return false;
     if (res.ok && res.json?.ok) {
       if (p === '') {
         setGit(!!res.json.git);
@@ -448,13 +453,13 @@ export default function FileViewer({
   };
 
   const openFile = async (p: string, line?: number) => {
-    const my = ++seq.current;
+    const my = ++fileSeq.current;
     setView('file');
     setTargetLine(line ?? null);
     setMdOn(p.endsWith('.md')); // prose renders, one click back to source
     setFile({ path: p, loading: true, err: null, content: '' });
     const res = await read(p);
-    if (my !== seq.current) return;
+    if (my !== fileSeq.current) return;
     if (res.ok && res.json?.ok) {
       setFile({ path: p, loading: false, err: null, ...res.json });
     } else {
@@ -489,7 +494,8 @@ export default function FileViewer({
   // ancestor prefix down to it, lazy-loading each level (like revealPath, but the
   // target is a folder, so no file opens). Only ever called on a favEnabled chip.
   const revealDir = async (fav: string) => {
-    const rel = fav === normRoot ? '' : fav.slice(rootPrefix.length);
+    const rel = relativeBrowsePath(normRoot, fav);
+    if (rel === null) return;
     const segs = rel ? rel.split('/') : [];
     let cur = '';
     for (const seg of segs) {
@@ -505,14 +511,24 @@ export default function FileViewer({
   // the whole array. No optimistic flip — on {ok:false} the reason renders
   // inline (fail-loud), and success re-supplies `favs` via the next snapshot.
   const toggleFav = async (abs: string | null, isFav: boolean) => {
+    if (favBusyRef.current) return;
     if (!isFav && favFull) {
       setFavErr(`${FAV_MAX} favorites max`);
       return;
     }
+    favBusyRef.current = true;
+    setFavBusy(true);
     setFavErr(null);
-    const next = isFav ? (favs ?? []).filter((f) => f !== abs) : [...(favs ?? []), abs];
-    const res = await saveSettings({ fav_dirs: next });
-    if (!(res.ok && res.json?.ok)) setFavErr(reasonOf(res, `save failed (${res.status})`));
+    try {
+      const next = isFav ? (favs ?? []).filter((f) => f !== abs) : [...(favs ?? []), abs];
+      const res = await saveSettings({ fav_dirs: next });
+      if (!(res.ok && res.json?.ok)) setFavErr(reasonOf(res, `save failed (${res.status})`));
+    } catch {
+      setFavErr('save failed — daemon unreachable');
+    } finally {
+      favBusyRef.current = false;
+      setFavBusy(false);
+    }
   };
 
   useEffect(() => {
@@ -523,11 +539,11 @@ export default function FileViewer({
   }, []);
 
   const runSearch = async (query: string, m: 'content' | 'name') => {
-    const my = ++seq.current;
+    const my = ++searchSeq.current;
     setResults({ q: query, mode: m, hits: [], busy: true, err: null });
     setView('results');
     const res = await search(query, m);
-    if (my !== seq.current) return;
+    if (my !== searchSeq.current) return;
     if (res.ok && res.json?.ok) {
       setResults({ q: query, mode: m, busy: false, err: null, ...res.json });
     } else {
@@ -545,13 +561,17 @@ export default function FileViewer({
   useEffect(() => {
     const query = q.trim();
     if (query.length < 2) {
+      searchSeq.current += 1; // invalidate a request already on the wire
+      clearTimeout(searchTimer.current ?? undefined);
+      searchTimer.current = null;
       setResults(null);
       setView((v) => (v === 'results' ? (file ? 'file' : 'welcome') : v));
       return undefined;
     }
-    const t = setTimeout(() => void runSearch(query, mode), 300);
+    searchTimer.current = setTimeout(() => void runSearch(query, mode), 300);
     return () => {
-      clearTimeout(t);
+      clearTimeout(searchTimer.current ?? undefined);
+      searchTimer.current = null;
     };
   }, [q, mode]);
 
@@ -574,11 +594,13 @@ export default function FileViewer({
       e.stopPropagation();
       setQ('');
     } else if (e.key === 'Enter' && q.trim().length >= 2) {
+      clearTimeout(searchTimer.current ?? undefined);
+      searchTimer.current = null;
       void runSearch(q.trim(), mode);
     }
   };
 
-  const absPath = (p: string) => (root ? `${root}/${p}` : p);
+  const absPath = (p: string) => joinBrowsePath(normRoot, p);
 
   return (
     <div className="fd-composewrap" onClick={onClose}>
@@ -619,6 +641,7 @@ export default function FileViewer({
           <input
             ref={searchRef}
             className="fd-input"
+            aria-label="Search files"
             placeholder="search file contents… (2+ chars, literal — no regex)"
             value={q}
             onChange={(e) => {
@@ -629,6 +652,8 @@ export default function FileViewer({
           <div className="fd-fsmodes" role="radiogroup" aria-label="Search mode">
             <button
               type="button"
+              role="radio"
+              aria-checked={mode === 'content'}
               className={`fd-target${mode === 'content' ? ' on' : ''}`}
               onClick={() => {
                 setMode('content');
@@ -638,6 +663,8 @@ export default function FileViewer({
             </button>
             <button
               type="button"
+              role="radio"
+              aria-checked={mode === 'name'}
               className={`fd-target${mode === 'name' ? ' on' : ''}`}
               onClick={() => {
                 setMode('name');
@@ -649,7 +676,7 @@ export default function FileViewer({
         </div>
 
         {rootErr ? (
-          <div className="fd-fsgone">
+          <div className="fd-fsgone" role="alert">
             <div className="t1">
               {rootErr.status === 410 ? 'WORKING TREE GONE' : 'FILES UNAVAILABLE'}
             </div>
@@ -688,7 +715,11 @@ export default function FileViewer({
                 })}
               </div>
             )}
-            {favActive && favErr && <div className="fd-fsfav-err">✗ {favErr}</div>}
+            {favActive && favErr && (
+              <div className="fd-fsfav-err" role="alert">
+                ✗ {favErr}
+              </div>
+            )}
             <div className="fd-fsbody">
               <div className="fd-fstree">
                 <TreeDir
@@ -702,6 +733,7 @@ export default function FileViewer({
                   favActive={favActive}
                   favSet={favSet}
                   favFull={favFull}
+                  favBusy={favBusy}
                   absOf={absPath}
                   onToggleFav={(abs, isFav) => void toggleFav(abs, isFav)}
                 />
@@ -710,7 +742,7 @@ export default function FileViewer({
               <div className="fd-fspane">
                 {view === 'results' && results && (
                   <>
-                    <div className="fd-fspanehead">
+                    <div className="fd-fspanehead" role="status" aria-live="polite">
                       <span className="ttl">
                         {results.busy
                           ? `searching “${results.q}”…`
@@ -725,7 +757,11 @@ export default function FileViewer({
                         <span className="fd-fstrunc dim">plain-dir scan, capped</span>
                       )}
                     </div>
-                    {results.err && <div className="fd-spawnerr">✗ {results.err}</div>}
+                    {results.err && (
+                      <div className="fd-spawnerr" role="alert">
+                        ✗ {results.err}
+                      </div>
+                    )}
                     <div className="fd-fsresults">
                       {!results.busy && !results.err && (results.hits?.length ?? 0) === 0 && (
                         <div className="fd-fsnotice">
@@ -793,9 +829,11 @@ export default function FileViewer({
                         <span className="meta">{fmtSize(file.size)}</span>
                       )}
                       {file.path.endsWith('.md') && !file.binary && (
-                        <div className="fd-fsmodes">
+                        <div className="fd-fsmodes" role="radiogroup" aria-label="Markdown view">
                           <button
                             type="button"
+                            role="radio"
+                            aria-checked={mdOn}
                             className={`fd-target${mdOn ? ' on' : ''}`}
                             onClick={() => {
                               setMdOn(true);
@@ -805,6 +843,8 @@ export default function FileViewer({
                           </button>
                           <button
                             type="button"
+                            role="radio"
+                            aria-checked={!mdOn}
                             className={`fd-target${!mdOn ? ' on' : ''}`}
                             onClick={() => {
                               setMdOn(false);
@@ -830,8 +870,16 @@ export default function FileViewer({
                         {fmtSize(file.size)}
                       </div>
                     )}
-                    {file.loading && <div className="fd-fsnotice">reading…</div>}
-                    {file.err && <div className="fd-spawnerr">✗ {file.err}</div>}
+                    {file.loading && (
+                      <div className="fd-fsnotice" role="status">
+                        reading…
+                      </div>
+                    )}
+                    {file.err && (
+                      <div className="fd-spawnerr" role="alert">
+                        ✗ {file.err}
+                      </div>
+                    )}
                     {!file.loading && !file.err && (
                       <FileBody file={file} targetLine={targetLine} mdOn={mdOn} />
                     )}

@@ -65,7 +65,8 @@ try {
   healthPid = (await res.json())?.pid ?? null;
 } catch { /* no listener there — pidfile is stale */ }
 
-const proven = healthPid === record.pid && takeover.verifyDaemonPid(record.pid, home);
+const proven =
+  healthPid === record.pid && takeover.verifyDaemonPid(record.pid, home, record.port);
 if (proven) console.log(`signal ${record.pid}`);
 else console.log(live(record.pid) ? `live ${record.pid}` : 'dead');
 EOF

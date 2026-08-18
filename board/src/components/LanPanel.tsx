@@ -1,6 +1,7 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { qrPath } from '../qr.ts';
 import { copyText } from '../util.ts';
+import { shareInfoForHref } from '../share.ts';
 import { useModal } from '../useModal.ts';
 import type { Lan } from '../../../contracts/index.ts';
 
@@ -23,10 +24,13 @@ interface UrlRowProps {
 
 function UrlRow({ url, primary }: UrlRowProps) {
   const [state, setState] = useState<'ok' | 'manual' | null>(null); // null | 'ok' | 'manual'
+  const clearTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => clearTimeout(clearTimer.current ?? undefined), []);
   const copy = async () => {
     const ok = await copyText(url);
     setState(ok ? 'ok' : 'manual');
-    setTimeout(
+    clearTimeout(clearTimer.current ?? undefined);
+    clearTimer.current = setTimeout(
       () => {
         setState(null);
       },
@@ -63,6 +67,12 @@ export default function LanPanel({ lan, onClose }: LanPanelProps) {
   // as "local only" until the poll lands.
   const urls = Array.isArray(lan?.urls) ? lan.urls.filter(Boolean) : [];
   const enabled = !!lan?.enabled && urls.length > 0;
+  // A loopback-bound daemon can still be deliberately reachable through an
+  // authenticated Coder app/reverse proxy. The browser knows that concrete
+  // fact from the page origin even on older daemons whose `lan` shape has no
+  // proxy metadata. Never tell that user to expose 0.0.0.0 unnecessarily.
+  const pageShare = useMemo(() => shareInfoForHref(window.location.href), []);
+  const proxied = !enabled && pageShare.proxied;
   const qr = useMemo(() => (enabled ? qrPath(urls[0]) : null), [enabled, urls[0]]);
   const dialogRef = useRef<HTMLDivElement | null>(null);
   useModal(dialogRef); // M-A2
@@ -80,7 +90,13 @@ export default function LanPanel({ lan, onClose }: LanPanelProps) {
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center' }}>
-          <span className="lbl">{enabled ? 'SHARE THIS BOARD' : 'THIS BOARD IS LOCAL ONLY'}</span>
+          <span className="lbl">
+            {enabled
+              ? 'SHARE THIS BOARD'
+              : proxied
+                ? 'THIS BOARD USES A PROXY'
+                : 'THIS BOARD IS LOCAL ONLY'}
+          </span>
           <span className="fd-spacer" />
           <button type="button" className="fd-x" aria-label="Close" onClick={onClose}>
             ✕
@@ -123,6 +139,24 @@ export default function LanPanel({ lan, onClose }: LanPanelProps) {
             <div className="fd-lanwarn">
               ⚠ Anyone on this network who has the link can spawn agents and type into their
               terminals. It is a password — send it like one.
+            </div>
+          </>
+        ) : proxied ? (
+          <>
+            <div className="sub">
+              {pageShare.remote
+                ? 'You opened FleetDeck through a workspace proxy or tunnel. Keep the daemon on loopback; share the workspace/app URL using that proxy’s access controls.'
+                : 'You opened FleetDeck through a local Coder app proxy. Keep the daemon on loopback; share the externally reachable Coder app URL, not this localhost test URL.'}
+            </div>
+            {pageShare.remote && pageShare.url && (
+              <div className="fd-lanurls">
+                <UrlRow url={pageShare.url} primary />
+              </div>
+            )}
+            <div className="fd-lanwarn">
+              Do not bind FleetDeck to <span className="mono">0.0.0.0</span> just for this. The
+              proxy should remain the public boundary. If this link asks another user for a
+              FleetDeck key, the proxy is in token mode; get the key from your administrator.
             </div>
           </>
         ) : (

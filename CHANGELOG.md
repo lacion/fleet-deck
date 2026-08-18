@@ -5,6 +5,153 @@ All notable changes to Fleet Deck are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.23.4] - 2026-08-18
+
+Interactive Claude hooks are silent and fail-open for ordinary or unsupported
+Claude sessions, and starting the managed service can safely adopt a
+plugin-spawned daemon.
+
+### Changed
+
+- **Repeated lifecycle and release logic now has one owner.** Shared helpers
+  consolidate bounded subprocess capture, atomic state publishing, filesystem
+  responses, worktree pruning, rename validation, spawn overrides, board dialog
+  and settings flows, daemon/session test setup, and release manifest/payload
+  metadata. Generated bundles remain generated artifacts, while intentionally
+  isolated fail-open entry points and semantically different retry paths stay
+  separate.
+- **Coder templates now share one Fleet Deck bootstrap and one Terraform
+  integration.** ML and non-engineering variants reference the canonical files;
+  CI materializes and verifies self-contained template directories before upload,
+  eliminating three hand-maintained copies without changing the deployed shape.
+
+### Fixed
+
+- **`AskUserQuestion`, permission, and elicitation hooks could hold an ordinary
+  terminal for minutes while waiting for an unattended board.** Interactive
+  relay now defaults to live Fleet Deck-spawned sessions only
+  (`FLEETDECK_HOLD_SCOPE=spawned`). Ordinary terminal sessions keep telemetry
+  but immediately use Claude's native prompt. Fleet Deck-owned panes carry a
+  launch marker that permits the long board-answer window; without that marker,
+  the hook shim also fails open after 2.5 seconds even if the daemon handler is
+  wedged. Legacy `all` can broaden daemon admission, but the hook shim still
+  requires the exact Fleet Deck-owned session marker before a long wait; `off`
+  disables every interactive hold.
+- **Board answers to `AskUserQuestion` used an obsolete deny-with-reason
+  workaround.** They now follow Claude Code's documented PreToolUse contract:
+  `permissionDecision: "allow"` with the original question input and a
+  structured `answers` map in `updatedInput`, so the tool completes normally
+  instead of depending on the model to recover from a synthetic denial.
+- **`fleetdeck service start` failed when the same home already had a healthy
+  plugin-spawned daemon on the port.** Startup now proves the responder owns this
+  `FLEETDECK_HOME`, gracefully retires it, and starts the supervised service.
+  Foreign or unverifiable responders are still never signalled. Systemd, live
+  supervisor, and fresh-supervisor success paths now all require the exact
+  verified managed daemon rather than any health-compatible port owner.
+- **A fixed five-second service readiness check reported false failures on slow
+  Coder cold starts.** Startup now polls progressively for up to 30 seconds
+  (`FLEETDECK_SERVICE_START_TIMEOUT_MS`), requires the exact installed daemon
+  version, and distinguishes a verified owned daemon that is still starting from
+  a foreign port conflict. Systemd upgrades use `systemctl --user restart` so a
+  `Restart=always` unit cannot race a raw signal; no-systemd handoff validates the
+  recorded home, PID, port, process shape, and managed identity first. Linux
+  process verification recognizes both a directly launched `fleetd` bundle and
+  the production `fleetdeck.mjs serve` process (but no other CLI verb), avoiding
+  a false 30-second startup failure after the daemon was already healthy.
+- **A Fleet Deck session marker could leak into nested/manual Claude processes.**
+  Managed Claude panes now receive their exact pre-created session id; shell
+  panes receive no marker, and the hook grants a long wait only when the hook
+  payload carries that same id. Legacy `1`, missing, or mismatched markers take
+  the 2.5-second fail-open path.
+- **An eligible board-owned prompt could still wait after its board vanished or
+  the daemon froze.** Relay admission now requires an authorized snapshot tab;
+  closing the last tab releases every live hold immediately without re-arming,
+  while terminal-viewer sockets never count as answer consumers. During a
+  healthy long wait the hook separately probes daemon health and fails open
+  after three consecutive misses (roughly 12–17 seconds), preserving the
+  ten-minute human window without permitting an eleven-minute daemon wedge.
+- **Hook invocation and output had avoidable loader/pipe failure modes.** Every
+  hook now uses Claude Code's executable-plus-argv form through a tiny POSIX
+  launcher. The launcher captures Bun's streams privately, commits output only
+  after an allowed exit, and turns a missing runtime or bundle, loader error,
+  crash, partial write, or diagnostic stderr into an event-appropriate silent
+  no-op. Valid stdout is then canonicalized against the exact event response
+  schema, writes are flushed before exit, SessionEnd fits its short lifecycle
+  budget, the idle watcher flushes mail before rewaking, and skill HTTP calls
+  have explicit connection and total deadlines. Foreign or stale responders
+  cannot pass through `systemMessage`, `continue:false`, mismatched event names,
+  or arbitrary model context.
+- **A stale or missing Fleet Deck hook token could interrupt Claude with restart
+  instructions.** Authentication and home mismatches now return the same HTTP
+  200 `{}` neutral success as every other automatic failure. Diagnostics remain
+  available on the board, in `fleetd.log`, and through `fleetdeck doctor`; they
+  are never injected into the model context or used to block a Stop hook.
+- **MCP elicitation answers used an obsolete top-level response shape.** They
+  now use Claude Code's current `hookSpecificOutput` contract with
+  `hookEventName: "Elicitation"`, a validated action, and form content only for
+  accepted answers.
+- **Multi-question `AskUserQuestion` cards could submit an incomplete answer
+  map.** The UI requires every question and the daemon enforces the same
+  invariant, leaving a partial card retryable instead of settling a malformed
+  Claude tool call.
+- **Activity in one session could cancel another session's unanswered-question
+  recovery timer.** Re-arm state now carries and enforces its owning session,
+  so only the session that demonstrably moved on can disarm its recovery card.
+- **Concurrent cold starts from two installed plugin versions could settle on
+  the older daemon.** Every post-spawn health result must now exactly match the
+  launching hook's version; a mismatch gets one bounded re-arbitration through
+  the normal managed-daemon and strictly-newer safety gates.
+- **A foreign local listener could imitate `/health` closely enough to reach the
+  SessionStart registration path.** Every pre-existing and post-spawn responder
+  must now match the selected home pidfile, PID, port, and process shape before
+  Fleet Deck accepts it or emits roster context. An unverifiable responder is a
+  silent no-op, never a source of text for Claude.
+- **The board could hide failures, duplicate actions, or break at phone width.**
+  Mutations are single-flight and fail visibly, stale async responses are
+  dropped, blocked browser storage no longer white-screens the board, terminal
+  chunks have a recovery surface, idle WebSockets stay connected while a
+  low-rate state probe detects half-open links, and the lanes, rail, modals,
+  file viewer, and terminal layouts collapse below 720 px. Laptop-width header
+  chrome now compresses and remains horizontally reachable instead of clipping
+  the final actions off-screen. Each token/effect connection now owns a fresh
+  generation and abortable state poll, so a retired poll, socket callback, or
+  stale-token 401 cannot overwrite or gate the replacement connection.
+- **A proxied Coder board was described as local-only and told users to bind
+  `0.0.0.0`.** Share now recognizes both a non-loopback page origin and Coder's
+  canonical app route (including a locally tested Coder), keeps the daemon
+  loopback-bound, points users at the proxy's access controls, never offers an
+  unusable localhost URL to copy, and strips any board token from displayed
+  proxy URLs.
+- **A fresh board logged a tmux restart warning about zero spawn rows.** The
+  conservative UNKNOWN warning remains when any durable spawn state needs
+  protection, but an empty fleet no longer fills the feed with unactionable
+  restart noise.
+- **Plain-directory file search walked dependency and generated trees.**
+  Implicit search now prunes `.git`, `node_modules`, `.next`, `.turbo`, `build`,
+  `dist`, and `coverage`; explicit browsing and reads remain available.
+- **Fleet Deck must not own an engineer's Claude Code version.** The Coder image
+  no longer pins Claude or disables its updater. Engineers may track latest,
+  stable, or an exact downgrade independently. A release-owned
+  `compatibility.json` declares the inclusive tested range; unsupported,
+  prerelease, and unknown CLIs make all automatic hooks silent no-ops before
+  token, daemon, timer, or network work. Coder startup skips network repair,
+  stops Fleet Deck best-effort, and disables only an enabled user-scope plugin,
+  recording an owner-only marker so it re-enables only a plugin Fleet Deck
+  disabled itself after the CLI returns to range. A manually disabled plugin is
+  preserved.
+- **Coder could run the npm daemon from one release beside plugin hooks fetched
+  from mutable `main`.** Workspace startup now installs immutable daemon
+  runtimes under the persisted Fleet Deck home, validates the complete package
+  tree, and pins the Claude marketplace to the matching `vX.Y.Z` tag. The image
+  carries a root-owned copy of its default runtime, so fresh and warm default
+  starts need no npm access; only an explicit version override may download.
+  Plugin source is verified before the daemon starts, and owner-only source,
+  compatibility, and manual-disable recovery markers make same-version repair
+  and interrupted reinstalls deterministic without blocking developer login.
+- **The tag publish gate omitted generated CLI and hook bundles.** The
+  irreversible npm job now rebuilds and diffs the daemon, CLI, all three hook
+  artifacts, and the board; its workflow wiring has regression coverage.
+
 ## [0.23.3] - 2026-08-17
 
 `fleetdeck service start` / `service stop` no longer crash on a fully-installed

@@ -176,6 +176,19 @@ interface SpawnBody {
   plan_id?: unknown;
 }
 
+function runtimeOverrideRefusal(body: SpawnBody): string | null {
+  if (body.remote_control != null && typeof body.remote_control !== 'boolean') {
+    return 'remote_control must be a boolean';
+  }
+  if (body.gateway != null && typeof body.gateway !== 'boolean') {
+    return 'gateway must be a boolean';
+  }
+  if (body.arm_token != null && typeof body.arm_token !== 'string') {
+    return 'arm_token must be a string';
+  }
+  return null;
+}
+
 interface CreateCardOverrides {
   deriveRepo?: boolean;
   repo_id?: string | null;
@@ -957,7 +970,10 @@ export function createSpawns(ctx: SpawnsCtx) {
         ? [...claudeEnvArgvPrefix(port, home), shellBin]
         : setupCmd
           ? [
-              ...claudeEnvArgvPrefix(port, home, { keep: Object.keys(launchEnv) }),
+              ...claudeEnvArgvPrefix(port, home, {
+                keep: Object.keys(launchEnv),
+                boardSession: session_id,
+              }),
               'sh',
               '-c',
               SETUP_WRAPPER,
@@ -967,6 +983,7 @@ export function createSpawns(ctx: SpawnsCtx) {
           : [
               ...claudeEnvArgvPrefix(port, home, {
                 keep: gatewayEnv ? Object.keys(gatewayEnv) : [],
+                boardSession: session_id,
               }),
               ...claudeArgv,
             ];
@@ -1131,14 +1148,9 @@ export function createSpawns(ctx: SpawnsCtx) {
         body: { ok: false, reason: 'dangerously_skip_permissions must be a boolean' },
       };
     }
-    if (body.remote_control != null && typeof body.remote_control !== 'boolean') {
-      return { status: 400, body: { ok: false, reason: 'remote_control must be a boolean' } };
-    }
-    if (body.gateway != null && typeof body.gateway !== 'boolean') {
-      return { status: 400, body: { ok: false, reason: 'gateway must be a boolean' } };
-    }
-    if (body.arm_token != null && typeof body.arm_token !== 'string') {
-      return { status: 400, body: { ok: false, reason: 'arm_token must be a string' } };
+    const runtimeOverrideError = runtimeOverrideRefusal(body);
+    if (runtimeOverrideError) {
+      return { status: 400, body: { ok: false, reason: runtimeOverrideError } };
     }
     if (body.setup_cmd != null) {
       if (typeof body.setup_cmd !== 'string') {
@@ -1291,6 +1303,12 @@ export function createSpawns(ctx: SpawnsCtx) {
       );
       onMutate();
       planClaim = null;
+    };
+    const completePlanClaim = (spawn_id: string) => {
+      if (!planClaim) return;
+      q.setPlanExecuted.run(`spawn:${spawn_id}`, planClaim.plan_id);
+      planClaim = null;
+      onMutate();
     };
     const wrapSpawnFailure =
       <A extends unknown[], R>(fn: (...args: A) => Promise<R>) =>
@@ -1545,11 +1563,7 @@ export function createSpawns(ctx: SpawnsCtx) {
               created: materialized.created,
             });
             if (out.status >= 400) releasePlanClaim();
-            else if (planClaim) {
-              q.setPlanExecuted.run(`spawn:${spawn_id}`, planClaim.plan_id);
-              planClaim = null;
-              onMutate();
-            }
+            else completePlanClaim(spawn_id);
             return out;
           } catch (err) {
             // in-place already ran `git switch`; compensation won't revert the
@@ -1615,11 +1629,7 @@ export function createSpawns(ctx: SpawnsCtx) {
               created,
               gatewayEnv: gateway.env,
             });
-            if (planClaim) {
-              q.setPlanExecuted.run(`spawn:${spawn_id}`, planClaim.plan_id);
-              planClaim = null;
-              onMutate();
-            }
+            completePlanClaim(spawn_id);
           } catch (err) {
             const reason =
               branchMode === 'in-place' && created.clone
@@ -1791,11 +1801,7 @@ export function createSpawns(ctx: SpawnsCtx) {
       gatewayEnv: gateway.env,
     });
     if (out.status >= 400) releasePlanClaim();
-    else if (planClaim) {
-      q.setPlanExecuted.run(`spawn:${spawn_id}`, planClaim.plan_id);
-      planClaim = null;
-      onMutate();
-    }
+    else completePlanClaim(spawn_id);
     return out;
   }
 
@@ -1818,14 +1824,9 @@ export function createSpawns(ctx: SpawnsCtx) {
     // row (pane-dead/killed/gone) always carries one; this proves it to the type
     // system for the window reconciliation below without altering behavior.
     if (row.tmux_window == null) throw new Error('revivable spawn is missing its tmux window');
-    if (body.remote_control != null && typeof body.remote_control !== 'boolean') {
-      return { status: 400, body: { ok: false, reason: 'remote_control must be a boolean' } };
-    }
-    if (body.gateway != null && typeof body.gateway !== 'boolean') {
-      return { status: 400, body: { ok: false, reason: 'gateway must be a boolean' } };
-    }
-    if (body.arm_token != null && typeof body.arm_token !== 'string') {
-      return { status: 400, body: { ok: false, reason: 'arm_token must be a string' } };
+    const runtimeOverrideError = runtimeOverrideRefusal(body);
+    if (runtimeOverrideError) {
+      return { status: 400, body: { ok: false, reason: runtimeOverrideError } };
     }
     // 0.16.0 (adversarial review): reviving an UNSUPERVISED lineage launches
     // --dangerously-skip-permissions again, so it is an unsupervised spawn and
@@ -2120,7 +2121,10 @@ export function createSpawns(ctx: SpawnsCtx) {
     // be excluded from this prefix's own `env -u`, or the resumed pane would be
     // scrubbed back onto Anthropic mid-conversation.
     const argv = [
-      ...claudeEnvArgvPrefix(port, home, { keep: gatewayEnv ? Object.keys(gatewayEnv) : [] }),
+      ...claudeEnvArgvPrefix(port, home, {
+        keep: gatewayEnv ? Object.keys(gatewayEnv) : [],
+        boardSession: session_id,
+      }),
       'claude',
       '--resume',
       session_id,
@@ -3082,9 +3086,14 @@ export function createSpawns(ctx: SpawnsCtx) {
       // ensureSession here: an unlinked live socket could create a replacement
       // server and turn inaccessible live panes into a false authoritative empty.
       const count = active.length + staleProvisioning.length;
-      tick(
-        `⚠ tmux window lookup failed at restart — leaving ${count} spawn row(s) as-is (unknown, not gone)`,
-      );
+      // A fresh/empty fleet has no state whose verdict is UNKNOWN. Keeping that
+      // expected first-boot condition out of the feed makes real recovery
+      // warnings actionable instead of training users to ignore them.
+      if (count > 0) {
+        tick(
+          `⚠ tmux window lookup failed at restart — leaving ${count} spawn row(s) as-is (unknown, not gone)`,
+        );
+      }
       // Safe on this path too, and strictly better than waiting: the heal reads
       // no tmux state, and an unsettled row still saying 'spawning' is exactly
       // what its predicate treats as in-flight — so an unreachable tmux makes it

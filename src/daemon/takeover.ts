@@ -94,13 +94,18 @@ function livePidLooksLikeFleetd(pid: number): boolean {
     const runtimeLike = /^(?:node|nodejs|bun|fleetd)$/i.test(executable);
     // Match every name the daemon boots under: the production bundle
     // (fleetd.bundle.mjs), the TypeScript source on a full checkout (fleetd.ts,
-    // run via Bun's native type-stripping), and the legacy
-    // fleetd.mjs (kept so a pre-cutover process and the test stubs that
-    // impersonate a fleetd by that argv still verify).
+    // run via Bun's native type-stripping), and the legacy fleetd.mjs. The
+    // standalone service intentionally stays in the CLI process while `serve`
+    // dynamically imports the bundle, so its Linux argv is
+    // `bun .../bin/fleetdeck.mjs serve`; require the adjacent `serve` verb so a
+    // harmless `fleetdeck status` process can never satisfy the ownership gate.
     const fleetdScript = argv.some((arg) =>
       /(?:^|[/\\])fleetd(?:\.bundle)?\.(?:mjs|ts)$/.test(arg),
     );
-    return runtimeLike && fleetdScript;
+    const fleetdeckServe = argv.some(
+      (arg, index) => /(?:^|[/\\])fleetdeck\.(?:mjs|ts)$/.test(arg) && argv[index + 1] === 'serve',
+    );
+    return runtimeLike && (fleetdScript || fleetdeckServe);
   } catch (err) {
     // WHY ENOENT is decisive: the PID died after kill(0), so it no longer owns
     // HOME. Permission and transient I/O failures are not decisive; retaining
@@ -219,13 +224,19 @@ export function shouldTakeOver(ownVersion: unknown, daemonVersion: unknown): boo
 
 // ----------------------------------------------------------------- verify/kill
 
-// Gate before any SIGTERM: prove the /health pid is really OUR daemon. The pid
-// reported by /health must match the pid recorded in HOME/fleetd.pid (the HOME
-// ownership lock) AND the live process must still carry a fleetd /proc shape.
-// Any mismatch → false, and the caller fails open onto the running daemon
-// rather than signalling a process it cannot positively identify.
-export function verifyDaemonPid(pid: number, home: string): boolean {
+// Trust gate before accepting daemon output OR sending SIGTERM. The pid
+// reported by /health must match HOME/fleetd.pid, an expected listener port
+// must match that same ownership record exactly, and the live process must
+// still carry a fleetd /proc shape. A legacy portless record cannot satisfy a
+// caller that knows its port. Any mismatch is unowned and fails closed.
+export function verifyDaemonPid(pid: number, home: string, expectedPort?: number): boolean {
   if (!Number.isInteger(pid) || pid <= 0) return false;
+  if (
+    expectedPort !== undefined &&
+    (!Number.isInteger(expectedPort) || expectedPort < 1 || expectedPort > 65535)
+  ) {
+    return false;
+  }
   // No `= null` seed: the only path past the catch is the try succeeding, so TS
   // proves definite assignment and the seed would be a dead write.
   let record: PidRecord | null;
@@ -236,6 +247,7 @@ export function verifyDaemonPid(pid: number, home: string): boolean {
     return false;
   }
   if (record?.pid !== pid) return false;
+  if (expectedPort !== undefined && record.port !== expectedPort) return false;
   // livePidLooksLikeFleetd also folds in liveness: a dead pid fails the
   // /proc/<pid>/exe read with ENOENT and is rejected. On non-linux the /proc
   // check is unavailable and returns true, so there the pidfile match is the
@@ -243,20 +255,20 @@ export function verifyDaemonPid(pid: number, home: string): boolean {
   return livePidLooksLikeFleetd(pid);
 }
 
-// A replaced daemon must report EXACTLY the hook's own build before the hook
-// accepts it. Two newer hooks (0.20.1 and 0.20.2) can evict the same stale
-// daemon together: both observe the old pid die, both spawn, and the port-bind
-// election keeps only one — with no notion of version. A bare truthy /health
-// would let the 0.20.2 hook accept 0.20.1's code (or vice versa), settling the
-// upgrade on whichever build happened to bind first instead of the newest
-// installed one. After a takeover spawn the hook therefore re-checks
-// health.version; a different version means a competitor won the race, so the
-// hook re-enters ensureServer with that daemon now healthy and the normal
-// strictly-newer takeover resolves the ordering. A shared home is trusted to
-// be same-user (claimHome + the pidfile + token all live there), so the
-// identity check is deliberately string equality — not "at least as new":
-// exact match is the whole contract and cannot settle on a WRONG build even if
-// the env is somehow shared across users.
+// A daemon observed after ANY spawn must report EXACTLY the hook's own build
+// before that spawn is accepted. Hooks from 0.20.1 and 0.20.2 can both observe
+// a cold port (or evict the same stale daemon), both spawn, and then poll the
+// one candidate the port-bind election kept — an election with no notion of
+// version. A bare truthy /health would let the 0.20.2 hook accept 0.20.1's code
+// (or vice versa), settling on whichever build bound first instead of the
+// newest installed one. The hook therefore checks every post-spawn
+// health.version; a different version means a competitor won, so it re-enters
+// ensureServer with that daemon now healthy and the normal strictly-newer
+// takeover resolves the ordering. A shared home is trusted to be same-user
+// (claimHome + the pidfile + token all live there), so the identity check is
+// deliberately string equality — not "at least as new": exact match is the
+// whole contract and cannot settle on a WRONG build even if the env is somehow
+// shared across users.
 export function replacementMatches(ownVersion: unknown, healthVersion: unknown): boolean {
   return (
     typeof ownVersion === 'string' &&

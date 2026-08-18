@@ -8,7 +8,7 @@
 //        -> "F3a: PermissionRequest ... allow", "F3a: PermissionRequest ... deny",
 //           "F3b: Elicitation ..."
 //   2. POST /api/questions/:id/answer resolves the held request (allow/deny/
-//      elicitation accept) + hold-expiry -> {} + status 'expired'
+//      elicitation accept/decline) + hold-expiry -> {} + status 'expired'
 //        -> same three tests above + "hold expiry: unanswered PermissionRequest ..."
 //   3. F3d freeform detection from transcript tail + answer delivery via mail
 //        -> "F3d: Stop trailing-question freeform detection ..."
@@ -34,14 +34,14 @@
 
 import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
 import { rmSync } from 'node:fs';
 import { startDaemon } from './helpers/daemon.ts';
 import { postHook, postJson, getJson, type JsonResponse } from './helpers/http.ts';
 import { loadFixture } from './helpers/fixtures.ts';
 import { makeTranscriptDir, writeTranscript } from './helpers/transcript.ts';
 import { waitUntil } from './helpers/wait.ts';
-import { getState, scratchCwd, questionsFor, getSession } from './helpers/state.ts';
+import { getState, questionsFor, getSession } from './helpers/state.ts';
+import { startRegisteredDaemon } from './helpers/session.ts';
 import type { StateResponse, QuestionEntry } from '../contracts/state.ts';
 
 // --- response-body facets: /state.json and each hook response are `unknown`
@@ -85,21 +85,10 @@ interface MailListResponse {
 
 test('F3a: PermissionRequest holds open; board answer {behavior:"allow"} resolves the held response and the question stops being pending', async (t) => {
   const holdMs = 1500;
-  const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
-  const cwd = scratchCwd();
-  t.after(async () => {
-    await daemon.stop();
-    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  const { daemon, cwd, sid, registration } = await startRegisteredDaemon(t, {
+    daemon: { env: { FLEETDECK_HOLD_MS: String(holdMs) } },
   });
-
-  const sid = randomUUID();
-  const reg = await postHook(
-    daemon.baseUrl,
-    'SessionStart',
-    loadFixture('session-start', { session_id: sid, cwd }),
-    { token: daemon },
-  );
-  const callsign = (reg.json as RegisterAck | null)?.callsign;
+  const callsign = (registration.json as RegisterAck | null)?.callsign;
   assert.ok(callsign, 'sanity: SessionStart should hand back a callsign');
 
   const t0 = Date.now();
@@ -107,7 +96,7 @@ test('F3a: PermissionRequest holds open; board answer {behavior:"allow"} resolve
     daemon.baseUrl,
     'PermissionRequest',
     loadFixture('permission-request', { session_id: sid, cwd }),
-    { token: daemon, timeout: holdMs + 5000 },
+    { token: daemon, timeout: holdMs + 5000, boardClient: true },
   );
 
   const q = await waitUntil(
@@ -160,26 +149,15 @@ test('F3a: PermissionRequest holds open; board answer {behavior:"allow"} resolve
 
 test('F3a: PermissionRequest board answer {behavior:"deny"} resolves the held response with behavior=deny', async (t) => {
   const holdMs = 1500;
-  const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
-  const cwd = scratchCwd();
-  t.after(async () => {
-    await daemon.stop();
-    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  const { daemon, cwd, sid } = await startRegisteredDaemon(t, {
+    daemon: { env: { FLEETDECK_HOLD_MS: String(holdMs) } },
   });
-
-  const sid = randomUUID();
-  await postHook(
-    daemon.baseUrl,
-    'SessionStart',
-    loadFixture('session-start', { session_id: sid, cwd }),
-    { token: daemon },
-  );
 
   const held = postHook(
     daemon.baseUrl,
     'PermissionRequest',
     loadFixture('permission-request', { session_id: sid, cwd }),
-    { token: daemon, timeout: holdMs + 5000 },
+    { token: daemon, timeout: holdMs + 5000, boardClient: true },
   );
 
   const q = await waitUntil(
@@ -211,30 +189,19 @@ test('F3a: PermissionRequest board answer {behavior:"deny"} resolves the held re
 // 1+2. F3b elicitation relay: hold + board answer (accept)
 // ---------------------------------------------------------------------------
 
-test('F3b: Elicitation holds open; board answer {action:"accept", content} resolves the held response per the handoff shape', async (t) => {
+test('F3b: Elicitation accept resolves with the documented hookSpecificOutput schema', async (t) => {
   const holdMs = 1500;
-  const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
-  const cwd = scratchCwd();
-  t.after(async () => {
-    await daemon.stop();
-    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  const { daemon, cwd, sid, registration } = await startRegisteredDaemon(t, {
+    daemon: { env: { FLEETDECK_HOLD_MS: String(holdMs) } },
   });
-
-  const sid = randomUUID();
-  const reg = await postHook(
-    daemon.baseUrl,
-    'SessionStart',
-    loadFixture('session-start', { session_id: sid, cwd }),
-    { token: daemon },
-  );
-  const callsign = (reg.json as RegisterAck | null)?.callsign;
+  const callsign = (registration.json as RegisterAck | null)?.callsign;
 
   const t0 = Date.now();
   const held = postHook(
     daemon.baseUrl,
     'Elicitation',
     loadFixture('elicitation', { session_id: sid, cwd }),
-    { token: daemon, timeout: holdMs + 5000 },
+    { token: daemon, timeout: holdMs + 5000, boardClient: true },
   );
 
   const q = await waitUntil(
@@ -266,9 +233,46 @@ test('F3b: Elicitation holds open; board answer {action:"accept", content} resol
   );
   assert.deepEqual(
     heldRes.json,
-    { action: 'accept', content },
-    'elicitation answer should be carried through per the handoff-documented shape (F3b)',
+    {
+      hookSpecificOutput: {
+        hookEventName: 'Elicitation',
+        action: 'accept',
+        content,
+      },
+    },
+    'accept must be event-scoped; a top-level action is ignored by Claude Code',
   );
+});
+
+test('F3b: Elicitation decline resolves with no stray top-level fields or content', async (t) => {
+  const holdMs = 1500;
+  const { daemon, cwd, sid } = await startRegisteredDaemon(t, {
+    daemon: { env: { FLEETDECK_HOLD_MS: String(holdMs) } },
+  });
+  const held = postHook(
+    daemon.baseUrl,
+    'Elicitation',
+    loadFixture('elicitation', { session_id: sid, cwd }),
+    { token: daemon, timeout: holdMs + 5000, boardClient: true },
+  );
+  const q = await waitUntil(
+    async () => {
+      const state = await getState<StateResponse>(daemon.baseUrl);
+      return questionsFor(state, sid, 'elicitation')[0];
+    },
+    { label: 'declinable elicitation question to appear in /state' },
+  );
+
+  const answer = await postJson(`${daemon.baseUrl}/api/questions/${q.id}/answer`, {
+    action: 'decline',
+  });
+  assert.equal(answer.status, 200);
+  assert.deepEqual((await held).json, {
+    hookSpecificOutput: {
+      hookEventName: 'Elicitation',
+      action: 'decline',
+    },
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -279,29 +283,18 @@ test('hold expiry: an unanswered PermissionRequest resolves to {} within toleran
   const holdMs = 1200;
   // Re-arm disabled (grace 0): this test's subject is the expiry itself; the
   // UX 2.1 re-arm lifecycle gets its own suite (question-rearm.test.mjs).
-  const daemon = await startDaemon({
-    env: { FLEETDECK_HOLD_MS: String(holdMs), FLEETDECK_REARM_GRACE_MS: '0' },
+  const { daemon, cwd, sid } = await startRegisteredDaemon(t, {
+    daemon: {
+      env: { FLEETDECK_HOLD_MS: String(holdMs), FLEETDECK_REARM_GRACE_MS: '0' },
+    },
   });
-  const cwd = scratchCwd();
-  t.after(async () => {
-    await daemon.stop();
-    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
-  });
-
-  const sid = randomUUID();
-  await postHook(
-    daemon.baseUrl,
-    'SessionStart',
-    loadFixture('session-start', { session_id: sid, cwd }),
-    { token: daemon },
-  );
 
   const t0 = Date.now();
   const held = postHook(
     daemon.baseUrl,
     'PermissionRequest',
     loadFixture('permission-request', { session_id: sid, cwd }),
-    { token: daemon, timeout: holdMs + 5000 },
+    { token: daemon, timeout: holdMs + 5000, boardClient: true },
   );
 
   const q = await waitUntil(
@@ -335,22 +328,11 @@ test('hold expiry: an unanswered PermissionRequest resolves to {} within toleran
 // ---------------------------------------------------------------------------
 
 test('F3d: Stop trailing-question freeform detection creates a needsyou card, and the board answer is delivered as mail', async (t) => {
-  const daemon = await startDaemon();
-  const cwd = scratchCwd();
+  const { daemon, cwd, sid } = await startRegisteredDaemon(t);
   const transcriptDir = makeTranscriptDir();
-  t.after(async () => {
-    await daemon.stop();
-    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  t.after(() => {
     rmSync(transcriptDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
-
-  const sid = randomUUID();
-  await postHook(
-    daemon.baseUrl,
-    'SessionStart',
-    loadFixture('session-start', { session_id: sid, cwd }),
-    { token: daemon },
-  );
   await postHook(
     daemon.baseUrl,
     'UserPromptSubmit',
@@ -451,22 +433,11 @@ test('F3d: Stop trailing-question freeform detection creates a needsyou card, an
 });
 
 test('F3d: Stop with last_assistant_message present on the live payload detects the payload question, not the transcript tail', async (t) => {
-  const daemon = await startDaemon();
-  const cwd = scratchCwd();
+  const { daemon, cwd, sid } = await startRegisteredDaemon(t);
   const transcriptDir = makeTranscriptDir();
-  t.after(async () => {
-    await daemon.stop();
-    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  t.after(() => {
     rmSync(transcriptDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
-
-  const sid = randomUUID();
-  await postHook(
-    daemon.baseUrl,
-    'SessionStart',
-    loadFixture('session-start', { session_id: sid, cwd }),
-    { token: daemon },
-  );
   await postHook(
     daemon.baseUrl,
     'UserPromptSubmit',
@@ -517,22 +488,11 @@ test('F3d: Stop with last_assistant_message present on the live payload detects 
 // ---------------------------------------------------------------------------
 
 test('a Stop that returns a mail block does not run freeform question detection for that request', async (t) => {
-  const daemon = await startDaemon();
-  const cwd = scratchCwd();
+  const { daemon, cwd, sid } = await startRegisteredDaemon(t);
   const transcriptDir = makeTranscriptDir();
-  t.after(async () => {
-    await daemon.stop();
-    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  t.after(() => {
     rmSync(transcriptDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
-
-  const sid = randomUUID();
-  await postHook(
-    daemon.baseUrl,
-    'SessionStart',
-    loadFixture('session-start', { session_id: sid, cwd }),
-    { token: daemon },
-  );
   await postHook(
     daemon.baseUrl,
     'UserPromptSubmit',
@@ -581,20 +541,7 @@ test('a Stop that returns a mail block does not run freeform question detection 
 // ---------------------------------------------------------------------------
 
 test('Notification ingest stores notification_type', async (t) => {
-  const daemon = await startDaemon();
-  const cwd = scratchCwd();
-  t.after(async () => {
-    await daemon.stop();
-    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
-  });
-
-  const sid = randomUUID();
-  await postHook(
-    daemon.baseUrl,
-    'SessionStart',
-    loadFixture('session-start', { session_id: sid, cwd }),
-    { token: daemon },
-  );
+  const { daemon, cwd, sid } = await startRegisteredDaemon(t);
   const res = await postHook(
     daemon.baseUrl,
     'Notification',
@@ -632,26 +579,15 @@ test('Notification ingest stores notification_type', async (t) => {
 
 test('subsequent activity (UserPromptSubmit) returns col to working and expires a pending permission question ahead of its own hold timeout', async (t) => {
   const holdMs = 6000; // long enough that early resolution can only be activity-driven, not the natural timeout
-  const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
-  const cwd = scratchCwd();
-  t.after(async () => {
-    await daemon.stop();
-    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  const { daemon, cwd, sid } = await startRegisteredDaemon(t, {
+    daemon: { env: { FLEETDECK_HOLD_MS: String(holdMs) } },
   });
-
-  const sid = randomUUID();
-  await postHook(
-    daemon.baseUrl,
-    'SessionStart',
-    loadFixture('session-start', { session_id: sid, cwd }),
-    { token: daemon },
-  );
 
   const held = postHook(
     daemon.baseUrl,
     'PermissionRequest',
     loadFixture('permission-request', { session_id: sid, cwd }),
-    { token: daemon, timeout: holdMs + 5000 },
+    { token: daemon, timeout: holdMs + 5000, boardClient: true },
   );
 
   const q = await waitUntil(
@@ -701,20 +637,9 @@ test('subsequent activity (UserPromptSubmit) returns col to working and expires 
 
 test('BUG-102: a FAILED tool call (PostToolUseFailure) retires its correlated permission hold promptly — the board must not show needsyou for an operation that already finished unsuccessfully', async (t) => {
   const holdMs = 6000; // long enough that early resolution can only be activity-driven, not the natural timeout
-  const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
-  const cwd = scratchCwd();
-  t.after(async () => {
-    await daemon.stop();
-    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  const { daemon, cwd, sid } = await startRegisteredDaemon(t, {
+    daemon: { env: { FLEETDECK_HOLD_MS: String(holdMs) } },
   });
-
-  const sid = randomUUID();
-  await postHook(
-    daemon.baseUrl,
-    'SessionStart',
-    loadFixture('session-start', { session_id: sid, cwd }),
-    { token: daemon },
-  );
 
   // The human permits the Bash call in the terminal; the tool runs and FAILS.
   // The completing PostToolUseFailure carries the SAME (tool_name, tool_input)
@@ -724,7 +649,7 @@ test('BUG-102: a FAILED tool call (PostToolUseFailure) retires its correlated pe
     daemon.baseUrl,
     'PermissionRequest',
     loadFixture('permission-request', { session_id: sid, cwd }),
-    { token: daemon, timeout: holdMs + 5000 },
+    { token: daemon, timeout: holdMs + 5000, boardClient: true },
   );
 
   const q = await waitUntil(
@@ -786,26 +711,15 @@ test('BUG-102: a FAILED tool call (PostToolUseFailure) retires its correlated pe
 
 test('SessionEnd expires all pending permission/elicitation questions for the session', async (t) => {
   const holdMs = 6000;
-  const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
-  const cwd = scratchCwd();
-  t.after(async () => {
-    await daemon.stop();
-    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  const { daemon, cwd, sid } = await startRegisteredDaemon(t, {
+    daemon: { env: { FLEETDECK_HOLD_MS: String(holdMs) } },
   });
-
-  const sid = randomUUID();
-  await postHook(
-    daemon.baseUrl,
-    'SessionStart',
-    loadFixture('session-start', { session_id: sid, cwd }),
-    { token: daemon },
-  );
 
   const heldA = postHook(
     daemon.baseUrl,
     'PermissionRequest',
     loadFixture('permission-request', { session_id: sid, cwd }),
-    { token: daemon, timeout: holdMs + 5000 },
+    { token: daemon, timeout: holdMs + 5000, boardClient: true },
   );
   await waitUntil(
     async () => {
@@ -819,7 +733,7 @@ test('SessionEnd expires all pending permission/elicitation questions for the se
     daemon.baseUrl,
     'Elicitation',
     loadFixture('elicitation', { session_id: sid, cwd }),
-    { token: daemon, timeout: holdMs + 5000 },
+    { token: daemon, timeout: holdMs + 5000, boardClient: true },
   );
   await waitUntil(
     async () => {
@@ -866,22 +780,11 @@ test('freeform questions SURVIVE SessionEnd and deliver on resume', async (t) =>
   // trailing question stays in the human's queue and the answer arrives as
   // mail at the resumed session's first turn boundary. (Live Phase 3
   // acceptance run 1 proved the old expire-everything rule orphans answers.)
-  const daemon = await startDaemon();
-  const cwd = scratchCwd();
+  const { daemon, cwd, sid } = await startRegisteredDaemon(t);
   const transcriptDir = makeTranscriptDir();
-  t.after(async () => {
-    await daemon.stop();
-    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  t.after(() => {
     rmSync(transcriptDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
-
-  const sid = randomUUID();
-  await postHook(
-    daemon.baseUrl,
-    'SessionStart',
-    loadFixture('session-start', { session_id: sid, cwd }),
-    { token: daemon },
-  );
   const transcriptPath = writeTranscript(transcriptDir, {
     sessionId: sid,
     assistantText: 'Should the project use bcrypt or argon2 for password hashing?',
@@ -944,22 +847,11 @@ test('concurrent holds per session are capped at 4; the 5th arrival expires the 
   // Re-arm disabled: the cap eviction settles through the same expiry path and
   // this test keeps its surviving holds parked past the eviction — an armed
   // re-arm timer would fire mid-test and flip the assertion counts.
-  const daemon = await startDaemon({
-    env: { FLEETDECK_HOLD_MS: String(holdMs), FLEETDECK_REARM_GRACE_MS: '0' },
+  const { daemon, cwd, sid } = await startRegisteredDaemon(t, {
+    daemon: {
+      env: { FLEETDECK_HOLD_MS: String(holdMs), FLEETDECK_REARM_GRACE_MS: '0' },
+    },
   });
-  const cwd = scratchCwd();
-  t.after(async () => {
-    await daemon.stop();
-    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
-  });
-
-  const sid = randomUUID();
-  await postHook(
-    daemon.baseUrl,
-    'SessionStart',
-    loadFixture('session-start', { session_id: sid, cwd }),
-    { token: daemon },
-  );
 
   const kinds = ['permission', 'elicitation', 'permission', 'elicitation', 'permission'];
   const promises: Promise<JsonResponse>[] = [];
@@ -972,6 +864,7 @@ test('concurrent holds per session are capped at 4; the 5th arrival expires the 
     const p = postHook(daemon.baseUrl, event, loadFixture(fixtureName, { session_id: sid, cwd }), {
       token: daemon,
       timeout: holdMs + 8000,
+      boardClient: true,
     });
     promises.push(p);
 
@@ -1094,22 +987,11 @@ test('malformed /hook/PermissionRequest body still answers 200 and the daemon st
 // NEEDS YOU was a wall of ghosts nobody trusted. Any activity from the session
 // proves it is no longer waiting.
 test('F3d: a freeform card clears when the session moves on (answered in the terminal)', async (t) => {
-  const daemon = await startDaemon();
-  const cwd = scratchCwd();
+  const { daemon, cwd, sid } = await startRegisteredDaemon(t);
   const transcriptDir = makeTranscriptDir();
-  t.after(async () => {
-    await daemon.stop();
-    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  t.after(() => {
     rmSync(transcriptDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
-
-  const sid = randomUUID();
-  await postHook(
-    daemon.baseUrl,
-    'SessionStart',
-    loadFixture('session-start', { session_id: sid, cwd }),
-    { token: daemon },
-  );
   await postHook(
     daemon.baseUrl,
     'UserPromptSubmit',
@@ -1155,22 +1037,11 @@ test('F3d: a freeform card clears when the session moves on (answered in the ter
 });
 
 test('a stale needs-you card can be dismissed without telling the session anything', async (t) => {
-  const daemon = await startDaemon();
-  const cwd = scratchCwd();
+  const { daemon, cwd, sid } = await startRegisteredDaemon(t);
   const transcriptDir = makeTranscriptDir();
-  t.after(async () => {
-    await daemon.stop();
-    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  t.after(() => {
     rmSync(transcriptDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
-
-  const sid = randomUUID();
-  await postHook(
-    daemon.baseUrl,
-    'SessionStart',
-    loadFixture('session-start', { session_id: sid, cwd }),
-    { token: daemon },
-  );
   await postHook(
     daemon.baseUrl,
     'UserPromptSubmit',

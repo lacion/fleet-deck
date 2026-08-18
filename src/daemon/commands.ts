@@ -103,6 +103,14 @@ export function createCommands(ctx: CommandsCtx) {
     return { sid: only.session_id };
   }
 
+  function resolveRenameTarget(command: 'ticket' | 'name', target: string): TicketTarget {
+    // Renames are per-session only: all/repo:* are broadcast scopes.
+    if (target === 'all' || target.startsWith('repo:')) {
+      return { error: `${command} targets one session — not all/repo:*` };
+    }
+    return resolveTicketTarget(target);
+  }
+
   // ------------------------------------------------------------- commands
   function command(text: unknown) {
     const parsed = parseCommand(text);
@@ -112,6 +120,11 @@ export function createCommands(ctx: CommandsCtx) {
         asText(text),
         JSON.stringify(extra ? { ...parsed, ...extra } : parsed),
       );
+    const rejectCommand = (reason: string) => {
+      logCommand();
+      onMutate();
+      return { ok: false, reason };
+    };
     let delivered = 0;
     if (parsed.cmd === 'broadcast' || parsed.cmd === 'assign_auto' || parsed.cmd === 'assign') {
       // BUG-021: the mail() clamp reports {truncated, original_length}, but the
@@ -188,24 +201,9 @@ export function createCommands(ctx: CommandsCtx) {
       // or {session_id, ...applyTicketResult} — it must NEVER fall through to
       // the note handler (a malformed rename is an error to show, not a note to
       // file). A bare/malformed command arrives already carrying parsed.error.
-      if ('error' in parsed) {
-        logCommand();
-        onMutate();
-        return { ok: false, reason: parsed.error };
-      }
-      // Per-session only: `all` / `repo:*` are broadcast scopes, meaningless for
-      // a rename.
-      if (parsed.target === 'all' || parsed.target.startsWith('repo:')) {
-        logCommand();
-        onMutate();
-        return { ok: false, reason: 'ticket targets one session — not all/repo:*' };
-      }
-      const resolved = resolveTicketTarget(parsed.target);
-      if ('error' in resolved) {
-        logCommand();
-        onMutate();
-        return { ok: false, reason: resolved.error };
-      }
+      if ('error' in parsed) return rejectCommand(parsed.error);
+      const resolved = resolveRenameTarget(parsed.cmd, parsed.target);
+      if ('error' in resolved) return rejectCommand(resolved.error);
       let result: RenameResult;
       if (/^clear$/i.test(parsed.ticket)) {
         result = clearTicket(resolved.sid);
@@ -215,12 +213,9 @@ export function createCommands(ctx: CommandsCtx) {
         // of times — ticket_source='manual' also permanently blocks auto-detect.
         const key = normalizeTicket(parsed.ticket);
         if (!key) {
-          logCommand();
-          onMutate();
-          return {
-            ok: false,
-            reason: `invalid ticket key "${parsed.ticket}" — expected e.g. PROJ-123 or clear`,
-          };
+          return rejectCommand(
+            `invalid ticket key "${parsed.ticket}" — expected e.g. PROJ-123 or clear`,
+          );
         }
         result = applyTicket(resolved.sid, key, 'manual');
       }
@@ -232,29 +227,14 @@ export function createCommands(ctx: CommandsCtx) {
       // exit is {ok:false, reason} or {session_id, ...renameResult}, and a
       // malformed rename is NEVER filed as a note. The human owns the suffix;
       // the animal is not theirs to choose, so it is not in the grammar.
-      if ('error' in parsed) {
-        logCommand();
-        onMutate();
-        return { ok: false, reason: parsed.error };
-      }
-      if (parsed.target === 'all' || parsed.target.startsWith('repo:')) {
-        logCommand();
-        onMutate();
-        return { ok: false, reason: 'name targets one session — not all/repo:*' };
-      }
-      const resolved = resolveTicketTarget(parsed.target);
-      if ('error' in resolved) {
-        logCommand();
-        onMutate();
-        return { ok: false, reason: resolved.error };
-      }
+      if ('error' in parsed) return rejectCommand(parsed.error);
+      const resolved = resolveRenameTarget(parsed.cmd, parsed.target);
+      if ('error' in resolved) return rejectCommand(resolved.error);
       const clearing = /^clear$/i.test(parsed.suffix);
       if (!clearing) {
         const bad = validateNameSuffix(parsed.suffix);
         if (bad) {
-          logCommand();
-          onMutate();
-          return { ok: false, reason: bad };
+          return rejectCommand(bad);
         }
       }
       const result = applyCustomName(resolved.sid, clearing ? null : parsed.suffix);

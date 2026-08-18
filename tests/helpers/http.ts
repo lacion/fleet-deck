@@ -1,8 +1,87 @@
 // tests/helpers/http.ts — thin fetch wrappers for hitting a running daemon.
 
 import http from 'node:http';
+import { WebSocket } from 'ws';
 
 import { scaleMs } from './wait.ts';
+
+const hookBoardClients = new Map<string, Promise<WebSocket>>();
+
+/** Open one authenticated snapshot client. Hold-relay tests opt into one via
+ * postHook({ boardClient: true }); unrelated daemon tests retain the production
+ * default of zero board clients. */
+export function connectBoardClient(baseUrl: string, token: string | null): Promise<WebSocket> {
+  const url = new URL(baseUrl.replace(/^http/, 'ws') + '/ws');
+  if (token) url.searchParams.set('t', token);
+  const ws = new WebSocket(url);
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      ws.terminate();
+      reject(new Error(`board websocket at ${url.origin} did not open in time`));
+    }, scaleMs(5000));
+    ws.once('open', () => {
+      clearTimeout(timer);
+      resolve(ws);
+    });
+    ws.once('error', (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+  });
+}
+
+export function closeBoardClient(ws: WebSocket): Promise<void> {
+  if (ws.readyState === WebSocket.CLOSED) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      try {
+        ws.terminate();
+      } catch {
+        /* already gone */
+      }
+      resolve();
+    }, scaleMs(2000));
+    ws.once('close', () => {
+      clearTimeout(timer);
+      resolve();
+    });
+    try {
+      ws.close();
+    } catch {
+      clearTimeout(timer);
+      resolve();
+    }
+  });
+}
+
+async function ensureHookBoardClient(baseUrl: string, token: string): Promise<void> {
+  let pending = hookBoardClients.get(baseUrl);
+  if (!pending) {
+    pending = connectBoardClient(baseUrl, token);
+    hookBoardClients.set(baseUrl, pending);
+  }
+  try {
+    const ws = await pending;
+    if (ws.readyState !== WebSocket.OPEN) {
+      hookBoardClients.delete(baseUrl);
+      await ensureHookBoardClient(baseUrl, token);
+    }
+  } catch (err) {
+    hookBoardClients.delete(baseUrl);
+    throw err;
+  }
+}
+
+export async function releaseHookBoardClient(baseUrl: string): Promise<void> {
+  const pending = hookBoardClients.get(baseUrl);
+  hookBoardClients.delete(baseUrl);
+  if (!pending) return;
+  try {
+    await closeBoardClient(await pending);
+  } catch {
+    /* failed connection already owns no live socket */
+  }
+}
 
 export interface RawRequestOptions {
   port: number;
@@ -136,6 +215,9 @@ export async function getJson(
 export interface HookOptions {
   timeout?: number;
   token?: string | { token: string | null } | null;
+  // Interactive relay tests opt into a lazily attached authorized board.
+  // Omit/false to exercise the production default: no board consumer.
+  boardClient?: boolean;
 }
 
 /** POST a hook payload to <baseUrl>/hook/<Event> and return the parsed response body.
@@ -149,6 +231,14 @@ export async function postHook(
 ): Promise<JsonResponse> {
   const token =
     typeof opts?.token === 'object' && opts.token !== null ? opts.token.token : opts?.token;
+  if (
+    opts?.boardClient === true &&
+    typeof token === 'string' &&
+    token &&
+    (event === 'PermissionRequest' || event === 'Elicitation' || event === 'AskUserQuestion')
+  ) {
+    await ensureHookBoardClient(baseUrl, token);
+  }
   // exactOptionalPropertyTypes: JsonRequestOptions' optional props reject an
   // explicit `undefined`, so build the forwarded options without ever setting a
   // key to undefined — undefined/null token both mean "no bearer" downstream.

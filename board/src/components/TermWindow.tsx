@@ -104,19 +104,7 @@ export default function TermWindow({
   // trap and NO initial-focus steal: xterm claims focus itself and Tab must
   // reach the agent. R3-4 — fallbackFocusRef catches focus when the opener
   // (a grid tile's ⤢) is gone by close time.
-  // useModal is not yet typed; its `fallbackRef = null` default mis-infers the
-  // param as `null`, so declare the contract it already implements (drop the
-  // cast when useModal.ts is converted). Type-only — the call is unchanged.
-  (
-    useModal as (
-      ref: React.RefObject<HTMLDivElement | null>,
-      options?: {
-        trap?: boolean;
-        initialFocus?: boolean;
-        fallbackRef?: React.RefObject<HTMLElement | null> | null;
-      },
-    ) => void
-  )(dialogRef, { trap: false, initialFocus: false, fallbackRef: fallbackFocusRef });
+  useModal(dialogRef, { trap: false, initialFocus: false, fallbackRef: fallbackFocusRef });
 
   // Live geometry during a drag/resize lives in a ref and is applied straight
   // to style — one rAF per pointermove, no React re-render (a re-render per

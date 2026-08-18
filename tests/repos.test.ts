@@ -803,6 +803,15 @@ test('repo_catalog never ships origin credentials over /state or the /ws snapsho
   // And the scrub leaves a credential-free origin byte-for-byte alone.
   const clean = makeRemoteRepo();
   const cleanRoot = clean.clone('clean-catalog-checkout');
+  // Compare against the origin Git actually persisted in this checkout. On
+  // macOS, tmpdir() is lexically under /var while realpathSync() resolves it
+  // through /private/var; makeRemoteRepo().origin is canonicalized, but Git
+  // deliberately preserves the lexical clone argument in remote.origin.url.
+  const cleanConfiguredOrigin = execFileSync(
+    'git',
+    ['-C', cleanRoot, 'config', '--get', 'remote.origin.url'],
+    { encoding: 'utf8' },
+  ).trim();
   t.after(() => {
     clean.cleanup();
   });
@@ -829,7 +838,7 @@ test('repo_catalog never ships origin credentials over /state or the /ws snapsho
   );
   assert.equal(
     cleanRow?.origin_url,
-    clean.origin,
+    cleanConfiguredOrigin,
     'a credential-free origin passes through untouched',
   );
 });

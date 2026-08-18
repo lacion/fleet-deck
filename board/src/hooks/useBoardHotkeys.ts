@@ -52,6 +52,7 @@ interface UseBoardHotkeysArgs {
   lanOpen: OverlayRef | null | undefined;
   wtOpen: OverlayRef | null | undefined;
   helpOpen: OverlayRef | null | undefined;
+  drawerOpen: OverlayRef | null | undefined;
 }
 
 // The board's global keyboard shortcuts (the canonical human-readable list is
@@ -137,6 +138,7 @@ export function useBoardHotkeys({
   lanOpen,
   wtOpen,
   helpOpen,
+  drawerOpen,
 }: UseBoardHotkeysArgs) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -209,6 +211,7 @@ export function useBoardHotkeys({
           wtOpen,
           fsOpen,
           helpOpen,
+          drawerOpen,
         ])
       )
         return;
@@ -272,6 +275,7 @@ export function useBoardHotkeys({
     lanOpen,
     wtOpen,
     helpOpen,
+    drawerOpen,
     setKillAsk,
     setArmAsk,
     setRenameAsk,

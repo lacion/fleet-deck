@@ -31,21 +31,23 @@ interface SpawnSession extends SessionLike {
 
 // The result shapes each action hands to its `onResult` callback (the header
 // documents them in prose; these are that prose, typed).
-type ReviveResult = { ok: true } | { ok: false; reason: string };
-interface ReviveAllResult {
+export type ReviveResult = { ok: true } | { ok: false; reason: string };
+export interface ReviveAllResult {
   okN: number;
   total: number;
   fails: string[];
 }
-type EnableResult =
+export type EnableResult =
   | { ok: true; url: string | null; pending: boolean }
   | { ok: false; reason: string };
-type AdoptResult = { ok: true; adopted: boolean; armed: boolean } | { ok: false; reason: string };
-type ShellResult = { ok: true; callsign: string | null } | { ok: false; reason: string };
+export type AdoptResult =
+  | { ok: true; adopted: boolean; armed: boolean }
+  | { ok: false; reason: string };
+export type ShellResult = { ok: true; callsign: string | null } | { ok: false; reason: string };
 
 // The adopt POST body — `{}`, `{dangerously_skip_permissions, arm_token}` or
 // `{disarm:true}`; the daemon reads the intent off it.
-interface AdoptBody {
+export interface AdoptBody {
   dangerously_skip_permissions?: boolean;
   arm_token?: string;
   disarm?: boolean;

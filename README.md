@@ -8,9 +8,13 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Bun ≥ 1.3.14](https://img.shields.io/badge/bun-%E2%89%A5%201.3.14-brightgreen.svg)](https://bun.sh)
 
-**One board for every Claude Code session on your machine.**
+**One reliable control plane for every Claude Code session on your machine.**
 
 Run more than two or three Claude Code sessions and you lose track of them: which terminal is which, which one is blocked on a permission prompt, and which two are editing the same file. Fleet Deck puts all of them on one local board at **http://127.0.0.1:4711**, with a callsign, a live status column, and a mailbox each.
+
+Fleet Deck is deliberately an accessory, never a dependency of the developer loop. If its daemon,
+board, network, or hooks are unhealthy, Claude Code must remain usable from the terminal. That rule is
+the reliability boundary every feature below is built around.
 
 <p align="center">
   <img src="docs/assets/fleet-deck-demo.gif" alt="The board: four agents working one repo in separate worktrees, cards moving between columns as each turn lands, and the conflict radar flaring when two of them touch the same file." width="100%">
@@ -20,7 +24,7 @@ Run more than two or three Claude Code sessions and you lose track of them: whic
 
 - **Live status, derived not self-reported.** `queued → working → verifying → needs-you → idle → offline`, computed from hook telemetry. The model badge is read from the session transcript, so it follows a mid-session `/model` switch instead of freezing on whatever the session launched with.
 - **Conflict radar.** Two sessions touching the same file within 30 minutes get warned in context, and the board flashes hazard-red. Worktree-aware: the same file edited in two worktrees of one repo is a merge conflict surfacing early.
-- **Needs-you rail.** Permission prompts, multiple-choice questions, MCP forms and trailing questions become cards you answer from the board. The terminal prints `⎿ Allowed by PermissionRequest hook` and continues. Outlast the 90-second answer window and the question **re-arms**: a fresh card (badged RE-ARMED) whose answer is sent as a message, delivered at the next turn boundary — it cannot unblock an agent parked on its own prompt, and never pretends to.
+- **Needs-you rail.** Permission prompts, multiple-choice questions, MCP forms and trailing questions from Fleet Deck-owned Claude panes become cards you answer from the board. The terminal prints `⎿ Allowed by PermissionRequest hook` and continues. Outlast the default 10-minute answer window and the question **re-arms**: a fresh card (badged RE-ARMED) whose answer is sent as a message, delivered at the next turn boundary — it cannot unblock an agent parked on its own prompt, and never pretends to. Ordinary terminal sessions use Claude's native prompts by default.
 - **Mail between sessions.** Message one session, a repo, or everyone. Delivered at the next turn boundary; idle sessions are woken by a small watcher, usually within seconds.
 - **Routing without a model call.** `assign auto: fix the flaky test` picks a candidate — idle first, least buried, right repo — with a SQL query. The core makes zero model calls.
 - **Spawning.** `+ Spawn` starts a fresh interactive `claude` in a daemon-owned tmux window. Watch it on the board, attach to the pane, or kill it.
@@ -29,6 +33,8 @@ Run more than two or three Claude Code sessions and you lose track of them: whic
 - **Revive.** Worktrees and transcripts outlive panes. One `⟲` click resumes a dead agent in its own worktree with full history — same callsign, same card. Whole columns at a time.
 - **Remote control.** Hand a session to claude.ai and drive it from a phone. The card grows a 📱 chip named after the callsign.
 - **A plan library.** Spawn a planner in plan mode; its plan lands on the board as a rendered card before it can act. Approve it, or capture it and release the planner. Execute it later with your own instructions.
+- **Workspace tools.** Browse and search files, inspect worktrees, rename sessions, filter the event feed, and share an already-proxied board without opening the daemon to the network.
+- **A board that survives real developer use.** Requests reject visibly, destructive actions are single-flight, state reconnects after daemon restarts, and the layout collapses to a usable phone-sized view instead of hiding controls off-screen.
 
 <p align="center">
   <img src="docs/assets/live-terminal.gif" alt="Opening a live agent's tmux pane in the board's terminal modal and typing into the running session." width="100%">
@@ -45,7 +51,9 @@ Your next `claude` — any terminal, any repo, no wrapper — brings the fleet u
 
 > **How updates actually reach you.** Claude Code installs a marketplace plugin by copying it into a versioned local cache, and that cached copy is what runs at every SessionStart — not the repo. Auto-update is off by default for third-party marketplaces, and even with it on, Claude Code only recognizes an update when the plugin's **version changes** in the manifest. Fleet Deck bumps `version` in `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json` for every distributable change for exactly this reason. To pull a new version, run `claude plugin marketplace update fleetdeck` and `claude plugin update fleetdeck@fleetdeck` (or manage it from `/plugin`), then start a new session. A push to `main` without a version bump never reaches an installed copy. If you want releases only, use the npm channel — `npm i -g fleetdeck` for [standalone mode](#standalone-mode) — or pin your marketplace clone to a tag.
 
-**Requirements.** **Bun 1.3.14+** — the CLI and daemon both run under Bun. Nothing to `npm install`: the daemon ships as one bundled file and keeps state in Bun's built-in `bun:sqlite`. Add **tmux 3.4+** to spawn workers or open their panes in the browser — Fleet Deck relies on 3.4's no-start probe to avoid attaching to a replacement server. Everything else works without tmux. Linux, WSL2 and macOS; Windows-native is untested.
+**Requirements.** **Bun 1.3.14+** — the CLI, hook shims, and daemon all run under Bun. A plugin install has no dependency-install step: the daemon ships as one bundled file and keeps state in Bun's built-in `bun:sqlite`. Add **tmux 3.4+** to spawn workers or open their panes in the browser — Fleet Deck relies on 3.4's no-start probe to avoid attaching to a replacement server. Everything else works without tmux. Linux, WSL2 and macOS; Windows-native is untested.
+
+Fleet Deck does **not** own your Claude Code version. Keep using Claude's normal `latest`, `stable`, or exact-version install flow, including upgrades and downgrades. This Fleet Deck release enables its hooks only for stable Claude Code **2.1.206 through 2.1.234, inclusive**. A newer, older, prerelease, or unidentifiable CLI makes every Fleet Deck hook a silent no-op: Claude starts and behaves normally, with no Fleet Deck warning or injected model context. For a decision hook, that no-op is exactly `{}` on stdout, empty stderr, and exit code 0; Claude receives no override and continues to its native prompt or normal tool behavior. `SessionStart` and the background watcher use the equivalent empty-stream exit 0. Upgrade Fleet Deck when its compatibility range catches up; do not pin Claude for Fleet Deck. The machine-readable policy is [`compatibility.json`](compatibility.json).
 
 <details>
 <summary>Working on Fleet Deck itself, or running from a fork</summary>
@@ -56,7 +64,10 @@ claude plugin marketplace add your-org/your-fork    # or your fork
 claude plugin install fleetdeck@fleetdeck
 ```
 
-After changing anything under `scripts/`, run `npm run bundle` — the daemon runs the bundle, not the source. After changing the board, run `npm run build` in `board/`. Then restart the daemon, or bump the version and let the upgrade takeover do it.
+After changing daemon, CLI, hook, or board source, rebuild the matching distributable — the installed
+plugin and npm package run generated artifacts, not the TypeScript source. The complete command set is
+in [Development](#development). Then restart the daemon, or bump the version and let the verified
+upgrade handoff do it.
 
 Two traps, both caused by the versioned plugin cache described above:
 
@@ -102,10 +113,36 @@ Before anything launches the form shows the exact list and count. **That preview
       └────────── the board (React) ─────────┘
 ```
 
-- **No wrapper.** The plugin's hooks make plain `claude` fleet-aware. The first session's SessionStart hook elects and launches the daemon; the port bind *is* the election.
-- **Fail open.** If the daemon is down, hooks time out silently and sessions run exactly as before. Fleet Deck is not load-bearing.
+- **No wrapper.** The plugin's hooks make plain `claude` fleet-aware. The first session's SessionStart hook elects and launches the daemon; the port bind *is* the election. Standalone/Coder installs supervise the same daemon independently of any Claude session.
+- **Fail open, silently.** For a decision hook, `{}` on stdout with exit code 0 is Claude's neutral result: continue normally, add no model context, show no warning, and use the native prompt when one is needed. Fleet Deck writes no failure text to either hook stream. Ordinary terminal sessions are observation-only by default. Only a Fleet Deck-owned Claude pane receives an exact session marker that permits a long board wait, and the daemon admits that wait only while an authorized board tab is connected. A missing, inherited, or mismatched marker takes the short path; closing the last board tab releases every live hold immediately. If the daemon wedges or Claude is outside the supported range, the shim returns that neutral result and gets out of the developer's way.
+- **No shell command interpolation.** Hook commands use executable-plus-argv configuration, with a tiny `/bin/sh` launcher passed as argv rather than assembled into a command string. Paths containing spaces are safe, pre-runtime diagnostics are captured privately, hook stdout contains only Claude's JSON contract, and every network wait has a deadline.
+- **One exact daemon.** Service startup validates home, port, PID, process identity, managed state, and installed version before it replaces or trusts an incumbent. A foreign process on the port is diagnosed and never signalled.
 - **No model calls in the core.** Telemetry, conflict detection, routing and question relay are deterministic code. The only added model cost is a ~100-token roster brief and the occasional whisper.
 - **Loopback by default.** The daemon binds `127.0.0.1`. `FLEETDECK_BIND=0.0.0.0` opens it to your network, and a token then becomes mandatory ([LAN mode](#lan-mode)). Either way it does not phone home.
+
+### The developer-experience contract
+
+| Failure | Fleet Deck's behavior |
+| --- | --- |
+| Daemon absent, slow, or restarting | Hooks fail open; the board reconnects and resynchronizes from `/state`. |
+| Board closed | Ordinary terminals remain native; closing the last board tab immediately releases owned-pane holds to their live terminal. |
+| Claude version outside Fleet Deck's tested range | Hooks stay silent and inactive; Claude remains fully usable and independently upgradeable or downgradeable. |
+| Hook token/configuration is stale | The event is ignored with a neutral success; diagnostics stay in `fleetd.log`, the board, and `fleetdeck doctor`, never in the Claude conversation. |
+| Old managed daemon after an upgrade | `service start` converges to the exact installed version using an identity-checked handoff. |
+| Foreign process owns the port | Startup refuses with a distinct diagnosis; it does not kill the process. |
+| Partial multi-question answer | The card stays open and identifies the missing answers; no malformed answer reaches Claude. |
+| Browser/network request fails | The action reports an error and becomes retryable; double-clicks do not duplicate destructive work. |
+| Reverse proxy already provides remote access | Share explains the proxy path; it does not recommend binding `0.0.0.0`. |
+
+### Plugin surface
+
+- `hooks/hooks.json` registers lifecycle, telemetry, prompt-relay, and idle-mail hooks. The detailed
+  timing/ownership invariants live in [hooks/README.md](hooks/README.md).
+- `/fleet` prints the exact board URL plus a compact live roster, conflicts, and queued-mail routes.
+- `fleet-doctrine` teaches each Claude session how to interpret Fleet Deck frames, coordinate safely,
+  and make only bounded daemon calls.
+- The plugin intentionally ships **no agent definitions**. Fleet Deck coordinates the Claude sessions
+  you start; it does not silently add autonomous subagents or model calls.
 
 ## Revive
 
@@ -228,10 +265,15 @@ Fleet Deck is a Claude Code plugin whose daemon is booted lazily by a `SessionSt
 npm install -g fleetdeck
 fleetdeck doctor            # Bun 1.3.14+? tmux? claude? the plugin?
 fleetdeck service install   # a systemd user unit, or a supervised wrapper without systemd
-fleetdeck service start
+fleetdeck service start     # returns only after this exact version answers /health
 ```
 
 The board is now always on, and you can **spawn an agent with no Claude Code session anywhere**: type a repo path, click, and it comes up in a tmux pane you can watch, type into, and answer prompts for. What standalone adds is a daemon that exists without a session to boot it, and a way to reach it from somewhere other than localhost.
+
+`service start` uses a progressive 30-second readiness deadline instead of a fixed five-second race.
+Slow cold starts therefore do not print a false failure, while a different process on the port is
+reported separately. Set `FLEETDECK_SERVICE_START_TIMEOUT_MS` (250–300000 ms) only when the host
+really needs a different bound.
 
 To reach it from another machine, put it behind a reverse proxy and name the origin:
 
@@ -248,14 +290,19 @@ Keep the plugin installed. The board can launch an agent without it, but status,
 
 **→ [docs/CODER.md](docs/CODER.md)** is the full guide for [Coder](https://coder.com) workspaces.
 
-A managed daemon is never evicted by a plugin hook. Normally the newest installed plugin takes the port by SIGTERMing an older daemon; against a supervised service that would fight the supervisor, so the service wins and the version drift is reported in your session brief.
+A managed daemon is never evicted by a plugin hook. `fleetdeck service start` is responsible for
+upgrades: systemd installations use a serialized service restart, while the no-systemd supervisor is
+retired only after its home, PID, port, process, and managed identity all match. Runtime files should
+be installed into immutable version directories so an interrupted package install cannot corrupt the
+daemon that is already serving developers. The [Coder guide](docs/CODER.md) shows that deployment
+pattern.
 
 ## The fine print
 
 - **Spawned sessions are real billed Claude sessions.** Nothing spawns without a human click. (An *armed* move-to-tmux fires at SessionEnd, but the click that armed it was the decision — one-shot, cancellable, visible, and it expires.) `assign auto` routes to existing sessions only.
 - **Unsupervised means unsupervised.** `--dangerously-skip-permissions` workers never produce permission cards. The checkbox is red and asks twice. Pair it with a fresh worktree.
 - **The permission relay is interactive-only.** Headless `claude -p` sessions deny permission-needing tools without consulting hooks — CLI behavior, not ours. Spawned workers are interactive precisely so their prompts reach the board.
-- **Version pin: Claude Code CLI 2.1.206+ (tested through 2.1.207).** Fleet Deck relies on a few undocumented behaviors; a guard test fails loudly if a CLI update drops them, and contract tests replay recorded hook payloads so schema drift is caught in CI.
+- **Compatibility gate, not a Claude pin.** This release supports stable Claude Code 2.1.206–2.1.234 inclusive. Unsupported, prerelease, and unknown versions make Fleet Deck's automatic hooks silently inactive; they do not stop Claude, inject an explanation, or ask engineers to downgrade. The range lives in `compatibility.json`, and recorded contract tests must move it deliberately when a new Claude release is qualified.
 - **Ports.** `FLEETDECK_PORT` / `FLEETDECK_HOME`. Hooks default to 4711, but the shims resolve the port and home from the environment at invocation time — `hooks/hooks.json` contains no port to edit, so there is nothing to copy or swap. A truly separate fleet instead needs **every** Claude Code process it owns to inherit the same `FLEETDECK_PORT` and `FLEETDECK_HOME` as its daemon:
 
   ```sh
@@ -270,7 +317,7 @@ A managed daemon is never evicted by a plugin hook. Normally the newest installe
 ### tmux isolation and the one-port rule
 
 - **`FLEETDECK_TMUX_SOCKET`** runs every tmux command against a named server (`tmux -L <socket>`) instead of your default one. Tests and `demo/` scripts always set it, for a concrete reason: tmux bakes the **first client's environment** into a new server's global env, and every window created later inherits it. An acceptance run once started the default tmux server from inside a test session, and that evening's production spawns inherited the test `FLEETDECK_PORT`/`FLEETDECK_HOME` and reported to a daemon nobody was watching. The demo scripts now use a per-run socket and `kill-server` it on exit. Leave this unset in production — or set it to move your fleet off the shared default socket, where any unscoped `tmux kill-server` on the machine would take it down.
-- **4711 is the supported production port.** Since 0.16.0 every hook event runs through a command shim (`scripts/fleet-hook.mjs`) that honors `FLEETDECK_PORT`, so a custom port no longer splits hook traffic. The shims also authenticate hooks: they read `$FLEETDECK_HOME/token` and attach it, which is why a tokenless `/hook/*` curl gets a 401.
+- **4711 is the supported production port.** Since 0.16.0 every hook event runs through a command shim (`scripts/fleet-hook.mjs`) that honors `FLEETDECK_PORT`, so a custom port no longer splits hook traffic. The shims also authenticate hooks: they read `$FLEETDECK_HOME/token` and attach it. An unauthenticated hook request is ignored with HTTP 200 `{}` rather than 401 so a stale local credential cannot turn into a Claude hook error; control and board routes still enforce their normal authentication policy.
 
 ### LAN mode
 
@@ -282,7 +329,7 @@ fleetd LAN http://192.168.8.223:4711/?t=<hidden> (credential available in share 
 fleetd LAN http://fleetdeck.local:4711/?t=<hidden> (mDNS; credential available in share panel)
 ```
 
-Note the `?t=<hidden>`: fleetd's stdout usually lands in `fleetd.log` (often `0644`), so the log deliberately redacts the key rather than becoming a second token store. To get a complete, ready-to-paste URL:
+Note the `?t=<hidden>`: fleetd's stdout usually lands in the owner-only `fleetd.log`, and the log still redacts the key rather than becoming a second token store. To get a complete, ready-to-paste URL:
 
 - open the header's **⇄ Share** panel on the board — it shows the full links with a QR code; or
 - run **`fleetdeck token`** to print the bearer, or **`fleetdeck status --show-token`** for the full link.
@@ -295,7 +342,7 @@ Paste the key onto the printed LAN URL as `?t=<token>`; the key is consumed at b
 
 **The `?t=` is a password.** This API can spawn agents with `--dangerously-skip-permissions` and type keystrokes into their terminals: unauthenticated, it is remote code execution for anyone on the network. LAN mode therefore *requires* a token — there is no insecure switch, and fleetd refuses to start rather than open an unauthenticated listener.
 
-- **Loopback needs no token for ordinary routes** — browsing the board, watching sessions, hook traffic from the fleet's own shims. Since 0.16.0 the daemon always has a token — generated when absent, persisted to `$FLEETDECK_HOME/token`, and reused on later boots — and the **powerful** routes demand it even locally: typing into terminals (`/ws/term`), `POST /mail`, `gateway_*` settings writes, and unsupervised spawns. Hooks authenticate automatically, and the daemon prints the credentialed local link at startup. On a shared box, other local users sit inside the loopback trust zone; `FLEETDECK_REQUIRE_TOKEN=on` closes every route behind the token — though it cannot protect you from processes running as *your* user, which can read the token file. See SECURITY.md.
+- **Loopback needs no token for ordinary board/read routes** — browsing the board and watching sessions. Since 0.16.0 the daemon always has a token — generated when absent, persisted to `$FLEETDECK_HOME/token`, and reused on later boots — and every `/hook/*` request plus the **powerful** routes demand it even locally: typing into terminals (`/ws/term`), `POST /mail`, `gateway_*` settings writes, and unsupervised spawns. Fleet Deck's shims attach the hook token automatically; a missing or stale hook credential is ignored with neutral HTTP 200 `{}` so it cannot become a Claude error. The daemon prints the credentialed local link at startup. On a shared box, other local users sit inside the loopback trust zone; `FLEETDECK_REQUIRE_TOKEN=on` closes every route behind the token — though it cannot protect you from processes running as *your* user, which can read the token file. See SECURITY.md.
 - **Everything else must present the token**, as `Authorization: Bearer <token>` or `?t=<token>`. Wrong or missing → 401.
 - **The static shell is public; fleet data is not.** The HTML and JS bundle contain no sessions, callsigns or key — only an empty board that knows how to ask for one. A browser cannot put a key on the `<script>` tag inside the page it is already loading, so gating the shell would serve a blank board rather than hide it. The printed link carries the key in the query string for the same reason: no `Authorization` header exists on a first navigation.
 - **A bearer token, not a cookie.** Cookies ride along automatically, so any page you visit could make your browser POST to your board. A bearer token cannot be forged that way.
@@ -316,9 +363,11 @@ All optional; the defaults are what we run.
 
 ### The question answer window (and what happens after)
 
-A permission prompt, choice question or MCP form parks the hook while the board card waits for your answer — default 10 min (`FLEETDECK_HOLD_MS`, or the `hold_ms` setting via `POST /api/settings`; the env var wins). Three numbers move in lockstep and must never cross: daemon hold (default 600 s, clamped ≤650 s) < hook-shim watchdog (660 s, `scripts/fleet-hook.mjs`) < hooks.json `timeout` (720 s). Crossing them means your answer lands on a dead socket.
+A permission prompt, choice question or MCP form from a **Fleet Deck-owned Claude pane** parks the hook while the board card waits for your answer — default 10 min (`FLEETDECK_HOLD_MS`, or the `hold_ms` setting via `POST /api/settings`; the env var wins). The daemon injects `FLEETDECK_BOARD_SESSION=<session-id>` into that pane and the shim verifies the hook payload carries the same id. The marker is not added to shell panes, and an ambient/stale marker never authorizes a wait. Admission also requires at least one authorized snapshot WebSocket (an open board tab); terminal-viewer sockets do not count. Closing one of several tabs changes nothing, while closing the last immediately answers `{}`, expires every live hold without re-arming it, and hands the prompt back to the terminal.
 
-When the window lapses, the hook fails open `{}` and the agent's own terminal prompt owns the decision — nothing is ever auto-answered. If the session then stays silent for a couple of seconds (still parked), the daemon **re-arms** the question as a fresh card, up to twice, stopping permanently on any activity from that session. A re-armed card is honest about what it is: the live window is gone, so its answer goes as a message delivered at the next turn boundary — it does not unblock an agent parked on stdin.
+Three numbers move in lockstep and must never cross: daemon hold (default 600 s, clamped ≤650 s) < hook-shim watchdog (660 s) < hooks.json timeout (720 s). Crossing them means your answer lands on a dead socket. The healthy human-answer window stays long, but the shim probes `/health` while that POST is parked; three consecutive misses abort it in roughly 12–17 seconds instead of waiting 660 seconds on a wedged daemon. Every other session takes the short observation path and must never wait on an unattended board.
+
+When the window lapses, the hook fails open `{}` and the agent's own terminal prompt owns the decision — nothing is ever auto-answered. That response is deliberately invisible: exit 0, no stderr, no `systemMessage`, no synthetic context. If the session then stays silent for a couple of seconds (still parked), the daemon **re-arms** the question as a fresh card, up to twice, stopping permanently on any activity from that session. A re-armed card is honest about what it is: the live window is gone, so its answer goes as a message delivered at the next turn boundary — it does not unblock an agent parked on stdin.
 
 **Mixed-version caveat.** Hooks ship inside the plugin; the daemon updates independently. A session started under an OLD plugin (65 s or 120 s hook timeout) paired with a NEW daemon (600 s hold) auto-releases its prompts at the old ceiling (~63 s on ≤0.19 hooks, ~115 s on 0.20/0.21.0 hooks) — the shim's own watchdog answers `{}` first, so a board answer past that point can't reach that session. That's the fail-open path working as designed, and the re-armed card is the recovery: answer it and the agent gets your decision as a message at its next turn boundary.
 
@@ -338,8 +387,10 @@ When the window lapses, the hook fails open `{}` and the agent's own terminal pr
 | `FLEETDECK_MDNS` | on (LAN only) | `off` disables the mDNS/DNS-SD responder. |
 | `FLEETDECK_MDNS_NAME` | `fleetdeck` | The advertised name, i.e. `fleetdeck.local`. |
 | `FLEETDECK_SPAWN` | on | `off` disables spawning; the board hides every spawn control. |
+| `FLEETDECK_HOLD_SCOPE` | `spawned` | Which sessions the daemon may consider for board answers. `spawned` pauses only live Fleet Deck-owned panes; `off` makes every interactive hook observation-only. Legacy `all` broadens daemon-side admission, but the command shim still requires the exact Fleet Deck-owned session marker before it will take a long wait, so it cannot silently turn an ordinary terminal into a minutes-long hold. Every mode also requires an authorized board tab at intake; the last tab closing releases existing holds. Invalid values fail safe to `spawned`. |
 | `FLEETDECK_STALE_MS` | `600000` (10 min) | How long a working card runs without telemetry before it's badged stale. |
-| `FLEETDECK_HOLD_MS` | `600000` (10 min) | How long a question hook is held open awaiting a board answer. Clamped 250 ms–650 s — the lockstep invariant (hold < shim watchdog 660 s < hooks.json timeout 720 s) keeps a board answer off a dead socket. Also settable without a restart-env as the `hold_ms` setting (`POST /api/settings`); the env var is the override. |
+| `FLEETDECK_HOLD_MS` | `600000` (10 min) | How long an eligible board-session question hook is held awaiting an answer. Ordinary terminal hooks fail open in 2.5 s even if the daemon wedges. Clamped 250 ms–650 s — the board-session lockstep invariant (hold < shim watchdog 660 s < hooks.json timeout 720 s) keeps a board answer off a dead socket. Also settable without a restart-env as the `hold_ms` setting (`POST /api/settings`); the env var is the override. |
+| `FLEETDECK_SERVICE_START_TIMEOUT_MS` | `30000` (30 s) | Progressive readiness deadline for `fleetdeck service start`, clamped 250 ms–300 s. Startup still diagnoses a verified-but-slow owned daemon separately from a foreign port owner. |
 | `FLEETDECK_NUDGE_MS` | `8000` (8 s) | Grace before a silent new pane gets its one bring-up Enter. Exactly once, and never into a folder-trust or MCP-approval dialog. |
 | `FLEETDECK_SPAWN_REGISTER_MS` | `90000` (90 s) | How long a spawned pane may run without phoning home before it's flagged `stalled` — loudly, never auto-respawned. |
 | `FLEETDECK_PANE_MAIL_GRACE_MS` | `1500` (1.5 s) | Head start given to the watcher before mail is typed into an owned pane. |
@@ -363,16 +414,56 @@ Deep-tuning knobs that rarely need touching: `FLEETDECK_TERM_CMD_TIMEOUT_MS` (10
 
 `FLEETDECK_SPAWN_CMD`, `FLEETDECK_TERM_CMD` and the `FLEETDECK_TEST_*` family replace tmux and the daemon with fixtures for the test harness. They are not a supported way to run a fleet.
 
+## Troubleshooting
+
+Start with three commands; they distinguish packaging, service, and plugin failures without guessing:
+
+```bash
+fleetdeck --version
+fleetdeck status
+fleetdeck doctor
+```
+
+| Symptom | What to do |
+| --- | --- |
+| Fleet Deck disappears after a Claude upgrade | Run `claude --version` and compare it with `compatibility.json`. Claude remains supported as a developer tool; only Fleet Deck's hooks are inactive until a Fleet Deck release qualifies that version. Do not downgrade Claude solely for Fleet Deck. |
+| `AskUserQuestion` appears frozen for minutes | Update the daemon and plugin together, then start a new Claude session. Current shims long-wait only when their payload session id matches the exact marker injected into a Fleet Deck-owned pane; an ordinary terminal must fall back silently to Claude's native prompt. |
+| `Cannot find module .../src/daemon/takeover.ts` from `bin/fleetdeck.mjs` | That is an old or incomplete CLI package whose generated entry point still references source that was not shipped. Install the current release into a clean runtime slot, run `fleetdeck service install`, then `fleetdeck service start`; do not overwrite the live runtime in place. |
+| `supervisor started ... but no MANAGED daemon ... within 5s` | Upgrade to the current CLI. Startup now waits progressively for 30 seconds. If it still fails, inspect `$FLEETDECK_HOME/fleetd.log` and `fleetdeck status`; a foreign owner of the port is reported and left untouched. |
+| Board loads but cards never move | The Claude plugin is missing or its cached version differs from the daemon. Check `claude plugin list`, update the `fleetdeck` marketplace, and install/update `fleetdeck@fleetdeck`; then start a new session. |
+| Board works directly but 403s through Coder/proxy | Match the browser's exact scheme and hostname in `FLEETDECK_TRUSTED_ORIGINS`, then re-run `fleetdeck service install` so the service captures it. See [the Coder guide](docs/CODER.md). |
+| Share says the board uses a proxy | The page is already behind Coder, a tunnel, or another proxy. Keep fleetd on loopback and use that proxy's access controls; LAN mode is unnecessary. A local Coder URL is recognized too, but is intentionally not offered as a shareable link. |
+| UI stopped updating after a daemon restart | The board should reconnect and fetch a fresh snapshot automatically. If it does not, check `/health`, then reload once and inspect `fleetd.log`; persistent failure is not an expected idle timeout. |
+
 ## Development
 
 ```bash
-npm install
-npm test                             # 600+ contract tests against a real daemon
-npm run bundle                       # rebundle the daemon after touching scripts/fleetd/
-npm run build:board                  # rebuild the React board into board-dist/
+bun install
+bun run bundle                       # src/daemon/*.ts -> fleetd.bundle.mjs
+bun run bundle:bin                   # bin/fleetdeck.ts -> bin/fleetdeck.mjs
+bun run bundle:hooks                 # hook/session-start/watcher TypeScript -> .mjs
+bun run build:board                  # React board -> src/daemon/board-dist/
+
+bun run typecheck
+bun run typecheck:board-tests
+bun run ci
+bun run test                         # source-mode daemon and contract suite
+bun run test:bundle                  # repeat contracts against shipped daemon bundle
 ```
 
-`npm test` runs serially (`--test-concurrency=1`) by necessity, not preference: every test boots a real daemon that binds a real port and drives a real tmux server. Run them in parallel and they contend for both, producing one or two failures a run — a different one each time, each passing in isolation.
+Before publishing, also run the payload and release gates directly. Given a real base revision, they
+verify that behavior-bearing plugin changes ride a semantic version increase and that all release
+manifests agree. The rebuild commands above plus `git diff` are what prove generated artifacts are
+current; the test suite covers the package/plugin payload:
+
+```bash
+node scripts/check-plugin-payload.mjs <base-ref> HEAD
+node scripts/check-release-gate.mjs <base-ref> HEAD
+```
+
+The test runner manages isolated ports, homes, and tmux sockets for real-daemon tests. Do not remove
+those fixtures or point tests at your normal `~/.fleetdeck`; acceptance work must never disturb a
+developer's live fleet.
 
 The `demo/` scripts are live acceptance gates that start *real* Claude sessions and therefore cost money: `run-smoke.sh` (two sessions colliding on purpose), `run-accept-phase3.sh` (a permission and a trailing question answered from the board), `run-accept-spawn.sh` (spawn → assign → board-approved permission → kill), `run-accept-plan.sh` (plan → capture → unsupervised execution). Run them deliberately. `run-accept-phase3.sh` supervises its `claude -p` runs with GNU `timeout`, Homebrew coreutils' `gtimeout` on macOS, or a Node fallback when neither exists; `run-smoke.sh` requires GNU `timeout` and `setsid` (Linux/WSL2) and aborts up front without them.
 

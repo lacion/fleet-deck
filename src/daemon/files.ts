@@ -97,6 +97,27 @@ const WALK_FILE_MAX = 2000;
 const WALK_FILE_BYTES = 1024 * 1024;
 const PER_FILE_HITS = 5;
 
+// The non-git fallback serves roots such as Coder's /workspace, where a single
+// filename search otherwise walks every dependency tree and generated bundle.
+// These are implicit-search defaults only: fs/list and fs/read deliberately do
+// NOT consult this set, so a developer can still click into and inspect the
+// generated/dependency trees explicitly (`.git` remains independently denied
+// by the credential wall). Keep the set conservative and limited to ubiquitous,
+// reproducible output trees; project source directories are never inferred.
+const DEFAULT_SEARCH_PRUNED_DIRS = new Set([
+  '.git',
+  '.next',
+  '.turbo',
+  'build',
+  'coverage',
+  'dist',
+  'node_modules',
+]);
+
+export function defaultSearchPrunesDir(name: string): boolean {
+  return DEFAULT_SEARCH_PRUNED_DIRS.has(name.toLocaleLowerCase());
+}
+
 let searchesInFlight = 0;
 
 class PathError extends Error {
@@ -620,6 +641,10 @@ async function walkSearch(
       }
       if (st.isSymbolicLink()) continue;
       if (st.isDirectory()) {
+        // Search is intentionally quieter than browsing: generated/dependency
+        // trees are skipped here, but remain visible through fs/list and can be
+        // traversed explicitly from the UI.
+        if (defaultSearchPrunesDir(name)) continue;
         if (current.depth < WALK_DEPTH_MAX) stack.push({ dir: abs, rel, depth: current.depth + 1 });
         else truncated = true;
         continue;

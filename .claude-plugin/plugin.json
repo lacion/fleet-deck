@@ -1,8 +1,8 @@
 {
   "name": "fleetdeck",
   "displayName": "Fleet Deck",
-  "version": "0.23.3",
-  "description": "Localhost fleet board for Claude Code: every session on the machine visible on one board, cross-session file-conflict whispers, and turn-boundary mail between sessions. Zero wrapper, zero model calls in the core. Tested against Claude Code 2.1.206+ (through 2.1.207).",
+  "version": "0.23.4",
+  "description": "Localhost fleet board for Claude Code, guarded by a release-bound compatibility policy.",
   "author": {
     "name": "Luis Morales",
     "email": "luismmorales@gmail.com"

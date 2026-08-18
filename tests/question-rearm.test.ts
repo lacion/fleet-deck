@@ -86,7 +86,7 @@ async function holdPermission(
     daemon.baseUrl,
     'PermissionRequest',
     loadFixture('permission-request', { session_id: sid, cwd }),
-    { token: daemon, timeout: holdMs + 30_000 },
+    { token: daemon, timeout: holdMs + 30_000, boardClient: true },
   );
   const q = await waitUntil(
     async () => {
@@ -245,6 +245,63 @@ test('re-arm: activity inside the grace window cancels the re-arm (no successor)
   assert.equal(rearmed.length, 0, 'activity inside the grace window must cancel the re-arm');
   const orig = state.questions.find((x) => x.id === q.id);
   assert.equal(orig?.status, 'expired');
+});
+
+test('re-arm: activity cancels only its own session; another session still re-arms', async (t) => {
+  const holdMs = 400;
+  const graceMs = 400;
+  const daemon = await startDaemon({
+    env: { FLEETDECK_HOLD_MS: String(holdMs), FLEETDECK_REARM_GRACE_MS: String(graceMs) },
+  });
+  const cwd = scratchCwd();
+  t.after(async () => {
+    await daemon.stop();
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  const activeSid = randomUUID();
+  const parkedSid = randomUUID();
+  for (const sid of [activeSid, parkedSid]) {
+    await postHook(
+      daemon.baseUrl,
+      'SessionStart',
+      loadFixture('session-start', { session_id: sid, cwd }),
+      { token: daemon },
+    );
+  }
+
+  const active = await holdPermission(daemon, activeSid, cwd, holdMs);
+  const parked = await holdPermission(daemon, parkedSid, cwd, holdMs);
+  await Promise.all([active.held, parked.held]); // both grace timers are armed
+
+  await postHook(
+    daemon.baseUrl,
+    'UserPromptSubmit',
+    loadFixture('user-prompt-submit', { session_id: activeSid, cwd }),
+    { token: daemon },
+  );
+
+  const parkedSuccessor = await waitForRearmed(
+    daemon,
+    parkedSid,
+    'the unrelated parked session to retain its re-arm timer',
+  );
+  assert.equal(parkedSuccessor.payload?.rearmed, true);
+
+  await sleep(graceMs + 300);
+  const state = await getState<QuestionsState>(daemon.baseUrl);
+  assert.equal(
+    questionsFor(state, activeSid).filter((x) => x.payload?.rearmed === true).length,
+    0,
+    'activity still cancels the active session re-arm',
+  );
+  assert.equal(
+    questionsFor(state, parkedSid).filter(
+      (x) => x.status === 'pending' && x.payload?.rearmed === true,
+    ).length,
+    1,
+    'activity in another session must not cancel this parked prompt recovery',
+  );
 });
 
 test('re-arm: the chain caps at two re-arms, then the daemon gets out of the way', async (t) => {
@@ -565,7 +622,7 @@ test('answer at TTL−1s: a board answer one second before the window lapses sti
     daemon.baseUrl,
     'PermissionRequest',
     loadFixture('permission-request', { session_id: sid, cwd }),
-    { token: daemon, timeout: HOLD_MS + 30_000 },
+    { token: daemon, timeout: HOLD_MS + 30_000, boardClient: true },
   );
   const q = await waitUntil(
     async () => {

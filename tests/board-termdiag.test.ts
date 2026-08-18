@@ -83,9 +83,11 @@ test('backoff is capped so a wall of tiles cannot storm a daemon still booting',
   }
 });
 
-test('a PRE-FRAME close is never retried — it is a refused upgrade, and retrying cannot fix auth', () => {
+test('an initial PRE-FRAME close is diagnosed, but recovery can span daemon startup', () => {
   assert.deepEqual(reconnectPlan(false, 0), { action: 'diagnose' });
-  assert.deepEqual(reconnectPlan(false, 3), { action: 'diagnose' });
+  assert.deepEqual(reconnectPlan(false, 1), { action: 'retry', delayMs: 1000 });
+  assert.deepEqual(reconnectPlan(false, 3), { action: 'retry', delayMs: 4000 });
+  assert.deepEqual(reconnectPlan(false, MAX_RECONNECT), { action: 'diagnose' });
 });
 
 test('retries are bounded — the pane eventually settles instead of reconnecting forever', () => {

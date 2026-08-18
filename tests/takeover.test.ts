@@ -47,8 +47,10 @@ import {
 } from '../src/daemon/takeover.ts';
 
 const HOOK_SCRIPT = path.join(REPO_ROOT, 'scripts/fleet-sessionstart.mjs');
+const HOOK_SOURCE = path.join(REPO_ROOT, 'scripts/fleet-sessionstart.ts');
 const FLEETD_SOURCE = path.join(REPO_ROOT, 'src/daemon/fleetd.ts');
 const STUB = path.join(REPO_ROOT, 'tests/helpers/stub-immortal-daemon.ts');
+const COLD_RACE_FLEETD = path.join(REPO_ROOT, 'tests/helpers/cold-race/fleetd.ts');
 const PKG_VERSION = (
   JSON.parse(readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8')) as { version: string }
 ).version;
@@ -94,6 +96,7 @@ interface RunHookOptions {
   home: string;
   env?: Record<string, string>;
   payload?: unknown;
+  script?: string;
 }
 
 interface HookRun {
@@ -108,9 +111,11 @@ interface HookRun {
 // launcher to fleetd.ts SOURCE (the committed bundle is deliberately stale
 // mid-iteration); FLEETDECK_TMUX_SOCKET isolates any tmux server the spawned
 // daemon might create; FLEETDECK_AGENTS_CMD=false keeps the poller off.
-function runHook({ port, home, env = {}, payload }: RunHookOptions): HookRun {
+function runHook({ port, home, env = {}, payload, script = HOOK_SCRIPT }: RunHookOptions): HookRun {
   const childEnv: NodeJS.ProcessEnv = {
     ...process.env,
+    FLEETDECK_TEST_CLAUDE_VERSION: '2.1.234',
+    CLAUDE_PID: String(process.pid),
     FLEETDECK_PORT: String(port),
     FLEETDECK_HOME: home,
     FLEETDECK_AGENTS_CMD: 'false',
@@ -124,7 +129,7 @@ function runHook({ port, home, env = {}, payload }: RunHookOptions): HookRun {
   // delete trips no-dynamic-delete.)
   Reflect.deleteProperty(childEnv, 'TMUX');
   Reflect.deleteProperty(childEnv, 'TMUX_PANE');
-  const child = spawn(process.execPath, [HOOK_SCRIPT], {
+  const child = spawn(process.execPath, [script], {
     env: childEnv,
     stdio: ['pipe', 'pipe', 'pipe'],
   });
@@ -175,7 +180,7 @@ function runHook({ port, home, env = {}, payload }: RunHookOptions): HookRun {
 // answering /health on `port` may belong to a concurrent run's HOME, not this
 // one (BUG-179). Cleanup therefore mirrors the hook's own verify-before-kill
 // gate: the candidate pid must be recorded in THIS home's pidfile AND pass
-// verifyDaemonPid(pid, home) before it is signalled, and the port-derived tmux
+// verifyDaemonPid(pid, home, port) before it is signalled, and the port-derived tmux
 // socket is only reaped once ownership is proven. Failing the gate leaks (a
 // tmpdir + an idle daemon on a scratch port), never kills a foreign process.
 async function killDaemonAt(port: number, home: string): Promise<void> {
@@ -188,7 +193,7 @@ async function killDaemonAt(port: number, home: string): Promise<void> {
   } catch {
     /* fall through to the pidfile */
   }
-  if (pid == null || !verifyDaemonPid(pid, home)) {
+  if (pid == null || !verifyDaemonPid(pid, home, port)) {
     // The /health answerer is not provably this HOME's daemon — or /health is
     // down. Either way the only pid we may trust is this HOME's OWN pidfile,
     // and only if the verifier (pidfile match + fleetd /proc shape) accepts it.
@@ -197,7 +202,7 @@ async function killDaemonAt(port: number, home: string): Promise<void> {
     } catch {
       pid = null;
     }
-    if (pid == null || !verifyDaemonPid(pid, home)) return; // not ours — do NOT signal, do NOT reap the tmux socket
+    if (pid == null || !verifyDaemonPid(pid, home, port)) return; // not ours — do NOT signal, do NOT reap the tmux socket
   }
   const targetPid = pid; // proven to belong to THIS home
   try {
@@ -393,29 +398,50 @@ test('verifyDaemonPid refuses a non-fleetd-shaped live pid, a pidfile mismatch, 
 
   if (process.platform === 'linux') {
     assert.equal(
-      verifyDaemonPid(sleeperPid, home),
+      verifyDaemonPid(sleeperPid, home, 40000),
       false,
       'a live but non-fleetd-shaped pid must be refused even when the pidfile matches',
     );
   }
+
+  assert.equal(
+    verifyDaemonPid(sleeperPid, home, 40001),
+    false,
+    'a pidfile for another port must never authorize this listener',
+  );
+  writeFileSync(path.join(home, 'fleetd.pid'), String(sleeperPid));
+  assert.equal(
+    verifyDaemonPid(sleeperPid, home, 40000),
+    false,
+    'a legacy portless pidfile cannot prove ownership of a selected port',
+  );
 
   // Pidfile pid mismatch is refused on every platform (checked before /proc).
   writeFileSync(
     path.join(home, 'fleetd.pid'),
     JSON.stringify({ pid: sleeperPid + 100000, port: 40000 }),
   );
-  assert.equal(verifyDaemonPid(sleeperPid, home), false, 'a pidfile pid mismatch must be refused');
+  assert.equal(
+    verifyDaemonPid(sleeperPid, home, 40000),
+    false,
+    'a pidfile pid mismatch must be refused',
+  );
 
   // A missing pidfile is refused.
   const emptyHome = mkdtempSync(path.join(tmpdir(), 'fleetdeck-verify-empty-'));
   t.after(() => {
     rmSync(emptyHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
-  assert.equal(verifyDaemonPid(sleeperPid, emptyHome), false, 'a missing pidfile must be refused');
+  assert.equal(
+    verifyDaemonPid(sleeperPid, emptyHome, 40000),
+    false,
+    'a missing pidfile must be refused',
+  );
 
   // A bad pid argument is refused.
-  assert.equal(verifyDaemonPid(0, home), false);
-  assert.equal(verifyDaemonPid(-1, home), false);
+  assert.equal(verifyDaemonPid(0, home, 40000), false);
+  assert.equal(verifyDaemonPid(-1, home, 40000), false);
+  assert.equal(verifyDaemonPid(sleeperPid, home, 0), false);
 });
 
 test('verifyDaemonPid accepts a genuine running daemon (pidfile match + fleetd /proc shape)', async (t) => {
@@ -426,10 +452,52 @@ test('verifyDaemonPid accepts a genuine running daemon (pidfile match + fleetd /
   const healthPid = ((await getJson(`${daemon.baseUrl}/health`)).json as HealthView).pid;
   assert.ok(healthPid, 'health should report a pid');
   assert.equal(
-    verifyDaemonPid(healthPid, daemon.home),
+    verifyDaemonPid(healthPid, daemon.home, daemon.port),
     true,
     'a real fleetd must verify (its pidfile matches and its /proc shape is node fleetd.mjs)',
   );
+});
+
+test('verifyDaemonPid accepts the standalone CLI serve process but not another CLI verb', async (t) => {
+  const home = mkdtempSync(path.join(tmpdir(), 'fleetdeck-verify-cli-'));
+  t.after(() => {
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+  const cli = path.join(home, 'fleetdeck.mjs');
+  writeFileSync(cli, 'setInterval(() => {}, 1e9);\n');
+
+  const launch = async (verb: string): Promise<ChildProcess> => {
+    const child = spawn(process.execPath, [cli, verb], { stdio: 'ignore' });
+    t.after(() => {
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        /* gone */
+      }
+    });
+    await waitUntil(() => child.pid != null, { label: `fleetdeck ${verb} pid` });
+    return child;
+  };
+
+  const server = await launch('serve');
+  assert.ok(server.pid !== undefined, 'the CLI serve fixture reports a pid');
+  writeFileSync(path.join(home, 'fleetd.pid'), JSON.stringify({ pid: server.pid, port: 4711 }));
+  assert.equal(
+    verifyDaemonPid(server.pid, home, 4711),
+    true,
+    'the managed `bun fleetdeck.mjs serve` process is the production daemon identity',
+  );
+
+  if (process.platform === 'linux') {
+    const status = await launch('status');
+    assert.ok(status.pid !== undefined, 'the CLI status fixture reports a pid');
+    writeFileSync(path.join(home, 'fleetd.pid'), JSON.stringify({ pid: status.pid, port: 4711 }));
+    assert.equal(
+      verifyDaemonPid(status.pid, home, 4711),
+      false,
+      'a different fleetdeck CLI verb must not satisfy the daemon ownership gate',
+    );
+  }
 });
 
 test('killDaemonAt never terminates a daemon owned by another HOME that answers on the same port (BUG-179)', async (t) => {
@@ -535,6 +603,73 @@ test('a cold-boot SessionStart hook rereads the minted token and registers the f
   );
 });
 
+for (const [hookKind, hookScript] of [
+  ['source', HOOK_SOURCE],
+  ['bundled', HOOK_SCRIPT],
+] as const) {
+  test(`a newer ${hookKind} hook re-arbitrates when an older plugin wins a cold-start spawn race`, async (t) => {
+    // Both plugin hooks observed an empty port before either candidate bound.
+    // The fixture deterministically makes the first post-spawn answer report
+    // the older plugin and every later launch report this hook's exact build.
+    // Before the regression fix, replacedVersion was still null on this cold
+    // path, so the hook silently accepted the older winner and stopped here.
+    const port = randomPort();
+    const home = mkdtempSync(path.join(tmpdir(), `fleetdeck-cold-version-race-${hookKind}-`));
+    const historyFile = path.join(home, '.cold-race-history');
+    t.after(async () => {
+      await killDaemonAt(port, home);
+      rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    });
+
+    assert.equal(
+      shouldTakeOver(PKG_VERSION, '0.0.2'),
+      true,
+      'the package version must be strictly newer than the staged cold-race winner',
+    );
+    const hook = runHook({
+      port,
+      home,
+      script: hookScript,
+      env: {
+        FLEETDECK_TEST_DAEMON_SCRIPT: COLD_RACE_FLEETD,
+        FLEETDECK_COLD_RACE_OLD_VERSION: '0.0.2',
+        FLEETDECK_COLD_RACE_CURRENT_VERSION: PKG_VERSION,
+      },
+      payload: loadFixture('session-start', {
+        session_id: randomUUID(),
+        cwd: scratchDir(t),
+      }),
+    });
+    assert.equal(
+      await hook.exitWithin(14000, `${hookKind} mixed-version cold race`),
+      0,
+      `the ${hookKind} hook must exit 0 (stderr: ${hook.stderr})`,
+    );
+
+    const health = await waitForHealth(`http://127.0.0.1:${port}`, 8000);
+    assert.equal(
+      health['version'],
+      PKG_VERSION,
+      `the ${hookKind} hook must replace the older cold-start winner with its exact build`,
+    );
+    const launches = readFileSync(historyFile, 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => {
+        const [version, pid] = line.split(' ');
+        return { version, pid: Number(pid) };
+      });
+    assert.deepEqual(
+      launches.map((launch) => launch.version),
+      ['0.0.2', PKG_VERSION],
+      'the staged older winner must be followed by exactly one current-version re-arbitration launch',
+    );
+    assert.notEqual(health.pid, launches[0]?.pid, 'the older cold-start winner was evicted');
+    const stable = await waitForHealth(`http://127.0.0.1:${port}`, 3000);
+    assert.equal(stable.pid, health.pid, 'the exact-version winner stays stable after arbitration');
+  });
+}
+
 test('a newer hook replaces an older daemon: old exits 0, new owns the same port+HOME, a pre-seeded session survives, ticker says "replaced"', async (t) => {
   const port = randomPort();
   const home = mkdtempSync(path.join(tmpdir(), 'fleetdeck-takeover-home-'));
@@ -569,6 +704,16 @@ test('a newer hook replaces an older daemon: old exits 0, new owns the same port
   });
   const code = await hook.exitWithin(14000, 'newer-hook takeover');
   assert.equal(code, 0, `the hook must always exit 0 (stderr: ${hook.stderr})`);
+  assert.match(
+    hook.stdout,
+    /^\[FLEETDECK\] You are on the fleet board as "/,
+    'a verified replacement still emits the normal roster brief',
+  );
+  assert.doesNotMatch(
+    hook.stdout,
+    /replaced v0\.0\.1|0\.0\.1.*session\(s\)/,
+    'takeover diagnostics never enter Claude SessionStart context',
+  );
 
   // The displaced daemon exits 0 (graceful shutdown, not the hard-exit watchdog).
   await waitUntil(() => old.proc.exitCode !== null, { timeoutMs: 5000, label: 'old daemon exit' });
@@ -868,17 +1013,17 @@ test('a MANAGED daemon is never evicted, even by a strictly newer hook', async (
   );
   assert.equal(after.version, '0.0.1', 'the older managed daemon still owns the port');
 
-  // ...and the drift is REPORTED, not silently swallowed. Discovering that a fix
-  // you installed is not the code that is running should not cost an afternoon.
+  // The mismatch is intentionally absent from Claude context. `fleetdeck
+  // doctor` and daemon logs own operator diagnostics; SessionStart may emit only
+  // the normal roster brief.
   assert.match(
     hook.stdout,
-    /managed service running v0\.0\.1/,
-    `the SessionStart brief must name the running service version (got: ${hook.stdout.slice(0, 300)})`,
+    /^\[FLEETDECK\] You are on the fleet board as "/,
+    `the normal roster brief survives (got: ${hook.stdout.slice(0, 300)})`,
   );
-  assert.match(
+  assert.doesNotMatch(
     hook.stdout,
-    new RegExp(`plugin is v${PKG_VERSION.replace(/\./g, '\\.')}`),
-    'the SessionStart brief must name the plugin version it could not install',
+    /The fleet daemon is a managed service|plugin is v|running v0\.0\.1/,
   );
 });
 
