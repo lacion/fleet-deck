@@ -20,7 +20,10 @@ export interface GitAccessHelp {
   detail?: string | null;
   action?: string;
   auth_url?: string | null;
+  auth_label?: string | null;
   cli_command?: string | null;
+  ssh_public_key?: string | null;
+  suggested_transport?: 'https' | null;
 }
 
 interface ApiJson {
@@ -66,12 +69,12 @@ export function reasonOf(res: ApiResult | null | undefined, fallback?: string): 
 // or the 15 s timeout come back as {ok:false, status:0, reason:'daemon
 // unreachable'} — the same shape a 4xx does — so callers branch on `res.ok`
 // and read `reasonOf(res)` without a parallel try/catch for the transport.
-async function request(url: string, init?: RequestInit): Promise<ApiResult> {
+async function request(url: string, init?: RequestInit, timeoutMs = 15_000): Promise<ApiResult> {
   let res: Response;
   try {
     // Callers still write root-relative paths ('/api/spawn'); apiUrl resolves
     // them against the board's actual base so a path-based proxy works.
-    res = await fetch(apiUrl(url), { ...init, signal: AbortSignal.timeout(15000) });
+    res = await fetch(apiUrl(url), { ...init, signal: AbortSignal.timeout(timeoutMs) });
   } catch {
     // DNS/refused/reset/timeout/abort — the daemon is unreachable, not a status
     return { ok: false, status: 0, json: null, reason: 'daemon unreachable' };
@@ -91,12 +94,16 @@ async function request(url: string, init?: RequestInit): Promise<ApiResult> {
   };
 }
 
-function post(url: string, body?: unknown): Promise<ApiResult> {
-  return request(url, {
-    method: 'POST',
-    headers: authHeaders({ 'content-type': 'application/json' }),
-    body: JSON.stringify(body ?? {}),
-  });
+function post(url: string, body?: unknown, timeoutMs?: number): Promise<ApiResult> {
+  return request(
+    url,
+    {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify(body ?? {}),
+    },
+    timeoutMs,
+  );
 }
 
 // Same shape as post() — for GETs whose failure the CALLER must show (unlike
@@ -234,7 +241,10 @@ export function spawnSession(body: unknown): Promise<ApiResult> {
 // a spawn owns any durable card or clone directory. The daemon repeats this
 // gate on POST /api/spawn; this route exists for actionable in-form feedback.
 export function preflightRepo(body: unknown): Promise<ApiResult> {
-  return post('/api/repos/preflight', body);
+  // The daemon owns the Git subprocess deadline (15s by default, at most 60s).
+  // Give its structured auth/timeout response room to arrive; an equal browser
+  // deadline races it and turns actionable guidance into "daemon unreachable".
+  return post('/api/repos/preflight', body, 65_000);
 }
 
 export function spawnShell(cwd: string): Promise<ApiResult> {

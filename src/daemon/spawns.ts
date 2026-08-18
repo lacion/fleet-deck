@@ -25,6 +25,7 @@ import { redactDiagnosticText, scrubUrlCredentials } from './payload-capture.ts'
 import { redactGitText } from './exec.ts';
 import type { ExecResult } from './exec.ts';
 import type { Statements, SessionRow, SpawnRow } from './statements.ts';
+import { SPAWN_FOLDER_TRUST_NOTE, SPAWN_PANE_UNREADABLE_NOTE } from './spawn-attention.ts';
 
 // ---------------------------------------------------------- strict-typing seam
 // Sibling module surfaces obtained as type queries: erased under
@@ -660,7 +661,7 @@ export function createSpawns(ctx: SpawnsCtx) {
         if (typeof screen !== 'string' || screen.trim() === '') {
           logEvent(row.session_id, 'SpawnNudge', null, 'pane unreadable — bring-up Enter held');
           updateSession(row.session_id, {
-            note: 'no bring-up keystroke sent — pane unreadable; check the terminal',
+            note: SPAWN_PANE_UNREADABLE_NOTE,
           });
           tick(`🔒 ${callsign} needs a look — no bring-up keystroke sent`);
           onMutate();
@@ -672,7 +673,7 @@ export function createSpawns(ctx: SpawnsCtx) {
         if (TRUST_DIALOG_RE.test(squashed)) {
           logEvent(row.session_id, 'SpawnNudge', null, 'trust/MCP dialog held for human approval');
           updateSession(row.session_id, {
-            note: 'waiting on the folder-trust dialog — approve it in the terminal',
+            note: SPAWN_FOLDER_TRUST_NOTE,
           });
           tick(`🔒 ${callsign} waits on a trust dialog — approve it in the terminal`);
           onMutate();

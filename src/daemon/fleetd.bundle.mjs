@@ -4290,6 +4290,16 @@ function detectCoderWorkspaceRoot({
   return null;
 }
 
+// src/daemon/repo-policy.ts
+function repoTransportChoice({
+  setting = null,
+  coder = false
+} = {}) {
+  if (setting === "ssh" || setting === "https") return { value: setting, source: "override" };
+  if (coder) return { value: "https", source: "coder" };
+  return { value: "ssh", source: "default" };
+}
+
 // src/daemon/repos.ts
 var CONTROL_RE = /[\x00-\x1f\x7f]/;
 var SPACE_OR_CONTROL_RE = /[\s\x00-\x1f\x7f]/;
@@ -4591,6 +4601,17 @@ function createRepos(ctx) {
       return null;
     }
   }
+  function sshKeySettingsUrl(provider) {
+    if (provider === "github") return "https://github.com/settings/ssh/new";
+    if (provider === "gitlab") return "https://gitlab.com/-/profile/keys";
+    return null;
+  }
+  function coderPublicKey(raw) {
+    const found = raw.match(
+      /(?:^|\n)(ssh-(?:ed25519|rsa)|ecdsa-sha2-nistp(?:256|384|521)) [A-Za-z0-9+/=]{20,8192}(?: [^\r\n]{0,256})?(?=\r?$|\n)/m
+    )?.[0];
+    return found?.trim() ?? null;
+  }
   function accessFailure(origin, result) {
     const { provider, transport } = originKind(origin);
     const raw = result.err ?? "";
@@ -4599,6 +4620,7 @@ function createRepos(ctx) {
     const providerName = provider === "github" ? "GitHub" : provider === "gitlab" ? "GitLab" : "the Git server";
     const detail = gitStderrDetail(redactGitText(raw, originSecrets(origin)));
     if (result.code === "ETIMEDOUT") {
+      const coderHttps = coderUrl != null && transport === "https";
       return {
         ok: false,
         status: 504,
@@ -4609,21 +4631,27 @@ function createRepos(ctx) {
           code: "timeout",
           title: "Git authentication did not finish",
           detail,
-          action: coderUrl ? "Reconnect the Git provider in Coder, then check access again." : "Finish any Git credential login in a terminal, then check access again.",
-          auth_url: coderUrl,
-          cli_command: null
+          action: coderHttps ? "Reconnect the Git provider in Coder, then check access again." : transport === "ssh" ? "The SSH check did not finish. Verify the host/key in a terminal, or switch this spawn to HTTPS." : "Finish any Git credential login in a terminal, then check access again.",
+          auth_url: coderHttps ? coderUrl : null,
+          auth_label: coderHttps ? "Open Coder authentication" : null,
+          cli_command: null,
+          ssh_public_key: null,
+          suggested_transport: null
         }
       };
     }
     const hostKey = /host key verification failed|authenticity of host .* can't be established/.test(lower);
-    const coderAuth = coderUrl != null && (/coder gitssh|coder publickey|external.auth|authenticate with (github|gitlab)/.test(lower) || /could not read from remote repository|authentication failed|could not read username/.test(
+    const coderSsh = coderUrl != null && transport === "ssh" && /coder gitssh|coder publickey|coder authenticates with git|coder-generated.*ssh|add to github and gitlab/.test(
+      lower
+    );
+    const coderAuth = coderUrl != null && transport === "https" && (/coder gitssh|coder publickey|external.auth|authenticate with (github|gitlab)/.test(lower) || /could not read from remote repository|authentication failed|could not read username/.test(
       lower
     ));
-    const code = coderAuth ? "coder_external_auth" : hostKey ? "host_key" : /authentication failed|permission denied|publickey|could not read username|http basic|access rights|repository not found/.test(
+    const code = coderSsh ? "coder_ssh_key" : coderAuth ? "coder_external_auth" : hostKey ? "host_key" : /authentication failed|permission denied|publickey|could not read username|http basic|access rights|repository not found/.test(
       lower
     ) ? "credentials" : "unreachable";
-    const cliCommand = coderUrl != null ? null : provider === "github" ? "gh auth login --hostname github.com --git-protocol https" : provider === "gitlab" ? "glab auth login --hostname gitlab.com" : null;
-    const action = coderAuth ? `Connect ${providerName} in Coder, then return here and check access again.` : hostKey ? `Trust ${providerName}'s SSH host key in a terminal, or switch this spawn to HTTPS.` : cliCommand ? `Authenticate with ${providerName} in a terminal (${cliCommand}), then check access again.` : "Authenticate Git in this developer environment, then check access again.";
+    const cliCommand = coderSsh ? "coder publickey" : coderUrl != null ? null : provider === "github" ? "gh auth login --hostname github.com --git-protocol https" : provider === "gitlab" ? "glab auth login --hostname gitlab.com" : null;
+    const action = coderSsh ? `Coder login covers HTTPS, not SSH. Switch this spawn to HTTPS, or add the Coder SSH key below to ${providerName}.` : coderAuth ? `Connect ${providerName} in Coder, then return here and check access again.` : hostKey ? `Trust ${providerName}'s SSH host key in a terminal, or switch this spawn to HTTPS.` : cliCommand ? `Authenticate with ${providerName} in a terminal (${cliCommand}), then check access again.` : "Authenticate Git in this developer environment, then check access again.";
     return {
       ok: false,
       status: 409,
@@ -4632,11 +4660,14 @@ function createRepos(ctx) {
         provider,
         transport,
         code,
-        title: coderAuth ? `${providerName} is not connected to this Coder workspace` : hostKey ? `${providerName} SSH host trust is not ready` : `${providerName} repository access is not ready`,
+        title: coderSsh ? `${providerName} does not recognize this Coder SSH key` : coderAuth ? `${providerName} is not connected to this Coder workspace` : hostKey ? `${providerName} SSH host trust is not ready` : `${providerName} repository access is not ready`,
         detail,
         action,
-        auth_url: coderAuth ? coderUrl : null,
-        cli_command: cliCommand
+        auth_url: coderSsh ? sshKeySettingsUrl(provider) : coderAuth ? coderUrl : null,
+        auth_label: coderSsh ? `Add SSH key to ${providerName}` : coderAuth ? "Open Coder authentication" : null,
+        cli_command: cliCommand,
+        ssh_public_key: coderSsh ? coderPublicKey(raw) : null,
+        suggested_transport: coderSsh ? "https" : null
       }
     };
   }
@@ -4715,7 +4746,10 @@ function createRepos(ctx) {
     return { value, source: "default", resolved: value };
   }
   function resolveRepoTransport() {
-    return q.getSetting.get("repo_transport")?.value ?? "ssh";
+    return repoTransportChoice({
+      setting: q.getSetting.get("repo_transport")?.value ?? null,
+      coder: !!detectCoderWorkspaceRoot()
+    }).value;
   }
   function resolveRepoDefaultOrg() {
     return repoDefaultOrgChoice({
@@ -5170,9 +5204,10 @@ function createSettings(ctx) {
     return q.getSetting.get(key)?.value ?? null;
   }
   function resolveRepoTransport() {
-    const value = readSetting("repo_transport");
-    const known = value === "ssh" || value === "https";
-    return { value: known ? value : "ssh", source: known ? "override" : "default" };
+    return repoTransportChoice({
+      setting: readSetting("repo_transport"),
+      coder: !!detectCoderWorkspaceRoot()
+    });
   }
   function browseRootChoice() {
     const setting = readSetting("browse_root");
@@ -7105,6 +7140,17 @@ ${p.plan_md ?? ""}`;
 import fs11 from "node:fs";
 import path12 from "node:path";
 import { randomUUID as randomUUID2, randomBytes } from "node:crypto";
+
+// src/daemon/spawn-attention.ts
+var SPAWN_FOLDER_TRUST_NOTE = "waiting on the folder-trust dialog \u2014 approve it in the terminal";
+var SPAWN_PANE_UNREADABLE_NOTE = "no bring-up keystroke sent \u2014 pane unreadable; check the terminal";
+function spawnAttentionForNote(note) {
+  if (note === SPAWN_FOLDER_TRUST_NOTE) return "folder-trust";
+  if (note === SPAWN_PANE_UNREADABLE_NOTE) return "pane-unreadable";
+  return null;
+}
+
+// src/daemon/spawns.ts
 function runtimeOverrideRefusal(body) {
   if (body.remote_control != null && typeof body.remote_control !== "boolean") {
     return "remote_control must be a boolean";
@@ -7312,7 +7358,7 @@ function createSpawns(ctx) {
         if (typeof screen !== "string" || screen.trim() === "") {
           logEvent(row.session_id, "SpawnNudge", null, "pane unreadable \u2014 bring-up Enter held");
           updateSession(row.session_id, {
-            note: "no bring-up keystroke sent \u2014 pane unreadable; check the terminal"
+            note: SPAWN_PANE_UNREADABLE_NOTE
           });
           tick(`\u{1F512} ${callsign} needs a look \u2014 no bring-up keystroke sent`);
           onMutate();
@@ -7322,7 +7368,7 @@ function createSpawns(ctx) {
         if (TRUST_DIALOG_RE.test(squashed)) {
           logEvent(row.session_id, "SpawnNudge", null, "trust/MCP dialog held for human approval");
           updateSession(row.session_id, {
-            note: "waiting on the folder-trust dialog \u2014 approve it in the terminal"
+            note: SPAWN_FOLDER_TRUST_NOTE
           });
           tick(`\u{1F512} ${callsign} waits on a trust dialog \u2014 approve it in the terminal`);
           onMutate();
@@ -9879,6 +9925,7 @@ function createSnapshot(ctx) {
             tmux_window: sp.tmux_window,
             status: sp.status,
             kind: sp.kind ?? "claude",
+            attention: spawnAttentionForNote(s.note),
             setup_cmd: sp.setup_cmd ?? null,
             stalled: sp.status === "stalled",
             // watchdog chip ("never registered")

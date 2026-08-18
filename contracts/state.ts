@@ -29,6 +29,7 @@ export interface SessionSpawn {
   tmux_window: string | null;
   status: string;
   kind: 'claude' | 'shell';
+  attention: 'folder-trust' | 'pane-unreadable' | null;
   setup_cmd: string | null;
   stalled: boolean;
   stall_detail: string | null;

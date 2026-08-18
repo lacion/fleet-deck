@@ -500,6 +500,8 @@ textarea.fd-input { font-family: var(--font-ui); font-size: 13px; resize: none; 
 }
 .fd-gitaccess details summary { cursor: pointer; color: var(--faint); }
 .fd-gitaccess details pre { margin: 6px 0 0; max-height: 120px; }
+.fd-gitkey { display: flex; align-items: flex-start; gap: 8px; }
+.fd-gitkey code { flex: 1; min-width: 0; }
 
 /* pane / stale chips on session cards */
 .fd-panechip {

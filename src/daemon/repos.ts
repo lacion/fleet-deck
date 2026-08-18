@@ -11,6 +11,7 @@ import { execFileP, baseBranch, distillGitStderr, gitStderrDetail, redactGitText
 import type { ExecResult } from './exec.ts';
 import { detectCoderWorkspaceRoot } from './config.ts';
 import { errStatus, errMessage } from './errors.ts';
+import { repoTransportChoice } from './repo-policy.ts';
 import type { Statements } from './statements.ts';
 
 // eslint-disable-next-line no-control-regex -- refusing NUL/C0/DEL in a repos_dir path is the entire purpose of this gate
@@ -504,12 +505,21 @@ interface TouchRepoArgs {
 export interface RepoAccessHelp {
   provider: 'github' | 'gitlab' | 'other';
   transport: 'https' | 'ssh';
-  code: 'coder_external_auth' | 'host_key' | 'credentials' | 'timeout' | 'unreachable';
+  code:
+    | 'coder_external_auth'
+    | 'coder_ssh_key'
+    | 'host_key'
+    | 'credentials'
+    | 'timeout'
+    | 'unreachable';
   title: string;
   detail: string | null;
   action: string;
   auth_url: string | null;
+  auth_label: string | null;
   cli_command: string | null;
+  ssh_public_key: string | null;
+  suggested_transport: 'https' | null;
 }
 
 type RepoAccessProbe =
@@ -582,6 +592,21 @@ export function createRepos(ctx: ReposCtx) {
     }
   }
 
+  function sshKeySettingsUrl(provider: RepoAccessHelp['provider']): string | null {
+    if (provider === 'github') return 'https://github.com/settings/ssh/new';
+    if (provider === 'gitlab') return 'https://gitlab.com/-/profile/keys';
+    return null;
+  }
+
+  function coderPublicKey(raw: string): string | null {
+    // Public keys are safe to display/copy, but accept only a single bounded
+    // OpenSSH public-key line. Never reflect arbitrary stderr into this field.
+    const found = raw.match(
+      /(?:^|\n)(ssh-(?:ed25519|rsa)|ecdsa-sha2-nistp(?:256|384|521)) [A-Za-z0-9+/=]{20,8192}(?: [^\r\n]{0,256})?(?=\r?$|\n)/m,
+    )?.[0];
+    return found?.trim() ?? null;
+  }
+
   function accessFailure(
     origin: string,
     result: Exclude<ExecResult, { ok: true }>,
@@ -594,6 +619,7 @@ export function createRepos(ctx: ReposCtx) {
       provider === 'github' ? 'GitHub' : provider === 'gitlab' ? 'GitLab' : 'the Git server';
     const detail = gitStderrDetail(redactGitText(raw, originSecrets(origin)));
     if (result.code === 'ETIMEDOUT') {
+      const coderHttps = coderUrl != null && transport === 'https';
       return {
         ok: false,
         status: 504,
@@ -604,46 +630,63 @@ export function createRepos(ctx: ReposCtx) {
           code: 'timeout',
           title: 'Git authentication did not finish',
           detail,
-          action: coderUrl
+          action: coderHttps
             ? 'Reconnect the Git provider in Coder, then check access again.'
-            : 'Finish any Git credential login in a terminal, then check access again.',
-          auth_url: coderUrl,
+            : transport === 'ssh'
+              ? 'The SSH check did not finish. Verify the host/key in a terminal, or switch this spawn to HTTPS.'
+              : 'Finish any Git credential login in a terminal, then check access again.',
+          auth_url: coderHttps ? coderUrl : null,
+          auth_label: coderHttps ? 'Open Coder authentication' : null,
           cli_command: null,
+          ssh_public_key: null,
+          suggested_transport: null,
         },
       };
     }
     const hostKey =
       /host key verification failed|authenticity of host .* can't be established/.test(lower);
+    const coderSsh =
+      coderUrl != null &&
+      transport === 'ssh' &&
+      /coder gitssh|coder publickey|coder authenticates with git|coder-generated.*ssh|add to github and gitlab/.test(
+        lower,
+      );
     const coderAuth =
       coderUrl != null &&
+      transport === 'https' &&
       (/coder gitssh|coder publickey|external.auth|authenticate with (github|gitlab)/.test(lower) ||
         /could not read from remote repository|authentication failed|could not read username/.test(
           lower,
         ));
-    const code: RepoAccessHelp['code'] = coderAuth
-      ? 'coder_external_auth'
-      : hostKey
-        ? 'host_key'
-        : /authentication failed|permission denied|publickey|could not read username|http basic|access rights|repository not found/.test(
-              lower,
-            )
-          ? 'credentials'
-          : 'unreachable';
-    const cliCommand =
-      coderUrl != null
+    const code: RepoAccessHelp['code'] = coderSsh
+      ? 'coder_ssh_key'
+      : coderAuth
+        ? 'coder_external_auth'
+        : hostKey
+          ? 'host_key'
+          : /authentication failed|permission denied|publickey|could not read username|http basic|access rights|repository not found/.test(
+                lower,
+              )
+            ? 'credentials'
+            : 'unreachable';
+    const cliCommand = coderSsh
+      ? 'coder publickey'
+      : coderUrl != null
         ? null
         : provider === 'github'
           ? 'gh auth login --hostname github.com --git-protocol https'
           : provider === 'gitlab'
             ? 'glab auth login --hostname gitlab.com'
             : null;
-    const action = coderAuth
-      ? `Connect ${providerName} in Coder, then return here and check access again.`
-      : hostKey
-        ? `Trust ${providerName}'s SSH host key in a terminal, or switch this spawn to HTTPS.`
-        : cliCommand
-          ? `Authenticate with ${providerName} in a terminal (${cliCommand}), then check access again.`
-          : 'Authenticate Git in this developer environment, then check access again.';
+    const action = coderSsh
+      ? `Coder login covers HTTPS, not SSH. Switch this spawn to HTTPS, or add the Coder SSH key below to ${providerName}.`
+      : coderAuth
+        ? `Connect ${providerName} in Coder, then return here and check access again.`
+        : hostKey
+          ? `Trust ${providerName}'s SSH host key in a terminal, or switch this spawn to HTTPS.`
+          : cliCommand
+            ? `Authenticate with ${providerName} in a terminal (${cliCommand}), then check access again.`
+            : 'Authenticate Git in this developer environment, then check access again.';
     return {
       ok: false,
       status: 409,
@@ -652,15 +695,24 @@ export function createRepos(ctx: ReposCtx) {
         provider,
         transport,
         code,
-        title: coderAuth
-          ? `${providerName} is not connected to this Coder workspace`
-          : hostKey
-            ? `${providerName} SSH host trust is not ready`
-            : `${providerName} repository access is not ready`,
+        title: coderSsh
+          ? `${providerName} does not recognize this Coder SSH key`
+          : coderAuth
+            ? `${providerName} is not connected to this Coder workspace`
+            : hostKey
+              ? `${providerName} SSH host trust is not ready`
+              : `${providerName} repository access is not ready`,
         detail,
         action,
-        auth_url: coderAuth ? coderUrl : null,
+        auth_url: coderSsh ? sshKeySettingsUrl(provider) : coderAuth ? coderUrl : null,
+        auth_label: coderSsh
+          ? `Add SSH key to ${providerName}`
+          : coderAuth
+            ? 'Open Coder authentication'
+            : null,
         cli_command: cliCommand,
+        ssh_public_key: coderSsh ? coderPublicKey(raw) : null,
+        suggested_transport: coderSsh ? 'https' : null,
       },
     };
   }
@@ -773,7 +825,10 @@ export function createRepos(ctx: ReposCtx) {
   // default stays https. spawns.mjs never re-reads this: it relies on
   // resolveTarget, which passes an explicit transport to parseRepoInput below.
   function resolveRepoTransport(): string {
-    return q.getSetting.get('repo_transport')?.value ?? 'ssh';
+    return repoTransportChoice({
+      setting: q.getSetting.get('repo_transport')?.value ?? null,
+      coder: !!detectCoderWorkspaceRoot(),
+    }).value;
   }
 
   // A bare repo name (`earm-module`) first keeps the long-standing local-catalog

@@ -330,11 +330,19 @@ non-interactive `git ls-remote`. This is the authority: `gh auth status` or
 credential path.
 
 Coder configures Git-over-HTTPS through `GIT_ASKPASS` and its external-auth
-providers. If that access is missing, the spawn form explains the failure and
-links to the workspace owner's Coder **External authentication** page. Complete
-the GitHub/GitLab OAuth flow there, return to the still-open spawn form, and
-click **Check access**. For SSH, register the key printed by `coder publickey`
-with the forge and establish host trust, or choose HTTPS in the form.
+providers, so HTTPS is Fleet Deck's default transport inside Coder. Clicking
+**Spawn** first runs the same access check and creates no card, clone, worktree,
+or session until it passes. If access is missing, the form links to the workspace
+owner's Coder **External authentication** page. Complete the GitHub/GitLab OAuth
+flow there, return to the still-open form, and click **Spawn** again (or use
+**Check access** for an explicit probe).
+
+SSH is a separate authentication path: Coder OAuth does not register the
+Coder-generated SSH key with GitHub or GitLab. The form explains that distinction,
+offers a one-click switch to HTTPS, and—when Coder prints it—shows a copyable
+public key plus the forge's SSH-key settings link. Fleet Deck never auto-accepts
+Claude's project-trust dialog; for a newly cloned directory it opens the owned
+terminal so the user can approve that security boundary once.
 
 The board never asks for, receives, or persists an OAuth token. Outside Coder
 it shows the relevant `gh auth login` or `glab auth login` command instead.

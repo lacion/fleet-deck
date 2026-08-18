@@ -11,10 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Repo spawns prove Git access before creating a card.** The daemon resolves
   the exact origin and runs a bounded, non-interactive `git ls-remote`; the
-  spawn form can run the same check explicitly. Failures return redacted,
-  structured GitHub/GitLab guidance, link Coder users to external auth, and
-  suggest the relevant `gh`/`glab` login command elsewhere. Fleet Deck never
-  receives or stores the provider token.
+  Spawn action runs the same check first and labels that phase explicitly; the
+  separate Check access button remains available. Failures return redacted,
+  structured GitHub/GitLab guidance. Coder defaults to its OAuth-backed HTTPS
+  path; SSH failures instead explain the separate public-key flow, show the
+  copyable Coder key, and offer HTTPS. Fleet Deck never receives or stores the
+  provider token.
 
 ### Fixed
 
@@ -28,6 +30,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the destination.** The destination claim now covers the access check and is
   acquired atomically before any await, so the loser returns a clean 409 with
   no card.
+- **A successful clone waiting at Claude's project-trust dialog looked like a
+  hung spawn.** The daemon now publishes that held security state explicitly;
+  the spawn form stops saying “Spawning…” and opens the owned terminal for the
+  one-time human approval. Fleet Deck still never answers trust or MCP-consent
+  dialogs automatically.
+- **Git access errors could lose their actionable response to a timeout race.**
+  The browser now outlives the daemon's bounded Git probe, so the structured
+  authentication guidance arrives instead of a generic “daemon unreachable.”
 
 ## [0.23.5] - 2026-08-18
 

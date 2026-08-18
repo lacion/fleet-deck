@@ -13,6 +13,7 @@ import {
   repoDefaultOrgProblem,
 } from '../src/daemon/repos.ts';
 import { detectCoderWorkspaceRoot, resolveHome } from '../src/daemon/config.ts';
+import { repoTransportChoice } from '../src/daemon/repo-policy.ts';
 import { openDb } from '../src/daemon/db.ts';
 import { createCore } from '../src/daemon/derive.ts';
 import { createStatements } from '../src/daemon/statements.ts';
@@ -488,6 +489,19 @@ test('default org choice precedence and Coder seed are explicit', () => {
   ]) {
     assert.equal(typeof repoDefaultOrgProblem(bad), 'string', bad);
   }
+});
+
+test('repository transport defaults to Coder HTTPS but preserves explicit choices', () => {
+  assert.deepEqual(repoTransportChoice({ coder: true }), { value: 'https', source: 'coder' });
+  assert.deepEqual(repoTransportChoice(), { value: 'ssh', source: 'default' });
+  assert.deepEqual(repoTransportChoice({ setting: 'ssh', coder: true }), {
+    value: 'ssh',
+    source: 'override',
+  });
+  assert.deepEqual(repoTransportChoice({ setting: 'https' }), {
+    value: 'https',
+    source: 'override',
+  });
 });
 
 test('resolveTarget promotes an unknown bare name through the default org, but a known checkout still wins', async (t) => {

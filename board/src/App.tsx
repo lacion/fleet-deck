@@ -894,6 +894,10 @@ export default function App() {
             planMode={!!spawnForm.planId}
             planId={(spawnForm.planId ?? 0) || null}
             onSpawned={spawnForm.planId ? onSpawnedForPlan : undefined}
+            onOpenTerminal={(session) => {
+              setSpawnForm(null);
+              openTerm(session);
+            }}
             onClose={() => {
               setSpawnForm(null);
             }}

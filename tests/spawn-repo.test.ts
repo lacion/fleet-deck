@@ -60,6 +60,10 @@ interface GitAccessFailure {
     title?: string;
     detail?: string | null;
     auth_url?: string | null;
+    auth_label?: string | null;
+    cli_command?: string | null;
+    ssh_public_key?: string | null;
+    suggested_transport?: string | null;
   };
 }
 // GET /api/settings body, narrowed to the repo_transport facet these tests read.
@@ -464,6 +468,15 @@ function writeCloneShim(t: TestContext): string {
       "  printf 'fatal: Could not read from remote repository.\\n' >&2\n" +
       '  exit 128\n' +
       'fi\n' +
+      'if [ "$1" = ls-remote ] && [ "$FD_SHIM_PREFLIGHT" = coder-ssh ]; then\n' +
+      "  printf 'Host key verification failed.\\n' >&2\n" +
+      "  printf 'Coder authenticates with git using the public key below.\\n' >&2\n" +
+      "  printf 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFleetdeckCoderKey000000000 coder@workspace\\n' >&2\n" +
+      "  printf 'Add to GitHub and GitLab.\\n' >&2\n" +
+      "  printf 'Encountered an error running coder gitssh.\\n' >&2\n" +
+      "  printf 'fatal: Could not read from remote repository.\\n' >&2\n" +
+      '  exit 128\n' +
+      'fi\n' +
       'if [ "$1" = ls-remote ] && [ -n "$FD_SHIM_CLONE" ]; then exit 0; fi\n' +
       'exec "$FD_REAL_GIT" "$@"\n',
     { mode: 0o755 },
@@ -531,6 +544,29 @@ test('Coder auth failure returns an app-safe external-auth action and creates no
   assert.match(body.git_access?.title ?? '', /GitLab.*not connected.*Coder/i);
   assert.equal(body.git_access?.auth_url, 'https://coder.example.test/settings/external-auth');
   assert.match(body.git_access?.detail ?? '', /authenticate with GitLab/i);
+  const state = await getState<StateResponse>(daemon.baseUrl);
+  assert.equal(state.sessions.length, 0);
+});
+
+test('Coder SSH failure explains the separate key flow and recommends HTTPS', async (t) => {
+  const { daemon } = await shimmedDaemon(t, {
+    FD_SHIM_PREFLIGHT: 'coder-ssh',
+    CODER_AGENT_URL: 'https://coder.example.test/api/v2/workspaceagents/example',
+  });
+  const response = await postJson(`${daemon.baseUrl}/api/repos/preflight`, {
+    repo: 'textemma/private-thing',
+    repo_host: 'gitlab',
+    repo_transport: 'ssh',
+  });
+  assert.equal(response.status, 409, response.text);
+  const body = response.json as GitAccessFailure;
+  assert.equal(body.git_access?.code, 'coder_ssh_key');
+  assert.match(body.git_access?.title ?? '', /GitLab.*Coder SSH key/i);
+  assert.equal(body.git_access?.auth_url, 'https://gitlab.com/-/profile/keys');
+  assert.equal(body.git_access?.auth_label, 'Add SSH key to GitLab');
+  assert.equal(body.git_access?.cli_command, 'coder publickey');
+  assert.match(body.git_access?.ssh_public_key ?? '', /^ssh-ed25519 /);
+  assert.equal(body.git_access?.suggested_transport, 'https');
   const state = await getState<StateResponse>(daemon.baseUrl);
   assert.equal(state.sessions.length, 0);
 });

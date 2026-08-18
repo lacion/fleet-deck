@@ -37,6 +37,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { detectCoderWorkspaceRoot } from './config.ts';
+import { repoTransportChoice } from './repo-policy.ts';
 import { resolveHoldMs } from './questions.ts';
 import { errStatus, errMessage } from './errors.ts';
 import type { Statements } from './statements.ts';
@@ -187,14 +188,15 @@ export function createSettings(ctx: SettingsCtx) {
   }
 
   // -------------------------------------------------------------- repo_transport
-  // ssh is the RESOLVED default — the SETTING owns it, so parseRepoInput's own
-  // third param stays https and the pure function is byte-stable. resolveTarget
-  // holds the single read that STEERS a spawn; this pair serves the settings
-  // view (it needs the source too), defaulting identically.
+  // The SETTING owns an explicit choice. Otherwise Coder defaults to HTTPS
+  // because external-auth injects OAuth credentials only for HTTPS Git URLs;
+  // standalone FleetDeck keeps its historical SSH default. resolveTarget and
+  // this settings view share repoTransportChoice so they cannot drift.
   function resolveRepoTransport() {
-    const value = readSetting('repo_transport');
-    const known = value === 'ssh' || value === 'https';
-    return { value: known ? value : 'ssh', source: known ? 'override' : 'default' };
+    return repoTransportChoice({
+      setting: readSetting('repo_transport'),
+      coder: !!detectCoderWorkspaceRoot(),
+    });
   }
 
   // -------------------------------------------------------------- browse_root

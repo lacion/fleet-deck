@@ -8,7 +8,7 @@ import {
   type ApiResult,
   type GitAccessHelp,
 } from '../api.ts';
-import { batchTotal, expandBatchTasks, parseBatchTasks } from '../util.ts';
+import { batchTotal, copyText, expandBatchTasks, parseBatchTasks } from '../util.ts';
 import { useModal } from '../useModal.ts';
 import DirPicker from './DirPicker.tsx';
 import type { SessionEntry } from '../../../contracts/index.ts';
@@ -121,6 +121,7 @@ interface SpawnFormProps {
   planMode: boolean;
   planId: number | null;
   onClose: () => void;
+  onOpenTerminal: (session: SessionEntry) => void;
   onSpawned?: ((json: SpawnJson) => Promise<SpawnResult | null>) | undefined;
 }
 
@@ -233,6 +234,7 @@ export default function SpawnForm({
   planMode,
   planId,
   onClose,
+  onOpenTerminal,
   onSpawned,
 }: SpawnFormProps) {
   const [cwd, setCwd] = useState(prefillCwd || '');
@@ -269,13 +271,16 @@ export default function SpawnForm({
   // in the spawn body; single-use, 60s TTL, re-fetched on every arm.
   const armTokenRef = useRef<string | null>(null);
   const armRequestSeq = useRef(0);
-  const [busy, setBusy] = useState(false);
+  const [submitPhase, setSubmitPhaseState] = useState<'idle' | 'checking-access' | 'spawning'>(
+    'idle',
+  );
+  const busy = submitPhase !== 'idle';
   // React state paints the button; the ref closes the same-render double-click
   // window so one gesture can never launch two billed sessions.
   const submitBusyRef = useRef(false);
-  const setSubmitBusy = (on: boolean) => {
+  const setSubmitBusy = (on: boolean, phase: 'checking-access' | 'spawning' = 'spawning') => {
     submitBusyRef.current = on;
-    setBusy(on);
+    setSubmitPhaseState(on ? phase : 'idle');
   };
   const [err, setErr] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null); // "spawning — <callsign>"
@@ -291,8 +296,9 @@ export default function SpawnForm({
   // but this user is on github AND gitlab, so shorthand needs an explicit pick.
   const [repoHost, setRepoHost] = useState<'github' | 'gitlab'>('github'); // 'github' | 'gitlab'
   // v2.5 — clone transport for `org/repo` shorthand: ssh (scp-style git@…) or
-  // https. Seeded ONCE, at mount, from the daemon's RESOLVED setting (ssh is the
-  // durable default — this fleet's forge auth is SSH-only).
+  // https. Seeded ONCE, at mount, from the daemon's RESOLVED setting (Coder
+  // defaults to HTTPS because external-auth supplies HTTPS credentials; a
+  // standalone daemon keeps the historical SSH default).
   // DOCTRINE: this is deliberately NOT live-adopted from later snapshot frames
   // the way reposDir is. A transport pill the user is looking at must never flip
   // under them — not when an unrelated frame arrives, and least of all when
@@ -307,6 +313,7 @@ export default function SpawnForm({
     state: 'idle' | 'checking' | 'ready';
     issue: GitAccessHelp | null;
   }>({ state: 'idle', issue: null });
+  const [sshKeyCopied, setSshKeyCopied] = useState(false);
   // Bare repo names resolve through this namespace when they are not already in
   // the local catalog. Seeded ONCE like transport (never flips under the human).
   // On Coder the daemon resolves `textemma` unless an env/persisted choice wins.
@@ -386,6 +393,26 @@ export default function SpawnForm({
     const sess = (sessions ?? []).find((s) => s.session_id === watchSid);
     if (!sess) return undefined; // not in a frame yet — the cap below bounds the wait
     if (watchDone.current) return undefined;
+    if (sess.spawn?.attention === 'folder-trust') {
+      // Claude deliberately refuses to relay project-trust/MCP-consent dialogs.
+      // Do not leave the spawn modal green and "Spawning…" forever: the pane is
+      // ready and the next required action is local human approval. Hand the
+      // user directly to the owned terminal; never synthesize the approval.
+      watchDone.current = true;
+      clearTimeout(watchTimer.current ?? undefined);
+      setSubmitBusy(false);
+      setNote('approval required — trust this new folder once in the terminal');
+      onOpenTerminal(sess);
+      return undefined;
+    }
+    if (sess.spawn?.attention === 'pane-unreadable') {
+      watchDone.current = true;
+      clearTimeout(watchTimer.current ?? undefined);
+      setSubmitBusy(false);
+      setNote('terminal needs a look before Claude can continue');
+      onOpenTerminal(sess);
+      return undefined;
+    }
     if (sess.col === 'offline') {
       // ANY offline transition ends the watch as a failure — a tombstone
       // without the "spawn failed:" prefix (daemon crash mid-clone, watchdog
@@ -413,7 +440,7 @@ export default function SpawnForm({
     // still queued: keep narrating the card's own note
     if (sess.note && sess.note !== 'spawning…') setNote(sess.note);
     return undefined;
-  }, [watchSid, sessions]);
+  }, [watchSid, sessions, onOpenTerminal]);
 
   // v2.2 — snapshots keep flowing while the form is open; adopt a repos-root
   // that arrives (or changes under us) ONLY while the box is untouched — a
@@ -430,6 +457,7 @@ export default function SpawnForm({
   // previous verdict; the next explicit check or Spawn re-probes it.
   useEffect(() => {
     setGitAccess({ state: 'idle', issue: null });
+    setSshKeyCopied(false);
   }, [repo, repoHost, repoTransport, defaultOrg]);
 
   // distinct places the fleet has been seen working → cwd suggestions
@@ -677,10 +705,14 @@ export default function SpawnForm({
     });
     if (res.ok && res.json?.ok) {
       setGitAccess({ state: 'ready', issue: null });
+      setErr(null);
       return true;
     }
-    setGitAccess({ state: 'idle', issue: res.json?.git_access ?? null });
-    setErr(reasonOf(res, `Git access check failed (${res.status})`));
+    const issue = res.json?.git_access ?? null;
+    setGitAccess({ state: 'idle', issue });
+    // Structured guidance owns the error surface when present. Repeating its
+    // generic HTTP reason at the bottom of the modal only adds noise.
+    setErr(issue ? null : reasonOf(res, `Git access check failed (${res.status})`));
     return false;
   };
 
@@ -860,14 +892,18 @@ export default function SpawnForm({
 
   const submit = async () => {
     if (!targetReady || submitBusyRef.current || note || blocked || emptyBatch) return;
-    setSubmitBusy(true);
+    setSubmitBusy(true, repoMode ? 'checking-access' : 'spawning');
     setErr(null);
     try {
-      if (!(await persistSetupDefault())) {
+      // A repo spawn first proves the exact origin is readable. Until this
+      // returns true there is no session, card, worktree, clone, or settings
+      // write to clean up — "Spawn" is a guided preflight, not a hopeful clone.
+      if (repoMode && !(await checkRepoAccess())) {
         setSubmitBusy(false);
         return;
       }
-      if (repoMode && !(await checkRepoAccess())) {
+      setSubmitBusy(true, 'spawning');
+      if (!(await persistSetupDefault())) {
         setSubmitBusy(false);
         return;
       }
@@ -1150,9 +1186,9 @@ export default function SpawnForm({
                   </div>
                 </div>
               )}
-              {/* v2.5 — clone transport for the shorthand: ssh default (this
-                  fleet's forge auth is SSH), https selectable. SAME visibility as
-                  the host toggle above (showHostToggle) and the same pill look
+              {/* v2.5 — clone transport for shorthand. The daemon supplies the
+                  environment-aware default; both options stay explicit here.
+                  SAME visibility as the host toggle above and the same pill look
                   (fd-fsmodes / fd-target). No save on click — the accepted spawn
                   persists the pick daemon-side (D2); this is a live preview knob. */}
               {showHostToggle && (
@@ -1188,11 +1224,11 @@ export default function SpawnForm({
               )}
               <div className="frow top">
                 <span className="fl">git access</span>
-                <div className={`fd-gitaccess${gitAccess.issue ? ' bad' : ''}`}>
+                <div className={`fd-gitaccess${gitAccess.issue ? ' bad' : ''}`} aria-live="polite">
                   <div className="fd-gitaccess-head">
                     <span>
                       {gitAccess.state === 'checking'
-                        ? 'checking the exact repository…'
+                        ? 'checking the exact repository… this can take up to 15 seconds'
                         : gitAccess.state === 'ready'
                           ? '✓ repository access ready'
                           : (gitAccess.issue?.title ??
@@ -1220,11 +1256,37 @@ export default function SpawnForm({
                             target="_blank"
                             rel="noopener noreferrer"
                           >
-                            Open Coder authentication ↗
+                            {gitAccess.issue.auth_label ?? 'Open authentication'} ↗
                           </a>
+                        )}
+                        {gitAccess.issue.suggested_transport === 'https' && shorthand && (
+                          <button
+                            type="button"
+                            className="fd-gitcheck"
+                            onClick={() => {
+                              setRepoTransport('https');
+                              setErr(null);
+                            }}
+                          >
+                            Use HTTPS instead
+                          </button>
                         )}
                         {gitAccess.issue.cli_command && <code>{gitAccess.issue.cli_command}</code>}
                       </div>
+                      {gitAccess.issue.ssh_public_key && (
+                        <div className="fd-gitkey">
+                          <code>{gitAccess.issue.ssh_public_key}</code>
+                          <button
+                            type="button"
+                            className="fd-gitcheck"
+                            onClick={() => {
+                              void copyText(gitAccess.issue?.ssh_public_key).then(setSshKeyCopied);
+                            }}
+                          >
+                            {sshKeyCopied ? '✓ copied' : 'Copy SSH key'}
+                          </button>
+                        </div>
+                      )}
                       {gitAccess.issue.detail && (
                         <details>
                           <summary>Git diagnostic</summary>
@@ -1714,6 +1776,8 @@ export default function SpawnForm({
             <span className="note">
               spawning {progress.done} of {progress.total}…
             </span>
+          ) : submitPhase === 'checking-access' && !note ? (
+            <span className="note">checking repository access before creating a session…</span>
           ) : busy && !note ? (
             <span className="note">
               spawning — the request can take a while (a fresh clone holds it open up to 2 min)…
@@ -1748,7 +1812,9 @@ export default function SpawnForm({
             disabled={!targetReady || busy || !!note || blocked || emptyBatch}
           >
             {busy
-              ? 'Spawning…'
+              ? submitPhase === 'checking-access'
+                ? 'Checking access…'
+                : 'Spawning…'
               : shellOnly
                 ? 'Open shell ⏎'
                 : total > 1
