@@ -1,5 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { spawnSession, saveSettings, reasonOf, armUnsupervised, type ApiResult } from '../api.ts';
+import {
+  spawnSession,
+  preflightRepo,
+  saveSettings,
+  reasonOf,
+  armUnsupervised,
+  type ApiResult,
+  type GitAccessHelp,
+} from '../api.ts';
 import { batchTotal, expandBatchTasks, parseBatchTasks } from '../util.ts';
 import { useModal } from '../useModal.ts';
 import DirPicker from './DirPicker.tsx';
@@ -295,6 +303,10 @@ export default function SpawnForm({
   const [repoTransport, setRepoTransport] = useState<'ssh' | 'https'>(
     () => settings?.repo_transport?.value ?? 'ssh',
   );
+  const [gitAccess, setGitAccess] = useState<{
+    state: 'idle' | 'checking' | 'ready';
+    issue: GitAccessHelp | null;
+  }>({ state: 'idle', issue: null });
   // Bare repo names resolve through this namespace when they are not already in
   // the local catalog. Seeded ONCE like transport (never flips under the human).
   // On Coder the daemon resolves `textemma` unless an env/persisted choice wins.
@@ -413,6 +425,12 @@ export default function SpawnForm({
       setReposDir(v);
     }
   }, [settings?.repos_dir?.resolved]);
+
+  // Access is a property of the exact origin spelling. Any edit retires the
+  // previous verdict; the next explicit check or Spawn re-probes it.
+  useEffect(() => {
+    setGitAccess({ state: 'idle', issue: null });
+  }, [repo, repoHost, repoTransport, defaultOrg]);
 
   // distinct places the fleet has been seen working → cwd suggestions
   const suggestions = [
@@ -647,6 +665,25 @@ export default function SpawnForm({
     return false;
   };
 
+  const checkRepoAccess = async (): Promise<boolean> => {
+    if (!repoMode) return true;
+    const body = baseBody();
+    setGitAccess({ state: 'checking', issue: null });
+    const res = await preflightRepo({
+      repo: body.repo,
+      repo_host: body.repo_host,
+      repo_transport: body.repo_transport,
+      repo_org: body.repo_org,
+    });
+    if (res.ok && res.json?.ok) {
+      setGitAccess({ state: 'ready', issue: null });
+      return true;
+    }
+    setGitAccess({ state: 'idle', issue: res.json?.git_access ?? null });
+    setErr(reasonOf(res, `Git access check failed (${res.status})`));
+    return false;
+  };
+
   // One agent — the original path, byte for byte, including the plan-mark hook.
   const submitOne = async () => {
     const body = baseBody();
@@ -656,6 +693,9 @@ export default function SpawnForm({
     // transport answer is a failure. A retry must require a fresh explicit arm.
     if (unsupEffective && armed) armTokenRef.current = null;
     if (!(res.ok && res.json?.ok)) {
+      if (res.json?.git_access) {
+        setGitAccess({ state: 'idle', issue: res.json.git_access });
+      }
       setErr(reasonOf(res, `spawn failed (${res.status})`));
       if (unsupEffective && armed) clearArm();
       setSubmitBusy(false);
@@ -747,6 +787,9 @@ export default function SpawnForm({
         const sb = res.json as SpawnJson;
         launched.push((sb.callsign ?? '') || (sb.session_id ?? ''));
       } else {
+        if (res?.json?.git_access) {
+          setGitAccess({ state: 'idle', issue: res.json.git_access });
+        }
         failed.push({
           prompt: p,
           reason: res ? reasonOf(res, `spawn failed (${res.status})`) : 'daemon unreachable',
@@ -821,6 +864,10 @@ export default function SpawnForm({
     setErr(null);
     try {
       if (!(await persistSetupDefault())) {
+        setSubmitBusy(false);
+        return;
+      }
+      if (repoMode && !(await checkRepoAccess())) {
         setSubmitBusy(false);
         return;
       }
@@ -1139,6 +1186,55 @@ export default function SpawnForm({
                   </div>
                 </div>
               )}
+              <div className="frow top">
+                <span className="fl">git access</span>
+                <div className={`fd-gitaccess${gitAccess.issue ? ' bad' : ''}`}>
+                  <div className="fd-gitaccess-head">
+                    <span>
+                      {gitAccess.state === 'checking'
+                        ? 'checking the exact repository…'
+                        : gitAccess.state === 'ready'
+                          ? '✓ repository access ready'
+                          : (gitAccess.issue?.title ??
+                            'check before spawning — FleetDeck never stores Git tokens')}
+                    </span>
+                    <button
+                      type="button"
+                      className="fd-gitcheck"
+                      disabled={gitAccess.state === 'checking' || !repo.trim()}
+                      onClick={() => void checkRepoAccess()}
+                    >
+                      {gitAccess.state === 'checking' ? 'Checking…' : 'Check access'}
+                    </button>
+                  </div>
+                  {gitAccess.issue && (
+                    <>
+                      {gitAccess.issue.action && (
+                        <div className="fd-gitaccess-action">{gitAccess.issue.action}</div>
+                      )}
+                      <div className="fd-gitaccess-controls">
+                        {gitAccess.issue.auth_url && (
+                          <a
+                            className="fd-gitlogin"
+                            href={gitAccess.issue.auth_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            Open Coder authentication ↗
+                          </a>
+                        )}
+                        {gitAccess.issue.cli_command && <code>{gitAccess.issue.cli_command}</code>}
+                      </div>
+                      {gitAccess.issue.detail && (
+                        <details>
+                          <summary>Git diagnostic</summary>
+                          <pre>{gitAccess.issue.detail}</pre>
+                        </details>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
               <div className="frow">
                 <span className="fl">branch *</span>
                 <input

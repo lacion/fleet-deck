@@ -12,10 +12,26 @@ import { apiUrl } from './base.ts';
 // fills only its own and each caller reads the field it documents; the daemon
 // is the shape authority (contracts/), never the browser. Grows one field at a
 // time as each wrapper's callers convert and reveal what they read.
+export interface GitAccessHelp {
+  provider?: 'github' | 'gitlab' | 'other';
+  transport?: 'https' | 'ssh';
+  code?: string;
+  title?: string;
+  detail?: string | null;
+  action?: string;
+  auth_url?: string | null;
+  cli_command?: string | null;
+}
+
 interface ApiJson {
   ok?: boolean;
   reason?: string;
   err?: string;
+  git_access?: GitAccessHelp;
+  mode?: 'local' | 'clone';
+  provider?: string;
+  transport?: string;
+  status?: string;
 }
 
 // The transport envelope every wrapper resolves to — request() NEVER rejects,
@@ -212,6 +228,13 @@ export function sendCommand(text: string): Promise<ApiResult> {
 // with git's own words).
 export function spawnSession(body: unknown): Promise<ApiResult> {
   return post('/api/spawn', body);
+}
+
+// Resolve the exact repo spelling and prove non-interactive read access before
+// a spawn owns any durable card or clone directory. The daemon repeats this
+// gate on POST /api/spawn; this route exists for actionable in-form feedback.
+export function preflightRepo(body: unknown): Promise<ApiResult> {
+  return post('/api/repos/preflight', body);
 }
 
 export function spawnShell(cwd: string): Promise<ApiResult> {

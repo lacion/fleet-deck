@@ -321,6 +321,32 @@ exists, it roots two defaults there instead of home:
 Both are just seeded defaults: an explicit setting or env var always wins, and
 nothing changes for non-Coder machines.
 
+## Git authentication for repo spawns
+
+Fleet Deck does not own GitHub or GitLab credentials. Before a remote repo
+spawn creates a card, it resolves the exact origin and runs a bounded,
+non-interactive `git ls-remote`. This is the authority: `gh auth status` or
+`glab auth status` can be green while Git itself is still using another
+credential path.
+
+Coder configures Git-over-HTTPS through `GIT_ASKPASS` and its external-auth
+providers. If that access is missing, the spawn form explains the failure and
+links to the workspace owner's Coder **External authentication** page. Complete
+the GitHub/GitLab OAuth flow there, return to the still-open spawn form, and
+click **Check access**. For SSH, register the key printed by `coder publickey`
+with the forge and establish host trust, or choose HTTPS in the form.
+
+The board never asks for, receives, or persists an OAuth token. Outside Coder
+it shows the relevant `gh auth login` or `glab auth login` command instead.
+See Coder's [external Git authentication](https://coder.com/docs/admin/external-auth),
+the [GitHub CLI auth manual](https://cli.github.com/manual/gh_auth_login), and
+the [GitLab CLI documentation](https://docs.gitlab.com/cli/).
+
+Provisioning is cancellable. Kill on a card that still says `cloning…` stops
+the Git process group (including credential/SSH helpers), removes only the
+Fleet Deck temporary checkout, prevents a late tmux launch, and retires the
+card as `spawn cancelled`.
+
 ## Test the complete Coder path locally
 
 A local Coder server is the most useful acceptance environment because it exercises the parts a

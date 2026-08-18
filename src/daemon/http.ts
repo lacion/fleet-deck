@@ -1715,6 +1715,35 @@ export function createHttp(
               json(res, 200, { ok: true, arm_token: core.armUnsupervised() });
               return;
             }
+            if (url.pathname === '/api/repos/preflight') {
+              const body = asRecord(ev);
+              if (typeof body['repo'] !== 'string') {
+                json(res, 400, { ok: false, reason: 'repo must be a string' });
+                return;
+              }
+              for (const key of ['repo_host', 'repo_transport', 'repo_org']) {
+                if (body[key] != null && typeof body[key] !== 'string') {
+                  json(res, 400, { ok: false, reason: `${key} must be a string` });
+                  return;
+                }
+              }
+              logExec(url.pathname, req);
+              core
+                .preflightRepo({
+                  repo: body['repo'],
+                  repo_host: (body['repo_host'] as string | undefined) ?? null,
+                  repo_transport: (body['repo_transport'] as string | undefined) ?? null,
+                  repo_org: (body['repo_org'] as string | undefined) ?? null,
+                })
+                .then((out) => {
+                  json(res, out.status, out.body);
+                })
+                .catch((err: unknown) => {
+                  console.error('fleetd repo preflight error:', err);
+                  json(res, 500, { ok: false, reason: 'Git access check failed internally' });
+                });
+              return;
+            }
             if (url.pathname === '/api/spawn') {
               // F1a structural gate: reject a body that isn't even a JSON
               // object before it reaches derive — the one shape spawns.mjs

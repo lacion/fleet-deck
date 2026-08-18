@@ -378,6 +378,7 @@ When the window lapses, the hook fails open `{}` and the agent's own terminal pr
 | `FLEETDECK_BIND` | `127.0.0.1` | Bind address. `0.0.0.0` is LAN mode, which makes a token mandatory. |
 | `FLEETDECK_TOKEN` | generated into `$FLEETDECK_HOME/token` | Bearer token, 16+ characters. Since 0.16.0 a token always exists — generated when absent, then persisted and reused — because hooks, `/ws/term`, `/mail`, gateway writes and unsupervised spawns all present it. Rotate with `fleetdeck token --rotate` plus a daemon restart. |
 | `FLEETDECK_REPOS_DIR` | `~/projects` (`/workspace` on Coder) | Where repo-mode spawns clone repositories that aren't local yet. The dialog's destination field can override and persist a different root. |
+| `FLEETDECK_GIT_PREFLIGHT_TIMEOUT_MS` | `15000` (15 s) | Deadline for the exact, non-interactive `git ls-remote` access check before a remote repo spawn creates any card or temp checkout. Clamped 1–60 s. |
 | `FLEETDECK_BROWSE_ROOT` | home (`/workspace` on Coder) | Root of the ⌸ Files explorer and the spawn form's folder picker. The `browse_root` setting wins over this; always resolved server-side. |
 | `FLEETDECK_TRUSTED_ORIGINS` | unset | Comma-separated origins allowed to reach the daemon behind a reverse proxy — `https://board.example.com`, or one leading wildcard label (`https://*.coder.example.com`). Scheme required. Without it, a proxied board loads and then 403s. |
 | `FLEETDECK_PROXY_AUTH` | `token` | Who authenticates a proxied browser. `token`: it must present the bearer token. `trust`: the proxy already authenticated it (only sane when it really does). |
@@ -433,6 +434,8 @@ fleetdeck doctor
 | Board loads but cards never move | The Claude plugin is missing or its cached version differs from the daemon. Check `claude plugin list`, update the `fleetdeck` marketplace, and install/update `fleetdeck@fleetdeck`; then start a new session. |
 | Board works directly but 403s through Coder/proxy | Match the browser's exact scheme and hostname in `FLEETDECK_TRUSTED_ORIGINS`, then re-run `fleetdeck service install` so the service captures it. See [the Coder guide](docs/CODER.md). |
 | Share says the board uses a proxy | The page is already behind Coder, a tunnel, or another proxy. Keep fleetd on loopback and use that proxy's access controls; LAN mode is unnecessary. A local Coder URL is recognized too, but is intentionally not offered as a shareable link. |
+| Repo spawn says Git access is not ready | Use **Check access** in the spawn form. In Coder, open the provided external-auth link, connect the matching Git provider, return to the form, and check again. Elsewhere use the shown `gh auth login` or `glab auth login` command. Fleet Deck tests the exact repo with Git; CLI login status alone is not treated as proof. |
+| A repo card is stuck on “cloning…” | Current versions let **Kill** cancel provisioning itself: Git and credential helpers are stopped, the temporary clone is removed, and no pane can launch later. On an older daemon, restart it so boot reconciliation can retire the residual provisioning row. |
 | UI stopped updating after a daemon restart | The board should reconnect and fetch a fresh snapshot automatically. If it does not, check `/health`, then reload once and inspect `fleetd.log`; persistent failure is not an expected idle timeout. |
 
 ## Development

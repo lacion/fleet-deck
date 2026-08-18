@@ -9,6 +9,8 @@ const app = readFileSync(path.resolve('board/src/App.tsx'), 'utf8');
 const hotkeys = readFileSync(path.resolve('board/src/hooks/useBoardHotkeys.ts'), 'utf8');
 const fleetState = readFileSync(path.resolve('board/src/useFleetState.ts'), 'utf8');
 const fleetConnection = readFileSync(path.resolve('board/src/fleetConnection.ts'), 'utf8');
+const spawnForm = readFileSync(path.resolve('board/src/components/SpawnForm.tsx'), 'utf8');
+const killConfirm = readFileSync(path.resolve('board/src/components/KillConfirm.tsx'), 'utf8');
 
 test('Share recognizes a Coder/proxy origin and never leaks the board token', () => {
   const got = shareInfoForHref(
@@ -71,4 +73,17 @@ test('lazy terminal surfaces have visible, dismissible loading and failure state
   assert.match(app, /<TerminalFallback[\s\S]*?grid[\s\S]*?setGrid\(null\)/);
   assert.match(app, /<ErrorBoundary/);
   assert.match(app, /window\.location\.reload\(\)/);
+});
+
+test('repo spawning checks exact Git access and explains Coder auth without owning tokens', () => {
+  assert.match(spawnForm, /preflightRepo/);
+  assert.match(spawnForm, /Open Coder authentication/);
+  assert.match(spawnForm, /FleetDeck never stores Git tokens/);
+  assert.match(spawnForm, /Git diagnostic/);
+});
+
+test('a provisioning card offers clone cancellation rather than a fake pane kill', () => {
+  assert.match(killConfirm, /Cancel the repository clone/);
+  assert.match(killConfirm, /stops Git and its credential helpers/);
+  assert.match(killConfirm, /Cancel clone/);
 });

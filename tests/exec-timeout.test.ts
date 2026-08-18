@@ -81,3 +81,23 @@ test('execFileP settles at the deadline while a grandchild holds an inherited pi
     `settlement took ${elapsed}ms; the deadline must bound it (300ms + 1s SIGKILL grace), not wait for the pipes`,
   );
 });
+
+test('execFileP aborts a cancellable process group instead of leaving its helper alive', async () => {
+  if (process.platform === 'win32') return;
+  const controller = new AbortController();
+  const started = Date.now();
+  const run = execFileP(
+    process.execPath,
+    [
+      '-e',
+      `const { spawn } = require('node:child_process');
+       spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: ['ignore', 1, 2] });
+       setInterval(() => {}, 1000);`,
+    ],
+    { timeout: 10_000, signal: controller.signal, killTree: true },
+  );
+  setTimeout(() => controller.abort(), 150);
+  const result = await run;
+  assert.deepEqual(result, { ok: false, code: 'ECANCELED', err: 'cancelled' });
+  assert.ok(Date.now() - started < 2_000, 'abort owns the wall-clock settlement');
+});

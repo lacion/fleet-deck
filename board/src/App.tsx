@@ -906,6 +906,7 @@ export default function App() {
             callsign={killAsk.callsign}
             tmuxWindow={killAsk.window}
             alive={killAsk.alive}
+            provisioning={killAsk.provisioning}
             busy={killBusy}
             onCancel={() => {
               setKillAsk(null);

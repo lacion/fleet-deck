@@ -6,6 +6,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { execFileP, baseBranch, distillGitStderr, gitStderrDetail, redactGitText } from './exec.ts';
 import type { ExecResult } from './exec.ts';
 import { detectCoderWorkspaceRoot } from './config.ts';
@@ -500,10 +501,26 @@ interface TouchRepoArgs {
   source?: string | null;
 }
 
+export interface RepoAccessHelp {
+  provider: 'github' | 'gitlab' | 'other';
+  transport: 'https' | 'ssh';
+  code: 'coder_external_auth' | 'host_key' | 'credentials' | 'timeout' | 'unreachable';
+  title: string;
+  detail: string | null;
+  action: string;
+  auth_url: string | null;
+  cli_command: string | null;
+}
+
+type RepoAccessProbe =
+  | { ok: true; provider: RepoAccessHelp['provider']; transport: RepoAccessHelp['transport'] }
+  | { ok: false; status: number; reason: string; git_access: RepoAccessHelp };
+
 export function createRepos(ctx: ReposCtx) {
   const { q } = ctx;
   const touchedAt = new Map<string, number>();
   const provisioningTargets = new Map<string, string>();
+  const accessCache = new Map<string, number>();
 
   // A clone is an unbounded, minutes-long subprocess that writes to disk;
   // single-flight only dedupes the SAME destination, so without a ceiling a
@@ -531,6 +548,176 @@ export function createRepos(ctx: ReposCtx) {
         clonesInFlight -= 1;
       }
     };
+  }
+
+  function originKind(origin: string): {
+    provider: RepoAccessHelp['provider'];
+    transport: RepoAccessHelp['transport'];
+  } {
+    const host =
+      /^https:\/\/([^/@:]+@)?([^/:?#]+)/i.exec(origin)?.[2] ??
+      /^ssh:\/\/([^/@:]+@)?([^/:?#]+)/i.exec(origin)?.[2] ??
+      /^[^/@:]+@([^/:]+):/.exec(origin)?.[1] ??
+      '';
+    return {
+      provider:
+        host.toLowerCase() === 'github.com'
+          ? 'github'
+          : host.toLowerCase() === 'gitlab.com'
+            ? 'gitlab'
+            : 'other',
+      transport: /^https:\/\//i.test(origin) ? 'https' : 'ssh',
+    };
+  }
+
+  function coderExternalAuthUrl(): string | null {
+    const raw = process.env['CODER_AGENT_URL'];
+    if (!raw) return null;
+    try {
+      const url = new URL(raw);
+      if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
+      return new URL('/settings/external-auth', url.origin).toString();
+    } catch {
+      return null;
+    }
+  }
+
+  function accessFailure(
+    origin: string,
+    result: Exclude<ExecResult, { ok: true }>,
+  ): RepoAccessProbe {
+    const { provider, transport } = originKind(origin);
+    const raw = result.err ?? '';
+    const lower = raw.toLowerCase();
+    const coderUrl = coderExternalAuthUrl();
+    const providerName =
+      provider === 'github' ? 'GitHub' : provider === 'gitlab' ? 'GitLab' : 'the Git server';
+    const detail = gitStderrDetail(redactGitText(raw, originSecrets(origin)));
+    if (result.code === 'ETIMEDOUT') {
+      return {
+        ok: false,
+        status: 504,
+        reason: `Git access check timed out before ${providerName} answered`,
+        git_access: {
+          provider,
+          transport,
+          code: 'timeout',
+          title: 'Git authentication did not finish',
+          detail,
+          action: coderUrl
+            ? 'Reconnect the Git provider in Coder, then check access again.'
+            : 'Finish any Git credential login in a terminal, then check access again.',
+          auth_url: coderUrl,
+          cli_command: null,
+        },
+      };
+    }
+    const hostKey =
+      /host key verification failed|authenticity of host .* can't be established/.test(lower);
+    const coderAuth =
+      coderUrl != null &&
+      (/coder gitssh|coder publickey|external.auth|authenticate with (github|gitlab)/.test(lower) ||
+        /could not read from remote repository|authentication failed|could not read username/.test(
+          lower,
+        ));
+    const code: RepoAccessHelp['code'] = coderAuth
+      ? 'coder_external_auth'
+      : hostKey
+        ? 'host_key'
+        : /authentication failed|permission denied|publickey|could not read username|http basic|access rights|repository not found/.test(
+              lower,
+            )
+          ? 'credentials'
+          : 'unreachable';
+    const cliCommand =
+      coderUrl != null
+        ? null
+        : provider === 'github'
+          ? 'gh auth login --hostname github.com --git-protocol https'
+          : provider === 'gitlab'
+            ? 'glab auth login --hostname gitlab.com'
+            : null;
+    const action = coderAuth
+      ? `Connect ${providerName} in Coder, then return here and check access again.`
+      : hostKey
+        ? `Trust ${providerName}'s SSH host key in a terminal, or switch this spawn to HTTPS.`
+        : cliCommand
+          ? `Authenticate with ${providerName} in a terminal (${cliCommand}), then check access again.`
+          : 'Authenticate Git in this developer environment, then check access again.';
+    return {
+      ok: false,
+      status: 409,
+      reason: `Git cannot read this repository with the workspace's current ${transport.toUpperCase()} credentials`,
+      git_access: {
+        provider,
+        transport,
+        code,
+        title: coderAuth
+          ? `${providerName} is not connected to this Coder workspace`
+          : hostKey
+            ? `${providerName} SSH host trust is not ready`
+            : `${providerName} repository access is not ready`,
+        detail,
+        action,
+        auth_url: coderAuth ? coderUrl : null,
+        cli_command: cliCommand,
+      },
+    };
+  }
+
+  async function probeRepoAccess(origin: string, signal?: AbortSignal): Promise<RepoAccessProbe> {
+    const kind = originKind(origin);
+    const cacheKey = createHash('sha256').update(origin).digest('base64url');
+    const cachedUntil = accessCache.get(cacheKey) ?? 0;
+    if (cachedUntil > Date.now()) return { ok: true, ...kind };
+    accessCache.delete(cacheKey);
+    const configured = Number(process.env['FLEETDECK_GIT_PREFLIGHT_TIMEOUT_MS']);
+    const timeout =
+      Number.isFinite(configured) && configured >= 1_000 && configured <= 60_000
+        ? configured
+        : 15_000;
+    const result = await execFileP('git', ['ls-remote', '--', origin, 'HEAD'], {
+      timeout,
+      signal,
+      killTree: true,
+      env: { GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'Never' },
+    });
+    if (!result.ok) return accessFailure(origin, result);
+    accessCache.set(cacheKey, Date.now() + 30_000);
+    return { ok: true, ...kind };
+  }
+
+  async function preflightRepo(body: ResolveTargetBody): Promise<{
+    status: number;
+    body: Record<string, unknown>;
+  }> {
+    let target: ResolvedTarget;
+    try {
+      target = await resolveTarget(body);
+    } catch (err) {
+      return {
+        status: errStatus(err) ?? 400,
+        body: { ok: false, reason: errMessage(err) },
+      };
+    }
+    if (target.mode === 'local') {
+      return { status: 200, body: { ok: true, mode: 'local' } };
+    }
+    const access = await probeRepoAccess(target.origin_url);
+    return access.ok
+      ? {
+          status: 200,
+          body: {
+            ok: true,
+            mode: 'clone',
+            provider: access.provider,
+            transport: access.transport,
+          },
+        }
+      : {
+          status: access.status,
+          body: { ok: false, reason: access.reason, git_access: access.git_access },
+        };
   }
 
   // Persist a failed git step's redacted excerpt on the spawn row that asked for
@@ -831,10 +1018,12 @@ export function createRepos(ctx: ReposCtx) {
     origin_url,
     dest,
     spawn_id,
+    signal,
   }: {
     origin_url: unknown;
     dest: string;
     spawn_id: string;
+    signal?: AbortSignal;
   }): Promise<string> {
     // Defence in depth: an origin reached via the catalog (a bare-name spawn, or
     // a `git remote get-url` backfill) never passed through parseRepoInput, so
@@ -858,9 +1047,12 @@ export function createRepos(ctx: ReposCtx) {
         Number.isFinite(configuredTimeout) && configuredTimeout > 0 ? configuredTimeout : 600_000;
       const result = await execFileP('git', ['clone', '--', origin_url, temp], {
         timeout,
-        env: { GIT_TERMINAL_PROMPT: '0' },
+        env: { GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'Never' },
+        signal,
+        killTree: true,
       });
       if (!result.ok) {
+        if (result.code === 'ECANCELED') throw namedError(409, 'spawn cancelled');
         // The full stderr goes to fleetd.log for diagnosis; the human-facing
         // failure carries git's own distilled `fatal:`/`error:` line, so a
         // private-repo auth failure no longer hides behind "Cloning into '…'".
@@ -903,6 +1095,7 @@ export function createRepos(ctx: ReposCtx) {
     spawn_id = '',
     sid = spawn_id,
     clone = false,
+    signal,
   }: {
     root: string;
     branch: string;
@@ -910,32 +1103,42 @@ export function createRepos(ctx: ReposCtx) {
     spawn_id?: string;
     sid?: string;
     clone?: boolean;
+    signal?: AbortSignal;
   }): Promise<{ runCwd: string; created: { clone: boolean; worktree: boolean }; reused: boolean }> {
-    const localBefore = await execFileP(
-      'git',
+    const git = async (
+      args: readonly string[],
+      options: { timeout?: number; env?: NodeJS.ProcessEnv } = {},
+    ): Promise<ExecResult> => {
+      const result = await execFileP('git', args, {
+        ...options,
+        signal,
+        killTree: true,
+      });
+      if (!result.ok && result.code === 'ECANCELED') throw namedError(409, 'spawn cancelled');
+      return result;
+    };
+    const localBefore = await git(
       ['-C', root, 'show-ref', '--verify', '--quiet', `refs/heads/${branch}`],
       { timeout: 5_000 },
     );
     // Best-effort: a fetch failure is fine as long as the branch (or a base to
     // cut it from) already resolves locally — an origin-less local repo can
     // still create a new branch from its own main.
-    const fetched = await execFileP('git', ['-C', root, 'fetch', 'origin', '--prune'], {
+    const fetched = await git(['-C', root, 'fetch', 'origin', '--prune'], {
       timeout: 120_000,
-      env: { GIT_TERMINAL_PROMPT: '0' },
+      env: { GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'Never' },
     });
     const local = localBefore.ok
       ? localBefore
-      : await execFileP(
-          'git',
-          ['-C', root, 'show-ref', '--verify', '--quiet', `refs/heads/${branch}`],
-          { timeout: 5_000 },
-        );
-    const remote = await execFileP(
-      'git',
+      : await git(['-C', root, 'show-ref', '--verify', '--quiet', `refs/heads/${branch}`], {
+          timeout: 5_000,
+        });
+    const remote = await git(
       ['-C', root, 'show-ref', '--verify', '--quiet', `refs/remotes/origin/${branch}`],
       { timeout: 5_000 },
     );
     const base = await baseBranch(root);
+    if (signal?.aborted) throw namedError(409, 'spawn cancelled');
     // `base` is proven non-null on the create paths only by the compound guard
     // below (which throws when local, remote AND base are all absent). TS cannot
     // carry that fact to the `switch -c`/`worktree add -b` argv literals, so this
@@ -967,7 +1170,7 @@ export function createRepos(ctx: ReposCtx) {
       // fetch stderr had no covering layer at all. argv only, no shell, local
       // config read (no network), failure path only, and `.ok` is not required —
       // a missing origin simply yields no needles.
-      const originUrl = await execFileP('git', ['-C', root, 'remote', 'get-url', 'origin'], {
+      const originUrl = await git(['-C', root, 'remote', 'get-url', 'origin'], {
         timeout: 5_000,
       });
       const { note, detail } = gitFailureText(
@@ -983,7 +1186,7 @@ export function createRepos(ctx: ReposCtx) {
     }
 
     if (mode === 'in-place') {
-      const status = await execFileP('git', ['-C', root, 'status', '--porcelain'], {
+      const status = await git(['-C', root, 'status', '--porcelain'], {
         timeout: 30_000,
       });
       // This and the three like it in the rest of this function (switch,
@@ -1020,13 +1223,13 @@ export function createRepos(ctx: ReposCtx) {
         : remote.ok
           ? ['-C', root, 'switch', '--track', `origin/${branch}`]
           : ['-C', root, 'switch', '-c', branch, requireBaseRef()];
-      const switched = await execFileP('git', args, { timeout: 30_000 });
+      const switched = await git(args, { timeout: 30_000 });
 
       if (!switched.ok) throw namedError(409, redactGitText(switched.err) || 'git switch failed');
       return { runCwd: root, created: { clone, worktree: false }, reused: false };
     }
 
-    const listed = await execFileP('git', ['-C', root, 'worktree', 'list', '--porcelain'], {
+    const listed = await git(['-C', root, 'worktree', 'list', '--porcelain'], {
       timeout: 10_000,
     });
 
@@ -1048,7 +1251,7 @@ export function createRepos(ctx: ReposCtx) {
         : remote.ok
           ? ['-C', root, 'worktree', 'add', '--track', '-b', branch, candidate, `origin/${branch}`]
           : ['-C', root, 'worktree', 'add', '-b', branch, candidate, requireBaseRef()];
-      last = await execFileP('git', args, { timeout: 30_000 });
+      last = await git(args, { timeout: 30_000 });
       if (last.ok) return { runCwd: candidate, created: { clone, worktree: true }, reused: false };
       // A failed worktree add can leave a directory/admin record behind. Only
       // unwind it when this attempt observed the path absent beforehand.
@@ -1102,6 +1305,8 @@ export function createRepos(ctx: ReposCtx) {
     resolveRepoDefaultOrg,
     validateRepoDefaultOrg,
     resolveTarget,
+    probeRepoAccess,
+    preflightRepo,
     cloneRepo,
     materializeBranch,
     claimTarget,

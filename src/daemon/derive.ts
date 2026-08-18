@@ -1178,7 +1178,7 @@ export function createCore(
   // POST route is untouched) plus resolveSettings, browseRootChoice (files.mjs)
   // and persistRepoTransport (spawns.mjs). It must precede files/spawns.
   Object.assign(ctx, createSettings(ctx));
-  const { resolveReposDir, setSettings, resolveSettings, setRepoSetupEntry } = ctx;
+  const { resolveReposDir, preflightRepo, setSettings, resolveSettings, setRepoSetupEntry } = ctx;
 
   // File-touch ledger + conflict radar → ledger.mjs.
   Object.assign(ctx, createLedger(ctx));
@@ -1331,6 +1331,7 @@ export function createCore(
     ingestAgentsPoll,
     // v1.2 dynamic fleet
     spawn, // POST /api/spawn flow → {status, body}
+    preflightRepo, // POST /api/repos/preflight — exact non-interactive Git read probe
     revive, // POST /api/spawn/:id/revive → {status, body}
     adoptSession, // POST /api/sessions/:session_id/adopt → {status, body}
     enableRemote, // POST /api/spawn/:id/rc → {status, body}

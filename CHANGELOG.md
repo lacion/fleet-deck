@@ -5,6 +5,30 @@ All notable changes to Fleet Deck are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Repo spawns prove Git access before creating a card.** The daemon resolves
+  the exact origin and runs a bounded, non-interactive `git ls-remote`; the
+  spawn form can run the same check explicitly. Failures return redacted,
+  structured GitHub/GitLab guidance, link Coder users to external auth, and
+  suggest the relevant `gh`/`glab` login command elsewhere. Fleet Deck never
+  receives or stores the provider token.
+
+### Fixed
+
+- **A failed or cancelled clone could leave a permanent “cloning…” card and
+  credential helper.** Provisioning now has an abortable process-group owner.
+  Kill cancels Git and its SSH/credential descendants, removes the temporary
+  checkout, prevents a late tmux launch, and retires the card as cancelled.
+  Restart-residual provisioning rows are also cancellable when exact pane
+  absence is verified.
+- **Concurrent clone requests could both pass a preflight before either owned
+  the destination.** The destination claim now covers the access check and is
+  acquired atomically before any await, so the loser returns a clean 409 with
+  no card.
+
 ## [0.23.5] - 2026-08-18
 
 ### Fixed

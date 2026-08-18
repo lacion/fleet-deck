@@ -15,7 +15,8 @@
 //   - repo-identity.mjs `git()` is SYNCHRONOUS (execFileSync) on purpose — its
 //     caller (derive.mjs) consumes results inline while building SQL, and making
 //     it async would thread Promises into session state (see its own comment).
-import { execFile } from 'node:child_process';
+import { spawn } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
 // Both are pure string functions (payload-capture itself imports only
 // node:fs/node:path, so this stays acyclic). NOTHING added below runs a
 // subprocess, let alone a shell: the no-shell boundary declared above is a
@@ -35,16 +36,45 @@ export type ExecResult =
 // 1s is enough for tmux/git/agents-cli to exit cleanly on TERM, and bounds the
 // worst-case overshoot of any advertised deadline to timeout + 1s.
 const KILL_GRACE_MS = 1_000;
+const MAX_OUTPUT_BYTES = 1024 * 1024;
+
+interface ExecOptions {
+  timeout?: number;
+  env?: NodeJS.ProcessEnv;
+  signal?: AbortSignal | undefined;
+  killTree?: boolean;
+}
+
+function signalChild(child: ChildProcess, signal: NodeJS.Signals, killTree: boolean): void {
+  try {
+    if (killTree && process.platform !== 'win32' && child.pid != null) {
+      // A detached POSIX child leads its own process group. Git credential/SSH
+      // helpers are grandchildren, so killing only `git clone` leaves exactly
+      // the stuck `coder gitssh` process this boundary exists to cancel.
+      process.kill(-child.pid, signal);
+    } else {
+      child.kill(signal);
+    }
+  } catch {
+    /* already gone */
+  }
+}
 
 export function execFileP(
   cmd: string,
   args: readonly string[],
-  { timeout = 30_000, env }: { timeout?: number; env?: NodeJS.ProcessEnv } = {},
+  { timeout = 30_000, env, signal, killTree = false }: ExecOptions = {},
 ): Promise<ExecResult> {
   return new Promise<ExecResult>((resolve) => {
     try {
       let done = false;
       let killTimer: NodeJS.Timeout | null = null;
+      let deadline: NodeJS.Timeout | null = null;
+      let child: ChildProcess | null = null;
+      const abort = () => {
+        settle(() => ({ ok: false, code: 'ECANCELED', err: 'cancelled' }));
+        if (child) terminate(child);
+      };
       // Settle EXACTLY once, on whatever happens first — exit, error, or our
       // own wall-clock deadline. execFile's `timeout` only SIGTERMs the child;
       // the CALLBACK still waits for the pipes to close, so a child that
@@ -57,95 +87,88 @@ export function execFileP(
         if (done) return;
         done = true;
         if (killTimer) clearTimeout(killTimer);
+        if (deadline) clearTimeout(deadline);
+        signal?.removeEventListener('abort', abort);
         resolve(fn());
       };
-      const child = execFile(
-        cmd,
-        args,
-        {
-          // utf8 is execFile's runtime default; pinning it makes the callback's
-          // stdout/stderr resolve to `string` (the buffer overload would otherwise
-          // widen them to `string | Buffer`) with no change in behaviour.
-          encoding: 'utf8',
-          // 0 disables execFile's own SIGTERM-only timeout: the deadline below is
-          // strictly stronger (same TERM, then KILL, then settle), and a second
-          // timer race inside execFile would change the shape of the callback
-          // error without changing settlement.
-          timeout: 0,
-          windowsHide: true,
-          // Always pass the LIVE process.env explicitly. Under Node this equals
-          // the default inheritance and is a no-op. Under Bun it is load-bearing:
-          // node:child_process's default env inheritance uses an environ
-          // SNAPSHOT taken at process start, so a runtime `process.env` mutation
-          // — a test isolating via FLEETDECK_*/TMUX_TMPDIR, or a caller setting
-          // GIT_TERMINAL_PROMPT=0 — never reaches the child unless env is passed
-          // explicitly. A supplied env is still MERGED over the daemon's own
-          // (never replacing it) so PATH and the rest survive.
-          env: env ? { ...process.env, ...env } : process.env,
-        },
-        (err, stdout, stderr) => {
-          clearTimeout(deadline);
-          // stderr first, then the exception's own message; err.name is the
-          // empty-message last resort — for an Error whose message is '' (the
-          // only way we reach it) Error.prototype.toString() returns exactly the
-          // name, so this drops no information the bare String(err) would have
-          // carried while staying a plain string the linter accepts.
-          if (err) {
-            settle(() => ({
-              ok: false,
-              code: err.code,
-              err: (stderr || err.message || err.name).trim(),
-            }));
-            return;
+      const terminate = (target: ChildProcess) => {
+        signalChild(target, 'SIGTERM', killTree);
+        killTimer = setTimeout(() => {
+          if (target.pid == null) return;
+          let alive = true;
+          try {
+            process.kill(target.pid, 0);
+          } catch {
+            alive = false;
           }
-          settle(() => ({ ok: true, out: stdout }));
-        },
-      );
-      const deadline = setTimeout(() => {
+          if (alive) signalChild(target, 'SIGKILL', killTree);
+        }, KILL_GRACE_MS);
+        killTimer.unref();
+      };
+      child = spawn(cmd, [...args], {
+        shell: false,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
+        detached: killTree && process.platform !== 'win32',
+        // Always pass the LIVE process.env explicitly. Under Node this equals
+        // the default inheritance and is a no-op. Under Bun it is load-bearing:
+        // node:child_process's default env inheritance uses an environ
+        // SNAPSHOT taken at process start, so runtime mutations otherwise do
+        // not reach the child.
+        env: env ? { ...process.env, ...env } : process.env,
+      });
+      const stdout: Buffer[] = [];
+      const stderr: Buffer[] = [];
+      let outputBytes = 0;
+      const capture = (chunks: Buffer[], chunk: Buffer | string) => {
+        if (done) return;
+        const data = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        outputBytes += data.byteLength;
+        if (outputBytes > MAX_OUTPUT_BYTES) {
+          settle(() => ({
+            ok: false,
+            code: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER',
+            err: `subprocess output exceeded ${MAX_OUTPUT_BYTES} bytes`,
+          }));
+          if (child) terminate(child);
+          return;
+        }
+        chunks.push(data);
+      };
+      child.stdout?.on('data', (chunk: Buffer | string) => {
+        capture(stdout, chunk);
+      });
+      child.stderr?.on('data', (chunk: Buffer | string) => {
+        capture(stderr, chunk);
+      });
+      child.once('error', (err) => {
+        settle(() => ({
+          ok: false,
+          code: 'code' in err ? (err.code as string | number | undefined) : undefined,
+          err: err.message || err.name,
+        }));
+      });
+      child.once('close', (code) => {
+        const out = Buffer.concat(stdout).toString('utf8');
+        const errorText = Buffer.concat(stderr).toString('utf8').trim();
+        if (code === 0) settle(() => ({ ok: true, out }));
+        else settle(() => ({ ok: false, code, err: errorText || `process exited ${code ?? ''}` }));
+      });
+      deadline = setTimeout(() => {
         // Settle FIRST: settle() clears any armed killTimer, and only this
         // timeout path can leave a child alive needing a KILL (every other
         // settle means execFile's callback ran, i.e. the child already
         // exited), so the escalation below is armed AFTER settlement on
         // purpose.
         settle(() => ({ ok: false, code: 'ETIMEDOUT', err: `timed out after ${timeout}ms` }));
-        if (!child.killed) {
-          try {
-            child.kill('SIGTERM');
-          } catch {
-            /* already gone */
-          }
-          // Escalate: a process may survive SIGTERM indefinitely (and on
-          // platforms where kill() is only advisory, so may SIGKILL — the
-          // resolve above is what actually bounds the attempt). child.killed
-          // is already true from the SIGTERM just sent, so re-check aliveness
-          // with signal 0 instead.
-          killTimer = setTimeout(() => {
-            let alive = true;
-            // child.pid is `number | undefined` (undefined only if the spawn
-            // never got a pid); signal 0 to a missing pid can test nothing, so
-            // treat that as already dead — the same outcome the original relied
-            // on the kill() throw producing.
-            try {
-              if (child.pid == null) alive = false;
-              else process.kill(child.pid, 0);
-            } catch {
-              alive = false;
-            }
-            if (alive) {
-              try {
-                child.kill('SIGKILL');
-              } catch {
-                /* already gone */
-              }
-            }
-          }, KILL_GRACE_MS);
-          killTimer.unref();
-        }
+        if (child) terminate(child);
       }, timeout);
       // The deadline (and the escalation grace below) exist only to bound THIS
       // attempt; they must not keep the daemon's event loop alive when they are
       // the only handles left.
       deadline.unref();
+      if (signal?.aborted) abort();
+      else signal?.addEventListener('abort', abort, { once: true });
     } catch (err) {
       resolve({ ok: false, err: err instanceof Error ? err.message || String(err) : String(err) });
     }

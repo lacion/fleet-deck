@@ -2,7 +2,15 @@ import test, { type TestContext } from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -44,6 +52,15 @@ interface SpawnRejected {
 interface CloneEcho {
   provisioning?: boolean;
   clone: { origin_url: string; dest: string };
+}
+interface GitAccessFailure {
+  ok?: boolean;
+  git_access?: {
+    code?: string;
+    title?: string;
+    detail?: string | null;
+    auth_url?: string | null;
+  };
 }
 // GET /api/settings body, narrowed to the repo_transport facet these tests read.
 interface SettingsView {
@@ -126,6 +143,13 @@ async function cloneKilledDaemon(
 ): Promise<{ daemon: DaemonHandle; reposDir: string }> {
   const reposDir = scratch('fleetdeck-transport-repos-');
   const recordFile = path.join(scratch(), 'specs.jsonl');
+  const shimDir = scratch('fleetdeck-preflight-ok-');
+  const realGit = realGitPath();
+  writeFileSync(
+    path.join(shimDir, 'git'),
+    '#!/usr/bin/env sh\nif [ "$1" = ls-remote ]; then exit 0; fi\nexec "$FD_REAL_GIT" "$@"\n',
+    { mode: 0o755 },
+  );
   const port = randomPort();
   const daemon = await startDaemon({
     port,
@@ -133,12 +157,15 @@ async function cloneKilledDaemon(
       ...spawnEnv(recordFile, reposDir, `http://127.0.0.1:${port}`),
       FLEETDECK_CLONE_TIMEOUT_MS: '1',
       GIT_SSH_COMMAND: 'false',
+      FD_REAL_GIT: realGit,
+      PATH: `${shimDir}:${process.env['PATH'] ?? ''}`,
     },
   });
   t.after(async () => {
     await daemon.stop();
     rmSync(reposDir, { recursive: true, force: true });
     rmSync(path.dirname(recordFile), { recursive: true, force: true });
+    rmSync(shimDir, { recursive: true, force: true });
   });
   return { daemon, reposDir };
 }
@@ -295,7 +322,74 @@ test('clone provisioning returns 202 then launches from the cloned requested bra
   assert.equal(git(['branch', '--show-current'], dest), 'remote-only');
 });
 
-test('clone failure tombstones the card and removes destination plus temp', async (t) => {
+test('Kill cancels an in-flight clone, removes its temp tree, and retires the card', async (t) => {
+  const shimDir = scratch('fleetdeck-cancel-clone-shim-');
+  const reposDir = scratch('fleetdeck-cancel-clone-repos-');
+  const recordDir = scratch('fleetdeck-cancel-clone-record-');
+  const recordFile = path.join(recordDir, 'specs.jsonl');
+  const startedFile = path.join(recordDir, 'clone-started');
+  const realGit = realGitPath();
+  writeFileSync(
+    path.join(shimDir, 'git'),
+    '#!/usr/bin/env sh\n' +
+      'if [ "$1" = ls-remote ]; then exit 0; fi\n' +
+      'if [ "$1" = clone ]; then\n' +
+      '  mkdir -p "$4"\n' +
+      '  printf "%s\\n" "$$" > "$FD_CLONE_STARTED"\n' +
+      '  trap "exit 143" TERM INT\n' +
+      '  sleep 30\n' +
+      '  exit 1\n' +
+      'fi\n' +
+      'exec "$FD_REAL_GIT" "$@"\n',
+    { mode: 0o755 },
+  );
+  const daemon = await startDaemon({
+    env: {
+      ...spawnEnv(recordFile, reposDir),
+      PATH: `${shimDir}:${process.env['PATH'] ?? ''}`,
+      FD_REAL_GIT: realGit,
+      FD_CLONE_STARTED: startedFile,
+    },
+  });
+  t.after(async () => {
+    await daemon.stop();
+    rmSync(shimDir, { recursive: true, force: true });
+    rmSync(reposDir, { recursive: true, force: true });
+    rmSync(recordDir, { recursive: true, force: true });
+  });
+
+  const spawned = await postJson(`${daemon.baseUrl}/api/spawn`, {
+    repo: 'https://gitlab.com/textemma/slow-clone.git',
+    branch: 'main',
+    branch_mode: 'in-place',
+  });
+  assert.equal(spawned.status, 202, spawned.text);
+  const body = spawned.json as SpawnBody;
+  await waitUntil(() => existsSync(startedFile), { label: 'clone subprocess start' });
+
+  const killed = await postJson(`${daemon.baseUrl}/api/spawn/${body.spawn_id}/kill`, {
+    force: true,
+  });
+  assert.ok(killed.status === 200 || killed.status === 202, killed.text);
+  assert.equal((killed.json as { ok?: boolean }).ok, true);
+
+  const card = await waitUntil(
+    async () => {
+      const state = await getState<StateResponse>(daemon.baseUrl);
+      const found = state.sessions.find((session) => session.session_id === body.session_id);
+      return found?.col === 'offline' ? found : null;
+    },
+    { label: 'cancelled clone tombstone' },
+  );
+  assert.equal(card.note, 'spawn cancelled');
+  assert.equal(card.spawn?.status, 'gone');
+  const dest = path.join(reposDir, 'slow-clone');
+  assert.equal(existsSync(dest), false);
+  assert.equal(existsSync(`${dest}.fd-cloning-${body.spawn_id.slice(0, 8)}`), false);
+  assert.equal(countEvents(daemon.home, 'SpawnCancelled'), 1);
+});
+
+test('access preflight refuses an unreadable remote before creating a card or temp clone', async (t) => {
   const { reposDir, daemon } = await setup(t);
   // The scratch PARENT must be owned by teardown too — nesting scratch() inside
   // path.join lost the path and leaked a fleetdeck-missing-origin-* dir per run.
@@ -309,53 +403,13 @@ test('clone failure tombstones the card and removes destination plus temp', asyn
     branch: 'main',
     branch_mode: 'in-place',
   });
-  assert.equal(response.status, 202, response.text);
-  const body = response.json as SpawnBody;
+  assert.equal(response.status, 409, response.text);
   const dest = path.join(reposDir, 'bad');
-  const card = await waitUntil(
-    async () => {
-      const state = await getState<StateResponse>(daemon.baseUrl);
-      const found = state.sessions.find((s) => s.session_id === body.session_id);
-      return found?.col === 'offline' ? found : null;
-    },
-    { label: 'failed clone tombstone' },
-  );
-  const note = card.note;
-  assert.ok(note, 'the tombstoned card carries a failure note');
-  assert.match(note, /spawn failed/i);
-  // D6: the tombstone carries git's OWN distilled `fatal:` line, not its
-  // "Cloning into '…'" narration — the whole point of distillGitStderr. (A
-  // missing local origin prints only the fatal line, so this proves the note is
-  // the verdict, clamped to 200 not 80.)
-  assert.match(note, /fatal: repository .*does not exist/i);
-  assert.doesNotMatch(note, /Cloning into/i);
-  // …and the full reason is durable in the events table (SpawnFailed), the
-  // queryable audit trail alongside the full stderr in fleetd.log.
-  assert.ok(
-    countEvents(daemon.home, 'SpawnFailed') >= 1,
-    'a failed clone must log a durable SpawnFailed event',
-  );
-  // …and the tombstone now also carries the bounded git-stderr excerpt the board
-  // reveals in its per-card expander, because the distilled note above was ALL a
-  // human ever saw and the remedy lives in the lines it discards. A missing local
-  // origin prints only the verdict, so here the excerpt and the note say the same
-  // thing — the strictly-richer case is pinned by the PATH-shim test below. What
-  // this asserts is the plumbing (row → snapshot) and the two bounds that keep a
-  // pathological stderr out of the DB and off every /ws frame.
-  const spawn = card.spawn;
-  assert.ok(spawn, 'the tombstoned card carries its spawn facet');
-  const detail = spawn.fail_detail;
-  // `assert.ok(typeof … === 'string')`, NOT `assert.equal(typeof …, 'string')`:
-  // `assert.equal`'s `asserts actual is T` narrows the `typeof` expression, not
-  // `detail` (a `string | null`), so the match/byteLength/split reads below
-  // would still see `null`. The `=== 'string'` form is a typeof type-guard that
-  // narrows `detail` to `string`. Pass/fail identical to the `.mjs`.
-  assert.ok(typeof detail === 'string');
-  assert.match(detail, /fatal: repository .*does not exist/i);
-  assert.ok(Buffer.byteLength(detail) <= 2000, 'the excerpt is byte-bounded');
-  assert.ok(detail.split('\n').length <= 20, 'the excerpt is line-bounded');
+  const state = await getState<StateResponse>(daemon.baseUrl);
+  assert.equal(state.sessions.length, 0, 'an auth/access refusal creates no durable card');
+  assert.equal(countEvents(daemon.home, 'SpawnFailed'), 0, 'there was no spawn to tombstone');
   assert.equal(existsSync(dest), false);
-  assert.equal(existsSync(`${dest}.fd-cloning-${body.spawn_id.slice(0, 8)}`), false);
+  assert.deepEqual(readdirSync(missingParent), [], 'no temporary clone directory was created');
 });
 
 // ---------------------------------------------------------------------------
@@ -405,6 +459,12 @@ function writeCloneShim(t: TestContext): string {
       '  fi\n' +
       '  exit 128\n' +
       'fi\n' +
+      'if [ "$1" = ls-remote ] && [ "$FD_SHIM_PREFLIGHT" = coder ]; then\n' +
+      "  printf 'Coder: authenticate with GitLab before cloning.\\n' >&2\n" +
+      "  printf 'fatal: Could not read from remote repository.\\n' >&2\n" +
+      '  exit 128\n' +
+      'fi\n' +
+      'if [ "$1" = ls-remote ] && [ -n "$FD_SHIM_CLONE" ]; then exit 0; fi\n' +
       'exec "$FD_REAL_GIT" "$@"\n',
     { mode: 0o755 },
   );
@@ -453,6 +513,27 @@ function tombstonedCard(daemon: DaemonHandle, session_id: string): Promise<Sessi
     { timeoutMs: 12_000, label: 'failed clone tombstone' },
   );
 }
+
+test('Coder auth failure returns an app-safe external-auth action and creates no card', async (t) => {
+  const { daemon } = await shimmedDaemon(t, {
+    FD_SHIM_PREFLIGHT: 'coder',
+    CODER_AGENT_URL: 'https://coder.example.test/api/v2/workspaceagents/example',
+  });
+  const response = await postJson(`${daemon.baseUrl}/api/repos/preflight`, {
+    repo: 'textemma/private-thing',
+    repo_host: 'gitlab',
+    repo_transport: 'https',
+  });
+  assert.equal(response.status, 409, response.text);
+  const body = response.json as GitAccessFailure;
+  assert.equal(body.ok, false);
+  assert.equal(body.git_access?.code, 'coder_external_auth');
+  assert.match(body.git_access?.title ?? '', /GitLab.*not connected.*Coder/i);
+  assert.equal(body.git_access?.auth_url, 'https://coder.example.test/settings/external-auth');
+  assert.match(body.git_access?.detail ?? '', /authenticate with GitLab/i);
+  const state = await getState<StateResponse>(daemon.baseUrl);
+  assert.equal(state.sessions.length, 0);
+});
 
 test('the note stays the distilled verdict while fail_detail carries the remedy', async (t) => {
   // THE deliverable, reproduced: on a Coder workspace the card said only
@@ -566,7 +647,7 @@ test('concurrent clone requests for one destination are single-flight', async (t
   const conflict = a.status === 409 ? a : b;
   assert.match(
     (conflict.json as SpawnRejected).reason,
-    /provisioned by (falcon|otter|raven|lynx|orca|wren|viper|heron|badger|comet|ember|drift)-/,
+    /already being provisioned by repository access check/,
   );
 });
 
@@ -834,6 +915,13 @@ test('an absent transport never creates a transport override', async (t) => {
 test('a 409-refused explicit transport never rewrites the remembered setting', async (t) => {
   const reposDir = scratch('fleetdeck-claim-repos-');
   const recordFile = path.join(scratch(), 'specs.jsonl');
+  const shimDir = scratch('fleetdeck-claim-preflight-ok-');
+  const realGit = realGitPath();
+  writeFileSync(
+    path.join(shimDir, 'git'),
+    '#!/usr/bin/env sh\nif [ "$1" = ls-remote ]; then exit 0; fi\nexec "$FD_REAL_GIT" "$@"\n',
+    { mode: 0o755 },
+  );
   const port = randomPort();
   const daemon = await startDaemon({
     port,
@@ -856,12 +944,15 @@ test('a 409-refused explicit transport never rewrites the remembered setting', a
       // own command line merely mentions it (editors, logs, other test
       // runners), which a plain substring pgrep cannot exclude.
       GIT_SSH_COMMAND: 'env FD_BUG177_FIXTURE=1 sh -c "exec sleep 30"',
+      FD_REAL_GIT: realGit,
+      PATH: `${shimDir}:${process.env['PATH'] ?? ''}`,
     },
   });
   t.after(async () => {
     await daemon.stop();
     rmSync(reposDir, { recursive: true, force: true });
     rmSync(path.dirname(recordFile), { recursive: true, force: true });
+    rmSync(shimDir, { recursive: true, force: true });
   });
 
   // First spawn (absent transport → ssh default) accepts and holds the claim.

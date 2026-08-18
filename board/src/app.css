@@ -478,6 +478,28 @@ textarea.fd-input { font-family: var(--font-ui); font-size: 13px; resize: none; 
 .fd-check input[type="checkbox"] { accent-color: var(--act); margin: 0; }
 .fd-spawnerr { font-family: var(--font-data); font-size: 11.5px; color: var(--hazard); overflow-wrap: anywhere; white-space: pre-wrap; }
 .fd-spawnhint { font-family: var(--font-data); font-size: 10px; color: var(--faint); line-height: 1.5; flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.fd-gitaccess {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 7px;
+  border: 1px solid var(--border); border-radius: var(--r-ctl); padding: 8px 10px;
+  color: var(--dim); font-family: var(--font-data); font-size: 10.5px; line-height: 1.45;
+}
+.fd-gitaccess.bad { border-color: color-mix(in srgb, var(--hazard) 55%, var(--border)); }
+.fd-gitaccess-head, .fd-gitaccess-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.fd-gitaccess-head > span { flex: 1; min-width: 180px; }
+.fd-gitcheck, .fd-gitlogin {
+  flex: none; border: 1px solid var(--border); border-radius: var(--r-ctl);
+  background: var(--raised); color: var(--text); padding: 5px 9px;
+  font: inherit; cursor: pointer; text-decoration: none;
+}
+.fd-gitcheck:disabled { opacity: .55; cursor: default; }
+.fd-gitcheck:hover:not(:disabled), .fd-gitlogin:hover { border-color: var(--act); }
+.fd-gitaccess-action { color: var(--hazard); }
+.fd-gitaccess code, .fd-gitaccess pre {
+  max-width: 100%; overflow: auto; border-radius: var(--r-ctl); background: var(--code);
+  color: var(--dim); padding: 5px 7px; white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.fd-gitaccess details summary { cursor: pointer; color: var(--faint); }
+.fd-gitaccess details pre { margin: 6px 0 0; max-height: 120px; }
 
 /* pane / stale chips on session cards */
 .fd-panechip {
