@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react';
+import babel from '@rolldown/plugin-babel';
+import react, { reactCompilerPreset } from '@vitejs/plugin-react';
 
 // The locally running fleetd we proxy `npm run dev` to, in its two schemes.
 // FLEETDECK_PORT is the same variable the daemon itself reads (see
@@ -36,7 +37,11 @@ const httpProxy = { target: FLEETD_HTTP, changeOrigin: true, configure: rewriteO
 // GET / and /assets/* from src/daemon/board-dist at runtime (resolved
 // relative to http.mjs, so both the source and bundle runs find it).
 export default defineConfig({
-  plugins: [react()],
+  // React Compiler is stable for React 19 and handles component/value/callback
+  // memoization at build time. Keep the existing hand-written memo boundaries
+  // as compatibility contracts for now; new code can stay declarative and let
+  // the compiler decide what needs a stable identity.
+  plugins: [react(), babel({ presets: [reactCompilerPreset()] })],
   // RELATIVE, not '/': the board must load under a path-based reverse proxy
   // (Coder serves apps at /@user/ws.agent/apps/<slug>/ and strips that prefix
   // before forwarding, without telling the app it ever existed). Relative asset

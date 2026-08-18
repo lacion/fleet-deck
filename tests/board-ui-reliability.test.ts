@@ -12,6 +12,10 @@ const fleetConnection = readFileSync(path.resolve('board/src/fleetConnection.ts'
 const api = readFileSync(path.resolve('board/src/api.ts'), 'utf8');
 const spawnForm = readFileSync(path.resolve('board/src/components/SpawnForm.tsx'), 'utf8');
 const killConfirm = readFileSync(path.resolve('board/src/components/KillConfirm.tsx'), 'utf8');
+const fileViewer = readFileSync(path.resolve('board/src/components/FileViewer.tsx'), 'utf8');
+const planLibrary = readFileSync(path.resolve('board/src/components/PlanLibrary.tsx'), 'utf8');
+const main = readFileSync(path.resolve('board/src/main.tsx'), 'utf8');
+const vite = readFileSync(path.resolve('board/vite.config.js'), 'utf8');
 
 test('Share recognizes a Coder/proxy origin and never leaks the board token', () => {
   const got = shareInfoForHref(
@@ -64,8 +68,32 @@ test('an idle healthy WebSocket is not recycled by an invented frame heartbeat',
 });
 
 test('the session drawer blocks global answer hotkeys behind its modal scrim', () => {
-  assert.match(app, /drawerOpen:\s*drawerOpenRef/);
+  assert.match(app, /drawerOpen:\s*drawerSid != null/);
+  assert.match(hotkeys, /useEffectEvent/);
   assert.match(hotkeys, /blockingOverlayOpen\([\s\S]*?drawerOpen,[\s\S]*?\]\)/);
+});
+
+test('the board build and long-lived listeners use the React 19 runtime model', () => {
+  assert.match(vite, /reactCompilerPreset/);
+  assert.match(main, /<StrictMode>/);
+  assert.match(app, /<ClockContext value=\{now\}>/);
+  assert.match(hotkeys, /useEffectEvent/);
+  assert.doesNotMatch(app, /ClockContext\.Provider/);
+});
+
+test('large board surfaces load on demand and long file views are virtualized', () => {
+  assert.match(app, /React\.lazy\(\(\) => import\('\.\/components\/SpawnForm\.tsx'\)\)/);
+  assert.match(app, /React\.lazy\(\(\) => import\('\.\/components\/FileViewer\.tsx'\)\)/);
+  assert.match(app, /React\.lazy\(\(\) => import\('\.\/components\/WorktreesModal\.tsx'\)\)/);
+  assert.match(app, /<LazySurfaceFallback/);
+  assert.match(app, /useModal\(dialogRef\)/);
+  assert.match(fileViewer, /useVirtualizer/);
+});
+
+test('collapsing the plan library preserves in-progress card state', () => {
+  assert.match(planLibrary, /<Activity mode=\{open \? 'visible' : 'hidden'\}>/);
+  assert.match(planLibrary, /setOpen\(next\);\s*storageSet\('fd-plans-open'/);
+  assert.doesNotMatch(planLibrary, /setOpen\(\(o\) => \{\s*storageSet/);
 });
 
 test('lazy terminal surfaces have visible, dismissible loading and failure states', () => {

@@ -1429,7 +1429,10 @@ textarea.fd-input { font-family: var(--font-ui); font-size: 13px; resize: none; 
   flex: 1; overflow: auto; border: 1px solid var(--border-soft); border-radius: 8px;
   background: var(--code); padding: 8px 0; font-family: var(--font-data); font-size: 12px;
 }
-.fd-fsline { display: flex; gap: 12px; padding: 0 12px; line-height: 1.65; }
+.fd-fsvirtual { position: relative; width: 100%; }
+.fd-fsline {
+  position: absolute; inset: 0 0 auto; display: flex; gap: 12px; padding: 0 12px; line-height: 1.65;
+}
 .fd-fsline .n { flex: none; text-align: right; color: var(--faint); user-select: none; }
 .fd-fsline .c { white-space: pre; color: var(--text); }
 .fd-fsline.hit { background: var(--act-bg); }

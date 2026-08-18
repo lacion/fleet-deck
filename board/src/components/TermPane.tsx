@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useEffectEvent, useRef, useState } from 'react';
 import { Terminal, type ITheme } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { ClipboardAddon, type IClipboardProvider } from '@xterm/addon-clipboard';
@@ -231,13 +231,16 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
   // change (a new spawn deserves a fresh budget).
   const [attempt, setAttempt] = useState(0);
   const retriesRef = useRef(0);
+  const reportNote = useEffectEvent((next: TermNote | null) => {
+    onNote?.(next);
+  });
   useEffect(() => {
     retriesRef.current = 0;
   }, [spawnId]);
 
   useEffect(() => {
     noteRef.current = note;
-    onNote?.(note);
+    reportNote(note);
   }, [note]);
 
   useEffect(() => {

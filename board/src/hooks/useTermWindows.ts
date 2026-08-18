@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { spawnTermable, clampWinRect } from '../util.ts';
 import { storageGet, storageSet } from '../storage.ts';
 import type { SessionEntry, SessionSpawn } from '../../../contracts/index.ts';
@@ -59,24 +59,7 @@ function loadRect() {
 // `term` and `grid` are ONE keyboard — opening either closes the other — so
 // this hook owns both and the invariant between them.
 //
-// `killAsk` / `armAsk` / `renameAsk` are threaded in only so the keydown MIRRORS
-// live together, since the hotkey handler reads them synchronously off refs (a
-// stale closure over state would misroute the key):
-//   gridOpen   — "the WALL owns the whole screen": board hotkeys are dead while
-//                it is up. The floating window deliberately does NOT suppress
-//                them (that is what floating means) — its own keys never leak
-//                because the window stops propagation itself;
-//   killOpen   — "the kill dialog is modal over everything": Esc cancels IT;
-//   armOpen    — "the move-to-tmux dialog is modal too": Esc cancels IT (v2.0),
-//                leaving the drawer it may have been opened from standing;
-//   renameOpen — same for the rename dialog (v2.1). Esc from INSIDE its text
-//                input must abandon the rename, not close the drawer under it.
-export function useTermWindows(
-  sessions: SessionEntry[],
-  killAsk: unknown,
-  armAsk: unknown,
-  renameAsk: unknown,
-) {
+export function useTermWindows(sessions: SessionEntry[]) {
   const [term, setTerm] = useState<TermState | null>(null); // null | { spawnId, callsign, window }
   const [grid, setGrid] = useState<TermIdentity[] | null>(null); // null | [{ spawnId, callsign, window }]
   const [termMin, setTermMin] = useState(false); // v2.6 minimized to the dock chip
@@ -90,17 +73,6 @@ export function useTermWindows(
     setTermRectState(r);
     storageSet(RECT_KEY, JSON.stringify(r));
   }, []);
-
-  // v2.6 — the GRID is the modal one; the floating term window is not. Only
-  // gridOpen feeds the hotkey suppression list now.
-  const gridOpen = useRef(false);
-  gridOpen.current = !!grid;
-  const killOpen = useRef(false);
-  killOpen.current = !!killAsk;
-  const armOpen = useRef(false);
-  armOpen.current = !!armAsk;
-  const renameOpen = useRef(false);
-  renameOpen.current = !!renameAsk;
 
   // Only board-spawned panes exist to be watched: a plain `claude` in your own
   // terminal has no pane the daemon owns.
@@ -220,9 +192,7 @@ export function useTermWindows(
     toggleWatch,
     openGrid,
     closeGridTile,
-    gridOpen,
-    killOpen,
-    armOpen,
-    renameOpen,
+    // v2.6 — the GRID is the modal one; the floating term window is not.
+    gridOpen: grid != null,
   };
 }

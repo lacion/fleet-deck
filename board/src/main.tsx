@@ -1,3 +1,4 @@
+import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import './tokens.css';
 import './app.css';
@@ -14,4 +15,8 @@ initToken();
 // unmounting the tree.
 installStaleChunkGuard(window);
 
-createRoot(document.getElementById('root') as unknown as HTMLElement).render(<App />);
+createRoot(document.getElementById('root') as unknown as HTMLElement).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+);

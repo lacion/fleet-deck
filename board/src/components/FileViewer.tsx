@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { reasonOf, saveSettings } from '../api.ts';
 import { basename, copyText } from '../util.ts';
 import { renderMarkdown } from '../markdown.ts';
@@ -284,14 +285,61 @@ interface FileBodyProps {
   mdOn: boolean;
 }
 
-function FileBody({ file, targetLine, mdOn }: FileBodyProps) {
-  const hitRef = useRef<HTMLDivElement | null>(null);
-  // center the hit once per open — file.path in deps, not the ref, so scrolling
-  // around afterwards isn't yanked back on unrelated re-renders
-  useEffect(() => {
-    hitRef.current?.scrollIntoView({ block: 'center' });
-  }, [file.path, targetLine]);
+interface SourceBodyProps {
+  filePath: string;
+  lines: string[];
+  totalLines: number;
+  targetLine: number | null;
+}
 
+function SourceBody({ filePath, lines, totalLines, targetLine }: SourceBodyProps) {
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const gutter = String(lines.length).length;
+  const rows = useVirtualizer({
+    count: lines.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 20,
+    overscan: 12,
+  });
+
+  // A search result can target a line that is not mounted yet. Scroll the
+  // virtualizer itself instead of relying on scrollIntoView from a DOM ref.
+  useEffect(() => {
+    if (targetLine && targetLine <= lines.length)
+      rows.scrollToIndex(targetLine - 1, { align: 'center' });
+  }, [filePath, targetLine, lines.length, rows]);
+
+  return (
+    <div className="fd-fscode" ref={scrollRef}>
+      <div className="fd-fsvirtual" style={{ height: rows.getTotalSize() }}>
+        {rows.getVirtualItems().map((row) => {
+          const n = row.index + 1;
+          const hit = n === targetLine;
+          return (
+            <div
+              key={row.key}
+              className={`fd-fsline${hit ? ' hit' : ''}`}
+              style={{ height: row.size, transform: `translateY(${row.start}px)` }}
+            >
+              <span className="n" style={{ width: `${gutter}ch` }}>
+                {n}
+              </span>
+              <span className="c">{lines[row.index]}</span>
+            </div>
+          );
+        })}
+      </div>
+      {totalLines > lines.length && (
+        <div className="fd-fsnotice">
+          showing the first {MAX_RENDER_LINES.toLocaleString()} lines ({totalLines.toLocaleString()}{' '}
+          in the served slice)
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FileBody({ file, targetLine, mdOn }: FileBodyProps) {
   if (file.binary) {
     return (
       <div className="fd-fsnotice">
@@ -311,28 +359,13 @@ function FileBody({ file, targetLine, mdOn }: FileBodyProps) {
   }
   const lines = (file.content ?? '').split('\n');
   const shown = lines.slice(0, MAX_RENDER_LINES);
-  const gutter = String(Math.min(lines.length, MAX_RENDER_LINES)).length;
   return (
-    <div className="fd-fscode">
-      {shown.map((ln, i) => {
-        const n = i + 1;
-        const hit = n === targetLine;
-        return (
-          <div key={n} className={`fd-fsline${hit ? ' hit' : ''}`} ref={hit ? hitRef : undefined}>
-            <span className="n" style={{ width: `${gutter}ch` }}>
-              {n}
-            </span>
-            <span className="c">{ln}</span>
-          </div>
-        );
-      })}
-      {lines.length > shown.length && (
-        <div className="fd-fsnotice">
-          showing the first {MAX_RENDER_LINES.toLocaleString()} lines (
-          {lines.length.toLocaleString()} in the served slice)
-        </div>
-      )}
-    </div>
+    <SourceBody
+      filePath={file.path}
+      lines={shown}
+      totalLines={lines.length}
+      targetLine={targetLine}
+    />
   );
 }
 
