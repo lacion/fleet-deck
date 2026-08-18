@@ -253,33 +253,37 @@ async function readPersistedGeneration(
   }
 }
 
-async function persistGeneration(
-  home: string,
-  port: Port,
-  record: GenerationRecord,
-): Promise<PersistedGeneration | null> {
-  const file = generationFile(home, port);
-  const temp = path.join(home, `.${path.basename(file)}.${process.pid}.${randomUUID()}.tmp`);
+async function publishSecureJson(
+  file: string,
+  value: unknown,
+  errorAction: string,
+  publish: 'if-absent' | 'replace',
+): Promise<void> {
+  const temp = path.join(
+    path.dirname(file),
+    `.${path.basename(file)}.${process.pid}.${randomUUID()}.tmp`,
+  );
   let handle: FileHandle | null = null;
   try {
     handle = await open(temp, 'wx', 0o600);
-    await handle.writeFile(
-      `${JSON.stringify({ generation: record.generation, serverPid: record.serverPid })}\n`,
-      'utf8',
-    );
+    await handle.writeFile(`${JSON.stringify(value)}\n`, 'utf8');
     await handle.chmod(0o600);
     await handle.sync();
     await handle.close();
     handle = null;
-    try {
-      // link is an atomic no-replace publish on the same filesystem. A second
-      // claimant can never overwrite the first durable expected generation.
-      await link(temp, file);
-    } catch (err) {
-      if (errCode(err) !== 'EEXIST') throw err;
+    if (publish === 'replace') {
+      await rename(temp, file);
+    } else {
+      try {
+        // link is an atomic no-replace publish on the same filesystem. A second
+        // claimant can never overwrite the first durable expected generation.
+        await link(temp, file);
+      } catch (err) {
+        if (errCode(err) !== 'EEXIST') throw err;
+      }
     }
   } catch (err) {
-    throw new Error(`cannot persist tmux generation (${errText(err)})`, { cause: err });
+    throw new Error(`cannot ${errorAction} (${errText(err)})`, { cause: err });
   } finally {
     try {
       await handle?.close();
@@ -294,6 +298,19 @@ async function persistGeneration(
       }
     }
   }
+}
+
+async function persistGeneration(
+  home: string,
+  port: Port,
+  record: GenerationRecord,
+): Promise<PersistedGeneration | null> {
+  await publishSecureJson(
+    generationFile(home, port),
+    { generation: record.generation, serverPid: record.serverPid },
+    'persist tmux generation',
+    'if-absent',
+  );
   return readPersistedGeneration(home, port);
 }
 
@@ -302,36 +319,12 @@ async function replacePersistedGeneration(
   port: Port,
   record: GenerationRecord,
 ): Promise<PersistedGeneration | null> {
-  const file = generationFile(home, port);
-  const temp = path.join(home, `.${path.basename(file)}.${process.pid}.${randomUUID()}.tmp`);
-  let handle: FileHandle | null = null;
-  try {
-    handle = await open(temp, 'wx', 0o600);
-    await handle.writeFile(
-      `${JSON.stringify({ generation: record.generation, serverPid: record.serverPid })}\n`,
-      'utf8',
-    );
-    await handle.chmod(0o600);
-    await handle.sync();
-    await handle.close();
-    handle = null;
-    await rename(temp, file); // atomic old-record -> strict-record migration
-  } catch (err) {
-    throw new Error(`cannot replace persisted tmux generation (${errText(err)})`, { cause: err });
-  } finally {
-    try {
-      await handle?.close();
-    } catch {
-      /* primary error wins */
-    }
-    try {
-      await unlink(temp);
-    } catch (err) {
-      if (errCode(err) !== 'ENOENT') {
-        /* best-effort temp cleanup */
-      }
-    }
-  }
+  await publishSecureJson(
+    generationFile(home, port),
+    { generation: record.generation, serverPid: record.serverPid },
+    'replace persisted tmux generation',
+    'replace', // atomic old-record -> strict-record migration
+  );
   return readPersistedGeneration(home, port);
 }
 
@@ -406,39 +399,15 @@ async function recordRetiredGeneration(
   port: Port,
   expected: PersistedGeneration,
 ): Promise<void> {
-  const file = retiredGenerationFile(home, port);
-  const temp = path.join(home, `.${path.basename(file)}.${process.pid}.${randomUUID()}.tmp`);
-  let handle: FileHandle | null = null;
-  try {
-    handle = await open(temp, 'wx', 0o600);
-    await handle.writeFile(
-      `${JSON.stringify({
-        retiredGeneration: expected.generation,
-        retiredServerPid: expected.serverPid,
-      })}\n`,
-      'utf8',
-    );
-    await handle.chmod(0o600);
-    await handle.sync();
-    await handle.close();
-    handle = null;
-    await rename(temp, file);
-  } catch (err) {
-    throw new Error(`cannot record retired tmux generation (${errText(err)})`, { cause: err });
-  } finally {
-    try {
-      await handle?.close();
-    } catch {
-      /* primary error wins */
-    }
-    try {
-      await unlink(temp);
-    } catch (err) {
-      if (errCode(err) !== 'ENOENT') {
-        /* best-effort temp cleanup */
-      }
-    }
-  }
+  await publishSecureJson(
+    retiredGenerationFile(home, port),
+    {
+      retiredGeneration: expected.generation,
+      retiredServerPid: expected.serverPid,
+    },
+    'record retired tmux generation',
+    'replace',
+  );
 }
 
 /** Is a proven-dead owner on record for this port? O_NOFOLLOW for the same

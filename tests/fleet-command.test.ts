@@ -55,7 +55,14 @@ function runInlineWithShimmedCurl(t: TestContext, env: NodeJS.ProcessEnv): strin
   });
   assert.equal(r.status, 0, r.stderr);
   assert.notEqual((r.stdout || '').trim(), 'FLEET_DAEMON_DOWN', 'shimmed curl must succeed');
-  return readFileSync(argsFile, 'utf8').trim().split('\n');
+  const args = readFileSync(argsFile, 'utf8').trim().split('\n');
+  const stateUrl = fetchedUrl(args);
+  assert.equal(
+    r.stdout.split('\n')[0],
+    `FLEET_BOARD_URL=${stateUrl.replace(/state$/, '')}`,
+    '/fleet must inject the resolved board URL instead of asking the model to expand shell syntax',
+  );
+  return args;
 }
 
 function fetchedUrl(args: string[]): string {
@@ -73,6 +80,13 @@ test('BUG-088: an invalid FLEETDECK_PORT falls back to the default port in the f
   const args = runInlineWithShimmedCurl(t, { FLEETDECK_PORT: 'not-a-port' });
   assert.equal(fetchedUrl(args), 'http://127.0.0.1:4711/state');
 });
+
+for (const invalid of ['0', '65536', '999999999999999999999999']) {
+  test(`BUG-088: out-of-range FLEETDECK_PORT ${invalid} falls back safely`, (t) => {
+    const args = runInlineWithShimmedCurl(t, { FLEETDECK_PORT: invalid });
+    assert.equal(fetchedUrl(args), 'http://127.0.0.1:4711/state');
+  });
+}
 
 test('BUG-088: an unset FLEETDECK_PORT defaults to 4711 in the fetch URL', (t) => {
   // Control the REAL process.env: runInlineWithShimmedCurl spreads ...process.env

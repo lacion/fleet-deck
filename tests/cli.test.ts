@@ -89,8 +89,13 @@ const {
   unitEnvFilePath,
   quoteExecArg,
   healthIsOurManagedDaemon,
+  healthIsOurCurrentManagedDaemon,
+  handoffExistingDaemon,
   healthPidIsOurDaemon,
+  ownedStartingDaemonPid,
   waitForHealth,
+  serviceStartTimeoutMs,
+  DEFAULT_SERVICE_START_TIMEOUT_MS,
 } = await import('../bin/fleetdeck.ts');
 const { parseTmuxVersion, tmuxVersionCapability, tmuxVersionSupported } = await import(
   '../bin/tmux-version.ts'
@@ -103,6 +108,11 @@ const { parseTmuxVersion, tmuxVersionCapability, tmuxVersionSupported } = await 
 // keeps the junk values verbatim without an `any` anywhere.
 type HealthArg = Parameters<typeof healthPidIsOurDaemon>[0];
 const asHealth = (h: unknown): HealthArg => h as HealthArg;
+const INSTALLED_VERSION = (
+  JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, '..', 'package.json'), 'utf8')) as {
+    version: string;
+  }
+).version;
 
 // tmuxVersionCapability returns a discriminated union; `.reason` lives only on the
 // `available: false` arm. Narrow to that arm for the unknown-version assertion.
@@ -520,6 +530,7 @@ test('serviceStart: live supervisor + dead daemon → nonzero degraded report, n
   }
   // Force the no-systemd branch the same way the serviceInstall test does.
   const savedPath = process.env['PATH'];
+  const savedStartTimeout = process.env['FLEETDECK_SERVICE_START_TIMEOUT_MS'];
   const emptyDir = path.join(TMP, 'nopath');
   fs.mkdirSync(emptyDir, { recursive: true });
   fs.writeFileSync(SUPERVISE_SH, '#!/bin/sh\n', { mode: 0o700 });
@@ -546,6 +557,9 @@ test('serviceStart: live supervisor + dead daemon → nonzero degraded report, n
   });
 
   process.env['PATH'] = emptyDir;
+  // Production defaults to a generous first-boot window. This fixture is
+  // intentionally dead, so keep the negative unit test fast.
+  process.env['FLEETDECK_SERVICE_START_TIMEOUT_MS'] = '300';
   let rc: number | undefined;
   try {
     // Written INSIDE the PATH scope: serviceStart must see our live fake
@@ -554,6 +568,11 @@ test('serviceStart: live supervisor + dead daemon → nonzero degraded report, n
     rc = await serviceStart();
   } finally {
     process.env['PATH'] = savedPath;
+    if (savedStartTimeout === undefined) {
+      delete process.env['FLEETDECK_SERVICE_START_TIMEOUT_MS'];
+    } else {
+      process.env['FLEETDECK_SERVICE_START_TIMEOUT_MS'] = savedStartTimeout;
+    }
   }
 
   assert.equal(rc, 1, 'a wrapper with no daemon answering is degraded, not success');
@@ -989,6 +1008,323 @@ test('healthIsOurManagedDaemon: an unmanaged health answer is refused (BUG-081)'
   assert.equal(
     await healthIsOurManagedDaemon(asHealth({ managed: false, pid: process.pid })),
     false,
+  );
+});
+
+test('service startup timeout: defaults to 30s and accepts a bounded operator override', () => {
+  assert.equal(serviceStartTimeoutMs(null), DEFAULT_SERVICE_START_TIMEOUT_MS);
+  assert.equal(DEFAULT_SERVICE_START_TIMEOUT_MS, 30_000);
+  assert.equal(serviceStartTimeoutMs('1250'), 1250);
+  assert.equal(serviceStartTimeoutMs('249'), DEFAULT_SERVICE_START_TIMEOUT_MS);
+  assert.equal(serviceStartTimeoutMs('not-a-number'), DEFAULT_SERVICE_START_TIMEOUT_MS);
+  assert.equal(serviceStartTimeoutMs('300001'), DEFAULT_SERVICE_START_TIMEOUT_MS);
+});
+
+test('healthIsOurCurrentManagedDaemon: readiness requires exact installed-version convergence', async (t) => {
+  const fake = spawnFakeFleetd();
+  t.after(() => {
+    try {
+      if (fake.pid !== undefined) process.kill(fake.pid, 'SIGKILL');
+    } catch {
+      /* already gone */
+    }
+  });
+  assert.ok(fake.pid, 'fake daemon has a pid');
+  fs.writeFileSync(FLEETD_PID, JSON.stringify({ pid: fake.pid, port: DEAD_PORT }));
+
+  assert.equal(
+    await healthIsOurCurrentManagedDaemon(
+      asHealth({ version: INSTALLED_VERSION, managed: true, pid: fake.pid }),
+    ),
+    true,
+    'the verified same-home managed daemon on the installed version is ready',
+  );
+  assert.equal(
+    await healthIsOurCurrentManagedDaemon(
+      asHealth({ version: '0.0.1-old-runtime', managed: true, pid: fake.pid }),
+    ),
+    false,
+    'a verified but older runtime is not successful startup convergence',
+  );
+});
+
+test('handoffExistingDaemon: gracefully retires a verified same-home plugin daemon', async (t) => {
+  const fakeEntry = path.join(TMP, 'fleetd.mjs');
+  fs.writeFileSync(
+    fakeEntry,
+    "process.on('SIGTERM', () => process.exit(0)); setInterval(() => {}, 1000);\n",
+  );
+  const fake = spawn(process.execPath, [fakeEntry], { detached: true, stdio: 'ignore' });
+  fake.unref();
+  t.after(() => {
+    try {
+      if (fake.pid !== undefined) process.kill(fake.pid, 'SIGKILL');
+    } catch {
+      /* already retired by the handoff */
+    }
+  });
+  assert.ok(fake.pid, 'fake daemon has a pid');
+  fs.writeFileSync(FLEETD_PID, JSON.stringify({ pid: fake.pid, port: DEAD_PORT }));
+
+  const responder = http.createServer((req, res) => {
+    if (req.url === '/health') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ version: '0.23.3', managed: false, pid: fake.pid }));
+    } else {
+      res.writeHead(404);
+      res.end();
+    }
+  });
+  await new Promise<void>((resolve) => responder.listen(DEAD_PORT, '127.0.0.1', resolve));
+  t.after(
+    () =>
+      new Promise<void>((resolve) => {
+        responder.close(() => resolve());
+      }),
+  );
+
+  assert.equal(await handoffExistingDaemon(), true);
+  assert.throws(() => process.kill(fake.pid ?? -1, 0), { code: 'ESRCH' });
+});
+
+test('handoffExistingDaemon: retires a verified orphaned old managed runtime during upgrade', async (t) => {
+  const fakeEntry = path.join(TMP, 'fleetd.mjs');
+  fs.writeFileSync(
+    fakeEntry,
+    "process.on('SIGTERM', () => process.exit(0)); setInterval(() => {}, 1000);\n",
+  );
+  const fake = spawn(process.execPath, [fakeEntry], { detached: true, stdio: 'ignore' });
+  fake.unref();
+  t.after(() => {
+    try {
+      if (fake.pid !== undefined) process.kill(fake.pid, 'SIGKILL');
+    } catch {
+      /* already retired by the version handoff */
+    }
+  });
+  assert.ok(fake.pid, 'old fake daemon has a pid');
+  fs.writeFileSync(FLEETD_PID, JSON.stringify({ pid: fake.pid, port: DEAD_PORT }));
+
+  const responder = http.createServer((req, res) => {
+    if (req.url === '/health') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ version: '0.0.1-old-runtime', managed: true, pid: fake.pid }));
+    } else {
+      res.writeHead(404);
+      res.end();
+    }
+  });
+  await new Promise<void>((resolve) => responder.listen(DEAD_PORT, '127.0.0.1', resolve));
+  t.after(
+    () =>
+      new Promise<void>((resolve) => {
+        responder.close(() => resolve());
+      }),
+  );
+
+  assert.equal(await handoffExistingDaemon(), true);
+  assert.throws(
+    () => process.kill(fake.pid ?? -1, 0),
+    { code: 'ESRCH' },
+    'the positively identified old runtime is retired so the installed build can start',
+  );
+});
+
+test('serviceStart: systemd upgrade uses one serialized restart and never raw-signals the old child', async (t) => {
+  const fakeDir = path.join(TMP, 'systemd-old-daemon');
+  fs.mkdirSync(fakeDir, { recursive: true });
+  const fakeEntry = path.join(fakeDir, 'fleetd.mjs');
+  fs.writeFileSync(
+    fakeEntry,
+    "process.on('SIGTERM', () => process.exit(0)); setInterval(() => {}, 1000);\n",
+  );
+  const fake = spawn(process.execPath, [fakeEntry], { detached: true, stdio: 'ignore' });
+  fake.unref();
+  t.after(() => {
+    try {
+      if (fake.pid !== undefined) process.kill(fake.pid, 'SIGKILL');
+    } catch {
+      /* test cleanup */
+    }
+  });
+  assert.ok(fake.pid, 'old systemd child has a pid');
+  fs.writeFileSync(FLEETD_PID, JSON.stringify({ pid: fake.pid, port: DEAD_PORT }));
+
+  const binDir = path.join(TMP, 'fake-systemd-bin');
+  const callsFile = path.join(TMP, 'systemctl.calls');
+  const restartedFile = path.join(TMP, 'systemctl.restarted');
+  fs.mkdirSync(binDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(binDir, 'systemctl'),
+    '#!/bin/sh\n' +
+      'printf \'%s\\n\' "$*" >> "$FLEETDECK_TEST_SYSTEMCTL_LOG"\n' +
+      'case "$*" in "--user restart fleetdeck") : > "$FLEETDECK_TEST_SYSTEMCTL_RESTARTED" ;; esac\n',
+    { mode: 0o700 },
+  );
+  fs.mkdirSync(path.dirname(UNIT_FILE), { recursive: true });
+  fs.writeFileSync(UNIT_FILE, '[Service]\n');
+
+  const responder = http.createServer((req, res) => {
+    if (req.url === '/health') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          version: fs.existsSync(restartedFile) ? INSTALLED_VERSION : '0.0.1-old-runtime',
+          managed: true,
+          pid: fake.pid,
+        }),
+      );
+    } else {
+      res.writeHead(404);
+      res.end();
+    }
+  });
+  await new Promise<void>((resolve) => responder.listen(DEAD_PORT, '127.0.0.1', resolve));
+  t.after(
+    () =>
+      new Promise<void>((resolve) => {
+        responder.close(() => resolve());
+      }),
+  );
+
+  const saved = {
+    PATH: process.env['PATH'],
+    timeout: process.env['FLEETDECK_SERVICE_START_TIMEOUT_MS'],
+    log: process.env['FLEETDECK_TEST_SYSTEMCTL_LOG'],
+    restarted: process.env['FLEETDECK_TEST_SYSTEMCTL_RESTARTED'],
+  };
+  process.env['PATH'] = binDir;
+  process.env['FLEETDECK_SERVICE_START_TIMEOUT_MS'] = '1000';
+  process.env['FLEETDECK_TEST_SYSTEMCTL_LOG'] = callsFile;
+  process.env['FLEETDECK_TEST_SYSTEMCTL_RESTARTED'] = restartedFile;
+  let rc: number | undefined;
+  try {
+    rc = await serviceStart();
+  } finally {
+    const restore = (key: string, value: string | undefined) => {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    };
+    restore('PATH', saved.PATH);
+    restore('FLEETDECK_SERVICE_START_TIMEOUT_MS', saved.timeout);
+    restore('FLEETDECK_TEST_SYSTEMCTL_LOG', saved.log);
+    restore('FLEETDECK_TEST_SYSTEMCTL_RESTARTED', saved.restarted);
+    try {
+      fs.unlinkSync(UNIT_FILE);
+    } catch {
+      /* already gone */
+    }
+  }
+
+  assert.equal(rc, 0);
+  assert.deepEqual(fs.readFileSync(callsFile, 'utf8').trim().split('\n'), [
+    '--user show-environment',
+    '--user restart fleetdeck',
+  ]);
+  assert.doesNotThrow(
+    () => process.kill(fake.pid ?? -1, 0),
+    'the CLI delegates the stop/start transaction to systemd instead of raw-SIGTERMing its child',
+  );
+});
+
+test('handoffExistingDaemon: a mismatched or missing pidfile port cannot authorize a signal', async (t) => {
+  const fakeEntry = path.join(TMP, 'fleetd-other-port.mjs');
+  fs.writeFileSync(
+    fakeEntry,
+    "process.on('SIGTERM', () => process.exit(0)); setInterval(() => {}, 1000);\n",
+  );
+  const fake = spawn(process.execPath, [fakeEntry], { detached: true, stdio: 'ignore' });
+  fake.unref();
+  t.after(() => {
+    try {
+      if (fake.pid !== undefined) process.kill(fake.pid, 'SIGKILL');
+    } catch {
+      /* test cleanup */
+    }
+  });
+  assert.ok(fake.pid, 'fake daemon has a pid');
+  const otherPort = DEAD_PORT === 65535 ? DEAD_PORT - 1 : DEAD_PORT + 1;
+  fs.writeFileSync(FLEETD_PID, JSON.stringify({ pid: fake.pid, port: otherPort }));
+
+  const responder = http.createServer((req, res) => {
+    if (req.url === '/health') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ version: '0.23.3', managed: false, pid: fake.pid }));
+    } else {
+      res.writeHead(404);
+      res.end();
+    }
+  });
+  await new Promise<void>((resolve) => responder.listen(DEAD_PORT, '127.0.0.1', resolve));
+  t.after(
+    () =>
+      new Promise<void>((resolve) => {
+        responder.close(() => resolve());
+      }),
+  );
+
+  assert.equal(await handoffExistingDaemon(), false);
+  assert.doesNotThrow(() => process.kill(fake.pid ?? -1, 0), 'the other-port daemon stays alive');
+  fs.writeFileSync(FLEETD_PID, String(fake.pid));
+  assert.equal(
+    await handoffExistingDaemon(),
+    false,
+    'a legacy port-less record is uncertain and must fail closed',
+  );
+  assert.doesNotThrow(
+    () => process.kill(fake.pid ?? -1, 0),
+    'a forged responder cannot weaponize a port-less record',
+  );
+});
+
+test('ownedStartingDaemonPid: identifies a same-port fleetd before /health without trusting another port', (t) => {
+  const fake = spawnFakeFleetd();
+  t.after(() => {
+    try {
+      if (fake.pid !== undefined) process.kill(fake.pid, 'SIGKILL');
+    } catch {
+      /* already gone */
+    }
+  });
+  assert.ok(fake.pid, 'starting fake daemon has a pid');
+  fs.writeFileSync(FLEETD_PID, JSON.stringify({ pid: fake.pid, port: DEAD_PORT }));
+  assert.equal(
+    ownedStartingDaemonPid(),
+    fake.pid,
+    'same-home/same-port live fleetd is classified as slow-owned startup',
+  );
+  fs.writeFileSync(FLEETD_PID, JSON.stringify({ pid: fake.pid, port: DEAD_PORT + 1 }));
+  assert.equal(
+    ownedStartingDaemonPid(),
+    null,
+    'another port cannot be mislabeled as this service startup',
+  );
+});
+
+test('waitForHealth: progressive deadline accepts a listener that opens after early probes', async (t) => {
+  const responder = http.createServer((req, res) => {
+    if (req.url === '/health') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ version: INSTALLED_VERSION, managed: true, pid: process.pid }));
+    } else {
+      res.writeHead(404);
+      res.end();
+    }
+  });
+  const listening = new Promise<void>((resolve) => {
+    setTimeout(() => responder.listen(DEAD_PORT, '127.0.0.1', resolve), 220);
+  });
+  t.after(async () => {
+    await listening;
+    await new Promise<void>((resolve) => responder.close(() => resolve()));
+  });
+
+  const startedAt = Date.now();
+  const h = await waitForHealth({ timeoutMs: 1000, everyMs: 25 });
+  assert.ok(h, 'the late listener is accepted inside the startup deadline');
+  assert.ok(
+    Date.now() - startedAt >= 180,
+    'several early connection-refused probes occurred first',
   );
 });
 

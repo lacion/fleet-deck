@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo } from 'react';
 import SessionCard from './SessionCard.tsx';
 import { COLS, boardCol, basename, sessionsById, callsignOf } from '../util.ts';
 import { COL_HINTS } from '../helpText.ts';
@@ -114,6 +114,12 @@ function BoardLanes({
   // hands the ids as an array; a Set keeps per-card lookup O(1) and the
   // reference stable across frames that don't change it.
   const legacySet = useMemo(() => new Set(legacyUpgrade?.sessions ?? []), [legacyUpgrade]);
+  const repoFilterExists =
+    repoFilter === 'all' || sessions.some((s) => (s.repo_id ?? '(none)') === repoFilter);
+  const effectiveRepoFilter = repoFilterExists ? repoFilter : 'all';
+  useEffect(() => {
+    if (!repoFilterExists) onRepoFilter('all');
+  }, [repoFilterExists, onRepoFilter]);
 
   // M-P4 — the lane derivation is pure over (sessions, repos, conflicts,
   // repoFilter). Memoizing it keeps the derived Maps/arrays stable across an
@@ -142,7 +148,9 @@ function BoardLanes({
     for (const [sid, set] of cPeerSets) cPeers.set(sid, [...set]);
 
     const visible =
-      repoFilter === 'all' ? sessions : sessions.filter((s) => repoKey(s) === repoFilter);
+      effectiveRepoFilter === 'all'
+        ? sessions
+        : sessions.filter((s) => repoKey(s) === effectiveRepoFilter);
     const heads = COLS.map((c) => ({
       ...c,
       count: visible.filter((s) => boardCol(s.col) === c.key).length,
@@ -205,7 +213,7 @@ function BoardLanes({
       conflictFiles: cFiles,
       conflictPeers: cPeers,
     };
-  }, [sessions, repos, conflicts, repoFilter]);
+  }, [sessions, repos, conflicts, effectiveRepoFilter]);
 
   return (
     <>
@@ -215,7 +223,8 @@ function BoardLanes({
           <button
             key={c.id}
             type="button"
-            className={`fd-chip${repoFilter === c.id ? ' on' : ''}`}
+            className={`fd-chip${effectiveRepoFilter === c.id ? ' on' : ''}`}
+            aria-pressed={effectiveRepoFilter === c.id}
             onClick={() => {
               onRepoFilter(c.id);
             }}
@@ -259,7 +268,7 @@ function BoardLanes({
             </div>
             <div className="fd-lanegrid">
               {COLS.map((c) => (
-                <div className="fd-col" key={c.key}>
+                <div className="fd-col" key={c.key} data-label={c.label}>
                   {lane.sessions
                     .filter((s) => boardCol(s.col) === c.key)
                     .map((s) => (

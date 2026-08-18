@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { spawnTermable, clampWinRect } from '../util.ts';
+import { storageGet, storageSet } from '../storage.ts';
 import type { SessionEntry, SessionSpawn } from '../../../contracts/index.ts';
 
 // The identity a live terminal captures at open (see termIdentity below).
@@ -45,7 +46,7 @@ const RECT_KEY = 'fd-termwin';
 function loadRect() {
   let saved: unknown = null;
   try {
-    saved = JSON.parse((localStorage.getItem(RECT_KEY) ?? '') || 'null');
+    saved = JSON.parse((storageGet(RECT_KEY) ?? '') || 'null');
   } catch {
     /* corrupt entry */
   }
@@ -87,31 +88,19 @@ export function useTermWindows(
 
   const setTermRect = useCallback((r: ReturnType<typeof clampWinRect>) => {
     setTermRectState(r);
-    try {
-      localStorage.setItem(RECT_KEY, JSON.stringify(r));
-    } catch {
-      /* quota */
-    }
+    storageSet(RECT_KEY, JSON.stringify(r));
   }, []);
 
   // v2.6 — the GRID is the modal one; the floating term window is not. Only
   // gridOpen feeds the hotkey suppression list now.
   const gridOpen = useRef(false);
-  useEffect(() => {
-    gridOpen.current = !!grid;
-  }, [grid]);
+  gridOpen.current = !!grid;
   const killOpen = useRef(false);
-  useEffect(() => {
-    killOpen.current = !!killAsk;
-  }, [killAsk]);
+  killOpen.current = !!killAsk;
   const armOpen = useRef(false);
-  useEffect(() => {
-    armOpen.current = !!armAsk;
-  }, [armAsk]);
+  armOpen.current = !!armAsk;
   const renameOpen = useRef(false);
-  useEffect(() => {
-    renameOpen.current = !!renameAsk;
-  }, [renameAsk]);
+  renameOpen.current = !!renameAsk;
 
   // Only board-spawned panes exist to be watched: a plain `claude` in your own
   // terminal has no pane the daemon owns.

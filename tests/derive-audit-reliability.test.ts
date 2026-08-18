@@ -260,10 +260,12 @@ function memoryCore(
     tmux = makeAdapter(),
     home = '/daemon-home',
     env = {},
+    boardConnected = false,
   }: {
     tmux?: ReturnType<typeof makeAdapter>;
     home?: string;
     env?: Record<string, string | number>;
+    boardConnected?: boolean;
   } = {},
 ): {
   db: Db;
@@ -287,6 +289,7 @@ function memoryCore(
     home,
     tmuxAdapter: tmux.adapter as unknown as CoreTmuxAdapter,
   });
+  if (boardConnected) core.questions.setBoardConsumerProbe(() => true);
   return { db, core, ...tmux, home };
 }
 
@@ -419,6 +422,22 @@ test('H-R2: boot reconciliation leaves rows UNKNOWN on list failure without crea
       `INSERT INTO spawns (spawn_id, session_id, callsign, tmux_session, tmux_window, requested_at, status)
       VALUES ('sp1', 's1', 'a1', 'fleetdeck-4711', 'fd4711-a1', ?, 'live')`,
     ).run(now);
+  }
+
+  // A fresh fleet has no spawn verdict to preserve. An unavailable tmux is
+  // still handled conservatively, but should not dirty the operator feed with
+  // a warning about zero affected rows.
+  {
+    const tmux = makeAdapter(4711, {
+      listScopedWindows: () => Promise.resolve(null),
+    });
+    const { core } = memoryCore(t, { tmux });
+    await (core.reconcileSpawns() as Promise<void>);
+    assert.equal(
+      core.snapshot().ticker.some((x) => x.msg?.includes('tmux window lookup failed at restart')),
+      false,
+      'an empty fleet does not emit an unactionable tmux restart warning',
+    );
   }
 
   // Failed listing is explicitly UNKNOWN. Reconciliation must not call
@@ -1155,7 +1174,7 @@ test('M-B6: an ExitPlanMode plan-persist failure rolls the question row back and
   t.after(() => {
     rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
-  const { db, core } = memoryCore(t);
+  const { db, core } = memoryCore(t, { boardConnected: true });
 
   // Force the plan insert to throw at runtime by removing its table AFTER the
   // prepared statements were compiled.
@@ -1192,7 +1211,7 @@ test('BUG-112: a plan-intake failure on an EXISTING card leaves the card exactly
   t.after(() => {
     rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
-  const { db, core } = memoryCore(t);
+  const { db, core } = memoryCore(t, { boardConnected: true });
 
   // Bring the card up through the ordinary hook path, then park it in a known
   // pre-plan state.
@@ -1229,7 +1248,10 @@ test('M-B6: on the happy path both the question row and its plan row persist and
   t.after(() => {
     rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
-  const { db, core } = memoryCore(t);
+  const { db, core } = memoryCore(t, {
+    env: { FLEETDECK_HOLD_SCOPE: 'all' },
+    boardConnected: true,
+  });
 
   const planMd = '# Add caching\n\n1. do it\n';
   const ev = { session_id: 's', cwd, tool_name: 'ExitPlanMode', tool_input: { plan: planMd } };
@@ -1248,6 +1270,106 @@ test('M-B6: on the happy path both the question row and its plan row persist and
   assert.ok(card, 'the intake dealt a card');
   assert.equal(card.col, 'needsyou', 'the card moves to needsyou once the intake committed');
   assert.equal(card.events, 1, 'the PermissionRequest event is counted exactly once');
+});
+
+test('interactive hook scope: an ordinary terminal session is observation-only by default', (t) => {
+  const cwd = mkdtempSync(path.join(tmpdir(), 'fd-hook-scope-terminal-'));
+  t.after(() => {
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+  const { db, core } = memoryCore(t, {
+    env: { FLEETDECK_HOLD_SCOPE: 'spawned' },
+    boardConnected: true,
+  });
+
+  core.hookSessionStart({ session_id: 'terminal', cwd, source: 'startup' });
+  const row = core.hookHoldQuestion(
+    {
+      session_id: 'terminal',
+      cwd,
+      tool_name: 'AskUserQuestion',
+      tool_input: { questions: [{ question: 'Continue?' }] },
+    },
+    'AskUserQuestion',
+  );
+
+  assert.equal(row, null, 'the HTTP layer must answer {} immediately instead of parking Claude');
+  assert.equal(
+    db.prepare<CountRow>('SELECT COUNT(*) AS n FROM questions').get()?.n,
+    0,
+    'observation-only hooks do not create a dead board-answer card',
+  );
+  assert.equal(
+    db
+      .prepare<ColEventsNoteRow>('SELECT col, events, note FROM sessions WHERE session_id = ?')
+      .get('terminal')?.col,
+    'needsyou',
+    'telemetry still shows that the terminal session needs the user',
+  );
+});
+
+test('interactive hook scope: a live Fleet Deck-spawned session still relays to the board', (t) => {
+  const cwd = mkdtempSync(path.join(tmpdir(), 'fd-hook-scope-spawned-'));
+  t.after(() => {
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+  const { db, core } = memoryCore(t, {
+    env: { FLEETDECK_HOLD_SCOPE: 'spawned' },
+    boardConnected: true,
+  });
+  core.hookSessionStart({ session_id: 'spawned', cwd, source: 'startup' });
+  db.prepare(
+    `INSERT INTO spawns (spawn_id, session_id, callsign, requested_at, status)
+     VALUES ('scope-spawn', 'spawned', 'heron-1', ?, 'live')`,
+  ).run(Date.now());
+
+  const row = core.hookHoldQuestion(
+    {
+      session_id: 'spawned',
+      cwd,
+      tool_name: 'AskUserQuestion',
+      tool_input: { questions: [{ question: 'Continue?' }] },
+    },
+    'AskUserQuestion',
+  );
+
+  assert.ok(row?.id, 'a live board-owned pane remains eligible for interactive relay');
+  assert.equal(
+    db.prepare<CountRow>("SELECT COUNT(*) AS n FROM questions WHERE status = 'pending'").get()?.n,
+    1,
+  );
+});
+
+test('interactive hook scope: terminal ExitPlanMode captures the plan but never holds Claude', (t) => {
+  const cwd = mkdtempSync(path.join(tmpdir(), 'fd-hook-scope-plan-'));
+  t.after(() => {
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+  const { db, core } = memoryCore(t, {
+    env: { FLEETDECK_HOLD_SCOPE: 'spawned' },
+    boardConnected: true,
+  });
+  core.hookSessionStart({ session_id: 'planner', cwd, source: 'startup' });
+
+  const row = core.hookHoldQuestion(
+    {
+      session_id: 'planner',
+      cwd,
+      tool_name: 'ExitPlanMode',
+      tool_input: { plan: '# Safe plan\n' },
+    },
+    'PermissionRequest',
+  );
+
+  assert.equal(row, null, 'the native ExitPlanMode prompt must render immediately');
+  assert.equal(
+    db.prepare<StatusRow>('SELECT status FROM questions ORDER BY id DESC LIMIT 1').get()?.status,
+    'expired',
+    'the correlation row is retired without creating a dead hold',
+  );
+  const plan = db.prepare<PlanRow>('SELECT * FROM plans ORDER BY plan_id DESC LIMIT 1').get();
+  assert.equal(plan?.plan_md, '# Safe plan\n', 'plan capture remains available in the library');
+  assert.equal(plan?.status, 'proposed');
 });
 
 // ---------------------------------------------------------------------------

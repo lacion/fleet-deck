@@ -1,13 +1,16 @@
 {
-  "_filechanged": "FileChanged is intentionally not registered. Claude Code's watcher has no exclusion contract: a dynamic cwd watch traverses .git and node_modules, while exact matcher paths can themselves be large directories. PostToolUse still records writes made through Claude's tools; broad external-edit telemetry stays disabled until Fleet Deck owns an ignore-capable watcher. tests/filechanged-watch.test.ts guards this contract.",
-  "_lockstep": "The 720s timeouts on AskUserQuestion/PermissionRequest/Elicitation are one invariant with scripts/fleet-hook.mjs WATCHDOG_MS (660s) and the daemon hold window (scripts/fleetd/questions.mjs resolveHoldMs, default 600s, clamp ceiling 650s): hold < watchdog < timeout, or a board answer lands on a dead socket. Change all three together.",
   "hooks": {
     "SessionStart": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "bun \"${CLAUDE_PLUGIN_ROOT}/scripts/fleet-sessionstart.mjs\"",
+            "command": "/bin/sh",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/scripts/hook-launcher.sh",
+              "sessionstart",
+              "${CLAUDE_PLUGIN_ROOT}/scripts/fleet-sessionstart.mjs"
+            ],
             "timeout": 15
           }
         ]
@@ -18,7 +21,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bun \"${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs\" UserPromptSubmit",
+            "command": "/bin/sh",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/scripts/hook-launcher.sh",
+              "decision",
+              "${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs",
+              "UserPromptSubmit"
+            ],
             "timeout": 3
           }
         ]
@@ -30,7 +39,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bun \"${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs\" PostToolUse",
+            "command": "/bin/sh",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/scripts/hook-launcher.sh",
+              "decision",
+              "${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs",
+              "PostToolUse"
+            ],
             "timeout": 3
           }
         ]
@@ -42,7 +57,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bun \"${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs\" PostToolUseFailure",
+            "command": "/bin/sh",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/scripts/hook-launcher.sh",
+              "decision",
+              "${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs",
+              "PostToolUseFailure"
+            ],
             "timeout": 3
           }
         ]
@@ -54,7 +75,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bun \"${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs\" AskUserQuestion",
+            "command": "/bin/sh",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/scripts/hook-launcher.sh",
+              "decision",
+              "${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs",
+              "AskUserQuestion"
+            ],
             "timeout": 720
           }
         ]
@@ -65,7 +92,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bun \"${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs\" PermissionRequest",
+            "command": "/bin/sh",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/scripts/hook-launcher.sh",
+              "decision",
+              "${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs",
+              "PermissionRequest"
+            ],
             "timeout": 720
           }
         ]
@@ -76,7 +109,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bun \"${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs\" Elicitation",
+            "command": "/bin/sh",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/scripts/hook-launcher.sh",
+              "decision",
+              "${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs",
+              "Elicitation"
+            ],
             "timeout": 720
           }
         ]
@@ -87,7 +126,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bun \"${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs\" Notification",
+            "command": "/bin/sh",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/scripts/hook-launcher.sh",
+              "decision",
+              "${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs",
+              "Notification"
+            ],
             "timeout": 3,
             "async": true
           }
@@ -99,12 +144,23 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bun \"${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs\" Stop",
+            "command": "/bin/sh",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/scripts/hook-launcher.sh",
+              "decision",
+              "${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs",
+              "Stop"
+            ],
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "bun \"${CLAUDE_PLUGIN_ROOT}/scripts/fleet-watch.mjs\"",
+            "command": "/bin/sh",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/scripts/hook-launcher.sh",
+              "watch",
+              "${CLAUDE_PLUGIN_ROOT}/scripts/fleet-watch.mjs"
+            ],
             "asyncRewake": true,
             "rewakeMessage": "[FLEETDECK] Fleet board mail for you:",
             "rewakeSummary": "Fleet Deck: board mail delivered",
@@ -118,8 +174,14 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bun \"${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs\" SessionEnd",
-            "timeout": 3,
+            "command": "/bin/sh",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/scripts/hook-launcher.sh",
+              "decision",
+              "${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs",
+              "SessionEnd"
+            ],
+            "timeout": 1,
             "async": true
           }
         ]
@@ -130,7 +192,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bun \"${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs\" CwdChanged",
+            "command": "/bin/sh",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/scripts/hook-launcher.sh",
+              "decision",
+              "${CLAUDE_PLUGIN_ROOT}/scripts/fleet-hook.mjs",
+              "CwdChanged"
+            ],
             "timeout": 3,
             "async": true
           }

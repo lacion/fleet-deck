@@ -226,6 +226,11 @@ test('override shell is live immediately, source shell, snapshot kind shell, and
   assert.equal(spec.kind, 'shell');
   assert.equal(spec.argv.includes('--session-id'), false);
   assert.equal(
+    spec.argv.some((arg) => arg.startsWith('FLEETDECK_BOARD_SESSION=')),
+    false,
+    'shell panes scrub an inherited board-session marker without setting one',
+  );
+  assert.equal(
     spec.argv.at(-1),
     (process.env['SHELL'] ?? '').trim() || (existsSync('/bin/bash') ? 'bash' : 'sh'),
   );

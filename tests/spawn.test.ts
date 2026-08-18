@@ -506,6 +506,7 @@ test('argv construction: prompt/model/permission-mode survive intact through the
     'FLEETDECK_RC_HARVEST_MS',
     'FLEETDECK_ADOPT_ARM_MS',
     'FLEETDECK_ADOPT_DELAY_MS',
+    'FLEETDECK_BOARD_SESSION',
     'FLEETDECK_TEST_DAEMON_SCRIPT',
     'FLEETDECK_VERSION_OVERRIDE',
     // 0.16.0: the daemon's own bearer must never leak into a pane it spawns —
@@ -527,6 +528,7 @@ test('argv construction: prompt/model/permission-mode survive intact through the
     // Every fleet-owned pane pins Claude Code's redundant agent view OFF so a
     // human cannot arrow into it from a spawned pane and start nested agents.
     'CLAUDE_CODE_DISABLE_AGENT_VIEW=1',
+    `FLEETDECK_BOARD_SESSION=${sid}`,
     `FLEETDECK_PORT=${daemon.port}`,
     `FLEETDECK_HOME=${daemon.home}`,
   ];

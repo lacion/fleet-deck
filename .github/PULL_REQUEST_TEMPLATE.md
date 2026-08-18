@@ -4,8 +4,10 @@
 
 ---
 
-- [ ] `npm test` passes locally (serial — don't parallelize it)
-- [ ] Changed `scripts/fleetd/`? Ran `npm run bundle` and committed `scripts/fleetd/fleetd.bundle.mjs`
-- [ ] Changed `board/`? Ran `npm run build:board` and committed `scripts/fleetd/board-dist/`
-- [ ] No new runtime dependencies (`ws` is the only one)
+- [ ] `bun run ci`, `bun run typecheck`, and `bun run test` pass locally (run the full test suites serially)
+- [ ] Changed `src/daemon/`? Ran `bun run bundle` and committed `src/daemon/fleetd.bundle.mjs`
+- [ ] Changed `bin/`? Ran `bun run bundle:bin` and committed `bin/fleetdeck.mjs`
+- [ ] Changed hook sources in `scripts/`? Ran `bun run bundle:hooks` and committed the generated `scripts/fleet-*.mjs`
+- [ ] Changed `board/`? Ran `bun run build:board` and committed `src/daemon/board-dist/`
+- [ ] No new production dependencies (`dependencies` stays empty; Bun provides the runtime APIs)
 - [ ] Docs/README updated if behavior changed

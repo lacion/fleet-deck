@@ -732,7 +732,10 @@ function sessionAdoptableNow(session, hasSpawnRow) {
   const cwd = session.cwd;
   return cwdIsDirectory(cwd) && fs2.existsSync(claudeTranscriptPath(cwd, session.session_id));
 }
-function claudeEnvArgvPrefix(port, home, { keep = [] } = {}) {
+function claudeEnvArgvPrefix(port, home, {
+  keep = [],
+  boardSession = null
+} = {}) {
   const keepSet = new Set(keep);
   const scrub = [
     ...CLAUDE_ENV_MARKERS,
@@ -763,6 +766,12 @@ function claudeEnvArgvPrefix(port, home, { keep = [] } = {}) {
     "FLEETDECK_RC_HARVEST_MS",
     "FLEETDECK_ADOPT_ARM_MS",
     "FLEETDECK_ADOPT_DELAY_MS",
+    // The hook shim uses this launch-owned marker to decide whether an
+    // interactive event may wait for a board answer. Scrub any ambient value,
+    // then set the exact precreated session id below only for a Fleet Deck-owned
+    // Claude pane. A shell pane gets no marker; a nested/manual Claude process
+    // inheriting some other pane's marker cannot impersonate that board session.
+    "FLEETDECK_BOARD_SESSION",
     // Test seams that must NEVER ride a pane's env into the next SessionStart:
     // a leaked FLEETDECK_TEST_DAEMON_SCRIPT would make every future daemon
     // (re)spawn launch an arbitrary script, and a leaked VERSION_OVERRIDE
@@ -795,6 +804,7 @@ function claudeEnvArgvPrefix(port, home, { keep = [] } = {}) {
     // here. Placed BEFORE the FLEETDECK identity pair so PORT/HOME remain the
     // immediate lead-in to the command, the ordering the adapter/tests pin.
     "CLAUDE_CODE_DISABLE_AGENT_VIEW=1",
+    ...boardSession ? [`FLEETDECK_BOARD_SESSION=${boardSession}`] : [],
     `FLEETDECK_PORT=${port}`,
     `FLEETDECK_HOME=${home}`
   ];
@@ -1096,6 +1106,17 @@ function createQuestions(db2, {
   const rearmMeta = /* @__PURE__ */ new Map();
   const rearmChains = /* @__PURE__ */ new Map();
   const completedKeys = /* @__PURE__ */ new Map();
+  let boardConsumerProbe = () => false;
+  function setBoardConsumerProbe(probe2) {
+    boardConsumerProbe = probe2;
+  }
+  function boardConsumerAvailable() {
+    try {
+      return boardConsumerProbe() === true;
+    } catch {
+      return false;
+    }
+  }
   function create(kind, sessionId, payload) {
     const now = Date.now();
     let windowMs = holdMs;
@@ -1151,6 +1172,33 @@ function createQuestions(db2, {
     clearTimeout(h.timer);
     holds.delete(id);
     return h;
+  }
+  function failOpenAllHolds() {
+    const ids = [...holds.keys()];
+    if (ids.length === 0) return 0;
+    const retired = [];
+    for (const id of ids) {
+      const h = releaseHold(id);
+      if (!h) continue;
+      try {
+        h.respond({});
+      } catch {
+      }
+      cancelRearm(id);
+      try {
+        if (q.markExpired.run(id).changes) retired.push(id);
+      } catch (err) {
+        console.error(`fleetd question #${id} board-disconnect persistence error:`, err);
+      }
+    }
+    for (const id of retired) {
+      try {
+        onRetired(q.get.get(id));
+      } catch {
+      }
+    }
+    onChange();
+    return ids.length;
   }
   function noteCompleted(sessionId, key) {
     let byKey = completedKeys.get(sessionId);
@@ -1212,7 +1260,12 @@ function createQuestions(db2, {
       }
     }, rearmGraceMs);
     timer.unref();
-    rearmById.set(row.id, { timer, chainRoot, armedAt: Date.now() });
+    rearmById.set(row.id, {
+      session_id: row.session_id,
+      timer,
+      chainRoot,
+      armedAt: Date.now()
+    });
     return true;
   }
   function fireRearm(sourceId, chainRoot) {
@@ -1229,7 +1282,12 @@ function createQuestions(db2, {
     const fresh = create(row.kind, row.session_id, payload);
     rearmChains.set(chainRoot, (rearmChains.get(chainRoot) ?? 0) + 1);
     rearmMeta.set(fresh.id, { sourceId });
-    rearmById.set(row.id, { timer: null, chainRoot, successor: fresh.id });
+    rearmById.set(row.id, {
+      session_id: row.session_id,
+      timer: null,
+      chainRoot,
+      successor: fresh.id
+    });
     tick(
       `\u{1F501} question #${fresh.id} re-armed (was #${row.id}) \u2014 answering sends it as a message at the next turn boundary`
     );
@@ -1252,7 +1310,7 @@ function createQuestions(db2, {
       }
     }, rearmGraceMs);
     timer.unref();
-    rearmById.set(id, { timer, chainRoot });
+    rearmById.set(id, { session_id: row.session_id, timer, chainRoot });
     return true;
   }
   function cancelRearm(id) {
@@ -1265,6 +1323,7 @@ function createQuestions(db2, {
   }
   function disarmRearmsForSession(sessionId) {
     for (const [id, m] of [...rearmById]) {
+      if (m.session_id !== sessionId) continue;
       if (m.timer) clearTimeout(m.timer);
       rearmById.delete(id);
       if (m.successor != null) rearmMeta.delete(m.successor);
@@ -1285,6 +1344,13 @@ function createQuestions(db2, {
       onChange();
       onRetired(q.get.get(id));
     }
+  }
+  function expireUnheld(id) {
+    if (holds.has(id)) return false;
+    if (!q.markExpired.run(id).changes) return false;
+    onRetired(q.get.get(id));
+    onChange();
+    return true;
   }
   const ANSWER_TOO_LONG_ERR = "answer too long \u2014 the mail pipeline would truncate it. Shorten it (or dismiss and answer in the terminal); the question is still pending.";
   function answerMailGuard(frame) {
@@ -1400,11 +1466,18 @@ function createQuestions(db2, {
             }
           };
         }
+        const updatedInput = choiceUpdatedInput(row, body);
+        if (!updatedInput) {
+          return {
+            status: 400,
+            body: { ok: false, err: "choice payload has no usable questions to answer" }
+          };
+        }
         hookResponse = {
           hookSpecificOutput: {
             hookEventName: "PreToolUse",
-            permissionDecision: "deny",
-            permissionDecisionReason: `User answered via Fleet Deck: ${serialized}`
+            permissionDecision: "allow",
+            updatedInput
           }
         };
         detail = serialized.length > 60 ? serialized.slice(0, 57) + "\u2026" : serialized;
@@ -1419,7 +1492,13 @@ function createQuestions(db2, {
             }
           };
         }
-        hookResponse = action === "accept" ? { action: "accept", content: body?.content ?? {} } : { action: "decline" };
+        hookResponse = {
+          hookSpecificOutput: {
+            hookEventName: "Elicitation",
+            action,
+            ...action === "accept" ? { content: body?.content ?? {} } : {}
+          }
+        };
         detail = action;
       }
       const h = releaseHold(row.id);
@@ -1624,7 +1703,11 @@ function createQuestions(db2, {
   return {
     create,
     attachHold,
+    setBoardConsumerProbe,
+    boardConsumerAvailable,
+    failOpenAllHolds,
     socketClosed,
+    expireUnheld,
     answer,
     dismiss,
     purgeResolved,
@@ -1637,6 +1720,30 @@ function createQuestions(db2, {
   };
 }
 var ANSWER_MAX = 2e3;
+function choiceUpdatedInput(row, body) {
+  const input = safeParse(row.payload_json)?.tool_input;
+  const questions = input?.questions;
+  if (!input || !Array.isArray(questions) || questions.length === 0) return null;
+  let entries;
+  if (typeof body?.text === "string" && body.text.trim()) {
+    const qText = questions.length === 1 ? questions[0]?.question : null;
+    if (typeof qText !== "string" || !qText) return null;
+    entries = [[qText, body.text.trim()]];
+  } else if (body?.answers && typeof body.answers === "object" && !Array.isArray(body.answers)) {
+    entries = Object.entries(body.answers);
+    if (!validChoiceAnswers(questions, entries)) return null;
+  } else {
+    return null;
+  }
+  const answers = Object.fromEntries(
+    entries.map(([question, answer]) => [
+      question,
+      Array.isArray(answer) ? answer.map((label2) => asText(label2).trim()).join(", ") : asText(answer).trim()
+    ])
+  );
+  if (Object.values(answers).some((answer) => !answer)) return null;
+  return { ...input, answers };
+}
 function serializeChoiceAnswer(row, body) {
   if (typeof body?.text === "string" && body.text.trim()) {
     const t2 = body.text.trim();
@@ -1663,6 +1770,9 @@ function validChoiceLabel(question, label2) {
   return (Array.isArray(question.options) ? question.options : []).some((o) => o?.label === label2);
 }
 function validChoiceAnswers(questions, entries) {
+  if (questions.length === 0 || questions.some((question) => !question || typeof question.question !== "string") || entries.length !== questions.length) {
+    return false;
+  }
   return entries.every(([qText, v]) => {
     const question = questions.find((x) => x?.question === qText);
     if (!question) return false;
@@ -2349,28 +2459,31 @@ async function readPersistedGeneration(home, port) {
     await handle.close();
   }
 }
-async function persistGeneration(home, port, record) {
-  const file = generationFile(home, port);
-  const temp = path4.join(home, `.${path4.basename(file)}.${process.pid}.${randomUUID()}.tmp`);
+async function publishSecureJson(file, value, errorAction, publish) {
+  const temp = path4.join(
+    path4.dirname(file),
+    `.${path4.basename(file)}.${process.pid}.${randomUUID()}.tmp`
+  );
   let handle = null;
   try {
     handle = await open(temp, "wx", 384);
-    await handle.writeFile(
-      `${JSON.stringify({ generation: record.generation, serverPid: record.serverPid })}
-`,
-      "utf8"
-    );
+    await handle.writeFile(`${JSON.stringify(value)}
+`, "utf8");
     await handle.chmod(384);
     await handle.sync();
     await handle.close();
     handle = null;
-    try {
-      await link(temp, file);
-    } catch (err) {
-      if (errCode(err) !== "EEXIST") throw err;
+    if (publish === "replace") {
+      await rename(temp, file);
+    } else {
+      try {
+        await link(temp, file);
+      } catch (err) {
+        if (errCode(err) !== "EEXIST") throw err;
+      }
     }
   } catch (err) {
-    throw new Error(`cannot persist tmux generation (${errText(err)})`, { cause: err });
+    throw new Error(`cannot ${errorAction} (${errText(err)})`, { cause: err });
   } finally {
     try {
       await handle?.close();
@@ -2383,38 +2496,24 @@ async function persistGeneration(home, port, record) {
       }
     }
   }
+}
+async function persistGeneration(home, port, record) {
+  await publishSecureJson(
+    generationFile(home, port),
+    { generation: record.generation, serverPid: record.serverPid },
+    "persist tmux generation",
+    "if-absent"
+  );
   return readPersistedGeneration(home, port);
 }
 async function replacePersistedGeneration(home, port, record) {
-  const file = generationFile(home, port);
-  const temp = path4.join(home, `.${path4.basename(file)}.${process.pid}.${randomUUID()}.tmp`);
-  let handle = null;
-  try {
-    handle = await open(temp, "wx", 384);
-    await handle.writeFile(
-      `${JSON.stringify({ generation: record.generation, serverPid: record.serverPid })}
-`,
-      "utf8"
-    );
-    await handle.chmod(384);
-    await handle.sync();
-    await handle.close();
-    handle = null;
-    await rename(temp, file);
-  } catch (err) {
-    throw new Error(`cannot replace persisted tmux generation (${errText(err)})`, { cause: err });
-  } finally {
-    try {
-      await handle?.close();
-    } catch {
-    }
-    try {
-      await unlink(temp);
-    } catch (err) {
-      if (errCode(err) !== "ENOENT") {
-      }
-    }
-  }
+  await publishSecureJson(
+    generationFile(home, port),
+    { generation: record.generation, serverPid: record.serverPid },
+    "replace persisted tmux generation",
+    "replace"
+    // atomic old-record -> strict-record migration
+  );
   return readPersistedGeneration(home, port);
 }
 var SERVER_ABSENT_RE = /(?:^|\n)(?:no server running on |error connecting to .*\(No such file or directory\))/i;
@@ -2453,38 +2552,15 @@ function pidState(pid) {
 }
 var sameRecord = (left, right) => left !== null && right !== null && left.generation === right.generation && left.serverPid === right.serverPid;
 async function recordRetiredGeneration(home, port, expected) {
-  const file = retiredGenerationFile(home, port);
-  const temp = path4.join(home, `.${path4.basename(file)}.${process.pid}.${randomUUID()}.tmp`);
-  let handle = null;
-  try {
-    handle = await open(temp, "wx", 384);
-    await handle.writeFile(
-      `${JSON.stringify({
-        retiredGeneration: expected.generation,
-        retiredServerPid: expected.serverPid
-      })}
-`,
-      "utf8"
-    );
-    await handle.chmod(384);
-    await handle.sync();
-    await handle.close();
-    handle = null;
-    await rename(temp, file);
-  } catch (err) {
-    throw new Error(`cannot record retired tmux generation (${errText(err)})`, { cause: err });
-  } finally {
-    try {
-      await handle?.close();
-    } catch {
-    }
-    try {
-      await unlink(temp);
-    } catch (err) {
-      if (errCode(err) !== "ENOENT") {
-      }
-    }
-  }
+  await publishSecureJson(
+    retiredGenerationFile(home, port),
+    {
+      retiredGeneration: expected.generation,
+      retiredServerPid: expected.serverPid
+    },
+    "record retired tmux generation",
+    "replace"
+  );
 }
 async function hasRetiredGeneration(home, port) {
   let handle;
@@ -3941,6 +4017,19 @@ function createWorktrees(ctx) {
     );
     return tip.ok ? tip.out.trim() : null;
   }
+  async function pruneWorktreeMetadata(repo) {
+    const pruned = await execFileP("git", ["-C", repo, "worktree", "prune"], {
+      timeout: 3e4
+    });
+    if (pruned.ok) return null;
+    return {
+      status: 409,
+      body: {
+        ok: false,
+        reason: `git worktree prune failed: ${scrubUrlCredentials(pruned.err)}`.slice(0, 300)
+      }
+    };
+  }
   async function removeWorktree(body = {}) {
     if (typeof body?.path !== "string") {
       return { status: 400, body: { ok: false, reason: "not a fleet worktree" } };
@@ -4042,36 +4131,12 @@ function createWorktrees(ctx) {
                 body: { ok: false, reason: `could not remove worktree: ${detail}` }
               };
             }
-            const pruned = await execFileP("git", ["-C", repo, "worktree", "prune"], {
-              timeout: 3e4
-            });
-            if (!pruned.ok)
-              return {
-                status: 409,
-                body: {
-                  ok: false,
-                  reason: `git worktree prune failed: ${scrubUrlCredentials(pruned.err)}`.slice(
-                    0,
-                    300
-                  )
-                }
-              };
+            const pruneError = await pruneWorktreeMetadata(repo);
+            if (pruneError) return pruneError;
           }
         } else {
-          const pruned = await execFileP("git", ["-C", repo, "worktree", "prune"], {
-            timeout: 3e4
-          });
-          if (!pruned.ok)
-            return {
-              status: 409,
-              body: {
-                ok: false,
-                reason: `git worktree prune failed: ${scrubUrlCredentials(pruned.err)}`.slice(
-                  0,
-                  300
-                )
-              }
-            };
+          const pruneError = await pruneWorktreeMetadata(repo);
+          if (pruneError) return pruneError;
         }
         let branch_deleted = false;
         const branch = state.branch ?? q.getSession.get(row.session_id)?.branch ?? null;
@@ -5421,6 +5486,18 @@ var WALK_ENTRY_MAX = 2e4;
 var WALK_FILE_MAX = 2e3;
 var WALK_FILE_BYTES = 1024 * 1024;
 var PER_FILE_HITS = 5;
+var DEFAULT_SEARCH_PRUNED_DIRS = /* @__PURE__ */ new Set([
+  ".git",
+  ".next",
+  ".turbo",
+  "build",
+  "coverage",
+  "dist",
+  "node_modules"
+]);
+function defaultSearchPrunesDir(name) {
+  return DEFAULT_SEARCH_PRUNED_DIRS.has(name.toLocaleLowerCase());
+}
 var searchesInFlight = 0;
 var PathError = class extends Error {
   status;
@@ -5791,6 +5868,7 @@ async function walkSearch(root, q, mode, deadline) {
       }
       if (st.isSymbolicLink()) continue;
       if (st.isDirectory()) {
+        if (defaultSearchPrunesDir(name)) continue;
         if (current.depth < WALK_DEPTH_MAX) stack.push({ dir: abs, rel, depth: current.depth + 1 });
         else truncated = true;
         continue;
@@ -6679,6 +6757,12 @@ function createCommands(ctx) {
     if (!only) return { error: `no live session matching "${target}"` };
     return { sid: only.session_id };
   }
+  function resolveRenameTarget(command2, target) {
+    if (target === "all" || target.startsWith("repo:")) {
+      return { error: `${command2} targets one session \u2014 not all/repo:*` };
+    }
+    return resolveTicketTarget(target);
+  }
   function command(text) {
     const parsed = parseCommand(text);
     const logCommand = (extra) => q.insertCommand.run(
@@ -6686,6 +6770,11 @@ function createCommands(ctx) {
       asText(text),
       JSON.stringify(extra ? { ...parsed, ...extra } : parsed)
     );
+    const rejectCommand = (reason) => {
+      logCommand();
+      onMutate();
+      return { ok: false, reason };
+    };
     let delivered = 0;
     if (parsed.cmd === "broadcast" || parsed.cmd === "assign_auto" || parsed.cmd === "assign") {
       const frame = parsed.cmd === "broadcast" ? "" : "[FLEETDECK ASSIGNMENT] ";
@@ -6732,34 +6821,18 @@ function createCommands(ctx) {
       delivered = targets.length;
       tick(`\u{1F4CC} orchestrator assign \u2192 ${parsed.target}${delivered ? "" : " (no such session)"}`);
     } else if (parsed.cmd === "ticket") {
-      if ("error" in parsed) {
-        logCommand();
-        onMutate();
-        return { ok: false, reason: parsed.error };
-      }
-      if (parsed.target === "all" || parsed.target.startsWith("repo:")) {
-        logCommand();
-        onMutate();
-        return { ok: false, reason: "ticket targets one session \u2014 not all/repo:*" };
-      }
-      const resolved = resolveTicketTarget(parsed.target);
-      if ("error" in resolved) {
-        logCommand();
-        onMutate();
-        return { ok: false, reason: resolved.error };
-      }
+      if ("error" in parsed) return rejectCommand(parsed.error);
+      const resolved = resolveRenameTarget(parsed.cmd, parsed.target);
+      if ("error" in resolved) return rejectCommand(resolved.error);
       let result;
       if (/^clear$/i.test(parsed.ticket)) {
         result = clearTicket(resolved.sid);
       } else {
         const key = normalizeTicket(parsed.ticket);
         if (!key) {
-          logCommand();
-          onMutate();
-          return {
-            ok: false,
-            reason: `invalid ticket key "${parsed.ticket}" \u2014 expected e.g. PROJ-123 or clear`
-          };
+          return rejectCommand(
+            `invalid ticket key "${parsed.ticket}" \u2014 expected e.g. PROJ-123 or clear`
+          );
         }
         result = applyTicket(resolved.sid, key, "manual");
       }
@@ -6767,29 +6840,14 @@ function createCommands(ctx) {
       onMutate();
       return { session_id: resolved.sid, ...result };
     } else if (parsed.cmd === "name") {
-      if ("error" in parsed) {
-        logCommand();
-        onMutate();
-        return { ok: false, reason: parsed.error };
-      }
-      if (parsed.target === "all" || parsed.target.startsWith("repo:")) {
-        logCommand();
-        onMutate();
-        return { ok: false, reason: "name targets one session \u2014 not all/repo:*" };
-      }
-      const resolved = resolveTicketTarget(parsed.target);
-      if ("error" in resolved) {
-        logCommand();
-        onMutate();
-        return { ok: false, reason: resolved.error };
-      }
+      if ("error" in parsed) return rejectCommand(parsed.error);
+      const resolved = resolveRenameTarget(parsed.cmd, parsed.target);
+      if ("error" in resolved) return rejectCommand(resolved.error);
       const clearing = /^clear$/i.test(parsed.suffix);
       if (!clearing) {
         const bad = validateNameSuffix(parsed.suffix);
         if (bad) {
-          logCommand();
-          onMutate();
-          return { ok: false, reason: bad };
+          return rejectCommand(bad);
         }
       }
       const result = applyCustomName(resolved.sid, clearing ? null : parsed.suffix);
@@ -6894,6 +6952,18 @@ ${p.plan_md ?? ""}`;
 import fs11 from "node:fs";
 import path12 from "node:path";
 import { randomUUID as randomUUID2, randomBytes } from "node:crypto";
+function runtimeOverrideRefusal(body) {
+  if (body.remote_control != null && typeof body.remote_control !== "boolean") {
+    return "remote_control must be a boolean";
+  }
+  if (body.gateway != null && typeof body.gateway !== "boolean") {
+    return "gateway must be a boolean";
+  }
+  if (body.arm_token != null && typeof body.arm_token !== "string") {
+    return "arm_token must be a string";
+  }
+  return null;
+}
 var SETUP_WRAPPER = [
   "cmd=$FLEETDECK_SETUP_CMD; unset FLEETDECK_SETUP_CMD",
   `printf '\u25B6 fleetdeck setup: %s\\n' "$cmd"`,
@@ -7278,7 +7348,10 @@ function createSpawns(ctx) {
     if (body.prompt) claudeArgv.push("--", body.prompt);
     const shellBin = (process.env["SHELL"] ?? "").trim() || (fs11.existsSync("/bin/bash") ? "bash" : "sh");
     const argv = kind === "shell" ? [...claudeEnvArgvPrefix(port, home), shellBin] : setupCmd ? [
-      ...claudeEnvArgvPrefix(port, home, { keep: Object.keys(launchEnv) }),
+      ...claudeEnvArgvPrefix(port, home, {
+        keep: Object.keys(launchEnv),
+        boardSession: session_id
+      }),
       "sh",
       "-c",
       SETUP_WRAPPER,
@@ -7286,7 +7359,8 @@ function createSpawns(ctx) {
       ...claudeArgv
     ] : [
       ...claudeEnvArgvPrefix(port, home, {
-        keep: gatewayEnv ? Object.keys(gatewayEnv) : []
+        keep: gatewayEnv ? Object.keys(gatewayEnv) : [],
+        boardSession: session_id
       }),
       ...claudeArgv
     ];
@@ -7434,14 +7508,9 @@ function createSpawns(ctx) {
         body: { ok: false, reason: "dangerously_skip_permissions must be a boolean" }
       };
     }
-    if (body.remote_control != null && typeof body.remote_control !== "boolean") {
-      return { status: 400, body: { ok: false, reason: "remote_control must be a boolean" } };
-    }
-    if (body.gateway != null && typeof body.gateway !== "boolean") {
-      return { status: 400, body: { ok: false, reason: "gateway must be a boolean" } };
-    }
-    if (body.arm_token != null && typeof body.arm_token !== "string") {
-      return { status: 400, body: { ok: false, reason: "arm_token must be a string" } };
+    const runtimeOverrideError = runtimeOverrideRefusal(body);
+    if (runtimeOverrideError) {
+      return { status: 400, body: { ok: false, reason: runtimeOverrideError } };
     }
     if (body.setup_cmd != null) {
       if (typeof body.setup_cmd !== "string") {
@@ -7558,6 +7627,12 @@ function createSpawns(ctx) {
       );
       onMutate();
       planClaim = null;
+    };
+    const completePlanClaim = (spawn_id2) => {
+      if (!planClaim) return;
+      q.setPlanExecuted.run(`spawn:${spawn_id2}`, planClaim.plan_id);
+      planClaim = null;
+      onMutate();
     };
     const wrapSpawnFailure = (fn) => async (...a) => {
       try {
@@ -7764,11 +7839,7 @@ function createSpawns(ctx) {
               created: materialized.created
             });
             if (out2.status >= 400) releasePlanClaim();
-            else if (planClaim) {
-              q.setPlanExecuted.run(`spawn:${spawn_id2}`, planClaim.plan_id);
-              planClaim = null;
-              onMutate();
-            }
+            else completePlanClaim(spawn_id2);
             return out2;
           } catch (err) {
             const reason = branchMode === "in-place" ? `${errMessage(err)} \u2014 ${path12.basename(target.root)} was left switched to ${body.branch}` : errMessage(err);
@@ -7825,11 +7896,7 @@ function createSpawns(ctx) {
             created,
             gatewayEnv: gateway.env
           });
-          if (planClaim) {
-            q.setPlanExecuted.run(`spawn:${spawn_id2}`, planClaim.plan_id);
-            planClaim = null;
-            onMutate();
-          }
+          completePlanClaim(spawn_id2);
         } catch (err) {
           const reason = branchMode === "in-place" && created.clone ? `${errMessage(err)} \u2014 ${path12.basename(target.dest)} was left switched to ${body.branch}` : errMessage(err);
           await spawnCompensate({
@@ -7975,11 +8042,7 @@ function createSpawns(ctx) {
       gatewayEnv: gateway.env
     });
     if (out.status >= 400) releasePlanClaim();
-    else if (planClaim) {
-      q.setPlanExecuted.run(`spawn:${spawn_id}`, planClaim.plan_id);
-      planClaim = null;
-      onMutate();
-    }
+    else completePlanClaim(spawn_id);
     return out;
   }
   async function revive(spawn_id, body = {}) {
@@ -7995,14 +8058,9 @@ function createSpawns(ctx) {
       return { status: 409, body: { ok: false, reason: `spawn is ${row.status}, not revivable` } };
     }
     if (row.tmux_window == null) throw new Error("revivable spawn is missing its tmux window");
-    if (body.remote_control != null && typeof body.remote_control !== "boolean") {
-      return { status: 400, body: { ok: false, reason: "remote_control must be a boolean" } };
-    }
-    if (body.gateway != null && typeof body.gateway !== "boolean") {
-      return { status: 400, body: { ok: false, reason: "gateway must be a boolean" } };
-    }
-    if (body.arm_token != null && typeof body.arm_token !== "string") {
-      return { status: 400, body: { ok: false, reason: "arm_token must be a string" } };
+    const runtimeOverrideError = runtimeOverrideRefusal(body);
+    if (runtimeOverrideError) {
+      return { status: 400, body: { ok: false, reason: runtimeOverrideError } };
     }
     if (row.skip_permissions) {
       const reviveArmRefusal = unsupervisedGate(true, body);
@@ -8169,7 +8227,10 @@ function createSpawns(ctx) {
     }
     const new_spawn_id = randomUUID2();
     const argv = [
-      ...claudeEnvArgvPrefix(port, home, { keep: gatewayEnv ? Object.keys(gatewayEnv) : [] }),
+      ...claudeEnvArgvPrefix(port, home, {
+        keep: gatewayEnv ? Object.keys(gatewayEnv) : [],
+        boardSession: session_id
+      }),
       "claude",
       "--resume",
       session_id
@@ -8762,9 +8823,11 @@ ${detail}` : note);
     const wins = await tmuxAdapter.listScopedWindows(port);
     if (wins === null) {
       const count = active.length + staleProvisioning.length;
-      tick(
-        `\u26A0 tmux window lookup failed at restart \u2014 leaving ${count} spawn row(s) as-is (unknown, not gone)`
-      );
+      if (count > 0) {
+        tick(
+          `\u26A0 tmux window lookup failed at restart \u2014 leaving ${count} spawn row(s) as-is (unknown, not gone)`
+        );
+      }
       healInterruptedRevives();
       onMutate();
       return;
@@ -8957,6 +9020,9 @@ function createEvents(ctx) {
     // none of those proves the human decided anything in the terminal.
     settleTerminalPlans
   } = ctx;
+  const holdScopeRaw = (process.env["FLEETDECK_HOLD_SCOPE"] ?? "spawned").trim().toLowerCase();
+  const holdScope = holdScopeRaw === "all" || holdScopeRaw === "off" ? holdScopeRaw : "spawned";
+  const shouldRelayQuestion = (sid) => questions.boardConsumerAvailable() && (holdScope === "all" || holdScope === "spawned" && q.activeSpawnBySession.get(sid) != null);
   function applyEvent(ev) {
     const sid = typeof ev.session_id === "string" && ev.session_id ? ev.session_id : null;
     if (!sid) return { card: null, conflict: null };
@@ -9300,8 +9366,10 @@ function createEvents(ctx) {
     const kind = eventName === "Elicitation" ? "elicitation" : eventName === "AskUserQuestion" ? "choice" : "permission";
     const sid = ev.session_id ?? "";
     const isPlan = eventName === "PermissionRequest" && ev.tool_name === "ExitPlanMode";
+    const relay = shouldRelayQuestion(sid);
     if (!isPlan) {
       applyEvent({ ...ev, hook_event_name: eventName });
+      if (!relay) return null;
       const row2 = questions.create(kind, sid, ev);
       onMutate();
       return row2;
@@ -9345,6 +9413,10 @@ function createEvents(ctx) {
     }
     applyEvent({ ...ev, hook_event_name: eventName });
     tick(`\u{1F4CB} ${callsign} proposed a plan \u2014 captured to the library (#${planRowId})`);
+    if (!relay) {
+      questions.expireUnheld(row.id);
+      return null;
+    }
     onMutate();
     return row;
   }
@@ -11734,6 +11806,14 @@ function createHttp(core2, {
     });
     return res.end(body);
   }
+  function settleFilesystemOperation(res, scope, operation) {
+    operation.then(({ status, body }) => {
+      json(res, status, body);
+    }).catch((err) => {
+      console.error(`fleetd ${scope} filesystem error:`, err);
+      json(res, 500, { ok: false, reason: "internal" });
+    });
+  }
   function tokenMatches(candidate) {
     if (typeof token !== "string" || typeof candidate !== "string") return false;
     const expected = Buffer.from(token);
@@ -11762,7 +11842,6 @@ function createHttp(core2, {
     if (method !== "POST") return false;
     return pathname === "/mail" || pathname === "/api/spawn/arm-unsupervised";
   }
-  const legacyWhisperedSessions = /* @__PURE__ */ new Set();
   const legacySessions = /* @__PURE__ */ new Set();
   const upgradedSessions = /* @__PURE__ */ new Set();
   function noteLegacySession(sid) {
@@ -11782,20 +11861,11 @@ function createHttp(core2, {
   function legacyBanner() {
     return { sessions: [...legacySessions], upgraded: upgradedSessions.size };
   }
-  const LEGACY_WHISPER = "[FLEETDECK] This session is running pre-0.16.0 hooks and is no longer reaching the fleet daemon (hook calls now require a token). Tell the human: please RESTART this Claude session \u2014 after the restart it reconnects to the board automatically.";
-  const LEGACY_BLOCK_REASON = "[FLEETDECK] This session is running pre-0.16.0 hooks and cannot reach the fleet daemon. Stop and tell the human NOW: restart this Claude session (exit and relaunch in the same directory). Do not continue the current task until the human acknowledges \u2014 the session is running without fleet oversight.";
-  function legacyHookResponse(res, ev, name) {
+  function silentHookRefusal(res, ev) {
     const sidRaw = asRecord(ev)["session_id"];
     const sid = typeof sidRaw === "string" ? sidRaw : null;
     noteLegacySession(sid);
-    if (name === "Stop" && sid && !legacyWhisperedSessions.has(sid)) {
-      legacyWhisperedSessions.add(sid);
-      json(res, 200, { decision: "block", reason: LEGACY_BLOCK_REASON });
-      return;
-    }
-    json(res, 200, {
-      hookSpecificOutput: { hookEventName: name, additionalContext: LEGACY_WHISPER }
-    });
+    json(res, 200, {});
   }
   const daemonPort = String(port);
   const lanHosts = /* @__PURE__ */ new Set();
@@ -12075,12 +12145,7 @@ function createHttp(core2, {
           const operation = action === "list" ? core2.fsList(sid, url.searchParams.get("path") ?? "") : action === "read" ? core2.fsRead(sid, url.searchParams.get("path") ?? "") : core2.fsSearch(sid, url.searchParams.get("q") ?? "", {
             mode: url.searchParams.get("mode") ?? "content"
           });
-          operation.then(({ status, body }) => {
-            json(res, status, body);
-          }).catch((err) => {
-            console.error("fleetd session filesystem error:", err);
-            json(res, 500, { ok: false, reason: "internal" });
-          });
+          settleFilesystemOperation(res, "session", operation);
           return;
         }
         const homeFsMatch = /^\/api\/fs\/(list|read|search)$/.exec(url.pathname);
@@ -12089,12 +12154,7 @@ function createHttp(core2, {
           const operation = action === "list" ? core2.fsListHome(url.searchParams.get("path") ?? "") : action === "read" ? core2.fsReadHome(url.searchParams.get("path") ?? "") : core2.fsSearchHome(url.searchParams.get("q") ?? "", {
             mode: url.searchParams.get("mode") ?? "content"
           });
-          operation.then(({ status, body }) => {
-            json(res, status, body);
-          }).catch((err) => {
-            console.error("fleetd home filesystem error:", err);
-            json(res, 500, { ok: false, reason: "internal" });
-          });
+          settleFilesystemOperation(res, "home", operation);
           return;
         }
         if (url.pathname === "/mail") {
@@ -12173,7 +12233,7 @@ function createHttp(core2, {
             if (hook) {
               const name = hook[1] ?? "";
               if (!hookAuthed) {
-                legacyHookResponse(res, ev, name);
+                silentHookRefusal(res, ev);
                 return;
               }
               noteUpgradedSession(asRecord(ev)["session_id"]);
@@ -12451,6 +12511,7 @@ function createHttp(core2, {
   }
   const snapshotClients = /* @__PURE__ */ new Set();
   const termClients = /* @__PURE__ */ new Set();
+  core2.questions.setBoardConsumerProbe(() => snapshotClients.size > 0);
   const termbridge = createTermBridge({
     port,
     resolveSpawn: (spawnId) => core2.terminalSpawn(spawnId),
@@ -12535,7 +12596,14 @@ function createHttp(core2, {
     },
     close(ws) {
       if (ws.data.kind === "snapshot") {
-        snapshotClients.delete(ws);
+        const removed = snapshotClients.delete(ws);
+        if (removed && snapshotClients.size === 0) {
+          try {
+            core2.questions.failOpenAllHolds();
+          } catch (err) {
+            console.error("fleetd board disconnect hold-release error:", err);
+          }
+        }
         return;
       }
       termClients.delete(ws);
@@ -13858,7 +13926,10 @@ function livePidLooksLikeFleetd(pid) {
     const fleetdScript = argv.some(
       (arg) => /(?:^|[/\\])fleetd(?:\.bundle)?\.(?:mjs|ts)$/.test(arg)
     );
-    return runtimeLike && fleetdScript;
+    const fleetdeckServe = argv.some(
+      (arg, index) => /(?:^|[/\\])fleetdeck\.(?:mjs|ts)$/.test(arg) && argv[index + 1] === "serve"
+    );
+    return runtimeLike && (fleetdScript || fleetdeckServe);
   } catch (err) {
     return errCode(err) !== "ENOENT";
   }
@@ -13923,8 +13994,11 @@ function shouldTakeOver(ownVersion, daemonVersion) {
   if (isZeroVersion(own.core) || isZeroVersion(other.core)) return false;
   return compareSemver(own, other) > 0;
 }
-function verifyDaemonPid(pid, home) {
+function verifyDaemonPid(pid, home, expectedPort) {
   if (!Number.isInteger(pid) || pid <= 0) return false;
+  if (expectedPort !== void 0 && (!Number.isInteger(expectedPort) || expectedPort < 1 || expectedPort > 65535)) {
+    return false;
+  }
   let record;
   try {
     record = pidRecord(fs16.readFileSync(path17.join(home, "fleetd.pid"), "utf8"));
@@ -13932,6 +14006,7 @@ function verifyDaemonPid(pid, home) {
     return false;
   }
   if (record?.pid !== pid) return false;
+  if (expectedPort !== void 0 && record.port !== expectedPort) return false;
   return livePidLooksLikeFleetd(pid);
 }
 var defaultSleep = sleep;
@@ -14048,7 +14123,7 @@ async function supersedeIfNewer(record) {
   if (incumbent.managed) return false;
   if (!shouldTakeOver(version, incumbent.version)) return false;
   if (incumbent.pid !== record.pid) return false;
-  if (!verifyDaemonPid(record.pid, HOME)) return false;
+  if (!verifyDaemonPid(record.pid, HOME, record.port)) return false;
   if (!await terminateDaemon(record.pid)) return false;
   console.log(
     `fleetd v${version} superseded v${String(incumbent.version)}: a strictly newer build claimed FLEETDECK_HOME`

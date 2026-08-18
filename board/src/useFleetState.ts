@@ -2,7 +2,7 @@
 //
 // Connection lifecycle:
 //   - initial GET /state paints the board before the socket is even open;
-//   - WS /ws pushes {type:'snapshot', ...} on every mutation + 5 s heartbeat;
+//   - WS /ws pushes {type:'snapshot', ...} on connect and on mutations;
 //   - on drop: status → 'reconnecting', retry with exponential backoff
 //     (500 ms → 8 s cap, ±20% jitter); after 3 straight failures the pill
 //     reads OFFLINE (still retrying underneath, forever);
@@ -26,16 +26,16 @@
 import { useEffect, useRef, useState } from 'react';
 import { fetchState } from './api.ts';
 import { useAuth, wsUrl } from './token.ts';
-import type {
-  Snapshot,
-  SpawnCapability,
-  Lan,
-  LegacyUpgrade,
-  SessionEntry,
-} from '../../contracts/index.ts';
+import type { Snapshot, SpawnCapability, Lan, LegacyUpgrade } from '../../contracts/index.ts';
+import {
+  startFleetConnection,
+  type FleetConnectionOwner,
+  type FleetConnectionStatus,
+  type FleetSocket,
+} from './fleetConnection.ts';
 
 // The connection pill's three states.
-type ConnStatus = 'live' | 'reconnecting' | 'offline';
+type ConnStatus = FleetConnectionStatus;
 
 // Fields the board ALWAYS has a safe default for (seeded by EMPTY), so consumers
 // map them without a load guard.
@@ -79,17 +79,6 @@ export type BoardSnapshot = Pick<Snapshot, SnapshotDefaults> &
     legacy_upgrade: LegacyUpgrade | null;
   };
 
-// The mutable connection state carried across renders in a ref. `timer`/`poll`
-// are timer handles (browser `setTimeout`/`setInterval` return `number`).
-interface ConnRef {
-  ws: WebSocket | null;
-  timer: ReturnType<typeof setTimeout> | null;
-  poll: ReturnType<typeof setInterval> | null;
-  failures: number;
-  closed: boolean;
-  socketOpen: boolean;
-}
-
 const EMPTY: BoardSnapshot = {
   up_ms: 0,
   sessions: [],
@@ -112,144 +101,51 @@ const EMPTY: BoardSnapshot = {
 };
 
 export function useFleetState() {
-  const [snap, setSnap] = useState<BoardSnapshot>(EMPTY);
-  const [status, setStatus] = useState<ConnStatus>('reconnecting'); // live | reconnecting | offline
-  const ref = useRef<ConnRef>({
-    ws: null,
-    timer: null,
-    poll: null,
-    failures: 0,
-    closed: false,
-    socketOpen: false,
+  // Keep the current and previous session arrays in one atomic state update.
+  // A separate setState from inside setSnap's updater can be replayed by React
+  // and make the spawn-failure watcher compare the wrong two frames.
+  const [{ snap, prevSessions }, setFleet] = useState({
+    snap: EMPTY,
+    prevSessions: EMPTY.sessions,
   });
+  const [status, setStatus] = useState<ConnStatus>('reconnecting'); // live | reconnecting | offline
+  // Each effect invocation installs a NEW immutable generation object here.
+  // Cleanup never mutates state later reused by a token change/StrictMode replay.
+  const owner = useRef<FleetConnectionOwner['current']>(null);
   const { token, unauthorized } = useAuth();
-  // The previous frame's sessions, kept one frame behind `snap` (2.3): the
-  // spawn-failure banner needs "a card TRANSITIONED to offline", and a card
-  // that was already offline when the board loaded must not count as one.
-  const [prevSessions, setPrevSessions] = useState<SessionEntry[]>(EMPTY.sessions);
-
   useEffect(() => {
     if (unauthorized) return undefined; // gated — App owns the screen now
-    const st = ref.current;
-    st.closed = false;
-    st.failures = 0;
-    st.socketOpen = false;
 
     // H-S1 — the daemon deliberately keeps the token-bearing `lan` block OUT of
     // the WS broadcast (it rides only the token-gated GET /state). So a WS frame
     // carries no `lan`; preserve the last one we saw rather than clobbering the
     // share panel/LAN dot to null on every frame.
     const apply = (data: BoardSnapshot) => {
-      setSnap((prev) => {
-        setPrevSessions(prev.sessions);
-        return { ...EMPTY, ...data, lan: data.lan ?? prev.lan };
-      });
+      setFleet((prev) => ({
+        prevSessions: prev.snap.sessions,
+        snap: { ...EMPTY, ...data, lan: data.lan ?? prev.snap.lan },
+      }));
     };
 
-    // M-F3 — a /state poll started while the socket was down can still be in
-    // flight when the WS opens; the WS pushes the authoritative snapshot on
-    // connect and on every mutation, so once the socket is open the poll result
-    // is by definition NOT newer and must not overwrite the board — a late poll
-    // landing after a fresh WS frame would regress it to an older snapshot.
-    // EXCEPTION: `lan` lives ONLY on /state (H-S1 above), so even after the
-    // socket is open we still fold that one field in from a poll (it can't
-    // regress anything the WS owns).
-    const pollOnce = () => {
-      fetchState()
-        // api.js is still JS (it converts in Phase 8), so fetchState() is typed
-        // `any`; assert the board's snapshot shape at this boundary. The board
-        // trusts the daemon's wire shape by design — runtime validation is the
-        // daemon's job (contracts/), never the browser's. See ts-migration-bugs.md;
-        // this cast drops once api.js is typed to return the wire contract.
-        .then((raw) => {
-          const data = raw as BoardSnapshot | null;
-          if (!data || st.closed) return;
-          if (st.socketOpen) {
-            if (data.lan) setSnap((prev) => ({ ...prev, lan: data.lan }));
-          } else {
-            apply(data);
-          }
-        })
-        .catch(() => {
-          /* daemon unreachable — WS retry loop owns recovery */
-        });
-    };
-
-    const startPolling = () => {
-      if (st.poll) return;
-      st.poll = setInterval(pollOnce, 3000);
-    };
-    const stopPolling = () => {
-      if (st.poll) {
-        clearInterval(st.poll);
-        st.poll = null;
-      }
-    };
-
-    const connect = () => {
-      if (st.closed) return;
-      let ws: WebSocket;
-      try {
-        ws = new WebSocket(wsUrl('/ws'));
-      } catch {
-        scheduleRetry();
-        return;
-      }
-      st.ws = ws;
-      ws.onopen = () => {
-        st.failures = 0;
-        st.socketOpen = true;
-        setStatus('live');
-        stopPolling();
-      };
-      ws.onmessage = (e) => {
-        try {
-          // The frame is JSON from the daemon; assert the board snapshot shape
-          // (plus the WS-only `type` discriminator) rather than runtime-validate
-          // — the same daemon-trust boundary as the /state poll above.
-          const data = JSON.parse(e.data as string) as (BoardSnapshot & { type?: string }) | null;
-          if (data?.type === 'snapshot') apply(data);
-        } catch {
-          /* malformed frame — ignore */
-        }
-      };
-      ws.onclose = () => {
-        if (st.ws === ws) scheduleRetry();
-      };
-      ws.onerror = () => {
-        try {
-          ws.close();
-        } catch {
-          /* already closing */
-        }
-      };
-    };
-
-    const scheduleRetry = () => {
-      if (st.closed) return;
-      st.ws = null;
-      st.socketOpen = false; // poll results may be applied again while we're down
-      st.failures += 1;
-      setStatus(st.failures > 3 ? 'offline' : 'reconnecting');
-      startPolling();
-      const base = Math.min(500 * 2 ** (st.failures - 1), 8000);
-      const delay = base * (0.8 + Math.random() * 0.4);
-      st.timer = setTimeout(connect, delay);
-    };
-
-    pollOnce();
-    connect();
-
-    return () => {
-      st.closed = true;
-      clearTimeout(st.timer ?? undefined);
-      stopPolling();
-      try {
-        st.ws?.close();
-      } catch {
-        /* unmounting */
-      }
-    };
+    return startFleetConnection(
+      owner,
+      {
+        // The daemon remains the runtime authority for the wire shape. The
+        // lifecycle helper owns ordering/cancellation only; this hook owns the
+        // imported Snapshot contract at the UI boundary.
+        onSnapshot: (raw) => apply(raw as BoardSnapshot),
+        onLan: (lan) => setFleet((prev) => ({ ...prev, snap: { ...prev.snap, lan: lan as Lan } })),
+        onStatus: setStatus,
+      },
+      {
+        fetchState: (timeoutMs, signal) => fetchState(timeoutMs, signal),
+        openSocket: (url) => new WebSocket(url) as unknown as FleetSocket,
+        socketUrl: () => wsUrl('/ws'),
+        schedule: (callback, delayMs) => setTimeout(callback, delayMs),
+        cancel: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+        random: Math.random,
+      },
+    );
     // a saved token must reconnect the socket that was refused without it
   }, [token, unauthorized]);
 

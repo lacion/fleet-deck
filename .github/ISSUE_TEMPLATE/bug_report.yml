@@ -51,8 +51,8 @@ body:
     id: claude-code-version
     attributes:
       label: Claude Code version
-      description: From `claude --version`. Fleet Deck needs 2.1.206 or newer.
-      placeholder: 2.1.206
+      description: From `claude --version`. Compare it with this release's `compatibility.json`; unsupported versions leave Claude usable and Fleet Deck inactive.
+      placeholder: 2.1.234
     validations:
       required: true
   - type: dropdown

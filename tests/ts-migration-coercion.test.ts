@@ -249,7 +249,7 @@ test('events: an AskUserQuestion whose question is non-string still holds as a c
         },
       },
     ),
-    { token: daemon, timeout: holdMs + 5000 },
+    { token: daemon, timeout: holdMs + 5000, boardClient: true },
   );
 
   const q = await waitUntil(

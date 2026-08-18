@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useModal } from '../useModal.ts';
+import ConfirmDialogFrame from './ConfirmDialogFrame.tsx';
 
 interface ArmMoveConfirmProps {
   callsign: string;
@@ -40,19 +40,12 @@ export default function ArmMoveConfirm({
   onConfirm,
 }: ArmMoveConfirmProps) {
   const cancelRef = useRef<HTMLButtonElement>(null);
-  const dialogRef = useRef<HTMLDivElement>(null);
   const [unsup, setUnsup] = useState(false); // step 1: reveal the confirm
   const [armed, setArmed] = useState(false); // step 2: actually send the flag
-  // M-A2 — trap Tab + restore focus on close; the SAFE button owns initial focus.
-  useModal(dialogRef, { initialFocus: false });
   // the SAFE choice takes focus on open — a stray ⏎ cancels, never moves
   useEffect(() => {
     cancelRef.current?.focus();
   }, []);
-
-  const cancel = () => {
-    if (!busy) onCancel();
-  };
   // revealed-but-unarmed refuses to send — exactly like SpawnForm's Spawn button
   const blocked = unsup && !armed;
   const confirm = () => {
@@ -60,107 +53,88 @@ export default function ArmMoveConfirm({
   };
 
   return (
-    <div className="fd-composewrap" onClick={cancel}>
-      <div
-        className="fd-compose fd-killask fd-armmove"
-        role="dialog"
-        aria-modal="true"
-        aria-label={`Move ${callsign} to tmux`}
-        ref={dialogRef}
-        onClick={(e) => {
-          e.stopPropagation();
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center' }}>
-          <span className="lbl">⇥ MOVE TO TMUX</span>
-          <span className="fd-spacer" />
-          <button
-            type="button"
-            className="fd-x"
-            aria-label="Cancel"
-            disabled={busy}
-            onClick={cancel}
-          >
-            ✕
-          </button>
-        </div>
-
-        <div className="ask">
-          Move <b>{callsign}</b> into a board-owned tmux pane?
-        </div>
-
-        {live ? (
-          <>
-            <div className="sub">
-              This session is still live, and two processes can’t drive one conversation — so the
-              move is deferred. <b>When you exit this session in your terminal</b>, fleetdeck
-              resumes it in a board-owned tmux pane and the card returns to QUEUED.
-            </div>
-            <div className="sub">
-              The arm expires in ~30 minutes. Nothing happens until you exit — keep working as
-              normal, and a <span className="win">/clear</span> won’t trigger it.
-            </div>
-          </>
-        ) : (
-          <div className="sub">
-            Resume this ended session in a board-owned tmux pane now. Its transcript and cwd are
-            reused, so the conversation picks up exactly where it left off; the card returns to
-            QUEUED.
-          </div>
-        )}
-
-        {/* v1.3-style unsupervised gate: reveal, then arm */}
-        <label className="fd-check hazard">
-          <input
-            type="checkbox"
-            checked={unsup}
-            disabled={busy}
-            onChange={(e) => {
-              setUnsup(e.target.checked);
-              if (!e.target.checked) setArmed(false);
-            }}
-          />
-          run unsupervised
-        </label>
-        {unsup && (
-          <div className="fd-hazardconfirm">
-            <div className="warn">⚠ the moved session will never ask permission for anything</div>
-            <div className="sub">no permission cards will ever reach this board for it</div>
-            <label className="fd-check hazard">
-              <input
-                type="checkbox"
-                checked={armed}
-                disabled={busy}
-                onChange={(e) => {
-                  setArmed(e.target.checked);
-                }}
-              />
-              I understand — arm it
-            </label>
-          </div>
-        )}
-
-        <div className="foot">
-          {blocked && (
-            <span className="note" style={{ color: 'var(--hazard)' }}>
-              arm the unsupervised confirm — or uncheck it
-            </span>
-          )}
-          <span className="fd-spacer" />
-          <button
-            type="button"
-            className="fd-ghostbtn"
-            ref={cancelRef}
-            disabled={busy}
-            onClick={cancel}
-          >
-            Cancel
-          </button>
-          <button type="button" className="send" disabled={busy || blocked} onClick={confirm}>
-            {busy ? (live ? 'Arming…' : 'Moving…') : live ? '⇥ Arm move' : '⇥ Move now'}
-          </button>
-        </div>
+    <ConfirmDialogFrame
+      ariaLabel={`Move ${callsign} to tmux`}
+      busy={busy}
+      className="fd-armmove"
+      title="⇥ MOVE TO TMUX"
+      onCancel={onCancel}
+    >
+      <div className="ask">
+        Move <b>{callsign}</b> into a board-owned tmux pane?
       </div>
-    </div>
+
+      {live ? (
+        <>
+          <div className="sub">
+            This session is still live, and two processes can’t drive one conversation — so the move
+            is deferred. <b>When you exit this session in your terminal</b>, fleetdeck resumes it in
+            a board-owned tmux pane and the card returns to QUEUED.
+          </div>
+          <div className="sub">
+            The arm expires in ~30 minutes. Nothing happens until you exit — keep working as normal,
+            and a <span className="win">/clear</span> won’t trigger it.
+          </div>
+        </>
+      ) : (
+        <div className="sub">
+          Resume this ended session in a board-owned tmux pane now. Its transcript and cwd are
+          reused, so the conversation picks up exactly where it left off; the card returns to
+          QUEUED.
+        </div>
+      )}
+
+      {/* v1.3-style unsupervised gate: reveal, then arm */}
+      <label className="fd-check hazard">
+        <input
+          type="checkbox"
+          checked={unsup}
+          disabled={busy}
+          onChange={(e) => {
+            setUnsup(e.target.checked);
+            if (!e.target.checked) setArmed(false);
+          }}
+        />
+        run unsupervised
+      </label>
+      {unsup && (
+        <div className="fd-hazardconfirm">
+          <div className="warn">⚠ the moved session will never ask permission for anything</div>
+          <div className="sub">no permission cards will ever reach this board for it</div>
+          <label className="fd-check hazard">
+            <input
+              type="checkbox"
+              checked={armed}
+              disabled={busy}
+              onChange={(e) => {
+                setArmed(e.target.checked);
+              }}
+            />
+            I understand — arm it
+          </label>
+        </div>
+      )}
+
+      <div className="foot">
+        {blocked && (
+          <span className="note" style={{ color: 'var(--hazard)' }}>
+            arm the unsupervised confirm — or uncheck it
+          </span>
+        )}
+        <span className="fd-spacer" />
+        <button
+          type="button"
+          className="fd-ghostbtn"
+          ref={cancelRef}
+          disabled={busy}
+          onClick={onCancel}
+        >
+          Cancel
+        </button>
+        <button type="button" className="send" disabled={busy || blocked} onClick={confirm}>
+          {busy ? (live ? 'Arming…' : 'Moving…') : live ? '⇥ Arm move' : '⇥ Move now'}
+        </button>
+      </div>
+    </ConfirmDialogFrame>
   );
 }

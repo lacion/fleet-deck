@@ -222,6 +222,11 @@ test('adopt moves an ended session into a board-owned pane and its resume hook m
   const claude = spec.argv.indexOf('claude');
   assert.ok(claude > 0, 'adopt keeps the env-wrapper prefix');
   assert.equal(spec.argv[0], 'env');
+  assert.equal(
+    spec.argv.includes(`FLEETDECK_BOARD_SESSION=${sid}`),
+    true,
+    'adopt pins the marker to the exact resumed Claude session id',
+  );
   assert.deepEqual(spec.argv.slice(claude, claude + 3), ['claude', '--resume', sid]);
   assert.equal(spec.argv.includes('--session-id'), false);
   assert.equal(spec.argv.includes('--dangerously-skip-permissions'), false);

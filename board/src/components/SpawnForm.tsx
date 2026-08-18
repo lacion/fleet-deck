@@ -255,11 +255,20 @@ export default function SpawnForm({
   const [gwBusy, setGwBusy] = useState(false);
   const [unsup, setUnsup] = useState(false); // step 1: reveal the confirm
   const [armed, setArmed] = useState(false); // step 2: actually send the flag
+  const [arming, setArming] = useState(false);
   // 0.16.0 — the server requires a one-time arm token for any unsupervised
   // spawn (the API half of this two-step). Fetched when the human arms, echoed
   // in the spawn body; single-use, 60s TTL, re-fetched on every arm.
-  const [armToken, setArmToken] = useState<string | null>(null);
+  const armTokenRef = useRef<string | null>(null);
+  const armRequestSeq = useRef(0);
   const [busy, setBusy] = useState(false);
+  // React state paints the button; the ref closes the same-render double-click
+  // window so one gesture can never launch two billed sessions.
+  const submitBusyRef = useRef(false);
+  const setSubmitBusy = (on: boolean) => {
+    submitBusyRef.current = on;
+    setBusy(on);
+  };
   const [err, setErr] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null); // "spawning — <callsign>"
   const [progress, setProgress] = useState<BatchProgress | null>(null); // batch: {done, total, failed[]}
@@ -309,6 +318,12 @@ export default function SpawnForm({
   const [watchSid, setWatchSid] = useState<string | null | undefined>(null);
   const watchTimer = useRef<ReturnType<typeof setTimeout> | null>(null); // overall cap — a missed frame must never wedge the modal
   const watchDone = useRef(false); // exactly one of success/failure/timeout resolves the watch
+  const clearArm = () => {
+    armRequestSeq.current += 1;
+    armTokenRef.current = null;
+    setArming(false);
+    setArmed(false);
+  };
   // M-A2 — trap Tab + restore focus on close; the form parks initial focus
   // itself (cwd, or the plan caret) in the effect below.
   useModal(dialogRef, { initialFocus: false });
@@ -367,7 +382,7 @@ export default function SpawnForm({
       // distilled git remedy inline.
       watchDone.current = true;
       clearTimeout(watchTimer.current ?? undefined);
-      setBusy(false);
+      setSubmitBusy(false);
       setNote(null);
       const note =
         typeof sess.note === 'string' && sess.note
@@ -553,20 +568,18 @@ export default function SpawnForm({
   // Arming mints the server-side capability the spawn body must echo. A batch
   // consumes one token per agent, so a batch fetch mints up front and each
   // leg re-mints as it goes (see submitBatch).
-  const armUnsupervisedNow = async (): Promise<string | null> => {
+  const mintArmToken = async (): Promise<{ token: string | null; error: string | null }> => {
     try {
       const res = await armUnsupervised();
       const aj: ArmJson | null = res.json;
-      if (res.ok && aj?.arm_token) {
-        setArmToken(aj.arm_token);
-        return aj.arm_token;
-      }
-      setErr(`could not arm unsupervised spawning (${res.status})`);
+      if (res.ok && aj?.arm_token) return { token: aj.arm_token, error: null };
+      return {
+        token: null,
+        error: reasonOf(res, `could not arm unsupervised spawning (${res.status})`),
+      };
     } catch {
-      setErr('could not arm unsupervised spawning — daemon unreachable');
+      return { token: null, error: 'could not arm unsupervised spawning — daemon unreachable' };
     }
-    setArmToken(null);
-    return null;
   };
   // a batch needs at least one task, and each agent needs its own worktree
   const emptyBatch = batching && total === 0;
@@ -612,7 +625,7 @@ export default function SpawnForm({
     if (remote && !gatewayOn) body.remote_control = true;
     if (unsupEffective && armed) {
       body.dangerously_skip_permissions = true;
-      if (armToken) body.arm_token = armToken;
+      if (armTokenRef.current) body.arm_token = armTokenRef.current;
     }
     // Always explicit, never omitted: silence would defer to gateway_default,
     // and the checkbox the human is looking at is the answer — even when it
@@ -639,9 +652,13 @@ export default function SpawnForm({
     const body = baseBody();
     if (prompt.trim()) body.prompt = prompt.trim();
     const res = await spawnSession(body);
+    // The capability is single-use and may have been consumed even when the
+    // transport answer is a failure. A retry must require a fresh explicit arm.
+    if (unsupEffective && armed) armTokenRef.current = null;
     if (!(res.ok && res.json?.ok)) {
       setErr(reasonOf(res, `spawn failed (${res.status})`));
-      setBusy(false);
+      if (unsupEffective && armed) clearArm();
+      setSubmitBusy(false);
       return;
     }
     const sj = res.json as SpawnJson;
@@ -653,6 +670,16 @@ export default function SpawnForm({
     // live or tombstones. A non-202 spawn keeps the original timed close.
     if (sj.provisioning) {
       setNote(`cloning — ${(sj.callsign ?? '') || (sj.session_id ?? '') || 'new session'}`);
+      if (!sj.session_id) {
+        // A 202 without an identity cannot be watched. Treat it as accepted
+        // (never enable a duplicate retry), explain the protocol fault, and
+        // hand narration back to the board after a short readable pause.
+        setSubmitBusy(false);
+        setErr('provisioning was accepted, but the daemon response omitted its session id');
+        setNote('provisioning accepted — the card narrates from here');
+        closeTimer.current = setTimeout(onClose, 5000);
+        return;
+      }
       // Escape hatch: a missed snapshot frame must never wedge the modal. The
       // daemon's clone cap is 600 s and user-tunable upward — 660 s here so a
       // legitimately long clone doesn't lose the race to its own timeout.
@@ -663,7 +690,7 @@ export default function SpawnForm({
       watchTimer.current = setTimeout(() => {
         if (watchDone.current) return;
         watchDone.current = true;
-        setBusy(false);
+        setSubmitBusy(false);
         setNote(
           (n) =>
             `${(n ?? '') || 'provisioning'} — still going after 11 min; the card narrates from here`,
@@ -715,17 +742,7 @@ export default function SpawnForm({
       } catch {
         res = null;
       }
-      // Arm tokens are single-use: after the first leg of an armed batch, mint
-      // the next one so every agent carries a fresh capability.
-      if (unsupEffective && armed && i + 1 < prompts.length) {
-        const next = await armUnsupervisedNow();
-        if (!next) {
-          failed.push(
-            ...prompts.slice(i + 1).map((pr) => ({ prompt: pr, reason: 'arm token refused' })),
-          );
-          break;
-        }
-      }
+      if (unsupEffective && armed) armTokenRef.current = null;
       if (res?.ok && res.json?.ok) {
         const sb = res.json as SpawnJson;
         launched.push((sb.callsign ?? '') || (sb.session_id ?? ''));
@@ -736,6 +753,20 @@ export default function SpawnForm({
         });
       }
       setProgress({ done: i + 1, total: prompts.length, failed: [...failed] });
+      // Arm tokens are single-use. Publish the current leg's outcome first,
+      // then put the freshly minted token directly in the ref baseBody reads;
+      // React state would leave later loop iterations closing over the old,
+      // already-consumed token.
+      if (unsupEffective && armed && i + 1 < prompts.length) {
+        const next = await mintArmToken();
+        if (!next.token) {
+          const armReason = next.error ?? 'arm token refused';
+          failed.push(...prompts.slice(i + 1).map((pr) => ({ prompt: pr, reason: armReason })));
+          clearArm();
+          break;
+        }
+        armTokenRef.current = next.token;
+      }
     }
     if (failed.length) {
       // Partial success, handled honestly. The agents that came up are up and
@@ -749,7 +780,8 @@ export default function SpawnForm({
           ? `spawned ${launched.length} of ${prompts.length} (${launched.join(', ')}) — the ${failed.length} left above failed: ${failed[0]?.reason ?? ''}`
           : `none of the ${prompts.length} spawned: ${failed[0]?.reason ?? ''}`,
       );
-      setBusy(false);
+      if (unsupEffective && armed) clearArm();
+      setSubmitBusy(false);
       return;
     }
     setNote(`spawning ${launched.length} — ${launched.join(', ')}`);
@@ -784,19 +816,20 @@ export default function SpawnForm({
               : null;
 
   const submit = async () => {
-    if (!targetReady || busy || note || blocked || emptyBatch) return;
-    setBusy(true);
+    if (!targetReady || submitBusyRef.current || note || blocked || emptyBatch) return;
+    setSubmitBusy(true);
     setErr(null);
     try {
       if (!(await persistSetupDefault())) {
-        setBusy(false);
+        setSubmitBusy(false);
         return;
       }
       if (batching) await submitBatch();
       else await submitOne();
     } catch {
       setErr('daemon unreachable');
-      setBusy(false);
+      if (unsupEffective && armed) clearArm();
+      setSubmitBusy(false);
     }
   };
 
@@ -820,14 +853,29 @@ export default function SpawnForm({
     setPickerFor(null);
   };
 
+  // Closing an accepted provisioning watch is safe: the card owns the durable
+  // operation. Closing while the initial POST/batch is still in flight is not
+  // safe because reopening can duplicate billed sessions.
+  const closeAllowed = !busy || !!watchSid || !!note;
+  const requestClose = () => {
+    if (closeAllowed) onClose();
+  };
+
   return (
-    <div className="fd-composewrap" onClick={onClose}>
+    <div className="fd-composewrap" onClick={requestClose}>
       <div
         className="fd-compose fd-spawn"
         role="dialog"
         aria-modal="true"
         aria-label="Spawn a session"
+        aria-busy={busy}
         ref={dialogRef}
+        onKeyDown={(e) => {
+          if (!closeAllowed && e.key === 'Escape') {
+            e.preventDefault();
+            e.stopPropagation();
+          }
+        }}
         onClick={(e) => {
           e.stopPropagation();
         }}
@@ -835,7 +883,13 @@ export default function SpawnForm({
         <div style={{ display: 'flex', alignItems: 'center' }}>
           <span className="lbl">{planMode ? 'SPAWN SESSION — EXECUTE PLAN' : 'SPAWN SESSION'}</span>
           <span className="fd-spacer" />
-          <button type="button" className="fd-x" aria-label="Close" onClick={onClose}>
+          <button
+            type="button"
+            className="fd-x"
+            aria-label="Close"
+            disabled={!closeAllowed}
+            onClick={requestClose}
+          >
             ✕
           </button>
         </div>
@@ -848,6 +902,8 @@ export default function SpawnForm({
               <div className="fd-fsmodes" role="radiogroup" aria-label="Spawn target">
                 <button
                   type="button"
+                  role="radio"
+                  aria-checked={!repoMode}
                   className={`fd-target${!repoMode ? ' on' : ''}`}
                   onClick={() => {
                     setTargetMode('dir');
@@ -858,6 +914,8 @@ export default function SpawnForm({
                 </button>
                 <button
                   type="button"
+                  role="radio"
+                  aria-checked={repoMode}
                   className={`fd-target${repoMode ? ' on' : ''}`}
                   onClick={() => {
                     setTargetMode('repo');
@@ -919,8 +977,7 @@ export default function SpawnForm({
                       setRemote(false);
                       setGateway(false);
                       setUnsup(false);
-                      setArmed(false);
-                      setArmToken(null);
+                      clearArm();
                       setPermissionMode('default');
                       setGwEdit(false);
                     }
@@ -1015,6 +1072,8 @@ export default function SpawnForm({
                   <div className="fd-fsmodes" role="radiogroup" aria-label="Shorthand host">
                     <button
                       type="button"
+                      role="radio"
+                      aria-checked={effectiveHost === 'github'}
                       className={`fd-target${effectiveHost === 'github' ? ' on' : ''}`}
                       disabled={subgrouped}
                       title={
@@ -1031,6 +1090,8 @@ export default function SpawnForm({
                     </button>
                     <button
                       type="button"
+                      role="radio"
+                      aria-checked={effectiveHost === 'gitlab'}
                       className={`fd-target${effectiveHost === 'gitlab' ? ' on' : ''}`}
                       onClick={() => {
                         setRepoHost('gitlab');
@@ -1053,6 +1114,8 @@ export default function SpawnForm({
                   <div className="fd-fsmodes" role="radiogroup" aria-label="Clone transport">
                     <button
                       type="button"
+                      role="radio"
+                      aria-checked={repoTransport === 'ssh'}
                       className={`fd-target${repoTransport === 'ssh' ? ' on' : ''}`}
                       onClick={() => {
                         setRepoTransport('ssh');
@@ -1063,6 +1126,8 @@ export default function SpawnForm({
                     </button>
                     <button
                       type="button"
+                      role="radio"
+                      aria-checked={repoTransport === 'https'}
                       className={`fd-target${repoTransport === 'https' ? ' on' : ''}`}
                       onClick={() => {
                         setRepoTransport('https');
@@ -1095,7 +1160,7 @@ export default function SpawnForm({
               )}
               <div className="frow top">
                 <span className="fl">branch mode</span>
-                <div className="fd-branchmode">
+                <div className="fd-branchmode" role="radiogroup" aria-label="Branch mode">
                   <label className="fd-check">
                     <input
                       type="radio"
@@ -1262,7 +1327,7 @@ export default function SpawnForm({
                 // bypassPermissions is the same hazard as "run unsupervised" —
                 // picking it reveals the same arm row below (0.16.0: the daemon
                 // refuses it without the arm token either way).
-                if (e.target.value !== 'bypassPermissions') setArmed(false);
+                if (e.target.value !== 'bypassPermissions') clearArm();
                 if (err) setErr(null);
               }}
             >
@@ -1396,11 +1461,13 @@ export default function SpawnForm({
                     setGwNote(null);
                   }}
                 />
-                <div className="fd-fsmodes">
+                <div className="fd-fsmodes" role="radiogroup" aria-label="Gateway auth style">
                   {['bearer', 'api-key'].map((style) => (
                     <button
                       key={style}
                       type="button"
+                      role="radio"
+                      aria-checked={gwStyle === style}
                       className={`fd-target${gwStyle === style ? ' on' : ''}`}
                       onClick={() => {
                         setGwStyle(style);
@@ -1489,8 +1556,7 @@ export default function SpawnForm({
                 onChange={(e) => {
                   setUnsup(e.target.checked);
                   if (!e.target.checked) {
-                    setArmed(false);
-                    setArmToken(null);
+                    clearArm();
                     if (bypassPicked) setPermissionMode('default');
                   }
                   if (err) setErr(null);
@@ -1508,29 +1574,46 @@ export default function SpawnForm({
                 <label className="fd-check hazard">
                   <input
                     type="checkbox"
-                    checked={armed}
+                    checked={armed || arming}
                     onChange={(e) => {
                       const on = e.target.checked;
-                      void (async () => {
-                        if (on) {
-                          const token = await armUnsupervisedNow();
-                          setArmed(!!token);
-                        } else {
-                          setArmed(false);
-                          setArmToken(null);
-                        }
+                      if (!on) {
+                        clearArm();
                         if (err) setErr(null);
+                        return;
+                      }
+                      const request = ++armRequestSeq.current;
+                      armTokenRef.current = null;
+                      setArmed(false);
+                      setArming(true);
+                      void (async () => {
+                        const minted = await mintArmToken();
+                        if (request !== armRequestSeq.current) return;
+                        setArming(false);
+                        if (minted.token) {
+                          armTokenRef.current = minted.token;
+                          setArmed(true);
+                          setErr(null);
+                        } else {
+                          armTokenRef.current = null;
+                          setArmed(false);
+                          setErr(minted.error ?? 'could not arm unsupervised spawning');
+                        }
                       })();
                     }}
                   />
-                  I understand — arm it
+                  {arming ? 'Arming…' : 'I understand — arm it'}
                 </label>
               </div>
             </div>
           )}
         </div>
-        {err && <div className="fd-spawnerr">✗ {err}</div>}
-        <div className="foot">
+        {err && (
+          <div className="fd-spawnerr" role="alert">
+            ✗ {err}
+          </div>
+        )}
+        <div className="foot" aria-live="polite">
           {busy && progress && !note ? (
             <span className="note">
               spawning {progress.done} of {progress.total}…
@@ -1566,7 +1649,7 @@ export default function SpawnForm({
             type="button"
             className="send"
             onClick={() => void submit()}
-            disabled={!targetReady || busy || blocked || emptyBatch}
+            disabled={!targetReady || busy || !!note || blocked || emptyBatch}
           >
             {busy
               ? 'Spawning…'

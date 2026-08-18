@@ -88,8 +88,13 @@ export default function Header({
   return (
     <div className="fd-header">
       <div className="fd-wordmark">FLEET&nbsp;DECK&nbsp;⚡</div>
-      <div className={`fd-wspill ${status}`}>
-        <span className="dot" />
+      <div
+        className={`fd-wspill ${status}`}
+        role="status"
+        aria-live="polite"
+        aria-label={`Fleet connection ${WS_LABEL[status].toLowerCase()}`}
+      >
+        <span className="dot" aria-hidden="true" />
         {WS_LABEL[status]}
       </div>
       {stale && <div className="fd-stale">showing last known state</div>}

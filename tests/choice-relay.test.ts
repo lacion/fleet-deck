@@ -1,8 +1,8 @@
 // tests/choice-relay.test.ts
 //
 // Phase 4 F3c: AskUserQuestion PreToolUse relay ('choice' hold kind).
-// Built against the live-validated payload/response shapes (validated live
-// on CLI 2.1.206) and the raw evidence in
+// Built against the captured payload shape and Claude Code's current documented
+// AskUserQuestion PreToolUse response contract:
 // demo/demo-logs/phase4/run1-askq-hook-recorder.jsonl / run2-askq-deny-*:
 //
 //   - /hook/AskUserQuestion (PreToolUse-shaped payload, tool_input.questions[]
@@ -10,7 +10,7 @@
 //     tool_use_id) holds open like F3a and shows in /state as kind 'choice'.
 //   - Board answer {answers:{"<question text>":"<label>"}} (the CLI's own
 //     PostToolUse answers format) or {text} → the held response resolves to
-//     the deny-with-reason schema VERBATIM.
+//     permissionDecision:"allow" with updatedInput.questions + answers.
 //   - Expiry → {} (the native terminal chooser renders as normal).
 //   - CRITICAL: /hook/PermissionRequest with tool_name==="AskUserQuestion"
 //     answers {} IMMEDIATELY (never held) — otherwise an unanswered question
@@ -19,13 +19,12 @@
 
 import test from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
-import { rmSync } from 'node:fs';
-import { startDaemon, type DaemonHandle } from './helpers/daemon.ts';
+import type { DaemonHandle } from './helpers/daemon.ts';
 import { postHook, postJson } from './helpers/http.ts';
 import { loadFixture } from './helpers/fixtures.ts';
 import { waitUntil, scaleMs } from './helpers/wait.ts';
-import { getState, scratchCwd, questionsFor } from './helpers/state.ts';
+import { getState, questionsFor } from './helpers/state.ts';
+import { startRegisteredDaemon } from './helpers/session.ts';
 
 const FIXTURE_QUESTION = 'Should this project use bcrypt or argon2 for password hashing?';
 
@@ -75,8 +74,15 @@ interface HookRelayResponse {
   hookSpecificOutput?: {
     hookEventName?: string;
     permissionDecision?: string;
-    permissionDecisionReason?: string;
+    updatedInput?: {
+      questions?: ChoiceQuestion[];
+      answers?: Record<string, string>;
+    };
   };
+}
+
+function relayedAnswers(response: unknown): Record<string, string> | undefined {
+  return (response as HookRelayResponse | null)?.hookSpecificOutput?.updatedInput?.answers;
 }
 
 async function holdChoice(
@@ -90,7 +96,7 @@ async function holdChoice(
     daemon.baseUrl,
     'AskUserQuestion',
     loadFixture('ask-user-question', { session_id: sid, cwd }, overrides),
-    { token: daemon, timeout: holdMs + 5000 },
+    { token: daemon, timeout: holdMs + 5000, boardClient: true },
   );
   const q = await waitUntil(
     async () => {
@@ -104,26 +110,15 @@ async function holdChoice(
 
 // ---------------------------------------------------------------------------
 // hold fires → /state carries the parsed questions[]; board answer → the
-// validated deny+reason schema VERBATIM
+// current allow+updatedInput schema VERBATIM
 // ---------------------------------------------------------------------------
 
-test('F3c: AskUserQuestion holds as kind=choice with parsed questions[]; {answers} resolves the held response to the validated deny schema verbatim', async (t) => {
+test('F3c: AskUserQuestion holds as kind=choice; {answers} resolves with allow + updatedInput.answers', async (t) => {
   const holdMs = 4000;
-  const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
-  const cwd = scratchCwd();
-  t.after(async () => {
-    await daemon.stop();
-    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  const { daemon, cwd, sid, registration } = await startRegisteredDaemon(t, {
+    daemon: { env: { FLEETDECK_HOLD_MS: String(holdMs) } },
   });
-
-  const sid = randomUUID();
-  const reg = await postHook(
-    daemon.baseUrl,
-    'SessionStart',
-    loadFixture('session-start', { session_id: sid, cwd }),
-    { token: daemon },
-  );
-  const callsign = (reg.json as SessionStartResponse | null)?.callsign;
+  const callsign = (registration.json as SessionStartResponse | null)?.callsign;
 
   const t0 = Date.now();
   const { held, q } = await holdChoice(daemon, sid, cwd, holdMs);
@@ -176,17 +171,21 @@ test('F3c: AskUserQuestion holds as kind=choice with parsed questions[]; {answer
     elapsed < holdMs,
     `answering should resolve the hold well before the ${holdMs}ms window (took ${elapsed}ms)`,
   );
-  // VERBATIM the response the live run2 deny validation proved graceful
+  // Current Claude Code contract: echo the original questions and add the
+  // board's answers via updatedInput so AskUserQuestion executes normally.
   assert.deepEqual(
     heldRes.json,
     {
       hookSpecificOutput: {
         hookEventName: 'PreToolUse',
-        permissionDecision: 'deny',
-        permissionDecisionReason: 'User answered via Fleet Deck: argon2',
+        permissionDecision: 'allow',
+        updatedInput: {
+          questions,
+          answers: { [FIXTURE_QUESTION]: 'argon2' },
+        },
       },
     },
-    'choice answer must produce the validated PreToolUse deny+reason schema (validated live on CLI 2.1.206) verbatim',
+    'choice answer must satisfy AskUserQuestion through updatedInput',
   );
 
   const state2 = await getState<StateResponse>(daemon.baseUrl);
@@ -203,22 +202,11 @@ test('F3c: an unanswered AskUserQuestion hold expires to {} and the question bec
   // Re-arm disabled (grace 0): this test asserts the late answer 409s on the
   // EXPIRED row — under the default grace the daemon would have re-armed the
   // question into a fresh mail-delivered card (covered in question-rearm.test.mjs).
-  const daemon = await startDaemon({
-    env: { FLEETDECK_HOLD_MS: String(holdMs), FLEETDECK_REARM_GRACE_MS: '0' },
+  const { daemon, cwd, sid } = await startRegisteredDaemon(t, {
+    daemon: {
+      env: { FLEETDECK_HOLD_MS: String(holdMs), FLEETDECK_REARM_GRACE_MS: '0' },
+    },
   });
-  const cwd = scratchCwd();
-  t.after(async () => {
-    await daemon.stop();
-    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
-  });
-
-  const sid = randomUUID();
-  await postHook(
-    daemon.baseUrl,
-    'SessionStart',
-    loadFixture('session-start', { session_id: sid, cwd }),
-    { token: daemon },
-  );
 
   const t0 = Date.now();
   const { held, q } = await holdChoice(daemon, sid, cwd, holdMs);
@@ -256,20 +244,9 @@ test('F3c: an unanswered AskUserQuestion hold expires to {} and the question bec
 
 test('F3c: /hook/PermissionRequest with tool_name=AskUserQuestion answers {} in <200ms even while another hold is open (and leaves that hold undisturbed)', async (t) => {
   const holdMs = 6000; // long, so a wrongly-held request would blow the 200ms budget by construction
-  const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
-  const cwd = scratchCwd();
-  t.after(async () => {
-    await daemon.stop();
-    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  const { daemon, cwd, sid } = await startRegisteredDaemon(t, {
+    daemon: { env: { FLEETDECK_HOLD_MS: String(holdMs) } },
   });
-
-  const sid = randomUUID();
-  await postHook(
-    daemon.baseUrl,
-    'SessionStart',
-    loadFixture('session-start', { session_id: sid, cwd }),
-    { token: daemon },
-  );
 
   // open a choice hold first — the guard must answer around it, not through it
   const { held, q } = await holdChoice(daemon, sid, cwd, holdMs);
@@ -313,10 +290,7 @@ test('F3c: /hook/PermissionRequest with tool_name=AskUserQuestion answers {} in 
   });
   assert.equal(ansRes.status, 200, 'the choice hold must survive the PermissionRequest guard');
   const heldRes = await held;
-  assert.equal(
-    (heldRes.json as HookRelayResponse | null)?.hookSpecificOutput?.permissionDecisionReason,
-    'User answered via Fleet Deck: bcrypt',
-  );
+  assert.deepEqual(relayedAnswers(heldRes.json), { [FIXTURE_QUESTION]: 'bcrypt' });
 });
 
 // ---------------------------------------------------------------------------
@@ -325,20 +299,9 @@ test('F3c: /hook/PermissionRequest with tool_name=AskUserQuestion answers {} in 
 
 test('F3c: multi-question answers serialize compactly (header: label; multiSelect labels joined)', async (t) => {
   const holdMs = 4000;
-  const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
-  const cwd = scratchCwd();
-  t.after(async () => {
-    await daemon.stop();
-    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  const { daemon, cwd, sid } = await startRegisteredDaemon(t, {
+    daemon: { env: { FLEETDECK_HOLD_MS: String(holdMs) } },
   });
-
-  const sid = randomUUID();
-  await postHook(
-    daemon.baseUrl,
-    'SessionStart',
-    loadFixture('session-start', { session_id: sid, cwd }),
-    { token: daemon },
-  );
 
   const toolInput = {
     questions: [
@@ -358,6 +321,14 @@ test('F3c: multi-question answers serialize compactly (header: label; multiSelec
   };
   const { held, q } = await holdChoice(daemon, sid, cwd, holdMs, { tool_input: toolInput });
 
+  const partial = await postJson(`${daemon.baseUrl}/api/questions/${q.id}/answer`, {
+    answers: { 'Which hashing algorithm?': 'argon2' },
+  });
+  assert.equal(partial.status, 400, 'a partial multi-question answer must stay retryable');
+  const pending = await getState<StateResponse>(daemon.baseUrl);
+  assert.equal(pending.questions.find((x) => String(x.id) === String(q.id))?.status, 'pending');
+  assert.equal(pending.questions.find((x) => String(x.id) === String(q.id))?.held, true);
+
   const ansRes = await postJson(`${daemon.baseUrl}/api/questions/${q.id}/answer`, {
     answers: {
       'Which hashing algorithm?': 'argon2',
@@ -367,29 +338,17 @@ test('F3c: multi-question answers serialize compactly (header: label; multiSelec
   assert.equal(ansRes.status, 200);
 
   const heldRes = await held;
-  assert.equal(
-    (heldRes.json as HookRelayResponse | null)?.hookSpecificOutput?.permissionDecisionReason,
-    'User answered via Fleet Deck: Hashing: argon2; Deploy: staging, docker',
-    'multi-question answers should compact to "<header>: <label(s)>" pairs',
-  );
+  assert.deepEqual(relayedAnswers(heldRes.json), {
+    'Which hashing algorithm?': 'argon2',
+    'Which deploy targets?': 'staging, docker',
+  });
 });
 
 test('F3c: {text} freeform fallback answers a choice hold with the text as the relayed answer', async (t) => {
   const holdMs = 4000;
-  const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
-  const cwd = scratchCwd();
-  t.after(async () => {
-    await daemon.stop();
-    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  const { daemon, cwd, sid } = await startRegisteredDaemon(t, {
+    daemon: { env: { FLEETDECK_HOLD_MS: String(holdMs) } },
   });
-
-  const sid = randomUUID();
-  await postHook(
-    daemon.baseUrl,
-    'SessionStart',
-    loadFixture('session-start', { session_id: sid, cwd }),
-    { token: daemon },
-  );
 
   const { held, q } = await holdChoice(daemon, sid, cwd, holdMs);
 
@@ -401,10 +360,9 @@ test('F3c: {text} freeform fallback answers a choice hold with the text as the r
   });
   assert.equal(ansRes.status, 200);
   const heldRes = await held;
-  assert.equal(
-    (heldRes.json as HookRelayResponse | null)?.hookSpecificOutput?.permissionDecisionReason,
-    'User answered via Fleet Deck: neither — use scrypt, and ask me about cost params later',
-  );
+  assert.deepEqual(relayedAnswers(heldRes.json), {
+    [FIXTURE_QUESTION]: 'neither — use scrypt, and ask me about cost params later',
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -417,20 +375,9 @@ test('F3c: {text} freeform fallback answers a choice hold with the text as the r
 
 test('BUG-139: a long {text} answer (>300 units) is relayed to the agent in full — no silent clip', async (t) => {
   const holdMs = 4000;
-  const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
-  const cwd = scratchCwd();
-  t.after(async () => {
-    await daemon.stop();
-    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  const { daemon, cwd, sid } = await startRegisteredDaemon(t, {
+    daemon: { env: { FLEETDECK_HOLD_MS: String(holdMs) } },
   });
-
-  const sid = randomUUID();
-  await postHook(
-    daemon.baseUrl,
-    'SessionStart',
-    loadFixture('session-start', { session_id: sid, cwd }),
-    { token: daemon },
-  );
 
   const { held, q } = await holdChoice(daemon, sid, cwd, holdMs);
 
@@ -438,29 +385,18 @@ test('BUG-139: a long {text} answer (>300 units) is relayed to the agent in full
   const ansRes = await postJson(`${daemon.baseUrl}/api/questions/${q.id}/answer`, { text: long });
   assert.equal(ansRes.status, 200, 'a >300-unit answer under the 2000-unit limit must be accepted');
   const heldRes = await held;
-  assert.equal(
-    (heldRes.json as HookRelayResponse | null)?.hookSpecificOutput?.permissionDecisionReason,
-    `User answered via Fleet Deck: ${long}`,
+  assert.deepEqual(
+    relayedAnswers(heldRes.json),
+    { [FIXTURE_QUESTION]: long },
     'the agent must receive the COMPLETE answer — no display clamp, no ellipsis',
   );
 });
 
 test('BUG-139: an answer over the 2000-unit limit is rejected with 400 and the hold stays pending (no silent truncation)', async (t) => {
   const holdMs = 60000;
-  const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
-  const cwd = scratchCwd();
-  t.after(async () => {
-    await daemon.stop();
-    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  const { daemon, cwd, sid } = await startRegisteredDaemon(t, {
+    daemon: { env: { FLEETDECK_HOLD_MS: String(holdMs) } },
   });
-
-  const sid = randomUUID();
-  await postHook(
-    daemon.baseUrl,
-    'SessionStart',
-    loadFixture('session-start', { session_id: sid, cwd }),
-    { token: daemon },
-  );
 
   const { held, q } = await holdChoice(daemon, sid, cwd, holdMs);
 
@@ -493,10 +429,7 @@ test('BUG-139: an answer over the 2000-unit limit is rejected with 400 and the h
   });
   assert.equal(ok.status, 200, 'the hold is still answerable after the rejections');
   const heldRes = await held;
-  assert.equal(
-    (heldRes.json as HookRelayResponse | null)?.hookSpecificOutput?.permissionDecisionReason,
-    'User answered via Fleet Deck: bcrypt',
-  );
+  assert.deepEqual(relayedAnswers(heldRes.json), { [FIXTURE_QUESTION]: 'bcrypt' });
 });
 
 // ---------------------------------------------------------------------------
@@ -508,20 +441,9 @@ test('BUG-139: an answer over the 2000-unit limit is rejected with 400 and the h
 
 test('BUG-140: malformed answers maps are rejected with 400 and the choice hold stays open for a valid answer', async (t) => {
   const holdMs = 4000;
-  const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
-  const cwd = scratchCwd();
-  t.after(async () => {
-    await daemon.stop();
-    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  const { daemon, cwd, sid } = await startRegisteredDaemon(t, {
+    daemon: { env: { FLEETDECK_HOLD_MS: String(holdMs) } },
   });
-
-  const sid = randomUUID();
-  await postHook(
-    daemon.baseUrl,
-    'SessionStart',
-    loadFixture('session-start', { session_id: sid, cwd }),
-    { token: daemon },
-  );
 
   const { held, q } = await holdChoice(daemon, sid, cwd, holdMs);
 
@@ -548,10 +470,7 @@ test('BUG-140: malformed answers maps are rejected with 400 and the choice hold 
   });
   assert.equal(good.status, 200);
   const heldRes = await held;
-  assert.equal(
-    (heldRes.json as HookRelayResponse | null)?.hookSpecificOutput?.permissionDecisionReason,
-    'User answered via Fleet Deck: bcrypt',
-  );
+  assert.deepEqual(relayedAnswers(heldRes.json), { [FIXTURE_QUESTION]: 'bcrypt' });
 });
 
 // ---------------------------------------------------------------------------
@@ -560,20 +479,9 @@ test('BUG-140: malformed answers maps are rejected with 400 and the choice hold 
 
 test('F3c: session activity (UserPromptSubmit) expires a pending choice hold with {} promptly — identical to the permission kind', async (t) => {
   const holdMs = 6000;
-  const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
-  const cwd = scratchCwd();
-  t.after(async () => {
-    await daemon.stop();
-    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  const { daemon, cwd, sid } = await startRegisteredDaemon(t, {
+    daemon: { env: { FLEETDECK_HOLD_MS: String(holdMs) } },
   });
-
-  const sid = randomUUID();
-  await postHook(
-    daemon.baseUrl,
-    'SessionStart',
-    loadFixture('session-start', { session_id: sid, cwd }),
-    { token: daemon },
-  );
   const { held, q } = await holdChoice(daemon, sid, cwd, holdMs);
 
   const t0 = Date.now();
@@ -597,20 +505,9 @@ test('F3c: session activity (UserPromptSubmit) expires a pending choice hold wit
 
 test('F3c: SessionEnd expires a pending choice hold with {} — identical to the permission kind', async (t) => {
   const holdMs = 6000;
-  const daemon = await startDaemon({ env: { FLEETDECK_HOLD_MS: String(holdMs) } });
-  const cwd = scratchCwd();
-  t.after(async () => {
-    await daemon.stop();
-    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  const { daemon, cwd, sid } = await startRegisteredDaemon(t, {
+    daemon: { env: { FLEETDECK_HOLD_MS: String(holdMs) } },
   });
-
-  const sid = randomUUID();
-  await postHook(
-    daemon.baseUrl,
-    'SessionStart',
-    loadFixture('session-start', { session_id: sid, cwd }),
-    { token: daemon },
-  );
   const { held, q } = await holdChoice(daemon, sid, cwd, holdMs);
 
   const t0 = Date.now();

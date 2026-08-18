@@ -16,24 +16,23 @@
 //                   captured at intake, derive.mjs) also accepts the
 //                   board-only pseudo-behavior "capture" — wire deny + the
 //                   pinned PLAN_CAPTURE_MAIL + plan status 'captured'.
-//   'elicitation' — Elicitation hook held open (F3b). The response schema is
-//                   NOT documented; this wires a best-effort guess
-//                   ({"action":"accept","content":{...}} / {"action":"decline"})
-//                   — live semantics unproven until the Phase 3 gate (unproven
-//                   live — validate before relying on it).
-//   'choice'      — AskUserQuestion PreToolUse hook held open (F3c, validated
-//                   live on CLI 2.1.206 on 2026-07-10, experiment 1).
+//   'elicitation' — Elicitation hook held open (F3b). Answer schema:
+//                     {"hookSpecificOutput":{"hookEventName":"Elicitation",
+//                      "action":"accept"|"decline","content":{...}}}
+//                   `content` is present only for accept. Keeping the action
+//                   inside hookSpecificOutput is required by Claude Code's
+//                   event-specific output contract; a top-level action is
+//                   ignored and can leave the elicitation unresolved.
+//   'choice'      — AskUserQuestion PreToolUse hook held open (F3c).
 //                   Payload keeps tool_input.questions[] ({question, header,
 //                   options:[{label,description}], multiSelect}) + tool_use_id.
 //                   Board answer body: {answers:{"<question text>":"<label>"}}
 //                   (mirrors the CLI's own PostToolUse `answers` map) or
 //                   {text:"..."} freeform fallback. Answer resolves the held
-//                   PreToolUse response to a deny-with-reason:
-//                     {"hookSpecificOutput":{"hookEventName":"PreToolUse",
-//                      "permissionDecision":"deny",
-//                      "permissionDecisionReason":"User answered via Fleet Deck: …"}}
-//                   — validated GRACEFUL (model acts on the answer, no retry,
-//                   no terminal chooser). Expiry/disconnect → {} → the native
+//                   PreToolUse response with permissionDecision:"allow" and
+//                   updatedInput containing the original questions plus the
+//                   answer map — Claude Code's documented AskUserQuestion
+//                   contract. Expiry/disconnect → {} → the native
 //                   terminal chooser renders normally and OWNS the question
 //                   from then on (a late board answer 409s, same as the other
 //                   hold kinds). Activity/SessionEnd expiry semantics are
@@ -123,7 +122,7 @@ interface QuestionPayload {
   chain_root?: number;
   rearm_pending?: boolean;
   tool_name?: string;
-  tool_input?: { questions?: (ChoiceQuestion | null)[] };
+  tool_input?: Record<string, unknown> & { questions?: (ChoiceQuestion | null)[] };
   text?: string;
 }
 
@@ -268,6 +267,7 @@ interface HoldEntry {
   timer: Timer;
 }
 interface RearmEntry {
+  session_id: string;
   timer: Timer | null;
   chainRoot: number;
   armedAt?: number;
@@ -346,7 +346,8 @@ export function createQuestions(
   // UX 2.1 re-arm ephemera (in-memory only — the same "a dead socket can never
   // be re-parked" reasoning that keeps holds in-memory; a daemon restart simply
   // forfeits any pending grace window, which fails safe to the pre-2.1 state):
-  //   rearmById   — expired row id -> { timer, chainRoot, armedAt, successor? };
+  //   rearmById   — expired row id -> { session_id, timer, chainRoot, armedAt,
+  //                 successor? };
   //                 a LIVE timer means a grace window is armed. After the grace
   //                 fires, the entry stays as a link to the successor row, so
   //                 answering the successor cancels the chain through either id
@@ -368,6 +369,24 @@ export function createQuestions(
   // sibling's completion. Answered-in-terminal completions are unaffected: they
   // left no ledger entry and retire a matching pending hold exactly as before.
   const completedKeys = new Map<string, Map<string, number>>();
+  // Interactive holds are useful only while an authorized board can actually
+  // render and answer them. The HTTP layer owns that fact (its authenticated
+  // snapshot-WebSocket set), so it installs a live probe after createHttp has
+  // created the set and before the server starts listening. Default CLOSED:
+  // a partially wired daemon must fail hooks open, never park them blindly.
+  let boardConsumerProbe: () => boolean = () => false;
+
+  function setBoardConsumerProbe(probe: () => boolean): void {
+    boardConsumerProbe = probe;
+  }
+
+  function boardConsumerAvailable(): boolean {
+    try {
+      return boardConsumerProbe() === true;
+    } catch {
+      return false;
+    }
+  }
 
   // -------------------------------------------------------------- creation
   function create(
@@ -462,6 +481,49 @@ export function createQuestions(
     clearTimeout(h.timer);
     holds.delete(id);
     return h;
+  }
+
+  // The last authorized board disappeared. Every parked hook must immediately
+  // fall back to Claude's native terminal prompt: release the HTTP response
+  // FIRST, then retire the durable row. Deliberately do NOT call settleExpired
+  // here — its timer-expiry path schedules a re-arm card, but after a board
+  // disconnect the terminal owns the question and no board is present to answer
+  // a successor. Work from a snapshot so responder close events can safely call
+  // socketClosed while this loop is running.
+  function failOpenAllHolds(): number {
+    const ids = [...holds.keys()];
+    if (ids.length === 0) return 0;
+
+    const retired: number[] = [];
+    for (const id of ids) {
+      const h = releaseHold(id);
+      if (!h) continue;
+      try {
+        h.respond({});
+      } catch {
+        /* socket already gone */
+      }
+      // Defensive: a live hold normally has no re-arm metadata yet, but keeping
+      // this explicit makes the no-successor contract survive future refactors.
+      cancelRearm(id);
+      try {
+        if (q.markExpired.run(id).changes) retired.push(id);
+      } catch (err) {
+        // The hook has already failed open. Keep releasing the remaining holds;
+        // expireOrphans will retry this row once storage recovers.
+        console.error(`fleetd question #${id} board-disconnect persistence error:`, err);
+      }
+    }
+
+    for (const id of retired) {
+      try {
+        onRetired(q.get.get(id));
+      } catch {
+        /* retirement wiring is best-effort after the hook is already released */
+      }
+    }
+    onChange();
+    return ids.length;
   }
 
   // -------------------------------------------- BUG-138: completion ledger
@@ -570,7 +632,12 @@ export function createQuestions(
       }
     }, rearmGraceMs);
     timer.unref();
-    rearmById.set(row.id, { timer, chainRoot, armedAt: Date.now() });
+    rearmById.set(row.id, {
+      session_id: row.session_id,
+      timer,
+      chainRoot,
+      armedAt: Date.now(),
+    });
     return true;
   }
 
@@ -596,7 +663,12 @@ export function createQuestions(
     // when its card is answered (the answer path) and its chain continues or
     // closes there.
     rearmMeta.set(fresh.id, { sourceId });
-    rearmById.set(row.id, { timer: null, chainRoot, successor: fresh.id });
+    rearmById.set(row.id, {
+      session_id: row.session_id,
+      timer: null,
+      chainRoot,
+      successor: fresh.id,
+    });
     tick(
       `🔁 question #${fresh.id} re-armed (was #${row.id}) — answering sends it as a message at the next turn boundary`,
     );
@@ -628,7 +700,7 @@ export function createQuestions(
       }
     }, rearmGraceMs);
     timer.unref();
-    rearmById.set(id, { timer, chainRoot });
+    rearmById.set(id, { session_id: row.session_id, timer, chainRoot });
     return true;
   }
 
@@ -653,6 +725,10 @@ export function createQuestions(
   // outlive the question it represents.
   function disarmRearmsForSession(sessionId: string): boolean {
     for (const [id, m] of [...rearmById]) {
+      // rearmById is global to the daemon. Activity in one session proves only
+      // that session moved on; cancelling another session's grace timer would
+      // silently lose its unanswered prompt recovery.
+      if (m.session_id !== sessionId) continue;
       if (m.timer) clearTimeout(m.timer);
       rearmById.delete(id);
       if (m.successor != null) rearmMeta.delete(m.successor);
@@ -679,6 +755,20 @@ export function createQuestions(
       onChange();
       onRetired(q.get.get(id));
     }
+  }
+
+  // A question observed in a native terminal is deliberately NOT held by
+  // Fleet Deck (the default relay scope is board-spawned sessions only). Plan
+  // capture still needs a durable question row so the plan can be correlated
+  // with the terminal's eventual activity, but there is no HTTP socket to park
+  // or re-arm. Retire that row immediately and fire the ordinary retirement
+  // callback so the plan's handled-in-terminal gate remains intact.
+  function expireUnheld(id: number): boolean {
+    if (holds.has(id)) return false;
+    if (!q.markExpired.run(id).changes) return false;
+    onRetired(q.get.get(id));
+    onChange();
+    return true;
   }
 
   // -------------------------------------------------- answer mail size guard
@@ -847,16 +937,23 @@ export function createQuestions(
             },
           };
         }
-        // Validated schema + wording (validated live on CLI 2.1.206, exp. 1b): a
-        // PreToolUse deny with this reason frame is honored GRACEFULLY — the
-        // model proceeds with the relayed answer, no retry, no terminal
-        // chooser. The reason renders as an `Error:` line in the terminal,
-        // so it must read well in that frame.
+        const updatedInput = choiceUpdatedInput(row, body);
+        if (!updatedInput) {
+          return {
+            status: 400,
+            body: { ok: false, err: 'choice payload has no usable questions to answer' },
+          };
+        }
+        // Current Claude Code contract: AskUserQuestion is satisfied by
+        // allowing the PreToolUse call with the original questions plus an
+        // `answers` map in updatedInput. This executes the tool normally and
+        // produces its ordinary PostToolUse result; the former deny-with-reason
+        // workaround surfaced an Error line and depended on model recovery.
         hookResponse = {
           hookSpecificOutput: {
             hookEventName: 'PreToolUse',
-            permissionDecision: 'deny',
-            permissionDecisionReason: `User answered via Fleet Deck: ${serialized}`,
+            permissionDecision: 'allow',
+            updatedInput,
           },
         };
         detail = serialized.length > 60 ? serialized.slice(0, 57) + '…' : serialized;
@@ -871,11 +968,13 @@ export function createQuestions(
             },
           };
         }
-        // UNVERIFIED schema — handoff guess, pending the Phase 3 live gate.
-        hookResponse =
-          action === 'accept'
-            ? { action: 'accept', content: body?.content ?? {} }
-            : { action: 'decline' };
+        hookResponse = {
+          hookSpecificOutput: {
+            hookEventName: 'Elicitation',
+            action,
+            ...(action === 'accept' ? { content: body?.content ?? {} } : {}),
+          },
+        };
         detail = action;
       }
       const h = releaseHold(row.id);
@@ -1267,7 +1366,11 @@ export function createQuestions(
   return {
     create,
     attachHold,
+    setBoardConsumerProbe,
+    boardConsumerAvailable,
+    failOpenAllHolds,
     socketClosed,
+    expireUnheld,
     answer,
     dismiss,
     purgeResolved,
@@ -1283,9 +1386,9 @@ export function createQuestions(
 // --------------------------------------------------------------------------
 // F3c choice-answer serialization (pure helper)
 // --------------------------------------------------------------------------
-// Compacts a board answer body into the deny-reason tail. The frame the live
-// validation proved graceful is "User answered via Fleet Deck: <answer>", so
-// the serialization must stay SHORT and read well after an `Error:` prefix:
+// Compacts a board answer body for board telemetry and mail-delivered re-arms.
+// The live hold itself uses choiceUpdatedInput above so Claude receives the
+// structured answers map through its documented AskUserQuestion contract:
 //   {text:"..."}                             → the text itself
 //   {answers:{q:"argon2"}} (single entry)    → "argon2"
 //   {answers:{q1:"a", q2:["x","y"]}} (multi) → "<header-or-question>: a; <…>: x, y"
@@ -1316,6 +1419,42 @@ export function createQuestions(
 // ever split. Any text a multi-question chooser legitimately produces is
 // far under the cap; it guards against pathological bodies only.
 const ANSWER_MAX = 2000;
+
+function choiceUpdatedInput(
+  row: QuestionRow,
+  body: AnswerBody | null | undefined,
+): (Record<string, unknown> & { answers: Record<string, string> }) | null {
+  const input = safeParse<QuestionPayload>(row.payload_json)?.tool_input;
+  const questions = input?.questions;
+  if (!input || !Array.isArray(questions) || questions.length === 0) return null;
+
+  let entries: [string, unknown][];
+  if (typeof body?.text === 'string' && body.text.trim()) {
+    // A free-text answer is unambiguous only for a single question. Claude's
+    // native chooser also supports an "Other" response, represented in the
+    // same answers map as an option label.
+    const qText = questions.length === 1 ? questions[0]?.question : null;
+    if (typeof qText !== 'string' || !qText) return null;
+    entries = [[qText, body.text.trim()]];
+  } else if (body?.answers && typeof body.answers === 'object' && !Array.isArray(body.answers)) {
+    entries = Object.entries(body.answers as Record<string, unknown>);
+    if (!validChoiceAnswers(questions, entries)) return null;
+  } else {
+    return null;
+  }
+
+  const answers = Object.fromEntries(
+    entries.map(([question, answer]) => [
+      question,
+      Array.isArray(answer)
+        ? answer.map((label) => asText(label).trim()).join(', ')
+        : asText(answer).trim(),
+    ]),
+  );
+  if (Object.values(answers).some((answer) => !answer)) return null;
+  return { ...input, answers };
+}
+
 function serializeChoiceAnswer(
   row: QuestionRow,
   body: AnswerBody | null | undefined,
@@ -1353,6 +1492,19 @@ function validChoiceAnswers(
   questions: (ChoiceQuestion | null)[],
   entries: [string, unknown][],
 ): boolean {
+  // AskUserQuestion executes as soon as this PreToolUse response allows it.
+  // A partial map would therefore retire the Fleet Deck hold while handing
+  // Claude an input that cannot satisfy every chooser row. Require one answer
+  // for every well-formed question (and reject malformed/null payload rows), so
+  // a stale or interrupted board submit stays retryable instead of becoming a
+  // tool error with no native chooser left to recover through.
+  if (
+    questions.length === 0 ||
+    questions.some((question) => !question || typeof question.question !== 'string') ||
+    entries.length !== questions.length
+  ) {
+    return false;
+  }
   return entries.every(([qText, v]) => {
     const question = questions.find((x) => x?.question === qText);
     if (!question) return false; // key must be a held question's text

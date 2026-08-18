@@ -42,6 +42,15 @@ interface WorktreesResponse {
   worktrees: Worktree[];
 }
 
+// A failed forced removal can carry the exact foreign-owned paths that blocked
+// git plus the daemon-generated recovery command. Preserve that evidence for
+// the modal instead of collapsing the response to its one-line reason.
+interface WorktreeRemoveFailure {
+  blocked_paths?: unknown;
+  blocked_owner?: unknown;
+  fix_command?: unknown;
+}
+
 // v1.9 — worktrees. The daemon runs git per row to answer this, so the board
 // does NOT poll it on a timer: it reads once at boot, again whenever the fleet
 // gains or loses a session (a spawn creates a worktree; a death strands one),
@@ -59,12 +68,19 @@ export function useWorktrees(sessionCount: number) {
   const [wtErr, setWtErr] = useState<string | null>(null);
   const [wtSupported, setWtSupported] = useState(true); // 404 → older daemon
   const wtGone = useRef(false); // this daemon has no /api/worktrees — stop asking
+  // A refresh can be triggered by boot, a session-count mutation, the modal,
+  // and a completed removal at nearly the same time. Only the newest request
+  // may publish; otherwise a slower, older git scan can resurrect a row that
+  // was just removed (and can clear the loading indicator too early).
+  const loadSeq = useRef(0);
 
   const loadWorktrees = useCallback(async () => {
     if (wtGone.current) return;
+    const seq = ++loadSeq.current;
     setWtLoading(true);
     try {
       const res = await fetchWorktrees();
+      if (seq !== loadSeq.current) return;
       // ApiJson (res.json's type) doesn't carry `worktrees`; read it off the
       // endpoint's own body shape.
       const body = res.json as WorktreesResponse | null;
@@ -82,7 +98,7 @@ export function useWorktrees(sessionCount: number) {
         setWtErr(reasonOf(res, `could not list worktrees (${res.status})`));
       }
     } finally {
-      setWtLoading(false);
+      if (seq === loadSeq.current) setWtLoading(false);
     }
   }, []);
   useEffect(() => {
@@ -98,7 +114,16 @@ export function useWorktrees(sessionCount: number) {
       // literal widens `true`/`false` to `boolean`), so this union stays
       // assignable to the modal's { ok: true } | { ok: false; reason } prop.
       if (res.ok && res.json?.ok !== false) return { ok: true as const, json: res.json };
-      return { ok: false as const, reason: reasonOf(res, `remove failed (${res.status})`) };
+      const body = res.json as WorktreeRemoveFailure | null;
+      return {
+        ok: false as const,
+        reason: reasonOf(res, `remove failed (${res.status})`),
+        blocked_paths: Array.isArray(body?.blocked_paths)
+          ? body.blocked_paths.filter((p): p is string => typeof p === 'string')
+          : undefined,
+        blocked_owner: typeof body?.blocked_owner === 'string' ? body.blocked_owner : undefined,
+        fix_command: typeof body?.fix_command === 'string' ? body.fix_command : undefined,
+      };
     },
     [],
   );

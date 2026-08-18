@@ -39,6 +39,9 @@ function errCode(err2) {
   return void 0;
 }
 
+// src/daemon/helpers.ts
+var sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 // src/daemon/takeover.ts
 function pidRecord(text) {
   try {
@@ -57,6 +60,14 @@ function pidRecord(text) {
   const pid = Number(text.trim());
   return Number.isInteger(pid) && pid > 0 ? { pid, port: null } : null;
 }
+function pidIsLive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err2) {
+    return errCode(err2) !== "ESRCH";
+  }
+}
 function livePidLooksLikeFleetd(pid) {
   if (process.platform !== "linux") return true;
   try {
@@ -66,21 +77,32 @@ function livePidLooksLikeFleetd(pid) {
     const fleetdScript = argv.some(
       (arg) => /(?:^|[/\\])fleetd(?:\.bundle)?\.(?:mjs|ts)$/.test(arg)
     );
-    return runtimeLike && fleetdScript;
+    const fleetdeckServe = argv.some(
+      (arg, index) => /(?:^|[/\\])fleetdeck\.(?:mjs|ts)$/.test(arg) && argv[index + 1] === "serve"
+    );
+    return runtimeLike && (fleetdScript || fleetdeckServe);
   } catch (err2) {
     return errCode(err2) !== "ENOENT";
   }
 }
-function verifyDaemonPid(pid, home) {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  let record;
+var defaultSleep = sleep;
+async function terminateDaemon(pid, {
+  timeoutMs = 2e3,
+  sleep: sleep2 = defaultSleep
+} = {}) {
   try {
-    record = pidRecord(fs.readFileSync(path.join(home, "fleetd.pid"), "utf8"));
-  } catch {
+    process.kill(pid, "SIGTERM");
+  } catch (err2) {
+    if (errCode(err2) === "ESRCH") return true;
     return false;
   }
-  if (record?.pid !== pid) return false;
-  return livePidLooksLikeFleetd(pid);
+  const stepMs = 100;
+  const steps = Math.max(1, Math.ceil(timeoutMs / stepMs));
+  for (let i = 0; i < steps; i += 1) {
+    await sleep2(stepMs);
+    if (!pidIsLive(pid)) return true;
+  }
+  return !pidIsLive(pid);
 }
 
 // bin/fleetdeck.ts
@@ -147,6 +169,13 @@ function version() {
   } catch {
     return "0.0.0";
   }
+}
+var DEFAULT_SERVICE_START_TIMEOUT_MS = 3e4;
+var MAX_SERVICE_START_TIMEOUT_MS = 3e5;
+function serviceStartTimeoutMs(raw = process.env["FLEETDECK_SERVICE_START_TIMEOUT_MS"]) {
+  if (raw === void 0 || raw === null || raw === "") return DEFAULT_SERVICE_START_TIMEOUT_MS;
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= 250 && n <= MAX_SERVICE_START_TIMEOUT_MS ? n : DEFAULT_SERVICE_START_TIMEOUT_MS;
 }
 var out = (s) => process.stdout.write(`${s}
 `);
@@ -462,8 +491,8 @@ function supervisorAlive() {
     return 0;
   }
 }
-function healthPidIsOurDaemon(h) {
-  if (!h?.managed) return false;
+function healthPidOwnsSelectedService(h) {
+  if (!h) return false;
   const pid = Number(h.pid);
   if (!Number.isInteger(pid) || pid <= 0) return false;
   let record;
@@ -473,30 +502,176 @@ function healthPidIsOurDaemon(h) {
     return false;
   }
   if (record?.pid !== pid) return false;
-  if (record.port !== null && record.port !== PORT) return false;
+  if (record.port !== PORT) return false;
   return livePidLooksLikeFleetd(pid);
 }
+function healthPidIsOurDaemon(h) {
+  return h?.managed === true && healthPidOwnsSelectedService(h);
+}
 async function waitForHealth({
-  tries = 20,
+  tries,
   everyMs = 250,
+  timeoutMs = serviceStartTimeoutMs(),
   expect
 } = {}) {
-  for (let i = 0; i < tries; i += 1) {
-    await new Promise((r) => setTimeout(r, everyMs));
-    const h = await health({ timeout: everyMs });
+  const boundedEveryMs = Math.max(1, Math.floor(everyMs));
+  const boundedTimeoutMs = Math.max(1, Math.floor(timeoutMs));
+  const deadline = Date.now() + boundedTimeoutMs;
+  const maxAttempts = tries === void 0 ? Number.POSITIVE_INFINITY : Math.max(0, tries);
+  let delayMs = 0;
+  for (let i = 0; i < maxAttempts; i += 1) {
+    if (delayMs > 0) {
+      const remainingBeforeSleep = deadline - Date.now();
+      if (tries === void 0 && remainingBeforeSleep <= 0) break;
+      await new Promise(
+        (r) => setTimeout(r, tries === void 0 ? Math.min(delayMs, remainingBeforeSleep) : delayMs)
+      );
+    }
+    const remaining = deadline - Date.now();
+    const finalDeadlineProbe = tries === void 0 && remaining <= 0;
+    const h = await health({
+      timeout: tries === void 0 ? finalDeadlineProbe ? Math.min(1e3, boundedEveryMs) : Math.max(1, Math.min(1e3, remaining)) : boundedEveryMs
+    });
     if (h && (!expect || await expect(h))) return h;
+    if (finalDeadlineProbe) break;
+    delayMs = tries === void 0 ? Math.min(delayMs === 0 ? boundedEveryMs : Math.ceil(delayMs * 1.5), 1e3) : boundedEveryMs;
   }
   return null;
 }
 async function healthIsOurManagedDaemon(h) {
-  if (!h?.managed) return false;
-  return verifyDaemonPid(h.pid, HOME);
+  return healthPidIsOurDaemon(h);
+}
+async function healthIsOurCurrentManagedDaemon(h) {
+  return healthPidIsOurDaemon(h) && h?.version === version();
+}
+function ownedStartingDaemonPid() {
+  let record;
+  try {
+    record = pidRecord(fs2.readFileSync(FLEETD_PID, "utf8"));
+  } catch {
+    return null;
+  }
+  if (!record || record.port !== PORT) return null;
+  if (!pidIsLive(record.pid) || !livePidLooksLikeFleetd(record.pid)) return null;
+  return record.pid;
+}
+async function handoffExistingDaemon() {
+  const incumbent = await health({ timeout: 500 });
+  if (!incumbent) return true;
+  if (!healthPidOwnsSelectedService(incumbent)) {
+    err(
+      `\u2717 cannot start managed service: something else owns :${PORT} (reported pid ${String(incumbent.pid)})`
+    );
+    err("  the responder is not this FLEETDECK_HOME's verified daemon; leaving it untouched");
+    return false;
+  }
+  out(
+    `\u21BB replacing same-home ${incumbent.managed ? `managed v${String(incumbent.version)}` : "plugin-spawned"} daemon (pid ${incumbent.pid}) with the supervised v${version()} service`
+  );
+  if (!await terminateDaemon(incumbent.pid, { timeoutMs: 3e3 })) {
+    err(`\u2717 daemon pid ${incumbent.pid} did not stop after SIGTERM; leaving it in place`);
+    return false;
+  }
+  return true;
+}
+function unlinkSupervisorPidIfMatches(pid) {
+  try {
+    if (Number(fs2.readFileSync(SUPERVISOR_PID, "utf8").trim()) === pid) {
+      fs2.unlinkSync(SUPERVISOR_PID);
+    }
+  } catch {
+  }
+}
+async function stopOwnedSupervisor(pid) {
+  if (supervisorAlive() !== pid) return false;
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch (e) {
+    if (errnoCode(e) !== "ESRCH") return false;
+  }
+  for (let i = 0; i < 30; i += 1) {
+    if (supervisorAlive() !== pid) {
+      unlinkSupervisorPidIfMatches(pid);
+      return true;
+    }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return false;
+}
+function durationLabel(ms) {
+  return ms % 1e3 === 0 ? `${ms / 1e3}s` : `${ms}ms`;
+}
+async function explainServiceStartFailure({
+  launcher,
+  timeoutMs,
+  supervisorPid = 0
+}) {
+  const observed = await health({ timeout: 750 });
+  err(
+    `\u2717 ${launcher} but no current MANAGED v${version()} daemon became ready on :${PORT} within ${durationLabel(timeoutMs)}`
+  );
+  if (observed) {
+    if (!healthPidOwnsSelectedService(observed)) {
+      err(
+        `  port conflict: an unverified responder (reported pid ${String(observed.pid)}, v${String(observed.version)}) owns :${PORT}; it was left untouched`
+      );
+      return;
+    }
+    if (observed.managed !== true) {
+      err(
+        `  same-home daemon pid ${observed.pid} is plugin-spawned, not the requested managed service`
+      );
+      return;
+    }
+    err(
+      `  same-home managed daemon pid ${observed.pid} reports v${String(observed.version)}; installed CLI is v${version()}`
+    );
+    return;
+  }
+  const startingPid = ownedStartingDaemonPid();
+  if (startingPid !== null) {
+    err(
+      `  owned daemon pid ${startingPid} is still running but has not opened /health; this is a slow or stuck startup, not a port conflict`
+    );
+    return;
+  }
+  if (supervisorPid > 0 && supervisorAlive() === supervisorPid) {
+    err(
+      `  supervisor pid ${supervisorPid} is still running; fleetd may be backing off or failing before it claims HOME`
+    );
+  }
 }
 async function serviceStart() {
+  const startupTimeoutMs = serviceStartTimeoutMs();
   if (await hasSystemd() && fs2.existsSync(UNIT_FILE)) {
-    await execFileP("systemctl", ["--user", "start", SERVICE_NAME], { timeout: 15e3 });
-    if (!await waitForHealth()) {
-      err(`\u2717 ${SERVICE_NAME}.service started but no daemon answered on :${PORT} within 5s`);
+    const incumbent = await health({ timeout: 500 });
+    let systemdAction = "start";
+    if (incumbent?.managed === true) {
+      if (!healthPidOwnsSelectedService(incumbent)) {
+        err(
+          `\u2717 cannot start managed service: something else owns :${PORT} (reported pid ${String(incumbent.pid)})`
+        );
+        err("  the responder is not this FLEETDECK_HOME's verified daemon; leaving it untouched");
+        return 1;
+      }
+      if (!await healthIsOurCurrentManagedDaemon(incumbent)) {
+        systemdAction = "restart";
+        out(
+          `\u21BB restarting ${SERVICE_NAME}.service to upgrade verified v${String(incumbent.version)} to v${version()}`
+        );
+      }
+    } else if (incumbent && !await handoffExistingDaemon()) {
+      return 1;
+    }
+    await execFileP("systemctl", ["--user", systemdAction, SERVICE_NAME], { timeout: 15e3 });
+    if (!await waitForHealth({
+      timeoutMs: startupTimeoutMs,
+      expect: healthIsOurCurrentManagedDaemon
+    })) {
+      await explainServiceStartFailure({
+        launcher: `${SERVICE_NAME}.service started`,
+        timeoutMs: startupTimeoutMs
+      });
       err("  systemctl --user status fleetdeck  /  journalctl --user -u fleetdeck");
       return 1;
     }
@@ -509,19 +684,36 @@ async function serviceStart() {
   }
   const sup = supervisorAlive();
   if (sup) {
-    const h2 = await waitForHealth();
-    if (h2?.managed) {
+    const h2 = await waitForHealth({
+      timeoutMs: startupTimeoutMs,
+      expect: healthIsOurManagedDaemon
+    });
+    if (h2?.version === version()) {
       out("\u2713 already running");
       return 0;
     }
-    err(
-      `\u2717 supervisor alive (pid ${sup}) but no managed daemon answering on :${PORT} \u2014 see ${LOG_FILE}`
+    if (!h2) {
+      await explainServiceStartFailure({
+        launcher: `supervisor pid ${sup} is alive`,
+        timeoutMs: startupTimeoutMs,
+        supervisorPid: sup
+      });
+      err(`  see ${LOG_FILE}; run \`fleetdeck service stop\` then start if it is crash-looping`);
+      return 1;
+    }
+    out(
+      `\u21BB upgrading managed fleetd v${String(h2.version)} to installed v${version()} (pid ${h2.pid})`
     );
-    err(
-      "  the wrapper may be backing off between respawns; check the log, or `fleetdeck service stop` then start"
-    );
-    return 1;
+    if (!await stopOwnedSupervisor(sup)) {
+      err(`\u2717 verified supervisor pid ${sup} did not stop; old daemon left untouched`);
+      return 1;
+    }
+    if (healthPidOwnsSelectedService(h2) && pidIsLive(h2.pid) && !await terminateDaemon(h2.pid, { timeoutMs: 3e3 })) {
+      err(`\u2717 old managed daemon pid ${h2.pid} did not stop; refusing to start a competing service`);
+      return 1;
+    }
   }
+  if (!await handoffExistingDaemon()) return 1;
   fs2.mkdirSync(HOME, { recursive: true });
   const log = fs2.openSync(LOG_FILE, "a", 384);
   try {
@@ -534,14 +726,17 @@ async function serviceStart() {
   child.unref();
   fs2.closeSync(log);
   fs2.writeFileSync(SUPERVISOR_PID, String(child.pid), { encoding: "utf8", mode: 384 });
-  const h = await waitForHealth({ expect: healthIsOurManagedDaemon });
+  const h = await waitForHealth({
+    timeoutMs: startupTimeoutMs,
+    expect: healthIsOurCurrentManagedDaemon
+  });
   if (!h) {
-    err(
-      `\u2717 supervisor started (pid ${String(child.pid)}) but no MANAGED daemon for this FLEETDECK_HOME answered on :${PORT} within 5s \u2014 see ${LOG_FILE}`
-    );
-    if (await health({ timeout: 500 })) {
-      err("  something else already owns the port \u2014 `fleetdeck status` shows what is answering");
-    }
+    await explainServiceStartFailure({
+      launcher: `supervisor started (pid ${String(child.pid)})`,
+      timeoutMs: startupTimeoutMs,
+      supervisorPid: child.pid ?? 0
+    });
+    err(`  see ${LOG_FILE}`);
     return 1;
   }
   if (!supervisorAlive()) {
@@ -717,6 +912,7 @@ var IS_ENTRYPOINT = (() => {
 })();
 if (IS_ENTRYPOINT) await main(process.argv.slice(2));
 export {
+  DEFAULT_SERVICE_START_TIMEOUT_MS,
   ENV_VALUE_BARE_SAFE,
   ENV_VALUE_UNQUOTABLE,
   MIN_BUN_VERSION,
@@ -725,13 +921,17 @@ export {
   argvIsOurSupervisor,
   bunVersionSupported,
   doctor,
+  handoffExistingDaemon,
+  healthIsOurCurrentManagedDaemon,
   healthIsOurManagedDaemon,
   healthPidIsOurDaemon,
+  ownedStartingDaemonPid,
   parseServiceEnvPort,
   quoteExecArg,
   serviceEnvPort,
   serviceInstall,
   serviceStart,
+  serviceStartTimeoutMs,
   shQuote,
   supervisorAlive,
   supervisorLooksLikeOurs,

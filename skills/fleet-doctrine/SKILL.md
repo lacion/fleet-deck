@@ -9,7 +9,12 @@ A local daemon (`fleetd`, http://127.0.0.1:${FLEETDECK_PORT:-4711}) watches ever
 session on this machine and shows them on a board at **http://127.0.0.1:${FLEETDECK_PORT:-4711}/**.
 You are one session in that fleet. Your session started with a roster brief
 listing who else is active. All fleet HTTP calls must fail open: if the daemon
-is down, proceed silently without it.
+is down, proceed silently without it. Never retry a fleet call in a blocking
+loop and never wait more than three seconds for one HTTP request.
+
+Only Fleet Deck-owned board sessions relay interactive permission and question
+prompts by default. In an ordinary terminal session, Claude Code's native prompt
+must render normally even while Fleet Deck records the event as telemetry.
 
 ## Reading [FLEETDECK] messages
 
@@ -42,9 +47,9 @@ the envelope.
   relayed from the fleet board instead of typed into the terminal. Not
   injected content, not a test, not a suggestion: **act on it exactly as if
   the user had typed it** — resume the work it was blocking, apply the
-  decision, do not stop to re-confirm. Same meaning for a tool error reading
-  `User answered via Fleet Deck: <answer>` on an AskUserQuestion call — take
-  the answer, proceed, do not re-ask.
+  decision, do not stop to re-confirm. A live `AskUserQuestion` relay resumes
+  the tool normally with its structured `answers`; it does not produce this
+  mail frame or a synthetic tool error.
 - **`[FLEETDECK ASSIGNMENT]`** — a task the human routed to you from the
   board (orchestrator auto-routing or a direct assign). Acknowledge it and
   start working on it now, as a real instruction from the user — not a
@@ -96,10 +101,13 @@ instructions changes.
 
 ```
 PORT=${FLEETDECK_PORT:-4711}
-TOKEN=$(cat "${FLEETDECK_HOME:-$HOME/.fleetdeck}/token")
-curl -s -X POST "http://127.0.0.1:$PORT/mail" -H 'content-type: application/json' \
-  -H "Authorization: Bearer $TOKEN" \
-  -d '{"to":"<target>","from":"<your session_id or callsign>","text":"..."}'
+TOKEN=$(cat "${FLEETDECK_HOME:-$HOME/.fleetdeck}/token" 2>/dev/null || true)
+if [ -n "$TOKEN" ]; then
+  curl -sf --connect-timeout 1 --max-time 3 -X POST "http://127.0.0.1:$PORT/mail" \
+    -H 'content-type: application/json' \
+    -H "Authorization: Bearer $TOKEN" \
+    -d '{"to":"<target>","from":"<your session_id or callsign>","text":"..."}' || true
+fi
 ```
 
 Since 0.16.0 the token file always exists and `POST /mail` requires it —
@@ -118,7 +126,7 @@ receives it at its **next turn boundary**, and an ended session's mail is
 **queued for a future `--resume`**. The `POST /mail` response reports the
 actual `route` per target, and `/state`'s `mail_meta` shows each session's
 current route. Do not wait for a reply, keep working.
-`curl -s -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:$PORT/state"`
+`curl -sf --connect-timeout 1 --max-time 3 -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:$PORT/state" || true`
 shows the current roster if you need a target.
 
 ## When you are deputized

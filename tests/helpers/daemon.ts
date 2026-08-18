@@ -9,13 +9,15 @@
 // that spawn it will simply fail/skip until the sibling daemon lands; that is
 // expected and not a bug in this harness.
 
-import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { TestContext } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import { releaseHookBoardClient } from './http.ts';
+import { cleanupOwnedTmuxSocket } from './tmux.ts';
 import { scaleMs } from './wait.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -124,6 +126,7 @@ export interface SpawnRawOptions {
 export interface RawDaemon {
   proc: ChildProcess;
   tmuxSocket: string | undefined;
+  tmuxTmpDir: string | undefined;
   readonly stdout: string;
   readonly stderr: string;
   waitForExit: (timeoutMs?: number) => Promise<number | null>;
@@ -173,6 +176,10 @@ export function spawnRaw({
     // tests/agents-ingest.test.mjs) pass their own FLEETDECK_AGENTS_CMD via
     // `env`, which — spread after this default — wins as usual.
     FLEETDECK_AGENTS_CMD: 'false',
+    // Most existing hook-relay tests exercise the explicit legacy/all scope.
+    // Production defaults to `spawned`; dedicated hook-scope tests override
+    // this and prove ordinary terminal sessions fail open immediately.
+    FLEETDECK_HOLD_SCOPE: 'all',
     // Isolated tmux server per test daemon: the suite can never touch (or
     // poison) the developer's real tmux server — the 2026-07-11 env scar.
     FLEETDECK_TMUX_SOCKET: `fleetdeck-test-${port}`,
@@ -196,6 +203,7 @@ export function spawnRaw({
   return {
     proc: child,
     tmuxSocket: childEnv['FLEETDECK_TMUX_SOCKET'],
+    tmuxTmpDir: childEnv['TMUX_TMPDIR'],
     get stdout() {
       return stdout;
     },
@@ -203,7 +211,13 @@ export function spawnRaw({
       return stderr;
     },
     waitForExit: (timeoutMs?: number) => waitForExit(child, timeoutMs),
-    kill: (timeoutMs?: number) => killProcess(child, timeoutMs),
+    kill: async (timeoutMs?: number) => {
+      await killProcess(child, timeoutMs);
+      // tmux can leave a dead Unix socket inode after its server exits. Reap
+      // the exact test-owned label on every raw lifecycle, including failed
+      // starts that never return a DaemonHandle to the caller.
+      cleanupOwnedTmuxSocket(childEnv['FLEETDECK_TMUX_SOCKET'], childEnv['TMUX_TMPDIR']);
+    },
   };
 }
 
@@ -397,29 +411,8 @@ export async function startDaemon({
         return raw.stderr;
       },
       async stop({ keepHome = false }: { keepHome?: boolean } = {}) {
+        await releaseHookBoardClient(baseUrl);
         await raw.kill();
-        // tmux servers outlive the daemon that started them: any test whose
-        // daemon touched the real tmux path left a live
-        // `tmux -L fleetdeck-test-<port>` server behind forever — observed
-        // 2026-07-14: 89 leaked servers from the previous day's suite runs,
-        // four still hosting live claude panes that haunted the production
-        // board as ghost cards. Guarded to test-owned sockets so a test that
-        // points FLEETDECK_TMUX_SOCKET at a shared server can never have that
-        // server killed from here.
-        if (raw.tmuxSocket?.startsWith('fleetdeck-test-')) {
-          try {
-            spawnSync('tmux', ['-L', raw.tmuxSocket, 'kill-server'], {
-              stdio: 'ignore',
-              timeout: 3000,
-              // Live env, not Bun's startup snapshot: the socket name resolves
-              // against a runtime-mutated TMUX_TMPDIR, so kill-server must see
-              // it or it targets the wrong dir and leaks the server. See exec.ts.
-              env: process.env,
-            });
-          } catch {
-            /* best-effort: no server on the socket is the common case */
-          }
-        }
         if (!keepHome) {
           rmSync(homeDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
         }

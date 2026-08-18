@@ -90,6 +90,8 @@ interface EventsCtx {
   home: string | null;
   questions: {
     create: (kind: string, sid: string, payload: unknown) => { id: number };
+    boardConsumerAvailable: () => boolean;
+    expireUnheld: (id: number) => boolean;
     expireOnActivity: (
       sid: string,
       correlate?: { toolName?: unknown; toolInput?: unknown },
@@ -190,6 +192,20 @@ export function createEvents(ctx: EventsCtx) {
     // none of those proves the human decided anything in the terminal.
     settleTerminalPlans,
   } = ctx;
+
+  // Interactive hooks are a control-plane feature, not telemetry. By default
+  // only sessions launched into a Fleet Deck-owned pane are eligible to have
+  // their prompt relayed to the board, AND an authorized snapshot client must
+  // be connected at intake. A Claude session started in an ordinary terminal —
+  // or any session while the board is closed — keeps its native chooser.
+  // `all` broadens session eligibility but never waives the live-consumer gate;
+  // `off` makes every interactive hook observation-only. Invalid values fail
+  // safe to `spawned`.
+  const holdScopeRaw = (process.env['FLEETDECK_HOLD_SCOPE'] ?? 'spawned').trim().toLowerCase();
+  const holdScope = holdScopeRaw === 'all' || holdScopeRaw === 'off' ? holdScopeRaw : 'spawned';
+  const shouldRelayQuestion = (sid: string): boolean =>
+    questions.boardConsumerAvailable() &&
+    (holdScope === 'all' || (holdScope === 'spawned' && q.activeSpawnBySession.get(sid) != null));
 
   // ---------------------------------------------- hook event -> card state
   // Faithful port of the spike's applyEvent switch.
@@ -859,8 +875,13 @@ export function createEvents(ctx: EventsCtx) {
           : 'permission';
     const sid = ev.session_id ?? '';
     const isPlan = eventName === 'PermissionRequest' && ev.tool_name === 'ExitPlanMode';
+    const relay = shouldRelayQuestion(sid);
     if (!isPlan) {
       applyEvent({ ...ev, hook_event_name: eventName });
+      // Observation-only terminal session: telemetry still moves the card to
+      // needs-you, but returning null makes http.ts answer {} immediately so
+      // Claude renders its native prompt. No dead question card is created.
+      if (!relay) return null;
       const row = questions.create(kind, sid, ev);
       onMutate();
       return row;
@@ -936,6 +957,10 @@ export function createEvents(ctx: EventsCtx) {
     // guaranteed to exist, so the board can never point at a rolled-back row.
     applyEvent({ ...ev, hook_event_name: eventName });
     tick(`📋 ${callsign} proposed a plan — captured to the library (#${planRowId})`);
+    if (!relay) {
+      questions.expireUnheld(row.id);
+      return null;
+    }
     onMutate();
     return row;
   }

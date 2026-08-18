@@ -239,7 +239,7 @@ async function supersedeIfNewer(record: PidRecord): Promise<boolean> {
   // name (verifyDaemonPid re-checks this against the pidfile + /proc shape).
   if (!shouldTakeOver(version, incumbent.version)) return false;
   if (incumbent.pid !== record.pid) return false;
-  if (!verifyDaemonPid(record.pid, HOME)) return false;
+  if (!verifyDaemonPid(record.pid, HOME, record.port)) return false;
   if (!(await terminateDaemon(record.pid))) return false; // wedged: leave it serving, refuse
   console.log(
     `fleetd v${version} superseded v${String(incumbent.version)}: a strictly newer build claimed FLEETDECK_HOME`,

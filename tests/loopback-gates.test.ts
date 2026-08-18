@@ -152,18 +152,13 @@ test('TRUST_LOOPBACK=on waives the four power gates only for plain loopback', as
   const armBody = arm.json as { arm_token?: unknown };
   assert.ok(typeof armBody.arm_token === 'string' && armBody.arm_token, 'arm capability is minted');
 
-  // Hook authentication cannot be opted out. Legacy tokenless hooks retain
-  // their fail-open HTTP dialect, but are refused before any handler runs.
+  // Hook authentication cannot be opted out. Tokenless hooks retain their
+  // silent fail-open HTTP dialect, but are refused before any handler runs.
   const hook = await postJson(`${daemon.baseUrl}/hook/SessionStart`, {
     session_id: 'trust-loopback-forgery',
   });
   assert.equal(hook.status, 200, 'legacy hook refusal stays fail-open at HTTP level');
-  const hookBody = hook.json as {
-    ok?: unknown;
-    hookSpecificOutput?: { additionalContext?: string };
-  };
-  assert.equal(hookBody.ok, undefined, 'tokenless hook was not authenticated');
-  assert.match(hookBody.hookSpecificOutput?.additionalContext ?? '', /restart/i);
+  assert.deepEqual(hook.json, {}, 'tokenless hook was not authenticated and injected no context');
 });
 
 test('TRUST_LOOPBACK refuses contradictory and invalid startup configuration', async (t: TestContext) => {

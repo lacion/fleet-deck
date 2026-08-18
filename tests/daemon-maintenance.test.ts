@@ -487,6 +487,7 @@ test('spawn argv is deterministic and registration watchdog stalls once, then a 
     'FLEETDECK_RC_HARVEST_MS',
     'FLEETDECK_ADOPT_ARM_MS',
     'FLEETDECK_ADOPT_DELAY_MS',
+    'FLEETDECK_BOARD_SESSION',
     'FLEETDECK_TEST_DAEMON_SCRIPT',
     'FLEETDECK_VERSION_OVERRIDE',
     // 0.16.0: the daemon's bearer never leaks into a spawned pane — see the
@@ -506,6 +507,7 @@ test('spawn argv is deterministic and registration watchdog stalls once, then a 
     'env',
     ...scrub.flatMap((v) => ['-u', v]),
     'CLAUDE_CODE_DISABLE_AGENT_VIEW=1',
+    `FLEETDECK_BOARD_SESSION=${out.body.session_id}`,
     `FLEETDECK_PORT=${port}`,
     `FLEETDECK_HOME=${home}`,
   ];
@@ -614,7 +616,11 @@ test('revive reuses the env wrapper, kills a dead remnant, inserts a new row, an
   assert.deepEqual(state.killed, [original.body.tmux.window]);
   assert.ok(state.argv);
   const prefix = state.argv.slice(0, state.argv.indexOf('claude'));
-  assert.deepEqual(prefix.slice(-2), [`FLEETDECK_PORT=${port}`, `FLEETDECK_HOME=${home}`]);
+  assert.deepEqual(prefix.slice(-3), [
+    `FLEETDECK_BOARD_SESSION=${sid}`,
+    `FLEETDECK_PORT=${port}`,
+    `FLEETDECK_HOME=${home}`,
+  ]);
   assert.deepEqual(state.argv.slice(state.argv.indexOf('claude')), [
     'claude',
     '--resume',

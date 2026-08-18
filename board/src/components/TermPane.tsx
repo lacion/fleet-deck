@@ -274,9 +274,21 @@ export default function TermPane({ spawnId, live = true, fontSize = 13, onNote }
 
     // fitted dims travel in the URL so the daemon sizes the pane before init;
     // in LAN mode wsUrl() adds ?t=<token> — a WS handshake takes no headers
-    const ws = new WebSocket(
-      wsUrl('/ws/term', { spawn: spawnId, cols: term.cols, rows: term.rows }),
-    );
+    let ws: WebSocket;
+    try {
+      ws = new WebSocket(wsUrl('/ws/term', { spawn: spawnId, cols: term.cols, rows: term.rows }));
+    } catch {
+      // URL construction and the WebSocket constructor can throw synchronously
+      // (broken proxy base/mixed scheme). Keep the rest of the board alive and
+      // leave this pane with a concrete, retryable diagnosis.
+      term.options.disableStdin = true;
+      term.options.cursorBlink = false;
+      setNote({ kind: 'err', text: 'terminal connection could not start — check the board URL' });
+      return () => {
+        termRef.current = null;
+        term.dispose();
+      };
+    }
     // `seen` = did even one frame arrive? A socket that closes without ever
     // speaking was refused at the upgrade, not disconnected mid-stream, and the
     // two need different words — see the close handler.

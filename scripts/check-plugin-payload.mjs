@@ -11,19 +11,22 @@
 // payload while new installs got different behavior under the same semantic
 // version (BUG-001).
 //
-// This script is the single checked-in definition of the payload closure.
-// It fails (exit 1) when any payload path changed between BASE and HEAD
-// without a version-manifest change in the same range.
+// release-contract.mjs is the single checked-in definition of the payload
+// closure. This verifier fails (exit 1) when any payload path changed between
+// BASE and HEAD without a version-manifest change in the same range.
 //
 //   node scripts/check-plugin-payload.mjs <base-ref> [head-ref]
 //
 // Exit 0 also when there is no base to compare (branch creation, tag push).
 
 import { execFileSync } from 'node:child_process';
+import { PLUGIN_PAYLOAD_PATHS, VERSION_MANIFEST_PATHS } from './release-contract.mjs';
 
 // The complete behavior-bearing plugin payload:
 //  - hooks/ + the hook scripts: run on every installed machine at every
 //    SessionStart / tool call with the user's full environment.
+//  - commands/, skills/, and agents/: prompt/instruction payload loaded into
+//    Claude Code; changes here alter behavior just as surely as hook code.
 //  - bin/: the CLI every install shares.
 //  - src/daemon/: ALL daemon sources AND the two cached artifacts built
 //    from them (fleetd.bundle.mjs is what fleet-sessionstart.mjs actually
@@ -32,26 +35,9 @@ import { execFileSync } from 'node:child_process';
 //  - board/: the board source and lockfile that produce board-dist.
 //  - .claude-plugin/: plugin.json is the cache key itself; marketplace.json
 //    repeats it.
-const PAYLOAD = [
-  'hooks/',
-  'scripts/fleet-hook.mjs',
-  'scripts/fleet-sessionstart.mjs',
-  'scripts/fleet-watch.mjs',
-  'bin/',
-  'src/daemon/',
-  'board/',
-  '.claude-plugin/',
-];
-
 // A change to any of these signals a release. The version CI job already
 // proves the four agree on the version string, so any one of them changing
 // means the closure is riding a release.
-const VERSION_MANIFESTS = [
-  'package.json',
-  '.claude-plugin/plugin.json',
-  '.claude-plugin/marketplace.json',
-  'board/package.json',
-];
 
 const base = process.argv[2];
 const head = process.argv[3] ?? 'HEAD';
@@ -74,7 +60,7 @@ if (!git(['rev-parse', '--verify', '--quiet', `${base}^{commit}`])) {
   git(['fetch', '--no-tags', 'origin', base]);
 }
 
-const changed = git(['diff', '--name-only', base, head, '--', ...PAYLOAD]);
+const changed = git(['diff', '--name-only', base, head, '--', ...PLUGIN_PAYLOAD_PATHS]);
 if (!changed) {
   console.log('✓ plugin payload closure untouched');
   process.exit(0);
@@ -83,7 +69,7 @@ if (!changed) {
 console.log('plugin payload closure changed:');
 console.log(changed);
 
-const versionChanged = git(['diff', '--name-only', base, head, '--', ...VERSION_MANIFESTS]);
+const versionChanged = git(['diff', '--name-only', base, head, '--', ...VERSION_MANIFEST_PATHS]);
 if (!versionChanged) {
   console.error(
     '::error::the behavior-bearing plugin payload changed but no version manifest did — ' +

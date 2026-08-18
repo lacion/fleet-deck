@@ -23,14 +23,16 @@
 // arm is consumed further down the same function the guard returns from), and
 // HOME accumulated one stray file per hook.
 //
-// THE KEY. Claude Code exports CLAUDE_PID — the pid of the CLI process itself
-// — and it is visible to hooks through any intervening shell. That is exactly
-// the identity the nonce is supposed to track: stable for every hook of one CLI
-// process, and DIFFERENT for a `--resume`, which is a new process and must get
-// a new nonce or the guard above stops working.
+// THE KEY. Measured Claude Code 2.1.206 does NOT export CLAUDE_PID. Fleet
+// Deck's fixed `/bin/sh` hook launcher is directly parented by Claude, so it
+// overwrites and exports CLAUDE_PID=$PPID before starting Bun. SessionStart's
+// compatibility probe authenticates that exact process executable, version,
+// and generation. The derived identity is stable for every hook of one CLI
+// process and DIFFERENT for `--resume`, which is a new process and must get a
+// new nonce or the guard above stops working.
 //
 // Fallback order, most to least trustworthy:
-//   1. CLAUDE_PID           — the CLI's own pid, what we want
+//   1. CLAUDE_PID           — the launcher's derived CLI pid, what we want
 //   2. the nearest `claude` ancestor via /proc (Linux)  — same answer, derived
 //   3. process.ppid         — the historical behaviour; wrong when a shell sits
 //                             in between, but never worse than before

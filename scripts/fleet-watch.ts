@@ -1,10 +1,10 @@
 #!/usr/bin/env bun
-// fleet-watch.ts — F3d-2 asyncRewake watcher, v1.1 any-mail wake (EXPERIMENTAL, shipped on).
+// fleet-watch.ts — F3d-2 asyncRewake watcher, v1.1 any-mail wake.
 //
 // Spawned by the plugin's Stop command hook with `asyncRewake: true`
 // (hooks/hooks.json): the CLI backgrounds it, hands it the full Stop payload
-// on stdin, and — validated live on 2.1.206 — wakes the idle session when it
-// exits 2, injecting
+// on stdin. Claude Code's documented asyncRewake contract wakes the idle
+// session when the hook exits 2, injecting
 // stderr behind the hook's `rewakeMessage` prefix (now the neutral
 // "[FLEETDECK] Fleet board mail for you:" — each mail carries its own frame,
 // see below).
@@ -74,18 +74,28 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { resolveHome, resolvePort, resolveBase, readToken } from '../src/daemon/config.ts';
+import { hasActiveClaudeCompatibility } from './claude-compat.ts';
 
-const PORT = resolvePort();
-const BASE = resolveBase(PORT);
-const HOME = resolveHome();
+let runtime: { base: string; home: string } | null = null;
+try {
+  const home = resolveHome();
+  // Do this before token reads, pidfile claims, streams, timers, or network.
+  if (!hasActiveClaudeCompatibility(home)) process.exit(0);
+  const port = resolvePort();
+  runtime = { base: resolveBase(port), home };
+} catch {
+  // Invalid config must never block Stop or create a noisy background-hook
+  // failure. `fleetdeck doctor` owns the actionable diagnostic.
+  process.exit(0);
+}
+if (!runtime) process.exit(0);
+const BASE = runtime.base;
+const HOME = runtime.home;
 
-// FLEETDECK_REQUIRE_TOKEN support: /api/watch is neither a hook path nor the
-// public shell, so under the flag it demands the token even on loopback. Read
-// the persisted token ($FLEETDECK_HOME/token, resolved like every other path
-// here) ONCE at startup and tolerate absence — in default loopback mode there
-// is no file and the loopback exemption carries the poll. This watcher is only
-// ever spawned by a Stop hook AFTER SessionStart booted the daemon, so the token
-// file already exists by the time we read it. Harmless in default mode.
+// /api/watch is not public: read the persisted bearer once at startup. The
+// watcher is spawned only after SessionStart has booted the daemon, so the file
+// normally exists; absence still fails open through the loopback policy rather
+// than breaking Stop.
 const TOKEN: string | null = readToken(HOME);
 
 // exactOptionalPropertyTypes forbids `headers: undefined` inline, so the auth
@@ -103,6 +113,7 @@ const POLL_MS = envMs('FLEETDECK_WATCH_POLL_MS', 25_000, 50, 25_000);
 const MAX_MS = envMs('FLEETDECK_WATCH_MAX_MS', 7_200_000, 500, 24 * 3600_000);
 const MAX_FAILURES = 3;
 const MAX_STDIN_BYTES = 64_000;
+const WAKE_FLUSH_MS = 1_000;
 
 const startedAt = Date.now();
 const sleep = (ms: number): Promise<void> =>
@@ -110,6 +121,27 @@ const sleep = (ms: number): Promise<void> =>
     setTimeout(r, ms);
   });
 const jitter = (base: number): number => base + Math.floor(Math.random() * 250);
+
+async function writeWake(text: string): Promise<void> {
+  // Mail is bounded server-side and normally flushes immediately. Still cap
+  // the stream callback: a Claude parent that stopped reading stderr must not
+  // leave an otherwise-finished watcher alive until the 24-hour hook ceiling.
+  await new Promise<void>((resolve) => {
+    let settled = false;
+    const finish = (): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(finish, WAKE_FLUSH_MS);
+    try {
+      process.stderr.write(text, finish);
+    } catch {
+      finish();
+    }
+  });
+}
 
 // ---------------------------------------------------------------- stdin
 // The CLI writes the Stop payload and closes stdin; guard with a timeout so
@@ -269,6 +301,7 @@ while (Date.now() < deadline) {
   // 'answer' shape some in-rollout servers may still send — wake the session
   // the same way: exit 2, raw text on stderr, no local reframing.
   if (out && (out.status === 'mail' || out.status === 'answer') && typeof out.text === 'string') {
+    const mailText = out.text;
     cleanupPidFile();
     // BUG-034: the claim was a LEASE — acknowledge it now that the body is in
     // hand, BEFORE exiting. Without this ack the lease lapses and the mail is
@@ -292,7 +325,12 @@ while (Date.now() < deadline) {
         /* ack lost → duplicate re-delivery, never a loss */
       }
     }
-    process.stderr.write(out.text); // the ONLY thing ever written anywhere
+    // Wait for the stream callback before force-exiting. `process.exit(2)` can
+    // otherwise truncate mail when stderr is a pipe, turning a valid wake into
+    // an empty or partial system reminder. A one-second internal ceiling keeps
+    // a parent that stopped reading from extending this completed delivery to
+    // the Stop hook's much larger lifecycle timeout.
+    await writeWake(mailText); // the ONLY thing ever written anywhere
     process.exit(2); // rewake: CLI injects stderr behind rewakeMessage
   }
   // idle

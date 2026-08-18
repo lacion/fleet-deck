@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
-// fleet-sessionstart.ts — the ONLY command hook. Election + spawn +
-// registration + brief.
+// fleet-sessionstart.ts — dedicated SessionStart hook. Election + spawn +
+// registration + brief; the other events use the smaller fleet-hook shim.
 //
 // Reads the SessionStart hook payload on stdin, makes sure fleetd is up
 // (health check → spawn detached → poll ~3 s), POSTs /hook/SessionStart and
@@ -12,7 +12,8 @@
 // node_modules, and every other subtree, which can wedge startup in large repos.
 //
 // Design rule #1: this script must NEVER break the session. EVERY failure
-// path is a silent exit 0, and a watchdog guarantees we are gone in ~4 s.
+// path is a silent exit 0. Cold starts normally have a ~4 s ceiling; a
+// positively identified version takeover may extend that ceiling to 8 s.
 
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -20,9 +21,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CLAUDE_ENV_MARKERS, GATEWAY_ENV_VARS, SPAWN_ENV_VARS } from '../src/daemon/env-scrub.ts';
 import { runNonce } from '../src/daemon/run-nonce.ts';
-// Version-takeover contract, imported as SOURCE from the sibling fleetd/ dir
-// (same unbundled pattern as env-scrub.ts above) so this hook can evict a
-// strictly-older daemon and let the newest installed build own the port.
+// Version-takeover contract. The release bundle inlines these sibling daemon
+// seams, so an installed hook never depends on unpublished TypeScript files.
 import {
   shouldTakeOver,
   verifyDaemonPid,
@@ -30,9 +30,26 @@ import {
   replacementMatches,
 } from '../src/daemon/takeover.ts';
 import { resolveHome, resolvePort, resolveBase, readToken } from '../src/daemon/config.ts';
+import { establishClaudeCompatibility } from './claude-compat.ts';
+import { trustedRosterBrief } from './hook-output.ts';
 
-const PORT = resolvePort();
-const BASE = resolveBase(PORT);
+let runtime: { port: number; base: string; home: string } | null = null;
+try {
+  const home = resolveHome();
+  // Fleet Deck never constrains Claude Code itself. An unrecognized runtime
+  // silently disables this optional integration for the life of the process.
+  if (!(await establishClaudeCompatibility(home))) process.exit(0);
+  const port = resolvePort();
+  runtime = { port, base: resolveBase(port), home };
+} catch {
+  // A typo in FLEETDECK_PORT must not turn SessionStart into a Claude startup
+  // failure. The daemon/doctor report the configuration error; the hook is an
+  // optional integration and exits silently.
+  process.exit(0);
+}
+if (!runtime) process.exit(0);
+const PORT = runtime.port;
+const BASE = runtime.base;
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 // Prefer the committed bundle (self-contained — git-distributed installs have
 // no node_modules); fall back to source for dev checkouts mid-iteration.
@@ -48,7 +65,7 @@ const FLEETD =
   (fs.existsSync(FLEETD_BUNDLE)
     ? FLEETD_BUNDLE
     : path.join(HERE, '..', 'src', 'daemon', 'fleetd.ts'));
-const HOME = resolveHome();
+const HOME = runtime.home;
 
 // Shapes of the daemon's wire JSON. Trusted like every other /health consumer
 // (bin/fleetdeck.ts): the daemon has minted these fields at every boot, and any
@@ -59,9 +76,26 @@ interface Health {
   managed: boolean;
   pid: number;
 }
+
+function asHealth(value: unknown): Health | null {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
+  const candidate = value as Partial<Health>;
+  if (
+    typeof candidate.version !== 'string' ||
+    !candidate.version ||
+    typeof candidate.managed !== 'boolean' ||
+    typeof candidate.pid !== 'number' ||
+    !Number.isSafeInteger(candidate.pid) ||
+    candidate.pid < 1
+  )
+    return null;
+  return candidate as Health;
+}
 interface Registration {
-  upgrade_lines?: unknown;
+  ok?: unknown;
+  callsign?: unknown;
   brief?: unknown;
+  upgrade_lines?: unknown;
 }
 // Only the fields this hook reads or stamps are named; JSON.stringify still
 // serializes every runtime key the CLI sent, so the daemon receives the full
@@ -97,17 +131,18 @@ function rearmWatchdog(totalMs: number): void {
 // can't see, so a plain `= null` narrows every later read to `null` (making the
 // real takeover guards below dead code to the type checker).
 let replacedVersion = null as string | null;
-// Set when a service-managed daemon is running a different version than this
-// plugin. We never evict it (see ensureServer), but silent drift is how someone
-// spends an afternoon debugging a fix that is installed and not running. Widened
-// like replacedVersion above — same cross-closure assignment in ensureServer.
-let managedVersionDrift = null as string | null;
-
 async function readStdin(): Promise<Payload> {
+  const maxBytes = 1024 * 1024;
   let data = '';
+  let bytes = 0;
   try {
-    for await (const chunk of process.stdin)
-      data += typeof chunk === 'string' ? chunk : (chunk as Buffer).toString('utf8');
+    for await (const chunk of process.stdin) {
+      if (bytes >= maxBytes) continue;
+      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+      const kept = buf.subarray(0, maxBytes - bytes);
+      data += kept.toString('utf8');
+      bytes += kept.length;
+    }
     return JSON.parse(data || '{}') as Payload;
   } catch {
     return {};
@@ -135,6 +170,7 @@ async function api<T = unknown>(
       // when present (an absent body is identical on the wire to undefined).
       ...(body ? { body: JSON.stringify(body) } : {}),
     });
+    if (!res.ok) return null;
     return (await res.json()) as T;
   } catch {
     return null;
@@ -177,6 +213,7 @@ function bootEnv(): NodeJS.ProcessEnv {
     // scar). A leaked TEST_DAEMON_SCRIPT would hijack every future daemon
     // spawn; a leaked VERSION_OVERRIDE would permanently skew takeover.
     'FLEETDECK_TEST_DAEMON_SCRIPT',
+    'FLEETDECK_TEST_CLAUDE_VERSION',
     'FLEETDECK_VERSION_OVERRIDE',
     // The managed bit belongs to `fleetdeck serve` ALONE: a hook that happens
     // to run inside a session whose daemon IS managed would otherwise stamp
@@ -227,15 +264,16 @@ function ownVersion(): string | null {
 // and hard-caps so two evenly-matched candidates can never re-take over each
 // other past the hook's watchdog.
 async function ensureServer(round = 0): Promise<boolean> {
-  const health = await api<Health>('/health', { timeout: 250 });
+  const health = asHealth(await api('/health', { timeout: 250 }));
   if (health) {
-    // A daemon is already up. ownVersion() is read only on this branch — the
-    // cold-boot path below never compares versions, so it skips the
-    // package.json read entirely. String-equality shortcut before ANY semver
-    // work: identical versions can never be a takeover candidate, and
-    // own==null (our package.json was unreadable) means we can't claim to be
-    // newer — both keep the overwhelmingly-common path a single /health
-    // round-trip, as before.
+    // A same-version JSON shape on loopback is not identity. Before accepting
+    // this responder for registration, takeover, or model-visible output,
+    // prove that HOME's ownership record names this exact pid AND this exact
+    // port and that the live process still has FleetDeck's daemon shape.
+    if (!verifyDaemonPid(health.pid, HOME, PORT)) return false;
+    // A daemon is already up. String-equality shortcut before ANY semver work:
+    // identical versions can never be a takeover candidate, and own==null
+    // (our package.json was unreadable) means we can't claim to be newer.
     const own = ownVersion();
     if (own == null || health.version === own) return true;
     // MANAGED DAEMON: started by `fleetdeck serve` under a supervisor, so it is
@@ -245,13 +283,12 @@ async function ensureServer(round = 0): Promise<boolean> {
     // version mismatch here is an operator's upgrade to make, so we fail open
     // onto it and say so rather than papering over the drift.
     if (health.managed) {
-      managedVersionDrift = health.version;
       return true;
     }
     // Version differs. Take over ONLY when strictly newer AND we can positively
     // identify the /health pid as our daemon (pidfile match + /proc shape). Any
     // doubt on either check → keep using the running daemon.
-    if (!shouldTakeOver(own, health.version) || !verifyDaemonPid(health.pid, HOME)) return true;
+    if (!shouldTakeOver(own, health.version)) return true;
     // Committed takeover. This branch alone can take ~6.5s (up to 2s for the old
     // daemon to die, then ~3s polling the replacement), so extend the hook's
     // self-watchdog to 8s from its start; hooks.json's 15s ceiling is untouched.
@@ -301,21 +338,21 @@ async function ensureServer(round = 0): Promise<boolean> {
     await new Promise<void>((r) => {
       setTimeout(r, 250);
     });
-    const spawned = await api<Health>('/health', { timeout: 250 });
+    const spawned = asHealth(await api('/health', { timeout: 250 }));
     if (spawned) {
-      // A daemon answers, but whose? Only a hook that just evicted an older
-      // build can be RACING another candidate doing the same — a cold-boot
-      // competitor simply fails to bind and this poll never sees it (its
-      // winner, whoever spawned it, reports this hook's own version anyway).
-      // If the winner is not our build, do NOT accept its code as the result
-      // of our upgrade: fail open onto it for this session and re-arbitrate.
-      // Round 2's /health then applies the normal strictly-newer rule — we
-      // evict it when we are newer, keep it when we are not — so a rapid
-      // multi-version upgrade converges on the NEWEST build instead of
-      // whichever candidate happened to claim the port first. Skipping the
-      // check on the cold-boot path also keeps ownVersion() (a package.json
-      // read) off that path, as documented in ensureServer.
-      if (replacedVersion && !replacementMatches(ownVersion(), spawned.version)) {
+      // The process that won the port election must also own THIS HOME at THIS
+      // port. A foreign/stale responder is never a daemon we register with,
+      // recurse against, or expose output from.
+      if (!verifyDaemonPid(spawned.pid, HOME, PORT)) return false;
+      // A daemon answers, but whose? Every spawn is an election, including a
+      // genuinely cold port: hooks from two installed plugin versions can both
+      // observe no daemon, spawn different builds, and then poll whichever one
+      // bound first. Therefore every post-spawn health result must exactly
+      // match THIS hook before it can be accepted. On mismatch, re-enter the
+      // normal arbitration path: a newer hook evicts an older winner, an older
+      // hook keeps a newer winner, and managed/unknown candidates retain their
+      // existing fail-open rules.
+      if (!replacementMatches(ownVersion(), spawned.version)) {
         // The recursion cap is the anti-flap guarantee: if the competitor
         // somehow evicts us back (only possible with two equal "newest"
         // builds fighting), a third round is out of budget — return true and
@@ -339,18 +376,18 @@ try {
   payload.hook_event_name = payload.hook_event_name || 'SessionStart';
   // Run generation (BUG-025): mint/read THIS CLI process's run nonce and stamp
   // it on the registration. SessionStart is usually the process's first hook,
-  // so this hook owns the mint; fleet-hook.ts (same run-<ppid> dotfile, mint
-  // only when absent) tags the process's later events — SessionEnd included —
-  // with the same nonce. The daemon refuses to tombstone a card on a
+  // so this hook owns the mint; fleet-hook.ts (same launcher-derived
+  // run-<claude-pid> dotfile, mint only when absent) tags the process's later
+  // events — SessionEnd included — with the same nonce. The daemon refuses to tombstone a card on a
   // SessionEnd whose nonce is not the active run, which is what stops a
   // delayed async SessionEnd from the PREVIOUS `claude --resume` process
   // (same session id) from killing the live one. Every failure path leaves the
   // payload untagged (the daemon's historical behavior) — never break the
   // session.
   try {
-    // Keyed on the CLI process (CLAUDE_PID), not this shim's parent — see
-    // run-nonce.ts. A ppid key gave every hook its own nonce, so the run this
-    // registers could never be matched by the SessionEnd that followed.
+    // Keyed on the CLI process (the launcher-derived CLAUDE_PID), not this Bun
+    // shim's parent — see run-nonce.ts. A shim ppid key gave every hook its own
+    // nonce, so the run this registers could never be matched by SessionEnd.
     if (payload.fleet_run == null) {
       const run = runNonce(HOME);
       if (run) payload.fleet_run = run;
@@ -377,23 +414,22 @@ try {
       body: payload,
       timeout: 1200,
     });
-    if (managedVersionDrift) {
-      context.push(
-        `[FLEETDECK] The fleet daemon is a managed service running v${managedVersionDrift}, ` +
-          `but this plugin is v${String(ownVersion())}. The service owns the port and was left running. ` +
-          `Restart it to pick up the new version.\n`,
-      );
-    }
-    const upgradeLines = reg?.upgrade_lines;
-    if (Array.isArray(upgradeLines)) {
-      for (const line of upgradeLines) context.push(`${String(line)}\n`);
-    }
-    const brief = reg?.brief;
-    if (typeof brief === 'string' && brief) context.push(brief);
+    // Upgrade/failure diagnostics belong in fleetdeck doctor and daemon logs,
+    // never in model context. Only the normal roster brief is intentional.
+    const brief = trustedRosterBrief(reg);
+    if (brief) context.push(brief);
   }
-  process.stdout.write(context.join(''));
+  // A roster can be larger than a pipe's eager-write buffer. Wait for the
+  // stream callback instead of force-exiting and risking a truncated brief;
+  // the hook watchdog remains armed while it flushes.
+  const rendered = context.join('');
+  if (rendered) {
+    await new Promise<void>((resolve) => {
+      process.stdout.write(rendered, () => resolve());
+    });
+  }
 } catch {
   /* no fleet, no drama */
 }
 clearTimeout(watchdog);
-process.exit(0);
+process.exitCode = 0;

@@ -8,8 +8,10 @@
 // base and head, requires a semantic increase, and requires every release
 // manifest at head to equal the new value.
 //
-// These tests build scratch git repos and run the real checker script against
-// them — no mocks of the version comparison.
+// The gate now covers the complete behavior-bearing plugin payload, including
+// commands and skills, not only executable hooks. These tests build scratch
+// git repos and run the real checker script against them — no mocks of the
+// version comparison.
 
 import test, { type TestContext } from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
@@ -50,11 +52,15 @@ function makeReleaseRepo(t: TestContext, version: string) {
   mkdirSync(path.join(root, '.claude-plugin'), { recursive: true });
   mkdirSync(path.join(root, 'board'), { recursive: true });
   mkdirSync(path.join(root, 'scripts'), { recursive: true });
+  mkdirSync(path.join(root, 'commands'), { recursive: true });
+  mkdirSync(path.join(root, 'skills/fleet-doctrine'), { recursive: true });
   writeFileSync(path.join(root, 'package.json'), manifest(version));
   writeFileSync(path.join(root, '.claude-plugin/plugin.json'), pluginJson(version));
   writeFileSync(path.join(root, '.claude-plugin/marketplace.json'), marketplaceJson(version));
   writeFileSync(path.join(root, 'board/package.json'), manifest(version));
   writeFileSync(path.join(root, 'scripts/fleet-hook.mjs'), '// hook v1\n');
+  writeFileSync(path.join(root, 'commands/fleet.md'), '# command v1\n');
+  writeFileSync(path.join(root, 'skills/fleet-doctrine/SKILL.md'), '# skill v1\n');
   git(['add', '.'], root);
   git(['commit', '-q', '-m', `release ${version}`], root);
   return root;
@@ -107,6 +113,24 @@ test('BUG-002: hook change + manifest edit at an UNCHANGED version is rejected (
   assert.match(res.output, /did not increase \(0\.20\.0 -> 0\.20\.0\)/);
 });
 
+for (const rel of ['commands/fleet.md', 'skills/fleet-doctrine/SKILL.md']) {
+  test(`prompt payload change + manifest edit at an unchanged version is rejected: ${rel}`, (t) => {
+    const root = makeReleaseRepo(t, '0.20.0');
+    const base = git(['rev-parse', 'HEAD'], root);
+
+    writeFileSync(path.join(root, rel), `# changed ${rel}\n`);
+    writeFileSync(
+      path.join(root, 'package.json'),
+      manifest('0.20.0', ',"description":"fake bump"'),
+    );
+    commitAll(root, `change ${rel} without changing the cache key`);
+
+    const res = runGate(root, base);
+    assert.equal(res.status, 1, `expected rejection, got exit 0:\n${res.output}`);
+    assert.match(res.output, /did not increase \(0\.20\.0 -> 0\.20\.0\)/);
+  });
+}
+
 test('BUG-002: hook change + real semver bump with all manifests and lock roots in agreement passes', (t) => {
   const root = makeReleaseRepo(t, '0.20.0');
   const base = git(['rev-parse', 'HEAD'], root);
@@ -152,7 +176,7 @@ test('BUG-002: hook change + bump where the marketplace manifest is stale is rej
   assert.match(res.output, /version drift at HEAD.*marketplace\.json says 0\.20\.0/);
 });
 
-test('BUG-002: untouched hook closure passes without any version bump', (t) => {
+test('BUG-002: untouched plugin payload passes without any version bump', (t) => {
   const root = makeReleaseRepo(t, '0.20.0');
   const base = git(['rev-parse', 'HEAD'], root);
 
@@ -162,7 +186,7 @@ test('BUG-002: untouched hook closure passes without any version bump', (t) => {
 
   const res = runGate(root, base);
   assert.equal(res.status, 0, `expected pass, got exit ${res.status}:\n${res.output}`);
-  assert.match(res.output, /closure untouched/);
+  assert.match(res.output, /payload untouched/);
 });
 
 test('BUG-002: a semver DECREASE is not a bump', (t) => {

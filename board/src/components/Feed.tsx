@@ -29,6 +29,7 @@ export default function Feed({ ticker, orphans }: FeedProps) {
             key={f}
             type="button"
             className={`fd-chip${filter === f ? ' on' : ''}`}
+            aria-pressed={filter === f}
             onClick={() => {
               setFilter(f);
             }}
@@ -50,7 +51,7 @@ export default function Feed({ ticker, orphans }: FeedProps) {
       )}
       <div className="fd-feedlines">
         {rows.length === 0 && (
-          <div className="fd-feedline">
+          <div className="fd-feedline" role="status">
             <span className="m">quiet so far</span>
           </div>
         )}

@@ -687,6 +687,21 @@ export function createHttp(
     return res.end(body);
   }
 
+  function settleFilesystemOperation(
+    res: HttpResShim,
+    scope: 'session' | 'home',
+    operation: Promise<{ status: number; body: unknown }>,
+  ): void {
+    operation
+      .then(({ status, body }) => {
+        json(res, status, body);
+      })
+      .catch((err: unknown) => {
+        console.error(`fleetd ${scope} filesystem error:`, err);
+        json(res, 500, { ok: false, reason: 'internal' });
+      });
+  }
+
   // AUTH CONTRACT: every non-loopback HTTP route and WebSocket upgrade shares
   // this exact gate. Presented secrets are compared only after byte lengths
   // match, because timingSafeEqual throws for unequal buffers. Never include a
@@ -723,7 +738,9 @@ export function createHttp(
     // (scripts/fleet-hook.mjs / fleet-sessionstart.mjs / fleet-watch.mjs) that
     // reads $FLEETDECK_HOME/token and attaches the bearer, because Claude Code
     // http hooks cannot. A tokenless /hook/* call — a legacy pre-0.16.0 CLI or a
-    // local forgery — must fall through to the bearer check below and 401. This
+    // local forgery — must fail the bearer check below. The router still answers
+    // it with the canonical hook no-op (HTTP 200 `{}`), because an auth/home/token
+    // mismatch must never add context, show a warning, or interrupt Claude. This
     // guard LEADS the loopback block on purpose: the PROXY_AUTH=trust exemption
     // (return true, below) would otherwise authorize a FORGED hook, because a
     // direct loopback process can forge the trusted Host/Origin to make
@@ -790,22 +807,14 @@ export function createHttp(
     return pathname === '/mail' || pathname === '/api/spawn/arm-unsupervised';
   }
 
-  // 0.16.0 UPGRADE WHISPER. Sessions started before this release run the OLD
-  // (0.15-era) hooks: plain http POSTs with no token. With the gate up, those
-  // calls must be REFUSED — a tokenless hook is exactly the forgery the gate
-  // exists to stop — but a refusal alone leaves the old session silently dark
-  // on the board until someone restarts it. So instead of a bare 401, a
-  // tokenless hook is answered in the CLI's own dialect: no state change
-  // (nothing is ingested, held, or derived), but the response carries a
-  // context whisper the old CLI shows its agent, which relays it to the human.
-  // A session that KEEPS calling (the agent saw the whisper and the human
-  // hasn't acted) escalates once: its next tokenless Stop is answered with a
-  // turn-blocking restart instruction — the strongest signal the hook protocol
-  // allows, sent at most once per session per daemon boot, and never losing
-  // work (the turn continues after the block). Forgery vs. legacy is
-  // deliberately NOT distinguished: both get the same response, the whisper
-  // carries no privileged data, and the request is always refused.
-  const legacyWhisperedSessions = new Set();
+  // SILENT AUTH FAILURE. Sessions started before authenticated command shims
+  // (and modern shims reading a missing/stale token or the wrong FLEETDECK_HOME)
+  // arrive exactly like a local forgery: the daemon cannot distinguish them, so
+  // none may be ingested. They also must not leak an infrastructure problem into
+  // the developer's conversation. Every rejected hook therefore receives the
+  // one safe response for every event: HTTP 200 with canonical `{}`. The board
+  // still learns the affected session id through legacySessions below and can
+  // show an operator diagnostic without steering or interrupting Claude.
   // The board banner reads these: which sessions are running pre-0.16.0 hooks
   // (still to restart) and which have already proven they're on the new shims
   // (an authenticated hook arrived). A session moves from the first set to
@@ -837,22 +846,11 @@ export function createHttp(
   function legacyBanner() {
     return { sessions: [...legacySessions], upgraded: upgradedSessions.size };
   }
-  const LEGACY_WHISPER =
-    '[FLEETDECK] This session is running pre-0.16.0 hooks and is no longer reaching the fleet daemon (hook calls now require a token). Tell the human: please RESTART this Claude session — after the restart it reconnects to the board automatically.';
-  const LEGACY_BLOCK_REASON =
-    '[FLEETDECK] This session is running pre-0.16.0 hooks and cannot reach the fleet daemon. Stop and tell the human NOW: restart this Claude session (exit and relaunch in the same directory). Do not continue the current task until the human acknowledges — the session is running without fleet oversight.';
-  function legacyHookResponse(res: HttpResShim, ev: unknown, name: string) {
+  function silentHookRefusal(res: HttpResShim, ev: unknown) {
     const sidRaw = asRecord(ev)['session_id'];
     const sid = typeof sidRaw === 'string' ? sidRaw : null;
     noteLegacySession(sid);
-    if (name === 'Stop' && sid && !legacyWhisperedSessions.has(sid)) {
-      legacyWhisperedSessions.add(sid);
-      json(res, 200, { decision: 'block', reason: LEGACY_BLOCK_REASON });
-      return;
-    }
-    json(res, 200, {
-      hookSpecificOutput: { hookEventName: name, additionalContext: LEGACY_WHISPER },
-    });
+    json(res, 200, {});
   }
 
   // SAME-ORIGIN CONTRACT (C1/H-S3). Loopback auto-authorizes, and a browser is a
@@ -1294,10 +1292,10 @@ export function createHttp(
     try {
       const url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`);
       const shell = isPublicShell(req.method, url.pathname);
-      // Hook paths are NOT refused here: a tokenless hook is answered (and
-      // refused) by legacyHookResponse AFTER its body is parsed — the upgrade
-      // whisper needs the session_id and event name, and the hook dialect
-      // never sends an error page. Everything else 401s as usual.
+      // Hook paths are NOT refused here: a tokenless hook is silently answered
+      // (and refused) only AFTER its body is parsed, because the board-side
+      // legacy-session diagnostic needs the session_id. The hook dialect always
+      // receives HTTP 200 `{}`; everything else 401s as usual.
       const isHookPath = url.pathname.startsWith('/hook/');
       if (!shell && !isHookPath && !authorized(req, url)) {
         json(res, 401, { ok: false, reason: 'unauthorized' });
@@ -1397,14 +1395,7 @@ export function createHttp(
                 : core.fsSearch(sid, url.searchParams.get('q') ?? '', {
                     mode: url.searchParams.get('mode') ?? 'content',
                   });
-          operation
-            .then(({ status, body }) => {
-              json(res, status, body);
-            })
-            .catch((err: unknown) => {
-              console.error('fleetd session filesystem error:', err);
-              json(res, 500, { ok: false, reason: 'internal' });
-            });
+          settleFilesystemOperation(res, 'session', operation);
           return;
         }
         const homeFsMatch = /^\/api\/fs\/(list|read|search)$/.exec(url.pathname);
@@ -1418,14 +1409,7 @@ export function createHttp(
                 : core.fsSearchHome(url.searchParams.get('q') ?? '', {
                     mode: url.searchParams.get('mode') ?? 'content',
                   });
-          operation
-            .then(({ status, body }) => {
-              json(res, status, body);
-            })
-            .catch((err: unknown) => {
-              console.error('fleetd home filesystem error:', err);
-              json(res, 500, { ok: false, reason: 'internal' });
-            });
+          settleFilesystemOperation(res, 'home', operation);
           return;
         }
         if (url.pathname === '/mail') {
@@ -1556,11 +1540,11 @@ export function createHttp(
             const hook = /^\/hook\/([A-Za-z]+)$/.exec(url.pathname);
             if (hook) {
               const name = hook[1] ?? '';
-              // 0.16.0 upgrade path: a tokenless hook is REFUSED here — nothing
-              // below may ingest, hold, or derive from it — and answered with
-              // the restart whisper (see legacyHookResponse).
+              // A tokenless/wrong-token hook is REFUSED here — nothing below may
+              // ingest, hold, or derive from it — and answered with the canonical
+              // silent no-op. Diagnostics stay on the board, never in Claude.
               if (!hookAuthed) {
-                legacyHookResponse(res, ev, name);
+                silentHookRefusal(res, ev);
                 return;
               }
               noteUpgradedSession(asRecord(ev)['session_id']);
@@ -2030,6 +2014,11 @@ export function createHttp(
   // auth/CSRF gate lives in the fetch handler's handleUpgrade, before server.upgrade.
   const snapshotClients = new Set<LiveSocket>();
   const termClients = new Set<LiveSocket>();
+  // createCore is built before the HTTP surface, so the question relay starts
+  // fail-closed and receives this live probe now. Hooks cannot arrive until the
+  // returned server is listened, making admission -> row creation -> attachHold
+  // one synchronous, non-interleavable path with respect to websocket close.
+  core.questions.setBoardConsumerProbe(() => snapshotClients.size > 0);
   const termbridge = createTermBridge({
     port,
     resolveSpawn: (spawnId) => core.terminalSpawn(spawnId),
@@ -2155,7 +2144,22 @@ export function createHttp(
     },
     close(ws) {
       if (ws.data.kind === 'snapshot') {
-        snapshotClients.delete(ws);
+        const removed = snapshotClients.delete(ws);
+        // One tab closing must not disturb another tab that can still answer.
+        // The 1 -> 0 transition, however, makes every live hold undeliverable:
+        // release them immediately so Claude renders its native terminal UI.
+        // failOpenAllHolds suppresses re-arm because the terminal now owns each
+        // question and there is no board consumer for a successor card.
+        if (removed && snapshotClients.size === 0) {
+          try {
+            core.questions.failOpenAllHolds();
+          } catch (err) {
+            // The question layer releases responders before persistence work;
+            // contain any unexpected hygiene error so websocket cleanup itself
+            // cannot destabilize the daemon.
+            console.error('fleetd board disconnect hold-release error:', err);
+          }
+        }
         return;
       }
       termClients.delete(ws);

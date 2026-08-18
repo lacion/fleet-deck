@@ -11,8 +11,9 @@
 //
 // The fix moved the watched closure into one checked-in verifier,
 // scripts/check-plugin-payload.mjs, which covers the complete
-// behavior-bearing payload (hooks, bin/, ALL of src/daemon/ including the
-// bundle and board-dist, board/ sources, .claude-plugin/) and requires a
+// behavior-bearing payload (hooks, commands, skills, agents, bin/, ALL of
+// src/daemon/ including the bundle and board-dist, board/ sources,
+// .claude-plugin/) and requires a
 // version-manifest change in the same range. These tests run that verifier
 // against scratch git repos, exactly as CI does.
 
@@ -28,11 +29,16 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 const CHECK = path.join(REPO_ROOT, 'scripts', 'check-plugin-payload.mjs');
 
 const PAYLOAD_FILES = [
+  'compatibility.json',
   '.claude-plugin/plugin.json',
   'bin/fleetdeck.mjs',
   'board/src/App.jsx',
   'board/bun.lock',
+  'commands/fleet.md',
   'hooks/hooks.json',
+  'skills/fleet-doctrine/SKILL.md',
+  'agents/fleet-reviewer.md',
+  'scripts/hook-launcher.sh',
   'scripts/fleet-hook.mjs',
   'scripts/fleet-sessionstart.mjs',
   'scripts/fleet-watch.mjs',
@@ -114,6 +120,7 @@ function runGate(base: string, cwd: string): GateResult {
 // a version bump. The hook-side paths were already watched pre-fix; the
 // daemon/board rows are the BUG-001 regression assertions.
 for (const rel of [
+  'compatibility.json',
   'src/daemon/http.mjs',
   'src/daemon/fleetd.mjs',
   'src/daemon/fleetd.bundle.mjs',
@@ -121,7 +128,11 @@ for (const rel of [
   'board/src/App.jsx',
   'board/bun.lock',
   'bin/fleetdeck.mjs',
+  'commands/fleet.md',
+  'skills/fleet-doctrine/SKILL.md',
+  'agents/fleet-reviewer.md',
   'hooks/hooks.json',
+  'scripts/hook-launcher.sh',
   'scripts/fleet-hook.mjs',
   'scripts/fleet-sessionstart.mjs',
   'scripts/fleet-watch.mjs',

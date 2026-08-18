@@ -2,10 +2,10 @@
 //
 // LAN mode (v1.7): every request carries `Authorization: Bearer <token>` when a
 // token is known. Loopback daemons ignore it; a LAN daemon refuses without it.
-// A 401 anywhere latches the board's unauthorized state (token.js) and App
+// A 401 anywhere latches the board's unauthorized state (tokenStore.ts) and App
 // swaps the board for the token gate — one clear state, however many calls fail.
 
-import { authHeaders, markUnauthorized } from './token.ts';
+import { authHeaders, markUnauthorized } from './tokenStore.ts';
 import { apiUrl } from './base.ts';
 
 // The parsed JSON body of a daemon response. Every field is optional — a route
@@ -110,27 +110,76 @@ export async function fetchHealth(): Promise<unknown> {
 
 // GET /state — the board's paint-and-poll snapshot. Returns null on any
 // failure (401 included: the gate, not the caller, reports that one).
-export async function fetchState(): Promise<unknown> {
-  let res: Response;
+interface StateFetchTransport {
+  fetcher: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+  unauthorized: () => void;
+}
+
+function stateRequestSignal(
+  timeoutMs: number,
+  external?: AbortSignal,
+): { signal: AbortSignal; release: () => void } {
+  if (!external) return { signal: AbortSignal.timeout(timeoutMs), release: () => undefined };
+
+  // The connection effect must be able to retire an old-token request NOW,
+  // while the timeout remains an independent upper bound for the live request.
+  const controller = new AbortController();
+  const abortFromOwner = () => controller.abort(external.reason);
+  if (external.aborted) abortFromOwner();
+  else external.addEventListener('abort', abortFromOwner, { once: true });
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  return {
+    signal: controller.signal,
+    release: () => {
+      clearTimeout(timeout);
+      external.removeEventListener('abort', abortFromOwner);
+    },
+  };
+}
+
+// Exported as a narrow deterministic transport seam: the lifecycle regression
+// can prove that an already-retired request may not latch a stale-token 401.
+export async function fetchStateWithTransport(
+  timeoutMs: number,
+  signal: AbortSignal | undefined,
+  transport: StateFetchTransport,
+): Promise<unknown> {
+  const request = stateRequestSignal(timeoutMs, signal);
   try {
-    res = await fetch(apiUrl('/state'), {
-      headers: authHeaders(),
-      signal: AbortSignal.timeout(15000),
-    });
-  } catch {
-    return null; // unreachable/timeout — the WS retry loop owns recovery
+    let res: Response;
+    try {
+      res = await transport.fetcher(apiUrl('/state'), {
+        headers: authHeaders(),
+        signal: request.signal,
+      });
+    } catch {
+      return null; // unreachable/timeout — the WS retry loop owns recovery
+    }
+    // A mocked/non-compliant fetcher can resolve even after abort. Ownership is
+    // still authoritative: never let that retired response mutate auth or state.
+    if (request.signal.aborted) return null;
+    if (res.status === 401) {
+      transport.unauthorized();
+      return null;
+    }
+    if (!res.ok) return null;
+    try {
+      const body: unknown = await res.json();
+      if (request.signal.aborted) return null;
+      return body;
+    } catch {
+      return null;
+    }
+  } finally {
+    request.release();
   }
-  if (res.status === 401) {
-    markUnauthorized();
-    return null;
-  }
-  if (!res.ok) return null;
-  try {
-    const body: unknown = await res.json();
-    return body;
-  } catch {
-    return null;
-  }
+}
+
+export function fetchState(timeoutMs = 15_000, signal?: AbortSignal): Promise<unknown> {
+  return fetchStateWithTransport(timeoutMs, signal, {
+    fetcher: fetch,
+    unauthorized: markUnauthorized,
+  });
 }
 
 export function answerQuestion(id: string, body: unknown): Promise<ApiResult> {

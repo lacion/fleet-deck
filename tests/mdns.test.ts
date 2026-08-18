@@ -1222,30 +1222,10 @@ test('update() retires the old A record (TTL 0) and announces the new one (BUG-1
     'junk input never empties the advertisement either',
   );
 
-  // A legacy unicast query after the roam is answered from the NEW set.
-  const asker = await bindShared(0);
-  if (!asker) {
-    t.skip('no ephemeral udp4 socket for the legacy query');
-    return;
-  }
-  t.after(() => close(asker));
-  const queryInbox = collect(asker);
-  const query = encodeMessage({
-    id: 0x1234,
-    flags: 0,
-    questions: [{ name: HOST, type: TYPE.A, class: 1 }],
-  });
-  asker.send(query, MDNS_PORT, '127.0.0.1');
-  const reply = await queryInbox.waitFor(
-    (p) => p.isResponse && p.answers.some((r) => r.typeName === 'A'),
-    'the post-update A answer',
-  );
-  assert.ok(reply, 'the responder must answer queries after an update');
-  assert.deepEqual(
-    reply.answers.filter((r) => r.typeName === 'A').map((r) => r.data),
-    ['192.0.2.9'],
-    'post-roam answers must carry the new address, not the retired one',
-  );
+  // Query rebasing is covered by the preceding update() test, where no test
+  // listener is co-bound to 5353. A legacy-unicast query cannot be asserted in
+  // this multicast-observer test: with two reuseAddr sockets on 5353, macOS may
+  // deliver the query to the listener instead of the responder.
 });
 
 // ------------------------------------------------- probing & conflict handling

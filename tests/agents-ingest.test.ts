@@ -21,7 +21,7 @@
 //      (offline + "no longer reported by agents CLI"); reappearance revives.
 //      Hook-sourced cards: SessionEnd stays the only tombstone.
 
-import test from './helpers/harness-test.ts';
+import test, { type TestContext } from './helpers/harness-test.ts';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { spawnSync, execFileSync } from 'node:child_process';
@@ -64,6 +64,12 @@ interface EndReasonRow {
 
 // A pid that is definitely alive on this machine: our own test process.
 const LIVE_PID = process.pid;
+
+function requireLinuxProc(t: TestContext): boolean {
+  if (process.platform === 'linux') return true;
+  t.skip('agents-cli PID ownership verification requires Linux /proc process metadata');
+  return false;
+}
 
 // A pid that is definitely dead: spawn a no-op process, let it exit, reuse
 // its pid. (PID reuse within a test run is theoretically possible but
@@ -133,7 +139,7 @@ function procStartMs(pid: number): number {
 // A startedAt for a record genuinely owned by our live test process. Spawned
 // daemons and THIS test process are both alive for the whole test, so the
 // once-per-file snapshot stays within tolerance of any daemon's own read.
-const LIVE_STARTED_AT = procStartMs(process.pid);
+const LIVE_STARTED_AT = process.platform === 'linux' ? procStartMs(process.pid) : 0;
 
 async function waitForSession(
   baseUrl: string,
@@ -150,6 +156,7 @@ async function waitForSession(
 }
 
 test('poller cards live interactive entries only: background and dead-pid entries are excluded', async (t) => {
+  if (!requireLinuxProc(t)) return;
   const scratchDir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-agents-scratch-'));
   const fixtureFile = path.join(scratchDir, 'agents.json');
   const repo = makeRepoWithWorktree({ repoName: 'agents-repo-test' });
@@ -261,6 +268,7 @@ test('poller cards live interactive entries only: background and dead-pid entrie
 });
 
 test('a hook event for the same sessionId flips source to hooks and the poller stops touching it', async (t) => {
+  if (!requireLinuxProc(t)) return;
   const scratchDir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-agents-scratch-'));
   const fixtureFile = path.join(scratchDir, 'agents.json');
   const cwd = mkdtempSync(path.join(tmpdir(), 'fleetdeck-cwd-'));
@@ -342,6 +350,7 @@ test('a hook event for the same sessionId flips source to hooks and the poller s
 });
 
 test('absence tombstones agents-cli cards; reappearance revives them', async (t) => {
+  if (!requireLinuxProc(t)) return;
   const scratchDir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-agents-scratch-'));
   const fixtureFile = path.join(scratchDir, 'agents.json');
   const cwd = mkdtempSync(path.join(tmpdir(), 'fleetdeck-cwd-'));
@@ -427,6 +436,7 @@ test('absence tombstones agents-cli cards; reappearance revives them', async (t)
 // must be treated as absent: never carded, never revived, and any stale card
 // it would have stood for must be tombstoned.
 test('a reused pid (live process, stale startedAt) is not the recorded session', async (t) => {
+  if (!requireLinuxProc(t)) return;
   const scratchDir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-agents-scratch-'));
   const fixtureFile = path.join(scratchDir, 'agents.json');
   const cwd = mkdtempSync(path.join(tmpdir(), 'fleetdeck-cwd-'));
@@ -514,6 +524,7 @@ test('a reused pid (live process, stale startedAt) is not the recorded session',
 // keep the birth branch for the card's whole lifetime, since agents-cli cards
 // have no hook telemetry to correct it.
 test("an in-place checkout refreshes an agents-cli card's branch (same repo_id)", async (t) => {
+  if (!requireLinuxProc(t)) return;
   const scratchDir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-agents-scratch-'));
   const fixtureFile = path.join(scratchDir, 'agents.json');
   const repo = makeRepoWithWorktree({ repoName: 'agents-checkout-test' });
@@ -658,6 +669,7 @@ test('poll command exiting non-zero harms nothing', async (t) => {
 // once: the poll still ingests the fixture JSON (stdout unredirected), and the
 // "redirect target" file is never created (`>` is data, not a shell operator).
 test('FLEETDECK_AGENTS_CMD is argv-only: a `>` is data, never a shell redirection', async (t) => {
+  if (!requireLinuxProc(t)) return;
   const scratchDir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-agents-scratch-'));
   const fixtureFile = path.join(scratchDir, 'agents.json');
   const canaryPath = path.join(scratchDir, 'canary-should-never-exist');
@@ -737,6 +749,7 @@ test('poll command producing garbage (non-JSON) output harms nothing', async (t)
 // Jira key, the discovered card is ticketed (<animal>-KEY, ticket_source
 // 'branch') instead of hex-suffixed.
 test('agents-cli birth on a ticket branch → a ticketed callsign', async (t) => {
+  if (!requireLinuxProc(t)) return;
   const scratchDir = mkdtempSync(path.join(tmpdir(), 'fleetdeck-agents-scratch-'));
   const fixtureFile = path.join(scratchDir, 'agents.json');
   const repo = makeRepoWithWorktree({

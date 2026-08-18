@@ -3,10 +3,11 @@
 // the SessionStart / watch hook scripts (scripts/fleet-*.mjs).
 //
 // bin/fleetdeck.mjs deliberately does NOT import this. The published npm package
-// ships only `bin/` + the bundle + board-dist (see package.json "files"), never
-// scripts/fleetd/*.mjs source, so the standalone CLI cannot import this module at
-// runtime and keeps its own byte-identical HOME/PORT constants. Keep the two in
-// sync by eye; a drift test would need the CLI to be importable, which it is not.
+// ships only `bin/` + the daemon bundle + board-dist (see package.json "files"),
+// never `src/daemon/*.ts`, so the standalone CLI cannot import this module at
+// runtime and keeps its own equivalent HOME/PORT validation. Keep the two in
+// sync by eye; the CLI additionally reads an installed service.env when the
+// process environment does not select a port.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';

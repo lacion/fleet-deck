@@ -1,15 +1,15 @@
-// scripts/check-release-gate.mjs — release gate for the hook execution closure.
+// scripts/check-release-gate.mjs — semantic-version gate for the complete
+// behavior-bearing plugin payload.
 //
-// The hook scripts run on every installed machine at every SessionStart, and
-// marketplace installs track git main UNGATED. Claude Code's plugin cache key
-// is the explicit plugin VERSION, not a pathname: editing a manifest's
-// description while leaving the version alone used to satisfy the old
-// "a version-bearing file changed" predicate (ci.yml VERSION_CHANGED) even
-// though the cache key did not move — so changed hook behavior could reach
-// first-time installs under the old version while existing installs stayed
-// on cached code.
+// Hooks run on every installed machine, while commands and skills become model
+// instructions. Claude Code's marketplace cache key is the explicit plugin
+// VERSION, not a source ref or pathname: editing a
+// manifest's description while leaving the version alone used to satisfy the
+// old "a version-bearing file changed" predicate even though the cache key did
+// not move. First-time and existing installs could then receive different
+// behavior under the same version.
 //
-// This checker is the root-cause fix: when the watched hook closure changed
+// This checker is the root-cause fix: when the watched plugin payload changed
 // between BASE and HEAD, it resolves the plugin version from BOTH revisions
 // and requires
 //   1. the resolved plugin version to increase semantically (semver
@@ -25,25 +25,11 @@
 // requests and main pushes.
 
 import { execFileSync } from 'node:child_process';
-
-const WATCHED = [
-  'hooks/hooks.json',
-  'scripts/fleet-hook.mjs',
-  'scripts/fleet-sessionstart.mjs',
-  'scripts/fleet-watch.mjs',
-  'src/daemon/config.ts',
-  'src/daemon/takeover.ts',
-  'src/daemon/env-scrub.ts',
-];
-
-// Version-bearing manifests that must all equal the bumped plugin version at
-// HEAD. The resolved plugin version (plugin.json wins over marketplace.json —
-// it is Claude Code's cache key) is compared separately.
-const HEAD_MANIFESTS = [
-  ['package.json', (j) => j.version],
-  ['.claude-plugin/marketplace.json', (j) => j.plugins?.[0]?.version],
-  ['board/package.json', (j) => j.version],
-];
+import {
+  PLUGIN_PAYLOAD_PATHS,
+  VERSION_MANIFEST_PATHS,
+  versionFromManifest,
+} from './release-contract.mjs';
 
 function git(args) {
   return execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
@@ -87,12 +73,12 @@ export function semverGt(head, base) {
 }
 
 export function checkReleaseGate({ base, head = 'HEAD' }) {
-  const changed = git(['diff', '--name-only', base, head, '--', ...WATCHED]);
+  const changed = git(['diff', '--name-only', base, head, '--', ...PLUGIN_PAYLOAD_PATHS]);
   if (!changed) {
-    return { ok: true, lines: ['✓ hook execution closure untouched'] };
+    return { ok: true, lines: ['✓ plugin payload untouched'] };
   }
 
-  const lines = ['hook execution closure changed:', changed];
+  const lines = ['plugin payload changed:', changed];
   const fail = (msg) => ({ ok: false, lines: [...lines, `::error::${msg}`] });
 
   const baseVersion = pluginVersionAt(base);
@@ -105,13 +91,13 @@ export function checkReleaseGate({ base, head = 'HEAD' }) {
   }
   if (!semverGt(headVersion, baseVersion)) {
     return fail(
-      `hook scripts (or their fleetd/ import closure) changed but the plugin version did not increase (${baseVersion} -> ${headVersion}) — ` +
-      'the plugin version is Claude Code\'s install cache key, so code that runs at every user\'s SessionStart must ride a real version bump, not just a manifest edit'
+      `the behavior-bearing plugin payload changed but the plugin version did not increase (${baseVersion} -> ${headVersion}) — ` +
+      'the plugin version is Claude Code\'s install cache key, so behavior-bearing plugin changes must ride a real version bump, not just a manifest edit'
     );
   }
 
-  for (const [file, pick] of HEAD_MANIFESTS) {
-    const v = pick(readJsonAt(head, file.split(' ')[0]) ?? {});
+  for (const file of VERSION_MANIFEST_PATHS) {
+    const v = versionFromManifest(file, readJsonAt(head, file) ?? {});
     if (v !== headVersion) {
       return fail(`version drift at HEAD — plugin version is ${headVersion} but ${file} says ${v ?? '(missing)'}`);
     }
@@ -119,7 +105,7 @@ export function checkReleaseGate({ base, head = 'HEAD' }) {
 
   return {
     ok: true,
-    lines: [...lines, `✓ hook closure changed alongside a version bump (${baseVersion} -> ${headVersion}); all manifests agree`],
+    lines: [...lines, `✓ plugin payload changed alongside a version bump (${baseVersion} -> ${headVersion}); all manifests agree`],
   };
 }
 

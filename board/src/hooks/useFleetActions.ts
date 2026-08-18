@@ -9,6 +9,15 @@ import {
 } from '../api.ts';
 import type { ApiResult } from '../api.ts';
 import { safeUrl, validSuffix } from '../util.ts';
+import type {
+  AdoptBody,
+  AdoptResult,
+  EnableResult,
+  ReviveAllResult,
+  ReviveResult,
+  ShellResult,
+} from '../useSpawnActions.ts';
+import type { FeedbackNote } from './useFeedbackStrip.ts';
 
 // The defensively-accessed slice of a session these mutations read. Callers pass
 // a raw session (a real SessionEntry) and each field is reached behind a `?.` (an
@@ -33,38 +42,6 @@ interface AdoptTarget {
   callsign: string;
 }
 
-// The result shapes the spawn actions hand their onResult callback (mirrors
-// useSpawnActions, whose functions produce them — kept structural here so App can
-// wire those functions straight into this hook's props).
-type ReviveResult = { ok: true } | { ok: false; reason: string };
-interface ReviveAllResult {
-  okN: number;
-  total: number;
-  fails: string[];
-}
-type EnableResult =
-  | { ok: true; url: string | null; pending: boolean }
-  | { ok: false; reason: string };
-type AdoptResult = { ok: true; adopted: boolean; armed: boolean } | { ok: false; reason: string };
-type ShellResult = { ok: true; callsign: string | null } | { ok: false; reason: string };
-
-// The adopt POST body — `{}`, `{dangerously_skip_permissions, arm_token}` or
-// `{disarm:true}`; the daemon reads the intent off it (mirrors useSpawnActions).
-interface AdoptBody {
-  dangerously_skip_permissions?: boolean;
-  arm_token?: string;
-  disarm?: boolean;
-}
-
-// The feedback-strip note showNote renders — every field optional; each call
-// fills only the slots it needs (heading, body, error, orphan list, remote URL).
-interface FeedbackNote {
-  hd?: string;
-  msg?: string;
-  err?: string;
-  orphans?: string[];
-  url?: string;
-}
 type ShowNote = (note: FeedbackNote, ms: number) => void;
 
 // The daemon response fields these mutations read that api.ts's ApiJson does not
@@ -140,16 +117,19 @@ export function useFleetActions({
   spawnShellAction,
 }: UseFleetActionsArgs) {
   const [clearing, setClearing] = useState(false);
+  const clearingRef = useRef(false);
   // v1.8 kill — the card chip and the drawer button both open ONE dialog; the
   // POST only fires from its hazard button. null | {spawnId, callsign, window, alive}
   const [killAsk, setKillAsk] = useState<KillAsk | null>(null);
   const [killBusy, setKillBusy] = useState(false);
+  const killBusyRef = useRef(false);
   // v2.0 Move-to-tmux — the card chip (offline 'now' OR live 'arm') opens ONE
   // dialog; the POST fires only from its confirm button. null | {sessionId,
   // callsign, live}. `live` picks the dialog's copy variant AND, on the daemon,
   // whether the click adopts now or arms a deferred move.
   const [armAsk, setArmAsk] = useState<ArmAsk | null>(null);
   const [armBusy, setArmBusy] = useState(false);
+  const armBusyRef = useRef(false);
   // v2.1 Rename — the card's ✎ chip and the drawer's ✎ button both open ONE
   // dialog; the POST fires only from it. null | {sessionId, callsign, window}.
   // `window` is the pane's tmux window when the board owns one — it is ABSENT on
@@ -158,6 +138,7 @@ export function useFleetActions({
   // drops the "your tmux window keeps its name" line when there is no window.
   const [renameAsk, setRenameAsk] = useState<RenameAsk | null>(null);
   const [renameBusy, setRenameBusy] = useState(false);
+  const renameBusyRef = useRef(false);
   // Item 3 dismiss — a per-session in-flight guard (ref = synchronous source of
   // truth at click time; the state Set mirrors it so the chip can show/disable
   // "dismissing…"). Keyed on session_id: the card being dismissed is offline and
@@ -170,21 +151,26 @@ export function useFleetActions({
   // the human to remove. Orphan paths need reading time — that strip stays until
   // dismissed.
   const doClear = async () => {
-    if (clearing) return;
+    if (clearingRef.current) return;
+    clearingRef.current = true;
     setClearing(true);
-    const res = await cleanup();
-    if (res.ok && res.json?.ok !== false) {
-      const j = (res.json ?? {}) as ClearJson;
-      const orphans = Array.isArray(j.orphan_worktrees) ? j.orphan_worktrees : [];
-      const msg =
-        `cleared ${j.archived ?? 0} offline · ${j.conflicts_cleared ?? 0} conflicts` +
-        ` · ${(j.questions_purged ?? 0) + (j.questions_expired ?? 0)} questions` +
-        ` · ${j.mail_expired ?? 0} mail · ${j.windows_killed ?? 0} windows · feed wiped`;
-      showNote({ msg, orphans }, orphans.length ? 0 : 8000);
-    } else {
-      showNote({ err: reasonOf(res, `clear failed (${res.status})`) }, 8000);
+    try {
+      const res = await cleanup();
+      if (res.ok && res.json?.ok !== false) {
+        const j = (res.json ?? {}) as ClearJson;
+        const orphans = Array.isArray(j.orphan_worktrees) ? j.orphan_worktrees : [];
+        const msg =
+          `cleared ${j.archived ?? 0} offline · ${j.conflicts_cleared ?? 0} conflicts` +
+          ` · ${(j.questions_purged ?? 0) + (j.questions_expired ?? 0)} questions` +
+          ` · ${j.mail_expired ?? 0} mail · ${j.windows_killed ?? 0} windows · feed wiped`;
+        showNote({ msg, orphans }, orphans.length ? 0 : 8000);
+      } else {
+        showNote({ err: reasonOf(res, `clear failed (${res.status})`) }, 8000);
+      }
+    } finally {
+      clearingRef.current = false;
+      setClearing(false);
     }
-    setClearing(false);
   };
 
   // v1.5 — revive dead board-spawned agents (spawn.revivable). Success is
@@ -287,8 +273,9 @@ export function useFleetActions({
     });
   }, []);
   const doKill = async () => {
-    if (!killAsk || killBusy) return;
+    if (!killAsk || killBusyRef.current) return;
     const { spawnId, callsign, alive } = killAsk;
+    killBusyRef.current = true;
     setKillBusy(true);
     // force:true is REQUIRED for a card that isn't offline — the daemon 409s
     // otherwise. `alive` is exactly that condition (see the dialog's warning).
@@ -312,6 +299,7 @@ export function useFleetActions({
               : reason || `kill failed (${res.status})`;
       showNote({ hd: '✗ KILL', err: `${callsign} — ${msg}` }, 8000);
     }
+    killBusyRef.current = false;
     setKillBusy(false);
     setKillAsk(null);
   };
@@ -388,13 +376,18 @@ export function useFleetActions({
   const doArm = useCallback(
     async (skip: boolean) => {
       const a = armAsk;
-      if (!a || armBusy) return;
+      if (!a || armBusyRef.current) return;
+      armBusyRef.current = true;
       setArmBusy(true);
-      await doAdopt({ session_id: a.sessionId, callsign: a.callsign }, { skip });
-      setArmBusy(false);
-      setArmAsk(null);
+      try {
+        await doAdopt({ session_id: a.sessionId, callsign: a.callsign }, { skip });
+      } finally {
+        armBusyRef.current = false;
+        setArmBusy(false);
+        setArmAsk(null);
+      }
     },
-    [armAsk, armBusy, doAdopt],
+    [armAsk, doAdopt],
   );
 
   // The armed chip's click: cancel the deferred move immediately, no dialog
@@ -511,40 +504,41 @@ export function useFleetActions({
     [showNote],
   );
 
-  // The dialog's confirm — mirrors doKill/doArm: hold the dialog (renameBusy)
-  // through the POST, then close on completion, success OR failure (the daemon's
-  // reason lands on the strip either way, so the dialog never has to carry it).
+  // Both rename commands share one single-flight lifecycle. Their request bodies
+  // differ, but busy state, reporting, and close-on-completion must not drift.
+  const runRename = useCallback(
+    async (body: { suffix: string } | { clear: true }) => {
+      const a = renameAsk;
+      if (!a || renameBusyRef.current) return;
+      renameBusyRef.current = true;
+      setRenameBusy(true);
+      try {
+        const res = await renameSession(a.sessionId, body);
+        reportRename(a.callsign, res);
+      } finally {
+        renameBusyRef.current = false;
+        setRenameBusy(false);
+        setRenameAsk(null);
+      }
+    },
+    [renameAsk, reportRename],
+  );
+
+  // The dialog's confirm validates locally before entering the shared lifecycle;
+  // the daemon validates again because it remains the authority on names.
   const doRename = useCallback(
     async (suffix: string) => {
-      const a = renameAsk;
-      if (!a || renameBusy) return;
-      // The dialog already disables the confirm on an invalid suffix — this is the
-      // second latch, so a stray ⏎ can never POST a name the daemon must reject.
-      // (The daemon validates it again regardless: it, not the board, is the
-      // authority on names.)
       if (!validSuffix(suffix)) return;
-      setRenameBusy(true);
-      const res = await renameSession(a.sessionId, { suffix });
-      reportRename(a.callsign, res);
-      setRenameBusy(false);
-      setRenameAsk(null);
+      await runRename({ suffix });
     },
-    [renameAsk, renameBusy, reportRename],
+    [runRename],
   );
 
   // The dialog's quiet "reset to the automatic name" — {clear:true} reverts to
   // the ticket name when the session has a ticket, else to the hex name. No
   // second confirmation: nothing is destroyed, and the name it lands on is the
   // one the daemon would have given it anyway.
-  const doResetName = useCallback(async () => {
-    const a = renameAsk;
-    if (!a || renameBusy) return;
-    setRenameBusy(true);
-    const res = await renameSession(a.sessionId, { clear: true });
-    reportRename(a.callsign, res);
-    setRenameBusy(false);
-    setRenameAsk(null);
-  }, [renameAsk, renameBusy, reportRename]);
+  const doResetName = useCallback(() => runRename({ clear: true }), [runRename]);
 
   return {
     clearing,

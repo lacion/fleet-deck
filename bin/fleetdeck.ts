@@ -11,17 +11,10 @@
 // the plugin ships, so there is exactly one daemon implementation and CI's
 // bundle drift gate keeps covering both entry points.
 //
-// Node builtins only. Nothing the published package SHIPS imports anything from
-// node_modules: `files` carries the bundle, not the source, and esbuild has
-// already inlined `ws` into it (SQLite is the `node:sqlite` builtin). That is
-// what makes `npm i -g fleetdeck` a reasonable thing to put in a container image.
-//
-// NOTE: `ws` remains declared in package.json `dependencies` because the SOURCE
-// daemon (npm start, and the test suite) imports it. A global install therefore
-// pulls it in even though the bundle already inlines it. That is a deliberate,
-// revisitable choice, not an oversight: reclassifying it to devDependencies would
-// make the published package literally dependency-free, at the cost of breaking
-// anyone who runs the daemon from source after `npm ci --omit=dev`.
+// Bun and its standard library only. The published package carries the built
+// daemon and hook artifacts, while `serve` uses Bun's native WebSocket server
+// and `bun:sqlite`. Keeping the runtime dependency-free makes a global install
+// deterministic and suitable for immutable container images.
 
 import fs from 'node:fs';
 import os from 'node:os';
@@ -30,7 +23,12 @@ import { execFile, spawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { MIN_TMUX_VERSION, parseTmuxVersion, tmuxVersionSupported } from './tmux-version.ts';
-import { livePidLooksLikeFleetd, pidRecord, verifyDaemonPid } from '../src/daemon/takeover.ts';
+import {
+  livePidLooksLikeFleetd,
+  pidIsLive,
+  pidRecord,
+  terminateDaemon,
+} from '../src/daemon/takeover.ts';
 
 const execFileP = promisify(execFile);
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -68,9 +66,9 @@ const FLEETD = fs.existsSync(BUNDLE) ? BUNDLE : SOURCE;
 
 // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- an empty FLEETDECK_HOME must fall back to the default, not be kept as ''
 const HOME = process.env['FLEETDECK_HOME'] || path.join(os.homedir() || '/tmp', '.fleetdeck');
-// Byte-identical to scripts/fleetd/config.mjs resolvePort (that module is not
-// importable from the published CLI — see the header comment there): reject
-// port 0 and every other non-1..65535 value so the CLI never targets a
+// Mirrors src/daemon/config.ts resolvePort's validation (that source module is
+// not shipped beside the published CLI — see its header comment): reject port
+// 0 and every other non-1..65535 value so the CLI never targets a
 // daemon identity nothing can actually reach. An explicit ambient
 // FLEETDECK_PORT still wins; when it is unset we fall back to the port frozen
 // into the installed service.env (BUG-075), and only then to the default.
@@ -152,6 +150,25 @@ function version(): string {
   } catch {
     return '0.0.0';
   }
+}
+
+// A fresh Coder container may spend several seconds loading the Bun bundle,
+// opening/migrating SQLite and reconciling persisted sessions before the HTTP
+// listener is observable. Five seconds was too tight in real arm64 workspaces:
+// `service start` returned failure and the exact daemon it had spawned answered
+// /health a moment later. Give first boot a production-sized window while still
+// allowing templates/CI to choose a tighter or wider bound deliberately.
+const DEFAULT_SERVICE_START_TIMEOUT_MS = 30_000;
+const MAX_SERVICE_START_TIMEOUT_MS = 300_000;
+
+function serviceStartTimeoutMs(
+  raw: unknown = process.env['FLEETDECK_SERVICE_START_TIMEOUT_MS'],
+): number {
+  if (raw === undefined || raw === null || raw === '') return DEFAULT_SERVICE_START_TIMEOUT_MS;
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= 250 && n <= MAX_SERVICE_START_TIMEOUT_MS
+    ? n
+    : DEFAULT_SERVICE_START_TIMEOUT_MS;
 }
 
 const out = (s: string) => process.stdout.write(`${s}\n`);
@@ -707,14 +724,13 @@ function supervisorAlive(): number {
 // signalled when EVERY one of these holds:
 //   - the responder claims to be a MANAGED daemon (h.managed) — `service stop`
 //     owns the supervised install only; a plugin-spawned daemon is not ours to kill;
-//   - the pid matches the one recorded in OUR HOME's fleetd.pid (the HOME
-//     ownership lock), and any port recorded there matches our selected PORT;
+//   - the pid and port exactly match OUR HOME's fleetd.pid ownership record;
 //   - the live process still carries a fleetd /proc shape (livePidLooksLikeFleetd).
 // Any disagreement → false, and the caller reports the foreign responder and
 // leaves it untouched rather than signalling a process it cannot identify.
 //
-// pidRecord / livePidLooksLikeFleetd (and verifyDaemonPid below) come from
-// takeover.ts via a STATIC top-level import, so `bun run bundle:bin` esbuild-
+// pidRecord / livePidLooksLikeFleetd come from takeover.ts via a STATIC
+// top-level import, so `bun run bundle:bin` esbuild-
 // inlines them into bin/fleetdeck.mjs and the shipped CLI carries this logic
 // itself. That is mandatory, not stylistic: a published (bundle-only) install
 // ships only bin/ + the daemon bundle — no src/ tree — so the former computed-
@@ -722,8 +738,8 @@ function supervisorAlive(): number {
 // there and crashed every command that reached these gates (`service start`/
 // `stop`). takeover.ts stays dependency-free (node builtins + pure helpers), so
 // esbuild inlines it cleanly — the same way the SessionStart hook bundle does.
-function healthPidIsOurDaemon(h: Health | null | undefined): boolean {
-  if (!h?.managed) return false;
+function healthPidOwnsSelectedService(h: Health | null | undefined): boolean {
+  if (!h) return false;
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-conversion -- h is an unchecked cast of wire JSON; Number() coerces a stringy pid before the integer guard
   const pid = Number(h.pid);
   if (!Number.isInteger(pid) || pid <= 0) return false;
@@ -735,12 +751,16 @@ function healthPidIsOurDaemon(h: Health | null | undefined): boolean {
     return false;
   }
   if (record?.pid !== pid) return false;
-  // The pidfile predates port recording (or another daemon in the chain wrote
-  // it before the port was frozen in): a missing recorded port cannot
-  // DISPROVE ownership, so only a recorded port that disagrees with the
-  // selected PORT vetoes the kill.
-  if (record.port !== null && record.port !== PORT) return false;
+  // A legacy port-less record cannot prove that this responder and the recorded
+  // process are the same service. Fail closed: accepting "unknown" here lets a
+  // forged listener on :PORT report a real same-home fleetd pid from another
+  // port and aim our SIGTERM at it. Current daemons always record the port.
+  if (record.port !== PORT) return false;
   return livePidLooksLikeFleetd(pid);
+}
+
+function healthPidIsOurDaemon(h: Health | null | undefined): boolean {
+  return h?.managed === true && healthPidOwnsSelectedService(h);
 }
 
 // "Started" must mean "answering", not "spawned". systemctl returns as soon as
@@ -748,23 +768,56 @@ function healthPidIsOurDaemon(h: Health | null | undefined): boolean {
 // bound the port — long enough that a template's next step (or an impatient
 // human running `fleetdeck status`) sees a dead board and concludes it failed.
 async function waitForHealth({
-  tries = 20,
+  tries,
   everyMs = 250,
+  timeoutMs = serviceStartTimeoutMs(),
   expect,
 }: {
   tries?: number;
   everyMs?: number;
+  timeoutMs?: number;
   expect?: (h: Health) => boolean | Promise<boolean>;
 } = {}): Promise<Health | null> {
-  for (let i = 0; i < tries; i += 1) {
-    await new Promise((r) => setTimeout(r, everyMs));
-    const h = await health({ timeout: everyMs });
+  const boundedEveryMs = Math.max(1, Math.floor(everyMs));
+  const boundedTimeoutMs = Math.max(1, Math.floor(timeoutMs));
+  const deadline = Date.now() + boundedTimeoutMs;
+  const maxAttempts = tries === undefined ? Number.POSITIVE_INFINITY : Math.max(0, tries);
+  let delayMs = 0;
+  for (let i = 0; i < maxAttempts; i += 1) {
+    if (delayMs > 0) {
+      const remainingBeforeSleep = deadline - Date.now();
+      if (tries === undefined && remainingBeforeSleep <= 0) break;
+      await new Promise((r) =>
+        setTimeout(r, tries === undefined ? Math.min(delayMs, remainingBeforeSleep) : delayMs),
+      );
+    }
+    const remaining = deadline - Date.now();
+    const finalDeadlineProbe = tries === undefined && remaining <= 0;
+    const h = await health({
+      timeout:
+        tries === undefined
+          ? finalDeadlineProbe
+            ? Math.min(1000, boundedEveryMs)
+            : Math.max(1, Math.min(1000, remaining))
+          : boundedEveryMs,
+    });
     // AWAIT the predicate. healthIsOurManagedDaemon is async (its Promise wraps
-    // takeover's verifyDaemonPid), and an un-awaited Promise is ALWAYS truthy —
+    // the HOME/pid/port identity gate), and an un-awaited Promise is ALWAYS truthy —
     // which silently turned the managed-identity gate into a no-op on the
     // supervised `service start` path, so a foreign/unmanaged responder already
     // owning the port was accepted as "up". Awaiting restores the gate.
     if (h && (!expect || (await expect(h)))) return h;
+    // One final bounded request at the deadline closes the race where the
+    // listener opens during the last sleep. Without it, start can report a
+    // timeout immediately before the new daemon's first successful /health.
+    if (finalDeadlineProbe) break;
+    // Fast probes make the common path feel immediate; backing off to one probe
+    // per second keeps a slow 30-second first boot cheap and avoids log/network
+    // churn. Tests that pass an explicit `tries` retain their fixed cadence.
+    delayMs =
+      tries === undefined
+        ? Math.min(delayMs === 0 ? boundedEveryMs : Math.ceil(delayMs * 1.5), 1000)
+        : boundedEveryMs;
   }
   return null;
 }
@@ -774,20 +827,184 @@ async function waitForHealth({
 // managed (started via `serve`, which sets FLEETDECK_MANAGED=1) AND positively
 // identified as the fleetd that claimed OUR FLEETDECK_HOME — its /health pid
 // must match the HOME/fleetd.pid ownership record and still carry a fleetd
-// /proc shape (the same verifyDaemonPid gate the hook's takeover path uses).
+// /proc shape (the same identity ingredients the hook's takeover path uses).
 // Without this, an unmanaged/foreign responder that already owns the port makes
 // `service start` print success for a service that does not exist: our wrapper
 // exits 3 after losing the port election while waitForHealth saw the squatter.
 async function healthIsOurManagedDaemon(h: Health | null | undefined): Promise<boolean> {
-  if (!h?.managed) return false;
-  return verifyDaemonPid(h.pid, HOME);
+  return healthPidIsOurDaemon(h);
+}
+
+// A service start after an in-place package upgrade is not complete merely
+// because the OLD managed process still answers. Identity establishes authority
+// to keep/replace it; exact package-version agreement establishes convergence.
+// Unknown/malformed versions therefore never masquerade as the installed build.
+async function healthIsOurCurrentManagedDaemon(h: Health | null | undefined): Promise<boolean> {
+  return healthPidIsOurDaemon(h) && h?.version === version();
+}
+
+// A pidfile is written immediately after HOME is claimed, before SQLite and the
+// HTTP listener are opened. It therefore lets a timed-out `service start`
+// distinguish "our daemon is still booting" from "a foreign listener owns the
+// port" without treating the record alone as proof of readiness. This is
+// diagnostic only: signalling still requires the stronger health+pid+port gate.
+function ownedStartingDaemonPid(): number | null {
+  let record: { pid: number; port: number | null } | null;
+  try {
+    record = pidRecord(fs.readFileSync(FLEETD_PID, 'utf8'));
+  } catch {
+    return null;
+  }
+  if (!record || record.port !== PORT) return null;
+  if (!pidIsLive(record.pid) || !livePidLooksLikeFleetd(record.pid)) return null;
+  return record.pid;
+}
+
+// Turn a same-HOME daemon that was lazily spawned by a plugin (or left behind
+// by a dead supervisor) into the explicitly requested managed service. Merely
+// answering on the port is never enough authority to signal a process: the
+// health pid must also own HOME's fleetd.pid and still look like fleetd. A
+// foreign responder therefore remains untouched and start fails with a useful
+// diagnostic instead of spawning a wrapper that can only lose the port race.
+async function handoffExistingDaemon(): Promise<boolean> {
+  const incumbent = await health({ timeout: 500 });
+  if (!incumbent) return true;
+  if (!healthPidOwnsSelectedService(incumbent)) {
+    err(
+      `✗ cannot start managed service: something else owns :${PORT} (reported pid ${String(incumbent.pid)})`,
+    );
+    err("  the responder is not this FLEETDECK_HOME's verified daemon; leaving it untouched");
+    return false;
+  }
+  out(
+    `↻ replacing same-home ${incumbent.managed ? `managed v${String(incumbent.version)}` : 'plugin-spawned'} daemon (pid ${incumbent.pid}) with the supervised v${version()} service`,
+  );
+  if (!(await terminateDaemon(incumbent.pid, { timeoutMs: 3000 }))) {
+    err(`✗ daemon pid ${incumbent.pid} did not stop after SIGTERM; leaving it in place`);
+    return false;
+  }
+  return true;
+}
+
+function unlinkSupervisorPidIfMatches(pid: number): void {
+  try {
+    if (Number(fs.readFileSync(SUPERVISOR_PID, 'utf8').trim()) === pid) {
+      fs.unlinkSync(SUPERVISOR_PID);
+    }
+  } catch {
+    /* already gone or replaced by a newer supervisor */
+  }
+}
+
+// Explicit upgrade handoff for the no-systemd wrapper. Never signal the pidfile
+// blindly: re-run the argv identity gate immediately before SIGTERM, then wait
+// only for that identity to disappear. PID reuse or a concurrently replaced
+// pidfile ends the wait without signalling the new process.
+async function stopOwnedSupervisor(pid: number): Promise<boolean> {
+  if (supervisorAlive() !== pid) return false;
+  try {
+    process.kill(pid, 'SIGTERM');
+  } catch (e) {
+    if (errnoCode(e) !== 'ESRCH') return false;
+  }
+  for (let i = 0; i < 30; i += 1) {
+    if (supervisorAlive() !== pid) {
+      unlinkSupervisorPidIfMatches(pid);
+      return true;
+    }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return false;
+}
+
+function durationLabel(ms: number): string {
+  return ms % 1000 === 0 ? `${ms / 1000}s` : `${ms}ms`;
+}
+
+async function explainServiceStartFailure({
+  launcher,
+  timeoutMs,
+  supervisorPid = 0,
+}: {
+  launcher: string;
+  timeoutMs: number;
+  supervisorPid?: number;
+}): Promise<void> {
+  const observed = await health({ timeout: 750 });
+  err(
+    `✗ ${launcher} but no current MANAGED v${version()} daemon became ready on :${PORT} within ${durationLabel(timeoutMs)}`,
+  );
+  if (observed) {
+    if (!healthPidOwnsSelectedService(observed)) {
+      err(
+        `  port conflict: an unverified responder (reported pid ${String(observed.pid)}, v${String(observed.version)}) owns :${PORT}; it was left untouched`,
+      );
+      return;
+    }
+    if (observed.managed !== true) {
+      err(
+        `  same-home daemon pid ${observed.pid} is plugin-spawned, not the requested managed service`,
+      );
+      return;
+    }
+    err(
+      `  same-home managed daemon pid ${observed.pid} reports v${String(observed.version)}; installed CLI is v${version()}`,
+    );
+    return;
+  }
+  const startingPid = ownedStartingDaemonPid();
+  if (startingPid !== null) {
+    err(
+      `  owned daemon pid ${startingPid} is still running but has not opened /health; this is a slow or stuck startup, not a port conflict`,
+    );
+    return;
+  }
+  if (supervisorPid > 0 && supervisorAlive() === supervisorPid) {
+    err(
+      `  supervisor pid ${supervisorPid} is still running; fleetd may be backing off or failing before it claims HOME`,
+    );
+  }
 }
 
 async function serviceStart(): Promise<number> {
+  const startupTimeoutMs = serviceStartTimeoutMs();
   if ((await hasSystemd()) && fs.existsSync(UNIT_FILE)) {
-    await execFileP('systemctl', ['--user', 'start', SERVICE_NAME], { timeout: 15_000 });
-    if (!(await waitForHealth())) {
-      err(`✗ ${SERVICE_NAME}.service started but no daemon answered on :${PORT} within 5s`);
+    const incumbent = await health({ timeout: 500 });
+    let systemdAction: 'start' | 'restart' = 'start';
+    if (incumbent?.managed === true) {
+      // Never raw-SIGTERM a systemd-owned old child while Restart=always is
+      // armed: the manager can immediately respawn the old ExecStart and turn
+      // `systemctl start` into a no-op. First prove pid+HOME+port ownership;
+      // then let systemd perform its serialized stop/start transaction.
+      if (!healthPidOwnsSelectedService(incumbent)) {
+        err(
+          `✗ cannot start managed service: something else owns :${PORT} (reported pid ${String(incumbent.pid)})`,
+        );
+        err("  the responder is not this FLEETDECK_HOME's verified daemon; leaving it untouched");
+        return 1;
+      }
+      if (!(await healthIsOurCurrentManagedDaemon(incumbent))) {
+        systemdAction = 'restart';
+        out(
+          `↻ restarting ${SERVICE_NAME}.service to upgrade verified v${String(incumbent.version)} to v${version()}`,
+        );
+      }
+    } else if (incumbent && !(await handoffExistingDaemon())) {
+      // Plugin-spawned same-home daemon: systemd does not own it, so the normal
+      // identity-gated graceful handoff is still required before the unit starts.
+      return 1;
+    }
+    await execFileP('systemctl', ['--user', systemdAction, SERVICE_NAME], { timeout: 15_000 });
+    if (
+      !(await waitForHealth({
+        timeoutMs: startupTimeoutMs,
+        expect: healthIsOurCurrentManagedDaemon,
+      }))
+    ) {
+      await explainServiceStartFailure({
+        launcher: `${SERVICE_NAME}.service started`,
+        timeoutMs: startupTimeoutMs,
+      });
       err('  systemctl --user status fleetdeck  /  journalctl --user -u fleetdeck');
       return 1;
     }
@@ -806,19 +1023,45 @@ async function serviceStart(): Promise<number> {
     // indefinitely. "Started" means "answering", same contract as the branch
     // below: require a MANAGED health response (an unmanaged daemon on the
     // port is a plugin-spawned squatter the wrapper is not supervising).
-    const h = await waitForHealth();
-    if (h?.managed) {
+    const h = await waitForHealth({
+      timeoutMs: startupTimeoutMs,
+      expect: healthIsOurManagedDaemon,
+    });
+    if (h?.version === version()) {
       out('✓ already running');
       return 0;
     }
-    err(
-      `✗ supervisor alive (pid ${sup}) but no managed daemon answering on :${PORT} — see ${LOG_FILE}`,
+    if (!h) {
+      await explainServiceStartFailure({
+        launcher: `supervisor pid ${sup} is alive`,
+        timeoutMs: startupTimeoutMs,
+        supervisorPid: sup,
+      });
+      err(`  see ${LOG_FILE}; run \`fleetdeck service stop\` then start if it is crash-looping`);
+      return 1;
+    }
+
+    // The responder is positively identified as OUR managed daemon, but it is
+    // an older installed runtime. Stop the verified wrapper first (otherwise it
+    // would respawn the old child), then retire only the pid still authorized by
+    // HOME's pidfile before starting the freshly installed wrapper.
+    out(
+      `↻ upgrading managed fleetd v${String(h.version)} to installed v${version()} (pid ${h.pid})`,
     );
-    err(
-      '  the wrapper may be backing off between respawns; check the log, or `fleetdeck service stop` then start',
-    );
-    return 1;
+    if (!(await stopOwnedSupervisor(sup))) {
+      err(`✗ verified supervisor pid ${sup} did not stop; old daemon left untouched`);
+      return 1;
+    }
+    if (
+      healthPidOwnsSelectedService(h) &&
+      pidIsLive(h.pid) &&
+      !(await terminateDaemon(h.pid, { timeoutMs: 3000 }))
+    ) {
+      err(`✗ old managed daemon pid ${h.pid} did not stop; refusing to start a competing service`);
+      return 1;
+    }
   }
+  if (!(await handoffExistingDaemon())) return 1;
   // MUST return immediately: a coder_script that does not exit leaves the
   // workspace stuck "starting".
   fs.mkdirSync(HOME, { recursive: true });
@@ -836,14 +1079,17 @@ async function serviceStart(): Promise<number> {
   fs.closeSync(log);
   fs.writeFileSync(SUPERVISOR_PID, String(child.pid), { encoding: 'utf8', mode: 0o600 });
 
-  const h = await waitForHealth({ expect: healthIsOurManagedDaemon });
+  const h = await waitForHealth({
+    timeoutMs: startupTimeoutMs,
+    expect: healthIsOurCurrentManagedDaemon,
+  });
   if (!h) {
-    err(
-      `✗ supervisor started (pid ${String(child.pid)}) but no MANAGED daemon for this FLEETDECK_HOME answered on :${PORT} within 5s — see ${LOG_FILE}`,
-    );
-    if (await health({ timeout: 500 })) {
-      err('  something else already owns the port — `fleetdeck status` shows what is answering');
-    }
+    await explainServiceStartFailure({
+      launcher: `supervisor started (pid ${String(child.pid)})`,
+      timeoutMs: startupTimeoutMs,
+      supervisorPid: child.pid ?? 0,
+    });
+    err(`  see ${LOG_FILE}`);
     return 1;
   }
   // The daemon answering is ours, but the SUPERVISOR may already be gone (it
@@ -1070,7 +1316,12 @@ export {
   argvIsOurSupervisor,
   healthPidIsOurDaemon,
   healthIsOurManagedDaemon,
+  healthIsOurCurrentManagedDaemon,
+  ownedStartingDaemonPid,
+  handoffExistingDaemon,
   waitForHealth,
+  serviceStartTimeoutMs,
+  DEFAULT_SERVICE_START_TIMEOUT_MS,
   serviceInstall,
   serviceStart,
   UNIT,

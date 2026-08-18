@@ -72,9 +72,10 @@ export const MAX_RECONNECT = 5;
  *
  * Split out as a pure function so the policy is testable without a DOM.
  *
- * @param sawFrames  did this socket ever deliver a frame? false ⇒ the upgrade
- *                   itself was refused (auth/proxy) — retrying cannot fix that,
- *                   so diagnose instead of hammering the daemon.
+ * @param sawFrames  did this socket ever deliver a frame? A first-ever
+ *                   pre-frame close is diagnosed immediately. During recovery,
+ *                   a pre-frame close often just means the daemon is still
+ *                   restarting, so it consumes the same bounded retry budget.
  * @param attempts   consecutive reconnects already tried for this pane.
  * @returns {{action:'retry',delayMs:number}|{action:'give-up'}|{action:'diagnose'}}
  */
@@ -83,8 +84,8 @@ export function reconnectPlan(
   attempts = 0,
   max = MAX_RECONNECT,
 ): { action: 'retry'; delayMs: number } | { action: 'give-up' } | { action: 'diagnose' } {
-  if (!sawFrames) return { action: 'diagnose' };
-  if (!(attempts < max)) return { action: 'give-up' };
+  if (!sawFrames && attempts === 0) return { action: 'diagnose' };
+  if (!(attempts < max)) return sawFrames ? { action: 'give-up' } : { action: 'diagnose' };
   // Exponential backoff, capped: a daemon restart is back in ~1s, but a fleet
   // of open tiles must not become a reconnect storm against a daemon that is
   // still coming up.

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { useModal } from '../useModal.ts';
 import { animalOf, suffixOf, validSuffix, SUFFIX_MAX } from '../util.ts';
+import ConfirmDialogFrame from './ConfirmDialogFrame.tsx';
 
 interface RenameDialogProps {
   callsign: string;
@@ -49,9 +49,6 @@ export default function RenameDialog({
   const current = suffixOf(callsign);
   const [suffix, setSuffix] = useState(current);
   const inputRef = useRef<HTMLInputElement>(null);
-  const dialogRef = useRef<HTMLDivElement>(null);
-  // M-A2 — trap Tab + restore focus on close; the input owns initial focus.
-  useModal(dialogRef, { initialFocus: false });
   // Pre-filled with the CURRENT suffix and selected, so the common case (throw
   // the hex away and type a real name) is one keystroke, and the rarer case
   // (tweak the name you already gave it) is still an edit rather than a retype.
@@ -65,9 +62,6 @@ export default function RenameDialog({
   const valid = validSuffix(next);
   const unchanged = next === current;
 
-  const cancel = () => {
-    if (!busy) onCancel();
-  };
   const confirm = () => {
     if (!busy && valid) onConfirm(next);
   };
@@ -91,102 +85,83 @@ export default function RenameDialog({
         : { bad: false, text: `→ ${animal}-${next}` };
 
   return (
-    <div className="fd-composewrap" onClick={cancel}>
-      <div
-        className="fd-compose fd-killask fd-renameask"
-        role="dialog"
-        aria-modal="true"
-        aria-label={`Rename ${callsign}`}
-        ref={dialogRef}
-        onClick={(e) => {
-          e.stopPropagation();
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center' }}>
-          <span className="lbl">✎ RENAME SESSION</span>
-          <span className="fd-spacer" />
-          <button
-            type="button"
-            className="fd-x"
-            aria-label="Cancel"
-            disabled={busy}
-            onClick={cancel}
-          >
-            ✕
-          </button>
-        </div>
+    <ConfirmDialogFrame
+      ariaLabel={`Rename ${callsign}`}
+      busy={busy}
+      className="fd-renameask"
+      title="✎ RENAME SESSION"
+      onCancel={onCancel}
+    >
+      <div className="ask">
+        Rename <b>{callsign}</b>.
+      </div>
+      <div className="sub">
+        The animal is the daemon’s — it never changes. Everything after it is yours.
+      </div>
 
-        <div className="ask">
-          Rename <b>{callsign}</b>.
-        </div>
+      {/* the callsign, built in place: fixed animal + editable suffix, one line */}
+      <div className="fd-namerow">
+        <span className="fd-namefix" aria-hidden="true">
+          {animal}-
+        </span>
+        <input
+          ref={inputRef}
+          className="fd-input fd-nameinput"
+          type="text"
+          // the animal is static text OUTSIDE the input, so the field's label
+          // has to say what the field alone holds, for anyone not seeing it
+          aria-label={`New suffix for ${callsign} — the callsign will be ${animal}-<suffix>`}
+          aria-invalid={!!next && !valid}
+          maxLength={SUFFIX_MAX}
+          spellCheck={false}
+          autoComplete="off"
+          placeholder="docs-review"
+          value={suffix}
+          disabled={busy}
+          onChange={(e) => {
+            setSuffix(e.target.value);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              confirm();
+            }
+          }}
+        />
+      </div>
+      <div className={`fd-namehint${hint.bad ? ' bad' : ''}`}>{hint.text}</div>
+
+      <div className="sub">
+        Mail addressed to the old name still reaches it — the board remembers the name it used to
+        answer to.
+      </div>
+      {tmuxWindow && (
+        // Honest about the one thing that does NOT follow the name: the tmux
+        // window was frozen at spawn and is deliberately never renamed (a crash
+        // between the tmux rename and the DB write would strand the pane), so
+        // the card's ⌗ chip keeps showing the old name. Say so, rather than let
+        // it read as a bug.
         <div className="sub">
-          The animal is the daemon’s — it never changes. Everything after it is yours.
+          Its tmux window stays <span className="win">{tmuxWindow}</span> — the pane, its terminal
+          and its kill chip are untouched by a rename.
         </div>
+      )}
 
-        {/* the callsign, built in place: fixed animal + editable suffix, one line */}
-        <div className="fd-namerow">
-          <span className="fd-namefix" aria-hidden="true">
-            {animal}-
-          </span>
-          <input
-            ref={inputRef}
-            className="fd-input fd-nameinput"
-            type="text"
-            // the animal is static text OUTSIDE the input, so the field's label
-            // has to say what the field alone holds, for anyone not seeing it
-            aria-label={`New suffix for ${callsign} — the callsign will be ${animal}-<suffix>`}
-            aria-invalid={!!next && !valid}
-            maxLength={SUFFIX_MAX}
-            spellCheck={false}
-            autoComplete="off"
-            placeholder="docs-review"
-            value={suffix}
-            disabled={busy}
-            onChange={(e) => {
-              setSuffix(e.target.value);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                confirm();
-              }
-            }}
-          />
-        </div>
-        <div className={`fd-namehint${hint.bad ? ' bad' : ''}`}>{hint.text}</div>
-
-        <div className="sub">
-          Mail addressed to the old name still reaches it — the board remembers the name it used to
-          answer to.
-        </div>
-        {tmuxWindow && (
-          // Honest about the one thing that does NOT follow the name: the tmux
-          // window was frozen at spawn and is deliberately never renamed (a crash
-          // between the tmux rename and the DB write would strand the pane), so
-          // the card's ⌗ chip keeps showing the old name. Say so, rather than let
-          // it read as a bug.
-          <div className="sub">
-            Its tmux window stays <span className="win">{tmuxWindow}</span> — the pane, its terminal
-            and its kill chip are untouched by a rename.
-          </div>
-        )}
-
-        <div className="foot">
-          {/* quiet, deliberately: reverting is a real door, but it is not the
+      <div className="foot">
+        {/* quiet, deliberately: reverting is a real door, but it is not the
               thing you opened this dialog to do. Sends {clear:true} — the daemon
               puts the ticket name back, or the hex name when there is no ticket. */}
-          <button type="button" className="fd-ghostbtn reset" disabled={busy} onClick={reset}>
-            ⟲ reset to the automatic name
-          </button>
-          <span className="fd-spacer" />
-          <button type="button" className="fd-ghostbtn" disabled={busy} onClick={cancel}>
-            Cancel
-          </button>
-          <button type="button" className="send" disabled={busy || !valid} onClick={confirm}>
-            {busy ? 'Renaming…' : '✎ Rename'}
-          </button>
-        </div>
+        <button type="button" className="fd-ghostbtn reset" disabled={busy} onClick={reset}>
+          ⟲ reset to the automatic name
+        </button>
+        <span className="fd-spacer" />
+        <button type="button" className="fd-ghostbtn" disabled={busy} onClick={onCancel}>
+          Cancel
+        </button>
+        <button type="button" className="send" disabled={busy || !valid} onClick={confirm}>
+          {busy ? 'Renaming…' : '✎ Rename'}
+        </button>
       </div>
-    </div>
+    </ConfirmDialogFrame>
   );
 }

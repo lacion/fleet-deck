@@ -11,8 +11,12 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { resolvePort } from '../src/daemon/config.ts';
 import { spawnRaw, randomPort } from './helpers/daemon.ts';
+
+const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 function withPort(value: string | undefined, fn: () => void) {
   const saved = process.env['FLEETDECK_PORT'];
@@ -53,6 +57,30 @@ test('resolvePort rejects port 0, whitespace, and out-of-range or non-numeric va
         `FLEETDECK_PORT=${JSON.stringify(bad)} should be rejected`,
       );
     });
+  }
+});
+
+test('all Claude hook shims fail open silently when FLEETDECK_PORT is invalid', (t) => {
+  const home = mkdtempSync(path.join(tmpdir(), 'fleetdeck-hook-invalid-port-'));
+  t.after(() => {
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  for (const { script, args, stdout } of [
+    { script: 'fleet-hook.mjs', args: ['Stop'], stdout: '{}' },
+    { script: 'fleet-sessionstart.mjs', args: [], stdout: '' },
+    { script: 'fleet-watch.mjs', args: [], stdout: '' },
+  ]) {
+    const result = spawnSync(process.execPath, [path.join(ROOT, 'scripts', script), ...args], {
+      env: { ...process.env, FLEETDECK_PORT: '0', FLEETDECK_HOME: home },
+      input: '{}',
+      encoding: 'utf8',
+      timeout: 5_000,
+    });
+    assert.equal(result.error, undefined, `${script} launch error: ${result.error?.message}`);
+    assert.equal(result.status, 0, `${script} exit status; stderr: ${result.stderr}`);
+    assert.equal(result.stdout, stdout, `${script} stdout`);
+    assert.equal(result.stderr, '', `${script} must not inject configuration noise into Claude`);
   }
 });
 

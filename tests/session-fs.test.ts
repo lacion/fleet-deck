@@ -8,7 +8,7 @@ import { networkInterfaces, tmpdir } from 'node:os';
 import path from 'node:path';
 import { openDb } from '../src/daemon/db.ts';
 import type { SqliteHandle } from '../src/daemon/sqlite.ts';
-import { createFiles, LIST_MAX } from '../src/daemon/files.ts';
+import { createFiles, defaultSearchPrunesDir, LIST_MAX } from '../src/daemon/files.ts';
 import { startDaemon } from './helpers/daemon.ts';
 import { makePlainDir, makeRepoWithWorktree } from './helpers/gitrepo.ts';
 import { getJson, postJson } from './helpers/http.ts';
@@ -307,6 +307,14 @@ test('plain roots include dotfiles, skip .git, and support list/read/walk search
   writeFileSync(path.join(plain.dir, '.git', 'hidden.txt'), 'never-index-this\n');
   writeFileSync(path.join(plain.dir, '.env'), 'DOT_VALUE=yes\n');
   writeFileSync(path.join(plain.dir, 'notes.txt'), 'zero\nplain needle\n');
+  writeFileSync(path.join(plain.dir, 'README.md'), 'useful project readme\n');
+  mkdirSync(path.join(plain.dir, 'node_modules', 'dependency'), { recursive: true });
+  writeFileSync(
+    path.join(plain.dir, 'node_modules', 'dependency', 'README.md'),
+    'GENERATED_SEARCH_NOISE\n',
+  );
+  mkdirSync(path.join(plain.dir, 'build'), { recursive: true });
+  writeFileSync(path.join(plain.dir, 'build', 'README.md'), 'GENERATED_SEARCH_NOISE\n');
   const daemon = await startDaemon();
   t.after(async () => {
     await daemon.stop();
@@ -340,6 +348,27 @@ test('plain roots include dotfiles, skip .git, and support list/read/walk search
   );
   assert.deepEqual((skipped.json as SearchResponse).hits, []);
 
+  const quietNames = await getJson(
+    endpoint(daemon.baseUrl, 'fs-session', 'search', '?mode=name&q=readme'),
+  );
+  assert.deepEqual(
+    (quietNames.json as SearchResponse).hits,
+    [{ path: 'README.md' }],
+    'implicit walk search prunes dependency/build output instead of filling the result cap',
+  );
+  const quietContent = await getJson(
+    endpoint(daemon.baseUrl, 'fs-session', 'search', '?q=GENERATED_SEARCH_NOISE'),
+  );
+  assert.deepEqual((quietContent.json as SearchResponse).hits, []);
+  const explicitDependency = await getJson(
+    endpoint(daemon.baseUrl, 'fs-session', 'list', '?path=node_modules%2Fdependency'),
+  );
+  assert.equal(
+    (explicitDependency.json as ListResponse).entries.some((entry) => entry.name === 'README.md'),
+    true,
+    'pruned directories remain directly browsable when the developer clicks into them',
+  );
+
   // .git is refused for DIRECT access too, not merely hidden from listings and
   // search: reading .git/config on a plain clone would hand back embedded
   // remote credentials, and listing .git would hand back the object store.
@@ -349,6 +378,24 @@ test('plain roots include dotfiles, skip .git, and support list/read/walk search
     endpoint(daemon.baseUrl, 'fs-session', 'read', '?path=.git%2Fhidden.txt'),
   );
   assert.equal(gitRead.status, 404);
+});
+
+test('walk-search generated-directory defaults stay conservative and case-insensitive', () => {
+  for (const name of [
+    'node_modules',
+    'NODE_MODULES',
+    '.git',
+    '.next',
+    '.turbo',
+    'build',
+    'dist',
+    'coverage',
+  ]) {
+    assert.equal(defaultSearchPrunesDir(name), true, name);
+  }
+  for (const name of ['src', 'packages', 'vendor', 'docs', 'examples']) {
+    assert.equal(defaultSearchPrunesDir(name), false, name);
+  }
 });
 
 test('read, list, search-hit, and binary caps shape bounded responses', async (t) => {

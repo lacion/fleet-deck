@@ -104,3 +104,38 @@ test('publish.yml runs the shared verifier against the tag', () => {
   const publish = readFileSync(path.join(repoRoot, '.github', 'workflows', 'publish.yml'), 'utf8');
   assert.match(publish, /check-release-version\.mjs "\$GITHUB_REF_NAME"/);
 });
+
+test('ci.yml uses the same shared verifier for branch version checks', () => {
+  const ci = readFileSync(path.join(repoRoot, '.github', 'workflows', 'ci.yml'), 'utf8');
+  assert.match(ci, /run: node scripts\/check-release-version\.mjs(?:\s|$)/);
+  assert.doesNotMatch(
+    ci,
+    /require\('\.\/\.claude-plugin\/plugin\.json'\)\.version/,
+    'CI must not grow a second hand-maintained manifest/version implementation',
+  );
+});
+
+test('publish.yml rebuilds and checks every generated npm artifact', () => {
+  // A tag may point at a commit that did not pass the branch workflow. The
+  // irreversible publish job must independently prove that no committed
+  // daemon, CLI, hook, or board artifact is stale.
+  const publish = readFileSync(path.join(repoRoot, '.github', 'workflows', 'publish.yml'), 'utf8');
+  for (const command of [
+    'bun run bundle',
+    'bun run bundle:bin',
+    'bun run bundle:hooks',
+    'bun run build',
+  ]) {
+    assert.match(publish, new RegExp(command.replaceAll(':', '\\:')));
+  }
+  for (const artifact of [
+    'src/daemon/fleetd.bundle.mjs',
+    'bin/fleetdeck.mjs',
+    'scripts/fleet-hook.mjs',
+    'scripts/fleet-sessionstart.mjs',
+    'scripts/fleet-watch.mjs',
+    'src/daemon/board-dist',
+  ]) {
+    assert.match(publish, new RegExp(artifact.replaceAll('.', '\\.')));
+  }
+});

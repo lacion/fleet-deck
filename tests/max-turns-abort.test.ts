@@ -24,6 +24,7 @@ import { postHook } from './helpers/http.ts';
 import { getState } from './helpers/state.ts';
 import { loadFixture } from './helpers/fixtures.ts';
 import type { StateResponse } from '../contracts/state.ts';
+import { seedHookCompatibility } from './helpers/hook-compat.ts';
 
 const HOOKS_JSON = path.join(REPO_ROOT, 'hooks', 'hooks.json');
 const SHIM = path.join(REPO_ROOT, 'scripts', 'fleet-hook.mjs');
@@ -33,6 +34,7 @@ const SHIM = path.join(REPO_ROOT, 'scripts', 'fleet-hook.mjs');
 interface HookCommand {
   type: string;
   command: string;
+  args?: string[];
 }
 interface HookGroup {
   hooks?: HookCommand[];
@@ -52,7 +54,12 @@ interface ShimResult {
 function runSessionEndShim(daemon: DaemonHandle, payload: string): Promise<ShimResult> {
   return new Promise<ShimResult>((resolve, reject) => {
     const child = spawn(process.execPath, [SHIM, 'SessionEnd'], {
-      env: { ...process.env, FLEETDECK_PORT: String(daemon.port), FLEETDECK_HOME: daemon.home },
+      env: {
+        ...process.env,
+        ...seedHookCompatibility(daemon.home),
+        FLEETDECK_PORT: String(daemon.port),
+        FLEETDECK_HOME: daemon.home,
+      },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     let stdout = '';
@@ -83,13 +90,12 @@ test('SessionEnd tombstones a session even when Stop was never sent (max-turns a
   const sessionEndCmds = (manifest.hooks?.SessionEnd ?? [])
     .flatMap((group) => group.hooks ?? [])
     .filter((h) => h.type === 'command');
-  const sessionEndCmd = sessionEndCmds.find((h) => h.command.includes('fleet-hook.mjs'));
-  assert.ok(sessionEndCmd, 'hooks.json must route SessionEnd through scripts/fleet-hook.mjs');
-  assert.match(
-    sessionEndCmd.command,
-    /fleet-hook\.mjs"?\s+SessionEnd/,
-    'the SessionEnd hook command must pass SessionEnd as the shim argv',
+  const sessionEndCmd = sessionEndCmds.find((h) =>
+    h.args?.some((arg) => arg.includes('fleet-hook.mjs')),
   );
+  assert.ok(sessionEndCmd, 'hooks.json must route SessionEnd through scripts/fleet-hook.mjs');
+  assert.equal(sessionEndCmd.command, '/bin/sh', 'the SessionEnd hook must use the quiet launcher');
+  assert.deepEqual(sessionEndCmd.args?.slice(-1), ['SessionEnd'], 'the shim argv names SessionEnd');
 
   const sid = randomUUID();
   await postHook(

@@ -30,7 +30,7 @@ export class ErrorBoundary extends Component<Props, State> {
 
   override componentDidCatch(err: unknown, info: ErrorInfo): void {
     // Best-effort breadcrumb only; never rethrow from here.
-    console.error('[fd] a card failed to render', err, info.componentStack);
+    console.error('[fd] a UI subtree failed to render', err, info.componentStack);
   }
 
   override render(): ReactNode {

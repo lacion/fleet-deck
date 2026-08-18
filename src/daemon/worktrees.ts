@@ -399,6 +399,20 @@ export function createWorktrees(ctx: WorktreesCtx) {
     return tip.ok ? tip.out.trim() : null;
   }
 
+  async function pruneWorktreeMetadata(repo: string): Promise<RemoveResult | null> {
+    const pruned = await execFileP('git', ['-C', repo, 'worktree', 'prune'], {
+      timeout: 30_000,
+    });
+    if (pruned.ok) return null;
+    return {
+      status: 409,
+      body: {
+        ok: false,
+        reason: `git worktree prune failed: ${scrubUrlCredentials(pruned.err)}`.slice(0, 300),
+      },
+    };
+  }
+
   async function removeWorktree(body: RemoveBody | null = {}): Promise<RemoveResult> {
     if (typeof body?.path !== 'string') {
       return { status: 400, body: { ok: false, reason: 'not a fleet worktree' } };
@@ -597,36 +611,12 @@ export function createWorktrees(ctx: WorktreesCtx) {
                 body: { ok: false, reason: `could not remove worktree: ${detail}` },
               };
             }
-            const pruned = await execFileP('git', ['-C', repo, 'worktree', 'prune'], {
-              timeout: 30_000,
-            });
-            if (!pruned.ok)
-              return {
-                status: 409,
-                body: {
-                  ok: false,
-                  reason: `git worktree prune failed: ${scrubUrlCredentials(pruned.err)}`.slice(
-                    0,
-                    300,
-                  ),
-                },
-              };
+            const pruneError = await pruneWorktreeMetadata(repo);
+            if (pruneError) return pruneError;
           }
         } else {
-          const pruned = await execFileP('git', ['-C', repo, 'worktree', 'prune'], {
-            timeout: 30_000,
-          });
-          if (!pruned.ok)
-            return {
-              status: 409,
-              body: {
-                ok: false,
-                reason: `git worktree prune failed: ${scrubUrlCredentials(pruned.err)}`.slice(
-                  0,
-                  300,
-                ),
-              },
-            };
+          const pruneError = await pruneWorktreeMetadata(repo);
+          if (pruneError) return pruneError;
         }
 
         let branch_deleted = false;
