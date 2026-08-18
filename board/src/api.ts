@@ -2,10 +2,10 @@
 //
 // LAN mode (v1.7): every request carries `Authorization: Bearer <token>` when a
 // token is known. Loopback daemons ignore it; a LAN daemon refuses without it.
-// A 401 anywhere latches the board's unauthorized state (token.js) and App
+// A 401 anywhere latches the board's unauthorized state (tokenStore.ts) and App
 // swaps the board for the token gate — one clear state, however many calls fail.
 
-import { authHeaders, markUnauthorized } from './token.ts';
+import { authHeaders, markUnauthorized } from './tokenStore.ts';
 import { apiUrl } from './base.ts';
 
 // The parsed JSON body of a daemon response. Every field is optional — a route
