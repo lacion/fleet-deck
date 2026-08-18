@@ -5,6 +5,17 @@ All notable changes to Fleet Deck are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.23.5] - 2026-08-18
+
+### Fixed
+
+- **Coder's managed daemon started successfully but was rejected as an
+  unverified port owner.** Bun's official npm package names its Linux executable
+  `bun.exe`; Fleet Deck's strict process-identity allowlist recognized only the
+  native install name `bun`. Both official Bun executable names now verify the
+  same exact `fleetdeck.mjs serve` argv shape, while every other CLI verb and
+  runtime name remains rejected.
+
 ## [0.23.4] - 2026-08-18
 
 Interactive Claude hooks are silent and fail-open for ordinary or unsupported

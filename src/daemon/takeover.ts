@@ -75,6 +75,27 @@ function pidIsLive(pid: number): boolean {
   }
 }
 
+function fleetdProcessIdentity(executable: string, argv: string[]): boolean {
+  // Bun's official npm package names its Linux binary `bun.exe` even though it
+  // is a native ELF executable. Coder installs that package through nvm, so the
+  // exact production process uses `.../node_modules/bun/bin/bun.exe` with
+  // `.../fleetdeck.mjs serve`. Keep the runtime allowlist exact while accepting
+  // both official Bun distribution names.
+  const runtimeLike = /^(?:node|nodejs|bun(?:\.exe)?|fleetd)$/i.test(executable);
+  // Match every name the daemon boots under: the production bundle
+  // (fleetd.bundle.mjs), the TypeScript source on a full checkout (fleetd.ts,
+  // run via Bun's native type-stripping), and the legacy fleetd.mjs. The
+  // standalone service intentionally stays in the CLI process while `serve`
+  // dynamically imports the bundle, so its Linux argv is
+  // `bun .../bin/fleetdeck.mjs serve`; require the adjacent `serve` verb so a
+  // harmless `fleetdeck status` process can never satisfy the ownership gate.
+  const fleetdScript = argv.some((arg) => /(?:^|[/\\])fleetd(?:\.bundle)?\.(?:mjs|ts)$/.test(arg));
+  const fleetdeckServe = argv.some(
+    (arg, index) => /(?:^|[/\\])fleetdeck\.(?:mjs|ts)$/.test(arg) && argv[index + 1] === 'serve',
+  );
+  return runtimeLike && (fleetdScript || fleetdeckServe);
+}
+
 function livePidLooksLikeFleetd(pid: number): boolean {
   if (process.platform !== 'linux') return true;
   try {
@@ -82,7 +103,7 @@ function livePidLooksLikeFleetd(pid: number): boolean {
     // identity: Node 24 names it `MainThread` instead of `node`. Resolve the
     // executable symlink so upgrades cannot make a live fleetd look recycled.
     // The dual node:sqlite⇔bun:sqlite seam means a fleetd may legitimately run
-    // under bun (basename `bun`) as well as node — accept either runtime.
+    // under Bun (native install `bun`, npm install `bun.exe`) as well as Node.
     const executable = path
       .basename(fs.readlinkSync(`/proc/${pid}/exe`))
       .replace(/ \(deleted\)$/, '');
@@ -91,21 +112,7 @@ function livePidLooksLikeFleetd(pid: number): boolean {
       .toString('utf8')
       .split('\0')
       .filter(Boolean);
-    const runtimeLike = /^(?:node|nodejs|bun|fleetd)$/i.test(executable);
-    // Match every name the daemon boots under: the production bundle
-    // (fleetd.bundle.mjs), the TypeScript source on a full checkout (fleetd.ts,
-    // run via Bun's native type-stripping), and the legacy fleetd.mjs. The
-    // standalone service intentionally stays in the CLI process while `serve`
-    // dynamically imports the bundle, so its Linux argv is
-    // `bun .../bin/fleetdeck.mjs serve`; require the adjacent `serve` verb so a
-    // harmless `fleetdeck status` process can never satisfy the ownership gate.
-    const fleetdScript = argv.some((arg) =>
-      /(?:^|[/\\])fleetd(?:\.bundle)?\.(?:mjs|ts)$/.test(arg),
-    );
-    const fleetdeckServe = argv.some(
-      (arg, index) => /(?:^|[/\\])fleetdeck\.(?:mjs|ts)$/.test(arg) && argv[index + 1] === 'serve',
-    );
-    return runtimeLike && (fleetdScript || fleetdeckServe);
+    return fleetdProcessIdentity(executable, argv);
   } catch (err) {
     // WHY ENOENT is decisive: the PID died after kill(0), so it no longer owns
     // HOME. Permission and transient I/O failures are not decisive; retaining
@@ -114,7 +121,7 @@ function livePidLooksLikeFleetd(pid: number): boolean {
   }
 }
 
-export { pidRecord, pidIsLive, livePidLooksLikeFleetd };
+export { pidRecord, pidIsLive, fleetdProcessIdentity, livePidLooksLikeFleetd };
 
 // --------------------------------------------------------------------- semver
 // Full SemVer precedence over major.minor.patch PLUS prerelease identifiers

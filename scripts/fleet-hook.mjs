@@ -104,7 +104,7 @@ var compatibility_default = {
 // package.json
 var package_default = {
   name: "fleetdeck",
-  version: "0.23.4",
+  version: "0.23.5",
   description: "Fleet Deck \u2014 localhost daemon + board for Claude Code, guarded by a release-bound compatibility policy.",
   type: "module",
   license: "MIT",
