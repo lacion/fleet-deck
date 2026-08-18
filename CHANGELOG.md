@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.6] - 2026-08-19
+
 ### Added
 
 - **Repo spawns prove Git access before creating a card.** The daemon resolves

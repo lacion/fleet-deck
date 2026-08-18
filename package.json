@@ -1,6 +1,6 @@
 {
   "name": "fleetdeck",
-  "version": "0.23.5",
+  "version": "0.23.6",
   "description": "Fleet Deck — localhost daemon + board for Claude Code, guarded by a release-bound compatibility policy.",
   "type": "module",
   "license": "MIT",
